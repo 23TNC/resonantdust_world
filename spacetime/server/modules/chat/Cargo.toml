@@ -1,0 +1,16 @@
+[package]
+name = "resonantdust_chat"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb = { version = "=2.1.0" }
+# Chat needs only the `valid_at` bit-helpers (`pack_valid_at` / `valid_at_time`),
+# which live in the shared codec alongside every other wire layout. Reached via
+# the `../shared:/workspace/shared` bind-mount in ../../../compose.yml (the path
+# is container-relative). Cheap to link — the codec is dependency-free integer
+# math — and it keeps chat's PK shape identical to the shard's by construction.
+resonantdust-codec = { path = "../../../shared/codec" }

@@ -1,0 +1,286 @@
+//! Bit-packing helpers — `valid_at` primary keys, `zone_id` composition, zone
+//! cells, and packed things/tiles. The single source of truth for every wire and
+//! storage bit-layout; the server packs and the client unpacks with the same
+//! code.
+//!
+//! The shapes the game is built around:
+//!
+//! ```text
+//! valid_at:  u64 = (time_ms: u48 << 16) | sequence: u16
+//! zone_id:   u32 = region_x:8 | region_y:8 | surface:8 | zone_x:4 | zone_y:4
+//! region_id: u32 = region_x:8 | region_y:8 | surface:8 | reserved:8
+//! thing:     u32 = x:4 | y:4 | rotation:2 | object_id:12 | reserved:10
+//!                  (a layer field will later be carved from the reserved bits)
+//! tile:      u16 = def_id:12 | reserved:4
+//! ```
+
+// ── valid_at PK ──────────────────────────────────────────────────────────────
+
+/// Pack `(time_ms, sequence)` into the u64 `valid_at` primary key. Rows for one
+/// key (one zone, one player, one chat channel …) order by this composite —
+/// `time_ms` dominates, `sequence` tie-breaks writes within the same ms.
+pub fn pack_valid_at(time_ms: u64, sequence: u16) -> u64 {
+    (time_ms << 16) | (sequence as u64)
+}
+
+/// Extract the `time_ms` half of a packed `valid_at`.
+pub fn valid_at_time(v: u64) -> u64 {
+    v >> 16
+}
+
+/// Extract the `sequence` half of a packed `valid_at`.
+pub fn valid_at_sequence(v: u64) -> u16 {
+    (v & 0xFFFF) as u16
+}
+
+// ── zone_id ↔ region_id ──────────────────────────────────────────────────────
+//
+// `zone_id` addresses a single zone within the whole world; `region_id` is the
+// shard-routing key — a `zone_id` with its low byte (the in-region `zone_x|zone_y`
+// nibbles) cleared. The shard treats `zone_id` as opaque; composing and
+// decomposing it is the gateway's / client's concern, which is why these live in
+// the shared codec rather than in any one module.
+
+/// Mask turning a `zone_id` into its `region_id`: clears the low byte
+/// (`zone_x | zone_y`), leaving `region_x | region_y | surface` and a zero
+/// `reserved` byte.
+pub const REGION_ID_MASK: u32 = 0xFFFF_FF00;
+
+const ZONE_RX_SHIFT: u32 = 24;
+const ZONE_RY_SHIFT: u32 = 16;
+const ZONE_SURFACE_SHIFT: u32 = 8;
+const ZONE_X_SHIFT: u32 = 4;
+const ZONE_BYTE: u32 = 0xFF;
+
+/// Compose a `zone_id` from its parts. `region_x`/`region_y`/`surface` are full
+/// bytes; `zone_x`/`zone_y` are the in-region nibbles (`0..REGION_DIM`), masked
+/// to 4 bits each.
+pub fn pack_zone_id(region_x: u8, region_y: u8, surface: u8, zone_x: u8, zone_y: u8) -> u32 {
+    ((region_x as u32) << ZONE_RX_SHIFT)
+        | ((region_y as u32) << ZONE_RY_SHIFT)
+        | ((surface as u32) << ZONE_SURFACE_SHIFT)
+        | ((zone_x as u32 & NIBBLE) << ZONE_X_SHIFT)
+        | (zone_y as u32 & NIBBLE)
+}
+
+/// The `region_id` owning a `zone_id` (the zone_id with its low byte zeroed).
+pub fn region_of(zone_id: u32) -> u32 {
+    zone_id & REGION_ID_MASK
+}
+
+/// The `region_x` byte of a `zone_id` (or `region_id`).
+pub fn zone_region_x(zone_id: u32) -> u8 {
+    ((zone_id >> ZONE_RX_SHIFT) & ZONE_BYTE) as u8
+}
+
+/// The `region_y` byte of a `zone_id` (or `region_id`).
+pub fn zone_region_y(zone_id: u32) -> u8 {
+    ((zone_id >> ZONE_RY_SHIFT) & ZONE_BYTE) as u8
+}
+
+/// The `surface` byte of a `zone_id` (or `region_id`).
+pub fn zone_surface(zone_id: u32) -> u8 {
+    ((zone_id >> ZONE_SURFACE_SHIFT) & ZONE_BYTE) as u8
+}
+
+/// The in-region `zone_x` nibble of a `zone_id`.
+pub fn zone_x(zone_id: u32) -> u8 {
+    ((zone_id >> ZONE_X_SHIFT) & NIBBLE) as u8
+}
+
+/// The in-region `zone_y` nibble of a `zone_id`.
+pub fn zone_y(zone_id: u32) -> u8 {
+    (zone_id & NIBBLE) as u8
+}
+
+// ── zone geometry ────────────────────────────────────────────────────────────
+
+/// Tiles per zone edge. A zone is `ZONE_DIM × ZONE_DIM` cells.
+pub const ZONE_DIM: u8 = 16;
+/// Cells per zone (`ZONE_DIM²` = 256). The `location` byte indexes `0..ZONE_TILES`.
+pub const ZONE_TILES: usize = (ZONE_DIM as usize) * (ZONE_DIM as usize);
+/// Zones per region edge. A region is `REGION_DIM × REGION_DIM` zones
+/// (= 256×256 tiles).
+pub const REGION_DIM: u8 = 16;
+
+/// Cell index `0..256` from in-zone `(x, y)` — row-major, `y << 4 | x`. Matches
+/// the `x`/`y` nibble positions of a [packed thing](pack_thing).
+pub fn cell(x: u8, y: u8) -> u8 {
+    ((y & 0x0F) << 4) | (x & 0x0F)
+}
+
+/// The `x` (column) of a cell index.
+pub fn cell_x(location: u8) -> u8 {
+    location & 0x0F
+}
+
+/// The `y` (row) of a cell index.
+pub fn cell_y(location: u8) -> u8 {
+    location >> 4
+}
+
+// ── packed thing (cold `things` entries) ─────────────────────────────────────
+//
+// Layout (LSB→MSB): x:4 | y:4 | rotation:2 | object_id:12 | reserved:10.
+// `object_id` is a **u12** ([`DEF_ID_MAX`]) — the thing def-id space; the 10
+// reserved bits are headroom for later. There is one thing list per zone; a
+// layer field carved from the reserved bits will distinguish floor-level from
+// wall-level things (folding `primary_thing` + `wall_thing` into one list).
+// Tiles use the same u12 def width in their
+// own separate namespace (see the tile-slot helpers below). The hot `id` column
+// is a u16 for all three layers (no u12 scalar exists), so the hot write path
+// rejects any `id` above the u12 max rather than truncating it on fold. Rotation
+// is only meaningful for the two thing layers (tiles don't rotate).
+
+/// Largest def id the u12 packing holds (4095). The shared width for tile defs
+/// and thing `object_id`s (separate namespaces, same size); the hot write path
+/// validates every `id` against it.
+pub const DEF_ID_MAX: u16 = 0x0FFF;
+
+const THING_X_SHIFT: u32 = 0;
+const THING_Y_SHIFT: u32 = 4;
+const THING_ROT_SHIFT: u32 = 8;
+const THING_OBJ_SHIFT: u32 = 10;
+
+const NIBBLE: u32 = 0x0F;
+const THING_ROT_MASK: u32 = 0x03;
+const THING_OBJ_MASK: u32 = 0x0FFF;
+
+/// Pack an in-zone thing into the cold `u32` entry. `object_id` is masked to u12;
+/// callers reject out-of-range ids upstream (see the shard's hot write path).
+/// `object_id == 0` is the "empty" sentinel — callers shouldn't pack it (a
+/// removed thing is dropped from the vec, not stored as a 0-id entry).
+pub fn pack_thing(x: u8, y: u8, rotation: u8, object_id: u16) -> u32 {
+    ((x as u32 & NIBBLE) << THING_X_SHIFT)
+        | ((y as u32 & NIBBLE) << THING_Y_SHIFT)
+        | ((rotation as u32 & THING_ROT_MASK) << THING_ROT_SHIFT)
+        | ((object_id as u32 & THING_OBJ_MASK) << THING_OBJ_SHIFT)
+}
+
+/// Pack a thing addressed by a cell index instead of `(x, y)`.
+pub fn pack_thing_at(location: u8, rotation: u8, object_id: u16) -> u32 {
+    pack_thing(cell_x(location), cell_y(location), rotation, object_id)
+}
+
+/// The `x` (column) of a packed thing.
+pub fn thing_x(packed: u32) -> u8 {
+    ((packed >> THING_X_SHIFT) & NIBBLE) as u8
+}
+
+/// The `y` (row) of a packed thing.
+pub fn thing_y(packed: u32) -> u8 {
+    ((packed >> THING_Y_SHIFT) & NIBBLE) as u8
+}
+
+/// The cell index of a packed thing (`y << 4 | x`).
+pub fn thing_location(packed: u32) -> u8 {
+    cell(thing_x(packed), thing_y(packed))
+}
+
+/// The rotation (0..3) of a packed thing.
+pub fn thing_rotation(packed: u32) -> u8 {
+    ((packed >> THING_ROT_SHIFT) & THING_ROT_MASK) as u8
+}
+
+/// The object/def id of a packed thing.
+pub fn thing_object_id(packed: u32) -> u16 {
+    ((packed >> THING_OBJ_SHIFT) & THING_OBJ_MASK) as u16
+}
+
+// ── cold tile slot (`cold_zones.tiles[location]`) ────────────────────────────
+//
+// Each tile cell is a u16: `def_id:12 | reserved:4`. The def id is a u12 in the
+// tile namespace ([`DEF_ID_MAX`]); the top 4 bits are reserved per cell for later
+// use. Tiles don't rotate. `def_id == 0` = empty (no floor/wall). The hot tile
+// row carries only the def `id`, so the fold preserves a cell's existing reserved
+// nibble across a def change (see the shard's `fold_hot_to_cold`).
+
+const TILE_DEF_MASK: u16 = 0x0FFF;
+const TILE_RESERVED_SHIFT: u16 = 12;
+const TILE_RESERVED_MASK: u16 = 0x0F;
+
+/// Pack a tile slot from a u12 `def_id` and its 4 reserved bits.
+pub fn pack_tile(def_id: u16, reserved: u8) -> u16 {
+    (def_id & TILE_DEF_MASK) | (((reserved as u16) & TILE_RESERVED_MASK) << TILE_RESERVED_SHIFT)
+}
+
+/// The u12 def id of a tile slot.
+pub fn tile_def(slot: u16) -> u16 {
+    slot & TILE_DEF_MASK
+}
+
+/// The 4 reserved bits of a tile slot.
+pub fn tile_reserved(slot: u16) -> u8 {
+    ((slot >> TILE_RESERVED_SHIFT) & TILE_RESERVED_MASK) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_at_roundtrips() {
+        let v = pack_valid_at(1_700_000_000_000, 42);
+        assert_eq!(valid_at_time(v), 1_700_000_000_000);
+        assert_eq!(valid_at_sequence(v), 42);
+    }
+
+    #[test]
+    fn zone_id_roundtrips() {
+        let z = pack_zone_id(0xAB, 0xCD, 0x02, 13, 7);
+        assert_eq!(zone_region_x(z), 0xAB);
+        assert_eq!(zone_region_y(z), 0xCD);
+        assert_eq!(zone_surface(z), 0x02);
+        assert_eq!(zone_x(z), 13);
+        assert_eq!(zone_y(z), 7);
+        // region_of clears exactly the zone_x|zone_y nibbles, nothing above.
+        let r = region_of(z);
+        assert_eq!(zone_region_x(r), 0xAB);
+        assert_eq!(zone_region_y(r), 0xCD);
+        assert_eq!(zone_surface(r), 0x02);
+        assert_eq!(zone_x(r), 0);
+        assert_eq!(zone_y(r), 0);
+        // two zones in the same region resolve to one region_id.
+        assert_eq!(region_of(pack_zone_id(0xAB, 0xCD, 0x02, 0, 0)), r);
+        assert_eq!(region_of(pack_zone_id(0xAB, 0xCD, 0x02, 15, 15)), r);
+    }
+
+    #[test]
+    fn cell_roundtrips() {
+        for x in 0..16u8 {
+            for y in 0..16u8 {
+                let loc = cell(x, y);
+                assert_eq!(cell_x(loc), x);
+                assert_eq!(cell_y(loc), y);
+            }
+        }
+        assert_eq!(cell(15, 15), 255);
+    }
+
+    #[test]
+    fn thing_roundtrips() {
+        // 0xABC (2748) is within the u12 object_id range.
+        let p = pack_thing(13, 7, 2, 0x0ABC);
+        assert_eq!(thing_x(p), 13);
+        assert_eq!(thing_y(p), 7);
+        assert_eq!(thing_rotation(p), 2);
+        assert_eq!(thing_object_id(p), 0x0ABC);
+        assert_eq!(thing_location(p), cell(13, 7));
+        // by-location constructor agrees
+        assert_eq!(pack_thing_at(cell(13, 7), 2, 0x0ABC), p);
+        // u12 cap: the max object_id round-trips, nothing above it fits.
+        assert_eq!(thing_object_id(pack_thing(0, 0, 0, DEF_ID_MAX)), DEF_ID_MAX);
+    }
+
+    #[test]
+    fn tile_roundtrips() {
+        let slot = pack_tile(0x0ABC, 0x5);
+        assert_eq!(tile_def(slot), 0x0ABC);
+        assert_eq!(tile_reserved(slot), 0x5);
+        // def and reserved occupy disjoint bits — the u12 max + full reserved nibble.
+        let full = pack_tile(DEF_ID_MAX, 0xF);
+        assert_eq!(tile_def(full), DEF_ID_MAX);
+        assert_eq!(tile_reserved(full), 0xF);
+        assert_eq!(full, 0xFFFF);
+    }
+}

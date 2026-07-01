@@ -1,0 +1,12 @@
+# content/servers/alpha — index routing topology for the `alpha` environment.
+# See content/servers/dev for the full format reference. alpha is the REMOTE
+# lightsail deployment (gateway.resonantdust.com); standup isn't fully wired yet
+# (no gateway deploy.yml, RD_REMOTE=1), so this is a placeholder until alpha goes
+# live. Every row below is commented out — seeding alpha is a no-op for now.
+#
+# When alpha lands, the world server url must be the host clients actually reach
+# (the lightsail box / its eventual TLS proxy), and the shard url is internal to
+# that box's daemon:
+#
+# server 0 ws://gateway.resonantdust.com:8473/ws
+# shard 0 http://start:3000 resonantdust-alpha-region_shard-0

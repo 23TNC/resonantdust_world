@@ -1,0 +1,13 @@
+[package]
+name = "resonantdust-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Resonant Dust (world) core — hello-world placeholder for the foundational shared logic. Pure Rust, no wasm: the gateway and spacetime modules link this directly as an rlib; the client reaches it through the resonantdust-shared wasm bundle."
+
+[lib]
+name = "resonantdust_core"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]

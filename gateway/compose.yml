@@ -1,0 +1,81 @@
+networks:
+  resonantdust:
+    external: true
+
+services:
+  # Compile the gateway release binary on the local daemon. One binary serves
+  # every env (it reads GATE_LISTEN / INDEX_URI / INDEX_DB at runtime). Output
+  # lands at /workspace/target/release/gateway, visible on the host via the bind
+  # mount.
+  #
+  # Built from ./Dockerfile (rust:slim + pkg-config + libssl-dev): the
+  # SpacetimeDB SDK's native-tls/openssl-sys needs the OpenSSL headers, which
+  # stock rust:slim lacks. `rd build gateway` passes `--build` so this image is
+  # (re)built as needed.
+  build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    # spacetimedb-lib's build script shells out to `git rev-parse HEAD` to stamp
+    # a commit hash, panicking when git is absent (it is, in rust:slim). This env
+    # var (its Nix escape hatch) supplies the hash directly and skips the git
+    # call — the spacetime cli 2.3.0 commit that generated src/bindings/. (Same
+    # value as server/compose.yml — both link spacetimedb-sdk =2.3.0.)
+    environment:
+      SPACETIMEDB_NIX_BUILD_GIT_COMMIT: "aa73d1c35b4b346b98eeba10a3d756b4ae72162f"
+    command: ["cargo", "build", "--release"]
+
+  # Regenerate the SDK bindings the gateway links (gateway/src/bindings/<module>)
+  # from the spacetime modules. Run via `rd build gateway --bindings`. Uses the
+  # spacetime CLI image; the modules + this crate are bind-mounted so generate can
+  # read the module source and write the bindings here.
+  bindings:
+    image: clockworklabs/spacetime:v2.3.0
+    volumes:
+      - ../spacetime/server:/workspace/server
+      - .:/workspace/gateway
+    working_dir: /workspace/server
+    entrypoint: ["spacetime"]
+    command:
+      - generate
+      - --yes
+      - --lang
+      - rust
+      - --out-dir
+      - /workspace/gateway/src/bindings/index
+      - --module-path
+      - /workspace/server/modules/index
+
+  # Long-lived gateway containers — one per local env, side by side. Each idles
+  # (`sleep infinity`) so `rd redeploy` can run/re-run the compiled binary inside
+  # it. The binary at /workspace/target/release/gateway is shared via the bind
+  # mount; the env's port/log/upstream are passed at exec time.
+  gateway:
+    image: rust:slim
+    networks: [resonantdust]
+    ports: ["9473:9473"]
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    command: ["sleep", "infinity"]
+
+  gateway-claude:
+    image: rust:slim
+    networks: [resonantdust]
+    ports: ["9474:9474"]
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    command: ["sleep", "infinity"]
+
+  gateway-test:
+    image: rust:slim
+    networks: [resonantdust]
+    ports: ["9475:9475"]
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    command: ["sleep", "infinity"]

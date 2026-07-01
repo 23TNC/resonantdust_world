@@ -1,0 +1,533 @@
+//! The native engine — the tokio-backed runtime behind the host-facing
+//! [`Client`] handle.
+//!
+//! [`Client::spawn`] launches one [`Engine`] task. That task is the client's
+//! single owner of mutable session state, so there are no locks: it `select!`s
+//! between two inputs —
+//!   * the **command channel** ([`Command`]s the host sends via the handle), and
+//!   * the **world-server WS read stream** (frames the server pushes) —
+//! and funnels everything outward as [`Event`]s through the host's [`EventSink`].
+//!
+//! Login is intentionally split across the loop: [`Command::Login`] does the
+//! blocking-ish setup (gateway HTTP, WS connect, send the login frame) inline,
+//! then *returns to the loop* with a pending correlation id; the matching
+//! `login_ok` / `login_err` is handled when it arrives on the read stream. That
+//! keeps the loop responsive and puts all reply handling in one place.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use futures_util::stream::{SplitSink, SplitStream};
+use futures_util::{SinkExt, StreamExt};
+use tokio::net::TcpStream;
+use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+
+use crate::api::{Command, Event, EventSink, ServerInfo};
+use crate::config::ClientConfig;
+use crate::protocol::{ClientMsg, RowData, ServerMsg};
+use crate::zones::{AnchorRadii, ZoneManager};
+
+/// The live world-server socket, split into its write and read halves. The read
+/// half lives in the loop (so `select!` can poll it); the write half lives on the
+/// engine (only command handling sends).
+type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type WsWrite = SplitSink<WsStream, Message>;
+type WsRead = SplitStream<WsStream>;
+
+/// Returned by [`Client::send`] when the engine task is already gone (the client
+/// was shut down or dropped). The unsent command is handed back.
+#[derive(Debug)]
+pub struct SendError(pub Command);
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "client engine is no longer running")
+    }
+}
+
+impl std::error::Error for SendError {}
+
+/// A host's handle to a running client. Cheap to clone; every clone drives the
+/// same engine. Dropping the last handle closes the command channel, which stops
+/// the engine after it tears the session down.
+#[derive(Clone)]
+pub struct Client {
+    cmd_tx: mpsc::UnboundedSender<Command>,
+}
+
+impl Client {
+    /// Spawn a client engine on the current tokio runtime and return its handle.
+    /// `sink` receives every [`Event`] the client emits (a closure is the usual
+    /// choice — see [`EventSink`]).
+    ///
+    /// Must be called from within a tokio runtime (e.g. under `#[tokio::main]`):
+    /// it uses [`tokio::spawn`].
+    pub fn spawn(config: ClientConfig, sink: impl EventSink) -> Client {
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let engine = Engine::new(config, Arc::new(sink));
+        tokio::spawn(engine.run(cmd_rx));
+        Client { cmd_tx }
+    }
+
+    /// Send a command to the engine. Errors only if the engine has stopped.
+    pub fn send(&self, cmd: Command) -> Result<(), SendError> {
+        self.cmd_tx.send(cmd).map_err(|e| SendError(e.0))
+    }
+
+    /// Convenience: log in as `name` (acquire a server, connect, authenticate).
+    pub fn login(&self, name: impl Into<String>) -> Result<(), SendError> {
+        self.send(Command::Login { name: name.into() })
+    }
+
+    /// Convenience: add or move the anchor named `name` (see
+    /// [`Command::SetAnchor`]). `tile_x`/`tile_y` are global tile coordinates;
+    /// `radii` are the per-tier reach in tiles; `soul` is `0` for a viewport.
+    pub fn set_anchor(
+        &self,
+        name: impl Into<String>,
+        tile_x: i32,
+        tile_y: i32,
+        surface: u8,
+        radii: AnchorRadii,
+        soul: u32,
+    ) -> Result<(), SendError> {
+        self.send(Command::SetAnchor {
+            name: name.into(),
+            tile_x,
+            tile_y,
+            surface,
+            radii,
+            soul,
+        })
+    }
+
+    /// Convenience: remove the anchor named `name` (see [`Command::RemoveAnchor`]).
+    pub fn remove_anchor(&self, name: impl Into<String>) -> Result<(), SendError> {
+        self.send(Command::RemoveAnchor { name: name.into() })
+    }
+
+    /// Convenience: drop the world-server connection but keep the engine alive.
+    pub fn logout(&self) -> Result<(), SendError> {
+        self.send(Command::Logout)
+    }
+
+    /// Convenience: stop the engine.
+    pub fn shutdown(&self) -> Result<(), SendError> {
+        self.send(Command::Shutdown)
+    }
+}
+
+/// A login awaiting its server reply: the `cid` we stamped and the name we sent,
+/// so an arriving `login_ok` / `login_err` can be matched and reported.
+struct Pending {
+    cid: u32,
+    name: String,
+}
+
+/// The engine's owned state.
+struct Engine {
+    config: ClientConfig,
+    sink: Arc<dyn EventSink>,
+    /// Monotonic source of login correlation ids.
+    next_cid: u32,
+    /// The connected world server's WS url, retained so [`Event::LoggedIn`] can
+    /// report which server the session lives on.
+    server_url: Option<String>,
+    /// Write half of the live socket, if connected.
+    write: Option<WsWrite>,
+    /// The in-flight login, if one is awaiting its reply.
+    pending: Option<Pending>,
+    /// The established player id, set on login. Carried back to the gateway on a
+    /// subsequent login for reconnect affinity.
+    player_id: Option<u32>,
+    /// The anchor-driven zone subscription manager. Decides which zones to keep a
+    /// `SubZone` open on; the engine maps its intents to wire frames.
+    zones: ZoneManager,
+    /// `zone_id` → the `sid` we opened it under, so an intent to close a zone
+    /// resolves to the right `Unsub`. The wire-level `sid` lives here, not in the
+    /// pure manager. Cleared with the session on disconnect.
+    subs: HashMap<u32, u32>,
+    /// Monotonic source of subscription ids for this session.
+    next_sid: u32,
+}
+
+impl Engine {
+    fn new(config: ClientConfig, sink: Arc<dyn EventSink>) -> Self {
+        Self {
+            config,
+            sink,
+            next_cid: 1,
+            server_url: None,
+            write: None,
+            pending: None,
+            player_id: None,
+            zones: ZoneManager::default(),
+            subs: HashMap::new(),
+            next_sid: 1,
+        }
+    }
+
+    /// The select loop. Runs until the command channel closes or a
+    /// [`Command::Shutdown`] arrives, then tears the session down.
+    async fn run(mut self, mut cmd_rx: mpsc::UnboundedReceiver<Command>) {
+        // The read half lives here, not on `self`: `select!` polls it each
+        // iteration while command handling (which may replace it) borrows `self`.
+        let mut read: Option<WsRead> = None;
+
+        loop {
+            tokio::select! {
+                cmd = cmd_rx.recv() => match cmd {
+                    Some(cmd) => {
+                        if self.handle_command(cmd, &mut read).await {
+                            break; // Shutdown
+                        }
+                    }
+                    None => break, // all handles dropped
+                },
+                frame = next_frame(&mut read) => {
+                    self.handle_frame(frame, &mut read).await;
+                }
+            }
+        }
+
+        self.disconnect(&mut read, None, /*emit=*/ false).await;
+        tracing::debug!("client engine stopped");
+    }
+
+    /// Process one host command. Returns `true` to stop the engine.
+    async fn handle_command(&mut self, cmd: Command, read: &mut Option<WsRead>) -> bool {
+        match cmd {
+            Command::Login { name } => self.handle_login(name, read).await,
+            Command::SetAnchor {
+                name,
+                tile_x,
+                tile_y,
+                surface,
+                radii,
+                soul,
+            } => {
+                self.handle_set_anchor(name, tile_x, tile_y, surface, radii, soul)
+                    .await
+            }
+            Command::RemoveAnchor { name } => self.handle_remove_anchor(name).await,
+            Command::Logout => {
+                self.disconnect(read, Some("logout".to_string()), /*emit=*/ true)
+                    .await;
+            }
+            Command::Shutdown => return true,
+        }
+        false
+    }
+
+    /// Add or move an anchor and push the resulting subscription changes. A live
+    /// session is required (subscriptions ride the world-server socket); without
+    /// one the command is reported and dropped, so a host sets anchors after
+    /// [`Event::LoggedIn`].
+    async fn handle_set_anchor(
+        &mut self,
+        name: String,
+        tile_x: i32,
+        tile_y: i32,
+        surface: u8,
+        radii: AnchorRadii,
+        soul: u32,
+    ) {
+        if self.write.is_none() {
+            self.emit(Event::Status(format!(
+                "set_anchor '{name}' ignored: not logged in"
+            )));
+            return;
+        }
+        self.zones
+            .set_anchor(&name, tile_x, tile_y, surface, radii, soul, now_ms());
+        self.flush_zone_intents().await;
+    }
+
+    /// Remove an anchor and push the resulting subscription changes.
+    async fn handle_remove_anchor(&mut self, name: String) {
+        self.zones.remove_anchor(&name, now_ms());
+        self.flush_zone_intents().await;
+    }
+
+    /// Drain the zone manager's pending intents and translate each into a
+    /// `sub_zone` / `unsub` frame, maintaining the `zone_id` → `sid` map. Only
+    /// runs meaningfully while connected; a send failure is surfaced and skipped.
+    async fn flush_zone_intents(&mut self) {
+        for intent in self.zones.take_intents() {
+            let frame = if intent.on {
+                let sid = self.take_sid();
+                self.subs.insert(intent.zone_id, sid);
+                ClientMsg::SubZone {
+                    sid,
+                    zone_id: intent.zone_id,
+                }
+            } else {
+                match self.subs.remove(&intent.zone_id) {
+                    Some(sid) => {
+                        self.emit(Event::ZoneClosed {
+                            zone_id: intent.zone_id,
+                        });
+                        ClientMsg::Unsub { sid }
+                    }
+                    None => continue, // not open on the wire; nothing to drop
+                }
+            };
+            if let Err(err) = self.send_frame(&frame).await {
+                self.emit(Event::Status(format!("subscription send failed: {err}")));
+            }
+        }
+    }
+
+    /// Acquire a server, connect, and fire off the login frame. The reply is
+    /// handled later, in [`Self::handle_frame`].
+    async fn handle_login(&mut self, name: String, read: &mut Option<WsRead>) {
+        self.emit(Event::LoginStarted { name: name.clone() });
+
+        // A fresh login supersedes any existing connection.
+        if self.write.is_some() {
+            self.disconnect(read, Some("reconnecting".to_string()), /*emit=*/ true)
+                .await;
+        }
+
+        // 1. Gateway: which world server should we use?
+        let server = match crate::gateway::resolve_server(&self.config.gateway_url, self.player_id)
+            .await
+        {
+            Ok(s) => s,
+            Err(reason) => {
+                self.emit(Event::LoginFailed { reason });
+                return;
+            }
+        };
+        self.emit(Event::ServerResolved(server.clone()));
+
+        // 2. Connect to that world server's WebSocket.
+        let ServerInfo { url, .. } = server;
+        let socket = match connect_async(url.as_str()).await {
+            Ok((socket, _resp)) => socket,
+            Err(err) => {
+                self.emit(Event::LoginFailed {
+                    reason: format!("connect to {url} failed: {err}"),
+                });
+                return;
+            }
+        };
+        let (write, new_read) = socket.split();
+        self.write = Some(write);
+        *read = Some(new_read);
+        self.server_url = Some(url.clone());
+
+        // 3. Send the login frame; record the pending correlation id.
+        let cid = self.take_cid();
+        let frame = ClientMsg::Login {
+            cid,
+            client_time_ms: now_ms(),
+            name: name.clone(),
+        };
+        if let Err(err) = self.send_frame(&frame).await {
+            self.emit(Event::LoginFailed {
+                reason: format!("sending login failed: {err}"),
+            });
+            self.disconnect(read, Some("login send failed".to_string()), /*emit=*/ false)
+                .await;
+            return;
+        }
+        self.pending = Some(Pending { cid, name });
+    }
+
+    /// Handle one inbound frame outcome from the read stream.
+    async fn handle_frame(&mut self, frame: FrameOutcome, read: &mut Option<WsRead>) {
+        match frame {
+            FrameOutcome::Text(text) => self.handle_server_msg(&text).await,
+            // Control + non-text frames carry no protocol payload.
+            FrameOutcome::Other => {}
+            FrameOutcome::Closed => {
+                self.disconnect(read, Some("server closed connection".to_string()), true)
+                    .await;
+            }
+            FrameOutcome::Err(err) => {
+                self.disconnect(read, Some(format!("connection error: {err}")), true)
+                    .await;
+            }
+        }
+    }
+
+    /// Parse and dispatch a text frame as a [`ServerMsg`].
+    async fn handle_server_msg(&mut self, text: &str) {
+        let msg: ServerMsg = match serde_json::from_str(text) {
+            Ok(m) => m,
+            Err(err) => {
+                self.emit(Event::Status(format!("unparseable server frame: {err}")));
+                return;
+            }
+        };
+
+        match msg {
+            ServerMsg::LoginOk {
+                cid,
+                player_id,
+                data_shard,
+                ..
+            } => {
+                if !self.matches_pending(cid) {
+                    return;
+                }
+                self.pending = None;
+                self.player_id = Some(player_id);
+                let server_url = self.server_url.clone().unwrap_or_default();
+                self.emit(Event::LoggedIn {
+                    player_id,
+                    data_shard,
+                    server_url,
+                });
+            }
+            ServerMsg::LoginErr { cid, error, .. } => {
+                if !self.matches_pending(cid) {
+                    return;
+                }
+                self.pending = None;
+                self.emit(Event::LoginFailed { reason: error });
+            }
+            ServerMsg::Error { error } => {
+                self.emit(Event::Status(format!("server error: {error}")));
+            }
+            // A subscription's initial rows have all arrived.
+            ServerMsg::Applied { sid } => {
+                self.emit(Event::Status(format!("subscription {sid} applied")));
+            }
+            // One upstream row change. `sid` is 0 (the shard connection
+            // multiplexes every zone); route by the row's own `zone_id`. Feeding
+            // it to the manager ages any candidate sub on that zone (warmth), which
+            // may evict it — flush the resulting intents.
+            ServerMsg::Row { row, .. } => {
+                if let RowData::ColdZone(z) = &row {
+                    self.emit(Event::ZoneTiles {
+                        zone_id: z.zone_id,
+                        tiles: z.tiles.clone(),
+                    });
+                }
+                self.zones.note_update(row_zone_id(&row), now_ms());
+                self.flush_zone_intents().await;
+            }
+        }
+    }
+
+    /// Serialize and send a client frame on the live socket.
+    async fn send_frame(&mut self, frame: &ClientMsg) -> Result<(), String> {
+        let text = serde_json::to_string(frame).map_err(|e| format!("serialize frame: {e}"))?;
+        let write = self
+            .write
+            .as_mut()
+            .ok_or_else(|| "not connected".to_string())?;
+        write
+            .send(Message::Text(text))
+            .await
+            .map_err(|e| format!("ws send: {e}"))
+    }
+
+    /// Tear down the live connection (if any) and clear session state. Emits
+    /// [`Event::Disconnected`] when `emit` is set and a connection actually
+    /// existed — suppressed for internal teardown that already reported a failure,
+    /// and on engine shutdown.
+    async fn disconnect(
+        &mut self,
+        read: &mut Option<WsRead>,
+        reason: Option<String>,
+        emit: bool,
+    ) {
+        let was_connected = self.write.is_some();
+        if let Some(mut write) = self.write.take() {
+            // Best-effort close; the socket is being dropped regardless.
+            let _ = write.close().await;
+        }
+        *read = None;
+        self.server_url = None;
+        // Subscriptions die with the socket: drop anchors and the sid map so a
+        // reconnecting host starts from an empty anchor list (no stale subs, no
+        // sid reuse against a fresh server session).
+        self.zones.clear();
+        self.subs.clear();
+        self.next_sid = 1;
+        // A pending login that never got its reply dies with the connection.
+        if let Some(p) = self.pending.take() {
+            if was_connected {
+                self.emit(Event::LoginFailed {
+                    reason: format!("disconnected before '{}' login completed", p.name),
+                });
+            }
+        }
+        if emit && was_connected {
+            self.emit(Event::Disconnected { reason });
+        }
+    }
+
+    /// Does `cid` match the in-flight login? A mismatch is a stale/duplicate reply
+    /// and is ignored.
+    fn matches_pending(&self, cid: u32) -> bool {
+        self.pending.as_ref().is_some_and(|p| p.cid == cid)
+    }
+
+    fn take_cid(&mut self) -> u32 {
+        let cid = self.next_cid;
+        self.next_cid = self.next_cid.wrapping_add(1);
+        cid
+    }
+
+    fn take_sid(&mut self) -> u32 {
+        let sid = self.next_sid;
+        self.next_sid = self.next_sid.wrapping_add(1);
+        sid
+    }
+
+    fn emit(&self, event: Event) {
+        self.sink.emit(event);
+    }
+}
+
+/// What the read stream yielded, normalized so [`Engine::handle_frame`] doesn't
+/// touch the tungstenite types directly.
+enum FrameOutcome {
+    /// A text frame (the only kind the protocol uses).
+    Text(String),
+    /// A non-text or control frame — ignored.
+    Other,
+    /// The stream ended (clean close or EOF).
+    Closed,
+    /// A transport error.
+    Err(String),
+}
+
+/// Await the next frame from the read half. When there's no connection this is a
+/// future that never resolves, so `select!` simply waits on the command channel.
+async fn next_frame(read: &mut Option<WsRead>) -> FrameOutcome {
+    match read {
+        Some(stream) => match stream.next().await {
+            Some(Ok(Message::Text(t))) => FrameOutcome::Text(t),
+            Some(Ok(Message::Close(_))) => FrameOutcome::Closed,
+            Some(Ok(_)) => FrameOutcome::Other,
+            Some(Err(e)) => FrameOutcome::Err(e.to_string()),
+            None => FrameOutcome::Closed,
+        },
+        None => std::future::pending().await,
+    }
+}
+
+/// The `zone_id` a relayed row belongs to, whichever table it came from.
+fn row_zone_id(row: &RowData) -> u32 {
+    match row {
+        RowData::ColdZone(r) => r.zone_id,
+        RowData::HotTile(r) | RowData::HotThing(r) => r.zone_id,
+    }
+}
+
+/// Wall-clock milliseconds since the unix epoch — the client clock sample sent
+/// with login (the server stamps authoritative time itself).
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}

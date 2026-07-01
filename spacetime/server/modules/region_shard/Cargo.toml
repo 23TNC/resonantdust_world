@@ -1,0 +1,20 @@
+[package]
+name = "resonantdust_region_shard"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb = { version = "=2.1.0" }
+log = "0.4"
+# The shared bit-packing layer: `valid_at` PKs, zone geometry, packed
+# things/tiles. Reached via the `../shared:/workspace/shared` bind-mount in
+# ../../../compose.yml — the path is container-relative. The client links the
+# same crate through the wasm bundle, so the two sides can't drift.
+# (Was inlined as src/packed.rs during the foundation rebuild; lifted back to
+# the shared codec when zone_id composition needed sharing.)
+resonantdust-codec = { path = "../../../shared/codec" }

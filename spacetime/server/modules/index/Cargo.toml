@@ -1,0 +1,16 @@
+[package]
+name = "resonantdust_index"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Routing directory: region→shard→endpoint + player→server→endpoint. The one
+# shared bit it owns is the `zone_id → region_id` mask, which lives in the shared
+# codec so this module and the native server can't drift. Reached via the
+# `../shared:/workspace/shared` bind-mount in ../../../compose.yml (the path is
+# container-relative).
+spacetimedb = { version = "=2.1.0" }
+resonantdust-codec = { path = "../../../shared/codec" }
