@@ -26,10 +26,15 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::bindings;
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
-use crate::bindings::region_shard::seed_cold_zone as _; // reducer trait → `reducers.seed_cold_zone`
-use crate::connections::{await_ready, connect_players, connect_shard, Pool};
-use crate::index::{resolve_zone_or_default, ShardEndpoint};
-use crate::protocol::{ClientMsg, ColdZoneRow, HotCellRow, RowData, RowOp, ServerMsg};
+use crate::bindings::zone_shard::seed_cold_zone as _; // reducer trait → `reducers.seed_cold_zone`
+use crate::bindings::zone_shard::begin_release as _; // reducer trait → `reducers.begin_release`
+use crate::bindings::zone_shard::ack_release as _; // reducer trait → `reducers.ack_release`
+use crate::bindings::object_shard::receive as _; // reducer trait → `reducers.receive`
+use crate::connections::{await_ready, connect_object_shard, connect_players, connect_shard, Pool};
+use crate::index::{resolve_object_or_default, resolve_zone_or_default, ShardEndpoint};
+use crate::protocol::{
+    ClientMsg, ColdZoneRow, FreeThingRow, HotCellRow, RowData, RowOp, ServerMsg,
+};
 
 /// How long to wait for `claim_or_login` to commit before failing the login.
 const REDUCER_CALL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -38,26 +43,45 @@ const REDUCER_CALL_TIMEOUT: Duration = Duration::from_secs(5);
 const PLAYER_READ_POLLS: u32 = 20;
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+// Transfer `direction` / `state` discriminants, mirrored from the shard modules'
+// `transfer.rs` (the gate compares the raw u8s on relayed rows; the modules own
+// the canonical constants). A pending outbound zone transfer triggers the object
+// `receive`; the object's received receipt triggers the zone `ack_release`.
+const TRANSFER_DIR_OUT: u8 = 0;
+const TRANSFER_DIR_IN: u8 = 1;
+const TRANSFER_ST_PENDING: u8 = 0;
+const TRANSFER_ST_RECEIVED: u8 = 1;
+
 /// `GET /ws` — upgrade to a WebSocket and run a [`client_session`].
 pub async fn handler(ws: WebSocketUpgrade, State(pool): State<Arc<Pool>>) -> Response {
     ws.on_upgrade(move |socket| client_session(socket, pool))
 }
 
-/// A live shard upstream plus whether its row callbacks are installed. One per
-/// distinct endpoint this client touches.
+/// A live zone-shard upstream plus whether its row callbacks are installed. One
+/// per distinct endpoint this client touches.
 struct ShardConn {
-    conn: Arc<bindings::region_shard::DbConnection>,
-    /// Row callbacks (cold + 3 hot tables) are wired once per connection — they
+    conn: Arc<bindings::zone_shard::DbConnection>,
+    /// Row callbacks (cold + 2 hot tables) are wired once per connection — they
     /// relay every subscribed zone's rows, demuxed client-side by `zone_id`.
     wired: bool,
 }
 
-/// A live zone subscription: the one handle covering its four table queries, and
-/// the endpoint it lives on (so teardown knows which shard it used).
+/// A live object-shard upstream (loose things). Mirror of [`ShardConn`] for the
+/// second shard class; its `free_things` relay is likewise wired once.
+struct ObjectConn {
+    conn: Arc<bindings::object_shard::DbConnection>,
+    wired: bool,
+}
+
+/// A live zone subscription. Terrain + affixed things come from the `zone_shard`
+/// (`handle`); loose things come from the `object_shard` (`object_handle`, absent
+/// if that shard was unreachable — loose things are best-effort, terrain is not).
+/// `endpoint` is the zone shard this used (teardown recorded for symmetry).
 struct ZoneSub {
     #[allow(dead_code)]
     endpoint: ShardEndpoint,
-    handle: bindings::region_shard::SubscriptionHandle,
+    handle: bindings::zone_shard::SubscriptionHandle,
+    object_handle: Option<bindings::object_shard::SubscriptionHandle>,
 }
 
 /// Server wall clock in microseconds since the unix epoch — stamped onto login
@@ -90,7 +114,11 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
 
     let mut session: Option<u32> = None;
     let mut shards: HashMap<ShardEndpoint, ShardConn> = HashMap::new();
+    let mut object_shards: HashMap<ShardEndpoint, ObjectConn> = HashMap::new();
     let mut subs: HashMap<u32, ZoneSub> = HashMap::new();
+    // Whether the release saga's cross-shard `transfers` bridge is installed
+    // (once per session, on the first `Release`; single zone/object pair in dev).
+    let mut transfer_bridge_wired = false;
 
     while let Some(frame) = stream.next().await {
         let msg = match frame {
@@ -125,14 +153,38 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
                     .await;
             }
             ClientMsg::SubZone { sid, zone_id } => {
-                handle_sub_zone(&pool, &out_tx, &mut shards, &mut subs, sid, zone_id).await;
+                handle_sub_zone(
+                    &pool,
+                    &out_tx,
+                    &mut shards,
+                    &mut object_shards,
+                    &mut subs,
+                    sid,
+                    zone_id,
+                )
+                .await;
             }
             ClientMsg::Unsub { sid } => {
                 if let Some(zs) = subs.remove(&sid) {
                     let _ = zs.handle.unsubscribe();
+                    if let Some(h) = zs.object_handle {
+                        let _ = h.unsubscribe();
+                    }
                 } else {
                     tracing::debug!(sid, "unsub for unknown sid");
                 }
+            }
+            ClientMsg::Release { zone_id, location } => {
+                handle_release(
+                    &pool,
+                    &out_tx,
+                    &shards,
+                    &object_shards,
+                    &mut transfer_bridge_wired,
+                    zone_id,
+                    location,
+                )
+                .await;
             }
         }
     }
@@ -142,9 +194,15 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
     // callbacks we're tearing down).
     for (_sid, zs) in subs.drain() {
         let _ = zs.handle.unsubscribe();
+        if let Some(h) = zs.object_handle {
+            let _ = h.unsubscribe();
+        }
     }
     for (_endpoint, sc) in shards.drain() {
         let _ = sc.conn.disconnect();
+    }
+    for (_endpoint, oc) in object_shards.drain() {
+        let _ = oc.conn.disconnect();
     }
     if let Some(conn) = &players {
         let _ = conn.disconnect();
@@ -314,6 +372,7 @@ async fn handle_sub_zone(
     pool: &Arc<Pool>,
     out_tx: &mpsc::UnboundedSender<String>,
     shards: &mut HashMap<ShardEndpoint, ShardConn>,
+    object_shards: &mut HashMap<ShardEndpoint, ObjectConn>,
     subs: &mut HashMap<u32, ZoneSub>,
     sid: u32,
     zone_id: u32,
@@ -364,13 +423,17 @@ async fn handle_sub_zone(
     // the cold cache is populated we can tell whether a row exists, and worldgen
     // generates the terrain for a fresh one.
     let seed_conn = shard.conn.clone();
-    let seed_wg = pool.worldgen.clone();
+    // Capture the pool (not a worldgen snapshot) so seeding reads the LIVE
+    // worldgen when the subscription applies — a content hot-reload between
+    // subscribe and apply then generates this zone from the new content.
+    let seed_pool = pool.clone();
     let handle = shard
         .conn
         .subscription_builder()
         .on_applied(move |_ctx| {
             send(&applied_tx, ServerMsg::Applied { sid });
-            seed_zone_if_empty(&seed_conn, seed_wg.as_deref(), zone_id);
+            let wg = seed_pool.current_worldgen();
+            seed_zone_if_empty(&seed_conn, wg.as_deref(), zone_id);
         })
         .on_error(move |_ctx, err| send(&error_tx, err_frame(&format!("sub {sid}: {err}"))))
         .subscribe([
@@ -379,22 +442,171 @@ async fn handle_sub_zone(
             q("hot_things"),
         ]);
 
-    subs.insert(sid, ZoneSub { endpoint, handle });
+    // Also open the zone's loose-thing feed from the object shard. Best-effort:
+    // if the object shard is unreachable the zone still renders its terrain, just
+    // without free things (`object_handle` = None).
+    let object_handle = open_object_sub(pool, out_tx, object_shards, sid, zone_id).await;
+
+    subs.insert(sid, ZoneSub { endpoint, handle, object_handle });
+}
+
+/// Get-or-connect the object shard holding `zone_id`'s region, wire its
+/// `free_things` relay once, and open the zone's loose-thing subscription.
+/// Returns `None` (having logged) when the object shard is unreachable — loose
+/// things are best-effort, so the caller keeps the zone subscription regardless.
+async fn open_object_sub(
+    pool: &Arc<Pool>,
+    out_tx: &mpsc::UnboundedSender<String>,
+    object_shards: &mut HashMap<ShardEndpoint, ObjectConn>,
+    sid: u32,
+    zone_id: u32,
+) -> Option<bindings::object_shard::SubscriptionHandle> {
+    let endpoint = resolve_object_or_default(zone_id, &pool.cfg);
+
+    if !object_shards.contains_key(&endpoint) {
+        let (conn, ready) = match connect_object_shard(&endpoint.url, &endpoint.db_name) {
+            Some(c) => c,
+            None => {
+                tracing::warn!(db = %endpoint.db_name, "object shard unavailable; zone served without loose things");
+                return None;
+            }
+        };
+        if !await_ready(ready).await {
+            tracing::warn!(db = %endpoint.db_name, "object shard connect timed out; zone served without loose things");
+            return None;
+        }
+        object_shards.insert(endpoint.clone(), ObjectConn { conn, wired: false });
+    }
+    let oc = object_shards.get_mut(&endpoint).expect("just inserted");
+
+    // Wire the `free_things` relay once per connection — it carries every zone
+    // subscribed on this object shard; the client demuxes by `zone_id`.
+    if !oc.wired {
+        wire_object_relay(&oc.conn, out_tx.clone());
+        oc.wired = true;
+    }
+
+    let error_tx = out_tx.clone();
+    let handle = oc
+        .conn
+        .subscription_builder()
+        .on_error(move |_ctx, err| send(&error_tx, err_frame(&format!("object sub {sid}: {err}"))))
+        .subscribe([format!("SELECT * FROM free_things WHERE zone_id = {zone_id}")]);
+    Some(handle)
+}
+
+/// Drive a Prison-Architect release for the thing affixed at `(zone_id,
+/// location)`. Requires the zone to already be subscribed, so both the zone-shard
+/// and object-shard upstreams are live. Installs the transfer bridge once, then
+/// kicks the saga with `begin_release`; the bridge's callbacks carry it the rest
+/// of the way (`receive` → `ack_release`).
+async fn handle_release(
+    pool: &Arc<Pool>,
+    out_tx: &mpsc::UnboundedSender<String>,
+    shards: &HashMap<ShardEndpoint, ShardConn>,
+    object_shards: &HashMap<ShardEndpoint, ObjectConn>,
+    bridge_wired: &mut bool,
+    zone_id: u32,
+    location: u8,
+) {
+    let zone_endpoint = match resolve_zone_or_default(&pool.index, &pool.cfg, zone_id) {
+        Ok(e) => e,
+        Err(err) => {
+            send(out_tx, err_frame(&format!("release zone {zone_id}: {err}")));
+            return;
+        }
+    };
+    let Some(shard) = shards.get(&zone_endpoint) else {
+        send(out_tx, err_frame(&format!("release: zone {zone_id:#010x} not subscribed")));
+        return;
+    };
+    let object_endpoint = resolve_object_or_default(zone_id, &pool.cfg);
+    let Some(object) = object_shards.get(&object_endpoint) else {
+        send(out_tx, err_frame("release: object shard not connected (subscribe the zone first)"));
+        return;
+    };
+
+    if !*bridge_wired {
+        wire_transfer_bridge(&shard.conn, &object.conn);
+        *bridge_wired = true;
+    }
+
+    if let Err(err) = shard.conn.reducers.begin_release(now_ms(), zone_id, location) {
+        send(out_tx, err_frame(&format!("release: begin_release request failed: {err}")));
+    }
+}
+
+/// Install the release saga's cross-shard bridge on a (zone shard, object shard)
+/// pair: subscribe each side's `transfers` table and wire the two hops that carry
+/// a release across the DB boundary —
+///   1. a pending outbound zone transfer → `object_shard::receive`, and
+///   2. the object shard's received receipt → `zone_shard::ack_release`.
+///
+/// Both target reducers are idempotent on `transfer_id`, so a replayed callback
+/// (e.g. rows redelivered on subscribe) is a no-op. The `transfers` subscription
+/// handles are leaked for the connections' lifetime, like the players sub.
+fn wire_transfer_bridge(
+    zone_conn: &Arc<bindings::zone_shard::DbConnection>,
+    object_conn: &Arc<bindings::object_shard::DbConnection>,
+) {
+    use bindings::object_shard::transfers_table::TransfersTableAccess as _;
+    use bindings::zone_shard::transfers_table::TransfersTableAccess as _;
+
+    // Hop 1: a pending outbound zone transfer → object `receive`.
+    {
+        let obj = object_conn.clone();
+        zone_conn.db().transfers().on_insert(move |_c, row| {
+            if row.direction == TRANSFER_DIR_OUT && row.state == TRANSFER_ST_PENDING {
+                if let Err(err) = obj.reducers.receive(
+                    now_ms(),
+                    row.transfer_id,
+                    row.zone_id,
+                    row.location,
+                    row.rotation,
+                    row.id,
+                ) {
+                    tracing::warn!(transfer_id = row.transfer_id, %err, "transfer: receive relay failed");
+                }
+            }
+        });
+        let h = zone_conn
+            .subscription_builder()
+            .on_error(|_c, err| tracing::warn!(%err, "zone transfers subscription error"))
+            .subscribe(["SELECT * FROM transfers"]);
+        std::mem::forget(h);
+    }
+
+    // Hop 2: the object shard's received receipt → zone `ack_release`.
+    {
+        let zone = zone_conn.clone();
+        object_conn.db().transfers().on_insert(move |_c, row| {
+            if row.direction == TRANSFER_DIR_IN && row.state == TRANSFER_ST_RECEIVED {
+                if let Err(err) = zone.reducers.ack_release(now_ms(), row.transfer_id) {
+                    tracing::warn!(transfer_id = row.transfer_id, %err, "transfer: ack_release relay failed");
+                }
+            }
+        });
+        let h = object_conn
+            .subscription_builder()
+            .on_error(|_c, err| tracing::warn!(%err, "object transfers subscription error"))
+            .subscribe(["SELECT * FROM transfers"]);
+        std::mem::forget(h);
+    }
 }
 
 /// Seed a fresh zone's terrain if the shard has no cold row for it yet. Called
 /// once the zone subscription applies (so the cold cache reflects what's stored):
 /// an existing row means the zone is already settled — leave it alone, so we
 /// never clobber edits. A missing row means a never-generated zone, so worldgen
-/// builds its grass/dirt terrain and `seed_cold_zone` stores it; the resulting
+/// classifies its biomes into tiles + things and `seed_cold_zone` stores it; the resulting
 /// insert relays back to every subscriber. No-op when worldgen is disabled
 /// (content failed to load).
 fn seed_zone_if_empty(
-    conn: &Arc<bindings::region_shard::DbConnection>,
+    conn: &Arc<bindings::zone_shard::DbConnection>,
     worldgen: Option<&crate::worldgen::Worldgen>,
     zone_id: u32,
 ) {
-    use bindings::region_shard::cold_zones_table::ColdZonesTableAccess;
+    use bindings::zone_shard::cold_zones_table::ColdZonesTableAccess;
 
     let Some(wg) = worldgen else { return };
     // The cache holds only this connection's subscribed rows (possibly several
@@ -402,8 +614,8 @@ fn seed_zone_if_empty(
     if conn.db().cold_zones().iter().any(|z| z.zone_id == zone_id) {
         return;
     }
-    let tiles = wg.zone_tiles(zone_id);
-    match conn.reducers.seed_cold_zone(now_ms(), zone_id, tiles, Vec::new()) {
+    let (tiles, things) = wg.zone_terrain(zone_id);
+    match conn.reducers.seed_cold_zone(now_ms(), zone_id, tiles, things) {
         Ok(()) => tracing::info!(zone_id, "seeded fresh zone"),
         Err(err) => tracing::warn!(zone_id, %err, "seed_cold_zone request failed"),
     }
@@ -420,10 +632,10 @@ fn now_ms() -> u64 {
 /// connection. Every fired row is converted to a [`RowData`] and pushed to the
 /// outbound channel as a [`ServerMsg::Row`] (with the `sid: 0` demux-by-zone
 /// sentinel).
-fn wire_shard_relay(conn: &Arc<bindings::region_shard::DbConnection>, out: mpsc::UnboundedSender<String>) {
-    use bindings::region_shard::cold_zones_table::ColdZonesTableAccess;
-    use bindings::region_shard::hot_things_table::HotThingsTableAccess;
-    use bindings::region_shard::hot_tiles_table::HotTilesTableAccess;
+fn wire_shard_relay(conn: &Arc<bindings::zone_shard::DbConnection>, out: mpsc::UnboundedSender<String>) {
+    use bindings::zone_shard::cold_zones_table::ColdZonesTableAccess;
+    use bindings::zone_shard::hot_things_table::HotThingsTableAccess;
+    use bindings::zone_shard::hot_tiles_table::HotTilesTableAccess;
 
     let db = conn.db();
 
@@ -453,8 +665,37 @@ fn wire_shard_relay(conn: &Arc<bindings::region_shard::DbConnection>, out: mpsc:
     }
 }
 
+/// Install insert/update/delete callbacks for the object shard's `free_things`
+/// table. Each fired row becomes a [`RowData::FreeThing`] pushed to the outbound
+/// channel (the `sid: 0` demux-by-zone sentinel, like the zone-shard relay).
+fn wire_object_relay(
+    conn: &Arc<bindings::object_shard::DbConnection>,
+    out: mpsc::UnboundedSender<String>,
+) {
+    use bindings::object_shard::free_things_table::FreeThingsTableAccess;
+
+    let t = conn.db().free_things();
+    let (oi, ou, od) = (out.clone(), out.clone(), out);
+    t.on_insert(move |_c, r| relay(&oi, RowOp::Insert, RowData::FreeThing(free_thing_row(r))));
+    t.on_update(move |_c, _o, r| relay(&ou, RowOp::Update, RowData::FreeThing(free_thing_row(r))));
+    t.on_delete(move |_c, r| relay(&od, RowOp::Delete, RowData::FreeThing(free_thing_row(r))));
+}
+
+/// Copy a generated `FreeThing` row into the serde wire mirror.
+fn free_thing_row(r: &bindings::object_shard::free_thing_type::FreeThing) -> FreeThingRow {
+    FreeThingRow {
+        valid_at: r.valid_at,
+        object_id: r.object_id,
+        zone_id: r.zone_id,
+        location: r.location,
+        rotation: r.rotation,
+        id: r.id,
+        offset: r.offset,
+    }
+}
+
 /// Copy a generated `ColdZone` row into the serde wire mirror.
-fn cold_row(r: &bindings::region_shard::cold_zone_type::ColdZone) -> ColdZoneRow {
+fn cold_row(r: &bindings::zone_shard::cold_zone_type::ColdZone) -> ColdZoneRow {
     ColdZoneRow {
         valid_at: r.valid_at,
         zone_id: r.zone_id,
@@ -484,8 +725,8 @@ macro_rules! hot_row_impl {
 trait HotRowSource {
     fn to_wire(&self) -> HotCellRow;
 }
-hot_row_impl!(bindings::region_shard::hot_tile_type::HotTile);
-hot_row_impl!(bindings::region_shard::hot_thing_type::HotThing);
+hot_row_impl!(bindings::zone_shard::hot_tile_type::HotTile);
+hot_row_impl!(bindings::zone_shard::hot_thing_type::HotThing);
 
 fn hot_row<T: HotRowSource>(r: &T) -> HotCellRow {
     r.to_wire()

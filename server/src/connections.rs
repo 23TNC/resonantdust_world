@@ -17,7 +17,7 @@
 //! (`run_threaded`); row/applied callbacks fire there and hand frames to the
 //! per-client async writer over a channel.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use spacetimedb_sdk::{DbContext, Table as _};
@@ -99,9 +99,11 @@ macro_rules! connector {
 
 connector!(connect_index, index);
 connector!(connect_players, players);
-// The generic data-shard connector currently targets the `region_shard` module;
-// an `object_shard` connector will join it when mobile objects land.
-connector!(connect_shard, region_shard);
+// The data-shard connectors: `connect_shard` → the `zone_shard` module (terrain +
+// affixed things), `connect_object_shard` → the `object_shard` module (loose
+// things). Both are per-endpoint, cached for the client's lifetime.
+connector!(connect_shard, zone_shard);
+connector!(connect_object_shard, object_shard);
 
 /// Await an upstream's readiness oneshot with the connect timeout. `true` once
 /// the connection's `on_connect` fired; `false` on timeout (or a dropped sender,
@@ -119,10 +121,27 @@ pub struct Pool {
     /// The shared routing-directory connection, subscribed to `region_shards` +
     /// `shards`. Read by [`crate::index`] resolution.
     pub index: Arc<bindings::index::DbConnection>,
-    /// The loaded content corpus + tile ids worldgen seeds fresh zones from.
-    /// `None` if the content tree failed to load — seeding is then skipped (the
-    /// server still routes existing zones); a startup warning says why.
-    pub worldgen: Option<Arc<Worldgen>>,
+    /// Hot-reloadable content-derived state (currently the worldgen runtime),
+    /// behind an `RwLock` so [`spawn_content_poll`](Pool::spawn_content_poll) can
+    /// swap in a rebuilt runtime when the corpus changes. Consumers read the live
+    /// value with [`current_worldgen`](Pool::current_worldgen) **at the point of
+    /// use** (per zone seed) — never cache the `Arc` across a reload, or a new zone
+    /// would generate from stale content.
+    content: RwLock<ContentState>,
+}
+
+/// The server's content-derived state — the worldgen runtime plus the corpus
+/// fingerprint the reload compares against. A single lock covers the pair so a
+/// swap is atomic. As more content-derived state appears (recipes, pawn
+/// behaviours), it joins here and rebuilds on the same reload.
+struct ContentState {
+    /// [`resonantdust_dsl::content::content_version`] of the loaded corpus (`0`
+    /// when content failed to load).
+    version: u64,
+    /// The generation runtime worldgen seeds fresh zones from. `None` if the
+    /// content tree failed to load — seeding is then skipped (the server still
+    /// routes existing zones); a startup warning says why.
+    worldgen: Option<Arc<Worldgen>>,
 }
 
 impl Pool {
@@ -177,19 +196,82 @@ impl Pool {
         // Load the DSL content tree worldgen seeds zones from. Non-fatal: a
         // server with no content can still route + relay zones that already
         // exist; it just can't generate new terrain, so warn loudly.
-        let worldgen = match Worldgen::load(std::path::Path::new(&cfg.content_dir)) {
-            Ok(w) => {
-                let tiles = w.bundle().tile_names().len();
-                tracing::info!(dir = %cfg.content_dir, tiles, "worldgen content loaded");
-                Some(Arc::new(w))
-            }
-            Err(err) => {
-                tracing::warn!(dir = %cfg.content_dir, %err, "worldgen disabled (content load failed)");
-                None
-            }
-        };
+        let content = load_content_state(&cfg.content_dir);
 
-        Ok(Arc::new(Pool { cfg, index, worldgen }))
+        Ok(Arc::new(Pool {
+            cfg,
+            index,
+            content: RwLock::new(content),
+        }))
+    }
+
+    /// The live worldgen runtime (a cloned `Arc`), or `None` if content isn't
+    /// loaded. Read this **per zone seed** so a content hot-reload applies to
+    /// zones generated after the swap.
+    pub fn current_worldgen(&self) -> Option<Arc<Worldgen>> {
+        self.content.read().unwrap().worldgen.clone()
+    }
+
+    /// The loaded corpus fingerprint (`0` if content failed to load).
+    pub fn content_version(&self) -> u64 {
+        self.content.read().unwrap().version
+    }
+
+    /// Re-read the content tree and, on a fingerprint change, rebuild + swap in
+    /// the worldgen. **Refuses** a corpus whose tile/thing ids aren't
+    /// append-compatible with the live one — a reorder or removal would renumber
+    /// ids, so zones already stored with the old ids would be misread; that needs
+    /// a restart (and matching client + stored-zone migration), not a live swap.
+    /// Parsing happens before the lock, so an unchanged or bad corpus never blocks
+    /// readers. Returns whether it swapped.
+    pub fn reload_content(&self) -> Result<bool, String> {
+        let loaded = Worldgen::load_versioned(std::path::Path::new(&self.cfg.content_dir))?;
+        let mut state = self.content.write().unwrap();
+        if loaded.version == state.version {
+            return Ok(false);
+        }
+        if let Some(prev) = &state.worldgen {
+            if !loaded.worldgen.is_append_compatible_with(prev) {
+                return Err(
+                    "tile/thing ids changed (reorder or removal) — refusing hot-reload; restart to apply"
+                        .to_string(),
+                );
+            }
+        }
+        state.version = loaded.version;
+        state.worldgen = Some(Arc::new(loaded.worldgen));
+        Ok(true)
+    }
+
+    /// Spawn the background content poll: every `secs` seconds re-read the content
+    /// tree and hot-reload the worldgen on a change (via [`reload_content`], so an
+    /// id-incompatible edit is refused). `secs == 0` disables it (load-once). The
+    /// re-read runs on a blocking thread so the runtime isn't stalled. New zones
+    /// then generate from the swapped-in content; already-seeded zones are stored
+    /// and unaffected.
+    pub fn spawn_content_poll(self: &Arc<Pool>, secs: u64) {
+        if secs == 0 {
+            tracing::info!("worldgen content hot-reload disabled (RD_CONTENT_POLL_SECS=0)");
+            return;
+        }
+        let pool = self.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(secs));
+            tick.tick().await; // the first tick fires immediately — skip it (just loaded)
+            loop {
+                tick.tick().await;
+                let p = pool.clone();
+                match tokio::task::spawn_blocking(move || p.reload_content()).await {
+                    Ok(Ok(true)) => tracing::info!(
+                        version = format!("{:016x}", pool.content_version()),
+                        "worldgen content hot-reloaded"
+                    ),
+                    Ok(Ok(false)) => {}
+                    Ok(Err(reason)) => tracing::warn!(%reason, "worldgen content reload skipped"),
+                    Err(err) => tracing::warn!(%err, "worldgen reload task failed"),
+                }
+            }
+        });
     }
 
     /// Register this server in the index `servers` table and keep it fresh. The
@@ -236,6 +318,29 @@ impl Pool {
                 }
             }
         });
+    }
+}
+
+/// Load the initial content-derived state (worldgen + fingerprint) from
+/// `content_dir`. Non-fatal: a failed load yields an empty state (no worldgen,
+/// version `0`), logged, so the server still routes existing zones — the poll can
+/// later pick content up once it becomes valid.
+fn load_content_state(content_dir: &str) -> ContentState {
+    match Worldgen::load_versioned(std::path::Path::new(content_dir)) {
+        Ok(loaded) => {
+            let tiles = loaded.worldgen.bundle().tile_names().len();
+            tracing::info!(
+                dir = %content_dir,
+                tiles,
+                version = format!("{:016x}", loaded.version),
+                "worldgen content loaded"
+            );
+            ContentState { version: loaded.version, worldgen: Some(Arc::new(loaded.worldgen)) }
+        }
+        Err(err) => {
+            tracing::warn!(dir = %content_dir, %err, "worldgen disabled (content load failed)");
+            ContentState { version: 0, worldgen: None }
+        }
     }
 }
 

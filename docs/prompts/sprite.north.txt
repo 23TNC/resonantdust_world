@@ -1,0 +1,29 @@
+Convert this existing 4×4 sprite sheet from south-facing sprites into north-facing sprites.
+
+Requirements:
+
+* Preserve the exact 4×4 layout, sprite count, spacing, scale, cell positions, and canvas dimensions.
+* Preserve each sprite’s identity, pose variation, proportions, anatomy, markings, colors, materials, equipment, and overall design.
+* The sprites are **[SUBJECT]**.
+* Every sprite must face **due north**, directly toward the top edge of the image.
+* The centerline from the back of each sprite through its neck, head, and muzzle must be vertical and point directly upward.
+* Do not angle the sprites toward the left or right side of the image.
+* Do not generate northeast-facing, northwest-facing, diagonal-facing, east-facing, west-facing, south-facing, or rear-facing sprites.
+* Redraw each sprite from a matching elevated oblique northern view rather than mechanically rotating, mirroring, or flipping the existing image.
+* The left and right sides of each sprite may remain visible to preserve the elevated RimWorld-style perspective, but the directional heading must remain exactly north.
+* Preserve the RimWorld-inspired visual style: compact shapes, minimal detail, limited shading, soft irregular silhouettes, and a slightly hand-painted appearance.
+* Keep the same body mass, silhouette language, and distinguishing details visible wherever they would naturally appear from the northern viewing angle.
+* Do not introduce new variants, markings, anatomy, equipment, colors, materials, or accessories.
+* Do not remove existing distinguishing details unless they would naturally be hidden from the northern viewing angle.
+* Keep every sprite centered within its original grid cell with enough clearance to prevent overlap.
+* Preserve the existing primary, secondary, and detail color regions.
+* Keep the purpose and placement of those three regions consistent with the source sprites.
+* Do not merge, recolor, reinterpret, or replace the primary, secondary, or detail regions.
+* Preserve the original shading style within each region.
+* Keep region boundaries clear and easy to isolate later.
+* Do not convert the image into an RGB mask or channel-packed texture.
+* Preserve the solid `0xFF00FF` background exactly.
+* Keep the background perfectly flat and uniform with no gradients, texture, glow, shadows, or color variation.
+* Do not use `0xFF00FF` inside the sprites.
+* Do not add text, labels, borders, grid lines, scenery, or environmental elements.
+* The result must look like the same 16 sprites redrawn facing due north, not a newly generated unrelated sprite sheet.

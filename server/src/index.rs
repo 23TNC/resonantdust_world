@@ -93,3 +93,18 @@ pub fn resolve_zone_or_default(
         }),
     }
 }
+
+/// The object-shard endpoint holding a zone's loose things.
+///
+/// Object placement is *presence-driven*, not index-routed: a region's loose
+/// things can span several object shards, chosen at release time, and a gate
+/// discovers where they live by reading each object shard's `presence` table
+/// (see docs/object-shard.md). That multi-shard routing is a follow-up; for now
+/// every zone resolves to the env's single default object shard on the
+/// control-plane server — the sibling of [`resolve_zone_or_default`]'s fallback.
+pub fn resolve_object_or_default(_zone_id: u32, cfg: &ServerConfig) -> ShardEndpoint {
+    ShardEndpoint {
+        url: cfg.uri.clone(),
+        db_name: cfg.default_object_db(),
+    }
+}

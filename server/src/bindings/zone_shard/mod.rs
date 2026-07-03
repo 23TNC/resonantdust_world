@@ -17,13 +17,17 @@ pub mod gc_schedule_type;
 pub mod hot_thing_type;
 pub mod hot_tile_type;
 pub mod sequence_counter_type;
+pub mod transfer_type;
+pub mod ack_release_reducer;
 pub mod apply_hot_reducer;
+pub mod begin_release_reducer;
 pub mod seed_cold_zone_reducer;
 pub mod set_hot_reducer;
 pub mod can_exist_table;
 pub mod cold_zones_table;
 pub mod hot_things_table;
 pub mod hot_tiles_table;
+pub mod transfers_table;
 
 pub use can_exist_type::CanExist;
 pub use cold_zone_type::ColdZone;
@@ -31,11 +35,15 @@ pub use gc_schedule_type::GcSchedule;
 pub use hot_thing_type::HotThing;
 pub use hot_tile_type::HotTile;
 pub use sequence_counter_type::SequenceCounter;
+pub use transfer_type::Transfer;
 pub use can_exist_table::*;
 pub use cold_zones_table::*;
 pub use hot_things_table::*;
 pub use hot_tiles_table::*;
+pub use transfers_table::*;
+pub use ack_release_reducer::ack_release;
 pub use apply_hot_reducer::apply_hot;
+pub use begin_release_reducer::begin_release;
 pub use seed_cold_zone_reducer::seed_cold_zone;
 pub use set_hot_reducer::set_hot;
 
@@ -47,13 +55,22 @@ pub use set_hot_reducer::set_hot;
 /// to indicate which reducer caused the event.
 
 pub enum Reducer {
-        ApplyHot {
+        AckRelease {
+        now_ms: u64,
+        transfer_id: u64,
+}    ,
+    ApplyHot {
         now_ms: u64,
         layer: u8,
         zone_id: u32,
         locations: Vec::<u8>,
         rotations: Vec::<u8>,
         ids: Vec::<u16>,
+}    ,
+    BeginRelease {
+        now_ms: u64,
+        zone_id: u32,
+        location: u8,
 }    ,
     SeedColdZone {
         now_ms: u64,
@@ -79,7 +96,9 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
-                        Reducer::ApplyHot { .. } => "apply_hot",
+                        Reducer::AckRelease { .. } => "ack_release",
+            Reducer::ApplyHot { .. } => "apply_hot",
+            Reducer::BeginRelease { .. } => "begin_release",
             Reducer::SeedColdZone { .. } => "seed_cold_zone",
             Reducer::SetHot { .. } => "set_hot",
             _ => unreachable!(),
@@ -88,7 +107,14 @@ impl __sdk::Reducer for Reducer {
     #[allow(clippy::clone_on_copy)]
 fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
         match self {
-                        Reducer::ApplyHot{
+                        Reducer::AckRelease{
+                now_ms,
+                transfer_id,
+}             => __sats::bsatn::to_vec(&ack_release_reducer::AckReleaseArgs {
+                now_ms: now_ms.clone(),
+                transfer_id: transfer_id.clone(),
+}),
+            Reducer::ApplyHot{
                 now_ms,
                 layer,
                 zone_id,
@@ -102,6 +128,15 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 locations: locations.clone(),
                 rotations: rotations.clone(),
                 ids: ids.clone(),
+}),
+            Reducer::BeginRelease{
+                now_ms,
+                zone_id,
+                location,
+}             => __sats::bsatn::to_vec(&begin_release_reducer::BeginReleaseArgs {
+                now_ms: now_ms.clone(),
+                zone_id: zone_id.clone(),
+                location: location.clone(),
 }),
             Reducer::SeedColdZone{
                 now_ms,
@@ -142,6 +177,7 @@ pub struct DbUpdate {
     cold_zones: __sdk::TableUpdate<ColdZone>,
     hot_things: __sdk::TableUpdate<HotThing>,
     hot_tiles: __sdk::TableUpdate<HotTile>,
+    transfers: __sdk::TableUpdate<Transfer>,
 }
 
 
@@ -156,6 +192,7 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
     "cold_zones" => db_update.cold_zones.append(cold_zones_table::parse_table_update(table_update)?),
     "hot_things" => db_update.hot_things.append(hot_things_table::parse_table_update(table_update)?),
     "hot_tiles" => db_update.hot_tiles.append(hot_tiles_table::parse_table_update(table_update)?),
+    "transfers" => db_update.transfers.append(transfers_table::parse_table_update(table_update)?),
 
                 unknown => {
                     return Err(__sdk::InternalError::unknown_name(
@@ -182,6 +219,7 @@ impl __sdk::DbUpdate for DbUpdate {
         diff.cold_zones = cache.apply_diff_to_table::<ColdZone>("cold_zones", &self.cold_zones).with_updates_by_pk(|row| &row.valid_at);
         diff.hot_things = cache.apply_diff_to_table::<HotThing>("hot_things", &self.hot_things).with_updates_by_pk(|row| &row.valid_at);
         diff.hot_tiles = cache.apply_diff_to_table::<HotTile>("hot_tiles", &self.hot_tiles).with_updates_by_pk(|row| &row.valid_at);
+        diff.transfers = cache.apply_diff_to_table::<Transfer>("transfers", &self.transfers).with_updates_by_pk(|row| &row.transfer_id);
 
                     diff
                 }
@@ -193,6 +231,7 @@ for table_rows in raw.tables {
                 "cold_zones" => db_update.cold_zones.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "hot_things" => db_update.hot_things.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "hot_tiles" => db_update.hot_tiles.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "transfers" => db_update.transfers.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
 }
@@ -204,6 +243,7 @@ for table_rows in raw.tables {
                 "cold_zones" => db_update.cold_zones.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "hot_things" => db_update.hot_things.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "hot_tiles" => db_update.hot_tiles.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "transfers" => db_update.transfers.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
 }
@@ -217,6 +257,7 @@ pub struct AppliedDiff<'r> {
     cold_zones: __sdk::TableAppliedDiff<'r, ColdZone>,
     hot_things: __sdk::TableAppliedDiff<'r, HotThing>,
     hot_tiles: __sdk::TableAppliedDiff<'r, HotTile>,
+    transfers: __sdk::TableAppliedDiff<'r, Transfer>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
 
@@ -231,6 +272,7 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
         callbacks.invoke_table_row_callbacks::<ColdZone>("cold_zones", &self.cold_zones, event);
         callbacks.invoke_table_row_callbacks::<HotThing>("hot_things", &self.hot_things, event);
         callbacks.invoke_table_row_callbacks::<HotTile>("hot_tiles", &self.hot_tiles, event);
+        callbacks.invoke_table_row_callbacks::<Transfer>("transfers", &self.transfers, event);
 }
 }
 
@@ -886,11 +928,13 @@ fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
         cold_zones_table::register_table(client_cache);
         hot_things_table::register_table(client_cache);
         hot_tiles_table::register_table(client_cache);
+        transfers_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
                 "can_exist",
         "cold_zones",
         "hot_things",
         "hot_tiles",
+        "transfers",
 ];
 }

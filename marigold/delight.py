@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Marigold-IID de-lighting for master sprites.
+
+Replaces the hand-rolled two-pass divide (bin/art `delight-divide`) with
+Marigold Intrinsic Image Decomposition — the "lighting" checkpoint, which splits
+each diffuse sprite as
+
+    I = A * S + R
+
+into Albedo A (base colour, de-lit), diffuse Shading S, and non-diffuse Residual
+R (the additive highlights — painted rim lights / speculars — that a division
+CANNOT remove). We ship A as `<base>.albedo.png`, a drop-in for the old albedo,
+carrying the source sprite's alpha. Unlike the divide, this needs no normal map:
+it is a learned decomposition, independent of Laigter.
+
+Batch: the model loads once, then every diffuse under the given paths is
+decomposed. Invoked by `bin/art delight` via the `bin/marigold` wrapper, but also
+runnable directly for a spike:
+
+    bin/marigold delight textures/master/linked.0/wall_smooth.0 \
+        --emit albedo,shading,residual --out-dir /tmp/spike
+
+Each `N.diffuse.png` maps to `N.<target>.png` co-located (or flat under --out-dir).
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+DIFFUSE_SUFFIX = ".diffuse.png"
+DEFAULT_MODEL = "prs-eth/marigold-iid-lighting-v1-1"
+# Targets the "lighting" checkpoint emits (visualize_intrinsics keys).
+LIGHTING_TARGETS = ("albedo", "shading", "residual")
+
+
+def find_diffuse(paths: list[Path]) -> list[Path]:
+    """Every *.diffuse.png under the given files/dirs (sorted, de-duped)."""
+    out: list[Path] = []
+    for p in paths:
+        if p.is_dir():
+            out.extend(sorted(p.rglob("*" + DIFFUSE_SUFFIX)))
+        elif p.name.endswith(DIFFUSE_SUFFIX):
+            out.append(p)
+        else:
+            print(f"marigold: skipping non-diffuse path {p}", file=sys.stderr)
+    # de-dupe, keep order
+    seen: set[Path] = set()
+    uniq: list[Path] = []
+    for p in out:
+        rp = p.resolve()
+        if rp not in seen:
+            seen.add(rp)
+            uniq.append(p)
+    return uniq
+
+
+def out_path(diffuse: Path, target: str, out_dir: Path | None) -> Path:
+    """Co-located `<base>.<target>.png`, or flat under out_dir if given."""
+    base = diffuse.name[: -len(DIFFUSE_SUFFIX)]
+    name = f"{base}.{target}.png"
+    if out_dir is not None:
+        # Flatten with the object dir so spikes over many objects don't collide.
+        return out_dir / f"{diffuse.parent.name}.{name}"
+    return diffuse.parent / name
+
+
+def load_pipeline(model: str, half: bool, device: str):
+    try:
+        import torch
+        from diffusers import MarigoldIntrinsicsPipeline
+    except ImportError as e:  # diffusers too old, or torch missing
+        print(
+            f"marigold: {e}\n"
+            "  MarigoldIntrinsicsPipeline needs diffusers>=0.33 and torch.\n"
+            "  Rebuild the venv:  bin/marigold build",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    kwargs = {}
+    dtype = None
+    if half:
+        dtype = torch.float16
+        kwargs = {"variant": "fp16", "torch_dtype": dtype}
+    try:
+        pipe = MarigoldIntrinsicsPipeline.from_pretrained(model, **kwargs)
+    except Exception as e:  # fp16 variant absent, etc. — retry plain.
+        if half:
+            print(f"marigold: fp16 variant load failed ({e}); retrying full precision", file=sys.stderr)
+            pipe = MarigoldIntrinsicsPipeline.from_pretrained(model)
+            dtype = None
+        else:
+            raise
+    pipe = pipe.to(device)
+    pipe.set_progress_bar_config(disable=True)
+    return pipe, torch, dtype
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Marigold-IID de-lighting for master sprites.")
+    ap.add_argument("paths", nargs="+", type=Path,
+                    help="diffuse PNGs or directories to scan for *.diffuse.png")
+    ap.add_argument("--emit", default="albedo",
+                    help="comma list of targets to write: albedo,shading,residual (default albedo)")
+    ap.add_argument("--out-dir", type=Path, default=None,
+                    help="write maps here (flat) instead of co-located next to the diffuse")
+    ap.add_argument("--steps", type=int, default=4, help="denoising steps (default 4)")
+    ap.add_argument("--ensemble", type=int, default=5,
+                    help="ensemble size for precision; >=3 enables ensembling (default 5)")
+    ap.add_argument("--resolution", type=int, default=768,
+                    help="processing resolution on the long side; 0 = native (default 768)")
+    ap.add_argument("--seed", type=int, default=2024, help="RNG seed, per-image, for reproducible masters")
+    ap.add_argument("--model", default=DEFAULT_MODEL, help=f"HF checkpoint (default {DEFAULT_MODEL})")
+    ap.add_argument("--device", default="cuda", help="torch device (default cuda)")
+    ap.add_argument("--no-half", action="store_true", help="full fp32 instead of the fp16 variant")
+    ap.add_argument("--skip-existing", action="store_true", help="skip a sprite if its albedo already exists")
+    args = ap.parse_args()
+
+    from PIL import Image
+
+    targets = [t.strip() for t in args.emit.split(",") if t.strip()]
+    unknown = [t for t in targets if t not in LIGHTING_TARGETS]
+    if unknown:
+        print(f"marigold: unknown emit target(s) {unknown}; valid: {LIGHTING_TARGETS}", file=sys.stderr)
+        return 2
+
+    diffuse = find_diffuse(args.paths)
+    if not diffuse:
+        print("marigold: no *.diffuse.png found under the given paths", file=sys.stderr)
+        return 1
+
+    if args.out_dir is not None:
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.skip_existing:
+        pending = [d for d in diffuse if not out_path(d, "albedo", args.out_dir).exists()]
+        skipped = len(diffuse) - len(pending)
+        if skipped:
+            print(f"marigold: skipping {skipped} sprite(s) with existing albedo")
+        diffuse = pending
+        if not diffuse:
+            print("marigold: nothing to do")
+            return 0
+
+    print(f"marigold: loading {args.model} on {args.device} "
+          f"({'fp32' if args.no_half else 'fp16'}) ...", flush=True)
+    t0 = time.time()
+    pipe, torch, _ = load_pipeline(args.model, half=not args.no_half, device=args.device)
+    print(f"marigold: model ready in {time.time() - t0:.1f}s; "
+          f"decomposing {len(diffuse)} sprite(s) [emit: {','.join(targets)}]", flush=True)
+
+    proc_res = None if args.resolution == 0 else args.resolution
+    ok = 0
+    for i, d in enumerate(diffuse, 1):
+        # Normalise to RGBA first so alpha is recovered correctly for palette-mode
+        # ('P' + transparency) inputs too, then split. RGB is taken from the RGBA
+        # (keeps the edge-bled colour; does not composite the sprite over black).
+        src = Image.open(d).convert("RGBA")
+        alpha = src.getchannel("A")
+        rgb = src.convert("RGB")
+
+        gen = torch.Generator(device=args.device).manual_seed(args.seed)
+        pred = pipe(
+            rgb,
+            num_inference_steps=args.steps,
+            ensemble_size=args.ensemble,
+            processing_resolution=proc_res,
+            generator=gen,
+        )
+        vis = pipe.image_processor.visualize_intrinsics(pred.prediction, pipe.target_properties)[0]
+
+        for t in targets:
+            img = vis[t].convert("RGBA")
+            if alpha is not None:
+                a = alpha if alpha.size == img.size else alpha.resize(img.size, Image.NEAREST)
+                img.putalpha(a)
+            op = out_path(d, t, args.out_dir)
+            op.parent.mkdir(parents=True, exist_ok=True)
+            img.save(op)
+        ok += 1
+        print(f"  [{i}/{len(diffuse)}] {d.name} -> {', '.join(t for t in targets)}", flush=True)
+
+    print(f"marigold: wrote {ok} sprite(s) x {len(targets)} target(s)", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

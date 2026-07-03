@@ -12,6 +12,7 @@
 //! thing:     u32 = x:4 | y:4 | rotation:2 | object_id:12 | reserved:10
 //!                  (a layer field will later be carved from the reserved bits)
 //! tile:      u16 = def_id:12 | reserved:4
+//! offset:    u8  = x_off:4 | y_off:4    (object-shard free things: sub-tile pos)
 //! ```
 
 // ── valid_at PK ──────────────────────────────────────────────────────────────
@@ -214,6 +215,36 @@ pub fn tile_reserved(slot: u16) -> u8 {
     ((slot >> TILE_RESERVED_SHIFT) & TILE_RESERVED_MASK) as u8
 }
 
+// ── sub-tile offset (object-shard free things) ───────────────────────────────
+//
+// A `u8` holding a free thing's position *within* its tile: `x_off:4 | y_off:4`
+// (x in the low nibble, mirroring the packed-thing x/y order). Each axis is a
+// 1/16-of-a-tile step (`0..OFFSET_STEPS`), so on a 64px tile one step is 4px.
+// Affixed things are tile-snapped and have no offset; only the object shard's
+// `free_things` rows carry one — deliberately a separate byte rather than
+// spending the packed thing's reserved bits, which stay as headroom.
+
+/// Sub-tile steps per axis (`OFFSET_STEPS × OFFSET_STEPS` positions in a tile).
+pub const OFFSET_STEPS: u8 = 16;
+
+const OFFSET_Y_SHIFT: u8 = 4;
+
+/// Pack a sub-tile `(x_off, y_off)` into the `u8` offset. Each is masked to a
+/// nibble (`0..OFFSET_STEPS`).
+pub fn pack_offset(x_off: u8, y_off: u8) -> u8 {
+    (x_off & 0x0F) | ((y_off & 0x0F) << OFFSET_Y_SHIFT)
+}
+
+/// The `x_off` nibble of a packed offset.
+pub fn offset_x(offset: u8) -> u8 {
+    offset & 0x0F
+}
+
+/// The `y_off` nibble of a packed offset.
+pub fn offset_y(offset: u8) -> u8 {
+    offset >> OFFSET_Y_SHIFT
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +301,20 @@ mod tests {
         assert_eq!(pack_thing_at(cell(13, 7), 2, 0x0ABC), p);
         // u12 cap: the max object_id round-trips, nothing above it fits.
         assert_eq!(thing_object_id(pack_thing(0, 0, 0, DEF_ID_MAX)), DEF_ID_MAX);
+    }
+
+    #[test]
+    fn offset_roundtrips() {
+        for x in 0..OFFSET_STEPS {
+            for y in 0..OFFSET_STEPS {
+                let o = pack_offset(x, y);
+                assert_eq!(offset_x(o), x);
+                assert_eq!(offset_y(o), y);
+            }
+        }
+        // both nibbles full → 0xFF; x and y occupy disjoint bits.
+        assert_eq!(pack_offset(0xF, 0xF), 0xFF);
+        assert_eq!(pack_offset(0x3, 0xC), 0xC3);
     }
 
     #[test]

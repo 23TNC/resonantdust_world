@@ -5,11 +5,12 @@
 //! the proper world server for the player (reusing the server already holding
 //! their session on reconnect, else allocating one from the live pool), and
 //! returns that server's endpoint. The client then logs into that world server,
-//! which becomes state-authoritative for the player.
+//! which becomes state-authoritative for the player *and* serves the client its
+//! assets (`/content` + `/textures` live on the world `server`, not here).
 //!
 //! So the gateway is deliberately thin: a directory lookup over HTTP. It holds no
-//! game state and no client stream — that's the world `server`'s job. Its only
-//! upstream is the `index` SpacetimeDB database (see [`directory`]).
+//! game state, no client stream, and no assets — that's the world `server`'s job.
+//! Its only upstream is the `index` SpacetimeDB database (see [`directory`]).
 //!
 //! ## HTTP API
 //! - `GET /`               — hello banner.

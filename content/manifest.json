@@ -1,0 +1,13 @@
+{
+  "data": [
+    "data/things.rd",
+    "data/tiles.rd"
+  ],
+  "visual": [
+    "visual/things.rd",
+    "visual/tiles.rd"
+  ],
+  "biome": [
+    "biome/biomes.rd"
+  ]
+}

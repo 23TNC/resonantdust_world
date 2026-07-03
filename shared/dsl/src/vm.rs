@@ -189,11 +189,31 @@ pub struct Store {
   /// pure and wasm-safe — and so a deferred/budgeted update still gets the real
   /// elapsed `dt` between passes. `0` until the runtime sets it.
   now_ms: i64,
+  /// The biome dimensions the runtime samples for this tile before running a
+  /// `@define` / `@on_create` biome hook: `[dim0, dim1, …, dimN]` in `[0, 1]`
+  /// (temperature, humidity, elevation, …). The `^biome call` op reads them as a
+  /// `Cell::Arr`, so content does `^biome call &biome set` then `*biome.0`.
+  /// Injected (not sampled in the VM) so the machine stays deterministic and
+  /// wasm-safe — worldgen samples the noise, the DSL only classifies. Empty until
+  /// the runtime sets it.
+  biome: Vec<f64>,
+  /// The per-tile RNG seed the runtime stamps before a biome hook. The `^rand`
+  /// op hashes it with a caller-supplied salt to a deterministic `[0, 1)` float,
+  /// so a biome can scatter independent features (trees on salt 1, flora on salt
+  /// 2, …) that reproduce on a re-seed. `0` until the runtime sets it.
+  seed: u64,
 }
 
 impl Default for Store {
   fn default() -> Self {
-    Store { root: Cell::Map(Vec::new()), exports: Vec::new(), dirty: false, now_ms: 0 }
+    Store {
+      root: Cell::Map(Vec::new()),
+      exports: Vec::new(),
+      dirty: false,
+      now_ms: 0,
+      biome: Vec::new(),
+      seed: 0,
+    }
   }
 }
 
@@ -220,6 +240,35 @@ impl Store {
   /// runtime sets this per pass; `dt` is the difference the content computes.
   pub fn set_now(&mut self, now_ms: i64) {
     self.now_ms = now_ms;
+  }
+  /// Inject this tile's biome dimensions (what `^biome call` returns). Worldgen
+  /// samples the noise fields and stamps them before running a biome hook.
+  pub fn set_biome(&mut self, dims: Vec<f64>) {
+    self.biome = dims;
+  }
+  /// The injected biome dimensions (empty until [`set_biome`](Self::set_biome)).
+  pub fn biome(&self) -> &[f64] {
+    &self.biome
+  }
+  /// Inject this tile's RNG seed (what `^rand` hashes). Worldgen derives it from
+  /// the tile's world coordinates so scatter is deterministic and reproducible.
+  pub fn set_seed(&mut self, seed: u64) {
+    self.seed = seed;
+  }
+  /// A deterministic `[0, 1)` float from the tile seed and a caller `salt` — the
+  /// engine side of `<salt> ^rand call`. Different salts give independent draws
+  /// for the same tile (SplitMix64 finalizer over `seed ^ mix(salt)`), so flora
+  /// and trees scatter without correlating. Pure of `self` (no interior state),
+  /// so re-running a hook reproduces the same draws.
+  pub fn rand(&self, salt: i64) -> f64 {
+    let mut h = self.seed ^ (salt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^= h >> 30;
+    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h ^= h >> 27;
+    h = h.wrapping_mul(0x94D0_49BB_1331_11EB);
+    h ^= h >> 31;
+    // Top 53 bits → a double in [0, 1), the usual uniform construction.
+    (h >> 11) as f64 / (1u64 << 53) as f64
   }
   /// Read a slot (`None` if the path doesn't resolve), following `Ref` handles.
   pub fn read(&self, path: &str) -> Option<&Cell> {
@@ -407,6 +456,20 @@ pub fn run(body: &[Stmt], store: &mut Store) -> Result<i64, String> {
               let idx = store.prims_push(kind);
               st.push(Item::Cell(Cell::Ref(format!("prims.{idx}"))));
             }
+            // `^biome call` — the injected biome dimensions as a `Cell::Arr` of
+            // floats. Content does `^biome call &biome set`, then reads a
+            // dimension with `*biome.0` / `*biome.1` / … in a later line.
+            Some(Item::Sys(name)) if name == "biome" => {
+              let dims: Vec<Cell> = store.biome.iter().map(|&f| Cell::Float(f)).collect();
+              st.push(Item::Cell(Cell::Arr(dims)));
+            }
+            // `<salt> ^rand call` — a deterministic `[0, 1)` draw for this tile,
+            // salted by the popped int. Lets a biome scatter independent features
+            // (`1 ^rand call` for trees, `2 ^rand call` for flora, …).
+            Some(Item::Sys(name)) if name == "rand" => {
+              let salt = st.pop().map(|i| i.int()).unwrap_or(0);
+              st.push(Item::Float(store.rand(salt)));
+            }
             // An unknown `^system` — no host is wired into this VM yet, so it
             // yields 0 rather than failing the body.
             Some(Item::Sys(_)) => st.push(Item::Val(0)),
@@ -482,6 +545,19 @@ pub fn run(body: &[Stmt], store: &mut Store) -> Result<i64, String> {
               }
             };
             st.push(Item::Val(r as i64));
+          }
+          // Boolean combinators over truthiness (non-zero = true), so a biome
+          // `@define` can AND/OR several dimension tests into one predicate line:
+          // `*biome.0 0.5 ge *biome.1 0.4 ge and return`.
+          "and" | "or" => {
+            let b = st.pop().map(|i| i.int()).unwrap_or(0) != 0;
+            let a = st.pop().map(|i| i.int()).unwrap_or(0) != 0;
+            let r = if w == "and" { a && b } else { a || b };
+            st.push(Item::Val(r as i64));
+          }
+          "not" => {
+            let a = st.pop().map(|i| i.int()).unwrap_or(0) != 0;
+            st.push(Item::Val((!a) as i64));
           }
           // `<cond> if <rest…>` runs the rest of the LINE only when `cond` is
           // truthy (non-zero); `!if` inverts. A false guard skips to the next
@@ -641,6 +717,79 @@ mod tests {
     run_into(&mut store, body);
     assert_eq!(store.read("progress"), Some(&Cell::Int(0)));
     assert!(!store.is_dirty(), "hit zero → goes quiet (no re-dirty)");
+  }
+
+  #[test]
+  fn biome_call_returns_the_injected_dimensions() {
+    // `^biome call &biome set` stores the injected dims as an array; `*biome.N`
+    // reads a dimension in a later line (the operand stack is per-line).
+    let src = "@on_create>\n  ^biome call &biome set\n  *biome.0 &t set\n  *biome.2 &e set\n  0 return\n";
+    let body = &parse(src).unwrap().children[0].body;
+    let mut store = Store::default();
+    store.set_biome(vec![0.25, 0.5, 0.9]);
+    run(body, &mut store).unwrap();
+    assert_eq!(store.read("t"), Some(&Cell::Float(0.25)));
+    assert_eq!(store.read("e"), Some(&Cell::Float(0.9)));
+  }
+
+  #[test]
+  fn rand_is_deterministic_and_salt_varies() {
+    // Same seed + salt → same draw (reproducible scatter); different salt → an
+    // independent draw; every draw is in [0, 1).
+    let a = Store { seed: 12345, ..Store::default() };
+    assert_eq!(a.rand(1), a.rand(1), "same seed+salt reproduces");
+    assert_ne!(a.rand(1), a.rand(2), "salt decorrelates");
+    for salt in 0..64 {
+      let r = a.rand(salt);
+      assert!((0.0..1.0).contains(&r), "draw {r} out of range");
+    }
+    // A different tile seed gives a different sequence.
+    let b = Store { seed: 999, ..Store::default() };
+    assert_ne!(a.rand(1), b.rand(1));
+  }
+
+  #[test]
+  fn rand_scatter_line_places_a_thing_below_threshold() {
+    // The forest-style scatter line: draw, compare, guard a `set`. Pick a seed
+    // whose salt-1 draw is small so the guard fires.
+    let src = "@on_create>\n  grass &tile set\n  1 ^rand call 0.999 lt if tree &thing.1 set\n  0 return\n";
+    let body = &parse(src).unwrap().children[0].body;
+    let mut store = Store::default();
+    store.set_seed(42);
+    run(body, &mut store).unwrap();
+    assert_eq!(store.read("tile"), Some(&Cell::Sym("grass".into())));
+    assert_eq!(store.read("thing.1"), Some(&Cell::Sym("tree".into())));
+  }
+
+  #[test]
+  fn boolean_combinators_and_or_not() {
+    // `and` / `or` / `not` over truthiness, one predicate line at a time.
+    let (s, _) = run_body("  1 1 and &a set\n  1 0 and &b set\n  1 0 or &c set\n  0 0 or &d set\n  0 not &e set\n  0 return\n");
+    assert_eq!(s.read("a"), Some(&Cell::Int(1)));
+    assert_eq!(s.read("b"), Some(&Cell::Int(0)));
+    assert_eq!(s.read("c"), Some(&Cell::Int(1)));
+    assert_eq!(s.read("d"), Some(&Cell::Int(0)));
+    assert_eq!(s.read("e"), Some(&Cell::Int(1)));
+  }
+
+  #[test]
+  fn define_style_predicate_is_one_line() {
+    // A biome `@define`: stash dims in a slot, then AND several threshold tests
+    // into one line and `return` the verdict.
+    let src = "@define>\n  ^biome call &b set\n  *b.2 0.42 ge *b.0 0.35 ge and *b.1 0.55 ge and return\n";
+    let body = &parse(src).unwrap().children[0].body;
+    let pass = {
+      let mut s = Store::default();
+      s.set_biome(vec![0.5, 0.7, 0.6]); // temperate, humid, land
+      run(body, &mut s).unwrap()
+    };
+    let fail = {
+      let mut s = Store::default();
+      s.set_biome(vec![0.5, 0.7, 0.3]); // underwater → below the elevation gate
+      run(body, &mut s).unwrap()
+    };
+    assert_eq!(pass, 1);
+    assert_eq!(fail, 0);
   }
 
   #[test]

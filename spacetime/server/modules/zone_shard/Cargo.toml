@@ -1,5 +1,5 @@
 [package]
-name = "resonantdust_region_shard"
+name = "resonantdust_zone_shard"
 version = "0.1.0"
 edition = "2021"
 

@@ -7,7 +7,7 @@
 //! This is the rect-grid descendant of the old quadtree: the render texture is a
 //! FIXED grid of square slots that never pans; as the anchor moves, world squares
 //! wrap onto physical slots via {@link mod} (a torus), and only the freshly-exposed
-//! strip re-bakes. See `AlbedoMap`.
+//! strip re-bakes. See `SquareCache`.
 
 /** Square edge in world px. The grid unit — all map squares are this size. */
 export const SQUARE = 64;

@@ -5,7 +5,7 @@ import type { UiEditMode } from "../../../ui/dom/UiEditMode";
 import { panelTitle, panelText } from "../panelStrings";
 import { currentEnvironment, gatewayUrlFor } from "../../../client/environments";
 import { getContentVersion } from "../../definitions/contentBoot";
-import type { CallStat, SubStat } from "../../../client/WasmClient";
+import type { CallStat, SubStatsSnapshot } from "../../../client/WasmClient";
 
 /** A `versions.json` snapshot: a build number + per-component source-closure
  *  hashes. Both the gate's baked copy (`server`) and the freshest pushed copy
@@ -130,20 +130,21 @@ const CALLS_COLUMNS: ReadonlyArray<readonly [string, "left" | "right"]> = [
   ["req", "right"],
   ["ok", "right"],
   ["err", "right"],
-  ["prom", "right"],
   ["tx", "right"],
   ["rx", "right"],
 ];
 
 /** Subs-tab columns: [header label, text-align]. Order matches `renderSubs`.
- *  `cur` = currently-open subscriptions (live), `total` = ever-issued (additive). */
+ *  Per relayed-row table: `rows` = `Row` frames received, `rx` = their total bytes
+ *  (the live open/total subscription gauge is a summary line above the table). */
 const SUBS_COLUMNS: ReadonlyArray<readonly [string, "left" | "right"]> = [
   ["table", "left"],
-  ["cur", "right"],
-  ["total", "right"],
-  ["tx", "right"],
+  ["rows", "right"],
   ["rx", "right"],
 ];
+
+/** The empty subscription snapshot the subs tab shows before any subscription. */
+const EMPTY_SUB_STATS: SubStatsSnapshot = { open: 0, total: 0, tables: [] };
 
 /** Versions-tab value cell: hash stacked above its dim timestamp. */
 const VERSION_VALUE_CSS: Partial<CSSStyleDeclaration> = {
@@ -168,6 +169,11 @@ const GRAPH_RIGHT_CSS: Partial<CSSStyleDeclaration> = {
 
 const SPARKLINE_W = 80;
 const SPARKLINE_H = 16;
+
+/** The power-of-two atlas buckets the textures tab tallies, one row each. A fixed
+ *  list (not derived from `LOD_SIZES`) so the HUD layout stays stable; a size with
+ *  no live pool simply reads 0. */
+const TEX_ATLAS_SIZES = [8, 16, 32, 64, 128, 256, 512] as const;
 
 /** Draw `samples` as a sparkline into `canvas`. Auto-scales the Y axis
  *  to the range of finite values in the window, and treats `NaN` as a
@@ -326,9 +332,10 @@ export class DebugPanel {
   private readonly texFps:         HTMLSpanElement;
   private readonly texDrawCalls:   HTMLSpanElement;
   private readonly texAtlases:     HTMLSpanElement;
-  private readonly texS256:        HTMLSpanElement;
-  private readonly texS128:        HTMLSpanElement;
-  private readonly texS64:         HTMLSpanElement;
+  /** LOD size (px) → its packed-count span, one per {@link TEX_ATLAS_SIZES}. */
+  private readonly texSizeRows = new Map<number, HTMLSpanElement>();
+  private readonly texPreviewSize:  HTMLSpanElement;
+  private readonly texPreviewCount: HTMLSpanElement;
 
   // ── Sync tab values ─────────────────────────────────────────────
   private readonly syncDateNow:    HTMLSpanElement;
@@ -354,10 +361,10 @@ export class DebugPanel {
    *  render immediately (the worker only pushes every pump). */
   private lastCallStats: CallStat[] = [];
 
-  // ── Subs tab — per-table subscription tally ─────────────────────
+  // ── Subs tab — subscription-data tally ──────────────────────────
   private readonly subsBody: HTMLDivElement;
-  /** Latest tally pushed from the worker, retained so opening renders at once. */
-  private lastSubStats: SubStat[] = [];
+  /** Latest snapshot pushed from the client, retained so opening renders at once. */
+  private lastSubStats: SubStatsSnapshot = EMPTY_SUB_STATS;
 
   private fps = 60;
 
@@ -409,12 +416,16 @@ export class DebugPanel {
     this.mainRegion    = this.addRow(mainContent, "region (q,r)");
 
     // ── Textures tab — atlas / slot counts ────────────────────────
+    // Atlas-page total, then a packed-texture count per power-of-two bucket, then
+    // the preview (floor) tier's live size + count.
     this.texFps       = this.addRow(texturesContent, panelText("debugPanel", "fps"));
     this.texDrawCalls = this.addRow(texturesContent, panelText("debugPanel", "drawCalls"));
     this.texAtlases   = this.addRow(texturesContent, panelText("debugPanel", "atlases"));
-    this.texS256      = this.addRow(texturesContent, panelText("debugPanel", "size256"));
-    this.texS128      = this.addRow(texturesContent, panelText("debugPanel", "size128"));
-    this.texS64       = this.addRow(texturesContent, panelText("debugPanel", "size64"));
+    for (const size of TEX_ATLAS_SIZES) {
+      this.texSizeRows.set(size, this.addRow(texturesContent, `${size} px`));
+    }
+    this.texPreviewSize  = this.addRow(texturesContent, panelText("debugPanel", "previewSize"));
+    this.texPreviewCount = this.addRow(texturesContent, panelText("debugPanel", "previewTextures"));
 
     // ── Sync tab — full time-sync state ───────────────────────────
     this.syncDateNow       = this.addRow(syncContent, panelText("debugPanel", "dateNow"));
@@ -500,7 +511,12 @@ export class DebugPanel {
   setStats(
     deltaMS: number,
     drawCalls: number,
-    atlasStats?: { atlases: number; slotCounts: ReadonlyMap<number, number> },
+    atlasStats?: {
+      atlases: number;
+      slotCounts: ReadonlyMap<number, number>;
+      previewSize: number;
+      previewCount: number;
+    },
     syncStats?: SyncStats,
   ): void {
     if (deltaMS > 0) {
@@ -529,9 +545,11 @@ export class DebugPanel {
 
     if (atlasStats) {
       this.texAtlases.textContent = String(atlasStats.atlases);
-      this.texS256.textContent    = String(atlasStats.slotCounts.get(256) ?? 0);
-      this.texS128.textContent    = String(atlasStats.slotCounts.get(128) ?? 0);
-      this.texS64.textContent     = String(atlasStats.slotCounts.get(64)  ?? 0);
+      for (const [size, span] of this.texSizeRows) {
+        span.textContent = String(atlasStats.slotCounts.get(size) ?? 0);
+      }
+      this.texPreviewSize.textContent  = `${atlasStats.previewSize} px`;
+      this.texPreviewCount.textContent = String(atlasStats.previewCount);
     }
     if (syncStats) {
       const dateNowText   = formatHourClock(syncStats.dateNowMs);
@@ -812,9 +830,9 @@ export class DebugPanel {
     if (this.panel.isOpen) this.renderCalls();
   }
 
-  /** Rebuild the calls table from {@link lastCallStats}: one row per reducer
-   *  (command, request count, ok/err/promise reply counts, tx/rx byte estimates)
-   *  plus a totals row. Error counts highlight red when non-zero. */
+  /** Rebuild the calls table from {@link lastCallStats}: one row per command type
+   *  (wire tag, request count, ok/err reply counts, tx/rx byte estimates) plus a
+   *  totals row. Error counts highlight red when non-zero. */
   private renderCalls(): void {
     const body = this.callsBody;
     body.replaceChildren();
@@ -826,12 +844,11 @@ export class DebugPanel {
 
     const table = this.statTable(CALLS_COLUMNS);
     const tbody = table.createTBody();
-    const totals = { requests: 0, ok: 0, err: 0, promise: 0, tx: 0, rx: 0 };
+    const totals = { requests: 0, ok: 0, err: 0, tx: 0, rx: 0 };
     for (const s of this.lastCallStats) {
       totals.requests += s.requests;
       totals.ok += s.ok;
       totals.err += s.err;
-      totals.promise += s.promise;
       totals.tx += s.tx;
       totals.rx += s.rx;
       const row = tbody.insertRow();
@@ -839,18 +856,16 @@ export class DebugPanel {
       this.statCell(row, String(s.requests), "right");
       this.statCell(row, String(s.ok), "right");
       this.statCell(row, String(s.err), "right", s.err > 0 ? VERSION_DRIFT_COLOR : undefined);
-      this.statCell(row, String(s.promise), "right");
       this.statCell(row, fmtBytes(s.tx), "right");
       this.statCell(row, fmtBytes(s.rx), "right");
     }
 
-    // Totals row — bold, top-ruled, to separate it from the per-reducer rows.
+    // Totals row — bold, top-ruled, to separate it from the per-command rows.
     const totalRow = tbody.insertRow();
     this.statCell(totalRow, "total", "left", undefined, true);
     this.statCell(totalRow, String(totals.requests), "right", undefined, true);
     this.statCell(totalRow, String(totals.ok), "right", undefined, true);
     this.statCell(totalRow, String(totals.err), "right", totals.err > 0 ? VERSION_DRIFT_COLOR : undefined, true);
-    this.statCell(totalRow, String(totals.promise), "right", undefined, true);
     this.statCell(totalRow, fmtBytes(totals.tx), "right", undefined, true);
     this.statCell(totalRow, fmtBytes(totals.rx), "right", undefined, true);
 
@@ -859,49 +874,69 @@ export class DebugPanel {
 
   // ── Subs tab ────────────────────────────────────────────────────
 
-  /** Receive the latest per-table subscription tally (pushed each pump). Retain
-   *  it for a later `open()`, and rebuild the table now if the panel is open. */
-  setSubStats(stats: SubStat[]): void {
-    this.lastSubStats = stats;
+  /** Receive the latest subscription-data snapshot (pushed on every open/close and
+   *  `Row` frame). Retain it for a later `open()`, and rebuild now if open. */
+  setSubStats(snap: SubStatsSnapshot): void {
+    this.lastSubStats = snap;
     if (this.panel.isOpen) this.renderSubs();
   }
 
-  /** Rebuild the subs table from {@link lastSubStats}: one row per subscribed
-   *  table (current open count, total ever-issued, tx/rx byte estimates) plus a
-   *  totals row. `cur` is a LIVE gauge; `total`/`tx`/`rx` are cumulative. */
+  /** Rebuild the subs tab from {@link lastSubStats}: a live open/total zone-sub
+   *  gauge, then one row per relayed-row table (`Row` frames received + their
+   *  bytes) with a totals row. The gauge is LIVE; row counts and bytes are
+   *  cumulative — the volume of data subscriptions have streamed back. */
   private renderSubs(): void {
     const body = this.subsBody;
     body.replaceChildren();
 
-    if (this.lastSubStats.length === 0) {
+    const { open, total, tables } = this.lastSubStats;
+    if (total === 0 && tables.length === 0) {
       body.appendChild(this.statEmpty("no subscriptions yet"));
+      return;
+    }
+
+    // Live open / cumulative-total zone-subscription gauge.
+    body.appendChild(this.subGaugeRow(open, total));
+
+    if (tables.length === 0) {
+      body.appendChild(this.statEmpty("no rows received yet"));
       return;
     }
 
     const table = this.statTable(SUBS_COLUMNS);
     const tbody = table.createTBody();
-    const totals = { subs: 0, total: 0, tx: 0, rx: 0 };
-    for (const s of this.lastSubStats) {
-      totals.subs += s.subs;
-      totals.total += s.total;
-      totals.tx += s.tx;
+    const totals = { rows: 0, rx: 0 };
+    for (const s of tables) {
+      totals.rows += s.rows;
       totals.rx += s.rx;
       const row = tbody.insertRow();
       this.statCell(row, s.table, "left");
-      this.statCell(row, String(s.subs), "right");
-      this.statCell(row, String(s.total), "right");
-      this.statCell(row, fmtBytes(s.tx), "right");
+      this.statCell(row, String(s.rows), "right");
       this.statCell(row, fmtBytes(s.rx), "right");
     }
 
     const totalRow = tbody.insertRow();
     this.statCell(totalRow, "total", "left", undefined, true);
-    this.statCell(totalRow, String(totals.subs), "right", undefined, true);
-    this.statCell(totalRow, String(totals.total), "right", undefined, true);
-    this.statCell(totalRow, fmtBytes(totals.tx), "right", undefined, true);
+    this.statCell(totalRow, String(totals.rows), "right", undefined, true);
     this.statCell(totalRow, fmtBytes(totals.rx), "right", undefined, true);
 
     body.appendChild(table);
+  }
+
+  /** The subs-tab summary line: the live count of open zone subscriptions over the
+   *  cumulative total ever issued. */
+  private subGaugeRow(open: number, total: number): HTMLDivElement {
+    const row = document.createElement("div");
+    Object.assign(row.style, ROW_CSS);
+    const labelEl = document.createElement("span");
+    Object.assign(labelEl.style, LABEL_CSS);
+    labelEl.textContent = "subscriptions";
+    const valueEl = document.createElement("span");
+    Object.assign(valueEl.style, VALUE_CSS);
+    valueEl.textContent = `${open} open · ${total} total`;
+    row.appendChild(labelEl);
+    row.appendChild(valueEl);
+    return row;
   }
 
   // ── Stat-table builders (shared by the calls + subs tabs) ───────

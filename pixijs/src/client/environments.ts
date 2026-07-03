@@ -55,6 +55,21 @@ export function gatewayUrlFor(env: Environment, host = hostFor(env)): string {
   return `${secure ? "https" : "http"}://${host}:${port}`;
 }
 
+/** The HTTP ASSET base for a world server, derived from the WS URL the gateway
+ *  hands back at login (`ws://host:port/ws` → `http://host:port`, `wss` → `https`).
+ *  The world server hosts `/content` + `/textures` on the same host:port as its
+ *  game WebSocket, so the client fetches assets from here once it's logged in.
+ *  `""` if `serverUrl` doesn't parse. */
+export function assetBaseFromServerUrl(serverUrl: string): string {
+  try {
+    const u = new URL(serverUrl);
+    const proto = u.protocol === "wss:" ? "https:" : "http:";
+    return `${proto}//${u.host}`; // host includes the port
+  } catch {
+    return "";
+  }
+}
+
 /** The env the client is currently connected to (set at login). Surfaced in the
  *  debug HUD + env badge so it's always unambiguous which gateway's data you're
  *  looking at — dev / claude / test / alpha. `null` until the first login. */

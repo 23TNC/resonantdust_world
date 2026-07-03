@@ -33,3 +33,17 @@ resonantdust-codec = { path = "../shared/codec" }
 # `:data` side the server reads; the client reads the `:visual` side of the same
 # corpus via the wasm bundle, so a `def_id` means the same tile on both ends.
 resonantdust-dsl = { path = "../shared/dsl" }
+# CORS for the asset routes: the browser client fetches `/content` + `/textures`
+# cross-origin, so the responses need `Access-Control-Allow-Origin` (+ ETag
+# exposed for the texture cache's revalidation). Same version as the gateway.
+tower-http = { version = "0.6", features = ["cors"] }
+# Content + texture serving from R2 (CONTENT_SOURCE / TEXTURE_SOURCE = r2): reqwest
+# GETs assets over short-lived SigV4-presigned URLs rusty-s3 builds (R2 is
+# S3-compatible), reusing the native-tls/openssl the SDK already links. Disk mode
+# uses neither. `url` is rusty-s3's endpoint type.
+reqwest = "0.12"
+rusty-s3 = "0.5"
+url = "2"
+# On-demand texture derivation: downscale a master albedo into the requested
+# lower resolution (the half-res preview) instead of pre-baking. PNG-only, lean.
+image = { version = "0.25", default-features = false, features = ["png"] }

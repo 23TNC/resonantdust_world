@@ -156,24 +156,16 @@ impl Content {
 
     /// Expand a zone's packed tile slots into renderable prims — the painter's
     /// per-zone call. Runs the codec (cell → coords, slot → `def_id`) and the DSL
-    /// (`def_id` → `visual.color.bg`, i.e. the `:visual @on_create` tint) for
-    /// every non-empty cell, returning a flat **stride-3** array
-    /// `[tileX, tileY, tint, …]` in *global tile coordinates* (the host scales by
-    /// the 64 px tile size and fills a white texture tinted `tint`). Empty cells
-    /// (`def_id == 0`) are skipped. One wasm-boundary crossing per zone, not 256.
+    /// (`def_id` → its `:visual @on_create` [`VisualParts`]) for every non-empty
+    /// cell, returning a flat **stride-5** array `[tileX, tileY, tint, geoColor,
+    /// defId, …]` in *global tile coordinates*. `tint` multiplies a loaded sprite;
+    /// `geoColor` is the flat silhouette shown until it loads; `defId` indexes
+    /// [`tileTextureStems`] for the sprite stem (empty = flat tint, no sprite).
+    /// Empty cells (`def_id == 0`) are skipped. One wasm-boundary crossing per
+    /// zone, not 256.
     #[wasm_bindgen(js_name = zoneTilePrims)]
     pub fn zone_tile_prims(&self, zone_id: u32, tiles: Vec<u16>) -> Vec<f64> {
-        // Zone origin in global tile coordinates: which region, then which zone
-        // within it, each scaled by the zone/region edge in tiles.
-        let region_x = packed::zone_region_x(zone_id) as i64;
-        let region_y = packed::zone_region_y(zone_id) as i64;
-        let zone_x = packed::zone_x(zone_id) as i64;
-        let zone_y = packed::zone_y(zone_id) as i64;
-        let dim = packed::ZONE_DIM as i64;
-        let region_dim = packed::REGION_DIM as i64;
-        let origin_x = (region_x * region_dim + zone_x) * dim;
-        let origin_y = (region_y * region_dim + zone_y) * dim;
-
+        let (origin_x, origin_y) = zone_origin(zone_id);
         let mut out = Vec::new();
         for (i, &slot) in tiles.iter().enumerate() {
             let def_id = packed::tile_def(slot);
@@ -183,14 +175,115 @@ impl Content {
             let location = i as u8;
             let tile_x = origin_x + packed::cell_x(location) as i64;
             let tile_y = origin_y + packed::cell_y(location) as i64;
-            // The DSL on_create resolves the tint; unknown defs fall back to white.
-            let tint = self.bundle.color_bg_for_def(def_id).unwrap_or(0x00FF_FFFF);
+            // The DSL on_create resolves the tint + geo colour; unknown defs fall
+            // back to a white tint (and geo = tint).
+            let visual = self.bundle.visual_for_def(def_id);
+            let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
+            let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
             out.push(tile_x as f64);
             out.push(tile_y as f64);
             out.push(tint as f64);
+            out.push(geo as f64);
+            out.push(def_id as f64);
         }
         out
     }
+
+    /// Every tile's texture stem in `def_id` order (index 0 → def_id 1) — the
+    /// stem table the host fetches once and indexes by the `defId` each tile prim
+    /// carries. An empty string means "flat tint, no sprite" (the built-in white
+    /// fill); a non-empty stem names the sprite the resolver loads.
+    #[wasm_bindgen(js_name = tileTextureStems)]
+    pub fn tile_texture_stems(&self) -> Vec<String> {
+        self.bundle.tile_texture_stems()
+    }
+
+    /// Every thing's texture stem in `object_id` order — the thing-layer sibling
+    /// of [`tileTextureStems`], indexed by the `defId` a thing / free-thing prim
+    /// carries.
+    #[wasm_bindgen(js_name = thingTextureStems)]
+    pub fn thing_texture_stems(&self) -> Vec<String> {
+        self.bundle.thing_texture_stems()
+    }
+
+    /// Every thing's sprite driving-axis footprint in `object_id` order, indexed by
+    /// the `defId` a thing / free-thing prim carries. `0.0` means "unset" — the
+    /// host applies its own default; the renderer treats it as pixels (the min axis)
+    /// and derives the other axis from the texture aspect.
+    #[wasm_bindgen(js_name = thingSizes)]
+    pub fn thing_sizes(&self) -> Vec<f64> {
+        self.bundle.thing_sizes()
+    }
+
+    /// Render coords + colour for one loose thing (object-shard `free_things`) —
+    /// the painter's per-thing call, the sub-tile sibling of [`zone_tile_prims`].
+    /// Returns the same **stride-5** record `[x, y, tint, geoColor, defId]`, where
+    /// `x`/`y` are **fractional global tile coordinates**: the tile origin plus the
+    /// `offset`'s `x_off/y_off` nibbles as a 1/16-tile fraction
+    /// (`resonantdust_codec::packed::pack_offset`). The host scales by the 64 px
+    /// tile size like a tile prim, but draws a smaller sprite so a loose thing sits
+    /// visibly within its cell. `id` is the thing def (an `object_id`), so its
+    /// visual comes from the THING namespace — `defId` indexes [`thingTextureStems`].
+    #[wasm_bindgen(js_name = freeThingPrim)]
+    pub fn free_thing_prim(&self, zone_id: u32, location: u8, offset: u8, id: u16) -> Vec<f64> {
+        let (origin_x, origin_y) = zone_origin(zone_id);
+        let tile_x = origin_x + packed::cell_x(location) as i64;
+        let tile_y = origin_y + packed::cell_y(location) as i64;
+        let steps = packed::OFFSET_STEPS as f64;
+        let x = tile_x as f64 + packed::offset_x(offset) as f64 / steps;
+        let y = tile_y as f64 + packed::offset_y(offset) as f64 / steps;
+        let visual = self.bundle.visual_for_object(id);
+        let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
+        let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
+        vec![x, y, tint as f64, geo as f64, id as f64]
+    }
+
+    /// Expand a zone's packed cold things (`cold_zones.things`) into renderable
+    /// prims — the thing-layer sibling of [`zone_tile_prims`]. Each entry is
+    /// `x:4 | y:4 | rotation:2 | object_id:12` ([`packed::pack_thing`]); this runs
+    /// the codec (→ in-zone cell) and the DSL (`object_id` → the thing's `:visual`
+    /// [`VisualParts`]) for every entry, returning a flat **stride-6** array
+    /// `[tileX, tileY, tint, geoColor, defId, rotation, …]` in *global tile coordinates*
+    /// (`defId` indexing [`thingTextureStems`]; `rotation` the packed 0..3 facing the
+    /// host resolves to a texture `<rot>` segment). The host draws a sprite smaller than
+    /// a tile, centred in the cell and above the ground. Empty entries
+    /// (`object_id == 0`) are skipped. One boundary crossing per zone.
+    #[wasm_bindgen(js_name = zoneThingPrims)]
+    pub fn zone_thing_prims(&self, zone_id: u32, things: Vec<u32>) -> Vec<f64> {
+        let (origin_x, origin_y) = zone_origin(zone_id);
+        let mut out = Vec::new();
+        for &entry in &things {
+            let object_id = packed::thing_object_id(entry);
+            if object_id == 0 {
+                continue; // empty entry — nothing here
+            }
+            let tile_x = origin_x + packed::thing_x(entry) as i64;
+            let tile_y = origin_y + packed::thing_y(entry) as i64;
+            let visual = self.bundle.visual_for_object(object_id);
+            let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
+            let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
+            out.push(tile_x as f64);
+            out.push(tile_y as f64);
+            out.push(tint as f64);
+            out.push(geo as f64);
+            out.push(object_id as f64);
+            out.push(packed::thing_rotation(entry) as f64);
+        }
+        out
+    }
+}
+
+/// A zone's origin in **global tile coordinates**: which region, then which zone
+/// within it, each scaled by the zone/region edge in tiles. The shared prefix of
+/// every prim-expansion call ([`Content::zone_tile_prims`], `free_thing_prim`,
+/// `zone_thing_prims`).
+#[cfg(feature = "js")]
+fn zone_origin(zone_id: u32) -> (i64, i64) {
+    let dim = packed::ZONE_DIM as i64;
+    let region_dim = packed::REGION_DIM as i64;
+    let ox = (packed::zone_region_x(zone_id) as i64 * region_dim + packed::zone_x(zone_id) as i64) * dim;
+    let oy = (packed::zone_region_y(zone_id) as i64 * region_dim + packed::zone_y(zone_id) as i64) * dim;
+    (ox, oy)
 }
 
 // ---------- world client (js feature) ----------
@@ -264,6 +357,13 @@ impl WorldClient {
         let _ = self.inner.remove_anchor(name);
     }
 
+    /// Release the thing affixed at `(zone_id, location)` into the object shard
+    /// (the server drives the transfer). No-op before login / if disconnected.
+    #[wasm_bindgen(js_name = release)]
+    pub fn release(&self, zone_id: u32, location: u8) {
+        let _ = self.inner.release(zone_id, location);
+    }
+
     /// Drop the world-server connection, keeping the client alive for reconnect.
     pub fn logout(&self) {
         let _ = self.inner.logout();
@@ -330,9 +430,73 @@ fn event_to_js(event: &client::Event) -> JsValue {
             arr.copy_from(tiles);
             set("tiles", &arr);
         }
+        Event::ZoneThings { zone_id, things } => {
+            set("kind", &JsValue::from_str("zoneThings"));
+            set("zoneId", &JsValue::from_f64(*zone_id as f64));
+            let arr = js_sys::Uint32Array::new_with_length(things.len() as u32);
+            arr.copy_from(things);
+            set("things", &arr);
+        }
+        Event::ZoneFreeThing {
+            zone_id,
+            object_id,
+            removed,
+            location,
+            rotation,
+            id,
+            offset,
+        } => {
+            set("kind", &JsValue::from_str("zoneFreeThing"));
+            set("zoneId", &JsValue::from_f64(*zone_id as f64));
+            set("objectId", &JsValue::from_f64(*object_id as f64));
+            set("removed", &JsValue::from_bool(*removed));
+            set("location", &JsValue::from_f64(*location as f64));
+            set("rotation", &JsValue::from_f64(*rotation as f64));
+            set("id", &JsValue::from_f64(*id as f64));
+            set("offset", &JsValue::from_f64(*offset as f64));
+        }
         Event::ZoneClosed { zone_id } => {
             set("kind", &JsValue::from_str("zoneClosed"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));
+        }
+        Event::CallStats(stats) => {
+            set("kind", &JsValue::from_str("callStats"));
+            let arr = js_sys::Array::new();
+            for s in stats {
+                let o = js_sys::Object::new();
+                let put = |key: &str, value: &JsValue| {
+                    let _ = js_sys::Reflect::set(&o, &JsValue::from_str(key), value);
+                };
+                put("command", &JsValue::from_str(&s.command));
+                put("requests", &JsValue::from_f64(s.requests as f64));
+                put("ok", &JsValue::from_f64(s.ok as f64));
+                put("err", &JsValue::from_f64(s.err as f64));
+                put("tx", &JsValue::from_f64(s.tx as f64));
+                put("rx", &JsValue::from_f64(s.rx as f64));
+                arr.push(&o);
+            }
+            set("stats", &arr);
+        }
+        Event::SubStats {
+            open,
+            total,
+            tables,
+        } => {
+            set("kind", &JsValue::from_str("subStats"));
+            set("open", &JsValue::from_f64(*open as f64));
+            set("total", &JsValue::from_f64(*total as f64));
+            let arr = js_sys::Array::new();
+            for s in tables {
+                let o = js_sys::Object::new();
+                let put = |key: &str, value: &JsValue| {
+                    let _ = js_sys::Reflect::set(&o, &JsValue::from_str(key), value);
+                };
+                put("table", &JsValue::from_str(&s.table));
+                put("rows", &JsValue::from_f64(s.rows as f64));
+                put("rx", &JsValue::from_f64(s.rx as f64));
+                arr.push(&o);
+            }
+            set("tables", &arr);
         }
     }
 

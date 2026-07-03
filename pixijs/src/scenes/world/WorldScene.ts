@@ -7,6 +7,10 @@ import { LayoutNode } from "../../game/layout/LayoutNode";
 import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { RtPanel } from "../../game/panels/rt/RtPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
+import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
+
+/** Accumulated wheel `deltaY` that halves or doubles the zoom (one LOD octave). */
+const WHEEL_OCTAVE = 500;
 
 /**
  * The world scene — the post-login game surface. In the old client this hosted
@@ -40,6 +44,8 @@ export class WorldScene extends Scene {
   /** Wiring from the world client's zone stream into the viewport, and the
    *  viewport camera into the client's anchor. */
   private bridge!: WorldBridge;
+  /** Unsubscribe from content hot-swaps; called on scene exit. */
+  private contentUnsub: (() => void) | null = null;
   /** Drag-to-pan state: pointer id + last client-px position while dragging. */
   private dragId: number | null = null;
   private dragX = 0;
@@ -52,10 +58,21 @@ export class WorldScene extends Scene {
   };
   private readonly onPointerMove = (e: PointerEvent): void => {
     if (this.dragId !== e.pointerId) return;
-    // Drag right → world slides right under the cursor → anchor moves left.
-    this.bridge.moveBy(this.dragX - e.clientX, this.dragY - e.clientY);
+    // Drag right → world slides right under the cursor → anchor moves left. A screen-px
+    // drag is `1/zoom` world px, so divide the delta by the zoom.
+    const z = this.viewport.view.zoom;
+    this.bridge.moveBy((this.dragX - e.clientX) / z, (this.dragY - e.clientY) / z);
     this.dragX = e.clientX;
     this.dragY = e.clientY;
+  };
+  /** Scroll wheel → zoom about the cursor. Each `WHEEL_OCTAVE` of accumulated
+   *  `deltaY` halves/doubles the zoom; the world point under the cursor stays put. */
+  private readonly onWheel = (e: WheelEvent): void => {
+    e.preventDefault();
+    const r = this.ctx.app.canvas.getBoundingClientRect();
+    const factor = Math.pow(2, -e.deltaY / WHEEL_OCTAVE);
+    const anchor = this.viewport.view.zoomAt(e.clientX - r.left, e.clientY - r.top, factor);
+    if (anchor) this.bridge.zoomTo(anchor.x, anchor.y, this.viewport.view.zoom);
   };
   private readonly onPointerUp = (e: PointerEvent): void => {
     if (this.dragId === e.pointerId) this.dragId = null;
@@ -87,8 +104,12 @@ export class WorldScene extends Scene {
     // Wire the client's zone stream into the viewport and start the anchor at the
     // origin — login has completed by the time this scene enters, so the first
     // anchor immediately subscribes the zones around it.
-    this.bridge = new WorldBridge(ctx.client, ctx.content, this.viewport.view, ctx.textures.white);
+    this.bridge = new WorldBridge(ctx.client, ctx.content, this.viewport.view, ctx.textureResolver.white, ctx.textureResolver);
     this.bridge.start();
+
+    // Repaint live zones when the gate hot-swaps the corpus. `getContent()` is the
+    // freshly-swapped bundle (independent of listener order vs `ctx.content`).
+    this.contentUnsub = onContentReloaded(() => this.bridge.setContent(getContent()));
 
     // Drag-to-pan: move the anchor as the user drags the canvas (which streams
     // zones in/out via the hysteresis ladder).
@@ -98,6 +119,8 @@ export class WorldScene extends Scene {
     canvas.addEventListener("pointerup", this.onPointerUp);
     canvas.addEventListener("pointercancel", this.onPointerUp);
     canvas.addEventListener("pointerleave", this.onPointerLeave);
+    // `passive: false` so the handler can preventDefault the page scroll.
+    canvas.addEventListener("wheel", this.onWheel, { passive: false });
 
     // Taskbar-pinned DOM panel. The client core would subscribe `chat_messages`
     // on login and stream them through `ctx.client.onChat`; the stub never fires,
@@ -157,6 +180,9 @@ export class WorldScene extends Scene {
     canvas.removeEventListener("pointerup", this.onPointerUp);
     canvas.removeEventListener("pointercancel", this.onPointerUp);
     canvas.removeEventListener("pointerleave", this.onPointerLeave);
+    canvas.removeEventListener("wheel", this.onWheel);
+    this.contentUnsub?.();
+    this.contentUnsub = null;
     this.bridge.dispose();
 
     // Destroy PanelManager-registered panels (the RT preview) first, while their

@@ -19,7 +19,7 @@
 //! the socket on reconnect. Each connection carries a **generation**; the pump
 //! tags every frame with it, and the loop drops frames from a superseded socket.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use futures::channel::mpsc;
@@ -27,9 +27,9 @@ use futures::stream::{SplitSink, SplitStream};
 use futures::{select, SinkExt, StreamExt};
 use ws_stream_wasm::{WsMessage, WsMeta, WsStream};
 
-use crate::api::{Command, Event, EventSink, ServerInfo};
+use crate::api::{CallStat, Command, Event, EventSink, ServerInfo, SubStat};
 use crate::config::ClientConfig;
-use crate::protocol::{ClientMsg, RowData, ServerMsg};
+use crate::protocol::{ClientMsg, RowData, RowOp, ServerMsg};
 use crate::zones::{AnchorRadii, ZoneManager};
 
 /// The write half of the live socket. The read half is moved into the pump task.
@@ -105,6 +105,11 @@ impl Client {
         self.send(Command::RemoveAnchor { name: name.into() })
     }
 
+    /// Convenience: release the thing at `(zone_id, location)`.
+    pub fn release(&self, zone_id: u32, location: u8) -> Result<(), SendError> {
+        self.send(Command::Release { zone_id, location })
+    }
+
     /// Convenience: drop the world-server connection but keep the engine alive.
     pub fn logout(&self) -> Result<(), SendError> {
         self.send(Command::Logout)
@@ -120,6 +125,48 @@ impl Client {
 struct Pending {
     cid: u32,
     name: String,
+}
+
+/// Running counters for one outbound command type, feeding the debug HUD's "calls"
+/// tab. `requests` / `tx` accrue on every sent frame; `ok` / `err` / `rx` on the
+/// correlated replies (see [`CallStat`]).
+#[derive(Default)]
+struct CallCounters {
+    requests: u32,
+    ok: u32,
+    err: u32,
+    tx: u64,
+    rx: u64,
+}
+
+/// The wire tag of a client frame — the key its tally accrues under, matching the
+/// `#[serde(rename_all = "snake_case")]` discriminator the server sees.
+fn client_msg_tag(msg: &ClientMsg) -> &'static str {
+    match msg {
+        ClientMsg::Login { .. } => "login",
+        ClientMsg::SubZone { .. } => "sub_zone",
+        ClientMsg::Unsub { .. } => "unsub",
+        ClientMsg::Release { .. } => "release",
+    }
+}
+
+/// Running data counters for one relayed-row table, feeding the debug HUD's "subs"
+/// tab: how many `Row` frames of this table arrived and their total bytes.
+#[derive(Default)]
+struct SubCounters {
+    rows: u32,
+    rx: u64,
+}
+
+/// The wire tag of a relayed row — the key its data tally accrues under, matching
+/// the server's `#[serde(tag = "table", rename_all = "snake_case")]` discriminator.
+fn row_table_tag(row: &RowData) -> &'static str {
+    match row {
+        RowData::ColdZone(_) => "cold_zone",
+        RowData::HotTile(_) => "hot_tile",
+        RowData::HotThing(_) => "hot_thing",
+        RowData::FreeThing(_) => "free_thing",
+    }
 }
 
 /// What the read pump forwards, normalized so the loop doesn't touch the
@@ -155,6 +202,15 @@ struct Engine {
     generation: u64,
     /// Cloned into each read pump so it can forward frames into the loop.
     frame_tx: mpsc::UnboundedSender<(u64, FrameOutcome)>,
+    /// Per-command gateway-call tally for the debug HUD, keyed by wire tag. A
+    /// `BTreeMap` so [`Self::emit_call_stats`] snapshots in a stable order.
+    calls: BTreeMap<&'static str, CallCounters>,
+    /// Per-table subscription-data tally for the debug HUD, keyed by row table tag
+    /// (`BTreeMap` for stable snapshot order).
+    sub_data: BTreeMap<&'static str, SubCounters>,
+    /// Every `sub_zone` frame ever sent — the cumulative "total" gauge (the live
+    /// "open" gauge is [`Self::subs`]`.len()`).
+    subs_total: u32,
 }
 
 impl Engine {
@@ -177,6 +233,9 @@ impl Engine {
             next_sid: 1,
             generation: 0,
             frame_tx,
+            calls: BTreeMap::new(),
+            sub_data: BTreeMap::new(),
+            subs_total: 0,
         };
         (engine, frame_rx)
     }
@@ -228,6 +287,11 @@ impl Engine {
                     .await
             }
             Command::RemoveAnchor { name } => self.handle_remove_anchor(name).await,
+            Command::Release { zone_id, location } => {
+                if let Err(err) = self.send_frame(&ClientMsg::Release { zone_id, location }).await {
+                    self.emit(Event::Status(format!("release send failed: {err}")));
+                }
+            }
             Command::Logout => {
                 self.disconnect(Some("logout".to_string()), /*emit=*/ true)
                     .await;
@@ -269,10 +333,13 @@ impl Engine {
     /// `unsub` frame, maintaining the `zone_id` → `sid` map. A closed sub also
     /// emits [`Event::ZoneClosed`] so the host drops that zone's sprites.
     async fn flush_zone_intents(&mut self) {
+        let mut subs_changed = false;
         for intent in self.zones.take_intents() {
             let frame = if intent.on {
                 let sid = self.take_sid();
                 self.subs.insert(intent.zone_id, sid);
+                self.subs_total += 1;
+                subs_changed = true;
                 ClientMsg::SubZone {
                     sid,
                     zone_id: intent.zone_id,
@@ -283,6 +350,7 @@ impl Engine {
                         self.emit(Event::ZoneClosed {
                             zone_id: intent.zone_id,
                         });
+                        subs_changed = true;
                         ClientMsg::Unsub { sid }
                     }
                     None => continue, // not open on the wire; nothing to drop
@@ -291,6 +359,10 @@ impl Engine {
             if let Err(err) = self.send_frame(&frame).await {
                 self.emit(Event::Status(format!("subscription send failed: {err}")));
             }
+        }
+        // The open/total gauge moved — refresh the "subs" HUD once for the batch.
+        if subs_changed {
+            self.emit_sub_stats();
         }
     }
 
@@ -383,6 +455,7 @@ impl Engine {
                 data_shard,
                 ..
             } => {
+                self.record_reply("login", /*ok=*/ true, text.len());
                 if !self.matches_pending(cid) {
                     return;
                 }
@@ -396,6 +469,7 @@ impl Engine {
                 });
             }
             ServerMsg::LoginErr { cid, error, .. } => {
+                self.record_reply("login", /*ok=*/ false, text.len());
                 if !self.matches_pending(cid) {
                     return;
                 }
@@ -406,19 +480,39 @@ impl Engine {
                 self.emit(Event::Status(format!("server error: {error}")));
             }
             ServerMsg::Applied { sid } => {
+                self.record_reply("sub_zone", /*ok=*/ true, text.len());
                 self.emit(Event::Status(format!("subscription {sid} applied")));
             }
             // One upstream row change. `sid` is 0 (the shard connection
             // multiplexes every zone); route by the row's own `zone_id`. A cold
             // baseline is surfaced to the host as tiles to paint; every row also
             // ages the zone's candidacy (warmth), which may evict it.
-            ServerMsg::Row { row, .. } => {
+            ServerMsg::Row { row, op, .. } => {
                 let zone_id = row_zone_id(&row);
-                if let RowData::ColdZone(z) = &row {
-                    self.emit(Event::ZoneTiles {
-                        zone_id: z.zone_id,
-                        tiles: z.tiles.clone(),
-                    });
+                self.record_row(row_table_tag(&row), text.len());
+                match &row {
+                    RowData::ColdZone(z) => {
+                        // The cold baseline is atomic (tiles + things); deliver both
+                        // so the host re-seeds ground and scattered things together.
+                        self.emit(Event::ZoneTiles {
+                            zone_id: z.zone_id,
+                            tiles: z.tiles.clone(),
+                        });
+                        self.emit(Event::ZoneThings {
+                            zone_id: z.zone_id,
+                            things: z.things.clone(),
+                        });
+                    }
+                    RowData::FreeThing(ft) => self.emit(Event::ZoneFreeThing {
+                        zone_id: ft.zone_id,
+                        object_id: ft.object_id,
+                        removed: matches!(op, RowOp::Delete),
+                        location: ft.location,
+                        rotation: ft.rotation,
+                        id: ft.id,
+                        offset: ft.offset,
+                    }),
+                    RowData::HotTile(_) | RowData::HotThing(_) => {}
                 }
                 self.zones.note_update(zone_id, now_ms());
                 self.flush_zone_intents().await;
@@ -426,9 +520,15 @@ impl Engine {
         }
     }
 
-    /// Serialize and send a client frame on the live socket.
+    /// Serialize and send a client frame on the live socket. Tallies the frame as a
+    /// request (with its serialized byte size) before the send, so the "calls" HUD
+    /// reflects the attempt whether or not the socket write succeeds.
     async fn send_frame(&mut self, frame: &ClientMsg) -> Result<(), String> {
         let text = serde_json::to_string(frame).map_err(|e| format!("serialize frame: {e}"))?;
+        let entry = self.calls.entry(client_msg_tag(frame)).or_default();
+        entry.requests += 1;
+        entry.tx += text.len() as u64;
+        self.emit_call_stats();
         let write = self
             .write
             .as_mut()
@@ -437,6 +537,64 @@ impl Engine {
             .send(WsMessage::Text(text))
             .await
             .map_err(|e| format!("ws send: {e}"))
+    }
+
+    /// Record a correlated reply for command `tag`: a success (`ok`) or failure
+    /// (`err`), plus the reply frame's byte size, then re-emit the tally.
+    fn record_reply(&mut self, tag: &'static str, ok: bool, rx_bytes: usize) {
+        let entry = self.calls.entry(tag).or_default();
+        if ok {
+            entry.ok += 1;
+        } else {
+            entry.err += 1;
+        }
+        entry.rx += rx_bytes as u64;
+        self.emit_call_stats();
+    }
+
+    /// Snapshot the running tally and emit it as [`Event::CallStats`] for the HUD.
+    fn emit_call_stats(&self) {
+        let stats = self
+            .calls
+            .iter()
+            .map(|(command, c)| CallStat {
+                command: (*command).to_string(),
+                requests: c.requests,
+                ok: c.ok,
+                err: c.err,
+                tx: c.tx,
+                rx: c.rx,
+            })
+            .collect();
+        self.emit(Event::CallStats(stats));
+    }
+
+    /// Record one relayed `Row` frame of table `tag` (with its byte size) and
+    /// re-emit the subscription-data tally.
+    fn record_row(&mut self, tag: &'static str, rx_bytes: usize) {
+        let entry = self.sub_data.entry(tag).or_default();
+        entry.rows += 1;
+        entry.rx += rx_bytes as u64;
+        self.emit_sub_stats();
+    }
+
+    /// Snapshot the subscription-data tally (live open + cumulative total gauge and
+    /// the per-table breakdown) and emit it as [`Event::SubStats`] for the HUD.
+    fn emit_sub_stats(&self) {
+        let tables = self
+            .sub_data
+            .iter()
+            .map(|(table, c)| SubStat {
+                table: (*table).to_string(),
+                rows: c.rows,
+                rx: c.rx,
+            })
+            .collect();
+        self.emit(Event::SubStats {
+            open: self.subs.len() as u32,
+            total: self.subs_total,
+            tables,
+        });
     }
 
     /// Tear down the live connection (if any) and clear session state. Bumps the
@@ -455,9 +613,15 @@ impl Engine {
         self.server_url = None;
         // Subscriptions die with the socket: drop anchors + the sid map so a
         // reconnecting host starts from an empty anchor list.
+        let had_subs = !self.subs.is_empty();
         self.zones.clear();
         self.subs.clear();
         self.next_sid = 1;
+        // The live "open" gauge just fell to zero — refresh the "subs" HUD (the
+        // per-table byte totals are cumulative and survive the reconnect).
+        if had_subs {
+            self.emit_sub_stats();
+        }
         if let Some(p) = self.pending.take() {
             if was_connected {
                 self.emit(Event::LoginFailed {
@@ -531,6 +695,7 @@ fn row_zone_id(row: &RowData) -> u32 {
     match row {
         RowData::ColdZone(r) => r.zone_id,
         RowData::HotTile(r) | RowData::HotThing(r) => r.zone_id,
+        RowData::FreeThing(r) => r.zone_id,
     }
 }
 

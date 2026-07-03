@@ -30,7 +30,7 @@ export class ViewportPanel extends PixiPanel {
       uiEditMode: ctx.uiEditMode,
     });
     this.renderer = ctx.app.renderer;
-    this.viewport = new Viewport(ctx.textures);
+    this.viewport = new Viewport(ctx.textureResolver);
     this.content.addChild(this.viewport);
     this.sizeViewport();
     // PixiPanel syncs `content` bounds first on each rect change (it subscribed in its

@@ -27,7 +27,7 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use crate::api::{Command, Event, EventSink, ServerInfo};
 use crate::config::ClientConfig;
-use crate::protocol::{ClientMsg, RowData, ServerMsg};
+use crate::protocol::{ClientMsg, RowData, RowOp, ServerMsg};
 use crate::zones::{AnchorRadii, ZoneManager};
 
 /// The live world-server socket, split into its write and read halves. The read
@@ -107,6 +107,12 @@ impl Client {
     /// Convenience: remove the anchor named `name` (see [`Command::RemoveAnchor`]).
     pub fn remove_anchor(&self, name: impl Into<String>) -> Result<(), SendError> {
         self.send(Command::RemoveAnchor { name: name.into() })
+    }
+
+    /// Convenience: release the thing at `(zone_id, location)` (see
+    /// [`Command::Release`]).
+    pub fn release(&self, zone_id: u32, location: u8) -> Result<(), SendError> {
+        self.send(Command::Release { zone_id, location })
     }
 
     /// Convenience: drop the world-server connection but keep the engine alive.
@@ -213,6 +219,11 @@ impl Engine {
                     .await
             }
             Command::RemoveAnchor { name } => self.handle_remove_anchor(name).await,
+            Command::Release { zone_id, location } => {
+                if let Err(err) = self.send_frame(&ClientMsg::Release { zone_id, location }).await {
+                    self.emit(Event::Status(format!("release send failed: {err}")));
+                }
+            }
             Command::Logout => {
                 self.disconnect(read, Some("logout".to_string()), /*emit=*/ true)
                     .await;
@@ -402,12 +413,31 @@ impl Engine {
             // multiplexes every zone); route by the row's own `zone_id`. Feeding
             // it to the manager ages any candidate sub on that zone (warmth), which
             // may evict it — flush the resulting intents.
-            ServerMsg::Row { row, .. } => {
-                if let RowData::ColdZone(z) = &row {
-                    self.emit(Event::ZoneTiles {
-                        zone_id: z.zone_id,
-                        tiles: z.tiles.clone(),
-                    });
+            ServerMsg::Row { row, op, .. } => {
+                match &row {
+                    RowData::ColdZone(z) => {
+                        // The cold baseline is atomic (tiles + things); deliver both
+                        // so the host re-seeds the zone's ground and its scattered
+                        // things together. Things may be empty (clears them).
+                        self.emit(Event::ZoneTiles {
+                            zone_id: z.zone_id,
+                            tiles: z.tiles.clone(),
+                        });
+                        self.emit(Event::ZoneThings {
+                            zone_id: z.zone_id,
+                            things: z.things.clone(),
+                        });
+                    }
+                    RowData::FreeThing(ft) => self.emit(Event::ZoneFreeThing {
+                        zone_id: ft.zone_id,
+                        object_id: ft.object_id,
+                        removed: matches!(op, RowOp::Delete),
+                        location: ft.location,
+                        rotation: ft.rotation,
+                        id: ft.id,
+                        offset: ft.offset,
+                    }),
+                    RowData::HotTile(_) | RowData::HotThing(_) => {}
                 }
                 self.zones.note_update(row_zone_id(&row), now_ms());
                 self.flush_zone_intents().await;
@@ -520,6 +550,7 @@ fn row_zone_id(row: &RowData) -> u32 {
     match row {
         RowData::ColdZone(r) => r.zone_id,
         RowData::HotTile(r) | RowData::HotThing(r) => r.zone_id,
+        RowData::FreeThing(r) => r.zone_id,
     }
 }
 

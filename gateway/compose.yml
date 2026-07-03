@@ -58,6 +58,8 @@ services:
     networks: [resonantdust]
     ports: ["9473:9473"]
     volumes:
+      # Just the gateway crate — it's a thin directory now; content + textures
+      # are served by the world `server` (their mounts live in server/compose.yml).
       - .:/workspace
     working_dir: /workspace
     command: ["sleep", "infinity"]

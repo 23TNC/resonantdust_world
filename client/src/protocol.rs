@@ -32,6 +32,9 @@ pub enum ClientMsg {
     SubZone { sid: u32, zone_id: u32 },
     /// Drop a subscription previously opened with the same `sid`.
     Unsub { sid: u32 },
+    /// Release the thing affixed at `(zone_id, location)` into the object shard.
+    /// The server drives the transfer saga; no direct reply.
+    Release { zone_id: u32, location: u8 },
 }
 
 /// A frame the server sends to the client.
@@ -76,12 +79,15 @@ pub enum RowOp {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "table", rename_all = "snake_case")]
 pub enum RowData {
-    /// The settled baseline for a zone (`shard::cold_zones`).
+    /// The settled baseline for a zone (`zone_shard::cold_zones`).
     ColdZone(ColdZoneRow),
-    /// A changed terrain cell overlaying cold (`shard::hot_tiles`).
+    /// A changed terrain cell overlaying cold (`zone_shard::hot_tiles`).
     HotTile(HotCellRow),
-    /// A changed thing cell (`shard::hot_things`).
+    /// A changed thing cell (`zone_shard::hot_things`).
     HotThing(HotCellRow),
+    /// A loose thing from the object shard (`object_shard::free_things`) — a
+    /// stable `object_id`, a tile `location`, and a sub-tile `offset`.
+    FreeThing(FreeThingRow),
 }
 
 /// Mirror of `shard::cold_zone_type::ColdZone`.
@@ -101,4 +107,16 @@ pub struct HotCellRow {
     pub location: u8,
     pub rotation: u8,
     pub id: u16,
+}
+
+/// Mirror of `object_shard::free_thing_type::FreeThing` (server `FreeThingRow`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct FreeThingRow {
+    pub valid_at: u64,
+    pub object_id: u64,
+    pub zone_id: u32,
+    pub location: u8,
+    pub rotation: u8,
+    pub id: u16,
+    pub offset: u8,
 }

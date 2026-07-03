@@ -1,13 +1,15 @@
 // lib.rs
 //
-// Region-shard module — the hot/cold zone store for the new game. Holds the
-// location-dependent region/zone state: terrain plus the things that have
-// *settled into* the world. Mobile things and pawns live in a separate
-// `object_shard` (planned) — something dropped into the world starts in an
-// object shard, and becomes part of a region shard once it settles.
+// Zone-shard module (crate `resonantdust_zone_shard`, db `resonantdust-<env>-zone-0`)
+// — the hot/cold zone store for the new game. Holds the location-dependent
+// region/zone state: terrain plus the things that have *settled into* the world.
+// Mobile ("loose") things and pawns live in a separate `object_shard` — something
+// dropped into the world lives in an object shard, and becomes part of a zone
+// shard once it settles. (Formerly `region_shard`; renamed because the db name
+// must be DNS-like — no underscores — and the shard is keyed by zone.)
 //
 // SpacetimeDB is the generic data store; the Gateway is the game server. The
-// region shard holds two representations of every 16×16 zone and trusts the
+// zone shard holds two representations of every 16×16 zone and trusts the
 // Gateway to validate and to overlay them:
 //
 //   - `zones` (cold) — one settled `cold_zone` row per zone: the full 256-tile
@@ -32,6 +34,7 @@ pub mod gc;
 pub mod hot;
 pub mod sequence;
 pub mod time;
+pub mod transfer;
 pub mod zones;
 
 /// Default shard id for this deployment. `0` while a single shard serves

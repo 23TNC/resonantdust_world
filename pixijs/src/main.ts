@@ -24,11 +24,17 @@ import { SyncHistory } from "./game/panels/titlebar/syncHistory";
 // gate-served content, so they live in the view. This is the single source of
 // truth the panel-settings "Copy All JSON" export pastes into.
 import panelDefaults from "./content/panels/defaults.json";
-import { WasmClient, type ClockStats, type CallStat, type SubStat } from "./client/WasmClient";
+import { WasmClient, type ClockStats, type CallStat, type SubStatsSnapshot } from "./client/WasmClient";
 import { initWasm } from "./client/wasm";
-import { loadContent } from "./game/definitions/contentBoot";
-import { gatewayUrlFor, setCurrentEnvironment } from "./client/environments";
-import { TextureManager } from "./textures";
+import {
+  loadContent,
+  reloadContent,
+  startContentPolling,
+  onContentReloaded,
+  getContent,
+} from "./game/definitions/contentBoot";
+import { gatewayUrlFor, assetBaseFromServerUrl, setCurrentEnvironment } from "./client/environments";
+import { TextureResolver, texturesRoot, persistStorage } from "./textures";
 import type { GameContext } from "./GameContext";
 
 async function main(): Promise<void> {
@@ -69,13 +75,21 @@ async function main(): Promise<void> {
   // Instantiate the Rust→wasm bundle (login + zone engine + DSL content) before
   // anything that constructs a `WorldClient` or `Content`.
   await initWasm();
-  // The DSL tile content runtime, decoded from the embedded `content/` corpus —
-  // the world scene queries it per zone to colour tiles.
-  const content = loadContent();
+  // The DSL content runtime. Assets live on the world SERVER now, which isn't
+  // known until login, so boot from the build-time embed; `onLoggedIn` (below)
+  // pulls the server's corpus and hot-swaps it in. The world scene queries this
+  // per zone to colour tiles + place things.
+  const content = await loadContent();
 
-  // Texture atlas pool — MaxRects-packed pages of rectangle textures. Bakes the
-  // 32×32 WHITE fill primitive at construction; texture loading returns later.
-  const textures = new TextureManager(app.renderer);
+  // The three-tier texture resolver — owns the per-LOD MaxRects atlas pools and
+  // bakes the WHITE fill primitive into the preview pool at construction. Named
+  // prims resolve to the best of master → preview (half-grid, IndexedDB-backed) →
+  // geo, upgrading in place as loads land. It fetches from the world SERVER's
+  // `/textures` route — the same origin `/content` comes from — but the server
+  // isn't known until login, so it starts rootless (all geo) and `onLoggedIn`
+  // (below) repoints it. Ask the browser to keep the preview store off eviction.
+  const textureResolver = new TextureResolver(app.renderer, "");
+  void persistStorage();
 
   const scenes = new SceneManager(app);
 
@@ -105,12 +119,34 @@ async function main(): Promise<void> {
     topTaskbar,
     uiEditMode,
     drawCalls,
-    textures,
+    textureResolver,
     content,
     panels: null,
     logs: null,
   };
   scenes.setContext(ctx);
+
+  // Assets live on the world server the client logs into. On login, repoint the
+  // texture resolver at that server's `/textures` and pull its corpus (replacing
+  // the boot embed) — both from the same server HTTP base.
+  client.onLoggedIn((serverUrl) => {
+    const base = assetBaseFromServerUrl(serverUrl);
+    if (!base) return;
+    textureResolver.setRoot(texturesRoot(base));
+    void reloadContent(base).catch((err) =>
+      console.warn("[content] server corpus fetch failed; staying on embed", err),
+    );
+  });
+
+  // Content hot-swap: poll the server for a new corpus version and, on a change,
+  // reload + repaint without a page reload. The poll reads the client's asset base
+  // each tick (empty before login → no-op), so it follows login; `onContentReloaded`
+  // updates the shared handle so any consumer sees the fresh bundle (the world
+  // scene also subscribes, to repaint its live zones — see WorldScene).
+  startContentPolling(() => ctx.client.assetBase());
+  onContentReloaded(() => {
+    ctx.content = getContent();
+  });
 
   // ── App-global title-bar tools ──────────────────────────────────────
   // Settings dropdown (⛯) + debug HUD (📊), pinned to the top taskbar and alive
@@ -134,12 +170,10 @@ async function main(): Promise<void> {
   client.onClockStats((s: ClockStats) => {
     syncHistory.update(s.synced ? toSyncStats(s) : null);
   });
-  // Per-reducer gateway-call tally → the debug panel's "calls" tab (inert until
-  // call-stat accounting returns).
+  // Per-command gateway-call tally → the debug panel's "calls" tab.
   client.onCallStats((stats: CallStat[]) => debugPanel.setCallStats(stats));
-  // Per-table subscription tally → the debug panel's "subs" tab (inert until zone
-  // subscriptions return).
-  client.onSubStats((stats: SubStat[]) => debugPanel.setSubStats(stats));
+  // Subscription-data tally (open/total gauge + per-table bytes) → the "subs" tab.
+  client.onSubStats((snap: SubStatsSnapshot) => debugPanel.setSubStats(snap));
 
   // Couple UI edit mode with the per-panel settings popup: entering edit mode
   // closes the Settings dropdown and opens the popup (bound to the last-focused
@@ -158,15 +192,23 @@ async function main(): Promise<void> {
     if (!open) uiEditMode.setEnabled(false);
   });
 
-  // Drive the debug HUD every frame, scene-independent: frame-time → fps and the
-  // GL draw-call tally. Atlas occupancy + clock-sync are omitted/empty until the
-  // texture + networking subsystems return (`syncHistory.current()` is null under
-  // the stub → the sync rows stay at "—").
+  // Drive the debug HUD every frame, scene-independent: frame-time → fps, the GL
+  // draw-call tally, and the atlas occupancy. `atlases` is the total page count
+  // across every LOD pool (the white fill shares the preview pool, so there's no
+  // separate built-in atlas); `slotCounts` is the per-pow2 packed-texture tally and
+  // `preview*` the floor tier. Clock-sync stays empty until networking returns
+  // (`syncHistory.current()` null → sync rows at "—").
   app.ticker.add((ticker) => {
+    const lod = textureResolver.lodStats();
     debugPanel.setStats(
       ticker.deltaMS,
       drawCalls.readAndReset(),
-      undefined,
+      {
+        atlases: lod.pages,
+        slotCounts: lod.counts,
+        previewSize: lod.previewSize,
+        previewCount: lod.previewCount,
+      },
       syncHistory.current() ?? undefined,
     );
   });

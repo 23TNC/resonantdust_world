@@ -14,7 +14,7 @@
 //! server; the gateway picks a *server* and returns it; the client connects there
 //! and that server becomes authoritative for the player's live state. Servers
 //! read the authoritative *data* from the SpacetimeDB *shards* backing them
-//! (the `region_shard` module DBs today; an `object_shard` will join them). So a
+//! (the `zone_shard` module DBs today; an `object_shard` will join them). So a
 //! region resolves to a shard+endpoint (which DB
 //! holds its zones), and a player resolves to a server+endpoint (which process
 //! owns its session).

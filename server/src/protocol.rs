@@ -35,6 +35,13 @@ pub enum ClientMsg {
     SubZone { sid: u32, zone_id: u32 },
     /// Drop a subscription previously opened with the same `sid`.
     Unsub { sid: u32 },
+    /// Release the thing affixed at `(zone_id, location)` out into the object
+    /// shard (the Prison-Architect release). The server drives the transfer saga:
+    /// `begin_release` on the zone shard → `receive` on the object shard → back to
+    /// `ack_release`. Requires the zone to be subscribed (both shard upstreams
+    /// live). No reply frame — the effect arrives as the affixed thing vanishing
+    /// and a `free_thing` appearing on the client's existing subscriptions.
+    Release { zone_id: u32, location: u8 },
 }
 
 /// A frame the server sends to the client.
@@ -83,12 +90,16 @@ pub enum RowOp {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "table", rename_all = "snake_case")]
 pub enum RowData {
-    /// The settled baseline for a zone (`shard::cold_zones`).
+    /// The settled baseline for a zone (`zone_shard::cold_zones`).
     ColdZone(ColdZoneRow),
-    /// A changed terrain cell overlaying cold (`shard::hot_tiles`).
+    /// A changed terrain cell overlaying cold (`zone_shard::hot_tiles`).
     HotTile(HotCellRow),
-    /// A changed thing cell (`shard::hot_things`).
+    /// A changed thing cell (`zone_shard::hot_things`).
     HotThing(HotCellRow),
+    /// A loose thing from the object shard (`object_shard::free_things`). Carries
+    /// a stable `object_id` and a sub-tile `offset`; the client overlays these on
+    /// top of the zone's cold+hot things.
+    FreeThing(FreeThingRow),
 }
 
 /// Mirror of `shard::cold_zone_type::ColdZone`.
@@ -101,7 +112,7 @@ pub struct ColdZoneRow {
 }
 
 /// Mirror of the two identical hot layer rows
-/// (`shard::{hot_tile,hot_thing}_type`).
+/// (`zone_shard::{hot_tile,hot_thing}_type`).
 #[derive(Debug, Clone, Serialize)]
 pub struct HotCellRow {
     pub valid_at: u64,
@@ -109,6 +120,20 @@ pub struct HotCellRow {
     pub location: u8,
     pub rotation: u8,
     pub id: u16,
+}
+
+/// Mirror of `object_shard::free_thing_type::FreeThing`. Like a hot thing plus a
+/// stable `object_id` instance handle and a `u8` sub-tile `offset`
+/// (`resonantdust_codec::packed`: `x_off:4 | y_off:4`).
+#[derive(Debug, Clone, Serialize)]
+pub struct FreeThingRow {
+    pub valid_at: u64,
+    pub object_id: u64,
+    pub zone_id: u32,
+    pub location: u8,
+    pub rotation: u8,
+    pub id: u16,
+    pub offset: u8,
 }
 
 impl ServerMsg {

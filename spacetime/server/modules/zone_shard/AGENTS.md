@@ -1,10 +1,10 @@
-# AGENTS.md — `region_shard` module (the hot/cold zone store)
+# AGENTS.md — `zone_shard` module (the hot/cold zone store)
 
 ## Purpose
-SpacetimeDB 2.1.0 server module (Rust → wasm32), package `resonantdust_region_shard`.
-The new game's **region shard**: the location-dependent store holding terrain plus
+SpacetimeDB 2.1.0 server module (Rust → wasm32), package `resonantdust_zone_shard`.
+The new game's **zone shard**: the location-dependent store holding terrain plus
 the things that have **settled into** the world. SpacetimeDB is the generic data
-store, the **Gateway** is the game server. The region shard holds two
+store, the **Gateway** is the game server. The zone shard holds two
 representations of every **16×16 zone** and trusts the Gateway to validate writes
 and to overlay the two representations when serving the client. Depends on the
 shared `resonantdust-codec` crate (the `valid_at` / `zone_id` / packed-thing/tile
@@ -45,7 +45,7 @@ tile/thing tables don't carry.
 | [src/sequence.rs](src/sequence.rs) | `sequence_counter` + `next_sequence()` — load-bearing for `valid_at` PK uniqueness across same-ms writes. |
 
 The `valid_at` PK + zone-cell + packed-thing/tile bit helpers live in the shared
-`resonantdust_codec::packed` crate (not in this module), so the region shard and
+`resonantdust_codec::packed` crate (not in this module), so the zone shard and
 the client encode the same layouts.
 
 ## Anti-drift: one history-primitive set, macro-generated
@@ -110,10 +110,10 @@ Gateway-resolved `now_ms: u64`.
 
 ## Build & iterate
 Builds to wasm inside Docker — never a host `spacetime` CLI.
-- `bin/rd build spacetime region_shard` — module wasm + regenerates server bindings
-  into `server/src/bindings/region_shard/`.
+- `bin/rd build spacetime zone_shard` — module wasm + regenerates server bindings
+  into `server/src/bindings/zone_shard/`.
 - Iteration-only compile check (skips bindings):
-  `docker compose -f spacetime/compose.yml run --rm -w /workspace/server/modules/region_shard build build`.
+  `docker compose -f spacetime/compose.yml run --rm -w /workspace/server/modules/zone_shard build build`.
 - `rustfmt` is absent in the image — the "could not format" warning is cosmetic.
 
 ## SpacetimeDB 2.x notes

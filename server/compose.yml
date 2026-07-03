@@ -48,6 +48,11 @@ services:
       # cwd) finds it — worldgen reads it to seed zones. Read-only: the server
       # never writes content.
       - ../content:/workspace/content:ro
+      # The texture master tree, likewise nested at /workspace/textures so the
+      # binary's default TEXTURE_DIR ("textures") finds it — the server serves
+      # /textures from it (disk mode). Read-only: masters are authored by bin/art,
+      # never written by the server (derived previews cache under the temp dir).
+      - ../textures:/workspace/textures:ro
     working_dir: /workspace
     command: ["sleep", "infinity"]
 
@@ -63,6 +68,11 @@ services:
       # cwd) finds it — worldgen reads it to seed zones. Read-only: the server
       # never writes content.
       - ../content:/workspace/content:ro
+      # The texture master tree, likewise nested at /workspace/textures so the
+      # binary's default TEXTURE_DIR ("textures") finds it — the server serves
+      # /textures from it (disk mode). Read-only: masters are authored by bin/art,
+      # never written by the server (derived previews cache under the temp dir).
+      - ../textures:/workspace/textures:ro
     working_dir: /workspace
     command: ["sleep", "infinity"]
 
@@ -78,5 +88,10 @@ services:
       # cwd) finds it — worldgen reads it to seed zones. Read-only: the server
       # never writes content.
       - ../content:/workspace/content:ro
+      # The texture master tree, likewise nested at /workspace/textures so the
+      # binary's default TEXTURE_DIR ("textures") finds it — the server serves
+      # /textures from it (disk mode). Read-only: masters are authored by bin/art,
+      # never written by the server (derived previews cache under the temp dir).
+      - ../textures:/workspace/textures:ro
     working_dir: /workspace
     command: ["sleep", "infinity"]

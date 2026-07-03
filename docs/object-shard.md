@@ -1,8 +1,10 @@
 # Object shard
 
-**Status:** design spec (not yet built). This is the plan for the second class of
-data shard and the cross-shard transfer protocol that converts things between the
-two.
+**Status:** Phases 1–2 built (the `object_shard` module + codec `offset` helper);
+Phases 3–7 (gate/client integration + transfer protocol) still to do. The
+`region_shard` module was also renamed to `zone_shard` (db family `shard`→`zone`)
+as part of this work. This doc is the plan for the second class of data shard and
+the cross-shard transfer protocol that converts things between the two.
 
 ## Why object shards exist
 
@@ -88,12 +90,14 @@ richer instance identity pawns (and attachment) need comes later.
 
 | Table | Purpose | Key fields |
 | ----- | ------- | ---------- |
-| `free_things` | one row per free (movable, sub-tile) thing | `valid_at (u64 PK)`, `zone_id (u32, indexed)`, `location (u8)`, `rotation (u8)`, `id (u16)`, `offset (u8 = x_off:4 \| y_off:4)` |
+| `free_things` | one row per free (movable, sub-tile) thing | `valid_at (u64 PK)`, `object_id (u64, indexed)`, `zone_id (u32, indexed)`, `location (u8)`, `rotation (u8)`, `id (u16)`, `offset (u8 = x_off:4 \| y_off:4)` |
 | `presence` | per-region object count | `region_id (u32 PK)`, `count (u32)` |
-| `transfer` | in-flight transfers, both directions | `transfer_id (u64 PK)`, `direction (u8)`, `state (u8)`, `region_id (u32, indexed)`, `payload (location, rotation, id, offset)`, `claimed_by (u16)`, `claimed_at (u64)`, `created_at (u64)` |
+| `transfer` | in-flight transfers, both directions *(Phase 5, not built)* | `transfer_id (u64 PK)`, `direction (u8)`, `state (u8)`, `region_id (u32, indexed)`, `payload (object_id, location, rotation, id, offset)`, `claimed_by (u16)`, `claimed_at (u64)`, `created_at (u64)` |
 
-`free_things` is the `hot_things` layout (`region_shard/src/hot.rs`: `zone_id`,
-`location`, `rotation`, `id`) **plus `offset`**. The offset gives sub-tile position
+`free_things` is the `hot_things` layout (`zone_shard/src/hot.rs`: `zone_id`,
+`location`, `rotation`, `id`) **plus `offset`** and a stable **`object_id`** (u64,
+allocated once, preserved across every version/move — see [Positioning &
+identity](#positioning--identity)). The offset gives sub-tile position
 at 1/16-tile granularity — 4px on a 64px tile — which is the whole point: affixed
 things are tile-snapped, a free thing needs to sit anywhere in the tile to move
 smoothly. It's a deliberate *separate* `u8`, **not** carved from the packed thing's
@@ -275,13 +279,15 @@ away on settle), not an identity remap. No global u64 id and no companion regist
 for now; those belong with the richer instance identity **pawns** need, which is
 deferred.
 
-One consequence to nail down: with a sub-tile offset, **several free things can
-share a tile**, so `location` alone no longer identifies an object within a zone
-the way it does for a tile-snapped affixed thing (one per cell). The object shard
-needs a per-instance handle for updates and transfers. The bitemporal `valid_at`
-PK already gives each row identity; whether free things also need a *stable*
-cross-update instance id — one that survives a move and is distinct from `id`
-(= what-kind) — is the one thing left open here.
+One consequence forced a decision: with a sub-tile offset, **several free things
+can share a tile**, so `location` alone no longer identifies an object within a
+zone the way it does for a tile-snapped affixed thing (one per cell). The object
+shard needs a per-instance handle for updates and transfers. **Resolved (Phase 1,
+minimally):** `free_things` carries a stable **`object_id` (u64)** allocated once
+from a module counter and preserved across every version and move — distinct from
+`id` (= what-kind). That's the handle `move`/`remove` address and the one a future
+settle-transfer carries. History is still per `valid_at` PK; `object_id` groups a
+thing's versions.
 
 **Attachment sharpens this.** Reason #2 (a pawn carrying a sword/chair) needs a
 loose thing to reference its **parent** — the carrier — so its position derives
@@ -303,27 +309,55 @@ through this same free-thing path once added.)
 
 ## Implementation plan
 
-Phased so each step is independently verifiable, mirroring how `region_shard` was
+Phased so each step is independently verifiable, mirroring how `zone_shard` was
 brought up.
 
-1. **`object_shard` module skeleton.** New `spacetime/server/modules/object_shard`
-   reusing `region_shard`'s hot machinery: `free_things` (the `hot_things` layout +
-   `offset`) + `presence` tables, `init` (recount), a reconcile `gc_schedule`, a
-   `seed`-style populate reducer, and CRUD reducers that maintain presence. Registers
-   in the `index` `shards` table like a zone shard. DB name has **no underscores**
-   (`object-0`, per the `shard-0` naming constraint). Verifiable in isolation: insert
-   free things, watch presence stay correct across restart.
-2. **Codec + shared types.** The `offset` pack/unpack (`u4 x | u4 y`) and the
-   free-thing row layout in `shared/codec`, so shard and client agree (same posture
-   as the existing packed helpers).
-3. **Gate reads presence.** World server subscribes object-shard `presence`,
-   resolves object shards for a region dynamically, and relays free-thing rows to the
-   client (new `RowData::FreeThing` variant in `server/src/protocol.rs`).
-4. **Client three-way merge.** Render free things (at their sub-tile `offset`) atop
-   cold+hot in the pixijs viewport; extend `zones.rs` demux to the object source.
-5. **Transfer protocol.** Add the `transfer` table to both modules, the role
-   reducers, `transfer_id` minting, and the pending-out suppression lock. Drive the
-   three-hop handshake from the world server for a single gate first (no witnesses).
+1. **✅ `object_shard` module skeleton.** `spacetime/server/modules/object_shard`
+   reusing `zone_shard`'s hot machinery (`time`/`sequence`): `free_things` (the
+   `hot_things` layout + `offset` + stable `object_id`) + `presence` tables, `init`
+   (recount), a reconcile `gc_schedule` (**no fold**), and CRUD reducers
+   (`create`/`place`/`move`/`remove`) that maintain presence transactionally. DB
+   `object-0` (no underscores). Compiles to wasm. *Still to do: register in the
+   `index` `shards` table (a runtime seed, done alongside Phase 3).*
+2. **✅ Codec + shared types.** The `offset` pack/unpack (`x_off:4 | y_off:4`,
+   `pack_offset`/`offset_x`/`offset_y` + test) in `shared/codec`, so shard and client
+   agree.
+3. **Gate relays free things** *(data path ✅; presence routing pending)*. The world
+   server now connects the object shard per client, subscribes `free_things WHERE
+   zone_id = Z` alongside each zone's cold/hot, and relays rows as
+   `RowData::FreeThing` (`server/src/{protocol,ws,connections,index,config}.rs`).
+   Object connect is **best-effort** — an unreachable object shard logs and the zone
+   still serves terrain. **Still pending (the "scale" half):** subscribe object-shard
+   `presence` and resolve object shards for a region *dynamically* across multiple
+   shards; today every zone resolves to the single default object shard
+   (`resolve_object_or_default`), so no `index` `shards` rows are needed yet.
+4. **Client renders free things** *(✅, pending browser verify)*. The `FreeThing`
+   row flows client protocol → `Event::ZoneFreeThing` (both `engine.rs` + `web.rs`)
+   → `shared/wasm` marshal + `freeThingPrim` helper (fractional global tile coords +
+   tint) → pixijs `WasmClient.onFreeThing` → `WorldBridge` draws a sub-tile square
+   per `object_id` (upsert on insert/update, drop on delete or zone close). Builds
+   clean; runtime rendering unverified (needs the stack in a browser). Note: affixed
+   things (cold/hot `things`) still aren't rendered, so loose things are the first
+   things drawn — the full cold+hot+free "three-way merge" awaits affixed-thing
+   rendering.
+5. **Transfer protocol.** Split into shard-side reducers and the gate driver.
+   - **5a — release reducers** *(✅, compile-verified; testable via `spacetime call`)*:
+     `zone_shard/transfer.rs` (`transfers` table + `begin_release` reading the
+     current affixed thing + `ack_release` clearing it via a hot 0-id write, both
+     idempotent, `transfer_id` = `pack_valid_at(now_ms, seq)`) and
+     `object_shard/transfer.rs` (`transfers` receipt + `receive` inserting the loose
+     thing at tile-centre via `free_things::place`, idempotent). The pending-out row
+     is the suppression lock; the thing is deleted only on `ack_release`.
+   - **5b — gate orchestration** *(✅ builds; browser/runtime unverified)*: a client
+     `Release { zone_id, location }` command (client `Client::release` → wasm
+     `WorldClient.release` → pixijs `WasmClient.release`) and the world-server saga
+     (`ws.rs`): `handle_release` calls `begin_release`, and `wire_transfer_bridge`
+     subscribes each shard's `transfers` table with two callbacks —
+     pending-out → `object_shard::receive`, received-receipt → `zone_shard::ack_release`.
+     Single gate, no witnesses/leases (Phase 6). Idempotent target reducers make
+     replayed callbacks safe. **Not runtime-verified** — the callback ordering /
+     connection-lifecycle wants a live stack to trust.
+   - **settle direction** (object → zone) is the mirror, to follow 5b.
 6. **Region-scoped witnessing + leases.** Gates witness `transfer WHERE region_id
    IN (active regions)`; add the lease fields and the **load-bearing**
    stale-transfer sweep; test recovery by killing the driving gate mid-transfer,
@@ -333,10 +367,8 @@ brought up.
 
 ## Open questions
 
-- **Stable free-thing instance handle** (§ Positioning & identity) — with multiple
-  free things per tile, `location` isn't a unique key, and attaching a thing to a
-  pawn needs a durable parent reference; both point at the same decision: whether a
-  free thing needs a stable instance id (distinct from `id` = what-kind) beyond the
-  `valid_at` PK. Lands with the deferred pawn/attachment work; the free-thing row
-  should reserve room for a future `parent`/attachment field. This is the only
-  substantive one left.
+- **Attachment / `parent` field** — the stable-handle question is settled (Phase 1
+  gave `free_things` a `u64 object_id`). What remains is the pawn-carry model:
+  attaching a loose thing to a pawn means its position derives from a `parent`
+  handle instead of `zone_id`/`location`. That lands with pawns (deferred); the row
+  will gain a `parent`/attachment field then. This is the only substantive one left.

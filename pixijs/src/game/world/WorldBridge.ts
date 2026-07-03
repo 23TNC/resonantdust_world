@@ -2,27 +2,115 @@
 //! subscribed zones into painted tiles, and the viewport's camera into the
 //! client's anchor.
 //!
-//! On every cold-zone delivery (`onZoneTiles`) it runs the DSL (`Content
-//! .zoneTilePrims`, which executes each tile's `:visual @on_create`) to expand
-//! the packed slots into `[tileX, tileY, tint]` triples, then adds one 64×64
-//! white-texture sprite per non-empty cell, tinted by its colour. On a zone
-//! close it drops that zone's sprites. The anchor is pushed to the viewport every
-//! move (so the camera follows) and to the client whenever it crosses a tile (so
-//! the hysteresis ladder subscribes / unsubscribes zones).
+//! On every cold-zone delivery it runs the DSL to expand the zone's packed cells
+//! into `[tileX, tileY, tint]` triples and adds one sprite each: `onZoneTiles`
+//! (`Content.zoneTilePrims`, each tile's `:visual @on_create`) paints a 64×64
+//! ground sprite per non-empty cell; `onZoneThings` (`Content.zoneThingPrims`,
+//! each thing's `:visual @on_create`) paints a smaller sprite per scattered thing
+//! (the worldgen flora), centred in its cell and above the ground. Tiles and
+//! things are tracked per zone separately, so a cold rewrite re-seeds each without
+//! disturbing the other or the object-shard loose things. On a zone close it drops
+//! all of that zone's sprites. The anchor is pushed to the viewport every move (so
+//! the camera follows) and to the client whenever it crosses a tile (so the
+//! hysteresis ladder subscribes / unsubscribes zones).
 
 import type { Texture } from "pixi.js";
-import type { WasmClient, AnchorRadii } from "../../client/WasmClient";
+import type { WasmClient, AnchorRadii, FreeThing } from "../../client/WasmClient";
 import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
+import type { TextureResolver } from "../../textures";
 import { SQUARE } from "../viewport/squareMath";
 
 /** The viewport anchor's name in the client's anchor list. */
 const ANCHOR = "viewport:0";
 
+/** How slowly the sticky subscription reach relaxes toward the current zoom's reach —
+ *  one tile per this many ms of zoomed-in time. Long enough that a quick zoom in→out
+ *  keeps its subs, short enough that a sustained zoom-in lets the outer band fall away. */
+const STICKY_RELAX_MS = 200;
+
+/** Whether two radii sets are identical — a zoom that doesn't change the reach skips the
+ *  client re-push (and its ladder re-evaluation). */
+const sameRadii = (a: AnchorRadii, b: AnchorRadii): boolean =>
+  a.active === b.active && a.hot === b.hot && a.warm === b.warm && a.cold === b.cold;
+
+/** A thing's driving-axis footprint in world px when its def sets no `size`
+ *  (content emits `0` = unset). Half a tile, so small flora sits within its cell. */
+const DEFAULT_THING_PX = SQUARE / 2;
+
+/** Base zIndex for thing sprites — above the ground (tiles are `0`). Each thing
+ *  adds its base tile-row on top of this, so overlapping things paint in
+ *  painter's order (a lower/nearer thing draws over a higher/farther one) and a
+ *  big sprite (a tree) that extends into the cell above still sits in front of
+ *  whatever grows there. See {@link thingZ}. */
+const THING_Z_BASE = 1;
+
+/** The built-in flat-fill stem: a def that names this (or nothing) has no sprite —
+ *  it bakes as a plain tint rect (the geo tier), unchanged from before textures. */
+const WHITE_STEM = "white";
+
+/** A prim's texture name for the resolver from its def's stem: the stem itself, or
+ *  `undefined` for the built-in white fill / an unnamed def (→ flat tint rect). */
+function textureNameFor(stem: string | undefined): string | undefined {
+  return stem && stem !== WHITE_STEM ? stem : undefined;
+}
+
+/** The facing (a master's `<rot>` segment) + horizontal flip for each 2-bit thing
+ *  rotation. Rotation 0 is SOUTH — the single-facing default every existing master
+ *  was renamed to — so untouched worldgen data (rotation all-zero) renders south
+ *  unchanged. West ships no master of its own: it reuses the east master mirrored. */
+const FACING_BY_ROTATION: ReadonlyArray<{ facing: "s" | "e" | "n"; flipX: boolean }> = [
+  { facing: "s", flipX: false }, // 0 — south
+  { facing: "e", flipX: false }, // 1 — east
+  { facing: "n", flipX: false }, // 2 — north
+  { facing: "e", flipX: true }, //  3 — west (east mirrored)
+];
+
+/** The category (first stem segment) whose objects are LINKED/autotiled: their
+ *  masters carry the `l` direction and their variation is picked by neighbour context
+ *  rather than a facing. Mirrors `bin/art`'s `GRID_CATS`. */
+const LINKED_CATEGORY = "linked";
+
+/** A thing's texture name + flip for a given rotation. The def's base stem gets a
+ *  trailing DIRECTION segment the resolver treats as its own stem: a facing from the
+ *  rotation (`world/conifer` → `world/conifer/e`), or `l` for a linked-category object
+ *  (`linked/wall_smooth` → `linked/wall_smooth/l`), whose grid cell (count) is a
+ *  neighbour-context atlas — the context pick is Phase 2; the canonical cell renders
+ *  for now. A white/absent stem stays a flat tint rect. */
+function thingTexture(stem: string | undefined, rotation: number): { name: string | undefined; flipX: boolean } {
+  const base = textureNameFor(stem);
+  if (!base) return { name: undefined, flipX: false };
+  if (base.startsWith(`${LINKED_CATEGORY}/`)) return { name: `${base}/l`, flipX: false };
+  const f = FACING_BY_ROTATION[rotation & 3];
+  return { name: `${base}/${f.facing}`, flipX: f.flipX };
+}
+
 export class WorldBridge {
-  /** Sprite ids per subscribed zone, so a close drops exactly that zone. */
+  /** Tile-sprite ids per subscribed zone, so a close drops exactly that zone. */
   private readonly zonePrims = new Map<number, number[]>();
+  /** Cold thing-sprite ids per zone (worldgen flora), tracked apart from tiles so
+   *  a cold rewrite re-seeds each independently. */
+  private readonly zoneThings = new Map<number, number[]>();
+  /** One sprite per loose thing, keyed by `objectId`; the `thing` payload is kept
+   *  so a content hot-swap can re-expand it, and `thing.zoneId` lets a zone close
+   *  drop exactly its things. */
+  private readonly freeThings = new Map<number, { primId: number; thing: FreeThing }>();
+  /** Raw packed tiles / things per zone as delivered — kept so a content hot-swap
+   *  ({@link setContent}) can re-expand every live zone through the new corpus
+   *  without re-requesting it from the server. */
+  private readonly zoneTilesRaw = new Map<number, Uint16Array>();
+  private readonly zoneThingsRaw = new Map<number, Uint32Array>();
   private readonly unsubs: Array<() => void> = [];
+
+  /** Texture-stem tables from the content bundle, indexed by `defId - 1` (the
+   *  `defId` each prim carries). Cached so the per-cell expansion loop doesn't
+   *  re-cross the wasm boundary for the same table; refreshed on every content
+   *  hot-swap ({@link setContent}). */
+  private tileStems: string[] = [];
+  private thingStems: string[] = [];
+  /** Per-thing footprint in tiles, indexed by `defId - 1` (same as the stem
+   *  tables). `0` = unset → {@link DEFAULT_THING_TILES}. Refreshed on hot-swap. */
+  private thingSizes: Float64Array = new Float64Array();
 
   /** Anchor centre, in world px. */
   private anchorX = 0;
@@ -30,15 +118,73 @@ export class WorldBridge {
   /** Last anchor tile pushed to the client (NaN before the first push). */
   private anchorTileX = NaN;
   private anchorTileY = NaN;
+  /** Current viewport zoom (screen px per world px); scales the subscription reach. */
+  private zoom = 1;
+  /** Sticky subscription reach (tiles): grows instantly on zoom-out, relaxes slowly on
+   *  zoom-in, so a zoom in→out cycle keeps its outer subs instead of dropping + re-fetching. */
+  private stickyActive = 0;
+  private stickyRelaxedMs = 0;
+  /** Last radii pushed to the client, so an unchanged reach skips the re-push. */
+  private lastRadii: AnchorRadii = { active: -1, hot: -1, warm: -1, cold: -1 };
 
   constructor(
     private readonly client: WasmClient,
-    private readonly content: Content,
+    private content: Content,
     private readonly viewport: Viewport,
     private readonly white: Texture,
+    private readonly resolver: TextureResolver,
   ) {
     this.unsubs.push(client.onZoneTiles((zoneId, tiles) => this.onZoneTiles(zoneId, tiles)));
+    this.unsubs.push(client.onZoneThings((zoneId, things) => this.onZoneThings(zoneId, things)));
     this.unsubs.push(client.onZoneClosed((zoneId) => this.onZoneClosed(zoneId)));
+    this.unsubs.push(client.onFreeThing((thing) => this.onFreeThing(thing)));
+    // A thing's footprint depends on its texture's aspect (see thingBox), which
+    // isn't known until a real tier loads — re-seed the live things when one lands
+    // so a square silhouette becomes its true shape (a 1:2 tree) in place.
+    this.unsubs.push(this.resolver.onLoad(() => this.reseedThings()));
+    this.refreshStems();
+  }
+
+  /** Re-read the per-def texture-stem tables from the current content bundle —
+   *  after construction and on every hot-swap, so the expansion loops resolve
+   *  each prim's `defId` to its stem without a wasm call per cell. */
+  private refreshStems(): void {
+    this.tileStems = this.content.tileTextureStems();
+    this.thingStems = this.content.thingTextureStems();
+    this.thingSizes = this.content.thingSizes();
+  }
+
+  /** A thing's DRIVING (min-axis) footprint in world px from its `defId` — its
+   *  content `size` (now in PIXELS, e.g. 64 = one tile wide), or
+   *  {@link DEFAULT_THING_PX} when unset. */
+  private thingSizePx(defId: number): number {
+    const px = this.thingSizes[defId - 1];
+    return px && px > 0 ? px : DEFAULT_THING_PX;
+  }
+
+  /** A thing's on-screen box in world px: the min axis is its `size`
+   *  ({@link thingSizePx}); the other axis is that times the texture's aspect, so
+   *  a 1:2 conifer draws 1 wide × 2 tall instead of squished into a square. Aspect
+   *  comes from the resolved texture (1 until a real tier loads → a square
+   *  silhouette that grows into its shape via {@link reseedThings}). */
+  private thingBox(defId: number): { w: number; h: number } {
+    const size = this.thingSizePx(defId);
+    const aspect = this.resolver.aspect(textureNameFor(this.thingStems[defId - 1])); // h / w
+    return aspect >= 1 ? { w: size, h: size * aspect } : { w: size / aspect, h: size };
+  }
+
+  /** A thing's zIndex from its base tile row — higher (nearer the camera-bottom)
+   *  rows paint later, so overlapping things z-order front-over-back. */
+  private thingZ(baseTileY: number): number {
+    return THING_Z_BASE + baseTileY;
+  }
+
+  /** Re-expand every live zone's cold things + loose things from their kept raw
+   *  data — used when a texture tier lands (aspect changed) so a thing's footprint
+   *  updates in place. Cheap: a handful of stems, each firing this a couple times. */
+  private reseedThings(): void {
+    for (const [zoneId, things] of this.zoneThingsRaw) this.onZoneThings(zoneId, things);
+    for (const { thing } of [...this.freeThings.values()]) this.onFreeThing(thing);
   }
 
   /** Begin: place the anchor at the world origin and force the first client
@@ -48,8 +194,9 @@ export class WorldBridge {
     this.setAnchor(0, 0);
   }
 
-  /** Move the anchor to a world-px point: always recenter the viewport; push to
-   *  the client only when the anchor tile changes (subscriptions are per tile). */
+  /** Move the anchor to a world-px point: always recenter the viewport; push to the
+   *  client only when the anchor tile OR the reach ({@link radii}) actually changes, so a
+   *  pan within a tile and a zoom that doesn't move a tier boundary are both free. */
   setAnchor(x: number, y: number): void {
     this.anchorX = x;
     this.anchorY = y;
@@ -57,16 +204,26 @@ export class WorldBridge {
 
     const tileX = Math.round(x / SQUARE);
     const tileY = Math.round(y / SQUARE);
-    if (tileX !== this.anchorTileX || tileY !== this.anchorTileY) {
+    const r = this.radii();
+    if (tileX !== this.anchorTileX || tileY !== this.anchorTileY || !sameRadii(r, this.lastRadii)) {
       this.anchorTileX = tileX;
       this.anchorTileY = tileY;
-      this.client.setAnchor(ANCHOR, tileX, tileY, 0, this.radii(), 0);
+      this.lastRadii = r;
+      this.client.setAnchor(ANCHOR, tileX, tileY, 0, r, 0);
     }
   }
 
   /** Pan the anchor by a world-px delta (drag handling lives in the scene). */
   moveBy(dx: number, dy: number): void {
     this.setAnchor(this.anchorX + dx, this.anchorY + dy);
+  }
+
+  /** Apply a zoom: record it (widens {@link radii} as we zoom out to see more world) and
+   *  move to the cursor-anchored point. {@link setAnchor} re-pushes on its own iff the
+   *  reach actually changed, so a zoom that stays within a tier boundary is free. */
+  zoomTo(x: number, y: number, zoom: number): void {
+    this.zoom = zoom;
+    this.setAnchor(x, y);
   }
 
   /** Drop everything: listeners, every zone's sprites, and the client anchor. */
@@ -77,50 +234,190 @@ export class WorldBridge {
       for (const id of ids) this.viewport.removePrim(id);
     }
     this.zonePrims.clear();
+    for (const ids of this.zoneThings.values()) {
+      for (const id of ids) this.viewport.removePrim(id);
+    }
+    this.zoneThings.clear();
+    for (const { primId } of this.freeThings.values()) this.viewport.removePrim(primId);
+    this.freeThings.clear();
+    this.zoneTilesRaw.clear();
+    this.zoneThingsRaw.clear();
     this.client.removeAnchor(ANCHOR);
   }
 
   // ── internals ───────────────────────────────────────────────────────
 
-  /** Per-tier anchor reach in tiles: the `active` ring covers the visible area
-   *  (half the larger screen dimension, in tiles) plus a prefetch margin; the
-   *  hysteresis tiers widen outward from there. */
+  /** Per-tier anchor reach in tiles. `active` (opens subs) + `hot` (pan hysteresis)
+   *  track the CURRENT zoom: `active` covers the visible area (half the larger screen
+   *  dimension in tiles, ÷ zoom — zooming out shows more world) plus a prefetch margin.
+   *  `warm`/`cold` (the sticky candidate band) track a STICKY reach that grows instantly
+   *  on zoom-out and relaxes slowly on zoom-in, so a quick zoom in→out keeps its subs
+   *  (held as warm candidates — the client's warmth + capacity-LRU bound them) instead
+   *  of dropping + re-fetching. Called every anchor move; mutates the sticky state. */
   private radii(): AnchorRadii {
-    const screenTiles = Math.max(window.innerWidth, window.innerHeight) / SQUARE;
+    const screenTiles = Math.max(window.innerWidth, window.innerHeight) / (SQUARE * this.zoom);
     const active = Math.ceil(screenTiles / 2) + 2;
-    return { active, hot: active + 2, warm: active + 4, cold: active + 6 };
+    const now = Date.now();
+    if (active >= this.stickyActive) {
+      this.stickyActive = active; // zoom-out (or first aim): grow to cover instantly
+      this.stickyRelaxedMs = now;
+    } else {
+      // Zoom-in: relax the held reach toward `active` at one tile per STICKY_RELAX_MS,
+      // carrying the remainder so the rate is wall-clock, not call-frequency, driven.
+      const shrink = Math.floor((now - this.stickyRelaxedMs) / STICKY_RELAX_MS);
+      if (shrink > 0) {
+        this.stickyActive = Math.max(active, this.stickyActive - shrink);
+        this.stickyRelaxedMs += shrink * STICKY_RELAX_MS;
+      }
+    }
+    return { active, hot: active + 2, warm: this.stickyActive + 4, cold: this.stickyActive + 6 };
   }
 
-  /** A zone's cold baseline arrived: re-seed its sprites from the DSL expansion. */
+  /** A zone's cold tile baseline arrived: re-seed its ground sprites. Clears only
+   *  this zone's tile sprites (a later cold row rewrites them) — its things and any
+   *  loose things are untouched, they re-seed on their own deliveries. */
   private onZoneTiles(zoneId: number, tiles: Uint16Array): void {
-    // A later cold row rewrites the zone — clear the old sprites first.
-    this.onZoneClosed(zoneId);
+    this.clearPrims(this.zonePrims, zoneId);
+    this.zoneTilesRaw.set(zoneId, tiles); // keep for a content hot-swap re-expand
 
-    const flat = this.content.zoneTilePrims(zoneId, tiles); // [tileX, tileY, tint, …]
+    const flat = this.content.zoneTilePrims(zoneId, tiles); // [x, y, tint, geoColor, defId, …]
     const ids: number[] = [];
-    for (let i = 0; i + 2 < flat.length; i += 3) {
+    for (let i = 0; i + 4 < flat.length; i += 5) {
       const tileX = flat[i];
       const tileY = flat[i + 1];
       const tint = flat[i + 2];
+      const geoColor = flat[i + 3];
+      const defId = flat[i + 4];
       ids.push(
         this.viewport.addPrim({
           texture: this.white,
+          textureName: textureNameFor(this.tileStems[defId - 1]),
           x: tileX * SQUARE,
           y: tileY * SQUARE,
           width: SQUARE,
           height: SQUARE,
           tint,
+          geoColor,
         }),
       );
     }
     if (ids.length) this.zonePrims.set(zoneId, ids);
   }
 
-  /** A zone's subscription closed (or it's being re-seeded): drop its sprites. */
+  /** A zone's cold thing baseline arrived: re-seed its scattered-thing sprites
+   *  (the worldgen flora). Each draws smaller than a tile, centred in its cell and
+   *  above the ground. Clears only this zone's thing sprites first; an empty
+   *  delivery just clears them. */
+  private onZoneThings(zoneId: number, things: Uint32Array): void {
+    this.clearPrims(this.zoneThings, zoneId);
+    this.zoneThingsRaw.set(zoneId, things); // keep for a content hot-swap re-expand
+
+    const flat = this.content.zoneThingPrims(zoneId, things); // [x, y, tint, geoColor, defId, rotation, …]
+    const ids: number[] = [];
+    for (let i = 0; i + 5 < flat.length; i += 6) {
+      const tileX = flat[i];
+      const tileY = flat[i + 1];
+      const tint = flat[i + 2];
+      const geoColor = flat[i + 3];
+      const defId = flat[i + 4];
+      const rotation = flat[i + 5];
+      const { w, h } = this.thingBox(defId);
+      const tex = thingTexture(this.thingStems[defId - 1], rotation);
+      ids.push(
+        this.viewport.addPrim({
+          texture: this.white,
+          textureName: tex.name,
+          flipX: tex.flipX,
+          // Bottom-CENTRED on the cell: horizontally centred, base on the cell's
+          // bottom edge, so a taller-than-a-cell sprite (a tree) rises past the
+          // cell it occupies rather than overflowing symmetrically.
+          x: tileX * SQUARE + (SQUARE - w) / 2,
+          y: tileY * SQUARE + SQUARE - h,
+          width: w,
+          height: h,
+          tint,
+          geoColor,
+          zIndex: this.thingZ(tileY),
+        }),
+      );
+    }
+    if (ids.length) this.zoneThings.set(zoneId, ids);
+  }
+
+  /** A zone's subscription closed: drop all of its sprites — tiles, cold things,
+   *  and any object-shard loose things in that zone. */
   private onZoneClosed(zoneId: number): void {
-    const ids = this.zonePrims.get(zoneId);
-    if (!ids) return;
-    for (const id of ids) this.viewport.removePrim(id);
-    this.zonePrims.delete(zoneId);
+    this.clearPrims(this.zonePrims, zoneId);
+    this.clearPrims(this.zoneThings, zoneId);
+    this.zoneTilesRaw.delete(zoneId);
+    this.zoneThingsRaw.delete(zoneId);
+    for (const [objectId, ft] of this.freeThings) {
+      if (ft.thing.zoneId === zoneId) {
+        this.viewport.removePrim(ft.primId);
+        this.freeThings.delete(objectId);
+      }
+    }
+  }
+
+  /** Remove a zone's sprites from one of the per-zone sprite maps (tiles or cold
+   *  things) and forget them. */
+  private clearPrims(map: Map<number, number[]>, zoneId: number): void {
+    const ids = map.get(zoneId);
+    if (ids) {
+      for (const id of ids) this.viewport.removePrim(id);
+      map.delete(zoneId);
+    }
+  }
+
+  /** A loose thing changed: drop it on remove, else upsert its sprite at the
+   *  sub-tile position the DSL/codec resolves (`Content.freeThingPrim`). Keyed by
+   *  `objectId`, so insert and update are the same upsert. */
+  private onFreeThing(thing: FreeThing): void {
+    const existing = this.freeThings.get(thing.objectId);
+    if (thing.removed) {
+      if (existing) {
+        this.viewport.removePrim(existing.primId);
+        this.freeThings.delete(thing.objectId);
+      }
+      return;
+    }
+
+    // Replace any prior sprite for this object (a move), then draw the new one.
+    if (existing) this.viewport.removePrim(existing.primId);
+
+    // [x, y, tint, geoColor, defId] — fractional global tile coords + colour + stem index.
+    const prim = this.content.freeThingPrim(thing.zoneId, thing.location, thing.offset, thing.id);
+    const { w, h } = this.thingBox(prim[4]);
+    const tex = thingTexture(this.thingStems[prim[4] - 1], thing.rotation);
+    const primId = this.viewport.addPrim({
+      texture: this.white,
+      textureName: tex.name,
+      flipX: tex.flipX,
+      // Bottom-centred on its (sub-tile) position, same as cold things, so a big
+      // freed thing rises from where it sits and z-orders by its base row.
+      x: prim[0] * SQUARE + (SQUARE - w) / 2,
+      y: prim[1] * SQUARE + SQUARE - h,
+      width: w,
+      height: h,
+      tint: prim[2],
+      geoColor: prim[3],
+      zIndex: this.thingZ(Math.floor(prim[1])),
+    });
+    this.freeThings.set(thing.objectId, { primId, thing });
+  }
+
+  /** Swap in a hot-reloaded content bundle and repaint every live zone through
+   *  it — re-expanding the cached raw tiles / things / loose things so a `.rd`
+   *  edit (a recolour, a new thing tint) shows without re-requesting anything from
+   *  the server. Each `onZone*` / `onFreeThing` re-run clears the old sprites and
+   *  redraws from the new corpus. */
+  setContent(content: Content): void {
+    this.content = content;
+    this.refreshStems(); // the new corpus may retexture / recolour defs
+    for (const [zoneId, tiles] of this.zoneTilesRaw) this.onZoneTiles(zoneId, tiles);
+    for (const [zoneId, things] of this.zoneThingsRaw) this.onZoneThings(zoneId, things);
+    // Re-expand loose things from their kept payloads (a snapshot first, since
+    // onFreeThing mutates the map as it replaces each sprite).
+    for (const { thing } of [...this.freeThings.values()]) this.onFreeThing(thing);
   }
 }
