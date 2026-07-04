@@ -16,8 +16,11 @@
 
 # Build/export output directories
 /build/
-bin/
 dist/
+# bin/ holds tracked CLI tooling (rd, art, dsl, marigold, lib/); ignore only its
+# local state, not the scripts. (keys/ is covered by /bin/keys/* above.)
+/bin/.build-state/
+/bin/.rd-profile
 /spacetime/server/spacetimedb/target/
 /spacetime/config
 /spacetime/data

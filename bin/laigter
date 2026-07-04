@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Docker wrapper for headless Laigter, mirroring bin/content / bin/client. The
+# repo root is mounted at /work inside the container (see laigter/compose.yml),
+# so any path passed through must be /work-relative, e.g.
+#   bin/laigter -d /work/textures/master/objects.0/berry.0/1.1.0.diffuse.png -n
+# `bin/art laigter <object>` is the batch front-end; this wrapper is the raw
+# passthrough used to drive a single file or to debug the container.
+COMPOSE_FILE="${LAIGTER_COMPOSE:-$REPO_ROOT/laigter/compose.yml}"
+
+usage() {
+  cat >&2 <<EOF
+usage: laigter <command|flags...>
+
+commands:
+  build            build the laigter image (downloads + extracts the AppImage)
+  config           print the compose file path
+  <flags...>       run headless laigter with these flags (passed through), e.g.
+                   laigter -d /work/<diffuse>.png -n [-r /work/<preset>]
+                     -g  no-gui (always on)     -s  software opengl (always on)
+                     -d  diffuse   -n normal  -c specular  -o occlusion  -p parallax
+                     -r  preset file
+
+override the compose file via env: LAIGTER_COMPOSE
+EOF
+}
+
+case "${1:-}" in
+  build)  docker compose -f "$COMPOSE_FILE" build ;;
+  config) echo "compose-file: $COMPOSE_FILE" ;;
+  -h|--help|help|"") usage ;;
+  # Run as the host user (not root) so generated maps aren't root-owned in the
+  # repo; HOME=/tmp gives Qt/Xvfb a writable home under that uid.
+  *)      docker compose -f "$COMPOSE_FILE" run --rm \
+            --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            laigter "$@" ;;
+esac

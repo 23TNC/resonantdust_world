@@ -1,0 +1,383 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# dsl — publish the DSL content corpus to the Cloudflare R2 asset bucket so a
+# deployed client can fetch it, instead of embedding it at build time.
+#
+# Ported from the old game's bin/dsl. Two adaptations for this world:
+#   - Layout: the corpus is content/{data,visual,biome} here (the old game used
+#     data/visuals/locales). `visual` is singular; `biome` is new (worldgen
+#     generation rules); there are no locales yet.
+#   - Namespace: every R2 key is under $R2_PREFIX/ (as bin/art does for
+#     textures), so this world's uploads never clobber the old game's bucket.
+#
+# CONSUMER: the world SERVER serves this corpus at GET /content (CONTENT_SOURCE=r2
+# pulls it from R2; disk mode reads the local tree). The client fetches it from the
+# server it logs into and hot-swaps on change. Set RD_SERVER=<url> to have
+# upload/reindex ping the server's /content/refresh (optional — it re-polls on its
+# own). Textures publish separately via bin/art.
+#
+# Commands: upload / download / reindex / upload_file / download_file (see usage).
+# Creds live in bin/keys/r2.env (gitignored); the rest is public config.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# The corpus folders under content/ this tool publishes, in load order (data owns
+# the def_id numbering, visual folds colours on, biome is server-side worldgen).
+# Also the set `_remote_key_for` / `_check_relpath` accept as folder args.
+CONTENT_FOLDERS=(data visual biome)
+
+# Cloudflare R2 (S3-compatible) asset bucket — same bucket + creds as bin/art.
+# Account id / endpoint / bucket are public config; the SECRETS live in
+# bin/keys/r2.env (gitignored).
+R2_ACCOUNT_ID="0d47d810e5fcfd344f83d3e2d80c62f8"
+R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+R2_BUCKET="resonantdust-assets"
+# Top-level bucket prefix for THIS game (mirrors bin/art). The old game wrote to
+# the bucket root (content/data/…); this world namespaces everything under
+# resonantdust_world/ so its uploads never clobber the old game's assets. Every
+# R2 key below is built as $R2_PREFIX/content/… — bump this to fork asset trees.
+R2_PREFIX="resonantdust_world"
+R2_KEYS="$SCRIPT_DIR/keys/r2.env"
+# Dockerized aws-cli (no host install needed); override the tag via env.
+R2_AWSCLI_IMAGE="${R2_AWSCLI_IMAGE:-amazon/aws-cli:latest}"
+
+# Load + validate the R2 creds from bin/keys/r2.env into the environment for
+# _r2_sync. Fails clearly if the file is missing or the keys are blank.
+_r2_preflight() {
+  if [[ ! -f "$R2_KEYS" ]]; then
+    echo "dsl: missing credentials file $R2_KEYS — populate it (see comments inside)" >&2
+    return 1
+  fi
+  # shellcheck source=/dev/null
+  source "$R2_KEYS"
+  if [[ -z "${R2_ACCESS_KEY_ID:-}" || -z "${R2_SECRET_ACCESS_KEY:-}" ]]; then
+    echo "dsl: R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY not set in $R2_KEYS" >&2
+    return 1
+  fi
+}
+
+# Sync LOCAL_DIR -> s3://<bucket>/<REMOTE_KEY> via the dockerized aws-cli.
+# Incremental (only changed files), never deletes. _r2_preflight must run first.
+_r2_sync() {  # local_dir remote_key
+  local local_dir=$1 remote_key=$2
+  # AWS_REQUEST_CHECKSUM_CALCULATION=when_required: newer aws-cli v2 adds CRC32
+  # request checksums by default that R2 rejects — this disables them.
+  docker run --rm \
+    -e AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
+    -e AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    -e AWS_DEFAULT_REGION=auto \
+    -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
+    -v "$local_dir:/data:ro" \
+    "$R2_AWSCLI_IMAGE" \
+    s3 sync /data "s3://$R2_BUCKET/$remote_key" \
+      --endpoint-url "$R2_ENDPOINT" --no-progress
+}
+
+# Sync s3://<bucket>/<REMOTE_KEY> -> LOCAL_DIR via the dockerized aws-cli.
+# Mirror (--delete): local ends up byte-identical to R2, so it OVERWRITES the
+# local folder with the server's canonical bundle. _r2_preflight must run first.
+_r2_pull() {  # remote_key local_dir
+  local remote_key=$1 local_dir=$2
+  # --user host uid:gid so downloaded files land owned by us, not root (the
+  # container's default). HOME=/tmp gives aws-cli a writable home for its cache.
+  docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp \
+    -e AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
+    -e AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    -e AWS_DEFAULT_REGION=auto \
+    -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
+    -v "$local_dir:/data" \
+    "$R2_AWSCLI_IMAGE" \
+    s3 sync "s3://$R2_BUCKET/$remote_key" /data \
+      --endpoint-url "$R2_ENDPOINT" --no-progress --delete
+}
+
+# Copy a SINGLE local file -> s3://<bucket>/<REMOTE_KEY> via the dockerized
+# aws-cli. Mounts the file's parent dir read-only. _r2_preflight must run first.
+_r2_cp_up() {  # local_file remote_key
+  local local_file=$1 remote_key=$2
+  docker run --rm \
+    -e AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
+    -e AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    -e AWS_DEFAULT_REGION=auto \
+    -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
+    -v "$(dirname "$local_file"):/data:ro" \
+    "$R2_AWSCLI_IMAGE" \
+    s3 cp "/data/$(basename "$local_file")" "s3://$R2_BUCKET/$remote_key" \
+      --endpoint-url "$R2_ENDPOINT" --no-progress
+}
+
+# Copy a SINGLE s3://<bucket>/<REMOTE_KEY> -> local file via the dockerized
+# aws-cli, OVERWRITING it. Runs as host uid:gid so the file lands owned by us
+# (see _r2_pull). _r2_preflight must run first.
+_r2_cp_down() {  # remote_key local_file
+  local remote_key=$1 local_file=$2
+  docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp \
+    -e AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
+    -e AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    -e AWS_DEFAULT_REGION=auto \
+    -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
+    -v "$(dirname "$local_file"):/data" \
+    "$R2_AWSCLI_IMAGE" \
+    s3 cp "s3://$R2_BUCKET/$remote_key" "/data/$(basename "$local_file")" \
+      --endpoint-url "$R2_ENDPOINT" --no-progress
+}
+
+# Map a folder name (data|visual|biome) to its R2 remote key, namespaced under
+# $R2_PREFIX. Returns non-zero for an unknown folder, so callers reuse it as a
+# "is this a known folder?" test.
+_remote_key_for() {  # folder
+  local folder=$1 f
+  for f in "${CONTENT_FOLDERS[@]}"; do
+    if [[ "$folder" == "$f" ]]; then
+      echo "$R2_PREFIX/content/$folder"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# If a world-server URL is set (RD_SERVER), POST /content/refresh so an R2-backed
+# server re-reads the corpus NOW instead of waiting for its background poll (the
+# server hosts /content now, not the gateway). Best-effort: no URL / no curl /
+# unreachable server is a silent skip — the server's poll still picks the change
+# up within CONTENT_POLL_SECS. Disk-mode dev servers read local files, not R2, so
+# this is a no-op for them (harmless).
+_refresh_server() {
+  local sv="${RD_SERVER:-}"
+  [[ -n "$sv" ]] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  sv="${sv%/}"
+  echo "dsl: pinging $sv/content/refresh ..."
+  if ! curl -fsS -X POST "$sv/content/refresh" 2>/dev/null | sed 's/^/dsl: server: /'; then
+    echo "dsl: server refresh ping failed (it'll re-poll on its own)" >&2
+  fi
+}
+
+# Validate a single-file path argument (relative to content/, e.g.
+# `visual/tiles.rd`). Must start with a known corpus folder and not escape with
+# `..`. Echoes the cleaned path on success.
+_check_relpath() {  # relpath
+  local rel=$1
+  case "$rel" in
+    data/*|visual/*|biome/*) ;;
+    *) echo "dsl: path must start with data/, visual/, or biome/ (got '$rel')" >&2; return 1 ;;
+  esac
+  case "$rel" in
+    *..*) echo "dsl: path must not contain '..' ('$rel')" >&2; return 1 ;;
+  esac
+  echo "$rel"
+}
+
+# Sync one content folder (data|visual|biome) up to R2. Incremental.
+_upload_folder() {  # folder
+  local folder=$1
+  local dir="$REPO_ROOT/content/$folder"
+  if [[ ! -d "$dir" ]]; then
+    echo "dsl: missing source directory $dir" >&2
+    return 1
+  fi
+  local key; key=$(_remote_key_for "$folder")
+  echo "dsl: uploading content/$folder -> s3://$R2_BUCKET/$key ..."
+  _r2_sync "$dir" "$key"
+}
+
+# Mirror one content folder (data|visual|biome) down from R2, OVERWRITING the
+# local copy (--delete).
+_download_folder() {  # folder
+  local folder=$1
+  local key; key=$(_remote_key_for "$folder")
+  local local_dir="$REPO_ROOT/content/$folder"
+  mkdir -p "$local_dir"
+  echo "dsl: downloading s3://$R2_BUCKET/$key -> content/$folder (overwrite) ..."
+  _r2_pull "$key" "$local_dir"
+}
+
+# Upload the content corpus to the R2 asset bucket so the deployed client can
+# fetch it. Mirrors content/ under $R2_PREFIX/content/:
+#   content/data   -> s3://<bucket>/$R2_PREFIX/content/data
+#   content/visual -> s3://<bucket>/$R2_PREFIX/content/visual
+#   content/biome  -> s3://<bucket>/$R2_PREFIX/content/biome
+# With no argument, uploads all three folders. With arguments, each is either a
+# folder (data|visual|biome) or a single file path relative to content/ (anything
+# containing a '/', e.g. visual/tiles.rd) routed to upload_file. Incremental,
+# never deletes. Creds in bin/keys/r2.env.
+cmd_upload() {
+  _r2_preflight || return 1
+  if [[ $# -eq 0 ]]; then
+    local folder
+    for folder in "${CONTENT_FOLDERS[@]}"; do
+      _upload_folder "$folder" || return 1
+    done
+    echo "dsl: uploaded ${CONTENT_FOLDERS[*]} to s3://$R2_BUCKET/$R2_PREFIX/content/"
+    # A full upload pushed every local file, so it's safe to rewrite the index to
+    # match the tree exactly — this is the ONLY thing that prunes deleted files
+    # and registers new ones in bulk.
+    cmd_reindex || return 1
+    return
+  fi
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == */* ]]; then
+      cmd_upload_file "$arg" || return 1
+    elif _remote_key_for "$arg" >/dev/null; then
+      _upload_folder "$arg" || return 1
+    else
+      echo "dsl: '$arg' is neither a folder (${CONTENT_FOLDERS[*]}) nor a file path (contains '/')" >&2
+      return 1
+    fi
+  done
+}
+
+# Pull the canonical content corpus from R2 down into content/, OVERWRITING the
+# local copy (mirror with --delete) so we're in sync with the server before
+# editing + re-uploading. Maps the same dirs as cmd_upload, in reverse. With no
+# argument, pulls all three. With arguments, each is either a folder
+# (data|visual|biome) or a single file path relative to content/ routed to
+# download_file. Creds in bin/keys/r2.env.
+cmd_download() {
+  _r2_preflight || return 1
+  if [[ $# -eq 0 ]]; then
+    local folder
+    for folder in "${CONTENT_FOLDERS[@]}"; do
+      _download_folder "$folder" || return 1
+    done
+    echo "dsl: downloaded ${CONTENT_FOLDERS[*]} from s3://$R2_BUCKET/$R2_PREFIX/content/ into content/"
+    return
+  fi
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == */* ]]; then
+      cmd_download_file "$arg" || return 1
+    elif _remote_key_for "$arg" >/dev/null; then
+      _download_folder "$arg" || return 1
+    else
+      echo "dsl: '$arg' is neither a folder (${CONTENT_FOLDERS[*]}) nor a file path (contains '/')" >&2
+      return 1
+    fi
+  done
+}
+
+# Upload ONE file to R2. The argument is a path relative to content/, e.g.
+# `visual/tiles.rd` -> s3://<bucket>/$R2_PREFIX/content/visual/tiles.rd.
+cmd_upload_file() {  # relpath
+  if [[ $# -ne 1 ]]; then
+    echo "dsl: upload_file needs exactly one path (e.g. visual/tiles.rd)" >&2
+    return 1
+  fi
+  local rel; rel=$(_check_relpath "$1") || return 1
+  local local_file="$REPO_ROOT/content/$rel"
+  if [[ ! -f "$local_file" ]]; then
+    echo "dsl: no such file content/$rel" >&2
+    return 1
+  fi
+  _r2_preflight || return 1
+  echo "dsl: uploading content/$rel -> s3://$R2_BUCKET/$R2_PREFIX/content/$rel ..."
+  _r2_cp_up "$local_file" "$R2_PREFIX/content/$rel" || return 1
+  echo "dsl: uploaded content/$rel"
+  _refresh_server
+}
+
+# Download ONE file from R2, OVERWRITING the local copy. The argument is a path
+# relative to content/, e.g. `visual/tiles.rd`.
+cmd_download_file() {  # relpath
+  if [[ $# -ne 1 ]]; then
+    echo "dsl: download_file needs exactly one path (e.g. visual/tiles.rd)" >&2
+    return 1
+  fi
+  local rel; rel=$(_check_relpath "$1") || return 1
+  local local_file="$REPO_ROOT/content/$rel"
+  _r2_preflight || return 1
+  mkdir -p "$(dirname "$local_file")"
+  echo "dsl: downloading s3://$R2_BUCKET/$R2_PREFIX/content/$rel -> content/$rel (overwrite) ..."
+  _r2_cp_down "$R2_PREFIX/content/$rel" "$local_file" || return 1
+  echo "dsl: downloaded content/$rel"
+}
+
+# Regenerate content/manifest.json from the LOCAL content tree (the source of
+# truth) and upload it to R2. A future gate reads this index to learn its corpus
+# (it can't list a bucket). A BULK change (new/renamed/deleted .rd files) leaves
+# it stale until this runs. Lists every data/**.rd + visual/**.rd + biome/**.rd
+# as three arrays of paths relative to content/. Assumes the referenced files are
+# already in R2 (run `dsl upload` first, or use its built-in reindex).
+#
+# NOTE: no gate consumer reads this yet (content-serving is TODO) — this defines
+# the shape ahead of that reader.
+cmd_reindex() {
+  _r2_preflight || return 1
+  local content_dir="$REPO_ROOT/content"
+  local manifest="$content_dir/manifest.json"
+  python3 - "$content_dir" "$manifest" <<'PY'
+import json, glob, os, sys
+root, out = sys.argv[1], sys.argv[2]
+os.chdir(root)
+def rd_paths(folder):
+    return sorted(glob.glob(f'{folder}/**/*.rd', recursive=True))
+manifest = {folder: rd_paths(folder) for folder in ('data', 'visual', 'biome')}
+json.dump(manifest, open(out, 'w'), indent=2)
+open(out, 'a').write('\n')
+counts = ', '.join(f'{len(v)} {k}' for k, v in manifest.items())
+print(f"dsl: manifest.json — {counts}")
+PY
+  _r2_cp_up "$manifest" "$R2_PREFIX/content/manifest.json" || return 1
+  echo "dsl: wrote content/manifest.json and uploaded it to s3://$R2_BUCKET/$R2_PREFIX/content/manifest.json"
+  _refresh_server
+}
+
+usage() {
+  cat >&2 <<EOF
+usage: dsl <command>
+
+commands:
+  upload [arg…]       Sync content up to the Cloudflare R2 asset bucket via a
+                      dockerized aws-cli. With no arg, uploads all corpus folders
+                      (${CONTENT_FOLDERS[*]}) then reindexes. Incremental, never
+                      deletes. Each arg is either a folder (${CONTENT_FOLDERS[*]})
+                      or a single file path relative to content/ (anything with a
+                      '/', e.g. visual/tiles.rd) — file args route to upload_file.
+
+  reindex             Regenerate content/manifest.json from the LOCAL tree and
+                      upload it — the only thing that prunes deleted files +
+                      registers new ones in bulk. A full \`upload\` runs this too.
+
+  download [arg…]     Pull content from R2 down into content/, OVERWRITING the
+                      local copy (folder mirror deletes local files absent on
+                      R2). With no arg, pulls all corpus folders. Each arg is
+                      either a folder or a single file path (with a '/') routed
+                      to download_file.
+
+  upload_file <path>    Upload ONE file to R2. <path> is relative to content/,
+                        e.g. visual/tiles.rd. (upload/download with a '/'-bearing
+                        arg dispatch here automatically.)
+
+  download_file <path>  Download ONE file from R2, overwriting the local copy.
+                        Same <path> form, e.g. visual/tiles.rd.
+
+R2 keys are namespaced under $R2_PREFIX/content/. Needs S3 creds in
+bin/keys/r2.env (gitignored). The world SERVER serves this corpus at GET /content
+and re-polls its source periodically; set RD_SERVER=<url> to have upload/reindex
+POST /content/refresh so an R2-backed server re-reads immediately (optional — it
+re-polls on its own otherwise).
+EOF
+}
+
+main() {
+  local cmd=${1:-}
+  shift || true
+  case "$cmd" in
+    upload) cmd_upload "$@" ;;
+    reindex) cmd_reindex "$@" ;;
+    download) cmd_download "$@" ;;
+    upload_file) cmd_upload_file "$@" ;;
+    download_file) cmd_download_file "$@" ;;
+    -h|--help|help|"") usage ;;
+    *) echo "dsl: unknown command '$cmd'" >&2; usage; exit 1 ;;
+  esac
+}
+
+main "$@"
