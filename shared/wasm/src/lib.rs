@@ -245,7 +245,7 @@ impl Content {
     /// [`VisualParts`]) for every entry, returning a flat **stride-6** array
     /// `[tileX, tileY, tint, geoColor, defId, rotation, …]` in *global tile coordinates*
     /// (`defId` indexing [`thingTextureStems`]; `rotation` the packed 0..3 facing the
-    /// host resolves to a texture `<rot>` segment). The host draws a sprite smaller than
+    /// host resolves to a texture `<dir>` segment). The host draws a sprite smaller than
     /// a tile, centred in the cell and above the ground. Empty entries
     /// (`object_id == 0`) are skipped. One boundary crossing per zone.
     #[wasm_bindgen(js_name = zoneThingPrims)]

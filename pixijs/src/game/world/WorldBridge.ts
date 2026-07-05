@@ -55,7 +55,7 @@ function textureNameFor(stem: string | undefined): string | undefined {
   return stem && stem !== WHITE_STEM ? stem : undefined;
 }
 
-/** The facing (a master's `<rot>` segment) + horizontal flip for each 2-bit thing
+/** The facing (a master's `<dir>` segment) + horizontal flip for each 2-bit thing
  *  rotation. Rotation 0 is SOUTH — the single-facing default every existing master
  *  was renamed to — so untouched worldgen data (rotation all-zero) renders south
  *  unchanged. West ships no master of its own: it reuses the east master mirrored. */
@@ -66,15 +66,15 @@ const FACING_BY_ROTATION: ReadonlyArray<{ facing: "s" | "e" | "n"; flipX: boolea
   { facing: "e", flipX: true }, //  3 — west (east mirrored)
 ];
 
-/** The category (first stem segment) whose objects are LINKED/autotiled: their
+/** The category (first stem segment) whose kinds are LINKED/autotiled: their
  *  masters carry the `l` direction and their variation is picked by neighbour context
  *  rather than a facing. Mirrors `bin/art`'s `GRID_CATS`. */
 const LINKED_CATEGORY = "linked";
 
 /** A thing's texture name + flip for a given rotation. The def's base stem gets a
  *  trailing DIRECTION segment the resolver treats as its own stem: a facing from the
- *  rotation (`world/conifer` → `world/conifer/e`), or `l` for a linked-category object
- *  (`linked/wall_smooth` → `linked/wall_smooth/l`), whose grid cell (count) is a
+ *  rotation (`world/conifer` → `world/conifer/e`), or `l` for a linked-category kind
+ *  (`linked/wall_smooth` → `linked/wall_smooth/l`), whose grid cell (variant) is a
  *  neighbour-context atlas — the context pick is Phase 2; the canonical cell renders
  *  for now. A white/absent stem stays a flat tint rect. */
 function thingTexture(stem: string | undefined, rotation: number): { name: string | undefined; flipX: boolean } {

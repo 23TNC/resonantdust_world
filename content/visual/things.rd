@@ -7,7 +7,7 @@
         :visual>
             @on_create>
                 "thing ^prim call &thing export
-                ; The conifer master in R2 (master/world.0/conifer.0/1.1.0.albedo.png);
+                ; The conifer master (master/world/conifer/1.s.0.1.albedo.png);
                 ; the gate resolves the "world/conifer stem and derives the preview.
                 ; tint stays white so it doesn't recolour the art; geoColor is the
                 ; flat green silhouette shown until the sprite streams in.
@@ -57,12 +57,12 @@
                 "thing ^prim call &thing export
                 ; A real texture stem: the client appends a direction (`l` for a
                 ; linked-category object) and the gate resolves it to a master albedo
-                ; (master/linked.0/wall_smooth.0/1.l.0.1.albedo.png) and derives the
-                ; preview. Uses wall_smooth because it's mastered (rock_smooth is
-                ; still a raw sprite — `bin/art remaster` masters new objects). tint
+                ; (master/linked/wall.smooth/1.l.0.1.albedo.png) and derives the
+                ; preview. Uses wall.smooth because it's mastered (rock.smooth is
+                ; still a raw sprite — `bin/art remaster` masters new kinds). tint
                 ; stays white so it doesn't recolour the art; geoColor is the flat
                 ; silhouette shown until the sprite streams in.
-                "linked/wall_smooth &thing.texture set
+                "linked/wall.smooth &thing.texture set
                 #ffffff &thing.tint set
                 #7a7a7a &thing.geoColor set
                 0 return

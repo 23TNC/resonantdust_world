@@ -31,6 +31,13 @@ commands:
                                       see normals.py -h)
   depth <paths...> [flags]    16-bit height field for diffuse sprites -> N.depth.png
                               (flags: as normals, plus --visualize; see depth.py -h)
+                              MONOCULAR (reads the diffuse; flattens on flat art).
+  normal-depth <paths...>     16-bit height field by INTEGRATING each co-located
+                              N.normal.png -> N.depth.png. No model/GPU (FFT
+                              Frankot-Chellappa). Works on flat art; needs the
+                              normal to exist first. (flags: --invert --visualize
+                              --nz-floor --grad-clip --out-dir --skip-existing;
+                              see normal_depth.py -h)
 
 override the venv location via env: MARIGOLD_VENV
 EOF
@@ -98,6 +105,11 @@ EOF
     shift
     [[ -x "$PY" ]] || { echo "marigold: venv missing — run 'bin/marigold build'" >&2; exit 1; }
     exec "$PY" "$MARIGOLD_DIR/depth.py" "$@"
+    ;;
+  normal-depth)
+    shift
+    [[ -x "$PY" ]] || { echo "marigold: venv missing — run 'bin/marigold build'" >&2; exit 1; }
+    exec "$PY" "$MARIGOLD_DIR/normal_depth.py" "$@"
     ;;
   -h|--help|help|"") usage ;;
   *) echo "marigold: unknown command '$1'" >&2; usage; exit 1 ;;

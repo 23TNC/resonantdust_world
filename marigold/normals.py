@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Marigold surface-normals for master sprites.
 
-Replaces Laigter as the normal source (see docs/de-lighting.md). Marigold predicts
-VIEW-SPACE surface normals of the depicted geometry — semantically correct macro
-shape, unlike Laigter's luminance-heightfield guess (which reads painted albedo
-edges as relief). Writes `N.normal.png` co-located, carrying the sprite's alpha so
-transparent regions don't composite into the shared normal buffer.
+The optional (`art normal --marigold`) alternative to the default Laigter engine
+(see docs/de-lighting.md). Marigold predicts VIEW-SPACE surface normals of the
+depicted geometry — cleaner macro shape than Laigter's luminance-heightfield guess,
+but not a valid height field (depth won't integrate) and starved on flat art. Writes
+`N.normal.png` co-located with a FLAT OPAQUE background (#8080FF outside the
+silhouette); coverage comes from the albedo alpha at render time.
 
 Convention: Marigold normals are view-space — X right, Y up, Z toward the viewer,
-[-1,1] mapped to RGB. The renderer's lighting shader reads this directly; there is
-no green-flip / tangent-space conversion (see docs/de-lighting.md). Batch: the
-model loads once, then every diffuse under the given paths is processed.
+[-1,1] mapped to RGB — the SAME OpenGL/+Y-up encoding Laigter emits (verified), so
+the renderer reads either directly, no green-flip / tangent-space conversion (see
+docs/de-lighting.md). Batch: the model loads once, then every diffuse is processed.
 """
 from __future__ import annotations
 
@@ -145,18 +146,16 @@ def main() -> int:
         # Outside the silhouette, fill a FLAT facing-viewer normal (0,0,1) = #8080FF
         # (Marigold's own encoding for a camera-facing surface — also "flat ground"
         # in a top-down view) instead of leaving the model's background prediction.
-        # Keeps edge filtering / mipmaps from bleeding a garbage normal into the
-        # sprite rim, and stays sane if the renderer ever samples without the mask.
-        # Alpha still carries the silhouette so the margin doesn't overwrite the
-        # shared normal buffer.
+        # We ship the normal with this flat background OPAQUE (not masked to
+        # transparent): coverage comes from the albedo alpha at render time, and a
+        # flat opaque background keeps edge texels valid under bilinear filtering /
+        # mipmaps. Matches the Laigter path's _flatten_normal_bg. See docs/de-lighting.md.
         out = Image.new("RGB", nrm.size, FLAT_NORMAL_RGB)
         out.paste(nrm, (0, 0), a)
-        img = out.convert("RGBA")
-        img.putalpha(a)
 
         op = out_path(d, "normal", args.out_dir)
         op.parent.mkdir(parents=True, exist_ok=True)
-        img.save(op)
+        out.save(op)
         ok += 1
         print(f"  [{i}/{len(diffuse)}] {d.name} -> {op.name}", flush=True)
 

@@ -3,8 +3,8 @@
 //! with ZERO network (and never get pushed out by large full-res masters, which
 //! share the HTTP cache's one LRU pool).
 //!
-//! Keyed by `stem@size`, one entry per (object, LOD) — the entry carries the content
-//! `hash` it was fetched at (the manifest's per-master hash), so a re-mastered object
+//! Keyed by `stem@size`, one entry per (kind, LOD) — the entry carries the content
+//! `hash` it was fetched at (the manifest's per-master hash), so a re-mastered kind
 //! reads as stale and is re-fetched + overwritten in place (no accumulation). A hash
 //! MATCH is served with no network at all — the URL is content-addressed.
 //! The largest masters are best left to the evictable HTTP cache (a lower LOD floor

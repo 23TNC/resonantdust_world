@@ -130,30 +130,30 @@ pub fn spawn_poll(manifest: Arc<TextureManifest>, source: Arc<TextureSource>, se
 }
 
 /// The direction tokens whose canonical master (`1.<dir>.0.1.albedo.png`) is scanned
-/// into its own stem: the n/e/s facings plus `l` for linked (autotile) objects. West
+/// into its own stem: the n/e/s facings plus `l` for linked (autotile) kinds. West
 /// is never on disk — the client mirrors east.
 const FACINGS: [&str; 4] = ["n", "e", "s", "l"];
 
-/// Walk `master/<cat>/<obj>/1.<facing>.0.1.albedo.png`, filling `entries` with one
-/// per-facing stem (`<cat>/<obj>/<facing>`, `.0` module suffix stripped on the dir
-/// segments) → hash + master short axis. Each facing is its own texture (own bytes,
-/// hash, LOD cache), so it gets its own manifest row.
+/// Walk `master/<cat>/<kind>/1.<facing>.0.1.albedo.png`, filling `entries` with one
+/// per-facing stem (`<cat>/<kind>/<facing>` — the dir names ARE the stem segments
+/// verbatim, named subkinds included) → hash + master short axis. Each facing is its
+/// own texture (own bytes, hash, LOD cache), so it gets its own manifest row.
 fn scan_masters(master_root: &Path, entries: &mut BTreeMap<String, Entry>) {
     let Ok(cats) = std::fs::read_dir(master_root) else { return };
     for cat in cats.flatten() {
-        let Ok(objs) = std::fs::read_dir(cat.path()) else { continue };
-        for obj in objs.flatten() {
-            let (Some(cat_name), Some(obj_name)) = (dir_name(&cat.file_name()), dir_name(&obj.file_name())) else {
+        let Ok(kinds) = std::fs::read_dir(cat.path()) else { continue };
+        for kind in kinds.flatten() {
+            let (Some(cat_name), Some(kind_name)) = (dir_name(&cat.file_name()), dir_name(&kind.file_name())) else {
                 continue;
             };
             for facing in FACINGS {
-                let master = obj.path().join(format!("1.{facing}.0.1.albedo.png"));
+                let master = kind.path().join(format!("1.{facing}.0.1.albedo.png"));
                 if !master.is_file() {
                     continue;
                 }
                 let Some(hash) = master_hash(&master) else { continue };
                 let Ok((w, h)) = image::image_dimensions(&master) else { continue };
-                let stem = format!("{}/{}/{}", demod(&cat_name), demod(&obj_name), facing);
+                let stem = format!("{cat_name}/{kind_name}/{facing}");
                 entries.insert(stem, Entry { hash, max_size: w.min(h), lods: BTreeSet::new() });
             }
         }
@@ -162,12 +162,6 @@ fn scan_masters(master_root: &Path, entries: &mut BTreeMap<String, Entry>) {
 
 fn dir_name(name: &std::ffi::OsStr) -> Option<String> {
     name.to_str().map(|s| s.to_string())
-}
-
-/// Strip the `.0` default-variation module suffix a stem segment gained via
-/// `norm_mod` (`linked.0` → `linked`); leave other segments unchanged.
-fn demod(seg: &str) -> String {
-    seg.strip_suffix(".0").unwrap_or(seg).to_string()
 }
 
 /// A URL-safe content hash for a master: hex `mtime-size` (moves on any rewrite).
@@ -201,8 +195,8 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    fn write_master(root: &Path, cat: &str, obj: &str, w: u32, h: u32) {
-        let dir = root.join("master").join(format!("{cat}.0")).join(format!("{obj}.0"));
+    fn write_master(root: &Path, cat: &str, kind: &str, w: u32, h: u32) {
+        let dir = root.join("master").join(cat).join(kind);
         std::fs::create_dir_all(&dir).unwrap();
         let img = image::RgbaImage::from_pixel(w, h, image::Rgba([1, 2, 3, 255]));
         let mut buf = Cursor::new(Vec::new());
@@ -214,26 +208,26 @@ mod tests {
     fn scans_stems_records_max_short_axis_and_notes_generated() {
         let base = std::env::temp_dir().join(format!("gw-manifest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        write_master(&base, "linked", "wall_smooth", 64, 128); // short axis = 64
+        write_master(&base, "linked", "wall.smooth", 64, 128); // short axis = 64; named subkind
 
         let src = TextureSource::Disk { root: base.clone(), cache: base.join("cache") };
         let m = TextureManifest::build(&src);
 
         // the south master scans into a facing-suffixed stem
-        let (hash, max) = m.lookup("linked/wall_smooth/s").expect("stem scanned");
+        let (hash, max) = m.lookup("linked/wall.smooth/s").expect("stem scanned");
         assert_eq!(max, 64, "max size is the short axis");
         assert!(!hash.is_empty());
-        assert!(m.lookup("linked/wall_smooth").is_none(), "bare stem is not indexed");
+        assert!(m.lookup("linked/wall.smooth").is_none(), "bare stem is not indexed");
         assert!(m.lookup("linked/nope/s").is_none());
 
         // note_generated adds the LOD and bumps the version
         let v0 = m.version_hex();
-        m.note_generated("linked/wall_smooth/s", 32);
+        m.note_generated("linked/wall.smooth/s", 32);
         assert_ne!(m.version_hex(), v0, "version bumps when a LOD is generated");
         assert!(m.payload_json().contains("\"lods\":[32]"));
         // a repeat is a no-op (no churn)
         let v1 = m.version_hex();
-        m.note_generated("linked/wall_smooth/s", 32);
+        m.note_generated("linked/wall.smooth/s", 32);
         assert_eq!(m.version_hex(), v1);
 
         std::fs::remove_dir_all(&base).unwrap();

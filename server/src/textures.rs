@@ -4,21 +4,21 @@
 //! sizes the client needs, so a re-mastered asset needs no offline pyramid — the
 //! next request just re-derives.
 //!
-//! Two tiers today, both keyed by stem (`<category>/<object>[/<facing>]`):
+//! Two tiers today, both keyed by stem (`<category>/<kind>[/<facing>]`):
 //!   • `master`  — the full-res master albedo, served verbatim.
 //!   • `preview` — the master downscaled by [`PREVIEW_SCALE`] (half), the geo→real
 //!                 placeholder. Disk sources cache the derived PNG under
 //!                 `derived/preview/` (invalidated when the master is newer); R2
 //!                 sources derive per request.
 //!
-//! Stem → master path is deterministic. The stem's leading segments are the
-//! `<cat>/<obj>` directories; an optional TRAILING `n`/`e`/`s` segment names the
-//! facing (absent → south). `linked/wall_smooth` →
-//! `master/linked.0/wall_smooth.0/1.s.0.1.albedo.png` and `world/conifer/e` →
-//! `master/world.0/conifer.0/1.e.0.1.albedo.png` — each dir segment normalised to a
-//! `.0` module suffix ([`norm_mod`]); the filename is the canonical
-//! `<id=1>.<rot>.<part=0>.<count=1>`. The per-instance variation picker (the old
-//! `^r2`) is future work; one variation per object for now.
+//! Stem → master path is deterministic. The stem's leading segments ARE the
+//! `<cat>/<kind>` directory names verbatim (a named subcategory/subkind is a dotted
+//! segment kept as-is); an optional TRAILING `n`/`e`/`s` segment names the facing
+//! (absent → south). `linked/wall.smooth` →
+//! `master/linked/wall.smooth/1.s.0.1.albedo.png` and `world/conifer/e` →
+//! `master/world/conifer/1.e.0.1.albedo.png`; the filename is the canonical
+//! `<id=1>.<dir>.<layer=0>.<variant=1>`. The per-instance variation picker (the old
+//! `^r2`) is future work; one variation per kind for now.
 //!
 //! Paths are sanitised to relative, `..`-free forms before they touch disk or the
 //! R2 keyspace, so a crafted stem can never escape the texture root.
@@ -172,11 +172,13 @@ impl TextureSource {
     }
 }
 
-/// The master albedo path for a stem: `master/<norm(cat)>/<norm(obj)>/1.1.0.albedo.png`.
-/// `None` if the stem escapes its root or isn't `<category>/<object>` shaped.
+/// The master albedo path for a stem: `master/<cat>/<kind>/1.s.0.1.albedo.png` — each
+/// stem segment IS the directory name verbatim (`world/conifer` →
+/// `master/world/conifer/…`, `linked/wall.smooth` → `master/linked/wall.smooth/…`).
+/// `None` if the stem escapes its root or isn't `<category>/<kind>` shaped.
 /// The direction tokens a stem's trailing segment may name — folded into the master
-/// FILENAME (`…<rot>…`) rather than becoming a directory: the `n`/`e`/`s` facings
-/// plus `l` for LINKED (autotile) objects. West is never a physical sprite (the
+/// FILENAME (`…<dir>…`) rather than becoming a directory: the `n`/`e`/`s` facings
+/// plus `l` for LINKED (autotile) kinds. West is never a physical sprite (the
 /// client mirrors east), so it never lands on disk.
 const FACINGS: [&str; 4] = ["n", "e", "s", "l"];
 
@@ -189,8 +191,8 @@ fn master_albedo_rel(stem: &str) -> Option<PathBuf> {
             _ => return None,
         }
     }
-    // A trailing facing segment folds into the filename's `<rot>` field — but only
-    // when a `<cat>/<obj>` prefix precedes it (≥3 segments), so a 2-segment object
+    // A trailing facing segment folds into the filename's `<dir>` field — but only
+    // when a `<cat>/<kind>` prefix precedes it (≥3 segments), so a 2-segment kind
     // whose name happens to be a facing letter is never mistaken for one. Absent →
     // south (`s`), the canonical single-facing default.
     let facing = if segs.len() >= 3 && FACINGS.contains(segs.last()?) {
@@ -203,9 +205,9 @@ fn master_albedo_rel(stem: &str) -> Option<PathBuf> {
     }
     let mut out = PathBuf::from("master");
     for seg in segs {
-        out.push(norm_mod(seg));
+        out.push(seg);
     }
-    // Canonical instance: id 1, part 0, variation (count) 1 — the per-instance
+    // Canonical instance: id 1, layer 0, variation (variant) 1 — the per-instance
     // variation picker (the old `^r2`) is still future work.
     Some(out.join(format!("1.{facing}.0.1.albedo.png")))
 }
@@ -224,18 +226,6 @@ fn derived_lod_path(cache: &Path, size: u32, stem: &str) -> PathBuf {
     p.push(size.to_string());
     p.push(format!("{stem}.albedo.png"));
     p
-}
-
-/// Normalise a path segment to a module folder: append `.0` unless it already ends
-/// in a `.<digits>` suffix (`linked` → `linked.0`, `wall_smooth.2` stays). Mirrors
-/// `bin/art`'s `_norm_mod`.
-fn norm_mod(seg: &str) -> String {
-    if let Some((_, tail)) = seg.rsplit_once('.') {
-        if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) {
-            return seg.to_string();
-        }
-    }
-    format!("{seg}.0")
 }
 
 /// A weak-ish ETag for a master file: `"<mtime_secs>-<size>"` in hex, quoted. Cheap
@@ -297,7 +287,7 @@ fn sanitize(rel: &str) -> Option<PathBuf> {
     (!out.as_os_str().is_empty()).then_some(out)
 }
 
-/// GET one master object's bytes from R2 at `<prefix>/textures/<rel>` via a
+/// GET one master's bytes from R2 at `<prefix>/textures/<rel>` via a
 /// short-lived SigV4-presigned URL — the binary sibling of [`crate::content`]'s
 /// `r2_get_text`. A 404 maps to `Ok(None)`; other failures are `Err`.
 async fn r2_get_bytes(cfg: &R2Config, rel: &Path) -> Result<Option<Vec<u8>>, String> {
@@ -326,38 +316,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn norm_mod_adds_suffix_once() {
-        assert_eq!(norm_mod("linked"), "linked.0");
-        assert_eq!(norm_mod("wall_smooth"), "wall_smooth.0");
-        assert_eq!(norm_mod("wall_smooth.2"), "wall_smooth.2"); // already suffixed
-        assert_eq!(norm_mod("v1"), "v1.0"); // trailing non-digit-after-dot → suffix
-    }
-
-    #[test]
     fn stem_resolves_to_canonical_master() {
-        // no facing → south default, canonical `1.s.0.1`
+        // no facing → south default, canonical `1.s.0.1`; segments verbatim (a named
+        // subkind like `wall.smooth` is kept as-is)
         assert_eq!(
-            master_albedo_rel("linked/wall_smooth"),
-            Some(PathBuf::from("master/linked.0/wall_smooth.0/1.s.0.1.albedo.png")),
+            master_albedo_rel("linked/wall.smooth"),
+            Some(PathBuf::from("master/linked/wall.smooth/1.s.0.1.albedo.png")),
         );
-        // a trailing facing segment folds into the `<rot>` field
+        // a trailing facing segment folds into the `<dir>` field
         assert_eq!(
             master_albedo_rel("world/conifer/e"),
-            Some(PathBuf::from("master/world.0/conifer.0/1.e.0.1.albedo.png")),
+            Some(PathBuf::from("master/world/conifer/1.e.0.1.albedo.png")),
         );
         assert_eq!(
             master_albedo_rel("world/conifer/n"),
-            Some(PathBuf::from("master/world.0/conifer.0/1.n.0.1.albedo.png")),
+            Some(PathBuf::from("master/world/conifer/1.n.0.1.albedo.png")),
         );
         // `l` (linked/autotile) is a direction token too
         assert_eq!(
-            master_albedo_rel("linked/wall_smooth/l"),
-            Some(PathBuf::from("master/linked.0/wall_smooth.0/1.l.0.1.albedo.png")),
+            master_albedo_rel("linked/wall.smooth/l"),
+            Some(PathBuf::from("master/linked/wall.smooth/1.l.0.1.albedo.png")),
         );
         // a non-facing 3rd segment stays a directory (facing → south)
         assert_eq!(
             master_albedo_rel("world/conifer/foo"),
-            Some(PathBuf::from("master/world.0/conifer.0/foo.0/1.s.0.1.albedo.png")),
+            Some(PathBuf::from("master/world/conifer/foo/1.s.0.1.albedo.png")),
         );
         // escapes are rejected
         assert_eq!(master_albedo_rel("../secret"), None);
@@ -382,31 +365,31 @@ mod tests {
         let root = base.join("textures");
         let cache = base.join("cache");
         let _ = std::fs::remove_dir_all(&base);
-        let obj = root.join("master/linked.0/wall_smooth.0");
-        std::fs::create_dir_all(&obj).unwrap();
+        let kind = root.join("master/linked/wall.smooth");
+        std::fs::create_dir_all(&kind).unwrap();
         // a 4×4 master albedo
         let master = image::RgbaImage::from_pixel(4, 4, image::Rgba([10, 180, 40, 255]));
         let mut buf = Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(master).write_to(&mut buf, image::ImageFormat::Png).unwrap();
-        std::fs::write(obj.join("1.s.0.1.albedo.png"), buf.into_inner()).unwrap();
+        std::fs::write(kind.join("1.s.0.1.albedo.png"), buf.into_inner()).unwrap();
 
         let src = TextureSource::Disk { root: root.clone(), cache: cache.clone() };
 
         // master served verbatim (4×4)
-        let m = src.serve_master("linked/wall_smooth").await.unwrap().expect("master present");
+        let m = src.serve_master("linked/wall.smooth").await.unwrap().expect("master present");
         assert_eq!(image::load_from_memory(&m.bytes).unwrap().width(), 4);
 
         // preview derived to 2×2, and cached to the (separate, writable) cache dir
-        let p = src.serve_preview("linked/wall_smooth").await.unwrap().expect("preview derived");
+        let p = src.serve_preview("linked/wall.smooth").await.unwrap().expect("preview derived");
         assert_eq!(image::load_from_memory(&p.bytes).unwrap().width(), 2);
-        assert!(derived_preview_path(&cache, "linked/wall_smooth").exists(), "preview cached");
+        assert!(derived_preview_path(&cache, "linked/wall.smooth").exists(), "preview cached");
 
         // a LOD downscales to the requested short axis (4×4 → 2×2) and caches it
-        let l = src.serve_lod("linked/wall_smooth", 2).await.unwrap().expect("lod derived");
+        let l = src.serve_lod("linked/wall.smooth", 2).await.unwrap().expect("lod derived");
         assert_eq!(image::load_from_memory(&l.bytes).unwrap().width(), 2);
-        assert!(derived_lod_path(&cache, 2, "linked/wall_smooth").exists(), "lod cached");
+        assert!(derived_lod_path(&cache, 2, "linked/wall.smooth").exists(), "lod cached");
         // a LOD at/above the master's short axis is clamped to the master (no upscale)
-        let big = src.serve_lod("linked/wall_smooth", 16).await.unwrap().expect("lod clamped");
+        let big = src.serve_lod("linked/wall.smooth", 16).await.unwrap().expect("lod clamped");
         assert_eq!(image::load_from_memory(&big.bytes).unwrap().width(), 4);
         // an un-mastered stem is a clean miss on all tiers
         assert!(src.serve_master("linked/nope").await.unwrap().is_none());
@@ -414,7 +397,7 @@ mod tests {
         assert!(src.serve_lod("linked/nope", 4).await.unwrap().is_none());
 
         // a mastered stem has an ETag; an un-mastered one doesn't
-        assert!(src.etag("linked/wall_smooth").is_some());
+        assert!(src.etag("linked/wall.smooth").is_some());
         assert!(src.etag("linked/nope").is_none());
 
         std::fs::remove_dir_all(&base).unwrap();

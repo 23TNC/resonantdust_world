@@ -4,10 +4,12 @@
 Drives the ComfyUI box (SDXL i2i + ControlNet edge, east hero + IP-Adapter
 anchored south/north) to paint directional sprites from a template set.
 
-Naming (co-located-type convention, base = <id>.<rotation>.<part>):
-  templates in  textures/templates/<from>/<template-id>.<dir>.template.png
-  sprites  out  textures/sprites/<to-or-from>/<seed>.<dir>.0.sprite.png   (transparent RGBA)
-  prompt   out  textures/templates/<from>/<seed>.prompt.txt               (reusable, --prompt)
+Naming (<id>.<dir>.<layer>.<variant>.<map>.<filetype>):
+  templates in  textures/templates/<from>/<template-id>.<dir>.<layer>.<template-variant>.template.png
+  sprites  out  textures/sprites/<to-or-from>/<template-id>.<dir>.<layer>.<seed>.sprite.png  (SEED = variant; transparent RGBA)
+  prompt   out  textures/templates/<from>/<seed>.prompt.txt                                  (reusable, --prompt)
+The template supplies <id>.<dir>.<layer>; the SEED becomes the output <variant>, so many
+seeds share one <id>.<dir>.<layer> — i.e. multiple sprite variants/control-maps per object.
 
 Background is removed by a corner flood-fill (colour auto-detected from the four
 corners, stops at the sharp outline transition). Prompts are used verbatim unless
@@ -28,7 +30,7 @@ COMFY = os.environ.get("COMFYUI_URL", "http://172.16.10.10:8188").rstrip("/")
 MODEL   = "sdxl/cyberrealisticXL_v80.safetensors"
 CN_MODEL= "sdxl/diffusion_pytorch_model.safetensors"
 STEPS, CFG, SAMPLER, SCHED = 26, 6.0, "dpmpp_2m", "karras"
-DN, CN, CN_END = 0.80, 0.50, 0.60
+DN, CN, CN_END = 0.70, 0.50, 0.90
 IP_WEIGHT = 0.6
 DIRS = ["e", "s", "n"]                       # e generated first = the IP hero
 FACE = {
@@ -92,12 +94,16 @@ def _anthropic_key():
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
     return None
 
-POS_SYS = ("You expand a terse creature description into a rich comma-separated VISUAL prompt fragment for a "
-           "flat 2D cartoon game sprite (RimWorld style). Describe ONLY appearance: species, fur/skin colour and "
-           "pattern, distinctive features, eye colour. Do NOT mention pose, camera angle, background, or art style "
-           "— those are added separately. Output ONLY the fragment, no preamble, no quotes.")
-NEG_SYS = ("You expand a terse 'avoid' list into a concise comma-separated list of things a flat 2D cartoon game "
-           "sprite generator should avoid, based on the user's input. Output ONLY the comma-separated list, no preamble.")
+POS_SYS = ("You refine a description for a 2D cartoon game sprite (RimWorld / Prison Architect "
+           "style: bold simple shapes, soft dimensional shading, clear colour regions, readable when small). PRESERVE "
+           "every feature the user stated (species, colours, markings, eyes) — never drop or contradict them — "
+           "then ADD complementary visual detail that suits this style: distinct colour regions, simple bold "
+           "markings, a clear silhouette. Do NOT add pose, camera angle, background, or render-style keywords "
+           "(those are appended separately by the pipeline). Output ONLY a comma-separated appearance fragment, "
+           "no preamble, no quotes.")
+NEG_SYS = ("You refine a terse 'avoid' list for a flat 2D cartoon game sprite generator. PRESERVE the user's "
+           "stated items and add a few closely-related things worth avoiding for this flat cartoon style. Output "
+           "ONLY a comma-separated list, no preamble, no quotes.")
 
 def _claude(key, system, user, model="claude-haiku-4-5-20251001", max_tokens=220):
     body = {"model": model, "max_tokens": max_tokens, "system": system,
@@ -131,8 +137,9 @@ def read_prompt_file(path):
     pos, neg, cur = [], [], None
     for line in open(path):
         s = line.rstrip("\n")
-        if s.strip().startswith("#"): continue
-        low = s.strip().lower()
+        st = s.strip()
+        if st == "#" or st.startswith("# "): continue   # comment = '#' + space (so '#FF00FF' hex is content)
+        low = st.lower()
         if low == "[positive]": cur = pos; continue
         if low == "[negative]": cur = neg; continue
         if cur is not None: cur.append(s)
@@ -147,12 +154,16 @@ def write_prompt_file(path, pos, neg, seed, from_path):
         f.write("[negative]\n" + (neg or "") + "\n")
 
 def resolve_prompts(args, from_path):
+    # Base prompt: explicit --positive/--negative, else the --prompt file (explicit
+    # args override the file). Then --llm (if set) expands whatever the base is —
+    # so --prompt just PRE-FILLS pos/neg and the LLM takes over from there.
+    pos, neg = args.positive.strip(), args.negative.strip()
     if args.prompt:
         pth = _resolve_prompt_ref(args.prompt, from_path)
         fpos, fneg = read_prompt_file(pth)
-        print(f"generate: reusing prompt {os.path.relpath(pth, REPO)} (no LLM)")
-        return (args.positive.strip() or fpos), (args.negative.strip() or fneg)
-    pos, neg = args.positive.strip(), args.negative.strip()
+        pos, neg = (pos or fpos), (neg or fneg)
+        print(f"generate: loaded prompt {os.path.relpath(pth, REPO)}"
+              + (" (+ --llm expand)" if args.llm else " (verbatim, no LLM)"))
     if not args.llm:
         return pos, neg
     key = _anthropic_key()
@@ -162,34 +173,48 @@ def resolve_prompts(args, from_path):
     print("generate: expanding prompts via Claude (--llm)")
     return _expand(key, pos, "pos") or pos, _expand(key, neg, "neg") or neg
 
-# ---------------------------------------------------------------- templates / bg
-def load_template(from_path, tid, d):
-    p = os.path.join(REPO, "textures", "templates", from_path, f"{tid}.{d}.template.png")
+# ---------------------------------------------------------------- naming / templates / bg
+# Full vocabulary: <id>.<dir>.<layer>.<variant>.<map>.<filetype>
+def template_name(tid, d, layer, tvar):   # the pose reference (map=template)
+    return f"{tid}.{d}.{layer}.{tvar}.template.png"
+def sprite_name(tid, d, layer, seed):     # generated sprite: SEED is the variant (map=sprite)
+    return f"{tid}.{d}.{layer}.{seed}.sprite.png"
+
+def load_template(from_path, tid, d, layer, tvar):
+    p = os.path.join(REPO, "textures", "templates", from_path, template_name(tid, d, layer, tvar))
     if not os.path.exists(p):
         raise SystemExit(f"generate: template not found: {p}")
     t = Image.open(p).convert("RGBA").resize((512, 512), Image.LANCZOS)
     f = Image.new("RGBA", (512, 512), (255, 255, 255, 255)); f.alpha_composite(t)
     return f.convert("RGB")
 
-def load_hero_from_disk(out_dir, seed):
-    """An already-generated east sprite (out_dir/<seed>.e.0.sprite.png), flattened
+def load_hero_from_disk(out_dir, tid, layer, seed):
+    """An already-generated east sprite (<id>.e.<layer>.<seed>.sprite.png), flattened
     onto white, for use as the IP anchor when east isn't regenerated this run."""
-    p = os.path.join(out_dir, f"{seed}.e.0.sprite.png")
+    p = os.path.join(out_dir, sprite_name(tid, "e", layer, seed))
     if not os.path.exists(p):
         return None
     im = Image.open(p).convert("RGBA")
     w = Image.new("RGBA", im.size, (255, 255, 255, 255)); w.alpha_composite(im)
     return w.convert("RGB")
 
-def edge_map(rgb):
-    e = (np.array(rgb.convert("L").filter(ImageFilter.FIND_EDGES)) > 30).astype(np.uint8) * 255
+def edge_map(rgb, thresh=30):
+    """Binary edge map fed to ControlNet. Higher thresh keeps only the strong outer
+    silhouette and drops interior/AA noise — a cleaner control signal that lets you
+    hold high CN without the model baking every speck of fur texture into a hard line."""
+    e = (np.array(rgb.convert("L").filter(ImageFilter.FIND_EDGES)) > thresh).astype(np.uint8) * 255
     return Image.fromarray(e).convert("RGB")
 
-def remove_bg_floodfill(img_rgb, thresh=60.0, feather=0.8, max_iter=4096):
+def remove_bg_floodfill(img_rgb, thresh=60.0, choke=2, feather=0.8, max_iter=4096):
     """Corner-seeded flood fill -> transparent background. Auto-detects the bg
     colour from the four corners, floods inward, STOPS at the first sharp colour
     transition (e.g. white->black outline; also white->green, magenta->black).
-    Interior same-colour regions sealed by the outline stay opaque. Colour-agnostic."""
+    Interior same-colour regions sealed by the outline stay opaque. Colour-agnostic.
+
+    choke: erode the alpha inward by N px, seating the cut against the black outline
+    so the anti-aliased fringe the flood leaves behind (the light 'halo' between bg
+    and outline) is removed. Mirrors the magenta matte choke; colour-agnostic, so it
+    also clears a green/magenta fringe. 0 = no choke."""
     rgb = np.asarray(img_rgb.convert("RGB")).astype(np.float32)
     H, W, _ = rgb.shape; cs = 6
     corners = np.vstack([rgb[:cs, :cs].reshape(-1, 3), rgb[:cs, -cs:].reshape(-1, 3),
@@ -207,9 +232,45 @@ def remove_bg_floodfill(img_rgb, thresh=60.0, feather=0.8, max_iter=4096):
         if int(g.sum()) == int(region.sum()): break
         region = g
     alpha = Image.fromarray(np.where(region, 0, 255).astype(np.uint8), "L")
+    for _ in range(int(choke)):                          # choke: kill the AA fringe / halo
+        alpha = alpha.filter(ImageFilter.MinFilter(3))
     if feather > 0:
         alpha = alpha.filter(ImageFilter.GaussianBlur(feather))
     return Image.fromarray(np.dstack([rgb.astype(np.uint8), np.asarray(alpha)]), "RGBA")
+
+def make_symmetric(img, axis):
+    """Force mirror symmetry by averaging the sprite with its own flip. axis='h'
+    mirrors left<->right (horizontal symmetry, a vertical mirror line — the useful
+    one for front/back N/S views); axis='v' mirrors top<->bottom. Blends in
+    premultiplied alpha so transparent (bg-coloured) RGB can't bleed into the
+    averaged edges and re-create a halo."""
+    flip = Image.FLIP_LEFT_RIGHT if axis == "h" else Image.FLIP_TOP_BOTTOM
+    mirror = img.transpose(flip)
+    if img.mode != "RGBA":
+        a = np.asarray(img.convert("RGB")).astype(np.float32)
+        b = np.asarray(mirror.convert("RGB")).astype(np.float32)
+        return Image.fromarray(((a + b) / 2.0).astype(np.uint8), "RGB")
+    a = np.asarray(img).astype(np.float32); b = np.asarray(mirror).astype(np.float32)
+    pre = (a[..., :3] * (a[..., 3:4] / 255.0) + b[..., :3] * (b[..., 3:4] / 255.0)) / 2.0
+    oa = (a[..., 3:4] + b[..., 3:4]) / 2.0               # averaged alpha
+    rgb = np.where(oa > 1e-3, pre / np.clip(oa / 255.0, 1e-3, None), 0.0)
+    return Image.fromarray(np.dstack([np.clip(rgb, 0, 255), oa[..., 0]]).astype(np.uint8), "RGBA")
+
+def resize_sprite(img, size):
+    """Scale the final sprite to size×size. For RGBA, resize with PREMULTIPLIED
+    alpha so the transparent pixels' (bg-coloured) RGB can't bleed into the edges
+    and re-create the halo — then unpremultiply. Generation stays at 512 (quality);
+    only the saved file shrinks."""
+    if size <= 0 or (img.width == size and img.height == size):
+        return img
+    if img.mode != "RGBA":
+        return img.resize((size, size), Image.LANCZOS)
+    a = np.asarray(img).astype(np.float32); al = a[..., 3:4] / 255.0
+    pre = Image.fromarray(np.dstack([a[..., :3] * al, a[..., 3]]).astype(np.uint8), "RGBA")
+    pre = pre.resize((size, size), Image.LANCZOS)
+    r = np.asarray(pre).astype(np.float32); oa = r[..., 3:4] / 255.0
+    rgb = np.where(oa > 1e-3, r[..., :3] / np.clip(oa, 1e-3, None), 0.0)
+    return Image.fromarray(np.dstack([np.clip(rgb, 0, 255), r[..., 3]]).astype(np.uint8), "RGBA")
 
 # ---------------------------------------------------------------- workflow
 def _tail(pos, neg, ref_name, edge_name, model_ref, seed):
@@ -238,6 +299,7 @@ def graph_ip(pos, neg, ref_name, edge_name, hero_name, seed):
 
 # ---------------------------------------------------------------- main
 def main():
+    global DN, CN, CN_END, CFG   # --dn/--cn/--cn-end/--cfg override the module defaults
     ap = argparse.ArgumentParser(prog="art generate", description="Generate directional creature sprites from a template set.")
     ap.add_argument("--from", dest="from_path", required=True, help="template path under textures/templates (e.g. pawns/wolf)")
     ap.add_argument("--to", dest="to_path", default=None, help="output path under textures/sprites (default: same as --from)")
@@ -246,14 +308,34 @@ def main():
     ap.add_argument("--prompt", default=None, help="reuse a saved prompt: an id (templates/<from>/<id>.prompt.txt) or a path")
     ap.add_argument("--llm", action="store_true", help="expand --positive/--negative via Claude (spends API tokens; off by default)")
     ap.add_argument("--seed", type=int, default=None, help="seed; also the output id. random if omitted")
-    ap.add_argument("--template-id", default="1", help="template id within the folder (default 1)")
+    ap.add_argument("--template-id", default="1", help="template <id> within the folder (default 1)")
+    ap.add_argument("--layer", default="0", help="template/sprite <layer> field (default 0)")
+    ap.add_argument("--template-variant", default="0", help="template <variant> field to read (default 0)")
     ap.add_argument("--dirs", default="e,s,n", help="directions to generate (default e,s,n; e is the hero)")
     ap.add_argument("--dir", default=None, help="generate a single direction (overrides --dirs), e.g. --dir s")
+    ap.add_argument("--size", type=int, default=512, help="output sprite size in px (default 512; generation stays at 512, only the saved file scales)")
     ap.add_argument("--bg-thresh", type=float, default=60.0, help="corner-flood key tolerance (colour distance; default 60)")
+    ap.add_argument("--choke", type=int, default=2, help="erode alpha inward N px to kill the AA fringe/halo at the outline (default 2; 1 can still bleed bg)")
     ap.add_argument("--keep-bg", action="store_true", help="skip background removal; save the raw sprite on its bg")
+    ap.add_argument("--hsym", default="", help="directions (subset of 'sne') to force horizontal (left-right) mirror symmetry, e.g. --hsym ns for front/back views")
+    ap.add_argument("--vsym", default="", help="directions (subset of 'sne') to force vertical (top-bottom) mirror symmetry")
+    ap.add_argument("--dn", type=float, default=DN, help=f"i2i denoise strength (default {DN}; higher = more repaint freedom / less template fidelity)")
+    ap.add_argument("--cn", type=float, default=CN, help=f"ControlNet edge strength (default {CN}; higher = harder pull toward the template silhouette)")
+    ap.add_argument("--cn-end", type=float, default=CN_END, help=f"ControlNet end_percent: fraction of steps it stays active (default {CN_END}; higher holds the silhouette deeper into the paint-in phase)")
+    ap.add_argument("--edge-thresh", type=int, default=30, help="FIND_EDGES cutoff for the ControlNet edge map (default 30; raise to 60-90 to keep only the strong silhouette and drop interior noise, so high CN doesn't blow up the lines)")
+    ap.add_argument("--cfg", type=float, default=CFG, help=f"classifier-free guidance scale (default {CFG:g}; lower loosens prompt/prior adherence — the model chases 'wolf' less hard, so it adds legs less; higher pushes harder toward the prompt and control)")
     args = ap.parse_args()
 
+    DN, CN, CN_END, CFG = args.dn, args.cn, args.cn_end, args.cfg
+
+    hsym = {c for c in args.hsym.lower() if not c.isspace() and c != ","}
+    vsym = {c for c in args.vsym.lower() if not c.isspace() and c != ","}
+    bad = (hsym | vsym) - set(FACE)
+    if bad:
+        print(f"generate: --hsym/--vsym ignores unknown direction(s) {''.join(sorted(bad))} (valid: {''.join(FACE)})", file=sys.stderr)
+
     seed = args.seed if args.seed is not None else random.randint(1, 2**31 - 1)
+    tid, layer, tvar = args.template_id, args.layer, args.template_variant   # template <id>.<dir>.<layer>.<variant>
     dirs = [args.dir.strip()] if args.dir else [d.strip() for d in args.dirs.split(",") if d.strip()]
     if "e" in dirs: dirs = ["e"] + [d for d in dirs if d != "e"]   # hero first
     from_path = args.from_path.strip("/")
@@ -270,26 +352,30 @@ def main():
 
     out_dir = os.path.join(REPO, "textures", "sprites", out_path)
     os.makedirs(out_dir, exist_ok=True)
-    print(f"generate: from={from_path} to={out_path} seed={seed} dirs={dirs}"
+    print(f"generate: from={from_path} to={out_path} seed={seed} dirs={dirs} size={args.size}"
           + ("" if args.keep_bg else f" bg-key(thresh {args.bg_thresh:g})"))
+    print(f"  recipe -> dn={DN:g} cn={CN:g} cn_end={CN_END:g} edge_thresh={args.edge_thresh} steps={STEPS} cfg={CFG:g}")
+    print(f"  bg-key -> " + ("keep-bg (no removal)" if args.keep_bg else f"bg_thresh={args.bg_thresh:g} choke={args.choke}"))
+    if hsym: print(f"  hsym (left-right) -> {''.join(sorted(hsym))}")
+    if vsym: print(f"  vsym (top-bottom) -> {''.join(sorted(vsym))}")
     print(f"  positive -> {pos}")
     print(f"  negative -> {neg}")
     print(f"  wrote {os.path.relpath(prompt_out, REPO)}")
 
     hero_name = None
     if "e" not in dirs:   # regenerating only s/n — anchor to the existing east sprite if present
-        hero_img = load_hero_from_disk(out_dir, seed)
+        hero_img = load_hero_from_disk(out_dir, tid, layer, seed)
         if hero_img is not None:
             hero_name = _upload(hero_img, f"artgen_{seed}_hero.png")
-            print(f"  IP anchor: existing {seed}.e.0.sprite.png")
+            print(f"  IP anchor: existing {sprite_name(tid, 'e', layer, seed)}")
         else:
-            print(f"generate: no existing east sprite for seed {seed}; {dirs} generate without IP anchor", file=sys.stderr)
+            print(f"generate: no existing east sprite ({sprite_name(tid, 'e', layer, seed)}); {dirs} generate without IP anchor", file=sys.stderr)
     for d in dirs:
         if d not in FACE:
             print(f"generate: skipping unknown direction '{d}'", file=sys.stderr); continue
-        tpl = load_template(from_path, args.template_id, d)
+        tpl = load_template(from_path, tid, d, layer, tvar)
         ref_name = _upload(tpl, f"artgen_{seed}_{d}_ref.png")
-        edge_name = _upload(edge_map(tpl), f"artgen_{seed}_{d}_edge.png")
+        edge_name = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{seed}_{d}_edge.png")
         full_pos = f"{pos}, {STYLE.format(face=FACE[d])}"
         if d == "e" or hero_name is None:
             raw = _run(graph_hero(full_pos, neg, ref_name, edge_name, seed))
@@ -298,11 +384,14 @@ def main():
         img = Image.open(io.BytesIO(raw)).convert("RGB")
         if d == "e":
             hero_name = _upload(img, f"artgen_{seed}_hero.png")   # east (on white) becomes the IP anchor
-        sprite = img if args.keep_bg else remove_bg_floodfill(img, thresh=args.bg_thresh)
-        out = os.path.join(out_dir, f"{seed}.{d}.0.sprite.png")
+        sprite = img if args.keep_bg else remove_bg_floodfill(img, thresh=args.bg_thresh, choke=args.choke)
+        if d in hsym: sprite = make_symmetric(sprite, "h")             # force symmetry after the cut
+        if d in vsym: sprite = make_symmetric(sprite, "v")
+        sprite = resize_sprite(sprite, args.size)                       # scale AFTER the cut (premultiplied)
+        out = os.path.join(out_dir, sprite_name(tid, d, layer, seed))   # SEED = variant
         sprite.save(out)
         print(f"  wrote {os.path.relpath(out, REPO)}")
-    print(f"generate: done (id {seed})")
+    print(f"generate: done (id {tid} variant {seed})")
 
 if __name__ == "__main__":
     main()

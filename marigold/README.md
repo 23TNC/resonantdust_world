@@ -9,11 +9,13 @@ each diffuse sprite as
 
 - **A — Albedo**: base colour, de-lit. Shipped as `N.albedo.png` (drop-in for the
   old albedo). This is what the renderer bakes today.
-- **S — diffuse Shading**: the removed lighting. Emit for inspection / a future
-  occlusion-style channel.
-- **R — non-diffuse Residual**: additive highlights (painted rim lights,
-  speculars) that a *division* can't remove. Emit for a future emissive/specular
-  channel.
+- **S — diffuse Shading**: the removed lighting. Emit as `N.albedo_shading.png`
+  (`--emit albedo_shading`) for inspection / a future occlusion-style channel.
+- **R — non-diffuse Residual**: additive highlights (painted rim lights, speculars,
+  self-lit glow) that a *division* can't remove. Emitted as `N.albedo_residual.png`
+  (by `maps`/`remaster`); `bin/art emissive` gates + cleans it into the shipped
+  `N.emissive.png` additive glow map. (Not to be confused with `split_layers`'
+  `N.packed_residual.png`, a different "residual".)
 
 Because it's a learned decomposition it needs **no normal map** (unlike the
 divide, which measured `N·L`), so `bin/art maps` now runs normal and albedo
@@ -46,7 +48,7 @@ Or drive it directly for a spike/compare (all three targets, off to the side):
 
 ```
 bin/marigold delight textures/master/linked.0/wall_smooth.0 \
-    --emit albedo,shading,residual --out-dir /tmp/spike
+    --emit albedo,albedo_shading,albedo_residual --out-dir /tmp/spike
 ```
 
 Runs offline at master-generation time only; not in the game loop. Seed is fixed

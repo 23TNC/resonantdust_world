@@ -46,11 +46,13 @@ Diffusion 2. It decomposes an image as
 
     I = A · S + R
 
-- **A — albedo**: base colour, de-lit. This is what we ship.
+- **A — albedo**: base colour, de-lit. Shipped as `N.albedo.png`.
 - **S — diffuse shading**: the removed lighting (ambient occlusion **plus**
-  directional light).
-- **R — non-diffuse residual**: additive highlights (rim lights, speculars) — the
-  component a divide can *never* recover.
+  directional light). Emitted as `N.albedo_shading.png` when wanted.
+- **R — non-diffuse residual**: additive highlights (rim lights, speculars) **and
+  self-lit glow** — the component a divide can *never* recover. This is where a
+  glowing eye's colour lands (not the albedo). Emitted as `N.albedo_residual.png`;
+  `art emissive` gates + cleans it into the shipped `N.emissive.png` (see below).
 
 Because it's a learned decomposition it needs **no normal map** (unlike the
 divide, which measured `N·L`). So normal and albedo generation are now
@@ -75,18 +77,48 @@ file with the tooling and don't repackage the weights.
 
 ## The map architecture we settled on
 
-For a normal-lit (deferred-ish) renderer, the shipped map set is:
+For a normal-lit (deferred-ish) renderer, the core shipped map set is **albedo +
+normal**. Depth is *not* shipped (see below); **emissive** (below) is also generated
+now and is a shipping candidate (which maps go to R2 vs. stay local for dev is still
+TBD). Master generation additionally produces the intermediates `albedo_residual`
+(emissive's source) and, when packing tints, `packed` + `packed_residual` — kept
+local, not necessarily shipped:
 
 - **albedo** (Marigold IID) — flat base colour, no lighting.
-- **normal** (Marigold) — view-space surface normals; the *shading* input (N·L).
-  Retired Laigter (luminance-heightfield guess; misread painted edges as relief);
-  reachable via `art normal --engine laigter`. Convention: Marigold view-space,
-  consumed directly by the renderer (no green-flip / tangent-space conversion) —
-  see [normals](#normals-vs-shadows-the-depth-map). detail-blend / strength are
-  Laigter-only tangent-space knobs the marigold engine ignores.
-- **depth** (Marigold) — 16-bit height field; the *shadowing* + AO + parallax
-  input. Normals give shading but can't cast shadows (no occlusion info); depth is
-  the complement. See below.
+- **emissive** — additive self-lit glow, gated from Marigold's non-diffuse residual
+  (`albedo_residual`) by `art emissive`; black on matte assets. Added *after* the
+  lighting pass, unlit. This is where glowing eyes / lava / runes live — the colour
+  Marigold pulls out of the albedo. Dormant until the renderer's lighting pass exists.
+- **normal** (Laigter, default) — tangent-space surface normals; the *shading* input
+  (N·L). We use **Laigter** as canonical because we're 2.5D, not 3D: a sprite is a
+  flat plane with relief, and Laigter's luminance-heightfield normal *is* the
+  gradient of a single height field — so depth integrates cleanly from it (below) and
+  it works on flat art. Marigold's view-space normals are cleaner macro shape but
+  aren't a valid height field (steep tilts → non-integrable) and are starved on flat
+  art; reach for them via `art normal --marigold`. **Convention (verified, not
+  assumed):** both engines emit the SAME OpenGL / +Y-up encoding — red-high = +X
+  (right), green-high = +Y (up), blue-high = +Z (toward viewer). Measured by driving
+  Laigter with synthetic luminance ramps (a +Y-facing surface → green 145 > 128;
+  a +X-facing surface → red > 128) — no green-flip / DirectX conversion needed. The
+  renderer consumes it directly. detail-blend / strength are Laigter-only knobs the
+  marigold engine ignores.
+- **depth** — the *shadowing* + AO + parallax input, but **NOT generated or
+  distributed**. Depth is a deterministic integral of the normal (the normal *is* a
+  height-field gradient), so baking + shipping a 16-bit map is redundant with the
+  normal we already ship. The renderer **integrates it client-side** from the normal
+  at load (Frankot–Chellappa / Poisson), caching the height texture like any other —
+  a CPU FFT (rustfft in the WASM client) or a GPU Jacobi/multigrid solve in WebGL.
+  Normal + depth then describe ONE surface for free, and there's nothing to keep in
+  sync. `marigold/normal_depth.py` + `art depth` remain as the **reference
+  implementation** for that client port and for eyeballing relief.
+
+  **Caveat — relief ≠ standing height.** Integrating the normal recovers *surface
+  relief* (bark ridges, branch tiers), never *world elevation* (that a conifer stands
+  tall and casts a long ground shadow) — that was never in the normal. So client-side
+  integration covers per-sprite **self-shadow / AO / parallax**. If **cross-object**
+  shadows (tall tree over a short bush) are ever wanted, that standing height must be
+  authored separately — a cheap per-sprite `height` scalar (e.g. alongside
+  `&thing.size`), NOT a depth texture and NOT derivable from the normal.
 
 ### Normals vs shadows: the depth map
 
@@ -95,6 +127,13 @@ Normals and depth are complementary halves of 2.5D lighting: **normal → shadin
 map can't cast a shadow — that needs occlusion, i.e. a height field. Heightfield
 ray-marching (horizon mapping) over a composited depth buffer gives dynamic
 directional shadows with no 3D geometry.
+
+> The caveats in the rest of this section (frame-edge flattening, billboard-depth ≠
+> world elevation, per-image affine normalisation) are properties of the **monocular
+> Marigold depth net** — now only the `art depth --engine marigold` path. The default
+> **integrated** depth (from the normal) doesn't have the frame-edge or billboard
+> problems: it reconstructs the relief the normal encodes, so a conifer's tiers come
+> through directly. It's still per-sprite affine (normalised within the silhouette).
 
 **Frame-edge flattening (handled).** Monocular depth flattens any object that runs
 to the frame border — it can't tell the object doesn't continue past it. Dense
@@ -116,8 +155,11 @@ Two conventions, both settled at render time ("build the renderer to match"):
   occluder, not rich per-pixel relief. Top-down terrain tiles (depth ≈ elevation)
   are the case where it's a genuine height field — spike those before leaning on it.
 
-Depth has **no alpha** (16-bit grayscale); coverage comes from the shared sprite
-mask (albedo/normal alpha), and the renderer masks the edge-bled background out.
+Depth has **no alpha** (16-bit grayscale) and the normal ships a **flat opaque
+background** (#8080FF outside the silhouette) — neither carries coverage. Coverage
+comes from the **albedo alpha** (the one map that keeps the silhouette); the renderer
+masks normal/depth writes by albedo coverage, so the flat padding never composites
+into a neighbour.
 
 ### Ambient occlusion
 
@@ -143,8 +185,8 @@ A second option, if depth proves too coarse on some art (billboards), is to deri
 AO from Marigold's **shading**: estimate `L` from `shading` + `normal`, compute
 `max(N·L, 0)`, take `AO ≈ shading / directional` — the directionless remainder is
 the contact/crevice occlusion. Clean because it runs on the smooth shading channel
-(no albedo edges to halo). Emit shading with `art delight <object> --emit
-albedo,shading` (off by default).
+(no albedo edges to halo). Emit shading with `art delight <kind> --emit
+albedo,albedo_shading` (off by default).
 
 Either way it's a later polish pass — good normals + a screen-space/height AO pass
 get most of the way first. Note the split of responsibilities: **directional
@@ -164,7 +206,9 @@ Run on the 2080 Ti against real masters:
   removed and no halos/vignette/smear. The old divide, by contrast, barely changed
   the input. Residual caught the specular needle-tip highlights.
 - **Residual** is minor for matte assets and has mild edge colour-fringing; it
-  matters for glossy/emissive content, not stone or bark. Not wired into rendering.
+  matters for glossy/emissive content, not stone or bark. This is exactly why it's
+  now emitted (`N.albedo_residual.png`) and gated into the shipped emissive map —
+  see below.
 
 Takeaway: Marigold albedo is trustworthy on coloured content and a clear quality
 win over the divide; on monochrome content it (correctly) goes flat, which is a
@@ -172,34 +216,46 @@ render-side problem, not a decomposition problem.
 
 ## The tooling
 
-Three sibling scripts under `marigold/`, each loading its model once and batching
-every `*.diffuse.png` under the given paths. All share `delight.py`'s discovery /
-path helpers, a fixed `--seed` (2024, reproducible), and `--steps`/`--ensemble`/
-`--resolution`/`--out-dir` knobs (small sprites are upscaled to the processing
-resolution internally — lower it if the model hallucinates detail):
+Scripts under `marigold/`. The model-backed ones load once and batch every
+`*.diffuse.png` under the given paths, share `delight.py`'s discovery / path helpers,
+a fixed `--seed` (2024, reproducible), and `--steps`/`--ensemble`/`--resolution`/
+`--out-dir` knobs (small sprites are upscaled to the processing resolution internally
+— lower it if the model hallucinates detail):
 
-- **`delight.py`** — IID de-light → `N.albedo.png` (+ `shading`/`residual` via
-  `--emit`). Re-applies the sprite alpha (palette inputs normalised to RGBA first).
-- **`normals.py`** — view-space normals → `N.normal.png`. Alpha = sprite
-  silhouette (coverage); RGB outside the silhouette is filled with the flat
-  facing-viewer normal `#8080FF` (0,0,1) — Marigold's own encoding for a
-  camera-facing surface, and "flat ground" in a top-down view — so edge filtering /
-  mipmaps bleed toward flat rather than the model's garbage background prediction.
-  Same `--pad-frac` frame-edge padding as depth (subtler effect — normals are
-  local, so less edge-sensitive than depth).
-- **`depth.py`** — 16-bit height field → `N.depth.png` (no alpha; coverage from the
-  shared mask). `--visualize` also writes a colour-mapped `N.depth-viz.png`. Needs
-  `scipy` for the depth pipeline's ensembling.
+- **`delight.py`** — IID de-light → `N.albedo.png` (+ `albedo_shading`/
+  `albedo_residual` via `--emit`; `maps` emits `albedo_residual` by default so
+  `emissive` can gate it). Re-applies the sprite alpha (palette inputs normalised
+  to RGBA first).
+- **`bin/lib/emissive.py`** — gates + cleans `N.albedo_residual.png` into the
+  shipped `N.emissive.png` (CPU, no venv/GPU): threshold the luminance, erode the
+  coverage to drop the edge fringe, black elsewhere. Non-destructive (the residual
+  is preserved), so `art emissive <kind>` re-tunes without re-running the de-light.
+  Additive at render: `out = albedo·lighting + emissive`.
+- **`normals.py`** — the OPTIONAL Marigold normal engine (`art normal --marigold`)
+  → `N.normal.png` with a **flat OPAQUE background**: RGB outside the silhouette is
+  filled with the flat facing-viewer normal `#8080FF` (0,0,1) and left opaque (no
+  silhouette alpha; coverage comes from the albedo). Same `#8080FF` fill and same
+  `--pad-frac` frame-edge padding as the default Laigter path.
+- **`normal_depth.py`** — **reference** depth-from-normal integrator (not run by
+  `maps`; depth ships nowhere — the client does this at render time). **No model/GPU**:
+  integrates the co-located `N.normal.png` slope field into `N.depth.png` (Frankot–
+  Chellappa FFT), forcing a flat plateau outside the silhouette (from the diffuse
+  alpha). `--invert` for near=0/far=1, `--visualize` for `N.depth-viz.png`. This is
+  the algorithm to port to the client (rustfft/WASM or a WebGL multigrid solve).
+- **`depth.py`** — the monocular Marigold depth net (`art depth --engine marigold`),
+  kept only for the rare photoreal-ish case → `N.depth.png` (no alpha; coverage from
+  the shared mask). Flattens on flat art — that's why integration exists.
+  `--visualize` writes a colour-mapped `N.depth-viz.png`.
 
 - **`bin/marigold`** — venv wrapper mirroring `bin/laigter`. `build` creates the
   venv (prefers `uv`, so it needs neither `sudo` nor the system `python3-venv`),
-  `config` reports torch/CUDA status; subcommands `delight` / `normals` / `depth`.
-  First run downloads each checkpoint (~a few GB) to the HF cache.
+  `config` reports torch/CUDA status; subcommands `delight` / `normals` / `depth` /
+  `normal-depth`. First run downloads each checkpoint (~a few GB) to the HF cache.
 - **`bin/art`** front-ends over a master dir: `art delight` / `art normal`
   (`--engine marigold|laigter`, default marigold) / `art depth`. Legacy divide
   kept as **`art delight-divide`**.
 - **Wiring:** `art remaster` → `art split` → `art maps`, and `maps` runs all three
-  (normal → albedo → depth). So `art remaster <object>` (or `art maps <object>`)
+  (normal → albedo → depth). So `art remaster <kind>` (or `art maps <kind>`)
   produces the full Marigold set end-to-end. Grid categories (`linked`) skip only
   the per-piece **outline** (auto-tile seams) — they DO get maps now.
 
@@ -228,7 +284,7 @@ The `marigold/` code is tracked; the venv and HF cache are git-ignored
    shadows from the depth buffer. Settle the normal/depth conventions here (view-
    space normals read directly; depth height meaning per art class).
 2. **Regenerate masters.** Spikes ran into scratch; on-disk masters still carry the
-   old divide albedo. Run `art maps <object>` (or a full `art remaster`) to switch
+   old divide albedo. Run `art maps <kind>` (or a full `art remaster`) to switch
    them over — do this *after* the lighting pass exists, so flat albedo isn't a
    visible regression in the meantime.
 3. **Derived AO** (optional, later) — the shading-divide recipe above, if

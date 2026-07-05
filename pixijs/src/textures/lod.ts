@@ -4,7 +4,7 @@
 //! resolutions on demand (see `server/src/textures.rs`), so `bin/art` writes only
 //! masters and the client never downscales.
 //!
-//! Two tiers, both keyed by stem (`<category>/<object>`):
+//! Two tiers, both keyed by stem (`<category>/<kind>`):
 //!   • `master`  — the full-res master albedo (the resolver's top tier).
 //!   • `preview` — the gate's half-res derivation (the geo→real placeholder).
 

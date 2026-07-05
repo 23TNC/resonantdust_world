@@ -8,17 +8,22 @@ each diffuse sprite as
     I = A * S + R
 
 into Albedo A (base colour, de-lit), diffuse Shading S, and non-diffuse Residual
-R (the additive highlights — painted rim lights / speculars — that a division
-CANNOT remove). We ship A as `<base>.albedo.png`, a drop-in for the old albedo,
-carrying the source sprite's alpha. Unlike the divide, this needs no normal map:
-it is a learned decomposition, independent of Laigter.
+R (the additive highlights — painted rim lights / speculars / self-lit glow —
+that a division CANNOT remove). We ship A as `<base>.albedo.png`, a drop-in for
+the old albedo, carrying the source sprite's alpha. Unlike the divide, this needs
+no normal map: it is a learned decomposition, independent of Laigter.
+
+The emitted maps are named for the user-facing target, prefixed `albedo_` for the
+IID by-products (see EMIT_TARGETS): S → `<base>.albedo_shading.png`, R →
+`<base>.albedo_residual.png`. `albedo_residual` is the raw non-diffuse term that
+`art emissive` gates + cleans into the shipped `<base>.emissive.png`.
 
 Batch: the model loads once, then every diffuse under the given paths is
 decomposed. Invoked by `bin/art delight` via the `bin/marigold` wrapper, but also
 runnable directly for a spike:
 
     bin/marigold delight textures/master/linked.0/wall_smooth.0 \
-        --emit albedo,shading,residual --out-dir /tmp/spike
+        --emit albedo,albedo_shading,albedo_residual --out-dir /tmp/spike
 
 Each `N.diffuse.png` maps to `N.<target>.png` co-located (or flat under --out-dir).
 """
@@ -31,8 +36,16 @@ from pathlib import Path
 
 DIFFUSE_SUFFIX = ".diffuse.png"
 DEFAULT_MODEL = "prs-eth/marigold-iid-lighting-v1-1"
-# Targets the "lighting" checkpoint emits (visualize_intrinsics keys).
-LIGHTING_TARGETS = ("albedo", "shading", "residual")
+# User-facing emit targets → the "lighting" checkpoint's visualize_intrinsics keys.
+# The IID by-products are prefixed `albedo_` so they (a) read as products of the
+# albedo decomposition and (b) don't collide with split_layers' `packed_residual`.
+# `albedo_residual` is the non-diffuse (emissive/specular) term R — the source that
+# `art emissive` gates + cleans into the shipped `<base>.emissive.png`.
+EMIT_TARGETS = {
+    "albedo": "albedo",
+    "albedo_shading": "shading",
+    "albedo_residual": "residual",
+}
 
 
 def find_diffuse(paths: list[Path]) -> list[Path]:
@@ -98,12 +111,29 @@ def load_pipeline(model: str, half: bool, device: str):
     return pipe, torch, dtype
 
 
+def restore_edge(albedo: "Image.Image", diffuse_rgb: "Image.Image", alpha: "Image.Image") -> "Image.Image":
+    """Kill the de-lighting halo. Marigold lifts the sprite's near-black AA fringe
+    (lum ~0-13 in the diffuse) into a pale ghost ring (~lum 24-50) — a halo the
+    source never had. Sub-opaque pixels carry almost no real albedo signal (they're
+    AA blends of outline over transparent background), so restore the diffuse's own
+    clean, dark edge colour wherever alpha < 255; the fully-opaque interior keeps
+    the de-lit albedo untouched. Result: the albedo edge byte-matches the diffuse
+    edge, so split_layers never packs a halo."""
+    import numpy as np
+    from PIL import Image
+    df = diffuse_rgb if diffuse_rgb.size == alpha.size else diffuse_rgb.resize(alpha.size, Image.NEAREST)
+    out = np.asarray(albedo).copy()                    # HxWx4
+    edge = np.asarray(alpha) < 255
+    out[edge, :3] = np.asarray(df.convert("RGB"))[edge]
+    return Image.fromarray(out, "RGBA")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Marigold-IID de-lighting for master sprites.")
     ap.add_argument("paths", nargs="+", type=Path,
                     help="diffuse PNGs or directories to scan for *.diffuse.png")
     ap.add_argument("--emit", default="albedo",
-                    help="comma list of targets to write: albedo,shading,residual (default albedo)")
+                    help="comma list of targets to write: albedo,albedo_shading,albedo_residual (default albedo)")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="write maps here (flat) instead of co-located next to the diffuse")
     ap.add_argument("--steps", type=int, default=4, help="denoising steps (default 4)")
@@ -121,9 +151,9 @@ def main() -> int:
     from PIL import Image
 
     targets = [t.strip() for t in args.emit.split(",") if t.strip()]
-    unknown = [t for t in targets if t not in LIGHTING_TARGETS]
+    unknown = [t for t in targets if t not in EMIT_TARGETS]
     if unknown:
-        print(f"marigold: unknown emit target(s) {unknown}; valid: {LIGHTING_TARGETS}", file=sys.stderr)
+        print(f"marigold: unknown emit target(s) {unknown}; valid: {tuple(EMIT_TARGETS)}", file=sys.stderr)
         return 2
 
     diffuse = find_diffuse(args.paths)
@@ -172,10 +202,12 @@ def main() -> int:
         vis = pipe.image_processor.visualize_intrinsics(pred.prediction, pipe.target_properties)[0]
 
         for t in targets:
-            img = vis[t].convert("RGBA")
+            img = vis[EMIT_TARGETS[t]].convert("RGBA")   # vis keyed by Marigold name; file named by target
             if alpha is not None:
                 a = alpha if alpha.size == img.size else alpha.resize(img.size, Image.NEAREST)
                 img.putalpha(a)
+                if t == "albedo":
+                    img = restore_edge(img, rgb, a)   # strip the de-lit fringe halo
             op = out_path(d, t, args.out_dir)
             op.parent.mkdir(parents=True, exist_ok=True)
             img.save(op)

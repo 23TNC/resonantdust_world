@@ -73,7 +73,7 @@ eyes. (Pure-black tint loses shading — tint toward dark-gray, not 0,0,0.)
 **Generation implication:** stage 1 must produce cleanly **separable** regions.
 Relying on the model to paint separable colors + auto-segmentation is fragile
 (esp. eyes). Preferred: the template carries an authored **region map** (from the
-`<id>.<rotation>.<part>.png` parts / PSD layers); i2i generates *shading*
+`<id>.<dir>.<layer>.png` parts / PSD layers); i2i generates *shading*
 pose-locked to the template, the aligned region map assigns each pixel to its
 channel, and packing is exact. Per region, stretch luminance to full range so
 tints read bright; near-black outline pixels stay dark under any tint.
