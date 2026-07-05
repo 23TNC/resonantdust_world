@@ -7,6 +7,48 @@ layout to a **folder-per-variant** layout.
 Read this before touching `bin/art`, `bin/lib/*.py`, `marigold/*.py`, the
 `server/src/tex_*` / `textures.rs` resolvers, or `pixijs/src/textures/*`.
 
+## Post-migration audit (2026-07-05)
+
+A sweep of `bin/art` for operations that assumed the old *separate* `master/`,
+`sprites/`, `templates/` trees (now all unified under `$TEX`). The **read/serve
+path is solid** (Phases 1–4 verified end-to-end). The gaps are all on the
+**authoring** side, where source and master now share a dir.
+
+**Fixed:**
+- `cmd_split` whole-dir wipes (`rm -rf "$MASTER_DIR/<cat>[/<kind>]"`) destroyed
+  co-located source → `_wipe_master_leaves` (leaf dirs only). *(0.1.6)*
+- `_grid_ids_in` used the full atlas stem as the id → `1.l.0.diffuse.png` became
+  id `1.l.0`, double-encoding to `1.l.0.l.0/` → now parses the leading `<id>`. *(0.1.6)*
+- `cmd_templates` no-arg walk (`find $TEMPLATE_DIR -iname '*.psd'`, root now `$TEX`)
+  would flatten every source atlas PSD (`*_Atlas.psd`) into junk `.png` → now matches
+  only `*template.psd`.
+
+**Benign (noted, not fixed):**
+- `cmd_key` globs all PNGs under `$SPRITE_DIR/<kind>` (now source + master leaves)
+  and keys them into scratch `$KEY_DIR` — over-reach but non-destructive (rel-paths
+  preserved, no source/master touched).
+- `art upload_master` R2-syncs the whole kind dir, so co-located sprite/template/
+  source files upload too — harmless bloat (the gate only reads albedo leaves).
+
+**OPEN — authoring pipeline regression (needs a design decision, NOT yet fixed):**
+The mode-A non-grid remaster reads its SOURCE sheets/sprites from the kind
+*top-level* (`_ids_in` globs `<kind>/*.png`; `_remaster_id` parses top-level stems),
+but Phase 2 moved per-variant sources into leaf subdirs, and Phase 1's `generate.py`
+now *writes* new sprites into leaves too. So the **generate → remaster loop is broken
+for non-grid creature/plant kinds**: `art remaster world/conifer` (and `berry`,
+`flora`, `pawns.animal/wolf`) find zero ids. Compounding it, Phase 2's "numeric-id
+sprite → leaf" rule mis-classified **multi-blob source *sheets*** (conifer = 1 sheet
+→ 9 blobs; berry → 12; flora → 30) as if they were per-variant sprites, burying the
+sheet at `<kind>/1.s.0/0/sprite.png` instead of leaving it a top-level source. (Wolf
+is genuinely per-variant, 1:1, so only the read-side of its remaster is affected.)
+
+This does not affect serving — all masters migrated correctly and the server renders
+them. It only blocks *re-generating* those masters from source. The fix is a design
+call on where SOURCE inputs (sheets vs true per-variant sprites) live in the group-less
+layout, then rewiring `_ids_in`/`_remaster_id` (and possibly reverting `generate.py`'s
+sprite path) to match. Grid kinds (linked) and mode-B sheet kinds (pawns.human, sources
+at category level) are unaffected.
+
 > **Post-migration fixes (2026-07-05).** Re-mastering `wall.smooth` surfaced two bugs
 > the group-drop had left latent, both now fixed in `bin/art`: (1) the `rm -rf
 > "$MASTER_DIR/<cat>[/<kind>]"` pre-rebuild wipes in `cmd_split` destroyed the

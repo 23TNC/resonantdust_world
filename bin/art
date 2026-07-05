@@ -1699,9 +1699,13 @@ cmd_templates() {
       *) echo "art: not a psd template: ${root#$TEMPLATE_DIR/}" >&2; return 1 ;;
     esac
   else
+    # Match only TEMPLATE psds (`template.psd`, or legacy `<stem>.template.psd`) — the
+    # group-drop merged templates into the shared tree, so an unfiltered `*.psd` walk
+    # would also flatten source grid-atlas psds (e.g. `Wall_Atlas_Smooth.psd`) into junk
+    # pngs. See docs/texture-paths.md.
     while IFS= read -r -d '' psd; do
       total=$((total+1)); _flatten_template_psd "$psd" && wrote=$((wrote+1))
-    done < <(find "$root" -type f -iname '*.psd' -print0 | sort -z)
+    done < <(find "$root" -type f -iname '*template.psd' -print0 | sort -z)
   fi
   echo "art: templates [${path:-all}] — $wrote/$total psd template(s) → png under $TEMPLATE_DIR/ ($((total-wrote)) up-to-date)"
 }
