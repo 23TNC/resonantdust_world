@@ -24,19 +24,18 @@ import numpy as np
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import texpath
 REPO = os.environ.get("RD_REPO_ROOT") or os.path.abspath(os.path.join(HERE, "..", ".."))
-MASTER = os.path.join(REPO, "textures", "master")
-ALBEDO_SUFFIX = ".albedo.png"
-RESIDUAL_SUFFIX = ".packed_residual.png"
-PACKED_SUFFIX = ".packed.png"
+TEXROOT = os.path.join(REPO, "textures")   # source root; the <group> dir is gone
 
 def _resolve(p):
-    """Accept an absolute/cwd path, OR a master-relative one like remaster:
-    `pawns.animal/wolf` -> textures/master/pawns.animal/wolf. Returns None if neither exists."""
+    """Accept an absolute/cwd path, OR a textures-relative one like remaster:
+    `pawns.animal/wolf` -> textures/pawns.animal/wolf. Returns None if neither exists."""
     p = p.rstrip("/")
     if os.path.exists(p):
         return p
-    mp = os.path.join(MASTER, p)
+    mp = os.path.join(TEXROOT, p)
     if os.path.exists(mp):
         return mp
     return None
@@ -46,11 +45,10 @@ def find_albedos(paths):
     for p in paths:
         rp = _resolve(p)
         if rp is None:
-            print(f"split_layers: path not found (tried '{p}' and textures/master/{p})", file=sys.stderr); continue
+            print(f"split_layers: path not found (tried '{p}' and textures/{p})", file=sys.stderr); continue
         if os.path.isdir(rp):
-            for root, _, files in os.walk(rp):
-                out += [os.path.join(root, f) for f in files if f.endswith(ALBEDO_SUFFIX)]
-        elif rp.endswith(ALBEDO_SUFFIX):
+            out += texpath.find_maps(rp, "albedo")
+        elif texpath.is_map(rp, "albedo"):
             out.append(rp)
         else:
             print(f"split_layers: not an albedo or directory: {rp}", file=sys.stderr)
@@ -146,12 +144,11 @@ def main():
 
     albs = find_albedos(args.paths)
     if not albs:
-        raise SystemExit(f"split_layers: no {ALBEDO_SUFFIX} found under the given paths")
+        raise SystemExit("split_layers: no albedo.png found under the given paths")
     done = skipped = 0
     for alb in albs:
-        base = alb[:-len(ALBEDO_SUFFIX)]
-        residual_path = base + RESIDUAL_SUFFIX
-        packed_path = base + PACKED_SUFFIX
+        residual_path = texpath.sibling(alb, "packed_residual")
+        packed_path = texpath.sibling(alb, "packed")
         if os.path.exists(residual_path) and not args.force:
             skipped += 1; continue      # already split — don't redo (--force to re-derive)
         res, packed, info = split_albedo(Image.open(alb), args.channels, args.sat, args.stretch, args.outline_v, args.hue_buckets, args.min_region)

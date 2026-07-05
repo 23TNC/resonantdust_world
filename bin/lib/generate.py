@@ -4,10 +4,11 @@
 Drives the ComfyUI box (SDXL i2i + ControlNet edge, east hero + IP-Adapter
 anchored south/north) to paint directional sprites from a template set.
 
-Naming (<id>.<dir>.<layer>.<variant>.<map>.<filetype>):
-  templates in  textures/templates/<from>/<template-id>.<dir>.<layer>.<template-variant>.template.png
-  sprites  out  textures/sprites/<to-or-from>/<template-id>.<dir>.<layer>.<seed>.sprite.png  (SEED = variant; transparent RGBA)
-  prompt   out  textures/templates/<from>/<seed>.prompt.txt                                  (reusable, --prompt)
+Naming — folder-per-variant layout (docs/texture-paths.md), each map a <map>.png in a
+<id>.<dir>.<layer>/<variant>/ leaf:
+  templates in  textures/<from>/<template-id>.<dir>.<layer>/<template-variant>/template.png
+  sprites  out  textures/<to-or-from>/<template-id>.<dir>.<layer>/<seed>/sprite.png  (SEED = variant; transparent RGBA)
+  prompt   out  textures/<from>/<seed>.prompt.txt                                    (reusable, --prompt; loose sidecar)
 The template supplies <id>.<dir>.<layer>; the SEED becomes the output <variant>, so many
 seeds share one <id>.<dir>.<layer> — i.e. multiple sprite variants/control-maps per object.
 
@@ -23,6 +24,8 @@ from PIL import Image, ImageFilter
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import texpath
 REPO = os.environ.get("RD_REPO_ROOT") or os.path.abspath(os.path.join(HERE, "..", ".."))
 COMFY = os.environ.get("COMFYUI_URL", "http://172.16.10.10:8188").rstrip("/")
 
@@ -128,7 +131,7 @@ def _resolve_prompt_ref(ref, from_path):
     if os.sep in ref or ref.endswith(".txt"):
         p = ref if os.path.isabs(ref) else os.path.join(REPO, ref)
     else:
-        p = os.path.join(REPO, "textures", "templates", from_path, f"{ref}.prompt.txt")
+        p = os.path.join(REPO, "textures", from_path, f"{ref}.prompt.txt")
     if not os.path.exists(p):
         raise SystemExit(f"generate: --prompt file not found: {p}")
     return p
@@ -174,14 +177,15 @@ def resolve_prompts(args, from_path):
     return _expand(key, pos, "pos") or pos, _expand(key, neg, "neg") or neg
 
 # ---------------------------------------------------------------- naming / templates / bg
-# Full vocabulary: <id>.<dir>.<layer>.<variant>.<map>.<filetype>
+# Folder-per-variant layout (docs/texture-paths.md): each map is <map>.png inside a
+# <id>.<dir>.<layer>/<variant>/ leaf. These return the leaf-relative path to a member.
 def template_name(tid, d, layer, tvar):   # the pose reference (map=template)
-    return f"{tid}.{d}.{layer}.{tvar}.template.png"
+    return os.path.join(texpath.variant_leaf(tid, d, layer, tvar), "template.png")
 def sprite_name(tid, d, layer, seed):     # generated sprite: SEED is the variant (map=sprite)
-    return f"{tid}.{d}.{layer}.{seed}.sprite.png"
+    return os.path.join(texpath.variant_leaf(tid, d, layer, seed), "sprite.png")
 
 def load_template(from_path, tid, d, layer, tvar):
-    p = os.path.join(REPO, "textures", "templates", from_path, template_name(tid, d, layer, tvar))
+    p = os.path.join(REPO, "textures", from_path, template_name(tid, d, layer, tvar))
     if not os.path.exists(p):
         raise SystemExit(f"generate: template not found: {p}")
     t = Image.open(p).convert("RGBA").resize((512, 512), Image.LANCZOS)
@@ -189,7 +193,7 @@ def load_template(from_path, tid, d, layer, tvar):
     return f.convert("RGB")
 
 def load_hero_from_disk(out_dir, tid, layer, seed):
-    """An already-generated east sprite (<id>.e.<layer>.<seed>.sprite.png), flattened
+    """An already-generated east sprite (<id>.e.<layer>/<seed>/sprite.png), flattened
     onto white, for use as the IP anchor when east isn't regenerated this run."""
     p = os.path.join(out_dir, sprite_name(tid, "e", layer, seed))
     if not os.path.exists(p):
@@ -344,13 +348,14 @@ def main():
     pos, neg_user = resolve_prompts(args, from_path)
     neg = ", ".join(x for x in [neg_user, GENERIC_NEG] if x)
 
-    # persist the reusable prompt into the templates dir (id-keyed)
-    tpl_dir = os.path.join(REPO, "textures", "templates", from_path)
+    # persist the reusable prompt as a loose seed-keyed sidecar at the from-level
+    # (shared across the e/s/n leaves, so it's not a per-variant leaf member)
+    tpl_dir = os.path.join(REPO, "textures", from_path)
     os.makedirs(tpl_dir, exist_ok=True)
     prompt_out = os.path.join(tpl_dir, f"{seed}.prompt.txt")
     write_prompt_file(prompt_out, pos, neg_user, seed, from_path)
 
-    out_dir = os.path.join(REPO, "textures", "sprites", out_path)
+    out_dir = os.path.join(REPO, "textures", out_path)
     os.makedirs(out_dir, exist_ok=True)
     print(f"generate: from={from_path} to={out_path} seed={seed} dirs={dirs} size={args.size}"
           + ("" if args.keep_bg else f" bg-key(thresh {args.bg_thresh:g})"))
@@ -389,6 +394,7 @@ def main():
         if d in vsym: sprite = make_symmetric(sprite, "v")
         sprite = resize_sprite(sprite, args.size)                       # scale AFTER the cut (premultiplied)
         out = os.path.join(out_dir, sprite_name(tid, d, layer, seed))   # SEED = variant
+        os.makedirs(os.path.dirname(out), exist_ok=True)                # ensure the variant leaf
         sprite.save(out)
         print(f"  wrote {os.path.relpath(out, REPO)}")
     print(f"generate: done (id {tid} variant {seed})")

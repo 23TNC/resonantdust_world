@@ -34,7 +34,11 @@ import sys
 import time
 from pathlib import Path
 
-DIFFUSE_SUFFIX = ".diffuse.png"
+# A variant leaf's diffuse member in the folder-per-variant layout — the shape's
+# single source of truth is docs/texture-paths.md. This module re-implements it
+# natively because the marigold venv can't import bin/lib/texpath. normals.py /
+# depth.py / normal_depth.py all route through find_diffuse + out_path here.
+DIFFUSE_FILE = "diffuse.png"
 DEFAULT_MODEL = "prs-eth/marigold-iid-lighting-v1-1"
 # User-facing emit targets → the "lighting" checkpoint's visualize_intrinsics keys.
 # The IID by-products are prefixed `albedo_` so they (a) read as products of the
@@ -49,12 +53,12 @@ EMIT_TARGETS = {
 
 
 def find_diffuse(paths: list[Path]) -> list[Path]:
-    """Every *.diffuse.png under the given files/dirs (sorted, de-duped)."""
+    """Every variant-leaf diffuse.png under the given files/dirs (sorted, de-duped)."""
     out: list[Path] = []
     for p in paths:
         if p.is_dir():
-            out.extend(sorted(p.rglob("*" + DIFFUSE_SUFFIX)))
-        elif p.name.endswith(DIFFUSE_SUFFIX):
+            out.extend(sorted(p.rglob(DIFFUSE_FILE)))
+        elif p.name == DIFFUSE_FILE:
             out.append(p)
         else:
             print(f"marigold: skipping non-diffuse path {p}", file=sys.stderr)
@@ -70,13 +74,17 @@ def find_diffuse(paths: list[Path]) -> list[Path]:
 
 
 def out_path(diffuse: Path, target: str, out_dir: Path | None) -> Path:
-    """Co-located `<base>.<target>.png`, or flat under out_dir if given."""
-    base = diffuse.name[: -len(DIFFUSE_SUFFIX)]
-    name = f"{base}.{target}.png"
-    if out_dir is not None:
-        # Flatten with the object dir so spikes over many objects don't collide.
-        return out_dir / f"{diffuse.parent.name}.{name}"
-    return diffuse.parent / name
+    """The `<target>.png` sibling in the diffuse's variant leaf, or a collision-free
+    flat name under out_dir if given."""
+    if out_dir is None:
+        return diffuse.parent / f"{target}.png"
+    # Flat mode: <kind>.<pose>.<variant>.<target>.png from the leaf's last three path
+    # components (…/<kind>/<id>.<dir>.<layer>/<variant>/diffuse.png) so spikes over
+    # many objects/variants don't collide.
+    variant = diffuse.parent.name
+    pose = diffuse.parent.parent.name
+    kind = diffuse.parent.parent.parent.name
+    return out_dir / f"{kind}.{pose}.{variant}.{target}.png"
 
 
 def load_pipeline(model: str, half: bool, device: str):

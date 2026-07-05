@@ -7,9 +7,13 @@ layout to a **folder-per-variant** layout.
 Read this before touching `bin/art`, `bin/lib/*.py`, `marigold/*.py`, the
 `server/src/tex_*` / `textures.rs` resolvers, or `pixijs/src/textures/*`.
 
-> Status: **plan** (2026-07-04). The layout below is the target; the code still
-> writes and reads the *old* layout until the phases land. When migration
-> completes this doc supersedes the `asset-path-vocabulary` note.
+> Status: **Phases 1–4 landed** (2026-07-04) — pipeline write side, the on-disk
+> migration (non-destructive copy), the `art manifest` walk, and the server readers
+> all use the new group-less layout. Remaining: the **R2 step** (upload key + prune +
+> gc), **Phase 5** (client multi-map fetch, deferred), a re-master of `wall.smooth`
+> (pre-broken), and dropping the old `<group>` trees once verified. The server is
+> edited but UNCOMPILED here (no cargo in this env) — build via the project toolchain.
+> When the old trees are dropped this doc supersedes the `asset-path-vocabulary` note.
 
 ---
 
@@ -90,6 +94,9 @@ group prefix):
   sheet split). Loose at the category level.
 - **PSD authoring sources** — `linked/rock.default/Rock_Atlas.psd`. Loose in the
   kind dir.
+- **Generation prompts** — `<from>/<seed>.prompt.txt` (art generate). Keyed by seed
+  and shared across the e/s/n leaves it generates, so it's a loose seed-keyed
+  sidecar at the `<from>` level, not a per-variant leaf member.
 
 Per-variant sprites (e.g. wolf, where each blob already has its own seed) *do*
 fold into the leaf, because the remaster preserves the seed as the variant, so
@@ -167,6 +174,26 @@ spike-dir name as `f"{diffuse.parent.name}.{name}"`; after the move
 across poses. Use the full relative path (or `id.dir.layer.variant`) as the
 flatten key.
 
+**Landed (2026-07-04).** New helper `bin/lib/texpath.py` (shape SoT for the
+bin/lib scripts; marigold re-implements it natively in `delight.py`). Converted:
+`split_layers.py`, `emissive.py`, `generate.py`, `marigold/delight.py` (→
+`normals`/`depth`/`normal_depth` inherit), and `bin/art` — group-drop constants
+(`SPRITE_DIR`/`MASTER_DIR`/`TEMPLATE_DIR` → `$TEX`), `_find_diffuse` (exact
+`diffuse.png`), `_map_path` (leaf sibling), the grid slicer + remaster writers and
+their cleanup globs, and the `art unmaps` deleter. The `out_dir` flatten uses
+`<kind>.<pose>.<variant>` (leaf's last three components). Verified: py_compile +
+`texpath`/`delight.out_path` unit tests + `bash -n` + a scratch-tree dry-run of
+`_find_diffuse`/`_map_path`/cleanup globs (leaf `diffuse.png` found, flat
+`<id>.diffuse.png` source atlas correctly ignored, `1.*/` cleanup hits only leaf
+dirs). Prompts kept as loose `<seed>.prompt.txt` sidecars.
+
+**Deferred out of Phase 1 (flagged):** `bin/art`'s manifest walk + `_kind_maps` +
+`&variant`/`&layers`/`&subkinds` counters still assume flat names → **Phase 3**
+(so `art manifest` misreports until then); R2 upload key + prune parser → **R2
+step** (`art publish` inconsistent until then). Minor quirk: `art key` (debug) now
+globs the unified tree and would key master leaves too — harmless (rel-path
+preserved, scratch output), but noted.
+
 ### Phase 2 — migrate the existing tree (scripted `mv`)
 
 A one-shot script (`bin/lib/migrate_texpaths.py`, or an `art migrate-paths`
@@ -196,6 +223,24 @@ Edge cases the script must handle:
 
 After the moves: re-run `art manifest`, restart the server, verify a zone renders.
 
+**Landed (2026-07-04).** Implemented as `bin/lib/migrate_texpaths.py` (dry-run by
+default; `--apply` to execute). NON-DESTRUCTIVE: it **copies** into the new
+group-less `<cat>/…` dirs and leaves `master/`/`sprites/`/`templates/` intact —
+essential because **`textures/` is gitignored** (`.gitignore:85`), so the on-disk
+old trees are the *only* rollback (git can't restore them). Applied on the real
+tree: 541 files → **497 leaf + 43 loose + 1 anomaly (skipped), 0 collisions**, 540
+copied. Verified the three groups **merge** per leaf (e.g. `world/conifer/1.s.0/0/`
+= `diffuse/albedo/normal.png` from master + `sprite.png` from sprites; template
+leaves get `template.png`+`template.psd`). Notes: the 45 `linked/wall.smooth`
+`1.l.0.l.0.N` masters are pre-existing non-canonical (double-encoded stem) —
+migrated **losslessly** via trailing-variant split to `1.l.0.l.0/N/`, but the
+server/pipeline expect `1.l.0/N/`, so wall.smooth was already broken and should be
+**re-mastered** post-migration. The 1 anomaly is `sprites/world/flora/1.s.0.0.png`
+(no `.sprite` map token) — left in the old tree for manual triage.
+
+**Rollback:** `rm -rf` the new top-level `textures/<cat>/` dirs; the old
+`master/`/`sprites/`/`templates/` trees are untouched.
+
 ### Phase 3 — manifest generation
 
 `content/visual/manifest/*.rd` carry per-kind `&maps` bits (bit0 albedo | bit1
@@ -212,6 +257,21 @@ the manifest *format is unchanged*. Only the *detector* changes:
 Regenerate and diff against the current `.rd` — the output should be identical
 except for any counts the old glob got wrong.
 
+**Landed (2026-07-04).** In `bin/art`: `_kind_maps` (exact `albedo.png`/`normal.png`/
+`emissive.png` names, recursive), `_var_pairs` + `_layer_count` rewritten to walk the
+`<id>.<dir>.<layer>/<variant>/` leaf dirs, and `cmd_manifest`'s category loop skips
+the legacy `<group>` dirs kept for rollback. `_var_variant` was dead code (untouched);
+`_kind_hash`/`_override_ints` work as-is. Also: `cmd_manifest` now **skips kinds with
+no mastered variations** — the group-less tree co-locates source atlases + templates
+with masters, so un-mastered kinds (`fence.*`, `rock.*`, `dead.*`, `male.thin`) would
+otherwise appear as empty stubs. Verified: helper outputs match the old-tree baseline
+(male.fit → `1 0/1 1/1 2`, 2 layers, maps=3); regenerated the real manifest → 4 files,
+**8 mastered kinds, 81 variations** (`linked/wall.blueprint`, `world/{berry,conifer,
+flora}`, `pawns.animal/wolf`, `pawns.human/male.{average,fat,fit}`). The committed
+baseline was stale (berry 1–12 vs the tree's 0–11; pawns.*.rd didn't exist) — the
+regen corrects it. `&hash` values change (leaf path-order), expected. `cmd_gc` (R2)
+still needs the same legacy-group skip — folded into the R2 step.
+
 ### Phase 4 — server disk-path builders
 
 Client stem contract is **unchanged** (`<cat>/<kind>[/<facing>]`); only the
@@ -227,6 +287,20 @@ stem→disk mapping moves. In `server/src/`:
   live in the **cache** dir keyed by stem; unaffected by the source reshape
   except that they can keep appending `.albedo.png` (still albedo-only until
   Phase 5).
+
+**Landed (2026-07-04).** `master_albedo_rel` now returns the group-less leaf
+`<cat>/<kind>/1.<facing>.0/1/albedo.png` (shared by Disk + R2 reads, ETag, and the
+manifest scan). `tex_manifest.rs::scan_masters` scans the textures root directly,
+skips the legacy `<group>` dirs (`LEGACY_GROUPS`), and probes the leaf; tests updated
+(`master_albedo_rel` assertions + `write_master`/serve-test write leaf paths). The
+`/textures/master/…` HTTP route is unchanged (serving tier, not disk group). Verified
+the migrated tree matches the probe path — `world/conifer/1.s.0/1/albedo.png` exists,
+and kinds without a variant-1 albedo (wolf uses seeds; wall.smooth malformed) weren't
+resolvable before either, so no regression. **Not compiled here** (no cargo/rustup in
+this env) — the edits are mechanical + reviewed; build via the project toolchain
+(Docker/`rd`) before deploy. **R2 caveat:** dropping `master/` from the shared rel
+means R2 masters must be re-synced to the group-less layout before an R2 deploy — the
+R2 step.
 
 ### Phase 5 — client multi-map fetch (deferred)
 
@@ -259,6 +333,18 @@ R2 mirrors the disk tree under `$R2_PREFIX/textures/…`, plus derived
   unless we also drop the serving-tier prefix (we shouldn't).
 - After Phase 2, re-sync R2 (`art publish`/`_r2_sync_kind`) so the remote tree
   matches, then prune stale versions.
+
+**Landed (2026-07-04).** Resolved the open question **against** an R2 `master/`
+prefix — dropping it everywhere (disk and R2 identical). Forced by Phase 4: the
+server reads `{prefix}/textures/{rel}` and `rel` no longer carries `master/`, so
+`cmd_upload_master` now uploads to `$R2_PREFIX/textures/<cat>/<kind>/…` (was
+`…/textures/master/<cat>/<kind>/…`). The lod/geo **serving-tier** prefixes are
+untouched (they're tiers, not the lifecycle group — the prune's `<group>` var is
+really `<tier>` ∈ lod|geo; comment clarified). `cmd_gc`'s master-tree walk skips the
+legacy `<group>` dirs. Not runnable here (needs docker + R2 creds) — verified only by
+key-alignment: upload dir `…/textures/world/conifer/` ⊃ `1.s.0/1/albedo.png` = the
+server's read path. Bloat note: the unified kind dir co-locates sprite/template/source
+files; they upload too but the gate only reads albedo leaves.
 
 ---
 

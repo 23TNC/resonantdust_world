@@ -13,10 +13,15 @@ TEX="$REPO_ROOT/textures"
 # Raw source art (multi-sprite sheets, magenta key colour + transparent
 # gaps). `key` reads from here, and so does `remaster` (which keys
 # before splitting).
-SPRITE_DIR="$TEX/sprites"
+# Folder-per-variant migration (docs/texture-paths.md): the <group> segment
+# (sprites/master/templates) is dropped — source sheets, masters and templates now
+# share one tree under $TEX, disambiguated by filename (a source atlas is the flat
+# `<id>.diffuse.png`; a master leaf's diffuse is the bare `diffuse.png` inside an
+# `<id>.<dir>.<layer>/<variant>/` dir). So these roots now all point at $TEX.
+SPRITE_DIR="$TEX"
 # Canonical cleaned sprites — output of `remaster`, input of the map generators.
-# Each diffuse N.diffuse.png sits beside its CO-LOCATED maps (below).
-MASTER_DIR="$TEX/master"
+# Each variant leaf's diffuse.png sits beside its CO-LOCATED maps (below).
+MASTER_DIR="$TEX"
 # Keyed sprites — output of `key`, input of `split`. A debug convenience:
 # `remaster` keys in-memory and never reads or writes this.
 KEY_DIR="$TEX/key"
@@ -27,7 +32,7 @@ SPLIT_DIR="$TEX/split"
 # per body-plan). Authored as layered Photoshop `*.psd`; `templates` flattens each
 # composite to a sibling `*.png` (the form ComfyUI ControlNet consumes), leaving
 # the psd in place as the tracked source.
-TEMPLATE_DIR="$TEX/templates"
+TEMPLATE_DIR="$TEX"
 
 # Cloudflare R2 (S3-compatible) asset bucket — `upload` syncs the master tree
 # here so the deployed client can fetch textures from R2. Account id / endpoint /
@@ -44,30 +49,29 @@ R2_KEYS="$SCRIPT_DIR/keys/r2.env"
 # Dockerized aws-cli (no host install needed); override the tag via env.
 R2_AWSCLI_IMAGE="${R2_AWSCLI_IMAGE:-amazon/aws-cli:latest}"
 
-# CO-LOCATED MAPS: every master file is TYPED by its extension `N.<type>.png` —
-# there is NO bare `N.png`. The diffuse itself is `N.diffuse.png` (written by
-# remaster); its derived maps are `N.albedo.png` (de-lit, Marigold-IID) and
-# `N.normal.png` (Laigter), in the SAME folder. `maps` also emits Marigold's
-# non-diffuse term `N.albedo_residual.png` and gates it into `N.emissive.png` (the
-# shipped self-lit glow). `--split_layer` adds two more from the albedo:
-# `N.packed.png` (channel-packed tint materials) + `N.packed_residual.png` (the
-# albedo minus those materials — NOT the same as albedo_residual). So the diffuse
-# is just the `.diffuse.png` member of the set.
+# CO-LOCATED MAPS (folder-per-variant, docs/texture-paths.md): each variant is an
+# `<id>.<dir>.<layer>/<variant>/` leaf dir holding one file per map, named `<map>.png`.
+# The diffuse is `diffuse.png` (written by remaster); its derived maps are `albedo.png`
+# (de-lit, Marigold-IID) and `normal.png` (Laigter), in the SAME leaf. `maps` also
+# emits Marigold's non-diffuse term `albedo_residual.png` and gates it into
+# `emissive.png` (the shipped self-lit glow). `--split_layer` adds two more from the
+# albedo: `packed.png` (channel-packed tint materials) + `packed_residual.png` (the
+# albedo minus those materials — NOT the same as albedo_residual). So the diffuse is
+# just the `diffuse.png` member of the leaf.
 
-# Print (NUL-separated, sorted) every DIFFUSE sprite under DIR — the *.diffuse.png
-# files. The single source of truth for "what diffuse sprites are here", used
-# wherever master is walked; it naturally skips the derived maps.
+# Print (NUL-separated, sorted) every DIFFUSE sprite under DIR — the variant-leaf
+# `diffuse.png` files (folder-per-variant layout). The single source of truth for
+# "what diffuse sprites are here", used wherever master is walked; the exact name
+# skips both the derived maps AND any flat `<id>.diffuse.png` source atlas.
 _find_diffuse() {  # dir
-  find "$1" -type f -iname '*.diffuse.png' -print0 | sort -z
+  find "$1" -type f -name 'diffuse.png' -print0 | sort -z
 }
 
-# The co-located map path for a diffuse sprite: `<dir>/<N>.<type>.png`, where the
-# base <N> is the diffuse name with its `.diffuse.png` stripped. So
-# _map_path(foo.diffuse.png, normal) -> foo.normal.png.
+# The co-located map path for a diffuse sprite: the `<type>.png` sibling in the
+# diffuse's variant leaf. So _map_path(…/1.s.0/1/diffuse.png, normal) ->
+# …/1.s.0/1/normal.png — the leaf dir IS the identity, so the base is gone.
 _map_path() {  # diffuse_png type
-  local d; d=$(dirname "$1")
-  local b; b=$(basename "$1" .diffuse.png)
-  printf '%s/%s.%s.png' "$d" "$b" "$2"
+  printf '%s/%s.png' "$(dirname "$1")" "$2"
 }
 
 # Magenta cutout predicate (ImageMagick -fx): 0 for the key colour, 1 to
@@ -948,8 +952,8 @@ cmd_clean() {
       continue
     fi
     local n
-    n=$(find "$src_root" -type f -iname "*.$t.png" | wc -l)
-    find "$src_root" -type f -iname "*.$t.png" -delete
+    n=$(find "$src_root" -type f -name "$t.png" | wc -l)
+    find "$src_root" -type f -name "$t.png" -delete
     echo "art: removed $n $t map(s) for $kind"
     total=$((total + n))
   done
@@ -1322,8 +1326,8 @@ _grid_slice_id() {  # src_dir id out_cat out_kind
   local cw=$(( w / cols )) ch=$(( h / rows )) ncount=$(( cols * rows ))
   if (( cw == 0 || ch == 0 )); then echo "art: $id.diffuse.png ${w}x${h} too small for a ${cols}x${rows} grid (skipped)" >&2; LAST_TOTAL=0; return 0; fi
 
-  # clean this id's existing outputs in the kind dir (all maps; re-run safe).
-  rm -f "$MASTER_DIR/$out_cat/$out_kind/$id".*.png 2>/dev/null || true
+  # clean this id's existing output leaves in the kind dir (all variants/maps; re-run safe).
+  rm -rf "$MASTER_DIR/$out_cat/$out_kind/$id".*/ 2>/dev/null || true
 
   # gather this id's source map atlases: the diffuse + any <id>.<map>.png sibling
   # (normal, overlay, …), each sliced on the SAME grid. A purely-numeric middle
@@ -1354,7 +1358,7 @@ _grid_slice_id() {  # src_dir id out_cat out_kind
     for (( row=0; row<rows; row++ )); do
       for (( col=0; col<cols; col++ )); do
         variant=$(( k + 1 )); x=$(( col * cw )); y=$(( row * ch ))
-        out="$outdir/$id.l.0.$variant.$mtype.png"
+        out="$outdir/$id.l.0/$variant/$mtype.png"; mkdir -p "$(dirname "$out")"
         cargs+=( \( -clone 0 -gravity None -crop "${cw}x${ch}+${x}+${y}" +repage -strip -write "$out" +delete \) )
         douts+=("$out")
         k=$(( k + 1 ))
@@ -1464,7 +1468,7 @@ _remaster_id() {
   # variant. (Mode B fans blobs into alias-chosen dirs it can't know until it has
   # read each unit's alias, so it cleans per unit instead.)
   if [[ "$mode" != B ]]; then
-    rm -f "$MASTER_DIR/$out_cat/$arg6/$id".*.png 2>/dev/null || true
+    rm -rf "$MASTER_DIR/$out_cat/$arg6/$id".*/ 2>/dev/null || true
   fi
 
   local total=0 rot vbase reg ncount k lnum smap pf omap nfiles
@@ -1498,14 +1502,14 @@ _remaster_id() {
       done
       # Mode-B cleanup: wipe this facing's existing outputs for each touched (dir,id).
       for _pair in $(for k in "${!kinddirs[@]}"; do printf '%s/%s\n' "${kinddirs[$k]}" "${outids[$k]}"; done | sort -u); do
-        rm -f "$MASTER_DIR/$out_cat/$_pair.$rot".*.png 2>/dev/null || true
+        rm -rf "$MASTER_DIR/$out_cat/$_pair.$rot".*/ 2>/dev/null || true
       done
     else
       for k in "${!KEPT_GEOMS[@]}"; do kinddirs+=( "$arg6" ); outids+=( "$id" ); variants+=( $(( vbase + k )) ); done
     fi
 
     # 3) crop the SAME rectangles from every (layer, map) file in the unit →
-    #    master name: <id>.<dir>.<layer>.<variant>.<map>.png (fields from §2).
+    #    master leaf: <id>.<dir>.<layer>/<variant>/<map>.png (fields from §2).
     #    Diffuse-family maps are keyed + edge-bled; other maps ride the rects raw.
     nfiles=0
     while IFS=$'\t' read -r lnum smap pf; do
@@ -1515,7 +1519,7 @@ _remaster_id() {
       CROP_GEOMS=(); CROP_OUTS=()
       for k in "${!KEPT_GEOMS[@]}"; do
         CROP_GEOMS+=( "${KEPT_GEOMS[$k]}" )
-        CROP_OUTS+=( "$MASTER_DIR/$out_cat/${kinddirs[$k]}/${outids[$k]}.$rot.$lnum.${variants[$k]}.$omap.png" )
+        CROP_OUTS+=( "$MASTER_DIR/$out_cat/${kinddirs[$k]}/${outids[$k]}.$rot.$lnum/${variants[$k]}/$omap.png" )
       done
       if _is_diffuse_map "$smap"; then
         _key_stack "$pf"; EMIT_BLEED=1
@@ -1538,7 +1542,7 @@ _remaster_id() {
 #   <cat>/<kind>/<f>  tile/fog/1.png            → one id within a mode-A kind
 # A `.png` in the LAST segment marks a sheet/id target (the layer number in it is
 # ignored — building an id rebuilds ALL its layers, since slicing unions them).
-# Output is fully normalized: master/<cat>.<subcategory>/<kind>.<subkind>/<id>.<dir>.<layer>.<variant>.diffuse.png
+# Output is fully normalized: <cat>.<subcategory>/<kind>.<subkind>/<id>.<dir>.<layer>/<variant>/diffuse.png
 # with subcategory/subkind/layer defaulting to 0 and rot to s (south).
 #
 # GRID CATEGORIES ($GRID_CATS, e.g. `linked`): mode-A kinds whose atlas is cut
@@ -1886,23 +1890,40 @@ _var_pairs() {  # kinddir
   local d=$1 map=albedo
   [[ -d "$d" ]] || return
   # post-maps uses albedo; pre-maps (remaster only) falls back to diffuse.
-  if ! find "$d" -maxdepth 1 -type f -name '*.0.*.albedo.png' -print -quit 2>/dev/null | grep -q .; then
+  if ! find "$d" -type f -name 'albedo.png' -print -quit 2>/dev/null | grep -q .; then
     map=diffuse
   fi
-  find "$d" -maxdepth 1 -type f -name "*.0.*.${map}.png" -printf '%f\n' 2>/dev/null \
-    | sed -nE "s/^([0-9]+)\.${FACINGS_RE}\.0\.([0-9]+)\.${map}\.png\$/\1 \2/p" \
-    | sort -n -k1,1 -k2,2 -u
+  # Folder-per-variant: <id>.<dir>.<layer>/<variant>/<map>.png. Walk the LAYER-0 pose
+  # dirs (`<id>.<facing>.0`); each `<variant>/` subdir holding <map>.png is a (id,
+  # variant) pair, deduped across facings.
+  local pose pn id vdir var
+  for pose in "$d"/*/; do
+    [[ -d "$pose" ]] || continue
+    pn=$(basename "${pose%/}")
+    [[ "$pn" =~ ^([0-9]+)\.${FACINGS_RE}\.0$ ]] || continue
+    id=${BASH_REMATCH[1]}
+    for vdir in "$pose"*/; do
+      [[ -f "${vdir}${map}.png" ]] || continue
+      var=$(basename "$vdir")
+      [[ "$var" =~ ^[0-9]+$ ]] && printf '%s %s\n' "$id" "$var"
+    done
+  done | sort -n -k1,1 -k2,2 -u
 }
 
 # Number of LAYERS in KINDDIR = distinct `<layer>` segment across its sprites
 # (contiguous from 0: layer 0 = the base layer, 1.. = overlays). 1 if absent.
 _layer_count() {  # kinddir
-  # <id>.<dir>.<layer>.<variant>.diffuse.png — the layer is the 3rd field. Count the
-  # distinct layers (layers) across all facings/variations.
-  local d=$1 n
+  # Folder-per-variant: <id>.<dir>.<layer>/<variant>/diffuse.png — the layer is the
+  # 3rd field of the pose dir. Count distinct <layer> across pose dirs holding a diffuse.
+  local d=$1 n pose pn
   [[ -d "$d" ]] || { echo 1; return; }
-  n=$(find "$d" -maxdepth 1 -type f -name '*.diffuse.png' -printf '%f\n' 2>/dev/null \
-        | sed -nE "s/^[0-9]+\.${FACINGS_RE}\.([0-9]+)\.[0-9]+\.diffuse\.png\$/\1/p" | sort -un | wc -l)
+  n=$(for pose in "$d"/*/; do
+        [[ -d "$pose" ]] || continue
+        pn=$(basename "${pose%/}")
+        [[ "$pn" =~ ^[0-9]+\.${FACINGS_RE}\.([0-9]+)$ ]] || continue
+        find "$pose" -maxdepth 2 -type f -name 'diffuse.png' -print -quit 2>/dev/null | grep -q . \
+          && echo "${BASH_REMATCH[1]}"
+      done | sort -un | wc -l)
   (( n == 0 )) && n=1
   echo "$n"
 }
@@ -1984,10 +2005,13 @@ _r2_ls() {  # remote_prefix
     | awk '{print $4}'
 }
 
-# Upload KIND's MASTER tree (full-res diffuse + maps) to the R2 asset bucket:
-# master/<kind>/... -> s3://<bucket>/$R2_PREFIX/textures/master/<kind>/... .
-# The source of truth / full-res assets — the gate reads these and downscales the
-# client-facing LODs from them on demand (no offline pyramid).
+# Upload KIND's master leaves (full-res diffuse + maps) to the R2 asset bucket:
+# <cat>/<kind>/... -> s3://<bucket>/$R2_PREFIX/textures/<cat>/<kind>/... — group-less
+# (docs/texture-paths.md); the gate reads `<prefix>/textures/<rel>` with NO master/
+# prefix, so the upload drops it too. The source of truth / full-res assets — the gate
+# reads these and downscales the client-facing LODs from them on demand (no offline
+# pyramid). NOTE: the unified tree co-locates sprite/template/source-atlas files in the
+# kind dir; they upload too (harmless bloat — the gate only ever reads albedo leaves).
 cmd_upload_master() {
   local kind=${1:-}
   if [[ -z "$kind" ]]; then
@@ -2001,10 +2025,10 @@ cmd_upload_master() {
     return 1
   fi
   _r2_preflight || return 1
-  local key="$R2_PREFIX/textures/master/$kind"
-  echo "art: uploading master/$kind -> s3://$R2_BUCKET/$key ..."
+  local key="$R2_PREFIX/textures/$kind"
+  echo "art: uploading $kind -> s3://$R2_BUCKET/$key ..."
   _r2_sync "$src_root" "$key" || return 1
-  echo "art: uploaded master/$kind to s3://$R2_BUCKET/$key"
+  echo "art: uploaded $kind to s3://$R2_BUCKET/$key"
   # Drop the now-stale LOD/geo subtree for this kind (all versions + sizes) —
   # version-in-path means they regenerate lazily at the new master hash. Hygiene,
   # not correctness; a failure here is a leak the GC sweeps, so don't hard-fail.
@@ -2069,9 +2093,10 @@ _kind_hash() {  # kinddir
 _kind_maps() {  # kinddir
   local d=$1 bits=0
   [[ -d "$d" ]] || { echo 0; return; }
-  find "$d" -maxdepth 1 -type f -name '*.albedo.png'   -print -quit 2>/dev/null | grep -q . && bits=$((bits | 1))
-  find "$d" -maxdepth 1 -type f -name '*.normal.png'   -print -quit 2>/dev/null | grep -q . && bits=$((bits | 2))
-  find "$d" -maxdepth 1 -type f -name '*.emissive.png' -print -quit 2>/dev/null | grep -q . && bits=$((bits | 4))
+  # Folder-per-variant: maps are bare <map>.png files inside variant leaves.
+  find "$d" -type f -name 'albedo.png'   -print -quit 2>/dev/null | grep -q . && bits=$((bits | 1))
+  find "$d" -type f -name 'normal.png'   -print -quit 2>/dev/null | grep -q . && bits=$((bits | 2))
+  find "$d" -type f -name 'emissive.png' -print -quit 2>/dev/null | grep -q . && bits=$((bits | 4))
   echo "$bits"
 }
 
@@ -2096,7 +2121,9 @@ cmd_manifest() {
   local -A cats=()
   for l1dir in "$MASTER_DIR"/*/; do
     [[ -d "$l1dir" ]] || continue
-    l1=$(basename "$l1dir"); base_cat=$(_strip_int_suffix "$l1")
+    l1=$(basename "$l1dir")
+    case "$l1" in master|sprites|templates) continue ;; esac  # legacy <group> dirs kept for rollback
+    base_cat=$(_strip_int_suffix "$l1")
     cats[$base_cat]=1
   done
 
@@ -2136,7 +2163,13 @@ cmd_manifest() {
           n=${#ids[@]}
           p=$(_layer_count "$kinddir")
           facs=$(_override_ints "$basedir" "$base_kind")
-          (( n == 0 )) && echo "art: warning: $base_cat/$base_kind has no base variations" >&2
+          # The group-less tree co-locates source atlases + templates with masters; a
+          # kind with no mastered display variations (source/template only) has nothing
+          # for `^r2` to resolve, so skip it (the old master-only scan never saw these).
+          if (( n == 0 )); then
+            echo "art: skipping $base_cat/$base_kind — no mastered variations (source/template only)" >&2
+            continue
+          fi
           echo "    :${base_kind}>"
           echo "      @define>"
           echo "        ${p} &layers set"
@@ -2168,6 +2201,7 @@ cmd_gc() {
   local l1dir base_cat basedir l2dir base_kind kinddir
   for l1dir in "$MASTER_DIR"/*/; do
     [[ -d "$l1dir" ]] || continue
+    case "$(basename "$l1dir")" in master|sprites|templates) continue ;; esac  # legacy <group> dirs kept for rollback
     base_cat=$(_strip_int_suffix "$(basename "$l1dir")")
     basedir="$MASTER_DIR/$base_cat"
     [[ -d "$basedir" ]] || continue
@@ -2181,7 +2215,9 @@ cmd_gc() {
   done
 
   # 2. Walk R2 LOD + geo trees; flag every version dir not matching the live hash.
-  #    Key layout: $R2_PREFIX/textures/<group>/<cat>.<subcategory>/<kind>.<subkind>/<version>/...
+  #    Key layout: $R2_PREFIX/textures/<tier>/<cat>.<subcategory>/<kind>.<subkind>/<version>/...
+  #    where <tier> is the SERVING tier lod|geo (NOT the dropped master/sprites/templates
+  #    lifecycle group — the derived tiers are unaffected by the folder-per-variant move).
   local -A stale=()
   local group key rest seg_cat seg_kind seg_ver bcat bkind want
   for group in lod geo; do
@@ -2283,7 +2319,7 @@ commands:
                            out = packed_residual + packed.R*tint0 + .G*tint1 + .B*tint2
                            + .A*tint3. Idempotent — re-runs re-derive both maps from
                            the untouched albedo (--force to overwrite).
-                           e.g. art split_layers textures/master/pawns.animal/wolf
+                           e.g. art split_layers textures/pawns.animal/wolf
   remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--split_layer N] [--threshold T]
                            THE make-masters command: runs `split`, optionally
                            `outline`, then `maps` in one pass, so master ends up
@@ -2481,7 +2517,7 @@ commands:
                            kind path (used verbatim as the master dir).
   upload_master <kind>   Sync <kind>'s MASTER tree (full-res diffuse + maps)
                            to the Cloudflare R2 asset bucket (master/<kind>/ ->
-                           s3://<bucket>/resonantdust_world/textures/master/<kind>/)
+                           s3://<bucket>/resonantdust_world/textures/<kind>/)
                            via a dockerized aws-cli. Incremental, never deletes.
                            This world's assets live under the resonantdust_world/
                            prefix so they never clobber the old game's textures/.

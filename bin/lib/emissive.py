@@ -23,18 +23,18 @@ import numpy as np
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import texpath
 REPO = os.environ.get("RD_REPO_ROOT") or os.path.abspath(os.path.join(HERE, "..", ".."))
-MASTER = os.path.join(REPO, "textures", "master")
-RESIDUAL_SUFFIX = ".albedo_residual.png"
-EMISSIVE_SUFFIX = ".emissive.png"
+TEXROOT = os.path.join(REPO, "textures")   # source root; the <group> dir is gone
 
 def _resolve(p):
-    """Accept an absolute/cwd path, OR a master-relative one like remaster:
-    `pawns.animal/wolf` -> textures/master/pawns.animal/wolf. None if neither exists."""
+    """Accept an absolute/cwd path, OR a textures-relative one like remaster:
+    `pawns.animal/wolf` -> textures/pawns.animal/wolf. None if neither exists."""
     p = p.rstrip("/")
     if os.path.exists(p):
         return p
-    mp = os.path.join(MASTER, p)
+    mp = os.path.join(TEXROOT, p)
     if os.path.exists(mp):
         return mp
     return None
@@ -44,11 +44,10 @@ def find_residuals(paths):
     for p in paths:
         rp = _resolve(p)
         if rp is None:
-            print(f"emissive: path not found (tried '{p}' and textures/master/{p})", file=sys.stderr); continue
+            print(f"emissive: path not found (tried '{p}' and textures/{p})", file=sys.stderr); continue
         if os.path.isdir(rp):
-            for root, _, files in os.walk(rp):
-                out += [os.path.join(root, f) for f in files if f.endswith(RESIDUAL_SUFFIX)]
-        elif rp.endswith(RESIDUAL_SUFFIX):
+            out += texpath.find_maps(rp, "albedo_residual")
+        elif texpath.is_map(rp, "albedo_residual"):
             out.append(rp)
         else:
             print(f"emissive: not an albedo_residual or directory: {rp}", file=sys.stderr)
@@ -85,10 +84,10 @@ def main():
 
     res = find_residuals(args.paths)
     if not res:
-        raise SystemExit(f"emissive: no {RESIDUAL_SUFFIX} found under the given paths")
+        raise SystemExit("emissive: no albedo_residual.png found under the given paths")
     done = skipped = 0
     for r in res:
-        emissive_path = r[:-len(RESIDUAL_SUFFIX)] + EMISSIVE_SUFFIX
+        emissive_path = texpath.sibling(r, "emissive")
         if os.path.exists(emissive_path) and not args.force:
             skipped += 1; continue
         img, lit = gate_residual(Image.open(r), args.threshold, args.erode)

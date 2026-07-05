@@ -14,11 +14,12 @@
 //! Stem → master path is deterministic. The stem's leading segments ARE the
 //! `<cat>/<kind>` directory names verbatim (a named subcategory/subkind is a dotted
 //! segment kept as-is); an optional TRAILING `n`/`e`/`s` segment names the facing
-//! (absent → south). `linked/wall.smooth` →
-//! `master/linked/wall.smooth/1.s.0.1.albedo.png` and `world/conifer/e` →
-//! `master/world/conifer/1.e.0.1.albedo.png`; the filename is the canonical
-//! `<id=1>.<dir>.<layer=0>.<variant=1>`. The per-instance variation picker (the old
-//! `^r2`) is future work; one variation per kind for now.
+//! (absent → south). In the group-less folder-per-variant layout
+//! (docs/texture-paths.md): `linked/wall.smooth` →
+//! `linked/wall.smooth/1.s.0/1/albedo.png` and `world/conifer/e` →
+//! `world/conifer/1.e.0/1/albedo.png` — the canonical instance
+//! `<id=1>.<dir>.<layer=0>/<variant=1>/albedo.png`. The per-instance variation picker
+//! (the old `^r2`) is future work; one variation per kind for now.
 //!
 //! Paths are sanitised to relative, `..`-free forms before they touch disk or the
 //! R2 keyspace, so a crafted stem can never escape the texture root.
@@ -37,12 +38,13 @@ const PREVIEW_SCALE: f32 = 0.5;
 /// [`crate::content::ContentSource`].
 pub enum TextureSource {
     /// A local texture root (dev — the bind-mounted, READ-ONLY `textures/`).
-    /// Masters live at `<root>/master/…`; derived previews cache under `<cache>/…`,
-    /// a separate WRITABLE dir (the master mount is read-only, so the cache can't
-    /// live beneath it).
+    /// Masters live at `<root>/<cat>/<kind>/…` (group-less folder-per-variant leaves);
+    /// derived previews cache under `<cache>/…`, a separate WRITABLE dir (the master
+    /// mount is read-only, so the cache can't live beneath it).
     Disk { root: PathBuf, cache: PathBuf },
     /// The Cloudflare R2 asset bucket (deployed). Masters live under
-    /// `<prefix>/textures/master/…`, reusing the content route's R2 credentials.
+    /// `<prefix>/textures/<cat>/<kind>/…` (group-less; R2 must be re-synced to this
+    /// layout — docs "R2 step"), reusing the content route's R2 credentials.
     R2(R2Config),
 }
 
@@ -172,14 +174,16 @@ impl TextureSource {
     }
 }
 
-/// The master albedo path for a stem: `master/<cat>/<kind>/1.s.0.1.albedo.png` — each
-/// stem segment IS the directory name verbatim (`world/conifer` →
-/// `master/world/conifer/…`, `linked/wall.smooth` → `master/linked/wall.smooth/…`).
-/// `None` if the stem escapes its root or isn't `<category>/<kind>` shaped.
-/// The direction tokens a stem's trailing segment may name — folded into the master
-/// FILENAME (`…<dir>…`) rather than becoming a directory: the `n`/`e`/`s` facings
-/// plus `l` for LINKED (autotile) kinds. West is never a physical sprite (the
-/// client mirrors east), so it never lands on disk.
+/// The master albedo path for a stem, in the group-less folder-per-variant layout
+/// (docs/texture-paths.md): `<cat>/<kind>/1.<facing>.0/1/albedo.png` — each stem
+/// segment IS the directory name verbatim (`world/conifer` → `world/conifer/…`,
+/// `linked/wall.smooth` → `linked/wall.smooth/…`). `None` if the stem escapes its
+/// root or isn't `<category>/<kind>` shaped. The direction tokens a stem's trailing
+/// segment may name — folded into the pose dir's `<dir>` field rather than becoming
+/// its own directory: the `n`/`e`/`s` facings plus `l` for LINKED (autotile) kinds.
+/// West is never a physical sprite (the client mirrors east), so it never lands on
+/// disk. NOTE: the `master/` group prefix is gone on disk; R2 masters must be
+/// re-synced to the same group-less layout before an R2 deploy (docs "R2 step").
 const FACINGS: [&str; 4] = ["n", "e", "s", "l"];
 
 fn master_albedo_rel(stem: &str) -> Option<PathBuf> {
@@ -203,13 +207,16 @@ fn master_albedo_rel(stem: &str) -> Option<PathBuf> {
     if segs.is_empty() {
         return None;
     }
-    let mut out = PathBuf::from("master");
+    let mut out = PathBuf::new();
     for seg in segs {
         out.push(seg);
     }
-    // Canonical instance: id 1, layer 0, variation (variant) 1 — the per-instance
-    // variation picker (the old `^r2`) is still future work.
-    Some(out.join(format!("1.{facing}.0.1.albedo.png")))
+    // Canonical instance: id 1, layer 0, variant 1 — the leaf `1.<facing>.0/1/albedo.png`
+    // (the per-instance variation picker, the old `^r2`, is still future work).
+    out.push(format!("1.{facing}.0"));
+    out.push("1");
+    out.push("albedo.png");
+    Some(out)
 }
 
 /// The cache path for a stem's derived preview: `<cache>/preview/<stem>.albedo.png`
@@ -317,30 +324,30 @@ mod tests {
 
     #[test]
     fn stem_resolves_to_canonical_master() {
-        // no facing → south default, canonical `1.s.0.1`; segments verbatim (a named
-        // subkind like `wall.smooth` is kept as-is)
+        // no facing → south default, canonical leaf `1.s.0/1/albedo.png`; segments
+        // verbatim (a named subkind like `wall.smooth` is kept as-is), group dropped
         assert_eq!(
             master_albedo_rel("linked/wall.smooth"),
-            Some(PathBuf::from("master/linked/wall.smooth/1.s.0.1.albedo.png")),
+            Some(PathBuf::from("linked/wall.smooth/1.s.0/1/albedo.png")),
         );
         // a trailing facing segment folds into the `<dir>` field
         assert_eq!(
             master_albedo_rel("world/conifer/e"),
-            Some(PathBuf::from("master/world/conifer/1.e.0.1.albedo.png")),
+            Some(PathBuf::from("world/conifer/1.e.0/1/albedo.png")),
         );
         assert_eq!(
             master_albedo_rel("world/conifer/n"),
-            Some(PathBuf::from("master/world/conifer/1.n.0.1.albedo.png")),
+            Some(PathBuf::from("world/conifer/1.n.0/1/albedo.png")),
         );
         // `l` (linked/autotile) is a direction token too
         assert_eq!(
             master_albedo_rel("linked/wall.smooth/l"),
-            Some(PathBuf::from("master/linked/wall.smooth/1.l.0.1.albedo.png")),
+            Some(PathBuf::from("linked/wall.smooth/1.l.0/1/albedo.png")),
         );
         // a non-facing 3rd segment stays a directory (facing → south)
         assert_eq!(
             master_albedo_rel("world/conifer/foo"),
-            Some(PathBuf::from("master/world/conifer/foo/1.s.0.1.albedo.png")),
+            Some(PathBuf::from("world/conifer/foo/1.s.0/1/albedo.png")),
         );
         // escapes are rejected
         assert_eq!(master_albedo_rel("../secret"), None);
@@ -365,13 +372,14 @@ mod tests {
         let root = base.join("textures");
         let cache = base.join("cache");
         let _ = std::fs::remove_dir_all(&base);
-        let kind = root.join("master/linked/wall.smooth");
-        std::fs::create_dir_all(&kind).unwrap();
+        // group-less canonical instance leaf: linked/wall.smooth/1.s.0/1/albedo.png
+        let leaf = root.join("linked/wall.smooth/1.s.0/1");
+        std::fs::create_dir_all(&leaf).unwrap();
         // a 4×4 master albedo
         let master = image::RgbaImage::from_pixel(4, 4, image::Rgba([10, 180, 40, 255]));
         let mut buf = Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(master).write_to(&mut buf, image::ImageFormat::Png).unwrap();
-        std::fs::write(kind.join("1.s.0.1.albedo.png"), buf.into_inner()).unwrap();
+        std::fs::write(leaf.join("albedo.png"), buf.into_inner()).unwrap();
 
         let src = TextureSource::Disk { root: root.clone(), cache: cache.clone() };
 

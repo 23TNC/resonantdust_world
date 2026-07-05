@@ -37,7 +37,7 @@ impl TextureManifest {
     pub fn build(source: &TextureSource) -> Self {
         let mut entries = BTreeMap::new();
         if let TextureSource::Disk { root, .. } = source {
-            scan_masters(&root.join("master"), &mut entries);
+            scan_masters(root, &mut entries);
         }
         let version = version_of(&entries);
         Self { state: RwLock::new(State { entries, version }) }
@@ -91,7 +91,7 @@ impl TextureManifest {
     pub fn refresh(&self, source: &TextureSource) -> bool {
         let TextureSource::Disk { root, .. } = source else { return false };
         let mut fresh = BTreeMap::new();
-        scan_masters(&root.join("master"), &mut fresh);
+        scan_masters(root, &mut fresh);
 
         let mut st = self.state.write().unwrap();
         let mut changed = fresh.len() != st.entries.len();
@@ -129,25 +129,33 @@ pub fn spawn_poll(manifest: Arc<TextureManifest>, source: Arc<TextureSource>, se
     });
 }
 
-/// The direction tokens whose canonical master (`1.<dir>.0.1.albedo.png`) is scanned
-/// into its own stem: the n/e/s facings plus `l` for linked (autotile) kinds. West
-/// is never on disk — the client mirrors east.
+/// The direction tokens whose canonical master (leaf `1.<dir>.0/1/albedo.png`) is
+/// scanned into its own stem: the n/e/s facings plus `l` for linked (autotile) kinds.
+/// West is never on disk — the client mirrors east.
 const FACINGS: [&str; 4] = ["n", "e", "s", "l"];
 
-/// Walk `master/<cat>/<kind>/1.<facing>.0.1.albedo.png`, filling `entries` with one
-/// per-facing stem (`<cat>/<kind>/<facing>` — the dir names ARE the stem segments
-/// verbatim, named subkinds included) → hash + master short axis. Each facing is its
-/// own texture (own bytes, hash, LOD cache), so it gets its own manifest row.
-fn scan_masters(master_root: &Path, entries: &mut BTreeMap<String, Entry>) {
-    let Ok(cats) = std::fs::read_dir(master_root) else { return };
+/// The legacy `<group>` dirs kept on disk for rollback (docs/texture-paths.md, Phase
+/// 2) — skipped so the group-less scan never mistakes them for categories.
+const LEGACY_GROUPS: [&str; 3] = ["master", "sprites", "templates"];
+
+/// Walk `<tex_root>/<cat>/<kind>/1.<facing>.0/1/albedo.png` (group-less folder-per-
+/// variant, docs/texture-paths.md), filling `entries` with one per-facing stem
+/// (`<cat>/<kind>/<facing>` — the dir names ARE the stem segments verbatim, named
+/// subkinds included) → hash + master short axis. Each facing is its own texture (own
+/// bytes, hash, LOD cache), so it gets its own manifest row.
+fn scan_masters(tex_root: &Path, entries: &mut BTreeMap<String, Entry>) {
+    let Ok(cats) = std::fs::read_dir(tex_root) else { return };
     for cat in cats.flatten() {
+        let Some(cat_name) = dir_name(&cat.file_name()) else { continue };
+        if LEGACY_GROUPS.contains(&cat_name.as_str()) {
+            continue;
+        }
         let Ok(kinds) = std::fs::read_dir(cat.path()) else { continue };
         for kind in kinds.flatten() {
-            let (Some(cat_name), Some(kind_name)) = (dir_name(&cat.file_name()), dir_name(&kind.file_name())) else {
-                continue;
-            };
+            let Some(kind_name) = dir_name(&kind.file_name()) else { continue };
             for facing in FACINGS {
-                let master = kind.path().join(format!("1.{facing}.0.1.albedo.png"));
+                // Canonical instance leaf: 1.<facing>.0/1/albedo.png.
+                let master = kind.path().join(format!("1.{facing}.0")).join("1").join("albedo.png");
                 if !master.is_file() {
                     continue;
                 }
@@ -196,12 +204,13 @@ mod tests {
     use std::io::Cursor;
 
     fn write_master(root: &Path, cat: &str, kind: &str, w: u32, h: u32) {
-        let dir = root.join("master").join(cat).join(kind);
+        // Group-less canonical instance leaf: <cat>/<kind>/1.s.0/1/albedo.png.
+        let dir = root.join(cat).join(kind).join("1.s.0").join("1");
         std::fs::create_dir_all(&dir).unwrap();
         let img = image::RgbaImage::from_pixel(w, h, image::Rgba([1, 2, 3, 255]));
         let mut buf = Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(img).write_to(&mut buf, image::ImageFormat::Png).unwrap();
-        std::fs::write(dir.join("1.s.0.1.albedo.png"), buf.into_inner()).unwrap();
+        std::fs::write(dir.join("albedo.png"), buf.into_inner()).unwrap();
     }
 
     #[test]
