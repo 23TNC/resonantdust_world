@@ -1408,13 +1408,32 @@ _normalize_grid_atlas() {  # kind_dir
   fi
 }
 
+# Remove only the master LEAF pose dirs under ROOT — the `<id>.<dir>.<layer>/` dirs
+# (incl. malformed variants) — while PRESERVING co-located loose source (atlases,
+# sheets, psd, aliases, prompts). Since the folder-per-variant group-drop, source and
+# master share one tree (docs/texture-paths.md), so the old `rm -rf <cat>/<kind>`
+# whole-dir wipe would destroy the source. A leaf is always a directory and loose
+# source is always a file, so removing subdirs at the leaf DEPTH is exact. DEPTH 1
+# wipes a KIND dir's poses; DEPTH 2 wipes a CATEGORY dir's <kind>/<pose>.
+_wipe_master_leaves() {  # root depth
+  local root=$1 depth=$2
+  [[ -d "$root" ]] || return 0
+  find "$root" -mindepth "$depth" -maxdepth "$depth" -type d -exec rm -rf {} + 2>/dev/null || true
+}
+
 # Grid ids = distinct <id> among a kind's <id>.diffuse.png atlases (the diffuse
 # is the registration channel; map siblings share its id). Sorted, one per line.
 _grid_ids_in() {  # kind_dir
-  local f
+  # Grid ids are the LEADING <id> of each `<id>[.<dir>][.<layer>].diffuse.png` atlas —
+  # parse it out (the slicer re-adds the `.l.0` facing/layer itself, so a source whose
+  # name already bakes them in, e.g. `1.l.0.diffuse.png`, must NOT become a separate id
+  # `1.l.0` or it double-encodes to a `1.l.0.l.0/` leaf). The canonical `<id>.diffuse.png`
+  # is the one sliced; redundantly-named siblings collapse to the same id.
+  local f bn
   for f in "$1"/*.diffuse.png; do
     [[ -f "$f" ]] || continue
-    basename "$f" .diffuse.png
+    bn=$(basename "$f" .diffuse.png); _parse_sheet_stem "$bn"
+    echo "$SHEET_ID"
   done | sort -u
 }
 
@@ -1583,7 +1602,8 @@ cmd_split() {
   local grand=0 id kind out_kind kinddir bn
   if (( nseg == 1 )); then
     # whole category: wipe + rebuild every nested kind (mode A) and flat sheet (mode B).
-    rm -rf "${MASTER_DIR:?}/$out_cat"
+    # Wipe only master leaf pose dirs (<kind>/<pose>/) — the loose source shares this tree.
+    _wipe_master_leaves "${MASTER_DIR:?}/$out_cat" 2
     for kinddir in "$src_cat"/*/; do
       [[ -d "$kinddir" ]] || continue
       kind=$(basename "$kinddir"); out_kind=$(_norm_mod "$kind")
@@ -1604,7 +1624,7 @@ cmd_split() {
     kind=${seg[1]}; out_kind=$(_norm_mod "$kind"); SPLIT_TARGET="$out_cat/$out_kind"
     local src_kind="$src_cat/$kind"
     if [[ ! -d "$src_kind" ]]; then echo "art: no kind dir (looked at $src_kind)" >&2; return 1; fi
-    rm -rf "${MASTER_DIR:?}/$out_cat/$out_kind"
+    _wipe_master_leaves "${MASTER_DIR:?}/$out_cat/$out_kind" 1   # leaf pose dirs only (keep loose source)
     echo "$cat_src/$kind  (kind)"
     while IFS= read -r id; do _remaster_id "$src_kind" "$id" "$out_cat" "$gap" A "$out_kind" && grand=$((grand+LAST_TOTAL)); done < <(_ids_for "$cat_src" "$src_kind")
   elif (( nseg == 3 )) && [[ "${seg[2]}" == *.png ]]; then

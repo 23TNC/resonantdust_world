@@ -7,13 +7,25 @@ layout to a **folder-per-variant** layout.
 Read this before touching `bin/art`, `bin/lib/*.py`, `marigold/*.py`, the
 `server/src/tex_*` / `textures.rs` resolvers, or `pixijs/src/textures/*`.
 
-> Status: **Phases 1–4 landed** (2026-07-04) — pipeline write side, the on-disk
-> migration (non-destructive copy), the `art manifest` walk, and the server readers
-> all use the new group-less layout. Remaining: the **R2 step** (upload key + prune +
-> gc), **Phase 5** (client multi-map fetch, deferred), a re-master of `wall.smooth`
-> (pre-broken), and dropping the old `<group>` trees once verified. The server is
-> edited but UNCOMPILED here (no cargo in this env) — build via the project toolchain.
-> When the old trees are dropped this doc supersedes the `asset-path-vocabulary` note.
+> **Post-migration fixes (2026-07-05).** Re-mastering `wall.smooth` surfaced two bugs
+> the group-drop had left latent, both now fixed in `bin/art`: (1) the `rm -rf
+> "$MASTER_DIR/<cat>[/<kind>]"` pre-rebuild wipes in `cmd_split` destroyed the
+> co-located loose source once source+master shared a tree — replaced with
+> `_wipe_master_leaves` (removes only leaf pose *dirs*, keeps source *files*); (2)
+> `_grid_ids_in` used the full atlas stem as the id, so `1.l.0.diffuse.png` became id
+> `1.l.0` and double-encoded to a `1.l.0.l.0/` leaf — now it parses the leading `<id>`.
+> wall.smooth re-mastered clean (`1.l.0/{1..16}/`, full map set, server serves it 200).
+> The old `<group>` trees were moved to `../backup/` (rollback).
+>
+> Status: **Phases 1–4 + R2 landed; server VERIFIED end-to-end** (2026-07-04).
+> Pipeline write side, the on-disk migration (non-destructive copy), the `art manifest`
+> walk, and the server readers all use the new group-less layout. The server was built
+> in-container (`rd build server`), 15/15 unit tests pass, and — run against the real
+> migrated tree — it scans the leaf masters, serves `pawns.human/male.fit/s` (128×256
+> PNG from `…/male.fit/1.s.0/1/albedo.png`), and derives previews. Remaining: **Phase 5**
+> (client multi-map fetch, deferred), a re-master of `wall.smooth` (pre-broken), and
+> dropping the old `<group>` trees once satisfied. When the old trees are dropped this
+> doc supersedes the `asset-path-vocabulary` note.
 
 ---
 
