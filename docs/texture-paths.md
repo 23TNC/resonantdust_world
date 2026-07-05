@@ -51,17 +51,19 @@ keeps only its master maps. `_ids_in` now finds them, so **kind-level (mode-A) r
 works again** for conifer/berry/flora — no code change needed once the sheet is where
 mode-A looks. Level-1 (pawns.human, alias-driven) and grid (linked) were already fine.
 
-**OPEN — level-3 leaf remaster (wolf-style single-variation sprites):** `art generate`
-(Phase 1) writes single sprites into leaves, but no remaster path reads them there
-(`_ids_in` only globs the kind top-level). Building it needs three careful pieces the
-old separate-tree code never needed: (a) `cmd_split` dispatch to detect level-3 (leaf
-`sprite.png` present, no top-level sheet) vs level-2; (b) a **level-aware wipe** —
-`_wipe_master_leaves` must NOT run for level-3, because the source `sprite.png` lives
-*inside* the leaf it would delete (same failure class as the fixed `cmd_split` wipe);
-(c) a per-leaf crop: `sprite.png` → `diffuse.png` = the sprite's alpha content-bbox,
-pow2-normalized + edge-bled (wolf 512×512 → 768×256), reusing `_emit_crops` with a
-single alpha-derived geom (no magenta key, no alias). Serving is unaffected (wolf's
-masters exist); this only blocks re-mastering wolf-style kinds from source.
+**Level-3 leaf remaster — DONE (2026-07-05).** `cmd_split` now routes every kind
+through `_remaster_kind`, which dispatches on level: a kind-top-level sheet (`_ids_for`
+returns ids) → mode-A (wipe leaves + blob-detect); otherwise single-variation sprites
+in the leaves → `_remaster_leaf_sprites` (per-leaf crop, NO wipe). Two supporting
+changes: (a) `_wipe_master_leaves` now **preserves any leaf holding a `sprite.png`** —
+level-3 sources live inside their leaf, so wiping would delete them (same failure class
+as the fixed `cmd_split` wipe); (b) `_remaster_leaf_sprites` crops each `sprite.png` to
+its alpha content-bbox (`%@`), pow2-normalizes + edge-bleds via `_emit_crops`, writing
+`diffuse.png` in place and preserving the sprite. Verified on scratch copies: wolf
+(level-3) → 15 diffuses, the e-facing 124 diffuse **byte-identical** to the pre-migration
+master (per-facing orientations correct, all other maps preserved, no malformed dirs);
+conifer (level-2) → sheet blob-detects into 9 leaves, sheet preserved at kind level. All
+three source levels now remaster correctly.
 
 > **Post-migration fixes (2026-07-05).** Re-mastering `wall.smooth` surfaced two bugs
 > the group-drop had left latent, both now fixed in `bin/art`: (1) the `rm -rf

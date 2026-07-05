@@ -1416,9 +1416,54 @@ _normalize_grid_atlas() {  # kind_dir
 # source is always a file, so removing subdirs at the leaf DEPTH is exact. DEPTH 1
 # wipes a KIND dir's poses; DEPTH 2 wipes a CATEGORY dir's <kind>/<pose>.
 _wipe_master_leaves() {  # root depth
-  local root=$1 depth=$2
+  local root=$1 depth=$2 d
   [[ -d "$root" ]] || return 0
-  find "$root" -mindepth "$depth" -maxdepth "$depth" -type d -exec rm -rf {} + 2>/dev/null || true
+  while IFS= read -r -d '' d; do
+    # PRESERVE any pose leaf holding a source sprite.png — a level-3 single-variation
+    # source lives INSIDE its leaf, so wiping it would delete the source (see
+    # _remaster_leaf_sprites). Level-2 leaves are pure master output (sheet lives at the
+    # kind top-level) and carry no sprite, so they wipe normally.
+    if find "$d" -type f -name 'sprite.png' -print -quit 2>/dev/null | grep -q .; then continue; fi
+    rm -rf "$d"
+  done < <(find "$root" -mindepth "$depth" -maxdepth "$depth" -type d -print0 2>/dev/null)
+}
+
+# LEVEL-3 remaster: each `<pose>/<variant>/sprite.png` → co-located `diffuse.png`. A
+# single clean variation (transparent bg from `generate`) is ONE blob — its alpha
+# content-bbox (`%@`); crop that, pow2-normalize + edge-bleed via _emit_crops (no
+# magenta key, no alias, no blob detection). The sprite.png source is PRESERVED. Sets
+# LAST_TOTAL. See the three-level source model in docs/texture-paths.md.
+_remaster_leaf_sprites() {  # src_kind
+  local src_kind=$1 total=0 sp leaf bbox
+  while IFS= read -r -d '' sp; do
+    leaf=$(dirname "$sp")
+    bbox=$(convert "$sp" -format '%@' info: 2>/dev/null)
+    if [[ -z "$bbox" || "$bbox" == 0x0* ]]; then echo "art: ${sp#$MASTER_DIR/} — blank sprite (skipped)" >&2; continue; fi
+    CROP_GEOMS=( "$bbox" ); CROP_OUTS=( "$leaf/diffuse.png" ); EMIT_BLEED=1
+    _emit_crops "$sp"
+    total=$(( total + LAST_COUNT ))
+  done < <(find "$src_kind" -type f -name 'sprite.png' -print0 | sort -z)
+  echo "    $(basename "$src_kind"): $total leaf sprite(s) → diffuse (level-3, in place)"
+  LAST_TOTAL=$total
+}
+
+# Remaster ONE kind, dispatching on the source's LEVEL (docs/texture-paths.md): a
+# kind-top-level sheet → mode-A (wipe leaves, blob-detect into variations); else
+# single-variation sprites already in the leaves → level-3 per-leaf crop (NO wipe —
+# the source is in the leaf). Sets LAST_TOTAL to the kind's crop count.
+_remaster_kind() {  # cat_src src_kind out_cat gap out_kind
+  local cat_src=$1 src_kind=$2 out_cat=$3 gap=$4 out_kind=$5 ids total=0 id
+  ids=$(_ids_for "$cat_src" "$src_kind")
+  if [[ -n "$ids" ]]; then
+    _wipe_master_leaves "${MASTER_DIR:?}/$out_cat/$out_kind" 1
+    while IFS= read -r id; do
+      [[ -n "$id" ]] || continue
+      _remaster_id "$src_kind" "$id" "$out_cat" "$gap" A "$out_kind" && total=$(( total + LAST_TOTAL ))
+    done <<< "$ids"
+  else
+    _remaster_leaf_sprites "$src_kind" && total=$(( total + LAST_TOTAL ))
+  fi
+  LAST_TOTAL=$total
 }
 
 # Grid ids = distinct <id> among a kind's <id>.diffuse.png atlases (the diffuse
@@ -1608,7 +1653,7 @@ cmd_split() {
       [[ -d "$kinddir" ]] || continue
       kind=$(basename "$kinddir"); out_kind=$(_norm_mod "$kind")
       echo "$cat_src/$kind  (kind)"
-      while IFS= read -r id; do _remaster_id "$kinddir" "$id" "$out_cat" "$gap" A "$out_kind" && grand=$((grand+LAST_TOTAL)); done < <(_ids_for "$cat_src" "$kinddir")
+      _remaster_kind "$cat_src" "$kinddir" "$out_cat" "$gap" "$out_kind" && grand=$((grand+LAST_TOTAL))
     done
     while IFS= read -r id; do
       echo "$cat_src/$id.png  (flat sheet)"
@@ -1624,9 +1669,8 @@ cmd_split() {
     kind=${seg[1]}; out_kind=$(_norm_mod "$kind"); SPLIT_TARGET="$out_cat/$out_kind"
     local src_kind="$src_cat/$kind"
     if [[ ! -d "$src_kind" ]]; then echo "art: no kind dir (looked at $src_kind)" >&2; return 1; fi
-    _wipe_master_leaves "${MASTER_DIR:?}/$out_cat/$out_kind" 1   # leaf pose dirs only (keep loose source)
     echo "$cat_src/$kind  (kind)"
-    while IFS= read -r id; do _remaster_id "$src_kind" "$id" "$out_cat" "$gap" A "$out_kind" && grand=$((grand+LAST_TOTAL)); done < <(_ids_for "$cat_src" "$src_kind")
+    _remaster_kind "$cat_src" "$src_kind" "$out_cat" "$gap" "$out_kind" && grand=$((grand+LAST_TOTAL))
   elif (( nseg == 3 )) && [[ "${seg[2]}" == *.png ]]; then
     # one id within a mode-A kind (rebuilds all that id's layers). A `.diffuse`
     # suffix (grid source `1.diffuse.png`) is stripped so the id is just `1`.
