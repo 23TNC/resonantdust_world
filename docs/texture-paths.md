@@ -30,24 +30,38 @@ path is solid** (Phases 1–4 verified end-to-end). The gaps are all on the
 - `art upload_master` R2-syncs the whole kind dir, so co-located sprite/template/
   source files upload too — harmless bloat (the gate only reads albedo leaves).
 
-**OPEN — authoring pipeline regression (needs a design decision, NOT yet fixed):**
-The mode-A non-grid remaster reads its SOURCE sheets/sprites from the kind
-*top-level* (`_ids_in` globs `<kind>/*.png`; `_remaster_id` parses top-level stems),
-but Phase 2 moved per-variant sources into leaf subdirs, and Phase 1's `generate.py`
-now *writes* new sprites into leaves too. So the **generate → remaster loop is broken
-for non-grid creature/plant kinds**: `art remaster world/conifer` (and `berry`,
-`flora`, `pawns.animal/wolf`) find zero ids. Compounding it, Phase 2's "numeric-id
-sprite → leaf" rule mis-classified **multi-blob source *sheets*** (conifer = 1 sheet
-→ 9 blobs; berry → 12; flora → 30) as if they were per-variant sprites, burying the
-sheet at `<kind>/1.s.0/0/sprite.png` instead of leaving it a top-level source. (Wolf
-is genuinely per-variant, 1:1, so only the read-side of its remaster is affected.)
+**Authoring source layout — the three-level rule (confirmed 2026-07-05).** A source
+sheet lives at the level it *spans*; the derived master maps always end up in the
+`<variation>` leaf regardless:
 
-This does not affect serving — all masters migrated correctly and the server renders
-them. It only blocks *re-generating* those masters from source. The fix is a design
-call on where SOURCE inputs (sheets vs true per-variant sprites) live in the group-less
-layout, then rewiring `_ids_in`/`_remaster_id` (and possibly reverting `generate.py`'s
-sprite path) to match. Grid kinds (linked) and mode-B sheet kinds (pawns.human, sources
-at category level) are unaffected.
+| Sheet spans… | Lives at | Named by |
+|---|---|---|
+| multiple **subkinds** | `<cat>.<sub>/` (top of the category) | an **alias/metadata** file — assigns each blob's subkind + per-sprite vars (e.g. a sheet of tools, each tool a subkind) |
+| multiple **variations** of one kind.subkind | `<cat>.<sub>/<kind>.<sub>/` (top of the kind) | its own stem (path already fixes the subkind — blob-detect into variations) |
+| a **single** variation | the `<id>.<dir>.<layer>/<variation>/` leaf | — (one sprite, cropped in place) |
+
+Discovery is **by location** (the filename mirrors it — higher sheets carry less path
+info and lean on the alias). This maps to remaster modes: category-level → mode-B
+(alias); kind-level → mode-A (blob-detect); leaf → a per-leaf single-blob crop.
+
+**Fixed (Stage A):** Phase 2's "numeric-id sprite → leaf" rule had mis-filed the
+multi-variation *sheets* (conifer 1→9, berry 1→12, flora 1→30) into a leaf instead of
+the kind top-level. Relocated them to `<kind>/<pose>.<variant>.sprite.png`; the leaf
+keeps only its master maps. `_ids_in` now finds them, so **kind-level (mode-A) remaster
+works again** for conifer/berry/flora — no code change needed once the sheet is where
+mode-A looks. Level-1 (pawns.human, alias-driven) and grid (linked) were already fine.
+
+**OPEN — level-3 leaf remaster (wolf-style single-variation sprites):** `art generate`
+(Phase 1) writes single sprites into leaves, but no remaster path reads them there
+(`_ids_in` only globs the kind top-level). Building it needs three careful pieces the
+old separate-tree code never needed: (a) `cmd_split` dispatch to detect level-3 (leaf
+`sprite.png` present, no top-level sheet) vs level-2; (b) a **level-aware wipe** —
+`_wipe_master_leaves` must NOT run for level-3, because the source `sprite.png` lives
+*inside* the leaf it would delete (same failure class as the fixed `cmd_split` wipe);
+(c) a per-leaf crop: `sprite.png` → `diffuse.png` = the sprite's alpha content-bbox,
+pow2-normalized + edge-bled (wolf 512×512 → 768×256), reusing `_emit_crops` with a
+single alpha-derived geom (no magenta key, no alias). Serving is unaffected (wolf's
+masters exist); this only blocks re-mastering wolf-style kinds from source.
 
 > **Post-migration fixes (2026-07-05).** Re-mastering `wall.smooth` surfaced two bugs
 > the group-drop had left latent, both now fixed in `bin/art`: (1) the `rm -rf
