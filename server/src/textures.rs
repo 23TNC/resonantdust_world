@@ -34,6 +34,15 @@ use crate::content::R2Config;
 /// Drop toward 0.25 to quarter it; the gate is the one place that decides.
 const PREVIEW_SCALE: f32 = 0.5;
 
+/// The texture MAPS a leaf can hold, one PNG per map in the same variant leaf. `albedo`
+/// (colour) is mandatory and the default; `normal`/`depth`/`emissive` are optional (a
+/// missing one is a clean 404 the client falls back for). `packed` (per-material weight,
+/// RGBA) + `packed_residual` (the leftover after the weighted materials) drive the
+/// material bake pass — `bin/art split_layers` emits `packed.png` / `packed_residual.png`.
+/// The set doubles as the leaf FILENAME allowlist — a `map` outside it never touches disk
+/// (`master_map_rel` → None).
+pub const MAPS: [&str; 7] = ["albedo", "normal", "depth", "emissive", "packed", "packed_residual", "surface"];
+
 /// Where the gateway reads master texture bytes from — the binary analogue of
 /// [`crate::content::ContentSource`].
 pub enum TextureSource {
@@ -66,7 +75,7 @@ impl TextureSource {
     /// The full-res master albedo for `stem`, served verbatim. `Ok(None)` is a
     /// clean miss (404).
     pub async fn serve_master(&self, stem: &str) -> Result<Option<ServedTexture>, String> {
-        let rel = master_albedo_rel(stem).ok_or_else(|| format!("bad texture stem: {stem}"))?;
+        let rel = master_map_rel(stem, "albedo").ok_or_else(|| format!("bad texture stem: {stem}"))?;
         Ok(self
             .read_master(&rel)
             .await?
@@ -77,7 +86,7 @@ impl TextureSource {
     /// the derived PNG (re-deriving when the master is newer); R2 derives fresh.
     /// `Ok(None)` when the master is absent.
     pub async fn serve_preview(&self, stem: &str) -> Result<Option<ServedTexture>, String> {
-        let rel = master_albedo_rel(stem).ok_or_else(|| format!("bad texture stem: {stem}"))?;
+        let rel = master_map_rel(stem, "albedo").ok_or_else(|| format!("bad texture stem: {stem}"))?;
 
         // Disk: serve a fresh cached derivation, else re-derive + cache.
         if let TextureSource::Disk { root, cache } = self {
@@ -115,8 +124,8 @@ impl TextureSource {
     /// master verbatim — we never upscale). Disk sources cache the derived PNG under
     /// `derived/lod/<size>/…` (re-derived when the master is newer); R2 derives
     /// fresh. `Ok(None)` when the master is absent.
-    pub async fn serve_lod(&self, stem: &str, size: u32) -> Result<Option<ServedTexture>, String> {
-        let rel = master_albedo_rel(stem).ok_or_else(|| format!("bad texture stem: {stem}"))?;
+    pub async fn serve_lod(&self, stem: &str, size: u32, map: &str) -> Result<Option<ServedTexture>, String> {
+        let rel = master_map_rel(stem, map).ok_or_else(|| format!("bad texture stem/map: {stem} {map}"))?;
 
         // Disk: serve a fresh cached derivation, else re-derive + cache.
         if let TextureSource::Disk { root, cache } = self {
@@ -124,7 +133,7 @@ impl TextureSource {
             if !master.exists() {
                 return Ok(None);
             }
-            let cached = derived_lod_path(cache, size, stem);
+            let cached = derived_lod_path(cache, size, map, stem);
             if is_fresh(&cached, &master) {
                 if let Ok(bytes) = std::fs::read(&cached) {
                     return Ok(Some(ServedTexture { bytes, content_type: "image/png" }));
@@ -154,7 +163,7 @@ impl TextureSource {
     /// Disk: the master's `mtime-size`; R2: `None` (no cheap stat — R2 skips
     /// conditional revalidation for now). `None` too when the master is absent.
     pub fn etag(&self, stem: &str) -> Option<String> {
-        let rel = master_albedo_rel(stem)?;
+        let rel = master_map_rel(stem, "albedo")?;
         match self {
             TextureSource::Disk { root, .. } => disk_etag(&root.join(rel)),
             TextureSource::R2(_) => None,
@@ -186,7 +195,12 @@ impl TextureSource {
 /// re-synced to the same group-less layout before an R2 deploy (docs "R2 step").
 const FACINGS: [&str; 4] = ["n", "e", "s", "l"];
 
-fn master_albedo_rel(stem: &str) -> Option<PathBuf> {
+fn master_map_rel(stem: &str, map: &str) -> Option<PathBuf> {
+    // `map` names the leaf file (`<map>.png`); reject anything outside the allowlist so a
+    // crafted map segment can never name an arbitrary file (belt-and-braces over `sanitize`).
+    if !MAPS.contains(&map) {
+        return None;
+    }
     let safe = sanitize(stem)?;
     let mut segs: Vec<&str> = Vec::new();
     for c in safe.components() {
@@ -211,11 +225,11 @@ fn master_albedo_rel(stem: &str) -> Option<PathBuf> {
     for seg in segs {
         out.push(seg);
     }
-    // Canonical instance: id 1, layer 0, variant 1 — the leaf `1.<facing>.0/1/albedo.png`
+    // Canonical instance: id 1, layer 0, variant 1 — the leaf `1.<facing>.0/1/<map>.png`
     // (the per-instance variation picker, the old `^r2`, is still future work).
     out.push(format!("1.{facing}.0"));
     out.push("1");
-    out.push("albedo.png");
+    out.push(format!("{map}.png"));
     Some(out)
 }
 
@@ -227,11 +241,11 @@ fn derived_preview_path(cache: &Path, stem: &str) -> PathBuf {
     p
 }
 
-/// The cache path for a stem's derived LOD: `<cache>/lod/<size>/<stem>.albedo.png`.
-fn derived_lod_path(cache: &Path, size: u32, stem: &str) -> PathBuf {
+/// The cache path for a stem's derived LOD: `<cache>/lod/<size>/<stem>.<map>.png`.
+fn derived_lod_path(cache: &Path, size: u32, map: &str, stem: &str) -> PathBuf {
     let mut p = cache.join("lod");
     p.push(size.to_string());
-    p.push(format!("{stem}.albedo.png"));
+    p.push(format!("{stem}.{map}.png"));
     p
 }
 
@@ -327,31 +341,43 @@ mod tests {
         // no facing → south default, canonical leaf `1.s.0/1/albedo.png`; segments
         // verbatim (a named subkind like `wall.smooth` is kept as-is), group dropped
         assert_eq!(
-            master_albedo_rel("linked/wall.smooth"),
+            master_map_rel("linked/wall.smooth", "albedo"),
             Some(PathBuf::from("linked/wall.smooth/1.s.0/1/albedo.png")),
+        );
+        // the `map` names the leaf file — normal/depth resolve beside the albedo
+        assert_eq!(
+            master_map_rel("linked/wall.smooth", "normal"),
+            Some(PathBuf::from("linked/wall.smooth/1.s.0/1/normal.png")),
+        );
+        assert_eq!(
+            master_map_rel("world/conifer/e", "depth"),
+            Some(PathBuf::from("world/conifer/1.e.0/1/depth.png")),
         );
         // a trailing facing segment folds into the `<dir>` field
         assert_eq!(
-            master_albedo_rel("world/conifer/e"),
+            master_map_rel("world/conifer/e", "albedo"),
             Some(PathBuf::from("world/conifer/1.e.0/1/albedo.png")),
         );
         assert_eq!(
-            master_albedo_rel("world/conifer/n"),
+            master_map_rel("world/conifer/n", "albedo"),
             Some(PathBuf::from("world/conifer/1.n.0/1/albedo.png")),
         );
         // `l` (linked/autotile) is a direction token too
         assert_eq!(
-            master_albedo_rel("linked/wall.smooth/l"),
+            master_map_rel("linked/wall.smooth/l", "albedo"),
             Some(PathBuf::from("linked/wall.smooth/1.l.0/1/albedo.png")),
         );
         // a non-facing 3rd segment stays a directory (facing → south)
         assert_eq!(
-            master_albedo_rel("world/conifer/foo"),
+            master_map_rel("world/conifer/foo", "albedo"),
             Some(PathBuf::from("world/conifer/foo/1.s.0/1/albedo.png")),
         );
+        // an unknown map is rejected (leaf-filename allowlist)
+        assert_eq!(master_map_rel("linked/wall.smooth", "../etc"), None);
+        assert_eq!(master_map_rel("linked/wall.smooth", "roughness"), None);
         // escapes are rejected
-        assert_eq!(master_albedo_rel("../secret"), None);
-        assert_eq!(master_albedo_rel("linked/../../etc"), None);
+        assert_eq!(master_map_rel("../secret", "albedo"), None);
+        assert_eq!(master_map_rel("linked/../../etc", "albedo"), None);
     }
 
     /// A 4×4 red PNG downscales to 2×2 and re-decodes cleanly at half size.
@@ -393,16 +419,18 @@ mod tests {
         assert!(derived_preview_path(&cache, "linked/wall.smooth").exists(), "preview cached");
 
         // a LOD downscales to the requested short axis (4×4 → 2×2) and caches it
-        let l = src.serve_lod("linked/wall.smooth", 2).await.unwrap().expect("lod derived");
+        let l = src.serve_lod("linked/wall.smooth", 2, "albedo").await.unwrap().expect("lod derived");
         assert_eq!(image::load_from_memory(&l.bytes).unwrap().width(), 2);
-        assert!(derived_lod_path(&cache, 2, "linked/wall.smooth").exists(), "lod cached");
+        assert!(derived_lod_path(&cache, 2, "albedo", "linked/wall.smooth").exists(), "lod cached");
         // a LOD at/above the master's short axis is clamped to the master (no upscale)
-        let big = src.serve_lod("linked/wall.smooth", 16).await.unwrap().expect("lod clamped");
+        let big = src.serve_lod("linked/wall.smooth", 16, "albedo").await.unwrap().expect("lod clamped");
         assert_eq!(image::load_from_memory(&big.bytes).unwrap().width(), 4);
+        // a map with no leaf on disk (no normal.png here) is a clean miss, not an error
+        assert!(src.serve_lod("linked/wall.smooth", 2, "normal").await.unwrap().is_none());
         // an un-mastered stem is a clean miss on all tiers
         assert!(src.serve_master("linked/nope").await.unwrap().is_none());
         assert!(src.serve_preview("linked/nope").await.unwrap().is_none());
-        assert!(src.serve_lod("linked/nope", 4).await.unwrap().is_none());
+        assert!(src.serve_lod("linked/nope", 4, "albedo").await.unwrap().is_none());
 
         // a mastered stem has an ETag; an un-mastered one doesn't
         assert!(src.etag("linked/wall.smooth").is_some());

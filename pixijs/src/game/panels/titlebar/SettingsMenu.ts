@@ -38,6 +38,8 @@ export class SettingsMenu {
 
   /** Called when the user clicks Log Out. Wire from the active scene. */
   onLogOut: (() => void) | null = null;
+  /** Called when the user clicks Video — opens the video settings panel. Wire at boot. */
+  onVideo: (() => void) | null = null;
   /** Called when the user clicks Toggle Fullscreen. Wire from the active scene. */
   onToggleFullscreen: (() => void) | null = null;
   /** Called when the user clicks Sound. Wire from the active scene. */
@@ -77,6 +79,11 @@ export class SettingsMenu {
       // result.
       DomPanel.resetAllToDefaults();
       this.panel.close();
+    });
+    this.addItem(body, panelText("settingsMenu", "video"), () => {
+      this.panel.close();
+      if (this.onVideo) this.onVideo();
+      else debug.log(["ui"], "[SettingsMenu] Video: no handler set", 2);
     });
     this.addItem(body, panelText("settingsMenu", "logOut"), () => {
       this.panel.close();

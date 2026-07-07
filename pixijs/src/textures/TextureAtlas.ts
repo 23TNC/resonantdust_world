@@ -65,6 +65,10 @@ export class TextureAtlas {
     sprite.position.set(rect.x, rect.y);
     sprite.width = width;
     sprite.height = height;
+    // A straight-alpha source (a weight map like `packed`) must be copied VERBATIM: the
+    // default premultiplied blend would multiply its RGB by its alpha and zero the weights
+    // wherever alpha is 0. Rects never overlap, so an overwrite blit is safe for all sources.
+    if (source.source.alphaMode === "no-premultiply-alpha") sprite.blendMode = "none";
     this.renderer.render({ container: sprite, target: this.renderTexture, clear: false });
     sprite.destroy(); // drops the sprite, not the shared source texture
 

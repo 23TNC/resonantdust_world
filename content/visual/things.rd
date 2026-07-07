@@ -20,6 +20,19 @@
                 ; bottom-anchors + sorts by base row). Other flora leave size unset →
                 ; the host's small default.
                 64 &thing.size set
+                ; MATERIAL variation on the packed map: the conifer's albedo splits into
+                ; ch0 = foliage (#b7cf5d) + ch1 = trunk (#b0754f) (see `art split_layers
+                ; world/conifer`). The canonical reconstruction is
+                ;   out = packed_residual + packed.R*jitter(tint0) + packed.G*jitter(tint1)
+                ; so BOTH channels must set their base-colour tint (else that region's
+                ; colour, subtracted into the residual, is lost). ch0 (foliage) also binds
+                ; the `strand` material so the needles gain fine hue/chroma variation —
+                ; colour, not light; ch1 (trunk) is tint-only (no jitter).
+                "strand &thing.packed.0.material set
+                #46d64f &thing.packed.0.tint set
+                ; ch1 (trunk): NO material, just its natural base colour so the residual
+                ; reconstructs the original brown trunk faithfully (un-restyled).
+                #b0754f &thing.packed.1.tint set
                 0 return
             @on_destroy>
                 &thing.destroy call drop

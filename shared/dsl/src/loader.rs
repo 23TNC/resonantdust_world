@@ -41,6 +41,45 @@ pub struct GenTile {
   pub thing1: Option<String>,
 }
 
+/// One packed-map channel's MATERIAL binding on a prim. The stem's `packed` map
+/// holds a per-pixel weight in each of its (up to 4) RGBA channels; this says what
+/// that weight paints — a `tint` (base `0xRRGGBB` colour) and, optionally, a
+/// `material_id` (1-based into the material registry; `0` = none) whose noise-driven
+/// hue/chroma jitter the bake pass applies. All-zero = an unbound channel (identity:
+/// the residual reconstructs the flat albedo, no variation). See `docs/lighting.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PackedChannel {
+  /// 1-based material-registry id (`material_id`); `0` = no material (flat tint).
+  pub material_id: u16,
+  /// The channel's base colour, packed `0xRRGGBB`.
+  pub tint: u32,
+}
+
+/// A named material's rendering parameters (the `<material>` registry, mirrored to
+/// the client). `noise_field` names a tiling character field the client resolves to
+/// an atlas index; the swings drive hue/chroma jitter in OKLab (never lightness);
+/// `sample_space` is `"uv"` (rides the sprite) or `"world"` (pinned to the ground).
+/// All-zero swings = identity (smooth tintable, today's behaviour).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialParams {
+  /// The noise-field character name (`strand`/`mottle`/…); `""` = no field (flat).
+  pub noise_field: String,
+  /// Hue rotation amplitude at full noise, in DEGREES.
+  pub hue_swing: f64,
+  /// Chroma perturbation amplitude at full noise.
+  pub chroma_swing: f64,
+  /// Warm↔cool asymmetry of the swing, `-1`..`1` (cool..warm).
+  pub warm_cool_bias: f64,
+  /// `"uv"` (default) or `"world"` — where the noise is sampled.
+  pub sample_space: String,
+}
+
+impl Default for MaterialParams {
+  fn default() -> Self {
+    Self { noise_field: String::new(), hue_swing: 0.0, chroma_swing: 0.0, warm_cool_bias: 0.0, sample_space: "uv".into() }
+  }
+}
+
 /// The visual parts a def's `:visual @on_create` prim declares. `tint` multiplies
 /// a LOADED texture (usually white/no-op for full-colour art); `geo_color` is the
 /// flat silhouette colour shown while the prim is still on the geo tier (defaults
@@ -57,6 +96,10 @@ pub struct VisualParts {
   /// treats it as **pixels** (e.g. `64` = one tile wide) and derives the other
   /// axis from the texture's aspect, bottom-anchoring + z-sorting by base row.
   pub size: f64,
+  /// The prim's up-to-4 packed-map channel material bindings (`&prim.packed.<i>`),
+  /// indexed by packed RGBA channel. Default (all zero) = no material system in
+  /// play, so the renderer paints the flat albedo exactly as before.
+  pub packed: [PackedChannel; 4],
 }
 
 /// Everything the runtime needs to resolve and render tiles, built once at load.
@@ -86,6 +129,14 @@ pub struct Bundle {
   /// biome (an always-true define) belongs last. Not an id namespace — biomes are
   /// a generation-time classifier, never packed into a zone.
   biome_ids: Vec<String>,
+  /// Material defs by name — the `<material>` registry (`@on_create` sets its
+  /// [`MaterialParams`]). Referenced by a prim's packed channel, resolved to a
+  /// 1-based `material_id`; never packed into a zone (a client-render concern).
+  materials: HashMap<String, Node>,
+  /// Material names ordered by `material_id` (1-based; `0` = none). First-appearance
+  /// order, append-stable, same discipline as `tile_ids` — so the client's atlas /
+  /// registry lookups stay valid as materials are added.
+  material_ids: Vec<String>,
 }
 
 impl Bundle {
@@ -171,7 +222,24 @@ impl Bundle {
       _ => None,
     };
     let size = store.read("prims.0.size").map(|c| c.as_f64()).unwrap_or(0.0);
-    Some(VisualParts { tint, geo_color, texture, size })
+    // Up to 4 packed-map channels: `&prim.packed.<i>.tint` is the channel's base colour
+    // (what `split_layers` subtracted into the residual — the canonical reconstruction
+    // `residual + Σ packedᵢ·jitter(tintᵢ)` re-adds it, so EVERY produced channel must set
+    // its tint or that region loses its colour). `.material` optionally names a registry
+    // material whose noise jitter perturbs the tint's hue/chroma. A channel with neither
+    // stays `PackedChannel::default()` (material 0, tint 0 = contributes nothing).
+    let mut packed: [PackedChannel; 4] = Default::default();
+    for (i, ch) in packed.iter_mut().enumerate() {
+      let material_id = match store.read(&format!("prims.0.packed.{i}.material")) {
+        Some(crate::vm::Cell::Sym(name)) => self.material_id(name).unwrap_or(0),
+        _ => 0,
+      };
+      let tint = store.read(&format!("prims.0.packed.{i}.tint")).map(|c| c.as_int() as u32).unwrap_or(0);
+      if material_id != 0 || tint != 0 {
+        *ch = PackedChannel { material_id, tint };
+      }
+    }
+    Some(VisualParts { tint, geo_color, texture, size, packed })
   }
 
   /// A tile's background colour as a packed `0xRRGGBB` (see [`node_color_bg`]).
@@ -318,6 +386,72 @@ impl Bundle {
     }
     gen
   }
+
+  // ---------- materials ----------
+
+  /// Every tile's 4 packed-channel material bindings in `def_id` order (index 0 →
+  /// def_id 1) — the per-def table the client fetches once and indexes by the
+  /// `def_id` its prim expansion emits, exactly like [`tile_texture_stems`]. A def
+  /// with no packed channels yields four default (empty) channels.
+  pub fn tile_packed_channels(&self) -> Vec<[PackedChannel; 4]> {
+    self
+      .tile_ids
+      .iter()
+      .map(|name| self.tile(name).and_then(|n| self.node_visual(n)).map(|v| v.packed).unwrap_or_default())
+      .collect()
+  }
+
+  /// Every thing's 4 packed-channel material bindings in `object_id` order — the
+  /// thing-layer sibling of [`tile_packed_channels`].
+  pub fn thing_packed_channels(&self) -> Vec<[PackedChannel; 4]> {
+    self
+      .thing_ids
+      .iter()
+      .map(|name| self.thing(name).and_then(|n| self.node_visual(n)).map(|v| v.packed).unwrap_or_default())
+      .collect()
+  }
+
+  /// Every material name in `material_id` order (index 0 → id 1).
+  pub fn material_names(&self) -> &[String] {
+    &self.material_ids
+  }
+  /// The material def `name` (its `@on_create` hook), or `None`.
+  pub fn material(&self, name: &str) -> Option<&Node> {
+    self.materials.get(name)
+  }
+  /// The 1-based `material_id` for a name (`None` if unknown; the client treats a
+  /// missing binding as `0` = no material).
+  pub fn material_id(&self, name: &str) -> Option<u16> {
+    self.material_ids.iter().position(|n| n == name).map(|i| i as u16 + 1)
+  }
+  /// The material name for a `material_id` (`0` is the empty sentinel).
+  pub fn material_name(&self, id: u16) -> Option<&str> {
+    (id != 0).then(|| self.material_ids.get(id as usize - 1)).flatten().map(String::as_str)
+  }
+
+  /// A material's [`MaterialParams`] — run its `@on_create` hook (materials sit
+  /// directly under the `::def`, no facet, like biomes) into a fresh store and read
+  /// the fields. `None` if the material or its hook is absent; unset fields fall to
+  /// [`MaterialParams::default`] (identity).
+  pub fn material_params(&self, name: &str) -> Option<MaterialParams> {
+    let h = self.material(name)?.hook("on_create")?;
+    let mut store = Store::default();
+    let _ = run(&h.body, &mut store);
+    let def = MaterialParams::default();
+    Some(MaterialParams {
+      noise_field: read_sym(&store, "noiseField").unwrap_or(def.noise_field),
+      hue_swing: store.read("hueSwing").map(|c| c.as_f64()).unwrap_or(def.hue_swing),
+      chroma_swing: store.read("chromaSwing").map(|c| c.as_f64()).unwrap_or(def.chroma_swing),
+      warm_cool_bias: store.read("warmCoolBias").map(|c| c.as_f64()).unwrap_or(def.warm_cool_bias),
+      sample_space: read_sym(&store, "sampleSpace").unwrap_or(def.sample_space),
+    })
+  }
+
+  /// The whole material registry in `material_id` order — the client fetches this
+  /// once and indexes it by the `material_id` a packed channel carries.
+  pub fn material_params_all(&self) -> Vec<MaterialParams> {
+    self.material_ids.iter().map(|n| self.material_params(n).unwrap_or_default()).collect()
+  }
 }
 
 /// Read a slot as a content name: a `Sym` (`grass &tile set`) yields the string;
@@ -343,6 +477,7 @@ pub fn load(sources: &[(String, String)]) -> Result<Bundle, Vec<LoadError>> {
         index_defs(&node, "tile", &mut bundle.tiles, &mut bundle.tile_ids);
         index_defs(&node, "thing", &mut bundle.things, &mut bundle.thing_ids);
         index_defs(&node, "biome", &mut bundle.biomes, &mut bundle.biome_ids);
+        index_defs(&node, "material", &mut bundle.materials, &mut bundle.material_ids);
       }
       Err(e) => errors.push(LoadError { file: name.clone(), message: format!("parse: {e}") }),
     }
@@ -555,6 +690,84 @@ mod tests {
     // fill at the host default (size unset → 0.0).
     assert_eq!(b.thing_texture_stems(), vec!["world/conifer".to_string(), "white".to_string()]);
     assert_eq!(b.thing_sizes(), vec![2.0, 0.0]);
+  }
+
+  #[test]
+  fn material_registry_and_packed_channels() {
+    // A material registry (mottle=1) + a stone tile binding its packed.0 channel to
+    // it; grass binds no material (identity default).
+    let data = "<tile>\n  ::grass>\n    :data>\n      @define>\n        0 return\n  ::stone>\n    :data>\n      @define>\n        0 return\n";
+    let visual = "\
+<tile>
+  ::grass>
+    :visual>
+      @on_create>
+        \"tile ^prim call &tile export
+        #4b573e &tile.tint set
+        0 return
+  ::stone>
+    :visual>
+      @on_create>
+        \"tile ^prim call &tile export
+        \"linked/wall_smooth &tile.texture set
+        \"mottle &tile.packed.0.material set
+        #6b6b6b &tile.packed.0.tint set
+        0 return
+";
+    let material = "\
+<material>
+  ::mottle>
+    @on_create>
+      mottle &noiseField set
+      10 &hueSwing set
+      0.03 &chromaSwing set
+      0.2 &warmCoolBias set
+      world &sampleSpace set
+      0 return
+";
+    let b = load(&[
+      src("data/tiles.rd", data),
+      src("visual/tiles.rd", visual),
+      src("material/materials.rd", material),
+    ])
+    .expect("clean load");
+
+    // registry: mottle is the first (and only) material → id 1.
+    assert_eq!(b.material_id("mottle"), Some(1));
+    assert_eq!(b.material_name(1), Some("mottle"));
+    assert_eq!(b.material_id("nope"), None);
+    let mp = b.material_params("mottle").unwrap();
+    assert_eq!(mp.noise_field, "mottle");
+    assert_eq!(mp.hue_swing, 10.0);
+    assert_eq!(mp.chroma_swing, 0.03);
+    assert_eq!(mp.warm_cool_bias, 0.2);
+    assert_eq!(mp.sample_space, "world");
+    assert_eq!(b.material_params_all().len(), 1);
+
+    // stone (def_id 2) binds packed.0 → material 1, tint 0x6b6b6b; other channels
+    // stay empty. grass (def_id 1) binds nothing → all-default.
+    let stone = b.visual_for_def(2).unwrap();
+    assert_eq!(stone.packed[0], PackedChannel { material_id: 1, tint: 0x6b6b6b });
+    assert_eq!(stone.packed[1], PackedChannel::default());
+    let grass = b.visual_for_def(1).unwrap();
+    assert_eq!(grass.packed, [PackedChannel::default(); 4]);
+
+    // the per-def table the client fetches (def_id order).
+    let table = b.tile_packed_channels();
+    assert_eq!(table[0], [PackedChannel::default(); 4]);
+    assert_eq!(table[1][0], PackedChannel { material_id: 1, tint: 0x6b6b6b });
+  }
+
+  #[test]
+  fn unset_material_params_default_to_identity() {
+    // A material that sets nothing (or is absent) yields identity params — zero
+    // swings, uv space — so binding it changes nothing until it's authored.
+    let material = "<material>\n  ::blank>\n    @on_create>\n      0 return\n";
+    let b = load(&[src("material/materials.rd", material)]).expect("load");
+    let mp = b.material_params("blank").unwrap();
+    assert_eq!(mp, MaterialParams::default());
+    assert_eq!(mp.sample_space, "uv");
+    assert_eq!(mp.hue_swing, 0.0);
   }
 
   #[test]

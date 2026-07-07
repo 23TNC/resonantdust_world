@@ -521,10 +521,10 @@ cmd_outline() {
   echo "art: outlined $count master sprites under $src_root/"
 }
 
-# Shared driver for the Laigter map commands (`normal`, `occlusion`, `specular`).
-# For each diffuse N.diffuse.png under master/<kind>, run Laigter on it with FLAG
-# (-n / -o / -c) and rename the "<N>_<LSUFFIX>.png" it writes alongside into the
-# CO-LOCATED map N.<MAP_TYPE>.png. LABEL names the map in messages.
+# The Laigter map primitives, shared by the KIND-based commands (`normal`,
+# `occlusion`, `specular` → _laigter_batch) and the PATH-based `ao` (→ cmd_ao). For
+# each diffuse N.diffuse.png, run Laigter on it with FLAG (-n / -o / -c) and rename
+# the "<N>_<LSUFFIX>.png" it writes alongside into the CO-LOCATED map N.<MAP_TYPE>.png.
 #
 # Maps land OPAQUE here (no alpha): Laigter writes a flat-up opaque background, which
 # keeps the silhouette's edge texels valid under bilinear filtering (a transparent
@@ -534,36 +534,61 @@ cmd_outline() {
 # silhouette (cmd_normal -> _flatten_normal_bg); coverage comes from the albedo alpha
 # at render time. Co-located, so no separate tree to clear; each run overwrites its
 # own N.<type>.png.
-#
-# PRESET (.laigter, GUI-exported) makes runs reproducible: resolved to a
-# /work-relative -r flag — explicit path wins, else laigter/default.laigter if
-# present, else Laigter's built-in defaults (the v1.13.1 image pins those). Run
-# 'bin/laigter build' once first.
-_laigter_batch() {
+
+# Resolve a Laigter PRESET (a .laigter path, or '' → laigter/default.laigter if it
+# exists, else Laigter's built-in defaults) into the container's /work-relative -r
+# flag, left in the global _PRESET_ARG for _laigter_one to pick up. PRESET
+# (.laigter, GUI-exported) makes runs reproducible; the v1.13.1 image pins the
+# built-in defaults. Run 'bin/laigter build' once first.
+_laigter_preset() {  # preset
+  local preset=$1
+  _PRESET_ARG=()
+  [[ -z "$preset" && -f "$REPO_ROOT/laigter/default.laigter" ]] && \
+    preset="$REPO_ROOT/laigter/default.laigter"
+  if [[ -n "$preset" ]]; then
+    if [[ ! -f "$preset" ]]; then
+      echo "art: preset not found: $preset" >&2
+      return 1
+    fi
+    _PRESET_ARG=(-r "/work/${preset#$REPO_ROOT/}")
+    echo "art: using preset ${preset#$REPO_ROOT/}"
+  fi
+}
+
+# Run Laigter FLAG on ONE diffuse SRC and rename the "<base>_<LSUFFIX>.png" it writes
+# alongside into the co-located map SRC-leaf/<MAP_TYPE>.png (dropping any sibling maps
+# a preset enabled). _laigter_preset must have populated _PRESET_ARG first. LABEL
+# names the map in messages. Returns 1 (with a warning) if Laigter emitted nothing —
+# the caller counts successes.
+_laigter_one() {  # flag lsuffix map_type label src
+  local flag=$1 lsuffix=$2 map_type=$3 label=$4 src=$5
+  local dir base out
+  dir=$(dirname "$src"); base=$(basename "$src" .png); out=$(_map_path "$src" "$map_type")
+  "$SCRIPT_DIR/laigter" -d "/work/${src#$REPO_ROOT/}" "$flag" "${_PRESET_ARG[@]}" >/dev/null
+  if [[ -f "$dir/${base}_${lsuffix}.png" ]]; then
+    mv -f "$dir/${base}_${lsuffix}.png" "$out"
+    local s
+    for s in n s o p; do rm -f "$dir/${base}_${s}.png"; done
+    echo "${src#$REPO_ROOT/} -> $(basename "$out")"
+  else
+    echo "art: laigter produced no $label for ${src#$REPO_ROOT/} (check 'bin/laigter build')" >&2
+    return 1
+  fi
+}
+
+# KIND-based driver: run FLAG over every diffuse under master/<kind>, writing each
+# co-located <MAP_TYPE>.png. The path-based sibling is cmd_ao.
+_laigter_batch() {  # kind preset flag lsuffix map_type label
   local kind=$1 preset=$2 flag=$3 lsuffix=$4 map_type=$5 label=$6
   local src_root="$MASTER_DIR/$kind"
   if [[ ! -d "$src_root" ]]; then
     echo "art: no master directory for '$kind' (looked at $src_root)" >&2
     return 1
   fi
+  _laigter_preset "$preset" || return 1
 
-  [[ -z "$preset" && -f "$REPO_ROOT/laigter/default.laigter" ]] && \
-    preset="$REPO_ROOT/laigter/default.laigter"
-  local preset_arg=()
-  if [[ -n "$preset" ]]; then
-    if [[ ! -f "$preset" ]]; then
-      echo "art: preset not found: $preset" >&2
-      return 1
-    fi
-    preset_arg=(-r "/work/${preset#$REPO_ROOT/}")
-    echo "art: using preset ${preset#$REPO_ROOT/}"
-  fi
-
-  local sources=()
-  while IFS= read -r -d '' src; do
-    sources+=("$src")
-  done < <(_find_diffuse "$src_root")
-
+  local sources=() src
+  while IFS= read -r -d '' src; do sources+=("$src"); done < <(_find_diffuse "$src_root")
   if (( ${#sources[@]} == 0 )); then
     echo "art: no diffuse sprites under $src_root" >&2
     return 1
@@ -571,21 +596,7 @@ _laigter_batch() {
 
   local count=0
   for src in "${sources[@]}"; do
-    local dir; dir=$(dirname "$src")
-    local base; base=$(basename "$src" .png)
-    local out; out=$(_map_path "$src" "$map_type")
-    # Laigter writes <base>_<lsuffix>.png next to the diffuse; rename it to the
-    # co-located map and drop any sibling maps a preset enabled.
-    "$SCRIPT_DIR/laigter" -d "/work/${src#$REPO_ROOT/}" "$flag" "${preset_arg[@]}" >/dev/null
-    if [[ -f "$dir/${base}_${lsuffix}.png" ]]; then
-      mv -f "$dir/${base}_${lsuffix}.png" "$out"
-      local s
-      for s in n s o p; do rm -f "$dir/${base}_${s}.png"; done
-      echo "${src#$MASTER_DIR/} -> $(basename "$out")"
-      count=$((count + 1))
-    else
-      echo "art: laigter produced no $label for ${src#$MASTER_DIR/} (check 'bin/laigter build')" >&2
-    fi
+    _laigter_one "$flag" "$lsuffix" "$map_type" "$label" "$src" && count=$((count + 1))
   done
   echo "art: wrote $count $label maps co-located under $src_root/"
 }
@@ -682,6 +693,89 @@ _exaggerate_kind_normals() {  # kind strength
   done < <(_find_diffuse "$MASTER_DIR/$kind")
 }
 
+# Unsharp-mask each co-located normal.png of KIND (RGB), then re-flatten the opaque bg.
+# A LOCAL high-pass that crisps relief EDGES — the alternative to the global tangent-XY
+# 'strength' exaggeration (which inflates the whole normal uniformly → a balloon look).
+# The shader renormalizes N and the AO integrator reads slope RATIOS (-nx/nz, ny/nz), so
+# this sharpens both the lit relief and the derived AO with no renormalize needed. AMOUNT
+# is the unsharp gain (try ~1-3), SIGMA the blur radius px (default 1.5). No-op at 0.
+_sharpen_kind_normals() {  # kind amount [sigma]
+  local kind=$1 amount=$2 sigma=${3:-1.5} src nrm
+  awk "BEGIN{ exit !($amount > 0) }" || return 0
+  while IFS= read -r -d '' src; do
+    nrm=$(_map_path "$src" normal)
+    [[ -f "$nrm" ]] || continue
+    convert "$nrm" -alpha off -unsharp "0x${sigma}+${amount}+0" "$nrm"
+    _flatten_normal_bg "$nrm" "$src"
+  done < <(_find_diffuse "$MASTER_DIR/$kind")
+}
+
+# Unsharp-mask each co-located occlusion.png (AO) of KIND, in place — crisp the AO's own
+# contact bands for more definition, independent of the normal sharpen. AMOUNT is the
+# unsharp gain, SIGMA the blur radius px (default 1.5). No-op at 0. Runs BEFORE the pack
+# (the sharpened occlusion.png is what gets composited into normal.a).
+_sharpen_kind_occlusion() {  # kind amount [sigma]
+  local kind=$1 amount=$2 sigma=${3:-1.5} src occ
+  awk "BEGIN{ exit !($amount > 0) }" || return 0
+  while IFS= read -r -d '' src; do
+    occ=$(_map_path "$src" occlusion)
+    [[ -f "$occ" ]] || continue
+    convert "$occ" -unsharp "0x${sigma}+${amount}+0" "$occ"
+  done < <(_find_diffuse "$MASTER_DIR/$kind")
+}
+
+# Pitch a standing-object normal map forward (billboard frame → ground frame), in
+# place — the BAKED replacement for the old game's per-fragment SOUTH_TILT hack
+# (../resonantdust/view/.../rectDisplayShader.ts). A billboard's Laigter normal points
+# OUT of the card toward the viewer (+Z); rotating it toward the ground-frame up/north
+# is a fixed per-pixel reshape with no runtime dependency, so we do it once here and the
+# renderer then lights every normal uniformly (no isObject branch, no depth-band sniff).
+#
+# SIGN: the runtime decodes the stored map then applies uNormalYSign(-1) before lighting
+# (lightingShader `N = vec3(x, y*ySign, z)`), so a NORTH-pitched world normal (front dark,
+# north light backlights it) needs the STORED green biased NEGATIVE here — hence `- tilt`.
+# TILT is the +Y bias magnitude (old default 1.8); ZKEEP shrinks the out-of-card Z so the
+# pitch dominates (old default 0.18). Operates in the STORED frame like _normal_strength,
+# so it composes after the strength pass and before the bg flatten. If lit objects
+# backlight from the WRONG side, flip the sign on `ny` (the one convention gotcha).
+_normal_tilt() {  # normal_png tilt zkeep
+  local nrm=$1 tilt=$2 zkeep=$3
+  local rch gch bch
+  rch=$(mktemp --suffix=.png); gch=$(mktemp --suffix=.png); bch=$(mktemp --suffix=.png)
+  local pre="nx=(u.r*2-1); ny=(u.g*2-1)-($tilt); nz=(u.b*2-1)*$zkeep;"
+  pre+=" l=sqrt(nx*nx+ny*ny+nz*nz); l=(l<1e-6?1:l);"
+  convert "$nrm" -fx "$pre (nx/l+1)/2" "$rch"
+  convert "$nrm" -fx "$pre (ny/l+1)/2" "$gch"
+  convert "$nrm" -fx "$pre (nz/l+1)/2" "$bch"
+  convert "$rch" "$gch" "$bch" -combine -colorspace sRGB -strip "$nrm"
+  rm -f "$rch" "$gch" "$bch"
+}
+
+# Bake the object tilt into every co-located normal of KIND, in place, re-flattening the
+# background afterward so it stays a clean flat-up #8080FF opaque field (the tilt reshapes
+# the whole image; the bg is alpha-gated out at sample time, but we keep it flat anyway).
+# Used by `maps` AFTER the strength exaggeration — mirrors _exaggerate_kind_normals.
+_tilt_kind_normals() {  # kind tilt zkeep
+  local kind=$1 tilt=$2 zkeep=$3 src nrm
+  while IFS= read -r -d '' src; do
+    nrm=$(_map_path "$src" normal)
+    [[ -f "$nrm" ]] || continue
+    _normal_tilt "$nrm" "$tilt" "$zkeep"
+    _flatten_normal_bg "$nrm" "$src"   # retain the flat OPAQUE background
+  done < <(_find_diffuse "$MASTER_DIR/$kind")
+}
+
+# Resolve the tri-state tilt choice for KIND. Explicit on/off wins; otherwise default ON
+# for standing objects and OFF for grid ("linked") tiles — their normals are already in the
+# +Z-up ground frame and pitching them would light the floor sideways. Echoes 1 or 0.
+_resolve_tilt() {  # tilt_flag kind
+  case "$1" in
+    1|on|yes|true)   echo 1; return ;;
+    0|off|no|false)  echo 0; return ;;
+  esac
+  if _is_grid_cat "${2%%/*}"; then echo 0; else echo 1; fi
+}
+
 # Tangent-space normal map per master diffuse of KIND, written CO-LOCATED as
 # N.normal.png. Drives Laigter via _laigter_batch; see there for the opaque/
 # flat-up background rationale and preset handling.
@@ -709,8 +803,8 @@ cmd_normal() {
   # `marigold` (learned view-space normals, cleaner macro shape but not integrable
   # and starved on flat art — reach for it via --marigold). detail/detail_radius/
   # strength are Laigter-only tangent-space knobs, ignored by the marigold engine.
-  local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter
-  local -a pos=(kind preset detail detail_radius strength engine)
+  local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt="" tilt_amount=1.8 tilt_z=0.18
+  local -a pos=(kind preset detail detail_radius strength engine tilt_amount tilt_z)
   local pi=0
   while (( $# )); do
     local arg=$1; shift
@@ -718,19 +812,22 @@ cmd_normal() {
     case "$arg" in
       --laigter)   engine=laigter; continue ;;   # boolean shorthand for --engine laigter
       --marigold)  engine=marigold; continue ;;  # boolean shorthand for --engine marigold
+      --tilt)      tilt=1; continue ;;           # force object tilt on (default: auto by category)
+      --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
       --*=*)  name=${arg%%=*}; name=${name#--}; val=${arg#*=} ;;
       --*)    name=${arg#--}; val=${1:-}; shift || true ;;
       *)      if (( pi < ${#pos[@]} )); then printf -v "${pos[pi]}" '%s' "$arg"; pi=$((pi+1)); continue;
               else echo "art: too many positional args to normal ('$arg')" >&2; return 1; fi ;;
     esac
     if [[ " ${pos[*]} " != *" $name "* ]]; then
-      echo "art: unknown flag '--$name' (valid: ${pos[*]})" >&2; return 1
+      echo "art: unknown flag '--$name' (valid: ${pos[*]} tilt)" >&2; return 1
     fi
     printf -v "$name" '%s' "$val"
   done
   if [[ -z "$kind" ]]; then
     echo "usage: art normal <kind> [preset] [detail] [detail_radius] [strength] [engine]" >&2
     echo "       default engine is laigter; pass --marigold (or --engine marigold) to override" >&2
+    echo "       object normals are tilted into the ground frame by default; --no-tilt for tiles" >&2
     return 1
   fi
   kind=$(_resolve_master "$kind")   # `world/conifer` → master/world/conifer (verbatim)
@@ -783,8 +880,20 @@ cmd_normal() {
     done < <(_find_diffuse "$MASTER_DIR/$kind")
   fi
 
+  # Object tilt: pitch the billboard normal into the ground frame (baked SOUTH_TILT).
+  # AFTER strength (which reshapes tangent XY relative to flat-up +Z — meaningless once
+  # tilted). Default ON for standing objects, OFF for grid tiles (see _resolve_tilt).
+  if [[ "$(_resolve_tilt "$tilt" "$kind")" == 1 ]]; then
+    echo "art: tilting object normals into the ground frame (tilt $tilt_amount, z $tilt_z) ..."
+    while IFS= read -r -d '' src; do
+      nrm=$(_map_path "$src" normal)
+      [[ -f "$nrm" ]] || continue
+      _normal_tilt "$nrm" "$tilt_amount" "$tilt_z"
+    done < <(_find_diffuse "$MASTER_DIR/$kind")
+  fi
+
   # Fill each normal's background with a clean flat OPAQUE facing-viewer normal —
-  # last, so it survives the detail blend / strength -combine (which strips alpha)
+  # last, so it survives the detail blend / strength / tilt -combine (which strips alpha)
   # and scrubs Laigter's noisy rim guess. See _flatten_normal_bg.
   while IFS= read -r -d '' src; do
     nrm=$(_map_path "$src" normal)
@@ -806,6 +915,103 @@ cmd_occlusion() {
     return 1
   fi
   _laigter_batch "$kind" "$preset" -o o occlusion occlusion
+}
+
+# Ambient-occlusion (AO) map for one or more sprites named by PATH — the path-based
+# sibling of `occlusion` (which takes a master <kind>). A PATH is either a directory
+# (scanned for its variant-leaf diffuse.png sprites) or a diffuse.png file; each path
+# resolves against the CWD first, then against master/, so a master-relative leaf like
+# `world/conifer/1.s.0/1` works like a `<kind>`. AO is written CO-LOCATED as
+# N.occlusion.png next to each.
+#
+# AO is a SEPARATE map, never baked into albedo: de-lighting stripped the baked
+# shading out of albedo so the renderer can light it, and AO is the crevice/contact
+# darkening that survives that strip (view- and light-independent). The lighting
+# shader multiplies it onto AMBIENT fully and diffuse partially, so foliage/crevices
+# read as depth instead of flat plastic — baking it into albedo would re-introduce
+# the double-count de-lighting removed and poison split_layers' colour clustering.
+#
+# ENGINE (default depth):
+#   depth   — PROTOTYPE: integrate the co-located normal -> height (same Frankot-
+#             Chellappa the client does, marigold/normal_depth.py) then HBAO-style
+#             horizon occlusion over that height (lib/depth_ao.py). Reads occlusion off
+#             GEOMETRY, so foliage cavities darken even under a uniform albedo — and
+#             because the client already integrates that height, the same math runs
+#             client-side with NOTHING baked. Needs a co-located normal.png ('art normal').
+#             --visualize writes occlusion-compare.png (diffuse|height|AO|albedo*AO);
+#             tuning --height-scale/--radius/--dirs/--steps/--strength/--bias/--power forward.
+#   laigter — Laigter's occlusion pass (luminance heightfield). Fine on solid/hard-surface
+#             sprites; degenerates to a copy of the albedo luminance on foliage.
+#             --preset FILE selects a .laigter preset (default laigter/default.laigter).
+cmd_ao() {
+  local engine=depth preset="" paths=() passthru=()
+  while (( $# )); do
+    case "$1" in
+      --engine=*) engine=${1#--engine=}; shift ;;
+      --engine)   engine=${2:-}; shift 2 || { echo "art: --engine needs a value" >&2; return 1; } ;;
+      --laigter)  engine=laigter; shift ;;
+      --depth)    engine=depth; shift ;;
+      --preset=*) preset=${1#--preset=}; shift ;;
+      --preset)   preset=${2:-}; shift 2 || { echo "art: --preset needs a value" >&2; return 1; } ;;
+      # depth-engine flags forward to lib/depth_ao.py.
+      --visualize|--no-pack-normal|--pack-only) passthru+=("$1"); shift ;;
+      --height-scale|--radius|--dirs|--steps|--strength|--bias|--power|--ao-floor)
+                  passthru+=("$1" "${2:?art: $1 needs a value}"); shift 2 ;;
+      --height-scale=*|--radius=*|--dirs=*|--steps=*|--strength=*|--bias=*|--power=*|--ao-floor=*)
+                  passthru+=("$1"); shift ;;
+      --*)        echo "art: unknown flag '$1' to ao" >&2; return 1 ;;
+      *)          paths+=("$1"); shift ;;
+    esac
+  done
+  if (( ${#paths[@]} == 0 )); then
+    echo "usage: art ao <path> [path...] [--engine depth|laigter]" >&2
+    echo "       depth: [--visualize] [--height-scale N] [--radius N] [--strength N] [--bias N] [--power N]" >&2
+    echo "       laigter: [--preset FILE]" >&2
+    echo "       path: a directory (scanned for diffuse.png sprites) or a diffuse.png file" >&2
+    return 1
+  fi
+
+  # Resolve each path (CWD first, then master/) into concrete diffuse.png sources.
+  local sources=() src p r
+  for p in "${paths[@]}"; do
+    if [[ -e "$p" ]]; then r=$p
+    elif [[ -e "$MASTER_DIR/$p" ]]; then r="$MASTER_DIR/$p"
+    else
+      echo "art: no such path (tried '$p' and '$MASTER_DIR/$p')" >&2
+      return 1
+    fi
+    if [[ -d "$r" ]]; then
+      while IFS= read -r -d '' src; do sources+=("$src"); done < <(_find_diffuse "$r")
+    elif [[ -f "$r" && "$(basename "$r")" == diffuse.png ]]; then
+      sources+=("$r")
+    else
+      echo "art: not a directory or a diffuse.png file: $r" >&2
+      return 1
+    fi
+  done
+  if (( ${#sources[@]} == 0 )); then
+    echo "art: no diffuse.png sprites found under the given path(s)" >&2
+    return 1
+  fi
+
+  case "$engine" in
+    depth)
+      command -v python3 >/dev/null || { echo "art ao: python3 not found" >&2; return 1; }
+      RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/depth_ao.py" "${sources[@]}" "${passthru[@]}"
+      ;;
+    laigter)
+      (( ${#passthru[@]} )) && echo "art ao: ignoring depth-engine flags under --engine laigter" >&2
+      _laigter_preset "$preset" || return 1
+      local count=0
+      for src in "${sources[@]}"; do
+        _laigter_one -o o occlusion occlusion "$src" && count=$((count + 1))
+      done
+      echo "art: wrote $count occlusion (AO) map(s)"
+      ;;
+    *)
+      echo "art: unknown ao engine '$engine' (valid: depth, laigter)" >&2; return 1
+      ;;
+  esac
 }
 
 # Specular map per master sprite of KIND, into the parallel specular/ tree
@@ -1773,10 +1979,11 @@ cmd_remaster() {
   # always Marigold-IID. Depth is NOT generated (client-side from the normal). Pass
   # --marigold (or --laigter) as a boolean shorthand for the engine.
   local path="" gap=4 radius="" choke=1 aa=0.5 outline_width=2 outline_color=0x000000 outline_blur=2 \
-        preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter split_layer=0 threshold="" publish=0
-  # Positional slots, filled in order by every non-flag argument. split_layer/threshold
+        preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter split_layer=3 size="" publish=0 \
+        tilt="" tilt_amount=1.8 tilt_z=0.18 ao=0 sharpen_normal=0 ao_strength=1.0 sharpen_ao=0
+  # Positional slots, filled in order by every non-flag argument. split_layer/size are
   # appended at the end so publish keeps its position; both are normally passed as flags.
-  local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish split_layer threshold)
+  local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish split_layer size tilt_amount tilt_z sharpen_normal ao_strength sharpen_ao)
   local pi=0
   while (( $# )); do
     local arg=$1; shift
@@ -1784,6 +1991,10 @@ cmd_remaster() {
     case "$arg" in
       --laigter)   engine=laigter; continue ;;   # boolean shorthand for --engine laigter (normal map only)
       --marigold)  engine=marigold; continue ;;  # boolean shorthand for --engine marigold (normal map only)
+      --tilt)      tilt=1; continue ;;           # force object normal tilt on (default: auto by category)
+      --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
+      --ao)        ao=1; continue ;;             # pack depth-derived AO into normal.a (default)
+      --no-ao)     ao=0; continue ;;             # skip the AO step
       --*=*)  name=${arg%%=*}; name=${name#--}; val=${arg#*=} ;;
       --*)    name=${arg#--}; val=${1:-}; shift || true ;;
       *)      if (( pi < ${#pos[@]} )); then printf -v "${pos[pi]}" '%s' "$arg"; pi=$((pi+1)); continue;
@@ -1795,8 +2006,10 @@ cmd_remaster() {
     printf -v "$name" '%s' "$val"
   done
   if [[ -z "$path" ]]; then
-    echo "usage: art remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--split_layer N] [--threshold T]" >&2
-    echo "       or pass any as a flag, e.g.: art remaster <path> --choke 2   (= split [+ outline] + maps [+ split_layer])" >&2
+    echo "usage: art remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--split_layer N] [--size PX]" >&2
+    echo "       or pass any as a flag, e.g.: art remaster <path> --size 128   (= split [+ outline] + maps + channel-pack [+ scale])" >&2
+    echo "       --split_layer N (default 3) channel-packs N tintable materials into R/G/B (0 = off; skipped for grid tiles; N=4 puts the 4th in alpha, which makes packed.png view transparent)." >&2
+    echo "       --size PX scales masters to PX on the short axis (default: native); maps derive at FULL res, then downscale (sources kept full-res)." >&2
     echo "       normal engine defaults to laigter; --marigold overrides it. albedo=Marigold-IID." >&2
     echo "       depth is NOT generated (client integrates it from the normal). See 'art help'." >&2
     echo "       publish defaults to 0 (local masters only); the deploy tail isn't wired up in this repo yet." >&2
@@ -1813,19 +2026,44 @@ cmd_remaster() {
       cmd_outline "$SPLIT_TARGET" "$outline_color" "$outline_width" "$outline_blur" || return 1
     fi
   fi
-  cmd_maps "$SPLIT_TARGET" "$preset" "$detail" "$detail_radius" "$strength" "$engine" || return 1
+  local -a tilt_args=(--tilt_amount "$tilt_amount" --tilt_z "$tilt_z")
+  [[ "$tilt" == 1 ]] && tilt_args+=(--tilt)
+  [[ "$tilt" == 0 ]] && tilt_args+=(--no-tilt)
+  [[ "$ao" == 0 ]] && tilt_args+=(--no-ao)
+  tilt_args+=(--sharpen_normal "$sharpen_normal" --ao_strength "$ao_strength" --sharpen_ao "$sharpen_ao")
+  cmd_maps "$SPLIT_TARGET" "$preset" "$detail" "$detail_radius" "$strength" "$engine" "${tilt_args[@]}" || return 1
 
-  # Channel-pack the just-made albedo(s): strip N materials into <base>.packed.png and
-  # write the leftover to <base>.packed_residual.png. The source albedo is PRESERVED, so
-  # this can be re-derived later with a different --threshold from the original. --force
-  # because maps just regenerated a fresh albedo (skip-existing would wrongly skip it).
-  # --threshold tunes the neutral/coloured split. See 'art help' (split_layers via
-  # bin/lib/split_layers.py).
-  if (( split_layer > 0 )); then
-    local -a sl=(--channels "$split_layer" --force)
-    [[ -n "$threshold" ]] && sl+=(--threshold "$threshold")
-    command -v python3 >/dev/null || { echo "art: --split_layer needs python3" >&2; return 1; }
-    RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/split_layers.py" "$MASTER_DIR/$SPLIT_TARGET" "${sl[@]}" || return 1
+  # Channel-pack the just-made albedo(s) into up to `--split_layer` tintable materials:
+  # <base>.packed.png (per-material shading) + <base>.packed_residual.png (outline + un-kept
+  # colour). The source albedo is PRESERVED, so it can be re-derived. --force because maps
+  # just regenerated a fresh albedo. Skipped for grid categories (tiles auto-tile; not
+  # per-material tinted) — same gate as the outline. Tune with `art split_layers` directly
+  # (--group-threshold, --min-region, --outline-rim, --blend-radius, …); see 'art help'.
+  if (( split_layer > 0 )) && ! _is_grid_cat "${path%%/*}"; then
+    command -v python3 >/dev/null || { echo "art: channel-pack (--split_layer) needs python3" >&2; return 1; }
+    RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/split_layers.py" "$MASTER_DIR/$SPLIT_TARGET" --channels "$split_layer" --force || return 1
+  fi
+
+  # --size: force the master output resolution. Done LAST, after every map is derived at
+  # FULL resolution (de-light, normal, channel-pack all see maximum detail), then the
+  # finished maps are downscaled together to `size` on the SHORT axis (aspect kept). The
+  # authoring sources (sprite/template maps) are left full-res so a later re-remaster can
+  # target another size. Those sources take TWO name shapes and both must be spared: the
+  # level-3 leaf form `sprite.png`/`template.png`, and the Mode-A atlas form that sits at
+  # the SPLIT_TARGET top level, `<id>.<dir>.<layer>.<variant>.sprite.png` (e.g.
+  # `1.s.0.0.sprite.png`) — hence the `*.sprite.png`/`*.template.png` globs alongside the
+  # bare names (a plain `*.sprite.png` glob does NOT match the dotless `sprite.png`).
+  # NOTE: normals are downscaled as colour (not re-normalised) — fine for flat art at
+  # these sizes; revisit if lighting looks off.
+  if [[ -n "$size" ]]; then
+    local nsz=0 mp
+    while IFS= read -r -d '' mp; do
+      convert "$mp" -background none -filter Lanczos -resize "${size}x${size}^" "$mp" || return 1
+      nsz=$((nsz+1))
+    done < <(find "$MASTER_DIR/$SPLIT_TARGET" -type f -name '*.png' \
+               ! -name 'sprite.png'   ! -name '*.sprite.png' \
+               ! -name 'template.png' ! -name '*.template.png' -print0 | sort -z)
+    echo "art: --size $size -> scaled $nsz master map(s) to ${size}px short-axis (sources kept full-res)"
   fi
 
   if [[ "$publish" == 0 ]]; then
@@ -1869,8 +2107,9 @@ cmd_remaster() {
 # preset/detail/detail_radius/strength are LAIGTER-only knobs, ignored by --marigold.
 cmd_maps() {
   # Defaults; overridable positionally OR by --flag (--name value / --name=value).
-  local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter
-  local -a pos=(kind preset detail detail_radius strength engine)
+  local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt="" tilt_amount=1.8 tilt_z=0.18 ao=0 \
+        sharpen_normal=0 ao_strength=1.0 sharpen_ao=0
+  local -a pos=(kind preset detail detail_radius strength engine tilt_amount tilt_z sharpen_normal ao_strength sharpen_ao)
   local pi=0
   while (( $# )); do
     local arg=$1; shift
@@ -1878,19 +2117,24 @@ cmd_maps() {
     case "$arg" in
       --laigter)   engine=laigter; continue ;;   # boolean shorthand for --engine laigter
       --marigold)  engine=marigold; continue ;;  # boolean shorthand for --engine marigold
+      --tilt)      tilt=1; continue ;;           # force object tilt on (default: auto by category)
+      --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
+      --ao)        ao=1; continue ;;             # pack depth-derived AO into normal.a (default)
+      --no-ao)     ao=0; continue ;;             # skip the AO step entirely
       --*=*)  name=${arg%%=*}; name=${name#--}; val=${arg#*=} ;;
       --*)    name=${arg#--}; val=${1:-}; shift || true ;;
       *)      if (( pi < ${#pos[@]} )); then printf -v "${pos[pi]}" '%s' "$arg"; pi=$((pi+1)); continue;
               else echo "art: too many positional args to maps ('$arg')" >&2; return 1; fi ;;
     esac
     if [[ " ${pos[*]} " != *" $name "* ]]; then
-      echo "art: unknown flag '--$name' (valid: ${pos[*]})" >&2; return 1
+      echo "art: unknown flag '--$name' (valid: ${pos[*]} tilt)" >&2; return 1
     fi
     printf -v "$name" '%s' "$val"
   done
   if [[ -z "$kind" ]]; then
     echo "usage: art maps <kind> [preset] [detail] [detail_radius] [strength]" >&2
     echo "       normal engine defaults to laigter; pass --marigold to override" >&2
+    echo "       object normals are tilted into the ground frame by default; --no-tilt for tiles" >&2
     return 1
   fi
   kind=$(_resolve_master "$kind")   # kind path used verbatim (no `.0` shorthand)
@@ -1900,23 +2144,59 @@ cmd_maps() {
     return 1
   fi
 
-  # 1) normal → 2) albedo + albedo_residual (de-lit) → 3) emissive (gate the
-  # residual) → exaggerate the normal last. albedo_residual is Marigold's non-diffuse
-  # term R (self-lit glow / speculars); `emissive` gates + cleans it into the shipped
-  # additive glow map (a black no-op on matte assets).
-  echo "art: maps [$kind] 1/3 normal (N.normal.png, engine=$engine) ..."
-  cmd_normal "$kind" "$preset" "$detail" "$detail_radius" 1.0 "$engine" || return 1
-  echo "art: maps [$kind] 2/3 albedo + albedo_residual (Marigold-IID de-light) ..."
+  # 1) normal → 2) albedo + albedo_residual (de-lit) → exaggerate the normal last.
+  # albedo_residual is Marigold's non-diffuse term R (self-lit glow / speculars); it is
+  # NOT the emissive map. Deriving the shipped emissive from it (`art emissive`) is
+  # deferred, so the maps pipeline no longer generates emissive — run `art emissive <kind>`
+  # standalone if/when we want it.
+  echo "art: maps [$kind] 1/2 normal (N.normal.png, engine=$engine) ..."
+  # --no-tilt here: the tilt is baked LAST (after the strength exaggeration below),
+  # since strength reshapes tangent XY relative to flat-up +Z — meaningless once tilted.
+  cmd_normal "$kind" "$preset" "$detail" "$detail_radius" 1.0 "$engine" --no-tilt || return 1
+  echo "art: maps [$kind] 2/2 albedo + albedo_residual (Marigold-IID de-light) ..."
   cmd_delight "$kind" --emit albedo,albedo_residual || return 1
-  echo "art: maps [$kind] 3/3 emissive (N.emissive.png, gated from albedo_residual) ..."
-  cmd_emissive "$kind" --force || return 1
   # Strength exaggeration is a Laigter-only tangent-space knob (marigold normals
   # are view-space — scaling their XY would be meaningless).
   if [[ "$engine" == laigter ]] && awk "BEGIN{ exit !($strength != 1.0) }"; then
     echo "art: exaggerating shipped normal strength (x$strength) ..."
     _exaggerate_kind_normals "$kind" "$strength" || return 1
   fi
-  echo "art: maps for $kind — normal + albedo + albedo_residual + emissive generated co-located under $src_root/"
+  # Optional LOCAL sharpen of the normal (unsharp) — crisps relief edges. An alternative
+  # to the global 'strength' exaggeration above (pass strength 1.0 to skip that). Runs
+  # before AO so the sharper relief also sharpens the derived occlusion.
+  if awk "BEGIN{ exit !($sharpen_normal > 0) }"; then
+    echo "art: sharpening normal (unsharp x$sharpen_normal) ..."
+    _sharpen_kind_normals "$kind" "$sharpen_normal" || return 1
+  fi
+  # AO (compute): integrate the UNTILTED normal -> height -> occlusion.png. MUST run
+  # before the tilt — the tilt is a fixed rotation that adds a spurious global ramp to the
+  # integrated height (swamping the real relief), so AO has to measure the true face-on
+  # relief first. --no-pack-normal: only write occlusion.png here; the pack waits until
+  # after the tilt (which rewrites normal.rgb and resets its alpha). See docs/lighting.md.
+  # --strength scales the AO depth (ao_strength).
+  if [[ "$ao" == 1 ]]; then
+    echo "art: maps [$kind] AO (depth-derived, strength $ao_strength) from the untilted normal ..."
+    cmd_ao "$src_root" --no-pack-normal --strength "$ao_strength" || return 1
+    # Optional LOCAL sharpen of the AO map before it's packed into normal.a.
+    if awk "BEGIN{ exit !($sharpen_ao > 0) }"; then
+      echo "art: sharpening AO (unsharp x$sharpen_ao) ..."
+      _sharpen_kind_occlusion "$kind" "$sharpen_ao" || return 1
+    fi
+  fi
+  # Object tilt LAST: pitch the billboard normal into the ground frame (baked SOUTH_TILT).
+  # Laigter-only (view-space marigold normals need a different rotation, not wired yet);
+  # default ON for objects, OFF for grid tiles. Retains the flat opaque background.
+  if [[ "$engine" == laigter ]] && [[ "$(_resolve_tilt "$tilt" "$kind")" == 1 ]]; then
+    echo "art: tilting object normals into the ground frame (tilt $tilt_amount, z $tilt_z) ..."
+    _tilt_kind_normals "$kind" "$tilt_amount" "$tilt_z" || return 1
+  fi
+  # AO (pack) DEAD LAST: composite the occlusion.png measured above into the (now tilted)
+  # normal's alpha. The client's normal composite is premultiplied, so the shader recovers
+  # the normal as rgb/alpha and samples AO from alpha (floored >0 by the pack). See lightingShader.ts.
+  if [[ "$ao" == 1 ]]; then
+    cmd_ao "$src_root" --pack-only || return 1
+  fi
+  echo "art: maps for $kind — normal(+AO in alpha) + albedo + albedo_residual co-located under $src_root/ (emissive deferred)"
 }
 
 # Count the display variations in KINDDIR: unique sprite stems carrying a colour
@@ -2372,40 +2652,41 @@ commands:
                            yellow eyes" --negative "brown" --seed 555 --llm
                            reuse: art generate --from pawns/wolf --prompt 555 --seed 123
                            one dir: art generate --from pawns/wolf --prompt 555 --seed 555 --dir s
-  split_layers <path...> [--channels 4] [--threshold 0.20] [--stretch 0.35] [--outline-v 0.18] [--hue-buckets 8] [--force]
+  split_layers <path...> [--channels 4] [--threshold 0.15] [--group-threshold 0.10] [--edge 42] [--min-region 25] [--outline-v 0.18] [--outline-rim 0.35] [--blend-radius 10] [--force]
                            (standalone form of remaster --split_layer; path resolves
-                            master-relative like remaster, e.g. pawns.animal/wolf)
+                            textures-relative like remaster, e.g. pawns.animal/wolf)
                            Decompose flat (de-lit) albedo(s) into a channel-packed
-                           tint map. For each *.albedo.png (file or dir walk): strip
-                           up to --channels materials into <base>.packed.png (RGBA =
-                           per-region stretched brightness) and write the leftover to
-                           <base>.packed_residual.png (stripped regions zeroed; black
-                           outline kept dark — distinct from Marigold's albedo_residual).
-                           The source albedo is PRESERVED. Materials cluster by CHROMA —
-                           all low-sat pixels are one neutral coat (--sat cutoff),
-                           saturated accents (eyes, markings) split by hue. Renderer:
-                           out = packed_residual + packed.R*tint0 + .G*tint1 + .B*tint2
-                           + .A*tint3. Idempotent — re-runs re-derive both maps from
-                           the untouched albedo (--force to overwrite).
-                           e.g. art split_layers textures/pawns.animal/wolf
-  remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--split_layer N] [--threshold T]
+                           tint map. For each albedo.png (file or dir walk): DIVIDE into
+                           regions (--edge + --threshold), CLUSTER region-mean colours
+                           into materials (--group-threshold), ABSORB specks spatially
+                           (--min-region), then UNMIX up to --channels materials into
+                           <base>.packed.png (RGBA = per-material coefficients; a pixel
+                           can overlap two channels so gradients blend) and write the
+                           leftover to <base>.packed_residual.png. The source albedo is
+                           PRESERVED. Renderer: out = packed_residual + packed.R*tint0 +
+                           .G*tint1 + .B*tint2 + .A*tint3 — under the identity tint (each
+                           material's base colour) it reconstructs the albedo exactly.
+                           Idempotent — re-runs re-derive both maps (--force to overwrite).
+                           e.g. art split_layers pawns.animal/wolf
+  remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--split_layer N] [--size PX]
                            THE make-masters command: runs `split`, optionally
                            `outline`, then `maps` in one pass, so master ends up
                            with the diffuse crops AND their derived maps —
-                           N.normal.png + N.albedo.png + N.albedo_residual.png +
-                           N.emissive.png (and, with --split_layer, N.packed.png +
+                           N.normal.png + N.albedo.png + N.albedo_residual.png
+                           (and, with --split_layer, N.packed.png +
                            N.packed_residual.png). Split alone leaves
                            diffuse-only. `maps` runs only on the kind `split` touched.
                            <path> resolves master-relative (<cat> | <cat>/<kind> |
                            <cat>/<sheet>.png | …), same as `split`.
-                           --split_layer N (default 0 = off): after maps, channel-pack
-                           each albedo — strip N materials into <base>.packed.png and
-                           write the leftover to <base>.packed_residual.png, leaving the
-                           source albedo intact (tint-at-render: out = packed_residual +
-                           packed.R*t0 + .G*t1 + .B*t2 + .A*t3). --threshold T (0-1)
-                           tunes the neutral-coat vs coloured-accent split (default
-                           0.20); re-derive anytime from the preserved albedo.
-                           Force-repacks the fresh albedo.
+                           --split_layer N (default 3; 0 = off; skipped for grid tiles):
+                           after maps, channel-pack each albedo into N tintable materials
+                           — <base>.packed.png (per-material shading in R/G/B[/A]) +
+                           <base>.packed_residual.png (outline + un-kept colour), leaving
+                           the source albedo intact (tint-at-render: out = packed_residual
+                           + packed.R*t0 + .G*t1 + .B*t2). N=4 puts the 4th material in
+                           alpha (packed.png then views transparent). Tune the split via
+                           \`art split_layers\` directly. --size PX scales the finished
+                           masters to PX on the short axis (maps derive at full res first).
                            [gap] (blob-merge px, default 4) [radius] (despill rim
                            width px, default auto) [choke] (matte erosion px, default
                            1) [aa] (matte anti-alias sigma, default 0.5) forward to
@@ -2480,8 +2761,8 @@ commands:
                            N.diffuse.png in master/<kind>/: N.normal.png (Laigter
                            by default — needs 'bin/laigter build' — or Marigold via
                            --marigold), N.albedo.png + N.albedo_residual.png
-                           (Marigold-IID de-light), and N.emissive.png (albedo_residual
-                           gated by 'art emissive').
+                           (Marigold-IID de-light). Emissive is NOT auto-generated —
+                           run 'art emissive <kind>' standalone if/when needed.
                            DEPTH is not generated — it's a deterministic integral of
                            the normal, computed client-side at render time (see 'art
                            depth' for the reference tool).
@@ -2491,8 +2772,14 @@ commands:
                            the LIT diffuse, so run after `split`/`remaster`.
                            preset/detail/detail_radius/strength forward to normal
                            and apply only with the laigter engine; --marigold ignores
-                           them. Order: normal → albedo(+residual) → emissive →
-                           exaggerate the normal.
+                           them. Order: normal → albedo(+residual) →
+                           exaggerate the normal → tilt object normals into the
+                           ground frame (emissive deferred). The tilt bakes the old
+                           runtime SOUTH_TILT: default ON for standing objects, OFF
+                           for grid tiles (linked) whose normals are already ground-
+                           frame; force with --tilt / --no-tilt, tune with
+                           --tilt_amount (1.8) / --tilt_z (0.18). Flat opaque
+                           backgrounds are retained.
   outline <kind> [color] [width] [blur]
                            Add a coloured outline around every master
                            sprite for <kind>, in place (defaults: color
@@ -2521,6 +2808,14 @@ commands:
                            Generate an ambient-occlusion map CO-LOCATED as
                            N.occlusion.png, via Laigter. Not part of the default
                            map set (see 'maps'); kept for manual use.
+  ao <path> [path...] [--preset FILE]
+                           Ambient-occlusion (AO) map CO-LOCATED as N.occlusion.png,
+                           like 'occlusion' but PATH-driven: each path is a directory
+                           (scanned for its variant-leaf diffuse.png sprites) or a
+                           diffuse.png file. A SEPARATE map, never baked into albedo —
+                           the lighting shader multiplies it onto ambient (fully) and
+                           diffuse (partially) so crevices/foliage read as depth, not
+                           flat plastic. Same Laigter preset handling as 'normal'.
   specular <kind> [preset]
                            Generate a specular map CO-LOCATED as N.specular.png,
                            via Laigter. Not part of the default map set.
@@ -2640,6 +2935,7 @@ main() {
     outline) cmd_outline "$@" ;;
     normal) cmd_normal "$@" ;;
     occlusion) cmd_occlusion "$@" ;;
+    ao) cmd_ao "$@" ;;
     specular) cmd_specular "$@" ;;
     emissive) cmd_emissive "$@" ;;
     emissive-hsb) cmd_emissive_hsb "$@" ;;

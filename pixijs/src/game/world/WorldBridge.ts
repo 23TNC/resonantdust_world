@@ -20,9 +20,25 @@ import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
 import type { TextureResolver } from "../../textures";
 import { SQUARE } from "../viewport/squareMath";
+import { MaterialRegistry, type PackedChannel } from "../viewport/material";
+import { makeNoiseAtlas } from "../viewport/noiseAtlas";
 
 /** The viewport anchor's name in the client's anchor list. */
 const ANCHOR = "viewport:0";
+
+/** A well-distributed 32-bit integer hash, normalised to `[0, 1)` — the STABLE per-instance
+ *  seed the material bake hashes into a per-instance noise offset. */
+function hash01(a: number): number {
+  a = Math.imul(a ^ (a >>> 16), 0x45d9f3b);
+  a = Math.imul(a ^ (a >>> 16), 0x45d9f3b);
+  return ((a ^ (a >>> 16)) >>> 0) / 4294967296;
+}
+
+/** A stable seed for a STATIC thing/tile from its world CELL (the same input the worldgen
+ *  `tile_seed` uses), so its material variation is fixed to where it sits and never swims. */
+function cellSeed(tx: number, ty: number): number {
+  return hash01((Math.imul(tx | 0, 73856093) ^ Math.imul(ty | 0, 19349663)) >>> 0);
+}
 
 /** How slowly the sticky subscription reach relaxes toward the current zoom's reach —
  *  one tile per this many ms of zoomed-in time. Long enough that a quick zoom in→out
@@ -111,6 +127,12 @@ export class WorldBridge {
   /** Per-thing footprint in tiles, indexed by `defId - 1` (same as the stem
    *  tables). `0` = unset → {@link DEFAULT_THING_TILES}. Refreshed on hot-swap. */
   private thingSizes: Float64Array = new Float64Array();
+  /** Per-def packed-channel material bindings, flat stride-8 (`[mat0, tint0, …, mat3,
+   *  tint3]` per def), indexed by `defId - 1` — {@link Content.tilePackedChannels} /
+   *  `thingPackedChannels`. Sliced per prim into a {@link PackedChannel}[] the albedo bake
+   *  reads. Refreshed on hot-swap alongside the stem tables. */
+  private tilePacked: Float64Array = new Float64Array();
+  private thingPacked: Float64Array = new Float64Array();
 
   /** Anchor centre, in world px. */
   private anchorX = 0;
@@ -142,16 +164,46 @@ export class WorldBridge {
     // isn't known until a real tier loads — re-seed the live things when one lands
     // so a square silhouette becomes its true shape (a 1:2 tree) in place.
     this.unsubs.push(this.resolver.onLoad(() => this.reseedThings()));
+    // The tiling noise atlas the material bake samples — a static, content-independent
+    // asset, generated once for the session.
+    this.viewport.setNoiseAtlas(makeNoiseAtlas());
     this.refreshStems();
   }
 
-  /** Re-read the per-def texture-stem tables from the current content bundle —
-   *  after construction and on every hot-swap, so the expansion loops resolve
-   *  each prim's `defId` to its stem without a wasm call per cell. */
+  /** Re-read the per-def texture-stem / packed-channel tables + the material registry from
+   *  the current content bundle — after construction and on every hot-swap, so the
+   *  expansion loops resolve each prim's `defId` to its stem + material bindings without a
+   *  wasm call per cell, and the albedo bake sees any newly-authored materials. */
   private refreshStems(): void {
     this.tileStems = this.content.tileTextureStems();
     this.thingStems = this.content.thingTextureStems();
     this.thingSizes = this.content.thingSizes();
+    this.tilePacked = this.content.tilePackedChannels();
+    this.thingPacked = this.content.thingPackedChannels();
+    this.viewport.setMaterialRegistry(
+      MaterialRegistry.fromWasm(
+        this.content.materialNoiseFields(),
+        this.content.materialSampleSpaces(),
+        this.content.materialSwings(),
+      ),
+    );
+  }
+
+  /** Slice a prim's up-to-4 packed-channel bindings out of a stride-8 per-def table by
+   *  `defId`, or `undefined` when the def binds no material (all channels empty) — the
+   *  common case, so most prims carry no `packed` and bake flat. */
+  private packedFor(table: Float64Array, defId: number): PackedChannel[] | undefined {
+    const base = (defId - 1) * 8;
+    if (base < 0 || base + 8 > table.length) return undefined;
+    let bound = false;
+    const channels: PackedChannel[] = [];
+    for (let i = 0; i < 4; i++) {
+      const materialId = table[base + i * 2];
+      const tint = table[base + i * 2 + 1];
+      channels.push({ materialId, tint });
+      if (materialId > 0) bound = true;
+    }
+    return bound ? channels : undefined;
   }
 
   /** A thing's DRIVING (min-axis) footprint in world px from its `defId` — its
@@ -166,10 +218,15 @@ export class WorldBridge {
    *  ({@link thingSizePx}); the other axis is that times the texture's aspect, so
    *  a 1:2 conifer draws 1 wide × 2 tall instead of squished into a square. Aspect
    *  comes from the resolved texture (1 until a real tier loads → a square
-   *  silhouette that grows into its shape via {@link reseedThings}). */
-  private thingBox(defId: number): { w: number; h: number } {
+   *  silhouette that grows into its shape via {@link reseedThings}).
+   *
+   *  `textureName` is the DIRECTIONAL leaf actually baked ({@link thingTexture} —
+   *  `world/conifer/s`), NOT the base stem: aspect must read the same leaf that
+   *  loads (per-facing aspects differ; the base stem is never requested, so it would
+   *  always read 1 → square). */
+  private thingBox(defId: number, textureName: string | undefined): { w: number; h: number } {
     const size = this.thingSizePx(defId);
-    const aspect = this.resolver.aspect(textureNameFor(this.thingStems[defId - 1])); // h / w
+    const aspect = this.resolver.aspect(textureName); // h / w
     return aspect >= 1 ? { w: size, h: size * aspect } : { w: size / aspect, h: size };
   }
 
@@ -298,6 +355,8 @@ export class WorldBridge {
           height: SQUARE,
           tint,
           geoColor,
+          packed: this.packedFor(this.tilePacked, defId),
+          seed: cellSeed(tileX, tileY),
         }),
       );
     }
@@ -321,8 +380,8 @@ export class WorldBridge {
       const geoColor = flat[i + 3];
       const defId = flat[i + 4];
       const rotation = flat[i + 5];
-      const { w, h } = this.thingBox(defId);
       const tex = thingTexture(this.thingStems[defId - 1], rotation);
+      const { w, h } = this.thingBox(defId, tex.name);
       ids.push(
         this.viewport.addPrim({
           texture: this.white,
@@ -337,6 +396,9 @@ export class WorldBridge {
           height: h,
           tint,
           geoColor,
+          packed: this.packedFor(this.thingPacked, defId),
+          // Cold worldgen things don't move → seed by their world cell (their tile_seed).
+          seed: cellSeed(tileX, tileY),
           zIndex: this.thingZ(tileY),
         }),
       );
@@ -387,8 +449,8 @@ export class WorldBridge {
 
     // [x, y, tint, geoColor, defId] — fractional global tile coords + colour + stem index.
     const prim = this.content.freeThingPrim(thing.zoneId, thing.location, thing.offset, thing.id);
-    const { w, h } = this.thingBox(prim[4]);
     const tex = thingTexture(this.thingStems[prim[4] - 1], thing.rotation);
+    const { w, h } = this.thingBox(prim[4], tex.name);
     const primId = this.viewport.addPrim({
       texture: this.white,
       textureName: tex.name,
@@ -401,6 +463,9 @@ export class WorldBridge {
       height: h,
       tint: prim[2],
       geoColor: prim[3],
+      packed: this.packedFor(this.thingPacked, prim[4]),
+      // A MOVER: seed by its stable objectId (NOT position) so its pattern doesn't swim.
+      seed: hash01(thing.objectId),
       zIndex: this.thingZ(Math.floor(prim[1])),
     });
     this.freeThings.set(thing.objectId, { primId, thing });

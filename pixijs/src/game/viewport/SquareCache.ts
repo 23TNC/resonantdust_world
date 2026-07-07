@@ -30,11 +30,14 @@ import {
   Geometry,
   Matrix,
   Mesh,
+  MeshGeometry,
   RenderTexture,
   Sprite,
   Texture,
   type Renderer,
 } from "pixi.js";
+import { makeMaterialBakeShader, type MaterialBakeShader } from "./materialBakeShader";
+import type { PackedChannel } from "./material";
 import {
   mod,
   OVERSCAN,
@@ -67,14 +70,39 @@ export interface Primitive {
   /** Mirror the sprite horizontally when baked — the west facing reuses the east
    *  master flipped, so no separate west texture ever ships. */
   flipX?: boolean;
+  /** The prim's up-to-4 packed-map material bindings (`Content.tilePackedChannels`),
+   *  by packed RGBA channel. When set AND the stem's `packed` map is loaded, the
+   *  albedo channel bakes hue/chroma VARIATION instead of a flat tint; otherwise
+   *  ignored (flat, as before). See {@link material.ts}. */
+  packed?: readonly PackedChannel[];
+  /** A STABLE per-instance seed the material bake hashes into a per-instance noise offset
+   *  (cell-derived for static things, `objectId` for movers) so instances differ without the
+   *  pattern swimming when a mover moves. `0` when unset. */
+  seed?: number;
   zIndex: number;
 }
 
 /** What a channel's {@link ChannelSpec.resolve} returns: the texture to bake and the
- *  tint to bake it WITH (the channel picks the tier-appropriate colour). */
+ *  tint to bake it WITH (the channel picks the tier-appropriate colour). When `material`
+ *  is set, the bake draws this prim through the {@link MaterialBakeShader} instead of a
+ *  flat tinted sprite — `texture` is the master albedo, `material.packed` the weight map,
+ *  and `material.chA/chB` the per-channel jitter params (see {@link materialBakeShader.ts}). */
 export interface ResolvedPrim {
   texture: Texture;
   tint: number;
+  material?: MaterialResolve;
+}
+
+/** The extra inputs the material bake path needs, resolved from a prim's packed channels
+ *  + the material registry. The canonical reconstruction is `residual + Σ packedᵢ·jitter`,
+ *  so both the `packed` weight map and the `residual` leftover are sampled. `chA[i] =
+ *  (tintR, tintG, tintB, hueSwing)`, `chB[i] = (chromaSwing, warmCoolBias, noiseRow,
+ *  sampleSpace)` for the 4 packed channels. */
+export interface MaterialResolve {
+  packed: Texture;
+  residual: Texture;
+  chA: Float32Array;
+  chB: Float32Array;
 }
 
 /** Fields a caller supplies to {@link SquareCache.addPrim}; `id` is assigned. */
@@ -227,6 +255,18 @@ export class SquareCache {
   private readonly bakeContainer = new Container();
   private readonly blitSprite = new Sprite();
   private readonly bakePool: Sprite[] = [];
+  /** Material-bake meshes, pooled parallel to {@link bakePool} — a prim resolving to a
+   *  {@link MaterialResolve} draws through one of these (its own shader = its own
+   *  per-prim uniforms) instead of a flat sprite. All share {@link materialQuad}. */
+  private readonly materialPool: Mesh[] = [];
+  /** The unit-quad geometry every material mesh shares (per-prim world rect comes from the
+   *  mesh transform; per-prim params from its shader). Lazily built (needs no renderer). */
+  private materialQuad: MeshGeometry | null = null;
+  /** The tiling noise atlas bound to every material bake (rows = fields). `null` until the
+   *  viewport sets it — a null noise atlas disables the material path (flat, as before). */
+  private noiseTex: Texture | null = null;
+  /** Noise globals pushed to each material shader: `[rows, uvTile, worldTile]`. */
+  private noiseGlobals: readonly [number, number, number] = [1, 1, 128];
 
   /** Diagnostics: squares baked on the last {@link bakeDirty}. */
   lastBaked = 0;
@@ -235,6 +275,15 @@ export class SquareCache {
     this.channels = channels.map((c) => new Channel(c));
     // Verbatim slot copy — no premultiply/blend, so the scratch overwrites the slot exactly.
     this.blitSprite.blendMode = "none";
+    (globalThis as any).__map = this;
+  }
+
+  /** Bind the shared noise atlas + its globals for the material bake path. `rows` = atlas
+   *  field rows, `uvTile` = noise tiles across a sprite (uv space), `worldTile` = world px
+   *  per noise tile (world space). A `null` texture disables material variation. */
+  setNoise(texture: Texture | null, rows: number, uvTile: number, worldTile: number): void {
+    this.noiseTex = texture;
+    this.noiseGlobals = [rows, uvTile, worldTile];
   }
 
   /** The buffer the viewport's display mesh samples for channel `key` — the outgoing
@@ -283,6 +332,17 @@ export class SquareCache {
    *  of the DISPLAYED layer (the held `prev` during a swap, else the live grid). */
   get displayQuadCount(): number {
     return this.prev ? this.prev.cols * this.prev.rows : this.cols * this.rows;
+  }
+
+  /** How much a channel composite's UV advances per WORLD px, `[du/dx, dv/dy]`, for the
+   *  DISPLAYED layer. A world square (`SQUARE` world px) maps to a `slotPx`-CSS-px slot in
+   *  the fixed buffer, so `du/dx = (slotPx/SQUARE)/fixedCW`. The lighting shader marches the
+   *  depth composite in UV space with this (the toroidal composite has no linear world→UV
+   *  map, but the per-square scale is uniform, so a short in-window ray steps correctly). */
+  get displayUvPerWorld(): [number, number] {
+    const slotPx = this.prev ? this.prev.slotPx : this.slotPx;
+    const per = slotPx / SQUARE;
+    return [this.fixedCW > 0 ? per / this.fixedCW : 0, this.fixedCH > 0 ? per / this.fixedCH : 0];
   }
 
   // ── sizing ───────────────────────────────────────────────────────────────────
@@ -504,6 +564,8 @@ export class SquareCache {
       height: spec.height,
       tint: spec.tint ?? 0xffffff,
       flipX: spec.flipX,
+      packed: spec.packed,
+      seed: spec.seed,
       zIndex: spec.zIndex ?? 0,
     };
     const range = squaresForAABB(prim.x, prim.y, prim.x + prim.width, prim.y + prim.height);
@@ -517,6 +579,15 @@ export class SquareCache {
    *  Call {@link refreshPrim} after mutating so the index + dirty set catch up. */
   getPrim(id: number): Primitive | null {
     return this.prims.get(id)?.prim ?? null;
+  }
+
+  /** The STANDING prims — `zIndex ≥ 1` (things, not ground tiles) — the shadow pass casts
+   *  from. Ground tiles (`zIndex 0`) don't cast. Insertion order; the caller resolves each
+   *  prim's silhouette texture + depth. */
+  standingPrims(): Primitive[] {
+    const out: Primitive[] = [];
+    for (const { prim } of this.prims.values()) if (prim.zIndex >= 1) out.push(prim);
+    return out;
   }
 
   /** Re-evaluate `id`'s footprint after a mutation: relink if it moved/resized, and dirty
@@ -651,26 +722,11 @@ export class SquareCache {
       this.bakeContainer.removeChildren();
       for (let i = 0; i < list.length; i++) {
         const prim = list[i];
-        let sprite = this.bakePool[i];
-        if (!sprite) {
-          sprite = new Sprite();
-          this.bakePool[i] = sprite;
-        }
         const r = ch.resolve(prim);
-        sprite.texture = r.texture;
-        sprite.tint = r.tint;
-        sprite.width = prim.width;
-        sprite.height = prim.height;
-        // West mirrors the east master: negate scale.x and shift the origin by the
-        // width so the flipped quad still occupies [x, x+width]. (`.width` set the
-        // magnitude of scale.x above; this only flips its sign.)
-        if (prim.flipX) {
-          sprite.scale.x = -Math.abs(sprite.scale.x);
-          sprite.position.set(prim.x + prim.width, prim.y);
-        } else {
-          sprite.position.set(prim.x, prim.y); // world px; the transform maps → slot-local
-        }
-        this.bakeContainer.addChild(sprite);
+        // Material prims (packed bindings + a bound noise atlas) draw through a mesh with
+        // the OKLab jitter shader; everything else is a flat tinted sprite as before.
+        const node = r.material && this.noiseTex ? this.materialNode(i, prim, r, r.material) : this.spriteNode(i, prim, r);
+        this.bakeContainer.addChild(node);
       }
       renderer.render({ container: this.bakeContainer, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 0], transform: m });
       this.blit(renderer, this.scratchTex!, slotX, slotY, target);
@@ -678,6 +734,64 @@ export class SquareCache {
       if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);
       if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
     }
+  }
+
+  /** Mirror the west facing: shift the origin by the width so the flipped quad still
+   *  occupies `[x, x+width]` in world px (the caller has already made `scale.x` negative). */
+  private placeFlipped(node: Sprite | Mesh, prim: Primitive): void {
+    if (prim.flipX) {
+      node.scale.x = -Math.abs(node.scale.x);
+      node.position.set(prim.x + prim.width, prim.y);
+    } else {
+      node.position.set(prim.x, prim.y); // world px; the transform maps → slot-local
+    }
+  }
+
+  /** The flat-tint path: a pooled sprite showing this channel's resolved texture + tint.
+   *  `Sprite.width/height` sets scale relative to the texture size. */
+  private spriteNode(i: number, prim: Primitive, r: ResolvedPrim): Sprite {
+    let sprite = this.bakePool[i];
+    if (!sprite) {
+      sprite = new Sprite();
+      this.bakePool[i] = sprite;
+    }
+    sprite.texture = r.texture;
+    sprite.tint = r.tint;
+    sprite.width = prim.width;
+    sprite.height = prim.height;
+    this.placeFlipped(sprite, prim);
+    return sprite;
+  }
+
+  /** The material path: a pooled mesh whose {@link MaterialBakeShader} reconstructs the
+   *  albedo with per-material hue/chroma variation. Its `width`/`height` set the unit-quad
+   *  scale; the shader reads the prim's world rect for world-space noise. */
+  private materialNode(i: number, prim: Primitive, r: ResolvedPrim, mat: MaterialResolve): Mesh {
+    if (!this.materialQuad) {
+      this.materialQuad = new MeshGeometry({
+        positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+      });
+    }
+    let mesh = this.materialPool[i];
+    if (!mesh) {
+      mesh = new Mesh({ geometry: this.materialQuad, shader: makeMaterialBakeShader() });
+      this.materialPool[i] = mesh;
+    }
+    const shader = mesh.shader as MaterialBakeShader;
+    shader.residual = mat.residual; // packed_residual — the reconstruction base
+    shader.packed = mat.packed;
+    shader.noise = this.noiseTex!;
+    shader.setChannels(mat.chA, mat.chB);
+    const [rows, uvTile, worldTile] = this.noiseGlobals;
+    shader.setNoiseGlobals(rows, uvTile, worldTile);
+    shader.setWorldRect(prim.x, prim.y, prim.width, prim.height);
+    shader.setSeed(prim.seed ?? 0);
+    // Unit-quad mesh: scale IS the world-px size (no texture-size division). Flip in place.
+    mesh.scale.set(prim.width, prim.height);
+    this.placeFlipped(mesh, prim);
+    return mesh;
   }
 
   /** Copy the full `slotPx` scratch into `target` at `(dx,dy)`, verbatim (blendMode
@@ -759,6 +873,10 @@ export class SquareCache {
     this.scratchTex?.destroy();
     for (const s of this.bakePool) s.destroy();
     this.bakePool.length = 0;
+    for (const mesh of this.materialPool) (mesh.shader as MaterialBakeShader).destroy();
+    for (const mesh of this.materialPool) mesh.destroy();
+    this.materialPool.length = 0;
+    this.materialQuad?.destroy();
     this.blitSprite.destroy();
     this.bakeContainer.destroy();
     this.empty.destroy();

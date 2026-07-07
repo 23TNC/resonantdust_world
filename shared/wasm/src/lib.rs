@@ -215,6 +215,52 @@ impl Content {
         self.bundle.thing_sizes()
     }
 
+    /// Every tile's 4 packed-map channel material bindings, in `def_id` order — a
+    /// per-def table the host fetches once and indexes by the `defId` a tile prim
+    /// carries (like [`tileTextureStems`]). Flat **stride-8** per def:
+    /// `[mat0, tint0, mat1, tint1, mat2, tint2, mat3, tint3]`, where `matN` is a
+    /// 1-based [`materialParams`] index (`0` = no material) and `tintN` a `0xRRGGBB`
+    /// base colour. All-zero = no material system for that channel (flat albedo).
+    #[wasm_bindgen(js_name = tilePackedChannels)]
+    pub fn tile_packed_channels(&self) -> Vec<f64> {
+        flatten_packed(self.bundle.tile_packed_channels())
+    }
+
+    /// Every thing's 4 packed-channel material bindings, in `object_id` order — the
+    /// thing-layer sibling of [`tilePackedChannels`].
+    #[wasm_bindgen(js_name = thingPackedChannels)]
+    pub fn thing_packed_channels(&self) -> Vec<f64> {
+        flatten_packed(self.bundle.thing_packed_channels())
+    }
+
+    /// The material registry's noise-field NAMES, in `material_id` order (index 0 →
+    /// id 1). The host resolves each to a noise-atlas index. Empty = no field (flat).
+    #[wasm_bindgen(js_name = materialNoiseFields)]
+    pub fn material_noise_fields(&self) -> Vec<String> {
+        self.bundle.material_params_all().into_iter().map(|m| m.noise_field).collect()
+    }
+
+    /// The material registry's sample spaces (`"uv"` | `"world"`), in `material_id`
+    /// order — the parallel-array sibling of [`materialNoiseFields`].
+    #[wasm_bindgen(js_name = materialSampleSpaces)]
+    pub fn material_sample_spaces(&self) -> Vec<String> {
+        self.bundle.material_params_all().into_iter().map(|m| m.sample_space).collect()
+    }
+
+    /// The material registry's numeric swings, flat **stride-3** in `material_id`
+    /// order: `[hueSwing (deg), chromaSwing, warmCoolBias, …]`. The host binds these
+    /// as the bake shader's per-material jitter uniforms.
+    #[wasm_bindgen(js_name = materialSwings)]
+    pub fn material_swings(&self) -> Vec<f64> {
+        let mut out = Vec::new();
+        for m in self.bundle.material_params_all() {
+            out.push(m.hue_swing);
+            out.push(m.chroma_swing);
+            out.push(m.warm_cool_bias);
+        }
+        out
+    }
+
     /// Render coords + colour for one loose thing (object-shard `free_things`) —
     /// the painter's per-thing call, the sub-tile sibling of [`zone_tile_prims`].
     /// Returns the same **stride-5** record `[x, y, tint, geoColor, defId]`, where
@@ -284,6 +330,21 @@ fn zone_origin(zone_id: u32) -> (i64, i64) {
     let ox = (packed::zone_region_x(zone_id) as i64 * region_dim + packed::zone_x(zone_id) as i64) * dim;
     let oy = (packed::zone_region_y(zone_id) as i64 * region_dim + packed::zone_y(zone_id) as i64) * dim;
     (ox, oy)
+}
+
+/// Flatten a per-def table of 4 packed channels into the **stride-8** array the
+/// host indexes by `def_id`: `[mat0, tint0, …, mat3, tint3]` per def (see
+/// [`Content::tile_packed_channels`]).
+#[cfg(feature = "js")]
+fn flatten_packed(table: Vec<[dsl::loader::PackedChannel; 4]>) -> Vec<f64> {
+    let mut out = Vec::with_capacity(table.len() * 8);
+    for channels in table {
+        for ch in channels {
+            out.push(ch.material_id as f64);
+            out.push(ch.tint as f64);
+        }
+    }
+    out
 }
 
 // ---------- world client (js feature) ----------

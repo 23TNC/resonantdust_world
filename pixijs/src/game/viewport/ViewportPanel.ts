@@ -17,6 +17,8 @@ export class ViewportPanel extends PixiPanel {
   private readonly viewport: Viewport;
   private readonly renderer: Renderer;
   private readonly unsubResize: () => void;
+  /** Window pointer listener driving the viewport's cursor light. */
+  private readonly onPointerMove: (e: PointerEvent) => void;
 
   constructor(ctx: GameContext, parent: LayoutNode) {
     super({
@@ -36,6 +38,22 @@ export class ViewportPanel extends PixiPanel {
     // PixiPanel syncs `content` bounds first on each rect change (it subscribed in its
     // own constructor, before this one), so the viewport reads the fresh body size.
     this.unsubResize = this.onRectChange(() => this.sizeViewport());
+
+    // Drive the cursor light: map the pointer (when over the body) to a world point and
+    // hand it to the rig; clear it when the pointer leaves. A window listener (not a body
+    // one) so the light also clears when the pointer moves off-panel onto another window.
+    this.onPointerMove = (e: PointerEvent): void => {
+      const r = this.bodyRect;
+      const lx = e.clientX - r.left;
+      const ly = e.clientY - r.top;
+      if (lx >= 0 && lx < r.width && ly >= 0 && ly < r.height) {
+        const w = this.viewport.screenToWorld(lx, ly);
+        this.viewport.lights.setCursorWorld(w.x, w.y);
+      } else {
+        this.viewport.lights.setCursorWorld(null);
+      }
+    };
+    window.addEventListener("pointermove", this.onPointerMove);
   }
 
   private sizeViewport(): void {
@@ -67,6 +85,7 @@ export class ViewportPanel extends PixiPanel {
 
   override destroy(): void {
     this.unsubResize();
+    window.removeEventListener("pointermove", this.onPointerMove);
     this.viewport.destroy();
     super.destroy();
   }

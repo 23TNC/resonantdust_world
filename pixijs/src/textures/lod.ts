@@ -16,6 +16,15 @@ export function texturesRoot(serverBase: string): string {
   return `${serverBase.replace(/\/$/, "")}/textures`;
 }
 
+/** The texture MAPS a stem can carry, one PNG per map in the same variant leaf. `albedo`
+ *  (colour) is mandatory and the default; `normal` (tangent-space normal) and `depth`
+ *  (height) are optional — a stem lacking one stays on that channel's flat fallback.
+ *  `packed` (per-material weight, RGBA) + `packed_residual` (the leftover after the
+ *  weighted materials, RGB) drive the material bake pass (`split_layers` output; see
+ *  docs/lighting.md) — a stem lacking them renders its flat albedo unchanged.
+ *  Mirrors the server's `textures::MAPS` allowlist. */
+export type TexMap = "albedo" | "normal" | "depth" | "emissive" | "packed" | "packed_residual" | "surface";
+
 /** Zoom bounds (screen px per world px). 1 = tiles at their native 64px; the range
  *  spans two power-of-two steps in each direction. */
 export const ZOOM_MIN = 0.25;
@@ -59,12 +68,13 @@ export function pickLodForSize(px: number): number {
   return LOD_SIZES[LOD_SIZES.length - 1];
 }
 
-/** One LOD's URL for a stem — the gate derives it from the master (short axis
- *  `size` px), clamped to the master's own size. The `hash` (from the manifest) is a
- *  path segment, so the URL is content-addressed: a re-master changes it, a stale URL
- *  404s (→ manifest refetch), and a hit is `immutable`-cacheable. */
-export function lodUrl(root: string, stem: string, hash: string, size: number): string {
-  return `${root}/lod/${hash}/${size}/${stem}`;
+/** One LOD's URL for a stem's `map` (albedo|normal|depth|emissive) — the gate derives it
+ *  from that map's master (short axis `size` px), clamped to the master's own size. The
+ *  `map` segment precedes the catch-all `stem`. The `hash` (from the manifest) is a path
+ *  segment, so the URL is content-addressed: a re-master changes it, a stale URL 404s (→
+ *  manifest refetch), and a hit is `immutable`-cacheable. */
+export function lodUrl(root: string, stem: string, hash: string, size: number, map: TexMap = "albedo"): string {
+  return `${root}/lod/${hash}/${size}/${map}/${stem}`;
 }
 
 /** The texture-manifest URL (`…/textures` → `…/textures-manifest`) — the authoritative

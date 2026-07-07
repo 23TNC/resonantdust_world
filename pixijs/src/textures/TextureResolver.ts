@@ -23,11 +23,17 @@
 //! It composes, not owns: each LOD size packs into its own {@link LodPool}; loads are
 //! deduped so a `(stem, size)` is fetched at most once.
 
-import { Texture, type Renderer } from "pixi.js";
+import { ImageSource, Texture, type Renderer } from "pixi.js";
 import { LodPool } from "./LodPool";
 import { getLod, putLod } from "./previewCache";
-import { LOD_SIZES, lodUrl, pickLodForSize } from "./lod";
+import { LOD_SIZES, lodUrl, pickLodForSize, type TexMap } from "./lod";
 import { TextureManifest } from "./textureManifest";
+
+/** The index key for one (stem, map) — the packed/hash/pending maps carry every map of a
+ *  stem side by side (albedo|normal|depth|…), so the key is `stem|map`. */
+const mapKey = (stem: string, map: TexMap): string => `${stem}|${map}`;
+/** Recover the stem from a {@link mapKey} (for a manifest lookup keyed by bare stem). */
+const stemOf = (key: string): string => key.slice(0, key.lastIndexOf("|"));
 
 /** A resolve result: the texture to bake, and whether it's the GEO tier (the white
  *  fill) rather than real pixels. The caller tints geo with the prim's silhouette
@@ -78,17 +84,18 @@ export class TextureResolver {
    *  while empty. */
   private root: string;
 
-  /** One packing pool per LOD size present. */
+  /** One packing pool per LOD size present (shared across maps — a 64px albedo and a
+   *  64px normal pack into the same page, keyed apart by {@link mapKey}). */
   private readonly pools = new Map<number, LodPool>();
-  /** stem → its loaded LODs, keyed by size. */
+  /** `stem|map` → its loaded LODs, keyed by size. */
   private readonly packed = new Map<string, Map<number, Texture>>();
   /** The authoritative LOD index — the resolver builds every URL from it and stays on
    *  geo for a stem it doesn't list (no speculative request). */
   private readonly manifest = new TextureManifest();
-  /** stem → the content hash its packed LODs were loaded at; a differing manifest
+  /** `stem|map` → the content hash its packed LODs were loaded at; a differing manifest
    *  hash (a re-master) marks them stale. */
   private readonly packedHash = new Map<string, string>();
-  /** In-flight loads, deduped so a `(stem, size)` is fetched at most once. */
+  /** In-flight loads, deduped so a `(stem, map, size)` is fetched at most once. */
   private readonly pending = new Set<string>();
 
   /** Target on-screen px for one tile (`64 × zoom`) — the LOD the resolver aims for. */
@@ -99,6 +106,7 @@ export class TextureResolver {
   constructor(renderer: Renderer, texturesRoot: string) {
     this.renderer = renderer;
     this.root = texturesRoot;
+    (globalThis as any).__resolver = this;
     // Bake the white fill into the preview pool at the preview size, so the geo
     // placeholder lives beside the preview LODs it stands in for (no dedicated
     // atlas page). Tinted per-prim by the caller.
@@ -152,29 +160,33 @@ export class TextureResolver {
     };
   }
 
-  /** Best texture for `stem` available now (plus its tier), kicking the load that
-   *  upgrades it toward the target LOD. A falsy `stem` (an untextured tint-rect prim)
-   *  resolves straight to geo. Cheap enough to call every bake: the hot path is a
-   *  couple of map lookups. */
-  resolve(stem: string | undefined): ResolvedTexture {
+  /** Best texture for `stem`'s `map` (albedo|normal|depth|…) available now (plus its
+   *  tier), kicking the load that upgrades it toward the target LOD. A falsy `stem` (an
+   *  untextured tint-rect prim), or a `map` the manifest says this stem lacks, resolves
+   *  straight to geo — the caller applies that channel's flat fallback. Cheap enough to
+   *  call every bake: the hot path is a couple of map lookups. */
+  resolve(stem: string | undefined, map: TexMap = "albedo"): ResolvedTexture {
     if (!stem || !this.root) return { texture: this.white, geo: true };
 
     // Only stems the manifest lists are requestable — an unlisted stem stays on geo
     // (never a speculative fetch). The row gives the ceiling + the URL's hash.
     const entry = this.manifest.entry(stem);
     if (!entry) return { texture: this.white, geo: true };
+    // Skip a map this stem has no leaf for (most art has no normal/depth) — geo, no fetch.
+    if (map !== "albedo" && !entry.maps.includes(map)) return { texture: this.white, geo: true };
 
+    const key = mapKey(stem, map);
     const cap = entry.maxSize;
     let desired = pickLodForSize(Math.min(this.targetPx, cap));
     if (desired > cap) desired = LOD_SIZES.filter((s) => s <= cap).pop() ?? LOD_SIZES[0];
-    const loaded = this.packed.get(stem);
+    const loaded = this.packed.get(key);
 
     // Fire the upgrade toward the target LOD (deduped inside ensureLod) …
-    if (!loaded?.has(desired)) void this.ensureLod(stem, desired, entry.hash);
+    if (!loaded?.has(desired)) void this.ensureLod(stem, desired, entry.hash, map);
     // … plus a cheap floor while nothing is on hand yet, so a placeholder lands before
     // the target does (geo → floor → target).
     if (!(loaded && loaded.size > 0) && desired > FLOOR_LOD && FLOOR_LOD <= cap)
-      void this.ensureLod(stem, FLOOR_LOD, entry.hash);
+      void this.ensureLod(stem, FLOOR_LOD, entry.hash, map);
 
     if (loaded && loaded.size > 0) {
       const best = this.bestLoaded(loaded, desired);
@@ -187,11 +199,11 @@ export class TextureResolver {
    *  longer matches the manifest (stale bytes), then re-bake so `resolve` re-fetches
    *  them with the fresh hash. */
   private onManifestChange(): void {
-    for (const stem of [...this.packed.keys()]) {
-      const e = this.manifest.entry(stem);
-      if (!e || this.packedHash.get(stem) !== e.hash) {
-        this.packed.delete(stem);
-        this.packedHash.delete(stem);
+    for (const key of [...this.packed.keys()]) {
+      const e = this.manifest.entry(stemOf(key));
+      if (!e || this.packedHash.get(key) !== e.hash) {
+        this.packed.delete(key);
+        this.packedHash.delete(key);
       }
     }
     this.emit();
@@ -218,7 +230,8 @@ export class TextureResolver {
    *  loads. */
   aspect(stem: string | undefined): number {
     if (!stem) return 1;
-    const loaded = this.packed.get(stem);
+    // Aspect is a geometry property — read it off the albedo map (always present).
+    const loaded = this.packed.get(mapKey(stem, "albedo"));
     const tex = loaded?.values().next().value as Texture | undefined;
     return tex && tex.width > 0 ? tex.height / tex.width : 1;
   }
@@ -230,57 +243,69 @@ export class TextureResolver {
    *  network; otherwise it fetches fresh and re-caches under the current hash. A `404`
    *  is a stale hash (a re-master the manifest hasn't caught) — it refetches the
    *  manifest so the retry uses the fresh hash. Fires {@link onLoad} once packed. */
-  private async ensureLod(stem: string, size: number, hash: string): Promise<void> {
-    const key = `${stem}@${size}`;
-    if (this.pending.has(key) || this.packed.get(stem)?.has(size)) return;
-    this.pending.add(key);
+  private async ensureLod(stem: string, size: number, hash: string, map: TexMap): Promise<void> {
+    const key = mapKey(stem, map);
+    const pkey = `${key}@${size}`;
+    if (this.pending.has(pkey) || this.packed.get(key)?.has(size)) return;
+    this.pending.add(pkey);
     try {
-      const cached = await getLod(stem, size);
+      const cached = await getLod(stem, size, map);
       let bytes: ArrayBuffer;
       if (cached && cached.v === hash) {
-        bytes = cached.albedo; // hash-addressed: the cached bytes are current
+        bytes = cached.bytes; // hash-addressed: the cached bytes are current
       } else {
-        const res = await fetch(lodUrl(this.root, stem, hash, size));
+        const res = await fetch(lodUrl(this.root, stem, hash, size, map));
         if (res.status === 404) {
           this.manifest.refresh(); // stale hash — refetch the manifest, retry with the new one
           return;
         }
-        if (!res.ok) throw new Error(`lod fetch ${res.status}: ${lodUrl(this.root, stem, hash, size)}`);
+        if (!res.ok) throw new Error(`lod fetch ${res.status}: ${lodUrl(this.root, stem, hash, size, map)}`);
         bytes = await res.arrayBuffer();
-        void putLod(stem, size, { v: hash, albedo: bytes });
+        void putLod(stem, size, map, { v: hash, bytes });
       }
 
-      const bmp = await createImageBitmap(new Blob([bytes]));
+      // The `packed` map is a per-material WEIGHT map, not a colour — it must load with
+      // STRAIGHT alpha. Its alpha channel is the (often empty) 4th material coefficient, so
+      // premultiplying (the default) would multiply the RGB weights by that alpha and zero
+      // them wherever the 4th channel is 0. All other maps are colours and stay premultiplied.
+      const raw = map === "packed";
+      const bmp = await createImageBitmap(new Blob([bytes]), raw ? { premultiplyAlpha: "none" } : {});
       // The server clamps to the master; pack under the size we actually got.
       const actualShort = Math.min(bmp.width, bmp.height);
       const achieved = Math.min(size, actualShort);
-      if (this.packInto(stem, achieved, bmp)) {
-        this.packedHash.set(stem, hash);
+      if (this.packInto(key, achieved, bmp, raw)) {
+        this.packedHash.set(key, hash);
         this.emit();
       }
     } catch {
       /* LOD unavailable — stay on the current tier */
     } finally {
-      this.pending.delete(key);
+      this.pending.delete(pkey);
     }
   }
 
-  /** Pack a decoded bitmap into `size`'s pool and index it under `(stem, size)`.
-   *  Returns whether it packed (a whole-page overflow drops it). Drops the
-   *  bitmap-backed source afterwards (the atlas kept its own copy). */
-  private packInto(stem: string, size: number, bmp: ImageBitmap): boolean {
+  /** Pack a decoded bitmap into `size`'s pool and index it under `(key, size)` where `key`
+   *  is the `stem|map` id. Returns whether it packed (a whole-page overflow drops it).
+   *  Drops the bitmap-backed source afterwards (the atlas kept its own copy). */
+  private packInto(key: string, size: number, bmp: ImageBitmap, raw = false): boolean {
     const pool = this.poolFor(size);
-    const src = Texture.from(bmp);
+    // Straight-alpha (weight map): set `no-premultiply-alpha` AT SOURCE CONSTRUCTION, before
+    // the GPU upload — a `Texture.from(...)` then alphaMode set is too late (upload already
+    // premultiplied it). The atlas blit copies it verbatim (blendMode none) so the RGB
+    // weights survive even where the alpha (4th material channel) is 0.
+    const src = raw
+      ? new Texture({ source: new ImageSource({ resource: bmp, alphaMode: "no-premultiply-alpha" }) })
+      : Texture.from(bmp);
     let packed: Texture | null;
     try {
-      packed = pool.add(stem, src, bmp.width, bmp.height);
+      packed = pool.add(key, src, bmp.width, bmp.height);
     } finally {
       src.destroy(true);
     }
     if (!packed) return false;
-    let byStem = this.packed.get(stem);
-    if (!byStem) this.packed.set(stem, (byStem = new Map()));
-    byStem.set(size, packed);
+    let byKey = this.packed.get(key);
+    if (!byKey) this.packed.set(key, (byKey = new Map()));
+    byKey.set(size, packed);
     return true;
   }
 

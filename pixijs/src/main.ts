@@ -17,6 +17,7 @@ import { DomPanel } from "./ui/dom/DomPanel";
 import { DrawCallCounter } from "./debug/DrawCallCounter";
 import { mountEnvOverlay } from "./debug/EnvOverlay";
 import { SettingsMenu } from "./game/panels/titlebar/SettingsMenu";
+import { VideoPanel } from "./game/panels/titlebar/VideoPanel";
 import { DebugPanel } from "./game/panels/titlebar/DebugPanel";
 import type { SyncStats } from "./game/panels/titlebar/DebugPanel";
 import { SyncHistory } from "./game/panels/titlebar/syncHistory";
@@ -160,6 +161,12 @@ async function main(): Promise<void> {
       console.error("pixijs: return to login failed", err);
     });
   };
+  // Video settings (🖥) — a pinned title-bar tool alive across every scene.
+  // Reads persisted frame-cap / render-scale in its constructor and applies
+  // them to the live app, so a saved choice takes effect at boot. The Settings
+  // dropdown's "Video" item toggles it.
+  const videoPanel = new VideoPanel(app, topTaskbar, uiEditMode);
+  settingsMenu.onVideo = () => videoPanel.toggle();
   // Clock-sync HUD source: the client seeds one snapshot from `login_ok` and a
   // running sync lands with the row stream; the sync tab reads "—" until login.
   const syncHistory = new SyncHistory();

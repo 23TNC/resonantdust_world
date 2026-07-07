@@ -4,6 +4,8 @@
 //!   - `content/data/*.rd`   — the `:data` facets (server-side simulation).
 //!   - `content/visual/*.rd` — the `:visual` facets (client-side rendering).
 //!   - `content/biome/*.rd`  — `<biome>` generation rules (server-side worldgen).
+//!   - `content/material/*.rd` — `<material>` render registry (client-side; the
+//!     noise-driven hue/chroma jitter a prim's packed channels reference).
 //! [`load`](crate::loader::load) wants `(name, source)` pairs and merges a tile's
 //! facets across files, so the only thing that matters here is order: **data
 //! first**, so each tile's `:data` def is indexed before its `:visual` fragment
@@ -25,7 +27,7 @@ use std::path::Path;
 /// relative to `content_root`, for error reporting.
 pub fn read_content_dir(content_root: &Path) -> io::Result<Vec<(String, String)>> {
   let mut sources = Vec::new();
-  for facet in ["data", "visual", "biome"] {
+  for facet in ["data", "visual", "biome", "material"] {
     read_rd_files(&content_root.join(facet), facet, &mut sources)?;
   }
   Ok(sources)

@@ -168,6 +168,7 @@ export class PanelSettingsPopup {
   private readonly snapSelect:     CyclingSelect<SnapMode>;
   private readonly heightSelect:   CyclingSelect<HeightMode>;
   private readonly pinSelect:      CyclingSelect<PinMode>;
+  private readonly pinnedBtn:      HTMLButtonElement;
   private readonly taskbarIconInput: HTMLInputElement;
   /** Title suffix cycler — rebuilt on every `bind` because the
    *  available option set is per-panel (a panel without resolvers
@@ -213,6 +214,10 @@ export class PanelSettingsPopup {
    *  (and a future hotkey), so we listen so the cycler stays in
    *  sync. */
   private unsubPin: (() => void) | null = null;
+  /** Cleanup for the bound panel's `onPinnedChange` subscription.
+   *  Pinned can mutate from outside the popup via `resetToDefaults`,
+   *  so we listen to keep the Pin toggle glyph in sync. */
+  private unsubPinned: (() => void) | null = null;
   /** Cleanup for the bound panel's `onSnapChange` subscription.
    *  Snap mutates the Draggable toggle as a side effect (any
    *  non-none snap forces draggable off), so a snap change must
@@ -285,6 +290,12 @@ export class PanelSettingsPopup {
     const pinRow = this.addPinRow(body);
     this.pinSelect = pinRow.select;
     this.rowsByKey.set("pin", pinRow.row);
+    // Pin (boolean): whether the taskbar entry persists while the panel
+    // is closed. Separate from the location cycler above, which only
+    // picks *which* corner the entry sits in.
+    const pinnedRow = this.addToggleRow(body, pp("pin"), "▣", () => this.boundPanel?.togglePinned());
+    this.pinnedBtn = pinnedRow.btn;
+    this.rowsByKey.set("pinned", pinnedRow.row);
     const iconRow = this.addTaskbarIconRow(body);
     this.taskbarIconInput = iconRow.input;
     this.rowsByKey.set("taskbarIcon", iconRow.row);
@@ -463,6 +474,7 @@ export class PanelSettingsPopup {
     this.unsubAnchor    = panel.onAnchorChange(() => this.refreshControls());
     this.unsubHeight    = panel.onHeightModeChange(() => this.refreshControls());
     this.unsubPin       = panel.onPinChange(() => this.refreshControls());
+    this.unsubPinned    = panel.onPinnedChange(() => this.refreshControls());
     this.unsubSnap      = panel.onSnapChange(() => this.refreshControls());
     this.unsubDraggable = panel.onDraggableChange(() => this.refreshControls());
     this.unsubTaskbarIcon = panel.onTaskbarIconChange(() => this.refreshControls());
@@ -482,6 +494,8 @@ export class PanelSettingsPopup {
     this.unsubHeight = null;
     this.unsubPin?.();
     this.unsubPin = null;
+    this.unsubPinned?.();
+    this.unsubPinned = null;
     this.unsubSnap?.();
     this.unsubSnap = null;
     this.unsubDraggable?.();
@@ -523,6 +537,7 @@ export class PanelSettingsPopup {
     const resizeYForced = p.heightMode !== "off";
     this.resizableYBtn.textContent = resizeYForced ? "▢" : (p.isResizableY ? "▣" : "▢");
     this.resizableYBtn.style.color = resizeYForced ? FORCED_BUTTON_COLOR : NORMAL_BUTTON_COLOR;
+    this.pinnedBtn.textContent = p.pinned ? "▣" : "▢";
     this.anchorSelect.setValue(p.anchor);
     this.snapSelect.setValue(p.snap);
     this.heightSelect.setValue(p.heightMode);
@@ -677,16 +692,17 @@ export class PanelSettingsPopup {
     return { row, select };
   }
 
-  /** Pin row — cycling select that attaches the panel's entry to
-   *  one of the four taskbar corners (or detaches it). Driven via
-   *  `DomPanel.setPin`, which (un)registers with the appropriate
-   *  `PanelTaskbar` looked up by position. */
+  /** Taskbar Location row — cycling select that attaches the panel's
+   *  entry to one of the taskbar corners / centers (or detaches it with
+   *  `"none"`). Driven via `DomPanel.setPin`, which (un)registers with
+   *  the appropriate `PanelTaskbar` looked up by position. Whether that
+   *  entry *persists while closed* is the separate Pin toggle row. */
   private addPinRow(parent: HTMLDivElement): { row: HTMLDivElement; select: CyclingSelect<PinMode> } {
     const row = document.createElement("div");
     Object.assign(row.style, ROW_CSS);
     const labelEl = document.createElement("span");
     Object.assign(labelEl.style, LABEL_CSS);
-    labelEl.textContent = pp("taskbarPin");
+    labelEl.textContent = pp("taskbarLocation");
     row.appendChild(labelEl);
 
     const wrap = document.createElement("div");

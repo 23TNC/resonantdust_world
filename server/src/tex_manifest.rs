@@ -21,6 +21,10 @@ struct Entry {
     hash: String,
     max_size: u32,
     lods: BTreeSet<u32>,
+    /// Which maps (albedo|normal|depth|emissive) have a `<map>.png` leaf on disk. The
+    /// client uses this to skip requesting a map that isn't there (no speculative 404).
+    /// `albedo` is always present (it's what makes the stem a stem).
+    maps: BTreeSet<String>,
 }
 
 struct State {
@@ -57,6 +61,7 @@ impl TextureManifest {
                         "hash": e.hash,
                         "maxSize": e.max_size,
                         "lods": e.lods.iter().copied().collect::<Vec<u32>>(),
+                        "maps": e.maps.iter().cloned().collect::<Vec<String>>(),
                     }),
                 )
             })
@@ -97,7 +102,15 @@ impl TextureManifest {
         let mut changed = fresh.len() != st.entries.len();
         for (stem, e) in fresh.iter_mut() {
             match st.entries.get(stem) {
-                Some(old) if old.hash == e.hash => e.lods = old.lods.clone(), // unchanged master
+                // Unchanged leaf (every map file's mtime/size identical): keep its
+                // generated-LOD set. Any map rewrite/add/remove moves the hash, so it
+                // falls through to the re-fetch path below.
+                Some(old) if old.hash == e.hash => {
+                    e.lods = old.lods.clone();
+                    if old.maps != e.maps {
+                        changed = true;
+                    }
+                }
                 _ => changed = true,
             }
         }
@@ -154,15 +167,26 @@ fn scan_masters(tex_root: &Path, entries: &mut BTreeMap<String, Entry>) {
         for kind in kinds.flatten() {
             let Some(kind_name) = dir_name(&kind.file_name()) else { continue };
             for facing in FACINGS {
-                // Canonical instance leaf: 1.<facing>.0/1/albedo.png.
-                let master = kind.path().join(format!("1.{facing}.0")).join("1").join("albedo.png");
+                // Canonical instance leaf: 1.<facing>.0/1/. The albedo is the master (its
+                // presence makes the stem a stem); its sibling maps are probed alongside.
+                let leaf = kind.path().join(format!("1.{facing}.0")).join("1");
+                let master = leaf.join("albedo.png");
                 if !master.is_file() {
                     continue;
                 }
-                let Some(hash) = master_hash(&master) else { continue };
                 let Ok((w, h)) = image::image_dimensions(&master) else { continue };
+                // Which of the known maps have a leaf here (albedo always does).
+                let maps: BTreeSet<String> = crate::textures::MAPS
+                    .iter()
+                    .filter(|m| leaf.join(format!("{m}.png")).is_file())
+                    .map(|m| m.to_string())
+                    .collect();
+                // Hash ALL present map files, not just the albedo — re-mastering `packed` or
+                // any sibling map must move the hash so the cache-buster URL changes (else a
+                // stale `packed` LOD stays cached under the unchanged albedo hash).
+                let Some(hash) = leaf_hash(&leaf, &maps) else { continue };
                 let stem = format!("{cat_name}/{kind_name}/{facing}");
-                entries.insert(stem, Entry { hash, max_size: w.min(h), lods: BTreeSet::new() });
+                entries.insert(stem, Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps });
             }
         }
     }
@@ -172,14 +196,25 @@ fn dir_name(name: &std::ffi::OsStr) -> Option<String> {
     name.to_str().map(|s| s.to_string())
 }
 
-/// A URL-safe content hash for a master: hex `mtime-size` (moves on any rewrite).
-fn master_hash(path: &Path) -> Option<String> {
-    let meta = std::fs::metadata(path).ok()?;
-    let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
-    Some(format!("{:x}-{:x}", mtime, meta.len()))
+/// A URL-safe content hash for a leaf: FNV-1a over each present map file's `mtime-size`
+/// (sorted by map name for determinism). Moves on any map's rewrite — a re-mastered
+/// `albedo` OR `packed` OR `packed_residual` all bust it, so the client's hash-addressed
+/// caches (HTTP + IndexedDB) never serve stale map bytes.
+fn leaf_hash(leaf: &Path, maps: &BTreeSet<String>) -> Option<String> {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
+    for map in maps {
+        let meta = std::fs::metadata(leaf.join(format!("{map}.png"))).ok()?;
+        let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+        for b in format!("{map}:{mtime:x}-{:x};", meta.len()).bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    Some(format!("{h:x}"))
 }
 
-/// FNV-1a over the sorted (stem, hash, lods) — moves on a re-master or a new LOD.
+/// FNV-1a over the sorted (stem, hash, lods, maps) — moves on a re-master, a new LOD, or a
+/// newly-added map (e.g. a `normal.png` dropped beside an existing albedo).
 fn version_of(entries: &BTreeMap<String, Entry>) -> u64 {
     fn feed(h: &mut u64, bytes: &[u8]) {
         for &b in bytes {
@@ -193,6 +228,9 @@ fn version_of(entries: &BTreeMap<String, Entry>) -> u64 {
         feed(&mut h, e.hash.as_bytes());
         for s in &e.lods {
             feed(&mut h, &s.to_le_bytes());
+        }
+        for m in &e.maps {
+            feed(&mut h, m.as_bytes());
         }
     }
     h
@@ -228,6 +266,20 @@ mod tests {
         assert!(!hash.is_empty());
         assert!(m.lookup("linked/wall.smooth").is_none(), "bare stem is not indexed");
         assert!(m.lookup("linked/nope/s").is_none());
+
+        // an albedo-only leaf lists just albedo; a normal dropped beside it bumps the
+        // version and shows up in the maps set (and moves the leaf hash, since the hash now
+        // covers every present map file).
+        assert!(m.payload_json().contains("\"maps\":[\"albedo\"]"));
+        let v_maps = m.version_hex();
+        let leaf = base.join("linked").join("wall.smooth").join("1.s.0").join("1");
+        let img = image::RgbaImage::from_pixel(64, 128, image::Rgba([128, 128, 255, 255]));
+        let mut buf = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img).write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        std::fs::write(leaf.join("normal.png"), buf.into_inner()).unwrap();
+        assert!(m.refresh(&src), "a new map beside an unchanged albedo is a change");
+        assert_ne!(m.version_hex(), v_maps, "version bumps when a map is added");
+        assert!(m.payload_json().contains("\"maps\":[\"albedo\",\"normal\"]"));
 
         // note_generated adds the LOD and bumps the version
         let v0 = m.version_hex();

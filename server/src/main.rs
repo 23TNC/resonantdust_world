@@ -121,7 +121,7 @@ async fn main() {
         .route("/content/refresh", post(refresh_content))
         .route("/textures/master/{*stem}", get(serve_master))
         .route("/textures/preview/{*stem}", get(serve_preview))
-        .route("/textures/lod/{hash}/{size}/{*stem}", get(serve_lod))
+        .route("/textures/lod/{hash}/{size}/{map}/{*stem}", get(serve_lod))
         .route("/textures-manifest", get(serve_texture_manifest))
         .route("/textures-manifest-version", get(serve_texture_manifest_version))
         .with_state(AppState { pool, content, textures, tex_manifest })
@@ -263,20 +263,29 @@ async fn serve_preview(State(state): State<AppState>, headers: HeaderMap, Path(s
     texture_response(&state, &stem, TextureTier::Preview, &headers).await
 }
 
-/// `GET /textures/lod/{hash}/{size}/{*stem}` — one LOD (short axis `size` px), derived
-/// from the master and clamped to it. The `hash` is validated against the current
-/// master: a stale (re-mastered) or oversize request `404`s, so the client refetches
-/// the manifest and retries with the fresh hash. The URL is content-addressed, so a
-/// hit is `immutable`-cacheable — no revalidation.
-async fn serve_lod(State(state): State<AppState>, Path((hash, size, stem)): Path<(String, u32, String)>) -> impl IntoResponse {
+/// `GET /textures/lod/{hash}/{size}/{map}/{*stem}` — one LOD (short axis `size` px) of a
+/// stem's `map` (albedo|normal|depth|emissive), derived from that map's master and clamped
+/// to it. The `hash` is validated against the current master: a stale (re-mastered) or
+/// oversize request `404`s, so the client refetches the manifest and retries with the fresh
+/// hash. A stem whose leaf lacks the requested map (e.g. no `normal.png`) is a clean `404`
+/// the client falls back for. The URL is content-addressed, so a hit is
+/// `immutable`-cacheable — no revalidation. (The hash/max-size are keyed off the albedo
+/// master; the sibling maps share its dimensions, authored at matched resolution.)
+async fn serve_lod(
+    State(state): State<AppState>,
+    Path((hash, size, map, stem)): Path<(String, u32, String, String)>,
+) -> impl IntoResponse {
     let (Some(source), Some(manifest)) = (&state.textures, &state.tex_manifest) else {
         return (StatusCode::SERVICE_UNAVAILABLE, "textures unavailable").into_response();
     };
+    if !textures::MAPS.contains(&map.as_str()) {
+        return (StatusCode::NOT_FOUND, "unknown map").into_response();
+    }
     match manifest.lookup(&stem) {
         Some((current, max_size)) if current == hash && size <= max_size => {}
         _ => return (StatusCode::NOT_FOUND, "stale or unknown lod").into_response(),
     }
-    match source.serve_lod(&stem, size).await {
+    match source.serve_lod(&stem, size, &map).await {
         Ok(Some(asset)) => {
             manifest.note_generated(&stem, size);
             (

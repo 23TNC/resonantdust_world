@@ -4,12 +4,21 @@
   "settingsMenu": {
     "label": "Settings",
     "resetPanels": "Reset All Panels",
+    "video": "Video",
     "logOut": "Log Out",
     "toggleFullscreen": "Toggle Fullscreen",
     "sound": "Sound",
     "enterEditMode": "Enter UI Edit Mode",
     "exitEditMode": "Exit UI Edit Mode",
     "editModeUnavailable": "UI Edit Mode (unavailable)"
+  },
+
+  "videoPanel": {
+    "label": "Video",
+    "frameRate": "Frame rate",
+    "renderScale": "Render scale",
+    "native": "Native",
+    "fullscreen": "Fullscreen"
   },
 
   "chatPanel": {
@@ -48,7 +57,8 @@
     "draggable": "Draggable",
     "snapping": "Snapping",
     "height": "Height",
-    "taskbarPin": "Taskbar Pin",
+    "taskbarLocation": "Taskbar Location",
+    "pin": "Pin",
     "taskbarIcon": "Taskbar Icon",
     "taskbarIconPlaceholder": "(text)",
     "titleSuffix": "Title Suffix",

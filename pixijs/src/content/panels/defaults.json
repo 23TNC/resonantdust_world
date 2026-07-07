@@ -66,6 +66,28 @@
     "masked": true,
     "minimized": false
   },
+  "videoPanel": {
+    "left": "auto",
+    "top": "32px",
+    "right": "72px",
+    "bottom": "auto",
+    "width": "260px",
+    "anchor": "top-right",
+    "snap": "none",
+    "pin": "top-right",
+    "heightMode": "off",
+    "draggable": true,
+    "minimizable": true,
+    "resizableX": false,
+    "resizableY": false,
+    "closable": true,
+    "hideMinimizeBtn": false,
+    "hideCloseBtn": false,
+    "titleBarHidden": false,
+    "gridSnap": false,
+    "masked": true,
+    "minimized": false
+  },
   "worldViewport": {
     "left": "0.545455px",
     "top": "32px",

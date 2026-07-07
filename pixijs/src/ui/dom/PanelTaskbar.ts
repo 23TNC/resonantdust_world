@@ -174,6 +174,7 @@ interface Entry {
   unsubFocus:    () => void;
   unsubAnchor:      () => void;
   unsubMinimizable: () => void;
+  unsubPinned:      () => void;
   unsubTaskbarIcon: () => void;
   unsubTitle:       () => void;
 }
@@ -315,6 +316,13 @@ export class PanelTaskbar {
       }),
       unsubAnchor:      panel.onAnchorChange(()      => this.applyEntryState(entry)),
       unsubMinimizable: panel.onMinimizableChange(() => this.applyEntryState(entry)),
+      // Pinned flips whether a closed panel keeps its entry — mirror
+      // the live flag into `entry.pinned` then re-run the state pass so
+      // the entry appears / vanishes without a re-register.
+      unsubPinned:      panel.onPinnedChange((pinned) => {
+        entry.pinned = pinned;
+        this.applyEntryState(entry);
+      }),
       // Icon changes reshape the entry button: icon-mode flips
       // between square (single glyph) and wide-text (panel
       // title) on every transition through `null`, and the
@@ -354,6 +362,7 @@ export class PanelTaskbar {
     entry.unsubFocus();
     entry.unsubAnchor();
     entry.unsubMinimizable();
+    entry.unsubPinned();
     entry.unsubTaskbarIcon();
     entry.unsubTitle();
     entry.button.remove();
@@ -369,6 +378,7 @@ export class PanelTaskbar {
       entry.unsubFocus();
       entry.unsubAnchor();
       entry.unsubMinimizable();
+      entry.unsubPinned();
       entry.unsubTaskbarIcon();
       entry.unsubTitle();
     }

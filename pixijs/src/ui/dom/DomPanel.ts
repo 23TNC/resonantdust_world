@@ -363,6 +363,7 @@ export type PanelSettingKey =
   | "snap"
   | "height"
   | "pin"
+  | "pinned"
   | "taskbarIcon"
   | "titleSuffix"
   | "minimize"
@@ -415,6 +416,10 @@ export interface PanelStateJSON {
   anchor?: AnchorMode;
   snap?:   SnapMode;
   pin?:    PinMode;
+  /** Whether the taskbar entry persists while the panel is closed
+   *  (a re-launch button). Set via the popup's Pin row. Independent
+   *  of `pin`, which chooses *where* the entry sits. */
+  pinned?: boolean;
   heightMode?:     HeightMode;
   draggable?:      boolean;
   minimizable?:    boolean;
@@ -603,9 +608,14 @@ export class DomPanel {
   get availableTitleSuffixes(): readonly TitleSuffix[] {
     return ["none", ...this._titleSuffixResolvers.keys()];
   }
-  /** True when this panel asked to be pinned in its taskbar. Read by
-   *  the taskbar at registration time; ignored thereafter. */
-  readonly pinned: boolean;
+  /** Whether the panel keeps a taskbar entry while closed (the entry
+   *  acts as a re-launch button). Mutable at runtime via `setPinned`
+   *  (the popup's Pin row); the live `PanelTaskbar` subscribes
+   *  `onPinnedChange` to add / drop the persistent entry. Persisted
+   *  under `<storageKey>.pinned`. Orthogonal to `pin` (the taskbar
+   *  *location*). */
+  private _pinned: boolean;
+  get pinned(): boolean { return this._pinned; }
   /** Constructor-seed icon — the value first written into
    *  `_taskbarIcon`. Stashed so `resetToDefaults` can revert the
    *  user's runtime override (set via the Taskbar Icon row in the
@@ -650,6 +660,7 @@ export class DomPanel {
   private readonly initialResizable:   boolean;
   private readonly initialClosable:    boolean;
   private readonly initialPin:         PinMode;
+  private readonly initialPinned:      boolean;
   /** Constructor-time master switch — `false` means the title bar
    *  is never rendered (FormOverlay et al.). Runtime hides go
    *  through `titleBarHidden` instead. */
@@ -795,6 +806,7 @@ export class DomPanel {
   private readonly hideMinimizeBtnChangeListeners = new Set<(hidden: boolean) => void>();
   private readonly hideCloseBtnChangeListeners    = new Set<(hidden: boolean) => void>();
   private readonly pinChangeListeners         = new Set<(pin: PinMode) => void>();
+  private readonly pinnedChangeListeners      = new Set<(pinned: boolean) => void>();
   private readonly taskbarIconChangeListeners = new Set<(icon: string | null) => void>();
   private readonly titleChangeListeners       = new Set<(title: string) => void>();
   private readonly titleSuffixChangeListeners = new Set<(mode: TitleSuffix) => void>();
@@ -821,7 +833,7 @@ export class DomPanel {
     this._titleSuffixResolvers = new Map(
       Object.entries(opts.titleSuffixResolvers ?? {}) as [TitleSuffix, TitleSuffixResolver][],
     );
-    this.pinned      = opts.pinned      ?? false;
+    this.initialPinned = opts.pinned ?? false;
     this.initialTaskbarIcon = opts.taskbarIcon ?? null;
     // `_taskbarIcon` resolution happens after `contentDefaults` is
     // built below — it needs to layer `persisted > content > seed`
@@ -887,6 +899,7 @@ export class DomPanel {
     this._hideCloseBtn    = this.defaultedBool("hideCloseBtn",    contentDefaults.hideCloseBtn    ?? false);
     this._pin            = readPin(this.storageGet("pin"))
       ?? (contentDefaults.pin ?? this.initialPin);
+    this._pinned         = this.defaultedBool("pinned", contentDefaults.pinned ?? this.initialPinned);
     this._heightMode     = readHeight(
       this.storageGet("heightMode"),
       contentDefaults.heightMode ?? opts.heightMode ?? "off",
@@ -1598,6 +1611,15 @@ export class DomPanel {
   onPinChange(cb: (pin: PinMode) => void): () => void {
     this.pinChangeListeners.add(cb);
     return () => this.pinChangeListeners.delete(cb);
+  }
+
+  /** Fires when the pinned flag flips (via `setPinned` from the popup,
+   *  or reset-to-defaults). The live `PanelTaskbar` subscribes to
+   *  add / drop the persistent-while-closed entry; the popup subscribes
+   *  to keep its Pin toggle glyph in sync. */
+  onPinnedChange(cb: (pinned: boolean) => void): () => void {
+    this.pinnedChangeListeners.add(cb);
+    return () => this.pinnedChangeListeners.delete(cb);
   }
 
   /** Fires when the user's taskbar icon changes (via the popup
@@ -2407,6 +2429,21 @@ export class DomPanel {
     for (const cb of this.pinChangeListeners) cb(pin);
   }
 
+  /** Set whether the taskbar entry persists while the panel is closed.
+   *  Persists under `<storageKey>.pinned` and fires `onPinnedChange` so
+   *  the live taskbar re-evaluates the entry — an unpinned entry vanishes
+   *  when its panel closes, a pinned one stays as a re-launch button.
+   *  Independent of `setPin` (which chooses *where* the entry sits). */
+  setPinned(pinned: boolean): void {
+    if (this._pinned === pinned) return;
+    this._pinned = pinned;
+    this.storageSet("pinned", pinned ? "1" : "0");
+    for (const cb of this.pinnedChangeListeners) cb(pinned);
+  }
+
+  /** Flip the pinned flag. Convenience for the popup's Pin toggle row. */
+  togglePinned(): void { this.setPinned(!this._pinned); }
+
   /** Set the taskbar icon. `null` (or empty string) flips the
    *  entry to text mode (uses the panel title). Persists under
    *  `<storageKey>.taskbarIcon` — empty-string is the on-disk
@@ -2447,6 +2484,7 @@ export class DomPanel {
       anchor:          this._anchor,
       snap:            this._snap,
       pin:             this._pin,
+      pinned:          this._pinned,
       heightMode:      this._heightMode,
       draggable:       this._draggable,
       minimizable:     this._minimizable,
@@ -2478,7 +2516,7 @@ export class DomPanel {
       "anchor", "titleBarHidden", "gridSnap", "masked",
       "minimizable", "resizable", "resizableX", "resizableY",
       "closable", "hideMinimizeBtn", "hideCloseBtn",
-      "pin", "heightMode",
+      "pin", "pinned", "heightMode",
       "snap", "draggable",
       "taskbarIcon", "titleSuffix",
     ];
@@ -2519,6 +2557,14 @@ export class DomPanel {
     this._draggable       = cd.draggable       ?? (this._snap === "none");
     this._taskbarIcon     = cd.taskbarIcon     ?? this.initialTaskbarIcon;
     this._titleSuffix     = cd.titleSuffix     ?? "none";
+    // Pinned: fire the change so the live taskbar re-evaluates the entry.
+    // Direct-set (not `setPinned`) so we don't re-write the localStorage
+    // key we just wiped — matches the masked-reset pattern above.
+    const nextPinned = cd.pinned ?? this.initialPinned;
+    if (nextPinned !== this._pinned) {
+      this._pinned = nextPinned;
+      for (const cb of this.pinnedChangeListeners) cb(this._pinned);
+    }
     this.setPin(cd.pin ?? this.initialPin);
 
     // Restore from minimize so the rolled-up height / hidden flag

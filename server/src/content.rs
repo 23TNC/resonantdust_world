@@ -12,9 +12,9 @@
 //! `/content` and hot-swaps — no reload. `POST /content/refresh` forces the poll
 //! immediately (so `dsl upload` can ping the gate).
 //!
-//! **What's served.** Only the `data` + `visual` facets — the client's `Content`
+//! **What's served.** The `data` + `visual` + `material` facets — the client's `Content`
 //! bundle. `biome` is server-only worldgen and is never sent to clients. Sources
-//! are ordered **data first, then visual**, matching the world server's
+//! are ordered **data first, then visual, then material**, matching the world server's
 //! `read_content_dir`, so tile / thing def-ids agree on both sides by
 //! construction.
 
@@ -69,13 +69,14 @@ impl ContentSource {
     }
 }
 
-/// Read `data/*.rd` then `visual/*.rd` (top-level, sorted) from a content dir.
-/// Mirrors the world server's `read_content_dir` order (data before visual, each
-/// dir sorted, non-recursive) so def-ids match; `biome` is skipped — it's
-/// server-only and never served to clients.
+/// Read `data/*.rd`, then `visual/*.rd`, then `material/*.rd` (top-level, sorted) from a
+/// content dir. Mirrors the world server's `read_content_dir` order (data before visual so
+/// tile/thing def-ids match; each dir sorted, non-recursive). `biome` is skipped — it's
+/// server-only worldgen — but `material` IS served: the client's albedo bake needs the
+/// `<material>` registry (materials add no id namespace, so their order can't shift ids).
 fn load_disk(root: &Path) -> io::Result<Sources> {
     let mut out = Sources::new();
-    for facet in ["data", "visual"] {
+    for facet in ["data", "visual", "material"] {
         let dir = root.join(facet);
         if !dir.is_dir() {
             continue;
@@ -96,24 +97,27 @@ fn load_disk(root: &Path) -> io::Result<Sources> {
 }
 
 /// The R2 `manifest.json` index (`bin/dsl reindex`). Only the client facets are
-/// deserialized; `biome` is intentionally ignored (server-only worldgen).
+/// deserialized; `biome` is intentionally ignored (server-only worldgen). `material` is
+/// the client-side render registry (defaults empty for a manifest predating it).
 #[derive(serde::Deserialize, Default)]
 struct Manifest {
     #[serde(default)]
     data: Vec<String>,
     #[serde(default)]
     visual: Vec<String>,
+    #[serde(default)]
+    material: Vec<String>,
 }
 
-/// Fetch `manifest.json` from R2, then each `data` + `visual` key it lists
-/// (data first, preserving the manifest's sorted order). Keys are resolved under
+/// Fetch `manifest.json` from R2, then each `data` + `visual` + `material` key it
+/// lists (data first, preserving the manifest's sorted order). Keys are resolved under
 /// `<prefix>/content/`.
 async fn load_r2(cfg: &R2Config) -> Result<Sources, String> {
     let manifest_text = r2_get_text(cfg, "manifest.json").await?;
     let manifest: Manifest =
         serde_json::from_str(&manifest_text).map_err(|e| format!("parse manifest.json: {e}"))?;
     let mut out = Sources::new();
-    for key in manifest.data.iter().chain(manifest.visual.iter()) {
+    for key in manifest.data.iter().chain(manifest.visual.iter()).chain(manifest.material.iter()) {
         let text = r2_get_text(cfg, key).await?;
         out.push((key.clone(), text));
     }

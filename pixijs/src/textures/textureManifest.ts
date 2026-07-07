@@ -9,16 +9,20 @@
 //! re-fetches with the fresh hash.
 
 import { manifestUrl, manifestVersionUrl } from "./lod";
+import type { TexMap } from "./lod";
 
-/** One stem's manifest row: the master's content hash + its short-axis ceiling. */
+/** One stem's manifest row: the master's content hash, its short-axis ceiling, and which
+ *  maps (albedo|normal|depth|emissive) actually have a leaf on disk — the resolver skips
+ *  requesting a map that's absent (no speculative 404). `albedo` is always present. */
 export interface ManifestEntry {
   hash: string;
   maxSize: number;
+  maps: TexMap[];
 }
 
 interface ManifestPayload {
   version: string;
-  textures: Record<string, { hash: string; maxSize: number; lods: number[] }>;
+  textures: Record<string, { hash: string; maxSize: number; lods: number[]; maps?: string[] }>;
 }
 
 export class TextureManifest {
@@ -69,7 +73,9 @@ export class TextureManifest {
       this.version = payload.version;
       this.entries.clear();
       for (const [stem, e] of Object.entries(payload.textures)) {
-        this.entries.set(stem, { hash: e.hash, maxSize: e.maxSize });
+        // An older payload without `maps` predates the multi-map server → albedo-only.
+        const maps = (e.maps as TexMap[] | undefined) ?? ["albedo"];
+        this.entries.set(stem, { hash: e.hash, maxSize: e.maxSize, maps });
       }
       for (const fn of this.listeners) fn();
     } catch {
