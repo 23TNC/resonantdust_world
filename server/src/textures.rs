@@ -37,11 +37,12 @@ const PREVIEW_SCALE: f32 = 0.5;
 /// The texture MAPS a leaf can hold, one PNG per map in the same variant leaf. `albedo`
 /// (colour) is mandatory and the default; `normal`/`depth`/`emissive` are optional (a
 /// missing one is a clean 404 the client falls back for). `packed` (per-material weight,
-/// RGBA) + `packed_residual` (the leftover after the weighted materials) drive the
-/// material bake pass — `bin/art split_layers` emits `packed.png` / `packed_residual.png`.
-/// The set doubles as the leaf FILENAME allowlist — a `map` outside it never touches disk
-/// (`master_map_rel` → None).
-pub const MAPS: [&str; 7] = ["albedo", "normal", "depth", "emissive", "packed", "packed_residual", "surface"];
+/// The `albedo` map is the residual reconstruction base (RGB); `layers` (RGB weights) adds the
+/// material tints; `surface` (R=height, G=ao, B=coverage) is the one silhouette source. `bin/art
+/// split_layers` emits `albedo.png` (residual) + `layers.png` and preserves the de-lit source as
+/// the build-only `albedo_marigold.png` (NOT served). The set doubles as the leaf FILENAME
+/// allowlist — a `map` outside it never touches disk (`master_map_rel` → None).
+pub const MAPS: [&str; 6] = ["albedo", "normal", "depth", "emissive", "layers", "surface"];
 
 /// Where the gateway reads master texture bytes from — the binary analogue of
 /// [`crate::content::ContentSource`].

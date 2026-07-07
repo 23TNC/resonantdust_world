@@ -93,10 +93,12 @@ const LINKED_CATEGORY = "linked";
  *  (`linked/wall_smooth` → `linked/wall_smooth/l`), whose grid cell (variant) is a
  *  neighbour-context atlas — the context pick is Phase 2; the canonical cell renders
  *  for now. A white/absent stem stays a flat tint rect. */
-function thingTexture(stem: string | undefined, rotation: number): { name: string | undefined; flipX: boolean } {
+function thingTexture(stem: string | undefined, rotation: number): { name: string | undefined; flipX: boolean; cell?: number } {
   const base = textureNameFor(stem);
   if (!base) return { name: undefined, flipX: false };
-  if (base.startsWith(`${LINKED_CATEGORY}/`)) return { name: `${base}/l`, flipX: false };
+  // A linked (autotile) kind is ONE master atlas sampled by cell. The neighbour-context
+  // cell pick is Phase 2 — bake the canonical cell 0 for now; rotation doesn't apply.
+  if (base.startsWith(`${LINKED_CATEGORY}/`)) return { name: `${base}/l`, flipX: false, cell: 0 };
   const f = FACING_BY_ROTATION[rotation & 3];
   return { name: `${base}/${f.facing}`, flipX: f.flipX };
 }
@@ -387,6 +389,7 @@ export class WorldBridge {
           texture: this.white,
           textureName: tex.name,
           flipX: tex.flipX,
+          cell: tex.cell,
           // Bottom-CENTRED on the cell: horizontally centred, base on the cell's
           // bottom edge, so a taller-than-a-cell sprite (a tree) rises past the
           // cell it occupies rather than overflowing symmetrically.
@@ -455,6 +458,7 @@ export class WorldBridge {
       texture: this.white,
       textureName: tex.name,
       flipX: tex.flipX,
+      cell: tex.cell,
       // Bottom-centred on its (sub-tile) position, same as cold things, so a big
       // freed thing rises from where it sits and z-orders by its base row.
       x: prim[0] * SQUARE + (SQUARE - w) / 2,

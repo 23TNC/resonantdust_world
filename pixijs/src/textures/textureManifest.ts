@@ -18,11 +18,21 @@ export interface ManifestEntry {
   hash: string;
   maxSize: number;
   maps: TexMap[];
+  /** A LINKED (autotile) atlas: the master holds a `[cols, rows]` cell grid the client
+   *  samples by UV rather than fetching per-cell stems. Absent for an ordinary texture. */
+  grid?: [number, number];
+  /** Normalized per-cell inset `[padU, padV]` (a fraction of the whole atlas) trimmed off
+   *  each cell's UV rect so a downscale can't bleed a neighbour cell across a cell edge.
+   *  Present iff {@link grid} is. */
+  pad?: [number, number];
 }
 
 interface ManifestPayload {
   version: string;
-  textures: Record<string, { hash: string; maxSize: number; lods: number[]; maps?: string[] }>;
+  textures: Record<
+    string,
+    { hash: string; maxSize: number; lods: number[]; maps?: string[]; grid?: number[]; pad?: number[] }
+  >;
 }
 
 export class TextureManifest {
@@ -75,7 +85,12 @@ export class TextureManifest {
       for (const [stem, e] of Object.entries(payload.textures)) {
         // An older payload without `maps` predates the multi-map server → albedo-only.
         const maps = (e.maps as TexMap[] | undefined) ?? ["albedo"];
-        this.entries.set(stem, { hash: e.hash, maxSize: e.maxSize, maps });
+        // A linked-atlas stem carries `grid` + `pad`; an ordinary stem omits both.
+        const grid =
+          Array.isArray(e.grid) && e.grid.length === 2 ? ([e.grid[0], e.grid[1]] as [number, number]) : undefined;
+        const pad =
+          grid && Array.isArray(e.pad) && e.pad.length === 2 ? ([e.pad[0], e.pad[1]] as [number, number]) : undefined;
+        this.entries.set(stem, { hash: e.hash, maxSize: e.maxSize, maps, grid, pad });
       }
       for (const fn of this.listeners) fn();
     } catch {

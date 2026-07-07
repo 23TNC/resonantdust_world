@@ -37,6 +37,9 @@ import {
   type Renderer,
 } from "pixi.js";
 import { makeMaterialBakeShader, type MaterialBakeShader } from "./materialBakeShader";
+import { makeDepthBakeShader, type DepthBakeShader } from "./depthBakeShader";
+import { makeNormalBakeShader, type NormalBakeShader } from "./normalBakeShader";
+import { makeSurfaceBakeShader, type SurfaceBakeShader } from "./surfaceBakeShader";
 import type { PackedChannel } from "./material";
 import {
   mod,
@@ -70,6 +73,10 @@ export interface Primitive {
   /** Mirror the sprite horizontally when baked — the west facing reuses the east
    *  master flipped, so no separate west texture ever ships. */
   flipX?: boolean;
+  /** For a LINKED (autotile) atlas texture: which cell (row-major, 0-based) of the atlas
+   *  to bake. A channel's `resolve` passes it to the resolver, which returns that cell's UV
+   *  sub-frame of the one atlas texture. Undefined for an ordinary single-image texture. */
+  cell?: number;
   /** The prim's up-to-4 packed-map material bindings (`Content.tilePackedChannels`),
    *  by packed RGBA channel. When set AND the stem's `packed` map is loaded, the
    *  albedo channel bakes hue/chroma VARIATION instead of a flat tint; otherwise
@@ -84,23 +91,34 @@ export interface Primitive {
 
 /** What a channel's {@link ChannelSpec.resolve} returns: the texture to bake and the
  *  tint to bake it WITH (the channel picks the tier-appropriate colour). When `material`
- *  is set, the bake draws this prim through the {@link MaterialBakeShader} instead of a
- *  flat tinted sprite — `texture` is the master albedo, `material.packed` the weight map,
- *  and `material.chA/chB` the per-channel jitter params (see {@link materialBakeShader.ts}). */
+ *  is set, the bake draws this prim through the {@link MaterialBakeShader} (the single
+ *  real-tier albedo path) instead of a flat tinted sprite — see {@link MaterialResolve}. */
 export interface ResolvedPrim {
   texture: Texture;
   tint: number;
   material?: MaterialResolve;
+  /** When set, the prim bakes through the {@link DepthBakeShader} instead of a tinted sprite:
+   *  `texture` is the SURFACE source (its B → presence) and this scalar (0..1) is the tile
+   *  depth written into B where present. Used by the `depth` channel. */
+  depth?: number;
+  /** When set, the prim bakes through the {@link NormalBakeShader}: `rgb` is the normal LOD
+   *  (or null → flat-up) and `alpha` (`texture`) is the SURFACE source (its B = soft coverage)
+   *  the normal is premultiplied by. Used by the `normal` channel. */
+  normal?: { rgb: Texture | null; alpha: Texture };
+  /** When set, the prim bakes through the {@link SurfaceBakeShader}: `texture` is the SURFACE
+   *  source (RGB), presence-premultiplied so the composite carries A = presence. `surface` channel. */
+  surface?: boolean;
 }
 
 /** The extra inputs the material bake path needs, resolved from a prim's packed channels
- *  + the material registry. The canonical reconstruction is `residual + Σ packedᵢ·jitter`,
- *  so both the `packed` weight map and the `residual` leftover are sampled. `chA[i] =
- *  (tintR, tintG, tintB, hueSwing)`, `chB[i] = (chromaSwing, warmCoolBias, noiseRow,
- *  sampleSpace)` for the 4 packed channels. */
+ *  + the material registry. Reconstruction is `residual + Σ layersᵢ·jitter`, alpha applied
+ *  from `surface.B` after the sum. `residual` is the `albedo` map (RGB base), `layers` the
+ *  weight map (or null → residual only), `surface` supplies the alpha. `chA[i] = (tintR,
+ *  tintG, tintB, hueSwing)`, `chB[i] = (chromaSwing, warmCoolBias, noiseRow, sampleSpace)`. */
 export interface MaterialResolve {
-  packed: Texture;
   residual: Texture;
+  layers: Texture | null;
+  surface: Texture;
   chA: Float32Array;
   chB: Float32Array;
 }
@@ -259,6 +277,16 @@ export class SquareCache {
    *  {@link MaterialResolve} draws through one of these (its own shader = its own
    *  per-prim uniforms) instead of a flat sprite. All share {@link materialQuad}. */
   private readonly materialPool: Mesh[] = [];
+  /** Depth-bake meshes, pooled parallel to {@link bakePool} — a prim resolving with a `depth`
+   *  scalar draws through one of these (its own shader = its own tile-depth). Shares
+   *  {@link materialQuad}. */
+  private readonly depthPool: Mesh[] = [];
+  /** Normal-bake meshes, pooled parallel to {@link bakePool} — a prim resolving with a `normal`
+   *  binding draws through one of these (silhouette-masked normal). Shares {@link materialQuad}. */
+  private readonly normalPool: Mesh[] = [];
+  /** Surface-bake meshes, pooled parallel to {@link bakePool} — a prim resolving with `surface`
+   *  draws through one of these (presence-premultiplied surface). Shares {@link materialQuad}. */
+  private readonly surfacePool: Mesh[] = [];
   /** The unit-quad geometry every material mesh shares (per-prim world rect comes from the
    *  mesh transform; per-prim params from its shader). Lazily built (needs no renderer). */
   private materialQuad: MeshGeometry | null = null;
@@ -309,6 +337,10 @@ export class SquareCache {
 
   /** Mark square `(wc,wr)` dirty at `band`, keeping the most urgent (lowest) priority. */
   private markDirty(wc: number, wr: number, band: number): void {
+    // The world is anchored at the origin with unsigned coords (region_x/y are u8); squares
+    // left of / above it (col or row < 0) hold no content. Never dirty or bake them — the
+    // window + OVERSCAN reach negative near the origin, but there's nothing there to draw.
+    if (wc < 0 || wr < 0) return;
     const k = sqKey(wc, wr);
     const p = this.prio(wc, wr, band);
     const cur = this.dirty.get(k);
@@ -564,6 +596,7 @@ export class SquareCache {
       height: spec.height,
       tint: spec.tint ?? 0xffffff,
       flipX: spec.flipX,
+      cell: spec.cell,
       packed: spec.packed,
       seed: spec.seed,
       zIndex: spec.zIndex ?? 0,
@@ -723,9 +756,19 @@ export class SquareCache {
       for (let i = 0; i < list.length; i++) {
         const prim = list[i];
         const r = ch.resolve(prim);
-        // Material prims (packed bindings + a bound noise atlas) draw through a mesh with
-        // the OKLab jitter shader; everything else is a flat tinted sprite as before.
-        const node = r.material && this.noiseTex ? this.materialNode(i, prim, r, r.material) : this.spriteNode(i, prim, r);
+        // Material prims (the single real-tier albedo path) draw through the reconstruction
+        // mesh; surface prims through the presence-premultiply mesh; depth prims through the
+        // tile-depth mesh; normal prims through the soft-α normal mesh; everything else is a
+        // flat tinted sprite (geo tier / untextured) as before.
+        const node = r.material
+          ? this.materialNode(i, prim, r, r.material)
+          : r.surface
+            ? this.surfaceNode(i, prim, r)
+            : r.depth !== undefined
+              ? this.depthNode(i, prim, r, r.depth)
+              : r.normal
+                ? this.normalNode(i, prim, r, r.normal)
+                : this.spriteNode(i, prim, r);
         this.bakeContainer.addChild(node);
       }
       renderer.render({ container: this.bakeContainer, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 0], transform: m });
@@ -780,15 +823,87 @@ export class SquareCache {
       this.materialPool[i] = mesh;
     }
     const shader = mesh.shader as MaterialBakeShader;
-    shader.residual = mat.residual; // packed_residual — the reconstruction base
-    shader.packed = mat.packed;
-    shader.noise = this.noiseTex!;
+    shader.residual = mat.residual; // the `albedo` map — the reconstruction base (RGB)
+    shader.layers = mat.layers; // weight map, or null → residual only
+    shader.surface = mat.surface; // its B channel supplies the visual alpha
+    shader.noise = this.noiseTex ?? Texture.EMPTY; // noise optional (identity 0.5 when absent)
     shader.setChannels(mat.chA, mat.chB);
     const [rows, uvTile, worldTile] = this.noiseGlobals;
     shader.setNoiseGlobals(rows, uvTile, worldTile);
     shader.setWorldRect(prim.x, prim.y, prim.width, prim.height);
     shader.setSeed(prim.seed ?? 0);
     // Unit-quad mesh: scale IS the world-px size (no texture-size division). Flip in place.
+    mesh.scale.set(prim.width, prim.height);
+    this.placeFlipped(mesh, prim);
+    return mesh;
+  }
+
+  /** The depth path: a pooled mesh whose {@link DepthBakeShader} writes this prim's constant
+   *  tile depth into B where the sprite is ≥95% opaque. Shares the unit quad + placement with
+   *  {@link materialNode}. */
+  private depthNode(i: number, prim: Primitive, r: ResolvedPrim, depth: number): Mesh {
+    if (!this.materialQuad) {
+      this.materialQuad = new MeshGeometry({
+        positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+      });
+    }
+    let mesh = this.depthPool[i];
+    if (!mesh) {
+      mesh = new Mesh({ geometry: this.materialQuad, shader: makeDepthBakeShader() });
+      this.depthPool[i] = mesh;
+    }
+    const shader = mesh.shader as DepthBakeShader;
+    shader.texture = r.texture;
+    shader.tileDepth = depth;
+    mesh.scale.set(prim.width, prim.height);
+    this.placeFlipped(mesh, prim);
+    return mesh;
+  }
+
+  /** The normal path: a pooled mesh whose {@link NormalBakeShader} writes the prim's normal
+   *  (real LOD, or flat-up) masked by the silhouette alpha, so its flat background never
+   *  clobbers a thing behind. Shares the unit quad + placement with {@link materialNode}. */
+  private normalNode(i: number, prim: Primitive, r: ResolvedPrim, nrm: { rgb: Texture | null; alpha: Texture }): Mesh {
+    if (!this.materialQuad) {
+      this.materialQuad = new MeshGeometry({
+        positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+      });
+    }
+    let mesh = this.normalPool[i];
+    if (!mesh) {
+      mesh = new Mesh({ geometry: this.materialQuad, shader: makeNormalBakeShader() });
+      this.normalPool[i] = mesh;
+    }
+    const shader = mesh.shader as NormalBakeShader;
+    shader.alpha = nrm.alpha; // surface coverage source (also the mesh's main texture)
+    shader.normalTex = nrm.rgb;
+    mesh.scale.set(prim.width, prim.height);
+    this.placeFlipped(mesh, prim);
+    return mesh;
+  }
+
+  /** The surface path: a pooled mesh whose {@link SurfaceBakeShader} presence-premultiplies the
+   *  surface source (RGB) so the composite carries A = presence. Shares the unit quad +
+   *  placement with {@link materialNode}. */
+  private surfaceNode(i: number, prim: Primitive, r: ResolvedPrim): Mesh {
+    if (!this.materialQuad) {
+      this.materialQuad = new MeshGeometry({
+        positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+      });
+    }
+    let mesh = this.surfacePool[i];
+    if (!mesh) {
+      mesh = new Mesh({ geometry: this.materialQuad, shader: makeSurfaceBakeShader() });
+      this.surfacePool[i] = mesh;
+    }
+    const shader = mesh.shader as SurfaceBakeShader;
+    shader.texture = r.texture; // the surface source (RGB)
     mesh.scale.set(prim.width, prim.height);
     this.placeFlipped(mesh, prim);
     return mesh;
@@ -845,8 +960,9 @@ export class SquareCache {
       for (let wr = winRow; wr < winRow + rows; wr++) {
         const sy = mod(wr, rows);
         const si = sy * cols + sx;
-        if (baked[si] === 0 || ownerCol[si] !== wc || ownerRow[si] !== wr) {
-          // Slot doesn't currently hold this world square — draw nothing here.
+        // Skip negative world squares (off the origin-anchored world — never baked/owned)
+        // and any slot that doesn't currently hold this world square — draw nothing here.
+        if (wc < 0 || wr < 0 || baked[si] === 0 || ownerCol[si] !== wc || ownerRow[si] !== wr) {
           for (let k = 0; k < 8; k++) { pos[b + k] = 0; uv[b + k] = 0; }
           b += 8;
           continue;
@@ -876,6 +992,15 @@ export class SquareCache {
     for (const mesh of this.materialPool) (mesh.shader as MaterialBakeShader).destroy();
     for (const mesh of this.materialPool) mesh.destroy();
     this.materialPool.length = 0;
+    for (const mesh of this.depthPool) (mesh.shader as DepthBakeShader).destroy();
+    for (const mesh of this.depthPool) mesh.destroy();
+    this.depthPool.length = 0;
+    for (const mesh of this.normalPool) (mesh.shader as NormalBakeShader).destroy();
+    for (const mesh of this.normalPool) mesh.destroy();
+    this.normalPool.length = 0;
+    for (const mesh of this.surfacePool) (mesh.shader as SurfaceBakeShader).destroy();
+    for (const mesh of this.surfacePool) mesh.destroy();
+    this.surfacePool.length = 0;
     this.materialQuad?.destroy();
     this.blitSprite.destroy();
     this.bakeContainer.destroy();

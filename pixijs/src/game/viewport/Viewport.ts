@@ -20,7 +20,7 @@ import type { TextureResolver } from "../../textures";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 import type { RtChannel } from "../panels/rt/RtPanel";
 import { SquareCache, type PrimitiveSpec } from "./SquareCache";
-import { NOISE_FIELDS, type MaterialRegistry } from "./material";
+import { NOISE_FIELDS, PACKED_UNIFORM_LEN, type MaterialRegistry } from "./material";
 import { SQUARE } from "./squareMath";
 import { makeLightingShader, type LightingShader } from "./lightingShader";
 import { LightRig } from "../lighting/LightRig";
@@ -34,10 +34,10 @@ const BAKE_BUDGET = 128;
 const GROUND_ANGLE = (65 * Math.PI) / 180;
 
 /** The caster's ORIGIN as a fraction down the sprite box (0 = top, 1 = bottom): the bottom-most
- *  fully-opaque pixel (α = 255) down the texture's centre column — the trunk-ground contact the shadow's foot
- *  plants on. Pixi discards the CPU bitmap after GPU upload, so we read the pixels back through
- *  the renderer's `extract`. Returns null on failure (caller falls back to the box bottom).
- *  Computed once per stem and cached. */
+ *  fully-present pixel down the SURFACE map's centre column (its B channel is the coverage) — the
+ *  trunk-ground contact the shadow's foot plants on. Pixi discards the CPU bitmap after GPU
+ *  upload, so we read the pixels back through the renderer's `extract`. Returns null on failure
+ *  (caller falls back to the box bottom). Computed once per stem and cached. */
 function originFrac(renderer: Renderer, texture: Texture): number | null {
   try {
     const out = renderer.extract.pixels(texture) as { pixels: Uint8ClampedArray | Uint8Array; width: number; height: number };
@@ -45,13 +45,27 @@ function originFrac(renderer: Renderer, texture: Texture): number | null {
     if (!width || !height || !pixels) return null;
     const cx = Math.min(width - 1, Math.floor(width / 2));
     for (let y = height - 1; y >= 0; y--) {
-      if (pixels[(y * width + cx) * 4 + 3] >= 255) return (y + 1) / height;
+      if (pixels[(y * width + cx) * 4 + 2] >= 250) return (y + 1) / height; // B = coverage
     }
     return 1; // fully transparent centre column → no crop
   } catch {
     return null;
   }
 }
+
+/** A world-y's DEPTH on the 0..1 ring: one step per {@link DEPTH_PX} world px, wrapped over the
+ *  full 0..255 range. The composite/shadow ALPHA marks thing-vs-ground (so the value can start at
+ *  0), and the lighting compare handles the ring wrap — so nothing needs a ≥128 floor. Baked into
+ *  the depth composite (receiver) and the shadow RT's R (caster). Finer than per-tile so things
+ *  a few px apart in y still order (and occlude) correctly. */
+const DEPTH_PX = 5;
+function depthUnit(worldY: number): number {
+  return (((Math.floor(worldY / DEPTH_PX) % 256) + 256) % 256) / 255;
+}
+
+/** Zero material-channel params (no jitter) — shared by the albedo path when a prim has no
+ *  varying materials (the reconstruction is then just the residual). Read-only. */
+const ZERO_CH = new Float32Array(PACKED_UNIFORM_LEN);
 
 export class Viewport extends LayoutNode {
   /** The world cache — bakes albedo + normal + depth channels from one prim index. The
@@ -110,21 +124,28 @@ export class Viewport extends LayoutNode {
         key: "albedo",
         resolve: (prim) => {
           if (!prim.textureName) return { texture: prim.texture, tint: prim.tint };
-          const { texture, geo } = resolver.resolve(prim.textureName, "albedo");
-          if (geo) return { texture, tint: prim.geoColor ?? prim.tint };
-          // Material path: a varying material bound to a packed channel AND both the stem's
-          // packed weight map + packed_residual loaded (the canonical reconstruction base).
-          // Any miss falls through to the flat master albedo, unchanged from before.
+          // The `albedo` map is the residual base (RGB). Its visual alpha lives in `surface.B`,
+          // so the reconstruction needs BOTH loaded before it can composite — until then the
+          // prim stays a flat geo box (a solid rectangle, as the geo tier always was), never a
+          // silhouette-less residual box.
+          const alb = resolver.resolve(prim.textureName, "albedo", prim.cell);
+          const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
+          if (alb.geo || surf.geo) return { texture: alb.texture, tint: prim.geoColor ?? prim.tint };
+          // Single real-tier path: reconstruct residual + Σ layers·jitter, alpha from surface.B.
+          // Only sample the `layers` map when a bound material actually varies; otherwise the
+          // residual IS the full albedo (layers = null → residual only).
           const reg = this.materialRegistry;
+          let layers: Texture | null = null;
+          let chA: Float32Array = ZERO_CH;
+          let chB: Float32Array = ZERO_CH;
           if (reg && reg.channelsVary(prim.packed)) {
-            const packed = resolver.resolve(prim.textureName, "packed");
-            const residual = resolver.resolve(prim.textureName, "packed_residual");
-            if (!packed.geo && !residual.geo) {
-              const { chA, chB } = reg.packChannels(prim.packed);
-              return { texture, tint: prim.tint, material: { packed: packed.texture, residual: residual.texture, chA, chB } };
+            const lyr = resolver.resolve(prim.textureName, "layers", prim.cell);
+            if (!lyr.geo) {
+              layers = lyr.texture;
+              ({ chA, chB } = reg.packChannels(prim.packed));
             }
           }
-          return { texture, tint: prim.tint };
+          return { texture: alb.texture, tint: prim.tint, material: { residual: alb.texture, layers, surface: surf.texture, chA, chB } };
         },
       },
       // The normal channel: a real normal map bakes UNTINTED (0xffffff) so the albedo tint
@@ -134,21 +155,47 @@ export class Viewport extends LayoutNode {
       {
         key: "normal",
         resolve: (prim) => {
+          // Standing things: premultiply the normal (real LOD, or flat-up) by surface.B — the
+          // soft coverage — so the flat background never clobbers, and the over-blend onto the
+          // ground normal computes the α-lerp. Needs surface loaded (the coverage source);
+          // until then, fall through to the flat sprite.
+          if (prim.zIndex >= 1 && prim.textureName) {
+            const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
+            if (!surf.geo) {
+              const n = resolver.resolve(prim.textureName, "normal", prim.cell);
+              return { texture: surf.texture, tint: 0xffffff, normal: { rgb: n.geo ? null : n.texture, alpha: surf.texture } };
+            }
+          }
+          // Ground / tiles / geo-tier things: full flat-up (or a real tile normal) as before.
           if (!prim.textureName) return { texture: resolver.white, tint: 0x8080ff };
-          const { texture, geo } = resolver.resolve(prim.textureName, "normal");
+          const { texture, geo } = resolver.resolve(prim.textureName, "normal", prim.cell);
           return geo ? { texture: resolver.white, tint: 0x8080ff } : { texture, tint: 0xffffff };
         },
       },
-      // The surface channel: R = height (integrated from the normal, for the shadow march),
-      // G = ambient occlusion, B = open (reserved). A real map bakes UNTINTED; absent → flat
-      // ground with NO occlusion (0x00ff00 = height 0, ao 1), the clean degrade for art that
-      // has no surface map. Succeeds the old depth map + AO-in-normal-alpha packing.
+      // The surface channel: R = height (reserved; unused by the current lighting), G = ambient
+      // occlusion, B = coverage/transparency. A real map bakes through the presence-premultiply
+      // shader (composite A = presence); ground / geo-tier things degrade to a flat OPAQUE,
+      // PRESENT, un-occluded fill (0x00ffff = height 0, ao 1, coverage 1) as a plain sprite.
       {
         key: "surface",
         resolve: (prim) => {
-          if (!prim.textureName) return { texture: resolver.white, tint: 0x00ff00 };
-          const { texture, geo } = resolver.resolve(prim.textureName, "surface");
-          return geo ? { texture: resolver.white, tint: 0x00ff00 } : { texture, tint: 0xffffff };
+          if (!prim.textureName) return { texture: resolver.white, tint: 0x00ffff };
+          const { texture, geo } = resolver.resolve(prim.textureName, "surface", prim.cell);
+          return geo ? { texture: resolver.white, tint: 0x00ffff } : { texture, tint: 0xffffff, surface: true };
+        },
+      },
+      // The depth channel: B = the prim's tile-depth (row%256, /255), for STANDING things only —
+      // ground/tiles + geo-tier bake nothing. Baked once, dirty-tracked, world-space; the
+      // lighting pass reads B at vUV and omits a shadow where it's ≥ the caster depth. The
+      // silhouette/presence comes from the SURFACE map's B (via the depth bake's smoothstep).
+      {
+        key: "depth",
+        resolve: (prim) => {
+          if (prim.zIndex >= 1 && prim.textureName) {
+            const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
+            if (!surf.geo) return { texture: surf.texture, tint: 0xffffff, depth: depthUnit(prim.y + prim.height) };
+          }
+          return { texture: resolver.white, tint: 0xffffff, depth: -1 }; // ground / geo → write nothing
         },
       },
     ]);
@@ -235,6 +282,7 @@ export class Viewport extends LayoutNode {
       { name: "albedo", texture: this.map.displayComposite("albedo") },
       { name: "normal", texture: this.map.displayComposite("normal") },
       { name: "surface", texture: this.map.displayComposite("surface") },
+      { name: "depth", texture: this.map.displayComposite("depth") },
       { name: "shadow", texture: this.shadowPass.texture },
     ];
   }
@@ -281,10 +329,12 @@ export class Viewport extends LayoutNode {
     const albedo = this.map.displayComposite("albedo");
     const normal = this.map.displayComposite("normal");
     const surface = this.map.displayComposite("surface");
-    if (albedo && normal && surface && this.mesh) {
+    const depth = this.map.displayComposite("depth");
+    if (albedo && normal && surface && depth && this.mesh) {
       this.lightingShader.albedo = albedo;
       this.lightingShader.normal = normal;
       this.lightingShader.surface = surface;
+      this.lightingShader.depth = depth;
       // The mesh's aPosition is the PANNED world coord (worldX + panX); world-space lights
       // add this pan to line up with the fragment's vWorld.
       this.lightingShader.setPan(panX, panY);
@@ -311,21 +361,23 @@ export class Viewport extends LayoutNode {
     }
   }
 
-  /** The shadow-pass caster list: each standing prim's billboard box + its resolved
-   *  silhouette texture + a placeholder depth. Skips prims still on the geo tier (no real
-   *  texture) so only true silhouettes cast for now. */
+  /** The shadow-pass caster list: each standing prim's billboard box + its resolved SURFACE
+   *  texture (its B channel is the silhouette/coverage the shadow rasterizes) + a placeholder
+   *  depth. Skips prims still on the geo tier (no surface) so only true silhouettes cast. */
   private buildCasters(renderer: Renderer): ShadowCaster[] {
     const out: ShadowCaster[] = [];
     for (const p of this.map.standingPrims()) {
       if (!p.textureName) continue;
-      const { texture, geo } = this.resolver.resolve(p.textureName, "albedo");
+      const { texture, geo } = this.resolver.resolve(p.textureName, "surface", p.cell);
       if (geo) continue;
       // Origin (trunk base) fraction — read back from the GPU once per stem, then cached
-      // (fall back to the box bottom if the readback fails, so the caster still shadows).
-      let footFrac = this.originCache.get(p.textureName);
+      // (fall back to the box bottom if the readback fails, so the caster still shadows). A
+      // linked cell keys by (stem, cell) since each cell has its own silhouette.
+      const okey = p.cell != null ? `${p.textureName}#${p.cell}` : p.textureName;
+      let footFrac = this.originCache.get(okey);
       if (footFrac === undefined) {
         footFrac = originFrac(renderer, texture) ?? 1;
-        this.originCache.set(p.textureName, footFrac);
+        this.originCache.set(okey, footFrac);
       }
       out.push({
         x: p.x,
@@ -336,6 +388,9 @@ export class Viewport extends LayoutNode {
         flipX: !!p.flipX,
         depth: Math.max(4, p.width * 0.15), // placeholder until the DSL / depth-map wiring
         footFrac,
+        // Same depth encoding as the `depth` composite (base y) so a thing's shadow matches its
+        // own receiver depth exactly → it never self-shadows.
+        tileDepth: depthUnit(p.y + p.height),
       });
     }
     return out;

@@ -55,25 +55,44 @@ const lightBitGl = {
       uniform vec4 uLightColor[${MAX_HOT_LIGHTS}];  // per point light: rgb colour, a brightness
       uniform float uLightCount;                    // active point lights (loop breaks past it)
       uniform sampler2D uSurface;                    // G = ambient occlusion (R = height / B reserved)
+      uniform sampler2D uDepth;                      // world depth composite: B = depth·cov, A = cov
       uniform vec2 uPan;                             // fillDisplay's pan: vWorld = trueWorld + uPan
-      uniform sampler2D uShadow;                     // shadow coverage RT (R = shadowed 0..1), screen space
+      uniform sampler2D uShadow;                     // shadow RT: R = caster depth·cov, A = cov (screen space)
       uniform vec4 uShadowUv;                        // vWorld → shadow uv: uv = vWorld·xy + zw (zw carries any Y flip)
       in vec2 vWorld;
 
-      // The shadow pass rasterises billboard "wedge" shadows into a screen-space coverage RT.
-      // Sample it at this fragment's screen position; 0 = lit, 1 = fully shadowed. Out-of-RT
-      // fragments (uv outside 0..1) read as unshadowed.
-      float shadowCoverage() {
+      // The shadow pass rasterises billboard "wedge" shadows into a screen-space RT (R = caster
+      // depth·coverage, A = coverage). Sample it at this fragment's screen position and return
+      // coverage (0 = lit, 1 = fully shadowed) — but where this fragment's own THING sits at/in
+      // front of the caster, the shadow is BEHIND the thing, so only the see-through fraction
+      // (1 - alpha, alpha = the thing's visual opacity) reveals the shadowed background. Ground
+      // never occludes. Depths ride a 0..1 ring (1 step per 5 world px), so the ordering is the
+      // WRAPPED difference. Out-of-RT fragments (uv outside 0..1) read as unshadowed.
+      float shadowCoverage(bool isThing, float receiverDepth, float alpha) {
         vec2 uv = vWorld * uShadowUv.xy + uShadowUv.zw;
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
-        return texture(uShadow, uv).r;
+        vec4 sh = texture(uShadow, uv);
+        if (sh.a < 0.004) return 0.0;                   // no caster here
+        if (isThing) {
+          float casterDepth = sh.r / sh.a;              // unpremultiply (AA-safe)
+          float diff = receiverDepth - casterDepth;
+          diff -= floor(diff + 0.5);                    // nearest wrap into (-0.5, 0.5]
+          // Tolerance ≈ 1.5 depth steps (~7.5 world px), absorbs 8-bit depth noise so a thing's
+          // edge self-omits; tight enough to keep distinct trees ordered. Receiver in FRONT of
+          // the caster: dim only the see-through fraction. DEADZONE it — near-opaque foliage
+          // (alpha ≳ 0.85) reads as fully opaque (0 see-through), so faint shadow-seam values
+          // don't leak through as specks; only genuinely transparent pixels reveal the shadow.
+          if (diff >= -0.006) return sh.a * (1.0 - smoothstep(0.4, 0.85, alpha));
+        }
+        return sh.a;
       }
     `,
     main: /* glsl */ `
-      // outColor = the NORMAL composite (textureBit). Empty (uncovered) texels read
-      // (0,0,0,0) — treat those as flat-up +Z so bare cells light like flat ground.
+      // outColor = the NORMAL composite (textureBit). It stores PREMULTIPLIED, silhouette-masked
+      // normals (nrm·a, a) — unpremultiply before decoding. Empty/uncovered texels read (0,0,0,0)
+      // → treat as flat-up +Z so bare cells (and outside-silhouette gaps) light like flat ground.
       vec4 nTex = outColor;
-      vec3 nrm = nTex.a > 0.001 ? nTex.rgb * 2.0 - 1.0 : vec3(0.0, 0.0, 1.0);
+      vec3 nrm = nTex.a > 0.001 ? (nTex.rgb / nTex.a) * 2.0 - 1.0 : vec3(0.0, 0.0, 1.0);
       // AMPLIFY the relief in math (instead of baking exaggerated normals): scale the
       // tangent XY away from flat-up, then renormalize. A bigger tilt widens the N·L range
       // → brighter facing-highlights + darker facing-away shadows from the SAME light. Flat
@@ -86,11 +105,21 @@ const lightBitGl = {
       // CONTRAST without clipping away-facing surfaces to black.
       const float LIGHT_WRAP = 0.4;
 
-      // Ambient occlusion (surface.G): gates AMBIENT fully (occlusion blocks indirect light)
-      // and DIRECT light only partially — a crevice still catches a key light, but darkens,
-      // reading as depth/contact grime rather than flat plastic. Covered texels carry the AO;
-      // uncovered ones read 0 but their albedo is 0 too, so it never shows.
-      float ao = texture(uSurface, vUV).g;
+      // The albedo composite is premultiplied by the visual alpha (surface.B applied after the
+      // reconstruction), so alb.a is the fragment's opacity — the see-through weight the shadow
+      // pass dims by. Sample it now (reused for the final colour below).
+      vec4 alb = texture(uAlbedo, vUV);
+      // Ambient occlusion: the SURFACE composite is premultiplied by PRESENCE (A), so ao = G/A.
+      // Gates AMBIENT fully (occlusion blocks indirect light) and DIRECT light only partially —
+      // a crevice still catches a key light but darkens, reading as depth/contact grime.
+      vec4 surf = texture(uSurface, vUV);
+      float ao = surf.a > 0.001 ? surf.g / surf.a : 1.0;
+      // Depth composite is premultiplied by PRESENCE (B = depth·p, A = p). Divide to recover the
+      // true depth even at the presence edge; A marks thing vs ground. Presence is HARD (a
+      // semi-transparent px is still fully present), so a clean 0.5 gate — no fringe ring.
+      vec4 dc = texture(uDepth, vUV);
+      bool isThing = dc.a > 0.5;
+      float receiverDepth = isThing ? dc.b / dc.a : 0.0;
       // Deepen the baked AO's contrast in-shader (the map only dips to ~0.75): scale the
       // occlusion (1 - ao) up, so crevices darken harder without re-baking the map.
       const float AO_STRENGTH = 3.0;
@@ -122,12 +151,12 @@ const lightBitGl = {
       }
 
       // Gate the direct light by the screen-space wedge-shadow coverage (0 = lit, 1 = shadowed).
+      // Pass the fragment's opacity so a shadow behind a transparent thing shows through it.
       const float SHADOW_STRENGTH = 0.7;
-      float cov = shadowCoverage();
+      float cov = shadowCoverage(isThing, receiverDepth, alb.a);
       vec3 lightSum = uAmbient * ao + direct * (1.0 - cov * SHADOW_STRENGTH);
 
-      vec4 alb = texture(uAlbedo, vUV);                 // premultiplied → multiply is safe
-      outColor = vec4(alb.rgb * lightSum, alb.a);
+      outColor = vec4(alb.rgb * lightSum, alb.a);       // alb premultiplied → multiply is safe
     `,
   },
 };
@@ -183,6 +212,12 @@ export class LightingShader extends Shader {
   set surface(value: Texture) {
     this.resources.uSurface = value.source;
     this.resources.uSurfaceSampler = value.source.style;
+  }
+  /** The DEPTH composite — B = the fragment's own thing tile-depth (0 = ground), silhouette-
+   *  accurate. The shadow compare omits a shadow where this ≥ the caster depth. */
+  set depth(value: Texture) {
+    this.resources.uDepth = value.source;
+    this.resources.uDepthSampler = value.source.style;
   }
   /** The shadow coverage RT (R = shadowed 0..1), sampled per-fragment in screen space. */
   set shadow(value: Texture) {
@@ -241,6 +276,8 @@ export function makeLightingShader(): LightingShader {
       uAlbedoSampler: empty.source.style,
       uSurface: empty.source,
       uSurfaceSampler: empty.source.style,
+      uDepth: empty.source,
+      uDepthSampler: empty.source.style,
       uShadow: empty.source,
       uShadowSampler: empty.source.style,
       lightUniforms: new UniformGroup({

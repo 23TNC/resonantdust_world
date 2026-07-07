@@ -7,44 +7,58 @@ non-standard projection, and where it should go. Sibling to `docs/art-style.md` 
 ## Where we are (implemented + verified)
 
 A **screen-space deferred** model. `SquareCache` bakes the visible world into one fixed-size
-toroidal composite **per channel** — `albedo`, `normal`, `depth` — from a shared prim index.
-The display mesh draws that composite through `LightingShader` (`pixijs/src/game/viewport/
-lightingShader.ts`), which lights every fragment in one pass. The composites *are* the G-buffer;
-there are no per-object light passes.
+toroidal composite **per channel** — `albedo`, `normal`, `surface`, `depth` — from a shared prim
+index. The display mesh draws those composites through `LightingShader` (`pixijs/src/game/
+viewport/lightingShader.ts`), which lights every fragment in one pass. The composites *are* the
+G-buffer; there are no per-object light passes.
 
-Built in four phases, all verified in-browser (login → zones → `/showRT` + the lit viewport):
+### The coverage model (one silhouette source of truth)
+
+Every masked channel keys its coverage off **one** place — the **surface map's B channel** — so
+silhouettes can't drift between channels (the class of bug that caused halos/speckles/ghost
+shadows before). The surface map is RGB data: **R = height** (reserved; unused by the current
+wedge-shadow lighting), **G = ambient occlusion**, **B = coverage/transparency** (the diffuse
+alpha, straight — 0 outside the object). It carries **no stored alpha**: data in a source alpha
+channel fights the client's upload-premultiply and the gate's on-demand downscale, so coverage is
+*derived* at bake time and premultiplied into each composite. Two derivations:
+
+- **Soft α** (`surface.B` directly) premultiplies the **albedo** and **normal** bakes — the
+  visual transparency. A thing's edge blends smoothly toward whatever's behind it.
+- **Hard presence** (`smoothstep(surface.B)`) premultiplies the **depth** and **surface** bakes
+  — a semi-transparent pixel still *fully* occupies its cell for occlusion, so a thing's edge
+  never reads as ground (no halo). The lighting pass recovers everything `/A`: `ao = surface.G/A`,
+  presence = `surface.A`, receiver depth = `depth.B/depth.A`, opacity = `albedo.A`.
+
+The shadow caster silhouette, the `originFrac` trunk-base probe, and the presence gate all read
+`surface.B` — nothing reads albedo-alpha anymore (the albedo map is the RGB residual base).
+
+### Built (client verified in-browser; the surface-map pipeline needs an asset regen to test)
 
 - **A — map-aware texture path.** Server (`server/src/textures.rs`, `tex_manifest.rs`, `main.rs`)
-  serves any map (`albedo|normal|depth|emissive`) via `/textures/lod/<hash>/<size>/<map>/<stem>`;
-  the manifest advertises which maps each stem actually has. Client (`TextureResolver`, `lod.ts`,
-  `previewCache.ts`, `textureManifest.ts`) resolves per `(stem, map)`; a stem lacking a map stays
-  on that channel's flat fallback and never fetches. `SquareCache` bakes the `normal`/`depth`
-  channels untinted where real, else flat fallbacks: normal → `0x8080ff` (+Z up), depth → black
-  (ground). Visible in `/showRT` as three composites.
+  serves any map in `MAPS` (`albedo|normal|layers|surface|depth|emissive`) via
+  `/textures/lod/<hash>/<size>/<map>/<stem>`; the manifest advertises which each stem has. Client
+  (`TextureResolver`, `lod.ts`, …) resolves per `(stem, map)`; a stem lacking a map stays on that
+  channel's flat fallback and never fetches. The data maps (`albedo`, `layers`, `normal`,
+  `surface`) load **straight** (no premultiply) so their RGB survives intact.
 - **B — ambient + directional sun.** `outColor = albedo · (ambient + sun·halfLambert(N·sunDir))`.
   Half-Lambert wrap (0.4). Normal-mapped tiles show relief.
-- **C — dynamic point lights.** `LightRig` (`pixijs/src/game/lighting/LightRig.ts`) holds the sun,
-  ambient, ≤32 point lights (world px, `height`/`radius`/`color`/`brightness`/`castsShadow`), and a
-  cursor light packed into the shader each frame. Quadratic falloff, half-Lambert. The **cursor
-  light** is wired to real pointer input (`ViewportPanel` `pointermove` → `Viewport.screenToWorld`
-  → `LightRig.setCursorWorld`) and tracks the pointer with correct world-space falloff.
-- **D — depth shadows (machinery).** A screen-space height-ray march over the `depth` composite
-  (`shadowFactor`), gated per light by `castsShadow` (encoded in the sign of the packed radius).
-  Correct **no-op** today: no shipped art has depth maps, so the depth composite is all-zero →
-  nothing occludes → fully lit. The pass is ready for when depth art lands.
-- **E — ambient occlusion (packed in normal.alpha).** AO is derived offline from the normal's
-  own relief and **packed into the normal map's alpha**, so it rides the existing normal
-  composite — no new channel, no client compute. Pipeline: `art ao` (default `--engine depth`,
-  `bin/lib/depth_ao.py`) integrates the untilted normal → height (Frankot-Chellappa, same as
-  `marigold/normal_depth.py`), runs an HBAO horizon march → `occlusion.png`, then packs
-  `AO × silhouette` into `normal.a` (floored `≥ --ao-floor` so it survives premultiplication).
-  Wired into `art maps`/`remaster` as two steps around the tilt: **compute before** (the tilt
-  is a fixed rotation that adds a spurious global height ramp, ruining the integral), **pack
-  after** (the tilt rewrites `normal.rgb` and resets its alpha). `--no-ao` opts out. The shader
-  un-premultiplies the composite (`rgb / a`) to recover the normal and reads AO from `a`:
-  ambient is gated fully (`ambient·ao`), direct light partially (`mix(1, ao, AO_DIRECT)`), so
-  crevices/foliage read as depth instead of flat plastic. Self-occlusion only (intra-sprite);
-  cross-object contact AO would need a world-calibrated depth composite (screen-space, future).
+- **C — dynamic point lights.** `LightRig` holds the sun, ambient, ≤32 point lights (world px,
+  `height`/`radius`/`color`/`brightness`/`castsShadow`), and a cursor light packed each frame.
+  Quadratic falloff, half-Lambert. The cursor light tracks real pointer input with world-space
+  falloff.
+- **D — wedge shadows + presence occlusion.** `ShadowPass` (`shadowPass.ts`) rasterizes each
+  standing caster's billboard "wedge" (its `surface.B` silhouette, projected radially to the
+  light) into a screen-space coverage RT carrying the caster's **tile-depth** (a z-order ring, 1
+  step per 5 world px — *not* a height field). The lighting pass compares that against the
+  receiver's own tile-depth (the `depth` composite) with a wrapped difference: where the receiver
+  sits at/in front of the caster the shadow is behind it, so only the see-through fraction
+  `sh.a·(1−opacity)` shows through (opaque → full light, glass → the shadowed background reveals).
+  See `docs/shadow-design.md` for the wedge geometry.
+- **E — ambient occlusion (surface.G).** AO is derived offline (`art ao`, `bin/lib/depth_ao.py`
+  integrates the untilted normal → height → HBAO horizon march → `occlusion.png`) and packed into
+  **surface.G** (was normal.α). The lighting pass reads `ao = surface.G / surface.A`: ambient
+  gated fully (`ambient·ao`), direct light partially (`mix(1, ao, AO_DIRECT)`), so crevices read
+  as depth, not flat plastic. Self-occlusion only (intra-sprite).
 
 ### Coordinate note (a fixed bug worth remembering)
 The display mesh's `aPosition` is the **panned** world coord (`worldX + panX`, from
@@ -128,35 +142,37 @@ entirely **upstream of, and blind to, the lighting engine**. The lighting pass l
 albedo exactly as it lit the flat one; the two never fight because material owns hue/chroma and
 lighting owns value.
 
-**Data flow.** `bin/art split_layers` decomposes a flat albedo into a `packed` RGBA map (each
-channel = a material's per-pixel weight) + a `packed_residual` leftover. A `<material>` DSL
-registry (`content/material/*.rd`, mirrored to the client over `/content`) names reusable
-materials — `{ noiseField, hueSwing (deg), chromaSwing, warmCoolBias, sampleSpace }`. A prim's
-`:visual @on_create` binds each packed channel to a material + a base **tint**
-(`&thing.packed.0.material` / `.tint`); these ride up through `VisualParts` → the wasm per-def
-tables (`tilePackedChannels` / `materialSwings` / …) → the client `MaterialRegistry`, attached to
-each prim by `def_id`.
+**Data flow.** `bin/art split_layers` decomposes the de-lit albedo into a `layers` RGB map (each
+channel = a material's per-pixel weight) + a **residual that becomes the `albedo` map** (the RGB
+render base); the de-lit source is preserved as the build-only `albedo_marigold.png`. Both
+`albedo` and `layers` are RGB — no alpha, so the client loads them straight and the reconstruction
+sum stays exact; the visual alpha lives in `surface.B`. A `<material>` DSL registry
+(`content/material/*.rd`, mirrored over `/content`) names reusable materials — `{ noiseField,
+hueSwing (deg), chromaSwing, warmCoolBias, sampleSpace }`. A prim's `:visual @on_create` binds each
+layer channel to a material + a base **tint** (`&thing.packed.0.material` / `.tint` — the DSL
+binding kept its `packed` name) → `VisualParts` → the wasm per-def tables (`tilePackedChannels` /
+`materialSwings` / …) → the client `MaterialRegistry`, attached to each prim by `def_id`.
 
 **Where the math runs: BAKE time, not the display shader.** This is a deferred/composite
 renderer — a display-space fragment can belong to any prim, so per-prim material params can't be
 display-shader uniforms. Instead the **albedo composite's per-prim bake** (`SquareCache`) draws a
-material-bound prim through `materialBakeShader.ts` (a Pixi high-shader Mesh) instead of a flat
-sprite. It reconstructs, per fragment, in the **delta form**:
+real-tier prim through `materialBakeShader.ts` (a Pixi high-shader Mesh) — the *single* real-tier
+albedo path. It reconstructs, per fragment, in the **delta form**, then applies alpha LAST:
 
-    out.rgb = albedo + Σ packedᵢ · (jitter(tintᵢ, noise, paramsᵢ) − tintᵢ)      out.a = albedo.a
+    out.rgb = albedo(residual) + Σ layersᵢ · (jitter(tintᵢ, noise, paramsᵢ) − tintᵢ)
+    out.a   = surface.B     (visual alpha, applied AFTER the sum — never premultiplied into it)
 
-The delta form is **identity-safe**: an unbound channel (`tint 0`) or a zero-swing material
-contributes exactly `0`, so a stem with a packed map but no material bindings — or the whole world
-before any material is authored — bakes its albedo unchanged. `jitter()` (`oklab.ts`) converts the
-tint to OKLab, rotates hue by `hueSwing·noise` (leaned by `warmCoolBias`) and shifts chroma by
-`chromaSwing·noise`, **never touching L**, then back to sRGB. Noise is sampled from a runtime-built
-tiling atlas (`noiseAtlas.ts`; rows = fields, R/G = two decorrelated fields) in **UV space**
-(rides the sprite) or **world space** (pinned to the ground, so tiles of one kind don't all show
-an identical patch).
+The delta form is **identity-safe**: no `layers` map (or a zero-swing material / unbound channel,
+`tint 0`) contributes exactly `0`, so a stem with no materials — or the whole world before any is
+authored — bakes its albedo (== residual) unchanged. `jitter()` (`oklab.ts`) converts the tint to
+OKLab, rotates hue by `hueSwing·noise` (leaned by `warmCoolBias`) and shifts chroma by
+`chromaSwing·noise`, **never touching L**, then back to sRGB. Noise is a runtime-built tiling atlas
+(`noiseAtlas.ts`; rows = fields, R/G = two decorrelated fields) in **UV space** (rides the sprite)
+or **world space** (pinned to the ground).
 
-Assumptions / current limits: material engages only once a stem's `packed` LOD has loaded (so it
-degrades cleanly to the flat albedo on the geo/preview tiers); a 4th packed channel needs the
-`packed` texture loaded WITHOUT premultiplied alpha (the ≤3-channel case is unaffected); and the
-noise atlas is procedural for now — `bin/lib/noise_fields.py` can later bake richer fields into the
-same row layout. World-space noise is per-fragment exact for ground tiles (world-pinned in the
-composite); billboard things use UV space.
+Assumptions / current limits: the real-tier bake engages once a stem's `albedo` **and** `surface`
+LODs load (so it degrades cleanly to the flat geo box on the geo/preview tiers); `layers` is
+capped at **3 channels** (RGB — the 4th/alpha material channel was dropped, since data in an alpha
+channel fights the upload/downscale path); and the noise atlas is procedural for now
+(`bin/lib/noise_fields.py` can bake richer fields into the same row layout). World-space noise is
+per-fragment exact for ground tiles; billboard things use UV space.

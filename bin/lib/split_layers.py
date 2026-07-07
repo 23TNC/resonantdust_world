@@ -2,20 +2,21 @@
 """bin/art split_layers — decompose a flat albedo into a channel-packed tint map.
 
 A de-lit albedo is a near-flat, tiny-palette image, so its materials separate
-cleanly by colour. This strips up to 4 materials into a packed RGBA map (each
-channel = that region's stretched brightness) and writes the leftover to a
-SEPARATE `.packed_residual.png` (extracted regions zeroed; outline + un-stripped
-pixels kept — the "residual" of the PACKING step, distinct from Marigold's
-`albedo_residual`). The source `.albedo.png` is left UNTOUCHED, so this is
-idempotent and can be re-run with a different --threshold to re-derive both maps.
+cleanly by colour. This strips up to 3 materials into a packed RGB map `layers.png`
+(each channel = that region's stretched brightness). The leftover (the residual)
+BECOMES `albedo.png` — the render base the client reconstructs from — and the de-lit
+source is preserved as `albedo_marigold.png` (the re-split / reconstruction source).
 
-Renderer:  out = packed_residual + packed.R*tint0 + packed.G*tint1
-                                 + packed.B*tint2 + packed.A*tint3   (masked by albedo alpha)
-Packing is LINEAR UNMIXING: packed.<ch> holds each pixel's coefficient on a material
-(a pixel can be nonzero in two channels — a gradient blend), and
-`packed_residual = albedo - sum(coeff * material_base_colour)`. So under the identity
-tint (tint = base colour) the renderer reconstructs the albedo exactly; a new tint
-shifts only the material's share and the gradient blends smoothly across channels.
+Renderer:  out.rgb = albedo(residual) + layers.R*tint0 + layers.G*tint1 + layers.B*tint2
+           out.a   = surface.B   (the visual alpha, applied AFTER the sum)
+Both `albedo` and `layers` are RGB (no alpha): the client loads them STRAIGHT (no
+premultiply) so the sum stays exact, and the silhouette/transparency lives in the
+surface map's B channel — see pixijs/materialBakeShader.ts. Packing is LINEAR
+UNMIXING: layers.<ch> holds each pixel's coefficient on a material (a pixel can be
+nonzero in two channels — a gradient blend), and `residual = albedo - sum(coeff *
+material_base_colour)`. So under the identity tint (tint = base colour) the renderer
+reconstructs the de-lit albedo exactly; a new tint shifts only the material's share
+and the gradient blends smoothly across channels.
 
 Segmentation: DIVIDE into regions, cluster region MEANS, then spatial cleanup:
   1. divide into spatially-coherent sections — sharp colour edges (--edge) + chroma
@@ -31,10 +32,11 @@ Segmentation: DIVIDE into regions, cluster region MEANS, then spatial cleanup:
      on its 2 nearest materials (overlap => smooth gradients), and the leftover goes to the
      residual. The black outline is excluded so it stays dark under any tint.
 
-Idempotent — always reads the original albedo, so re-running just overwrites the
-derived `.packed_residual.png` + `.packed.png`. No `art delight` reset needed.
+Re-run safe: a standalone re-run SKIPS an already-split leaf (albedo_marigold.png
+present) so it can't re-split the residual; --force re-derives from the fresh de-lit
+in albedo.png (the remaster path, where `maps` just regenerated it).
 """
-import argparse, os, sys
+import argparse, os, shutil, sys
 import numpy as np
 from PIL import Image
 
@@ -303,28 +305,25 @@ def split_albedo(im, channels=4, section_tol=0.15, group_tol=0.10, edge_thr=42.0
         recon = (ps[:, :, None] * Bcol[None, :, :]).sum(1)
         resid = rgb / 255.0
         resid[idx] = np.clip(rgb[idx] / 255.0 - recon, 0.0, 1.0)
-        rgb = resid * 255.0                                  # residual -> packed_residual (base subtracted)
+        rgb = resid * 255.0                                  # residual -> albedo.png (base subtracted)
         for i in range(min(K, 4)):
             rad = float(np.hypot(Cc[i, 0], Cc[i, 1])); ang = int(np.degrees(np.arctan2(Cc[i, 1], Cc[i, 0]))) % 360
             info.append(("neutral" if rad < 0.04 else f"hue{ang}", int((ps[:, i] > 0.05).sum()),
                          (Bcol[i] * 255).round().astype(int).tolist()))
-    residual = Image.fromarray(np.dstack([rgb.astype(np.uint8), A.astype(np.uint8)]), "RGBA")
-    # R,G,B are always tint layers. The alpha channel is a 4th tint layer ONLY when
-    # --channels >= 4; otherwise it's OPAQUE padding (255) so the packed PNG is viewable
-    # and survives premultiply/discard on texture upload (alpha=0 would zero the RGB data).
-    prgb = (np.clip(packed[..., :3], 0, 1) * 255).astype(np.uint8)
-    if channels >= 4:
-        pa = (np.clip(packed[..., 3], 0, 1) * 255).astype(np.uint8)   # 4th material (renderer: load raw, no premultiply)
-    else:
-        pa = np.full(lum.shape, 255, np.uint8)                        # opaque padding
-    packed_img = Image.fromarray(np.dstack([prgb, pa]), "RGBA")
-    return residual, packed_img, info
+    # Both outputs are RGB — no alpha. The residual's alpha (the diffuse silhouette) now lives
+    # in the surface map's B channel, and a 4th (alpha) material layer fought the client's
+    # upload-premultiply + on-demand downscale path. The client loads BOTH straight (no
+    # premultiply) so the reconstruction sum `residual + Σ layersᵢ·tint` stays exact.
+    residual = Image.fromarray(rgb.astype(np.uint8), "RGB")
+    prgb = (np.clip(packed[..., :3], 0, 1) * 255).astype(np.uint8)   # 3 tint layers in RGB
+    layers_img = Image.fromarray(prgb, "RGB")
+    return residual, layers_img, info
 
 def main():
     ap = argparse.ArgumentParser(prog="art split_layers",
-        description="Decompose a flat albedo into a packed RGBA tint map + a separate packed_residual; the source albedo is preserved.")
+        description="Decompose a flat albedo into layers.png (RGB weights); the residual becomes albedo.png, the de-lit preserved as albedo_marigold.png.")
     ap.add_argument("paths", nargs="+", help="*.albedo.png file(s) or directories to scan")
-    ap.add_argument("--channels", type=int, default=4, help="max materials (channels) to strip (default 4)")
+    ap.add_argument("--channels", type=int, default=3, help="max materials (channels) to strip (RGB, max 3)")
     ap.add_argument("--threshold", dest="section_tol", type=float, default=0.15, help="DIVIDE: chroma cell size for sectioning — smaller cuts finer sections (default 0.15)")
     ap.add_argument("--group-threshold", dest="group_tol", type=float, default=0.10, help="GROUP: how close two region colours must be to count as ONE material/channel — higher merges more colours together (default 0.10)")
     ap.add_argument("--edge", dest="edge_thr", type=float, default=42.0, help="DIVIDE: colour-gradient edge cutoff (sum-of-abs RGB diff to a neighbour); lower = more/smaller sections (default 42)")
@@ -332,7 +331,7 @@ def main():
     ap.add_argument("--blend-radius", type=int, default=10, help="how far (px) a material's tint may reach past its own region — the gradient blend zone; keeps faint coefficients from sprinkling specks onto far pixels (default 10; 0 = hard region edges)")
     ap.add_argument("--outline-v", type=float, default=0.18, help="value below which an opaque pixel is the outline CORE (kept dark; default 0.18)")
     ap.add_argument("--outline-rim", type=float, default=0.35, help="hysteresis rim: dark pixels up to this value that TOUCH the core are also outline — swallows the black line's AA halo (default 0.35; lower for dark-furred creatures)")
-    ap.add_argument("--force", action="store_true", help="re-split albedos that already have a .packed_residual.png (default: skip them; re-runs are non-destructive since the source albedo is preserved)")
+    ap.add_argument("--force", action="store_true", help="re-split leaves that already have albedo_marigold.png, re-deriving from the fresh de-lit in albedo.png (default: skip them)")
     args = ap.parse_args()
 
     albs = find_albedos(args.paths)
@@ -340,15 +339,24 @@ def main():
         raise SystemExit("split_layers: no albedo.png found under the given paths")
     done = skipped = 0
     for alb in albs:
-        residual_path = texpath.sibling(alb, "packed_residual")
-        packed_path = texpath.sibling(alb, "packed")
-        if os.path.exists(residual_path) and not args.force:
-            skipped += 1; continue      # already split — don't redo (--force to re-derive)
-        res, packed, info = split_albedo(Image.open(alb), args.channels, args.section_tol, args.group_tol, args.edge_thr, args.outline_v, args.outline_rim, args.min_region, args.blend_radius)
-        res.save(residual_path)     # residual -> separate map (albedo left untouched)
-        packed.save(packed_path)    # co-located packed map
+        # The residual IS the render base, so it takes the `albedo.png` name; the de-lit source
+        # is preserved once as `albedo_marigold.png` (the reconstruction input, and what a
+        # re-split reads from). `layers.png` holds the weight channels. Already-split leaves
+        # (marigold present) skip unless --force, which re-derives from the preserved de-lit.
+        marigold_path = texpath.sibling(alb, "albedo_marigold")
+        layers_path = texpath.sibling(alb, "layers")
+        # `albedo.png` holds the DE-LIT until we split it, then the RESIDUAL — so a standalone
+        # re-run must SKIP an already-split leaf (marigold present), or it would re-split the
+        # residual. `--force` is for the remaster path, where `cmd_maps` has just written a FRESH
+        # de-lit to albedo.png, so we always read (and re-preserve) THAT, never the stale marigold.
+        if os.path.exists(marigold_path) and not args.force:
+            skipped += 1; continue
+        res, layers, info = split_albedo(Image.open(alb).convert("RGBA"), min(args.channels, 3), args.section_tol, args.group_tol, args.edge_thr, args.outline_v, args.outline_rim, args.min_region, args.blend_radius)
+        shutil.copy2(alb, marigold_path)   # preserve this de-lit (the reconstruction/re-split source)
+        res.save(alb)               # residual -> albedo.png (the render base)
+        layers.save(layers_path)    # co-located weight map
         done += 1
-        print(f"  {os.path.relpath(alb, REPO)}: {len(info)} layer(s) -> {os.path.basename(packed_path)} + {os.path.basename(residual_path)}")
+        print(f"  {os.path.relpath(alb, REPO)}: {len(info)} layer(s) -> {os.path.basename(layers_path)} + albedo.png (residual) + albedo_marigold.png")
         for i, (kind, n, seed) in enumerate(info):
             print(f"     ch{i}: {kind:8s} px={n} seed={seed}")
     tail = f" ({skipped} already split — use --force to re-split)" if skipped else ""

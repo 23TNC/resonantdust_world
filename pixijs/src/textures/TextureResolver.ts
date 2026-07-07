@@ -23,7 +23,7 @@
 //! It composes, not owns: each LOD size packs into its own {@link LodPool}; loads are
 //! deduped so a `(stem, size)` is fetched at most once.
 
-import { ImageSource, Texture, type Renderer } from "pixi.js";
+import { ImageSource, Rectangle, Texture, type Renderer } from "pixi.js";
 import { LodPool } from "./LodPool";
 import { getLod, putLod } from "./previewCache";
 import { LOD_SIZES, lodUrl, pickLodForSize, type TexMap } from "./lod";
@@ -97,6 +97,11 @@ export class TextureResolver {
   private readonly packedHash = new Map<string, string>();
   /** In-flight loads, deduped so a `(stem, map, size)` is fetched at most once. */
   private readonly pending = new Set<string>();
+  /** Linked-atlas cell sub-frames, keyed first by the packed atlas texture they view into
+   *  (a {@link WeakMap} — an entry dies with its base texture, so a re-master that drops the
+   *  packed LODs drops these too) then by cell index. Lets a bake reuse a cell's UV sub-frame
+   *  instead of allocating one each time. */
+  private readonly cellFrames = new WeakMap<Texture, Map<number, Texture>>();
 
   /** Target on-screen px for one tile (`64 × zoom`) — the LOD the resolver aims for. */
   private targetPx = BASE_LOD_PX;
@@ -165,7 +170,7 @@ export class TextureResolver {
    *  untextured tint-rect prim), or a `map` the manifest says this stem lacks, resolves
    *  straight to geo — the caller applies that channel's flat fallback. Cheap enough to
    *  call every bake: the hot path is a couple of map lookups. */
-  resolve(stem: string | undefined, map: TexMap = "albedo"): ResolvedTexture {
+  resolve(stem: string | undefined, map: TexMap = "albedo", cell?: number): ResolvedTexture {
     if (!stem || !this.root) return { texture: this.white, geo: true };
 
     // Only stems the manifest lists are requestable — an unlisted stem stays on geo
@@ -177,7 +182,11 @@ export class TextureResolver {
 
     const key = mapKey(stem, map);
     const cap = entry.maxSize;
-    let desired = pickLodForSize(Math.min(this.targetPx, cap));
+    // A LINKED atlas packs cols×rows cells into ONE texture: to render a cell at ~targetPx
+    // the whole atlas must be fetched at targetPx × the grid's larger axis. Scale the target
+    // up so a cell resolves crisp rather than 1/cols of the on-screen size.
+    const gridFactor = entry.grid ? Math.max(entry.grid[0], entry.grid[1]) : 1;
+    let desired = pickLodForSize(Math.min(this.targetPx * gridFactor, cap));
     if (desired > cap) desired = LOD_SIZES.filter((s) => s <= cap).pop() ?? LOD_SIZES[0];
     const loaded = this.packed.get(key);
 
@@ -190,9 +199,41 @@ export class TextureResolver {
 
     if (loaded && loaded.size > 0) {
       const best = this.bestLoaded(loaded, desired);
-      if (best) return { texture: best, geo: false };
+      if (best) {
+        // A gridded stem with a chosen cell bakes a UV sub-frame of the atlas, not the whole
+        // sheet; an ordinary stem (or a linked prim with no cell yet) bakes the texture as-is.
+        if (entry.grid && cell != null) return { texture: this.cellFrame(best, cell, entry.grid, entry.pad), geo: false };
+        return { texture: best, geo: false };
+      }
     }
     return { texture: this.white, geo: true };
+  }
+
+  /** A cached UV sub-frame of a packed linked-atlas texture for `cell` (row-major, 0-based),
+   *  trimmed by the manifest inset `pad` so a downscale can't bleed a neighbour cell across a
+   *  cell edge. `base.frame` is the atlas's region on its pool page; the sub-frame narrows it
+   *  to the cell's inset rect. Cached per (base texture, cell) via {@link cellFrames}. */
+  private cellFrame(base: Texture, cell: number, grid: [number, number], pad?: [number, number]): Texture {
+    let byCell = this.cellFrames.get(base);
+    if (!byCell) this.cellFrames.set(base, (byCell = new Map()));
+    const hit = byCell.get(cell);
+    if (hit) return hit;
+
+    const [cols, rows] = grid;
+    const [pu, pv] = pad ?? [0, 0];
+    const cx = cell % cols;
+    const cy = Math.floor(cell / cols) % rows;
+    // The cell's inset UV rect within the whole atlas [0,1] …
+    const u0 = cx / cols + pu;
+    const v0 = cy / rows + pv;
+    const uw = 1 / cols - 2 * pu;
+    const vh = 1 / rows - 2 * pv;
+    // … projected onto the atlas's frame on its pool page.
+    const f = base.frame;
+    const rect = new Rectangle(f.x + u0 * f.width, f.y + v0 * f.height, uw * f.width, vh * f.height);
+    const t = new Texture({ source: base.source, frame: rect });
+    byCell.set(cell, t);
+    return t;
   }
 
   /** A manifest change (re-master / new LOD): drop any packed LODs whose hash no
@@ -233,7 +274,12 @@ export class TextureResolver {
     // Aspect is a geometry property — read it off the albedo map (always present).
     const loaded = this.packed.get(mapKey(stem, "albedo"));
     const tex = loaded?.values().next().value as Texture | undefined;
-    return tex && tex.width > 0 ? tex.height / tex.width : 1;
+    let a = tex && tex.width > 0 ? tex.height / tex.width : 1;
+    // A linked atlas's texture aspect is the WHOLE sheet's; one cell is `cols/rows` narrower/
+    // taller, so scale to the cell aspect the caller actually draws.
+    const e = this.manifest.entry(stem);
+    if (e?.grid) a *= e.grid[0] / e.grid[1];
+    return a;
   }
 
   // ── loads ───────────────────────────────────────────────────────────────────
@@ -264,11 +310,13 @@ export class TextureResolver {
         void putLod(stem, size, map, { v: hash, bytes });
       }
 
-      // The `packed` map is a per-material WEIGHT map, not a colour — it must load with
-      // STRAIGHT alpha. Its alpha channel is the (often empty) 4th material coefficient, so
-      // premultiplying (the default) would multiply the RGB weights by that alpha and zero
-      // them wherever the 4th channel is 0. All other maps are colours and stay premultiplied.
-      const raw = map === "packed";
+      // `albedo` (residual base), `layers` (weights), `normal` (vector) and `surface`
+      // (height/ao/coverage) are all DATA maps — their RGB must survive intact. Load them with
+      // STRAIGHT alpha so premultiplying (the default) can't scale their RGB by a non-opaque
+      // alpha (e.g. legacy AO packed in normal.α) and corrupt the reconstruction / vector /
+      // coverage. Nothing reads their alpha anymore (the silhouette lives in surface.B). Only
+      // true colour maps (emissive) stay premultiplied.
+      const raw = map === "layers" || map === "albedo" || map === "normal" || map === "surface";
       const bmp = await createImageBitmap(new Blob([bytes]), raw ? { premultiplyAlpha: "none" } : {});
       // The server clamps to the master; pack under the size we actually got.
       const actualShort = Math.min(bmp.width, bmp.height);

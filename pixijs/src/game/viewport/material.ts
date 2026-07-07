@@ -22,8 +22,9 @@ export type NoiseFieldName = (typeof NOISE_FIELDS)[number];
 /** Sentinel for "no noise field" — the shader treats it as a constant 0.5 (identity). */
 export const NO_NOISE_FIELD = -1;
 
-/** Length of each `vec4[4]` packed-channel uniform array (4 channels × 4 floats). */
-export const PACKED_UNIFORM_LEN = 16;
+/** Length of each `vec4[3]` layer-channel uniform array (3 channels × 4 floats). The 4th
+ *  (alpha) material channel was dropped — the `layers` map is RGB. */
+export const PACKED_UNIFORM_LEN = 12;
 
 /** Resolve a material's `noiseField` name to its atlas row index, or {@link NO_NOISE_FIELD}. */
 export function noiseFieldIndex(name: string): number {
@@ -92,7 +93,8 @@ export class MaterialRegistry {
     const chA = new Float32Array(PACKED_UNIFORM_LEN);
     const chB = new Float32Array(PACKED_UNIFORM_LEN);
     if (!channels) return { chA, chB };
-    for (let i = 0; i < 4 && i < channels.length; i++) {
+    // 3 layer channels (RGB); any 4th binding on a prim is ignored (the `layers` map is RGB).
+    for (let i = 0; i < 3 && i < channels.length; i++) {
       const c = channels[i];
       const base = i * 4;
       chA[base] = ((c.tint >> 16) & 0xff) / 255;

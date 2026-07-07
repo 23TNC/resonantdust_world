@@ -94,7 +94,7 @@ scheme reads as contradictory:
 
 1. **Lifecycle map** — *what a file is in the art pipeline*: `template` (pose
    reference) → `sprite` (raw gen art) → `diffuse` (mastered) → `albedo` /
-   `normal` / `emissive` / `packed` / … (derived). Today this is spread across
+   `normal` / `surface` / `layers` / `emissive` / … (derived). Today this is spread across
    three sibling **source trees** `textures/{master,sprites,templates}/`. **This
    axis is what we collapse:** the lifecycle becomes the *filename* inside one
    folder, and the three source trees merge into one.
@@ -126,9 +126,10 @@ textures/<category>.<subcategory>/<kind>.<subkind>/<id>.<dir>.<layer>/<variant>/
   `layer` (integer). All variants of one pose live under here.
 - `<variant>/` — one variant = one **co-located map set**. `variant` is an
   integer (a sequential index, or a generation seed — see below).
-- `<map>.<ext>` — the file itself: `albedo.png`, `normal.png`, `diffuse.png`,
-  `emissive.png`, `packed.png`, `packed_residual.png`, `albedo_residual.png`,
-  `albedo_shading.png`, `sprite.png`, `template.png`, `prompt.txt`, …
+- `<map>.<ext>` — the file itself: `albedo.png` (the residual render base), `normal.png`,
+  `surface.png`, `layers.png`, `diffuse.png`, `emissive.png`, `albedo_marigold.png` (the
+  preserved de-lit source), `albedo_residual.png`, `albedo_shading.png`, `sprite.png`,
+  `template.png`, `prompt.txt`, …
 
 The `<group>` segment (`master`/`sprites`/`templates`) is **gone** — the map
 filename already distinguishes lifecycle stage, and every map name is distinct,
@@ -140,15 +141,33 @@ so there are no collisions when they share a folder.
 |---|---|---|
 | tree albedo | `master/world/conifer/1.s.0.1.albedo.png` | `world/conifer/1.s.0/1/albedo.png` |
 | tree normal | `master/world/conifer/1.s.0.1.normal.png` | `world/conifer/1.s.0/1/normal.png` |
-| wall (linked) | `master/linked/wall.smooth/1.l.0.0.albedo.png` | `linked/wall.smooth/1.l.0/0/albedo.png` |
+| wall (linked, whole atlas) | `master/linked/wall.smooth/1.l.0.0.albedo.png` | `linked/wall.smooth/1.l.0/1/albedo.png` (+ `atlas.json`) |
 | linked base (sparse) | `master/linked/rock.default/1.diffuse.png` | `linked/rock.default/1.s.0/1/diffuse.png` |
 | wolf variant | `master/pawns.animal/wolf/1.n.0.124.albedo.png` | `pawns.animal/wolf/1.n.0/124/albedo.png` |
 | human master | `master/pawns.human/male.fit/1.e.0.0.diffuse.png` | `pawns.human/male.fit/1.e.0/0/diffuse.png` |
 
 The leaf folder is the whole co-located set — e.g.
-`pawns.animal/wolf/1.n.0/124/` holds `sprite.png`, `diffuse.png`, `albedo.png`,
-`normal.png`, `emissive.png`, `albedo_residual.png`, `packed.png`,
-`packed_residual.png` — everything that used to be `1.n.0.124.*.png`.
+`pawns.animal/wolf/1.n.0/124/` holds `sprite.png`, `diffuse.png`, `albedo.png` (residual),
+`normal.png`, `surface.png`, `layers.png`, `albedo_marigold.png`, `emissive.png`,
+`albedo_residual.png` — everything that used to be `1.n.0.124.*.png`.
+
+### Linked (autotile) kinds — ONE atlas, not split cells
+
+A `linked/*` kind (e.g. `wall.smooth`) is authored as a `GRID_COLS×GRID_ROWS`
+autotile atlas and is now **held whole**: `bin/art`'s `_grid_slice_id` writes the
+entire atlas — at source size, no per-cell crop — to the single leaf
+`linked/<kind>/1.l.0/1/<map>.png` (diffuse keyed + edge-bled; data maps verbatim).
+The downstream map generators (de-light / normal / emissive / `split_layers`) then
+run once over the continuous atlas.
+
+Beside the maps sits a sidecar **`atlas.json`** = `{"cols","rows","padU","padV"}`.
+The server's manifest scan folds it into the stem's row as `grid: [cols, rows]` +
+`pad: [padU, padV]` (a normalized **per-cell inset** — `padU = f/cols`). The client
+holds the atlas as **one texture** (a single GPU upload) and samples a cell by a UV
+sub-frame `u0 = cx/cols + padU`, `u1 = (cx+1)/cols − padU` (same for v); the inset
+trims each cell's outer margin so a server LOD downscale can't bleed a neighbour cell
+across a cell edge. Cell **selection** by neighbour context is Phase 2 — the canonical
+cell 0 renders for now. (Superseded the earlier per-cell `1.l.0/<1..16>/` split.)
 
 ### Loose files that do NOT fold into a leaf
 

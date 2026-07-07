@@ -54,10 +54,11 @@ R2_AWSCLI_IMAGE="${R2_AWSCLI_IMAGE:-amazon/aws-cli:latest}"
 # The diffuse is `diffuse.png` (written by remaster); its derived maps are `albedo.png`
 # (de-lit, Marigold-IID) and `normal.png` (Laigter), in the SAME leaf. `maps` also
 # emits Marigold's non-diffuse term `albedo_residual.png` and gates it into
-# `emissive.png` (the shipped self-lit glow). `--split_layer` adds two more from the
-# albedo: `packed.png` (channel-packed tint materials) + `packed_residual.png` (the
-# albedo minus those materials — NOT the same as albedo_residual). So the diffuse is
-# just the `diffuse.png` member of the leaf.
+# `emissive.png` (the shipped self-lit glow), plus `surface.png` (R=height, G=ao,
+# B=coverage — the client's one silhouette source). `--split_layer` then decomposes
+# `albedo.png`: the residual REPLACES `albedo.png` (the render base), `layers.png`
+# (RGB per-material weights) holds the tints, and the de-lit source is preserved as
+# `albedo_marigold.png`. So the diffuse is just the `diffuse.png` member of the leaf.
 
 # Print (NUL-separated, sorted) every DIFFUSE sprite under DIR — the variant-leaf
 # `diffuse.png` files (folder-per-variant layout). The single source of truth for
@@ -142,14 +143,25 @@ _pow2_box() {
   if (( w <= h )); then echo "$short $long"; else echo "$long $short"; fi
 }
 
-# Fixed-grid ("linked") categories: their sheets are autotile atlases cut into a
-# fixed GRID_COLS×GRID_ROWS grid rather than blob-detected — the cell size is
-# DERIVED (atlas width/GRID_COLS × height/GRID_ROWS), not a fixed pixel count, so
-# a 320² and a 640² atlas both yield the same 16-cell set. Space-separated BASE
-# category names (subcategory suffix stripped before matching). See _grid_slice_id.
+# Fixed-grid ("linked") categories: their sheets are autotile atlases held WHOLE as
+# one master atlas (the client samples a cell by UV), on a fixed GRID_COLS×GRID_ROWS
+# grid. The cell size is DERIVED (atlas width/GRID_COLS × height/GRID_ROWS), so a 320²
+# and a 640² atlas both yield the same 16-cell set. Space-separated BASE category names
+# (subcategory suffix stripped before matching). See _grid_slice_id.
 GRID_CATS="linked"
 GRID_COLS=4
 GRID_ROWS=4
+# Per-cell INSET fraction for linked atlases: the client samples only the inner (1−2f) of
+# each cell, treating the outer f-margin as the bleed border a server downscale would
+# otherwise pull a neighbour cell across. Recorded PER-ATLAS (normalized: padU=f/cols,
+# padV=f/rows) in the atlas.json sidecar the server folds into the manifest — so padding is
+# variable per kind, carried by metadata, never baked into the client.
+#
+# DEFAULT 0: the linked source art already carries its own built-in padding, so the full
+# cell is safe to sample. Override per authoring run when a kind needs a real inset, e.g.
+# `GRID_INSET_FRAC=0.03 bin/art remaster linked/<kind>`. (ADDING padding — growing the atlas
+# with gutters — is a separate slice/resize/pack tool, not this inset path.)
+GRID_INSET_FRAC=${GRID_INSET_FRAC:-0}
 # True if base category CAT (a bare or `.<subcategory>` name) is a fixed-grid category.
 _is_grid_cat() {
   case " $GRID_CATS " in *" $(_strip_int_suffix "$1") "*) return 0 ;; *) return 1 ;; esac
@@ -765,6 +777,33 @@ _tilt_kind_normals() {  # kind tilt zkeep
   done < <(_find_diffuse "$MASTER_DIR/$kind")
 }
 
+# Assemble the per-leaf surface.png of KIND, in place — the client's single coverage channel.
+#   R = 0            height (reserved; unused by the current wedge-shadow lighting)
+#   G = occlusion    ambient occlusion (white/1 = none when no occlusion.png)
+#   B = diffuse α    coverage/transparency, STRAIGHT (0 outside the object)
+# NO stored alpha: data in a source alpha channel fights the client's upload-premultiply + the
+# gate's on-demand downscale. The client DERIVES presence from B (smoothstep) and premultiplies
+# at bake, so the composite carries A = presence and recovers ao = G/A, transparency = B/A,
+# presence = A. Every bake (albedo/normal/depth/shadow) keys its coverage off this B — the one
+# silhouette source of truth. See pixijs surfaceBakeShader.ts / lightingShader.ts.
+_surface_kind() {  # kind
+  local kind=$1 src surf occ r g b
+  while IFS= read -r -d '' src; do
+    surf=$(_map_path "$src" surface)
+    occ=$(_map_path "$src" occlusion)
+    r=$(mktemp --suffix=.png); g=$(mktemp --suffix=.png); b=$(mktemp --suffix=.png)
+    convert "$src" -alpha off -fill black -colorize 100 -colorspace Gray "$r"   # R = 0 (height)
+    if [[ -f "$occ" ]]; then
+      convert "$occ" -alpha off -colorspace Gray "$g"                           # G = occlusion
+    else
+      convert "$src" -alpha off -fill white -colorize 100 -colorspace Gray "$g" # G = 1 (no AO)
+    fi
+    convert "$src" -alpha extract -colorspace Gray "$b"                         # B = diffuse alpha
+    convert "$r" "$g" "$b" -combine -colorspace sRGB -alpha off -strip "$surf"
+    rm -f "$r" "$g" "$b"
+  done < <(_find_diffuse "$MASTER_DIR/$kind")
+}
+
 # Resolve the tri-state tilt choice for KIND. Explicit on/off wins; otherwise default ON
 # for standing objects and OFF for grid ("linked") tiles — their normals are already in the
 # +Z-up ground frame and pitching them would light the floor sideways. Echoes 1 or 0.
@@ -1136,14 +1175,14 @@ cmd_emissive() {
 # Remove co-located maps of the given TYPE(s) for KIND from master/,
 # leaving the diffuse and the other maps intact — e.g. drop emissive maps
 # generated for testing. TYPE is a map type (emissive|normal|albedo|albedo_residual|
-# albedo_shading|packed|packed_residual|occlusion|specular); pass several to remove
-# several. The diffuse is refused (it's the source — there's no bare N.png to fall
-# back on).
+# albedo_shading|albedo_marigold|layers|surface|occlusion|specular); pass several to
+# remove several. The diffuse is refused (it's the source — there's no bare N.png to
+# fall back on).
 cmd_clean() {
   local kind=${1:-}; shift || true
   local types=("$@")
   if [[ -z "$kind" || ${#types[@]} -eq 0 ]]; then
-    echo "usage: art clean <kind> <type> [type...]   (type: emissive|normal|albedo|albedo_residual|albedo_shading|packed|packed_residual|occlusion|specular)" >&2
+    echo "usage: art clean <kind> <type> [type...]   (type: emissive|normal|albedo|albedo_residual|albedo_shading|albedo_marigold|layers|surface|occlusion|specular)" >&2
     return 1
   fi
   local src_root="$MASTER_DIR/$kind"
@@ -1503,20 +1542,18 @@ _ids_in() {  # dir
 # three blobs → 124,125,126); the `sprite` map is written out as `diffuse`. Only
 # diffuse-family maps are keyed + edge-bled; other maps ride the rects verbatim.
 # Returns the sprite count written in LAST_TOTAL.
-# Slice one fixed-grid ("linked") id into a GRID_COLS×GRID_ROWS grid. The DIFFUSE
-# atlas (<id>.diffuse.png) is cut row-major into GRID_COLS×GRID_ROWS cells sized
-# W/GRID_COLS × H/GRID_ROWS (cell size derived from the atlas, not fixed); EVERY
-# cell — including blank (fully transparent) ones — becomes a numbered variation,
-# so a cell's position IS its variation index and the autotile neighbour-bitmask
-# lookup stays aligned. Any co-located authored map atlas (<id>.normal.png,
-# <id>.overlay.png, … — see GRID_MAPS) is COPIED ACROSS the identical grid into
-# <id>.l.0.<variant>.<map>.png (l = linked/atlas direction); only the diffuse defines
-# the layout. The DIFFUSE is
-# KEYED first (0xFF00FF magenta cutout + despill, via _key_stack) and its cells
-# edge-bled, exactly like the blob path — so a magenta-backed linked atlas comes
-# out transparent. Every OTHER map rides the grid VERBATIM (keying its data by
-# colour would corrupt it); no outline or laigter derivation. Part is always 0.
-# Diffuse count → LAST_TOTAL.
+# Master one fixed-grid ("linked") id as a SINGLE atlas leaf. The DIFFUSE atlas
+# (<id>.diffuse.png) and any co-located authored map atlas (<id>.normal.png,
+# <id>.overlay.png, … — see GRID_MAPS) are written WHOLE — at source size, no per-cell
+# crop — into the one leaf <id>.l.0/1/<map>.png (l = linked/atlas direction). The client
+# holds this as one texture and samples a cell by UV; the GRID_COLS×GRID_ROWS grid and a
+# per-cell INSET (GRID_INSET_FRAC — the safe inner copy rect that keeps a server downscale
+# from bleeding neighbour cells across a cell edge) are recorded in a sidecar atlas.json
+# the server folds into the manifest. The DIFFUSE is KEYED (0xFF00FF magenta cutout +
+# despill, via _key_stack) then edge-bled ONCE over the whole atlas (so fringes on internal
+# alpha edges — holes/windows within a cell — can't tint under a downscale; cell-boundary
+# bleed is handled by the client's inset, not here). Every OTHER map rides VERBATIM (keying
+# its data by colour would corrupt it). One leaf → LAST_TOTAL=1.
 _grid_slice_id() {  # src_dir id out_cat out_kind
   local src_dir=$1 id=$2 out_cat=$3 out_kind=$4
   local diffuse="$src_dir/$id.diffuse.png"
@@ -1525,19 +1562,19 @@ _grid_slice_id() {  # src_dir id out_cat out_kind
   fi
   local cols=$GRID_COLS rows=$GRID_ROWS dims w h
   dims=$(identify -format '%w %h' "$diffuse"); w=${dims% *}; h=${dims#* }
-  # Fixed cols×rows grid; the cell size is the atlas size divided by the grid.
+  # The client divides the atlas into cols×rows cells by FRACTION; an atlas that doesn't
+  # divide evenly still works (cell UVs are just approximate), but warn.
   if (( w % cols != 0 || h % rows != 0 )); then
-    echo "art: $id.diffuse.png is ${w}x${h}, not evenly divisible by the ${cols}x${rows} grid — edge cells will clip" >&2
+    echo "art: $id.diffuse.png is ${w}x${h}, not evenly divisible by the ${cols}x${rows} grid — cell UVs will be approximate" >&2
   fi
-  local cw=$(( w / cols )) ch=$(( h / rows )) ncount=$(( cols * rows ))
-  if (( cw == 0 || ch == 0 )); then echo "art: $id.diffuse.png ${w}x${h} too small for a ${cols}x${rows} grid (skipped)" >&2; LAST_TOTAL=0; return 0; fi
 
-  # clean this id's existing output leaves in the kind dir (all variants/maps; re-run safe).
+  # clean this id's existing output leaves in the kind dir (drops any legacy per-cell
+  # variant dirs; re-run safe).
   rm -rf "$MASTER_DIR/$out_cat/$out_kind/$id".*/ 2>/dev/null || true
 
   # gather this id's source map atlases: the diffuse + any <id>.<map>.png sibling
-  # (normal, overlay, …), each sliced on the SAME grid. A purely-numeric middle
-  # segment (a legacy integer layer) is skipped — grid sources are single-layer.
+  # (normal, overlay, …). A purely-numeric middle segment (a legacy integer layer) is
+  # skipped — grid sources are single-layer.
   local -a matlases=() mtypes=()
   local f mt
   for f in "$src_dir/$id".*.png; do
@@ -1547,39 +1584,29 @@ _grid_slice_id() {  # src_dir id out_cat out_kind
     matlases+=("$f"); mtypes+=("$mt")
   done
 
-  local outdir="$MASTER_DIR/$out_cat/$out_kind"; mkdir -p "$outdir"
-  local total=0 mi
+  local outdir="$MASTER_DIR/$out_cat/$out_kind/$id.l.0/1"; mkdir -p "$outdir"
+  local mi
   for mi in "${!matlases[@]}"; do
     local atlas=${matlases[$mi]} mtype=${mtypes[$mi]}
-    # Every map must share the diffuse's grid; warn + skip a mismatched atlas.
-    local md mw mh; md=$(identify -format '%w %h' "$atlas"); mw=${md% *}; mh=${md#* }
-    if (( mw != w || mh != h )); then
-      echo "art: $id.$mtype.png is ${mw}x${mh}, not the diffuse's ${w}x${h} — skipped" >&2; continue
-    fi
-    # One convert per atlas: image 0 is the sheet (for the diffuse, the KEYED
-    # sheet — the key stack reduces to a single keyed image 0). Each group crops
-    # one cell in reading order to its own output and drops it, leaving 0 intact.
-    local cargs=( "$atlas" ) douts=() row col k=0 variant x y out
-    [[ "$mtype" == diffuse ]] && { _key_stack "$atlas"; cargs+=( "${KEY_STACK[@]}" ); }
-    for (( row=0; row<rows; row++ )); do
-      for (( col=0; col<cols; col++ )); do
-        variant=$(( k + 1 )); x=$(( col * cw )); y=$(( row * ch ))
-        out="$outdir/$id.l.0/$variant/$mtype.png"; mkdir -p "$(dirname "$out")"
-        cargs+=( \( -clone 0 -gravity None -crop "${cw}x${ch}+${x}+${y}" +repage -strip -write "$out" +delete \) )
-        douts+=("$out")
-        k=$(( k + 1 ))
-      done
-    done
-    convert "${cargs[@]}" null:
-    # Edge-bleed the keyed diffuse cells so the cutout can't bleed a fringe on any
-    # downstream downscale (mirrors _emit_crops); other maps are left untouched.
+    local out="$outdir/$mtype.png"
     if [[ "$mtype" == diffuse ]]; then
-      for out in "${douts[@]}"; do _edge_bleed "$out"; done
-      total=$ncount
+      # Key the whole atlas (magenta → transparent), then edge-bleed it once.
+      _key_stack "$atlas"
+      convert "$atlas" "${KEY_STACK[@]}" -strip "$out"
+      _edge_bleed "$out"
+    else
+      convert "$atlas" -strip "$out" # data map: verbatim
     fi
   done
-  echo "    id $id: ${cols}x${rows} grid @ ${cw}x${ch}px = $ncount cell(s) × ${#matlases[@]} map(s) [${mtypes[*]}]"
-  LAST_TOTAL=$total
+
+  # Sidecar the server folds into the manifest: grid + normalized per-cell inset.
+  local pu pv
+  read -r pu pv < <(awk -v f="$GRID_INSET_FRAC" -v c="$cols" -v r="$rows" \
+    'BEGIN{ printf "%.6f %.6f", f/c, f/r }')
+  printf '{"cols":%d,"rows":%d,"padU":%s,"padV":%s}\n' "$cols" "$rows" "$pu" "$pv" > "$outdir/atlas.json"
+
+  echo "    id $id: atlas ${w}x${h} → 1.l.0/1 (${cols}x${rows} cells, inset ${GRID_INSET_FRAC}) × ${#matlases[@]} map(s) [${mtypes[*]}]"
+  LAST_TOTAL=1
 }
 
 # Normalize ONE grid-kind source dir so its DIFFUSE atlas is the canonical
@@ -2008,7 +2035,7 @@ cmd_remaster() {
   if [[ -z "$path" ]]; then
     echo "usage: art remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--split_layer N] [--size PX]" >&2
     echo "       or pass any as a flag, e.g.: art remaster <path> --size 128   (= split [+ outline] + maps + channel-pack [+ scale])" >&2
-    echo "       --split_layer N (default 3) channel-packs N tintable materials into R/G/B (0 = off; skipped for grid tiles; N=4 puts the 4th in alpha, which makes packed.png view transparent)." >&2
+    echo "       --split_layer N (default 3, max 3) channel-packs N tintable materials into layers.png R/G/B; the residual becomes albedo.png, de-lit preserved as albedo_marigold.png (0 = off; skipped for grid tiles)." >&2
     echo "       --size PX scales masters to PX on the short axis (default: native); maps derive at FULL res, then downscale (sources kept full-res)." >&2
     echo "       normal engine defaults to laigter; --marigold overrides it. albedo=Marigold-IID." >&2
     echo "       depth is NOT generated (client integrates it from the normal). See 'art help'." >&2
@@ -2034,11 +2061,11 @@ cmd_remaster() {
   cmd_maps "$SPLIT_TARGET" "$preset" "$detail" "$detail_radius" "$strength" "$engine" "${tilt_args[@]}" || return 1
 
   # Channel-pack the just-made albedo(s) into up to `--split_layer` tintable materials:
-  # <base>.packed.png (per-material shading) + <base>.packed_residual.png (outline + un-kept
-  # colour). The source albedo is PRESERVED, so it can be re-derived. --force because maps
-  # just regenerated a fresh albedo. Skipped for grid categories (tiles auto-tile; not
-  # per-material tinted) — same gate as the outline. Tune with `art split_layers` directly
-  # (--group-threshold, --min-region, --outline-rim, --blend-radius, …); see 'art help'.
+  # <base>.layers.png (per-material weights, RGB). The residual REPLACES <base>.albedo.png
+  # (the render base) and the de-lit source is preserved as <base>.albedo_marigold.png.
+  # --force because maps just regenerated a fresh albedo (split reads THAT, re-preserving
+  # marigold). Skipped for grid categories (tiles auto-tile; not per-material tinted) — same
+  # gate as the outline. Tune with `art split_layers` directly; see 'art help'.
   if (( split_layer > 0 )) && ! _is_grid_cat "${path%%/*}"; then
     command -v python3 >/dev/null || { echo "art: channel-pack (--split_layer) needs python3" >&2; return 1; }
     RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/split_layers.py" "$MASTER_DIR/$SPLIT_TARGET" --channels "$split_layer" --force || return 1
@@ -2196,7 +2223,12 @@ cmd_maps() {
   if [[ "$ao" == 1 ]]; then
     cmd_ao "$src_root" --pack-only || return 1
   fi
-  echo "art: maps for $kind — normal(+AO in alpha) + albedo + albedo_residual co-located under $src_root/ (emissive deferred)"
+  # Surface map DEAD LAST: pack R=height(0) / G=occlusion / B=diffuse-alpha into surface.png —
+  # the client's one coverage source (presence + transparency + ao). Runs after occlusion.png
+  # exists (if --ao); degrades to G=1 (no occlusion) otherwise.
+  echo "art: maps [$kind] surface (R=height, G=ao, B=coverage) ..."
+  _surface_kind "$kind" || return 1
+  echo "art: maps for $kind — normal + albedo + albedo_residual + surface co-located under $src_root/ (emissive deferred)"
 }
 
 # Count the display variations in KINDDIR: unique sprite stems carrying a colour
@@ -2652,39 +2684,40 @@ commands:
                            yellow eyes" --negative "brown" --seed 555 --llm
                            reuse: art generate --from pawns/wolf --prompt 555 --seed 123
                            one dir: art generate --from pawns/wolf --prompt 555 --seed 555 --dir s
-  split_layers <path...> [--channels 4] [--threshold 0.15] [--group-threshold 0.10] [--edge 42] [--min-region 25] [--outline-v 0.18] [--outline-rim 0.35] [--blend-radius 10] [--force]
+  split_layers <path...> [--channels 3] [--threshold 0.15] [--group-threshold 0.10] [--edge 42] [--min-region 25] [--outline-v 0.18] [--outline-rim 0.35] [--blend-radius 10] [--force]
                            (standalone form of remaster --split_layer; path resolves
                             textures-relative like remaster, e.g. pawns.animal/wolf)
                            Decompose flat (de-lit) albedo(s) into a channel-packed
                            tint map. For each albedo.png (file or dir walk): DIVIDE into
                            regions (--edge + --threshold), CLUSTER region-mean colours
                            into materials (--group-threshold), ABSORB specks spatially
-                           (--min-region), then UNMIX up to --channels materials into
-                           <base>.packed.png (RGBA = per-material coefficients; a pixel
-                           can overlap two channels so gradients blend) and write the
-                           leftover to <base>.packed_residual.png. The source albedo is
-                           PRESERVED. Renderer: out = packed_residual + packed.R*tint0 +
-                           .G*tint1 + .B*tint2 + .A*tint3 — under the identity tint (each
-                           material's base colour) it reconstructs the albedo exactly.
-                           Idempotent — re-runs re-derive both maps (--force to overwrite).
-                           e.g. art split_layers pawns.animal/wolf
+                           (--min-region), then UNMIX up to --channels (max 3) materials
+                           into <base>.layers.png (RGB = per-material coefficients; a pixel
+                           can overlap two channels so gradients blend) and the leftover
+                           BECOMES <base>.albedo.png (the residual = the render base);
+                           the de-lit source is preserved as <base>.albedo_marigold.png.
+                           Renderer: out.rgb = albedo(residual) + layers.R*tint0 +
+                           .G*tint1 + .B*tint2 (identity tint = each material's base colour
+                           → reconstructs the de-lit albedo exactly); alpha comes from
+                           surface.B. Skips already-split leaves (marigold present) unless
+                           --force. e.g. art split_layers pawns.animal/wolf
   remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--split_layer N] [--size PX]
                            THE make-masters command: runs `split`, optionally
                            `outline`, then `maps` in one pass, so master ends up
                            with the diffuse crops AND their derived maps —
-                           N.normal.png + N.albedo.png + N.albedo_residual.png
-                           (and, with --split_layer, N.packed.png +
-                           N.packed_residual.png). Split alone leaves
+                           N.normal.png + N.albedo.png + N.albedo_residual.png +
+                           N.surface.png (and, with --split_layer, N.layers.png +
+                           N.albedo_marigold.png). Split alone leaves
                            diffuse-only. `maps` runs only on the kind `split` touched.
                            <path> resolves master-relative (<cat> | <cat>/<kind> |
                            <cat>/<sheet>.png | …), same as `split`.
-                           --split_layer N (default 3; 0 = off; skipped for grid tiles):
-                           after maps, channel-pack each albedo into N tintable materials
-                           — <base>.packed.png (per-material shading in R/G/B[/A]) +
-                           <base>.packed_residual.png (outline + un-kept colour), leaving
-                           the source albedo intact (tint-at-render: out = packed_residual
-                           + packed.R*t0 + .G*t1 + .B*t2). N=4 puts the 4th material in
-                           alpha (packed.png then views transparent). Tune the split via
+                           --split_layer N (default 3, max 3; 0 = off; skipped for grid
+                           tiles): after maps, channel-pack each albedo into N tintable
+                           materials — <base>.layers.png (per-material shading in R/G/B) —
+                           and the residual REPLACES <base>.albedo.png as the render base,
+                           the de-lit source preserved as <base>.albedo_marigold.png
+                           (tint-at-render: out.rgb = albedo(residual) + layers.R*t0 +
+                           .G*t1 + .B*t2; alpha from surface.B). Tune the split via
                            \`art split_layers\` directly. --size PX scales the finished
                            masters to PX on the short axis (maps derive at full res first).
                            [gap] (blob-merge px, default 4) [radius] (despill rim
@@ -2910,11 +2943,11 @@ cmd_generate() {
 }
 
 cmd_split_layers() {
-  # Decompose a flat (de-lit) albedo into a channel-packed RGBA tint map plus a
-  # separate <base>.packed_residual.png, leaving the source albedo intact (re-derivable).
-  # Clusters materials by chroma (neutral coat = one layer, saturated accents by
-  # hue), outline excluded. Renderer:
-  # out = packed_residual + packed.R*tint0 + packed.G*tint1 + packed.B*tint2 + packed.A*tint3.
+  # Decompose a flat (de-lit) albedo into a channel-packed RGB tint map (<base>.layers.png)
+  # plus the residual, which BECOMES <base>.albedo.png (the render base); the de-lit source
+  # is preserved as <base>.albedo_marigold.png. Clusters materials by chroma (neutral coat =
+  # one layer, saturated accents by hue), outline excluded. Renderer:
+  # out.rgb = albedo(residual) + layers.R*tint0 + layers.G*tint1 + layers.B*tint2 (alpha from surface.B).
   # Delegates to lib/split_layers.py (python3 + pillow/numpy).
   command -v python3 >/dev/null || { echo "art split_layers: python3 not found" >&2; exit 1; }
   RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/split_layers.py" "$@"

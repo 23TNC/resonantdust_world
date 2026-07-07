@@ -264,7 +264,7 @@ async fn serve_preview(State(state): State<AppState>, headers: HeaderMap, Path(s
 }
 
 /// `GET /textures/lod/{hash}/{size}/{map}/{*stem}` — one LOD (short axis `size` px) of a
-/// stem's `map` (albedo|normal|depth|emissive), derived from that map's master and clamped
+/// stem's `map` (albedo|normal|layers|surface|…), derived from that map's master and clamped
 /// to it. The `hash` is validated against the current master: a stale (re-mastered) or
 /// oversize request `404`s, so the client refetches the manifest and retries with the fresh
 /// hash. A stem whose leaf lacks the requested map (e.g. no `normal.png`) is a clean `404`

@@ -54,40 +54,10 @@
     :wall.smooth>
       @define>
         1 &layers set
-        629576290844044 &hash set
-        7 &maps set
-        16 &var_id array
+        1923520204920499 &hash set
+        3 &maps set
+        1 &var_id array
         1 &var_id.0 set
-        1 &var_id.1 set
-        1 &var_id.2 set
-        1 &var_id.3 set
-        1 &var_id.4 set
-        1 &var_id.5 set
-        1 &var_id.6 set
-        1 &var_id.7 set
-        1 &var_id.8 set
-        1 &var_id.9 set
-        1 &var_id.10 set
-        1 &var_id.11 set
-        1 &var_id.12 set
-        1 &var_id.13 set
-        1 &var_id.14 set
-        1 &var_id.15 set
-        16 &var_variant array
+        1 &var_variant array
         1 &var_variant.0 set
-        2 &var_variant.1 set
-        3 &var_variant.2 set
-        4 &var_variant.3 set
-        5 &var_variant.4 set
-        6 &var_variant.5 set
-        7 &var_variant.6 set
-        8 &var_variant.7 set
-        9 &var_variant.8 set
-        10 &var_variant.9 set
-        11 &var_variant.10 set
-        12 &var_variant.11 set
-        13 &var_variant.12 set
-        14 &var_variant.13 set
-        15 &var_variant.14 set
-        16 &var_variant.15 set
         0 &subkinds array

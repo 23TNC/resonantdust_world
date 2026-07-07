@@ -21,10 +21,18 @@ struct Entry {
     hash: String,
     max_size: u32,
     lods: BTreeSet<u32>,
-    /// Which maps (albedo|normal|depth|emissive) have a `<map>.png` leaf on disk. The
+    /// Which maps (albedo|normal|layers|surface|…) have a `<map>.png` leaf on disk. The
     /// client uses this to skip requesting a map that isn't there (no speculative 404).
     /// `albedo` is always present (it's what makes the stem a stem).
     maps: BTreeSet<String>,
+    /// A LINKED (autotile) atlas holds a `cols × rows` cell grid in ONE master texture;
+    /// the client samples a cell by UV rather than fetching a per-cell stem. Present only
+    /// when the leaf carries an `atlas.json` sidecar (`bin/art`'s grid output); `None` for
+    /// an ordinary single-image stem. `pad` is the normalized per-cell inset `[padU, padV]`
+    /// (a fraction of the whole atlas) the client trims off each cell's UV rect so a
+    /// downscale can't bleed a neighbour cell across a cell edge.
+    grid: Option<[u32; 2]>,
+    pad: Option<[f32; 2]>,
 }
 
 struct State {
@@ -55,15 +63,20 @@ impl TextureManifest {
             .entries
             .iter()
             .map(|(stem, e)| {
-                (
-                    stem.clone(),
-                    serde_json::json!({
-                        "hash": e.hash,
-                        "maxSize": e.max_size,
-                        "lods": e.lods.iter().copied().collect::<Vec<u32>>(),
-                        "maps": e.maps.iter().cloned().collect::<Vec<String>>(),
-                    }),
-                )
+                let mut row = serde_json::json!({
+                    "hash": e.hash,
+                    "maxSize": e.max_size,
+                    "lods": e.lods.iter().copied().collect::<Vec<u32>>(),
+                    "maps": e.maps.iter().cloned().collect::<Vec<String>>(),
+                });
+                // A linked-atlas stem carries its cell grid + per-cell inset so the client
+                // can sample a cell by UV; an ordinary stem omits both.
+                if let (Some(grid), Some(pad)) = (e.grid, e.pad) {
+                    let obj = row.as_object_mut().unwrap();
+                    obj.insert("grid".into(), serde_json::json!(grid));
+                    obj.insert("pad".into(), serde_json::json!(pad));
+                }
+                (stem.clone(), row)
             })
             .collect();
         serde_json::json!({ "version": format!("{:016x}", st.version), "textures": textures }).to_string()
@@ -181,12 +194,20 @@ fn scan_masters(tex_root: &Path, entries: &mut BTreeMap<String, Entry>) {
                     .filter(|m| leaf.join(format!("{m}.png")).is_file())
                     .map(|m| m.to_string())
                     .collect();
-                // Hash ALL present map files, not just the albedo — re-mastering `packed` or
+                // Hash ALL present map files, not just the albedo — re-mastering `layers` or
                 // any sibling map must move the hash so the cache-buster URL changes (else a
-                // stale `packed` LOD stays cached under the unchanged albedo hash).
+                // stale `layers` LOD stays cached under the unchanged albedo hash). The
+                // `atlas.json` sidecar (if any) is folded in too, so re-authoring the grid
+                // busts the hash.
                 let Some(hash) = leaf_hash(&leaf, &maps) else { continue };
+                // A `bin/art` linked atlas drops an `atlas.json` beside its maps: the cell
+                // grid + normalized per-cell inset. Absent → an ordinary single-image stem.
+                let (grid, pad) = match read_atlas_meta(&leaf) {
+                    Some((g, p)) => (Some(g), Some(p)),
+                    None => (None, None),
+                };
                 let stem = format!("{cat_name}/{kind_name}/{facing}");
-                entries.insert(stem, Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps });
+                entries.insert(stem, Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps, grid, pad });
             }
         }
     }
@@ -198,7 +219,7 @@ fn dir_name(name: &std::ffi::OsStr) -> Option<String> {
 
 /// A URL-safe content hash for a leaf: FNV-1a over each present map file's `mtime-size`
 /// (sorted by map name for determinism). Moves on any map's rewrite — a re-mastered
-/// `albedo` OR `packed` OR `packed_residual` all bust it, so the client's hash-addressed
+/// `albedo` OR `layers` OR `surface` all bust it, so the client's hash-addressed
 /// caches (HTTP + IndexedDB) never serve stale map bytes.
 fn leaf_hash(leaf: &Path, maps: &BTreeSet<String>) -> Option<String> {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
@@ -210,7 +231,30 @@ fn leaf_hash(leaf: &Path, maps: &BTreeSet<String>) -> Option<String> {
             h = h.wrapping_mul(0x0000_0100_0000_01b3);
         }
     }
+    // Fold the linked-atlas sidecar too (if any), so re-authoring the grid/inset busts the
+    // hash even though it isn't one of the served `<map>.png` files.
+    if let Ok(meta) = std::fs::metadata(leaf.join("atlas.json")) {
+        if let Some(mtime) = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()) {
+            for b in format!("atlas:{:x}-{:x};", mtime.as_secs(), meta.len()).bytes() {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+    }
     Some(format!("{h:x}"))
+}
+
+/// Parse a leaf's `atlas.json` (a `bin/art` linked-atlas sidecar) into `([cols, rows],
+/// [padU, padV])`. `None` when the file is absent or malformed — the stem is then treated
+/// as an ordinary single-image texture. Parsed via `serde_json::Value` (no derive dep).
+fn read_atlas_meta(leaf: &Path) -> Option<([u32; 2], [f32; 2])> {
+    let text = std::fs::read_to_string(leaf.join("atlas.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let cols = v.get("cols")?.as_u64()? as u32;
+    let rows = v.get("rows")?.as_u64()? as u32;
+    let pad_u = v.get("padU")?.as_f64()? as f32;
+    let pad_v = v.get("padV")?.as_f64()? as f32;
+    Some(([cols, rows], [pad_u, pad_v]))
 }
 
 /// FNV-1a over the sorted (stem, hash, lods, maps) — moves on a re-master, a new LOD, or a
@@ -231,6 +275,16 @@ fn version_of(entries: &BTreeMap<String, Entry>) -> u64 {
         }
         for m in &e.maps {
             feed(&mut h, m.as_bytes());
+        }
+        // Fold the linked-atlas grid + inset so authoring/changing it bumps the version
+        // (the client refetches the manifest and re-derives its cell UVs).
+        if let Some(g) = e.grid {
+            feed(&mut h, &g[0].to_le_bytes());
+            feed(&mut h, &g[1].to_le_bytes());
+        }
+        if let Some(p) = e.pad {
+            feed(&mut h, &p[0].to_le_bytes());
+            feed(&mut h, &p[1].to_le_bytes());
         }
     }
     h
@@ -290,6 +344,18 @@ mod tests {
         let v1 = m.version_hex();
         m.note_generated("linked/wall.smooth/s", 32);
         assert_eq!(m.version_hex(), v1);
+
+        // A linked-atlas sidecar (bin/art's grid output) beside the maps adds `grid` + `pad`
+        // to the stem's manifest row and bumps the version; absent, the row omits both.
+        // (Pad values are exact powers of two so they serialize without float noise.)
+        assert!(!m.payload_json().contains("\"grid\""), "no atlas.json → no grid field");
+        let v_pre_atlas = m.version_hex();
+        std::fs::write(leaf.join("atlas.json"), br#"{"cols":4,"rows":4,"padU":0.125,"padV":0.0625}"#).unwrap();
+        assert!(m.refresh(&src), "an atlas.json sidecar is a change");
+        assert_ne!(m.version_hex(), v_pre_atlas, "version bumps when the atlas grid lands");
+        let payload = m.payload_json();
+        assert!(payload.contains("\"grid\":[4,4]"), "grid round-trips: {payload}");
+        assert!(payload.contains("\"pad\":[0.125,0.0625]"), "pad round-trips: {payload}");
 
         std::fs::remove_dir_all(&base).unwrap();
     }

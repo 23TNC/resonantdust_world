@@ -19,11 +19,11 @@ export function texturesRoot(serverBase: string): string {
 /** The texture MAPS a stem can carry, one PNG per map in the same variant leaf. `albedo`
  *  (colour) is mandatory and the default; `normal` (tangent-space normal) and `depth`
  *  (height) are optional — a stem lacking one stays on that channel's flat fallback.
- *  `packed` (per-material weight, RGBA) + `packed_residual` (the leftover after the
- *  weighted materials, RGB) drive the material bake pass (`split_layers` output; see
- *  docs/lighting.md) — a stem lacking them renders its flat albedo unchanged.
- *  Mirrors the server's `textures::MAPS` allowlist. */
-export type TexMap = "albedo" | "normal" | "depth" | "emissive" | "packed" | "packed_residual" | "surface";
+ *  `albedo` is the residual reconstruction BASE (RGB); `layers` (per-material weight, RGB)
+ *  adds the material tints on top; `surface` (R=height, G=ao, B=coverage) is the one silhouette
+ *  source. `split_layers` emits albedo(residual)+layers; a stem lacking `layers` renders its
+ *  albedo unchanged. Mirrors the server's `textures::MAPS` allowlist. */
+export type TexMap = "albedo" | "normal" | "depth" | "emissive" | "layers" | "surface";
 
 /** Zoom bounds (screen px per world px). 1 = tiles at their native 64px; the range
  *  spans two power-of-two steps in each direction. */
