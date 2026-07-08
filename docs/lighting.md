@@ -7,30 +7,42 @@ non-standard projection, and where it should go. Sibling to `docs/art-style.md` 
 ## Where we are (implemented + verified)
 
 A **screen-space deferred** model. `SquareCache` bakes the visible world into one fixed-size
-toroidal composite **per channel** — `albedo`, `normal`, `surface`, `depth` — from a shared prim
-index. The display mesh draws those composites through `LightingShader` (`pixijs/src/game/
+toroidal composite **per channel** — `albedo`, `normal`, `surface`, `zdepth_world` — from a
+shared prim index (plus the screen-space `zdepth_screen` for dynamic shadows). The display mesh draws those composites through `LightingShader` (`pixijs/src/game/
 viewport/lightingShader.ts`), which lights every fragment in one pass. The composites *are* the
 G-buffer; there are no per-object light passes.
 
-### The coverage model (one silhouette source of truth)
+### The NO-ALPHA / opaque model (one silhouette source of truth)
 
-Every masked channel keys its coverage off **one** place — the **surface map's B channel** — so
-silhouettes can't drift between channels (the class of bug that caused halos/speckles/ghost
-shadows before). The surface map is RGB data: **R = height** (reserved; unused by the current
-wedge-shadow lighting), **G = ambient occlusion**, **B = coverage/transparency** (the diffuse
-alpha, straight — 0 outside the object). It carries **no stored alpha**: data in a source alpha
-channel fights the client's upload-premultiply and the gate's on-demand downscale, so coverage is
-*derived* at bake time and premultiplied into each composite. Two derivations:
+**Nothing writes an alpha channel — anywhere.** Every composite is OPAQUE RGB data (`α = 1`),
+and every masked channel keys its silhouette off **one** place — the **surface map's B channel**.
+This is both the anti-drift rule (silhouettes can't diverge between channels — the class of bug
+that caused halos/speckles/ghost shadows) *and* the fix for the stale-map bug: the cache's
+per-slot blit runs as an over-blend, which only replaces **opaque** pixels — a transparent write
+is a no-op that leaves the old pixel behind. When every bake is opaque the blit always replaces,
+so a slot re-baked as ground wipes whatever was there. (Depth used to write *transparent* ground,
+so its stale trees never cleared on pan; making it opaque fixed it — depth is "just another RT".)
 
-- **Soft α** (`surface.B` directly) premultiplies the **albedo** and **normal** bakes — the
-  visual transparency. A thing's edge blends smoothly toward whatever's behind it.
-- **Hard presence** (`smoothstep(surface.B)`) premultiplies the **depth** and **surface** bakes
-  — a semi-transparent pixel still *fully* occupies its cell for occlusion, so a thing's edge
-  never reads as ground (no halo). The lighting pass recovers everything `/A`: `ao = surface.G/A`,
-  presence = `surface.A`, receiver depth = `depth.B/depth.A`, opacity = `albedo.A`.
+The silhouette is a **hard `discard`** on `surface.B` (AA is off — nearest sampling, no mips — so
+there's no soft edge to blend). Discarded fragments keep whatever was baked underneath (ground,
+or a thing behind); kept fragments write opaque data. No premultiply, no `/A` recovery.
 
-The shadow caster silhouette, the `originFrac` trunk-base probe, and the presence gate all read
-`surface.B` — nothing reads albedo-alpha anymore (the albedo map is the RGB residual base).
+Channel layout (all OPAQUE RGB):
+
+- **albedo** — colour: `residual + Σ layersᵢ·jitter(tintᵢ)`. Coverage is **not** baked in.
+- **surface** — **R = presence** (1 where a thing is), **G = ambient occlusion**, **B = alpha**
+  (the coverage/transparency value). Read straight: `presence = R`, `ao = G`, `alpha = B`.
+- **normal** — raw normal vectors (flat-up `(0.5,0.5,1)` for ground / bare cells).
+- **zdepth_world** (renamed from `depth`) — **B = the thing's tile-Y depth**, **R reserved for a
+  cold (static, world-space) shadow**, ground = opaque black. Read straight: `receiverDepth = B`.
+- **zdepth_screen** (renamed from `shadow`, screen-space) — **R = caster tile-Y**, **G = a
+  shadow-present flag** (so a tile-0 caster isn't read as blank). Blanked to opaque black each
+  frame; only shadows draw.
+
+The display shader applies the visual alpha **only at output**: `out = ((albedo +
+layers·tint)·lighting·alpha, alpha)`. Opaque maps in, alpha out — empty cells (`alpha 0`) show the
+background; ground/things (`alpha 1`) draw opaque. The shadow caster silhouette, the `originFrac`
+trunk-base probe, and the presence read all key off `surface.B`.
 
 ### Built (client verified in-browser; the surface-map pipeline needs an asset regen to test)
 

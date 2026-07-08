@@ -116,6 +116,25 @@ fn delete_at(ctx: &ReducerContext, object_id: u64, time_ms: u64) {
     }
 }
 
+/// Delete every version of `object_id` except the one at `keep_valid_at` (its PK).
+/// Used to reset a mover to just its current row before committing a fresh path,
+/// so completed-path history and any superseded future don't accumulate between
+/// the 10-minute GC sweeps — which would bloat every new subscriber's initial
+/// burst and the client's sort/interpolation work.
+pub fn retain_only(ctx: &ReducerContext, object_id: u64, keep_valid_at: u64) {
+    let pks: Vec<u64> = ctx
+        .db
+        .free_things()
+        .object_id()
+        .filter(object_id)
+        .filter(|r| r.valid_at != keep_valid_at)
+        .map(|r| r.valid_at)
+        .collect();
+    for pk in pks {
+        ctx.db.free_things().valid_at().delete(pk);
+    }
+}
+
 /// Delete every version of `object_id`, regardless of time — the remove path.
 pub fn delete_all(ctx: &ReducerContext, object_id: u64) {
     let pks: Vec<u64> = ctx

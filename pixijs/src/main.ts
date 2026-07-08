@@ -6,7 +6,15 @@
 //! a successful login hands off to the world scene (which opens the chat panel).
 //! Game subsystems (content, viewport, cards) are rebuilt on top from here.
 
-import { Application } from "pixi.js";
+import { Application, TextureStyle } from "pixi.js";
+
+// GLOBAL sampling policy (set before ANY texture / RenderTexture is created): NEAREST filtering
+// so nothing ever samples an adjacent texel (the source of the "something sampled next door and
+// broke the shader" bugs), and CLAMP-TO-EDGE addressing (already the Pixi default) so a sample
+// at a texture edge never selects out of bounds. Mips are off by TextureSource default. Any AA
+// we want, we do ourselves in-shader.
+TextureStyle.defaultOptions.scaleMode = "nearest";
+TextureStyle.defaultOptions.addressMode = "clamp-to-edge";
 import { loadFonts } from "./assets/fonts";
 import { SceneManager } from "./scenes/SceneManager";
 import { LoginScene } from "./scenes/login/LoginScene";
@@ -43,7 +51,10 @@ async function main(): Promise<void> {
   await app.init({
     background: 0x101418,
     resizeTo: window,
-    antialias: true,
+    // AA OFF everywhere by mandate: no multisample, no adjacent-pixel sampling. Any AA we
+    // want, we do ourselves in-shader. Textures are sampled nearest with mips off (see the
+    // resolver + RT creation), so nothing bleeds across a silhouette or channel boundary.
+    antialias: false,
     autoDensity: true,
     resolution: window.devicePixelRatio || 1,
     // Force WebGL — the draw-call counter patches the GL context, and the
@@ -217,6 +228,10 @@ async function main(): Promise<void> {
         previewCount: lod.previewCount,
       },
       syncHistory.current() ?? undefined,
+      // Live "sync time" for the main tab: the server clock we believe holds
+      // right now, ticking every frame off the local clock + adopted offset.
+      // Omitted until the clock has an estimate so the row reads "—".
+      client.clockIsSynced() ? client.syncedNowMs() : undefined,
     );
   });
 

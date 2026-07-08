@@ -317,7 +317,7 @@ export class DebugPanel {
 
   // ── Main tab values ─────────────────────────────────────────────
   private readonly mainEnv:        HTMLSpanElement;
-  private readonly mainServerNow:  HTMLSpanElement;
+  private readonly mainSyncTime:   HTMLSpanElement;
   private readonly mainOffset:     HTMLSpanElement;
   private readonly mainFps:        HTMLSpanElement;
   private readonly mainDrawCalls:  HTMLSpanElement;
@@ -407,7 +407,7 @@ export class DebugPanel {
       () => debug.toggleInfo(),
     );
     this.mainEnv       = this.addRow(mainContent, panelText("debugPanel", "environment"));
-    this.mainServerNow = this.addRow(mainContent, panelText("debugPanel", "serverNow"));
+    this.mainSyncTime  = this.addRow(mainContent, panelText("debugPanel", "syncTime"));
     this.mainOffset    = this.addRow(mainContent, panelText("debugPanel", "offset"));
     this.mainFps       = this.addRow(mainContent, panelText("debugPanel", "fps"));
     this.mainDrawCalls = this.addRow(mainContent, panelText("debugPanel", "drawCalls"));
@@ -518,6 +518,7 @@ export class DebugPanel {
       previewCount: number;
     },
     syncStats?: SyncStats,
+    syncTimeMs?: number,
   ): void {
     if (deltaMS > 0) {
       const instant = 1000 / deltaMS;
@@ -535,6 +536,13 @@ export class DebugPanel {
     if (!this.panel.isOpen) return;
 
     this.mainEnv.textContent = currentEnvironment() ?? "—";
+
+    // Sync time — our live estimate of the server's clock *right now*, ticking
+    // smoothly every frame (last server-now + local elapsed = `syncedNowMs()`),
+    // unlike the sync tab's `serverNow`, which is frozen at each capture. "—"
+    // until the clock has an estimate.
+    this.mainSyncTime.textContent =
+      syncTimeMs === undefined ? "—" : formatHourClock(syncTimeMs);
 
     const fpsText = String(Math.round(this.fps));
     const dcText  = String(drawCalls);
@@ -555,7 +563,6 @@ export class DebugPanel {
       const dateNowText   = formatHourClock(syncStats.dateNowMs);
       const serverNowText = formatHourClock(syncStats.serverNowMs);
       const offsetText    = formatSignedMs(syncStats.offsetMs);
-      this.mainServerNow.textContent   = serverNowText;
       this.mainOffset.textContent      = offsetText;
       this.syncDateNow.textContent     = dateNowText;
       this.syncServerNow.textContent   = serverNowText;

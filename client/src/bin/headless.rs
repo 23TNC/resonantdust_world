@@ -108,8 +108,9 @@ fn log_event(event: &Event) {
             info!(zone_id = format!("{zone_id:#010x}"), "zone closed")
         }
         // The web engine emits these for the pixijs debug HUD; the headless driver
-        // has no HUD, so there's nothing to log.
-        Event::CallStats(_) | Event::SubStats { .. } => {}
+        // has no HUD, so there's nothing to log. `ClockSync` fires every couple of
+        // seconds — logging it would drown the smoke test.
+        Event::CallStats(_) | Event::SubStats { .. } | Event::ClockSync(_) => {}
     }
 }
 

@@ -2,10 +2,11 @@
 //! albedo path for a real-tier thing. It reconstructs the display colour from the `albedo` map
 //! (the residual base, RGB) plus the `layers` map (up to 3 per-material weight channels, RGB),
 //! adding per-material hue/chroma VARIATION in OKLab (L held fixed → reads as pigment, not
-//! light). The visual alpha is applied AFTER the reconstruction, from `surface.B` — never
-//! premultiplied into the residual/layers, which would break the additive sum. When a thing has
-//! no `layers` map (`uHasLayers = 0`) the sum is just the residual (== the full albedo). See
-//! `material.ts`, `oklab.ts`, and `docs/lighting.md`.
+//! light). NO-ALPHA model: the composite is OPAQUE colour (`out = (rgb, 1)`); the visual alpha
+//! (coverage) is NOT baked in — the display shader applies `surface.B` itself. The silhouette is
+//! a HARD `discard` on `surface.B` (AA off), so the opaque write lets the slot blit REPLACE
+//! cleanly. When a thing has no `layers` map (`uHasLayers = 0`) the sum is just the residual
+//! (== the full albedo). See `material.ts`, `oklab.ts`, and `docs/lighting.md`.
 //!
 //! A Pixi v8 high-shader Mesh program. We deliberately DROP the stock `textureBit`: it folds the
 //! main texture's atlas matrix into `vUV`, but we sample FOUR differently-framed atlas
@@ -14,7 +15,7 @@
 //! `gl_Position`; `roundPixelsBit` snaps like the sprite path.
 //!
 //! Reconstruction: `out.rgb = residual + Σ layersᵢ·(jitter(tintᵢ) − tintᵢ)` (straight space),
-//! `out.a = surface.B`, re-premultiplied so it composites like a sprite bake.
+//! `out.a = 1` (opaque); the display applies coverage from `surface.B`.
 //!
 //! GOTCHAS (as the lighting shader): a GLSL compile error draws the mesh BLACK with only a
 //! console.error; `packed` is a GLSL reserved word (uniforms are `uLayers…`).
@@ -72,8 +73,9 @@ const materialBitGl = {
       // weighted materials were stripped; each layer re-adds a material's contribution,
       // hue/chroma-jittered. At identity (tintᵢ = split_layers' base, zero swing) this rebuilds
       // the albedo. No layers → residual is already the full albedo.
+      float cov = texture(uSurface, uSurfaceRect.xy + vUV * uSurfaceRect.zw).b;    // coverage
+      if (cov < 0.5) discard;                       // HARD silhouette (AA off) — ground behind survives
       vec3 base = texture(uResidual, uResidualRect.xy + vUV * uResidualRect.zw).rgb;
-      float alpha = texture(uSurface, uSurfaceRect.xy + vUV * uSurfaceRect.zw).b;  // soft transparency
       vec3 outc = base;
       if (uHasLayers > 0.5) {
         vec3 weights = texture(uLayers, uLayersRect.xy + vUV * uLayersRect.zw).rgb; // r,g,b coefficients
@@ -101,7 +103,7 @@ const materialBitGl = {
           outc += weights[i] * jit;                 // re-add this material's (jittered) contribution
         }
       }
-      outColor = vec4(outc * alpha, alpha);        // apply alpha AFTER the sum; re-premultiplied
+      outColor = vec4(outc, 1.0);                  // OPAQUE colour; coverage (alpha) is applied at DISPLAY from surface.B
     `,
   },
 };

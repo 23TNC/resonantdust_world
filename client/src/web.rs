@@ -25,12 +25,19 @@ use std::sync::Arc;
 use futures::channel::mpsc;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{select, SinkExt, StreamExt};
+use gloo_timers::future::IntervalStream;
 use ws_stream_wasm::{WsMessage, WsMeta, WsStream};
 
 use crate::api::{CallStat, Command, Event, EventSink, ServerInfo, SubStat};
+use crate::clock::Clock;
 use crate::config::ClientConfig;
 use crate::protocol::{ClientMsg, RowData, RowOp, ServerMsg};
 use crate::zones::{AnchorRadii, ZoneManager};
+
+/// Clock-sync ping cadence, ms. Matches the native engine's `PING_INTERVAL`: a
+/// fresh session converges within a few seconds, then costs one tiny frame each
+/// way every couple of seconds for the rest of the session.
+const PING_INTERVAL_MS: u32 = 2_000;
 
 /// The write half of the live socket. The read half is moved into the pump task.
 type WsSink = SplitSink<WsStream, WsMessage>;
@@ -110,6 +117,11 @@ impl Client {
         self.send(Command::Release { zone_id, location })
     }
 
+    /// Convenience: move the controllable thing toward global tile `(tile_x, tile_y)`.
+    pub fn move_to(&self, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
+        self.send(Command::Move { tile_x, tile_y })
+    }
+
     /// Convenience: drop the world-server connection but keep the engine alive.
     pub fn logout(&self) -> Result<(), SendError> {
         self.send(Command::Logout)
@@ -147,6 +159,8 @@ fn client_msg_tag(msg: &ClientMsg) -> &'static str {
         ClientMsg::SubZone { .. } => "sub_zone",
         ClientMsg::Unsub { .. } => "unsub",
         ClientMsg::Release { .. } => "release",
+        ClientMsg::Ping { .. } => "ping",
+        ClientMsg::Move { .. } => "move",
     }
 }
 
@@ -211,6 +225,9 @@ struct Engine {
     /// Every `sub_zone` frame ever sent — the cumulative "total" gauge (the live
     /// "open" gauge is [`Self::subs`]`.len()`).
     subs_total: u32,
+    /// Rolling clock-offset estimate, fed by ping/pong round-trips and the login
+    /// seed. Reset to a fresh, unsynced estimate on every disconnect.
+    clock: Clock,
 }
 
 impl Engine {
@@ -236,6 +253,7 @@ impl Engine {
             calls: BTreeMap::new(),
             sub_data: BTreeMap::new(),
             subs_total: 0,
+            clock: Clock::new(),
         };
         (engine, frame_rx)
     }
@@ -247,6 +265,10 @@ impl Engine {
         mut cmd_rx: mpsc::UnboundedReceiver<Command>,
         mut frame_rx: mpsc::UnboundedReceiver<(u64, FrameOutcome)>,
     ) {
+        // Clock-sync cadence: a browser interval polled alongside the command and
+        // frame streams. It ticks whether or not we're connected; `send_ping`
+        // skips the send when there's no socket.
+        let mut ping = IntervalStream::new(PING_INTERVAL_MS).fuse();
         loop {
             select! {
                 cmd = cmd_rx.next() => match cmd {
@@ -264,6 +286,9 @@ impl Engine {
                             self.handle_frame(outcome).await;
                         }
                     }
+                }
+                _ = ping.next() => {
+                    self.send_ping().await;
                 }
             }
         }
@@ -290,6 +315,11 @@ impl Engine {
             Command::Release { zone_id, location } => {
                 if let Err(err) = self.send_frame(&ClientMsg::Release { zone_id, location }).await {
                     self.emit(Event::Status(format!("release send failed: {err}")));
+                }
+            }
+            Command::Move { tile_x, tile_y } => {
+                if let Err(err) = self.send_frame(&ClientMsg::Move { tile_x, tile_y }).await {
+                    self.emit(Event::Status(format!("move send failed: {err}")));
                 }
             }
             Command::Logout => {
@@ -453,7 +483,7 @@ impl Engine {
                 cid,
                 player_id,
                 data_shard,
-                ..
+                server_micros,
             } => {
                 self.record_reply("login", /*ok=*/ true, text.len());
                 if !self.matches_pending(cid) {
@@ -461,12 +491,23 @@ impl Engine {
                 }
                 self.pending = None;
                 self.player_id = Some(player_id);
+                // Coarse offset seed so the clock is usable before the first pong;
+                // a real round-trip refines it within `PING_INTERVAL_MS`.
+                self.clock.seed_login(server_micros / 1_000, now_ms());
+                self.emit(Event::ClockSync(self.clock.snapshot(now_ms())));
                 let server_url = self.server_url.clone().unwrap_or_default();
                 self.emit(Event::LoggedIn {
                     player_id,
                     data_shard,
                     server_url,
                 });
+            }
+            ServerMsg::Pong {
+                client_send_ms,
+                server_ms,
+            } => {
+                self.clock.on_pong(client_send_ms, server_ms, now_ms());
+                self.emit(Event::ClockSync(self.clock.snapshot(now_ms())));
             }
             ServerMsg::LoginErr { cid, error, .. } => {
                 self.record_reply("login", /*ok=*/ false, text.len());
@@ -511,12 +552,33 @@ impl Engine {
                         rotation: ft.rotation,
                         id: ft.id,
                         offset: ft.offset,
+                        valid_at_ms: resonantdust_codec::packed::valid_at_time(ft.valid_at),
                     }),
                     RowData::HotTile(_) | RowData::HotThing(_) => {}
                 }
                 self.zones.note_update(zone_id, now_ms());
                 self.flush_zone_intents().await;
             }
+        }
+    }
+
+    /// Send a clock-sync ping, if connected. Silent when there's no socket (the
+    /// interval keeps ticking between sessions) and on a transport error (the read
+    /// pump surfaces the disconnect). Pings aren't tallied in the "calls" HUD —
+    /// they're background chatter, not a host-driven command.
+    async fn send_ping(&mut self) {
+        if self.write.is_none() {
+            return;
+        }
+        let frame = ClientMsg::Ping {
+            client_send_ms: now_ms(),
+        };
+        let text = match serde_json::to_string(&frame) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        if let Some(write) = self.write.as_mut() {
+            let _ = write.send(WsMessage::Text(text)).await;
         }
     }
 
@@ -617,6 +679,8 @@ impl Engine {
         self.zones.clear();
         self.subs.clear();
         self.next_sid = 1;
+        // The clock offset is per-session (a new server, a new clock to sync to).
+        self.clock = Clock::new();
         // The live "open" gauge just fell to zero — refresh the "subs" HUD (the
         // per-table byte totals are cumulative and survive the reconnect).
         if had_subs {

@@ -1,15 +1,18 @@
-//! `presence` — per-region count of loose things.
+//! `presence` — per-region count of mobile objects (loose things **and** pawns).
 //!
 //! The object shard's **routing table**: gates subscribe every object shard's
 //! `presence` and, from it, decide which shards to subscribe for a given region
 //! (object routing is dynamic — placement chooses the shard at release time —
-//! unlike zone shards' static `index` routing). See docs/object-shard.md.
+//! unlike zone shards' static `index` routing). See docs/object-shard.md. A
+//! region with *any* mobile object (a thing or a pawn) must route, so the count
+//! spans both tables; `object_id`s are unique across them (shared allocator), so
+//! nothing double-counts.
 //!
 //! Counts are maintained **transactionally with the row** in the `free_things`
-//! reducers (create → `inc`, region-change → `dec`+`inc`, remove → `dec`), so an
-//! ordinary crash rolls both back together. [`recount`] rebuilds from ground
-//! truth on `init` and on every GC sweep, covering the cases atomicity doesn't:
-//! snapshot restore, migration, logic bugs.
+//! and `pawns` reducers (create → `inc`, region-change → `dec`+`inc`, remove →
+//! `dec`), so an ordinary crash rolls both back together. [`recount`] rebuilds
+//! from ground truth on `init` and on every GC sweep, covering the cases
+//! atomicity doesn't: snapshot restore, migration, logic bugs.
 
 use std::collections::HashMap;
 
@@ -18,6 +21,7 @@ use spacetimedb::{table, ReducerContext, Table};
 use resonantdust_codec::packed::region_of;
 
 use crate::free_things::free_things;
+use crate::pawns::pawns;
 
 /// One row per region that currently holds any loose thing. Absent row = 0.
 #[table(accessor = presence, public)]
@@ -59,9 +63,16 @@ pub fn dec(ctx: &ReducerContext, region_id: u32) {
 /// distinct `object_id` by its current region, then replace the table. Distinct
 /// by `object_id` so bitemporal history rows never double-count.
 pub fn recount(ctx: &ReducerContext) {
-    // object_id -> (latest valid_at, its zone_id)
+    // object_id -> (latest valid_at, its zone_id), across BOTH free things and
+    // pawns (disjoint object_id spaces, so one map covers both).
     let mut latest_by_obj: HashMap<u64, (u64, u32)> = HashMap::new();
     for r in ctx.db.free_things().iter() {
+        let e = latest_by_obj.entry(r.object_id).or_insert((r.valid_at, r.zone_id));
+        if r.valid_at > e.0 {
+            *e = (r.valid_at, r.zone_id);
+        }
+    }
+    for r in ctx.db.pawns().iter() {
         let e = latest_by_obj.entry(r.object_id).or_insert((r.valid_at, r.zone_id));
         if r.valid_at > e.0 {
             *e = (r.valid_at, r.zone_id);

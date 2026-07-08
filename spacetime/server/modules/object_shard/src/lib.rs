@@ -27,8 +27,10 @@
 //
 // Shares the bitemporal foundation with `zone_shard` (`time`, `sequence`) and the
 // `resonantdust_codec` layouts, so the free ⇄ affixed representations agree.
+pub mod debug_mover;
 pub mod free_things;
 pub mod gc;
+pub mod pawns;
 pub mod presence;
 pub mod sequence;
 pub mod time;

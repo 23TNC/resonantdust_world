@@ -39,6 +39,7 @@
 //!   `gloo-net` + `spawn_local`). Both expose the same [`Client`] handle.
 
 pub mod api;
+pub mod clock;
 pub mod config;
 pub mod gateway;
 pub mod protocol;

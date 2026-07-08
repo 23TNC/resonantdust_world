@@ -1,0 +1,26 @@
+[package]
+name = "npc"
+version = "0.1.0"
+edition = "2021"
+
+# The NPC driver — a headless program that logs in through the `client` crate
+# (exactly as a player's pixijs does) and issues the same command verbs to drive
+# NPCs. The point: NPCs need no server-side simulation; they are just automated
+# clients. Everything flows pixijs/npc → client → server → spacetime, and
+# spacetime is the sole authority. A player "owns" a set of NPCs by running one
+# of these (a group of villagers, a pack of wolves, …).
+#
+# First cut: drive the debug mover (a tree) around autonomously. Real pawns and
+# multiple owned NPCs (one addressable object each) follow.
+[[bin]]
+name = "npc"
+path = "src/main.rs"
+
+[dependencies]
+# The headless client (native transport). The NPC drives the identical
+# `Command`/`Event` API a real player's host does — an NPC and a player are
+# indistinguishable to the server.
+client = { path = "../client" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

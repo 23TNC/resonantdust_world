@@ -46,7 +46,7 @@ const lightBitGl = {
   },
   fragment: {
     header: /* glsl */ `
-      uniform sampler2D uAlbedo;                    // albedo composite (premultiplied)
+      uniform sampler2D uAlbedo;                    // albedo composite (OPAQUE colour; coverage applied at output)
       uniform vec3 uAmbient;                        // ambient floor (colour × intensity)
       uniform vec3 uSunDir;                         // normalised sun direction (world/tangent)
       uniform vec3 uSunColor;                       // sun colour × intensity
@@ -54,45 +54,47 @@ const lightBitGl = {
       uniform vec4 uLightData[${MAX_HOT_LIGHTS}];   // per point light: xy world px, z height, w ±radius px (sign = casts shadow)
       uniform vec4 uLightColor[${MAX_HOT_LIGHTS}];  // per point light: rgb colour, a brightness
       uniform float uLightCount;                    // active point lights (loop breaks past it)
-      uniform sampler2D uSurface;                    // G = ambient occlusion (R = height / B reserved)
-      uniform sampler2D uDepth;                      // world depth composite: B = depth·cov, A = cov
+      uniform sampler2D uSurface;                    // OPAQUE: R = presence, G = ambient occlusion, B = alpha (coverage)
+      uniform sampler2D uDepth;                      // zdepth_world (OPAQUE): B = thing tile-Y depth, R = cold shadow (reserved)
       uniform vec2 uPan;                             // fillDisplay's pan: vWorld = trueWorld + uPan
-      uniform sampler2D uShadow;                     // shadow RT: R = caster depth·cov, A = cov (screen space)
+      uniform sampler2D uShadow;                     // zdepth_screen (screen space, OPAQUE): G = caster tile-Y depth (5+row%251); 0..4 = no shadow
       uniform vec4 uShadowUv;                        // vWorld → shadow uv: uv = vWorld·xy + zw (zw carries any Y flip)
       in vec2 vWorld;
 
-      // The shadow pass rasterises billboard "wedge" shadows into a screen-space RT (R = caster
-      // depth·coverage, A = coverage). Sample it at this fragment's screen position and return
-      // coverage (0 = lit, 1 = fully shadowed) — but where this fragment's own THING sits at/in
-      // front of the caster, the shadow is BEHIND the thing, so only the see-through fraction
-      // (1 - alpha, alpha = the thing's visual opacity) reveals the shadowed background. Ground
-      // never occludes. Depths ride a 0..1 ring (1 step per 5 world px), so the ordering is the
-      // WRAPPED difference. Out-of-RT fragments (uv outside 0..1) read as unshadowed.
-      float shadowCoverage(bool isThing, float receiverDepth, float alpha) {
+      // The shadow pass (zdepth_screen) rasterises billboard "wedge" shadows into a screen-space
+      // RT — G = the caster's tile-Y depth (5 + row%251), 0..4 = no shadow. Sample it at this
+      // fragment's screen position and return the direct-light coverage (0 = lit, 1 = shadowed).
+      //
+      // Silhouettes are HARD (AA off): presence (surface.R) is a clean 0/1, so the receiver
+      // classifies binary. A present thing sitting at/in FRONT of the caster blocks the shadow
+      // with its own body (self-omit); ground, or anything behind the caster, is shadowed. Depths
+      // ride the 251-ring (1 step per tile), so the ordering is the WRAPPED difference. Out-of-RT
+      // fragments read as unshadowed.
+      float shadowCoverage(float receiverDepth, float presence) {
         vec2 uv = vWorld * uShadowUv.xy + uShadowUv.zw;
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
         vec4 sh = texture(uShadow, uv);
-        if (sh.a < 0.004) return 0.0;                   // no caster here
-        if (isThing) {
-          float casterDepth = sh.r / sh.a;              // unpremultiply (AA-safe)
-          float diff = receiverDepth - casterDepth;
-          diff -= floor(diff + 0.5);                    // nearest wrap into (-0.5, 0.5]
-          // Tolerance ≈ 1.5 depth steps (~7.5 world px), absorbs 8-bit depth noise so a thing's
-          // edge self-omits; tight enough to keep distinct trees ordered. Receiver in FRONT of
-          // the caster: dim only the see-through fraction. DEADZONE it — near-opaque foliage
-          // (alpha ≳ 0.85) reads as fully opaque (0 see-through), so faint shadow-seam values
-          // don't leak through as specks; only genuinely transparent pixels reveal the shadow.
-          if (diff >= -0.006) return sh.a * (1.0 - smoothstep(0.4, 0.85, alpha));
-        }
-        return sh.a;
+        if (sh.g < 0.02) return 0.0;                    // reserved 0..4 band (G < 5/255) = no shadow
+        if (presence < 0.5) return 1.0;                 // ground receiver → fully shadowed
+        // Both the receiver (zdepth_world.B) and the caster (zdepth_screen.G) encode 5 + row%251.
+        // Recover the tile-row ring index (0..250) and take the NEAREST wrap of the difference over
+        // the 251-ring, so a low value renders over a high value (the wrap-around). Unambiguous for
+        // shadows up to ~125 tiles long; beyond that the wrap misclassifies (fine for now).
+        float rRecv = receiverDepth * 255.0 - 5.0;      // this thing's tile row
+        float rCast = sh.g * 255.0 - 5.0;               // caster's tile row
+        float d = rRecv - rCast;
+        d -= 251.0 * floor(d / 251.0 + 0.5);            // wrap into (-125.5, 125.5]
+        // Receiver AT / IN FRONT of the caster (d >= 0) blocks the shadow with its own body — half
+        // a tile self-omits the caster's own footing while a neighbour ONE tile behind (d = -1) is
+        // still shadowed. Behind the caster → the whole fragment takes the shadow.
+        return d >= -0.5 ? 0.0 : 1.0;
       }
     `,
     main: /* glsl */ `
-      // outColor = the NORMAL composite (textureBit). It stores PREMULTIPLIED, silhouette-masked
-      // normals (nrm·a, a) — unpremultiply before decoding. Empty/uncovered texels read (0,0,0,0)
-      // → treat as flat-up +Z so bare cells (and outside-silhouette gaps) light like flat ground.
+      // outColor = the NORMAL composite (textureBit), now OPAQUE raw normals. Decode straight;
+      // near-black texels (an empty/cleared cell) → flat-up +Z so they light like flat ground.
       vec4 nTex = outColor;
-      vec3 nrm = nTex.a > 0.001 ? (nTex.rgb / nTex.a) * 2.0 - 1.0 : vec3(0.0, 0.0, 1.0);
+      vec3 nrm = length(nTex.rgb) < 0.02 ? vec3(0.0, 0.0, 1.0) : nTex.rgb * 2.0 - 1.0;
       // AMPLIFY the relief in math (instead of baking exaggerated normals): scale the
       // tangent XY away from flat-up, then renormalize. A bigger tilt widens the N·L range
       // → brighter facing-highlights + darker facing-away shadows from the SAME light. Flat
@@ -105,21 +107,19 @@ const lightBitGl = {
       // CONTRAST without clipping away-facing surfaces to black.
       const float LIGHT_WRAP = 0.4;
 
-      // The albedo composite is premultiplied by the visual alpha (surface.B applied after the
-      // reconstruction), so alb.a is the fragment's opacity — the see-through weight the shadow
-      // pass dims by. Sample it now (reused for the final colour below).
+      // OPAQUE composites — read straight, NO un-premultiply. albedo = colour; surface carries
+      // R = presence, G = ao, B = alpha (coverage). The visual alpha is applied to the OUTPUT
+      // only (never stored in a map), so alpha composites the final pixel over the background.
       vec4 alb = texture(uAlbedo, vUV);
-      // Ambient occlusion: the SURFACE composite is premultiplied by PRESENCE (A), so ao = G/A.
-      // Gates AMBIENT fully (occlusion blocks indirect light) and DIRECT light only partially —
-      // a crevice still catches a key light but darkens, reading as depth/contact grime.
       vec4 surf = texture(uSurface, vUV);
-      float ao = surf.a > 0.001 ? surf.g / surf.a : 1.0;
-      // Depth composite is premultiplied by PRESENCE (B = depth·p, A = p). Divide to recover the
-      // true depth even at the presence edge; A marks thing vs ground. Presence is HARD (a
-      // semi-transparent px is still fully present), so a clean 0.5 gate — no fringe ring.
+      float presence = surf.r;                          // 1 = a thing occupies this fragment (hard)
+      float alpha = surf.b;                             // visual coverage → output alpha
+      float ao = surf.g;
+      // Ambient occlusion gates AMBIENT fully (occlusion blocks indirect light) and DIRECT light
+      // only partially — a crevice still catches a key light but darkens, reading as contact grime.
+      // zdepth_world: B = the fragment's thing tile-Y depth (0 = ground). Straight read.
       vec4 dc = texture(uDepth, vUV);
-      bool isThing = dc.a > 0.5;
-      float receiverDepth = isThing ? dc.b / dc.a : 0.0;
+      float receiverDepth = dc.b;
       // Deepen the baked AO's contrast in-shader (the map only dips to ~0.75): scale the
       // occlusion (1 - ao) up, so crevices darken harder without re-baking the map.
       const float AO_STRENGTH = 3.0;
@@ -153,10 +153,13 @@ const lightBitGl = {
       // Gate the direct light by the screen-space wedge-shadow coverage (0 = lit, 1 = shadowed).
       // Pass the fragment's opacity so a shadow behind a transparent thing shows through it.
       const float SHADOW_STRENGTH = 0.7;
-      float cov = shadowCoverage(isThing, receiverDepth, alb.a);
+      float cov = shadowCoverage(receiverDepth, presence);
       vec3 lightSum = uAmbient * ao + direct * (1.0 - cov * SHADOW_STRENGTH);
 
-      outColor = vec4(alb.rgb * lightSum, alb.a);       // alb premultiplied → multiply is safe
+      // Coverage (visual alpha) is applied at OUTPUT only — premultiplied so it composites over
+      // the canvas background. Opaque maps in, alpha out: empty cells (α 0) show the background,
+      // ground/things (alpha 1) draw opaque. This is the (albedo + layers*tint)*alpha of the spec.
+      outColor = vec4(alb.rgb * lightSum * alpha, alpha);
     `,
   },
 };

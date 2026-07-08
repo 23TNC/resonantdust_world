@@ -43,6 +43,7 @@ web = [
     "dep:futures",
     "dep:ws_stream_wasm",
     "dep:gloo-net",
+    "dep:gloo-timers",
 ]
 
 [dependencies]
@@ -89,4 +90,9 @@ futures = { version = "0.3", optional = true }
 ws_stream_wasm = { version = "0.7", optional = true }
 gloo-net = { version = "0.6", default-features = false, features = [
     "http",
+], optional = true }
+# The browser periodic timer behind the clock-sync ping cadence. `futures` gives
+# the `IntervalStream` the engine's `select!` loop polls.
+gloo-timers = { version = "0.3", default-features = false, features = [
+    "futures",
 ], optional = true }

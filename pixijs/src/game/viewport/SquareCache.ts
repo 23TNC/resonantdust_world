@@ -207,8 +207,11 @@ class Channel {
     }
     const a = RenderTexture.create({ width: cw, height: ch, resolution: res });
     const b = RenderTexture.create({ width: cw, height: ch, resolution: res });
-    renderer.render({ container: empty, target: a, clear: true, clearColor: [0, 0, 0, 0] });
-    renderer.render({ container: empty, target: b, clear: true, clearColor: [0, 0, 0, 0] });
+    // OPAQUE clear (α = 1). Every composite is opaque RGB data — nothing writes α < 1 — so the
+    // verbatim slot blit (over-blend) always REPLACES the slot instead of leaving stale pixels
+    // where the new content is transparent. This is the fix for the depth-RT stale-tree bug.
+    renderer.render({ container: empty, target: a, clear: true, clearColor: [0, 0, 0, 1] });
+    renderer.render({ container: empty, target: b, clear: true, clearColor: [0, 0, 0, 1] });
     this.bufs = [a, b];
     this.prevComposite = null;
   }
@@ -424,7 +427,7 @@ export class SquareCache {
     this.active = 1 - this.active;
     for (const ch of this.channels) {
       if (old) ch.prevComposite = ch.bufs![1 - this.active]; // the just-vacated buffer
-      renderer.render({ container: this.empty, target: ch.bufs![this.active], clear: true, clearColor: [0, 0, 0, 0] });
+      renderer.render({ container: this.empty, target: ch.bufs![this.active], clear: true, clearColor: [0, 0, 0, 1] }); // opaque (see ensureBuffers)
     }
     this.cols = cols;
     this.rows = rows;
@@ -771,7 +774,7 @@ export class SquareCache {
                 : this.spriteNode(i, prim, r);
         this.bakeContainer.addChild(node);
       }
-      renderer.render({ container: this.bakeContainer, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 0], transform: m });
+      renderer.render({ container: this.bakeContainer, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 1], transform: m }); // opaque clear — every bake outputs α=1
       this.blit(renderer, this.scratchTex!, slotX, slotY, target);
       if (ax >= 0) this.blit(renderer, this.scratchTex!, ax, slotY, target);
       if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);

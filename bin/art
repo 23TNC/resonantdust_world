@@ -2217,12 +2217,9 @@ cmd_maps() {
     echo "art: tilting object normals into the ground frame (tilt $tilt_amount, z $tilt_z) ..."
     _tilt_kind_normals "$kind" "$tilt_amount" "$tilt_z" || return 1
   fi
-  # AO (pack) DEAD LAST: composite the occlusion.png measured above into the (now tilted)
-  # normal's alpha. The client's normal composite is premultiplied, so the shader recovers
-  # the normal as rgb/alpha and samples AO from alpha (floored >0 by the pack). See lightingShader.ts.
-  if [[ "$ao" == 1 ]]; then
-    cmd_ao "$src_root" --pack-only || return 1
-  fi
+  # AO packing into normal.alpha is DROPPED (legacy): the client's normal composite is now OPAQUE
+  # RGB (no alpha — the silhouette is a hard discard on surface.B), and AO is read from surface.G.
+  # So normal.png ships RGB and occlusion.png feeds only the surface map below. No pack step.
   # Surface map DEAD LAST: pack R=height(0) / G=occlusion / B=diffuse-alpha into surface.png —
   # the client's one coverage source (presence + transparency + ao). Runs after occlusion.png
   # exists (if --ao); degrades to G=1 (no occlusion) otherwise.

@@ -35,6 +35,16 @@ pub enum ClientMsg {
     /// Release the thing affixed at `(zone_id, location)` into the object shard.
     /// The server drives the transfer saga; no direct reply.
     Release { zone_id: u32, location: u8 },
+    /// Clock-sync probe. `client_send_ms` is the client wall clock at send; the
+    /// server echoes it in [`ServerMsg::Pong`] alongside its own clock, letting
+    /// the client pin the offset from the round-trip. Sent periodically while
+    /// connected.
+    Ping { client_send_ms: u64 },
+    /// Move the (debug) controllable thing toward global tile `(tile_x, tile_y)`.
+    /// The server pathfinds from its current tile and commits the path as
+    /// future-stamped move rows; no direct reply (the effect arrives on the
+    /// existing free-thing subscription).
+    Move { tile_x: i32, tile_y: i32 },
 }
 
 /// A frame the server sends to the client.
@@ -56,6 +66,9 @@ pub enum ServerMsg {
         error: String,
         server_micros: u64,
     },
+    /// Reply to [`ClientMsg::Ping`]. `client_send_ms` is echoed back verbatim (the
+    /// round-trip correlator); `server_ms` is the server wall clock (ms) at reply.
+    Pong { client_send_ms: u64, server_ms: u64 },
     /// A zone subscription's initial rows have all been delivered.
     Applied { sid: u32 },
     /// One upstream row insert/update/delete. `sid` is `0` — route by the row's

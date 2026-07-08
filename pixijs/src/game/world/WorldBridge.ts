@@ -16,6 +16,7 @@
 
 import type { Texture } from "pixi.js";
 import type { WasmClient, AnchorRadii, FreeThing } from "../../client/WasmClient";
+import { RENDER_DELAY_MS } from "../../client/WasmClient";
 import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
 import type { TextureResolver } from "../../textures";
@@ -65,6 +66,94 @@ const THING_Z_BASE = 1;
  *  it bakes as a plain tint rect (the geo tier), unchanged from before textures. */
 const WHITE_STEM = "white";
 
+/** How many move-rows to keep per moving loose thing. Covers the recent past (the
+ *  render line + the tween's "from" row) and the server's look-ahead, with margin;
+ *  older rows are dropped. */
+const FREE_THING_SAMPLE_CAP = 32;
+
+/** Travel time per tile, ms — how long a move-row's tween takes. **Must match the
+ *  server's `TILE_TRAVEL_MS`** in `debug_mover.rs`: the projector needs the move
+ *  speed to tell "moving" from "resting" without a per-row duration field (see
+ *  `docs/sync.md`). A real thing will carry this as a movement stat; the debug
+ *  mover hard-codes it on both sides. */
+const TILE_TRAVEL_MS = 500;
+
+/** One move-row of a loose thing in the event-log model: `valid_at` (= when the
+ *  move *departs*) and the destination tile's fractional global coords
+ *  (`freeThingPrim`'s `[x, y]`). It's a behavior, not a sample — the thing is
+ *  *heading to* `(fx, fy)` starting at `t`, arriving `t + TILE_TRAVEL_MS`. The
+ *  projector tweens from the previous row's tile toward this one over that window
+ *  and holds after (see {@link projectMotion}). */
+interface FreeSample {
+  t: number;
+  fx: number;
+  fy: number;
+}
+
+/** The live state of one rendered loose thing: its sprite, latest payload (for a
+ *  content re-expand), the position trail, the current on-screen box, and an
+ *  appearance signature (a change — new facing, tint, size — rebuilds the sprite;
+ *  a plain move just appends a sample and tweens). */
+interface FreeThingState {
+  primId: number;
+  thing: FreeThing;
+  samples: FreeSample[];
+  sig: string;
+  w: number;
+  h: number;
+  /** The `valid_at`s of this object's live server rows. A delete removes one; the
+   *  sprite is dropped only when this empties — a GC reap of old history (or a
+   *  same-ms overwrite) deletes a stale *version*, not the object, and must not
+   *  make the thing vanish. */
+  versions: Set<number>;
+}
+
+/** Insert `s` into `samples` keeping them sorted ascending by `valid_at` (`t`),
+ *  replacing any same-`t` entry. Drops the oldest beyond {@link FREE_THING_SAMPLE_CAP}
+ *  so the trail stays bounded to the most-recent window. Samples arrive unordered
+ *  (subscription burst in storage order; redirect delete/insert interleaving), so
+ *  the projection can't rely on append order. */
+function insertSample(samples: FreeSample[], s: FreeSample): void {
+  const at = samples.findIndex((e) => e.t === s.t);
+  if (at >= 0) {
+    samples[at] = s;
+    return;
+  }
+  let j = samples.length;
+  while (j > 0 && samples[j - 1].t > s.t) j--;
+  samples.splice(j, 0, s);
+  if (samples.length > FREE_THING_SAMPLE_CAP) samples.splice(0, samples.length - FREE_THING_SAMPLE_CAP);
+}
+
+/** Project a moving thing's position at render time `t` from its move-rows
+ *  (ascending by `valid_at`). Departure semantics: the *current* row (latest with
+ *  `valid_at ≤ t`) is the tile it's committed to; it tweens there from the
+ *  *previous* row's tile over `[current.t, current.t + travelMs]`, then holds until
+ *  the next row departs. That hold is what a rest/dwell renders as — the gap to the
+ *  next departure is left still, so a wait never smears into slow drift. Rows with
+ *  `valid_at > t` (the look-ahead) are ignored until `t` reaches them. Returns
+ *  `null` only for an empty trail. */
+function projectMotion(samples: readonly FreeSample[], t: number, travelMs: number): FreeSample | null {
+  const n = samples.length;
+  if (n === 0) return null;
+  // Current row = last departure at or before t.
+  let ci = -1;
+  for (let i = 0; i < n; i++) {
+    if (samples[i].t <= t) ci = i;
+    else break;
+  }
+  // t precedes every committed departure → hold at the earliest known tile.
+  if (ci < 0) return samples[0];
+  const cur = samples[ci];
+  // No previous tile to come from (freshly spawned) → sit at the current tile.
+  if (ci === 0) return cur;
+  const moveEnd = cur.t + travelMs;
+  if (t >= moveEnd) return cur; // arrived — hold (covers dwell/rest)
+  const prev = samples[ci - 1];
+  const f = (t - cur.t) / travelMs; // in transit — tween from prev toward cur
+  return { t, fx: prev.fx + (cur.fx - prev.fx) * f, fy: prev.fy + (cur.fy - prev.fy) * f };
+}
+
 /** A prim's texture name for the resolver from its def's stem: the stem itself, or
  *  `undefined` for the built-in white fill / an unnamed def (→ flat tint rect). */
 function textureNameFor(stem: string | undefined): string | undefined {
@@ -109,10 +198,11 @@ export class WorldBridge {
   /** Cold thing-sprite ids per zone (worldgen flora), tracked apart from tiles so
    *  a cold rewrite re-seeds each independently. */
   private readonly zoneThings = new Map<number, number[]>();
-  /** One sprite per loose thing, keyed by `objectId`; the `thing` payload is kept
-   *  so a content hot-swap can re-expand it, and `thing.zoneId` lets a zone close
-   *  drop exactly its things. */
-  private readonly freeThings = new Map<number, { primId: number; thing: FreeThing }>();
+  /** One sprite per loose thing, keyed by `objectId`. Holds a position trail
+   *  ({@link FreeThingState.samples}) the render loop interpolates by `valid_at`,
+   *  the latest payload (so a content hot-swap can re-expand it), and
+   *  `thing.zoneId` so a zone close drops exactly its things. */
+  private readonly freeThings = new Map<number, FreeThingState>();
   /** Raw packed tiles / things per zone as delivered — kept so a content hot-swap
    *  ({@link setContent}) can re-expand every live zone through the new corpus
    *  without re-requesting it from the server. */
@@ -434,33 +524,87 @@ export class WorldBridge {
     }
   }
 
-  /** A loose thing changed: drop it on remove, else upsert its sprite at the
-   *  sub-tile position the DSL/codec resolves (`Content.freeThingPrim`). Keyed by
-   *  `objectId`, so insert and update are the same upsert. */
+  /** A loose thing changed. On remove, drop the sprite. Otherwise this is an
+   *  insert or a move: record the new timestamped position into the object's trail
+   *  (the render loop tweens the sprite to `syncedNow − RENDER_DELAY_MS`, so it
+   *  glides instead of snapping and every client shows it at the same world point
+   *  at the same wall time). The sprite itself is created once and only rebuilt
+   *  when its *appearance* changes (a new facing, tint, or size) — a plain move
+   *  keeps it and just extends the trail. Keyed by `objectId`. */
   private onFreeThing(thing: FreeThing): void {
     const existing = this.freeThings.get(thing.objectId);
     if (thing.removed) {
-      if (existing) {
+      if (!existing) return;
+      // Drop this specific version; the object survives as long as any remain (a
+      // GC reap of old history, or a same-ms overwrite, deletes a stale version —
+      // not the thing). Only an all-versions-gone delete removes the sprite.
+      existing.versions.delete(thing.validAt);
+      const si = existing.samples.findIndex((s) => s.t === thing.validAt);
+      if (si >= 0) existing.samples.splice(si, 1);
+      if (existing.versions.size === 0) {
         this.viewport.removePrim(existing.primId);
         this.freeThings.delete(thing.objectId);
       }
       return;
     }
 
-    // Replace any prior sprite for this object (a move), then draw the new one.
-    if (existing) this.viewport.removePrim(existing.primId);
-
     // [x, y, tint, geoColor, defId] — fractional global tile coords + colour + stem index.
     const prim = this.content.freeThingPrim(thing.zoneId, thing.location, thing.offset, thing.id);
-    const tex = thingTexture(this.thingStems[prim[4] - 1], thing.rotation);
-    const { w, h } = this.thingBox(prim[4], tex.name);
-    const primId = this.viewport.addPrim({
+    const defId = prim[4];
+    const tex = thingTexture(this.thingStems[defId - 1], thing.rotation);
+    const { w, h } = this.thingBox(defId, tex.name);
+    const sample: FreeSample = { t: thing.validAt, fx: prim[0], fy: prim[1] };
+    // Appearance identity: anything that changes how (not where) it draws. A
+    // difference forces a sprite rebuild; a match lets the existing sprite tween.
+    const sig = `${defId}|${tex.name ?? ""}|${tex.flipX}|${tex.cell ?? -1}|${w.toFixed(2)}|${h.toFixed(2)}|${prim[2]}|${prim[3]}`;
+
+    if (!existing) {
+      const primId = this.spawnFreePrim(thing, prim, tex, w, h);
+      this.freeThings.set(thing.objectId, {
+        primId,
+        thing,
+        samples: [sample],
+        sig,
+        w,
+        h,
+        versions: new Set([thing.validAt]),
+      });
+      return;
+    }
+
+    existing.thing = thing;
+    existing.w = w;
+    existing.h = h;
+    existing.versions.add(thing.validAt);
+    // Insert keeping the trail sorted by `valid_at`. Rows do NOT arrive in order —
+    // the subscription delivers the history burst in storage order, and a redirect
+    // interleaves deletes + inserts — so a naive append corrupts the projection
+    // (which assumes sorted samples). Bounded to the most-recent CAP by time.
+    insertSample(existing.samples, sample);
+    if (sig !== existing.sig) {
+      // Appearance changed: rebuild the sprite. Position is corrected on the next
+      // frame's tween, so a one-frame placement at the sample point is harmless.
+      this.viewport.removePrim(existing.primId);
+      existing.primId = this.spawnFreePrim(thing, prim, tex, w, h);
+      existing.sig = sig;
+    }
+  }
+
+  /** Create the sprite for a loose thing at its sample position (bottom-centred on
+   *  its sub-tile cell, like cold things). Position is authoritative only for this
+   *  first frame — {@link tick} tweens it thereafter. Returns the prim id. */
+  private spawnFreePrim(
+    thing: FreeThing,
+    prim: ArrayLike<number>,
+    tex: { name: string | undefined; flipX: boolean; cell?: number },
+    w: number,
+    h: number,
+  ): number {
+    return this.viewport.addPrim({
       texture: this.white,
       textureName: tex.name,
       flipX: tex.flipX,
       cell: tex.cell,
-      // Bottom-centred on its (sub-tile) position, same as cold things, so a big
-      // freed thing rises from where it sits and z-orders by its base row.
       x: prim[0] * SQUARE + (SQUARE - w) / 2,
       y: prim[1] * SQUARE + SQUARE - h,
       width: w,
@@ -472,7 +616,23 @@ export class WorldBridge {
       seed: hash01(thing.objectId),
       zIndex: this.thingZ(Math.floor(prim[1])),
     });
-    this.freeThings.set(thing.objectId, { primId, thing });
+  }
+
+  /** Per-frame: tween every loose thing to the shared render instant
+   *  `syncedNow − RENDER_DELAY_MS`, interpolating its trail by `valid_at`. Driven
+   *  from {@link WorldScene.update}. Cheap and a no-op when nothing's loose. */
+  tick(): void {
+    if (this.freeThings.size === 0) return;
+    const renderAt = this.client.syncedNowMs() - RENDER_DELAY_MS;
+    for (const st of this.freeThings.values()) {
+      const p = projectMotion(st.samples, renderAt, TILE_TRAVEL_MS);
+      if (!p) continue;
+      this.viewport.movePrim(
+        st.primId,
+        p.fx * SQUARE + (SQUARE - st.w) / 2,
+        p.fy * SQUARE + SQUARE - st.h,
+      );
+    }
   }
 
   /** Swap in a hot-reloaded content bundle and repaint every live zone through

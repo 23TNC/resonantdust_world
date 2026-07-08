@@ -76,6 +76,19 @@ rd_build_pixijs() {
   ( cd "$PIXIJS_DIR" && npm run build )
 }
 
+# npc → the NPC driver binary, in docker (rust:slim). Path-deps the `client` crate
+# + shared codec (both mounted as siblings). No TLS (plain ws:// envs), so stock
+# rust:slim builds it. `--check` type-checks only.
+rd_build_npc() {
+  if [[ "${1:-}" == "--check" ]]; then
+    rd_log "check npc → cargo check --all-targets"
+    rd_npc_dcl run --rm check
+    return
+  fi
+  rd_log "build npc → release binary (npc/target/release/npc)"
+  rd_npc_dcl run --rm build
+}
+
 rd_build_usage() {
   cat >&2 <<EOF
 usage: rd build <component> [args]
@@ -89,6 +102,7 @@ components:
                       modules (e.g. 'rd build spacetime shard chat')
   client [--check]    the headless client binary (in docker); --check type-checks
                       only (cargo check --all-targets)
+  npc [--check]       the NPC driver binary (in docker); --check type-checks only
   pixijs              the pixijs production web bundle (pixijs/dist)
 EOF
 }
@@ -103,6 +117,7 @@ rd_build() {
     gateway)   rd_build_gateway "$@" ;;
     spacetime) rd_build_spacetime "$@" ;;
     client)    rd_build_client "$@" ;;
+    npc)       rd_build_npc "$@" ;;
     pixijs)    rd_build_pixijs "$@" ;;
     -h|--help|help) rd_build_usage ;;
     *) rd_warn "unknown component '$comp'"; rd_build_usage; exit 1 ;;

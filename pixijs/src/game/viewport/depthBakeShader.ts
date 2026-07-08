@@ -1,12 +1,10 @@
-//! The depth BAKE shader — the `depth` channel's per-prim material. It writes a thing's constant
-//! tile-depth into the composite PREMULTIPLIED by the thing's PRESENCE (a hard-ish mask derived
-//! from `surface.B`, the coverage/transparency channel): `B = depth·p`, `A = p`. The lighting
-//! pass divides `B/A` to recover the true depth even where the presence edge softens (so the
-//! depth never "falls toward 0" at the edge and speckles the shadow), and reads `A` as the
-//! thing-vs-ground / occlusion presence. Presence is HARD (a semi-transparent pixel still fully
-//! occupies its cell for occlusion), so it's `smoothstep(surface.B)`, not the soft B itself.
-//! Ground writes NOTHING (a sentinel `uTileDepth < 0` → `A = 0`), so ALPHA distinguishes thing
-//! from ground, freeing the depth value to use the whole 0..1 ring.
+//! The zdepth_world BAKE shader — the `zdepth_world` channel's per-prim material. NO-ALPHA,
+//! OPAQUE: it writes a thing's constant tile-Y depth into B (`out = (0, 0, tileDepth, 1)`), with
+//! R reserved for COLD (static, world-space) shadow and G unused. Ground writes opaque black
+//! (`(0,0,0,1)`) — it is NOT a thing; thing-vs-ground is read from `surface.R` (presence), so
+//! this channel doesn't need alpha to mark it. The thing silhouette is a HARD `discard` on
+//! `surface.B` (AA off); the opaque writes let the slot blit REPLACE the slot exactly, which is
+//! the fix for the stale-tree bug (a transparent write left the old tree behind).
 //!
 //! Drawn back-to-front by the cache's z-sort, so the front-most thing wins. The lighting pass
 //! samples this composite at `vUV` and omits a shadow where the receiving thing sits at/in front
@@ -43,15 +41,18 @@ const depthBitGl = {
       uniform float uTileDepth;    // this thing's tile depth 0..1, or < 0 for ground (write nothing)
     `,
     main: /* glsl */ `
-      float b = texture(uSprite, uSpriteRect.xy + vUV * uSpriteRect.zw).b;   // surface.B coverage
-      // HARD presence centered on the VISIBLE edge (~0.5), not the low feather: a lower band
-      // dilated presence into the soft alpha fringe, so the shadow-omit shaved a bright ring of
-      // (mostly-ground) feather around every thing. Keep the band matched to the shadow caster
-      // + surface bake so self-shadow omits cleanly.
-      float p = smoothstep(0.35, 0.65, b);
-      // Premultiplied depth: B = depth·p, A = p → lighting divides B/A (AA-safe) + reads A as
-      // presence. Ground (uTileDepth < 0) writes nothing, so A marks thing vs ground.
-      outColor = uTileDepth < 0.0 ? vec4(0.0) : vec4(0.0, 0.0, uTileDepth * p, p);
+      // zdepth_world (OPAQUE, no alpha): B = the thing's tile-Y depth, R reserved for COLD
+      // (static, world-space) shadow, G unused. Ground writes opaque black — it is NOT a thing;
+      // thing-vs-ground is read from surface.R (presence), not from this alpha. The HARD thing
+      // silhouette is a discard on surface.B (AA off), so the opaque write lets the slot blit
+      // REPLACE cleanly (the fix for the stale-tree bug).
+      if (uTileDepth < 0.0) {
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);       // ground / geo-tier: opaque black, no thing
+      } else {
+        float cov = texture(uSprite, uSpriteRect.xy + vUV * uSpriteRect.zw).b;   // surface.B coverage
+        if (cov < 0.5) discard;                    // HARD thing silhouette
+        outColor = vec4(0.0, 0.0, uTileDepth, 1.0);
+      }
     `,
   },
 };

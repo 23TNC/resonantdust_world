@@ -1,17 +1,13 @@
 //! The normal BAKE shader — the `normal` channel's per-prim material for STANDING things.
 //!
-//! Our normal maps carry a FLAT (opaque, no-alpha) background: Laigter emits a full rectangle,
-//! flat-up (0.5,0.5,1) outside the sprite. Baked as a plain sprite, that flat background stamps
-//! over the whole billboard box and CLOBBERS the relief of things behind it. So we key the
-//! coverage out of the SURFACE map's B channel — the one canonical silhouette/transparency
-//! source — and premultiply the normal by that SOFT α: `out = (nrm·α, α)`.
-//!
-//! Premultiplying the ENCODED normal by the SAME soft α as the albedo means the over-blend
-//! (ground normal baked first, this thing over it) computes exactly the α-lerp of the decoded
-//! normals — the +0.5 encoding offset cancels under the lighting pass's `rgb/α` divide, and its
-//! `normalize()` restores unit length. So a soft edge blends smoothly toward whatever's behind
-//! (its normal is coherent with the albedo's tree/ground mix), and α = 0 outside writes nothing
-//! — no clobber. No opacity cutoff: relief survives across the whole body.
+//! Our normal maps carry a FLAT background: Laigter emits a full rectangle, flat-up (0.5,0.5,1)
+//! outside the sprite. Baked as a plain sprite, that flat background stamps over the whole
+//! billboard box and CLOBBERS the relief of things behind it. NO-ALPHA model: instead of
+//! premultiplying by coverage, we key the silhouette out of the SURFACE map's B channel and
+//! `discard` outside it (HARD edge — AA is off), then write the raw normal OPAQUE (`out = (nrm,1)`).
+//! Discarded fragments keep whatever was baked underneath (ground normal / a thing behind), so
+//! nothing is clobbered, and the opaque write lets the slot blit REPLACE cleanly. The soft
+//! edge-lerp is gone by design; if we want AA on normals we do it in the display shader.
 //!
 //! A Pixi v8 high-shader Mesh program; drops the stock textureBit (two differently-framed atlas
 //! sub-textures — the normal LOD and the alpha LOD — each mapped by its own uv-rect).
@@ -45,11 +41,12 @@ const normalBitGl = {
       uniform float uHasNormal;      // 1 = sample uNormalTex, 0 = flat-up fallback
     `,
     main: /* glsl */ `
-      float a = texture(uAlpha, uAlphaRect.xy + vUV * uAlphaRect.zw).b;   // surface.B = soft coverage
+      float cov = texture(uAlpha, uAlphaRect.xy + vUV * uAlphaRect.zw).b;  // surface.B = coverage
+      if (cov < 0.5) discard;                                              // HARD silhouette (AA off) — no flat-bg clobber
       vec3 nrm = uHasNormal > 0.5
         ? texture(uNormalTex, uNormalRect.xy + vUV * uNormalRect.zw).rgb
         : vec3(0.5, 0.5, 1.0);                                            // flat-up
-      outColor = vec4(nrm * a, a);   // premultiplied by soft α; a=0 → no clobber; over-blend = α-lerp
+      outColor = vec4(nrm, 1.0);   // OPAQUE raw normal (α=1); discard masks the silhouette, no premultiply
     `,
   },
   vertex: { header: "", main: "" },

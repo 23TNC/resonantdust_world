@@ -120,6 +120,38 @@ pub fn cell_y(location: u8) -> u8 {
     location >> 4
 }
 
+/// Tiles per region edge (`REGION_DIM` zones × `ZONE_DIM` tiles = 256). A region
+/// spans `REGION_TILES × REGION_TILES` tiles.
+pub const REGION_TILES: i32 = REGION_DIM as i32 * ZONE_DIM as i32;
+
+/// Global tile `(gx, gy)` on `surface` → its `(zone_id, location)`. Floor-division
+/// throughout so off-origin (negative) tiles map correctly. Matches the client's
+/// anchor→zone convention (`client::zones::{zone_axis, zone_at}`), so a row written
+/// at this `zone_id` lands in exactly the zone the client subscribes for that tile.
+pub fn zone_and_location(gx: i32, gy: i32, surface: u8) -> (u32, u8) {
+    let zgx = gx.div_euclid(ZONE_DIM as i32); // global zone coordinate
+    let zgy = gy.div_euclid(ZONE_DIM as i32);
+    let region_x = zgx.div_euclid(REGION_DIM as i32) as u8;
+    let region_y = zgy.div_euclid(REGION_DIM as i32) as u8;
+    let zone_x = zgx.rem_euclid(REGION_DIM as i32) as u8;
+    let zone_y = zgy.rem_euclid(REGION_DIM as i32) as u8;
+    let cx = gx.rem_euclid(ZONE_DIM as i32) as u8;
+    let cy = gy.rem_euclid(ZONE_DIM as i32) as u8;
+    (pack_zone_id(region_x, region_y, surface, zone_x, zone_y), cell(cx, cy))
+}
+
+/// `(zone_id, location)` → its global tile `(gx, gy)`. Inverse of
+/// [`zone_and_location`].
+pub fn global_tile(zone_id: u32, location: u8) -> (i32, i32) {
+    let gx = zone_region_x(zone_id) as i32 * REGION_TILES
+        + zone_x(zone_id) as i32 * ZONE_DIM as i32
+        + cell_x(location) as i32;
+    let gy = zone_region_y(zone_id) as i32 * REGION_TILES
+        + zone_y(zone_id) as i32 * ZONE_DIM as i32
+        + cell_y(location) as i32;
+    (gx, gy)
+}
+
 // ── packed thing (cold `things` entries) ─────────────────────────────────────
 //
 // Layout (LSB→MSB): x:4 | y:4 | rotation:2 | object_id:12 | reserved:10.
@@ -327,5 +359,24 @@ mod tests {
         assert_eq!(tile_def(full), DEF_ID_MAX);
         assert_eq!(tile_reserved(full), 0xF);
         assert_eq!(full, 0xFFFF);
+    }
+
+    #[test]
+    fn global_tile_roundtrips() {
+        for &(gx, gy) in &[(0, 0), (15, 0), (16, 3), (255, 255), (256, 256), (1000, 42)] {
+            let (z, loc) = zone_and_location(gx, gy, 0);
+            assert_eq!(global_tile(z, loc), (gx, gy), "roundtrip ({gx},{gy})");
+        }
+    }
+
+    #[test]
+    fn global_tile_matches_zone_layout() {
+        // (8,8) → region 0, zone 0, cell (8,8).
+        let (z, loc) = zone_and_location(8, 8, 0);
+        assert_eq!(z, pack_zone_id(0, 0, 0, 0, 0));
+        assert_eq!((cell_x(loc), cell_y(loc)), (8, 8));
+        // Crossing the zone edge bumps zone_x; crossing the region edge bumps region_x.
+        assert_eq!(zone_x(zone_and_location(16, 0, 0).0), 1);
+        assert_eq!(zone_region_x(zone_and_location(256, 0, 0).0), 1);
     }
 }

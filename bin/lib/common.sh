@@ -15,6 +15,7 @@ SHARED_DIR="$REPO/shared"
 SERVER_DIR="$REPO/server"
 GATEWAY_DIR="$REPO/gateway"
 CLIENT_DIR="$REPO/client"
+NPC_DIR="$REPO/npc"
 SPACETIME_DIR="$REPO/spacetime"
 MODULES_DIR="$SPACETIME_DIR/server/modules"
 PIXIJS_DIR="$REPO/pixijs"
@@ -171,6 +172,11 @@ rd_gateway_dcl() {
 # an env-specific deployment).
 rd_client_dcl() {
   docker compose -f "$CLIENT_DIR/compose.yml" "$@"
+}
+# NPC driver build/run — a dev-side bot binary (path-deps the client), always the
+# local compose.yml.
+rd_npc_dcl() {
+  docker compose -f "$NPC_DIR/compose.yml" "$@"
 }
 
 # ── module discovery ─────────────────────────────────────────────────────────

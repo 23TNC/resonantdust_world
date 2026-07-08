@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
@@ -26,9 +26,15 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use crate::api::{Command, Event, EventSink, ServerInfo};
+use crate::clock::Clock;
 use crate::config::ClientConfig;
 use crate::protocol::{ClientMsg, RowData, RowOp, ServerMsg};
 use crate::zones::{AnchorRadii, ZoneManager};
+
+/// How often to send a clock-sync ping while connected. Fast enough that a fresh
+/// session converges on a good offset within a few seconds, cheap enough to run
+/// for the whole session (one tiny frame each way).
+const PING_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The live world-server socket, split into its write and read halves. The read
 /// half lives in the loop (so `select!` can poll it); the write half lives on the
@@ -115,6 +121,12 @@ impl Client {
         self.send(Command::Release { zone_id, location })
     }
 
+    /// Convenience: move the controllable thing toward global tile
+    /// `(tile_x, tile_y)` (see [`Command::Move`]).
+    pub fn move_to(&self, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
+        self.send(Command::Move { tile_x, tile_y })
+    }
+
     /// Convenience: drop the world-server connection but keep the engine alive.
     pub fn logout(&self) -> Result<(), SendError> {
         self.send(Command::Logout)
@@ -158,6 +170,9 @@ struct Engine {
     subs: HashMap<u32, u32>,
     /// Monotonic source of subscription ids for this session.
     next_sid: u32,
+    /// Rolling clock-offset estimate, fed by ping/pong round-trips and the login
+    /// seed. Reset (to a fresh, unsynced estimate) on every disconnect.
+    clock: Clock,
 }
 
 impl Engine {
@@ -173,6 +188,7 @@ impl Engine {
             zones: ZoneManager::default(),
             subs: HashMap::new(),
             next_sid: 1,
+            clock: Clock::new(),
         }
     }
 
@@ -182,6 +198,9 @@ impl Engine {
         // The read half lives here, not on `self`: `select!` polls it each
         // iteration while command handling (which may replace it) borrows `self`.
         let mut read: Option<WsRead> = None;
+        // Clock-sync cadence. The first tick fires immediately (a ping right after
+        // login); subsequent ticks pace the session. Skipped while disconnected.
+        let mut ping = tokio::time::interval(PING_INTERVAL);
 
         loop {
             tokio::select! {
@@ -195,6 +214,9 @@ impl Engine {
                 },
                 frame = next_frame(&mut read) => {
                     self.handle_frame(frame, &mut read).await;
+                }
+                _ = ping.tick() => {
+                    self.send_ping().await;
                 }
             }
         }
@@ -222,6 +244,11 @@ impl Engine {
             Command::Release { zone_id, location } => {
                 if let Err(err) = self.send_frame(&ClientMsg::Release { zone_id, location }).await {
                     self.emit(Event::Status(format!("release send failed: {err}")));
+                }
+            }
+            Command::Move { tile_x, tile_y } => {
+                if let Err(err) = self.send_frame(&ClientMsg::Move { tile_x, tile_y }).await {
+                    self.emit(Event::Status(format!("move send failed: {err}")));
                 }
             }
             Command::Logout => {
@@ -381,19 +408,30 @@ impl Engine {
                 cid,
                 player_id,
                 data_shard,
-                ..
+                server_micros,
             } => {
                 if !self.matches_pending(cid) {
                     return;
                 }
                 self.pending = None;
                 self.player_id = Some(player_id);
+                // Coarse offset seed so the clock is usable before the first pong;
+                // a real round-trip refines it within `PING_INTERVAL`.
+                self.clock.seed_login(server_micros / 1_000, now_ms());
+                self.emit(Event::ClockSync(self.clock.snapshot(now_ms())));
                 let server_url = self.server_url.clone().unwrap_or_default();
                 self.emit(Event::LoggedIn {
                     player_id,
                     data_shard,
                     server_url,
                 });
+            }
+            ServerMsg::Pong {
+                client_send_ms,
+                server_ms,
+            } => {
+                self.clock.on_pong(client_send_ms, server_ms, now_ms());
+                self.emit(Event::ClockSync(self.clock.snapshot(now_ms())));
             }
             ServerMsg::LoginErr { cid, error, .. } => {
                 if !self.matches_pending(cid) {
@@ -436,6 +474,7 @@ impl Engine {
                         rotation: ft.rotation,
                         id: ft.id,
                         offset: ft.offset,
+                        valid_at_ms: resonantdust_codec::packed::valid_at_time(ft.valid_at),
                     }),
                     RowData::HotTile(_) | RowData::HotThing(_) => {}
                 }
@@ -443,6 +482,20 @@ impl Engine {
                 self.flush_zone_intents().await;
             }
         }
+    }
+
+    /// Send a clock-sync ping, if connected. Silent when there's no socket (the
+    /// interval keeps ticking between sessions) and on a transport error (the read
+    /// side surfaces the disconnect).
+    async fn send_ping(&mut self) {
+        if self.write.is_none() {
+            return;
+        }
+        let _ = self
+            .send_frame(&ClientMsg::Ping {
+                client_send_ms: now_ms(),
+            })
+            .await;
     }
 
     /// Serialize and send a client frame on the live socket.
@@ -481,6 +534,8 @@ impl Engine {
         self.zones.clear();
         self.subs.clear();
         self.next_sid = 1;
+        // The clock offset is per-session (a new server, a new clock to sync to).
+        self.clock = Clock::new();
         // A pending login that never got its reply dies with the connection.
         if let Some(p) = self.pending.take() {
             if was_connected {

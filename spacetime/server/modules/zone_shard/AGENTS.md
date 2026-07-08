@@ -41,7 +41,7 @@ tile/thing tables don't carry.
 | [src/zones.rs](src/zones.rs) | `cold_zones` table `{valid_at PK, zone_id idx, tiles: Vec<u16>(256), things: Vec<u32>}` + its hand-written `valid_at` primitives (`prior_at`/`latest`/`baseline`/`delete_at`/`write_at`/`reap_prior`), the `upsert_thing` fold helper, and the `seed_cold_zone` reducer. One cold table → no macro. |
 | [src/hot.rs](src/hot.rs) | The two hot layer structs (`HotTile`/`HotThing`, identical: `{valid_at PK, zone_id idx, location: u8, rotation: u8, id: u16}`) + `decl_cell_history!` which generates each layer's primitives keyed on `(zone_id, location)` (`prior_at`/`latest`/`delete_at`/`delete_all`/`write_at`/`cells_in_zone`/`reap_prior`). The `set_hot` (single cell) + `apply_hot` (batched, one commit per zone) reducers + the `LAYER_*` dispatch. |
 | [src/gc.rs](src/gc.rs) | `gc_schedule` + `init` (seeds the 10-min schedule) + `gc_sweep` → `fold_hot_to_cold` then prior-version reaps for all tables. `FOLD_HORIZON_MS` (30s) gates "at rest". |
-| [src/time.rs](src/time.rs) | Client/server time-discipline contract: `now_ms`, `effective_now_ms`, the drift-grace constants. |
+| [src/time.rs](src/time.rs) | Server time source (`now_ms`) for the `valid_at` model. The old drift-grace contract was retired with the event-log sync model — reducers stamp at server time; the render delay is client-side (see `docs/sync.md`). |
 | [src/sequence.rs](src/sequence.rs) | `sequence_counter` + `next_sequence()` — load-bearing for `valid_at` PK uniqueness across same-ms writes. |
 
 The `valid_at` PK + zone-cell + packed-thing/tile bit helpers live in the shared

@@ -32,6 +32,7 @@ dist/
 /gateway/target/
 /server/target/
 /client/target/
+/npc/target/
 
 # spacetimedb data
 /spacetime-data/*

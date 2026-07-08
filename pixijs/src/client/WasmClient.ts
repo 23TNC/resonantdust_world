@@ -14,6 +14,14 @@
 import { WorldClient } from "./wasm";
 import { assetBaseFromServerUrl } from "./environments";
 
+/** Shared render delay `D`, in ms. Every client renders the world as of
+ *  `syncedNow − RENDER_DELAY_MS`; using the SAME value on every client is what
+ *  makes them agree on the instant they display. Sized above typical one-way
+ *  latency + jitter + the server's write cadence — 300ms is imperceptible for a
+ *  colony sim and doubles as the command-latency budget (a local action becomes
+ *  visible this long after it's issued). */
+export const RENDER_DELAY_MS = 300;
+
 /** One chat message from the (future) chat feed. `sentAt` is a packed
  *  `[time_ms | seq]` key as a STRING — the u64 exceeds JS's safe-integer range,
  *  so it's carried as text (and is a stable per-message id / sort key). The
@@ -56,9 +64,9 @@ export interface SubStatsSnapshot {
   tables: SubStat[];
 }
 
-/** Clock-sync diagnostics for the debug HUD's "sync" tab. The wasm `LoggedIn`
- *  event carries no clock sample, so this is inert for now — a running sync
- *  lands with a later clock frame. */
+/** Clock-sync diagnostics for the debug HUD's "sync" tab. Fed by the wasm core's
+ *  `clockSync` event — a login seed plus a ping/pong round-trip every couple of
+ *  seconds — carrying the running offset/RTT estimate. */
 export interface ClockStats {
   serverNowMs: number;
   synced: boolean;
@@ -120,6 +128,11 @@ export interface FreeThing {
   rotation: number;
   id: number;
   offset: number;
+  /** The row's `valid_at` in server wall-clock ms — when this position becomes
+   *  true. The render layer buffers positions by this and interpolates to the
+   *  shared instant `syncedNow − RENDER_DELAY_MS`, so every client shows the
+   *  mover at the same world point at the same wall time. */
+  validAt: number;
 }
 /** A loose thing changed — upsert or drop it. */
 export type FreeThingHandler = (thing: FreeThing) => void;
@@ -150,10 +163,26 @@ type WorldEvent =
       rotation: number;
       id: number;
       offset: number;
+      validAt: number;
     }
   | { kind: "zoneClosed"; zoneId: number }
   | { kind: "callStats"; stats: CallStat[] }
-  | { kind: "subStats"; open: number; total: number; tables: SubStat[] };
+  | { kind: "subStats"; open: number; total: number; tables: SubStat[] }
+  | {
+      kind: "clockSync";
+      serverNowMs: number;
+      synced: boolean;
+      offsetMs: number;
+      captures: number;
+      rttSamples: number;
+      rttMs: number | null;
+      bestRttMs: number | null;
+      bestOffsetMs: number | null;
+      worstOffsetMs: number | null;
+      runningDelayMs: number;
+      runningDeltaMs: number;
+      deltaMs: number | null;
+    };
 
 /** An in-flight login awaiting its terminal event. */
 interface PendingLogin {
@@ -183,6 +212,12 @@ export class WasmClient {
   private serverUrl: string | null = null;
 
   private clockCb: ((stats: ClockStats) => void) | null = null;
+  /** Live clock offset (`serverNow − Date.now()`), updated on every `clockSync`.
+   *  `0` until the first synced sample, so {@link syncedNowMs} degrades to the
+   *  local clock. */
+  private clockOffsetMs = 0;
+  /** Whether the clock has at least one estimate (login seed or a pong). */
+  private clockSynced = false;
   private readonly loggedInCbs = new Set<(serverUrl: string) => void>();
   private readonly zoneTilesCbs = new Set<ZoneTilesHandler>();
   private readonly zoneThingsCbs = new Set<ZoneThingsHandler>();
@@ -211,6 +246,19 @@ export class WasmClient {
    *  (`ws://host:port/ws` → `http://host:port`). */
   assetBase(): string {
     return this.serverUrl ? assetBaseFromServerUrl(this.serverUrl) : "";
+  }
+
+  /** The server wall clock (ms) estimated for *now*, from the live clock offset.
+   *  The render loop reads `syncedNowMs() − RENDER_DELAY_MS` to pick the shared
+   *  instant to display. Before the first clock sample this is just `Date.now()`
+   *  (offset 0), so rendering still works — just un-synced across clients. */
+  syncedNowMs(): number {
+    return Date.now() + this.clockOffsetMs;
+  }
+
+  /** Whether the clock offset has been estimated at least once. */
+  clockIsSynced(): boolean {
+    return this.clockSynced;
   }
 
   /** Subscribe to successful logins (fires with the world server's WS URL). The
@@ -305,6 +353,13 @@ export class WasmClient {
     this.world?.release(zoneId, location);
   }
 
+  /** Move the controllable thing toward global tile `(tileX, tileY)`. The server
+   *  pathfinds from its current tile and commits the path, which arrives on the
+   *  free-thing subscription. No-op before login. */
+  moveTo(tileX: number, tileY: number): void {
+    this.world?.moveTo(tileX, tileY);
+  }
+
   /** Subscribe to cold-zone tile deliveries. Returns an unsubscribe. */
   onZoneTiles(cb: ZoneTilesHandler): () => void {
     this.zoneTilesCbs.add(cb);
@@ -342,7 +397,8 @@ export class WasmClient {
     /* no chat frames yet — drop */
   }
 
-  /** Clock-sync snapshots → debug HUD. Inert for now (no clock frame yet). */
+  /** Clock-sync snapshots → debug HUD. Fires on every `clockSync` (login seed +
+   *  each ping/pong). Only one consumer is kept (the HUD projector). */
   onClockStats(cb: (stats: ClockStats) => void): () => void {
     this.clockCb = cb;
     return () => {
@@ -443,8 +499,30 @@ export class WasmClient {
             rotation: ev.rotation,
             id: ev.id,
             offset: ev.offset,
+            validAt: ev.validAt,
           });
         }
+        break;
+      case "clockSync":
+        // Update the live offset so `syncedNowMs()` tracks the server clock, then
+        // project the snapshot into the debug HUD's `ClockStats` shape. `synced`
+        // gates the offset write so a pre-sync seed of 0 can't skew the clock.
+        this.clockSynced = ev.synced;
+        if (ev.synced) this.clockOffsetMs = ev.serverNowMs - Date.now();
+        this.clockCb?.({
+          serverNowMs: ev.serverNowMs,
+          synced: ev.synced,
+          clientDelayMs: RENDER_DELAY_MS,
+          runningDelayMs: ev.runningDelayMs,
+          runningDeltaMs: ev.runningDeltaMs,
+          deltaMs: ev.deltaMs,
+          captures: ev.captures,
+          bestOffsetMs: ev.bestOffsetMs,
+          worstOffsetMs: ev.worstOffsetMs,
+          rttMs: ev.rttMs,
+          bestRttMs: ev.bestRttMs,
+          rttSamples: ev.rttSamples,
+        });
         break;
       case "zoneClosed":
         for (const cb of this.zoneClosedCbs) cb(ev.zoneId);

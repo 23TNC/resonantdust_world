@@ -3,32 +3,6 @@ use spacetimedb::{reducer, ReducerContext, Table};
 use crate::sequence;
 use resonantdust_codec::packed::{pack_valid_at, valid_at_time};
 
-/// Client-server time-drift tolerance, mirrored from the `cards` module's
-/// `cards::TIME_DRIFT_BUFFER_MS` — the steady-state forward-grace ceiling
-/// (how far ahead of server a `client_time_ms` may be before rejection). Kept
-/// as a local copy because the `players` and `cards` modules are separate
-/// crates with no shared runtime dependency — keep the two in sync.
-///
-/// NOTE: this is *not* the player-row back-stamp depth — that's
-/// `CLIENT_RENDER_BUFFER_MAX_MS` below. The two used to be the same value
-/// (2s), which is why login rows landed in the client's future once the
-/// render buffer grew past 2s.
-pub const TIME_DRIFT_BUFFER_MS: u64 = 2_000;
-
-/// Bootstrap back-stamp for the login row. The client renders behind true
-/// server time by `clientDelay` — adaptive in `[1.5s, 5s]`, init 3s (see
-/// `ReducerManager.CLIENT_DELAY_*`), which is DEEPER than
-/// `TIME_DRIFT_BUFFER_MS` (2s, the steady-state forward-grace ceiling). At
-/// login the client's clock window isn't seeded yet, so we can't stamp at its
-/// actual buffered clock (`effective_now_ms` would reject the un-synced
-/// `client_time_ms`). Instead back-stamp by the client's MAX render buffer so
-/// the row is visible on the next promote tick wherever `clientDelay` settles —
-/// stamping at only `now − 2s` left the row ~1s (up to 3s) in the client's
-/// future, which is the login lag this fixes. Login rows carry no timing
-/// semantics, so over-back-stamping is free. Mirror of the client's
-/// `CLIENT_DELAY_MAX_MS`.
-pub const CLIENT_RENDER_BUFFER_MAX_MS: u64 = 5_000;
-
 /// The card shard a freshly-claimed player is assigned to. `0` while a
 /// single `cards` database serves everyone — which it can, since the
 /// auth DB is low-write and the hot card state is what actually needs
@@ -312,7 +286,7 @@ fn write_at(ctx: &ReducerContext, mut player: Player, time_ms: u64) -> Player {
 }
 
 // Convenience: insert at the server's wall-clock `now`. Reducer
-// callers should prefer `create_at` and pass `effective_now_ms`.
+// callers should prefer `create_at` and pass the server `now_ms`.
 // Assigns the default card shard.
 pub fn create(ctx: &ReducerContext, player_id: u32, name: String) -> Player {
     create_at(ctx, player_id, name, CARD_SHARD, now_ms(ctx))
@@ -408,7 +382,7 @@ pub fn create_at(
 // Pick up the latest row at-or-before `time_ms`, mutate it via `f`,
 // write it back at `time_ms`. Returns None if no prior row exists.
 // Mirrors `cards::update_with_at` — use this from reducers that have
-// resolved an `effective_now_ms` value.
+// resolved a server `now_ms` value.
 pub fn update_with_at<F>(
     ctx: &ReducerContext,
     player_id: u32,
@@ -552,18 +526,8 @@ pub fn delete_player(ctx: &ReducerContext, player_id: u32) {
 /// `player_id` is supplied by the gate (which owns the session) — same
 /// gate-mediated auth pattern as the cards reducers' `caller_player_id`.
 ///
-/// **Exempt from `effective_now_ms` grace check** — same rationale as
-/// `claim_or_login`. The client also calls this reducer on every
-/// shard reconnect to re-seed `noteServerTime` after a stale-capture
-/// gap (the player row's update is delivered as a `Reducer`-tagged
-/// row event because the client is already subscribed to the player
-/// row from the prior session). At reconnect time the client's
-/// offset window may be too stale to pass a grace check, so the
-/// grace check is bypassed; the reducer's purpose is precisely to
-/// repair that staleness, not to depend on it.
-///
-/// `_client_time_ms` is accepted but ignored, kept for wire-format
-/// consistency.
+/// `client_time_ms` is accepted for wire-format parity but ignored — the row is
+/// stamped at server-now (the render delay is applied client-side).
 ///
 /// No-op (returns `Ok`) if the player has no prior row, which can
 /// happen mid-creation; the next login will land on a real row.
@@ -577,14 +541,9 @@ pub fn set_last_login(
     player_id: u32,
 ) -> Result<(), String> {
     let _ = client_time_ms;
-    // Stamp at `ctx.timestamp − CLIENT_RENDER_BUFFER_MAX_MS` so the row is
-    // immediately visible to the client's buffered `serverNowMs()` view —
-    // matches the same convention (and back-stamp depth) as `claim_or_login`;
-    // see the constant's doc for why the shift tracks the client's MAX render
-    // buffer rather than `TIME_DRIFT_BUFFER_MS`. The `last_login_secs` value
-    // itself uses the shifted time too, so the recorded "last login" is
-    // consistent with what the client's chat-window calculator expects.
-    let now_ms = now_ms(ctx).saturating_sub(CLIENT_RENDER_BUFFER_MAX_MS);
+    // Stamp at server-now. The render delay `D` is applied client-side (a single
+    // shared value), so the server writes true times and never back-stamps.
+    let now_ms = now_ms(ctx);
     let now_secs = (now_ms / 1_000) as u32;
     update_with_at(ctx, player_id, now_ms, |p| {
         p.last_login_secs = now_secs;
@@ -615,35 +574,11 @@ pub fn claim_or_login(
 ) -> Result<(), String> {
     let _ = client_time_ms;
     validate_player_name(&name)?;
-    // **Exempt from `effective_now_ms` grace check.** This is the
-    // bootstrap reducer: the client's clock offset isn't yet
-    // synchronized to the server's (the offset window is empty until
-    // `captureReducerTimestamp` fires from a row event), so a grace
-    // check on `client_time_ms` would systematically reject the first
-    // call of every session whose host clock is off by more than 2N.
-    //
-    // Instead, this reducer writes the player row at
-    // `ctx.timestamp − CLIENT_RENDER_BUFFER_MAX_MS` — shifted backward
-    // by the client's MAX render buffer (`clientDelay` ∈ [1.5s, 5s]).
-    // Stamping at the raw `ctx.timestamp` would put the row N ms in the
-    // client's future, forcing the player to wait N seconds before
-    // `promote()` brings the row into `current` and `waitForPlayer`
-    // resolves. Shifting back by the max buffer makes the row visible on
-    // the very next promote tick regardless of where `clientDelay`
-    // settles — the old `TIME_DRIFT_BUFFER_MS` (2s) shift was shallower
-    // than the live buffer (3–5s) and left the player waiting ~1–3s.
-    //
-    // The client subscribes to the player row BEFORE calling this
-    // reducer (see `PlayerManager.claimOrLogin`), so the
-    // transaction-update delivery carries the row as a `Reducer`-
-    // tagged row event, which feeds `noteServerTime` and
-    // synchronizes the offset window. From there on, every reducer is
-    // submitted with a valid `client_time_ms`.
-    //
-    // `_client_time_ms` is accepted but ignored, kept for wire-format
-    // consistency so the client's `ReducerManager.claimOrLogin`
-    // wrapper doesn't need a special case.
-    let now_ms = now_ms(ctx).saturating_sub(CLIENT_RENDER_BUFFER_MAX_MS);
+    // Bootstrap login. `client_time_ms` is accepted for wire-format parity but
+    // ignored — the row is stamped at server-now. The render delay is applied
+    // client-side, and the gate reads this row server-side (it isn't projected on
+    // the client), so no back-stamp is needed.
+    let now_ms = now_ms(ctx);
 
     let player_id = match latest_by_name(ctx, &name) {
         Some(player) => {
@@ -713,9 +648,8 @@ pub fn claim_or_login(
 /// or bumps `last_login_secs`. The player_soul is minted separately via
 /// `spawn_soul` on the card shard, same as the login path.
 ///
-/// **Intentionally insecure**, like `claim_or_login`: no auth. Exempt from the
-/// `effective_now_ms` grace check (bootstrap-class; stamps at
-/// `now − CLIENT_RENDER_BUFFER_MAX_MS` so the row promotes on the next tick).
+/// **Intentionally insecure**, like `claim_or_login`: no auth. Stamps at
+/// server-now (no back-stamp; the render delay is applied client-side).
 #[reducer]
 pub fn create_player(
     ctx: &ReducerContext,
@@ -729,7 +663,7 @@ pub fn create_player(
     if latest_by_name(ctx, &name).is_some() {
         return Err(format!("create_player: a player named {name:?} already exists"));
     }
-    let now_ms = now_ms(ctx).saturating_sub(CLIENT_RENDER_BUFFER_MAX_MS);
+    let now_ms = now_ms(ctx);
     provision_player(ctx, name, now_ms);
     Ok(())
 }

@@ -1,15 +1,12 @@
-//! The surface BAKE shader — the `surface` channel's per-prim material. The SURFACE source map
-//! is RGB data — R = height (reserved; unused by the current lighting), G = ambient occlusion,
-//! B = the coverage/transparency (diffuse alpha, straight, 0 outside the object). It carries NO
-//! stored alpha (data in a source alpha channel fights the upload-premultiply + on-demand
-//! downscale path — see docs/lighting.md), so the bake DERIVES the presence coverage from B and
-//! premultiplies by it: `out = (R·p, G·p, B·p, p)`, `p = smoothstep(B)`.
+//! The surface BAKE shader — the `surface` channel's per-prim material. SOURCE map is RGB:
+//! R = height (unused), G = ambient occlusion, B = coverage (straight, 0 outside the object).
 //!
-//! Presence is HARD (a semi-transparent pixel still fully occupies its cell — occlusion must see
-//! it as present, or a thing's edge halos), so `p` is a `smoothstep` of B, not B itself. The
-//! lighting pass then recovers `ao = G/A`, the soft transparency `B/A`, and reads `A` as presence
-//! — all `/A`, exactly like the other premultiplied composites. Where B = 0 (outside the object)
-//! it writes nothing, so the flat data background never clobbers a thing behind it.
+//! NO-ALPHA model: the composite is OPAQUE (α = 1) and carries data in RGB — R = PRESENCE
+//! (1 where a thing is), G = AO, B = ALPHA (the coverage, used by the display shader). Nothing
+//! is premultiplied. The silhouette is a HARD `discard` on B (AA is off, so there's no soft
+//! edge to blend); discarded fragments keep whatever was baked underneath, and the opaque writes
+//! let the slot blit REPLACE cleanly — the root fix for the stale-tree bug. The lighting pass
+//! reads R/G/B directly (no `/A` un-premultiply).
 //!
 //! A Pixi v8 high-shader Mesh program; drops the stock textureBit (its own uv-rect).
 //!
@@ -40,13 +37,13 @@ const surfaceBitGl = {
       uniform vec4 uSurfaceRect;    // surface uv rect on its page (offset.xy, scale.zw)
     `,
     main: /* glsl */ `
-      vec3 s = texture(uSurface, uSurfaceRect.xy + vUV * uSurfaceRect.zw).rgb;
-      // Presence (HARD) from B, centered on the VISIBLE edge (~0.5) — matched to the depth bake
-      // + shadow caster so occlusion presence, the receiver, and the caster all share one
-      // silhouette. Premultiply the whole surface by it → composite carries A = presence, and
-      // G/A = ao, B/A = soft transparency (recovered AA-safe in the lighting pass).
-      float p = smoothstep(0.35, 0.65, s.b);
-      outColor = vec4(s * p, p);
+      vec3 s = texture(uSurface, uSurfaceRect.xy + vUV * uSurfaceRect.zw).rgb;  // R unused, G=ao, B=coverage
+      // HARD silhouette: DISCARD outside the thing (AA off, so no soft edge to blend). The
+      // ground/thing already baked underneath survives in the discarded fragments; the kept
+      // fragments write OPAQUE data (α=1) so the slot blit replaces cleanly (no premultiply,
+      // no stale). Composite layout: R = presence (1 where a thing is), G = ao, B = alpha.
+      if (s.b < 0.5) discard;
+      outColor = vec4(1.0, s.g, s.b, 1.0);
     `,
   },
 };

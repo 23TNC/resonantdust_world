@@ -425,6 +425,13 @@ impl WorldClient {
         let _ = self.inner.release(zone_id, location);
     }
 
+    /// Move the controllable thing toward global tile `(tile_x, tile_y)` — the
+    /// server pathfinds and commits the move. No-op before login / if disconnected.
+    #[wasm_bindgen(js_name = moveTo)]
+    pub fn move_to(&self, tile_x: i32, tile_y: i32) {
+        let _ = self.inner.move_to(tile_x, tile_y);
+    }
+
     /// Drop the world-server connection, keeping the client alive for reconnect.
     pub fn logout(&self) {
         let _ = self.inner.logout();
@@ -506,6 +513,7 @@ fn event_to_js(event: &client::Event) -> JsValue {
             rotation,
             id,
             offset,
+            valid_at_ms,
         } => {
             set("kind", &JsValue::from_str("zoneFreeThing"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));
@@ -515,6 +523,7 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("rotation", &JsValue::from_f64(*rotation as f64));
             set("id", &JsValue::from_f64(*id as f64));
             set("offset", &JsValue::from_f64(*offset as f64));
+            set("validAt", &JsValue::from_f64(*valid_at_ms as f64));
         }
         Event::ZoneClosed { zone_id } => {
             set("kind", &JsValue::from_str("zoneClosed"));
@@ -537,6 +546,27 @@ fn event_to_js(event: &client::Event) -> JsValue {
                 arr.push(&o);
             }
             set("stats", &arr);
+        }
+        Event::ClockSync(s) => {
+            // Fields line up with pixijs's `ClockStats` so the sync HUD renders
+            // them directly. Optionals become `null` until a real pong lands.
+            let num = |v: f64| JsValue::from_f64(v);
+            let opt_u = |v: Option<u64>| v.map_or(JsValue::NULL, |x| JsValue::from_f64(x as f64));
+            let opt_i = |v: Option<i64>| v.map_or(JsValue::NULL, |x| JsValue::from_f64(x as f64));
+            set("kind", &JsValue::from_str("clockSync"));
+            set("serverNowMs", &num(s.server_now_ms as f64));
+            set("synced", &JsValue::from_bool(s.synced));
+            set("offsetMs", &num(s.offset_ms as f64));
+            set("captures", &num(s.samples as f64));
+            set("rttSamples", &num(s.samples as f64));
+            set("rttMs", &opt_u(s.rtt_ms));
+            set("bestRttMs", &opt_u(s.best_rtt_ms));
+            set("bestOffsetMs", &opt_i(s.best_offset_ms));
+            set("worstOffsetMs", &opt_i(s.worst_offset_ms));
+            // Running diagnostics: the freshest round-trip + its offset.
+            set("runningDelayMs", &num(s.rtt_ms.unwrap_or(0) as f64));
+            set("runningDeltaMs", &num(s.offset_ms as f64));
+            set("deltaMs", &opt_i(s.best_offset_ms));
         }
         Event::SubStats {
             open,

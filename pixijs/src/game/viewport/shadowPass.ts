@@ -1,6 +1,9 @@
-//! The shadow pass — billboard "wedge" shadows rasterized into a screen-space RT that carries,
-//! per covered texel: R = the caster's TILE-DEPTH (128 + row%128, /255, PREMULTIPLIED by
-//! coverage) and A = coverage (the silhouette alpha).
+//! The shadow pass — billboard "wedge" shadows rasterized into the screen-space `zdepth_screen`
+//! RT. NO-ALPHA / OPAQUE: the RT is blanked to opaque black each frame and only shadows draw,
+//! carrying per covered texel G = the caster's TILE-Y depth, encoded `5 + row%251` (5..255/255).
+//! The RESERVED 0..4 band means a blanked texel (G=0) reads as "no shadow" — no separate flag. R
+//! and B stay 0 (R is reserved for the world-space COLD shadow in zdepth_world). The silhouette is
+//! a HARD `discard` (AA off); overlapping shadows resolve last-writer-wins.
 //!
 //! Per caster we build the sim's wedge: a quad (A,B top / C,D bottom) rotated about its bottom
 //! edge by the GROUND ANGLE θ, with per-vertex depth extruded ± along the face normal. The TOP
@@ -83,14 +86,16 @@ const shadowBitGl = {
     header: /* glsl */ `
       uniform sampler2D uSprite;   // caster's SURFACE map (atlas source); B = silhouette/coverage
       uniform vec4 uSpriteRect;    // sprite's uv rect on its page (offset.xy, scale.zw)
-      uniform float uTileDepth;    // caster tile depth 0..1 → R (premultiplied by coverage)
+      uniform float uTileDepth;    // caster tile depth, encoded 5+row%251 (5..255/255) → G
     `,
     main: /* glsl */ `
-      // Cast a SOLID silhouette: harden surface.B to presence (same band as the depth/surface
-      // bakes) so the shadow carries no foliage-alpha dapple, and the two crossed wedge
-      // rectangles union cleanly — near-binary coverage leaves no partial-overlap seam specks.
-      float a = smoothstep(0.35, 0.65, texture(uSprite, uSpriteRect.xy + vUV * uSpriteRect.zw).b);
-      outColor = vec4(uTileDepth * a, 0.0, 0.0, a);   // R = depth·cov, A = cov; over-blend unions
+      // NO-ALPHA: the RT is blanked to opaque black each frame and only shadows draw. HARD
+      // silhouette — discard outside it (AA off) so the two crossed wedge rectangles union
+      // cleanly. G = the caster's tile-Y depth, encoded 5 + row%251 (5..255/255) so the RESERVED
+      // 0..4 band (a blanked texel reads G=0) means 'no shadow' with no separate flag. R and B
+      // stay 0. OPAQUE. Overlapping shadows: last writer wins.
+      if (texture(uSprite, uSpriteRect.xy + vUV * uSpriteRect.zw).b < 0.5) discard;
+      outColor = vec4(0.0, uTileDepth, 0.0, 1.0);
     `,
   },
 };
@@ -156,8 +161,8 @@ export class ShadowPass {
   private readonly container = new Container();
   private readonly pool: Slot[] = [];
 
-  /** The shadow RT (R = caster depth·coverage, A = coverage). Null before the first
-   *  {@link render}/{@link clear}. */
+  /** The zdepth_screen RT (OPAQUE: G = caster tile-Y depth, 5+row%251; 0..4 = no shadow). Null
+   *  before the first {@link render}/{@link clear}. */
   get texture(): RenderTexture | null {
     return this.rt;
   }
@@ -255,14 +260,14 @@ export class ShadowPass {
       r2.shader.tileDepth = c.tileDepth;
       this.container.addChild(r2.mesh);
     }
-    renderer.render({ container: this.container, target: this.rt!, clear: true, clearColor: [0, 0, 0, 0] });
+    renderer.render({ container: this.container, target: this.rt!, clear: true, clearColor: [0, 0, 0, 1] }); // opaque blank
   }
 
-  /** Clear the RT to zero (no casters / no shadow light this frame). */
+  /** Blank the RT to opaque black (no casters / no shadow light this frame). */
   clear(renderer: Renderer, w: number, h: number, res: number): void {
     this.ensureRT(renderer, w, h, res);
     this.container.removeChildren();
-    renderer.render({ container: this.container, target: this.rt!, clear: true, clearColor: [0, 0, 0, 0] });
+    renderer.render({ container: this.container, target: this.rt!, clear: true, clearColor: [0, 0, 0, 1] });
   }
 
   destroy(): void {

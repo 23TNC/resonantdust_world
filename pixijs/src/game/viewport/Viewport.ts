@@ -53,14 +53,15 @@ function originFrac(renderer: Renderer, texture: Texture): number | null {
   }
 }
 
-/** A world-y's DEPTH on the 0..1 ring: one step per {@link DEPTH_PX} world px, wrapped over the
- *  full 0..255 range. The composite/shadow ALPHA marks thing-vs-ground (so the value can start at
- *  0), and the lighting compare handles the ring wrap — so nothing needs a ≥128 floor. Baked into
- *  the depth composite (receiver) and the shadow RT's R (caster). Finer than per-tile so things
- *  a few px apart in y still order (and occlude) correctly. */
-const DEPTH_PX = 5;
+/** Encode a prim's TILE ROW as its depth byte: `5 + (row % 251)` → the range 5..255, with 0..4
+ *  RESERVED (0 = blank / no depth, so the reserved band itself signals "nothing here" — no extra
+ *  flag needed). `row = floor(worldY / SQUARE)` is the tile row of the prim's foot (same input for
+ *  the shadow CASTER and the zdepth_world RECEIVER, so they compare in one space). Written into
+ *  zdepth_world.B and zdepth_screen.G; the lighting compare recovers `row = value·255 − 5` and
+ *  wraps over the 251-ring. Per-tile granularity — the tile the primitive occupies. */
 function depthUnit(worldY: number): number {
-  return (((Math.floor(worldY / DEPTH_PX) % 256) + 256) % 256) / 255;
+  const row = Math.floor(worldY / SQUARE);
+  return (5 + (((row % 251) + 251) % 251)) / 255; // 5..255; 0..4 reserved
 }
 
 /** Zero material-channel params (no jitter) — shared by the albedo path when a prim has no
@@ -157,11 +158,12 @@ export class Viewport extends LayoutNode {
         resolve: (prim) => {
           // Standing things: premultiply the normal (real LOD, or flat-up) by surface.B — the
           // soft coverage — so the flat background never clobbers, and the over-blend onto the
-          // ground normal computes the α-lerp. Needs surface loaded (the coverage source);
-          // until then, fall through to the flat sprite.
+          // ground normal computes the α-lerp. Gate on the SAME real tier as albedo (both albedo
+          // AND surface loaded) so a thing never bakes as real in one channel but geo in another.
           if (prim.zIndex >= 1 && prim.textureName) {
+            const alb = resolver.resolve(prim.textureName, "albedo", prim.cell);
             const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
-            if (!surf.geo) {
+            if (!alb.geo && !surf.geo) {
               const n = resolver.resolve(prim.textureName, "normal", prim.cell);
               return { texture: surf.texture, tint: 0xffffff, normal: { rgb: n.geo ? null : n.texture, alpha: surf.texture } };
             }
@@ -180,8 +182,12 @@ export class Viewport extends LayoutNode {
         key: "surface",
         resolve: (prim) => {
           if (!prim.textureName) return { texture: resolver.white, tint: 0x00ffff };
+          // Same real-tier gate as albedo: don't bake a thing's real surface (its coverage /
+          // presence) until albedo is real too, else depth/normal (which read this) and the
+          // occlusion see a thing albedo renders as a geo box.
+          const alb = resolver.resolve(prim.textureName, "albedo", prim.cell);
           const { texture, geo } = resolver.resolve(prim.textureName, "surface", prim.cell);
-          return geo ? { texture: resolver.white, tint: 0x00ffff } : { texture, tint: 0xffffff, surface: true };
+          return alb.geo || geo ? { texture: resolver.white, tint: 0x00ffff } : { texture, tint: 0xffffff, surface: true };
         },
       },
       // The depth channel: B = the prim's tile-depth (row%256, /255), for STANDING things only —
@@ -189,13 +195,17 @@ export class Viewport extends LayoutNode {
       // lighting pass reads B at vUV and omits a shadow where it's ≥ the caster depth. The
       // silhouette/presence comes from the SURFACE map's B (via the depth bake's smoothstep).
       {
-        key: "depth",
+        key: "zdepth_world",
         resolve: (prim) => {
+          // Same real-tier gate as albedo (both albedo AND surface loaded): a geo-tier thing
+          // (albedo still a box) must NOT write a thing depth, or zdepth_world shows
+          // thing-silhouettes that albedo/normal/surface don't.
           if (prim.zIndex >= 1 && prim.textureName) {
+            const alb = resolver.resolve(prim.textureName, "albedo", prim.cell);
             const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
-            if (!surf.geo) return { texture: surf.texture, tint: 0xffffff, depth: depthUnit(prim.y + prim.height) };
+            if (!alb.geo && !surf.geo) return { texture: surf.texture, tint: 0xffffff, depth: depthUnit(prim.y + prim.height) };
           }
-          return { texture: resolver.white, tint: 0xffffff, depth: -1 }; // ground / geo → write nothing
+          return { texture: resolver.white, tint: 0xffffff, depth: -1 }; // ground / geo → opaque black (no thing)
         },
       },
     ]);
@@ -259,6 +269,18 @@ export class Viewport extends LayoutNode {
     this.map.removePrim(id);
   }
 
+  /** Move an existing primitive to a new world-px top-left, updating the spatial
+   *  index + dirty set. Cheaper than remove+add for a per-frame position tween —
+   *  the interpolated free-thing movers call this every frame. No-op if the id is
+   *  unknown or the position is unchanged. */
+  movePrim(id: number, x: number, y: number): void {
+    const prim = this.map.getPrim(id);
+    if (!prim || (prim.x === x && prim.y === y)) return;
+    prim.x = x;
+    prim.y = y;
+    this.map.refreshPrim(id);
+  }
+
   /** The light rig — register world-space point lights (mutate them to move a torch), set
    *  the sun/ambient, or drive the cursor light. Lights are in WORLD px. */
   get lights(): LightRig {
@@ -282,8 +304,8 @@ export class Viewport extends LayoutNode {
       { name: "albedo", texture: this.map.displayComposite("albedo") },
       { name: "normal", texture: this.map.displayComposite("normal") },
       { name: "surface", texture: this.map.displayComposite("surface") },
-      { name: "depth", texture: this.map.displayComposite("depth") },
-      { name: "shadow", texture: this.shadowPass.texture },
+      { name: "zdepth_world", texture: this.map.displayComposite("zdepth_world") },
+      { name: "zdepth_screen", texture: this.shadowPass.texture },
     ];
   }
 
@@ -329,12 +351,12 @@ export class Viewport extends LayoutNode {
     const albedo = this.map.displayComposite("albedo");
     const normal = this.map.displayComposite("normal");
     const surface = this.map.displayComposite("surface");
-    const depth = this.map.displayComposite("depth");
-    if (albedo && normal && surface && depth && this.mesh) {
+    const zdepthWorld = this.map.displayComposite("zdepth_world");
+    if (albedo && normal && surface && zdepthWorld && this.mesh) {
       this.lightingShader.albedo = albedo;
       this.lightingShader.normal = normal;
       this.lightingShader.surface = surface;
-      this.lightingShader.depth = depth;
+      this.lightingShader.depth = zdepthWorld;
       // The mesh's aPosition is the PANNED world coord (worldX + panX); world-space lights
       // add this pan to line up with the fragment's vWorld.
       this.lightingShader.setPan(panX, panY);
@@ -368,8 +390,12 @@ export class Viewport extends LayoutNode {
     const out: ShadowCaster[] = [];
     for (const p of this.map.standingPrims()) {
       if (!p.textureName) continue;
+      // Only cast from things on the real tier (albedo AND surface loaded) — same gate as the
+      // depth/normal/surface bakes — so a geo-tier thing (still a box in albedo) doesn't throw
+      // a shadow from an invisible caster.
+      const alb = this.resolver.resolve(p.textureName, "albedo", p.cell);
       const { texture, geo } = this.resolver.resolve(p.textureName, "surface", p.cell);
-      if (geo) continue;
+      if (alb.geo || geo) continue;
       // Origin (trunk base) fraction — read back from the GPU once per stem, then cached
       // (fall back to the box bottom if the readback fails, so the caster still shadows). A
       // linked cell keys by (stem, cell) since each cell has its own silhouette.

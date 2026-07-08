@@ -42,6 +42,15 @@ pub enum ClientMsg {
     /// live). No reply frame — the effect arrives as the affixed thing vanishing
     /// and a `free_thing` appearing on the client's existing subscriptions.
     Release { zone_id: u32, location: u8 },
+    /// Clock-sync probe: the client's wall clock at send. The server replies with
+    /// [`ServerMsg::Pong`], echoing `client_send_ms` and adding its own clock, so
+    /// the client can estimate the offset from the round-trip.
+    Ping { client_send_ms: u64 },
+    /// Move the (debug) controllable thing toward global tile `(tile_x, tile_y)`.
+    /// The server relays to the object shard's `move_debug_mover`, which pathfinds
+    /// and commits the path; no reply frame (the effect arrives on the free-thing
+    /// subscription).
+    Move { tile_x: i32, tile_y: i32 },
 }
 
 /// A frame the server sends to the client.
@@ -63,6 +72,9 @@ pub enum ServerMsg {
         error: String,
         server_micros: u64,
     },
+    /// Reply to [`ClientMsg::Ping`]: `client_send_ms` echoed back (the round-trip
+    /// correlator) and `server_ms`, the server wall clock (ms) at reply time.
+    Pong { client_send_ms: u64, server_ms: u64 },
     /// A zone subscription's initial rows have all been delivered.
     Applied { sid: u32 },
     /// One upstream row insert/update/delete. `sid` is `0` — the client routes

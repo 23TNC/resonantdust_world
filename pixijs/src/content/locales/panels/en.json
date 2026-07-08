@@ -94,6 +94,7 @@
     "debugInfo": "Debug info",
     "environment": "Environment",
     "serverNow": "Server now",
+    "syncTime": "Sync time",
     "offset": "Offset",
     "fps": "FPS",
     "drawCalls": "Draw Calls",

@@ -1,0 +1,47 @@
+networks:
+  resonantdust:
+    external: true
+
+services:
+  # Compile the NPC driver on the local daemon. Output lands at
+  # /workspace/target/release/npc, visible on the host via the bind mount. Stock
+  # `rust:slim` is enough (plain ws:// everywhere → no TLS backend), same as the
+  # headless `client`.
+  #
+  # The npc crate path-deps `client` at ../client, which in turn path-deps
+  # resonantdust-codec at ../shared/codec. Mount both as siblings of /workspace so
+  # those relative paths resolve in-container: /workspace/../client = /client, and
+  # from there /client/../shared/codec = /shared/codec.
+  build:
+    image: rust:slim
+    volumes:
+      - .:/workspace
+      - ../client:/client
+      - ../shared:/shared
+    working_dir: /workspace
+    command: ["cargo", "build", "--release"]
+
+  # Type-check without producing a binary — the quick inner-loop check.
+  check:
+    image: rust:slim
+    volumes:
+      - .:/workspace
+      - ../client:/client
+      - ../shared:/shared
+    working_dir: /workspace
+    command: ["cargo", "check", "--all-targets"]
+
+  # Run the NPC driver against a gateway on the resonantdust network. Pass the
+  # NPC-owner name + env at invocation:
+  #   docker compose -f npc/compose.yml run --rm \
+  #     -e RD_ENV=dev -e CLIENT_GATEWAY_URL=http://gateway-gateway-1:9473 \
+  #     run wolves
+  # (Or run the built binary straight on the host against the gateway's exposed
+  # port: CLIENT_GATEWAY_URL=http://127.0.0.1:9473 npc/target/release/npc wolves)
+  run:
+    image: rust:slim
+    networks: [resonantdust]
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/workspace/target/release/npc"]

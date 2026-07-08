@@ -8,9 +8,14 @@ import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { RtPanel } from "../../game/panels/rt/RtPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
+import { SQUARE } from "../../game/viewport/squareMath";
 
 /** Accumulated wheel `deltaY` that halves or doubles the zoom (one LOD octave). */
 const WHEEL_OCTAVE = 500;
+
+/** Pointer travel (CSS px) below which a press-release counts as a click (a move
+ *  command), not a drag (a pan). */
+const CLICK_SLOP = 4;
 
 /**
  * The world scene — the post-login game surface. In the old client this hosted
@@ -50,14 +55,26 @@ export class WorldScene extends Scene {
   private dragId: number | null = null;
   private dragX = 0;
   private dragY = 0;
+  /** Where the current press started, and whether it has crossed {@link CLICK_SLOP}
+   *  into a drag — so a release below the slop fires a move command instead. */
+  private downX = 0;
+  private downY = 0;
+  private dragged = false;
   /** Bound pointer handlers (so they can be removed on exit). */
   private readonly onPointerDown = (e: PointerEvent): void => {
     this.dragId = e.pointerId;
     this.dragX = e.clientX;
     this.dragY = e.clientY;
+    this.downX = e.clientX;
+    this.downY = e.clientY;
+    this.dragged = false;
   };
   private readonly onPointerMove = (e: PointerEvent): void => {
     if (this.dragId !== e.pointerId) return;
+    if (!this.dragged && Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > CLICK_SLOP) {
+      this.dragged = true;
+    }
+    if (!this.dragged) return; // still within the click slop — don't pan yet
     // Drag right → world slides right under the cursor → anchor moves left. A screen-px
     // drag is `1/zoom` world px, so divide the delta by the zoom.
     const z = this.viewport.view.zoom;
@@ -75,8 +92,19 @@ export class WorldScene extends Scene {
     if (anchor) this.bridge.zoomTo(anchor.x, anchor.y, this.viewport.view.zoom);
   };
   private readonly onPointerUp = (e: PointerEvent): void => {
-    if (this.dragId === e.pointerId) this.dragId = null;
+    if (this.dragId !== e.pointerId) return;
+    // A press-release that never crossed the slop is a click → move the mover to
+    // the clicked tile.
+    if (!this.dragged) this.moveToClick(e);
+    this.dragId = null;
   };
+  /** Convert a click to a global tile and send a move intent. The server pathfinds
+   *  and commits the path; both players see the same authoritative motion. */
+  private moveToClick(e: PointerEvent): void {
+    const r = this.ctx.app.canvas.getBoundingClientRect();
+    const w = this.viewport.view.screenToWorld(e.clientX - r.left, e.clientY - r.top);
+    this.ctx.client.moveTo(Math.floor(w.x / SQUARE), Math.floor(w.y / SQUARE));
+  }
   /** End the drag when the cursor leaves the canvas: the matching `pointerup`
    *  fires off-canvas where we don't hear it, so without this we'd keep panning
    *  with no button held once the cursor re-enters. */
@@ -165,6 +193,9 @@ export class WorldScene extends Scene {
   }
 
   override update(_deltaMS: number): void {
+    // Tween loose things to the shared render instant (synced clock − delay)
+    // before the viewport bakes, so their new positions are in this frame's paint.
+    this.bridge?.tick();
     // Lay out the Pixi panel chrome, then drive the viewport's bake + display.
     this.panelLayer?.layoutIfDirty();
     this.viewport?.tick();

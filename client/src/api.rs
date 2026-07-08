@@ -11,6 +11,7 @@
 //!
 //! Login is the only verb so far; the enums grow as world interaction lands.
 
+use crate::clock::ClockSnapshot;
 use crate::zones::AnchorRadii;
 
 /// One command type's gateway-call tally, surfaced via [`Event::CallStats`] for
@@ -88,6 +89,11 @@ pub enum Command {
     /// vanishes, a [`Event::ZoneFreeThing`] appears). Requires a live session and
     /// the zone to be subscribed; ignored otherwise.
     Release { zone_id: u32, location: u8 },
+    /// Move the (debug) controllable thing toward global tile `(tile_x, tile_y)`.
+    /// The pixijs host sends this on a click; the server pathfinds from the
+    /// mover's current tile and commits the path, which surfaces on existing
+    /// free-thing subscriptions. Requires a live session; ignored otherwise.
+    Move { tile_x: i32, tile_y: i32 },
     /// Drop the world-server connection and clear the session, without stopping
     /// the client (a later [`Command::Login`] can reconnect).
     Logout,
@@ -149,6 +155,14 @@ pub enum Event {
         rotation: u8,
         id: u16,
         offset: u8,
+        /// The row's `valid_at` decoded to wall-clock ms — *when* this position
+        /// becomes true on the server clock. The host buffers positions by this
+        /// and interpolates the sprite to the shared render instant
+        /// (`synced_now − render_delay`), so every client shows the mover at the
+        /// same world point at the same wall time. A server that stamps a move's
+        /// destination slightly in the future lands the row before that instant
+        /// is reached.
+        valid_at_ms: u64,
     },
     /// A zone's subscription closed (the anchor moved it out of range, or it was
     /// evicted). The host drops that zone's sprites — tiles and loose things.
@@ -158,6 +172,12 @@ pub enum Event {
     /// each outbound frame and each correlated reply. Diagnostic-only — the pixijs
     /// debug HUD's "calls" tab renders it; other hosts ignore it.
     CallStats(Vec<CallStat>),
+    /// The clock estimate advanced — a fresh [`ClockSnapshot`] from a login seed
+    /// or a ping/pong round-trip. The host stores the implied offset
+    /// (`server_now_ms − now`) and renders the world at `now + offset − delay`,
+    /// so all clients agree on the instant they display. Also drives the debug
+    /// HUD's "sync" tab.
+    ClockSync(ClockSnapshot),
     /// The subscription data tally changed. `open` is the live count of zone
     /// subscriptions currently on the wire; `total` is every `sub_zone` ever sent
     /// (cumulative); `tables` is the per-table row/byte breakdown. Re-emitted when

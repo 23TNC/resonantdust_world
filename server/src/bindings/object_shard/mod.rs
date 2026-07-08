@@ -14,32 +14,48 @@ use spacetimedb_sdk::__codegen::{
 pub mod free_thing_type;
 pub mod gc_schedule_type;
 pub mod object_id_counter_type;
+pub mod pawn_type;
 pub mod presence_type;
 pub mod sequence_counter_type;
 pub mod transfer_type;
 pub mod create_free_thing_reducer;
+pub mod move_debug_mover_reducer;
 pub mod move_free_thing_reducer;
+pub mod move_pawn_reducer;
 pub mod place_free_thing_reducer;
+pub mod place_pawn_reducer;
 pub mod receive_reducer;
 pub mod remove_free_thing_reducer;
+pub mod remove_pawn_reducer;
+pub mod set_pawn_data_reducer;
+pub mod spawn_pawn_reducer;
 pub mod free_things_table;
+pub mod pawns_table;
 pub mod presence_table;
 pub mod transfers_table;
 
 pub use free_thing_type::FreeThing;
 pub use gc_schedule_type::GcSchedule;
 pub use object_id_counter_type::ObjectIdCounter;
+pub use pawn_type::Pawn;
 pub use presence_type::Presence;
 pub use sequence_counter_type::SequenceCounter;
 pub use transfer_type::Transfer;
 pub use free_things_table::*;
+pub use pawns_table::*;
 pub use presence_table::*;
 pub use transfers_table::*;
 pub use create_free_thing_reducer::create_free_thing;
+pub use move_debug_mover_reducer::move_debug_mover;
 pub use move_free_thing_reducer::move_free_thing;
+pub use move_pawn_reducer::move_pawn;
 pub use place_free_thing_reducer::place_free_thing;
+pub use place_pawn_reducer::place_pawn;
 pub use receive_reducer::receive;
 pub use remove_free_thing_reducer::remove_free_thing;
+pub use remove_pawn_reducer::remove_pawn;
+pub use set_pawn_data_reducer::set_pawn_data;
+pub use spawn_pawn_reducer::spawn_pawn;
 
 #[derive(Clone, PartialEq, Debug)]
 
@@ -57,7 +73,20 @@ pub enum Reducer {
         id: u16,
         offset: u8,
 }    ,
+    MoveDebugMover {
+        now: u64,
+        dest_gx: i32,
+        dest_gy: i32,
+}    ,
     MoveFreeThing {
+        now_ms: u64,
+        object_id: u64,
+        zone_id: u32,
+        location: u8,
+        rotation: u8,
+        offset: u8,
+}    ,
+    MovePawn {
         now_ms: u64,
         object_id: u64,
         zone_id: u32,
@@ -74,6 +103,17 @@ pub enum Reducer {
         id: u16,
         offset: u8,
 }    ,
+    PlacePawn {
+        now_ms: u64,
+        object_id: u64,
+        owner_id: u32,
+        zone_id: u32,
+        location: u8,
+        rotation: u8,
+        id: u16,
+        offset: u8,
+        data: Vec::<u64>,
+}    ,
     Receive {
         now_ms: u64,
         transfer_id: u64,
@@ -84,6 +124,24 @@ pub enum Reducer {
 }    ,
     RemoveFreeThing {
         object_id: u64,
+}    ,
+    RemovePawn {
+        object_id: u64,
+}    ,
+    SetPawnData {
+        now_ms: u64,
+        object_id: u64,
+        data: Vec::<u64>,
+}    ,
+    SpawnPawn {
+        now_ms: u64,
+        owner_id: u32,
+        zone_id: u32,
+        location: u8,
+        rotation: u8,
+        id: u16,
+        offset: u8,
+        data: Vec::<u64>,
 }    ,
 }
 
@@ -96,10 +154,16 @@ impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
                         Reducer::CreateFreeThing { .. } => "create_free_thing",
+            Reducer::MoveDebugMover { .. } => "move_debug_mover",
             Reducer::MoveFreeThing { .. } => "move_free_thing",
+            Reducer::MovePawn { .. } => "move_pawn",
             Reducer::PlaceFreeThing { .. } => "place_free_thing",
+            Reducer::PlacePawn { .. } => "place_pawn",
             Reducer::Receive { .. } => "receive",
             Reducer::RemoveFreeThing { .. } => "remove_free_thing",
+            Reducer::RemovePawn { .. } => "remove_pawn",
+            Reducer::SetPawnData { .. } => "set_pawn_data",
+            Reducer::SpawnPawn { .. } => "spawn_pawn",
             _ => unreachable!(),
 }
 }
@@ -121,6 +185,15 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 id: id.clone(),
                 offset: offset.clone(),
 }),
+            Reducer::MoveDebugMover{
+                now,
+                dest_gx,
+                dest_gy,
+}             => __sats::bsatn::to_vec(&move_debug_mover_reducer::MoveDebugMoverArgs {
+                now: now.clone(),
+                dest_gx: dest_gx.clone(),
+                dest_gy: dest_gy.clone(),
+}),
             Reducer::MoveFreeThing{
                 now_ms,
                 object_id,
@@ -129,6 +202,21 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 rotation,
                 offset,
 }             => __sats::bsatn::to_vec(&move_free_thing_reducer::MoveFreeThingArgs {
+                now_ms: now_ms.clone(),
+                object_id: object_id.clone(),
+                zone_id: zone_id.clone(),
+                location: location.clone(),
+                rotation: rotation.clone(),
+                offset: offset.clone(),
+}),
+            Reducer::MovePawn{
+                now_ms,
+                object_id,
+                zone_id,
+                location,
+                rotation,
+                offset,
+}             => __sats::bsatn::to_vec(&move_pawn_reducer::MovePawnArgs {
                 now_ms: now_ms.clone(),
                 object_id: object_id.clone(),
                 zone_id: zone_id.clone(),
@@ -153,6 +241,27 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 id: id.clone(),
                 offset: offset.clone(),
 }),
+            Reducer::PlacePawn{
+                now_ms,
+                object_id,
+                owner_id,
+                zone_id,
+                location,
+                rotation,
+                id,
+                offset,
+                data,
+}             => __sats::bsatn::to_vec(&place_pawn_reducer::PlacePawnArgs {
+                now_ms: now_ms.clone(),
+                object_id: object_id.clone(),
+                owner_id: owner_id.clone(),
+                zone_id: zone_id.clone(),
+                location: location.clone(),
+                rotation: rotation.clone(),
+                id: id.clone(),
+                offset: offset.clone(),
+                data: data.clone(),
+}),
             Reducer::Receive{
                 now_ms,
                 transfer_id,
@@ -173,6 +282,39 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }             => __sats::bsatn::to_vec(&remove_free_thing_reducer::RemoveFreeThingArgs {
                 object_id: object_id.clone(),
 }),
+            Reducer::RemovePawn{
+                object_id,
+}             => __sats::bsatn::to_vec(&remove_pawn_reducer::RemovePawnArgs {
+                object_id: object_id.clone(),
+}),
+            Reducer::SetPawnData{
+                now_ms,
+                object_id,
+                data,
+}             => __sats::bsatn::to_vec(&set_pawn_data_reducer::SetPawnDataArgs {
+                now_ms: now_ms.clone(),
+                object_id: object_id.clone(),
+                data: data.clone(),
+}),
+            Reducer::SpawnPawn{
+                now_ms,
+                owner_id,
+                zone_id,
+                location,
+                rotation,
+                id,
+                offset,
+                data,
+}             => __sats::bsatn::to_vec(&spawn_pawn_reducer::SpawnPawnArgs {
+                now_ms: now_ms.clone(),
+                owner_id: owner_id.clone(),
+                zone_id: zone_id.clone(),
+                location: location.clone(),
+                rotation: rotation.clone(),
+                id: id.clone(),
+                offset: offset.clone(),
+                data: data.clone(),
+}),
             _ => unreachable!(),
 }
 }
@@ -183,6 +325,7 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 #[doc(hidden)]
 pub struct DbUpdate {
         free_things: __sdk::TableUpdate<FreeThing>,
+    pawns: __sdk::TableUpdate<Pawn>,
     presence: __sdk::TableUpdate<Presence>,
     transfers: __sdk::TableUpdate<Transfer>,
 }
@@ -196,6 +339,7 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
             match &table_update.table_name[..] {
 
         "free_things" => db_update.free_things.append(free_things_table::parse_table_update(table_update)?),
+    "pawns" => db_update.pawns.append(pawns_table::parse_table_update(table_update)?),
     "presence" => db_update.presence.append(presence_table::parse_table_update(table_update)?),
     "transfers" => db_update.transfers.append(transfers_table::parse_table_update(table_update)?),
 
@@ -221,6 +365,7 @@ impl __sdk::DbUpdate for DbUpdate {
                     let mut diff = AppliedDiff::default();
                 
                 diff.free_things = cache.apply_diff_to_table::<FreeThing>("free_things", &self.free_things).with_updates_by_pk(|row| &row.valid_at);
+        diff.pawns = cache.apply_diff_to_table::<Pawn>("pawns", &self.pawns).with_updates_by_pk(|row| &row.valid_at);
         diff.presence = cache.apply_diff_to_table::<Presence>("presence", &self.presence).with_updates_by_pk(|row| &row.region_id);
         diff.transfers = cache.apply_diff_to_table::<Transfer>("transfers", &self.transfers).with_updates_by_pk(|row| &row.transfer_id);
 
@@ -231,6 +376,7 @@ fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
 for table_rows in raw.tables {
             match &table_rows.table[..] {
                                 "free_things" => db_update.free_things.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "pawns" => db_update.pawns.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "presence" => db_update.presence.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "transfers" => db_update.transfers.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
@@ -241,6 +387,7 @@ fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
 for table_rows in raw.tables {
             match &table_rows.table[..] {
                                 "free_things" => db_update.free_things.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "pawns" => db_update.pawns.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "presence" => db_update.presence.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "transfers" => db_update.transfers.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
@@ -253,6 +400,7 @@ for table_rows in raw.tables {
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
         free_things: __sdk::TableAppliedDiff<'r, FreeThing>,
+    pawns: __sdk::TableAppliedDiff<'r, Pawn>,
     presence: __sdk::TableAppliedDiff<'r, Presence>,
     transfers: __sdk::TableAppliedDiff<'r, Transfer>,
     __unused: std::marker::PhantomData<&'r ()>,
@@ -266,6 +414,7 @@ impl __sdk::InModule for AppliedDiff<'_> {
 impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     fn invoke_row_callbacks(&self, event: &EventContext, callbacks: &mut __sdk::DbCallbacks<RemoteModule>) {
                 callbacks.invoke_table_row_callbacks::<FreeThing>("free_things", &self.free_things, event);
+        callbacks.invoke_table_row_callbacks::<Pawn>("pawns", &self.pawns, event);
         callbacks.invoke_table_row_callbacks::<Presence>("presence", &self.presence, event);
         callbacks.invoke_table_row_callbacks::<Transfer>("transfers", &self.transfers, event);
 }
@@ -920,11 +1069,13 @@ impl __sdk::SpacetimeModule for RemoteModule {
 
 fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
                 free_things_table::register_table(client_cache);
+        pawns_table::register_table(client_cache);
         presence_table::register_table(client_cache);
         transfers_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
                 "free_things",
+        "pawns",
         "presence",
         "transfers",
 ];

@@ -39,13 +39,16 @@ pub fn init(ctx: &ReducerContext) {
             )),
         });
     }
+    // Seed the debug mover's schedule too (one init reducer per module).
+    crate::debug_mover::seed(ctx);
     presence::recount(ctx);
 }
 
-/// Periodic sweep: reap prior versions, then reconcile presence.
+/// Periodic sweep: reap prior versions (things + pawns), then reconcile presence.
 #[reducer]
 pub fn gc_sweep(ctx: &ReducerContext, _row: GcSchedule) -> Result<(), String> {
     free_things::reap_prior(ctx);
+    crate::pawns::reap_prior(ctx);
     presence::recount(ctx);
     Ok(())
 }

@@ -30,6 +30,7 @@ use crate::bindings::zone_shard::seed_cold_zone as _; // reducer trait → `redu
 use crate::bindings::zone_shard::begin_release as _; // reducer trait → `reducers.begin_release`
 use crate::bindings::zone_shard::ack_release as _; // reducer trait → `reducers.ack_release`
 use crate::bindings::object_shard::receive as _; // reducer trait → `reducers.receive`
+use crate::bindings::object_shard::move_debug_mover as _; // reducer trait → `reducers.move_debug_mover`
 use crate::connections::{await_ready, connect_object_shard, connect_players, connect_shard, Pool};
 use crate::index::{resolve_object_or_default, resolve_zone_or_default, ShardEndpoint};
 use crate::protocol::{
@@ -185,6 +186,22 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
                     location,
                 )
                 .await;
+            }
+            // Clock-sync probe: reply immediately with the client's send time
+            // echoed and the server clock, so the client can pin its offset. No DB
+            // work — this task stamps its own wall clock (same box / NTP-synced to
+            // the SpacetimeDB host that stamps `valid_at`).
+            ClientMsg::Ping { client_send_ms } => {
+                send(
+                    &out_tx,
+                    ServerMsg::Pong {
+                        client_send_ms,
+                        server_ms: now_ms(),
+                    },
+                );
+            }
+            ClientMsg::Move { tile_x, tile_y } => {
+                handle_move(&pool, &out_tx, &object_shards, tile_x, tile_y).await;
             }
         }
     }
@@ -533,6 +550,29 @@ async fn handle_release(
 
     if let Err(err) = shard.conn.reducers.begin_release(now_ms(), zone_id, location) {
         send(out_tx, err_frame(&format!("release: begin_release request failed: {err}")));
+    }
+}
+
+/// Relay a client move intent to the object shard's `move_debug_mover`, which
+/// pathfinds from the mover's current tile to global `(tile_x, tile_y)` and commits
+/// the path. In dev a single object shard serves every region, so we resolve it
+/// from the destination tile's zone; the mover must already be reachable there
+/// (the client is subscribed near the origin, so it is).
+async fn handle_move(
+    pool: &Arc<Pool>,
+    out_tx: &mpsc::UnboundedSender<String>,
+    object_shards: &HashMap<ShardEndpoint, ObjectConn>,
+    tile_x: i32,
+    tile_y: i32,
+) {
+    let (dest_zone, _loc) = resonantdust_codec::packed::zone_and_location(tile_x, tile_y, 0);
+    let endpoint = resolve_object_or_default(dest_zone, &pool.cfg);
+    let Some(object) = object_shards.get(&endpoint) else {
+        send(out_tx, err_frame("move: object shard not connected (subscribe near the target first)"));
+        return;
+    };
+    if let Err(err) = object.conn.reducers.move_debug_mover(now_ms(), tile_x, tile_y) {
+        send(out_tx, err_frame(&format!("move: request failed: {err}")));
     }
 }
 
