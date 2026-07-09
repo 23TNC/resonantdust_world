@@ -4,10 +4,10 @@ Companion to [`simulation.md`](simulation.md) (the design). This is the *how* an
 *order*, grounded in the current code. Branch `0.2`.
 
 A key grounding discovery reshapes the risk: **the subscription-blocking read mechanism
-is exercised in Phase 1, single-shard.** The worker (`server_simulation`) reads actor
+is exercised in Phase A, single-shard.** The worker (`server_simulation`) reads actor
 state from its SpacetimeDB subscription and blocks until `dirty==0` — that's the same
-machine whether the actor is on the worker's own shard or another. So Phase 1 proves the
-blocking-read primitive; the only thing Phase 2 adds is *a second shard's subscription*
+machine whether the actor is on the worker's own shard or another. So Phase A proves the
+blocking-read primitive; the only thing Phase C adds is *a second shard's subscription*
 (the volume/multi-DB question), not the mechanism itself. The spike shrinks accordingly.
 
 ## Topology — crates & binaries
@@ -112,43 +112,63 @@ read-rule/priority helpers live in `shared/tick`.
 - **`bindings/`**: regenerate for the new shard tables/reducers (`bin/rd` +
   `generate-bindings.sh object_shard|zone_shard`).
 
-## Phase 1 — within-class, single shard (no cross-class subscription)
+## Build phases — grouped by concern, not by shippability
 
-Each slice ships and is verifiable. Object shard first; the zone shard is the same macro,
-so it comes nearly free once the object path works.
+Phases are **not** individually shippable. The engine is a self-contained server-side
+concern that needs neither the browser client nor a protocol change to be *correct*, so
+we build and prove it in isolation and defer all client/edge integration to one later
+pass. This is faster than end-to-end slices because it never drags the wire layer through
+the hard work, and it's verified with a cheap SDK harness (call reducers, assert on
+`state_log`/`state`) instead of the browser loop. The trade — no always-demoable build,
+edge-integration surprises surface in Phase B not earlier — is low-risk here (the
+subscription-block primitive is proven *in-pipeline* by A3; the edge wiring follows an
+existing pattern). Object shard throughout A; the zone shard is the same macro (Phase C).
 
-- **Slice 0 — foundations.** `shared/codec` entity-key pack/unpack (+ tests). `shared/tick`
-  crate: the `decl_tick_pipeline!` macro (tables + the four reducers) and the pure helpers
-  (`priority`, read-rule eval, action dispatch skeleton). Invoke it in `object_shard`;
-  delete `free_things`/`pawns`/`debug_mover`/`presence` and the `sequence` module.
-  *Verify:* module builds & deploys; tables exist; `bin/rd build/deploy module object_shard` green.
-- **Slice 1 — master + tic.** `server_master` binary; `bump` advancing `master_tic` with
-  work-gen + promote (no events yet). *Verify:* `master_tic` climbs at 2 Hz on the shard;
-  bump is idempotent under a forced double-call.
-- **Slice 2 — one action, end to end.** Action `move`. Minimal entity = a positioned
-  object (`kind`, `zone_id`, `location`, `offset`). Edge `append_event(move)`;
-  `server_simulation` claims → composes → `resolve`; edge forwards `state` to clients.
-  *Verify:* an `npc`-issued move flows event→state→client; two clients see identical final
-  position; provably no per-tic fan-out (idle entities write no rows).
-- **Slice 3 — the hard semantics (local reads).** Add `damage` (reads target hp in `data`,
-  reads actor). Implement the read rule + priority-DAG in the worker. All reads are
-  same-shard here — but through the subscription-block path, so the blocking primitive is
-  proven now. *Verify (the three acceptance tests):* (a) headless bots converge to
-  identical state; (b) scripted mutual lethal exchange → higher-`hash` survives,
-  deterministically; (c) scripted A→B→C chain → preemption (dead B doesn't hit C).
-- **Slice 4 — worker robustness.** Claim contention (two workers, one wins), eviction on
-  `assigned_at` timeout + re-assignment, fence rejects the late original, GC horizon =
-  min frontier (soft-delete via `status`, hard-delete sweep). *Verify:* kill a worker
-  mid-claim → work reassigned, no double-write; `event_log`/`state_log` bounded.
-- **Slice 5 — zone shard.** Invoke `decl_tick_pipeline!` in `zone_shard`; delete
-  `cold_zones`/`hot_*`. A `tile-change` action. *Verify:* a zone cell changes through the
-  same pipeline; static cells cost nothing.
+### Phase A — the engine, headless (the bulk of the work; no client, no wire)
 
-**In parallel with Phase 1:** the residual spike is now narrow — *can one worker hold
-subscriptions to N shards and block across them at volume?* The single-shard block is
-already proven by Slice 3, so this is a scaling probe, not a feasibility gate.
+Built as one cohesive unit; the internal steps below are a construction order, not
+ships. Verified end-of-phase by the SDK harness.
 
-## Phase 2 — cross-class (gated on the multi-shard spike)
+- **A0 — foundations.** `shared/codec` entity-key pack/unpack (+ tests). `shared/tick`:
+  the `decl_tick_pipeline!` macro (tables + the four reducers) and pure helpers
+  (`priority`, read-rule eval, action-dispatch skeleton). Invoke it in `object_shard`;
+  delete `free_things`/`pawns`/`debug_mover`/`presence`/`sequence`.
+- **A1 — master + tic.** `server_master` binary; `bump` advancing `master_tic` with
+  work-gen + promote (no events yet). Idempotent under a forced double-call.
+- **A2 — worker + one action.** Action `move`; `server_simulation` claims → composes →
+  `resolve`. Harness `append_event(move)` → assert the `state` row updates; idle entities
+  write no rows.
+- **A3 — the hard semantics.** Add `damage` (reads target + actor). Read rule +
+  priority-DAG in the worker; all reads same-shard but through the subscription-block
+  path, so the blocking primitive is proven here.
+- **A4 — worker robustness + GC.** Claim contention (one winner), eviction on
+  `assigned_at` timeout + re-assign, fence rejects the late original, GC horizon = min
+  frontier (soft-delete via `status`, hard sweep).
+
+**Phase-A gate (the only hard verification of the risky part), via the SDK harness:**
+(a) many injected events → all workers converge to identical `state`; (b) scripted mutual
+lethal exchange → higher-`hash` survives, deterministically; (c) scripted A→B→C chain →
+preemption (dead B doesn't hit C); (d) killed worker mid-claim → reassigned, no
+double-write.
+
+### Phase B — edge + client integration (mechanical, on a proven engine)
+
+One pass, verified once in browsers. `protocol.rs` (server + `client/`): `StateRow`;
+`Move`/intent → `append_event`; drop `ColdZoneRow`/`HotCellRow`/`FreeThingRow`.
+`ws.rs`/`connections.rs`: subscribe clients to `state` per anchored zone, forward
+`StateRow`s, map inbound intent to `append_event` (thin validation = the shared
+predicate). Regenerate `bindings/`. Client: render from `state`; delete `WorldBridge`
+projector + `TILE_TRAVEL_MS`. *Verify:* two browsers see identical, live state.
+
+### Phase C — zone shard + cross-shard (Phase 2 of the design)
+
+- **Zone shard**: invoke `decl_tick_pipeline!` in `zone_shard`; delete `cold_zones`/`hot_*`;
+  a `tile-change` action. Same engine, second class.
+- **Multi-shard spike** (narrow — the block is proven in A3; this is *can one worker hold
+  N shards' subscriptions and block across them at volume?*), then cross-class reads.
+- Below.
+
+## Phase 2 (design) / Phase C (build) — cross-class
 
 - Worker subscribes to a **second** shard; a `target_key` on shard X with an `actor_key`
   on shard Y resolves by reading Y's `state_log` via that subscription (same read rule).
@@ -172,9 +192,9 @@ already proven by Slice 3, so this is a scaling probe, not a feasibility gate.
 
 - **Bindings for master/simulation** — per-crate generated `bindings/` (matches `server`)
   vs a shared `shared/stbindings` crate. *Lean:* per-crate now, dedup later.
-- **`data [u64;2]` sufficiency** for entity state (hp + a few fields for Phase 1 — fine;
-  confirm before a richer slice). Kind-specific interpretation lives in the action code.
-- **Presence/routing** — Phase 1 is single-shard (default `db_name`), so `presence` and
+- **`data [u64;2]` sufficiency** for entity state (hp + a few fields for Phase A — fine;
+  confirm before a richer action set). Kind-specific interpretation lives in the action code.
+- **Presence/routing** — Phase A/B are single-shard (default `db_name`), so `presence` and
   `index` region-routing are unexercised; keep `index` as-is, re-add presence-style routing
   only when multi-shard lands.
 - **Edge rename** (`server` → `server_edge`) — do it last to avoid churning `bindings/`,
