@@ -1,0 +1,16 @@
+[package]
+name = "resonantdust-tick"
+version = "0.1.0"
+edition = "2021"
+
+# The pure (SDK-free, wasm-free) core of the simulation pipeline: the priority
+# total order, the read-rule, and the domain types resolution operates on. Shared
+# by `server_simulation` (the worker, which reads SDK rows and calls these) and —
+# later — the shard module. No `spacetimedb` dependency: this is plain integer
+# logic so the worker and any other consumer resolve identically. See
+# `docs/simulation.md` / `docs/simulation-plan.md`.
+
+[dependencies]
+# Entity-key packing lives in the codec (a bit layout); the sim logic here builds
+# on it. Keys are otherwise treated as opaque u64s.
+resonantdust-codec = { path = "../codec" }

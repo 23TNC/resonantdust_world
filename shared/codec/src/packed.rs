@@ -277,6 +277,79 @@ pub fn offset_y(offset: u8) -> u8 {
     offset >> OFFSET_Y_SHIFT
 }
 
+// ── entity key (simulation pipeline) ─────────────────────────────────────────
+//
+// A tagged `u64` naming any simulation entity across both shard classes:
+//
+// ```text
+// entity_key: u64 = tag:2 | payload:62
+//   OBJECT (tag=01): payload = object_id           (mobile things; object shards)
+//   ZONE   (tag=10): payload = zone_id:32 << 8 | location:8   (cells; zone shards)
+// ```
+//
+// The tag makes object and zone payloads disjoint, so the two classes share **one**
+// globally-unique key space. That is what lets `priority` (a hash of the key) be a
+// total order spanning both classes — the property that breaks cross-class dependency
+// cycles in the resolution DAG (see `docs/simulation.md`). Events address an actor or
+// target by this key; `state_log`/`state` are identified by it. Zone cells have no id
+// of their own — position *is* the identity — which is why the zone payload is just
+// `(zone_id, location)` and objects carry their allocated `object_id`.
+
+/// Reserved "no entity" tag (`0`).
+pub const ENTITY_TAG_NONE: u8 = 0b00;
+/// Object-shard entity: payload is an `object_id`.
+pub const ENTITY_TAG_OBJECT: u8 = 0b01;
+/// Zone-shard entity: payload is `(zone_id, location)`.
+pub const ENTITY_TAG_ZONE: u8 = 0b10;
+
+const ENTITY_TAG_SHIFT: u32 = 62;
+/// The low 62 bits — the payload under a 2-bit tag. `object_id` must fit here.
+pub const ENTITY_PAYLOAD_MAX: u64 = (1u64 << ENTITY_TAG_SHIFT) - 1;
+const ENTITY_ZONE_ID_SHIFT: u32 = 8;
+
+/// The entity key for an object-shard thing. `object_id` is masked to 62 bits
+/// (the allocator stays well under that — u32-range today, 62-bit headroom).
+pub fn pack_object_key(object_id: u64) -> u64 {
+    ((ENTITY_TAG_OBJECT as u64) << ENTITY_TAG_SHIFT) | (object_id & ENTITY_PAYLOAD_MAX)
+}
+
+/// The entity key for a zone-shard cell `(zone_id, location)`.
+pub fn pack_zone_key(zone_id: u32, location: u8) -> u64 {
+    ((ENTITY_TAG_ZONE as u64) << ENTITY_TAG_SHIFT)
+        | ((zone_id as u64) << ENTITY_ZONE_ID_SHIFT)
+        | (location as u64)
+}
+
+/// The 2-bit tag of an entity key (`ENTITY_TAG_*`).
+pub fn entity_tag(key: u64) -> u8 {
+    (key >> ENTITY_TAG_SHIFT) as u8
+}
+
+/// True if `key` names an object-shard entity.
+pub fn entity_is_object(key: u64) -> bool {
+    entity_tag(key) == ENTITY_TAG_OBJECT
+}
+
+/// True if `key` names a zone-shard cell.
+pub fn entity_is_zone(key: u64) -> bool {
+    entity_tag(key) == ENTITY_TAG_ZONE
+}
+
+/// The `object_id` of an OBJECT key (meaningless for other tags).
+pub fn entity_object_id(key: u64) -> u64 {
+    key & ENTITY_PAYLOAD_MAX
+}
+
+/// The `zone_id` of a ZONE key (meaningless for other tags).
+pub fn entity_zone_id(key: u64) -> u32 {
+    ((key >> ENTITY_ZONE_ID_SHIFT) & 0xFFFF_FFFF) as u32
+}
+
+/// The `location` of a ZONE key (meaningless for other tags).
+pub fn entity_location(key: u64) -> u8 {
+    (key & 0xFF) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,5 +451,40 @@ mod tests {
         // Crossing the zone edge bumps zone_x; crossing the region edge bumps region_x.
         assert_eq!(zone_x(zone_and_location(16, 0, 0).0), 1);
         assert_eq!(zone_region_x(zone_and_location(256, 0, 0).0), 1);
+    }
+
+    #[test]
+    fn object_key_roundtrips() {
+        for &oid in &[1u64, 2, 42, 0xFFFF, 0xFFFF_FFFF, ENTITY_PAYLOAD_MAX] {
+            let k = pack_object_key(oid);
+            assert_eq!(entity_tag(k), ENTITY_TAG_OBJECT);
+            assert!(entity_is_object(k) && !entity_is_zone(k));
+            assert_eq!(entity_object_id(k), oid);
+        }
+    }
+
+    #[test]
+    fn zone_key_roundtrips() {
+        let z = pack_zone_id(0xAB, 0xCD, 0x02, 13, 7);
+        for loc in [0u8, 1, 128, 255] {
+            let k = pack_zone_key(z, loc);
+            assert_eq!(entity_tag(k), ENTITY_TAG_ZONE);
+            assert!(entity_is_zone(k) && !entity_is_object(k));
+            assert_eq!(entity_zone_id(k), z);
+            assert_eq!(entity_location(k), loc);
+        }
+    }
+
+    #[test]
+    fn object_and_zone_key_spaces_are_disjoint() {
+        // Same numeric payload under different tags must not collide — this is what
+        // makes the priority total order span both classes.
+        let obj = pack_object_key(0x1234);
+        let zone = pack_zone_key(0x12, 0x34); // packs to a different payload anyway
+        assert_ne!(obj, zone);
+        assert_ne!(entity_tag(obj), entity_tag(zone));
+        // A zone key never reads as an object key with the same low bits.
+        let z = pack_zone_id(0, 0, 0, 0, 0);
+        assert_ne!(pack_zone_key(z, 5), pack_object_key(5));
     }
 }
