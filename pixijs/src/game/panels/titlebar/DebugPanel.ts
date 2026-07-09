@@ -275,19 +275,33 @@ function drawArrivalDots(canvas: HTMLCanvasElement, samples: readonly number[]):
  *  `setStats`; whatever clock source the view wires in (a future
  *  `ReducerManager` equivalent) fills it. All ms unless noted. */
 export interface SyncStats {
-  serverNowMs: number;
-  dateNowMs: number;
+  /** Raw best-RTT offset estimate (`server − client`), the value the sparklines
+   *  and best/worst-capture rows trail. */
   offsetMs: number;
   captures: number;
   bestOffsetMs: number | null;
   worstOffsetMs: number | null;
-  deltaMs: number | null;
+  /** The shared render delay `D` — shown so the tab carries the whole time model. */
   clientLagMs: number;
   rttMs: number | null;
   bestRttMs: number | null;
   rttSamples: number;
-  runningDeltaMs: number;
-  runningDelayMs: number;
+}
+
+/** The live per-frame clock readout for the "Now" row and discipline diagnostics.
+ *  Unlike {@link SyncStats} (a per-`clockSync` snapshot) these are sampled every
+ *  frame so the clocks tick smoothly. */
+export interface NowStats {
+  /** Sync.now — the disciplined clock the game renders off. */
+  syncMs: number;
+  /** Date.now — the raw local wall clock. */
+  dateMs: number;
+  /** Server.now — the raw (undisciplined) server-clock estimate. */
+  serverMs: number;
+  /** The disciplined offset Sync.now is currently running at. */
+  disciplinedOffsetMs: number;
+  /** Which discipline regime the clock is in. */
+  slew: "step" | "slew" | "locked" | "—";
 }
 
 /** The sparkline history backing store the panel reads. Decoupled from
@@ -338,12 +352,11 @@ export class DebugPanel {
   private readonly texPreviewCount: HTMLSpanElement;
 
   // ── Sync tab values ─────────────────────────────────────────────
-  private readonly syncDateNow:    HTMLSpanElement;
-  private readonly syncServerNow:  HTMLSpanElement;
+  /** The unified "Now" row — a 3-line value cell (Sync / Date / Server). */
+  private readonly syncNow:        HTMLSpanElement;
+  private readonly syncOffsetDisc: HTMLSpanElement;
+  private readonly syncSlew:       HTMLSpanElement;
   private readonly syncClientLag:     { value: HTMLSpanElement; canvas: HTMLCanvasElement };
-  private readonly syncRunningDelta:  { value: HTMLSpanElement; canvas: HTMLCanvasElement };
-  private readonly syncRunningDelay:  { value: HTMLSpanElement; canvas: HTMLCanvasElement };
-  private readonly syncDelta:         { value: HTMLSpanElement; canvas: HTMLCanvasElement };
   private readonly syncOffset:        { value: HTMLSpanElement; canvas: HTMLCanvasElement };
   private readonly syncBestOffset:    { value: HTMLSpanElement; canvas: HTMLCanvasElement };
   private readonly syncWorstOffset:   { value: HTMLSpanElement; canvas: HTMLCanvasElement };
@@ -428,13 +441,14 @@ export class DebugPanel {
     this.texPreviewCount = this.addRow(texturesContent, panelText("debugPanel", "previewTextures"));
 
     // ── Sync tab — full time-sync state ───────────────────────────
-    this.syncDateNow       = this.addRow(syncContent, panelText("debugPanel", "dateNow"));
-    this.syncServerNow     = this.addRow(syncContent, panelText("debugPanel", "serverNow"));
+    // One "Now" row stacks the three clocks (Sync / Date / Server) so their
+    // convergence is read at a glance; then the discipline state, then the raw
+    // estimator's sparkline diagnostics.
+    this.syncNow           = this.addMultiRow(syncContent, panelText("debugPanel", "now"));
+    this.syncOffsetDisc    = this.addRow(syncContent, panelText("debugPanel", "syncOffset"));
+    this.syncSlew          = this.addRow(syncContent, panelText("debugPanel", "slew"));
     this.syncClientLag     = this.addGraphRow(syncContent, panelText("debugPanel", "clientDelay"));
-    this.syncRunningDelay  = this.addGraphRow(syncContent, panelText("debugPanel", "runningDelay"));
-    this.syncRunningDelta  = this.addGraphRow(syncContent, panelText("debugPanel", "runningDelta"));
-    this.syncDelta         = this.addGraphRow(syncContent, panelText("debugPanel", "delta"));
-    this.syncOffset        = this.addGraphRow(syncContent, panelText("debugPanel", "offset"));
+    this.syncOffset        = this.addGraphRow(syncContent, panelText("debugPanel", "rawOffset"));
     this.syncBestOffset    = this.addGraphRow(syncContent, panelText("debugPanel", "bestCapture"));
     this.syncWorstOffset   = this.addGraphRow(syncContent, panelText("debugPanel", "worstCapture"));
     this.syncCaptures      = this.addGraphRow(syncContent, panelText("debugPanel", "captures"));
@@ -518,7 +532,7 @@ export class DebugPanel {
       previewCount: number;
     },
     syncStats?: SyncStats,
-    syncTimeMs?: number,
+    now?: NowStats,
   ): void {
     if (deltaMS > 0) {
       const instant = 1000 / deltaMS;
@@ -537,12 +551,26 @@ export class DebugPanel {
 
     this.mainEnv.textContent = currentEnvironment() ?? "—";
 
-    // Sync time — our live estimate of the server's clock *right now*, ticking
-    // smoothly every frame (last server-now + local elapsed = `syncedNowMs()`),
-    // unlike the sync tab's `serverNow`, which is frozen at each capture. "—"
-    // until the clock has an estimate.
-    this.mainSyncTime.textContent =
-      syncTimeMs === undefined ? "—" : formatHourClock(syncTimeMs);
+    // Live clocks (per-frame): the main tab's Sync time + offset, and the sync
+    // tab's unified "Now" row / discipline state. Sync.now is the smooth
+    // disciplined clock; Server.now is the raw estimate it chases; Date.now is the
+    // local wall clock. "—" until the clock has an estimate.
+    if (now) {
+      this.mainSyncTime.textContent = formatHourClock(now.syncMs);
+      this.mainOffset.textContent   = formatSignedMs(now.disciplinedOffsetMs);
+      this.syncNow.textContent =
+        `Sync ${formatHourClock(now.syncMs)}\n` +
+        `Date ${formatHourClock(now.dateMs)}\n` +
+        `Srv  ${formatHourClock(now.serverMs)}`;
+      this.syncOffsetDisc.textContent = formatSignedMs(now.disciplinedOffsetMs);
+      this.syncSlew.textContent       = now.slew;
+    } else {
+      this.mainSyncTime.textContent   = "—";
+      this.mainOffset.textContent     = "—";
+      this.syncNow.textContent        = "—";
+      this.syncOffsetDisc.textContent = "—";
+      this.syncSlew.textContent       = "—";
+    }
 
     const fpsText = String(Math.round(this.fps));
     const dcText  = String(drawCalls);
@@ -560,13 +588,7 @@ export class DebugPanel {
       this.texPreviewCount.textContent = String(atlasStats.previewCount);
     }
     if (syncStats) {
-      const dateNowText   = formatHourClock(syncStats.dateNowMs);
-      const serverNowText = formatHourClock(syncStats.serverNowMs);
-      const offsetText    = formatSignedMs(syncStats.offsetMs);
-      this.mainOffset.textContent      = offsetText;
-      this.syncDateNow.textContent     = dateNowText;
-      this.syncServerNow.textContent   = serverNowText;
-      this.syncOffset.value.textContent = offsetText;
+      this.syncOffset.value.textContent = formatSignedMs(syncStats.offsetMs);
       this.syncBestOffset.value.textContent =
         syncStats.bestOffsetMs === null
           ? "—"
@@ -575,14 +597,8 @@ export class DebugPanel {
         syncStats.worstOffsetMs === null
           ? "—"
           : formatSignedMs(syncStats.worstOffsetMs);
-      this.syncDelta.value.textContent =
-        syncStats.deltaMs === null
-          ? "—"
-          : formatSignedMs(syncStats.deltaMs);
       this.syncCaptures.value.textContent = String(syncStats.captures);
       this.syncClientLag.value.textContent     = `${Math.round(syncStats.clientLagMs)} ms`;
-      this.syncRunningDelay.value.textContent  = `${Math.round(syncStats.runningDelayMs)} ms`;
-      this.syncRunningDelta.value.textContent  = formatSignedMs(syncStats.runningDeltaMs);
       this.syncRtt.value.textContent =
         syncStats.rttMs === null ? "—" : `${Math.round(syncStats.rttMs)} ms`;
       this.syncBestRtt.value.textContent =
@@ -592,9 +608,6 @@ export class DebugPanel {
 
       if (this.reducers) {
         drawSparkline(this.syncClientLag.canvas,    this.reducers.getHistory("clientDelayMs"));
-        drawSparkline(this.syncRunningDelay.canvas, this.reducers.getHistory("runningDelayMs"));
-        drawSparkline(this.syncRunningDelta.canvas, this.reducers.getHistory("runningDeltaMs"));
-        drawSparkline(this.syncDelta.canvas,        this.reducers.getHistory("deltaMs"));
         drawSparkline(this.syncOffset.canvas,       this.reducers.getHistory("offsetMs"));
         drawSparkline(this.syncBestOffset.canvas,   this.reducers.getHistory("bestOffsetMs"));
         drawSparkline(this.syncWorstOffset.canvas,  this.reducers.getHistory("worstOffsetMs"));
@@ -653,6 +666,27 @@ export class DebugPanel {
     labelEl.textContent = label;
     const valueEl = document.createElement("span");
     Object.assign(valueEl.style, VALUE_CSS);
+    valueEl.textContent = "--";
+    row.appendChild(labelEl);
+    row.appendChild(valueEl);
+    parent.appendChild(row);
+    return valueEl;
+  }
+
+  /** Row variant whose value cell stacks multiple right-aligned lines (set via a
+   *  newline-joined `textContent`). Used for the "Now" row's Sync/Date/Server
+   *  triple. The label sits top-aligned against the stack. */
+  private addMultiRow(parent: HTMLDivElement, label: string): HTMLSpanElement {
+    const row = document.createElement("div");
+    Object.assign(row.style, ROW_CSS);
+    row.style.alignItems = "flex-start";
+    const labelEl = document.createElement("span");
+    Object.assign(labelEl.style, LABEL_CSS);
+    labelEl.textContent = label;
+    const valueEl = document.createElement("span");
+    Object.assign(valueEl.style, VALUE_CSS);
+    valueEl.style.whiteSpace = "pre";
+    valueEl.style.textAlign = "right";
     valueEl.textContent = "--";
     row.appendChild(labelEl);
     row.appendChild(valueEl);

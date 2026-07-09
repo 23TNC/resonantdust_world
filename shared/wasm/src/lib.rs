@@ -563,10 +563,6 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("bestRttMs", &opt_u(s.best_rtt_ms));
             set("bestOffsetMs", &opt_i(s.best_offset_ms));
             set("worstOffsetMs", &opt_i(s.worst_offset_ms));
-            // Running diagnostics: the freshest round-trip + its offset.
-            set("runningDelayMs", &num(s.rtt_ms.unwrap_or(0) as f64));
-            set("runningDeltaMs", &num(s.offset_ms as f64));
-            set("deltaMs", &opt_i(s.best_offset_ms));
         }
         Event::SubStats {
             open,

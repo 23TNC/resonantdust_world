@@ -425,6 +425,10 @@ impl Engine {
                     data_shard,
                     server_url,
                 });
+                // Prime the estimator with a real round-trip immediately, rather
+                // than waiting a full ping interval — the windowed best-RTT filter
+                // then has a genuine sample to adopt over the coarse login seed.
+                self.send_ping().await;
             }
             ServerMsg::Pong {
                 client_send_ms,

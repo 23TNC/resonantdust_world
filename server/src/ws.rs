@@ -97,13 +97,32 @@ fn server_micros() -> u64 {
 async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
     let (mut sink, mut stream) = socket.split();
 
-    // Single outbound funnel: handlers here and SDK callbacks on upstream threads
-    // both push text frames; one writer task drains them to the WS sink.
+    // Outbound to the WS sink, drained by one writer task. Two lanes:
+    //   * `out_tx` — the normal funnel: the stateful worker's replies and the SDK
+    //     row callbacks on upstream threads. Can be a firehose (worldgen snapshots,
+    //     a streaming mover) and the frames can be large.
+    //   * `pong_tx` — a priority lane for clock-sync Pongs only. The writer drains
+    //     it *ahead* of `out_tx`, so a Pong never departs behind a backlog of row
+    //     frames. Without this, a row-flooded connection (whoever's driving the
+    //     sim) sees its Pong queued out, inflating the client's RTT and biasing its
+    //     offset — the server-side half of keeping pings off the busy path.
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
+    let (pong_tx, mut pong_rx) = mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {
-        while let Some(txt) = out_rx.recv().await {
-            if sink.send(Message::Text(txt.into())).await.is_err() {
-                break;
+        loop {
+            tokio::select! {
+                biased;
+                Some(txt) = pong_rx.recv() => {
+                    if sink.send(Message::Text(txt.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Some(txt) = out_rx.recv() => {
+                    if sink.send(Message::Text(txt.into())).await.is_err() {
+                        break;
+                    }
+                }
+                else => break,
             }
         }
     });
@@ -113,13 +132,20 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
     // `players = None`; login then reports the outage instead of hanging.
     let players = build_players(&pool, &out_tx).await;
 
-    let mut session: Option<u32> = None;
-    let mut shards: HashMap<ShardEndpoint, ShardConn> = HashMap::new();
-    let mut object_shards: HashMap<ShardEndpoint, ObjectConn> = HashMap::new();
-    let mut subs: HashMap<u32, ZoneSub> = HashMap::new();
-    // Whether the release saga's cross-shard `transfers` bridge is installed
-    // (once per session, on the first `Release`; single zone/object pair in dev).
-    let mut transfer_bridge_wired = false;
+    // Stateful commands run on a dedicated worker task so the read loop never
+    // blocks on a slow DB handler (login / sub_zone / worldgen can take seconds).
+    // That head-of-line blocking used to delay — and, because the ping reply is
+    // stamped when the loop *reaches* it, systematically bias — the clock-sync
+    // Pong. Now the read loop only reads: it answers pings inline and forwards
+    // everything else to the worker over an ordered channel (per-connection
+    // command order is preserved).
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<ClientMsg>();
+    let worker = tokio::spawn(session_worker(
+        pool.clone(),
+        players,
+        out_tx.clone(),
+        cmd_rx,
+    ));
 
     while let Some(frame) = stream.next().await {
         let msg = match frame {
@@ -144,6 +170,58 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
             }
         };
 
+        match cmsg {
+            // Clock-sync probe: stamped and answered right here on the read loop
+            // (so a slow worker handler can't delay it) and sent on the priority
+            // lane (so a backlog of row frames can't delay it either). No DB work —
+            // this task stamps its own wall clock (same box / NTP-synced to the
+            // SpacetimeDB host that stamps `valid_at`).
+            ClientMsg::Ping { client_send_ms } => {
+                send(
+                    &pong_tx,
+                    ServerMsg::Pong {
+                        client_send_ms,
+                        server_ms: now_ms(),
+                    },
+                );
+            }
+            // Everything stateful is handled in arrival order on the worker.
+            other => {
+                if cmd_tx.send(other).is_err() {
+                    break; // worker gone — nothing left to serve
+                }
+            }
+        }
+    }
+
+    // Closing the command channel drains the worker, which owns session teardown.
+    // The writer is aborted only after the worker returns (its senders are
+    // scattered across the SDK callbacks the worker tears down).
+    drop(cmd_tx);
+    let _ = worker.await;
+    writer.abort();
+    tracing::debug!("client session ended");
+}
+
+/// Drains stateful client commands in arrival order, owning all per-session DB
+/// state (session id, shard/object upstreams, zone subs, the transfer bridge
+/// flag). Split out from the read loop so clock-sync pings are never queued behind
+/// a slow handler here. Runs teardown once the command channel closes.
+async fn session_worker(
+    pool: Arc<Pool>,
+    players: Option<Arc<bindings::players::DbConnection>>,
+    out_tx: mpsc::UnboundedSender<String>,
+    mut cmd_rx: mpsc::UnboundedReceiver<ClientMsg>,
+) {
+    let mut session: Option<u32> = None;
+    let mut shards: HashMap<ShardEndpoint, ShardConn> = HashMap::new();
+    let mut object_shards: HashMap<ShardEndpoint, ObjectConn> = HashMap::new();
+    let mut subs: HashMap<u32, ZoneSub> = HashMap::new();
+    // Whether the release saga's cross-shard `transfers` bridge is installed
+    // (once per session, on the first `Release`; single zone/object pair in dev).
+    let mut transfer_bridge_wired = false;
+
+    while let Some(cmsg) = cmd_rx.recv().await {
         match cmsg {
             ClientMsg::Login {
                 cid,
@@ -187,28 +265,15 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
                 )
                 .await;
             }
-            // Clock-sync probe: reply immediately with the client's send time
-            // echoed and the server clock, so the client can pin its offset. No DB
-            // work — this task stamps its own wall clock (same box / NTP-synced to
-            // the SpacetimeDB host that stamps `valid_at`).
-            ClientMsg::Ping { client_send_ms } => {
-                send(
-                    &out_tx,
-                    ServerMsg::Pong {
-                        client_send_ms,
-                        server_ms: now_ms(),
-                    },
-                );
-            }
             ClientMsg::Move { tile_x, tile_y } => {
                 handle_move(&pool, &out_tx, &object_shards, tile_x, tile_y).await;
             }
+            // Pings are answered on the read loop and never forwarded here.
+            ClientMsg::Ping { .. } => {}
         }
     }
 
-    // Teardown: drop zone subscriptions, then disconnect every upstream. The
-    // writer task is aborted last (its senders are scattered across the SDK
-    // callbacks we're tearing down).
+    // Teardown: drop zone subscriptions, then disconnect every upstream.
     for (_sid, zs) in subs.drain() {
         let _ = zs.handle.unsubscribe();
         if let Some(h) = zs.object_handle {
@@ -224,8 +289,7 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
     if let Some(conn) = &players {
         let _ = conn.disconnect();
     }
-    writer.abort();
-    tracing::debug!(player = ?session, "client session ended");
+    tracing::debug!(player = ?session, "client session worker ended");
 }
 
 /// Build the per-client players upstream and subscribe to the auth table so the

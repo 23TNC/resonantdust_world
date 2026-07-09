@@ -27,7 +27,7 @@ import { mountEnvOverlay } from "./debug/EnvOverlay";
 import { SettingsMenu } from "./game/panels/titlebar/SettingsMenu";
 import { VideoPanel } from "./game/panels/titlebar/VideoPanel";
 import { DebugPanel } from "./game/panels/titlebar/DebugPanel";
-import type { SyncStats } from "./game/panels/titlebar/DebugPanel";
+import type { SyncStats, NowStats } from "./game/panels/titlebar/DebugPanel";
 import { SyncHistory } from "./game/panels/titlebar/syncHistory";
 // Panel layout defaults are a pure client concern (DOM panel geometry) — NOT
 // gate-served content, so they live in the view. This is the single source of
@@ -228,35 +228,43 @@ async function main(): Promise<void> {
         previewCount: lod.previewCount,
       },
       syncHistory.current() ?? undefined,
-      // Live "sync time" for the main tab: the server clock we believe holds
-      // right now, ticking every frame off the local clock + adopted offset.
-      // Omitted until the clock has an estimate so the row reads "—".
-      client.clockIsSynced() ? client.syncedNowMs() : undefined,
+      // Live per-frame clocks for the "Now" row + discipline readout. Sync.now is
+      // the disciplined clock, Server.now the raw estimate it chases, Date.now the
+      // local wall clock. Omitted until the clock has an estimate (row reads "—").
+      buildNowStats(),
     );
   });
+
+  /** Snapshot the live clocks each frame for the HUD's "Now" row + discipline
+   *  readout. `undefined` until the clock has an estimate, so the rows read "—". */
+  function buildNowStats(): NowStats | undefined {
+    if (!client.clockIsSynced()) return undefined;
+    const diag = client.clockDiag();
+    return {
+      syncMs: client.syncedNowMs(),
+      dateMs: Date.now(),
+      serverMs: client.rawServerNowMs(),
+      disciplinedOffsetMs: diag.disciplinedOffsetMs,
+      slew: diag.slew,
+    };
+  }
 
   await scenes.change(new LoginScene());
 }
 
-/** Project the client core's `ClockStats` into the debug panel's `SyncStats`,
- *  filling the `Date.now()`-relative fields the core can't compute. Called once
- *  per login, when `s.synced` is set. */
+/** Project the client core's `ClockStats` into the debug panel's `SyncStats` (the
+ *  per-`clockSync` snapshot backing the sparklines). The live clocks come from
+ *  `buildNowStats` instead. `offsetMs` is the raw estimate (`server − Date.now()`). */
 function toSyncStats(s: ClockStats): SyncStats {
-  const dateNowMs = Date.now();
   return {
-    serverNowMs: s.serverNowMs,
-    dateNowMs,
-    offsetMs: s.serverNowMs - dateNowMs,
+    offsetMs: s.serverNowMs - Date.now(),
     captures: s.captures,
     bestOffsetMs: s.bestOffsetMs,
     worstOffsetMs: s.worstOffsetMs,
-    deltaMs: s.deltaMs,
     clientLagMs: s.clientDelayMs,
     rttMs: s.rttMs,
     bestRttMs: s.bestRttMs,
     rttSamples: s.rttSamples,
-    runningDeltaMs: s.runningDeltaMs,
-    runningDelayMs: s.runningDelayMs,
   };
 }
 

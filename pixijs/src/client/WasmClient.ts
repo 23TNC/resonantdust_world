@@ -22,6 +22,20 @@ import { assetBaseFromServerUrl } from "./environments";
  *  visible this long after it's issued). */
 export const RENDER_DELAY_MS = 300;
 
+/** Clock discipline — how the smooth **Sync.now** clock chases the jittery **raw**
+ *  server-offset estimate. Small errors are *slewed* (the clock ticks slightly
+ *  fast/slow until it catches up) so motion never hitches and clients converge
+ *  together; large errors (first sync, resync after a backgrounded tab) are
+ *  *stepped* instantly because slewing multi-second gaps would keep the clock
+ *  wrong for too long. The slew rate is well under 1000 ms/s, so Sync.now is
+ *  always monotonic — it may tick slow, but never runs backward (except on a
+ *  deliberate step). */
+export const CLOCK_STEP_THRESHOLD_MS = 250;
+export const CLOCK_SLEW_RATE_MS_PER_S = 50;
+
+/** Which discipline regime the clock is in — surfaced to the debug HUD. */
+export type SlewState = "step" | "slew" | "locked" | "—";
+
 /** One chat message from the (future) chat feed. `sentAt` is a packed
  *  `[time_ms | seq]` key as a STRING — the u64 exceeds JS's safe-integer range,
  *  so it's carried as text (and is a stable per-message id / sort key). The
@@ -71,9 +85,6 @@ export interface ClockStats {
   serverNowMs: number;
   synced: boolean;
   clientDelayMs: number;
-  runningDelayMs: number;
-  runningDeltaMs: number;
-  deltaMs: number | null;
   captures: number;
   bestOffsetMs: number | null;
   worstOffsetMs: number | null;
@@ -179,9 +190,6 @@ type WorldEvent =
       bestRttMs: number | null;
       bestOffsetMs: number | null;
       worstOffsetMs: number | null;
-      runningDelayMs: number;
-      runningDeltaMs: number;
-      deltaMs: number | null;
     };
 
 /** An in-flight login awaiting its terminal event. */
@@ -212,10 +220,20 @@ export class WasmClient {
   private serverUrl: string | null = null;
 
   private clockCb: ((stats: ClockStats) => void) | null = null;
-  /** Live clock offset (`serverNow − Date.now()`), updated on every `clockSync`.
-   *  `0` until the first synced sample, so {@link syncedNowMs} degrades to the
-   *  local clock. */
-  private clockOffsetMs = 0;
+  /** Raw offset (`serverNow − Date.now()`) from the core's windowed best-RTT
+   *  estimate, refreshed on every synced `clockSync`. Jittery / steps per sample;
+   *  it's the *target* the disciplined clock chases, and drives the HUD's raw
+   *  **Server.now**. `0` until the first synced sample. */
+  private rawOffsetMs = 0;
+  /** Disciplined offset — the smoothly-slewed value {@link syncedNowMs} actually
+   *  uses, chasing {@link rawOffsetMs} via step/slew. */
+  private disciplinedOffsetMs = 0;
+  /** Whether the disciplined offset has been primed from a first raw estimate. */
+  private disciplineInit = false;
+  /** `Date.now()` at the last discipline advance, for the slew's time step. */
+  private lastDisciplineMs = 0;
+  /** The regime the last discipline advance took — for the HUD. */
+  private slewState: SlewState = "—";
   /** Whether the clock has at least one estimate (login seed or a pong). */
   private clockSynced = false;
   private readonly loggedInCbs = new Set<(serverUrl: string) => void>();
@@ -248,12 +266,64 @@ export class WasmClient {
     return this.serverUrl ? assetBaseFromServerUrl(this.serverUrl) : "";
   }
 
-  /** The server wall clock (ms) estimated for *now*, from the live clock offset.
-   *  The render loop reads `syncedNowMs() − RENDER_DELAY_MS` to pick the shared
-   *  instant to display. Before the first clock sample this is just `Date.now()`
-   *  (offset 0), so rendering still works — just un-synced across clients. */
+  /** **Sync.now** — the disciplined server-clock estimate for *now*: the smooth,
+   *  monotonic clock the render loop drives off (`syncedNowMs() − RENDER_DELAY_MS`
+   *  picks the shared display instant). It slews toward the raw estimate rather
+   *  than snapping, so it converges across clients without hitching. Advancing the
+   *  discipline here means any caller (render loop, HUD) keeps it fresh. Before the
+   *  first sample this is just `Date.now()` (offset 0) — rendering still works,
+   *  just un-synced across clients. */
   syncedNowMs(): number {
-    return Date.now() + this.clockOffsetMs;
+    const now = Date.now();
+    this.advanceDiscipline(now);
+    return now + this.disciplinedOffsetMs;
+  }
+
+  /** **Server.now** — the *raw* server-clock estimate for now (`Date.now()` +
+   *  windowed best-RTT offset). Jittery and step-prone; it's the target Sync.now
+   *  chases. The debug HUD shows it alongside Sync.now to make convergence
+   *  visible. */
+  rawServerNowMs(): number {
+    return Date.now() + this.rawOffsetMs;
+  }
+
+  /** Live clock-discipline readout for the debug HUD: the disciplined vs raw
+   *  offsets and which regime the last advance took. */
+  clockDiag(): { disciplinedOffsetMs: number; rawOffsetMs: number; slew: SlewState } {
+    return {
+      disciplinedOffsetMs: this.disciplinedOffsetMs,
+      rawOffsetMs: this.rawOffsetMs,
+      slew: this.clockSynced ? this.slewState : "—",
+    };
+  }
+
+  /** Advance the disciplined offset toward the raw estimate. Steps for large
+   *  errors (first sync / resync), slews for small ones at a bounded rate that
+   *  keeps Sync.now monotonic. Idempotent within a frame — called back-to-back
+   *  with `dt ≈ 0` it barely moves. */
+  private advanceDiscipline(now: number): void {
+    if (!this.clockSynced) return;
+    const target = this.rawOffsetMs;
+    if (!this.disciplineInit) {
+      this.disciplinedOffsetMs = target;
+      this.lastDisciplineMs = now;
+      this.disciplineInit = true;
+      this.slewState = "step";
+      return;
+    }
+    const err = target - this.disciplinedOffsetMs;
+    if (Math.abs(err) > CLOCK_STEP_THRESHOLD_MS) {
+      this.disciplinedOffsetMs = target;
+      this.slewState = "step";
+    } else if (err === 0) {
+      this.slewState = "locked";
+    } else {
+      const dt = Math.max(0, now - this.lastDisciplineMs);
+      const maxStep = (CLOCK_SLEW_RATE_MS_PER_S * dt) / 1000;
+      this.disciplinedOffsetMs += Math.max(-maxStep, Math.min(maxStep, err));
+      this.slewState = "slew";
+    }
+    this.lastDisciplineMs = now;
   }
 
   /** Whether the clock offset has been estimated at least once. */
@@ -504,18 +574,15 @@ export class WasmClient {
         }
         break;
       case "clockSync":
-        // Update the live offset so `syncedNowMs()` tracks the server clock, then
-        // project the snapshot into the debug HUD's `ClockStats` shape. `synced`
-        // gates the offset write so a pre-sync seed of 0 can't skew the clock.
+        // Refresh the *raw* offset target (the disciplined clock chases it in
+        // `syncedNowMs`), then project the snapshot into the HUD's `ClockStats`.
+        // `synced` gates the write so a pre-sync seed of 0 can't skew the clock.
         this.clockSynced = ev.synced;
-        if (ev.synced) this.clockOffsetMs = ev.serverNowMs - Date.now();
+        if (ev.synced) this.rawOffsetMs = ev.serverNowMs - Date.now();
         this.clockCb?.({
           serverNowMs: ev.serverNowMs,
           synced: ev.synced,
           clientDelayMs: RENDER_DELAY_MS,
-          runningDelayMs: ev.runningDelayMs,
-          runningDeltaMs: ev.runningDeltaMs,
-          deltaMs: ev.deltaMs,
           captures: ev.captures,
           bestOffsetMs: ev.bestOffsetMs,
           worstOffsetMs: ev.worstOffsetMs,

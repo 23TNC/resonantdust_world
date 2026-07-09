@@ -214,8 +214,13 @@ struct Engine {
     /// stamps frames with the generation live when it started; the loop ignores
     /// any whose generation no longer matches (a superseded socket's tail).
     generation: u64,
-    /// Cloned into each read pump so it can forward frames into the loop.
-    frame_tx: mpsc::UnboundedSender<(u64, FrameOutcome)>,
+    /// Cloned into each read pump so it can forward frames into the loop. Each
+    /// item is `(generation, recv_ms, outcome)`: the recv timestamp is stamped at
+    /// ingress in [`read_pump`] — *not* when the loop later processes the frame —
+    /// so a clock-sync Pong sitting behind a backlog of row frames still yields a
+    /// true round-trip (client-side head-of-line blocking otherwise inflates the
+    /// RTT and biases the offset on a row-flooded connection).
+    frame_tx: mpsc::UnboundedSender<(u64, u64, FrameOutcome)>,
     /// Per-command gateway-call tally for the debug HUD, keyed by wire tag. A
     /// `BTreeMap` so [`Self::emit_call_stats`] snapshots in a stable order.
     calls: BTreeMap<&'static str, CallCounters>,
@@ -234,7 +239,7 @@ impl Engine {
     fn new(
         config: ClientConfig,
         sink: Arc<dyn EventSink>,
-    ) -> (Self, mpsc::UnboundedReceiver<(u64, FrameOutcome)>) {
+    ) -> (Self, mpsc::UnboundedReceiver<(u64, u64, FrameOutcome)>) {
         let (frame_tx, frame_rx) = mpsc::unbounded();
         let engine = Self {
             config,
@@ -263,7 +268,7 @@ impl Engine {
     async fn run(
         mut self,
         mut cmd_rx: mpsc::UnboundedReceiver<Command>,
-        mut frame_rx: mpsc::UnboundedReceiver<(u64, FrameOutcome)>,
+        mut frame_rx: mpsc::UnboundedReceiver<(u64, u64, FrameOutcome)>,
     ) {
         // Clock-sync cadence: a browser interval polled alongside the command and
         // frame streams. It ticks whether or not we're connected; `send_ping`
@@ -280,10 +285,10 @@ impl Engine {
                     None => break, // all handles dropped
                 },
                 frame = frame_rx.next() => {
-                    if let Some((generation, outcome)) = frame {
+                    if let Some((generation, recv_ms, outcome)) = frame {
                         // Drop a superseded socket's tail frames.
                         if generation == self.generation {
-                            self.handle_frame(outcome).await;
+                            self.handle_frame(recv_ms, outcome).await;
                         }
                     }
                 }
@@ -456,10 +461,12 @@ impl Engine {
         self.pending = Some(Pending { cid, name });
     }
 
-    /// Handle one inbound frame outcome from the read pump.
-    async fn handle_frame(&mut self, outcome: FrameOutcome) {
+    /// Handle one inbound frame outcome from the read pump. `recv_ms` is the
+    /// ingress timestamp stamped when the frame left the socket, forwarded to the
+    /// clock so a queued Pong is timed by arrival, not by processing.
+    async fn handle_frame(&mut self, recv_ms: u64, outcome: FrameOutcome) {
         match outcome {
-            FrameOutcome::Text(text) => self.handle_server_msg(&text).await,
+            FrameOutcome::Text(text) => self.handle_server_msg(&text, recv_ms).await,
             FrameOutcome::Other => {}
             FrameOutcome::Closed => {
                 self.disconnect(Some("server closed connection".to_string()), true)
@@ -468,8 +475,9 @@ impl Engine {
         }
     }
 
-    /// Parse and dispatch a text frame as a [`ServerMsg`].
-    async fn handle_server_msg(&mut self, text: &str) {
+    /// Parse and dispatch a text frame as a [`ServerMsg`]. `recv_ms` is the
+    /// frame's ingress timestamp, used to time clock-sync replies.
+    async fn handle_server_msg(&mut self, text: &str, recv_ms: u64) {
         let msg: ServerMsg = match serde_json::from_str(text) {
             Ok(m) => m,
             Err(err) => {
@@ -492,8 +500,9 @@ impl Engine {
                 self.pending = None;
                 self.player_id = Some(player_id);
                 // Coarse offset seed so the clock is usable before the first pong;
-                // a real round-trip refines it within `PING_INTERVAL_MS`.
-                self.clock.seed_login(server_micros / 1_000, now_ms());
+                // a real round-trip refines it within `PING_INTERVAL_MS`. Timed by
+                // the frame's ingress, not by when we got round to processing it.
+                self.clock.seed_login(server_micros / 1_000, recv_ms);
                 self.emit(Event::ClockSync(self.clock.snapshot(now_ms())));
                 let server_url = self.server_url.clone().unwrap_or_default();
                 self.emit(Event::LoggedIn {
@@ -501,12 +510,20 @@ impl Engine {
                     data_shard,
                     server_url,
                 });
+                // Prime the estimator with a real round-trip immediately (the
+                // browser's ping interval otherwise fires a full period later), so
+                // the windowed best-RTT filter can adopt a genuine sample over the
+                // coarse login seed within a second of connecting.
+                self.send_ping().await;
             }
             ServerMsg::Pong {
                 client_send_ms,
                 server_ms,
             } => {
-                self.clock.on_pong(client_send_ms, server_ms, now_ms());
+                // Time the round-trip by the pong's ingress (`recv_ms`), not by
+                // now — otherwise a Pong queued behind row frames reads as a long
+                // RTT and biases the offset low on a busy connection.
+                self.clock.on_pong(client_send_ms, server_ms, recv_ms);
                 self.emit(Event::ClockSync(self.clock.snapshot(now_ms())));
             }
             ServerMsg::LoginErr { cid, error, .. } => {
@@ -725,18 +742,21 @@ impl Engine {
 async fn read_pump(
     mut read: SplitStream<WsStream>,
     generation: u64,
-    tx: mpsc::UnboundedSender<(u64, FrameOutcome)>,
+    tx: mpsc::UnboundedSender<(u64, u64, FrameOutcome)>,
 ) {
     while let Some(msg) = read.next().await {
         let outcome = match msg {
             WsMessage::Text(t) => FrameOutcome::Text(t),
             WsMessage::Binary(_) => FrameOutcome::Other,
         };
-        if tx.unbounded_send((generation, outcome)).is_err() {
+        // Stamp arrival here, at the socket edge, so a clock-sync Pong is timed by
+        // when it landed — not by when the (possibly backlogged) engine loop gets
+        // to it. This is the client-side half of keeping pings off the busy path.
+        if tx.unbounded_send((generation, now_ms(), outcome)).is_err() {
             return;
         }
     }
-    let _ = tx.unbounded_send((generation, FrameOutcome::Closed));
+    let _ = tx.unbounded_send((generation, now_ms(), FrameOutcome::Closed));
 }
 
 /// The gateway round-trip over `fetch` (`gloo-net`), delegating the parse to the

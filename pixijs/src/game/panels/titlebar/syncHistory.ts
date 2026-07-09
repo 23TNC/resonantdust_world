@@ -18,9 +18,6 @@ const WINDOW = 240;
  *  latest `SyncStats` (see `scalar`). */
 const SERIES = [
   "clientDelayMs",
-  "runningDelayMs",
-  "runningDeltaMs",
-  "deltaMs",
   "offsetMs",
   "bestOffsetMs",
   "worstOffsetMs",
@@ -87,9 +84,6 @@ export class SyncHistory implements SyncHistorySource {
   private scalar(s: SyncStats, name: SeriesName): number {
     switch (name) {
       case "clientDelayMs":  return s.clientLagMs;
-      case "runningDelayMs": return s.runningDelayMs;
-      case "runningDeltaMs": return s.runningDeltaMs;
-      case "deltaMs":        return s.deltaMs ?? NaN;
       case "offsetMs":       return s.offsetMs;
       case "bestOffsetMs":   return s.bestOffsetMs ?? NaN;
       case "worstOffsetMs":  return s.worstOffsetMs ?? NaN;
