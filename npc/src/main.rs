@@ -1,144 +1,136 @@
-//! NPC driver — a headless bot that logs in like a player and drives NPCs by
-//! issuing the same command verbs a real client does.
+//! npc — the demo mover.
 //!
-//! It proves the architecture's key simplification: **NPCs are just automated
-//! clients.** There is no server-side simulation to stall — an NPC's "AI" runs
-//! here, in a client, and reaches the world through the identical path a player's
-//! pixijs does: npc → [`client`] → server → spacetime (the sole authority).
+//! Connects straight to the object shard (like `server_master`), seeds `DEMO_COUNT`
+//! demo objects in zone (0,0) — each type-tagged in its `object_id` so the client can
+//! tell them apart from real things — then every `MOVE_MS` picks a random cell for each
+//! and appends an `ACTION_MOVE`. The tick pipeline resolves those into `state`; the edge
+//! streams `state` to browsers that draw each as a tweening circle. Watching the same
+//! objects across tabs is the sync test.
 //!
-//! This first cut drives the debug mover (a tree): it logs in, anchors near a
-//! home tile (so the gate subscribes the zone + connects the object shard — the
-//! move relay needs that), and every few seconds picks a random nearby tile and
-//! walks the mover there. Real pawns and a *set* of individually-addressable
-//! owned NPCs are the next step (they need a per-object move command); the AI
-//! loop here is already shaped as "manage a list of NPCs" with one member.
-//!
-//! Run (host, against the dev gateway's exposed port):
-//! ```text
-//! CLIENT_GATEWAY_URL=http://127.0.0.1:9473 npc/target/release/npc wolves
-//! ```
-//! or in-network via `npc/compose.yml`'s `run` service.
+//! Moves go direct to the shard (no edge command path needed); only `state` travels
+//! through the edge to the browser, which keeps the browser-side sync check honest.
 
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use spacetimedb_sdk::DbContext;
 
-use client::{AnchorRadii, Client, ClientConfig, Event};
+use resonantdust_codec::packed::{pack_object_id, pack_object_key, OBJ_TYPE_DEMO};
+use resonantdust_tick::{pack_move, ACTION_MOVE};
 
-/// How often the NPC picks a new destination for each of its charges.
-const WANDER_INTERVAL: Duration = Duration::from_secs(3);
+mod bindings;
+use bindings::object_shard::{append_event as _, seed_entity as _, DbConnection};
 
-/// Home tile the NPC's charges wander around, and how far (tiles) they roam. Kept
-/// clear of the world origin so the roam box stays in the valid (non-negative)
-/// world — negative global tiles wrap to the far region and would fling the mover
-/// across the map. Near enough to the origin to sit in a player's default view.
-const HOME: (i32, i32) = (6, 6);
-const ROAM: i32 = 5;
+/// How many demo circles to drive.
+const DEMO_COUNT: u32 = 5;
+/// Everything lives in zone (0,0) — `zone_id == 0`.
+const ZONE: u32 = 0;
+/// Cells per zone edge (16×16 = 256 locations).
+const CELLS: u32 = 256;
+/// The `from_server_id` these events are stamped with (provenance; arbitrary here).
+const NPC_SERVER_ID: u16 = 9;
 
-/// Subscription reach around home (tiles) — enough to keep the home zone (and its
-/// object shard) live so move commands relay.
-const RADII: AnchorRadii = AnchorRadii {
-    active: 10,
-    hot: 12,
-    warm: 14,
-    cold: 16,
-};
+/// Tiny xorshift64 — the mover's motion is not part of sim determinism, so a
+/// wall-clock seed is fine (no dependency needed).
+struct Rng(u64);
+impl Rng {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+    fn below(&mut self, n: u32) -> u32 {
+        (self.next() % n as u64) as u32
+    }
+}
+
+fn env_or(key: &str, default: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+fn demo_key(index: u32) -> u64 {
+    pack_object_key(pack_object_id(OBJ_TYPE_DEMO, index))
+}
 
 #[tokio::main]
 async fn main() {
-    init_tracing();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "npc=info".into()),
+        )
+        .init();
 
-    let config = ClientConfig::from_env();
-    let name = std::env::args().nth(1).unwrap_or_else(|| "npc".to_string());
-    info!(%name, gateway = %config.gateway_url, "npc: starting");
+    let uri = env_or("ST_URI", "http://127.0.0.1:3000");
+    let db = env_or("OBJECT_DB", "resonantdust-dev-object-0");
+    let move_ms: u64 = env_or("MOVE_MS", "1000").parse().unwrap_or(1000);
+    tracing::info!(%uri, %db, demo_count = DEMO_COUNT, move_ms, "npc demo mover starting");
 
-    // The client calls the sink for every event; forward them into a channel the
-    // driver loop selects on.
-    let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
-    let client = Client::spawn(config, move |ev: Event| {
-        let _ = tx.send(ev);
-    });
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let ready_tx = std::sync::Mutex::new(Some(ready_tx));
+    let conn = DbConnection::builder()
+        .with_uri(&uri)
+        .with_database_name(&db)
+        .on_connect(move |_ctx, identity, _token| {
+            tracing::info!(%identity, "connected");
+            if let Some(tx) = ready_tx.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+        })
+        .on_connect_error(|_ctx, err| tracing::error!(%err, "connect error"))
+        .on_disconnect(|_ctx, err| tracing::warn!(?err, "disconnected"))
+        .build()
+        .expect("build connection");
+    let conn = Arc::new(conn);
+    conn.run_threaded();
 
-    if client.login(name.clone()).is_err() {
-        error!("npc: client engine gone before login");
+    // Reducer calls before the connection is live are lost; wait for on_connect.
+    if tokio::time::timeout(Duration::from_secs(5), ready_rx)
+        .await
+        .is_err()
+    {
+        tracing::error!("timed out waiting to connect");
         return;
     }
 
-    let mut rng = seed();
-    let mut logged_in = false;
-    let mut wander = tokio::time::interval(WANDER_INTERVAL);
+    let mut rng = Rng(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9E37_79B9_7F4A_7C15)
+            | 1,
+    );
 
-    loop {
-        tokio::select! {
-            ev = rx.recv() => match ev {
-                Some(Event::LoggedIn { player_id, data_shard, .. }) => {
-                    info!(player_id, data_shard, "npc: logged in");
-                    // Anchor near home so the gate subscribes the zone and connects
-                    // the object shard the move relay needs.
-                    let _ = client.set_anchor("npc:home", HOME.0, HOME.1, 0, RADII, 0);
-                    logged_in = true;
-                }
-                Some(Event::LoginFailed { reason }) => {
-                    error!(%reason, "npc: login failed");
-                    break;
-                }
-                Some(Event::Disconnected { reason }) => {
-                    warn!(?reason, "npc: disconnected");
-                    break;
-                }
-                // Zone/thing/clock events: the AI could react to them (make
-                // decisions from observed state); the wander loop ignores them.
-                Some(_) => {}
-                None => break, // client engine stopped
-            },
-            _ = wander.tick() => {
-                if logged_in {
-                    let (x, y) = pick_destination(&mut rng);
-                    info!(x, y, "npc: wander → move");
-                    let _ = client.move_to(x, y);
-                }
-            }
-            _ = tokio::signal::ctrl_c() => {
-                info!("npc: shutting down");
-                break;
-            }
+    // Seed the demo objects at random start cells (idempotent per key).
+    for i in 0..DEMO_COUNT {
+        let loc = rng.below(CELLS) as u8;
+        if let Err(err) =
+            conn.reducers()
+                .seed_entity(demo_key(i), OBJ_TYPE_DEMO as u16, ZONE, loc, 0, 0, 0, 0)
+        {
+            tracing::warn!(%err, i, "seed failed");
         }
     }
+    tracing::info!("seeded {DEMO_COUNT} demo objects");
 
-    let _ = client.shutdown();
-}
-
-/// A random tile within [`ROAM`] tiles of [`HOME`], clamped to the non-negative
-/// world (a defensive floor; with the chosen HOME/ROAM the box is already ≥ 1).
-fn pick_destination(rng: &mut u64) -> (i32, i32) {
-    let span = (2 * ROAM + 1) as u64;
-    let dx = (next(rng) % span) as i32 - ROAM;
-    let dy = (next(rng) % span) as i32 - ROAM;
-    ((HOME.0 + dx).max(0), (HOME.1 + dy).max(0))
-}
-
-/// Seed an xorshift PRNG from the wall clock (no `rand` dependency for a bot that
-/// just needs some wander). `| 1` guards the all-zero state.
-fn seed() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0x9E37_79B9_7F4A_7C15)
-        | 1
-}
-
-/// xorshift64 — cheap, non-cryptographic randomness for destinations.
-fn next(s: &mut u64) -> u64 {
-    *s ^= *s << 13;
-    *s ^= *s >> 7;
-    *s ^= *s << 17;
-    *s
-}
-
-/// `tracing` to stderr, level via `RUST_LOG` (default `info`).
-fn init_tracing() {
-    use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    fmt().with_env_filter(filter).with_target(false).init();
+    // Move each to a fresh random cell every tick.
+    let mut ticker = tokio::time::interval(Duration::from_millis(move_ms));
+    loop {
+        ticker.tick().await;
+        for i in 0..DEMO_COUNT {
+            let loc = rng.below(CELLS) as u8;
+            let d = pack_move(ZONE, loc, 0, 0);
+            let key = demo_key(i);
+            if let Err(err) =
+                conn.reducers()
+                    .append_event(NPC_SERVER_ID, 0, key, key, ACTION_MOVE, d[0], d[1])
+            {
+                tracing::warn!(%err, i, "move failed");
+            }
+        }
+        tracing::debug!("issued a round of moves");
+    }
 }

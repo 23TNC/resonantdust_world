@@ -350,6 +350,36 @@ pub fn entity_location(key: u64) -> u8 {
     (key & 0xFF) as u8
 }
 
+// ── object_id sub-typing ─────────────────────────────────────────────────────
+//
+// Within an OBJECT entity key, the `object_id` carries a small **type** tag so a
+// consumer can tell classes of object apart (demo circles vs real things) straight
+// from the id, no lookup:
+//
+// ```text
+// object_id: u62 = obj_type:8 << 32 | serial:32
+// ```
+
+/// Demo object (a moving circle in the Phase-A sync demo).
+pub const OBJ_TYPE_DEMO: u8 = 1;
+
+const OBJ_TYPE_SHIFT: u64 = 32;
+
+/// Compose an `object_id` from its type tag and serial.
+pub fn pack_object_id(obj_type: u8, serial: u32) -> u64 {
+    ((obj_type as u64) << OBJ_TYPE_SHIFT) | serial as u64
+}
+
+/// The type tag of an `object_id`.
+pub fn object_id_type(object_id: u64) -> u8 {
+    ((object_id >> OBJ_TYPE_SHIFT) & 0xFF) as u8
+}
+
+/// The serial of an `object_id`.
+pub fn object_id_serial(object_id: u64) -> u32 {
+    object_id as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,6 +503,17 @@ mod tests {
             assert_eq!(entity_zone_id(k), z);
             assert_eq!(entity_location(k), loc);
         }
+    }
+
+    #[test]
+    fn object_id_type_roundtrips() {
+        let oid = pack_object_id(OBJ_TYPE_DEMO, 3);
+        assert_eq!(object_id_type(oid), OBJ_TYPE_DEMO);
+        assert_eq!(object_id_serial(oid), 3);
+        // Survives the round-trip through an entity key.
+        let k = pack_object_key(oid);
+        assert_eq!(object_id_type(entity_object_id(k)), OBJ_TYPE_DEMO);
+        assert_eq!(object_id_serial(entity_object_id(k)), 3);
     }
 
     #[test]

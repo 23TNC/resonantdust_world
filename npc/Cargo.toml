@@ -3,24 +3,25 @@ name = "npc"
 version = "0.1.0"
 edition = "2021"
 
-# The NPC driver — a headless program that logs in through the `client` crate
-# (exactly as a player's pixijs does) and issues the same command verbs to drive
-# NPCs. The point: NPCs need no server-side simulation; they are just automated
-# clients. Everything flows pixijs/npc → client → server → spacetime, and
-# spacetime is the sole authority. A player "owns" a set of NPCs by running one
-# of these (a group of villagers, a pack of wolves, …).
-#
-# First cut: drive the debug mover (a tree) around autonomously. Real pawns and
-# multiple owned NPCs (one addressable object each) follow.
+# npc — the demo mover. A direct-SDK client to the object shard that seeds a handful
+# of "demo objects" (type-tagged in their object_id) in zone (0,0) and, on a timer,
+# moves each to a random cell via `append_event(ACTION_MOVE)`. The tick pipeline
+# (master + server_simulation) resolves the moves into `state`; the edge streams
+# `state` to browsers, which draw each demo object as a tweening circle. The point is
+# to watch the SAME motion across browser tabs and catch sync issues — the whole reason
+# for the 0.2 rework. (Supersedes the old login-through-client debug_mover driver;
+# movement now flows through the real event/state pipeline, not a legacy streamer.)
+
 [[bin]]
 name = "npc"
 path = "src/main.rs"
 
 [dependencies]
-# The headless client (native transport). The NPC drives the identical
-# `Command`/`Event` API a real player's host does — an NPC and a player are
-# indistinguishable to the server.
-client = { path = "../client" }
+spacetimedb-sdk = "=2.3.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Shared layouts: object-id type tag + entity key (codec) and the move data encoding
+# (tick), so the mover, the worker, and the client all agree.
+resonantdust-codec = { path = "../shared/codec" }
+resonantdust-tick = { path = "../shared/tick" }
