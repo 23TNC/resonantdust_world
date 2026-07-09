@@ -33,6 +33,10 @@ pub mod gc;
 pub mod pawns;
 pub mod presence;
 pub mod sequence;
+// The simulation tick pipeline (event_log / state_log / state / tic_meta + reducers).
+// Added alongside the legacy bitemporal tables during Phase A; the legacy modules
+// above are removed with the edge rewire (Phase B). See docs/simulation-plan.md.
+pub mod tick;
 pub mod time;
 pub mod transfer;
 
