@@ -1,5 +1,11 @@
 # Client/server sync — authoritative bitemporal event log + deterministic projection
 
+> **0.2 note (2026-07-09):** the **server** model below is superseded by the tick
+> pipeline in [`simulation.md`](simulation.md) (`server_master`/`server_edge`/
+> `server_simulation`, event/state split, per-object tic frontier). The **client**
+> model here — synced clock, render delay `D`, interpolate-by-`valid_at`,
+> gray-out — is **retained**.
+
 **Status:** Design locked (2026-07-08); substrate partly built. Live today: clock
 sync, client interpolation, and a **stopgap** debug mover that streams a position
 every 150 ms. Not yet built: **Slice 0**, which converts motion from
