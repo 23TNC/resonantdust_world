@@ -33,6 +33,8 @@ dist/
 /server/target/
 /client/target/
 /npc/target/
+/server_master/target/
+/server_simulation/target/
 
 # spacetimedb data
 /spacetime-data/*
