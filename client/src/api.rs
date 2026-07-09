@@ -94,6 +94,12 @@ pub enum Command {
     /// mover's current tile and commits the path, which surfaces on existing
     /// free-thing subscriptions. Requires a live session; ignored otherwise.
     Move { tile_x: i32, tile_y: i32 },
+    /// Sync-experiment: ask the server to reposition experiment object `object_id`
+    /// to global tile `(x, y)`. The result surfaces as an [`Event::ExperimentObject`]
+    /// on every client's experiment subscription. Requires a live session; ignored
+    /// otherwise. Deliberately parallel to the real sync path (see the `experiment`
+    /// module and docs/sync.md).
+    UpdateExperiment { object_id: u32, x: u32, y: u32 },
     /// Drop the world-server connection and clear the session, without stopping
     /// the client (a later [`Command::Login`] can reconnect).
     Logout,
@@ -167,6 +173,12 @@ pub enum Event {
     /// A zone's subscription closed (the anchor moved it out of range, or it was
     /// evicted). The host drops that zone's sprites — tiles and loose things.
     ZoneClosed { zone_id: u32 },
+    /// A sync-experiment object changed (`experiment::experiment_objects`). The
+    /// host keys a circle by `object_id` and tweens it from its current position to
+    /// tile `(x, y)`. Insert and update both arrive here; the experiment has no
+    /// deletes. Carries no timestamp — the host tweens on its own local clock, NOT
+    /// the synced render instant, bypassing the real sync machinery.
+    ExperimentObject { object_id: u32, x: u32, y: u32 },
     /// The running per-command gateway-call tally changed. Carries the full
     /// snapshot (one [`CallStat`] per command type seen so far), re-emitted after
     /// each outbound frame and each correlated reply. Diagnostic-only — the pixijs

@@ -432,6 +432,14 @@ impl WorldClient {
         let _ = self.inner.move_to(tile_x, tile_y);
     }
 
+    /// Sync-experiment: reposition experiment object `object_id` to global tile
+    /// `(x, y)` — the server relays to the `experiment` module. No-op before login
+    /// / if disconnected. Bypasses the real sync path.
+    #[wasm_bindgen(js_name = updateExperiment)]
+    pub fn update_experiment(&self, object_id: u32, x: u32, y: u32) {
+        let _ = self.inner.update_experiment(object_id, x, y);
+    }
+
     /// Drop the world-server connection, keeping the client alive for reconnect.
     pub fn logout(&self) {
         let _ = self.inner.logout();
@@ -528,6 +536,12 @@ fn event_to_js(event: &client::Event) -> JsValue {
         Event::ZoneClosed { zone_id } => {
             set("kind", &JsValue::from_str("zoneClosed"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));
+        }
+        Event::ExperimentObject { object_id, x, y } => {
+            set("kind", &JsValue::from_str("experimentObject"));
+            set("objectId", &JsValue::from_f64(*object_id as f64));
+            set("x", &JsValue::from_f64(*x as f64));
+            set("y", &JsValue::from_f64(*y as f64));
         }
         Event::CallStats(stats) => {
             set("kind", &JsValue::from_str("callStats"));

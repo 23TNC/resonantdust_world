@@ -45,6 +45,10 @@ pub enum ClientMsg {
     /// future-stamped move rows; no direct reply (the effect arrives on the
     /// existing free-thing subscription).
     Move { tile_x: i32, tile_y: i32 },
+    /// Sync-experiment: reposition experiment object `object_id` to global tile
+    /// `(x, y)`. The server relays to the `experiment` module; the effect arrives
+    /// on the experiment-object subscription. Bypasses the real sync path.
+    UpdateExperiment { object_id: u32, x: u32, y: u32 },
 }
 
 /// A frame the server sends to the client.
@@ -101,6 +105,9 @@ pub enum RowData {
     /// A loose thing from the object shard (`object_shard::free_things`) — a
     /// stable `object_id`, a tile `location`, and a sub-tile `offset`.
     FreeThing(FreeThingRow),
+    /// A sync-experiment object (`experiment::experiment_objects`): a flat
+    /// `(object_id, x, y)` tile position, no bitemporal fields.
+    ExperimentObject(ExperimentObjectRow),
 }
 
 /// Mirror of `shard::cold_zone_type::ColdZone`.
@@ -132,4 +139,13 @@ pub struct FreeThingRow {
     pub rotation: u8,
     pub id: u16,
     pub offset: u8,
+}
+
+/// Mirror of `experiment::experiment_object_type::ExperimentObject` (server
+/// `ExperimentObjectRow`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExperimentObjectRow {
+    pub object_id: u32,
+    pub x: u32,
+    pub y: u32,
 }

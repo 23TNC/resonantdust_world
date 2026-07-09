@@ -295,6 +295,14 @@ export class Viewport extends LayoutNode {
     return { x: this.anchorX + (sx - this.width / 2) / z, y: this.anchorY + (sy - this.height / 2) / z };
   }
 
+  /** Map a WORLD-px point to a body-local screen point (px, origin at the
+   *  viewport's top-left) — the forward of {@link screenToWorld}. Used by the
+   *  sync-experiment overlay to place circles under the current pan/zoom. */
+  worldToScreen(wx: number, wy: number): { x: number; y: number } {
+    const z = this.zoomFactor;
+    return { x: (wx - this.anchorX) * z + this.width / 2, y: (wy - this.anchorY) * z + this.height / 2 };
+  }
+
   /** Named render-texture channels for the `/showRT` dev preview. Stable order so
    *  the preview tiles don't reshuffle as channels light up: `albedo` is the live
    *  fixed-slot composite (the map itself); `normal`/`emissive` are dormant until

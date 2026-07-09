@@ -29,6 +29,18 @@ use client::{AnchorRadii, Client, ClientConfig, Event};
 /// How often the NPC picks a new destination for each of its charges.
 const WANDER_INTERVAL: Duration = Duration::from_secs(3);
 
+/// How often the NPC repositions the sync-experiment objects. A touch above the
+/// pixijs tween duration (1.5 s) so each circle settles before its next hop.
+const EXPERIMENT_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Number of seeded experiment objects (ids `0..EXPERIMENT_OBJECTS`), matching the
+/// `experiment` module's `init`.
+const EXPERIMENT_OBJECTS: u32 = 5;
+
+/// Side length (tiles) of zone (0,0) — the experiment objects are scattered within
+/// tiles `0..ZONE00_DIM` on each axis. Mirrors `ZONE_DIM` in shared/codec.
+const ZONE00_DIM: u32 = 16;
+
 /// Home tile the NPC's charges wander around, and how far (tiles) they roam. Kept
 /// clear of the world origin so the roam box stays in the valid (non-negative)
 /// world — negative global tiles wrap to the far region and would fling the mover
@@ -68,6 +80,7 @@ async fn main() {
     let mut rng = seed();
     let mut logged_in = false;
     let mut wander = tokio::time::interval(WANDER_INTERVAL);
+    let mut experiment = tokio::time::interval(EXPERIMENT_INTERVAL);
 
     loop {
         tokio::select! {
@@ -99,6 +112,18 @@ async fn main() {
                     let _ = client.move_to(x, y);
                 }
             }
+            _ = experiment.tick() => {
+                if logged_in {
+                    // Scatter every experiment object to a fresh random tile in
+                    // zone (0,0). The server writes the rows; every client tweens
+                    // its circles there — the full-stack sync probe.
+                    for object_id in 0..EXPERIMENT_OBJECTS {
+                        let (x, y) = pick_zone00_tile(&mut rng);
+                        let _ = client.update_experiment(object_id, x, y);
+                    }
+                    info!("npc: experiment → repositioned {EXPERIMENT_OBJECTS} objects");
+                }
+            }
             _ = tokio::signal::ctrl_c() => {
                 info!("npc: shutting down");
                 break;
@@ -116,6 +141,14 @@ fn pick_destination(rng: &mut u64) -> (i32, i32) {
     let dx = (next(rng) % span) as i32 - ROAM;
     let dy = (next(rng) % span) as i32 - ROAM;
     ((HOME.0 + dx).max(0), (HOME.1 + dy).max(0))
+}
+
+/// A random tile within zone (0,0) — global tiles `0..ZONE00_DIM` on each axis —
+/// for scattering the sync-experiment objects.
+fn pick_zone00_tile(rng: &mut u64) -> (u32, u32) {
+    let x = (next(rng) % ZONE00_DIM as u64) as u32;
+    let y = (next(rng) % ZONE00_DIM as u64) as u32;
+    (x, y)
 }
 
 /// Seed an xorshift PRNG from the wall clock (no `rand` dependency for a bot that

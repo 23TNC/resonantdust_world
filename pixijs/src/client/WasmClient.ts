@@ -148,6 +148,18 @@ export interface FreeThing {
 /** A loose thing changed — upsert or drop it. */
 export type FreeThingHandler = (thing: FreeThing) => void;
 
+/** A sync-experiment object changed (`experiment::experiment_objects`): a flat
+ *  `(objectId, x, y)` tile position. The host keys a circle by `objectId` and
+ *  tweens it toward tile `(x, y)`. No timestamp — the host tweens on its own local
+ *  clock, bypassing the synced-render machinery (see docs/sync.md). */
+export interface ExperimentObject {
+  objectId: number;
+  x: number;
+  y: number;
+}
+/** An experiment object changed — upsert its target position. */
+export type ExperimentHandler = (obj: ExperimentObject) => void;
+
 const NOOP_UNSUB = (): void => { /* nothing subscribed */ };
 
 /** How long to wait for login to complete (gateway resolve + connect + auth)
@@ -177,6 +189,7 @@ type WorldEvent =
       validAt: number;
     }
   | { kind: "zoneClosed"; zoneId: number }
+  | { kind: "experimentObject"; objectId: number; x: number; y: number }
   | { kind: "callStats"; stats: CallStat[] }
   | { kind: "subStats"; open: number; total: number; tables: SubStat[] }
   | {
@@ -241,6 +254,7 @@ export class WasmClient {
   private readonly zoneThingsCbs = new Set<ZoneThingsHandler>();
   private readonly zoneClosedCbs = new Set<ZoneClosedHandler>();
   private readonly freeThingCbs = new Set<FreeThingHandler>();
+  private readonly experimentCbs = new Set<ExperimentHandler>();
   private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
   private readonly subStatCbs = new Set<(snap: SubStatsSnapshot) => void>();
 
@@ -430,6 +444,13 @@ export class WasmClient {
     this.world?.moveTo(tileX, tileY);
   }
 
+  /** Sync-experiment: ask the server to reposition experiment object `objectId`
+   *  to global tile `(x, y)`. The update streams back on the experiment
+   *  subscription as an `experimentObject` event. No-op before login. */
+  updateExperiment(objectId: number, x: number, y: number): void {
+    this.world?.updateExperiment(objectId, x, y);
+  }
+
   /** Subscribe to cold-zone tile deliveries. Returns an unsubscribe. */
   onZoneTiles(cb: ZoneTilesHandler): () => void {
     this.zoneTilesCbs.add(cb);
@@ -454,6 +475,13 @@ export class WasmClient {
   onFreeThing(cb: FreeThingHandler): () => void {
     this.freeThingCbs.add(cb);
     return () => this.freeThingCbs.delete(cb);
+  }
+
+  /** Subscribe to sync-experiment object changes
+   *  (`experiment::experiment_objects`). Returns an unsubscribe. */
+  onExperiment(cb: ExperimentHandler): () => void {
+    this.experimentCbs.add(cb);
+    return () => this.experimentCbs.delete(cb);
   }
 
   /** ChatPanel feed subscription. The protocol carries no chat frames yet, so
@@ -593,6 +621,11 @@ export class WasmClient {
         break;
       case "zoneClosed":
         for (const cb of this.zoneClosedCbs) cb(ev.zoneId);
+        break;
+      case "experimentObject":
+        for (const cb of this.experimentCbs) {
+          cb({ objectId: ev.objectId, x: ev.x, y: ev.y });
+        }
         break;
       case "callStats":
         for (const cb of this.callStatCbs) cb(ev.stats);

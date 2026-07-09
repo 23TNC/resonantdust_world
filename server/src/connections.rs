@@ -104,6 +104,9 @@ connector!(connect_players, players);
 // things). Both are per-endpoint, cached for the client's lifetime.
 connector!(connect_shard, zone_shard);
 connector!(connect_object_shard, object_shard);
+// The sync-experiment upstream: one global `experiment` DB, connected per client
+// (like `players`) so its `experiment_objects` stream relays to that WS.
+connector!(connect_experiment, experiment);
 
 /// Await an upstream's readiness oneshot with the connect timeout. `true` once
 /// the connection's `on_connect` fired; `false` on timeout (or a dropped sender,

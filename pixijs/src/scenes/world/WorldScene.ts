@@ -7,6 +7,7 @@ import { LayoutNode } from "../../game/layout/LayoutNode";
 import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { RtPanel } from "../../game/panels/rt/RtPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
+import { ExperimentLayer } from "../../game/world/ExperimentLayer";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
 import { SQUARE } from "../../game/viewport/squareMath";
 
@@ -49,6 +50,9 @@ export class WorldScene extends Scene {
   /** Wiring from the world client's zone stream into the viewport, and the
    *  viewport camera into the client's anchor. */
   private bridge!: WorldBridge;
+  /** Sync-experiment overlay — circles tweened between server-sent positions,
+   *  drawn on top of the viewport, independent of the real sync path. */
+  private experiment!: ExperimentLayer;
   /** Unsubscribe from content hot-swaps; called on scene exit. */
   private contentUnsub: (() => void) | null = null;
   /** Drag-to-pan state: pointer id + last client-px position while dragging. */
@@ -135,6 +139,19 @@ export class WorldScene extends Scene {
     this.bridge = new WorldBridge(ctx.client, ctx.content, this.viewport.view, ctx.textureResolver.white, ctx.textureResolver);
     this.bridge.start();
 
+    // Sync-experiment overlay: circles for `experiment_objects`, tweened between
+    // server positions. Added INTO the viewport's own container so it shares the
+    // terrain mesh's coordinate space — `worldToScreen` returns body-local px, and
+    // the viewport panel is not the full canvas, so a scene-root overlay would be
+    // mis-offset. Painted after the mesh → on top of the terrain. Deliberately
+    // bypasses the real sync path.
+    this.experiment = new ExperimentLayer(ctx.client, this.viewport.view);
+    // The terrain mesh is added to this container lazily (first bake), landing
+    // after our overlay; enable z-ordering so the overlay's high zIndex keeps the
+    // circles on top of the terrain.
+    this.viewport.view.container.sortableChildren = true;
+    this.viewport.view.container.addChild(this.experiment.container);
+
     // Repaint live zones when the gate hot-swaps the corpus. `getContent()` is the
     // freshly-swapped bundle (independent of listener order vs `ctx.content`).
     this.contentUnsub = onContentReloaded(() => this.bridge.setContent(getContent()));
@@ -199,6 +216,9 @@ export class WorldScene extends Scene {
     // Lay out the Pixi panel chrome, then drive the viewport's bake + display.
     this.panelLayer?.layoutIfDirty();
     this.viewport?.tick();
+    // Advance the experiment circles' tweens after the viewport recomputed its
+    // camera, so they place against this frame's pan/zoom.
+    this.experiment?.tick();
     // RT preview re-reads the live composites (cheap unless a channel/size moved).
     this.rt?.tick();
   }
@@ -215,6 +235,7 @@ export class WorldScene extends Scene {
     this.contentUnsub?.();
     this.contentUnsub = null;
     this.bridge.dispose();
+    this.experiment.destroy();
 
     // Destroy PanelManager-registered panels (the RT preview) first, while their
     // parent layer is still alive, then the manually-owned panels + the layer.

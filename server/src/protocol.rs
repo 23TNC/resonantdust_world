@@ -51,6 +51,12 @@ pub enum ClientMsg {
     /// and commits the path; no reply frame (the effect arrives on the free-thing
     /// subscription).
     Move { tile_x: i32, tile_y: i32 },
+    /// Sync-experiment: reposition experiment object `object_id` to global tile
+    /// `(x, y)`. The server relays to the `experiment` module's
+    /// `set_experiment_position`; no reply frame (the effect arrives on the
+    /// experiment-object subscription). Bypasses the real sync path entirely — see
+    /// docs/sync.md and the `experiment` module.
+    UpdateExperiment { object_id: u32, x: u32, y: u32 },
 }
 
 /// A frame the server sends to the client.
@@ -112,6 +118,10 @@ pub enum RowData {
     /// a stable `object_id` and a sub-tile `offset`; the client overlays these on
     /// top of the zone's cold+hot things.
     FreeThing(FreeThingRow),
+    /// A sync-experiment object (`experiment::experiment_objects`): a flat
+    /// `(object_id, x, y)` tile position with no `valid_at`/history. Streamed to
+    /// every client; pixijs tweens between whatever positions arrive.
+    ExperimentObject(ExperimentObjectRow),
 }
 
 /// Mirror of `shard::cold_zone_type::ColdZone`.
@@ -146,6 +156,16 @@ pub struct FreeThingRow {
     pub rotation: u8,
     pub id: u16,
     pub offset: u8,
+}
+
+/// Mirror of `experiment::experiment_object_type::ExperimentObject`. Flat tile
+/// position, no bitemporal fields — the experiment is deliberately outside the
+/// real sync model.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExperimentObjectRow {
+    pub object_id: u32,
+    pub x: u32,
+    pub y: u32,
 }
 
 impl ServerMsg {

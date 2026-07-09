@@ -122,6 +122,12 @@ impl Client {
         self.send(Command::Move { tile_x, tile_y })
     }
 
+    /// Convenience: reposition sync-experiment object `object_id` to global tile
+    /// `(x, y)` (see [`Command::UpdateExperiment`]).
+    pub fn update_experiment(&self, object_id: u32, x: u32, y: u32) -> Result<(), SendError> {
+        self.send(Command::UpdateExperiment { object_id, x, y })
+    }
+
     /// Convenience: drop the world-server connection but keep the engine alive.
     pub fn logout(&self) -> Result<(), SendError> {
         self.send(Command::Logout)
@@ -161,6 +167,7 @@ fn client_msg_tag(msg: &ClientMsg) -> &'static str {
         ClientMsg::Release { .. } => "release",
         ClientMsg::Ping { .. } => "ping",
         ClientMsg::Move { .. } => "move",
+        ClientMsg::UpdateExperiment { .. } => "update_experiment",
     }
 }
 
@@ -180,6 +187,7 @@ fn row_table_tag(row: &RowData) -> &'static str {
         RowData::HotTile(_) => "hot_tile",
         RowData::HotThing(_) => "hot_thing",
         RowData::FreeThing(_) => "free_thing",
+        RowData::ExperimentObject(_) => "experiment_object",
     }
 }
 
@@ -325,6 +333,14 @@ impl Engine {
             Command::Move { tile_x, tile_y } => {
                 if let Err(err) = self.send_frame(&ClientMsg::Move { tile_x, tile_y }).await {
                     self.emit(Event::Status(format!("move send failed: {err}")));
+                }
+            }
+            Command::UpdateExperiment { object_id, x, y } => {
+                if let Err(err) = self
+                    .send_frame(&ClientMsg::UpdateExperiment { object_id, x, y })
+                    .await
+                {
+                    self.emit(Event::Status(format!("update_experiment send failed: {err}")));
                 }
             }
             Command::Logout => {
@@ -571,10 +587,19 @@ impl Engine {
                         offset: ft.offset,
                         valid_at_ms: resonantdust_codec::packed::valid_at_time(ft.valid_at),
                     }),
+                    RowData::ExperimentObject(eo) => self.emit(Event::ExperimentObject {
+                        object_id: eo.object_id,
+                        x: eo.x,
+                        y: eo.y,
+                    }),
                     RowData::HotTile(_) | RowData::HotThing(_) => {}
                 }
-                self.zones.note_update(zone_id, now_ms());
-                self.flush_zone_intents().await;
+                // Zone-routing tail: only zone-scoped rows age a sub's warmth.
+                // Experiment rows are global (no zone_id) — skip it for them.
+                if !matches!(row, RowData::ExperimentObject(_)) {
+                    self.zones.note_update(zone_id, now_ms());
+                    self.flush_zone_intents().await;
+                }
             }
         }
     }
@@ -780,6 +805,9 @@ fn row_zone_id(row: &RowData) -> u32 {
         RowData::ColdZone(r) => r.zone_id,
         RowData::HotTile(r) | RowData::HotThing(r) => r.zone_id,
         RowData::FreeThing(r) => r.zone_id,
+        // Experiment objects are global (no zone); this is never used for them
+        // (the caller skips zone routing), but the match must stay exhaustive.
+        RowData::ExperimentObject(_) => 0,
     }
 }
 

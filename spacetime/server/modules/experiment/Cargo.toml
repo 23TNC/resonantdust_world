@@ -1,0 +1,14 @@
+[package]
+name = "resonantdust_experiment"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The sync experiment is deliberately self-contained: a flat (object_id, x, y)
+# table with no bitemporal `valid_at` packing, so — unlike the other modules —
+# it needs nothing from `shared/codec`. Kept dependency-free on purpose; this
+# module exists to exercise the full stack, not to share the real sync layout.
+spacetimedb = { version = "=2.1.0" }

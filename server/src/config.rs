@@ -202,6 +202,14 @@ impl ServerConfig {
     pub fn default_object_db(&self) -> String {
         format!("resonantdust-{}-object-0", self.env)
     }
+
+    /// The single global `experiment` database (sync-experiment probe). One
+    /// instance, not zone-routed — every client subscribes to the same
+    /// `resonantdust-<env>-experiment-0`. Deliberately parallel to the real sync
+    /// path; see the `experiment` module and docs/sync.md.
+    pub fn experiment_db(&self) -> String {
+        format!("resonantdust-{}-experiment-0", self.env)
+    }
 }
 
 fn env_or(key: &str, default: &str) -> String {

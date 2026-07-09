@@ -31,10 +31,13 @@ use crate::bindings::zone_shard::begin_release as _; // reducer trait → `reduc
 use crate::bindings::zone_shard::ack_release as _; // reducer trait → `reducers.ack_release`
 use crate::bindings::object_shard::receive as _; // reducer trait → `reducers.receive`
 use crate::bindings::object_shard::move_debug_mover as _; // reducer trait → `reducers.move_debug_mover`
-use crate::connections::{await_ready, connect_object_shard, connect_players, connect_shard, Pool};
+use crate::bindings::experiment::set_experiment_position as _; // reducer trait → `reducers.set_experiment_position`
+use crate::connections::{
+    await_ready, connect_experiment, connect_object_shard, connect_players, connect_shard, Pool,
+};
 use crate::index::{resolve_object_or_default, resolve_zone_or_default, ShardEndpoint};
 use crate::protocol::{
-    ClientMsg, ColdZoneRow, FreeThingRow, HotCellRow, RowData, RowOp, ServerMsg,
+    ClientMsg, ColdZoneRow, ExperimentObjectRow, FreeThingRow, HotCellRow, RowData, RowOp, ServerMsg,
 };
 
 /// How long to wait for `claim_or_login` to commit before failing the login.
@@ -132,6 +135,12 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
     // `players = None`; login then reports the outage instead of hanging.
     let players = build_players(&pool, &out_tx).await;
 
+    // Sync-experiment upstream, also eager: one global `experiment` DB per client.
+    // Wiring the relay + subscribing here means the five seeded rows arrive as
+    // inserts as soon as the client connects, before any command. A failure leaves
+    // `experiment = None`; `UpdateExperiment` then reports the outage.
+    let experiment = build_experiment(&pool, &out_tx).await;
+
     // Stateful commands run on a dedicated worker task so the read loop never
     // blocks on a slow DB handler (login / sub_zone / worldgen can take seconds).
     // That head-of-line blocking used to delay — and, because the ping reply is
@@ -143,6 +152,7 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
     let worker = tokio::spawn(session_worker(
         pool.clone(),
         players,
+        experiment,
         out_tx.clone(),
         cmd_rx,
     ));
@@ -210,6 +220,7 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
 async fn session_worker(
     pool: Arc<Pool>,
     players: Option<Arc<bindings::players::DbConnection>>,
+    experiment: Option<Arc<bindings::experiment::DbConnection>>,
     out_tx: mpsc::UnboundedSender<String>,
     mut cmd_rx: mpsc::UnboundedReceiver<ClientMsg>,
 ) {
@@ -268,6 +279,9 @@ async fn session_worker(
             ClientMsg::Move { tile_x, tile_y } => {
                 handle_move(&pool, &out_tx, &object_shards, tile_x, tile_y).await;
             }
+            ClientMsg::UpdateExperiment { object_id, x, y } => {
+                handle_update_experiment(&out_tx, &experiment, object_id, x, y);
+            }
             // Pings are answered on the read loop and never forwarded here.
             ClientMsg::Ping { .. } => {}
         }
@@ -287,6 +301,9 @@ async fn session_worker(
         let _ = oc.conn.disconnect();
     }
     if let Some(conn) = &players {
+        let _ = conn.disconnect();
+    }
+    if let Some(conn) = &experiment {
         let _ = conn.disconnect();
     }
     tracing::debug!(player = ?session, "client session worker ended");
@@ -320,6 +337,36 @@ async fn build_players(
     // The handle must outlive this fn or the subscription tears down immediately.
     // Leak it for the connection's lifetime — it's dropped when the process exits
     // and the connection with it.
+    std::mem::forget(handle);
+    Some(conn)
+}
+
+/// Build the per-client experiment upstream: wire the row relay, then subscribe
+/// `experiment_objects` so the seeded rows stream in as inserts. `None` (with an
+/// error frame already sent) if the upstream can't be reached. The subscription
+/// handle is leaked for the connection's lifetime, like `build_players`.
+async fn build_experiment(
+    pool: &Arc<Pool>,
+    out_tx: &mpsc::UnboundedSender<String>,
+) -> Option<Arc<bindings::experiment::DbConnection>> {
+    let (conn, ready) = match connect_experiment(&pool.cfg.uri, &pool.cfg.experiment_db()) {
+        Some(c) => c,
+        None => {
+            send(out_tx, err_frame("experiment upstream unavailable"));
+            return None;
+        }
+    };
+    if !await_ready(ready).await {
+        send(out_tx, err_frame("experiment upstream connect timed out"));
+        return None;
+    }
+    // Install the relay before subscribing so the initial (seeded) rows fire the
+    // on_insert callbacks and reach the client.
+    wire_experiment_relay(&conn, out_tx.clone());
+    let handle = conn
+        .subscription_builder()
+        .on_error(|_ctx, err| tracing::warn!(%err, "experiment subscription error"))
+        .subscribe(["SELECT * FROM experiment_objects"]);
     std::mem::forget(handle);
     Some(conn)
 }
@@ -640,6 +687,25 @@ async fn handle_move(
     }
 }
 
+/// Handle a `UpdateExperiment` command: relay to the experiment DB's
+/// `set_experiment_position`. The reposition streams back to every subscriber via
+/// [`wire_experiment_relay`]; no reply frame.
+fn handle_update_experiment(
+    out_tx: &mpsc::UnboundedSender<String>,
+    experiment: &Option<Arc<bindings::experiment::DbConnection>>,
+    object_id: u32,
+    x: u32,
+    y: u32,
+) {
+    let Some(conn) = experiment else {
+        send(out_tx, err_frame("update_experiment: experiment upstream not connected"));
+        return;
+    };
+    if let Err(err) = conn.reducers.set_experiment_position(object_id, x, y) {
+        send(out_tx, err_frame(&format!("update_experiment: request failed: {err}")));
+    }
+}
+
 /// Install the release saga's cross-shard bridge on a (zone shard, object shard)
 /// pair: subscribe each side's `transfers` table and wire the two hops that carry
 /// a release across the DB boundary —
@@ -795,6 +861,32 @@ fn free_thing_row(r: &bindings::object_shard::free_thing_type::FreeThing) -> Fre
         rotation: r.rotation,
         id: r.id,
         offset: r.offset,
+    }
+}
+
+/// Register insert/update/delete relays on the experiment upstream's
+/// `experiment_objects` table, mirroring [`wire_object_relay`].
+fn wire_experiment_relay(
+    conn: &Arc<bindings::experiment::DbConnection>,
+    out: mpsc::UnboundedSender<String>,
+) {
+    use bindings::experiment::experiment_objects_table::ExperimentObjectsTableAccess;
+
+    let t = conn.db().experiment_objects();
+    let (oi, ou, od) = (out.clone(), out.clone(), out);
+    t.on_insert(move |_c, r| relay(&oi, RowOp::Insert, RowData::ExperimentObject(experiment_object_row(r))));
+    t.on_update(move |_c, _o, r| relay(&ou, RowOp::Update, RowData::ExperimentObject(experiment_object_row(r))));
+    t.on_delete(move |_c, r| relay(&od, RowOp::Delete, RowData::ExperimentObject(experiment_object_row(r))));
+}
+
+/// Copy a generated `ExperimentObject` row into the serde wire mirror.
+fn experiment_object_row(
+    r: &bindings::experiment::experiment_object_type::ExperimentObject,
+) -> ExperimentObjectRow {
+    ExperimentObjectRow {
+        object_id: r.object_id,
+        x: r.x,
+        y: r.y,
     }
 }
 
