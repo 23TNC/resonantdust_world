@@ -368,3 +368,66 @@ pub fn resolve(
     promote(ctx, &resolved);
     Ok(())
 }
+
+/// Prune the working set. Called periodically by `server_master` (no `state_log`/
+/// `event_log` row is ever read again once past the horizon). Two sweeps:
+///
+/// 1. **`event_log`**: hard-delete `status == COMPLETE` rows — a consumed event is
+///    never resolved against again.
+/// 2. **`state_log`**: keep every pending (`dirty>0`) row and, per entity, its latest
+///    resolved row (the base for its next tic + its idle-carry value that other
+///    entities read). Also keep resolved rows at `tic ≥ min_pending − 1`, since a
+///    resolution in progress at the lowest pending tic reads actors at `tic − 1`. Drop
+///    the rest — the accumulated deep history.
+///
+/// (Named `tick_gc` to avoid the legacy `gc_sweep` in `gc.rs`, removed in Phase B.)
+#[reducer]
+pub fn tick_gc(ctx: &ReducerContext) -> Result<(), String> {
+    // 1. Completed events.
+    let done: Vec<u64> = ctx
+        .db
+        .event_log()
+        .iter()
+        .filter(|e| e.status == STATUS_COMPLETE)
+        .map(|e| e.event_reference)
+        .collect();
+    for r in done {
+        ctx.db.event_log().event_reference().delete(r);
+    }
+
+    // 2. Horizon = (lowest pending tic) − 1; if nothing is pending, only each entity's
+    //    latest resolved row is needed (no in-progress resolution reads history).
+    let pending_min = ctx
+        .db
+        .state_log()
+        .iter()
+        .filter(|r| r.dirty > 0)
+        .map(|r| r.tic)
+        .min();
+    let horizon = pending_min.map_or(u32::MAX, |g| g.saturating_sub(1));
+
+    let mut latest: HashMap<u64, u32> = HashMap::new();
+    for r in ctx.db.state_log().iter().filter(|r| r.dirty == 0) {
+        latest
+            .entry(r.entity_key)
+            .and_modify(|m| {
+                if r.tic > *m {
+                    *m = r.tic;
+                }
+            })
+            .or_insert(r.tic);
+    }
+    let drop: Vec<u64> = ctx
+        .db
+        .state_log()
+        .iter()
+        .filter(|r| {
+            r.dirty == 0 && r.tic < horizon && latest.get(&r.entity_key) != Some(&r.tic)
+        })
+        .map(|r| r.id)
+        .collect();
+    for id in drop {
+        ctx.db.state_log().id().delete(id);
+    }
+    Ok(())
+}

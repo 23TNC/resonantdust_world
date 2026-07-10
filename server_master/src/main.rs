@@ -15,7 +15,7 @@ use std::time::Duration;
 use spacetimedb_sdk::{DbContext, Table as _};
 
 mod bindings;
-use bindings::object_shard::{bump as _, DbConnection, TicMetaTableAccess};
+use bindings::object_shard::{bump as _, tick_gc as _, DbConnection, TicMetaTableAccess};
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -34,7 +34,9 @@ async fn main() {
     let db = env_or("OBJECT_DB", "resonantdust-dev-object-0");
     let tic_hz: f64 = env_or("TIC_HZ", "2").parse().unwrap_or(2.0);
     let period = Duration::from_secs_f64(1.0 / tic_hz);
-    tracing::info!(%uri, %db, tic_hz, "server_master starting");
+    // Run the GC sweep every this many tics (default 20 → ~10s at 2 Hz).
+    let gc_every: u32 = env_or("GC_EVERY", "20").parse().unwrap_or(20);
+    tracing::info!(%uri, %db, tic_hz, gc_every, "server_master starting");
 
     let conn = DbConnection::builder()
         .with_uri(&uri)
@@ -56,6 +58,7 @@ async fn main() {
         .subscribe(["SELECT * FROM tic_meta"]);
 
     let mut ticker = tokio::time::interval(period);
+    let mut since_gc: u32 = 0;
     // A stall (worker/backpressure) would be handled by a runaway guard here later.
     loop {
         ticker.tick().await;
@@ -69,6 +72,15 @@ async fn main() {
         match conn.reducers().bump(cur + 1) {
             Ok(()) => tracing::debug!(to = cur + 1, "bump"),
             Err(err) => tracing::warn!(%err, "bump failed"),
+        }
+        since_gc += 1;
+        if since_gc >= gc_every {
+            since_gc = 0;
+            if let Err(err) = conn.reducers().tick_gc() {
+                tracing::warn!(%err, "tick_gc failed");
+            } else {
+                tracing::debug!("tick_gc");
+            }
         }
     }
 }

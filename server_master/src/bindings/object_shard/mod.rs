@@ -38,6 +38,7 @@ pub mod resolve_reducer;
 pub mod seed_entity_reducer;
 pub mod set_pawn_data_reducer;
 pub mod spawn_pawn_reducer;
+pub mod tick_gc_reducer;
 pub mod event_log_table;
 pub mod free_things_table;
 pub mod pawns_table;
@@ -82,6 +83,7 @@ pub use resolve_reducer::resolve;
 pub use seed_entity_reducer::seed_entity;
 pub use set_pawn_data_reducer::set_pawn_data;
 pub use spawn_pawn_reducer::spawn_pawn;
+pub use tick_gc_reducer::tick_gc;
 
 #[derive(Clone, PartialEq, Debug)]
 
@@ -208,6 +210,7 @@ pub enum Reducer {
         offset: u8,
         data: Vec::<u64>,
 }    ,
+    TickGc ,
 }
 
 
@@ -234,6 +237,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::SeedEntity { .. } => "seed_entity",
             Reducer::SetPawnData { .. } => "set_pawn_data",
             Reducer::SpawnPawn { .. } => "spawn_pawn",
+            Reducer::TickGc => "tick_gc",
             _ => unreachable!(),
 }
 }
@@ -458,7 +462,9 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 offset: offset.clone(),
                 data: data.clone(),
 }),
-            _ => unreachable!(),
+            Reducer::TickGc => __sats::bsatn::to_vec(&tick_gc_reducer::TickGcArgs {
+                }),
+_ => unreachable!(),
 }
 }
 }
