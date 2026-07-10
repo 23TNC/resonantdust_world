@@ -32,18 +32,14 @@ pub enum ClientMsg {
     SubZone { sid: u32, zone_id: u32 },
     /// Drop a subscription previously opened with the same `sid`.
     Unsub { sid: u32 },
-    /// Release the thing affixed at `(zone_id, location)` into the object shard.
-    /// The server drives the transfer saga; no direct reply.
-    Release { zone_id: u32, location: u8 },
     /// Clock-sync probe. `client_send_ms` is the client wall clock at send; the
     /// server echoes it in [`ServerMsg::Pong`] alongside its own clock, letting
     /// the client pin the offset from the round-trip. Sent periodically while
     /// connected.
     Ping { client_send_ms: u64 },
-    /// Move the (debug) controllable thing toward global tile `(tile_x, tile_y)`.
-    /// The server pathfinds from its current tile and commits the path as
-    /// future-stamped move rows; no direct reply (the effect arrives on the
-    /// existing free-thing subscription).
+    /// Move the player's own object toward global tile `(tile_x, tile_y)`. The
+    /// server appends an `ACTION_MOVE` event to the shard's tick pipeline; no
+    /// direct reply (the effect arrives as a `state` row on the zone subscription).
     Move { tile_x: i32, tile_y: i32 },
 }
 
@@ -92,51 +88,11 @@ pub enum RowOp {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "table", rename_all = "snake_case")]
 pub enum RowData {
-    /// The settled baseline for a zone (`zone_shard::cold_zones`).
-    ColdZone(ColdZoneRow),
-    /// A changed terrain cell overlaying cold (`zone_shard::hot_tiles`).
-    HotTile(HotCellRow),
-    /// A changed thing cell (`zone_shard::hot_things`).
-    HotThing(HotCellRow),
-    /// A loose thing from the object shard (`object_shard::free_things`) — a
-    /// stable `object_id`, a tile `location`, and a sub-tile `offset`.
-    FreeThing(FreeThingRow),
-    /// A resolved entity from the object shard's tick pipeline (`object_shard::state`).
+    /// A resolved entity from the shard's tick pipeline (`shard::state`).
     State(StateRow),
 }
 
-/// Mirror of `shard::cold_zone_type::ColdZone`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ColdZoneRow {
-    pub valid_at: u64,
-    pub zone_id: u32,
-    pub tiles: Vec<u16>,
-    pub things: Vec<u32>,
-}
-
-/// Mirror of the two identical hot layer rows.
-#[derive(Debug, Clone, Deserialize)]
-pub struct HotCellRow {
-    pub valid_at: u64,
-    pub zone_id: u32,
-    pub location: u8,
-    pub rotation: u8,
-    pub id: u16,
-}
-
-/// Mirror of `object_shard::free_thing_type::FreeThing` (server `FreeThingRow`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct FreeThingRow {
-    pub valid_at: u64,
-    pub object_id: u64,
-    pub zone_id: u32,
-    pub location: u8,
-    pub rotation: u8,
-    pub id: u16,
-    pub offset: u8,
-}
-
-/// Mirror of `object_shard::state_type::State` (server `StateRow`). No `valid_at` —
+/// Mirror of `shard::state_type::State` (server `StateRow`). No `valid_at` —
 /// the tick pipeline is tic-based, not bitemporal.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StateRow {

@@ -31,11 +31,10 @@ pub struct CallStat {
 }
 
 /// One relayed-row table's data tally, surfaced via [`Event::SubStats`] for the
-/// pixijs debug HUD's "subs" tab. `table` is the wire tag (`cold_zone` /
-/// `hot_tile` / `hot_thing` / `free_thing`); `rows` counts the `Row` frames of
-/// that table streamed down a subscription and `rx` sums their serialized bytes —
-/// the bulk of what a subscription pulls back (the calls tab covers the outbound
-/// `sub_zone` / `unsub` control frames).
+/// pixijs debug HUD's "subs" tab. `table` is the wire tag (`state`); `rows` counts
+/// the `Row` frames of that table streamed down a subscription and `rx` sums their
+/// serialized bytes — the bulk of what a subscription pulls back (the calls tab
+/// covers the outbound `sub_zone` / `unsub` control frames).
 #[derive(Debug, Clone)]
 pub struct SubStat {
     pub table: String,
@@ -83,16 +82,10 @@ pub enum Command {
     },
     /// Remove the anchor named `name`, closing any subscriptions only it held.
     RemoveAnchor { name: String },
-    /// Release the thing affixed at `(zone_id, location)` out of the world into an
-    /// object shard (Prison-Architect release). The server drives the cross-shard
-    /// transfer; the result surfaces on existing subscriptions (the affixed thing
-    /// vanishes, a [`Event::ZoneFreeThing`] appears). Requires a live session and
-    /// the zone to be subscribed; ignored otherwise.
-    Release { zone_id: u32, location: u8 },
-    /// Move the (debug) controllable thing toward global tile `(tile_x, tile_y)`.
-    /// The pixijs host sends this on a click; the server pathfinds from the
-    /// mover's current tile and commits the path, which surfaces on existing
-    /// free-thing subscriptions. Requires a live session; ignored otherwise.
+    /// Move the player's own object toward global tile `(tile_x, tile_y)`. The
+    /// pixijs host sends this on a click; the server appends an `ACTION_MOVE` event
+    /// to the shard's tick pipeline, which surfaces as a `state` row on the zone
+    /// subscription. Requires a live session; ignored otherwise.
     Move { tile_x: i32, tile_y: i32 },
     /// Drop the world-server connection and clear the session, without stopping
     /// the client (a later [`Command::Login`] can reconnect).
@@ -126,45 +119,7 @@ pub enum Event {
     /// A non-fatal status line worth surfacing (e.g. a server-pushed
     /// [`crate::protocol::ServerMsg::Error`]).
     Status(String),
-    /// A subscribed zone's cold baseline arrived: its `ZONE_TILES` packed tile
-    /// slots (`def_id:12 | reserved:4` each, row-major). The host expands them to
-    /// renderable cells — running the DSL `on_create` per `def_id` for the white
-    /// texture + tint — and paints the zone. Fired on every `cold_zones` row for
-    /// the zone (the initial seed and any later rewrite).
-    ZoneTiles { zone_id: u32, tiles: Vec<u16> },
-    /// A subscribed zone's cold thing baseline: the packed things in
-    /// `cold_zones.things` (`x:4 | y:4 | rotation:2 | object_id:12` each, in the
-    /// thing def-id namespace). The host expands them to sprites — one per thing,
-    /// positioned by the codec and tinted by the thing def's `:visual`. Fired
-    /// alongside [`Event::ZoneTiles`] on every `cold_zones` row (seed or rewrite);
-    /// an empty vec means the host clears the zone's things. These are the
-    /// worldgen-scattered flora, distinct from the object-shard
-    /// [`ZoneFreeThing`](Event::ZoneFreeThing) loose things.
-    ZoneThings { zone_id: u32, things: Vec<u32> },
-    /// A loose thing in a subscribed zone changed (object shard `free_things`).
-    /// `removed` is `true` for a delete — the host drops the sprite keyed by
-    /// `object_id`; otherwise it upserts one at the tile `location` shifted by the
-    /// sub-tile `offset` (`resonantdust_codec::packed`: `x_off:4 | y_off:4`). `id`
-    /// is the thing's what-kind def. Insert and update both arrive as `removed:
-    /// false` — the host keys by `object_id`, so an upsert covers both.
-    ZoneFreeThing {
-        zone_id: u32,
-        object_id: u64,
-        removed: bool,
-        location: u8,
-        rotation: u8,
-        id: u16,
-        offset: u8,
-        /// The row's `valid_at` decoded to wall-clock ms — *when* this position
-        /// becomes true on the server clock. The host buffers positions by this
-        /// and interpolates the sprite to the shared render instant
-        /// (`synced_now − render_delay`), so every client shows the mover at the
-        /// same world point at the same wall time. A server that stamps a move's
-        /// destination slightly in the future lands the row before that instant
-        /// is reached.
-        valid_at_ms: u64,
-    },
-    /// A resolved entity from the object shard's tick pipeline (`state`) changed in a
+    /// A resolved entity from the shard's tick pipeline (`state`) changed in a
     /// subscribed zone. The raw u64 `entity_key` exceeds JS's 2^53 integer range, so it's
     /// decoded host-side into the object's class (`obj_type`) and its 48-bit `object_id`
     /// (JS-safe), which the host keys the circle by; shown only when
@@ -178,7 +133,7 @@ pub enum Event {
         removed: bool,
     },
     /// A zone's subscription closed (the anchor moved it out of range, or it was
-    /// evicted). The host drops that zone's sprites — tiles and loose things.
+    /// evicted). The host drops that zone's entities.
     ZoneClosed { zone_id: u32 },
     /// The running per-command gateway-call tally changed. Carries the full
     /// snapshot (one [`CallStat`] per command type seen so far), re-emitted after

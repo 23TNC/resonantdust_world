@@ -112,11 +112,6 @@ impl Client {
         self.send(Command::RemoveAnchor { name: name.into() })
     }
 
-    /// Convenience: release the thing at `(zone_id, location)`.
-    pub fn release(&self, zone_id: u32, location: u8) -> Result<(), SendError> {
-        self.send(Command::Release { zone_id, location })
-    }
-
     /// Convenience: move the controllable thing toward global tile `(tile_x, tile_y)`.
     pub fn move_to(&self, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
         self.send(Command::Move { tile_x, tile_y })
@@ -158,7 +153,6 @@ fn client_msg_tag(msg: &ClientMsg) -> &'static str {
         ClientMsg::Login { .. } => "login",
         ClientMsg::SubZone { .. } => "sub_zone",
         ClientMsg::Unsub { .. } => "unsub",
-        ClientMsg::Release { .. } => "release",
         ClientMsg::Ping { .. } => "ping",
         ClientMsg::Move { .. } => "move",
     }
@@ -176,10 +170,6 @@ struct SubCounters {
 /// the server's `#[serde(tag = "table", rename_all = "snake_case")]` discriminator.
 fn row_table_tag(row: &RowData) -> &'static str {
     match row {
-        RowData::ColdZone(_) => "cold_zone",
-        RowData::HotTile(_) => "hot_tile",
-        RowData::HotThing(_) => "hot_thing",
-        RowData::FreeThing(_) => "free_thing",
         RowData::State(_) => "state",
     }
 }
@@ -318,11 +308,6 @@ impl Engine {
                     .await
             }
             Command::RemoveAnchor { name } => self.handle_remove_anchor(name).await,
-            Command::Release { zone_id, location } => {
-                if let Err(err) = self.send_frame(&ClientMsg::Release { zone_id, location }).await {
-                    self.emit(Event::Status(format!("release send failed: {err}")));
-                }
-            }
             Command::Move { tile_x, tile_y } => {
                 if let Err(err) = self.send_frame(&ClientMsg::Move { tile_x, tile_y }).await {
                     self.emit(Event::Status(format!("move send failed: {err}")));
@@ -550,28 +535,6 @@ impl Engine {
                 let zone_id = row_zone_id(&row);
                 self.record_row(row_table_tag(&row), text.len());
                 match &row {
-                    RowData::ColdZone(z) => {
-                        // The cold baseline is atomic (tiles + things); deliver both
-                        // so the host re-seeds ground and scattered things together.
-                        self.emit(Event::ZoneTiles {
-                            zone_id: z.zone_id,
-                            tiles: z.tiles.clone(),
-                        });
-                        self.emit(Event::ZoneThings {
-                            zone_id: z.zone_id,
-                            things: z.things.clone(),
-                        });
-                    }
-                    RowData::FreeThing(ft) => self.emit(Event::ZoneFreeThing {
-                        zone_id: ft.zone_id,
-                        object_id: ft.object_id,
-                        removed: matches!(op, RowOp::Delete),
-                        location: ft.location,
-                        rotation: ft.rotation,
-                        id: ft.id,
-                        offset: ft.offset,
-                        valid_at_ms: resonantdust_codec::packed::valid_at_time(ft.valid_at),
-                    }),
                     RowData::State(sr) => {
                         use resonantdust_codec::packed;
                         let (obj_type, object_id) = if packed::entity_is_object(sr.entity_key) {
@@ -589,7 +552,6 @@ impl Engine {
                             removed: matches!(op, RowOp::Delete),
                         });
                     }
-                    RowData::HotTile(_) | RowData::HotThing(_) => {}
                 }
                 self.zones.note_update(zone_id, now_ms());
                 self.flush_zone_intents().await;
@@ -795,9 +757,6 @@ async fn fetch_resolve(url: &str) -> Result<ServerInfo, String> {
 /// The `zone_id` a relayed row belongs to, whichever table it came from.
 fn row_zone_id(row: &RowData) -> u32 {
     match row {
-        RowData::ColdZone(r) => r.zone_id,
-        RowData::HotTile(r) | RowData::HotThing(r) => r.zone_id,
-        RowData::FreeThing(r) => r.zone_id,
         RowData::State(r) => r.zone_id,
     }
 }

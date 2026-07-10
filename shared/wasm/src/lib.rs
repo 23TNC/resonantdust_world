@@ -418,13 +418,6 @@ impl WorldClient {
         let _ = self.inner.remove_anchor(name);
     }
 
-    /// Release the thing affixed at `(zone_id, location)` into the object shard
-    /// (the server drives the transfer). No-op before login / if disconnected.
-    #[wasm_bindgen(js_name = release)]
-    pub fn release(&self, zone_id: u32, location: u8) {
-        let _ = self.inner.release(zone_id, location);
-    }
-
     /// Move the controllable thing toward global tile `(tile_x, tile_y)` — the
     /// server pathfinds and commits the move. No-op before login / if disconnected.
     #[wasm_bindgen(js_name = moveTo)]
@@ -490,40 +483,6 @@ fn event_to_js(event: &client::Event) -> JsValue {
         Event::Status(message) => {
             set("kind", &JsValue::from_str("status"));
             set("message", &JsValue::from_str(message));
-        }
-        Event::ZoneTiles { zone_id, tiles } => {
-            set("kind", &JsValue::from_str("zoneTiles"));
-            set("zoneId", &JsValue::from_f64(*zone_id as f64));
-            let arr = js_sys::Uint16Array::new_with_length(tiles.len() as u32);
-            arr.copy_from(tiles);
-            set("tiles", &arr);
-        }
-        Event::ZoneThings { zone_id, things } => {
-            set("kind", &JsValue::from_str("zoneThings"));
-            set("zoneId", &JsValue::from_f64(*zone_id as f64));
-            let arr = js_sys::Uint32Array::new_with_length(things.len() as u32);
-            arr.copy_from(things);
-            set("things", &arr);
-        }
-        Event::ZoneFreeThing {
-            zone_id,
-            object_id,
-            removed,
-            location,
-            rotation,
-            id,
-            offset,
-            valid_at_ms,
-        } => {
-            set("kind", &JsValue::from_str("zoneFreeThing"));
-            set("zoneId", &JsValue::from_f64(*zone_id as f64));
-            set("objectId", &JsValue::from_f64(*object_id as f64));
-            set("removed", &JsValue::from_bool(*removed));
-            set("location", &JsValue::from_f64(*location as f64));
-            set("rotation", &JsValue::from_f64(*rotation as f64));
-            set("id", &JsValue::from_f64(*id as f64));
-            set("offset", &JsValue::from_f64(*offset as f64));
-            set("validAt", &JsValue::from_f64(*valid_at_ms as f64));
         }
         Event::StateObject {
             zone_id,

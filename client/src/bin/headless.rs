@@ -92,16 +92,10 @@ fn log_event(event: &Event) {
         Event::LoginFailed { reason } => error!(%reason, "login failed"),
         Event::Disconnected { reason } => warn!(reason = ?reason, "disconnected"),
         Event::Status(msg) => info!(%msg, "status"),
-        Event::ZoneTiles { zone_id, tiles } => {
-            info!(zone_id = format!("{zone_id:#010x}"), tiles = tiles.len(), "zone tiles")
-        }
-        Event::ZoneThings { zone_id, things } => {
-            info!(zone_id = format!("{zone_id:#010x}"), things = things.len(), "zone things")
-        }
-        Event::ZoneFreeThing { zone_id, object_id, removed, location, id, .. } => {
+        Event::StateObject { zone_id, obj_type, object_id, tic, location, removed } => {
             info!(
                 zone_id = format!("{zone_id:#010x}"),
-                object_id, removed, location, id, "free thing"
+                obj_type, object_id, tic, location, removed, "state object"
             )
         }
         Event::ZoneClosed { zone_id } => {
