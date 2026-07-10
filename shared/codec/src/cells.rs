@@ -156,6 +156,34 @@ pub fn tertiary_rotation(t: u16) -> u8 {
     ((t >> TERTIARY_ROT_SHIFT) & ROT_MASK) as u8
 }
 
+// ── tile → render kind (biome folding) ──────────────────────────────────────────
+//
+// A cell's `tile:9` resolves against the zone's `biome:u16` into a u16 render `kind`.
+// The 9th bit (`0x100`) selects default vs biome; for a biome tile, bit 7 (`0x80`) picks
+// the biome byte (high `biome >> 8` or low `biome & 0xFF`) and the low 7 bits index within
+// that palette. So a zone shows three palettes at once: default, high-byte, low-byte.
+
+/// The default (biome-independent) render kind of a tile — `0x80 + (tile & 0xFF)`. Also
+/// the fallback when a biome-specific kind has no texture (a palette cache miss).
+pub fn tile_default_kind(tile: u16) -> u16 {
+    0x80 + (tile & 0xFF)
+}
+
+/// Resolve a cell's `tile:9` against the zone's `biome:u16` into a u16 render kind.
+///
+/// - `tile & 0x100` set → a **default** tile (biome ignored): [`tile_default_kind`].
+/// - else a **biome** tile `b1 | biome:8 | type:7`: bit 7 picks the biome byte
+///   (`biome >> 8` high, `biome & 0xFF` low), the low 7 bits index within it. On a texture
+///   miss the caller falls back to [`tile_default_kind`].
+pub fn tile_kind(tile: u16, biome: u16) -> u16 {
+    if tile & 0x100 != 0 {
+        tile_default_kind(tile)
+    } else {
+        let biome_byte = if tile & 0x80 != 0 { (biome >> 8) & 0xFF } else { biome & 0xFF };
+        0x8000 | (biome_byte << 7) | (tile & 0x7F)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +243,40 @@ mod tests {
         let t = pack_tertiary(0xFF, 3);
         assert_eq!(tertiary_def(t), 0xFF);
         assert_eq!(tertiary_rotation(t), 3);
+    }
+
+    #[test]
+    fn tile_resolves_default_when_ninth_bit_set() {
+        // bit 8 (0x100) set → default tile, biome ignored.
+        assert_eq!(tile_default_kind(0x123), 0x80 + 0x23);
+        assert_eq!(tile_kind(0x123, 0xABCD), 0x80 + 0x23);
+        // biome varying makes no difference for a default tile.
+        assert_eq!(tile_kind(0x1FF, 0x0000), tile_kind(0x1FF, 0xFFFF));
+    }
+
+    #[test]
+    fn tile_resolves_high_biome_from_high_byte() {
+        // bit 8 clear, bit 7 set → high biome byte (biome >> 8), type = low 7 bits.
+        let k = tile_kind(0x80 | 0x20, 0xAB_CD);
+        assert_eq!(k, 0x8000 | (0xAB << 7) | 0x20);
+        assert_ne!(k & 0x8000, 0, "b1 prefix set");
+        assert_eq!((k >> 7) & 0xFF, 0xAB, "biome byte = high byte");
+        assert_eq!(k & 0x7F, 0x20, "type = low 7 bits");
+    }
+
+    #[test]
+    fn tile_resolves_low_biome_from_low_byte() {
+        // bit 8 clear, bit 7 clear → low biome byte (biome & 0xFF).
+        let k = tile_kind(0x30, 0xAB_CD);
+        assert_eq!(k, 0x8000 | (0xCD << 7) | 0x30);
+        assert_eq!((k >> 7) & 0xFF, 0xCD);
+        assert_eq!(k & 0x7F, 0x30);
+    }
+
+    #[test]
+    fn biome_tile_fallback_is_the_default_kind() {
+        // The render fallback for any biome tile is 0x80 + (tile & 0xFF).
+        assert_eq!(tile_default_kind(0x80 | 0x20), 0x80 + 0xA0);
+        assert_eq!(tile_default_kind(0x30), 0x80 + 0x30);
     }
 }
