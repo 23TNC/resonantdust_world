@@ -31,6 +31,7 @@ use crate::bindings::zone_shard::begin_release as _; // reducer trait → `reduc
 use crate::bindings::zone_shard::ack_release as _; // reducer trait → `reducers.ack_release`
 use crate::bindings::object_shard::receive as _; // reducer trait → `reducers.receive`
 use crate::bindings::object_shard::move_debug_mover as _; // reducer trait → `reducers.move_debug_mover`
+use crate::bindings::object_shard::append_event as _; // reducer trait → `reducers.append_event`
 use crate::connections::{await_ready, connect_object_shard, connect_players, connect_shard, Pool};
 use crate::index::{resolve_object_or_default, resolve_zone_or_default, ShardEndpoint};
 use crate::protocol::{
@@ -266,7 +267,7 @@ async fn session_worker(
                 .await;
             }
             ClientMsg::Move { tile_x, tile_y } => {
-                handle_move(&pool, &out_tx, &object_shards, tile_x, tile_y).await;
+                handle_move(&pool, &out_tx, &object_shards, session, tile_x, tile_y).await;
             }
             // Pings are answered on the read loop and never forwarded here.
             ClientMsg::Ping { .. } => {}
@@ -623,25 +624,48 @@ async fn handle_release(
     }
 }
 
-/// Relay a client move intent to the object shard's `move_debug_mover`, which
-/// pathfinds from the mover's current tile to global `(tile_x, tile_y)` and commits
-/// the path. In dev a single object shard serves every region, so we resolve it
-/// from the destination tile's zone; the mover must already be reachable there
-/// (the client is subscribed near the origin, so it is).
+/// Turn a client move intent into an `ACTION_MOVE` event on the object shard's tick
+/// pipeline, targeting **this player's own object** (`OBJ_TYPE_PLAYER | player_id`).
+/// The object materializes on the first move (work-gen carries a default base, the move
+/// sets position), so no login-time seed is needed. Thin intent check: must be logged
+/// in. In dev a single object shard serves every region; we resolve it from the
+/// destination tile's zone (the client is subscribed near the origin, so it's live).
 async fn handle_move(
     pool: &Arc<Pool>,
     out_tx: &mpsc::UnboundedSender<String>,
     object_shards: &HashMap<ShardEndpoint, ObjectConn>,
+    player_id: Option<u32>,
     tile_x: i32,
     tile_y: i32,
 ) {
-    let (dest_zone, _loc) = resonantdust_codec::packed::zone_and_location(tile_x, tile_y, 0);
+    use resonantdust_codec::packed::{cell, pack_object_id, pack_object_key, OBJ_TYPE_PLAYER};
+
+    let Some(player_id) = player_id else {
+        send(out_tx, err_frame("move: not logged in"));
+        return;
+    };
+    // Demo: keep the player object inside zone (0,0) so it stays on the client's
+    // subscribed grid — wrap the clicked world tile into the 16×16 zone. (A real move
+    // would honor the tile's actual zone; that's the cross-shard Phase-C concern.)
+    let dest_zone = 0u32;
+    let location = cell(tile_x.rem_euclid(16) as u8, tile_y.rem_euclid(16) as u8);
     let endpoint = resolve_object_or_default(dest_zone, &pool.cfg);
     let Some(object) = object_shards.get(&endpoint) else {
         send(out_tx, err_frame("move: object shard not connected (subscribe near the target first)"));
         return;
     };
-    if let Err(err) = object.conn.reducers.move_debug_mover(now_ms(), tile_x, tile_y) {
+    // The player's own entity; both actor and target (a self-move).
+    let key = pack_object_key(pack_object_id(OBJ_TYPE_PLAYER, player_id));
+    let data = resonantdust_tick::pack_move(dest_zone, location, 0, 0);
+    if let Err(err) = object.conn.reducers.append_event(
+        pool.cfg.server_id,
+        0, // actor shard: same shard (self-move)
+        key,
+        key,
+        resonantdust_tick::ACTION_MOVE,
+        data[0],
+        data[1],
+    ) {
         send(out_tx, err_frame(&format!("move: request failed: {err}")));
     }
 }

@@ -1,9 +1,10 @@
 import { Container, Graphics, type Ticker } from "pixi.js";
 import type { StateObject } from "../../client/WasmClient";
 
-/** Mirrors `resonantdust_codec::packed::OBJ_TYPE_DEMO` — the object_id type tag the
- *  demo mover stamps. Only these are drawn. */
+/** Mirror `resonantdust_codec::packed` object-id type tags. Demo movers (npc) and
+ *  player-controlled objects are both drawn; players get a distinct style. */
 const OBJ_TYPE_DEMO = 1;
+const OBJ_TYPE_PLAYER = 2;
 
 const GRID = 16; // a zone is 16×16 cells; `location = cy<<4 | cx`
 const CELL = 28; // px per cell in the overlay
@@ -29,6 +30,7 @@ interface Circle {
  */
 export class DemoLayer {
   readonly container = new Container();
+  /** Keyed by `objType*1e6 + serial` so demo and player objects can't collide. */
   private readonly circles = new Map<number, Circle>();
 
   constructor() {
@@ -46,27 +48,35 @@ export class DemoLayer {
     return { x: PAD + cx * CELL + CELL / 2, y: PAD + cy * CELL + CELL / 2 };
   }
 
-  /** Apply a `state` change: create/move/remove the circle for this demo serial. */
+  /** Apply a `state` change: create/move/remove the circle for this object. Draws
+   *  demo (npc) and player objects; players get a white core + ring so a click-driven
+   *  player circle is distinguishable from the ambient demo movers. */
   upsert(obj: StateObject): void {
-    if (obj.objType !== OBJ_TYPE_DEMO) return;
-    const existing = this.circles.get(obj.serial);
+    if (obj.objType !== OBJ_TYPE_DEMO && obj.objType !== OBJ_TYPE_PLAYER) return;
+    const key = obj.objType * 1_000_000 + obj.serial;
+    const existing = this.circles.get(key);
     if (obj.removed) {
       if (existing) {
         existing.g.destroy();
-        this.circles.delete(obj.serial);
+        this.circles.delete(key);
       }
       return;
     }
     const { x, y } = this.cellCenter(obj.location);
     if (!existing) {
       const g = new Graphics();
-      g.circle(0, 0, CELL * 0.34).fill({
-        color: COLORS[obj.serial % COLORS.length],
-        alpha: 0.95,
-      });
+      if (obj.objType === OBJ_TYPE_PLAYER) {
+        g.circle(0, 0, CELL * 0.4).fill({ color: 0xffffff, alpha: 0.95 });
+        g.circle(0, 0, CELL * 0.4).stroke({ color: 0x2a6cff, width: 3, alpha: 1 });
+      } else {
+        g.circle(0, 0, CELL * 0.34).fill({
+          color: COLORS[obj.serial % COLORS.length],
+          alpha: 0.95,
+        });
+      }
       g.position.set(x, y);
       this.container.addChild(g);
-      this.circles.set(obj.serial, { g, x, y, tx: x, ty: y });
+      this.circles.set(key, { g, x, y, tx: x, ty: y });
       return;
     }
     existing.tx = x;

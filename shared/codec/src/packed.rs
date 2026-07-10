@@ -363,6 +363,10 @@ pub fn entity_location(key: u64) -> u8 {
 /// Demo object (a moving circle in the Phase-A sync demo).
 pub const OBJ_TYPE_DEMO: u8 = 1;
 
+/// A player-controlled object (one per logged-in player; the `serial` is the
+/// `player_id`). Materialized on the player's first move through the edge.
+pub const OBJ_TYPE_PLAYER: u8 = 2;
+
 const OBJ_TYPE_SHIFT: u64 = 32;
 
 /// Compose an `object_id` from its type tag and serial.
