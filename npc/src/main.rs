@@ -21,7 +21,7 @@ use resonantdust_codec::packed::{
 use resonantdust_tick::{pack_move, ACTION_MOVE};
 
 mod bindings;
-use bindings::object_shard::{append_event as _, seed_entity as _, DbConnection};
+use bindings::shard::{append_event as _, seed_entity as _, DbConnection};
 
 /// How many demo circles to drive.
 const DEMO_COUNT: u32 = 5;

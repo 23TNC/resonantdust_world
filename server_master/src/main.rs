@@ -15,7 +15,7 @@ use std::time::Duration;
 use spacetimedb_sdk::{DbContext, Table as _};
 
 mod bindings;
-use bindings::object_shard::{bump as _, tick_gc as _, DbConnection, TicMetaTableAccess};
+use bindings::shard::{bump as _, tick_gc as _, DbConnection, TicMetaTableAccess};
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())

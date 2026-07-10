@@ -1,0 +1,15 @@
+[package]
+name = "resonantdust_shard"
+version = "0.1.0"
+edition = "2021"
+
+# The unified shard module — one codebase deployed as either an object shard or a zone
+# shard (role is a deployment concern: which DB + set_shard_id). Runs the shared
+# resonantdust_pipeline; its tables + reducers register here via the re-export. The
+# cold-zone tier + the object/zone role split land in later phases.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb = { version = "=2.1.0" }
+resonantdust_pipeline = { path = "../../pipeline" }

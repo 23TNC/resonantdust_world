@@ -24,7 +24,7 @@ use resonantdust_tick::{
 };
 
 mod bindings;
-use bindings::object_shard::{
+use bindings::shard::{
     claim as _, resolve as _, DbConnection, EventLogTableAccess, StateLog, StateLogTableAccess,
 };
 
