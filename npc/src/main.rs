@@ -72,7 +72,7 @@ async fn main() {
         .init();
 
     let uri = env_or("ST_URI", "http://127.0.0.1:3000");
-    let db = env_or("OBJECT_DB", "resonantdust-dev-object-0");
+    let db = env_or("SHARD_DB", "resonantdust-dev-zone-0");
     let move_ms: u64 = env_or("MOVE_MS", "1000").parse().unwrap_or(1000);
     tracing::info!(%uri, %db, demo_count = DEMO_COUNT, move_ms, "npc demo mover starting");
 

@@ -92,11 +92,11 @@ async fn main() {
     }
 }
 
-/// Parse the shard set from `SHARDS="1=db_a,2=db_b"`; fall back to `1=<OBJECT_DB>`.
+/// Parse the shard set from `SHARDS="1=db_a,2=db_b"`; fall back to `1=<SHARD_DB>`.
 fn parse_shards() -> Vec<(u16, String)> {
     let raw = std::env::var("SHARDS").unwrap_or_default();
     if raw.trim().is_empty() {
-        return vec![(1, env_or("OBJECT_DB", "resonantdust-dev-object-0"))];
+        return vec![(1, env_or("SHARD_DB", "resonantdust-dev-zone-0"))];
     }
     raw.split(',')
         .filter_map(|part| {

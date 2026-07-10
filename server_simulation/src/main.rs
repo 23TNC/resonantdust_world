@@ -91,11 +91,11 @@ async fn main() {
 }
 
 /// Parse the shard set from `SHARDS="1=db_a,2=db_b"` (`shard_id=db_name`). Falls back to
-/// a single shard `1=<OBJECT_DB>` — the A2 same-shard configuration.
+/// a single shard `1=<SHARD_DB>` — the same-shard configuration.
 fn parse_shards() -> Vec<(u16, String)> {
     let raw = std::env::var("SHARDS").unwrap_or_default();
     if raw.trim().is_empty() {
-        return vec![(1, env_or("OBJECT_DB", "resonantdust-dev-object-0"))];
+        return vec![(1, env_or("SHARD_DB", "resonantdust-dev-zone-0"))];
     }
     raw.split(',')
         .filter_map(|part| {
