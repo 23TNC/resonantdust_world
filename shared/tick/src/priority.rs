@@ -49,11 +49,20 @@ pub fn actor_read_tic(actor_key: u64, target_key: u64, tic: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use resonantdust_codec::packed::{pack_object_key, pack_zone_key, pack_zone_id};
+    use resonantdust_codec::packed::pack_zone_id;
+    use resonantdust_codec::refs::{
+        pack_minted_entity, pack_positional_entity, ENTITY_TYPE_OBJECT, ENTITY_TYPE_ZONE_CELL,
+        SERVER_REF_NONE,
+    };
+
+    /// A minted object `entity_reference` with `id` — the test key.
+    fn obj(id: u32) -> u64 {
+        pack_minted_entity(ENTITY_TYPE_OBJECT, id, SERVER_REF_NONE)
+    }
 
     #[test]
     fn priority_is_deterministic_and_tic_varying() {
-        let k = pack_object_key(7);
+        let k = obj(7);
         assert_eq!(priority(5, k), priority(5, k), "same inputs → same output");
         // Overwhelmingly likely to differ across tics (decorrelated mix).
         assert_ne!(priority(5, k), priority(6, k));
@@ -63,8 +72,8 @@ mod tests {
     fn actor_read_tic_is_asymmetric_and_total() {
         // For any distinct pair at a tic, exactly one reads T and the other T-1 —
         // that asymmetry is the DAG edge direction.
-        let a = pack_object_key(1);
-        let b = pack_object_key(2);
+        let a = obj(1);
+        let b = obj(2);
         let tic = 10;
         let ab = actor_read_tic(a, b, tic); // resolving b, reading a
         let ba = actor_read_tic(b, a, tic); // resolving a, reading b
@@ -77,8 +86,8 @@ mod tests {
     #[test]
     fn read_tic_spans_object_and_zone_classes() {
         // A cross-class pair still yields a strict order (no panic, one back-edge).
-        let obj = pack_object_key(42);
-        let zone = pack_zone_key(pack_zone_id(1, 1, 0, 2, 3), 17, 2);
+        let obj = obj(42);
+        let zone = pack_positional_entity(ENTITY_TYPE_ZONE_CELL, pack_zone_id(1, 1, 0, 2, 3), 17, 2);
         let tic = 4;
         let a = actor_read_tic(obj, zone, tic);
         let b = actor_read_tic(zone, obj, tic);
@@ -89,7 +98,7 @@ mod tests {
     fn self_edge_reads_prior_tic() {
         // An entity that reads itself (self-target) can't rank below itself → T-1,
         // so it never self-deadlocks.
-        let k = pack_object_key(9);
+        let k = obj(9);
         assert_eq!(actor_read_tic(k, k, 8), 7);
     }
 }

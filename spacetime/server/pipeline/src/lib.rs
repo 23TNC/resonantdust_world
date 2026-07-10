@@ -130,7 +130,7 @@ macro_rules! decl_tick_pipeline {
         }
 
         /// This data shard's id — bits 32–47 of every object_id it mints. Single row
-        /// (PK 0), `SHARD_NONE` (0) until `set_shard_id`. Must be globally unique and
+        /// (PK 0), `0` (unset) until `set_shard_id`. Must be globally unique and
         /// permanent.
         #[table(accessor = shard_meta, public)]
         pub struct ShardMeta {

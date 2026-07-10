@@ -118,6 +118,16 @@ pub const ENTITY_TYPE_TILE: u8 = 5;
 /// A zone cell `(zone_id, location, layer)` — the cold store's positional entity.
 pub const ENTITY_TYPE_ZONE_CELL: u8 = 0x80;
 
+// Zone-cell layers — the `layer` byte of a positional entity lets multiple cells stack
+// on one `(zone_id, location)` (floor + wall + affixed things). A starting palette;
+// content can define more (up to 255).
+/// Floor layer.
+pub const LAYER_FLOOR: u8 = 0;
+/// Wall layer.
+pub const LAYER_WALL: u8 = 1;
+/// Affixed-thing layer.
+pub const LAYER_THING: u8 = 2;
+
 /// A minted `entity_reference`: `entity_type:8 | entity_id:32 | mint_server:16 |
 /// reserved:8`. Unique by construction — `mint_server` is globally unique, `entity_id`
 /// its monotonic counter.

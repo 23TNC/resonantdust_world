@@ -399,7 +399,7 @@ async fn handle_sub_zone(
 }
 
 /// Turn a client move intent into an `ACTION_MOVE` event on the shard's tick pipeline,
-/// targeting **this player's own object** (`OBJ_TYPE_PLAYER | player_id`). The object
+/// targeting **this player's own object** (`ENTITY_TYPE_PLAYER` + `player_id`). The object
 /// materializes on the first move (work-gen carries a default base, the move sets
 /// position), so no login-time seed is needed. Thin intent check: must be logged in.
 async fn handle_move(

@@ -121,9 +121,9 @@ pub enum Event {
     Status(String),
     /// A resolved entity from the shard's tick pipeline (`state`) changed in a
     /// subscribed zone. The raw u64 `entity_key` exceeds JS's 2^53 integer range, so it's
-    /// decoded host-side into the object's class (`obj_type`) and its 48-bit `object_id`
-    /// (JS-safe), which the host keys the circle by; shown only when
-    /// `obj_type == OBJ_TYPE_DEMO`/`PLAYER`. `removed` is `true` for a delete.
+    /// decoded host-side into the entity's type (`obj_type`, an `entity_type`) and its
+    /// 32-bit `object_id` (the minted `entity_id`, JS-safe), which the host keys the circle
+    /// by; shown only when `obj_type == ENTITY_TYPE_DEMO`/`PLAYER`. `removed` on delete.
     StateObject {
         zone_id: u32,
         obj_type: u8,
