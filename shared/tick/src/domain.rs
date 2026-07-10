@@ -16,6 +16,19 @@ pub const ACTION_MOVE: u16 = 1;
 /// actor died this tic). Composed in Phase A3.
 pub const ACTION_DAMAGE: u16 = 2;
 
+/// **Migration receive** (Phase C3): this (new, usually cross-shard) entity takes on the
+/// actor's payload — the "attach" half of an object↔zone transfer. Reads the actor
+/// (the source entity, on another shard). Position stays this entity's (a zone cell's
+/// key-derived location).
+pub const ACTION_RECEIVE: u16 = 3;
+
+/// **Migration ack** (Phase C3): the source tombstones itself once the receive landed
+/// (the actor = the received copy exists), so the entity isn't duplicated. Issued a tic
+/// AFTER the receive so it reads the *completed* copy — cross-tic sequencing is what
+/// makes a conserved transfer exactly-once (a same-tic receive+ack is a cross-shard
+/// cycle whose back-edge would read a stale state and duplicate). Reads the actor.
+pub const ACTION_ACK: u16 = 4;
+
 /// The game payload of one entity's resolved state — the fields that live in a
 /// `state`/`state_log` row alongside its `entity_key`/`tic`/bookkeeping. `data` is the
 /// per-kind opaque state (e.g. `data[0]` = hp), interpreted by the action code.
@@ -62,9 +75,16 @@ pub fn hp(state: &EntityState) -> u64 {
 
 /// Does resolving this action require the actor's resolved state? Actor-reading
 /// actions are the ones that go through the read-rule + priority-DAG (they can block
-/// on an actor); position-only actions (`move`) resolve with no cross-entity read.
+/// on an actor, possibly across shards); position-only actions (`move`) resolve with no
+/// cross-entity read.
 pub fn action_reads_actor(action: u16) -> bool {
-    matches!(action, ACTION_DAMAGE)
+    matches!(action, ACTION_DAMAGE | ACTION_RECEIVE | ACTION_ACK)
+}
+
+/// A tombstoned entity — the source of a completed migration. `kind == 0` is "no
+/// entity here"; the client hides these.
+fn is_tombstone(state: &EntityState) -> bool {
+    state.kind == 0
 }
 
 /// Fold one event onto an entity's state, given the actor's resolved state where the
@@ -86,6 +106,23 @@ pub fn apply_event(mut state: EntityState, ev: &Event, actor: Option<&EntityStat
             let attacker_alive = actor.map_or(false, |a| hp(a) > 0);
             if attacker_alive {
                 state.data[0] = hp(&state).saturating_sub(ev.data[0]);
+            }
+        }
+        ACTION_RECEIVE => {
+            // Attach: take on the source's payload (kind + data). Our position — a zone
+            // cell's key-derived location — stays ours. A tombstoned/absent source
+            // transfers nothing.
+            if let Some(a) = actor.filter(|a| !is_tombstone(a)) {
+                state.kind = a.kind;
+                state.data = a.data;
+            }
+        }
+        ACTION_ACK => {
+            // Detach: the copy exists on the other shard (actor is a live received
+            // entity) → tombstone this source so the entity is exactly-once.
+            if actor.map_or(false, |a| !is_tombstone(a)) {
+                state.kind = 0;
+                state.data = [0, 0];
             }
         }
         _ => {}
@@ -156,5 +193,36 @@ mod tests {
     fn damage_saturates_at_zero() {
         let ev = Event { action: ACTION_DAMAGE, actor_key: 0, data: pack_damage(10) };
         assert_eq!(hp(&apply_event(with_hp(3), &ev, Some(&with_hp(1)))), 0);
+    }
+
+    #[test]
+    fn receive_copies_source_payload() {
+        let source = EntityState { kind: 7, data: [42, 9], ..Default::default() };
+        // A fresh zone cell (kind 0) at some location receives the source's payload.
+        let dest = EntityState { kind: 0, location: 200, ..Default::default() };
+        let ev = Event { action: ACTION_RECEIVE, actor_key: 0, data: [0, 0] };
+        let out = apply_event(dest, &ev, Some(&source));
+        assert_eq!((out.kind, out.data), (7, [42, 9]), "payload migrated");
+        assert_eq!(out.location, 200, "dest keeps its own (key-derived) position");
+    }
+
+    #[test]
+    fn ack_tombstones_source_once_copy_exists() {
+        let source = EntityState { kind: 7, data: [42, 0], ..Default::default() };
+        // The received copy exists (kind 7) → source tombstones.
+        let received = EntityState { kind: 7, data: [42, 0], ..Default::default() };
+        let ev = Event { action: ACTION_ACK, actor_key: 0, data: [0, 0] };
+        let out = apply_event(source, &ev, Some(&received));
+        assert_eq!((out.kind, out.data), (0, [0, 0]), "source tombstoned — no duplicate");
+    }
+
+    #[test]
+    fn ack_is_noop_when_copy_absent() {
+        // If the receive never landed (actor tombstone/absent), the source is kept —
+        // the transfer didn't happen, so we must not lose the entity.
+        let source = EntityState { kind: 7, data: [42, 0], ..Default::default() };
+        let ev = Event { action: ACTION_ACK, actor_key: 0, data: [0, 0] };
+        assert_eq!(apply_event(source, &ev, None).kind, 7);
+        assert_eq!(apply_event(source, &ev, Some(&EntityState::default())).kind, 7);
     }
 }
