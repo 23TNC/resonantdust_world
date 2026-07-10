@@ -37,6 +37,12 @@ pub mod time;
 pub mod transfer;
 pub mod zones;
 
+// The simulation tick pipeline, shared with object_shard via the `resonantdust_pipeline`
+// rlib so both shard classes run one identical engine keyed by the unified entity_key.
+// Zone entities are keyed by a ZONE-tagged entity_key (zone_id, location). Re-exported
+// so its tables + reducers register in this module's wasm. See docs/simulation.md.
+pub use resonantdust_pipeline::*;
+
 /// Default shard id for this deployment. `0` while a single shard serves
 /// everything; horizontal sharding assigns distinct ids per instance. `zone_id`
 /// encoding (region + local zone) and shard routing are the Gateway's concern —

@@ -33,10 +33,11 @@ pub mod gc;
 pub mod pawns;
 pub mod presence;
 pub mod sequence;
-// The simulation tick pipeline (event_log / state_log / state / tic_meta + reducers).
-// Added alongside the legacy bitemporal tables during Phase A; the legacy modules
-// above are removed with the edge rewire (Phase B). See docs/simulation-plan.md.
-pub mod tick;
+// The simulation tick pipeline (event_log / state_log / state / tic_meta + reducers),
+// now shared with zone_shard via the `resonantdust_pipeline` rlib so both classes run
+// one identical engine keyed by the unified entity_key. Re-exported so its tables +
+// reducers register in this module's wasm. See docs/simulation.md.
+pub use resonantdust_pipeline::*;
 pub mod time;
 pub mod transfer;
 

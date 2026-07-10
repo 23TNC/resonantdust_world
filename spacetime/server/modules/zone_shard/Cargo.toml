@@ -18,3 +18,6 @@ log = "0.4"
 # (Was inlined as src/packed.rs during the foundation rebuild; lifted back to
 # the shared codec when zone_id composition needed sharing.)
 resonantdust-codec = { path = "../../../shared/codec" }
+# The shared tick pipeline (tables + reducers), also linked by object_shard so both
+# shard classes run one identical engine. Container path: /workspace/server/pipeline.
+resonantdust_pipeline = { path = "../../pipeline" }
