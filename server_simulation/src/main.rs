@@ -21,6 +21,7 @@ use spacetimedb_sdk::{DbContext, Table as _};
 
 use resonantdust_tick::{
     action_reads_actor, actor_read_tic, resolve_events, resolved_through, EntityState, Event,
+    Spatial,
 };
 
 mod bindings;
@@ -217,7 +218,7 @@ fn resolve_one(
         paired.push((ev, actor));
     }
 
-    let out = resolve_events(base, &paired);
+    let out = resolve_events::<Spatial>(base, &paired);
     match conn.reducers().resolve(
         worker_id,
         entity,

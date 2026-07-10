@@ -53,6 +53,51 @@ pub struct Event {
     pub data: [u64; 2],
 }
 
+/// A pipeline's *resolution policy* — the payload it carries and how events compose
+/// onto it. This is the one seam that varies per data structure (pawn, object, zone, …);
+/// the scheduling spine ([`priority`](crate::priority) / [`read_rule`](crate::read_rule) /
+/// the [`resolve_events`] fold) is generic over it and never inspects the payload. See
+/// `docs/pipeline-generalization.md`.
+///
+/// The methods are associated (no `self`): a `Domain` is a marker for its payload type,
+/// selected by the worker from an event's `data_type` — there is no per-instance state.
+pub trait Domain {
+    /// The game payload this pipeline carries in each `state`/`state_log` row.
+    type Payload: Copy + Default;
+
+    /// Fold one event onto the payload, given the actor's resolved state where the
+    /// action reads it (`None` otherwise). Pure per-action composition.
+    fn apply_event(
+        state: Self::Payload,
+        ev: &Event,
+        actor: Option<&Self::Payload>,
+    ) -> Self::Payload;
+
+    /// Does resolving `action` require the actor's resolved state (routing it through
+    /// the read-rule + priority-DAG, possibly blocking cross-shard)?
+    fn action_reads_actor(action: u16) -> bool;
+}
+
+/// The spatial payload objects and zones share today — the sole [`Domain`] until a
+/// divergent payload lands (`docs/pipeline-generalization.md`, Phase 4). A zero-sized
+/// marker; its logic is the free `apply_event`/`action_reads_actor` below (kept as free
+/// items so the edge/npc injectors, which only touch the `ACTION_*` constants and
+/// `pack_*` helpers, are unaffected).
+#[derive(Clone, Copy, Debug)]
+pub struct Spatial;
+
+impl Domain for Spatial {
+    type Payload = EntityState;
+
+    fn apply_event(state: EntityState, ev: &Event, actor: Option<&EntityState>) -> EntityState {
+        apply_event(state, ev, actor)
+    }
+
+    fn action_reads_actor(action: u16) -> bool {
+        action_reads_actor(action)
+    }
+}
+
 /// Encode a `move`'s event data: `data[0] = zone_id<<8 | location`, `data[1] =
 /// rotation<<8 | offset`. The one place the layout is defined, so injector and worker
 /// agree.
@@ -133,11 +178,15 @@ pub fn apply_event(mut state: EntityState, ev: &Event, actor: Option<&EntityStat
 /// Resolve an entity's new state: fold its events (already ordered by `event_reference`)
 /// onto its prior state, each paired with its actor's resolved state (`None` where the
 /// action doesn't read an actor). The worker supplies the actor states after applying
-/// the read-rule + priority-DAG.
-pub fn resolve_events(base: EntityState, events: &[(Event, Option<EntityState>)]) -> EntityState {
+/// the read-rule + priority-DAG. Generic over the pipeline's [`Domain`]; the fold itself
+/// is unchanged — only which `apply_event` it calls is now a type parameter.
+pub fn resolve_events<D: Domain>(
+    base: D::Payload,
+    events: &[(Event, Option<D::Payload>)],
+) -> D::Payload {
     events
         .iter()
-        .fold(base, |s, (e, actor)| apply_event(s, e, actor.as_ref()))
+        .fold(base, |s, (e, actor)| D::apply_event(s, e, actor.as_ref()))
 }
 
 #[cfg(test)]
@@ -164,7 +213,7 @@ mod tests {
             (Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, 10, 0, 0) }, None),
             (Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, 20, 0, 0) }, None),
         ];
-        assert_eq!(resolve_events(base, &events).location, 20);
+        assert_eq!(resolve_events::<Spatial>(base, &events).location, 20);
     }
 
     #[test]
