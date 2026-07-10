@@ -283,7 +283,7 @@ pub fn offset_y(offset: u8) -> u8 {
 //
 // ```text
 // entity_key: u64 = tag:2 | payload:62
-//   OBJECT (tag=01): payload = object_id           (mobile things; object shards)
+//   OBJECT (tag=01): payload = object_reference     (mobile things; object shards)
 //   ZONE   (tag=10): payload = zone_id:32 << 8 | location:8   (cells; zone shards)
 // ```
 //
@@ -307,10 +307,10 @@ const ENTITY_TAG_SHIFT: u32 = 62;
 pub const ENTITY_PAYLOAD_MAX: u64 = (1u64 << ENTITY_TAG_SHIFT) - 1;
 const ENTITY_ZONE_ID_SHIFT: u32 = 8;
 
-/// The entity key for an object-shard thing. `object_id` is masked to 62 bits
-/// (the allocator stays well under that — u32-range today, 62-bit headroom).
-pub fn pack_object_key(object_id: u64) -> u64 {
-    ((ENTITY_TAG_OBJECT as u64) << ENTITY_TAG_SHIFT) | (object_id & ENTITY_PAYLOAD_MAX)
+/// The entity key for an object-shard thing, from its `object_reference` (`obj_type`
+/// + `object_id`). The reference is masked to the 62-bit payload.
+pub fn pack_object_key(object_reference: u64) -> u64 {
+    ((ENTITY_TAG_OBJECT as u64) << ENTITY_TAG_SHIFT) | (object_reference & ENTITY_PAYLOAD_MAX)
 }
 
 /// The entity key for a zone-shard cell `(zone_id, location)`.
@@ -335,8 +335,9 @@ pub fn entity_is_zone(key: u64) -> bool {
     entity_tag(key) == ENTITY_TAG_ZONE
 }
 
-/// The `object_id` of an OBJECT key (meaningless for other tags).
-pub fn entity_object_id(key: u64) -> u64 {
+/// The `object_reference` of an OBJECT key — its 62-bit payload (meaningless for other
+/// tags). Decompose further with [`object_reference_type`] / [`object_reference_id`].
+pub fn entity_object_reference(key: u64) -> u64 {
     key & ENTITY_PAYLOAD_MAX
 }
 
@@ -350,38 +351,69 @@ pub fn entity_location(key: u64) -> u8 {
     (key & 0xFF) as u8
 }
 
-// ── object_id sub-typing ─────────────────────────────────────────────────────
+// ── object reference (OBJECT payload) ────────────────────────────────────────
 //
-// Within an OBJECT entity key, the `object_id` carries a small **type** tag so a
-// consumer can tell classes of object apart (demo circles vs real things) straight
-// from the id, no lookup:
+// An OBJECT entity key's 62-bit payload is an **object_reference**: a class tag plus
+// the object's stable, globally-unique **object_id**.
 //
 // ```text
-// object_id: u62 = obj_type:8 << 32 | serial:32
+// object_reference:62 = obj_type:8 << 48 | object_id:48          (bits 56–61 spare)
+// object_id:48        = shard_id:16 << 32 | count:32
 // ```
+//
+// The `object_id` is unique across every data shard by construction: `shard_id` is the
+// data shard that minted it (unique + permanent), `count` is that shard's monotonic
+// per-shard counter — so no two shards, and no single shard twice, ever mint the same
+// `(shard_id, count)`. `obj_type` is just a class tag (thing/pawn/demo/player) and plays
+// no part in the uniqueness. Position is NOT encoded here — a mobile object keeps its
+// `object_id` across every move; only its `state` position changes.
 
 /// Demo object (a moving circle in the Phase-A sync demo).
 pub const OBJ_TYPE_DEMO: u8 = 1;
 
-/// A player-controlled object (one per logged-in player; the `serial` is the
-/// `player_id`). Materialized on the player's first move through the edge.
+/// A player-controlled object (one per logged-in player). Materialized on the player's
+/// first move through the edge.
 pub const OBJ_TYPE_PLAYER: u8 = 2;
 
-const OBJ_TYPE_SHIFT: u64 = 32;
+/// Reserved `shard_id` for objects **not** minted by a data shard (edge/system/ephemeral
+/// — e.g. demo & player objects, whose `count` is assigned directly and self-uniquely).
+/// Real data shards use ids `≥ 1`.
+pub const SHARD_NONE: u16 = 0;
 
-/// Compose an `object_id` from its type tag and serial.
-pub fn pack_object_id(obj_type: u8, serial: u32) -> u64 {
-    ((obj_type as u64) << OBJ_TYPE_SHIFT) | serial as u64
+const OBJECT_ID_SHARD_SHIFT: u64 = 32;
+const OBJ_TYPE_SHIFT: u64 = 48;
+/// Mask for the 48-bit `object_id` within an `object_reference`.
+pub const OBJECT_ID_MAX: u64 = (1u64 << 48) - 1;
+
+/// Compose the globally-unique 48-bit `object_id` from the minting `shard_id` and its
+/// per-shard `count`.
+pub fn pack_object_id(shard_id: u16, count: u32) -> u64 {
+    ((shard_id as u64) << OBJECT_ID_SHARD_SHIFT) | count as u64
 }
 
-/// The type tag of an `object_id`.
-pub fn object_id_type(object_id: u64) -> u8 {
-    ((object_id >> OBJ_TYPE_SHIFT) & 0xFF) as u8
+/// The minting `shard_id` of an `object_id`.
+pub fn object_id_shard(object_id: u64) -> u16 {
+    ((object_id >> OBJECT_ID_SHARD_SHIFT) & 0xFFFF) as u16
 }
 
-/// The serial of an `object_id`.
-pub fn object_id_serial(object_id: u64) -> u32 {
+/// The per-shard `count` of an `object_id`.
+pub fn object_id_count(object_id: u64) -> u32 {
     object_id as u32
+}
+
+/// Compose an `object_reference` from its class tag and 48-bit `object_id`.
+pub fn pack_object_reference(obj_type: u8, object_id: u64) -> u64 {
+    ((obj_type as u64) << OBJ_TYPE_SHIFT) | (object_id & OBJECT_ID_MAX)
+}
+
+/// The class tag of an `object_reference`.
+pub fn object_reference_type(reference: u64) -> u8 {
+    ((reference >> OBJ_TYPE_SHIFT) & 0xFF) as u8
+}
+
+/// The 48-bit `object_id` of an `object_reference`.
+pub fn object_reference_id(reference: u64) -> u64 {
+    reference & OBJECT_ID_MAX
 }
 
 #[cfg(test)]
@@ -489,11 +521,11 @@ mod tests {
 
     #[test]
     fn object_key_roundtrips() {
-        for &oid in &[1u64, 2, 42, 0xFFFF, 0xFFFF_FFFF, ENTITY_PAYLOAD_MAX] {
-            let k = pack_object_key(oid);
+        for &r in &[1u64, 2, 42, 0xFFFF, 0xFFFF_FFFF, ENTITY_PAYLOAD_MAX] {
+            let k = pack_object_key(r);
             assert_eq!(entity_tag(k), ENTITY_TAG_OBJECT);
             assert!(entity_is_object(k) && !entity_is_zone(k));
-            assert_eq!(entity_object_id(k), oid);
+            assert_eq!(entity_object_reference(k), r);
         }
     }
 
@@ -510,14 +542,31 @@ mod tests {
     }
 
     #[test]
-    fn object_id_type_roundtrips() {
-        let oid = pack_object_id(OBJ_TYPE_DEMO, 3);
-        assert_eq!(object_id_type(oid), OBJ_TYPE_DEMO);
-        assert_eq!(object_id_serial(oid), 3);
+    fn object_id_and_reference_roundtrip() {
+        // object_id = (shard_id, count), globally unique.
+        let oid = pack_object_id(7, 12345);
+        assert_eq!(object_id_shard(oid), 7);
+        assert_eq!(object_id_count(oid), 12345);
+        // object_reference = obj_type + object_id.
+        let r = pack_object_reference(OBJ_TYPE_DEMO, oid);
+        assert_eq!(object_reference_type(r), OBJ_TYPE_DEMO);
+        assert_eq!(object_reference_id(r), oid);
         // Survives the round-trip through an entity key.
-        let k = pack_object_key(oid);
-        assert_eq!(object_id_type(entity_object_id(k)), OBJ_TYPE_DEMO);
-        assert_eq!(object_id_serial(entity_object_id(k)), 3);
+        let k = pack_object_key(r);
+        let back = entity_object_reference(k);
+        assert_eq!(object_reference_type(back), OBJ_TYPE_DEMO);
+        assert_eq!(object_id_shard(object_reference_id(back)), 7);
+        assert_eq!(object_id_count(object_reference_id(back)), 12345);
+    }
+
+    #[test]
+    fn object_ids_are_globally_unique_by_construction() {
+        // Different shards, same count → different ids. Same shard, different count →
+        // different ids. So no two shards, and no shard twice, collide.
+        assert_ne!(pack_object_id(1, 100), pack_object_id(2, 100));
+        assert_ne!(pack_object_id(1, 100), pack_object_id(1, 101));
+        // Max shard + max count fits the 48-bit object_id.
+        assert!(pack_object_id(u16::MAX, u32::MAX) <= OBJECT_ID_MAX);
     }
 
     #[test]

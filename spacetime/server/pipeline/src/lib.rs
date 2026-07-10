@@ -19,6 +19,8 @@ use std::collections::HashMap;
 
 use spacetimedb::{reducer, table, ReducerContext, Table};
 
+use resonantdust_codec::packed::{pack_object_id, pack_object_key, pack_object_reference};
+
 /// An event row is live until its target resolves the tic; then it's marked complete
 /// (soft-delete for debug; the GC sweep hard-deletes later — Phase A4).
 const STATUS_ACTIVE: u8 = 0;
@@ -162,10 +164,10 @@ fn promote(ctx: &ReducerContext, r: &StateLog) {
 
 // ── reducers ─────────────────────────────────────────────────────────────────
 
-/// Seed an entity's initial resolved state at the current master tic — the bulk-load /
-/// harness entry point (a real spawn action lands later). Idempotent per entity_key.
-#[reducer]
-pub fn seed_entity(
+/// Write an entity's initial resolved state at the current master tic (clearing any
+/// prior rows for it) and promote it. Shared by `seed_entity` and `spawn_object`.
+#[allow(clippy::too_many_arguments)]
+fn seed_write(
     ctx: &ReducerContext,
     entity_key: u64,
     kind: u16,
@@ -175,9 +177,8 @@ pub fn seed_entity(
     offset: u8,
     data0: u64,
     data1: u64,
-) -> Result<(), String> {
+) {
     let tic = master_tic(ctx);
-    // Clear any prior rows for this entity, then write a resolved base + promote.
     let old: Vec<u64> = ctx
         .db
         .state_log()
@@ -207,6 +208,99 @@ pub fn seed_entity(
         status: STATUS_ACTIVE,
     });
     promote(ctx, &row);
+}
+
+/// Seed an entity at an explicit `entity_key` — the bulk-load / harness entry point.
+/// Idempotent per entity_key.
+#[reducer]
+#[allow(clippy::too_many_arguments)]
+pub fn seed_entity(
+    ctx: &ReducerContext,
+    entity_key: u64,
+    kind: u16,
+    zone_id: u32,
+    location: u8,
+    rotation: u8,
+    offset: u8,
+    data0: u64,
+    data1: u64,
+) -> Result<(), String> {
+    seed_write(ctx, entity_key, kind, zone_id, location, rotation, offset, data0, data1);
+    Ok(())
+}
+
+// ── object-id minting ────────────────────────────────────────────────────────
+
+/// This data shard's id — bits 32–47 of every object_id it mints. Single row (PK 0),
+/// `SHARD_NONE` (0) until `set_shard_id`. Must be globally unique and permanent.
+#[table(accessor = shard_meta, public)]
+pub struct ShardMeta {
+    #[primary_key]
+    pub id: u8,
+    pub shard_id: u16,
+}
+
+/// The monotonic per-shard object counter — bits 0–31 of a minted object_id. Durable
+/// (survives restart), never reset independently of the objects it stamped.
+#[table(accessor = object_counter)]
+pub struct ObjectCounter {
+    #[primary_key]
+    pub id: u8,
+    pub next: u32,
+}
+
+/// Set this shard's id — called once at deploy/seed. Idempotent upsert.
+#[reducer]
+pub fn set_shard_id(ctx: &ReducerContext, shard_id: u16) -> Result<(), String> {
+    ctx.db.shard_meta().id().delete(0);
+    ctx.db.shard_meta().insert(ShardMeta { id: 0, shard_id });
+    Ok(())
+}
+
+fn this_shard_id(ctx: &ReducerContext) -> u16 {
+    ctx.db.shard_meta().id().find(0).map_or(0, |m| m.shard_id)
+}
+
+/// Mint a fresh, globally-unique object_id: `(this shard's id, its next count)`. The
+/// count never repeats on this shard and the `shard_id` never repeats across shards, so
+/// the pair is unique everywhere with no coordination. The object-create entry point
+/// (spawn / a zone→object detach) calls this.
+pub fn mint_object_id(ctx: &ReducerContext) -> u64 {
+    let count = match ctx.db.object_counter().id().find(0) {
+        Some(c) => {
+            ctx.db.object_counter().id().delete(0);
+            ctx.db.object_counter().insert(ObjectCounter {
+                id: 0,
+                next: c.next.saturating_add(1),
+            });
+            c.next
+        }
+        None => {
+            ctx.db.object_counter().insert(ObjectCounter { id: 0, next: 1 });
+            0
+        }
+    };
+    pack_object_id(this_shard_id(ctx), count)
+}
+
+/// Create a new object with a freshly-minted globally-unique object_id, of class
+/// `obj_type` and def `kind`, at the given position. The caller learns the id by
+/// observing the new `state` row (reducers can't return it).
+#[reducer]
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_object(
+    ctx: &ReducerContext,
+    obj_type: u8,
+    kind: u16,
+    zone_id: u32,
+    location: u8,
+    rotation: u8,
+    offset: u8,
+    data0: u64,
+    data1: u64,
+) -> Result<(), String> {
+    let entity_key = pack_object_key(pack_object_reference(obj_type, mint_object_id(ctx)));
+    seed_write(ctx, entity_key, kind, zone_id, location, rotation, offset, data0, data1);
     Ok(())
 }
 

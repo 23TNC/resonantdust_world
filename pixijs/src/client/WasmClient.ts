@@ -149,13 +149,13 @@ export interface FreeThing {
 export type FreeThingHandler = (thing: FreeThing) => void;
 
 /** A resolved entity from the object-shard tick pipeline (`state`). The raw u64
- *  `entity_key` exceeds JS's safe-integer range, so the wasm core decodes it into a
- *  JS-safe `objType` + `serial`; the demo layer keys a circle by `serial` and only
- *  renders `objType === OBJ_TYPE_DEMO`. */
+ *  `entity_key` exceeds JS's safe-integer range, so the wasm core decodes it into the
+ *  object's class (`objType`) and its 48-bit `objectId` (JS-safe); the demo layer keys
+ *  a circle by `objectId` and only renders demo/player classes. */
 export interface StateObject {
   zoneId: number;
   objType: number;
-  serial: number;
+  objectId: number;
   tic: number;
   location: number;
   removed: boolean;
@@ -195,7 +195,7 @@ type WorldEvent =
       kind: "stateObject";
       zoneId: number;
       objType: number;
-      serial: number;
+      objectId: number;
       tic: number;
       location: number;
       removed: boolean;
@@ -610,7 +610,7 @@ export class WasmClient {
           cb({
             zoneId: ev.zoneId,
             objType: ev.objType,
-            serial: ev.serial,
+            objectId: ev.objectId,
             tic: ev.tic,
             location: ev.location,
             removed: ev.removed,

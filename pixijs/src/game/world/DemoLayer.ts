@@ -10,7 +10,7 @@ const GRID = 16; // a zone is 16×16 cells; `location = cy<<4 | cx`
 const CELL = 28; // px per cell in the overlay
 const PAD = 12;
 const SIZE = GRID * CELL;
-/** Distinct colours per demo serial (wraps if there are more than 6). */
+/** Distinct colours per demo object (wraps if there are more than 6). */
 const COLORS = [0xff5a5a, 0x5ada6a, 0x5a9cff, 0xffce4a, 0xc86bff, 0x4adfd0];
 
 interface Circle {
@@ -30,7 +30,8 @@ interface Circle {
  */
 export class DemoLayer {
   readonly container = new Container();
-  /** Keyed by `objType*1e6 + serial` so demo and player objects can't collide. */
+  /** Keyed by `objType*1e6 + objectId` so demo and player objects can't collide.
+   *  (Demo/player are SHARD_NONE-minted, so objectId is a small count — safe to add.) */
   private readonly circles = new Map<number, Circle>();
 
   constructor() {
@@ -53,7 +54,7 @@ export class DemoLayer {
    *  player circle is distinguishable from the ambient demo movers. */
   upsert(obj: StateObject): void {
     if (obj.objType !== OBJ_TYPE_DEMO && obj.objType !== OBJ_TYPE_PLAYER) return;
-    const key = obj.objType * 1_000_000 + obj.serial;
+    const key = obj.objType * 1_000_000 + obj.objectId;
     const existing = this.circles.get(key);
     if (obj.removed) {
       if (existing) {
@@ -70,7 +71,7 @@ export class DemoLayer {
         g.circle(0, 0, CELL * 0.4).stroke({ color: 0x2a6cff, width: 3, alpha: 1 });
       } else {
         g.circle(0, 0, CELL * 0.34).fill({
-          color: COLORS[obj.serial % COLORS.length],
+          color: COLORS[obj.objectId % COLORS.length],
           alpha: 0.95,
         });
       }

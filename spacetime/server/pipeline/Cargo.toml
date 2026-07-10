@@ -12,3 +12,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 spacetimedb = { version = "=2.1.0" }
+# The shared entity-key / object-id bit layout — the pipeline mints globally-unique
+# object_ids and builds entity keys with the same packing the edge/client use.
+# Container path (built inside the module workspace): /workspace/shared/codec.
+resonantdust-codec = { path = "../../shared/codec" }

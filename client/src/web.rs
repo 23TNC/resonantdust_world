@@ -574,16 +574,16 @@ impl Engine {
                     }),
                     RowData::State(sr) => {
                         use resonantdust_codec::packed;
-                        let (obj_type, serial) = if packed::entity_is_object(sr.entity_key) {
-                            let oid = packed::entity_object_id(sr.entity_key);
-                            (packed::object_id_type(oid), packed::object_id_serial(oid))
+                        let (obj_type, object_id) = if packed::entity_is_object(sr.entity_key) {
+                            let r = packed::entity_object_reference(sr.entity_key);
+                            (packed::object_reference_type(r), packed::object_reference_id(r))
                         } else {
                             (0, 0)
                         };
                         self.emit(Event::StateObject {
                             zone_id: sr.zone_id,
                             obj_type,
-                            serial,
+                            object_id,
                             tic: sr.tic,
                             location: sr.location,
                             removed: matches!(op, RowOp::Delete),

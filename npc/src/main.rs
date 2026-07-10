@@ -15,7 +15,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use spacetimedb_sdk::DbContext;
 
-use resonantdust_codec::packed::{pack_object_id, pack_object_key, OBJ_TYPE_DEMO};
+use resonantdust_codec::packed::{
+    pack_object_id, pack_object_key, pack_object_reference, OBJ_TYPE_DEMO, SHARD_NONE,
+};
 use resonantdust_tick::{pack_move, ACTION_MOVE};
 
 mod bindings;
@@ -52,7 +54,12 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 fn demo_key(index: u32) -> u64 {
-    pack_object_key(pack_object_id(OBJ_TYPE_DEMO, index))
+    // Demo objects aren't shard-minted: reserved SHARD_NONE + the index as the count
+    // (self-unique for the fixed demo set).
+    pack_object_key(pack_object_reference(
+        OBJ_TYPE_DEMO,
+        pack_object_id(SHARD_NONE, index),
+    ))
 }
 
 #[tokio::main]

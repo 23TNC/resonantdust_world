@@ -165,14 +165,14 @@ pub enum Event {
         valid_at_ms: u64,
     },
     /// A resolved entity from the object shard's tick pipeline (`state`) changed in a
-    /// subscribed zone. The `entity_key` is decoded host-side into a JS-safe
-    /// `obj_type` + `serial` (the raw u64 key exceeds JS's 2^53 integer range), so the
-    /// host keys the demo circle by `serial` and shows it only when
-    /// `obj_type == OBJ_TYPE_DEMO`. `removed` is `true` for a delete.
+    /// subscribed zone. The raw u64 `entity_key` exceeds JS's 2^53 integer range, so it's
+    /// decoded host-side into the object's class (`obj_type`) and its 48-bit `object_id`
+    /// (JS-safe), which the host keys the circle by; shown only when
+    /// `obj_type == OBJ_TYPE_DEMO`/`PLAYER`. `removed` is `true` for a delete.
     StateObject {
         zone_id: u32,
         obj_type: u8,
-        serial: u32,
+        object_id: u64,
         tic: u32,
         location: u8,
         removed: bool,

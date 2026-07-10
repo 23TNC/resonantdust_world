@@ -528,7 +528,7 @@ fn event_to_js(event: &client::Event) -> JsValue {
         Event::StateObject {
             zone_id,
             obj_type,
-            serial,
+            object_id,
             tic,
             location,
             removed,
@@ -536,7 +536,8 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("kind", &JsValue::from_str("stateObject"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));
             set("objType", &JsValue::from_f64(*obj_type as f64));
-            set("serial", &JsValue::from_f64(*serial as f64));
+            // 48-bit object_id fits JS's 2^53 safe-integer range.
+            set("objectId", &JsValue::from_f64(*object_id as f64));
             set("tic", &JsValue::from_f64(*tic as f64));
             set("location", &JsValue::from_f64(*location as f64));
             set("removed", &JsValue::from_bool(*removed));
