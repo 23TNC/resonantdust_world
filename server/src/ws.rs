@@ -34,7 +34,7 @@ use crate::bindings::object_shard::move_debug_mover as _; // reducer trait → `
 use crate::connections::{await_ready, connect_object_shard, connect_players, connect_shard, Pool};
 use crate::index::{resolve_object_or_default, resolve_zone_or_default, ShardEndpoint};
 use crate::protocol::{
-    ClientMsg, ColdZoneRow, FreeThingRow, HotCellRow, RowData, RowOp, ServerMsg,
+    ClientMsg, ColdZoneRow, FreeThingRow, HotCellRow, RowData, RowOp, ServerMsg, StateRow,
 };
 
 /// How long to wait for `claim_or_login` to commit before failing the login.
@@ -560,10 +560,13 @@ async fn open_object_sub(
     }
     let oc = object_shards.get_mut(&endpoint).expect("just inserted");
 
-    // Wire the `free_things` relay once per connection — it carries every zone
-    // subscribed on this object shard; the client demuxes by `zone_id`.
+    // Wire the object-shard relays once per connection — they carry every zone
+    // subscribed on this object shard; the client demuxes by `zone_id`. `free_things`
+    // is the legacy loose-thing stream; `state` is the tick pipeline's resolved
+    // entities (the moving demo objects).
     if !oc.wired {
         wire_object_relay(&oc.conn, out_tx.clone());
+        wire_state_relay(&oc.conn, out_tx.clone());
         oc.wired = true;
     }
 
@@ -572,7 +575,10 @@ async fn open_object_sub(
         .conn
         .subscription_builder()
         .on_error(move |_ctx, err| send(&error_tx, err_frame(&format!("object sub {sid}: {err}"))))
-        .subscribe([format!("SELECT * FROM free_things WHERE zone_id = {zone_id}")]);
+        .subscribe([
+            format!("SELECT * FROM free_things WHERE zone_id = {zone_id}"),
+            format!("SELECT * FROM state WHERE zone_id = {zone_id}"),
+        ]);
     Some(handle)
 }
 
@@ -795,6 +801,37 @@ fn free_thing_row(r: &bindings::object_shard::free_thing_type::FreeThing) -> Fre
         rotation: r.rotation,
         id: r.id,
         offset: r.offset,
+    }
+}
+
+/// Relay the object shard's `state` table (the tick pipeline's resolved entities) —
+/// insert/update/delete forwarded as [`RowData::State`]. Wired once per object-shard
+/// connection, like [`wire_object_relay`].
+fn wire_state_relay(
+    conn: &Arc<bindings::object_shard::DbConnection>,
+    out: mpsc::UnboundedSender<String>,
+) {
+    use bindings::object_shard::state_table::StateTableAccess;
+
+    let t = conn.db().state();
+    let (si, su, sd) = (out.clone(), out.clone(), out);
+    t.on_insert(move |_c, r| relay(&si, RowOp::Insert, RowData::State(state_row(r))));
+    t.on_update(move |_c, _o, r| relay(&su, RowOp::Update, RowData::State(state_row(r))));
+    t.on_delete(move |_c, r| relay(&sd, RowOp::Delete, RowData::State(state_row(r))));
+}
+
+/// Copy a generated `State` row into the serde wire mirror.
+fn state_row(r: &bindings::object_shard::state_type::State) -> StateRow {
+    StateRow {
+        entity_key: r.entity_key,
+        tic: r.tic,
+        kind: r.kind,
+        zone_id: r.zone_id,
+        location: r.location,
+        rotation: r.rotation,
+        offset: r.offset,
+        data_0: r.data_0,
+        data_1: r.data_1,
     }
 }
 

@@ -112,6 +112,9 @@ pub enum RowData {
     /// a stable `object_id` and a sub-tile `offset`; the client overlays these on
     /// top of the zone's cold+hot things.
     FreeThing(FreeThingRow),
+    /// A resolved entity from the object shard's tick pipeline (`object_shard::state`).
+    /// The client-visible present per entity; drives the moving demo circles.
+    State(StateRow),
 }
 
 /// Mirror of `shard::cold_zone_type::ColdZone`.
@@ -146,6 +149,22 @@ pub struct FreeThingRow {
     pub rotation: u8,
     pub id: u16,
     pub offset: u8,
+}
+
+/// Mirror of `object_shard::state_type::State` — one resolved entity. `entity_key`
+/// carries the tagged object/zone id; `tic` is how current this entity is (for later
+/// staleness display). The client identifies demo objects by the type in the id.
+#[derive(Debug, Clone, Serialize)]
+pub struct StateRow {
+    pub entity_key: u64,
+    pub tic: u32,
+    pub kind: u16,
+    pub zone_id: u32,
+    pub location: u8,
+    pub rotation: u8,
+    pub offset: u8,
+    pub data_0: u64,
+    pub data_1: u64,
 }
 
 impl ServerMsg {

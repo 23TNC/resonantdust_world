@@ -7,8 +7,10 @@ import { LayoutNode } from "../../game/layout/LayoutNode";
 import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { RtPanel } from "../../game/panels/rt/RtPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
+import { DemoLayer } from "../../game/world/DemoLayer";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
 import { SQUARE } from "../../game/viewport/squareMath";
+import type { Ticker } from "pixi.js";
 
 /** Accumulated wheel `deltaY` that halves or doubles the zoom (one LOD octave). */
 const WHEEL_OCTAVE = 500;
@@ -49,6 +51,11 @@ export class WorldScene extends Scene {
   /** Wiring from the world client's zone stream into the viewport, and the
    *  viewport camera into the client's anchor. */
   private bridge!: WorldBridge;
+  /** Screen-space overlay of the moving demo circles (object-shard `state`). */
+  private demo: DemoLayer | null = null;
+  /** Unsubscribe from the `state` stream; the ticker fn driving the demo tween. */
+  private demoUnsub: (() => void) | null = null;
+  private demoTick: ((t: Ticker) => void) | null = null;
   /** Unsubscribe from content hot-swaps; called on scene exit. */
   private contentUnsub: (() => void) | null = null;
   /** Drag-to-pan state: pointer id + last client-px position while dragging. */
@@ -135,6 +142,15 @@ export class WorldScene extends Scene {
     this.bridge = new WorldBridge(ctx.client, ctx.content, this.viewport.view, ctx.textureResolver.white, ctx.textureResolver);
     this.bridge.start();
 
+    // Demo circles: draw the object-shard `state` stream as tweening circles over
+    // the world. A fixed overlay (camera-independent) so two tabs must match — the
+    // sync probe.
+    this.demo = new DemoLayer();
+    this.root.addChild(this.demo.container);
+    this.demoUnsub = ctx.client.onStateObject((obj) => this.demo?.upsert(obj));
+    this.demoTick = (t: Ticker) => this.demo?.update(t);
+    ctx.app.ticker.add(this.demoTick);
+
     // Repaint live zones when the gate hot-swaps the corpus. `getContent()` is the
     // freshly-swapped bundle (independent of listener order vs `ctx.content`).
     this.contentUnsub = onContentReloaded(() => this.bridge.setContent(getContent()));
@@ -214,6 +230,12 @@ export class WorldScene extends Scene {
     canvas.removeEventListener("wheel", this.onWheel);
     this.contentUnsub?.();
     this.contentUnsub = null;
+    if (this.demoTick) this.ctx.app.ticker.remove(this.demoTick);
+    this.demoTick = null;
+    this.demoUnsub?.();
+    this.demoUnsub = null;
+    this.demo?.destroy();
+    this.demo = null;
     this.bridge.dispose();
 
     // Destroy PanelManager-registered panels (the RT preview) first, while their

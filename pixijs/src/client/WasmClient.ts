@@ -148,6 +148,21 @@ export interface FreeThing {
 /** A loose thing changed — upsert or drop it. */
 export type FreeThingHandler = (thing: FreeThing) => void;
 
+/** A resolved entity from the object-shard tick pipeline (`state`). The raw u64
+ *  `entity_key` exceeds JS's safe-integer range, so the wasm core decodes it into a
+ *  JS-safe `objType` + `serial`; the demo layer keys a circle by `serial` and only
+ *  renders `objType === OBJ_TYPE_DEMO`. */
+export interface StateObject {
+  zoneId: number;
+  objType: number;
+  serial: number;
+  tic: number;
+  location: number;
+  removed: boolean;
+}
+/** A state object changed — upsert or drop it. */
+export type StateObjectHandler = (obj: StateObject) => void;
+
 const NOOP_UNSUB = (): void => { /* nothing subscribed */ };
 
 /** How long to wait for login to complete (gateway resolve + connect + auth)
@@ -175,6 +190,15 @@ type WorldEvent =
       id: number;
       offset: number;
       validAt: number;
+    }
+  | {
+      kind: "stateObject";
+      zoneId: number;
+      objType: number;
+      serial: number;
+      tic: number;
+      location: number;
+      removed: boolean;
     }
   | { kind: "zoneClosed"; zoneId: number }
   | { kind: "callStats"; stats: CallStat[] }
@@ -241,6 +265,7 @@ export class WasmClient {
   private readonly zoneThingsCbs = new Set<ZoneThingsHandler>();
   private readonly zoneClosedCbs = new Set<ZoneClosedHandler>();
   private readonly freeThingCbs = new Set<FreeThingHandler>();
+  private readonly stateObjectCbs = new Set<StateObjectHandler>();
   private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
   private readonly subStatCbs = new Set<(snap: SubStatsSnapshot) => void>();
 
@@ -456,6 +481,13 @@ export class WasmClient {
     return () => this.freeThingCbs.delete(cb);
   }
 
+  /** Subscribe to tick-pipeline entity changes (object-shard `state`). Returns an
+   *  unsubscribe. */
+  onStateObject(cb: StateObjectHandler): () => void {
+    this.stateObjectCbs.add(cb);
+    return () => this.stateObjectCbs.delete(cb);
+  }
+
   /** ChatPanel feed subscription. The protocol carries no chat frames yet, so
    *  this never fires — wired for when the feed returns. */
   onChat(_cb: (messages: ChatMessage[]) => void): () => void {
@@ -570,6 +602,18 @@ export class WasmClient {
             id: ev.id,
             offset: ev.offset,
             validAt: ev.validAt,
+          });
+        }
+        break;
+      case "stateObject":
+        for (const cb of this.stateObjectCbs) {
+          cb({
+            zoneId: ev.zoneId,
+            objType: ev.objType,
+            serial: ev.serial,
+            tic: ev.tic,
+            location: ev.location,
+            removed: ev.removed,
           });
         }
         break;

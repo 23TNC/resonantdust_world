@@ -101,6 +101,8 @@ pub enum RowData {
     /// A loose thing from the object shard (`object_shard::free_things`) — a
     /// stable `object_id`, a tile `location`, and a sub-tile `offset`.
     FreeThing(FreeThingRow),
+    /// A resolved entity from the object shard's tick pipeline (`object_shard::state`).
+    State(StateRow),
 }
 
 /// Mirror of `shard::cold_zone_type::ColdZone`.
@@ -132,4 +134,19 @@ pub struct FreeThingRow {
     pub rotation: u8,
     pub id: u16,
     pub offset: u8,
+}
+
+/// Mirror of `object_shard::state_type::State` (server `StateRow`). No `valid_at` —
+/// the tick pipeline is tic-based, not bitemporal.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StateRow {
+    pub entity_key: u64,
+    pub tic: u32,
+    pub kind: u16,
+    pub zone_id: u32,
+    pub location: u8,
+    pub rotation: u8,
+    pub offset: u8,
+    pub data_0: u64,
+    pub data_1: u64,
 }

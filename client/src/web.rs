@@ -180,6 +180,7 @@ fn row_table_tag(row: &RowData) -> &'static str {
         RowData::HotTile(_) => "hot_tile",
         RowData::HotThing(_) => "hot_thing",
         RowData::FreeThing(_) => "free_thing",
+        RowData::State(_) => "state",
     }
 }
 
@@ -571,6 +572,23 @@ impl Engine {
                         offset: ft.offset,
                         valid_at_ms: resonantdust_codec::packed::valid_at_time(ft.valid_at),
                     }),
+                    RowData::State(sr) => {
+                        use resonantdust_codec::packed;
+                        let (obj_type, serial) = if packed::entity_is_object(sr.entity_key) {
+                            let oid = packed::entity_object_id(sr.entity_key);
+                            (packed::object_id_type(oid), packed::object_id_serial(oid))
+                        } else {
+                            (0, 0)
+                        };
+                        self.emit(Event::StateObject {
+                            zone_id: sr.zone_id,
+                            obj_type,
+                            serial,
+                            tic: sr.tic,
+                            location: sr.location,
+                            removed: matches!(op, RowOp::Delete),
+                        });
+                    }
                     RowData::HotTile(_) | RowData::HotThing(_) => {}
                 }
                 self.zones.note_update(zone_id, now_ms());
@@ -780,6 +798,7 @@ fn row_zone_id(row: &RowData) -> u32 {
         RowData::ColdZone(r) => r.zone_id,
         RowData::HotTile(r) | RowData::HotThing(r) => r.zone_id,
         RowData::FreeThing(r) => r.zone_id,
+        RowData::State(r) => r.zone_id,
     }
 }
 

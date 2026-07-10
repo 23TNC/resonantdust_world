@@ -525,6 +525,22 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("offset", &JsValue::from_f64(*offset as f64));
             set("validAt", &JsValue::from_f64(*valid_at_ms as f64));
         }
+        Event::StateObject {
+            zone_id,
+            obj_type,
+            serial,
+            tic,
+            location,
+            removed,
+        } => {
+            set("kind", &JsValue::from_str("stateObject"));
+            set("zoneId", &JsValue::from_f64(*zone_id as f64));
+            set("objType", &JsValue::from_f64(*obj_type as f64));
+            set("serial", &JsValue::from_f64(*serial as f64));
+            set("tic", &JsValue::from_f64(*tic as f64));
+            set("location", &JsValue::from_f64(*location as f64));
+            set("removed", &JsValue::from_bool(*removed));
+        }
         Event::ZoneClosed { zone_id } => {
             set("kind", &JsValue::from_str("zoneClosed"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));

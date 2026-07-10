@@ -11,13 +11,20 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
+pub mod event_log_type;
 pub mod free_thing_type;
 pub mod gc_schedule_type;
 pub mod object_id_counter_type;
 pub mod pawn_type;
 pub mod presence_type;
 pub mod sequence_counter_type;
+pub mod state_type;
+pub mod state_log_type;
+pub mod tic_meta_type;
 pub mod transfer_type;
+pub mod append_event_reducer;
+pub mod bump_reducer;
+pub mod claim_reducer;
 pub mod create_free_thing_reducer;
 pub mod move_debug_mover_reducer;
 pub mod move_free_thing_reducer;
@@ -27,24 +34,41 @@ pub mod place_pawn_reducer;
 pub mod receive_reducer;
 pub mod remove_free_thing_reducer;
 pub mod remove_pawn_reducer;
+pub mod resolve_reducer;
+pub mod seed_entity_reducer;
 pub mod set_pawn_data_reducer;
 pub mod spawn_pawn_reducer;
+pub mod event_log_table;
 pub mod free_things_table;
 pub mod pawns_table;
 pub mod presence_table;
+pub mod state_table;
+pub mod state_log_table;
+pub mod tic_meta_table;
 pub mod transfers_table;
 
+pub use event_log_type::EventLog;
 pub use free_thing_type::FreeThing;
 pub use gc_schedule_type::GcSchedule;
 pub use object_id_counter_type::ObjectIdCounter;
 pub use pawn_type::Pawn;
 pub use presence_type::Presence;
 pub use sequence_counter_type::SequenceCounter;
+pub use state_type::State;
+pub use state_log_type::StateLog;
+pub use tic_meta_type::TicMeta;
 pub use transfer_type::Transfer;
+pub use event_log_table::*;
 pub use free_things_table::*;
 pub use pawns_table::*;
 pub use presence_table::*;
+pub use state_table::*;
+pub use state_log_table::*;
+pub use tic_meta_table::*;
 pub use transfers_table::*;
+pub use append_event_reducer::append_event;
+pub use bump_reducer::bump;
+pub use claim_reducer::claim;
 pub use create_free_thing_reducer::create_free_thing;
 pub use move_debug_mover_reducer::move_debug_mover;
 pub use move_free_thing_reducer::move_free_thing;
@@ -54,6 +78,8 @@ pub use place_pawn_reducer::place_pawn;
 pub use receive_reducer::receive;
 pub use remove_free_thing_reducer::remove_free_thing;
 pub use remove_pawn_reducer::remove_pawn;
+pub use resolve_reducer::resolve;
+pub use seed_entity_reducer::seed_entity;
 pub use set_pawn_data_reducer::set_pawn_data;
 pub use spawn_pawn_reducer::spawn_pawn;
 
@@ -65,7 +91,24 @@ pub use spawn_pawn_reducer::spawn_pawn;
 /// to indicate which reducer caused the event.
 
 pub enum Reducer {
-        CreateFreeThing {
+        AppendEvent {
+        from_server_id: u16,
+        actor_shard_id: u16,
+        actor_key: u64,
+        target_key: u64,
+        action: u16,
+        data_0: u64,
+        data_1: u64,
+}    ,
+    Bump {
+        to_tic: u32,
+}    ,
+    Claim {
+        server_id: u16,
+        entity_key: u64,
+        tic: u32,
+}    ,
+    CreateFreeThing {
         now_ms: u64,
         zone_id: u32,
         location: u8,
@@ -128,6 +171,28 @@ pub enum Reducer {
     RemovePawn {
         object_id: u64,
 }    ,
+    Resolve {
+        server_id: u16,
+        entity_key: u64,
+        tic: u32,
+        kind: u16,
+        zone_id: u32,
+        location: u8,
+        rotation: u8,
+        offset: u8,
+        data_0: u64,
+        data_1: u64,
+}    ,
+    SeedEntity {
+        entity_key: u64,
+        kind: u16,
+        zone_id: u32,
+        location: u8,
+        rotation: u8,
+        offset: u8,
+        data_0: u64,
+        data_1: u64,
+}    ,
     SetPawnData {
         now_ms: u64,
         object_id: u64,
@@ -153,7 +218,10 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
-                        Reducer::CreateFreeThing { .. } => "create_free_thing",
+                        Reducer::AppendEvent { .. } => "append_event",
+            Reducer::Bump { .. } => "bump",
+            Reducer::Claim { .. } => "claim",
+            Reducer::CreateFreeThing { .. } => "create_free_thing",
             Reducer::MoveDebugMover { .. } => "move_debug_mover",
             Reducer::MoveFreeThing { .. } => "move_free_thing",
             Reducer::MovePawn { .. } => "move_pawn",
@@ -162,6 +230,8 @@ impl __sdk::Reducer for Reducer {
             Reducer::Receive { .. } => "receive",
             Reducer::RemoveFreeThing { .. } => "remove_free_thing",
             Reducer::RemovePawn { .. } => "remove_pawn",
+            Reducer::Resolve { .. } => "resolve",
+            Reducer::SeedEntity { .. } => "seed_entity",
             Reducer::SetPawnData { .. } => "set_pawn_data",
             Reducer::SpawnPawn { .. } => "spawn_pawn",
             _ => unreachable!(),
@@ -170,7 +240,38 @@ impl __sdk::Reducer for Reducer {
     #[allow(clippy::clone_on_copy)]
 fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
         match self {
-                        Reducer::CreateFreeThing{
+                        Reducer::AppendEvent{
+                from_server_id,
+                actor_shard_id,
+                actor_key,
+                target_key,
+                action,
+                data_0,
+                data_1,
+}             => __sats::bsatn::to_vec(&append_event_reducer::AppendEventArgs {
+                from_server_id: from_server_id.clone(),
+                actor_shard_id: actor_shard_id.clone(),
+                actor_key: actor_key.clone(),
+                target_key: target_key.clone(),
+                action: action.clone(),
+                data_0: data_0.clone(),
+                data_1: data_1.clone(),
+}),
+            Reducer::Bump{
+                to_tic,
+}             => __sats::bsatn::to_vec(&bump_reducer::BumpArgs {
+                to_tic: to_tic.clone(),
+}),
+            Reducer::Claim{
+                server_id,
+                entity_key,
+                tic,
+}             => __sats::bsatn::to_vec(&claim_reducer::ClaimArgs {
+                server_id: server_id.clone(),
+                entity_key: entity_key.clone(),
+                tic: tic.clone(),
+}),
+            Reducer::CreateFreeThing{
                 now_ms,
                 zone_id,
                 location,
@@ -287,6 +388,48 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }             => __sats::bsatn::to_vec(&remove_pawn_reducer::RemovePawnArgs {
                 object_id: object_id.clone(),
 }),
+            Reducer::Resolve{
+                server_id,
+                entity_key,
+                tic,
+                kind,
+                zone_id,
+                location,
+                rotation,
+                offset,
+                data_0,
+                data_1,
+}             => __sats::bsatn::to_vec(&resolve_reducer::ResolveArgs {
+                server_id: server_id.clone(),
+                entity_key: entity_key.clone(),
+                tic: tic.clone(),
+                kind: kind.clone(),
+                zone_id: zone_id.clone(),
+                location: location.clone(),
+                rotation: rotation.clone(),
+                offset: offset.clone(),
+                data_0: data_0.clone(),
+                data_1: data_1.clone(),
+}),
+            Reducer::SeedEntity{
+                entity_key,
+                kind,
+                zone_id,
+                location,
+                rotation,
+                offset,
+                data_0,
+                data_1,
+}             => __sats::bsatn::to_vec(&seed_entity_reducer::SeedEntityArgs {
+                entity_key: entity_key.clone(),
+                kind: kind.clone(),
+                zone_id: zone_id.clone(),
+                location: location.clone(),
+                rotation: rotation.clone(),
+                offset: offset.clone(),
+                data_0: data_0.clone(),
+                data_1: data_1.clone(),
+}),
             Reducer::SetPawnData{
                 now_ms,
                 object_id,
@@ -324,9 +467,13 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct DbUpdate {
-        free_things: __sdk::TableUpdate<FreeThing>,
+        event_log: __sdk::TableUpdate<EventLog>,
+    free_things: __sdk::TableUpdate<FreeThing>,
     pawns: __sdk::TableUpdate<Pawn>,
     presence: __sdk::TableUpdate<Presence>,
+    state: __sdk::TableUpdate<State>,
+    state_log: __sdk::TableUpdate<StateLog>,
+    tic_meta: __sdk::TableUpdate<TicMeta>,
     transfers: __sdk::TableUpdate<Transfer>,
 }
 
@@ -338,9 +485,13 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
         for table_update in __sdk::transaction_update_iter_table_updates(raw) {
             match &table_update.table_name[..] {
 
-        "free_things" => db_update.free_things.append(free_things_table::parse_table_update(table_update)?),
+        "event_log" => db_update.event_log.append(event_log_table::parse_table_update(table_update)?),
+    "free_things" => db_update.free_things.append(free_things_table::parse_table_update(table_update)?),
     "pawns" => db_update.pawns.append(pawns_table::parse_table_update(table_update)?),
     "presence" => db_update.presence.append(presence_table::parse_table_update(table_update)?),
+    "state" => db_update.state.append(state_table::parse_table_update(table_update)?),
+    "state_log" => db_update.state_log.append(state_log_table::parse_table_update(table_update)?),
+    "tic_meta" => db_update.tic_meta.append(tic_meta_table::parse_table_update(table_update)?),
     "transfers" => db_update.transfers.append(transfers_table::parse_table_update(table_update)?),
 
                 unknown => {
@@ -364,9 +515,13 @@ impl __sdk::DbUpdate for DbUpdate {
     fn apply_to_client_cache(&self, cache: &mut __sdk::ClientCache<RemoteModule>) -> AppliedDiff<'_> {
                     let mut diff = AppliedDiff::default();
                 
-                diff.free_things = cache.apply_diff_to_table::<FreeThing>("free_things", &self.free_things).with_updates_by_pk(|row| &row.valid_at);
+                diff.event_log = cache.apply_diff_to_table::<EventLog>("event_log", &self.event_log).with_updates_by_pk(|row| &row.event_reference);
+        diff.free_things = cache.apply_diff_to_table::<FreeThing>("free_things", &self.free_things).with_updates_by_pk(|row| &row.valid_at);
         diff.pawns = cache.apply_diff_to_table::<Pawn>("pawns", &self.pawns).with_updates_by_pk(|row| &row.valid_at);
         diff.presence = cache.apply_diff_to_table::<Presence>("presence", &self.presence).with_updates_by_pk(|row| &row.region_id);
+        diff.state = cache.apply_diff_to_table::<State>("state", &self.state).with_updates_by_pk(|row| &row.entity_key);
+        diff.state_log = cache.apply_diff_to_table::<StateLog>("state_log", &self.state_log).with_updates_by_pk(|row| &row.id);
+        diff.tic_meta = cache.apply_diff_to_table::<TicMeta>("tic_meta", &self.tic_meta).with_updates_by_pk(|row| &row.id);
         diff.transfers = cache.apply_diff_to_table::<Transfer>("transfers", &self.transfers).with_updates_by_pk(|row| &row.transfer_id);
 
                     diff
@@ -375,9 +530,13 @@ fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "free_things" => db_update.free_things.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                                "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "free_things" => db_update.free_things.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "pawns" => db_update.pawns.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "presence" => db_update.presence.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "state" => db_update.state.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "state_log" => db_update.state_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "tic_meta" => db_update.tic_meta.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "transfers" => db_update.transfers.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
@@ -386,9 +545,13 @@ fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "free_things" => db_update.free_things.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                                "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "free_things" => db_update.free_things.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "pawns" => db_update.pawns.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "presence" => db_update.presence.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "state" => db_update.state.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "state_log" => db_update.state_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "tic_meta" => db_update.tic_meta.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "transfers" => db_update.transfers.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
@@ -399,9 +562,13 @@ for table_rows in raw.tables {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
-        free_things: __sdk::TableAppliedDiff<'r, FreeThing>,
+        event_log: __sdk::TableAppliedDiff<'r, EventLog>,
+    free_things: __sdk::TableAppliedDiff<'r, FreeThing>,
     pawns: __sdk::TableAppliedDiff<'r, Pawn>,
     presence: __sdk::TableAppliedDiff<'r, Presence>,
+    state: __sdk::TableAppliedDiff<'r, State>,
+    state_log: __sdk::TableAppliedDiff<'r, StateLog>,
+    tic_meta: __sdk::TableAppliedDiff<'r, TicMeta>,
     transfers: __sdk::TableAppliedDiff<'r, Transfer>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
@@ -413,9 +580,13 @@ impl __sdk::InModule for AppliedDiff<'_> {
 
 impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     fn invoke_row_callbacks(&self, event: &EventContext, callbacks: &mut __sdk::DbCallbacks<RemoteModule>) {
-                callbacks.invoke_table_row_callbacks::<FreeThing>("free_things", &self.free_things, event);
+                callbacks.invoke_table_row_callbacks::<EventLog>("event_log", &self.event_log, event);
+        callbacks.invoke_table_row_callbacks::<FreeThing>("free_things", &self.free_things, event);
         callbacks.invoke_table_row_callbacks::<Pawn>("pawns", &self.pawns, event);
         callbacks.invoke_table_row_callbacks::<Presence>("presence", &self.presence, event);
+        callbacks.invoke_table_row_callbacks::<State>("state", &self.state, event);
+        callbacks.invoke_table_row_callbacks::<StateLog>("state_log", &self.state_log, event);
+        callbacks.invoke_table_row_callbacks::<TicMeta>("tic_meta", &self.tic_meta, event);
         callbacks.invoke_table_row_callbacks::<Transfer>("transfers", &self.transfers, event);
 }
 }
@@ -1068,15 +1239,23 @@ impl __sdk::SpacetimeModule for RemoteModule {
     type QueryBuilder = __sdk::QueryBuilder;
 
 fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
-                free_things_table::register_table(client_cache);
+                event_log_table::register_table(client_cache);
+        free_things_table::register_table(client_cache);
         pawns_table::register_table(client_cache);
         presence_table::register_table(client_cache);
+        state_table::register_table(client_cache);
+        state_log_table::register_table(client_cache);
+        tic_meta_table::register_table(client_cache);
         transfers_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
-                "free_things",
+                "event_log",
+        "free_things",
         "pawns",
         "presence",
+        "state",
+        "state_log",
+        "tic_meta",
         "transfers",
 ];
 }
