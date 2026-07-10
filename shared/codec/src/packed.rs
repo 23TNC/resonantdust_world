@@ -284,7 +284,7 @@ pub fn offset_y(offset: u8) -> u8 {
 // ```text
 // entity_key: u64 = tag:2 | payload:62
 //   OBJECT (tag=01): payload = object_reference     (mobile things; object shards)
-//   ZONE   (tag=10): payload = zone_id:32 << 8 | location:8   (cells; zone shards)
+//   ZONE   (tag=10): payload = zone_id:32 << 16 | location:8 << 8 | layer:8   (cells)
 // ```
 //
 // The tag makes object and zone payloads disjoint, so the two classes share **one**
@@ -305,7 +305,18 @@ pub const ENTITY_TAG_ZONE: u8 = 0b10;
 const ENTITY_TAG_SHIFT: u32 = 62;
 /// The low 62 bits — the payload under a 2-bit tag. `object_id` must fit here.
 pub const ENTITY_PAYLOAD_MAX: u64 = (1u64 << ENTITY_TAG_SHIFT) - 1;
-const ENTITY_ZONE_ID_SHIFT: u32 = 8;
+// ZONE payload: zone_id:32 << 16 | location:8 << 8 | layer:8  (48 bits, 14 spare)
+const ENTITY_ZONE_ID_SHIFT: u32 = 16;
+const ENTITY_LOCATION_SHIFT: u32 = 8;
+
+/// Zone cell layers — a `u8` lets multiple entities stack on one `(zone_id, location)`
+/// (floor + wall + affixed things), each a distinct location-keyed cell. A starting
+/// palette; content can define more (up to 255). (Mobile object-shard things stack
+/// without a layer — they're keyed by `object_id`, positioned by `(zone_id, location)`
+/// in their state — so the layer is only for location-keyed zone cells.)
+pub const LAYER_FLOOR: u8 = 0;
+pub const LAYER_WALL: u8 = 1;
+pub const LAYER_THING: u8 = 2;
 
 /// The entity key for an object-shard thing, from its `object_reference` (`obj_type`
 /// + `object_id`). The reference is masked to the 62-bit payload.
@@ -313,11 +324,12 @@ pub fn pack_object_key(object_reference: u64) -> u64 {
     ((ENTITY_TAG_OBJECT as u64) << ENTITY_TAG_SHIFT) | (object_reference & ENTITY_PAYLOAD_MAX)
 }
 
-/// The entity key for a zone-shard cell `(zone_id, location)`.
-pub fn pack_zone_key(zone_id: u32, location: u8) -> u64 {
+/// The entity key for a zone-shard cell `(zone_id, location, layer)`.
+pub fn pack_zone_key(zone_id: u32, location: u8, layer: u8) -> u64 {
     ((ENTITY_TAG_ZONE as u64) << ENTITY_TAG_SHIFT)
         | ((zone_id as u64) << ENTITY_ZONE_ID_SHIFT)
-        | (location as u64)
+        | ((location as u64) << ENTITY_LOCATION_SHIFT)
+        | (layer as u64)
 }
 
 /// The 2-bit tag of an entity key (`ENTITY_TAG_*`).
@@ -348,6 +360,11 @@ pub fn entity_zone_id(key: u64) -> u32 {
 
 /// The `location` of a ZONE key (meaningless for other tags).
 pub fn entity_location(key: u64) -> u8 {
+    ((key >> ENTITY_LOCATION_SHIFT) & 0xFF) as u8
+}
+
+/// The `layer` of a ZONE key (meaningless for other tags).
+pub fn entity_layer(key: u64) -> u8 {
     (key & 0xFF) as u8
 }
 
@@ -533,12 +550,30 @@ mod tests {
     fn zone_key_roundtrips() {
         let z = pack_zone_id(0xAB, 0xCD, 0x02, 13, 7);
         for loc in [0u8, 1, 128, 255] {
-            let k = pack_zone_key(z, loc);
-            assert_eq!(entity_tag(k), ENTITY_TAG_ZONE);
-            assert!(entity_is_zone(k) && !entity_is_object(k));
-            assert_eq!(entity_zone_id(k), z);
-            assert_eq!(entity_location(k), loc);
+            for layer in [LAYER_FLOOR, LAYER_WALL, LAYER_THING, 200] {
+                let k = pack_zone_key(z, loc, layer);
+                assert_eq!(entity_tag(k), ENTITY_TAG_ZONE);
+                assert!(entity_is_zone(k) && !entity_is_object(k));
+                assert_eq!(entity_zone_id(k), z);
+                assert_eq!(entity_location(k), loc);
+                assert_eq!(entity_layer(k), layer);
+            }
         }
+    }
+
+    #[test]
+    fn layers_stack_on_one_tile() {
+        // Multiple objects on the same tile — distinct keys per layer.
+        let z = pack_zone_id(1, 1, 0, 5, 3);
+        let floor = pack_zone_key(z, 42, LAYER_FLOOR);
+        let wall = pack_zone_key(z, 42, LAYER_WALL);
+        let thing = pack_zone_key(z, 42, LAYER_THING);
+        assert_ne!(floor, wall);
+        assert_ne!(wall, thing);
+        assert_ne!(floor, thing);
+        // …all at the same cell.
+        assert_eq!(entity_location(floor), entity_location(thing));
+        assert_eq!(entity_zone_id(floor), entity_zone_id(thing));
     }
 
     #[test]
@@ -574,11 +609,11 @@ mod tests {
         // Same numeric payload under different tags must not collide — this is what
         // makes the priority total order span both classes.
         let obj = pack_object_key(0x1234);
-        let zone = pack_zone_key(0x12, 0x34); // packs to a different payload anyway
+        let zone = pack_zone_key(0x12, 0x34, 0); // packs to a different payload anyway
         assert_ne!(obj, zone);
         assert_ne!(entity_tag(obj), entity_tag(zone));
         // A zone key never reads as an object key with the same low bits.
         let z = pack_zone_id(0, 0, 0, 0, 0);
-        assert_ne!(pack_zone_key(z, 5), pack_object_key(5));
+        assert_ne!(pack_zone_key(z, 5, 0), pack_object_key(5));
     }
 }

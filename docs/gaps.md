@@ -49,10 +49,11 @@ Capabilities designed but not built.
    path that moves the world map onto the pipeline — and the prerequisite for the legacy
    `hot_*`/`cold_zones` cleanup. (Design agreed; not built.)
 
-6. **`u8` layer — multiple objects per tile.** A zone key is `(zone_id, location)`, so
-   one entity per tile. Needs a layer dimension for floor + wall + affixed things at one
-   cell. **Plan below.** (Mobile object-shard things already stack — distinct
-   `object_id`s at the same position — so this is specifically for location-keyed cells.)
+6. **`u8` layer — multiple objects per tile.** **codec step DONE** — zone key is now
+   `(zone_id, location, layer)` (`pack_zone_key`/`entity_layer`, layout
+   `zone_id:32<<16 | location:8<<8 | layer:8`), so 256 entities can stack on one cell.
+   Remaining (with the world-object phase): the client renders zone cells per-layer with
+   z-order, and `pack`/attach picks the destination layer. Plan below.
 
 7. **Client stale-object indication.** Deferred: gray-out entities whose per-object tic
    lags the visible frontier. The pipeline supports it (`state.tic`); the edge/client
@@ -100,15 +101,10 @@ resolved independently by the existing pipeline (the key is opaque to resolution
 
 ### Steps
 
-1. **codec — zone key gains `layer`.**
-   - `pack_zone_key(zone_id: u32, location: u8, layer: u8) -> u64`.
-   - Layout: ZONE payload `= zone_id:32 << 16 | location:8 << 8 | layer:8` (48 bits, 14
-     spare under the tag). Update `entity_zone_id` (`>>16`) / `entity_location`
-     (`>>8 & 0xFF`); add `entity_layer` (`& 0xFF`).
-   - Named layers as a starting palette, extensible by content: `LAYER_FLOOR = 0`,
-     `LAYER_WALL = 1`, `LAYER_THING = 2` (… up to 255).
-   - Tests: `(zone, loc, layer)` round-trip; two layers at one `(zone, loc)` → distinct
-     keys; layer survives the entity-key round-trip.
+1. **codec — zone key gains `layer`. ✅ DONE.**
+   - `pack_zone_key(zone_id, location, layer)`; layout `zone_id:32<<16 | location:8<<8 |
+     layer:8` (48 bits, 14 spare); `entity_zone_id`/`entity_location`/`entity_layer`;
+     `LAYER_FLOOR/WALL/THING`. Codec + tick tests green.
 
 2. **Pipeline — no change.** Layer lives inside the opaque `entity_key`; different layers
    are different entities. Resolution, read-rule, priority, GC are untouched. Keep `layer`
