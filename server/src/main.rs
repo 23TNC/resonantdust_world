@@ -9,7 +9,7 @@
 //!   * **login** — `claim_or_login` against the `players` auth DB, binding the
 //!     connection to a `player_id`;
 //!   * **zone subscription** — resolve `zone_id → region → shard` via the index,
-//!     connect to that shard, and stream its `cold_zones` + `hot_*` rows.
+//!     connect to that shard, and stream its tick-pipeline `state` rows.
 
 mod bindings;
 mod config;

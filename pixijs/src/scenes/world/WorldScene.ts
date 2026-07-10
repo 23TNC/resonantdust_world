@@ -48,10 +48,10 @@ export class WorldScene extends Scene {
   /** Render-texture preview panel (`/showRT`), or null while closed. Ticked each
    *  frame so its live thumbnails track the viewport's composites. */
   private rt: RtPanel | null = null;
-  /** Wiring from the world client's zone stream into the viewport, and the
-   *  viewport camera into the client's anchor. */
+  /** Wiring from the viewport camera into the client's anchor (which drives which
+   *  zones the client subscribes to). */
   private bridge!: WorldBridge;
-  /** Screen-space overlay of the moving demo circles (object-shard `state`). */
+  /** Screen-space overlay of the moving demo circles (shard `state`). */
   private demo: DemoLayer | null = null;
   /** Unsubscribe from the `state` stream; the ticker fn driving the demo tween. */
   private demoUnsub: (() => void) | null = null;
@@ -139,7 +139,7 @@ export class WorldScene extends Scene {
     // Wire the client's zone stream into the viewport and start the anchor at the
     // origin — login has completed by the time this scene enters, so the first
     // anchor immediately subscribes the zones around it.
-    this.bridge = new WorldBridge(ctx.client, ctx.content, this.viewport.view, ctx.textureResolver.white, ctx.textureResolver);
+    this.bridge = new WorldBridge(ctx.client, ctx.content, this.viewport.view);
     this.bridge.start();
 
     // Demo circles: draw the object-shard `state` stream as tweening circles over
@@ -209,9 +209,6 @@ export class WorldScene extends Scene {
   }
 
   override update(_deltaMS: number): void {
-    // Tween loose things to the shared render instant (synced clock − delay)
-    // before the viewport bakes, so their new positions are in this frame's paint.
-    this.bridge?.tick();
     // Lay out the Pixi panel chrome, then drive the viewport's bake + display.
     this.panelLayer?.layoutIfDirty();
     this.viewport?.tick();

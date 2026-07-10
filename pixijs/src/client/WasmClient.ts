@@ -61,9 +61,8 @@ export interface CallStat {
 }
 
 /** One relayed-row table's data tally for the debug HUD's "subs" tab. `table` is
- *  the wire tag (`cold_zone` / `hot_tile` / `hot_thing` / `free_thing`); `rows`
- *  counts the `Row` frames streamed down subscriptions and `rx` sums their
- *  serialized bytes. */
+ *  the wire tag (`state`); `rows` counts the `Row` frames streamed down
+ *  subscriptions and `rx` sums their serialized bytes. */
 export interface SubStat {
   table: string;
   rows: number;
@@ -118,37 +117,10 @@ export interface AnchorRadii {
   cold: number;
 }
 
-/** A cold zone's tiles arrived: `tiles` is the `ZONE_TILES` packed slots. */
-export type ZoneTilesHandler = (zoneId: number, tiles: Uint16Array) => void;
-/** A cold zone's things arrived: `things` is its packed thing entries
- *  (`x:4 | y:4 | rotation:2 | object_id:12` each) — the worldgen-scattered flora.
- *  Fires alongside the tiles on every cold delivery; an empty array clears them. */
-export type ZoneThingsHandler = (zoneId: number, things: Uint32Array) => void;
-/** A zone's subscription closed — drop its sprites. */
+/** A zone's subscription closed — drop its entities. */
 export type ZoneClosedHandler = (zoneId: number) => void;
 
-/** One loose thing changed in a subscribed zone (object-shard `free_things`).
- *  `removed` = true drops the sprite keyed by `objectId`; otherwise upsert one at
- *  `location` shifted by the sub-tile `offset`. Insert and update both arrive as
- *  `removed: false` (the host keys by `objectId`). */
-export interface FreeThing {
-  zoneId: number;
-  objectId: number;
-  removed: boolean;
-  location: number;
-  rotation: number;
-  id: number;
-  offset: number;
-  /** The row's `valid_at` in server wall-clock ms — when this position becomes
-   *  true. The render layer buffers positions by this and interpolates to the
-   *  shared instant `syncedNow − RENDER_DELAY_MS`, so every client shows the
-   *  mover at the same world point at the same wall time. */
-  validAt: number;
-}
-/** A loose thing changed — upsert or drop it. */
-export type FreeThingHandler = (thing: FreeThing) => void;
-
-/** A resolved entity from the object-shard tick pipeline (`state`). The raw u64
+/** A resolved entity from the shard's tick pipeline (`state`). The raw u64
  *  `entity_key` exceeds JS's safe-integer range, so the wasm core decodes it into the
  *  object's class (`objType`) and its 48-bit `objectId` (JS-safe); the demo layer keys
  *  a circle by `objectId` and only renders demo/player classes. */
@@ -178,19 +150,6 @@ type WorldEvent =
   | { kind: "loginFailed"; reason: string }
   | { kind: "disconnected"; reason: string | null }
   | { kind: "status"; message: string }
-  | { kind: "zoneTiles"; zoneId: number; tiles: Uint16Array }
-  | { kind: "zoneThings"; zoneId: number; things: Uint32Array }
-  | {
-      kind: "zoneFreeThing";
-      zoneId: number;
-      objectId: number;
-      removed: boolean;
-      location: number;
-      rotation: number;
-      id: number;
-      offset: number;
-      validAt: number;
-    }
   | {
       kind: "stateObject";
       zoneId: number;
@@ -261,10 +220,7 @@ export class WasmClient {
   /** Whether the clock has at least one estimate (login seed or a pong). */
   private clockSynced = false;
   private readonly loggedInCbs = new Set<(serverUrl: string) => void>();
-  private readonly zoneTilesCbs = new Set<ZoneTilesHandler>();
-  private readonly zoneThingsCbs = new Set<ZoneThingsHandler>();
   private readonly zoneClosedCbs = new Set<ZoneClosedHandler>();
-  private readonly freeThingCbs = new Set<FreeThingHandler>();
   private readonly stateObjectCbs = new Set<StateObjectHandler>();
   private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
   private readonly subStatCbs = new Set<(snap: SubStatsSnapshot) => void>();
@@ -440,45 +396,17 @@ export class WasmClient {
     this.world?.removeAnchor(name);
   }
 
-  /** Release the thing affixed at `(zoneId, location)` into the object shard —
-   *  it vanishes from the world and reappears as a loose thing. The server drives
-   *  the transfer; the result arrives on existing subscriptions. No-op before
-   *  login. */
-  release(zoneId: number, location: number): void {
-    this.world?.release(zoneId, location);
-  }
-
-  /** Move the controllable thing toward global tile `(tileX, tileY)`. The server
-   *  pathfinds from its current tile and commits the path, which arrives on the
-   *  free-thing subscription. No-op before login. */
+  /** Move the player's own object toward global tile `(tileX, tileY)`. The server
+   *  appends an `ACTION_MOVE` event to the shard's tick pipeline, which arrives as
+   *  a `state` row on the zone subscription. No-op before login. */
   moveTo(tileX: number, tileY: number): void {
     this.world?.moveTo(tileX, tileY);
-  }
-
-  /** Subscribe to cold-zone tile deliveries. Returns an unsubscribe. */
-  onZoneTiles(cb: ZoneTilesHandler): () => void {
-    this.zoneTilesCbs.add(cb);
-    return () => this.zoneTilesCbs.delete(cb);
-  }
-
-  /** Subscribe to cold-zone thing deliveries (worldgen-scattered flora). Returns
-   *  an unsubscribe. */
-  onZoneThings(cb: ZoneThingsHandler): () => void {
-    this.zoneThingsCbs.add(cb);
-    return () => this.zoneThingsCbs.delete(cb);
   }
 
   /** Subscribe to zone-close notifications (a sub dropped). Returns an unsub. */
   onZoneClosed(cb: ZoneClosedHandler): () => void {
     this.zoneClosedCbs.add(cb);
     return () => this.zoneClosedCbs.delete(cb);
-  }
-
-  /** Subscribe to loose-thing changes (object-shard `free_things`). Returns an
-   *  unsubscribe. */
-  onFreeThing(cb: FreeThingHandler): () => void {
-    this.freeThingCbs.add(cb);
-    return () => this.freeThingCbs.delete(cb);
   }
 
   /** Subscribe to tick-pipeline entity changes (object-shard `state`). Returns an
@@ -584,26 +512,6 @@ export class WasmClient {
         break;
       case "status":
         this.pending?.onProgress?.(ev.message);
-        break;
-      case "zoneTiles":
-        for (const cb of this.zoneTilesCbs) cb(ev.zoneId, ev.tiles);
-        break;
-      case "zoneThings":
-        for (const cb of this.zoneThingsCbs) cb(ev.zoneId, ev.things);
-        break;
-      case "zoneFreeThing":
-        for (const cb of this.freeThingCbs) {
-          cb({
-            zoneId: ev.zoneId,
-            objectId: ev.objectId,
-            removed: ev.removed,
-            location: ev.location,
-            rotation: ev.rotation,
-            id: ev.id,
-            offset: ev.offset,
-            validAt: ev.validAt,
-          });
-        }
         break;
       case "stateObject":
         for (const cb of this.stateObjectCbs) {
