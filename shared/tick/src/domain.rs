@@ -50,10 +50,31 @@ pub fn pack_move(zone_id: u32, location: u8, rotation: u8, offset: u8) -> [u64; 
     ]
 }
 
-/// Fold one event onto an entity's state. Pure per-action composition; unknown actions
-/// are ignored (an intent the sim doesn't implement is a no-op, not a fault). `DAMAGE`
-/// and the actor-reading actions land in Phase A3.
-pub fn apply_event(mut state: EntityState, ev: &Event) -> EntityState {
+/// Encode a `damage` event: `data[0] = amount`.
+pub fn pack_damage(amount: u64) -> [u64; 2] {
+    [amount, 0]
+}
+
+/// An entity's hit points live in `data[0]`. `0` = dead.
+pub fn hp(state: &EntityState) -> u64 {
+    state.data[0]
+}
+
+/// Does resolving this action require the actor's resolved state? Actor-reading
+/// actions are the ones that go through the read-rule + priority-DAG (they can block
+/// on an actor); position-only actions (`move`) resolve with no cross-entity read.
+pub fn action_reads_actor(action: u16) -> bool {
+    matches!(action, ACTION_DAMAGE)
+}
+
+/// Fold one event onto an entity's state, given the actor's resolved state where the
+/// action reads it (`None` for actions that don't, or an absent/unresolved actor —
+/// which reads as dead). Pure per-action composition; unknown actions are a no-op.
+///
+/// `DAMAGE` is the actor-reading case: a **dead actor's blow is voided** (the
+/// preemption the priority-DAG hangs on — "dead B can't hit C"); a live actor subtracts
+/// `data[0]` from the target's hp (saturating at 0).
+pub fn apply_event(mut state: EntityState, ev: &Event, actor: Option<&EntityState>) -> EntityState {
     match ev.action {
         ACTION_MOVE => {
             state.zone_id = (ev.data[0] >> 8) as u32;
@@ -61,27 +82,40 @@ pub fn apply_event(mut state: EntityState, ev: &Event) -> EntityState {
             state.rotation = ((ev.data[1] >> 8) & 0xFF) as u8;
             state.offset = (ev.data[1] & 0xFF) as u8;
         }
+        ACTION_DAMAGE => {
+            let attacker_alive = actor.map_or(false, |a| hp(a) > 0);
+            if attacker_alive {
+                state.data[0] = hp(&state).saturating_sub(ev.data[0]);
+            }
+        }
         _ => {}
     }
     state
 }
 
 /// Resolve an entity's new state: fold its events (already ordered by `event_reference`)
-/// onto its prior state. Phase A2 covers position-only actions; A3 threads resolved
-/// actor states in for actions that read them.
-pub fn resolve_events(base: EntityState, events: &[Event]) -> EntityState {
-    events.iter().fold(base, |s, e| apply_event(s, e))
+/// onto its prior state, each paired with its actor's resolved state (`None` where the
+/// action doesn't read an actor). The worker supplies the actor states after applying
+/// the read-rule + priority-DAG.
+pub fn resolve_events(base: EntityState, events: &[(Event, Option<EntityState>)]) -> EntityState {
+    events
+        .iter()
+        .fold(base, |s, (e, actor)| apply_event(s, e, actor.as_ref()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn with_hp(h: u64) -> EntityState {
+        EntityState { data: [h, 0], ..Default::default() }
+    }
+
     #[test]
     fn move_sets_position_from_event() {
         let base = EntityState { kind: 1, zone_id: 0, location: 10, ..Default::default() };
         let ev = Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(7, 200, 2, 5) };
-        let out = apply_event(base, &ev);
+        let out = apply_event(base, &ev, None); // move ignores the actor
         assert_eq!((out.zone_id, out.location, out.rotation, out.offset), (7, 200, 2, 5));
         assert_eq!(out.kind, 1, "move leaves kind untouched");
     }
@@ -90,8 +124,8 @@ mod tests {
     fn events_fold_in_order_last_move_wins() {
         let base = EntityState::default();
         let events = [
-            Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, 10, 0, 0) },
-            Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, 20, 0, 0) },
+            (Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, 10, 0, 0) }, None),
+            (Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, 20, 0, 0) }, None),
         ];
         assert_eq!(resolve_events(base, &events).location, 20);
     }
@@ -100,6 +134,27 @@ mod tests {
     fn unknown_action_is_a_noop() {
         let base = EntityState { location: 42, ..Default::default() };
         let ev = Event { action: 9999, actor_key: 0, data: [0, 0] };
-        assert_eq!(apply_event(base, &ev), base);
+        assert_eq!(apply_event(base, &ev, None), base);
+    }
+
+    #[test]
+    fn live_actor_deals_damage() {
+        let ev = Event { action: ACTION_DAMAGE, actor_key: 0, data: pack_damage(3) };
+        assert_eq!(hp(&apply_event(with_hp(5), &ev, Some(&with_hp(1)))), 2);
+    }
+
+    #[test]
+    fn dead_or_absent_actor_deals_nothing() {
+        let ev = Event { action: ACTION_DAMAGE, actor_key: 0, data: pack_damage(3) };
+        // Dead actor (hp 0) → blow voided (the priority-DAG preemption).
+        assert_eq!(hp(&apply_event(with_hp(5), &ev, Some(&with_hp(0)))), 5);
+        // Absent (unresolved/missing) actor also voids.
+        assert_eq!(hp(&apply_event(with_hp(5), &ev, None)), 5);
+    }
+
+    #[test]
+    fn damage_saturates_at_zero() {
+        let ev = Event { action: ACTION_DAMAGE, actor_key: 0, data: pack_damage(10) };
+        assert_eq!(hp(&apply_event(with_hp(3), &ev, Some(&with_hp(1)))), 0);
     }
 }

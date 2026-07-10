@@ -18,7 +18,8 @@ pub mod priority;
 pub mod read_rule;
 
 pub use domain::{
-    apply_event, pack_move, resolve_events, EntityState, Event, ACTION_DAMAGE, ACTION_MOVE,
+    action_reads_actor, apply_event, hp, pack_damage, pack_move, resolve_events, EntityState,
+    Event, ACTION_DAMAGE, ACTION_MOVE,
 };
 pub use priority::actor_read_tic;
 pub use read_rule::resolved_through;

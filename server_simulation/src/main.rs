@@ -19,7 +19,9 @@ use std::time::Duration;
 
 use spacetimedb_sdk::{DbContext, Table as _};
 
-use resonantdust_tick::{resolve_events, EntityState, Event};
+use resonantdust_tick::{
+    action_reads_actor, actor_read_tic, resolve_events, resolved_through, EntityState, Event,
+};
 
 mod bindings;
 use bindings::object_shard::{
@@ -100,26 +102,48 @@ fn work_pass(conn: &DbConnection, worker_id: u16) {
     }
 }
 
-/// Compose `(entity, tic)`'s events onto the entity's prior resolved state and commit.
-fn resolve_one(conn: &DbConnection, worker_id: u16, entity: u64, row: &StateLog) {
-    // Base = the entity's most recent resolved state strictly below this tic (its state
-    // at tic-1, idle-carried). Computed authoritatively here — the pending row's carried
-    // fields can predate a just-resolved earlier tic.
-    let base = conn
-        .db()
+/// Project a `state_log` row's game fields into an [`EntityState`].
+fn entity_state(r: &StateLog) -> EntityState {
+    EntityState {
+        kind: r.kind,
+        zone_id: r.zone_id,
+        location: r.location,
+        rotation: r.rotation,
+        offset: r.offset,
+        data: [r.data_0, r.data_1],
+    }
+}
+
+/// The entity's most recent resolved (`dirty==0`) state at or below `tic` — its
+/// idle-carried value at that tic. `None` if it has never resolved that far down
+/// (an absent actor, which reads as dead).
+fn resolved_at(conn: &DbConnection, entity: u64, tic: u32) -> Option<EntityState> {
+    conn.db()
         .state_log()
         .iter()
-        .filter(|r| r.entity_key == entity && r.dirty == 0 && r.tic < row.tic)
+        .filter(|r| r.entity_key == entity && r.dirty == 0 && r.tic <= tic)
         .max_by_key(|r| r.tic)
-        .map(|r| EntityState {
-            kind: r.kind,
-            zone_id: r.zone_id,
-            location: r.location,
-            rotation: r.rotation,
-            offset: r.offset,
-            data: [r.data_0, r.data_1],
-        })
-        .unwrap_or_default();
+        .map(|r| entity_state(&r))
+}
+
+/// The entity's lowest pending (`dirty>0`) tic, or `None` if it has none. The read
+/// rule's input: an entity is resolved through `T` iff it has no pending row `≤ T`.
+fn min_pending_tic(conn: &DbConnection, entity: u64) -> Option<u32> {
+    conn.db()
+        .state_log()
+        .iter()
+        .filter(|r| r.entity_key == entity && r.dirty > 0)
+        .map(|r| r.tic)
+        .min()
+}
+
+/// Try to resolve `(entity, tic)`. Gathers each actor-reading event's actor state via
+/// the **read-rule + priority-DAG**; if any required actor isn't resolved through its
+/// read tic yet, returns without committing (the claim is held; a later pass retries
+/// once the actor's row flips to `dirty==0`). Returns `true` if it resolved.
+fn resolve_one(conn: &DbConnection, worker_id: u16, entity: u64, row: &StateLog) -> bool {
+    // Base = the entity's most recent resolved state strictly below this tic.
+    let base = resolved_at(conn, entity, row.tic.saturating_sub(1)).unwrap_or_default();
 
     // The tic's active events targeting this entity, ordered by event_reference.
     let mut evs: Vec<_> = conn
@@ -129,16 +153,27 @@ fn resolve_one(conn: &DbConnection, worker_id: u16, entity: u64, row: &StateLog)
         .filter(|e| e.target_key == entity && e.event_tic == row.tic && e.status == 0)
         .collect();
     evs.sort_by_key(|e| e.event_reference);
-    let events: Vec<Event> = evs
-        .iter()
-        .map(|e| Event {
-            action: e.action,
-            actor_key: e.actor_key,
-            data: [e.data_0, e.data_1],
-        })
-        .collect();
 
-    let out = resolve_events(base, &events);
+    // Pair each event with its actor's resolved state, applying the read-rule.
+    let mut paired: Vec<(Event, Option<EntityState>)> = Vec::with_capacity(evs.len());
+    for e in &evs {
+        let ev = Event { action: e.action, actor_key: e.actor_key, data: [e.data_0, e.data_1] };
+        let actor = if action_reads_actor(ev.action) {
+            // priority-DAG: read the actor at `tic` if it ranks below the target, else
+            // at `tic-1` (the back-edge that keeps cycles deadlock-free).
+            let read_tic = actor_read_tic(ev.actor_key, entity, row.tic);
+            // read-rule: block unless the actor is resolved through `read_tic`.
+            if !resolved_through(min_pending_tic(conn, ev.actor_key), read_tic) {
+                return false; // an actor isn't ready — leave the whole resolution parked
+            }
+            resolved_at(conn, ev.actor_key, read_tic)
+        } else {
+            None
+        };
+        paired.push((ev, actor));
+    }
+
+    let out = resolve_events(base, &paired);
     match conn.reducers().resolve(
         worker_id,
         entity,
@@ -151,7 +186,13 @@ fn resolve_one(conn: &DbConnection, worker_id: u16, entity: u64, row: &StateLog)
         out.data[0],
         out.data[1],
     ) {
-        Ok(()) => tracing::info!(entity, tic = row.tic, loc = out.location, "resolved"),
-        Err(err) => tracing::warn!(%err, entity, tic = row.tic, "resolve failed"),
+        Ok(()) => {
+            tracing::info!(entity, tic = row.tic, loc = out.location, hp = out.data[0], "resolved");
+            true
+        }
+        Err(err) => {
+            tracing::warn!(%err, entity, tic = row.tic, "resolve failed");
+            false
+        }
     }
 }
