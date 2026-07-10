@@ -42,39 +42,72 @@ async fn main() {
         .init();
 
     let uri = env_or("ST_URI", "http://127.0.0.1:3000");
-    let db = env_or("OBJECT_DB", "resonantdust-dev-object-0");
     let worker_id: u16 = env_or("WORKER_ID", "1").parse().unwrap_or(1);
     let poll = Duration::from_millis(env_or("POLL_MS", "50").parse().unwrap_or(50));
     assert!(worker_id != 0, "WORKER_ID must be non-zero (0 = unclaimed sentinel)");
-    tracing::info!(%uri, %db, worker_id, "server_simulation starting");
 
-    let conn = DbConnection::builder()
-        .with_uri(&uri)
-        .with_database_name(&db)
-        .on_connect(|_ctx, identity, _token| tracing::info!(%identity, "connected"))
-        .on_connect_error(|_ctx, err| tracing::error!(%err, "connect error"))
-        .on_disconnect(|_ctx, err| match err {
-            Some(err) => tracing::warn!(%err, "disconnected"),
-            None => tracing::info!("disconnected"),
-        })
-        .build()
-        .expect("build connection");
-    let conn = Arc::new(conn);
-    conn.run_threaded();
+    // The shard set this worker connects to, `shard_id → db_name`. It resolves work on
+    // every shard here, and routes an actor read to the actor's shard by the event's
+    // `actor_shard_id` (falling back to the target's own shard). One shard = the A2
+    // same-shard case; two or more = the C2 cross-shard case.
+    let shard_cfg = parse_shards();
+    tracing::info!(%uri, worker_id, shards = shard_cfg.len(), "server_simulation starting");
 
-    conn.subscription_builder()
-        .on_applied(|_ctx| tracing::info!("subscription applied"))
-        .subscribe(["SELECT * FROM state_log", "SELECT * FROM event_log"]);
+    let mut shards: HashMap<u16, Arc<DbConnection>> = HashMap::new();
+    for (id, db) in &shard_cfg {
+        let conn = DbConnection::builder()
+            .with_uri(&uri)
+            .with_database_name(db)
+            .on_connect({
+                let db = db.clone();
+                let sid = *id;
+                move |_ctx, identity, _token| tracing::info!(%identity, %db, shard = sid, "connected")
+            })
+            .on_connect_error(|_ctx, err| tracing::error!(%err, "connect error"))
+            .on_disconnect(|_ctx, err| match err {
+                Some(err) => tracing::warn!(%err, "disconnected"),
+                None => tracing::info!("disconnected"),
+            })
+            .build()
+            .expect("build connection");
+        let conn = Arc::new(conn);
+        conn.run_threaded();
+        conn.subscription_builder()
+            .on_applied({
+                let db = db.clone();
+                move |_ctx| tracing::info!(%db, "subscription applied")
+            })
+            .subscribe(["SELECT * FROM state_log", "SELECT * FROM event_log"]);
+        shards.insert(*id, conn);
+    }
 
     let mut ticker = tokio::time::interval(poll);
     loop {
         ticker.tick().await;
-        work_pass(&conn, worker_id);
+        for conn in shards.values() {
+            work_pass(conn, &shards, worker_id);
+        }
     }
 }
 
-/// One resolution pass over the current subscription snapshot.
-fn work_pass(conn: &DbConnection, worker_id: u16) {
+/// Parse the shard set from `SHARDS="1=db_a,2=db_b"` (`shard_id=db_name`). Falls back to
+/// a single shard `1=<OBJECT_DB>` — the A2 same-shard configuration.
+fn parse_shards() -> Vec<(u16, String)> {
+    let raw = std::env::var("SHARDS").unwrap_or_default();
+    if raw.trim().is_empty() {
+        return vec![(1, env_or("OBJECT_DB", "resonantdust-dev-object-0"))];
+    }
+    raw.split(',')
+        .filter_map(|part| {
+            let (id, db) = part.split_once('=')?;
+            Some((id.trim().parse().ok()?, db.trim().to_string()))
+        })
+        .collect()
+}
+
+/// One resolution pass over one home shard's snapshot. `shards` is the full set, used
+/// to route cross-shard actor reads.
+fn work_pass(conn: &DbConnection, shards: &HashMap<u16, Arc<DbConnection>>, worker_id: u16) {
     // Lowest pending (dirty>0) tic per entity — resolve an entity's tics in order.
     let mut lowest: HashMap<u64, StateLog> = HashMap::new();
     for r in conn.db().state_log().iter() {
@@ -96,7 +129,7 @@ fn work_pass(conn: &DbConnection, worker_id: u16) {
                 tracing::warn!(%err, entity, tic = row.tic, "claim failed");
             }
         } else if row.server_id == worker_id {
-            resolve_one(conn, worker_id, entity, &row);
+            resolve_one(conn, shards, worker_id, entity, &row);
         }
         // else: owned by another live worker — skip (A4 handles eviction).
     }
@@ -141,7 +174,13 @@ fn min_pending_tic(conn: &DbConnection, entity: u64) -> Option<u32> {
 /// the **read-rule + priority-DAG**; if any required actor isn't resolved through its
 /// read tic yet, returns without committing (the claim is held; a later pass retries
 /// once the actor's row flips to `dirty==0`). Returns `true` if it resolved.
-fn resolve_one(conn: &DbConnection, worker_id: u16, entity: u64, row: &StateLog) -> bool {
+fn resolve_one(
+    conn: &DbConnection,
+    shards: &HashMap<u16, Arc<DbConnection>>,
+    worker_id: u16,
+    entity: u64,
+    row: &StateLog,
+) -> bool {
     // Base = the entity's most recent resolved state strictly below this tic.
     let base = resolved_at(conn, entity, row.tic.saturating_sub(1)).unwrap_or_default();
 
@@ -159,14 +198,19 @@ fn resolve_one(conn: &DbConnection, worker_id: u16, entity: u64, row: &StateLog)
     for e in &evs {
         let ev = Event { action: e.action, actor_key: e.actor_key, data: [e.data_0, e.data_1] };
         let actor = if action_reads_actor(ev.action) {
+            // Route the actor read to its shard by `actor_shard_id` (fall back to this
+            // home shard for a same-shard/unset actor). THIS is the cross-shard step: a
+            // different shard's connection, read + blocked-on exactly like the local one.
+            let actor_conn: &DbConnection =
+                shards.get(&e.actor_shard_id).map_or(conn, |c| c.as_ref());
             // priority-DAG: read the actor at `tic` if it ranks below the target, else
             // at `tic-1` (the back-edge that keeps cycles deadlock-free).
             let read_tic = actor_read_tic(ev.actor_key, entity, row.tic);
             // read-rule: block unless the actor is resolved through `read_tic`.
-            if !resolved_through(min_pending_tic(conn, ev.actor_key), read_tic) {
+            if !resolved_through(min_pending_tic(actor_conn, ev.actor_key), read_tic) {
                 return false; // an actor isn't ready — leave the whole resolution parked
             }
-            resolved_at(conn, ev.actor_key, read_tic)
+            resolved_at(actor_conn, ev.actor_key, read_tic)
         } else {
             None
         };

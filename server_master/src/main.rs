@@ -31,56 +31,77 @@ async fn main() {
         .init();
 
     let uri = env_or("ST_URI", "http://127.0.0.1:3000");
-    let db = env_or("OBJECT_DB", "resonantdust-dev-object-0");
     let tic_hz: f64 = env_or("TIC_HZ", "2").parse().unwrap_or(2.0);
     let period = Duration::from_secs_f64(1.0 / tic_hz);
     // Run the GC sweep every this many tics (default 20 → ~10s at 2 Hz).
     let gc_every: u32 = env_or("GC_EVERY", "20").parse().unwrap_or(20);
-    tracing::info!(%uri, %db, tic_hz, gc_every, "server_master starting");
+    // Every shard this master drives, kept in LOCKSTEP so a tic number means the same
+    // logical tic on all of them — the precondition for cross-shard reads (an actor on
+    // shard B read at `tic T` by a target on shard A). `SHARDS="1=db_a,2=db_b"`; falls
+    // back to a single `1=<OBJECT_DB>`. (Lockstep assumes the shards start aligned;
+    // catch-up for a lagging shard is future work — reset a shard to realign.)
+    let shard_cfg = parse_shards();
+    tracing::info!(%uri, tic_hz, gc_every, shards = shard_cfg.len(), "server_master starting");
 
-    let conn = DbConnection::builder()
-        .with_uri(&uri)
-        .with_database_name(&db)
-        .on_connect(|_ctx, identity, _token| tracing::info!(%identity, "connected"))
-        .on_connect_error(|_ctx, err| tracing::error!(%err, "connect error"))
-        .on_disconnect(|_ctx, err| match err {
-            Some(err) => tracing::warn!(%err, "disconnected"),
-            None => tracing::info!("disconnected"),
-        })
-        .build()
-        .expect("build connection");
-    let conn = Arc::new(conn);
-    conn.run_threaded();
-
-    // Watch the authoritative tic so each bump targets exactly `master_tic + 1`.
-    conn.subscription_builder()
-        .on_applied(|_ctx| tracing::info!("tic_meta subscription applied"))
-        .subscribe(["SELECT * FROM tic_meta"]);
+    let mut shards: Vec<Arc<DbConnection>> = Vec::new();
+    for (_, db) in &shard_cfg {
+        let conn = DbConnection::builder()
+            .with_uri(&uri)
+            .with_database_name(db)
+            .on_connect({
+                let db = db.clone();
+                move |_ctx, identity, _token| tracing::info!(%identity, %db, "connected")
+            })
+            .on_connect_error(|_ctx, err| tracing::error!(%err, "connect error"))
+            .on_disconnect(|_ctx, err| match err {
+                Some(err) => tracing::warn!(%err, "disconnected"),
+                None => tracing::info!("disconnected"),
+            })
+            .build()
+            .expect("build connection");
+        let conn = Arc::new(conn);
+        conn.run_threaded();
+        conn.subscription_builder()
+            .subscribe(["SELECT * FROM tic_meta"]);
+        shards.push(conn);
+    }
 
     let mut ticker = tokio::time::interval(period);
     let mut since_gc: u32 = 0;
-    // A stall (worker/backpressure) would be handled by a runaway guard here later.
     loop {
         ticker.tick().await;
-        let cur = conn
-            .db()
-            .tic_meta()
-            .iter()
-            .map(|m| m.master_tic)
-            .max()
-            .unwrap_or(0);
-        match conn.reducers().bump(cur + 1) {
-            Ok(()) => tracing::debug!(to = cur + 1, "bump"),
-            Err(err) => tracing::warn!(%err, "bump failed"),
+        for conn in &shards {
+            let cur = conn
+                .db()
+                .tic_meta()
+                .iter()
+                .map(|m| m.master_tic)
+                .max()
+                .unwrap_or(0);
+            if let Err(err) = conn.reducers().bump(cur + 1) {
+                tracing::warn!(%err, to = cur + 1, "bump failed");
+            }
         }
         since_gc += 1;
         if since_gc >= gc_every {
             since_gc = 0;
-            if let Err(err) = conn.reducers().tick_gc() {
-                tracing::warn!(%err, "tick_gc failed");
-            } else {
-                tracing::debug!("tick_gc");
+            for conn in &shards {
+                let _ = conn.reducers().tick_gc();
             }
         }
     }
+}
+
+/// Parse the shard set from `SHARDS="1=db_a,2=db_b"`; fall back to `1=<OBJECT_DB>`.
+fn parse_shards() -> Vec<(u16, String)> {
+    let raw = std::env::var("SHARDS").unwrap_or_default();
+    if raw.trim().is_empty() {
+        return vec![(1, env_or("OBJECT_DB", "resonantdust-dev-object-0"))];
+    }
+    raw.split(',')
+        .filter_map(|part| {
+            let (id, db) = part.split_once('=')?;
+            Some((id.trim().parse().ok()?, db.trim().to_string()))
+        })
+        .collect()
 }
