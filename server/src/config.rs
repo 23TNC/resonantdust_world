@@ -179,28 +179,18 @@ impl ServerConfig {
         format!("resonantdust-{}-players-0", self.env)
     }
 
-    /// Fallback zone-shard database name for a region whose `region_shards` entry
-    /// is missing — single-shard deployments run with no index rows seeded, so an
-    /// unrouted region defaults to zone shard 0 on *this* SpacetimeDB server.
-    /// Mirrors the old gateway's "default to shard 0" posture.
+    /// Fallback shard database name for a region whose `region_shards` entry is
+    /// missing — single-shard deployments run with no index rows seeded, so an
+    /// unrouted region defaults to shard 0 on *this* SpacetimeDB server. Mirrors
+    /// the old gateway's "default to shard 0" posture.
     ///
-    /// The `zone_shard` *module* deploys to the `zone` db family
-    /// (`rd_db_for zone 0`): SpacetimeDB db names are DNS-like and reject the
-    /// underscore in `zone_shard`, so the db is named `zone-0` (matching
-    /// `bin/rd`'s `RD_DB`). The module crate keeps its descriptive name.
+    /// The unified `shard` module deploys to the `zone` db family
+    /// (`rd_db_for zone 0`): SpacetimeDB db names are DNS-like, so the db is named
+    /// `zone-0` (matching `bin/rd`'s `RD_DB`). A single shard now carries both a
+    /// zone's terrain and its loose objects through one tick pipeline, so there is
+    /// no separate object-shard db family anymore.
     pub fn default_shard_db(&self) -> String {
         format!("resonantdust-{}-zone-0", self.env)
-    }
-
-    /// Fallback object-shard database name — the mobile store holding a region's
-    /// loose things (`object_shard` module). The sibling of [`default_shard_db`]
-    /// for the second shard class: single-shard deployments run one object shard,
-    /// `resonantdust-<env>-object-0`. Object placement is presence-driven rather
-    /// than index-routed, so there's no `region_shards`-style map yet — every
-    /// region resolves to this default object shard until multi-shard placement
-    /// lands (see docs/object-shard.md).
-    pub fn default_object_db(&self) -> String {
-        format!("resonantdust-{}-object-0", self.env)
     }
 }
 

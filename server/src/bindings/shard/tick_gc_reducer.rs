@@ -12,64 +12,58 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct RemovePawnArgs {
-    pub object_id: u64,
-}
+pub(super) struct TickGcArgs {
+    }
 
-impl From<RemovePawnArgs> for super::Reducer {
-    fn from(args: RemovePawnArgs) -> Self {
-        Self::RemovePawn {
-            object_id: args.object_id,
-}
+impl From<TickGcArgs> for super::Reducer {
+    fn from(args: TickGcArgs) -> Self {
+        Self::TickGc
 }
 }
 
-impl __sdk::InModule for RemovePawnArgs {
+impl __sdk::InModule for TickGcArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `remove_pawn`.
+/// Extension trait for access to the reducer `tick_gc`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait remove_pawn {
-    /// Request that the remote module invoke the reducer `remove_pawn` to run as soon as possible.
+pub trait tick_gc {
+    /// Request that the remote module invoke the reducer `tick_gc` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`remove_pawn:remove_pawn_then`] to run a callback after the reducer completes.
-    fn remove_pawn(&self, object_id: u64,
-) -> __sdk::Result<()> {
-        self.remove_pawn_then(object_id,  |_, _| {})
+    /// /// Use [`tick_gc:tick_gc_then`] to run a callback after the reducer completes.
+    fn tick_gc(&self, ) -> __sdk::Result<()> {
+        self.tick_gc_then( |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `remove_pawn` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `tick_gc` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn remove_pawn_then(
+    fn tick_gc_then(
         &self,
-        object_id: u64,
-
+        
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()>;
 }
 
-impl remove_pawn for super::RemoteReducers {
-    fn remove_pawn_then(
+impl tick_gc for super::RemoteReducers {
+    fn tick_gc_then(
         &self,
-        object_id: u64,
-
+        
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(RemovePawnArgs { object_id,  }, callback)
+        self.imp.invoke_reducer_with_callback(TickGcArgs {  }, callback)
     }
 }
 

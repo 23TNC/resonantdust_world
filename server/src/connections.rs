@@ -99,11 +99,9 @@ macro_rules! connector {
 
 connector!(connect_index, index);
 connector!(connect_players, players);
-// The data-shard connectors: `connect_shard` → the `zone_shard` module (terrain +
-// affixed things), `connect_object_shard` → the `object_shard` module (loose
-// things). Both are per-endpoint, cached for the client's lifetime.
-connector!(connect_shard, zone_shard);
-connector!(connect_object_shard, object_shard);
+// The unified data-shard connector → the `shard` module (the tick pipeline).
+// Per-endpoint, cached for the client's lifetime.
+connector!(connect_shard, shard);
 
 /// Await an upstream's readiness oneshot with the connect timeout. `true` once
 /// the connection's `on_connect` fired; `false` on timeout (or a dropped sender,

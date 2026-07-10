@@ -2,10 +2,11 @@
 //!
 //! This is the server's `:data`-side use of the DSL: load the content corpus
 //! once at startup, then answer "what does a fresh zone look like?" as the packed
-//! `tiles` (`Vec<u16>`) and `things` (`Vec<u32>`) the shard's `seed_cold_zone`
-//! stores. The gateway owns generation because the DSL is pure Rust it links as
-//! an rlib and it already reads `content/` off disk — a SpacetimeDB module is
-//! wasm with neither, so it just stores what we hand it.
+//! `tiles` (`Vec<u16>`) and `things` (`Vec<u32>`) a zone's baseline is seeded
+//! from. The edge owns generation because the DSL is pure Rust it links as an
+//! rlib and it already reads `content/` off disk — a SpacetimeDB module is wasm
+//! with neither, so it just stores what we hand it. (The cold-zone seeding path
+//! itself is a follow-up in the merged pipeline — see docs/gaps.md.)
 //!
 //! Generation is per tile and independent. For each cell we sample N **biome
 //! dimensions** (temperature / humidity / elevation) from noise at the cell's

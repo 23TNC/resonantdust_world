@@ -28,28 +28,20 @@ pub enum ClientMsg {
         name: String,
     },
     /// Subscribe to a single zone's live data. The server resolves
-    /// `zone_id → region → shard` via the index, connects to that shard's
-    /// SpacetimeDB if it hasn't already, and streams the zone's `cold_zones` +
-    /// `hot_*` rows back as [`ServerMsg::Row`]. `sid` is a client-chosen
-    /// subscription id used to [`Unsub`](ClientMsg::Unsub) later.
+    /// `zone_id → region → shard` via the index, connects to that shard if it hasn't
+    /// already, and streams the zone's `state` rows (the tick pipeline's entities) back
+    /// as [`ServerMsg::Row`]. `sid` is a client-chosen subscription id used to
+    /// [`Unsub`](ClientMsg::Unsub) later.
     SubZone { sid: u32, zone_id: u32 },
     /// Drop a subscription previously opened with the same `sid`.
     Unsub { sid: u32 },
-    /// Release the thing affixed at `(zone_id, location)` out into the object
-    /// shard (the Prison-Architect release). The server drives the transfer saga:
-    /// `begin_release` on the zone shard → `receive` on the object shard → back to
-    /// `ack_release`. Requires the zone to be subscribed (both shard upstreams
-    /// live). No reply frame — the effect arrives as the affixed thing vanishing
-    /// and a `free_thing` appearing on the client's existing subscriptions.
-    Release { zone_id: u32, location: u8 },
     /// Clock-sync probe: the client's wall clock at send. The server replies with
     /// [`ServerMsg::Pong`], echoing `client_send_ms` and adding its own clock, so
     /// the client can estimate the offset from the round-trip.
     Ping { client_send_ms: u64 },
-    /// Move the (debug) controllable thing toward global tile `(tile_x, tile_y)`.
-    /// The server relays to the object shard's `move_debug_mover`, which pathfinds
-    /// and commits the path; no reply frame (the effect arrives on the free-thing
-    /// subscription).
+    /// Move the player's own object toward global tile `(tile_x, tile_y)`. The server
+    /// appends an `ACTION_MOVE` event to the shard's tick pipeline; no reply frame (the
+    /// effect arrives as a `state` row on the zone subscription).
     Move { tile_x: i32, tile_y: i32 },
 }
 
@@ -94,64 +86,18 @@ pub enum RowOp {
     Delete,
 }
 
-/// A relayed shard row, tagged by its source table. These mirror the generated
-/// SpacetimeDB row types field-for-field; the generated types derive *sats*
-/// `Serialize` (not serde), so we copy into these plain serde structs rather
-/// than pull in the sats→serde bridge. Keep them in sync with the `shard`
-/// module's table definitions.
+/// A relayed shard row, tagged by its source table. Mirrors the generated SpacetimeDB
+/// row types field-for-field; the generated types derive *sats* `Serialize` (not serde),
+/// so we copy into these plain serde structs. Keep in sync with the `shard` module.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "table", rename_all = "snake_case")]
 pub enum RowData {
-    /// The settled baseline for a zone (`zone_shard::cold_zones`).
-    ColdZone(ColdZoneRow),
-    /// A changed terrain cell overlaying cold (`zone_shard::hot_tiles`).
-    HotTile(HotCellRow),
-    /// A changed thing cell (`zone_shard::hot_things`).
-    HotThing(HotCellRow),
-    /// A loose thing from the object shard (`object_shard::free_things`). Carries
-    /// a stable `object_id` and a sub-tile `offset`; the client overlays these on
-    /// top of the zone's cold+hot things.
-    FreeThing(FreeThingRow),
-    /// A resolved entity from the object shard's tick pipeline (`object_shard::state`).
-    /// The client-visible present per entity; drives the moving demo circles.
+    /// A resolved entity from the shard's tick pipeline (`shard::state`) — the
+    /// client-visible present per entity in a subscribed zone.
     State(StateRow),
 }
 
-/// Mirror of `shard::cold_zone_type::ColdZone`.
-#[derive(Debug, Clone, Serialize)]
-pub struct ColdZoneRow {
-    pub valid_at: u64,
-    pub zone_id: u32,
-    pub tiles: Vec<u16>,
-    pub things: Vec<u32>,
-}
-
-/// Mirror of the two identical hot layer rows
-/// (`zone_shard::{hot_tile,hot_thing}_type`).
-#[derive(Debug, Clone, Serialize)]
-pub struct HotCellRow {
-    pub valid_at: u64,
-    pub zone_id: u32,
-    pub location: u8,
-    pub rotation: u8,
-    pub id: u16,
-}
-
-/// Mirror of `object_shard::free_thing_type::FreeThing`. Like a hot thing plus a
-/// stable `object_id` instance handle and a `u8` sub-tile `offset`
-/// (`resonantdust_codec::packed`: `x_off:4 | y_off:4`).
-#[derive(Debug, Clone, Serialize)]
-pub struct FreeThingRow {
-    pub valid_at: u64,
-    pub object_id: u64,
-    pub zone_id: u32,
-    pub location: u8,
-    pub rotation: u8,
-    pub id: u16,
-    pub offset: u8,
-}
-
-/// Mirror of `object_shard::state_type::State` — one resolved entity. `entity_key`
+/// Mirror of `shard::state_type::State` — one resolved entity. `entity_key`
 /// carries the tagged object/zone id; `tic` is how current this entity is (for later
 /// staleness display). The client identifies demo objects by the type in the id.
 #[derive(Debug, Clone, Serialize)]

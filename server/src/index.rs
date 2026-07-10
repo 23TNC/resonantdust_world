@@ -22,7 +22,7 @@ use spacetimedb_sdk::{DbContext, Table};
 // and re-exported here, so the native server and the `index` SpacetimeDB module
 // resolve regions with the same code (they used to carry duplicated masks with a
 // "keep the two in lockstep" comment).
-pub use resonantdust_codec::packed::{region_of, REGION_ID_MASK};
+pub use resonantdust_codec::packed::region_of;
 
 /// Where a shard physically lives: the SpacetimeDB server URL plus the database
 /// name on it holding the shard's zones. This is what a shard upstream connects
@@ -34,37 +34,12 @@ pub struct ShardEndpoint {
     pub db_name: String,
 }
 
-/// Resolve the shard endpoint holding `zone_id`'s region from the index cache.
-///
-/// Returns `None` only when the region is assigned to a `shard_id` that has no
-/// `shards` row yet (a genuinely broken/incomplete routing table — the caller
-/// surfaces an error). A region with *no* `region_shards` entry is not an error:
-/// single-shard deployments seed no index rows, so an unrouted region falls back
-/// to the env's default shard on the control-plane server — see
-/// [`resolve_zone_or_default`].
-pub fn resolve_zone(conn: &IndexConnection, zone_id: u32) -> Option<ShardEndpoint> {
-    let region_id = region_of(zone_id);
-    let shard_id = conn
-        .db()
-        .region_shards()
-        .iter()
-        .find(|r| r.region_id == region_id)?
-        .shard_id;
-    let shard = conn
-        .db()
-        .shards()
-        .iter()
-        .find(|s| s.shard_id == shard_id)?;
-    Some(ShardEndpoint {
-        url: shard.url,
-        db_name: shard.db_name,
-    })
-}
-
-/// [`resolve_zone`] with the single-shard fallback applied: an unrouted region
-/// (no `region_shards` entry) maps to the env's default shard DB on the
-/// control-plane server. Returns `Err` only when the region *is* routed but its
-/// shard endpoint row is missing — a partial index the server can't act on.
+/// Resolve the shard endpoint holding `zone_id`'s region, with the single-shard
+/// fallback applied: an unrouted region (no `region_shards` entry) maps to the
+/// env's default shard DB on the control-plane server — single-shard deployments
+/// seed no index rows, so this is the common path. Returns `Err` only when the
+/// region *is* routed but its shard endpoint row is missing — a partial index the
+/// server can't act on.
 pub fn resolve_zone_or_default(
     conn: &IndexConnection,
     cfg: &ServerConfig,
@@ -91,20 +66,5 @@ pub fn resolve_zone_or_default(
             url: cfg.uri.clone(),
             db_name: cfg.default_shard_db(),
         }),
-    }
-}
-
-/// The object-shard endpoint holding a zone's loose things.
-///
-/// Object placement is *presence-driven*, not index-routed: a region's loose
-/// things can span several object shards, chosen at release time, and a gate
-/// discovers where they live by reading each object shard's `presence` table
-/// (see docs/object-shard.md). That multi-shard routing is a follow-up; for now
-/// every zone resolves to the env's single default object shard on the
-/// control-plane server — the sibling of [`resolve_zone_or_default`]'s fallback.
-pub fn resolve_object_or_default(_zone_id: u32, cfg: &ServerConfig) -> ShardEndpoint {
-    ShardEndpoint {
-        url: cfg.uri.clone(),
-        db_name: cfg.default_object_db(),
     }
 }

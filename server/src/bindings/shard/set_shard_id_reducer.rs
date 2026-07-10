@@ -12,67 +12,47 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct SetHotArgs {
-    pub now_ms: u64,
-    pub layer: u8,
-    pub zone_id: u32,
-    pub location: u8,
-    pub rotation: u8,
-    pub id: u16,
+pub(super) struct SetShardIdArgs {
+    pub shard_id: u16,
 }
 
-impl From<SetHotArgs> for super::Reducer {
-    fn from(args: SetHotArgs) -> Self {
-        Self::SetHot {
-            now_ms: args.now_ms,
-            layer: args.layer,
-            zone_id: args.zone_id,
-            location: args.location,
-            rotation: args.rotation,
-            id: args.id,
+impl From<SetShardIdArgs> for super::Reducer {
+    fn from(args: SetShardIdArgs) -> Self {
+        Self::SetShardId {
+            shard_id: args.shard_id,
 }
 }
 }
 
-impl __sdk::InModule for SetHotArgs {
+impl __sdk::InModule for SetShardIdArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `set_hot`.
+/// Extension trait for access to the reducer `set_shard_id`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait set_hot {
-    /// Request that the remote module invoke the reducer `set_hot` to run as soon as possible.
+pub trait set_shard_id {
+    /// Request that the remote module invoke the reducer `set_shard_id` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`set_hot:set_hot_then`] to run a callback after the reducer completes.
-    fn set_hot(&self, now_ms: u64,
-layer: u8,
-zone_id: u32,
-location: u8,
-rotation: u8,
-id: u16,
+    /// /// Use [`set_shard_id:set_shard_id_then`] to run a callback after the reducer completes.
+    fn set_shard_id(&self, shard_id: u16,
 ) -> __sdk::Result<()> {
-        self.set_hot_then(now_ms, layer, zone_id, location, rotation, id,  |_, _| {})
+        self.set_shard_id_then(shard_id,  |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `set_hot` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `set_shard_id` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn set_hot_then(
+    fn set_shard_id_then(
         &self,
-        now_ms: u64,
-layer: u8,
-zone_id: u32,
-location: u8,
-rotation: u8,
-id: u16,
+        shard_id: u16,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -80,21 +60,16 @@ id: u16,
     ) -> __sdk::Result<()>;
 }
 
-impl set_hot for super::RemoteReducers {
-    fn set_hot_then(
+impl set_shard_id for super::RemoteReducers {
+    fn set_shard_id_then(
         &self,
-        now_ms: u64,
-layer: u8,
-zone_id: u32,
-location: u8,
-rotation: u8,
-id: u16,
+        shard_id: u16,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(SetHotArgs { now_ms, layer, zone_id, location, rotation, id,  }, callback)
+        self.imp.invoke_reducer_with_callback(SetShardIdArgs { shard_id,  }, callback)
     }
 }
 

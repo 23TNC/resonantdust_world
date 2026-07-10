@@ -12,67 +12,75 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct CreateFreeThingArgs {
-    pub now_ms: u64,
+pub(super) struct SpawnObjectArgs {
+    pub obj_type: u8,
+    pub kind: u16,
     pub zone_id: u32,
     pub location: u8,
     pub rotation: u8,
-    pub id: u16,
     pub offset: u8,
+    pub data_0: u64,
+    pub data_1: u64,
 }
 
-impl From<CreateFreeThingArgs> for super::Reducer {
-    fn from(args: CreateFreeThingArgs) -> Self {
-        Self::CreateFreeThing {
-            now_ms: args.now_ms,
+impl From<SpawnObjectArgs> for super::Reducer {
+    fn from(args: SpawnObjectArgs) -> Self {
+        Self::SpawnObject {
+            obj_type: args.obj_type,
+            kind: args.kind,
             zone_id: args.zone_id,
             location: args.location,
             rotation: args.rotation,
-            id: args.id,
             offset: args.offset,
+            data_0: args.data_0,
+            data_1: args.data_1,
 }
 }
 }
 
-impl __sdk::InModule for CreateFreeThingArgs {
+impl __sdk::InModule for SpawnObjectArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `create_free_thing`.
+/// Extension trait for access to the reducer `spawn_object`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait create_free_thing {
-    /// Request that the remote module invoke the reducer `create_free_thing` to run as soon as possible.
+pub trait spawn_object {
+    /// Request that the remote module invoke the reducer `spawn_object` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`create_free_thing:create_free_thing_then`] to run a callback after the reducer completes.
-    fn create_free_thing(&self, now_ms: u64,
+    /// /// Use [`spawn_object:spawn_object_then`] to run a callback after the reducer completes.
+    fn spawn_object(&self, obj_type: u8,
+kind: u16,
 zone_id: u32,
 location: u8,
 rotation: u8,
-id: u16,
 offset: u8,
+data_0: u64,
+data_1: u64,
 ) -> __sdk::Result<()> {
-        self.create_free_thing_then(now_ms, zone_id, location, rotation, id, offset,  |_, _| {})
+        self.spawn_object_then(obj_type, kind, zone_id, location, rotation, offset, data_0, data_1,  |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `create_free_thing` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `spawn_object` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn create_free_thing_then(
+    fn spawn_object_then(
         &self,
-        now_ms: u64,
+        obj_type: u8,
+kind: u16,
 zone_id: u32,
 location: u8,
 rotation: u8,
-id: u16,
 offset: u8,
+data_0: u64,
+data_1: u64,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -80,21 +88,23 @@ offset: u8,
     ) -> __sdk::Result<()>;
 }
 
-impl create_free_thing for super::RemoteReducers {
-    fn create_free_thing_then(
+impl spawn_object for super::RemoteReducers {
+    fn spawn_object_then(
         &self,
-        now_ms: u64,
+        obj_type: u8,
+kind: u16,
 zone_id: u32,
 location: u8,
 rotation: u8,
-id: u16,
 offset: u8,
+data_0: u64,
+data_1: u64,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(CreateFreeThingArgs { now_ms, zone_id, location, rotation, id, offset,  }, callback)
+        self.imp.invoke_reducer_with_callback(SpawnObjectArgs { obj_type, kind, zone_id, location, rotation, offset, data_0, data_1,  }, callback)
     }
 }
 

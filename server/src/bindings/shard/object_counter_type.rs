@@ -12,29 +12,29 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub struct SequenceCounter {
+pub struct ObjectCounter {
     pub id: u8,
-    pub next: u16,
+    pub next: u32,
 }
 
 
-impl __sdk::InModule for SequenceCounter {
+impl __sdk::InModule for ObjectCounter {
     type Module = super::RemoteModule;
 }
 
 
-/// Column accessor struct for the table `SequenceCounter`.
+/// Column accessor struct for the table `ObjectCounter`.
 ///
 /// Provides typed access to columns for query building.
-pub struct SequenceCounterCols {
-    pub id: __sdk::__query_builder::Col<SequenceCounter, u8>,
-    pub next: __sdk::__query_builder::Col<SequenceCounter, u16>,
+pub struct ObjectCounterCols {
+    pub id: __sdk::__query_builder::Col<ObjectCounter, u8>,
+    pub next: __sdk::__query_builder::Col<ObjectCounter, u32>,
 }
 
-impl __sdk::__query_builder::HasCols for SequenceCounter {
-    type Cols = SequenceCounterCols;
+impl __sdk::__query_builder::HasCols for ObjectCounter {
+    type Cols = ObjectCounterCols;
     fn cols(table_name: &'static str) -> Self::Cols {
-        SequenceCounterCols {
+        ObjectCounterCols {
             id: __sdk::__query_builder::Col::new(table_name, "id"),
             next: __sdk::__query_builder::Col::new(table_name, "next"),
 
@@ -42,22 +42,22 @@ impl __sdk::__query_builder::HasCols for SequenceCounter {
     }
 }
 
-/// Indexed column accessor struct for the table `SequenceCounter`.
+/// Indexed column accessor struct for the table `ObjectCounter`.
 ///
 /// Provides typed access to indexed columns for query building.
-pub struct SequenceCounterIxCols {
-    pub id: __sdk::__query_builder::IxCol<SequenceCounter, u8>,
+pub struct ObjectCounterIxCols {
+    pub id: __sdk::__query_builder::IxCol<ObjectCounter, u8>,
 }
 
-impl __sdk::__query_builder::HasIxCols for SequenceCounter {
-    type IxCols = SequenceCounterIxCols;
+impl __sdk::__query_builder::HasIxCols for ObjectCounter {
+    type IxCols = ObjectCounterIxCols;
     fn ix_cols(table_name: &'static str) -> Self::IxCols {
-        SequenceCounterIxCols {
+        ObjectCounterIxCols {
             id: __sdk::__query_builder::IxCol::new(table_name, "id"),
 
         }
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for SequenceCounter {}
+impl __sdk::__query_builder::CanBeLookupTable for ObjectCounter {}
 
