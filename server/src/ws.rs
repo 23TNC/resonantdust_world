@@ -410,9 +410,8 @@ async fn handle_move(
     tile_x: i32,
     tile_y: i32,
 ) {
-    use resonantdust_codec::packed::{
-        cell, pack_object_id, pack_object_key, pack_object_reference, OBJ_TYPE_PLAYER, SHARD_NONE,
-    };
+    use resonantdust_codec::packed::cell;
+    use resonantdust_codec::refs::{pack_minted_entity, ENTITY_TYPE_PLAYER, SERVER_REF_NONE};
 
     let Some(player_id) = player_id else {
         send(out_tx, err_frame("move: not logged in"));
@@ -435,11 +434,8 @@ async fn handle_move(
         return;
     };
     // The player's own entity; both actor and target (a self-move). Not shard-minted:
-    // reserved SHARD_NONE + the (globally-unique) player_id as the count.
-    let key = pack_object_key(pack_object_reference(
-        OBJ_TYPE_PLAYER,
-        pack_object_id(SHARD_NONE, player_id),
-    ));
+    // SERVER_REF_NONE as the minting server + the (globally-unique) player_id as the id.
+    let key = pack_minted_entity(ENTITY_TYPE_PLAYER, player_id, SERVER_REF_NONE);
     let data = resonantdust_tick::pack_move(dest_zone, location, 0, 0);
     if let Err(err) = shard.conn.reducers.append_event(
         pool.cfg.server_id,

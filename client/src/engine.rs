@@ -447,10 +447,9 @@ impl Engine {
             ServerMsg::Row { row, op, .. } => {
                 match &row {
                     RowData::State(sr) => {
-                        use resonantdust_codec::packed;
-                        let (obj_type, object_id) = if packed::entity_is_object(sr.entity_key) {
-                            let r = packed::entity_object_reference(sr.entity_key);
-                            (packed::object_reference_type(r), packed::object_reference_id(r))
+                        use resonantdust_codec::refs;
+                        let (obj_type, object_id) = if !refs::entity_ref_is_positional(sr.entity_key) {
+                            (refs::entity_ref_type(sr.entity_key), refs::entity_ref_id(sr.entity_key) as u64)
                         } else {
                             (0, 0)
                         };

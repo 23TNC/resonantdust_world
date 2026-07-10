@@ -31,7 +31,7 @@ use std::collections::HashMap;
 
 use spacetimedb::{reducer, table, ReducerContext, Table};
 
-use resonantdust_codec::packed::{pack_object_id, pack_object_key, pack_object_reference};
+use resonantdust_codec::refs::pack_minted_entity;
 
 /// An event row is live until its target resolves the tic; then it's marked complete
 /// (soft-delete for debug; the GC sweep hard-deletes later — Phase A4).
@@ -232,12 +232,11 @@ macro_rules! decl_tick_pipeline {
             ctx.db.shard_meta().id().find(0).map_or(0, |m| m.shard_id)
         }
 
-        /// Mint a fresh, globally-unique object_id: `(this shard's id, its next count)`.
-        /// The count never repeats on this shard and the `shard_id` never repeats across
-        /// shards, so the pair is unique everywhere with no coordination. The
-        /// object-create entry point (spawn / a zone→object detach) calls this.
-        pub fn mint_object_id(ctx: &ReducerContext) -> u64 {
-            let count = match ctx.db.object_counter().id().find(0) {
+        /// The monotonic per-server entity counter — the `entity_id` half of a minted
+        /// `entity_reference`. Returns the next id and advances it (durable; never reset
+        /// independently of the entities it stamped).
+        fn next_entity_id(ctx: &ReducerContext) -> u32 {
+            match ctx.db.object_counter().id().find(0) {
                 Some(c) => {
                     ctx.db.object_counter().id().delete(0);
                     ctx.db.object_counter().insert(ObjectCounter {
@@ -250,8 +249,16 @@ macro_rules! decl_tick_pipeline {
                     ctx.db.object_counter().insert(ObjectCounter { id: 0, next: 1 });
                     0
                 }
-            };
-            pack_object_id(this_shard_id(ctx), count)
+            }
+        }
+
+        /// Mint a fresh, globally-unique **minted** `entity_reference` of `entity_type`:
+        /// `(entity_type, this server's next entity_id, this server's reference)`. The id
+        /// never repeats on this server and the server reference never repeats across
+        /// servers, so the triple is unique everywhere with no coordination. The
+        /// entity-create entry point (spawn / a zone→object detach) calls this.
+        pub fn mint_entity(ctx: &ReducerContext, entity_type: u8) -> u64 {
+            pack_minted_entity(entity_type, next_entity_id(ctx), this_shard_id(ctx))
         }
 
         // ── reducers ───────────────────────────────────────────────────────────
@@ -277,9 +284,10 @@ macro_rules! decl_tick_pipeline {
             Ok(())
         }
 
-        /// Create a new object with a freshly-minted globally-unique object_id, of class
-        /// `obj_type` and def `kind`, at the given position. The caller learns the id by
-        /// observing the new `state` row (reducers can't return it).
+        /// Create a new entity with a freshly-minted globally-unique `entity_reference`,
+        /// of `entity_type` (the reducer's first arg, kept named `obj_type` until the
+        /// reducer-rename batch) and payload, at the given position. The caller learns the
+        /// key by observing the new `state` row (reducers can't return it).
         #[reducer]
         #[allow(clippy::too_many_arguments)]
         pub fn spawn_object(
@@ -287,7 +295,7 @@ macro_rules! decl_tick_pipeline {
             obj_type: u8,
             $( $pf: $pt, )*
         ) -> Result<(), String> {
-            let entity_key = pack_object_key(pack_object_reference(obj_type, mint_object_id(ctx)));
+            let entity_key = mint_entity(ctx, obj_type);
             seed_write(ctx, entity_key, $( $pf, )*);
             Ok(())
         }

@@ -15,9 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use spacetimedb_sdk::DbContext;
 
-use resonantdust_codec::packed::{
-    pack_object_id, pack_object_key, pack_object_reference, OBJ_TYPE_DEMO, SHARD_NONE,
-};
+use resonantdust_codec::refs::{pack_minted_entity, ENTITY_TYPE_DEMO, SERVER_REF_NONE};
 use resonantdust_tick::{pack_move, ACTION_MOVE};
 
 mod bindings;
@@ -54,12 +52,9 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 fn demo_key(index: u32) -> u64 {
-    // Demo objects aren't shard-minted: reserved SHARD_NONE + the index as the count
-    // (self-unique for the fixed demo set).
-    pack_object_key(pack_object_reference(
-        OBJ_TYPE_DEMO,
-        pack_object_id(SHARD_NONE, index),
-    ))
+    // Demo objects aren't shard-minted: SERVER_REF_NONE as the minting server + the index
+    // as the id (self-unique for the fixed demo set).
+    pack_minted_entity(ENTITY_TYPE_DEMO, index, SERVER_REF_NONE)
 }
 
 #[tokio::main]
@@ -116,7 +111,7 @@ async fn main() {
         let loc = rng.below(CELLS) as u8;
         if let Err(err) =
             conn.reducers()
-                .seed_entity(demo_key(i), OBJ_TYPE_DEMO as u16, ZONE, loc, 0, 0, 0, 0)
+                .seed_entity(demo_key(i), ENTITY_TYPE_DEMO as u16, ZONE, loc, 0, 0, 0, 0)
         {
             tracing::warn!(%err, i, "seed failed");
         }
