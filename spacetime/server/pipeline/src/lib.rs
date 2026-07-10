@@ -1,71 +1,71 @@
-//! The simulation tick pipeline (object shard) — `docs/simulation.md` /
-//! `docs/simulation-plan.md`, Phase A, and `docs/pipeline-generalization.md`.
+//! The simulation tick pipeline — `docs/simulation.md` / `docs/simulation-plan.md`,
+//! Phase A, and `docs/pipeline-generalization.md`.
 //!
-//! This is the mechanical, single-shard, atomic half of the pipeline: the tables
-//! plus the reducers (`append_event`, `bump`, `claim`, `resolve`, `seed_entity`,
-//! `spawn_object`, `tick_gc`, `set_shard_id`). The *policy* — read rule, priority-DAG,
-//! action composition — lives in the external worker (`server_simulation`, using
-//! `resonantdust-tick`); the module only stores events, generates work, fences claims,
-//! and commits precomputed results.
+//! This crate provides the **`decl_tick_pipeline!` macro** plus the payload-agnostic
+//! helpers it reaches through `$crate::`. It defines no tables or reducers itself: a
+//! SpacetimeDB **module** invokes the macro with its own payload, and the tables +
+//! reducers register in *that* module. So one engine serves any number of pipelines with
+//! divergent payloads (object, zone, …), each in its own module — see the invocation in
+//! `spacetime/server/modules/shard/src/lib.rs`.
 //!
-//! ## The `decl_tick_pipeline!` macro
-//!
-//! The engine's scheduling spine never inspects an entity's *payload* — it only ever
-//! copies the game fields (`kind`/`zone_id`/`location`/`rotation`/`offset`/`data0`/
-//! `data1`) verbatim. So the whole engine is emitted by a macro that takes the payload
-//! field list as a parameter; changing the payload (or a second shard class with a
-//! different one) is a change to the macro's argument, not the engine. Phase 1
-//! (`pipeline-generalization.md`) invokes it **in-crate** with today's exact payload, so
-//! the generated schema is byte-identical to the hand-written one it replaces. Making
-//! the macro `#[macro_export]` and invoking it per-module (for divergent payloads) is a
-//! later phase; the `$crate`-path + per-module-codec-dep work is deferred until payloads
-//! actually diverge.
+//! The engine's scheduling spine never inspects the payload — it only ever copies the
+//! game fields verbatim — so the whole engine is emitted by a macro taking the payload
+//! field list as a parameter. The macro is `#[macro_export]` and self-contained (it
+//! emits its own `::spacetimedb` prelude and reaches this crate's constants/helpers via
+//! `$crate::`), so an invoking module needs only `spacetimedb` + `resonantdust_pipeline`
+//! as deps — not the codec.
 //!
 //! Tic relationship (`event_tic = master_tic + 2`): on `bump` to `M` we generate work
-//! for tic `M` (pending `state_log` rows for entities with events at `M`); a worker
-//! only ever resolves a pending row whose tic `≤ master_tic`, so `resolve` always
-//! promotes into `state`. The `+2` gap means every event a worker resolves is already
-//! sealed (no new event for tic `M` can arrive once `master_tic ≥ M-1`).
+//! for tic `M` (pending `state_log` rows for entities with events at `M`); a worker only
+//! ever resolves a pending row whose tic `≤ master_tic`, so `resolve` always promotes
+//! into `state`. The `+2` gap means every event a worker resolves is already sealed (no
+//! new event for tic `M` can arrive once `master_tic ≥ M-1`).
 
-use std::collections::HashMap;
+use spacetimedb::ReducerContext;
 
-use spacetimedb::{reducer, table, ReducerContext, Table};
-
-use resonantdust_codec::refs::pack_minted_entity;
+/// Re-exported so the macro can reach it via `$crate::pack_minted_entity` from any module
+/// that invokes it — without that module depending on the codec directly.
+pub use resonantdust_codec::refs::pack_minted_entity;
 
 /// An event row is live until its target resolves the tic; then it's marked complete
 /// (soft-delete for debug; the GC sweep hard-deletes later — Phase A4).
-const STATUS_ACTIVE: u8 = 0;
-const STATUS_COMPLETE: u8 = 1;
+pub const STATUS_ACTIVE: u8 = 0;
+pub const STATUS_COMPLETE: u8 = 1;
 
-/// How long (seconds) a claim holds before another worker may evict it. Deliberately
-/// a few tics at 2 Hz; tuned with the reaper in Phase A4.
-const CLAIM_LEASE_SECS: u32 = 5;
+/// How long (seconds) a claim holds before another worker may evict it. Deliberately a
+/// few tics at 2 Hz; tuned with the reaper in Phase A4.
+pub const CLAIM_LEASE_SECS: u32 = 5;
 
 /// `server_id == 0` means "unclaimed".
-const SERVER_NONE: u16 = 0;
+pub const SERVER_NONE: u16 = 0;
 
-/// Seconds since the unix epoch, from the reducer's timestamp. Payload-agnostic, so it
-/// lives outside the pipeline macro (referenced by simple name at the in-crate
-/// expansion site).
-fn now_secs(ctx: &ReducerContext) -> u32 {
+/// Seconds since the unix epoch, from the reducer's timestamp. Payload-agnostic and
+/// SDK-only, so it lives here (reached via `$crate::now_secs`) rather than in the macro.
+pub fn now_secs(ctx: &ReducerContext) -> u32 {
     (ctx.timestamp.to_micros_since_unix_epoch() / 1_000_000) as u32
 }
 
-/// Emit a complete tick-pipeline: the six tables (`event_log`, `state_log`, `state`,
-/// `tic_meta`, `shard_meta`, `object_counter`), their helpers, and the reducers. The
-/// only parameter is the `payload` field list carried through `state_log`/`state` and
-/// the seed/spawn/resolve reducer signatures — everything else (ids, tic bookkeeping,
-/// fencing, work-gen, GC) is fixed for every pipeline.
+/// Emit a complete tick-pipeline into the invoking module: the six tables (`event_log`,
+/// `state_log`, `state`, `tic_meta`, `shard_meta`, `object_counter`), their helpers, and
+/// the reducers. The only parameter is the `payload` field list carried through
+/// `state_log`/`state` and the seed/spawn/resolve reducer signatures — everything else
+/// (ids, tic bookkeeping, fencing, work-gen, GC) is fixed for every pipeline.
 ///
-/// `payload` fields are emitted, in declared order, in exactly the position the
-/// hand-written schema had them (`state_log`: after `dirty`, before `server_id`;
-/// `state`: after `tic`; reducer args: after the fixed prefix), so the generated
-/// SpacetimeDB schema — and thus the server bindings — are byte-identical.
+/// `payload` fields are emitted, in declared order, in the position the hand-written
+/// schema had them (`state_log`: after `dirty`; `state`: after `tic`; reducer args: after
+/// the fixed prefix). Field values are `.clone()`d on carry-forward/promote, so a payload
+/// may carry non-`Copy` fields (e.g. a `Vec<u64>` zone-cell array) as well as scalars.
+///
+/// Self-contained: the expansion opens with its own `use ::spacetimedb::{…}` and reaches
+/// `$crate::{SERVER_NONE, STATUS_ACTIVE, …, now_secs, pack_minted_entity}`, so it resolves
+/// in any module depending on `spacetimedb` + `resonantdust_pipeline`.
+#[macro_export]
 macro_rules! decl_tick_pipeline {
     (
         payload: { $( $pf:ident : $pt:ty ),* $(,)? } $(,)?
     ) => {
+        use ::spacetimedb::{reducer, table, ReducerContext, Table};
+
         // ── tables ─────────────────────────────────────────────────────────────
 
         /// Inbound intent, appended by the edge at `event_tic`, sealed by the `+2` gap,
@@ -104,7 +104,7 @@ macro_rules! decl_tick_pipeline {
             pub dirty: u16,
             $( pub $pf: $pt, )*
             /// Fence token: the worker currently assigned this `(entity_key, tic)`, or
-            /// `SERVER_NONE`. `resolve` rejects a caller that isn't the current assignee.
+            /// `0` (unclaimed). `resolve` rejects a caller that isn't the current assignee.
             pub server_id: u16,
             pub created_at: u32,
             pub assigned_at: u32,
@@ -129,9 +129,9 @@ macro_rules! decl_tick_pipeline {
             pub master_tic: u32,
         }
 
-        /// This data shard's id — bits 32–47 of every object_id it mints. Single row
-        /// (PK 0), `0` (unset) until `set_shard_id`. Must be globally unique and
-        /// permanent.
+        /// This data server's reference — bits 8–23 of every minted `entity_reference`.
+        /// Single row (PK 0), `0` (unset) until `set_shard_id`. Must be globally unique
+        /// and permanent.
         #[table(accessor = shard_meta, public)]
         pub struct ShardMeta {
             #[primary_key]
@@ -139,9 +139,9 @@ macro_rules! decl_tick_pipeline {
             pub shard_id: u16,
         }
 
-        /// The monotonic per-shard object counter — bits 0–31 of a minted object_id.
-        /// Durable (survives restart), never reset independently of the objects it
-        /// stamped.
+        /// The monotonic per-server entity counter — the `entity_id` of a minted
+        /// `entity_reference`. Durable (survives restart), never reset independently of
+        /// the entities it stamped.
         #[table(accessor = object_counter)]
         pub struct ObjectCounter {
             #[primary_key]
@@ -171,9 +171,7 @@ macro_rules! decl_tick_pipeline {
         }
 
         /// The entity's most recent resolved (`dirty==0`) `state_log` row at or below
-        /// `tic` — the base a new pending row carries forward (position/kind/data of an
-        /// entity that had no event this tic still needs to be represented when it does
-        /// get one).
+        /// `tic` — the base a new pending row carries forward.
         fn base_resolved(ctx: &ReducerContext, entity_key: u64, tic: u32) -> Option<StateLog> {
             ctx.db
                 .state_log()
@@ -189,13 +187,12 @@ macro_rules! decl_tick_pipeline {
             ctx.db.state().insert(State {
                 entity_key: r.entity_key,
                 tic: r.tic,
-                $( $pf: r.$pf, )*
+                $( $pf: r.$pf.clone(), )*
             });
         }
 
         /// Write an entity's initial resolved state at the current master tic (clearing
-        /// any prior rows for it) and promote it. Shared by `seed_entity` and
-        /// `spawn_object`.
+        /// any prior rows for it) and promote it. Shared by `seed_entity`/`spawn_object`.
         #[allow(clippy::too_many_arguments)]
         fn seed_write(
             ctx: &ReducerContext,
@@ -213,17 +210,17 @@ macro_rules! decl_tick_pipeline {
             for id in old {
                 ctx.db.state_log().id().delete(id);
             }
-            let now = now_secs(ctx);
+            let now = $crate::now_secs(ctx);
             let row = ctx.db.state_log().insert(StateLog {
                 id: 0,
                 entity_key,
                 tic,
                 dirty: 0,
                 $( $pf, )*
-                server_id: SERVER_NONE,
+                server_id: $crate::SERVER_NONE,
                 created_at: now,
                 assigned_at: 0,
-                status: STATUS_ACTIVE,
+                status: $crate::STATUS_ACTIVE,
             });
             promote(ctx, &row);
         }
@@ -233,8 +230,7 @@ macro_rules! decl_tick_pipeline {
         }
 
         /// The monotonic per-server entity counter — the `entity_id` half of a minted
-        /// `entity_reference`. Returns the next id and advances it (durable; never reset
-        /// independently of the entities it stamped).
+        /// `entity_reference`. Returns the next id and advances it.
         fn next_entity_id(ctx: &ReducerContext) -> u32 {
             match ctx.db.object_counter().id().find(0) {
                 Some(c) => {
@@ -253,12 +249,10 @@ macro_rules! decl_tick_pipeline {
         }
 
         /// Mint a fresh, globally-unique **minted** `entity_reference` of `entity_type`:
-        /// `(entity_type, this server's next entity_id, this server's reference)`. The id
-        /// never repeats on this server and the server reference never repeats across
-        /// servers, so the triple is unique everywhere with no coordination. The
-        /// entity-create entry point (spawn / a zone→object detach) calls this.
+        /// `(entity_type, this server's next entity_id, this server's reference)`. Unique
+        /// everywhere with no coordination.
         pub fn mint_entity(ctx: &ReducerContext, entity_type: u8) -> u64 {
-            pack_minted_entity(entity_type, next_entity_id(ctx), this_shard_id(ctx))
+            $crate::pack_minted_entity(entity_type, next_entity_id(ctx), this_shard_id(ctx))
         }
 
         // ── reducers ───────────────────────────────────────────────────────────
@@ -276,7 +270,7 @@ macro_rules! decl_tick_pipeline {
             Ok(())
         }
 
-        /// Set this shard's id — called once at deploy/seed. Idempotent upsert.
+        /// Set this server's reference — called once at deploy/seed. Idempotent upsert.
         #[reducer]
         pub fn set_shard_id(ctx: &ReducerContext, shard_id: u16) -> Result<(), String> {
             ctx.db.shard_meta().id().delete(0);
@@ -286,8 +280,8 @@ macro_rules! decl_tick_pipeline {
 
         /// Create a new entity with a freshly-minted globally-unique `entity_reference`,
         /// of `entity_type` (the reducer's first arg, kept named `obj_type` until the
-        /// reducer-rename batch) and payload, at the given position. The caller learns the
-        /// key by observing the new `state` row (reducers can't return it).
+        /// reducer-rename batch) and payload. The caller learns the key by observing the
+        /// new `state` row (reducers can't return it).
         #[reducer]
         #[allow(clippy::too_many_arguments)]
         pub fn spawn_object(
@@ -324,7 +318,7 @@ macro_rules! decl_tick_pipeline {
                 action,
                 data0,
                 data1,
-                status: STATUS_ACTIVE,
+                status: $crate::STATUS_ACTIVE,
             });
             Ok(())
         }
@@ -342,13 +336,14 @@ macro_rules! decl_tick_pipeline {
 
             // Work-gen for tic `to_tic`: group this tic's active events by target, and
             // create one pending row per target that doesn't already have one.
-            let mut counts: HashMap<u64, u16> = HashMap::new();
+            let mut counts: ::std::collections::HashMap<u64, u16> =
+                ::std::collections::HashMap::new();
             for e in ctx.db.event_log().event_tic().filter(to_tic) {
-                if e.status == STATUS_ACTIVE {
+                if e.status == $crate::STATUS_ACTIVE {
                     *counts.entry(e.target_key).or_insert(0) += 1;
                 }
             }
-            let now = now_secs(ctx);
+            let now = $crate::now_secs(ctx);
             for (target, count) in counts {
                 if find_state_log(ctx, target, to_tic).is_some() {
                     continue; // idempotent
@@ -359,19 +354,18 @@ macro_rules! decl_tick_pipeline {
                     entity_key: target,
                     tic: to_tic,
                     dirty: count,
-                    $( $pf: base.as_ref().map_or(Default::default(), |b| b.$pf), )*
-                    server_id: SERVER_NONE,
+                    $( $pf: base.as_ref().map_or(Default::default(), |b| b.$pf.clone()), )*
+                    server_id: $crate::SERVER_NONE,
                     created_at: now,
                     assigned_at: 0,
-                    status: STATUS_ACTIVE,
+                    status: $crate::STATUS_ACTIVE,
                 });
             }
             Ok(())
         }
 
         /// A worker claims a pending `(entity_key, tic)`. Succeeds if unclaimed or the
-        /// lease has expired; otherwise a no-op (the loser observes the row's `server_id`
-        /// via its subscription and backs off). The claim is the fence token `resolve`
+        /// lease has expired; otherwise a no-op. The claim is the fence token `resolve`
         /// checks.
         #[reducer]
         pub fn claim(ctx: &ReducerContext, server_id: u16, entity_key: u64, tic: u32) -> Result<(), String> {
@@ -381,8 +375,9 @@ macro_rules! decl_tick_pipeline {
             if row.dirty == 0 {
                 return Ok(()); // already resolved
             }
-            let now = now_secs(ctx);
-            let free = row.server_id == SERVER_NONE || now.saturating_sub(row.assigned_at) > CLAIM_LEASE_SECS;
+            let now = $crate::now_secs(ctx);
+            let free = row.server_id == $crate::SERVER_NONE
+                || now.saturating_sub(row.assigned_at) > $crate::CLAIM_LEASE_SECS;
             if !free {
                 return Ok(());
             }
@@ -398,8 +393,7 @@ macro_rules! decl_tick_pipeline {
 
         /// Commit a precomputed resolved state for `(entity_key, tic)`. Fenced: rejected
         /// (no-op) unless the caller is the current assignee. Writes the row `dirty=0`,
-        /// marks the tic's events complete, and promotes to `state` (always — a pending
-        /// row's tic is `≤ master`).
+        /// marks the tic's events complete, and promotes to `state`.
         #[reducer]
         #[allow(clippy::too_many_arguments)]
         pub fn resolve(
@@ -420,7 +414,7 @@ macro_rules! decl_tick_pipeline {
                 id: 0, // fresh surface id; identity is (entity_key, tic)
                 dirty: 0,
                 $( $pf, )*
-                server_id: SERVER_NONE,
+                server_id: $crate::SERVER_NONE,
                 ..row
             });
             // Mark this tic's events for this target complete.
@@ -429,13 +423,13 @@ macro_rules! decl_tick_pipeline {
                 .event_log()
                 .target_key()
                 .filter(entity_key)
-                .filter(|e| e.event_tic == tic && e.status == STATUS_ACTIVE)
+                .filter(|e| e.event_tic == tic && e.status == $crate::STATUS_ACTIVE)
                 .map(|e| e.event_reference)
                 .collect();
             for r in done {
                 if let Some(mut e) = ctx.db.event_log().event_reference().find(r) {
                     ctx.db.event_log().event_reference().delete(r);
-                    e.status = STATUS_COMPLETE;
+                    e.status = $crate::STATUS_COMPLETE;
                     ctx.db.event_log().insert(e);
                 }
             }
@@ -443,16 +437,10 @@ macro_rules! decl_tick_pipeline {
             Ok(())
         }
 
-        /// Prune the working set. Called periodically by `server_master` (no `state_log`/
-        /// `event_log` row is ever read again once past the horizon). Two sweeps:
-        ///
-        /// 1. **`event_log`**: hard-delete `status == COMPLETE` rows — a consumed event is
-        ///    never resolved against again.
-        /// 2. **`state_log`**: keep every pending (`dirty>0`) row and, per entity, its
-        ///    latest resolved row (the base for its next tic + its idle-carry value that
-        ///    other entities read). Also keep resolved rows at `tic ≥ min_pending − 1`,
-        ///    since a resolution in progress at the lowest pending tic reads actors at
-        ///    `tic − 1`. Drop the rest — the accumulated deep history.
+        /// Prune the working set. Called periodically by `server_master`. Two sweeps:
+        /// hard-delete completed events; and keep every pending row plus, per entity, its
+        /// latest resolved row and resolved rows at `tic ≥ min_pending − 1`, dropping the
+        /// accumulated deep history.
         #[reducer]
         pub fn tick_gc(ctx: &ReducerContext) -> Result<(), String> {
             // 1. Completed events.
@@ -460,7 +448,7 @@ macro_rules! decl_tick_pipeline {
                 .db
                 .event_log()
                 .iter()
-                .filter(|e| e.status == STATUS_COMPLETE)
+                .filter(|e| e.status == $crate::STATUS_COMPLETE)
                 .map(|e| e.event_reference)
                 .collect();
             for r in done {
@@ -468,8 +456,7 @@ macro_rules! decl_tick_pipeline {
             }
 
             // 2. Horizon = (lowest pending tic) − 1; if nothing is pending, only each
-            //    entity's latest resolved row is needed (no in-progress resolution reads
-            //    history).
+            //    entity's latest resolved row is needed.
             let pending_min = ctx
                 .db
                 .state_log()
@@ -479,7 +466,8 @@ macro_rules! decl_tick_pipeline {
                 .min();
             let horizon = pending_min.map_or(u32::MAX, |g| g.saturating_sub(1));
 
-            let mut latest: HashMap<u64, u32> = HashMap::new();
+            let mut latest: ::std::collections::HashMap<u64, u32> =
+                ::std::collections::HashMap::new();
             for r in ctx.db.state_log().iter().filter(|r| r.dirty == 0) {
                 latest
                     .entry(r.entity_key)
@@ -505,22 +493,4 @@ macro_rules! decl_tick_pipeline {
             Ok(())
         }
     };
-}
-
-// ── the object/zone pipeline (Phase 1: today's exact payload) ──────────────────
-//
-// One in-crate instantiation carrying the spatial payload that objects and zones share
-// today. `zone_id` is a routing key (the edge subscribes `WHERE zone_id`); it stays an
-// ordinary column here — promoting it to an indexed routing key is a later refinement,
-// kept out of the byte-identical no-op.
-decl_tick_pipeline! {
-    payload: {
-        kind: u16,
-        zone_id: u32,
-        location: u8,
-        rotation: u8,
-        offset: u8,
-        data0: u64,
-        data1: u64,
-    }
 }

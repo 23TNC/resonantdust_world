@@ -1,0 +1,16 @@
+[package]
+name = "resonantdust_zone"
+version = "0.1.0"
+edition = "2021"
+
+# The zone shard module — the cold store. Invokes the shared
+# resonantdust_pipeline::decl_tick_pipeline! with a DIVERGENT payload: the packed
+# `[u64;256]` zone-cell array (as a Vec<u64>) plus biome/version, instead of the object
+# shard's small spatial payload. Same engine, different data structure — the proof that
+# the pipeline is generalized over its payload. See docs/pipeline-generalization.md.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb = { version = "=2.1.0" }
+resonantdust_pipeline = { path = "../../pipeline" }
