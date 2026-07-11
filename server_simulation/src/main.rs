@@ -199,11 +199,11 @@ fn resolve_one(
     for e in &evs {
         let ev = Event { action: e.action, actor_key: e.actor_key, data: [e.data_0, e.data_1] };
         let actor = if action_reads_actor(ev.action) {
-            // Route the actor read to its shard by `actor_shard_id` (fall back to this
-            // home shard for a same-shard/unset actor). THIS is the cross-shard step: a
-            // different shard's connection, read + blocked-on exactly like the local one.
+            // Route the actor read to its shard by `actor_server_reference` (fall back to
+            // this home shard for a same-shard/unset actor). THIS is the cross-shard step:
+            // a different shard's connection, read + blocked-on exactly like the local one.
             let actor_conn: &DbConnection =
-                shards.get(&e.actor_shard_id).map_or(conn, |c| c.as_ref());
+                shards.get(&e.actor_server_reference).map_or(conn, |c| c.as_ref());
             // priority-DAG: read the actor at `tic` if it ranks below the target, else
             // at `tic-1` (the back-edge that keeps cycles deadlock-free).
             let read_tic = actor_read_tic(ev.actor_key, entity, row.tic);

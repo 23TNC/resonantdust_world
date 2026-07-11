@@ -438,8 +438,11 @@ async fn handle_move(
     let key = pack_minted_entity(ENTITY_TYPE_PLAYER, player_id, SERVER_REF_NONE);
     let data = resonantdust_tick::pack_move(dest_zone, location, 0, 0);
     if let Err(err) = shard.conn.reducers.append_event(
-        pool.cfg.server_id,
-        0, // actor shard: same shard (self-move)
+        pool.cfg.server_id, // source_server_reference
+        0,                  // actor_server_reference: same shard (self-move)
+        0,                  // requesting_server_reference: externally injected
+        0,                  // trigger_server_reference: no trigger
+        0,                  // trigger_event_reference
         key,
         key,
         resonantdust_tick::ACTION_MOVE,

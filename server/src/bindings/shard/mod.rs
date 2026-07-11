@@ -60,8 +60,11 @@ pub use tick_gc_reducer::tick_gc;
 
 pub enum Reducer {
         AppendEvent {
-        from_server_id: u16,
-        actor_shard_id: u16,
+        source_server_reference: u16,
+        actor_server_reference: u16,
+        requesting_server_reference: u16,
+        trigger_server_reference: u16,
+        trigger_event_reference: u64,
         actor_key: u64,
         target_key: u64,
         action: u16,
@@ -137,16 +140,22 @@ impl __sdk::Reducer for Reducer {
 fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
         match self {
                         Reducer::AppendEvent{
-                from_server_id,
-                actor_shard_id,
+                source_server_reference,
+                actor_server_reference,
+                requesting_server_reference,
+                trigger_server_reference,
+                trigger_event_reference,
                 actor_key,
                 target_key,
                 action,
                 data_0,
                 data_1,
 }             => __sats::bsatn::to_vec(&append_event_reducer::AppendEventArgs {
-                from_server_id: from_server_id.clone(),
-                actor_shard_id: actor_shard_id.clone(),
+                source_server_reference: source_server_reference.clone(),
+                actor_server_reference: actor_server_reference.clone(),
+                requesting_server_reference: requesting_server_reference.clone(),
+                trigger_server_reference: trigger_server_reference.clone(),
+                trigger_event_reference: trigger_event_reference.clone(),
                 actor_key: actor_key.clone(),
                 target_key: target_key.clone(),
                 action: action.clone(),

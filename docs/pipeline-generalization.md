@@ -218,46 +218,39 @@ The four+ tables and their reducers, parameterized. `server_id` here is the fenc
 
 ### `event_log` — intent + provenance
 
-Expanded from today to carry provenance, so **worker-generated events are safe without a
-deterministic dedup key** (see [Provenance](#provenance-validated-events)). Fields, with
-the renames and additions from the design dialogue:
+Expanded to carry provenance, so **worker-generated (saga follow-on) events are safe
+without a deterministic dedup key** (see [Provenance](#provenance-validated-events)). The
+**as-built** schema (P3a, in the `decl_tick_pipeline!` macro):
 
 ```
-u64  event_reference          // minted global identity: mint_server_reference:16 | reserved:16 | event_id:48
-u64  sequence                 // per-shard auto_inc — the ONLY composition order (see note)
+u64  event_reference          // PK, auto_inc — per-shard identity AND composition order
 u32  event_tic
-u16  source_server_reference  // who CREATED the event (was from_server_id)
-u16  actor_server_reference   // where actor_key lives — the cross-shard read target (was actor_shard_id)
-u16  requesting_server_reference // who requested it (need not be the source)
-u16  worker_server_reference  // the worker that generated/handled this event's trigger
-u64  trigger_event_reference  // the event that generated this one, if any (0 = none)
+u16  source_server_reference  // who injected it (edge/npc/worker); audit, was from_server_id
+u16  actor_server_reference   // where actor_key lives — cross-shard read routing; was actor_shard_id
+u16  requesting_server_reference // the worker that generated a follow-on (0 = externally injected)
+u16  worker_server_reference  // the worker that RESOLVED this event's target (stamped by resolve)
+u16  trigger_server_reference // the shard where trigger_event_reference lives (0 = none)
+u64  trigger_event_reference  // the event that generated this one (0 = none)
 u64  actor_key                // entity_reference
-u64  target_key               // entity_reference
+u64  target_key               // entity_reference (indexed)
 u16  action                   // action_reference
 u64  data0, data1
 u8   status
 ```
 
-Two deliberate splits vs. the naive version:
-
-- **Identity vs. order.** `event_reference` is **minted** (global, so
-  `trigger_event_reference` can point cross-shard) but minting destroys the per-shard
-  monotonicity that ordered composition. So composition order moves to a **separate
-  per-shard `sequence: auto_inc`** — ST serializes reducer appends, giving a well-defined
-  commit order. Invariant #5 ("ordered by per-shard reference") now reads *by
-  `sequence`*, never by the minted `event_reference`.
-- **`event_id:48`, not 32.** Events mint every action every tic — churn orders of
-  magnitude above object counters. u32 wraps in weeks at a few k events/sec; the 48-bit
-  field (spending the reserved bytes) pushes wrap past any real horizon.
+**Decision (P3a): keep `event_reference` `auto_inc`; no minting, no separate `sequence`.**
+The doc earlier floated a *minted* global `event_reference` + a per-shard `sequence` split,
+because a minted id would break per-shard ordering. But carrying **`trigger_server_reference`
+alongside `trigger_event_reference`** makes the **`(shard, ref)` pair** a cross-shard-unique
+trigger locator — so per-shard `auto_inc` is sufficient for *both* identity and composition
+order, and the minting/sequence complexity (and the u48-churn worry) disappears. This also
+**resolves the old "which field carries the trigger's home shard" TODO**: it's the new
+explicit `trigger_server_reference`.
 
 `resolve` **stamps `worker_server_reference` onto the consumed events** as it marks them
-complete — that recorded winner is what provenance validation reads.
-
-> **TODO (open):** which reference carries the *home shard* of a trigger event. A minted
-> `event_reference`'s `mint_server_reference` is E's *creator*, but E lives on its
-> *target's* shard — those differ. Validation must locate E to read its recorded winner,
-> so one field must carry E's home shard. `source_server_reference` is defined as
-> "creator," so it can't double as "home shard." Resolve before locking the schema.
+complete — that recorded fence-winner is what provenance validation reads. (The validation
+itself + the worker emitting follow-ons land with the saga, P3b — one caveat: validate a
+follow-on *before* its trigger is GC'd, since the check reads the trigger's row.)
 
 ### `state_log` / `state` — payload parameterized
 

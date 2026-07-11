@@ -13,8 +13,11 @@ use spacetimedb_sdk::__codegen::{
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub(super) struct AppendEventArgs {
-    pub from_server_id: u16,
-    pub actor_shard_id: u16,
+    pub source_server_reference: u16,
+    pub actor_server_reference: u16,
+    pub requesting_server_reference: u16,
+    pub trigger_server_reference: u16,
+    pub trigger_event_reference: u64,
     pub actor_key: u64,
     pub target_key: u64,
     pub action: u16,
@@ -25,8 +28,11 @@ pub(super) struct AppendEventArgs {
 impl From<AppendEventArgs> for super::Reducer {
     fn from(args: AppendEventArgs) -> Self {
         Self::AppendEvent {
-            from_server_id: args.from_server_id,
-            actor_shard_id: args.actor_shard_id,
+            source_server_reference: args.source_server_reference,
+            actor_server_reference: args.actor_server_reference,
+            requesting_server_reference: args.requesting_server_reference,
+            trigger_server_reference: args.trigger_server_reference,
+            trigger_event_reference: args.trigger_event_reference,
             actor_key: args.actor_key,
             target_key: args.target_key,
             action: args.action,
@@ -51,15 +57,18 @@ pub trait append_event {
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`append_event:append_event_then`] to run a callback after the reducer completes.
-    fn append_event(&self, from_server_id: u16,
-actor_shard_id: u16,
+    fn append_event(&self, source_server_reference: u16,
+actor_server_reference: u16,
+requesting_server_reference: u16,
+trigger_server_reference: u16,
+trigger_event_reference: u64,
 actor_key: u64,
 target_key: u64,
 action: u16,
 data_0: u64,
 data_1: u64,
 ) -> __sdk::Result<()> {
-        self.append_event_then(from_server_id, actor_shard_id, actor_key, target_key, action, data_0, data_1,  |_, _| {})
+        self.append_event_then(source_server_reference, actor_server_reference, requesting_server_reference, trigger_server_reference, trigger_event_reference, actor_key, target_key, action, data_0, data_1,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `append_event` to run as soon as possible,
@@ -70,8 +79,11 @@ data_1: u64,
     ///  and its status can be observed with the `callback`.
     fn append_event_then(
         &self,
-        from_server_id: u16,
-actor_shard_id: u16,
+        source_server_reference: u16,
+actor_server_reference: u16,
+requesting_server_reference: u16,
+trigger_server_reference: u16,
+trigger_event_reference: u64,
 actor_key: u64,
 target_key: u64,
 action: u16,
@@ -87,8 +99,11 @@ data_1: u64,
 impl append_event for super::RemoteReducers {
     fn append_event_then(
         &self,
-        from_server_id: u16,
-actor_shard_id: u16,
+        source_server_reference: u16,
+actor_server_reference: u16,
+requesting_server_reference: u16,
+trigger_server_reference: u16,
+trigger_event_reference: u64,
 actor_key: u64,
 target_key: u64,
 action: u16,
@@ -99,7 +114,7 @@ data_1: u64,
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(AppendEventArgs { from_server_id, actor_shard_id, actor_key, target_key, action, data_0, data_1,  }, callback)
+        self.imp.invoke_reducer_with_callback(AppendEventArgs { source_server_reference, actor_server_reference, requesting_server_reference, trigger_server_reference, trigger_event_reference, actor_key, target_key, action, data_0, data_1,  }, callback)
     }
 }
 

@@ -128,7 +128,8 @@ async fn main() {
             let key = demo_key(i);
             if let Err(err) =
                 conn.reducers()
-                    .append_event(NPC_SERVER_ID, 0, key, key, ACTION_MOVE, d[0], d[1])
+                    // source, actor_server, requesting, trigger_server, trigger_event, …
+                    .append_event(NPC_SERVER_ID, 0, 0, 0, 0, key, key, ACTION_MOVE, d[0], d[1])
             {
                 tracing::warn!(%err, i, "move failed");
             }

@@ -73,13 +73,31 @@ macro_rules! decl_tick_pipeline {
         /// the `auto_inc` `event_reference` (per-shard, sufficient for per-target order).
         #[table(accessor = event_log, public)]
         pub struct EventLog {
+            /// Per-shard identity + composition order (`auto_inc`). Cross-shard, a trigger
+            /// is located by the `(trigger_server_reference, trigger_event_reference)` pair,
+            /// so no global minting is needed.
             #[primary_key]
             #[auto_inc]
             pub event_reference: u64,
             #[index(btree)]
             pub event_tic: u32,
-            pub from_server_id: u16,
-            pub actor_shard_id: u16,
+            /// Who injected this event (edge / npc / worker) — audit; not read during
+            /// resolution.
+            pub source_server_reference: u16,
+            /// The shard where `actor_key` lives — the cross-shard actor-read target.
+            pub actor_server_reference: u16,
+            /// The worker that generated this event (`0` if externally injected) —
+            /// provenance: validated against the trigger's recorded `worker_server_reference`.
+            pub requesting_server_reference: u16,
+            /// The worker that RESOLVED this event's target (stamped by `resolve` — the
+            /// fence winner). A follow-on reads this on its trigger to validate provenance.
+            pub worker_server_reference: u16,
+            /// The shard where `trigger_event_reference` lives (`0` if none) — locates the
+            /// trigger for validation.
+            pub trigger_server_reference: u16,
+            /// The event that generated this one (`0` = none); with
+            /// `trigger_server_reference`, the cross-shard pair identifying the trigger.
+            pub trigger_event_reference: u64,
             pub actor_key: u64,
             #[index(btree)]
             pub target_key: u64,
@@ -294,13 +312,20 @@ macro_rules! decl_tick_pipeline {
             Ok(())
         }
 
-        /// Append validated intent. The edge calls this; the shard stamps `event_tic` so
-        /// tic logic stays server-side. AoE = one call per target.
+        /// Append validated intent. The edge/npc call this with `requesting`/`trigger`
+        /// fields `0` (externally injected); a worker emitting a saga follow-on sets them
+        /// so the consumer can validate provenance. The shard stamps `event_tic` so tic
+        /// logic stays server-side. `worker_server_reference` starts `0`; `resolve` stamps
+        /// it. AoE = one call per target.
         #[reducer]
+        #[allow(clippy::too_many_arguments)]
         pub fn append_event(
             ctx: &ReducerContext,
-            from_server_id: u16,
-            actor_shard_id: u16,
+            source_server_reference: u16,
+            actor_server_reference: u16,
+            requesting_server_reference: u16,
+            trigger_server_reference: u16,
+            trigger_event_reference: u64,
             actor_key: u64,
             target_key: u64,
             action: u16,
@@ -311,8 +336,12 @@ macro_rules! decl_tick_pipeline {
             ctx.db.event_log().insert(EventLog {
                 event_reference: 0,
                 event_tic,
-                from_server_id,
-                actor_shard_id,
+                source_server_reference,
+                actor_server_reference,
+                requesting_server_reference,
+                worker_server_reference: $crate::SERVER_NONE,
+                trigger_server_reference,
+                trigger_event_reference,
                 actor_key,
                 target_key,
                 action,
@@ -430,6 +459,9 @@ macro_rules! decl_tick_pipeline {
                 if let Some(mut e) = ctx.db.event_log().event_reference().find(r) {
                     ctx.db.event_log().event_reference().delete(r);
                     e.status = $crate::STATUS_COMPLETE;
+                    // Record the fence winner so a saga follow-on triggered by this event
+                    // can validate its provenance against it.
+                    e.worker_server_reference = server_id;
                     ctx.db.event_log().insert(e);
                 }
             }
