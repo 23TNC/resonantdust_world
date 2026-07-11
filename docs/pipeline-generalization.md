@@ -357,6 +357,48 @@ cross-tic sequencing (the worker drives it), and the blind tombstone (verificati
 
 ---
 
+## Resolution phases & work ordering
+
+Every entity's events at a tic resolve in three phases — **inbound → data → outbound** —
+the generalization of the receive-first / ack-last saga ordering. `dirty` becomes
+phase-structured. Two orderings, kept **separate**:
+
+**Correctness** (must hold, or state is wrong):
+1. **Tics resolve oldest-first** (invariant #4).
+2. **Within one `(target, tic)` resolve, events apply by phase then `event_reference`** —
+   inbound events, then data, then outbound, each in reference order. One worker, one
+   atomic write; **no barrier, no self-block** — the phase order *is* the apply order.
+3. **Cross-shard transfer legs block via the existing read-rule + priority-DAG:**
+   `receive` (inbound) blocks on the source; `ack` (outbound) blocks on the received copy.
+
+**Scheduling** (pure optimization, never correctness): a worker acquires work
+**group-inbound → target → group-outbound** (batched by action for the transfer groups,
+by target for data), so it resolves *unblockers* first and defers/retries less. It is a
+**soft preference, not a global barrier** — a hard barrier would serialize the whole shard
+each tic. If a work item is blocked, defer it and come back.
+
+**Phase comes from the action band.** Phase is a function of the action's `action_id`
+(low 10 bits of the `action_reference`): a low band → inbound, mid → data, high → outbound.
+So `action_phase` is two comparisons, pipeline-agnostic, and the saga verbs sit at the
+extremes (receive low, transfer/ack high). This is also what gives work-acquisition its
+inbound/outbound batching for free.
+
+**Priority is per-target and server-independent.** Cross-target actor reads order by
+`priority(tic, entity_key)` — a pure function of the *global* entity_key, identical on
+every shard (the reader is not an input). Within a target it's phase+reference. (This is
+`simulation.md`'s "priority is per-object, not per-event.")
+
+**Transfer lifecycle** (cold → cold, exactly-once):
+- A **throttled cold-GC in `bump`** (every N tics) finds objects with
+  `master_tic − last_resolved_tic > COLD` and appends `pack_transfer` (outbound) at each.
+- A worker resolving `pack_transfer` marks the object transfer-state, picks the destination
+  zone shard (routing — non-determinism-safe via the provenance guard), and emits
+  `pack_receive` (inbound, dest, tic `T`) + `pack_ack` (outbound, source, tic **`T+1`** — a
+  tic later, so the receive/ack handshake is not a same-tic cross-shard cycle).
+- `pack_receive` folds the object into the destination; `pack_ack` reads the received copy
+  and tombstones the source — or **noops** if the source was destroyed meanwhile (the
+  tombstone check already in `apply_event(ACK)`), so "A transfers, B destroys A" is safe.
+
 ## Pack / unpack as the migration model
 
 Pack/unpack (hot ↔ cold world objects) is **the transfer saga generalized** — not a

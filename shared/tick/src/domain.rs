@@ -8,26 +8,64 @@
 //! is the new state." The per-action composition (`ACTION_MOVE`, `ACTION_DAMAGE`, …)
 //! is filled in as actions land (Phase A2/A3); A0 defines the shapes.
 
-/// Move to a new position. `data[0]` = `zone_id:32 << 8 | location:8`; `data[1]` =
-/// `rotation:8 | offset:8` (low bits). Composed in Phase A2.
-pub const ACTION_MOVE: u16 = 1;
+/// The resolution phase an action belongs to. Every entity's events at a tic resolve
+/// **inbound → data → outbound** (the generalization of the receive-first / ack-last saga
+/// ordering); within a phase, by `event_reference`. Phase is a function of the action's
+/// `action_id` band, so it is pipeline-agnostic — see [`action_phase`] and
+/// `docs/pipeline-generalization.md`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    /// Transferred-in entities/quantities — applied first, so the entity is complete
+    /// before any data action reads it.
+    Inbound,
+    /// Normal mutations (move, damage, …).
+    Data,
+    /// Transfers out — applied last, so the entity finishes its data before it leaves.
+    Outbound,
+}
 
-/// Deal damage to the target. `data[0]` = amount. Reads the actor (to void if the
-/// actor died this tic). Composed in Phase A3.
-pub const ACTION_DAMAGE: u16 = 2;
+// Action-id bands → phase. The action carried in an event is an `action_reference`
+// (`data_type:6 | action_id:10`); phase keys off the low-10-bit `action_id` so the same
+// band means the same phase in every pipeline. Inbound low, data mid, outbound high.
+const ACTION_ID_MASK: u16 = 0x03FF;
+const PHASE_INBOUND_MAX: u16 = 0x00FF; // action_id 0x000..=0x0FF → inbound
+const PHASE_DATA_MAX: u16 = 0x02FF; //    0x100..=0x2FF → data; above → outbound
 
-/// **Migration receive** (Phase C3): this (new, usually cross-shard) entity takes on the
-/// actor's payload — the "attach" half of an object↔zone transfer. Reads the actor
-/// (the source entity, on another shard). Position stays this entity's (a zone cell's
-/// key-derived location).
-pub const ACTION_RECEIVE: u16 = 3;
+/// The [`Phase`] of an action, from its `action_id` band (the low 10 bits of the
+/// `action_reference`; the `data_type` in the high bits doesn't affect phase).
+pub fn action_phase(action: u16) -> Phase {
+    match action & ACTION_ID_MASK {
+        id if id <= PHASE_INBOUND_MAX => Phase::Inbound,
+        id if id <= PHASE_DATA_MAX => Phase::Data,
+        _ => Phase::Outbound,
+    }
+}
 
-/// **Migration ack** (Phase C3): the source tombstones itself once the receive landed
-/// (the actor = the received copy exists), so the entity isn't duplicated. Issued a tic
-/// AFTER the receive so it reads the *completed* copy — cross-tic sequencing is what
-/// makes a conserved transfer exactly-once (a same-tic receive+ack is a cross-shard
-/// cycle whose back-edge would read a stale state and duplicate). Reads the actor.
-pub const ACTION_ACK: u16 = 4;
+// ── actions, placed in their phase band ──
+
+/// **Migration receive** (inbound): this (usually cross-shard) entity takes on the actor's
+/// payload — the "attach" half of a transfer. Reads the actor (the source, on another
+/// shard). Position stays this entity's (a zone cell's key-derived location).
+pub const ACTION_RECEIVE: u16 = 0x001;
+
+/// Move to a new position (data). `data[0]` = `zone_id:32 << 8 | location:8`; `data[1]` =
+/// `rotation:8 | offset:8` (low bits).
+pub const ACTION_MOVE: u16 = 0x100;
+
+/// Deal damage to the target (data). `data[0]` = amount. Reads the actor (to void if the
+/// actor died this tic).
+pub const ACTION_DAMAGE: u16 = 0x101;
+
+/// **Migration transfer** (outbound): mark the source in transfer-state and hand it off —
+/// the worker resolving this emits the cross-shard `receive` and the next-tic `ack`.
+/// Applied last so the entity finishes its data before it leaves.
+pub const ACTION_TRANSFER: u16 = 0x300;
+
+/// **Migration ack** (outbound): the source tombstones itself once the receive landed (the
+/// actor = the received copy exists), so the entity isn't duplicated. Issued a tic AFTER
+/// the receive so it reads the *completed* copy — a same-tic receive+ack is a cross-shard
+/// cycle whose back-edge would read a stale state and duplicate. Reads the actor.
+pub const ACTION_ACK: u16 = 0x301;
 
 /// The game payload of one entity's resolved state — the fields that live in a
 /// `state`/`state_log` row alongside its `entity_key`/`tic`/bookkeeping. `data` is the
@@ -175,18 +213,22 @@ pub fn apply_event(mut state: EntityState, ev: &Event, actor: Option<&EntityStat
     state
 }
 
-/// Resolve an entity's new state: fold its events (already ordered by `event_reference`)
-/// onto its prior state, each paired with its actor's resolved state (`None` where the
-/// action doesn't read an actor). The worker supplies the actor states after applying
-/// the read-rule + priority-DAG. Generic over the pipeline's [`Domain`]; the fold itself
-/// is unchanged — only which `apply_event` it calls is now a type parameter.
+/// Resolve an entity's new state: fold its events onto its prior state in **phase order**
+/// (inbound → data → outbound), each paired with its actor's resolved state (`None` where
+/// the action doesn't read an actor). Within a phase the input order is preserved, and the
+/// worker supplies events already ordered by `event_reference`, so the effective order is
+/// (phase, reference). Generic over the pipeline's [`Domain`].
 pub fn resolve_events<D: Domain>(
     base: D::Payload,
     events: &[(Event, Option<D::Payload>)],
 ) -> D::Payload {
-    events
-        .iter()
-        .fold(base, |s, (e, actor)| D::apply_event(s, e, actor.as_ref()))
+    let mut state = base;
+    for phase in [Phase::Inbound, Phase::Data, Phase::Outbound] {
+        for (e, actor) in events.iter().filter(|(e, _)| action_phase(e.action) == phase) {
+            state = D::apply_event(state, e, actor.as_ref());
+        }
+    }
+    state
 }
 
 #[cfg(test)]
@@ -273,5 +315,52 @@ mod tests {
         let ev = Event { action: ACTION_ACK, actor_key: 0, data: [0, 0] };
         assert_eq!(apply_event(source, &ev, None).kind, 7);
         assert_eq!(apply_event(source, &ev, Some(&EntityState::default())).kind, 7);
+    }
+
+    #[test]
+    fn action_phase_bands() {
+        assert_eq!(action_phase(ACTION_RECEIVE), Phase::Inbound);
+        assert_eq!(action_phase(ACTION_MOVE), Phase::Data);
+        assert_eq!(action_phase(ACTION_DAMAGE), Phase::Data);
+        assert_eq!(action_phase(ACTION_TRANSFER), Phase::Outbound);
+        assert_eq!(action_phase(ACTION_ACK), Phase::Outbound);
+        // Phase keys off the action_id (low 10 bits); a data_type in the high bits doesn't
+        // change it (same action_id → same phase in every pipeline).
+        assert_eq!(action_phase(ACTION_MOVE | (0x2A << 10)), Phase::Data);
+    }
+
+    /// A domain whose payload records the exact apply order: each event shifts its action
+    /// into a base-0x1000 accumulator. Lets a test read back the sequence of applications.
+    struct OrderDom;
+    impl Domain for OrderDom {
+        type Payload = u64;
+        fn apply_event(state: u64, ev: &Event, _actor: Option<&u64>) -> u64 {
+            state.wrapping_mul(0x1000).wrapping_add(ev.action as u64)
+        }
+        fn action_reads_actor(_action: u16) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn resolve_events_applies_in_phase_order() {
+        // Feed events OUT of phase order — they must apply inbound → data → outbound.
+        let events = [
+            (Event { action: ACTION_TRANSFER, actor_key: 0, data: [0, 0] }, None), // outbound
+            (Event { action: ACTION_MOVE, actor_key: 0, data: [0, 0] }, None),     // data
+            (Event { action: ACTION_RECEIVE, actor_key: 0, data: [0, 0] }, None),  // inbound
+        ];
+        // Applied order RECEIVE, MOVE, TRANSFER → 0x001, then 0x100, then 0x300.
+        assert_eq!(resolve_events::<OrderDom>(0, &events), 0x001_100_300);
+    }
+
+    #[test]
+    fn within_a_phase_reference_order_is_preserved() {
+        // Two data events keep their input (event_reference) order: DAMAGE then MOVE.
+        let events = [
+            (Event { action: ACTION_DAMAGE, actor_key: 0, data: [0, 0] }, None),
+            (Event { action: ACTION_MOVE, actor_key: 0, data: [0, 0] }, None),
+        ];
+        assert_eq!(resolve_events::<OrderDom>(0, &events), 0x101_100);
     }
 }
