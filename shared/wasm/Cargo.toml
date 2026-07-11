@@ -30,7 +30,7 @@ resonantdust-dsl = { path = "../dsl" }
 # The headless client core in its browser (`web`) skin — login + the
 # anchor-driven zone subscription engine. The `WorldClient` surface wraps it;
 # `default-features = false` drops the native (tokio) transport.
-client = { path = "../../client", default-features = false, features = [
+client = { path = "../../client/core", default-features = false, features = [
     "web",
 ], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }

@@ -6,9 +6,9 @@ set -euo pipefail
 # Supporting logic lives in bin/lib/*.sh.
 #
 #   rd config [list|set <p>|get <KEY>]   active env/profile (was: st config)
-#   rd build <component> [args]          build shared|server|gateway|spacetime|client
-#   rd up|down [target]                  start/stop spacetime|server|gateway|all
-#   rd deploy <server|gateway|module …>  build + run one component now
+#   rd build <component> [args]          build shared|edge|gateway|spacetime|core
+#   rd up|down [target]                  start/stop spacetime|edge|gateway|all
+#   rd deploy <edge|gateway|module …>    build + run one component now
 #   rd redeploy [--run|--force|...]      detect changes, rebuild + redeploy
 #   rd index <seed|show>                 seed/inspect index from content/servers/<env>
 #   rd logs <target> [-f]   /  rd ps     tail a component's log / show stack status
@@ -45,10 +45,10 @@ rd_config() {
       printf '%-18s %s\n' "RD_ST_SERVER" "$RD_ST_SERVER"
       printf '%-18s %s\n' "RD_DB"        "$(rd_db_for zone)"
       printf '%-18s %s\n' "RD_GATEWAY"   "$RD_GATEWAY  (client-facing)"
-      printf '%-18s %s\n' "RD_SERVER"    "$RD_SERVER_SERVICE  :$RD_SERVER_PORT  (build/deploy)"
+      printf '%-18s %s\n' "RD_EDGE"      "$RD_EDGE_SERVICE  :$RD_EDGE_PORT  (build/deploy)"
       printf '%-18s %s\n' "RD_CONTEXT"   "${RD_DOCKER_CONTEXT:-<local>}"
       printf '%-18s %s\n' "RD_ST_COMPOSE"     "${RD_ST_COMPOSE/#$REPO\//}"
-      printf '%-18s %s\n' "RD_SERVER_COMPOSE" "${RD_SERVER_COMPOSE/#$REPO\//}"
+      printf '%-18s %s\n' "RD_EDGE_COMPOSE" "${RD_EDGE_COMPOSE/#$REPO\//}"
       ;;
     get)
       # Machine-readable single value (for scripts): rd config get RD_GATEWAY.
@@ -59,8 +59,8 @@ rd_config() {
         RD_DB)        rd_db_for zone ;;
         RD_GATEWAY)   echo "$RD_GATEWAY" ;;
         RD_GATEWAY_PORT)   echo "$RD_GATEWAY_PORT" ;;
-        RD_SERVER_PORT)    echo "$RD_SERVER_PORT" ;;
-        RD_SERVER_SERVICE) echo "$RD_SERVER_SERVICE" ;;
+        RD_EDGE_PORT)    echo "$RD_EDGE_PORT" ;;
+        RD_EDGE_SERVICE) echo "$RD_EDGE_SERVICE" ;;
         RD_CONTEXT)   echo "$RD_DOCKER_CONTEXT" ;;
         *) rd_die "config get: unknown key '${2:-}'" ;;
       esac
@@ -88,20 +88,20 @@ usage: rd [--env <profile>] <command> [args...]
 
 commands:
   config [list|set <p>|get <KEY>]   active env/profile + derived settings
-  build <component> [args]          build shared | server | gateway | spacetime | client
-  up   [spacetime|server|gateway|all]   start container(s) (default all; ensures network)
-  down [spacetime|server|gateway|all]   stop  container(s) (default all)
-  deploy <server|gateway|module <name>> build + run one component now
+  build <component> [args]          build shared | edge | gateway | spacetime | core
+  up   [spacetime|edge|gateway|all]     start container(s) (default all; ensures network)
+  down [spacetime|edge|gateway|all]     stop  container(s) (default all)
+  deploy <edge|gateway|module <name>>   build + run one component now
   redeploy [--run|--force|--no-reset|--mark]
                                     detect changed units, rebuild + redeploy
   index <seed|show>                 seed/inspect the index routing directory
                                     from content/servers/<env>
-  logs <spacetime|server|gateway> [-f]  tail a component's log
+  logs <spacetime|edge|gateway> [-f]    tail a component's log
   ps                                container status across all three stacks
 
 typical local test loop:
-  rd up                 # network + spacetime daemon + idle server/gateway containers
-  rd redeploy --run     # publish modules, build + run server + gateway
+  rd up                 # network + spacetime daemon + idle edge/gateway containers
+  rd redeploy --run     # publish modules, build + run edge + gateway
   rd ps                 # confirm everything's up
 
 profiles (envs): dev claude test alpha   (alpha = remote lightsail)

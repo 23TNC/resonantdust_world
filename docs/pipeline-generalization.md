@@ -85,7 +85,9 @@ Split zone data across **two specialized pipelines** — the payoff of the gener
 2. **Worker `data_type` dispatch** — one worker resolving multiple pipeline classes.
 3. **Pack/unpack saga + `event_log` provenance** — built together (§ *Provenance* / §
    *Pack / unpack*), the saga being the provenance's consumer.
-4. **Client zone rendering** — per-layer, biome-resolved.
+4. **Client zone rendering** — per-layer, biome-resolved. The concrete edge→protocol→pixijs
+   wiring gap list + the static-only short path (Scope A, no worker/saga needed) is in
+   [`zones-to-screen.md`](zones-to-screen.md).
 
 Not yet touched: worker/master rename (`server_simulation → server_worker`), the
 `server_reference` migration of `event_log`'s own server-id/action fields, `set_shard_id`

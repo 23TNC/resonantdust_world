@@ -117,6 +117,11 @@ pub const ENTITY_TYPE_TILE: u8 = 5;
 // positional (0x80–0xFF) — identity IS location, never minted
 /// A zone cell `(zone_id, location, layer)` — the cold store's positional entity.
 pub const ENTITY_TYPE_ZONE_CELL: u8 = 0x80;
+/// A zone's whole-zone static terrain blob — the packed `tiles` + scattered `things`
+/// for one zone (worldgen's cold baseline). Positional: identity is its `zone_id`
+/// (`location`/`layer` are `0`). Distinct from a per-cell [`ENTITY_TYPE_ZONE_CELL`];
+/// the edge seeds one per zone and streams it on the zone subscription.
+pub const ENTITY_TYPE_ZONE_TERRAIN: u8 = 0x81;
 
 // Zone-cell layers — the `layer` byte of a positional entity lets multiple cells stack
 // on one `(zone_id, location)` (floor + wall + affixed things). A starting palette;
@@ -233,7 +238,7 @@ pub fn entity_type_data_type(entity_type: u8) -> u8 {
     match entity_type {
         ENTITY_TYPE_PAWN => DATA_TYPE_PAWN,
         ENTITY_TYPE_DEMO | ENTITY_TYPE_PLAYER | ENTITY_TYPE_OBJECT => DATA_TYPE_OBJECT,
-        ENTITY_TYPE_TILE | ENTITY_TYPE_ZONE_CELL => DATA_TYPE_ZONE,
+        ENTITY_TYPE_TILE | ENTITY_TYPE_ZONE_CELL | ENTITY_TYPE_ZONE_TERRAIN => DATA_TYPE_ZONE,
         _ => DATA_TYPE_SHARED,
     }
 }
@@ -331,6 +336,7 @@ mod tests {
         assert_eq!(entity_type_data_type(ENTITY_TYPE_PLAYER), DATA_TYPE_OBJECT);
         assert_eq!(entity_type_data_type(ENTITY_TYPE_TILE), DATA_TYPE_ZONE);
         assert_eq!(entity_type_data_type(ENTITY_TYPE_ZONE_CELL), DATA_TYPE_ZONE);
+        assert_eq!(entity_type_data_type(ENTITY_TYPE_ZONE_TERRAIN), DATA_TYPE_ZONE);
         assert_eq!(entity_type_data_type(ENTITY_TYPE_NONE), DATA_TYPE_SHARED);
     }
 }

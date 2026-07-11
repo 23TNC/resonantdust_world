@@ -12,13 +12,13 @@ REPO="$(cd "$RD_LIB_DIR/../.." && pwd)"
 BIN="$REPO/bin"
 
 SHARED_DIR="$REPO/shared"
-SERVER_DIR="$REPO/server"
-GATEWAY_DIR="$REPO/gateway"
-CLIENT_DIR="$REPO/client"
-NPC_DIR="$REPO/npc"
-SPACETIME_DIR="$REPO/spacetime"
+EDGE_DIR="$REPO/server/edge"
+GATEWAY_DIR="$REPO/server/gateway"
+CORE_DIR="$REPO/client/core"
+NPC_DIR="$REPO/client/npc"
+SPACETIME_DIR="$REPO/server/spacetime"
 MODULES_DIR="$SPACETIME_DIR/server/modules"
-PIXIJS_DIR="$REPO/pixijs"
+PIXIJS_DIR="$REPO/client/pixijs"
 CONTENT_DIR="$REPO/content"
 
 # Persisted active profile (written by `rd config set`), and per-env build state
@@ -63,7 +63,7 @@ rd_resolve_env() {
       RD_DOCKER_CONTEXT=""
       RD_REMOTE=0
       RD_ST_COMPOSE="$SPACETIME_DIR/compose.yml"
-      RD_SERVER_COMPOSE="$SERVER_DIR/compose.yml"
+      RD_EDGE_COMPOSE="$EDGE_DIR/compose.yml"
       RD_GATEWAY_COMPOSE="$GATEWAY_DIR/compose.yml"
       ;;
     alpha)
@@ -75,7 +75,7 @@ rd_resolve_env() {
       RD_DOCKER_CONTEXT="lightsail"
       RD_REMOTE=1
       RD_ST_COMPOSE="$SPACETIME_DIR/deploy.yml"
-      RD_SERVER_COMPOSE="$SERVER_DIR/deploy.yml"
+      RD_EDGE_COMPOSE="$EDGE_DIR/deploy.yml"
       # No gateway deploy.yml yet — remote gateway standup isn't wired (the
       # deploy primitives guard on this being empty). Build still works locally.
       RD_GATEWAY_COMPOSE=""
@@ -89,14 +89,14 @@ rd_resolve_env() {
   #   • gateway (9473/4/5) — the CLIENT-FACING entry. Clients connect here to
   #     determine/acquire a server; they never hardcode a server address. Not
   #     implemented yet, so this is a reserved address (no compose service).
-  #   • server  (8473/4/5) — the game server the tooling builds + stands up. The
-  #     binary is env-agnostic; only the port/service/log differ. 8xxx=server,
+  #   • edge    (8473/4/5) — the game/edge server the tooling builds + stands up.
+  #     The binary is env-agnostic; only the port/service/log differ. 8xxx=edge,
   #     9xxx=gateway.
   case "$RD_ENV" in
-    dev)    RD_GATEWAY_PORT=9473; RD_GATEWAY_SERVICE=gateway;        RD_SERVER_PORT=8473; RD_SERVER_SERVICE=server ;;
-    claude) RD_GATEWAY_PORT=9474; RD_GATEWAY_SERVICE=gateway-claude; RD_SERVER_PORT=8474; RD_SERVER_SERVICE=server-claude ;;
-    test)   RD_GATEWAY_PORT=9475; RD_GATEWAY_SERVICE=gateway-test;   RD_SERVER_PORT=8475; RD_SERVER_SERVICE=server-test ;;
-    alpha)  RD_GATEWAY_PORT=9473; RD_GATEWAY_SERVICE=gateway-alpha;  RD_SERVER_PORT=8473; RD_SERVER_SERVICE=server-alpha ;;
+    dev)    RD_GATEWAY_PORT=9473; RD_GATEWAY_SERVICE=gateway;        RD_EDGE_PORT=8473; RD_EDGE_SERVICE=edge ;;
+    claude) RD_GATEWAY_PORT=9474; RD_GATEWAY_SERVICE=gateway-claude; RD_EDGE_PORT=8474; RD_EDGE_SERVICE=edge-claude ;;
+    test)   RD_GATEWAY_PORT=9475; RD_GATEWAY_SERVICE=gateway-test;   RD_EDGE_PORT=8475; RD_EDGE_SERVICE=edge-test ;;
+    alpha)  RD_GATEWAY_PORT=9473; RD_GATEWAY_SERVICE=gateway-alpha;  RD_EDGE_PORT=8473; RD_EDGE_SERVICE=edge-alpha ;;
   esac
   # The address clients connect to (the gateway). A URL, per the old gate-url
   # contract the client baked in.
@@ -105,7 +105,7 @@ rd_resolve_env() {
   # The SpacetimeDB daemon's address as seen *from inside* the resonantdust
   # docker network: it's the `start` service, regardless of env. Distinct from
   # RD_ST_SERVER (the host-facing URL the tooling/CLI use). Services we stand up
-  # in containers (server, gateway) reach the daemon here, not on 127.0.0.1.
+  # in containers (edge, gateway) reach the daemon here, not on 127.0.0.1.
   RD_STDB_INTERNAL="http://start:3000"
 
   # Per-module DBs are resonantdust-<env>-<module>-<idx>.
@@ -147,17 +147,17 @@ rd_st_dcl() {
 # identity-stable path — the container's server-issued identity never drifts).
 rd_stc() { rd_st_dc exec -T start spacetime "$@"; }
 
-# Server compose, honouring the env's docker context.
-rd_server_dc() {
+# Edge compose, honouring the env's docker context.
+rd_edge_dc() {
   docker ${RD_DOCKER_CONTEXT:+--context "$RD_DOCKER_CONTEXT"} \
-    compose -f "$RD_SERVER_COMPOSE" "$@"
+    compose -f "$RD_EDGE_COMPOSE" "$@"
 }
-# Server build — always local compose.yml (one binary serves every env).
-rd_server_dcl() {
-  docker compose -f "$SERVER_DIR/compose.yml" "$@"
+# Edge build — always local compose.yml (one binary serves every env).
+rd_edge_dcl() {
+  docker compose -f "$EDGE_DIR/compose.yml" "$@"
 }
 # Gateway compose, honouring the env's docker context. Used to stand up + run the
-# gateway binary (mirrors rd_server_dc). Guards on RD_GATEWAY_COMPOSE being set —
+# gateway binary (mirrors rd_edge_dc). Guards on RD_GATEWAY_COMPOSE being set —
 # it's empty for envs with no gateway standup wired (e.g. alpha, no deploy.yml).
 rd_gateway_dc() {
   [[ -n "$RD_GATEWAY_COMPOSE" ]] || rd_die "no gateway standup for env '$RD_ENV' (RD_GATEWAY_COMPOSE unset)"
@@ -168,13 +168,12 @@ rd_gateway_dc() {
 rd_gateway_dcl() {
   docker compose -f "$GATEWAY_DIR/compose.yml" "$@"
 }
-# Headless client build — always local compose.yml (a dev-side library + bin, not
-# an env-specific deployment).
-rd_client_dcl() {
-  docker compose -f "$CLIENT_DIR/compose.yml" "$@"
+# Headless client-core build — always local compose.yml (a dev-side library + bin,
+# not an env-specific deployment).
+rd_core_dcl() {
+  docker compose -f "$CORE_DIR/compose.yml" "$@"
 }
-# NPC driver build/run — a dev-side bot binary (path-deps the client), always the
-# local compose.yml.
+# NPC driver build/run — a dev-side bot binary, always the local compose.yml.
 rd_npc_dcl() {
   docker compose -f "$NPC_DIR/compose.yml" "$@"
 }

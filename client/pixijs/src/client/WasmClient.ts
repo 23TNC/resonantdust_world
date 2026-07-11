@@ -1,0 +1,588 @@
+//! The main-thread bridge to the world server — the client core's facade.
+//!
+//! This wraps the Rust `client` crate compiled to wasm (`WorldClient` in the
+//! `resonantdust-shared` bundle): login (the two-hop gateway → world-server
+//! handshake) and the anchor-driven zone subscription engine. We send it the
+//! same `Command` verbs the native headless driver does (`login`, `setAnchor`,
+//! …) and it streams `Event`s back, which arrive here as small tagged objects
+//! (`{ kind, … }`) on the constructor callback and fan out to typed listeners.
+//!
+//! The surface is kept close to the Rust `Command`/`Event` contract (`api.rs`).
+//! The chat / call-stat / sub-stat hooks are still inert stubs the ported UI
+//! reaches for; they return no-op unsubscribes until those subsystems return.
+
+import { WorldClient } from "./wasm";
+import { assetBaseFromServerUrl } from "./environments";
+
+/** Shared render delay `D`, in ms. Every client renders the world as of
+ *  `syncedNow − RENDER_DELAY_MS`; using the SAME value on every client is what
+ *  makes them agree on the instant they display. Sized above typical one-way
+ *  latency + jitter + the server's write cadence — 300ms is imperceptible for a
+ *  colony sim and doubles as the command-latency budget (a local action becomes
+ *  visible this long after it's issued). */
+export const RENDER_DELAY_MS = 300;
+
+/** Clock discipline — how the smooth **Sync.now** clock chases the jittery **raw**
+ *  server-offset estimate. Small errors are *slewed* (the clock ticks slightly
+ *  fast/slow until it catches up) so motion never hitches and clients converge
+ *  together; large errors (first sync, resync after a backgrounded tab) are
+ *  *stepped* instantly because slewing multi-second gaps would keep the clock
+ *  wrong for too long. The slew rate is well under 1000 ms/s, so Sync.now is
+ *  always monotonic — it may tick slow, but never runs backward (except on a
+ *  deliberate step). */
+export const CLOCK_STEP_THRESHOLD_MS = 250;
+export const CLOCK_SLEW_RATE_MS_PER_S = 50;
+
+/** Which discipline regime the clock is in — surfaced to the debug HUD. */
+export type SlewState = "step" | "slew" | "locked" | "—";
+
+/** One chat message from the (future) chat feed. `sentAt` is a packed
+ *  `[time_ms | seq]` key as a STRING — the u64 exceeds JS's safe-integer range,
+ *  so it's carried as text (and is a stable per-message id / sort key). The
+ *  current protocol has no chat frames, so this never fires yet. */
+export interface ChatMessage {
+  sentAt: string;
+  senderPlayerId: number;
+  senderName: string;
+  body: string;
+}
+
+/** One command type's gateway-call tally for the debug HUD's "calls" tab.
+ *  `command` is the wire tag (`login` / `sub_zone` / `unsub` / `release`);
+ *  `requests` / `tx` count outbound frames + their bytes; `ok` / `err` / `rx` the
+ *  correlated replies + their bytes (fire-and-forget frames have no reply). */
+export interface CallStat {
+  command: string;
+  requests: number;
+  ok: number;
+  err: number;
+  tx: number;
+  rx: number;
+}
+
+/** One relayed-row table's data tally for the debug HUD's "subs" tab. `table` is
+ *  the wire tag (`state`); `rows` counts the `Row` frames streamed down
+ *  subscriptions and `rx` sums their serialized bytes. */
+export interface SubStat {
+  table: string;
+  rows: number;
+  rx: number;
+}
+
+/** A subscription-data snapshot for the "subs" tab: the live `open` zone-sub gauge,
+ *  the cumulative `total` ever issued, and the per-table byte breakdown. */
+export interface SubStatsSnapshot {
+  open: number;
+  total: number;
+  tables: SubStat[];
+}
+
+/** Clock-sync diagnostics for the debug HUD's "sync" tab. Fed by the wasm core's
+ *  `clockSync` event — a login seed plus a ping/pong round-trip every couple of
+ *  seconds — carrying the running offset/RTT estimate. */
+export interface ClockStats {
+  serverNowMs: number;
+  synced: boolean;
+  clientDelayMs: number;
+  captures: number;
+  bestOffsetMs: number | null;
+  worstOffsetMs: number | null;
+  rttMs: number | null;
+  bestRttMs: number | null;
+  rttSamples: number;
+}
+
+/** What a successful {@link WasmClient.login} resolves to. Mirrors the Rust
+ *  `Event::LoggedIn` payload plus the gateway's `reused` affinity flag. */
+export interface LoginResult {
+  playerId: number;
+  dataShard: number;
+  /** The world-server WS URL the gateway resolved and we're now connected to. */
+  serverUrl: string;
+  /** `true` when the gateway reused an existing session pin (reconnect
+   *  affinity), `false` when it freshly allocated a server. */
+  reused: boolean;
+}
+
+/** Coarse progress callback for the login UI — the scene narrates these into its
+ *  status line as the handshake advances through its stages. */
+export type LoginProgress = (message: string) => void;
+
+/** Per-tier anchor reach, in tiles (active ⊆ hot ⊆ warm ⊆ cold). Only the
+ *  `active` ring opens subscriptions; the rest are the hysteresis ladder. */
+export interface AnchorRadii {
+  active: number;
+  hot: number;
+  warm: number;
+  cold: number;
+}
+
+/** A cold zone's tiles arrived: `tiles` is the `ZONE_TILES` packed slots. */
+export type ZoneTilesHandler = (zoneId: number, tiles: Uint16Array) => void;
+/** A cold zone's things arrived: `things` is its packed thing entries
+ *  (`x:4 | y:4 | rotation:2 | object_id:12` each) — the worldgen-scattered flora.
+ *  Fires alongside the tiles on every cold delivery; an empty array clears them. */
+export type ZoneThingsHandler = (zoneId: number, things: Uint32Array) => void;
+/** A zone's subscription closed — drop its entities. */
+export type ZoneClosedHandler = (zoneId: number) => void;
+
+/** A resolved entity from the shard's tick pipeline (`state`). The raw u64
+ *  `entity_key` exceeds JS's safe-integer range, so the wasm core decodes it into the
+ *  object's class (`objType`) and its 48-bit `objectId` (JS-safe); the demo layer keys
+ *  a circle by `objectId` and only renders demo/player classes. */
+export interface StateObject {
+  zoneId: number;
+  objType: number;
+  objectId: number;
+  tic: number;
+  location: number;
+  removed: boolean;
+}
+/** A state object changed — upsert or drop it. */
+export type StateObjectHandler = (obj: StateObject) => void;
+
+const NOOP_UNSUB = (): void => { /* nothing subscribed */ };
+
+/** How long to wait for login to complete (gateway resolve + connect + auth)
+ *  before giving up, so a stalled handshake can't hang the login form forever. */
+const LOGIN_TIMEOUT_MS = 12_000;
+
+/** A tagged event from the wasm `WorldClient` (mirror of the Rust `Event` enum,
+ *  marshaled in `shared/wasm`'s `event_to_js`). */
+type WorldEvent =
+  | { kind: "loginStarted"; name: string }
+  | { kind: "serverResolved"; serverId: number; url: string; reused: boolean }
+  | { kind: "loggedIn"; playerId: number; dataShard: number; serverUrl: string }
+  | { kind: "loginFailed"; reason: string }
+  | { kind: "disconnected"; reason: string | null }
+  | { kind: "status"; message: string }
+  | { kind: "zoneTiles"; zoneId: number; tiles: Uint16Array }
+  | { kind: "zoneThings"; zoneId: number; things: Uint32Array }
+  | {
+      kind: "stateObject";
+      zoneId: number;
+      objType: number;
+      objectId: number;
+      tic: number;
+      location: number;
+      removed: boolean;
+    }
+  | { kind: "zoneClosed"; zoneId: number }
+  | { kind: "callStats"; stats: CallStat[] }
+  | { kind: "subStats"; open: number; total: number; tables: SubStat[] }
+  | {
+      kind: "clockSync";
+      serverNowMs: number;
+      synced: boolean;
+      offsetMs: number;
+      captures: number;
+      rttSamples: number;
+      rttMs: number | null;
+      bestRttMs: number | null;
+      bestOffsetMs: number | null;
+      worstOffsetMs: number | null;
+    };
+
+/** An in-flight login awaiting its terminal event. */
+interface PendingLogin {
+  resolve: (result: LoginResult) => void;
+  reject: (err: Error) => void;
+  onProgress?: LoginProgress;
+}
+
+/**
+ * Client bridge. Constructed with the **gateway** HTTP base it should ask for a
+ * world server (`http(s)://host:port`, no trailing `/server`). The underlying
+ * wasm client is created lazily on first {@link login} (after the wasm module is
+ * initialised) and re-created if the gateway is repointed.
+ */
+export class WasmClient {
+  /** The wasm world client, or null before the first login. */
+  private world: WorldClient | null = null;
+  /** The gateway the live `world` was constructed against, to detect repoints. */
+  private worldGateway: string | null = null;
+  /** The in-flight login, if any. */
+  private pending: PendingLogin | null = null;
+  /** `reused` from the most recent `serverResolved`, folded into `LoginResult`. */
+  private lastReused = false;
+  /** The world server's URL from the most recent successful login (its WS base) —
+   *  the client derives the HTTP ASSET base from this (`/content` + `/textures`
+   *  live on the server now). `null` until logged in / after disconnect. */
+  private serverUrl: string | null = null;
+
+  private clockCb: ((stats: ClockStats) => void) | null = null;
+  /** Raw offset (`serverNow − Date.now()`) from the core's windowed best-RTT
+   *  estimate, refreshed on every synced `clockSync`. Jittery / steps per sample;
+   *  it's the *target* the disciplined clock chases, and drives the HUD's raw
+   *  **Server.now**. `0` until the first synced sample. */
+  private rawOffsetMs = 0;
+  /** Disciplined offset — the smoothly-slewed value {@link syncedNowMs} actually
+   *  uses, chasing {@link rawOffsetMs} via step/slew. */
+  private disciplinedOffsetMs = 0;
+  /** Whether the disciplined offset has been primed from a first raw estimate. */
+  private disciplineInit = false;
+  /** `Date.now()` at the last discipline advance, for the slew's time step. */
+  private lastDisciplineMs = 0;
+  /** The regime the last discipline advance took — for the HUD. */
+  private slewState: SlewState = "—";
+  /** Whether the clock has at least one estimate (login seed or a pong). */
+  private clockSynced = false;
+  private readonly loggedInCbs = new Set<(serverUrl: string) => void>();
+  private readonly zoneTilesCbs = new Set<ZoneTilesHandler>();
+  private readonly zoneThingsCbs = new Set<ZoneThingsHandler>();
+  private readonly zoneClosedCbs = new Set<ZoneClosedHandler>();
+  private readonly stateObjectCbs = new Set<StateObjectHandler>();
+  private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
+  private readonly subStatCbs = new Set<(snap: SubStatsSnapshot) => void>();
+
+  constructor(private gatewayUrl: string) {}
+
+  /** Repoint the client at a different gateway HTTP base (the login screen's
+   *  Server dropdown does this before each attempt). The live wasm client is
+   *  re-created against the new base on the next {@link login}. */
+  setGatewayUrl(url: string): void {
+    this.gatewayUrl = url;
+  }
+
+  /** The gateway HTTP base the client currently points at (used for `GET /server`). */
+  currentGatewayUrl(): string {
+    return this.gatewayUrl;
+  }
+
+  /** The HTTP base of the world server the client is logged into — where the
+   *  DSL corpus (`/content`) and textures (`/textures`) are fetched from — or `""`
+   *  before login / after disconnect. Derived from the login-discovered WS URL
+   *  (`ws://host:port/ws` → `http://host:port`). */
+  assetBase(): string {
+    return this.serverUrl ? assetBaseFromServerUrl(this.serverUrl) : "";
+  }
+
+  /** **Sync.now** — the disciplined server-clock estimate for *now*: the smooth,
+   *  monotonic clock the render loop drives off (`syncedNowMs() − RENDER_DELAY_MS`
+   *  picks the shared display instant). It slews toward the raw estimate rather
+   *  than snapping, so it converges across clients without hitching. Advancing the
+   *  discipline here means any caller (render loop, HUD) keeps it fresh. Before the
+   *  first sample this is just `Date.now()` (offset 0) — rendering still works,
+   *  just un-synced across clients. */
+  syncedNowMs(): number {
+    const now = Date.now();
+    this.advanceDiscipline(now);
+    return now + this.disciplinedOffsetMs;
+  }
+
+  /** **Server.now** — the *raw* server-clock estimate for now (`Date.now()` +
+   *  windowed best-RTT offset). Jittery and step-prone; it's the target Sync.now
+   *  chases. The debug HUD shows it alongside Sync.now to make convergence
+   *  visible. */
+  rawServerNowMs(): number {
+    return Date.now() + this.rawOffsetMs;
+  }
+
+  /** Live clock-discipline readout for the debug HUD: the disciplined vs raw
+   *  offsets and which regime the last advance took. */
+  clockDiag(): { disciplinedOffsetMs: number; rawOffsetMs: number; slew: SlewState } {
+    return {
+      disciplinedOffsetMs: this.disciplinedOffsetMs,
+      rawOffsetMs: this.rawOffsetMs,
+      slew: this.clockSynced ? this.slewState : "—",
+    };
+  }
+
+  /** Advance the disciplined offset toward the raw estimate. Steps for large
+   *  errors (first sync / resync), slews for small ones at a bounded rate that
+   *  keeps Sync.now monotonic. Idempotent within a frame — called back-to-back
+   *  with `dt ≈ 0` it barely moves. */
+  private advanceDiscipline(now: number): void {
+    if (!this.clockSynced) return;
+    const target = this.rawOffsetMs;
+    if (!this.disciplineInit) {
+      this.disciplinedOffsetMs = target;
+      this.lastDisciplineMs = now;
+      this.disciplineInit = true;
+      this.slewState = "step";
+      return;
+    }
+    const err = target - this.disciplinedOffsetMs;
+    if (Math.abs(err) > CLOCK_STEP_THRESHOLD_MS) {
+      this.disciplinedOffsetMs = target;
+      this.slewState = "step";
+    } else if (err === 0) {
+      this.slewState = "locked";
+    } else {
+      const dt = Math.max(0, now - this.lastDisciplineMs);
+      const maxStep = (CLOCK_SLEW_RATE_MS_PER_S * dt) / 1000;
+      this.disciplinedOffsetMs += Math.max(-maxStep, Math.min(maxStep, err));
+      this.slewState = "slew";
+    }
+    this.lastDisciplineMs = now;
+  }
+
+  /** Whether the clock offset has been estimated at least once. */
+  clockIsSynced(): boolean {
+    return this.clockSynced;
+  }
+
+  /** Subscribe to successful logins (fires with the world server's WS URL). The
+   *  boot wiring uses this to repoint the texture resolver + pull the server's
+   *  corpus once the server is known. Returns an unsubscribe. */
+  onLoggedIn(cb: (serverUrl: string) => void): () => void {
+    this.loggedInCbs.add(cb);
+    return () => this.loggedInCbs.delete(cb);
+  }
+
+  /**
+   * Log in as `name` (trust-on-first-use). Drives the wasm engine's gateway →
+   * connect → authenticate sequence; resolves with the bound `player_id` /
+   * `data_shard` on `loggedIn`, rejects (with a human-readable reason) on
+   * `loginFailed` / disconnect / timeout. `onProgress` is narrated into the
+   * login form's status line as each stage begins.
+   */
+  login(name: string, onProgress?: LoginProgress): Promise<LoginResult> {
+    const world = this.ensureWorld();
+
+    // A new login supersedes any in-flight one.
+    if (this.pending) {
+      this.pending.reject(new Error("login superseded"));
+      this.pending = null;
+    }
+
+    return new Promise<LoginResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pending) {
+          this.pending = null;
+          reject(new Error("login timed out"));
+        }
+      }, LOGIN_TIMEOUT_MS);
+
+      this.pending = {
+        resolve: (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+        onProgress,
+      };
+
+      onProgress?.("Asking the gateway for a world server…");
+      world.login(name);
+    });
+  }
+
+  /** Drop the world-server connection and clear the session (the Rust
+   *  `Command::Logout`). Safe to call when not connected. */
+  logout(): void {
+    this.world?.logout();
+  }
+
+  /** Add or move the viewport anchor `name` to global tile `(tileX, tileY)` on
+   *  `surface`, with the per-tier reach `radii` (in tiles). `soul` is `0` for a
+   *  viewport. Idempotent — cheap to call as the view pans. No-op before login. */
+  setAnchor(
+    name: string,
+    tileX: number,
+    tileY: number,
+    surface: number,
+    radii: AnchorRadii,
+    soul: number,
+  ): void {
+    this.world?.setAnchor(
+      name,
+      tileX,
+      tileY,
+      surface,
+      radii.active,
+      radii.hot,
+      radii.warm,
+      radii.cold,
+      soul,
+    );
+  }
+
+  /** Remove the anchor `name`, closing any subscriptions only it held. */
+  removeAnchor(name: string): void {
+    this.world?.removeAnchor(name);
+  }
+
+  /** Move the player's own object toward global tile `(tileX, tileY)`. The server
+   *  appends an `ACTION_MOVE` event to the shard's tick pipeline, which arrives as
+   *  a `state` row on the zone subscription. No-op before login. */
+  moveTo(tileX: number, tileY: number): void {
+    this.world?.moveTo(tileX, tileY);
+  }
+
+  /** Subscribe to cold-zone tile deliveries. Returns an unsubscribe. */
+  onZoneTiles(cb: ZoneTilesHandler): () => void {
+    this.zoneTilesCbs.add(cb);
+    return () => this.zoneTilesCbs.delete(cb);
+  }
+
+  /** Subscribe to cold-zone thing deliveries (worldgen-scattered flora). Returns
+   *  an unsubscribe. */
+  onZoneThings(cb: ZoneThingsHandler): () => void {
+    this.zoneThingsCbs.add(cb);
+    return () => this.zoneThingsCbs.delete(cb);
+  }
+
+  /** Subscribe to zone-close notifications (a sub dropped). Returns an unsub. */
+  onZoneClosed(cb: ZoneClosedHandler): () => void {
+    this.zoneClosedCbs.add(cb);
+    return () => this.zoneClosedCbs.delete(cb);
+  }
+
+  /** Subscribe to tick-pipeline entity changes (object-shard `state`). Returns an
+   *  unsubscribe. */
+  onStateObject(cb: StateObjectHandler): () => void {
+    this.stateObjectCbs.add(cb);
+    return () => this.stateObjectCbs.delete(cb);
+  }
+
+  /** ChatPanel feed subscription. The protocol carries no chat frames yet, so
+   *  this never fires — wired for when the feed returns. */
+  onChat(_cb: (messages: ChatMessage[]) => void): () => void {
+    return NOOP_UNSUB;
+  }
+
+  /** Send a chat message — dropped until the protocol carries chat frames. */
+  sendChat(_body: string): void {
+    /* no chat frames yet — drop */
+  }
+
+  /** Clock-sync snapshots → debug HUD. Fires on every `clockSync` (login seed +
+   *  each ping/pong). Only one consumer is kept (the HUD projector). */
+  onClockStats(cb: (stats: ClockStats) => void): () => void {
+    this.clockCb = cb;
+    return () => {
+      if (this.clockCb === cb) this.clockCb = null;
+    };
+  }
+
+  /** Per-command call tally → debug HUD "calls" tab. Fires with the full snapshot
+   *  on every `callStats` event (after each outbound frame / correlated reply).
+   *  Returns an unsubscribe. */
+  onCallStats(cb: (stats: CallStat[]) => void): () => void {
+    this.callStatCbs.add(cb);
+    return () => this.callStatCbs.delete(cb);
+  }
+
+  /** Subscription-data tally → debug HUD "subs" tab. Fires with the full snapshot
+   *  (open/total gauge + per-table byte breakdown) whenever a subscription
+   *  opens/closes or a `Row` frame lands. Returns an unsubscribe. */
+  onSubStats(cb: (snap: SubStatsSnapshot) => void): () => void {
+    this.subStatCbs.add(cb);
+    return () => this.subStatCbs.delete(cb);
+  }
+
+  /** Gate content hot-swap notification. Superseded — content hot-swap is driven
+   *  by polling the gateway's `GET /content-version` in `contentBoot`
+   *  (`startContentPolling` → `onContentReloaded`), not over this client's stream,
+   *  since the gateway (not the world server) owns the corpus. Kept as a no-op for
+   *  the ported UI that still references it. */
+  onContentChanged(_cb: () => void): () => void {
+    return NOOP_UNSUB;
+  }
+
+  // ── internals ───────────────────────────────────────────────────────
+
+  /** Get the wasm world client, (re)creating it if absent or if the gateway was
+   *  repointed since it was built. The event callback is permanent — it fans
+   *  every engine event out to this bridge's listeners. */
+  private ensureWorld(): WorldClient {
+    if (!this.world || this.worldGateway !== this.gatewayUrl) {
+      this.world?.shutdown();
+      this.world = new WorldClient(this.gatewayUrl, (ev: WorldEvent) => this.onEvent(ev));
+      this.worldGateway = this.gatewayUrl;
+    }
+    return this.world;
+  }
+
+  /** Route one tagged engine event: resolve/reject the in-flight login, narrate
+   *  progress, or fan zone deliveries out to listeners. */
+  private onEvent(ev: WorldEvent): void {
+    switch (ev.kind) {
+      case "loginStarted":
+        break;
+      case "serverResolved":
+        this.lastReused = ev.reused;
+        this.pending?.onProgress?.(`Connecting to ${ev.url}…`);
+        break;
+      case "loggedIn":
+        // Record the world server so asset fetches (`/content` + `/textures`)
+        // target it, then notify listeners (they repoint the texture resolver +
+        // pull the server's corpus).
+        this.serverUrl = ev.serverUrl;
+        this.pending?.resolve({
+          playerId: ev.playerId,
+          dataShard: ev.dataShard,
+          serverUrl: ev.serverUrl,
+          reused: this.lastReused,
+        });
+        this.pending = null;
+        for (const cb of this.loggedInCbs) cb(ev.serverUrl);
+        break;
+      case "loginFailed":
+        this.pending?.reject(new Error(ev.reason));
+        this.pending = null;
+        break;
+      case "disconnected":
+        this.serverUrl = null;
+        if (this.pending) {
+          this.pending.reject(new Error(ev.reason ?? "disconnected"));
+          this.pending = null;
+        }
+        break;
+      case "status":
+        this.pending?.onProgress?.(ev.message);
+        break;
+      case "zoneTiles":
+        for (const cb of this.zoneTilesCbs) cb(ev.zoneId, ev.tiles);
+        break;
+      case "zoneThings":
+        for (const cb of this.zoneThingsCbs) cb(ev.zoneId, ev.things);
+        break;
+      case "stateObject":
+        for (const cb of this.stateObjectCbs) {
+          cb({
+            zoneId: ev.zoneId,
+            objType: ev.objType,
+            objectId: ev.objectId,
+            tic: ev.tic,
+            location: ev.location,
+            removed: ev.removed,
+          });
+        }
+        break;
+      case "clockSync":
+        // Refresh the *raw* offset target (the disciplined clock chases it in
+        // `syncedNowMs`), then project the snapshot into the HUD's `ClockStats`.
+        // `synced` gates the write so a pre-sync seed of 0 can't skew the clock.
+        this.clockSynced = ev.synced;
+        if (ev.synced) this.rawOffsetMs = ev.serverNowMs - Date.now();
+        this.clockCb?.({
+          serverNowMs: ev.serverNowMs,
+          synced: ev.synced,
+          clientDelayMs: RENDER_DELAY_MS,
+          captures: ev.captures,
+          bestOffsetMs: ev.bestOffsetMs,
+          worstOffsetMs: ev.worstOffsetMs,
+          rttMs: ev.rttMs,
+          bestRttMs: ev.bestRttMs,
+          rttSamples: ev.rttSamples,
+        });
+        break;
+      case "zoneClosed":
+        for (const cb of this.zoneClosedCbs) cb(ev.zoneId);
+        break;
+      case "callStats":
+        for (const cb of this.callStatCbs) cb(ev.stats);
+        break;
+      case "subStats":
+        for (const cb of this.subStatCbs) {
+          cb({ open: ev.open, total: ev.total, tables: ev.tables });
+        }
+        break;
+    }
+  }
+}

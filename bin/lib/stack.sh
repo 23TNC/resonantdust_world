@@ -7,43 +7,43 @@
 #   • spacetime — the SpacetimeDB daemon (`start`). SHARED across the local envs
 #     (one daemon on :3000; envs differ only by DB name), so `up`/`down` act on
 #     the single instance.
-#   • server    — the world-server binary, run detached in the env's long-lived
-#     container (server / server-claude / server-test), on 8473/4/5.
+#   • edge      — the edge-server binary, run detached in the env's long-lived
+#     container (edge / edge-claude / edge-test), on 8473/4/5.
 #   • gateway   — the directory binary, run detached in the env's long-lived
 #     container (gateway / gateway-claude / gateway-test), on 9473/4/5.
 #
-# The build+run of the server/gateway *binaries* is `rd deploy <…>` (or, change-
+# The build+run of the edge/gateway *binaries* is `rd deploy <…>` (or, change-
 # detected, `rd redeploy --run`); `rd up`/`down` only manage the containers (and
-# the daemon). Targets: spacetime | server | gateway | all (default all).
+# the daemon). Targets: spacetime | edge | gateway | all (default all).
 
 # Resolve a target word to the work it touches. `all` = every stack for this env.
 rd_stack_targets() {
   case "${1:-all}" in
     spacetime|st) echo spacetime ;;
-    server)       echo server ;;
+    edge)         echo edge ;;
     gateway)      echo gateway ;;
-    all)          echo "spacetime server gateway" ;;
-    *) rd_die "unknown target '$1' (want: spacetime | server | gateway | all)" ;;
+    all)          echo "spacetime edge gateway" ;;
+    *) rd_die "unknown target '$1' (want: spacetime | edge | gateway | all)" ;;
   esac
 }
 
 # ── rd up ────────────────────────────────────────────────────────────────────
 # Stand up the requested stack's container(s). Always ensures the shared network
-# first. This brings containers up only — for server/gateway it starts the idle
+# first. This brings containers up only — for edge/gateway it starts the idle
 # (`sleep infinity`) container; run the binary inside it with `rd deploy <…>`.
 rd_up() {
   local t; rd_net_ensure
   for t in $(rd_stack_targets "${1:-all}"); do
     case "$t" in
       spacetime) rd_log "up: spacetime daemon ($RD_ST_SERVER)"; rd_st_dc up -d start >/dev/null ;;
-      server)    rd_log "up: server container ($RD_SERVER_SERVICE)"; rd_server_dc up -d "$RD_SERVER_SERVICE" >/dev/null ;;
+      edge)      rd_log "up: edge container ($RD_EDGE_SERVICE)"; rd_edge_dc up -d "$RD_EDGE_SERVICE" >/dev/null ;;
       gateway)   rd_log "up: gateway container ($RD_GATEWAY_SERVICE)"; rd_gateway_dc up -d "$RD_GATEWAY_SERVICE" >/dev/null ;;
     esac
   done
 }
 
 # ── rd down ──────────────────────────────────────────────────────────────────
-# Stop the requested stack. server/gateway `stop` only the active env's container
+# Stop the requested stack. edge/gateway `stop` only the active env's container
 # (the other envs run side by side, so we never knock them over); spacetime stops
 # the shared daemon. Containers are stopped, not removed — `rd up` restarts them.
 rd_down() {
@@ -51,7 +51,7 @@ rd_down() {
   for t in $(rd_stack_targets "${1:-all}"); do
     case "$t" in
       spacetime) rd_log "down: spacetime daemon"; rd_st_dc stop start >/dev/null 2>&1 || true ;;
-      server)    rd_log "down: server container ($RD_SERVER_SERVICE)"; rd_server_dc stop "$RD_SERVER_SERVICE" >/dev/null 2>&1 || true ;;
+      edge)      rd_log "down: edge container ($RD_EDGE_SERVICE)"; rd_edge_dc stop "$RD_EDGE_SERVICE" >/dev/null 2>&1 || true ;;
       gateway)   rd_log "down: gateway container ($RD_GATEWAY_SERVICE)"; rd_gateway_dc stop "$RD_GATEWAY_SERVICE" >/dev/null 2>&1 || true ;;
     esac
   done
@@ -59,28 +59,29 @@ rd_down() {
 
 # ── rd ps ────────────────────────────────────────────────────────────────────
 # Status across all three stacks for this env. The daemon is a compose service;
-# server/gateway containers idle while their binary (if running) is a process
+# edge/gateway containers idle while their binary (if running) is a process
 # inside — so this shows the containers, and the per-binary logs live in the
 # files `rd logs` tails.
 rd_ps() {
   echo "── spacetime (shared daemon) ──"; rd_st_dc ps || true
-  echo "── server ($RD_ENV) ──";          rd_server_dc ps || true
+  echo "── edge ($RD_ENV) ──";            rd_edge_dc ps || true
   if [[ -n "$RD_GATEWAY_COMPOSE" ]]; then
     echo "── gateway ($RD_ENV) ──";       rd_gateway_dc ps || true
   fi
 }
 
 # ── rd logs ──────────────────────────────────────────────────────────────────
-# spacetime → the daemon's compose logs. server/gateway → the detached binary's
-# host log file (server/server-<env>.log, gateway/gateway-<env>.log), since the
-# binary writes there, not to container stdout. Extra args (e.g. -f) pass through.
+# spacetime → the daemon's compose logs. edge/gateway → the detached binary's
+# host log file (server/edge/edge-<env>.log, server/gateway/gateway-<env>.log),
+# since the binary writes there, not to container stdout. Extra args (-f) pass
+# through.
 rd_logs() {
-  local target="${1:-}"; [[ -n "$target" ]] && shift || rd_die "usage: rd logs <spacetime|server|gateway> [-f]"
+  local target="${1:-}"; [[ -n "$target" ]] && shift || rd_die "usage: rd logs <spacetime|edge|gateway> [-f]"
   case "$target" in
     spacetime|st) rd_st_dc logs "$@" start ;;
-    server)  rd_tail_log "$SERVER_DIR/server-${RD_ENV}.log" "$@" ;;
+    edge)    rd_tail_log "$EDGE_DIR/edge-${RD_ENV}.log" "$@" ;;
     gateway) rd_tail_log "$GATEWAY_DIR/gateway-${RD_ENV}.log" "$@" ;;
-    *) rd_die "unknown target '$target' (want: spacetime | server | gateway)" ;;
+    *) rd_die "unknown target '$target' (want: spacetime | edge | gateway)" ;;
   esac
 }
 # Tail a host log file; `-f` follows. Missing file is reported, not fatal (the
@@ -96,15 +97,15 @@ rd_tail_log() {
 # `rd redeploy`). Needs the relevant container(s) up — `rd up <target>` first, or
 # these `up` it themselves via the deploy primitives.
 #
-#   rd deploy server                 build the server binary, (re)run it detached
+#   rd deploy edge                   build the edge binary, (re)run it detached
 #   rd deploy gateway                build the gateway binary, (re)run it detached
 #   rd deploy module <name> [--keep] publish a module's wasm (--keep = no data wipe)
 rd_deploy() {
   local what="${1:-}"; [[ -n "$what" ]] && shift || { rd_deploy_usage; exit 1; }
   case "$what" in
-    server)
-      [[ "$RD_REMOTE" == 0 ]] || rd_die "server is remote for '$RD_ENV' — deploy it separately"
-      rd_build_server; rd_deploy_server ;;
+    edge)
+      [[ "$RD_REMOTE" == 0 ]] || rd_die "edge is remote for '$RD_ENV' — deploy it separately"
+      rd_build_edge; rd_deploy_edge ;;
     gateway)
       [[ "$RD_REMOTE" == 0 ]] || rd_die "no remote gateway standup wired for '$RD_ENV'"
       rd_build_gateway; rd_deploy_gateway ;;
@@ -120,14 +121,14 @@ rd_deploy() {
 
 rd_deploy_usage() {
   cat >&2 <<EOF
-usage: rd deploy <server|gateway|module <name>>
+usage: rd deploy <edge|gateway|module <name>>
 
-  server                 build + (re)run the world-server binary in its container
+  edge                   build + (re)run the edge-server binary in its container
   gateway                build + (re)run the gateway binary in its container
   module <name> [--keep] publish a spacetime module's wasm (--keep keeps data)
 
 Needs the spacetime daemon up (\`rd up spacetime\`) for module publishes, and is
-local-env only for server/gateway. For change-detected bulk deploys use
+local-env only for edge/gateway. For change-detected bulk deploys use
 \`rd redeploy --run\`.
 EOF
 }

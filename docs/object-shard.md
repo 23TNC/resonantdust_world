@@ -1,5 +1,14 @@
 # Object shard
 
+> **⚠️ Largely pre-0.2.** The modules/tables here (`object_shard`, `region_shard`,
+> `cold_zones`, `hot_things`) were **merged/stripped** by the 0.2 pipeline generalization —
+> the single `shard` module now carries the spatial payload. The **routing regimes** (static
+> region-partition vs dynamic presence) and the **transfer saga** remain the design of
+> record; see [`data-shards.md`](data-shards.md) for the multi-shard-**class** routing plan
+> reconciled with the current `decl_tick_pipeline!` world, and
+> [`pipeline-generalization.md`](pipeline-generalization.md) §Pack/unpack for the transfer
+> saga on the generalized engine.
+
 **Status:** Phases 1–2 built (the `object_shard` module + codec `offset` helper);
 Phases 3–7 (gate/client integration + transfer protocol) still to do. The
 `region_shard` module was also renamed to `zone_shard` (db family `shard`→`zone`)

@@ -501,6 +501,20 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("location", &JsValue::from_f64(*location as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
+        Event::ZoneTiles { zone_id, tiles } => {
+            set("kind", &JsValue::from_str("zoneTiles"));
+            set("zoneId", &JsValue::from_f64(*zone_id as f64));
+            let arr = js_sys::Uint16Array::new_with_length(tiles.len() as u32);
+            arr.copy_from(tiles);
+            set("tiles", &arr);
+        }
+        Event::ZoneThings { zone_id, things } => {
+            set("kind", &JsValue::from_str("zoneThings"));
+            set("zoneId", &JsValue::from_f64(*zone_id as f64));
+            let arr = js_sys::Uint32Array::new_with_length(things.len() as u32);
+            arr.copy_from(things);
+            set("things", &arr);
+        }
         Event::ZoneClosed { zone_id } => {
             set("kind", &JsValue::from_str("zoneClosed"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));

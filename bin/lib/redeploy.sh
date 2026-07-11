@@ -21,18 +21,18 @@
 #   • spacetime modules — discovered dynamically from spacetime/server/modules/
 #     (so a module rename/add/remove needs no edit here). Each module's closure
 #     is its own dir; its deploy DB target defaults to its name.
-#   • the rest (server, gateway, shared, pixijs) — explicit, hand-written
-#     closures. server + gateway are local-only standups (build the binary, run
+#   • the rest (edge, gateway, shared, pixijs) — explicit, hand-written
+#     closures. edge + gateway are local-only standups (build the binary, run
 #     it detached in the env's long-lived container); both are skipped on remote
 #     envs, which have no in-repo standup wired.
 # A unit is "changed" when the hash over its inputs differs from its last clean
 # stamp. Add a shared-crate path to a closure once a unit actually links it (e.g.
-# append "$SHARED_DIR" to server when the server links resonantdust-shared) so
+# append "$SHARED_DIR" to edge when the edge links resonantdust-shared) so
 # editing it marks the dependent dirty — kept honest: nothing path-deps shared yet.
 #
-# The headless `client/` crate is NOT a redeploy unit: it produces a dev-side
+# The headless client-core crate is NOT a redeploy unit: it produces a dev-side
 # binary nothing deployed consumes yet, so it has no deploy step. Build it on
-# demand with `rd build client`. Fold it in here once pixijs links it.
+# demand with `rd build core`. Fold it in here once pixijs links it.
 declare -A RD_INPUTS=()
 RD_MODULE_UNITS=()
 rd_init_units() {
@@ -41,7 +41,7 @@ rd_init_units() {
     RD_MODULE_UNITS+=("$mod")
     RD_INPUTS[$mod]="$MODULES_DIR/$mod"
   done
-  RD_INPUTS[server]="$SERVER_DIR/src $SERVER_DIR/Cargo.toml"
+  RD_INPUTS[edge]="$EDGE_DIR/src $EDGE_DIR/Cargo.toml"
   RD_INPUTS[gateway]="$GATEWAY_DIR/src $GATEWAY_DIR/Cargo.toml"
   RD_INPUTS[shared]="$SHARED_DIR"
   RD_INPUTS[pixijs]="$PIXIJS_DIR/src $PIXIJS_DIR/index.html $PIXIJS_DIR/package.json $PIXIJS_DIR/vite.config.ts $PIXIJS_DIR/tsconfig.json"
@@ -50,7 +50,7 @@ rd_init_units() {
   # `index` module is (re)published below, since a --reset publish wipes the rows.
   RD_INPUTS[index-seed]="$(rd_servers_manifest)"
   # Stable iteration order (modules first, then the seed, then the rest).
-  RD_ORDER=("${RD_MODULE_UNITS[@]}" index-seed server gateway shared pixijs)
+  RD_ORDER=("${RD_MODULE_UNITS[@]}" index-seed edge gateway shared pixijs)
 }
 
 # A module's deploy DB target(s) default to its own name. A module that backs
@@ -60,7 +60,7 @@ rd_re_targets() { echo "${RD_RE_TARGETS[$1]:-$1}"; }
 
 # Binary paths inside the long-lived containers (each bind-mounts its crate at
 # /workspace, so the release binary lands here).
-RD_SERVER_BIN="/workspace/target/release/server"
+RD_EDGE_BIN="/workspace/target/release/edge"
 RD_GATEWAY_BIN="/workspace/target/release/gateway"
 
 # sha256 over every SOURCE file under the given paths, order-independent.
@@ -94,6 +94,10 @@ rd_deploy_module() {
   local fam
   case "$target" in
     shard) fam="zone" ;;
+    # The `zone` module (static terrain) publishes to its OWN db family so it never
+    # collides with the object `shard` on `zone-0`; the edge's default_terrain_db()
+    # points here (resonantdust-<env>-zone-terrain-0).
+    zone)  fam="zone-terrain" ;;
     *)     fam="$target" ;;
   esac
   rd_log "deploy module $src → $(rd_db_for "$fam" "$idx")"
@@ -111,7 +115,7 @@ rd_deploy_module() {
 
 # Stop a running detached *process* inside a container (the binary we exec'd, not
 # PID 1's `sleep infinity`). rust:slim has no pkill/ps, so scan /proc and match
-# the binary path. $1 = compose-runner fn (rd_server_dc|rd_gateway_dc), $2 =
+# the binary path. $1 = compose-runner fn (rd_edge_dc|rd_gateway_dc), $2 =
 # service, $3 = binary path. Used before re-running so we never stack two copies.
 rd_stop_process() {
   local dc="$1" svc="$2" bin="$3"
@@ -127,22 +131,23 @@ rd_stop_process() {
   ' sh "$bin" 2>/dev/null || true
 }
 
-# Run the (freshly built) server binary detached inside its env container, on the
+# Run the (freshly built) edge binary detached inside its env container, on the
 # env's port. SERVER_ENV pins the control-plane DB names to this env (without it
 # the binary defaults to dev — wrong for claude/test). SERVER_STDB_URI is left at
 # the binary's default (http://start:3000, the daemon on the shared network).
-# Output → server/server-<env>.log via the bind mount.
-rd_deploy_server() {
-  local log="server-${RD_ENV}.log"
-  rd_server_dc up -d "$RD_SERVER_SERVICE" >/dev/null
-  rd_stop_process rd_server_dc "$RD_SERVER_SERVICE" "$RD_SERVER_BIN"
-  rd_server_dc exec -d \
+# (SERVER_* are the edge binary's runtime env-var contract, unchanged by the
+# server→edge rename.) Output → server/edge/edge-<env>.log via the bind mount.
+rd_deploy_edge() {
+  local log="edge-${RD_ENV}.log"
+  rd_edge_dc up -d "$RD_EDGE_SERVICE" >/dev/null
+  rd_stop_process rd_edge_dc "$RD_EDGE_SERVICE" "$RD_EDGE_BIN"
+  rd_edge_dc exec -d \
     -e RUST_LOG="${RUST_LOG:-info}" \
     -e SERVER_ENV="$RD_ENV" \
-    -e SERVER_LISTEN="0.0.0.0:$RD_SERVER_PORT" \
-    "$RD_SERVER_SERVICE" \
-    sh -c "exec $RD_SERVER_BIN > /workspace/$log 2>&1"
-  rd_log "server:$RD_ENV running detached on :$RD_SERVER_PORT (log: server/$log)"
+    -e SERVER_LISTEN="0.0.0.0:$RD_EDGE_PORT" \
+    "$RD_EDGE_SERVICE" \
+    sh -c "exec $RD_EDGE_BIN > /workspace/$log 2>&1"
+  rd_log "edge:$RD_ENV running detached on :$RD_EDGE_PORT (log: server/edge/$log)"
 }
 
 # Run the (freshly built) gateway binary detached inside its env container, on the
@@ -199,7 +204,7 @@ rd_redeploy() {
   echo "changed: ${CHANGED_UNITS[*]}"
 
   # Plan.
-  local SERVER_LOCAL=0; [[ "$RD_REMOTE" == 0 ]] && SERVER_LOCAL=1
+  local EDGE_LOCAL=0; [[ "$RD_REMOTE" == 0 ]] && EDGE_LOCAL=1
   echo "--- plan ---"
   for u in "${RD_MODULE_UNITS[@]}"; do
     [[ -n "${CHANGED[$u]:-}" ]] || continue
@@ -213,12 +218,12 @@ rd_redeploy() {
   local SEED_INDEX=0
   [[ -n "${CHANGED[index-seed]:-}" || -n "${CHANGED[index]:-}" ]] && SEED_INDEX=1
   [[ "$SEED_INDEX" == 1 ]] && printf '  %-26s # %s\n' "seed index" "← ${RD_INPUTS[index-seed]/#$REPO\//}"
-  if [[ -n "${CHANGED[server]:-}" ]]; then
-    if [[ "$SERVER_LOCAL" == 1 ]]; then printf '  %-26s # rebuild binary + restart\n' "build+deploy server"
-    else                                printf '  %-26s # skipped — server is remote\n' "(server)"; fi
+  if [[ -n "${CHANGED[edge]:-}" ]]; then
+    if [[ "$EDGE_LOCAL" == 1 ]]; then printf '  %-26s # rebuild binary + restart\n' "build+deploy edge"
+    else                                printf '  %-26s # skipped — edge is remote\n' "(edge)"; fi
   fi
   if [[ -n "${CHANGED[gateway]:-}" ]]; then
-    if [[ "$SERVER_LOCAL" == 1 ]]; then printf '  %-26s # rebuild binary + restart\n' "build+deploy gateway"
+    if [[ "$EDGE_LOCAL" == 1 ]]; then printf '  %-26s # rebuild binary + restart\n' "build+deploy gateway"
     else                                printf '  %-26s # skipped — no remote gateway standup\n' "(gateway)"; fi
   fi
   [[ -n "${CHANGED[shared]:-}" ]] && printf '  %-26s # rebuild wasm bundle\n' "build shared"
@@ -242,15 +247,15 @@ rd_redeploy() {
     fi
     stamp index-seed
   fi
-  if [[ -n "${CHANGED[server]:-}" ]]; then
-    if [[ "$SERVER_LOCAL" == 1 ]]; then
-      rd_build_server; rd_deploy_server; stamp server
+  if [[ -n "${CHANGED[edge]:-}" ]]; then
+    if [[ "$EDGE_LOCAL" == 1 ]]; then
+      rd_build_edge; rd_deploy_edge; stamp edge
     else
-      rd_log "note: '$RD_ENV' server is remote — deploy it separately."; stamp server
+      rd_log "note: '$RD_ENV' edge is remote — deploy it separately."; stamp edge
     fi
   fi
   if [[ -n "${CHANGED[gateway]:-}" ]]; then
-    if [[ "$SERVER_LOCAL" == 1 ]]; then
+    if [[ "$EDGE_LOCAL" == 1 ]]; then
       rd_build_gateway; rd_deploy_gateway; stamp gateway
     else
       rd_log "note: no remote gateway standup wired for '$RD_ENV' — skipping."; stamp gateway
