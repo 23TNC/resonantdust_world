@@ -46,7 +46,7 @@
     :conifer>
       @define>
         1 &layers set
-        3628940714898761 &hash set
+        3722917938856331 &hash set
         3 &maps set
         9 &var_id array
         1 &var_id.0 set
@@ -72,9 +72,9 @@
     :flora>
       @define>
         1 &layers set
-        2594809922338834 &hash set
+        2444563527173994 &hash set
         3 &maps set
-        30 &var_id array
+        17 &var_id array
         1 &var_id.0 set
         1 &var_id.1 set
         1 &var_id.2 set
@@ -92,48 +92,22 @@
         1 &var_id.14 set
         1 &var_id.15 set
         1 &var_id.16 set
-        1 &var_id.17 set
-        1 &var_id.18 set
-        1 &var_id.19 set
-        1 &var_id.20 set
-        1 &var_id.21 set
-        1 &var_id.22 set
-        1 &var_id.23 set
-        1 &var_id.24 set
-        1 &var_id.25 set
-        1 &var_id.26 set
-        1 &var_id.27 set
-        1 &var_id.28 set
-        1 &var_id.29 set
-        30 &var_variant array
-        0 &var_variant.0 set
-        1 &var_variant.1 set
-        2 &var_variant.2 set
-        3 &var_variant.3 set
-        4 &var_variant.4 set
-        5 &var_variant.5 set
-        6 &var_variant.6 set
-        7 &var_variant.7 set
-        8 &var_variant.8 set
-        9 &var_variant.9 set
-        10 &var_variant.10 set
-        11 &var_variant.11 set
-        12 &var_variant.12 set
-        13 &var_variant.13 set
-        14 &var_variant.14 set
-        15 &var_variant.15 set
-        16 &var_variant.16 set
-        17 &var_variant.17 set
-        18 &var_variant.18 set
-        19 &var_variant.19 set
-        20 &var_variant.20 set
-        21 &var_variant.21 set
-        22 &var_variant.22 set
-        23 &var_variant.23 set
-        24 &var_variant.24 set
-        25 &var_variant.25 set
-        26 &var_variant.26 set
-        27 &var_variant.27 set
-        28 &var_variant.28 set
-        29 &var_variant.29 set
+        17 &var_variant array
+        13 &var_variant.0 set
+        14 &var_variant.1 set
+        15 &var_variant.2 set
+        16 &var_variant.3 set
+        17 &var_variant.4 set
+        18 &var_variant.5 set
+        19 &var_variant.6 set
+        20 &var_variant.7 set
+        21 &var_variant.8 set
+        22 &var_variant.9 set
+        23 &var_variant.10 set
+        24 &var_variant.11 set
+        25 &var_variant.12 set
+        26 &var_variant.13 set
+        27 &var_variant.14 set
+        28 &var_variant.15 set
+        29 &var_variant.16 set
         0 &subkinds array

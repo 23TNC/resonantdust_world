@@ -8,18 +8,42 @@ several **classes** of data shard, and how the edge routes to each. Reconciles t
 
 ## Where we are
 
-Two data-shard **modules** exist, each its own DB, each a `decl_tick_pipeline!` payload:
+Three data-shard **modules** exist, each its own DB, each a `decl_tick_pipeline!` payload:
 
 | Module | DB (dev) | Payload | Carries | Reached by |
 |---|---|---|---|---|
 | `shard` | `resonantdust-dev-zone-0` | spatial (`kind, zone_id, location, rotation, offset, data0/1`) | mobile objects / movers / players (and, later, pawns) | index `region_shards`→`shards`, **default** `zone-0` |
-| `zone` | `resonantdust-dev-zone-terrain-0` | terrain (`zone_id, tiles: Vec<u16>, things: Vec<u32>`) | static per-zone terrain (worldgen baseline) | **hardcoded** `config.default_terrain_db()` |
+| `cold_tiles` | `resonantdust-dev-cold-tiles-0` | tiles (`zone_id, tiles: Vec<u8>`) | a zone's **dense** ground grid — 256 `u8` tile-kinds | **hardcoded** `config.default_cold_tiles_db()` |
+| `cold_things` | `resonantdust-dev-cold-things-0` | things (`zone_id, things: Vec<u64>`) | a zone's **sparse settled** things — `kind:16\|x:4\|y:4\|data:5\|layer:3\|variant:5\|reserved:27` each | **hardcoded** `config.default_cold_things_db()` |
 
-The edge dual-subscribes each zone: object `state` from the shard DB + terrain `state`
-from the terrain DB ([`zones-to-screen.md`](zones-to-screen.md)). **Neither class is truly
-class-routed** — objects fall back to the single default shard, terrain uses a hardcoded
-name. This is the deliberate single-shard-dev shortcut (`object-shard.md` Phase 3 took the
-same one: `resolve_object_or_default`).
+The edge **triple**-subscribes each zone: object `state` (shard DB) + tiles (tiles DB) +
+things (things DB), seeding each from worldgen if-absent
+([`zones-to-screen.md`](zones-to-screen.md)). Splitting tiles (dense, ~256 B/zone) from
+things (sparse — only occupied `(cell, layer)` slots) keeps a mostly-empty zone tiny.
+**None of the three is truly class-routed** — objects fall back to the single default
+shard, tiles/things use hardcoded names. The deliberate single-shard-dev shortcut
+(`object-shard.md` Phase 3 took the same one: `resolve_object_or_default`).
+
+### Zone aggregates are keyed by `zone_reference`
+
+The tiles and cold-things entities (one per zone) are keyed by a **`zone_reference`**
+(`shared/codec/src/refs.rs`): `u64 = server_id:16 | reserved:16 | zone_id:32`. It widens the
+globally-unique `u32 zone_id` to the `u64` the pipeline's `actor_key`/`target_key` need, so a
+zone can be an event actor/target; `server_id` records the minting server. Distinct from the
+`entity_type`-discriminated `entity_reference` — a zone aggregate lives in its own DB, so
+`zone_id` alone is unique. The coming **`hot_things`** shard is the counterpart: its things
+each get a *minted* `entity_reference` (`u64` id) so they're first-class actors/targets with
+richer state; a settled hot thing folds back into `cold_things` (pack/unpack).
+
+### Thing encoding & the category direction
+
+A thing is `kind:16 | x:4 | y:4 | data:5 | layer:3` (`shared/codec/src/packed.rs`):
+`layer:3` stacks up to 8 things on a cell; `data:5` is kind-interpreted (rotation for
+placeables, count for stacks). The `u16` **kind** space can later be **partitioned into
+categories** — e.g. a *utilities* band (pipes/wires), a *secondary* band (surface details),
+a *primary* band (one main placeable per tile), a *stacks* band (stackable items) — so a
+cell can hold 8 *per category* rather than 8 total. That partition is a content convention
+on top of this encoding, not an encoding change; add it when the content needs it.
 
 ## The class vocabulary already exists
 
@@ -91,7 +115,7 @@ default to a real directory-listed shard.
 Single-shard dev keeps working throughout: with no `region_shards` rows, every class
 resolves to its **default** shard (today's behaviour). The class dimension is additive —
 add the column + `connect_<class>` + resolve loop; nothing breaks until you actually seed a
-per-class split. Promote `zone` (terrain) off `default_terrain_db()` onto a class-routed
+per-class split. Promote `cold_tiles` (terrain) off `default_cold_tiles_db()` onto a class-routed
 `shards` row as the first exercise of the new dimension.
 
 ## Open

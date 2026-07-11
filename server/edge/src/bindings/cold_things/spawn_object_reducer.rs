@@ -12,67 +12,55 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct ResolveArgs {
-    pub server_id: u16,
-    pub entity_key: u64,
-    pub tic: u32,
+pub(super) struct SpawnObjectArgs {
+    pub obj_type: u8,
     pub zone_id: u32,
-    pub tiles: Vec::<u16>,
-    pub things: Vec::<u32>,
+    pub things: Vec::<u64>,
 }
 
-impl From<ResolveArgs> for super::Reducer {
-    fn from(args: ResolveArgs) -> Self {
-        Self::Resolve {
-            server_id: args.server_id,
-            entity_key: args.entity_key,
-            tic: args.tic,
+impl From<SpawnObjectArgs> for super::Reducer {
+    fn from(args: SpawnObjectArgs) -> Self {
+        Self::SpawnObject {
+            obj_type: args.obj_type,
             zone_id: args.zone_id,
-            tiles: args.tiles,
             things: args.things,
 }
 }
 }
 
-impl __sdk::InModule for ResolveArgs {
+impl __sdk::InModule for SpawnObjectArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `resolve`.
+/// Extension trait for access to the reducer `spawn_object`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait resolve {
-    /// Request that the remote module invoke the reducer `resolve` to run as soon as possible.
+pub trait spawn_object {
+    /// Request that the remote module invoke the reducer `spawn_object` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`resolve:resolve_then`] to run a callback after the reducer completes.
-    fn resolve(&self, server_id: u16,
-entity_key: u64,
-tic: u32,
+    /// /// Use [`spawn_object:spawn_object_then`] to run a callback after the reducer completes.
+    fn spawn_object(&self, obj_type: u8,
 zone_id: u32,
-tiles: Vec::<u16>,
-things: Vec::<u32>,
+things: Vec::<u64>,
 ) -> __sdk::Result<()> {
-        self.resolve_then(server_id, entity_key, tic, zone_id, tiles, things,  |_, _| {})
+        self.spawn_object_then(obj_type, zone_id, things,  |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `resolve` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `spawn_object` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn resolve_then(
+    fn spawn_object_then(
         &self,
-        server_id: u16,
-entity_key: u64,
-tic: u32,
+        obj_type: u8,
 zone_id: u32,
-tiles: Vec::<u16>,
-things: Vec::<u32>,
+things: Vec::<u64>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -80,21 +68,18 @@ things: Vec::<u32>,
     ) -> __sdk::Result<()>;
 }
 
-impl resolve for super::RemoteReducers {
-    fn resolve_then(
+impl spawn_object for super::RemoteReducers {
+    fn spawn_object_then(
         &self,
-        server_id: u16,
-entity_key: u64,
-tic: u32,
+        obj_type: u8,
 zone_id: u32,
-tiles: Vec::<u16>,
-things: Vec::<u32>,
+things: Vec::<u64>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(ResolveArgs { server_id, entity_key, tic, zone_id, tiles, things,  }, callback)
+        self.imp.invoke_reducer_with_callback(SpawnObjectArgs { obj_type, zone_id, things,  }, callback)
     }
 }
 

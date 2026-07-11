@@ -75,6 +75,7 @@
             *biome.1 0.55 ge *biome.0 0.35 ge and *biome.0 0.80 le and return
         @on_create>
             grass &tile set
+            8 ^rand call 0.16 lt if flora &thing.1 set
             5 ^rand call 0.14 lt if shrub &thing.1 set
             6 ^rand call 0.22 lt if tree &thing.1 set
             0 return
@@ -83,5 +84,6 @@
             1 return
         @on_create>
             grass &tile set
+            9 ^rand call 0.20 lt if flora &thing.1 set
             7 ^rand call 0.06 lt if shrub &thing.1 set
             0 return

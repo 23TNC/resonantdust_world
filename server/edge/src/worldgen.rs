@@ -1,9 +1,10 @@
 //! Worldgen — drive the biome DSL to build a zone's packed terrain.
 //!
 //! This is the server's `:data`-side use of the DSL: load the content corpus
-//! once at startup, then answer "what does a fresh zone look like?" as the packed
-//! `tiles` (`Vec<u16>`) and `things` (`Vec<u32>`) a zone's baseline is seeded
-//! from. The edge owns generation because the DSL is pure Rust it links as an
+//! once at startup, then answer "what does a fresh zone look like?" as the dense
+//! `tiles` (`Vec<u8>`, one tile-kind per cell) and the sparse `things` (`Vec<u64>`,
+//! `kind:16|x:4|y:4|data:5|layer:3|variant:5|reserved:27`) a zone's baseline is seeded from — held in
+//! separate shards. The edge owns generation because the DSL is pure Rust it links as an
 //! rlib and it already reads `content/` off disk — a SpacetimeDB module is wasm
 //! with neither, so it just stores what we hand it. (The cold-zone seeding path
 //! itself is a follow-up in the merged pipeline — see docs/gaps.md.)
@@ -25,8 +26,8 @@
 use std::path::Path;
 
 use resonantdust_codec::packed::{
-    cell, pack_thing_at, pack_tile, zone_region_x, zone_region_y, zone_x, zone_y, REGION_DIM,
-    ZONE_DIM, ZONE_TILES,
+    cell, pack_thing_at, zone_region_x, zone_region_y, zone_x, zone_y, REGION_DIM, ZONE_DIM,
+    ZONE_TILES,
 };
 use resonantdust_dsl::Bundle;
 
@@ -113,14 +114,15 @@ impl Worldgen {
     /// biome dimensions, lets the DSL classify it, and resolves the chosen tile /
     /// thing names to `def_id`s. Deterministic in the zone's world position, so a
     /// re-seed reproduces it and it's seamless across zone boundaries.
-    pub fn zone_terrain(&self, zone_id: u32) -> (Vec<u16>, Vec<u32>) {
+    pub fn zone_terrain(&self, zone_id: u32) -> (Vec<u8>, Vec<u64>) {
         let (ox, oy) = zone_world_origin(zone_id);
-        let mut tiles = vec![0u16; ZONE_TILES];
-        let mut things = Vec::new();
+        let mut tiles = vec![0u8; ZONE_TILES];
+        let mut things: Vec<u64> = Vec::new();
         for y in 0..ZONE_DIM {
             for x in 0..ZONE_DIM {
                 let (wx, wy) = (ox + x as i32, oy + y as i32);
-                let gen = self.bundle.generate(&biome_dims(wx, wy), tile_seed(wx, wy));
+                let seed = tile_seed(wx, wy);
+                let gen = self.bundle.generate(&biome_dims(wx, wy), seed);
                 let loc = cell(x, y);
 
                 let tile_id = gen
@@ -128,10 +130,18 @@ impl Worldgen {
                     .as_deref()
                     .and_then(|name| self.bundle.tile_def_id(name))
                     .unwrap_or(self.default_tile);
-                tiles[loc as usize] = pack_tile(tile_id, 0);
+                // Tile-kind is a plain u8 now (256 kinds; corpus ids are small).
+                tiles[loc as usize] = tile_id as u8;
 
-                if let Some(obj) = gen.thing1.as_deref().and_then(|n| self.bundle.thing_object_id(n)) {
-                    things.push(pack_thing_at(loc, 0, obj));
+                if let Some(kind) = gen.thing1.as_deref().and_then(|n| self.bundle.thing_object_id(n))
+                {
+                    // Worldgen scatters one primary-layer thing per cell: data
+                    // (rotation/count) 0 for flora, layer 0. A deterministic per-cell
+                    // sprite variant (0..31) from a high slice of the same seed (kept off
+                    // the low bits the scatter draw uses); the client renders it modulo the
+                    // kind's actual variant count. Sparse — only occupied cells are pushed.
+                    let variant = (seed >> 21) as u8 & 0x1F;
+                    things.push(pack_thing_at(loc, kind, 0, 0, variant));
                 }
             }
         }
@@ -222,7 +232,7 @@ fn is_prefix(prefix: &[String], full: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use resonantdust_codec::packed::{pack_zone_id, tile_def};
+    use resonantdust_codec::packed::pack_zone_id;
 
     /// Hermetic worldgen over a small biome corpus shaped like the real
     /// content/{data,visual,biome} tree — no filesystem, so it runs anywhere.
@@ -343,13 +353,13 @@ mod tests {
         let w = worldgen();
         let (tiles, _) = w.zone_terrain(0);
         assert_eq!(tiles.len(), ZONE_TILES);
-        // every ground def resolves to one of the corpus tiles (never 0/empty)
-        let known: Vec<u16> = ["grass", "dirt", "water", "stone"]
+        // every ground def resolves to one of the corpus tile-kinds (never 0/empty)
+        let known: Vec<u8> = ["grass", "dirt", "water", "stone"]
             .iter()
-            .filter_map(|n| w.bundle.tile_def_id(n))
+            .filter_map(|n| w.bundle.tile_def_id(n).map(|d| d as u8))
             .collect();
-        for &slot in &tiles {
-            assert!(known.contains(&tile_def(slot)), "unexpected tile def {}", tile_def(slot));
+        for &tile in &tiles {
+            assert!(known.contains(&tile), "unexpected tile-kind {tile}");
         }
     }
 
@@ -358,16 +368,16 @@ mod tests {
         // The test forest scatters trees on grass; a thing must never sit on a
         // water/stone cell (those biomes place nothing).
         let w = worldgen();
-        let grass = w.bundle.tile_def_id("grass").unwrap();
+        let grass = w.bundle.tile_def_id("grass").unwrap() as u8;
         let tree = w.bundle.thing_object_id("tree").unwrap();
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
                 let zone_id = pack_zone_id(0, 0, 0, zx, zy);
                 let (tiles, things) = w.zone_terrain(zone_id);
                 for &t in &things {
-                    use resonantdust_codec::packed::{thing_location, thing_object_id};
-                    assert_eq!(thing_object_id(t), tree);
-                    assert_eq!(tile_def(tiles[thing_location(t) as usize]), grass);
+                    use resonantdust_codec::packed::{thing_kind, thing_location};
+                    assert_eq!(thing_kind(t), tree);
+                    assert_eq!(tiles[thing_location(t) as usize], grass);
                 }
             }
         }
@@ -378,14 +388,14 @@ mod tests {
         // A whole region (16×16 zones) should surface more than one biome's
         // ground — at minimum some non-grass tile from an elevation band.
         let w = worldgen();
-        let grass = w.bundle.tile_def_id("grass").unwrap();
+        let grass = w.bundle.tile_def_id("grass").unwrap() as u8;
         let mut saw_grass = false;
         let mut saw_other = false;
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
                 let (tiles, _) = w.zone_terrain(pack_zone_id(0, 0, 0, zx, zy));
-                for &slot in &tiles {
-                    if tile_def(slot) == grass {
+                for &tile in &tiles {
+                    if tile == grass {
                         saw_grass = true;
                     } else {
                         saw_other = true;
@@ -413,11 +423,11 @@ mod tests {
         let (east, _) = w.zone_terrain(pack_zone_id(0, 0, 0, 1, 0));
         let ground = |wx: i32, wy: i32| {
             let g = w.bundle.generate(&biome_dims(wx, wy), tile_seed(wx, wy));
-            g.tile.and_then(|n| w.bundle.tile_def_id(&n)).unwrap_or(w.default_tile)
+            g.tile.and_then(|n| w.bundle.tile_def_id(&n)).unwrap_or(w.default_tile) as u8
         };
         for y in 0..ZONE_DIM as i32 {
-            assert_eq!(tile_def(west[cell(ZONE_DIM - 1, y as u8) as usize]), ground(15, y));
-            assert_eq!(tile_def(east[cell(0, y as u8) as usize]), ground(16, y));
+            assert_eq!(west[cell(ZONE_DIM - 1, y as u8) as usize], ground(15, y));
+            assert_eq!(east[cell(0, y as u8) as usize], ground(16, y));
         }
     }
 }

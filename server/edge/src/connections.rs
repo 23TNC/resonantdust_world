@@ -102,10 +102,12 @@ connector!(connect_players, players);
 // The unified data-shard connector → the `shard` module (the tick pipeline).
 // Per-endpoint, cached for the client's lifetime.
 connector!(connect_shard, shard);
-// The zone-terrain connector → the `zone` module (static tiles + things, its own
-// DB). The edge dual-subscribes: object `state` from a shard, terrain `state` from
-// here. Cached for the client's lifetime alongside the object shard.
-connector!(connect_zone, zone);
+// The cold-tiles connector → the `cold_tiles` module (dense Vec<u8> tile grid, its own
+// DB) and the cold-things connector → the `cold_things` module (sparse Vec<u64>, its own
+// DB). The edge triple-subscribes each zone: object `state` from a shard + tiles + things.
+// Both cached for the client's lifetime alongside the object shard.
+connector!(connect_cold_tiles, cold_tiles);
+connector!(connect_cold_things, cold_things);
 
 /// Await an upstream's readiness oneshot with the connect timeout. `true` once
 /// the connection's `on_connect` fired; `false` on timeout (or a dropped sender,

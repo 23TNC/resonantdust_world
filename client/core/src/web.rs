@@ -171,7 +171,8 @@ struct SubCounters {
 fn row_table_tag(row: &RowData) -> &'static str {
     match row {
         RowData::State(_) => "state",
-        RowData::ZoneTerrain(_) => "zone_terrain",
+        RowData::ZoneTiles(_) => "zone_tiles",
+        RowData::ZoneThings(_) => "zone_things",
     }
 }
 
@@ -530,8 +531,9 @@ impl Engine {
             }
             // One upstream row change. `sid` is 0 (the shard connection
             // multiplexes every zone); route by the row's own `zone_id`. A cold
-            // baseline is surfaced to the host as tiles to paint; every row also
-            // ages the zone's candidacy (warmth), which may evict it.
+            // baseline is surfaced to the host as tiles to paint; every row's byte
+            // length also feeds the zone's cost accounting (load vs. retention), which
+            // may release a soft-held sub.
             ServerMsg::Row { row, op, .. } => {
                 let zone_id = row_zone_id(&row);
                 self.record_row(row_table_tag(&row), text.len());
@@ -552,15 +554,17 @@ impl Engine {
                             removed: matches!(op, RowOp::Delete),
                         });
                     }
-                    RowData::ZoneTerrain(z) => {
-                        // The terrain baseline is atomic (tiles + things); deliver both so
-                        // the host re-seeds the zone's ground and its scattered things
-                        // together. An empty things vec clears them.
+                    RowData::ZoneTiles(z) => {
                         self.emit(Event::ZoneTiles { zone_id: z.zone_id, tiles: z.tiles.clone() });
-                        self.emit(Event::ZoneThings { zone_id: z.zone_id, things: z.things.clone() });
+                    }
+                    RowData::ZoneThings(z) => {
+                        self.emit(Event::ZoneThings {
+                            zone_id: z.zone_id,
+                            things: z.things.clone(),
+                        });
                     }
                 }
-                self.zones.note_update(zone_id, now_ms());
+                self.zones.note_update(zone_id, text.len() as u64, now_ms());
                 self.flush_zone_intents().await;
             }
         }
@@ -765,7 +769,8 @@ async fn fetch_resolve(url: &str) -> Result<ServerInfo, String> {
 fn row_zone_id(row: &RowData) -> u32 {
     match row {
         RowData::State(r) => r.zone_id,
-        RowData::ZoneTerrain(r) => r.zone_id,
+        RowData::ZoneTiles(r) => r.zone_id,
+        RowData::ZoneThings(r) => r.zone_id,
     }
 }
 

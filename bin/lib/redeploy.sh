@@ -93,12 +93,15 @@ rd_deploy_module() {
   # edge's `default_shard_db`. Non-shard modules keep their own name.
   local fam
   case "$target" in
-    shard) fam="zone" ;;
-    # The `zone` module (static terrain) publishes to its OWN db family so it never
-    # collides with the object `shard` on `zone-0`; the edge's default_terrain_db()
-    # points here (resonantdust-<env>-zone-terrain-0).
-    zone)  fam="zone-terrain" ;;
-    *)     fam="$target" ;;
+    shard)       fam="zone" ;;
+    # Zone data splits across two shards, each its own db family (so neither collides
+    # with the object `shard` on `zone-0`): the `cold_tiles` module → dense tiles
+    # (resonantdust-<env>-cold-tiles-0), the `cold_things` module → sparse settled things
+    # (resonantdust-<env>-cold-things-0). The edge's
+    # default_cold_tiles_db()/default_cold_things_db() point here.
+    cold_tiles)  fam="cold-tiles" ;;
+    cold_things) fam="cold-things" ;;
+    *)           fam="$target" ;;
   esac
   rd_log "deploy module $src → $(rd_db_for "$fam" "$idx")"
   rd_st_dcl run --rm --workdir "/workspace/server/modules/$src" build

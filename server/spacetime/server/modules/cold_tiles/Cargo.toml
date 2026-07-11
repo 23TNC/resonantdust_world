@@ -1,0 +1,16 @@
+[package]
+name = "resonantdust_cold_tiles"
+version = "0.1.0"
+edition = "2021"
+
+# The cold-tiles module — a zone's DENSE ground grid, the cold store's tile half
+# (its sparse thing half is the sibling `cold_things` module). Invokes the shared
+# resonantdust_pipeline::decl_tick_pipeline! with a tiles payload (`tiles: Vec<u8>` of
+# 256 tile-kinds), divergent from the object `shard`'s small spatial payload — same
+# engine, different data structure. See docs/data-shards.md.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb = { version = "=2.1.0" }
+resonantdust_pipeline = { path = "../../pipeline" }

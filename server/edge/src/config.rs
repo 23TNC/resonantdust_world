@@ -193,14 +193,20 @@ impl ServerConfig {
         format!("resonantdust-{}-zone-0", self.env)
     }
 
-    /// The zone-**terrain** database — the `zone` module's own DB (one static
-    /// terrain entity per zone: packed `tiles` + scattered `things` from worldgen),
-    /// separate from the object shard above. The edge dual-subscribes each zone:
-    /// object `state` from [`default_shard_db`](Self::default_shard_db), terrain
-    /// `state` from here. Single instance today (`zone-terrain-0`); no per-region
-    /// terrain routing yet, so it's always this default on *this* server.
-    pub fn default_terrain_db(&self) -> String {
-        format!("resonantdust-{}-zone-terrain-0", self.env)
+    /// The **cold-tiles** database — the `cold_tiles` module's own DB (one dense `Vec<u8>`
+    /// tile grid per zone), separate from the object shard and the cold-things DB. Single
+    /// instance today (`cold-tiles-0`); no per-region routing yet.
+    pub fn default_cold_tiles_db(&self) -> String {
+        format!("resonantdust-{}-cold-tiles-0", self.env)
+    }
+
+    /// The **cold-things** database — the `cold_things` module's own DB (one sparse
+    /// `Vec<u64>` settled-thing list per zone). The edge triple-subscribes each zone:
+    /// object `state` ([`default_shard_db`](Self::default_shard_db)) + tiles
+    /// ([`default_cold_tiles_db`](Self::default_cold_tiles_db)) + cold-things from here.
+    /// Single instance today (`cold-things-0`).
+    pub fn default_cold_things_db(&self) -> String {
+        format!("resonantdust-{}-cold-things-0", self.env)
     }
 }
 

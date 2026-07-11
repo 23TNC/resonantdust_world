@@ -88,20 +88,20 @@ const FACING_BY_ROTATION: ReadonlyArray<{ facing: "s" | "e" | "n"; flipX: boolea
  *  rather than a facing. Mirrors `bin/art`'s `GRID_CATS`. */
 const LINKED_CATEGORY = "linked";
 
-/** A thing's texture name + flip for a given rotation. The def's base stem gets a
- *  trailing DIRECTION segment the resolver treats as its own stem: a facing from the
- *  rotation (`world/conifer` → `world/conifer/e`), or `l` for a linked-category kind
- *  (`linked/wall_smooth` → `linked/wall_smooth/l`), whose grid cell (variant) is a
- *  neighbour-context atlas — the context pick is Phase 2; the canonical cell renders
- *  for now. A white/absent stem stays a flat tint rect. */
-function thingTexture(stem: string | undefined, rotation: number): { name: string | undefined; flipX: boolean; cell?: number } {
+/** A thing's texture name + flip for a given rotation + sprite variant. The def's base
+ *  stem gets a trailing DIRECTION segment the resolver treats as its own stem: a facing
+ *  from the rotation (`world/conifer` → `world/conifer/e`), or `l` for a linked-category
+ *  kind (`linked/wall_smooth` → `linked/wall_smooth/l`). `cell` selects which grid cell of
+ *  the master atlas to bake: for a facing kind that's the packed **variant** (which sprite
+ *  of the kind — the resolver takes it modulo the kind's variant count); for a linked kind
+ *  it's the neighbour-context cell (still Phase 2 — canonical cell 0). A white/absent stem
+ *  stays a flat tint rect. */
+function thingTexture(stem: string | undefined, rotation: number, variant: number): { name: string | undefined; flipX: boolean; cell?: number } {
   const base = textureNameFor(stem);
   if (!base) return { name: undefined, flipX: false };
-  // A linked (autotile) kind is ONE master atlas sampled by cell. The neighbour-context
-  // cell pick is Phase 2 — bake the canonical cell 0 for now; rotation doesn't apply.
   if (base.startsWith(`${LINKED_CATEGORY}/`)) return { name: `${base}/l`, flipX: false, cell: 0 };
   const f = FACING_BY_ROTATION[rotation & 3];
-  return { name: `${base}/${f.facing}`, flipX: f.flipX };
+  return { name: `${base}/${f.facing}`, flipX: f.flipX, cell: variant };
 }
 
 export class WorldBridge {
@@ -113,8 +113,8 @@ export class WorldBridge {
   /** Raw packed tiles / things per zone as delivered — kept so a content hot-swap
    *  ({@link setContent}) can re-expand every live zone through the new corpus
    *  without re-requesting it from the server. */
-  private readonly zoneTilesRaw = new Map<number, Uint16Array>();
-  private readonly zoneThingsRaw = new Map<number, Uint32Array>();
+  private readonly zoneTilesRaw = new Map<number, Uint8Array>();
+  private readonly zoneThingsRaw = new Map<number, BigUint64Array>();
   private readonly unsubs: Array<() => void> = [];
 
   /** Texture-stem tables from the content bundle, indexed by `defId - 1` (the
@@ -339,7 +339,7 @@ export class WorldBridge {
   /** A zone's cold tile baseline arrived: re-seed its ground sprites. Clears only
    *  this zone's tile sprites (a later cold row rewrites them) — its things are
    *  untouched, they re-seed on their own deliveries. */
-  private onZoneTiles(zoneId: number, tiles: Uint16Array): void {
+  private onZoneTiles(zoneId: number, tiles: Uint8Array): void {
     this.clearPrims(this.zonePrims, zoneId);
     this.zoneTilesRaw.set(zoneId, tiles); // keep for a content hot-swap re-expand
 
@@ -373,20 +373,21 @@ export class WorldBridge {
    *  (the worldgen flora). Each draws smaller than a tile, centred in its cell and
    *  above the ground. Clears only this zone's thing sprites first; an empty
    *  delivery just clears them. */
-  private onZoneThings(zoneId: number, things: Uint32Array): void {
+  private onZoneThings(zoneId: number, things: BigUint64Array): void {
     this.clearPrims(this.zoneThings, zoneId);
     this.zoneThingsRaw.set(zoneId, things); // keep for a content hot-swap re-expand
 
-    const flat = this.content.zoneThingPrims(zoneId, things); // [x, y, tint, geoColor, defId, rotation, …]
+    const flat = this.content.zoneThingPrims(zoneId, things); // [x, y, tint, geoColor, defId, data, variant, …]
     const ids: number[] = [];
-    for (let i = 0; i + 5 < flat.length; i += 6) {
+    for (let i = 0; i + 6 < flat.length; i += 7) {
       const tileX = flat[i];
       const tileY = flat[i + 1];
       const tint = flat[i + 2];
       const geoColor = flat[i + 3];
       const defId = flat[i + 4];
       const rotation = flat[i + 5];
-      const tex = thingTexture(this.thingStems[defId - 1], rotation);
+      const variant = flat[i + 6];
+      const tex = thingTexture(this.thingStems[defId - 1], rotation, variant);
       const { w, h } = this.thingBox(defId, tex.name);
       ids.push(
         this.viewport.addPrim({

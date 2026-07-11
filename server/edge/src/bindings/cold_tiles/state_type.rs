@@ -16,8 +16,7 @@ pub struct State {
     pub entity_key: u64,
     pub tic: u32,
     pub zone_id: u32,
-    pub tiles: Vec::<u16>,
-    pub things: Vec::<u32>,
+    pub tiles: Vec::<u8>,
 }
 
 
@@ -33,8 +32,7 @@ pub struct StateCols {
     pub entity_key: __sdk::__query_builder::Col<State, u64>,
     pub tic: __sdk::__query_builder::Col<State, u32>,
     pub zone_id: __sdk::__query_builder::Col<State, u32>,
-    pub tiles: __sdk::__query_builder::Col<State, Vec::<u16>>,
-    pub things: __sdk::__query_builder::Col<State, Vec::<u32>>,
+    pub tiles: __sdk::__query_builder::Col<State, Vec::<u8>>,
 }
 
 impl __sdk::__query_builder::HasCols for State {
@@ -45,7 +43,6 @@ impl __sdk::__query_builder::HasCols for State {
             tic: __sdk::__query_builder::Col::new(table_name, "tic"),
             zone_id: __sdk::__query_builder::Col::new(table_name, "zone_id"),
             tiles: __sdk::__query_builder::Col::new(table_name, "tiles"),
-            things: __sdk::__query_builder::Col::new(table_name, "things"),
 
         }
     }

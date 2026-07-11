@@ -1,0 +1,16 @@
+[package]
+name = "resonantdust_cold_things"
+version = "0.1.0"
+edition = "2021"
+
+# The zone-things module — a zone's SPARSE thing list. Invokes the shared
+# resonantdust_pipeline::decl_tick_pipeline! with a things payload (Vec<u32>, each entry
+# kind:16|x:4|y:4|data:5|layer:3), held in its own DB separate from the dense tile grid so
+# a mostly-empty zone stores only what it has. Same engine, divergent payload. See
+# docs/data-shards.md.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb = { version = "=2.1.0" }
+resonantdust_pipeline = { path = "../../pipeline" }

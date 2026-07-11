@@ -33,3 +33,10 @@
                 0 return
             @on_create>
                 0 return
+    ; Appended last so existing thing def_ids don't renumber (append-compatible).
+    ::flora>
+        :data>
+            @define>
+                0 return
+            @on_create>
+                0 return

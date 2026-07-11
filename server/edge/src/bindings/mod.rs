@@ -2,4 +2,5 @@ pub mod chat;
 pub mod index;
 pub mod players;
 pub mod shard;
-pub mod zone;
+pub mod cold_tiles;
+pub mod cold_things;

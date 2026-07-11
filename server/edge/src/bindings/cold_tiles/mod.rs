@@ -84,14 +84,12 @@ pub enum Reducer {
         entity_key: u64,
         tic: u32,
         zone_id: u32,
-        tiles: Vec::<u16>,
-        things: Vec::<u32>,
+        tiles: Vec::<u8>,
 }    ,
     SeedEntity {
         entity_key: u64,
         zone_id: u32,
-        tiles: Vec::<u16>,
-        things: Vec::<u32>,
+        tiles: Vec::<u8>,
 }    ,
     SetShardId {
         shard_id: u16,
@@ -99,8 +97,7 @@ pub enum Reducer {
     SpawnObject {
         obj_type: u8,
         zone_id: u32,
-        tiles: Vec::<u16>,
-        things: Vec::<u32>,
+        tiles: Vec::<u8>,
 }    ,
     TickGc ,
 }
@@ -170,25 +167,21 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 tic,
                 zone_id,
                 tiles,
-                things,
 }             => __sats::bsatn::to_vec(&resolve_reducer::ResolveArgs {
                 server_id: server_id.clone(),
                 entity_key: entity_key.clone(),
                 tic: tic.clone(),
                 zone_id: zone_id.clone(),
                 tiles: tiles.clone(),
-                things: things.clone(),
 }),
             Reducer::SeedEntity{
                 entity_key,
                 zone_id,
                 tiles,
-                things,
 }             => __sats::bsatn::to_vec(&seed_entity_reducer::SeedEntityArgs {
                 entity_key: entity_key.clone(),
                 zone_id: zone_id.clone(),
                 tiles: tiles.clone(),
-                things: things.clone(),
 }),
             Reducer::SetShardId{
                 shard_id,
@@ -199,12 +192,10 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 obj_type,
                 zone_id,
                 tiles,
-                things,
 }             => __sats::bsatn::to_vec(&spawn_object_reducer::SpawnObjectArgs {
                 obj_type: obj_type.clone(),
                 zone_id: zone_id.clone(),
                 tiles: tiles.clone(),
-                things: things.clone(),
 }),
             Reducer::TickGc => __sats::bsatn::to_vec(&tick_gc_reducer::TickGcArgs {
                 }),

@@ -95,20 +95,30 @@ pub enum RowData {
     /// A resolved entity from the shard's tick pipeline (`shard::state`) — the
     /// client-visible present per entity in a subscribed zone.
     State(StateRow),
-    /// A zone's static terrain baseline from the `zone` module (`zone::state`) — the
-    /// packed tiles + scattered things the edge seeded from worldgen. One row per zone;
-    /// the client expands it into the ground + flora sprites.
-    ZoneTerrain(ZoneTerrainRow),
+    /// A zone's dense tile grid from the `cold_tiles` module (`cold_tiles::state`) —
+    /// `Vec<u8>` of 256 tile-kinds (row-major, `0` = empty). The client paints the ground.
+    ZoneTiles(ZoneTilesRow),
+    /// A zone's sparse thing list from the `cold_things` module (`cold_things::state`) —
+    /// `Vec<u64>` packed things (`kind:16|x:4|y:4|data:5|layer:3|variant:5|reserved:27`).
+    /// The client draws a sprite each.
+    ZoneThings(ZoneThingsRow),
 }
 
-/// Mirror of `zone::state_type::State` — one zone's whole terrain payload. `tiles` is
-/// `ZONE_TILES` packed slots (`pack_tile`, row-major); `things` the packed scattered
-/// flora (`pack_thing_at`). Keep in sync with the `zone` module.
+/// Mirror of `cold_tiles::state_type::State` — a zone's dense tile grid (256 `u8`
+/// tile-kinds). Keep in sync with the `cold_tiles` module.
 #[derive(Debug, Clone, Serialize)]
-pub struct ZoneTerrainRow {
+pub struct ZoneTilesRow {
     pub zone_id: u32,
-    pub tiles: Vec<u16>,
-    pub things: Vec<u32>,
+    pub tiles: Vec<u8>,
+}
+
+/// Mirror of `cold_things::state_type::State` — a zone's sparse packed things (each a
+/// `u64`: `kind:16|x:4|y:4|data:5|layer:3|variant:5|reserved:27`). Keep in sync with the
+/// `cold_things` module.
+#[derive(Debug, Clone, Serialize)]
+pub struct ZoneThingsRow {
+    pub zone_id: u32,
+    pub things: Vec<u64>,
 }
 
 /// Mirror of `shard::state_type::State` — one resolved entity. `entity_key`

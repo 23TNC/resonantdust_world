@@ -118,11 +118,11 @@ export interface AnchorRadii {
 }
 
 /** A cold zone's tiles arrived: `tiles` is the `ZONE_TILES` packed slots. */
-export type ZoneTilesHandler = (zoneId: number, tiles: Uint16Array) => void;
+export type ZoneTilesHandler = (zoneId: number, tiles: Uint8Array) => void;
 /** A cold zone's things arrived: `things` is its packed thing entries
  *  (`x:4 | y:4 | rotation:2 | object_id:12` each) — the worldgen-scattered flora.
  *  Fires alongside the tiles on every cold delivery; an empty array clears them. */
-export type ZoneThingsHandler = (zoneId: number, things: Uint32Array) => void;
+export type ZoneThingsHandler = (zoneId: number, things: BigUint64Array) => void;
 /** A zone's subscription closed — drop its entities. */
 export type ZoneClosedHandler = (zoneId: number) => void;
 
@@ -156,8 +156,8 @@ type WorldEvent =
   | { kind: "loginFailed"; reason: string }
   | { kind: "disconnected"; reason: string | null }
   | { kind: "status"; message: string }
-  | { kind: "zoneTiles"; zoneId: number; tiles: Uint16Array }
-  | { kind: "zoneThings"; zoneId: number; things: Uint32Array }
+  | { kind: "zoneTiles"; zoneId: number; tiles: Uint8Array }
+  | { kind: "zoneThings"; zoneId: number; things: BigUint64Array }
   | {
       kind: "stateObject";
       zoneId: number;

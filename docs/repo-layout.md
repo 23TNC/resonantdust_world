@@ -10,7 +10,7 @@ server/                     everything server-side
   gateway/    (unchanged name)        client-facing routing over the index DB
   master/     (was server_master)     the tick metronome (bump loop)
   worker/     (was server_simulation) the resolution worker pool
-  spacetime/  (unchanged name)        SpacetimeDB modules (shard/zone/players/index/chat) + daemon
+  spacetime/  (unchanged name)        SpacetimeDB modules (shard/cold_tiles/cold_things/players/index/chat) + daemon
 client/                     everything client-side
   core/       (was client)            headless client library + `headless` bin (login + zone sub)
   pixijs/     (unchanged name)         the browser renderer

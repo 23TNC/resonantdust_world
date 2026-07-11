@@ -81,3 +81,18 @@
                 0 return
             @on_destroy>
                 0 return
+    ; Ground-cover flora — uses the `world/flora` master (30 variants; the gate
+    ; resolves the "world/flora stem + derives the preview). Small: size left unset
+    ; → the host's small default (well within its cell, unlike the 2-tile conifer).
+    ; White tint keeps the art's own colours; geoColor is the flat green silhouette
+    ; shown until the sprite streams in.
+    ::flora>
+        :visual>
+            @on_create>
+                "thing ^prim call &thing export
+                "world/flora &thing.texture set
+                #ffffff &thing.tint set
+                #4a7a3a &thing.geoColor set
+                0 return
+            @on_destroy>
+                0 return

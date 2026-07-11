@@ -462,15 +462,17 @@ impl Engine {
                             removed: matches!(op, RowOp::Delete),
                         });
                     }
-                    RowData::ZoneTerrain(z) => {
-                        // The terrain baseline is atomic (tiles + things); deliver both so
-                        // the host re-seeds the zone's ground and its scattered things
-                        // together. An empty things vec clears them.
+                    RowData::ZoneTiles(z) => {
                         self.emit(Event::ZoneTiles { zone_id: z.zone_id, tiles: z.tiles.clone() });
-                        self.emit(Event::ZoneThings { zone_id: z.zone_id, things: z.things.clone() });
+                    }
+                    RowData::ZoneThings(z) => {
+                        self.emit(Event::ZoneThings {
+                            zone_id: z.zone_id,
+                            things: z.things.clone(),
+                        });
                     }
                 }
-                self.zones.note_update(row_zone_id(&row), now_ms());
+                self.zones.note_update(row_zone_id(&row), text.len() as u64, now_ms());
                 self.flush_zone_intents().await;
             }
         }
@@ -596,7 +598,8 @@ async fn next_frame(read: &mut Option<WsRead>) -> FrameOutcome {
 fn row_zone_id(row: &RowData) -> u32 {
     match row {
         RowData::State(r) => r.zone_id,
-        RowData::ZoneTerrain(r) => r.zone_id,
+        RowData::ZoneTiles(r) => r.zone_id,
+        RowData::ZoneThings(r) => r.zone_id,
     }
 }
 

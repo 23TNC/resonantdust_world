@@ -22,28 +22,44 @@
 //!   - **hot** — *hold* (hysteresis). An open sub stays open, hard-held, while in
 //!     hot. A zone reached only at hot is **not** opened — hot sustains, never
 //!     starts. This is the anti-thrash band as the view pans across an edge.
-//!   - **warm** — *sticky*. Still open, but now a close-candidate: eligible for
-//!     warmth eviction (drop on update-noise) and the capacity-LRU.
-//!   - **cold** (or uncovered) — *drop*. The sub closes.
+//!   - **warm / cold / uncovered** — *soft-held*. Once a sub falls out of hot it is
+//!     **not dropped by distance**. We keep the subscription and let the cost-based
+//!     release (below) decide, because re-transmitting a zone the player pans back
+//!     to is precisely the waste we're avoiding.
 //!
-//! Moving outward a sub walks active → hot → warm → cold = wanted → wanted →
-//! candidate → closed; it only ever *opens* by crossing into active. Two
-//! thresholds (active to enter, cold to leave) with a soft eviction band between.
+//! Moving outward a sub walks active → hot → soft-held; it only ever *opens* by
+//! crossing into active, and only ever *closes* by the soft release or the LRU.
 //!
-//! ## Sticky eviction
+//! ## Soft release — retention vs. re-transmit
 //!
-//! A candidate (warm) sub does not close the instant it stops being hard-held.
-//! Network re-transmit is the binding cost, so we hold generously and drop only
-//! the noisy or over-budget:
-//!   - **warmth** ([`should_close`], run on each inbound update — a silent
-//!     candidate is never evicted by warmth), and
-//!   - **capacity-LRU** ([`ZoneManager::enforce_capacity`]) — a hard ceiling
-//!     ([`DEFAULT_MAX_OPEN_SUBS`]); the least-recently-demoted candidate goes
-//!     first, and a hard-held (active/hot) sub is never evicted.
+//! A subscription is cheap to hold while its zone is quiet and dear to re-open when
+//! the player returns, so we hold generously and release only once holding has
+//! actually cost something. Per sub we track two byte tallies:
+//!
+//!   - **`load_bytes`** — the baseline burst streamed within [`LOAD_SETTLE_MS`] of
+//!     the sub opening (its tiles + things + state). Our estimate of what a fresh
+//!     `sub_zone` on this zone would re-transmit.
+//!   - **`held_bytes`** — bytes streamed to the zone *since it went soft-held* — the
+//!     deltas we pay for while the player is elsewhere.
+//!
+//! A soft-held sub releases the instant `held_bytes >= load_bytes`: retention has
+//! cost as much as a re-fetch would, so nothing is saved by holding it longer. A
+//! **quiet** zone (no deltas) never reaches that and stays subscribed indefinitely —
+//! exactly the static tiles/things we never want to re-transmit — until the
+//! capacity-LRU reclaims it. A **churning** zone pays a re-fetch's worth quickly and
+//! is let go.
+//!
+//! ## Capacity-LRU
+//!
+//! A hard ceiling ([`DEFAULT_MAX_OPEN_SUBS`]) backstops the soft-hold: over it, the
+//! least-recently-demoted soft-held sub goes first
+//! ([`ZoneManager::enforce_capacity`]); a hard-held (active/hot) sub is never
+//! evicted, so the cap can be exceeded when every open sub is hard-held.
 //!
 //! Sans-IO: decisions become [`ZoneIntent`]s the engine drains and maps to
-//! `sub_zone` / `unsub` frames. `now` (ms) is threaded in for warmth recency, so
-//! the manager stays pure and unit-testable.
+//! `sub_zone` / `unsub` frames. `now` (ms) and the row's byte length are threaded in
+//! for the load-settle window and LRU recency, so the manager stays pure and
+//! unit-testable.
 
 use std::collections::{HashMap, HashSet};
 
@@ -120,35 +136,33 @@ struct Anchor {
     soul: u32,
 }
 
+/// How long after a sub opens its inbound bytes count as the **initial load** (the
+/// re-transmit estimate) rather than retention. The baseline burst (tiles + things +
+/// state) lands within a round-trip of the `sub_zone`; this is comfortably longer so
+/// a dense zone's whole baseline is captured, yet anchored at open time so it only
+/// ever covers that first burst — later deltas, and every re-visit, fall past it.
+const LOAD_SETTLE_MS: u64 = 1_000;
+
 /// Live state for one open zone subscription. A `Sub` exists in the map iff we
 /// believe a `SubZone` is open for it; closing removes the entry.
 #[derive(Debug, Clone, Copy)]
 struct Sub {
-    /// The tier last assigned while open. `Active`/`Hot` are hard-held;
-    /// `Warm`/`Cold` mean the sub is a candidate (see `candidate_since_ms`).
+    /// The tier last assigned while open. `Active`/`Hot` are hard-held; anything
+    /// looser is soft-held (see `candidate_since_ms`).
     tier: ZoneTier,
-    /// `Some(ms)` once the sub became a close-candidate (entered warm), reset to
-    /// `None` whenever it re-hardens (back to active/hot). Drives warmth aging
-    /// and capacity-LRU ordering.
+    /// `Some(ms)` once the sub went soft-held, reset to `None` whenever it re-hardens
+    /// (back to active/hot). Orders the capacity-LRU (least-recently-demoted first).
     candidate_since_ms: Option<u64>,
-    /// Inbound updates seen since this sub became a candidate; compared against
-    /// the warmth tolerance. Reset on each (re-)entry to the candidate state.
-    updates_since_candidate: u32,
-}
-
-/// Warmth eviction policy: should a candidate close after `updates` inbound row
-/// changes, having been a candidate for `age_ms`? Recently-demoted subs tolerate
-/// more churn; old ones close on any update. A silent candidate (0 updates) is
-/// never closed here — only capacity-LRU reclaims it.
-fn should_close(updates: u32, age_ms: u64) -> bool {
-    let tolerance = if age_ms < 5 * 60_000 {
-        5
-    } else if age_ms < 15 * 60_000 {
-        3
-    } else {
-        0
-    };
-    updates > tolerance
+    /// When the `SubZone` opened (ms). Bytes within [`LOAD_SETTLE_MS`] of it seed
+    /// `load_bytes`; later ones are deltas.
+    opened_ms: u64,
+    /// Estimated re-transmit cost: bytes streamed during the initial-load window —
+    /// what a fresh `sub_zone` on this zone would re-send.
+    load_bytes: u64,
+    /// Bytes streamed to the zone since it last went soft-held — the retention we pay
+    /// while the player is elsewhere. Reset on each (re-)entry to soft-held; once it
+    /// reaches `load_bytes` the sub is released.
+    held_bytes: u64,
 }
 
 /// The anchor-driven zone subscription manager. Sans-IO: mutate it with
@@ -211,20 +225,29 @@ impl ZoneManager {
         }
     }
 
-    /// Record an inbound row change for `zone_id`. Ages the zone's candidacy (if
-    /// it is a candidate) and may evict it via warmth. Hard-held subs ignore this.
-    pub fn note_update(&mut self, zone_id: u32, now: u64) {
-        let close = match self.subs.get_mut(&zone_id) {
-            Some(s) => match s.candidate_since_ms {
-                Some(since) => {
-                    s.updates_since_candidate += 1;
-                    should_close(s.updates_since_candidate, now.saturating_sub(since))
-                }
-                None => false,
-            },
-            None => false,
+    /// Record an inbound row of `bytes` for `zone_id`. Within a sub's initial-load
+    /// window the bytes seed its re-transmit estimate; once the sub is soft-held they
+    /// accrue as retention, and when retention reaches that estimate the sub is
+    /// released (holding it has now cost as much as re-fetching would). A hard-held sub
+    /// past its load window just renders the delta — no cost is tracked, no eviction.
+    pub fn note_update(&mut self, zone_id: u32, bytes: u64, now: u64) {
+        let release = match self.subs.get_mut(&zone_id) {
+            // Initial-load window: (re-)transmit cost, whether or not the player has
+            // already panned past — so a fast pan-by never instant-drops a zone the
+            // moment its baseline lands.
+            Some(s) if now.saturating_sub(s.opened_ms) < LOAD_SETTLE_MS => {
+                s.load_bytes = s.load_bytes.saturating_add(bytes);
+                false
+            }
+            // Soft-held past its load window: charge retention, release once it has
+            // cost a whole re-fetch.
+            Some(s) if s.candidate_since_ms.is_some() => {
+                s.held_bytes = s.held_bytes.saturating_add(bytes);
+                s.held_bytes >= s.load_bytes
+            }
+            _ => false,
         };
-        if close {
+        if release {
             self.close_sub(zone_id);
         }
     }
@@ -280,26 +303,28 @@ impl ZoneManager {
                 // Enter / hard-hold.
                 Some(ZoneTier::Active) => {
                     if !open {
-                        self.open_sub(zone);
+                        self.open_sub(zone, now);
                     }
                     self.harden(zone, ZoneTier::Active);
                 }
-                // Hysteresis hold: sustain an open sub; never open a fresh one.
+                // Hysteresis hold: sustain an open sub hard-held; never open fresh.
                 Some(ZoneTier::Hot) => {
                     if open {
                         self.harden(zone, ZoneTier::Hot);
                     }
                 }
-                // Sticky: sustain as an evictable candidate; never open fresh.
-                Some(ZoneTier::Warm) => {
+                // Anything looser than hot — warm, cold, or fully uncovered — is
+                // soft-held: keep the sub and let the cost-based release
+                // (`note_update`) or the capacity-LRU decide. Distance alone never
+                // drops a sub now; it only ever *opened* by crossing into active.
+                Some(t) => {
                     if open {
-                        self.make_candidate(zone, now);
+                        self.make_soft(zone, t, now);
                     }
                 }
-                // Out of range: drop.
-                Some(ZoneTier::Cold) | None => {
+                None => {
                     if open {
-                        self.close_sub(zone);
+                        self.make_soft(zone, ZoneTier::Cold, now);
                     }
                 }
             }
@@ -308,15 +333,17 @@ impl ZoneManager {
         self.enforce_capacity();
     }
 
-    /// Open a sub for `zone` (inserted hard-held at active; the caller assigns the
-    /// final tier) and emit the intent.
-    fn open_sub(&mut self, zone: u32) {
+    /// Open a sub for `zone` at `now` (inserted hard-held at active; the caller
+    /// assigns the final tier) and emit the intent.
+    fn open_sub(&mut self, zone: u32, now: u64) {
         self.subs.insert(
             zone,
             Sub {
                 tier: ZoneTier::Active,
                 candidate_since_ms: None,
-                updates_since_candidate: 0,
+                opened_ms: now,
+                load_bytes: 0,
+                held_bytes: 0,
             },
         );
         self.intents.push(ZoneIntent {
@@ -333,15 +360,16 @@ impl ZoneManager {
         }
     }
 
-    /// Mark an open sub a warm close-candidate. Stamps the demotion time (and
-    /// resets the update counter) only on the transition into candidacy, so a sub
-    /// that stays warm keeps aging from when it first demoted.
-    fn make_candidate(&mut self, zone: u32, now: u64) {
+    /// Soft-hold an open sub at `tier` (warm/cold). Stamps the demotion time and
+    /// resets the retention budget only on the transition into soft-hold, so a sub
+    /// that stays soft keeps its LRU age and does not forget the `held_bytes` it has
+    /// paid since it first demoted.
+    fn make_soft(&mut self, zone: u32, tier: ZoneTier, now: u64) {
         if let Some(s) = self.subs.get_mut(&zone) {
-            s.tier = ZoneTier::Warm;
+            s.tier = tier;
             if s.candidate_since_ms.is_none() {
                 s.candidate_since_ms = Some(now);
-                s.updates_since_candidate = 0;
+                s.held_bytes = 0;
             }
         }
     }
@@ -478,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    fn hysteresis_holds_then_drops() {
+    fn hysteresis_holds_then_soft_holds() {
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
 
@@ -490,13 +518,14 @@ mod tests {
         zm.set_anchor("a", 28, 8, 0, ladder(), 0, 10);
         assert!(is_open(&zm, z) && !is_candidate(&zm, z), "hot sustains hard");
 
-        // Move so z is now Warm: still open, now a candidate.
+        // Move so z is now Warm: still open, now soft-held.
         zm.set_anchor("a", 44, 8, 0, ladder(), 0, 20);
-        assert!(is_open(&zm, z) && is_candidate(&zm, z), "warm = sticky candidate");
+        assert!(is_open(&zm, z) && is_candidate(&zm, z), "warm = soft-held");
 
-        // Move so z is out of every band: closed.
+        // Move so z is out of every band: still open — distance no longer drops it,
+        // only the cost-based release or the capacity-LRU can.
         zm.set_anchor("a", 88, 8, 0, ladder(), 0, 30);
-        assert!(!is_open(&zm, z), "cold/uncovered drops");
+        assert!(is_open(&zm, z) && is_candidate(&zm, z), "cold/uncovered soft-holds");
     }
 
     #[test]
@@ -511,30 +540,49 @@ mod tests {
     }
 
     #[test]
-    fn warmth_evicts_a_noisy_candidate() {
+    fn soft_release_when_retention_pays_a_refetch() {
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 1000); // open active
-        zm.set_anchor("a", 44, 8, 0, ladder(), 0, 1000); // demote to warm candidate
+        // Open active at t=0 and stream a 1000-byte baseline inside the load window.
+        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
+        zm.note_update(z, 1000, 0);
+        // Pan so z is only warm → soft-held.
+        zm.set_anchor("a", 44, 8, 0, ladder(), 0, 10);
         assert!(is_candidate(&zm, z));
 
-        // Fresh candidate tolerates 5 updates.
-        for _ in 0..5 {
-            zm.note_update(z, 1000);
-        }
-        assert!(is_open(&zm, z), "within tolerance, still open");
-        // The 6th exceeds it.
-        zm.note_update(z, 1000);
-        assert!(!is_open(&zm, z), "warmth closed the noisy candidate");
+        // Past the load window, deltas now charge retention. Under the 1000-byte
+        // re-fetch estimate it stays held...
+        zm.note_update(z, 400, LOAD_SETTLE_MS + 1);
+        zm.note_update(z, 400, LOAD_SETTLE_MS + 2);
+        assert!(is_open(&zm, z), "800 < 1000 load — still worth holding");
+        // ...the delta that pushes retention to a whole re-fetch releases it.
+        zm.note_update(z, 400, LOAD_SETTLE_MS + 3);
+        assert!(!is_open(&zm, z), "1200 >= 1000 — retention paid a re-fetch, released");
     }
 
     #[test]
-    fn silent_candidate_survives_warmth() {
+    fn quiet_soft_held_sub_is_never_released() {
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
         zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
-        zm.set_anchor("a", 44, 8, 0, ladder(), 0, 0); // warm candidate, no updates
-        assert!(is_open(&zm, z), "a silent candidate is never closed by warmth");
+        zm.note_update(z, 1000, 0); // baseline load
+        zm.set_anchor("a", 44, 8, 0, ladder(), 0, 10); // soft-held, then silent
+        // No further rows: a quiet zone (static tiles/things) is held indefinitely.
+        assert!(is_open(&zm, z), "a quiet soft-held sub is never released by cost");
+    }
+
+    #[test]
+    fn fast_pan_by_does_not_instant_drop() {
+        // A zone opened then panned past *before* its baseline arrives must not drop
+        // the instant the baseline lands: bytes inside the load window are re-transmit
+        // cost, not retention, even while soft-held.
+        let mut zm = ZoneManager::default();
+        let z = zone(0, 0);
+        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0); // open active
+        zm.set_anchor("a", 44, 8, 0, ladder(), 0, 5); // soft-held at t=5, still no data
+        assert!(is_candidate(&zm, z));
+        zm.note_update(z, 1000, 50); // baseline lands at t=50 (< LOAD_SETTLE_MS)
+        assert!(is_open(&zm, z), "baseline is load, not retention — stays held");
     }
 
     #[test]
@@ -572,22 +620,33 @@ mod tests {
     }
 
     #[test]
-    fn remove_anchor_closes_its_zones() {
+    fn remove_anchor_soft_holds_its_zones() {
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
         zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
-        assert!(is_open(&zm, z));
+        assert!(is_open(&zm, z) && !is_candidate(&zm, z));
+        // Removing the anchor uncovers z — but, like panning away, that soft-holds it
+        // rather than dropping it (cost / capacity still reclaim it later).
         zm.remove_anchor("a", 10);
-        assert!(!is_open(&zm, z), "removing the last anchor closes its sub");
+        assert!(is_open(&zm, z) && is_candidate(&zm, z), "uncovered on removal → soft-held");
     }
 
     #[test]
-    fn intents_describe_open_then_close() {
+    fn intents_describe_open_then_cost_close() {
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
+        // Opening the active zone emits an open intent.
         zm.set_anchor("a", 8, 8, 0, AnchorRadii { active: 4, ..Default::default() }, 0, 0);
         assert_eq!(zm.take_intents(), vec![ZoneIntent { zone_id: z, on: true }]);
-        zm.remove_anchor("a", 1);
+
+        // Stream a baseline, pan away so z soft-holds (the move opens a fresh active
+        // zone at the new spot — drain that), then let retention reach the re-fetch
+        // estimate: that, and only that, emits z's close intent.
+        zm.note_update(z, 500, 0);
+        zm.set_anchor("a", 44, 8, 0, AnchorRadii { active: 4, warm: 40, ..Default::default() }, 0, 10);
+        let panned = zm.take_intents();
+        assert!(!panned.contains(&ZoneIntent { zone_id: z, on: false }), "pan-away does not close z");
+        zm.note_update(z, 500, LOAD_SETTLE_MS + 1);
         assert_eq!(zm.take_intents(), vec![ZoneIntent { zone_id: z, on: false }]);
     }
 }

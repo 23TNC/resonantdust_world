@@ -117,11 +117,9 @@ pub const ENTITY_TYPE_TILE: u8 = 5;
 // positional (0x80–0xFF) — identity IS location, never minted
 /// A zone cell `(zone_id, location, layer)` — the cold store's positional entity.
 pub const ENTITY_TYPE_ZONE_CELL: u8 = 0x80;
-/// A zone's whole-zone static terrain blob — the packed `tiles` + scattered `things`
-/// for one zone (worldgen's cold baseline). Positional: identity is its `zone_id`
-/// (`location`/`layer` are `0`). Distinct from a per-cell [`ENTITY_TYPE_ZONE_CELL`];
-/// the edge seeds one per zone and streams it on the zone subscription.
-pub const ENTITY_TYPE_ZONE_TERRAIN: u8 = 0x81;
+// A whole-zone AGGREGATE entity (the tile grid, the cold thing list) is keyed by a
+// [`zone_reference`](pack_zone_reference), not an `entity_type`-tagged reference — it
+// lives in its own DB, so it needs no type tag to stay unique. See below.
 
 // Zone-cell layers — the `layer` byte of a positional entity lets multiple cells stack
 // on one `(zone_id, location)` (floor + wall + affixed things). A starting palette;
@@ -192,6 +190,35 @@ pub fn entity_ref_layer(k: u64) -> u8 {
     ((k >> ENTITY_LAYER_SHIFT) & ENTITY_BYTE_MASK) as u8
 }
 
+// ── zone_reference ──────────────────────────────────────────────────────────
+//
+// u64 = server_id:16 | reserved:16 | zone_id:32. A whole-zone AGGREGATE entity — a
+// zone's tile grid, or its cold thing list — keyed by its globally-unique u32 `zone_id`,
+// widened to the u64 the pipeline's `actor_key`/`target_key` need so a zone can be an
+// actor/target in `event_log` events. `server_id` records which server minted (wrote) the
+// row — provenance/consistency, spare for now. Distinct from the entity_type-discriminated
+// `entity_reference`: a zone aggregate lives in its own DB (tiles / cold-things), so it
+// needs no type tag to stay unique — its `zone_id` already is.
+
+const ZONE_REF_SERVER_SHIFT: u64 = 48;
+const ZONE_REF_ZONE_MASK: u64 = 0xFFFF_FFFF;
+
+/// Pack a `zone_reference`: `server_id:16 | reserved:16 | zone_id:32`. Unique per zone
+/// (`zone_id` is world-global); `server_id` records the minting server.
+pub fn pack_zone_reference(server_id: u16, zone_id: u32) -> u64 {
+    ((server_id as u64) << ZONE_REF_SERVER_SHIFT) | (zone_id as u64)
+}
+
+/// The minting `server_id` of a `zone_reference`.
+pub fn zone_ref_server(r: u64) -> u16 {
+    (r >> ZONE_REF_SERVER_SHIFT) as u16
+}
+
+/// The `zone_id` of a `zone_reference`.
+pub fn zone_ref_zone_id(r: u64) -> u32 {
+    (r & ZONE_REF_ZONE_MASK) as u32
+}
+
 // ── action_reference ──────────────────────────────────────────────────────────
 //
 // u16 = data_type:6 | action_id:10. `data_type` namespaces actions per pipeline so one
@@ -238,7 +265,7 @@ pub fn entity_type_data_type(entity_type: u8) -> u8 {
     match entity_type {
         ENTITY_TYPE_PAWN => DATA_TYPE_PAWN,
         ENTITY_TYPE_DEMO | ENTITY_TYPE_PLAYER | ENTITY_TYPE_OBJECT => DATA_TYPE_OBJECT,
-        ENTITY_TYPE_TILE | ENTITY_TYPE_ZONE_CELL | ENTITY_TYPE_ZONE_TERRAIN => DATA_TYPE_ZONE,
+        ENTITY_TYPE_TILE | ENTITY_TYPE_ZONE_CELL => DATA_TYPE_ZONE,
         _ => DATA_TYPE_SHARED,
     }
 }
@@ -320,6 +347,15 @@ mod tests {
     }
 
     #[test]
+    fn zone_reference_roundtrips() {
+        let r = pack_zone_reference(0xBEEF, 0xABCD_1234);
+        assert_eq!(zone_ref_server(r), 0xBEEF);
+        assert_eq!(zone_ref_zone_id(r), 0xABCD_1234);
+        // server + zone occupy disjoint halves; the middle 16 reserved bits stay 0.
+        assert_eq!(pack_zone_reference(u16::MAX, u32::MAX), 0xFFFF_0000_FFFF_FFFF);
+    }
+
+    #[test]
     fn action_reference_roundtrips() {
         for &(dt, id) in &[(0u8, 0u16), (DATA_TYPE_ZONE, 5), (0x3F, 0x3FF)] {
             let r = pack_action_reference(dt, id);
@@ -336,7 +372,6 @@ mod tests {
         assert_eq!(entity_type_data_type(ENTITY_TYPE_PLAYER), DATA_TYPE_OBJECT);
         assert_eq!(entity_type_data_type(ENTITY_TYPE_TILE), DATA_TYPE_ZONE);
         assert_eq!(entity_type_data_type(ENTITY_TYPE_ZONE_CELL), DATA_TYPE_ZONE);
-        assert_eq!(entity_type_data_type(ENTITY_TYPE_ZONE_TERRAIN), DATA_TYPE_ZONE);
         assert_eq!(entity_type_data_type(ENTITY_TYPE_NONE), DATA_TYPE_SHARED);
     }
 }

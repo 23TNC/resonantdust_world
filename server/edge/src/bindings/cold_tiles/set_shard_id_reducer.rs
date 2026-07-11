@@ -12,59 +12,47 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct SeedEntityArgs {
-    pub entity_key: u64,
-    pub zone_id: u32,
-    pub tiles: Vec::<u16>,
-    pub things: Vec::<u32>,
+pub(super) struct SetShardIdArgs {
+    pub shard_id: u16,
 }
 
-impl From<SeedEntityArgs> for super::Reducer {
-    fn from(args: SeedEntityArgs) -> Self {
-        Self::SeedEntity {
-            entity_key: args.entity_key,
-            zone_id: args.zone_id,
-            tiles: args.tiles,
-            things: args.things,
+impl From<SetShardIdArgs> for super::Reducer {
+    fn from(args: SetShardIdArgs) -> Self {
+        Self::SetShardId {
+            shard_id: args.shard_id,
 }
 }
 }
 
-impl __sdk::InModule for SeedEntityArgs {
+impl __sdk::InModule for SetShardIdArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `seed_entity`.
+/// Extension trait for access to the reducer `set_shard_id`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait seed_entity {
-    /// Request that the remote module invoke the reducer `seed_entity` to run as soon as possible.
+pub trait set_shard_id {
+    /// Request that the remote module invoke the reducer `set_shard_id` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`seed_entity:seed_entity_then`] to run a callback after the reducer completes.
-    fn seed_entity(&self, entity_key: u64,
-zone_id: u32,
-tiles: Vec::<u16>,
-things: Vec::<u32>,
+    /// /// Use [`set_shard_id:set_shard_id_then`] to run a callback after the reducer completes.
+    fn set_shard_id(&self, shard_id: u16,
 ) -> __sdk::Result<()> {
-        self.seed_entity_then(entity_key, zone_id, tiles, things,  |_, _| {})
+        self.set_shard_id_then(shard_id,  |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `seed_entity` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `set_shard_id` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn seed_entity_then(
+    fn set_shard_id_then(
         &self,
-        entity_key: u64,
-zone_id: u32,
-tiles: Vec::<u16>,
-things: Vec::<u32>,
+        shard_id: u16,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -72,19 +60,16 @@ things: Vec::<u32>,
     ) -> __sdk::Result<()>;
 }
 
-impl seed_entity for super::RemoteReducers {
-    fn seed_entity_then(
+impl set_shard_id for super::RemoteReducers {
+    fn set_shard_id_then(
         &self,
-        entity_key: u64,
-zone_id: u32,
-tiles: Vec::<u16>,
-things: Vec::<u32>,
+        shard_id: u16,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(SeedEntityArgs { entity_key, zone_id, tiles, things,  }, callback)
+        self.imp.invoke_reducer_with_callback(SetShardIdArgs { shard_id,  }, callback)
     }
 }
 

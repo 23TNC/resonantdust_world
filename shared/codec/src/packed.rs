@@ -9,9 +9,9 @@
 //! valid_at:  u64 = (time_ms: u48 << 16) | sequence: u16
 //! zone_id:   u32 = region_x:8 | region_y:8 | surface:8 | zone_x:4 | zone_y:4
 //! region_id: u32 = region_x:8 | region_y:8 | surface:8 | reserved:8
-//! thing:     u32 = x:4 | y:4 | rotation:2 | object_id:12 | reserved:10
-//!                  (a layer field will later be carved from the reserved bits)
-//! tile:      u16 = def_id:12 | reserved:4
+//! tile:      u8  = tile-kind (0 = empty); a zone's tiles are a dense Vec<u8>[256]
+//! thing:     u64 = kind:16 | x:4 | y:4 | data:5 | layer:3 | variant:5 | reserved:27
+//!                  (sparse Vec<u64>)
 //! offset:    u8  = x_off:4 | y_off:4    (object-shard free things: sub-tile pos)
 //! ```
 
@@ -52,6 +52,9 @@ const ZONE_RY_SHIFT: u32 = 16;
 const ZONE_SURFACE_SHIFT: u32 = 8;
 const ZONE_X_SHIFT: u32 = 4;
 const ZONE_BYTE: u32 = 0xFF;
+/// Low nibble mask — the in-region `zone_x`/`zone_y` (and, via the thing packers, cell
+/// x/y) widths.
+const NIBBLE: u32 = 0x0F;
 
 /// Compose a `zone_id` from its parts. `region_x`/`region_y`/`surface` are full
 /// bytes; `zone_x`/`zone_y` are the in-region nibbles (`0..REGION_DIM`), masked
@@ -152,100 +155,103 @@ pub fn global_tile(zone_id: u32, location: u8) -> (i32, i32) {
     (gx, gy)
 }
 
-// ── packed thing (cold `things` entries) ─────────────────────────────────────
+// ── packed thing (sparse zone `things` entries) ──────────────────────────────
 //
-// Layout (LSB→MSB): x:4 | y:4 | rotation:2 | object_id:12 | reserved:10.
-// `object_id` is a **u12** ([`DEF_ID_MAX`]) — the thing def-id space; the 10
-// reserved bits are headroom for later. There is one thing list per zone; a
-// layer field carved from the reserved bits will distinguish floor-level from
-// wall-level things (folding `primary_thing` + `wall_thing` into one list).
-// Tiles use the same u12 def width in their
-// own separate namespace (see the tile-slot helpers below). The hot `id` column
-// is a u16 for all three layers (no u12 scalar exists), so the hot write path
-// rejects any `id` above the u12 max rather than truncating it on fold. Rotation
-// is only meaningful for the two thing layers (tiles don't rotate).
+// Layout (LSB→MSB): layer:3 | data:5 | y:4 | x:4 | kind:16 | variant:5 | reserved:27.
+//   kind:16     — the thing's what-kind, its own def-id namespace (SEPARATE from
+//                 tiles). Room to partition into content categories later
+//                 (utilities / secondary / primary / stacks) so a cell holds more
+//                 than the 8 the layer alone gives.
+//   x:4,y:4     — the thing's cell within its 16×16 zone.
+//   data:5      — kind-interpreted: rotation for placeables, count for stacks, …
+//   layer:3     — up to 8 things per cell (floor / wall / affixed / …).
+//   variant:5   — which of up to 32 sprite variants of `kind` to render; the corpus
+//                 may define fewer, so the renderer takes it modulo the kind's count.
+//   reserved:27 — headroom (per-thing hp/state/flags as things grow richer).
+// A zone's things are a SPARSE `Vec<u64>` — only occupied (cell, layer) slots cost
+// storage, so a mostly-empty zone is a few bytes rather than 256 fixed slots.
 
-/// Largest def id the u12 packing holds (4095). The shared width for tile defs
-/// and thing `object_id`s (separate namespaces, same size); the hot write path
-/// validates every `id` against it.
-pub const DEF_ID_MAX: u16 = 0x0FFF;
+/// Largest thing `kind` the u16 field holds.
+pub const THING_KIND_MAX: u16 = u16::MAX;
+/// Largest `data` value (5 bits).
+pub const THING_DATA_MAX: u8 = 0x1F;
+/// Largest `variant` value (5 bits → 32 sprite variants per kind).
+pub const THING_VARIANT_MAX: u8 = 0x1F;
+/// Layers per cell (3 bits → 8 things stackable on one tile per kind-category).
+pub const THING_LAYERS: u8 = 8;
 
-const THING_X_SHIFT: u32 = 0;
-const THING_Y_SHIFT: u32 = 4;
-const THING_ROT_SHIFT: u32 = 8;
-const THING_OBJ_SHIFT: u32 = 10;
+const THING_LAYER_SHIFT: u64 = 0;
+const THING_DATA_SHIFT: u64 = 3;
+const THING_Y_SHIFT: u64 = 8;
+const THING_X_SHIFT: u64 = 12;
+const THING_KIND_SHIFT: u64 = 16;
+const THING_VARIANT_SHIFT: u64 = 32;
 
-const NIBBLE: u32 = 0x0F;
-const THING_ROT_MASK: u32 = 0x03;
-const THING_OBJ_MASK: u32 = 0x0FFF;
+const THING_NIBBLE: u64 = 0x0F;
+const THING_LAYER_MASK: u64 = 0x07;
+const THING_DATA_MASK: u64 = 0x1F;
+const THING_KIND_MASK: u64 = 0xFFFF;
+const THING_VARIANT_MASK: u64 = 0x1F;
 
-/// Pack an in-zone thing into the cold `u32` entry. `object_id` is masked to u12;
-/// callers reject out-of-range ids upstream (see the shard's hot write path).
-/// `object_id == 0` is the "empty" sentinel — callers shouldn't pack it (a
-/// removed thing is dropped from the vec, not stored as a 0-id entry).
-pub fn pack_thing(x: u8, y: u8, rotation: u8, object_id: u16) -> u32 {
-    ((x as u32 & NIBBLE) << THING_X_SHIFT)
-        | ((y as u32 & NIBBLE) << THING_Y_SHIFT)
-        | ((rotation as u32 & THING_ROT_MASK) << THING_ROT_SHIFT)
-        | ((object_id as u32 & THING_OBJ_MASK) << THING_OBJ_SHIFT)
+/// Pack a sparse zone thing into its `u64` entry: `kind:16 | x:4 | y:4 | data:5 |
+/// layer:3 | variant:5` (+ 27 reserved). Each field is masked to its width.
+pub fn pack_thing(kind: u16, x: u8, y: u8, data: u8, layer: u8, variant: u8) -> u64 {
+    ((kind as u64 & THING_KIND_MASK) << THING_KIND_SHIFT)
+        | ((x as u64 & THING_NIBBLE) << THING_X_SHIFT)
+        | ((y as u64 & THING_NIBBLE) << THING_Y_SHIFT)
+        | ((data as u64 & THING_DATA_MASK) << THING_DATA_SHIFT)
+        | ((layer as u64 & THING_LAYER_MASK) << THING_LAYER_SHIFT)
+        | ((variant as u64 & THING_VARIANT_MASK) << THING_VARIANT_SHIFT)
 }
 
 /// Pack a thing addressed by a cell index instead of `(x, y)`.
-pub fn pack_thing_at(location: u8, rotation: u8, object_id: u16) -> u32 {
-    pack_thing(cell_x(location), cell_y(location), rotation, object_id)
+pub fn pack_thing_at(location: u8, kind: u16, data: u8, layer: u8, variant: u8) -> u64 {
+    pack_thing(kind, cell_x(location), cell_y(location), data, layer, variant)
+}
+
+/// The what-kind of a packed thing (its own namespace, separate from tiles).
+pub fn thing_kind(packed: u64) -> u16 {
+    ((packed >> THING_KIND_SHIFT) & THING_KIND_MASK) as u16
 }
 
 /// The `x` (column) of a packed thing.
-pub fn thing_x(packed: u32) -> u8 {
-    ((packed >> THING_X_SHIFT) & NIBBLE) as u8
+pub fn thing_x(packed: u64) -> u8 {
+    ((packed >> THING_X_SHIFT) & THING_NIBBLE) as u8
 }
 
 /// The `y` (row) of a packed thing.
-pub fn thing_y(packed: u32) -> u8 {
-    ((packed >> THING_Y_SHIFT) & NIBBLE) as u8
+pub fn thing_y(packed: u64) -> u8 {
+    ((packed >> THING_Y_SHIFT) & THING_NIBBLE) as u8
 }
 
 /// The cell index of a packed thing (`y << 4 | x`).
-pub fn thing_location(packed: u32) -> u8 {
+pub fn thing_location(packed: u64) -> u8 {
     cell(thing_x(packed), thing_y(packed))
 }
 
-/// The rotation (0..3) of a packed thing.
-pub fn thing_rotation(packed: u32) -> u8 {
-    ((packed >> THING_ROT_SHIFT) & THING_ROT_MASK) as u8
+/// The kind-interpreted `data` (5 bits) of a packed thing — rotation, count, ….
+pub fn thing_data(packed: u64) -> u8 {
+    ((packed >> THING_DATA_SHIFT) & THING_DATA_MASK) as u8
 }
 
-/// The object/def id of a packed thing.
-pub fn thing_object_id(packed: u32) -> u16 {
-    ((packed >> THING_OBJ_SHIFT) & THING_OBJ_MASK) as u16
+/// The layer (0..8) of a packed thing.
+pub fn thing_layer(packed: u64) -> u8 {
+    ((packed >> THING_LAYER_SHIFT) & THING_LAYER_MASK) as u8
 }
 
-// ── cold tile slot (`cold_zones.tiles[location]`) ────────────────────────────
+/// The sprite `variant` (0..32) of a packed thing — the renderer takes it modulo the
+/// kind's actual variant count (the corpus may define fewer than 32).
+pub fn thing_variant(packed: u64) -> u8 {
+    ((packed >> THING_VARIANT_SHIFT) & THING_VARIANT_MASK) as u8
+}
+
+// ── zone tiles ───────────────────────────────────────────────────────────────
 //
-// Each tile cell is a u16: `def_id:12 | reserved:4`. The def id is a u12 in the
-// tile namespace ([`DEF_ID_MAX`]); the top 4 bits are reserved per cell for later
-// use. Tiles don't rotate. `def_id == 0` = empty (no floor/wall). The hot tile
-// row carries only the def `id`, so the fold preserves a cell's existing reserved
-// nibble across a def change (see the shard's `fold_hot_to_cold`).
-
-const TILE_DEF_MASK: u16 = 0x0FFF;
-const TILE_RESERVED_SHIFT: u16 = 12;
-const TILE_RESERVED_MASK: u16 = 0x0F;
-
-/// Pack a tile slot from a u12 `def_id` and its 4 reserved bits.
-pub fn pack_tile(def_id: u16, reserved: u8) -> u16 {
-    (def_id & TILE_DEF_MASK) | (((reserved as u16) & TILE_RESERVED_MASK) << TILE_RESERVED_SHIFT)
-}
-
-/// The u12 def id of a tile slot.
-pub fn tile_def(slot: u16) -> u16 {
-    slot & TILE_DEF_MASK
-}
-
-/// The 4 reserved bits of a tile slot.
-pub fn tile_reserved(slot: u16) -> u8 {
-    ((slot >> TILE_RESERVED_SHIFT) & TILE_RESERVED_MASK) as u8
-}
+// A zone's ground is a dense `Vec<u8>` of length [`ZONE_TILES`] (256), one
+// **tile-kind** per cell in row-major `cell(x, y)` order; `0` = empty. Tile-kind
+// is a plain `u8` in its own namespace (separate from thing `kind`) — the byte IS
+// the kind, no bit-packing. 256 tile kinds; the corpus assigns them in content
+// order.
 
 // ── sub-tile offset (object-shard free things) ───────────────────────────────
 //
@@ -322,17 +328,24 @@ mod tests {
 
     #[test]
     fn thing_roundtrips() {
-        // 0xABC (2748) is within the u12 object_id range.
-        let p = pack_thing(13, 7, 2, 0x0ABC);
+        let p = pack_thing(0xBEEF, 13, 7, 0x1A, 5, 0x0C);
+        assert_eq!(thing_kind(p), 0xBEEF);
         assert_eq!(thing_x(p), 13);
         assert_eq!(thing_y(p), 7);
-        assert_eq!(thing_rotation(p), 2);
-        assert_eq!(thing_object_id(p), 0x0ABC);
+        assert_eq!(thing_data(p), 0x1A);
+        assert_eq!(thing_layer(p), 5);
+        assert_eq!(thing_variant(p), 0x0C);
         assert_eq!(thing_location(p), cell(13, 7));
         // by-location constructor agrees
-        assert_eq!(pack_thing_at(cell(13, 7), 2, 0x0ABC), p);
-        // u12 cap: the max object_id round-trips, nothing above it fits.
-        assert_eq!(thing_object_id(pack_thing(0, 0, 0, DEF_ID_MAX)), DEF_ID_MAX);
+        assert_eq!(pack_thing_at(cell(13, 7), 0xBEEF, 0x1A, 5, 0x0C), p);
+        // every field disjoint: 37 bits used (kind..variant), reserved:27 stays 0.
+        let full =
+            pack_thing(THING_KIND_MAX, 15, 15, THING_DATA_MAX, THING_LAYERS - 1, THING_VARIANT_MAX);
+        assert_eq!(thing_kind(full), THING_KIND_MAX);
+        assert_eq!(thing_data(full), THING_DATA_MAX);
+        assert_eq!(thing_layer(full), THING_LAYERS - 1);
+        assert_eq!(thing_variant(full), THING_VARIANT_MAX);
+        assert_eq!(full, 0x0000_001F_FFFF_FFFF);
     }
 
     #[test]
@@ -347,18 +360,6 @@ mod tests {
         // both nibbles full → 0xFF; x and y occupy disjoint bits.
         assert_eq!(pack_offset(0xF, 0xF), 0xFF);
         assert_eq!(pack_offset(0x3, 0xC), 0xC3);
-    }
-
-    #[test]
-    fn tile_roundtrips() {
-        let slot = pack_tile(0x0ABC, 0x5);
-        assert_eq!(tile_def(slot), 0x0ABC);
-        assert_eq!(tile_reserved(slot), 0x5);
-        // def and reserved occupy disjoint bits — the u12 max + full reserved nibble.
-        let full = pack_tile(DEF_ID_MAX, 0xF);
-        assert_eq!(tile_def(full), DEF_ID_MAX);
-        assert_eq!(tile_reserved(full), 0xF);
-        assert_eq!(full, 0xFFFF);
     }
 
     #[test]

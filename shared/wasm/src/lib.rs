@@ -164,14 +164,14 @@ impl Content {
     /// Empty cells (`def_id == 0`) are skipped. One wasm-boundary crossing per
     /// zone, not 256.
     #[wasm_bindgen(js_name = zoneTilePrims)]
-    pub fn zone_tile_prims(&self, zone_id: u32, tiles: Vec<u16>) -> Vec<f64> {
+    pub fn zone_tile_prims(&self, zone_id: u32, tiles: Vec<u8>) -> Vec<f64> {
         let (origin_x, origin_y) = zone_origin(zone_id);
         let mut out = Vec::new();
-        for (i, &slot) in tiles.iter().enumerate() {
-            let def_id = packed::tile_def(slot);
-            if def_id == 0 {
+        for (i, &kind) in tiles.iter().enumerate() {
+            if kind == 0 {
                 continue; // empty cell — no floor/wall
             }
+            let def_id = kind as u16; // tile-kind IS the def-id (its own u8 namespace)
             let location = i as u8;
             let tile_x = origin_x + packed::cell_x(location) as i64;
             let tile_y = origin_y + packed::cell_y(location) as i64;
@@ -284,36 +284,39 @@ impl Content {
         vec![x, y, tint as f64, geo as f64, id as f64]
     }
 
-    /// Expand a zone's packed cold things (`cold_zones.things`) into renderable
-    /// prims — the thing-layer sibling of [`zone_tile_prims`]. Each entry is
-    /// `x:4 | y:4 | rotation:2 | object_id:12` ([`packed::pack_thing`]); this runs
-    /// the codec (→ in-zone cell) and the DSL (`object_id` → the thing's `:visual`
-    /// [`VisualParts`]) for every entry, returning a flat **stride-6** array
-    /// `[tileX, tileY, tint, geoColor, defId, rotation, …]` in *global tile coordinates*
-    /// (`defId` indexing [`thingTextureStems`]; `rotation` the packed 0..3 facing the
-    /// host resolves to a texture `<dir>` segment). The host draws a sprite smaller than
-    /// a tile, centred in the cell and above the ground. Empty entries
-    /// (`object_id == 0`) are skipped. One boundary crossing per zone.
+    /// Expand a zone's sparse packed cold things into renderable prims — the thing-layer
+    /// sibling of [`zone_tile_prims`]. Each entry is a `u64`
+    /// `kind:16 | x:4 | y:4 | data:5 | layer:3 | variant:5 | …` ([`packed::pack_thing`]);
+    /// this runs the codec (→ in-zone cell) and the DSL (`kind` → the thing's `:visual`
+    /// [`VisualParts`]) for every entry, returning a flat **stride-7** array
+    /// `[tileX, tileY, tint, geoColor, defId, data, variant, …]` in *global tile
+    /// coordinates* (`defId` indexing [`thingTextureStems`]; `data`'s low bits the facing;
+    /// `variant` the 0..32 sprite the host resolves modulo the kind's variant count). The
+    /// host draws a sprite smaller than a tile, centred in the cell and above the ground.
+    /// Empty entries (`kind == 0`) are skipped. One boundary crossing per zone.
     #[wasm_bindgen(js_name = zoneThingPrims)]
-    pub fn zone_thing_prims(&self, zone_id: u32, things: Vec<u32>) -> Vec<f64> {
+    pub fn zone_thing_prims(&self, zone_id: u32, things: Vec<u64>) -> Vec<f64> {
         let (origin_x, origin_y) = zone_origin(zone_id);
         let mut out = Vec::new();
         for &entry in &things {
-            let object_id = packed::thing_object_id(entry);
-            if object_id == 0 {
-                continue; // empty entry — nothing here
+            let kind = packed::thing_kind(entry);
+            if kind == 0 {
+                continue; // empty entry — nothing here (sparse, so rare)
             }
             let tile_x = origin_x + packed::thing_x(entry) as i64;
             let tile_y = origin_y + packed::thing_y(entry) as i64;
-            let visual = self.bundle.visual_for_object(object_id);
+            let visual = self.bundle.visual_for_object(kind);
             let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
             let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
             out.push(tile_x as f64);
             out.push(tile_y as f64);
             out.push(tint as f64);
             out.push(geo as f64);
-            out.push(object_id as f64);
-            out.push(packed::thing_rotation(entry) as f64);
+            out.push(kind as f64);
+            // 6th: the thing's `data` (kind-interpreted; low bits = facing, 0 for flora).
+            out.push(packed::thing_data(entry) as f64);
+            // 7th: the sprite `variant` (0..31); the host takes it modulo the kind's count.
+            out.push(packed::thing_variant(entry) as f64);
         }
         out
     }
@@ -438,7 +441,7 @@ impl WorldClient {
 
 /// Marshal one [`Event`](client::Event) to a tagged JS object the host switches
 /// on by `kind`. `u32` ids go through as `number` (within JS's safe-integer
-/// range); a zone's packed tiles go through as a `Uint16Array`.
+/// range); a zone's tiles go through as a `Uint8Array`, its things as a `Uint32Array`.
 #[cfg(feature = "js")]
 fn event_to_js(event: &client::Event) -> JsValue {
     use client::Event;
@@ -504,14 +507,17 @@ fn event_to_js(event: &client::Event) -> JsValue {
         Event::ZoneTiles { zone_id, tiles } => {
             set("kind", &JsValue::from_str("zoneTiles"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));
-            let arr = js_sys::Uint16Array::new_with_length(tiles.len() as u32);
+            let arr = js_sys::Uint8Array::new_with_length(tiles.len() as u32);
             arr.copy_from(tiles);
             set("tiles", &arr);
         }
         Event::ZoneThings { zone_id, things } => {
             set("kind", &JsValue::from_str("zoneThings"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));
-            let arr = js_sys::Uint32Array::new_with_length(things.len() as u32);
+            // Each thing is a u64 (exceeds JS's 2^53 safe range), so ship it as a
+            // BigUint64Array — the host never reads the values, just hands the array
+            // straight back to `zoneThingPrims`, which unpacks them in wasm.
+            let arr = js_sys::BigUint64Array::new_with_length(things.len() as u32);
             arr.copy_from(things);
             set("things", &arr);
         }

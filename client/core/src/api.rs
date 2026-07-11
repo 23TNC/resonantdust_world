@@ -132,18 +132,17 @@ pub enum Event {
         location: u8,
         removed: bool,
     },
-    /// A subscribed zone's static terrain baseline arrived: its `ZONE_TILES` packed tile
-    /// slots (`def_id:12 | reserved:4` each, row-major). The host expands them to
-    /// renderable cells — running the DSL per `def_id` for the texture + tint — and paints
-    /// the zone's ground. Fired on every terrain row for the zone (the initial seed and any
-    /// later rewrite). Paired with [`Event::ZoneThings`] on the same terrain delivery.
-    ZoneTiles { zone_id: u32, tiles: Vec<u16> },
-    /// A subscribed zone's scattered-things baseline: the packed things in the terrain row
-    /// (`x:4 | y:4 | rotation:2 | object_id:12` each). The host expands them to sprites —
-    /// one per thing, positioned by the codec and tinted by the thing def's `:visual` (the
-    /// worldgen-scattered flora). Fired alongside [`Event::ZoneTiles`]; an empty vec means
-    /// the host clears the zone's things.
-    ZoneThings { zone_id: u32, things: Vec<u32> },
+    /// A subscribed zone's dense tile grid arrived (the `cold_tiles` module): 256 `u8`
+    /// tile-kinds, row-major (`0` = empty). The host expands them to renderable ground
+    /// cells — running the DSL per tile-kind for the texture + tint. Fired on every tiles
+    /// row for the zone (the initial seed and any later rewrite).
+    ZoneTiles { zone_id: u32, tiles: Vec<u8> },
+    /// A subscribed zone's sparse thing list arrived (the `cold_things` module): packed
+    /// things (each a `u64`: `kind:16 | x:4 | y:4 | data:5 | layer:3 | variant:5 |
+    /// reserved:27`). The host draws one sprite per thing, positioned by the codec, tinted
+    /// by the thing kind's `:visual`, and picking the kind's `variant` sprite. Fired on
+    /// every things row; an empty vec means the host clears the zone's things.
+    ZoneThings { zone_id: u32, things: Vec<u64> },
     /// A zone's subscription closed (the anchor moved it out of range, or it was
     /// evicted). The host drops that zone's entities.
     ZoneClosed { zone_id: u32 },

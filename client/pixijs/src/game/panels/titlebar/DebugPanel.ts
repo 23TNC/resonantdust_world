@@ -335,6 +335,9 @@ export class DebugPanel {
   private readonly mainOffset:     HTMLSpanElement;
   private readonly mainFps:        HTMLSpanElement;
   private readonly mainDrawCalls:  HTMLSpanElement;
+  /** Estimated network bandwidth (↓ received / ↑ sent), a smoothed bytes/sec over
+   *  the cumulative row + reply byte tallies. */
+  private readonly mainBandwidth:  HTMLSpanElement;
   // Cursor coordinate readout (debug): tile → zone (macro) → region, derived
   // from the codec formula so it's the REFERENCE to compare against where tiles
   // actually load/render.
@@ -381,6 +384,14 @@ export class DebugPanel {
 
   private fps = 60;
 
+  /** Bandwidth estimate state — sampled on a ~1s wall-clock cadence from the
+   *  cumulative row + reply byte tallies. The `Rate` values are smoothed bytes/sec. */
+  private bwAccumMs = 0;
+  private bwLastDown = 0;
+  private bwLastUp = 0;
+  private bwDownRate = 0;
+  private bwUpRate = 0;
+
   /** Optional handle to the live sync-history source. When set,
    *  `setStats` drives `sampleSyncHistory()` on a fixed-frame cadence
    *  so the sparklines have continuous history regardless of whether
@@ -424,6 +435,7 @@ export class DebugPanel {
     this.mainOffset    = this.addRow(mainContent, panelText("debugPanel", "offset"));
     this.mainFps       = this.addRow(mainContent, panelText("debugPanel", "fps"));
     this.mainDrawCalls = this.addRow(mainContent, panelText("debugPanel", "drawCalls"));
+    this.mainBandwidth = this.addRow(mainContent, "net (↓ · ↑)");
     this.mainTile      = this.addRow(mainContent, "tile local (world)");
     this.mainZone      = this.addRow(mainContent, "zone (q,r)");
     this.mainRegion    = this.addRow(mainContent, "region (q,r)");
@@ -545,6 +557,22 @@ export class DebugPanel {
       this.historyTick = 0;
       this.reducers.sampleSyncHistory();
     }
+    // Bandwidth: on a ~1s wall-clock cadence, diff the cumulative down/up byte tallies
+    // into a smoothed bytes/sec. Runs unconditionally (like fps) so the rate is current
+    // the instant the panel opens. `down` = row frames + correlated replies; `up` = the
+    // frames we send (login / sub_zone / unsub / move) — a spike in ↑ + a matching ↓
+    // burst is the resubscribe re-transmission cost made visible.
+    this.bwAccumMs += deltaMS;
+    if (this.bwAccumMs >= 1000) {
+      const down = this.totalDownBytes();
+      const up = this.totalUpBytes();
+      const secs = this.bwAccumMs / 1000;
+      this.bwDownRate = this.bwDownRate * 0.4 + (Math.max(0, down - this.bwLastDown) / secs) * 0.6;
+      this.bwUpRate = this.bwUpRate * 0.4 + (Math.max(0, up - this.bwLastUp) / secs) * 0.6;
+      this.bwLastDown = down;
+      this.bwLastUp = up;
+      this.bwAccumMs = 0;
+    }
     // The instant-fps calculation runs unconditionally so the running
     // average stays current; the DOM updates skip when closed.
     if (!this.panel.isOpen) return;
@@ -576,6 +604,7 @@ export class DebugPanel {
     const dcText  = String(drawCalls);
     this.mainFps.textContent       = fpsText;
     this.mainDrawCalls.textContent = dcText;
+    this.mainBandwidth.textContent = `${fmtRate(this.bwDownRate)} · ${fmtRate(this.bwUpRate)}`;
     this.texFps.textContent        = fpsText;
     this.texDrawCalls.textContent  = dcText;
 
@@ -629,6 +658,23 @@ export class DebugPanel {
             : "—";
       }
     }
+  }
+
+  /** Cumulative bytes RECEIVED so far — every relayed `Row` frame (per-table `rx`) plus
+   *  every correlated reply (`CallStat.rx`). The bandwidth sampler diffs this over time. */
+  private totalDownBytes(): number {
+    let n = 0;
+    for (const t of this.lastSubStats.tables) n += t.rx;
+    for (const c of this.lastCallStats) n += c.rx;
+    return n;
+  }
+
+  /** Cumulative bytes SENT so far — every outbound frame (`CallStat.tx`: login /
+   *  sub_zone / unsub / move). A rising ↑ rate is the churn the resubscribe cost rides on. */
+  private totalUpBytes(): number {
+    let n = 0;
+    for (const c of this.lastCallStats) n += c.tx;
+    return n;
   }
 
   /** Build a toggle row: a label plus a ▣ / ▢ glyph button reflecting
@@ -936,8 +982,9 @@ export class DebugPanel {
       return;
     }
 
-    // Live open / cumulative-total zone-subscription gauge.
+    // Live open / cumulative-total zone-subscription gauge, then the bandwidth line.
     body.appendChild(this.subGaugeRow(open, total));
+    body.appendChild(this.subBandwidthRow());
 
     if (tables.length === 0) {
       body.appendChild(this.statEmpty("no rows received yet"));
@@ -962,6 +1009,23 @@ export class DebugPanel {
     this.statCell(totalRow, fmtBytes(totals.rx), "right", undefined, true);
 
     body.appendChild(table);
+  }
+
+  /** Subs-tab bandwidth line: the smoothed ↓ receive rate + the cumulative bytes streamed
+   *  back. The per-table breakdown below shows where it goes; a total that keeps climbing
+   *  while `open` stays flat is the resubscribe re-transmission this is here to expose. */
+  private subBandwidthRow(): HTMLDivElement {
+    const row = document.createElement("div");
+    Object.assign(row.style, ROW_CSS);
+    const labelEl = document.createElement("span");
+    Object.assign(labelEl.style, LABEL_CSS);
+    labelEl.textContent = "bandwidth";
+    const valueEl = document.createElement("span");
+    Object.assign(valueEl.style, VALUE_CSS);
+    valueEl.textContent = `↓ ${fmtRate(this.bwDownRate)} · ${fmtBytes(this.totalDownBytes())} total`;
+    row.appendChild(labelEl);
+    row.appendChild(valueEl);
+    return row;
   }
 
   /** The subs-tab summary line: the live count of open zone subscriptions over the
@@ -1032,6 +1096,15 @@ function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} K`;
   return `${(n / 1024 / 1024).toFixed(1)} M`;
+}
+
+/** Format a bytes/sec rate for the bandwidth readouts (1024-based unit; the caller
+ *  supplies the ↓/↑ direction). Clamped at 0 so a counter reset never shows negative. */
+function fmtRate(bytesPerSec: number): string {
+  const n = Math.max(0, bytesPerSec);
+  if (n < 1024) return `${Math.round(n)} B/s`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB/s`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB/s`;
 }
 
 /** Compact UTC `YYYY-MM-DD HH:MM` from an ISO timestamp (no Date parse — the
