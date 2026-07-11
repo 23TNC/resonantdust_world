@@ -1,11 +1,95 @@
 # Generalizing the tick pipeline — one engine, any data structure
 
-**Status:** Design (2026-07-10), branch `0.2.1`. Extends [`simulation.md`](simulation.md)
+**Status:** In progress (2026-07-10), branch `0.2.2`. Extends [`simulation.md`](simulation.md)
 (the tick engine) and [`object-shard.md`](object-shard.md) (the transfer saga), and
-**supersedes** the cold-blob-first plan in [`world-on-pipeline.md`](world-on-pipeline.md)
-(see [Zones as a pipeline](#zones-as-a-pipeline--the-u64-256-payload)). Nothing built
-yet; this is the target the `decl_tick_pipeline!` macro (already promised in
-[`pipeline/src/lib.rs`](../spacetime/server/pipeline/src/lib.rs) line 9) builds toward.
+**supersedes** the cold-blob-first plan in [`world-on-pipeline.md`](world-on-pipeline.md).
+The generalization **core is built and proven** — see the status log below; the design
+sections after it are the original target, annotated where this session's decisions
+refined them.
+
+## Build status & decision log (as of 0.2.2)
+
+**The generalization core is done and proven.** One `decl_tick_pipeline!` engine now runs
+two live modules with divergent payloads; every reference is a generalized layout;
+migration is complete and the old scheme removed. Everything below verified green.
+
+### Built (8 commits on `0.2.2`)
+
+| Phase | What | Verify |
+|---|---|---|
+| P1 | `decl_tick_pipeline!` macro emits the whole engine; payload is its one arg | shard bindings byte-identical |
+| P2 | `shared/tick` `Domain` trait + `Spatial` impl; `resolve_events` generic; `priority`/`read_rule` untouched | tick 16 tests |
+| P3a | `shared/codec/refs.rs` — `server_reference` / `entity_reference` / `action_reference` layouts + DB-range guard + `entity_type→data_type` map | codec tests |
+| P3b | migrate `entity_key` → `entity_reference` across module + edge + npc + client (u64 column, logic-only) | all crates compile |
+| P3c | delete the old 2-tag `entity_key`/`object_reference` from `packed.rs`; migrate `priority.rs` tests | codec 16, tick 16 |
+| P4a | macro `#[macro_export]` + self-contained (`$crate::` + `::spacetimedb` prelude, `.clone()` for non-`Copy`); invocation moved into the **module** crate; second **`zone`** module with a divergent payload — **divergent payloads proven** | shard byte-identical; zone builds; server compiles zone bindings |
+| P4b | `shared/codec/cells.rs` — `[u64;256]` cell codec *(superseded, see below)* | codec 21 |
+| P4c | `tile_kind` biome-folding resolver *(superseded, see below)* | codec 25 |
+
+Worker (`server_simulation`) + master treat `entity_key` as an opaque `u64` — unaffected.
+
+### Decisions this session
+
+- **`data = [u64; N]`, N=2.** Keep the two `data` words (exposed as an array in logic if
+  needed); 16 bytes is ample and there is **no `data` use yet**. Don't flatten conceptually,
+  but don't grow it speculatively.
+- **`kind` stays a payload field — NOT promoted to a spine column.** Aggregate rows (a
+  `zone_tiles` row = 256 tiles) have no single `kind`. Tile-kind and object-kind are
+  **separate spaces** (see zone design).
+- **SATS has no fixed-array column type.** `[T; N]` is not a `SpacetimeType`; the only
+  sequence constructor is the variable-length `Array` (= `Vec`, length-prefixed). Fixed
+  `[u64; N]` lives fine in **Rust logic**; the **storage column is `Vec`**, held to length
+  by invariant. A `Product` (N columns / `u256`-packed) is the only truly-fixed form and is
+  impractical for runtime-indexed cells. So cell collections are `Vec` at storage.
+- **Actor reads: the dirty gate is the universal cross-shard primitive** (already
+  payload-agnostic — the read-rule touches only spine fields). **Do not build a cross-class
+  actor "view" struct** until a concrete cross-class *dynamic-data* case appears; same-class
+  evals read actor+target state as today. `entity_type` is redundant with `kind`.
+- **`event_log` provenance is deferred to land WITH the pack/unpack saga** (its consumer) —
+  minted `event_reference` + per-shard `sequence` split + `trigger`/`requesting`/`worker`
+  fields + validate-on-consume, all built together, not speculatively. The open TODO on the
+  trigger's home-shard field (below) is resolved then.
+
+### Current zone-storage design (supersedes the `[u64;256]` packed cell + `cells.rs`)
+
+Split zone data across **two specialized pipelines** — the payoff of the generic engine
+(each is just a `decl_tick_pipeline!` payload):
+
+- **`zone_tiles`** — `{ tiles: Vec<u8>, biome: u16 }`. Dense, fixed length 256 (one floor
+  per cell), ~0.25 KB, present for **every** zone. `u8` tile-kind = 256 tiles per biome;
+  `u16` biome ≈ unlimited biomes. Render kind is a flat `(biome, tile)` lookup (the `u9`
+  biome-folding in `cells.rs::tile_kind` collapses away).
+- **`zone_objects`** — `{ objects: Vec<u32> }`, **sparse** (only actual objects). Entry =
+  `x:4 | y:4 | kind:16 | layer:3 | data:5`. `layer:3` → up to 8 objects per cell; `data:5`
+  = `rotation:2 | reserved:3` (placeables) or `count:5` (stacks), interpreted by the `u16`
+  kind (so the object-kind space needs a documented stack-vs-placeable partition).
+  Materialized on demand; size ∝ object count. `x:4 | y:4` = the 16×16 in-zone position.
+
+- **Separate `u8` tile-kind / `u16` object-kind spaces** — drops the `b1/b01/b001` prefix
+  sharing *and* the biome-folding.
+- **Storage:** ~0.25 KB empty zone, ~0.75 KB typical populated, worst-case ~8 KB (256 cells
+  × 8 layers). A 16×16 region (256 zones) ≈ 64–128 KB vs the old ~512 KB.
+- **Consequences (all acceptable):** one `zone_objects` entity per zone → whole-`Vec`
+  rewrite + single-worker resolution (fine — cold = settled, reinforces the hot/cold split);
+  O(n) object lookup (fine while sparse; sort-by-row + binary search only if a profiler
+  complains); the worst case is 8 KB not 1 KB, but hot/cold keeps active dense areas hot.
+- **Superseded:** the `[u64;256]` packed cell (§ *Zones as a pipeline*) and
+  `shared/codec/cells.rs` (the `tile|stack|primary|secondary|tertiary` packing + `tile_kind`
+  biome-folding). `cells.rs` is committed but reflects the earlier design; it will be
+  replaced when `zone_tiles`/`zone_objects` are built.
+
+### Next (in order)
+
+1. **Build `zone_tiles` + `zone_objects`** modules with the payloads above — reshape the
+   proof `zone` module (currently `Vec<u64>`). *(Awaiting go-ahead — design is settled.)*
+2. **Worker `data_type` dispatch** — one worker resolving multiple pipeline classes.
+3. **Pack/unpack saga + `event_log` provenance** — built together (§ *Provenance* / §
+   *Pack / unpack*), the saga being the provenance's consumer.
+4. **Client zone rendering** — per-layer, biome-resolved.
+
+Not yet touched: worker/master rename (`server_simulation → server_worker`), the
+`server_reference` migration of `event_log`'s own server-id/action fields, `set_shard_id`
+deploy wiring.
 
 ## Why
 
@@ -307,6 +391,11 @@ machinery.
 
 ## Zones as a pipeline — the `[u64; 256]` payload
 
+> **Superseded** by the split `zone_tiles` (`Vec<u8>`) + sparse `zone_objects` (`Vec<u32>`)
+> design in the status log above — cheaper (~0.25–0.75 KB/zone vs 2 KB), separate tile/object
+> kind spaces, and no packed-cell/biome-folding codec. Kept here for the rationale that led
+> to it. `shared/codec/cells.rs` implements *this* section and will be replaced.
+
 A zone is a **single fixed-width pipeline entity**, not a blob side-table and not 256
 per-cell rows. Its payload packs every layer of all 256 cells into a fixed array:
 
@@ -338,12 +427,12 @@ reference packers, consumed by worldgen (assign) and the client (resolve → tex
 does **not** touch the engine. Two inconsistencies from the sketch to reconcile when
 writing it:
 
-> **TODO:** biome width — the tile kind is `b1 | biome:8 | tile_bottom:7` (u8) but
-> resolution reads a **u16** biome (`biome >> 8`, `biome & 0xFF`). Decide whether the
-> per-zone biome is u16 and the kind's field is a *selector into* it.
->
-> **TODO:** `primary` and `secondary` were both sketched as `b0100 | u12` — identical
-> prefixes can't distinguish them; secondary needs its own (e.g. `b0101`).
+> **RESOLVED (both, then superseded).** Biome is a per-zone **u16** (three palettes:
+> high-byte / low-byte / default); `primary` and `secondary` *intentionally* share the
+> `b0100` prefix (two placeable slots on one tile — the slot distinguishes them, not the
+> prefix). Both were implemented in `cells.rs` (P4b/P4c). Then the whole shared-kind /
+> biome-folding approach was **dropped** for separate `u8` tile-kind + `u16` object-kind
+> spaces (status log) — so this codec is being replaced, not fixed.
 
 The resolution intent (for the codec): `tile & 0x100` → default tile (`0x80 + tile&0xFF`,
 255 defaults); else `tile & 0x80` → high-biome set (`biome >> 8`); else low-biome set
