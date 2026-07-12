@@ -121,61 +121,78 @@ per-class split. Promote `cold_tiles` (terrain) off `default_cold_tiles_db()` on
 ## Cold objects on the object model (0.2.3)
 
 The [object model](object-model.md) makes tiles and things the *same* thing — cold
-**objects**, each an `object_reference` (type / subtype / kind / subkind / variant /
-x / y / data). A zone's cold data becomes **N `ColdRow`s split by (type, subtype,
-layer)** (`object-model.md` §4): each row = a shared `object_type_reference : u32` +
-a `Vec<object_kind_reference : u32>`. `biome-tile` rows are the dense ground (one per
-cell), `biome-thing` rows the sparse scatter — and a row's `subtype` *is* its biome.
-`Worldgen::zone_cold_objects` (`server/edge/src/worldgen.rs`) already emits exactly
-this. It replaces the two split payloads:
+**objects**, each an `object_reference`. A zone's cold data becomes **N `ColdRow`s
+split by (type, subtype, layer)** (`object-model.md` §4): each row = a shared
+`object_type_reference : u32` + a `Vec<object_kind_reference : u32>`. `biome-tile`
+rows are the dense ground, `biome-thing` rows the sparse scatter — a row's `subtype`
+*is* its biome. `Worldgen::zone_cold_objects` (`server/edge/src/worldgen.rs`) emits
+exactly this.
 
-| today | 0.2.3 |
-|---|---|
-| `cold_tiles` — `tiles: Vec<u8>` (kind only, no biome) | `biome-tile` `ColdRow`s (kind + biome via `subtype`) |
-| `cold_things` — `things: Vec<u64>` (old `pack_thing`) | `biome-thing` `ColdRow`s (new `object_kind_reference`) |
+**This is a change to what a module's COLD TABLE stores — NOT a new module.** A
+pipeline module is generic (`decl_tick_pipeline!`) and carries **both a hot and a cold
+table**:
 
-The dense `Vec<u8>` grid can't survive: a zone spans biomes, so a tile needs its
-`subtype`, which the row carries for free.
+- **hot** — the `state` table: minted, ticking entities (mobile objects, active
+  cells), keyed by a minted `entity_reference`.
+- **cold** — settled, packed, *static* objects (terrain, at-rest things), never
+  ticks, keyed geographically. `unpack` promotes a cold object to a hot `state`
+  entity; `pack` folds a settled hot entity back — **within the same module** (no
+  cross-module transfer for settle/release; that's the whole point of one generic
+  module holding both).
+
+So the object-model work updates the **cold table** to hold `ColdRow`s, replacing
+today's split cold payloads (`cold_tiles` `Vec<u8>` + `cold_things` `Vec<u64>`). The
+dense `Vec<u8>` grid can't survive — a zone spans biomes, so a tile needs its
+`subtype`, which the row carries. The engine, hot `state`, and pack/unpack are
+unchanged; only the cold representation moves onto the object model.
+
+### The cold table (generic, uniform across modules)
+
+`object_kind_reference`s are type-agnostic `u32`s, so the cold table is **one fixed
+shape** for every module (unlike the payload-parameterised hot `state`). Extend
+`decl_tick_pipeline!` to emit it beside the hot tables:
+
+```
+cold {                                  // static; tick_gc ignores it
+  #[primary_key] (region_zone_reference, type_reference)   // one ColdRow per (zone, type/subtype/layer)
+  kinds: Vec<u32>                        // the object_kind_references
+  version: u32                           // bumped on mutation → drives client re-send
+}
+```
+
+Every module instance (tile shard, object shard, per realm) carries its own hot +
+cold — the **shape** is generic and shared; the **data** stays sharded (consolidating
+all shards into one table would be foolish, and isn't the point).
 
 ### Decisions (for review)
 
-1. **Unify `cold_tiles` + `cold_things` → one `cold` module.** Both are geographic
-   cold `ColdRow`s now, and the doc's *tile shard* holds both (`object-model.md` §5).
-   Merging turns the edge's triple-subscribe into a double (object `state` + `cold`).
-   An empty zone still costs only its `biome-tile` rows (ground you need anyway), so
-   the original split's "don't pay for an empty thing array" rationale is gone.
-   *(Recommended.)*
-2. **One entity per zone; payload = the zone's rows.** Keep the current
-   one-entity-per-zone shape (keyed by `zone_reference`), payload becomes the zone's
-   `ColdRow`s. Subscriptions stay `WHERE zone_id`, stream the whole zone, and the
-   client decodes locally — matching §4 ("subscriptions never filter; queries do").
-   *(Recommended over one-entity-per-`(zone, type_reference)` row — the per-zone
-   seeding doesn't need the finer key.)*
-3. **Encoding + where `ColdRow` lives.** Payload `rows: Vec<ColdRow>` with `ColdRow {
-   type_reference: u32, kinds: Vec<u32> }`. To share one type across edge (produces),
-   shard (stores), client (decodes) without dragging `spacetimedb` into the pure
-   `codec` crate: define `ColdRow` in `shared/codec` as the canonical shape, and
-   **feature-gate a `#[derive(SpacetimeType)]`** behind a `spacetime` codec feature the
-   shard enables. *Sub-decision:* feature-gate vs a module-local mirror vs flattening
-   to primitive parallel vecs (`row_types: Vec<u32>`, `row_kinds: Vec<Vec<u32>>`).
-   *Lean: feature-gate, one type end-to-end.*
-4. **Wire projection (later).** A dense `biome-tile` row's `x/y` is implicit (one per
-   cell), so the **edge** can project it out on the client hop (`u32`→~`u16`/tile), per
-   §4's storage-vs-wire split. Deferred — correctness first, bandwidth second.
+1. **Cold is a table in the generic module, not a module.** Extend
+   `decl_tick_pipeline!` with the cold table; today's cold-only `cold_tiles`/
+   `cold_things` modules converge into it as the module's cold side, beside the hot
+   `state`. *(The established hot/cold-generic model — `world-on-pipeline.md`
+   milestones, `object-shard.md` pack/unpack.)*
+2. **Row = one `ColdRow` per `(region_zone, type_reference)`**, a Vec of its
+   `object_kind_reference`s — matching §4's cold-table key, so a zone subscription's
+   `WHERE` narrows by zone and the client decodes the handful of rows locally.
+3. **`ColdRow` type** — a plain struct in `shared/codec` (canonical shape), with a
+   `#[derive(SpacetimeType)]` **feature-gated** behind a `spacetime` codec feature the
+   shard enables. One type end-to-end without dragging `spacetimedb` into the pure
+   codec. *(Sub-decision: feature-gate vs module-local mirror vs flattening.)*
+4. **Wire projection (later).** A dense `biome-tile` row's `x/y` is implicit, so the
+   edge can drop it on the client hop (`u32`→~`u16`/tile). Deferred — correctness first.
 
-### Migration (additive, no flag day)
+### Migration (additive)
 
-New `cold` module *alongside* `cold_tiles`/`cold_things`. Edge seeds it from
-`zone_cold_objects` and subscribes it in parallel; the client learns to decode
-`ColdRow`s. Once a zone renders from `cold` in the browser, drop the two legacy
-modules + their subscribes. **Verify on the running stack** (`rd up` → `rd deploy` →
-browser) — this changes what the client draws, so unit tests can't close it.
+Add the cold table + its ColdRow representation alongside the current cold payloads;
+edge seeds it from `zone_cold_objects`; the client learns to decode `ColdRow`s. Once a
+zone renders from the new cold table in the browser, retire the old `Vec<u8>`/`Vec<u64>`
+cold payloads. **Verify on the running stack** (`rd up` → `rd deploy` → browser) — this
+changes what the client draws, so unit tests can't close it.
 
 ## Open
 
 - **Cold-object encoding sub-decision** (above §3): feature-gate `SpacetimeType` on
-  `codec::ColdRow`, a module-local mirror, or primitive parallel vecs. Blocks the
-  `cold` module + edge/client wire.
+  `codec::ColdRow`, a module-local mirror, or primitive parallel vecs.
 - **`object-shard.md` is largely pre-0.2** — its transfer/presence *design* stands, but its
   modules/tables (`cold_zones`, `hot_things`, `region_shard`) don't exist; fold its still-
   valid parts (transfer saga, presence routing, witnessing) into the pack/unpack saga on the
