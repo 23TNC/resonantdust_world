@@ -14,5 +14,6 @@
 //! drift.
 
 pub mod biome;
+pub mod object;
 pub mod packed;
 pub mod refs;
