@@ -13,7 +13,7 @@
 //! and lights per-fragment (ambient + directional sun today; point lights + depth shadows
 //! extend the shader in place). The depth composite is bound once the shadow pass lands.
 
-import { Buffer, BufferUsage, Geometry, Mesh, Texture } from "pixi.js";
+import { Buffer, BufferUsage, Container, Geometry, Mesh, Texture } from "pixi.js";
 import type { Renderer } from "pixi.js";
 import { LayoutNode } from "../layout/LayoutNode";
 import type { TextureResolver } from "../../textures";
@@ -112,9 +112,19 @@ export class Viewport extends LayoutNode {
    *  flat, exactly as before. */
   private materialRegistry: MaterialRegistry | null = null;
 
+  /** A screen-space layer drawn ABOVE the baked world mesh — for dynamic overlays that
+   *  don't go through the (lit, baked) prim cache: the mover layer's pawn markers. Kept on
+   *  top via `zIndex` (the mesh is `0`). Consumers add display objects here and position
+   *  them each frame with {@link worldToScreen}. */
+  private readonly overlayContainer = new Container();
+
   constructor(resolver: TextureResolver) {
     super();
     this.resolver = resolver;
+    // Sort children by zIndex so the overlay stays above the (later-created) mesh.
+    this.container.sortableChildren = true;
+    this.overlayContainer.zIndex = 1;
+    this.container.addChild(this.overlayContainer);
     // The albedo channel: bake each prim through the three-tier resolver — a named prim
     // gets the best texture on hand (master → preview → geo); an unnamed tint-rect keeps
     // its own texture. Colour by tier — geo shows the prim's silhouette colour
@@ -287,12 +297,27 @@ export class Viewport extends LayoutNode {
     return this.rig;
   }
 
+  /** The screen-space overlay layer above the baked world (see {@link overlayContainer}) —
+   *  the mover layer parents its pawn markers here. */
+  get overlay(): Container {
+    return this.overlayContainer;
+  }
+
   /** Map a body-local screen point (px, origin at the viewport's top-left) to a WORLD-px
    *  point — the same inverse transform {@link zoomAt} uses. Feed a pointermove through
    *  this into {@link LightRig.setCursorWorld} to attach a hover light. */
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
     const z = this.zoomFactor;
     return { x: this.anchorX + (sx - this.width / 2) / z, y: this.anchorY + (sy - this.height / 2) / z };
+  }
+
+  /** Map a WORLD-px point to a body-local screen point (px, origin at the viewport's
+   *  top-left) — the inverse of {@link screenToWorld}. Overlays that float above the baked
+   *  world (the mover layer's pawn markers) call this every frame to pin a screen-space
+   *  sprite to its world position as the camera pans / zooms. */
+  worldToScreen(wx: number, wy: number): { x: number; y: number } {
+    const z = this.zoomFactor;
+    return { x: (wx - this.anchorX) * z + this.width / 2, y: (wy - this.anchorY) * z + this.height / 2 };
   }
 
   /** Named render-texture channels for the `/showRT` dev preview. Stable order so
@@ -450,6 +475,7 @@ export class Viewport extends LayoutNode {
       // Snap final vertex positions to whole device pixels in the shader, so the
       // grid's shared edges coincide exactly (no sub-pixel crack between quads).
       this.mesh.roundPixels = true;
+      this.mesh.zIndex = 0; // below the overlay (zIndex 1)
       this.container.addChild(this.mesh);
     } else {
       const old = this.mesh.geometry;
@@ -461,6 +487,7 @@ export class Viewport extends LayoutNode {
 
   override destroy(): void {
     this.unsubLoad();
+    this.overlayContainer.destroy({ children: true });
     this.map.destroy();
     this.shadowPass.destroy();
     this.mesh?.geometry.destroy();

@@ -96,3 +96,20 @@
                 0 return
             @on_destroy>
                 0 return
+    ; Wolf — the first pawn (a bot-driven wandering mobile entity, not a scattered
+    ; cold thing). Uses the mastered `pawns.animal/wolf` sprite set: e/s/n facings
+    ; (west = flipped east), 5 variants; the client picks a facing from the entity's
+    ; rotation and a variant from its id. White tint keeps the art's own colours;
+    ; geoColor is the gray silhouette shown until the sprite streams in. Sized a bit
+    ; under one tile.
+    ::wolf>
+        :visual>
+            @on_create>
+                "thing ^prim call &thing export
+                "pawns.animal/wolf &thing.texture set
+                #ffffff &thing.tint set
+                #6a6a6a &thing.geoColor set
+                48 &thing.size set
+                0 return
+            @on_destroy>
+                0 return

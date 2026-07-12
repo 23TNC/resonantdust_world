@@ -96,7 +96,7 @@ const LINKED_CATEGORY = "linked";
  *  of the kind — the resolver takes it modulo the kind's variant count); for a linked kind
  *  it's the neighbour-context cell (still Phase 2 — canonical cell 0). A white/absent stem
  *  stays a flat tint rect. */
-function thingTexture(stem: string | undefined, rotation: number, variant: number): { name: string | undefined; flipX: boolean; cell?: number } {
+export function thingTexture(stem: string | undefined, rotation: number, variant: number): { name: string | undefined; flipX: boolean; cell?: number } {
   const base = textureNameFor(stem);
   if (!base) return { name: undefined, flipX: false };
   if (base.startsWith(`${LINKED_CATEGORY}/`)) return { name: `${base}/l`, flipX: false, cell: 0 };

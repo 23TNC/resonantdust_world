@@ -134,8 +134,15 @@ export interface StateObject {
   zoneId: number;
   objType: number;
   objectId: number;
+  /** The entity's content kind → sprite (a wolf's thing id). Distinct from `objType`
+   *  (the entity class: demo / player / pawn). */
+  objKind: number;
   tic: number;
   location: number;
+  /** Facing: 0=south, 1=east, 2=north, 3=west. */
+  rotation: number;
+  /** Sub-tile offset, `x_off:4 | y_off:4` (8/16 = centred). */
+  offset: number;
   removed: boolean;
 }
 /** A state object changed — upsert or drop it. */
@@ -163,8 +170,11 @@ type WorldEvent =
       zoneId: number;
       objType: number;
       objectId: number;
+      objKind: number;
       tic: number;
       location: number;
+      rotation: number;
+      offset: number;
       removed: boolean;
     }
   | { kind: "zoneClosed"; zoneId: number }
@@ -548,8 +558,11 @@ export class WasmClient {
             zoneId: ev.zoneId,
             objType: ev.objType,
             objectId: ev.objectId,
+            objKind: ev.objKind,
             tic: ev.tic,
             location: ev.location,
+            rotation: ev.rotation,
+            offset: ev.offset,
             removed: ev.removed,
           });
         }

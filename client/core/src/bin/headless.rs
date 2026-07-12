@@ -112,10 +112,20 @@ fn log_event(event: &Event) {
         Event::LoginFailed { reason } => error!(%reason, "login failed"),
         Event::Disconnected { reason } => warn!(reason = ?reason, "disconnected"),
         Event::Status(msg) => info!(%msg, "status"),
-        Event::StateObject { zone_id, obj_type, object_id, tic, location, removed } => {
+        Event::StateObject {
+            zone_id,
+            obj_type,
+            object_id,
+            kind,
+            tic,
+            location,
+            rotation,
+            offset,
+            removed,
+        } => {
             info!(
                 zone_id = format!("{zone_id:#010x}"),
-                obj_type, object_id, tic, location, removed, "state object"
+                obj_type, object_id, kind, tic, location, rotation, offset, removed, "state object"
             )
         }
         Event::ZoneTiles { zone_id, tiles } => {

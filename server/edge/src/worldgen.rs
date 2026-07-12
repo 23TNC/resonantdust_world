@@ -25,30 +25,13 @@
 
 use std::path::Path;
 
-use resonantdust_codec::packed::{
-    cell, pack_thing_at, zone_region_x, zone_region_y, zone_x, zone_y, REGION_DIM, ZONE_DIM,
-    ZONE_TILES,
-};
+use resonantdust_codec::biome::{biome_dims, tile_seed, zone_world_origin};
+use resonantdust_codec::packed::{cell, pack_thing_at, ZONE_DIM, ZONE_TILES};
 use resonantdust_dsl::Bundle;
 
 /// The tile a cell falls back to when its biome named no ground (or an unknown
 /// one). Grass is the neutral floor; the corpus must define it.
 const DEFAULT_TILE: &str = "grass";
-
-/// Feature size of each biome-dimension noise field, in world tiles — roughly the
-/// lattice spacing, so a band spans a couple of these. Distinct per dimension so
-/// temperature, humidity, and elevation vary at different scales and don't stripe
-/// together.
-const TEMPERATURE_SCALE: f64 = 48.0;
-const HUMIDITY_SCALE: f64 = 34.0;
-const ELEVATION_SCALE: f64 = 26.0;
-
-/// Per-dimension lattice offsets — each field samples a different region of the
-/// integer hash lattice, so the three dimensions are independent rather than
-/// correlated copies of one noise field.
-const TEMPERATURE_OFFSET: f64 = 131.0;
-const HUMIDITY_OFFSET: f64 = 517.0;
-const ELEVATION_OFFSET: f64 = 911.0;
 
 /// A loaded content corpus plus the fallback tile id. Built once at startup and
 /// shared (read-only) across every zone seed.
@@ -149,78 +132,6 @@ impl Worldgen {
     }
 }
 
-/// The three biome dimensions at a world tile: temperature, humidity, elevation,
-/// each in `[0, 1)`. Independent noise fields (distinct scale + lattice offset),
-/// so a cell's climate is a point in that 3-space the biomes partition.
-fn biome_dims(wx: i32, wy: i32) -> [f64; 3] {
-    let sample = |scale: f64, off: f64| {
-        value_noise(wx as f64 / scale + off, wy as f64 / scale + off)
-    };
-    [
-        sample(TEMPERATURE_SCALE, TEMPERATURE_OFFSET),
-        sample(HUMIDITY_SCALE, HUMIDITY_OFFSET),
-        sample(ELEVATION_SCALE, ELEVATION_OFFSET),
-    ]
-}
-
-/// A per-tile RNG seed from its world coordinates — what `^rand` salts and
-/// finalizes. Deterministic in `(wx, wy)`, so a cell's scatter reproduces on a
-/// re-seed; the VM's `rand` does the salt-mixing, this just spreads the coords.
-fn tile_seed(wx: i32, wy: i32) -> u64 {
-    let mut h = (wx as u32 as u64) | ((wy as u32 as u64) << 32);
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xD6E8_FEB8_6659_FD93);
-    h ^= h >> 29;
-    h
-}
-
-/// World-tile coordinate of a zone's top-left cell. The world is a grid of
-/// `REGION_DIM × REGION_DIM` zones per region, each `ZONE_DIM` tiles square, so a
-/// zone's origin is `(region * REGION_DIM + zone) * ZONE_DIM` on each axis.
-/// (Surface isn't a spatial axis — different surfaces share the same plane.)
-fn zone_world_origin(zone_id: u32) -> (i32, i32) {
-    let span = REGION_DIM as i32 * ZONE_DIM as i32;
-    let ox = zone_region_x(zone_id) as i32 * span + zone_x(zone_id) as i32 * ZONE_DIM as i32;
-    let oy = zone_region_y(zone_id) as i32 * span + zone_y(zone_id) as i32 * ZONE_DIM as i32;
-    (ox, oy)
-}
-
-/// Smooth value noise in `[0, 1)` at a continuous `(x, y)`: hash the four integer
-/// lattice corners and smoothstep-interpolate between them. One octave — cheap,
-/// smooth, and enough for coherent biome blobs.
-fn value_noise(x: f64, y: f64) -> f64 {
-    let (x0, y0) = (x.floor(), y.floor());
-    let (ix, iy) = (x0 as i32, y0 as i32);
-    let sx = smoothstep(x - x0);
-    let sy = smoothstep(y - y0);
-    let nx0 = lerp(lattice(ix, iy), lattice(ix + 1, iy), sx);
-    let nx1 = lerp(lattice(ix, iy + 1), lattice(ix + 1, iy + 1), sx);
-    lerp(nx0, nx1, sy)
-}
-
-/// Deterministic pseudo-random value in `[0, 1)` for an integer lattice point —
-/// an integer hash (xorshift-multiply mix) normalised to a fraction.
-fn lattice(x: i32, y: i32) -> f64 {
-    let mut h = (x as u32).wrapping_mul(0x27d4_eb2d) ^ (y as u32).wrapping_mul(0x1656_67b1);
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x2c1b_3c6d);
-    h ^= h >> 12;
-    h = h.wrapping_mul(0x297a_2d39);
-    h ^= h >> 15;
-    h as f64 / (u32::MAX as f64 + 1.0)
-}
-
-/// Hermite smoothstep `3t² − 2t³`, easing the lattice interpolation so biome
-/// edges are smooth rather than linearly creased.
-fn smoothstep(t: f64) -> f64 {
-    t * t * (3.0 - 2.0 * t)
-}
-
-/// Linear interpolation.
-fn lerp(a: f64, b: f64, t: f64) -> f64 {
-    a + (b - a) * t
-}
-
 /// Whether `prefix` is a leading sub-slice of `full` (same items, same order) —
 /// the id append-compatibility test for a content hot-reload.
 fn is_prefix(prefix: &[String], full: &[String]) -> bool {
@@ -232,7 +143,7 @@ fn is_prefix(prefix: &[String], full: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use resonantdust_codec::packed::pack_zone_id;
+    use resonantdust_codec::packed::{pack_zone_id, REGION_DIM};
 
     /// Hermetic worldgen over a small biome corpus shaped like the real
     /// content/{data,visual,biome} tree — no filesystem, so it runs anywhere.

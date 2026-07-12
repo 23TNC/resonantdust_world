@@ -40,3 +40,14 @@
                 0 return
             @on_create>
                 0 return
+    ; The wolf — the world's first PAWN. Unlike the flora above it is not a
+    ; scattered cold thing: it's a mobile shard entity spawned + wandered by the
+    ; npc bot. This def exists only to give the client its visual by kind
+    ; (object_id); worldgen never references `wolf`, so it's never seeded as terrain.
+    ; Kept last so its object_id stays a stable append (see KIND_WOLF in the npc).
+    ::wolf>
+        :data>
+            @define>
+                0 return
+            @on_create>
+                0 return

@@ -7,6 +7,7 @@ import { LayoutNode } from "../../game/layout/LayoutNode";
 import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { RtPanel } from "../../game/panels/rt/RtPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
+import { MoverLayer } from "../../game/world/MoverLayer";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
 import { SQUARE } from "../../game/viewport/squareMath";
 
@@ -49,6 +50,9 @@ export class WorldScene extends Scene {
   /** Wiring from the world client's zone stream into the viewport, and the
    *  viewport camera into the client's anchor. */
   private bridge!: WorldBridge;
+  /** The tick pipeline's mobile entities (pawns — the wolves) drawn as an overlay
+   *  above the viewport. */
+  private moverLayer!: MoverLayer;
   /** Unsubscribe from content hot-swaps; called on scene exit. */
   private contentUnsub: (() => void) | null = null;
   /** Drag-to-pan state: pointer id + last client-px position while dragging. */
@@ -134,10 +138,17 @@ export class WorldScene extends Scene {
     // anchor immediately subscribes the zones around it.
     this.bridge = new WorldBridge(ctx.client, ctx.content, this.viewport.view, ctx.textureResolver.white, ctx.textureResolver);
     this.bridge.start();
+    // Mobile entities (pawns) from the shard `state` stream — the bot-driven wolves,
+    // drawn as an overlay above the world.
+    this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.viewport.view);
 
     // Repaint live zones when the gate hot-swaps the corpus. `getContent()` is the
     // freshly-swapped bundle (independent of listener order vs `ctx.content`).
-    this.contentUnsub = onContentReloaded(() => this.bridge.setContent(getContent()));
+    this.contentUnsub = onContentReloaded(() => {
+      const c = getContent();
+      this.bridge.setContent(c);
+      this.moverLayer.setContent(c);
+    });
 
     // Drag-to-pan: move the anchor as the user drags the canvas (which streams
     // zones in/out via the hysteresis ladder).
@@ -196,6 +207,9 @@ export class WorldScene extends Scene {
     // Lay out the Pixi panel chrome, then drive the viewport's bake + display.
     this.panelLayer?.layoutIfDirty();
     this.viewport?.tick();
+    // Re-pin the pawn markers to their world positions for this frame's camera (after
+    // the viewport tick, so its anchor/zoom are current).
+    this.moverLayer?.tick();
     // RT preview re-reads the live composites (cheap unless a channel/size moved).
     this.rt?.tick();
   }
@@ -212,6 +226,7 @@ export class WorldScene extends Scene {
     this.contentUnsub?.();
     this.contentUnsub = null;
     this.bridge.dispose();
+    this.moverLayer.dispose();
 
     // Destroy PanelManager-registered panels (the RT preview) first, while their
     // parent layer is still alive, then the manually-owned panels + the layer.

@@ -13,5 +13,6 @@
 //! native server with a "keep the two in lockstep" comment). One definition, no
 //! drift.
 
+pub mod biome;
 pub mod packed;
 pub mod refs;

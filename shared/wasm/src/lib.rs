@@ -320,6 +320,24 @@ impl Content {
         }
         out
     }
+
+    /// Render data for one MOBILE entity (a pawn — e.g. a wolf) at `(zone_id,
+    /// location)` of content `kind`: its world-tile position plus the kind's
+    /// `tint`/`geo_color`, as `[tileX, tileY, tint, geoColor]`. The single-entity
+    /// sibling of [`Content::zone_thing_prims`] — the host adds the sprite using this
+    /// position + the kind's stem/size (from `thing_texture_stems`/`thing_sizes`) and a
+    /// facing from the entity's rotation. Position comes straight from the cell, so a
+    /// mover the bot walks cell-by-cell lands on the same grid the cold things use.
+    #[wasm_bindgen(js_name = moverPrim)]
+    pub fn mover_prim(&self, zone_id: u32, location: u8, kind: u16) -> Vec<f64> {
+        let (origin_x, origin_y) = zone_origin(zone_id);
+        let tile_x = origin_x + packed::cell_x(location) as i64;
+        let tile_y = origin_y + packed::cell_y(location) as i64;
+        let visual = self.bundle.visual_for_object(kind);
+        let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
+        let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
+        vec![tile_x as f64, tile_y as f64, tint as f64, geo as f64]
+    }
 }
 
 /// A zone's origin in **global tile coordinates**: which region, then which zone
@@ -491,8 +509,11 @@ fn event_to_js(event: &client::Event) -> JsValue {
             zone_id,
             obj_type,
             object_id,
+            kind,
             tic,
             location,
+            rotation,
+            offset,
             removed,
         } => {
             set("kind", &JsValue::from_str("stateObject"));
@@ -500,8 +521,13 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("objType", &JsValue::from_f64(*obj_type as f64));
             // 48-bit object_id fits JS's 2^53 safe-integer range.
             set("objectId", &JsValue::from_f64(*object_id as f64));
+            // The entity's content kind → sprite (`kind` the JS key is taken by the
+            // event discriminator above, so the entity kind marshals as `objKind`).
+            set("objKind", &JsValue::from_f64(*kind as f64));
             set("tic", &JsValue::from_f64(*tic as f64));
             set("location", &JsValue::from_f64(*location as f64));
+            set("rotation", &JsValue::from_f64(*rotation as f64));
+            set("offset", &JsValue::from_f64(*offset as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
         Event::ZoneTiles { zone_id, tiles } => {

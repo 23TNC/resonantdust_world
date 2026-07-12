@@ -128,8 +128,16 @@ pub enum Event {
         zone_id: u32,
         obj_type: u8,
         object_id: u64,
+        /// The entity's `kind` — its content thing/pawn id, which the host resolves to a
+        /// sprite (a wolf carries the wolf thing id). Distinct from `obj_type` (the
+        /// entity class from the key: demo / player / pawn).
+        kind: u16,
         tic: u32,
         location: u8,
+        /// Facing (0=south, 1=east, 2=north, 3=west) and sub-tile `offset`
+        /// (`x_off:4 | y_off:4`), so a moving pawn renders with the right facing sprite.
+        rotation: u8,
+        offset: u8,
         removed: bool,
     },
     /// A subscribed zone's dense tile grid arrived (the `cold_tiles` module): 256 `u8`

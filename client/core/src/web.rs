@@ -549,8 +549,11 @@ impl Engine {
                             zone_id: sr.zone_id,
                             obj_type,
                             object_id,
+                            kind: sr.kind,
                             tic: sr.tic,
                             location: sr.location,
+                            rotation: sr.rotation,
+                            offset: sr.offset,
                             removed: matches!(op, RowOp::Delete),
                         });
                     }
