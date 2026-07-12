@@ -390,19 +390,26 @@ textures/<type>/<subtype>/<kind>/<subkind>/<variant>/<dir>.<part>.<map>.<ext>
   tile object-slot, §3) — this reverts the 2026-07 `part`→`layer` rename precisely
   to end that collision.
 
-**Renames implied by the new tree:**
+**Renames implied by the new tree (LOCKED — subtype carries the biome):**
 
-- `world` → a real `type/subtype`. Current leaning: promote **`biome`** to a
-  top-level type, so a conifer is `biome/default/conifer/default/<variant>`
-  (type=`biome`, subtype=`default`, kind=`conifer`, subkind=`default`). *Tentative
-  — the alternative is `things/world/…`; the biome-as-type choice was aesthetic and
-  is flagged "think about later."*
-- `pawns.human/male.fit` → `pawns/human/male/fat/<variant>`.
-- `berry` / `conifer` / `flora` stop being bare kinds — they become
-  `<subkind>` under a biome `<kind>`.
-- `linked` (autotile walls/fences/rocks) is a **rendering** category, not a game
-  type → needs a home (§Open, art). Likely a per-kind autotile flag under a real
-  type, not a pseudo-type.
+- `world/conifer` → `biome-thing/<biome>/conifer/default/<variant>` — **type =
+  `biome-thing`**, **subtype = the biome** (`default`/`forest`/`tundra`/…), **kind =
+  `conifer`**, **subkind = `default`**. Tiles use **`biome-tile`** the same way
+  (`biome-tile/<biome>/grass/default`). This is *functional, not aesthetic*: a cold
+  row already carries `subtype_id`, so making subtype = biome means the row *is* the
+  zone's biome — worldgen's biome selection maps straight to `subtype_id`, no
+  parallel classifier, and `u12` subtype = 4096 biomes. It absorbs the worldgen
+  `biome` (doesn't collide with it).
+- `conifer`/`berry`/`flora`/`grass`/… are **kinds** (`kind_id` global per type — one
+  id regardless of biome; the existing `tile_def_id`/`thing_object_id` *are* those
+  kind ids).
+- `pawns.human/male.fit` → `pawn/human/male/fit/<variant>` (pawn subtype = species,
+  not a biome).
+- `linked` (autotile walls/fences/rocks) is a **rendering** trait, not a type → a
+  per-kind autotile flag under a real type (still open, below).
+
+The `type`/`subtype` name↔id tables live in **`content/registry.rd`**
+(append-only, 0-reserved); kind ids come from the tile/thing buckets. See §Decided.
 
 **Sprite sheets** (multi-blob sources that aren't per-variant) stay loose at the
 level they span, named by the axes the path doesn't already fix; the `<atlas>`
@@ -410,15 +417,17 @@ still populates subkind/variant as today.
 
 ### Open (art/dsl), still owed
 
-- **Registry vs bit-pack for the folder↔id mapping** — where the `type`/`kind`
-  name↔number tables live (a `content/` file? the DSL?). The pipeline reads the
-  same registry.
-- **Variant 0** — existing art is 0-based on disk; reserving `variant 0` forces a
-  renumber. Recommendation: keep `variant` 0-based (reserve 0 only for `type_id`).
+- **Registry** — ✅ `content/registry.rd` (type + subtype tables, append-only,
+  0-reserved). Kind ids from the tile/thing buckets, global per type. Loader wiring
+  to compose `object_type_reference`/`object_kind_reference` from it: next.
 - **`linked`'s home** — autotile flag under a real type vs texture-only pseudo-type.
+  Still open (not on the biome-content critical path — `rock` is a `biome-thing`
+  kind; walls/fences are future built structures).
+- **Variant 0** — keep `variant` 0-based (reserve 0 only for `type_id`); existing
+  art is 0-based on disk.
 - **The sheet-placement rule** re-mapped onto the 4-level tree (draft into
   `texture-paths.md`).
 - **DSL stem contract** changes: `content/visual/things.rd` stems like
-  `"world/conifer"` become 4-part; server (`tex_manifest.rs`,
-  `textures.rs::master_albedo_rel`), client (`pixijs/src/textures/*`), `texpath.py`,
-  the migration script, and R2 keys all follow.
+  `"world/conifer"` become `biome-thing/<biome>/conifer/default`; server
+  (`tex_manifest.rs`, `textures.rs::master_albedo_rel`), client
+  (`pixijs/src/textures/*`), `texpath.py`, the migration script, and R2 keys follow.

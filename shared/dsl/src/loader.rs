@@ -346,6 +346,21 @@ impl Bundle {
     self.biomes.get(name)
   }
 
+  /// A biome's stable `subtype_id` — the value its `@subtype>` hook returns. A
+  /// `biome-tile`/`biome-thing` object carries its biome in `subtype` (see
+  /// `docs/object-model.md`), so this is the biome's identity in an
+  /// `object_type_reference`. It is authored EXPLICITLY per biome (a small
+  /// constant) rather than derived from file order, because this file's order is
+  /// evaluation PRIORITY (retunable) and a stored zone's `subtype_id` must never
+  /// renumber. `None` if the biome or its `@subtype` hook is absent, or it returns
+  /// `0` (the reserved/`default` subtype).
+  pub fn biome_subtype_id(&self, name: &str) -> Option<u16> {
+    let h = self.biome(name)?.hook("subtype")?;
+    let mut store = Store::default();
+    let id = run(&h.body, &mut store).unwrap_or(0);
+    (id > 0).then_some(id as u16)
+  }
+
   /// Run one of a biome's hooks (`define` / `on_create`) against a store seeded
   /// with this tile's `dims` and rng `seed`. Returns the finished store and the
   /// hook's return value. Biome hooks sit directly under the `::def` (no facet),
@@ -900,6 +915,32 @@ mod tests {
   fn generate_is_deterministic() {
     let b = load(&biome_corpus()).expect("clean load");
     assert_eq!(b.generate(&[0.5, 0.7, 0.6], 7), b.generate(&[0.5, 0.7, 0.6], 7));
+  }
+
+  #[test]
+  fn biome_carries_its_stable_subtype_id() {
+    let biome = "\
+<biome>
+  ::forest>
+    @subtype>
+      6 return
+    @define>
+      1 return
+    @on_create>
+      grass &tile set
+      0 return
+  ::plains>
+    @define>
+      1 return
+";
+    let b = load(&[src("biome/biomes.rd", biome)]).expect("load");
+    // forest's @subtype returns its explicit, stable id — its biome identity in
+    // an object_type_reference, independent of file order.
+    assert_eq!(b.biome_subtype_id("forest"), Some(6));
+    // plains authors no @subtype → None (the reserved/`default` subtype 0).
+    assert_eq!(b.biome_subtype_id("plains"), None);
+    // an unknown biome → None.
+    assert_eq!(b.biome_subtype_id("nope"), None);
   }
 
   #[test]

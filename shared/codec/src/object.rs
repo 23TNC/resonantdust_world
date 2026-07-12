@@ -49,6 +49,24 @@ const LAYER_MASK: u32 = 0xF; // 4 bits
 /// Reserved "no type" id — the null/unset sentinel. Real types are `1..=15`.
 pub const TYPE_NONE: u8 = 0;
 
+// The `type_id` palette — structural (each type implies a pipeline + a `data`
+// decode), so they live in code, not content (types are few and fixed; kinds are
+// content-derived). APPEND-ONLY: a new type goes last so stored zones never
+// renumber. These are the go-forward ids, superseding the `ENTITY_TYPE_*` /
+// `DATA_TYPE_*` palettes in [`refs`](crate::refs) as consumers migrate.
+/// Biome-classified ground tiles — `subtype = biome`.
+pub const TYPE_BIOME_TILE: u8 = 1;
+/// Biome-scattered things (flora, rocks) — `subtype = biome`.
+pub const TYPE_BIOME_THING: u8 = 2;
+/// A mobile agent — `subtype = species` (animal / human).
+pub const TYPE_PAWN: u8 = 3;
+/// A player-controlled entity.
+pub const TYPE_PLAYER: u8 = 4;
+/// An event-log entry — the generalized object log.
+pub const TYPE_EVENT: u8 = 5;
+/// A server / shard (provenance).
+pub const TYPE_SERVER: u8 = 6;
+
 /// Compose an `object_type_reference`: `type_id:4 | subtype_id:12 | layer:4 | reserved:12`.
 /// The low 12 reserved bits stay 0 (growth room — see `docs/object-model.md`).
 pub fn pack_type_reference(type_id: u8, subtype_id: u16, layer: u8) -> u32 {
@@ -307,6 +325,24 @@ pub fn cold_ref_region_zone(r: u32) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn type_id_palette_fits_u4_and_is_contiguous() {
+        let all = [
+            TYPE_NONE,
+            TYPE_BIOME_TILE,
+            TYPE_BIOME_THING,
+            TYPE_PAWN,
+            TYPE_PLAYER,
+            TYPE_EVENT,
+            TYPE_SERVER,
+        ];
+        for (i, &t) in all.iter().enumerate() {
+            assert_eq!(t as usize, i, "append-only, contiguous from 0");
+            assert!(t <= 0xF, "fits u4");
+            assert_eq!(type_ref_type_id(pack_type_reference(t, 0, 0)), t);
+        }
+    }
 
     #[test]
     fn type_reference_roundtrips() {

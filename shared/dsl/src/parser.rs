@@ -131,6 +131,7 @@ fn is_code_hook(name: &str) -> bool {
       | "on_create"
       | "on_update"
       | "on_destroy"
+      | "subtype"
       | "init"
       | "update"
       | "input"
