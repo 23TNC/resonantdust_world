@@ -26,6 +26,7 @@
 use std::path::Path;
 
 use resonantdust_codec::biome::{biome_dims, tile_seed, zone_world_origin};
+use resonantdust_codec::object::{pack_kind_reference, pack_type_reference, TYPE_BIOME_THING};
 use resonantdust_codec::packed::{cell, pack_thing_at, ZONE_DIM, ZONE_TILES};
 use resonantdust_dsl::Bundle;
 
@@ -47,6 +48,19 @@ pub struct LoadedWorldgen {
     /// [`resonantdust_dsl::content::content_version`] of the loaded corpus.
     pub version: u64,
     pub worldgen: Worldgen,
+}
+
+/// One cold-storage row of a zone: every `biome-thing` object that shares an
+/// `object_type_reference` (type = biome-thing, subtype = the biome, `layer`),
+/// with its members as `object_kind_reference`s. This is the cold-table row shape
+/// from `docs/object-model.md` §4 — keyed upstream by the zone's
+/// `region_zone_reference`; the shared type half is amortised across the `Vec`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColdRow {
+    /// The shared `object_type_reference` (type / subtype = biome / layer).
+    pub type_reference: u32,
+    /// One `object_kind_reference` per member (kind / subkind / variant / x / y / data).
+    pub kinds: Vec<u32>,
 }
 
 impl Worldgen {
@@ -130,6 +144,46 @@ impl Worldgen {
         }
         (tiles, things)
     }
+
+    /// A fresh zone's cold `biome-thing` objects as `object_reference`s, grouped
+    /// into cold rows (`docs/object-model.md` §4). Same generation + scatter as
+    /// [`zone_terrain`], but each scattered thing becomes an
+    /// `object_kind_reference` (its `kind` + in-zone `x`/`y` + `variant`) filed
+    /// under the `object_type_reference` for its `(biome-thing, biome subtype,
+    /// layer 0)`. Rows are ordered by `type_reference` (a `BTreeMap`), so the
+    /// result is deterministic.
+    ///
+    /// This is the NEW cold representation, built **alongside** `zone_terrain`'s
+    /// legacy `Vec<u64>` while the wire / shard / client migrate over. The biome
+    /// becomes the `subtype` (its `@subtype` id; `0`/`default` if the biome
+    /// carries none), which is what lets a cold row *be* the zone's biome.
+    pub fn zone_cold_things(&self, zone_id: u32) -> Vec<ColdRow> {
+        use std::collections::BTreeMap;
+        let (ox, oy) = zone_world_origin(zone_id);
+        // object_type_reference (the shared type half) → its member kind refs.
+        let mut rows: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+        for y in 0..ZONE_DIM {
+            for x in 0..ZONE_DIM {
+                let (wx, wy) = (ox + x as i32, oy + y as i32);
+                let seed = tile_seed(wx, wy);
+                let gen = self.bundle.generate(&biome_dims(wx, wy), seed);
+                let Some(kind) = gen.thing1.as_deref().and_then(|n| self.bundle.thing_object_id(n)) else {
+                    continue;
+                };
+                // subtype = the cell's biome (0/default if it carries no @subtype).
+                let subtype =
+                    gen.biome.as_deref().and_then(|b| self.bundle.biome_subtype_id(b)).unwrap_or(0);
+                // Primary thing-layer 0; subkind 0 (default). `variant` is now u4
+                // (0..16) — a NARROWER field than the legacy 5-bit (see note in the
+                // changelog); the client renders modulo the kind's real variant count.
+                let type_ref = pack_type_reference(TYPE_BIOME_THING, subtype, 0);
+                let variant = (seed >> 21) as u8 & 0x0F;
+                let kind_ref = pack_kind_reference(kind, 0, variant, x, y, 0);
+                rows.entry(type_ref).or_default().push(kind_ref);
+            }
+        }
+        rows.into_iter().map(|(type_reference, kinds)| ColdRow { type_reference, kinds }).collect()
+    }
 }
 
 /// Whether `prefix` is a leading sub-slice of `full` (same items, same order) —
@@ -179,6 +233,8 @@ mod tests {
         let biome = "\
 <biome>
   ::ocean>
+    @subtype>
+      1 return
     @define>
       ^biome call &biome set
       *biome.2 0.32 lt return
@@ -186,6 +242,8 @@ mod tests {
       water &tile set
       0 return
   ::mountains>
+    @subtype>
+      3 return
     @define>
       ^biome call &biome set
       *biome.2 0.82 ge return
@@ -193,6 +251,8 @@ mod tests {
       stone &tile set
       0 return
   ::forest>
+    @subtype>
+      6 return
     @define>
       ^biome call &biome set
       *biome.1 0.55 ge return
@@ -201,6 +261,8 @@ mod tests {
       1 ^rand call 0.5 lt if tree &thing.1 set
       0 return
   ::plains>
+    @subtype>
+      7 return
     @define>
       1 return
     @on_create>
@@ -322,6 +384,48 @@ mod tests {
         let w = worldgen();
         let zone_id = pack_zone_id(0, 0, 0, 3, 5);
         assert_eq!(w.zone_terrain(zone_id), w.zone_terrain(zone_id));
+    }
+
+    #[test]
+    fn cold_things_carry_biome_subtype_and_kind() {
+        use resonantdust_codec::object::{kind_ref_kind_id, kind_ref_x, kind_ref_y, type_ref_subtype_id, type_ref_type_id};
+        // The test corpus scatters trees ONLY in the forest biome (@subtype 6),
+        // so every cold thing is a tree filed under (biome-thing, forest, layer 0).
+        let w = worldgen();
+        let tree = w.bundle.thing_object_id("tree").unwrap();
+        let forest = w.bundle.biome_subtype_id("forest").unwrap();
+        assert_eq!(forest, 6);
+        let mut saw_tree = false;
+        for zy in 0..REGION_DIM {
+            for zx in 0..REGION_DIM {
+                for row in w.zone_cold_things(pack_zone_id(0, 0, 0, zx, zy)) {
+                    // shared type half: biome-thing, subtype = the forest biome.
+                    assert_eq!(type_ref_type_id(row.type_reference), TYPE_BIOME_THING);
+                    assert_eq!(type_ref_subtype_id(row.type_reference), forest);
+                    for k in row.kinds {
+                        assert_eq!(kind_ref_kind_id(k), tree);
+                        assert!(kind_ref_x(k) < 16 && kind_ref_y(k) < 16, "in-zone position");
+                        saw_tree = true;
+                    }
+                }
+            }
+        }
+        assert!(saw_tree, "some zone should scatter a tree");
+    }
+
+    #[test]
+    fn cold_things_scatter_the_same_as_the_legacy_path() {
+        // The new object_reference path must place exactly the things the legacy
+        // Vec<u64> path does — same generation, same cells.
+        let w = worldgen();
+        for zy in 0..REGION_DIM {
+            for zx in 0..REGION_DIM {
+                let zone_id = pack_zone_id(0, 0, 0, zx, zy);
+                let (_, legacy) = w.zone_terrain(zone_id);
+                let cold: usize = w.zone_cold_things(zone_id).iter().map(|r| r.kinds.len()).sum();
+                assert_eq!(cold, legacy.len(), "same thing count as legacy scatter");
+            }
+        }
     }
 
     #[test]
