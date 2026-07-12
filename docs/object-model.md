@@ -361,6 +361,17 @@ which: edge substitutes it in the queue, or the action references the crate
 3. **Realm crossing = server change = `hot_reference` re-mint.** *Deferred — handle
    cross-realm later.* Rare (every 4096 tiles) but a real seam: in-flight events
    targeting the object dangle. Needs a defined hand-off.
+4. **`variant` u4 (16) vs content that has more.** Surfaced wiring worldgen: `flora`
+   has **30** art variants, but `variant_id` is `u4` → only 16 are reachable
+   (worldgen masks the seed slice to `& 0xF`; legacy was 5-bit/32). Decide: cap art
+   at 16 per kind, or widen `variant` — which costs bits from the *full* `u32` kind
+   half (e.g. borrow from `data`, or from `x/y` if sub-tile precision isn't needed).
+5. **Tiles need the biome (subtype) in the dense layer.** A zone spans multiple
+   biomes, so a tile cell is `(subtype = biome, kind)`, not just `kind` — the old
+   `Vec<u8>` (kind only) can't carry it. The parked dense-tile projection (§4) must
+   include the biome. Options: a parallel per-cell biome array, or widen each tile
+   cell to `u16`/`u24` (subtype + kind), or (if a zone is *usually* one biome) a
+   zone-level biome with per-cell overrides.
 
 ---
 
