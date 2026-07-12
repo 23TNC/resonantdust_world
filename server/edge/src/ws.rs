@@ -32,11 +32,14 @@ use crate::bindings::players::claim_or_login as _; // reducer trait → `reducer
 use crate::bindings::shard::append_event as _; // reducer trait → `reducers.append_event`
 use crate::bindings::cold_things::seed_entity as _; // reducer trait → things `reducers.seed_entity`
 use crate::bindings::cold_tiles::seed_entity as _; // reducer trait → cold_tiles `reducers.seed_entity`
+use crate::bindings::cold_tiles::seed_cold_row as _; // reducer trait → cold_tiles `reducers.seed_cold_row`
 use crate::connections::{
     await_ready, connect_players, connect_shard, connect_cold_things, connect_cold_tiles, Pool,
 };
 use crate::index::{resolve_zone_or_default, ShardEndpoint};
-use crate::protocol::{ClientMsg, RowData, RowOp, ServerMsg, StateRow, ZoneThingsRow, ZoneTilesRow};
+use crate::protocol::{
+    ClientMsg, ColdObjectsRow, RowData, RowOp, ServerMsg, StateRow, ZoneThingsRow, ZoneTilesRow,
+};
 
 /// How long to wait for `claim_or_login` to commit before failing the login.
 const REDUCER_CALL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -80,6 +83,9 @@ struct ZoneSub {
     handle: bindings::shard::SubscriptionHandle,
     tiles_handle: bindings::cold_tiles::SubscriptionHandle,
     cold_things_handle: bindings::cold_things::SubscriptionHandle,
+    /// The zone's cold-OBJECT rows (`cold_tiles::cold` — the object model), alongside the
+    /// legacy tiles/things handles while the client migrates.
+    cold_handle: bindings::cold_tiles::SubscriptionHandle,
 }
 
 /// Server wall clock in microseconds since the unix epoch — stamped onto login
@@ -211,6 +217,7 @@ async fn session_worker(
                     let _ = zs.handle.unsubscribe();
                     let _ = zs.tiles_handle.unsubscribe();
                     let _ = zs.cold_things_handle.unsubscribe();
+                    let _ = zs.cold_handle.unsubscribe();
                 } else {
                     tracing::debug!(sid, "unsub for unknown sid");
                 }
@@ -228,6 +235,7 @@ async fn session_worker(
         let _ = zs.handle.unsubscribe();
         let _ = zs.tiles_handle.unsubscribe();
         let _ = zs.cold_things_handle.unsubscribe();
+        let _ = zs.cold_handle.unsubscribe();
     }
     for (_endpoint, sc) in shards.drain() {
         let _ = sc.conn.disconnect();
@@ -459,6 +467,9 @@ async fn handle_sub_zone(
     let tconn = tiles.as_mut().expect("just inserted");
     if !tconn.wired {
         wire_tiles_relay(&tconn.conn, out_tx.clone());
+        // The object-model `cold` table lives in the SAME cold_tiles module/DB, so wire
+        // its relay on this one connection too.
+        wire_cold_relay(&tconn.conn, out_tx.clone());
         tconn.wired = true;
     }
     let seed_conn = tconn.conn.clone();
@@ -473,6 +484,23 @@ async fn handle_sub_zone(
         })
         .on_error(move |_ctx, err| send(&tiles_error, err_frame(&format!("tiles sub {sid}: {err}"))))
         .subscribe([format!("SELECT * FROM state WHERE zone_id = {zone_id}")]);
+
+    // ── cold objects: the zone's ColdRows from the cold_tiles module's `cold` table
+    // (object model — biome-tile ground + biome-thing scatter, biome in the subtype).
+    // Same connection as tiles; seeded from `zone_cold_objects` on apply. Additive
+    // alongside the legacy tiles/things subs while the client migrates.
+    let cold_seed_conn = tconn.conn.clone();
+    let cold_seed_pool = pool.clone();
+    let cold_error = out_tx.clone();
+    let cold_handle = tconn
+        .conn
+        .subscription_builder()
+        .on_applied(move |_ctx| {
+            let wg = cold_seed_pool.current_worldgen();
+            seed_cold_if_empty(&cold_seed_conn, wg.as_deref(), zone_id);
+        })
+        .on_error(move |_ctx, err| send(&cold_error, err_frame(&format!("cold sub {sid}: {err}"))))
+        .subscribe([format!("SELECT * FROM cold WHERE zone_id = {zone_id}")]);
 
     // ── cold things: the zone's sparse Vec<u32> list from the `cold_things` module ──
     let cold_things_db = pool.cfg.default_cold_things_db();
@@ -514,7 +542,7 @@ async fn handle_sub_zone(
         })
         .subscribe([format!("SELECT * FROM state WHERE zone_id = {zone_id}")]);
 
-    subs.insert(sid, ZoneSub { endpoint, handle, tiles_handle, cold_things_handle });
+    subs.insert(sid, ZoneSub { endpoint, handle, tiles_handle, cold_things_handle, cold_handle });
 }
 
 /// Turn a client move intent into an `ACTION_MOVE` event on the shard's tick pipeline,
@@ -690,6 +718,51 @@ fn seed_cold_things_if_empty(
         Ok(()) => tracing::info!(zone_id, "seeded fresh zone cold things"),
         Err(err) => tracing::warn!(zone_id, %err, "seed_entity (cold things) request failed"),
     }
+}
+
+/// Install insert/update/delete callbacks on the `cold_tiles` module's `cold` table (the
+/// object model); each fired row relays as a [`RowData::ColdObjects`] frame
+/// (demux-by-zone, `sid: 0`). The object-model counterpart to [`wire_tiles_relay`] +
+/// [`wire_cold_things_relay`].
+fn wire_cold_relay(conn: &Arc<bindings::cold_tiles::DbConnection>, out: mpsc::UnboundedSender<String>) {
+    use bindings::cold_tiles::cold_table::ColdTableAccess;
+
+    let t = conn.db().cold();
+    let (ci, cu, cd) = (out.clone(), out.clone(), out);
+    t.on_insert(move |_c, r| relay(&ci, RowOp::Insert, RowData::ColdObjects(cold_row(r))));
+    t.on_update(move |_c, _o, r| relay(&cu, RowOp::Update, RowData::ColdObjects(cold_row(r))));
+    t.on_delete(move |_c, r| relay(&cd, RowOp::Delete, RowData::ColdObjects(cold_row(r))));
+}
+
+/// Copy a `cold` row into the serde wire mirror.
+fn cold_row(r: &bindings::cold_tiles::cold_type::Cold) -> ColdObjectsRow {
+    ColdObjectsRow { zone_id: r.zone_id, type_reference: r.type_reference, kinds: r.kinds.clone() }
+}
+
+/// Seed a zone's cold OBJECTS (biome-tile ground + biome-thing scatter) from worldgen if
+/// the zone has no `cold` rows yet — the object-model path (`docs/object-model.md`).
+/// Each `ColdRow` of [`Worldgen::zone_cold_objects`] becomes one `cold` row via
+/// `seed_cold_row` (insert-if-absent per `(zone, type_reference)`, so a worldgen re-run
+/// never clobbers a mutated row). No-op when worldgen is disabled.
+fn seed_cold_if_empty(
+    conn: &Arc<bindings::cold_tiles::DbConnection>,
+    worldgen: Option<&crate::worldgen::Worldgen>,
+    zone_id: u32,
+) {
+    use bindings::cold_tiles::cold_table::ColdTableAccess;
+
+    let Some(wg) = worldgen else { return };
+    if conn.db().cold().iter().any(|c| c.zone_id == zone_id) {
+        return;
+    }
+    let rows = wg.zone_cold_objects(zone_id);
+    let n = rows.len();
+    for row in rows {
+        if let Err(err) = conn.reducers.seed_cold_row(zone_id, row.type_reference, row.kinds) {
+            tracing::warn!(zone_id, %err, "seed_cold_row request failed");
+        }
+    }
+    tracing::info!(zone_id, rows = n, "seeded fresh zone cold objects");
 }
 
 fn relay(out: &mpsc::UnboundedSender<String>, op: RowOp, row: RowData) {

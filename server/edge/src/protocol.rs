@@ -102,6 +102,11 @@ pub enum RowData {
     /// `Vec<u64>` packed things (`kind:16|x:4|y:4|data:5|layer:3|variant:5|reserved:27`).
     /// The client draws a sprite each.
     ZoneThings(ZoneThingsRow),
+    /// A zone's cold-object row from a module's `cold` table (object model) — the shared
+    /// `object_type_reference` (type/subtype=biome/layer) plus a `Vec<object_kind_reference>`.
+    /// `biome-tile` rows are the ground, `biome-thing` rows the scatter. Supersedes
+    /// `ZoneTiles`/`ZoneThings` (`docs/object-model.md`).
+    ColdObjects(ColdObjectsRow),
 }
 
 /// Mirror of `cold_tiles::state_type::State` — a zone's dense tile grid (256 `u8`
@@ -119,6 +124,17 @@ pub struct ZoneTilesRow {
 pub struct ZoneThingsRow {
     pub zone_id: u32,
     pub things: Vec<u64>,
+}
+
+/// Mirror of a module's `cold_type::Cold` — one cold-object row: the shared
+/// `object_type_reference` for a `(zone, type, subtype=biome, layer)`, plus its members
+/// as `object_kind_reference`s (`kind/subkind/variant/x/y/data`). Keep in sync with the
+/// generic `cold` table on `decl_tick_pipeline!`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ColdObjectsRow {
+    pub zone_id: u32,
+    pub type_reference: u32,
+    pub kinds: Vec<u32>,
 }
 
 /// Mirror of `shard::state_type::State` — one resolved entity. `entity_key`
