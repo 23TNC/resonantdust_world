@@ -118,8 +118,64 @@ add the column + `connect_<class>` + resolve loop; nothing breaks until you actu
 per-class split. Promote `cold_tiles` (terrain) off `default_cold_tiles_db()` onto a class-routed
 `shards` row as the first exercise of the new dimension.
 
+## Cold objects on the object model (0.2.3)
+
+The [object model](object-model.md) makes tiles and things the *same* thing — cold
+**objects**, each an `object_reference` (type / subtype / kind / subkind / variant /
+x / y / data). A zone's cold data becomes **N `ColdRow`s split by (type, subtype,
+layer)** (`object-model.md` §4): each row = a shared `object_type_reference : u32` +
+a `Vec<object_kind_reference : u32>`. `biome-tile` rows are the dense ground (one per
+cell), `biome-thing` rows the sparse scatter — and a row's `subtype` *is* its biome.
+`Worldgen::zone_cold_objects` (`server/edge/src/worldgen.rs`) already emits exactly
+this. It replaces the two split payloads:
+
+| today | 0.2.3 |
+|---|---|
+| `cold_tiles` — `tiles: Vec<u8>` (kind only, no biome) | `biome-tile` `ColdRow`s (kind + biome via `subtype`) |
+| `cold_things` — `things: Vec<u64>` (old `pack_thing`) | `biome-thing` `ColdRow`s (new `object_kind_reference`) |
+
+The dense `Vec<u8>` grid can't survive: a zone spans biomes, so a tile needs its
+`subtype`, which the row carries for free.
+
+### Decisions (for review)
+
+1. **Unify `cold_tiles` + `cold_things` → one `cold` module.** Both are geographic
+   cold `ColdRow`s now, and the doc's *tile shard* holds both (`object-model.md` §5).
+   Merging turns the edge's triple-subscribe into a double (object `state` + `cold`).
+   An empty zone still costs only its `biome-tile` rows (ground you need anyway), so
+   the original split's "don't pay for an empty thing array" rationale is gone.
+   *(Recommended.)*
+2. **One entity per zone; payload = the zone's rows.** Keep the current
+   one-entity-per-zone shape (keyed by `zone_reference`), payload becomes the zone's
+   `ColdRow`s. Subscriptions stay `WHERE zone_id`, stream the whole zone, and the
+   client decodes locally — matching §4 ("subscriptions never filter; queries do").
+   *(Recommended over one-entity-per-`(zone, type_reference)` row — the per-zone
+   seeding doesn't need the finer key.)*
+3. **Encoding + where `ColdRow` lives.** Payload `rows: Vec<ColdRow>` with `ColdRow {
+   type_reference: u32, kinds: Vec<u32> }`. To share one type across edge (produces),
+   shard (stores), client (decodes) without dragging `spacetimedb` into the pure
+   `codec` crate: define `ColdRow` in `shared/codec` as the canonical shape, and
+   **feature-gate a `#[derive(SpacetimeType)]`** behind a `spacetime` codec feature the
+   shard enables. *Sub-decision:* feature-gate vs a module-local mirror vs flattening
+   to primitive parallel vecs (`row_types: Vec<u32>`, `row_kinds: Vec<Vec<u32>>`).
+   *Lean: feature-gate, one type end-to-end.*
+4. **Wire projection (later).** A dense `biome-tile` row's `x/y` is implicit (one per
+   cell), so the **edge** can project it out on the client hop (`u32`→~`u16`/tile), per
+   §4's storage-vs-wire split. Deferred — correctness first, bandwidth second.
+
+### Migration (additive, no flag day)
+
+New `cold` module *alongside* `cold_tiles`/`cold_things`. Edge seeds it from
+`zone_cold_objects` and subscribes it in parallel; the client learns to decode
+`ColdRow`s. Once a zone renders from `cold` in the browser, drop the two legacy
+modules + their subscribes. **Verify on the running stack** (`rd up` → `rd deploy` →
+browser) — this changes what the client draws, so unit tests can't close it.
+
 ## Open
 
+- **Cold-object encoding sub-decision** (above §3): feature-gate `SpacetimeType` on
+  `codec::ColdRow`, a module-local mirror, or primitive parallel vecs. Blocks the
+  `cold` module + edge/client wire.
 - **`object-shard.md` is largely pre-0.2** — its transfer/presence *design* stands, but its
   modules/tables (`cold_zones`, `hot_things`, `region_shard`) don't exist; fold its still-
   valid parts (transfer saga, presence routing, witnessing) into the pack/unpack saga on the
