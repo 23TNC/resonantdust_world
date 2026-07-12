@@ -167,6 +167,29 @@ macro_rules! decl_tick_pipeline {
             pub next: u32,
         }
 
+        /// The **cold** table — a module's settled, packed objects, the static
+        /// counterpart to the ticking hot `state`. One row per
+        /// `(zone_id, object_type_reference)`: the shared type half plus a
+        /// `Vec<object_kind_reference>` (a `ColdRow`; see `docs/object-model.md` §4,
+        /// `docs/data-shards.md`). `biome-tile` rows are the dense ground, `biome-thing`
+        /// rows the sparse scatter — a row's `subtype` *is* its zone's biome. Uniform
+        /// across modules (object_kind_references are type-agnostic `u32`s), unlike the
+        /// payload-parameterised `state`. NOT tick-managed (never `dirty`; `tick_gc`
+        /// ignores it). `unpack` promotes a cold object to a hot `state` entity; `pack`
+        /// folds a settled hot entity back — within this one module. `zone_id` is a
+        /// routing column so the edge subscribes `WHERE zone_id`; `cold_key` packs
+        /// `(zone_id, type_reference)` into the single-column PK.
+        #[table(accessor = cold, public)]
+        pub struct Cold {
+            #[primary_key]
+            pub cold_key: u64,
+            #[index(btree)]
+            pub zone_id: u32,
+            pub type_reference: u32,
+            pub kinds: Vec<u32>,
+            pub version: u32,
+        }
+
         // ── helpers ────────────────────────────────────────────────────────────
 
         /// Current master tic (0 before the first `bump`).
@@ -273,6 +296,12 @@ macro_rules! decl_tick_pipeline {
             $crate::pack_minted_entity(entity_type, next_entity_id(ctx), this_shard_id(ctx))
         }
 
+        /// The cold-row PK: `(zone_id:32 << 32) | type_reference:32` — a single-column
+        /// key for the `(zone_id, object_type_reference)` a `ColdRow` is filed under.
+        fn cold_key(zone_id: u32, type_reference: u32) -> u64 {
+            ((zone_id as u64) << 32) | (type_reference as u64)
+        }
+
         // ── reducers ───────────────────────────────────────────────────────────
 
         /// Seed an entity at an explicit `entity_key` — the bulk-load / harness entry
@@ -285,6 +314,24 @@ macro_rules! decl_tick_pipeline {
             $( $pf: $pt, )*
         ) -> Result<(), String> {
             seed_write(ctx, entity_key, $( $pf, )*);
+            Ok(())
+        }
+
+        /// Seed one **cold** row for a zone — insert-only-if-absent, so a worldgen
+        /// re-run never clobbers a cold row later mutated in-world (same discipline as
+        /// `seed_entity`). Sets `version = 1`. The edge calls this once per `ColdRow` of
+        /// a fresh zone (`Worldgen::zone_cold_objects`).
+        #[reducer]
+        pub fn seed_cold_row(
+            ctx: &ReducerContext,
+            zone_id: u32,
+            type_reference: u32,
+            kinds: Vec<u32>,
+        ) -> Result<(), String> {
+            let key = cold_key(zone_id, type_reference);
+            if ctx.db.cold().cold_key().find(key).is_none() {
+                ctx.db.cold().insert(Cold { cold_key: key, zone_id, type_reference, kinds, version: 1 });
+            }
             Ok(())
         }
 
