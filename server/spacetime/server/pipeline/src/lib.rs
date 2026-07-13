@@ -27,6 +27,10 @@ use spacetimedb::ReducerContext;
 /// that invokes it — without that module depending on the codec directly.
 pub use resonantdust_codec::refs::pack_minted_entity;
 
+/// Re-exported for the macro's `unpack` reducer (reached via `$crate::…`) — it locates the
+/// cold object at a cell by decoding each `object_kind_reference`'s in-zone position.
+pub use resonantdust_codec::object::{kind_ref_x, kind_ref_y};
+
 /// An event row is live until its target resolves the tic; then it's marked complete
 /// (soft-delete for debug; the GC sweep hard-deletes later — Phase A4).
 pub const STATUS_ACTIVE: u8 = 0;
@@ -331,6 +335,106 @@ macro_rules! decl_tick_pipeline {
             let key = cold_key(zone_id, type_reference);
             if ctx.db.cold().cold_key().find(key).is_none() {
                 ctx.db.cold().insert(Cold { cold_key: key, zone_id, type_reference, kinds, version: 1 });
+            }
+            Ok(())
+        }
+
+        /// **unpack** — promote a settled COLD object to a hot `state` entity (the cold→hot
+        /// half of the pack/unpack bridge; `docs/object-model.md`, `docs/data-shards.md`).
+        /// Finds the cold row for `(zone_id, type_reference)`, removes the
+        /// `object_kind_reference` sitting at cell `(x, y)`, mints a hot entity of
+        /// `entity_type`, and seeds it with the caller-supplied payload — the caller/worker
+        /// decodes the object into THIS module's payload, since the macro can't map a
+        /// type-agnostic `object_kind_reference` to a specific payload. The now-hot object
+        /// ticks through the normal `event_log → state_log → state` pipeline; `pack` folds
+        /// it back. Errors if no cold object occupies that cell. The cold row's `version`
+        /// bumps (drops the row if it empties).
+        // The unpack-target params are prefixed `cold_` / `hot_` so their SpacetimeDB
+        // reducer arg NAMES can never collide with an arbitrary payload field (e.g. a
+        // payload with its own `zone_id`) — the wire schema keys args by name.
+        #[reducer]
+        #[allow(clippy::too_many_arguments)]
+        pub fn unpack(
+            ctx: &ReducerContext,
+            cold_zone: u32,
+            cold_type_reference: u32,
+            cold_x: u8,
+            cold_y: u8,
+            hot_entity_type: u8,
+            $( $pf: $pt, )*
+        ) -> Result<(), String> {
+            let key = cold_key(cold_zone, cold_type_reference);
+            let Some(row) = ctx.db.cold().cold_key().find(key) else {
+                return Err(format!("unpack: no cold row for zone {cold_zone} type {cold_type_reference}"));
+            };
+            let idx = row
+                .kinds
+                .iter()
+                .position(|&k| $crate::kind_ref_x(k) == cold_x && $crate::kind_ref_y(k) == cold_y);
+            let Some(idx) = idx else {
+                return Err(format!("unpack: no cold object at cell ({cold_x},{cold_y})"));
+            };
+            let mut kinds = row.kinds.clone();
+            kinds.remove(idx);
+            // Mint + seed the hot entity with the caller's payload; it now ticks.
+            let entity_key = mint_entity(ctx, hot_entity_type);
+            seed_write(ctx, entity_key, $( $pf, )*);
+            // Rewrite the cold row without the promoted object (drop it if now empty).
+            ctx.db.cold().cold_key().delete(key);
+            if !kinds.is_empty() {
+                ctx.db.cold().insert(Cold {
+                    cold_key: key,
+                    zone_id: cold_zone,
+                    type_reference: cold_type_reference,
+                    kinds,
+                    version: row.version.saturating_add(1),
+                });
+            }
+            Ok(())
+        }
+
+        /// **pack** — fold a settled hot `state` entity back into COLD (the hot→cold half).
+        /// Appends `object_kind_reference` to the cold row for `(zone_id, type_reference)`
+        /// (creating it if absent), then deletes the hot entity + its `state_log` rows. The
+        /// caller composes the `object_kind_reference` from the entity's resolved state.
+        #[reducer]
+        pub fn pack(
+            ctx: &ReducerContext,
+            entity_key: u64,
+            zone_id: u32,
+            type_reference: u32,
+            object_kind_reference: u32,
+        ) -> Result<(), String> {
+            let key = cold_key(zone_id, type_reference);
+            match ctx.db.cold().cold_key().find(key) {
+                Some(row) => {
+                    let mut kinds = row.kinds.clone();
+                    kinds.push(object_kind_reference);
+                    ctx.db.cold().cold_key().delete(key);
+                    ctx.db.cold().insert(Cold {
+                        cold_key: key,
+                        zone_id,
+                        type_reference,
+                        kinds,
+                        version: row.version.saturating_add(1),
+                    });
+                }
+                None => {
+                    ctx.db.cold().insert(Cold {
+                        cold_key: key,
+                        zone_id,
+                        type_reference,
+                        kinds: vec![object_kind_reference],
+                        version: 1,
+                    });
+                }
+            }
+            // Drop the hot entity + its change log.
+            ctx.db.state().entity_key().delete(entity_key);
+            let ids: Vec<u64> =
+                ctx.db.state_log().entity_key().filter(entity_key).map(|r| r.id).collect();
+            for id in ids {
+                ctx.db.state_log().id().delete(id);
             }
             Ok(())
         }
