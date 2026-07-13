@@ -420,6 +420,12 @@ export class WasmClient {
     this.world?.moveTo(tileX, tileY);
   }
 
+  /** Interact with (unpack) the cold thing at global tile `(tileX, tileY)`. The server
+   *  promotes it to a live `state` entity (cold→hot). No-op before login. */
+  interact(tileX: number, tileY: number): void {
+    this.world?.interact(tileX, tileY);
+  }
+
   /** Subscribe to cold-zone OBJECT rows (the object model — biome-tile ground +
    *  biome-thing scatter). Returns an unsubscribe. */
   onColdObjects(cb: ColdObjectsHandler): () => void {

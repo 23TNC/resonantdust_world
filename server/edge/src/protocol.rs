@@ -43,6 +43,10 @@ pub enum ClientMsg {
     /// appends an `ACTION_MOVE` event to the shard's tick pipeline; no reply frame (the
     /// effect arrives as a `state` row on the zone subscription).
     Move { tile_x: i32, tile_y: i32 },
+    /// Interact with the cold thing at global tile `(tile_x, tile_y)` — the server
+    /// `unpack`s it (cold→hot), so it becomes a live `state` entity. No reply frame (the
+    /// effect arrives as a `state` insert + a `cold` update on the zone subscription).
+    Interact { tile_x: i32, tile_y: i32 },
 }
 
 /// A frame the server sends to the client.

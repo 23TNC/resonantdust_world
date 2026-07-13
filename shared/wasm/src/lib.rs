@@ -504,6 +504,13 @@ impl WorldClient {
         let _ = self.inner.move_to(tile_x, tile_y);
     }
 
+    /// Interact with (unpack) the cold thing at global tile `(tile_x, tile_y)` — the
+    /// server promotes it to a live `state` entity. No-op before login / if disconnected.
+    #[wasm_bindgen(js_name = interact)]
+    pub fn interact(&self, tile_x: i32, tile_y: i32) {
+        let _ = self.inner.interact(tile_x, tile_y);
+    }
+
     /// Drop the world-server connection, keeping the client alive for reconnect.
     pub fn logout(&self) {
         let _ = self.inner.logout();

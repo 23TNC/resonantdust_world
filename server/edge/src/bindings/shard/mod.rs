@@ -21,12 +21,14 @@ pub mod tic_meta_type;
 pub mod append_event_reducer;
 pub mod bump_reducer;
 pub mod claim_reducer;
+pub mod pack_reducer;
 pub mod resolve_reducer;
 pub mod seed_cold_row_reducer;
 pub mod seed_entity_reducer;
 pub mod set_shard_id_reducer;
 pub mod spawn_object_reducer;
 pub mod tick_gc_reducer;
+pub mod unpack_reducer;
 pub mod cold_table;
 pub mod event_log_table;
 pub mod shard_meta_table;
@@ -50,12 +52,14 @@ pub use tic_meta_table::*;
 pub use append_event_reducer::append_event;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
+pub use pack_reducer::pack;
 pub use resolve_reducer::resolve;
 pub use seed_cold_row_reducer::seed_cold_row;
 pub use seed_entity_reducer::seed_entity;
 pub use set_shard_id_reducer::set_shard_id;
 pub use spawn_object_reducer::spawn_object;
 pub use tick_gc_reducer::tick_gc;
+pub use unpack_reducer::unpack;
 
 #[derive(Clone, PartialEq, Debug)]
 
@@ -84,6 +88,12 @@ pub enum Reducer {
         server_id: u16,
         entity_key: u64,
         tic: u32,
+}    ,
+    Pack {
+        entity_key: u64,
+        zone_id: u32,
+        type_reference: u32,
+        object_kind_reference: u32,
 }    ,
     Resolve {
         server_id: u16,
@@ -126,6 +136,20 @@ pub enum Reducer {
         data_1: u64,
 }    ,
     TickGc ,
+    Unpack {
+        cold_zone: u32,
+        cold_type_reference: u32,
+        cold_x: u8,
+        cold_y: u8,
+        hot_entity_type: u8,
+        kind: u16,
+        zone_id: u32,
+        location: u8,
+        rotation: u8,
+        offset: u8,
+        data_0: u64,
+        data_1: u64,
+}    ,
 }
 
 
@@ -139,12 +163,14 @@ impl __sdk::Reducer for Reducer {
                         Reducer::AppendEvent { .. } => "append_event",
             Reducer::Bump { .. } => "bump",
             Reducer::Claim { .. } => "claim",
+            Reducer::Pack { .. } => "pack",
             Reducer::Resolve { .. } => "resolve",
             Reducer::SeedColdRow { .. } => "seed_cold_row",
             Reducer::SeedEntity { .. } => "seed_entity",
             Reducer::SetShardId { .. } => "set_shard_id",
             Reducer::SpawnObject { .. } => "spawn_object",
             Reducer::TickGc => "tick_gc",
+            Reducer::Unpack { .. } => "unpack",
             _ => unreachable!(),
 }
 }
@@ -187,6 +213,17 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 server_id: server_id.clone(),
                 entity_key: entity_key.clone(),
                 tic: tic.clone(),
+}),
+            Reducer::Pack{
+                entity_key,
+                zone_id,
+                type_reference,
+                object_kind_reference,
+}             => __sats::bsatn::to_vec(&pack_reducer::PackArgs {
+                entity_key: entity_key.clone(),
+                zone_id: zone_id.clone(),
+                type_reference: type_reference.clone(),
+                object_kind_reference: object_kind_reference.clone(),
 }),
             Reducer::Resolve{
                 server_id,
@@ -265,7 +302,34 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }),
             Reducer::TickGc => __sats::bsatn::to_vec(&tick_gc_reducer::TickGcArgs {
                 }),
-_ => unreachable!(),
+Reducer::Unpack{
+                cold_zone,
+                cold_type_reference,
+                cold_x,
+                cold_y,
+                hot_entity_type,
+                kind,
+                zone_id,
+                location,
+                rotation,
+                offset,
+                data_0,
+                data_1,
+}             => __sats::bsatn::to_vec(&unpack_reducer::UnpackArgs {
+                cold_zone: cold_zone.clone(),
+                cold_type_reference: cold_type_reference.clone(),
+                cold_x: cold_x.clone(),
+                cold_y: cold_y.clone(),
+                hot_entity_type: hot_entity_type.clone(),
+                kind: kind.clone(),
+                zone_id: zone_id.clone(),
+                location: location.clone(),
+                rotation: rotation.clone(),
+                offset: offset.clone(),
+                data_0: data_0.clone(),
+                data_1: data_1.clone(),
+}),
+            _ => unreachable!(),
 }
 }
 }

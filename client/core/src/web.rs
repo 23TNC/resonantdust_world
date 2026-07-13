@@ -117,6 +117,11 @@ impl Client {
         self.send(Command::Move { tile_x, tile_y })
     }
 
+    /// Convenience: interact with (unpack) the cold thing at global tile `(tile_x, tile_y)`.
+    pub fn interact(&self, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
+        self.send(Command::Interact { tile_x, tile_y })
+    }
+
     /// Convenience: drop the world-server connection but keep the engine alive.
     pub fn logout(&self) -> Result<(), SendError> {
         self.send(Command::Logout)
@@ -155,6 +160,7 @@ fn client_msg_tag(msg: &ClientMsg) -> &'static str {
         ClientMsg::Unsub { .. } => "unsub",
         ClientMsg::Ping { .. } => "ping",
         ClientMsg::Move { .. } => "move",
+        ClientMsg::Interact { .. } => "interact",
     }
 }
 
@@ -309,6 +315,11 @@ impl Engine {
                     .await
             }
             Command::RemoveAnchor { name } => self.handle_remove_anchor(name).await,
+            Command::Interact { tile_x, tile_y } => {
+                if let Err(err) = self.send_frame(&ClientMsg::Interact { tile_x, tile_y }).await {
+                    tracing::warn!(%err, "interact frame send failed");
+                }
+            }
             Command::Move { tile_x, tile_y } => {
                 if let Err(err) = self.send_frame(&ClientMsg::Move { tile_x, tile_y }).await {
                     self.emit(Event::Status(format!("move send failed: {err}")));

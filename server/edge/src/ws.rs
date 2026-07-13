@@ -31,6 +31,7 @@ use crate::bindings;
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
 use crate::bindings::shard::append_event as _; // reducer trait → `reducers.append_event`
 use crate::bindings::shard::seed_cold_row as _; // reducer trait → shard `reducers.seed_cold_row` (cold objects live on the object module)
+use crate::bindings::shard::unpack as _; // reducer trait → shard `reducers.unpack` (cold→hot, edge-triggered on interact)
 use crate::connections::{await_ready, connect_players, connect_shard, Pool};
 use crate::index::{resolve_zone_or_default, ShardEndpoint};
 use crate::protocol::{ClientMsg, ColdObjectsRow, RowData, RowOp, ServerMsg, StateRow};
@@ -192,6 +193,9 @@ async fn session_worker(
             }
             ClientMsg::Move { tile_x, tile_y } => {
                 handle_move(&pool, &out_tx, &shards, session, tile_x, tile_y).await;
+            }
+            ClientMsg::Interact { tile_x, tile_y } => {
+                handle_interact(&pool, &out_tx, &shards, session, tile_x, tile_y).await;
             }
             // Pings are answered on the read loop and never forwarded here.
             ClientMsg::Ping { .. } => {}
@@ -478,6 +482,74 @@ async fn handle_move(
         data[1],
     ) {
         send(out_tx, err_frame(&format!("move: request failed: {err}")));
+    }
+}
+
+/// Turn a client **interact** intent (a click on a cold thing) into an `unpack` on the
+/// object module — the edge-triggered cold→hot bridge. Finds the `biome-thing` cold object
+/// at the clicked cell in the shard's cached `cold` rows, decodes its kind, and unpacks it:
+/// it becomes a hot `state` entity (a free object) the pipeline then ticks; the cold row
+/// loses it. Zone (0,0) only for now (like [`handle_move`]).
+async fn handle_interact(
+    pool: &Arc<Pool>,
+    out_tx: &mpsc::UnboundedSender<String>,
+    shards: &HashMap<ShardEndpoint, ShardConn>,
+    player_id: Option<u32>,
+    tile_x: i32,
+    tile_y: i32,
+) {
+    use bindings::shard::cold_table::ColdTableAccess;
+    use resonantdust_codec::object::{
+        kind_ref_kind_id, kind_ref_x, kind_ref_y, type_ref_type_id, TYPE_BIOME_THING,
+    };
+    use resonantdust_codec::packed::cell;
+    use resonantdust_codec::refs::ENTITY_TYPE_OBJECT;
+
+    if player_id.is_none() {
+        send(out_tx, err_frame("interact: not logged in"));
+        return;
+    }
+    let zone = 0u32;
+    let (x, y) = (tile_x.rem_euclid(16) as u8, tile_y.rem_euclid(16) as u8);
+    let endpoint = match resolve_zone_or_default(&pool.index, &pool.cfg, zone) {
+        Ok(e) => e,
+        Err(err) => {
+            send(out_tx, err_frame(&format!("interact: route zone {zone}: {err}")));
+            return;
+        }
+    };
+    let Some(shard) = shards.get(&endpoint) else {
+        send(out_tx, err_frame("interact: shard not connected (subscribe the zone first)"));
+        return;
+    };
+    // Find a biome-thing cold object sitting at (x, y) in this zone's cached cold rows.
+    let found = shard.conn.db().cold().iter().filter(|c| c.zone_id == zone && type_ref_type_id(c.type_reference) == TYPE_BIOME_THING).find_map(|c| {
+        c.kinds.iter().find(|&&k| kind_ref_x(k) == x && kind_ref_y(k) == y).map(|&k| (c.type_reference, kind_ref_kind_id(k)))
+    });
+    let Some((type_reference, kind_id)) = found else {
+        send(out_tx, err_frame(&format!("interact: no cold thing at ({x},{y})")));
+        return;
+    };
+    let location = cell(x, y);
+    // unpack → mint a hot `state` entity (a free object) carrying the thing's kind at the
+    // cell; it now ticks through the pipeline and renders via the mover path.
+    if let Err(err) = shard.conn.reducers.unpack(
+        zone,              // cold_zone
+        type_reference,    // cold_type_reference
+        x,                 // cold_x
+        y,                 // cold_y
+        ENTITY_TYPE_OBJECT, // hot_entity_type
+        kind_id,           // payload: kind
+        zone,              // payload: zone_id
+        location,          // payload: location
+        0,                 // payload: rotation
+        0,                 // payload: offset
+        0,                 // payload: data0
+        0,                 // payload: data1
+    ) {
+        send(out_tx, err_frame(&format!("interact: unpack failed: {err}")));
+    } else {
+        tracing::info!(zone, x, y, kind = kind_id, "interact → unpacked cold thing");
     }
 }
 

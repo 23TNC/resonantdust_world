@@ -87,6 +87,10 @@ pub enum Command {
     /// to the shard's tick pipeline, which surfaces as a `state` row on the zone
     /// subscription. Requires a live session; ignored otherwise.
     Move { tile_x: i32, tile_y: i32 },
+    /// Interact with the cold thing at global tile `(tile_x, tile_y)` — the pixijs host
+    /// sends this on a right-click; the server `unpack`s the cold object (cold→hot) into a
+    /// live `state` entity. Requires a live session; ignored otherwise.
+    Interact { tile_x: i32, tile_y: i32 },
     /// Drop the world-server connection and clear the session, without stopping
     /// the client (a later [`Command::Login`] can reconnect).
     Logout,

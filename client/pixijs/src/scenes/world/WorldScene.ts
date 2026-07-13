@@ -64,6 +64,8 @@ export class WorldScene extends Scene {
   private downX = 0;
   private downY = 0;
   private dragged = false;
+  /** Which mouse button started the press — left (0) = move, right (2) = interact. */
+  private downButton = 0;
   /** Bound pointer handlers (so they can be removed on exit). */
   private readonly onPointerDown = (e: PointerEvent): void => {
     this.dragId = e.pointerId;
@@ -71,8 +73,11 @@ export class WorldScene extends Scene {
     this.dragY = e.clientY;
     this.downX = e.clientX;
     this.downY = e.clientY;
+    this.downButton = e.button;
     this.dragged = false;
   };
+  /** Suppress the browser context menu so a right-click can mean "interact". */
+  private readonly onContextMenu = (e: Event): void => e.preventDefault();
   private readonly onPointerMove = (e: PointerEvent): void => {
     if (this.dragId !== e.pointerId) return;
     if (!this.dragged && Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > CLICK_SLOP) {
@@ -97,17 +102,24 @@ export class WorldScene extends Scene {
   };
   private readonly onPointerUp = (e: PointerEvent): void => {
     if (this.dragId !== e.pointerId) return;
-    // A press-release that never crossed the slop is a click → move the mover to
-    // the clicked tile.
-    if (!this.dragged) this.moveToClick(e);
+    // A press-release that never crossed the slop is a click: left → move the mover to
+    // the clicked tile, right → interact with (unpack) the cold thing there.
+    if (!this.dragged) {
+      if (this.downButton === 2) this.tileClick(e, "interact");
+      else this.tileClick(e, "move");
+    }
     this.dragId = null;
   };
-  /** Convert a click to a global tile and send a move intent. The server pathfinds
-   *  and commits the path; both players see the same authoritative motion. */
-  private moveToClick(e: PointerEvent): void {
+  /** Convert a click to a global tile and send the intent. `move` (left click) pathfinds
+   *  the mover there; `interact` (right click) unpacks the cold thing at that cell into a
+   *  live entity. */
+  private tileClick(e: PointerEvent, kind: "move" | "interact"): void {
     const r = this.ctx.app.canvas.getBoundingClientRect();
     const w = this.viewport.view.screenToWorld(e.clientX - r.left, e.clientY - r.top);
-    this.ctx.client.moveTo(Math.floor(w.x / SQUARE), Math.floor(w.y / SQUARE));
+    const tx = Math.floor(w.x / SQUARE);
+    const ty = Math.floor(w.y / SQUARE);
+    if (kind === "interact") this.ctx.client.interact(tx, ty);
+    else this.ctx.client.moveTo(tx, ty);
   }
   /** End the drag when the cursor leaves the canvas: the matching `pointerup`
    *  fires off-canvas where we don't hear it, so without this we'd keep panning
@@ -158,6 +170,7 @@ export class WorldScene extends Scene {
     canvas.addEventListener("pointerup", this.onPointerUp);
     canvas.addEventListener("pointercancel", this.onPointerUp);
     canvas.addEventListener("pointerleave", this.onPointerLeave);
+    canvas.addEventListener("contextmenu", this.onContextMenu);
     // `passive: false` so the handler can preventDefault the page scroll.
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
 
@@ -222,6 +235,7 @@ export class WorldScene extends Scene {
     canvas.removeEventListener("pointerup", this.onPointerUp);
     canvas.removeEventListener("pointercancel", this.onPointerUp);
     canvas.removeEventListener("pointerleave", this.onPointerLeave);
+    canvas.removeEventListener("contextmenu", this.onContextMenu);
     canvas.removeEventListener("wheel", this.onWheel);
     this.contentUnsub?.();
     this.contentUnsub = null;
