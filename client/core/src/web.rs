@@ -171,8 +171,6 @@ struct SubCounters {
 fn row_table_tag(row: &RowData) -> &'static str {
     match row {
         RowData::State(_) => "state",
-        RowData::ZoneTiles(_) => "zone_tiles",
-        RowData::ZoneThings(_) => "zone_things",
         RowData::ColdObjects(_) => "cold_objects",
     }
 }
@@ -558,15 +556,6 @@ impl Engine {
                             removed: matches!(op, RowOp::Delete),
                         });
                     }
-                    RowData::ZoneTiles(z) => {
-                        self.emit(Event::ZoneTiles { zone_id: z.zone_id, tiles: z.tiles.clone() });
-                    }
-                    RowData::ZoneThings(z) => {
-                        self.emit(Event::ZoneThings {
-                            zone_id: z.zone_id,
-                            things: z.things.clone(),
-                        });
-                    }
                     RowData::ColdObjects(z) => {
                         self.emit(Event::ColdObjects {
                             zone_id: z.zone_id,
@@ -780,8 +769,6 @@ async fn fetch_resolve(url: &str) -> Result<ServerInfo, String> {
 fn row_zone_id(row: &RowData) -> u32 {
     match row {
         RowData::State(r) => r.zone_id,
-        RowData::ZoneTiles(r) => r.zone_id,
-        RowData::ZoneThings(r) => r.zone_id,
         RowData::ColdObjects(r) => r.zone_id,
     }
 }

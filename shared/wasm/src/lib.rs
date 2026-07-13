@@ -588,23 +588,6 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("offset", &JsValue::from_f64(*offset as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
-        Event::ZoneTiles { zone_id, tiles } => {
-            set("kind", &JsValue::from_str("zoneTiles"));
-            set("zoneId", &JsValue::from_f64(*zone_id as f64));
-            let arr = js_sys::Uint8Array::new_with_length(tiles.len() as u32);
-            arr.copy_from(tiles);
-            set("tiles", &arr);
-        }
-        Event::ZoneThings { zone_id, things } => {
-            set("kind", &JsValue::from_str("zoneThings"));
-            set("zoneId", &JsValue::from_f64(*zone_id as f64));
-            // Each thing is a u64 (exceeds JS's 2^53 safe range), so ship it as a
-            // BigUint64Array — the host never reads the values, just hands the array
-            // straight back to `zoneThingPrims`, which unpacks them in wasm.
-            let arr = js_sys::BigUint64Array::new_with_length(things.len() as u32);
-            arr.copy_from(things);
-            set("things", &arr);
-        }
         Event::ColdObjects { zone_id, type_reference, kinds } => {
             set("kind", &JsValue::from_str("coldObjects"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));

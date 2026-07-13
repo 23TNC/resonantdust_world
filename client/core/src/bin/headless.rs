@@ -128,12 +128,6 @@ fn log_event(event: &Event) {
                 obj_type, object_id, kind, tic, location, rotation, offset, removed, "state object"
             )
         }
-        Event::ZoneTiles { zone_id, tiles } => {
-            info!(zone_id = format!("{zone_id:#010x}"), tiles = tiles.len(), "zone tiles")
-        }
-        Event::ZoneThings { zone_id, things } => {
-            info!(zone_id = format!("{zone_id:#010x}"), things = things.len(), "zone things")
-        }
         Event::ColdObjects { zone_id, type_reference, kinds } => {
             info!(
                 zone_id = format!("{zone_id:#010x}"),

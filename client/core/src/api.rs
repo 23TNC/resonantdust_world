@@ -140,17 +140,6 @@ pub enum Event {
         offset: u8,
         removed: bool,
     },
-    /// A subscribed zone's dense tile grid arrived (the `cold_tiles` module): 256 `u8`
-    /// tile-kinds, row-major (`0` = empty). The host expands them to renderable ground
-    /// cells — running the DSL per tile-kind for the texture + tint. Fired on every tiles
-    /// row for the zone (the initial seed and any later rewrite).
-    ZoneTiles { zone_id: u32, tiles: Vec<u8> },
-    /// A subscribed zone's sparse thing list arrived (the `cold_things` module): packed
-    /// things (each a `u64`: `kind:16 | x:4 | y:4 | data:5 | layer:3 | variant:5 |
-    /// reserved:27`). The host draws one sprite per thing, positioned by the codec, tinted
-    /// by the thing kind's `:visual`, and picking the kind's `variant` sprite. Fired on
-    /// every things row; an empty vec means the host clears the zone's things.
-    ZoneThings { zone_id: u32, things: Vec<u64> },
     /// A subscribed zone's cold-object row arrived (a module's generic `cold` table —
     /// the object model): the shared `object_type_reference` (type / subtype = biome /
     /// layer) plus its members as `object_kind_reference`s. A `biome-tile` row is the

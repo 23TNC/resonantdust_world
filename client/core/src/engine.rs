@@ -465,15 +465,6 @@ impl Engine {
                             removed: matches!(op, RowOp::Delete),
                         });
                     }
-                    RowData::ZoneTiles(z) => {
-                        self.emit(Event::ZoneTiles { zone_id: z.zone_id, tiles: z.tiles.clone() });
-                    }
-                    RowData::ZoneThings(z) => {
-                        self.emit(Event::ZoneThings {
-                            zone_id: z.zone_id,
-                            things: z.things.clone(),
-                        });
-                    }
                     RowData::ColdObjects(z) => {
                         self.emit(Event::ColdObjects {
                             zone_id: z.zone_id,
@@ -608,8 +599,6 @@ async fn next_frame(read: &mut Option<WsRead>) -> FrameOutcome {
 fn row_zone_id(row: &RowData) -> u32 {
     match row {
         RowData::State(r) => r.zone_id,
-        RowData::ZoneTiles(r) => r.zone_id,
-        RowData::ZoneThings(r) => r.zone_id,
         RowData::ColdObjects(r) => r.zone_id,
     }
 }

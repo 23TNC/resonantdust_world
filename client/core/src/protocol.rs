@@ -90,30 +90,10 @@ pub enum RowOp {
 pub enum RowData {
     /// A resolved entity from the shard's tick pipeline (`shard::state`).
     State(StateRow),
-    /// A zone's dense tile grid from the `cold_tiles` module — `Vec<u8>` of 256 tile-kinds.
-    ZoneTiles(ZoneTilesRow),
-    /// A zone's sparse thing list from the `things` module — `Vec<u32>` packed things.
-    ZoneThings(ZoneThingsRow),
     /// A zone's cold-object row from a module's generic `cold` table (object model): the
     /// shared `object_type_reference` (type/subtype=biome/layer) + a
     /// `Vec<object_kind_reference>`. `biome-tile` rows = ground, `biome-thing` = scatter.
     ColdObjects(ColdObjectsRow),
-}
-
-/// Mirror of `zone::state_type::State` — a zone's dense tile grid (256 `u8` tile-kinds,
-/// row-major, `0` = empty).
-#[derive(Debug, Clone, Deserialize)]
-pub struct ZoneTilesRow {
-    pub zone_id: u32,
-    pub tiles: Vec<u8>,
-}
-
-/// Mirror of `cold_things::state_type::State` — a zone's sparse packed things (each a
-/// `u64`: `kind:16|x:4|y:4|data:5|layer:3|variant:5|reserved:27`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct ZoneThingsRow {
-    pub zone_id: u32,
-    pub things: Vec<u64>,
 }
 
 /// Mirror of a module's `cold_type::Cold` — one cold-object row: the shared
