@@ -151,6 +151,14 @@ pub enum Event {
     /// by the thing kind's `:visual`, and picking the kind's `variant` sprite. Fired on
     /// every things row; an empty vec means the host clears the zone's things.
     ZoneThings { zone_id: u32, things: Vec<u64> },
+    /// A subscribed zone's cold-object row arrived (a module's generic `cold` table —
+    /// the object model): the shared `object_type_reference` (type / subtype = biome /
+    /// layer) plus its members as `object_kind_reference`s. A `biome-tile` row is the
+    /// dense ground for one biome, a `biome-thing` row the sparse scatter. The host
+    /// decodes each `object_kind_reference` (`shared/codec` `object`) to position + kind
+    /// + variant and expands it via the DSL. Supersedes [`Event::ZoneTiles`] /
+    /// [`Event::ZoneThings`]. Fired per cold row for the zone (seed + any later rewrite).
+    ColdObjects { zone_id: u32, type_reference: u32, kinds: Vec<u32> },
     /// A zone's subscription closed (the anchor moved it out of range, or it was
     /// evicted). The host drops that zone's entities.
     ZoneClosed { zone_id: u32 },

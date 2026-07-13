@@ -94,6 +94,10 @@ pub enum RowData {
     ZoneTiles(ZoneTilesRow),
     /// A zone's sparse thing list from the `things` module — `Vec<u32>` packed things.
     ZoneThings(ZoneThingsRow),
+    /// A zone's cold-object row from a module's generic `cold` table (object model): the
+    /// shared `object_type_reference` (type/subtype=biome/layer) + a
+    /// `Vec<object_kind_reference>`. `biome-tile` rows = ground, `biome-thing` = scatter.
+    ColdObjects(ColdObjectsRow),
 }
 
 /// Mirror of `zone::state_type::State` — a zone's dense tile grid (256 `u8` tile-kinds,
@@ -110,6 +114,16 @@ pub struct ZoneTilesRow {
 pub struct ZoneThingsRow {
     pub zone_id: u32,
     pub things: Vec<u64>,
+}
+
+/// Mirror of a module's `cold_type::Cold` — one cold-object row: the shared
+/// `object_type_reference` for a `(zone, type, subtype=biome, layer)`, plus its members
+/// as `object_kind_reference`s.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ColdObjectsRow {
+    pub zone_id: u32,
+    pub type_reference: u32,
+    pub kinds: Vec<u32>,
 }
 
 /// Mirror of `shard::state_type::State` (server `StateRow`). No `valid_at` —

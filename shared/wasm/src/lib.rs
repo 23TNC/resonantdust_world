@@ -88,6 +88,26 @@ pub fn zone_y_js(zone_id: u32) -> u8 {
     packed::zone_y(zone_id)
 }
 
+/// The `type_id` of a cold row's `object_type_reference` — the host reads it to route a
+/// `coldObjects` event to its ground painter ([`typeBiomeTile`]) or thing painter
+/// ([`typeBiomeThing`]) and pick the matching stem table.
+#[wasm_bindgen(js_name = objectTypeId)]
+pub fn object_type_id_js(type_reference: u32) -> u8 {
+    resonantdust_codec::object::type_ref_type_id(type_reference)
+}
+
+/// The `type_id` for biome-classified ground tiles (`biome-tile`).
+#[wasm_bindgen(js_name = typeBiomeTile)]
+pub fn type_biome_tile_js() -> u8 {
+    resonantdust_codec::object::TYPE_BIOME_TILE
+}
+
+/// The `type_id` for biome-scattered things (`biome-thing`).
+#[wasm_bindgen(js_name = typeBiomeThing)]
+pub fn type_biome_thing_js() -> u8 {
+    resonantdust_codec::object::TYPE_BIOME_THING
+}
+
 // ---------- content runtime (js feature) ----------
 //
 // The client's view of the DSL: load the fetched `.rd` corpus once, then answer
@@ -321,6 +341,44 @@ impl Content {
         out
     }
 
+    /// Expand a zone's cold-object row (a module's `cold` table — the OBJECT MODEL) into
+    /// renderable prims. `type_reference` is the row's shared `object_type_reference`
+    /// (type / subtype = biome / layer); each `kinds` entry is a `u32`
+    /// `object_kind_reference` (`kind:10 | subkind:4 | variant:4 | x:4 | y:4 | data:6`).
+    /// Dispatches the visual by the row's `type_id` — `biome-tile` → the tile namespace,
+    /// `biome-thing` → the thing namespace — and returns a flat **stride-7** array
+    /// `[tileX, tileY, tint, geoColor, kindId, data, variant]` in global tile coordinates
+    /// (the same shape as [`zoneThingPrims`]; a `biome-tile` prim's first 5 fields match
+    /// [`zoneTilePrims`]). The host picks the stem table + painter by [`objectTypeId`];
+    /// `kindId` indexes that namespace's stems, `variant` the sprite. One boundary
+    /// crossing per cold row. Unifies the legacy [`zoneTilePrims`]/[`zoneThingPrims`].
+    #[wasm_bindgen(js_name = zoneColdPrims)]
+    pub fn zone_cold_prims(&self, zone_id: u32, type_reference: u32, kinds: Vec<u32>) -> Vec<f64> {
+        use resonantdust_codec::object;
+        let (origin_x, origin_y) = zone_origin(zone_id);
+        let is_tile = object::type_ref_type_id(type_reference) == object::TYPE_BIOME_TILE;
+        let mut out = Vec::new();
+        for &k in &kinds {
+            let kind_id = object::kind_ref_kind_id(k);
+            let tile_x = origin_x + object::kind_ref_x(k) as i64;
+            let tile_y = origin_y + object::kind_ref_y(k) as i64;
+            // biome-tile kinds live in the TILE namespace (def_id), biome-thing kinds in
+            // the THING namespace (object_id).
+            let visual =
+                if is_tile { self.bundle.visual_for_def(kind_id) } else { self.bundle.visual_for_object(kind_id) };
+            let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
+            let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
+            out.push(tile_x as f64);
+            out.push(tile_y as f64);
+            out.push(tint as f64);
+            out.push(geo as f64);
+            out.push(kind_id as f64);
+            out.push(object::kind_ref_data(k) as f64);
+            out.push(object::kind_ref_variant_id(k) as f64);
+        }
+        out
+    }
+
     /// Render data for one MOBILE entity (a pawn — e.g. a wolf) at `(zone_id,
     /// location)` of content `kind`: its world-tile position plus the kind's
     /// `tint`/`geo_color`, as `[tileX, tileY, tint, geoColor]`. The single-entity
@@ -546,6 +604,17 @@ fn event_to_js(event: &client::Event) -> JsValue {
             let arr = js_sys::BigUint64Array::new_with_length(things.len() as u32);
             arr.copy_from(things);
             set("things", &arr);
+        }
+        Event::ColdObjects { zone_id, type_reference, kinds } => {
+            set("kind", &JsValue::from_str("coldObjects"));
+            set("zoneId", &JsValue::from_f64(*zone_id as f64));
+            set("typeReference", &JsValue::from_f64(*type_reference as f64));
+            // Each member is a u32 object_kind_reference; ship as a Uint32Array — the
+            // host hands it straight back to `zoneColdPrims`, which unpacks + expands it
+            // (position + kind + variant) in wasm.
+            let arr = js_sys::Uint32Array::new_with_length(kinds.len() as u32);
+            arr.copy_from(kinds);
+            set("kinds", &arr);
         }
         Event::ZoneClosed { zone_id } => {
             set("kind", &JsValue::from_str("zoneClosed"));

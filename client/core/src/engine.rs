@@ -474,6 +474,13 @@ impl Engine {
                             things: z.things.clone(),
                         });
                     }
+                    RowData::ColdObjects(z) => {
+                        self.emit(Event::ColdObjects {
+                            zone_id: z.zone_id,
+                            type_reference: z.type_reference,
+                            kinds: z.kinds.clone(),
+                        });
+                    }
                 }
                 self.zones.note_update(row_zone_id(&row), text.len() as u64, now_ms());
                 self.flush_zone_intents().await;
@@ -603,6 +610,7 @@ fn row_zone_id(row: &RowData) -> u32 {
         RowData::State(r) => r.zone_id,
         RowData::ZoneTiles(r) => r.zone_id,
         RowData::ZoneThings(r) => r.zone_id,
+        RowData::ColdObjects(r) => r.zone_id,
     }
 }
 

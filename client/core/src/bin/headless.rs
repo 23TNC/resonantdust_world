@@ -134,6 +134,14 @@ fn log_event(event: &Event) {
         Event::ZoneThings { zone_id, things } => {
             info!(zone_id = format!("{zone_id:#010x}"), things = things.len(), "zone things")
         }
+        Event::ColdObjects { zone_id, type_reference, kinds } => {
+            info!(
+                zone_id = format!("{zone_id:#010x}"),
+                type_reference = format!("{type_reference:#010x}"),
+                kinds = kinds.len(),
+                "cold objects"
+            )
+        }
         Event::ZoneClosed { zone_id } => {
             info!(zone_id = format!("{zone_id:#010x}"), "zone closed")
         }
