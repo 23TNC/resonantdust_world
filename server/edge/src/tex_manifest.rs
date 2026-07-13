@@ -164,53 +164,73 @@ const FACINGS: [&str; 4] = ["n", "e", "s", "l"];
 /// 2) — skipped so the group-less scan never mistakes them for categories.
 const LEGACY_GROUPS: [&str; 3] = ["master", "sprites", "templates"];
 
-/// Walk `<tex_root>/<cat>/<kind>/1.<facing>.0/1/albedo.png` (group-less folder-per-
-/// variant, docs/texture-paths.md), filling `entries` with one per-facing stem
-/// (`<cat>/<kind>/<facing>` — the dir names ARE the stem segments verbatim, named
-/// subkinds included) → hash + master short axis. Each facing is its own texture (own
-/// bytes, hash, LOD cache), so it gets its own manifest row.
+/// Walk the texture tree to any depth, filling `entries` with one per-facing stem for
+/// every KIND dir — a dir holding the canonical instance leaf `1.<facing>.0/1/albedo.png`.
+/// The stem is the dir's path relative to `tex_root` (dir names ARE the stem segments
+/// verbatim) plus the facing, so BOTH the legacy 2-level `<cat>/<kind>` layout and the
+/// object-model 4-level `<type>/<subtype>/<kind>/<subkind>` layout scan into their stems
+/// with no depth assumption (docs/object-model.md §8, docs/texture-paths.md). Each facing
+/// is its own texture (own bytes, hash, LOD cache), so it gets its own manifest row.
 fn scan_masters(tex_root: &Path, entries: &mut BTreeMap<String, Entry>) {
-    let Ok(cats) = std::fs::read_dir(tex_root) else { return };
-    for cat in cats.flatten() {
-        let Some(cat_name) = dir_name(&cat.file_name()) else { continue };
-        if LEGACY_GROUPS.contains(&cat_name.as_str()) {
+    scan_dir(tex_root, tex_root, entries);
+}
+
+/// Recurse `dir`: register it as a kind if it holds the canonical leaf, otherwise descend.
+fn scan_dir(tex_root: &Path, dir: &Path, entries: &mut BTreeMap<String, Entry>) {
+    let Ok(kids) = std::fs::read_dir(dir) else { return };
+    for kid in kids.flatten() {
+        let path = kid.path();
+        if !path.is_dir() {
             continue;
         }
-        let Ok(kinds) = std::fs::read_dir(cat.path()) else { continue };
-        for kind in kinds.flatten() {
-            let Some(kind_name) = dir_name(&kind.file_name()) else { continue };
-            for facing in FACINGS {
-                // Canonical instance leaf: 1.<facing>.0/1/. The albedo is the master (its
-                // presence makes the stem a stem); its sibling maps are probed alongside.
-                let leaf = kind.path().join(format!("1.{facing}.0")).join("1");
-                let master = leaf.join("albedo.png");
-                if !master.is_file() {
-                    continue;
-                }
-                let Ok((w, h)) = image::image_dimensions(&master) else { continue };
-                // Which of the known maps have a leaf here (albedo always does).
-                let maps: BTreeSet<String> = crate::textures::MAPS
-                    .iter()
-                    .filter(|m| leaf.join(format!("{m}.png")).is_file())
-                    .map(|m| m.to_string())
-                    .collect();
-                // Hash ALL present map files, not just the albedo — re-mastering `layers` or
-                // any sibling map must move the hash so the cache-buster URL changes (else a
-                // stale `layers` LOD stays cached under the unchanged albedo hash). The
-                // `atlas.json` sidecar (if any) is folded in too, so re-authoring the grid
-                // busts the hash.
-                let Some(hash) = leaf_hash(&leaf, &maps) else { continue };
-                // A `bin/art` linked atlas drops an `atlas.json` beside its maps: the cell
-                // grid + normalized per-cell inset. Absent → an ordinary single-image stem.
-                let (grid, pad) = match read_atlas_meta(&leaf) {
-                    Some((g, p)) => (Some(g), Some(p)),
-                    None => (None, None),
-                };
-                let stem = format!("{cat_name}/{kind_name}/{facing}");
-                entries.insert(stem, Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps, grid, pad });
-            }
+        let Some(name) = dir_name(&kid.file_name()) else { continue };
+        // Skip the legacy `<group>` rollback dirs and any `1.<facing>.<layer>` leaf-id dir
+        // (its contents are the variant leaves, handled by its parent kind).
+        if LEGACY_GROUPS.contains(&name.as_str()) || name.starts_with("1.") {
+            continue;
+        }
+        let Some(rel) = path.strip_prefix(tex_root).ok().and_then(|p| p.to_str()) else { continue };
+        // A dir with the canonical leaf IS a kind; else it's an intermediate — descend.
+        if !register_kind(&path, rel, entries) {
+            scan_dir(tex_root, &path, entries);
         }
     }
+}
+
+/// Register a kind dir's per-facing stems (`<stem_prefix>/<facing>`) if it holds the
+/// canonical instance leaf `1.<facing>.0/1/albedo.png`. Returns whether any facing matched.
+fn register_kind(kind_path: &Path, stem_prefix: &str, entries: &mut BTreeMap<String, Entry>) -> bool {
+    let mut found = false;
+    for facing in FACINGS {
+        // Canonical instance leaf: 1.<facing>.0/1/. The albedo is the master (its presence
+        // makes the stem a stem); its sibling maps are probed alongside.
+        let leaf = kind_path.join(format!("1.{facing}.0")).join("1");
+        let master = leaf.join("albedo.png");
+        if !master.is_file() {
+            continue;
+        }
+        let Ok((w, h)) = image::image_dimensions(&master) else { continue };
+        // Which of the known maps have a leaf here (albedo always does).
+        let maps: BTreeSet<String> = crate::textures::MAPS
+            .iter()
+            .filter(|m| leaf.join(format!("{m}.png")).is_file())
+            .map(|m| m.to_string())
+            .collect();
+        // Hash ALL present map files, not just the albedo — re-mastering any sibling map
+        // must move the hash so the cache-buster URL changes. The `atlas.json` sidecar (if
+        // any) is folded in too, so re-authoring the grid busts the hash.
+        let Some(hash) = leaf_hash(&leaf, &maps) else { continue };
+        // A `bin/art` linked atlas drops an `atlas.json` beside its maps: the cell grid +
+        // normalized per-cell inset. Absent → an ordinary single-image stem.
+        let (grid, pad) = match read_atlas_meta(&leaf) {
+            Some((g, p)) => (Some(g), Some(p)),
+            None => (None, None),
+        };
+        let stem = format!("{stem_prefix}/{facing}");
+        entries.insert(stem, Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps, grid, pad });
+        found = true;
+    }
+    found
 }
 
 fn dir_name(name: &std::ffi::OsStr) -> Option<String> {
