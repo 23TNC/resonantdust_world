@@ -11,6 +11,7 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
+pub mod cold_type;
 pub mod event_log_type;
 pub mod object_counter_type;
 pub mod shard_meta_type;
@@ -21,22 +22,26 @@ pub mod append_event_reducer;
 pub mod bump_reducer;
 pub mod claim_reducer;
 pub mod resolve_reducer;
+pub mod seed_cold_row_reducer;
 pub mod seed_entity_reducer;
 pub mod set_shard_id_reducer;
 pub mod spawn_object_reducer;
 pub mod tick_gc_reducer;
+pub mod cold_table;
 pub mod event_log_table;
 pub mod shard_meta_table;
 pub mod state_table;
 pub mod state_log_table;
 pub mod tic_meta_table;
 
+pub use cold_type::Cold;
 pub use event_log_type::EventLog;
 pub use object_counter_type::ObjectCounter;
 pub use shard_meta_type::ShardMeta;
 pub use state_type::State;
 pub use state_log_type::StateLog;
 pub use tic_meta_type::TicMeta;
+pub use cold_table::*;
 pub use event_log_table::*;
 pub use shard_meta_table::*;
 pub use state_table::*;
@@ -46,6 +51,7 @@ pub use append_event_reducer::append_event;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
 pub use resolve_reducer::resolve;
+pub use seed_cold_row_reducer::seed_cold_row;
 pub use seed_entity_reducer::seed_entity;
 pub use set_shard_id_reducer::set_shard_id;
 pub use spawn_object_reducer::spawn_object;
@@ -91,6 +97,11 @@ pub enum Reducer {
         data_0: u64,
         data_1: u64,
 }    ,
+    SeedColdRow {
+        zone_id: u32,
+        type_reference: u32,
+        kinds: Vec::<u32>,
+}    ,
     SeedEntity {
         entity_key: u64,
         kind: u16,
@@ -129,6 +140,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::Bump { .. } => "bump",
             Reducer::Claim { .. } => "claim",
             Reducer::Resolve { .. } => "resolve",
+            Reducer::SeedColdRow { .. } => "seed_cold_row",
             Reducer::SeedEntity { .. } => "seed_entity",
             Reducer::SetShardId { .. } => "set_shard_id",
             Reducer::SpawnObject { .. } => "spawn_object",
@@ -199,6 +211,15 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 data_0: data_0.clone(),
                 data_1: data_1.clone(),
 }),
+            Reducer::SeedColdRow{
+                zone_id,
+                type_reference,
+                kinds,
+}             => __sats::bsatn::to_vec(&seed_cold_row_reducer::SeedColdRowArgs {
+                zone_id: zone_id.clone(),
+                type_reference: type_reference.clone(),
+                kinds: kinds.clone(),
+}),
             Reducer::SeedEntity{
                 entity_key,
                 kind,
@@ -253,7 +274,8 @@ _ => unreachable!(),
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct DbUpdate {
-        event_log: __sdk::TableUpdate<EventLog>,
+        cold: __sdk::TableUpdate<Cold>,
+    event_log: __sdk::TableUpdate<EventLog>,
     shard_meta: __sdk::TableUpdate<ShardMeta>,
     state: __sdk::TableUpdate<State>,
     state_log: __sdk::TableUpdate<StateLog>,
@@ -268,7 +290,8 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
         for table_update in __sdk::transaction_update_iter_table_updates(raw) {
             match &table_update.table_name[..] {
 
-        "event_log" => db_update.event_log.append(event_log_table::parse_table_update(table_update)?),
+        "cold" => db_update.cold.append(cold_table::parse_table_update(table_update)?),
+    "event_log" => db_update.event_log.append(event_log_table::parse_table_update(table_update)?),
     "shard_meta" => db_update.shard_meta.append(shard_meta_table::parse_table_update(table_update)?),
     "state" => db_update.state.append(state_table::parse_table_update(table_update)?),
     "state_log" => db_update.state_log.append(state_log_table::parse_table_update(table_update)?),
@@ -295,7 +318,8 @@ impl __sdk::DbUpdate for DbUpdate {
     fn apply_to_client_cache(&self, cache: &mut __sdk::ClientCache<RemoteModule>) -> AppliedDiff<'_> {
                     let mut diff = AppliedDiff::default();
                 
-                diff.event_log = cache.apply_diff_to_table::<EventLog>("event_log", &self.event_log).with_updates_by_pk(|row| &row.event_reference);
+                diff.cold = cache.apply_diff_to_table::<Cold>("cold", &self.cold).with_updates_by_pk(|row| &row.cold_key);
+        diff.event_log = cache.apply_diff_to_table::<EventLog>("event_log", &self.event_log).with_updates_by_pk(|row| &row.event_reference);
         diff.shard_meta = cache.apply_diff_to_table::<ShardMeta>("shard_meta", &self.shard_meta).with_updates_by_pk(|row| &row.id);
         diff.state = cache.apply_diff_to_table::<State>("state", &self.state).with_updates_by_pk(|row| &row.entity_key);
         diff.state_log = cache.apply_diff_to_table::<StateLog>("state_log", &self.state_log).with_updates_by_pk(|row| &row.id);
@@ -307,7 +331,8 @@ fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                                "cold" => db_update.cold.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "shard_meta" => db_update.shard_meta.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "state" => db_update.state.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "state_log" => db_update.state_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
@@ -319,7 +344,8 @@ fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                                "cold" => db_update.cold.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "shard_meta" => db_update.shard_meta.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "state" => db_update.state.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "state_log" => db_update.state_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
@@ -333,7 +359,8 @@ for table_rows in raw.tables {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
-        event_log: __sdk::TableAppliedDiff<'r, EventLog>,
+        cold: __sdk::TableAppliedDiff<'r, Cold>,
+    event_log: __sdk::TableAppliedDiff<'r, EventLog>,
     shard_meta: __sdk::TableAppliedDiff<'r, ShardMeta>,
     state: __sdk::TableAppliedDiff<'r, State>,
     state_log: __sdk::TableAppliedDiff<'r, StateLog>,
@@ -348,7 +375,8 @@ impl __sdk::InModule for AppliedDiff<'_> {
 
 impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     fn invoke_row_callbacks(&self, event: &EventContext, callbacks: &mut __sdk::DbCallbacks<RemoteModule>) {
-                callbacks.invoke_table_row_callbacks::<EventLog>("event_log", &self.event_log, event);
+                callbacks.invoke_table_row_callbacks::<Cold>("cold", &self.cold, event);
+        callbacks.invoke_table_row_callbacks::<EventLog>("event_log", &self.event_log, event);
         callbacks.invoke_table_row_callbacks::<ShardMeta>("shard_meta", &self.shard_meta, event);
         callbacks.invoke_table_row_callbacks::<State>("state", &self.state, event);
         callbacks.invoke_table_row_callbacks::<StateLog>("state_log", &self.state_log, event);
@@ -1004,14 +1032,16 @@ impl __sdk::SpacetimeModule for RemoteModule {
     type QueryBuilder = __sdk::QueryBuilder;
 
 fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
-                event_log_table::register_table(client_cache);
+                cold_table::register_table(client_cache);
+        event_log_table::register_table(client_cache);
         shard_meta_table::register_table(client_cache);
         state_table::register_table(client_cache);
         state_log_table::register_table(client_cache);
         tic_meta_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
-                "event_log",
+                "cold",
+        "event_log",
         "shard_meta",
         "state",
         "state_log",
