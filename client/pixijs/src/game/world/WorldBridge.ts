@@ -2,14 +2,14 @@
 //! subscribed zones into painted tiles, and the viewport's camera into the
 //! client's anchor.
 //!
-//! On every cold-zone delivery it runs the DSL to expand the zone's packed cells
-//! into `[tileX, tileY, tint]` triples and adds one sprite each: `onZoneTiles`
-//! (`Content.zoneTilePrims`, each tile's `:visual @on_create`) paints a 64×64
-//! ground sprite per non-empty cell; `onZoneThings` (`Content.zoneThingPrims`,
-//! each thing's `:visual @on_create`) paints a smaller sprite per scattered thing
-//! (the worldgen flora), centred in its cell and above the ground. Tiles and
-//! things are tracked per zone separately, so a cold rewrite re-seeds each without
-//! disturbing the other. On a zone close it drops all of that zone's sprites. The
+//! On every cold-object row delivery (a module's `cold` table — the object model) it
+//! runs the DSL to expand the row's `object_kind_reference`s into renderable prims:
+//! `onColdObjects` (`Content.zoneColdPrims`, each object's `:visual @on_create`)
+//! dispatches by the row's `type_id` — a `biome-tile` row paints a 64×64 ground sprite
+//! per cell, a `biome-thing` row a smaller sprite per scattered thing, centred in its
+//! cell and above the ground. Rows are tracked per `(zone, type_reference)`, so a zone's
+//! several rows (one per biome) coexist and each rewrite re-seeds only itself. On a zone
+//! close it drops all of that zone's sprites. The
 //! anchor is pushed to the viewport every move (so the camera follows) and to the
 //! client whenever it crosses a tile (so the hysteresis ladder subscribes /
 //! unsubscribes zones). It also seeds the viewport's static bake config (the noise
@@ -105,16 +105,17 @@ export function thingTexture(stem: string | undefined, rotation: number, variant
 }
 
 export class WorldBridge {
-  /** Tile-sprite ids per subscribed zone, so a close drops exactly that zone. */
-  private readonly zonePrims = new Map<number, number[]>();
-  /** Cold thing-sprite ids per zone (worldgen flora), tracked apart from tiles so
-   *  a cold rewrite re-seeds each independently. */
-  private readonly zoneThings = new Map<number, number[]>();
-  /** Raw packed tiles / things per zone as delivered — kept so a content hot-swap
-   *  ({@link setContent}) can re-expand every live zone through the new corpus
-   *  without re-requesting it from the server. */
-  private readonly zoneTilesRaw = new Map<number, Uint8Array>();
-  private readonly zoneThingsRaw = new Map<number, BigUint64Array>();
+  /** Cold-object sprite ids per cold ROW, keyed `${zoneId}:${typeReference}`. A zone has
+   *  several rows (a biome-tile row per biome + biome-thing rows), each cleared +
+   *  repainted independently on delivery, so they coexist without clobbering each other. */
+  private readonly coldPrims = new Map<string, number[]>();
+  /** Raw cold rows as delivered, keyed like {@link coldPrims} — kept so a content
+   *  hot-swap ({@link setContent}) or a texture-tier load ({@link reseedThings}) can
+   *  re-expand every live row through the new corpus without re-requesting it. */
+  private readonly coldRowsRaw = new Map<
+    string,
+    { zoneId: number; typeReference: number; kinds: Uint32Array }
+  >();
   private readonly unsubs: Array<() => void> = [];
 
   /** Texture-stem tables from the content bundle, indexed by `defId - 1` (the
@@ -155,8 +156,11 @@ export class WorldBridge {
     private readonly white: Texture,
     private readonly resolver: TextureResolver,
   ) {
-    this.unsubs.push(client.onZoneTiles((zoneId, tiles) => this.onZoneTiles(zoneId, tiles)));
-    this.unsubs.push(client.onZoneThings((zoneId, things) => this.onZoneThings(zoneId, things)));
+    this.unsubs.push(
+      client.onColdObjects((zoneId, typeReference, kinds) =>
+        this.onColdObjects(zoneId, typeReference, kinds),
+      ),
+    );
     this.unsubs.push(client.onZoneClosed((zoneId) => this.onZoneClosed(zoneId)));
     // A thing's footprint depends on its texture's aspect (see thingBox), which
     // isn't known until a real tier loads — re-seed the live things when one lands
@@ -238,7 +242,9 @@ export class WorldBridge {
    *  texture tier lands (aspect changed) so a thing's footprint updates in place.
    *  Cheap: a handful of stems, each firing this a couple times. */
   private reseedThings(): void {
-    for (const [zoneId, things] of this.zoneThingsRaw) this.onZoneThings(zoneId, things);
+    for (const row of this.coldRowsRaw.values()) {
+      this.onColdObjects(row.zoneId, row.typeReference, row.kinds);
+    }
   }
 
   /** Begin: place the anchor at the world origin and force the first client
@@ -284,16 +290,11 @@ export class WorldBridge {
   dispose(): void {
     for (const unsub of this.unsubs) unsub();
     this.unsubs.length = 0;
-    for (const ids of this.zonePrims.values()) {
+    for (const ids of this.coldPrims.values()) {
       for (const id of ids) this.viewport.removePrim(id);
     }
-    this.zonePrims.clear();
-    for (const ids of this.zoneThings.values()) {
-      for (const id of ids) this.viewport.removePrim(id);
-    }
-    this.zoneThings.clear();
-    this.zoneTilesRaw.clear();
-    this.zoneThingsRaw.clear();
+    this.coldPrims.clear();
+    this.coldRowsRaw.clear();
     this.client.removeAnchor(ANCHOR);
   }
 
@@ -304,8 +305,9 @@ export class WorldBridge {
   setContent(content: Content): void {
     this.content = content;
     this.refreshStems(); // the new corpus may retexture / recolour defs
-    for (const [zoneId, tiles] of this.zoneTilesRaw) this.onZoneTiles(zoneId, tiles);
-    for (const [zoneId, things] of this.zoneThingsRaw) this.onZoneThings(zoneId, things);
+    for (const row of this.coldRowsRaw.values()) {
+      this.onColdObjects(row.zoneId, row.typeReference, row.kinds);
+    }
   }
 
   // ── internals ───────────────────────────────────────────────────────
@@ -336,99 +338,88 @@ export class WorldBridge {
     return { active, hot: active + 2, warm: this.stickyActive + 4, cold: this.stickyActive + 6 };
   }
 
-  /** A zone's cold tile baseline arrived: re-seed its ground sprites. Clears only
-   *  this zone's tile sprites (a later cold row rewrites them) — its things are
-   *  untouched, they re-seed on their own deliveries. */
-  private onZoneTiles(zoneId: number, tiles: Uint8Array): void {
-    this.clearPrims(this.zonePrims, zoneId);
-    this.zoneTilesRaw.set(zoneId, tiles); // keep for a content hot-swap re-expand
+  /** A zone's cold-object ROW arrived (the object model). A `biome-tile` row paints the
+   *  ground (a 64×64 sprite per cell), a `biome-thing` row paints scattered sprites
+   *  (smaller, bottom-centred, above the ground); the row's `type_id` picks which. Keyed
+   *  per `(zone, type_reference)` so a zone's many rows (one per biome) coexist and each
+   *  re-delivery clears + repaints only itself. Unifies the old tiles/things painters. */
+  private onColdObjects(zoneId: number, typeReference: number, kinds: Uint32Array): void {
+    const key = `${zoneId}:${typeReference}`;
+    this.clearColdPrims(key);
+    this.coldRowsRaw.set(key, { zoneId, typeReference, kinds }); // keep for hot-swap re-expand
 
-    const flat = this.content.zoneTilePrims(zoneId, tiles); // [x, y, tint, geoColor, defId, …]
-    const ids: number[] = [];
-    for (let i = 0; i + 4 < flat.length; i += 5) {
-      const tileX = flat[i];
-      const tileY = flat[i + 1];
-      const tint = flat[i + 2];
-      const geoColor = flat[i + 3];
-      const defId = flat[i + 4];
-      ids.push(
-        this.viewport.addPrim({
-          texture: this.white,
-          textureName: textureNameFor(this.tileStems[defId - 1]),
-          x: tileX * SQUARE,
-          y: tileY * SQUARE,
-          width: SQUARE,
-          height: SQUARE,
-          tint,
-          geoColor,
-          packed: this.packedFor(this.tilePacked, defId),
-          seed: cellSeed(tileX, tileY),
-        }),
-      );
-    }
-    if (ids.length) this.zonePrims.set(zoneId, ids);
-  }
-
-  /** A zone's cold thing baseline arrived: re-seed its scattered-thing sprites
-   *  (the worldgen flora). Each draws smaller than a tile, centred in its cell and
-   *  above the ground. Clears only this zone's thing sprites first; an empty
-   *  delivery just clears them. */
-  private onZoneThings(zoneId: number, things: BigUint64Array): void {
-    this.clearPrims(this.zoneThings, zoneId);
-    this.zoneThingsRaw.set(zoneId, things); // keep for a content hot-swap re-expand
-
-    const flat = this.content.zoneThingPrims(zoneId, things); // [x, y, tint, geoColor, defId, data, variant, …]
+    const isTile = this.content.objectTypeId(typeReference) === this.content.typeBiomeTile();
+    // [tileX, tileY, tint, geoColor, kindId, data, variant, …]
+    const flat = this.content.zoneColdPrims(zoneId, typeReference, kinds);
     const ids: number[] = [];
     for (let i = 0; i + 6 < flat.length; i += 7) {
       const tileX = flat[i];
       const tileY = flat[i + 1];
       const tint = flat[i + 2];
       const geoColor = flat[i + 3];
-      const defId = flat[i + 4];
-      const rotation = flat[i + 5];
+      const kindId = flat[i + 4];
+      const data = flat[i + 5];
       const variant = flat[i + 6];
-      const tex = thingTexture(this.thingStems[defId - 1], rotation, variant);
-      const { w, h } = this.thingBox(defId, tex.name);
-      ids.push(
-        this.viewport.addPrim({
-          texture: this.white,
-          textureName: tex.name,
-          flipX: tex.flipX,
-          cell: tex.cell,
-          // Bottom-CENTRED on the cell: horizontally centred, base on the cell's
-          // bottom edge, so a taller-than-a-cell sprite (a tree) rises past the
-          // cell it occupies rather than overflowing symmetrically.
-          x: tileX * SQUARE + (SQUARE - w) / 2,
-          y: tileY * SQUARE + SQUARE - h,
-          width: w,
-          height: h,
-          tint,
-          geoColor,
-          packed: this.packedFor(this.thingPacked, defId),
-          // Cold worldgen things don't move → seed by their world cell (their tile_seed).
-          seed: cellSeed(tileX, tileY),
-          zIndex: this.thingZ(tileY),
-        }),
-      );
+      if (isTile) {
+        ids.push(
+          this.viewport.addPrim({
+            texture: this.white,
+            textureName: textureNameFor(this.tileStems[kindId - 1]),
+            x: tileX * SQUARE,
+            y: tileY * SQUARE,
+            width: SQUARE,
+            height: SQUARE,
+            tint,
+            geoColor,
+            packed: this.packedFor(this.tilePacked, kindId),
+            seed: cellSeed(tileX, tileY),
+          }),
+        );
+      } else {
+        const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
+        const { w, h } = this.thingBox(kindId, tex.name);
+        ids.push(
+          this.viewport.addPrim({
+            texture: this.white,
+            textureName: tex.name,
+            flipX: tex.flipX,
+            cell: tex.cell,
+            // Bottom-CENTRED on the cell: base on the cell's bottom edge, so a
+            // taller-than-a-cell sprite (a tree) rises past its cell.
+            x: tileX * SQUARE + (SQUARE - w) / 2,
+            y: tileY * SQUARE + SQUARE - h,
+            width: w,
+            height: h,
+            tint,
+            geoColor,
+            packed: this.packedFor(this.thingPacked, kindId),
+            // Cold objects don't move → seed by their world cell (their tile_seed).
+            seed: cellSeed(tileX, tileY),
+            zIndex: this.thingZ(tileY),
+          }),
+        );
+      }
     }
-    if (ids.length) this.zoneThings.set(zoneId, ids);
+    if (ids.length) this.coldPrims.set(key, ids);
   }
 
-  /** A zone's subscription closed: drop all of its sprites — tiles and cold things. */
+  /** A zone's subscription closed: drop all of its cold-object sprites (every row). */
   private onZoneClosed(zoneId: number): void {
-    this.clearPrims(this.zonePrims, zoneId);
-    this.clearPrims(this.zoneThings, zoneId);
-    this.zoneTilesRaw.delete(zoneId);
-    this.zoneThingsRaw.delete(zoneId);
+    const prefix = `${zoneId}:`;
+    for (const key of [...this.coldPrims.keys()]) {
+      if (key.startsWith(prefix)) this.clearColdPrims(key);
+    }
+    for (const key of [...this.coldRowsRaw.keys()]) {
+      if (key.startsWith(prefix)) this.coldRowsRaw.delete(key);
+    }
   }
 
-  /** Remove a zone's sprites from one of the per-zone sprite maps (tiles or cold
-   *  things) and forget them. */
-  private clearPrims(map: Map<number, number[]>, zoneId: number): void {
-    const ids = map.get(zoneId);
+  /** Remove one cold ROW's sprites (keyed `${zoneId}:${typeReference}`) and forget them. */
+  private clearColdPrims(key: string): void {
+    const ids = this.coldPrims.get(key);
     if (ids) {
       for (const id of ids) this.viewport.removePrim(id);
-      map.delete(zoneId);
+      this.coldPrims.delete(key);
     }
   }
 }

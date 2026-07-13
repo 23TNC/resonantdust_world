@@ -88,26 +88,6 @@ pub fn zone_y_js(zone_id: u32) -> u8 {
     packed::zone_y(zone_id)
 }
 
-/// The `type_id` of a cold row's `object_type_reference` — the host reads it to route a
-/// `coldObjects` event to its ground painter ([`typeBiomeTile`]) or thing painter
-/// ([`typeBiomeThing`]) and pick the matching stem table.
-#[wasm_bindgen(js_name = objectTypeId)]
-pub fn object_type_id_js(type_reference: u32) -> u8 {
-    resonantdust_codec::object::type_ref_type_id(type_reference)
-}
-
-/// The `type_id` for biome-classified ground tiles (`biome-tile`).
-#[wasm_bindgen(js_name = typeBiomeTile)]
-pub fn type_biome_tile_js() -> u8 {
-    resonantdust_codec::object::TYPE_BIOME_TILE
-}
-
-/// The `type_id` for biome-scattered things (`biome-thing`).
-#[wasm_bindgen(js_name = typeBiomeThing)]
-pub fn type_biome_thing_js() -> u8 {
-    resonantdust_codec::object::TYPE_BIOME_THING
-}
-
 // ---------- content runtime (js feature) ----------
 //
 // The client's view of the DSL: load the fetched `.rd` corpus once, then answer
@@ -377,6 +357,26 @@ impl Content {
             out.push(object::kind_ref_variant_id(k) as f64);
         }
         out
+    }
+
+    /// The `type_id` of a cold row's `object_type_reference` — the host reads it to route
+    /// a `coldObjects` row to its ground painter ([`Content::type_biome_tile`]) or thing
+    /// painter ([`Content::type_biome_thing`]) and pick the matching stem table.
+    #[wasm_bindgen(js_name = objectTypeId)]
+    pub fn object_type_id(&self, type_reference: u32) -> u8 {
+        resonantdust_codec::object::type_ref_type_id(type_reference)
+    }
+
+    /// The `type_id` for biome-classified ground tiles (`biome-tile`).
+    #[wasm_bindgen(js_name = typeBiomeTile)]
+    pub fn type_biome_tile(&self) -> u8 {
+        resonantdust_codec::object::TYPE_BIOME_TILE
+    }
+
+    /// The `type_id` for biome-scattered things (`biome-thing`).
+    #[wasm_bindgen(js_name = typeBiomeThing)]
+    pub fn type_biome_thing(&self) -> u8 {
+        resonantdust_codec::object::TYPE_BIOME_THING
     }
 
     /// Render data for one MOBILE entity (a pawn — e.g. a wolf) at `(zone_id,

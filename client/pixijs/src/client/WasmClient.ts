@@ -123,6 +123,11 @@ export type ZoneTilesHandler = (zoneId: number, tiles: Uint8Array) => void;
  *  (`x:4 | y:4 | rotation:2 | object_id:12` each) — the worldgen-scattered flora.
  *  Fires alongside the tiles on every cold delivery; an empty array clears them. */
 export type ZoneThingsHandler = (zoneId: number, things: BigUint64Array) => void;
+/** A cold zone's OBJECT row arrived (the object model): `typeReference` is the row's
+ *  shared `object_type_reference` (type / subtype = biome / layer), `kinds` its members
+ *  as `object_kind_reference`s (u32 each). A `biome-tile` row is the ground, a
+ *  `biome-thing` row the scatter. Supersedes tiles/things; fires per cold row. */
+export type ColdObjectsHandler = (zoneId: number, typeReference: number, kinds: Uint32Array) => void;
 /** A zone's subscription closed — drop its entities. */
 export type ZoneClosedHandler = (zoneId: number) => void;
 
@@ -165,6 +170,7 @@ type WorldEvent =
   | { kind: "status"; message: string }
   | { kind: "zoneTiles"; zoneId: number; tiles: Uint8Array }
   | { kind: "zoneThings"; zoneId: number; things: BigUint64Array }
+  | { kind: "coldObjects"; zoneId: number; typeReference: number; kinds: Uint32Array }
   | {
       kind: "stateObject";
       zoneId: number;
@@ -240,6 +246,7 @@ export class WasmClient {
   private readonly loggedInCbs = new Set<(serverUrl: string) => void>();
   private readonly zoneTilesCbs = new Set<ZoneTilesHandler>();
   private readonly zoneThingsCbs = new Set<ZoneThingsHandler>();
+  private readonly coldObjectsCbs = new Set<ColdObjectsHandler>();
   private readonly zoneClosedCbs = new Set<ZoneClosedHandler>();
   private readonly stateObjectCbs = new Set<StateObjectHandler>();
   private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
@@ -436,6 +443,13 @@ export class WasmClient {
     return () => this.zoneThingsCbs.delete(cb);
   }
 
+  /** Subscribe to cold-zone OBJECT rows (the object model — biome-tile ground +
+   *  biome-thing scatter). Returns an unsubscribe. */
+  onColdObjects(cb: ColdObjectsHandler): () => void {
+    this.coldObjectsCbs.add(cb);
+    return () => this.coldObjectsCbs.delete(cb);
+  }
+
   /** Subscribe to zone-close notifications (a sub dropped). Returns an unsub. */
   onZoneClosed(cb: ZoneClosedHandler): () => void {
     this.zoneClosedCbs.add(cb);
@@ -551,6 +565,9 @@ export class WasmClient {
         break;
       case "zoneThings":
         for (const cb of this.zoneThingsCbs) cb(ev.zoneId, ev.things);
+        break;
+      case "coldObjects":
+        for (const cb of this.coldObjectsCbs) cb(ev.zoneId, ev.typeReference, ev.kinds);
         break;
       case "stateObject":
         for (const cb of this.stateObjectCbs) {
