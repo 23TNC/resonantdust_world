@@ -2,6 +2,7 @@ import type { GameContext } from "../../GameContext";
 import { WorldScene } from "../world/WorldScene";
 import { Scene } from "../Scene";
 import { FormOverlay } from "./FormOverlay";
+import { debugParams } from "../../debug/urlParams";
 import {
   ENVIRONMENTS,
   gatewayUrlFor,
@@ -50,7 +51,13 @@ export class LoginScene extends Scene {
   onEnter(ctx: GameContext): void {
     this.overlay = new FormOverlay(ctx.uiEditMode);
     this.overlay.mount();
+    // Debug convenience: `?user=<name>` auto-logs-in on the remembered server, skipping
+    // the form (see debug/urlParams). The form still renders (name prefilled) so a failed
+    // auto-login lands back on it.
+    const auto = debugParams().user;
+    if (auto) this.rememberedUsername = auto;
     this.render(ctx);
+    if (auto) void this.doLogin(ctx, auto, this.rememberedServer);
   }
 
   onExit(): void {

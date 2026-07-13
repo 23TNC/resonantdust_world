@@ -247,11 +247,12 @@ export class WorldBridge {
     }
   }
 
-  /** Begin: place the anchor at the world origin and force the first client
-   *  subscription. Call after login. */
-  start(): void {
+  /** Begin: centre the anchor on tile `(tileX, tileY)` (default the world origin) and
+   *  force the first client subscription. Call after login. `?x=/?y=` (debug/urlParams)
+   *  jump the camera straight to a cell instead of panning there. */
+  start(tileX = 0, tileY = 0): void {
     this.anchorTileX = NaN; // force the first client push
-    this.setAnchor(0, 0);
+    this.setAnchor(tileX * SQUARE, tileY * SQUARE);
   }
 
   /** Move the anchor to a world-px point: always recenter the viewport; push to the

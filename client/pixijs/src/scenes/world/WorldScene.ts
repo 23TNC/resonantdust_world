@@ -9,6 +9,7 @@ import { RtPanel } from "../../game/panels/rt/RtPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
 import { MoverLayer } from "../../game/world/MoverLayer";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
+import { debugParams } from "../../debug/urlParams";
 import { SQUARE } from "../../game/viewport/squareMath";
 
 /** Accumulated wheel `deltaY` that halves or doubles the zoom (one LOD octave). */
@@ -145,11 +146,21 @@ export class WorldScene extends Scene {
     this.viewport = new ViewportPanel(ctx, this.panelLayer);
     this.viewport.open();
 
-    // Wire the client's zone stream into the viewport and start the anchor at the
-    // origin — login has completed by the time this scene enters, so the first
-    // anchor immediately subscribes the zones around it.
+    // Debug conveniences (debug/urlParams): `?ambient=<f>` lifts the ambient floor to a
+    // neutral white boost so the scene reads clearly instead of fighting the lighting;
+    // `?x=/?y=` jump the initial camera centre to a tile.
+    const dbg = debugParams();
+    if (dbg.ambient !== null) {
+      const amb = this.viewport.view.lights.ambient;
+      amb.color = 0xffffff;
+      amb.intensity = dbg.ambient;
+    }
+
+    // Wire the client's zone stream into the viewport and start the anchor — login has
+    // completed by the time this scene enters, so the first anchor immediately subscribes
+    // the zones around it (at the origin, or the debug `?x=/?y=` tile).
     this.bridge = new WorldBridge(ctx.client, ctx.content, this.viewport.view, ctx.textureResolver.white, ctx.textureResolver);
-    this.bridge.start();
+    this.bridge.start(dbg.x ?? 0, dbg.y ?? 0);
     // Mobile entities (pawns) from the shard `state` stream — the bot-driven wolves,
     // drawn as an overlay above the world.
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.viewport.view);
