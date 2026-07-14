@@ -5,10 +5,12 @@ GC/find-or-mint/PACK, real binaries end-to-end). But the ✅ marks in the [statu
 mean **"the hot/core path works,"** not "every sub-feature of the design stage is built." This
 lists what's genuinely still open, so nothing is lost. Grouped by kind.
 
-## A. Simplifications inside "done" stages (the ✅s don't cover these)
+## A. Simplifications inside "done" stages — ✅ ALL CLOSED
 
 These were deliberately scoped out to land the working core; the design ([../spacetime-tables/])
-specifies them.
+specifies them. The full-design pass ([completion-log.md](completion-log.md) #1–#5) has now
+closed **every behavioral one** — only the `event_reference`-width *representation* note remains,
+and it's tied to the #5 re-key in section B.
 
 - ~~Verbs — only `MOVE`/`SPAWN`~~ — **DONE** ([completion-log](completion-log.md) #3): `DAMAGE`
   (actor-reading) implemented; more verbs are additive.
