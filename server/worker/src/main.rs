@@ -20,8 +20,9 @@ use resonantdust_tick::{domain::EntityState, vm};
 
 mod bindings;
 use bindings::shard::{
-    abort as _, claim as _, ready as _, resolve as _, stand_up as _, DbConnection,
-    EventLogTableAccess, StateLog, StateLogTableAccess, TicMetaTableAccess, TargetState,
+    abort as _, claim as _, mint_cold as _, ready as _, resolve as _, stand_up as _,
+    ColdTableAccess, DbConnection, EventLogTableAccess, StateLog, StateLogTableAccess,
+    StateTableAccess, TicMetaTableAccess, TargetState,
 };
 
 // event_log.status (mirror of resonantdust_pipeline::STATUS_*; kept local to avoid pulling the
@@ -80,6 +81,8 @@ async fn main() {
             .subscribe([
                 "SELECT * FROM event_log",
                 "SELECT * FROM state_log",
+                "SELECT * FROM state",
+                "SELECT * FROM cold",
                 "SELECT * FROM tic_meta",
             ]);
         shards.push(conn);
@@ -120,6 +123,7 @@ fn work_pass(conn: &DbConnection, worker_id: u16) {
             }
             STATUS_QUEUEING if ev.worker_reference == worker_id => {
                 for &target in &ev.targets {
+                    find_or_mint(conn, target); // cold target ⇒ promote hot (issue 005)
                     if let Err(err) = conn.reducers().stand_up(worker_id, ev.event_reference, target) {
                         tracing::warn!(%err, ev = ev.event_reference, target, "stand_up failed");
                     }
@@ -196,6 +200,42 @@ fn execute(conn: &DbConnection, worker_id: u16, ev: &bindings::shard::EventLog) 
     match conn.reducers().resolve(worker_id, ev.event_reference, results) {
         Ok(()) => tracing::info!(ev = ev.event_reference, targets = ev.targets.len(), "resolved"),
         Err(err) => tracing::warn!(%err, ev = ev.event_reference, "resolve failed"),
+    }
+}
+
+/// Cold target ⇒ promote it hot (find-or-mint). A **positional** `entity_reference` names a
+/// cold object by location; if no hot entity exists there yet, decode the cold object's kind and
+/// call `mint_cold` to seed it (keyed by the positional ref) + tombstone the cold slot. The
+/// worker does the decode because the module is payload-generic (docs/issues/005).
+fn find_or_mint(conn: &DbConnection, target: u64) {
+    use resonantdust_codec::object::{kind_ref_kind_id, kind_ref_x, kind_ref_y, type_ref_type_id};
+    use resonantdust_codec::refs::{entity_ref_is_positional, entity_ref_location, entity_ref_zone_id};
+
+    if !entity_ref_is_positional(target) {
+        return; // a normal hot target — nothing to promote
+    }
+    if conn.db().state().iter().any(|s| s.entity_key == target) {
+        return; // already hot at this location — idempotent
+    }
+    let zone = entity_ref_zone_id(target);
+    let loc = entity_ref_location(target);
+    let (x, y) = (loc & 0x0F, loc >> 4);
+    // Find the cold object sitting at this tile and read its kind + type.
+    let found = conn.db().cold().iter().filter(|c| c.zone_id == zone).find_map(|c| {
+        c.kinds
+            .iter()
+            .find(|&&k| kind_ref_x(k) == x && kind_ref_y(k) == y)
+            .map(|&k| (kind_ref_kind_id(k), type_ref_type_id(c.type_reference)))
+    });
+    let Some((kind_id, type_id)) = found else {
+        return; // nothing cold here
+    };
+    // tombstone: x:4 | y:4 | layer:4(=0) | type_id:4
+    let tombstone = ((x as u16) << 12) | ((y as u16) << 8) | (type_id as u16 & 0x0F);
+    if let Err(err) = conn.reducers().mint_cold(target, tombstone, kind_id, zone, loc, 0, 0, 0, 0) {
+        tracing::warn!(%err, target, "mint_cold failed");
+    } else {
+        tracing::info!(target, zone, loc, kind = kind_id, "cold → hot (find-or-mint)");
     }
 }
 

@@ -24,3 +24,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # (server/worker/ → repo/shared): this crate has no build compose, so it resolves on
 # the host tree (unlike the edge, which builds in-container against a bind-mount).
 resonantdust-tick = { path = "../../shared/tick" }
+# The codec — decode positional targets + cold objects for enqueue find-or-mint.
+resonantdust-codec = { path = "../../shared/codec" }

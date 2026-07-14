@@ -14,7 +14,7 @@
 //!
 //! The engine never runs the DSL — the worker does, then calls `resolve` with the results.
 
-pub use resonantdust_codec::refs::pack_minted_entity;
+pub use resonantdust_codec::refs::{entity_ref_zone_id, pack_minted_entity};
 
 // ── lifecycle status (event_log.status) ─────────────────────────────────────────
 /// Written by the issuer; no worker has taken it to stand up yet.
@@ -465,6 +465,37 @@ macro_rules! decl_tick_pipeline {
                     && ctx.db.holder().state_log_id().filter(r.id).count() == 0
             }).map(|r| r.id).collect();
             for id in drop { ctx.db.state_log().id().delete(id); }
+            Ok(())
+        }
+
+        /// **find-or-mint** a cold object into a hot entity keyed by its positional
+        /// `entity_reference` `target` (the cold object's location). Idempotent: if a hot entity
+        /// already exists at `target`, no-op. Else seed its resolved state from the (worker-
+        /// decoded) payload, promote, and append the `tombstone` (`x:4|y:4|layer:4|type_id:4`) to
+        /// the zone's `cold_removed` delta so the client omits it. The worker calls this in the
+        /// enqueue phase before `stand_up` when a target is positional (docs/issues/005).
+        #[reducer]
+        #[allow(clippy::too_many_arguments)]
+        pub fn mint_cold(ctx: &ReducerContext, target: u64, tombstone: u16, $( $pf: $pt, )*) -> Result<(), String> {
+            if ctx.db.state().entity_key().find(target).is_some() {
+                return Ok(()); // already hot at this location — idempotent
+            }
+            let tic = master_tic(ctx);
+            let row = ctx.db.state_log().insert(StateLog { id: 0, entity_key: target, tic, dirty: 0, $( $pf, )* });
+            promote(ctx, &row);
+            let zone = $crate::entity_ref_zone_id(target);
+            match ctx.db.cold_removed().zone_key().find(zone) {
+                Some(r) => {
+                    let mut removed = r.removed.clone();
+                    if !removed.contains(&tombstone) { removed.push(tombstone); }
+                    let version = r.version.saturating_add(1);
+                    ctx.db.cold_removed().zone_key().delete(zone);
+                    ctx.db.cold_removed().insert(ColdRemoved { zone_key: zone, removed, version });
+                }
+                None => {
+                    ctx.db.cold_removed().insert(ColdRemoved { zone_key: zone, removed: vec![tombstone], version: 1 });
+                }
+            }
             Ok(())
         }
 

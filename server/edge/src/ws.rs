@@ -570,15 +570,21 @@ async fn handle_interact(
     let found = shard.conn.db().cold().iter().filter(|c| c.zone_id == zone && type_ref_type_id(c.type_reference) == TYPE_BIOME_THING).find_map(|c| {
         c.kinds.iter().find(|&&k| kind_ref_x(k) == x && kind_ref_y(k) == y).map(|&k| (c.type_reference, kind_ref_kind_id(k)))
     });
-    let Some((type_reference, kind_id)) = found else {
+    let Some((type_reference, _kind_id)) = found else {
         send(out_tx, err_frame(&format!("interact: no cold thing at ({x},{y})")));
         return;
     };
-    let _location = cell(x, y);
-    // Cold→hot promotion is absorbed into enqueue's find-or-mint in the rewrite — it lands in
-    // S6 (docs/spacetime-implementation/s6-hot-cold.md). Until then, interact is a no-op.
-    let _ = (type_reference, kind_id);
-    send(out_tx, err_frame("interact: cold unpack deferred to S6 (rewrite in progress)"));
+    let _ = type_reference;
+    // Target the cold object by its POSITIONAL entity_reference; the worker's enqueue
+    // find-or-mint promotes it hot (kind from cold) before the action runs (issue 005). An
+    // empty action program just makes it hot (interact = "bring it to life"); richer verbs later.
+    use resonantdust_codec::refs::{pack_positional_entity, ENTITY_TYPE_ZONE_CELL};
+    let target = pack_positional_entity(ENTITY_TYPE_ZONE_CELL, zone, cell(x, y), 0);
+    if let Err(err) = shard.conn.reducers.append(Vec::new(), vec![target]) {
+        send(out_tx, err_frame(&format!("interact: request failed: {err}")));
+    } else {
+        tracing::info!(zone, x, y, target, "interact → cold target queued (worker will mint)");
+    }
 }
 
 fn now_ms() -> u64 {

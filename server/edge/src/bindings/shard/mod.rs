@@ -27,6 +27,7 @@ pub mod append_reducer;
 pub mod bump_reducer;
 pub mod claim_reducer;
 pub mod drop_timed_out_reducer;
+pub mod mint_cold_reducer;
 pub mod ready_reducer;
 pub mod resolve_reducer;
 pub mod seed_cold_row_reducer;
@@ -69,6 +70,7 @@ pub use append_reducer::append;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
 pub use drop_timed_out_reducer::drop_timed_out;
+pub use mint_cold_reducer::mint_cold;
 pub use ready_reducer::ready;
 pub use resolve_reducer::resolve;
 pub use seed_cold_row_reducer::seed_cold_row;
@@ -101,6 +103,17 @@ pub enum Reducer {
         event_reference: u64,
 }    ,
     DropTimedOut ,
+    MintCold {
+        target: u64,
+        tombstone: u16,
+        kind: u16,
+        zone_id: u32,
+        location: u8,
+        rotation: u8,
+        offset: u8,
+        data_0: u64,
+        data_1: u64,
+}    ,
     Ready {
         worker_reference: u16,
         event_reference: u64,
@@ -149,6 +162,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::Bump { .. } => "bump",
             Reducer::Claim { .. } => "claim",
             Reducer::DropTimedOut => "drop_timed_out",
+            Reducer::MintCold { .. } => "mint_cold",
             Reducer::Ready { .. } => "ready",
             Reducer::Resolve { .. } => "resolve",
             Reducer::SeedColdRow { .. } => "seed_cold_row",
@@ -190,7 +204,28 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }),
             Reducer::DropTimedOut => __sats::bsatn::to_vec(&drop_timed_out_reducer::DropTimedOutArgs {
                 }),
-Reducer::Ready{
+Reducer::MintCold{
+                target,
+                tombstone,
+                kind,
+                zone_id,
+                location,
+                rotation,
+                offset,
+                data_0,
+                data_1,
+}             => __sats::bsatn::to_vec(&mint_cold_reducer::MintColdArgs {
+                target: target.clone(),
+                tombstone: tombstone.clone(),
+                kind: kind.clone(),
+                zone_id: zone_id.clone(),
+                location: location.clone(),
+                rotation: rotation.clone(),
+                offset: offset.clone(),
+                data_0: data_0.clone(),
+                data_1: data_1.clone(),
+}),
+            Reducer::Ready{
                 worker_reference,
                 event_reference,
 }             => __sats::bsatn::to_vec(&ready_reducer::ReadyArgs {
