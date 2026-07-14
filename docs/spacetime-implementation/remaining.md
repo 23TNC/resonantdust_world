@@ -24,10 +24,10 @@ specifies them.
   target's value folds all its events in `event_reference` order.
 - ~~No operand-read defer (`read_rule`)~~ — **DONE** ([completion-log](completion-log.md) #3):
   actor-reads defer until the actor is settled through `≤ T−1`.
-- **Control flow is await-gate only.** S5 implements `[LITERAL(timeout), ALIAS, ACTION(AWAIT),
-  body]` + defer/abort. The **forward `SKIP` branch / `? then : else`** conditional and a
-  **multi-action vector per row** are not implemented; `OBJECT`/`ALIAS` beyond the gate are
-  stubs (push-payload). ([../spacetime-tables/event-dsl.md].)
+- ~~Control flow is await-gate only~~ — **DONE** ([completion-log](completion-log.md) #5): the
+  forward `SKIP` branch (`? then : else` via `encode_if`), `FAIL` halt, and multi-action vectors
+  are implemented + tested. `OBJECT` now feeds a branch condition (actor read); `ALIAS` remains
+  the worker-level await gate by design.
 - ~~`RUNNING`-row recovery~~ — **DONE** ([completion-log](completion-log.md) #2): re-claim on lease expiry.
 - **`event_reference` width.** The `ALIAS` word carries a `u32`; `event_reference` is a `u64` PK.
   Fine while refs are small; reconcile with the hot_reference re-key (#5).

@@ -10,14 +10,16 @@
 //!
 //! Verbs so far: `MOVE`/`SPAWN` (data-carrying, no read) and `DAMAGE` (actor-reading — an
 //! `OBJECT` operand resolves to the actor's hp via [`Reads`], and a live actor's blow lands).
-//! Action data (`[u64; 2]`) rides as `LITERAL` words — two per `u64` (lo then hi). `AWAIT` is a
-//! worker-level gate ([`await_gate`]); the `SKIP` branch is a designed-but-optional refinement
-//! (the row model expresses `? then : else` as await-gate → proceed / timeout → fail).
+//! Action data (`[u64; 2]`) rides as `LITERAL` words — two per `u64` (lo then hi). Control flow:
+//! `AWAIT` is a worker-level gate ([`await_gate`]); within a program, the **forward-only `SKIP`**
+//! encodes `? then : else` ([`encode_if`]) and `FAIL` aborts — no backward jumps, so a program is
+//! bounded. A program may carry **multiple action words** (a multi-verb row: e.g. `SPAWN` then
+//! `MOVE`), applied left-to-right over the target's scratch state.
 
 use crate::domain::{self, EntityState, Event};
 use resonantdust_codec::event_word::{
     pack_word, word_op_code, word_payload, word_server_reference, ACTION_AWAIT, ACTION_DAMAGE,
-    ACTION_MOVE, ACTION_SPAWN, OP_ACTION, OP_ALIAS, OP_LITERAL, OP_OBJECT,
+    ACTION_FAIL, ACTION_MOVE, ACTION_SKIP, ACTION_SPAWN, OP_ACTION, OP_ALIAS, OP_LITERAL, OP_OBJECT,
 };
 use resonantdust_codec::refs::{entity_ref_id, entity_ref_mint_server};
 
@@ -48,40 +50,74 @@ fn domain_action(codec_action: u32) -> u16 {
 }
 
 /// Run a row's `actions` program over `base`, producing the target's new [`EntityState`].
-/// Hot path: `LITERAL`s push action data; an `ACTION` word pops its data and applies the
-/// verb via [`domain::apply_event`]. `OBJECT`/`ALIAS` are accepted but not yet consumed
-/// (operand reads + await are S5).
+/// `LITERAL`s push data; `OBJECT` pushes an actor read; an `ACTION` word pops its operands and
+/// applies its verb. Control flow is **forward-only** (D1): `SKIP` pops a `LITERAL` word-count and
+/// a boolean and jumps forward when the boolean is false (the `? then : else` primitive); `FAIL`
+/// halts the program (the row aborts, producing no further effect). No backward jumps ⇒ bounded.
+/// `ALIAS` (await) is resolved at the worker level — a no-op in a pure run.
 pub fn run(actions: &[u64], base: EntityState, reads: &dyn Reads) -> EntityState {
     let mut stack: Vec<u64> = Vec::new();
     let mut state = base;
-    for &w in actions {
+    let mut i = 0;
+    while i < actions.len() {
+        let w = actions[i];
+        i += 1;
         match word_op_code(w) {
             OP_LITERAL => stack.push(word_payload(w) as u64),
             // An OBJECT actor operand resolves to the actor's hp (via the reader) — 0 if
             // absent/unsettled/dead. Actor-reading verbs (DAMAGE) consume it.
             OP_OBJECT => stack.push(reads.actor_hp(word_server_reference(w), word_payload(w))),
-            OP_ACTION => {
-                let action = word_payload(w);
-                if action == ACTION_DAMAGE {
-                    // [OBJECT(actor→hp), LITERAL(amount), DAMAGE]: a LIVE actor's blow lands.
+            OP_ACTION => match word_payload(w) {
+                // Forward-only branch: pop count + condition; skip `count` words when the
+                // condition is false (`skip-if-false`). An unconditional skip pushes `0` first.
+                ACTION_SKIP => {
+                    let count = stack.pop().unwrap_or(0) as usize;
+                    let cond = stack.pop().unwrap_or(0);
+                    if cond == 0 {
+                        i = (i + count).min(actions.len());
+                    }
+                }
+                // Abort the program: no further effects (the row's `FAIL` branch).
+                ACTION_FAIL => break,
+                // [OBJECT(actor→hp), LITERAL(amount), DAMAGE]: a LIVE actor's blow lands.
+                ACTION_DAMAGE => {
                     let amount = stack.pop().unwrap_or(0);
                     let actor_hp = stack.pop().unwrap_or(0);
                     if actor_hp > 0 {
                         state.data[0] = state.data[0].saturating_sub(amount);
                     }
-                } else {
-                    // Data-carrying verbs (MOVE/SPAWN): reconstruct the Event and apply.
+                }
+                // Data-carrying verbs (MOVE/SPAWN): reconstruct the Event and apply.
+                action => {
                     let d1 = pop_u64(&mut stack);
                     let d0 = pop_u64(&mut stack);
                     let ev = Event { action: domain_action(action), actor_key: 0, data: [d0, d1] };
                     state = domain::apply_event(state, &ev, None);
                 }
-            }
+            },
             OP_ALIAS => { /* await — resolved at the worker level; no-op in a pure run */ }
             _ => {}
         }
     }
     state
+}
+
+/// Encode `cond ? then : else` with the forward-only `SKIP` (D1). `cond` is a word stream that
+/// leaves a boolean on the stack (nonzero = true — e.g. an `OBJECT` actor read, or `lit(1)`);
+/// when it's false the guard `SKIP` jumps over the `then` block **and** the trailing unconditional
+/// skip, landing in `else`. When true, `then` runs and the unconditional skip jumps over `else`.
+pub fn encode_if(cond: Vec<u64>, then_block: Vec<u64>, else_block: Vec<u64>) -> Vec<u64> {
+    let mut v = cond;
+    // guard: cond false ⇒ skip the then-block + the 3-word unconditional skip that follows it.
+    v.push(lit((then_block.len() + 3) as u32));
+    v.push(pack_word(OP_ACTION, 0, ACTION_SKIP));
+    v.extend(then_block);
+    // after `then`, unconditionally skip the else-block (push `0` ⇒ skip-if-false always skips).
+    v.push(lit(0));
+    v.push(lit(else_block.len() as u32));
+    v.push(pack_word(OP_ACTION, 0, ACTION_SKIP));
+    v.extend(else_block);
+    v
 }
 
 // ── await gate (S5 — control flow) ──────────────────────────────────────────────
@@ -226,6 +262,54 @@ mod tests {
         assert_eq!(run(&encode_damage(actor, 25), victim, &dead).data[0], 100);
         // damage saturates at 0, never underflows
         assert_eq!(run(&encode_damage(actor, 999), victim, &live).data[0], 0);
+    }
+
+    #[test]
+    fn skip_branch_picks_then_or_else() {
+        // `cond ? move→0x22 : move→0x44` — the two branches land the pawn on different tiles.
+        let then_b = encode_move(0, 0x22, 0, 0);
+        let else_b = encode_move(0, 0x44, 0, 0);
+        let base = EntityState { kind: 9, ..EntityState::default() };
+        // cond TRUE (lit 1) → then-block runs, else skipped.
+        let prog_t = encode_if(vec![lit(1)], then_b.clone(), else_b.clone());
+        assert_eq!(run(&prog_t, base, &NoReads).location, 0x22, "true → then");
+        // cond FALSE (lit 0) → then skipped, else-block runs.
+        let prog_f = encode_if(vec![lit(0)], then_b.clone(), else_b.clone());
+        assert_eq!(run(&prog_f, base, &NoReads).location, 0x44, "false → else");
+    }
+
+    #[test]
+    fn skip_branch_condition_from_actor_read() {
+        use resonantdust_codec::refs::{pack_minted_entity, ENTITY_TYPE_PAWN};
+        // `actor_alive ? move→0x22 : move→0x44` — the OBJECT read is the condition.
+        let actor = pack_minted_entity(ENTITY_TYPE_PAWN, 42, 1);
+        let cond = vec![pack_word(OP_OBJECT, entity_ref_mint_server(actor), entity_ref_id(actor))];
+        let prog = encode_if(cond, encode_move(0, 0x22, 0, 0), encode_move(0, 0x44, 0, 0));
+        let base = EntityState { kind: 9, ..EntityState::default() };
+        // live actor (hp 30 ≠ 0) → then
+        assert_eq!(run(&prog, base, &StubReads { actor_id: 42, hp: 30 }).location, 0x22);
+        // dead actor (hp 0) → else
+        assert_eq!(run(&prog, base, &StubReads { actor_id: 42, hp: 0 }).location, 0x44);
+    }
+
+    #[test]
+    fn fail_halts_program() {
+        // `move→0x22 ; FAIL ; move→0x44` — FAIL aborts before the second move.
+        let mut prog = encode_move(0, 0x22, 0, 0);
+        prog.push(pack_word(OP_ACTION, 0, ACTION_FAIL));
+        prog.extend(encode_move(0, 0x44, 0, 0));
+        let got = run(&prog, EntityState { kind: 9, ..EntityState::default() }, &NoReads);
+        assert_eq!(got.location, 0x22, "FAIL halts — the post-FAIL move never applies");
+    }
+
+    #[test]
+    fn multi_action_vector_applies_in_order() {
+        // one program, two verbs: SPAWN (kind 42, loc 0x22) then MOVE (loc 0x33) — both land.
+        let mut prog = encode_spawn(42, 0, 0x22, 0, 0);
+        prog.extend(encode_move(0, 0x33, 0, 0));
+        let got = run(&prog, EntityState::default(), &NoReads);
+        assert_eq!(got.kind, 42, "spawn set the kind");
+        assert_eq!(got.location, 0x33, "the later move won");
     }
 
     #[test]

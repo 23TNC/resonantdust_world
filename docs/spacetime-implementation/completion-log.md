@@ -99,3 +99,24 @@ holder on its home shard** during the in-flight window (its stand-up is skipped 
 home shard's read-rule/GC don't "see" the incoming write until it lands — the design's accepted
 "eventually-consistent over a tic or two." The cross-shard *hold* (Phase-1) is the remaining
 sub-item; the convergent *write* (Phase-2) is done.
+
+### 5. Full control flow — forward `SKIP` branch (`? then : else`) + multi-action vectors ✅
+
+**What.** The interpreter's `run` is now index-driven and implements the D1 control flow: a
+**forward-only `SKIP`** action pops a `LITERAL` word-count + a boolean and jumps forward when the
+boolean is **false** (`skip-if-false`); `FAIL` halts the program (the row's abort branch, no
+further effect). [`encode_if(cond, then, else)`] composes these into `cond ? then : else` — the
+guard `SKIP` jumps over `then` + the trailing unconditional skip when `cond` is false, else `then`
+runs and the unconditional skip clears `else`. No backward jumps ⇒ **bounded execution** (the
+termination guarantee D1 relies on). A program may also carry **multiple action words** (a
+multi-verb row, e.g. `SPAWN` then `MOVE`), applied left-to-right over the target's scratch —
+already true of the loop, now locked by a test.
+
+**How verified.** Unit (4 new, 32 total): `cond ? move→A : move→B` lands **A when true, B when
+false**; the condition sourced from an **`OBJECT` actor read** (live actor → then, dead → else);
+`FAIL` halts before a following move; a two-verb program applies both in order. The interpreter is
+pure and runs via the *same* `vm::run` the worker already drives live for MOVE/SPAWN/DAMAGE, so no
+new integration surface — the branch rides the proven execute path.
+
+**Note.** `encode_if` is available for the edge/content to build branching programs; wiring a
+specific branching action into the edge is content-authoring, not a pipeline gap.
