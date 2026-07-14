@@ -38,14 +38,19 @@ fn shard_conn(shards: &Shards, id: u16) -> Option<&Arc<DbConnection>> {
     shards.iter().find(|(sid, _)| *sid == id).map(|(_, c)| c)
 }
 
-/// Which shard a target's resolved state lives on. A **positional** (cold) target is minted on
-/// the shard that owns its zone — i.e. always local, so it resolves against `my_shard`.
+/// Which shard a target's resolved state lives on. Two cases resolve **locally** (`my_shard`):
+/// a **positional** (cold) target is minted on the shard that owns its zone; and an **unminted**
+/// target (`mint_server == SERVER_REF_NONE`, i.e. 0 — a fresh spawn not yet bound to a server)
+/// is owned by whichever shard processes its event. Only a target explicitly minted by a
+/// *different* server is foreign.
 fn home_shard(target: u64, my_shard: u16) -> u16 {
-    use resonantdust_codec::refs::{entity_ref_is_positional, entity_ref_mint_server};
+    use resonantdust_codec::refs::{entity_ref_is_positional, entity_ref_mint_server, SERVER_REF_NONE};
     if entity_ref_is_positional(target) {
-        my_shard
-    } else {
-        entity_ref_mint_server(target)
+        return my_shard;
+    }
+    match entity_ref_mint_server(target) {
+        SERVER_REF_NONE => my_shard, // unminted ⇒ local (0 is "no server", never a real shard)
+        m => m,
     }
 }
 
