@@ -2,7 +2,7 @@
 
 ## Situation
 
-The full-design pass closed **section A** of [remaining.md](../spacetime-implementation/remaining.md)
+The full-design pass closed **section A** of [remaining.md](../work/spacetime-rewrite/remaining.md)
 — every behavioral mechanism (composition+gating, RUNNING recovery, actor-reads+read-rule,
 convergent cross-shard writes, control flow) is built + verified (`full-design 1..5`). What's left
 is a genuine fork.

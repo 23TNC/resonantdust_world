@@ -6,7 +6,7 @@
 > region-partition vs dynamic presence) and the **transfer saga** remain the design of
 > record; see [`data-shards.md`](data-shards.md) for the multi-shard-**class** routing plan
 > reconciled with the current `decl_tick_pipeline!` world, and
-> [`pipeline-generalization.md`](components/server/spacetime/pipeline/design/pipeline-generalization.md) §Pack/unpack for the transfer
+> [`pipeline-generalization.md`](../components/server/spacetime/pipeline/design/pipeline-generalization.md) §Pack/unpack for the transfer
 > saga on the generalized engine.
 
 **Status:** Phases 1–2 built (the `object_shard` module + codec `offset` helper);

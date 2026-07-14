@@ -110,3 +110,4 @@ A work-folder headers the component(s) + plan phase it executes; plans link back
 | a problem + how we resolved it / a decision between options | `work/<w>/{issues,forks}.md` |
 | something needing your input | `work/<w>/blockers.md` |
 | a cross-session hint for me (not project state) | `memory/` |
+| a superseded / pre-rewrite design (kept for history) | `docs/archive/` (with a pointer to what replaced it) |

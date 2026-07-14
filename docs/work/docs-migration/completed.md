@@ -19,3 +19,9 @@ chronological.
   `de-lighting.md` (design) + `client.md`, `zones-to-screen.md` (intent). Cross-cutting
   `sync.md` → `docs/intent/`. 33 outgoing + 12 incoming link-sets rewritten; `docs/references/`
   removed. Component READMEs written.
+- **2026-07-14** · **legacy archived + dev docs migrated** — superseded pre-rewrite designs
+  (`simulation`, `simulation-plan`, `gaps`, `data-shards`, `object-shard`) → `docs/archive/` with
+  a superseded-by map (+ CONVENTIONS archive rule). Dev docs → `components/dev/textures/design`
+  (`art-style`, `texture-paths`, `texture-layout/`) + `components/dev/scripts/art/plan`
+  (`sprite-gen-plan`). Decisions logged in [`forks.md`](forks.md). All 270 doc links verified
+  resolving.

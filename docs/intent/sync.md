@@ -1,7 +1,7 @@
 # Client/server sync — authoritative bitemporal event log + deterministic projection
 
 > **0.2 note (2026-07-09):** the **server** model below is superseded by the tick
-> pipeline in [`simulation.md`](../simulation.md) (`server_master`/`server_edge`/
+> pipeline in [`simulation.md`](../archive/simulation.md) (`server_master`/`server_edge`/
 > `server_simulation`, event/state split, per-object tic frontier). The **client**
 > model here — synced clock, render delay `D`, interpolate-by-`valid_at`,
 > gray-out — is **retained**.
@@ -13,7 +13,7 @@ position-streaming to future-stamped per-tile `free_things` rows and makes the
 client projector speed-aware. This doc is the plan for how every client stays in
 sync with the server for a RimWorld-like MMO simulation, and the incremental path
 to get there. Companion to [`client.md`](../components/client/pixijs/intent/client.md) and
-[`object-shard.md`](../object-shard.md).
+[`object-shard.md`](../archive/object-shard.md).
 
 ## The problem
 

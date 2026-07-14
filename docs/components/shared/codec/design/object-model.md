@@ -8,7 +8,7 @@ event log, the codec, the texture tree) builds against.
 > model are settled enough to build against; the texture-taxonomy naming and four
 > flagged decisions (§Open decisions) are still open. Supersedes the ad-hoc
 > "object == thing" language throughout the codebase and reconciles
-> [`object-shard.md`](../../../../object-shard.md), [`data-shards.md`](../../../../data-shards.md), and
+> [`object-shard.md`](../../../../archive/object-shard.md), [`data-shards.md`](../../../../archive/data-shards.md), and
 > [`pipeline-generalization.md`](../../../server/spacetime/pipeline/design/pipeline-generalization.md) under one addressing
 > scheme.
 
@@ -379,7 +379,7 @@ which: edge substitutes it in the queue, or the action references the crate
 
 The texture path mirrors the identity axes, so art and data share one vocabulary.
 
-**New layout** (supersedes [`texture-paths.md`](../../../../texture-paths.md)'s
+**New layout** (supersedes [`texture-paths.md`](../../../dev/textures/design/texture-paths.md)'s
 `category.subcategory/kind.subkind` scheme):
 
 ```

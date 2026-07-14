@@ -11,7 +11,7 @@
 
 How the tile-based world (biome-classified terrain + scattered trees/flora) moves
 onto the 0.2 tick pipeline, replacing the deleted `cold_zones` / `hot_*` tables.
-Realises gap **#5** in [`gaps.md`](../../../../../gaps.md) ("hot/cold world objects") and the
+Realises gap **#5** in [`gaps.md`](../../../../../archive/gaps.md) ("hot/cold world objects") and the
 **#6** layer plan. Decision (2026-07-10): **cold-blob first**, hot per-cell cells
 layered on after.
 

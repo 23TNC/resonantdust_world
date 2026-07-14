@@ -1,7 +1,7 @@
 # Sprite generation — plan
 
 How we generate directional creature/pawn sprites, given what we proved and the
-corrected perspective (see [art-style.md](art-style.md)). Backend is ComfyUI on
+corrected perspective (see [art-style.md](../../../textures/design/art-style.md)). Backend is ComfyUI on
 the unraid box, driven over its HTTP API; Claude does prompt authoring + visual QA.
 
 ## What we proved (grounding)

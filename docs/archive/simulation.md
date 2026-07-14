@@ -7,7 +7,7 @@ build** (cross-shard subscription feasibility) and **two scope decisions pending
 
 This doc covers the **server-side simulation architecture**: how the server computes
 world state in ticks across multiple SpacetimeDB shards. It is the companion to and
-partial supersession of [`sync.md`](intent/sync.md): `sync.md`'s **client** model (synced
+partial supersession of [`sync.md`](../intent/sync.md): `sync.md`'s **client** model (synced
 clock, render delay `D`, interpolate-by-`valid_at`, gray-out laggards) is **retained**;
 what changes is the **server** — from a single authoritative event-log-and-project
 loop into a three-process pipeline that pipelines simulation one tic ahead of what

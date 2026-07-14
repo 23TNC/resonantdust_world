@@ -1,7 +1,7 @@
 # Generalizing the tick pipeline — one engine, any data structure
 
-**Status:** In progress (2026-07-10), branch `0.2.2`. Extends [`simulation.md`](../../../../../simulation.md)
-(the tick engine) and [`object-shard.md`](../../../../../object-shard.md) (the transfer saga), and
+**Status:** In progress (2026-07-10), branch `0.2.2`. Extends [`simulation.md`](../../../../../archive/simulation.md)
+(the tick engine) and [`object-shard.md`](../../../../../archive/object-shard.md) (the transfer saga), and
 **supersedes** the cold-blob-first plan in [`world-on-pipeline.md`](../intent/world-on-pipeline.md).
 The generalization **core is built and proven** — see the status log below; the design
 sections after it are the original target, annotated where this session's decisions
@@ -346,7 +346,7 @@ doesn't matter. Keep genuine per-entity state math deterministic where cross-sha
 depend on it.)
 
 Provenance is generic (not pipeline-specific), so it lives in the engine core, and it
-**closes three open items** in [`gaps.md`](../../../../../gaps.md) #3: the pre-`receive` transfer-flag
+**closes three open items** in [`gaps.md`](../../../../../archive/gaps.md) #3: the pre-`receive` transfer-flag
 hop (a `pack` puts the source in transfer-state before emitting follow-ons), the manual
 cross-tic sequencing (the worker drives it), and the blind tombstone (verification, below).
 

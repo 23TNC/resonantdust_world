@@ -139,4 +139,4 @@ lets the cold store fold a zone into a handful of rows: one row per
 written once; each settled object costs only its 32-bit kind half. `unpack` promotes one
 kind half to a hot `state` entity; `pack` folds a settled hot entity back into the Vec.
 See [`docs/object-model.md`](../object-model.md) and
-[`docs/data-shards.md`](../../../../../data-shards.md).
+[`docs/data-shards.md`](../../../../../archive/data-shards.md).
