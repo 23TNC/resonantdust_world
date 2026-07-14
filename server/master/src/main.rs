@@ -15,7 +15,9 @@ use std::time::Duration;
 use spacetimedb_sdk::{DbContext, Table as _};
 
 mod bindings;
-use bindings::shard::{bump as _, tick_gc as _, DbConnection, TicMetaTableAccess};
+use bindings::shard::{
+    bump as _, drop_timed_out as _, tick_gc as _, DbConnection, TicMetaTableAccess,
+};
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -78,6 +80,9 @@ async fn main() {
                 .map(|m| m.master_tic)
                 .max()
                 .unwrap_or(0);
+            // The per-tic drop barrier: cancel stale enqueue/queueing rows *before* the tic
+            // rolls (docs/spacetime-tables/lifecycle.md — causality guard, no watermark).
+            let _ = conn.reducers().drop_timed_out();
             if let Err(err) = conn.reducers().bump(cur + 1) {
                 tracing::warn!(%err, to = cur + 1, "bump failed");
             }

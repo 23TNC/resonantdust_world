@@ -11,44 +11,66 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
+pub mod cold_type;
+pub mod cold_removed_type;
 pub mod event_log_type;
+pub mod holder_type;
 pub mod object_counter_type;
+pub mod open_rows_type;
 pub mod shard_meta_type;
 pub mod state_type;
 pub mod state_log_type;
+pub mod target_state_type;
 pub mod tic_meta_type;
-pub mod append_event_reducer;
+pub mod append_reducer;
 pub mod bump_reducer;
 pub mod claim_reducer;
+pub mod drop_timed_out_reducer;
+pub mod ready_reducer;
 pub mod resolve_reducer;
 pub mod seed_entity_reducer;
 pub mod set_shard_id_reducer;
-pub mod spawn_object_reducer;
+pub mod stand_up_reducer;
 pub mod tick_gc_reducer;
+pub mod cold_table;
+pub mod cold_removed_table;
 pub mod event_log_table;
+pub mod holder_table;
+pub mod open_rows_table;
 pub mod shard_meta_table;
 pub mod state_table;
 pub mod state_log_table;
 pub mod tic_meta_table;
 
+pub use cold_type::Cold;
+pub use cold_removed_type::ColdRemoved;
 pub use event_log_type::EventLog;
+pub use holder_type::Holder;
 pub use object_counter_type::ObjectCounter;
+pub use open_rows_type::OpenRows;
 pub use shard_meta_type::ShardMeta;
 pub use state_type::State;
 pub use state_log_type::StateLog;
+pub use target_state_type::TargetState;
 pub use tic_meta_type::TicMeta;
+pub use cold_table::*;
+pub use cold_removed_table::*;
 pub use event_log_table::*;
+pub use holder_table::*;
+pub use open_rows_table::*;
 pub use shard_meta_table::*;
 pub use state_table::*;
 pub use state_log_table::*;
 pub use tic_meta_table::*;
-pub use append_event_reducer::append_event;
+pub use append_reducer::append;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
+pub use drop_timed_out_reducer::drop_timed_out;
+pub use ready_reducer::ready;
 pub use resolve_reducer::resolve;
 pub use seed_entity_reducer::seed_entity;
 pub use set_shard_id_reducer::set_shard_id;
-pub use spawn_object_reducer::spawn_object;
+pub use stand_up_reducer::stand_up;
 pub use tick_gc_reducer::tick_gc;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -59,37 +81,26 @@ pub use tick_gc_reducer::tick_gc;
 /// to indicate which reducer caused the event.
 
 pub enum Reducer {
-        AppendEvent {
-        source_server_reference: u16,
-        actor_server_reference: u16,
-        requesting_server_reference: u16,
-        trigger_server_reference: u16,
-        trigger_event_reference: u64,
-        actor_key: u64,
-        target_key: u64,
-        action: u16,
-        data_0: u64,
-        data_1: u64,
+        Append {
+        actions: Vec::<u64>,
+        targets: Vec::<u64>,
 }    ,
     Bump {
         to_tic: u32,
 }    ,
     Claim {
-        server_id: u16,
-        entity_key: u64,
-        tic: u32,
+        worker_reference: u16,
+        event_reference: u64,
+}    ,
+    DropTimedOut ,
+    Ready {
+        worker_reference: u16,
+        event_reference: u64,
 }    ,
     Resolve {
-        server_id: u16,
-        entity_key: u64,
-        tic: u32,
-        kind: u16,
-        zone_id: u32,
-        location: u8,
-        rotation: u8,
-        offset: u8,
-        data_0: u64,
-        data_1: u64,
+        worker_reference: u16,
+        event_reference: u64,
+        results: Vec::<TargetState>,
 }    ,
     SeedEntity {
         entity_key: u64,
@@ -104,15 +115,10 @@ pub enum Reducer {
     SetShardId {
         shard_id: u16,
 }    ,
-    SpawnObject {
-        obj_type: u8,
-        kind: u16,
-        zone_id: u32,
-        location: u8,
-        rotation: u8,
-        offset: u8,
-        data_0: u64,
-        data_1: u64,
+    StandUp {
+        worker_reference: u16,
+        event_reference: u64,
+        target: u64,
 }    ,
     TickGc ,
 }
@@ -125,13 +131,15 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
-                        Reducer::AppendEvent { .. } => "append_event",
+                        Reducer::Append { .. } => "append",
             Reducer::Bump { .. } => "bump",
             Reducer::Claim { .. } => "claim",
+            Reducer::DropTimedOut => "drop_timed_out",
+            Reducer::Ready { .. } => "ready",
             Reducer::Resolve { .. } => "resolve",
             Reducer::SeedEntity { .. } => "seed_entity",
             Reducer::SetShardId { .. } => "set_shard_id",
-            Reducer::SpawnObject { .. } => "spawn_object",
+            Reducer::StandUp { .. } => "stand_up",
             Reducer::TickGc => "tick_gc",
             _ => unreachable!(),
 }
@@ -139,28 +147,12 @@ impl __sdk::Reducer for Reducer {
     #[allow(clippy::clone_on_copy)]
 fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
         match self {
-                        Reducer::AppendEvent{
-                source_server_reference,
-                actor_server_reference,
-                requesting_server_reference,
-                trigger_server_reference,
-                trigger_event_reference,
-                actor_key,
-                target_key,
-                action,
-                data_0,
-                data_1,
-}             => __sats::bsatn::to_vec(&append_event_reducer::AppendEventArgs {
-                source_server_reference: source_server_reference.clone(),
-                actor_server_reference: actor_server_reference.clone(),
-                requesting_server_reference: requesting_server_reference.clone(),
-                trigger_server_reference: trigger_server_reference.clone(),
-                trigger_event_reference: trigger_event_reference.clone(),
-                actor_key: actor_key.clone(),
-                target_key: target_key.clone(),
-                action: action.clone(),
-                data_0: data_0.clone(),
-                data_1: data_1.clone(),
+                        Reducer::Append{
+                actions,
+                targets,
+}             => __sats::bsatn::to_vec(&append_reducer::AppendArgs {
+                actions: actions.clone(),
+                targets: targets.clone(),
 }),
             Reducer::Bump{
                 to_tic,
@@ -168,36 +160,29 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 to_tic: to_tic.clone(),
 }),
             Reducer::Claim{
-                server_id,
-                entity_key,
-                tic,
+                worker_reference,
+                event_reference,
 }             => __sats::bsatn::to_vec(&claim_reducer::ClaimArgs {
-                server_id: server_id.clone(),
-                entity_key: entity_key.clone(),
-                tic: tic.clone(),
+                worker_reference: worker_reference.clone(),
+                event_reference: event_reference.clone(),
+}),
+            Reducer::DropTimedOut => __sats::bsatn::to_vec(&drop_timed_out_reducer::DropTimedOutArgs {
+                }),
+Reducer::Ready{
+                worker_reference,
+                event_reference,
+}             => __sats::bsatn::to_vec(&ready_reducer::ReadyArgs {
+                worker_reference: worker_reference.clone(),
+                event_reference: event_reference.clone(),
 }),
             Reducer::Resolve{
-                server_id,
-                entity_key,
-                tic,
-                kind,
-                zone_id,
-                location,
-                rotation,
-                offset,
-                data_0,
-                data_1,
+                worker_reference,
+                event_reference,
+                results,
 }             => __sats::bsatn::to_vec(&resolve_reducer::ResolveArgs {
-                server_id: server_id.clone(),
-                entity_key: entity_key.clone(),
-                tic: tic.clone(),
-                kind: kind.clone(),
-                zone_id: zone_id.clone(),
-                location: location.clone(),
-                rotation: rotation.clone(),
-                offset: offset.clone(),
-                data_0: data_0.clone(),
-                data_1: data_1.clone(),
+                worker_reference: worker_reference.clone(),
+                event_reference: event_reference.clone(),
+                results: results.clone(),
 }),
             Reducer::SeedEntity{
                 entity_key,
@@ -223,24 +208,14 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }             => __sats::bsatn::to_vec(&set_shard_id_reducer::SetShardIdArgs {
                 shard_id: shard_id.clone(),
 }),
-            Reducer::SpawnObject{
-                obj_type,
-                kind,
-                zone_id,
-                location,
-                rotation,
-                offset,
-                data_0,
-                data_1,
-}             => __sats::bsatn::to_vec(&spawn_object_reducer::SpawnObjectArgs {
-                obj_type: obj_type.clone(),
-                kind: kind.clone(),
-                zone_id: zone_id.clone(),
-                location: location.clone(),
-                rotation: rotation.clone(),
-                offset: offset.clone(),
-                data_0: data_0.clone(),
-                data_1: data_1.clone(),
+            Reducer::StandUp{
+                worker_reference,
+                event_reference,
+                target,
+}             => __sats::bsatn::to_vec(&stand_up_reducer::StandUpArgs {
+                worker_reference: worker_reference.clone(),
+                event_reference: event_reference.clone(),
+                target: target.clone(),
 }),
             Reducer::TickGc => __sats::bsatn::to_vec(&tick_gc_reducer::TickGcArgs {
                 }),
@@ -253,7 +228,11 @@ _ => unreachable!(),
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct DbUpdate {
-        event_log: __sdk::TableUpdate<EventLog>,
+        cold: __sdk::TableUpdate<Cold>,
+    cold_removed: __sdk::TableUpdate<ColdRemoved>,
+    event_log: __sdk::TableUpdate<EventLog>,
+    holder: __sdk::TableUpdate<Holder>,
+    open_rows: __sdk::TableUpdate<OpenRows>,
     shard_meta: __sdk::TableUpdate<ShardMeta>,
     state: __sdk::TableUpdate<State>,
     state_log: __sdk::TableUpdate<StateLog>,
@@ -268,7 +247,11 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
         for table_update in __sdk::transaction_update_iter_table_updates(raw) {
             match &table_update.table_name[..] {
 
-        "event_log" => db_update.event_log.append(event_log_table::parse_table_update(table_update)?),
+        "cold" => db_update.cold.append(cold_table::parse_table_update(table_update)?),
+    "cold_removed" => db_update.cold_removed.append(cold_removed_table::parse_table_update(table_update)?),
+    "event_log" => db_update.event_log.append(event_log_table::parse_table_update(table_update)?),
+    "holder" => db_update.holder.append(holder_table::parse_table_update(table_update)?),
+    "open_rows" => db_update.open_rows.append(open_rows_table::parse_table_update(table_update)?),
     "shard_meta" => db_update.shard_meta.append(shard_meta_table::parse_table_update(table_update)?),
     "state" => db_update.state.append(state_table::parse_table_update(table_update)?),
     "state_log" => db_update.state_log.append(state_log_table::parse_table_update(table_update)?),
@@ -295,7 +278,11 @@ impl __sdk::DbUpdate for DbUpdate {
     fn apply_to_client_cache(&self, cache: &mut __sdk::ClientCache<RemoteModule>) -> AppliedDiff<'_> {
                     let mut diff = AppliedDiff::default();
                 
-                diff.event_log = cache.apply_diff_to_table::<EventLog>("event_log", &self.event_log).with_updates_by_pk(|row| &row.event_reference);
+                diff.cold = cache.apply_diff_to_table::<Cold>("cold", &self.cold).with_updates_by_pk(|row| &row.cold_key);
+        diff.cold_removed = cache.apply_diff_to_table::<ColdRemoved>("cold_removed", &self.cold_removed).with_updates_by_pk(|row| &row.zone_key);
+        diff.event_log = cache.apply_diff_to_table::<EventLog>("event_log", &self.event_log).with_updates_by_pk(|row| &row.event_reference);
+        diff.holder = cache.apply_diff_to_table::<Holder>("holder", &self.holder).with_updates_by_pk(|row| &row.id);
+        diff.open_rows = cache.apply_diff_to_table::<OpenRows>("open_rows", &self.open_rows).with_updates_by_pk(|row| &row.id);
         diff.shard_meta = cache.apply_diff_to_table::<ShardMeta>("shard_meta", &self.shard_meta).with_updates_by_pk(|row| &row.id);
         diff.state = cache.apply_diff_to_table::<State>("state", &self.state).with_updates_by_pk(|row| &row.entity_key);
         diff.state_log = cache.apply_diff_to_table::<StateLog>("state_log", &self.state_log).with_updates_by_pk(|row| &row.id);
@@ -307,7 +294,11 @@ fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                                "cold" => db_update.cold.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "cold_removed" => db_update.cold_removed.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "holder" => db_update.holder.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "open_rows" => db_update.open_rows.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "shard_meta" => db_update.shard_meta.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "state" => db_update.state.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "state_log" => db_update.state_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
@@ -319,7 +310,11 @@ fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                                "cold" => db_update.cold.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "cold_removed" => db_update.cold_removed.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "holder" => db_update.holder.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "open_rows" => db_update.open_rows.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "shard_meta" => db_update.shard_meta.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "state" => db_update.state.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "state_log" => db_update.state_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
@@ -333,7 +328,11 @@ for table_rows in raw.tables {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
-        event_log: __sdk::TableAppliedDiff<'r, EventLog>,
+        cold: __sdk::TableAppliedDiff<'r, Cold>,
+    cold_removed: __sdk::TableAppliedDiff<'r, ColdRemoved>,
+    event_log: __sdk::TableAppliedDiff<'r, EventLog>,
+    holder: __sdk::TableAppliedDiff<'r, Holder>,
+    open_rows: __sdk::TableAppliedDiff<'r, OpenRows>,
     shard_meta: __sdk::TableAppliedDiff<'r, ShardMeta>,
     state: __sdk::TableAppliedDiff<'r, State>,
     state_log: __sdk::TableAppliedDiff<'r, StateLog>,
@@ -348,7 +347,11 @@ impl __sdk::InModule for AppliedDiff<'_> {
 
 impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     fn invoke_row_callbacks(&self, event: &EventContext, callbacks: &mut __sdk::DbCallbacks<RemoteModule>) {
-                callbacks.invoke_table_row_callbacks::<EventLog>("event_log", &self.event_log, event);
+                callbacks.invoke_table_row_callbacks::<Cold>("cold", &self.cold, event);
+        callbacks.invoke_table_row_callbacks::<ColdRemoved>("cold_removed", &self.cold_removed, event);
+        callbacks.invoke_table_row_callbacks::<EventLog>("event_log", &self.event_log, event);
+        callbacks.invoke_table_row_callbacks::<Holder>("holder", &self.holder, event);
+        callbacks.invoke_table_row_callbacks::<OpenRows>("open_rows", &self.open_rows, event);
         callbacks.invoke_table_row_callbacks::<ShardMeta>("shard_meta", &self.shard_meta, event);
         callbacks.invoke_table_row_callbacks::<State>("state", &self.state, event);
         callbacks.invoke_table_row_callbacks::<StateLog>("state_log", &self.state_log, event);
@@ -1004,14 +1007,22 @@ impl __sdk::SpacetimeModule for RemoteModule {
     type QueryBuilder = __sdk::QueryBuilder;
 
 fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
-                event_log_table::register_table(client_cache);
+                cold_table::register_table(client_cache);
+        cold_removed_table::register_table(client_cache);
+        event_log_table::register_table(client_cache);
+        holder_table::register_table(client_cache);
+        open_rows_table::register_table(client_cache);
         shard_meta_table::register_table(client_cache);
         state_table::register_table(client_cache);
         state_log_table::register_table(client_cache);
         tic_meta_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
-                "event_log",
+                "cold",
+        "cold_removed",
+        "event_log",
+        "holder",
+        "open_rows",
         "shard_meta",
         "state",
         "state_log",

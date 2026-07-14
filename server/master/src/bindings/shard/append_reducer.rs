@@ -12,51 +12,51 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct ClaimArgs {
-    pub worker_reference: u16,
-    pub event_reference: u64,
+pub(super) struct AppendArgs {
+    pub actions: Vec::<u64>,
+    pub targets: Vec::<u64>,
 }
 
-impl From<ClaimArgs> for super::Reducer {
-    fn from(args: ClaimArgs) -> Self {
-        Self::Claim {
-            worker_reference: args.worker_reference,
-            event_reference: args.event_reference,
+impl From<AppendArgs> for super::Reducer {
+    fn from(args: AppendArgs) -> Self {
+        Self::Append {
+            actions: args.actions,
+            targets: args.targets,
 }
 }
 }
 
-impl __sdk::InModule for ClaimArgs {
+impl __sdk::InModule for AppendArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `claim`.
+/// Extension trait for access to the reducer `append`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait claim {
-    /// Request that the remote module invoke the reducer `claim` to run as soon as possible.
+pub trait append {
+    /// Request that the remote module invoke the reducer `append` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`claim:claim_then`] to run a callback after the reducer completes.
-    fn claim(&self, worker_reference: u16,
-event_reference: u64,
+    /// /// Use [`append:append_then`] to run a callback after the reducer completes.
+    fn append(&self, actions: Vec::<u64>,
+targets: Vec::<u64>,
 ) -> __sdk::Result<()> {
-        self.claim_then(worker_reference, event_reference,  |_, _| {})
+        self.append_then(actions, targets,  |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `claim` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `append` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn claim_then(
+    fn append_then(
         &self,
-        worker_reference: u16,
-event_reference: u64,
+        actions: Vec::<u64>,
+targets: Vec::<u64>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -64,17 +64,17 @@ event_reference: u64,
     ) -> __sdk::Result<()>;
 }
 
-impl claim for super::RemoteReducers {
-    fn claim_then(
+impl append for super::RemoteReducers {
+    fn append_then(
         &self,
-        worker_reference: u16,
-event_reference: u64,
+        actions: Vec::<u64>,
+targets: Vec::<u64>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(ClaimArgs { worker_reference, event_reference,  }, callback)
+        self.imp.invoke_reducer_with_callback(AppendArgs { actions, targets,  }, callback)
     }
 }
 
