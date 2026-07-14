@@ -23,7 +23,7 @@ So the plan stops getting lost. The rule going forward:
 
 Every claim in these docs is tagged so you know how much to trust it:
 
-- ✅ **AGREED** — settled; recorded in [`object-model.md`](../../../../../../object-model.md) "Decided"
+- ✅ **AGREED** — settled; recorded in [`object-model.md`](../../../../../shared/codec/design/object-model.md) "Decided"
   or stated directly by the user.
 - ✏️ **DRAFT** — my reconstruction of what we discussed; **confirm before relying on it.**
 - ❓ **OPEN** — genuinely undecided; needs a call.

@@ -12,3 +12,10 @@ chronological.
   `risks`, `event-reference`), current (`README` + `divergences`), plan (`stages/` S0–S7 +
   `cleanup` + plan README) + component README. 100 relative links rewritten to the new depth; old
   folders removed. Dead modules kept OUT of design, placed in current (reality) + plan (deletion).
+- **2026-07-14** · **codec / gateway / pipeline / pixijs migrated + sync staged** — codec:
+  `docs/references/*` + `object-model*.md` → `components/shared/codec/{design,current}` (flags
+  the object-model open decisions → blocker B-1). gateway: `gateway.md` → intent. pipeline:
+  `pipeline-generalization.md` (design) + `world-on-pipeline.md` (intent). pixijs: `lighting.md`,
+  `de-lighting.md` (design) + `client.md`, `zones-to-screen.md` (intent). Cross-cutting
+  `sync.md` → `docs/intent/`. 33 outgoing + 12 incoming link-sets rewritten; `docs/references/`
+  removed. Component READMEs written.

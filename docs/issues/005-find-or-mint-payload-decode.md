@@ -31,7 +31,7 @@ Worker decodes a positional/cold target and calls a payload-parameterised `mint_
 
 ## Why
 
-- **A matches the design** ([hot-cold.md](../spacetime-tables/hot-cold.md), decision that the
+- **A matches the design** ([hot-cold.md](../components/server/spacetime/modules/shard/intent/hot-cold.md), decision that the
   worker does the game-logic decode; the module is a store) and keeps `decl_tick_pipeline!`
   payload-generic — the `mint_cold` reducer is emitted with `$pf` like `resolve`/`seed_entity`.
 - **B** re-couples the engine to the spatial payload, undoing the generalization.

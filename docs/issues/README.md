@@ -1,6 +1,6 @@
 # Implementation issues log
 
-Genuine problems hit while building the [spacetime rewrite](../spacetime-implementation/README.md),
+Genuine problems hit while building the [spacetime rewrite](../components/server/spacetime/modules/shard/plan/stages/README.md),
 one file each. Every entry: the **problem**, the **options** considered, the **choice**, and
 **why**. This is the decision trail — if a choice turns out wrong, the entry says what the
 alternatives were.

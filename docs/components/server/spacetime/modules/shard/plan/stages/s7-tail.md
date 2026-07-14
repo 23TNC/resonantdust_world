@@ -12,11 +12,11 @@ shard-class decisions.
   ([`server/spacetime/server/modules/`](../../../../../../../../server/spacetime/server/modules)) once the
   in-macro `cold` table carries their data end-to-end (edge seeds it; client decodes it).
 - **#4 · Geographic cold key.** Move `cold` from the flat `zone_id` key to `region_zone`
-  ([../references/spatial-references.md](../../../../../../../references/spatial-references.md)); reconcile against
+  ([../references/spatial-references.md](../../../../../../shared/codec/design/references/spatial-references.md)); reconcile against
   the legacy flat `zone_id` routing.
 - **#5 · Re-key hot identity + location index.** Close D3's deferral — re-key `state`/`state_log`
   to `hot_reference:u32` (+ `server_reference`) if we take that path
-  ([../references/hot-cold-references.md](../../../../../../../references/hot-cold-references.md)); otherwise
+  ([../references/hot-cold-references.md](../../../../../../shared/codec/design/references/hot-cold-references.md)); otherwise
   document why `u64 entity_key` stays. Either way, add the **location index** on `state`
   (realm·region·zone·position·layer·type_id) that enqueue's `find-or-mint` needs
   ([S3](s3-worker.md)).
@@ -26,7 +26,7 @@ shard-class decisions.
 - **#10 · Geographic `server_reference`.** Settle `server_reference = realm_reference:u8 +
   server_id:u8` vs. the functional `server_type:6 | server_id:10`, with the object-model
   shard-class work. Decide where `server_type` (routing) lives (the open fork:
-  [../references/reference-vs-id.md](../../../../../../../references/reference-vs-id.md)).
+  [../references/reference-vs-id.md](../../../../../../shared/codec/design/references/reference-vs-id.md)).
 
 ## Verify
 

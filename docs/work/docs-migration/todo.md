@@ -5,19 +5,15 @@ top-level docs into `docs/components/<group>/<name>/{design,intent,current,plan}
 we work each. Newest-first. (Physical `git mv` breaks code-comment doc-paths; those are fixed when
 that code is next touched, not now — we're only documenting.)
 
-- **2026-07-14** · **shared/codec** — the reference layouts (`docs/references/*`,
-  `docs/object-model.md`, `object-model-status.md`) are really codec's design/intent; the shard
-  currently links to them in place. Migrate → `components/shared/codec/{design,intent}` and
-  relink shard. (Includes the object-model's open decisions — feeds blocker B-1.)
-- **2026-07-14** · **server/edge** — `docs/gateway.md` (partly), worldgen notes, `sync.md` (the
-  sync model, cross-cutting client/edge/worker) → edge design/intent (+ `docs/intent/` for the
-  cross-cutting sync/pathfinding parts).
-- **2026-07-14** · **server/gateway** — `docs/gateway.md` → gateway design/intent.
-- **2026-07-14** · **client/{pixijs,core}** — `docs/client.md`, `zones-to-screen.md`,
-  `lighting.md`, `de-lighting.md` → pixijs design/intent; `sync.md` client half.
+- **2026-07-14** · **server/edge** — no edge-specific top-level doc remains (worldgen is inline in
+  `edge/src`); create `components/server/edge/{intent,current}` from the map's edge entry + the
+  worldgen/`world-on-pipeline` relationship when edge is worked. Low priority.
+- **2026-07-14** · **client/core** — split the client half out of pixijs's `intent/client.md` if
+  it turns out to describe `client/core` rather than the browser client.
 - **2026-07-14** · **dev/** — `docs/art-style.md`, `sprite-gen-plan.md`, `texture-layout/`,
-  `texture-paths.md` → `components/dev/{textures,scripts,dsl}`; the `bin/` → `dev/scripts/` reorg.
-- **2026-07-14** · **server/spacetime/pipeline** — `docs/pipeline-generalization.md`,
-  `world-on-pipeline.md` → pipeline design/intent.
+  `texture-paths.md`, `prompts/*` → `components/dev/{textures,scripts}`; the `bin/` → `dev/scripts/`
+  reorg. Fuzzy; docs vs assets (`prompts` are template *assets*, not docs) needs a call first.
 - **2026-07-14** · **legacy sweep** — `docs/data-shards.md` (dead cold_tiles/things design),
-  `object-shard.md`, `simulation*.md`, `gaps.md` — classify as retired / current / plan or delete.
+  `object-shard.md`, `simulation.md`, `simulation-plan.md`, `gaps.md`, `repo-layout.md` — these are
+  pre-rewrite / superseded designs. Decide: retire to an archive, fold into a component's
+  `current`, or delete. Needs a call — don't force them into a component's `design/`.

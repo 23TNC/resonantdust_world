@@ -4,7 +4,7 @@
 several **classes** of data shard, and how the edge routes to each. Reconciles the pre-0.2
 [`object-shard.md`](object-shard.md) (written against `region_shard`/`object_shard`/
 `cold_zones`/`hot_things`, most of which 0.2 merged away) with the current
-`decl_tick_pipeline!` world ([`pipeline-generalization.md`](pipeline-generalization.md)).
+`decl_tick_pipeline!` world ([`pipeline-generalization.md`](components/server/spacetime/pipeline/design/pipeline-generalization.md)).
 
 ## Where we are
 
@@ -18,7 +18,7 @@ Three data-shard **modules** exist, each its own DB, each a `decl_tick_pipeline!
 
 The edge **triple**-subscribes each zone: object `state` (shard DB) + tiles (tiles DB) +
 things (things DB), seeding each from worldgen if-absent
-([`zones-to-screen.md`](zones-to-screen.md)). Splitting tiles (dense, ~256 B/zone) from
+([`zones-to-screen.md`](components/client/pixijs/intent/zones-to-screen.md)). Splitting tiles (dense, ~256 B/zone) from
 things (sparse — only occupied `(cell, layer)` slots) keeps a mostly-empty zone tiny.
 **None of the three is truly class-routed** — objects fall back to the single default
 shard, tiles/things use hardcoded names. The deliberate single-shard-dev shortcut
@@ -106,7 +106,7 @@ The class dimension serves the static regime directly; the dynamic regime layers
    events → renderer.
 4. Client + pixijs: decode the row variant and render/consume it.
 
-Steps 3–4 are exactly what [`zones-to-screen.md`](zones-to-screen.md) did for `zone`; the
+Steps 3–4 are exactly what [`zones-to-screen.md`](components/client/pixijs/intent/zones-to-screen.md) did for `zone`; the
 class-routing work (step 2 + the edge resolve loop) is what promotes it from a hardcoded
 default to a real directory-listed shard.
 
@@ -120,7 +120,7 @@ per-class split. Promote `cold_tiles` (terrain) off `default_cold_tiles_db()` on
 
 ## Cold objects on the object model (0.2.3)
 
-The [object model](object-model.md) makes tiles and things the *same* thing — cold
+The [object model](components/shared/codec/design/object-model.md) makes tiles and things the *same* thing — cold
 **objects**, each an `object_reference`. A zone's cold data becomes **N `ColdRow`s
 split by (type, subtype, layer)** (`object-model.md` §4): each row = a shared
 `object_type_reference : u32` + a `Vec<object_kind_reference : u32>`. `biome-tile`

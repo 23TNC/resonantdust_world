@@ -4,7 +4,7 @@ The packed identity of a single **object** — the 0.2.3 object-model unit that 
 tiles and things the same kind of thing. One `u64`, split into two `u32` halves: a
 **shared** type half and a **per-instance** kind half.
 
-Canonical implementation: [`shared/codec/src/object.rs`](../../shared/codec/src/object.rs)
+Canonical implementation: [`shared/codec/src/object.rs`](../../../../../../shared/codec/src/object.rs)
 (pure integer math + roundtrip tests). This document is the spec that file implements;
 if they disagree, the code wins and this doc is the bug.
 
@@ -139,4 +139,4 @@ lets the cold store fold a zone into a handful of rows: one row per
 written once; each settled object costs only its 32-bit kind half. `unpack` promotes one
 kind half to a hot `state` entity; `pack` folds a settled hot entity back into the Vec.
 See [`docs/object-model.md`](../object-model.md) and
-[`docs/data-shards.md`](../data-shards.md).
+[`docs/data-shards.md`](../../../../../data-shards.md).

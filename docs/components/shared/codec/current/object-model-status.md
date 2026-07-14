@@ -4,8 +4,8 @@
 > object-model redesign is built end to end (spacetime → edge → client → pixijs),
 > deployed on the dev stack, and confirmed in the browser + the DB. This doc is the
 > **implementation record + runbook**; the *design* lives in
-> [`object-model.md`](object-model.md) (identity/reference bit-layouts, shard classes,
-> events) and [`data-shards.md`](data-shards.md) (the cold table on the generic module).
+> [`object-model.md`](../design/object-model.md) (identity/reference bit-layouts, shard classes,
+> events) and [`data-shards.md`](../../../../data-shards.md) (the cold table on the generic module).
 
 ---
 

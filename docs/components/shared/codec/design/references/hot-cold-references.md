@@ -18,7 +18,7 @@ See [`docs/object-model.md`](../object-model.md) §"cold-vs-hot" and
 
 ## `cold_reference : u32` — implemented
 
-`pack_cold_reference(...)` — [object.rs:280](../../shared/codec/src/object.rs:280).
+`pack_cold_reference(...)` — [object.rs:280](../../../../../../shared/codec/src/object.rs:280).
 
 ```
 bit  31            24 23           16 15               8 7        4 3        0
@@ -43,10 +43,10 @@ in the object's `object_kind_reference` inside the cold row, not in its address.
 **Realm is implied, not encoded.** A cold object lives in a **realm-scoped shard**, so
 the realm is named once by the shard, not repeated per object. Pair a `cold_reference`
 with a **`cold_server_id : u8`** to name the shard within the realm
-([object.rs:269](../../shared/codec/src/object.rs:269)).
+([object.rs:269](../../../../../../shared/codec/src/object.rs:269)).
 
 Its subscription key is `cold_ref_region_zone(r) -> u16` — the `region_zone_reference`,
-dropping position/layer/type ([object.rs:321](../../shared/codec/src/object.rs:321)).
+dropping position/layer/type ([object.rs:321](../../../../../../shared/codec/src/object.rs:321)).
 
 ---
 
@@ -74,7 +74,7 @@ its resting tile. A queued action pinned to a cold object *symbolically* is rebo
 
 There is **no `hot_reference` type in code today** (`rg hot_reference` → nothing). The
 32-bit `object_id` currently exists only as a **slice of the `u64` `entity_reference`**
-([`refs.rs`](../../shared/codec/src/refs.rs)):
+([`refs.rs`](../../../../../../shared/codec/src/refs.rs)):
 
 ```
 entity_reference : u64 = entity_type:8 | entity_id:32 | mint_server:16 | reserved:8
@@ -83,9 +83,9 @@ entity_reference : u64 = entity_type:8 | entity_id:32 | mint_server:16 | reserve
 ```
 
 The client pulls `object_id` out for JS safety (*"32-bit `object_id` (the minted
-`entity_id`, JS-safe)"*, [api.rs:149](../../client/core/src/api.rs:149);
-[web.rs:584](../../client/core/src/web.rs:584),
-[engine.rs:519](../../client/core/src/engine.rs:519)). So the *value* exists; the *named
+`entity_id`, JS-safe)"*, [api.rs:149](../../../../../../client/core/src/api.rs:149);
+[web.rs:584](../../../../../../client/core/src/web.rs:584),
+[engine.rs:519](../../../../../../client/core/src/engine.rs:519)). So the *value* exists; the *named
 `u32` abstraction* and the `pack_hot_reference` / `cold_reference ⇄ hot_reference` bridge
 do not.
 

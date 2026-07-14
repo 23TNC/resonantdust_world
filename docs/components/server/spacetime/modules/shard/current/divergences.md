@@ -58,7 +58,7 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
   `(zone_id, type_reference)`.
 - **Fix**: move to `region_zone` as the subscription/routing key as the object-model
   geography lands; reconcile against the legacy flat `zone_id`
-  ([../references/spatial-references.md](../../../../../../references/spatial-references.md)).
+  ([../references/spatial-references.md](../../../../../shared/codec/design/references/spatial-references.md)).
 
 ## 5. 🟡 Hot identity is a `u64 entity_key`, not a `u32 hot_reference`
 
@@ -66,7 +66,7 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
   (+ `server_reference` for global uniqueness).
 - **Code**: `state`/`state_log` key on `u64 entity_key`; the 32-bit `object_id` is only a
   *slice* of the `u64` minted `entity_reference`. No `hot_reference` type exists
-  ([../references/hot-cold-references.md](../../../../../../references/hot-cold-references.md)).
+  ([../references/hot-cold-references.md](../../../../../shared/codec/design/references/hot-cold-references.md)).
 - **Fix**: define `hot_reference` in `object.rs`; decide whether hot identity is the compact
   `u32` or stays the `u64`. **Open reconciliation.**
 
@@ -108,7 +108,7 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 
 ## 10. ⚪ `server_reference` layout unresolved
 
-- **Design** ([../references/reference-vs-id.md](../../../../../../references/reference-vs-id.md),
+- **Design** ([../references/reference-vs-id.md](../../../../../shared/codec/design/references/reference-vs-id.md),
   `object-model.md` §5): `server_reference:u16 = realm_reference:u8 + server_id:u8`.
 - **Code**: `refs.rs` has `server_reference:u16 = server_type:6 | server_id:10` (functional,
   not geographic). No home for `server_type` under the geographic layout.

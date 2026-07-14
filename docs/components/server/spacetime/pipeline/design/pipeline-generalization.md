@@ -1,8 +1,8 @@
 # Generalizing the tick pipeline — one engine, any data structure
 
-**Status:** In progress (2026-07-10), branch `0.2.2`. Extends [`simulation.md`](simulation.md)
-(the tick engine) and [`object-shard.md`](object-shard.md) (the transfer saga), and
-**supersedes** the cold-blob-first plan in [`world-on-pipeline.md`](world-on-pipeline.md).
+**Status:** In progress (2026-07-10), branch `0.2.2`. Extends [`simulation.md`](../../../../../simulation.md)
+(the tick engine) and [`object-shard.md`](../../../../../object-shard.md) (the transfer saga), and
+**supersedes** the cold-blob-first plan in [`world-on-pipeline.md`](../intent/world-on-pipeline.md).
 The generalization **core is built and proven** — see the status log below; the design
 sections after it are the original target, annotated where this session's decisions
 refined them.
@@ -87,7 +87,7 @@ Split zone data across **two specialized pipelines** — the payoff of the gener
    *Pack / unpack*), the saga being the provenance's consumer.
 4. **Client zone rendering** — per-layer, biome-resolved. The concrete edge→protocol→pixijs
    wiring gap list + the static-only short path (Scope A, no worker/saga needed) is in
-   [`zones-to-screen.md`](zones-to-screen.md).
+   [`zones-to-screen.md`](../../../../client/pixijs/intent/zones-to-screen.md).
 
 Not yet touched: worker/master rename (`server_simulation → server_worker`), the
 `server_reference` migration of `event_log`'s own server-id/action fields, `set_shard_id`
@@ -128,7 +128,7 @@ enough to name anything.
 
 ## Reference layouts
 
-All three live in [`shared/codec`](../shared/codec/src/packed.rs) — the one crate
+All three live in [`shared/codec`](../../../../../../shared/codec/src/packed.rs) — the one crate
 bind-mounted into the SpacetimeDB modules **and** linked by `server`/`server_worker`/
 client, so every process packs and unpacks with identical code (as `entity_key` already
 does today). Define the layouts and their `pack_*`/`unpack_*` helpers there once; changing
@@ -199,7 +199,7 @@ dispatching on `data_type`.
   cross-class action (`damage` targeting an entity in another pipeline). Cross-class
   actions target an entity in a *different* pipeline than the actor; without a shared
   namespace every pipeline would re-declare them. These verbs are already generic in
-  [`shared/tick/src/domain.rs`](../shared/tick/src/domain.rs), so a shared namespace
+  [`shared/tick/src/domain.rs`](../../../../../../shared/tick/src/domain.rs), so a shared namespace
   matches the code.
 
 ### `entity_type → data_type` map
@@ -277,7 +277,7 @@ structs (no generics), so a declarative `macro_rules!` that stamps out monomorph
 tables + reducers per (key, server-id, routing, payload) is the way — declarative-macro
 expansion runs first, so the ST attributes apply to the emitted items. Confirmed feasible:
 the module is already just `pub use resonantdust_pipeline::*`
-([`shard/src/lib.rs`](../spacetime/server/modules/shard/src/lib.rs)), and re-export
+([`shard/src/lib.rs`](../../../../../../spacetime/server/modules/shard/src/lib.rs)), and re-export
 registers tables fine.
 
 ```rust
@@ -296,9 +296,9 @@ Each shard module invokes it once with its own payload; interacting pipelines sh
 
 ## The worker — a generic `Domain`
 
-The scheduling half of [`shared/tick`](../shared/tick/src) (`priority.rs`, `read_rule.rs`,
+The scheduling half of [`shared/tick`](../../../../../../shared/tick/src) (`priority.rs`, `read_rule.rs`,
 the fence, cross-shard routing) is **already generic over `entity_key: u64`** and needs no
-change. Only [`domain.rs`](../shared/tick/src/domain.rs) — the `EntityState` struct + the
+change. Only [`domain.rs`](../../../../../../shared/tick/src/domain.rs) — the `EntityState` struct + the
 per-action `apply_event` — is payload-specific. Lift it behind a trait:
 
 ```rust
@@ -346,7 +346,7 @@ doesn't matter. Keep genuine per-entity state math deterministic where cross-sha
 depend on it.)
 
 Provenance is generic (not pipeline-specific), so it lives in the engine core, and it
-**closes three open items** in [`gaps.md`](gaps.md) #3: the pre-`receive` transfer-flag
+**closes three open items** in [`gaps.md`](../../../../../gaps.md) #3: the pre-`receive` transfer-flag
 hop (a `pack` puts the source in transfer-state before emitting follow-ons), the manual
 cross-tic sequencing (the worker drives it), and the blind tombstone (verification, below).
 
@@ -398,7 +398,7 @@ every shard (the reader is not an input). Within a target it's phase+reference. 
 
 Pack/unpack (hot ↔ cold world objects) is **the transfer saga generalized** — not a
 bespoke cold-blob subsystem. This is what supersedes
-[`world-on-pipeline.md`](world-on-pipeline.md): hot objects/tiles/things live in their own
+[`world-on-pipeline.md`](../intent/world-on-pipeline.md): hot objects/tiles/things live in their own
 pipelines/shards; **zones are their own shard/pipeline and are the cold store**; a settled
 hot entity *packs into* a zone via ordinary events + cross-shard reads.
 

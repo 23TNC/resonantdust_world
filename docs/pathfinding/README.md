@@ -7,10 +7,10 @@ enough information for the worker **and** every client to reconstruct the whole
 trajectory independently. We store the intent; we derive the position.
 
 > **Status: DESIGN.** Written against the 0.2.3 tick pipeline
-> ([`pipeline-generalization.md`](../pipeline-generalization.md)), the action
+> ([`pipeline-generalization.md`](../components/server/spacetime/pipeline/design/pipeline-generalization.md)), the action
 > model in [`shared/tick/src/domain.rs`](../../shared/tick/src/domain.rs), and the
-> client sync model ([`sync.md`](../sync.md)). Terminology follows
-> [`object-model.md`](../object-model.md). Nothing here is built yet.
+> client sync model ([`sync.md`](../intent/sync.md)). Terminology follows
+> [`object-model.md`](../components/shared/codec/design/object-model.md). Nothing here is built yet.
 
 ---
 
@@ -152,7 +152,7 @@ walked each tic.
 
 ## 8. Client rendering — why the sync is invisible
 
-This slots straight into the existing model ([`sync.md`](../sync.md)): synced
+This slots straight into the existing model ([`sync.md`](../intent/sync.md)): synced
 clock + shared render delay **D** + interpolate-by-`valid_at`.
 
 - On receiving a move-intent, the client renders the object **in motion

@@ -275,7 +275,7 @@ The `marigold/` code is tracked; the venv and HF cache are git-ignored
 
 ## Open work
 
-1. **Renderer lighting pass — the blocker.** [AlbedoMap](../pixijs/src/game/viewport/AlbedoMap.ts)
+1. **Renderer lighting pass — the blocker.** [AlbedoMap](../../../../../pixijs/src/game/viewport/AlbedoMap.ts)
    bakes albedo only; nothing consumes the normal or depth. Until a lighting pass
    exists, flat albedo has nothing to restore its form. This — not another map — is
    what stands between "flat albedo on screen" and a lit, dimensional world.

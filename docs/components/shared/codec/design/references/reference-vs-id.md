@@ -1,7 +1,7 @@
 # "reference" vs "id"
 
 Two words with two precise, non-overlapping jobs across the codec
-([`shared/codec/`](../../shared/codec/src)) and the shard/pipeline. Keeping them
+([`shared/codec/`](../../../../../../shared/codec/src)) and the shard/pipeline. Keeping them
 straight is the whole reason the packed layouts read cleanly, so this is a naming
 contract, not a style preference.
 

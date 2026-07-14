@@ -26,7 +26,7 @@ new states" has no obvious fixed signature.
 
 ## Why
 
-- **A preserves the row-atomicity invariant** ([lifecycle.md](../spacetime-tables/lifecycle.md)):
+- **A preserves the row-atomicity invariant** ([lifecycle.md](../components/server/spacetime/modules/shard/intent/lifecycle.md)):
   same-shard targets commit in one transaction, exactly as the design requires.
 - **B breaks that invariant** — partial rows become visible and it reintroduces a per-row barrier
   we'd otherwise get for free from the single call.

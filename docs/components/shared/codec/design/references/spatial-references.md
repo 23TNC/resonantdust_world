@@ -11,7 +11,7 @@ bit  7        4 3        0
     └──────────┴──────────┘      lo = y / *_y   (0..16)
 ```
 
-Canonical impl: [`shared/codec/src/object.rs`](../../shared/codec/src/object.rs).
+Canonical impl: [`shared/codec/src/object.rs`](../../../../../../shared/codec/src/object.rs).
 See [reference-vs-id.md](reference-vs-id.md) for the "reference" vs "id" vocabulary.
 
 ## The four levels
@@ -42,7 +42,7 @@ is a `65 536 × 65 536` tile plane (~4.29 billion tiles).
 All four are packed and read by the **same** functions — there is no
 `pack_zone_reference` / `pack_realm_reference` today; they share the primitive:
 
-- `pack_position_reference(x, y) -> u8` — packs any level's `(hi, lo)` ([object.rs:232](../../shared/codec/src/object.rs:232)).
+- `pack_position_reference(x, y) -> u8` — packs any level's `(hi, lo)` ([object.rs:232](../../../../../../shared/codec/src/object.rs:232)).
 - `ref_hi(r) -> u8` — the `x` / `zone_x` / `region_x` / `realm_x` nibble.
 - `ref_lo(r) -> u8` — the `y` / `zone_y` / `region_y` / `realm_y` nibble.
 
@@ -54,7 +54,7 @@ bit-layouts.)
 ## Composite spatial references
 
 - **`region_zone_reference : u16`** = `region_reference:8 | zone_reference:8`
-  ([object.rs:251](../../shared/codec/src/object.rs:251)) — a reference **composed of two
+  ([object.rs:251](../../../../../../shared/codec/src/object.rs:251)) — a reference **composed of two
   references**. The zone-subscription key: a client names region + zone directly, no
   filter. `region_zone_region` / `region_zone_zone` split it back out.
 

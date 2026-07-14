@@ -3,15 +3,15 @@
 > **⚠️ SUPERSEDED (2026-07-11).** The **cold-blob `zone_data` side-table** storage in
 > this doc is retired. Zones are their **own module/pipeline** now (`server/spacetime/
 > server/modules/zone`), not a table bolted onto `shard`. The current, settled path to pixels
-> lives in [`zones-to-screen.md`](zones-to-screen.md); the storage design is in
-> [`pipeline-generalization.md`](pipeline-generalization.md) (`zone_tiles` + `zone_objects`).
+> lives in [`zones-to-screen.md`](../../../../client/pixijs/intent/zones-to-screen.md); the storage design is in
+> [`pipeline-generalization.md`](../design/pipeline-generalization.md) (`zone_tiles` + `zone_objects`).
 > This doc is kept for its **milestone framing** (static → hot per-cell → mutation) and
 > the exact client-restore notes, which remain valid. **Do not add a `zone_data` table to
 > the `shard` module.**
 
 How the tile-based world (biome-classified terrain + scattered trees/flora) moves
 onto the 0.2 tick pipeline, replacing the deleted `cold_zones` / `hot_*` tables.
-Realises gap **#5** in [`gaps.md`](gaps.md) ("hot/cold world objects") and the
+Realises gap **#5** in [`gaps.md`](../../../../../gaps.md) ("hot/cold world objects") and the
 **#6** layer plan. Decision (2026-07-10): **cold-blob first**, hot per-cell cells
 layered on after.
 

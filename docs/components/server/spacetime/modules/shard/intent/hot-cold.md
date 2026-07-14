@@ -17,7 +17,7 @@ the worker; it's just more actions in the log. This is the idea the code missed 
 
 Both references are `u32` on purpose: an event slot holds "a reference" and the **action**
 says whether that slot is cold or hot (no discriminator bit). See
-[../references/hot-cold-references.md](../../../../../../references/hot-cold-references.md) for the bit
+[../references/hot-cold-references.md](../../../../../shared/codec/design/references/hot-cold-references.md) for the bit
 layouts.
 
 ## Shard modules — one per shape, each hot **and** cold ✅
