@@ -265,23 +265,6 @@ export class TextureResolver {
     return pick >= 0 ? loaded.get(pick) ?? null : null;
   }
 
-  /** The aspect ratio (height ÷ width) of the best texture on hand for `stem`, or `1`
-   *  when nothing has loaded (dimensions unknown). A peek — it does NOT kick a load.
-   *  All LODs share the master's normalized ratio, so the value is stable once any
-   *  loads. */
-  aspect(stem: string | undefined): number {
-    if (!stem) return 1;
-    // Aspect is a geometry property — read it off the albedo map (always present).
-    const loaded = this.packed.get(mapKey(stem, "albedo"));
-    const tex = loaded?.values().next().value as Texture | undefined;
-    let a = tex && tex.width > 0 ? tex.height / tex.width : 1;
-    // A linked atlas's texture aspect is the WHOLE sheet's; one cell is `cols/rows` narrower/
-    // taller, so scale to the cell aspect the caller actually draws.
-    const e = this.manifest.entry(stem);
-    if (e?.grid) a *= e.grid[0] / e.grid[1];
-    return a;
-  }
-
   // ── loads ───────────────────────────────────────────────────────────────────
 
   /** Fetch + pack one LOD (idempotent, deduped). The URL is content-addressed by

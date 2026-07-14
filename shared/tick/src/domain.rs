@@ -48,6 +48,15 @@ pub fn action_phase(action: u16) -> Phase {
 /// shard). Position stays this entity's (a zone cell's key-derived location).
 pub const ACTION_RECEIVE: u16 = 0x001;
 
+/// **Spawn** (inbound): materialize an entity from nothing — set its `kind` + placement on a
+/// fresh (default) base. Inbound so a same-tic spawn lands before any data action reads the
+/// entity; reads no actor. This is how a pawn is minted through the event pipeline (an
+/// automated player's `spawn` intent) rather than a direct `seed_entity` write — the
+/// work-gen creates the pending row for the new target, and this action fills it in.
+/// `data[0]` = `zone_id:32 << 8 | location:8`; `data[1]` = `kind:16 << 16 | rotation:8 <<
+/// 8 | offset:8`.
+pub const ACTION_SPAWN: u16 = 0x002;
+
 /// Move to a new position (data). `data[0]` = `zone_id:32 << 8 | location:8`; `data[1]` =
 /// `rotation:8 | offset:8` (low bits).
 pub const ACTION_MOVE: u16 = 0x100;
@@ -146,9 +155,52 @@ pub fn pack_move(zone_id: u32, location: u8, rotation: u8, offset: u8) -> [u64; 
     ]
 }
 
+/// Encode a `spawn`'s event data: `data[0] = zone_id<<8 | location` (as `move`), `data[1] =
+/// kind<<16 | rotation<<8 | offset`. Spawn carries `kind` (which move does not) so a
+/// materialized entity is non-tombstone (`kind != 0`) and renders. The one place the layout
+/// is defined, so the edge injector and the worker agree.
+pub fn pack_spawn(kind: u16, zone_id: u32, location: u8, rotation: u8, offset: u8) -> [u64; 2] {
+    [
+        ((zone_id as u64) << 8) | location as u64,
+        ((kind as u64) << 16) | ((rotation as u64) << 8) | offset as u64,
+    ]
+}
+
 /// Encode a `damage` event: `data[0] = amount`.
 pub fn pack_damage(amount: u64) -> [u64; 2] {
     [amount, 0]
+}
+
+/// Facing values carried in [`EntityState::rotation`]. The client maps each to a directional
+/// sprite; **west is the east master mirrored** (no west art ships). `0=south, 1=east,
+/// 2=north, 3=west`.
+pub const FACE_SOUTH: u8 = 0;
+pub const FACE_EAST: u8 = 1;
+pub const FACE_NORTH: u8 = 2;
+pub const FACE_WEST: u8 = 3;
+
+/// The facing implied by a move `old_loc → new_loc` within one zone, or `None` if the cell
+/// didn't change (so the pawn keeps its prior facing). Cells are `y<<4 | x` (`+x` east, `+y`
+/// south — screen-down); the dominant axis wins, a diagonal tie favouring the horizontal
+/// (east/west) facing.
+fn facing_from_delta(old_loc: u8, new_loc: u8) -> Option<u8> {
+    let (ox, oy) = ((old_loc & 0x0F) as i32, (old_loc >> 4) as i32);
+    let (nx, ny) = ((new_loc & 0x0F) as i32, (new_loc >> 4) as i32);
+    let (dx, dy) = (nx - ox, ny - oy);
+    if dx == 0 && dy == 0 {
+        return None;
+    }
+    Some(if dx.abs() >= dy.abs() {
+        if dx > 0 {
+            FACE_EAST
+        } else {
+            FACE_WEST
+        }
+    } else if dy > 0 {
+        FACE_SOUTH
+    } else {
+        FACE_NORTH
+    })
 }
 
 /// An entity's hit points live in `data[0]`. `0` = dead.
@@ -179,10 +231,29 @@ fn is_tombstone(state: &EntityState) -> bool {
 /// `data[0]` from the target's hp (saturating at 0).
 pub fn apply_event(mut state: EntityState, ev: &Event, actor: Option<&EntityState>) -> EntityState {
     match ev.action {
-        ACTION_MOVE => {
+        ACTION_SPAWN => {
+            // Materialize: set kind + placement on the (default) base. Unlike MOVE, this
+            // also sets `kind`, so the resolved entity is non-tombstone and renders.
+            state.kind = ((ev.data[1] >> 16) & 0xFFFF) as u16;
             state.zone_id = (ev.data[0] >> 8) as u32;
             state.location = (ev.data[0] & 0xFF) as u8;
             state.rotation = ((ev.data[1] >> 8) & 0xFF) as u8;
+            state.offset = (ev.data[1] & 0xFF) as u8;
+        }
+        ACTION_MOVE => {
+            let new_zone = (ev.data[0] >> 8) as u32;
+            let new_loc = (ev.data[0] & 0xFF) as u8;
+            // Facing follows the direction of travel: the client picks the pawn's s/e/n sprite
+            // (and the west→mirrored-east flip) from this `rotation`. Derived within a zone from
+            // the old→new cell; a same-cell move or a cross-zone hop keeps the prior facing
+            // (cross-zone facing is a later concern — movers are single-zone today).
+            if new_zone == state.zone_id {
+                if let Some(rot) = facing_from_delta(state.location, new_loc) {
+                    state.rotation = rot;
+                }
+            }
+            state.zone_id = new_zone;
+            state.location = new_loc;
             state.offset = (ev.data[1] & 0xFF) as u8;
         }
         ACTION_DAMAGE => {
@@ -241,11 +312,68 @@ mod tests {
 
     #[test]
     fn move_sets_position_from_event() {
-        let base = EntityState { kind: 1, zone_id: 0, location: 10, ..Default::default() };
-        let ev = Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(7, 200, 2, 5) };
+        // Position + offset come from the event; rotation is DERIVED from the movement (not the
+        // event's rotation field). Base faces east, then moves (10,0)→(5,12) within zone 7 —
+        // dominant vertical, down → south.
+        let base = EntityState { kind: 1, zone_id: 7, location: loc(10, 0), rotation: FACE_EAST, ..Default::default() };
+        let ev = Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(7, loc(5, 12), 0, 5) };
         let out = apply_event(base, &ev, None); // move ignores the actor
-        assert_eq!((out.zone_id, out.location, out.rotation, out.offset), (7, 200, 2, 5));
+        assert_eq!((out.zone_id, out.location, out.offset), (7, loc(5, 12), 5));
+        assert_eq!(out.rotation, FACE_SOUTH, "rotation derived from movement, not the event");
         assert_eq!(out.kind, 1, "move leaves kind untouched");
+    }
+
+    #[test]
+    fn spawn_materializes_kind_and_placement_from_default_base() {
+        // A fresh (default, kind 0 = tombstone) base + a spawn → a live entity.
+        let ev = Event { action: ACTION_SPAWN, actor_key: 0, data: pack_spawn(7, 0, 40, 1, 0x88) };
+        let out = apply_event(EntityState::default(), &ev, None);
+        assert_eq!(out.kind, 7, "spawn sets kind so the entity is non-tombstone");
+        assert_eq!((out.zone_id, out.location, out.rotation, out.offset), (0, 40, 1, 0x88));
+    }
+
+    #[test]
+    fn spawn_then_move_resolves_in_phase_order() {
+        // Same-tic spawn (inbound) then move (data): the entity materializes, then relocates.
+        let events = [
+            (Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, 99, 0, 0) }, None),
+            (Event { action: ACTION_SPAWN, actor_key: 0, data: pack_spawn(7, 0, 5, 0, 0) }, None),
+        ];
+        let out = resolve_events::<Spatial>(EntityState::default(), &events);
+        assert_eq!(out.kind, 7, "spawn (inbound) applied");
+        assert_eq!(out.location, 99, "move (data) applied after spawn, so it wins position");
+    }
+
+    /// Cell index `y<<4 | x` — mirror of `codec::packed::cell`, inlined so the pure-tick
+    /// tests carry no codec dep.
+    fn loc(x: u8, y: u8) -> u8 {
+        (y << 4) | x
+    }
+
+    #[test]
+    fn facing_follows_direction_of_travel() {
+        assert_eq!(facing_from_delta(loc(5, 5), loc(8, 5)), Some(FACE_EAST)); // +x
+        assert_eq!(facing_from_delta(loc(8, 5), loc(5, 5)), Some(FACE_WEST)); // -x
+        assert_eq!(facing_from_delta(loc(5, 5), loc(5, 9)), Some(FACE_SOUTH)); // +y (down)
+        assert_eq!(facing_from_delta(loc(5, 9), loc(5, 5)), Some(FACE_NORTH)); // -y (up)
+        // Diagonal tie favours horizontal; a pure vertical-dominant move faces N/S.
+        assert_eq!(facing_from_delta(loc(5, 5), loc(7, 7)), Some(FACE_EAST));
+        assert_eq!(facing_from_delta(loc(5, 5), loc(6, 9)), Some(FACE_SOUTH));
+        // No move → no facing change.
+        assert_eq!(facing_from_delta(loc(5, 5), loc(5, 5)), None);
+    }
+
+    #[test]
+    fn move_sets_rotation_from_movement_and_keeps_it_when_still() {
+        let base = EntityState { kind: 7, zone_id: 0, location: loc(5, 5), rotation: FACE_SOUTH, ..Default::default() };
+        // Move west → rotation becomes west (so the client mirrors the east sprite).
+        let west = apply_event(base, &Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, loc(2, 5), 0, 0) }, None);
+        assert_eq!(west.rotation, FACE_WEST);
+        assert_eq!(west.location, loc(2, 5));
+        // A same-cell move keeps the prior facing (no spurious re-facing).
+        let still = apply_event(EntityState { rotation: FACE_NORTH, location: loc(2, 5), ..Default::default() },
+            &Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, loc(2, 5), 0, 0) }, None);
+        assert_eq!(still.rotation, FACE_NORTH);
     }
 
     #[test]
@@ -320,6 +448,7 @@ mod tests {
     #[test]
     fn action_phase_bands() {
         assert_eq!(action_phase(ACTION_RECEIVE), Phase::Inbound);
+        assert_eq!(action_phase(ACTION_SPAWN), Phase::Inbound);
         assert_eq!(action_phase(ACTION_MOVE), Phase::Data);
         assert_eq!(action_phase(ACTION_DAMAGE), Phase::Data);
         assert_eq!(action_phase(ACTION_TRANSFER), Phase::Outbound);

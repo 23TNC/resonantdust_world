@@ -73,13 +73,14 @@ async fn main() {
     loop {
         ticker.tick().await;
         for conn in &shards {
-            let cur = conn
-                .db()
-                .tic_meta()
-                .iter()
-                .map(|m| m.master_tic)
-                .max()
-                .unwrap_or(0);
+            // Debug freeze: while a shard's `tic_meta.paused` is set, don't advance its tic or
+            // run its drop sweep — the whole simulation on that shard holds still (set via the
+            // `set_paused` reducer, driven from the client's `/pause`).
+            let meta = conn.db().tic_meta().iter().max_by_key(|m| m.master_tic);
+            if meta.as_ref().map_or(false, |m| m.paused) {
+                continue;
+            }
+            let cur = meta.map(|m| m.master_tic).unwrap_or(0);
             // The per-tic drop barrier: cancel stale enqueue/queueing rows *before* the tic
             // rolls (docs/spacetime-tables/lifecycle.md — causality guard, no watermark).
             let _ = conn.reducers().drop_timed_out();

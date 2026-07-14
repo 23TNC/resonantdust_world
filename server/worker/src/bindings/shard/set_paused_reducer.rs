@@ -12,58 +12,64 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct TickGcArgs {
-    }
-
-impl From<TickGcArgs> for super::Reducer {
-    fn from(args: TickGcArgs) -> Self {
-        Self::TickGc
-}
+pub(super) struct SetPausedArgs {
+    pub paused: bool,
 }
 
-impl __sdk::InModule for TickGcArgs {
+impl From<SetPausedArgs> for super::Reducer {
+    fn from(args: SetPausedArgs) -> Self {
+        Self::SetPaused {
+            paused: args.paused,
+}
+}
+}
+
+impl __sdk::InModule for SetPausedArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `tick_gc`.
+/// Extension trait for access to the reducer `set_paused`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait tick_gc {
-    /// Request that the remote module invoke the reducer `tick_gc` to run as soon as possible.
+pub trait set_paused {
+    /// Request that the remote module invoke the reducer `set_paused` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`tick_gc:tick_gc_then`] to run a callback after the reducer completes.
-    fn tick_gc(&self, ) -> __sdk::Result<()> {
-        self.tick_gc_then( |_, _| {})
+    /// /// Use [`set_paused:set_paused_then`] to run a callback after the reducer completes.
+    fn set_paused(&self, paused: bool,
+) -> __sdk::Result<()> {
+        self.set_paused_then(paused,  |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `tick_gc` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `set_paused` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn tick_gc_then(
+    fn set_paused_then(
         &self,
-        
+        paused: bool,
+
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()>;
 }
 
-impl tick_gc for super::RemoteReducers {
-    fn tick_gc_then(
+impl set_paused for super::RemoteReducers {
+    fn set_paused_then(
         &self,
-        
+        paused: bool,
+
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(TickGcArgs {  }, callback)
+        self.imp.invoke_reducer_with_callback(SetPausedArgs { paused,  }, callback)
     }
 }
 

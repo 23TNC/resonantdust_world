@@ -15,6 +15,7 @@ use spacetimedb_sdk::__codegen::{
 pub struct TicMeta {
     pub id: u8,
     pub master_tic: u32,
+    pub paused: bool,
 }
 
 
@@ -29,6 +30,7 @@ impl __sdk::InModule for TicMeta {
 pub struct TicMetaCols {
     pub id: __sdk::__query_builder::Col<TicMeta, u8>,
     pub master_tic: __sdk::__query_builder::Col<TicMeta, u32>,
+    pub paused: __sdk::__query_builder::Col<TicMeta, bool>,
 }
 
 impl __sdk::__query_builder::HasCols for TicMeta {
@@ -37,6 +39,7 @@ impl __sdk::__query_builder::HasCols for TicMeta {
         TicMetaCols {
             id: __sdk::__query_builder::Col::new(table_name, "id"),
             master_tic: __sdk::__query_builder::Col::new(table_name, "master_tic"),
+            paused: __sdk::__query_builder::Col::new(table_name, "paused"),
 
         }
     }

@@ -13,15 +13,15 @@
 //! and lights per-fragment (ambient + directional sun today; point lights + depth shadows
 //! extend the shader in place). The depth composite is bound once the shadow pass lands.
 
-import { Buffer, BufferUsage, Container, Geometry, Mesh, Texture } from "pixi.js";
+import { Buffer, BufferUsage, Container, Geometry, Graphics, Mesh, Texture } from "pixi.js";
 import type { Renderer } from "pixi.js";
 import { LayoutNode } from "../layout/LayoutNode";
 import type { TextureResolver } from "../../textures";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 import type { RtChannel } from "../panels/rt/RtPanel";
-import { SquareCache, type PrimitiveSpec } from "./SquareCache";
+import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } from "./SquareCache";
 import { NOISE_FIELDS, PACKED_UNIFORM_LEN, type MaterialRegistry } from "./material";
-import { SQUARE } from "./squareMath";
+import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { makeLightingShader, type LightingShader } from "./lightingShader";
 import { LightRig } from "../lighting/LightRig";
 import { ShadowPass, type ShadowCaster } from "./shadowPass";
@@ -30,38 +30,72 @@ import { ShadowPass, type ShadowCaster } from "./shadowPass";
  *  spreads that over a few frames so the first open never hitches. */
 const BAKE_BUDGET = 128;
 
+/** Minimum cold squares baked per frame regardless of warm load — so a warm whole-window
+ *  flood (fresh window / LOD swap re-dirties every warm slot, mostly empty) can't starve the
+ *  static world of bake budget. */
+const COLD_BAKE_FLOOR = 64;
+
 /** The wedge's ground angle (0 = flat / depth vertical, π/2 = standing / depth N–S). */
 const GROUND_ANGLE = (65 * Math.PI) / 180;
 
-/** The caster's ORIGIN as a fraction down the sprite box (0 = top, 1 = bottom): the bottom-most
- *  fully-present pixel down the SURFACE map's centre column (its B channel is the coverage) — the
- *  trunk-ground contact the shadow's foot plants on. Pixi discards the CPU bitmap after GPU
- *  upload, so we read the pixels back through the renderer's `extract`. Returns null on failure
- *  (caller falls back to the box bottom). Computed once per stem and cached. */
-function originFrac(renderer: Renderer, texture: Texture): number | null {
+/** The tight bounding box of a sprite's PRESENT pixels — the SURFACE map's B channel (coverage)
+ *  at/above the hard threshold — as fractions 0..1 of the texture (x: 0 left → 1 right, y: 0 top →
+ *  1 bottom). The shadow FLOORS derive from it: the E/W floor is the box's BOTTOM edge (`maxY`, the
+ *  foot the sprite stands on), the N/S floor its LEFT-RIGHT CENTRE (`(minX+maxX)/2`, the vertical
+ *  midline a rolled sprite pivots on). Pixi discards the CPU bitmap after upload, so we read it
+ *  back through `extract`. Null on failure (caller falls back to the whole box); a fully-transparent
+ *  sprite returns the whole 0..1 box. Computed once per stem and cached. */
+interface SpriteBBox {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+const FULL_BBOX: SpriteBBox = { minX: 0, maxX: 1, minY: 0, maxY: 1 };
+function spriteBBox(renderer: Renderer, texture: Texture): SpriteBBox | null {
   try {
     const out = renderer.extract.pixels(texture) as { pixels: Uint8ClampedArray | Uint8Array; width: number; height: number };
     const { pixels, width, height } = out;
     if (!width || !height || !pixels) return null;
-    const cx = Math.min(width - 1, Math.floor(width / 2));
-    for (let y = height - 1; y >= 0; y--) {
-      if (pixels[(y * width + cx) * 4 + 2] >= 250) return (y + 1) / height; // B = coverage
+    let minX = width, maxX = -1, minY = height, maxY = -1;
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      for (let x = 0; x < width; x++) {
+        if (pixels[(row + x) * 4 + 2] >= 250) {
+          // B = coverage
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
     }
-    return 1; // fully transparent centre column → no crop
+    if (maxX < 0) return FULL_BBOX; // fully transparent → no crop
+    return { minX: minX / width, maxX: (maxX + 1) / width, minY: minY / height, maxY: (maxY + 1) / height };
   } catch {
     return null;
   }
 }
 
-/** Encode a prim's TILE ROW as its depth byte: `5 + (row % 251)` → the range 5..255, with 0..4
+/** Encode a prim's SUB-TILE ROW as its depth byte: `5 + (row % 251)` → the range 5..255, with 0..4
  *  RESERVED (0 = blank / no depth, so the reserved band itself signals "nothing here" — no extra
- *  flag needed). `row = floor(worldY / SQUARE)` is the tile row of the prim's foot (same input for
- *  the shadow CASTER and the zdepth_world RECEIVER, so they compare in one space). Written into
+ *  flag needed). `row = floor(worldY / (SQUARE / 3))` splits each tile into 3 depth bands
+ *  (top/center/bottom) so things sharing a tile still order front-to-back — same input for the
+ *  shadow CASTER and the zdepth_world RECEIVER, so they compare in one space. Written into
  *  zdepth_world.B and zdepth_screen.G; the lighting compare recovers `row = value·255 − 5` and
- *  wraps over the 251-ring. Per-tile granularity — the tile the primitive occupies. */
+ *  wraps over the 251-ring. 3 units/tile → the ring spans ~83 tiles (unambiguous to ~41). */
 function depthUnit(worldY: number): number {
-  const row = Math.floor(worldY / SQUARE);
+  const row = Math.floor(worldY / (SQUARE / 3)); // 3 sub-rows per tile: top/center/bottom
   return (5 + (((row % 251) + 251) % 251)) / 255; // 5..255; 0..4 reserved
+}
+
+/** The shadow billboard roll for a texture stem's FACING (its trailing `/<dir>` segment): a
+ *  front/back sprite (`s`/`n`) rolls its card edge-on to cast E/W (±1, sign per s vs n — north
+ *  rolls opposite south); a side (`e`, west = `e`+flip) or linked (`l`) sprite uses the standard
+ *  billboard (0). See {@link ShadowCaster.nsRoll}. */
+function nsRollFor(textureName: string): number {
+  const dir = textureName.slice(textureName.lastIndexOf("/") + 1);
+  return dir === "s" ? 1 : dir === "n" ? -1 : 0;
 }
 
 /** Zero material-channel params (no jitter) — shared by the albedo path when a prim has no
@@ -69,9 +103,16 @@ function depthUnit(worldY: number): number {
 const ZERO_CH = new Float32Array(PACKED_UNIFORM_LEN);
 
 export class Viewport extends LayoutNode {
-  /** The world cache — bakes albedo + normal + depth channels from one prim index. The
-   *  display still samples only albedo (Phase A); the lighting shader consumes the rest. */
+  /** The COLD world cache — bakes the `*-cold` channels (albedo/normal/surface/zdepth-world)
+   *  from the static prim index (tiles + cold things). World-space, dirty-updated. */
   private readonly map: SquareCache;
+
+  /** The WARM cache — the SAME four channels (keyed `*-warm`) baked from the MOVER prim index
+   *  (pawns). Driven with the identical window/slot geometry as {@link map}, so its composites
+   *  are slot-aligned and the lighting pass composites warm OVER cold by warm `surface.B`. Baked
+   *  at a HIGHER dirty priority than cold (movers update first). This replaces the bespoke
+   *  overlay-sprite mover path — pawns now light + shadow like everything else. */
+  private readonly warm: SquareCache;
 
   /** World-px point centred in the viewport. Starts at the origin. */
   private anchorX = 0;
@@ -92,9 +133,9 @@ export class Viewport extends LayoutNode {
   /** The wedge shadow pass — rasterizes billboard shadows into a screen-space coverage RT
    *  (viewable as the `shadow` channel in `/showRT`). Not yet sampled by the lighting pass. */
   private readonly shadowPass = new ShadowPass();
-  /** Per-stem shadow ORIGIN fraction (bottom-most opaque pixel down the centre line), computed
-   *  once from the texture pixels and reused every frame. */
-  private readonly originCache = new Map<string, number>();
+  /** Per-stem sprite bounding box (present pixels, fractions of the texture) — the shadow floors
+   *  derive from it. Computed once from the surface pixels and reused every frame. */
+  private readonly bboxCache = new Map<string, SpriteBBox>();
   private curQuads = -1;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -118,6 +159,13 @@ export class Viewport extends LayoutNode {
    *  them each frame with {@link worldToScreen}. */
   private readonly overlayContainer = new Container();
 
+  /** Debug tile grid — a red gfx layer drawn straight over the composited world (in the
+   *  screen-space {@link overlayContainer}, not through the baked/lit prim cache) that outlines
+   *  every tile so cell boundaries read at a glance. Enabled by the `?grid` URL param via
+   *  {@link setDebugGrid}; `null` (and undrawn) until then. Redrawn each frame in {@link tick}
+   *  since the line positions follow the camera pan/zoom. */
+  private gridGfx: Graphics | null = null;
+
   constructor(resolver: TextureResolver) {
     super();
     this.resolver = resolver;
@@ -130,9 +178,11 @@ export class Viewport extends LayoutNode {
     // its own texture. Colour by tier — geo shows the prim's silhouette colour
     // (`geoColor`, falling back to `tint`); a loaded tier shows `tint`. (A future normal
     // channel is another entry here with its own resolve + flat-up geo fallback.)
-    this.map = new SquareCache([
+    // The four G-buffer channels, identical resolve logic for both tiers — only the key's
+    // `-cold`/`-warm` suffix differs (which prim index the cache holds). Built twice.
+    const chan = (suffix: string): ChannelSpec[] => [
       {
-        key: "albedo",
+        key: `albedo-${suffix}`,
         resolve: (prim) => {
           if (!prim.textureName) return { texture: prim.texture, tint: prim.tint };
           // The `albedo` map is the residual base (RGB). Its visual alpha lives in `surface.B`,
@@ -143,13 +193,16 @@ export class Viewport extends LayoutNode {
           const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
           if (alb.geo || surf.geo) return { texture: alb.texture, tint: prim.geoColor ?? prim.tint };
           // Single real-tier path: reconstruct residual + Σ layers·jitter, alpha from surface.B.
-          // Only sample the `layers` map when a bound material actually varies; otherwise the
-          // residual IS the full albedo (layers = null → residual only).
+          // ALWAYS reconstruct from the `layers` map when the stem has one (every split sprite
+          // does). No material-variation gate: `packChannels` fills unauthored channels with
+          // per-channel default grays, so even a sprite with no authored tints reconstructs its
+          // materials instead of baking the colour-stripped residual. A stem with no `layers`
+          // map resolves geo → skipped (residual == the full albedo, one fewer texture pull).
           const reg = this.materialRegistry;
           let layers: Texture | null = null;
           let chA: Float32Array = ZERO_CH;
           let chB: Float32Array = ZERO_CH;
-          if (reg && reg.channelsVary(prim.packed)) {
+          if (reg) {
             const lyr = resolver.resolve(prim.textureName, "layers", prim.cell);
             if (!lyr.geo) {
               layers = lyr.texture;
@@ -164,7 +217,7 @@ export class Viewport extends LayoutNode {
       // +Z — RGB (128,128,255) = 0x8080ff tinted onto the white fill (the old game's
       // makeFlatNormal, via the existing tint machinery, no dedicated texture).
       {
-        key: "normal",
+        key: `normal-${suffix}`,
         resolve: (prim) => {
           // Standing things: premultiply the normal (real LOD, or flat-up) by surface.B — the
           // soft coverage — so the flat background never clobbers, and the over-blend onto the
@@ -189,7 +242,7 @@ export class Viewport extends LayoutNode {
       // shader (composite A = presence); ground / geo-tier things degrade to a flat OPAQUE,
       // PRESENT, un-occluded fill (0x00ffff = height 0, ao 1, coverage 1) as a plain sprite.
       {
-        key: "surface",
+        key: `surface-${suffix}`,
         resolve: (prim) => {
           if (!prim.textureName) return { texture: resolver.white, tint: 0x00ffff };
           // Same real-tier gate as albedo: don't bake a thing's real surface (its coverage /
@@ -205,7 +258,7 @@ export class Viewport extends LayoutNode {
       // lighting pass reads B at vUV and omits a shadow where it's ≥ the caster depth. The
       // silhouette/presence comes from the SURFACE map's B (via the depth bake's smoothstep).
       {
-        key: "zdepth_world",
+        key: `zdepth-world-${suffix}`,
         resolve: (prim) => {
           // Same real-tier gate as albedo (both albedo AND surface loaded): a geo-tier thing
           // (albedo still a box) must NOT write a thing depth, or zdepth_world shows
@@ -218,9 +271,14 @@ export class Viewport extends LayoutNode {
           return { texture: resolver.white, tint: 0xffffff, depth: -1 }; // ground / geo → opaque black (no thing)
         },
       },
-    ]);
-    // When a tier lands, re-dirty every prim'd square so the bake upgrades.
-    this.unsubLoad = resolver.onLoad(() => this.map.invalidateAll());
+    ];
+    this.map = new SquareCache(chan("cold"));
+    this.warm = new SquareCache(chan("warm"));
+    // When a tier lands, re-dirty every prim'd square (both tiers) so the bake upgrades.
+    this.unsubLoad = resolver.onLoad(() => {
+      this.map.invalidateAll();
+      this.warm.invalidateAll();
+    });
   }
 
   /** Swap in the material registry (from the content bundle; re-set on hot-swap) and
@@ -228,6 +286,7 @@ export class Viewport extends LayoutNode {
   setMaterialRegistry(registry: MaterialRegistry): void {
     this.materialRegistry = registry;
     this.map.invalidateAll();
+    this.warm.invalidateAll();
   }
 
   /** Bind the tiling noise atlas the material bake samples. `rows` is the field count
@@ -236,7 +295,9 @@ export class Viewport extends LayoutNode {
     // uvTile = 1 noise tile across a sprite; worldTile = 2 world tiles (128px) per noise
     // tile, so ground mottle spans a couple of cells before repeating.
     this.map.setNoise(texture, rows, 1, SQUARE * 2);
+    this.warm.setNoise(texture, rows, 1, SQUARE * 2);
     this.map.invalidateAll();
+    this.warm.invalidateAll();
   }
 
   /** Recenter the view on a world-px point. */
@@ -291,6 +352,31 @@ export class Viewport extends LayoutNode {
     this.map.refreshPrim(id);
   }
 
+  // ── warm (mover) prim index ───────────────────────────────────────────────────
+  /** Add a mover primitive to the WARM cache, returning its id. Pawns feed here instead of
+   *  the (removed) overlay layer — they bake through the same albedo/normal/surface/depth
+   *  channels as cold things and so light + shadow identically, just at warm dirty priority. */
+  warmAddPrim(spec: PrimitiveSpec): number {
+    return this.warm.addPrim(spec);
+  }
+
+  /** The mutable warm primitive for `id` (mutate its `x`/`y`/`textureName`/`cell`/`flipX`/
+   *  `tint`, then call {@link warmRefreshPrim}), or null. Lets a mover update position AND
+   *  facing in one place as the pawn walks/turns. */
+  warmGetPrim(id: number): Primitive | null {
+    return this.warm.getPrim(id);
+  }
+
+  /** Re-index + dirty a warm prim after mutating it (moved/turned/retextured). */
+  warmRefreshPrim(id: number): void {
+    this.warm.refreshPrim(id);
+  }
+
+  /** Remove a warm mover primitive. */
+  warmRemovePrim(id: number): void {
+    this.warm.removePrim(id);
+  }
+
   /** The light rig — register world-space point lights (mutate them to move a torch), set
    *  the sun/ambient, or drive the cursor light. Lights are in WORLD px. */
   get lights(): LightRig {
@@ -301,6 +387,69 @@ export class Viewport extends LayoutNode {
    *  the mover layer parents its pawn markers here. */
   get overlay(): Container {
     return this.overlayContainer;
+  }
+
+  /** Toggle the red debug tile grid (the `?grid` URL param). Lazily builds the gfx layer on
+   *  first enable; the actual lines are (re)drawn each frame in {@link tick} against the live
+   *  camera. Disabling hides it (kept around, cheaply, for a later re-enable). */
+  setDebugGrid(on: boolean): void {
+    if (on && !this.gridGfx) {
+      this.gridGfx = new Graphics();
+      this.overlayContainer.addChild(this.gridGfx);
+    }
+    if (this.gridGfx) this.gridGfx.visible = on;
+  }
+
+  /** Redraw the debug grid for the current camera: three nested line sets, each on the
+   *  boundaries of a world division — tiles (red, {@link SQUARE} px), zones (magenta,
+   *  {@link ZONE_DIM} tiles) and regions (blue, {@link REGION_DIM}·{@link ZONE_DIM} tiles).
+   *  Drawn in body-local screen px so it sits directly over the composited display, cleared +
+   *  rebuilt each frame. Coarser sets are drawn LAST so their line wins where boundaries
+   *  coincide (a region edge overdraws the zone + tile edge on the same pixel). No-op unless
+   *  the grid is enabled. */
+  private drawGrid(): void {
+    const g = this.gridGfx;
+    if (!g || !g.visible) return;
+    g.clear();
+    const w = this.width;
+    const h = this.height;
+    const z = this.zoomFactor;
+    if (w <= 0 || h <= 0 || z <= 0) return;
+    const zonePx = SQUARE * ZONE_DIM;
+    const regionPx = zonePx * REGION_DIM;
+    // Fine → coarse: the region lines paint over the zone + tile lines at shared boundaries.
+    // Line weight scales with the division — thin tiles, heavier zones, heaviest regions.
+    this.drawGridLines(g, SQUARE, 0xff0000, 1);
+    this.drawGridLines(g, zonePx, 0xff00ff, 2);
+    this.drawGridLines(g, regionPx, 0x0000ff, 3);
+  }
+
+  /** Stroke every `pitch`-px world boundary (vertical + horizontal) across the visible extent
+   *  in `color` at `width` screen px, one `stroke()` per call. Screen-space (body-local px),
+   *  matching the display's camera transform; alpha < 1 so the art reads through. */
+  private drawGridLines(g: Graphics, pitch: number, color: number, width: number): void {
+    const w = this.width;
+    const h = this.height;
+    const z = this.zoomFactor;
+    // Visible world extent (the inverse of screenToWorld at the two corners), snapped out to
+    // whole divisions so both edge lines are drawn.
+    const wx0 = this.anchorX - w / 2 / z;
+    const wy0 = this.anchorY - h / 2 / z;
+    const wx1 = this.anchorX + w / 2 / z;
+    const wy1 = this.anchorY + h / 2 / z;
+    const kx0 = Math.floor(wx0 / pitch);
+    const kx1 = Math.ceil(wx1 / pitch);
+    const ky0 = Math.floor(wy0 / pitch);
+    const ky1 = Math.ceil(wy1 / pitch);
+    for (let kx = kx0; kx <= kx1; kx++) {
+      const sx = (kx * pitch - this.anchorX) * z + w / 2;
+      g.moveTo(sx, 0).lineTo(sx, h);
+    }
+    for (let ky = ky0; ky <= ky1; ky++) {
+      const sy = (ky * pitch - this.anchorY) * z + h / 2;
+      g.moveTo(0, sy).lineTo(w, sy);
+    }
+    g.stroke({ width, color, alpha: 0.5 });
   }
 
   /** Map a body-local screen point (px, origin at the viewport's top-left) to a WORLD-px
@@ -326,11 +475,15 @@ export class Viewport extends LayoutNode {
    *  their composites come online (the multi-channel bake), reporting `null`. */
   renderTextures(): RtChannel[] {
     return [
-      { name: "albedo", texture: this.map.displayComposite("albedo") },
-      { name: "normal", texture: this.map.displayComposite("normal") },
-      { name: "surface", texture: this.map.displayComposite("surface") },
-      { name: "zdepth_world", texture: this.map.displayComposite("zdepth_world") },
-      { name: "zdepth_screen", texture: this.shadowPass.texture },
+      { name: "albedo-cold", texture: this.map.displayComposite("albedo-cold") },
+      { name: "normal-cold", texture: this.map.displayComposite("normal-cold") },
+      { name: "surface-cold", texture: this.map.displayComposite("surface-cold") },
+      { name: "zdepth-world-cold", texture: this.map.displayComposite("zdepth-world-cold") },
+      { name: "albedo-warm", texture: this.warm.displayComposite("albedo-warm") },
+      { name: "normal-warm", texture: this.warm.displayComposite("normal-warm") },
+      { name: "surface-warm", texture: this.warm.displayComposite("surface-warm") },
+      { name: "zdepth-world-warm", texture: this.warm.displayComposite("zdepth-world-warm") },
+      { name: "zdepth-hot", texture: this.shadowPass.texture },
     ];
   }
 
@@ -353,9 +506,17 @@ export class Viewport extends LayoutNode {
     const z = this.zoomFactor;
     // Aim texture loads at the on-screen tile size (a tile is SQUARE world px).
     this.resolver.setTargetLod(SQUARE * z);
+    // Both caches share the window/slot geometry (identical resize/recenter inputs), so their
+    // composites stay slot-aligned for the warm-over-cold composite in the lighting pass.
     this.map.resize(w, h, renderer, z, this.anchorX, this.anchorY);
+    this.warm.resize(w, h, renderer, z, this.anchorX, this.anchorY);
     this.map.recenter(this.anchorX, this.anchorY);
-    this.map.bakeDirty(renderer, BAKE_BUDGET);
+    this.warm.recenter(this.anchorX, this.anchorY);
+    // Warm has PRIORITY: bake its dirty squares (movers — few) first, then cold gets the
+    // remaining budget (floored so a warm flood on a fresh window / LOD swap never fully
+    // starves the static world).
+    this.warm.bakeDirty(renderer, BAKE_BUDGET);
+    this.map.bakeDirty(renderer, Math.max(BAKE_BUDGET - this.warm.lastBaked, COLD_BAKE_FLOOR));
     if (!this.map.ready) return;
 
     this.ensureGeometry(this.map.displayQuadCount);
@@ -373,15 +534,29 @@ export class Viewport extends LayoutNode {
     // Bind the live composites to the lighting shader (both share the same swap state, so
     // they stay consistent through a LOD swap). The mesh's main texture IS the normal
     // composite (textureBit samples it); albedo is a second sampler the shader reads.
-    const albedo = this.map.displayComposite("albedo");
-    const normal = this.map.displayComposite("normal");
-    const surface = this.map.displayComposite("surface");
-    const zdepthWorld = this.map.displayComposite("zdepth_world");
+    const albedo = this.map.displayComposite("albedo-cold");
+    const normal = this.map.displayComposite("normal-cold");
+    const surface = this.map.displayComposite("surface-cold");
+    const zdepthWorld = this.map.displayComposite("zdepth-world-cold");
     if (albedo && normal && surface && zdepthWorld && this.mesh) {
       this.lightingShader.albedo = albedo;
       this.lightingShader.normal = normal;
       this.lightingShader.surface = surface;
       this.lightingShader.depth = zdepthWorld;
+      // Warm tier: the same four composites for the movers, slot-aligned with cold (same
+      // window). The lighting shader composites warm OVER cold per-fragment by warm surface.B,
+      // then lights the merged G-buffer — so pawns light + shadow like the world. When warm
+      // isn't ready yet its samplers stay EMPTY (coverage 0 → pure cold).
+      const albedoW = this.warm.displayComposite("albedo-warm");
+      const normalW = this.warm.displayComposite("normal-warm");
+      const surfaceW = this.warm.displayComposite("surface-warm");
+      const zdepthWorldW = this.warm.displayComposite("zdepth-world-warm");
+      if (albedoW && normalW && surfaceW && zdepthWorldW) {
+        this.lightingShader.albedoWarm = albedoW;
+        this.lightingShader.normalWarm = normalW;
+        this.lightingShader.surfaceWarm = surfaceW;
+        this.lightingShader.depthWarm = zdepthWorldW;
+      }
       // The mesh's aPosition is the PANNED world coord (worldX + panX); world-space lights
       // add this pan to line up with the fragment's vWorld.
       this.lightingShader.setPan(panX, panY);
@@ -406,6 +581,9 @@ export class Viewport extends LayoutNode {
       // pair is the Y flip (0,0 = none) — dialed in against the RT's sample orientation.
       this.lightingShader.setShadowUv(z / w, z / h, 0, 0);
     }
+
+    // Debug tile grid (the `?grid` param): a red gfx overlay redrawn against the live camera.
+    this.drawGrid();
   }
 
   /** The shadow-pass caster list: each standing prim's billboard box + its resolved SURFACE
@@ -413,7 +591,8 @@ export class Viewport extends LayoutNode {
    *  depth. Skips prims still on the geo tier (no surface) so only true silhouettes cast. */
   private buildCasters(renderer: Renderer): ShadowCaster[] {
     const out: ShadowCaster[] = [];
-    for (const p of this.map.standingPrims()) {
+    // Cold things AND warm movers cast — both are standing prims with a resolved silhouette.
+    for (const p of [...this.map.standingPrims(), ...this.warm.standingPrims()]) {
       if (!p.textureName) continue;
       // Only cast from things on the real tier (albedo AND surface loaded) — same gate as the
       // depth/normal/surface bakes — so a geo-tier thing (still a box in albedo) doesn't throw
@@ -421,14 +600,15 @@ export class Viewport extends LayoutNode {
       const alb = this.resolver.resolve(p.textureName, "albedo", p.cell);
       const { texture, geo } = this.resolver.resolve(p.textureName, "surface", p.cell);
       if (alb.geo || geo) continue;
-      // Origin (trunk base) fraction — read back from the GPU once per stem, then cached
-      // (fall back to the box bottom if the readback fails, so the caster still shadows). A
-      // linked cell keys by (stem, cell) since each cell has its own silhouette.
+      // Sprite bounding box (present pixels) — read back from the GPU once per stem, then cached
+      // (fall back to the whole box if the readback fails, so the caster still shadows). A linked
+      // cell keys by (stem, cell) since each cell has its own silhouette. The shadow floors derive
+      // from it in the shadow pass.
       const okey = p.cell != null ? `${p.textureName}#${p.cell}` : p.textureName;
-      let footFrac = this.originCache.get(okey);
-      if (footFrac === undefined) {
-        footFrac = originFrac(renderer, texture) ?? 1;
-        this.originCache.set(okey, footFrac);
+      let bbox = this.bboxCache.get(okey);
+      if (bbox === undefined) {
+        bbox = spriteBBox(renderer, texture) ?? FULL_BBOX;
+        this.bboxCache.set(okey, bbox);
       }
       out.push({
         x: p.x,
@@ -437,8 +617,12 @@ export class Viewport extends LayoutNode {
         height: p.height,
         texture,
         flipX: !!p.flipX,
-        depth: Math.max(4, p.width * 0.15), // placeholder until the DSL / depth-map wiring
-        footFrac,
+        depth: Math.max(4, p.width * 0.15), // placeholder until a real per-def depth lands
+        // Facing → billboard roll: the texture stem's trailing segment is the facing (`s`/`e`/`n`,
+        // west ships as `e`+flipX). A front/back (`s`/`n`) sprite rolls its card edge-on (±1, sign
+        // per s vs n); a side (`e`) or linked (`l`) sprite uses the standard billboard (0).
+        nsRoll: nsRollFor(p.textureName),
+        bbox,
         // Same depth encoding as the `depth` composite (base y) so a thing's shadow matches its
         // own receiver depth exactly → it never self-shadows.
         tileDepth: depthUnit(p.y + p.height),
@@ -489,6 +673,7 @@ export class Viewport extends LayoutNode {
     this.unsubLoad();
     this.overlayContainer.destroy({ children: true });
     this.map.destroy();
+    this.warm.destroy();
     this.shadowPass.destroy();
     this.mesh?.geometry.destroy();
     this.lightingShader.destroy();

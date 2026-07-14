@@ -32,6 +32,14 @@ Segmentation: DIVIDE into regions, cluster region MEANS, then spatial cleanup:
      on its 2 nearest materials (overlap => smooth gradients), and the leftover goes to the
      residual. The black outline is excluded so it stays dark under any tint.
 
+--normalize (--black-threshold T): after the split, pull EVERY non-black material pixel
+(brightest channel >= T, default 0.05) FULLY into a single layer — grouped by its clustered
+region, else the nearest layer's remembered chroma colour — and zero its residual. The
+outline (all channels < T) is all that remains in albedo.png; every trace of colour is
+pulled into the layers. One-layer-per-pixel, so gradient overlap is dropped for a clean pull.
+Then the whole residual is desaturated to GRAYSCALE, so any colour the pull couldn't fully
+lift is knocked flat and the render base carries NO hue at all.
+
 Re-run safe: a standalone re-run SKIPS an already-split leaf (albedo_marigold.png
 present) so it can't re-split the residual; --force re-derives from the fresh de-lit
 in albedo.png (the remaster path, where `maps` just regenerated it).
@@ -233,7 +241,7 @@ def _outline_mask(opaque, lum, core_v, rim_v):
         out = cur
     return out
 
-def split_albedo(im, channels=4, section_tol=0.15, group_tol=0.10, edge_thr=42.0, outline_v=0.18, outline_rim=0.35, min_region=25, blend_radius=10):
+def split_albedo(im, channels=4, section_tol=0.15, group_tol=0.10, edge_thr=42.0, outline_v=0.18, outline_rim=0.35, min_region=25, blend_radius=10, normalize=False, black_thr=0.05):
     arr = np.asarray(im.convert("RGBA")).astype(np.float32); rgb = arr[..., :3]; A = arr[..., 3]
     opaque = A > 128
     lum = (0.299*rgb[...,0] + 0.587*rgb[...,1] + 0.114*rgb[...,2]) / 255.0
@@ -306,9 +314,48 @@ def split_albedo(im, channels=4, section_tol=0.15, group_tol=0.10, edge_thr=42.0
         resid = rgb / 255.0
         resid[idx] = np.clip(rgb[idx] / 255.0 - recon, 0.0, 1.0)
         rgb = resid * 255.0                                  # residual -> albedo.png (base subtracted)
+        if normalize and K > 0:
+            # --normalize: pull EVERY non-black material pixel FULLY into a single layer, so
+            # the residual (albedo.png) is left holding ONLY the black outline. Each non-black
+            # opaque pixel is grouped by proximity to a layer — its own clustered region when
+            # that region is a kept material, else the nearest layer by the GROUPED chroma
+            # colour we remembered per channel (Cc) — and given the coefficient that reprojects
+            # its brightness onto that layer's base colour (Bcol); its residual is then zeroed
+            # (all colour now rides in the layer, none baked into albedo). Unlike the default
+            # 2-material unmix, this is one-layer-per-pixel and drops the colour residual.
+            orig = arr[..., :3]
+            val = orig.max(axis=2) / 255.0                   # brightest channel: black only if ALL low
+            # Gate ONLY on black_thr over EVERY opaque pixel — NOT on `cand`. The outline mask
+            # deliberately swallows dark-but-coloured pixels (a dark-green conifer's foliage,
+            # the line's AA halo) so the default split keeps them dark; but --normalize's
+            # contract is "only genuinely-black pixels stay in albedo", so those dark-coloured
+            # pixels must ALSO be pulled into a layer. Only pixels black on every channel remain.
+            nb = opaque & (val >= black_thr)                 # every non-black opaque pixel (outline included)
+            jj = np.where(nb)
+            if jj[0].size:
+                lut = np.full(int(lbl.max()) + 2, -1, np.int64)   # kept label -> channel; -1 if not kept
+                for i, l in enumerate(kept):
+                    lut[l + 1] = i
+                m = lut[lbl[jj] + 1]
+                miss = m < 0                                 # region dropped/unlabelled -> nearest layer colour
+                if miss.any():
+                    pa2, pb2 = a[jj][miss], b[jj][miss]
+                    dd = (pa2[:, None] - Cc[None, :, 0]) ** 2 + (pb2[:, None] - Cc[None, :, 1]) ** 2
+                    m[miss] = np.argmin(dd, axis=1)
+                pix = orig[jj] / 255.0; Bm = Bcol[m]
+                coeff = np.clip((pix * Bm).sum(1) / ((Bm * Bm).sum(1) + 1e-9), 0.0, 1.0).astype(np.float32)
+                for i in range(min(K, 4)):                   # one layer per pixel: set nearest, clear the rest
+                    packed[..., i][jj] = np.where(m == i, coeff, 0.0)
+                rgb[jj[0], jj[1], :] = 0.0                   # colour pulled out -> residual is black here
+            # Finally desaturate the whole residual to grayscale: the pull leaves albedo.png
+            # (near-)black, but any colour it couldn't fully lift (sub-threshold pixels, a faint
+            # unlifted tint) is knocked flat so NO colour survives in the render base — every
+            # hue now lives only in the layers.
+            gray = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+            rgb = np.repeat(gray[..., None], 3, axis=2)
         for i in range(min(K, 4)):
             rad = float(np.hypot(Cc[i, 0], Cc[i, 1])); ang = int(np.degrees(np.arctan2(Cc[i, 1], Cc[i, 0]))) % 360
-            info.append(("neutral" if rad < 0.04 else f"hue{ang}", int((ps[:, i] > 0.05).sum()),
+            info.append(("neutral" if rad < 0.04 else f"hue{ang}", int((packed[..., i] > 0.05).sum()),
                          (Bcol[i] * 255).round().astype(int).tolist()))
     # Both outputs are RGB — no alpha. The residual's alpha (the diffuse silhouette) now lives
     # in the surface map's B channel, and a 4th (alpha) material layer fought the client's
@@ -331,6 +378,8 @@ def main():
     ap.add_argument("--blend-radius", type=int, default=10, help="how far (px) a material's tint may reach past its own region — the gradient blend zone; keeps faint coefficients from sprinkling specks onto far pixels (default 10; 0 = hard region edges)")
     ap.add_argument("--outline-v", type=float, default=0.18, help="value below which an opaque pixel is the outline CORE (kept dark; default 0.18)")
     ap.add_argument("--outline-rim", type=float, default=0.35, help="hysteresis rim: dark pixels up to this value that TOUCH the core are also outline — swallows the black line's AA halo (default 0.35; lower for dark-furred creatures)")
+    ap.add_argument("--normalize", action="store_true", help="pull EVERY non-black material pixel FULLY into one layer (grouped by region, else nearest layer colour) so albedo.png keeps ONLY the black outline and all colour lives in the layers, then desaturate the residual to grayscale so no colour survives in albedo (default: off — leaves a colour residual in albedo.png)")
+    ap.add_argument("--black-threshold", dest="black_thr", type=float, default=0.05, help="--normalize: a pixel counts as black (stays in albedo) when its brightest channel is below this fraction — raise for gradients that fade toward black (default 0.05 = 5%%)")
     ap.add_argument("--force", action="store_true", help="re-split leaves that already have albedo_marigold.png, re-deriving from the fresh de-lit in albedo.png (default: skip them)")
     args = ap.parse_args()
 
@@ -351,7 +400,7 @@ def main():
         # de-lit to albedo.png, so we always read (and re-preserve) THAT, never the stale marigold.
         if os.path.exists(marigold_path) and not args.force:
             skipped += 1; continue
-        res, layers, info = split_albedo(Image.open(alb).convert("RGBA"), min(args.channels, 3), args.section_tol, args.group_tol, args.edge_thr, args.outline_v, args.outline_rim, args.min_region, args.blend_radius)
+        res, layers, info = split_albedo(Image.open(alb).convert("RGBA"), min(args.channels, 3), args.section_tol, args.group_tol, args.edge_thr, args.outline_v, args.outline_rim, args.min_region, args.blend_radius, args.normalize, args.black_thr)
         shutil.copy2(alb, marigold_path)   # preserve this de-lit (the reconstruction/re-split source)
         res.save(alb)               # residual -> albedo.png (the render base)
         layers.save(layers_path)    # co-located weight map

@@ -3,25 +3,25 @@ name = "npc"
 version = "0.1.0"
 edition = "2021"
 
-# npc — the demo mover. A direct-SDK client to the object shard that seeds a handful
-# of "demo objects" (type-tagged in their object_id) in zone (0,0) and, on a timer,
-# moves each to a random cell via `append_event(ACTION_MOVE)`. The tick pipeline
-# (master + server_simulation) resolves the moves into `state`; the edge streams
-# `state` to browsers, which draw each demo object as a tweening circle. The point is
-# to watch the SAME motion across browser tabs and catch sync issues — the whole reason
-# for the 0.2 rework. (Supersedes the old login-through-client debug_mover driver;
-# movement now flows through the real event/state pipeline, not a legacy streamer.)
+# npc — an automated player. It drives the headless `client` (client/core) exactly as the
+# pixijs browser client does, so wildlife actions travel login → client → edge → spacetime
+# with no privileged shortcut. This binary is the wildlife npc (a wolf pack in zone (0,0));
+# the connect/anchor harness is written to extract into a shared `npc` lib once a second npc
+# type (e.g. a village) exists. (Supersedes the old direct-to-shard demo mover — movement now
+# goes through the real player command path, not `append_event` on a raw SDK connection.)
 
 [[bin]]
 name = "npc"
 path = "src/main.rs"
 
 [dependencies]
-spacetimedb-sdk = "=2.3.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# Shared layouts: object-id type tag + entity key (codec) and the move data encoding
-# (tick), so the mover, the worker, and the client all agree.
+# The headless client, linked natively and driven through its command/event API — the same
+# core the pixijs wasm bundle wraps. Mounted at /core in the build container (see compose.yml).
+client = { path = "../core" }
+# Shared layout: the entity-key type tag + minting (codec), so the npc can name the wolves it
+# spawns with the same keys the client/edge/worker decode. Container path `../shared/codec` →
+# /shared/codec (matches `client`'s own transitive `../../shared/codec`).
 resonantdust-codec = { path = "../shared/codec" }
-resonantdust-tick = { path = "../shared/tick" }

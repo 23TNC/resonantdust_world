@@ -12,52 +12,49 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub struct ShardMeta {
-    pub id: u8,
-    pub shard_id: u16,
+pub struct AppliedForeign {
+    pub id: u128,
 }
 
 
-impl __sdk::InModule for ShardMeta {
+impl __sdk::InModule for AppliedForeign {
     type Module = super::RemoteModule;
 }
 
 
-/// Column accessor struct for the table `ShardMeta`.
+/// Column accessor struct for the table `AppliedForeign`.
 ///
 /// Provides typed access to columns for query building.
-pub struct ShardMetaCols {
-    pub id: __sdk::__query_builder::Col<ShardMeta, u8>,
-    pub shard_id: __sdk::__query_builder::Col<ShardMeta, u16>,
+pub struct AppliedForeignCols {
+    pub id: __sdk::__query_builder::Col<AppliedForeign, u128>,
 }
 
-impl __sdk::__query_builder::HasCols for ShardMeta {
-    type Cols = ShardMetaCols;
+impl __sdk::__query_builder::HasCols for AppliedForeign {
+    type Cols = AppliedForeignCols;
     fn cols(table_name: &'static str) -> Self::Cols {
-        ShardMetaCols {
+        AppliedForeignCols {
             id: __sdk::__query_builder::Col::new(table_name, "id"),
-            shard_id: __sdk::__query_builder::Col::new(table_name, "shard_id"),
 
         }
     }
 }
 
-/// Indexed column accessor struct for the table `ShardMeta`.
+/// Indexed column accessor struct for the table `AppliedForeign`.
 ///
 /// Provides typed access to indexed columns for query building.
-pub struct ShardMetaIxCols {
-    pub id: __sdk::__query_builder::IxCol<ShardMeta, u8>,
+pub struct AppliedForeignIxCols {
+    pub id: __sdk::__query_builder::IxCol<AppliedForeign, u128>,
 }
 
-impl __sdk::__query_builder::HasIxCols for ShardMeta {
-    type IxCols = ShardMetaIxCols;
+impl __sdk::__query_builder::HasIxCols for AppliedForeign {
+    type IxCols = AppliedForeignIxCols;
     fn ix_cols(table_name: &'static str) -> Self::IxCols {
-        ShardMetaIxCols {
+        AppliedForeignIxCols {
             id: __sdk::__query_builder::IxCol::new(table_name, "id"),
 
         }
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for ShardMeta {}
+impl __sdk::__query_builder::CanBeLookupTable for AppliedForeign {}
 

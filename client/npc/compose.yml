@@ -8,14 +8,17 @@ services:
   # `rust:slim` is enough (plain ws:// everywhere → no TLS backend), same as the
   # headless client core.
   #
-  # The npc crate path-deps resonantdust-codec + resonantdust-tick at
-  # ../shared/{codec,tick}. Mount the shared workspace at /shared so those
-  # container-relative paths resolve (/workspace/../shared = /shared). Source is
-  # ../../shared: npc lives at client/npc/ now.
+  # The npc crate path-deps `client` at ../core and `resonantdust-codec` at ../shared/codec.
+  # Mount the sibling client/core at /core and the shared workspace at /shared so those
+  # container-relative paths resolve: /workspace/../core = /core and /workspace/../shared =
+  # /shared. `client`'s own transitive `../../shared/codec` resolves from /core to /shared/codec
+  # too — the same codec crate, so cargo unifies it. Sources are ../core and ../../shared: npc
+  # lives at client/npc/.
   build:
     image: rust:slim
     volumes:
       - .:/workspace
+      - ../core:/core
       - ../../shared:/shared
     working_dir: /workspace
     command: ["cargo", "build", "--release"]
@@ -25,6 +28,7 @@ services:
     image: rust:slim
     volumes:
       - .:/workspace
+      - ../core:/core
       - ../../shared:/shared
     working_dir: /workspace
     command: ["cargo", "check", "--all-targets"]

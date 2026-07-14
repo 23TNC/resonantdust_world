@@ -39,6 +39,7 @@ export class WorldScene extends Scene {
    *  tab + send input). Server messages would stream through `ctx.client.onChat`
    *  once the client core is rebuilt; today the feed stays empty. */
   private chat!: ChatPanel;
+  private unsubPaused: (() => void) | null = null;
   /** Transform-free Pixi layer the PixiPanel chrome + content attach to. Nothing
    *  in this fresh client instantiated a `PixiPanel` before, so the world scene
    *  owns the one layout root + drives its per-frame layout pass. */
@@ -51,8 +52,8 @@ export class WorldScene extends Scene {
   /** Wiring from the world client's zone stream into the viewport, and the
    *  viewport camera into the client's anchor. */
   private bridge!: WorldBridge;
-  /** The tick pipeline's mobile entities (pawns — the wolves) drawn as an overlay
-   *  above the viewport. */
+  /** The tick pipeline's mobile entities (pawns — the wolves): synced into the viewport's
+   *  WARM cache as prims (lit + shadowed like the world), not a separate overlay. */
   private moverLayer!: MoverLayer;
   /** Unsubscribe from content hot-swaps; called on scene exit. */
   private contentUnsub: (() => void) | null = null;
@@ -155,6 +156,8 @@ export class WorldScene extends Scene {
       amb.color = 0xffffff;
       amb.intensity = dbg.ambient;
     }
+    // `?grid` overlays a red per-tile grid over the viewport as a gfx debug layer.
+    if (dbg.grid) this.viewport.view.setDebugGrid(true);
 
     // Wire the client's zone stream into the viewport and start the anchor — login has
     // completed by the time this scene enters, so the first anchor immediately subscribes
@@ -194,6 +197,21 @@ export class WorldScene extends Scene {
 
     // `/showRT` — open (or re-focus) the render-texture preview for the viewport.
     this.chat.registerCommand("showRT", () => this.showRenderTextures());
+
+    // `/pause` + `/unpause` (debug) — freeze/resume the whole simulation. The server stops
+    // advancing the tic, so every client's movement halts (npcs stop issuing commands too).
+    // The authoritative state relays back via `onPaused`, echoed as a system line below.
+    this.chat.registerCommand("pause", () => {
+      this.ctx.client.setPaused(true);
+      return "Pausing simulation…";
+    });
+    this.chat.registerCommand("unpause", () => {
+      this.ctx.client.setPaused(false);
+      return "Resuming simulation…";
+    });
+    this.unsubPaused = this.ctx.client.onPaused((paused) => {
+      this.chat.systemLine(paused ? "⏸ Simulation paused (tic frozen)." : "▶ Simulation resumed.");
+    });
   }
 
   /** `/showRT` chat command — open (or re-focus) the render-texture preview panel
@@ -230,10 +248,12 @@ export class WorldScene extends Scene {
   override update(_deltaMS: number): void {
     // Lay out the Pixi panel chrome, then drive the viewport's bake + display.
     this.panelLayer?.layoutIfDirty();
+    // The viewport drives the cold + warm bakes and the composited display; pawns are warm
+    // prims (fed by the mover layer on state updates), so there's no per-frame mover work here.
     this.viewport?.tick();
-    // Re-pin the pawn markers to their world positions for this frame's camera (after
-    // the viewport tick, so its anchor/zoom are current).
-    this.moverLayer?.tick();
+    // Push the live zoom into the debug HUD (textures tab) — the viewport only
+    // exists here, so `setStats` (scene-independent) can't read it.
+    this.ctx.debugPanel?.setZoom(this.viewport.view.zoom);
     // RT preview re-reads the live composites (cheap unless a channel/size moved).
     this.rt?.tick();
   }
@@ -250,6 +270,8 @@ export class WorldScene extends Scene {
     canvas.removeEventListener("wheel", this.onWheel);
     this.contentUnsub?.();
     this.contentUnsub = null;
+    this.unsubPaused?.();
+    this.unsubPaused = null;
     this.bridge.dispose();
     this.moverLayer.dispose();
 

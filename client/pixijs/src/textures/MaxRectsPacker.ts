@@ -1,11 +1,12 @@
 //! MaxRects rectangle bin-packing — the allocator behind every `TextureAtlas`.
 //!
-//! Our textures are no longer power-of-two quadtree tiles; they're arbitrary
-//! rectangles (in practice multiples of 32px). A quadtree can't pack those
-//! tightly, so we use MaxRects: maintain the set of maximal free rectangles and,
-//! for each insert, pick the free rect that wastes the least edge. This is the
-//! Best-Short-Side-Fit (BSSF) heuristic — the strongest single-bin rule from
-//! Jukka Jylänki's survey, and simple enough to keep in one file.
+//! Masters are now square powers of two again (see `bin/art`), so a quadtree
+//! allocator would pack them cleanly — but MaxRects packs squares correctly too,
+//! and still absorbs the odd non-square page (previews, linked atlases), so it
+//! stays until a dedicated quadtree packer lands. MaxRects: maintain the set of
+//! maximal free rectangles and, for each insert, pick the free rect that wastes
+//! the least edge — the Best-Short-Side-Fit (BSSF) heuristic, the strongest
+//! single-bin rule from Jukka Jylänki's survey, simple enough to keep in one file.
 
 /** A placed (or free) axis-aligned rectangle, in atlas pixel space. */
 export interface PackedRect {

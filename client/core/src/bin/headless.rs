@@ -139,6 +139,7 @@ fn log_event(event: &Event) {
         Event::ZoneClosed { zone_id } => {
             info!(zone_id = format!("{zone_id:#010x}"), "zone closed")
         }
+        Event::Paused { paused } => info!(paused, "simulation freeze changed"),
         // The web engine emits these for the pixijs debug HUD; the headless driver
         // has no HUD, so there's nothing to log. `ClockSync` fires every couple of
         // seconds — logging it would drown the smoke test.

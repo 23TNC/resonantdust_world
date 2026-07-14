@@ -1,18 +1,32 @@
-//! The shadow pass — billboard "wedge" shadows rasterized into the screen-space `zdepth_screen`
+//! The shadow pass — billboard silhouette shadows rasterized into the screen-space `zdepth_screen`
 //! RT. NO-ALPHA / OPAQUE: the RT is blanked to opaque black each frame and only shadows draw,
 //! carrying per covered texel G = the caster's TILE-Y depth, encoded `5 + row%251` (5..255/255).
 //! The RESERVED 0..4 band means a blanked texel (G=0) reads as "no shadow" — no separate flag. R
 //! and B stay 0 (R is reserved for the world-space COLD shadow in zdepth_world). The silhouette is
 //! a HARD `discard` (AA off); overlapping shadows resolve last-writer-wins.
 //!
-//! Per caster we build the sim's wedge: a quad (A,B top / C,D bottom) rotated about its bottom
-//! edge by the GROUND ANGLE θ, with per-vertex depth extruded ± along the face normal. The TOP
-//! depth is 0 (A,B share a point across faces); the BOTTOM has depth. We anchor the front-bottom
-//! to the ORIGIN (trunk base) and drop the model in z so the front (blue) face sits on the
-//! ground; the back (red) face's sub-ground points clamp to z=0 (their footprint). Instead of a
-//! front/back face pair (which leaves the sides open), we draw two CROSSED rectangles —
-//! `A B C+ D−` and `A B C− D+` — so their bottom edges run opposite diagonals and cover the
-//! sides with an X. Each rectangle is textured with the sprite silhouette (its alpha).
+//! Per caster we project the sprite's BILLBOARD silhouette from the light onto the ground. The
+//! billboard is a flat quad standing tilted at the GROUND ANGLE θ (it rises north as it climbs);
+//! its points — A,B at the canopy top, N the base-CENTRE, and the base corners extruded by ±DEPTH
+//! (D+,D- left · C+,C- right) — each cast along the ray from the light through it onto z=0. The
+//! ±depth corners project like everything else: the raised +depth face throws away from the light
+//! (t>1), the sub-ground -depth face toward it (t<1), so the base thickness comes straight from the
+//! projection. The result is a sheared/scaled copy of the sprite, base pinned at the trunk, top
+//! thrown from the light, with a ±depth thickness at the foot so the base reads as solid.
+//!
+//! The far canopy is magnified far more than the near base, so the quad is a wide TRAPEZOID; a
+//! plain two-triangle split affine-warps the silhouette off-centre. Instead we FAN five triangles
+//! about the base-centre N: central A B N (canopy) plus, per side, a +depth and a -depth base face
+//! — left N D+ A / N D- A, right N C+ B / N C- B. Symmetric about the centerline. (Still affine.)
+//!
+//! FACING + FLOORS: the above is the E/W (side) billboard, rooted on its E/W floor (the sprite
+//! bbox's BOTTOM edge), rising north. A south/north-facing sprite instead roots on its N/S floor —
+//! the bbox's LEFT-RIGHT centre (the midline) — which lies on the ground running N-S (head→feet).
+//! From that centerline floor it raises only HALF the silhouette (the half away from the light:
+//! light west → east/right half u nsFloor..maxX, light east → west/left half minX..nsFloor): each
+//! column's E-W distance from the midline tilts out along east-west + up, so the raised outer edge
+//! projects E/W. Same 5-triangle mesh; only the per-vertex projection + the floor differ (see
+//! `project`/`nsProject`, `ShadowCaster.nsRoll`/`bbox`).
 //!
 //! The OCCLUSION (don't shadow a thing that sits in front of the caster) is NOT done here — it
 //! lives in the lighting pass, which compares this RT's caster depth against the world-space
@@ -43,10 +57,8 @@ import {
 const TMAX = 8;
 
 /** A shadow caster: the sprite's billboard box in WORLD px, the silhouette texture, the west
- *  flip, the bottom half-thickness `depth` (top depth is 0), `footFrac` — the origin (trunk
- *  base) as a fraction down the box (0 = top, 1 = bottom), where the front foot plants — and
- *  `tileDepth`, the caster's tile depth (0..1, = (128 + row%128)/255) written into R for the
- *  lighting-pass occlusion compare. */
+ *  flip, `bbox` — the present-pixel bounding box the shadow FLOORS derive from — and `tileDepth`,
+ *  the caster's tile depth (0..1, = (128 + row%128)/255) written into R for the occlusion compare. */
 export interface ShadowCaster {
   x: number;
   y: number;
@@ -54,9 +66,19 @@ export interface ShadowCaster {
   height: number;
   texture: Texture;
   flipX: boolean;
+  /** The billboard's bottom half-thickness in WORLD px (the top has no depth): the ±depth
+   *  extrusion of the base corners along the face normal, giving the foot a front/back face. */
   depth: number;
-  footFrac: number;
+  /** The sprite's present-pixel bounding box (fractions 0..1 of the texture). The shadow FLOORS
+   *  derive from it: the E/W floor = `maxY` (bottom edge, the foot the sprite stands on), the N/S
+   *  floor = `(minX+maxX)/2` (left-right centre, the midline a rolled sprite pivots on). */
+  bbox: { minX: number; maxX: number; minY: number; maxY: number };
   tileDepth: number;
+  /** Billboard roll for the sprite's FACING. 0 = an E/W (side) sprite: the standard billboard,
+   *  width east-west, leaning north. ±1 = an s/n (front/back) sprite: the card is rolled 90° about
+   *  the N-S axis so it stands EDGE-ON (faces east-west) and casts its shadow E/W. The sign (s vs
+   *  n) flips the roll direction — hence which trunk corner grounds and which way it leans. */
+  nsRoll: number;
 }
 
 /** A shadow-casting point light: world px + height above the ground. */
@@ -90,10 +112,10 @@ const shadowBitGl = {
     `,
     main: /* glsl */ `
       // NO-ALPHA: the RT is blanked to opaque black each frame and only shadows draw. HARD
-      // silhouette — discard outside it (AA off) so the two crossed wedge rectangles union
-      // cleanly. G = the caster's tile-Y depth, encoded 5 + row%251 (5..255/255) so the RESERVED
-      // 0..4 band (a blanked texel reads G=0) means 'no shadow' with no separate flag. R and B
-      // stay 0. OPAQUE. Overlapping shadows: last writer wins.
+      // silhouette — discard outside the sprite's coverage (AA off) so the projected quad takes the
+      // billboard's SHAPE, a clean cutout. G = the caster's tile-Y depth, encoded 5 + row%251
+      // (5..255/255) so the RESERVED 0..4 band (a blanked texel reads G=0) means 'no shadow' with no
+      // separate flag. R and B stay 0. OPAQUE. Overlapping shadows: last writer wins.
       if (texture(uSprite, uSpriteRect.xy + vUV * uSpriteRect.zw).b < 0.5) discard;
       outColor = vec4(0.0, uTileDepth, 0.0, 1.0);
     `,
@@ -179,10 +201,12 @@ export class ShadowPass {
   private slot(i: number): Slot {
     let s = this.pool[i];
     if (!s) {
+      // 7 verts (A,B canopy · N base-centre · D+,D- / C+,C- the ±depth base corners), FIVE
+      // triangles about N: central A B N, left N D+ A + N D- A, right N C+ B + N C- B. See render().
       const geo = new MeshGeometry({
-        positions: new Float32Array(8),
-        uvs: new Float32Array(8),
-        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+        positions: new Float32Array(14),
+        uvs: new Float32Array(14),
+        indices: new Uint32Array([0, 1, 2, 2, 3, 0, 2, 4, 0, 2, 5, 1, 2, 6, 1]),
       });
       const shader = makeShadowShader();
       const mesh = new Mesh<MeshGeometry>({ geometry: geo, shader });
@@ -194,8 +218,8 @@ export class ShadowPass {
     return s;
   }
 
-  /** Rasterize every caster's crossed wedge shadow for one light into the RT.
-   *  `thetaRad` is the ground angle (0 = flat / depth vertical, π/2 = standing / depth N–S). */
+  /** Rasterize every caster's projected billboard-silhouette shadow for one light into the RT.
+   *  `thetaRad` is the ground angle (0 = the billboard lies flat, π/2 = it stands straight up). */
   render(
     renderer: Renderer,
     w: number,
@@ -214,51 +238,89 @@ export class ShadowPass {
     const st = Math.sin(thetaRad);
     let n = 0;
     for (const c of casters) {
+      // Shadow FLOORS from the sprite's present-pixel bounding box: the E/W floor is the box's
+      // BOTTOM edge (the foot the sprite plants on + the texture base); the N/S floor is its
+      // LEFT-RIGHT CENTRE (the midline the rolled sprite pivots on + its texture base).
+      const ewFloor = c.bbox.maxY;
+      const nsFloor = (c.bbox.minX + c.bbox.maxX) / 2;
       const xL = c.x;
       const xR = c.x + c.width;
-      const nOrigin = c.y + c.footFrac * c.height; // world-y of the origin (trunk base)
-      const Hspr = c.footFrac * c.height; // origin → box top
-      const vBot = c.footFrac; // crop the below-origin padding
-      const depB = c.depth;
+      const nOrigin = c.y + ewFloor * c.height; // world-y of the origin (E/W foot = bbox bottom)
+      const Hspr = ewFloor * c.height; // origin → box top
+      const vBot = ewFloor; // crop the below-foot padding
+      const depB = c.depth; // base half-thickness (±depth extrusion)
       const uL = c.flipX ? 1 : 0;
       const uR = c.flipX ? 0 : 1;
-      // Straddle the origin symmetrically (no shift): the depth+ bottom rises above ground and
-      // the depth− bottom drops below (clamped to its footprint), so the CROSSING of the X sits
-      // right on the origin (trunk base) at z=0.
+      // Two projections: E/W casters use `project` (foot floor, rises north), N/S casters use
+      // `nsProject` (centerline floor, rises east-west). Both cast a point from the light onto z=0
+      // at t = Lz/(Lz−z); `Math.max(Lz−z, 1)` only guards the grazing case.
+      const rs = c.nsRoll;
+      // E/W (side) billboard: width along east-west (E), rooted on the FOOT floor, leaning NORTH by
+      // v·cosθ and up by v·sinθ; depth pushes north/up along the face normal. (rs = 0.)
       const project = (E: number, v: number, dep: number, sign: number): [number, number] => {
         const worldY = nOrigin - v * ct + sign * dep * st;
         const z = v * st + sign * dep * ct;
-        const zc = Math.max(z, 0); // sub-ground → footprint, not through the floor
-        const t = zc <= 0 ? 1 : Math.min(Lz / Math.max(Lz - zc, 1), TMAX);
+        const t = Math.min(Lz / Math.max(Lz - z, 1), TMAX);
         return [toBodyX(light.x + t * (E - light.x)), toBodyY(light.y + t * (worldY - light.y))];
       };
+      // N/S (front/back) shadow: ROOTED on the CENTERLINE floor, not the foot. The sprite's midline
+      // (u = nsFloor) lies on the ground running N-S — head→feet (`vFrac`) maps to world-y about the
+      // box centre. The half-silhouette RISES sideways from the midline: its signed E-W distance
+      // from the centerline (`uFrac − nsFloor`) tilts out along east-west by cosθ and up by sinθ, so
+      // the raised outer edge projects E/W. Depth extrudes east-west (worldX ± dep).
+      const eCenter = c.x + nsFloor * c.width; // centerline world-x
+      const nCenter = c.y + c.height / 2; // box centre-row (the midline's north-south anchor)
+      const vMid = (c.bbox.minY + c.bbox.maxY) / 2; // sprite vertical centre (head↔feet midpoint)
+      const nsProject = (uFrac: number, vFrac: number, dep: number, sign: number): [number, number] => {
+        const off = (uFrac - nsFloor) * c.width; // signed E-W distance from the midline
+        const worldX = eCenter + off * ct + sign * dep;
+        const z = Math.abs(off) * st;
+        const worldY = nCenter + (vFrac - vMid) * c.height;
+        const t = Math.min(Lz / Math.max(Lz - z, 1), TMAX);
+        return [toBodyX(light.x + t * (worldX - light.x)), toBodyY(light.y + t * (worldY - light.y))];
+      };
 
-      // Shared top edge A, B (depth 0). Bottom corners at ±depth per side.
-      const [ax, ay] = project(xL, Hspr, 0, 1);
-      const [bx2, by2] = project(xR, Hspr, 0, 1);
-      const [cpx, cpy] = project(xR, 0, depB, 1); // C+
-      const [cmx, cmy] = project(xR, 0, depB, -1); // C−
-      const [dpx, dpy] = project(xL, 0, depB, 1); // D+
-      const [dmx, dmy] = project(xL, 0, depB, -1); // D−
-      // Two CROSSED, textured rectangles: A B C+ D− · A B C− D+. Same silhouette UVs; only the
-      // bottom positions cross. TL, TR, BR, BL order; v runs 0 (box top) → footFrac (origin).
-      const uvs = [uL, 0, uR, 0, uR, vBot, uL, vBot];
-      const r1 = this.slot(n++);
-      r1.pos.set([ax, ay, bx2, by2, cpx, cpy, dmx, dmy]);
-      r1.uv.set(uvs);
-      r1.posBuf.update();
-      r1.uvBuf.update();
-      r1.shader.texture = c.texture;
-      r1.shader.tileDepth = c.tileDepth;
-      this.container.addChild(r1.mesh);
-      const r2 = this.slot(n++);
-      r2.pos.set([ax, ay, bx2, by2, cmx, cmy, dpx, dpy]);
-      r2.uv.set(uvs);
-      r2.posBuf.update();
-      r2.uvBuf.update();
-      r2.shader.texture = c.texture;
-      r2.shader.tileDepth = c.tileDepth;
-      this.container.addChild(r2.mesh);
+      // Build the 7 verts + UVs. Both use the same 5-triangle mesh about the trunk centre N
+      // (indices [0,1,2, 2,3,0, 2,4,0, 2,5,1, 2,6,1]).
+      let ax = 0, ay = 0, bx = 0, by = 0, nx = 0, ny = 0;
+      let dpx = 0, dpy = 0, dmx = 0, dmy = 0, cpx = 0, cpy = 0, cmx = 0, cmy = 0;
+      let uvs: number[];
+      if (rs === 0) {
+        // E/W: FULL silhouette on the foot floor. A,B canopy top; N base-centre; D±/C± the ±depth
+        // base corners. UVs: A,D± left edge, B,C± right edge, N centre.
+        [ax, ay] = project(xL, Hspr, 0, 1);
+        [bx, by] = project(xR, Hspr, 0, 1);
+        [nx, ny] = project((xL + xR) / 2, 0, 0, 1);
+        [dpx, dpy] = project(xL, 0, depB, 1);
+        [dmx, dmy] = project(xL, 0, depB, -1);
+        [cpx, cpy] = project(xR, 0, depB, 1);
+        [cmx, cmy] = project(xR, 0, depB, -1);
+        uvs = [uL, 0, uR, 0, (uL + uR) / 2, vBot, uL, vBot, uL, vBot, uR, vBot, uR, vBot];
+      } else {
+        // N/S: HALF silhouette hinged on the CENTERLINE floor. Keep the half AWAY from the light —
+        // light WEST → east/right half (u nsFloor..maxX), light EAST → west/left half (minX..nsFloor)
+        // — from the midline (on the ground) out to the far bbox edge (raised). Head = bbox top
+        // (minY), feet = bbox bottom (maxY). Inner verts (B head, N feet) sit ON the centerline
+        // floor; outer verts (A head, D± feet ±depth) are raised. C± = D± (one outer edge).
+        const uEdge = light.x < eCenter ? c.bbox.maxX : c.bbox.minX;
+        const vHead = c.bbox.minY;
+        const vFeet = c.bbox.maxY;
+        [ax, ay] = nsProject(uEdge, vHead, 0, 1); // outer head
+        [bx, by] = nsProject(nsFloor, vHead, 0, 1); // centerline head
+        [nx, ny] = nsProject(nsFloor, vFeet, 0, 1); // centerline feet
+        [dpx, dpy] = nsProject(uEdge, vFeet, depB, 1); // outer feet +depth
+        [dmx, dmy] = nsProject(uEdge, vFeet, depB, -1); // outer feet -depth
+        cpx = dpx; cpy = dpy; cmx = dmx; cmy = dmy;
+        uvs = [uEdge, vHead, nsFloor, vHead, nsFloor, vFeet, uEdge, vFeet, uEdge, vFeet, uEdge, vFeet, uEdge, vFeet];
+      }
+      const s = this.slot(n++);
+      s.pos.set([ax, ay, bx, by, nx, ny, dpx, dpy, dmx, dmy, cpx, cpy, cmx, cmy]);
+      s.uv.set(uvs);
+      s.posBuf.update();
+      s.uvBuf.update();
+      s.shader.texture = c.texture;
+      s.shader.tileDepth = c.tileDepth;
+      this.container.addChild(s.mesh);
     }
     renderer.render({ container: this.container, target: this.rt!, clear: true, clearColor: [0, 0, 0, 1] }); // opaque blank
   }

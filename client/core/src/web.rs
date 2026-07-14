@@ -112,14 +112,24 @@ impl Client {
         self.send(Command::RemoveAnchor { name: name.into() })
     }
 
-    /// Convenience: move the controllable thing toward global tile `(tile_x, tile_y)`.
+    /// Convenience: move the player's own object toward global tile `(tile_x, tile_y)`
+    /// (a self-move).
     pub fn move_to(&self, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
-        self.send(Command::Move { tile_x, tile_y })
+        self.send(Command::Move {
+            pawn: None,
+            tile_x,
+            tile_y,
+        })
     }
 
     /// Convenience: interact with (unpack) the cold thing at global tile `(tile_x, tile_y)`.
     pub fn interact(&self, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
         self.send(Command::Interact { tile_x, tile_y })
+    }
+
+    /// Convenience: freeze / unfreeze the simulation (debug `/pause`).
+    pub fn set_paused(&self, paused: bool) -> Result<(), SendError> {
+        self.send(Command::SetPaused { paused })
     }
 
     /// Convenience: drop the world-server connection but keep the engine alive.
@@ -159,8 +169,10 @@ fn client_msg_tag(msg: &ClientMsg) -> &'static str {
         ClientMsg::SubZone { .. } => "sub_zone",
         ClientMsg::Unsub { .. } => "unsub",
         ClientMsg::Ping { .. } => "ping",
+        ClientMsg::Spawn { .. } => "spawn",
         ClientMsg::Move { .. } => "move",
         ClientMsg::Interact { .. } => "interact",
+        ClientMsg::SetPaused { .. } => "set_paused",
     }
 }
 
@@ -320,9 +332,39 @@ impl Engine {
                     tracing::warn!(%err, "interact frame send failed");
                 }
             }
-            Command::Move { tile_x, tile_y } => {
-                if let Err(err) = self.send_frame(&ClientMsg::Move { tile_x, tile_y }).await {
+            Command::Spawn {
+                entity_key,
+                kind,
+                tile_x,
+                tile_y,
+            } => {
+                let frame = ClientMsg::Spawn {
+                    entity_key,
+                    kind,
+                    tile_x,
+                    tile_y,
+                };
+                if let Err(err) = self.send_frame(&frame).await {
+                    self.emit(Event::Status(format!("spawn send failed: {err}")));
+                }
+            }
+            Command::Move {
+                pawn,
+                tile_x,
+                tile_y,
+            } => {
+                let frame = ClientMsg::Move {
+                    pawn,
+                    tile_x,
+                    tile_y,
+                };
+                if let Err(err) = self.send_frame(&frame).await {
                     self.emit(Event::Status(format!("move send failed: {err}")));
+                }
+            }
+            Command::SetPaused { paused } => {
+                if let Err(err) = self.send_frame(&ClientMsg::SetPaused { paused }).await {
+                    self.emit(Event::Status(format!("set_paused send failed: {err}")));
                 }
             }
             Command::Logout => {
@@ -534,6 +576,9 @@ impl Engine {
             }
             ServerMsg::Error { error } => {
                 self.emit(Event::Status(format!("server error: {error}")));
+            }
+            ServerMsg::Paused { paused } => {
+                self.emit(Event::Paused { paused });
             }
             ServerMsg::Applied { sid } => {
                 self.record_reply("sub_zone", /*ok=*/ true, text.len());

@@ -23,6 +23,7 @@ import type { TextureResolver } from "../../textures";
 import { SQUARE } from "../viewport/squareMath";
 import { MaterialRegistry, type PackedChannel } from "../viewport/material";
 import { makeNoiseAtlas } from "../viewport/noiseAtlas";
+import { placeThing, readLayout } from "./thingPlacement";
 
 /** The viewport anchor's name in the client's anchor list. */
 const ANCHOR = "viewport:0";
@@ -51,15 +52,11 @@ const STICKY_RELAX_MS = 200;
 const sameRadii = (a: AnchorRadii, b: AnchorRadii): boolean =>
   a.active === b.active && a.hot === b.hot && a.warm === b.warm && a.cold === b.cold;
 
-/** A thing's driving-axis footprint in world px when its def sets no `size`
- *  (content emits `0` = unset). Half a tile, so small flora sits within its cell. */
-const DEFAULT_THING_PX = SQUARE / 2;
-
 /** Base zIndex for thing sprites — above the ground (tiles are `0`). Each thing
- *  adds its base tile-row on top of this, so overlapping things paint in
+ *  adds its anchor tile-row on top of this, so overlapping things paint in
  *  painter's order (a lower/nearer thing draws over a higher/farther one) and a
  *  big sprite (a tree) that extends into the cell above still sits in front of
- *  whatever grows there. See {@link thingZ}. */
+ *  whatever grows there. The row comes from {@link placeThing}. */
 const THING_Z_BASE = 1;
 
 /** The built-in flat-fill stem: a def that names this (or nothing) has no sprite —
@@ -72,10 +69,10 @@ function textureNameFor(stem: string | undefined): string | undefined {
   return stem && stem !== WHITE_STEM ? stem : undefined;
 }
 
-/** The facing (a master's `<dir>` segment) + horizontal flip for each 2-bit thing
- *  rotation. Rotation 0 is SOUTH — the single-facing default every existing master
- *  was renamed to — so untouched worldgen data (rotation all-zero) renders south
- *  unchanged. West ships no master of its own: it reuses the east master mirrored. */
+/** The facing (a master's `<dir>` segment) + horizontal flip for each 2-bit MOVER
+ *  rotation — a pawn's cardinal facing picked from its direction of travel (`0=south`,
+ *  matching `FACE_*` on the wire). West ships no master of its own: it reuses the east
+ *  master mirrored. */
 const FACING_BY_ROTATION: ReadonlyArray<{ facing: "s" | "e" | "n"; flipX: boolean }> = [
   { facing: "s", flipX: false }, // 0 — south
   { facing: "e", flipX: false }, // 1 — east
@@ -83,24 +80,34 @@ const FACING_BY_ROTATION: ReadonlyArray<{ facing: "s" | "e" | "n"; flipX: boolea
   { facing: "e", flipX: true }, //  3 — west (east mirrored)
 ];
 
+/** The canonical single-facing DIRECTION — the `<dir>` segment a kind that ships ONE
+ *  master is authored under. This is the project's DEFAULT facing; it moved from `s`
+ *  (south) to `e` (east) when east became the hero facing, so single-facing cold things
+ *  (conifer, flora, …) now resolve to `<stem>/e`. Movers still pick a cardinal facing
+ *  from their rotation (above) — only single-facing things fold onto this default. */
+const DEFAULT_FACING = "e";
+
 /** The category (first stem segment) whose kinds are LINKED/autotiled: their
  *  masters carry the `l` direction and their variation is picked by neighbour context
  *  rather than a facing. Mirrors `bin/art`'s `GRID_CATS`. */
 const LINKED_CATEGORY = "linked";
 
 /** A thing's texture name + flip for a given rotation + sprite variant. The def's base
- *  stem gets a trailing DIRECTION segment the resolver treats as its own stem: a facing
- *  from the rotation (`world/conifer` → `world/conifer/e`), or `l` for a linked-category
- *  kind (`linked/wall_smooth` → `linked/wall_smooth/l`). `cell` selects which grid cell of
- *  the master atlas to bake: for a facing kind that's the packed **variant** (which sprite
- *  of the kind — the resolver takes it modulo the kind's variant count); for a linked kind
- *  it's the neighbour-context cell (still Phase 2 — canonical cell 0). A white/absent stem
- *  stays a flat tint rect. */
-export function thingTexture(stem: string | undefined, rotation: number, variant: number): { name: string | undefined; flipX: boolean; cell?: number } {
+ *  stem gets a trailing DIRECTION segment the resolver treats as its own stem: the
+ *  single-facing DEFAULT (`world/conifer` → `world/conifer/e`) for a cold thing, a cardinal
+ *  facing from the rotation when `mover` (a pawn's `world/wolf` → `world/wolf/s|e|n`), or `l`
+ *  for a linked-category kind (`linked/wall_smooth` → `linked/wall_smooth/l`). `cell` selects
+ *  which grid cell of the master atlas to bake: for a facing kind that's the packed
+ *  **variant** (which sprite of the kind — the resolver takes it modulo the kind's variant
+ *  count); for a linked kind it's the neighbour-context cell (still Phase 2 — canonical cell
+ *  0). A white/absent stem stays a flat tint rect. */
+export function thingTexture(stem: string | undefined, rotation: number, variant: number, mover = false): { name: string | undefined; flipX: boolean; cell?: number } {
   const base = textureNameFor(stem);
   if (!base) return { name: undefined, flipX: false };
   if (base.startsWith(`${LINKED_CATEGORY}/`)) return { name: `${base}/l`, flipX: false, cell: 0 };
-  const f = FACING_BY_ROTATION[rotation & 3];
+  // A mover (pawn) picks its cardinal facing from the rotation; a single-facing cold thing
+  // has one master, authored under the DEFAULT_FACING dir.
+  const f = mover ? FACING_BY_ROTATION[rotation & 3] : { facing: DEFAULT_FACING, flipX: false };
   return { name: `${base}/${f.facing}`, flipX: f.flipX, cell: variant };
 }
 
@@ -110,8 +117,8 @@ export class WorldBridge {
    *  repainted independently on delivery, so they coexist without clobbering each other. */
   private readonly coldPrims = new Map<string, number[]>();
   /** Raw cold rows as delivered, keyed like {@link coldPrims} — kept so a content
-   *  hot-swap ({@link setContent}) or a texture-tier load ({@link reseedThings}) can
-   *  re-expand every live row through the new corpus without re-requesting it. */
+   *  hot-swap ({@link setContent}) can re-expand every live row through the new corpus
+   *  without re-requesting it. */
   private readonly coldRowsRaw = new Map<
     string,
     { zoneId: number; typeReference: number; kinds: Uint32Array }
@@ -124,9 +131,10 @@ export class WorldBridge {
    *  hot-swap ({@link setContent}). */
   private tileStems: string[] = [];
   private thingStems: string[] = [];
-  /** Per-thing footprint in tiles, indexed by `defId - 1` (same as the stem
-   *  tables). `0` = unset → {@link DEFAULT_THING_PX}. Refreshed on hot-swap. */
-  private thingSizes: Float64Array = new Float64Array();
+  /** Per-thing spatial layout, flat stride-7 (`[fw, fh, ax, ay, size, sx, sy]` per def),
+   *  indexed by `defId - 1` (same as the stem tables) — {@link Content.thingLayout}.
+   *  Decoded per prim via {@link readLayout} + {@link placeThing}. Refreshed on hot-swap. */
+  private thingLayout: Float64Array = new Float64Array();
   /** Per-def packed-channel material bindings, flat stride-8 (`[mat0, tint0, …, mat3,
    *  tint3]` per def), indexed by `defId - 1` — {@link Content.tilePackedChannels} /
    *  `thingPackedChannels`. Sliced per prim into a {@link PackedChannel}[] the albedo bake
@@ -162,10 +170,8 @@ export class WorldBridge {
       ),
     );
     this.unsubs.push(client.onZoneClosed((zoneId) => this.onZoneClosed(zoneId)));
-    // A thing's footprint depends on its texture's aspect (see thingBox), which
-    // isn't known until a real tier loads — re-seed the live things when one lands
-    // so a square silhouette becomes its true shape (a 1:2 tree) in place.
-    this.unsubs.push(this.resolver.onLoad(() => this.reseedThings()));
+    // A thing's box is fixed by its def layout (see placeThing), so a texture tier landing
+    // doesn't change geometry — the SquareCache re-bakes the geo→master swap itself.
     // The tiling noise atlas the material bake samples — a static, content-independent
     // asset, generated once for the session.
     this.viewport.setNoiseAtlas(makeNoiseAtlas());
@@ -179,7 +185,7 @@ export class WorldBridge {
   private refreshStems(): void {
     this.tileStems = this.content.tileTextureStems();
     this.thingStems = this.content.thingTextureStems();
-    this.thingSizes = this.content.thingSizes();
+    this.thingLayout = this.content.thingLayout();
     this.tilePacked = this.content.tilePackedChannels();
     this.thingPacked = this.content.thingPackedChannels();
     this.viewport.setMaterialRegistry(
@@ -208,43 +214,10 @@ export class WorldBridge {
     return bound ? channels : undefined;
   }
 
-  /** A thing's DRIVING (min-axis) footprint in world px from its `defId` — its
-   *  content `size` (now in PIXELS, e.g. 64 = one tile wide), or
-   *  {@link DEFAULT_THING_PX} when unset. */
-  private thingSizePx(defId: number): number {
-    const px = this.thingSizes[defId - 1];
-    return px && px > 0 ? px : DEFAULT_THING_PX;
-  }
-
-  /** A thing's on-screen box in world px: the min axis is its `size`
-   *  ({@link thingSizePx}); the other axis is that times the texture's aspect, so
-   *  a 1:2 conifer draws 1 wide × 2 tall instead of squished into a square. Aspect
-   *  comes from the resolved texture (1 until a real tier loads → a square
-   *  silhouette that grows into its shape via {@link reseedThings}).
-   *
-   *  `textureName` is the DIRECTIONAL leaf actually baked ({@link thingTexture} —
-   *  `world/conifer/s`), NOT the base stem: aspect must read the same leaf that
-   *  loads (per-facing aspects differ; the base stem is never requested, so it would
-   *  always read 1 → square). */
-  private thingBox(defId: number, textureName: string | undefined): { w: number; h: number } {
-    const size = this.thingSizePx(defId);
-    const aspect = this.resolver.aspect(textureName); // h / w
-    return aspect >= 1 ? { w: size, h: size * aspect } : { w: size / aspect, h: size };
-  }
-
-  /** A thing's zIndex from its base tile row — higher (nearer the camera-bottom)
+  /** A thing's zIndex from its anchor tile row — higher (nearer the camera-bottom)
    *  rows paint later, so overlapping things z-order front-over-back. */
-  private thingZ(baseTileY: number): number {
-    return THING_Z_BASE + baseTileY;
-  }
-
-  /** Re-expand every live zone's cold things from their kept raw data — used when a
-   *  texture tier lands (aspect changed) so a thing's footprint updates in place.
-   *  Cheap: a handful of stems, each firing this a couple times. */
-  private reseedThings(): void {
-    for (const row of this.coldRowsRaw.values()) {
-      this.onColdObjects(row.zoneId, row.typeReference, row.kinds);
-    }
+  private thingZ(anchorRow: number): number {
+    return THING_Z_BASE + anchorRow;
   }
 
   /** Begin: centre the anchor on tile `(tileX, tileY)` (default the world origin) and
@@ -378,25 +351,25 @@ export class WorldBridge {
         );
       } else {
         const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
-        const { w, h } = this.thingBox(kindId, tex.name);
+        // Anchor/size/footprint from the def layout; a tall sprite rises past its cell,
+        // a west facing mirrors the pivot with the art (see placeThing).
+        const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX);
         ids.push(
           this.viewport.addPrim({
             texture: this.white,
             textureName: tex.name,
             flipX: tex.flipX,
             cell: tex.cell,
-            // Bottom-CENTRED on the cell: base on the cell's bottom edge, so a
-            // taller-than-a-cell sprite (a tree) rises past its cell.
-            x: tileX * SQUARE + (SQUARE - w) / 2,
-            y: tileY * SQUARE + SQUARE - h,
-            width: w,
-            height: h,
+            x: p.x,
+            y: p.y,
+            width: p.width,
+            height: p.height,
             tint,
             geoColor,
             packed: this.packedFor(this.thingPacked, kindId),
             // Cold objects don't move → seed by their world cell (their tile_seed).
             seed: cellSeed(tileX, tileY),
-            zIndex: this.thingZ(tileY),
+            zIndex: this.thingZ(p.zRow),
           }),
         );
       }

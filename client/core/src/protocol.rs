@@ -37,13 +37,34 @@ pub enum ClientMsg {
     /// the client pin the offset from the round-trip. Sent periodically while
     /// connected.
     Ping { client_send_ms: u64 },
-    /// Move the player's own object toward global tile `(tile_x, tile_y)`. The
-    /// server appends an `ACTION_MOVE` event to the shard's tick pipeline; no
-    /// direct reply (the effect arrives as a `state` row on the zone subscription).
-    Move { tile_x: i32, tile_y: i32 },
+    /// Materialize an entity: the server appends an `ACTION_SPAWN` event targeting
+    /// `entity_key`, which the tick pipeline resolves into a live `state` row carrying
+    /// `kind` + placement. The event-driven spawn path (an automated player mints its
+    /// pawns this way); no direct reply.
+    Spawn {
+        entity_key: u64,
+        kind: u16,
+        tile_x: i32,
+        tile_y: i32,
+    },
+    /// Move an object toward global tile `(tile_x, tile_y)`. `pawn` is `None` for the
+    /// player's own object (a self-move) or `Some(entity_key)` for a specific entity. The
+    /// server appends an `ACTION_MOVE` event; no direct reply (the effect arrives as a
+    /// `state` row on the zone subscription). `pawn` is omitted from the frame when `None`,
+    /// so an existing self-move client stays byte-compatible.
+    Move {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pawn: Option<u64>,
+        tile_x: i32,
+        tile_y: i32,
+    },
     /// Interact with the cold thing at global tile `(tile_x, tile_y)` — the server
     /// `unpack`s it (cold→hot) into a live `state` entity.
     Interact { tile_x: i32, tile_y: i32 },
+    /// Debug: freeze / unfreeze the simulation on the client's current shard. The server
+    /// calls `set_paused`, so the master stops advancing the tic; the new state is relayed
+    /// back as [`ServerMsg::Paused`] to every subscriber (so tic-driven actors pause too).
+    SetPaused { paused: bool },
 }
 
 /// A frame the server sends to the client.
@@ -75,6 +96,10 @@ pub enum ServerMsg {
     Row { sid: u32, op: RowOp, row: RowData },
     /// A protocol- or routing-level error not tied to a single `cid`.
     Error { error: String },
+    /// The simulation's freeze state on a subscribed shard changed (debug `/pause`). Sent to
+    /// every subscriber when the shard's `tic_meta.paused` flips (and once on subscribe), so
+    /// tic-driven actors (npc) can stop/resume issuing commands.
+    Paused { paused: bool },
 }
 
 /// The kind of upstream row change a [`ServerMsg::Row`] carries.

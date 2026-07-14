@@ -305,11 +305,11 @@ def graph_ip(pos, neg, ref_name, edge_name, hero_name, seed):
 def main():
     global DN, CN, CN_END, CFG   # --dn/--cn/--cn-end/--cfg override the module defaults
     ap = argparse.ArgumentParser(prog="art generate", description="Generate directional creature sprites from a template set.")
-    ap.add_argument("--from", dest="from_path", required=True, help="template path under textures/templates (e.g. pawns/wolf)")
-    ap.add_argument("--to", dest="to_path", default=None, help="output path under textures/sprites (default: same as --from)")
+    ap.add_argument("--from", dest="from_path", required=True, help="kind path under textures/ holding the template leaves, any depth (e.g. pawn/animal/wolf/default)")
+    ap.add_argument("--to", dest="to_path", default=None, help="output kind path under textures/ (default: same as --from)")
     ap.add_argument("--positive", default="", help="short creature description")
     ap.add_argument("--negative", default="", help="short 'avoid' description")
-    ap.add_argument("--prompt", default=None, help="reuse a saved prompt: an id (templates/<from>/<id>.prompt.txt) or a path")
+    ap.add_argument("--prompt", default=None, help="reuse a saved prompt: an id (textures/<from>/<id>.prompt.txt) or a path")
     ap.add_argument("--llm", action="store_true", help="expand --positive/--negative via Claude (spends API tokens; off by default)")
     ap.add_argument("--seed", type=int, default=None, help="seed; also the output id. random if omitted")
     ap.add_argument("--template-id", default="1", help="template <id> within the folder (default 1)")

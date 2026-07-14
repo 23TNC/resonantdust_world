@@ -91,11 +91,27 @@ pub struct VisualParts {
   pub tint: u32,
   pub geo_color: u32,
   pub texture: Option<String>,
-  /// The sprite's DRIVING (min) axis footprint, or `0.0` when the def sets none
-  /// (the host applies its own default). Host-interpreted units — the renderer
-  /// treats it as **pixels** (e.g. `64` = one tile wide) and derives the other
-  /// axis from the texture's aspect, bottom-anchoring + z-sorting by base row.
+  /// The tiles this prim OCCUPIES — `(w, h)`, default `(1, 1)`. Logical grid extent
+  /// (movement / hit-testing), authored in the object's own frame; the object's
+  /// position is its TOP-LEFT tile. Rotation swaps `w`/`h` for an n/s facing (a 3×2
+  /// object becomes 2×3). **Server-side occupancy is deferred** (`docs/object-model.md`);
+  /// today the client uses `footprint` only to resolve the `anchor` and the z-row.
+  pub footprint: (f64, f64),
+  /// The prim's logical ANCHOR within its footprint — `(x, y)` in `0..1`, default
+  /// `(0.5, 0.5)` (centre). `(0,0)` is the footprint's top-left tile corner, `(1,1)`
+  /// its bottom-right; `(0.5, 1.0)` is bottom-centre (a thing that stands on its
+  /// cell's front edge). The `sprite_anchor` point of the art is pinned here.
+  pub anchor: (f64, f64),
+  /// The sprite's on-screen scale in TILES (square canvas → one value), default `1.0`
+  /// (one tile). Masters are square pow2 canvases with the subject letterboxed +
+  /// centred (via `bin/art`), so drawing `size × size` shows the sprite at its true
+  /// shape through the transparent padding — a `size 3` conifer draws 3 tiles tall.
   pub size: f64,
+  /// The pivot ON THE SPRITE that aligns to `anchor` — `(x, y)` in `0..1`, default
+  /// `(0.5, 0.5)`. `(0.5, 1.0)` = the art's bottom-centre (its "feet"), which pinned
+  /// to a bottom-centre `anchor` reproduces the old bottom-anchored placement. A
+  /// west (mirrored-east) facing mirrors `x → 1 − x` so the pin stays put.
+  pub sprite_anchor: (f64, f64),
   /// The prim's up-to-4 packed-map channel material bindings (`&prim.packed.<i>`),
   /// indexed by packed RGBA channel. Default (all zero) = no material system in
   /// play, so the renderer paints the flat albedo exactly as before.
@@ -221,7 +237,14 @@ impl Bundle {
       Some(crate::vm::Cell::Sym(s)) => Some(s.clone()),
       _ => None,
     };
-    let size = store.read("prims.0.size").map(|c| c.as_f64()).unwrap_or(0.0);
+    // Spatial layout — footprint (tiles, default 1×1), logical anchor + sprite pivot
+    // (0..1, default centre), sprite size (tiles, default 1). Read component-wise so a
+    // def sets only what it overrides (`64 &thing.footprint.w set`, `1.0 &thing.anchor.y set`).
+    let read_f = |path: &str, dflt: f64| store.read(path).map(|c| c.as_f64()).unwrap_or(dflt);
+    let footprint = (read_f("prims.0.footprint.w", 1.0), read_f("prims.0.footprint.h", 1.0));
+    let anchor = (read_f("prims.0.anchor.x", 0.5), read_f("prims.0.anchor.y", 0.5));
+    let size = read_f("prims.0.size", 1.0);
+    let sprite_anchor = (read_f("prims.0.sprite_anchor.x", 0.5), read_f("prims.0.sprite_anchor.y", 0.5));
     // Up to 4 packed-map channels: `&prim.packed.<i>.tint` is the channel's base colour
     // (what `split_layers` subtracted into the residual — the canonical reconstruction
     // `residual + Σ packedᵢ·jitter(tintᵢ)` re-adds it, so EVERY produced channel must set
@@ -239,7 +262,7 @@ impl Bundle {
         *ch = PackedChannel { material_id, tint };
       }
     }
-    Some(VisualParts { tint, geo_color, texture, size, packed })
+    Some(VisualParts { tint, geo_color, texture, footprint, anchor, size, sprite_anchor, packed })
   }
 
   /// A tile's background colour as a packed `0xRRGGBB` (see [`node_color_bg`]).
@@ -323,16 +346,23 @@ impl Bundle {
       .collect()
   }
 
-  /// Every thing's sprite driving-axis footprint in `object_id` order (index 0 →
-  /// object_id 1); `0.0` for a def that sets no size (the host applies its
-  /// default). Host-interpreted units (pixels) — the min axis; the other comes
-  /// from the texture aspect.
-  pub fn thing_sizes(&self) -> Vec<f64> {
-    self
-      .thing_ids
-      .iter()
-      .map(|name| self.thing(name).and_then(|n| self.node_visual(n)).map(|v| v.size).unwrap_or(0.0))
-      .collect()
+  /// Every thing's spatial LAYOUT in `object_id` order, flattened **stride-7** per def
+  /// (index 0 → object_id 1): `[footprint.w, footprint.h, anchor.x, anchor.y, size,
+  /// sprite_anchor.x, sprite_anchor.y]` — all in the units of [`VisualParts`] (footprint
+  /// + size in tiles, anchors in `0..1`). A def that builds no prim gets the default row
+  /// `[1, 1, 0.5, 0.5, 1, 0.5, 0.5]`, so the host never special-cases "unset". The host
+  /// (`WorldBridge`/`MoverLayer`) resolves it into a world-px box + z-row.
+  pub fn thing_layout(&self) -> Vec<f64> {
+    let mut out = Vec::with_capacity(self.thing_ids.len() * 7);
+    for name in &self.thing_ids {
+      match self.thing(name).and_then(|n| self.node_visual(n)) {
+        Some(v) => out.extend_from_slice(&[
+          v.footprint.0, v.footprint.1, v.anchor.0, v.anchor.1, v.size, v.sprite_anchor.0, v.sprite_anchor.1,
+        ]),
+        None => out.extend_from_slice(&[1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5]),
+      }
+    }
+    out
   }
 
   // ---------- biomes ----------
@@ -680,7 +710,7 @@ mod tests {
   }
 
   #[test]
-  fn thing_stem_and_size_tables() {
+  fn thing_stem_and_layout_tables() {
     let data = "<thing>\n  ::tree>\n    :data>\n      @define>\n        0 return\n  ::shrub>\n    :data>\n      @define>\n        0 return\n";
     let visual = "\
 <thing>
@@ -690,7 +720,9 @@ mod tests {
         \"thing ^prim call &thing export
         \"world/conifer &thing.texture set
         #ffffff &thing.tint set
-        2.0 &thing.size set
+        3.0 &thing.size set
+        1.0 &thing.anchor.y set
+        1.0 &thing.sprite_anchor.y set
         0 return
   ::shrub>
     :visual>
@@ -701,10 +733,16 @@ mod tests {
         0 return
 ";
     let b = load(&[src("data/things.rd", data), src("visual/things.rd", visual)]).expect("load");
-    // tree carries the conifer stem + a 2-tile footprint; shrub is a flat white
-    // fill at the host default (size unset → 0.0).
     assert_eq!(b.thing_texture_stems(), vec!["world/conifer".to_string(), "white".to_string()]);
-    assert_eq!(b.thing_sizes(), vec![2.0, 0.0]);
+    // tree: default 1×1 footprint, bottom anchor (y=1) + bottom sprite pivot (y=1),
+    // size 3 tiles. shrub authors none → the all-default row.
+    assert_eq!(
+      b.thing_layout(),
+      vec![
+        1.0, 1.0, 0.5, 1.0, 3.0, 0.5, 1.0, // tree
+        1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, // shrub (defaults)
+      ],
+    );
   }
 
   #[test]

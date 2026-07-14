@@ -82,15 +82,39 @@ pub enum Command {
     },
     /// Remove the anchor named `name`, closing any subscriptions only it held.
     RemoveAnchor { name: String },
-    /// Move the player's own object toward global tile `(tile_x, tile_y)`. The
-    /// pixijs host sends this on a click; the server appends an `ACTION_MOVE` event
-    /// to the shard's tick pipeline, which surfaces as a `state` row on the zone
-    /// subscription. Requires a live session; ignored otherwise.
-    Move { tile_x: i32, tile_y: i32 },
+    /// Materialize an entity through the event pipeline: the server appends an
+    /// `ACTION_SPAWN` event targeting `entity_key`, which the tick pipeline resolves
+    /// into a live `state` row (`kind` + placement). The one spawn path — an automated
+    /// player (`npc`) mints its pawns this way, exactly as a `Move` travels, rather than
+    /// a privileged direct write. The host chooses `entity_key` (typically
+    /// `pack_minted_entity`) so it can address the entity later. Requires a live session
+    /// and a subscribed zone (the shard must be connected); ignored otherwise.
+    Spawn {
+        entity_key: u64,
+        kind: u16,
+        tile_x: i32,
+        tile_y: i32,
+    },
+    /// Move an object toward global tile `(tile_x, tile_y)` by appending an `ACTION_MOVE`
+    /// event, which surfaces as a `state` row on the zone subscription. `pawn` selects the
+    /// target: `None` moves the player's **own** object (the pixijs host sends this on a
+    /// click — a self-move); `Some(entity_key)` moves that specific entity (an `npc`
+    /// driving its wolves). Authority: today any live session may move any pawn — no
+    /// ownership check yet (see the edge `handle_move`). Requires a live session; ignored
+    /// otherwise.
+    Move {
+        pawn: Option<u64>,
+        tile_x: i32,
+        tile_y: i32,
+    },
     /// Interact with the cold thing at global tile `(tile_x, tile_y)` — the pixijs host
     /// sends this on a right-click; the server `unpack`s the cold object (cold→hot) into a
     /// live `state` entity. Requires a live session; ignored otherwise.
     Interact { tile_x: i32, tile_y: i32 },
+    /// Debug: freeze (`true`) / unfreeze (`false`) the simulation on the current shard. The
+    /// server stops advancing the tic, so movement halts for every client; the pixijs `/pause`
+    /// command sends this. Requires a live session; ignored otherwise.
+    SetPaused { paused: bool },
     /// Drop the world-server connection and clear the session, without stopping
     /// the client (a later [`Command::Login`] can reconnect).
     Logout,
@@ -155,6 +179,11 @@ pub enum Event {
     /// A zone's subscription closed (the anchor moved it out of range, or it was
     /// evicted). The host drops that zone's entities.
     ZoneClosed { zone_id: u32 },
+    /// The simulation's freeze state changed (debug `/pause`). `true` = frozen (the tic
+    /// stopped, movement halts); `false` = running. Emitted to every subscriber when the
+    /// shard's flag flips (and once on subscribe). Tic-driven hosts (npc) gate on this to
+    /// stop/resume issuing commands; pixijs surfaces it as a chat system line.
+    Paused { paused: bool },
     /// The running per-command gateway-call tally changed. Carries the full
     /// snapshot (one [`CallStat`] per command type seen so far), re-emitted after
     /// each outbound frame and each correlated reply. Diagnostic-only — the pixijs

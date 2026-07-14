@@ -206,13 +206,15 @@ impl Content {
         self.bundle.thing_texture_stems()
     }
 
-    /// Every thing's sprite driving-axis footprint in `object_id` order, indexed by
-    /// the `defId` a thing / free-thing prim carries. `0.0` means "unset" — the
-    /// host applies its own default; the renderer treats it as pixels (the min axis)
-    /// and derives the other axis from the texture aspect.
-    #[wasm_bindgen(js_name = thingSizes)]
-    pub fn thing_sizes(&self) -> Vec<f64> {
-        self.bundle.thing_sizes()
+    /// Every thing's spatial LAYOUT in `object_id` order, indexed by the `defId` a
+    /// thing / free-thing prim carries. Flat **stride-7** per def: `[footprint.w,
+    /// footprint.h, anchor.x, anchor.y, size, sprite_anchor.x, sprite_anchor.y]`
+    /// (footprint + size in tiles, anchors in `0..1`). A def with no prim yields the
+    /// default row `[1, 1, 0.5, 0.5, 1, 0.5, 0.5]`. The host (`WorldBridge`/`MoverLayer`)
+    /// resolves it into a world-px box (via `SQUARE`) + a z-row.
+    #[wasm_bindgen(js_name = thingLayout)]
+    pub fn thing_layout(&self) -> Vec<f64> {
+        self.bundle.thing_layout()
     }
 
     /// Every tile's 4 packed-map channel material bindings, in `def_id` order — a
@@ -383,7 +385,7 @@ impl Content {
     /// location)` of content `kind`: its world-tile position plus the kind's
     /// `tint`/`geo_color`, as `[tileX, tileY, tint, geoColor]`. The single-entity
     /// sibling of [`Content::zone_thing_prims`] — the host adds the sprite using this
-    /// position + the kind's stem/size (from `thing_texture_stems`/`thing_sizes`) and a
+    /// position + the kind's stem/layout (from `thing_texture_stems`/`thing_layout`) and a
     /// facing from the entity's rotation. Position comes straight from the cell, so a
     /// mover the bot walks cell-by-cell lands on the same grid the cold things use.
     #[wasm_bindgen(js_name = moverPrim)]
@@ -511,6 +513,13 @@ impl WorldClient {
         let _ = self.inner.interact(tile_x, tile_y);
     }
 
+    /// Freeze / unfreeze the simulation (debug `/pause`) — the server stops advancing the
+    /// tic, so movement halts for every client. No-op before login / if disconnected.
+    #[wasm_bindgen(js_name = setPaused)]
+    pub fn set_paused(&self, paused: bool) {
+        let _ = self.inner.set_paused(paused);
+    }
+
     /// Drop the world-server connection, keeping the client alive for reconnect.
     pub fn logout(&self) {
         let _ = self.inner.logout();
@@ -609,6 +618,10 @@ fn event_to_js(event: &client::Event) -> JsValue {
         Event::ZoneClosed { zone_id } => {
             set("kind", &JsValue::from_str("zoneClosed"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));
+        }
+        Event::Paused { paused } => {
+            set("kind", &JsValue::from_str("paused"));
+            set("paused", &JsValue::from_bool(*paused));
         }
         Event::CallStats(stats) => {
             set("kind", &JsValue::from_str("callStats"));

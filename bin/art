@@ -55,7 +55,7 @@ R2_AWSCLI_IMAGE="${R2_AWSCLI_IMAGE:-amazon/aws-cli:latest}"
 # (de-lit, Marigold-IID) and `normal.png` (Laigter), in the SAME leaf. `maps` also
 # emits Marigold's non-diffuse term `albedo_residual.png` and gates it into
 # `emissive.png` (the shipped self-lit glow), plus `surface.png` (R=height, G=ao,
-# B=coverage — the client's one silhouette source). `--split_layer` then decomposes
+# B=coverage — the client's one silhouette source). `--layers` then decomposes
 # `albedo.png`: the residual REPLACES `albedo.png` (the render base), `layers.png`
 # (RGB per-material weights) holds the tints, and the de-lit source is preserved as
 # `albedo_marigold.png`. So the diffuse is just the `diffuse.png` member of the leaf.
@@ -102,15 +102,14 @@ SPLIT_MIN_SIZE=32
 # of the most aggressive downstream downscale (gate LOD / mipmaps); see _edge_bleed.
 EDGE_BLEED_SIGMA=6
 
-# Master canvas normalization — powers of 2, not the old multiple-of-32 grid.
-#
-# A sprite's SHORT axis (min of width/height) is the DRIVING dimension: it snaps
-# to the NEAREST power of 2 (>= MIN_POW2). The LONG axis is that driver times the
-# integer aspect RATIO (long/short, rounded half-up), so every master has a clean
-# 1:N shape (a tree is ~1:2). The content is then LETTERBOXED into that box —
-# scaled to fit while preserving its aspect, transparent-padded — so a slightly
-# out-of-shape sprite (say 1:2.2) scales down to fit its rounded ratio (1:2)
-# without distortion. LOD then just becomes the driver's power-of-2 width.
+# Master canvas normalization — SQUARE powers of 2 (see docs, and ../resonantdust
+# `bin/art` closest_pow2). Every master is an N×N square whose side is the nearest
+# power of 2 to the blob's LARGER dimension; the content is letterboxed into it
+# (scaled to fit, preserving aspect, transparent-padded, centred). Non-square
+# sprites therefore carry a lot of empty area — deliberate: square pow2 masters
+# make LOD a single number and let atlases pack with a quadtree. The client draws
+# every thing on a SQUARE footprint (one `size` per def), so the sprite's real
+# shape shows through the padding.
 MIN_POW2=8
 
 # Nearest power of 2 to n, at least MIN_POW2. Ties round UP (n exactly halfway
@@ -126,21 +125,14 @@ nearest_pow2() {
 }
 
 # The normalized master canvas for a w×h content blob (content + its padding
-# border): echoes "BOXW BOXH". The short axis snaps to nearest_pow2(short); the
-# long axis is short × round(long/short); orientation follows w vs h.
+# border): echoes "SIDE SIDE". The box is a SQUARE whose side is the nearest power
+# of 2 to the LARGER of w/h — driving off the long axis so the content always fits.
 _pow2_box() {
-  local w=$1 h=$2 s l ratio short long
-  if (( w <= h )); then s=$w; l=$h; else s=$h; l=$w; fi
-  (( s < 1 )) && s=1
-  # ratio = ceil(long/short), UNLESS long/short is within SHRINK_CUTOFF (0.1) above
-  # a whole number — then floor, i.e. only a BARELY-over sprite is scaled DOWN into
-  # the smaller box (avoiding a mostly-empty next unit); everything else pads UP so
-  # the driving axis keeps its resolution. Integer form of floor(long/short + 0.9);
-  # the 9/10 is (1 - 0.1) — lower the cutoff by changing the 9.
-  ratio=$(( (10 * l + 9 * s) / (10 * s) )); (( ratio < 1 )) && ratio=1
-  short=$(nearest_pow2 "$s")
-  long=$(( short * ratio ))
-  if (( w <= h )); then echo "$short $long"; else echo "$long $short"; fi
+  local w=$1 h=$2 side s
+  side=$(( w > h ? w : h ))
+  (( side < 1 )) && side=1
+  s=$(nearest_pow2 "$side")
+  echo "$s $s"
 }
 
 # Fixed-grid ("linked") categories: their sheets are autotile atlases held WHOLE as
@@ -355,10 +347,10 @@ _geoms_from_source() { # src gap
 # pass fan blobs into per-KIND folders (mode B) or pool them as numbered
 # variations of one kind (mode A); _emit_crops itself is layout-agnostic.
 #
-# Each kept blob lands in its own power-of-2, integer-ratio canvas (see
-# _pow2_box): the short axis snaps to the nearest power of 2, the long axis is a
-# whole multiple of it, and the blob is letterboxed in (scaled to fit inside a
-# SPLIT_PADDING border, preserving aspect, then centred). `-compose Over` inside
+# Each kept blob lands in its own SQUARE power-of-2 canvas (see _pow2_box): the
+# side is the nearest power of 2 to the blob's larger dimension, and the blob is
+# letterboxed in (scaled to fit inside a SPLIT_PADDING border, preserving aspect,
+# then centred — so a non-square sprite keeps empty slack). `-compose Over` inside
 # each group overrides the key stack's lingering CopyOpacity before -extent.
 # Count lands in LAST_COUNT.
 # Edge color-bleed: replace the RGB UNDERNEATH the transparent border of FILE
@@ -393,6 +385,14 @@ LAST_COUNT=0
 CROP_GEOMS=()
 CROP_OUTS=()
 EMIT_BLEED=1     # 1 = edge-bleed outputs (diffuse); 0 = leave data maps untouched
+# Shared-canvas / common-scale mode (kind-level normalization). When EMIT_SIDE > 0, every
+# blob lands in the SAME EMIT_SIDE×EMIT_SIDE square and is scaled by the SAME factor
+# (padded interior ÷ EMIT_MAXDIM) instead of each fitting its OWN pow2 box. This preserves
+# the RELATIVE size of a kind's sprites across all its directions + variants (a wolf's
+# side view stays longer than its front view), so the client can draw them all at one
+# per-def `size` without the directions scaling apart. 0 = per-blob mode (default).
+EMIT_SIDE=0
+EMIT_MAXDIM=0
 _emit_crops() {
   local cargs=( "$@" )            # "$@" yields keyed image 0
   local logs=() n=0 i
@@ -401,19 +401,28 @@ _emit_crops() {
     local wh=${g%%+*} xy=${g#*+}
     local w=${wh%x*} h=${wh#*x}
     local x=${xy%+*} y=${xy#*+}
-    # Normalize to the power-of-2, integer-ratio master canvas (see _pow2_box),
-    # and letterbox the blob into it: fit the content inside the box minus its
-    # padding border, preserving aspect, then centre + transparent-pad to the box.
-    local tw th; read -r tw th < <(_pow2_box "$w" "$h")
-    local iw=$(( tw - SPLIT_PADDING * 2 )) ih=$(( th - SPLIT_PADDING * 2 ))
-    (( iw < 1 )) && iw=1
-    (( ih < 1 )) && ih=1
+    # Target square + interior fit. Two modes:
+    #  - SHARED (EMIT_SIDE>0): one canvas for the whole kind; scale by the common factor
+    #    (interior ÷ EMIT_MAXDIM), so a smaller sprite stays proportionally smaller.
+    #  - PER-BLOB (default): each blob fits its own nearest-pow2 square (see _pow2_box).
+    local tw th iw ih
+    if (( EMIT_SIDE > 0 )); then
+      tw=$EMIT_SIDE; th=$EMIT_SIDE
+      local inner=$(( EMIT_SIDE - SPLIT_PADDING * 2 )); (( inner < 1 )) && inner=1
+      iw=$(( w * inner / EMIT_MAXDIM )); (( iw < 1 )) && iw=1
+      ih=$(( h * inner / EMIT_MAXDIM )); (( ih < 1 )) && ih=1
+    else
+      read -r tw th < <(_pow2_box "$w" "$h")
+      iw=$(( tw - SPLIT_PADDING * 2 )); ih=$(( th - SPLIT_PADDING * 2 ))
+      (( iw < 1 )) && iw=1
+      (( ih < 1 )) && ih=1
+    fi
     mkdir -p "$(dirname "$out")"
     # -gravity None before -crop: settings persist across groups in a single
     # convert, so without this reset the previous group's `-gravity center` would
-    # offset the crop. `-resize ${iw}x${ih}` fits the content inside the padded box
-    # preserving aspect (scales down an out-of-shape sprite, or up to the nearest
-    # power of 2), then `-extent` centres it in the full box with transparent slack.
+    # offset the crop. `-resize ${iw}x${ih}` scales the content (per-blob: fill the
+    # padded box; shared: the common kind scale), preserving aspect, then `-extent`
+    # centres it in the full square with transparent slack.
     # -write/+delete INSIDE the group so it writes only this clone (not the whole
     # list, which would also dump image 0) and leaves image 0 intact for the next.
     cargs+=(
@@ -1663,20 +1672,41 @@ _wipe_master_leaves() {  # root depth
 
 # LEVEL-3 remaster: each `<pose>/<variant>/sprite.png` → co-located `diffuse.png`. A
 # single clean variation (transparent bg from `generate`) is ONE blob — its alpha
-# content-bbox (`%@`); crop that, pow2-normalize + edge-bleed via _emit_crops (no
-# magenta key, no alias, no blob detection). The sprite.png source is PRESERVED. Sets
-# LAST_TOTAL. See the three-level source model in docs/texture-paths.md.
+# content-bbox (`%@`); crop that, normalize + edge-bleed via _emit_crops (no magenta
+# key, no alias, no blob detection). The sprite.png source is PRESERVED. Sets LAST_TOTAL.
+# See the three-level source model in docs/texture-paths.md.
+#
+# TWO-PASS, KIND-NORMALIZED: pass 1 measures the content bbox of EVERY sprite in the kind
+# (all directions × variants) to find the kind's max content dimension; pass 2 emits each
+# into ONE shared square (nearest_pow2 of that max) at ONE common scale (via EMIT_SIDE /
+# EMIT_MAXDIM). So a pawn's three facings keep their RELATIVE sizes — the side view stays
+# longer than the front view — and a single per-def `size` scales all of them together,
+# instead of each facing filling its own square and the directions rendering apart.
 _remaster_leaf_sprites() {  # src_kind
-  local src_kind=$1 total=0 sp leaf bbox
+  local src_kind=$1 total=0 sp leaf bbox w h
+  # Pass 1: collect every sprite + its bbox, tracking the kind's max content dimension.
+  local -a sps=() bxs=() maxdim=0
   while IFS= read -r -d '' sp; do
-    leaf=$(dirname "$sp")
     bbox=$(convert "$sp" -format '%@' info: 2>/dev/null)
     if [[ -z "$bbox" || "$bbox" == 0x0* ]]; then echo "art: ${sp#$MASTER_DIR/} — blank sprite (skipped)" >&2; continue; fi
-    CROP_GEOMS=( "$bbox" ); CROP_OUTS=( "$leaf/diffuse.png" ); EMIT_BLEED=1
+    sps+=( "$sp" ); bxs+=( "$bbox" )
+    w=${bbox%%x*}; h=${bbox#*x}; h=${h%%+*}
+    (( w > maxdim )) && maxdim=$w
+    (( h > maxdim )) && maxdim=$h
+  done < <(find "$src_kind" -type f -name 'sprite.png' -print0 | sort -z)
+  if (( maxdim < 1 )); then LAST_TOTAL=0; return; fi
+  # Pass 2: shared canvas + common scale for the whole kind.
+  local side; side=$(nearest_pow2 "$maxdim")
+  EMIT_SIDE=$side; EMIT_MAXDIM=$maxdim
+  local i
+  for i in "${!sps[@]}"; do
+    sp=${sps[$i]}; leaf=$(dirname "$sp")
+    CROP_GEOMS=( "${bxs[$i]}" ); CROP_OUTS=( "$leaf/diffuse.png" ); EMIT_BLEED=1
     _emit_crops "$sp"
     total=$(( total + LAST_COUNT ))
-  done < <(find "$src_kind" -type f -name 'sprite.png' -print0 | sort -z)
-  echo "    $(basename "$src_kind"): $total leaf sprite(s) → diffuse (level-3, in place)"
+  done
+  EMIT_SIDE=0; EMIT_MAXDIM=0   # back to per-blob for any later caller
+  echo "    $(basename "$src_kind"): $total leaf sprite(s) → diffuse (level-3, kind-normalized: max ${maxdim}px → ${side}□ shared canvas)"
   LAST_TOTAL=$total
 }
 
@@ -1697,6 +1727,63 @@ _remaster_kind() {  # cat_src src_kind out_cat gap out_kind
     _remaster_leaf_sprites "$src_kind" && total=$(( total + LAST_TOTAL ))
   fi
   LAST_TOTAL=$total
+}
+
+# True if DIR is a KIND directory — the leaf level of the texture taxonomy that holds a
+# kind's sources/masters directly (mirrors the manifest scanner's kind test in
+# server/edge tex_manifest.rs). A kind dir either (a) has sheet/atlas sources at its top
+# (`<id>[.<dir>][.<layer>][.<variant>][.<map>].png`, e.g. conifer's `1.s.0.0.sprite.png`
+# or a grid `1.diffuse.png`), or (b) holds a mastered/level-3 pose-leaf subdir named
+# `<id>.<dir>.<layer>` (e.g. `1.s.0`). Everything above a kind (a type/subtype container)
+# has only plainly-named child dirs and matches neither.
+_is_kind_src_dir() {  # dir
+  local d=$1 f b
+  for f in "$d"/*.png; do [[ -f "$f" ]] && return 0; done   # sheet/atlas sources at top
+  for f in "$d"/*/; do                                       # a pose-leaf subdir (1.<dir>.<layer>)
+    [[ -d "$f" ]] || continue
+    b=$(basename "$f")
+    [[ "$b" == [0-9]*.*.* ]] && return 0
+  done
+  return 1
+}
+
+# Print every KIND dir at or below ROOT (NUL-separated), recursing to ANY depth so both
+# the legacy 2-level `<cat>/<kind>` tree and the object-model 4-level
+# `<type>/<subtype>/<kind>/<subkind>` tree resolve with no depth assumption. Skips the
+# legacy `<group>` rollback dirs and any `1.<dir>.<layer>` pose leaf (its variant subdirs
+# are NOT kinds) — same skips as the manifest scan. A kind dir is a leaf: it is emitted,
+# not descended into.
+_find_kind_dirs() {  # root
+  local root=${1%/} d b
+  if _is_kind_src_dir "$root"; then printf '%s\0' "$root"; return; fi
+  for d in "$root"/*/; do
+    [[ -d "$d" ]] || continue
+    d=${d%/}; b=$(basename "$d")
+    [[ "$b" == 1.* || "$b" == master || "$b" == sprites || "$b" == templates ]] && continue
+    _find_kind_dirs "$d"
+  done
+}
+
+# Depth-agnostic remaster of a DIRECTORY path (relative to SPRITE_DIR): remaster the one
+# kind if REL is a kind dir, else recurse into every kind dir beneath it. Sets SPLIT_TARGET
+# to REL so the combined `remaster` re-maps exactly this subtree; accumulates into `grand`
+# (a caller-scoped local). `cat_src` (seg[0], the top category) drives grid detection; the
+# per-kind out_cat/out_kind come from each kind's own path so mode-A output lands back in
+# the same taxonomy dir (level-3 kinds write in place regardless).
+_remaster_dirpath() {  # cat_src rel gap
+  local cat_src=$1 rel=$2 gap=$3 kd krel out_cat out_kind
+  local dirpath="$SPRITE_DIR/$rel"
+  if [[ ! -d "$dirpath" ]]; then echo "art: no dir (looked at $dirpath)" >&2; return 1; fi
+  SPLIT_TARGET="$(_norm_mod "$rel")"
+  local -a kinds=(); while IFS= read -r -d '' kd; do kinds+=("$kd"); done < <(_find_kind_dirs "$dirpath")
+  if (( ${#kinds[@]} == 0 )); then echo "art: no kind dirs under $rel" >&2; return 1; fi
+  for kd in "${kinds[@]}"; do
+    krel=${kd#"$SPRITE_DIR/"}; krel=${krel%/}
+    out_kind=$(_norm_mod "$(basename "$krel")")
+    out_cat=$(dirname "$krel"); [[ "$out_cat" == "." ]] && out_cat="" || out_cat=$(_norm_mod "$out_cat")
+    echo "$krel  (kind)"
+    _remaster_kind "$cat_src" "$kd" "$out_cat" "$gap" "$out_kind" && grand=$(( grand + LAST_TOTAL ))
+  done
 }
 
 # Grid ids = distinct <id> among a kind's <id>.diffuse.png atlases (the diffuse
@@ -1832,11 +1919,18 @@ _remaster_id() {
   LAST_TOTAL=$total
 }
 
-# Path-aware remaster. PATH selects the granularity (all under SPRITE_DIR):
-#   <cat>            tile | tile.5             → every kind in the category
-#   <cat>/<kind>      tile/fog | tile.5/fog.6   → one mode-A kind (its ids)
-#   <cat>/<sheet>    tile/1.png | tile/1.6.png → one mode-B flat sheet's id (alias)
-#   <cat>/<kind>/<f>  tile/fog/1.png            → one id within a mode-A kind
+# Path-aware remaster. PATH selects the granularity (all under SPRITE_DIR), and is
+# DEPTH-AGNOSTIC — both the legacy 2-level `<cat>/<kind>` tree and the object-model
+# 4-level `<type>/<subtype>/<kind>/<subkind>` tree resolve (docs/object-model.md §8,
+# server/edge tex_manifest.rs uses the same kind test). A path that names a KIND dir
+# (holds sheet sources or `1.<dir>.<layer>` pose leaves — see _is_kind_src_dir) remasters
+# that one kind; a path ABOVE a kind recurses into every kind beneath it:
+#   <cat>                       tile | tile.5              → every kind in the category
+#   <type>/<subtype>            biome-thing/default        → every kind beneath (recurse)
+#   <cat>/<kind>                tile/fog | linked/wall.smooth
+#   <type>/<subtype>/<kind>/<subkind>  biome-thing/default/conifer/default  → one kind
+#   <cat>/<sheet>.png           tile/1.png                 → one mode-B flat sheet's id
+#   <…>/<kind>/<id>.png         tile/fog/1.png | biome-thing/default/conifer/default/1.s.0.0.sprite.png
 # A `.png` in the LAST segment marks a sheet/id target (the layer number in it is
 # ignored — building an id rebuilds ALL its layers, since slicing unions them).
 # Output is fully normalized: <cat>.<subcategory>/<kind>.<subkind>/<id>.<dir>.<layer>/<variant>/diffuse.png
@@ -1897,24 +1991,34 @@ cmd_split() {
     bn=$(basename "${seg[1]}" .png); _parse_sheet_stem "$bn"; id=$SHEET_ID
     echo "$cat_src/$id.png  (flat sheet)"
     _remaster_id "$src_cat" "$id" "$out_cat" "$gap" B "$src_cat/$id.alias" && grand=$LAST_TOTAL
-  elif (( nseg == 2 )); then
-    # one mode-A kind: wipe + rebuild its ids.
+  elif (( nseg == 2 )) && _is_kind_src_dir "$src_cat/${seg[1]}"; then
+    # one mode-A/grid kind at the legacy 2-level depth.
     kind=${seg[1]}; out_kind=$(_norm_mod "$kind"); SPLIT_TARGET="$out_cat/$out_kind"
-    local src_kind="$src_cat/$kind"
-    if [[ ! -d "$src_kind" ]]; then echo "art: no kind dir (looked at $src_kind)" >&2; return 1; fi
     echo "$cat_src/$kind  (kind)"
-    _remaster_kind "$cat_src" "$src_kind" "$out_cat" "$gap" "$out_kind" && grand=$((grand+LAST_TOTAL))
-  elif (( nseg == 3 )) && [[ "${seg[2]}" == *.png ]]; then
-    # one id within a mode-A kind (rebuilds all that id's layers). A `.diffuse`
-    # suffix (grid source `1.diffuse.png`) is stripped so the id is just `1`.
+    _remaster_kind "$cat_src" "$src_cat/$kind" "$out_cat" "$gap" "$out_kind" && grand=$((grand+LAST_TOTAL))
+  elif (( nseg == 3 )) && [[ "${seg[2]}" == *.png ]] && _is_kind_src_dir "$src_cat/${seg[1]}"; then
+    # one id within a legacy 2-level mode-A kind (rebuilds all that id's layers). A
+    # `.diffuse` suffix (grid source `1.diffuse.png`) is stripped so the id is just `1`.
     kind=${seg[1]}; out_kind=$(_norm_mod "$kind"); SPLIT_TARGET="$out_cat/$out_kind"
     bn=$(basename "${seg[2]}" .png); bn=${bn%.diffuse}; _parse_sheet_stem "$bn"; id=$SHEET_ID
     echo "$cat_src/$kind/$id.png  (id)"
     _remaster_id "$src_cat/$kind" "$id" "$out_cat" "$gap" A "$out_kind" && grand=$LAST_TOTAL
+  elif [[ "${seg[$((nseg-1))]}" == *.png ]]; then
+    # a deep id/sheet target under the object-model taxonomy: <…>/<kind>/<id>.png.
+    local kindrel=${path%/*} src_kind="$SPRITE_DIR/${path%/*}"
+    if ! _is_kind_src_dir "$src_kind"; then echo "art: not a kind dir (looked at $src_kind)" >&2; return 1; fi
+    out_kind=$(_norm_mod "$(basename "$kindrel")"); out_cat=$(dirname "$kindrel")
+    [[ "$out_cat" == "." ]] && out_cat="" || out_cat=$(_norm_mod "$out_cat")
+    SPLIT_TARGET="$(_norm_mod "$kindrel")"
+    bn=$(basename "${seg[$((nseg-1))]}" .png); bn=${bn%.diffuse}; _parse_sheet_stem "$bn"; id=$SHEET_ID
+    echo "$kindrel/$id.png  (id)"
+    _remaster_id "$src_kind" "$id" "$out_cat" "$gap" A "$out_kind" && grand=$LAST_TOTAL
   else
-    echo "art: unrecognized path '$path'" >&2; return 1
+    # a directory target at any depth (object-model taxonomy): one kind, or recurse
+    # into every kind dir beneath it. Sets SPLIT_TARGET + accumulates grand itself.
+    _remaster_dirpath "$cat_src" "$path" "$gap"
   fi
-  echo "art: split wrote $grand diffuse sprites under $MASTER_DIR/$out_cat/"
+  echo "art: split wrote $grand diffuse sprites under $MASTER_DIR/${SPLIT_TARGET%%/*}/"
 }
 
 # Normalize grid-category source atlases to `1.diffuse.png` WITHOUT slicing —
@@ -2006,11 +2110,13 @@ cmd_remaster() {
   # always Marigold-IID. Depth is NOT generated (client-side from the normal). Pass
   # --marigold (or --laigter) as a boolean shorthand for the engine.
   local path="" gap=4 radius="" choke=1 aa=0.5 outline_width=2 outline_color=0x000000 outline_blur=2 \
-        preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter split_layer=3 size="" publish=0 \
-        tilt="" tilt_amount=1.8 tilt_z=0.18 ao=0 sharpen_normal=0 ao_strength=1.0 sharpen_ao=0
-  # Positional slots, filled in order by every non-flag argument. split_layer/size are
+        preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter layers=3 size="" publish=0 \
+        tilt="" tilt_amount=1.8 tilt_z=0.18 ao=0 sharpen_normal=0 ao_strength=1.0 sharpen_ao=0 \
+        split_normalize=1 black_threshold=0.05
+  # Positional slots, filled in order by every non-flag argument. layers/size are
   # appended at the end so publish keeps its position; both are normally passed as flags.
-  local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish split_layer size tilt_amount tilt_z sharpen_normal ao_strength sharpen_ao)
+  # (split_normalize/black_threshold are flag-only — dashed names, handled in the case below.)
+  local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish layers size tilt_amount tilt_z sharpen_normal ao_strength sharpen_ao)
   local pi=0
   while (( $# )); do
     local arg=$1; shift
@@ -2022,6 +2128,14 @@ cmd_remaster() {
       --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
       --ao)        ao=1; continue ;;             # pack depth-derived AO into normal.a (default)
       --no-ao)     ao=0; continue ;;             # skip the AO step
+      --split-normalize|--split_normalize)   # normalize the channel-pack (DEFAULT on): pull all colour into layers, leave only the black outline in albedo. Optional 0/1 value disables/enables (bare = on).
+        case "${1:-}" in 0|1) split_normalize=$1; shift ;; *) split_normalize=1 ;; esac; continue ;;
+      --split-normalize=*|--split_normalize=*) split_normalize=${arg#*=}; continue ;;
+      --no-split-normalize)                  split_normalize=0; continue ;;
+      --split_layer|--split-layer)           layers=${1:-}; shift || true; continue ;;  # back-compat alias for --layers
+      --split_layer=*|--split-layer=*)       layers=${arg#*=}; continue ;;
+      --black-threshold|--black_threshold)   black_threshold=${1:-}; shift || true; continue ;;  # dashed name -> can't be a pos var
+      --black-threshold=*|--black_threshold=*) black_threshold=${arg#*=}; continue ;;
       --*=*)  name=${arg%%=*}; name=${name#--}; val=${arg#*=} ;;
       --*)    name=${arg#--}; val=${1:-}; shift || true ;;
       *)      if (( pi < ${#pos[@]} )); then printf -v "${pos[pi]}" '%s' "$arg"; pi=$((pi+1)); continue;
@@ -2033,9 +2147,10 @@ cmd_remaster() {
     printf -v "$name" '%s' "$val"
   done
   if [[ -z "$path" ]]; then
-    echo "usage: art remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--split_layer N] [--size PX]" >&2
+    echo "usage: art remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--layers N] [--split-normalize 0|1] [--black-threshold T] [--size PX]" >&2
     echo "       or pass any as a flag, e.g.: art remaster <path> --size 128   (= split [+ outline] + maps + channel-pack [+ scale])" >&2
-    echo "       --split_layer N (default 3, max 3) channel-packs N tintable materials into layers.png R/G/B; the residual becomes albedo.png, de-lit preserved as albedo_marigold.png (0 = off; skipped for grid tiles)." >&2
+    echo "       --layers N (default 3, max 3) channel-packs N tintable materials into layers.png R/G/B; the residual becomes albedo.png, de-lit preserved as albedo_marigold.png (0 = off; skipped for grid tiles)." >&2
+    echo "       --split-normalize (DEFAULT on) pulls ALL colour into the layers, leaving only the black outline in albedo.png; disable with --split-normalize 0 (or --no-split-normalize). --black-threshold T (default 0.05) is its black cutoff." >&2
     echo "       --size PX scales masters to PX on the short axis (default: native); maps derive at FULL res, then downscale (sources kept full-res)." >&2
     echo "       normal engine defaults to laigter; --marigold overrides it. albedo=Marigold-IID." >&2
     echo "       depth is NOT generated (client integrates it from the normal). See 'art help'." >&2
@@ -2060,15 +2175,19 @@ cmd_remaster() {
   tilt_args+=(--sharpen_normal "$sharpen_normal" --ao_strength "$ao_strength" --sharpen_ao "$sharpen_ao")
   cmd_maps "$SPLIT_TARGET" "$preset" "$detail" "$detail_radius" "$strength" "$engine" "${tilt_args[@]}" || return 1
 
-  # Channel-pack the just-made albedo(s) into up to `--split_layer` tintable materials:
+  # Channel-pack the just-made albedo(s) into up to `--layers` tintable materials:
   # <base>.layers.png (per-material weights, RGB). The residual REPLACES <base>.albedo.png
   # (the render base) and the de-lit source is preserved as <base>.albedo_marigold.png.
   # --force because maps just regenerated a fresh albedo (split reads THAT, re-preserving
-  # marigold). Skipped for grid categories (tiles auto-tile; not per-material tinted) — same
-  # gate as the outline. Tune with `art split_layers` directly; see 'art help'.
-  if (( split_layer > 0 )) && ! _is_grid_cat "${path%%/*}"; then
-    command -v python3 >/dev/null || { echo "art: channel-pack (--split_layer) needs python3" >&2; return 1; }
-    RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/split_layers.py" "$MASTER_DIR/$SPLIT_TARGET" --channels "$split_layer" --force || return 1
+  # marigold). With --split-normalize, forward --normalize (+ --black-threshold) so ALL
+  # colour is pulled into the layers and only the black outline stays in albedo. Skipped for
+  # grid categories (tiles auto-tile; not per-material tinted) — same gate as the outline.
+  # Tune with `art split_layers` directly; see 'art help'.
+  if (( layers > 0 )) && ! _is_grid_cat "${path%%/*}"; then
+    command -v python3 >/dev/null || { echo "art: channel-pack (--layers) needs python3" >&2; return 1; }
+    local -a split_args=(--channels "$layers" --force)
+    (( split_normalize )) && split_args+=(--normalize --black-threshold "$black_threshold")
+    RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/split_layers.py" "$MASTER_DIR/$SPLIT_TARGET" "${split_args[@]}" || return 1
   fi
 
   # --size: force the master output resolution. Done LAST, after every map is derived at
@@ -2494,73 +2613,68 @@ cmd_manifest() {
   local out_dir="$REPO_ROOT/content/visual/manifest"
   mkdir -p "$out_dir"
 
-  local l1dir l1 base_cat
-  local -A cats=()
-  for l1dir in "$MASTER_DIR"/*/; do
-    [[ -d "$l1dir" ]] || continue
-    l1=$(basename "$l1dir")
-    case "$l1" in master|sprites|templates) continue ;; esac  # legacy <group> dirs kept for rollback
-    base_cat=$(_strip_int_suffix "$l1")
-    cats[$base_cat]=1
-  done
-
-  # Index the LOCAL master tree (no R2 gate in this repo — see the function
-  # header). Every base kind present on disk is indexed.
-  local kinds=0 total=0
-  for base_cat in $(printf '%s\n' "${!cats[@]}" | sort); do
-    local out="$out_dir/${base_cat}.rd"
-    local basedir="$MASTER_DIR/$base_cat"          # category dir (name verbatim)
-    local subcategories; subcategories=$(_override_ints "$MASTER_DIR" "$base_cat")
+  # Index the LOCAL master tree (no R2 gate in this repo — see the function header). ONE
+  # file per top-level TYPE dir; within it, one `:<key>` per KIND leaf found at ANY depth
+  # via _find_kind_dirs, so both the legacy 2-level `<cat>/<kind>` tree and the object-model
+  # 4-level `<type>/<subtype>/<kind>/<subkind>` tree index with no depth assumption
+  # (docs/object-model.md §8). The key is the leaf's path BELOW the type, so `<type>/<key>`
+  # reconstructs the client texture stem verbatim (a facet name is opaque — `/` is kept).
+  local typedir type kinds=0 total=0 files=0
+  for typedir in "$MASTER_DIR"/*/; do
+    [[ -d "$typedir" ]] || continue
+    type=$(basename "$typedir")
+    case "$type" in master|sprites|templates) continue ;; esac  # legacy <group> dirs kept for rollback
+    local -a leaves=(); local kd
+    while IFS= read -r -d '' kd; do leaves+=( "$kd" ); done < <(_find_kind_dirs "$typedir")
+    (( ${#leaves[@]} == 0 )) && continue
+    local out="$out_dir/${type}.rd"
+    local subcategories; subcategories=$(_override_ints "$MASTER_DIR" "$type")
     {
-      echo "; content/visual/manifest/${base_cat}.rd"
-      echo "; GENERATED by \`bin/art manifest\` from $MASTER_DIR/$base_cat/<kind>/."
-      echo "; Existence index for the \`^r2\` resolver: per category &subcategories; per base"
-      echo "; kind &variant (variations), &layers (layer count), &subkinds (override ints),"
-      echo "; &hash (master version), &maps (bit0 albedo|bit1 normal|bit2 emissive)."
-      echo "; Subcategory/subkind are named dir segments; the filename layer/variant"
-      echo "; default to 0/1. Do not edit"
-      echo "; by hand — re-run \`bin/art manifest\`."
+      echo "; content/visual/manifest/${type}.rd"
+      echo "; GENERATED by \`bin/art manifest\` from $MASTER_DIR/$type/ (all kind leaves, any depth)."
+      echo "; Existence index for the (future) \`^r2\` resolver: per type &subcategories; per KIND"
+      echo "; LEAF a :<key> (leaf path below the type, so <type>/<key> = the client stem) carrying"
+      echo "; &variant (variations), &layers (layer count), &subkinds (override ints), &hash"
+      echo "; (master version), &maps (bit0 albedo|bit1 normal|bit2 emissive). The filename"
+      echo "; layer/variant default to 0/1. Do not edit by hand — re-run \`bin/art manifest\`."
       echo
       echo "<manifest>"
-      echo "  ::${base_cat}>"
+      echo "  ::${type}>"
       echo "    @define>"
       _emit_int_array subcategories $subcategories
-      if [[ -d "$basedir" ]]; then
-        local -A seen_kind=()
-        local l2dir l2 base_kind n p facs
-        for l2dir in "$basedir"/*/; do
-          [[ -d "$l2dir" ]] || continue
-          l2=$(basename "$l2dir"); base_kind=$(_strip_int_suffix "$l2")
-          [[ -n "${seen_kind[$base_kind]:-}" ]] && continue
-          seen_kind[$base_kind]=1
-          local kinddir="$basedir/$base_kind"
-          # variation list = (id,variant) pairs → parallel &var_id / &var_variant arrays.
-          local ids=() cnts=() line
-          while IFS=' ' read -r vi vc; do [[ -n "$vi" ]] && { ids+=("$vi"); cnts+=("$vc"); }; done < <(_var_pairs "$kinddir")
-          n=${#ids[@]}
-          p=$(_layer_count "$kinddir")
-          facs=$(_override_ints "$basedir" "$base_kind")
-          # The group-less tree co-locates source atlases + templates with masters; a
-          # kind with no mastered display variations (source/template only) has nothing
-          # for `^r2` to resolve, so skip it (the old master-only scan never saw these).
-          if (( n == 0 )); then
-            echo "art: skipping $base_cat/$base_kind — no mastered variations (source/template only)" >&2
-            continue
-          fi
-          echo "    :${base_kind}>"
-          echo "      @define>"
-          echo "        ${p} &layers set"
-          echo "        $(_kind_hash "$kinddir") &hash set"
-          echo "        $(_kind_maps "$kinddir") &maps set"
-          _emit_int_array var_id "${ids[@]}"
-          _emit_int_array var_variant "${cnts[@]}"
-          _emit_int_array subkinds $facs
-          kinds=$((kinds + 1)); total=$((total + n))
-        done
-      fi
+      local key parent base n p facs
+      for kd in "${leaves[@]}"; do
+        kd=${kd%/}
+        key=${kd#"${typedir%/}/"}                    # leaf path below the type (stem tail)
+        [[ "$key" == "$kd" || -z "$key" ]] && key=$(basename "$kd")
+        # variation list = (id,variant) pairs → parallel &var_id / &var_variant arrays.
+        local ids=() cnts=()
+        while IFS=' ' read -r vi vc; do [[ -n "$vi" ]] && { ids+=("$vi"); cnts+=("$vc"); }; done < <(_var_pairs "$kd")
+        n=${#ids[@]}
+        # The group-less tree co-locates source atlases + templates with masters; a kind with
+        # no mastered display variations (source/template only) has nothing for `^r2` to
+        # resolve, so skip it.
+        if (( n == 0 )); then
+          echo "art: skipping $type/$key — no mastered variations (source/template only)" >&2
+          continue
+        fi
+        p=$(_layer_count "$kd")
+        parent=$(dirname "$kd"); base=$(basename "$kd")
+        facs=$(_override_ints "$parent" "$base")     # int-suffixed subkind siblings (empty for named)
+        echo "    :${key}>"
+        echo "      @define>"
+        echo "        ${p} &layers set"
+        echo "        $(_kind_hash "$kd") &hash set"
+        echo "        $(_kind_maps "$kd") &maps set"
+        _emit_int_array var_id "${ids[@]}"
+        _emit_int_array var_variant "${cnts[@]}"
+        _emit_int_array subkinds $facs
+        kinds=$((kinds + 1)); total=$((total + n))
+      done
     } > "$out"
+    files=$((files + 1))
   done
-  echo "art: wrote ${#cats[@]} manifest files under $out_dir/ ($kinds kinds, $total variations)"
+  echo "art: wrote $files manifest file(s) under $out_dir/ ($kinds kinds, $total variations)"
 }
 
 # GC stale texture artifacts in R2: delete every LOD/geo version dir whose hash no
@@ -2631,15 +2745,17 @@ usage: art <command> [args...]
 commands:
   generate --from <path> [--to <path>] [--positive TEXT] [--negative TEXT] [--prompt REF] [--llm] [--seed N] [--template-id 1] [--layer 0] [--template-variant 0] [--dir D | --dirs e,s,n] [--size 512] [--bg-thresh 60] [--choke 2] [--keep-bg] [--hsym DIRS] [--vsym DIRS] [--dn 0.7] [--cn 0.5] [--cn-end 0.9] [--edge-thresh 30]
                            AI-generate directional creature sprites from a template
-                           set. Naming = <id>.<dir>.<layer>.<variant>.<map>.<filetype>:
-                           reads textures/templates/<from>/<template-id>.<dir>.<layer>.<template-variant>.template.png,
+                           set. Folder-per-variant layout (docs/texture-paths.md); <from>
+                           and <to> are ANY-depth kind paths in the object-model tree
+                           (e.g. pawn/animal/wolf/default). Reads the template leaf
+                           textures/<from>/<template-id>.<dir>.<layer>/<template-variant>/template.png,
                            drives ComfyUI (SDXL i2i + ControlNet edge; east is the
                            hero, south/north are IP-Adapter-anchored to it), and writes
-                           textures/sprites/<to-or-from>/<template-id>.<dir>.<layer>.<seed>.sprite.png
+                           textures/<to-or-from>/<template-id>.<dir>.<layer>/<seed>/sprite.png
                            — the SEED becomes the <variant>, so many seeds share one
                            <id>.<dir>.<layer> (multiple variants/control-maps per object),
                            transparent RGBA. Also writes the reusable prompt to
-                           textures/templates/<from>/<seed>.prompt.txt. --to overrides
+                           textures/<from>/<seed>.prompt.txt. --to overrides
                            the output dir (default = --from).
                            Background: removed by a corner flood-fill — bg colour is
                            auto-detected from the four corners and filled inward until
@@ -2655,7 +2771,7 @@ commands:
                            --llm is passed, which expands them via Claude (spends API
                            tokens; needs ANTHROPIC_API_KEY or bin/keys/anthropic.env).
                            --prompt REF reuses a saved prompt (an id under
-                           templates/<from>/ or a path) instead — no tokens; lets you
+                           textures/<from>/ or a path) instead — no tokens; lets you
                            reuse one creature's prompt across seeds. Generic negatives
                            (realistic, photo, watermark …) are always appended.
                            --seed omitted = random; the seed IS the output id.
@@ -2677,12 +2793,12 @@ commands:
                            noise, so high CN doesn't blow up the lines on dense poses like
                            the head-on south). Override per-run to sweep without editing
                            generate.py.
-                           e.g. art generate --from pawns/wolf --positive "grey wolf,
-                           yellow eyes" --negative "brown" --seed 555 --llm
-                           reuse: art generate --from pawns/wolf --prompt 555 --seed 123
-                           one dir: art generate --from pawns/wolf --prompt 555 --seed 555 --dir s
-  split_layers <path...> [--channels 3] [--threshold 0.15] [--group-threshold 0.10] [--edge 42] [--min-region 25] [--outline-v 0.18] [--outline-rim 0.35] [--blend-radius 10] [--force]
-                           (standalone form of remaster --split_layer; path resolves
+                           e.g. art generate --from pawn/animal/wolf/default --positive
+                           "grey wolf, yellow eyes" --negative "brown" --seed 555 --llm
+                           reuse: art generate --from pawn/animal/wolf/default --prompt 555 --seed 123
+                           one dir: art generate --from pawn/animal/wolf/default --prompt 555 --seed 555 --dir s
+  split_layers <path...> [--channels 3] [--threshold 0.15] [--group-threshold 0.10] [--edge 42] [--min-region 25] [--outline-v 0.18] [--outline-rim 0.35] [--blend-radius 10] [--normalize] [--black-threshold 0.05] [--force]
+                           (standalone form of remaster --layers; path resolves
                             textures-relative like remaster, e.g. pawns.animal/wolf)
                            Decompose flat (de-lit) albedo(s) into a channel-packed
                            tint map. For each albedo.png (file or dir walk): DIVIDE into
@@ -2696,25 +2812,31 @@ commands:
                            Renderer: out.rgb = albedo(residual) + layers.R*tint0 +
                            .G*tint1 + .B*tint2 (identity tint = each material's base colour
                            → reconstructs the de-lit albedo exactly); alpha comes from
-                           surface.B. Skips already-split leaves (marigold present) unless
-                           --force. e.g. art split_layers pawns.animal/wolf
-  remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--split_layer N] [--size PX]
+                           surface.B. --normalize (--black-threshold T, default 0.05)
+                           pulls EVERY non-black pixel FULLY into one layer (grouped by
+                           region/colour) so albedo.png keeps ONLY the black outline — all
+                           colour lives in the layers. Skips already-split leaves (marigold
+                           present) unless --force. e.g. art split_layers pawns.animal/wolf
+  remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--layers N] [--split-normalize 0|1] [--black-threshold T] [--size PX]
                            THE make-masters command: runs `split`, optionally
                            `outline`, then `maps` in one pass, so master ends up
                            with the diffuse crops AND their derived maps —
                            N.normal.png + N.albedo.png + N.albedo_residual.png +
-                           N.surface.png (and, with --split_layer, N.layers.png +
+                           N.surface.png (and, with --layers, N.layers.png +
                            N.albedo_marigold.png). Split alone leaves
                            diffuse-only. `maps` runs only on the kind `split` touched.
                            <path> resolves master-relative (<cat> | <cat>/<kind> |
                            <cat>/<sheet>.png | …), same as `split`.
-                           --split_layer N (default 3, max 3; 0 = off; skipped for grid
+                           --layers N (default 3, max 3; 0 = off; skipped for grid
                            tiles): after maps, channel-pack each albedo into N tintable
                            materials — <base>.layers.png (per-material shading in R/G/B) —
                            and the residual REPLACES <base>.albedo.png as the render base,
                            the de-lit source preserved as <base>.albedo_marigold.png
                            (tint-at-render: out.rgb = albedo(residual) + layers.R*t0 +
-                           .G*t1 + .B*t2; alpha from surface.B). Tune the split via
+                           .G*t1 + .B*t2; alpha from surface.B). --split-normalize (DEFAULT
+                           on; disable with --split-normalize 0) forwards --normalize to the
+                           pack (--black-threshold T, default 0.05): pulls ALL colour into
+                           the layers, leaving only the black outline in albedo.png. Tune via
                            \`art split_layers\` directly. --size PX scales the finished
                            masters to PX on the short axis (maps derive at full res first).
                            [gap] (blob-merge px, default 4) [radius] (despill rim
@@ -2931,8 +3053,10 @@ EOF
 cmd_generate() {
   # Formalized creature-sprite generation: ComfyUI (SDXL i2i + ControlNet edge,
   # east hero + IP-Adapter-anchored south/north) painting directional sprites
-  # from a template set into textures/sprites/<from>/<seed>.<dir>.0.png (raw on
-  # white — keyed downstream off the black outline). Delegates to lib/generate.py.
+  # from a template set into the folder-per-variant leaf
+  # textures/<to-or-from>/<id>.<dir>.<layer>/<seed>/sprite.png (transparent RGBA;
+  # <from>/<to> are any-depth kind paths in the object-model tree, e.g.
+  # pawn/animal/wolf/default). Delegates to lib/generate.py.
   # Needs: python3 w/ pillow+numpy, a reachable ComfyUI (COMFYUI_URL), and
   # ANTHROPIC_API_KEY (or bin/keys/anthropic.env) for prompt expansion.
   command -v python3 >/dev/null || { echo "art generate: python3 not found" >&2; exit 1; }

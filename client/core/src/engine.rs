@@ -115,16 +115,54 @@ impl Client {
         self.send(Command::RemoveAnchor { name: name.into() })
     }
 
-    /// Convenience: move the controllable thing toward global tile
-    /// `(tile_x, tile_y)` (see [`Command::Move`]).
+    /// Convenience: move the player's **own** object toward global tile
+    /// `(tile_x, tile_y)` — a self-move (see [`Command::Move`]).
     pub fn move_to(&self, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
-        self.send(Command::Move { tile_x, tile_y })
+        self.send(Command::Move {
+            pawn: None,
+            tile_x,
+            tile_y,
+        })
+    }
+
+    /// Convenience: move a **specific** entity toward global tile `(tile_x, tile_y)`
+    /// (see [`Command::Move`]) — the automated-player path (an `npc` driving its pawns).
+    pub fn move_pawn(&self, pawn: u64, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
+        self.send(Command::Move {
+            pawn: Some(pawn),
+            tile_x,
+            tile_y,
+        })
+    }
+
+    /// Convenience: materialize an entity at global tile `(tile_x, tile_y)` through the
+    /// event pipeline (see [`Command::Spawn`]). `entity_key` is the host-chosen handle
+    /// (typically `pack_minted_entity`) it will address for later moves.
+    pub fn spawn_entity(
+        &self,
+        entity_key: u64,
+        kind: u16,
+        tile_x: i32,
+        tile_y: i32,
+    ) -> Result<(), SendError> {
+        self.send(Command::Spawn {
+            entity_key,
+            kind,
+            tile_x,
+            tile_y,
+        })
     }
 
     /// Convenience: interact with (unpack) the cold thing at global tile
     /// `(tile_x, tile_y)` (see [`Command::Interact`]).
     pub fn interact(&self, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
         self.send(Command::Interact { tile_x, tile_y })
+    }
+
+    /// Convenience: freeze / unfreeze the simulation (debug `/pause`; see
+    /// [`Command::SetPaused`]).
+    pub fn set_paused(&self, paused: bool) -> Result<(), SendError> {
+        self.send(Command::SetPaused { paused })
     }
 
     /// Convenience: drop the world-server connection but keep the engine alive.
@@ -246,9 +284,39 @@ impl Engine {
                     tracing::warn!(%err, "interact frame send failed");
                 }
             }
-            Command::Move { tile_x, tile_y } => {
-                if let Err(err) = self.send_frame(&ClientMsg::Move { tile_x, tile_y }).await {
+            Command::Spawn {
+                entity_key,
+                kind,
+                tile_x,
+                tile_y,
+            } => {
+                let frame = ClientMsg::Spawn {
+                    entity_key,
+                    kind,
+                    tile_x,
+                    tile_y,
+                };
+                if let Err(err) = self.send_frame(&frame).await {
+                    self.emit(Event::Status(format!("spawn send failed: {err}")));
+                }
+            }
+            Command::Move {
+                pawn,
+                tile_x,
+                tile_y,
+            } => {
+                let frame = ClientMsg::Move {
+                    pawn,
+                    tile_x,
+                    tile_y,
+                };
+                if let Err(err) = self.send_frame(&frame).await {
                     self.emit(Event::Status(format!("move send failed: {err}")));
+                }
+            }
+            Command::SetPaused { paused } => {
+                if let Err(err) = self.send_frame(&ClientMsg::SetPaused { paused }).await {
+                    self.emit(Event::Status(format!("set_paused send failed: {err}")));
                 }
             }
             Command::Logout => {
@@ -446,6 +514,11 @@ impl Engine {
             }
             ServerMsg::Error { error } => {
                 self.emit(Event::Status(format!("server error: {error}")));
+            }
+            // The simulation's freeze state changed (debug `/pause`) — surface it so
+            // tic-driven hosts pause and pixijs can echo a chat line.
+            ServerMsg::Paused { paused } => {
+                self.emit(Event::Paused { paused });
             }
             // A subscription's initial rows have all arrived.
             ServerMsg::Applied { sid } => {

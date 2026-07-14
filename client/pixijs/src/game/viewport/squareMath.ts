@@ -12,6 +12,14 @@
 /** Square edge in world px. The grid unit — all map squares are this size. */
 export const SQUARE = 64;
 
+/** Tiles per zone edge — mirrors `resonantdust_codec::packed::ZONE_DIM`. A zone is
+ *  `ZONE_DIM × ZONE_DIM` tiles. */
+export const ZONE_DIM = 16;
+
+/** Zones per region edge — mirrors `resonantdust_codec::packed::REGION_DIM`. A region is
+ *  `REGION_DIM × REGION_DIM` zones, i.e. `REGION_DIM · ZONE_DIM` tiles per edge. */
+export const REGION_DIM = 16;
+
 /** Slack squares kept baked OFF each edge of the viewport, so a pan reaches
  *  finished content before the screen edge does (and a small jiggle never
  *  re-bakes). "A number of these squares off each edge." */

@@ -102,6 +102,7 @@
     "offset": "Offset",
     "fps": "FPS",
     "drawCalls": "Draw Calls",
+    "zoom": "Zoom",
     "atlases": "Atlases",
     "previewSize": "Preview size",
     "previewTextures": "Preview textures",

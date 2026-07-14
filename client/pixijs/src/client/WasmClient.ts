@@ -176,6 +176,7 @@ type WorldEvent =
       removed: boolean;
     }
   | { kind: "zoneClosed"; zoneId: number }
+  | { kind: "paused"; paused: boolean }
   | { kind: "callStats"; stats: CallStat[] }
   | { kind: "subStats"; open: number; total: number; tables: SubStat[] }
   | {
@@ -239,6 +240,7 @@ export class WasmClient {
   private readonly coldObjectsCbs = new Set<ColdObjectsHandler>();
   private readonly zoneClosedCbs = new Set<ZoneClosedHandler>();
   private readonly stateObjectCbs = new Set<StateObjectHandler>();
+  private readonly pausedCbs = new Set<(paused: boolean) => void>();
   private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
   private readonly subStatCbs = new Set<(snap: SubStatsSnapshot) => void>();
 
@@ -426,6 +428,19 @@ export class WasmClient {
     this.world?.interact(tileX, tileY);
   }
 
+  /** Freeze (`true`) / unfreeze (`false`) the simulation (debug `/pause`). The server stops
+   *  advancing the tic, so movement halts for every client until unpaused. No-op before login. */
+  setPaused(paused: boolean): void {
+    this.world?.setPaused(paused);
+  }
+
+  /** Subscribe to simulation freeze changes (debug `/pause`). Fires with the new paused
+   *  state whenever the shard's flag flips (and once on subscribe). Returns an unsubscribe. */
+  onPaused(cb: (paused: boolean) => void): () => void {
+    this.pausedCbs.add(cb);
+    return () => this.pausedCbs.delete(cb);
+  }
+
   /** Subscribe to cold-zone OBJECT rows (the object model — biome-tile ground +
    *  biome-thing scatter). Returns an unsubscribe. */
   onColdObjects(cb: ColdObjectsHandler): () => void {
@@ -581,6 +596,9 @@ export class WasmClient {
         break;
       case "zoneClosed":
         for (const cb of this.zoneClosedCbs) cb(ev.zoneId);
+        break;
+      case "paused":
+        for (const cb of this.pausedCbs) cb(ev.paused);
         break;
       case "callStats":
         for (const cb of this.callStatCbs) cb(ev.stats);

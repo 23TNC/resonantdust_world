@@ -30,6 +30,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::bindings;
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
 use crate::bindings::shard::append as _; // reducer trait → `reducers.append` (DSL word stream + targets)
+use crate::bindings::shard::set_paused as _; // reducer trait → `reducers.set_paused` (debug freeze)
 use crate::bindings::shard::seed_cold_row as _; // reducer trait → `reducers.seed_cold_row` (terrain)
 use crate::connections::{await_ready, connect_players, connect_shard, Pool};
 use crate::index::{resolve_zone_or_default, ShardEndpoint};
@@ -53,6 +54,9 @@ pub async fn handler(ws: WebSocketUpgrade, State(pool): State<Arc<Pool>>) -> Res
 struct ShardConn {
     conn: Arc<bindings::shard::DbConnection>,
     wired: bool,
+    /// Keeps the shard-global `tic_meta` subscription alive (wired once with the relays), so
+    /// the [`wire_paused_relay`] callbacks fire on a `set_paused` change. Dropping it unsubs.
+    tic_sub: Option<bindings::shard::SubscriptionHandle>,
 }
 
 /// A live zone subscription — the zone's object `state` rows + its cold-object rows, both
@@ -199,6 +203,9 @@ async fn session_worker(
             }
             ClientMsg::Interact { tile_x, tile_y } => {
                 handle_interact(&pool, &out_tx, &shards, session, tile_x, tile_y).await;
+            }
+            ClientMsg::SetPaused { paused } => {
+                handle_set_paused(&out_tx, &shards, session, paused);
             }
             // Pings are answered on the read loop and never forwarded here.
             ClientMsg::Ping { .. } => {}
@@ -391,7 +398,7 @@ async fn handle_sub_zone(
             send(out_tx, err_frame(&format!("shard {} connect timed out", endpoint.db_name)));
             return;
         }
-        shards.insert(endpoint.clone(), ShardConn { conn, wired: false });
+        shards.insert(endpoint.clone(), ShardConn { conn, wired: false, tic_sub: None });
     }
     let shard = shards.get_mut(&endpoint).expect("just inserted");
 
@@ -401,6 +408,16 @@ async fn handle_sub_zone(
         // wire their relay on the same connection — one shard serves hot movers + cold
         // terrain, and `unpack`/`pack` stay in-module.
         wire_cold_relay(&shard.conn, out_tx.clone());
+        // The shard's freeze flag (`tic_meta.paused`) — relay changes to this client so a
+        // `/pause` from any session reaches every subscriber (including tic-driven npcs).
+        // Subscribed shard-globally (once), separate from the per-zone subs.
+        wire_paused_relay(&shard.conn, out_tx.clone());
+        shard.tic_sub = Some(
+            shard
+                .conn
+                .subscription_builder()
+                .subscribe(["SELECT * FROM tic_meta".to_string()]),
+        );
         shard.wired = true;
     }
 
@@ -634,6 +651,48 @@ fn wire_cold_relay(conn: &Arc<bindings::shard::DbConnection>, out: mpsc::Unbound
 /// Copy a `cold` row into the serde wire mirror.
 fn cold_row(r: &bindings::shard::cold_type::Cold) -> ColdObjectsRow {
     ColdObjectsRow { zone_id: r.zone_id, type_reference: r.type_reference, kinds: r.kinds.clone() }
+}
+
+/// Relay the shard's freeze flag (`tic_meta.paused`) to this client. `tic_meta` updates every
+/// tic (the master bumps `master_tic`), so only forward a [`ServerMsg::Paused`] when `paused`
+/// actually flips — on insert (the first row: the initial state) and on an update that changes
+/// it. Keeps `/pause` authoritative (reflects the real shard flag) without per-tic spam.
+fn wire_paused_relay(conn: &Arc<bindings::shard::DbConnection>, out: mpsc::UnboundedSender<String>) {
+    use bindings::shard::tic_meta_table::TicMetaTableAccess;
+
+    let t = conn.db().tic_meta();
+    let (pi, pu) = (out.clone(), out);
+    t.on_insert(move |_c, r| send(&pi, ServerMsg::Paused { paused: r.paused }));
+    t.on_update(move |_c, old, new| {
+        if old.paused != new.paused {
+            send(&pu, ServerMsg::Paused { paused: new.paused });
+        }
+    });
+}
+
+/// Debug freeze: relay the client's `/pause` to every shard this session has connected,
+/// calling `set_paused`. The master then stops advancing those shards' tics, and the change
+/// relays back to all subscribers via [`wire_paused_relay`].
+fn handle_set_paused(
+    out_tx: &mpsc::UnboundedSender<String>,
+    shards: &HashMap<ShardEndpoint, ShardConn>,
+    session: Option<u32>,
+    paused: bool,
+) {
+    if session.is_none() {
+        send(out_tx, err_frame("set_paused before login"));
+        return;
+    }
+    if shards.is_empty() {
+        send(out_tx, err_frame("set_paused before subscribing a zone"));
+        return;
+    }
+    for sc in shards.values() {
+        if let Err(err) = sc.conn.reducers.set_paused(paused) {
+            tracing::warn!(%err, paused, "set_paused request failed");
+        }
+    }
+    tracing::info!(paused, shards = shards.len(), "set_paused");
 }
 
 /// Seed a zone's cold OBJECTS (biome-tile ground + biome-thing scatter) from worldgen if

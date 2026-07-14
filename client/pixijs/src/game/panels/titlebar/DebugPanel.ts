@@ -348,6 +348,8 @@ export class DebugPanel {
   // ── Textures tab values ─────────────────────────────────────────
   private readonly texFps:         HTMLSpanElement;
   private readonly texDrawCalls:   HTMLSpanElement;
+  /** Current viewport zoom (screen px per world px). Scene-pushed via {@link setZoom}. */
+  private readonly texZoom:        HTMLSpanElement;
   private readonly texAtlases:     HTMLSpanElement;
   /** LOD size (px) → its packed-count span, one per {@link TEX_ATLAS_SIZES}. */
   private readonly texSizeRows = new Map<number, HTMLSpanElement>();
@@ -445,6 +447,7 @@ export class DebugPanel {
     // the preview (floor) tier's live size + count.
     this.texFps       = this.addRow(texturesContent, panelText("debugPanel", "fps"));
     this.texDrawCalls = this.addRow(texturesContent, panelText("debugPanel", "drawCalls"));
+    this.texZoom      = this.addRow(texturesContent, panelText("debugPanel", "zoom"));
     this.texAtlases   = this.addRow(texturesContent, panelText("debugPanel", "atlases"));
     for (const size of TEX_ATLAS_SIZES) {
       this.texSizeRows.set(size, this.addRow(texturesContent, `${size} px`));
@@ -520,6 +523,14 @@ export class DebugPanel {
     this.mainTile.textContent   = `${tileLocal.q}, ${tileLocal.r}   (w ${tileWorld.q}, ${tileWorld.r})`;
     this.mainZone.textContent   = `${zone.q}, ${zone.r}`;
     this.mainRegion.textContent = `${region.q}, ${region.r}`;
+  }
+
+  /** Live viewport zoom readout (textures tab). Scene-pushed each frame; the
+   *  viewport only exists in the world scene, so this is driven from there rather
+   *  than the scene-independent `setStats`. */
+  setZoom(zoom: number): void {
+    if (!this.panel.isOpen) return;
+    this.texZoom.textContent = `${zoom.toFixed(2)}×`;
   }
 
   get isOpen(): boolean { return this.panel.isOpen; }

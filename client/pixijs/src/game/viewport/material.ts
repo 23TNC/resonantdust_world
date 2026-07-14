@@ -57,6 +57,15 @@ export interface MaterialDef {
 /** The material registry: `params[materialId - 1]` → its {@link MaterialDef}. Built once
  *  per content load (and on hot-swap) from the wasm parallel arrays; a `materialId` of `0`
  *  (or out of range) means "no material". */
+/** Per-layer-channel DEFAULT tint when the content authored none — three DISTINCT grays so a
+ *  split sprite with no authored tints reconstructs its materials as separable gray masses
+ *  (readable form + shading, no hue) instead of baking the colour-stripped residual. The
+ *  reconstruction (`residual + Σ layersᵢ·tintᵢ`) scales each by that channel's per-pixel weight,
+ *  so a default gray only shows where its material actually is. An authored `packed.N.tint`
+ *  overrides it (to restyle/recolour that material). `split_layers` throws away the true base
+ *  colours it computed, so these grays stand in until the pipeline emits them (see notes). */
+const DEFAULT_LAYER_GRAY = [0x666666, 0x8c8c8c, 0xb3b3b3];
+
 export class MaterialRegistry {
   private readonly defs: MaterialDef[];
 
@@ -75,32 +84,26 @@ export class MaterialRegistry {
     return this.defs.some((d) => d.hueSwing !== 0 || d.chromaSwing !== 0);
   }
 
-  /** Whether a prim's packed channels bind any material that actually VARIES — the gate
-   *  for taking the material bake path (else the prim bakes flat, as before). */
-  channelsVary(channels: readonly PackedChannel[] | undefined): boolean {
-    if (!channels) return false;
-    return channels.some((c) => {
-      const d = this.get(c.materialId);
-      return !!d && (d.hueSwing !== 0 || d.chromaSwing !== 0);
-    });
-  }
-
   /** Pack a prim's channels into the two `vec4[4]` uniform arrays the bake shader reads:
    *  `chA[i] = (tintR, tintG, tintB, hueSwing)`, `chB[i] = (chromaSwing, warmCoolBias,
-   *  noiseRow, sampleSpace)`. Unbound / unknown-material channels stay all-zero → the
-   *  shader's delta contribution is `0`. */
+   *  noiseRow, sampleSpace)`. ALL 3 layer channels are always emitted: a channel with an
+   *  authored tint uses it (a restyle/recolour); a channel with none falls back to that
+   *  channel's {@link DEFAULT_LAYER_GRAY}, so an unauthored split sprite reconstructs its
+   *  materials as distinct grays rather than the bare residual. The per-pixel layer weight
+   *  scales each contribution in the shader, so a gray only shows where its material is. */
   packChannels(channels: readonly PackedChannel[] | undefined): { chA: Float32Array; chB: Float32Array } {
     const chA = new Float32Array(PACKED_UNIFORM_LEN);
     const chB = new Float32Array(PACKED_UNIFORM_LEN);
-    if (!channels) return { chA, chB };
     // 3 layer channels (RGB); any 4th binding on a prim is ignored (the `layers` map is RGB).
-    for (let i = 0; i < 3 && i < channels.length; i++) {
-      const c = channels[i];
+    for (let i = 0; i < 3; i++) {
+      const c = channels?.[i];
       const base = i * 4;
-      chA[base] = ((c.tint >> 16) & 0xff) / 255;
-      chA[base + 1] = ((c.tint >> 8) & 0xff) / 255;
-      chA[base + 2] = (c.tint & 0xff) / 255;
-      const d = this.get(c.materialId);
+      // Authored tint (nonzero) → restyle; else the per-channel default gray.
+      const tint = c && c.tint > 0 ? c.tint : DEFAULT_LAYER_GRAY[i];
+      chA[base] = ((tint >> 16) & 0xff) / 255;
+      chA[base + 1] = ((tint >> 8) & 0xff) / 255;
+      chA[base + 2] = (tint & 0xff) / 255;
+      const d = c ? this.get(c.materialId) : undefined;
       chA[base + 3] = d?.hueSwing ?? 0;
       chB[base] = d?.chromaSwing ?? 0;
       chB[base + 1] = d?.warmCoolBias ?? 0;

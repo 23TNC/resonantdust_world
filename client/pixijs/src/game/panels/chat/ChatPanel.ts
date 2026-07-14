@@ -191,6 +191,12 @@ export class ChatPanel {
     this.commands.set(name.toLowerCase(), handler);
   }
 
+  /** Echo a client-only system line into the general feed — for a host surfacing out-of-band
+   *  state (e.g. a server-relayed `/pause` confirmation), not just command return values. */
+  systemLine(text: string): void {
+    this.appendSystemLine(text);
+  }
+
   destroy(): void {
     this.unsubChat();
     this.unsubLogs();

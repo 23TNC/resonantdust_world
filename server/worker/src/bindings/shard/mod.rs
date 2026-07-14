@@ -35,6 +35,7 @@ pub mod resolve_reducer;
 pub mod resolve_foreign_reducer;
 pub mod seed_cold_row_reducer;
 pub mod seed_entity_reducer;
+pub mod set_paused_reducer;
 pub mod set_shard_id_reducer;
 pub mod stand_up_reducer;
 pub mod tick_gc_reducer;
@@ -83,6 +84,7 @@ pub use resolve_reducer::resolve;
 pub use resolve_foreign_reducer::resolve_foreign;
 pub use seed_cold_row_reducer::seed_cold_row;
 pub use seed_entity_reducer::seed_entity;
+pub use set_paused_reducer::set_paused;
 pub use set_shard_id_reducer::set_shard_id;
 pub use stand_up_reducer::stand_up;
 pub use tick_gc_reducer::tick_gc;
@@ -159,6 +161,9 @@ pub enum Reducer {
         data_0: u64,
         data_1: u64,
 }    ,
+    SetPaused {
+        paused: bool,
+}    ,
     SetShardId {
         shard_id: u16,
 }    ,
@@ -190,6 +195,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::ResolveForeign { .. } => "resolve_foreign",
             Reducer::SeedColdRow { .. } => "seed_cold_row",
             Reducer::SeedEntity { .. } => "seed_entity",
+            Reducer::SetPaused { .. } => "set_paused",
             Reducer::SetShardId { .. } => "set_shard_id",
             Reducer::StandUp { .. } => "stand_up",
             Reducer::TickGc => "tick_gc",
@@ -315,6 +321,11 @@ Reducer::MintCold{
                 offset: offset.clone(),
                 data_0: data_0.clone(),
                 data_1: data_1.clone(),
+}),
+            Reducer::SetPaused{
+                paused,
+}             => __sats::bsatn::to_vec(&set_paused_reducer::SetPausedArgs {
+                paused: paused.clone(),
 }),
             Reducer::SetShardId{
                 shard_id,

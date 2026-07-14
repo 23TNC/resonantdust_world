@@ -187,6 +187,10 @@ macro_rules! decl_tick_pipeline {
             #[primary_key]
             pub id: u8,
             pub master_tic: u32,
+            /// Debug freeze: while `true`, `bump` no-ops so the tic (and thus the whole
+            /// simulation) stops advancing. Set via [`set_paused`]; the master also skips its
+            /// drop sweep while paused. Relayed to clients so tic-driven actors (npc) pause too.
+            pub paused: bool,
         }
 
         #[table(accessor = shard_meta, public)]
@@ -209,9 +213,15 @@ macro_rules! decl_tick_pipeline {
             ctx.db.tic_meta().id().find(0).map_or(0, |m| m.master_tic)
         }
 
+        /// Whether the simulation is frozen (see [`set_paused`]).
+        pub fn is_paused(ctx: &ReducerContext) -> bool {
+            ctx.db.tic_meta().id().find(0).map_or(false, |m| m.paused)
+        }
+
         fn set_master_tic(ctx: &ReducerContext, tic: u32) {
+            let paused = is_paused(ctx); // preserve the freeze flag across the tic rewrite
             ctx.db.tic_meta().id().delete(0);
-            ctx.db.tic_meta().insert(TicMeta { id: 0, master_tic: tic });
+            ctx.db.tic_meta().insert(TicMeta { id: 0, master_tic: tic, paused });
         }
 
         fn this_shard_id(ctx: &ReducerContext) -> u16 {
@@ -454,9 +464,21 @@ macro_rules! decl_tick_pipeline {
         /// gap (`> master+1`) is ignored. The master calls `drop_timed_out` *before* this.
         #[reducer]
         pub fn bump(ctx: &ReducerContext, to_tic: u32) -> Result<(), String> {
+            if is_paused(ctx) { return Ok(()); } // frozen — the tic does not advance while paused
             let cur = master_tic(ctx);
             if to_tic != cur + 1 { return Ok(()); }
             set_master_tic(ctx, to_tic);
+            Ok(())
+        }
+
+        /// Freeze / unfreeze the simulation (debug). While `paused`, [`bump`] no-ops so the tic
+        /// stops; the master also skips its drop sweep, and the flag is relayed to clients so
+        /// tic-driven actors stop issuing commands. Idempotent; creates `tic_meta` if absent.
+        #[reducer]
+        pub fn set_paused(ctx: &ReducerContext, paused: bool) -> Result<(), String> {
+            let tic = master_tic(ctx);
+            ctx.db.tic_meta().id().delete(0);
+            ctx.db.tic_meta().insert(TicMeta { id: 0, master_tic: tic, paused });
             Ok(())
         }
 
