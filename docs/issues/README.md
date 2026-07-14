@@ -16,3 +16,4 @@ rollback point. An issue names the phase it arose in.
 | [002](002-worker-binding-regen.md) | regenerating worker/non-edge bindings | S3 | copy edge bindings (extend generator later) |
 | [003](003-claim-same-worker-reclaim.md) | `claim` refused same-worker re-claim (found live) | S3 | allow owner + unowned + expired |
 | [004](004-running-worker-master.md) | running worker/master binaries (no cargo/compose) | S3/S4 | rust+openssl container on host net; compose later |
+| [005](005-find-or-mint-payload-decode.md) | cold find-or-mint can't decode into a generic payload | S6/S7 | worker decodes + payload-param `mint_cold` |
