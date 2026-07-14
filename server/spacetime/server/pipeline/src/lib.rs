@@ -499,6 +499,43 @@ macro_rules! decl_tick_pipeline {
             Ok(())
         }
 
+        /// **PACK** — settle an *idle* hot entity back into `cold` (the reverse of find-or-mint).
+        /// Skips a busy object (any holder on its `state_log` rows). Appends the caller-computed
+        /// `object_kind_reference` to the `(zone, type_reference)` cold row, drops the entity's
+        /// `tombstone` from `cold_removed` (it's cold again), and deletes the hot `state`/
+        /// `state_log`. The worker composes `object_kind_reference` from the entity's resolved
+        /// state (the module is payload-generic, same reasoning as issue 005).
+        #[reducer]
+        pub fn pack_settle(ctx: &ReducerContext, entity_key: u64, zone_id: u32, type_reference: u32, object_kind_reference: u32, tombstone: u16) -> Result<(), String> {
+            // Only settle an object at rest — one with no pending read/write holds.
+            let busy = ctx.db.state_log().entity_key().filter(entity_key)
+                .any(|r| ctx.db.holder().state_log_id().filter(r.id).count() > 0);
+            if busy { return Ok(()); }
+            let key = cold_key(zone_id, type_reference);
+            match ctx.db.cold().cold_key().find(key) {
+                Some(c) => {
+                    let mut kinds = c.kinds.clone();
+                    if !kinds.contains(&object_kind_reference) { kinds.push(object_kind_reference); }
+                    let version = c.version.saturating_add(1);
+                    ctx.db.cold().cold_key().delete(key);
+                    ctx.db.cold().insert(Cold { cold_key: key, zone_id, type_reference, kinds, version });
+                }
+                None => {
+                    ctx.db.cold().insert(Cold { cold_key: key, zone_id, type_reference, kinds: vec![object_kind_reference], version: 1 });
+                }
+            }
+            if let Some(r) = ctx.db.cold_removed().zone_key().find(zone_id) {
+                let removed: Vec<u16> = r.removed.iter().copied().filter(|&t| t != tombstone).collect();
+                let version = r.version.saturating_add(1);
+                ctx.db.cold_removed().zone_key().delete(zone_id);
+                ctx.db.cold_removed().insert(ColdRemoved { zone_key: zone_id, removed, version });
+            }
+            ctx.db.state().entity_key().delete(entity_key);
+            let ids: Vec<u64> = ctx.db.state_log().entity_key().filter(entity_key).map(|r| r.id).collect();
+            for id in ids { ctx.db.state_log().id().delete(id); }
+            Ok(())
+        }
+
         /// Seed an entity's resolved state directly (bulk-load / harness). Idempotent per key.
         #[reducer]
         #[allow(clippy::too_many_arguments)]

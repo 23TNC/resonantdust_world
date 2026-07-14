@@ -28,6 +28,7 @@ pub mod bump_reducer;
 pub mod claim_reducer;
 pub mod drop_timed_out_reducer;
 pub mod mint_cold_reducer;
+pub mod pack_settle_reducer;
 pub mod ready_reducer;
 pub mod resolve_reducer;
 pub mod seed_cold_row_reducer;
@@ -71,6 +72,7 @@ pub use bump_reducer::bump;
 pub use claim_reducer::claim;
 pub use drop_timed_out_reducer::drop_timed_out;
 pub use mint_cold_reducer::mint_cold;
+pub use pack_settle_reducer::pack_settle;
 pub use ready_reducer::ready;
 pub use resolve_reducer::resolve;
 pub use seed_cold_row_reducer::seed_cold_row;
@@ -113,6 +115,13 @@ pub enum Reducer {
         offset: u8,
         data_0: u64,
         data_1: u64,
+}    ,
+    PackSettle {
+        entity_key: u64,
+        zone_id: u32,
+        type_reference: u32,
+        object_kind_reference: u32,
+        tombstone: u16,
 }    ,
     Ready {
         worker_reference: u16,
@@ -163,6 +172,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::Claim { .. } => "claim",
             Reducer::DropTimedOut => "drop_timed_out",
             Reducer::MintCold { .. } => "mint_cold",
+            Reducer::PackSettle { .. } => "pack_settle",
             Reducer::Ready { .. } => "ready",
             Reducer::Resolve { .. } => "resolve",
             Reducer::SeedColdRow { .. } => "seed_cold_row",
@@ -224,6 +234,19 @@ Reducer::MintCold{
                 offset: offset.clone(),
                 data_0: data_0.clone(),
                 data_1: data_1.clone(),
+}),
+            Reducer::PackSettle{
+                entity_key,
+                zone_id,
+                type_reference,
+                object_kind_reference,
+                tombstone,
+}             => __sats::bsatn::to_vec(&pack_settle_reducer::PackSettleArgs {
+                entity_key: entity_key.clone(),
+                zone_id: zone_id.clone(),
+                type_reference: type_reference.clone(),
+                object_kind_reference: object_kind_reference.clone(),
+                tombstone: tombstone.clone(),
 }),
             Reducer::Ready{
                 worker_reference,
