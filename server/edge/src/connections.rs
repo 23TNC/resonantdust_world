@@ -104,10 +104,9 @@ connector!(connect_players, players);
 connector!(connect_shard, shard);
 // The cold-tiles connector → the `cold_tiles` module (dense Vec<u8> tile grid, its own
 // DB) and the cold-things connector → the `cold_things` module (sparse Vec<u64>, its own
-// DB). The edge triple-subscribes each zone: object `state` from a shard + tiles + things.
-// Both cached for the client's lifetime alongside the object shard.
-connector!(connect_cold_tiles, cold_tiles);
-connector!(connect_cold_things, cold_things);
+// DB). The zone's cold objects now live in the shard's own `cold` table (seeded via
+// seed_cold_row), so the standalone cold_tiles/cold_things modules + their connectors are
+// retired (spacetime-rewrite S7, divergence #3).
 
 /// Await an upstream's readiness oneshot with the connect timeout. `true` once
 /// the connection's `on_connect` fired; `false` on timeout (or a dropped sender,
