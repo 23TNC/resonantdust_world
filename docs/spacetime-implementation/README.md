@@ -57,7 +57,7 @@ cross-shard writes safe (convergent, not atomic).
 | S4 | [Producers → word streams (gap +3)](s4-producers.md) | div #1,9 | ✅ **full-stack live-verified** (real master+worker drive spawn+move) |
 | S5 | [Control flow (`AWAIT`/defer/`FAIL`)](s5-control-flow.md) | — | ✅ (await-gate + abort; live-verified) |
 | S6 | [`PACK` settle (cold→hot mint is in S3 enqueue)](s6-hot-cold.md) | div #2 | ✅ **live-verified**: seed_cold_row + find-or-mint (cold→hot) + pack_settle (hot→cold). Trigger (sweep) is the follow-up |
-| S7 | [Cold/reference/shard-split tail](s7-tail.md) | div #3–5,8,10 | ⬜ |
+| S7 | [Cold/reference/shard-split tail](s7-tail.md) | div #3–5,8,10 | 🔨 cold modules retired (#3 ✅); region_zone (#4), hot_reference re-key (#5), server_reference (#10) remain — functional-neutral reconciliation |
 
 ## Sequencing
 
