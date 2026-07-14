@@ -47,7 +47,7 @@ cross-shard writes safe (convergent, not atomic).
 | S1 | [The interpreter (pure), proving `MOVE`+`SPAWN`](s1-interpreter.md) | — | ✅ |
 | S2 | [Event schema + lifecycle + holder table](s2-event-schema.md) | div #1,6,7 | ✅ |
 | S3 | [Worker: two-phase resolve (enqueue+execute)](s3-worker.md) | div #1,6,9 | ✅ (code; live verify w/ S4) |
-| S4 | [Producers → word streams (gap +3)](s4-producers.md) | div #1,9 | ⬜ |
+| S4 | [Producers → word streams (gap +3)](s4-producers.md) | div #1,9 | ✅ (code; live verify pending) |
 | S5 | [Control flow (`AWAIT`/defer/`?:`/`FAIL`)](s5-control-flow.md) | — | ⬜ |
 | S6 | [`PACK` settle (cold→hot mint is in S3 enqueue)](s6-hot-cold.md) | div #2 | ⬜ |
 | S7 | [Cold/reference/shard-split tail](s7-tail.md) | div #3–5,8,10 | ⬜ |

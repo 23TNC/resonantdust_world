@@ -29,9 +29,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::bindings;
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
-use crate::bindings::shard::append_event as _; // reducer trait → `reducers.append_event`
-use crate::bindings::shard::seed_cold_row as _; // reducer trait → shard `reducers.seed_cold_row` (cold objects live on the object module)
-use crate::bindings::shard::unpack as _; // reducer trait → shard `reducers.unpack` (cold→hot, edge-triggered on interact)
+use crate::bindings::shard::append as _; // reducer trait → `reducers.append` (DSL word stream + targets)
 use crate::connections::{await_ready, connect_players, connect_shard, Pool};
 use crate::index::{resolve_zone_or_default, ShardEndpoint};
 use crate::protocol::{ClientMsg, ColdObjectsRow, RowData, RowOp, ServerMsg, StateRow};
@@ -191,8 +189,12 @@ async fn session_worker(
                     tracing::debug!(sid, "unsub for unknown sid");
                 }
             }
-            ClientMsg::Move { tile_x, tile_y } => {
-                handle_move(&pool, &out_tx, &shards, session, tile_x, tile_y).await;
+            ClientMsg::Spawn { entity_key, kind, tile_x, tile_y } => {
+                handle_spawn(&pool, &out_tx, &shards, session, entity_key, kind, tile_x, tile_y)
+                    .await;
+            }
+            ClientMsg::Move { pawn, tile_x, tile_y } => {
+                handle_move(&pool, &out_tx, &shards, session, pawn, tile_x, tile_y).await;
             }
             ClientMsg::Interact { tile_x, tile_y } => {
                 handle_interact(&pool, &out_tx, &shards, session, tile_x, tile_y).await;
@@ -430,15 +432,65 @@ async fn handle_sub_zone(
     subs.insert(sid, ZoneSub { endpoint, handle, cold_handle });
 }
 
-/// Turn a client move intent into an `ACTION_MOVE` event on the shard's tick pipeline,
-/// targeting **this player's own object** (`ENTITY_TYPE_PLAYER` + `player_id`). The object
-/// materializes on the first move (work-gen carries a default base, the move sets
-/// position), so no login-time seed is needed. Thin intent check: must be logged in.
+/// Materialize an entity through the tick pipeline: append an `ACTION_SPAWN` event
+/// targeting `entity_key`. Work-gen creates the pending row for the new target, `ACTION_SPAWN`
+/// fills in its `kind` + placement, and the worker promotes it to `state` — so a pawn is
+/// minted through the same event path a move travels, not a privileged direct write. The
+/// caller chooses `entity_key` (typically `pack_minted_entity`) so it can address the entity
+/// for later moves. Zone (0,0) only for now (like [`handle_move`]); must be logged in and the
+/// zone's shard connected.
+#[allow(clippy::too_many_arguments)]
+async fn handle_spawn(
+    pool: &Arc<Pool>,
+    out_tx: &mpsc::UnboundedSender<String>,
+    shards: &HashMap<ShardEndpoint, ShardConn>,
+    player_id: Option<u32>,
+    entity_key: u64,
+    kind: u16,
+    tile_x: i32,
+    tile_y: i32,
+) {
+    use resonantdust_codec::packed::cell;
+
+    if player_id.is_none() {
+        send(out_tx, err_frame("spawn: not logged in"));
+        return;
+    }
+    let dest_zone = 0u32;
+    let location = cell(tile_x.rem_euclid(16) as u8, tile_y.rem_euclid(16) as u8);
+    let endpoint = match resolve_zone_or_default(&pool.index, &pool.cfg, dest_zone) {
+        Ok(e) => e,
+        Err(err) => {
+            send(out_tx, err_frame(&format!("spawn: route zone {dest_zone}: {err}")));
+            return;
+        }
+    };
+    let Some(shard) = shards.get(&endpoint) else {
+        send(out_tx, err_frame("spawn: shard not connected (subscribe the zone first)"));
+        return;
+    };
+    // Build a SPAWN word-stream program and append it targeting the (caller-minted) entity_key.
+    // `encode_spawn` carries the kind so the materialized entity is non-tombstone and renders.
+    let actions = resonantdust_tick::vm::encode_spawn(kind, dest_zone, location, 0, 0);
+    if let Err(err) = shard.conn.reducers.append(actions, vec![entity_key]) {
+        send(out_tx, err_frame(&format!("spawn: request failed: {err}")));
+    } else {
+        tracing::info!(zone = dest_zone, location, kind, entity_key, "spawn → materialized entity");
+    }
+}
+
+/// Turn a client move intent into an `ACTION_MOVE` event on the shard's tick pipeline.
+/// `pawn` selects the target: `None` moves **this player's own object** (`ENTITY_TYPE_PLAYER`
+/// + `player_id`, a self-move — the object materializes on its first move via work-gen's
+/// default base); `Some(entity_key)` moves that specific entity (an automated player driving
+/// its wolves). Thin intent check: must be logged in. **No ownership check** — today any
+/// logged-in session may move any pawn; the ownership seam lands with per-npc ownership.
 async fn handle_move(
     pool: &Arc<Pool>,
     out_tx: &mpsc::UnboundedSender<String>,
     shards: &HashMap<ShardEndpoint, ShardConn>,
     player_id: Option<u32>,
+    pawn: Option<u64>,
     tile_x: i32,
     tile_y: i32,
 ) {
@@ -449,9 +501,9 @@ async fn handle_move(
         send(out_tx, err_frame("move: not logged in"));
         return;
     };
-    // Keep the player object inside zone (0,0) so it stays on the client's subscribed
-    // grid — wrap the clicked world tile into the 16×16 zone. (A real move would honor
-    // the tile's actual zone; cross-zone movement is a later phase.)
+    // Keep the object inside zone (0,0) so it stays on the client's subscribed grid — wrap
+    // the clicked world tile into the 16×16 zone. (A real move would honor the tile's actual
+    // zone; cross-zone movement is a later phase.)
     let dest_zone = 0u32;
     let location = cell(tile_x.rem_euclid(16) as u8, tile_y.rem_euclid(16) as u8);
     let endpoint = match resolve_zone_or_default(&pool.index, &pool.cfg, dest_zone) {
@@ -465,22 +517,14 @@ async fn handle_move(
         send(out_tx, err_frame("move: shard not connected (subscribe the zone first)"));
         return;
     };
-    // The player's own entity; both actor and target (a self-move). Not shard-minted:
-    // SERVER_REF_NONE as the minting server + the (globally-unique) player_id as the id.
-    let key = pack_minted_entity(ENTITY_TYPE_PLAYER, player_id, SERVER_REF_NONE);
-    let data = resonantdust_tick::pack_move(dest_zone, location, 0, 0);
-    if let Err(err) = shard.conn.reducers.append_event(
-        pool.cfg.server_id, // source_server_reference
-        0,                  // actor_server_reference: same shard (self-move)
-        0,                  // requesting_server_reference: externally injected
-        0,                  // trigger_server_reference: no trigger
-        0,                  // trigger_event_reference
-        key,
-        key,
-        resonantdust_tick::ACTION_MOVE,
-        data[0],
-        data[1],
-    ) {
+    // The target: an explicit pawn (automated player), else the player's own entity (a
+    // self-move). The player's own key is not shard-minted: SERVER_REF_NONE as the minting
+    // server + the (globally-unique) player_id as the id.
+    let target = pawn
+        .unwrap_or_else(|| pack_minted_entity(ENTITY_TYPE_PLAYER, player_id, SERVER_REF_NONE));
+    // Build a MOVE word-stream program and append it targeting the pawn.
+    let actions = resonantdust_tick::vm::encode_move(dest_zone, location, 0, 0);
+    if let Err(err) = shard.conn.reducers.append(actions, vec![target]) {
         send(out_tx, err_frame(&format!("move: request failed: {err}")));
     }
 }
@@ -503,7 +547,6 @@ async fn handle_interact(
         kind_ref_kind_id, kind_ref_x, kind_ref_y, type_ref_type_id, TYPE_BIOME_THING,
     };
     use resonantdust_codec::packed::cell;
-    use resonantdust_codec::refs::ENTITY_TYPE_OBJECT;
 
     if player_id.is_none() {
         send(out_tx, err_frame("interact: not logged in"));
@@ -530,27 +573,11 @@ async fn handle_interact(
         send(out_tx, err_frame(&format!("interact: no cold thing at ({x},{y})")));
         return;
     };
-    let location = cell(x, y);
-    // unpack → mint a hot `state` entity (a free object) carrying the thing's kind at the
-    // cell; it now ticks through the pipeline and renders via the mover path.
-    if let Err(err) = shard.conn.reducers.unpack(
-        zone,              // cold_zone
-        type_reference,    // cold_type_reference
-        x,                 // cold_x
-        y,                 // cold_y
-        ENTITY_TYPE_OBJECT, // hot_entity_type
-        kind_id,           // payload: kind
-        zone,              // payload: zone_id
-        location,          // payload: location
-        0,                 // payload: rotation
-        0,                 // payload: offset
-        0,                 // payload: data0
-        0,                 // payload: data1
-    ) {
-        send(out_tx, err_frame(&format!("interact: unpack failed: {err}")));
-    } else {
-        tracing::info!(zone, x, y, kind = kind_id, "interact → unpacked cold thing");
-    }
+    let _location = cell(x, y);
+    // Cold→hot promotion is absorbed into enqueue's find-or-mint in the rewrite — it lands in
+    // S6 (docs/spacetime-implementation/s6-hot-cold.md). Until then, interact is a no-op.
+    let _ = (type_reference, kind_id);
+    send(out_tx, err_frame("interact: cold unpack deferred to S6 (rewrite in progress)"));
 }
 
 fn now_ms() -> u64 {
@@ -618,14 +645,11 @@ fn seed_cold_if_empty(
     if conn.db().cold().iter().any(|c| c.zone_id == zone_id) {
         return;
     }
-    let rows = wg.zone_cold_objects(zone_id);
-    let n = rows.len();
-    for row in rows {
-        if let Err(err) = conn.reducers.seed_cold_row(zone_id, row.type_reference, row.kinds) {
-            tracing::warn!(zone_id, %err, "seed_cold_row request failed");
-        }
-    }
-    tracing::info!(zone_id, rows = n, "seeded fresh zone cold objects");
+    // Cold seeding uses a `seed_cold_row` reducer retired in the rewrite; the cold path (the
+    // `cold` table's writer + client decode) returns in S6/S7. Skipped for now so the hot
+    // spawn/move path can be exercised on the new pipeline.
+    let _ = (wg, zone_id);
+    tracing::info!(zone_id, "cold seeding deferred to S6 (rewrite in progress)");
 }
 
 fn relay(out: &mpsc::UnboundedSender<String>, op: RowOp, row: RowData) {
