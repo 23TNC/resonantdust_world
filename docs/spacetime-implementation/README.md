@@ -39,6 +39,13 @@ watermark); GC is dumb (refcounted holders); the row carries a durable `status` 
 That's what makes crashes recoverable and
 cross-shard writes safe (convergent, not atomic).
 
+> ✅ **Full-stack hot path proven live** (S0–S5 + terrain). Real `master` (2 Hz, drop→bump) +
+> real `worker` (two-phase loop + DSL interpreter) drove an appended **spawn** then **move**
+> end-to-end: entity materialized, then moved with kind carried forward and facing computed —
+> autonomously, not hand-driven ([issue 004](../issues/004-running-worker-master.md)). Remaining:
+> S6 find-or-mint / S7 (payload↔object-model reconciliation + location index), and a proper
+> worker/master run-compose.
+
 ## Stages
 
 | # | stage | closes | status |
@@ -47,7 +54,7 @@ cross-shard writes safe (convergent, not atomic).
 | S1 | [The interpreter (pure), proving `MOVE`+`SPAWN`](s1-interpreter.md) | — | ✅ |
 | S2 | [Event schema + lifecycle + holder table](s2-event-schema.md) | div #1,6,7 | ✅ |
 | S3 | [Worker: two-phase resolve (enqueue+execute)](s3-worker.md) | div #1,6,9 | ✅ (lifecycle live-verified) |
-| S4 | [Producers → word streams (gap +3)](s4-producers.md) | div #1,9 | ✅ (edge builds; module lifecycle live-verified) |
+| S4 | [Producers → word streams (gap +3)](s4-producers.md) | div #1,9 | ✅ **full-stack live-verified** (real master+worker drive spawn+move) |
 | S5 | [Control flow (`AWAIT`/defer/`FAIL`)](s5-control-flow.md) | — | ✅ (await-gate + abort; live-verified) |
 | S6 | [`PACK` settle (cold→hot mint is in S3 enqueue)](s6-hot-cold.md) | div #2 | 🔨 seed_cold_row (terrain) live; find-or-mint+PACK need S7 location index |
 | S7 | [Cold/reference/shard-split tail](s7-tail.md) | div #3–5,8,10 | ⬜ |
