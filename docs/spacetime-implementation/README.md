@@ -42,20 +42,22 @@ cross-shard writes safe (convergent, not atomic).
 > ✅ **Full-stack hot path proven live** (S0–S5 + terrain). Real `master` (2 Hz, drop→bump) +
 > real `worker` (two-phase loop + DSL interpreter) drove an appended **spawn** then **move**
 > end-to-end: entity materialized, then moved with kind carried forward and facing computed —
-> autonomously, not hand-driven ([issue 004](../issues/004-running-worker-master.md)). Remaining:
-> S6 find-or-mint / S7 (payload↔object-model reconciliation + location index), and a proper
-> worker/master run-compose.
+> autonomously, not hand-driven ([issue 004](../issues/004-running-worker-master.md)).
+> **Everything still open is in [remaining.md](remaining.md)** — including the simplifications
+> inside the ✅ stages (single-shard only, no deterministic composition, `SKIP`/`?:` branch,
+> DAMAGE verb, tic-gating), the functional-neutral reconciliations (#4/#5/#10), and the
+> client/compose integration.
 
 ## Stages
 
 | # | stage | closes | status |
 |---|-------|--------|--------|
 | S0 | [Foundation — decisions + codec](s0-foundation.md) | — | ✅ |
-| S1 | [The interpreter (pure), proving `MOVE`+`SPAWN`](s1-interpreter.md) | — | ✅ |
+| S1 | [The interpreter (pure), proving `MOVE`+`SPAWN`](s1-interpreter.md) | — | ✅ hot verbs (MOVE/SPAWN); DAMAGE/actor-reads TODO ([remaining](remaining.md)) |
 | S2 | [Event schema + lifecycle + holder table](s2-event-schema.md) | div #1,6,7 | ✅ |
-| S3 | [Worker: two-phase resolve (enqueue+execute)](s3-worker.md) | div #1,6,9 | ✅ (lifecycle live-verified) |
+| S3 | [Worker: two-phase resolve (enqueue+execute)](s3-worker.md) | div #1,6,9 | ✅ lifecycle live; **single-shard, no composition/defer/tic-gate yet** ([remaining](remaining.md)) |
 | S4 | [Producers → word streams (gap +3)](s4-producers.md) | div #1,9 | ✅ **full-stack live-verified** (real master+worker drive spawn+move) |
-| S5 | [Control flow (`AWAIT`/defer/`FAIL`)](s5-control-flow.md) | — | ✅ (await-gate + abort; live-verified) |
+| S5 | [Control flow (`AWAIT`/defer/`FAIL`)](s5-control-flow.md) | — | ✅ await-gate + abort live; **`SKIP`/`?:` branch TODO** ([remaining](remaining.md)) |
 | S6 | [`PACK` settle (cold→hot mint is in S3 enqueue)](s6-hot-cold.md) | div #2 | ✅ **live-verified**: seed_cold_row + find-or-mint (cold→hot) + pack_settle (hot→cold). Trigger (sweep) is the follow-up |
 | S7 | [Cold/reference/shard-split tail](s7-tail.md) | div #3–5,8,10 | 🔨 cold modules retired (#3 ✅); region_zone (#4), hot_reference re-key (#5), server_reference (#10) remain — functional-neutral reconciliation |
 
