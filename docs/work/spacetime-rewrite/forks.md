@@ -2,6 +2,30 @@
 
 Decision points with more than one viable path + which we chose + why. Chronological.
 
+- **2026-07-14** · **Re-cut split along the hot/cold boundary** — the codec re-cut hit the
+  geometry conflict ([blockers.md](blockers.md) B-2). Options for the whole re-cut: **(A)** land it
+  all (needs the world-geometry call); **(B)** split — land the geometry-free *hot/identity/event*
+  side now, defer the *cold* side to B-2; **(C)** stop. **Chose B.** **Why:** the hot side (`#5`
+  `hot_reference`, `#10` `server_reference`, `event_reference` u32 — the "big PK change") is fully
+  settled and geometry-free; the cold side (`#4`, compressed `position_reference`/`cold_reference`
+  addressing, the `cold` `macro` header) is the *only* part that needs B-2. Splitting there lands
+  the bulk without unilaterally deciding world geometry (the B-1-class failure).
+- **2026-07-14** · **`entity_key` column width under `#5`** — options: **(a)** narrow the
+  `state`/`state_log` PK to `u32 hot_reference`; **(b)** keep `u64`, holding the new-layout
+  `entity_reference` (`reserved:10 | reference_id:6 | server_reference:16 | object_reference:32`).
+  **Chose (b).** **Why:** "`object_reference = hot_reference:32` **server-qualified**" *needs* the
+  16-bit `server_reference` alongside the 32-bit handle — that's the u64 `entity_reference`.
+  Narrowing to u32 drops server qualification (breaks cross-shard identity + the `home_shard`
+  routing the worker does by `server_reference`). Keeping the u64 realizes `#5` faithfully and is
+  functional-neutral (only the *layout inside* the u64 changes), minimizing churn (no column
+  rename → bindings/consumers unchanged in shape).
+- **2026-07-14** · **Hot vs cold `entity_reference` variants** — the new `object_reference:32` can't
+  hold a world-global `zone_id:u32`+cell+layer (that's the B-2 geometry). So the two identity
+  classes coexist in the one `u64` `entity_key`, discriminated by `reference_id`: **HOT** =
+  `reference_id:6 | server_reference:16 | object_reference(hot):32` (clean new layout); **COLD**
+  (find-or-mint/Interact targets) = `reference_id:6 | position(zone_id:32|location:8|layer:8):48`
+  (world-global, pre-B-2 compat). The worker branches on `reference_id` (was: the old
+  `entity_type` positional top-bit). Documented as the interim cold form until B-2 settles.
 - **2026-07-14** · **Next tranche after the behavioral core** — with Section A (behavioral
   mechanisms) all closed, the options were: **(A)** browser integration, **(B)** the
   representation re-keys, **(C)** stop & review. **Chose A.** **Why:** A was the only *unblocked*

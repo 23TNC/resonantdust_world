@@ -3,26 +3,31 @@
 Executes: the `shard` component. Planned work not yet begun; moves to [remaining.md](remaining.md)
 when started. Newest-first.
 
-## The codec re-cut + shard re-keys (now UNBLOCKED — B-1 closed 2026-07-14)
+## Retire the legacy world-global `zone_id` (geometry cleanup — UNBLOCKED)
 
-Functional-neutral **representation** reconciliations — the system works fully without them; they
-change *shape*, not *behavior*. The object model is now fully settled
-([reference-model.md](../../components/shared/codec/design/reference-model.md)), so these are
-**implementation against a fixed target**, not decisions. The codec re-cut lands the shapes; the
-shard re-keys follow. (Primary tracking: [codec plan](../../components/shared/codec/plan/README.md).)
+The identity/event re-cut **and** the object-model re-cut (`object.rs` → reference model) are
+**done + browser-verified** ([completed.md](completed.md), 2026-07-14). What remains is retiring the
+one acknowledged legacy layer: `packed.rs`'s **world-global `zone_id : u32 = region_x:8 |
+region_y:8 | surface:8 | zone_x:4 | zone_y:4`** — from the old game (it carries a dead **surface**
+byte and 256-wide regions instead of the go-forward **realm · region · zone · tile · layer**).
+`spatial-references.md` itself frames it as "the legacy routing key it will reconcile against." Not
+blocked — normal work.
 
-- **2026-07-14** · **codec re-cut** — `object.rs`/`refs.rs` v1 → the reference model
-  (`definition_reference`, `position_reference`/`cold_reference`, cold row + `data:8`,
-  `object_reference` union, `entity_reference`, `server_reference = realm:8|server_id:8`).
-- **2026-07-14** · **#5 `hot_reference` re-key** — `state`/`state_log` key `u64 entity_key` →
-  `object_reference = hot_reference:32` (server-qualified). Big PK change; target now defined.
-- **2026-07-14** · **#4 `region_zone` cold keying** — `cold` keys flat `zone_id` →
-  `macro_position_reference = region:8|zone:8`.
-- **2026-07-14** · **#10 `server_reference`** — → `realm:8|server_id:8` (decided).
-- **2026-07-14** · **`event_reference` → `u32`** — the `event_log` PK `u64` → `u32` (composes into
-  `action_reference`).
-- **2026-07-14** · **`PACK` trigger** — `pack_settle` exists; *who* calls it is unbuilt. The
-  pack-criterion is now defined (`data:8` fits ⇒ packable; else stays hot) — a normal todo.
+- **2026-07-14** · **Repartition `zone_id` → geographic + drop `surface`** — `zone_id : u32 = realm:8
+  | region:8 | zone:8 | reserved:8` (each level `hi:4|lo:4`; drops surface, adds realm). Touches
+  `packed.rs` (`pack_zone_id`/`zone_and_location`/`global_tile`/`region_of`), `biome.rs`
+  (`zone_world_origin`), `wasm` js wrappers (`pack_zone_id_js`, drop `zone_surface_js`,
+  `zone_origin`), `client/core` (`zones.rs`/`engine.rs` `set_anchor` — drop the `surface` param or
+  make it `realm`), `pixijs` (`setAnchor` call), edge/index `region_of` routing. Realm→shard
+  routing; the demo stays in realm 0 / region 0.
+- **2026-07-14** · **#4 `region_zone` cold key** — move the `cold` table from `zone_id:u32` to
+  `region_zone_reference:u16` (realm implied by the shard); carry it on the wire (`ColdObjectsRow`,
+  `SubZone`) + the client demux. Switch the cold `entity_reference` from the interim world-global
+  `zone_id|location|layer` form to the geographic `REF_COLD | server_reference | cold_reference:32`
+  (`object.rs` `pack_cold_reference` already exists). Retire the `refs.rs` interim cold packing.
+- **2026-07-14** · **`PACK` trigger** — `pack_settle` exists; wire *who* calls it + the
+  pack-criterion (`data:8` fits ⇒ packable, now that `data:8` is defined). (No live trigger in the
+  current demo: pawns never pack.)
 
 ## Not blocked (small, deferrable)
 

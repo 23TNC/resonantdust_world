@@ -13,6 +13,22 @@ _(none)_
 
 ## Resolved
 
+### B-2 · ~~Cold geometry conflicts with world-global `zone_id`~~ — RETRACTED (not a blocker)
+**Raised 2026-07-14 · retracted 2026-07-14 (same day, by the user).**
+
+I raised this treating `packed.rs`'s `zone_id` (`region_x:8 | region_y:8 | surface:8 | …`) as the
+authoritative world geometry. **It is legacy from the old game** — `surface` doesn't exist in the
+go-forward model, and `zone_id` is explicitly "the legacy routing key it will reconcile against"
+([spatial-references.md](../../components/shared/codec/design/references/spatial-references.md)).
+The go-forward geometry is **realm · region · zone · tile · layer** (each a `u8` of two `u4`
+nibbles; realm rides `server_reference`), which the reference model already encodes. So the cold
+side is *not* blocked — `cold_reference : u32 = region:8 | zone:8 | tile:8 | layer:8` is geographic
+and fits `REF_COLD | server_reference | cold_reference:32`. Lesson: don't preserve legacy code as a
+constraint; conform it to the design. (Naming: use `region_zone_reference`, not `macro_*`.)
+
+**Now executing** the cold-side re-cut against the geographic model (drop `surface`, retire the
+flat `zone_id`), see [todo.md](todo.md) / [completed.md](completed.md).
+
 ### B-1 · The object-model taxonomy was in-flux — blocked the representation re-keys
 **Raised 2026-07-14 · fully resolved 2026-07-14.**
 

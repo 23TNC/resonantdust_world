@@ -1,11 +1,20 @@
 # The object model — implementation status & runbook
 
-> **Status: IMPLEMENTED & VERIFIED LIVE (2026-07-13), branch `0.2.3`.** The whole
-> object-model redesign is built end to end (spacetime → edge → client → pixijs),
-> deployed on the dev stack, and confirmed in the browser + the DB. This doc is the
+> ⚠️ **PARTLY STALE (2026-07-14).** The bit-layout details below (`object_reference` /
+> `pack_kind_reference` with `subkind`, `kind:10`, `x/y/data:6`, etc.) describe the **pre-re-cut v1**
+> and no longer match the code. `object.rs`/`refs.rs` have been **re-cut to the reference model**
+> ([`reference-model.md`](../design/reference-model.md)) — `definition_reference`, `kind_reference:16
+> | tile:8 | data:8`, `data:8`, geographic `cold_reference`, no `subkind` — and browser-verified.
+> The current state of the re-cut is in [`README.md`](README.md) + the shard
+> [`current/`](../../../server/spacetime/modules/shard/current/README.md); the go-forward shape is
+> [`reference-model.md`](../design/reference-model.md). Treat the sections below as historical runbook
+> until refreshed.
+>
+> _(Original header, 2026-07-13:)_ The whole object-model redesign was built end to end (spacetime →
+> edge → client → pixijs), deployed, and confirmed in the browser + DB. This doc is the
 > **implementation record + runbook**; the *design* lives in
-> [`object-model.md`](../design/object-model.md) (identity/reference bit-layouts, shard classes,
-> events) and [`data-shards.md`](../../../../archive/data-shards.md) (the cold table on the generic module).
+> [`object-model.md`](../design/object-model.md) (SUPERSEDED) and
+> [`data-shards.md`](../../../../archive/data-shards.md).
 
 ---
 

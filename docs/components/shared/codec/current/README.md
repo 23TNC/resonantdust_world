@@ -6,16 +6,20 @@ The reference layouts + object model are implemented in `shared/codec/src` (`eve
 `refs.rs`, `object.rs`) and consumed across the stack. Detail + runbook:
 [`object-model-status.md`](object-model-status.md).
 
-**Reference model — DECIDED, code not yet re-cut (2026-07-14).** The object reference model is now
-settled: the **definition / position / data** split in
-[`design/reference-model.md`](../design/reference-model.md) (all `u32`; `object_reference` →
-`definition_reference`; `subkind` dropped; explicit `region_zone`; `data:8` = the cold/hot
-pack criterion). **The code (`object.rs`, `refs.rs`) still implements v1** (a `u64
-object_reference` with `subkind` + `x/y/data` in the kind half) — the re-cut is a
-[`plan/`](../plan/) item.
+**Re-cut status (2026-07-14): `refs.rs` DONE, `object.rs` deferred.**
 
-**No open decisions — the reference model is fully settled** (blocker
-[B-1](../../../../work/spacetime-rewrite/blockers.md) closed 2026-07-14): taxonomy/naming,
-`region_zone` (#4), `hot_reference` re-key (#5), and `server_reference = realm:8 | server_id:8`
-(#10) are all decided. What remains is the **codec re-cut** — turning v1 `object.rs`/`refs.rs` into
-the model — which is now pure implementation against a fixed target ([`plan/`](../plan/)).
+- **`refs.rs` ✅ re-cut + browser-verified** — geographic `server_reference = realm_id:8 |
+  server_id:8` (#10); `entity_reference = reserved:10 | reference_id:6 | server_reference:16 |
+  object_reference:32` (#5, hot = `REF_HOT | server_reference | hot_reference:32`); the dead
+  functional machinery removed. `event_reference` is now `u32` on the shard side.
+  (`work/spacetime-rewrite/completed.md`.)
+- **`object.rs` ✅ re-cut + browser-verified** — the **definition / position / data** split:
+  `definition_reference:u32` (drop `subkind`, `kind` 12b), `type_reference`/`kind_reference` halves,
+  the cold entry `kind_reference:16 | tile:8 | data:8`, `data:8` decode, geographic `cold_reference
+  = region:8 | zone:8 | tile:8 | layer:8` (realm rides `server_reference`), `region_zone_reference`
+  naming (not `macro_*`). Terrain renders on the new encoding. (B-2 was **retracted** — it treated
+  the legacy `zone_id`/`surface` as a constraint; geometry is realm/region/zone/tile/layer.)
+
+**No open decisions.** Remaining is normal cleanup: retire the legacy world-global `zone_id` (drop
+`surface`, repartition to realm/region/zone) + move `cold` to a `region_zone:u16` key + the
+geographic cold `entity_reference` — see [work/…/todo.md](../../../../work/spacetime-rewrite/todo.md).

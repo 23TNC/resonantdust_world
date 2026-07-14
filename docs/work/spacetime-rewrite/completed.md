@@ -35,6 +35,42 @@ follows the log. (Was `docs/spacetime-implementation/completion-log.md`, now ret
   `bump` no-ops paused; master skips paused shards; edge relays `Paused` to all subscribers;
   client/core + wasm + npc + pixijs chat wired. Live: browser `/pause` froze the tic, npc stopped,
   `/unpause` resumed. · b5337d8
+- **2026-07-14** · **Hot/identity/event re-cut (codec reference model — hot side)** — the settled,
+  geometry-free half of the codec re-cut, landed + browser-verified end-to-end:
+  - **`refs.rs` → reference model** — `server_reference = realm_id:8 | server_id:8` (geographic,
+    **#10**); `entity_reference = reserved:10 | reference_id:6 | server_reference:16 |
+    object_reference:32` (**#5**), a hot object = `REF_HOT | server_reference | hot_reference:32`;
+    dropped the dead functional machinery (`server_type`/`action_reference`/`zone_reference`/
+    `entity_type_data_type` — 0 live uses). Cold/positional kept as a `REF_COLD` variant carrying
+    the world-global `zone_id:32|location:8|layer:8` (interim, pre-**B-2**).
+  - **`event_reference : u64 → u32`** — `event_log` PK + `holder`/`open_rows` cols + every reducer
+    sig; `vm::await_gate`/`encode_await` now u32 (closes the "u32↔u64 reconciliation of S7" TODO).
+  - **`entity_key` kept `u64`** holding the new-layout `entity_reference` (server-qualified) — `#5`
+    realized without narrowing the PK ([forks.md](forks.md)).
+  - Propagated through the whole stack + regenerated ST bindings (edge/worker/master): pipeline
+    macro (`mint_hot`), worker (`home_shard`/actor-reads/find-or-mint), edge (`pack_hot_entity`/
+    `pack_cold_entity`), tick vm, client/core (obj_type = `reference_id`), npc, wasm, pixijs
+    (`MoverLayer` filters `REF_HOT`). Terrain (cold path, `object.rs` v1) untouched + still renders.
+  - **Verified:** all crates compile; shard republished (fresh schema); worker+master subscribe on
+    the u32 schema; npc spawns 4 wolves; `state` shows `entity_key = 0x0001_0000_0000_000N`
+    (`REF_HOT`+hot_reference N), `kind=7`, locations advancing per tic; browser renders the 4
+    directional wolves moving through the forest. · _(uncommitted — commit on request)_
+- **2026-07-14** · **Object-model re-cut (`object.rs` → reference model — cold side)** — after the
+  user corrected the B-2 confusion (surface is legacy; geometry is **realm · region · zone · tile ·
+  layer**), re-cut `object.rs` to the honest **definition / position / data** split + propagated:
+  - `definition_reference : u32 = type_id:4 | subtype_id:12 | kind_id:12 | variant_id:4` — **dropped
+    `subkind`**, widened `kind` 10→12b; `type_reference:u16` / `kind_reference:u16` halves.
+  - Cold entry `kind_pos_reference : u32 = kind_reference:16 | tile:8 | data:8`; `data:8 =
+    sub_position:3 | rotation:2 | aux:3` (replaces the old `rotation:2|count:4`).
+  - Geographic `cold_reference : u32 = region:8 | zone:8 | tile:8 | layer_reference:8` (realm omitted
+    — rides `server_reference`); `region_zone_reference` naming (not `macro_*`); the `u8` nibble
+    primitive at four scales per [spatial-references.md](../../components/shared/codec/design/references/spatial-references.md).
+  - Propagated: worldgen (`pack_cold_entry`), worker/edge/wasm decode unchanged (entry readers kept
+    their names). Kept the cold *table* on its `zone_id:u32` key for now (the legacy-`zone_id`
+    retirement is the remaining cleanup below — NOT a blocker; B-2 retracted).
+  - **Verified:** codec unit tests pass; shard republished (fresh); edge reseeded cold in the new
+    entry format; browser renders the forest (conifers + bushes + ground) correctly **and** the
+    wolves — cold (new object encoding) + hot (identity re-cut) both live. · _(uncommitted)_
 
 ---
 

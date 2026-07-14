@@ -1,8 +1,10 @@
 # Design — the reference model (definition / position / data)
 
 _The shape. Authoritative as of 2026-07-14; supersedes the v1 layout in
-[`object-model.md`](object-model.md) §3 and the v1 parts of [`references/`](references/) (which
-still describe the current **code** — the re-cut is a [`plan/`](../plan/) item). Rationale in
+[`object-model.md`](object-model.md) §3 and the v1 parts of [`references/`](references/) (kept as
+historical rationale). **The code now matches this doc** — `object.rs`/`refs.rs` were re-cut and
+browser-verified (2026-07-14); the one remaining piece is retiring the legacy world-global `zone_id`
+([`work/…/todo.md`](../../../../work/spacetime-rewrite/todo.md)). Rationale in
 [`../intent/reference-model.md`](../intent/reference-model.md)._
 
 An object is described by **three orthogonal references** — *what* it is, *where* it is, and its
@@ -38,7 +40,7 @@ combined kind like `male.fat` is one `kind_id`). No reserved headroom — the u3
 ┌────────────────┬───────────────┬──────────────┬──────┬───────┐
 │ region_ref:8   │  zone_ref:8   │  tile_ref:8  │type:4│layer:4│
 ├────────────────┴───────────────┼──────────────┴──────┴───────┤
-│ macro_position_reference : u16 │  micro_position_reference:16 │
+│ region_zone_reference : u16    │  tile_layer_reference : u16  │
 └────────────────────────────────┴──────────────────────────────┘
                                                 └ layer_reference:8 ┘
 ```
@@ -71,7 +73,7 @@ per-object delta is repeated.
 | field | width | meaning |
 |---|---|---|
 | `type_reference` | u16 | `type_id \| subtype_id` |
-| `macro_position_reference` | u16 | `region_ref \| zone_ref` |
+| `region_zone_reference` | u16 | `region_ref \| zone_ref` |
 | `layer_id` | u4 | the tile-slot (one row per layer) |
 
 **`Vec<kind_pos_reference : u32>` — one per object:**
@@ -86,7 +88,7 @@ Each object costs **32 bits** carrying its full delta. Everything reconstructs f
 | you want | = row gives | + entry gives |
 |---|---|---|
 | `definition_reference` | `type_reference` | `kind_reference` |
-| `position_reference` | `macro` + `layer_id` + `type_id` | `tile_reference` |
+| `position_reference` | `region_zone` + `layer_id` + `type_id` | `tile_reference` |
 | state | *(decode picked by `type_id`)* | `data` |
 
 ## `data : u8` — per-instance state, decoded by the row's `type_id`
@@ -177,8 +179,9 @@ unambiguous (`reference_id` names the variant).
   `position_reference` / the cold `tile_reference`; state lives in `data:8` (cold) or the `state`
   table (hot).
 - `layer` moved from the type half to `position_reference` (it's a tile-slot, not a type property).
-- `region_zone` (macro_position) is now explicit (`region_ref:8 | zone_ref:8`) — closes
-  divergence #4.
+- `region_zone_reference` (region+zone) is now explicit (`region_ref:8 | zone_ref:8`) — the
+  zone-subscription key. (Named `region_zone_reference`, **not** `macro_position` — "macro" is
+  retired.) Divergence #4's cold-table re-key rides the legacy-`zone_id` retirement.
 - **`entity_reference` re-laid-out** to `reserved:10 | reference_id:6 | server_reference:16 |
   object_reference:32` (was `entity_type:8 | entity_id:32 | mint_server:16`): the type left for
   `definition_reference`, `entity_id` generalized to the `object_reference` union, and the low 48

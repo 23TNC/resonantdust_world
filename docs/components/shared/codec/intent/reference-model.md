@@ -54,7 +54,9 @@ pay for the tag only when we need it, never per operand.
 
 ## Ties into
 
-Settling this closes the **taxonomy/naming** piece and both identity/keying divergences: `region_zone`
-(**#4**, via `macro_position_reference`) and the `hot_reference` re-key (**#5**, via the
-`entity_reference` layout). Blocker [B-1](../../../../work/spacetime-rewrite/blockers.md) is now down
-to the one remaining call: the geographic-vs-functional `server_reference` internal layout (**#10**).
+Settling this closes the **taxonomy/naming** piece and the identity/keying divergences: the
+`hot_reference` re-key (**#5**, via the `entity_reference` layout) and the geographic
+`server_reference` (**#10**) are **done + browser-verified** (2026-07-14); `region_zone` (**#4** —
+via `region_zone_reference`, *not* `macro_*`; the term "macro" is retired) rides the remaining
+legacy-`zone_id` retirement in [`work/…/todo.md`](../../../../work/spacetime-rewrite/todo.md).
+Blockers [B-1](../../../../work/spacetime-rewrite/blockers.md) + B-2 are both resolved.

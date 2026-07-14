@@ -154,6 +154,14 @@ range. Replaces the bare `u16` server ids.
 
 ### `entity_reference` — `u64`, `entity_type`-discriminated
 
+> ⚠️ **The `entity_reference` layout here is SUPERSEDED (2026-07-14).** The reference model re-laid
+> it out to `reserved:10 | reference_id:6 | server_reference:16 | object_reference:32` (a
+> `reference_id` variant tag, not an `entity_type` game-type) — see
+> [`shared/codec/design/reference-model.md`](../../../../shared/codec/design/references/../reference-model.md)
+> + `refs.rs` (done + browser-verified). The *principle* below (one `u64` key space so `priority`
+> is a single total order across classes) still holds; the *bit fields* (`entity_type:8 |
+> entity_id:32 | mint_server:16`) do not.
+
 Names any simulation entity in one comparable space. **`entity_type:8` (top byte)
 discriminates the layout of the remaining 56 bits** — generalizing the current 2-bit
 `ENTITY_TAG`. This is load-bearing: it lets *minted* and *positional* entities coexist in

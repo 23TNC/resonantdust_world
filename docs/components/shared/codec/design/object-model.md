@@ -1,19 +1,19 @@
 # The object model — types, references, shards
 
-> ⚠️ **Reference layouts superseded (2026-07-14).** The authoritative object reference
-> model is now [reference-model.md](reference-model.md) — the honest **definition / position / data**
-> split (all `u32`). The layouts below still describe the current **code** (v1: a `u64
-> object_reference` with `subkind` and `x/y/data` packed into the kind half); the re-cut is a
-> [plan](../plan/) item. Read reference-model.md for the target shape.
+> ⚠️ **SUPERSEDED + RETIRED in code (2026-07-14).** The authoritative object reference model is now
+> [reference-model.md](reference-model.md) — the honest **definition / position / data** split (all
+> `u32`). The v1 layouts below (a `u64 object_reference` with `subkind` + packed `x/y/data`) **no
+> longer match the code**: `object.rs` has been re-cut to reference-model.md and browser-verified,
+> and the **four "open decisions" are all resolved** (B-1 + B-2 closed). Kept as historical
+> rationale + the surviving vocabulary. Read reference-model.md for the live shape.
 
 
 The pinned contract for the 0.2.3+ redesign. This is the vocabulary and the
 bit-level shape that everything downstream (shard tables, the tick pipeline, the
 event log, the codec, the texture tree) builds against.
 
-> **Status: DESIGN — in flux.** The reference bit-layouts and the shard-class
-> model are settled enough to build against; the texture-taxonomy naming and four
-> flagged decisions (§Open decisions) are still open. Supersedes the ad-hoc
+> **Status: SUPERSEDED — see the header above.** (Historical: was "DESIGN — in flux" with four open
+> decisions; all now settled in [reference-model.md](reference-model.md).) Supersedes the ad-hoc
 > "object == thing" language throughout the codebase and reconciles
 > [`object-shard.md`](../../../../archive/object-shard.md), [`data-shards.md`](../../../../archive/data-shards.md), and
 > [`pipeline-generalization.md`](../../../server/spacetime/pipeline/design/pipeline-generalization.md) under one addressing

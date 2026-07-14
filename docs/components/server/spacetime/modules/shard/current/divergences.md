@@ -51,7 +51,12 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 - **Fix**: delete the two modules once the `cold` table fully carries their data end-to-end
   (edge seeds it, client decodes it).
 
-## 4. 🟡 Cold keyed by flat `zone_id`, not geographic `region_zone`
+> **Update 2026-07-14.** #5 and #10 below are **closed** (hot/identity/event re-cut landed +
+> browser-verified — [`work/…/completed.md`](../../../../../../work/spacetime-rewrite/completed.md)).
+> #4 is **deferred**, not closed: it needs the world-geometry decision
+> ([`work/…/blockers.md`](../../../../../../work/spacetime-rewrite/blockers.md) B-2).
+
+## 4. 🟡 Cold keyed by flat `zone_id`, not geographic `region_zone` — DEFERRED to B-2
 
 - **Design**: `cold` keyed by `region_zone_reference:u16`; realm implied by the shard.
 - **Code**: `Cold.zone_id : u32` flat, used as the routing column; `cold_key` packs
@@ -60,7 +65,7 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
   geography lands; reconcile against the legacy flat `zone_id`
   ([../references/spatial-references.md](../../../../../shared/codec/design/references/spatial-references.md)).
 
-## 5. 🟡 Hot identity is a `u64 entity_key`, not a `u32 hot_reference`
+## 5. ✅ CLOSED (2026-07-14) — Hot identity re-keyed to the reference model's `entity_reference`
 
 - **Design** ([hot-cold.md](../intent/hot-cold.md)): a hot object is a per-server `hot_reference:u32`
   (+ `server_reference` for global uniqueness).
@@ -106,7 +111,13 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 - **Code**: `shared/tick` has `Phase` (`domain.rs`) and `priority` (`actor_read_tic`).
 - **Fix**: keep `read_rule`; **delete `Phase` and `priority`** as the DSL lands (S3/S4).
 
-## 10. ⚪ `server_reference` layout unresolved
+## 10. ✅ CLOSED (2026-07-14) — `server_reference` is geographic `realm_id:8 | server_id:8`
+
+Landed. The functional `server_type` question is **moot**: it had 0 live consumers (the worker
+maps `server_reference → DB` via its `SHARDS` env list, not a type tag), so the whole functional
+machinery (`server_type`/`action_reference`/`zone_reference`) was deleted, not relocated.
+
+<details><summary>original divergence</summary>
 
 - **Design** ([../references/reference-vs-id.md](../../../../../shared/codec/design/references/reference-vs-id.md),
   `object-model.md` §5): `server_reference:u16 = realm_reference:u8 + server_id:u8`.
@@ -115,6 +126,8 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 - **Fix**: decide where `server_type` (master/worker/edge/db-class routing) lives once
   `server_reference` goes geographic. **Open** (the fork raised earlier: fold type into the
   `u8 server_id`, keep functional, or look role up from a registry).
+
+</details>
 
 ---
 
@@ -125,8 +138,12 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 - The **fence** (`server_id`, `resolve` rejects non-owners) — reused, now fencing rows.
 - The **metronome + `+N` tic gap** — kept; the gap widens **+2 → +3** for the enqueue phase
   ([lifecycle.md](../intent/lifecycle.md)).
-- The **object/type/kind/cold reference bit layouts** in `shared/codec/src/object.rs`
-  (see [../references/](../../../../../../references)).
+- The **`entity_reference` / `server_reference` layouts** in `shared/codec/src/refs.rs` —
+  re-cut to the reference model (2026-07-14, #5/#10 above).
+- The **`object.rs` definition/cold layouts** — re-cut to the reference model (2026-07-14):
+  `definition_reference`, cold entry `kind_reference:16|tile:8|data:8`, `data:8`, geographic
+  `cold_reference`. Browser-verified. (Remaining: the `cold` *table* still keys by the legacy
+  `zone_id:u32` — the geometry cleanup in [todo](../../../../../../work/spacetime-rewrite/todo.md), not blocked.)
 
 ## Resolved (no longer open) ✅
 

@@ -18,13 +18,24 @@ See also [`divergences.md`](divergences.md) — the design-vs-code gap list.
 - **Debug:** `/pause` — `tic_meta.paused` + `set_paused`; `bump` no-ops while paused.
 - **Integration:** the full stack self-drives (`rd run`) and renders in the browser.
 
-## Not yet implemented (→ [`plan/`](../plan/), most blocked → blockers)
+## Representation re-keys — hot/identity/event side DONE (2026-07-14, browser-verified)
 
-- The representation re-keys: `hot_reference` u32 (D3), `region_zone` cold key (#4), geographic
-  `server_reference` (#10) — **blocked** on the object-model decisions.
-- `event_reference` → `u32` — design-decided (see [`../intent/event-reference.md`](../intent/event-reference.md)),
-  not yet applied; the PK is still `u64`.
-- `PACK` trigger (who calls `pack_settle`; needs a hot→cold type map).
+- **`hot_reference` re-key (#5)** ✅ — `state`/`state_log` key `entity_key:u64` now holds the
+  new-layout `entity_reference` (`reserved:10 | reference_id:6 | server_reference:16 |
+  object_reference:32`); a hot object is `REF_HOT | server_reference | hot_reference:32`. Column
+  kept `u64` (server-qualified) — see [`work/…/forks.md`](../../../../../../work/spacetime-rewrite/forks.md).
+- **Geographic `server_reference` (#10)** ✅ — `realm_id:8 | server_id:8`; dead functional
+  `server_type`/`action_reference` machinery removed.
+- **`event_reference` → `u32`** ✅ — `event_log` PK + `holder`/`open_rows` + every reducer sig +
+  `vm::await_gate`/`encode_await`.
+
+## Not yet implemented (→ [`plan/`](../plan/) / blockers)
+
+- **Cold-side re-cut — blocked on world geometry** ([`work/…/blockers.md`](../../../../../../work/spacetime-rewrite/blockers.md)
+  B-2): `region_zone` cold key (#4) + `object.rs` compressed `position_reference`/`cold_reference`
+  addressing + the cold row's `macro` header. The compressed `region:8|zone:8` conflicts with the
+  live world-global `zone_id:u32`. Cold keeps its **working** `zone_id:u32` key meanwhile.
+- `PACK` trigger — rides the new cold `data:8` decode → deferred with the cold-side re-cut.
 - Cross-shard foreign Phase-1 hold (in-flight read-rule/GC visibility on the home shard).
 
 ## Reality that isn't in the design (→ cleanup)

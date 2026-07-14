@@ -34,9 +34,11 @@ state
   <payload…>               copied verbatim from the resolved state_log row
 ```
 
-- ✏️ **Key.** Per [hot-cold.md](../intent/hot-cold.md) the hot identity should be a per-server
-  `hot_reference : u32` (paired with `server_reference` for global uniqueness). Today the
-  column is a `u64 entity_key`. **Reconciliation open** (see divergences).
+- ✅ **Key (DONE 2026-07-14).** The `u64 entity_key` now holds the reference model's
+  `entity_reference = reserved:10 | reference_id:6 | server_reference:16 | object_reference:32`; a
+  hot object is `REF_HOT | server_reference | hot_reference:32` — the per-server `hot_reference`
+  paired with `server_reference` for global uniqueness, as intended. Column kept `u64` (so it stays
+  server-qualified — see [`work/…/forks.md`](../../../../../../work/spacetime-rewrite/forks.md)).
 - ✅ **`state` must be queryable by location** (realm·region·zone·position·layer·type_id) so
   enqueue's `find-or-mint` can resolve a `cold_reference` to the entity at that location
   ([hot-cold.md](../intent/hot-cold.md)).

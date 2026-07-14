@@ -15,6 +15,6 @@ payload:32` word). Holding it as a `u32` means an action that carries an `event_
 *differently* from actions carrying hot/cold references, and would change how we pass the vector
 of actions in an event log. That special-casing is the cost we're avoiding.
 
-**Status:** design-decided; the code still keys `event_log` on a `u64` PK — reconciling it to
-`u32` is a [`plan/`](../plan/) item (not blocked). See
-[`current/README.md`](../current/README.md).
+**Status:** ✅ **DONE (2026-07-14, browser-verified).** `event_log` keys on a `u32`
+`event_reference` (+ `holder`/`open_rows` columns + every reducer sig + `vm::await_gate` /
+`encode_await`). See [`current/README.md`](../current/README.md) / [`work/…/completed.md`](../../../../../../work/spacetime-rewrite/completed.md).

@@ -1,10 +1,11 @@
 # Hot and cold references
 
-> ⚠️ **Reference layouts superseded (2026-07-14).** The authoritative object reference
-> model is now [reference-model.md](../reference-model.md) — the honest **definition / position / data**
-> split (all `u32`). The layouts below still describe the current **code** (v1: a `u64
-> object_reference` with `subkind` and `x/y/data` packed into the kind half); the re-cut is a
-> [plan](../../plan/) item. Read reference-model.md for the target shape.
+> ⚠️ **Superseded + RETIRED in code (2026-07-14).** The authoritative object reference model is
+> now [reference-model.md](../reference-model.md) — the honest **definition / position / data** split
+> (all `u32`). The v1 layouts below (a `u64 object_reference` with `subkind` + packed `x/y/data`)
+> **no longer match the code** — `object.rs`/`refs.rs` have been re-cut to reference-model.md and
+> browser-verified. Kept here as historical rationale (and the `u8` spatial-nibble primitive, which
+> survives). Read reference-model.md for the live shape.
 
 
 Every object is in one of two states, and each state has its own `u32` reference:
