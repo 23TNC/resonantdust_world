@@ -9,6 +9,7 @@ set -euo pipefail
 #   rd build <component> [args]          build shared|edge|gateway|spacetime|core
 #   rd up|down [target]                  start/stop spacetime|edge|gateway|all
 #   rd deploy <edge|gateway|module …>    build + run one component now
+#   rd run <up|worker|master|stop|…>     stand up the native tick pipeline (worker+master)
 #   rd redeploy [--run|--force|...]      detect changes, rebuild + redeploy
 #   rd index <seed|show>                 seed/inspect index from content/servers/<env>
 #   rd logs <target> [-f]   /  rd ps     tail a component's log / show stack status
@@ -118,6 +119,7 @@ case "$cmd" in
   ps)       source "$RD_LIB/stack.sh";    rd_ps "$@" ;;
   logs)     source "$RD_LIB/stack.sh";    rd_logs "$@" ;;
   deploy)   source "$RD_LIB/build.sh"; source "$RD_LIB/redeploy.sh"; source "$RD_LIB/stack.sh"; rd_deploy "$@" ;;
+  run)      source "$RD_LIB/stack.sh"; source "$RD_LIB/run.sh"; rd_run "$@" ;;
   redeploy) source "$RD_LIB/build.sh"; source "$RD_LIB/redeploy.sh"; source "$RD_LIB/index.sh"; rd_redeploy "$@" ;;
   index)    source "$RD_LIB/index.sh";   rd_index "$@" ;;
   -h|--help|help|"") usage ;;

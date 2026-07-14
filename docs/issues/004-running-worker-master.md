@@ -39,3 +39,14 @@ interpreter) against a fresh shard:
 
 The whole hot-path pipeline runs end-to-end with the actual binaries. Follow-up: add worker/master
 compose + `rd run` (B).
+
+
+## Resolution — option B shipped as `rd run` (light form)
+
+`bin/lib/run.sh` adds `rd run <up|worker|master|stop|status|logs>`. Rather than the heavier
+edge-style compose+up/down wiring, it keeps ONE persistent `rd-run-<env>` container
+(rust:slim + libssl-dev, repo bind-mounted, `--network host`), builds the debug binaries into
+the mounted `target/`, and runs them detached against `resonantdust-<env>-zone-0`. Logs land at
+`server/{worker,master}/{worker,master}-<env>.log`. **Verified:** `rd run up` on dev drove an
+appended spawn to a resolved `state` row (worker log `resolved ev=1`), master ticking. This is
+the self-driving half of the dev stack; edge/gateway remain `rd up`/`rd deploy`.
