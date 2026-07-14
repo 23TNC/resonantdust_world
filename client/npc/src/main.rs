@@ -21,7 +21,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 use client::{AnchorRadii, Client, ClientConfig, Command, Event};
-use resonantdust_codec::refs::{pack_minted_entity, ENTITY_TYPE_PAWN, SERVER_REF_NONE};
+use resonantdust_codec::refs::{pack_hot_entity, SERVER_REF_NONE};
 
 /// The zone the pack lives in — zone (0,0), `zone_id == 0`.
 const ZONE: u32 = 0;
@@ -57,12 +57,12 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
-/// The stable key an npc addresses a wolf by. Wolves are pawns, self-minted (no shard
-/// round-trip): `ENTITY_TYPE_PAWN` tags them so the client renders them as pawn markers, the
-/// index `i` is the id, and `SERVER_REF_NONE` marks "not shard-minted". The npc keeps these
-/// keys so it can move each wolf later.
+/// The stable key an npc addresses a wolf by. Wolves are hot objects, self-minted (no shard
+/// round-trip): the index `i` is the `hot_reference`, and `SERVER_REF_NONE` marks "not
+/// shard-minted" (the qualifying server). Their pawn-ness lives in the payload `kind`
+/// (`KIND_WOLF`), not the identity. The npc keeps these keys so it can move each wolf later.
 fn wolf_key(index: u32) -> u64 {
-    pack_minted_entity(ENTITY_TYPE_PAWN, index, SERVER_REF_NONE)
+    pack_hot_entity(SERVER_REF_NONE, index)
 }
 
 /// The automated-player harness: owns the `client` handle and its event stream, and hides the

@@ -13,7 +13,7 @@ use spacetimedb_sdk::__codegen::{
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub struct EventLog {
-    pub event_reference: u64,
+    pub event_reference: u32,
     pub event_tic: u32,
     pub actions: Vec::<u64>,
     pub targets: Vec::<u64>,
@@ -33,7 +33,7 @@ impl __sdk::InModule for EventLog {
 ///
 /// Provides typed access to columns for query building.
 pub struct EventLogCols {
-    pub event_reference: __sdk::__query_builder::Col<EventLog, u64>,
+    pub event_reference: __sdk::__query_builder::Col<EventLog, u32>,
     pub event_tic: __sdk::__query_builder::Col<EventLog, u32>,
     pub actions: __sdk::__query_builder::Col<EventLog, Vec::<u64>>,
     pub targets: __sdk::__query_builder::Col<EventLog, Vec::<u64>>,
@@ -64,7 +64,7 @@ impl __sdk::__query_builder::HasCols for EventLog {
 ///
 /// Provides typed access to indexed columns for query building.
 pub struct EventLogIxCols {
-    pub event_reference: __sdk::__query_builder::IxCol<EventLog, u64>,
+    pub event_reference: __sdk::__query_builder::IxCol<EventLog, u32>,
     pub event_tic: __sdk::__query_builder::IxCol<EventLog, u32>,
 }
 

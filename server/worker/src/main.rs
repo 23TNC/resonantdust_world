@@ -44,11 +44,11 @@ fn shard_conn(shards: &Shards, id: u16) -> Option<&Arc<DbConnection>> {
 /// is owned by whichever shard processes its event. Only a target explicitly minted by a
 /// *different* server is foreign.
 fn home_shard(target: u64, my_shard: u16) -> u16 {
-    use resonantdust_codec::refs::{entity_ref_is_positional, entity_ref_mint_server, SERVER_REF_NONE};
+    use resonantdust_codec::refs::{entity_ref_is_positional, entity_ref_server_reference, SERVER_REF_NONE};
     if entity_ref_is_positional(target) {
         return my_shard;
     }
-    match entity_ref_mint_server(target) {
+    match entity_ref_server_reference(target) {
         SERVER_REF_NONE => my_shard, // unminted ⇒ local (0 is "no server", never a real shard)
         m => m,
     }
@@ -204,7 +204,7 @@ struct WorkerReads<'a> {
 }
 impl resonantdust_tick::vm::Reads for WorkerReads<'_> {
     fn actor_hp(&self, server_reference: u16, object_reference: u32) -> u64 {
-        use resonantdust_codec::refs::{entity_ref_id, entity_ref_mint_server};
+        use resonantdust_codec::refs::{entity_ref_object_reference, entity_ref_server_reference};
         self.conn
             .db()
             .state_log()
@@ -212,8 +212,8 @@ impl resonantdust_tick::vm::Reads for WorkerReads<'_> {
             .filter(|r| {
                 r.dirty == 0
                     && r.tic <= self.read_tic
-                    && entity_ref_mint_server(r.entity_key) == server_reference
-                    && entity_ref_id(r.entity_key) == object_reference
+                    && entity_ref_server_reference(r.entity_key) == server_reference
+                    && entity_ref_object_reference(r.entity_key) == object_reference
             })
             .max_by_key(|r| r.tic)
             .map(|r| r.data_0)
@@ -234,7 +234,7 @@ fn actor_operands(actions: &[u64]) -> Vec<(u16, u32)> {
 /// The read rule: every actor an event reads must be **settled through `read_tic`** — no pending
 /// (`dirty>0`) work at or below it. Until then the read would be stale, so the reader defers.
 fn actors_settled(conn: &DbConnection, actions: &[u64], read_tic: u32) -> bool {
-    use resonantdust_codec::refs::{entity_ref_id, entity_ref_mint_server};
+    use resonantdust_codec::refs::{entity_ref_object_reference, entity_ref_server_reference};
     actor_operands(actions).into_iter().all(|(server, obj)| {
         let min_pending = conn
             .db()
@@ -242,8 +242,8 @@ fn actors_settled(conn: &DbConnection, actions: &[u64], read_tic: u32) -> bool {
             .iter()
             .filter(|r| {
                 r.dirty > 0
-                    && entity_ref_mint_server(r.entity_key) == server
-                    && entity_ref_id(r.entity_key) == obj
+                    && entity_ref_server_reference(r.entity_key) == server
+                    && entity_ref_object_reference(r.entity_key) == obj
             })
             .map(|r| r.tic)
             .min();
@@ -252,7 +252,7 @@ fn actors_settled(conn: &DbConnection, actions: &[u64], read_tic: u32) -> bool {
 }
 
 /// Is an event's `event_reference` `complete`?
-fn event_complete(conn: &DbConnection, event_reference: u64) -> bool {
+fn event_complete(conn: &DbConnection, event_reference: u32) -> bool {
     conn.db()
         .event_log()
         .iter()

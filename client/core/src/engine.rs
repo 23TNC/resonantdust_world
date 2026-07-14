@@ -533,7 +533,7 @@ impl Engine {
                     RowData::State(sr) => {
                         use resonantdust_codec::refs;
                         let (obj_type, object_id) = if !refs::entity_ref_is_positional(sr.entity_key) {
-                            (refs::entity_ref_type(sr.entity_key), refs::entity_ref_id(sr.entity_key) as u64)
+                            (refs::entity_ref_reference_id(sr.entity_key), refs::entity_ref_object_reference(sr.entity_key) as u64)
                         } else {
                             (0, 0)
                         };

@@ -14,7 +14,7 @@ use spacetimedb_sdk::__codegen::{
 #[sats(crate = __lib)]
 pub(super) struct AbortArgs {
     pub worker_reference: u16,
-    pub event_reference: u64,
+    pub event_reference: u32,
 }
 
 impl From<AbortArgs> for super::Reducer {
@@ -42,7 +42,7 @@ pub trait abort {
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`abort:abort_then`] to run a callback after the reducer completes.
     fn abort(&self, worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 ) -> __sdk::Result<()> {
         self.abort_then(worker_reference, event_reference,  |_, _| {})
     }
@@ -56,7 +56,7 @@ event_reference: u64,
     fn abort_then(
         &self,
         worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -68,7 +68,7 @@ impl abort for super::RemoteReducers {
     fn abort_then(
         &self,
         worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send

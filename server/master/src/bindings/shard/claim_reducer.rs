@@ -14,7 +14,7 @@ use spacetimedb_sdk::__codegen::{
 #[sats(crate = __lib)]
 pub(super) struct ClaimArgs {
     pub worker_reference: u16,
-    pub event_reference: u64,
+    pub event_reference: u32,
 }
 
 impl From<ClaimArgs> for super::Reducer {
@@ -42,7 +42,7 @@ pub trait claim {
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`claim:claim_then`] to run a callback after the reducer completes.
     fn claim(&self, worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 ) -> __sdk::Result<()> {
         self.claim_then(worker_reference, event_reference,  |_, _| {})
     }
@@ -56,7 +56,7 @@ event_reference: u64,
     fn claim_then(
         &self,
         worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -68,7 +68,7 @@ impl claim for super::RemoteReducers {
     fn claim_then(
         &self,
         worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send

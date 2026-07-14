@@ -15,7 +15,7 @@ use super::target_state_type::TargetState;
 #[sats(crate = __lib)]
 pub(super) struct ResolveForeignArgs {
     pub source_shard: u16,
-    pub event_reference: u64,
+    pub event_reference: u32,
     pub tic: u32,
     pub results: Vec::<TargetState>,
 }
@@ -47,7 +47,7 @@ pub trait resolve_foreign {
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`resolve_foreign:resolve_foreign_then`] to run a callback after the reducer completes.
     fn resolve_foreign(&self, source_shard: u16,
-event_reference: u64,
+event_reference: u32,
 tic: u32,
 results: Vec::<TargetState>,
 ) -> __sdk::Result<()> {
@@ -63,7 +63,7 @@ results: Vec::<TargetState>,
     fn resolve_foreign_then(
         &self,
         source_shard: u16,
-event_reference: u64,
+event_reference: u32,
 tic: u32,
 results: Vec::<TargetState>,
 
@@ -77,7 +77,7 @@ impl resolve_foreign for super::RemoteReducers {
     fn resolve_foreign_then(
         &self,
         source_shard: u16,
-event_reference: u64,
+event_reference: u32,
 tic: u32,
 results: Vec::<TargetState>,
 

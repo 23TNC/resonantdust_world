@@ -15,7 +15,7 @@ use super::target_state_type::TargetState;
 #[sats(crate = __lib)]
 pub(super) struct ResolveArgs {
     pub worker_reference: u16,
-    pub event_reference: u64,
+    pub event_reference: u32,
     pub results: Vec::<TargetState>,
 }
 
@@ -45,7 +45,7 @@ pub trait resolve {
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`resolve:resolve_then`] to run a callback after the reducer completes.
     fn resolve(&self, worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 results: Vec::<TargetState>,
 ) -> __sdk::Result<()> {
         self.resolve_then(worker_reference, event_reference, results,  |_, _| {})
@@ -60,7 +60,7 @@ results: Vec::<TargetState>,
     fn resolve_then(
         &self,
         worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 results: Vec::<TargetState>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
@@ -73,7 +73,7 @@ impl resolve for super::RemoteReducers {
     fn resolve_then(
         &self,
         worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 results: Vec::<TargetState>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)

@@ -50,14 +50,11 @@ pub fn actor_read_tic(actor_key: u64, target_key: u64, tic: u32) -> u32 {
 mod tests {
     use super::*;
     use resonantdust_codec::packed::pack_zone_id;
-    use resonantdust_codec::refs::{
-        pack_minted_entity, pack_positional_entity, ENTITY_TYPE_OBJECT, ENTITY_TYPE_ZONE_CELL,
-        SERVER_REF_NONE,
-    };
+    use resonantdust_codec::refs::{pack_cold_entity, pack_hot_entity, SERVER_REF_NONE};
 
-    /// A minted object `entity_reference` with `id` — the test key.
+    /// A minted (hot) object `entity_reference` with `id` — the test key.
     fn obj(id: u32) -> u64 {
-        pack_minted_entity(ENTITY_TYPE_OBJECT, id, SERVER_REF_NONE)
+        pack_hot_entity(SERVER_REF_NONE, id)
     }
 
     #[test]
@@ -87,7 +84,7 @@ mod tests {
     fn read_tic_spans_object_and_zone_classes() {
         // A cross-class pair still yields a strict order (no panic, one back-edge).
         let obj = obj(42);
-        let zone = pack_positional_entity(ENTITY_TYPE_ZONE_CELL, pack_zone_id(1, 1, 0, 2, 3), 17, 2);
+        let zone = pack_cold_entity(pack_zone_id(1, 1, 0, 2, 3), 17, 2);
         let tic = 4;
         let a = actor_read_tic(obj, zone, tic);
         let b = actor_read_tic(zone, obj, tic);

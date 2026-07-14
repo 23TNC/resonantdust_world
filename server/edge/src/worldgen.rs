@@ -26,7 +26,10 @@
 use std::path::Path;
 
 use resonantdust_codec::biome::{biome_dims, tile_seed, zone_world_origin};
-use resonantdust_codec::object::{pack_kind_reference, pack_type_reference, TYPE_BIOME_THING, TYPE_BIOME_TILE};
+use resonantdust_codec::object::{
+    pack_cold_entry, pack_kind_reference, pack_position_reference, pack_type_reference,
+    TYPE_BIOME_THING, TYPE_BIOME_TILE,
+};
 use resonantdust_codec::packed::{cell, pack_thing_at, ZONE_DIM, ZONE_TILES};
 use resonantdust_dsl::Bundle;
 
@@ -183,15 +186,23 @@ impl Worldgen {
                 // ground and its scatter vary independently.
                 let tile_kind =
                     gen.tile.as_deref().and_then(|n| self.bundle.tile_def_id(n)).unwrap_or(self.default_tile);
-                let tile_type = pack_type_reference(TYPE_BIOME_TILE, subtype, 0);
+                let tile_type = pack_type_reference(TYPE_BIOME_TILE, subtype);
                 let tile_variant = (seed >> 13) as u8 & 0x0F;
-                rows.entry(tile_type).or_default().push(pack_kind_reference(tile_kind, 0, tile_variant, x, y, 0));
+                rows.entry(tile_type).or_default().push(pack_cold_entry(
+                    pack_kind_reference(tile_kind, tile_variant),
+                    pack_position_reference(x, y),
+                    0,
+                ));
 
                 // Scattered primary-layer thing — sparse, a biome-thing at layer 0.
                 if let Some(thing_kind) = gen.thing1.as_deref().and_then(|n| self.bundle.thing_object_id(n)) {
-                    let thing_type = pack_type_reference(TYPE_BIOME_THING, subtype, 0);
+                    let thing_type = pack_type_reference(TYPE_BIOME_THING, subtype);
                     let thing_variant = (seed >> 21) as u8 & 0x0F;
-                    rows.entry(thing_type).or_default().push(pack_kind_reference(thing_kind, 0, thing_variant, x, y, 0));
+                    rows.entry(thing_type).or_default().push(pack_cold_entry(
+                        pack_kind_reference(thing_kind, thing_variant),
+                        pack_position_reference(x, y),
+                        0,
+                    ));
                 }
             }
         }

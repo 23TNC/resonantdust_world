@@ -14,7 +14,7 @@ use spacetimedb_sdk::__codegen::{
 #[sats(crate = __lib)]
 pub(super) struct StandUpArgs {
     pub worker_reference: u16,
-    pub event_reference: u64,
+    pub event_reference: u32,
     pub target: u64,
 }
 
@@ -44,7 +44,7 @@ pub trait stand_up {
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`stand_up:stand_up_then`] to run a callback after the reducer completes.
     fn stand_up(&self, worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 target: u64,
 ) -> __sdk::Result<()> {
         self.stand_up_then(worker_reference, event_reference, target,  |_, _| {})
@@ -59,7 +59,7 @@ target: u64,
     fn stand_up_then(
         &self,
         worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 target: u64,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
@@ -72,7 +72,7 @@ impl stand_up for super::RemoteReducers {
     fn stand_up_then(
         &self,
         worker_reference: u16,
-event_reference: u64,
+event_reference: u32,
 target: u64,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)

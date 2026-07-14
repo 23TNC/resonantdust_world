@@ -104,7 +104,7 @@ impl<'ctx> __sdk::TableWithPrimaryKey for EventLogTableHandle<'ctx> {
         /// but to directly chain method calls,
         /// like `ctx.db.event_log().event_reference().find(...)`.
         pub struct EventLogEventReferenceUnique<'ctx> {
-            imp: __sdk::UniqueConstraintHandle<EventLog, u64>,
+            imp: __sdk::UniqueConstraintHandle<EventLog, u32>,
             phantom: std::marker::PhantomData<&'ctx super::RemoteTables>,
         }
 
@@ -112,7 +112,7 @@ impl<'ctx> __sdk::TableWithPrimaryKey for EventLogTableHandle<'ctx> {
             /// Get a handle on the `event_reference` unique index on the table `event_log`.
             pub fn event_reference(&self) -> EventLogEventReferenceUnique<'ctx> {
                 EventLogEventReferenceUnique {
-                    imp: self.imp.get_unique_constraint::<u64>("event_reference"),
+                    imp: self.imp.get_unique_constraint::<u32>("event_reference"),
                     phantom: std::marker::PhantomData,
                 }
             }
@@ -121,7 +121,7 @@ impl<'ctx> __sdk::TableWithPrimaryKey for EventLogTableHandle<'ctx> {
         impl<'ctx> EventLogEventReferenceUnique<'ctx> {
             /// Find the subscribed row whose `event_reference` column value is equal to `col_val`,
             /// if such a row is present in the client cache.
-            pub fn find(&self, col_val: &u64) -> Option<EventLog> {
+            pub fn find(&self, col_val: &u32) -> Option<EventLog> {
                 self.imp.find(col_val)
             }
         }
@@ -130,7 +130,7 @@ impl<'ctx> __sdk::TableWithPrimaryKey for EventLogTableHandle<'ctx> {
 pub(super) fn register_table(client_cache: &mut __sdk::ClientCache<super::RemoteModule>) {
 
     let _table = client_cache.get_or_make_table::<EventLog>("event_log");
-    _table.add_unique_constraint::<u64>("event_reference", |row| &row.event_reference);
+    _table.add_unique_constraint::<u32>("event_reference", |row| &row.event_reference);
 }
 
 #[doc(hidden)]

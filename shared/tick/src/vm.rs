@@ -21,7 +21,7 @@ use resonantdust_codec::event_word::{
     pack_word, word_op_code, word_payload, word_server_reference, ACTION_AWAIT, ACTION_DAMAGE,
     ACTION_FAIL, ACTION_MOVE, ACTION_SKIP, ACTION_SPAWN, OP_ACTION, OP_ALIAS, OP_LITERAL, OP_OBJECT,
 };
-use resonantdust_codec::refs::{entity_ref_id, entity_ref_mint_server};
+use resonantdust_codec::refs::{entity_ref_object_reference, entity_ref_server_reference};
 
 /// How the interpreter reads an `OBJECT` actor operand — mapped by the caller (the worker) from
 /// the 48-bit `(server_reference, object_reference)` = `(mint_server, entity_id)` identity to
@@ -127,26 +127,26 @@ pub fn encode_if(cond: Vec<u64>, then_block: Vec<u64>, else_block: Vec<u64>) -> 
 // completion, defers or fails), then runs the body via [`run`] — keeping `run` pure.
 
 /// If `actions` opens with an await gate, return `(timeout_tics, await_event_reference, body)`;
-/// else `None` (an unconditional program — run all of it). `event_reference` is carried in the
-/// `ALIAS` word's 32-bit payload (fits until the u32↔u64 reconciliation of S7).
-pub fn await_gate(actions: &[u64]) -> Option<(u32, u64, &[u64])> {
+/// else `None` (an unconditional program — run all of it). The `event_reference` is a `u32`,
+/// carried in the `ALIAS` word's 32-bit payload (the reference model's `event_reference : u32`).
+pub fn await_gate(actions: &[u64]) -> Option<(u32, u32, &[u64])> {
     if actions.len() >= 3
         && word_op_code(actions[0]) == OP_LITERAL
         && word_op_code(actions[1]) == OP_ALIAS
         && word_op_code(actions[2]) == OP_ACTION
         && word_payload(actions[2]) == ACTION_AWAIT
     {
-        Some((word_payload(actions[0]), word_payload(actions[1]) as u64, &actions[3..]))
+        Some((word_payload(actions[0]), word_payload(actions[1]), &actions[3..]))
     } else {
         None
     }
 }
 
 /// Build an await-gated program: block on `await_ref` for `timeout` tics, then run `body`.
-pub fn encode_await(await_ref: u64, timeout: u32, body: Vec<u64>) -> Vec<u64> {
+pub fn encode_await(await_ref: u32, timeout: u32, body: Vec<u64>) -> Vec<u64> {
     let mut v = vec![
         pack_word(OP_LITERAL, 0, timeout),
-        pack_word(OP_ALIAS, 0, await_ref as u32),
+        pack_word(OP_ALIAS, 0, await_ref),
         pack_word(OP_ACTION, 0, ACTION_AWAIT),
     ];
     v.extend(body);
@@ -189,11 +189,11 @@ pub fn encode_spawn(kind: u16, zone_id: u32, location: u8, rotation: u8, offset:
 }
 
 /// A `DAMAGE` program: `[OBJECT(actor), LITERAL(amount), ACTION(DAMAGE)]`. The `actor`
-/// entity_reference is carried as `(mint_server, entity_id)` in the OBJECT word (the worker maps
-/// it back). Targets the victim (in the row's `targets`).
+/// entity_reference is carried as `(server_reference, object_reference)` in the OBJECT word (the
+/// worker maps it back). Targets the victim (in the row's `targets`).
 pub fn encode_damage(actor: u64, amount: u32) -> Vec<u64> {
     vec![
-        pack_word(OP_OBJECT, entity_ref_mint_server(actor), entity_ref_id(actor)),
+        pack_word(OP_OBJECT, entity_ref_server_reference(actor), entity_ref_object_reference(actor)),
         lit(amount),
         pack_word(OP_ACTION, 0, ACTION_DAMAGE),
     ]
@@ -251,8 +251,8 @@ mod tests {
 
     #[test]
     fn damage_voids_when_actor_dead_lands_when_alive() {
-        use resonantdust_codec::refs::{pack_minted_entity, ENTITY_TYPE_PAWN};
-        let actor = pack_minted_entity(ENTITY_TYPE_PAWN, 42, 1);
+        use resonantdust_codec::refs::pack_hot_entity;
+        let actor = pack_hot_entity(1, 42);
         let victim = EntityState { data: [100, 0], ..EntityState::default() }; // hp 100
         // live actor (hp 30) → 100 − 25 = 75
         let live = StubReads { actor_id: 42, hp: 30 };
@@ -280,10 +280,10 @@ mod tests {
 
     #[test]
     fn skip_branch_condition_from_actor_read() {
-        use resonantdust_codec::refs::{pack_minted_entity, ENTITY_TYPE_PAWN};
+        use resonantdust_codec::refs::pack_hot_entity;
         // `actor_alive ? move→0x22 : move→0x44` — the OBJECT read is the condition.
-        let actor = pack_minted_entity(ENTITY_TYPE_PAWN, 42, 1);
-        let cond = vec![pack_word(OP_OBJECT, entity_ref_mint_server(actor), entity_ref_id(actor))];
+        let actor = pack_hot_entity(1, 42);
+        let cond = vec![pack_word(OP_OBJECT, entity_ref_server_reference(actor), entity_ref_object_reference(actor))];
         let prog = encode_if(cond, encode_move(0, 0x22, 0, 0), encode_move(0, 0x44, 0, 0));
         let base = EntityState { kind: 9, ..EntityState::default() };
         // live actor (hp 30 ≠ 0) → then

@@ -14,7 +14,7 @@
 //!
 //! The engine never runs the DSL — the worker does, then calls `resolve` with the results.
 
-pub use resonantdust_codec::refs::{entity_ref_zone_id, pack_minted_entity};
+pub use resonantdust_codec::refs::{entity_ref_zone_id, pack_hot_entity};
 
 // ── lifecycle status (event_log.status) ─────────────────────────────────────────
 /// Written by the issuer; no worker has taken it to stand up yet.
@@ -67,7 +67,7 @@ macro_rules! decl_tick_pipeline {
         pub struct EventLog {
             #[primary_key]
             #[auto_inc]
-            pub event_reference: u64,
+            pub event_reference: u32,
             #[index(btree)]
             pub event_tic: u32,
             /// The DSL program — a flat postfix word stream (`docs/spacetime-tables/event-dsl.md`).
@@ -129,7 +129,7 @@ macro_rules! decl_tick_pipeline {
             #[index(btree)]
             pub state_log_id: u64,
             #[index(btree)]
-            pub event_reference: u64,
+            pub event_reference: u32,
             pub kind: u8,
         }
 
@@ -141,7 +141,7 @@ macro_rules! decl_tick_pipeline {
             #[auto_inc]
             pub id: u64,
             #[index(btree)]
-            pub event_reference: u64,
+            pub event_reference: u32,
             pub state_log_id: u64,
         }
 
@@ -242,9 +242,11 @@ macro_rules! decl_tick_pipeline {
             }
         }
 
-        /// Mint a fresh globally-unique minted `entity_reference` of `entity_type`.
-        pub fn mint_entity(ctx: &ReducerContext, entity_type: u8) -> u64 {
-            $crate::pack_minted_entity(entity_type, next_entity_id(ctx), this_shard_id(ctx))
+        /// Mint a fresh globally-unique **hot** `entity_reference` — `REF_HOT` qualified by this
+        /// shard's `server_reference`, handle = this shard's next `hot_reference`. (Game-type is
+        /// no longer in the identity; it lives in the payload `kind` / `definition_reference`.)
+        pub fn mint_hot(ctx: &ReducerContext) -> u64 {
+            $crate::pack_hot_entity(this_shard_id(ctx), next_entity_id(ctx))
         }
 
         /// The `state_log` row for `(entity_key, tic)`, if any.
@@ -267,13 +269,13 @@ macro_rules! decl_tick_pipeline {
 
         /// Register that `event_reference` holds `kind` on `state_log_id`, and remember it in
         /// open-rows (so enqueue can back out).
-        fn add_hold(ctx: &ReducerContext, event_reference: u64, state_log_id: u64, kind: u8) {
+        fn add_hold(ctx: &ReducerContext, event_reference: u32, state_log_id: u64, kind: u8) {
             ctx.db.holder().insert(Holder { id: 0, state_log_id, event_reference, kind });
             ctx.db.open_rows().insert(OpenRows { id: 0, event_reference, state_log_id });
         }
 
         /// Release every hold + open-row for an event.
-        fn release_holds(ctx: &ReducerContext, event_reference: u64) {
+        fn release_holds(ctx: &ReducerContext, event_reference: u32) {
             let hs: Vec<u64> = ctx.db.holder().event_reference().filter(event_reference).map(|h| h.id).collect();
             for id in hs { ctx.db.holder().id().delete(id); }
             let os: Vec<u64> = ctx.db.open_rows().event_reference().filter(event_reference).map(|o| o.id).collect();
@@ -337,7 +339,7 @@ macro_rules! decl_tick_pipeline {
         /// A worker claims (fences) a row for its next phase: `enqueue → queueing` or
         /// `in_queue → running`. Succeeds if unclaimed or the lease expired.
         #[reducer]
-        pub fn claim(ctx: &ReducerContext, worker_reference: u16, event_reference: u64) -> Result<(), String> {
+        pub fn claim(ctx: &ReducerContext, worker_reference: u16, event_reference: u32) -> Result<(), String> {
             let Some(row) = ctx.db.event_log().event_reference().find(event_reference) else { return Ok(()); };
             let now = master_tic(ctx);
             // Free to claim if unowned, already ours (re-claim across phases:
@@ -367,7 +369,7 @@ macro_rules! decl_tick_pipeline {
         /// register a write hold. Idempotent (skips if the row already exists). Cold targets
         /// (`find-or-mint`) land in S6; this handles the hot path (spawn/move).
         #[reducer]
-        pub fn stand_up(ctx: &ReducerContext, worker_reference: u16, event_reference: u64, target: u64) -> Result<(), String> {
+        pub fn stand_up(ctx: &ReducerContext, worker_reference: u16, event_reference: u32, target: u64) -> Result<(), String> {
             let Some(ev) = ctx.db.event_log().event_reference().find(event_reference) else { return Ok(()); };
             if ev.worker_reference != worker_reference || ev.status != $crate::STATUS_QUEUEING { return Ok(()); }
             let tic = ev.event_tic;
@@ -388,7 +390,7 @@ macro_rules! decl_tick_pipeline {
 
         /// Mark a fully-stood-up row ready to execute.
         #[reducer]
-        pub fn ready(ctx: &ReducerContext, worker_reference: u16, event_reference: u64) -> Result<(), String> {
+        pub fn ready(ctx: &ReducerContext, worker_reference: u16, event_reference: u32) -> Result<(), String> {
             let Some(row) = ctx.db.event_log().event_reference().find(event_reference) else { return Ok(()); };
             if row.worker_reference != worker_reference || row.status != $crate::STATUS_QUEUEING { return Ok(()); }
             set_status(ctx, row, $crate::STATUS_IN_QUEUE);
@@ -398,7 +400,7 @@ macro_rules! decl_tick_pipeline {
         /// Commit a whole row atomically: write every target's resolved state (dirty=0),
         /// promote to `state`, release the row's holds, mark `complete`. Fenced.
         #[reducer]
-        pub fn resolve(ctx: &ReducerContext, worker_reference: u16, event_reference: u64, results: Vec<TargetState>) -> Result<(), String> {
+        pub fn resolve(ctx: &ReducerContext, worker_reference: u16, event_reference: u32, results: Vec<TargetState>) -> Result<(), String> {
             let Some(ev) = ctx.db.event_log().event_reference().find(event_reference) else { return Ok(()); };
             if ev.worker_reference != worker_reference || ev.status != $crate::STATUS_RUNNING { return Ok(()); }
             let tic = ev.event_tic;
@@ -425,7 +427,7 @@ macro_rules! decl_tick_pipeline {
         /// every target shard's `resolve_foreign` has returned (`lifecycle.md` §convergent write).
         /// `tic` is the row's `event_tic`, carried explicitly since this shard can't read it.
         #[reducer]
-        pub fn resolve_foreign(ctx: &ReducerContext, source_shard: u16, event_reference: u64, tic: u32, results: Vec<TargetState>) -> Result<(), String> {
+        pub fn resolve_foreign(ctx: &ReducerContext, source_shard: u16, event_reference: u32, tic: u32, results: Vec<TargetState>) -> Result<(), String> {
             let key = ((source_shard as u128) << 64) | (event_reference as u128);
             if ctx.db.applied_foreign().id().find(key).is_some() {
                 return Ok(()); // already converged here — idempotent no-op
@@ -447,7 +449,7 @@ macro_rules! decl_tick_pipeline {
         /// Abort a `running` row (its `await` timed out): terminal-fail it + release holds.
         /// Fenced. Reuses `queue_failed` (both mean "terminal, produced nothing").
         #[reducer]
-        pub fn abort(ctx: &ReducerContext, worker_reference: u16, event_reference: u64) -> Result<(), String> {
+        pub fn abort(ctx: &ReducerContext, worker_reference: u16, event_reference: u32) -> Result<(), String> {
             let Some(row) = ctx.db.event_log().event_reference().find(event_reference) else { return Ok(()); };
             if row.worker_reference != worker_reference || row.status != $crate::STATUS_RUNNING { return Ok(()); }
             release_holds(ctx, event_reference);
@@ -487,7 +489,7 @@ macro_rules! decl_tick_pipeline {
         #[reducer]
         pub fn drop_timed_out(ctx: &ReducerContext) -> Result<(), String> {
             let now = master_tic(ctx);
-            let stale: Vec<u64> = ctx.db.event_log().iter()
+            let stale: Vec<u32> = ctx.db.event_log().iter()
                 .filter(|e| (e.status == $crate::STATUS_ENQUEUE || e.status == $crate::STATUS_QUEUEING)
                     && now.saturating_sub(e.tic_state_change) > $crate::ENQUEUE_WINDOW_TICS)
                 .map(|e| e.event_reference).collect();
@@ -510,7 +512,7 @@ macro_rules! decl_tick_pipeline {
         #[reducer]
         pub fn tick_gc(ctx: &ReducerContext) -> Result<(), String> {
             // 1. terminal events.
-            let done: Vec<u64> = ctx.db.event_log().iter()
+            let done: Vec<u32> = ctx.db.event_log().iter()
                 .filter(|e| e.status == $crate::STATUS_COMPLETE || e.status == $crate::STATUS_QUEUE_FAILED)
                 .map(|e| e.event_reference).collect();
             for r in done { ctx.db.event_log().event_reference().delete(r); }

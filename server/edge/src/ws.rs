@@ -498,8 +498,8 @@ async fn handle_spawn(
 }
 
 /// Turn a client move intent into an `ACTION_MOVE` event on the shard's tick pipeline.
-/// `pawn` selects the target: `None` moves **this player's own object** (`ENTITY_TYPE_PLAYER`
-/// + `player_id`, a self-move — the object materializes on its first move via work-gen's
+/// `pawn` selects the target: `None` moves **this player's own object** (a hot entity keyed by
+/// `player_id`, a self-move — the object materializes on its first move via work-gen's
 /// default base); `Some(entity_key)` moves that specific entity (an automated player driving
 /// its wolves). Thin intent check: must be logged in. **No ownership check** — today any
 /// logged-in session may move any pawn; the ownership seam lands with per-npc ownership.
@@ -513,7 +513,7 @@ async fn handle_move(
     tile_y: i32,
 ) {
     use resonantdust_codec::packed::cell;
-    use resonantdust_codec::refs::{pack_minted_entity, ENTITY_TYPE_PLAYER, SERVER_REF_NONE};
+    use resonantdust_codec::refs::{pack_hot_entity, SERVER_REF_NONE};
 
     let Some(player_id) = player_id else {
         send(out_tx, err_frame("move: not logged in"));
@@ -536,10 +536,10 @@ async fn handle_move(
         return;
     };
     // The target: an explicit pawn (automated player), else the player's own entity (a
-    // self-move). The player's own key is not shard-minted: SERVER_REF_NONE as the minting
-    // server + the (globally-unique) player_id as the id.
+    // self-move). The player's own key is not shard-minted: SERVER_REF_NONE as the qualifying
+    // server + the (globally-unique) player_id as the hot_reference.
     let target = pawn
-        .unwrap_or_else(|| pack_minted_entity(ENTITY_TYPE_PLAYER, player_id, SERVER_REF_NONE));
+        .unwrap_or_else(|| pack_hot_entity(SERVER_REF_NONE, player_id));
     // Build a MOVE word-stream program and append it targeting the pawn.
     let actions = resonantdust_tick::vm::encode_move(dest_zone, location, 0, 0);
     if let Err(err) = shard.conn.reducers.append(actions, vec![target]) {
@@ -595,8 +595,8 @@ async fn handle_interact(
     // Target the cold object by its POSITIONAL entity_reference; the worker's enqueue
     // find-or-mint promotes it hot (kind from cold) before the action runs (issue 005). An
     // empty action program just makes it hot (interact = "bring it to life"); richer verbs later.
-    use resonantdust_codec::refs::{pack_positional_entity, ENTITY_TYPE_ZONE_CELL};
-    let target = pack_positional_entity(ENTITY_TYPE_ZONE_CELL, zone, cell(x, y), 0);
+    use resonantdust_codec::refs::pack_cold_entity;
+    let target = pack_cold_entity(zone, cell(x, y), 0);
     if let Err(err) = shard.conn.reducers.append(Vec::new(), vec![target]) {
         send(out_tx, err_frame(&format!("interact: request failed: {err}")));
     } else {

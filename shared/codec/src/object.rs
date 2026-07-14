@@ -1,59 +1,45 @@
-//! The object-model reference layouts — the packed identity + addressing scheme
-//! from `docs/object-model.md`.
+//! The object-model reference layouts — the **definition / position / data** split of the 0.2.3
+//! reference model. Canonical shape:
+//! `docs/components/shared/codec/design/reference-model.md` (+ `references/spatial-references.md`).
 //!
-//! This is the **new** reference layer for the 0.2.3 pipeline/shard redesign. It
-//! is added **alongside** [`refs`](crate::refs) (whose `entity_reference` /
-//! `server_reference` / `action_reference` it supersedes) and
-//! [`packed`](crate::packed) during migration; consumers move over, then the old
-//! layers are removed. Like the rest of the codec it is **pure integer math** —
-//! no naming, no I/O. The `type_id ↔ name` / `kind_id ↔ name` mapping is the
-//! *registry's* job (content-derived, append-stable); this module only packs and
-//! unpacks whatever numbers it is handed.
+//! Three orthogonal references describe an object — *what* it is, *where* it is, its *state*:
 //!
 //! ```text
-//! object_reference : u64 = object_type_reference:32 | object_kind_reference:32
-//!   object_type_reference : u32 = type_id:4  | subtype_id:12 | layer:4      | reserved:12
-//!   object_kind_reference : u32 = kind_id:10 | subkind_id:4  | variant_id:4 | x:4 | y:4 | data:6
+//! definition_reference : u32 = type_id:4 | subtype_id:12 | kind_id:12 | variant_id:4   (WHAT)
+//!   type_reference : u16 = type_id:4 | subtype_id:12      (shareable — the type half)
+//!   kind_reference : u16 = kind_id:12 | variant_id:4      (the kind half)
 //!
-//! spatial (each u8 = hi<<4 | lo, two u4 grid coords):
-//!   position_reference  = x:4        | y:4
-//!   zone_reference      = zone_x:4   | zone_y:4
-//!   region_reference    = region_x:4 | region_y:4
-//!   realm_reference     = realm_x:4  | realm_y:4
-//!   region_zone_reference : u16 = region_reference:8 | zone_reference:8
+//! spatial u8 = hi:4 | lo:4   (one primitive at four nested 16×16 scales: realm/region/zone/tile)
+//! region_zone_reference : u16 = region:8 | zone:8         (the zone-subscription key)
+//! cold_reference : u32 = region:8 | zone:8 | tile:8 | layer_reference:8       (WHERE, realm-scoped)
+//!   layer_reference : u8 = type_id:4 | layer_id:4
 //!
-//! cold_reference : u32 = region_reference:8 | zone_reference:8 | position_reference:8 | layer_id:4 | type_id:4
+//! cold entry (kind_pos_reference) : u32 = kind_reference:16 | tile:8 | data:8  (one per cold object)
+//! data : u8 = sub_position:3 | rotation:2 | aux:3         (per-instance state; decoded by type_id)
 //! ```
 //!
-//! `data` is a **type-decoded** u6 payload (see [`data_default`] / [`data_stack`]):
-//! most types read it as `rotation:2 | count:4`; a dedicated stackable/resource
-//! type reads the whole u6 as `count`. The decode is a function of `type_id` — a
-//! caller that knows the type picks the decoder.
+//! `realm` is **not** in a `cold_reference` — a cold object lives in a realm-scoped shard, so the
+//! realm rides `server_reference` ([`crate::refs`]), not every reference. Pure integer math — the
+//! `type_id ↔ name` / `kind_id ↔ name` mapping is the registry's (content-derived) job.
 //!
-//! `type_id == 0` is reserved (the null/unset sentinel); callers assign real types
-//! from `1..=15` via the registry.
+//! `type_id == 0` is the null/unset sentinel; real types are `1..=15`.
 
-// ── object_type_reference ─────────────────────────────────────────────────────
-//
-// u32 = type_id:4 | subtype_id:12 | layer:4 | reserved:12. The "shared" half of an
-// object_reference — many objects of the same (type, subtype, layer) share it, which
-// is what the cold store's `Vec<object_kind_reference>` per row exploits.
+// ── definition_reference : u32 = type_id:4 | subtype_id:12 | kind_id:12 | variant_id:4 ──────────
 
-const TYPE_ID_SHIFT: u32 = 28;
-const SUBTYPE_ID_SHIFT: u32 = 16;
-const TYPE_LAYER_SHIFT: u32 = 12;
+const DEF_TYPE_SHIFT: u32 = 28;
+const DEF_SUBTYPE_SHIFT: u32 = 16;
+const DEF_KIND_SHIFT: u32 = 4;
 const TYPE_ID_MASK: u32 = 0xF; // 4 bits
 const SUBTYPE_ID_MASK: u32 = 0xFFF; // 12 bits
-const LAYER_MASK: u32 = 0xF; // 4 bits
+const KIND_ID_MASK: u32 = 0xFFF; // 12 bits
+const VARIANT_ID_MASK: u32 = 0xF; // 4 bits
 
 /// Reserved "no type" id — the null/unset sentinel. Real types are `1..=15`.
 pub const TYPE_NONE: u8 = 0;
 
-// The `type_id` palette — structural (each type implies a pipeline + a `data`
-// decode), so they live in code, not content (types are few and fixed; kinds are
-// content-derived). APPEND-ONLY: a new type goes last so stored zones never
-// renumber. These are the go-forward ids, superseding the `ENTITY_TYPE_*` /
-// `DATA_TYPE_*` palettes in [`refs`](crate::refs) as consumers migrate.
+// The `type_id` palette — structural (each type implies a pipeline + a `data` decode), so they
+// live in code, not content (types are few and fixed; kinds are content-derived). APPEND-ONLY: a
+// new type goes last so stored zones never renumber.
 /// Biome-classified ground tiles — `subtype = biome`.
 pub const TYPE_BIOME_TILE: u8 = 1;
 /// Biome-scattered things (flora, rocks) — `subtype = biome`.
@@ -67,177 +53,78 @@ pub const TYPE_EVENT: u8 = 5;
 /// A server / shard (provenance).
 pub const TYPE_SERVER: u8 = 6;
 
-/// Compose an `object_type_reference`: `type_id:4 | subtype_id:12 | layer:4 | reserved:12`.
-/// The low 12 reserved bits stay 0 (growth room — see `docs/object-model.md`).
-pub fn pack_type_reference(type_id: u8, subtype_id: u16, layer: u8) -> u32 {
-    (((type_id as u32) & TYPE_ID_MASK) << TYPE_ID_SHIFT)
-        | (((subtype_id as u32) & SUBTYPE_ID_MASK) << SUBTYPE_ID_SHIFT)
-        | (((layer as u32) & LAYER_MASK) << TYPE_LAYER_SHIFT)
+/// Compose a `definition_reference`: `type_id:4 | subtype_id:12 | kind_id:12 | variant_id:4`.
+/// Fully shareable — every instance of `pawn/human/male.fat` has the same one.
+pub fn pack_definition_reference(type_id: u8, subtype_id: u16, kind_id: u16, variant_id: u8) -> u32 {
+    (((type_id as u32) & TYPE_ID_MASK) << DEF_TYPE_SHIFT)
+        | (((subtype_id as u32) & SUBTYPE_ID_MASK) << DEF_SUBTYPE_SHIFT)
+        | (((kind_id as u32) & KIND_ID_MASK) << DEF_KIND_SHIFT)
+        | ((variant_id as u32) & VARIANT_ID_MASK)
 }
 
-/// The `type_id` (0..16) of an `object_type_reference`.
+/// The `type_id` (0..16) of a `definition_reference`.
+pub fn def_type_id(r: u32) -> u8 {
+    ((r >> DEF_TYPE_SHIFT) & TYPE_ID_MASK) as u8
+}
+/// The `subtype_id` (0..4096) of a `definition_reference`.
+pub fn def_subtype_id(r: u32) -> u16 {
+    ((r >> DEF_SUBTYPE_SHIFT) & SUBTYPE_ID_MASK) as u16
+}
+/// The `kind_id` (0..4096) of a `definition_reference`.
+pub fn def_kind_id(r: u32) -> u16 {
+    ((r >> DEF_KIND_SHIFT) & KIND_ID_MASK) as u16
+}
+/// The `variant_id` (0..16) of a `definition_reference`.
+pub fn def_variant_id(r: u32) -> u8 {
+    (r & VARIANT_ID_MASK) as u8
+}
+
+// ── type_reference : u16 = type_id:4 | subtype_id:12 (the shareable type half) ──────────────────
+//
+// The cold row's shared header field: many objects share `(type, subtype)`. Stored in a `u32`
+// column on the wire/table (high 16 bits 0), so these accept a `u32` and mask the low 16.
+
+const TYPE_REF_TYPE_SHIFT: u32 = 12;
+
+/// Compose a `type_reference`: `type_id:4 | subtype_id:12`.
+pub fn pack_type_reference(type_id: u8, subtype_id: u16) -> u32 {
+    (((type_id as u32) & TYPE_ID_MASK) << TYPE_REF_TYPE_SHIFT) | ((subtype_id as u32) & SUBTYPE_ID_MASK)
+}
+/// The `type_id` of a `type_reference`.
 pub fn type_ref_type_id(r: u32) -> u8 {
-    ((r >> TYPE_ID_SHIFT) & TYPE_ID_MASK) as u8
+    ((r >> TYPE_REF_TYPE_SHIFT) & TYPE_ID_MASK) as u8
 }
-
-/// The `subtype_id` (0..4096) of an `object_type_reference`.
+/// The `subtype_id` of a `type_reference`.
 pub fn type_ref_subtype_id(r: u32) -> u16 {
-    ((r >> SUBTYPE_ID_SHIFT) & SUBTYPE_ID_MASK) as u16
+    (r & SUBTYPE_ID_MASK) as u16
 }
 
-/// The `layer` (0..16 — the tile object-slot, NOT the texture `part`) of an
-/// `object_type_reference`.
-pub fn type_ref_layer(r: u32) -> u8 {
-    ((r >> TYPE_LAYER_SHIFT) & LAYER_MASK) as u8
+// ── kind_reference : u16 = kind_id:12 | variant_id:4 (the kind half of a definition) ────────────
+
+const KIND_REF_KIND_SHIFT: u16 = 4;
+
+/// Compose a `kind_reference`: `kind_id:12 | variant_id:4`.
+pub fn pack_kind_reference(kind_id: u16, variant_id: u8) -> u16 {
+    (((kind_id) & KIND_ID_MASK as u16) << KIND_REF_KIND_SHIFT) | ((variant_id as u16) & VARIANT_ID_MASK as u16)
 }
 
-// ── object_kind_reference ─────────────────────────────────────────────────────
+// ── spatial primitive + region_zone (four nested 16×16 grids) ───────────────────────────────────
 //
-// u32 = kind_id:10 | subkind_id:4 | variant_id:4 | x:4 | y:4 | data:6. The
-// "per-instance" half — its own kind/subkind/variant, where it sits in the zone
-// (x/y = position_reference), and a type-decoded data payload.
-
-const KIND_ID_SHIFT: u32 = 22;
-const SUBKIND_ID_SHIFT: u32 = 18;
-const VARIANT_ID_SHIFT: u32 = 14;
-const KIND_X_SHIFT: u32 = 10;
-const KIND_Y_SHIFT: u32 = 6;
-const KIND_ID_MASK: u32 = 0x3FF; // 10 bits
-const SUBKIND_ID_MASK: u32 = 0xF; // 4 bits
-const VARIANT_ID_MASK: u32 = 0xF; // 4 bits
-const NIBBLE_MASK: u32 = 0xF; // 4 bits (x, y)
-const DATA_MASK: u32 = 0x3F; // 6 bits
-
-/// Compose an `object_kind_reference`: `kind_id:10 | subkind_id:4 | variant_id:4 |
-/// x:4 | y:4 | data:6`. `x`/`y` are the object's tile within its zone (the
-/// `position_reference`); `data` is the type-decoded payload
-/// ([`data_default`] / [`data_stack`]).
-pub fn pack_kind_reference(
-    kind_id: u16,
-    subkind_id: u8,
-    variant_id: u8,
-    x: u8,
-    y: u8,
-    data: u8,
-) -> u32 {
-    (((kind_id as u32) & KIND_ID_MASK) << KIND_ID_SHIFT)
-        | (((subkind_id as u32) & SUBKIND_ID_MASK) << SUBKIND_ID_SHIFT)
-        | (((variant_id as u32) & VARIANT_ID_MASK) << VARIANT_ID_SHIFT)
-        | (((x as u32) & NIBBLE_MASK) << KIND_X_SHIFT)
-        | (((y as u32) & NIBBLE_MASK) << KIND_Y_SHIFT)
-        | ((data as u32) & DATA_MASK)
-}
-
-/// The `kind_id` (0..1024) of an `object_kind_reference`.
-pub fn kind_ref_kind_id(r: u32) -> u16 {
-    ((r >> KIND_ID_SHIFT) & KIND_ID_MASK) as u16
-}
-
-/// The `subkind_id` (0..16) of an `object_kind_reference`.
-pub fn kind_ref_subkind_id(r: u32) -> u8 {
-    ((r >> SUBKIND_ID_SHIFT) & SUBKIND_ID_MASK) as u8
-}
-
-/// The `variant_id` (0..16) of an `object_kind_reference`.
-pub fn kind_ref_variant_id(r: u32) -> u8 {
-    ((r >> VARIANT_ID_SHIFT) & VARIANT_ID_MASK) as u8
-}
-
-/// The `x` tile coordinate (0..16) within the zone.
-pub fn kind_ref_x(r: u32) -> u8 {
-    ((r >> KIND_X_SHIFT) & NIBBLE_MASK) as u8
-}
-
-/// The `y` tile coordinate (0..16) within the zone.
-pub fn kind_ref_y(r: u32) -> u8 {
-    ((r >> KIND_Y_SHIFT) & NIBBLE_MASK) as u8
-}
-
-/// The raw type-decoded `data` payload (0..64). Decode with [`data_default`] or
-/// [`data_stack`] per the object's `type_id`.
-pub fn kind_ref_data(r: u32) -> u8 {
-    (r & DATA_MASK) as u8
-}
-
-/// The `position_reference` (`x:4 | y:4`) of a kind reference — the same two
-/// nibbles [`kind_ref_x`]/[`kind_ref_y`] read, packed as the u8 spatial ref.
-pub fn kind_ref_position(r: u32) -> u8 {
-    pack_position_reference(kind_ref_x(r), kind_ref_y(r))
-}
-
-// ── object_reference ──────────────────────────────────────────────────────────
-//
-// u64 = object_type_reference:32 (high) | object_kind_reference:32 (low).
-
-const OBJECT_TYPE_SHIFT: u64 = 32;
-
-/// Compose an `object_reference` from its two halves.
-pub fn pack_object_reference(type_reference: u32, kind_reference: u32) -> u64 {
-    ((type_reference as u64) << OBJECT_TYPE_SHIFT) | (kind_reference as u64)
-}
-
-/// The `object_type_reference` (high 32) of an `object_reference`.
-pub fn object_ref_type_reference(r: u64) -> u32 {
-    (r >> OBJECT_TYPE_SHIFT) as u32
-}
-
-/// The `object_kind_reference` (low 32) of an `object_reference`.
-pub fn object_ref_kind_reference(r: u64) -> u32 {
-    r as u32
-}
-
-// ── data payload (type-decoded u6) ────────────────────────────────────────────
-//
-// The default decode most types use: rotation:2 | count:4. A dedicated stackable
-// type instead reads the whole u6 as a count ([`data_stack`]).
-
-const DATA_ROTATION_SHIFT: u8 = 4;
-const DATA_ROTATION_MASK: u8 = 0x3; // 2 bits
-const DATA_COUNT4_MASK: u8 = 0xF; // 4 bits (default decode)
-const DATA_COUNT6_MASK: u8 = 0x3F; // 6 bits (stackable decode)
-
-/// Default `data` decode: `rotation:2 | count:4` → `(rotation, count)`.
-/// `rotation` is 0..4 (facings; west is mirrored east), `count` is a magnitude 0..16.
-pub fn data_default(data: u8) -> (u8, u8) {
-    let rotation = (data >> DATA_ROTATION_SHIFT) & DATA_ROTATION_MASK;
-    let count = data & DATA_COUNT4_MASK;
-    (rotation, count)
-}
-
-/// Compose the default `data`: `rotation:2 | count:4`.
-pub fn pack_data_default(rotation: u8, count: u8) -> u8 {
-    ((rotation & DATA_ROTATION_MASK) << DATA_ROTATION_SHIFT) | (count & DATA_COUNT4_MASK)
-}
-
-/// Stackable `data` decode: the whole u6 is a `count` (0..64) — for a dedicated
-/// stackable/resource type that does not rotate.
-pub fn data_stack(data: u8) -> u8 {
-    data & DATA_COUNT6_MASK
-}
-
-/// Compose a stackable `data`: `count:6` (masked to 0..64).
-pub fn pack_data_stack(count: u8) -> u8 {
-    count & DATA_COUNT6_MASK
-}
-
-// ── spatial references ────────────────────────────────────────────────────────
-//
-// Four nested 16×16 grids. Each is a u8 = hi_nibble<<4 | lo_nibble (two u4 coords).
+// One u8 = hi:4 | lo:4 at four scales: realm / region / zone / tile. `pack_position_reference`
+// packs any level's two nibbles; `ref_hi` / `ref_lo` read them. (`docs/…/spatial-references.md`.)
 
 const NIBBLE_SHIFT: u8 = 4;
 const NIBBLE_U8_MASK: u8 = 0xF;
 
-/// Pack a spatial `u8` reference from two `u4` grid coordinates: `hi:4 | lo:4`.
-/// The primitive behind position / zone / region / realm references.
+/// Pack a spatial `u8` from two `u4` grid coordinates: `hi:4 | lo:4`. The primitive behind
+/// tile / zone / region / realm references.
 pub fn pack_position_reference(x: u8, y: u8) -> u8 {
     ((x & NIBBLE_U8_MASK) << NIBBLE_SHIFT) | (y & NIBBLE_U8_MASK)
 }
-
 /// The high-nibble coordinate (`x` / `zone_x` / `region_x` / `realm_x`).
 pub fn ref_hi(r: u8) -> u8 {
     (r >> NIBBLE_SHIFT) & NIBBLE_U8_MASK
 }
-
 /// The low-nibble coordinate (`y` / `zone_y` / `region_y` / `realm_y`).
 pub fn ref_lo(r: u8) -> u8 {
     r & NIBBLE_U8_MASK
@@ -246,80 +133,150 @@ pub fn ref_lo(r: u8) -> u8 {
 const REGION_ZONE_REGION_SHIFT: u16 = 8;
 const REGION_ZONE_LOW_MASK: u16 = 0xFF;
 
-/// Pack a `region_zone_reference`: `region_reference:8 | zone_reference:8`. Stored
-/// in cold rows so a subscription names region+zone directly, without a filter.
+/// Pack a `region_zone_reference`: `region_reference:8 | zone_reference:8`. The zone-subscription
+/// key — a client names region + zone directly, no filter. (Realm is the shard's; tile is per
+/// object.)
 pub fn pack_region_zone(region_reference: u8, zone_reference: u8) -> u16 {
     ((region_reference as u16) << REGION_ZONE_REGION_SHIFT) | (zone_reference as u16)
 }
-
 /// The `region_reference` of a `region_zone_reference`.
 pub fn region_zone_region(r: u16) -> u8 {
     (r >> REGION_ZONE_REGION_SHIFT) as u8
 }
-
 /// The `zone_reference` of a `region_zone_reference`.
 pub fn region_zone_zone(r: u16) -> u8 {
     (r & REGION_ZONE_LOW_MASK) as u8
 }
 
-// ── cold_reference ────────────────────────────────────────────────────────────
+// ── layer_reference : u8 = type_id:4 | layer_id:4 ───────────────────────────────────────────────
+
+const LAYER_REF_TYPE_SHIFT: u8 = 4;
+
+/// Compose a `layer_reference`: `type_id:4 | layer_id:4` (the tile-slot, interpreted per type).
+pub fn pack_layer_reference(type_id: u8, layer_id: u8) -> u8 {
+    ((type_id & NIBBLE_U8_MASK) << LAYER_REF_TYPE_SHIFT) | (layer_id & NIBBLE_U8_MASK)
+}
+/// The `type_id` of a `layer_reference`.
+pub fn layer_ref_type_id(r: u8) -> u8 {
+    (r >> LAYER_REF_TYPE_SHIFT) & NIBBLE_U8_MASK
+}
+/// The `layer_id` of a `layer_reference`.
+pub fn layer_ref_layer_id(r: u8) -> u8 {
+    r & NIBBLE_U8_MASK
+}
+
+// ── cold_reference : u32 = region:8 | zone:8 | tile:8 | layer_reference:8 ────────────────────────
 //
-// u32 = region_reference:8 | zone_reference:8 | position_reference:8 | layer_id:4 |
-// type_id:4. Addresses a settled cold object; subtype-agnostic (the uniqueness rule
-// is one object per (type, layer, tile)). Pair with a cold_server_id:u8 to name the
-// shard within the realm.
+// A settled object addressed by its (realm-scoped) location. Realm omitted — carried by
+// `server_reference`. This is the `object_reference` a cold `entity_reference` (`REF_COLD`) holds,
+// and it `unpack`s to a hot object at that tile.
 
 const COLD_REGION_SHIFT: u32 = 24;
 const COLD_ZONE_SHIFT: u32 = 16;
-const COLD_POSITION_SHIFT: u32 = 8;
-const COLD_LAYER_SHIFT: u32 = 4;
+const COLD_TILE_SHIFT: u32 = 8;
 const COLD_BYTE_MASK: u32 = 0xFF;
-const COLD_NIBBLE_MASK: u32 = 0xF;
 
-/// Compose a `cold_reference`: `region:8 | zone:8 | position:8 | layer:4 | type:4`.
-pub fn pack_cold_reference(
-    region_reference: u8,
-    zone_reference: u8,
-    position_reference: u8,
-    layer_id: u8,
-    type_id: u8,
-) -> u32 {
-    ((region_reference as u32) << COLD_REGION_SHIFT)
-        | ((zone_reference as u32) << COLD_ZONE_SHIFT)
-        | ((position_reference as u32) << COLD_POSITION_SHIFT)
-        | (((layer_id as u32) & COLD_NIBBLE_MASK) << COLD_LAYER_SHIFT)
-        | ((type_id as u32) & COLD_NIBBLE_MASK)
+/// Compose a `cold_reference`: `region:8 | zone:8 | tile:8 | layer_reference:8`.
+pub fn pack_cold_reference(region: u8, zone: u8, tile: u8, layer_reference: u8) -> u32 {
+    ((region as u32) << COLD_REGION_SHIFT)
+        | ((zone as u32) << COLD_ZONE_SHIFT)
+        | ((tile as u32) << COLD_TILE_SHIFT)
+        | (layer_reference as u32)
 }
-
 /// The `region_reference` of a `cold_reference`.
 pub fn cold_ref_region(r: u32) -> u8 {
     ((r >> COLD_REGION_SHIFT) & COLD_BYTE_MASK) as u8
 }
-
 /// The `zone_reference` of a `cold_reference`.
 pub fn cold_ref_zone(r: u32) -> u8 {
     ((r >> COLD_ZONE_SHIFT) & COLD_BYTE_MASK) as u8
 }
-
-/// The `position_reference` of a `cold_reference`.
-pub fn cold_ref_position(r: u32) -> u8 {
-    ((r >> COLD_POSITION_SHIFT) & COLD_BYTE_MASK) as u8
+/// The `tile_reference` (`x:4 | y:4`) of a `cold_reference`.
+pub fn cold_ref_tile(r: u32) -> u8 {
+    ((r >> COLD_TILE_SHIFT) & COLD_BYTE_MASK) as u8
 }
-
-/// The `layer_id` of a `cold_reference`.
-pub fn cold_ref_layer(r: u32) -> u8 {
-    ((r >> COLD_LAYER_SHIFT) & COLD_NIBBLE_MASK) as u8
+/// The `layer_reference` (`type_id:4 | layer_id:4`) of a `cold_reference`.
+pub fn cold_ref_layer_reference(r: u32) -> u8 {
+    (r & COLD_BYTE_MASK) as u8
 }
-
-/// The `type_id` of a `cold_reference`.
-pub fn cold_ref_type_id(r: u32) -> u8 {
-    (r & COLD_NIBBLE_MASK) as u8
-}
-
-/// The `region_zone_reference` of a `cold_reference` — its region+zone as the u16
-/// subscription key (drops position/layer/type).
+/// The `region_zone_reference` (region+zone) of a `cold_reference` — its subscription key.
 pub fn cold_ref_region_zone(r: u32) -> u16 {
     pack_region_zone(cold_ref_region(r), cold_ref_zone(r))
+}
+
+// ── cold entry (kind_pos_reference) : u32 = kind_reference:16 | tile:8 | data:8 ──────────────────
+//
+// One per cold object in a row's `Vec<u32>`; carries the object's full per-instance delta. The
+// row header supplies the shared `(type, subtype, region, zone, layer_id)`. The `kind_ref_*` /
+// `entry_*` readers decode an entry; `pack_cold_entry` builds one.
+
+const ENTRY_KIND_SHIFT: u32 = 16;
+const ENTRY_TILE_SHIFT: u32 = 8;
+const ENTRY_KIND_MASK: u32 = 0xFFFF;
+const ENTRY_BYTE_MASK: u32 = 0xFF;
+
+/// Compose a cold entry: `kind_reference:16 | tile:8 | data:8`. `tile` is the object's cell
+/// (`x:4|y:4`) within its zone; `data` its per-instance state ([`pack_data`]).
+pub fn pack_cold_entry(kind_reference: u16, tile: u8, data: u8) -> u32 {
+    ((kind_reference as u32) << ENTRY_KIND_SHIFT) | ((tile as u32) << ENTRY_TILE_SHIFT) | (data as u32)
+}
+/// The `kind_reference` (`kind_id:12 | variant_id:4`) of a cold entry.
+pub fn kind_ref_kind_reference(k: u32) -> u16 {
+    ((k >> ENTRY_KIND_SHIFT) & ENTRY_KIND_MASK) as u16
+}
+/// The `kind_id` (0..4096) of a cold entry.
+pub fn kind_ref_kind_id(k: u32) -> u16 {
+    (kind_ref_kind_reference(k) >> KIND_REF_KIND_SHIFT) & KIND_ID_MASK as u16
+}
+/// The `variant_id` (0..16) of a cold entry.
+pub fn kind_ref_variant_id(k: u32) -> u8 {
+    (kind_ref_kind_reference(k) & VARIANT_ID_MASK as u16) as u8
+}
+/// The `tile` byte (`x:4 | y:4`) of a cold entry.
+pub fn kind_ref_tile(k: u32) -> u8 {
+    ((k >> ENTRY_TILE_SHIFT) & ENTRY_BYTE_MASK) as u8
+}
+/// The `x` tile coordinate (0..16) within the zone.
+pub fn kind_ref_x(k: u32) -> u8 {
+    ref_hi(kind_ref_tile(k))
+}
+/// The `y` tile coordinate (0..16) within the zone.
+pub fn kind_ref_y(k: u32) -> u8 {
+    ref_lo(kind_ref_tile(k))
+}
+/// The raw `data` byte (0..256) of a cold entry — decode with [`data_sub_position`] etc.
+pub fn kind_ref_data(k: u32) -> u8 {
+    (k & ENTRY_BYTE_MASK) as u8
+}
+
+// ── data : u8 = sub_position:3 | rotation:2 | aux:3 ─────────────────────────────────────────────
+//
+// Per-instance state, decoded by the row's `type_id` (read once per type-homogeneous row). This is
+// the default (universal) decode; `type_id` selects it so it can diverge later without a layout
+// change.
+
+const DATA_SUB_SHIFT: u8 = 5;
+const DATA_ROT_SHIFT: u8 = 3;
+const DATA_TRIPLE_MASK: u8 = 0x7; // 3 bits
+const DATA_ROT_MASK: u8 = 0x3; // 2 bits
+
+/// Compose the default `data`: `sub_position:3 | rotation:2 | aux:3`.
+pub fn pack_data(sub_position: u8, rotation: u8, aux: u8) -> u8 {
+    ((sub_position & DATA_TRIPLE_MASK) << DATA_SUB_SHIFT)
+        | ((rotation & DATA_ROT_MASK) << DATA_ROT_SHIFT)
+        | (aux & DATA_TRIPLE_MASK)
+}
+/// The `sub_position` (0..8 offsets internal to the tile).
+pub fn data_sub_position(d: u8) -> u8 {
+    (d >> DATA_SUB_SHIFT) & DATA_TRIPLE_MASK
+}
+/// The `rotation` (0..4 facings; west mirrors east).
+pub fn data_rotation(d: u8) -> u8 {
+    (d >> DATA_ROT_SHIFT) & DATA_ROT_MASK
+}
+/// The type-decoded `aux` field (0..8 — e.g. a small count).
+pub fn data_aux(d: u8) -> u8 {
+    d & DATA_TRIPLE_MASK
 }
 
 #[cfg(test)]
@@ -328,98 +285,55 @@ mod tests {
 
     #[test]
     fn type_id_palette_fits_u4_and_is_contiguous() {
-        let all = [
-            TYPE_NONE,
-            TYPE_BIOME_TILE,
-            TYPE_BIOME_THING,
-            TYPE_PAWN,
-            TYPE_PLAYER,
-            TYPE_EVENT,
-            TYPE_SERVER,
-        ];
+        let all = [TYPE_NONE, TYPE_BIOME_TILE, TYPE_BIOME_THING, TYPE_PAWN, TYPE_PLAYER, TYPE_EVENT, TYPE_SERVER];
         for (i, &t) in all.iter().enumerate() {
             assert_eq!(t as usize, i, "append-only, contiguous from 0");
             assert!(t <= 0xF, "fits u4");
-            assert_eq!(type_ref_type_id(pack_type_reference(t, 0, 0)), t);
         }
     }
 
     #[test]
-    fn type_reference_roundtrips() {
-        for &(t, s, l) in &[(0u8, 0u16, 0u8), (1, 1, 1), (7, 2048, 5), (0xF, 0xFFF, 0xF)] {
-            let r = pack_type_reference(t, s, l);
-            assert_eq!(type_ref_type_id(r), t);
-            assert_eq!(type_ref_subtype_id(r), s);
-            assert_eq!(type_ref_layer(r), l);
-        }
-        // all-ones per field, disjoint; the low 12 reserved bits stay 0.
-        assert_eq!(pack_type_reference(0xF, 0xFFF, 0xF), 0xFFFF_F000);
-    }
-
-    #[test]
-    fn kind_reference_roundtrips() {
-        for &(k, sk, v, x, y, d) in &[
-            (0u16, 0u8, 0u8, 0u8, 0u8, 0u8),
-            (1, 1, 1, 1, 1, 1),
-            (512, 8, 8, 3, 12, 42),
-            (0x3FF, 0xF, 0xF, 0xF, 0xF, 0x3F),
-        ] {
-            let r = pack_kind_reference(k, sk, v, x, y, d);
-            assert_eq!(kind_ref_kind_id(r), k);
-            assert_eq!(kind_ref_subkind_id(r), sk);
-            assert_eq!(kind_ref_variant_id(r), v);
-            assert_eq!(kind_ref_x(r), x);
-            assert_eq!(kind_ref_y(r), y);
-            assert_eq!(kind_ref_data(r), d);
+    fn definition_reference_roundtrips() {
+        for &(t, s, k, v) in &[(0u8, 0u16, 0u16, 0u8), (1, 1, 1, 1), (7, 2048, 3000, 5), (0xF, 0xFFF, 0xFFF, 0xF)] {
+            let r = pack_definition_reference(t, s, k, v);
+            assert_eq!(def_type_id(r), t);
+            assert_eq!(def_subtype_id(r), s);
+            assert_eq!(def_kind_id(r), k);
+            assert_eq!(def_variant_id(r), v);
         }
         // all-ones per field, disjoint → the whole u32 is set.
-        assert_eq!(pack_kind_reference(0x3FF, 0xF, 0xF, 0xF, 0xF, 0x3F), u32::MAX);
+        assert_eq!(pack_definition_reference(0xF, 0xFFF, 0xFFF, 0xF), u32::MAX);
     }
 
     #[test]
-    fn object_reference_composes_the_two_halves() {
-        let t = pack_type_reference(3, 7, 2);
-        let k = pack_kind_reference(100, 1, 4, 5, 6, 9);
-        let o = pack_object_reference(t, k);
-        assert_eq!(object_ref_type_reference(o), t);
-        assert_eq!(object_ref_kind_reference(o), k);
-        // high 32 = type half, low 32 = kind half.
-        assert_eq!(o, ((t as u64) << 32) | k as u64);
+    fn type_and_kind_halves() {
+        let tr = pack_type_reference(7, 2048);
+        assert_eq!(type_ref_type_id(tr), 7);
+        assert_eq!(type_ref_subtype_id(tr), 2048);
+        assert_eq!(pack_type_reference(0xF, 0xFFF), 0xFFFF);
+        let kr = pack_kind_reference(3000, 5);
+        assert_eq!((kr >> 4) & 0xFFF, 3000);
+        assert_eq!(kr & 0xF, 5);
     }
 
     #[test]
-    fn kind_position_matches_x_y() {
-        let r = pack_kind_reference(0, 0, 0, 0xA, 0x5, 0);
-        assert_eq!(kind_ref_position(r), pack_position_reference(0xA, 0x5));
-        assert_eq!(ref_hi(kind_ref_position(r)), 0xA);
-        assert_eq!(ref_lo(kind_ref_position(r)), 0x5);
-    }
-
-    #[test]
-    fn data_default_decode_and_pack() {
-        for rot in 0u8..4 {
-            for count in 0u8..16 {
-                let d = pack_data_default(rot, count);
-                assert!(d < 64, "fits in u6");
-                assert_eq!(data_default(d), (rot, count));
-            }
+    fn cold_entry_roundtrips() {
+        let kr = pack_kind_reference(3000, 5);
+        for &(x, y, d) in &[(0u8, 0u8, 0u8), (3, 12, 42), (15, 15, 0xFF)] {
+            let e = pack_cold_entry(kr, pack_position_reference(x, y), d);
+            assert_eq!(kind_ref_kind_reference(e), kr);
+            assert_eq!(kind_ref_kind_id(e), 3000);
+            assert_eq!(kind_ref_variant_id(e), 5);
+            assert_eq!(kind_ref_x(e), x);
+            assert_eq!(kind_ref_y(e), y);
+            assert_eq!(kind_ref_data(e), d);
         }
-        // rotation and count occupy disjoint bits: rot=3, count=15 → 0b11_1111.
-        assert_eq!(pack_data_default(3, 15), 0x3F);
+        // all-ones per field, disjoint → whole u32 set.
+        assert_eq!(pack_cold_entry(0xFFFF, 0xFF, 0xFF), u32::MAX);
     }
 
     #[test]
-    fn data_stack_uses_all_six_bits() {
-        for count in 0u8..64 {
-            assert_eq!(data_stack(pack_data_stack(count)), count);
-        }
-        assert_eq!(pack_data_stack(63), 0x3F);
-        // over-range counts are masked to u6, not overflowed.
-        assert_eq!(pack_data_stack(64), 0);
-    }
-
-    #[test]
-    fn spatial_nibbles_roundtrip() {
+    fn spatial_nibbles_and_region_zone() {
         for x in 0u8..16 {
             for y in 0u8..16 {
                 let r = pack_position_reference(x, y);
@@ -427,40 +341,41 @@ mod tests {
                 assert_eq!(ref_lo(r), y);
             }
         }
-        assert_eq!(pack_position_reference(0xF, 0xF), 0xFF);
-    }
-
-    #[test]
-    fn region_zone_composes() {
-        let r = pack_region_zone(0xAB, 0xCD);
-        assert_eq!(region_zone_region(r), 0xAB);
-        assert_eq!(region_zone_zone(r), 0xCD);
-        assert_eq!(r, 0xABCD);
+        let rz = pack_region_zone(0xAB, 0xCD);
+        assert_eq!(region_zone_region(rz), 0xAB);
+        assert_eq!(region_zone_zone(rz), 0xCD);
+        assert_eq!(rz, 0xABCD);
     }
 
     #[test]
     fn cold_reference_roundtrips() {
-        for &(reg, z, p, l, t) in &[
-            (0u8, 0u8, 0u8, 0u8, 0u8),
-            (1, 2, 3, 4, 5),
-            (0xAB, 0xCD, 0xEF, 0xF, 0xF),
-        ] {
-            let r = pack_cold_reference(reg, z, p, l, t);
+        for &(reg, z, t, l) in &[(0u8, 0u8, 0u8, 0u8), (1, 2, 3, 4), (0xAB, 0xCD, 0xEF, 0x35)] {
+            let r = pack_cold_reference(reg, z, t, l);
             assert_eq!(cold_ref_region(r), reg);
             assert_eq!(cold_ref_zone(r), z);
-            assert_eq!(cold_ref_position(r), p);
-            assert_eq!(cold_ref_layer(r), l);
-            assert_eq!(cold_ref_type_id(r), t);
+            assert_eq!(cold_ref_tile(r), t);
+            assert_eq!(cold_ref_layer_reference(r), l);
+            assert_eq!(cold_ref_region_zone(r), pack_region_zone(reg, z));
         }
-        // all-ones per field, disjoint → whole u32 set.
-        assert_eq!(pack_cold_reference(0xFF, 0xFF, 0xFF, 0xF, 0xF), u32::MAX);
+        assert_eq!(pack_cold_reference(0xFF, 0xFF, 0xFF, 0xFF), u32::MAX);
+        // layer_reference splits into type_id | layer_id.
+        let lr = pack_layer_reference(3, 5);
+        assert_eq!(layer_ref_type_id(lr), 3);
+        assert_eq!(layer_ref_layer_id(lr), 5);
     }
 
     #[test]
-    fn cold_reference_region_zone_is_the_subscription_key() {
-        let r = pack_cold_reference(0x12, 0x34, 0x56, 7, 8);
-        // the u16 region_zone key drops position/layer/type.
-        assert_eq!(cold_ref_region_zone(r), pack_region_zone(0x12, 0x34));
-        assert_eq!(cold_ref_region_zone(r), 0x1234);
+    fn data_default_decode() {
+        for sp in 0u8..8 {
+            for rot in 0u8..4 {
+                for aux in 0u8..8 {
+                    let d = pack_data(sp, rot, aux);
+                    assert_eq!(data_sub_position(d), sp);
+                    assert_eq!(data_rotation(d), rot);
+                    assert_eq!(data_aux(d), aux);
+                }
+            }
+        }
+        assert_eq!(pack_data(7, 3, 7), 0xFF);
     }
 }

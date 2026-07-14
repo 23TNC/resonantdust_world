@@ -24,9 +24,11 @@ import type { PackedChannel } from "../viewport/material";
 import { thingTexture } from "./WorldBridge";
 import { placeThing, readLayout } from "./thingPlacement";
 
-/** The entity class drawn here. `objType` is the entity-key tag from
- *  `resonantdust_codec::refs`; PAWN (3) is the wolf. */
-const ENTITY_TYPE_PAWN = 3;
+/** The reference variant drawn here. `objType` is the `reference_id` from
+ *  `resonantdust_codec::refs` (0.2.3 reference model); `REF_HOT` (1) is any live/minted object
+ *  — wolves + the player self-object. Game-type (pawn vs player) now lives in the payload `kind`,
+ *  not the identity, so the mover layer draws every hot object and distinguishes by `objKind`. */
+const REF_HOT = 1;
 
 /** Base zIndex for warm pawn sprites — above the ground (tiles are `0`), matching cold things
  *  ({@link WorldBridge}'s `THING_Z_BASE`); the pawn's anchor tile-row is added so overlapping
@@ -117,7 +119,7 @@ export class MoverLayer {
   }
 
   private onStateObject(obj: StateObject): void {
-    if (obj.objType !== ENTITY_TYPE_PAWN) return; // only wolves for now
+    if (obj.objType !== REF_HOT) return; // hot movers only (wolves + player self-object)
     const key = obj.objectId;
     if (obj.removed) {
       this.remove(key);

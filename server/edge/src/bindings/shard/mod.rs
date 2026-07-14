@@ -99,7 +99,7 @@ pub use tick_gc_reducer::tick_gc;
 pub enum Reducer {
         Abort {
         worker_reference: u16,
-        event_reference: u64,
+        event_reference: u32,
 }    ,
     Append {
         actions: Vec::<u64>,
@@ -110,7 +110,7 @@ pub enum Reducer {
 }    ,
     Claim {
         worker_reference: u16,
-        event_reference: u64,
+        event_reference: u32,
 }    ,
     DropTimedOut ,
     MintCold {
@@ -133,16 +133,16 @@ pub enum Reducer {
 }    ,
     Ready {
         worker_reference: u16,
-        event_reference: u64,
+        event_reference: u32,
 }    ,
     Resolve {
         worker_reference: u16,
-        event_reference: u64,
+        event_reference: u32,
         results: Vec::<TargetState>,
 }    ,
     ResolveForeign {
         source_shard: u16,
-        event_reference: u64,
+        event_reference: u32,
         tic: u32,
         results: Vec::<TargetState>,
 }    ,
@@ -169,7 +169,7 @@ pub enum Reducer {
 }    ,
     StandUp {
         worker_reference: u16,
-        event_reference: u64,
+        event_reference: u32,
         target: u64,
 }    ,
     TickGc ,

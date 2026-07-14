@@ -148,17 +148,18 @@ pub enum Event {
     /// [`crate::protocol::ServerMsg::Error`]).
     Status(String),
     /// A resolved entity from the shard's tick pipeline (`state`) changed in a
-    /// subscribed zone. The raw u64 `entity_key` exceeds JS's 2^53 integer range, so it's
-    /// decoded host-side into the entity's type (`obj_type`, an `entity_type`) and its
-    /// 32-bit `object_id` (the minted `entity_id`, JS-safe), which the host keys the circle
-    /// by; shown only when `obj_type == ENTITY_TYPE_DEMO`/`PLAYER`. `removed` on delete.
+    /// subscribed zone. The raw u64 `entity_key` (an `entity_reference`) exceeds JS's 2^53
+    /// integer range, so it's decoded host-side into the reference variant (`obj_type`, the
+    /// `reference_id` — `REF_HOT` for a live object) and its 32-bit `object_id` (the
+    /// `object_reference`/`hot_reference`, JS-safe), which the host keys the mover by; the mover
+    /// layer draws `REF_HOT` objects. `removed` on delete.
     StateObject {
         zone_id: u32,
         obj_type: u8,
         object_id: u64,
         /// The entity's `kind` — its content thing/pawn id, which the host resolves to a
-        /// sprite (a wolf carries the wolf thing id). Distinct from `obj_type` (the
-        /// entity class from the key: demo / player / pawn).
+        /// sprite (a wolf carries the wolf thing id). This is the *game-type*; `obj_type` is the
+        /// reference *variant* (hot/cold), a separate axis in the reference model.
         kind: u16,
         tic: u32,
         location: u8,

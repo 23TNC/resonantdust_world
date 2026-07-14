@@ -14,7 +14,7 @@ use spacetimedb_sdk::__codegen::{
 #[sats(crate = __lib)]
 pub struct OpenRows {
     pub id: u64,
-    pub event_reference: u64,
+    pub event_reference: u32,
     pub state_log_id: u64,
 }
 
@@ -29,7 +29,7 @@ impl __sdk::InModule for OpenRows {
 /// Provides typed access to columns for query building.
 pub struct OpenRowsCols {
     pub id: __sdk::__query_builder::Col<OpenRows, u64>,
-    pub event_reference: __sdk::__query_builder::Col<OpenRows, u64>,
+    pub event_reference: __sdk::__query_builder::Col<OpenRows, u32>,
     pub state_log_id: __sdk::__query_builder::Col<OpenRows, u64>,
 }
 
@@ -49,7 +49,7 @@ impl __sdk::__query_builder::HasCols for OpenRows {
 ///
 /// Provides typed access to indexed columns for query building.
 pub struct OpenRowsIxCols {
-    pub event_reference: __sdk::__query_builder::IxCol<OpenRows, u64>,
+    pub event_reference: __sdk::__query_builder::IxCol<OpenRows, u32>,
     pub id: __sdk::__query_builder::IxCol<OpenRows, u64>,
 }
 

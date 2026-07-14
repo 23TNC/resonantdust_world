@@ -15,7 +15,7 @@ use spacetimedb_sdk::__codegen::{
 pub struct Holder {
     pub id: u64,
     pub state_log_id: u64,
-    pub event_reference: u64,
+    pub event_reference: u32,
     pub kind: u8,
 }
 
@@ -31,7 +31,7 @@ impl __sdk::InModule for Holder {
 pub struct HolderCols {
     pub id: __sdk::__query_builder::Col<Holder, u64>,
     pub state_log_id: __sdk::__query_builder::Col<Holder, u64>,
-    pub event_reference: __sdk::__query_builder::Col<Holder, u64>,
+    pub event_reference: __sdk::__query_builder::Col<Holder, u32>,
     pub kind: __sdk::__query_builder::Col<Holder, u8>,
 }
 
@@ -52,7 +52,7 @@ impl __sdk::__query_builder::HasCols for Holder {
 ///
 /// Provides typed access to indexed columns for query building.
 pub struct HolderIxCols {
-    pub event_reference: __sdk::__query_builder::IxCol<Holder, u64>,
+    pub event_reference: __sdk::__query_builder::IxCol<Holder, u32>,
     pub id: __sdk::__query_builder::IxCol<Holder, u64>,
     pub state_log_id: __sdk::__query_builder::IxCol<Holder, u64>,
 }
