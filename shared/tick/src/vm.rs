@@ -15,8 +15,8 @@
 
 use crate::domain::{self, EntityState, Event};
 use resonantdust_codec::event_word::{
-    pack_word, word_op_code, word_payload, ACTION_MOVE, ACTION_SPAWN, OP_ACTION, OP_ALIAS,
-    OP_LITERAL, OP_OBJECT,
+    pack_word, word_op_code, word_payload, ACTION_AWAIT, ACTION_MOVE, ACTION_SPAWN, OP_ACTION,
+    OP_ALIAS, OP_LITERAL, OP_OBJECT,
 };
 
 /// Map a codec `action_reference` id to this build's [`domain`] action code. The codec ids
@@ -52,6 +52,39 @@ pub fn run(actions: &[u64], base: EntityState) -> EntityState {
         }
     }
     state
+}
+
+// ── await gate (S5 — control flow) ──────────────────────────────────────────────
+//
+// A row may open with an await gate: `[LITERAL(timeout_tics), ALIAS(event_reference),
+// ACTION(AWAIT), <body…>]`. The *worker* evaluates the gate (checks the aliased row's
+// completion, defers or fails), then runs the body via [`run`] — keeping `run` pure.
+
+/// If `actions` opens with an await gate, return `(timeout_tics, await_event_reference, body)`;
+/// else `None` (an unconditional program — run all of it). `event_reference` is carried in the
+/// `ALIAS` word's 32-bit payload (fits until the u32↔u64 reconciliation of S7).
+pub fn await_gate(actions: &[u64]) -> Option<(u32, u64, &[u64])> {
+    if actions.len() >= 3
+        && word_op_code(actions[0]) == OP_LITERAL
+        && word_op_code(actions[1]) == OP_ALIAS
+        && word_op_code(actions[2]) == OP_ACTION
+        && word_payload(actions[2]) == ACTION_AWAIT
+    {
+        Some((word_payload(actions[0]), word_payload(actions[1]) as u64, &actions[3..]))
+    } else {
+        None
+    }
+}
+
+/// Build an await-gated program: block on `await_ref` for `timeout` tics, then run `body`.
+pub fn encode_await(await_ref: u64, timeout: u32, body: Vec<u64>) -> Vec<u64> {
+    let mut v = vec![
+        pack_word(OP_LITERAL, 0, timeout),
+        pack_word(OP_ALIAS, 0, await_ref as u32),
+        pack_word(OP_ACTION, 0, ACTION_AWAIT),
+    ];
+    v.extend(body);
+    v
 }
 
 /// Pop a `u64` pushed as two `LITERAL`s: `lo` (deeper) then `hi` (top).
@@ -122,6 +155,21 @@ mod tests {
         assert_eq!(got, want);
         assert_eq!(got.kind, 42, "spawn sets kind (non-tombstone)");
         assert_eq!(got.location, 0x22);
+    }
+
+    #[test]
+    fn await_gate_wraps_and_unwraps() {
+        let body = encode_move(0, 0x22, 0, 0);
+        // encode_await(await_ref = 5, timeout = 7, body)
+        let gated = encode_await(5, 7, body.clone());
+        // an unconditional program has no gate…
+        assert!(await_gate(&body).is_none());
+        // …a gated one exposes (timeout, await_ref, body) and the body runs the same.
+        let (timeout, await_ref, got_body) = await_gate(&gated).expect("gate");
+        assert_eq!((timeout, await_ref), (7, 5));
+        assert_eq!(got_body, &body[..]);
+        let base = EntityState { kind: 9, ..EntityState::default() };
+        assert_eq!(run(got_body, base), run(&body, base));
     }
 
     #[test]

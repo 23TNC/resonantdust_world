@@ -20,8 +20,8 @@ use resonantdust_tick::{domain::EntityState, vm};
 
 mod bindings;
 use bindings::shard::{
-    claim as _, ready as _, resolve as _, stand_up as _, DbConnection, EventLogTableAccess,
-    StateLog, StateLogTableAccess, TargetState,
+    abort as _, claim as _, ready as _, resolve as _, stand_up as _, DbConnection,
+    EventLogTableAccess, StateLog, StateLogTableAccess, TicMetaTableAccess, TargetState,
 };
 
 // event_log.status (mirror of resonantdust_pipeline::STATUS_*; kept local to avoid pulling the
@@ -30,6 +30,7 @@ const STATUS_ENQUEUE: u8 = 0;
 const STATUS_QUEUEING: u8 = 1;
 const STATUS_IN_QUEUE: u8 = 2;
 const STATUS_RUNNING: u8 = 3;
+const STATUS_COMPLETE: u8 = 4;
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -76,7 +77,11 @@ async fn main() {
                 let db = db.clone();
                 move |_ctx| tracing::info!(%db, "subscription applied")
             })
-            .subscribe(["SELECT * FROM event_log", "SELECT * FROM state_log"]);
+            .subscribe([
+                "SELECT * FROM event_log",
+                "SELECT * FROM state_log",
+                "SELECT * FROM tic_meta",
+            ]);
         shards.push(conn);
     }
 
@@ -136,15 +141,46 @@ fn work_pass(conn: &DbConnection, worker_id: u16) {
     }
 }
 
-/// Run the row's program over each target and commit the whole row atomically.
+/// The current master tic (max over `tic_meta`; 0 before the first bump).
+fn master_tic(conn: &DbConnection) -> u32 {
+    conn.db().tic_meta().iter().map(|m| m.master_tic).max().unwrap_or(0)
+}
+
+/// Run the row's program over each target and commit the whole row atomically. If the row opens
+/// with an `await` gate, resolve/defer/abort on the awaited row first.
 fn execute(conn: &DbConnection, worker_id: u16, ev: &bindings::shard::EventLog) {
+    // Await gate: block until the aliased row completes, or the timeout (in tics) fires → abort.
+    let body: &[u64] = match vm::await_gate(&ev.actions) {
+        Some((timeout, await_ref, gate_body)) => {
+            let complete = conn
+                .db()
+                .event_log()
+                .iter()
+                .find(|e| e.event_reference == await_ref)
+                .map(|e| e.status == STATUS_COMPLETE)
+                .unwrap_or(false);
+            if complete {
+                gate_body
+            } else {
+                if master_tic(conn).saturating_sub(ev.tic_state_change) > timeout {
+                    if let Err(err) = conn.reducers().abort(worker_id, ev.event_reference) {
+                        tracing::warn!(%err, ev = ev.event_reference, "abort failed");
+                    } else {
+                        tracing::info!(ev = ev.event_reference, await_ref, "await timed out → abort");
+                    }
+                }
+                return; // defer (leave RUNNING, revisit) — or aborted above
+            }
+        }
+        None => &ev.actions,
+    };
     let below = ev.event_tic.saturating_sub(1);
     let results: Vec<TargetState> = ev
         .targets
         .iter()
         .map(|&target| {
             let base = resolved_at(conn, target, below).unwrap_or_default();
-            let out = vm::run(&ev.actions, base);
+            let out = vm::run(body, base);
             TargetState {
                 entity_key: target,
                 kind: out.kind,

@@ -22,6 +22,7 @@ pub mod state_type;
 pub mod state_log_type;
 pub mod target_state_type;
 pub mod tic_meta_type;
+pub mod abort_reducer;
 pub mod append_reducer;
 pub mod bump_reducer;
 pub mod claim_reducer;
@@ -62,6 +63,7 @@ pub use shard_meta_table::*;
 pub use state_table::*;
 pub use state_log_table::*;
 pub use tic_meta_table::*;
+pub use abort_reducer::abort;
 pub use append_reducer::append;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
@@ -81,7 +83,11 @@ pub use tick_gc_reducer::tick_gc;
 /// to indicate which reducer caused the event.
 
 pub enum Reducer {
-        Append {
+        Abort {
+        worker_reference: u16,
+        event_reference: u64,
+}    ,
+    Append {
         actions: Vec::<u64>,
         targets: Vec::<u64>,
 }    ,
@@ -131,7 +137,8 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
-                        Reducer::Append { .. } => "append",
+                        Reducer::Abort { .. } => "abort",
+            Reducer::Append { .. } => "append",
             Reducer::Bump { .. } => "bump",
             Reducer::Claim { .. } => "claim",
             Reducer::DropTimedOut => "drop_timed_out",
@@ -147,7 +154,14 @@ impl __sdk::Reducer for Reducer {
     #[allow(clippy::clone_on_copy)]
 fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
         match self {
-                        Reducer::Append{
+                        Reducer::Abort{
+                worker_reference,
+                event_reference,
+}             => __sats::bsatn::to_vec(&abort_reducer::AbortArgs {
+                worker_reference: worker_reference.clone(),
+                event_reference: event_reference.clone(),
+}),
+            Reducer::Append{
                 actions,
                 targets,
 }             => __sats::bsatn::to_vec(&append_reducer::AppendArgs {

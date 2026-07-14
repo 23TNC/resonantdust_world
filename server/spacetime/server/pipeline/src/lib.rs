@@ -376,6 +376,22 @@ macro_rules! decl_tick_pipeline {
             Ok(())
         }
 
+        /// Abort a `running` row (its `await` timed out): terminal-fail it + release holds.
+        /// Fenced. Reuses `queue_failed` (both mean "terminal, produced nothing").
+        #[reducer]
+        pub fn abort(ctx: &ReducerContext, worker_reference: u16, event_reference: u64) -> Result<(), String> {
+            let Some(row) = ctx.db.event_log().event_reference().find(event_reference) else { return Ok(()); };
+            if row.worker_reference != worker_reference || row.status != $crate::STATUS_RUNNING { return Ok(()); }
+            release_holds(ctx, event_reference);
+            let mut row = row;
+            row.status = $crate::STATUS_QUEUE_FAILED;
+            row.failed = true;
+            row.tic_state_change = master_tic(ctx);
+            ctx.db.event_log().event_reference().delete(event_reference);
+            ctx.db.event_log().insert(row);
+            Ok(())
+        }
+
         /// Advance the metronome one tic. Idempotent: a repeat/stale `to_tic` is a no-op; a
         /// gap (`> master+1`) is ignored. The master calls `drop_timed_out` *before* this.
         #[reducer]
