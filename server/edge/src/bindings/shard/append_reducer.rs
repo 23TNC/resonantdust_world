@@ -12,55 +12,51 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct SeedColdRowArgs {
-    pub zone_id: u32,
-    pub type_reference: u32,
-    pub kinds: Vec::<u32>,
+pub(super) struct AppendArgs {
+    pub actions: Vec::<u64>,
+    pub targets: Vec::<u64>,
 }
 
-impl From<SeedColdRowArgs> for super::Reducer {
-    fn from(args: SeedColdRowArgs) -> Self {
-        Self::SeedColdRow {
-            zone_id: args.zone_id,
-            type_reference: args.type_reference,
-            kinds: args.kinds,
+impl From<AppendArgs> for super::Reducer {
+    fn from(args: AppendArgs) -> Self {
+        Self::Append {
+            actions: args.actions,
+            targets: args.targets,
 }
 }
 }
 
-impl __sdk::InModule for SeedColdRowArgs {
+impl __sdk::InModule for AppendArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `seed_cold_row`.
+/// Extension trait for access to the reducer `append`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait seed_cold_row {
-    /// Request that the remote module invoke the reducer `seed_cold_row` to run as soon as possible.
+pub trait append {
+    /// Request that the remote module invoke the reducer `append` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`seed_cold_row:seed_cold_row_then`] to run a callback after the reducer completes.
-    fn seed_cold_row(&self, zone_id: u32,
-type_reference: u32,
-kinds: Vec::<u32>,
+    /// /// Use [`append:append_then`] to run a callback after the reducer completes.
+    fn append(&self, actions: Vec::<u64>,
+targets: Vec::<u64>,
 ) -> __sdk::Result<()> {
-        self.seed_cold_row_then(zone_id, type_reference, kinds,  |_, _| {})
+        self.append_then(actions, targets,  |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `seed_cold_row` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `append` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn seed_cold_row_then(
+    fn append_then(
         &self,
-        zone_id: u32,
-type_reference: u32,
-kinds: Vec::<u32>,
+        actions: Vec::<u64>,
+targets: Vec::<u64>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -68,18 +64,17 @@ kinds: Vec::<u32>,
     ) -> __sdk::Result<()>;
 }
 
-impl seed_cold_row for super::RemoteReducers {
-    fn seed_cold_row_then(
+impl append for super::RemoteReducers {
+    fn append_then(
         &self,
-        zone_id: u32,
-type_reference: u32,
-kinds: Vec::<u32>,
+        actions: Vec::<u64>,
+targets: Vec::<u64>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(SeedColdRowArgs { zone_id, type_reference, kinds,  }, callback)
+        self.imp.invoke_reducer_with_callback(AppendArgs { actions, targets,  }, callback)
     }
 }
 

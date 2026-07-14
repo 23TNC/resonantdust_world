@@ -9,35 +9,22 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
+use super::target_state_type::TargetState;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub(super) struct ResolveArgs {
-    pub server_id: u16,
-    pub entity_key: u64,
-    pub tic: u32,
-    pub kind: u16,
-    pub zone_id: u32,
-    pub location: u8,
-    pub rotation: u8,
-    pub offset: u8,
-    pub data_0: u64,
-    pub data_1: u64,
+    pub worker_reference: u16,
+    pub event_reference: u64,
+    pub results: Vec::<TargetState>,
 }
 
 impl From<ResolveArgs> for super::Reducer {
     fn from(args: ResolveArgs) -> Self {
         Self::Resolve {
-            server_id: args.server_id,
-            entity_key: args.entity_key,
-            tic: args.tic,
-            kind: args.kind,
-            zone_id: args.zone_id,
-            location: args.location,
-            rotation: args.rotation,
-            offset: args.offset,
-            data_0: args.data_0,
-            data_1: args.data_1,
+            worker_reference: args.worker_reference,
+            event_reference: args.event_reference,
+            results: args.results,
 }
 }
 }
@@ -57,18 +44,11 @@ pub trait resolve {
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`resolve:resolve_then`] to run a callback after the reducer completes.
-    fn resolve(&self, server_id: u16,
-entity_key: u64,
-tic: u32,
-kind: u16,
-zone_id: u32,
-location: u8,
-rotation: u8,
-offset: u8,
-data_0: u64,
-data_1: u64,
+    fn resolve(&self, worker_reference: u16,
+event_reference: u64,
+results: Vec::<TargetState>,
 ) -> __sdk::Result<()> {
-        self.resolve_then(server_id, entity_key, tic, kind, zone_id, location, rotation, offset, data_0, data_1,  |_, _| {})
+        self.resolve_then(worker_reference, event_reference, results,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `resolve` to run as soon as possible,
@@ -79,16 +59,9 @@ data_1: u64,
     ///  and its status can be observed with the `callback`.
     fn resolve_then(
         &self,
-        server_id: u16,
-entity_key: u64,
-tic: u32,
-kind: u16,
-zone_id: u32,
-location: u8,
-rotation: u8,
-offset: u8,
-data_0: u64,
-data_1: u64,
+        worker_reference: u16,
+event_reference: u64,
+results: Vec::<TargetState>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -99,22 +72,15 @@ data_1: u64,
 impl resolve for super::RemoteReducers {
     fn resolve_then(
         &self,
-        server_id: u16,
-entity_key: u64,
-tic: u32,
-kind: u16,
-zone_id: u32,
-location: u8,
-rotation: u8,
-offset: u8,
-data_0: u64,
-data_1: u64,
+        worker_reference: u16,
+event_reference: u64,
+results: Vec::<TargetState>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(ResolveArgs { server_id, entity_key, tic, kind, zone_id, location, rotation, offset, data_0, data_1,  }, callback)
+        self.imp.invoke_reducer_with_callback(ResolveArgs { worker_reference, event_reference, results,  }, callback)
     }
 }
 

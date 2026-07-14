@@ -12,59 +12,51 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct PackArgs {
-    pub entity_key: u64,
-    pub zone_id: u32,
-    pub type_reference: u32,
-    pub object_kind_reference: u32,
+pub(super) struct ReadyArgs {
+    pub worker_reference: u16,
+    pub event_reference: u64,
 }
 
-impl From<PackArgs> for super::Reducer {
-    fn from(args: PackArgs) -> Self {
-        Self::Pack {
-            entity_key: args.entity_key,
-            zone_id: args.zone_id,
-            type_reference: args.type_reference,
-            object_kind_reference: args.object_kind_reference,
+impl From<ReadyArgs> for super::Reducer {
+    fn from(args: ReadyArgs) -> Self {
+        Self::Ready {
+            worker_reference: args.worker_reference,
+            event_reference: args.event_reference,
 }
 }
 }
 
-impl __sdk::InModule for PackArgs {
+impl __sdk::InModule for ReadyArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `pack`.
+/// Extension trait for access to the reducer `ready`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait pack {
-    /// Request that the remote module invoke the reducer `pack` to run as soon as possible.
+pub trait ready {
+    /// Request that the remote module invoke the reducer `ready` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`pack:pack_then`] to run a callback after the reducer completes.
-    fn pack(&self, entity_key: u64,
-zone_id: u32,
-type_reference: u32,
-object_kind_reference: u32,
+    /// /// Use [`ready:ready_then`] to run a callback after the reducer completes.
+    fn ready(&self, worker_reference: u16,
+event_reference: u64,
 ) -> __sdk::Result<()> {
-        self.pack_then(entity_key, zone_id, type_reference, object_kind_reference,  |_, _| {})
+        self.ready_then(worker_reference, event_reference,  |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `pack` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `ready` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn pack_then(
+    fn ready_then(
         &self,
-        entity_key: u64,
-zone_id: u32,
-type_reference: u32,
-object_kind_reference: u32,
+        worker_reference: u16,
+event_reference: u64,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -72,19 +64,17 @@ object_kind_reference: u32,
     ) -> __sdk::Result<()>;
 }
 
-impl pack for super::RemoteReducers {
-    fn pack_then(
+impl ready for super::RemoteReducers {
+    fn ready_then(
         &self,
-        entity_key: u64,
-zone_id: u32,
-type_reference: u32,
-object_kind_reference: u32,
+        worker_reference: u16,
+event_reference: u64,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(PackArgs { entity_key, zone_id, type_reference, object_kind_reference,  }, callback)
+        self.imp.invoke_reducer_with_callback(ReadyArgs { worker_reference, event_reference,  }, callback)
     }
 }
 
