@@ -47,10 +47,11 @@ The system works fully without these; they change *representation*, not *behavio
 
 ## C. Infra & integration (different layers)
 
-- **Worker/master run-compose** — [issue 004](../issues/004-running-worker-master.md) option B
-  (they run today only via a throwaway container). Needed for a real dev stack.
-- **pixijs browser client** — wire the front end to the new `state`/`cold` schema so the game
-  renders on the new pipeline. The server pipeline is proven; the client is untouched.
+- ~~Worker/master run-compose~~ — **DONE** ([completion-log](completion-log.md) #6): `rd run`
+  (issue 004 option B, light form) stands up worker+master as a self-driving dev stack.
+- ~~pixijs browser client~~ — **DONE** ([completion-log](completion-log.md) #6): the client was
+  already on the new `state`/`cold` schema; the full stack (npc→gateway→edge→shard→worker→state)
+  renders a moving wolf pack in the browser. Found+fixed the `home_shard` mint_server=0 bug.
 
 ## Verified done (for contrast)
 

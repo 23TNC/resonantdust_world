@@ -120,3 +120,24 @@ new integration surface — the branch rides the proven execute path.
 
 **Note.** `encode_if` is available for the edge/content to build branching programs; wiring a
 specific branching action into the edge is content-authoring, not a pipeline gap.
+
+### 6. Integration — self-driving dev stack + in-browser render ✅
+
+**What.** The rewritten pipeline now runs as a real stack and renders in a browser. Two gaps
+closed: (a) **worker/master standup** — `rd run <up|worker|master|…>` (issue 004 option B, light
+form: one persistent `rd-run-<env>` container, `--network host`, builds+runs the native SDK
+binaries against `resonantdust-<env>-zone-0`); (b) **browser client** — `rd redeploy --run` +
+`rd up gateway` + `rd index seed` bring up edge/gateway/index, `npc` (client/core automated
+player) logs in and drives a wolf pack, and the pixijs client renders it. No client code needed
+porting — the scout confirmed core/npc/edge/pixijs were already on the new `state`/`cold` schema.
+
+**How verified.** (1) Data path (rigorous): `npc → gateway → edge → shard event_log → worker →
+state`, live — 4 wolves spawn **kind 7** and **move** (`state` locations change 119→15, 227→143,
+59→165 over seconds). (2) Browser (visual): `http://127.0.0.1:5173/?user=…` renders the zone —
+`cold` terrain + trees/bushes via WorldBridge, and the **4 wolves as pawns** via MoverLayer,
+scene live-updating.
+
+**Bug found + fixed by this integration** (`d14cf1b`): `home_shard` routed unminted targets
+(`mint_server == SERVER_REF_NONE == 0`) to a nonexistent "foreign shard 0", so every real spawn
+deferred forever. Shards are 1-indexed; `0` = unminted ⇒ resolve locally. A regression from
+full-design #4 that only a real end-to-end run surfaces — the reason integration matters.
