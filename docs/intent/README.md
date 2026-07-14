@@ -12,9 +12,11 @@ This is where a half-formed "we want X to…" lives before it's a per-component 
 
 ## Staged features
 
-- **[pathfinding](pathfinding.md)** — intent exists (server pathfinds → commits per-tile moves
-  with look-ahead); **not implemented**. Touches client / edge / worker / shared-tick / shard.
-  Written against the pre-rewrite model; needs re-confirming against the event-DSL architecture.
+- **[pathfinding](pathfinding/README.md)** — a **DESIGN** (written against the 0.2.3 pipeline): a
+  *deterministic* `path()` in `shared` makes the move-**intent** the position — store the intent,
+  derive `tile_at(tic)` identically on worker + every client (no per-tile rows, no jumps). Splits
+  `ACTION_MOVE` → `place` (absolute, today's behavior) + `move` (pathfind intent). **Not built.**
+  Touches shared/tick + worker + client. To distribute into those component intents once built.
 - **[sync](sync.md)** — client/server sync: authoritative bitemporal event log + deterministic
   projection (synced clock + shared render delay + interpolate-by-`valid_at`). Cross-cutting:
   client/core + pixijs + edge + worker + shard all realize it. Parts are implemented (the event
