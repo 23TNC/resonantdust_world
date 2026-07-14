@@ -269,6 +269,23 @@ macro_rules! decl_tick_pipeline {
 
         // ── reducers ─────────────────────────────────────────────────────────────
 
+        /// The cold-row PK: `(zone_id:32 << 32) | type_reference:32`.
+        fn cold_key(zone_id: u32, type_reference: u32) -> u64 {
+            ((zone_id as u64) << 32) | (type_reference as u64)
+        }
+
+        /// Seed one **cold** row for a zone — insert-only-if-absent, so a worldgen re-run never
+        /// clobbers a cold row later mutated in-world. The edge calls this once per `ColdRow` of a
+        /// fresh zone. (Cold→hot `find-or-mint` on a targeted cold object is S6/S7.)
+        #[reducer]
+        pub fn seed_cold_row(ctx: &ReducerContext, zone_id: u32, type_reference: u32, kinds: Vec<u32>) -> Result<(), String> {
+            let key = cold_key(zone_id, type_reference);
+            if ctx.db.cold().cold_key().find(key).is_none() {
+                ctx.db.cold().insert(Cold { cold_key: key, zone_id, type_reference, kinds, version: 1 });
+            }
+            Ok(())
+        }
+
         /// Set this server's reference — called once at deploy/seed. Idempotent upsert.
         #[reducer]
         pub fn set_shard_id(ctx: &ReducerContext, shard_id: u16) -> Result<(), String> {

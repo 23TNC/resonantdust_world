@@ -29,6 +29,7 @@ pub mod claim_reducer;
 pub mod drop_timed_out_reducer;
 pub mod ready_reducer;
 pub mod resolve_reducer;
+pub mod seed_cold_row_reducer;
 pub mod seed_entity_reducer;
 pub mod set_shard_id_reducer;
 pub mod stand_up_reducer;
@@ -70,6 +71,7 @@ pub use claim_reducer::claim;
 pub use drop_timed_out_reducer::drop_timed_out;
 pub use ready_reducer::ready;
 pub use resolve_reducer::resolve;
+pub use seed_cold_row_reducer::seed_cold_row;
 pub use seed_entity_reducer::seed_entity;
 pub use set_shard_id_reducer::set_shard_id;
 pub use stand_up_reducer::stand_up;
@@ -108,6 +110,11 @@ pub enum Reducer {
         event_reference: u64,
         results: Vec::<TargetState>,
 }    ,
+    SeedColdRow {
+        zone_id: u32,
+        type_reference: u32,
+        kinds: Vec::<u32>,
+}    ,
     SeedEntity {
         entity_key: u64,
         kind: u16,
@@ -144,6 +151,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::DropTimedOut => "drop_timed_out",
             Reducer::Ready { .. } => "ready",
             Reducer::Resolve { .. } => "resolve",
+            Reducer::SeedColdRow { .. } => "seed_cold_row",
             Reducer::SeedEntity { .. } => "seed_entity",
             Reducer::SetShardId { .. } => "set_shard_id",
             Reducer::StandUp { .. } => "stand_up",
@@ -197,6 +205,15 @@ Reducer::Ready{
                 worker_reference: worker_reference.clone(),
                 event_reference: event_reference.clone(),
                 results: results.clone(),
+}),
+            Reducer::SeedColdRow{
+                zone_id,
+                type_reference,
+                kinds,
+}             => __sats::bsatn::to_vec(&seed_cold_row_reducer::SeedColdRowArgs {
+                zone_id: zone_id.clone(),
+                type_reference: type_reference.clone(),
+                kinds: kinds.clone(),
 }),
             Reducer::SeedEntity{
                 entity_key,

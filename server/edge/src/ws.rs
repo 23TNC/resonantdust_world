@@ -30,6 +30,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::bindings;
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
 use crate::bindings::shard::append as _; // reducer trait → `reducers.append` (DSL word stream + targets)
+use crate::bindings::shard::seed_cold_row as _; // reducer trait → `reducers.seed_cold_row` (terrain)
 use crate::connections::{await_ready, connect_players, connect_shard, Pool};
 use crate::index::{resolve_zone_or_default, ShardEndpoint};
 use crate::protocol::{ClientMsg, ColdObjectsRow, RowData, RowOp, ServerMsg, StateRow};
@@ -645,11 +646,14 @@ fn seed_cold_if_empty(
     if conn.db().cold().iter().any(|c| c.zone_id == zone_id) {
         return;
     }
-    // Cold seeding uses a `seed_cold_row` reducer retired in the rewrite; the cold path (the
-    // `cold` table's writer + client decode) returns in S6/S7. Skipped for now so the hot
-    // spawn/move path can be exercised on the new pipeline.
-    let _ = (wg, zone_id);
-    tracing::info!(zone_id, "cold seeding deferred to S6 (rewrite in progress)");
+    let rows = wg.zone_cold_objects(zone_id);
+    let n = rows.len();
+    for row in rows {
+        if let Err(err) = conn.reducers.seed_cold_row(zone_id, row.type_reference, row.kinds) {
+            tracing::warn!(zone_id, %err, "seed_cold_row request failed");
+        }
+    }
+    tracing::info!(zone_id, rows = n, "seeded fresh zone cold objects");
 }
 
 fn relay(out: &mpsc::UnboundedSender<String>, op: RowOp, row: RowData) {
