@@ -12,18 +12,14 @@ specifies them.
 
 - **Verbs — only `MOVE`/`SPAWN`** (`shared/tick/vm.rs::domain_action`). `DAMAGE` and other
   **actor-reading / cross-entity** actions are not implemented (they map to a no-op).
-- **Execution is not tic-gated.** The worker resolves an event as soon as it's claimable, not
-  when `master_tic` reaches `event_tic`. The `+3` gap is *recorded* (event stamped at master+3)
-  but doesn't *gate* execution. The design's staging (seal-then-execute) is thus only partially
-  realized — fine for the single-writer hot path, but the gating matters once ordering/awaits
-  across many producers are stressed.
+- ~~Execution is not tic-gated~~ — **DONE** ([completion-log](completion-log.md) #1): the worker
+  resolves only a sealed tic (`master ≥ event_tic`).
 - **Single-shard only — no cross-shard convergent writes.** `resolve` commits all a row's
   `TargetState`s in one reducer call on one shard. A row whose targets span shards is not
   handled (no idempotent per-`(source_shard, event_reference)` writes, no "complete when all
   shards applied"). ([../spacetime-tables/lifecycle.md] §convergent write.)
-- **No deterministic composition.** If two rows target the same `(entity, tic)`, `resolve` is
-  last-writer-wins, not `event_reference`-ordered composition. ([../spacetime-tables/lifecycle.md]
-  §deterministic composition.)
+- ~~No deterministic composition~~ — **DONE** ([completion-log](completion-log.md) #1): a
+  target's value folds all its events in `event_reference` order.
 - **No operand-read defer (`read_rule`).** The hot path (move/spawn) reads no other entity, so
   the "defer until the source is settled through `≤ T−1`" machinery is not implemented/exercised.
   Needed for actor-reading verbs (DAMAGE) and multi-row data dependencies.

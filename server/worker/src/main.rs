@@ -32,6 +32,7 @@ const STATUS_QUEUEING: u8 = 1;
 const STATUS_IN_QUEUE: u8 = 2;
 const STATUS_RUNNING: u8 = 3;
 const STATUS_COMPLETE: u8 = 4;
+const STATUS_QUEUE_FAILED: u8 = 5;
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -150,50 +151,84 @@ fn master_tic(conn: &DbConnection) -> u32 {
     conn.db().tic_meta().iter().map(|m| m.master_tic).max().unwrap_or(0)
 }
 
-/// Run the row's program over each target and commit the whole row atomically. If the row opens
-/// with an `await` gate, resolve/defer/abort on the awaited row first.
+/// Is an event's `event_reference` `complete`?
+fn event_complete(conn: &DbConnection, event_reference: u64) -> bool {
+    conn.db()
+        .event_log()
+        .iter()
+        .find(|e| e.event_reference == event_reference)
+        .map(|e| e.status == STATUS_COMPLETE)
+        .unwrap_or(false)
+}
+
+/// Is an event ready to contribute to a tic's composition — no `await` gate, or its await is
+/// complete? (A gated event whose await isn't satisfied must not fold in yet.)
+fn applicable(conn: &DbConnection, ev: &bindings::shard::EventLog) -> bool {
+    match vm::await_gate(&ev.actions) {
+        Some((_, await_ref, _)) => event_complete(conn, await_ref),
+        None => true,
+    }
+}
+
+/// Run the row and commit it atomically. Two design mechanisms live here:
+/// - **tic-gating**: resolve only a *sealed* tic (`master ≥ event_tic`) — by then no new event
+///   for that tic can arrive (they'd target `master+3`), so the composition is complete.
+/// - **deterministic composition**: a target's value at the tic is `base@(tic−1)` folded over
+///   **all** applicable events targeting it, in `event_reference` order — never arrival order —
+///   so any row triggering the resolve computes the same result (idempotent, order-free).
+///
+/// The row's own `await` gate defers/aborts it before it contributes.
 fn execute(conn: &DbConnection, worker_id: u16, ev: &bindings::shard::EventLog) {
-    // Await gate: block until the aliased row completes, or the timeout (in tics) fires → abort.
-    let body: &[u64] = match vm::await_gate(&ev.actions) {
-        Some((timeout, await_ref, gate_body)) => {
-            let complete = conn
-                .db()
-                .event_log()
-                .iter()
-                .find(|e| e.event_reference == await_ref)
-                .map(|e| e.status == STATUS_COMPLETE)
-                .unwrap_or(false);
-            if complete {
-                gate_body
-            } else {
-                if master_tic(conn).saturating_sub(ev.tic_state_change) > timeout {
-                    if let Err(err) = conn.reducers().abort(worker_id, ev.event_reference) {
-                        tracing::warn!(%err, ev = ev.event_reference, "abort failed");
-                    } else {
-                        tracing::info!(ev = ev.event_reference, await_ref, "await timed out → abort");
-                    }
+    // tic-gate: don't resolve until the tic is sealed (all its events are present).
+    if master_tic(conn) < ev.event_tic {
+        return; // defer — revisit once the master reaches this tic
+    }
+    // This row's await gate: defer until the aliased row completes, or timeout → abort.
+    if let Some((timeout, await_ref, _)) = vm::await_gate(&ev.actions) {
+        if !event_complete(conn, await_ref) {
+            if master_tic(conn).saturating_sub(ev.tic_state_change) > timeout {
+                if let Err(err) = conn.reducers().abort(worker_id, ev.event_reference) {
+                    tracing::warn!(%err, ev = ev.event_reference, "abort failed");
+                } else {
+                    tracing::info!(ev = ev.event_reference, await_ref, "await timed out → abort");
                 }
-                return; // defer (leave RUNNING, revisit) — or aborted above
             }
+            return; // defer or aborted
         }
-        None => &ev.actions,
-    };
+    }
     let below = ev.event_tic.saturating_sub(1);
     let results: Vec<TargetState> = ev
         .targets
         .iter()
         .map(|&target| {
             let base = resolved_at(conn, target, below).unwrap_or_default();
-            let out = vm::run(body, base);
+            // Fold every applicable event targeting (target, this tic), by event_reference.
+            let mut evs: Vec<_> = conn
+                .db()
+                .event_log()
+                .iter()
+                .filter(|e| {
+                    e.event_tic == ev.event_tic
+                        && e.targets.contains(&target)
+                        && e.status != STATUS_QUEUE_FAILED
+                        && applicable(conn, e)
+                })
+                .collect();
+            evs.sort_by_key(|e| e.event_reference);
+            let mut state = base;
+            for e in &evs {
+                let b = vm::await_gate(&e.actions).map(|(_, _, body)| body).unwrap_or(&e.actions);
+                state = vm::run(b, state);
+            }
             TargetState {
                 entity_key: target,
-                kind: out.kind,
-                zone_id: out.zone_id,
-                location: out.location,
-                rotation: out.rotation,
-                offset: out.offset,
-                data_0: out.data[0],
-                data_1: out.data[1],
+                kind: state.kind,
+                zone_id: state.zone_id,
+                location: state.location,
+                rotation: state.rotation,
+                offset: state.offset,
+                data_0: state.data[0],
+                data_1: state.data[1],
             }
         })
         .collect();
