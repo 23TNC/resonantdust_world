@@ -1,13 +1,13 @@
 # SpacetimeDB / DSL implementation plan
 
-> **Status tracking has moved.** Per [`docs/CONVENTIONS.md`](../CONVENTIONS.md), the live
+> **Status tracking has moved.** Per [`docs/CONVENTIONS.md`](../../../../../../../CONVENTIONS.md), the live
 > execution state (completed / remaining / todo / issues / forks / blockers) now lives in
-> [`docs/work/spacetime-rewrite/`](../work/spacetime-rewrite/). This folder keeps the staged
+> [`docs/work/spacetime-rewrite/`](../../../../../../../work/spacetime-rewrite). This folder keeps the staged
 > *plan/design detail* (`s0`–`s7`); it will migrate to `docs/components/shard/{plan,design}`.
 
-The staged plan to move the code onto the [`spacetime-tables`](../spacetime-tables/README.md)
+The staged plan to move the code onto the [`spacetime-tables`](../../design/README.md)
 design. That folder is *what the shard should be*; this folder is *how we get there*, one
-landable stage at a time. [`divergences.md`](../spacetime-tables/divergences.md) is the gap
+landable stage at a time. [`divergences.md`](../../current/divergences.md) is the gap
 list these stages close.
 
 **How to use this folder:** each stage is one file with a Goal / Changes / Verify /
@@ -23,8 +23,8 @@ tic+1 work), `claim`/`resolve` + the `state_log` `server_id` **fence**, and the 
 
 What changes:
 - *What a resolve computes* — the `apply_event`/`resolve_events::<Spatial>` `ACTION_*` switch in
-  [`shared/tick/domain.rs`](../../shared/tick/src/domain.rs) becomes a generic interpreter over
-  `actions: Vec<u64>` ([event-dsl.md](../spacetime-tables/event-dsl.md)).
+  [`shared/tick/domain.rs`](../../../../../../../../shared/tick/src/domain.rs) becomes a generic interpreter over
+  `actions: Vec<u64>` ([event-dsl.md](../../design/event-dsl.md)).
 - *How ordering/dependencies work* — the old **`Phase`** (inbound/data/outbound) and the
   implicit actor-read machinery are **replaced by explicit `await` on a row's alias + tic
   queueing**. One action *vector* per row (may hold several actions hitting several **targets**);
@@ -34,9 +34,9 @@ What changes:
 
 ✅ **Decided** (was open): keep `read_rule` (`resolved_through`) as the `await`/defer substrate,
 with cross-entity reads at **≤ T−1**; **drop `Phase` and `priority`** (they served the same-tic
-actor-read model the DSL replaces). See [lifecycle.md](../spacetime-tables/lifecycle.md).
+actor-read model the DSL replaces). See [lifecycle.md](../../intent/lifecycle.md).
 
-**The safety model** ([lifecycle.md](../spacetime-tables/lifecycle.md)): work is right-shifted
+**The safety model** ([lifecycle.md](../../intent/lifecycle.md)): work is right-shifted
 so a resolve only *adds* to an immutable settled tic; every phase is idempotent + re-driven;
 writes only land at the frontier and reads only touch the sealed past, so **"write behind a
 read" is structurally impossible** — the master just **drops** rows that miss their window (no
@@ -47,8 +47,8 @@ cross-shard writes safe (convergent, not atomic).
 > ✅ **Full-stack hot path proven live** (S0–S5 + terrain). Real `master` (2 Hz, drop→bump) +
 > real `worker` (two-phase loop + DSL interpreter) drove an appended **spawn** then **move**
 > end-to-end: entity materialized, then moved with kind carried forward and facing computed —
-> autonomously, not hand-driven ([issue 004](../issues/004-running-worker-master.md)).
-> **Everything still open is in [remaining.md](remaining.md)** — including the simplifications
+> autonomously, not hand-driven ([issue 004](../../../../../../../issues/004-running-worker-master.md)).
+> **Everything still open is in [remaining.md](../../../../../../../work/spacetime-rewrite/remaining.md)** — including the simplifications
 > inside the ✅ stages (single-shard only, no deterministic composition, `SKIP`/`?:` branch,
 > DAMAGE verb, tic-gating), the functional-neutral reconciliations (#4/#5/#10), and the
 > client/compose integration.
@@ -58,11 +58,11 @@ cross-shard writes safe (convergent, not atomic).
 | # | stage | closes | status |
 |---|-------|--------|--------|
 | S0 | [Foundation — decisions + codec](s0-foundation.md) | — | ✅ |
-| S1 | [The interpreter (pure), proving `MOVE`+`SPAWN`](s1-interpreter.md) | — | ✅ hot verbs (MOVE/SPAWN); DAMAGE/actor-reads TODO ([remaining](remaining.md)) |
+| S1 | [The interpreter (pure), proving `MOVE`+`SPAWN`](s1-interpreter.md) | — | ✅ hot verbs (MOVE/SPAWN); DAMAGE/actor-reads TODO ([remaining](../../../../../../../work/spacetime-rewrite/remaining.md)) |
 | S2 | [Event schema + lifecycle + holder table](s2-event-schema.md) | div #1,6,7 | ✅ |
-| S3 | [Worker: two-phase resolve (enqueue+execute)](s3-worker.md) | div #1,6,9 | ✅ lifecycle live; **single-shard, no composition/defer/tic-gate yet** ([remaining](remaining.md)) |
+| S3 | [Worker: two-phase resolve (enqueue+execute)](s3-worker.md) | div #1,6,9 | ✅ lifecycle live; **single-shard, no composition/defer/tic-gate yet** ([remaining](../../../../../../../work/spacetime-rewrite/remaining.md)) |
 | S4 | [Producers → word streams (gap +3)](s4-producers.md) | div #1,9 | ✅ **full-stack live-verified** (real master+worker drive spawn+move) |
-| S5 | [Control flow (`AWAIT`/defer/`FAIL`)](s5-control-flow.md) | — | ✅ await-gate + abort live; **`SKIP`/`?:` branch TODO** ([remaining](remaining.md)) |
+| S5 | [Control flow (`AWAIT`/defer/`FAIL`)](s5-control-flow.md) | — | ✅ await-gate + abort live; **`SKIP`/`?:` branch TODO** ([remaining](../../../../../../../work/spacetime-rewrite/remaining.md)) |
 | S6 | [`PACK` settle (cold→hot mint is in S3 enqueue)](s6-hot-cold.md) | div #2 | ✅ **live-verified**: seed_cold_row + find-or-mint (cold→hot) + pack_settle (hot→cold). Trigger (sweep) is the follow-up |
 | S7 | [Cold/reference/shard-split tail](s7-tail.md) | div #3–5,8,10 | 🔨 cold modules retired (#3 ✅); region_zone (#4), hot_reference re-key (#5), server_reference (#10) remain — functional-neutral reconciliation |
 

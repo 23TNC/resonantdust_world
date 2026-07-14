@@ -18,7 +18,7 @@ today's `MOVE`, before wiring it anywhere.
   deterministic implementation, so prediction matches execution.
 - Implement the minimum op set to reproduce **both live verbs — `MOVE` and `SPAWN`** (both are
   on the wolves path the S3 verify exercises): `OBJECT` push + each verb writing the same fields
-  [`apply_event(ACTION_MOVE)` / `ACTION_SPAWN`](../../shared/tick/src/domain.rs) do.
+  [`apply_event(ACTION_MOVE)` / `ACTION_SPAWN`](../../../../../../../../shared/tick/src/domain.rs) do.
 - `reads` is the operand-read interface (given an `OBJECT` operand → its `EntityState`); in S1
   it's a test double, in [S3](s3-worker.md) it's backed by the worker's cross-shard reads.
 

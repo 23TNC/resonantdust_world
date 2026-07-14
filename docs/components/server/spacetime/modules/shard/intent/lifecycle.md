@@ -2,7 +2,7 @@
 
 This is the load-bearing correctness doc: how a row goes from "requested" to "live data,"
 crash-recoverable at every step, without ever modifying a settled tic. It builds on the event
-log shape ([events.md](events.md)) and the DSL ([event-dsl.md](event-dsl.md)).
+log shape ([events.md](events.md)) and the DSL ([event-dsl.md](../design/event-dsl.md)).
 
 The one invariant everything protects: **a settled `(entity, tic)` is immutable.** We only ever
 *add* resolved state at a tic; we never rewrite one. That's what makes crashed work safe to

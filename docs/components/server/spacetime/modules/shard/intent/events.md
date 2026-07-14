@@ -1,7 +1,7 @@
 # The event log and the tic pipeline
 
 The event log is where intent lands. Its intended shape and *where its processing runs*
-are both different from the code today ([divergences.md](divergences.md)); this doc is the
+are both different from the code today ([divergences.md](../current/divergences.md)); this doc is the
 target.
 
 ## An event is an object ✅
@@ -29,7 +29,7 @@ The `actions` field is a **flat postfix (RPN) word stream** — each `u64` is
 `op_code:4 | reserved:12 | server_reference:16 | payload:32` (tag on top; low 48 bits a clean
 `server + u32 ref`), where `op_code` is `LITERAL`/`OBJECT`/`ACTION`/`ALIAS` (constant / operand
 / verb / prior-action back-ref). Full worked example (`tile, object, MOVE`) and encoding in
-**[event-dsl.md](event-dsl.md)**.
+**[event-dsl.md](../design/event-dsl.md)**.
 
 - ✅ **The worker is the VM.** During `resolve`, the worker **interprets the event's
   `actions` program** against the operands it names, computes the new state, and commits. All
@@ -47,14 +47,14 @@ The `actions` field is a **flat postfix (RPN) word stream** — each `u64` is
   interprets — and new actions are authored in the DSL without changing the engine. **One
   action vector per row** — the vector may hold *several* actions hitting *several* targets
   (e.g. an AoE) that resolve together. A step that must run *after* another (a cross-tic
-  dependency) is a *separate* row chained by `await` ([event-dsl.md](event-dsl.md) §Multi-step
+  dependency) is a *separate* row chained by `await` ([event-dsl.md](../design/event-dsl.md) §Multi-step
   plans) — not one program resumed across tics.
 
 ### Decisions & remaining
 
 - ✅ **No `shared/dsl` reuse.** `shared/dsl` is a text-parsed VM for tile *visuals* (`Cell`
   tree of render prims) — different syntax, value model, and purpose. The event VM is
-  **purpose-built** ([event-dsl.md](event-dsl.md)).
+  **purpose-built** ([event-dsl.md](../design/event-dsl.md)).
 - ✅ **Routing is not opaque.** Each operand word carries its own `server_reference`, and the
   **requesting server designates the target** (which entity gets a pending row) when it appends
   the row — so the shard/worker never has to parse-to-route.

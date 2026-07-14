@@ -2,7 +2,7 @@
 
 **Goal:** let a row block on another row, so multiple rows form a plan. Not one program run
 across tics — **one action string per row**, rows chained by `await` on aliases
-([event-dsl.md](../spacetime-tables/event-dsl.md) §Multi-step plans).
+([event-dsl.md](../../design/event-dsl.md) §Multi-step plans).
 
 **Status:** ⬜ not started. **Depends on:** [S4](s4-producers.md), decision **D1**
 ([s0](s0-foundation.md)).

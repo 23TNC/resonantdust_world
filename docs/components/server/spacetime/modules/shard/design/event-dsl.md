@@ -5,8 +5,8 @@
 > **action** (a verb → *pop its args and execute*). The worker is a **generic stack machine**
 > that chews through the words; there is no per-action Rust and no separate operand table.
 
-This is the concrete form of "the event carries a program" ([events.md](events.md)). The
-execution model is the same postfix/stack discipline as [`shared/dsl`](../../shared/dsl/src)
+This is the concrete form of "the event carries a program" ([events.md](../intent/events.md)). The
+execution model is the same postfix/stack discipline as [`shared/dsl`](../../../../../../../shared/dsl/src)
 (`push`/`pop`, a value stack) — so the event DSL is that VM's **binary (`Vec<u64>`)
 sibling**, fed words instead of parsed `.rd` text.
 
@@ -102,7 +102,7 @@ A **plan** is not one big program. It's **several event rows, one action string 
 carrying an **alias**, chained by **`await` on a prior row's alias**. "Open the crate" is *two*
 rows — the unpack is **not** a step, because targeting the crate by its `cold_reference` mints it
 during enqueue (the middle `MINT` row and the execute-time `GET` both vanish — see
-[hot-cold.md](hot-cold.md)):
+[hot-cold.md](../intent/hot-cold.md)):
 
 ```
 c AS   b a MOVE ;                                 ← row c: walk pawn a to tile b
@@ -123,7 +123,7 @@ The ordering model (all defined by the user, none of it a "phase"):
   worker never spins/blocks waiting (that would stall every other row). A row is responsible for
   its own deferral, via `await` + `TIMEOUT`.
 - **Rows are queued at tics** (the `event_tic = master_tic + 3` gap; the recoverable enqueue
-  phase widened it from +2 — [lifecycle.md](lifecycle.md)). A worker resolving a
+  phase widened it from +2 — [lifecycle.md](../intent/lifecycle.md)). A worker resolving a
   row can **trigger new rows** (also queued at tics) — e.g. keyed off an alias.
 - **Execution is in tic order. Order is *not* guaranteed within a tic.** If two rows must
   order, the later one `await`s the earlier (a cross-tic dependency). Don't rely on intra-tic
@@ -132,10 +132,10 @@ The ordering model (all defined by the user, none of it a "phase"):
 - **A row is atomic.** The worker computes *all* the row's target effects in scratch and commits
   them in **one `resolve`** — so `a b MOVE ; c d MOVE` in one row moves `b` and `d` together, not
   one before the other. (Same-shard is one ST transaction; cross-shard is **convergent** —
-  idempotent re-drive, not atomic — [lifecycle.md](lifecycle.md).)
+  idempotent re-drive, not atomic — [lifecycle.md](../intent/lifecycle.md).)
 - **`await`'s required `TIMEOUT` guarantees termination.** Every `await` has a tic timeout, so a
   deferred row always reaches a terminal state (runs or fails) — which is what releases its
-  holds so GC can reclaim (see [lifecycle.md](lifecycle.md) §GC). A dependency that vanishes just
+  holds so GC can reclaim (see [lifecycle.md](../intent/lifecycle.md) §GC). A dependency that vanishes just
   times the dependent out; no cascade.
 
 The verbs used above:
@@ -148,7 +148,7 @@ The verbs used above:
   hot target.
 
 > **No `MINT`/`GET` verbs.** Promoting a cold *target* is absorbed into enqueue's `find-or-mint`
-> by location ([hot-cold.md](hot-cold.md)), so there's no `unpack`/`mint_hot` action and no
+> by location ([hot-cold.md](../intent/hot-cold.md)), so there's no `unpack`/`mint_hot` action and no
 > execute-time `GET` rebind. `PACK` (settle hot→cold) and `SPAWN` (mint from nothing) remain
 > distinct; explicit mint of a *non-target* object is the only case that would need its own verb.
 
@@ -188,14 +188,14 @@ it's all in the `actions` stream, each word carrying its own `server_reference`.
 - ✅ **Verb effects live in `shared`.** A verb's actual rule (movement, damage, …) is a function
   in a **shared crate** the **worker** (execute), the **edge** (validate/compose), and the
   **client** (predict) all call. One implementation → client prediction matches server execution
-  by construction, and it stays deterministic (a hard requirement — [risks.md](risks.md) R2).
+  by construction, and it stays deterministic (a hard requirement — [risks.md](../intent/risks.md) R2).
   Adding a verb adds a shared rule, not engine/scheduling code.
 - ✅ **Cross-shard is built in.** Every operand word carries its `server_reference`, so the
   interpreter reads each reference from the right shard with no separate routing list.
 - ✅ **Plans are first-class.** `AWAIT`/`TIMEOUT`/`? :`/`FAIL` let one event express a
   multi-step, control-flowed plan with failure handling.
 - ✅ **Cold targets auto-promote** — enqueue's `find-or-mint` makes a `cold_reference` target
-  hot before execute; no `MINT`/`GET` verb, no rebind step ([hot-cold.md](hot-cold.md)).
+  hot before execute; no `MINT`/`GET` verb, no rebind step ([hot-cold.md](../intent/hot-cold.md)).
 - ✅ **Uniform word shape** — every `u64` is `op_code:4 | reserved:12 | server_reference:16 |
   payload:32`; the low 48 bits are a clean `server + u32 ref` pair (plain-mask extraction, no
   tag-stripping).

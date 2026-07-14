@@ -70,7 +70,7 @@ pipeline bugs; they're the rest of the game server.
   (validation/composition), and the **client** (prediction) all run the *same* code. One
   implementation → client prediction matches server execution by construction, and the "generic
   worker" stays generic in *scheduling* while the effects are shared, deterministic Rust. See
-  [event-dsl.md](event-dsl.md).
+  [event-dsl.md](../design/event-dsl.md).
 - **A3 · Master is a single point of failure** — sole tic authority + drop barrier; if it dies,
   the world freezes. **Disposition:** deliberate — a **single unified non-distributed authority**
   is what *provides* the guarantees (one tic, deterministic drop, total ordering); without it we

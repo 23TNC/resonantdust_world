@@ -1,9 +1,9 @@
 # Completed — spacetime rewrite
 
-Executes: the `shard` component (design in `docs/spacetime-tables/`; plan detail in
-`docs/spacetime-implementation/s0–s7`). Done + verified work, chronological (oldest first).
+Executes: the `shard` component (docs migrated to
+`docs/components/server/spacetime/modules/shard/` — design/intent/current/plan). Done + verified work, chronological (oldest first).
 Each row: date · item · verification · commit. Rich detail for the full-design mechanisms
-follows the log. (Was `docs/spacetime-implementation/completion-log.md`.)
+follows the log. (Was `docs/spacetime-implementation/completion-log.md`, now retired.)
 
 ## Log
 
@@ -38,7 +38,7 @@ follows the log. (Was `docs/spacetime-implementation/completion-log.md`.)
 
 ---
 
-## Detail — the full-design mechanisms (matching `docs/spacetime-tables/` in full)
+## Detail — the full-design mechanisms (matching the shard `design/`+`intent/` in full)
 
 ### #1 Deterministic composition + tic-gated execution
 The worker's `execute` resolves a row only when `master_tic ≥ event_tic` (the tic is *sealed*, no

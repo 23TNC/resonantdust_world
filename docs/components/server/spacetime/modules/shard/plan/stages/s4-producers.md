@@ -7,13 +7,13 @@ After this stage the DSL fully owns the existing gameplay path. Completes **dive
 
 ## Changes
 
-- [`server/edge/src/ws.rs`](../../server/edge/src/ws.rs): the spawn and move paths build a
+- [`server/edge/src/ws.rs`](../../../../../../../../server/edge/src/ws.rs): the spawn and move paths build a
   `Vec<u64>` word stream (`tile, object, MOVE`; the spawn equivalent) + a `targets` list, and
   `append` them as a batch at **`event_tic = master + 3`** (the widened gap) instead of calling
   `append_event` with `resonantdust_tick::ACTION_MOVE` / `ACTION_SPAWN` scalars at +2
   (current call sites ~`ws.rs:477`, `ws.rs:539`).
 - A small **encoder** (surface intent → `Vec<u64>`) lives edge-side. The client/npc
-  `Command::{Spawn, Move}` surface ([`client/core/src/protocol.rs`](../../client/core/src/protocol.rs))
+  `Command::{Spawn, Move}` surface ([`client/core/src/protocol.rs`](../../../../../../../../client/core/src/protocol.rs))
   is **unchanged** — only the edge's translation to the shard changes.
 - Remove the now-dead scalar `ACTION_*` constants from `shared/tick` once no producer references
   them — **including `action_phase` and the `Phase` bands** (no phase in this design; ordering

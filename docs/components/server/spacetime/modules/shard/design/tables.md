@@ -3,10 +3,10 @@
 A shard module is one `decl_tick_pipeline!` invocation. It carries a **hot side** (the
 ticking working set + the client-visible latest), a **cold side** (the settled store), and
 a few **meta** rows (metronome, shard identity, mint counter). This doc is the intended
-shape of each; the tick mechanics live in [events.md](events.md), the resolution *lifecycle*
-in [lifecycle.md](lifecycle.md), the hot/cold bridge in [hot-cold.md](hot-cold.md).
+shape of each; the tick mechanics live in [events.md](../intent/events.md), the resolution *lifecycle*
+in [lifecycle.md](../intent/lifecycle.md), the hot/cold bridge in [hot-cold.md](../intent/hot-cold.md).
 
-> **Event shards vs data shards** ([lifecycle.md](lifecycle.md)). The `event_log` (rows +
+> **Event shards vs data shards** ([lifecycle.md](../intent/lifecycle.md)). The `event_log` (rows +
 > their lifecycle `status`) lives on **event shards** that workers *service*; the game data
 > (`state_log` / `state` / `cold` + the **holder table**) lives on **data shards**
 > that workers *write to*. The tables below are the data-shard tables plus the `event_log`;
@@ -34,12 +34,12 @@ state
   <payload…>               copied verbatim from the resolved state_log row
 ```
 
-- ✏️ **Key.** Per [hot-cold.md](hot-cold.md) the hot identity should be a per-server
+- ✏️ **Key.** Per [hot-cold.md](../intent/hot-cold.md) the hot identity should be a per-server
   `hot_reference : u32` (paired with `server_reference` for global uniqueness). Today the
   column is a `u64 entity_key`. **Reconciliation open** (see divergences).
 - ✅ **`state` must be queryable by location** (realm·region·zone·position·layer·type_id) so
   enqueue's `find-or-mint` can resolve a `cold_reference` to the entity at that location
-  ([hot-cold.md](hot-cold.md)).
+  ([hot-cold.md](../intent/hot-cold.md)).
 
 ### holder table — refcount for dumb GC ✅
 
@@ -47,7 +47,7 @@ Which `event_reference`s currently hold a **pending read or write** on a `state_
 Workers add a holder when they stand up a target (write) or register a source they'll read
 (read), and remove it on the row's terminal transition. GC reclaims a `state_log` row only when
 it has **no holders** (+ not-latest + old) — so GC makes no correctness decision
-([lifecycle.md](lifecycle.md) §GC). There is **no read watermark**; causality is the pipeline's
+([lifecycle.md](../intent/lifecycle.md) §GC). There is **no read watermark**; causality is the pipeline's
 strict staging + the master's drop, not a per-entity timestamp.
 
 ```
@@ -105,7 +105,7 @@ cold
   Decided).
 - ✅ **Cold uniqueness rule:** one object per `(type, layer, tile)`, subtype-agnostic,
   **reducer-enforced** (reject-if-present), not a PK.
-- ⚠️ **Keyed by `region_zone`, realm implied by the shard** — see [hot-cold.md](hot-cold.md)
+- ⚠️ **Keyed by `region_zone`, realm implied by the shard** — see [hot-cold.md](../intent/hot-cold.md)
   §shard classes. Today the code keys cold by a flat `zone_id` and stores it as the routing
   column; the geographic `region_zone` key is the target. (Divergences.)
 
@@ -133,7 +133,7 @@ cold_removed
 - ✅ **Compacted by a `PACK` action, not GC.** A worker-resolved `PACK` applies the tombstoned
   kinds to the `cold` rows and clears `removed` (and settles idle hot objects back in). So the
   `cold` `Vec` mutates (and re-sends) at most once per compaction, not once per unpack — and
-  compaction is normal recoverable work, not a GC correctness job ([hot-cold.md](hot-cold.md)).
+  compaction is normal recoverable work, not a GC correctness job ([hot-cold.md](../intent/hot-cold.md)).
 - ✏️ **Additions (`pack`) could mirror this** with a `cold_added` delta if we also want to avoid
   re-sending on settle. Not built yet — removals only, per the immediate need.
 
@@ -143,8 +143,8 @@ cold_removed
 
 ### `event_log` — rows + their lifecycle ✅
 
-The plan/actions and the state machine that resolves them (full shape in [events.md](events.md),
-lifecycle in [lifecycle.md](lifecycle.md)). Beyond `event_reference` / `event_tic` /
+The plan/actions and the state machine that resolves them (full shape in [events.md](../intent/events.md),
+lifecycle in [lifecycle.md](../intent/lifecycle.md)). Beyond `event_reference` / `event_tic` /
 `actions : Vec<u64>` / `targets`, it carries the lifecycle columns:
 
 ```
@@ -157,7 +157,7 @@ event_log (lifecycle columns)
 - **No side table for the state machine** — it's these columns on the row.
 - **An open-rows table** (keyed by `event_reference`) records which `state_log` rows an
   enqueue holds open, so a re-drive can finish or back out idempotently
-  ([lifecycle.md](lifecycle.md) Phase 1).
+  ([lifecycle.md](../intent/lifecycle.md) Phase 1).
 
 ---
 
@@ -194,7 +194,7 @@ deployment decides whether an instance carries the event side, the data side, or
 - The **spine** (`event_log`, `state_log`, `state`, meta) is identical for every shard.
 - The **payload** differs per shard class but the engine never looks inside it.
 - cold→hot mint is **absorbed into enqueue** (`find-or-mint` on a cold target); `pack`
-  (settle) is an execute op — not side-door reducers ([hot-cold.md](hot-cold.md),
-  [lifecycle.md](lifecycle.md)).
+  (settle) is an execute op — not side-door reducers ([hot-cold.md](../intent/hot-cold.md),
+  [lifecycle.md](../intent/lifecycle.md)).
 - `event_log` carries a `Vec<u64>` **program** per event, not fixed action columns; the
-  worker VM executes it. Full shape in [events.md](events.md).
+  worker VM executes it. Full shape in [events.md](../intent/events.md).

@@ -3,7 +3,7 @@
 The whole point of the split is that **the worker resolves work uniformly**, whether the
 object it's touching is settled (cold) or live (hot). Cold↔hot is not a special path in
 the worker; it's just more actions in the log. This is the idea the code missed by writing
-`pack`/`unpack` as standalone reducers — see [divergences.md](divergences.md).
+`pack`/`unpack` as standalone reducers — see [divergences.md](../current/divergences.md).
 
 ## The two states ✅
 
@@ -17,7 +17,7 @@ the worker; it's just more actions in the log. This is the idea the code missed 
 
 Both references are `u32` on purpose: an event slot holds "a reference" and the **action**
 says whether that slot is cold or hot (no discriminator bit). See
-[../references/hot-cold-references.md](../references/hot-cold-references.md) for the bit
+[../references/hot-cold-references.md](../../../../../../references/hot-cold-references.md) for the bit
 layouts.
 
 ## Shard modules — one per shape, each hot **and** cold ✅
@@ -68,7 +68,7 @@ minting it hot ([lifecycle.md](lifecycle.md) Phase 1). The action just names the
 
 The mint records a tiny **removal tombstone** in `cold_removed` rather than mutating the big
 `cold` `Vec` (which would re-transmit the whole zone to every subscriber). Clients render `cold`
-minus `cold_removed`; GC compacts. See [tables.md](tables.md) §`cold_removed`.
+minus `cold_removed`; GC compacts. See [tables.md](../design/tables.md) §`cold_removed`.
 
 ## `PACK` — settle hot → cold, as a worker action (not GC) ✅
 

@@ -6,7 +6,7 @@ promoting a cold *target* is absorbed into enqueue's `find-or-mint` stand-up, so
 reducers. Closes **divergence #2**.
 
 **Status:** ⬜ not started. **Depends on:** [S3](s3-worker.md) (which already mints on enqueue),
-[S5](s5-control-flow.md). Design: [hot-cold.md](../spacetime-tables/hot-cold.md).
+[S5](s5-control-flow.md). Design: [hot-cold.md](../../intent/hot-cold.md).
 
 ## What S3 already gave us (no work here)
 
@@ -18,7 +18,7 @@ reducers. Closes **divergence #2**.
 ## Changes here
 
 - **`PACK`** (settle hot→cold + compact) — an enqueued, worker-resolved action, **not a GC job**
-  ([hot-cold.md](../spacetime-tables/hot-cold.md)):
+  ([hot-cold.md](../../intent/hot-cold.md)):
   - for each hot object at rest here with **zero holders**, append its `object_kind_reference`
     into the cold row and delete its hot `state`/`state_log`; skip any with holders (stays hot);
   - apply the zone's `cold_removed` tombstones and clear the delta; stamp the cold row with the

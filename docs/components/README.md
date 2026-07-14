@@ -66,7 +66,7 @@ dead. It's the antidote to "I forget… which is why we need this."
 ## The two DSLs (prefix them so they don't blur)
 - **event-dsl** — the `Vec<u64>` action-program (event *definitions*). Not a deploy component; a
   cross-cutting concept defined by **shared/codec** (`event_word` frame) + **shared/tick** (the
-  VM). Spec: `docs/spacetime-tables/event-dsl.md`.
+  VM). Spec: `components/server/spacetime/modules/shard/design/event-dsl.md`.
 - **content-dsl** — the `.rd` files (data/visual defs). Crate: **shared/dsl**. Authoring specs:
   `dev/dsl` (below).
 
@@ -87,4 +87,4 @@ Held as components because scripts are the foundation of how we develop.
 - **shared/core** is a placeholder — keep, fill, or absorb?
 - The **dev/ reorg** (`bin/` → `dev/scripts/`) is proposed, not done.
 - Per lazy-create, per-component `{design,intent,current,plan}` folders come as we work each —
-  first up is **shard** (during the `spacetime-tables` → `components/…` migration).
+  the **shard** component is migrated (`components/server/spacetime/modules/shard/`); the rest follow.

@@ -3,7 +3,7 @@
 **Goal:** turn the worker into the two-phase, recoverable lifecycle driver: **enqueue** (stand
 up targets, acquire holds) then **execute** (run the interpreter, commit, release holds); add the
 **master `drop_timed_out` → `bump`** barrier and **refcounted GC**. Closes **divergences #1, #6,
-#7, #9**. Design: [lifecycle.md](../spacetime-tables/lifecycle.md).
+#7, #9**. Design: [lifecycle.md](../../intent/lifecycle.md).
 
 **Status:** ⬜ not started. **Depends on:** [S1](s1-interpreter.md), [S2](s2-event-schema.md).
 
