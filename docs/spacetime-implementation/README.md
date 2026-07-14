@@ -1,5 +1,10 @@
 # SpacetimeDB / DSL implementation plan
 
+> **Status tracking has moved.** Per [`docs/CONVENTIONS.md`](../CONVENTIONS.md), the live
+> execution state (completed / remaining / todo / issues / forks / blockers) now lives in
+> [`docs/work/spacetime-rewrite/`](../work/spacetime-rewrite/). This folder keeps the staged
+> *plan/design detail* (`s0`–`s7`); it will migrate to `docs/components/shard/{plan,design}`.
+
 The staged plan to move the code onto the [`spacetime-tables`](../spacetime-tables/README.md)
 design. That folder is *what the shard should be*; this folder is *how we get there*, one
 landable stage at a time. [`divergences.md`](../spacetime-tables/divergences.md) is the gap
