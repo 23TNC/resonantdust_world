@@ -47,7 +47,7 @@ cross-shard writes safe (convergent, not atomic).
 > ✅ **Full-stack hot path proven live** (S0–S5 + terrain). Real `master` (2 Hz, drop→bump) +
 > real `worker` (two-phase loop + DSL interpreter) drove an appended **spawn** then **move**
 > end-to-end: entity materialized, then moved with kind carried forward and facing computed —
-> autonomously, not hand-driven ([issue 004](../../../../../../../issues/004-running-worker-master.md)).
+> autonomously, not hand-driven ([issue 004](../../../../../../../work/spacetime-rewrite/issues.md)).
 > **Everything still open is in [remaining.md](../../../../../../../work/spacetime-rewrite/remaining.md)** — including the simplifications
 > inside the ✅ stages (single-shard only, no deterministic composition, `SKIP`/`?:` branch,
 > DAMAGE verb, tic-gating), the functional-neutral reconciliations (#4/#5/#10), and the

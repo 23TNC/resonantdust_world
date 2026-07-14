@@ -28,3 +28,6 @@ chronological.
 - **2026-07-14** · **pathfinding reconciled** — found a pre-existing `docs/pathfinding/README.md`
   (real 0.2.3 design) I'd missed; dropped my stub, moved the real doc to `docs/intent/pathfinding/`,
   fixed the index description. All 277 doc links verified resolving.
+- **2026-07-14** · **issues folder folded in** — `docs/issues/00X` detail (001–005 + the 006
+  fork) folded into `work/spacetime-rewrite/issues.md` + `forks.md` (full problem→options→choice→
+  why, links recomputed); `docs/issues/` removed. Matches the single-file convention.

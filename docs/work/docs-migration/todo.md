@@ -12,6 +12,5 @@ that code is next touched, not now — we're only documenting.)
   it turns out to describe `client/core` rather than the browser client.
 
 - **2026-07-14** · **minor remainders** — `docs/repo-layout.md` (current orientation; overlaps the
-  component map — keep, merge into map, or note); `docs/issues/00X` detail files (already indexed
-  by `work/spacetime-rewrite/issues.md`+`forks.md` — optionally relocate into that work folder);
+  component map — keep, merge into map, or note);
   `docs/prompts/*` (template assets — move with the bin→dev reorg).
