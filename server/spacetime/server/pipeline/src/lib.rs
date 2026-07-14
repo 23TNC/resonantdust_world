@@ -302,7 +302,10 @@ macro_rules! decl_tick_pipeline {
         pub fn claim(ctx: &ReducerContext, worker_reference: u16, event_reference: u64) -> Result<(), String> {
             let Some(row) = ctx.db.event_log().event_reference().find(event_reference) else { return Ok(()); };
             let now = master_tic(ctx);
+            // Free to claim if unowned, already ours (re-claim across phases:
+            // enqueue→queueing then in_queue→running), or the lease expired (eviction).
             let free = row.worker_reference == $crate::WORKER_NONE
+                || row.worker_reference == worker_reference
                 || now.saturating_sub(row.tic_state_change) > $crate::CLAIM_LEASE_TICS;
             let next = match row.status {
                 s if s == $crate::STATUS_ENQUEUE => $crate::STATUS_QUEUEING,

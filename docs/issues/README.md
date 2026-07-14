@@ -14,3 +14,4 @@ rollback point. An issue names the phase it arose in.
 |---|-------|-------|--------|
 | [001](001-multi-target-resolve.md) | committing N targets in one `resolve` | S2 | `Vec<TargetState>` arg |
 | [002](002-worker-binding-regen.md) | regenerating worker/non-edge bindings | S3 | copy edge bindings (extend generator later) |
+| [003](003-claim-same-worker-reclaim.md) | `claim` refused same-worker re-claim (found live) | S3 | allow owner + unowned + expired |
