@@ -11,15 +11,17 @@ Open→resolved; a resolved blocker gets a resolution + date, then archives to t
 
 **Resolved 2026-07-14 — the reference model is settled**
 ([`components/shared/codec/design/reference-model.md`](../../components/shared/codec/design/reference-model.md)):
-the **definition / position / data** split (all `u32`), `object_reference` → `definition_reference`,
-`subkind` dropped, explicit `region_zone` (closes **#4**), `data:8` as the cold/hot pack criterion.
-So the taxonomy/naming + `region_zone` are no longer blocked — implementing them is now a codec
-re-cut ([codec plan](../../components/shared/codec/plan/README.md)), not a decision.
+the **definition / position / data** split + the **identity** side (`object_reference` union +
+`entity_reference = reserved:10 | reference_id:6 | server_reference:16 | object_reference:32`), all
+`u32`. This closes the taxonomy/naming, `region_zone` (**#4**), **and** the `hot_reference` re-key
+(**#5** — a hot object is `object_reference = hot_reference:32`, server-qualified). Implementing
+them is now a codec re-cut ([codec plan](../../components/shared/codec/plan/README.md)), not a
+decision.
 
-**Still blocked (needs your call).** Two identity/routing decisions remain: the `hot_reference`
-u32 re-key (**#5**, decision D3 — is it worth the PK churn, given #3 showed actor-reads don't need
-it?) and geographic vs functional `server_reference` (**#10**). Until these land, the shard's
-`hot_reference`/`server_reference` re-keys can't target a settled shape.
+**Still blocked (needs your call).** One decision remains: the **geographic vs functional
+`server_reference` internal layout** (**#10** — `realm:8 | server_id:8` vs `server_type:6 |
+server_id:10`). `server_reference` is a `u16` field in `entity_reference` + the DSL word regardless,
+so this is the last piece of its *interior* that the identity model leaves open.
 
 **Description.** These all re-key or re-encode data on the object-model taxonomy — `kind` / `type`
 / `variant`, the packed `*_reference` u64 layouts, `hot_reference:u32` (decision D3), geographic

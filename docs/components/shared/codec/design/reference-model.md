@@ -31,7 +31,7 @@ Fully shareable — every instance of `pawn/human/male.fat` has the **same** `de
 Capacity: **16 types × 4096 subtypes × 4096 kinds × 16 variants**. No `subkind` (dropped — a
 combined kind like `male.fat` is one `kind_id`). No reserved headroom — the u32 is exact.
 
-## `position_reference : u32` — *where it is* (the standalone cold address / DSL target)
+## `position_reference : u32` — *where it is* (the positional layout)
 
 ```
  31            24 23           16 15           8 7    4 3      0
@@ -49,10 +49,18 @@ combined kind like `male.fat` is one `kind_id`). No reserved headroom — the u3
 | `tile_reference` | 8–15 | 8 | tile within zone (`x:4 \| y:4`) |
 | `layer_reference` | 0–7 | 8 | `type_id:4 \| layer_id:4` — the tile-slot, interpreted per type |
 
-This is the form a DSL `OBJECT` operand hands over to **target** a cold object: it self-identifies
-(carries `type_id` + `layer_id`), because there's no row alongside it. Uniqueness rule: **one
-object per `(type, layer, tile)`** within a zone. (`realm` is not here — it's part of
-`server_reference` / routing.)
+This is the positional layout: it self-identifies an object-slot (`type_id` + `layer_id`),
+because there's no row alongside it. Uniqueness rule: **one object per `(type, layer, tile)`**
+within a zone. (`realm` is not here — it's part of `server_reference` / routing.)
+
+**`position_reference` and `cold_reference` are two reference *types* that share this layout —
+not one thing.** A `position_reference` is *a location*: **any** object has one (a hot pawn's
+tile is a `position_reference`), and events that need a tile carry it. A `cold_reference` is *a
+cold object addressed by its position* — the same 32 bits, but it denotes "the settled object
+there, `unpack` it hot." A hot object never has a `cold_reference`; a cold object's position **is**
+one. You can `unpack` a `cold_reference` (or a `position_reference` that lands on a cold object —
+which makes it one); you can never `unpack` a `hot_reference`. They're distinguished by
+`reference_id` (below) or by context — never by their bits.
 
 ## Cold row — factors the shared bits out, `data:8` per object
 
@@ -107,6 +115,49 @@ transmits a bit more per object. The pack action gates on this:
 
 We never widen the per-tile cost to serve the stateful minority — they're hot by definition.
 
+## Identity — the handle side (`object_reference` / `entity_reference`)
+
+`definition_reference` says *what*; these say *which*. Everything in the game is an object, so one
+u32 addresses any of them.
+
+**`object_reference : u32`** — the universal handle, a tagged union whose variants share the width
+but not the meaning; disambiguated by **context** (the container/action slot) or, when carried
+standalone, by the `reference_id` in an `entity_reference`:
+
+| variant | is | notes |
+|---|---|---|
+| `hot_reference` | a live/minted object | per-server id; can't be `unpack`ed (already hot) |
+| `cold_reference` | a settled object at a position | `unpack`able → hot; positional layout |
+| `position_reference` | a location | any object has one; a bare tile for an event |
+| `event_reference` | an event row | what `ALIAS`/`AWAIT` carry |
+| server (as `reserved:16 \| server_reference:16`) | a server, as an object | |
+
+`cold_reference` and `position_reference` share the positional layout above but are **distinct
+types** — see that section.
+
+**`entity_reference : u64`** — an `object_reference` made globally unique and (optionally)
+self-describing:
+```
+ 63          54 53      48 47              32 31                    0
+┌──────────────┬──────────┬──────────────────┬──────────────────────┐
+│ reserved:10  │ ref_id:6 │ server_reference │  object_reference:32 │
+└──────────────┴──────────┴──────────────────┴──────────────────────┘
+              (which variant)  └──── low 48 = the DSL word's qualified reference ────┘
+```
+| field | bits | width | meaning |
+|---|---|---|---|
+| `reserved` | 54–63 | 10 | headroom |
+| `reference_id` | 48–53 | 6 | which reference type the `object_reference` is (64 types; append-only, 0 = none) |
+| `server_reference` | 32–47 | 16 | the server the object lives on / is qualified by |
+| `object_reference` | 0–31 | 32 | the handle |
+
+The **low 48 bits (`server_reference:16 | object_reference:32`) are identical to the DSL word's
+qualified reference** ([`shard/design/event-dsl.md`](../../../server/spacetime/modules/shard/design/event-dsl.md) —
+`op_code:4 | reserved:12 | server_reference:16 | payload:32`), plain-mask extractable from either.
+So a DSL operand **is** an `entity_reference` minus the top 16 (op-tag vs `reserved|ref_id`). Bare
+`object_reference` relies on context; carry the full `entity_reference` when you must be
+unambiguous (`reference_id` names the variant).
+
 ## What changed from v1
 - `u64 object_reference` (type+kind+position+data) → **`u32 definition_reference`** (type+kind
   only). Frees the name `object_reference` for an object *handle*.
@@ -117,3 +168,8 @@ We never widen the per-tile cost to serve the stateful minority — they're hot 
 - `layer` moved from the type half to `position_reference` (it's a tile-slot, not a type property).
 - `region_zone` (macro_position) is now explicit (`region_ref:8 | zone_ref:8`) — closes
   divergence #4.
+- **`entity_reference` re-laid-out** to `reserved:10 | reference_id:6 | server_reference:16 |
+  object_reference:32` (was `entity_type:8 | entity_id:32 | mint_server:16`): the type left for
+  `definition_reference`, `entity_id` generalized to the `object_reference` union, and the low 48
+  now matches the DSL word. This settles the `hot_reference` re-key (divergence #5) — a hot object
+  is `object_reference = hot_reference:32`, server-qualified.

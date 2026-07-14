@@ -41,9 +41,20 @@ pack action skips objects too state-dense to compress (pawns, with inventories/n
 dirt always does). This keeps us from ever widening the per-tile cost to serve the stateful
 minority — they're hot by definition, and there's no reason to pay for their state on every tile.
 
+## Why `object_reference` is one universal handle (+ `reference_id`)
+
+Everything is an object, so one `u32 object_reference` addresses any of them — `hot` / `cold` /
+`position` / `event` / `server`. Most of the time the **container disambiguates** the variant (the
+`state` table ⇒ hot, `cold` table ⇒ cold, `event_log` ⇒ event; a DSL slot ⇒ per the action), so no
+tag is spent on the wire. `cold_reference` and `position_reference` are kept **separate** (same
+bits, different type) precisely so "target the tile" vs "target the cold object at the tile" is
+never ambiguous — one is `unpack`able, the other isn't. When you genuinely need disambiguation
+standalone, you carry the full `entity_reference`, whose `reference_id:6` names the variant — so we
+pay for the tag only when we need it, never per operand.
+
 ## Ties into
 
-Settling this closes the **taxonomy / naming** piece of blocker
-[B-1](../../../../work/spacetime-rewrite/blockers.md) and defines the `region_zone` keying
-(divergence #4). Still open in B-1: the `hot_reference` u32 re-key (#5) and geographic
-`server_reference` (#10) on the identity/routing side.
+Settling this closes the **taxonomy/naming** piece and both identity/keying divergences: `region_zone`
+(**#4**, via `macro_position_reference`) and the `hot_reference` re-key (**#5**, via the
+`entity_reference` layout). Blocker [B-1](../../../../work/spacetime-rewrite/blockers.md) is now down
+to the one remaining call: the geographic-vs-functional `server_reference` internal layout (**#10**).
