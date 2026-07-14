@@ -14,7 +14,8 @@ pack criterion). **The code (`object.rs`, `refs.rs`) still implements v1** (a `u
 object_reference` with `subkind` + `x/y/data` in the kind half) — the re-cut is a
 [`plan/`](../plan/) item.
 
-**Still open (blocker [B-1](../../../../work/spacetime-rewrite/blockers.md)):** just the geographic-
-vs-functional `server_reference` internal layout (#10). The taxonomy/naming, `region_zone` (#4), and
-the `hot_reference` re-key (#5 — via the settled `entity_reference` = `reserved:10 | reference_id:6
-| server_reference:16 | object_reference:32`) are all closed by the reference model above.
+**No open decisions — the reference model is fully settled** (blocker
+[B-1](../../../../work/spacetime-rewrite/blockers.md) closed 2026-07-14): taxonomy/naming,
+`region_zone` (#4), `hot_reference` re-key (#5), and `server_reference = realm:8 | server_id:8`
+(#10) are all decided. What remains is the **codec re-cut** — turning v1 `object.rs`/`refs.rs` into
+the model — which is now pure implementation against a fixed target ([`plan/`](../plan/)).
