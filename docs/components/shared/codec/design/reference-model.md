@@ -138,40 +138,36 @@ types** — see that section.
 **`server_reference : u16` = `realm_id:8 | server_id:8`** (geographic). Realm is a **functional
 unit** — all servers in a realm work together, and a `server_reference` names the realm without
 having to state it separately. An `object_reference` carries **no** realm, so objects are **not
-unique between realms** (each realm mints independently) — realm-uniqueness comes from the
-`server_reference` (in a word/entity_reference) and, standalone, from `realm_reference` below.
+unique between realms** (each realm mints independently) — but because `server_reference` *does*
+carry realm, `(server_reference, object_reference)` is already realm-unique.
 
-**`entity_reference : u64`** — an `object_reference` made globally unique, realm-anchored, and
-(optionally) self-describing:
+**`entity_reference : u64`** — an `object_reference` made globally unique and (optionally)
+self-describing:
 ```
- 63 62 61          54 53      48 47              32 31                    0
-┌─────┬─────────────┬──────────┬──────────────────┬──────────────────────┐
-│res:2│realm_ref:8  │ ref_id:6 │ server_reference │  object_reference:32 │
-└─────┴─────────────┴──────────┴──────────────────┴──────────────────────┘
-        (home realm)  (variant)  (realm|server_id)  └── low 48 = DSL word's qualified ref ──┘
+ 63          54 53      48 47              32 31                    0
+┌──────────────┬──────────┬──────────────────┬──────────────────────┐
+│ reserved:10  │ ref_id:6 │ server_reference │  object_reference:32 │
+└──────────────┴──────────┴──────────────────┴──────────────────────┘
+              (which variant) (realm|server_id) └── low 48 = DSL word's qualified ref ──┘
 ```
 | field | bits | width | meaning |
 |---|---|---|---|
-| `reserved` | 62–63 | 2 | headroom |
-| `realm_reference` | 54–61 | 8 | the object's **home** realm — where its `object_reference` is native/unique (see note) |
+| `reserved` | 54–63 | 10 | headroom |
 | `reference_id` | 48–53 | 6 | which reference type the `object_reference` is (64 types; append-only, 0 = none) |
-| `server_reference` | 32–47 | 16 | `realm_id:8 \| server_id:8` — the realm/server currently **hosting** it |
+| `server_reference` | 32–47 | 16 | `realm_id:8 \| server_id:8` — the realm + server qualifying the handle |
 | `object_reference` | 0–31 | 32 | the handle |
 
 The **low 48 bits (`server_reference:16 | object_reference:32`) are identical to the DSL word's
 qualified reference** ([`shard/design/event-dsl.md`](../../../server/spacetime/modules/shard/design/event-dsl.md) —
 `op_code:4 | reserved:12 | server_reference:16 | payload:32`), plain-mask extractable from either.
-So a DSL operand **is** an `entity_reference` minus the top 16 (op-tag vs `reserved|realm|ref_id`).
-Bare `object_reference` relies on context; carry the full `entity_reference` when you must be
+So a DSL operand **is** an `entity_reference` minus the top 16 (op-tag vs `reserved|ref_id`). Bare
+`object_reference` relies on context; carry the full `entity_reference` when you must be
 unambiguous (`reference_id` names the variant).
 
-> **`realm_reference` vs `server_reference.realm`.** Equal in normal operation; they diverge only
-> when you hold a reference to an object in a **different realm than the one you're on** — which is
-> exactly the cross-realm / **realm-transfer** case. `realm_reference` = the object's *home* realm
-> (where its `object_reference` is native); `server_reference.realm` = the realm currently
-> *hosting* it. Because an `object_reference` alone isn't realm-unique, `realm_reference` is what
-> lets an `entity_reference` name an object across realms — the tool a transfer (mint-on-dest,
-> destroy-on-source) needs. No realm-transfer is built yet; this is headroom for it.
+> **Cross-realm identity comes free from `server_reference`.** Since `server_reference` includes
+> realm, an `entity_reference` is realm-unique with no dedicated realm field — no bits burned. A
+> future realm-transfer (mint-on-dest, destroy-on-source) references objects across realms through
+> `server_reference.realm`; nothing extra is needed. (If one ever is, the `reserved:10` is there.)
 
 ## What changed from v1
 - `u64 object_reference` (type+kind+position+data) → **`u32 definition_reference`** (type+kind
@@ -183,11 +179,11 @@ unambiguous (`reference_id` names the variant).
 - `layer` moved from the type half to `position_reference` (it's a tile-slot, not a type property).
 - `region_zone` (macro_position) is now explicit (`region_ref:8 | zone_ref:8`) — closes
   divergence #4.
-- **`entity_reference` re-laid-out** to `reserved:2 | realm_reference:8 | reference_id:6 |
-  server_reference:16 | object_reference:32` (was `entity_type:8 | entity_id:32 | mint_server:16`):
-  the type left for `definition_reference`, `entity_id` generalized to the `object_reference`
-  union, the low 48 now matches the DSL word, and `realm_reference` was added as headroom for
-  cross-realm identity. Settles the `hot_reference` re-key (divergence #5).
+- **`entity_reference` re-laid-out** to `reserved:10 | reference_id:6 | server_reference:16 |
+  object_reference:32` (was `entity_type:8 | entity_id:32 | mint_server:16`): the type left for
+  `definition_reference`, `entity_id` generalized to the `object_reference` union, and the low 48
+  now matches the DSL word. Realm-uniqueness rides on `server_reference` (which carries realm), so
+  no dedicated realm field. Settles the `hot_reference` re-key (divergence #5).
 - **`server_reference : u16` fixed as `realm_id:8 | server_id:8`** (geographic) — closes divergence
   #10. Realm is a functional unit; objects don't carry realm, so realm-uniqueness rides on the
   `server_reference` / `realm_reference`.

@@ -26,11 +26,10 @@ reserved for the user. Over 2026-07-14 the user co-designed and settled the whol
 - **taxonomy / naming** — `definition / position / data` split; `object_reference` → the object
   *handle*; the u64 blueprint → `definition_reference:u32` (type+kind, `subkind` dropped).
 - **#4 `region_zone`** — explicit `macro_position_reference = region:8 | zone:8`.
-- **#5 `hot_reference` re-key** — `entity_reference = reserved:2 | realm_reference:8 |
-  reference_id:6 | server_reference:16 | object_reference:32`; a hot object is `object_reference =
-  hot_reference:32`.
-- **#10 `server_reference`** — `realm_id:8 | server_id:8` (geographic); realm a functional unit,
-  `realm_reference` in `entity_reference` as headroom for cross-realm transfer.
+- **#5 `hot_reference` re-key** — `entity_reference = reserved:10 | reference_id:6 | server_reference:16 | object_reference:32`;
+  a hot object is `object_reference = hot_reference:32`.
+- **#10 `server_reference`** — `realm_id:8 | server_id:8` (geographic); realm a functional unit — realm-uniqueness rides on
+  `server_reference`, so no dedicated realm field in `entity_reference`.
 - **`event_reference` width** — `u32` (composes into `action_reference`).
 
 **Now unblocked:** implementing all of the above is a **codec re-cut** against a settled target
