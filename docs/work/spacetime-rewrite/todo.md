@@ -16,10 +16,19 @@ they can't start until B-1 is resolved.
   `region_zone:u16`.
 - **2026-07-14** · **#10 geographic `server_reference`** — `server_type:6|server_id:10`
   (functional) vs `realm:u8|server_id:u8` (geographic).
-- **2026-07-14** · **`event_reference` width** — the `ALIAS` word carries a `u32`;
-  `event_reference` is a `u64` PK. Fine while refs are small; reconcile with the #5 re-key.
 - **2026-07-14** · **`PACK` trigger** — `pack_settle` exists; *who* calls it (periodic sweep /
   edge) is unbuilt, and the caller needs a hot→cold **type map** (object-model territory).
+
+## Not blocked
+
+- **2026-07-14** · **`event_reference` → `u32`** — **DESIGN-DECIDED** (no longer blocked). The
+  `event_log` PK is currently `u64`; the design is **`u32 event_reference`**.
+  - *Design (shape):* `event_reference` is a `u32`.
+  - *Intent (why):* it matches `u32 hot_reference` and `u32 cold_reference`, so it composes into
+    a `u64 action_reference`. We do **not** use a `u64` event_reference — that would force
+    actions that carry an event_reference to be handled differently and would change how we pass
+    the vector of actions in an event log. (Belongs in `components/shard/{design,intent}` when we
+    migrate — recorded here so the intent isn't lost.)
 
 ## Not blocked (small, deferrable)
 
