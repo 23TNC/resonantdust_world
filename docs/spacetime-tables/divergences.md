@@ -1,0 +1,137 @@
+# Divergences — code today vs this design
+
+The honest ledger. Each row is where the implementation does *not* match this folder, with
+the file and the fix. Point at a row and say "close it" and it's a well-scoped task.
+
+Source of truth for the *intent* is the rest of this folder; source of truth for the
+*current code* is [`server/spacetime/server/pipeline/src/lib.rs`](../../server/spacetime/server/pipeline/src/lib.rs)
+(the `decl_tick_pipeline!` macro) and [`server/worker/src/main.rs`](../../server/worker/src/main.rs).
+
+Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming/cosmetic.
+
+---
+
+## 1. 🔴 `event_log` is wide scalar columns, not `actions : Vec<u64>` DSL
+
+- **Design** ([events.md](events.md), [event-dsl.md](event-dsl.md)): the event carries
+  `actions : Vec<u64>` — a flat postfix (RPN) stream of self-qualified words
+  (`server_reference:16 | reserved:16 | ref:32`), operands (push) + verbs (pop+run); the
+  worker interprets it. No `action` enum, no positional slot schema, no actor field, no
+  operand table.
+- **Code**: a fat struct with `actor_key:u64`, `target_key:u64`, `data0/1:u64`, and named
+  `source/actor/requesting/worker/trigger _server_reference` columns
+  ([pipeline/src/lib.rs](../../server/spacetime/server/pipeline/src/lib.rs) `EventLog`).
+- **Fix**: replace the scalar target/actor/data columns with `actions:Vec<u64>`; keep
+  `event_reference`, `tic`, `worker_reference`, `status`. Stand up the RPN interpreter in the
+  worker (reuse `shared/dsl`'s value-stack VM behind a `Vec<u64>` word decoder).
+- **Blast radius**: the worker's `resolve_one` (currently reads `actor_key`/`target_key`) →
+  becomes the interpreter; `append_event` signature; edge/npc callers; a compile step
+  (surface DSL / plan → `Vec<u64>`).
+
+## 2. 🔴 `mint_hot` / `pack` are out-of-band reducers, not part of the lifecycle
+
+- **Design** ([hot-cold.md](hot-cold.md), [lifecycle.md](lifecycle.md)): cold→hot of a *target*
+  is **absorbed into the enqueue phase** (`find-or-mint` by location when standing up a
+  `cold_reference` target — no `MINT`/`GET` verb); `PACK` (settle hot→cold) is an execute op.
+- **Code**: `pack` and `unpack` are `#[reducer]`s called directly by the edge/caller
+  ([pipeline/src/lib.rs](../../server/spacetime/server/pipeline/src/lib.rs)), out of band from
+  the tick loop.
+- **Fix**: fold `unpack` into enqueue's `stand_up` (S3); make `PACK` an execute op (S6); retire
+  the bespoke reducers.
+- **This is the specific "you wrote cold tables anyway" grievance.**
+
+## 3. 🟡 Standalone `cold_things` / `cold_tiles` modules still exist
+
+- **Design** ([tables.md](tables.md)): cold is **one `cold` table inside the generic
+  module**, beside hot `state`.
+- **Code**: the in-macro `Cold` table exists ✅, but the separate `cold_things` and
+  `cold_tiles` modules still physically live under
+  [`server/spacetime/server/modules/`](../../server/spacetime/server/modules). The last commit
+  retired their *wire paths*, not the modules.
+- **Fix**: delete the two modules once the `cold` table fully carries their data end-to-end
+  (edge seeds it, client decodes it).
+
+## 4. 🟡 Cold keyed by flat `zone_id`, not geographic `region_zone`
+
+- **Design**: `cold` keyed by `region_zone_reference:u16`; realm implied by the shard.
+- **Code**: `Cold.zone_id : u32` flat, used as the routing column; `cold_key` packs
+  `(zone_id, type_reference)`.
+- **Fix**: move to `region_zone` as the subscription/routing key as the object-model
+  geography lands; reconcile against the legacy flat `zone_id`
+  ([../references/spatial-references.md](../references/spatial-references.md)).
+
+## 5. 🟡 Hot identity is a `u64 entity_key`, not a `u32 hot_reference`
+
+- **Design** ([hot-cold.md](hot-cold.md)): a hot object is a per-server `hot_reference:u32`
+  (+ `server_reference` for global uniqueness).
+- **Code**: `state`/`state_log` key on `u64 entity_key`; the 32-bit `object_id` is only a
+  *slice* of the `u64` minted `entity_reference`. No `hot_reference` type exists
+  ([../references/hot-cold-references.md](../references/hot-cold-references.md)).
+- **Fix**: define `hot_reference` in `object.rs`; decide whether hot identity is the compact
+  `u32` or stays the `u64`. **Open reconciliation.**
+
+## 6. 🔴 No two-phase recoverable lifecycle / status state machine
+
+- **Design** ([lifecycle.md](lifecycle.md)): a row carries `status`
+  (`enqueue → queueing → in_queue → running → complete` / `queue_failed`) + `failed` +
+  `tic_state_change`; **enqueue** (stand up target `state_log` rows) and **execute** are
+  separate, each idempotent + crash-recoverable via re-drive; an open-rows table (keyed by
+  `event_reference`) tracks held state_log rows; timeout eviction on `tic_state_change`.
+- **Code**: `bump` opens pending rows inline + `claim`/`resolve` per `(entity, tic)`; no
+  enqueue phase, no lifecycle status, no open-rows table, no eviction.
+- **Fix**: build the lifecycle (S2/S3). This is the biggest structural change.
+
+## 7. 🔴 No master drop barrier / refcounted GC (correctness scaffolding)
+
+- **Design** ([lifecycle.md](lifecycle.md)): causality is **strict staging + a master
+  drop-then-bump barrier** (no watermark). GC is **dumb**: a **holder table** refcounts pending
+  reads/writes per `state_log` row, and GC reclaims only zero-holder, non-latest, old rows.
+- **Code**: `tick_gc` uses a horizon heuristic; no holder table; no master drop reducer; `bump`
+  doesn't sweep timed-out enqueued work.
+- **Fix**: add the holder table + hold acquire/release (S2/S3); the master's `drop_timed_out`
+  reducer before `bump` (S3); make GC the trivial zero-holder rule.
+
+## 8. 🟡 Event log not split from data (event shard vs data shard)
+
+- **Design** ([lifecycle.md](lifecycle.md)): `event_log` on **event shards**; `state`/`state_log`/
+  `cold` + the holder table on **data shards**; workers service the former, write the latter.
+- **Code**: one module holds both; not separated.
+- **Fix**: deployment split (same generic module), later — not a blocker for the DSL landing.
+
+## 9. ⚪ Ordering model: keep `read_rule`, drop `priority`
+
+- **Design** ([lifecycle.md](lifecycle.md)): dependencies are explicit `await`s + the read rule
+  (`resolved_through`), with cross-entity reads at **≤ T−1** → DAG by tic → deadlock-free. **No
+  `Phase`, no priority-DAG.**
+- **Code**: `shared/tick` has `Phase` (`domain.rs`) and `priority` (`actor_read_tic`).
+- **Fix**: keep `read_rule`; **delete `Phase` and `priority`** as the DSL lands (S3/S4).
+
+## 10. ⚪ `server_reference` layout unresolved
+
+- **Design** ([../references/reference-vs-id.md](../references/reference-vs-id.md),
+  `object-model.md` §5): `server_reference:u16 = realm_reference:u8 + server_id:u8`.
+- **Code**: `refs.rs` has `server_reference:u16 = server_type:6 | server_id:10` (functional,
+  not geographic). No home for `server_type` under the geographic layout.
+- **Fix**: decide where `server_type` (master/worker/edge/db-class routing) lives once
+  `server_reference` goes geographic. **Open** (the fork raised earlier: fold type into the
+  `u8 server_id`, keep functional, or look role up from a registry).
+
+---
+
+## Not divergent (working as designed) ✅
+
+- The **generic engine** (`decl_tick_pipeline!` over a payload field list; spine never
+  inspects payload) — proven across divergent payload modules.
+- The **fence** (`server_id`, `resolve` rejects non-owners) — reused, now fencing rows.
+- The **metronome + `+N` tic gap** — kept; the gap widens **+2 → +3** for the enqueue phase
+  ([lifecycle.md](lifecycle.md)).
+- The **object/type/kind/cold reference bit layouts** in `shared/codec/src/object.rs`
+  (see [../references/](../references)).
+
+## Resolved (no longer open) ✅
+
+- **Cross-shard multi-target atomicity** — was flagged open; resolved by **convergence**
+  (idempotent per-shard writes keyed by `event_reference` + re-drive), not distributed
+  transactions ([lifecycle.md](lifecycle.md)). Eventually-consistent over a tic or two, safe.
+- **`read_rule` vs `priority` survival** — decided: keep `read_rule`, drop `priority`/`Phase`
+  (#9).

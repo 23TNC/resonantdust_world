@@ -14,6 +14,7 @@
 //! drift.
 
 pub mod biome;
+pub mod event_word;
 pub mod object;
 pub mod packed;
 pub mod refs;
