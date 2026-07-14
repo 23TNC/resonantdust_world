@@ -44,8 +44,8 @@ cross-shard writes safe (convergent, not atomic).
 | # | stage | closes | status |
 |---|-------|--------|--------|
 | S0 | [Foundation — decisions + codec](s0-foundation.md) | — | ✅ |
-| S1 | [The interpreter (pure), proving `MOVE`+`SPAWN`](s1-interpreter.md) | — | ⬜ |
-| S2 | [Event schema + lifecycle + holder table](s2-event-schema.md) | div #1,6,7 | ⬜ |
+| S1 | [The interpreter (pure), proving `MOVE`+`SPAWN`](s1-interpreter.md) | — | ✅ |
+| S2 | [Event schema + lifecycle + holder table](s2-event-schema.md) | div #1,6,7 | ✅ |
 | S3 | [Worker: two-phase resolve (enqueue+execute)](s3-worker.md) | div #1,6,9 | ⬜ |
 | S4 | [Producers → word streams (gap +3)](s4-producers.md) | div #1,9 | ⬜ |
 | S5 | [Control flow (`AWAIT`/defer/`?:`/`FAIL`)](s5-control-flow.md) | — | ⬜ |

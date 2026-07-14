@@ -16,11 +16,12 @@
 pub mod domain;
 pub mod priority;
 pub mod read_rule;
+pub mod vm;
 
 pub use domain::{
-    action_phase, action_reads_actor, apply_event, hp, pack_damage, pack_move, resolve_events,
-    Domain, EntityState, Event, Phase, Spatial, ACTION_ACK, ACTION_DAMAGE, ACTION_MOVE,
-    ACTION_RECEIVE, ACTION_TRANSFER,
+    action_phase, action_reads_actor, apply_event, hp, pack_damage, pack_move, pack_spawn,
+    resolve_events, Domain, EntityState, Event, Phase, Spatial, ACTION_ACK, ACTION_DAMAGE,
+    ACTION_MOVE, ACTION_RECEIVE, ACTION_SPAWN, ACTION_TRANSFER,
 };
 pub use priority::actor_read_tic;
 pub use read_rule::resolved_through;
