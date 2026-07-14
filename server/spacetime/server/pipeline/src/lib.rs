@@ -327,6 +327,9 @@ macro_rules! decl_tick_pipeline {
             let next = match row.status {
                 s if s == $crate::STATUS_ENQUEUE => $crate::STATUS_QUEUEING,
                 s if s == $crate::STATUS_IN_QUEUE => $crate::STATUS_RUNNING,
+                // Re-claim a stuck `running` row (its worker died — lease expired) or our own:
+                // stays `running`, reassigned. Recovery for the execute phase.
+                s if s == $crate::STATUS_RUNNING => $crate::STATUS_RUNNING,
                 _ => return Ok(()), // not a claimable phase
             };
             if !free { return Ok(()); }

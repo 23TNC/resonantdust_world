@@ -42,3 +42,15 @@ resolved). After bumping master to 3 (tic sealed), the two moves **folded by `ev
 
 **Note.** This realizes the designed `+3` latency (a row now waits ~gap tics to seal before
 resolving), replacing the earlier resolve-immediately simplification.
+
+### 2. `RUNNING`-row recovery ✅
+
+**What.** `claim` now also re-claims a `RUNNING` row when the fence is free (unowned, ours, or
+**lease-expired**) — the worker that owned an in-flight execute died, so another worker takes it
+over (status stays `RUNNING`, reassigned). The worker's pass tries `claim` on a `RUNNING` row it
+doesn't own (a no-op unless the lease expired). Closes the "a crashed worker's `RUNNING` row is
+stuck" gap.
+
+**How verified (live).** A row driven to `RUNNING` owned by worker 99. Worker 1's `claim` was
+**refused** while the lease held (still 99). After advancing master past `CLAIM_LEASE_TICS`,
+worker 1's `claim` **took over** (status still `RUNNING`, `worker_reference = 1`).

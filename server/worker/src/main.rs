@@ -141,6 +141,11 @@ fn work_pass(conn: &DbConnection, worker_id: u16) {
             STATUS_RUNNING if ev.worker_reference == worker_id => {
                 execute(conn, worker_id, &ev);
             }
+            STATUS_RUNNING => {
+                // Owned by another worker — try to take over (claim no-ops unless the lease
+                // expired, i.e. that worker died mid-execute). Recovery.
+                let _ = conn.reducers().claim(worker_id, ev.event_reference);
+            }
             _ => {}
         }
     }

@@ -27,8 +27,7 @@ specifies them.
   body]` + defer/abort. The **forward `SKIP` branch / `? then : else`** conditional and a
   **multi-action vector per row** are not implemented; `OBJECT`/`ALIAS` beyond the gate are
   stubs (push-payload). ([../spacetime-tables/event-dsl.md].)
-- **`RUNNING`-row recovery.** `claim` advances `enqueue→queueing` and `in_queue→running` only —
-  a `RUNNING` row whose worker died isn't re-claimable on lease expiry yet.
+- ~~`RUNNING`-row recovery~~ — **DONE** ([completion-log](completion-log.md) #2): re-claim on lease expiry.
 - **`event_reference` width.** The `ALIAS` word carries a `u32`; `event_reference` is a `u64` PK.
   Fine while refs are small; reconcile with the hot_reference re-key (#5).
 
