@@ -25,3 +25,6 @@ chronological.
   (`art-style`, `texture-paths`, `texture-layout/`) + `components/dev/scripts/art/plan`
   (`sprite-gen-plan`). Decisions logged in [`forks.md`](forks.md). All 270 doc links verified
   resolving.
+- **2026-07-14** · **pathfinding reconciled** — found a pre-existing `docs/pathfinding/README.md`
+  (real 0.2.3 design) I'd missed; dropped my stub, moved the real doc to `docs/intent/pathfinding/`,
+  fixed the index description. All 277 doc links verified resolving.
