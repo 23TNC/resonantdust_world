@@ -1,5 +1,9 @@
 # Design — `shared/codec` (the shape)
 
+**Authoritative reference model:** [`reference-model.md`](reference-model.md) — the
+`definition` / `position` / `data` split (2026-07-14). `object-model.md` + `references/` below
+describe the current **code** (v1), superseded by it pending a re-cut.
+
 _Last updated: 2026-07-14._
 
 - **[`object-model.md`](object-model.md)** — the object taxonomy (type/kind/variant), the packed

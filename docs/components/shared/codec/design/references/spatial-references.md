@@ -1,5 +1,12 @@
 # Spatial references — position → zone → region → realm
 
+> ⚠️ **Reference layouts superseded (2026-07-14).** The authoritative object reference
+> model is now [reference-model.md](../reference-model.md) — the honest **definition / position / data**
+> split (all `u32`). The layouts below still describe the current **code** (v1: a `u64
+> object_reference` with `subkind` and `x/y/data` packed into the kind half); the re-cut is a
+> [plan](../../plan/) item. Read reference-model.md for the target shape.
+
+
 The world is a **nested 16×16 grid**, four levels deep. Each level is one `u8`:
 two `u4` coordinates, `hi:4 | lo:4`. The same primitive at four scales.
 

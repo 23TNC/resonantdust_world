@@ -8,3 +8,4 @@ references **compose** — a `u32 hot`/`cold`/`event_reference` drops into a `u6
 (no per-kind special-casing). `server_reference` per operand makes cross-shard addressing free.
 (See the shard's [`event-reference.md`](../../../server/spacetime/modules/shard/intent/event-reference.md)
 for the worked example.)
+- **[`reference-model.md`](reference-model.md)** — why *what/where/state* are three separate references, why `u32`, why drop `subkind`, and why `data:8` defines the cold/hot boundary.

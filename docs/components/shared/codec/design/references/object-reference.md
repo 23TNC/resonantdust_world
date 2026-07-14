@@ -1,5 +1,12 @@
 # `object_reference`
 
+> ⚠️ **Reference layouts superseded (2026-07-14).** The authoritative object reference
+> model is now [reference-model.md](../reference-model.md) — the honest **definition / position / data**
+> split (all `u32`). The layouts below still describe the current **code** (v1: a `u64
+> object_reference` with `subkind` and `x/y/data` packed into the kind half); the re-cut is a
+> [plan](../../plan/) item. Read reference-model.md for the target shape.
+
+
 The packed identity of a single **object** — the 0.2.3 object-model unit that makes
 tiles and things the same kind of thing. One `u64`, split into two `u32` halves: a
 **shared** type half and a **per-instance** kind half.

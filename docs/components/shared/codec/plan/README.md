@@ -2,8 +2,12 @@
 
 _Last updated: 2026-07-14._
 
-The crate is implemented; the open work is **deciding** the object-model's open questions (D3
-`hot_reference` u32, `region_zone` keying, geographic `server_reference`) — a human-input step,
-tracked as [`work/spacetime-rewrite/blockers.md`](../../../../work/spacetime-rewrite/blockers.md)
-**B-1**. Once decided in [`../design/object-model.md`](../design/object-model.md), the shard's
-representation re-keys become mechanical.
+1. **Re-cut `object.rs` / `refs.rs` to the reference model** (2026-07-14 decision,
+   [`../design/reference-model.md`](../design/reference-model.md)) — a code change, not yet done:
+   `definition_reference : u32` (type+kind, drop `subkind`), `position_reference : u32`
+   (macro+micro), the new cold row (`type_reference` + `macro` + `layer_id` header + `Vec<kind |
+   tile | data>`), and `data:8` decode. Rename `object_reference` → `definition_reference` across
+   consumers. Then the shard's `region_zone` cold keying (#4) follows directly.
+2. **Still needs a decision** (blocker
+   [B-1](../../../../work/spacetime-rewrite/blockers.md)): the `hot_reference` u32 re-key (#5) and
+   geographic `server_reference` (#10). Once decided, the remaining shard re-keys are mechanical.

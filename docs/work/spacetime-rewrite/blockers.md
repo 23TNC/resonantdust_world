@@ -7,11 +7,19 @@ Open→resolved; a resolved blocker gets a resolution + date, then archives to t
 
 ## B-1 · The object-model taxonomy is in-flux — blocks the representation re-keys
 
-**Status:** OPEN · raised 2026-07-14
+**Status:** PARTIALLY RESOLVED · raised 2026-07-14 · narrowed 2026-07-14
 
-**What's blocked.** Every remaining [todo.md](todo.md) item in the "blocked" group: the
-`hot_reference` u32 re-key (#5), `region_zone` cold keying (#4), geographic `server_reference`
-(#10), the `event_reference` width reconciliation, and the `PACK` trigger's hot→cold type map.
+**Resolved 2026-07-14 — the reference model is settled**
+([`components/shared/codec/design/reference-model.md`](../../components/shared/codec/design/reference-model.md)):
+the **definition / position / data** split (all `u32`), `object_reference` → `definition_reference`,
+`subkind` dropped, explicit `region_zone` (closes **#4**), `data:8` as the cold/hot pack criterion.
+So the taxonomy/naming + `region_zone` are no longer blocked — implementing them is now a codec
+re-cut ([codec plan](../../components/shared/codec/plan/README.md)), not a decision.
+
+**Still blocked (needs your call).** Two identity/routing decisions remain: the `hot_reference`
+u32 re-key (**#5**, decision D3 — is it worth the PK churn, given #3 showed actor-reads don't need
+it?) and geographic vs functional `server_reference` (**#10**). Until these land, the shard's
+`hot_reference`/`server_reference` re-keys can't target a settled shape.
 
 **Description.** These all re-key or re-encode data on the object-model taxonomy — `kind` / `type`
 / `variant`, the packed `*_reference` u64 layouts, `hot_reference:u32` (decision D3), geographic
