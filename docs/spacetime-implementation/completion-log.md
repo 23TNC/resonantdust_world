@@ -54,3 +54,20 @@ stuck" gap.
 **How verified (live).** A row driven to `RUNNING` owned by worker 99. Worker 1's `claim` was
 **refused** while the lease held (still 99). After advancing master past `CLAIM_LEASE_TICS`,
 worker 1's `claim` **took over** (status still `RUNNING`, `worker_reference = 1`).
+
+### 3. Actor-reading verbs (`DAMAGE`) + read-rule defer ✅
+
+**What.** The interpreter gained a `Reads` trait: an `OBJECT` operand `(mint_server, entity_id)`
+(the 48-bit identity that fits the word — no re-key needed, per D3) resolves to the actor's hp at
+`≤ T−1`. `DAMAGE` = `[OBJECT(actor), LITERAL(amount), ACTION(DAMAGE)]`: a **live** actor's blow
+subtracts from the target's hp; a dead/absent/unsettled actor reads 0 and is voided. The worker
+supplies `WorkerReads` (looks up the actor's resolved `data_0` by `(mint_server, entity_id)` at
+`≤ read_tic`) and enforces the **read rule** (`resolved_through`): a row whose actor isn't settled
+through `≤ T−1` **defers**, and such an event isn't folded into the composition (`applicable`).
+
+**How verified.** Unit: `DAMAGE` lands for a live actor (100−25=75), voids for a dead one (100),
+saturates at 0. Live (real worker + master): attacker seeded hp 50, victim hp 100; a `DAMAGE`
+event read the actor's hp (50) at `≤ T−1` and the blow landed → **victim 75**.
+
+**Note.** Uses the D3 operand form (`u32` identity in the word) — the full `hot_reference` re-key
+(#5) stays deferred; it isn't needed for actor-reads after all.

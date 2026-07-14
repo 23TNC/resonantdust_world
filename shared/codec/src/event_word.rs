@@ -92,6 +92,9 @@ pub const ACTION_AWAIT: u32 = 5;
 pub const ACTION_SKIP: u32 = 6;
 /// Abort this row / branch.
 pub const ACTION_FAIL: u32 = 7;
+/// Deal damage to the target: reads an `OBJECT` actor operand (its hp) + a `LITERAL` amount; a
+/// *live* actor subtracts the amount from the target's hp. The first actor-reading verb.
+pub const ACTION_DAMAGE: u32 = 8;
 
 #[cfg(test)]
 mod tests {

@@ -8,16 +8,34 @@
 //! ([risks.md](../../docs/spacetime-tables/risks.md) A2). This is NOT `shared/dsl` (a
 //! text/visual VM); the only thing borrowed is the abstract postfix-dispatch shape.
 //!
-//! Hot path only (MOVE / SPAWN): these read no other entity, so `run` needs no operand
-//! reader. Action data (`[u64; 2]`) rides as `LITERAL` words — two per `u64` (lo then hi) —
-//! so the whole program stays in the uniform word model. Cross-entity reads (DAMAGE, …) and
-//! control flow (AWAIT/SKIP/FAIL) land with S5.
+//! Verbs so far: `MOVE`/`SPAWN` (data-carrying, no read) and `DAMAGE` (actor-reading — an
+//! `OBJECT` operand resolves to the actor's hp via [`Reads`], and a live actor's blow lands).
+//! Action data (`[u64; 2]`) rides as `LITERAL` words — two per `u64` (lo then hi). `AWAIT` is a
+//! worker-level gate ([`await_gate`]); the `SKIP` branch is a designed-but-optional refinement
+//! (the row model expresses `? then : else` as await-gate → proceed / timeout → fail).
 
 use crate::domain::{self, EntityState, Event};
 use resonantdust_codec::event_word::{
-    pack_word, word_op_code, word_payload, ACTION_AWAIT, ACTION_MOVE, ACTION_SPAWN, OP_ACTION,
-    OP_ALIAS, OP_LITERAL, OP_OBJECT,
+    pack_word, word_op_code, word_payload, word_server_reference, ACTION_AWAIT, ACTION_DAMAGE,
+    ACTION_MOVE, ACTION_SPAWN, OP_ACTION, OP_ALIAS, OP_LITERAL, OP_OBJECT,
 };
+use resonantdust_codec::refs::{entity_ref_id, entity_ref_mint_server};
+
+/// How the interpreter reads an `OBJECT` actor operand — mapped by the caller (the worker) from
+/// the 48-bit `(server_reference, object_reference)` = `(mint_server, entity_id)` identity to
+/// the actor's hp *at the read tic* (`≤ T−1`). Returns `0` for an absent / unsettled / dead
+/// actor (all read as "no live actor"), which is what the read-rule + the `DAMAGE` void want.
+pub trait Reads {
+    fn actor_hp(&self, server_reference: u16, object_reference: u32) -> u64;
+}
+
+/// The no-op reader for programs that read no operand (the pure hot path, tests).
+pub struct NoReads;
+impl Reads for NoReads {
+    fn actor_hp(&self, _s: u16, _o: u32) -> u64 {
+        0
+    }
+}
 
 /// Map a codec `action_reference` id to this build's [`domain`] action code. The codec ids
 /// are the canonical wire palette; `domain`'s `ACTION_*` are the effect implementations.
@@ -33,19 +51,31 @@ fn domain_action(codec_action: u32) -> u16 {
 /// Hot path: `LITERAL`s push action data; an `ACTION` word pops its data and applies the
 /// verb via [`domain::apply_event`]. `OBJECT`/`ALIAS` are accepted but not yet consumed
 /// (operand reads + await are S5).
-pub fn run(actions: &[u64], base: EntityState) -> EntityState {
+pub fn run(actions: &[u64], base: EntityState, reads: &dyn Reads) -> EntityState {
     let mut stack: Vec<u64> = Vec::new();
     let mut state = base;
     for &w in actions {
         match word_op_code(w) {
             OP_LITERAL => stack.push(word_payload(w) as u64),
-            OP_OBJECT => stack.push(word_payload(w) as u64), // reserved (operand reads: S5)
+            // An OBJECT actor operand resolves to the actor's hp (via the reader) — 0 if
+            // absent/unsettled/dead. Actor-reading verbs (DAMAGE) consume it.
+            OP_OBJECT => stack.push(reads.actor_hp(word_server_reference(w), word_payload(w))),
             OP_ACTION => {
-                let action = domain_action(word_payload(w));
-                let d1 = pop_u64(&mut stack);
-                let d0 = pop_u64(&mut stack);
-                let ev = Event { action, actor_key: 0, data: [d0, d1] };
-                state = domain::apply_event(state, &ev, None);
+                let action = word_payload(w);
+                if action == ACTION_DAMAGE {
+                    // [OBJECT(actor→hp), LITERAL(amount), DAMAGE]: a LIVE actor's blow lands.
+                    let amount = stack.pop().unwrap_or(0);
+                    let actor_hp = stack.pop().unwrap_or(0);
+                    if actor_hp > 0 {
+                        state.data[0] = state.data[0].saturating_sub(amount);
+                    }
+                } else {
+                    // Data-carrying verbs (MOVE/SPAWN): reconstruct the Event and apply.
+                    let d1 = pop_u64(&mut stack);
+                    let d0 = pop_u64(&mut stack);
+                    let ev = Event { action: domain_action(action), actor_key: 0, data: [d0, d1] };
+                    state = domain::apply_event(state, &ev, None);
+                }
             }
             OP_ALIAS => { /* await — resolved at the worker level; no-op in a pure run */ }
             _ => {}
@@ -122,6 +152,17 @@ pub fn encode_spawn(kind: u16, zone_id: u32, location: u8, rotation: u8, offset:
     encode_action(ACTION_SPAWN, domain::pack_spawn(kind, zone_id, location, rotation, offset))
 }
 
+/// A `DAMAGE` program: `[OBJECT(actor), LITERAL(amount), ACTION(DAMAGE)]`. The `actor`
+/// entity_reference is carried as `(mint_server, entity_id)` in the OBJECT word (the worker maps
+/// it back). Targets the victim (in the row's `targets`).
+pub fn encode_damage(actor: u64, amount: u32) -> Vec<u64> {
+    vec![
+        pack_word(OP_OBJECT, entity_ref_mint_server(actor), entity_ref_id(actor)),
+        lit(amount),
+        pack_word(OP_ACTION, 0, ACTION_DAMAGE),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,7 +173,7 @@ mod tests {
     fn move_matches_direct_apply() {
         let base = EntityState { kind: 7, zone_id: 3, location: 0x00, rotation: 0, offset: 0, data: [0, 0] };
         let (zone, loc, rot, off) = (3u32, 0x11u8, 0u8, 5u8);
-        let got = run(&encode_move(zone, loc, rot, off), base);
+        let got = run(&encode_move(zone, loc, rot, off), base, &NoReads);
         let want = domain::apply_event(
             base,
             &Event { action: domain::ACTION_MOVE, actor_key: 0, data: domain::pack_move(zone, loc, rot, off) },
@@ -146,7 +187,7 @@ mod tests {
     #[test]
     fn spawn_matches_direct_apply() {
         let base = EntityState::default();
-        let got = run(&encode_spawn(42, 3, 0x22, 1, 0), base);
+        let got = run(&encode_spawn(42, 3, 0x22, 1, 0), base, &NoReads);
         let want = domain::apply_event(
             base,
             &Event { action: domain::ACTION_SPAWN, actor_key: 0, data: domain::pack_spawn(42, 3, 0x22, 1, 0) },
@@ -155,6 +196,36 @@ mod tests {
         assert_eq!(got, want);
         assert_eq!(got.kind, 42, "spawn sets kind (non-tombstone)");
         assert_eq!(got.location, 0x22);
+    }
+
+    /// A stub reader returning a fixed hp for one actor id, 0 otherwise.
+    struct StubReads {
+        actor_id: u32,
+        hp: u64,
+    }
+    impl Reads for StubReads {
+        fn actor_hp(&self, _s: u16, o: u32) -> u64 {
+            if o == self.actor_id {
+                self.hp
+            } else {
+                0
+            }
+        }
+    }
+
+    #[test]
+    fn damage_voids_when_actor_dead_lands_when_alive() {
+        use resonantdust_codec::refs::{pack_minted_entity, ENTITY_TYPE_PAWN};
+        let actor = pack_minted_entity(ENTITY_TYPE_PAWN, 42, 1);
+        let victim = EntityState { data: [100, 0], ..EntityState::default() }; // hp 100
+        // live actor (hp 30) → 100 − 25 = 75
+        let live = StubReads { actor_id: 42, hp: 30 };
+        assert_eq!(run(&encode_damage(actor, 25), victim, &live).data[0], 75);
+        // dead actor (hp 0) → blow voided, hp unchanged
+        let dead = StubReads { actor_id: 42, hp: 0 };
+        assert_eq!(run(&encode_damage(actor, 25), victim, &dead).data[0], 100);
+        // damage saturates at 0, never underflows
+        assert_eq!(run(&encode_damage(actor, 999), victim, &live).data[0], 0);
     }
 
     #[test]
@@ -169,14 +240,14 @@ mod tests {
         assert_eq!((timeout, await_ref), (7, 5));
         assert_eq!(got_body, &body[..]);
         let base = EntityState { kind: 9, ..EntityState::default() };
-        assert_eq!(run(got_body, base), run(&body, base));
+        assert_eq!(run(got_body, base, &NoReads), run(&body, base, &NoReads));
     }
 
     #[test]
     fn u64_data_survives_the_lo_hi_split() {
         // a large zone_id exercises the >32-bit data word.
         let z = 0x00AB_CDEFu32;
-        let got = run(&encode_move(z, 0x0F, 0, 0), EntityState { zone_id: z, ..EntityState::default() });
+        let got = run(&encode_move(z, 0x0F, 0, 0), EntityState { zone_id: z, ..EntityState::default() }, &NoReads);
         assert_eq!(got.zone_id, z);
         assert_eq!(got.location, 0x0F);
     }

@@ -156,6 +156,62 @@ fn master_tic(conn: &DbConnection) -> u32 {
     conn.db().tic_meta().iter().map(|m| m.master_tic).max().unwrap_or(0)
 }
 
+/// The interpreter's operand reader: maps an `OBJECT` operand `(mint_server, entity_id)` to the
+/// actor's hp (`data_0`) **as resolved at `≤ read_tic`** (the `≤ T−1` read rule). `0` if the
+/// actor is absent, dead, or not yet settled — all read as "no live actor".
+struct WorkerReads<'a> {
+    conn: &'a DbConnection,
+    read_tic: u32,
+}
+impl resonantdust_tick::vm::Reads for WorkerReads<'_> {
+    fn actor_hp(&self, server_reference: u16, object_reference: u32) -> u64 {
+        use resonantdust_codec::refs::{entity_ref_id, entity_ref_mint_server};
+        self.conn
+            .db()
+            .state_log()
+            .iter()
+            .filter(|r| {
+                r.dirty == 0
+                    && r.tic <= self.read_tic
+                    && entity_ref_mint_server(r.entity_key) == server_reference
+                    && entity_ref_id(r.entity_key) == object_reference
+            })
+            .max_by_key(|r| r.tic)
+            .map(|r| r.data_0)
+            .unwrap_or(0)
+    }
+}
+
+/// The `OBJECT` actor operands `(server_reference, object_reference)` an event's program reads.
+fn actor_operands(actions: &[u64]) -> Vec<(u16, u32)> {
+    use resonantdust_codec::event_word::{word_op_code, word_payload, word_server_reference, OP_OBJECT};
+    actions
+        .iter()
+        .filter(|&&w| word_op_code(w) == OP_OBJECT)
+        .map(|&w| (word_server_reference(w), word_payload(w)))
+        .collect()
+}
+
+/// The read rule: every actor an event reads must be **settled through `read_tic`** — no pending
+/// (`dirty>0`) work at or below it. Until then the read would be stale, so the reader defers.
+fn actors_settled(conn: &DbConnection, actions: &[u64], read_tic: u32) -> bool {
+    use resonantdust_codec::refs::{entity_ref_id, entity_ref_mint_server};
+    actor_operands(actions).into_iter().all(|(server, obj)| {
+        let min_pending = conn
+            .db()
+            .state_log()
+            .iter()
+            .filter(|r| {
+                r.dirty > 0
+                    && entity_ref_mint_server(r.entity_key) == server
+                    && entity_ref_id(r.entity_key) == obj
+            })
+            .map(|r| r.tic)
+            .min();
+        resonantdust_tick::resolved_through(min_pending, read_tic)
+    })
+}
+
 /// Is an event's `event_reference` `complete`?
 fn event_complete(conn: &DbConnection, event_reference: u64) -> bool {
     conn.db()
@@ -166,13 +222,15 @@ fn event_complete(conn: &DbConnection, event_reference: u64) -> bool {
         .unwrap_or(false)
 }
 
-/// Is an event ready to contribute to a tic's composition — no `await` gate, or its await is
-/// complete? (A gated event whose await isn't satisfied must not fold in yet.)
+/// Is an event ready to contribute to a tic's composition — its `await` (if any) is complete
+/// AND every actor it reads is settled through `≤ T−1`? A gated/reading event that isn't ready
+/// must not fold in yet (it would apply prematurely / read stale).
 fn applicable(conn: &DbConnection, ev: &bindings::shard::EventLog) -> bool {
-    match vm::await_gate(&ev.actions) {
+    let await_ok = match vm::await_gate(&ev.actions) {
         Some((_, await_ref, _)) => event_complete(conn, await_ref),
         None => true,
-    }
+    };
+    await_ok && actors_settled(conn, &ev.actions, ev.event_tic.saturating_sub(1))
 }
 
 /// Run the row and commit it atomically. Two design mechanisms live here:
@@ -202,6 +260,11 @@ fn execute(conn: &DbConnection, worker_id: u16, ev: &bindings::shard::EventLog) 
         }
     }
     let below = ev.event_tic.saturating_sub(1);
+    // Read rule: defer this row until every actor it reads is settled through ≤ T−1.
+    if !actors_settled(conn, &ev.actions, below) {
+        return; // an actor isn't ready — revisit once it settles
+    }
+    let reads = WorkerReads { conn, read_tic: below };
     let results: Vec<TargetState> = ev
         .targets
         .iter()
@@ -223,7 +286,7 @@ fn execute(conn: &DbConnection, worker_id: u16, ev: &bindings::shard::EventLog) 
             let mut state = base;
             for e in &evs {
                 let b = vm::await_gate(&e.actions).map(|(_, _, body)| body).unwrap_or(&e.actions);
-                state = vm::run(b, state);
+                state = vm::run(b, state, &reads);
             }
             TargetState {
                 entity_key: target,

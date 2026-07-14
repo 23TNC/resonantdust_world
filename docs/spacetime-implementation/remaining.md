@@ -10,8 +10,8 @@ lists what's genuinely still open, so nothing is lost. Grouped by kind.
 These were deliberately scoped out to land the working core; the design ([../spacetime-tables/])
 specifies them.
 
-- **Verbs — only `MOVE`/`SPAWN`** (`shared/tick/vm.rs::domain_action`). `DAMAGE` and other
-  **actor-reading / cross-entity** actions are not implemented (they map to a no-op).
+- ~~Verbs — only `MOVE`/`SPAWN`~~ — **DONE** ([completion-log](completion-log.md) #3): `DAMAGE`
+  (actor-reading) implemented; more verbs are additive.
 - ~~Execution is not tic-gated~~ — **DONE** ([completion-log](completion-log.md) #1): the worker
   resolves only a sealed tic (`master ≥ event_tic`).
 - **Single-shard only — no cross-shard convergent writes.** `resolve` commits all a row's
@@ -20,9 +20,8 @@ specifies them.
   shards applied"). ([../spacetime-tables/lifecycle.md] §convergent write.)
 - ~~No deterministic composition~~ — **DONE** ([completion-log](completion-log.md) #1): a
   target's value folds all its events in `event_reference` order.
-- **No operand-read defer (`read_rule`).** The hot path (move/spawn) reads no other entity, so
-  the "defer until the source is settled through `≤ T−1`" machinery is not implemented/exercised.
-  Needed for actor-reading verbs (DAMAGE) and multi-row data dependencies.
+- ~~No operand-read defer (`read_rule`)~~ — **DONE** ([completion-log](completion-log.md) #3):
+  actor-reads defer until the actor is settled through `≤ T−1`.
 - **Control flow is await-gate only.** S5 implements `[LITERAL(timeout), ALIAS, ACTION(AWAIT),
   body]` + defer/abort. The **forward `SKIP` branch / `? then : else`** conditional and a
   **multi-action vector per row** are not implemented; `OBJECT`/`ALIAS` beyond the gate are
