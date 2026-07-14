@@ -8,9 +8,13 @@
 //!     DSL interpreter ([`resonantdust_tick::vm`]) over its `actions` for each target,
 //!     producing a `TargetState`, then `resolve` (atomic commit of the whole row).
 //!
-//! Hot path (spawn/move): no operand reads, no cross-shard reads. Cold `find-or-mint`, control
-//! flow (await/skip/fail), and cross-shard convergence land in later phases.
+//! Hot path (spawn/move): no operand reads. A row's targets may span shards: the worker computes
+//! every target's state, then **converges** them — targets on this shard commit via `resolve`
+//! (which also completes the row), targets on another shard via that shard's idempotent
+//! `resolve_foreign`; the row completes only once every target shard has applied
+//! (`docs/spacetime-tables/lifecycle.md` §convergent write).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,10 +24,30 @@ use resonantdust_tick::{domain::EntityState, vm};
 
 mod bindings;
 use bindings::shard::{
-    abort as _, claim as _, mint_cold as _, ready as _, resolve as _, stand_up as _,
-    ColdTableAccess, DbConnection, EventLogTableAccess, StateLog, StateLogTableAccess,
-    StateTableAccess, TicMetaTableAccess, TargetState,
+    abort as _, claim as _, mint_cold as _, ready as _, resolve as _, resolve_foreign as _,
+    stand_up as _, ColdTableAccess, DbConnection, EventLogTableAccess, StateLog,
+    StateLogTableAccess, StateTableAccess, TargetState, TicMetaTableAccess,
 };
+
+/// The connected shard set, `(server_reference, connection)`. A target's home shard is its
+/// `entity_key`'s `mint_server`; positional (cold) targets are always local (minted here).
+type Shards = [(u16, Arc<DbConnection>)];
+
+/// The connection for shard `id`, if the worker holds one.
+fn shard_conn(shards: &Shards, id: u16) -> Option<&Arc<DbConnection>> {
+    shards.iter().find(|(sid, _)| *sid == id).map(|(_, c)| c)
+}
+
+/// Which shard a target's resolved state lives on. A **positional** (cold) target is minted on
+/// the shard that owns its zone — i.e. always local, so it resolves against `my_shard`.
+fn home_shard(target: u64, my_shard: u16) -> u16 {
+    use resonantdust_codec::refs::{entity_ref_is_positional, entity_ref_mint_server};
+    if entity_ref_is_positional(target) {
+        my_shard
+    } else {
+        entity_ref_mint_server(target)
+    }
+}
 
 // event_log.status (mirror of resonantdust_pipeline::STATUS_*; kept local to avoid pulling the
 // module crate + its `spacetimedb` dep into this SDK-client binary).
@@ -55,7 +79,7 @@ async fn main() {
     let shard_cfg = parse_shards();
     tracing::info!(%uri, worker_id, shards = shard_cfg.len(), "worker starting");
 
-    let mut shards: Vec<Arc<DbConnection>> = Vec::new();
+    let mut shards: Vec<(u16, Arc<DbConnection>)> = Vec::new();
     for (id, db) in &shard_cfg {
         let conn = DbConnection::builder()
             .with_uri(&uri)
@@ -85,15 +109,16 @@ async fn main() {
                 "SELECT * FROM state",
                 "SELECT * FROM cold",
                 "SELECT * FROM tic_meta",
+                "SELECT * FROM applied_foreign",
             ]);
-        shards.push(conn);
+        shards.push((*id, conn));
     }
 
     let mut ticker = tokio::time::interval(poll);
     loop {
         ticker.tick().await;
-        for conn in &shards {
-            work_pass(conn, worker_id);
+        for (id, _) in &shards {
+            work_pass(&shards, *id, worker_id);
         }
     }
 }
@@ -112,8 +137,11 @@ fn parse_shards() -> Vec<(u16, String)> {
         .collect()
 }
 
-/// One pass over one shard's `event_log`, advancing every row it can through the lifecycle.
-fn work_pass(conn: &DbConnection, worker_id: u16) {
+/// One pass over shard `my_shard`'s `event_log`, advancing every row it can through the
+/// lifecycle. `shards` is the full connected set so a row whose targets span shards can converge
+/// its writes onto the other shards.
+fn work_pass(shards: &Shards, my_shard: u16, worker_id: u16) {
+    let Some(conn) = shard_conn(shards, my_shard) else { return; };
     let rows: Vec<_> = conn.db().event_log().iter().collect();
     for ev in rows {
         match ev.status {
@@ -123,7 +151,13 @@ fn work_pass(conn: &DbConnection, worker_id: u16) {
                 }
             }
             STATUS_QUEUEING if ev.worker_reference == worker_id => {
+                // Stand up only the targets that live on this shard; a foreign target's pending
+                // row + write land on its home shard at `resolve_foreign` time (its Phase-1 hold
+                // is the documented cross-shard-hold follow-up).
                 for &target in &ev.targets {
+                    if home_shard(target, my_shard) != my_shard {
+                        continue;
+                    }
                     find_or_mint(conn, target); // cold target ⇒ promote hot (issue 005)
                     if let Err(err) = conn.reducers().stand_up(worker_id, ev.event_reference, target) {
                         tracing::warn!(%err, ev = ev.event_reference, target, "stand_up failed");
@@ -139,7 +173,7 @@ fn work_pass(conn: &DbConnection, worker_id: u16) {
                 }
             }
             STATUS_RUNNING if ev.worker_reference == worker_id => {
-                execute(conn, worker_id, &ev);
+                execute(shards, my_shard, worker_id, &ev);
             }
             STATUS_RUNNING => {
                 // Owned by another worker — try to take over (claim no-ops unless the lease
@@ -241,7 +275,8 @@ fn applicable(conn: &DbConnection, ev: &bindings::shard::EventLog) -> bool {
 ///   so any row triggering the resolve computes the same result (idempotent, order-free).
 ///
 /// The row's own `await` gate defers/aborts it before it contributes.
-fn execute(conn: &DbConnection, worker_id: u16, ev: &bindings::shard::EventLog) {
+fn execute(shards: &Shards, my_shard: u16, worker_id: u16, ev: &bindings::shard::EventLog) {
+    let Some(conn) = shard_conn(shards, my_shard) else { return; };
     // tic-gate: don't resolve until the tic is sealed (all its events are present).
     if master_tic(conn) < ev.event_tic {
         return; // defer — revisit once the master reaches this tic
@@ -269,7 +304,10 @@ fn execute(conn: &DbConnection, worker_id: u16, ev: &bindings::shard::EventLog) 
         .targets
         .iter()
         .map(|&target| {
-            let base = resolved_at(conn, target, below).unwrap_or_default();
+            // A target's prior state lives on its **home** shard (foreign targets read their base
+            // there, not on the source shard where the event row lives).
+            let base_conn = shard_conn(shards, home_shard(target, my_shard)).map_or(conn, |c| c);
+            let base = resolved_at(base_conn, target, below).unwrap_or_default();
             // Fold every applicable event targeting (target, this tic), by event_reference.
             let mut evs: Vec<_> = conn
                 .db()
@@ -300,8 +338,34 @@ fn execute(conn: &DbConnection, worker_id: u16, ev: &bindings::shard::EventLog) 
             }
         })
         .collect();
-    match conn.reducers().resolve(worker_id, ev.event_reference, results) {
-        Ok(()) => tracing::info!(ev = ev.event_reference, targets = ev.targets.len(), "resolved"),
+    // Convergent write: partition the row's target states by home shard. Foreign groups apply
+    // first via each shard's idempotent `resolve_foreign` (keyed by (my_shard, event_reference));
+    // only once every foreign shard has acked do we `resolve` the local group — which completes
+    // the row + releases holds. A crash before the local resolve leaves the row RUNNING; the
+    // re-drive re-applies (foreign dedups), then completes → converges. (`lifecycle.md`.)
+    let mut local: Vec<TargetState> = Vec::new();
+    let mut foreign: BTreeMap<u16, Vec<TargetState>> = BTreeMap::new();
+    for ts in results {
+        let home = home_shard(ts.entity_key, my_shard);
+        if home == my_shard {
+            local.push(ts);
+        } else {
+            foreign.entry(home).or_default().push(ts);
+        }
+    }
+    for (shard_id, group) in &foreign {
+        let Some(fconn) = shard_conn(shards, *shard_id) else {
+            tracing::warn!(ev = ev.event_reference, shard = shard_id, "no connection to target shard — deferring");
+            return; // can't converge without the shard; leave RUNNING, retry next pass
+        };
+        if let Err(err) = fconn.reducers().resolve_foreign(my_shard, ev.event_reference, ev.event_tic, group.clone()) {
+            tracing::warn!(%err, ev = ev.event_reference, shard = shard_id, "resolve_foreign failed — deferring");
+            return; // foreign write didn't land; don't complete the row yet
+        }
+        tracing::info!(ev = ev.event_reference, shard = shard_id, n = group.len(), "converged foreign targets");
+    }
+    match conn.reducers().resolve(worker_id, ev.event_reference, local) {
+        Ok(()) => tracing::info!(ev = ev.event_reference, targets = ev.targets.len(), foreign = foreign.len(), "resolved"),
         Err(err) => tracing::warn!(%err, ev = ev.event_reference, "resolve failed"),
     }
 }

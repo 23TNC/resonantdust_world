@@ -145,6 +145,17 @@ macro_rules! decl_tick_pipeline {
             pub state_log_id: u64,
         }
 
+        /// Cross-shard convergence dedup. When a row on **another** shard writes a target that
+        /// lives here, the worker calls [`resolve_foreign`] on this shard; the `(source_shard,
+        /// event_reference)` pair is recorded so a crash-recovery re-drive is a no-op (idempotent
+        /// per the row's identity — `docs/spacetime-tables/lifecycle.md` §convergent write).
+        #[table(accessor = applied_foreign, public)]
+        pub struct AppliedForeign {
+            /// `(source_shard as u128) << 64 | event_reference` — the convergence idempotency key.
+            #[primary_key]
+            pub id: u128,
+        }
+
         // ── cold side (schema now; find-or-mint / PACK land in S6) ──────────────────
 
         /// Settled, packed static objects — one row per `(zone, type_reference)`.
@@ -393,6 +404,33 @@ macro_rules! decl_tick_pipeline {
             }
             release_holds(ctx, event_reference);
             set_status(ctx, ev, $crate::STATUS_COMPLETE);
+            Ok(())
+        }
+
+        /// Convergent cross-shard write: apply a row's targets that live on **this** shard when
+        /// the row itself is owned by `source_shard`. Idempotent by `(source_shard,
+        /// event_reference)` — a re-drive after a mid-write crash is a no-op. This shard holds no
+        /// `event_log` row for the event (it lives on the source), so there's no fence and no
+        /// status transition here; the **worker** completes the row on the source shard only once
+        /// every target shard's `resolve_foreign` has returned (`lifecycle.md` §convergent write).
+        /// `tic` is the row's `event_tic`, carried explicitly since this shard can't read it.
+        #[reducer]
+        pub fn resolve_foreign(ctx: &ReducerContext, source_shard: u16, event_reference: u64, tic: u32, results: Vec<TargetState>) -> Result<(), String> {
+            let key = ((source_shard as u128) << 64) | (event_reference as u128);
+            if ctx.db.applied_foreign().id().find(key).is_some() {
+                return Ok(()); // already converged here — idempotent no-op
+            }
+            for ts in results {
+                if let Some(r) = find_state_log(ctx, ts.entity_key, tic) {
+                    ctx.db.state_log().id().delete(r.id);
+                }
+                let resolved = ctx.db.state_log().insert(StateLog {
+                    id: 0, entity_key: ts.entity_key, tic, dirty: 0,
+                    $( $pf: ts.$pf, )*
+                });
+                promote(ctx, &resolved);
+            }
+            ctx.db.applied_foreign().insert(AppliedForeign { id: key });
             Ok(())
         }
 

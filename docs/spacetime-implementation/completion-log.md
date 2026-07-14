@@ -71,3 +71,31 @@ event read the actor's hp (50) at `≤ T−1` and the blow landed → **victim 7
 
 **Note.** Uses the D3 operand form (`u32` identity in the word) — the full `hot_reference` re-key
 (#5) stays deferred; it isn't needed for actor-reads after all.
+
+### 4. Convergent cross-shard writes ✅
+
+**What.** A row's targets may live on shards other than the one its `event_log` row sits on. The
+worker now computes every target's state (reading each target's **base from its home shard**),
+then **partitions by home shard**: foreign groups apply first via that shard's new
+`resolve_foreign(source_shard, event_reference, tic, results)` — **idempotent** by the
+`(source_shard, event_reference)` key it records in an `applied_foreign` table — and only once
+**every** foreign shard has acked does the worker call `resolve` on the source shard, which
+commits the local targets *and* completes the row + releases holds. A crash before the final
+`resolve` leaves the row `RUNNING`; the re-drive re-applies (foreign shards dedup) then completes
+→ **exactly-once, eventually-consistent**, never 2PC (matches
+[lifecycle.md](../spacetime-tables/lifecycle.md) §convergent write). The enqueue phase stands up
+pending rows only for **local** targets (foreign targets are skipped there — see the follow-up).
+
+**How verified (live, two real shard DBs).** Shard A (`shard_id=1`, source) + shard B (`=2`,
+home). A pawn seeded on **B** at loc 17. A `MOVE` appended on **A** targeting B's pawn. Result:
+**B's pawn moved 17 → 34** (foreign write landed), **B's `applied_foreign` held `(1<<64)|1`**
+(the convergence key), **A's row completed** (then GC'd) with **no local state on A**. Worker log:
+`converged foreign targets ev=1 shard=2` → `resolved ev=1 foreign=1`. **Idempotency:** re-issuing
+`resolve_foreign` with the same key but a different location **no-op'd** — the pawn stayed at 34,
+proving the re-drive converges to exactly-once.
+
+**Follow-up (noted, not silently dropped).** A foreign target gets **no Phase-1 pending row /
+holder on its home shard** during the in-flight window (its stand-up is skipped there), so the
+home shard's read-rule/GC don't "see" the incoming write until it lands — the design's accepted
+"eventually-consistent over a tic or two." The cross-shard *hold* (Phase-1) is the remaining
+sub-item; the convergent *write* (Phase-2) is done.

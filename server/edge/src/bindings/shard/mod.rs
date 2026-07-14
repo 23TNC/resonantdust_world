@@ -11,6 +11,7 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
+pub mod applied_foreign_type;
 pub mod cold_type;
 pub mod cold_removed_type;
 pub mod event_log_type;
@@ -31,11 +32,13 @@ pub mod mint_cold_reducer;
 pub mod pack_settle_reducer;
 pub mod ready_reducer;
 pub mod resolve_reducer;
+pub mod resolve_foreign_reducer;
 pub mod seed_cold_row_reducer;
 pub mod seed_entity_reducer;
 pub mod set_shard_id_reducer;
 pub mod stand_up_reducer;
 pub mod tick_gc_reducer;
+pub mod applied_foreign_table;
 pub mod cold_table;
 pub mod cold_removed_table;
 pub mod event_log_table;
@@ -46,6 +49,7 @@ pub mod state_table;
 pub mod state_log_table;
 pub mod tic_meta_table;
 
+pub use applied_foreign_type::AppliedForeign;
 pub use cold_type::Cold;
 pub use cold_removed_type::ColdRemoved;
 pub use event_log_type::EventLog;
@@ -57,6 +61,7 @@ pub use state_type::State;
 pub use state_log_type::StateLog;
 pub use target_state_type::TargetState;
 pub use tic_meta_type::TicMeta;
+pub use applied_foreign_table::*;
 pub use cold_table::*;
 pub use cold_removed_table::*;
 pub use event_log_table::*;
@@ -75,6 +80,7 @@ pub use mint_cold_reducer::mint_cold;
 pub use pack_settle_reducer::pack_settle;
 pub use ready_reducer::ready;
 pub use resolve_reducer::resolve;
+pub use resolve_foreign_reducer::resolve_foreign;
 pub use seed_cold_row_reducer::seed_cold_row;
 pub use seed_entity_reducer::seed_entity;
 pub use set_shard_id_reducer::set_shard_id;
@@ -132,6 +138,12 @@ pub enum Reducer {
         event_reference: u64,
         results: Vec::<TargetState>,
 }    ,
+    ResolveForeign {
+        source_shard: u16,
+        event_reference: u64,
+        tic: u32,
+        results: Vec::<TargetState>,
+}    ,
     SeedColdRow {
         zone_id: u32,
         type_reference: u32,
@@ -175,6 +187,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::PackSettle { .. } => "pack_settle",
             Reducer::Ready { .. } => "ready",
             Reducer::Resolve { .. } => "resolve",
+            Reducer::ResolveForeign { .. } => "resolve_foreign",
             Reducer::SeedColdRow { .. } => "seed_cold_row",
             Reducer::SeedEntity { .. } => "seed_entity",
             Reducer::SetShardId { .. } => "set_shard_id",
@@ -264,6 +277,17 @@ Reducer::MintCold{
                 event_reference: event_reference.clone(),
                 results: results.clone(),
 }),
+            Reducer::ResolveForeign{
+                source_shard,
+                event_reference,
+                tic,
+                results,
+}             => __sats::bsatn::to_vec(&resolve_foreign_reducer::ResolveForeignArgs {
+                source_shard: source_shard.clone(),
+                event_reference: event_reference.clone(),
+                tic: tic.clone(),
+                results: results.clone(),
+}),
             Reducer::SeedColdRow{
                 zone_id,
                 type_reference,
@@ -317,7 +341,8 @@ _ => unreachable!(),
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct DbUpdate {
-        cold: __sdk::TableUpdate<Cold>,
+        applied_foreign: __sdk::TableUpdate<AppliedForeign>,
+    cold: __sdk::TableUpdate<Cold>,
     cold_removed: __sdk::TableUpdate<ColdRemoved>,
     event_log: __sdk::TableUpdate<EventLog>,
     holder: __sdk::TableUpdate<Holder>,
@@ -336,7 +361,8 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
         for table_update in __sdk::transaction_update_iter_table_updates(raw) {
             match &table_update.table_name[..] {
 
-        "cold" => db_update.cold.append(cold_table::parse_table_update(table_update)?),
+        "applied_foreign" => db_update.applied_foreign.append(applied_foreign_table::parse_table_update(table_update)?),
+    "cold" => db_update.cold.append(cold_table::parse_table_update(table_update)?),
     "cold_removed" => db_update.cold_removed.append(cold_removed_table::parse_table_update(table_update)?),
     "event_log" => db_update.event_log.append(event_log_table::parse_table_update(table_update)?),
     "holder" => db_update.holder.append(holder_table::parse_table_update(table_update)?),
@@ -367,7 +393,8 @@ impl __sdk::DbUpdate for DbUpdate {
     fn apply_to_client_cache(&self, cache: &mut __sdk::ClientCache<RemoteModule>) -> AppliedDiff<'_> {
                     let mut diff = AppliedDiff::default();
                 
-                diff.cold = cache.apply_diff_to_table::<Cold>("cold", &self.cold).with_updates_by_pk(|row| &row.cold_key);
+                diff.applied_foreign = cache.apply_diff_to_table::<AppliedForeign>("applied_foreign", &self.applied_foreign).with_updates_by_pk(|row| &row.id);
+        diff.cold = cache.apply_diff_to_table::<Cold>("cold", &self.cold).with_updates_by_pk(|row| &row.cold_key);
         diff.cold_removed = cache.apply_diff_to_table::<ColdRemoved>("cold_removed", &self.cold_removed).with_updates_by_pk(|row| &row.zone_key);
         diff.event_log = cache.apply_diff_to_table::<EventLog>("event_log", &self.event_log).with_updates_by_pk(|row| &row.event_reference);
         diff.holder = cache.apply_diff_to_table::<Holder>("holder", &self.holder).with_updates_by_pk(|row| &row.id);
@@ -383,7 +410,8 @@ fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "cold" => db_update.cold.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                                "applied_foreign" => db_update.applied_foreign.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "cold" => db_update.cold.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "cold_removed" => db_update.cold_removed.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "holder" => db_update.holder.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
@@ -399,7 +427,8 @@ fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "cold" => db_update.cold.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                                "applied_foreign" => db_update.applied_foreign.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "cold" => db_update.cold.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "cold_removed" => db_update.cold_removed.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "holder" => db_update.holder.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
@@ -417,7 +446,8 @@ for table_rows in raw.tables {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
-        cold: __sdk::TableAppliedDiff<'r, Cold>,
+        applied_foreign: __sdk::TableAppliedDiff<'r, AppliedForeign>,
+    cold: __sdk::TableAppliedDiff<'r, Cold>,
     cold_removed: __sdk::TableAppliedDiff<'r, ColdRemoved>,
     event_log: __sdk::TableAppliedDiff<'r, EventLog>,
     holder: __sdk::TableAppliedDiff<'r, Holder>,
@@ -436,7 +466,8 @@ impl __sdk::InModule for AppliedDiff<'_> {
 
 impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     fn invoke_row_callbacks(&self, event: &EventContext, callbacks: &mut __sdk::DbCallbacks<RemoteModule>) {
-                callbacks.invoke_table_row_callbacks::<Cold>("cold", &self.cold, event);
+                callbacks.invoke_table_row_callbacks::<AppliedForeign>("applied_foreign", &self.applied_foreign, event);
+        callbacks.invoke_table_row_callbacks::<Cold>("cold", &self.cold, event);
         callbacks.invoke_table_row_callbacks::<ColdRemoved>("cold_removed", &self.cold_removed, event);
         callbacks.invoke_table_row_callbacks::<EventLog>("event_log", &self.event_log, event);
         callbacks.invoke_table_row_callbacks::<Holder>("holder", &self.holder, event);
@@ -1096,7 +1127,8 @@ impl __sdk::SpacetimeModule for RemoteModule {
     type QueryBuilder = __sdk::QueryBuilder;
 
 fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
-                cold_table::register_table(client_cache);
+                applied_foreign_table::register_table(client_cache);
+        cold_table::register_table(client_cache);
         cold_removed_table::register_table(client_cache);
         event_log_table::register_table(client_cache);
         holder_table::register_table(client_cache);
@@ -1107,7 +1139,8 @@ fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
         tic_meta_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
-                "cold",
+                "applied_foreign",
+        "cold",
         "cold_removed",
         "event_log",
         "holder",

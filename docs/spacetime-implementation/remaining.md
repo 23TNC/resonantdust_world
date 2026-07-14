@@ -14,10 +14,12 @@ specifies them.
   (actor-reading) implemented; more verbs are additive.
 - ~~Execution is not tic-gated~~ — **DONE** ([completion-log](completion-log.md) #1): the worker
   resolves only a sealed tic (`master ≥ event_tic`).
-- **Single-shard only — no cross-shard convergent writes.** `resolve` commits all a row's
-  `TargetState`s in one reducer call on one shard. A row whose targets span shards is not
-  handled (no idempotent per-`(source_shard, event_reference)` writes, no "complete when all
-  shards applied"). ([../spacetime-tables/lifecycle.md] §convergent write.)
+- ~~Single-shard only — no cross-shard convergent writes~~ — **DONE**
+  ([completion-log](completion-log.md) #4): foreign targets apply via idempotent
+  `resolve_foreign` keyed by `(source_shard, event_reference)`; the row completes only once all
+  target shards acked; re-drive dedups → exactly-once. **Sub-item still open:** a foreign
+  target's **Phase-1 pending row / holder on its home shard** (in-flight read-rule/GC visibility);
+  the *write* converges, the in-flight *hold* is eventually-consistent.
 - ~~No deterministic composition~~ — **DONE** ([completion-log](completion-log.md) #1): a
   target's value folds all its events in `event_reference` order.
 - ~~No operand-read defer (`read_rule`)~~ — **DONE** ([completion-log](completion-log.md) #3):
