@@ -15,18 +15,12 @@ use spacetimedb_sdk::__codegen::{
 pub struct EventLog {
     pub event_reference: u64,
     pub event_tic: u32,
-    pub source_server_reference: u16,
-    pub actor_server_reference: u16,
-    pub requesting_server_reference: u16,
-    pub worker_server_reference: u16,
-    pub trigger_server_reference: u16,
-    pub trigger_event_reference: u64,
-    pub actor_key: u64,
-    pub target_key: u64,
-    pub action: u16,
-    pub data_0: u64,
-    pub data_1: u64,
+    pub actions: Vec::<u64>,
+    pub targets: Vec::<u64>,
+    pub worker_reference: u16,
     pub status: u8,
+    pub failed: bool,
+    pub tic_state_change: u32,
 }
 
 
@@ -41,18 +35,12 @@ impl __sdk::InModule for EventLog {
 pub struct EventLogCols {
     pub event_reference: __sdk::__query_builder::Col<EventLog, u64>,
     pub event_tic: __sdk::__query_builder::Col<EventLog, u32>,
-    pub source_server_reference: __sdk::__query_builder::Col<EventLog, u16>,
-    pub actor_server_reference: __sdk::__query_builder::Col<EventLog, u16>,
-    pub requesting_server_reference: __sdk::__query_builder::Col<EventLog, u16>,
-    pub worker_server_reference: __sdk::__query_builder::Col<EventLog, u16>,
-    pub trigger_server_reference: __sdk::__query_builder::Col<EventLog, u16>,
-    pub trigger_event_reference: __sdk::__query_builder::Col<EventLog, u64>,
-    pub actor_key: __sdk::__query_builder::Col<EventLog, u64>,
-    pub target_key: __sdk::__query_builder::Col<EventLog, u64>,
-    pub action: __sdk::__query_builder::Col<EventLog, u16>,
-    pub data_0: __sdk::__query_builder::Col<EventLog, u64>,
-    pub data_1: __sdk::__query_builder::Col<EventLog, u64>,
+    pub actions: __sdk::__query_builder::Col<EventLog, Vec::<u64>>,
+    pub targets: __sdk::__query_builder::Col<EventLog, Vec::<u64>>,
+    pub worker_reference: __sdk::__query_builder::Col<EventLog, u16>,
     pub status: __sdk::__query_builder::Col<EventLog, u8>,
+    pub failed: __sdk::__query_builder::Col<EventLog, bool>,
+    pub tic_state_change: __sdk::__query_builder::Col<EventLog, u32>,
 }
 
 impl __sdk::__query_builder::HasCols for EventLog {
@@ -61,18 +49,12 @@ impl __sdk::__query_builder::HasCols for EventLog {
         EventLogCols {
             event_reference: __sdk::__query_builder::Col::new(table_name, "event_reference"),
             event_tic: __sdk::__query_builder::Col::new(table_name, "event_tic"),
-            source_server_reference: __sdk::__query_builder::Col::new(table_name, "source_server_reference"),
-            actor_server_reference: __sdk::__query_builder::Col::new(table_name, "actor_server_reference"),
-            requesting_server_reference: __sdk::__query_builder::Col::new(table_name, "requesting_server_reference"),
-            worker_server_reference: __sdk::__query_builder::Col::new(table_name, "worker_server_reference"),
-            trigger_server_reference: __sdk::__query_builder::Col::new(table_name, "trigger_server_reference"),
-            trigger_event_reference: __sdk::__query_builder::Col::new(table_name, "trigger_event_reference"),
-            actor_key: __sdk::__query_builder::Col::new(table_name, "actor_key"),
-            target_key: __sdk::__query_builder::Col::new(table_name, "target_key"),
-            action: __sdk::__query_builder::Col::new(table_name, "action"),
-            data_0: __sdk::__query_builder::Col::new(table_name, "data_0"),
-            data_1: __sdk::__query_builder::Col::new(table_name, "data_1"),
+            actions: __sdk::__query_builder::Col::new(table_name, "actions"),
+            targets: __sdk::__query_builder::Col::new(table_name, "targets"),
+            worker_reference: __sdk::__query_builder::Col::new(table_name, "worker_reference"),
             status: __sdk::__query_builder::Col::new(table_name, "status"),
+            failed: __sdk::__query_builder::Col::new(table_name, "failed"),
+            tic_state_change: __sdk::__query_builder::Col::new(table_name, "tic_state_change"),
 
         }
     }
@@ -84,7 +66,6 @@ impl __sdk::__query_builder::HasCols for EventLog {
 pub struct EventLogIxCols {
     pub event_reference: __sdk::__query_builder::IxCol<EventLog, u64>,
     pub event_tic: __sdk::__query_builder::IxCol<EventLog, u32>,
-    pub target_key: __sdk::__query_builder::IxCol<EventLog, u64>,
 }
 
 impl __sdk::__query_builder::HasIxCols for EventLog {
@@ -93,7 +74,6 @@ impl __sdk::__query_builder::HasIxCols for EventLog {
         EventLogIxCols {
             event_reference: __sdk::__query_builder::IxCol::new(table_name, "event_reference"),
             event_tic: __sdk::__query_builder::IxCol::new(table_name, "event_tic"),
-            target_key: __sdk::__query_builder::IxCol::new(table_name, "target_key"),
 
         }
     }

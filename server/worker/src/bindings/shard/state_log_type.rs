@@ -24,10 +24,6 @@ pub struct StateLog {
     pub offset: u8,
     pub data_0: u64,
     pub data_1: u64,
-    pub server_id: u16,
-    pub created_at: u32,
-    pub assigned_at: u32,
-    pub status: u8,
 }
 
 
@@ -51,10 +47,6 @@ pub struct StateLogCols {
     pub offset: __sdk::__query_builder::Col<StateLog, u8>,
     pub data_0: __sdk::__query_builder::Col<StateLog, u64>,
     pub data_1: __sdk::__query_builder::Col<StateLog, u64>,
-    pub server_id: __sdk::__query_builder::Col<StateLog, u16>,
-    pub created_at: __sdk::__query_builder::Col<StateLog, u32>,
-    pub assigned_at: __sdk::__query_builder::Col<StateLog, u32>,
-    pub status: __sdk::__query_builder::Col<StateLog, u8>,
 }
 
 impl __sdk::__query_builder::HasCols for StateLog {
@@ -72,10 +64,6 @@ impl __sdk::__query_builder::HasCols for StateLog {
             offset: __sdk::__query_builder::Col::new(table_name, "offset"),
             data_0: __sdk::__query_builder::Col::new(table_name, "data_0"),
             data_1: __sdk::__query_builder::Col::new(table_name, "data_1"),
-            server_id: __sdk::__query_builder::Col::new(table_name, "server_id"),
-            created_at: __sdk::__query_builder::Col::new(table_name, "created_at"),
-            assigned_at: __sdk::__query_builder::Col::new(table_name, "assigned_at"),
-            status: __sdk::__query_builder::Col::new(table_name, "status"),
 
         }
     }
