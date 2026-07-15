@@ -1,10 +1,17 @@
 # Design — the reference model (definition / position / data)
 
-_The shape. Authoritative as of 2026-07-14; supersedes the v1 layout in
-[`object-model.md`](object-model.md) §3 and the v1 parts of [`references/`](references/) (kept as
-historical rationale). **The code now matches this doc** — `object.rs`/`refs.rs` were re-cut and
-browser-verified (2026-07-14); the one remaining piece is retiring the legacy world-global `zone_id`
-([`work/…/todo.md`](../../../../work/spacetime-rewrite/todo.md)). Rationale in
+> **Authoritative for the *reasoning*, not the bits.** As of 2026-07-15,
+> [`docs/VARIABLES.md`](../../../../VARIABLES.md) is the authority for every cross-component
+> variable's **name, width, and layout**. This doc owns *why* those shapes are what they are — the
+> definition/position/data split, the uniqueness rule, the cold/hot boundary, what changed from v1.
+> **The layouts reproduced below are for reading alongside the argument; if one disagrees with
+> VARIABLES.md, VARIABLES.md wins and the copy here is the bug.**
+
+_Supersedes the v1 layout in [`object-model.md`](object-model.md) §3 and the v1 parts of
+[`references/`](references/) (kept as historical rationale). **The code matches** —
+`object.rs`/`refs.rs` were re-cut and browser-verified (2026-07-14); the one remaining piece is
+retiring the legacy world-global `zone_id`
+([`work/…/todo.md`](../../../../work/spacetime-rewrite/todo.md)). Further rationale in
 [`../intent/reference-model.md`](../intent/reference-model.md)._
 
 An object is described by **three orthogonal references** — *what* it is, *where* it is, and its

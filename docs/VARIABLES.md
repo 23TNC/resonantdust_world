@@ -1,17 +1,30 @@
-# Variables — the name registry
+# Variables — the cross-component reference
 
-_Every named bit-layout the repo shares, in one place. **Not authoritative** — the shapes and the
-reasoning behind them live in [`components/shared/codec/design/reference-model.md`](components/shared/codec/design/reference-model.md);
-the code of record is `shared/codec/src/{object,refs,event_word,packed}.rs`. This file exists to
-answer "what is this variable called, how wide is it, what's inside it" without reading either._
+> **AUTHORITATIVE** for every cross-component variable: its **name, width, and bit layout**.
+> Established 2026-07-15. Where anything disagrees with this file — another doc, a comment, or the
+> code itself — **this file wins and the other is the bug**.
 
-**Why a registry.** These names cross every component — the codec mints them, the modules store
-them, the edge routes on them, the DSL packs them into words, the client decodes them. A name that
-drifts between two of those is a live bug. One flat list is the cheap way to keep them honest.
+_Scope. This file owns the **shapes**. It does not own the **reasoning**: why a shape is what it is,
+what the uniqueness rules are, and where the cold/hot boundary falls live in
+[`components/shared/codec/design/reference-model.md`](components/shared/codec/design/reference-model.md),
+which is authoritative for exactly that and defers to this file for bits. The implementation is
+`shared/codec/src/{object,refs,event_word,packed}.rs` — it is the code **of record**, not the source
+of truth; when it drifts from this file, conform the code._
+
+**Why this is the authority.** These names cross every component — the codec mints them, the modules
+store them, the edge routes on them, the DSL packs them into words, the client decodes them. A name
+or a nibble order that drifts between any two of those is a live bug, and a silent one. One file, one
+answer.
+
+**Changing a layout.** Edit here first, then conform the code and any doc that reproduces it. A
+layout change is a wire/storage break: everything that packs or unpacks it has to move together.
 
 **Reading convention.** Indentation = decomposition; children are listed **high bits first**, so
 the order you read them down the page is the order they sit in the word, left to right. A width on
 a parent is the sum of its children. Bit ranges are given where a layout is easy to get backwards.
+
+**Verified against the code** at `shared/codec` on 2026-07-15 — every bit range below was checked
+against its shift constant, not transcribed.
 
 ---
 
