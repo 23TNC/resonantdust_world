@@ -97,7 +97,15 @@ An `entity_reference` is realm-unique only via its `server_reference`; crossing 
 
 ```
 u16 tic                           the simulation clock; WRAPS
+
+u64 state_uid                     the (tic, entity) slot — PK of state_log + state_events
+  u16 reserved                    bits 48–63
+  u16 tic                         bits 32–47
+  u32 entity_reference            bits 0–31
 ```
+
+`tic` above `entity_reference`, so ascending `state_uid` is tic-major: one tic's rows are
+contiguous, and `(entity, tic)` is an exact key.
 
 A ring, not a line. **Never compare with `<` / `<=`** — across the wrap they invert (`0` is after
 `65535`). Use serial arithmetic: `(a.wrapping_sub(b) as i16)` — positive = `a` after `b`.

@@ -145,23 +145,33 @@ Payload = the reference model's three orthogonal references, carried by both `st
 | `position_reference` | `u32` | where it is |
 | `data` | `u8` | its state |
 
-### `state_log` — per `(target, tic)` composition slot
+### `state_log` — per `(entity, tic)` composition slot
 
 | column | type | key | notes |
 |---|---|---|---|
-| `uid` | `u64` | PK | surrogate |
-| `target_reference` | `u32` | idx `(target_reference, tic)` | `entity_reference` |
-| `tic` | `u16` | idx | `tic` — wraps |
+| `uid` | `u64` | PK | `state_uid` — `reserved:16 \| tic:16 \| entity_reference:32`. Not a surrogate: it **is** `(tic, entity)`. |
 | *payload* | | | composed so far; seeded from the resolved value at `< tic` |
+| `flags` | `u8` | | bit 0 `SETTLED` (no events left → eligible to promote) · bit 1 `PROMOTED` |
+
+`tic` and `entity_reference` are read off `uid`, not stored again. Tic-major, so `where tic <= t`
+(promote) is a `uid` range scan and `(entity, tic)` is an exact PK lookup.
+
+### `state_events` — the pending-event list for a slot
+
+| column | type | key | notes |
+|---|---|---|---|
+| `uid` | `u64` | PK | `state_uid` — the `state_log` slot's, 1:1 |
 | `events` | `Vec<u32>` | | `event_reference`s still to apply, **ascending** |
-| `settled` | `bool` | | `events` empty → eligible to promote |
-| `promoted` | `bool` | | |
+
+Split out of `state_log` so the composition slot stays fixed-size — `state_log` is read and written
+every tic; the vector is touched only when the event set changes. A slot with no pending events has
+no row.
 
 ### `state` — client-visible latest
 
 | column | type | key | notes |
 |---|---|---|---|
-| `target_reference` | `u32` | PK | `entity_reference` |
+| `entity_reference` | `u32` | PK | |
 | `tic` | `u16` | | `tic` — the tic this value went live on |
 | *payload* | | | |
 

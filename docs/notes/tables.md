@@ -120,6 +120,40 @@ open — these are real holes, not paperwork:
 None of this blocks the schema — the columns are gone and the shape is smaller. It blocks the
 enqueue flow, which isn't built.
 
+### `state_log` — composite `uid`, `flags`, and the events split
+
+**`uid` is not a surrogate.** `reserved:16 | tic:16 | entity_reference:32` — it *is* `(tic, entity)`,
+so the design's two indexes come free: `find_or_create(entity, tic)` is an exact PK lookup, and
+`where tic <= t` (promote) is a range scan, because `tic` sits above `entity_reference` and one tic's
+rows are therefore contiguous. `tic` and `entity_reference` are read off the `uid`, not stored again.
+
+**`u32`, and what fills it.** The instruction said `u32 object_reference`, but VARIABLES defines
+`object_reference` as **u24** and `entity_reference` as **u32** (`server_reference:8 |
+object_reference:24`). Taken as `entity_reference`, because 32 is the width budgeted and it's the only
+32-bit object identifier in the model. The alternative reading is a bare `object_reference` — the
+shard *could* imply the server, since `declare_pending` routes to `home_shard(target)`, so every row
+is homed locally — which would make the layout `reserved:24 | tic:16 | object_reference:24` and
+contradict the stated `u16 reserved`. Worth confirming; it's a one-line change either way.
+
+**The read rule loses its index.** `refresh_ready`'s READ branch asks *"no `state_log` row
+`(entity, t)` with `t <= h.tic` and not settled"* — a per-entity question across tics. `uid` is
+tic-major, so one entity's rows are scattered and this is a scan. Fixing it means either an index on
+`entity_reference` (which SpacetimeDB needs as a real column — reintroducing the duplication the
+composite `uid` removed) or an entity-major `uid` (`reserved | entity | tic`), which would cost
+`promote`'s range scan instead. One of the two queries pays; today it's the read rule.
+
+**`flags : u8` replaces `settled` + `promoted`.** Two bools were two bytes in practice. Bit 0
+`SETTLED`, bit 1 `PROMOTED`, six spare.
+
+**`state_events` is 1:1 with `state_log`, split by access pattern.** `state_log` is read and written
+every tic by `refresh_ready` / `apply`; the event vector changes only when the event set does. Keeping
+a `Vec<u32>` inline made every composition slot variable-width for a field most passes don't touch. A
+slot with no pending events has no row, which also makes "settled" checkable by absence.
+
+**`state.target_reference` → `entity_reference`** for the same vocabulary, though only `state_log` was
+named in the instruction — the two address the same thing and diverging names would be worse than the
+edit.
+
 ### `failed` dropped — folded into `status`
 
 Pure redundancy: every site that set `failed = true` also set `status = QUEUE_FAILED`

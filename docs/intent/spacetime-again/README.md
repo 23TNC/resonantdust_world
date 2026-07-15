@@ -13,8 +13,17 @@
 >   sets must now be recovered from the program, and *who* does that is unresolved. §Open's partition
 >   policy (`home_shard(targets[0])`) loses its input too.
 > - **`failed` is gone**, folded into `status` (it was pure redundancy with `QUEUE_FAILED`).
-> - **Widths**: `tic` is a wrapping `u16`; `worker_reference` `u8`; entity keys and
->   `target_reference` `u32`; `actions` `Vec<u32>`.
+> - **`state_log.uid` is composite** — `reserved:16 | tic:16 | entity_reference:32` — so it *is*
+>   `(tic, entity)`; `tic` and `target_reference` are not separate columns. `settled` + `promoted`
+>   are a `flags:u8`. The `events` vector moved to its own 1:1 table, `state_events`, keyed by the
+>   same `uid`.
+> - `target_reference` is named **`entity_reference`** throughout.
+> - **Widths**: `tic` is a wrapping `u16`; `worker_reference` `u8`; entity keys `u32`; `actions`
+>   `Vec<u32>`.
+>
+> One consequence worth carrying into the flow: `refresh_ready`'s READ branch ("no `state_log` row
+> `(entity, t)` with `t <= h.tic` and !settled") is a **per-entity** query, and the composite `uid` is
+> tic-major — so that lookup has no index. See [`notes/tables.md`](../../notes/tables.md).
 >
 > The pseudocode below still reads `e.targets` / `e.reads` / `e.failed`. Treat those as the open
 > question, not as the shape.
