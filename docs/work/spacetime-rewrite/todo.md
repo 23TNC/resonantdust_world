@@ -15,49 +15,15 @@ otherwise.
 
 ---
 
-## P1 · Restore the gates, clear the deck
+## P1 · Restore the gates, clear the deck — ✅ **DONE (2026-07-14)**
 
-Cheap, and first: **two of our three build gates don't gate** — the workspace `check` skips the
-wasm's `js`-gated code (**D-7**) and `cargo test` is red at HEAD. P2 is the largest refactor in the
-backlog; starting it without a working suite is how a D-3-class bug reaches the browser again.
+T-6/T-7/T-8 landed → [completed.md](completed.md). `cargo test --workspace` gates again (107
+tests, green for the first time). **D-7 still stands:** the workspace `check` skips the wasm's
+`js`-gated code, so `rd build shared` remains the real compile gate — that one is a tooling fix we
+have not made.
 
-### T-6 · Get `cargo test --workspace` green (the pre-existing red test)
-
-- `dsl::loader::material_registry_and_packed_channels` panics at
-  [loader.rs:802](../../../shared/dsl/src/loader.rs) — `visual_for_def(2)` (stone) → `None`.
-  Pre-existing at HEAD, unrelated to the re-cut (`dsl` doesn't depend on `codec`) →
-  [issues.md](issues.md).
-- Work out whether the **test fixture** drifted or the **loader** regressed (git-log
-  `shared/dsl/src/loader.rs` + the `content/` corpus it builds against; the DSL maps tile
-  name ⇄ def_id ⇄ visual). Fix the correct side.
-- **Do not** delete the assertion/test to go green, and don't paper over a real content-loading bug.
-- Done = `docker compose -f shared/compose.yml run --rm test` fully green.
-
-### T-7 · #3 · Delete the dead modules
-
-- Per [cleanup.md](../../components/server/spacetime/modules/shard/plan/cleanup.md):
-  `git rm -r server/spacetime/server/modules/{cold_tiles,cold_things,experiment}`; remove the
-  `cold_tiles) / cold_things)` fam arms in `bin/lib/redeploy.sh` + any
-  `default_cold_tiles_db()` / `default_cold_things_db()` and config references.
-- Their wire paths were retired in `2b2fc58` / `d47f152`; only the dirs + build wiring remain.
-- Done = `rd redeploy` plans cleanly without them; nothing references the deleted dbs.
-
-### T-8 · #9 · Drop `priority` from `shared/tick` — *the `Phase` half moved to P2*
-
-- The design's ordering model is explicit `await`s + the read rule (`resolved_through`), reads at
-  **≤ T−1** → DAG by tic → deadlock-free. **No `Phase`, no priority-DAG.**
-- ✅ **`priority` is deletable now** — `priority.rs` (`priority`, `rank`, `actor_read_tic`) had
-  **no callers anywhere**; only its own tests used it. Dead code, gone.
-- ⛔ **`Phase` is NOT** — `resolve_events` composes a tic's events **by phase**
-  (Inbound → Data → Outbound), so it is live ordering behaviour, and the design's replacement
-  (explicit `await`s + the read rule) doesn't exist yet. Deleting it now would change resolution
-  order with nothing to take its place.
-- **My mis-scope, recorded:** P1 called this a cheap ride-along deletion. It's half that. Divergence
-  **#9 said so already** — *"delete `Phase` and `priority` **as the DSL lands (S3/S4)**"* — and I
-  put the whole item in P1 without reading its fix line. The `Phase` half is now **part of T-9**,
-  where the replacement ordering actually gets built.
-- `shared/tick` has **no component folder yet** — create it lazily only if this grows past a
-  deletion.
+**One item didn't finish as scoped:** #9's `Phase` half is live ordering, not vestigial, so it
+moved into **T-9** where its replacement gets built. See T-8 in [completed.md](completed.md).
 
 ---
 

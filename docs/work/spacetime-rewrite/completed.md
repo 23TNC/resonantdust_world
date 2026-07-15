@@ -149,6 +149,24 @@ follows the log. (Was `docs/spacetime-implementation/completion-log.md`, now ret
   two targets at tile (7,7) differing only in `layer_reference` each minted exactly the object they
   named (`type_id=2` tree vs `type_id=1` ground; both `kind=1`, which is what masked it). Browser:
   forest + wolves render on the new schema.
+- **2026-07-14** · **P1 — restored the build gates + cleared the deck** (T-6/T-7/T-8).
+  **T-6:** `cargo test --workspace` is **green for the first time** (107 tests). The red
+  `dsl::loader::material_registry_and_packed_channels` was **born red** — it fails identically at
+  `d25b872`, the commit that added it, and the `?` on the base tint predates it (`6612de0`), so
+  nothing regressed. `node_visual` makes a base tint mandatory for a node to have *any* visual;
+  the fixture's stone set `texture` + `packed.0.{material,tint}` but no `&tile.tint`, which every
+  real def sets — including the real `::stone>` it miscopies. Fixed the fixture, assertions
+  untouched. The author's assumption (a def may bind only packed channels) is real and is logged
+  as an undecided fork, not silently overwritten. · f13426c
+  **T-7 (div #3 closed):** the docs overstated it — the module *sources* were already gone
+  (`2b2fc58`/`d47f152` deleted them; only `chat`/`index`/`players`/`shard` have been tracked
+  since), and with no `Cargo.toml` `rd_list_modules` never built them. What remained was ~530MB of
+  untracked `target/` detritus + the dead `cold_tiles)`/`cold_things)` `fam` arms in
+  `redeploy.sh`. Both gone; `rd redeploy` plans clean. · d16beee
+  **T-8 (div #9 half-closed):** `priority.rs` (`priority`/`rank`/`actor_read_tic`) had **no callers
+  anywhere** — deleted with its re-export + the stale priority-DAG prose. **`Phase` stayed**:
+  `resolve_events` composes a tic's events by phase, so it's live ordering, and #9's own fix line
+  already said *"as the DSL lands (S3/S4)"* — my P1 mis-scope. Its deletion moved into T-9. · 19a33be
 
 ## Detail — the full-design mechanisms (matching the shard `design/`+`intent/` in full)
 
