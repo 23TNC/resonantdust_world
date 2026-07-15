@@ -1,8 +1,8 @@
 //! The object-model reference layouts — the **definition / position / data** split of the 0.2.3
-//! reference model. Canonical shape:
-//! `docs/components/shared/codec/design/reference-model.md` (+ `references/spatial-references.md`).
+//! reference model. Authoritative shape: `docs/VARIABLES.md`.
 //!
-//! Three orthogonal references describe an object — *what* it is, *where* it is, its *state*:
+//! Three orthogonal references describe an object — *what* it is, *where* it is, its *state*.
+//! *Which* one it is, is [`crate::refs`]'s job (`entity_reference`), not this module's:
 //!
 //! ```text
 //! definition_reference : u32 = type_id:4 | subtype_id:12 | kind_id:12 | variant_id:4   (WHAT)
@@ -16,21 +16,22 @@
 //!   macro_position_reference : u16 = region:8 | zone:8    (the zone-subscription key)
 //!   micro_position_reference : u16 = tile_reference:8 | layer_reference:8
 //!     layer_reference : u8 = type_id:4 | layer_id:4
-//! cold_reference : u32 = the SAME layout, a distinct type (realm-scoped)
 //!
 //! cold_row_reference : u64 = reserved:28 | macro_position:16 | type_reference:16 | layer_id:4
 //! kind_pos_reference : u32 = kind_reference:16 | tile_reference:8 | data:8  (one per cold object)
 //! data : u8 = rotation:2 | count:6                        (per-instance state; decoded by type_id)
 //! ```
 //!
-//! `position_reference` and `cold_reference` share a layout but are two **types**, not one thing: a
-//! position is *a location* (any object has one); a `cold_reference` denotes *the settled object
-//! there*. A `cold_row_reference` addresses neither — it addresses the **row** that holds it, and is
-//! the composite of exactly the three header fields a row has, not an opaque surrogate.
+//! **A position is not an identity.** `position_reference` used to double as `cold_reference` — a
+//! second type over the same 32 bits, meaning "the settled object here, unpack it" — so an object
+//! could be addressed by its coordinates. That's gone: identity is an `entity_reference`
+//! (`server_reference:8 | object_reference:24`), and geography doesn't fit in 24 bits nor belong
+//! there. A `cold_row_reference` addresses neither a place nor an object — it addresses the **row**
+//! that holds one, and is the composite of exactly the three header fields a row has.
 //!
-//! `realm` is **not** in a `cold_reference` — a cold object lives in a realm-scoped shard, so the
-//! realm rides `server_reference` ([`crate::refs`]), not every reference. Pure integer math — the
-//! `type_id ↔ name` / `kind_id ↔ name` mapping is the registry's (content-derived) job.
+//! `realm` is **not** in a position — a cold object lives in a realm-scoped shard, so realm rides
+//! the `realm_server_reference` ([`crate::refs`]) on cross-realm traffic only. Pure integer math —
+//! the `type_id ↔ name` / `kind_id ↔ name` mapping is the registry's (content-derived) job.
 //!
 //! `type_id == 0` is the null/unset sentinel; real types are `1..=15`.
 
@@ -222,15 +223,16 @@ pub fn layer_ref_layer_id(r: u8) -> u8 {
 // ── position_reference : u32 = macro_position_reference:16 | micro_position_reference:16 ─────────
 //                            = region:8 | zone:8 | tile:8 | layer_reference:8
 //
-// **`position_reference` and `cold_reference` are two reference *types* that share this layout —
-// not one thing** (plan §position_reference). A `position_reference` is *a location*: any object
-// has one. A `cold_reference` is *the settled object at that location* — the same 32 bits, but it
-// denotes "unpack me". A hot object never has a `cold_reference`; you can never `unpack` a
-// `hot_reference`. They're told apart by `reference_id` or by context, never by their bits — so
-// they share one packer here, with `cold_reference` as a named alias for intent at call sites.
+// **A location, and only that.** It is *not* an identity: an `entity_reference` ([`crate::refs`])
+// is `server_reference:8 | object_reference:24`, and 32 bits of geography can't fit in a 24-bit
+// object_reference — nor should they. A position says where, a reference says which.
 //
-// Realm is omitted — a cold object lives in a realm-scoped shard, so realm rides
-// `server_reference` ([`crate::refs`]), never repeated per reference.
+// This layout used to double as `cold_reference`, a *second type over the same bits* meaning "the
+// settled object here, unpack it". That type is gone: addressing an object by its coordinates
+// conflated place with identity, and the tagged union it needed (`reference_id`) went with it.
+//
+// Realm is omitted — a cold object lives in a realm-scoped shard, so realm rides the
+// `realm_server_reference` ([`crate::refs`]) on cross-realm traffic, never per reference.
 
 const POSITION_MACRO_SHIFT: u32 = 16;
 const POSITION_BYTE_MASK: u32 = 0xFF;
@@ -275,33 +277,6 @@ pub fn position_layer_reference(r: u32) -> u8 {
     (r & POSITION_BYTE_MASK) as u8
 }
 
-// `cold_reference` — the same 32 bits, denoting *the settled object* at that position. Aliases, so
-// a call site says which of the two types it means (the plan keeps them distinct on purpose).
-/// Compose a `cold_reference` (a `position_reference` denoting the settled object there).
-pub fn pack_cold_reference(region: u8, zone: u8, tile: u8, layer_reference: u8) -> u32 {
-    pack_position_from_parts(region, zone, tile, layer_reference)
-}
-/// The `macro_position_reference` of a `cold_reference` — the cold row's macro key.
-pub fn cold_ref_macro_position(r: u32) -> u16 {
-    position_macro(r)
-}
-/// The `region_reference` of a `cold_reference`.
-pub fn cold_ref_region(r: u32) -> u8 {
-    position_region(r)
-}
-/// The `zone_reference` of a `cold_reference`.
-pub fn cold_ref_zone(r: u32) -> u8 {
-    position_zone(r)
-}
-/// The `tile_reference` of a `cold_reference`.
-pub fn cold_ref_tile(r: u32) -> u8 {
-    position_tile(r)
-}
-/// The `layer_reference` (`type_id:4 | layer_id:4`) of a `cold_reference`.
-pub fn cold_ref_layer_reference(r: u32) -> u8 {
-    position_layer_reference(r)
-}
-
 // ── cold_row_reference : u64 = reserved:28 | macro_position:16 | type_reference:16 | layer_id:4 ──
 //
 // The **cold row's identity** — the composite of exactly the three header fields the plan gives a
@@ -336,22 +311,22 @@ pub fn cold_row_layer_id(r: u64) -> u8 {
     (r & COLD_ROW_LAYER_MASK) as u8
 }
 
-/// The `cold_row_reference` that holds the object a `cold_reference` names, given its
-/// `subtype_id` (the one field a position doesn't carry). This is the row-selection key: filter on
-/// `(macro_position, type_id, layer_id)` — all off the reference — then match `tile_reference`
+/// The `cold_row_reference` that holds the object at `position_reference`, given its `subtype_id`
+/// (the one field a position doesn't carry). This is the row-selection key: filter on
+/// `(macro_position, type_id, layer_id)` — all off the position — then match `tile_reference`
 /// within the row.
-pub fn cold_row_of(cold_reference: u32, subtype_id: u16) -> u64 {
-    let layer = cold_ref_layer_reference(cold_reference);
+pub fn cold_row_of(position_reference: u32, subtype_id: u16) -> u64 {
+    let layer = position_layer_reference(position_reference);
     pack_cold_row_reference(
-        cold_ref_macro_position(cold_reference),
+        position_macro(position_reference),
         pack_type_reference(layer_ref_type_id(layer), subtype_id),
         layer_ref_layer_id(layer),
     )
 }
 
-/// Does a cold row's **header** hold the object a `cold_reference` names? Filter a zone's rows with
-/// this, then match `kind_pos_ref_tile(entry) == cold_ref_tile(cold_reference)` within the survivors
-/// — together those two are the whole row-selection rule.
+/// Does a cold row's **header** hold the object at `position_reference`? Filter a zone's rows with
+/// this, then match `kind_pos_ref_tile(entry) == position_tile(position_reference)` within the
+/// survivors — together those two are the whole row-selection rule.
 ///
 /// Subtype is deliberately not compared: uniqueness is one object per `(type, layer, tile)`
 /// **subtype-agnostic**, so across a zone's several subtype rows at this `(type, layer)` exactly one
@@ -360,13 +335,13 @@ pub fn cold_row_of(cold_reference: u32, subtype_id: u16) -> u64 {
 /// Comparing all three header fields is what D-3 lost: dropping them let a target naming a *thing*
 /// match the *ground* row under it (the ground layer is dense, so nearly every cell matched both).
 pub fn cold_row_selects(
-    cold_reference: u32,
+    position_reference: u32,
     row_macro_position: u16,
     row_type_reference: u16,
     row_layer_id: u8,
 ) -> bool {
-    let layer = cold_ref_layer_reference(cold_reference);
-    row_macro_position == cold_ref_macro_position(cold_reference)
+    let layer = position_layer_reference(position_reference);
+    row_macro_position == position_macro(position_reference)
         && type_ref_type_id(row_type_reference) == layer_ref_type_id(layer)
         && row_layer_id == layer_ref_layer_id(layer)
 }
@@ -534,8 +509,8 @@ mod tests {
             assert_eq!(position_micro(p), pack_micro_position(t, l));
             assert_eq!(p, pack_position_reference(pack_macro_position(reg, z), pack_micro_position(t, l)));
             // cold_reference is the SAME layout, a different *type* (plan: two types, one layout)
-            assert_eq!(pack_cold_reference(reg, z, t, l), p);
-            assert_eq!(cold_ref_macro_position(p), position_macro(p));
+            assert_eq!(pack_position_from_parts(reg, z, t, l), p);
+            assert_eq!(position_macro(p), position_macro(p));
         }
         assert_eq!(pack_position_from_parts(0xFF, 0xFF, 0xFF, 0xFF), u32::MAX);
         let lr = pack_layer_reference(3, 5);
@@ -573,16 +548,16 @@ mod tests {
     fn cold_row_of_selects_by_macro_type_and_layer() {
         // A cold_reference names macro + tile + (type_id, layer_id) — everything the row key needs
         // except subtype, which uniqueness makes unnecessary to *find* a row.
-        let cr = pack_cold_reference(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(2, 0));
+        let cr = pack_position_from_parts(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(2, 0));
         let row = cold_row_of(cr, 6); // subtype 6 = forest
         assert_eq!(cold_row_macro_position(row), pack_macro_position(0x12, 0x34));
         assert_eq!(cold_row_type_reference(row), pack_type_reference(2, 6));
         assert_eq!(cold_row_layer_id(row), 0);
         // The SAME tile at a different layer resolves to a DIFFERENT row (the D-3 bug).
-        let cr_l1 = pack_cold_reference(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(2, 1));
+        let cr_l1 = pack_position_from_parts(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(2, 1));
         assert_ne!(cold_row_of(cr_l1, 6), row);
         // ...and a different TYPE at the same tile+layer likewise (ground vs thing).
-        let cr_tile = pack_cold_reference(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(1, 0));
+        let cr_tile = pack_position_from_parts(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(1, 0));
         assert_ne!(cold_row_of(cr_tile, 6), row);
     }
 
@@ -612,32 +587,32 @@ mod tests {
 
         // Two targets at the SAME tile, differing only in `layer_reference`.
         let select = |type_id| {
-            let cr = pack_cold_reference(region, zone, tile, pack_layer_reference(type_id, 0));
+            let cr = pack_position_from_parts(region, zone, tile, pack_layer_reference(type_id, 0));
             rows.iter()
                 .filter(|&&(m, tr, l, _)| cold_row_selects(cr, m, tr, l))
-                .find_map(|&(_, tr, _, e)| (kind_pos_ref_tile(e) == cold_ref_tile(cr)).then_some(tr))
+                .find_map(|&(_, tr, _, e)| (kind_pos_ref_tile(e) == position_tile(cr)).then_some(tr))
         };
         assert_eq!(select(THING), Some(pack_type_reference(THING, 6)), "tree target must mint the tree");
         assert_eq!(select(GROUND), Some(pack_type_reference(GROUND, 6)), "ground target must mint the ground");
 
         // Exactly one row survives each filter — the selection is deterministic, not first-wins.
         for type_id in [GROUND, THING] {
-            let cr = pack_cold_reference(region, zone, tile, pack_layer_reference(type_id, 0));
+            let cr = pack_position_from_parts(region, zone, tile, pack_layer_reference(type_id, 0));
             assert_eq!(rows.iter().filter(|&&(m, tr, l, _)| cold_row_selects(cr, m, tr, l)).count(), 1);
         }
 
         // A target on a layer nothing occupies selects nothing (rather than the layer-0 ground).
-        let empty = pack_cold_reference(region, zone, tile, pack_layer_reference(THING, 1));
+        let empty = pack_position_from_parts(region, zone, tile, pack_layer_reference(THING, 1));
         assert!(!rows.iter().any(|&(m, tr, l, _)| cold_row_selects(empty, m, tr, l)));
 
         // ...and a neighbouring zone's identical rows never match (macro_position discriminates).
-        let far = pack_cold_reference(region, zone + 1, tile, pack_layer_reference(THING, 0));
+        let far = pack_position_from_parts(region, zone + 1, tile, pack_layer_reference(THING, 0));
         assert!(!rows.iter().any(|&(m, tr, l, _)| cold_row_selects(far, m, tr, l)));
 
         // The row a filter picks IS the composite of its header — the invariant `find_or_mint`
         // debug_asserts, and what lets PACK recompose the key from provenance alone.
         for &(m, tr, l, _) in &rows {
-            let cr = pack_cold_reference(region, zone, tile, pack_layer_reference(type_ref_type_id(tr), l));
+            let cr = pack_position_from_parts(region, zone, tile, pack_layer_reference(type_ref_type_id(tr), l));
             assert_eq!(pack_cold_row_reference(m, tr, l), cold_row_of(cr, type_ref_subtype_id(tr)));
         }
     }

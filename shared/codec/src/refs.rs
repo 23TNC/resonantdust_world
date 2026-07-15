@@ -1,166 +1,122 @@
 //! `server_reference` + `entity_reference` — the identity / addressing layer of the 0.2.3
-//! reference model. Canonical shape:
-//! `docs/components/shared/codec/design/reference-model.md`.
+//! reference model. Authoritative shape: `docs/VARIABLES.md`.
 //!
 //! ```text
-//! server_reference : u16 = realm_id:8 | server_id:8                    (geographic)
-//! object_reference : u32 = the universal handle; its variant named by `reference_id`
-//! entity_reference : u64 = reserved:10 | reference_id:6 | server_reference:16 | object_reference:32
+//! server_reference       : u8  = type_id:4 | server_id:4
+//! object_reference       : u24 = an opaque per-server minted id
+//! entity_reference       : u32 = server_reference:8 | object_reference:24
+//! realm_server_reference : u16 = realm_reference:8 | server_reference:8   (cross-realm only)
 //! ```
 //!
-//! `entity_reference` makes an `object_reference` globally unique + (optionally)
-//! self-describing. The low 48 bits (`server_reference:16 | object_reference:32`) are exactly
-//! the DSL word's qualified reference ([`crate::event_word`]) for the **hot** variant, so a hot
-//! handle passes identically whether it rides a word or a full `entity_reference`.
+//! **The reference carries no type tag — the server does.** A server serves objects of one
+//! `type_id`, and that nibble is the high half of its `server_reference`, so an
+//! `entity_reference` says what it is by saying where it lives. This is why there's no
+//! `reference_id` field: the variants it used to discriminate no longer exist as separate
+//! reference types.
 //!
-//! **Two identity classes share the `u64`, discriminated by `reference_id`:**
-//! - **HOT** (`REF_HOT`) — a live/minted object: `server_reference` is its minting server, the
-//!   `object_reference:32` is its per-server `hot_reference`.
-//! - **COLD** (`REF_COLD`) — a settled object addressed by location (find-or-mint / Interact
-//!   targets): `object_reference:32` is a geographic [`cold_reference`](crate::object)
-//!   (`region:8 | zone:8 | tile:8 | layer:8`), qualified by `server_reference` (realm + shard).
-//!   Realm rides `server_reference` — a shard is realm-scoped — so the full geographic address is
-//!   `server_reference.realm . region . zone . tile`.
+//! **Not realm-unique.** An `entity_reference` is unique within a realm — `(server_reference,
+//! object_reference)` is `(who minted it, its counter)`. Realm is deliberately *not* in the
+//! u32. Crossing a realm boundary, prepend the `realm_reference:8` and pass a
+//! [`pack_realm_server_reference`] instead; within a realm (the overwhelmingly common path) it
+//! costs nothing.
 //!
 //! Pure integer math — no naming, no I/O. `type_id ↔ name` is the registry's job.
 
-// ── server_reference : u16 = realm_id:8 | server_id:8 ────────────────────────────
+// ── server_reference : u8 = type_id:4 | server_id:4 ──────────────────────────────
 //
-// Geographic: all servers in a `realm` work together, so a `server_reference` names the realm
-// without stating it separately — `(server_reference, object_reference)` is realm-unique with no
-// dedicated realm field. There is no functional `server_type` here: the worker maps a
-// `server_reference` to a DB connection via its `SHARDS` env list, not a type tag.
-
-const SERVER_REALM_SHIFT: u16 = 8;
-const SERVER_BYTE_MASK: u16 = 0xFF;
-
-/// The "no server" reference (`realm 0`, `server 0`) — the fence `SERVER_NONE`, the system/self
-/// actor on injected events, and an *unminted* handle (a fresh spawn not yet bound to a server;
-/// the worker routes it to whichever shard processes its event).
-pub const SERVER_REF_NONE: u16 = 0;
-
-/// Compose a `server_reference`: `realm_id:8 | server_id:8`.
-pub fn pack_server_reference(realm_id: u8, server_id: u8) -> u16 {
-    ((realm_id as u16) << SERVER_REALM_SHIFT) | (server_id as u16)
-}
-
-/// The `realm_id` (high byte) of a `server_reference`.
-pub fn server_ref_realm(r: u16) -> u8 {
-    ((r >> SERVER_REALM_SHIFT) & SERVER_BYTE_MASK) as u8
-}
-
-/// The `server_id` (low byte) of a `server_reference` — the shard/server within its realm.
-pub fn server_ref_server_id(r: u16) -> u8 {
-    (r & SERVER_BYTE_MASK) as u8
-}
-
-// ── entity_reference : u64 ───────────────────────────────────────────────────────
+// 16 types × 16 servers per type. `type_id` is the object type this server serves
+// (`crate::object`'s `TYPE_*`), which is what lets a bare `entity_reference` be self-describing.
 //
-// reserved:10 | reference_id:6 | server_reference:16 | object_reference:32.
-
-const REFERENCE_ID_SHIFT: u64 = 48;
-const REFERENCE_ID_MASK: u64 = 0x3F; // 6 bits, bits 48–53
-const ENTITY_SERVER_SHIFT: u64 = 32;
-const ENTITY_SERVER_MASK: u64 = 0xFFFF; // 16 bits, bits 32–47
-const ENTITY_OBJECT_MASK: u64 = 0xFFFF_FFFF; // 32 bits, bits 0–31
-
-// ── reference_id : which reference variant an object_reference is ────────────────
-// Append-only (0 = none). Names the *reference variant* (hot/cold/position/event/server) — NOT
-// the game-type (that's `definition_reference.type_id`, carried in the payload). The old
-// `entity_type` conflated the two; the reference model separates them.
-/// Reserved null/unset variant.
-pub const REF_NONE: u8 = 0;
-/// A live/minted object — `object_reference = hot_reference:32`, per-server. Can't be `unpack`ed.
-pub const REF_HOT: u8 = 1;
-/// A settled object addressed by location — `unpack`able to hot. Its `object_reference` is a
-/// geographic `cold_reference` ([`crate::object`]).
-pub const REF_COLD: u8 = 2;
-/// A bare location (any object has one) — a `position_reference`. Same 32-bit layout as
-/// `REF_COLD`, a different *type*: a position is *a place*, a cold_reference is *the settled
-/// object there* (plan: two types, one layout).
-pub const REF_POSITION: u8 = 3;
-/// An event row — `object_reference = event_reference:32` (what `ALIAS`/`AWAIT` carry).
-pub const REF_EVENT: u8 = 4;
-/// A server, as an object.
-pub const REF_SERVER: u8 = 5;
-
-/// Compose an `entity_reference` from its variant tag, qualifying server, and handle:
-/// `reserved:10 | reference_id:6 | server_reference:16 | object_reference:32`.
-pub fn pack_entity_reference(reference_id: u8, server_reference: u16, object_reference: u32) -> u64 {
-    (((reference_id as u64) & REFERENCE_ID_MASK) << REFERENCE_ID_SHIFT)
-        | ((server_reference as u64) << ENTITY_SERVER_SHIFT)
-        | (object_reference as u64)
-}
-
-/// The `reference_id` (variant tag) of an `entity_reference`.
-pub fn entity_ref_reference_id(k: u64) -> u8 {
-    ((k >> REFERENCE_ID_SHIFT) & REFERENCE_ID_MASK) as u8
-}
-
-/// The qualifying `server_reference` (bits 32–47) of a **hot** `entity_reference` — its minting
-/// server. (Meaningless on a COLD ref, whose low 48 hold a position; guard with
-/// [`entity_ref_is_positional`].) This is what the worker's `home_shard` routes by.
-pub fn entity_ref_server_reference(k: u64) -> u16 {
-    ((k >> ENTITY_SERVER_SHIFT) & ENTITY_SERVER_MASK) as u16
-}
-
-/// The `object_reference` (low 32) of an `entity_reference` — a hot object's `hot_reference`, an
-/// event's `event_reference`, … per `reference_id`.
-pub fn entity_ref_object_reference(k: u64) -> u32 {
-    (k & ENTITY_OBJECT_MASK) as u32
-}
-
-/// A **hot** `entity_reference`: `REF_HOT`, minted by `server_reference`, handle `hot_reference`.
-/// Globally unique — `server_reference` is unique and `hot_reference` is that server's monotonic
-/// counter, so `(server_reference, hot_reference)` never collides (what keeps the priority order a
-/// single total order across shards).
-pub fn pack_hot_entity(server_reference: u16, hot_reference: u32) -> u64 {
-    pack_entity_reference(REF_HOT, server_reference, hot_reference)
-}
-
-// ── COLD / positional entity — a geographic cold_reference ───────────────────────
+// Allocation convention: hand out `server_reference`s in **increments of 16**, i.e. walk the
+// u8 by 0x10 — 0x10, 0x20, 0x30 … That holds `server_id` at 0 and advances `type_id`, so servers
+// spread across the type space rather than piling into one type. A second server for a type
+// takes `server_id = 1` (0x11, 0x21, …).
 //
-// `REF_COLD | server_reference | cold_reference:32` — `cold_reference` (object.rs) is
-// `region:8 | zone:8 | tile:8 | layer_reference:8`. Realm is NOT in the `cold_reference` (a
-// shard is realm-scoped); it rides `server_reference`. So the full geographic address is
-// `server_reference.realm . region . zone . tile`. The `REF_COLD` tag keeps it distinct from a
-// hot handle even when the low bits coincide.
+// Non-data servers (gateway, edge …) may collide with these ids: they don't address objects, so
+// a shared id space costs nothing.
 
-/// A **cold** (positional) `entity_reference`: `REF_COLD`, qualified by `server_reference` (its
-/// realm + shard), addressing the settled object by `cold_reference` (region|zone|tile|layer).
-/// Never minted — identity IS location.
-pub fn pack_cold_entity(server_reference: u16, cold_reference: u32) -> u64 {
-    pack_entity_reference(REF_COLD, server_reference, cold_reference)
+const SERVER_REF_TYPE_SHIFT: u8 = 4;
+const SERVER_REF_NIBBLE_MASK: u8 = 0xF;
+
+/// The "no server" reference (`type_id 0` = `TYPE_NONE`, `server_id 0`) — the fence
+/// `SERVER_NONE`, the system/self actor on injected events, and an *unminted* handle (a fresh
+/// spawn not yet bound to a server; the worker routes it to whichever shard processes its event).
+pub const SERVER_REF_NONE: u8 = 0;
+
+/// Compose a `server_reference`: `type_id:4 | server_id:4`.
+pub fn pack_server_reference(type_id: u8, server_id: u8) -> u8 {
+    ((type_id & SERVER_REF_NIBBLE_MASK) << SERVER_REF_TYPE_SHIFT) | (server_id & SERVER_REF_NIBBLE_MASK)
 }
 
-/// The `cold_reference` (object.rs `region:8 | zone:8 | tile:8 | layer:8`) of a cold entity.
-pub fn entity_ref_cold_reference(k: u64) -> u32 {
-    entity_ref_object_reference(k)
+/// The `type_id` (high nibble) — the object type this server serves.
+pub fn server_ref_type_id(r: u8) -> u8 {
+    (r >> SERVER_REF_TYPE_SHIFT) & SERVER_REF_NIBBLE_MASK
 }
 
-/// True if this reference is a cold/positional target (its `reference_id` is `REF_COLD` /
-/// `REF_POSITION`) — the ones the worker `find-or-mint`s. (Was: the old `entity_type` top bit.)
-pub fn entity_ref_is_positional(k: u64) -> bool {
-    matches!(entity_ref_reference_id(k), REF_COLD | REF_POSITION)
+/// The `server_id` (low nibble) — which server of that type, within the realm.
+pub fn server_ref_server_id(r: u8) -> u8 {
+    r & SERVER_REF_NIBBLE_MASK
 }
 
-/// The full geographic `zone_id` (`realm | region | zone | 0`) of a cold entity — realm from
-/// `server_reference`, region+zone from the `cold_reference`. This is what the (realm-scoped)
-/// cold table is keyed by. (Meaningless for hot refs.)
-pub fn entity_ref_zone_id(k: u64) -> u32 {
-    let realm = server_ref_realm(entity_ref_server_reference(k)) as u32;
-    let macro_position = crate::object::cold_ref_macro_position(entity_ref_cold_reference(k)) as u32;
-    (realm << 24) | (macro_position << 8)
+// ── realm_server_reference : u16 = realm_reference:8 | server_reference:8 ────────
+//
+// The cross-realm form. A bare `server_reference` is realm-scoped — realm is a functional unit
+// and every server in one works together — so only traffic that leaves a realm pays these 8 bits.
+// (This is what the old u16 `server_reference` was: `realm_id:8 | server_id:8`. It kept realm in
+// every reference, everywhere, to serve the rare cross-realm case.)
+
+const REALM_SERVER_SHIFT: u16 = 8;
+const REALM_SERVER_BYTE_MASK: u16 = 0xFF;
+
+/// Compose a `realm_server_reference`: `realm_reference:8 | server_reference:8`.
+pub fn pack_realm_server_reference(realm_reference: u8, server_reference: u8) -> u16 {
+    ((realm_reference as u16) << REALM_SERVER_SHIFT) | (server_reference as u16)
 }
 
-/// The in-zone cell `location` (`tile_reference`) of a cold entity (meaningless for hot refs).
-pub fn entity_ref_location(k: u64) -> u8 {
-    crate::object::cold_ref_tile(entity_ref_cold_reference(k))
+/// The `realm_reference` (high byte, `x:4 | y:4`) of a `realm_server_reference`.
+pub fn realm_server_ref_realm(r: u16) -> u8 {
+    ((r >> REALM_SERVER_SHIFT) & REALM_SERVER_BYTE_MASK) as u8
 }
 
-/// The `layer_id` of a cold entity (meaningless for hot refs).
-pub fn entity_ref_layer(k: u64) -> u8 {
-    crate::object::layer_ref_layer_id(crate::object::cold_ref_layer_reference(entity_ref_cold_reference(k)))
+/// The `server_reference` (low byte, `type_id:4 | server_id:4`) of a `realm_server_reference`.
+pub fn realm_server_ref_server_reference(r: u16) -> u8 {
+    (r & REALM_SERVER_BYTE_MASK) as u8
+}
+
+// ── entity_reference : u32 = server_reference:8 | object_reference:24 ────────────
+//
+// The whole identity. `object_reference` is opaque — a minting server's monotonic counter, no
+// interior. `(server_reference, object_reference)` is `(who minted it, which one)`, so it never
+// collides within a realm: a server only ever mints its own ids.
+
+const ENTITY_SERVER_SHIFT: u32 = 24;
+const ENTITY_SERVER_MASK: u32 = 0xFF;
+/// The widest `object_reference` — 24 bits, ~16.7M objects per server.
+pub const OBJECT_REF_MAX: u32 = 0x00FF_FFFF;
+
+/// Compose an `entity_reference`: `server_reference:8 | object_reference:24`.
+///
+/// `object_reference` is masked to 24 bits — a caller that overruns [`OBJECT_REF_MAX`] wraps
+/// rather than corrupting the `server_reference` above it.
+pub fn pack_entity_reference(server_reference: u8, object_reference: u32) -> u32 {
+    ((server_reference as u32) << ENTITY_SERVER_SHIFT) | (object_reference & OBJECT_REF_MAX)
+}
+
+/// The qualifying `server_reference` — the server that minted this entity, and (via its
+/// `type_id`) what type the entity is. This is what a worker routes by.
+pub fn entity_ref_server_reference(k: u32) -> u8 {
+    ((k >> ENTITY_SERVER_SHIFT) & ENTITY_SERVER_MASK) as u8
+}
+
+/// The `object_reference` (low 24) — the minting server's opaque handle.
+pub fn entity_ref_object_reference(k: u32) -> u32 {
+    k & OBJECT_REF_MAX
+}
+
+/// The entity's `type_id`, read off its server. The reference carries no type of its own; the
+/// server it lives on is the answer.
+pub fn entity_ref_type_id(k: u32) -> u8 {
+    server_ref_type_id(entity_ref_server_reference(k))
 }
 
 #[cfg(test)]
@@ -169,62 +125,80 @@ mod tests {
 
     #[test]
     fn server_reference_roundtrips() {
-        for &(realm, id) in &[(0u8, 0u8), (1, 1), (7, 33), (0xFF, 0xFF)] {
-            let r = pack_server_reference(realm, id);
-            assert_eq!(server_ref_realm(r), realm);
-            assert_eq!(server_ref_server_id(r), id);
+        for &(type_id, server_id) in &[(0u8, 0u8), (1, 1), (7, 3), (0xF, 0xF)] {
+            let r = pack_server_reference(type_id, server_id);
+            assert_eq!(server_ref_type_id(r), type_id);
+            assert_eq!(server_ref_server_id(r), server_id);
         }
-        // realm and server_id occupy disjoint bytes.
-        assert_eq!(pack_server_reference(0xFF, 0xFF), 0xFFFF);
+        // The two nibbles are disjoint and exhaust the byte.
+        assert_eq!(pack_server_reference(0xF, 0xF), 0xFF);
         assert_eq!(SERVER_REF_NONE, pack_server_reference(0, 0));
+        // Over-range args are masked to their own nibble, never bleed into the other.
+        assert_eq!(pack_server_reference(0xFF, 0), 0xF0);
+        assert_eq!(pack_server_reference(0, 0xFF), 0x0F);
     }
 
     #[test]
-    fn hot_entity_roundtrips() {
-        for &(srv, obj) in &[(1u16, 1u32), (0xBEEF, 12345), (u16::MAX, u32::MAX)] {
-            let k = pack_hot_entity(srv, obj);
-            assert_eq!(entity_ref_reference_id(k), REF_HOT);
+    fn allocating_in_steps_of_16_walks_the_type_space() {
+        // The allocation convention: +0x10 per new server holds server_id at 0 and advances
+        // type_id, so the first 16 servers land one per type.
+        for n in 0u8..16 {
+            let r = n.wrapping_mul(16);
+            assert_eq!(server_ref_type_id(r), n);
+            assert_eq!(server_ref_server_id(r), 0);
+        }
+    }
+
+    #[test]
+    fn entity_reference_roundtrips() {
+        for &(srv, obj) in &[(1u8, 1u32), (0xBE, 12345), (u8::MAX, OBJECT_REF_MAX)] {
+            let k = pack_entity_reference(srv, obj);
             assert_eq!(entity_ref_server_reference(k), srv);
             assert_eq!(entity_ref_object_reference(k), obj);
-            assert!(!entity_ref_is_positional(k), "hot is not positional");
-            // low 48 == the DSL word's qualified reference (server:16 | object:32).
-            assert_eq!(k & 0xFFFF_FFFF_FFFF, ((srv as u64) << 32) | obj as u64);
+            // The type is the server's — no tag on the reference itself.
+            assert_eq!(entity_ref_type_id(k), server_ref_type_id(srv));
         }
     }
 
     #[test]
-    fn cold_entity_roundtrips() {
-        use crate::object::{pack_cold_reference, pack_layer_reference, pack_tile_reference};
-        // realm 1 (server_reference), region(2,3) zone(4,5) tile(6,7) type 3 layer 2.
-        let server = pack_server_reference(0x11, 0);
-        let cr = pack_cold_reference(0x23, 0x45, pack_tile_reference(6, 7), pack_layer_reference(3, 2));
-        let k = pack_cold_entity(server, cr);
-        assert_eq!(entity_ref_reference_id(k), REF_COLD);
-        assert_eq!(entity_ref_cold_reference(k), cr);
-        assert!(entity_ref_is_positional(k), "cold is positional");
-        // zone_id reconstructs realm|region|zone|0 from server_reference.realm + cold_reference.
-        assert_eq!(entity_ref_zone_id(k), (0x11u32 << 24) | (0x23u32 << 16) | (0x45u32 << 8));
-        assert_eq!(entity_ref_location(k), pack_tile_reference(6, 7));
-        assert_eq!(entity_ref_layer(k), 2);
+    fn fields_do_not_overlap() {
+        // server:8 | object:24 — all-ones per field, disjoint, and they exhaust the u32.
+        let k = pack_entity_reference(u8::MAX, OBJECT_REF_MAX);
+        assert_eq!(entity_ref_server_reference(k), u8::MAX);
+        assert_eq!(entity_ref_object_reference(k), OBJECT_REF_MAX);
+        assert_eq!(k, u32::MAX);
     }
 
     #[test]
-    fn hot_and_cold_never_collide() {
-        // Distinct reference_id ⇒ distinct keys even when the low bits coincide — the
-        // single-space uniqueness the priority order needs (hot server|object vs cold position).
-        let hot = pack_hot_entity(0x0042, 7);
-        let cold = pack_cold_entity(0x0042, 7);
-        assert_ne!(hot, cold);
-        assert_ne!(entity_ref_reference_id(hot), entity_ref_reference_id(cold));
+    fn an_over_range_object_reference_cannot_corrupt_the_server() {
+        // 24-bit mask: the 25th bit and up are dropped, not carried into server_reference.
+        let k = pack_entity_reference(0x42, u32::MAX);
+        assert_eq!(entity_ref_server_reference(k), 0x42);
+        assert_eq!(entity_ref_object_reference(k), OBJECT_REF_MAX);
     }
 
     #[test]
-    fn full_hot_fields_do_not_overlap() {
-        // reference_id:6 | server:16 | object:32 — all-ones per field, disjoint; reserved:10 = 0.
-        let k = pack_entity_reference(0x3F, u16::MAX, u32::MAX);
-        assert_eq!(entity_ref_reference_id(k), 0x3F);
-        assert_eq!(entity_ref_server_reference(k), u16::MAX);
-        assert_eq!(entity_ref_object_reference(k), u32::MAX);
-        assert_eq!(k, 0x003F_FFFF_FFFF_FFFF);
+    fn same_object_id_on_different_servers_never_collides() {
+        // Uniqueness within a realm rests entirely on the server nibbles: a server only mints
+        // its own ids, so the pair (server, object) is unique without any realm field.
+        assert_ne!(
+            pack_entity_reference(pack_server_reference(1, 0), 7),
+            pack_entity_reference(pack_server_reference(2, 0), 7)
+        );
+        assert_ne!(
+            pack_entity_reference(pack_server_reference(1, 0), 7),
+            pack_entity_reference(pack_server_reference(1, 1), 7)
+        );
+    }
+
+    #[test]
+    fn realm_server_reference_roundtrips() {
+        let srv = pack_server_reference(3, 2);
+        for &realm in &[0u8, 0x12, 0xFF] {
+            let r = pack_realm_server_reference(realm, srv);
+            assert_eq!(realm_server_ref_realm(r), realm);
+            assert_eq!(realm_server_ref_server_reference(r), srv);
+        }
+        assert_eq!(pack_realm_server_reference(0xFF, 0xFF), 0xFFFF);
     }
 }

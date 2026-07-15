@@ -12,8 +12,14 @@
 //! the native server with a "keep the two in lockstep" comment). One definition,
 //! no drift.
 
+// `event_word` — the DSL word format (`op_code:4 | reserved:12 | server_reference:16 |
+// payload:32`) — was deleted 2026-07-15. It was the wire unit of the tick pipeline's
+// `actions: Vec<u64>`, and its only callers were `shared/tick`'s vm, the worker, and the edge's
+// move/spawn handlers — all removed with the shard. It outlived them only because it lives here
+// rather than in the deleted crates. The rebuild (`docs/intent/spacetime-again/`) still wants an
+// RPN `actions: Vec<u64>`, but has not specified a word format; that's its call to make, not a
+// shape to inherit. Recover the old one from `git show checkpoint/pre-shard-rebuild`.
 pub mod biome;
-pub mod event_word;
 pub mod object;
 pub mod packed;
 pub mod refs;
