@@ -3,13 +3,16 @@
 Executes: the `shard` component. Planned work not yet begun; moves to [remaining.md](remaining.md)
 when started. Newest-first.
 
-_Nothing planned._ The conformance re-cut (T-1…T-5 — deviations **D-1…D-5**, divergence **#11**)
-landed + is live-verified → [completed.md](completed.md). Every **identity/keying** divergence is
-now closed; what remains in the shard's
-[divergences.md](../../components/server/spacetime/modules/shard/current/divergences.md) is the
-pipeline-shape work (#1 word-DSL `event_log`, #6 lifecycle state machine, #7 drop barrier / GC,
-#8 event/data shard split) and the cleanups (#3 dead modules, #9 drop `priority`) — none of it
-scoped here yet.
+_Nothing planned **in this work-stream**._ Its scope (S0–S7 + the conformance re-cut T-1…T-5,
+deviations **D-1…D-5**, divergence **#11**) is complete + live-verified → [completed.md](completed.md).
+Every **identity/keying** divergence is now closed.
+
+**The forward plan lives in the component, not here:**
+[`shard/plan/README.md`](../../components/server/spacetime/modules/shard/plan/README.md) — P1 restore
+the build gates + cleanups (#3, #9), P2 the word-DSL `event_log` (#1), P3 lifecycle + holder GC
+(#6/#7), P4 the event/data shard split (#8, deferred), with the reasoning for that order. Per
+[`CONVENTIONS.md`](../../CONVENTIONS.md) each phase gets its **own work folder** when we start it;
+this stream stays closed rather than growing a second scope.
 
 Loose end, tracked in [issues.md](issues.md): the workspace test suite has a **pre-existing** red
 test (`dsl::loader::material_registry_and_packed_channels`), so `cargo test` can't gate until it's
