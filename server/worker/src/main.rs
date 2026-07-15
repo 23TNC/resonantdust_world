@@ -24,10 +24,15 @@ use resonantdust_tick::{domain::EntityState, vm};
 
 mod bindings;
 use bindings::shard::{
-    abort as _, claim as _, mint_cold as _, ready as _, resolve as _, resolve_foreign as _,
-    stand_up as _, ColdTableAccess, DbConnection, EventLogTableAccess, StateLog,
-    StateLogTableAccess, StateTableAccess, TargetState, TicMetaTableAccess,
+    abort as _, claim as _, mint_cold as _, pack_settle as _, ready as _, resolve as _,
+    resolve_foreign as _, stand_up as _, ColdTableAccess, DbConnection, EventLogTableAccess,
+    StateLog, StateLogTableAccess, StateTableAccess, TargetState, TicMetaTableAccess,
 };
+
+/// How many tics a minted-cold (find-or-mint) hot object may sit idle before a PACK settles it
+/// back to cold. Long enough that an interacted object stays live to act on, short enough that
+/// the cold store re-compacts promptly once it's left alone. (`docs/…/hot-cold.md` §PACK.)
+const PACK_IDLE_TICS: u32 = 20;
 
 /// The connected shard set, `(server_reference, connection)`. A target's home shard is its
 /// `entity_key`'s `mint_server`; positional (cold) targets are always local (minted here).
@@ -124,6 +129,51 @@ async fn main() {
         ticker.tick().await;
         for (id, _) in &shards {
             work_pass(&shards, *id, worker_id);
+            if let Some(conn) = shard_conn(&shards, *id) {
+                pack_idle(conn, worker_id);
+            }
+        }
+    }
+}
+
+/// PACK sweep — settle idle **minted-cold** hot objects (`REF_COLD` entity_key: a find-or-mint
+/// target promoted from cold) back into `cold` once they've sat idle for [`PACK_IDLE_TICS`]. The
+/// object's cold provenance (`type_reference` + cold entry) rides its `data_0` (stashed at mint —
+/// see [`find_or_mint`]), so the restore is exact (subtype/variant/data survive the round-trip).
+/// Pawns (`REF_HOT`) never match, so they never pack — the pack criterion the design wants
+/// (`docs/…/hot-cold.md`: pawns always hot, biome objects compact to cold). `pack_settle` itself
+/// skips a busy object (any holder), so this is safe to call every pass.
+fn pack_idle(conn: &DbConnection, worker_id: u16) {
+    use resonantdust_codec::object::type_ref_type_id;
+    use resonantdust_codec::refs::{
+        entity_ref_location, entity_ref_reference_id, entity_ref_zone_id, REF_COLD,
+    };
+    let _ = worker_id;
+    let now = master_tic(conn);
+    let idle: Vec<_> = conn
+        .db()
+        .state()
+        .iter()
+        .filter(|s| {
+            entity_ref_reference_id(s.entity_key) == REF_COLD
+                && now.saturating_sub(s.tic) > PACK_IDLE_TICS
+        })
+        .collect();
+    for s in idle {
+        // Provenance stashed at mint: data_0 = type_reference:32 | cold_entry:32.
+        let type_reference = (s.data_0 >> 32) as u32;
+        let object_kind_reference = s.data_0 as u32; // the original cold entry, restored verbatim
+        if type_reference == 0 {
+            continue; // no provenance (not a find-or-mint object) — don't pack
+        }
+        let zone_id = entity_ref_zone_id(s.entity_key);
+        let loc = entity_ref_location(s.entity_key);
+        let (x, y) = (loc & 0x0F, loc >> 4);
+        let type_id = type_ref_type_id(type_reference);
+        let tombstone = ((x as u16) << 12) | ((y as u16) << 8) | (type_id as u16 & 0x0F);
+        match conn.reducers().pack_settle(s.entity_key, zone_id, type_reference, object_kind_reference, tombstone) {
+            Ok(()) => tracing::info!(entity = s.entity_key, zone = zone_id, "hot → cold (PACK settle)"),
+            Err(err) => tracing::warn!(%err, entity = s.entity_key, "pack_settle failed"),
         }
     }
 }
@@ -392,19 +442,25 @@ fn find_or_mint(conn: &DbConnection, target: u64) {
     let zone = entity_ref_zone_id(target);
     let loc = entity_ref_location(target);
     let (x, y) = (loc & 0x0F, loc >> 4);
-    // Find the cold object sitting at this tile and read its kind + type.
+    // Find the cold object sitting at this tile; keep its full cold entry + its row's
+    // type_reference so a later PACK can restore it exactly (see `pack_idle`).
     let found = conn.db().cold().iter().filter(|c| c.zone_id == zone).find_map(|c| {
         c.kinds
             .iter()
             .find(|&&k| kind_ref_x(k) == x && kind_ref_y(k) == y)
-            .map(|&k| (kind_ref_kind_id(k), type_ref_type_id(c.type_reference)))
+            .map(|&entry| (entry, c.type_reference))
     });
-    let Some((kind_id, type_id)) = found else {
+    let Some((entry, type_reference)) = found else {
         return; // nothing cold here
     };
+    let kind_id = kind_ref_kind_id(entry);
+    let type_id = type_ref_type_id(type_reference);
+    // Cold provenance stashed in `data0` = `type_reference:32 | cold_entry:32`, so PACK can
+    // recompose the exact cold row + entry (subtype/variant/data survive the hot round-trip).
+    let provenance = ((type_reference as u64) << 32) | (entry as u64);
     // tombstone: x:4 | y:4 | layer:4(=0) | type_id:4
     let tombstone = ((x as u16) << 12) | ((y as u16) << 8) | (type_id as u16 & 0x0F);
-    if let Err(err) = conn.reducers().mint_cold(target, tombstone, kind_id, zone, loc, 0, 0, 0, 0) {
+    if let Err(err) = conn.reducers().mint_cold(target, tombstone, kind_id, zone, loc, 0, 0, provenance, 0) {
         tracing::warn!(%err, target, "mint_cold failed");
     } else {
         tracing::info!(target, zone, loc, kind = kind_id, "cold → hot (find-or-mint)");
