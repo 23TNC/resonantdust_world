@@ -75,6 +75,13 @@ ceremony is for substantial, multi-phase work):
   authoritative for what's done.
 - **`issues.md`** — problems hit + candidate solutions + which we chose + why.
 - **`forks.md`** — decision points + options + which we chose + why.
+- **`deviations.md`** — **where the code departs from the plan** (`components/<c>/{design,intent}`).
+  Log a row **at the moment you deviate**, not when someone catches it. The plan encodes decisions
+  we spent real thought on, so a departure is how bugs get in — it must carry a **strong** reason.
+  *"Less churn", "the existing code already did X", and "it's only cosmetic" are **not** reasons* —
+  they're the absence of one. If the plan looks wrong, change **the plan** (with input); don't
+  quietly diverge in code. Also log a deviation you *find* (someone else's, or your own, later).
+  Rows: date · what the plan says · what the code does · why · fix/status. Open→resolved.
 - **`blockers.md`** — things needing human input: description, solution analysis, *why* it blocks
   (needs a human), suggested path. Open→resolved; resolved rows archive with a date. The point:
   surface *what* blocks me and *why* so you can supply what I need — the goal is fewer blockers
@@ -109,5 +116,6 @@ A work-folder headers the component(s) + plan phase it executes; plans link back
 | an item to do / doing / done | `work/<w>/{todo,remaining,completed}.md` |
 | a problem + how we resolved it / a decision between options | `work/<w>/{issues,forks}.md` |
 | something needing your input | `work/<w>/blockers.md` |
+| code that departs from the plan (yours or found) | `work/<w>/deviations.md` |
 | a cross-session hint for me (not project state) | `memory/` |
 | a superseded / pre-rewrite design (kept for history) | `docs/archive/` (with a pointer to what replaced it) |
