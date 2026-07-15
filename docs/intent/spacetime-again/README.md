@@ -5,6 +5,20 @@
 > [reference-model.md](../../components/shared/codec/design/reference-model.md); the model it
 > replaces: [shard/intent/lifecycle.md](../../components/server/spacetime/modules/shard/intent/lifecycle.md).
 
+> ⚠️ **The table shapes below are superseded by [`docs/TABLES.md`](../../TABLES.md)**, which is
+> authoritative for shape. This doc remains authoritative for *flow* — the phases, the scheduler, the
+> ordering argument. Known divergences (2026-07-15):
+> - **`targets` and `reads` are not columns.** Dropped as duplication of `actions`. This voids
+>   **decision #5** and leaves `declare_pending` / `acquire` without an input — the write and read
+>   sets must now be recovered from the program, and *who* does that is unresolved. §Open's partition
+>   policy (`home_shard(targets[0])`) loses its input too.
+> - **`failed` is gone**, folded into `status` (it was pure redundancy with `QUEUE_FAILED`).
+> - **Widths**: `tic` is a wrapping `u16`; `worker_reference` `u8`; entity keys and
+>   `target_reference` `u32`; `actions` `Vec<u32>`.
+>
+> The pseudocode below still reads `e.targets` / `e.reads` / `e.failed`. Treat those as the open
+> question, not as the shape.
+
 **What this is for.** Two problems the current pipeline has:
 1. **Every worker mirrors the whole shard** — 6 blanket `SELECT *` subscriptions. It's a "pool"
    where every member holds every row and they race on `claim`.

@@ -119,14 +119,15 @@ predates — see [`notes/tables.md`](notes/tables.md) for what was translated an
 | `event_reference` | `u32` | PK | `entity_reference`, `type_id` = `TYPE_EVENT`. Ascending = composition order. |
 | `worker_reference` | `u8` | idx | subscription key. `SERVER_REF_NONE` = unassigned |
 | `event_tic` | `u16` | idx | `tic` — wraps |
-| `status` | `u8` | idx | `QUEUED` `QUEUEING` `QUEUE_SUCCESS` `RUNNING` `COMPLETE` `QUEUE_FAILED` |
-| `actions` | `Vec<u64>` | | the RPN program; **word format undefined** |
-| `targets` | `Vec<u32>` | | `entity_reference` — issuer-designated write set |
-| `reads` | `Vec<u32>` | | `entity_reference` — issuer-designated read set |
+| `status` | `u8` | idx | `QUEUED` `QUEUEING` `QUEUE_SUCCESS` `RUNNING` `COMPLETE` `QUEUE_FAILED` `FAILED` |
+| `actions` | `Vec<u32>` | | the RPN program; **word format undefined** |
 | `lease_tic` | `u16` | | `tic` — assignment expiry; the reclaim clock |
-| `failed` | `bool` | | |
 
 sub `SELECT * FROM event_log WHERE worker_reference = self` (worker)
+
+The write and read sets are **not** columns — they come out of `actions`. See
+[`notes/tables.md`](notes/tables.md); this supersedes the intent doc's decision #5 and leaves its
+enqueue flow without an input.
 
 ### `event` — the log (settled history / audit / replay)
 

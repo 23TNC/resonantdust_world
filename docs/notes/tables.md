@@ -85,9 +85,51 @@ is described as "client-visible **latest**" and `promote` does `state.upsert(tar
 payload)` — an upsert that replaces. A composite `(target, tic)` key would accumulate a row per tic
 and stop being "latest".
 
-**`actions : Vec<u64>` has no word format.** `event_word` was deleted (zero call sites — it belonged
-to the old pipeline). The rebuild specifies an RPN program but not its encoding. Undefined until the
-rebuild decides.
+**`actions : Vec<u32>` has no word format.** `event_word` was deleted (zero call sites — it belonged
+to the old pipeline). The rebuild specifies an RPN program but not its encoding. Narrowed u64 → u32
+because an `entity_reference` is a u32 now: whatever the encoding turns out to be, a word carrying a
+reference needs 32 bits, not 64.
+
+### `targets` / `reads` dropped — supersedes decision #5
+
+Both were `Vec<u32>` columns holding the issuer-designated write and read sets. Dropped as
+duplication: the entity_references are already in `actions`, so storing them again spends a vector
+per row to say what the program already says.
+
+**This contradicts the intent doc's decision #5**, which is explicit and reasoned:
+
+> A `reads` set on the row, issuer-designated like `targets`. The store must create READ holds
+> *before* the worker computes, and it must not interpret the program to discover them — same
+> argument that makes `targets` a column: no game semantics in the spine.
+
+TABLES.md wins on shape; the intent doc is now wrong here and needs a pass. What the removal leaves
+open — these are real holes, not paperwork:
+
+- **`declare_pending` has no input.** T=1 enqueue does `for target in e.targets:
+  home_shard(target).declare_pending(...)`. With no column, the write set has to be recovered from
+  `actions` — by the worker (which can interpret) or the store (which decision #5 says must not).
+- **`acquire(WRITE)` / `acquire(READ)` likewise**, at T=2.
+- **Telling writes from reads is the hard half.** Collecting an `OP_OBJECT`-style operand out of a
+  word stream is structural — arguably not "game semantics" and fine in the spine. Knowing which
+  operands a verb *writes* versus *reads* is not: that's `action_reads_actor`, and the design's own
+  §Open already names it — *"Who computes `reads`? … it must agree with the VM about which operands
+  a verb reads."* Dropping the column doesn't answer that question, it makes it load-bearing.
+- **Partition policy** (§Open) proposed assigning work by `home_shard(targets[0])`. No `targets`, no
+  `targets[0]`.
+
+None of this blocks the schema — the columns are gone and the shape is smaller. It blocks the
+enqueue flow, which isn't built.
+
+### `failed` dropped — folded into `status`
+
+Pure redundancy: every site that set `failed = true` also set `status = QUEUE_FAILED`
+(`e.status = QUEUE_FAILED ; e.failed = true`), and the terminal-state query already reads
+`status in (COMPLETE, QUEUE_FAILED)`. The bool never carried information the status didn't.
+
+`FAILED` was added alongside `QUEUE_FAILED` because the design's enum has no terminal value for the
+**execute**-phase failure its T=2 `event_shard.fail(e.event_reference)` triggers — the enum only
+covers the enqueue path. Keeping the two distinct preserves which phase failed, which the old
+`status` carried and a single flag would have lost.
 
 **Still open in the design itself** (not translation gaps): partition policy, read-set derivation,
 `base` copy cost, and where cold `find-or-mint` lives. See the intent doc's §Open.
