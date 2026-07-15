@@ -6,7 +6,10 @@ idea: a **deterministic** path function in `shared` means the *intent* to move i
 enough information for the worker **and** every client to reconstruct the whole
 trajectory independently. We store the intent; we derive the position.
 
-> **Status: DESIGN.** Written against the 0.2.3 tick pipeline
+> **Status: DESIGN — scoped 2026-07-15, not yet built.** The plan against the code as it actually
+> is: [`work/pathfinding/todo.md`](../../work/pathfinding/todo.md); decisions:
+> [`work/pathfinding/forks.md`](../../work/pathfinding/forks.md). §7's open question is **answered
+> below**. Written against the 0.2.3 tick pipeline
 > ([`pipeline-generalization.md`](../../components/server/spacetime/pipeline/design/pipeline-generalization.md)), the action
 > model in [`shared/tick/src/domain.rs`](../../../shared/tick/src/domain.rs), and the
 > client sync model ([`sync.md`](../sync.md)). Terminology follows
@@ -150,6 +153,23 @@ duration_tics` (or the next segment boundary). Confirm the resolution model
 supports a sparse "idle until tic T, then fire" so idle in-flight objects aren't
 walked each tic.
 
+> ✅ **Confirmed (2026-07-15), by reading the code — and the answer is better than expected.**
+>
+> - **A future write does not block present reads.** The read rule is "resolved through `T` iff no
+>   pending row **at or below** `T`", so a `place` pending at `T+50` leaves the object **readable
+>   for its whole flight**, and defers readers only at/after the arrival tic — which is correct, not
+>   a workaround. *This is the load-bearing property of the whole feature*: it's why occupancy needs
+>   no per-tile row, and why no `motion` table is required.
+> - **The worker already gates execution** on `master_tic >= event_tic`, so a future row waits
+>   rather than misfiring. `Holder` keeps its pending `state_log` row from GC.
+> - **The one real blocker** is that `append()` hardcodes `event_tic = master_tic + TIC_GAP(3)` —
+>   there is no way to *say* "at tic T". That's `append_at` (P2), a seam, not a redesign.
+> - **The sparse part is genuinely not there:** the worker's `work_pass` iterates the whole
+>   `event_log` per pass, so a future row is *walked* (not run) every pass — O(in-flight), the cost
+>   this section warns about. Judged acceptable for v1 (it's a tic compare, and the PACK sweep
+>   already walks every hot state row); a `wake_tic`-indexed table is the upgrade, and it's a pure
+>   add. See [D3](../../work/pathfinding/forks.md).
+
 ## 8. Client rendering — why the sync is invisible
 
 This slots straight into the existing model ([`sync.md`](../sync.md)): synced
@@ -167,8 +187,22 @@ clock + shared render delay **D** + interpolate-by-`valid_at`.
 
 ## 9. Open decisions
 
+> **Scoping pass 2026-07-15** — 2 and 4 recommended, 1 partly answered, 3 still the hard one; plus
+> a new one (duration: supplied vs derived) raised by the ask. All in
+> [`work/pathfinding/forks.md`](../../work/pathfinding/forks.md).
+
+0. **NEW — where does `duration_tics` come from?** The ask says *specify* the tic count; §3 says a
+   deterministic speed model derives it. **Not a conflict** — the row carries the number either way;
+   v1 takes it as an input word, the speed model later produces it. Taking it as input keeps the
+   speed model **off the determinism surface** for v1 (the *path* must still match cross-target;
+   the *costs* needn't). Accepted consequence: an unvalidated duration can lie until §6 lands
+   ([D1](../../work/pathfinding/forks.md)).
 1. **Move-intent bit-layout** — exact packing of the row against the
-   object-model reference scheme.
+   object-model reference scheme. **Home decided: new `payload` fields on the shard's
+   `decl_tick_pipeline!`, not a new table and not `data0`/`data1`** — the latter are already
+   overloaded (hp *and* cold provenance), and payload rows already relay to clients for free
+   ([D2](../../work/pathfinding/forks.md)). The *packing* is still open — note that a cross-zone
+   move needs a `dest_zone`, since a tile_reference is only zone-local.
 2. **Segment length policy** — fixed tile budget, fixed tic budget, or
    distance-to-first-obstacle.
 3. **Supersession semantics** for a cancelled future `place` (§5) — how the
