@@ -102,7 +102,7 @@ pub struct Event {
 
 /// A pipeline's *resolution policy* — the payload it carries and how events compose
 /// onto it. This is the one seam that varies per data structure (pawn, object, zone, …);
-/// the scheduling spine ([`priority`](crate::priority) / [`read_rule`](crate::read_rule) /
+/// the scheduling spine ([`read_rule`](crate::read_rule) /
 /// the [`resolve_events`] fold) is generic over it and never inspects the payload. See
 /// `docs/pipeline-generalization.md`.
 ///
@@ -121,7 +121,7 @@ pub trait Domain {
     ) -> Self::Payload;
 
     /// Does resolving `action` require the actor's resolved state (routing it through
-    /// the read-rule + priority-DAG, possibly blocking cross-shard)?
+    /// the read rule, possibly blocking cross-shard)?
     fn action_reads_actor(action: u16) -> bool;
 }
 
@@ -209,7 +209,7 @@ pub fn hp(state: &EntityState) -> u64 {
 }
 
 /// Does resolving this action require the actor's resolved state? Actor-reading
-/// actions are the ones that go through the read-rule + priority-DAG (they can block
+/// actions are the ones that go through the read rule (they can block
 /// on an actor, possibly across shards); position-only actions (`move`) resolve with no
 /// cross-entity read.
 pub fn action_reads_actor(action: u16) -> bool {
@@ -227,7 +227,7 @@ fn is_tombstone(state: &EntityState) -> bool {
 /// which reads as dead). Pure per-action composition; unknown actions are a no-op.
 ///
 /// `DAMAGE` is the actor-reading case: a **dead actor's blow is voided** (the
-/// preemption the priority-DAG hangs on — "dead B can't hit C"); a live actor subtracts
+/// preemption the ordering hangs on — "dead B can't hit C"); a live actor subtracts
 /// `data[0]` from the target's hp (saturating at 0).
 pub fn apply_event(mut state: EntityState, ev: &Event, actor: Option<&EntityState>) -> EntityState {
     match ev.action {
@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn dead_or_absent_actor_deals_nothing() {
         let ev = Event { action: ACTION_DAMAGE, actor_key: 0, data: pack_damage(3) };
-        // Dead actor (hp 0) → blow voided (the priority-DAG preemption).
+        // Dead actor (hp 0) → blow voided (the ordering preemption).
         assert_eq!(hp(&apply_event(with_hp(5), &ev, Some(&with_hp(0)))), 5);
         // Absent (unresolved/missing) actor also voids.
         assert_eq!(hp(&apply_event(with_hp(5), &ev, None)), 5);

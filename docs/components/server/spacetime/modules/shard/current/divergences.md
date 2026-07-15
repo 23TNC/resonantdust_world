@@ -70,8 +70,9 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 > blocked (B-2 was retracted — it wrongly treated the legacy `zone_id`/`surface` as a constraint);
 > its remaining half was folded into **#11**, the cold row's missing header — **now also closed**
 > (2026-07-14), which closes #4 with it. That settles every **identity/keying** divergence
-> (#2, #4, #5, #10, #11); the pipeline-shape ones (#1, #6, #7, #8) and the cleanups (#3, #9) are
-> untouched and still open.
+> (#2, #4, #5, #10, #11). **#3 is closed too, and #9 is half-closed** (T-7 / T-8). Still open: the
+> pipeline-shape work (#1, #6, #7, #8) and #9's `Phase` half, which rides with the DSL —
+> sequenced as P2/P3/P4 in [`plan/README.md`](../plan/README.md).
 
 ## 11. ✅ CLOSED — the `cold` row omitted `macro_position` + `layer_id`; its key couldn't select a row
 
@@ -168,13 +169,20 @@ The original divergence (flat legacy `zone_id`):
 - **Code**: one module holds both; not separated.
 - **Fix**: deployment split (same generic module), later — not a blocker for the DSL landing.
 
-## 9. ⚪ Ordering model: keep `read_rule`, drop `priority`
+## 9. 🟡 HALF-CLOSED (2026-07-14, T-8) — `priority` deleted; `Phase` waits for the DSL
 
 - **Design** ([lifecycle.md](../intent/lifecycle.md)): dependencies are explicit `await`s + the read rule
   (`resolved_through`), with cross-entity reads at **≤ T−1** → DAG by tic → deadlock-free. **No
   `Phase`, no priority-DAG.**
-- **Code**: `shared/tick` has `Phase` (`domain.rs`) and `priority` (`actor_read_tic`).
-- **Fix**: keep `read_rule`; **delete `Phase` and `priority`** as the DSL lands (S3/S4).
+- **✅ `priority` is gone** — `shared/tick/src/priority.rs` (`priority`, `rank`, `actor_read_tic`)
+  had **no callers anywhere**; only its own tests exercised it. Deleted with its re-export and the
+  stale priority-DAG prose in `lib.rs` / `domain.rs`.
+- **⛔ `Phase` stays for now** — it is **not** vestigial: `resolve_events` composes a tic's events
+  **by phase** (Inbound → Data → Outbound), so it's live ordering behaviour. The design's
+  replacement (explicit `await`s + the read rule, reads at ≤ T−1) doesn't exist yet, so deleting it
+  now would change resolution order with nothing behind it. This entry's own fix line said as much
+  — *"as the DSL lands (S3/S4)"*.
+- **Fix (remaining)**: `Phase` + `action_phase` die with the word-DSL → **T-9 / P2**.
 
 ## 10. ✅ CLOSED (2026-07-14) — `server_reference` is geographic `realm_id:8 | server_id:8`
 

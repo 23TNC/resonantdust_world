@@ -42,11 +42,20 @@ backlog; starting it without a working suite is how a D-3-class bug reaches the 
 - Their wire paths were retired in `2b2fc58` / `d47f152`; only the dirs + build wiring remain.
 - Done = `rd redeploy` plans cleanly without them; nothing references the deleted dbs.
 
-### T-8 · #9 · Drop `Phase` / `priority` from `shared/tick`
+### T-8 · #9 · Drop `priority` from `shared/tick` — *the `Phase` half moved to P2*
 
 - The design's ordering model is explicit `await`s + the read rule (`resolved_through`), reads at
-  **≤ T−1** → DAG by tic → deadlock-free. **No `Phase`, no priority-DAG** — it's vestigial.
-- Remove `Phase` (`shared/tick/src/domain.rs`) + `priority` (`actor_read_tic`) and their call sites.
+  **≤ T−1** → DAG by tic → deadlock-free. **No `Phase`, no priority-DAG.**
+- ✅ **`priority` is deletable now** — `priority.rs` (`priority`, `rank`, `actor_read_tic`) had
+  **no callers anywhere**; only its own tests used it. Dead code, gone.
+- ⛔ **`Phase` is NOT** — `resolve_events` composes a tic's events **by phase**
+  (Inbound → Data → Outbound), so it is live ordering behaviour, and the design's replacement
+  (explicit `await`s + the read rule) doesn't exist yet. Deleting it now would change resolution
+  order with nothing to take its place.
+- **My mis-scope, recorded:** P1 called this a cheap ride-along deletion. It's half that. Divergence
+  **#9 said so already** — *"delete `Phase` and `priority` **as the DSL lands (S3/S4)**"* — and I
+  put the whole item in P1 without reading its fix line. The `Phase` half is now **part of T-9**,
+  where the replacement ordering actually gets built.
 - `shared/tick` has **no component folder yet** — create it lazily only if this grows past a
   deletion.
 
@@ -76,6 +85,10 @@ and npc already write the fat struct; every new caller widens the blast radius.
   schema, no actor field, no operand table.
 - Callers: the `append` signature, the edge's producers, npc.
 - Word shape is settled: `op_code:4 | reserved:12 | server_reference:16 | payload:32`.
+- **Absorbs the `Phase` half of #9** (from T-8): `resolve_events` orders a tic's events
+  Inbound → Data → Outbound today. The design replaces that with explicit `await`s + the read rule
+  (reads at ≤ T−1 → DAG by tic). `Phase` + `action_phase` die **when that replacement exists**, not
+  before — deleting them earlier changes resolution order with nothing behind it.
 - Schema change → **live check, not just a green build** (D-6: subscription SQL is a string).
 
 ---
