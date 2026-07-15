@@ -283,3 +283,20 @@ born red: its author wrote a packed-only stone and reasonably expected it to wor
 decision, not a cleanup** — logged in [forks.md](forks.md) (2026-07-14, "base tint: mandatory,
 defaulted, or an error?") as undecided. Deliberately not settled while executing something else;
 that's how D-3 happened.
+
+
+### `current/divergences.md` #1 contradicted `design/event-dsl.md` (2026-07-14, caught in T-9 scouting)
+**Problem:** divergence #1's *fix* line said to stand up the RPN interpreter by **"reusing
+`shared/dsl`'s value-stack VM behind a `Vec<u64>` word decoder"**. The design decided the exact
+opposite — [event-dsl.md](../../components/server/spacetime/modules/shard/design/event-dsl.md)
+§"Not reusing `shared/dsl` (decided)": the event VM is **purpose-built in the worker**, because
+`shared/dsl` is a text-parsed `.rd` VM for tile *visuals* (`Cell` trees of render prims) — different
+syntax, value model, and purpose; the only overlap is the abstract postfix-stack shape, *"a few
+lines, not a library"* — *"don't design around it."*
+**Impact:** 🟡 caught before any code. I had already propagated the wrong instruction into T-9, so
+the interpreter would have been built on the wrong foundation and in violation of an explicit
+design decision — the exact failure mode the deviations discipline exists to prevent, arriving via
+a **stale doc** instead of a careless edit.
+**Choice:** `design/` wins (CONVENTIONS: `design/` is the final-state specification; `current/`
+is a convenience snapshot). Corrected #1's fix line and T-9. **Lesson:** `current/` and `plan/`
+notes are not authoritative — re-read `design/` at the start of each task, not the ticket.

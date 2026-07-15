@@ -11,22 +11,37 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 
 ---
 
-## 1. 🔴 `event_log` is wide scalar columns, not `actions : Vec<u64>` DSL
+## 1. ✅ CLOSED — it was **already done**; this entry was stale (2026-07-14, T-9)
 
 - **Design** ([events.md](../intent/events.md), [event-dsl.md](../design/event-dsl.md)): the event carries
   `actions : Vec<u64>` — a flat postfix (RPN) stream of self-qualified words
-  (`server_reference:16 | reserved:16 | ref:32`), operands (push) + verbs (pop+run); the
-  worker interprets it. No `action` enum, no positional slot schema, no actor field, no
-  operand table.
-- **Code**: a fat struct with `actor_key:u64`, `target_key:u64`, `data0/1:u64`, and named
-  `source/actor/requesting/worker/trigger _server_reference` columns
-  ([pipeline/src/lib.rs](../../../../../../../server/spacetime/server/pipeline/src/lib.rs) `EventLog`).
-- **Fix**: replace the scalar target/actor/data columns with `actions:Vec<u64>`; keep
-  `event_reference`, `tic`, `worker_reference`, `status`. Stand up the RPN interpreter in the
-  worker (reuse `shared/dsl`'s value-stack VM behind a `Vec<u64>` word decoder).
-- **Blast radius**: the worker's `resolve_one` (currently reads `actor_key`/`target_key`) →
-  becomes the interpreter; `append_event` signature; edge/npc callers; a compile step
-  (surface DSL / plan → `Vec<u64>`).
+  (`op_code:4 | reserved:12 | server_reference:16 | payload:32`), operands (push) + verbs
+  (pop+run); the worker interprets it. No `action` enum, no positional slot schema, no actor
+  field, no operand table.
+- **⚠️ This entry described code that no longer exists.** It claimed a fat struct with
+  `actor_key:u64`, `target_key:u64`, `data0/1:u64` and named `*_server_reference` columns.
+  **None of those identifiers appear anywhere in the repo.** The word DSL landed with S1/S2 and
+  the entry was never retired:
+  - `EventLog` is `event_reference:u32 · event_tic:u32 · **actions:Vec<u64>** · targets:Vec<u64> ·
+    worker_reference:u16 · status:u8 · failed · tic_state_change` — the design's row.
+    (`targets` is designed too — [tables.md](../design/tables.md) lists it and
+    [lifecycle.md](../intent/lifecycle.md) calls it the *issuer-designated* write set that
+    `bump`/`stand_up` read **without interpreting the program**. Only `event-dsl.md`'s abbreviated
+    "row restated" omits it.)
+  - The word codec is [`shared/codec/src/event_word.rs`](../../../../../../../shared/codec/src/event_word.rs)
+    — `pack_word` / `word_op_code` / `word_server_reference` / `word_payload`, the
+    `OP_LITERAL/OBJECT/ACTION/ALIAS` set, and an append-only `ACTION_*` palette; tested for
+    roundtrip, field-disjointness, and that the low 48 bits stay a clean qualified reference.
+  - The interpreter is [`shared/tick/src/vm.rs`](../../../../../../../shared/tick/src/vm.rs) —
+    a **purpose-built** stack machine (its own header says *"This is NOT `shared/dsl`"*, per the
+    design), with `SKIP`-encoded forward-only branches, `FAIL`, actor-reading `DAMAGE` via the
+    `Reads` trait, and `encode_if`.
+  - The worker runs it: `vm::run(body, state, &reads)` per row, folded in `event_reference` order,
+    gated by `vm::await_gate`.
+- **The lesson is the entry, not the code.** A stale `current/` row sent a whole phase (P2, "the
+  main event") after work that was already finished, and its *fix* line additionally told us to
+  build the VM on `shared/dsl` — which the design explicitly forbids. `current/` is a convenience
+  cache; **`design/` is the truth**. Re-read `design/` at the start of a task, not the ticket.
 
 ## 2. ✅ CLOSED (2026-07-14) — mint is enqueue-absorbed; `PACK` is an enqueued execute op
 
@@ -70,9 +85,16 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 > blocked (B-2 was retracted — it wrongly treated the legacy `zone_id`/`surface` as a constraint);
 > its remaining half was folded into **#11**, the cold row's missing header — **now also closed**
 > (2026-07-14), which closes #4 with it. That settles every **identity/keying** divergence
-> (#2, #4, #5, #10, #11). **#3 is closed too, and #9 is half-closed** (T-7 / T-8). Still open: the
-> pipeline-shape work (#1, #6, #7, #8) and #9's `Phase` half, which rides with the DSL —
-> sequenced as P2/P3/P4 in [`plan/README.md`](../plan/README.md).
+> (#2, #4, #5, #10, #11), and #3/#9 with them (T-7/T-8/T-9).
+>
+> **Update 2026-07-14 (T-9) — this ledger was badly stale.** Scouting P2 found that **#1, #6 and
+> #7 were already built** by the S0–S7 staged build and had simply never been retired here; each
+> entry's "Code" line described identifiers that no longer exist (`actor_key`, `target_key`,
+> `data0/1`) or absences that are present (`Holder`, `OpenRows`, `drop_timed_out`, the `STATUS_*`
+> machine). They are now closed **against verified evidence**, not assumption.
+>
+> **Only #8 remains open** — the event/data shard split, which the design defers anyway. The
+> "pipeline-shape backlog" was a phantom; see [`plan/README.md`](../plan/README.md).
 
 ## 11. ✅ CLOSED — the `cold` row omitted `macro_position` + `layer_id`; its key couldn't select a row
 
@@ -141,26 +163,46 @@ The original divergence (flat legacy `zone_id`):
 - **Fix**: define `hot_reference` in `object.rs`; decide whether hot identity is the compact
   `u32` or stays the `u64`. **Open reconciliation.**
 
-## 6. 🔴 No two-phase recoverable lifecycle / status state machine
+## 6. ✅ CLOSED — already built by S2/S3; this entry was stale (verified 2026-07-14, T-9)
 
 - **Design** ([lifecycle.md](../intent/lifecycle.md)): a row carries `status`
   (`enqueue → queueing → in_queue → running → complete` / `queue_failed`) + `failed` +
   `tic_state_change`; **enqueue** (stand up target `state_log` rows) and **execute** are
   separate, each idempotent + crash-recoverable via re-drive; an open-rows table (keyed by
   `event_reference`) tracks held state_log rows; timeout eviction on `tic_state_change`.
-- **Code**: `bump` opens pending rows inline + `claim`/`resolve` per `(entity, tic)`; no
-  enqueue phase, no lifecycle status, no open-rows table, no eviction.
-- **Fix**: build the lifecycle (S2/S3). This is the biggest structural change.
+- **⚠️ Every claim in this entry's "Code" line is false today.** It read: *"`bump` opens pending
+  rows inline + `claim`/`resolve` per `(entity, tic)`; no enqueue phase, no lifecycle status, no
+  open-rows table, no eviction."* Checked one by one against
+  [pipeline/src/lib.rs](../../../../../../../server/spacetime/server/pipeline/src/lib.rs):
+  - **lifecycle status** — `STATUS_ENQUEUE` / `QUEUEING` / `IN_QUEUE` / `RUNNING` / `COMPLETE` /
+    `QUEUE_FAILED`, exactly the design's machine, plus `failed` and `tic_state_change` on the row.
+  - **enqueue phase** — `claim` → `stand_up` (per target) → `ready`, separate from execute
+    (`resolve`); `find-or-mint` runs *at `stand_up`*, which is how divergence #2 closed.
+  - **open-rows table** — `OpenRows`, keyed by `event_reference` (+ `source_shard`,
+    `state_log_id`), so enqueue can back out.
+  - **eviction** — `drop_timed_out` evicts `ENQUEUE`/`QUEUEING` rows past `ENQUEUE_WINDOW_TICS`
+    off `tic_state_change`, releasing their holds.
+- **It was already in our own log.** [`completed.md`](../../../../../../work/spacetime-rewrite/completed.md)'s
+  2026-07-13 S0–S7 entry says *"pipeline module (event_log/state/holder/cold/meta + **lifecycle
+  reducers**), **worker two-phase loop**, master drop→bump … Live-verified with real binaries."*
+  This ledger simply never got retired to match.
 
-## 7. 🔴 No master drop barrier / refcounted GC (correctness scaffolding)
+## 7. ✅ CLOSED — already built; this entry was stale (verified 2026-07-14, T-9)
 
 - **Design** ([lifecycle.md](../intent/lifecycle.md)): causality is **strict staging + a master
   drop-then-bump barrier** (no watermark). GC is **dumb**: a **holder table** refcounts pending
   reads/writes per `state_log` row, and GC reclaims only zero-holder, non-latest, old rows.
-- **Code**: `tick_gc` uses a horizon heuristic; no holder table; no master drop reducer; `bump`
-  doesn't sweep timed-out enqueued work.
-- **Fix**: add the holder table + hold acquire/release (S2/S3); the master's `drop_timed_out`
-  reducer before `bump` (S3); make GC the trivial zero-holder rule.
+- **⚠️ Stale in the same way.** It read: *"`tick_gc` uses a horizon heuristic; no holder table; no
+  master drop reducer; `bump` doesn't sweep timed-out enqueued work."* In fact:
+  - **holder table** — `Holder` (btree on `state_log_id`), with `release_holds` on the abort /
+    drop / resolve paths.
+  - **master drop barrier** — `drop_timed_out` exists **and the master calls it immediately before
+    `bump`** ([master/src/main.rs](../../../../../../../server/master/src/main.rs)): `drop_timed_out()`
+    then `bump(cur + 1)`. That ordering *is* the causality guard.
+  - **GC is the trivial rule, not a heuristic** — `tick_gc`'s own doc says *"Dumb reclamation. Drop
+    `state_log` rows with **no holders**, **not the entity's latest resolved**, and old"*, and the
+    filter is exactly `dirty == 0 && tic < horizon && not-latest && holder-count == 0`. The
+    `horizon` is the design's "old", not a substitute for refcounting.
 
 ## 8. 🟡 Event log not split from data (event shard vs data shard)
 
@@ -169,7 +211,7 @@ The original divergence (flat legacy `zone_id`):
 - **Code**: one module holds both; not separated.
 - **Fix**: deployment split (same generic module), later — not a blocker for the DSL landing.
 
-## 9. 🟡 HALF-CLOSED (2026-07-14, T-8) — `priority` deleted; `Phase` waits for the DSL
+## 9. ✅ CLOSED (2026-07-14, T-8 + T-9) — both the priority-DAG and the `Phase` band are gone
 
 - **Design** ([lifecycle.md](../intent/lifecycle.md)): dependencies are explicit `await`s + the read rule
   (`resolved_through`), with cross-entity reads at **≤ T−1** → DAG by tic → deadlock-free. **No
@@ -177,12 +219,18 @@ The original divergence (flat legacy `zone_id`):
 - **✅ `priority` is gone** — `shared/tick/src/priority.rs` (`priority`, `rank`, `actor_read_tic`)
   had **no callers anywhere**; only its own tests exercised it. Deleted with its re-export and the
   stale priority-DAG prose in `lib.rs` / `domain.rs`.
-- **⛔ `Phase` stays for now** — it is **not** vestigial: `resolve_events` composes a tic's events
-  **by phase** (Inbound → Data → Outbound), so it's live ordering behaviour. The design's
-  replacement (explicit `await`s + the read rule, reads at ≤ T−1) doesn't exist yet, so deleting it
-  now would change resolution order with nothing behind it. This entry's own fix line said as much
-  — *"as the DSL lands (S3/S4)"*.
-- **Fix (remaining)**: `Phase` + `action_phase` die with the word-DSL → **T-9 / P2**.
+- **✅ `Phase` is gone too** (T-9). I deferred it in T-8 on the grounds that `resolve_events`
+  composed by phase and was therefore live — **that was wrong**: `resolve_events` itself had no
+  callers outside its own tests. The worker runs `vm::run` per row and folds in `event_reference`
+  order; it never had a phase in it. `Phase`, `action_phase` and the band constants are deleted;
+  `resolve_events` survives as the `Domain`-generic fold **in the caller's order**, which is the
+  design's model (tics + `await`; no intra-tic guarantee).
+- **One real behaviour change, deliberate.** `Phase` re-ordered a tic's events inbound → data →
+  outbound *regardless of arrival order*, so a `MOVE` arriving before its own same-tic `SPAWN` was
+  silently rescued. That rescue is gone by design — *"if two rows must order, the later one
+  `await`s the earlier"*. Nothing live depends on it: a spawn is appended before the move that
+  follows it, so it holds the lower `event_reference` and still lands first. The old test asserted
+  the rescue by feeding the events backwards; it now asserts caller-order in both directions.
 
 ## 10. ✅ CLOSED (2026-07-14) — `server_reference` is geographic `realm_id:8 | server_id:8`
 

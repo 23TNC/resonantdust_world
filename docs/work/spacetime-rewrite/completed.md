@@ -167,6 +167,28 @@ follows the log. (Was `docs/spacetime-implementation/completion-log.md`, now ret
   anywhere** — deleted with its re-export + the stale priority-DAG prose. **`Phase` stayed**:
   `resolve_events` composes a tic's events by phase, so it's live ordering, and #9's own fix line
   already said *"as the DSL lands (S3/S4)"* — my P1 mis-scope. Its deletion moved into T-9. · 19a33be
+- **2026-07-14** · **T-9 — scouted P2, found the backlog was a phantom; closed #1/#6/#7/#9.**
+  Scouting the word-DSL against `design/` (rather than the ticket) found **#1 was already done**:
+  `EventLog` has carried `actions:Vec<u64>` since S1/S2, with `codec::event_word` (word frame +
+  `OP_*`/`ACTION_*` palette) and the **purpose-built** `tick::vm` stack machine
+  (`SKIP`/`FAIL`/`DAMAGE`/`encode_if`) that the worker runs per row. #1's "Code" line named
+  `actor_key`/`target_key`/`data0/1` — **identifiers that exist nowhere in the repo**. Checking
+  #6/#7 the same way: the `STATUS_*` machine, `claim → stand_up → ready` enqueue (separate from
+  `resolve`), `OpenRows`, `Holder`/`release_holds`, the master's `drop_timed_out` **before** `bump`,
+  and a `tick_gc` that is already the zero-holder/non-latest/old rule — **all present**, and this
+  log said so on 2026-07-13. The ledger was simply never retired. #1/#6/#7 closed against verified
+  evidence; **only #8 (the deferred shard split) is open**.
+  **Two real defects came out of it.** (1) #1's *fix* line said to build the VM by "reusing
+  `shared/dsl`'s value-stack VM" — the design **explicitly decides the opposite** ("purpose-built…
+  don't design around it"); I had already propagated that into T-9, so it would have been built on
+  the wrong foundation. Corrected in #1, T-9 and `plan/README`. (2) **T-8's deferral of `Phase` was
+  wrong** — I claimed `resolve_events` composed by phase and was live; it has **no callers** outside
+  its own tests. `Phase`/`action_phase`/the band constants are now deleted, `resolve_events` kept as
+  the `Domain`-generic fold **in the caller's order** (the design's model: tics + `await`, no
+  intra-tic guarantee), closing #9. One deliberate behaviour change: `Phase` used to rescue a `MOVE`
+  that arrived before its own same-tic `SPAWN`; nothing live relies on it (a spawn is appended
+  first, so it holds the lower `event_reference`), and the design wants that expressed as an
+  `await`. Tests green (107), `rd build shared` green, worker resolving live. · commit below
 
 ## Detail — the full-design mechanisms (matching the shard `design/`+`intent/` in full)
 

@@ -8,40 +8,15 @@
 //! is the new state." The per-action composition (`ACTION_MOVE`, `ACTION_DAMAGE`, …)
 //! is filled in as actions land (Phase A2/A3); A0 defines the shapes.
 
-/// The resolution phase an action belongs to. Every entity's events at a tic resolve
-/// **inbound → data → outbound** (the generalization of the receive-first / ack-last saga
-/// ordering); within a phase, by `event_reference`. Phase is a function of the action's
-/// `action_id` band, so it is pipeline-agnostic — see [`action_phase`] and
-/// `docs/pipeline-generalization.md`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Phase {
-    /// Transferred-in entities/quantities — applied first, so the entity is complete
-    /// before any data action reads it.
-    Inbound,
-    /// Normal mutations (move, damage, …).
-    Data,
-    /// Transfers out — applied last, so the entity finishes its data before it leaves.
-    Outbound,
-}
-
-// Action-id bands → phase. The action carried in an event is an `action_reference`
-// (`data_type:6 | action_id:10`); phase keys off the low-10-bit `action_id` so the same
-// band means the same phase in every pipeline. Inbound low, data mid, outbound high.
-const ACTION_ID_MASK: u16 = 0x03FF;
-const PHASE_INBOUND_MAX: u16 = 0x00FF; // action_id 0x000..=0x0FF → inbound
-const PHASE_DATA_MAX: u16 = 0x02FF; //    0x100..=0x2FF → data; above → outbound
-
-/// The [`Phase`] of an action, from its `action_id` band (the low 10 bits of the
-/// `action_reference`; the `data_type` in the high bits doesn't affect phase).
-pub fn action_phase(action: u16) -> Phase {
-    match action & ACTION_ID_MASK {
-        id if id <= PHASE_INBOUND_MAX => Phase::Inbound,
-        id if id <= PHASE_DATA_MAX => Phase::Data,
-        _ => Phase::Outbound,
-    }
-}
-
-// ── actions, placed in their phase band ──
+// ── actions ──
+//
+// The `action_id` bands below (inbound-ish low, data mid, outbound high) are **historical**:
+// they used to drive a `Phase` enum that ordered a tic's events inbound → data → outbound.
+// That ordering is gone (divergence #9) — the design's model is **tics + explicit `await`s**,
+// with no intra-tic order guarantee, so the receive/transfer/ack ordering `Phase` encoded is
+// expressed as `await` chains instead ([event-dsl.md](../../../docs/components/server/spacetime/modules/shard/design/event-dsl.md)
+// §"No phase"). The numeric values are kept purely because they are a stable, append-only id
+// palette — stored programs must not renumber.
 
 /// **Migration receive** (inbound): this (usually cross-shard) entity takes on the actor's
 /// payload — the "attach" half of a transfer. Reads the actor (the source, on another
@@ -287,17 +262,17 @@ pub fn apply_event(mut state: EntityState, ev: &Event, actor: Option<&EntityStat
 /// Resolve an entity's new state: fold its events onto its prior state in **phase order**
 /// (inbound → data → outbound), each paired with its actor's resolved state (`None` where
 /// the action doesn't read an actor). Within a phase the input order is preserved, and the
-/// worker supplies events already ordered by `event_reference`, so the effective order is
-/// (phase, reference). Generic over the pipeline's [`Domain`].
+/// **in the order given** — the caller decides it (the worker sorts by `event_reference`).
+/// There is deliberately no phase re-ordering: the design's ordering model is tics + explicit
+/// `await`s, with no guaranteed order *within* a tic (divergence #9). Generic over the
+/// pipeline's [`Domain`].
 pub fn resolve_events<D: Domain>(
     base: D::Payload,
     events: &[(Event, Option<D::Payload>)],
 ) -> D::Payload {
     let mut state = base;
-    for phase in [Phase::Inbound, Phase::Data, Phase::Outbound] {
-        for (e, actor) in events.iter().filter(|(e, _)| action_phase(e.action) == phase) {
-            state = D::apply_event(state, e, actor.as_ref());
-        }
+    for (e, actor) in events {
+        state = D::apply_event(state, e, actor.as_ref());
     }
     state
 }
@@ -332,16 +307,34 @@ mod tests {
         assert_eq!((out.zone_id, out.location, out.rotation, out.offset), (0, 40, 1, 0x88));
     }
 
+    /// Same-tic spawn then move: the entity materializes, then relocates.
+    ///
+    /// **This used to assert more than it should have.** As `spawn_then_move_resolves_in_phase_order`
+    /// it fed the events *move-first* and relied on the `Phase` band to re-order them to
+    /// spawn → move — i.e. it asserted the outcome was independent of arrival order. Divergence #9
+    /// retired that: the design's rule is **no guaranteed order within a tic** — "if two rows must
+    /// order, the later one `await`s the earlier". So order is now exactly the caller's, and the
+    /// worker's caller-order is `event_reference`.
+    ///
+    /// No live behaviour changes: a spawn is appended *before* the move that follows it, so it
+    /// carries the lower `event_reference` and still lands first. What's gone is the silent
+    /// rescue of a move that arrived before its own spawn — which the design wants expressed as an
+    /// `await`, not as an invisible band.
     #[test]
-    fn spawn_then_move_resolves_in_phase_order() {
-        // Same-tic spawn (inbound) then move (data): the entity materializes, then relocates.
+    fn spawn_then_move_applies_in_the_callers_order() {
         let events = [
-            (Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, 99, 0, 0) }, None),
             (Event { action: ACTION_SPAWN, actor_key: 0, data: pack_spawn(7, 0, 5, 0, 0) }, None),
+            (Event { action: ACTION_MOVE, actor_key: 0, data: pack_move(0, 99, 0, 0) }, None),
         ];
         let out = resolve_events::<Spatial>(EntityState::default(), &events);
-        assert_eq!(out.kind, 7, "spawn (inbound) applied");
-        assert_eq!(out.location, 99, "move (data) applied after spawn, so it wins position");
+        assert_eq!(out.kind, 7, "spawn applied");
+        assert_eq!(out.location, 99, "move applied after spawn, so it wins position");
+
+        // Reversed, the fold no longer rescues it — the move lands on a tombstone and the spawn
+        // then overwrites the position. This is the design's "no intra-tic order" made visible.
+        let reversed = [events[1].clone(), events[0].clone()];
+        let out = resolve_events::<Spatial>(EntityState::default(), &reversed);
+        assert_eq!(out.location, 5, "no phase band re-orders this any more");
     }
 
     /// Cell index `y<<4 | x` — mirror of `codec::packed::cell`, inlined so the pure-tick
@@ -445,17 +438,25 @@ mod tests {
         assert_eq!(apply_event(source, &ev, Some(&EntityState::default())).kind, 7);
     }
 
+    /// The action ids are an **append-only palette** — stored programs carry these numbers, so a
+    /// renumber silently rewrites history. (This replaces `action_phase_bands`, which asserted the
+    /// `Phase` banding that divergence #9 retired; the values it pinned are worth keeping pinned,
+    /// the banding is not.)
     #[test]
-    fn action_phase_bands() {
-        assert_eq!(action_phase(ACTION_RECEIVE), Phase::Inbound);
-        assert_eq!(action_phase(ACTION_SPAWN), Phase::Inbound);
-        assert_eq!(action_phase(ACTION_MOVE), Phase::Data);
-        assert_eq!(action_phase(ACTION_DAMAGE), Phase::Data);
-        assert_eq!(action_phase(ACTION_TRANSFER), Phase::Outbound);
-        assert_eq!(action_phase(ACTION_ACK), Phase::Outbound);
-        // Phase keys off the action_id (low 10 bits); a data_type in the high bits doesn't
-        // change it (same action_id → same phase in every pipeline).
-        assert_eq!(action_phase(ACTION_MOVE | (0x2A << 10)), Phase::Data);
+    fn action_ids_are_stable_and_distinct() {
+        let ids = [
+            ACTION_RECEIVE,
+            ACTION_SPAWN,
+            ACTION_MOVE,
+            ACTION_DAMAGE,
+            ACTION_TRANSFER,
+            ACTION_ACK,
+        ];
+        for (i, a) in ids.iter().enumerate() {
+            assert!(ids[i + 1..].iter().all(|b| a != b), "action ids must be distinct");
+        }
+        // The low 10 bits are the action_id; a `data_type` in the high bits is not part of it.
+        assert_eq!(ACTION_MOVE | (0x2A << 10) & 0x03FF, ACTION_MOVE);
     }
 
     /// A domain whose payload records the exact apply order: each event shifts its action
@@ -472,20 +473,20 @@ mod tests {
     }
 
     #[test]
-    fn resolve_events_applies_in_phase_order() {
-        // Feed events OUT of phase order — they must apply inbound → data → outbound.
+    fn resolve_events_applies_in_the_order_given() {
+        // The caller's order IS the order — no phase re-ordering (divergence #9). These are fed
+        // in what used to be reverse phase order (outbound, data, inbound) and must apply as-is.
         let events = [
-            (Event { action: ACTION_TRANSFER, actor_key: 0, data: [0, 0] }, None), // outbound
-            (Event { action: ACTION_MOVE, actor_key: 0, data: [0, 0] }, None),     // data
-            (Event { action: ACTION_RECEIVE, actor_key: 0, data: [0, 0] }, None),  // inbound
+            (Event { action: ACTION_TRANSFER, actor_key: 0, data: [0, 0] }, None),
+            (Event { action: ACTION_MOVE, actor_key: 0, data: [0, 0] }, None),
+            (Event { action: ACTION_RECEIVE, actor_key: 0, data: [0, 0] }, None),
         ];
-        // Applied order RECEIVE, MOVE, TRANSFER → 0x001, then 0x100, then 0x300.
-        assert_eq!(resolve_events::<OrderDom>(0, &events), 0x001_100_300);
+        assert_eq!(resolve_events::<OrderDom>(0, &events), 0x300_100_001);
     }
 
     #[test]
-    fn within_a_phase_reference_order_is_preserved() {
-        // Two data events keep their input (event_reference) order: DAMAGE then MOVE.
+    fn reference_order_is_preserved() {
+        // The worker sorts by event_reference and the fold keeps that: DAMAGE then MOVE.
         let events = [
             (Event { action: ACTION_DAMAGE, actor_key: 0, data: [0, 0] }, None),
             (Event { action: ACTION_MOVE, actor_key: 0, data: [0, 0] }, None),
