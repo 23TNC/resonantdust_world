@@ -20,11 +20,12 @@ exists *because* of it:
 | component | query | against |
 |---|---|---|
 | worker | `SELECT * FROM event_log WHERE worker_reference = self` | `event_shard` |
+| worker | `SELECT * FROM state_log WHERE worker_a = <self> OR worker_b = <self> OR worker_c = <self> OR worker_d = <self>` | `data_shard` — **the 4-way OR is unverified against SpacetimeDB's subscription grammar** |
 | edge (per zone) | `SELECT * FROM state WHERE macro_position_reference = <zone>` | `data_shard` |
 
-A worker's second subscription — its holds on a data shard, `WHERE worker_reference = self` — has no
-table to name yet. Those two are the design's whole set: *"and NOTHING else. No state, no state_log,
-no cold, no event."*
+The two worker queries are the design's whole set — *"and NOTHING else. No state, no state_log, no
+cold, no event."* (The data-shard one is now `state_log` itself rather than a separate hold; the
+worker reads the payload straight off it.)
 
 ## Trust and correctness notes
 
@@ -178,12 +179,55 @@ the schema enforces that. A row whose `macro_position_reference` disagrees with 
 **`flags : u8` replaces `settled` + `promoted`.** Two bools were two bytes in practice. Bit 0
 `SETTLED`, bit 1 `PROMOTED`, six spare.
 
-### `state_events` — tried, deleted (2026-07-15)
+### The four-worker rule, and why `base` is gone
 
-Briefly existed as `event_reference → worker_reference | lease_tic | Vec<entity_reference>`: a
-per-event row on the data shard, meant to re-home the dropped `event_log.targets` and double as the
-hold. Deleted. Two things it structurally cannot carry, kept here because they constrain whatever
-replaces it:
+**Only four servers may act on one `state_log` row in one tic.** `worker_a..worker_d` hold their
+`server_reference`s, and a worker subscribes with a fixed-width disjunction:
+
+```sql
+SELECT * FROM state_log WHERE worker_a = <self> OR worker_b = <self> OR worker_c = <self> OR worker_d = <self>
+```
+
+That bound is what makes the subscription possible at all. The three shapes it beats:
+
+| | why not |
+|---|---|
+| a single `worker_reference` on the row | multiple events touch one row — one column can't name them all |
+| subscribe by target | a bazillion subscriptions |
+| subscribe by event | multiple events touch the same rows in one tic |
+
+**The payoff: the worker sees the row, so a hold needs no `base`.** The design's `state_hold` carried
+a payload copy *because* the worker couldn't see `state_log` — §"the consequence that drives
+everything below", and the §Open cost concern (*"every hold carries a payload copy … measure"*). Both
+dissolve: the worker reads the payload off the row it's subscribed to. That is what this rule buys,
+and it's why it's worth a hard cap.
+
+**`dirty : u8`** is the count of events holding a slot; `0` = settled, so `SETTLED` leaves `flags`
+(only `PROMOTED` remains). `state_events` (`event_reference → Vec<uid>`) is the reverse index that
+makes increment/decrement a direct lookup rather than a search — internal, never subscribed, so the
+per-event keying that sank the last attempt is fine here: nothing asks it a per-slot question.
+
+**`entity_reference` and `tic` are columns despite being inside `uid`.** A subscription filters on
+columns, and a reducer needs them as values — a packed field is neither. Same reason
+`state.macro_position_reference` is duplicated out of `position_reference`. The `uid` stays the key;
+the columns are for working with.
+
+**Two things to check before building on this:**
+
+1. **Does SpacetimeDB's subscription grammar accept a 4-way `OR`?** Subscription SQL is a subset, and
+   this design has no fallback if the answer is no — the whole shape rests on that one query.
+   Verifiable only against a live DB (see §The subscription hazard).
+2. **What happens to the fifth server?** The cap is a real bound on concurrency, not just a schema
+   convenience: a row that five servers want has no slot for the fifth. Failing its event is
+   correct-ish (the causality guard already fails events that miss their tic) but it means load, not
+   logic, can fail an event.
+
+### The per-event hold — tried, deleted (2026-07-15)
+
+An earlier `state_events` — `event_reference → worker_reference | lease_tic | Vec<entity_reference>`
+— tried to be *both* the write set and the worker's subscription in one per-event row. Deleted. The
+name came back for a different thing (above: internal, never subscribed), so keep the two apart. Two
+facts killed the per-event hold, and they still constrain anything that carries a hold:
 
 **`base` is per-target; the row was per-event.** The worker can't see `state_log`, so the value to
 compute from has to ride its hold (`vm.run(actions, base: hold.base, …)`). A row keyed by event, with

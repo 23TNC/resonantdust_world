@@ -149,13 +149,36 @@ Payload = the reference model's three orthogonal references, carried by both `st
 
 | column | type | key | notes |
 |---|---|---|---|
-| `uid` | `u64` | PK | `state_uid` — `reserved:16 \| entity_reference:32 \| tic:16`. Not a surrogate: it **is** `(entity, tic)`. |
+| `uid` | `u64` | PK | `state_uid` — `reserved:16 \| entity_reference:32 \| tic:16` |
+| `entity_reference` | `u32` | idx | also in `uid`; a column because packed fields can't be filtered or worked with |
+| `tic` | `u16` | idx | same |
+| `worker_a` | `u8` | idx | `server_reference` acting on this row this tic. `SERVER_REF_NONE` = free |
+| `worker_b` | `u8` | idx | |
+| `worker_c` | `u8` | idx | |
+| `worker_d` | `u8` | idx | |
+| `dirty` | `u8` | | count of events holding this slot. `0` = settled |
 | *payload* | | | composed so far; seeded from the resolved value at `< tic` |
-| `flags` | `u8` | | bit 0 `SETTLED` (no events left → eligible to promote) · bit 1 `PROMOTED` |
+| `flags` | `u8` | | bit 0 `PROMOTED` |
 
-`entity_reference` and `tic` are read off `uid`, not stored again. **Entity-major**: one entity's
-slots are contiguous, so the read rule's per-entity question is a range scan and `(entity, tic)` is an
-exact PK lookup. `promote`'s `tic <= t` is a scan — see [`notes/tables.md`](notes/tables.md).
+sub `SELECT * FROM state_log WHERE worker_a = <self> OR worker_b = <self> OR worker_c = <self> OR
+worker_d = <self>` (worker) — the worker's window into a data shard.
+
+**At most four servers may act on one row in one tic.** That bound is what makes the subscription a
+fixed-width disjunction instead of a per-target subscription, and it lets the worker read the payload
+off the row — so a hold carries no `base` copy.
+
+`uid` is entity-major; `entity_reference` and `tic` are duplicated out of it because a subscription
+filters on columns and a reducer needs them as values.
+
+### `state_events` — an event's slots on this shard
+
+| column | type | key | notes |
+|---|---|---|---|
+| `event_reference` | `u32` | PK | |
+| `uid` | `Vec<u64>` | | the `state_log` slots this event holds **here** |
+
+**Internal** — never subscribed. The reverse index: add/remove an event and this gives its `uid`s
+directly, so `dirty` can be incremented and decremented without a search.
 
 ### `state` — client-visible latest
 
@@ -171,13 +194,11 @@ sub `SELECT * FROM state WHERE macro_position_reference = <zone>` (edge, per sub
 
 ### Not shaped yet
 
-Three things the data shard needs and no table here provides:
-
 | | |
 |---|---|
-| **the hold** | The worker's only window into a data shard — `worker_reference` (its subscription key), `lease_tic`, and per-target `ready` + `base`. The design's `state_hold`, still unshaped. |
-| **the write set** | Which entities an event touches here. `declare_pending` / `withdraw_pending` / `release_holds` all iterate it. Had a home in `event_log.targets`; doesn't now. |
-| **the composition head** | The lowest pending `event_reference` for a slot `(entity, tic)` — `refresh_ready`'s go-signal and `apply`'s order fence. Decision #4 rests on it. |
+| **the composition head** | The lowest pending `event_reference` for a slot — `apply`'s order fence, and how a worker knows it's its turn. `dirty` is a count; it answers *how many*, not *which is next*. Decision #4 ("the one property that must not be broken") rests on it. |
+| **the lease** | `reap()` needs an expiry per `worker_*` slot, or a dead worker holds a row forever. |
+| **the read set** | Writes are recoverable from `actions` (each reference carries its `server_id`). Reads are not — telling which operands a verb *reads* needs `action_reads_actor`, which the design's §Open already flags. |
 
 See [`notes/tables.md`](notes/tables.md) and the intent doc.
 

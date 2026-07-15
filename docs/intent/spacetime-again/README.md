@@ -15,16 +15,21 @@
 > - **`failed` is gone**, folded into `status` (it was pure redundancy with `QUEUE_FAILED`).
 > - **`state_log.uid` is composite** — `reserved:16 | entity_reference:32 | tic:16` — so it *is*
 >   `(entity, tic)`, replacing `idx (target_reference, tic)`; neither is a separate column.
->   `settled` + `promoted` are a `flags:u8`. The `events` vector is gone.
-> - **The data shard is under-shaped.** TABLES.md has only `state_log` and `state`. Three things the
->   flow below needs have no table: the **hold** (`state_hold` — `worker_reference`, `lease_tic`,
->   per-target `ready` + `base`), the **write set** (which entities an event touches here, formerly
->   `event_log.targets`), and the **composition head** (`row.events.first()`, which decision #4
->   rests on).
+>   The `events` vector is gone; `settled` is now `dirty == 0` and `flags` keeps only `PROMOTED`.
+> - **`state_hold` does not exist, and `base` is unnecessary.** A hard rule — *at most four servers
+>   may act on one `state_log` row per tic* (`worker_a..worker_d`) — lets a worker subscribe to
+>   `state_log` itself with a fixed-width `OR`. It therefore **reads the payload off the row**, which
+>   voids §"the consequence that drives everything below" (`ready` + `base` on the hold) and §Open's
+>   `base`-copy cost.
+> - **`state_events` is internal** (`event_reference → Vec<uid>`) — the reverse index for
+>   incrementing/decrementing `dirty`. Never subscribed.
+> - **The write set comes from `actions`**, not a column: every reference is a `u32` carrying its
+>   `server_id` in the top byte, so the worker knows which shards to call. This resolves what
+>   dropping `targets` opened. It does **not** resolve `reads` — §Open's read-set question stands.
 >
->   A per-event shape was tried and deleted: `base` is per-target and the head is a per-slot
->   question, so both must be keyed per `(entity, tic)`. See
->   [`notes/tables.md`](../../notes/tables.md).
+> Still unresolved: the **composition head** (`dirty` counts, it doesn't order — decision #4 rests on
+> knowing *which* event is next) and a **lease** per `worker_*` slot for `reap()`. See
+> [`notes/tables.md`](../../notes/tables.md).
 > - `target_reference` is named **`entity_reference`** throughout.
 > - **Widths**: `tic` is a wrapping `u16`; `worker_reference` `u8`; entity keys `u32`; `actions`
 >   `Vec<u32>`.
