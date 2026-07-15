@@ -46,10 +46,6 @@ the `_id` suffix.
 > `object_reference` **variant slot** (the union is addressed uniformly). The name marks the slot,
 > not the structure. Known, deliberate exception.
 
-`count` and the `x`/`y` grid coordinates are leaf scalars too, but they're
-magnitudes/coordinates rather than allocated identities, so they don't take the `_id`
-suffix.
-
 ## references (the packed composites)
 
 Each packs the ids/references named, in fixed bit positions:
@@ -66,12 +62,14 @@ Each packs the ids/references named, in fixed bit positions:
 | `zone_reference`         | 8     | `zone_x` + `zone_y` |
 | `region_reference`       | 8     | `region_x` + `region_y` |
 | `realm_reference`        | 8     | `realm_x` + `realm_y` |
-| `region_zone_reference`  | 16    | `region_reference` + `zone_reference` (a reference of references) |
+| `macro_position_reference` | 16  | `region_reference` + `zone_reference` (a reference of references) — the macro half of `position_reference` |
+| `micro_position_reference` | 16  | `tile_reference` + `layer_reference` — its micro half |
+| `cold_row_reference`     | 64    | `macro_position_reference` + `type_reference` + `layer_id` — the **cold row's** identity (distinct from `cold_reference` below, which addresses an **object**) |
 | `layer_reference`        | 8     | `type_id` + `layer_id` |
 | `cold_reference`         | 32    | `region_reference` + `zone_reference` + tile + `layer_reference` (realm rides `server_reference`) |
 | `zone_id`                | 32    | `realm_reference` + `region_reference` + `zone_reference` (+ reserved) — see the contrast below |
 
-References may nest: `region_zone_reference` packs two `*_reference`s; `definition_reference` packs
+References may nest: `macro_position_reference` packs two `*_reference`s; `definition_reference` packs
 two 16-bit references, each of which packs ids. **Retired (2026-07-14):** the v1 `object_reference:64`
 (type+kind halves), `object_type_reference` / `object_kind_reference`, `action_reference`, and the
 `zone_reference:64` whole-zone aggregate — all deleted from the codec.
@@ -80,14 +78,14 @@ two 16-bit references, each of which packs ids. **Retired (2026-07-14):** the v1
 
 - Constructors pack: `pack_<thing>_reference(...) -> uN`.
 - Accessors unpack a field back out: `<thing>_ref_<field>(r) -> ...`, returning an id (or
-  a nested reference). e.g. `type_ref_type_id`, `kind_ref_x`, `cold_ref_region_zone`.
+  a nested reference). e.g. `type_ref_type_id`, `kind_ref_x`, `cold_ref_macro_position`.
 - A `pack_*` never takes another `pack_*`'s output *as an id* — it takes it as a
   reference. The signature type is the tell.
 
 ## A worked contrast: `zone_id` vs `zone_reference`
 
 - **`zone_reference : u8`** — `zone_x:4 | zone_y:4`, a zone's coordinate *within its region*. A
-  composite of two coordinate ids. Used to build `region_zone_reference`.
+  composite of two coordinate ids. Used to build `macro_position_reference`.
 - **`zone_id : u32`** — the **world-global address** of one zone, used as the routing/subscription
   key (`WHERE zone_id`). Since the 2026-07-14 geometry re-cut it is
   `realm_reference:8 | region_reference:8 | zone_reference:8 | reserved:8` — i.e. it now *nests*

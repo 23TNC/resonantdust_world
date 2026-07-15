@@ -24,10 +24,12 @@ The go-forward geometry is **realm · region · zone · tile · layer** (each a 
 nibbles; realm rides `server_reference`), which the reference model already encodes. So the cold
 side is *not* blocked — `cold_reference : u32 = region:8 | zone:8 | tile:8 | layer:8` is geographic
 and fits `REF_COLD | server_reference | cold_reference:32`. Lesson: don't preserve legacy code as a
-constraint; conform it to the design. (Naming: use `region_zone_reference`, not `macro_*`.)
+constraint; conform it to the design.
 
-**Now executing** the cold-side re-cut against the geographic model (drop `surface`, retire the
-flat `zone_id`), see [todo.md](todo.md) / [completed.md](completed.md).
+The cold-side re-cut then landed (drop `surface`, retire the flat `zone_id`) — see
+[completed.md](completed.md). What B-2 did *not* excuse: the cold **row** still lost two of its
+three header fields in that re-cut (`macro_position` + `layer_id`) — tracked as divergence **#11**
+in [todo.md](todo.md).
 
 ### B-1 · The object-model taxonomy was in-flux — blocked the representation re-keys
 **Raised 2026-07-14 · fully resolved 2026-07-14.**

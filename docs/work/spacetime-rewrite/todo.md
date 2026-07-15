@@ -3,26 +3,33 @@
 Executes: the `shard` component. Planned work not yet begun; moves to [remaining.md](remaining.md)
 when started. Newest-first.
 
-**The rewrite is done.** Behavioral core + integration; the reference-model re-cut
-(identity/event/object); the geographic geometry (legacy `zone_id`/`surface` retired); the
-geographic cold `entity_reference`; PACK as an enqueued execute op (divergence #2 closed); and the
-cross-shard foreign Phase-1 hold — all landed + verified ([completed.md](completed.md)). No blockers
-open. One deliberate non-item remains:
+## Re-cut the `cold` row to its design header + composite key (divergence #11)
 
-## Deliberately NOT done — `cold` table `region_zone:u16` key (#4 remnant)
+**2026-07-14 · A regression I introduced in the re-cut — not a "marginal compaction".** The plan's
+cold row header is **`macro_position_reference:16` + `type_reference:16` + `layer_id:4`**, and the
+key is their composite. I dropped two of the three: kept `zone_id:u32` in place of `macro_position`,
+and — having correctly moved `layer` out of `type_reference` (it's a tile-slot, not a type property)
+— **never re-homed `layer_id` in the row**. v1's `type_reference` had `layer` *inside* it, so the old
+key discriminated layer; mine doesn't. (I then wrongly rationalised `macro_position` as a deferrable
+2-byte compaction. It isn't: the row header is what a reader reconstructs a `position_reference`
+from.)
 
-- **2026-07-14** · **RECOMMENDATION: leave as-is until multi-realm sharding is real.**
-  `cold` keys by the **geographic** `zone_id:u32` (`realm|region|zone`), which is *correct* — the
-  geometry re-cut already retired the legacy flat/surface layout. The design's `region_zone:u16`
-  (realm implied by the shard) is a **wire-compaction**: it saves ~2 bytes per cold row.
-  **Cost today:** the wire (`ColdObjectsRow`) is demuxed by the client on `zone_id`, and a client
-  may hold subscriptions on **several shards** (several realms) over one edge connection — a row
-  carrying only `region_zone` can't be attributed to a realm by the client, so the **edge** would
-  have to track each shard's realm and reconstruct `zone_id` on every relayed row. That's new
-  plumbing + a new failure mode for 2 bytes, with **zero payoff in a single-realm world** (realm 0).
-  **Revisit when:** multi-realm sharding lands (the realm is then genuinely redundant per row and
-  the edge already needs per-shard realm knowledge for routing).
+- **`cold`** → PK `cold_row_reference : u64` = `reserved:28 | macro_position:16 | type_reference:16
+  | layer_id:4`; columns `macro_position:u16` (indexed — the subscription key; realm implied by the
+  shard), `type_reference`, `layer_id`, `kinds`, `version`. Drop `zone_id`.
+- **`cold_removed`** → **1:1 on the same key**; tombstones shrink `u16 → u8` (a bare
+  `tile_reference`) since macro/type/layer are in the key. Smaller re-sends (only that row's delta,
+  not the whole zone's), no cross-filtering, can't dangle.
+- **`find_or_mint` + the edge's interact scan** → select `(macro_position, type_id, layer_id)` off
+  the target's `cold_reference`, then match `tile_reference`. **This is the live bug**: today the
+  lookup ignores `layer_reference` and takes the first row with any entry at the tile — and the
+  dense ground layer means every occupied cell matches ≥2 rows, so it's iteration-order luck.
+- **worldgen** → emit `layer_id` per `ColdRow` (currently implicit 0); seed by `macro_position`.
+- **edge** → subscribe `WHERE macro_position`; reconstruct the client-facing `zone_id` from the
+  shard's realm + `macro_position` when relaying `ColdObjectsRow`.
+- **codec** → `pack_macro_position`/accessors (rename from `pack_region_zone`, per the plan's
+  `macro_position_reference` / `micro_position_reference` naming); `pack_cold_row_reference`.
+- Shard republish. **Test to add:** a tile holding ground **and** a thing resolves to the one the
+  target names (today a coin flip).
 
-_(This is a judgement, not a blocker — if you'd rather have the design's exact key width now, it's a
-contained change: `Cold.zone_id → region_zone`, `seed_cold_row`/`mint_cold`/`find_or_mint`, the edge
-subscribe filter + `ColdObjectsRow` reconstruction, and a shard republish.)_
+_(Everything else is done + verified — see [completed.md](completed.md). No blockers open.)_

@@ -40,7 +40,7 @@ combined kind like `male.fat` is one `kind_id`). No reserved headroom — the u3
 ┌────────────────┬───────────────┬──────────────┬──────┬───────┐
 │ region_ref:8   │  zone_ref:8   │  tile_ref:8  │type:4│layer:4│
 ├────────────────┴───────────────┼──────────────┴──────┴───────┤
-│ region_zone_reference : u16    │  tile_layer_reference : u16  │
+│ macro_position_reference : u16 │  micro_position_reference:16 │
 └────────────────────────────────┴──────────────────────────────┘
                                                 └ layer_reference:8 ┘
 ```
@@ -69,12 +69,37 @@ which makes it one); you can never `unpack` a `hot_reference`. They're distingui
 A cold row stores many objects that share `(type, subtype, region, zone, layer)`; only the
 per-object delta is repeated.
 
-**Row header (shared):**
+**Row header (shared) — and the row's identity:**
 | field | width | meaning |
 |---|---|---|
+| `macro_position_reference` | u16 | `region_ref \| zone_ref` (realm implied by the shard) |
 | `type_reference` | u16 | `type_id \| subtype_id` |
-| `region_zone_reference` | u16 | `region_ref \| zone_ref` |
 | `layer_id` | u4 | the tile-slot (one row per layer) |
+
+**`cold_row_reference : u64` — the row key.** Those three header fields *are* the identity, so the key
+is their composite (not an opaque surrogate):
+
+```
+ 63                36 35            20 19            4 3       0
+┌────────────────────┬────────────────┬───────────────┬─────────┐
+│    reserved : 28   │ macro_position │ type_reference│ layer:4 │
+└────────────────────┴────────────────┴───────────────┴─────────┘
+```
+Unique by construction, and every lookup key a reader holds is already in a `position_reference`:
+`macro_position` + `layer_id` + `type_id` come straight off it, and `subtype_id` is **not needed** to
+find the row — see the uniqueness rule below.
+
+> **Why `layer_id` must be in the key.** `layer` is a *tile-slot*, not a type property, so it is
+> **not** inside `type_reference` (v1 wrongly packed it there). Two rows sharing
+> `(macro_position, type, subtype)` but differing in `layer` are distinct rows — omit `layer_id`
+> from the key and they collide. Likewise `macro_position`: a flat/whole `zone_id` is *not* a
+> substitute, because the row header is what a reader reconstructs a `position_reference` from.
+
+**Selecting a row from a `position_reference` / `cold_reference`.** Filter by
+`(macro_position, type_id, layer_id)` — all three read directly off the reference — then match the
+entry whose `tile_reference` equals the target's. Exactly one matches, because the uniqueness rule
+is **one object per `(type, layer, tile)`, subtype-agnostic**: a reader never knows the subtype (a
+position carries none), so subtype may split rows but must never be needed to *find* one.
 
 **`Vec<kind_pos_reference : u32>` — one per object:**
 ```
@@ -88,8 +113,17 @@ Each object costs **32 bits** carrying its full delta. Everything reconstructs f
 | you want | = row gives | + entry gives |
 |---|---|---|
 | `definition_reference` | `type_reference` | `kind_reference` |
-| `position_reference` | `region_zone` + `layer_id` + `type_id` | `tile_reference` |
+| `position_reference` | `macro_position` + `layer_id` + `type_id` | `tile_reference` |
 | state | *(decode picked by `type_id`)* | `data` |
+
+**The removal delta (`cold_removed`) shares the key — 1:1 with the cold row.** A tombstone marks
+one object *of this row* as currently hot, so the delta row is keyed by the **same**
+`cold_row_reference:u64`. That makes each tombstone just a **`tile_reference : u8`** — `macro_position`,
+`type` and `layer` are already in the key, so they're never repeated (v1's `x|y|layer|type_id:u16`
+existed only because the delta was keyed per-*zone* and had to disambiguate). Three consequences,
+all good: an unpack re-sends only *that* row's small delta rather than the whole zone's (which is
+the re-transmit cost `cold_removed` exists to avoid); a client renders row X as `X.kinds` minus
+`X.removed` with no filtering; and a tombstone can't name a `(type, layer)` that has no cold row.
 
 ## `data : u8` — per-instance state, decoded by the row's `type_id`
 
@@ -179,9 +213,10 @@ unambiguous (`reference_id` names the variant).
   `position_reference` / the cold `tile_reference`; state lives in `data:8` (cold) or the `state`
   table (hot).
 - `layer` moved from the type half to `position_reference` (it's a tile-slot, not a type property).
-- `region_zone_reference` (region+zone) is now explicit (`region_ref:8 | zone_ref:8`) — the
-  zone-subscription key. (Named `region_zone_reference`, **not** `macro_position` — "macro" is
-  retired.) Divergence #4's cold-table re-key rides the legacy-`zone_id` retirement.
+  **It therefore has to reappear as `layer_id` in the cold row header + key** — dropping it from
+  `type_reference` without re-homing it collapses distinct per-layer rows (divergence #11).
+- `macro_position_reference` (region+zone) is now explicit (`region_ref:8 | zone_ref:8`) — the
+  zone-subscription key and the cold row's macro half. Closes divergence #4.
 - **`entity_reference` re-laid-out** to `reserved:10 | reference_id:6 | server_reference:16 |
   object_reference:32` (was `entity_type:8 | entity_id:32 | mint_server:16`): the type left for
   `definition_reference`, `entity_id` generalized to the `object_reference` union, and the low 48

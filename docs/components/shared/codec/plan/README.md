@@ -10,7 +10,8 @@ _Last updated: 2026-07-14._
 2. **`object.rs` ✅ DONE (2026-07-14)** — the **definition / position / data** split:
    `definition_reference:u32` (drop `subkind`, `kind` 12b), `type_reference`/`kind_reference`
    halves, the cold entry `kind_reference:16 | tile:8 | data:8`, `data:8` decode, geographic
-   `cold_reference = region:8 | zone:8 | tile:8 | layer:8`, `region_zone_reference` (not `macro_*`).
+   `cold_reference = region:8 | zone:8 | tile:8 | layer:8`, `macro_position_reference` /
+   `micro_position_reference` (the two u16 halves of a `position_reference`).
    Landed + browser-verified (terrain renders on the new encoding). B-2 retracted (it wrongly
    treated the legacy `zone_id`/`surface` as a constraint).
 3. **`packed.rs` `zone_id` ✅ DONE (2026-07-14, G1)** — repartitioned to geographic
@@ -18,5 +19,10 @@ _Last updated: 2026-07-14._
 4. **Cold `entity_reference` ✅ DONE (2026-07-14, G2)** — `REF_COLD | server_reference |
    cold_reference:32` (geographic); the interim world-global form removed. Verified via Interact.
 5. **PACK trigger ✅ DONE (2026-07-14, G3)** — worker settles idle `REF_COLD` objects back to cold
-   (provenance in `data0`); verified round-trip. Only marginal follow-up left: the `cold` table
-   `region_zone:u16` key-width compaction ([work/…/todo.md](../../../../work/spacetime-rewrite/todo.md)).
+   (provenance in `data0`); verified round-trip.
+6. **⛔ OPEN — the `cold` row re-cut (divergence #11).** The row must carry the design header
+   (`macro_position_reference:16 | type_reference:16 | layer_id:4`) and key on its composite. The
+   re-cut moved `layer` out of `type_reference` (correct) but never re-homed it in the row, and kept
+   `zone_id:u32` instead of `macro_position` — so the key can no longer select a row by layer, and
+   `find_or_mint` ignores the target's `layer_reference` outright
+   ([work/…/todo.md](../../../../work/spacetime-rewrite/todo.md)).

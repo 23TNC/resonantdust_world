@@ -16,9 +16,9 @@ object-model shard-class decisions this depended on are settled (blockers B-1 + 
 - **#4 · Geographic cold key.** 🟡 **Geometry DONE** — the legacy flat `zone_id`
   (`region_x:8|region_y:8|surface:8|…`) was **retired**; `zone_id` is now geographic
   `realm:8|region:8|zone:8|reserved:8` and `cold` keys by it, correctly. Only the `region_zone:u16`
-  **key-width** narrowing remains (drop the realm bits the shard implies) — a ~2-byte wire
-  compaction needing multi-realm edge plumbing; no dev payoff. There is no "legacy flat `zone_id`"
-  left to reconcile against.
+  row still keys on `zone_id:u32` instead of the design header's `macro_position_reference:u16` +
+  `layer_id:u4` — **not** a key-width compaction but a missing header (see divergence **#11**). There
+  is no "legacy flat `zone_id`" left to reconcile against; the remaining work is the row re-cut.
 - **#5 · Re-key hot identity + location index.** ✅ **DONE.** `state`/`state_log` keep a **`u64
   entity_key`** — it now holds the reference model's `entity_reference` (`reference_id:6 |
   server_reference:16 | object_reference:32`), so a hot object *is* `hot_reference:32`

@@ -63,7 +63,9 @@ follows the log. (Was `docs/spacetime-implementation/completion-log.md`, now ret
   - Cold entry `kind_pos_reference : u32 = kind_reference:16 | tile:8 | data:8`; `data:8 =
     sub_position:3 | rotation:2 | aux:3` (replaces the old `rotation:2|count:4`).
   - Geographic `cold_reference : u32 = region:8 | zone:8 | tile:8 | layer_reference:8` (realm omitted
-    — rides `server_reference`); `region_zone_reference` naming (not `macro_*`); the `u8` nibble
+    — rides `server_reference`). ⚠️ *This entry originally recorded a `macro_* → region_zone_reference`
+    rename; that rename was **reverted** (2026-07-14) — the plan's `macro_position_reference` /
+    `micro_position_reference` naming stands.* The `u8` nibble
     primitive at four scales per [spatial-references.md](../../components/shared/codec/design/references/spatial-references.md).
   - Propagated: worldgen (`pack_cold_entry`), worker/edge/wasm decode unchanged (entry readers kept
     their names). Kept the cold *table* on its `zone_id:u32` key for now (the legacy-`zone_id`

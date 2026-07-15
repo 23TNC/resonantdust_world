@@ -88,56 +88,74 @@ state_log
 
 ## Cold side
 
-### `cold` — the settled store ✅ (shape) / ⚠️ (role)
+### `cold` — the settled store ✅
 
 Settled, packed, static objects — terrain and at-rest things. **Never ticks** (`tick_gc`
-ignores it). One row per `(zone, type_reference)`: the shared type half once, plus a `Vec`
-of the per-instance kind halves.
+ignores it). One row per **`(macro_position, type_reference, layer_id)`**: the shared header
+once, plus a `Vec` of the per-instance entries.
 
 ```
 cold
-  cold_key       : u64  PK      packs (zone_id, type_reference)
-  zone_id        : u32          the subscription/routing key (geographic realm|region|zone)
-  type_reference : u32          the shared type half — type_id:4 | subtype_id:12 (holds a u16)
-  kinds          : Vec<u32>     the cold entries settled under it:
-                                kind_reference:16 | tile:8 | data:8  (one per object)
-  version        : u32          bumped on mutation → drives client re-send
+  cold_row_reference : u64  PK   the composite of the three header fields below:
+                                 reserved:28 | macro_position:16 | type_reference:16 | layer_id:4
+  macro_position     : u16  idx  region_reference:8 | zone_reference:8 — the subscription key
+                                 (realm is implied by the shard, never repeated in the row)
+  type_reference     : u32       the shared type half — type_id:4 | subtype_id:12 (holds a u16)
+  layer_id           : u8        the tile-slot (u4) — one row per layer
+  kinds              : Vec<u32>  the cold entries settled under it:
+                                 kind_reference:16 | tile_reference:8 | data:8  (one per object)
+  version            : u32       bumped on mutation → drives client re-send
 ```
 
-_(2026-07-14 re-cut: `type_reference` lost its `layer` — layer is a tile-slot, now in the
-`cold_reference`/`layer_reference`; the entry is the reference model's `kind_pos_reference`, no
-`subkind`. `region_zone_reference:u16` would narrow the key — see the note below.)_
-
-- ✅ **`Vec<u32>`, not columnar.** A zone is 256 tiles; keep the Vec (`object-model.md`
-  Decided).
-- ✅ **Cold uniqueness rule:** one object per `(type, layer, tile)`, subtype-agnostic,
-  **reducer-enforced** (reject-if-present), not a PK.
-- ✅ **Keyed by the geographic `zone_id`** (`realm|region|zone`, 2026-07-14 G1 — `surface`
-  retired), stored as the routing column. `region_zone` (realm implied by the shard) would narrow
-  the key `u32→u16` — a marginal wire compaction, not yet done (see
-  [work/…/todo.md](../../../../../../work/spacetime-rewrite/todo.md)).
+- ✅ **The key is the header, not a surrogate.** `cold_row_reference` is the composite of exactly
+  the three fields that identify a row ([reference-model.md](../../../../../shared/codec/design/reference-model.md)
+  §Cold row) — no opaque id, nothing to keep in sync.
+- ✅ **`layer_id` is in the key.** `layer` is a *tile-slot*, not a type property, so it is **not**
+  inside `type_reference` (v1 wrongly packed it there — `type_id:4|subtype_id:12|layer:4|reserved:12`).
+  Rows sharing `(macro_position, type, subtype)` but differing in `layer` are **distinct rows**;
+  omitting `layer_id` collapses them (and `seed_cold_row` is insert-if-absent, so the second would
+  be silently dropped).
+- ✅ **`macro_position`, not a whole `zone_id`.** The row header is what a reader reconstructs a
+  `position_reference` from, and realm is the shard's — so the row carries `region|zone` only.
+- ✅ **Selecting a row from a `cold_reference` / `position_reference`:** filter
+  `(macro_position, type_id, layer_id)` — all three read straight off the reference — then match the
+  entry whose `tile_reference` equals the target's.
+- ✅ **Cold uniqueness rule:** one object per `(type, layer, tile)`, **subtype-agnostic**,
+  reducer-enforced (reject-if-present), not a PK. This is what makes the selection above
+  unambiguous *without* a subtype — which a `cold_reference` deliberately doesn't carry.
+- ✅ **`Vec<u32>`, not columnar.** A zone is 256 tiles; keep the Vec (`object-model.md` Decided).
 
 ### `cold_removed` — the cold modification delta ✅
 
-A small companion to `cold`: per zone, the objects **removed** from cold since the last
-compaction (each object minted hot leaves one). Instead of mutating the big `cold` `Vec` on
-every unpack — which re-transmits the whole zone row to every subscriber — we append a tiny
+A small companion to `cold`, **1:1 with it**: the objects **removed** from *that* cold row since
+the last compaction (each object minted hot leaves one). Instead of mutating the big `cold` `Vec`
+on every unpack — which re-transmits the whole row to every subscriber — we append a tiny
 tombstone here.
 
 ```
 cold_removed
-  zone_key : u32         PK   the zone (region_zone)
-  removed  : Vec<u16>         each u16 = x:4 | y:4 | layer:4 | type_id:4
-  version  : u32              bumped on append → drives client re-send (tiny row)
+  cold_row_reference : u64  PK   the SAME key as its `cold` row (1:1)
+  macro_position     : u16  idx  the subscription key (mirrors `cold`)
+  removed            : Vec<u8>   each u8 = tile_reference (x:4 | y:4)
+  version            : u32       bumped on append → drives client re-send (tiny row)
 ```
 
-- ✅ **Each `u16` is the intra-zone part of a `cold_reference`** (the whole ref minus its
-  region/zone, which are the row's `zone_key`).
-- ✅ **Written at mint (unpack).** Enqueue's `find-or-mint` appends the removed position here
-  rather than rewriting the `cold` row. The entry also serves as the **"already unpacked"
+- ✅ **Same key as `cold` — 1:1.** A tombstone marks one object *of one row* as currently hot, so
+  the delta is keyed by that row's `cold_row_reference`. Consequences, all good:
+  - **A tombstone is a bare `tile_reference:u8`.** `macro_position`, `type` and `layer` are already
+    in the key, so they're never repeated. (v1's `x:4|y:4|layer:4|type_id:4` u16 existed *only*
+    because the delta was keyed per-**zone** and had to disambiguate layer+type within it.)
+  - **Smaller re-sends.** An unpack re-transmits only *that* row's delta, not the whole zone's —
+    which is precisely the re-transmit cost this table exists to avoid. Per-zone keying would have
+    re-sent every type/layer's tombstones on every unpack anywhere in the zone.
+  - **No cross-filtering.** A client renders row X as `X.kinds` minus `X.removed`; it never filters
+    tombstones by layer/type.
+  - **Can't dangle.** A tombstone cannot name a `(type, layer)` that has no cold row.
+- ✅ **Written at mint (unpack).** Enqueue's `find-or-mint` appends the removed `tile_reference`
+  here rather than rewriting the `cold` row. The entry also serves as the **"already unpacked"
   marker** for `find-or-mint` idempotency.
-- ✅ **Clients render `cold` minus `cold_removed`.** They subscribe to both by zone and omit any
-  cold object whose `(x, y, layer, type_id)` is in `removed`.
+- ✅ **Clients render `cold` minus `cold_removed`.** They subscribe both by `macro_position` and,
+  per row, omit any cold entry whose `tile_reference` is in that row's `removed`.
 - ✅ **Compacted by a `PACK` action, not GC.** A worker-resolved `PACK` applies the tombstoned
   kinds to the `cold` rows and clears `removed` (and settles idle hot objects back in). So the
   `cold` `Vec` mutates (and re-sends) at most once per compaction, not once per unpack — and

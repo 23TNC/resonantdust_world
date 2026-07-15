@@ -57,6 +57,6 @@ pay for the tag only when we need it, never per operand.
 Settling this closes the **taxonomy/naming** piece and the identity/keying divergences: the
 `hot_reference` re-key (**#5**, via the `entity_reference` layout) and the geographic
 `server_reference` (**#10**) are **done + browser-verified** (2026-07-14); `region_zone` (**#4** —
-via `region_zone_reference`, *not* `macro_*`; the term "macro" is retired) rides the remaining
-legacy-`zone_id` retirement in [`work/…/todo.md`](../../../../work/spacetime-rewrite/todo.md).
+via `macro_position_reference`) is **not** done — the cold row still omits it *and* `layer_id`
+(divergence #11, [`work/…/todo.md`](../../../../work/spacetime-rewrite/todo.md)).
 Blockers [B-1](../../../../work/spacetime-rewrite/blockers.md) + B-2 are both resolved.

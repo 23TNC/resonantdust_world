@@ -47,12 +47,19 @@ See also [`divergences.md`](divergences.md) — the design-vs-code gap list.
   keeps the row); `resolve_foreign` releases it with the write. Holds key on `(source_shard,
   event_reference)`. Verified on a real 2-shard rig.
 
-## Not yet implemented (one deliberate non-item — → [`work/…/todo.md`](../../../../../../work/spacetime-rewrite/todo.md))
+## 🔴 Open — the `cold` row re-cut (divergence #11 → [`work/…/todo.md`](../../../../../../work/spacetime-rewrite/todo.md))
 
-- `cold` table `region_zone:u16` key (#4 remnant) — the table keys by the (geographic) `zone_id:u32`,
-  which is correct; the `u16` narrowing is a ~2-byte wire compaction that would need the edge to
-  track each shard's realm and reconstruct `zone_id` per relayed row. **Recommended to wait for
-  multi-realm sharding** — no payoff in a single-realm world.
+The cold row **omits two of its three design header fields**: it keys on
+`(zone_id:u32, type_reference)` instead of the composite
+`macro_position_reference:16 | type_reference:16 | layer_id:4`. The re-cut correctly moved `layer`
+out of `type_reference` but never re-homed it in the row, so:
+- 🔴 **live:** `find_or_mint` ignores the target's `layer_reference` and takes the first row with any
+  entry at the tile — and the dense ground layer means every occupied cell matches ≥2 rows, so which
+  object gets minted is iteration-order luck;
+- 🟡 **latent:** rows differing only by `layer` collide (and `seed_cold_row` is insert-if-absent, so
+  the loser is silently dropped) — masked only because worldgen emits layer 0 exclusively.
+
+`cold_removed` re-keys 1:1 with it (tombstones shrink u16 → a bare `tile_reference:u8`).
 
 ## Reality that isn't in the design (→ cleanup)
 

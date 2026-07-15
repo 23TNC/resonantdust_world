@@ -61,10 +61,11 @@ bit-layouts.)
 
 ## Composite spatial references
 
-- **`region_zone_reference : u16`** = `region_reference:8 | zone_reference:8`
-  ([object.rs:251](../../../../../../shared/codec/src/object.rs:251)) — a reference **composed of two
-  references**. The zone-subscription key: a client names region + zone directly, no
-  filter. `region_zone_region` / `region_zone_zone` split it back out.
+- **`macro_position_reference : u16`** = `region_reference:8 | zone_reference:8` — a reference
+  **composed of two references**, and the macro half of a `position_reference:u32` (its micro half
+  is `micro_position_reference:16` = `tile_reference:8 | layer_reference:8`). The zone-subscription
+  key: a client names region + zone directly, no filter. It is also the macro half of the **cold row
+  key** (`cold_row_reference:u64` = `macro_position:16 | type_reference:16 | layer_id:4`).
 
 - **`cold_reference : u32`** stacks `region:8 | zone:8 | position:8 | layer_id:4 |
   type_id:4` — three spatial levels plus layer/type. Note it **omits `realm`**: a cold
@@ -87,4 +88,4 @@ There are **two** ways a zone is named, at different scales (see the contrast in
 references above. The old-game layout (`region_x:8 | region_y:8 | surface:8 | zone_x:4 | zone_y:4`,
 with a **`surface`** z-axis) is **retired**; there is no flat/legacy zone id left to reconcile.
 `region_of(zone_id)` masks to `realm | region` (the shard-routing key) and `zone_region_zone(zone_id)`
-yields the `region_zone_reference:u16` (the within-realm cold key).
+yields the `macro_position_reference:u16` (the within-realm cold/subscription key).
