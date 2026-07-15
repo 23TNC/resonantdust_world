@@ -96,6 +96,18 @@ follows the log. (Was `docs/spacetime-implementation/completion-log.md`, now ret
   event for a tree → hot (state +1, tombstoned) → after the idle window → `hot → cold (PACK settle)`
   (state −1, tombstone cleared, entry restored to the cold row verbatim) — a faithful
   cold→hot→cold round-trip. · 7454e39
+- **2026-07-14** · **PACK promoted to an enqueued execute op — closes divergence #2** — the doc
+  audit caught that the G3 sweep called `pack_settle` **directly**, i.e. the very "out-of-band
+  reducer racing the tick loop" the design rejects. Reworked: `vm::encode_pack`/`vm::pack_target`
+  (a `[OBJECT(zone), ACTION(PACK)]` program — `ACTION_PACK` was previously unused); the worker's
+  periodic sweep now **appends a PACK event** per zone holding at-rest packable objects (one in
+  flight per zone), and **execute** recognises the program, settles the zone, and completes the row
+  via the normal fenced `resolve`. Targets the **zone/cold row**, never an object (an
+  object-targeted PACK would hold the object it means to pack → the refcount gate would always
+  refuse); the row carries no `targets`, so enqueue holds nothing. **Verified:** `find-or-mint` →
+  `enqueued PACK zone=0` → `hot → cold (PACK settle)` → `PACK resolved ev=7391 packed=1`, exactly
+  one enqueue, wolves unaffected. Mint (enqueue-absorbed) + PACK (execute op) both now match the
+  design → **divergence #2 CLOSED**. · _(this commit)_
 
 ---
 

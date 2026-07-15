@@ -19,7 +19,8 @@
 use crate::domain::{self, EntityState, Event};
 use resonantdust_codec::event_word::{
     pack_word, word_op_code, word_payload, word_server_reference, ACTION_AWAIT, ACTION_DAMAGE,
-    ACTION_FAIL, ACTION_MOVE, ACTION_SKIP, ACTION_SPAWN, OP_ACTION, OP_ALIAS, OP_LITERAL, OP_OBJECT,
+    ACTION_FAIL, ACTION_MOVE, ACTION_PACK, ACTION_SKIP, ACTION_SPAWN, OP_ACTION, OP_ALIAS,
+    OP_LITERAL, OP_OBJECT,
 };
 use resonantdust_codec::refs::{entity_ref_object_reference, entity_ref_server_reference};
 
@@ -118,6 +119,41 @@ pub fn encode_if(cond: Vec<u64>, then_block: Vec<u64>, else_block: Vec<u64>) -> 
     v.push(pack_word(OP_ACTION, 0, ACTION_SKIP));
     v.extend(else_block);
     v
+}
+
+// ── PACK (hot → cold settle) ────────────────────────────────────────────────────
+//
+// `PACK` is an **enqueued execute op**, not a side-door reducer call
+// (`docs/…/shard/intent/hot-cold.md`, divergence #2): a program
+// `[OBJECT(zone), ACTION(PACK)]` targeting a **zone / cold row** (never an individual object — an
+// object-targeted PACK would register a write hold on the very object it means to pack, and the
+// refcount gate would then always refuse). The row carries **no `targets`**, so enqueue stands up
+// nothing and holds nothing; the worker recognises the program at execute, settles every at-rest
+// object in that zone, and completes the row. That keeps PACK on the fenced, recoverable tick loop.
+
+/// A `PACK` program: `[OBJECT(zone), ACTION(PACK)]`. `zone_reference` is the zone's
+/// `cold_reference` (`region:8 | zone:8 | tile:8=0 | layer:8=0`), qualified by `server_reference`
+/// (its realm + shard) — the same pair a cold object's `entity_reference` carries, so the worker
+/// decodes the zone with the same helpers.
+pub fn encode_pack(server_reference: u16, zone_reference: u32) -> Vec<u64> {
+    vec![
+        pack_word(OP_OBJECT, server_reference, zone_reference),
+        pack_word(OP_ACTION, 0, ACTION_PACK),
+    ]
+}
+
+/// If `actions` is a `PACK` program, return the zone it settles as `(server_reference,
+/// zone_reference)`; else `None`.
+pub fn pack_target(actions: &[u64]) -> Option<(u16, u32)> {
+    if actions.len() == 2
+        && word_op_code(actions[0]) == OP_OBJECT
+        && word_op_code(actions[1]) == OP_ACTION
+        && word_payload(actions[1]) == ACTION_PACK
+    {
+        Some((word_server_reference(actions[0]), word_payload(actions[0])))
+    } else {
+        None
+    }
 }
 
 // ── await gate (S5 — control flow) ──────────────────────────────────────────────
@@ -262,6 +298,19 @@ mod tests {
         assert_eq!(run(&encode_damage(actor, 25), victim, &dead).data[0], 100);
         // damage saturates at 0, never underflows
         assert_eq!(run(&encode_damage(actor, 999), victim, &live).data[0], 0);
+    }
+
+    #[test]
+    fn pack_program_roundtrips_and_is_distinct() {
+        // A PACK names the ZONE it settles (server_reference = realm+shard, zone cold_reference).
+        let prog = encode_pack(0x0102, 0x2345_0000);
+        assert_eq!(pack_target(&prog), Some((0x0102, 0x2345_0000)));
+        // A non-PACK program is never mistaken for one (MOVE / await-gated / empty).
+        assert_eq!(pack_target(&encode_move(0, 0x22, 0, 0)), None);
+        assert_eq!(pack_target(&[]), None);
+        assert_eq!(pack_target(&encode_await(5, 7, encode_move(0, 0x22, 0, 0))), None);
+        // ...and a PACK isn't mistaken for an await gate.
+        assert_eq!(await_gate(&prog), None);
     }
 
     #[test]

@@ -100,13 +100,14 @@ The reverse — settling an idle hot object back into cold, and compacting `cold
   gate + the atomic check-and-write live in the `pack_settle` reducer itself, so the sweep is safe
   to run every pass. Provenance (`type_reference` + the original cold entry) is stashed in the
   object's `data0` at mint, so the restore is exact (subtype/variant/data survive the round-trip).
-- ⚠️ **Divergence:** the sweep calls `pack_settle` **directly**, so PACK is not yet an *enqueued*
-  `ACTION_PACK` execute op (see [divergences](../current/divergences.md) #2). The correctness
-  properties the design names (refcount-gated, one atomic txn, worker-owned not GC) all hold; what's
-  missing is routing it through the event lifecycle. `ACTION_PACK` (the DSL verb id) is currently
-  unused. Note that an *object*-targeted PACK event would hold the very object it wants to pack
-  (the refcount gate would then always refuse) — so the enqueued form has to target the **zone /
-  cold row**, exactly as the pseudocode above is written.
+- ✅ **It is a real *execute op*** (not a side-door reducer): the sweep **appends a
+  `[OBJECT(zone), ACTION(PACK)]` event** (`vm::encode_pack`), one in flight per zone; the worker
+  recognises it at **execute** (`vm::pack_target`), settles the zone, and completes the row through
+  the normal fenced `resolve` — so PACK rides the recoverable tick loop like any other row. It
+  targets the **zone / cold row** exactly as the pseudocode above is written: an *object*-targeted
+  PACK would register a write hold on the very object it means to pack, and the refcount gate would
+  then always refuse. The row carries **no `targets`**, so enqueue stands up nothing and holds
+  nothing. (Closes [divergences](../current/divergences.md) #2.)
 
 Why the enqueue-side (mint) matters:
 

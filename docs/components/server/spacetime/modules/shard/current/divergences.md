@@ -28,24 +28,25 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
   becomes the interpreter; `append_event` signature; edge/npc callers; a compile step
   (surface DSL / plan → `Vec<u64>`).
 
-## 2. 🟡 MOSTLY CLOSED — mint is in-band; `PACK` is a worker sweep, not an enqueued execute op
+## 2. ✅ CLOSED (2026-07-14) — mint is enqueue-absorbed; `PACK` is an enqueued execute op
 
 - **Design** ([hot-cold.md](../intent/hot-cold.md), [lifecycle.md](../intent/lifecycle.md)): cold→hot of a *target*
   is **absorbed into the enqueue phase** (`find-or-mint` by location when standing up a
   `cold_reference` target — no `MINT`/`GET` verb); `PACK` (settle hot→cold) is an execute op.
-- **✅ Mint — CLOSED.** `find-or-mint` runs in the worker's **enqueue** phase (`stand_up` time), by
-  location, idempotently; there is no `MINT`/`GET` verb and the edge only names the cold target by
-  its `cold_reference`. Verified live (Interact → promote).
-- **🟡 PACK — partially closed.** The trigger is now owned (a periodic `worker::pack_idle` sweep —
-  one of the candidates hot-cold.md listed), it is **worker-owned (not GC)**, **refcount-gated**,
-  and the check-and-write is **one atomic reducer txn**. But it calls `pack_settle` **directly**
-  rather than being an **enqueued `ACTION_PACK` execute op**, so it doesn't ride the event
-  lifecycle; `ACTION_PACK` (the DSL verb id) is unused.
-- **Remaining fix**: enqueue PACK as an event **targeting the zone / cold row** (not the object —
-  an object-targeted PACK would hold the object it means to pack, and the refcount gate would always
-  refuse), and resolve it through execute. Tracked in
-  [work/…/todo.md](../../../../../../work/spacetime-rewrite/todo.md).
-- **This was the specific "you wrote cold tables anyway" grievance.**
+- **✅ Mint.** `find-or-mint` runs in the worker's **enqueue** phase (`stand_up` time), by location,
+  idempotently; there is no `MINT`/`GET` verb and the edge only names the cold target by its
+  `cold_reference`. Verified live (Interact → promote).
+- **✅ PACK.** Now a real **execute op**: a periodic `worker::enqueue_pack_sweep` (the trigger owner
+  hot-cold.md left open) **appends a `[OBJECT(zone), ACTION(PACK)]` event** against each zone
+  holding at-rest packable objects (one in flight per zone); the worker recognises the program at
+  **execute**, settles the zone, and completes the row through the normal fenced `resolve`. It
+  targets the **zone/cold row** — an object-targeted PACK would hold the very object it means to
+  pack. Refcount-gated + atomic inside `pack_settle`; worker-owned, not GC.
+- **Verified:** `find-or-mint` → `enqueued PACK zone=0` → `hot → cold (PACK settle)` →
+  `PACK resolved ev=… packed=1`, with the object restored to cold verbatim (provenance stashed in
+  `data0` at mint) and no enqueue churn.
+- **The bespoke side-door reducers are gone from the call path** — this was the specific "you wrote
+  cold tables anyway" grievance.
 
 ## 3. 🟡 Standalone `cold_things` / `cold_tiles` modules still exist
 

@@ -24,9 +24,10 @@ use resonantdust_tick::{domain::EntityState, vm};
 
 mod bindings;
 use bindings::shard::{
-    abort as _, claim as _, mint_cold as _, pack_settle as _, ready as _, resolve as _,
-    resolve_foreign as _, stand_up as _, ColdTableAccess, DbConnection, EventLogTableAccess,
-    StateLog, StateLogTableAccess, StateTableAccess, TargetState, TicMetaTableAccess,
+    abort as _, append as _, claim as _, mint_cold as _, pack_settle as _, ready as _,
+    resolve as _, resolve_foreign as _, stand_up as _, ColdTableAccess, DbConnection,
+    EventLogTableAccess, StateLog, StateLogTableAccess, StateTableAccess, TargetState,
+    TicMetaTableAccess,
 };
 
 /// How many tics a minted-cold (find-or-mint) hot object may sit idle before a PACK settles it
@@ -130,52 +131,100 @@ async fn main() {
         for (id, _) in &shards {
             work_pass(&shards, *id, worker_id);
             if let Some(conn) = shard_conn(&shards, *id) {
-                pack_idle(conn, worker_id);
+                enqueue_pack_sweep(conn); // the PACK trigger — enqueues; execute does the settling
             }
         }
     }
 }
 
-/// PACK sweep — settle idle **minted-cold** hot objects (`REF_COLD` entity_key: a find-or-mint
-/// target promoted from cold) back into `cold` once they've sat idle for [`PACK_IDLE_TICS`]. The
-/// object's cold provenance (`type_reference` + cold entry) rides its `data_0` (stashed at mint —
-/// see [`find_or_mint`]), so the restore is exact (subtype/variant/data survive the round-trip).
-/// Pawns (`REF_HOT`) never match, so they never pack — the pack criterion the design wants
-/// (`docs/…/hot-cold.md`: pawns always hot, biome objects compact to cold). `pack_settle` itself
-/// skips a busy object (any holder), so this is safe to call every pass.
-fn pack_idle(conn: &DbConnection, worker_id: u16) {
-    use resonantdust_codec::object::type_ref_type_id;
+/// Is a hot `state` row a **packable, at-rest** object? — a find-or-mint object (`REF_COLD`
+/// entity_key) carrying cold provenance, idle for longer than [`PACK_IDLE_TICS`]. Pawns are
+/// `REF_HOT` and never match, so they never pack: the criterion `docs/…/hot-cold.md` wants (pawns
+/// always hot; biome objects compact to cold). The refcount gate ("no holders") lives in the
+/// `pack_settle` reducer, where it's atomic with the write.
+fn packable(s: &bindings::shard::State, now: u32) -> bool {
+    use resonantdust_codec::refs::{entity_ref_reference_id, REF_COLD};
+    entity_ref_reference_id(s.entity_key) == REF_COLD
+        && (s.data_0 >> 32) != 0 // has cold provenance (stashed at mint)
+        && now.saturating_sub(s.tic) > PACK_IDLE_TICS
+}
+
+/// The **PACK trigger** (`hot-cold.md` names a periodic sweep as one of its candidate owners):
+/// find zones holding at-rest packable objects and **enqueue a `PACK` event** against each — the
+/// design's *execute op*, so the settle rides the fenced, recoverable tick loop rather than a
+/// side-door reducer call. Skips a zone that already has a PACK in flight so passes don't pile up.
+fn enqueue_pack_sweep(conn: &DbConnection) {
+    use resonantdust_codec::object::pack_cold_reference;
+    use resonantdust_codec::packed::{zone_realm, zone_region, zone_zone};
     use resonantdust_codec::refs::{
-        entity_ref_location, entity_ref_reference_id, entity_ref_zone_id, REF_COLD,
+        entity_ref_zone_id, pack_cold_entity, pack_server_reference,
     };
-    let _ = worker_id;
+    let now = master_tic(conn);
+    let zones: std::collections::BTreeSet<u32> = conn
+        .db()
+        .state()
+        .iter()
+        .filter(|s| packable(s, now))
+        .map(|s| entity_ref_zone_id(s.entity_key))
+        .collect();
+    for zone_id in zones {
+        // One PACK per zone in flight: a queued/running PACK for this zone means the settle is
+        // already scheduled — enqueueing another would just churn the log.
+        let in_flight = conn.db().event_log().iter().any(|e| {
+            e.status != STATUS_COMPLETE
+                && e.status != STATUS_QUEUE_FAILED
+                && vm::pack_target(&e.actions).is_some_and(|(sr, zr)| {
+                    entity_ref_zone_id(pack_cold_entity(sr, zr)) == zone_id
+                })
+        });
+        if in_flight {
+            continue;
+        }
+        // Name the zone the way a cold object names its place: server_reference (realm+shard) +
+        // a cold_reference with tile/layer zeroed.
+        let server_reference = pack_server_reference(zone_realm(zone_id), 0);
+        let zone_reference = pack_cold_reference(zone_region(zone_id), zone_zone(zone_id), 0, 0);
+        match conn.reducers().append(vm::encode_pack(server_reference, zone_reference), Vec::new()) {
+            Ok(()) => tracing::info!(zone = zone_id, "enqueued PACK"),
+            Err(err) => tracing::warn!(%err, zone = zone_id, "append(PACK) failed"),
+        }
+    }
+}
+
+/// Settle every at-rest object in `zone_id` back to cold — the body of a resolved `PACK` execute
+/// op. Each object's cold provenance (`type_reference` + the original cold entry) rides its
+/// `data_0` (stashed at mint — see [`find_or_mint`]), so the restore is **exact**
+/// (subtype/variant/data survive the hot round-trip). `pack_settle` skips a busy object (any
+/// holder) atomically with its write, so an object that caught new activity simply stays hot.
+/// Returns how many settled.
+fn pack_zone(conn: &DbConnection, zone_id: u32) -> usize {
+    use resonantdust_codec::object::type_ref_type_id;
+    use resonantdust_codec::refs::{entity_ref_location, entity_ref_zone_id};
     let now = master_tic(conn);
     let idle: Vec<_> = conn
         .db()
         .state()
         .iter()
-        .filter(|s| {
-            entity_ref_reference_id(s.entity_key) == REF_COLD
-                && now.saturating_sub(s.tic) > PACK_IDLE_TICS
-        })
+        .filter(|s| packable(s, now) && entity_ref_zone_id(s.entity_key) == zone_id)
         .collect();
+    let mut settled = 0;
     for s in idle {
         // Provenance stashed at mint: data_0 = type_reference:32 | cold_entry:32.
         let type_reference = (s.data_0 >> 32) as u32;
         let object_kind_reference = s.data_0 as u32; // the original cold entry, restored verbatim
-        if type_reference == 0 {
-            continue; // no provenance (not a find-or-mint object) — don't pack
-        }
-        let zone_id = entity_ref_zone_id(s.entity_key);
         let loc = entity_ref_location(s.entity_key);
         let (x, y) = (loc & 0x0F, loc >> 4);
         let type_id = type_ref_type_id(type_reference);
         let tombstone = ((x as u16) << 12) | ((y as u16) << 8) | (type_id as u16 & 0x0F);
         match conn.reducers().pack_settle(s.entity_key, zone_id, type_reference, object_kind_reference, tombstone) {
-            Ok(()) => tracing::info!(entity = s.entity_key, zone = zone_id, "hot → cold (PACK settle)"),
+            Ok(()) => {
+                settled += 1;
+                tracing::info!(entity = s.entity_key, zone = zone_id, "hot → cold (PACK settle)");
+            }
             Err(err) => tracing::warn!(%err, entity = s.entity_key, "pack_settle failed"),
         }
     }
+    settled
 }
 
 /// Parse the shard set from `SHARDS="1=db_a,2=db_b"`. Falls back to a single shard.
@@ -335,6 +384,20 @@ fn execute(shards: &Shards, my_shard: u16, worker_id: u16, ev: &bindings::shard:
     // tic-gate: don't resolve until the tic is sealed (all its events are present).
     if master_tic(conn) < ev.event_tic {
         return; // defer — revisit once the master reaches this tic
+    }
+    // PACK is an **execute op** (hot-cold.md; divergence #2): a zone-targeted row carrying no
+    // `targets` — it holds nothing, folds nothing, and reads no actors, so it short-circuits the
+    // target machinery below. Settle every at-rest object in the named zone, then complete the row
+    // through the normal fenced `resolve` (empty results) so it rides the lifecycle like any other.
+    if let Some((server_reference, zone_reference)) = vm::pack_target(&ev.actions) {
+        use resonantdust_codec::refs::{entity_ref_zone_id, pack_cold_entity};
+        let zone_id = entity_ref_zone_id(pack_cold_entity(server_reference, zone_reference));
+        let packed = pack_zone(conn, zone_id);
+        match conn.reducers().resolve(worker_id, ev.event_reference, Vec::new()) {
+            Ok(()) => tracing::info!(ev = ev.event_reference, zone = zone_id, packed, "PACK resolved"),
+            Err(err) => tracing::warn!(%err, ev = ev.event_reference, "PACK resolve failed"),
+        }
+        return;
     }
     // This row's await gate: defer until the aliased row completes, or timeout → abort.
     if let Some((timeout, await_ref, _)) = vm::await_gate(&ev.actions) {
