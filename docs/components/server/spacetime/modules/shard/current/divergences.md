@@ -48,16 +48,22 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 - **The bespoke side-door reducers are gone from the call path** — this was the specific "you wrote
   cold tables anyway" grievance.
 
-## 3. 🟡 Standalone `cold_things` / `cold_tiles` modules still exist
+## 3. ✅ CLOSED (2026-07-14, T-7) — the standalone `cold_things` / `cold_tiles` modules are gone
 
 - **Design** ([tables.md](../design/tables.md)): cold is **one `cold` table inside the generic
   module**, beside hot `state`.
-- **Code**: the in-macro `Cold` table exists ✅, but the separate `cold_things` and
-  `cold_tiles` modules still physically live under
-  [`server/spacetime/server/modules/`](../../../../../../../server/spacetime/server/modules). The last commit
-  retired their *wire paths*, not the modules.
-- **Fix**: delete the two modules once the `cold` table fully carries their data end-to-end
-  (edge seeds it, client decodes it).
+- **This entry was itself stale.** It claimed the modules "still physically live" and that
+  `2b2fc58` / `d47f152` retired only their *wire paths*. Not so — those commits deleted the
+  **sources too**; `git ls-files` has carried only `chat`/`index`/`players`/`shard` since. What
+  actually remained on disk was **untracked build detritus** (`target/` + `Cargo.lock`, ~530MB
+  across the three), plus `experiment`.
+- **Nor were they being built.** `rd_list_modules` requires a `Cargo.toml` to treat a directory as
+  a module unit, and none of the three had one — so `rd redeploy` skipped them. They cost disk, not
+  deploys.
+- **Done:** removed the stale artifact dirs; deleted the dead `cold_tiles) / cold_things)` `fam`
+  arms in [`bin/lib/redeploy.sh`](../../../../../../../bin/lib/redeploy.sh) (the only real
+  repo-visible leftover). `default_cold_tiles_db()` / `default_cold_things_db()` were already gone.
+  Verified: `rd redeploy` plans clean.
 
 > **Update 2026-07-14.** #2, #5 and #10 are **closed** (the re-cut landed + is verified —
 > [`work/…/completed.md`](../../../../../../work/spacetime-rewrite/completed.md)). #4 is **not**

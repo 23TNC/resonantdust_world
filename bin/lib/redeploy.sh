@@ -94,13 +94,6 @@ rd_deploy_module() {
   local fam
   case "$target" in
     shard)       fam="zone" ;;
-    # Zone data splits across two shards, each its own db family (so neither collides
-    # with the object `shard` on `zone-0`): the `cold_tiles` module → dense tiles
-    # (resonantdust-<env>-cold-tiles-0), the `cold_things` module → sparse settled things
-    # (resonantdust-<env>-cold-things-0). The edge's
-    # default_cold_tiles_db()/default_cold_things_db() point here.
-    cold_tiles)  fam="cold-tiles" ;;
-    cold_things) fam="cold-things" ;;
     *)           fam="$target" ;;
   esac
   rd_log "deploy module $src → $(rd_db_for "$fam" "$idx")"

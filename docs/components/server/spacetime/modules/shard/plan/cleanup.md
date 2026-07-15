@@ -1,6 +1,13 @@
-# Plan — retire the dead cold/experiment modules
+# Plan — retire the dead cold/experiment modules ✅ **DONE (2026-07-14, T-7)**
 
-_Plan item (a code change, not yet executed). Last updated: 2026-07-14._
+_Done — kept as the record of what was actually there. Last updated: 2026-07-14._
+
+> **What we found on execution.** This plan (and divergence #3) overstated the leftover. The module
+> **sources** were already deleted by `2b2fc58` / `d47f152` — only `chat`/`index`/`players`/`shard`
+> have been tracked since — and with no `Cargo.toml`, `rd_list_modules` never treated the three as
+> module units, so they were **not** being built or deployed. What actually remained was ~530MB of
+> untracked `target/` + `Cargo.lock` detritus on disk, plus the dead `fam` arms below.
+> Step 1's `git rm` was therefore a no-op (nothing tracked); step 2 was the real change.
 
 ## What
 
