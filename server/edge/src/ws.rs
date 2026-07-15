@@ -595,8 +595,19 @@ async fn handle_interact(
     // Target the cold object by its POSITIONAL entity_reference; the worker's enqueue
     // find-or-mint promotes it hot (kind from cold) before the action runs (issue 005). An
     // empty action program just makes it hot (interact = "bring it to life"); richer verbs later.
-    use resonantdust_codec::refs::pack_cold_entity;
-    let target = pack_cold_entity(zone, cell(x, y), 0);
+    // The target is a geographic cold_reference (region|zone|tile|layer) qualified by the shard's
+    // realm (server_reference).
+    use resonantdust_codec::object::{pack_cold_reference, pack_layer_reference};
+    use resonantdust_codec::packed::{zone_realm, zone_region, zone_zone};
+    use resonantdust_codec::refs::{pack_cold_entity, pack_server_reference};
+    let type_id = type_ref_type_id(type_reference);
+    let cold_reference = pack_cold_reference(
+        zone_region(zone),
+        zone_zone(zone),
+        cell(x, y),
+        pack_layer_reference(type_id, 0),
+    );
+    let target = pack_cold_entity(pack_server_reference(zone_realm(zone), 0), cold_reference);
     if let Err(err) = shard.conn.reducers.append(Vec::new(), vec![target]) {
         send(out_tx, err_frame(&format!("interact: request failed: {err}")));
     } else {

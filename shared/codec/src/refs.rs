@@ -15,12 +15,12 @@
 //!
 //! **Two identity classes share the `u64`, discriminated by `reference_id`:**
 //! - **HOT** (`REF_HOT`) — a live/minted object: `server_reference` is its minting server, the
-//!   `object_reference:32` is its per-server `hot_reference`. This is the clean new layout.
+//!   `object_reference:32` is its per-server `hot_reference`.
 //! - **COLD** (`REF_COLD`) — a settled object addressed by location (find-or-mint / Interact
-//!   targets). Its low 48 bits hold the **world-global** position `zone_id:32 | location:8 |
-//!   layer:8` rather than `server|object`, because a world-global `zone_id:u32` doesn't fit the
-//!   compressed `position_reference:32` — that compression is the world-geometry decision parked
-//!   in `work/spacetime-rewrite/blockers.md` (B-2). This is the interim cold form until B-2.
+//!   targets): `object_reference:32` is a geographic [`cold_reference`](crate::object)
+//!   (`region:8 | zone:8 | tile:8 | layer:8`), qualified by `server_reference` (realm + shard).
+//!   Realm rides `server_reference` — a shard is realm-scoped — so the full geographic address is
+//!   `server_reference.realm . region . zone . tile`.
 //!
 //! Pure integer math — no naming, no I/O. `type_id ↔ name` is the registry's job.
 
@@ -116,25 +116,24 @@ pub fn pack_hot_entity(server_reference: u16, hot_reference: u32) -> u64 {
     pack_entity_reference(REF_HOT, server_reference, hot_reference)
 }
 
-// ── COLD / positional entity (interim, world-global — see B-2) ───────────────────
+// ── COLD / positional entity — a geographic cold_reference ───────────────────────
 //
-// A cold/positional target's low 48 bits hold the world-global position `zone_id:32 |
-// location:8 | layer:8`, NOT `server|object` — a world-global `zone_id:u32` doesn't fit the
-// compressed `position_reference:32`. The variant tag (`REF_COLD`) sits in `reference_id` as
-// usual, so hot and cold never collide even though cold overloads the low fields.
+// `REF_COLD | server_reference | cold_reference:32` — `cold_reference` (object.rs) is
+// `region:8 | zone:8 | tile:8 | layer_reference:8`. Realm is NOT in the `cold_reference` (a
+// shard is realm-scoped); it rides `server_reference`. So the full geographic address is
+// `server_reference.realm . region . zone . tile`. The `REF_COLD` tag keeps it distinct from a
+// hot handle even when the low bits coincide.
 
-const COLD_ZONE_SHIFT: u64 = 16;
-const COLD_LOCATION_SHIFT: u64 = 8;
-const COLD_BYTE_MASK: u64 = 0xFF;
-const COLD_ZONE_MASK: u64 = 0xFFFF_FFFF;
+/// A **cold** (positional) `entity_reference`: `REF_COLD`, qualified by `server_reference` (its
+/// realm + shard), addressing the settled object by `cold_reference` (region|zone|tile|layer).
+/// Never minted — identity IS location.
+pub fn pack_cold_entity(server_reference: u16, cold_reference: u32) -> u64 {
+    pack_entity_reference(REF_COLD, server_reference, cold_reference)
+}
 
-/// A **cold** (positional) `entity_reference` naming a settled object by its world-global
-/// location: `REF_COLD | zone_id:32 | location:8 | layer:8`. Never minted (identity IS location).
-pub fn pack_cold_entity(zone_id: u32, location: u8, layer: u8) -> u64 {
-    ((REF_COLD as u64) << REFERENCE_ID_SHIFT)
-        | ((zone_id as u64) << COLD_ZONE_SHIFT)
-        | ((location as u64) << COLD_LOCATION_SHIFT)
-        | (layer as u64)
+/// The `cold_reference` (object.rs `region:8 | zone:8 | tile:8 | layer:8`) of a cold entity.
+pub fn entity_ref_cold_reference(k: u64) -> u32 {
+    entity_ref_object_reference(k)
 }
 
 /// True if this reference is a cold/positional target (its `reference_id` is `REF_COLD` /
@@ -143,19 +142,23 @@ pub fn entity_ref_is_positional(k: u64) -> bool {
     matches!(entity_ref_reference_id(k), REF_COLD | REF_POSITION)
 }
 
-/// The world-global `zone_id` of a cold/positional entity (meaningless for hot refs).
+/// The full geographic `zone_id` (`realm | region | zone | 0`) of a cold entity — realm from
+/// `server_reference`, region+zone from the `cold_reference`. This is what the (realm-scoped)
+/// cold table is keyed by. (Meaningless for hot refs.)
 pub fn entity_ref_zone_id(k: u64) -> u32 {
-    ((k >> COLD_ZONE_SHIFT) & COLD_ZONE_MASK) as u32
+    let realm = server_ref_realm(entity_ref_server_reference(k)) as u32;
+    let region_zone = crate::object::cold_ref_region_zone(entity_ref_cold_reference(k)) as u32;
+    (realm << 24) | (region_zone << 8)
 }
 
-/// The in-zone cell `location` of a cold/positional entity (meaningless for hot refs).
+/// The in-zone cell `location` (`tile_reference`) of a cold entity (meaningless for hot refs).
 pub fn entity_ref_location(k: u64) -> u8 {
-    ((k >> COLD_LOCATION_SHIFT) & COLD_BYTE_MASK) as u8
+    crate::object::cold_ref_tile(entity_ref_cold_reference(k))
 }
 
-/// The `layer` of a cold/positional entity (meaningless for hot refs).
+/// The `layer_id` of a cold entity (meaningless for hot refs).
 pub fn entity_ref_layer(k: u64) -> u8 {
-    (k & COLD_BYTE_MASK) as u8
+    crate::object::layer_ref_layer_id(crate::object::cold_ref_layer_reference(entity_ref_cold_reference(k)))
 }
 
 #[cfg(test)]
@@ -189,14 +192,18 @@ mod tests {
 
     #[test]
     fn cold_entity_roundtrips() {
-        for &(z, loc, lay) in &[(0u32, 0u8, 0u8), (0xABCD_1234, 200, 3), (u32::MAX, 255, 255)] {
-            let k = pack_cold_entity(z, loc, lay);
-            assert_eq!(entity_ref_reference_id(k), REF_COLD);
-            assert_eq!(entity_ref_zone_id(k), z);
-            assert_eq!(entity_ref_location(k), loc);
-            assert_eq!(entity_ref_layer(k), lay);
-            assert!(entity_ref_is_positional(k), "cold is positional");
-        }
+        use crate::object::{pack_cold_reference, pack_layer_reference, pack_position_reference};
+        // realm 1 (server_reference), region(2,3) zone(4,5) tile(6,7) type 3 layer 2.
+        let server = pack_server_reference(0x11, 0);
+        let cr = pack_cold_reference(0x23, 0x45, pack_position_reference(6, 7), pack_layer_reference(3, 2));
+        let k = pack_cold_entity(server, cr);
+        assert_eq!(entity_ref_reference_id(k), REF_COLD);
+        assert_eq!(entity_ref_cold_reference(k), cr);
+        assert!(entity_ref_is_positional(k), "cold is positional");
+        // zone_id reconstructs realm|region|zone|0 from server_reference.realm + cold_reference.
+        assert_eq!(entity_ref_zone_id(k), (0x11u32 << 24) | (0x23u32 << 16) | (0x45u32 << 8));
+        assert_eq!(entity_ref_location(k), pack_position_reference(6, 7));
+        assert_eq!(entity_ref_layer(k), 2);
     }
 
     #[test]
@@ -204,7 +211,7 @@ mod tests {
         // Distinct reference_id ⇒ distinct keys even when the low bits coincide — the
         // single-space uniqueness the priority order needs (hot server|object vs cold position).
         let hot = pack_hot_entity(0x0042, 7);
-        let cold = pack_cold_entity(0x42, 0, 7);
+        let cold = pack_cold_entity(0x0042, 7);
         assert_ne!(hot, cold);
         assert_ne!(entity_ref_reference_id(hot), entity_ref_reference_id(cold));
     }
