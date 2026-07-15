@@ -173,10 +173,12 @@ no row.
 | column | type | key | notes |
 |---|---|---|---|
 | `entity_reference` | `u32` | PK | |
+| `macro_position_reference` | `u16` | idx | the zone-subscription key. Duplicates `position_reference`'s high half — a subscription filters on columns, not expressions. |
 | `tic` | `u16` | | `tic` — the tic this value went live on |
 | *payload* | | | |
 
-reads edge · workers never subscribe
+reads edge · workers never subscribe ·
+sub `SELECT * FROM state WHERE macro_position_reference = <zone>` (edge, per subscribed zone)
 
 ### `state_hold` — not added
 

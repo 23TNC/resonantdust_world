@@ -14,6 +14,14 @@ runtime**, against a live DB — no build gate catches it. Every cross-component
 | gateway | `SELECT * FROM servers`, `SELECT * FROM player_servers` | `index` |
 | edge (startup, global) | `SELECT * FROM region_shards`, `SELECT * FROM shards` | `index` — vestigial, but live: still breaks at runtime |
 
+Designed, not yet live — they carry the same hazard the day they are, and each one's filter column
+exists *because* of it:
+
+| component | query | against |
+|---|---|---|
+| worker | `SELECT * FROM event_log WHERE worker_reference = self` | `event_shard` |
+| edge (per zone) | `SELECT * FROM state WHERE macro_position_reference = <zone>` | `data_shard` |
+
 ## Trust and correctness notes
 
 **`chat_messages.sender_player_id` is spoofable.** The chat module has no `players` table to
@@ -148,6 +156,20 @@ from the master and has to walk the table anyway to find settled-and-not-promote
 load-bearing: it says *which* object exactly. A shard could in principle imply it — `declare_pending`
 routes to `home_shard(target)`, so every row is homed locally — but the reference is then no longer
 self-describing, and a bare handle only means something next to the server that minted it.
+
+**`state.macro_position_reference` is deliberate duplication.** It's already inside the payload's
+`position_reference` (high half, `region:8 | zone:8`), but a subscription filters on **columns** —
+`WHERE (position_reference >> 16) = X` isn't expressible. The edge scopes a client's world to the
+zones it subscribes, so the zone key has to be its own indexed column or there is no per-zone
+subscription. The old shard carried the same duplication for the same reason
+(`SELECT * FROM cold WHERE macro_position = …`).
+
+Only `state` needs it. `state_log` is keyed by entity and no one subscribes to it per-zone; workers
+subscribe to nothing but their holds.
+
+Writers must keep the two halves in step — the column is a projection of the payload, and nothing in
+the schema enforces that. A row whose `macro_position_reference` disagrees with its
+`position_reference` is invisible in the zone it's actually in, and visible in one it isn't.
 
 **`flags : u8` replaces `settled` + `promoted`.** Two bools were two bytes in practice. Bit 0
 `SETTLED`, bit 1 `PROMOTED`, six spare.
