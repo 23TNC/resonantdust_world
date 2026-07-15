@@ -130,7 +130,7 @@ data_shard.request_state(worker, tic, entities) -> bool:
         slot = row's worker_a..worker_d already == worker ? that one : first free
         if none free: return false                           // the four-worker cap
         row.worker_<slot> = worker
-        row.lease_<slot>  = low8(tic::add(master_tic, LEASE))
+        row.lease_<slot>  = tic::add(master_tic, LEASE)
     return true
     // the rows now enter the worker's subscription — a tic BEFORE it executes them.
 ```
@@ -180,8 +180,7 @@ data_shard.apply(event_reference, tic, results: Vec<TargetState>) -> bool:
 
 data_shard.reap():                             // called by the master
     for row in state_log, for slot in a..d:
-        if row.worker_<slot> != SERVER_REF_NONE
-           and tic8::before(row.lease_<slot>, low8(master_tic)):
+        if row.worker_<slot> != SERVER_REF_NONE and tic::before(row.lease_<slot>, master_tic):
             row.worker_<slot> = SERVER_REF_NONE          // a dead worker's slot returns
 ```
 

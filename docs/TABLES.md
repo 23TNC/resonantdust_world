@@ -170,10 +170,10 @@ Payload = the reference model's three orthogonal references, carried by both `st
 | `worker_b` | `u8` | idx | |
 | `worker_c` | `u8` | idx | |
 | `worker_d` | `u8` | idx | |
-| `lease_a` | `u8` | | `worker_a`'s expiry — **`tic` low byte**, see notes |
-| `lease_b` | `u8` | | |
-| `lease_c` | `u8` | | |
-| `lease_d` | `u8` | | |
+| `lease_a` | `u16` | | `tic` — `worker_a`'s expiry |
+| `lease_b` | `u16` | | |
+| `lease_c` | `u16` | | |
+| `lease_d` | `u16` | | |
 | `dirty` | `u8` | | count of events holding this slot. `0` = settled |
 | *payload* | | | composed so far; seeded from the resolved value at `< tic` |
 | `flags` | `u8` | | bit 0 `PROMOTED` |

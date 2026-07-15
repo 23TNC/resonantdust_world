@@ -178,12 +178,11 @@ everything below", and the §Open cost concern (*"every hold carries a payload c
 dissolve: the worker reads the payload off the row it's subscribed to. That is what this rule buys,
 and it's why it's worth a hard cap.
 
-**The `lease_*` are `tic` low bytes, not tics.** A `tic` is a u16; a `u8` lease can only hold
-`tic & 0xFF`, compared with **u8** serial arithmetic — a 127-tic window instead of 32767. That is
-ample for a lease (`CLAIM_LEASE_TICS` is 4, ~2s at 2 Hz) and it hard-caps one at 127 tics, which is
-a bound worth knowing rather than discovering. It also means the ring math exists at two widths:
-`tic.rs` is u16-only today and needs u8 variants, or the comparison gets hand-rolled at each of the
-four call sites — which is exactly how nibble orders get reversed.
+**The `lease_*` are plain `tic`s** — u16, same as every other tic, compared with the same `tic::`
+serial arithmetic. A u8 would only hold `tic & 0xFF`, which would work (a lease is ~4 tics, far
+inside a u8's 127-tic window) but would put the ring math at two widths: `tic.rs` is u16-only, so the
+u8 comparison would be hand-rolled at four call sites. That is how nibble orders get reversed. Twelve
+bytes of slot state per row buys one ring.
 
 **`dirty : u8`** is the count of events holding a slot; `0` = settled, so `SETTLED` leaves `flags`
 (only `PROMOTED` remains).
