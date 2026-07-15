@@ -43,6 +43,24 @@ from blurring). Folders are created **lazily** — as we actually work a compone
   why. `completed.md` is authoritative and `current` may lag it — but we keep `current` because
   its job is to **cut re-derivation time**: a convenience cache of known state so we don't
   re-investigate what we already established.
+
+  ⚠️ **A cache that may lag is safe to *read* and unsafe to *plan from*.** Learned the hard way on
+  2026-07-14: the shard's `divergences.md` had three rows (#1, #6, #7) describing code that had been
+  deleted months earlier — `completed.md` said so the whole time — and a whole phase sequence got
+  planned against them. Two phases of "work" were already done before they were scheduled. So:
+
+  - **Verify a row before you work it.** `grep` the identifiers it names. If they aren't in the
+    code, the row is stale: **close it, don't work it.** This costs a minute and it is not optional
+    — `divergences.md` invites "point at a row and say close it", which is precisely how a stale row
+    becomes a phantom project.
+  - **Close the divergence in the same commit that closes the code.** This is the only rule that
+    actually keeps the lag from accumulating. A row retired a week later is a row that never gets
+    retired.
+  - **Precedence when docs conflict**: `design/` → `intent/` → `completed.md` → `current/` / `plan/`.
+    `design/` wins outright: on the same day, `divergences.md` #1's *fix* line told us to build the
+    event VM on `shared/dsl` while `design/event-dsl.md` explicitly decided the opposite
+    ("purpose-built… don't design around it"). Following the ticket would have violated the design.
+    **Re-read `design/` at the start of a task, not the ticket.**
 - **`plan/`** — **how we close current → design**. Proposed phases, how they tie into other
   components' plans, what blocks forward motion. **`plan` (and `design`/`intent`) hold the FULL
   future intent, not just what current work needs.** When executing, build *toward* the

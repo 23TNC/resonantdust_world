@@ -3,6 +3,13 @@
 The honest ledger. Each row is where the implementation does *not* match this folder, with
 the file and the fix. Point at a row and say "close it" and it's a well-scoped task.
 
+> ⚠️ **Verify a row before you work it — `grep` the identifiers it names.** This file is a
+> `current/` cache and **may lag the code** ([CONVENTIONS.md](../../../../../../CONVENTIONS.md)).
+> On 2026-07-14 rows #1/#6/#7 described code deleted months earlier and sent a whole phase sequence
+> chasing finished work. If the identifiers aren't in the code, the row is stale: **close it, don't
+> work it.** And **close a row in the same commit that closes its code** — that's what keeps this
+> file honest. Where a row conflicts with [`design/`](../design/), **`design/` wins**.
+
 Source of truth for the *intent* is the rest of this folder; source of truth for the
 *current code* is [`server/spacetime/server/pipeline/src/lib.rs`](../../../../../../../server/spacetime/server/pipeline/src/lib.rs)
 (the `decl_tick_pipeline!` macro) and [`server/worker/src/main.rs`](../../../../../../../server/worker/src/main.rs).
