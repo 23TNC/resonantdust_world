@@ -25,9 +25,9 @@ use resonantdust_tick::{domain::EntityState, vm};
 mod bindings;
 use bindings::shard::{
     abort as _, append as _, claim as _, mint_cold as _, pack_settle as _, ready as _,
-    resolve as _, resolve_foreign as _, stand_up as _, ColdTableAccess, DbConnection,
-    EventLogTableAccess, StateLog, StateLogTableAccess, StateTableAccess, TargetState,
-    TicMetaTableAccess,
+    resolve as _, resolve_foreign as _, stand_up as _, stand_up_foreign as _, ColdTableAccess,
+    DbConnection, EventLogTableAccess, StateLog, StateLogTableAccess, StateTableAccess,
+    TargetState, TicMetaTableAccess,
 };
 
 /// How many tics a minted-cold (find-or-mint) hot object may sit idle before a PACK settles it
@@ -255,11 +255,31 @@ fn work_pass(shards: &Shards, my_shard: u16, worker_id: u16) {
                 }
             }
             STATUS_QUEUEING if ev.worker_reference == worker_id => {
-                // Stand up only the targets that live on this shard; a foreign target's pending
-                // row + write land on its home shard at `resolve_foreign` time (its Phase-1 hold
-                // is the documented cross-shard-hold follow-up).
+                // Stand up EVERY target — local ones here (fenced `stand_up`), foreign ones on
+                // their home shard via `stand_up_foreign`. The foreign Phase-1 hold is what makes
+                // the in-flight window visible over there: the target shows pending work, so that
+                // shard's read rule defers readers (instead of reading a soon-to-be-stale value)
+                // and its GC won't reclaim the row. `resolve_foreign` releases the hold when the
+                // write lands.
                 for &target in &ev.targets {
-                    if home_shard(target, my_shard) != my_shard {
+                    let home = home_shard(target, my_shard);
+                    if home != my_shard {
+                        match shard_conn(shards, home) {
+                            Some(fconn) => {
+                                if let Err(err) = fconn.reducers().stand_up_foreign(
+                                    my_shard,
+                                    ev.event_reference,
+                                    ev.event_tic,
+                                    target,
+                                ) {
+                                    tracing::warn!(%err, ev = ev.event_reference, target, shard = home, "stand_up_foreign failed");
+                                }
+                            }
+                            // No connection to the home shard: skip the hold. The convergent write
+                            // still can't complete without it (execute defers), so this only costs
+                            // the in-flight visibility, never correctness of the write itself.
+                            None => tracing::warn!(ev = ev.event_reference, target, shard = home, "no connection — skipping foreign Phase-1 hold"),
+                        }
                         continue;
                     }
                     find_or_mint(conn, target); // cold target ⇒ promote hot (issue 005)

@@ -38,6 +38,7 @@ pub mod seed_entity_reducer;
 pub mod set_paused_reducer;
 pub mod set_shard_id_reducer;
 pub mod stand_up_reducer;
+pub mod stand_up_foreign_reducer;
 pub mod tick_gc_reducer;
 pub mod applied_foreign_table;
 pub mod cold_table;
@@ -87,6 +88,7 @@ pub use seed_entity_reducer::seed_entity;
 pub use set_paused_reducer::set_paused;
 pub use set_shard_id_reducer::set_shard_id;
 pub use stand_up_reducer::stand_up;
+pub use stand_up_foreign_reducer::stand_up_foreign;
 pub use tick_gc_reducer::tick_gc;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -172,6 +174,12 @@ pub enum Reducer {
         event_reference: u32,
         target: u64,
 }    ,
+    StandUpForeign {
+        source_shard: u16,
+        event_reference: u32,
+        tic: u32,
+        target: u64,
+}    ,
     TickGc ,
 }
 
@@ -198,6 +206,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::SetPaused { .. } => "set_paused",
             Reducer::SetShardId { .. } => "set_shard_id",
             Reducer::StandUp { .. } => "stand_up",
+            Reducer::StandUpForeign { .. } => "stand_up_foreign",
             Reducer::TickGc => "tick_gc",
             _ => unreachable!(),
 }
@@ -339,6 +348,17 @@ Reducer::MintCold{
 }             => __sats::bsatn::to_vec(&stand_up_reducer::StandUpArgs {
                 worker_reference: worker_reference.clone(),
                 event_reference: event_reference.clone(),
+                target: target.clone(),
+}),
+            Reducer::StandUpForeign{
+                source_shard,
+                event_reference,
+                tic,
+                target,
+}             => __sats::bsatn::to_vec(&stand_up_foreign_reducer::StandUpForeignArgs {
+                source_shard: source_shard.clone(),
+                event_reference: event_reference.clone(),
+                tic: tic.clone(),
                 target: target.clone(),
 }),
             Reducer::TickGc => __sats::bsatn::to_vec(&tick_gc_reducer::TickGcArgs {

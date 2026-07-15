@@ -3,22 +3,26 @@
 Executes: the `shard` component. Planned work not yet begun; moves to [remaining.md](remaining.md)
 when started. Newest-first.
 
-The whole reference-model re-cut is **done + verified** ([completed.md](completed.md)): the
-hot/identity/event side, the object-model side (`object.rs`), the geographic geometry (G1 — legacy
-`zone_id`/`surface` retired → realm/region/zone/tile/layer), the geographic cold `entity_reference`
-(G2), and the PACK trigger (G3). No blockers open. What's left is marginal / deferrable:
+**The rewrite is done.** Behavioral core + integration; the reference-model re-cut
+(identity/event/object); the geographic geometry (legacy `zone_id`/`surface` retired); the
+geographic cold `entity_reference`; PACK as an enqueued execute op (divergence #2 closed); and the
+cross-shard foreign Phase-1 hold — all landed + verified ([completed.md](completed.md)). No blockers
+open. One deliberate non-item remains:
 
-## Marginal representation follow-ups (unblocked, low value)
+## Deliberately NOT done — `cold` table `region_zone:u16` key (#4 remnant)
 
-- **2026-07-14** · **`cold` table `region_zone:u16` key (#4)** — the `cold` table keys by the
-  (now-geographic) `zone_id:u32`, which is correct. Narrowing to `region_zone:u16` (realm implied by
-  the shard) saves ~2 bytes/row but needs the edge to carry each shard's realm to reconstruct the
-  full `zone_id` for the client wire (`ColdObjectsRow` is demuxed by `zone_id`). No dev payoff
-  (single realm 0); do it if/when multi-realm sharding lands.
+- **2026-07-14** · **RECOMMENDATION: leave as-is until multi-realm sharding is real.**
+  `cold` keys by the **geographic** `zone_id:u32` (`realm|region|zone`), which is *correct* — the
+  geometry re-cut already retired the legacy flat/surface layout. The design's `region_zone:u16`
+  (realm implied by the shard) is a **wire-compaction**: it saves ~2 bytes per cold row.
+  **Cost today:** the wire (`ColdObjectsRow`) is demuxed by the client on `zone_id`, and a client
+  may hold subscriptions on **several shards** (several realms) over one edge connection — a row
+  carrying only `region_zone` can't be attributed to a realm by the client, so the **edge** would
+  have to track each shard's realm and reconstruct `zone_id` on every relayed row. That's new
+  plumbing + a new failure mode for 2 bytes, with **zero payoff in a single-realm world** (realm 0).
+  **Revisit when:** multi-realm sharding lands (the realm is then genuinely redundant per row and
+  the edge already needs per-shard realm knowledge for routing).
 
-## Not blocked (small, deferrable)
-
-- **2026-07-14** · **Cross-shard foreign Phase-1 hold** — a foreign target gets no pending
-  row/holder on its home shard during the in-flight window (read-rule/GC visibility). The
-  convergent *write* is done ([completed.md](completed.md) #4); this is the in-flight *hold*.
-  Eventually-consistent today; low priority.
+_(This is a judgement, not a blocker — if you'd rather have the design's exact key width now, it's a
+contained change: `Cold.zone_id → region_zone`, `seed_cold_row`/`mint_cold`/`find_or_mint`, the edge
+subscribe filter + `ColdObjectsRow` reconstruction, and a shard republish.)_

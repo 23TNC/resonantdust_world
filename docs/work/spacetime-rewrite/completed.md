@@ -107,7 +107,27 @@ follows the log. (Was `docs/spacetime-implementation/completion-log.md`, now ret
   refuse); the row carries no `targets`, so enqueue holds nothing. **Verified:** `find-or-mint` →
   `enqueued PACK zone=0` → `hot → cold (PACK settle)` → `PACK resolved ev=7391 packed=1`, exactly
   one enqueue, wolves unaffected. Mint (enqueue-absorbed) + PACK (execute op) both now match the
-  design → **divergence #2 CLOSED**. · _(this commit)_
+  design → **divergence #2 CLOSED**. · 067bb09
+- **2026-07-14** · **Cross-shard foreign Phase-1 hold** — the last follow-up from #4 (convergent
+  cross-shard writes): a foreign target used to get **no** pending row/holder on its home shard
+  during the in-flight window, so that shard's **read rule** couldn't defer readers (they'd read a
+  soon-to-be-stale value) and its **GC** saw no reason to keep the row.
+  - `stand_up_foreign(source_shard, event_reference, tic, target)` — the mirror of `stand_up` for a
+    row owned by another shard (no local `event_log` row ⇒ no fence/status transition, `tic` carried
+    explicitly — same shape as `resolve_foreign`). Idempotent; won't double-hold on a re-drive.
+  - **Holds are now keyed `(source_shard, event_reference)`** (`Holder`/`OpenRows` gain
+    `source_shard`; `0` = local). Necessary: each shard mints its own `event_reference` sequence, so
+    a foreign row's holds would otherwise collide with a local row's same-numbered holds.
+  - `resolve_foreign` releases those holds atomically with the write (its definite terminal). A
+    leaked hold (source row dropped mid-flight) is harmless by design — it only delays GC
+    (`lifecycle.md`: a crash may leak a hold, never release one early).
+  - The worker's enqueue now stands up **every** target — local via `stand_up`, foreign via
+    `stand_up_foreign` on its home shard.
+  - **Verified on a real 2-shard rig** (zone-0 = shard 1, zone-1 = shard 2, one worker over both):
+    froze shard-0's tic, appended a row whose target's `server_reference` = 2 → shard-2 showed the
+    pending row (`dirty=1`) **and** the hold (`event_reference=2, source_shard=1, kind=write`);
+    unpaused → `converged foreign targets ev=1 shard=2 n=1`, shard-2 row `dirty=0`, **holder empty**
+    (released), state promoted, `applied_foreign` key recorded. · _(this commit)_
 
 ---
 

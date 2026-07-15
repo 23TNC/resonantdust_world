@@ -6,10 +6,12 @@ Newest-first.
 
 ## In progress
 
-_Nothing actively in progress._ The **entire reference-model re-cut is complete + verified**
-([completed.md](completed.md)): behavioral core + integration; hot/identity/event (`refs.rs`,
-`event_reference` u32, `#5`/`#10`); the object model (`object.rs`); the geographic geometry (G1 —
-legacy `zone_id`/`surface` retired → realm/region/zone/tile/layer); the geographic cold
-`entity_reference` (G2); and the PACK trigger (G3). No blockers open ([blockers.md](blockers.md) —
-B-1 + B-2 resolved). Only marginal follow-ups remain (the `region_zone:u16` cold-key compaction +
-the cross-shard Phase-1 hold — [todo.md](todo.md)), none started, so none listed here.
+_Nothing actively in progress — **the rewrite is done**_ ([completed.md](completed.md)): behavioral
+core + integration; hot/identity/event (`refs.rs`, `event_reference` u32, `#5`/`#10`); the object
+model (`object.rs`); the geographic geometry (legacy `zone_id`/`surface` retired →
+realm/region/zone/tile/layer); the geographic cold `entity_reference`; PACK as an enqueued execute
+op (divergence #2 closed); and the cross-shard foreign Phase-1 hold. All verified — browser (terrain
++ wolves), the cold round-trip (Interact → find-or-mint → PACK settle), and a real 2-shard rig for
+the foreign hold. No blockers open ([blockers.md](blockers.md) — B-1 + B-2 resolved). The one
+remaining [todo.md](todo.md) entry is a *deliberate non-item* (the `region_zone:u16` cold-key
+compaction — recommended to wait for multi-realm), so nothing is in progress.

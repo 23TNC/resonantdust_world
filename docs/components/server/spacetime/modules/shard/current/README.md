@@ -39,12 +39,20 @@ See also [`divergences.md`](divergences.md) — the design-vs-code gap list.
   `pack_settle`, restoring the exact cold entry from provenance stashed in `data0` at mint. Verified
   end-to-end (cold→hot→cold round-trip).
 
-## Not yet implemented (marginal — → [`work/…/todo.md`](../../../../../../work/spacetime-rewrite/todo.md))
+- **PACK is an enqueued execute op** ✅ — a periodic worker sweep appends a
+  `[OBJECT(zone), ACTION(PACK)]` event per zone with at-rest packable objects; execute settles the
+  zone and completes the row via the normal fenced `resolve`. Closes divergence #2.
+- **Cross-shard foreign Phase-1 hold** ✅ — `stand_up_foreign` stands up the pending row + hold on a
+  foreign target's home shard during the in-flight window (so its read rule defers readers and GC
+  keeps the row); `resolve_foreign` releases it with the write. Holds key on `(source_shard,
+  event_reference)`. Verified on a real 2-shard rig.
 
-- `cold` table `region_zone:u16` key (#4) — the table keys by the (geographic) `zone_id:u32`, which
-  is correct; the `u16` narrowing is a ~2-byte wire compaction needing multi-realm edge plumbing. No
-  dev payoff.
-- Cross-shard foreign Phase-1 hold (in-flight read-rule/GC visibility on the home shard).
+## Not yet implemented (one deliberate non-item — → [`work/…/todo.md`](../../../../../../work/spacetime-rewrite/todo.md))
+
+- `cold` table `region_zone:u16` key (#4 remnant) — the table keys by the (geographic) `zone_id:u32`,
+  which is correct; the `u16` narrowing is a ~2-byte wire compaction that would need the edge to
+  track each shard's realm and reconstruct `zone_id` per relayed row. **Recommended to wait for
+  multi-realm sharding** — no payoff in a single-realm world.
 
 ## Reality that isn't in the design (→ cleanup)
 

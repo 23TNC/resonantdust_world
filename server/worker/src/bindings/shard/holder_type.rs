@@ -16,6 +16,7 @@ pub struct Holder {
     pub id: u64,
     pub state_log_id: u64,
     pub event_reference: u32,
+    pub source_shard: u16,
     pub kind: u8,
 }
 
@@ -32,6 +33,7 @@ pub struct HolderCols {
     pub id: __sdk::__query_builder::Col<Holder, u64>,
     pub state_log_id: __sdk::__query_builder::Col<Holder, u64>,
     pub event_reference: __sdk::__query_builder::Col<Holder, u32>,
+    pub source_shard: __sdk::__query_builder::Col<Holder, u16>,
     pub kind: __sdk::__query_builder::Col<Holder, u8>,
 }
 
@@ -42,6 +44,7 @@ impl __sdk::__query_builder::HasCols for Holder {
             id: __sdk::__query_builder::Col::new(table_name, "id"),
             state_log_id: __sdk::__query_builder::Col::new(table_name, "state_log_id"),
             event_reference: __sdk::__query_builder::Col::new(table_name, "event_reference"),
+            source_shard: __sdk::__query_builder::Col::new(table_name, "source_shard"),
             kind: __sdk::__query_builder::Col::new(table_name, "kind"),
 
         }

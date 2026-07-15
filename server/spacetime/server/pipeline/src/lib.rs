@@ -121,6 +121,11 @@ macro_rules! decl_tick_pipeline {
 
         /// Refcount for dumb GC: which `event_reference`s hold a pending read/write on a
         /// `state_log` row. GC reclaims a row only when it has no holders (+ not-latest + old).
+        ///
+        /// A hold is keyed by **`(source_shard, event_reference)`**, not `event_reference` alone:
+        /// a row on *another* shard can hold a row here (its target lives here — see
+        /// [`stand_up_foreign`]), and each shard's `event_reference` is its own auto_inc sequence,
+        /// so the numbers collide across shards. `source_shard == 0` means "this shard's own row".
         #[table(accessor = holder, public)]
         pub struct Holder {
             #[primary_key]
@@ -130,6 +135,8 @@ macro_rules! decl_tick_pipeline {
             pub state_log_id: u64,
             #[index(btree)]
             pub event_reference: u32,
+            /// The shard owning the holding row; `0` = local (this shard's own `event_log`).
+            pub source_shard: u16,
             pub kind: u8,
         }
 
@@ -142,6 +149,8 @@ macro_rules! decl_tick_pipeline {
             pub id: u64,
             #[index(btree)]
             pub event_reference: u32,
+            /// The shard owning the holding row; `0` = local (mirrors [`Holder::source_shard`]).
+            pub source_shard: u16,
             pub state_log_id: u64,
         }
 
@@ -269,16 +278,21 @@ macro_rules! decl_tick_pipeline {
 
         /// Register that `event_reference` holds `kind` on `state_log_id`, and remember it in
         /// open-rows (so enqueue can back out).
-        fn add_hold(ctx: &ReducerContext, event_reference: u32, state_log_id: u64, kind: u8) {
-            ctx.db.holder().insert(Holder { id: 0, state_log_id, event_reference, kind });
-            ctx.db.open_rows().insert(OpenRows { id: 0, event_reference, state_log_id });
+        fn add_hold(ctx: &ReducerContext, source_shard: u16, event_reference: u32, state_log_id: u64, kind: u8) {
+            ctx.db.holder().insert(Holder { id: 0, state_log_id, event_reference, source_shard, kind });
+            ctx.db.open_rows().insert(OpenRows { id: 0, event_reference, source_shard, state_log_id });
         }
 
         /// Release every hold + open-row for an event.
-        fn release_holds(ctx: &ReducerContext, event_reference: u32) {
-            let hs: Vec<u64> = ctx.db.holder().event_reference().filter(event_reference).map(|h| h.id).collect();
+        /// Release every hold + open-row a row holds here. Keyed by `(source_shard,
+        /// event_reference)` so releasing a local row never drops a same-numbered *foreign* row's
+        /// holds (each shard mints its own `event_reference` sequence).
+        fn release_holds(ctx: &ReducerContext, source_shard: u16, event_reference: u32) {
+            let hs: Vec<u64> = ctx.db.holder().event_reference().filter(event_reference)
+                .filter(|h| h.source_shard == source_shard).map(|h| h.id).collect();
             for id in hs { ctx.db.holder().id().delete(id); }
-            let os: Vec<u64> = ctx.db.open_rows().event_reference().filter(event_reference).map(|o| o.id).collect();
+            let os: Vec<u64> = ctx.db.open_rows().event_reference().filter(event_reference)
+                .filter(|o| o.source_shard == source_shard).map(|o| o.id).collect();
             for id in os { ctx.db.open_rows().id().delete(id); }
         }
 
@@ -384,7 +398,42 @@ macro_rules! decl_tick_pipeline {
                     r.id
                 }
             };
-            add_hold(ctx, event_reference, row_id, $crate::HOLD_WRITE);
+            add_hold(ctx, 0, event_reference, row_id, $crate::HOLD_WRITE);
+            Ok(())
+        }
+
+        /// **Phase-1 hold for a cross-shard target.** The mirror of [`stand_up`] for a row owned by
+        /// `source_shard` whose target lives *here*: stand up the pending `state_log` row at `tic`
+        /// and register the write hold, so during the in-flight window this shard sees the target
+        /// as having pending work — the **read rule** (`resolved_through`) defers readers instead of
+        /// reading a soon-to-be-stale value, and **GC** won't reclaim the row (it has a holder).
+        ///
+        /// No local `event_log` row exists for the event (it lives on the source shard), so there's
+        /// no fence and no status transition here — same shape as [`resolve_foreign`], and `tic` is
+        /// carried explicitly for the same reason. Idempotent: a re-drive finds the row already
+        /// stood up. The hold is keyed `(source_shard, event_reference)`; `resolve_foreign` releases
+        /// it. A leaked hold (source row dropped mid-flight) is harmless — it only delays GC
+        /// (`lifecycle.md`: release is tied to a definite terminal state; a crash may leak, never
+        /// release early).
+        #[reducer]
+        pub fn stand_up_foreign(ctx: &ReducerContext, source_shard: u16, event_reference: u32, tic: u32, target: u64) -> Result<(), String> {
+            let row_id = match find_state_log(ctx, target, tic) {
+                Some(r) => r.id, // already stood up (idempotent)
+                None => {
+                    let base = base_resolved(ctx, target, tic);
+                    let r = ctx.db.state_log().insert(StateLog {
+                        id: 0, entity_key: target, tic, dirty: 1,
+                        $( $pf: base.as_ref().map_or(Default::default(), |b| b.$pf.clone()), )*
+                    });
+                    r.id
+                }
+            };
+            // Don't double-hold on a re-drive: one write hold per (source_shard, event_reference, row).
+            let held = ctx.db.holder().event_reference().filter(event_reference)
+                .any(|h| h.source_shard == source_shard && h.state_log_id == row_id);
+            if !held {
+                add_hold(ctx, source_shard, event_reference, row_id, $crate::HOLD_WRITE);
+            }
             Ok(())
         }
 
@@ -414,7 +463,7 @@ macro_rules! decl_tick_pipeline {
                 });
                 promote(ctx, &resolved);
             }
-            release_holds(ctx, event_reference);
+            release_holds(ctx, 0, event_reference); // local row
             set_status(ctx, ev, $crate::STATUS_COMPLETE);
             Ok(())
         }
@@ -442,6 +491,10 @@ macro_rules! decl_tick_pipeline {
                 });
                 promote(ctx, &resolved);
             }
+            // This is the foreign row's **definite terminal** here — the write landed, so release
+            // the Phase-1 holds [`stand_up_foreign`] took (keyed by the same `(source_shard,
+            // event_reference)`), atomically with the write. Local holds are untouched.
+            release_holds(ctx, source_shard, event_reference);
             ctx.db.applied_foreign().insert(AppliedForeign { id: key });
             Ok(())
         }
@@ -452,7 +505,7 @@ macro_rules! decl_tick_pipeline {
         pub fn abort(ctx: &ReducerContext, worker_reference: u16, event_reference: u32) -> Result<(), String> {
             let Some(row) = ctx.db.event_log().event_reference().find(event_reference) else { return Ok(()); };
             if row.worker_reference != worker_reference || row.status != $crate::STATUS_RUNNING { return Ok(()); }
-            release_holds(ctx, event_reference);
+            release_holds(ctx, 0, event_reference); // local row
             let mut row = row;
             row.status = $crate::STATUS_QUEUE_FAILED;
             row.failed = true;
@@ -494,7 +547,7 @@ macro_rules! decl_tick_pipeline {
                     && now.saturating_sub(e.tic_state_change) > $crate::ENQUEUE_WINDOW_TICS)
                 .map(|e| e.event_reference).collect();
             for r in stale {
-                release_holds(ctx, r);
+                release_holds(ctx, 0, r); // local row
                 if let Some(row) = ctx.db.event_log().event_reference().find(r) {
                     let mut row = row;
                     row.status = $crate::STATUS_QUEUE_FAILED;
