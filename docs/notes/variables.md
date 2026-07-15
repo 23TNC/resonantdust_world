@@ -102,6 +102,11 @@ u24 to fit `entity_reference` in a u32.
 The variant tag (`REF_NONE/HOT/COLD/POSITION/EVENT/SERVER`) on an `entity_reference`. With one
 reference type left, there is nothing to tag. Type now comes from the server.
 
+`event_reference` survived the collapse as an **alias**, not a variant: an event is an object like
+any other, minted by an event shard, so its `entity_reference` carries `TYPE_EVENT` in the server's
+`type_id` nibble. It briefly went missing from VARIABLES when the variants table was deleted —
+`REF_EVENT` was a tag, the alias is not.
+
 ### `event_word : u64` — 2026-07-15
 
 `op_code:4 | reserved:12 | server_reference:16 | payload:32` — the wire unit of the tick pipeline's

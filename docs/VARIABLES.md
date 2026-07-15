@@ -78,6 +78,12 @@ u16 realm_server_reference        cross-realm only
 An `entity_reference` is realm-unique only via its `server_reference`; crossing realms, carry a
 `realm_server_reference`.
 
+**Aliases of `entity_reference`** (u32, same layout, no interior):
+
+| alias | names | `type_id` | on |
+|---|---|---|---|
+| `event_reference` | an event row | `TYPE_EVENT` | `event_log.event_reference`, `state_events.events` |
+
 **Aliases of `server_reference`** (u8, same layout, no interior):
 
 | alias | names |
