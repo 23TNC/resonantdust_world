@@ -280,10 +280,21 @@ born red: its author wrote a packed-only stone and reasonably expected it to wor
 **Why it's shaped this way:** the `?` doubles as "did this node produce a prim at all?" — but
 `run_node_hook(node, "visual", "on_create")?` on the line above **already** answers that. So the tint
 `?` only guards "prim exists but has no tint", and conflates *absent* with *invalid*.
-**Choice:** left as-is; T-6's scope was restoring the gate, and changing it is a **content-semantics
-decision, not a cleanup** — logged in [forks.md](forks.md) (2026-07-14, "base tint: mandatory,
-defaulted, or an error?") as undecided. Deliberately not settled while executing something else;
-that's how D-3 happened.
+**Not a fork — a divergence.** I logged this as an open question; it wasn't. The design already
+decided it: [art-style.md](../../components/dev/textures/design/art-style.md) packs the albedo's
+regions as **grayscale shading masks** and renders `R·tintPrimary + G·tintSecondary + B·tintDetail`,
+warning *"pure-black tint loses shading — tint toward dark-gray, not 0,0,0."* **An absent tint
+defaults to gray.** The code does neither:
+- `node_visual`'s `?` on `prims.0.tint` → an absent base tint kills the **whole visual** (texture
+  included) instead of graying it;
+- `PackedChannel::default()` is `tint: 0` — pure black, annotated in-code as *"contributes
+  nothing"*, which is precisely the value art-style.md says never to use.
+
+**Fix:** default an absent tint to a **gray** (family 0 in the palette model), both for the base
+prim and for packed channels; drop the `?`. Small, and it makes a def that binds only packed
+channels behave — which is what T-6's fixture author expected. Not done yet: 🟡 latent (all shipped
+content sets tints explicitly), and it's a render-side change, so it wants a browser check
+(a green build proves nothing here).
 
 
 ### `current/divergences.md` #1 contradicted `design/event-dsl.md` (2026-07-14, caught in T-9 scouting)

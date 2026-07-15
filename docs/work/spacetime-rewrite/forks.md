@@ -46,7 +46,15 @@ Decision points with more than one viable path + which we chose + why. Chronolog
 
 ---
 
-- **2026-07-14** · **Base `&tint`: mandatory, defaulted, or an error?** — **UNDECIDED, deliberately.**
+- **2026-07-14** · **Base `&tint`: mandatory, defaulted, or an error?** — **NOT A FORK; already
+  decided → default to GRAY.** Logged as open by me, wrongly: the answer was already in
+  [art-style.md](../../components/dev/textures/design/art-style.md). The albedo packs regions as
+  **grayscale shading masks** rendered `R·tintPrimary + G·tintSecondary + B·tintDetail`, and it
+  warns *"pure-black tint loses shading — tint toward dark-gray, not 0,0,0."* An absent tint must
+  therefore fall back to a **gray**, so the shading still reads; it must not annihilate the def
+  (today) nor default to black (today's packed channels). Reclassified as a **divergence** →
+  [issues.md](issues.md). Options (a)/(c) below are dead; (b) is the design, with "gray" as the
+  specific value. Original framing kept for the record:
   Surfaced by T-6: `node_visual` reads the base tint with `?`, so a def that exports a prim but sets
   no `&tile.tint` silently yields **no visual at all** — texture included. Options: **(a)** keep it
   mandatory (status quo; matches the real-content convention that every def sets a tint, identity
