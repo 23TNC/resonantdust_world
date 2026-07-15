@@ -12,7 +12,7 @@ every 150 ms. Not yet built: **Slice 0**, which converts motion from
 position-streaming to future-stamped per-tile `free_things` rows and makes the
 client projector speed-aware. This doc is the plan for how every client stays in
 sync with the server for a RimWorld-like MMO simulation, and the incremental path
-to get there. Companion to [`client.md`](../components/client/pixijs/intent/client.md) and
+to get there. Companion to [`client.md`](../components/client/core/intent/client.md) and
 [`object-shard.md`](../archive/object-shard.md).
 
 ## The problem

@@ -1,5 +1,12 @@
 # Repository layout
 
+> **Scope (settled 2026-07-14).** This is the **physical** tree — where code sits on disk — plus the
+> old→new **rename map** from the 2026-07-11 restructure, which is what lets you read pre-restructure
+> commits and docs. It is **not** the component truth: what each component *is*, what it
+> deploys/shares, and whether it's alive is the **map**,
+> [`docs/components/README.md`](components/README.md). Kept separate rather than merged — the map
+> shouldn't carry a historical rename table, and the rename key is still load-bearing for history.
+
 The top level groups crates by side of the wire. Renamed + regrouped 2026-07-11
 (was a flat tree of `server` / `gateway` / `spacetime` / `server_master` /
 `server_simulation` / `client` / `pixijs` / `npc`).

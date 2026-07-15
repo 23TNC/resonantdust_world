@@ -11,6 +11,10 @@ components** — the module that holds them is.
 This file is the map: what exists, where it lives, what it deploys/shares, and what's alive vs
 dead. It's the antidote to "I forget… which is why we need this."
 
+> **Physical layout** — where each crate sits on disk, plus the 2026-07-11 old→new rename key that
+> lets you read pre-restructure history — is [`docs/repo-layout.md`](../repo-layout.md). Kept
+> separate on purpose: this map is *conceptual* and shouldn't carry a historical rename table.
+
 ## `client/` — deployable
 - **client/core** (`resonantdust-client`) — headless session core: `Command` in / `Event` out,
   the tokio engine (`engine.rs`) + its wasm mirror (`web.rs`). Shared by npc + pixijs(wasm).
@@ -86,5 +90,5 @@ Held as components because scripts are the foundation of how we develop.
 - Per lazy-create, per-component `{design,intent,current,plan}` folders come as we work each — so a
   component **listed above with no folder is normal**, not a gap; this map is its home until it
   earns one. **Folders so far:** `shard` + `shared/codec` (all four, verified against the code
-  2026-07-14); partial, as work touched them: `server/spacetime/pipeline`, `client/pixijs`,
-  `server/gateway`, `dev/{scripts,textures}`.
+  2026-07-14); partial, as work touched them: `client/core`, `client/pixijs`,
+  `server/spacetime/pipeline`, `server/gateway`, `dev/{scripts,textures}`.

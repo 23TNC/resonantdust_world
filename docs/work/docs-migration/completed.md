@@ -31,3 +31,18 @@ chronological.
 - **2026-07-14** · **issues folder folded in** — `docs/issues/00X` detail (001–005 + the 006
   fork) folded into `work/spacetime-rewrite/issues.md` + `forks.md` (full problem→options→choice→
   why, links recomputed); `docs/issues/` removed. Matches the single-file convention.
+
+- **2026-07-14** · **The stream's last real items.** `client/core`: `intent/client.md` was filed
+  under `pixijs` but described the **headless Rust client** end to end (host API `src/api.rs`,
+  login flow, config, the `headless` binary) — pixijs appears only as a future *consumer*. **No
+  split needed**; it was simply misfiled. `git mv`'d to `components/client/core/intent/`, inbound
+  links fixed (`docs/intent/sync.md`, pixijs README), `client/core/README.md` added.
+  `docs/repo-layout.md`: **keep, scoped** — it's the physical tree + the 2026-07-11 rename key
+  (needed to read pre-restructure history); the component map is the conceptual truth. Merging would
+  bury a rename table in the map, deleting would lose the key; both now say so and cross-link.
+  The header caveat ("`git mv` breaks code-comment doc-paths; fix when that code is next touched")
+  is **void** — all 15 were repointed in `d81e1e7`. Verified: **0 broken relative links** across
+  `docs/`.
+  Still open by design: `server/edge` folders (lazy-create — edge hasn't been worked; the map entry
+  is its home) and `docs/prompts/*` (moves *with* the `bin/` → `dev/scripts/` reorg, which is itself
+  proposed-not-done — not worth moving twice).
