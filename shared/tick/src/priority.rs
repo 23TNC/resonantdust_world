@@ -84,7 +84,7 @@ mod tests {
     fn read_tic_spans_object_and_zone_classes() {
         // A cross-class pair still yields a strict order (no panic, one back-edge).
         let obj = obj(42);
-        let zone = pack_cold_entity(pack_zone_id(1, 1, 0, 2, 3), 17, 2);
+        let zone = pack_cold_entity(pack_zone_id(0, 0, 1, 1, 2, 3), 17, 2);
         let tic = 4;
         let a = actor_read_tic(obj, zone, tic);
         let b = actor_read_tic(zone, obj, tic);

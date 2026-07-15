@@ -386,14 +386,14 @@ export class WasmClient {
     this.world?.logout();
   }
 
-  /** Add or move the viewport anchor `name` to global tile `(tileX, tileY)` on
-   *  `surface`, with the per-tier reach `radii` (in tiles). `soul` is `0` for a
-   *  viewport. Idempotent — cheap to call as the view pans. No-op before login. */
+  /** Add or move the viewport anchor `name` to global tile `(tileX, tileY)`, with the
+   *  per-tier reach `radii` (in tiles). `soul` is `0` for a viewport. Idempotent — cheap to
+   *  call as the view pans. No-op before login. (The world is a single 2D tile plane; the old
+   *  `surface`/z-axis is retired.) */
   setAnchor(
     name: string,
     tileX: number,
     tileY: number,
-    surface: number,
     radii: AnchorRadii,
     soul: number,
   ): void {
@@ -401,7 +401,6 @@ export class WasmClient {
       name,
       tileX,
       tileY,
-      surface,
       radii.active,
       radii.hot,
       radii.warm,

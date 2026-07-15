@@ -69,7 +69,6 @@ async fn main() -> ExitCode {
                                     name: "headless:0".to_string(),
                                     tile_x: 0,
                                     tile_y: 0,
-                                    surface: 0,
                                     radii: AnchorRadii { active: 2, hot: 4, warm: 6, cold: 8 },
                                     soul: 0,
                                 });

@@ -369,7 +369,7 @@ mod tests {
         let tree = w.bundle.thing_object_id("tree").unwrap();
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
-                let zone_id = pack_zone_id(0, 0, 0, zx, zy);
+                let zone_id = pack_zone_id(0, 0, 0, 0, zx, zy);
                 let (tiles, things) = w.zone_terrain(zone_id);
                 for &t in &things {
                     use resonantdust_codec::packed::{thing_kind, thing_location};
@@ -390,7 +390,7 @@ mod tests {
         let mut saw_other = false;
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
-                let (tiles, _) = w.zone_terrain(pack_zone_id(0, 0, 0, zx, zy));
+                let (tiles, _) = w.zone_terrain(pack_zone_id(0, 0, 0, 0, zx, zy));
                 for &tile in &tiles {
                     if tile == grass {
                         saw_grass = true;
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn deterministic_reseed() {
         let w = worldgen();
-        let zone_id = pack_zone_id(0, 0, 0, 3, 5);
+        let zone_id = pack_zone_id(0, 0, 0, 0, 3, 5);
         assert_eq!(w.zone_terrain(zone_id), w.zone_terrain(zone_id));
     }
 
@@ -423,7 +423,7 @@ mod tests {
         let mut saw_tile = false;
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
-                for row in w.zone_cold_objects(pack_zone_id(0, 0, 0, zx, zy)) {
+                for row in w.zone_cold_objects(pack_zone_id(0, 0, 0, 0, zx, zy)) {
                     for k in &row.kinds {
                         assert!(kind_ref_x(*k) < 16 && kind_ref_y(*k) < 16, "in-zone position");
                     }
@@ -455,7 +455,7 @@ mod tests {
         let w = worldgen();
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
-                let zone_id = pack_zone_id(0, 0, 0, zx, zy);
+                let zone_id = pack_zone_id(0, 0, 0, 0, zx, zy);
                 let (legacy_tiles, legacy_things) = w.zone_terrain(zone_id);
                 let rows = w.zone_cold_objects(zone_id);
                 let count = |t: u8| -> usize {
@@ -473,8 +473,8 @@ mod tests {
         // adjacent world columns, so the ground must not break at the seam: the
         // noise is continuous and both columns sample the same world function.
         let w = worldgen();
-        let (west, _) = w.zone_terrain(pack_zone_id(0, 0, 0, 0, 0));
-        let (east, _) = w.zone_terrain(pack_zone_id(0, 0, 0, 1, 0));
+        let (west, _) = w.zone_terrain(pack_zone_id(0, 0, 0, 0, 0, 0));
+        let (east, _) = w.zone_terrain(pack_zone_id(0, 0, 0, 0, 1, 0));
         let ground = |wx: i32, wy: i32| {
             let g = w.bundle.generate(&biome_dims(wx, wy), tile_seed(wx, wy));
             g.tile.and_then(|n| w.bundle.tile_def_id(&n)).unwrap_or(w.default_tile) as u8

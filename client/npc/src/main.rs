@@ -115,7 +115,6 @@ impl Bot {
             name: "wildlife".to_string(),
             tile_x,
             tile_y,
-            surface: 0,
             radii: AnchorRadii { active: 2, hot: 4, warm: 6, cold: 8 },
             soul: 0,
         });

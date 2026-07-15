@@ -243,7 +243,7 @@ export class WorldBridge {
       this.anchorTileX = tileX;
       this.anchorTileY = tileY;
       this.lastRadii = r;
-      this.client.setAnchor(ANCHOR, tileX, tileY, 0, r, 0);
+      this.client.setAnchor(ANCHOR, tileX, tileY, r, 0);
     }
   }
 

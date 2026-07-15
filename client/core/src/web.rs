@@ -93,7 +93,6 @@ impl Client {
         name: impl Into<String>,
         tile_x: i32,
         tile_y: i32,
-        surface: u8,
         radii: AnchorRadii,
         soul: u32,
     ) -> Result<(), SendError> {
@@ -101,7 +100,6 @@ impl Client {
             name: name.into(),
             tile_x,
             tile_y,
-            surface,
             radii,
             soul,
         })
@@ -319,11 +317,10 @@ impl Engine {
                 name,
                 tile_x,
                 tile_y,
-                surface,
                 radii,
                 soul,
             } => {
-                self.handle_set_anchor(name, tile_x, tile_y, surface, radii, soul)
+                self.handle_set_anchor(name, tile_x, tile_y, radii, soul)
                     .await
             }
             Command::RemoveAnchor { name } => self.handle_remove_anchor(name).await,
@@ -383,7 +380,6 @@ impl Engine {
         name: String,
         tile_x: i32,
         tile_y: i32,
-        surface: u8,
         radii: AnchorRadii,
         soul: u32,
     ) {
@@ -394,7 +390,7 @@ impl Engine {
             return;
         }
         self.zones
-            .set_anchor(&name, tile_x, tile_y, surface, radii, soul, now_ms());
+            .set_anchor(&name, tile_x, tile_y, radii, soul, now_ms());
         self.flush_zone_intents().await;
     }
 

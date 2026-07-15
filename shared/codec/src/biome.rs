@@ -11,7 +11,7 @@
 //! ([`is_forest`]) mirrors the ordered biome cascade in `content/biome/biomes.rd` and
 //! must be kept in step with it — there is no way to evaluate the DSL here.
 
-use crate::packed::{zone_region_x, zone_region_y, zone_x, zone_y, REGION_DIM, ZONE_DIM};
+use crate::packed::ZONE_DIM;
 
 /// Feature size of each biome-dimension noise field, in world tiles. Distinct per
 /// dimension so temperature, humidity and elevation vary at different scales.
@@ -48,13 +48,10 @@ pub fn tile_seed(wx: i32, wy: i32) -> u64 {
     h
 }
 
-/// World-tile coordinate of a zone's top-left cell. The world is a grid of
-/// `REGION_DIM × REGION_DIM` zones per region, each `ZONE_DIM` tiles square.
+/// World-tile coordinate of a zone's top-left cell — the geographic realm ⊃ region ⊃ zone
+/// nesting (each 16 per axis). Equals `global_tile(zone_id, 0)`.
 pub fn zone_world_origin(zone_id: u32) -> (i32, i32) {
-    let span = REGION_DIM as i32 * ZONE_DIM as i32;
-    let ox = zone_region_x(zone_id) as i32 * span + zone_x(zone_id) as i32 * ZONE_DIM as i32;
-    let oy = zone_region_y(zone_id) as i32 * span + zone_y(zone_id) as i32 * ZONE_DIM as i32;
-    (ox, oy)
+    crate::packed::global_tile(zone_id, 0)
 }
 
 /// Whether a cell with these biome `dims` (`[temperature, humidity, elevation]`)

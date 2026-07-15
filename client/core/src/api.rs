@@ -76,7 +76,6 @@ pub enum Command {
         name: String,
         tile_x: i32,
         tile_y: i32,
-        surface: u8,
         radii: AnchorRadii,
         soul: u32,
     },

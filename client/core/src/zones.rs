@@ -63,7 +63,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use resonantdust_codec::packed::{pack_zone_id, REGION_DIM, ZONE_DIM};
+use resonantdust_codec::packed::{pack_zone_id, REALM_DIM, REGION_DIM, ZONE_DIM};
 
 /// Default ceiling on simultaneously open zone subscriptions. Candidates beyond
 /// it are evicted least-recently-demoted first; hard-held subs are never evicted,
@@ -128,7 +128,6 @@ struct Anchor {
     /// Global tile coordinates of the anchor's centre.
     tile_x: i32,
     tile_y: i32,
-    surface: u8,
     radii: AnchorRadii,
     /// The soul (pawn card id) this anchor represents, or `0` for a non-soul
     /// anchor such as a viewport. Reserved for the future per-soul memory path;
@@ -199,7 +198,6 @@ impl ZoneManager {
         name: &str,
         tile_x: i32,
         tile_y: i32,
-        surface: u8,
         radii: AnchorRadii,
         soul: u32,
         now: u64,
@@ -207,7 +205,6 @@ impl ZoneManager {
         let anchor = Anchor {
             tile_x,
             tile_y,
-            surface,
             radii,
             soul,
         };
@@ -417,7 +414,7 @@ fn anchor_coverage(anchor: &Anchor, sink: &mut impl FnMut(u32, ZoneTier)) {
         let zy1 = zone_axis(anchor.tile_y + radius);
         for zgx in zx0..=zx1 {
             for zgy in zy0..=zy1 {
-                if let Some(zone) = zone_at(zgx, zgy, anchor.surface) {
+                if let Some(zone) = zone_at(zgx, zgy) {
                     sink(zone, tier);
                 }
             }
@@ -429,8 +426,10 @@ fn anchor_coverage(anchor: &Anchor, sink: &mut impl FnMut(u32, ZoneTier)) {
 const ZONE_EDGE: i32 = ZONE_DIM as i32;
 /// Zones per region edge.
 const REGION_EDGE: i32 = REGION_DIM as i32;
-/// Region cells per world axis (`region_x`/`region_y` are full bytes: 0..256).
-const REGION_AXIS: i32 = 256;
+/// Regions per realm edge.
+const REALM_EDGE: i32 = REALM_DIM as i32;
+/// Region cells per world axis (`realm_x`·`region_x` = 16×16 = 256 regions/axis).
+const REGION_AXIS: i32 = REALM_EDGE * REGION_EDGE;
 /// Zones per world axis — the valid range for a global zone coordinate.
 const ZONES_PER_AXIS: i32 = REGION_AXIS * REGION_EDGE;
 
@@ -440,17 +439,24 @@ fn zone_axis(tile: i32) -> i32 {
     tile.div_euclid(ZONE_EDGE)
 }
 
-/// Pack a global zone coordinate `(zgx, zgy)` on `surface` into a `zone_id`, or
-/// `None` if it falls outside the world.
-fn zone_at(zgx: i32, zgy: i32, surface: u8) -> Option<u32> {
+/// Pack a global zone coordinate `(zgx, zgy)` into a geographic `zone_id`, or `None` if it
+/// falls outside the world. `zgx` nests realm ⊃ region ⊃ zone (each 16 per axis).
+fn zone_at(zgx: i32, zgy: i32) -> Option<u32> {
     if !(0..ZONES_PER_AXIS).contains(&zgx) || !(0..ZONES_PER_AXIS).contains(&zgy) {
         return None;
     }
-    let region_x = (zgx / REGION_EDGE) as u8;
-    let zone_x = (zgx % REGION_EDGE) as u8;
-    let region_y = (zgy / REGION_EDGE) as u8;
-    let zone_y = (zgy % REGION_EDGE) as u8;
-    Some(pack_zone_id(region_x, region_y, surface, zone_x, zone_y))
+    let split = |zg: i32| -> (u8, u8, u8) {
+        let zone = (zg % REGION_EDGE) as u8;
+        let region_full = zg / REGION_EDGE;
+        (
+            (region_full / REALM_EDGE) as u8, // realm
+            (region_full % REALM_EDGE) as u8, // region within realm
+            zone,                             // zone within region
+        )
+    };
+    let (realm_x, region_x, zone_x) = split(zgx);
+    let (realm_y, region_y, zone_y) = split(zgy);
+    Some(pack_zone_id(realm_x, realm_y, region_x, region_y, zone_x, zone_y))
 }
 
 #[cfg(test)]
@@ -469,7 +475,7 @@ mod tests {
     }
 
     fn zone(zgx: i32, zgy: i32) -> u32 {
-        zone_at(zgx, zgy, 0).unwrap()
+        zone_at(zgx, zgy).unwrap()
     }
 
     fn is_open(zm: &ZoneManager, z: u32) -> bool {
@@ -486,7 +492,7 @@ mod tests {
     #[test]
     fn coverage_assigns_tightest_tier() {
         let mut zm = ZoneManager::default();
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
+        zm.set_anchor("a", 8, 8, ladder(), 0, 0);
         let desired = zm.desired_tiers();
         assert_eq!(desired.get(&zone(0, 0)), Some(&ZoneTier::Active));
         assert_eq!(desired.get(&zone(1, 0)), Some(&ZoneTier::Hot));
@@ -497,7 +503,7 @@ mod tests {
     #[test]
     fn only_active_opens_a_sub() {
         let mut zm = ZoneManager::default();
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
+        zm.set_anchor("a", 8, 8, ladder(), 0, 0);
         // The active zone opens; the hot/warm/cold ring does not (hot+ only hold).
         assert!(is_open(&zm, zone(0, 0)));
         assert!(!is_open(&zm, zone(1, 0)));
@@ -511,20 +517,20 @@ mod tests {
         let z = zone(0, 0);
 
         // Open at active.
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
+        zm.set_anchor("a", 8, 8, ladder(), 0, 0);
         assert!(is_open(&zm, z) && !is_candidate(&zm, z));
 
         // Move so z is now only Hot: still open, still hard-held.
-        zm.set_anchor("a", 28, 8, 0, ladder(), 0, 10);
+        zm.set_anchor("a", 28, 8, ladder(), 0, 10);
         assert!(is_open(&zm, z) && !is_candidate(&zm, z), "hot sustains hard");
 
         // Move so z is now Warm: still open, now soft-held.
-        zm.set_anchor("a", 44, 8, 0, ladder(), 0, 20);
+        zm.set_anchor("a", 44, 8, ladder(), 0, 20);
         assert!(is_open(&zm, z) && is_candidate(&zm, z), "warm = soft-held");
 
         // Move so z is out of every band: still open — distance no longer drops it,
         // only the cost-based release or the capacity-LRU can.
-        zm.set_anchor("a", 88, 8, 0, ladder(), 0, 30);
+        zm.set_anchor("a", 88, 8, ladder(), 0, 30);
         assert!(is_open(&zm, z) && is_candidate(&zm, z), "cold/uncovered soft-holds");
     }
 
@@ -532,10 +538,10 @@ mod tests {
     fn reentering_active_rehardens() {
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
-        zm.set_anchor("a", 44, 8, 0, ladder(), 0, 10); // z → warm candidate
+        zm.set_anchor("a", 8, 8, ladder(), 0, 0);
+        zm.set_anchor("a", 44, 8, ladder(), 0, 10); // z → warm candidate
         assert!(is_candidate(&zm, z));
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 20); // z → active again
+        zm.set_anchor("a", 8, 8, ladder(), 0, 20); // z → active again
         assert!(is_open(&zm, z) && !is_candidate(&zm, z), "re-entry clears candidacy");
     }
 
@@ -544,10 +550,10 @@ mod tests {
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
         // Open active at t=0 and stream a 1000-byte baseline inside the load window.
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
+        zm.set_anchor("a", 8, 8, ladder(), 0, 0);
         zm.note_update(z, 1000, 0);
         // Pan so z is only warm → soft-held.
-        zm.set_anchor("a", 44, 8, 0, ladder(), 0, 10);
+        zm.set_anchor("a", 44, 8, ladder(), 0, 10);
         assert!(is_candidate(&zm, z));
 
         // Past the load window, deltas now charge retention. Under the 1000-byte
@@ -564,9 +570,9 @@ mod tests {
     fn quiet_soft_held_sub_is_never_released() {
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
+        zm.set_anchor("a", 8, 8, ladder(), 0, 0);
         zm.note_update(z, 1000, 0); // baseline load
-        zm.set_anchor("a", 44, 8, 0, ladder(), 0, 10); // soft-held, then silent
+        zm.set_anchor("a", 44, 8, ladder(), 0, 10); // soft-held, then silent
         // No further rows: a quiet zone (static tiles/things) is held indefinitely.
         assert!(is_open(&zm, z), "a quiet soft-held sub is never released by cost");
     }
@@ -578,8 +584,8 @@ mod tests {
         // cost, not retention, even while soft-held.
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0); // open active
-        zm.set_anchor("a", 44, 8, 0, ladder(), 0, 5); // soft-held at t=5, still no data
+        zm.set_anchor("a", 8, 8, ladder(), 0, 0); // open active
+        zm.set_anchor("a", 44, 8, ladder(), 0, 5); // soft-held at t=5, still no data
         assert!(is_candidate(&zm, z));
         zm.note_update(z, 1000, 50); // baseline lands at t=50 (< LOAD_SETTLE_MS)
         assert!(is_open(&zm, z), "baseline is load, not retention — stays held");
@@ -592,8 +598,8 @@ mod tests {
         let zb = zone(0, 5);
         // Two distinct active zones via two anchors — both hard-held, cap exceeded
         // but neither evictable.
-        zm.set_anchor("a", 8, 8, 0, AnchorRadii { active: 4, ..Default::default() }, 0, 0);
-        zm.set_anchor("b", 8, 88, 0, AnchorRadii { active: 4, ..Default::default() }, 0, 0);
+        zm.set_anchor("a", 8, 8, AnchorRadii { active: 4, ..Default::default() }, 0, 0);
+        zm.set_anchor("b", 8, 88, AnchorRadii { active: 4, ..Default::default() }, 0, 0);
         assert!(is_open(&zm, za) && is_open(&zm, zb), "hard-held subs survive over cap");
 
         // Demote a → candidate; now the cap reclaims it, keeping the hard-held b.
@@ -601,7 +607,6 @@ mod tests {
             "a",
             44,
             8,
-            0,
             AnchorRadii { active: 4, warm: 40, ..Default::default() },
             0,
             10,
@@ -613,9 +618,9 @@ mod tests {
     #[test]
     fn set_anchor_is_idempotent() {
         let mut zm = ZoneManager::default();
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
+        zm.set_anchor("a", 8, 8, ladder(), 0, 0);
         let _ = zm.take_intents();
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 1); // identical
+        zm.set_anchor("a", 8, 8, ladder(), 0, 1); // identical
         assert!(zm.take_intents().is_empty(), "unchanged anchor emits nothing");
     }
 
@@ -623,7 +628,7 @@ mod tests {
     fn remove_anchor_soft_holds_its_zones() {
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
-        zm.set_anchor("a", 8, 8, 0, ladder(), 0, 0);
+        zm.set_anchor("a", 8, 8, ladder(), 0, 0);
         assert!(is_open(&zm, z) && !is_candidate(&zm, z));
         // Removing the anchor uncovers z — but, like panning away, that soft-holds it
         // rather than dropping it (cost / capacity still reclaim it later).
@@ -636,14 +641,14 @@ mod tests {
         let mut zm = ZoneManager::default();
         let z = zone(0, 0);
         // Opening the active zone emits an open intent.
-        zm.set_anchor("a", 8, 8, 0, AnchorRadii { active: 4, ..Default::default() }, 0, 0);
+        zm.set_anchor("a", 8, 8, AnchorRadii { active: 4, ..Default::default() }, 0, 0);
         assert_eq!(zm.take_intents(), vec![ZoneIntent { zone_id: z, on: true }]);
 
         // Stream a baseline, pan away so z soft-holds (the move opens a fresh active
         // zone at the new spot — drain that), then let retention reach the re-fetch
         // estimate: that, and only that, emits z's close intent.
         zm.note_update(z, 500, 0);
-        zm.set_anchor("a", 44, 8, 0, AnchorRadii { active: 4, warm: 40, ..Default::default() }, 0, 10);
+        zm.set_anchor("a", 44, 8, AnchorRadii { active: 4, warm: 40, ..Default::default() }, 0, 10);
         let panned = zm.take_intents();
         assert!(!panned.contains(&ZoneIntent { zone_id: z, on: false }), "pan-away does not close z");
         zm.note_update(z, 500, LOAD_SETTLE_MS + 1);

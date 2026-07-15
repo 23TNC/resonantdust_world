@@ -7,8 +7,8 @@
 //!
 //! ```text
 //! valid_at:  u64 = (time_ms: u48 << 16) | sequence: u16
-//! zone_id:   u32 = region_x:8 | region_y:8 | surface:8 | zone_x:4 | zone_y:4
-//! region_id: u32 = region_x:8 | region_y:8 | surface:8 | reserved:8
+//! zone_id:   u32 = realm:8 | region:8 | zone:8 | reserved:8   (each level = hi:4 | lo:4)
+//! region_id: u32 = realm:8 | region:8 | reserved:16           (the shard-routing key)
 //! tile:      u8  = tile-kind (0 = empty); a zone's tiles are a dense Vec<u8>[256]
 //! thing:     u64 = kind:16 | x:4 | y:4 | data:5 | layer:3 | variant:5 | reserved:27
 //!                  (sparse Vec<u64>)
@@ -36,65 +36,91 @@ pub fn valid_at_sequence(v: u64) -> u16 {
 
 // ── zone_id ↔ region_id ──────────────────────────────────────────────────────
 //
-// `zone_id` addresses a single zone within the whole world; `region_id` is the
-// shard-routing key — a `zone_id` with its low byte (the in-region `zone_x|zone_y`
-// nibbles) cleared. The shard treats `zone_id` as opaque; composing and
-// decomposing it is the gateway's / client's concern, which is why these live in
-// the shared codec rather than in any one module.
+// The go-forward **geographic** address (0.2.3 reference model — realm · region · zone ·
+// tile · layer; `surface`, the old game's z-axis, is retired). `zone_id` addresses a single
+// zone within the whole world as three nested 16×16 grids: `realm:8 | region:8 | zone:8 |
+// reserved:8`, each level a `hi:4 | lo:4` pair (`realm_x|realm_y`, …). `region_id` is the
+// shard-routing key — a `zone_id` with its zone byte + reserved cleared, leaving `realm |
+// region`. The shard treats `zone_id` as opaque; composing/decomposing it is the gateway's /
+// client's concern, which is why these live in the shared codec. (The within-realm
+// `region:8 | zone:8` slice is the object model's `region_zone_reference` — the cold
+// subscription key; a shard is realm-scoped so cold rows omit the realm.)
 
-/// Mask turning a `zone_id` into its `region_id`: clears the low byte
-/// (`zone_x | zone_y`), leaving `region_x | region_y | surface` and a zero
-/// `reserved` byte.
-pub const REGION_ID_MASK: u32 = 0xFFFF_FF00;
+/// Mask turning a `zone_id` into its `region_id`: clears the `zone` byte + `reserved`,
+/// leaving `realm | region` (the top 16 bits).
+pub const REGION_ID_MASK: u32 = 0xFFFF_0000;
 
-const ZONE_RX_SHIFT: u32 = 24;
-const ZONE_RY_SHIFT: u32 = 16;
-const ZONE_SURFACE_SHIFT: u32 = 8;
-const ZONE_X_SHIFT: u32 = 4;
+const ZONE_REALM_SHIFT: u32 = 24;
+const ZONE_REGION_SHIFT: u32 = 16;
+const ZONE_ZONE_SHIFT: u32 = 8;
 const ZONE_BYTE: u32 = 0xFF;
-/// Low nibble mask — the in-region `zone_x`/`zone_y` (and, via the thing packers, cell
-/// x/y) widths.
 const NIBBLE: u32 = 0x0F;
+const NIBBLE_SHIFT: u32 = 4;
 
-/// Compose a `zone_id` from its parts. `region_x`/`region_y`/`surface` are full
-/// bytes; `zone_x`/`zone_y` are the in-region nibbles (`0..REGION_DIM`), masked
-/// to 4 bits each.
-pub fn pack_zone_id(region_x: u8, region_y: u8, surface: u8, zone_x: u8, zone_y: u8) -> u32 {
-    ((region_x as u32) << ZONE_RX_SHIFT)
-        | ((region_y as u32) << ZONE_RY_SHIFT)
-        | ((surface as u32) << ZONE_SURFACE_SHIFT)
-        | ((zone_x as u32 & NIBBLE) << ZONE_X_SHIFT)
-        | (zone_y as u32 & NIBBLE)
+/// Compose a `zone_id` from its geographic parts (each level two `u4` nibbles): `realm:8 |
+/// region:8 | zone:8 | reserved:8`. `reserved` (low byte) stays 0.
+pub fn pack_zone_id(
+    realm_x: u8,
+    realm_y: u8,
+    region_x: u8,
+    region_y: u8,
+    zone_x: u8,
+    zone_y: u8,
+) -> u32 {
+    let byte = |hi: u8, lo: u8| ((hi as u32 & NIBBLE) << NIBBLE_SHIFT) | (lo as u32 & NIBBLE);
+    (byte(realm_x, realm_y) << ZONE_REALM_SHIFT)
+        | (byte(region_x, region_y) << ZONE_REGION_SHIFT)
+        | (byte(zone_x, zone_y) << ZONE_ZONE_SHIFT)
 }
 
-/// The `region_id` owning a `zone_id` (the zone_id with its low byte zeroed).
+/// The `region_id` owning a `zone_id` (realm | region; zone byte + reserved zeroed).
 pub fn region_of(zone_id: u32) -> u32 {
     zone_id & REGION_ID_MASK
 }
 
-/// The `region_x` byte of a `zone_id` (or `region_id`).
+/// The `realm` byte (`realm_x:4 | realm_y:4`) of a `zone_id`.
+pub fn zone_realm(zone_id: u32) -> u8 {
+    ((zone_id >> ZONE_REALM_SHIFT) & ZONE_BYTE) as u8
+}
+/// The `realm_x` nibble of a `zone_id`.
+pub fn zone_realm_x(zone_id: u32) -> u8 {
+    ((zone_id >> (ZONE_REALM_SHIFT + NIBBLE_SHIFT)) & NIBBLE) as u8
+}
+/// The `realm_y` nibble of a `zone_id`.
+pub fn zone_realm_y(zone_id: u32) -> u8 {
+    ((zone_id >> ZONE_REALM_SHIFT) & NIBBLE) as u8
+}
+
+/// The `region` byte (`region_x:4 | region_y:4`) of a `zone_id` — the within-realm region.
+pub fn zone_region(zone_id: u32) -> u8 {
+    ((zone_id >> ZONE_REGION_SHIFT) & ZONE_BYTE) as u8
+}
+/// The `region_x` nibble of a `zone_id`.
 pub fn zone_region_x(zone_id: u32) -> u8 {
-    ((zone_id >> ZONE_RX_SHIFT) & ZONE_BYTE) as u8
+    ((zone_id >> (ZONE_REGION_SHIFT + NIBBLE_SHIFT)) & NIBBLE) as u8
 }
-
-/// The `region_y` byte of a `zone_id` (or `region_id`).
+/// The `region_y` nibble of a `zone_id`.
 pub fn zone_region_y(zone_id: u32) -> u8 {
-    ((zone_id >> ZONE_RY_SHIFT) & ZONE_BYTE) as u8
+    ((zone_id >> ZONE_REGION_SHIFT) & NIBBLE) as u8
 }
 
-/// The `surface` byte of a `zone_id` (or `region_id`).
-pub fn zone_surface(zone_id: u32) -> u8 {
-    ((zone_id >> ZONE_SURFACE_SHIFT) & ZONE_BYTE) as u8
+/// The `zone` byte (`zone_x:4 | zone_y:4`) of a `zone_id` — the within-region zone.
+pub fn zone_zone(zone_id: u32) -> u8 {
+    ((zone_id >> ZONE_ZONE_SHIFT) & ZONE_BYTE) as u8
 }
-
-/// The in-region `zone_x` nibble of a `zone_id`.
+/// The within-region `zone_x` nibble of a `zone_id`.
 pub fn zone_x(zone_id: u32) -> u8 {
-    ((zone_id >> ZONE_X_SHIFT) & NIBBLE) as u8
+    ((zone_id >> (ZONE_ZONE_SHIFT + NIBBLE_SHIFT)) & NIBBLE) as u8
+}
+/// The within-region `zone_y` nibble of a `zone_id`.
+pub fn zone_y(zone_id: u32) -> u8 {
+    ((zone_id >> ZONE_ZONE_SHIFT) & NIBBLE) as u8
 }
 
-/// The in-region `zone_y` nibble of a `zone_id`.
-pub fn zone_y(zone_id: u32) -> u8 {
-    (zone_id & NIBBLE) as u8
+/// The `region_zone_reference : u16` (`region:8 | zone:8`) of a `zone_id` — the cold
+/// subscription key within the (realm-scoped) shard. Realm is dropped (implied by the shard).
+pub fn zone_region_zone(zone_id: u32) -> u16 {
+    ((zone_id >> ZONE_ZONE_SHIFT) & 0xFFFF) as u16
 }
 
 // ── zone geometry ────────────────────────────────────────────────────────────
@@ -106,6 +132,8 @@ pub const ZONE_TILES: usize = (ZONE_DIM as usize) * (ZONE_DIM as usize);
 /// Zones per region edge. A region is `REGION_DIM × REGION_DIM` zones
 /// (= 256×256 tiles).
 pub const REGION_DIM: u8 = 16;
+/// Regions per realm edge. A realm is `REALM_DIM × REALM_DIM` regions.
+pub const REALM_DIM: u8 = 16;
 
 /// Cell index `0..256` from in-zone `(x, y)` — row-major, `y << 4 | x`. Matches
 /// the `x`/`y` nibble positions of a [packed thing](pack_thing).
@@ -127,29 +155,37 @@ pub fn cell_y(location: u8) -> u8 {
 /// spans `REGION_TILES × REGION_TILES` tiles.
 pub const REGION_TILES: i32 = REGION_DIM as i32 * ZONE_DIM as i32;
 
-/// Global tile `(gx, gy)` on `surface` → its `(zone_id, location)`. Floor-division
-/// throughout so off-origin (negative) tiles map correctly. Matches the client's
-/// anchor→zone convention (`client::zones::{zone_axis, zone_at}`), so a row written
-/// at this `zone_id` lands in exactly the zone the client subscribes for that tile.
-pub fn zone_and_location(gx: i32, gy: i32, surface: u8) -> (u32, u8) {
-    let zgx = gx.div_euclid(ZONE_DIM as i32); // global zone coordinate
-    let zgy = gy.div_euclid(ZONE_DIM as i32);
-    let region_x = zgx.div_euclid(REGION_DIM as i32) as u8;
-    let region_y = zgy.div_euclid(REGION_DIM as i32) as u8;
-    let zone_x = zgx.rem_euclid(REGION_DIM as i32) as u8;
-    let zone_y = zgy.rem_euclid(REGION_DIM as i32) as u8;
-    let cx = gx.rem_euclid(ZONE_DIM as i32) as u8;
-    let cy = gy.rem_euclid(ZONE_DIM as i32) as u8;
-    (pack_zone_id(region_x, region_y, surface, zone_x, zone_y), cell(cx, cy))
+/// Tiles per realm edge (`REALM_DIM` regions × `REGION_TILES`). A realm spans
+/// `REALM_TILES × REALM_TILES` tiles.
+pub const REALM_TILES: i32 = REALM_DIM as i32 * REGION_TILES;
+
+/// Global tile `(gx, gy)` → its `(zone_id, location)`. Floor-division throughout so off-origin
+/// (negative) tiles map correctly. The global tile plane nests realm ⊃ region ⊃ zone ⊃ tile
+/// (each 16 per axis). Matches the client's anchor→zone convention, so a row written at this
+/// `zone_id` lands in exactly the zone the client subscribes for that tile.
+pub fn zone_and_location(gx: i32, gy: i32) -> (u32, u8) {
+    let split = |g: i32| -> (u8, u8, u8, u8) {
+        let zg = g.div_euclid(ZONE_DIM as i32); // global zone coordinate
+        let tile = g.rem_euclid(ZONE_DIM as i32) as u8;
+        let zone = zg.rem_euclid(REGION_DIM as i32) as u8;
+        let rg = zg.div_euclid(REGION_DIM as i32); // global region coordinate
+        let region = rg.rem_euclid(REALM_DIM as i32) as u8;
+        let realm = rg.div_euclid(REALM_DIM as i32) as u8;
+        (realm, region, zone, tile)
+    };
+    let (realm_x, region_x, zone_x, cx) = split(gx);
+    let (realm_y, region_y, zone_y, cy) = split(gy);
+    (pack_zone_id(realm_x, realm_y, region_x, region_y, zone_x, zone_y), cell(cx, cy))
 }
 
-/// `(zone_id, location)` → its global tile `(gx, gy)`. Inverse of
-/// [`zone_and_location`].
+/// `(zone_id, location)` → its global tile `(gx, gy)`. Inverse of [`zone_and_location`].
 pub fn global_tile(zone_id: u32, location: u8) -> (i32, i32) {
-    let gx = zone_region_x(zone_id) as i32 * REGION_TILES
+    let gx = zone_realm_x(zone_id) as i32 * REALM_TILES
+        + zone_region_x(zone_id) as i32 * REGION_TILES
         + zone_x(zone_id) as i32 * ZONE_DIM as i32
         + cell_x(location) as i32;
-    let gy = zone_region_y(zone_id) as i32 * REGION_TILES
+    let gy = zone_realm_y(zone_id) as i32 * REALM_TILES
+        + zone_region_y(zone_id) as i32 * REGION_TILES
         + zone_y(zone_id) as i32 * ZONE_DIM as i32
         + cell_y(location) as i32;
     (gx, gy)
@@ -296,22 +332,27 @@ mod tests {
 
     #[test]
     fn zone_id_roundtrips() {
-        let z = pack_zone_id(0xAB, 0xCD, 0x02, 13, 7);
-        assert_eq!(zone_region_x(z), 0xAB);
-        assert_eq!(zone_region_y(z), 0xCD);
-        assert_eq!(zone_surface(z), 0x02);
+        // geographic: realm(1,2) region(10,13) zone(13,7)
+        let z = pack_zone_id(1, 2, 10, 13, 13, 7);
+        assert_eq!(zone_realm_x(z), 1);
+        assert_eq!(zone_realm_y(z), 2);
+        assert_eq!(zone_region_x(z), 10);
+        assert_eq!(zone_region_y(z), 13);
         assert_eq!(zone_x(z), 13);
         assert_eq!(zone_y(z), 7);
-        // region_of clears exactly the zone_x|zone_y nibbles, nothing above.
+        // region_zone is the within-realm cold key (region:8 | zone:8).
+        assert_eq!(zone_region_zone(z), ((0xAD << 8) | 0xD7) as u16);
+        // region_of clears exactly the zone byte + reserved, leaving realm | region.
         let r = region_of(z);
-        assert_eq!(zone_region_x(r), 0xAB);
-        assert_eq!(zone_region_y(r), 0xCD);
-        assert_eq!(zone_surface(r), 0x02);
+        assert_eq!(zone_realm_x(r), 1);
+        assert_eq!(zone_realm_y(r), 2);
+        assert_eq!(zone_region_x(r), 10);
+        assert_eq!(zone_region_y(r), 13);
         assert_eq!(zone_x(r), 0);
         assert_eq!(zone_y(r), 0);
-        // two zones in the same region resolve to one region_id.
-        assert_eq!(region_of(pack_zone_id(0xAB, 0xCD, 0x02, 0, 0)), r);
-        assert_eq!(region_of(pack_zone_id(0xAB, 0xCD, 0x02, 15, 15)), r);
+        // two zones in the same realm+region resolve to one region_id.
+        assert_eq!(region_of(pack_zone_id(1, 2, 10, 13, 0, 0)), r);
+        assert_eq!(region_of(pack_zone_id(1, 2, 10, 13, 15, 15)), r);
     }
 
     #[test]
@@ -364,21 +405,23 @@ mod tests {
 
     #[test]
     fn global_tile_roundtrips() {
-        for &(gx, gy) in &[(0, 0), (15, 0), (16, 3), (255, 255), (256, 256), (1000, 42)] {
-            let (z, loc) = zone_and_location(gx, gy, 0);
+        // Include a tile past the realm edge (4096) to exercise the realm level.
+        for &(gx, gy) in &[(0, 0), (15, 0), (16, 3), (255, 255), (256, 256), (1000, 42), (5000, 8192)] {
+            let (z, loc) = zone_and_location(gx, gy);
             assert_eq!(global_tile(z, loc), (gx, gy), "roundtrip ({gx},{gy})");
         }
     }
 
     #[test]
     fn global_tile_matches_zone_layout() {
-        // (8,8) → region 0, zone 0, cell (8,8).
-        let (z, loc) = zone_and_location(8, 8, 0);
-        assert_eq!(z, pack_zone_id(0, 0, 0, 0, 0));
+        // (8,8) → realm 0, region 0, zone 0, cell (8,8).
+        let (z, loc) = zone_and_location(8, 8);
+        assert_eq!(z, pack_zone_id(0, 0, 0, 0, 0, 0));
         assert_eq!((cell_x(loc), cell_y(loc)), (8, 8));
-        // Crossing the zone edge bumps zone_x; crossing the region edge bumps region_x.
-        assert_eq!(zone_x(zone_and_location(16, 0, 0).0), 1);
-        assert_eq!(zone_region_x(zone_and_location(256, 0, 0).0), 1);
+        // Crossing a zone edge (16) bumps zone_x; a region edge (256) bumps region_x; a realm
+        // edge (4096) bumps realm_x.
+        assert_eq!(zone_x(zone_and_location(16, 0).0), 1);
+        assert_eq!(zone_region_x(zone_and_location(256, 0).0), 1);
+        assert_eq!(zone_realm_x(zone_and_location(4096, 0).0), 1);
     }
-
 }

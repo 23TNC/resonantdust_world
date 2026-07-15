@@ -39,11 +39,18 @@ pub fn greeting_js(name: &str) -> String {
 // ids it receives. Thin wrappers over the shared [`packed`] functions the server
 // also calls — same bit-layout on both sides, by construction.
 
-/// Compose a `zone_id` from `region_x | region_y | surface | zone_x | zone_y`.
+/// Compose a `zone_id` from its geographic parts `realm | region | zone` (each `hi:4 | lo:4`).
 #[cfg(feature = "js")]
 #[wasm_bindgen(js_name = packZoneId)]
-pub fn pack_zone_id_js(region_x: u8, region_y: u8, surface: u8, zone_x: u8, zone_y: u8) -> u32 {
-    packed::pack_zone_id(region_x, region_y, surface, zone_x, zone_y)
+pub fn pack_zone_id_js(
+    realm_x: u8,
+    realm_y: u8,
+    region_x: u8,
+    region_y: u8,
+    zone_x: u8,
+    zone_y: u8,
+) -> u32 {
+    packed::pack_zone_id(realm_x, realm_y, region_x, region_y, zone_x, zone_y)
 }
 
 /// The `region_id` owning a `zone_id` (its shard-routing key).
@@ -67,11 +74,12 @@ pub fn zone_region_y_js(zone_id: u32) -> u8 {
     packed::zone_region_y(zone_id)
 }
 
-/// The `surface` byte of a `zone_id`.
+/// The `realm` byte (`realm_x:4 | realm_y:4`) of a `zone_id`. (Was `zoneSurface` — `surface`
+/// is retired; `realm` is the go-forward top geographic level.)
 #[cfg(feature = "js")]
-#[wasm_bindgen(js_name = zoneSurface)]
-pub fn zone_surface_js(zone_id: u32) -> u8 {
-    packed::zone_surface(zone_id)
+#[wasm_bindgen(js_name = zoneRealm)]
+pub fn zone_realm_js(zone_id: u32) -> u8 {
+    packed::zone_realm(zone_id)
 }
 
 /// The in-region `zone_x` nibble of a `zone_id`.
@@ -406,11 +414,8 @@ impl Content {
 /// `zone_thing_prims`).
 #[cfg(feature = "js")]
 fn zone_origin(zone_id: u32) -> (i64, i64) {
-    let dim = packed::ZONE_DIM as i64;
-    let region_dim = packed::REGION_DIM as i64;
-    let ox = (packed::zone_region_x(zone_id) as i64 * region_dim + packed::zone_x(zone_id) as i64) * dim;
-    let oy = (packed::zone_region_y(zone_id) as i64 * region_dim + packed::zone_y(zone_id) as i64) * dim;
-    (ox, oy)
+    let (ox, oy) = packed::global_tile(zone_id, 0); // realm ⊃ region ⊃ zone ⊃ tile
+    (ox as i64, oy as i64)
 }
 
 /// Flatten a per-def table of 4 packed channels into the **stride-8** array the
@@ -467,9 +472,10 @@ impl WorldClient {
         let _ = self.inner.login(name);
     }
 
-    /// Add or move the viewport anchor `name` to global tile `(tile_x, tile_y)`
-    /// on `surface`, with the four hysteresis-tier reaches in tiles. `soul` is `0`
-    /// for a viewport. Idempotent — cheap to call every pan.
+    /// Add or move the viewport anchor `name` to global tile `(tile_x, tile_y)`, with the four
+    /// hysteresis-tier reaches in tiles. `soul` is `0` for a viewport. Idempotent — cheap to call
+    /// every pan. (The world is a single 2D tile plane per the geographic model; the old
+    /// `surface`/z-axis is retired.)
     #[wasm_bindgen(js_name = setAnchor)]
     #[allow(clippy::too_many_arguments)]
     pub fn set_anchor(
@@ -477,7 +483,6 @@ impl WorldClient {
         name: String,
         tile_x: i32,
         tile_y: i32,
-        surface: u8,
         active: i32,
         hot: i32,
         warm: i32,
@@ -490,7 +495,7 @@ impl WorldClient {
             warm,
             cold,
         };
-        let _ = self.inner.set_anchor(name, tile_x, tile_y, surface, radii, soul);
+        let _ = self.inner.set_anchor(name, tile_x, tile_y, radii, soul);
     }
 
     /// Remove the anchor `name`, closing any subscriptions only it held.
