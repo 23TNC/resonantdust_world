@@ -82,7 +82,7 @@ An `entity_reference` is realm-unique only via its `server_reference`; crossing 
 
 | alias | names | `type_id` | on |
 |---|---|---|---|
-| `event_reference` | an event row | `TYPE_EVENT` | `event_log.event_reference`, `state_events.events` |
+| `event_reference` | an event row | `TYPE_EVENT` | `event_log.event_reference`, `state_events.event_reference` |
 
 **Aliases of `server_reference`** (u8, same layout, no interior):
 
@@ -104,7 +104,7 @@ An `entity_reference` is realm-unique only via its `server_reference`; crossing 
 ```
 u16 tic                           the simulation clock; WRAPS
 
-u64 state_uid                     the (entity, tic) slot — PK of state_log + state_events
+u64 state_uid                     the (entity, tic) slot — PK of state_log
   u16 reserved                    bits 48–63
   u32 entity_reference            bits 16–47
   u16 tic                         bits 0–15

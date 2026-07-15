@@ -15,8 +15,11 @@
 > - **`failed` is gone**, folded into `status` (it was pure redundancy with `QUEUE_FAILED`).
 > - **`state_log.uid` is composite** — `reserved:16 | entity_reference:32 | tic:16` — so it *is*
 >   `(entity, tic)`, replacing `idx (target_reference, tic)`; neither is a separate column.
->   `settled` + `promoted` are a `flags:u8`. The `events` vector moved to its own 1:1 table,
->   `state_events`, keyed by the same `uid`.
+>   `settled` + `promoted` are a `flags:u8`. The `events` vector is gone; `state_events` is keyed
+>   **by event** (`event_reference → Vec<entity_reference>`), giving the dropped `event_log.targets`
+>   a home on the data shard. **`row.events.first()` — the composition head, and `apply`'s order
+>   fence — has no source in that shape** (it's the transpose, and carries no `tic`). Decision #4
+>   depends on it. Unresolved; see [`notes/tables.md`](../../notes/tables.md).
 > - `target_reference` is named **`entity_reference`** throughout.
 > - **Widths**: `tic` is a wrapping `u16`; `worker_reference` `u8`; entity keys `u32`; `actions`
 >   `Vec<u32>`.

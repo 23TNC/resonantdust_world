@@ -157,16 +157,20 @@ Payload = the reference model's three orthogonal references, carried by both `st
 slots are contiguous, so the read rule's per-entity question is a range scan and `(entity, tic)` is an
 exact PK lookup. `promote`'s `tic <= t` is a scan — see [`notes/tables.md`](notes/tables.md).
 
-### `state_events` — the pending-event list for a slot
+### `state_events` — an event's write set on this shard
 
 | column | type | key | notes |
 |---|---|---|---|
-| `uid` | `u64` | PK | `state_uid` — the `state_log` slot's, 1:1 |
-| `events` | `Vec<u32>` | | `event_reference`s still to apply, **ascending** |
+| `event_reference` | `u32` | PK | |
+| `entity_reference` | `Vec<u32>` | | the entities this event touches **here** |
 
-Split out of `state_log` so the composition slot stays fixed-size — `state_log` is read and written
-every tic; the vector is touched only when the event set changes. A slot with no pending events has
-no row.
+One row per in-flight event, holding only the targets homed on this shard — the write set
+`declare_pending` builds, now that `event_log` no longer carries `targets`. Keeps the vector out of
+`state_log`, which is read and written every tic.
+
+> **The composition order has no home.** `refresh_ready` needs the *lowest pending
+> `event_reference` for a slot `(entity, tic)`* — this table answers the transpose, and carries no
+> `tic`. See [`notes/tables.md`](notes/tables.md).
 
 ### `state` — client-visible latest
 

@@ -174,10 +174,38 @@ the schema enforces that. A row whose `macro_position_reference` disagrees with 
 **`flags : u8` replaces `settled` + `promoted`.** Two bools were two bytes in practice. Bit 0
 `SETTLED`, bit 1 `PROMOTED`, six spare.
 
-**`state_events` is 1:1 with `state_log`, split by access pattern.** `state_log` is read and written
-every tic by `refresh_ready` / `apply`; the event vector changes only when the event set does. Keeping
-a `Vec<u32>` inline made every composition slot variable-width for a field most passes don't touch. A
-slot with no pending events has no row, which also makes "settled" checkable by absence.
+### `state_events` — and the composition order's missing home
+
+`state_events` is keyed **by event**: `event_reference → Vec<entity_reference>`, the targets homed on
+this shard. It gives the dropped `event_log.targets` a home on the side that actually needs it — the
+data shard, which is where `declare_pending` / `withdraw_pending` / `release_holds` all iterate a
+write set. Per-shard, so an event spanning shards is recorded only where its targets live. And it
+keeps the vector out of `state_log`, which `refresh_ready` and `apply` touch every tic.
+
+**What it does not answer.** The design serializes composition per `(entity, tic)` by *ascending
+`event_reference`*, and `refresh_ready` needs the head of that list:
+
+> `head = row.events.first()   // lowest event_reference = next to apply`
+>
+> `apply`: `require(row.events.first() == event_reference)   // ORDER FENCE: only the head may write`
+
+That's a **per-slot** question — "for entity E at tic T, which event is next?" This table answers the
+**per-event** one — "which entities does event X touch?" Getting the head means scanning every
+`state_events` row for one containing E, and then it still can't finish: the table carries **no
+`tic`**, so it cannot tell an event landing on `(E, T)` from one landing on `(E, T+1)`. `event_tic`
+lives in `event_log`, on the event shard, which a data shard cannot see.
+
+Decision #4 calls this ordering "the one property that must not be broken" — it's what makes
+multi-target events deadlock-free. So the head lookup needs a home. Three shapes that would give it
+one:
+
+| | |
+|---|---|
+| add `tic:u16` to `state_events` | Answers "does X touch E at T", still by scan. Cheapest edit, worst lookup. |
+| key it `(entity, tic)` again | i.e. the previous `state_uid`-keyed `events: Vec<u32>`. Answers the head directly; loses the per-event write set that `withdraw_pending` / `release_holds` want. |
+| keep both | The write set *is* the transpose of the pending lists. Two relations, one truth — they must not drift. |
+
+Nothing is built, so this costs a doc edit today and a scheduler bug later.
 
 **`state.target_reference` → `entity_reference`** for the same vocabulary, though only `state_log` was
 named in the instruction — the two address the same thing and diverging names would be worse than the
