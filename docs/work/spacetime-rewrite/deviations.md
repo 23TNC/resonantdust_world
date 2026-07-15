@@ -122,7 +122,14 @@ Landed as one conformance re-cut + verified:
   `WHERE macro_position = …`. Caught by *verifying*, not by compiling: SpacetimeDB's subscription
   SQL is a **string**, so the compiler can't see it. ⚠️ **Lesson: schema changes need a live check,
   not just a green build.**
-- **D-7** `docker compose -f shared/compose.yml run --rm check` does **not** compile the wasm's
-  `js`-gated code (default features), so `cargo check` passing says nothing about the browser
-  surface. `rd build shared` (which uses `--features js`) is the real gate. Three broken call sites
-  hid behind that.
+- **D-7** ✅ **RESOLVED (2026-07-14).** `docker compose -f shared/compose.yml run --rm check` did
+  **not** compile the wasm's `js`-gated code (default features), so a green `cargo check` said
+  nothing about the browser surface — three broken call sites hid behind it.
+  **Fix:** `check` is now **two passes** — native `--workspace --all-targets`, then wasm32
+  `-p resonantdust-shared --features js`. The `js` default-off gating is deliberate (it keeps
+  browser-only deps out of the native pass), so the fix is to check the browser surface *on its own
+  target*, not to force the feature natively. `check-native` remains as an explicit
+  "I know this is blind" escape hatch.
+  **Proven both ways** by breaking a `js`-gated call site on purpose: `check-native` reported
+  `Finished` (missed it); `check` failed pass 2 with `error[E0308]`. ~20s cold for the wasm pass,
+  incremental after.

@@ -189,6 +189,18 @@ follows the log. (Was `docs/spacetime-implementation/completion-log.md`, now ret
   that arrived before its own same-tic `SPAWN`; nothing live relies on it (a spawn is appended
   first, so it holds the lower `event_reference`), and the design wants that expressed as an
   `await`. Tests green (107), `rd build shared` green, worker resolving live. · commit below
+- **2026-07-14** · **D-7 closed — the `check` gate now gates.** `docker compose -f
+  shared/compose.yml run --rm check` ran `cargo check --workspace --all-targets` with **default
+  features**, and `js` is default-off — so it compiled **none** of the `#[wasm_bindgen]` surface and
+  returned green while the code the browser loads was broken (it had already hidden three call
+  sites). The `js` gating is *deliberate* (it keeps `client`/`js-sys` out of the native pass), so
+  the fix is to check the browser surface **on its own target**, not to force the feature natively:
+  `check` is now two passes — native, then `-p resonantdust-shared --features js --target
+  wasm32-unknown-unknown`. **Proven both ways** by deliberately breaking a `js`-gated call site —
+  the old native-only gate printed `Finished`, the new one failed pass 2 with `error[E0308]`; probe
+  then reverted and both passes green. `check-native` kept as an explicit "this is blind by
+  construction" escape hatch. ~20s cold for the wasm pass, incremental after. With T-6's suite
+  green, **both formerly-blind gates now gate.**
 
 ## Detail — the full-design mechanisms (matching the shard `design/`+`intent/` in full)
 

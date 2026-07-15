@@ -1,5 +1,34 @@
 services:
+  # The type-check gate. TWO passes, and both are load-bearing:
+  #
+  #   1. native `--workspace --all-targets` — the plain logic + every test target.
+  #   2. wasm32 `-p resonantdust-shared --features js` — the browser surface.
+  #
+  # Pass 2 exists because `js` is **off by default** (deliberately: it pulls `client` + `js-sys`,
+  # which are browser-only, and keeping them out of pass 1 is what lets the native check run
+  # without the wasm toolchain — see shared/wasm/Cargo.toml). The consequence is that pass 1
+  # compiles **none** of the `#[wasm_bindgen]` API, so on its own it returns green while the code
+  # the browser actually loads is broken. That was real: `rd build shared` caught three broken
+  # call sites a green `check` had missed (logged as deviation D-7). A gate that doesn't gate is
+  # worse than no gate, so `check` now runs both. Costs ~20s on the first wasm pass; incremental
+  # after. `sh -c` because two cargo invocations need a shell.
   check:
+    image: clockworklabs/spacetime:latest
+    volumes:
+      - ..:/workspace
+    working_dir: /workspace/shared
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        echo '── check 1/2: native (workspace, all targets)'
+        cargo check --workspace --all-targets
+        echo '── check 2/2: wasm32 (the js-gated browser surface)'
+        cargo check -p resonantdust-shared --features js --target wasm32-unknown-unknown --lib
+
+  # Native-only check — the inner-loop escape hatch when you are NOT touching the wasm surface
+  # and want the fast pass. Prefer `check`; this one is blind to the browser API by construction.
+  check-native:
     image: clockworklabs/spacetime:latest
     volumes:
       - ..:/workspace

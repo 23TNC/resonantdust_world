@@ -18,9 +18,9 @@ otherwise.
 ## P1 · Restore the gates, clear the deck — ✅ **DONE (2026-07-14)**
 
 T-6/T-7/T-8 landed → [completed.md](completed.md). `cargo test --workspace` gates again (107
-tests, green for the first time). **D-7 still stands:** the workspace `check` skips the wasm's
-`js`-gated code, so `rd build shared` remains the real compile gate — that one is a tooling fix we
-have not made.
+tests, green for the first time), and **D-7 is closed** — `check` now runs a second wasm32 pass
+over the `js`-gated browser surface, so it can't go green while the browser build is broken.
+**Both gates gate.**
 
 **One item didn't finish as scoped:** #9's `Phase` half is live ordering, not vestigial, so it
 moved into **T-9** where its replacement gets built. See T-8 in [completed.md](completed.md).
@@ -48,7 +48,7 @@ module, a **deployment** split. The design defers it; nothing waits on it. Not s
 
 ---
 
-**This work-stream has no open items.** What's genuinely left is listed under "So what *is* next?"
-in [`shard/plan/README.md`](../../components/server/spacetime/modules/shard/plan/README.md) — the
-strongest candidate being **D-7** (the workspace `check` still skips the `js`-gated wasm, so one
-blind gate remains).
+**This work-stream has no open items**, and no blind gates. What's genuinely left is listed under
+"So what *is* next?" in
+[`shard/plan/README.md`](../../components/server/spacetime/modules/shard/plan/README.md) — nothing
+urgent; the shard matches its design and #8 is deferred by that design.

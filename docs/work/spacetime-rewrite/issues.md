@@ -252,8 +252,9 @@ resolves. Unrelated to the rewrite (`dsl` doesn't depend on `codec`; `shared/dsl
 untouched). Confirmed by running `-p resonantdust-dsl --lib` in a clean worktree at HEAD.
 **Impact:** 🟡 `cargo test --workspace` was never green, so "tests pass" couldn't gate anything —
 each run needs the failure recognised and stepped over by hand, which is how a *real* regression
-would slip by. See also **D-7**: `check` skips the wasm's `js`-gated code. Two of our three build
-gates don't gate.
+would slip by. See also **D-7**: `check` skipped the wasm's `js`-gated code. At the time, **two of
+our three build gates didn't gate**. Both are fixed now (T-6 greened the suite; D-7's `check` is
+two-pass).
 **Resolved (T-6, 2026-07-14):** the **fixture** was wrong, not the loader — and the test was **born
 red**: it fails identically at `d25b872`, the commit that added it, so it never passed and nothing
 regressed. `node_visual` bails at [loader.rs:234](../../../shared/dsl/src/loader.rs) —

@@ -29,8 +29,10 @@ design already defers.
 red**, never a regression). Dead modules + the priority-DAG gone. Detail:
 [`work/…/completed.md`](../../../../../../work/spacetime-rewrite/completed.md).
 
-**Still standing (D-7):** the workspace `check` skips the wasm's `js`-gated code, so `rd build
-shared` remains the real compile gate. That's a tooling fix nobody has made.
+**D-7 closed too (2026-07-14):** `check` is now two passes — native, then wasm32 with `--features
+js` — so it can no longer go green while the browser surface is broken. Verified by breaking a
+`js`-gated call site on purpose: the old native-only gate said `Finished`, the new one fails.
+`check-native` survives as an explicit escape hatch.
 
 ### ✅ P2 · #1 word DSL — **was already done** (verified T-9)
 
@@ -56,8 +58,7 @@ module, a **deployment** split — the design defers it, and nothing waits on it
 
 Nothing in this component is blocking. The honest options, none urgent:
 
-1. **Close D-7** — make the workspace `check` compile the `js`-gated wasm (or make `rd build shared`
-   the documented gate). Small, and it's the last blind gate.
+1. ~~**Close D-7**~~ ✅ **done** — `check` is two-pass; both gates gate now.
 2. **Retire the stale-ledger risk** — #1/#6/#7 sat "open" for a day and sent a whole plan chasing
    them. The ledger is now verified, but nothing *keeps* it honest. Worth a convention: close the
    divergence in the same commit that closes the code.
