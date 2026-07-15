@@ -157,26 +157,6 @@ Payload = the reference model's three orthogonal references, carried by both `st
 slots are contiguous, so the read rule's per-entity question is a range scan and `(entity, tic)` is an
 exact PK lookup. `promote`'s `tic <= t` is a scan — see [`notes/tables.md`](notes/tables.md).
 
-### `state_events` — an event's write set on this shard
-
-| column | type | key | notes |
-|---|---|---|---|
-| `event_reference` | `u32` | PK | |
-| `worker_reference` | `u8` | idx | the subscription key. `SERVER_REF_NONE` = unassigned |
-| `lease_tic` | `u16` | | `tic` — assignment expiry; `reap()`'s clock |
-| `entity_reference` | `Vec<u32>` | | the entities this event touches **here** |
-
-One row per in-flight event, holding only the targets homed on this shard — the write set
-`declare_pending` builds, now that `event_log` no longer carries `targets`. Keeps the vector out of
-`state_log`, which is read and written every tic.
-
-sub `SELECT * FROM state_events WHERE worker_reference = self` (worker) — the worker's **only**
-window into a data shard.
-
-> This is `state_hold`'s role, one row per event rather than per `(target, tic, event, kind)`.
-> Still missing from it: `ready`, `base`, `kind` — and the composition head has no source.
-> See [`notes/tables.md`](notes/tables.md).
-
 ### `state` — client-visible latest
 
 | column | type | key | notes |
@@ -189,13 +169,17 @@ window into a data shard.
 reads edge · workers never subscribe ·
 sub `SELECT * FROM state WHERE macro_position_reference = <zone>` (edge, per subscribed zone)
 
-### `state_hold` — absorbed into `state_events`
+### Not shaped yet
 
-The design's per-`(target, tic, event, kind)` hold. `state_events` now carries its
-`worker_reference` + `lease_tic` at one row per event, which is the same role for far fewer rows.
-Not yet carried over: `ready` (the go-signal), `base` (the payload to compute from), and `kind`
-(WRITE / READ) — the design calls `ready` + `base` "the consequence that drives everything", since a
-worker that can't see `state_log` needs both from its hold.
+Three things the data shard needs and no table here provides:
+
+| | |
+|---|---|
+| **the hold** | The worker's only window into a data shard — `worker_reference` (its subscription key), `lease_tic`, and per-target `ready` + `base`. The design's `state_hold`, still unshaped. |
+| **the write set** | Which entities an event touches here. `declare_pending` / `withdraw_pending` / `release_holds` all iterate it. Had a home in `event_log.targets`; doesn't now. |
+| **the composition head** | The lowest pending `event_reference` for a slot `(entity, tic)` — `refresh_ready`'s go-signal and `apply`'s order fence. Decision #4 rests on it. |
+
+See [`notes/tables.md`](notes/tables.md) and the intent doc.
 
 ---
 

@@ -20,11 +20,11 @@ exists *because* of it:
 | component | query | against |
 |---|---|---|
 | worker | `SELECT * FROM event_log WHERE worker_reference = self` | `event_shard` |
-| worker | `SELECT * FROM state_events WHERE worker_reference = self` | `data_shard` |
 | edge (per zone) | `SELECT * FROM state WHERE macro_position_reference = <zone>` | `data_shard` |
 
-The two worker queries are the design's whole subscription set — *"and NOTHING else. No state, no
-state_log, no cold, no event."*
+A worker's second subscription — its holds on a data shard, `WHERE worker_reference = self` — has no
+table to name yet. Those two are the design's whole set: *"and NOTHING else. No state, no state_log,
+no cold, no event."*
 
 ## Trust and correctness notes
 
@@ -178,43 +178,29 @@ the schema enforces that. A row whose `macro_position_reference` disagrees with 
 **`flags : u8` replaces `settled` + `promoted`.** Two bools were two bytes in practice. Bit 0
 `SETTLED`, bit 1 `PROMOTED`, six spare.
 
-### `state_events` — and the composition order's missing home
+### `state_events` — tried, deleted (2026-07-15)
 
-`state_events` is keyed **by event**: `event_reference → Vec<entity_reference>`, the targets homed on
-this shard. It gives the dropped `event_log.targets` a home on the side that actually needs it — the
-data shard, which is where `declare_pending` / `withdraw_pending` / `release_holds` all iterate a
-write set. Per-shard, so an event spanning shards is recorded only where its targets live. And it
-keeps the vector out of `state_log`, which `refresh_ready` and `apply` touch every tic.
+Briefly existed as `event_reference → worker_reference | lease_tic | Vec<entity_reference>`: a
+per-event row on the data shard, meant to re-home the dropped `event_log.targets` and double as the
+hold. Deleted. Two things it structurally cannot carry, kept here because they constrain whatever
+replaces it:
 
-**With `worker_reference` + `lease_tic` it is the hold.** The design's second subscription is
-`SELECT * FROM state_hold WHERE worker_reference = self` — a worker sees nothing on a data shard but
-its own holds. `state_events` now answers that, at **one row per event** instead of one per
-`(target, tic, event, kind)`: a 5-target event is one row, not five. `lease_tic` is `reap()`'s clock
-(`where lease_tic < master_tic → delete`, i.e. `tic::before`, never `<`).
+**`base` is per-target; the row was per-event.** The worker can't see `state_log`, so the value to
+compute from has to ride its hold (`vm.run(actions, base: hold.base, …)`). A row keyed by event, with
+a vector of entities, would need one `base` per element of that vector — the only field that varies
+*within* the vector. Every field that is genuinely per-event (`worker_reference`, `lease_tic`) fit
+fine; `base` is the one that doesn't. **Whatever holds `base` must be keyed per (target, tic).**
 
-Three fields of the design's hold have no home yet, and two of them are the load-bearing ones:
+**The composition head is a per-slot question.** `refresh_ready` needs `row.events.first()` — the
+lowest pending `event_reference` for `(entity, tic)` — and `apply` fences on the same value ("only
+the head may write"). A per-event table answers the transpose ("which entities does X touch?"), so
+the head would need a scan, and it still couldn't finish: no `tic` on the row, so an event landing on
+`(E, T)` is indistinguishable from one on `(E, T+1)`, and `event_tic` lives on the *event* shard,
+which a data shard cannot see. **Whatever answers the head must be keyed per (entity, tic) and know
+the tic.**
 
-| | |
-|---|---|
-| `ready` | the go-signal. The design's §"consequence that drives everything": the worker cannot see `state_log`, so it needs the store to tell it *"it's your turn"*. `refresh_ready` computes it — `h.ready = (h.event_reference == head)` for WRITE, the read rule for READ. Without it a worker cannot know when to compute, and `blocked` becomes worker state again, which decision #3 explicitly kills. |
-| `base` | the value to compute from — `vm.run(actions, base: hold.base, …)`. Same reason: no `state_log` access, so the payload must ride the hold. Note this is **per-target**, and `state_events` is per-event: one row would have to carry a base per entity in its vector. |
-| `kind` | WRITE vs READ. A READ hold is acquired at `tic - 1` and readied by a different rule. Per-event rows would need the split some other way — the read set is a different vector, or a second table. |
-
-`base` is the one that resists the per-event shape: it's the only field that varies *within* the
-vector.
-
-**What it does not answer.** The design serializes composition per `(entity, tic)` by *ascending
-`event_reference`*, and `refresh_ready` needs the head of that list:
-
-> `head = row.events.first()   // lowest event_reference = next to apply`
->
-> `apply`: `require(row.events.first() == event_reference)   // ORDER FENCE: only the head may write`
-
-That's a **per-slot** question — "for entity E at tic T, which event is next?" This table answers the
-**per-event** one — "which entities does event X touch?" Getting the head means scanning every
-`state_events` row for one containing E, and then it still can't finish: the table carries **no
-`tic`**, so it cannot tell an event landing on `(E, T)` from one landing on `(E, T+1)`. `event_tic`
-lives in `event_log`, on the event shard, which a data shard cannot see.
+Both point the same way: the data shard's per-slot relation is the load-bearing one. The per-event
+write set is a convenience for `withdraw_pending` / `release_holds` and can be derived from it.
 
 Decision #4 calls this ordering "the one property that must not be broken" — it's what makes
 multi-target events deadlock-free. So the head lookup needs a home. Three shapes that would give it

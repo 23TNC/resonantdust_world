@@ -16,16 +16,15 @@
 > - **`state_log.uid` is composite** — `reserved:16 | entity_reference:32 | tic:16` — so it *is*
 >   `(entity, tic)`, replacing `idx (target_reference, tic)`; neither is a separate column.
 >   `settled` + `promoted` are a `flags:u8`. The `events` vector is gone.
-> - **`state_hold` is absorbed into `state_events`**, keyed by event
->   (`event_reference | worker_reference | lease_tic | Vec<entity_reference>`) — one row per event
->   rather than per `(target, tic, event, kind)`. It carries the dropped `event_log.targets` and is
->   the worker's data-shard subscription. **`ready`, `base` and `kind` have no home in it yet**;
->   §"the consequence that drives everything below" rests on `ready` + `base`, and `base` is
->   per-target while the row is per-event.
-> - **`row.events.first()` — the composition head, and `apply`'s order fence — has no source**
->   (`state_events` is the transpose and carries no `tic`). Decision #4 depends on it.
+> - **The data shard is under-shaped.** TABLES.md has only `state_log` and `state`. Three things the
+>   flow below needs have no table: the **hold** (`state_hold` — `worker_reference`, `lease_tic`,
+>   per-target `ready` + `base`), the **write set** (which entities an event touches here, formerly
+>   `event_log.targets`), and the **composition head** (`row.events.first()`, which decision #4
+>   rests on).
 >
-> Both unresolved; see [`notes/tables.md`](../../notes/tables.md).
+>   A per-event shape was tried and deleted: `base` is per-target and the head is a per-slot
+>   question, so both must be keyed per `(entity, tic)`. See
+>   [`notes/tables.md`](../../notes/tables.md).
 > - `target_reference` is named **`entity_reference`** throughout.
 > - **Widths**: `tic` is a wrapping `u16`; `worker_reference` `u8`; entity keys `u32`; `actions`
 >   `Vec<u32>`.

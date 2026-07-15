@@ -82,7 +82,7 @@ An `entity_reference` is realm-unique only via its `server_reference`; crossing 
 
 | alias | names | `type_id` | on |
 |---|---|---|---|
-| `event_reference` | an event row | `TYPE_EVENT` | `event_log.event_reference`, `state_events.event_reference` |
+| `event_reference` | an event row | `TYPE_EVENT` | `event_log.event_reference` |
 
 **Aliases of `server_reference`** (u8, same layout, no interior):
 
