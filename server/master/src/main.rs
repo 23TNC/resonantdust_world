@@ -7,7 +7,7 @@
 //! the subscription each tick and request `master_tic + 1`, which self-corrects.
 //!
 //! Phase A: one object shard, config from env. The shard set and a coarse runaway
-//! guard (`docs/simulation-plan.md`) come later.
+//! guard (`docs/archive/simulation-plan.md`) come later.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -82,7 +82,7 @@ async fn main() {
             }
             let cur = meta.map(|m| m.master_tic).unwrap_or(0);
             // The per-tic drop barrier: cancel stale enqueue/queueing rows *before* the tic
-            // rolls (docs/spacetime-tables/lifecycle.md — causality guard, no watermark).
+            // rolls (docs/components/server/spacetime/modules/shard/intent/lifecycle.md — causality guard, no watermark).
             let _ = conn.reducers().drop_timed_out();
             if let Err(err) = conn.reducers().bump(cur + 1) {
                 tracing::warn!(%err, to = cur + 1, "bump failed");

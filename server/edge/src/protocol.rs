@@ -129,7 +129,7 @@ pub enum RowData {
     /// A zone's cold-object row from a module's `cold` table (object model) — the shared
     /// `object_type_reference` (type/subtype=biome/layer) plus a `Vec<object_kind_reference>`.
     /// `biome-tile` rows are the ground, `biome-thing` rows the scatter. Supersedes
-    /// `ZoneTiles`/`ZoneThings` (`docs/object-model.md`).
+    /// `ZoneTiles`/`ZoneThings` (`docs/components/shared/codec/design/object-model.md`).
     ColdObjects(ColdObjectsRow),
 }
 

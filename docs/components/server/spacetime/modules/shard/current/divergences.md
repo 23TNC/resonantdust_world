@@ -262,9 +262,11 @@ machinery (`server_type`/`action_reference`/`zone_reference`) was deleted, not r
 - The **`entity_reference` / `server_reference` layouts** in `shared/codec/src/refs.rs` —
   re-cut to the reference model (2026-07-14, #5/#10 above).
 - The **`object.rs` definition/cold layouts** — re-cut to the reference model (2026-07-14):
-  `definition_reference`, cold entry `kind_reference:16|tile:8|data:8`, `data:8`, geographic
-  `cold_reference`. Browser-verified. (Remaining: the `cold` *table* still keys by the legacy
-  `zone_id:u32` — the geometry cleanup in [todo](../../../../../../work/spacetime-rewrite/todo.md), not blocked.)
+  `definition_reference`, `kind_pos_reference` (`kind_reference:16|tile_reference:8|data:8`),
+  `data:8`, geographic `cold_reference`. Browser-verified. The `cold` *table* now keys by
+  `cold_row_reference:u64` (`macro_position:16|type_reference:16|layer_id:4`) — the legacy
+  `zone_id:u32` key is gone. ⚠️ An earlier note here called that a deferrable "key-width
+  compaction"; it wasn't — the missing header **was** the D-3 live bug (#11).
 
 ## Resolved (no longer open) ✅
 

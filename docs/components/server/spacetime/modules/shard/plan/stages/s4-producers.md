@@ -16,7 +16,8 @@ After this stage the DSL fully owns the existing gameplay path. Completes **dive
   `Command::{Spawn, Move}` surface ([`client/core/src/protocol.rs`](../../../../../../../../client/core/src/protocol.rs))
   is **unchanged** — only the edge's translation to the shard changes.
 - Remove the now-dead scalar `ACTION_*` constants from `shared/tick` once no producer references
-  them — **including `action_phase` and the `Phase` bands** (no phase in this design; ordering
+  them — **including `action_phase` and the `Phase` bands** ✅ *(done 2026-07-14, T-9 — deleted
+  with the priority-DAG; divergence #9 closed)* (no phase in this design; ordering
   is tics + `await`, [S3](s3-worker.md)/[S5](s5-control-flow.md)).
 
 ## Verify — on the stack

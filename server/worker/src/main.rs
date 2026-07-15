@@ -1,5 +1,5 @@
 //! server_worker — a worker in the resolution pool, driving the two-phase recoverable
-//! lifecycle (`docs/spacetime-tables/lifecycle.md`, `docs/spacetime-implementation/s3-worker.md`).
+//! lifecycle (`docs/components/server/spacetime/modules/shard/intent/lifecycle.md`, `docs/components/server/spacetime/modules/shard/plan/stages/s3-worker.md`).
 //!
 //! Each pass over a shard's `event_log`:
 //!   - **enqueue**: `ENQUEUE` rows → `claim` (→ `queueing`); a `QUEUEING` row we own →
@@ -12,7 +12,7 @@
 //! every target's state, then **converges** them — targets on this shard commit via `resolve`
 //! (which also completes the row), targets on another shard via that shard's idempotent
 //! `resolve_foreign`; the row completes only once every target shard has applied
-//! (`docs/spacetime-tables/lifecycle.md` §convergent write).
+//! (`docs/components/server/spacetime/modules/shard/intent/lifecycle.md` §convergent write).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

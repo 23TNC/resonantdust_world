@@ -1,7 +1,7 @@
 //! The gateway round-trip: `GET {gateway_url}/server` to acquire a world server.
 //!
 //! This is the *first* step of login — before touching a world server the client
-//! asks the gateway which one to use (see `docs/gateway.md`). The reply is the
+//! asks the gateway which one to use (see `docs/components/server/gateway/intent/gateway.md`). The reply is the
 //! `{ server: { server_id, url }, reused }` envelope the gateway serializes; we
 //! flatten it into an [`ServerInfo`](crate::ServerInfo). A non-2xx response
 //! (`503` when the directory is down or no server is registered) becomes an

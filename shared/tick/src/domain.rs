@@ -79,7 +79,7 @@ pub struct Event {
 /// onto it. This is the one seam that varies per data structure (pawn, object, zone, …);
 /// the scheduling spine ([`read_rule`](crate::read_rule) /
 /// the [`resolve_events`] fold) is generic over it and never inspects the payload. See
-/// `docs/pipeline-generalization.md`.
+/// `docs/components/server/spacetime/pipeline/design/pipeline-generalization.md`.
 ///
 /// The methods are associated (no `self`): a `Domain` is a marker for its payload type,
 /// selected by the worker from an event's `data_type` — there is no per-instance state.
@@ -101,7 +101,7 @@ pub trait Domain {
 }
 
 /// The spatial payload objects and zones share today — the sole [`Domain`] until a
-/// divergent payload lands (`docs/pipeline-generalization.md`, Phase 4). A zero-sized
+/// divergent payload lands (`docs/components/server/spacetime/pipeline/design/pipeline-generalization.md`, Phase 4). A zero-sized
 /// marker; its logic is the free `apply_event`/`action_reads_actor` below (kept as free
 /// items so the edge/npc injectors, which only touch the `ACTION_*` constants and
 /// `pack_*` helpers, are unaffected).

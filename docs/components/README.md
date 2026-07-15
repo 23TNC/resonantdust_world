@@ -40,10 +40,9 @@ dead. It's the antidote to "I forget… which is why we need this."
   (`shards`), server registry + heartbeat/liveness (`servers`), **player→server assignment =
   presence** (`player_servers`), GC. gateway reads it; edge registers + heartbeats into it.
 - **chat** — chat messages.
-- **cold_tiles / cold_things — ☠ RETIRED / DEAD.** Superseded by shard's `cold` table (div #3,
-  commits `2b2fc58` / `d47f152`), but the module **dirs + `redeploy.sh` fam-entries were never
-  removed**. Should be deleted.
-- **experiment — ☠ DEAD.** sync-experiment leftover; no build references. Delete.
+- **cold_tiles / cold_things / experiment — ☠ GONE (2026-07-14, T-7).** Superseded by shard's
+  `cold` table (div #3, commits `2b2fc58` / `d47f152`, which deleted the sources). What lingered
+  was untracked build detritus + two dead `redeploy.sh` `fam` arms — both removed; div #3 closed.
 
 ## `server/spacetime/server/` (shared, ST-side)
 - **pipeline** (`resonantdust-pipeline`) — the `decl_tick_pipeline!` macro that generates a
@@ -82,8 +81,6 @@ Held as components because scripts are the foundation of how we develop.
   Today: `textures/` (gitignored) + templates.
 
 ## Open / to-resolve
-- **Delete dead modules** cold_tiles, cold_things, experiment (+ their `redeploy.sh` fam entries
-  and any config). Confirms the user's "not sure we should have cold_things/cold_tiles anymore."
 - **shared/core** is a placeholder — keep, fill, or absorb?
 - The **dev/ reorg** (`bin/` → `dev/scripts/`) is proposed, not done.
 - Per lazy-create, per-component `{design,intent,current,plan}` folders come as we work each —

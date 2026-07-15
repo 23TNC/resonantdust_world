@@ -7,7 +7,7 @@
 //! separate shards. The edge owns generation because the DSL is pure Rust it links as an
 //! rlib and it already reads `content/` off disk — a SpacetimeDB module is wasm
 //! with neither, so it just stores what we hand it. (The cold-zone seeding path
-//! itself is a follow-up in the merged pipeline — see docs/gaps.md.)
+//! itself is a follow-up in the merged pipeline — see docs/archive/gaps.md.)
 //!
 //! Generation is per tile and independent. For each cell we sample N **biome
 //! dimensions** (temperature / humidity / elevation) from noise at the cell's
@@ -158,7 +158,7 @@ impl Worldgen {
     }
 
     /// A fresh zone's cold objects as `object_reference`s, grouped into cold rows
-    /// (`docs/object-model.md` §4). Same generation as [`zone_terrain`], but every
+    /// (`docs/components/shared/codec/design/object-model.md` §4). Same generation as [`zone_terrain`], but every
     /// cell contributes a **`biome-tile`** ground object (dense — one per cell) and,
     /// where the biome scattered one, a **`biome-thing`** object (sparse). Each is an
     /// `object_kind_reference` (its `kind` + in-zone `x`/`y` + `variant`) filed under

@@ -1,11 +1,11 @@
 //! The event-DSL interpreter — the purpose-built stack machine the worker runs over a row's
-//! `actions: Vec<u64>` (S1; `docs/spacetime-implementation/s1-interpreter.md`,
-//! `docs/spacetime-tables/event-dsl.md`).
+//! `actions: Vec<u64>` (S1; `docs/components/server/spacetime/modules/shard/plan/stages/s1-interpreter.md`,
+//! `docs/components/server/spacetime/modules/shard/design/event-dsl.md`).
 //!
 //! It decodes words (`op_code` + `payload`) onto a value stack and applies verbs to the
 //! target's [`EntityState`]. **Verb effects live in [`crate::domain`]** — the *same* shared
 //! functions the edge (validate) and client (predict) call, so prediction matches execution
-//! ([risks.md](../../docs/spacetime-tables/risks.md) A2). This is NOT `shared/dsl` (a
+//! ([risks.md](docs/components/server/spacetime/modules/shard/intent/risks.md) A2). This is NOT `shared/dsl` (a
 //! text/visual VM); the only thing borrowed is the abstract postfix-dispatch shape.
 //!
 //! Verbs so far: `MOVE`/`SPAWN` (data-carrying, no read) and `DAMAGE` (actor-reading — an

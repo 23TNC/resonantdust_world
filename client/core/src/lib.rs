@@ -22,7 +22,7 @@
 //! [`headless` binary]: ../headless/index.html
 //!
 //! ## Login flow
-//! [`Command::Login`] runs the two-hop handshake described in `docs/gateway.md`:
+//! [`Command::Login`] runs the two-hop handshake described in `docs/components/server/gateway/intent/gateway.md`:
 //! ask the **gateway** for a world server, then connect to that server's
 //! WebSocket and authenticate. See [`engine`] for the runtime and [`protocol`]
 //! for the wire format.

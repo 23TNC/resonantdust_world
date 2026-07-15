@@ -41,7 +41,7 @@ pub const HOLD_WRITE: u8 = 1;
 pub const WORKER_NONE: u16 = 0;
 
 /// The right-shift: an appended event targets `master_tic + TIC_GAP` (enqueue at +2, execute
-/// at +1, live at N — `docs/spacetime-tables/lifecycle.md`).
+/// at +1, live at N — `docs/components/server/spacetime/modules/shard/intent/lifecycle.md`).
 pub const TIC_GAP: u32 = 3;
 
 /// How many tics a claim (fence) holds before another worker may evict — the lease.
@@ -71,7 +71,7 @@ macro_rules! decl_tick_pipeline {
             pub event_reference: u32,
             #[index(btree)]
             pub event_tic: u32,
-            /// The DSL program — a flat postfix word stream (`docs/spacetime-tables/event-dsl.md`).
+            /// The DSL program — a flat postfix word stream (`docs/components/server/spacetime/modules/shard/design/event-dsl.md`).
             pub actions: Vec<u64>,
             /// The entities this row writes (issuer-designated; `bump`/`stand_up` read this,
             /// never the program). Encoded as `entity_key`s.
@@ -113,7 +113,7 @@ macro_rules! decl_tick_pipeline {
 
         /// A resolved target's new state, passed to `resolve` — one per target the row wrote.
         /// The macro emits it with the payload so a whole row commits atomically in one call
-        /// (`docs/issues/001-multi-target-resolve.md`).
+        /// (`docs/work/spacetime-rewrite/issues.md` §001).
         #[derive(SpacetimeType)]
         pub struct TargetState {
             pub entity_key: u64,
@@ -158,7 +158,7 @@ macro_rules! decl_tick_pipeline {
         /// Cross-shard convergence dedup. When a row on **another** shard writes a target that
         /// lives here, the worker calls [`resolve_foreign`] on this shard; the `(source_shard,
         /// event_reference)` pair is recorded so a crash-recovery re-drive is a no-op (idempotent
-        /// per the row's identity — `docs/spacetime-tables/lifecycle.md` §convergent write).
+        /// per the row's identity — `docs/components/server/spacetime/modules/shard/intent/lifecycle.md` §convergent write).
         #[table(accessor = applied_foreign, public)]
         pub struct AppliedForeign {
             /// `(source_shard as u128) << 64 | event_reference` — the convergence idempotency key.

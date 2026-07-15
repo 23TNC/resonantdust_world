@@ -96,7 +96,7 @@ deploy wiring.
 ## Why
 
 The tick engine's *scheduling spine* — tic model, work-gen, claim/lease fence, read
-rule, priority-DAG, GC horizon — never inspects an entity's payload. It only ever
+rule, GC — never inspects an entity's payload. It only ever
 **copies** the game fields (`kind`/`zone_id`/`location`/`rotation`/`offset`/`data0`/
 `data1`) verbatim and reasons purely over ids and control fields. So the same engine can
 carry *any* payload; today it just hard-codes the one spatial payload that objects and
@@ -158,17 +158,28 @@ range. Replaces the bare `u16` server ids.
 > it out to `reserved:10 | reference_id:6 | server_reference:16 | object_reference:32` (a
 > `reference_id` variant tag, not an `entity_type` game-type) — see
 > [`shared/codec/design/reference-model.md`](../../../../shared/codec/design/references/../reference-model.md)
-> + `refs.rs` (done + browser-verified). The *principle* below (one `u64` key space so `priority`
-> is a single total order across classes) still holds; the *bit fields* (`entity_type:8 |
-> entity_id:32 | mint_server:16`) do not.
+> + `refs.rs` (done + browser-verified). The *principle* below (one `u64` key space, comparable
+> across classes) still holds; the *bit fields* (`entity_type:8 | entity_id:32 | mint_server:16`)
+> do not.
+>
+> ⚠️ **The `priority` justification below is also SUPERSEDED (2026-07-14).** There is no
+> priority-DAG any more (shard divergence #9): the read rule resolves cross-entity reads at
+> **≤ T−1**, which makes the dependency graph a **DAG by tic — deadlock-free by construction, so
+> no cycle-breaker is needed** ([shard/intent/lifecycle.md](../../modules/shard/intent/lifecycle.md)
+> §read rule: *"that machinery only existed for same-tic mutual reads, which this forbids"*).
+> `priority.rs` had no callers and was deleted. The **one-key-space principle survives on its own
+> merits** — `state`/`state_log`/`holder` are keyed by `entity_key`, and cross-shard identity +
+> `home_shard` routing all read it — it just isn't *`priority`* that makes it load-bearing.
 
 Names any simulation entity in one comparable space. **`entity_type:8` (top byte)
 discriminates the layout of the remaining 56 bits** — generalizing the current 2-bit
 `ENTITY_TAG`. This is load-bearing: it lets *minted* and *positional* entities coexist in
-one `u64`, which is what keeps `priority = hash(tic, entity_reference)` a **single total
-order across all classes** so cross-class dependency cycles (pawn ↔ trap tile) break
-deterministically. Do not fragment into per-pipeline key widths — interacting pipelines
-must share this key space.
+one `u64`. Originally this was justified by keeping `priority = hash(tic, entity_reference)` a
+single total order so cross-class cycles (pawn ↔ trap tile) broke deterministically; the read
+rule now prevents those cycles outright (see the note above), and `priority` is gone. The
+**conclusion is unchanged**: do not fragment into per-pipeline key widths — interacting
+pipelines must share this key space, because `state`/`state_log`/`holder` are all keyed by it
+and a target's home shard is read straight off it.
 
 Two families, chosen by `entity_type`:
 

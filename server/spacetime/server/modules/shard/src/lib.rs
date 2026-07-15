@@ -5,7 +5,7 @@
 //! the **spatial payload** objects and zones share today; the macro registers the tick
 //! tables + reducers here. Role is chosen at deploy time (the DB it publishes to +
 //! `set_shard_id`); there is no per-role code. A divergent payload (the `[u64;256]` zone
-//! cell array) lives in its own module — see `docs/pipeline-generalization.md`.
+//! cell array) lives in its own module — see `docs/components/server/spacetime/pipeline/design/pipeline-generalization.md`.
 //!
 //! `zone_id` is a routing key (the edge subscribes `WHERE zone_id`); it stays an ordinary
 //! column — promoting it to an indexed routing key is a later refinement.

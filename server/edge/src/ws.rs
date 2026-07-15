@@ -740,7 +740,7 @@ fn handle_set_paused(
 }
 
 /// Seed a zone's cold OBJECTS (biome-tile ground + biome-thing scatter) from worldgen if
-/// the zone has no `cold` rows yet — the object-model path (`docs/object-model.md`).
+/// the zone has no `cold` rows yet — the object-model path (`docs/components/shared/codec/design/object-model.md`).
 /// Each `ColdRow` of [`Worldgen::zone_cold_objects`] becomes one `cold` row via
 /// `seed_cold_row` (insert-if-absent per `(zone, type_reference)`, so a worldgen re-run
 /// never clobbers a mutated row). No-op when worldgen is disabled.

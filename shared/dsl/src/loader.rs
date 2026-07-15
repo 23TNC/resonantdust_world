@@ -46,7 +46,7 @@ pub struct GenTile {
 /// that weight paints — a `tint` (base `0xRRGGBB` colour) and, optionally, a
 /// `material_id` (1-based into the material registry; `0` = none) whose noise-driven
 /// hue/chroma jitter the bake pass applies. All-zero = an unbound channel (identity:
-/// the residual reconstructs the flat albedo, no variation). See `docs/lighting.md`.
+/// the residual reconstructs the flat albedo, no variation). See `docs/components/client/pixijs/design/lighting.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PackedChannel {
   /// 1-based material-registry id (`material_id`); `0` = no material (flat tint).
@@ -94,7 +94,7 @@ pub struct VisualParts {
   /// The tiles this prim OCCUPIES — `(w, h)`, default `(1, 1)`. Logical grid extent
   /// (movement / hit-testing), authored in the object's own frame; the object's
   /// position is its TOP-LEFT tile. Rotation swaps `w`/`h` for an n/s facing (a 3×2
-  /// object becomes 2×3). **Server-side occupancy is deferred** (`docs/object-model.md`);
+  /// object becomes 2×3). **Server-side occupancy is deferred** (`docs/components/shared/codec/design/object-model.md`);
   /// today the client uses `footprint` only to resolve the `anchor` and the z-row.
   pub footprint: (f64, f64),
   /// The prim's logical ANCHOR within its footprint — `(x, y)` in `0..1`, default
@@ -378,7 +378,7 @@ impl Bundle {
 
   /// A biome's stable `subtype_id` — the value its `@subtype>` hook returns. A
   /// `biome-tile`/`biome-thing` object carries its biome in `subtype` (see
-  /// `docs/object-model.md`), so this is the biome's identity in an
+  /// `docs/components/shared/codec/design/object-model.md`), so this is the biome's identity in an
   /// `object_type_reference`. It is authored EXPLICITLY per biome (a small
   /// constant) rather than derived from file order, because this file's order is
   /// evaluation PRIORITY (retunable) and a stored zone's `subtype_id` must never

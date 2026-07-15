@@ -1,5 +1,5 @@
 //! The packed word of an event's `actions: Vec<u64>` stack program — the event DSL's
-//! wire unit. Canonical design: `docs/spacetime-tables/event-dsl.md`.
+//! wire unit. Canonical design: `docs/components/server/spacetime/modules/shard/design/event-dsl.md`.
 //!
 //! Each `u64` is one stack instruction. The `op_code` (top nibble) says what the word
 //! *is*; the low 48 bits are a clean `server_reference:16 | payload:32` qualified
@@ -84,7 +84,7 @@ pub const ACTION_MOVE: u32 = 1;
 pub const ACTION_SPAWN: u32 = 2;
 /// Act on a hot object (read/interact).
 pub const ACTION_INSPECT: u32 = 3;
-/// Settle a hot object back to cold + compact (`docs/spacetime-tables/hot-cold.md`).
+/// Settle a hot object back to cold + compact (`docs/components/server/spacetime/modules/shard/intent/hot-cold.md`).
 pub const ACTION_PACK: u32 = 4;
 /// Block this row on an `ALIAS` (event_reference) completing, `LITERAL` tic budget.
 pub const ACTION_AWAIT: u32 = 5;

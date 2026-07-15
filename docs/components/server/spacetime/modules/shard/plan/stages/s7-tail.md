@@ -3,14 +3,16 @@
 **Goal:** the deferred reconciliations, now safe to do off the critical DSL path. Closes
 **divergences #3, #4, #5, #7**.
 
-**Status:** ✅ **mostly DONE (2026-07-14)** — #5 and #10 closed; #4's *geometry* closed (only the
-`u16` key-width remains); #3 and #8 still open. Live state:
+**Status:** ✅ **DONE (2026-07-14)** — #3, #4, #5, #7 and #10 all closed. (#4 closed **fully**: the
+`macro_position:u16` row header was *not* a "key-width compaction" to defer — omitting it was the
+D-3 live bug; see #11. #3 turned out to be untracked build detritus, not modules.) Only **#8** —
+the deferred event/data shard split — remains open anywhere in this component. Live state:
 [`work/spacetime-rewrite/`](../../../../../../../work/spacetime-rewrite/completed.md). The
 object-model shard-class decisions this depended on are settled (blockers B-1 + B-2 both resolved).
 
 ## Changes (each independently landable)
 
-- **#3 · Retire standalone cold modules.** Delete `cold_things` / `cold_tiles`
+- **#3 · Retire standalone cold modules.** ✅ **DONE (T-7).** Delete `cold_things` / `cold_tiles`
   ([`server/spacetime/server/modules/`](../../../../../../../../server/spacetime/server/modules)) once the
   in-macro `cold` table carries their data end-to-end (edge seeds it; client decodes it).
 - **#4 · Geographic cold key.** ✅ **DONE.** The legacy flat `zone_id`

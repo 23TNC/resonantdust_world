@@ -6,7 +6,7 @@
 //! this cheaply, because in-order resolution keeps every pending row above every
 //! resolved one). `Q` is resolved through `T` iff it has *no* pending row at or below
 //! `T`. An unchanged entity (no pending rows at all) is resolved at every tic — which
-//! is why the rule keys off absence, not a stale resolved row (see `docs/simulation.md`).
+//! is why the rule keys off absence, not a stale resolved row (see `docs/archive/simulation.md`).
 
 /// Is `entity` resolved through `read_tic`?
 ///

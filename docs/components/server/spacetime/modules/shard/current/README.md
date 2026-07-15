@@ -66,8 +66,8 @@ See also [`divergences.md`](divergences.md) — the design-vs-code gap list.
 
 ## Reality that isn't in the design (→ cleanup)
 
-- **Dead modules still on disk:** `cold_tiles`, `cold_things` (retired div #3, superseded by this
-  module's `cold` table) and `experiment` (sync-experiment leftover) — plus their `redeploy.sh`
-  fam-entries — were never deleted. They are **not** part of the design; their removal is a
-  [`plan/cleanup.md`](../plan/cleanup.md) item.
+- ~~Dead modules on disk~~ ✅ **gone (2026-07-14, T-7)** — `cold_tiles` / `cold_things` /
+  `experiment` and their `redeploy.sh` fam-entries. Their *sources* had in fact been deleted back
+  in div #3 (`2b2fc58`/`d47f152`); what survived was untracked build detritus and the dead fam
+  arms. [`plan/cleanup.md`](../plan/cleanup.md) is closed.
 - **`shared/pkg` / `shared/target`** are build outputs (not shard-specific; noted for the map).

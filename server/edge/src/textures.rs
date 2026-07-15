@@ -15,7 +15,7 @@
 //! `<cat>/<kind>` directory names verbatim (a named subcategory/subkind is a dotted
 //! segment kept as-is); an optional TRAILING `n`/`e`/`s` segment names the facing
 //! (absent → south). In the group-less folder-per-variant layout
-//! (docs/texture-paths.md): `linked/wall.smooth` →
+//! (docs/components/dev/textures/design/texture-paths.md): `linked/wall.smooth` →
 //! `linked/wall.smooth/1.s.0/1/albedo.png` and `world/conifer/e` →
 //! `world/conifer/1.e.0/1/albedo.png` — the canonical instance
 //! `<id=1>.<dir>.<layer=0>/<variant=1>/albedo.png`. The per-instance variation picker
@@ -185,7 +185,7 @@ impl TextureSource {
 }
 
 /// The master albedo path for a stem, in the group-less folder-per-variant layout
-/// (docs/texture-paths.md): `<cat>/<kind>/1.<facing>.0/1/albedo.png` — each stem
+/// (docs/components/dev/textures/design/texture-paths.md): `<cat>/<kind>/1.<facing>.0/1/albedo.png` — each stem
 /// segment IS the directory name verbatim (`world/conifer` → `world/conifer/…`,
 /// `linked/wall.smooth` → `linked/wall.smooth/…`). `None` if the stem escapes its
 /// root or isn't `<category>/<kind>` shaped. The direction tokens a stem's trailing

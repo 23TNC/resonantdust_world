@@ -160,7 +160,7 @@ pub fn spawn_poll(manifest: Arc<TextureManifest>, source: Arc<TextureSource>, se
 /// West is never on disk — the client mirrors east.
 const FACINGS: [&str; 4] = ["n", "e", "s", "l"];
 
-/// The legacy `<group>` dirs kept on disk for rollback (docs/texture-paths.md, Phase
+/// The legacy `<group>` dirs kept on disk for rollback (docs/components/dev/textures/design/texture-paths.md, Phase
 /// 2) — skipped so the group-less scan never mistakes them for categories.
 const LEGACY_GROUPS: [&str; 3] = ["master", "sprites", "templates"];
 
@@ -169,7 +169,7 @@ const LEGACY_GROUPS: [&str; 3] = ["master", "sprites", "templates"];
 /// The stem is the dir's path relative to `tex_root` (dir names ARE the stem segments
 /// verbatim) plus the facing, so BOTH the legacy 2-level `<cat>/<kind>` layout and the
 /// object-model 4-level `<type>/<subtype>/<kind>/<subkind>` layout scan into their stems
-/// with no depth assumption (docs/object-model.md §8, docs/texture-paths.md). Each facing
+/// with no depth assumption (docs/components/shared/codec/design/object-model.md §8, docs/components/dev/textures/design/texture-paths.md). Each facing
 /// is its own texture (own bytes, hash, LOD cache), so it gets its own manifest row.
 fn scan_masters(tex_root: &Path, entries: &mut BTreeMap<String, Entry>) {
     scan_dir(tex_root, tex_root, entries);
