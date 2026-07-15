@@ -83,10 +83,8 @@ Held as components because scripts are the foundation of how we develop.
 ## Open / to-resolve
 - **shared/core** is a placeholder — keep, fill, or absorb?
 - The **dev/ reorg** (`bin/` → `dev/scripts/`) is proposed, not done.
-- Per lazy-create, per-component `{design,intent,current,plan}` folders come as we work each.
-  **Fully migrated:** `shard` (`components/server/spacetime/modules/shard/`) and `shared/codec` —
-  both verified against the code on 2026-07-14. **Partial** (some folders only, as work touched
-  them): `server/spacetime/pipeline`, `client/pixijs`, `server/gateway`, `dev/{scripts,textures}`.
-  **None yet:** `shared/tick`, `shared/dsl`, `shared/core`, `server/edge`, `server/master`,
-  `server/worker`, `client/core`, `client/npc` — notable because `shared/tick` holds the event-DSL
-  VM and `server/edge` holds worldgen, i.e. real design surface with no component home yet.
+- Per lazy-create, per-component `{design,intent,current,plan}` folders come as we work each — so a
+  component **listed above with no folder is normal**, not a gap; this map is its home until it
+  earns one. **Folders so far:** `shard` + `shared/codec` (all four, verified against the code
+  2026-07-14); partial, as work touched them: `server/spacetime/pipeline`, `client/pixijs`,
+  `server/gateway`, `dev/{scripts,textures}`.
