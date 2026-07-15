@@ -149,12 +149,13 @@ Payload = the reference model's three orthogonal references, carried by both `st
 
 | column | type | key | notes |
 |---|---|---|---|
-| `uid` | `u64` | PK | `state_uid` — `reserved:16 \| tic:16 \| entity_reference:32`. Not a surrogate: it **is** `(tic, entity)`. |
+| `uid` | `u64` | PK | `state_uid` — `reserved:16 \| entity_reference:32 \| tic:16`. Not a surrogate: it **is** `(entity, tic)`. |
 | *payload* | | | composed so far; seeded from the resolved value at `< tic` |
 | `flags` | `u8` | | bit 0 `SETTLED` (no events left → eligible to promote) · bit 1 `PROMOTED` |
 
-`tic` and `entity_reference` are read off `uid`, not stored again. Tic-major, so `where tic <= t`
-(promote) is a `uid` range scan and `(entity, tic)` is an exact PK lookup.
+`entity_reference` and `tic` are read off `uid`, not stored again. **Entity-major**: one entity's
+slots are contiguous, so the read rule's per-entity question is a range scan and `(entity, tic)` is an
+exact PK lookup. `promote`'s `tic <= t` is a scan — see [`notes/tables.md`](notes/tables.md).
 
 ### `state_events` — the pending-event list for a slot
 

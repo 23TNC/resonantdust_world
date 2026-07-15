@@ -122,25 +122,32 @@ enqueue flow, which isn't built.
 
 ### `state_log` — composite `uid`, `flags`, and the events split
 
-**`uid` is not a surrogate.** `reserved:16 | tic:16 | entity_reference:32` — it *is* `(tic, entity)`,
-so the design's two indexes come free: `find_or_create(entity, tic)` is an exact PK lookup, and
-`where tic <= t` (promote) is a range scan, because `tic` sits above `entity_reference` and one tic's
-rows are therefore contiguous. `tic` and `entity_reference` are read off the `uid`, not stored again.
+**`uid` is not a surrogate.** `reserved:16 | entity_reference:32 | tic:16` — it *is* `(entity, tic)`,
+so `find_or_create(entity, tic)` is an exact PK lookup and `entity_reference` / `tic` are read off it
+rather than stored again. It replaces the design's `idx (target_reference, tic)`.
 
-**`u32`, and what fills it.** The instruction said `u32 object_reference`, but VARIABLES defines
-`object_reference` as **u24** and `entity_reference` as **u32** (`server_reference:8 |
-object_reference:24`). Taken as `entity_reference`, because 32 is the width budgeted and it's the only
-32-bit object identifier in the model. The alternative reading is a bare `object_reference` — the
-shard *could* imply the server, since `declare_pending` routes to `home_shard(target)`, so every row
-is homed locally — which would make the layout `reserved:24 | tic:16 | object_reference:24` and
-contradict the stated `u16 reserved`. Worth confirming; it's a one-line change either way.
+**Entity-major, because `tic` wraps.** Putting `tic` high would look like it buys `promote`'s
+`where tic <= t` a range scan. It doesn't: the table would sort by *raw* tic, and a wrapping tic makes
+raw order ≠ temporal order. With rows spanning a wrap (65530…65535, 0…5) and `t = 3`, a numeric range
+scan returns 0…3 and **misses 65530…65535** — the oldest rows, the ones most needing promotion. No key
+ordering can give a sound tic range while the tic is a ring, so `promote` scans and serial-compares
+regardless of layout, and `tic` costs nothing in the low bits.
 
-**The read rule loses its index.** `refresh_ready`'s READ branch asks *"no `state_log` row
-`(entity, t)` with `t <= h.tic` and not settled"* — a per-entity question across tics. `uid` is
-tic-major, so one entity's rows are scattered and this is a scan. Fixing it means either an index on
-`entity_reference` (which SpacetimeDB needs as a real column — reintroducing the duplication the
-composite `uid` removed) or an entity-major `uid` (`reserved | entity | tic`), which would cost
-`promote`'s range scan instead. One of the two queries pays; today it's the read rule.
+`entity_reference` doesn't wrap, so entity-major locality is real: one entity's slots are contiguous,
+which is what the read rule needs (below). Within an entity the rows still sort by raw tic — filter
+them with `tic::` serial comparison, not `<`. Cheap, because an entity's slot count is bounded by the
+GC horizon.
+
+**The read rule is why.** `refresh_ready`'s READ branch asks *"no `state_log` row `(entity, t)` with
+`t <= h.tic` and not settled"* — a per-entity question, and `refresh_ready` is the scheduler's hot
+path (every `apply`, every `acquire`). Entity-major gives it a range scan. `promote` runs once per tic
+from the master and has to walk the table anyway to find settled-and-not-promoted rows.
+
+**Why `entity_reference` and not `object_reference`.** The slot's 32 bits are an `entity_reference`
+(`server_reference:8 | object_reference:24`), not a bare `object_reference` (u24). The server half is
+load-bearing: it says *which* object exactly. A shard could in principle imply it — `declare_pending`
+routes to `home_shard(target)`, so every row is homed locally — but the reference is then no longer
+self-describing, and a bare handle only means something next to the server that minted it.
 
 **`flags : u8` replaces `settled` + `promoted`.** Two bools were two bytes in practice. Bit 0
 `SETTLED`, bit 1 `PROMOTED`, six spare.
