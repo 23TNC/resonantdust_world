@@ -8,4 +8,3 @@
 // table) will be the trust boundary that prevents spoofing.
 
 pub mod chat;
-pub mod sequence;

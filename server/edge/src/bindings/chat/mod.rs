@@ -13,13 +13,11 @@ use spacetimedb_sdk::__codegen::{
 
 pub mod chat_message_type;
 pub mod chat_retention_type;
-pub mod sequence_counter_type;
 pub mod send_chat_message_reducer;
 pub mod chat_messages_table;
 
 pub use chat_message_type::ChatMessage;
 pub use chat_retention_type::ChatRetention;
-pub use sequence_counter_type::SequenceCounter;
 pub use chat_messages_table::*;
 pub use send_chat_message_reducer::send_chat_message;
 
@@ -105,7 +103,7 @@ impl __sdk::DbUpdate for DbUpdate {
     fn apply_to_client_cache(&self, cache: &mut __sdk::ClientCache<RemoteModule>) -> AppliedDiff<'_> {
                     let mut diff = AppliedDiff::default();
                 
-                diff.chat_messages = cache.apply_diff_to_table::<ChatMessage>("chat_messages", &self.chat_messages).with_updates_by_pk(|row| &row.sent_at);
+                diff.chat_messages = cache.apply_diff_to_table::<ChatMessage>("chat_messages", &self.chat_messages).with_updates_by_pk(|row| &row.message_id);
 
                     diff
                 }

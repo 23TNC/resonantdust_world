@@ -96,30 +96,30 @@ impl<'ctx> __sdk::TableWithPrimaryKey for ChatMessagesTableHandle<'ctx> {
     }
 }
 
-        /// Access to the `sent_at` unique index on the table `chat_messages`,
+        /// Access to the `message_id` unique index on the table `chat_messages`,
         /// which allows point queries on the field of the same name
-        /// via the [`ChatMessagesSentAtUnique::find`] method.
+        /// via the [`ChatMessagesMessageIdUnique::find`] method.
         ///
         /// Users are encouraged not to explicitly reference this type,
         /// but to directly chain method calls,
-        /// like `ctx.db.chat_messages().sent_at().find(...)`.
-        pub struct ChatMessagesSentAtUnique<'ctx> {
+        /// like `ctx.db.chat_messages().message_id().find(...)`.
+        pub struct ChatMessagesMessageIdUnique<'ctx> {
             imp: __sdk::UniqueConstraintHandle<ChatMessage, u64>,
             phantom: std::marker::PhantomData<&'ctx super::RemoteTables>,
         }
 
         impl<'ctx> ChatMessagesTableHandle<'ctx> {
-            /// Get a handle on the `sent_at` unique index on the table `chat_messages`.
-            pub fn sent_at(&self) -> ChatMessagesSentAtUnique<'ctx> {
-                ChatMessagesSentAtUnique {
-                    imp: self.imp.get_unique_constraint::<u64>("sent_at"),
+            /// Get a handle on the `message_id` unique index on the table `chat_messages`.
+            pub fn message_id(&self) -> ChatMessagesMessageIdUnique<'ctx> {
+                ChatMessagesMessageIdUnique {
+                    imp: self.imp.get_unique_constraint::<u64>("message_id"),
                     phantom: std::marker::PhantomData,
                 }
             }
         }
 
-        impl<'ctx> ChatMessagesSentAtUnique<'ctx> {
-            /// Find the subscribed row whose `sent_at` column value is equal to `col_val`,
+        impl<'ctx> ChatMessagesMessageIdUnique<'ctx> {
+            /// Find the subscribed row whose `message_id` column value is equal to `col_val`,
             /// if such a row is present in the client cache.
             pub fn find(&self, col_val: &u64) -> Option<ChatMessage> {
                 self.imp.find(col_val)
@@ -130,7 +130,7 @@ impl<'ctx> __sdk::TableWithPrimaryKey for ChatMessagesTableHandle<'ctx> {
 pub(super) fn register_table(client_cache: &mut __sdk::ClientCache<super::RemoteModule>) {
 
     let _table = client_cache.get_or_make_table::<ChatMessage>("chat_messages");
-    _table.add_unique_constraint::<u64>("sent_at", |row| &row.sent_at);
+    _table.add_unique_constraint::<u64>("message_id", |row| &row.message_id);
 }
 
 #[doc(hidden)]

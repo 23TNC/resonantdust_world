@@ -13,8 +13,8 @@
 // Re-export the native API so server-side rlib consumers can depend on
 // `resonantdust-shared` and get the underlying crates' surface in one place.
 pub use resonantdust_core::greeting;
-// The bit-packing codec — the same `zone_id` / `valid_at` / thing-tile layouts
-// the server uses, so the client encodes and decodes them with identical code.
+// The bit-packing codec — the same `zone_id` / thing-tile layouts the server uses,
+// so the client encodes and decodes them with identical code.
 pub use resonantdust_codec::packed;
 // The DSL — re-exported so native rlib consumers reach it through this one crate
 // too. The browser surface ([`Content`]) wraps it behind the `js` feature.

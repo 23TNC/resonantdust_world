@@ -11,11 +11,9 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
-pub mod gc_schedule_type;
 pub mod player_type;
 pub mod player_id_counter_type;
 pub mod player_profile_type;
-pub mod sequence_counter_type;
 pub mod claim_or_login_reducer;
 pub mod create_player_reducer;
 pub mod set_last_login_reducer;
@@ -24,11 +22,9 @@ pub mod set_player_permissions_reducer;
 pub mod player_profiles_table;
 pub mod players_table;
 
-pub use gc_schedule_type::GcSchedule;
 pub use player_type::Player;
 pub use player_id_counter_type::PlayerIdCounter;
 pub use player_profile_type::PlayerProfile;
-pub use sequence_counter_type::SequenceCounter;
 pub use player_profiles_table::*;
 pub use players_table::*;
 pub use claim_or_login_reducer::claim_or_login;
@@ -173,7 +169,7 @@ impl __sdk::DbUpdate for DbUpdate {
                     let mut diff = AppliedDiff::default();
                 
                 diff.player_profiles = cache.apply_diff_to_table::<PlayerProfile>("player_profiles", &self.player_profiles).with_updates_by_pk(|row| &row.player_id);
-        diff.players = cache.apply_diff_to_table::<Player>("players", &self.players).with_updates_by_pk(|row| &row.valid_at);
+        diff.players = cache.apply_diff_to_table::<Player>("players", &self.players).with_updates_by_pk(|row| &row.player_id);
 
                     diff
                 }

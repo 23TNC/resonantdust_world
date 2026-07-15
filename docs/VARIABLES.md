@@ -215,16 +215,6 @@ u64 event_word
 
 ---
 
-## `valid_at : u64` — the bitemporal row key
-
-```
-u64 valid_at
-  u48 time_ms                     bits 16–63   dominates the ordering
-  u16 sequence                    bits 0–15    tie-breaks writes within one ms
-```
-
----
-
 ## Enumerations
 
 **`reference_id : u6`** — which *reference variant* an `object_reference` is. Append-only. Names the
@@ -282,3 +272,19 @@ within-realm `region | zone` slice **is** `macro_position_reference`, which is w
 Also legacy in `packed.rs`, from the pre-0.2.3 model: `thing : u64`
 (`kind:16 | x:4 | y:4 | data:5 | layer:3 | variant:5 | reserved:27`), `tile : u8`, `offset : u8`,
 and the `THING_*_MAX` bounds. Superseded by `kind_pos_reference` + `data`.
+
+## Removed
+
+**`valid_at : u64`** — deleted 2026-07-15, from the docs *and* the code. Was
+`time_ms:48 | sequence:16`, the primary key of the bitemporal model: rows for one key ordered by
+the composite, `sequence` tie-breaking same-millisecond writes.
+
+Both users stopped needing it. `players` was a version-history table whose history a GC sweep
+reaped every 10 minutes and nothing ever read — flattened to one row per player, keyed by
+`player_id` (which also let `name` become schema-`#[unique]`, previously impossible because a
+player's own version rows collided on it). `chat_messages` only borrowed the shape for
+same-millisecond collision avoidance — now an `auto_inc` `message_id`, which orders the feed
+without a timestamp doubling as an identifier, plus a plain `sent_at_ms` for retention.
+
+The go-forward ordering model is **tic-based** (`docs/intent/spacetime-again/`), not bitemporal.
+Don't reintroduce this; if you need per-row time, use a plain ms column.

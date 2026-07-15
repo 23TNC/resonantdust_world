@@ -96,32 +96,62 @@ impl<'ctx> __sdk::TableWithPrimaryKey for PlayersTableHandle<'ctx> {
     }
 }
 
-        /// Access to the `valid_at` unique index on the table `players`,
+        /// Access to the `player_id` unique index on the table `players`,
         /// which allows point queries on the field of the same name
-        /// via the [`PlayersValidAtUnique::find`] method.
+        /// via the [`PlayersPlayerIdUnique::find`] method.
         ///
         /// Users are encouraged not to explicitly reference this type,
         /// but to directly chain method calls,
-        /// like `ctx.db.players().valid_at().find(...)`.
-        pub struct PlayersValidAtUnique<'ctx> {
-            imp: __sdk::UniqueConstraintHandle<Player, u64>,
+        /// like `ctx.db.players().player_id().find(...)`.
+        pub struct PlayersPlayerIdUnique<'ctx> {
+            imp: __sdk::UniqueConstraintHandle<Player, u32>,
             phantom: std::marker::PhantomData<&'ctx super::RemoteTables>,
         }
 
         impl<'ctx> PlayersTableHandle<'ctx> {
-            /// Get a handle on the `valid_at` unique index on the table `players`.
-            pub fn valid_at(&self) -> PlayersValidAtUnique<'ctx> {
-                PlayersValidAtUnique {
-                    imp: self.imp.get_unique_constraint::<u64>("valid_at"),
+            /// Get a handle on the `player_id` unique index on the table `players`.
+            pub fn player_id(&self) -> PlayersPlayerIdUnique<'ctx> {
+                PlayersPlayerIdUnique {
+                    imp: self.imp.get_unique_constraint::<u32>("player_id"),
                     phantom: std::marker::PhantomData,
                 }
             }
         }
 
-        impl<'ctx> PlayersValidAtUnique<'ctx> {
-            /// Find the subscribed row whose `valid_at` column value is equal to `col_val`,
+        impl<'ctx> PlayersPlayerIdUnique<'ctx> {
+            /// Find the subscribed row whose `player_id` column value is equal to `col_val`,
             /// if such a row is present in the client cache.
-            pub fn find(&self, col_val: &u64) -> Option<Player> {
+            pub fn find(&self, col_val: &u32) -> Option<Player> {
+                self.imp.find(col_val)
+            }
+        }
+        
+        /// Access to the `name` unique index on the table `players`,
+        /// which allows point queries on the field of the same name
+        /// via the [`PlayersNameUnique::find`] method.
+        ///
+        /// Users are encouraged not to explicitly reference this type,
+        /// but to directly chain method calls,
+        /// like `ctx.db.players().name().find(...)`.
+        pub struct PlayersNameUnique<'ctx> {
+            imp: __sdk::UniqueConstraintHandle<Player, String>,
+            phantom: std::marker::PhantomData<&'ctx super::RemoteTables>,
+        }
+
+        impl<'ctx> PlayersTableHandle<'ctx> {
+            /// Get a handle on the `name` unique index on the table `players`.
+            pub fn name(&self) -> PlayersNameUnique<'ctx> {
+                PlayersNameUnique {
+                    imp: self.imp.get_unique_constraint::<String>("name"),
+                    phantom: std::marker::PhantomData,
+                }
+            }
+        }
+
+        impl<'ctx> PlayersNameUnique<'ctx> {
+            /// Find the subscribed row whose `name` column value is equal to `col_val`,
+            /// if such a row is present in the client cache.
+            pub fn find(&self, col_val: &String) -> Option<Player> {
                 self.imp.find(col_val)
             }
         }
@@ -130,7 +160,8 @@ impl<'ctx> __sdk::TableWithPrimaryKey for PlayersTableHandle<'ctx> {
 pub(super) fn register_table(client_cache: &mut __sdk::ClientCache<super::RemoteModule>) {
 
     let _table = client_cache.get_or_make_table::<Player>("players");
-    _table.add_unique_constraint::<u64>("valid_at", |row| &row.valid_at);
+    _table.add_unique_constraint::<u32>("player_id", |row| &row.player_id);
+    _table.add_unique_constraint::<String>("name", |row| &row.name);
 }
 
 #[doc(hidden)]

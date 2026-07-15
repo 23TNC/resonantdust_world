@@ -5,9 +5,9 @@
 > module, a doc, or a comment — **this file wins and the other is the bug**.
 
 _Peer to [`VARIABLES.md`](VARIABLES.md), which owns the **variables** these columns are made of. A
-column typed `valid_at` or `region_id` means exactly what VARIABLES.md says it means; this file
-never redefines a layout, it cites one. Rationale for a table's shape belongs in its component's
-`design/`._
+column typed `region_id` or `entity_reference` means exactly what VARIABLES.md says it means; this
+file never redefines a layout, it cites one. Rationale for a table's shape belongs in its
+component's `design/`._
 
 **Scope — what's in here.** A table is *cross-component* when **two or more components** read or
 write it. Module-internal tables (counters, schedules, sequences) are **out of scope** and listed at
@@ -38,22 +38,26 @@ test, alpha). All three below are `-0` today.
 
 ### `players` — public
 
-The player identity row. **Version history**: multiple rows per `player_id`; the live one is the
-row with the largest `valid_at` *time* component. Kept narrow — per-player private state belongs in
-`player_profiles`.
+The player identity row. **One row per player**, flat. Kept narrow — per-player private state
+belongs in `player_profiles`.
 
 | column | type | key | meaning |
 |---|---|---|---|
-| `valid_at` | `u64` | **PK** | [`valid_at`](VARIABLES.md#valid_at--u64--the-bitemporal-row-key) — `time_ms:48 \| sequence:16`. The sequence half is why two same-ms writes don't collide. |
+| `player_id` | `u32` | **PK** | logical id. `< 1024` reserved for system/pseudo-players; real players start at `FIRST_PLAYER_ID = 1024`. `DEVELOPER_ID = 512`. |
 | `data_shard` | `u16` | | the card-shard partition holding this player's cards/souls. `0` today. |
-| `player_id` | `u32` | `idx` | logical id. `< 1024` reserved for system/pseudo-players; real players start at `FIRST_PLAYER_ID = 1024`. `DEVELOPER_ID = 512`. |
-| `name` | `String` | `idx` | display name, **case-sensitive** ("Alice" ≠ "alice"), ≤ `MAX_PLAYER_NAME_LEN` (64). |
+| `name` | `String` | **unique** | display name, **case-sensitive** ("Alice" ≠ "alice"), ≤ `MAX_PLAYER_NAME_LEN` (64). |
 | `last_login_secs` | `u32` | | unix seconds of last `set_last_login`; `0` until the first login round-trip. Drives the chat catch-up window. |
 | `flags` | `u32` | | per-player flag bits (faction subfield drives the object-texture pack picker). |
 
-> **Uniqueness of `name` is reducer-enforced, not schema-enforced.** The history schema can't use
-> `#[unique]` — multiple version rows per player would collide — so `claim_or_login` enforces it by
-> lookup. Anything writing this table directly bypasses that check.
+> **Was a `valid_at`-keyed version-history table** until 2026-07-15: many rows per `player_id`, live
+> one = largest `valid_at` time. The history bought nothing — a GC sweep reaped every prior version
+> every 10 minutes and nothing read one — so it went with `valid_at` itself. Mutations now update in
+> place.
+>
+> **`name` uniqueness is now schema-enforced.** Under the history schema `#[unique]` was impossible
+> (a player's own version rows collided on it), so it lived only in `claim_or_login`'s lookup and any
+> other writer silently bypassed it. Flattening removed the obstacle. The reducer still checks first,
+> to fail with a readable message instead of a raw constraint violation.
 
 | | |
 |---|---|
@@ -152,10 +156,16 @@ for how a `local` feed would land).
 
 | column | type | key | meaning |
 |---|---|---|---|
-| `sent_at` | `u64` | **PK** | [`valid_at`](VARIABLES.md#valid_at--u64--the-bitemporal-row-key) shape — `time_ms:48 \| sequence:16`. Sorting by it gives chronological order in one pass. |
+| `message_id` | `u64` | **PK**, `auto_inc` | monotonic — ascending `message_id` **is** chronological order, in one pass, no tie-break |
+| `sent_at_ms` | `u64` | `idx` | unix ms, server-stamped. The retention sweep's age filter selects on it; also available for display. |
 | `sender_player_id` | `u32` | `idx` | **caller-supplied and unvalidated** — see below |
 | `sender_name` | `String` | | display name **frozen at send time**; a later rename does not rewrite history |
 | `body` | `String` | | trimmed + validated server-side |
+
+> **Was keyed by `sent_at : u64`** until 2026-07-15 — a packed `[time_ms:48 | sequence:16]`
+> borrowed from the legacy `valid_at` shape, whose low 16 bits existed only so two same-millisecond
+> sends couldn't collide on the key. `auto_inc` solves that directly, so the timestamp no longer
+> doubles as an identifier and moved to its own column.
 
 > **Trust boundary.** This module has no `players` table to validate against, so it **trusts the
 > caller** on `sender_player_id`. Spoofable today. The eventual fix is a sidecar or a chat-side
@@ -190,11 +200,12 @@ deliberate:
 | DB | table | role |
 |---|---|---|
 | `players` | `player_id_counter` | id allocation |
-| `players` | `sequence_counter` | the `valid_at` low-16 tie-breaker |
-| `players` | `gc_schedule` | scheduled version-history pruning |
-| `chat` | `sequence_counter` | same tie-breaker |
 | `chat` | `chat_retention` | scheduled retention sweep |
 | `index` | `gc_schedule` | scheduled stale server/pin reaping |
+
+Deleted 2026-07-15 with `valid_at`: `players.sequence_counter` and `chat.sequence_counter` (existed
+only to fill `valid_at`'s low 16 bits) and `players.gc_schedule` (its sweep pruned version rows that
+no longer exist; the module's `init` moved to `lib.rs`).
 
 ---
 

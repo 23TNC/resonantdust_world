@@ -1,10 +1,10 @@
 //! Client clock discipline — the offset that lets every client render a *shared*
 //! world instant.
 //!
-//! The server stamps authoritative time (`valid_at`, ms) on every row. A client
-//! that wants to render "the world as of time T" must first know what the server
-//! thinks the time is right now — i.e. the offset between its own wall clock and
-//! the server's. This module estimates that offset from ping/pong round-trips,
+//! The server is authoritative for time. A client that wants to render "the world as
+//! of time T" must first know what the server thinks the time is right now — i.e. the
+//! offset between its own wall clock and the server's. This module estimates that
+//! offset from ping/pong round-trips,
 //! NTP-style: each pong carries the server clock at reply time; combined with the
 //! measured round-trip, that pins `offset = server_clock − client_clock`.
 //!

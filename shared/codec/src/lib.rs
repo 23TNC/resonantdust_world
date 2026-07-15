@@ -8,10 +8,9 @@
 //! `resonantdust-shared` wasm bundle, which re-exports this surface.
 //!
 //! It replaces the per-module `packed.rs` copies the foundation rebuild inlined
-//! (shard / chat / players each carried their own `valid_at` pair, and the
-//! `zone_id → region_id` mask was duplicated between the `index` module and the
-//! native server with a "keep the two in lockstep" comment). One definition, no
-//! drift.
+//! (the `zone_id → region_id` mask was duplicated between the `index` module and
+//! the native server with a "keep the two in lockstep" comment). One definition,
+//! no drift.
 
 pub mod biome;
 pub mod event_word;

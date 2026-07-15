@@ -276,22 +276,20 @@ async fn handle_login(
     }
 }
 
-/// Poll the players cache for the latest row named `name`, returning its
+/// Poll the players cache for the row named `name`, returning its
 /// `(player_id, data_shard)`. The reducer's row insert arrives asynchronously after
 /// commit, so we retry over a short window.
+///
+/// One row per name — `Player.name` is unique, and the table is no longer versioned.
+/// This used to scan every row and take the max by `valid_at`'s time half, picking the
+/// newest of a player's version rows; there are no version rows to pick between now.
 async fn read_player_by_name(
     conn: &Arc<bindings::players::DbConnection>,
     name: &str,
 ) -> Option<(u32, u16)> {
     use bindings::players::players_table::PlayersTableAccess;
     for _ in 0..PLAYER_READ_POLLS {
-        let latest = conn
-            .db()
-            .players()
-            .iter()
-            .filter(|p| p.name == name)
-            .max_by_key(|p| p.valid_at >> 16);
-        if let Some(p) = latest {
+        if let Some(p) = conn.db().players().iter().find(|p| p.name == name) {
             return Some((p.player_id, p.data_shard));
         }
         tokio::time::sleep(POLL_INTERVAL).await;

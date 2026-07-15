@@ -1,8 +1,5 @@
 use spacetimedb::{reducer, ReducerContext, Table};
 
-use crate::sequence;
-use resonantdust_codec::packed::{pack_valid_at, valid_at_time};
-
 /// The card shard a freshly-claimed player is assigned to. `0` while a
 /// single `cards` database serves everyone — which it can, since the
 /// auth DB is low-write and the hot card state is what actually needs
@@ -43,15 +40,16 @@ pub const DEVELOPER_ID: u32 = 512;
 /// context). Souls themselves live as cards with
 /// `FLAG_OWNED_BY_PLAYER` set and `owner_id = player_id`, so
 /// "what souls does this player own" is `cards.owner_id().filter(player_id)`.
+/// **One row per player** — flat, not versioned. It was a `valid_at`-keyed history
+/// table; the history bought nothing (a GC sweep reaped every prior version every 10
+/// minutes and nothing ever read one), so `valid_at` went with the rest of the legacy
+/// bitemporal model. A mutation now updates the row in place.
 #[spacetimedb::table(accessor = players, public)]
 #[derive(Debug, Clone)]
 pub struct Player {
-    /// Packed primary key — `[time_ms: u48 | seq: u16]` (high | low).
-    /// `player_id` is on the row column (see below). Multiple rows per
-    /// `player_id` form a version history; the latest is the one with
-    /// the largest `valid_at_time`.
+    /// The player. One row per id — this is the identity, so it's the key.
     #[primary_key]
-    pub valid_at: u64,
+    pub player_id: u32,
     /// The **card shard** this player is assigned to — the `data_shard`
     /// partition whose `cards`-module database holds this player's cards
     /// and souls. The client reads this at login to know which card
@@ -66,13 +64,15 @@ pub struct Player {
     /// query is empty the client calls the card shard's `spawn_soul` to
     /// mint one. These top-level player-souls are never rendered in the world.
     pub data_shard: u16,
-    #[index(btree)]
-    pub player_id: u32,
-    /// Display name. Match is case-sensitive — "Alice" and "alice" are
-    /// different players. The history-style schema can't enforce uniqueness
-    /// with `#[unique]` (multiple version rows per player would collide), so
-    /// the registration reducer enforces it via lookup — see `claim_or_login`.
-    #[index(btree)]
+    /// Display name. Match is case-sensitive — "Alice" and "alice" are different
+    /// players.
+    ///
+    /// **Schema-enforced unique.** The old history schema *couldn't* use `#[unique]` —
+    /// a player's own version rows would have collided on it — so uniqueness lived only
+    /// in `claim_or_login`'s lookup, and any other writer silently bypassed it. Flattening
+    /// the table removed that obstacle. The reducer still checks first, to fail with a
+    /// readable message instead of a constraint violation.
+    #[unique]
     pub name: String,
     /// Unix seconds at which this player most recently called
     /// `set_last_login`. `0` on a brand-new player (`create()` seeds
@@ -139,15 +139,10 @@ pub fn player_faction(player: &Player) -> u8 {
 /// <int>` and the executor lands here. No direct reducer wraps this
 /// today (faction is recipe-driven); add a `set_player_faction` reducer
 /// here if a UI flow ever needs to call it outside the action system.
-pub fn set_faction(
-    ctx: &ReducerContext,
-    player_id: u32,
-    time_ms: u64,
-    faction: u8,
-) -> Result<(), String> {
+pub fn set_faction(ctx: &ReducerContext, player_id: u32, faction: u8) -> Result<(), String> {
     let faction_bits = (faction as u32) & PLAYER_FLAG_FACTION_MASK;
     let slot_mask = PLAYER_FLAG_FACTION_MASK << PLAYER_FLAG_FACTION_SHIFT;
-    update_with_at(ctx, player_id, time_ms, |p| {
+    update_with(ctx, player_id, |p| {
         p.flags = (p.flags & !slot_mask) | (faction_bits << PLAYER_FLAG_FACTION_SHIFT);
     })
     .map(|_| ())
@@ -187,14 +182,9 @@ pub fn player_has(player: &Player, caps: u8) -> bool {
 /// `time_ms`. Returns `Err` if no prior `Player` row exists. Granting is itself
 /// privileged — the caller (the gate) enforces who may invoke this; pre-release,
 /// dev/system accounts in `0..FIRST_PLAYER_ID` are provisioned out-of-band.
-pub fn set_permissions(
-    ctx: &ReducerContext,
-    player_id: u32,
-    time_ms: u64,
-    perms: u8,
-) -> Result<(), String> {
+pub fn set_permissions(ctx: &ReducerContext, player_id: u32, perms: u8) -> Result<(), String> {
     let slot_mask = PLAYER_FLAG_PERMS_MASK << PLAYER_FLAG_PERMS_SHIFT;
-    update_with_at(ctx, player_id, time_ms, |p| {
+    update_with(ctx, player_id, |p| {
         p.flags = (p.flags & !slot_mask) | ((perms as u32) << PLAYER_FLAG_PERMS_SHIFT);
     })
     .map(|_| ())
@@ -218,11 +208,10 @@ pub fn set_permissions(
 /// data this is fine. Sensitive future fields should move to a
 /// reducer-only path.
 ///
-/// **Flat row, not history.** Unlike `Player` / `Card` / `Zone`,
-/// this table has one row per `player_id` and is updated in place.
-/// Profile state isn't time-stamped — there are no "what did the
-/// player have unlocked at time T" reads downstream — so the
-/// `valid_at` history machinery would be deadweight.
+/// **Flat row.** One row per `player_id`, updated in place. Profile state isn't
+/// time-stamped — there are no "what did the player have unlocked at time T" reads
+/// downstream. (`Player` was the versioned one this contrasted against; it isn't
+/// anymore — the history was deadweight there too and went with `valid_at`.)
 ///
 /// **Initial row.** Created in `claim_or_login`'s new-player branch
 /// alongside the soul spawn (`spawn_soul_for`).
@@ -239,57 +228,25 @@ fn now_ms(ctx: &ReducerContext) -> u64 {
     (ctx.timestamp.to_micros_since_unix_epoch() / 1_000) as u64
 }
 
-// Latest row for a player_id is the row with the largest time component of valid_at.
-pub fn latest(ctx: &ReducerContext, player_id: u32) -> Option<Player> {
-    ctx.db
-        .players()
-        .player_id()
-        .filter(player_id)
-        .max_by_key(|p| valid_at_time(p.valid_at))
+/// The player's row, by id. A direct primary-key lookup — one row per player.
+pub fn get(ctx: &ReducerContext, player_id: u32) -> Option<Player> {
+    ctx.db.players().player_id().find(player_id)
 }
 
-// Latest row whose `name` matches (case-sensitive). Same selection rule as
-// `latest`, just keyed on a different btree index. Used by `claim_or_login`
-// to resolve a name → player_id without scanning the whole table.
-pub fn latest_by_name(ctx: &ReducerContext, name: &str) -> Option<Player> {
-    ctx.db
-        .players()
-        .name()
-        .filter(name)
-        .max_by_key(|p| valid_at_time(p.valid_at))
+/// The player's row by (case-sensitive) `name`. A direct unique-index lookup; used by
+/// `claim_or_login` to resolve a name → player_id without scanning the table.
+pub fn get_by_name(ctx: &ReducerContext, name: &str) -> Option<Player> {
+    ctx.db.players().name().find(name.to_string())
 }
 
-// Stamp valid_at = (player_id, now) and write. Two writes within the same
-// wall-clock second collide on the primary key; the existing row is replaced.
-// Also enqueues a one-shot delete schedule that prunes older versions.
-fn write_at(ctx: &ReducerContext, mut player: Player, time_ms: u64) -> Player {
-    // "Last write at this (player_id, time_ms) wins." See
-    // `cards::write_at` for the full rationale — same-time writes
-    // would otherwise accumulate distinct rows under the new
-    // sequence-bearing PK.
-    let stale: Vec<u64> = ctx
-        .db
-        .players()
-        .player_id()
-        .filter(player.player_id)
-        .filter(|p| valid_at_time(p.valid_at) == time_ms)
-        .map(|p| p.valid_at)
-        .collect();
-    for v in stale {
-        ctx.db.players().valid_at().delete(v);
+/// Write `player`, replacing any existing row for its id. Insert-or-update on the
+/// `player_id` primary key.
+fn upsert(ctx: &ReducerContext, player: Player) -> Player {
+    if ctx.db.players().player_id().find(player.player_id).is_some() {
+        ctx.db.players().player_id().update(player)
+    } else {
+        ctx.db.players().insert(player)
     }
-    player.valid_at = pack_valid_at(time_ms, sequence::next_sequence(ctx));
-    let inserted = ctx.db.players().insert(player);
-    // No per-write delete schedule — see `crate::gc` for the
-    // unified periodic sweep that handles prior-version reap.
-    inserted
-}
-
-// Convenience: insert at the server's wall-clock `now`. Reducer
-// callers should prefer `create_at` and pass the server `now_ms`.
-// Assigns the default card shard.
-pub fn create(ctx: &ReducerContext, player_id: u32, name: String) -> Player {
-    create_at(ctx, player_id, name, CARD_SHARD, now_ms(ctx))
 }
 
 /// Provision a brand-new player account: allocate the next id, write the
@@ -298,12 +255,12 @@ pub fn create(ctx: &ReducerContext, player_id: u32, name: String) -> Player {
 /// creation — shared by [`claim_or_login`]'s new-player branch and the
 /// [`create_player`] reducer (registration without login). Does NOT validate the
 /// name or check for collisions; callers do that first.
-pub fn provision_player(ctx: &ReducerContext, name: String, time_ms: u64) -> u32 {
+pub fn provision_player(ctx: &ReducerContext, name: String) -> u32 {
     let new_id = next_player_id(ctx);
     // No soul is created here — souls live in the assigned `cards` database, which
     // this module can't write to. The client (or harness) calls `spawn_soul`
     // there after reading `data_shard` off this row.
-    create_at(ctx, new_id, name, CARD_SHARD, time_ms);
+    create(ctx, new_id, name, CARD_SHARD);
     ctx.db.player_profiles().insert(PlayerProfile {
         player_id: new_id,
         data_shard: crate::DATA_SHARD,
@@ -315,19 +272,17 @@ pub fn provision_player(ctx: &ReducerContext, name: String, time_ms: u64) -> u32
 /// the `content-author` capability pre-granted. Unlike [`provision_player`] it
 /// uses a FIXED reserved id (not `next_player_id`) and starts authorized, so the
 /// in-app editor authors content with no out-of-band grant. Returns `DEVELOPER_ID`.
-pub fn provision_developer(ctx: &ReducerContext, time_ms: u64) -> u32 {
+pub fn provision_developer(ctx: &ReducerContext) -> u32 {
     let flags = (PERM_CONTENT_AUTHOR as u32) << PLAYER_FLAG_PERMS_SHIFT;
-    write_at(
+    upsert(
         ctx,
         Player {
-            valid_at: 0,
-            data_shard: CARD_SHARD,
             player_id: DEVELOPER_ID,
+            data_shard: CARD_SHARD,
             name: DEVELOPER_NAME.to_string(),
             last_login_secs: 0,
             flags,
         },
-        time_ms,
     );
     ctx.db.player_profiles().insert(PlayerProfile {
         player_id: DEVELOPER_ID,
@@ -341,28 +296,19 @@ pub fn provision_developer(ctx: &ReducerContext, time_ms: u64) -> u32 {
 /// human logs in. Idempotent — skips any that already exist. Today: the developer
 /// dev account at [`DEVELOPER_ID`] with content-author.
 pub fn seed_system_players(ctx: &ReducerContext) {
-    if latest(ctx, DEVELOPER_ID).is_none() {
-        provision_developer(ctx, now_ms(ctx));
+    if get(ctx, DEVELOPER_ID).is_none() {
+        provision_developer(ctx);
     }
 }
 
-// Insert a brand-new player at the given `time_ms`. valid_at is
-// computed from `time_ms`; any value passed in is overwritten.
-// `data_shard` is the card shard this player is assigned to — see the
-// `Player` struct docs.
-pub fn create_at(
-    ctx: &ReducerContext,
-    player_id: u32,
-    name: String,
-    data_shard: u16,
-    time_ms: u64,
-) -> Player {
-    write_at(
+// Insert a brand-new player. `data_shard` is the card shard this player is
+// assigned to — see the `Player` struct docs.
+pub fn create(ctx: &ReducerContext, player_id: u32, name: String, data_shard: u16) -> Player {
+    upsert(
         ctx,
         Player {
-            valid_at: 0,
-            data_shard,
             player_id,
+            data_shard,
             name,
             // Seed at 0 — anything below `now - retention_window` is
             // interpreted by the client as "no recent session," so
@@ -372,46 +318,25 @@ pub fn create_at(
             // a chosen faction in here once the UI exists; today
             // every fresh account starts neutral and any later
             // mutation goes through a (TBD) `set_player_faction`
-            // reducer that writes a new versioned row.
+            // reducer that updates the row.
             flags: 0,
         },
-        time_ms,
     )
 }
 
-// Pick up the latest row at-or-before `time_ms`, mutate it via `f`,
-// write it back at `time_ms`. Returns None if no prior row exists.
-// Mirrors `cards::update_with_at` — use this from reducers that have
-// resolved a server `now_ms` value.
-pub fn update_with_at<F>(
-    ctx: &ReducerContext,
-    player_id: u32,
-    time_ms: u64,
-    f: F,
-) -> Option<Player>
-where
-    F: FnOnce(&mut Player),
-{
-    let mut p = ctx
-        .db
-        .players()
-        .player_id()
-        .filter(player_id)
-        .filter(|p| valid_at_time(p.valid_at) <= time_ms)
-        .max_by_key(|p| valid_at_time(p.valid_at))?;
-    f(&mut p);
-    Some(write_at(ctx, p, time_ms))
-}
-
-// Convenience wrapper: stamp at server wall-clock `now`. Mostly a
-// holdover for callers outside the reducer-args-to-now_eff plumbing
-// (e.g., test setup). New code in reducers should pass `time_ms`
-// explicitly via `update_with_at`.
+/// Read the player's row, mutate it via `f`, write it back. `None` if no row exists.
+///
+/// Was `update_with_at`, which picked the latest version at-or-before a `time_ms` and
+/// wrote a new version at it. With one row per player there is no version to select and
+/// no timestamp to stamp, so the time argument is gone — callers that had one were
+/// passing server-now anyway.
 pub fn update_with<F>(ctx: &ReducerContext, player_id: u32, f: F) -> Option<Player>
 where
     F: FnOnce(&mut Player),
 {
-    update_with_at(ctx, player_id, now_ms(ctx), f)
+    let mut p = get(ctx, player_id)?;
+    f(&mut p);
+    Some(upsert(ctx, p))
 }
 
 // ---- name handling ----------------------------------------------------
@@ -495,7 +420,7 @@ fn next_player_id(ctx: &ReducerContext) -> u32 {
     }
 }
 
-/// Delete every version row for `player_id`.
+/// Delete `player_id`'s row.
 ///
 /// **Cards/souls are NOT cascaded here** — they live in the player's
 /// assigned `cards` shard (a separate database this module can't write
@@ -503,17 +428,7 @@ fn next_player_id(ctx: &ReducerContext) -> u32 {
 /// GC sweep reaps world-/owner-dead rows, and a dedicated card-side
 /// purge reducer (gateway-driven) can hard-delete on account removal.
 pub fn delete_player(ctx: &ReducerContext, player_id: u32) {
-    // Every version row of the player itself.
-    let valid_ats: Vec<u64> = ctx
-        .db
-        .players()
-        .player_id()
-        .filter(player_id)
-        .map(|p| p.valid_at)
-        .collect();
-    for v in valid_ats {
-        ctx.db.players().valid_at().delete(v);
-    }
+    ctx.db.players().player_id().delete(player_id);
 }
 
 
@@ -543,9 +458,8 @@ pub fn set_last_login(
     let _ = client_time_ms;
     // Stamp at server-now. The render delay `D` is applied client-side (a single
     // shared value), so the server writes true times and never back-stamps.
-    let now_ms = now_ms(ctx);
-    let now_secs = (now_ms / 1_000) as u32;
-    update_with_at(ctx, player_id, now_ms, |p| {
+    let now_secs = (now_ms(ctx) / 1_000) as u32;
+    update_with(ctx, player_id, |p| {
         p.last_login_secs = now_secs;
     });
     Ok(())
@@ -580,7 +494,7 @@ pub fn claim_or_login(
     // the client), so no back-stamp is needed.
     let now_ms = now_ms(ctx);
 
-    let player_id = match latest_by_name(ctx, &name) {
+    let player_id = match get_by_name(ctx, &name) {
         Some(player) => {
             // Reserved-range players (`__world__`, future NPC owners,
             // etc.) live at `player_id < FIRST_PLAYER_ID`. They're
@@ -607,9 +521,9 @@ pub fn claim_or_login(
             // there to mint the player_soul if it owns none yet. The developer is
             // provisioned at its reserved id with content-author instead.
             if name == DEVELOPER_NAME {
-                provision_developer(ctx, now_ms)
+                provision_developer(ctx)
             } else {
-                provision_player(ctx, name, now_ms)
+                provision_player(ctx, name)
             }
         }
     };
@@ -633,7 +547,7 @@ pub fn claim_or_login(
     //      server-private). Without this update, returning players
     //      would land with an empty offset window and the first
     //      subsequent reducer would fail the grace check.
-    update_with_at(ctx, player_id, now_ms, |p| {
+    update_with(ctx, player_id, |p| {
         p.last_login_secs = (now_ms / 1_000) as u32;
     });
 
@@ -660,11 +574,12 @@ pub fn create_player(
 ) -> Result<(), String> {
     let _ = client_time_ms;
     validate_player_name(&name)?;
-    if latest_by_name(ctx, &name).is_some() {
+    // Checked first so a taken name fails with this message rather than as a raw
+    // unique-constraint violation on `Player.name`.
+    if get_by_name(ctx, &name).is_some() {
         return Err(format!("create_player: a player named {name:?} already exists"));
     }
-    let now_ms = now_ms(ctx);
-    provision_player(ctx, name, now_ms);
+    provision_player(ctx, name);
     Ok(())
 }
 

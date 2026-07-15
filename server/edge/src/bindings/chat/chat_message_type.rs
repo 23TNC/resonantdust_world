@@ -13,7 +13,8 @@ use spacetimedb_sdk::__codegen::{
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub struct ChatMessage {
-    pub sent_at: u64,
+    pub message_id: u64,
+    pub sent_at_ms: u64,
     pub sender_player_id: u32,
     pub sender_name: String,
     pub body: String,
@@ -29,7 +30,8 @@ impl __sdk::InModule for ChatMessage {
 ///
 /// Provides typed access to columns for query building.
 pub struct ChatMessageCols {
-    pub sent_at: __sdk::__query_builder::Col<ChatMessage, u64>,
+    pub message_id: __sdk::__query_builder::Col<ChatMessage, u64>,
+    pub sent_at_ms: __sdk::__query_builder::Col<ChatMessage, u64>,
     pub sender_player_id: __sdk::__query_builder::Col<ChatMessage, u32>,
     pub sender_name: __sdk::__query_builder::Col<ChatMessage, String>,
     pub body: __sdk::__query_builder::Col<ChatMessage, String>,
@@ -39,7 +41,8 @@ impl __sdk::__query_builder::HasCols for ChatMessage {
     type Cols = ChatMessageCols;
     fn cols(table_name: &'static str) -> Self::Cols {
         ChatMessageCols {
-            sent_at: __sdk::__query_builder::Col::new(table_name, "sent_at"),
+            message_id: __sdk::__query_builder::Col::new(table_name, "message_id"),
+            sent_at_ms: __sdk::__query_builder::Col::new(table_name, "sent_at_ms"),
             sender_player_id: __sdk::__query_builder::Col::new(table_name, "sender_player_id"),
             sender_name: __sdk::__query_builder::Col::new(table_name, "sender_name"),
             body: __sdk::__query_builder::Col::new(table_name, "body"),
@@ -52,16 +55,18 @@ impl __sdk::__query_builder::HasCols for ChatMessage {
 ///
 /// Provides typed access to indexed columns for query building.
 pub struct ChatMessageIxCols {
+    pub message_id: __sdk::__query_builder::IxCol<ChatMessage, u64>,
     pub sender_player_id: __sdk::__query_builder::IxCol<ChatMessage, u32>,
-    pub sent_at: __sdk::__query_builder::IxCol<ChatMessage, u64>,
+    pub sent_at_ms: __sdk::__query_builder::IxCol<ChatMessage, u64>,
 }
 
 impl __sdk::__query_builder::HasIxCols for ChatMessage {
     type IxCols = ChatMessageIxCols;
     fn ix_cols(table_name: &'static str) -> Self::IxCols {
         ChatMessageIxCols {
+            message_id: __sdk::__query_builder::IxCol::new(table_name, "message_id"),
             sender_player_id: __sdk::__query_builder::IxCol::new(table_name, "sender_player_id"),
-            sent_at: __sdk::__query_builder::IxCol::new(table_name, "sent_at"),
+            sent_at_ms: __sdk::__query_builder::IxCol::new(table_name, "sent_at_ms"),
 
         }
     }

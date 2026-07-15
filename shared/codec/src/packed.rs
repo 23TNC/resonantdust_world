@@ -1,12 +1,12 @@
-//! Bit-packing helpers — `valid_at` primary keys, `zone_id` composition, zone
-//! cells, and packed things/tiles. The single source of truth for every wire and
-//! storage bit-layout; the server packs and the client unpacks with the same
-//! code.
+//! Bit-packing helpers — `zone_id` composition, zone cells, and packed
+//! things/tiles. The layouts here are authoritative in `docs/VARIABLES.md`; this is
+//! the code of record, packing and unpacking them with the same code on both ends.
 //!
-//! The shapes the game is built around:
+//! The shapes this module still carries — **all legacy**, retiring with the 0.2.3
+//! reference model (`docs/VARIABLES.md` §Legacy; the go-forward vocabulary is in
+//! [`crate::object`] / [`crate::refs`]):
 //!
 //! ```text
-//! valid_at:  u64 = (time_ms: u48 << 16) | sequence: u16
 //! zone_id:   u32 = realm:8 | region:8 | zone:8 | reserved:8   (each level = hi:4 | lo:4)
 //! region_id: u32 = realm:8 | region:8 | reserved:16           (the shard-routing key)
 //! tile:      u8  = tile-kind (0 = empty); a zone's tiles are a dense Vec<u8>[256]
@@ -14,25 +14,13 @@
 //!                  (sparse Vec<u64>)
 //! offset:    u8  = x_off:4 | y_off:4    (object-shard free things: sub-tile pos)
 //! ```
-
-// ── valid_at PK ──────────────────────────────────────────────────────────────
-
-/// Pack `(time_ms, sequence)` into the u64 `valid_at` primary key. Rows for one
-/// key (one zone, one player, one chat channel …) order by this composite —
-/// `time_ms` dominates, `sequence` tie-breaks writes within the same ms.
-pub fn pack_valid_at(time_ms: u64, sequence: u16) -> u64 {
-    (time_ms << 16) | (sequence as u64)
-}
-
-/// Extract the `time_ms` half of a packed `valid_at`.
-pub fn valid_at_time(v: u64) -> u64 {
-    v >> 16
-}
-
-/// Extract the `sequence` half of a packed `valid_at`.
-pub fn valid_at_sequence(v: u64) -> u16 {
-    (v & 0xFFFF) as u16
-}
+//!
+//! **`valid_at` was here and is gone** (2026-07-15) — the `[time_ms:48 | sequence:16]`
+//! primary key of the bitemporal model. Its two users both stopped needing it: `players`
+//! flattened to one row per player (the version history it keyed was reaped by a GC sweep
+//! and never read), and `chat_messages` moved to an `auto_inc` id, which orders the feed
+//! without a timestamp doubling as an identifier. The go-forward model is tic-based
+//! (`docs/intent/spacetime-again/`), not bitemporal.
 
 // ── zone_id ↔ region_id ──────────────────────────────────────────────────────
 //
@@ -322,13 +310,6 @@ pub fn offset_y(offset: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn valid_at_roundtrips() {
-        let v = pack_valid_at(1_700_000_000_000, 42);
-        assert_eq!(valid_at_time(v), 1_700_000_000_000);
-        assert_eq!(valid_at_sequence(v), 42);
-    }
 
     #[test]
     fn zone_id_roundtrips() {

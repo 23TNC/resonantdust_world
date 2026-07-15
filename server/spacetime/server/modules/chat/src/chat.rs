@@ -1,8 +1,5 @@
 use spacetimedb::{reducer, table, ReducerContext, ScheduleAt, Table, TimeDuration};
 
-use crate::sequence;
-use resonantdust_codec::packed::{pack_valid_at, valid_at_time};
-
 /// Reserved player_id used as a placeholder for system / unauthenticated
 /// senders. Mirrors `WORLD_PLAYER_ID` in the shard module — same value,
 /// same intent ("no real player owns this"). Hard-coded here rather than
@@ -46,13 +43,23 @@ const SWEEP_INTERVAL_MS: i64 = 60_000;
 #[spacetimedb::table(accessor = chat_messages, public)]
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
-    /// Packed `[time_ms: u48 | seq: u16]` (high | low). Same shape as
-    /// the shard module's `valid_at` — `sequence::next_sequence` fills
-    /// the low 16 bits so two same-millisecond writes don't collide on
-    /// the PK. Sorting by `sent_at` gives chronological order in one
-    /// pass.
+    /// Monotonic message id. Allocated by `auto_inc`, so it both keys the row and
+    /// **orders the feed**: ascending `message_id` is chronological, in one pass, with
+    /// no tie-break needed.
+    ///
+    /// This was `sent_at: u64`, a packed `[time_ms:48 | seq:16]` borrowed from the
+    /// legacy `valid_at` shape — the low 16 bits existed only so two same-millisecond
+    /// sends couldn't collide on the key. `auto_inc` solves that directly, so the
+    /// timestamp no longer has to double as an identifier and now lives in its own
+    /// column below.
     #[primary_key]
-    pub sent_at: u64,
+    #[auto_inc]
+    pub message_id: u64,
+    /// When the message was sent — unix ms, server-stamped. Read by the retention
+    /// sweep's age filter, and available to clients for display. Indexed because the
+    /// sweep selects on it.
+    #[index(btree)]
+    pub sent_at_ms: u64,
     /// `player_id` supplied by the caller. With no `players` table in
     /// this module to validate against, the chat module trusts the
     /// caller — eventually a sidecar (or chat-side mirror of
@@ -128,10 +135,10 @@ pub fn send_chat_message(
     let trimmed_body = validate_body(&body)?;
     let trimmed_name = validate_sender_name(&sender_name, sender_player_id)?;
 
-    let time_ms = (ctx.timestamp.to_micros_since_unix_epoch() / 1_000) as u64;
-    let sent_at = pack_valid_at(time_ms, sequence::next_sequence(ctx));
     ctx.db.chat_messages().insert(ChatMessage {
-        sent_at,
+        // 0 = "allocate me one" — auto_inc assigns the real id on insert.
+        message_id: 0,
+        sent_at_ms: (ctx.timestamp.to_micros_since_unix_epoch() / 1_000) as u64,
         sender_player_id,
         sender_name: trimmed_name,
         body: trimmed_body,
@@ -158,11 +165,11 @@ pub fn chat_retention_sweep(
         .db
         .chat_messages()
         .iter()
-        .filter(|m| valid_at_time(m.sent_at) < cutoff_ms)
-        .map(|m| m.sent_at)
+        .filter(|m| m.sent_at_ms < cutoff_ms)
+        .map(|m| m.message_id)
         .collect();
-    for sent_at in stale {
-        ctx.db.chat_messages().sent_at().delete(sent_at);
+    for message_id in stale {
+        ctx.db.chat_messages().message_id().delete(message_id);
     }
     Ok(())
 }
