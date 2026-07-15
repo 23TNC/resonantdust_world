@@ -62,11 +62,16 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 > **Update 2026-07-14.** #2, #5 and #10 are **closed** (the re-cut landed + is verified —
 > [`work/…/completed.md`](../../../../../../work/spacetime-rewrite/completed.md)). #4 is **not**
 > blocked (B-2 was retracted — it wrongly treated the legacy `zone_id`/`surface` as a constraint);
-> its remaining half is folded into the new **#11**, the cold row's missing header.
+> its remaining half was folded into **#11**, the cold row's missing header — **now also closed**
+> (2026-07-14), which closes #4 with it. That settles every **identity/keying** divergence
+> (#2, #4, #5, #10, #11); the pipeline-shape ones (#1, #6, #7, #8) and the cleanups (#3, #9) are
+> untouched and still open.
 
-## 11. 🔴 The `cold` row omits `macro_position` + `layer_id` — its key can't select a row
+## 11. ✅ CLOSED — the `cold` row omitted `macro_position` + `layer_id`; its key couldn't select a row
 
-**Raised 2026-07-14 (regression I introduced in the re-cut; caught by the user).**
+**Raised 2026-07-14 (regression I introduced in the re-cut; caught by the user). Closed 2026-07-14 —
+conformed + live-verified;** see [deviations.md](../../../../../../work/spacetime-rewrite/deviations.md)
+**D-3**, the deviation that produced it.
 
 - **Design** ([reference-model.md](../../../../../shared/codec/design/reference-model.md) §Cold row,
   [tables.md](../design/tables.md)): the row header is **`macro_position_reference:16` +
@@ -89,19 +94,28 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
   - 🟡 **Latent:** rows differing only by `layer` collide on one `cold_key`; `seed_cold_row` is
     insert-if-absent, so the second is silently dropped. Masked today only because worldgen emits
     layer 0 exclusively.
-- **Fix**: re-cut the row to the design header + composite key; make `find_or_mint` (and the edge's
-  interact scan) filter `(macro_position, type_id, layer_id)` then match `tile_reference`; worldgen
-  emits `layer_id` per row; `cold_removed` → 1:1 same key, `Vec<u8>` tombstones. Shard republish.
+- **Fixed as designed.** `cold` = PK `cold_row_reference:u64` (`reserved:28 | macro_position:16 |
+  type_reference:16 | layer_id:4`) + `macro_position:u16` (btree, the subscription key),
+  `type_reference:u16`, `layer_id:u8`; `cold_removed` **1:1** on the same key with `Vec<u8>`
+  `tile_reference` tombstones. `find_or_mint` + the edge's interact scan select
+  `(macro_position, type_id, layer_id)` — via the shared `cold_row_selects()` rule in the codec, so
+  the two call sites can't drift — then match `tile_reference`. Worldgen emits `layer_id` per row.
+- **Verified live** (shard republished + reseeded): two targets at the *same* tile (7,7) differing
+  only in `layer_reference` each minted exactly the object they named — `type_id=2` → the tree,
+  `type_id=1` → the ground. Previously iteration-order luck. Both carry `kind=1` (tree = thing-id 1,
+  grass = tile-def 1), which is precisely why the old logs read `kind=1` either way and the bug hid.
+- **Pinned by test**: `object::tests::a_target_mints_the_object_it_names_not_the_ground_under_it`
+  (plus `cold_row_reference_is_the_header_composite` / `cold_row_of_selects_by_macro_type_and_layer`).
 
-## 4. 🟡 Geometry is geographic; the cold row's `macro_position` is **not** done — see #11
+## 4. ✅ CLOSED — geometry is geographic; the cold row's `macro_position` landed with #11
 
 `zone_id` is now the **geographic** `realm:8 | region:8 | zone:8 | reserved:8` (G1 — surface
 retired), and the cold `entity_reference` is a geographic `cold_reference` (G2). The `cold` table
-still keys by `zone_id:u32` rather than the header's `macro_position_reference:u16`. That is **not**
-a mere key-width compaction (an earlier note here wrongly said so): the row header is what a reader
-reconstructs a `position_reference` from, and it must also carry `layer_id`. Folded into **#11**,
-tracked in [todo](../../../../../../work/spacetime-rewrite/todo.md). The original divergence (flat
-legacy `zone_id`):
+now keys by the header's `macro_position_reference:u16` (`zone_id` dropped), carrying `layer_id`
+alongside. This was **not** a mere key-width compaction (an earlier note here wrongly said so): the
+row header is what a reader reconstructs a `position_reference` from. Closed with **#11**; the edge
+reconstructs the client-facing `zone_id` from its shard's realm + `macro_position` when relaying.
+The original divergence (flat legacy `zone_id`):
 
 - **Design**: `cold` keyed by `macro_position_reference:u16`; realm implied by the shard.
 - **Code**: `Cold.zone_id : u32` flat, used as the routing column; `cold_key` packs

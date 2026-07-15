@@ -612,6 +612,7 @@ impl Engine {
                         self.emit(Event::ColdObjects {
                             zone_id: z.zone_id,
                             type_reference: z.type_reference,
+                            layer_id: z.layer_id,
                             kinds: z.kinds.clone(),
                         });
                     }

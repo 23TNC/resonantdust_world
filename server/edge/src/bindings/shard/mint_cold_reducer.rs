@@ -14,7 +14,9 @@ use spacetimedb_sdk::__codegen::{
 #[sats(crate = __lib)]
 pub(super) struct MintColdArgs {
     pub target: u64,
-    pub tombstone: u16,
+    pub cold_row_reference: u64,
+    pub macro_position: u16,
+    pub tombstone: u8,
     pub kind: u16,
     pub zone_id: u32,
     pub location: u8,
@@ -28,6 +30,8 @@ impl From<MintColdArgs> for super::Reducer {
     fn from(args: MintColdArgs) -> Self {
         Self::MintCold {
             target: args.target,
+            cold_row_reference: args.cold_row_reference,
+            macro_position: args.macro_position,
             tombstone: args.tombstone,
             kind: args.kind,
             zone_id: args.zone_id,
@@ -56,7 +60,9 @@ pub trait mint_cold {
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`mint_cold:mint_cold_then`] to run a callback after the reducer completes.
     fn mint_cold(&self, target: u64,
-tombstone: u16,
+cold_row_reference: u64,
+macro_position: u16,
+tombstone: u8,
 kind: u16,
 zone_id: u32,
 location: u8,
@@ -65,7 +71,7 @@ offset: u8,
 data_0: u64,
 data_1: u64,
 ) -> __sdk::Result<()> {
-        self.mint_cold_then(target, tombstone, kind, zone_id, location, rotation, offset, data_0, data_1,  |_, _| {})
+        self.mint_cold_then(target, cold_row_reference, macro_position, tombstone, kind, zone_id, location, rotation, offset, data_0, data_1,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `mint_cold` to run as soon as possible,
@@ -77,7 +83,9 @@ data_1: u64,
     fn mint_cold_then(
         &self,
         target: u64,
-tombstone: u16,
+cold_row_reference: u64,
+macro_position: u16,
+tombstone: u8,
 kind: u16,
 zone_id: u32,
 location: u8,
@@ -96,7 +104,9 @@ impl mint_cold for super::RemoteReducers {
     fn mint_cold_then(
         &self,
         target: u64,
-tombstone: u16,
+cold_row_reference: u64,
+macro_position: u16,
+tombstone: u8,
 kind: u16,
 zone_id: u32,
 location: u8,
@@ -109,7 +119,7 @@ data_1: u64,
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(MintColdArgs { target, tombstone, kind, zone_id, location, rotation, offset, data_0, data_1,  }, callback)
+        self.imp.invoke_reducer_with_callback(MintColdArgs { target, cold_row_reference, macro_position, tombstone, kind, zone_id, location, rotation, offset, data_0, data_1,  }, callback)
     }
 }
 

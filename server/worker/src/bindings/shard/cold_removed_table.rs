@@ -96,32 +96,32 @@ impl<'ctx> __sdk::TableWithPrimaryKey for ColdRemovedTableHandle<'ctx> {
     }
 }
 
-        /// Access to the `zone_key` unique index on the table `cold_removed`,
+        /// Access to the `cold_row_reference` unique index on the table `cold_removed`,
         /// which allows point queries on the field of the same name
-        /// via the [`ColdRemovedZoneKeyUnique::find`] method.
+        /// via the [`ColdRemovedColdRowReferenceUnique::find`] method.
         ///
         /// Users are encouraged not to explicitly reference this type,
         /// but to directly chain method calls,
-        /// like `ctx.db.cold_removed().zone_key().find(...)`.
-        pub struct ColdRemovedZoneKeyUnique<'ctx> {
-            imp: __sdk::UniqueConstraintHandle<ColdRemoved, u32>,
+        /// like `ctx.db.cold_removed().cold_row_reference().find(...)`.
+        pub struct ColdRemovedColdRowReferenceUnique<'ctx> {
+            imp: __sdk::UniqueConstraintHandle<ColdRemoved, u64>,
             phantom: std::marker::PhantomData<&'ctx super::RemoteTables>,
         }
 
         impl<'ctx> ColdRemovedTableHandle<'ctx> {
-            /// Get a handle on the `zone_key` unique index on the table `cold_removed`.
-            pub fn zone_key(&self) -> ColdRemovedZoneKeyUnique<'ctx> {
-                ColdRemovedZoneKeyUnique {
-                    imp: self.imp.get_unique_constraint::<u32>("zone_key"),
+            /// Get a handle on the `cold_row_reference` unique index on the table `cold_removed`.
+            pub fn cold_row_reference(&self) -> ColdRemovedColdRowReferenceUnique<'ctx> {
+                ColdRemovedColdRowReferenceUnique {
+                    imp: self.imp.get_unique_constraint::<u64>("cold_row_reference"),
                     phantom: std::marker::PhantomData,
                 }
             }
         }
 
-        impl<'ctx> ColdRemovedZoneKeyUnique<'ctx> {
-            /// Find the subscribed row whose `zone_key` column value is equal to `col_val`,
+        impl<'ctx> ColdRemovedColdRowReferenceUnique<'ctx> {
+            /// Find the subscribed row whose `cold_row_reference` column value is equal to `col_val`,
             /// if such a row is present in the client cache.
-            pub fn find(&self, col_val: &u32) -> Option<ColdRemoved> {
+            pub fn find(&self, col_val: &u64) -> Option<ColdRemoved> {
                 self.imp.find(col_val)
             }
         }
@@ -130,7 +130,7 @@ impl<'ctx> __sdk::TableWithPrimaryKey for ColdRemovedTableHandle<'ctx> {
 pub(super) fn register_table(client_cache: &mut __sdk::ClientCache<super::RemoteModule>) {
 
     let _table = client_cache.get_or_make_table::<ColdRemoved>("cold_removed");
-    _table.add_unique_constraint::<u32>("zone_key", |row| &row.zone_key);
+    _table.add_unique_constraint::<u64>("cold_row_reference", |row| &row.cold_row_reference);
 }
 
 #[doc(hidden)]

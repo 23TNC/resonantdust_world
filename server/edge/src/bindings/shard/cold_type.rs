@@ -13,9 +13,10 @@ use spacetimedb_sdk::__codegen::{
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub struct Cold {
-    pub cold_key: u64,
-    pub zone_id: u32,
-    pub type_reference: u32,
+    pub cold_row_reference: u64,
+    pub macro_position: u16,
+    pub type_reference: u16,
+    pub layer_id: u8,
     pub kinds: Vec::<u32>,
     pub version: u32,
 }
@@ -30,9 +31,10 @@ impl __sdk::InModule for Cold {
 ///
 /// Provides typed access to columns for query building.
 pub struct ColdCols {
-    pub cold_key: __sdk::__query_builder::Col<Cold, u64>,
-    pub zone_id: __sdk::__query_builder::Col<Cold, u32>,
-    pub type_reference: __sdk::__query_builder::Col<Cold, u32>,
+    pub cold_row_reference: __sdk::__query_builder::Col<Cold, u64>,
+    pub macro_position: __sdk::__query_builder::Col<Cold, u16>,
+    pub type_reference: __sdk::__query_builder::Col<Cold, u16>,
+    pub layer_id: __sdk::__query_builder::Col<Cold, u8>,
     pub kinds: __sdk::__query_builder::Col<Cold, Vec::<u32>>,
     pub version: __sdk::__query_builder::Col<Cold, u32>,
 }
@@ -41,9 +43,10 @@ impl __sdk::__query_builder::HasCols for Cold {
     type Cols = ColdCols;
     fn cols(table_name: &'static str) -> Self::Cols {
         ColdCols {
-            cold_key: __sdk::__query_builder::Col::new(table_name, "cold_key"),
-            zone_id: __sdk::__query_builder::Col::new(table_name, "zone_id"),
+            cold_row_reference: __sdk::__query_builder::Col::new(table_name, "cold_row_reference"),
+            macro_position: __sdk::__query_builder::Col::new(table_name, "macro_position"),
             type_reference: __sdk::__query_builder::Col::new(table_name, "type_reference"),
+            layer_id: __sdk::__query_builder::Col::new(table_name, "layer_id"),
             kinds: __sdk::__query_builder::Col::new(table_name, "kinds"),
             version: __sdk::__query_builder::Col::new(table_name, "version"),
 
@@ -55,16 +58,16 @@ impl __sdk::__query_builder::HasCols for Cold {
 ///
 /// Provides typed access to indexed columns for query building.
 pub struct ColdIxCols {
-    pub cold_key: __sdk::__query_builder::IxCol<Cold, u64>,
-    pub zone_id: __sdk::__query_builder::IxCol<Cold, u32>,
+    pub cold_row_reference: __sdk::__query_builder::IxCol<Cold, u64>,
+    pub macro_position: __sdk::__query_builder::IxCol<Cold, u16>,
 }
 
 impl __sdk::__query_builder::HasIxCols for Cold {
     type IxCols = ColdIxCols;
     fn ix_cols(table_name: &'static str) -> Self::IxCols {
         ColdIxCols {
-            cold_key: __sdk::__query_builder::IxCol::new(table_name, "cold_key"),
-            zone_id: __sdk::__query_builder::IxCol::new(table_name, "zone_id"),
+            cold_row_reference: __sdk::__query_builder::IxCol::new(table_name, "cold_row_reference"),
+            macro_position: __sdk::__query_builder::IxCol::new(table_name, "macro_position"),
 
         }
     }

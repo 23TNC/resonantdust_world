@@ -14,6 +14,7 @@
 //!
 //! The engine never runs the DSL — the worker does, then calls `resolve` with the results.
 
+pub use resonantdust_codec::object::pack_cold_row_reference;
 pub use resonantdust_codec::refs::{entity_ref_zone_id, pack_hot_entity};
 
 // ── lifecycle status (event_log.status) ─────────────────────────────────────────
@@ -167,25 +168,40 @@ macro_rules! decl_tick_pipeline {
 
         // ── cold side (schema now; find-or-mint / PACK land in S6) ──────────────────
 
-        /// Settled, packed static objects — one row per `(zone, type_reference)`.
+        /// Settled, packed static objects — one row per **`(macro_position, type_reference,
+        /// layer_id)`**, which *is* the row's identity: `cold_row_reference` is their composite
+        /// (`reserved:28 | macro_position:16 | type_reference:16 | layer_id:4`), not a surrogate.
+        /// `layer_id` is in the key because `layer` is a tile-slot, not a type property — rows
+        /// sharing `(macro_position, type, subtype)` but differing in `layer` are distinct rows.
+        /// Realm is implied by the shard, so the row carries `region|zone` only.
         #[table(accessor = cold, public)]
         pub struct Cold {
             #[primary_key]
-            pub cold_key: u64,
+            pub cold_row_reference: u64,
+            /// `region_reference:8 | zone_reference:8` — the subscription key.
             #[index(btree)]
-            pub zone_id: u32,
-            pub type_reference: u32,
+            pub macro_position: u16,
+            /// `type_id:4 | subtype_id:12`.
+            pub type_reference: u16,
+            /// The tile-slot (u4).
+            pub layer_id: u8,
+            /// One `kind_pos_reference` per object: `kind_reference:16 | tile_reference:8 | data:8`.
             pub kinds: Vec<u32>,
             pub version: u32,
         }
 
-        /// The per-zone removal delta (`x:4|y:4|layer:4|type_id:4`) a mint appends to instead
-        /// of rewriting the big `cold` row; a `PACK` action compacts it.
+        /// The removal delta — **1:1 with its `cold` row** (same `cold_row_reference`). A mint
+        /// appends the object's `tile_reference` here instead of rewriting the big `cold` row; a
+        /// `PACK` compacts it. Tombstones are a bare `tile_reference:u8` because macro/type/layer
+        /// are already in the key, and an unpack re-sends only *this* row's small delta.
         #[table(accessor = cold_removed, public)]
         pub struct ColdRemoved {
             #[primary_key]
-            pub zone_key: u32,
-            pub removed: Vec<u16>,
+            pub cold_row_reference: u64,
+            #[index(btree)]
+            pub macro_position: u16,
+            /// `tile_reference` (`x:4 | y:4`) tombstones.
+            pub removed: Vec<u8>,
             pub version: u32,
         }
 
@@ -306,19 +322,16 @@ macro_rules! decl_tick_pipeline {
 
         // ── reducers ─────────────────────────────────────────────────────────────
 
-        /// The cold-row PK: `(zone_id:32 << 32) | type_reference:32`.
-        fn cold_key(zone_id: u32, type_reference: u32) -> u64 {
-            ((zone_id as u64) << 32) | (type_reference as u64)
-        }
-
         /// Seed one **cold** row for a zone — insert-only-if-absent, so a worldgen re-run never
         /// clobbers a cold row later mutated in-world. The edge calls this once per `ColdRow` of a
         /// fresh zone. (Cold→hot `find-or-mint` on a targeted cold object is S6/S7.)
         #[reducer]
-        pub fn seed_cold_row(ctx: &ReducerContext, zone_id: u32, type_reference: u32, kinds: Vec<u32>) -> Result<(), String> {
-            let key = cold_key(zone_id, type_reference);
-            if ctx.db.cold().cold_key().find(key).is_none() {
-                ctx.db.cold().insert(Cold { cold_key: key, zone_id, type_reference, kinds, version: 1 });
+        pub fn seed_cold_row(ctx: &ReducerContext, macro_position: u16, type_reference: u16, layer_id: u8, kinds: Vec<u32>) -> Result<(), String> {
+            let key = $crate::pack_cold_row_reference(macro_position, type_reference, layer_id);
+            if ctx.db.cold().cold_row_reference().find(key).is_none() {
+                ctx.db.cold().insert(Cold {
+                    cold_row_reference: key, macro_position, type_reference, layer_id, kinds, version: 1,
+                });
             }
             Ok(())
         }
@@ -589,64 +602,70 @@ macro_rules! decl_tick_pipeline {
         /// **find-or-mint** a cold object into a hot entity keyed by its positional
         /// `entity_reference` `target` (the cold object's location). Idempotent: if a hot entity
         /// already exists at `target`, no-op. Else seed its resolved state from the (worker-
-        /// decoded) payload, promote, and append the `tombstone` (`x:4|y:4|layer:4|type_id:4`) to
-        /// the zone's `cold_removed` delta so the client omits it. The worker calls this in the
-        /// enqueue phase before `stand_up` when a target is positional (docs/issues/005).
+        /// decoded) payload, promote, and append the object's `tile_reference` to **its row's**
+        /// `cold_removed` delta so the client omits it.
+        ///
+        /// `cold_row_reference` is the row the worker **selected** — `(macro_position, type_id,
+        /// layer_id)` off the target's `cold_reference`, plus the row's `subtype_id` (the one field
+        /// a position doesn't carry, which is why the worker resolves the row and passes it here).
+        /// The tombstone is a bare `tile_reference`: macro/type/layer are already in the key.
         #[reducer]
         #[allow(clippy::too_many_arguments)]
-        pub fn mint_cold(ctx: &ReducerContext, target: u64, tombstone: u16, $( $pf: $pt, )*) -> Result<(), String> {
+        pub fn mint_cold(ctx: &ReducerContext, target: u64, cold_row_reference: u64, macro_position: u16, tombstone: u8, $( $pf: $pt, )*) -> Result<(), String> {
             if ctx.db.state().entity_key().find(target).is_some() {
                 return Ok(()); // already hot at this location — idempotent
             }
             let tic = master_tic(ctx);
             let row = ctx.db.state_log().insert(StateLog { id: 0, entity_key: target, tic, dirty: 0, $( $pf, )* });
             promote(ctx, &row);
-            let zone = $crate::entity_ref_zone_id(target);
-            match ctx.db.cold_removed().zone_key().find(zone) {
+            match ctx.db.cold_removed().cold_row_reference().find(cold_row_reference) {
                 Some(r) => {
                     let mut removed = r.removed.clone();
                     if !removed.contains(&tombstone) { removed.push(tombstone); }
                     let version = r.version.saturating_add(1);
-                    ctx.db.cold_removed().zone_key().delete(zone);
-                    ctx.db.cold_removed().insert(ColdRemoved { zone_key: zone, removed, version });
+                    ctx.db.cold_removed().cold_row_reference().delete(cold_row_reference);
+                    ctx.db.cold_removed().insert(ColdRemoved { cold_row_reference, macro_position, removed, version });
                 }
                 None => {
-                    ctx.db.cold_removed().insert(ColdRemoved { zone_key: zone, removed: vec![tombstone], version: 1 });
+                    ctx.db.cold_removed().insert(ColdRemoved { cold_row_reference, macro_position, removed: vec![tombstone], version: 1 });
                 }
             }
             Ok(())
         }
 
         /// **PACK** — settle an *idle* hot entity back into `cold` (the reverse of find-or-mint).
-        /// Skips a busy object (any holder on its `state_log` rows). Appends the caller-computed
-        /// `object_kind_reference` to the `(zone, type_reference)` cold row, drops the entity's
-        /// `tombstone` from `cold_removed` (it's cold again), and deletes the hot `state`/
-        /// `state_log`. The worker composes `object_kind_reference` from the entity's resolved
-        /// state (the module is payload-generic, same reasoning as issue 005).
+        /// Skips a busy object (any holder on its `state_log` rows), atomically with the write.
+        /// Appends the worker-composed `kind_pos_reference` to **its** cold row
+        /// (`cold_row_reference`), drops the object's `tile_reference` tombstone from that row's
+        /// `cold_removed` (it's cold again), and deletes the hot `state`/`state_log`. The worker
+        /// composes the entry + resolves the row (the module is payload-generic — issue 005).
         #[reducer]
-        pub fn pack_settle(ctx: &ReducerContext, entity_key: u64, zone_id: u32, type_reference: u32, object_kind_reference: u32, tombstone: u16) -> Result<(), String> {
+        #[allow(clippy::too_many_arguments)]
+        pub fn pack_settle(ctx: &ReducerContext, entity_key: u64, cold_row_reference: u64, macro_position: u16, type_reference: u16, layer_id: u8, kind_pos_reference: u32, tombstone: u8) -> Result<(), String> {
             // Only settle an object at rest — one with no pending read/write holds.
             let busy = ctx.db.state_log().entity_key().filter(entity_key)
                 .any(|r| ctx.db.holder().state_log_id().filter(r.id).count() > 0);
             if busy { return Ok(()); }
-            let key = cold_key(zone_id, type_reference);
-            match ctx.db.cold().cold_key().find(key) {
+            match ctx.db.cold().cold_row_reference().find(cold_row_reference) {
                 Some(c) => {
                     let mut kinds = c.kinds.clone();
-                    if !kinds.contains(&object_kind_reference) { kinds.push(object_kind_reference); }
+                    if !kinds.contains(&kind_pos_reference) { kinds.push(kind_pos_reference); }
                     let version = c.version.saturating_add(1);
-                    ctx.db.cold().cold_key().delete(key);
-                    ctx.db.cold().insert(Cold { cold_key: key, zone_id, type_reference, kinds, version });
+                    ctx.db.cold().cold_row_reference().delete(cold_row_reference);
+                    ctx.db.cold().insert(Cold { cold_row_reference, macro_position, type_reference, layer_id, kinds, version });
                 }
                 None => {
-                    ctx.db.cold().insert(Cold { cold_key: key, zone_id, type_reference, kinds: vec![object_kind_reference], version: 1 });
+                    ctx.db.cold().insert(Cold {
+                        cold_row_reference, macro_position, type_reference, layer_id,
+                        kinds: vec![kind_pos_reference], version: 1,
+                    });
                 }
             }
-            if let Some(r) = ctx.db.cold_removed().zone_key().find(zone_id) {
-                let removed: Vec<u16> = r.removed.iter().copied().filter(|&t| t != tombstone).collect();
+            if let Some(r) = ctx.db.cold_removed().cold_row_reference().find(cold_row_reference) {
+                let removed: Vec<u8> = r.removed.iter().copied().filter(|&t| t != tombstone).collect();
                 let version = r.version.saturating_add(1);
-                ctx.db.cold_removed().zone_key().delete(zone_id);
-                ctx.db.cold_removed().insert(ColdRemoved { zone_key: zone_id, removed, version });
+                ctx.db.cold_removed().cold_row_reference().delete(cold_row_reference);
+                ctx.db.cold_removed().insert(ColdRemoved { cold_row_reference, macro_position, removed, version });
             }
             ctx.db.state().entity_key().delete(entity_key);
             let ids: Vec<u64> = ctx.db.state_log().entity_key().filter(entity_key).map(|r| r.id).collect();

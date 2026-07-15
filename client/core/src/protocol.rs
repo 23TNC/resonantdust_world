@@ -130,7 +130,8 @@ pub enum RowData {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ColdObjectsRow {
     pub zone_id: u32,
-    pub type_reference: u32,
+    pub type_reference: u16,
+    pub layer_id: u8,
     pub kinds: Vec<u32>,
 }
 

@@ -54,9 +54,10 @@ pay for the tag only when we need it, never per operand.
 
 ## Ties into
 
-Settling this closes the **taxonomy/naming** piece and the identity/keying divergences: the
-`hot_reference` re-key (**#5**, via the `entity_reference` layout) and the geographic
-`server_reference` (**#10**) are **done + browser-verified** (2026-07-14); `region_zone` (**#4** —
-via `macro_position_reference`) is **not** done — the cold row still omits it *and* `layer_id`
-(divergence #11, [`work/…/todo.md`](../../../../work/spacetime-rewrite/todo.md)).
-Blockers [B-1](../../../../work/spacetime-rewrite/blockers.md) + B-2 are both resolved.
+Settling this closes the **taxonomy/naming** piece and the identity/keying divergences — all
+**done + browser-verified** (2026-07-14): the `hot_reference` re-key (**#5**, via the
+`entity_reference` layout), the geographic `server_reference` (**#10**), and the cold row's
+`macro_position_reference` + `layer_id` header (**#4** / **#11** — see
+[`work/…/deviations.md`](../../../../work/spacetime-rewrite/deviations.md) D-3, the deviation that
+produced it). Blockers [B-1](../../../../work/spacetime-rewrite/blockers.md) + B-2 are both
+resolved.

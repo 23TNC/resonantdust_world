@@ -13,8 +13,9 @@ use spacetimedb_sdk::__codegen::{
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub struct ColdRemoved {
-    pub zone_key: u32,
-    pub removed: Vec::<u16>,
+    pub cold_row_reference: u64,
+    pub macro_position: u16,
+    pub removed: Vec::<u8>,
     pub version: u32,
 }
 
@@ -28,8 +29,9 @@ impl __sdk::InModule for ColdRemoved {
 ///
 /// Provides typed access to columns for query building.
 pub struct ColdRemovedCols {
-    pub zone_key: __sdk::__query_builder::Col<ColdRemoved, u32>,
-    pub removed: __sdk::__query_builder::Col<ColdRemoved, Vec::<u16>>,
+    pub cold_row_reference: __sdk::__query_builder::Col<ColdRemoved, u64>,
+    pub macro_position: __sdk::__query_builder::Col<ColdRemoved, u16>,
+    pub removed: __sdk::__query_builder::Col<ColdRemoved, Vec::<u8>>,
     pub version: __sdk::__query_builder::Col<ColdRemoved, u32>,
 }
 
@@ -37,7 +39,8 @@ impl __sdk::__query_builder::HasCols for ColdRemoved {
     type Cols = ColdRemovedCols;
     fn cols(table_name: &'static str) -> Self::Cols {
         ColdRemovedCols {
-            zone_key: __sdk::__query_builder::Col::new(table_name, "zone_key"),
+            cold_row_reference: __sdk::__query_builder::Col::new(table_name, "cold_row_reference"),
+            macro_position: __sdk::__query_builder::Col::new(table_name, "macro_position"),
             removed: __sdk::__query_builder::Col::new(table_name, "removed"),
             version: __sdk::__query_builder::Col::new(table_name, "version"),
 
@@ -49,14 +52,16 @@ impl __sdk::__query_builder::HasCols for ColdRemoved {
 ///
 /// Provides typed access to indexed columns for query building.
 pub struct ColdRemovedIxCols {
-    pub zone_key: __sdk::__query_builder::IxCol<ColdRemoved, u32>,
+    pub cold_row_reference: __sdk::__query_builder::IxCol<ColdRemoved, u64>,
+    pub macro_position: __sdk::__query_builder::IxCol<ColdRemoved, u16>,
 }
 
 impl __sdk::__query_builder::HasIxCols for ColdRemoved {
     type IxCols = ColdRemovedIxCols;
     fn ix_cols(table_name: &'static str) -> Self::IxCols {
         ColdRemovedIxCols {
-            zone_key: __sdk::__query_builder::IxCol::new(table_name, "zone_key"),
+            cold_row_reference: __sdk::__query_builder::IxCol::new(table_name, "cold_row_reference"),
+            macro_position: __sdk::__query_builder::IxCol::new(table_name, "macro_position"),
 
         }
     }

@@ -13,16 +13,18 @@ use spacetimedb_sdk::__codegen::{
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub(super) struct SeedColdRowArgs {
-    pub zone_id: u32,
-    pub type_reference: u32,
+    pub macro_position: u16,
+    pub type_reference: u16,
+    pub layer_id: u8,
     pub kinds: Vec::<u32>,
 }
 
 impl From<SeedColdRowArgs> for super::Reducer {
     fn from(args: SeedColdRowArgs) -> Self {
         Self::SeedColdRow {
-            zone_id: args.zone_id,
+            macro_position: args.macro_position,
             type_reference: args.type_reference,
+            layer_id: args.layer_id,
             kinds: args.kinds,
 }
 }
@@ -43,11 +45,12 @@ pub trait seed_cold_row {
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`seed_cold_row:seed_cold_row_then`] to run a callback after the reducer completes.
-    fn seed_cold_row(&self, zone_id: u32,
-type_reference: u32,
+    fn seed_cold_row(&self, macro_position: u16,
+type_reference: u16,
+layer_id: u8,
 kinds: Vec::<u32>,
 ) -> __sdk::Result<()> {
-        self.seed_cold_row_then(zone_id, type_reference, kinds,  |_, _| {})
+        self.seed_cold_row_then(macro_position, type_reference, layer_id, kinds,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `seed_cold_row` to run as soon as possible,
@@ -58,8 +61,9 @@ kinds: Vec::<u32>,
     ///  and its status can be observed with the `callback`.
     fn seed_cold_row_then(
         &self,
-        zone_id: u32,
-type_reference: u32,
+        macro_position: u16,
+type_reference: u16,
+layer_id: u8,
 kinds: Vec::<u32>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
@@ -71,15 +75,16 @@ kinds: Vec::<u32>,
 impl seed_cold_row for super::RemoteReducers {
     fn seed_cold_row_then(
         &self,
-        zone_id: u32,
-type_reference: u32,
+        macro_position: u16,
+type_reference: u16,
+layer_id: u8,
 kinds: Vec::<u32>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(SeedColdRowArgs { zone_id, type_reference, kinds,  }, callback)
+        self.imp.invoke_reducer_with_callback(SeedColdRowArgs { macro_position, type_reference, layer_id, kinds,  }, callback)
     }
 }
 

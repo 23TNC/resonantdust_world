@@ -198,8 +198,11 @@ fn enqueue_pack_sweep(conn: &DbConnection) {
 /// holder) atomically with its write, so an object that caught new activity simply stays hot.
 /// Returns how many settled.
 fn pack_zone(conn: &DbConnection, zone_id: u32) -> usize {
-    use resonantdust_codec::object::type_ref_type_id;
-    use resonantdust_codec::refs::{entity_ref_location, entity_ref_zone_id};
+    use resonantdust_codec::object::{
+        cold_ref_layer_reference, cold_ref_macro_position, cold_ref_tile, layer_ref_layer_id,
+        pack_cold_row_reference,
+    };
+    use resonantdust_codec::refs::{entity_ref_cold_reference, entity_ref_zone_id};
     let now = master_tic(conn);
     let idle: Vec<_> = conn
         .db()
@@ -209,17 +212,23 @@ fn pack_zone(conn: &DbConnection, zone_id: u32) -> usize {
         .collect();
     let mut settled = 0;
     for s in idle {
-        // Provenance stashed at mint: data_0 = type_reference:32 | cold_entry:32.
-        let type_reference = (s.data_0 >> 32) as u32;
-        let object_kind_reference = s.data_0 as u32; // the original cold entry, restored verbatim
-        let loc = entity_ref_location(s.entity_key);
-        let (x, y) = (loc & 0x0F, loc >> 4);
-        let type_id = type_ref_type_id(type_reference);
-        let tombstone = ((x as u16) << 12) | ((y as u16) << 8) | (type_id as u16 & 0x0F);
-        match conn.reducers().pack_settle(s.entity_key, zone_id, type_reference, object_kind_reference, tombstone) {
+        // Provenance stashed at mint: data_0 = type_reference:32 | kind_pos_reference:32. The
+        // row is that type_reference + the macro/layer off the object's own cold_reference —
+        // i.e. exactly the header composite it came from.
+        let type_reference = (s.data_0 >> 32) as u16;
+        let kind_pos_reference = s.data_0 as u32; // the original entry, restored verbatim
+        let cold_reference = entity_ref_cold_reference(s.entity_key);
+        let macro_position = cold_ref_macro_position(cold_reference);
+        let layer_id = layer_ref_layer_id(cold_ref_layer_reference(cold_reference));
+        let cold_row_reference = pack_cold_row_reference(macro_position, type_reference, layer_id);
+        let tombstone = cold_ref_tile(cold_reference); // a bare tile_reference
+        match conn.reducers().pack_settle(
+            s.entity_key, cold_row_reference, macro_position, type_reference, layer_id,
+            kind_pos_reference, tombstone,
+        ) {
             Ok(()) => {
                 settled += 1;
-                tracing::info!(entity = s.entity_key, zone = zone_id, "hot → cold (PACK settle)");
+                tracing::info!(entity = s.entity_key, zone = zone_id, layer_id, "hot → cold (PACK settle)");
             }
             Err(err) => tracing::warn!(%err, entity = s.entity_key, "pack_settle failed"),
         }
@@ -513,8 +522,14 @@ fn execute(shards: &Shards, my_shard: u16, worker_id: u16, ev: &bindings::shard:
 /// call `mint_cold` to seed it (keyed by the positional ref) + tombstone the cold slot. The
 /// worker does the decode because the module is payload-generic (docs/issues/005).
 fn find_or_mint(conn: &DbConnection, target: u64) {
-    use resonantdust_codec::object::{kind_ref_kind_id, kind_ref_x, kind_ref_y, type_ref_type_id};
-    use resonantdust_codec::refs::{entity_ref_is_positional, entity_ref_location, entity_ref_zone_id};
+    use resonantdust_codec::object::{
+        cold_ref_layer_reference, cold_ref_macro_position, cold_ref_tile, cold_row_selects,
+        kind_pos_ref_kind_id, kind_pos_ref_tile, layer_ref_layer_id, pack_cold_row_reference,
+        type_ref_type_id,
+    };
+    use resonantdust_codec::refs::{
+        entity_ref_cold_reference, entity_ref_is_positional, entity_ref_location, entity_ref_zone_id,
+    };
 
     if !entity_ref_is_positional(target) {
         return; // a normal hot target — nothing to promote
@@ -522,31 +537,51 @@ fn find_or_mint(conn: &DbConnection, target: u64) {
     if conn.db().state().iter().any(|s| s.entity_key == target) {
         return; // already hot at this location — idempotent
     }
+    // Everything needed to *select the row* comes off the target's own `cold_reference`:
+    // macro_position + (type_id, layer_id) from its layer_reference + the tile to match.
+    // Only `subtype_id` isn't there — and it needn't be: the uniqueness rule is one object per
+    // `(type, layer, tile)` **subtype-agnostic**, so across the zone's several subtype (biome)
+    // rows at this (type, layer) exactly one holds this tile.
+    let cold_reference = entity_ref_cold_reference(target);
+    let macro_position = cold_ref_macro_position(cold_reference);
+    let layer_id = layer_ref_layer_id(cold_ref_layer_reference(cold_reference));
+    let tile = cold_ref_tile(cold_reference);
+
+    let found = conn
+        .db()
+        .cold()
+        .iter()
+        .filter(|c| cold_row_selects(cold_reference, c.macro_position, c.type_reference, c.layer_id))
+        .find_map(|c| {
+            c.kinds
+                .iter()
+                .find(|&&k| kind_pos_ref_tile(k) == tile)
+                .map(|&entry| (entry, c.type_reference, c.cold_row_reference))
+        });
+    let Some((entry, type_reference, cold_row_reference)) = found else {
+        return; // nothing cold at this (macro, type, layer, tile)
+    };
+    debug_assert_eq!(
+        cold_row_reference,
+        pack_cold_row_reference(macro_position, type_reference, layer_id),
+        "the row we picked must BE the composite of its header"
+    );
+    let kind_id = kind_pos_ref_kind_id(entry);
     let zone = entity_ref_zone_id(target);
     let loc = entity_ref_location(target);
-    let (x, y) = (loc & 0x0F, loc >> 4);
-    // Find the cold object sitting at this tile; keep its full cold entry + its row's
-    // type_reference so a later PACK can restore it exactly (see `pack_idle`).
-    let found = conn.db().cold().iter().filter(|c| c.zone_id == zone).find_map(|c| {
-        c.kinds
-            .iter()
-            .find(|&&k| kind_ref_x(k) == x && kind_ref_y(k) == y)
-            .map(|&entry| (entry, c.type_reference))
-    });
-    let Some((entry, type_reference)) = found else {
-        return; // nothing cold here
-    };
-    let kind_id = kind_ref_kind_id(entry);
-    let type_id = type_ref_type_id(type_reference);
-    // Cold provenance stashed in `data0` = `type_reference:32 | cold_entry:32`, so PACK can
-    // recompose the exact cold row + entry (subtype/variant/data survive the hot round-trip).
+    // Cold provenance stashed in `data0` = `type_reference:32 | kind_pos_reference:32`, so PACK can
+    // restore the exact row + entry (subtype/variant/data survive the hot round-trip).
     let provenance = ((type_reference as u64) << 32) | (entry as u64);
-    // tombstone: x:4 | y:4 | layer:4(=0) | type_id:4
-    let tombstone = ((x as u16) << 12) | ((y as u16) << 8) | (type_id as u16 & 0x0F);
-    if let Err(err) = conn.reducers().mint_cold(target, tombstone, kind_id, zone, loc, 0, 0, provenance, 0) {
+    // The tombstone is a bare tile_reference — macro/type/layer are already in the row key.
+    if let Err(err) = conn.reducers().mint_cold(
+        target, cold_row_reference, macro_position, tile, kind_id, zone, loc, 0, 0, provenance, 0,
+    ) {
         tracing::warn!(%err, target, "mint_cold failed");
     } else {
-        tracing::info!(target, zone, loc, kind = kind_id, "cold → hot (find-or-mint)");
+        // `type_id` off the row we PICKED (not the target's request) — the two agreeing is the
+        // whole point of D-3, so log the answer, not the question.
+        let type_id = type_ref_type_id(type_reference);
+        tracing::info!(target, zone, loc, kind = kind_id, type_id, layer_id, "cold → hot (find-or-mint)");
     }
 }
 

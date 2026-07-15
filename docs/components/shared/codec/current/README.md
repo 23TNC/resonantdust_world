@@ -26,10 +26,15 @@ The reference layouts + object model are implemented in `shared/codec/src` (`eve
   reserved:8`; the old-game `surface` z-axis is retired. Browser-verified.
 - **Cold `entity_reference` ✅ geographic (G2)** + **PACK trigger ✅ (G3)** — both verified.
 
-**No open decisions.** One real bug open: the **`cold` row lost two of its three design header
-fields** in the re-cut — it keys on `(zone_id:u32, type_reference)` instead of the composite
-`macro_position_reference:16 | type_reference:16 | layer_id:4`. `layer` was correctly moved out of
-`type_reference` but never re-homed in the row, so the key can't select by layer and `find_or_mint`
-ignores the target's `layer_reference` outright (divergence **#11** —
-[work/…/todo.md](../../../../work/spacetime-rewrite/todo.md)). Needs `pack_macro_position` +
-`pack_cold_row_reference` in the codec.
+- **Conformance re-cut ✅ (2026-07-14)** — closes deviations **D-1…D-5** + divergence **#11**.
+  `object.rs` now tracks the design verbatim: `type_reference:u16` (the *high half* of
+  `definition_reference:u32`, which composes from its two u16 halves); `pack_macro_position` /
+  `pack_micro_position`; **`position_reference:u32`** = `macro:16 | micro:16` as its own type, with
+  `cold_reference` sharing the layout as a distinct *type* (a position is *a location*; a
+  `cold_reference` denotes *the settled object there*); `pack_tile_reference` for the `u8`
+  `x:4|y:4` primitive; `pack_kind_pos_reference` + `kind_pos_ref_*` for the row's entries; and
+  `pack_cold_row_reference` (`reserved:28 | macro_position:16 | type_reference:16 | layer_id:4`)
+  + `cold_row_of` / `cold_row_selects` for row identity and selection.
+
+**No open decisions, no open bugs.** 28 unit tests pin every roundtrip + field-disjointness,
+including the D-3 property (a target mints the object it names, not the ground under it).

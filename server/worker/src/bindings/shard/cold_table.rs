@@ -96,30 +96,30 @@ impl<'ctx> __sdk::TableWithPrimaryKey for ColdTableHandle<'ctx> {
     }
 }
 
-        /// Access to the `cold_key` unique index on the table `cold`,
+        /// Access to the `cold_row_reference` unique index on the table `cold`,
         /// which allows point queries on the field of the same name
-        /// via the [`ColdColdKeyUnique::find`] method.
+        /// via the [`ColdColdRowReferenceUnique::find`] method.
         ///
         /// Users are encouraged not to explicitly reference this type,
         /// but to directly chain method calls,
-        /// like `ctx.db.cold().cold_key().find(...)`.
-        pub struct ColdColdKeyUnique<'ctx> {
+        /// like `ctx.db.cold().cold_row_reference().find(...)`.
+        pub struct ColdColdRowReferenceUnique<'ctx> {
             imp: __sdk::UniqueConstraintHandle<Cold, u64>,
             phantom: std::marker::PhantomData<&'ctx super::RemoteTables>,
         }
 
         impl<'ctx> ColdTableHandle<'ctx> {
-            /// Get a handle on the `cold_key` unique index on the table `cold`.
-            pub fn cold_key(&self) -> ColdColdKeyUnique<'ctx> {
-                ColdColdKeyUnique {
-                    imp: self.imp.get_unique_constraint::<u64>("cold_key"),
+            /// Get a handle on the `cold_row_reference` unique index on the table `cold`.
+            pub fn cold_row_reference(&self) -> ColdColdRowReferenceUnique<'ctx> {
+                ColdColdRowReferenceUnique {
+                    imp: self.imp.get_unique_constraint::<u64>("cold_row_reference"),
                     phantom: std::marker::PhantomData,
                 }
             }
         }
 
-        impl<'ctx> ColdColdKeyUnique<'ctx> {
-            /// Find the subscribed row whose `cold_key` column value is equal to `col_val`,
+        impl<'ctx> ColdColdRowReferenceUnique<'ctx> {
+            /// Find the subscribed row whose `cold_row_reference` column value is equal to `col_val`,
             /// if such a row is present in the client cache.
             pub fn find(&self, col_val: &u64) -> Option<Cold> {
                 self.imp.find(col_val)
@@ -130,7 +130,7 @@ impl<'ctx> __sdk::TableWithPrimaryKey for ColdTableHandle<'ctx> {
 pub(super) fn register_table(client_cache: &mut __sdk::ClientCache<super::RemoteModule>) {
 
     let _table = client_cache.get_or_make_table::<Cold>("cold");
-    _table.add_unique_constraint::<u64>("cold_key", |row| &row.cold_key);
+    _table.add_unique_constraint::<u64>("cold_row_reference", |row| &row.cold_row_reference);
 }
 
 #[doc(hidden)]

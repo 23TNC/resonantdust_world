@@ -175,7 +175,7 @@ pub enum Event {
     /// decodes each `object_kind_reference` (`shared/codec` `object`) to position + kind
     /// + variant and expands it via the DSL. Supersedes [`Event::ZoneTiles`] /
     /// [`Event::ZoneThings`]. Fired per cold row for the zone (seed + any later rewrite).
-    ColdObjects { zone_id: u32, type_reference: u32, kinds: Vec<u32> },
+    ColdObjects { zone_id: u32, type_reference: u16, layer_id: u8, kinds: Vec<u32> },
     /// A zone's subscription closed (the anchor moved it out of range, or it was
     /// evicted). The host drops that zone's entities.
     ZoneClosed { zone_id: u32 },

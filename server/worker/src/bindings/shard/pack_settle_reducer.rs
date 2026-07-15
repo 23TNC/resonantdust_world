@@ -14,19 +14,23 @@ use spacetimedb_sdk::__codegen::{
 #[sats(crate = __lib)]
 pub(super) struct PackSettleArgs {
     pub entity_key: u64,
-    pub zone_id: u32,
-    pub type_reference: u32,
-    pub object_kind_reference: u32,
-    pub tombstone: u16,
+    pub cold_row_reference: u64,
+    pub macro_position: u16,
+    pub type_reference: u16,
+    pub layer_id: u8,
+    pub kind_pos_reference: u32,
+    pub tombstone: u8,
 }
 
 impl From<PackSettleArgs> for super::Reducer {
     fn from(args: PackSettleArgs) -> Self {
         Self::PackSettle {
             entity_key: args.entity_key,
-            zone_id: args.zone_id,
+            cold_row_reference: args.cold_row_reference,
+            macro_position: args.macro_position,
             type_reference: args.type_reference,
-            object_kind_reference: args.object_kind_reference,
+            layer_id: args.layer_id,
+            kind_pos_reference: args.kind_pos_reference,
             tombstone: args.tombstone,
 }
 }
@@ -48,12 +52,14 @@ pub trait pack_settle {
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`pack_settle:pack_settle_then`] to run a callback after the reducer completes.
     fn pack_settle(&self, entity_key: u64,
-zone_id: u32,
-type_reference: u32,
-object_kind_reference: u32,
-tombstone: u16,
+cold_row_reference: u64,
+macro_position: u16,
+type_reference: u16,
+layer_id: u8,
+kind_pos_reference: u32,
+tombstone: u8,
 ) -> __sdk::Result<()> {
-        self.pack_settle_then(entity_key, zone_id, type_reference, object_kind_reference, tombstone,  |_, _| {})
+        self.pack_settle_then(entity_key, cold_row_reference, macro_position, type_reference, layer_id, kind_pos_reference, tombstone,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `pack_settle` to run as soon as possible,
@@ -65,10 +71,12 @@ tombstone: u16,
     fn pack_settle_then(
         &self,
         entity_key: u64,
-zone_id: u32,
-type_reference: u32,
-object_kind_reference: u32,
-tombstone: u16,
+cold_row_reference: u64,
+macro_position: u16,
+type_reference: u16,
+layer_id: u8,
+kind_pos_reference: u32,
+tombstone: u8,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -80,16 +88,18 @@ impl pack_settle for super::RemoteReducers {
     fn pack_settle_then(
         &self,
         entity_key: u64,
-zone_id: u32,
-type_reference: u32,
-object_kind_reference: u32,
-tombstone: u16,
+cold_row_reference: u64,
+macro_position: u16,
+type_reference: u16,
+layer_id: u8,
+kind_pos_reference: u32,
+tombstone: u8,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(PackSettleArgs { entity_key, zone_id, type_reference, object_kind_reference, tombstone,  }, callback)
+        self.imp.invoke_reducer_with_callback(PackSettleArgs { entity_key, cold_row_reference, macro_position, type_reference, layer_id, kind_pos_reference, tombstone,  }, callback)
     }
 }
 

@@ -127,10 +127,11 @@ fn log_event(event: &Event) {
                 obj_type, object_id, kind, tic, location, rotation, offset, removed, "state object"
             )
         }
-        Event::ColdObjects { zone_id, type_reference, kinds } => {
+        Event::ColdObjects { zone_id, type_reference, layer_id, kinds } => {
             info!(
                 zone_id = format!("{zone_id:#010x}"),
-                type_reference = format!("{type_reference:#010x}"),
+                type_reference = format!("{type_reference:#06x}"),
+                layer_id,
                 kinds = kinds.len(),
                 "cold objects"
             )

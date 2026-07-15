@@ -47,19 +47,22 @@ See also [`divergences.md`](divergences.md) — the design-vs-code gap list.
   keeps the row); `resolve_foreign` releases it with the write. Holds key on `(source_shard,
   event_reference)`. Verified on a real 2-shard rig.
 
-## 🔴 Open — the `cold` row re-cut (divergence #11 → [`work/…/todo.md`](../../../../../../work/spacetime-rewrite/todo.md))
+- **The `cold` row carries its full design header** ✅ (2026-07-14, divergence #11 / deviation D-3) —
+  PK `cold_row_reference:u64` = `reserved:28 | macro_position:16 | type_reference:16 | layer_id:4`,
+  the composite of exactly the three header fields the design gives a row, **not** an opaque
+  surrogate. Columns: `macro_position:u16` (btree — the subscription key), `type_reference:u16`,
+  `layer_id:u8`, `kinds:Vec<u32>` (`kind_pos_reference` entries), `version:u32`. `cold_removed` is
+  **1:1** on the same key, its tombstones bare `tile_reference:u8`.
 
-The cold row **omits two of its three design header fields**: it keys on
-`(zone_id:u32, type_reference)` instead of the composite
-`macro_position_reference:16 | type_reference:16 | layer_id:4`. The re-cut correctly moved `layer`
-out of `type_reference` but never re-homed it in the row, so:
-- 🔴 **live:** `find_or_mint` ignores the target's `layer_reference` and takes the first row with any
-  entry at the tile — and the dense ground layer means every occupied cell matches ≥2 rows, so which
-  object gets minted is iteration-order luck;
-- 🟡 **latent:** rows differing only by `layer` collide (and `seed_cold_row` is insert-if-absent, so
-  the loser is silently dropped) — masked only because worldgen emits layer 0 exclusively.
+  Row selection is one rule, stated once in the codec (`cold_row_selects()`) and shared by
+  `find_or_mint` and the edge's interact scan: filter `(macro_position, type_id, layer_id)` — all
+  three read off the target's own `cold_reference` — then match `tile_reference` within the row.
+  `subtype_id` is deliberately **not** needed to *find* a row: uniqueness is one object per
+  `(type, layer, tile)`, **subtype-agnostic**, so across a zone's several subtype (biome) rows at a
+  given `(type, layer)` exactly one holds the tile.
 
-`cold_removed` re-keys 1:1 with it (tombstones shrink u16 → a bare `tile_reference:u8`).
+  Live-verified: two targets at the same tile differing only in `layer_reference` each mint exactly
+  the object they name (tree vs the ground under it) — previously iteration-order luck.
 
 ## Reality that isn't in the design (→ cleanup)
 

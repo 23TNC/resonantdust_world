@@ -15,9 +15,9 @@ the record of what we learned).
 
 ---
 
-## Open
+## Resolved
 
-### D-1 · `type_reference` built as `u32`, plan says `u16`
+### D-1 · ✅ RESOLVED — `type_reference` is `u16`
 **2026-07-14 · backfilled · found by user.**
 - **Plan** ([reference-model.md](../../components/shared/codec/design/reference-model.md)):
   `type_reference : u16 = type_id:4 | subtype_id:12` — the *high half* of
@@ -30,9 +30,9 @@ the record of what we learned).
   (`macro_position:16 | type_reference:16 | layer_id:4`) — "it allows it to be placed where u32
   cannot". Self-indicting detail: I built `kind_reference` as `u16` (correct) and `type_reference`
   as `u32` — *the two halves of the same u32*, inconsistent with each other.
-- **Fix**: narrow to `u16` through codec → pipeline → wire → wasm → client. → [todo.md](todo.md).
+- **Fix**: narrow to `u16` through codec → pipeline → wire → wasm → client. → **Resolution** below.
 
-### D-2 · `macro_position_reference` / `micro_position_reference` renamed
+### D-2 · ✅ RESOLVED — `macro_position` / `micro_position` restored
 **2026-07-14 · backfilled · found by user.**
 - **Plan**: `position_reference : u32 = macro_position_reference:16 | micro_position_reference:16`.
 - **Code/docs**: renamed to `region_zone_reference` / `tile_layer_reference`, and I edited
@@ -41,10 +41,10 @@ the record of what we learned).
   existed in the repo; the real situation was a **pre-existing inconsistency** — the v1 code +
   `spatial-references.md` said `region_zone`, the newer `reference-model.md` said `macro_position`.
   I resolved it toward the **legacy code** and rewrote the design doc to match. Backwards.
-- **Fix**: docs reverted (7023e40). Code rename `pack_region_zone` → `pack_macro_position` still
-  pending → [todo.md](todo.md).
+- **Fix**: docs reverted (7023e40); code renamed `pack_region_zone` → `pack_macro_position`.
+  → **Resolution** below.
 
-### D-3 · Cold row dropped `macro_position_reference` **and** `layer_id` — **LIVE BUG**
+### D-3 · ✅ RESOLVED — cold row keys on its header composite (the LIVE BUG is fixed)
 **2026-07-14 · backfilled · found by user.**
 - **Plan** ([reference-model.md](../../components/shared/codec/design/reference-model.md) §Cold row,
   [tables.md](../../components/server/spacetime/modules/shard/design/tables.md)): row header =
@@ -63,9 +63,9 @@ the record of what we learned).
   under it). 🟡 **latent** — rows differing only by `layer` collide, and `seed_cold_row` is
   insert-if-absent, so the loser is silently dropped (masked: worldgen emits layer 0 only).
 - **This is the proof of why this file exists**: a "less churn" deviation became a real bug.
-- **Fix**: divergence **#11** → [todo.md](todo.md).
+- **Fix**: divergence **#11** → **Resolution** below.
 
-### D-4 · `position_reference : u32` never built; its name reused for the v1 `u8`
+### D-4 · ✅ RESOLVED — `position_reference:u32` built; the u8 is `tile_reference`
 **2026-07-14 · backfilled · found during self-audit.**
 - **Plan**: `position_reference : u32` = `region:8 | zone:8 | tile:8 | layer_reference:8`, and
   explicitly *"`position_reference` and `cold_reference` are two reference **types** that share this
@@ -76,9 +76,9 @@ the record of what we learned).
   list calls `tile_reference`), so the plan's `position_reference` name is taken by a different
   thing at a different width. `micro_position_reference` doesn't exist either.
 - **Why**: no reason — I carried the v1 name forward without checking it against the plan.
-- **Fix**: → [todo.md](todo.md).
+- **Fix**: → **Resolution** below.
 
-### D-5 · Cold entry named `cold_entry`, plan says `kind_pos_reference`
+### D-5 · ✅ RESOLVED — `kind_pos_reference` + `kind_pos_ref_*`
 **2026-07-14 · backfilled · found during self-audit.**
 - **Plan**: the cold row's `Vec` holds `kind_pos_reference : u32 = kind_reference:16 |
   tile_reference:8 | data:8`.
@@ -86,10 +86,43 @@ the record of what we learned).
   — which read an **entry**, not a `kind_reference`, so the name actively misleads.
 - **Why**: kept the v1 reader names to avoid touching worker/edge/wasm call sites. Less churn.
 - **Layout is correct** — naming only.
-- **Fix**: → [todo.md](todo.md).
+- **Fix**: → **Resolution** below.
+
 
 ---
 
-## Resolved
+## Resolution (2026-07-14) — all five closed, plan-verbatim
 
-_(none yet)_
+Landed as one conformance re-cut + verified:
+
+- **D-1** `pack_type_reference -> u16`; accessors take `u16`; narrowed through the `cold` column, the
+  wire (`ColdObjectsRow`), the wasm `zoneColdPrims`/`objectTypeId` signatures and `client/core`.
+  `definition_reference` now **composes from its two u16 halves** (test:
+  `definition_reference_is_its_two_u16_halves`).
+- **D-2** `pack_macro_position` / `pack_micro_position` (+ accessors); `packed::zone_macro_position`.
+- **D-3** `cold` PK is `cold_row_reference:u64 = reserved:28 | macro_position:16 |
+  type_reference:16 | layer_id:4`, with `macro_position`/`type_reference`/`layer_id` columns;
+  `cold_removed` **1:1** on the same key with `Vec<u8>` `tile_reference` tombstones.
+  `find_or_mint` + the edge's interact scan now select `(macro_position, type_id, layer_id)` off the
+  target's `cold_reference` then match `tile_reference`.
+  **Regression-verified live:** two targets at the *same tile* (7,7) differing only in
+  `layer_reference` → the one naming `type_id=2` minted the **tree**, the one naming `type_id=1`
+  minted the **ground**. Previously iteration-order luck. (Both have `kind=1` — tree is thing-id 1,
+  grass is tile-def 1 — which is exactly why the old log read `kind=1` either way and the bug hid.)
+  Unit tests pin the property: rows differing only by layer are distinct keys; `cold_row_of` maps
+  the same tile at a different layer/type to a different row.
+- **D-4** `position_reference:u32` = `macro:16 | micro:16` as its own type, with `cold_reference`
+  sharing the layout as a distinct *type* (aliased packers, so a call site says which it means);
+  the u8 primitive is `pack_tile_reference`.
+- **D-5** `pack_kind_pos_reference` + `kind_pos_ref_*` readers.
+
+**Found while doing it** (logged as they appeared, per this file's purpose):
+- **D-6** the edge's cold **subscription SQL** still filtered `WHERE zone_id` after the column was
+  gone — the seed silently never fired (cold empty, no error surfaced). Fixed to
+  `WHERE macro_position = …`. Caught by *verifying*, not by compiling: SpacetimeDB's subscription
+  SQL is a **string**, so the compiler can't see it. ⚠️ **Lesson: schema changes need a live check,
+  not just a green build.**
+- **D-7** `docker compose -f shared/compose.yml run --rm check` does **not** compile the wasm's
+  `js`-gated code (default features), so `cargo check` passing says nothing about the browser
+  surface. `rd build shared` (which uses `--features js`) is the real gate. Three broken call sites
+  hid behind that.

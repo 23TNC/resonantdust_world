@@ -13,8 +13,9 @@ realm/region/zone/tile/layer); the geographic cold `entity_reference`; PACK as a
 op (divergence #2 closed); and the cross-shard foreign Phase-1 hold. No blockers open
 ([blockers.md](blockers.md) — B-1 + B-2 resolved).
 
-**One real bug is open, not started** — [todo.md](todo.md): the **`cold` row lost two of its three
-design header fields** in the re-cut (`macro_position_reference` + `layer_id`), so its key can't
-select a row by layer and `find_or_mint` ignores the target's `layer_reference` entirely
-(divergence **#11**). Live symptom: on a tile holding both ground and a thing, which one an Interact
-mints is iteration-order luck. Not started, so not listed here.
+**No open bugs.** The one that was — the **`cold` row losing two of its three design header
+fields** in the re-cut (`macro_position_reference` + `layer_id`), so its key couldn't select a row
+by layer and `find_or_mint` ignored the target's `layer_reference` entirely (divergence **#11** /
+deviation **D-3**; live symptom: on a tile holding both ground and a thing, which one an Interact
+minted was iteration-order luck) — was fixed by the conformance re-cut and **live-verified**
+([completed.md](completed.md)).

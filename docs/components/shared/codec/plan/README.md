@@ -20,9 +20,14 @@ _Last updated: 2026-07-14._
    cold_reference:32` (geographic); the interim world-global form removed. Verified via Interact.
 5. **PACK trigger ✅ DONE (2026-07-14, G3)** — worker settles idle `REF_COLD` objects back to cold
    (provenance in `data0`); verified round-trip.
-6. **⛔ OPEN — the `cold` row re-cut (divergence #11).** The row must carry the design header
-   (`macro_position_reference:16 | type_reference:16 | layer_id:4`) and key on its composite. The
-   re-cut moved `layer` out of `type_reference` (correct) but never re-homed it in the row, and kept
-   `zone_id:u32` instead of `macro_position` — so the key can no longer select a row by layer, and
-   `find_or_mint` ignores the target's `layer_reference` outright
-   ([work/…/todo.md](../../../../work/spacetime-rewrite/todo.md)).
+6. **Cold row re-cut ✅ DONE (2026-07-14, divergence #11 / deviation D-3)** — the row carries the
+   design header (`macro_position_reference:16 | type_reference:16 | layer_id:4`) and keys on its
+   composite `cold_row_reference:u64`. Selection is `cold_row_selects()`: filter
+   `(macro_position, type_id, layer_id)` off the target's `cold_reference`, then match
+   `tile_reference`. Live-verified — a target mints the object it names, not the ground under it.
+7. **Conformance re-cut ✅ DONE (2026-07-14)** — closes deviations **D-1…D-5**: `type_reference:u16`,
+   `macro_position`/`micro_position`, `position_reference:u32` as its own type, `tile_reference:u8`,
+   `kind_pos_reference` + `kind_pos_ref_*`. See
+   [work/…/deviations.md](../../../../work/spacetime-rewrite/deviations.md).
+
+**The plan is fully landed — no open items.**

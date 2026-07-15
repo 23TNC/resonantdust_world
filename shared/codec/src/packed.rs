@@ -43,7 +43,7 @@ pub fn valid_at_sequence(v: u64) -> u16 {
 // shard-routing key — a `zone_id` with its zone byte + reserved cleared, leaving `realm |
 // region`. The shard treats `zone_id` as opaque; composing/decomposing it is the gateway's /
 // client's concern, which is why these live in the shared codec. (The within-realm
-// `region:8 | zone:8` slice is the object model's `region_zone_reference` — the cold
+// `region:8 | zone:8` slice is the object model's `macro_position_reference` — the cold
 // subscription key; a shard is realm-scoped so cold rows omit the realm.)
 
 /// Mask turning a `zone_id` into its `region_id`: clears the `zone` byte + `reserved`,
@@ -117,9 +117,9 @@ pub fn zone_y(zone_id: u32) -> u8 {
     ((zone_id >> ZONE_ZONE_SHIFT) & NIBBLE) as u8
 }
 
-/// The `region_zone_reference : u16` (`region:8 | zone:8`) of a `zone_id` — the cold
+/// The `macro_position_reference : u16` (`region:8 | zone:8`) of a `zone_id` — the cold
 /// subscription key within the (realm-scoped) shard. Realm is dropped (implied by the shard).
-pub fn zone_region_zone(zone_id: u32) -> u16 {
+pub fn zone_macro_position(zone_id: u32) -> u16 {
     ((zone_id >> ZONE_ZONE_SHIFT) & 0xFFFF) as u16
 }
 
@@ -340,8 +340,8 @@ mod tests {
         assert_eq!(zone_region_y(z), 13);
         assert_eq!(zone_x(z), 13);
         assert_eq!(zone_y(z), 7);
-        // region_zone is the within-realm cold key (region:8 | zone:8).
-        assert_eq!(zone_region_zone(z), ((0xAD << 8) | 0xD7) as u16);
+        // macro_position is the within-realm cold key (region:8 | zone:8).
+        assert_eq!(zone_macro_position(z), ((0xAD << 8) | 0xD7) as u16);
         // region_of clears exactly the zone byte + reserved, leaving realm | region.
         let r = region_of(z);
         assert_eq!(zone_realm_x(r), 1);

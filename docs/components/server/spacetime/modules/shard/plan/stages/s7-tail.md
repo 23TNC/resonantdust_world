@@ -13,12 +13,13 @@ object-model shard-class decisions this depended on are settled (blockers B-1 + 
 - **#3 · Retire standalone cold modules.** Delete `cold_things` / `cold_tiles`
   ([`server/spacetime/server/modules/`](../../../../../../../../server/spacetime/server/modules)) once the
   in-macro `cold` table carries their data end-to-end (edge seeds it; client decodes it).
-- **#4 · Geographic cold key.** 🟡 **Geometry DONE** — the legacy flat `zone_id`
+- **#4 · Geographic cold key.** ✅ **DONE.** The legacy flat `zone_id`
   (`region_x:8|region_y:8|surface:8|…`) was **retired**; `zone_id` is now geographic
-  `realm:8|region:8|zone:8|reserved:8` and `cold` keys by it, correctly. Only the `region_zone:u16`
-  row still keys on `zone_id:u32` instead of the design header's `macro_position_reference:u16` +
-  `layer_id:u4` — **not** a key-width compaction but a missing header (see divergence **#11**). There
-  is no "legacy flat `zone_id`" left to reconcile against; the remaining work is the row re-cut.
+  `realm:8|region:8|zone:8|reserved:8`. The `cold` row then dropped `zone_id` entirely for the
+  design header — `macro_position_reference:u16` + `type_reference:u16` + `layer_id:u4`, keyed on
+  their composite `cold_row_reference:u64` (**not** a key-width compaction but a missing header —
+  divergence **#11**, closed 2026-07-14). The edge subscribes `WHERE macro_position = …` and
+  reconstructs the client-facing `zone_id` from its shard's realm + `macro_position` when relaying.
 - **#5 · Re-key hot identity + location index.** ✅ **DONE.** `state`/`state_log` keep a **`u64
   entity_key`** — it now holds the reference model's `entity_reference` (`reference_id:6 |
   server_reference:16 | object_reference:32`), so a hot object *is* `hot_reference:32`

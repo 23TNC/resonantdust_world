@@ -244,3 +244,16 @@ path is fully live-verified; only cold `interact` remains stubbed.
 **Problem:** positional-target and `DAMAGE` `OBJECT` words hand-encoded incorrectly; the CODE was
 right both times. **Choice:** generate all test inputs from the real `encode_*`/`pack_*` via a
 throwaway test, never by hand. **Why:** recurring foot-gun; the codec is the source of truth.
+
+### `dsl::loader::material_registry_and_packed_channels` is red at HEAD (2026-07-14)
+**Problem:** the workspace test suite has a **pre-existing failure** — `visual_for_def(2).unwrap()`
+panics on `None` ([loader.rs:802](../../../shared/dsl/src/loader.rs)); the test's stone def no longer
+resolves. Unrelated to the rewrite (`dsl` doesn't depend on `codec`; `shared/dsl` + `content` are
+untouched). Confirmed by running `-p resonantdust-dsl --lib` in a clean worktree at HEAD.
+**Impact:** 🟡 `cargo test --workspace` was never green, so "tests pass" couldn't gate anything —
+each run needs the failure recognised and stepped over by hand, which is how a *real* regression
+would slip by. See also **D-7**: `check` skips the wasm's `js`-gated code. Two of our three build
+gates don't gate.
+**Choice:** left alone — out of scope for the re-cut, and fixing content-loading blind would risk
+masking a real content bug. Own it as its own task: decide whether the test's fixture or the loader
+drifted, then get the suite green so it can gate again.

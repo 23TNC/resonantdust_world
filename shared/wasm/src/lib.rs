@@ -343,15 +343,15 @@ impl Content {
     /// `kindId` indexes that namespace's stems, `variant` the sprite. One boundary
     /// crossing per cold row. Unifies the legacy [`zoneTilePrims`]/[`zoneThingPrims`].
     #[wasm_bindgen(js_name = zoneColdPrims)]
-    pub fn zone_cold_prims(&self, zone_id: u32, type_reference: u32, kinds: Vec<u32>) -> Vec<f64> {
+    pub fn zone_cold_prims(&self, zone_id: u32, type_reference: u16, kinds: Vec<u32>) -> Vec<f64> {
         use resonantdust_codec::object;
         let (origin_x, origin_y) = zone_origin(zone_id);
         let is_tile = object::type_ref_type_id(type_reference) == object::TYPE_BIOME_TILE;
         let mut out = Vec::new();
         for &k in &kinds {
-            let kind_id = object::kind_ref_kind_id(k);
-            let tile_x = origin_x + object::kind_ref_x(k) as i64;
-            let tile_y = origin_y + object::kind_ref_y(k) as i64;
+            let kind_id = object::kind_pos_ref_kind_id(k);
+            let tile_x = origin_x + object::kind_pos_ref_x(k) as i64;
+            let tile_y = origin_y + object::kind_pos_ref_y(k) as i64;
             // biome-tile kinds live in the TILE namespace (def_id), biome-thing kinds in
             // the THING namespace (object_id).
             let visual =
@@ -363,17 +363,17 @@ impl Content {
             out.push(tint as f64);
             out.push(geo as f64);
             out.push(kind_id as f64);
-            out.push(object::kind_ref_data(k) as f64);
-            out.push(object::kind_ref_variant_id(k) as f64);
+            out.push(object::kind_pos_ref_data(k) as f64);
+            out.push(object::kind_pos_ref_variant_id(k) as f64);
         }
         out
     }
 
-    /// The `type_id` of a cold row's `object_type_reference` — the host reads it to route
-    /// a `coldObjects` row to its ground painter ([`Content::type_biome_tile`]) or thing
+    /// The `type_id` of a cold row's `type_reference` — the host reads it to route a
+    /// `coldObjects` row to its ground painter ([`Content::type_biome_tile`]) or thing
     /// painter ([`Content::type_biome_thing`]) and pick the matching stem table.
     #[wasm_bindgen(js_name = objectTypeId)]
-    pub fn object_type_id(&self, type_reference: u32) -> u8 {
+    pub fn object_type_id(&self, type_reference: u16) -> u8 {
         resonantdust_codec::object::type_ref_type_id(type_reference)
     }
 
@@ -609,13 +609,14 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("offset", &JsValue::from_f64(*offset as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
-        Event::ColdObjects { zone_id, type_reference, kinds } => {
+        Event::ColdObjects { zone_id, type_reference, layer_id, kinds } => {
             set("kind", &JsValue::from_str("coldObjects"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));
             set("typeReference", &JsValue::from_f64(*type_reference as f64));
-            // Each member is a u32 object_kind_reference; ship as a Uint32Array — the
-            // host hands it straight back to `zoneColdPrims`, which unpacks + expands it
-            // (position + kind + variant) in wasm.
+            set("layerId", &JsValue::from_f64(*layer_id as f64));
+            // Each member is a u32 kind_pos_reference; ship as a Uint32Array — the host
+            // hands it straight back to `zoneColdPrims`, which unpacks + expands it
+            // (tile + kind + variant + data) in wasm.
             let arr = js_sys::Uint32Array::new_with_length(kinds.len() as u32);
             arr.copy_from(kinds);
             set("kinds", &arr);

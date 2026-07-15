@@ -132,6 +132,23 @@ follows the log. (Was `docs/spacetime-implementation/completion-log.md`, now ret
     (released), state promoted, `applied_foreign` key recorded. · _(this commit)_
 
 ---
+- **2026-07-14** · **Plan-conformance re-cut** (deviations **D-1…D-5**, divergences **#4**/**#11**)
+  — conformed the code back to the reference model rather than the other way round. Codec:
+  `type_reference:u16` (the high half of `definition_reference:u32`, which now composes from its two
+  u16 halves), `pack_macro_position`/`pack_micro_position`, **`position_reference:u32`** as its own
+  type sharing the `cold_reference` layout, `pack_tile_reference` for the `u8` `x:4|y:4` primitive,
+  `pack_kind_pos_reference` + `kind_pos_ref_*`, and `pack_cold_row_reference` + `cold_row_of` /
+  `cold_row_selects`. Shard: `cold` re-cut to PK `cold_row_reference:u64` (`reserved:28 |
+  macro_position:16 | type_reference:16 | layer_id:4`) + `macro_position:u16` btree /
+  `type_reference:u16` / `layer_id:u8`; `cold_removed` 1:1 on the same key with `Vec<u8>`
+  tombstones. Worker + edge select via the shared `cold_row_selects()` rule; edge subscribes
+  `WHERE macro_position` and rebuilds the client-facing `zone_id` from realm + `macro_position`;
+  worldgen emits `layer_id` per row; `type_reference` narrowed through the wire/wasm/client.
+  **Fixes the D-3 live bug**: 28 codec tests (incl.
+  `a_target_mints_the_object_it_names_not_the_ground_under_it`), and live on a republished shard —
+  two targets at tile (7,7) differing only in `layer_reference` each minted exactly the object they
+  named (`type_id=2` tree vs `type_id=1` ground; both `kind=1`, which is what masked it). Browser:
+  forest + wolves render on the new schema.
 
 ## Detail — the full-design mechanisms (matching the shard `design/`+`intent/` in full)
 

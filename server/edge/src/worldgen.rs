@@ -27,7 +27,7 @@ use std::path::Path;
 
 use resonantdust_codec::biome::{biome_dims, tile_seed, zone_world_origin};
 use resonantdust_codec::object::{
-    pack_cold_entry, pack_kind_reference, pack_position_reference, pack_type_reference,
+    pack_kind_pos_reference, pack_kind_reference, pack_tile_reference, pack_type_reference,
     TYPE_BIOME_THING, TYPE_BIOME_TILE,
 };
 use resonantdust_codec::packed::{cell, pack_thing_at, ZONE_DIM, ZONE_TILES};
@@ -53,20 +53,27 @@ pub struct LoadedWorldgen {
     pub worldgen: Worldgen,
 }
 
-/// One cold-storage row of a zone: every cold object that shares an
-/// `object_type_reference` (type / subtype = biome / `layer`), with its members as
-/// `object_kind_reference`s. This is the cold-table row shape from
-/// `docs/object-model.md` §4 — keyed upstream by the zone's `region_zone_reference`;
-/// the shared type half is amortised across the `Vec`. Both `biome-tile` (the dense
-/// ground, one per cell) and `biome-thing` (sparse scatter) rows use this same
-/// shape — a zone is just N such rows, split by (type, subtype, layer).
+/// One cold-storage row of a zone — the reference model's cold row: the shared header
+/// (`type_reference` + `layer_id`; `macro_position` is the zone's, supplied upstream) plus its
+/// members as `kind_pos_reference`s. Both `biome-tile` (the dense ground, one per cell) and
+/// `biome-thing` (sparse scatter) use this shape — a zone is N such rows, split by
+/// **(type, subtype, layer)**, which is exactly the row identity
+/// (`cold_row_reference = macro_position:16 | type_reference:16 | layer_id:4`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColdRow {
-    /// The shared `object_type_reference` (type / subtype = biome / layer).
-    pub type_reference: u32,
-    /// One `object_kind_reference` per member (kind / subkind / variant / x / y / data).
+    /// The shared type half — `type_id:4 | subtype_id:12`.
+    pub type_reference: u16,
+    /// The tile-slot this row occupies. Part of the row's identity: rows sharing
+    /// `(macro_position, type, subtype)` but differing in `layer_id` are **distinct rows**.
+    pub layer_id: u8,
+    /// One `kind_pos_reference` per member — `kind_reference:16 | tile_reference:8 | data:8`.
     pub kinds: Vec<u32>,
 }
+
+/// The layer worldgen scatters onto. Ground and its primary scatter both sit on the tile-slot 0 of
+/// their own `type` (`biome-tile` / `biome-thing`) — they don't collide, because `type_id` is part
+/// of the row identity. Richer layering (wall / affixed) is content's to assign later.
+const WORLDGEN_LAYER: u8 = 0;
 
 impl Worldgen {
     /// Load the content tree under `content_dir` into a worldgen plus the corpus
@@ -169,8 +176,8 @@ impl Worldgen {
     pub fn zone_cold_objects(&self, zone_id: u32) -> Vec<ColdRow> {
         use std::collections::BTreeMap;
         let (ox, oy) = zone_world_origin(zone_id);
-        // object_type_reference (the shared type half) → its member kind refs.
-        let mut rows: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+        // (type_reference, layer_id) — the row header — → its member kind_pos_references.
+        let mut rows: BTreeMap<(u16, u8), Vec<u32>> = BTreeMap::new();
         for y in 0..ZONE_DIM {
             for x in 0..ZONE_DIM {
                 let (wx, wy) = (ox + x as i32, oy + y as i32);
@@ -188,9 +195,9 @@ impl Worldgen {
                     gen.tile.as_deref().and_then(|n| self.bundle.tile_def_id(n)).unwrap_or(self.default_tile);
                 let tile_type = pack_type_reference(TYPE_BIOME_TILE, subtype);
                 let tile_variant = (seed >> 13) as u8 & 0x0F;
-                rows.entry(tile_type).or_default().push(pack_cold_entry(
+                rows.entry((tile_type, WORLDGEN_LAYER)).or_default().push(pack_kind_pos_reference(
                     pack_kind_reference(tile_kind, tile_variant),
-                    pack_position_reference(x, y),
+                    pack_tile_reference(x, y),
                     0,
                 ));
 
@@ -198,15 +205,17 @@ impl Worldgen {
                 if let Some(thing_kind) = gen.thing1.as_deref().and_then(|n| self.bundle.thing_object_id(n)) {
                     let thing_type = pack_type_reference(TYPE_BIOME_THING, subtype);
                     let thing_variant = (seed >> 21) as u8 & 0x0F;
-                    rows.entry(thing_type).or_default().push(pack_cold_entry(
+                    rows.entry((thing_type, WORLDGEN_LAYER)).or_default().push(pack_kind_pos_reference(
                         pack_kind_reference(thing_kind, thing_variant),
-                        pack_position_reference(x, y),
+                        pack_tile_reference(x, y),
                         0,
                     ));
                 }
             }
         }
-        rows.into_iter().map(|(type_reference, kinds)| ColdRow { type_reference, kinds }).collect()
+        rows.into_iter()
+            .map(|((type_reference, layer_id), kinds)| ColdRow { type_reference, layer_id, kinds })
+            .collect()
     }
 }
 

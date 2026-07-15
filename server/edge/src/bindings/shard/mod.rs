@@ -117,7 +117,9 @@ pub enum Reducer {
     DropTimedOut ,
     MintCold {
         target: u64,
-        tombstone: u16,
+        cold_row_reference: u64,
+        macro_position: u16,
+        tombstone: u8,
         kind: u16,
         zone_id: u32,
         location: u8,
@@ -128,10 +130,12 @@ pub enum Reducer {
 }    ,
     PackSettle {
         entity_key: u64,
-        zone_id: u32,
-        type_reference: u32,
-        object_kind_reference: u32,
-        tombstone: u16,
+        cold_row_reference: u64,
+        macro_position: u16,
+        type_reference: u16,
+        layer_id: u8,
+        kind_pos_reference: u32,
+        tombstone: u8,
 }    ,
     Ready {
         worker_reference: u16,
@@ -149,8 +153,9 @@ pub enum Reducer {
         results: Vec::<TargetState>,
 }    ,
     SeedColdRow {
-        zone_id: u32,
-        type_reference: u32,
+        macro_position: u16,
+        type_reference: u16,
+        layer_id: u8,
         kinds: Vec::<u32>,
 }    ,
     SeedEntity {
@@ -244,6 +249,8 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 }),
 Reducer::MintCold{
                 target,
+                cold_row_reference,
+                macro_position,
                 tombstone,
                 kind,
                 zone_id,
@@ -254,6 +261,8 @@ Reducer::MintCold{
                 data_1,
 }             => __sats::bsatn::to_vec(&mint_cold_reducer::MintColdArgs {
                 target: target.clone(),
+                cold_row_reference: cold_row_reference.clone(),
+                macro_position: macro_position.clone(),
                 tombstone: tombstone.clone(),
                 kind: kind.clone(),
                 zone_id: zone_id.clone(),
@@ -265,15 +274,19 @@ Reducer::MintCold{
 }),
             Reducer::PackSettle{
                 entity_key,
-                zone_id,
+                cold_row_reference,
+                macro_position,
                 type_reference,
-                object_kind_reference,
+                layer_id,
+                kind_pos_reference,
                 tombstone,
 }             => __sats::bsatn::to_vec(&pack_settle_reducer::PackSettleArgs {
                 entity_key: entity_key.clone(),
-                zone_id: zone_id.clone(),
+                cold_row_reference: cold_row_reference.clone(),
+                macro_position: macro_position.clone(),
                 type_reference: type_reference.clone(),
-                object_kind_reference: object_kind_reference.clone(),
+                layer_id: layer_id.clone(),
+                kind_pos_reference: kind_pos_reference.clone(),
                 tombstone: tombstone.clone(),
 }),
             Reducer::Ready{
@@ -304,12 +317,14 @@ Reducer::MintCold{
                 results: results.clone(),
 }),
             Reducer::SeedColdRow{
-                zone_id,
+                macro_position,
                 type_reference,
+                layer_id,
                 kinds,
 }             => __sats::bsatn::to_vec(&seed_cold_row_reducer::SeedColdRowArgs {
-                zone_id: zone_id.clone(),
+                macro_position: macro_position.clone(),
                 type_reference: type_reference.clone(),
+                layer_id: layer_id.clone(),
                 kinds: kinds.clone(),
 }),
             Reducer::SeedEntity{
@@ -425,8 +440,8 @@ impl __sdk::DbUpdate for DbUpdate {
                     let mut diff = AppliedDiff::default();
                 
                 diff.applied_foreign = cache.apply_diff_to_table::<AppliedForeign>("applied_foreign", &self.applied_foreign).with_updates_by_pk(|row| &row.id);
-        diff.cold = cache.apply_diff_to_table::<Cold>("cold", &self.cold).with_updates_by_pk(|row| &row.cold_key);
-        diff.cold_removed = cache.apply_diff_to_table::<ColdRemoved>("cold_removed", &self.cold_removed).with_updates_by_pk(|row| &row.zone_key);
+        diff.cold = cache.apply_diff_to_table::<Cold>("cold", &self.cold).with_updates_by_pk(|row| &row.cold_row_reference);
+        diff.cold_removed = cache.apply_diff_to_table::<ColdRemoved>("cold_removed", &self.cold_removed).with_updates_by_pk(|row| &row.cold_row_reference);
         diff.event_log = cache.apply_diff_to_table::<EventLog>("event_log", &self.event_log).with_updates_by_pk(|row| &row.event_reference);
         diff.holder = cache.apply_diff_to_table::<Holder>("holder", &self.holder).with_updates_by_pk(|row| &row.id);
         diff.open_rows = cache.apply_diff_to_table::<OpenRows>("open_rows", &self.open_rows).with_updates_by_pk(|row| &row.id);

@@ -72,10 +72,12 @@ const ENTITY_OBJECT_MASK: u64 = 0xFFFF_FFFF; // 32 bits, bits 0–31
 pub const REF_NONE: u8 = 0;
 /// A live/minted object — `object_reference = hot_reference:32`, per-server. Can't be `unpack`ed.
 pub const REF_HOT: u8 = 1;
-/// A settled object addressed by location — `unpack`able to hot. Interim form carries the
-/// world-global `zone_id:32 | location:8 | layer:8` in the low 48 (see module docs / B-2).
+/// A settled object addressed by location — `unpack`able to hot. Its `object_reference` is a
+/// geographic `cold_reference` ([`crate::object`]).
 pub const REF_COLD: u8 = 2;
-/// A bare location (any object has one). Same interim position layout as `REF_COLD`.
+/// A bare location (any object has one) — a `position_reference`. Same 32-bit layout as
+/// `REF_COLD`, a different *type*: a position is *a place*, a cold_reference is *the settled
+/// object there* (plan: two types, one layout).
 pub const REF_POSITION: u8 = 3;
 /// An event row — `object_reference = event_reference:32` (what `ALIAS`/`AWAIT` carry).
 pub const REF_EVENT: u8 = 4;
@@ -147,8 +149,8 @@ pub fn entity_ref_is_positional(k: u64) -> bool {
 /// cold table is keyed by. (Meaningless for hot refs.)
 pub fn entity_ref_zone_id(k: u64) -> u32 {
     let realm = server_ref_realm(entity_ref_server_reference(k)) as u32;
-    let region_zone = crate::object::cold_ref_region_zone(entity_ref_cold_reference(k)) as u32;
-    (realm << 24) | (region_zone << 8)
+    let macro_position = crate::object::cold_ref_macro_position(entity_ref_cold_reference(k)) as u32;
+    (realm << 24) | (macro_position << 8)
 }
 
 /// The in-zone cell `location` (`tile_reference`) of a cold entity (meaningless for hot refs).
@@ -192,17 +194,17 @@ mod tests {
 
     #[test]
     fn cold_entity_roundtrips() {
-        use crate::object::{pack_cold_reference, pack_layer_reference, pack_position_reference};
+        use crate::object::{pack_cold_reference, pack_layer_reference, pack_tile_reference};
         // realm 1 (server_reference), region(2,3) zone(4,5) tile(6,7) type 3 layer 2.
         let server = pack_server_reference(0x11, 0);
-        let cr = pack_cold_reference(0x23, 0x45, pack_position_reference(6, 7), pack_layer_reference(3, 2));
+        let cr = pack_cold_reference(0x23, 0x45, pack_tile_reference(6, 7), pack_layer_reference(3, 2));
         let k = pack_cold_entity(server, cr);
         assert_eq!(entity_ref_reference_id(k), REF_COLD);
         assert_eq!(entity_ref_cold_reference(k), cr);
         assert!(entity_ref_is_positional(k), "cold is positional");
         // zone_id reconstructs realm|region|zone|0 from server_reference.realm + cold_reference.
         assert_eq!(entity_ref_zone_id(k), (0x11u32 << 24) | (0x23u32 << 16) | (0x45u32 << 8));
-        assert_eq!(entity_ref_location(k), pack_position_reference(6, 7));
+        assert_eq!(entity_ref_location(k), pack_tile_reference(6, 7));
         assert_eq!(entity_ref_layer(k), 2);
     }
 

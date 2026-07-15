@@ -139,8 +139,14 @@ pub enum RowData {
 /// generic `cold` table on `decl_tick_pipeline!`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ColdObjectsRow {
+    /// The world-global zone the edge reconstructs from the shard's realm + the row's
+    /// `macro_position` (the row itself never repeats the realm — the shard implies it).
     pub zone_id: u32,
-    pub type_reference: u32,
+    /// `type_id:4 | subtype_id:12`.
+    pub type_reference: u16,
+    /// The row's tile-slot — part of its identity (`macro_position | type_reference | layer_id`).
+    pub layer_id: u8,
+    /// `kind_pos_reference` per object: `kind_reference:16 | tile_reference:8 | data:8`.
     pub kinds: Vec<u32>,
 }
 

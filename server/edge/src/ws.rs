@@ -373,6 +373,8 @@ async fn handle_sub_zone(
     sid: u32,
     zone_id: u32,
 ) {
+    use resonantdust_codec::packed::zone_realm;
+
     if subs.contains_key(&sid) {
         send(out_tx, err_frame(&format!("sid {sid} already in use")));
         return;
@@ -407,7 +409,7 @@ async fn handle_sub_zone(
         // Cold objects (the object model) live on THIS module beside the hot `state`, so
         // wire their relay on the same connection — one shard serves hot movers + cold
         // terrain, and `unpack`/`pack` stay in-module.
-        wire_cold_relay(&shard.conn, out_tx.clone());
+        wire_cold_relay(&shard.conn, out_tx.clone(), zone_realm(zone_id));
         // The shard's freeze flag (`tic_meta.paused`) — relay changes to this client so a
         // `/pause` from any session reaches every subscriber (including tic-driven npcs).
         // Subscribed shard-globally (once), separate from the per-zone subs.
@@ -445,7 +447,12 @@ async fn handle_sub_zone(
             seed_cold_if_empty(&cold_seed_conn, wg.as_deref(), zone_id);
         })
         .on_error(move |_ctx, err| send(&cold_error, err_frame(&format!("cold sub {sid}: {err}"))))
-        .subscribe([format!("SELECT * FROM cold WHERE zone_id = {zone_id}")]);
+        // Cold rows carry `macro_position` (region|zone) — realm is the shard's, never repeated
+        // per row — so the zone filter is the zone_id's macro slice, not the whole zone_id.
+        .subscribe([format!(
+            "SELECT * FROM cold WHERE macro_position = {}",
+            resonantdust_codec::packed::zone_macro_position(zone_id)
+        )]);
 
     subs.insert(sid, ZoneSub { endpoint, handle, cold_handle });
 }
@@ -562,7 +569,7 @@ async fn handle_interact(
 ) {
     use bindings::shard::cold_table::ColdTableAccess;
     use resonantdust_codec::object::{
-        kind_ref_kind_id, kind_ref_x, kind_ref_y, type_ref_type_id, TYPE_BIOME_THING,
+        kind_pos_ref_tile, type_ref_type_id, TYPE_BIOME_THING,
     };
     use resonantdust_codec::packed::cell;
 
@@ -571,6 +578,7 @@ async fn handle_interact(
         return;
     }
     let zone = 0u32;
+    let zone_macro = resonantdust_codec::packed::zone_macro_position(zone);
     let (x, y) = (tile_x.rem_euclid(16) as u8, tile_y.rem_euclid(16) as u8);
     let endpoint = match resolve_zone_or_default(&pool.index, &pool.cfg, zone) {
         Ok(e) => e,
@@ -583,15 +591,32 @@ async fn handle_interact(
         send(out_tx, err_frame("interact: shard not connected (subscribe the zone first)"));
         return;
     };
-    // Find a biome-thing cold object sitting at (x, y) in this zone's cached cold rows.
-    let found = shard.conn.db().cold().iter().filter(|c| c.zone_id == zone && type_ref_type_id(c.type_reference) == TYPE_BIOME_THING).find_map(|c| {
-        c.kinds.iter().find(|&&k| kind_ref_x(k) == x && kind_ref_y(k) == y).map(|&k| (c.type_reference, kind_ref_kind_id(k)))
-    });
-    let Some((type_reference, _kind_id)) = found else {
+    // Find the cold object an interact means at (x, y): a **biome-thing on layer 0** — never the
+    // ground beneath it. Select the row by `(zone, type_id, layer_id)` and match the entry by its
+    // `tile_reference`; the uniqueness rule (one object per (type, layer, tile), subtype-agnostic)
+    // makes that exactly one object, across however many subtype (biome) rows the zone has.
+    const INTERACT_LAYER: u8 = 0;
+    let tile = cell(x, y);
+    let found = shard
+        .conn
+        .db()
+        .cold()
+        .iter()
+        .filter(|c| {
+            c.macro_position == zone_macro
+                && type_ref_type_id(c.type_reference) == TYPE_BIOME_THING
+                && c.layer_id == INTERACT_LAYER
+        })
+        .find_map(|c| {
+            c.kinds
+                .iter()
+                .find(|&&k| kind_pos_ref_tile(k) == tile)
+                .map(|_| c.type_reference)
+        });
+    let Some(type_reference) = found else {
         send(out_tx, err_frame(&format!("interact: no cold thing at ({x},{y})")));
         return;
     };
-    let _ = type_reference;
     // Target the cold object by its POSITIONAL entity_reference; the worker's enqueue
     // find-or-mint promotes it hot (kind from cold) before the action runs (issue 005). An
     // empty action program just makes it hot (interact = "bring it to life"); richer verbs later.
@@ -604,8 +629,8 @@ async fn handle_interact(
     let cold_reference = pack_cold_reference(
         zone_region(zone),
         zone_zone(zone),
-        cell(x, y),
-        pack_layer_reference(type_id, 0),
+        tile,
+        pack_layer_reference(type_id, INTERACT_LAYER),
     );
     let target = pack_cold_entity(pack_server_reference(zone_realm(zone), 0), cold_reference);
     if let Err(err) = shard.conn.reducers.append(Vec::new(), vec![target]) {
@@ -649,19 +674,27 @@ fn state_row(r: &bindings::shard::state_type::State) -> StateRow {
 /// Install insert/update/delete callbacks on the `shard` module's `cold` table (the
 /// object model — cold objects live on the object module beside the hot `state`); each
 /// fired row relays as a [`RowData::ColdObjects`] frame (demux-by-zone, `sid: 0`).
-fn wire_cold_relay(conn: &Arc<bindings::shard::DbConnection>, out: mpsc::UnboundedSender<String>) {
+fn wire_cold_relay(conn: &Arc<bindings::shard::DbConnection>, out: mpsc::UnboundedSender<String>, realm: u8) {
     use bindings::shard::cold_table::ColdTableAccess;
 
     let t = conn.db().cold();
     let (ci, cu, cd) = (out.clone(), out.clone(), out);
-    t.on_insert(move |_c, r| relay(&ci, RowOp::Insert, RowData::ColdObjects(cold_row(r))));
-    t.on_update(move |_c, _o, r| relay(&cu, RowOp::Update, RowData::ColdObjects(cold_row(r))));
-    t.on_delete(move |_c, r| relay(&cd, RowOp::Delete, RowData::ColdObjects(cold_row(r))));
+    t.on_insert(move |_c, r| relay(&ci, RowOp::Insert, RowData::ColdObjects(cold_row(realm, r))));
+    t.on_update(move |_c, _o, r| relay(&cu, RowOp::Update, RowData::ColdObjects(cold_row(realm, r))));
+    t.on_delete(move |_c, r| relay(&cd, RowOp::Delete, RowData::ColdObjects(cold_row(realm, r))));
 }
 
-/// Copy a `cold` row into the serde wire mirror.
-fn cold_row(r: &bindings::shard::cold_type::Cold) -> ColdObjectsRow {
-    ColdObjectsRow { zone_id: r.zone_id, type_reference: r.type_reference, kinds: r.kinds.clone() }
+/// Copy a `cold` row into the serde wire mirror. The row carries `macro_position` (realm is the
+/// shard's — never repeated per row), but the client demuxes by the world-global `zone_id`, so
+/// reconstruct it here: `realm | region | zone`. `realm` comes from the zone this connection was
+/// subscribed for (every zone on one shard shares its realm).
+fn cold_row(realm: u8, r: &bindings::shard::cold_type::Cold) -> ColdObjectsRow {
+    ColdObjectsRow {
+        zone_id: ((realm as u32) << 24) | ((r.macro_position as u32) << 8),
+        type_reference: r.type_reference,
+        layer_id: r.layer_id,
+        kinds: r.kinds.clone(),
+    }
 }
 
 /// Relay the shard's freeze flag (`tic_meta.paused`) to this client. `tic_meta` updates every
@@ -719,13 +752,16 @@ fn seed_cold_if_empty(
     use bindings::shard::cold_table::ColdTableAccess;
 
     let Some(wg) = worldgen else { return };
-    if conn.db().cold().iter().any(|c| c.zone_id == zone_id) {
+    let macro_position = resonantdust_codec::packed::zone_macro_position(zone_id);
+    if conn.db().cold().iter().any(|c| c.macro_position == macro_position) {
         return;
     }
     let rows = wg.zone_cold_objects(zone_id);
     let n = rows.len();
     for row in rows {
-        if let Err(err) = conn.reducers.seed_cold_row(zone_id, row.type_reference, row.kinds) {
+        if let Err(err) =
+            conn.reducers.seed_cold_row(macro_position, row.type_reference, row.layer_id, row.kinds)
+        {
             tracing::warn!(zone_id, %err, "seed_cold_row request failed");
         }
     }
