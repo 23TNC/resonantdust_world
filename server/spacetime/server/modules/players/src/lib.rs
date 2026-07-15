@@ -9,11 +9,15 @@ use spacetimedb::{reducer, ReducerContext};
 /// `0` today.
 ///
 /// This is the `players` **auth** database: it owns accounts, login, and
-/// the identity↔player_id↔(card-shard, soul_id) routing. It does NOT hold
+/// the identity↔player_id↔(shard, soul_id) routing. It does NOT hold
 /// cards or souls — those live in the per-shard `cards` databases, and each
-/// `Player` row carries the `data_shard` of the card shard it's assigned to.
-/// Low-write, so a single auth DB can serve all players; the `cards` shards
+/// `Player` row carries the `player_shard_reference` of the shard it's assigned
+/// to. Low-write, so a single auth DB can serve all players; the `cards` shards
 /// are what scale out.
+///
+/// Distinct from `Player.player_shard_reference`: that names the shard serving a
+/// *player's data* (a `server_reference`), while this is the partition of the auth
+/// DB itself. Not yet converted to the reference vocabulary.
 pub const DATA_SHARD: u16 = 0;
 
 /// Module init — runs once on a fresh publish. Seeds the server-side system accounts

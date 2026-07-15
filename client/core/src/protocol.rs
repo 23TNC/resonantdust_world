@@ -72,12 +72,12 @@ pub enum ClientMsg {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ServerMsg {
     /// Login succeeded: the connection is now bound to `player_id`, whose cards
-    /// live on `data_shard`. `server_micros` is the server's wall clock at reply
+    /// live on `player_shard_reference`. `server_micros` is the server's wall clock at reply
     /// time (µs since unix epoch) — seed the client clock offset from it.
     LoginOk {
         cid: u32,
         player_id: u32,
-        data_shard: u16,
+        player_shard_reference: u16,
         server_micros: u64,
     },
     /// Login failed (reserved name, validation error, upstream timeout, …).

@@ -20,7 +20,7 @@
 //!
 //! cold_row_reference : u64 = reserved:28 | macro_position:16 | type_reference:16 | layer_id:4
 //! kind_pos_reference : u32 = kind_reference:16 | tile_reference:8 | data:8  (one per cold object)
-//! data : u8 = sub_position:3 | rotation:2 | aux:3         (per-instance state; decoded by type_id)
+//! data : u8 = rotation:2 | count:6                        (per-instance state; decoded by type_id)
 //! ```
 //!
 //! `position_reference` and `cold_reference` share a layout but are two **types**, not one thing: a
@@ -414,39 +414,37 @@ pub fn kind_pos_ref_x(k: u32) -> u8 {
 pub fn kind_pos_ref_y(k: u32) -> u8 {
     ref_lo(kind_pos_ref_tile(k))
 }
-/// The raw `data` byte (0..256) of a `kind_pos_reference` — decode with [`data_sub_position`] etc.
+/// The raw `data` byte (0..256) of a `kind_pos_reference` — decode with [`data_rotation`] /
+/// [`data_count`].
 pub fn kind_pos_ref_data(k: u32) -> u8 {
     (k & KPR_BYTE_MASK) as u8
 }
 
-// ── data : u8 = sub_position:3 | rotation:2 | aux:3 ─────────────────────────────────────────────
+// ── data : u8 = rotation:2 | count:6 ────────────────────────────────────────────────────────────
 //
 // Per-instance state, decoded by the row's `type_id` (read once per type-homogeneous row). This is
 // the default (universal) decode; `type_id` selects it so it can diverge later without a layout
-// change.
+// change. Authoritative layout: `docs/VARIABLES.md`.
+//
+// Was `sub_position:3 | rotation:2 | aux:3`: `sub_position` (offsets internal to the tile) is gone
+// — a cold object sits on its tile — and `aux` became `count`, named for what it holds and widened
+// 3→6 bits (max 7 → 63) with the freed bits.
 
-const DATA_SUB_SHIFT: u8 = 5;
-const DATA_ROT_SHIFT: u8 = 3;
-const DATA_TRIPLE_MASK: u8 = 0x7; // 3 bits
+const DATA_ROT_SHIFT: u8 = 6;
 const DATA_ROT_MASK: u8 = 0x3; // 2 bits
+const DATA_COUNT_MASK: u8 = 0x3F; // 6 bits
 
-/// Compose the default `data`: `sub_position:3 | rotation:2 | aux:3`.
-pub fn pack_data(sub_position: u8, rotation: u8, aux: u8) -> u8 {
-    ((sub_position & DATA_TRIPLE_MASK) << DATA_SUB_SHIFT)
-        | ((rotation & DATA_ROT_MASK) << DATA_ROT_SHIFT)
-        | (aux & DATA_TRIPLE_MASK)
-}
-/// The `sub_position` (0..8 offsets internal to the tile).
-pub fn data_sub_position(d: u8) -> u8 {
-    (d >> DATA_SUB_SHIFT) & DATA_TRIPLE_MASK
+/// Compose the default `data`: `rotation:2 | count:6`.
+pub fn pack_data(rotation: u8, count: u8) -> u8 {
+    ((rotation & DATA_ROT_MASK) << DATA_ROT_SHIFT) | (count & DATA_COUNT_MASK)
 }
 /// The `rotation` (0..4 facings; west mirrors east).
 pub fn data_rotation(d: u8) -> u8 {
     (d >> DATA_ROT_SHIFT) & DATA_ROT_MASK
 }
-/// The type-decoded `aux` field (0..8 — e.g. a small count).
-pub fn data_aux(d: u8) -> u8 {
-    d & DATA_TRIPLE_MASK
+/// The `count` (0..64) — how many of this object sit on the tile.
+pub fn data_count(d: u8) -> u8 {
+    d & DATA_COUNT_MASK
 }
 
 #[cfg(test)]
@@ -646,16 +644,19 @@ mod tests {
 
     #[test]
     fn data_default_decode() {
-        for sp in 0u8..8 {
-            for rot in 0u8..4 {
-                for aux in 0u8..8 {
-                    let d = pack_data(sp, rot, aux);
-                    assert_eq!(data_sub_position(d), sp);
-                    assert_eq!(data_rotation(d), rot);
-                    assert_eq!(data_aux(d), aux);
-                }
+        for rot in 0u8..4 {
+            for count in 0u8..64 {
+                let d = pack_data(rot, count);
+                assert_eq!(data_rotation(d), rot);
+                assert_eq!(data_count(d), count);
             }
         }
-        assert_eq!(pack_data(7, 3, 7), 0xFF);
+        // Both fields saturated fills the byte — proves the two spans are adjacent
+        // and exhaust it (no gap, no overlap).
+        assert_eq!(pack_data(3, 63), 0xFF);
+        // Each field is masked to its own span, so an over-range argument can't
+        // bleed into the other.
+        assert_eq!(pack_data(0xFF, 0), 0xC0);
+        assert_eq!(pack_data(0, 0xFF), 0x3F);
     }
 }

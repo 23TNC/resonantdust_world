@@ -1,12 +1,14 @@
 use spacetimedb::{reducer, ReducerContext, Table};
 
-/// The card shard a freshly-claimed player is assigned to. `0` while a
-/// single `cards` database serves everyone — which it can, since the
-/// auth DB is low-write and the hot card state is what actually needs
-/// sharding. When that changes, replace this constant with a real
-/// assignment policy (round-robin over live shards, least-loaded, etc.)
-/// and stamp the result onto `Player.data_shard`.
-const CARD_SHARD: u16 = 0;
+/// The shard a freshly-claimed player is assigned to, as a `server_reference`
+/// (`realm_id:8 | server_id:8` — see `docs/VARIABLES.md`).
+///
+/// `0` is `SERVER_REF_NONE`: realm 0, server 0 — "the one shard", while a single
+/// `cards` database serves everyone. It can, since the auth DB is low-write and the
+/// hot card state is what actually needs sharding. When that changes, replace this
+/// constant with a real assignment policy (round-robin over live shards,
+/// least-loaded, …) and stamp the result onto `Player.player_shard_reference`.
+const DEFAULT_PLAYER_SHARD: u16 = 0;
 
 /// Maximum byte length of a `Player.name`. Enforced by `validate_player_name`
 /// on the input name and again after normalization in `claim_or_login`.
@@ -50,20 +52,22 @@ pub struct Player {
     /// The player. One row per id — this is the identity, so it's the key.
     #[primary_key]
     pub player_id: u32,
-    /// The **card shard** this player is assigned to — the `data_shard`
-    /// partition whose `cards`-module database holds this player's cards
-    /// and souls. The client reads this at login to know which card
-    /// database to subscribe to. `0` today (single card shard); the
-    /// assignment policy that distributes players across shards lands
-    /// here when sharding actually splits.
+    /// The shard serving this player's data — the server whose `cards`-module database
+    /// holds their cards and souls. A **`server_reference`**: `realm_id:8 | server_id:8`
+    /// (`docs/VARIABLES.md`). The client reads it at login to know which database to
+    /// subscribe to. `0` today (realm 0, server 0 — a single shard); the assignment
+    /// policy that distributes players across shards lands here when sharding splits.
     ///
-    /// No soul id is stored here. After connecting to the card shard the
-    /// client finds its soul(s) directly — `cards.owner_id().filter(player_id)`
-    /// returns the player's top-level `player_soul` cards (a player can own
-    /// more than one; that's the future multi-character handle). If the
-    /// query is empty the client calls the card shard's `spawn_soul` to
-    /// mint one. These top-level player-souls are never rendered in the world.
-    pub data_shard: u16,
+    /// Was `data_shard`, a bare partition index that named nothing and couldn't address
+    /// a shard in another realm. As a `server_reference` it's addressable the same way
+    /// every other server is, and cross-realm falls out for free.
+    ///
+    /// No soul id is stored here. After connecting to the shard the client finds its
+    /// soul(s) directly — `cards.owner_id().filter(player_id)` returns the player's
+    /// top-level `player_soul` cards (a player can own more than one; that's the future
+    /// multi-character handle). If the query is empty the client calls the shard's
+    /// `spawn_soul` to mint one. These top-level player-souls are never rendered.
+    pub player_shard_reference: u16,
     /// Display name. Match is case-sensitive — "Alice" and "alice" are different
     /// players.
     ///
@@ -250,8 +254,8 @@ fn upsert(ctx: &ReducerContext, player: Player) -> Player {
 }
 
 /// Provision a brand-new player account: allocate the next id, write the
-/// `Player` row (assigned to [`CARD_SHARD`]) + its private `PlayerProfile` at
-/// `time_ms`, and return the new `player_id`. The single source of new-player
+/// `Player` row (assigned to [`DEFAULT_PLAYER_SHARD`]) + its private `PlayerProfile`,
+/// and return the new `player_id`. The single source of new-player
 /// creation — shared by [`claim_or_login`]'s new-player branch and the
 /// [`create_player`] reducer (registration without login). Does NOT validate the
 /// name or check for collisions; callers do that first.
@@ -259,8 +263,8 @@ pub fn provision_player(ctx: &ReducerContext, name: String) -> u32 {
     let new_id = next_player_id(ctx);
     // No soul is created here — souls live in the assigned `cards` database, which
     // this module can't write to. The client (or harness) calls `spawn_soul`
-    // there after reading `data_shard` off this row.
-    create(ctx, new_id, name, CARD_SHARD);
+    // there after reading `player_shard_reference` off this row.
+    create(ctx, new_id, name, DEFAULT_PLAYER_SHARD);
     ctx.db.player_profiles().insert(PlayerProfile {
         player_id: new_id,
         data_shard: crate::DATA_SHARD,
@@ -278,7 +282,7 @@ pub fn provision_developer(ctx: &ReducerContext) -> u32 {
         ctx,
         Player {
             player_id: DEVELOPER_ID,
-            data_shard: CARD_SHARD,
+            player_shard_reference: DEFAULT_PLAYER_SHARD,
             name: DEVELOPER_NAME.to_string(),
             last_login_secs: 0,
             flags,
@@ -301,14 +305,19 @@ pub fn seed_system_players(ctx: &ReducerContext) {
     }
 }
 
-// Insert a brand-new player. `data_shard` is the card shard this player is
+// Insert a brand-new player. `player_shard_reference` is the shard this player is
 // assigned to — see the `Player` struct docs.
-pub fn create(ctx: &ReducerContext, player_id: u32, name: String, data_shard: u16) -> Player {
+pub fn create(
+    ctx: &ReducerContext,
+    player_id: u32,
+    name: String,
+    player_shard_reference: u16,
+) -> Player {
     upsert(
         ctx,
         Player {
             player_id,
-            data_shard,
+            player_shard_reference,
             name,
             // Seed at 0 — anything below `now - retention_window` is
             // interpreted by the client as "no recent session," so
@@ -469,7 +478,7 @@ pub fn set_last_login(
 /// Trust-on-first-use registration / login.
 ///
 /// If no `Player` exists with the given (case-sensitive) name, one is
-/// created (with a `data_shard` + profile). Either way the player row's
+/// created (with a `player_shard_reference` + profile). Either way the player row's
 /// `last_login_secs` is bumped. The **gate** reads the resulting `player_id`
 /// off the player row (looked up by name) and records the WS → player_id
 /// session itself — this reducer no longer establishes an Identity session.

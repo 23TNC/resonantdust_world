@@ -130,15 +130,27 @@ u16 server_reference
   u8 server_id                    bits 0–7
 ```
 
-`worker_reference` and `shard_reference` are **aliases of `server_reference`** — same 16 bits, same
-layout. A worker and a shard *are* servers; the distinct name states which role a field means
-(`event_log.worker_reference` is the subscription key). They are not wrapper types with an interior.
+**These are all aliases of `server_reference`** — same 16 bits, same layout, no interior of their
+own. A worker, a shard, and a player's shard *are* servers; the distinct name states which role a
+field means. They are not wrapper types.
+
+| alias | names | seen on |
+|---|---|---|
+| `worker_reference` | the worker that owns a piece of work | `event_log.worker_reference` (a subscription key) |
+| `shard_reference` | a shard | |
+| `player_shard_reference` | the shard serving this player's data | `players.player_shard_reference` |
 
 Realm is a **functional unit** — all servers in a realm work together. An `object_reference` carries
 no realm, so objects are **not unique between realms**; `(server_reference, object_reference)` is
 already realm-unique, so cross-realm identity costs zero extra bits.
 
 `SERVER_REF_NONE = 0` — no server (never a real shard).
+
+> **`player_shard_reference` replaced `players.data_shard`** (2026-07-15). Same width, but
+> `data_shard` was a bare partition index (`0` = "the one card shard"), which named nothing and
+> couldn't address a shard in another realm. As a `server_reference` it carries `realm_id | server_id`
+> — so a player's shard is addressable the same way every other server is, and cross-realm falls out
+> for free rather than needing a second field later.
 
 ---
 
@@ -187,10 +199,13 @@ Rows are type-homogeneous, so the decode is read once per row. Currently **one u
 
 ```
 u8 data
-  u3 sub_position                 bits 5–7     8 offsets internal to the tile
-  u2 rotation                     bits 3–4     4 facings (west mirrors east)
-  u3 aux                          bits 0–2     type-decoded (e.g. count)
+  u2 rotation                     bits 6–7     4 facings (west mirrors east)
+  u6 count                        bits 0–5     0–63
 ```
+
+> Was `sub_position:3 | rotation:2 | aux:3`. `sub_position` (8 offsets internal to the tile) is
+> gone — a cold object sits on its tile — and `aux` is now `count`, named for what it holds and
+> widened 3→6 bits (7 → 63) with the freed bits.
 
 **`data:8` is the pack criterion, not a limit.** An object whose state doesn't fit stays hot, keeps
 its full `hot_reference`, and carries a `state` row instead. Pawns never qualify → always hot. Dirt

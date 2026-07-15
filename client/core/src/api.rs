@@ -131,10 +131,10 @@ pub enum Event {
     /// The gateway handed back a world server; the client is about to connect.
     ServerResolved(ServerInfo),
     /// Login succeeded — the session is live and bound to `player_id`, whose data
-    /// lives on `data_shard`. `server_url` is the world server now connected.
+    /// lives on `player_shard_reference`. `server_url` is the world server now connected.
     LoggedIn {
         player_id: u32,
-        data_shard: u16,
+        player_shard_reference: u16,
         server_url: String,
     },
     /// A login attempt failed at some stage (gateway unreachable, no server,

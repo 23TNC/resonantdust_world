@@ -561,12 +561,15 @@ fn event_to_js(event: &client::Event) -> JsValue {
         }
         Event::LoggedIn {
             player_id,
-            data_shard,
+            player_shard_reference,
             server_url,
         } => {
             set("kind", &JsValue::from_str("loggedIn"));
             set("playerId", &JsValue::from_f64(*player_id as f64));
-            set("dataShard", &JsValue::from_f64(*data_shard as f64));
+            set(
+                "playerShardReference",
+                &JsValue::from_f64(*player_shard_reference as f64),
+            );
             set("serverUrl", &JsValue::from_str(server_url));
         }
         Event::LoginFailed { reason } => {

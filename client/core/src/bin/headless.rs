@@ -105,9 +105,9 @@ fn log_event(event: &Event) {
         ),
         Event::LoggedIn {
             player_id,
-            data_shard,
+            player_shard_reference,
             server_url,
-        } => info!(player_id, data_shard, url = %server_url, "logged in"),
+        } => info!(player_id, player_shard_reference, url = %server_url, "logged in"),
         Event::LoginFailed { reason } => error!(%reason, "login failed"),
         Event::Disconnected { reason } => warn!(reason = ?reason, "disconnected"),
         Event::Status(msg) => info!(%msg, "status"),

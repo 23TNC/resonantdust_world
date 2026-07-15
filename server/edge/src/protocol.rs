@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 pub enum ClientMsg {
     /// Trust-on-first-use login: claim or create the player named `name`. The
     /// server relays to the `players` DB's `claim_or_login`, then reads back the
-    /// resulting `player_id` + `data_shard` and binds this connection's session.
+    /// resulting `player_id` + `player_shard_reference` and binds this connection's session.
     /// `cid` correlates the [`ServerMsg::LoginOk`] / [`ServerMsg::LoginErr`] reply.
     Login {
         cid: u32,
@@ -44,12 +44,12 @@ pub enum ClientMsg {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ServerMsg {
     /// Login succeeded: the connection is now bound to `player_id`, whose cards
-    /// live on `data_shard`. `server_micros` is the server's wall clock at reply
+    /// live on `player_shard_reference`. `server_micros` is the server's wall clock at reply
     /// time (µs since unix epoch) — the client seeds its clock offset from it.
     LoginOk {
         cid: u32,
         player_id: u32,
-        data_shard: u16,
+        player_shard_reference: u16,
         server_micros: u64,
     },
     /// Login failed (reserved name, validation error, upstream timeout, …).

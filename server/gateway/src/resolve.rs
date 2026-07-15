@@ -4,7 +4,7 @@
 //! server a player should be handed. Today every player goes to the one
 //! registered server, so this is just "pick the live server"; the function
 //! exists so the policy that splits players across servers (least-loaded, or
-//! routing by the player's `data_shard` / region) lands in exactly one place
+//! routing by the player's `player_shard_reference`) lands in exactly one place
 //! without touching the request plumbing in [`crate::directory`].
 
 use crate::bindings::index::Server;
@@ -20,7 +20,7 @@ use crate::bindings::index::Server;
 /// pool are live within the GC window.
 ///
 /// To split players across servers, replace the body here — e.g. take the
-/// player's `data_shard` and index a shard→server map, or pick the least-loaded.
+/// player's `player_shard_reference` and index a shard→server map, or pick the least-loaded.
 pub fn pick_server(pool: &[Server]) -> Option<&Server> {
     pool.iter().max_by_key(|s| s.last_seen_ms)
 }

@@ -96,7 +96,7 @@ export interface ClockStats {
  *  `Event::LoggedIn` payload plus the gateway's `reused` affinity flag. */
 export interface LoginResult {
   playerId: number;
-  dataShard: number;
+  playerShardReference: number;
   /** The world-server WS URL the gateway resolved and we're now connected to. */
   serverUrl: string;
   /** `true` when the gateway reused an existing session pin (reconnect
@@ -158,7 +158,7 @@ const LOGIN_TIMEOUT_MS = 12_000;
 type WorldEvent =
   | { kind: "loginStarted"; name: string }
   | { kind: "serverResolved"; serverId: number; url: string; reused: boolean }
-  | { kind: "loggedIn"; playerId: number; dataShard: number; serverUrl: string }
+  | { kind: "loggedIn"; playerId: number; playerShardReference: number; serverUrl: string }
   | { kind: "loginFailed"; reason: string }
   | { kind: "disconnected"; reason: string | null }
   | { kind: "status"; message: string }
@@ -342,7 +342,7 @@ export class WasmClient {
   /**
    * Log in as `name` (trust-on-first-use). Drives the wasm engine's gateway →
    * connect → authenticate sequence; resolves with the bound `player_id` /
-   * `data_shard` on `loggedIn`, rejects (with a human-readable reason) on
+   * `player_shard_reference` on `loggedIn`, rejects (with a human-readable reason) on
    * `loginFailed` / disconnect / timeout. `onProgress` is narrated into the
    * login form's status line as each stage begins.
    */
@@ -536,7 +536,7 @@ export class WasmClient {
         this.serverUrl = ev.serverUrl;
         this.pending?.resolve({
           playerId: ev.playerId,
-          dataShard: ev.dataShard,
+          playerShardReference: ev.playerShardReference,
           serverUrl: ev.serverUrl,
           reused: this.lastReused,
         });

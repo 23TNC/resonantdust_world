@@ -14,7 +14,7 @@ use spacetimedb_sdk::__codegen::{
 #[sats(crate = __lib)]
 pub struct Player {
     pub player_id: u32,
-    pub data_shard: u16,
+    pub player_shard_reference: u16,
     pub name: String,
     pub last_login_secs: u32,
     pub flags: u32,
@@ -31,7 +31,7 @@ impl __sdk::InModule for Player {
 /// Provides typed access to columns for query building.
 pub struct PlayerCols {
     pub player_id: __sdk::__query_builder::Col<Player, u32>,
-    pub data_shard: __sdk::__query_builder::Col<Player, u16>,
+    pub player_shard_reference: __sdk::__query_builder::Col<Player, u16>,
     pub name: __sdk::__query_builder::Col<Player, String>,
     pub last_login_secs: __sdk::__query_builder::Col<Player, u32>,
     pub flags: __sdk::__query_builder::Col<Player, u32>,
@@ -42,7 +42,7 @@ impl __sdk::__query_builder::HasCols for Player {
     fn cols(table_name: &'static str) -> Self::Cols {
         PlayerCols {
             player_id: __sdk::__query_builder::Col::new(table_name, "player_id"),
-            data_shard: __sdk::__query_builder::Col::new(table_name, "data_shard"),
+            player_shard_reference: __sdk::__query_builder::Col::new(table_name, "player_shard_reference"),
             name: __sdk::__query_builder::Col::new(table_name, "name"),
             last_login_secs: __sdk::__query_builder::Col::new(table_name, "last_login_secs"),
             flags: __sdk::__query_builder::Col::new(table_name, "flags"),

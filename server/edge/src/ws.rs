@@ -191,7 +191,7 @@ async fn build_players(
 }
 
 /// Relay `claim_or_login` to the players DB, then read back the resulting
-/// `player_id` + `data_shard` and bind the session.
+/// `player_id` + `player_shard_reference` and bind the session.
 async fn handle_login(
     players: Option<&Arc<bindings::players::DbConnection>>,
     out_tx: &mpsc::UnboundedSender<String>,
@@ -254,12 +254,12 @@ async fn handle_login(
     }
 
     match read_player_by_name(conn, &name).await {
-        Some((player_id, data_shard)) => {
+        Some((player_id, player_shard_reference)) => {
             *session = Some(player_id);
             tracing::debug!(player_id, %name, "session established");
             send(
                 out_tx,
-                ServerMsg::LoginOk { cid, player_id, data_shard, server_micros: server_micros() },
+                ServerMsg::LoginOk { cid, player_id, player_shard_reference, server_micros: server_micros() },
             );
         }
         None => {
@@ -277,7 +277,7 @@ async fn handle_login(
 }
 
 /// Poll the players cache for the row named `name`, returning its
-/// `(player_id, data_shard)`. The reducer's row insert arrives asynchronously after
+/// `(player_id, player_shard_reference)`. The reducer's row insert arrives asynchronously after
 /// commit, so we retry over a short window.
 ///
 /// One row per name — `Player.name` is unique, and the table is no longer versioned.
@@ -290,7 +290,7 @@ async fn read_player_by_name(
     use bindings::players::players_table::PlayersTableAccess;
     for _ in 0..PLAYER_READ_POLLS {
         if let Some(p) = conn.db().players().iter().find(|p| p.name == name) {
-            return Some((p.player_id, p.data_shard));
+            return Some((p.player_id, p.player_shard_reference));
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }

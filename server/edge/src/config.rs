@@ -174,7 +174,7 @@ impl ServerConfig {
     }
 
     /// The single `players` auth DB (account record + profile). One instance
-    /// today; login resolves a name → `player_id` + `data_shard` here.
+    /// today; login resolves a name → `player_id` + `player_shard_reference` here.
     pub fn players_db(&self) -> String {
         format!("resonantdust-{}-players-0", self.env)
     }

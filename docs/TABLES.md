@@ -44,7 +44,7 @@ belongs in `player_profiles`.
 | column | type | key | meaning |
 |---|---|---|---|
 | `player_id` | `u32` | **PK** | logical id. `< 1024` reserved for system/pseudo-players; real players start at `FIRST_PLAYER_ID = 1024`. `DEVELOPER_ID = 512`. |
-| `data_shard` | `u16` | | the card-shard partition holding this player's cards/souls. `0` today. |
+| `player_shard_reference` | `u16` | | [`player_shard_reference`](VARIABLES.md#server_reference--u16-and-its-roles) — a `server_reference` (`realm_id:8 \| server_id:8`) naming the shard that serves this player's cards/souls. `0` today (realm 0, server 0). |
 | `name` | `String` | **unique** | display name, **case-sensitive** ("Alice" ≠ "alice"), ≤ `MAX_PLAYER_NAME_LEN` (64). |
 | `last_login_secs` | `u32` | | unix seconds of last `set_last_login`; `0` until the first login round-trip. Drives the chat catch-up window. |
 | `flags` | `u32` | | per-player flag bits (faction subfield drives the object-texture pack picker). |
@@ -58,6 +58,11 @@ belongs in `player_profiles`.
 > (a player's own version rows collided on it), so it lived only in `claim_or_login`'s lookup and any
 > other writer silently bypassed it. Flattening removed the obstacle. The reducer still checks first,
 > to fail with a readable message instead of a raw constraint violation.
+>
+> **`player_shard_reference` replaced `data_shard`** — same width, but a `server_reference` rather
+> than a bare partition index, so a player's shard is addressed like any other server and stays
+> unique across realms. It is the routing that survives here: with a player's shard on the player's
+> own row, the geographic `region_shards → shards` chain is not what finds it.
 
 | | |
 |---|---|
@@ -84,38 +89,17 @@ in `claim_or_login`'s new-player branch.
 
 ## `index` DB — the routing directory
 
-Two independent tiers that happen to share a database:
-- **shard tier** (`region_shards` → `shards`): *which data shard holds a region, and where it lives.*
-- **server tier** (`player_servers` → `servers`): *which game server owns a player's session.*
+The **server tier** (`player_servers` → `servers`): *which game server owns a player's session.* A
+two-step lookup, read by the gateway.
 
-Each is a two-step lookup; nothing joins across the tiers.
-
-### `region_shards` — public
-
-Step one of the shard tier: which shard holds a region. One row per **assigned** region — an
-unrouted region is absent, and the edge falls back to the env's default shard DB (single-shard
-deployments seed no rows, so absence is the common path).
-
-| column | type | key | meaning |
-|---|---|---|---|
-| `region_id` | `u32` | **PK** | [`region_id`](VARIABLES.md#legacy--retiring-do-not-build-on) = `realm:8 \| region:8 \| reserved:16` — a `zone_id` masked by `REGION_ID_MASK` (`0xFFFF_0000`). **Legacy shape**, retiring with `zone_id`. |
-| `shard_id` | `u16` | | keys into `shards` |
-
-### `shards` — public
-
-Step two: where a shard physically lives.
-
-| column | type | key | meaning |
-|---|---|---|---|
-| `shard_id` | `u16` | **PK** | |
-| `url` | `String` | | SpacetimeDB server URL to connect to for this shard |
-| `db_name` | `String` | | database name on that server holding the shard's regions |
-
-| | |
-|---|---|
-| **writes** | operator, via `rd index seed` → `assign_region` / `unassign_region` / `set_shard` / `remove_shard`. Topology source: `content/servers/<env>`. |
-| **reads** | **edge** — `index.rs` resolves `zone_id → region → endpoint` against the subscribed cache (no per-lookup round trip). *Currently unconsumed: the shard it routed to was deleted; the chain itself is intact.* |
-| **subscribed** | edge, server-global, once at startup: `SELECT * FROM region_shards`, `SELECT * FROM shards` |
+> **`region_shards` and `shards` are not documented here.** They are the *shard tier* — the
+> geographic `region_id → shard_id → {url, db_name}` chain that answered "which data shard holds
+> this region." Nothing consumes it: the shard it routed to was deleted, `resolve_zone_or_default`
+> is `#[allow(dead_code)]`, and a player's shard now rides on their own row
+> (`players.player_shard_reference`) rather than being derived from geography. The tables still
+> exist in the `index` module and the edge still subscribes to them — see
+> [Vestigial](#vestigial--exists-but-nothing-consumes-it) below. They earn a place here again only
+> if the rebuild defines zone→shard routing that something actually reads.
 
 ### `servers` — public
 
@@ -179,6 +163,24 @@ for how a `local` feed would land).
 
 ---
 
+## Vestigial — exists but nothing consumes it
+
+Live in a module, and in one case still subscribed, but with no consumer of the result. Recorded
+rather than silently omitted: the code is there, so a reader who greps will find it and deserves to
+know it's inert.
+
+| DB | table | state |
+|---|---|---|
+| `index` | `region_shards` | The geographic shard tier: `region_id → shard_id`, and `shard_id → {url, db_name}`. Written by the operator (`rd index seed` → `assign_region` / `set_shard`); read only by the edge's `resolve_zone_or_default`, which is `#[allow(dead_code)]` — it routed to the deleted shard. The edge **still subscribes** at startup (`SELECT * FROM region_shards`, `SELECT * FROM shards`) and logs the row counts; the resolution feeds nothing. |
+| `index` | `shards` | ↑ same chain. |
+
+The routing itself isn't wrong — `zone_id → region → endpoint` is unchanged by the rebuild, which is
+why [`index.rs`](../server/edge/src/index.rs) was kept whole rather than deleted and re-derived. But
+a player's shard is no longer found this way: it rides on `players.player_shard_reference`. Whether
+zone→shard routing returns at all is the rebuild's call.
+
+---
+
 ## Not here yet — the rebuild's tables
 
 The shard and tick pipeline were deleted 2026-07-15, taking their tables with them (`event_log`,
@@ -219,8 +221,8 @@ no longer exist; the module's `init` moved to `lib.rs`).
    | component | query | against |
    |---|---|---|
    | edge (per session) | `SELECT * FROM players` | `players` |
-   | edge (startup, global) | `SELECT * FROM region_shards`, `SELECT * FROM shards` | `index` |
    | gateway | `SELECT * FROM servers`, `SELECT * FROM player_servers` | `index` |
+   | edge (startup, global) | `SELECT * FROM region_shards`, `SELECT * FROM shards` | `index` — **vestigial**, but a live subscription: it still breaks at runtime if those tables change |
 
 3. **Regenerate bindings** for every consumer (`rd build spacetime <module>` emits
    `server/<c>/src/bindings/<module>/`).

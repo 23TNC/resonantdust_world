@@ -526,7 +526,7 @@ impl Engine {
             ServerMsg::LoginOk {
                 cid,
                 player_id,
-                data_shard,
+                player_shard_reference,
                 server_micros,
             } => {
                 self.record_reply("login", /*ok=*/ true, text.len());
@@ -543,7 +543,7 @@ impl Engine {
                 let server_url = self.server_url.clone().unwrap_or_default();
                 self.emit(Event::LoggedIn {
                     player_id,
-                    data_shard,
+                    player_shard_reference,
                     server_url,
                 });
                 // Prime the estimator with a real round-trip immediately (the

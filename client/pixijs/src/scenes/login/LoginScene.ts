@@ -126,11 +126,11 @@ export class LoginScene extends Scene {
       // owns the gateway round-trip + world-server connection.
       setCurrentEnvironment(server);
       ctx.client.setGatewayUrl(gatewayUrlFor(server));
-      const { playerId, dataShard } = await ctx.client.login(username, (msg) =>
+      const { playerId, playerShardReference } = await ctx.client.login(username, (msg) =>
         this.overlay.setStatus(msg),
       );
       this.overlay.setStatus(
-        `Logged in as ${username} on ${server} (player ${playerId}, shard ${dataShard}).`,
+        `Logged in as ${username} on ${server} (player ${playerId}, shard ${playerShardReference}).`,
         "success",
       );
       // Into the world. `onExit` unmounts the form.
