@@ -48,6 +48,50 @@ why [`index.rs`](../../server/edge/src/index.rs) was kept whole rather than dele
 Whether zone→shard routing returns at all is the rebuild's call. Written by the operator via
 `rd index seed` → `assign_region` / `set_shard`; topology source `content/servers/<env>`.
 
+## The rebuild's tables — what was translated, what is open
+
+The shapes in TABLES.md come from [`../intent/spacetime-again/`](../intent/spacetime-again/README.md),
+which was written before this repo's reference model collapsed the object_reference union. The design
+is authoritative for *structure*; VARIABLES.md is authoritative for *widths*. Where they disagreed,
+widths won:
+
+| design said | TABLES.md says | why |
+|---|---|---|
+| `worker_reference : u16` | `u8` | `server_reference` is `type_id:4 \| server_id:4` now |
+| `targets` / `reads : Vec<u64>` | `Vec<u32>` | an `entity_reference` is a u32 |
+| `target_reference : u64` | `u32` | same |
+| `payload…` | `definition_reference` + `position_reference` + `data` | see below |
+
+**`event_reference` and the global total order.** The design says `u32 auto_inc` and calls the
+resulting ascending order "the one property that must not be broken" — multi-target events are
+deadlock-free *because* every queue readies in the same order. Under the current model an
+`entity_reference` is already a u32 (`server_reference:8 | object_reference:24`), so an event's
+identity and its ordering key are the same value: the shard mints the low 24 monotonically, and the
+server byte on top keeps two event shards' ranges disjoint. Ascending `entity_reference` is therefore
+still a global total order. Note this is **not** SpacetimeDB's `auto_inc` on the whole column — that
+would increment the server byte. The shard composes the reference.
+
+**`payload…` is the one thing the design leaves abstract**, and TABLES.md has to be concrete. The
+reference model already says what an object *is* — three orthogonal references: what it is
+(`definition_reference`), where it is (`position_reference`), and its state (`data`). So the payload
+is those three. This is a reading of the model, not a decision the intent doc made; the old shard's
+payload (`kind:u16, zone_id:u32, location:u8, rotation:u8, offset:u8, data0:u64, data1:u64`) is
+legacy — `zone_id` is retiring, `offset` was `sub_position` and is gone, and `rotation` now lives
+inside `data`.
+
+**`state`'s primary key.** The design line reads `PK target_reference : u64 ; tic : u32 ; payload…`,
+which is ambiguous. Taken as PK `target_reference` alone with `tic` a plain column, because the table
+is described as "client-visible **latest**" and `promote` does `state.upsert(target_reference, tic,
+payload)` — an upsert that replaces. A composite `(target, tic)` key would accumulate a row per tic
+and stop being "latest".
+
+**`actions : Vec<u64>` has no word format.** `event_word` was deleted (zero call sites — it belonged
+to the old pipeline). The rebuild specifies an RPN program but not its encoding. Undefined until the
+rebuild decides.
+
+**Still open in the design itself** (not translation gaps): partition policy, read-set derivation,
+`base` copy cost, and where cold `find-or-mint` lives. See the intent doc's §Open.
+
 ## History
 
 ### `players` was a version-history table — until 2026-07-15

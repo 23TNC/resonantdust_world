@@ -102,11 +102,75 @@ writes `send_chat_message` · reads pixijs (via wasm core) — **not wired**, se
 | `index` | `region_shards` | `region_id`→`shard_id`. No consumer; edge still subscribes. |
 | `index` | `shards` | `shard_id`→`{url, db_name}`. Same chain. |
 
-## Not built
+---
 
-The rebuild's tables — `event_log` / `event`, `state_log` / `state` / `state_hold` — are designed in
-[`intent/spacetime-again/`](intent/spacetime-again/README.md) (PSEUDOCODE). They land here when they
-exist.
+# Not built — the rebuild
+
+Shapes to build **to**. Designed in [`intent/spacetime-again/`](intent/spacetime-again/README.md);
+no module implements them yet. Widths are this repo's current reference model, which the design
+predates — see [`notes/tables.md`](notes/tables.md) for what was translated and what is still open.
+
+## `event_shard`
+
+### `event_log` — the queue (in flight only)
+
+| column | type | key | notes |
+|---|---|---|---|
+| `event_reference` | `u32` | PK | `entity_reference`, `type_id` = `TYPE_EVENT`. Ascending = composition order. |
+| `worker_reference` | `u8` | idx | subscription key. `SERVER_REF_NONE` = unassigned |
+| `event_tic` | `u32` | idx | |
+| `status` | `u8` | idx | `QUEUED` `QUEUEING` `QUEUE_SUCCESS` `RUNNING` `COMPLETE` `QUEUE_FAILED` |
+| `actions` | `Vec<u64>` | | the RPN program; **word format undefined** |
+| `targets` | `Vec<u32>` | | `entity_reference` — issuer-designated write set |
+| `reads` | `Vec<u32>` | | `entity_reference` — issuer-designated read set |
+| `lease_tic` | `u32` | | assignment expiry; the reclaim clock |
+| `failed` | `bool` | | |
+
+sub `SELECT * FROM event_log WHERE worker_reference = self` (worker)
+
+### `event` — the log (settled history / audit / replay)
+
+`event_log`'s columns, frozen, PK `event_reference`. Never subscribed by workers. `settle(t)` moves
+rows here and deletes them from the queue.
+
+## `data_shard`
+
+Payload = the reference model's three orthogonal references, carried by both `state_log` and
+`state`:
+
+| column | type | notes |
+|---|---|---|
+| `definition_reference` | `u32` | what it is |
+| `position_reference` | `u32` | where it is |
+| `data` | `u8` | its state |
+
+### `state_log` — per `(target, tic)` composition slot
+
+| column | type | key | notes |
+|---|---|---|---|
+| `uid` | `u64` | PK | surrogate |
+| `target_reference` | `u32` | idx `(target_reference, tic)` | `entity_reference` |
+| `tic` | `u32` | idx | |
+| *payload* | | | composed so far; seeded from the resolved value at `< tic` |
+| `events` | `Vec<u32>` | | `event_reference`s still to apply, **ascending** |
+| `settled` | `bool` | | `events` empty → eligible to promote |
+| `promoted` | `bool` | | |
+
+### `state` — client-visible latest
+
+| column | type | key | notes |
+|---|---|---|---|
+| `target_reference` | `u32` | PK | `entity_reference` |
+| `tic` | `u32` | | the tic this value went live on |
+| *payload* | | | |
+
+reads edge · workers never subscribe
+
+### `state_hold` — not added
+
+The worker's only window into a data shard (`worker_reference`, `ready`, `base`, `lease_tic`). Part
+of the same design and load-bearing in it; omitted here because it wasn't asked for. See the intent
+doc.
 
 ---
 
