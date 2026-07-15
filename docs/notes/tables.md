@@ -22,10 +22,11 @@ exists *because* of it:
 | worker | `SELECT * FROM event_log WHERE worker_reference = self` | `event_shard` |
 | worker | `SELECT * FROM state_log WHERE worker_a = <self> OR worker_b = <self> OR worker_c = <self> OR worker_d = <self>` | `data_shard` — **the 4-way OR is unverified against SpacetimeDB's subscription grammar** |
 | edge (per zone) | `SELECT * FROM state WHERE macro_position_reference = <zone>` | `data_shard` |
+| edge (per zone) | `SELECT * FROM event WHERE macro_position_reference = <zone>` | `event_shard` |
 
-The two worker queries are the design's whole set — *"and NOTHING else. No state, no state_log, no
-cold, no event."* (The data-shard one is now `state_log` itself rather than a separate hold; the
-worker reads the payload straight off it.)
+Two axes, and they're the whole model: a **worker** subscribes by *its own id* (work is pushed to it
+by assignment); the **edge and client** subscribe by *locality* (zone). Nothing subscribes to a log
+it doesn't own a row in.
 
 ## Trust and correctness notes
 
@@ -202,8 +203,43 @@ everything below", and the §Open cost concern (*"every hold carries a payload c
 dissolve: the worker reads the payload off the row it's subscribed to. That is what this rule buys,
 and it's why it's worth a hard cap.
 
+**The `lease_*` are `tic` low bytes, not tics.** A `tic` is a u16; a `u8` lease can only hold
+`tic & 0xFF`, compared with **u8** serial arithmetic — a 127-tic window instead of 32767. That is
+ample for a lease (`CLAIM_LEASE_TICS` is 4, ~2s at 2 Hz) and it hard-caps one at 127 tics, which is
+a bound worth knowing rather than discovering. It also means the ring math exists at two widths:
+`tic.rs` is u16-only today and needs u8 variants, or the comparison gets hand-rolled at each of the
+four call sites — which is exactly how nibble orders get reversed.
+
 **`dirty : u8`** is the count of events holding a slot; `0` = settled, so `SETTLED` leaves `flags`
-(only `PROMOTED` remains). `state_events` (`event_reference → Vec<uid>`) is the reverse index that
+(only `PROMOTED` remains).
+
+### The worker keeps its assignment through queueing → running
+
+The design released the worker between phases — `enqueue_done(ok) → status = QUEUE_SUCCESS,
+worker_reference = 0` (*"released; re-assigned for execute"*). It no longer does: the worker that
+stands the `state_log` rows up and pushes `QUEUEING → RUNNING` keeps the row.
+
+That is what makes early acquisition work. A worker can claim `state_log` slots any time after it
+holds the event in `RUNNING`, so it acquires the rows during the enqueue tic and the data is already
+in its subscription when the execute tic arrives — one worker, one flow, no re-assignment churn and
+no window where nobody owns the event. The subscription is the delivery mechanism, so it has to be
+armed a tic early; releasing and re-assigning would disarm it exactly when it's needed.
+
+### Promotion is an action, not a sweep
+
+`state` and `event` are **projections, and opt-in ones**. A row reaches them only when a program
+executes `promote_state` / `promote_event`; the master does not sweep settled rows into them.
+
+The consequence is the point: **a program that promotes nothing runs entirely server-side.**
+`state_log` composes, `event_log` settles, and `state` / `event` never see a single change — so no
+client ever observes it. Visibility becomes something a program asks for rather than something the
+spine does by default.
+
+This replaces the design's `promote(t)`, which promoted every settled row automatically:
+
+> `for row in state_log where tic <= t and settled and !promoted: state.upsert(…)`
+
+`flags.PROMOTED` survives to mark what has already been projected, so promotion stays idempotent. `state_events` (`event_reference → Vec<uid>`) is the reverse index that
 makes increment/decrement a direct lookup rather than a search — internal, never subscribed, so the
 per-event keying that sank the last attempt is fine here: nothing asks it a per-slot question.
 

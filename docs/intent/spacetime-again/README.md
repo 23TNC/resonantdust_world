@@ -27,9 +27,20 @@
 >   `server_id` in the top byte, so the worker knows which shards to call. This resolves what
 >   dropping `targets` opened. It does **not** resolve `reads` — §Open's read-set question stands.
 >
-> Still unresolved: the **composition head** (`dirty` counts, it doesn't order — decision #4 rests on
-> knowing *which* event is next) and a **lease** per `worker_*` slot for `reap()`. See
-> [`notes/tables.md`](../../notes/tables.md).
+> - **The worker is not released between phases.** Decision-adjacent change to T=1: `enqueue_done`
+>   no longer sets `worker_reference = 0`. The worker that stands the `state_log` rows up and pushes
+>   `QUEUEING → RUNNING` keeps the event, and may claim `state_log` slots as soon as it holds the
+>   event in `RUNNING` — so it acquires next tic's data during this tic, and the subscription is
+>   already armed when execute arrives. Releasing would disarm it exactly when needed.
+> - **`promote(t)` is gone; promotion is an action.** `state` and `event` are opt-in projections,
+>   written only by a `promote_state` / `promote_event` action in a program — not swept from settled
+>   rows by the master. **A program that promotes nothing runs entirely server-side**, and no client
+>   sees it. `flags.PROMOTED` keeps promotion idempotent.
+> - **`event` is client-visible and zone-scoped**, with a `macro_position_reference` like `state`.
+>   The queue mechanics (`worker_reference`, `lease_tic`) do not come across.
+>
+> Still unresolved: the **composition head** — `dirty` counts, it doesn't order, and decision #4
+> rests on knowing *which* event is next. See [`notes/tables.md`](../../notes/tables.md).
 > - `target_reference` is named **`entity_reference`** throughout.
 > - **Widths**: `tic` is a wrapping `u16`; `worker_reference` `u8`; entity keys `u32`; `actions`
 >   `Vec<u32>`.

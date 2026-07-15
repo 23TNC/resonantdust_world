@@ -129,10 +129,25 @@ The write and read sets are **not** columns — they come out of `actions`. See
 [`notes/tables.md`](notes/tables.md); this supersedes the intent doc's decision #5 and leaves its
 enqueue flow without an input.
 
-### `event` — the log (settled history / audit / replay)
+### `event` — client-visible settled events
 
-`event_log`'s columns, frozen, PK `event_reference`. Never subscribed by workers. `settle(t)` moves
-rows here and deletes them from the queue.
+| column | type | key | notes |
+|---|---|---|---|
+| `event_reference` | `u32` | PK | |
+| `macro_position_reference` | `u16` | idx | the zone-subscription key |
+| `event_tic` | `u16` | | `tic` |
+| `status` | `u8` | | terminal only: `COMPLETE` · `QUEUE_FAILED` · `FAILED` |
+| `actions` | `Vec<u32>` | | frozen |
+
+reads edge, client · workers never subscribe ·
+sub `SELECT * FROM event WHERE macro_position_reference = <zone>` (edge, per subscribed zone)
+
+The counterpart of `state`: zone-scoped and client-visible, so a client can see the events in its
+locality, not just their outcome. `event_log`'s queue mechanics (`worker_reference`, `lease_tic`) do
+not come across — they are in-flight state, and this row is settled.
+
+A row lands here **only** when a program says so, via a `promote_event` action. See
+[`notes/tables.md`](notes/tables.md).
 
 ## `data_shard`
 
@@ -156,6 +171,10 @@ Payload = the reference model's three orthogonal references, carried by both `st
 | `worker_b` | `u8` | idx | |
 | `worker_c` | `u8` | idx | |
 | `worker_d` | `u8` | idx | |
+| `lease_a` | `u8` | | `worker_a`'s expiry — **`tic` low byte**, see notes |
+| `lease_b` | `u8` | | |
+| `lease_c` | `u8` | | |
+| `lease_d` | `u8` | | |
 | `dirty` | `u8` | | count of events holding this slot. `0` = settled |
 | *payload* | | | composed so far; seeded from the resolved value at `< tic` |
 | `flags` | `u8` | | bit 0 `PROMOTED` |
@@ -165,7 +184,8 @@ worker_d = <self>` (worker) — the worker's window into a data shard.
 
 **At most four servers may act on one row in one tic.** That bound is what makes the subscription a
 fixed-width disjunction instead of a per-target subscription, and it lets the worker read the payload
-off the row — so a hold carries no `base` copy.
+off the row — so nothing carries a `base` copy. A worker claims a slot by calling the shard with the
+entity ids it intends to work; the shard allocates a free `worker_*` and stamps the matching `lease_*`.
 
 `uid` is entity-major; `entity_reference` and `tic` are duplicated out of it because a subscription
 filters on columns and a reducer needs them as values.
@@ -189,16 +209,18 @@ directly, so `dirty` can be incremented and decremented without a search.
 | `tic` | `u16` | | `tic` — the tic this value went live on |
 | *payload* | | | |
 
-reads edge · workers never subscribe ·
+reads edge, client · workers never subscribe ·
 sub `SELECT * FROM state WHERE macro_position_reference = <zone>` (edge, per subscribed zone)
+
+A row lands here **only** when a program says so, via a `promote_state` action.
 
 ### Not shaped yet
 
 | | |
 |---|---|
 | **the composition head** | The lowest pending `event_reference` for a slot — `apply`'s order fence, and how a worker knows it's its turn. `dirty` is a count; it answers *how many*, not *which is next*. Decision #4 ("the one property that must not be broken") rests on it. |
-| **the lease** | `reap()` needs an expiry per `worker_*` slot, or a dead worker holds a row forever. |
 | **the read set** | Writes are recoverable from `actions` (each reference carries its `server_id`). Reads are not — telling which operands a verb *reads* needs `action_reads_actor`, which the design's §Open already flags. |
+| **`promote_state` / `promote_event`** | Named as actions, but the verb palette (`ACTION_MOVE` and friends) died with `event_word`. They land wherever the word format does. |
 
 See [`notes/tables.md`](notes/tables.md) and the intent doc.
 
