@@ -245,7 +245,7 @@ path is fully live-verified; only cold `interact` remains stubbed.
 right both times. **Choice:** generate all test inputs from the real `encode_*`/`pack_*` via a
 throwaway test, never by hand. **Why:** recurring foot-gun; the codec is the source of truth.
 
-### `dsl::loader::material_registry_and_packed_channels` is red at HEAD (2026-07-14)
+### ✅ RESOLVED — `dsl::loader::material_registry_and_packed_channels` was red at HEAD (2026-07-14)
 **Problem:** the workspace test suite has a **pre-existing failure** — `visual_for_def(2).unwrap()`
 panics on `None` ([loader.rs:802](../../../shared/dsl/src/loader.rs)); the test's stone def no longer
 resolves. Unrelated to the rewrite (`dsl` doesn't depend on `codec`; `shared/dsl` + `content` are
@@ -254,6 +254,32 @@ untouched). Confirmed by running `-p resonantdust-dsl --lib` in a clean worktree
 each run needs the failure recognised and stepped over by hand, which is how a *real* regression
 would slip by. See also **D-7**: `check` skips the wasm's `js`-gated code. Two of our three build
 gates don't gate.
-**Choice:** left alone — out of scope for the re-cut, and fixing content-loading blind would risk
-masking a real content bug. Own it as its own task: decide whether the test's fixture or the loader
-drifted, then get the suite green so it can gate again.
+**Resolved (T-6, 2026-07-14):** the **fixture** was wrong, not the loader — and the test was **born
+red**: it fails identically at `d25b872`, the commit that added it, so it never passed and nothing
+regressed. `node_visual` bails at [loader.rs:234](../../../shared/dsl/src/loader.rs) —
+`store.read("prims.0.tint")?` makes a base tint **mandatory** for a node to have any visual — and the
+fixture's stone sets `texture` + `packed.0.{material,tint}` but no `&tile.tint`. Every real def in
+`content/visual/*.rd` sets one (identity `#ffffff` where the texture carries the colour), including
+the real `::stone>` the fixture is a miscopy of (`#6b6b6b &tile.tint set`). Fixed the fixture to
+match real content; the assertions are untouched and now pass. **`cargo test --workspace` is green
+for the first time** (107 tests) — the gate works again.
+
+**But the fixture's author assumed something real** (see the fork below): they expected a def to be
+able to bind *only* packed channels. It can't, and the way it can't is silent.
+
+
+### A tile/thing def that omits `&tint` silently loses its ENTIRE visual (2026-07-14)
+**Problem:** `node_visual` reads the base tint with `?`
+([loader.rs:234](../../../shared/dsl/src/loader.rs)), so a def whose `@on_create` exports a prim but
+never sets `&tile.tint` yields `None` — **not** "a visual with no tint". Its **texture vanishes too**
+(`tile_texture_stems` → `""` via `unwrap_or_default`), and `tile_packed_channels` → all-default. A
+def that binds only packed channels disappears rather than rendering untinted.
+**Impact:** 🟡 latent — no real content hits it (every def sets a tint), and it's how T-6's test was
+born red: its author wrote a packed-only stone and reasonably expected it to work.
+**Why it's shaped this way:** the `?` doubles as "did this node produce a prim at all?" — but
+`run_node_hook(node, "visual", "on_create")?` on the line above **already** answers that. So the tint
+`?` only guards "prim exists but has no tint", and conflates *absent* with *invalid*.
+**Choice:** left as-is; T-6's scope was restoring the gate, and changing it is a **content-semantics
+decision, not a cleanup** — logged in [forks.md](forks.md) (2026-07-14, "base tint: mandatory,
+defaulted, or an error?") as undecided. Deliberately not settled while executing something else;
+that's how D-3 happened.

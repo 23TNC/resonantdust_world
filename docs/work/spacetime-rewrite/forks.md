@@ -46,6 +46,17 @@ Decision points with more than one viable path + which we chose + why. Chronolog
 
 ---
 
+- **2026-07-14** · **Base `&tint`: mandatory, defaulted, or an error?** — **UNDECIDED, deliberately.**
+  Surfaced by T-6: `node_visual` reads the base tint with `?`, so a def that exports a prim but sets
+  no `&tile.tint` silently yields **no visual at all** — texture included. Options: **(a)** keep it
+  mandatory (status quo; matches the real-content convention that every def sets a tint, identity
+  `#ffffff` when the texture carries the colour); **(b)** default the tint (`0`/white) so a def can
+  bind only packed channels — what the test's author assumed; **(c)** make the omission a **load
+  error**, so it fails loudly instead of rendering nothing. **Not chosen** — T-6's scope was
+  restoring the build gate, and this is a content-semantics call with a real trade (b is friendlier
+  to the packed-channel model; c is honest; a is what all content already does). Deciding it while
+  executing an unrelated task is precisely the D-3 failure. Detail: [issues.md](issues.md).
+
 ## Detail
 
 ## 006 — Next tranche after the behavioral core (fork)

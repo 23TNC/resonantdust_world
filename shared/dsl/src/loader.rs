@@ -763,6 +763,7 @@ mod tests {
       @on_create>
         \"tile ^prim call &tile export
         \"linked/wall_smooth &tile.texture set
+        #6b6b6b &tile.tint set
         \"mottle &tile.packed.0.material set
         #6b6b6b &tile.packed.0.tint set
         0 return
