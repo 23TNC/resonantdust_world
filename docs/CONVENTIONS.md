@@ -126,6 +126,7 @@ A work-folder headers the component(s) + plan phase it executes; plans link back
 | You have… | It goes in… |
 |---|---|
 | **a cross-component variable's name / width / bit layout** | **`docs/VARIABLES.md` — authoritative; never re-state a layout in a component doc as if it owned it** |
+| **a cross-component table's columns / keys / readers / writers** | **`docs/TABLES.md` — authoritative; module-internal tables stay in the module** |
 | the final shape of a component (tables/types/protocol) | `components/<c>/design/` |
 | why the shape is that way, what's stored/read where + entry/exit | `components/<c>/intent/` |
 | what's implemented vs not, right now | `components/<c>/current/` |

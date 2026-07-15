@@ -48,7 +48,11 @@ pub use resonantdust_codec::packed::{region_of, REGION_ID_MASK};
 /// Step one: which shard holds a given region. One row per assigned region.
 #[table(accessor = region_shards, public)]
 pub struct RegionShard {
-    /// `region_id` = `region_x:8 | region_y:8 | surface:8 | reserved:8`.
+    /// `region_id` = `realm:8 | region:8 | reserved:16` — a `zone_id` under [`REGION_ID_MASK`],
+    /// each level an `x:4 | y:4` nibble pair. Authoritative shape: `docs/VARIABLES.md`.
+    /// (Was documented here as `region_x:8 | region_y:8 | surface:8 | reserved:8` — the
+    /// pre-0.2.3 layout, whose `surface` z-axis is retired. Comment only; the code takes
+    /// the mask from the codec and was always correct.)
     #[primary_key]
     pub region_id: u32,
     /// The shard holding this region — keys into [`Shard`].
