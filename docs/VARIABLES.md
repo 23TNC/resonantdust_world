@@ -93,6 +93,20 @@ An `entity_reference` is realm-unique only via its `server_reference`; crossing 
 
 ---
 
+## Time
+
+```
+u16 tic                           the simulation clock; WRAPS
+```
+
+A ring, not a line. **Never compare with `<` / `<=`** — across the wrap they invert (`0` is after
+`65535`). Use serial arithmetic: `(a.wrapping_sub(b) as i16)` — positive = `a` after `b`.
+`shared/codec/src/tic.rs`.
+
+`TIC_WINDOW` = 32767 — two tics further apart than this cannot be ordered.
+
+---
+
 ## Cold storage
 
 ```

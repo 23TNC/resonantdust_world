@@ -118,12 +118,12 @@ predates — see [`notes/tables.md`](notes/tables.md) for what was translated an
 |---|---|---|---|
 | `event_reference` | `u32` | PK | `entity_reference`, `type_id` = `TYPE_EVENT`. Ascending = composition order. |
 | `worker_reference` | `u8` | idx | subscription key. `SERVER_REF_NONE` = unassigned |
-| `event_tic` | `u32` | idx | |
+| `event_tic` | `u16` | idx | `tic` — wraps |
 | `status` | `u8` | idx | `QUEUED` `QUEUEING` `QUEUE_SUCCESS` `RUNNING` `COMPLETE` `QUEUE_FAILED` |
 | `actions` | `Vec<u64>` | | the RPN program; **word format undefined** |
 | `targets` | `Vec<u32>` | | `entity_reference` — issuer-designated write set |
 | `reads` | `Vec<u32>` | | `entity_reference` — issuer-designated read set |
-| `lease_tic` | `u32` | | assignment expiry; the reclaim clock |
+| `lease_tic` | `u16` | | `tic` — assignment expiry; the reclaim clock |
 | `failed` | `bool` | | |
 
 sub `SELECT * FROM event_log WHERE worker_reference = self` (worker)
@@ -150,7 +150,7 @@ Payload = the reference model's three orthogonal references, carried by both `st
 |---|---|---|---|
 | `uid` | `u64` | PK | surrogate |
 | `target_reference` | `u32` | idx `(target_reference, tic)` | `entity_reference` |
-| `tic` | `u32` | idx | |
+| `tic` | `u16` | idx | `tic` — wraps |
 | *payload* | | | composed so far; seeded from the resolved value at `< tic` |
 | `events` | `Vec<u32>` | | `event_reference`s still to apply, **ascending** |
 | `settled` | `bool` | | `events` empty → eligible to promote |
@@ -161,7 +161,7 @@ Payload = the reference model's three orthogonal references, carried by both `st
 | column | type | key | notes |
 |---|---|---|---|
 | `target_reference` | `u32` | PK | `entity_reference` |
-| `tic` | `u32` | | the tic this value went live on |
+| `tic` | `u16` | | `tic` — the tic this value went live on |
 | *payload* | | | |
 
 reads edge · workers never subscribe

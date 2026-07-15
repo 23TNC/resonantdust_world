@@ -42,6 +42,32 @@ shared id space costs nothing.
 **A position is not an identity.** 32 bits of geography don't fit in a 24-bit `object_reference`,
 and don't belong there. A position says *where*; a reference says *which*.
 
+## Why `tic` is a wrapping u16
+
+A ring, compared by serial arithmetic (RFC 1982) — the same "low numbers can be above high numbers"
+trick the shadow work uses for angles. `shared/codec/src/tic.rs`; every comparison in the pipeline
+design (`event_tic <= now`, `lease_tic < now`, the read rule's `t <= h.tic`) goes through it.
+
+**Why not u8.** Not causality — nothing is implemented, and the guards all sit inside the runway
+anyway (`TIC_GAP` = 3, `CLAIM_LEASE_TICS` = 4). The constraint is **scheduling runway**: a u8's
+usable half-window is 127 tics ≈ 60s at 2 Hz, ≈ 30s at 4 Hz. That's not enough room to schedule
+meaningfully into the future. A u16 gives 32767 tics — ~4.5 h at 2 Hz, ~2.3 h at 4 Hz — against a
+scheduling need of a few tics.
+
+**Why not u32.** It never wraps (68 years at 2 Hz), but the ring is cheap once implemented and the
+bytes are on every `state_log` / `state` / `event_log` row.
+
+**The one real limit.** Ordering holds only within `TIC_WINDOW` (32767). Two tics further apart than
+that compare *wrong* — not "unknown", wrong. Bounded by construction for `event_tic` and `lease_tic`
+(both `master + <5`) and for `state_log.tic` (GC horizon). The exposure is `state.tic` on a
+long-idle object: a rock untouched for >4.5 h carries a tic that no longer orders against
+`master_tic`. Nothing compares it today; if something ever needs to, it needs an epoch, not a wider
+tic. `tic.rs` pins this failure mode in a test so it can't drift silently.
+
+**`event.event_tic` wrapping is fine** — the log's total order is `event_reference` (ascending, and
+globally total because the server byte makes shards disjoint), not the tic. The tic is a scheduling
+label, not history's spine.
+
 ## Removed
 
 ### `valid_at : u64` — 2026-07-15
