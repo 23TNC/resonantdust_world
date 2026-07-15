@@ -87,15 +87,11 @@ rd_deploy_module() {
   local target="$1" reset="$2" idx=0
   local src; src="$target"   # module directory under spacetime/server/modules
   rd_require_module "$src"
-  # DB family this module deploys to. The unified `shard` module (one tick
-  # pipeline carrying both a zone's terrain and its loose objects) deploys to the
-  # `zone` family (`resonantdust-<env>-zone-0`) — matching `bin/rd`'s RD_DB and the
-  # edge's `default_shard_db`. Non-shard modules keep their own name.
-  local fam
-  case "$target" in
-    shard)       fam="zone" ;;
-    *)           fam="$target" ;;
-  esac
+  # DB family this module deploys to. Every module keeps its own name today. The
+  # deleted `shard` module was the one exception (it mapped to the `zone` family);
+  # the rebuild (`docs/intent/spacetime-again/`) picks its own families — add the
+  # mapping back here if a module name and its DB family diverge again.
+  local fam="$target"
   rd_log "deploy module $src → $(rd_db_for "$fam" "$idx")"
   rd_st_dcl run --rm --workdir "/workspace/server/modules/$src" build
   local crate wasm

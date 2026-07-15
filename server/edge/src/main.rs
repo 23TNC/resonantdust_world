@@ -1,15 +1,19 @@
 //! resonantdust world server — the bridge between clients and the SpacetimeDB
 //! data shards. It serves an inbound WebSocket listener (`ws`) for clients, holds
 //! a shared connection to the `index` routing directory (`connections`), and
-//! resolves each client's zones to their owning shard (`index`) before relaying
-//! the live zone rows back.
+//! serves the content + texture corpora over HTTP.
 //!
-//! Two client-facing capabilities today (the rest of the old gateway's surface —
-//! worldgen, recipes, content/LOD — is not ported):
+//! Client-facing capabilities today:
 //!   * **login** — `claim_or_login` against the `players` auth DB, binding the
 //!     connection to a `player_id`;
-//!   * **zone subscription** — resolve `zone_id → region → shard` via the index,
-//!     connect to that shard, and stream its tick-pipeline `state` rows.
+//!   * **clock sync** — the `ping`/`pong` round trip the client seeds its offset from;
+//!   * **assets** — `/content` + `/textures` (disk or R2), hot-reloaded from the tree.
+//!
+//! **Zone subscription is gone**, along with the shard module and tick pipeline it
+//! streamed from — deleted deliberately for a ground-up rebuild
+//! (`docs/intent/spacetime-again/`). What survived and still waits for it: the `index`
+//! routing chain (see `index`) and `worldgen`, which has no seeding path until a shard
+//! exists to seed.
 
 mod bindings;
 mod config;

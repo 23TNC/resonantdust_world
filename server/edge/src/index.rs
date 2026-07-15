@@ -11,6 +11,12 @@
 //! A zone's region is its `zone_id` with the low byte cleared. The server keeps
 //! one shared connection to the index, subscribed to both tables, and resolves
 //! against that connection's local cache — no per-lookup round trip.
+//!
+//! **Currently unconsumed.** Zone routing outlived the shard: this resolves against the
+//! `index` module, which was not part of the shard/pipeline deletion, and the routing
+//! chain itself is unchanged by the rebuild (`docs/intent/spacetime-again/` re-shapes what
+//! a shard *is*, not how a zone finds one). Kept whole rather than deleted and re-derived;
+//! the rebuild's shard connector is what calls it again.
 
 use crate::bindings::index::region_shards_table::RegionShardsTableAccess;
 use crate::bindings::index::shards_table::ShardsTableAccess;
@@ -29,6 +35,7 @@ pub use resonantdust_codec::packed::region_of;
 /// to. Two regions can resolve to the same endpoint (same shard) or to different
 /// servers entirely — regions may live on different SpacetimeDB databases.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[allow(dead_code)] // no consumer until the rebuild's shard connector — see module docs
 pub struct ShardEndpoint {
     pub url: String,
     pub db_name: String,
@@ -40,6 +47,7 @@ pub struct ShardEndpoint {
 /// seed no index rows, so this is the common path. Returns `Err` only when the
 /// region *is* routed but its shard endpoint row is missing — a partial index the
 /// server can't act on.
+#[allow(dead_code)] // no consumer until the rebuild's shard connector — see module docs
 pub fn resolve_zone_or_default(
     conn: &IndexConnection,
     cfg: &ServerConfig,

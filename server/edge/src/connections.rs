@@ -1,5 +1,5 @@
 //! Upstream SpacetimeDB connections — the server's link to the control-plane
-//! (`index`, `players`) and the data `shard`s.
+//! (`index`, `players`).
 //!
 //! Two lifetimes:
 //!   * The **index** connection is server-global and long-lived: one shared
@@ -8,10 +8,11 @@
 //!     low-write table, so the SpacetimeDB subscription set-semantics hazard (a
 //!     second subscriber silently dropping a first's initial rows on a shared
 //!     connection) doesn't apply.
-//!   * The **players** and **shard** connections are built *per client*, in
-//!     [`crate::ws`], precisely to avoid that hazard — each WS gets its own so
-//!     their zone subscriptions don't collide. They're created with the
-//!     `connect_*` helpers below and torn down when the WS closes.
+//!   * The **players** connection is built *per client*, in [`crate::ws`], precisely to
+//!     avoid that hazard — each WS gets its own so their subscriptions don't collide.
+//!     It's created with the `connect_*` helpers below and torn down when the WS closes.
+//!     Data-shard connections belonged here too until the shard was deleted for the
+//!     rebuild; they return the same way.
 //!
 //! Every connection runs the SDK message loop on its own thread
 //! (`run_threaded`); row/applied callbacks fire there and hand frames to the
@@ -99,14 +100,9 @@ macro_rules! connector {
 
 connector!(connect_index, index);
 connector!(connect_players, players);
-// The unified data-shard connector → the `shard` module (the tick pipeline).
-// Per-endpoint, cached for the client's lifetime.
-connector!(connect_shard, shard);
-// The cold-tiles connector → the `cold_tiles` module (dense Vec<u8> tile grid, its own
-// DB) and the cold-things connector → the `cold_things` module (sparse Vec<u64>, its own
-// DB). The zone's cold objects now live in the shard's own `cold` table (seeded via
-// seed_cold_row), so the standalone cold_tiles/cold_things modules + their connectors are
-// retired (spacetime-rewrite S7, divergence #3).
+// No data-shard connector: the shard module and the tick pipeline were deleted for a
+// ground-up rebuild (`docs/intent/spacetime-again/`). The macro above is what a new
+// `connect_<module>` costs — one line, once the module exists.
 
 /// Await an upstream's readiness oneshot with the connect timeout. `true` once
 /// the connection's `on_connect` fired; `false` on timeout (or a dropped sender,

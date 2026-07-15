@@ -99,7 +99,7 @@ components:
   gateway [--bindings]  the gateway release binary (in docker); --bindings first
                       regenerates gateway/src/bindings from the spacetime modules
   spacetime [mod...]  every module's wasm + server bindings, or only the named
-                      modules (e.g. 'rd build spacetime shard chat')
+                      modules (e.g. 'rd build spacetime index chat')
   core [--check]      the headless client core binary (in docker); --check type-
                       checks only (cargo check --all-targets)
   npc [--check]       the NPC driver binary (in docker); --check type-checks only
