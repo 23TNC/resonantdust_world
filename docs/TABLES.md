@@ -106,9 +106,9 @@ writes `send_chat_message` · reads pixijs (via wasm core) — **not wired**, se
 
 # Not built — the rebuild
 
-Shapes to build **to**. Designed in [`intent/spacetime-again/`](intent/spacetime-again/README.md);
-no module implements them yet. Widths are this repo's current reference model, which the design
-predates — see [`notes/tables.md`](notes/tables.md) for what was translated and what is still open.
+Shapes to build **to**. No module implements them yet. The flow that uses them is
+[`intent/spacetime-again/`](intent/spacetime-again/README.md); the reasoning is
+[`notes/tables.md`](notes/tables.md).
 
 ## `event_shard`
 
@@ -119,15 +119,14 @@ predates — see [`notes/tables.md`](notes/tables.md) for what was translated an
 | `event_reference` | `u32` | PK | `entity_reference`, `type_id` = `TYPE_EVENT`. Ascending = composition order. |
 | `worker_reference` | `u8` | idx | subscription key. `SERVER_REF_NONE` = unassigned |
 | `event_tic` | `u16` | idx | `tic` — wraps |
-| `status` | `u8` | idx | `QUEUED` `QUEUEING` `QUEUE_SUCCESS` `RUNNING` `COMPLETE` `QUEUE_FAILED` `FAILED` |
+| `status` | `u8` | idx | `QUEUED` `QUEUEING` `RUNNING` `COMPLETE` `QUEUE_FAILED` `FAILED` |
 | `actions` | `Vec<u32>` | | the RPN program; **word format undefined** |
 | `lease_tic` | `u16` | | `tic` — assignment expiry; the reclaim clock |
 
 sub `SELECT * FROM event_log WHERE worker_reference = self` (worker)
 
-The write and read sets are **not** columns — they come out of `actions`. See
-[`notes/tables.md`](notes/tables.md); this supersedes the intent doc's decision #5 and leaves its
-enqueue flow without an input.
+The write set is **not** a column — it comes out of `actions`, routed by each reference's top byte.
+See [`notes/tables.md`](notes/tables.md).
 
 ### `event` — client-visible settled events
 

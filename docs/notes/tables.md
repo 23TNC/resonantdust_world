@@ -62,27 +62,18 @@ why [`index.rs`](../../server/edge/src/index.rs) was kept whole rather than dele
 Whether zone→shard routing returns at all is the rebuild's call. Written by the operator via
 `rd index seed` → `assign_region` / `set_shard`; topology source `content/servers/<env>`.
 
-## The rebuild's tables — what was translated, what is open
+## The rebuild's tables
 
-The shapes in TABLES.md come from [`../intent/spacetime-again/`](../intent/spacetime-again/README.md),
-which was written before this repo's reference model collapsed the object_reference union. The design
-is authoritative for *structure*; VARIABLES.md is authoritative for *widths*. Where they disagreed,
-widths won:
+Shapes here, flow in [`../intent/spacetime-again/`](../intent/spacetime-again/README.md), widths from
+[`../VARIABLES.md`](../VARIABLES.md).
 
-| design said | TABLES.md says | why |
-|---|---|---|
-| `worker_reference : u16` | `u8` | `server_reference` is `type_id:4 \| server_id:4` now |
-| `targets` / `reads : Vec<u64>` | `Vec<u32>` | an `entity_reference` is a u32 |
-| `target_reference : u64` | `u32` | same |
-| `payload…` | `definition_reference` + `position_reference` + `data` | see below |
-
-**`event_reference` and the global total order.** The design says `u32 auto_inc` and calls the
-resulting ascending order "the one property that must not be broken" — multi-target events are
-deadlock-free *because* every queue readies in the same order. Under the current model an
+**`event_reference` and the global total order.** Ascending `event_reference` is what makes
+multi-target events deadlock-free — every queue readies in the same order, the classic
+acquire-in-a-global-order result, and the one property that must not be broken. An
 `entity_reference` is already a u32 (`server_reference:8 | object_reference:24`), so an event's
 identity and its ordering key are the same value: the shard mints the low 24 monotonically, and the
 server byte on top keeps two event shards' ranges disjoint. Ascending `entity_reference` is therefore
-still a global total order. Note this is **not** SpacetimeDB's `auto_inc` on the whole column — that
+a global total order. Note this is **not** SpacetimeDB's `auto_inc` on the whole column — that
 would increment the server byte. The shard composes the reference.
 
 **`payload…` is the one thing the design leaves abstract**, and TABLES.md has to be concrete. The
@@ -104,35 +95,19 @@ to the old pipeline). The rebuild specifies an RPN program but not its encoding.
 because an `entity_reference` is a u32 now: whatever the encoding turns out to be, a word carrying a
 reference needs 32 bits, not 64.
 
-### `targets` / `reads` dropped — supersedes decision #5
+### No `targets` / `reads` columns
 
-Both were `Vec<u32>` columns holding the issuer-designated write and read sets. Dropped as
-duplication: the entity_references are already in `actions`, so storing them again spends a vector
-per row to say what the program already says.
+Both were `Vec<u32>` columns holding the issuer-designated write and read sets. They're duplication:
+every reference is already in `actions`, so a column spends a vector per row to restate what the
+program says. The worker reads the write set off the program and routes by each reference's top byte.
 
-**This contradicts the intent doc's decision #5**, which is explicit and reasoned:
+Collecting operands out of a word stream is *structural* — no game semantics in the spine, which was
+the point of having the columns in the first place.
 
-> A `reads` set on the row, issuer-designated like `targets`. The store must create READ holds
-> *before* the worker computes, and it must not interpret the program to discover them — same
-> argument that makes `targets` a column: no game semantics in the spine.
-
-TABLES.md wins on shape; the intent doc is now wrong here and needs a pass. What the removal leaves
-open — these are real holes, not paperwork:
-
-- **`declare_pending` has no input.** T=1 enqueue does `for target in e.targets:
-  home_shard(target).declare_pending(...)`. With no column, the write set has to be recovered from
-  `actions` — by the worker (which can interpret) or the store (which decision #5 says must not).
-- **`acquire(WRITE)` / `acquire(READ)` likewise**, at T=2.
-- **Telling writes from reads is the hard half.** Collecting an `OP_OBJECT`-style operand out of a
-  word stream is structural — arguably not "game semantics" and fine in the spine. Knowing which
-  operands a verb *writes* versus *reads* is not: that's `action_reads_actor`, and the design's own
-  §Open already names it — *"Who computes `reads`? … it must agree with the VM about which operands
-  a verb reads."* Dropping the column doesn't answer that question, it makes it load-bearing.
-- **Partition policy** (§Open) proposed assigning work by `home_shard(targets[0])`. No `targets`, no
-  `targets[0]`.
-
-None of this blocks the schema — the columns are gone and the shape is smaller. It blocks the
-enqueue flow, which isn't built.
+**It only works for writes.** Telling which operands a verb *reads* rather than *writes* is game
+semantics, and the two look identical in the stream. That's `action_reads_actor`-shaped knowledge and
+it's still open — probably answered by the word format, since "how do I find the read set" is really
+"what does a word look like".
 
 ### `state_log` — composite `uid`, `flags`, and the events split
 
