@@ -20,6 +20,9 @@ The reference layouts + object model are implemented in `shared/codec/src` (`eve
   naming (not `macro_*`). Terrain renders on the new encoding. (B-2 was **retracted** — it treated
   the legacy `zone_id`/`surface` as a constraint; geometry is realm/region/zone/tile/layer.)
 
-**No open decisions.** Remaining is normal cleanup: retire the legacy world-global `zone_id` (drop
-`surface`, repartition to realm/region/zone) + move `cold` to a `region_zone:u16` key + the
-geographic cold `entity_reference` — see [work/…/todo.md](../../../../work/spacetime-rewrite/todo.md).
+- **`packed.rs` `zone_id` ✅ geographic (2026-07-14, G1)** — `realm:8 | region:8 | zone:8 |
+  reserved:8`; the old-game `surface` z-axis is retired. Browser-verified.
+- **Cold `entity_reference` ✅ geographic (G2)** + **PACK trigger ✅ (G3)** — both verified.
+
+**No open decisions; the re-cut is complete.** Only a marginal `cold`-table `region_zone:u16`
+key-width compaction remains ([work/…/todo.md](../../../../work/spacetime-rewrite/todo.md)).

@@ -70,7 +70,32 @@ follows the log. (Was `docs/spacetime-implementation/completion-log.md`, now ret
     retirement is the remaining cleanup below — NOT a blocker; B-2 retracted).
   - **Verified:** codec unit tests pass; shard republished (fresh); edge reseeded cold in the new
     entry format; browser renders the forest (conifers + bushes + ground) correctly **and** the
-    wolves — cold (new object encoding) + hot (identity re-cut) both live. · _(uncommitted)_
+    wolves — cold (new object encoding) + hot (identity re-cut) both live. · 11df80b
+- **2026-07-14** · **G1 — retire the legacy `zone_id` → geographic realm/region/zone (drop
+  surface)** — repartition `packed.rs`'s world-global routing key from `region_x:8 | region_y:8 |
+  surface:8 | zone_x:4 | zone_y:4` (old-game geometry) to **`realm:8 | region:8 | zone:8 |
+  reserved:8`** (each level `hi:4|lo:4`; `surface`/z-axis retired). `region_of` → realm|region;
+  `zone_region_zone` (the region:8|zone:8 cold key); realm accessors; `zone_and_location` /
+  `global_tile` nest realm ⊃ region ⊃ zone ⊃ tile. Propagated: biome, wasm (`zoneSurface`→
+  `zoneRealm`, dropped the `surface` param from the whole `set_anchor` chain wasm→client/core→
+  pixijs→npc), edge index, tests. **Browser-verified** (terrain + wolves render unchanged — zone 0
+  is invariant across the repartition). · a470495
+- **2026-07-14** · **G2 — cold `entity_reference` → geographic `cold_reference`** — replace the
+  interim world-global cold form with `REF_COLD | server_reference | cold_reference:32` (region:8 |
+  zone:8 | tile:8 | layer:8); realm rides `server_reference` (a shard is realm-scoped).
+  `entity_ref_zone_id` reconstructs realm|region|zone; edge `Interact` builds a `cold_reference`.
+  **Browser+DB-verified**: right-click a tree → find-or-mint decodes the geographic `cold_reference`
+  and promotes it hot (state +1, `cold_removed` +1, worker logs the decoded target). Cold *table*
+  keeps its geographic `zone_id:u32` key (the `region_zone:u16` narrowing is a marginal
+  wire-compaction needing multi-realm edge plumbing — see todo). · 34420c7
+- **2026-07-14** · **G3 — PACK trigger (hot→cold settle)** — the last representation item, worker-
+  only. `find_or_mint` stashes cold provenance (`type_reference:32 | cold_entry:32`) in `data0`; a
+  `pack_idle` sweep settles idle `REF_COLD` objects (no holders, idle > `PACK_IDLE_TICS`) back via
+  the existing `pack_settle` reducer, recomposing the exact cold row + entry. Pawns (`REF_HOT`)
+  never match → never pack (the design criterion). **Verified end-to-end**: drive a cold-target
+  event for a tree → hot (state +1, tombstoned) → after the idle window → `hot → cold (PACK settle)`
+  (state −1, tombstone cleared, entry restored to the cold row verbatim) — a faithful
+  cold→hot→cold round-trip. · 7454e39
 
 ---
 

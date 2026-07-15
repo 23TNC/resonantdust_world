@@ -29,13 +29,21 @@ See also [`divergences.md`](divergences.md) — the design-vs-code gap list.
 - **`event_reference` → `u32`** ✅ — `event_log` PK + `holder`/`open_rows` + every reducer sig +
   `vm::await_gate`/`encode_await`.
 
-## Not yet implemented (→ [`plan/`](../plan/) / blockers)
+## Geometry + cold side — DONE (2026-07-14, verified)
 
-- **Cold-side re-cut — blocked on world geometry** ([`work/…/blockers.md`](../../../../../../work/spacetime-rewrite/blockers.md)
-  B-2): `region_zone` cold key (#4) + `object.rs` compressed `position_reference`/`cold_reference`
-  addressing + the cold row's `macro` header. The compressed `region:8|zone:8` conflicts with the
-  live world-global `zone_id:u32`. Cold keeps its **working** `zone_id:u32` key meanwhile.
-- `PACK` trigger — rides the new cold `data:8` decode → deferred with the cold-side re-cut.
+- **Geographic `zone_id` (G1)** ✅ — legacy `region_x:8|region_y:8|surface:8|…` retired →
+  `realm:8 | region:8 | zone:8 | reserved:8`; `surface` (old-game z-axis) dropped. Browser-verified.
+- **Geographic cold `entity_reference` (G2)** ✅ — `REF_COLD | server_reference | cold_reference:32`;
+  find-or-mint decodes it. Verified via a live Interact.
+- **`PACK` trigger (G3)** ✅ — worker `pack_idle` settles idle `REF_COLD` objects back to cold via
+  `pack_settle`, restoring the exact cold entry from provenance stashed in `data0` at mint. Verified
+  end-to-end (cold→hot→cold round-trip).
+
+## Not yet implemented (marginal — → [`work/…/todo.md`](../../../../../../work/spacetime-rewrite/todo.md))
+
+- `cold` table `region_zone:u16` key (#4) — the table keys by the (geographic) `zone_id:u32`, which
+  is correct; the `u16` narrowing is a ~2-byte wire compaction needing multi-realm edge plumbing. No
+  dev payoff.
 - Cross-shard foreign Phase-1 hold (in-flight read-rule/GC visibility on the home shard).
 
 ## Reality that isn't in the design (→ cleanup)

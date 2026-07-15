@@ -107,9 +107,10 @@ cold
   Decided).
 - ✅ **Cold uniqueness rule:** one object per `(type, layer, tile)`, subtype-agnostic,
   **reducer-enforced** (reject-if-present), not a PK.
-- ⚠️ **Keyed by `region_zone`, realm implied by the shard** — see [hot-cold.md](../intent/hot-cold.md)
-  §shard classes. Today the code keys cold by a flat `zone_id` and stores it as the routing
-  column; the geographic `region_zone` key is the target. (Divergences.)
+- ✅ **Keyed by the geographic `zone_id`** (`realm|region|zone`, 2026-07-14 G1 — `surface`
+  retired), stored as the routing column. `region_zone` (realm implied by the shard) would narrow
+  the key `u32→u16` — a marginal wire compaction, not yet done (see
+  [work/…/todo.md](../../../../../../work/spacetime-rewrite/todo.md)).
 
 ### `cold_removed` — the cold modification delta ✅
 

@@ -13,7 +13,10 @@ _Last updated: 2026-07-14._
    `cold_reference = region:8 | zone:8 | tile:8 | layer:8`, `region_zone_reference` (not `macro_*`).
    Landed + browser-verified (terrain renders on the new encoding). B-2 retracted (it wrongly
    treated the legacy `zone_id`/`surface` as a constraint).
-3. **Remaining — retire the legacy `zone_id`** (normal cleanup, not blocked): drop `surface`,
-   repartition to realm/region/zone, move `cold` to a `region_zone:u16` key, and switch the cold
-   `entity_reference` to the geographic `cold_reference` form (`pack_cold_reference` exists). See
-   [work/…/todo.md](../../../../work/spacetime-rewrite/todo.md).
+3. **`packed.rs` `zone_id` ✅ DONE (2026-07-14, G1)** — repartitioned to geographic
+   `realm:8 | region:8 | zone:8 | reserved:8`; `surface` (old-game z-axis) retired. Browser-verified.
+4. **Cold `entity_reference` ✅ DONE (2026-07-14, G2)** — `REF_COLD | server_reference |
+   cold_reference:32` (geographic); the interim world-global form removed. Verified via Interact.
+5. **PACK trigger ✅ DONE (2026-07-14, G3)** — worker settles idle `REF_COLD` objects back to cold
+   (provenance in `data0`); verified round-trip. Only marginal follow-up left: the `cold` table
+   `region_zone:u16` key-width compaction ([work/…/todo.md](../../../../work/spacetime-rewrite/todo.md)).

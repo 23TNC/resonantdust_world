@@ -56,7 +56,14 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
 > #4 is **deferred**, not closed: it needs the world-geometry decision
 > ([`work/…/blockers.md`](../../../../../../work/spacetime-rewrite/blockers.md) B-2).
 
-## 4. 🟡 Cold keyed by flat `zone_id`, not geographic `region_zone` — DEFERRED to B-2
+## 4. ✅ MOSTLY CLOSED (2026-07-14) — geometry is geographic; only the `u16` key-width remains
+
+`zone_id` is now the **geographic** `realm:8 | region:8 | zone:8 | reserved:8` (G1 — surface
+retired), and the cold `entity_reference` is a geographic `cold_reference` (G2). The `cold` table
+keys by this geographic `zone_id:u32`, which is correct. The only remnant is the `region_zone:u16`
+key-width narrowing (drop the realm bits the shard implies) — a ~2-byte wire compaction needing
+multi-realm edge plumbing, tracked in [todo](../../../../../../work/spacetime-rewrite/todo.md). The
+original divergence (flat legacy `zone_id`):
 
 - **Design**: `cold` keyed by `region_zone_reference:u16`; realm implied by the shard.
 - **Code**: `Cold.zone_id : u32` flat, used as the routing column; `cold_key` packs
