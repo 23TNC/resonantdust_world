@@ -166,6 +166,10 @@ back-refs, and branch are all settled.
 
 ## The event row, restated
 
+**Abbreviated — the DSL-relevant columns only.** The full row is
+[tables.md](tables.md) + [lifecycle.md](../intent/lifecycle.md); don't read this as the
+complete schema.
+
 ```
 event
   event_reference : u32        a u32 so it can itself be passed as a reference
@@ -173,7 +177,15 @@ event
   actions         : Vec<u64>   the RPN word stream — operands + verbs, self-qualified
   worker_reference: u16        the worker assigned the job
   status          : u8
+  ...                          + `targets`, `failed`, `tic_state_change` — see tables.md
 ```
+
+> **`targets` is not a violation of "it's all in the stream".** The row also carries
+> `targets : Vec<u64>` — the **issuer-designated** entities the row writes, which `bump`/`stand_up`
+> read **without interpreting the program**. That's deliberate: enqueue must know the write set to
+> stand up rows + take holds *before* anything executes, and making the scheduler run the
+> interpreter to discover it would put game semantics in the spine. What the stream owns is the
+> *program*; what `targets` owns is the *write set*.
 
 No `action:u16` column, no `object_reference`/`server_reference` columns, no operand table —
 it's all in the `actions` stream, each word carrying its own `server_reference`.
