@@ -3,7 +3,7 @@
 **Goal:** move the event producers onto the DSL and retire the scalar `ACTION_*` surface.
 After this stage the DSL fully owns the existing gameplay path. Completes **divergence #1**.
 
-**Status:** ⬜ not started. **Depends on:** [S3](s3-worker.md).
+**Status:** ✅ **done + live-verified** — the edge's word-stream producers (`vm::encode_*`) + the master drop→bump metronome. Authoritative state: [`work/spacetime-rewrite/completed.md`](../../../../../../../work/spacetime-rewrite/completed.md). **Depends on:** [S3](s3-worker.md).
 
 ## Changes
 

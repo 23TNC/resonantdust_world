@@ -28,17 +28,24 @@ Legend: 🔴 contradicts the design · 🟡 partial / in-migration · ⚪ naming
   becomes the interpreter; `append_event` signature; edge/npc callers; a compile step
   (surface DSL / plan → `Vec<u64>`).
 
-## 2. 🔴 `mint_hot` / `pack` are out-of-band reducers, not part of the lifecycle
+## 2. 🟡 MOSTLY CLOSED — mint is in-band; `PACK` is a worker sweep, not an enqueued execute op
 
 - **Design** ([hot-cold.md](../intent/hot-cold.md), [lifecycle.md](../intent/lifecycle.md)): cold→hot of a *target*
   is **absorbed into the enqueue phase** (`find-or-mint` by location when standing up a
   `cold_reference` target — no `MINT`/`GET` verb); `PACK` (settle hot→cold) is an execute op.
-- **Code**: `pack` and `unpack` are `#[reducer]`s called directly by the edge/caller
-  ([pipeline/src/lib.rs](../../../../../../../server/spacetime/server/pipeline/src/lib.rs)), out of band from
-  the tick loop.
-- **Fix**: fold `unpack` into enqueue's `stand_up` (S3); make `PACK` an execute op (S6); retire
-  the bespoke reducers.
-- **This is the specific "you wrote cold tables anyway" grievance.**
+- **✅ Mint — CLOSED.** `find-or-mint` runs in the worker's **enqueue** phase (`stand_up` time), by
+  location, idempotently; there is no `MINT`/`GET` verb and the edge only names the cold target by
+  its `cold_reference`. Verified live (Interact → promote).
+- **🟡 PACK — partially closed.** The trigger is now owned (a periodic `worker::pack_idle` sweep —
+  one of the candidates hot-cold.md listed), it is **worker-owned (not GC)**, **refcount-gated**,
+  and the check-and-write is **one atomic reducer txn**. But it calls `pack_settle` **directly**
+  rather than being an **enqueued `ACTION_PACK` execute op**, so it doesn't ride the event
+  lifecycle; `ACTION_PACK` (the DSL verb id) is unused.
+- **Remaining fix**: enqueue PACK as an event **targeting the zone / cold row** (not the object —
+  an object-targeted PACK would hold the object it means to pack, and the refcount gate would always
+  refuse), and resolve it through execute. Tracked in
+  [work/…/todo.md](../../../../../../work/spacetime-rewrite/todo.md).
+- **This was the specific "you wrote cold tables anyway" grievance.**
 
 ## 3. 🟡 Standalone `cold_things` / `cold_tiles` modules still exist
 

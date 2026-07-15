@@ -96,12 +96,17 @@ of the per-instance kind halves.
 
 ```
 cold
-  cold_key       : u64  PK      packs (zone, type_reference)
-  region_zone    : u16          the subscription key (region_zone_reference)
-  type_reference : u32          the shared object_type_reference (type/subtype/layer)
-  kinds          : Vec<u32>     the object_kind_references settled under it
+  cold_key       : u64  PK      packs (zone_id, type_reference)
+  zone_id        : u32          the subscription/routing key (geographic realm|region|zone)
+  type_reference : u32          the shared type half — type_id:4 | subtype_id:12 (holds a u16)
+  kinds          : Vec<u32>     the cold entries settled under it:
+                                kind_reference:16 | tile:8 | data:8  (one per object)
   version        : u32          bumped on mutation → drives client re-send
 ```
+
+_(2026-07-14 re-cut: `type_reference` lost its `layer` — layer is a tile-slot, now in the
+`cold_reference`/`layer_reference`; the entry is the reference model's `kind_pos_reference`, no
+`subkind`. `region_zone_reference:u16` would narrow the key — see the note below.)_
 
 - ✅ **`Vec<u32>`, not columnar.** A zone is 256 tiles; keep the Vec (`object-model.md`
   Decided).

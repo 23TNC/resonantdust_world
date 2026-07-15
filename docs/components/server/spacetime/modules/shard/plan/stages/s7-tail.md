@@ -3,35 +3,50 @@
 **Goal:** the deferred reconciliations, now safe to do off the critical DSL path. Closes
 **divergences #3, #4, #5, #7**.
 
-**Status:** ⬜ not started. **Depends on:** [S6](s6-hot-cold.md) and the object-model
-shard-class decisions.
+**Status:** ✅ **mostly DONE (2026-07-14)** — #5 and #10 closed; #4's *geometry* closed (only the
+`u16` key-width remains); #3 and #8 still open. Live state:
+[`work/spacetime-rewrite/`](../../../../../../../work/spacetime-rewrite/completed.md). The
+object-model shard-class decisions this depended on are settled (blockers B-1 + B-2 both resolved).
 
 ## Changes (each independently landable)
 
 - **#3 · Retire standalone cold modules.** Delete `cold_things` / `cold_tiles`
   ([`server/spacetime/server/modules/`](../../../../../../../../server/spacetime/server/modules)) once the
   in-macro `cold` table carries their data end-to-end (edge seeds it; client decodes it).
-- **#4 · Geographic cold key.** Move `cold` from the flat `zone_id` key to `region_zone`
-  ([../references/spatial-references.md](../../../../../../shared/codec/design/references/spatial-references.md)); reconcile against
-  the legacy flat `zone_id` routing.
-- **#5 · Re-key hot identity + location index.** Close D3's deferral — re-key `state`/`state_log`
-  to `hot_reference:u32` (+ `server_reference`) if we take that path
-  ([../references/hot-cold-references.md](../../../../../../shared/codec/design/references/hot-cold-references.md)); otherwise
-  document why `u64 entity_key` stays. Either way, add the **location index** on `state`
-  (realm·region·zone·position·layer·type_id) that enqueue's `find-or-mint` needs
-  ([S3](s3-worker.md)).
+- **#4 · Geographic cold key.** 🟡 **Geometry DONE** — the legacy flat `zone_id`
+  (`region_x:8|region_y:8|surface:8|…`) was **retired**; `zone_id` is now geographic
+  `realm:8|region:8|zone:8|reserved:8` and `cold` keys by it, correctly. Only the `region_zone:u16`
+  **key-width** narrowing remains (drop the realm bits the shard implies) — a ~2-byte wire
+  compaction needing multi-realm edge plumbing; no dev payoff. There is no "legacy flat `zone_id`"
+  left to reconcile against.
+- **#5 · Re-key hot identity + location index.** ✅ **DONE.** `state`/`state_log` keep a **`u64
+  entity_key`** — it now holds the reference model's `entity_reference` (`reference_id:6 |
+  server_reference:16 | object_reference:32`), so a hot object *is* `hot_reference:32`
+  **server-qualified**; narrowing the column to a bare `u32` would drop the server qualification
+  cross-shard identity + `home_shard` routing need (rationale:
+  [work/…/forks.md](../../../../../../../work/spacetime-rewrite/forks.md)). The **location index**
+  need is satisfied structurally: a cold object's `entity_key` **is** its location (`REF_COLD |
+  server_reference | cold_reference(region|zone|tile|layer)`), so `find-or-mint`'s
+  "is there a hot entity at this location?" is a **primary-key lookup on `state`** — no separate
+  index required.
 - **#8 · Event-shard / data-shard split.** Deploy the `event_log`+lifecycle and the
   data tables (`state`/`cold`/holder) as separate shard roles of the one generic module
   ([lifecycle.md](../../intent/lifecycle.md)). Deployment/routing work, not a code fork.
-- **#10 · Geographic `server_reference`.** Settle `server_reference = realm_reference:u8 +
-  server_id:u8` vs. the functional `server_type:6 | server_id:10`, with the object-model
-  shard-class work. Decide where `server_type` (routing) lives (the open fork:
-  [../references/reference-vs-id.md](../../../../../../shared/codec/design/references/reference-vs-id.md)).
+- **#10 · Geographic `server_reference`.** ✅ **DONE.** `server_reference = realm_id:8 | server_id:8`
+  (geographic). The "where does `server_type` (routing) live" fork is **moot**: the functional
+  machinery (`server_type` / `server_ref_is_db` / `action_reference` / the `zone_reference:64`
+  aggregate) had **zero live consumers** — the worker maps a `server_reference` to a DB connection
+  via its `SHARDS` env list, not a type tag — so it was **deleted**, not relocated.
 
 ## Verify
 
 Per item: a zone renders from the converged `cold` table in the browser; routing still works
 after the key change; hot entities keep stable identity through a re-key.
+
+**Result (2026-07-14):** all three verified — the browser renders the forest + wolves from the
+converged `cold`/`state` tables on the re-cut schema; zone routing works after the geographic
+`zone_id` repartition; hot entities keep stable identity (`entity_key = REF_HOT | server | hot_ref`)
+across the re-key. Plus the cold round-trip (Interact → find-or-mint → PACK settle) verified.
 
 ## Why last
 

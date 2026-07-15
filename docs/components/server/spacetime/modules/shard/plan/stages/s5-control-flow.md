@@ -4,7 +4,7 @@
 across tics — **one action string per row**, rows chained by `await` on aliases
 ([event-dsl.md](../../design/event-dsl.md) §Multi-step plans).
 
-**Status:** ⬜ not started. **Depends on:** [S4](s4-producers.md), decision **D1**
+**Status:** ✅ **done + live-verified** — forward `SKIP` branch (`? :`) + `FAIL` + multi-action vectors. Authoritative state: [`work/spacetime-rewrite/completed.md`](../../../../../../../work/spacetime-rewrite/completed.md). **Depends on:** [S4](s4-producers.md), decision **D1**
 ([s0](s0-foundation.md)).
 
 ## The model (user-defined — do not add a "phase")

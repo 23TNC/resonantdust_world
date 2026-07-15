@@ -93,8 +93,20 @@ The reverse — settling an idle hot object back into cold, and compacting `cold
 - **Re-unpack race (packed out from under an event).** If an event needs a hot object that was
   just packed, it finds it cold, **verifies the cold data is consistent**, then tombstones it
   (`cold_removed`) and re-mints hot — the same `find-or-mint` path.
-- ❓ **What triggers a `PACK`** (edge / master / a periodic sweep over zones with settled hot
-  objects or accumulated `cold_removed`) is a small open — it just needs an owner.
+- ✅ **What triggers a `PACK`** — **ANSWERED (2026-07-14): a periodic worker sweep**
+  (`worker::pack_idle`, one of the candidates listed here). Each pass it settles every hot object
+  whose `entity_key` is a `REF_COLD` handle (i.e. a find-or-mint object — pawns are `REF_HOT` and
+  never match, so they never pack) that has sat idle longer than `PACK_IDLE_TICS`. The refcount
+  gate + the atomic check-and-write live in the `pack_settle` reducer itself, so the sweep is safe
+  to run every pass. Provenance (`type_reference` + the original cold entry) is stashed in the
+  object's `data0` at mint, so the restore is exact (subtype/variant/data survive the round-trip).
+- ⚠️ **Divergence:** the sweep calls `pack_settle` **directly**, so PACK is not yet an *enqueued*
+  `ACTION_PACK` execute op (see [divergences](../current/divergences.md) #2). The correctness
+  properties the design names (refcount-gated, one atomic txn, worker-owned not GC) all hold; what's
+  missing is routing it through the event lifecycle. `ACTION_PACK` (the DSL verb id) is currently
+  unused. Note that an *object*-targeted PACK event would hold the very object it wants to pack
+  (the refcount gate would then always refuse) — so the enqueued form has to target the **zone /
+  cold row**, exactly as the pseudocode above is written.
 
 Why the enqueue-side (mint) matters:
 

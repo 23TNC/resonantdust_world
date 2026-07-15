@@ -8,6 +8,17 @@ hot/identity/event side, the object-model side (`object.rs`), the geographic geo
 `zone_id`/`surface` retired → realm/region/zone/tile/layer), the geographic cold `entity_reference`
 (G2), and the PACK trigger (G3). No blockers open. What's left is marginal / deferrable:
 
+## Behavioral: PACK as an enqueued execute op (divergence #2 remnant)
+
+- **2026-07-14** · **Route `PACK` through the event lifecycle** — the trigger is owned and correct
+  (a periodic `worker::pack_idle` sweep; refcount-gated; one atomic `pack_settle` txn; worker-owned,
+  not GC — verified round-trip), but it calls `pack_settle` **directly** rather than being an
+  **enqueued `ACTION_PACK` execute op** ([divergences](../../components/server/spacetime/modules/shard/current/divergences.md) #2).
+  `ACTION_PACK` (the DSL verb id) is currently unused. **Design note:** the PACK event must target
+  the **zone / cold row**, not the object — an object-targeted PACK would register a write hold on
+  the very object it means to pack, and the refcount gate would then always refuse. (The
+  correctness properties the design names already hold; this is about routing.)
+
 ## Marginal representation follow-ups (unblocked, low value)
 
 - **2026-07-14** · **`cold` table `region_zone:u16` key (#4)** — the `cold` table keys by the

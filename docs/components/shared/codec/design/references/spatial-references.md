@@ -72,17 +72,19 @@ bit-layouts.)
   (`cold_server_id`), not repeated in every reference. See
   [hot-cold-references.md](hot-cold-references.md).
 
-## Relationship to `zone_id`
+## Relationship to `zone_id` — RECONCILED (2026-07-14)
 
-There are **two** ways a zone is named in the tree, and they belong to different layers
-(see the `zone_id` vs `zone_reference` contrast in
+There are **two** ways a zone is named, at different scales (see the contrast in
 [reference-vs-id.md](reference-vs-id.md)):
 
 - **`zone_reference : u8`** (object model) — a zone's `(zone_x, zone_y)` *within its
   region*. Geographic, nestable, realm-relative.
-- **`zone_id : u32`** (`refs.rs` / `packed.rs`) — a **flat, world-global** allocated
-  zone number, used today as the routing key (`WHERE zone_id`).
+- **`zone_id : u32`** (`packed.rs`) — the zone's **world-global address**, the routing /
+  subscription key (`WHERE zone_id`).
 
-These coexist during the object-model migration. The go-forward geographic address is
-`realm.region.zone`; the flat `zone_id` is the legacy routing key it will reconcile
-against.
+**These are now the same geometry.** `zone_id` was repartitioned to
+`realm_reference:8 | region_reference:8 | zone_reference:8 | reserved:8` — it *nests* the
+references above. The old-game layout (`region_x:8 | region_y:8 | surface:8 | zone_x:4 | zone_y:4`,
+with a **`surface`** z-axis) is **retired**; there is no flat/legacy zone id left to reconcile.
+`region_of(zone_id)` masks to `realm | region` (the shard-routing key) and `zone_region_zone(zone_id)`
+yields the `region_zone_reference:u16` (the within-realm cold key).

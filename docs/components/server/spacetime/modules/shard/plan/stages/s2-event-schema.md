@@ -4,7 +4,7 @@
 **holder table** (refcount for GC), and the reducers the enqueue phase + master drop need. Closes
 **divergences #1, #6, #7** (schema-side); the worker that drives it is [S3](s3-worker.md).
 
-**Status:** ⬜ not started. **Depends on:** [S0](s0-foundation.md). **Parallel with**
+**Status:** ✅ **done + live-verified** — the pipeline module — `event_log` (`actions`/`targets`/`status` lifecycle), `state_log`/`state`, `holder`, `open_rows`, `cold`/`cold_removed`, meta. Authoritative state: [`work/spacetime-rewrite/completed.md`](../../../../../../../work/spacetime-rewrite/completed.md). **Depends on:** [S0](s0-foundation.md). **Parallel with**
 [S1](s1-interpreter.md); converges at [S3](s3-worker.md). Design: [lifecycle.md](../../intent/lifecycle.md).
 
 ## `EventLog` shape

@@ -5,7 +5,7 @@ up targets, acquire holds) then **execute** (run the interpreter, commit, releas
 **master `drop_timed_out` → `bump`** barrier and **refcounted GC**. Closes **divergences #1, #6,
 #7, #9**. Design: [lifecycle.md](../../intent/lifecycle.md).
 
-**Status:** ⬜ not started. **Depends on:** [S1](s1-interpreter.md), [S2](s2-event-schema.md).
+**Status:** ✅ **done + live-verified** — the worker's two-phase recoverable loop — claim/stand_up/ready/resolve, enqueue-side `find-or-mint`, the read rule, convergent cross-shard writes. Authoritative state: [`work/spacetime-rewrite/completed.md`](../../../../../../../work/spacetime-rewrite/completed.md). **Depends on:** [S1](s1-interpreter.md), [S2](s2-event-schema.md).
 
 ## Phase 1 — enqueue
 

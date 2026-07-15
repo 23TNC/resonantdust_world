@@ -5,7 +5,7 @@ promoting a cold *target* is absorbed into enqueue's `find-or-mint` stand-up, so
 `MINT`/`GET` verb. This stage adds the reverse (`PACK`, settle) and retires the standalone
 reducers. Closes **divergence #2**.
 
-**Status:** ⬜ not started. **Depends on:** [S3](s3-worker.md) (which already mints on enqueue),
+**Status:** ✅ **done + live-verified** — cold→hot `find-or-mint` (enqueue-absorbed) + hot→cold `pack_settle`; the PACK trigger landed 2026-07-14 as a periodic worker sweep. Authoritative state: [`work/spacetime-rewrite/completed.md`](../../../../../../../work/spacetime-rewrite/completed.md). **Depends on:** [S3](s3-worker.md) (which already mints on enqueue),
 [S5](s5-control-flow.md). Design: [hot-cold.md](../../intent/hot-cold.md).
 
 ## What S3 already gave us (no work here)

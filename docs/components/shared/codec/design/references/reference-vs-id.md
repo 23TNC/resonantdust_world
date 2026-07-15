@@ -23,19 +23,28 @@ contract, not a style preference.
 
 Each comes from exactly one allocator and carries no sub-structure:
 
-| id            | width | allocated by | namespace |
-|---------------|-------|--------------|-----------|
-| `type_id`     | 4     | code palette | structural, append-only (`TYPE_*`) |
-| `subtype_id`  | 12    | registry     | content-derived (biome, species, …) |
-| `kind_id`     | 10    | registry     | content-derived |
-| `subkind_id`  | 4     | registry     | content-derived |
-| `variant_id`  | 4     | registry     | content-derived |
-| `layer_id`    | 4     | code palette | tile object-slot |
-| `zone_id`     | 32    | world-global | flat, allocated per zone |
-| `region_id`   | —     | world-global | flat |
-| `entity_id`   | 32    | per-server monotonic counter | that server's mint sequence |
-| `server_id`   | 10    | per-type range | id *within* a `server_type` |
-| `action_id`   | 10    | code/registry | id within a `data_type` |
+| id             | width | allocated by | namespace |
+|----------------|-------|--------------|-----------|
+| `type_id`      | 4     | code palette | structural, append-only (`TYPE_*`) |
+| `subtype_id`   | 12    | registry     | content-derived (biome, species, …) |
+| `kind_id`      | 12    | registry     | content-derived |
+| `variant_id`   | 4     | registry     | content-derived |
+| `layer_id`     | 4     | code palette | tile object-slot |
+| `hot_reference`| 32    | per-server monotonic counter | that server's mint sequence (a leaf despite the name — see below) |
+| `realm_id`     | 8     | geographic   | `realm_x:4 \| realm_y:4` within the world |
+| `server_id`    | 8     | per-realm    | id *within* a `realm_id` |
+| `event_reference` | 32 | per-shard auto_inc | that shard's `event_log` PK (a leaf despite the name) |
+
+`subkind_id` was **dropped** (2026-07-14 re-cut — flattened into `kind_id`, widened 10→12).
+`action_id`/`data_type` are **gone** with the functional `action_reference` (the DSL word carries an
+`ACTION_*` verb id in its payload instead). `count` and the `x`/`y` grid coordinates are leaf
+scalars too, but they're magnitudes/coordinates rather than allocated identities, so they don't take
+the `_id` suffix.
+
+> ⚠️ **Two leaves carry a `_reference` name** — `hot_reference` and `event_reference` are plain
+> allocator counters (ids by this doc's rule), but they're named `_reference` because they occupy an
+> `object_reference` **variant slot** (the union is addressed uniformly). The name marks the slot,
+> not the structure. Known, deliberate exception.
 
 `count` and the `x`/`y` grid coordinates are leaf scalars too, but they're
 magnitudes/coordinates rather than allocated identities, so they don't take the `_id`
@@ -47,22 +56,25 @@ Each packs the ids/references named, in fixed bit positions:
 
 | reference                | width | composed of |
 |--------------------------|-------|-------------|
-| `object_reference`       | 64    | `object_type_reference` + `object_kind_reference` |
-| `object_type_reference`  | 32    | `type_id` + `subtype_id` + `layer` (+ reserved) |
-| `object_kind_reference`  | 32    | `kind_id` + `subkind_id` + `variant_id` + `x` + `y` + `data` |
-| `entity_reference`       | 64    | `entity_type` + (`entity_id` + `mint_server`) *or* (`zone_id` + location + layer) |
-| `server_reference`       | 16    | `server_type` + `server_id` |
-| `action_reference`       | 16    | `data_type` + `action_id` |
-| `position_reference`     | 8     | `x` + `y` |
+| `definition_reference`   | 32    | `type_reference` + `kind_reference` (= `type_id`+`subtype_id`+`kind_id`+`variant_id`) |
+| `type_reference`         | 16    | `type_id` + `subtype_id` (the shareable type half) |
+| `kind_reference`         | 16    | `kind_id` + `variant_id` (the kind half) |
+| `object_reference`       | 32    | *a tagged union* — one of `hot_reference` / `cold_reference` / `position_reference` / `event_reference` / server; variant named by `reference_id` |
+| `entity_reference`       | 64    | `reserved:10` + `reference_id:6` + `server_reference` + `object_reference` |
+| `server_reference`       | 16    | `realm_id` + `server_id` (geographic) |
+| `position_reference`     | 8     | `x` + `y` — the u8 nibble primitive (also `zone_`/`region_`/`realm_reference`) |
 | `zone_reference`         | 8     | `zone_x` + `zone_y` |
 | `region_reference`       | 8     | `region_x` + `region_y` |
 | `realm_reference`        | 8     | `realm_x` + `realm_y` |
 | `region_zone_reference`  | 16    | `region_reference` + `zone_reference` (a reference of references) |
-| `cold_reference`         | 32    | region + zone + position + `layer_id` + `type_id` |
-| `zone_reference` (agg.)  | 64    | `server_id` + `zone_id` — the whole-zone aggregate key in `refs.rs` |
+| `layer_reference`        | 8     | `type_id` + `layer_id` |
+| `cold_reference`         | 32    | `region_reference` + `zone_reference` + tile + `layer_reference` (realm rides `server_reference`) |
+| `zone_id`                | 32    | `realm_reference` + `region_reference` + `zone_reference` (+ reserved) — see the contrast below |
 
-References may nest: `region_zone_reference` packs two `*_reference`s;
-`object_reference` packs two 32-bit references, each of which packs ids.
+References may nest: `region_zone_reference` packs two `*_reference`s; `definition_reference` packs
+two 16-bit references, each of which packs ids. **Retired (2026-07-14):** the v1 `object_reference:64`
+(type+kind halves), `object_type_reference` / `object_kind_reference`, `action_reference`, and the
+`zone_reference:64` whole-zone aggregate — all deleted from the codec.
 
 ## The naming convention in code
 
@@ -74,14 +86,22 @@ References may nest: `region_zone_reference` packs two `*_reference`s;
 
 ## A worked contrast: `zone_id` vs `zone_reference`
 
-They are deliberately different things, and the names say so:
+- **`zone_reference : u8`** — `zone_x:4 | zone_y:4`, a zone's coordinate *within its region*. A
+  composite of two coordinate ids. Used to build `region_zone_reference`.
+- **`zone_id : u32`** — the **world-global address** of one zone, used as the routing/subscription
+  key (`WHERE zone_id`). Since the 2026-07-14 geometry re-cut it is
+  `realm_reference:8 | region_reference:8 | zone_reference:8 | reserved:8` — i.e. it now *nests*
+  the three geographic references (it was a flat, allocated, world-global number, and the old-game
+  `surface` byte is gone).
 
-- **`zone_id : u32`** — a flat, world-global allocated number naming one zone. A leaf.
-  Used as a routing key (`WHERE zone_id`) and inside the 64-bit aggregate
-  `zone_reference`.
-- **`zone_reference : u8`** — `zone_x:4 | zone_y:4`, a zone's coordinate *within its
-  region*. A composite of two coordinate ids. Used to build `region_zone_reference`.
+> ⚠️ **Naming tension (known, deliberate).** Post-re-cut `zone_id` is a **packed composite**, so by
+> the rule above it is really a *reference*, not an id — you can bit-shift `realm`/`region`/`zone`
+> out of it. It keeps the `_id` name because it is the **routing key** the whole edge/index/client
+> subscription path addresses zones by (`SubZone`, `WHERE zone_id`), and `zone_reference:u8` already
+> owns the within-region meaning. Renaming it (e.g. `world_zone_reference`) is a rename across
+> edge + index + protocol + client — deliberately not done; flagged here so the exception is
+> explicit rather than an accident.
 
-Same stem, opposite category — because one is an allocated identity and the other is a
-packed coordinate address. When you read either word in this codebase, that category is
-what it's telling you.
+When you read `<thing>_id` vs `<thing>_reference` in this codebase, the category is what it's
+telling you — with `zone_id` (and the `hot_reference`/`event_reference` leaves above) as the
+documented exceptions.

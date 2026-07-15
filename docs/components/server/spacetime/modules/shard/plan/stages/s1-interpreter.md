@@ -3,7 +3,7 @@
 **Goal:** build the `Vec<u64>` interpreter as pure, SDK-free logic and prove it reproduces
 today's `MOVE`, before wiring it anywhere.
 
-**Status:** ⬜ not started. **Depends on:** [S0](s0-foundation.md). **Parallel with** [S2](s2-event-schema.md).
+**Status:** ✅ **done + live-verified** — the `Vec<u64>` stack machine (`shared/tick/vm.rs`) — hot verbs, `await_gate`, forward `SKIP`/`FAIL`; 32 unit tests green. Authoritative state: [`work/spacetime-rewrite/completed.md`](../../../../../../../work/spacetime-rewrite/completed.md). **Depends on:** [S0](s0-foundation.md). **Parallel with** [S2](s2-event-schema.md).
 
 ## Changes
 
