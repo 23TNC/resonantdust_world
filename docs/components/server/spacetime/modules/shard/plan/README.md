@@ -79,8 +79,8 @@ depend on it.
 
 ---
 
-The live execution state is the work-stream
-[`docs/work/spacetime-rewrite/`](../../../../../../work/spacetime-rewrite/) — whose S0–S7 scope is
-now complete. Per [`CONVENTIONS.md`](../../../../../../CONVENTIONS.md) a work folder is created when
-we **start** executing, so P1/P2 get theirs on the day we pick them up; until then this file is the
-plan of record.
+The live execution state stays in the work-stream
+[`docs/work/spacetime-rewrite/`](../../../../../../work/spacetime-rewrite/) — P1…P4 all fall out of
+the rewrite, so they keep its folder rather than minting new ones. This file holds the **sequence +
+reasoning**; [`todo.md`](../../../../../../work/spacetime-rewrite/todo.md) holds the executable cut
+(**T-6…T-10**), and items move todo → remaining → completed as usual.
