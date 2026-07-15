@@ -162,15 +162,20 @@ exact PK lookup. `promote`'s `tic <= t` is a scan — see [`notes/tables.md`](no
 | column | type | key | notes |
 |---|---|---|---|
 | `event_reference` | `u32` | PK | |
+| `worker_reference` | `u8` | idx | the subscription key. `SERVER_REF_NONE` = unassigned |
+| `lease_tic` | `u16` | | `tic` — assignment expiry; `reap()`'s clock |
 | `entity_reference` | `Vec<u32>` | | the entities this event touches **here** |
 
 One row per in-flight event, holding only the targets homed on this shard — the write set
 `declare_pending` builds, now that `event_log` no longer carries `targets`. Keeps the vector out of
 `state_log`, which is read and written every tic.
 
-> **The composition order has no home.** `refresh_ready` needs the *lowest pending
-> `event_reference` for a slot `(entity, tic)`* — this table answers the transpose, and carries no
-> `tic`. See [`notes/tables.md`](notes/tables.md).
+sub `SELECT * FROM state_events WHERE worker_reference = self` (worker) — the worker's **only**
+window into a data shard.
+
+> This is `state_hold`'s role, one row per event rather than per `(target, tic, event, kind)`.
+> Still missing from it: `ready`, `base`, `kind` — and the composition head has no source.
+> See [`notes/tables.md`](notes/tables.md).
 
 ### `state` — client-visible latest
 
@@ -184,11 +189,13 @@ One row per in-flight event, holding only the targets homed on this shard — th
 reads edge · workers never subscribe ·
 sub `SELECT * FROM state WHERE macro_position_reference = <zone>` (edge, per subscribed zone)
 
-### `state_hold` — not added
+### `state_hold` — absorbed into `state_events`
 
-The worker's only window into a data shard (`worker_reference`, `ready`, `base`, `lease_tic`). Part
-of the same design and load-bearing in it; omitted here because it wasn't asked for. See the intent
-doc.
+The design's per-`(target, tic, event, kind)` hold. `state_events` now carries its
+`worker_reference` + `lease_tic` at one row per event, which is the same role for far fewer rows.
+Not yet carried over: `ready` (the go-signal), `base` (the payload to compute from), and `kind`
+(WRITE / READ) — the design calls `ready` + `base` "the consequence that drives everything", since a
+worker that can't see `state_log` needs both from its hold.
 
 ---
 

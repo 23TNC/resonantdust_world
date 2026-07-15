@@ -20,7 +20,11 @@ exists *because* of it:
 | component | query | against |
 |---|---|---|
 | worker | `SELECT * FROM event_log WHERE worker_reference = self` | `event_shard` |
+| worker | `SELECT * FROM state_events WHERE worker_reference = self` | `data_shard` |
 | edge (per zone) | `SELECT * FROM state WHERE macro_position_reference = <zone>` | `data_shard` |
+
+The two worker queries are the design's whole subscription set — *"and NOTHING else. No state, no
+state_log, no cold, no event."*
 
 ## Trust and correctness notes
 
@@ -181,6 +185,23 @@ this shard. It gives the dropped `event_log.targets` a home on the side that act
 data shard, which is where `declare_pending` / `withdraw_pending` / `release_holds` all iterate a
 write set. Per-shard, so an event spanning shards is recorded only where its targets live. And it
 keeps the vector out of `state_log`, which `refresh_ready` and `apply` touch every tic.
+
+**With `worker_reference` + `lease_tic` it is the hold.** The design's second subscription is
+`SELECT * FROM state_hold WHERE worker_reference = self` — a worker sees nothing on a data shard but
+its own holds. `state_events` now answers that, at **one row per event** instead of one per
+`(target, tic, event, kind)`: a 5-target event is one row, not five. `lease_tic` is `reap()`'s clock
+(`where lease_tic < master_tic → delete`, i.e. `tic::before`, never `<`).
+
+Three fields of the design's hold have no home yet, and two of them are the load-bearing ones:
+
+| | |
+|---|---|
+| `ready` | the go-signal. The design's §"consequence that drives everything": the worker cannot see `state_log`, so it needs the store to tell it *"it's your turn"*. `refresh_ready` computes it — `h.ready = (h.event_reference == head)` for WRITE, the read rule for READ. Without it a worker cannot know when to compute, and `blocked` becomes worker state again, which decision #3 explicitly kills. |
+| `base` | the value to compute from — `vm.run(actions, base: hold.base, …)`. Same reason: no `state_log` access, so the payload must ride the hold. Note this is **per-target**, and `state_events` is per-event: one row would have to carry a base per entity in its vector. |
+| `kind` | WRITE vs READ. A READ hold is acquired at `tic - 1` and readied by a different rule. Per-event rows would need the split some other way — the read set is a different vector, or a second table. |
+
+`base` is the one that resists the per-event shape: it's the only field that varies *within* the
+vector.
 
 **What it does not answer.** The design serializes composition per `(entity, tic)` by *ascending
 `event_reference`*, and `refresh_ready` needs the head of that list:
