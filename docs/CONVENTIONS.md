@@ -16,13 +16,13 @@ duplicate them).
 A **component** is a self-contained chunk we **deploy** or **share**. Shared components get an
 entry too, because *how they change dictates how their consumers operate*.
 
-- **Groups** (mirrors the repo): `client/`, `server/`, `server/spacetime/{modules, pipeline}`,
+- **Groups** (mirrors the repo): `client/`, `server/`, `server/spacetime/modules`,
   `shared/`, and `dev/` (developer + gameplay: the scripts + specs + assets that are the
   foundation of how we build — `rd`, `art`, `dsl`, the `.rd` content specs, sprite templates).
 - **Not components:** an **individual table** (the *module* that holds it is the component); a
   **build output** (`shared/pkg`, `shared/target`); a **piece of a component** (worldgen ⊂ edge).
-- **Cross-cutting concepts** (e.g. the event-DSL, defined across `shared/codec` + `shared/tick`)
-  are documented where they live, not minted as fake deployables.
+- **Cross-cutting concepts** are documented where they live, not minted as fake deployables — and
+  when they span *every* component, they get a top-level file: `VARIABLES.md`, `TABLES.md`.
 
 The full list — every component, its path, what it deploys/shares, and alive-vs-dead — is the
 **map: [`docs/components/README.md`](components/README.md)**. Keep it current; it's the antidote
@@ -71,13 +71,13 @@ from blurring). Folders are created **lazily** — as we actually work a compone
 
 ## `docs/intent/<feature>/` — cross-cutting feature intent (staging)
 
-Some features (e.g. **pathfinding**) touch many components — implementing them threads through
+Some features (e.g. **the shard rebuild**) touch many components — implementing them threads through
 several pieces. Their intent belongs in the **`intent/` of each component they touch**. But when
 we don't yet know which components a feature touches, or don't have enough information to ascribe
 it, we **park it here** — a top-level staging area for feature-level intent. As the feature gets
 scoped, its intent **distributes out** into the affected components' `intent/` folders (leaving a
-pointer here, or retiring the staging entry). This is where a half-formed "we want pathfinding
-to…" lives before it's a per-component contract.
+pointer here, or retiring the staging entry). This is where a half-formed "we want X to…" lives
+before it's a per-component contract.
 
 ## `docs/work/<work>/` — the flowing execution state
 
