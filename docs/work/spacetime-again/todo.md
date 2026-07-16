@@ -1,82 +1,9 @@
 # Todo — spacetime-again
 
-_Planned, not started. Newest thinking at the top of each item; move an item to `remaining.md` when
-you begin it. Ordered by dependency — each item's surface is what the next one consumes._
-
----
-
-## W1 · `shared/codec` — the vocabulary
-
-**Component:** `shared/codec` only.
-**Surface it exposes:** the crate's public API. Every other item packs and unpacks through it and
-never hand-rolls a shift.
-
-- `state_uid` / `event_uid` pack + accessors (`reserved | entity_reference | tic`,
-  `macro_position_reference | event_tic | event_reference`). Both are `VARIABLES.md` layouts with no
-  implementation — the modules will need them on day one, and four hand-rolled shifts is how a
-  nibble order gets reversed.
-- `event_status` / `state_status` pack + accessors (`flags:4 | status:4`) + the constants:
-  `event_status.status` `QUEUED`/`GROUPED`/`ASSIGNED`/`RUNNING`/`COMPLETE`, flags `FAILED`/`PROMOTE`;
-  `state_status.status` `OPEN`/`PROMOTED`, flag `PROMOTE`.
-- **The action program** — [`ACTIONS.md`](../../ACTIONS.md). `action_reference` + the palette +
-  arity, `pack`/read helpers for the stream, and a signature table (per operand: written / read /
-  number) — that table is what the write and read sets are scanned out of, so it belongs here, not
-  in the worker.
-
-**Done when:** `cargo test` green in `shared/codec`, every layout matches `VARIABLES.md` field for
-field, and each new packer has a test that saturates its fields (proves the spans are adjacent and
-exhaust the word) and one that proves an over-range argument can't bleed into a neighbour. For the
-stream: a reader that round-trips a multi-action program (`PLACE obj pos MOVE_TO obj dest`), and a
-test that a wrong arity mis-frames the rest — there is no re-sync point, so arity is wire.
-
-**Watch:** the codec is the *code of record*, not the source of truth. If an implementation and
-`VARIABLES.md` disagree, the code is the bug.
-
----
-
-## W2 · `event_shard` module — the queue + the log
-
-**Component:** `server/spacetime/server/modules/event_shard` only.
-**Surface it exposes:** reducers (`queue`, `assign`, `fail`, `running`, `complete`, `settle`) +
-`event_log` / `event`, and the shard-local **grouping** (`event_group`) + the completeness barrier.
-**Consumes:** `shared/codec` (W1). Calls **nothing** on other components — the orchestrator and workers
-call *it*.
-
-Plan: [`event_shard/plan/`](../../components/server/spacetime/modules/event_shard/plan/README.md).
-
-**Done when**, with **no orchestrator, worker, or data shard in existence**:
-- `queue` mints `event_reference` (`server_reference:8 | ++counter:24`, *not* column `auto_inc`),
-  stamps `event_tic = master + 3`, `orchestrator_reference`, latches `PROMOTE`, and unions the event
-  into an `event_group` by shared write-target.
-- A `queue` for a tic whose birth window has passed is **rejected**.
-- A group request for tic T is **refused until the shard has read master ≥ T-2** (the completeness
-  barrier) — prove the refusal, it's a correctness invariant.
-- `settle` writes **one `event` row per zone** the targets occupy, then deletes the queue row.
-- A filtered subscription (`WHERE orchestrator_reference = self`, `WHERE worker_reference = self`)
-  actually delivers a row the reducer just stamped. **Prove this** — the whole model rests on it.
-
----
-
-## W3 · `data_shard` module — composition + state
-
-**Component:** `server/spacetime/server/modules/data_shard` only.
-**Surface it exposes:** reducers (`claim`, `write`, `gc`) + `state_log` / `state`.
-**Consumes:** `shared/codec` (W1). Independent of W2 — the two shards never call each other.
-
-Plan: [`data_shard/plan/`](../../components/server/spacetime/modules/data_shard/plan/README.md).
-
-**Do first:** verify SpacetimeDB accepts
-`WHERE worker_reference = 1 OR observer_reference = 1`. String-subset SQL, fails at runtime; if
-rejected, two subscriptions is the fallback. Know before phase 2.
-
-**Done when**, with **no orchestrator or worker in existence**:
-- `claim` creates `(E, tic)` (`dirty = true`), stamps `worker_reference`, and stamps
-  `observer_reference` on E's most-recent row `< tic`. **No lease** — a re-`claim` overwrites the
-  stamp, which is the eviction.
-- `write` requires caller == `worker_reference`, skips already-`!dirty` rows (replay-safe), sets the
-  absolute payload, clears `dirty`, and `state.upsert`s only on `PROMOTE` + not-yet-`PROMOTED`.
-- `write` is **idempotent** — call it twice with the same values, same result.
-- `gc` drops old `!dirty` rows but **never the latest per entity**. (No `reap` — nothing expires.)
+_Planned, not started. W1/W2/W3/W6 are done — see [`completed.md`](completed.md). Move an item to
+`remaining.md` when you begin it. Ordered by dependency — each item's surface is what the next one
+consumes. W4 (orchestrator) is next: the master clock + both shards are live, so it has its full
+dependency surface._
 
 ---
 
@@ -119,24 +46,6 @@ mid-`write` and a fresh assignment recomputes the identical finals.
 
 **Watch:** never write a target while a read target is dirty — that's the corruption case. Defer the
 whole component; never partial-write.
-
----
-
-## W6 · `server/master` — the metronome
-
-**Component:** a new `server/master` crate. The old one was deleted.
-**Surface it consumes:** `bump`, `settle`, `gc`; also **assigns the orchestrator per tic** and reaps a
-dead orchestrator (the leaning resolution — it's singular, lockstep, guaranteed to run). It does
-**not** reap `state_log` roles — that's the orchestrator's job (worker liveness), not the master's.
-
-Advances `master_tic` every `1/TIC_HZ` on all shards in lockstep, then sweeps: `settle` terminal
-events, `gc` old rows, and re-assign the tic's orchestrator if it died. Liveness lives here because
-the master is the one thing guaranteed to run.
-
-**Done when:** the tic advances in lockstep, orchestrator assignment is stable per tic, a dead
-orchestrator's tic gets reassigned, terminal events settle, old rows GC — and it survives the u16 wrap
-(~9h at 2 Hz). Every comparison
-`tic::`, never `<`.
 
 ---
 
