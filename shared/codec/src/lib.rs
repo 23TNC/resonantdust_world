@@ -19,8 +19,11 @@
 // rather than in the deleted crates. The rebuild (`docs/intent/spacetime-again/`) still wants an
 // RPN `actions: Vec<u64>`, but has not specified a word format; that's its call to make, not a
 // shape to inherit. Recover the old one from `git show checkpoint/pre-shard-rebuild`.
+pub mod action;
 pub mod biome;
 pub mod object;
 pub mod packed;
 pub mod refs;
+pub mod status;
 pub mod tic;
+pub mod uid;
