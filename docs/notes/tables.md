@@ -90,10 +90,10 @@ is described as "client-visible **latest**" and `promote` does `state.upsert(tar
 payload)` — an upsert that replaces. A composite `(target, tic)` key would accumulate a row per tic
 and stop being "latest".
 
-**`actions : Vec<u32>` has no word format.** `event_word` was deleted (zero call sites — it belonged
-to the old pipeline). The rebuild specifies an RPN program but not its encoding. Narrowed u64 → u32
-because an `entity_reference` is a u32 now: whatever the encoding turns out to be, a word carrying a
-reference needs 32 bits, not 64.
+**`actions : Vec<u32>`** — the encoding is [`../ACTIONS.md`](../ACTIONS.md). Narrowed u64 → u32
+because an `entity_reference` is a u32: a word carrying a reference needs 32 bits, not 64, and the
+old tagged frame couldn't manage it (`op_code:4 + entity_reference:32 = 36`). Leading with the
+action instead of tagging every word is what bought the whole u32 back.
 
 ### No `targets` / `reads` columns
 
@@ -104,10 +104,10 @@ program says. The worker reads the write set off the program and routes by each 
 Collecting operands out of a word stream is *structural* — no game semantics in the spine, which was
 the point of having the columns in the first place.
 
-**It only works for writes.** Telling which operands a verb *reads* rather than *writes* is game
-semantics, and the two look identical in the stream. That's `action_reads_actor`-shaped knowledge and
-it's still open — probably answered by the word format, since "how do I find the read set" is really
-"what does a word look like".
+**Both sets fall out of it.** An action's *signature* declares, per operand, written vs read
+([`../ACTIONS.md`](../ACTIONS.md)) — so one scan yields both, and the spine never interprets a verb.
+That is what closed the `action_reads_actor` question: the same fact, moved from a function that
+knows game semantics into a declaration.
 
 ### `state_log` — composite `uid`, `flags`, and the events split
 

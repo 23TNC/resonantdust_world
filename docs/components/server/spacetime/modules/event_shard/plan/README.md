@@ -3,13 +3,19 @@
 _Last updated: 2026-07-15. Nothing is built. Active work:
 [`work/spacetime-again/`](../../../../../../work/spacetime-again/README.md) W2._
 
-## Blocked before phase 3
+## Reading `actions`
 
-**`actions : Vec<u32>` has no encoding.** `event_word` was deleted with the old pipeline (it had
-zero call sites), and the rebuild has not chosen a word format. Phases 1–2 don't read `actions`, so
-they can proceed; everything that *interprets* it cannot. Deciding the format probably also settles
-read-set derivation and the `promote_*` verbs — see
-[`intent/spacetime-again/`](../../../../../../intent/spacetime-again/README.md) §Open.
+Encoding: [`ACTIONS.md`](../../../../../../ACTIONS.md). `queue` scans the program once, for two
+things only:
+
+- **`PROMOTE_EVENT` present** → latch `event_status.flags.PROMOTE`. That is the whole of promotion
+  on this side; nothing later re-reads the program to decide it.
+- **validity** — arity frames the stream, and a wrong arity mis-frames the rest of it with no
+  re-sync point. Reject a program that doesn't parse *here*, at the only door in, rather than
+  handing a worker something it can't decode.
+
+The module never interprets a verb. Extracting targets is the worker's job (W4), off the same
+signature table.
 
 ## Phases
 
@@ -23,7 +29,7 @@ read-set derivation and the `promote_*` verbs — see
    a row the reducer just stamped — the whole model rests on it.
 3. **The worker's phase transitions.** `enqueue_done` (→ `QUEUE_SUCCESS`, keeping the worker),
    `running`, `fail` (sets the `FAILED` flag, leaves `status` on the phase it died in), `complete`.
-   Needs the word format only insofar as the worker must extract targets.
+   The module doesn't read `actions` here — the worker does.
 4. **`settle(t)`.** Terminal rows → `event`, **one row per zone** the targets occupy, then delete
    from `event_log`.
 

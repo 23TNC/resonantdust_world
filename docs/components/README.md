@@ -65,9 +65,8 @@ _Map + conventions: [`server/spacetime/`](server/spacetime/README.md)._
 
 ## The two DSLs (prefix them so they don't blur)
 - **event-dsl** — the action-program an event carries (`actions : Vec<u32>`). Not a deploy
-  component. **Currently undefined**: the `event_word` frame and the VM were deleted with the
-  pipeline, and the rebuild has not chosen an encoding — see
-  [`intent/spacetime-again/`](../intent/spacetime-again/README.md) §Open.
+  component; defined in [`../ACTIONS.md`](../ACTIONS.md) (encoding + palette) and realized by
+  `shared/codec` (the words) + the worker's VM (running them) + the edge (composing them).
 - **content-dsl** — the `.rd` files (data/visual defs). Crate: **shared/dsl**. Authoring specs:
   `dev/dsl` (below).
 

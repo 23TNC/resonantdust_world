@@ -17,12 +17,16 @@ never hand-rolls a shift.
   nibble order gets reversed.
 - `event_status` / `state_status` pack + accessors (`flags:4 | status:4`) + the `QUEUED`/`QUEUEING`/
   `QUEUE_SUCCESS`/`RUNNING`/`COMPLETE`, `FAILED`/`PROMOTE`, `OPEN`/`PROMOTED` constants.
-- **The word format** — blocked, see `blockers.md` B-1. Everything below that *interprets* `actions`
-  waits on it; nothing else here does.
+- **The action program** — [`ACTIONS.md`](../../ACTIONS.md). `action_reference` + the palette +
+  arity, `pack`/read helpers for the stream, and a signature table (per operand: written / read /
+  number) — that table is what the write and read sets are scanned out of, so it belongs here, not
+  in the worker.
 
 **Done when:** `cargo test` green in `shared/codec`, every layout matches `VARIABLES.md` field for
 field, and each new packer has a test that saturates its fields (proves the spans are adjacent and
-exhaust the word) and one that proves an over-range argument can't bleed into a neighbour.
+exhaust the word) and one that proves an over-range argument can't bleed into a neighbour. For the
+stream: a reader that round-trips `ECHO 5 PUSH <action> POP`, and a test that a wrong arity
+mis-frames the rest — there is no re-sync point, so arity is wire.
 
 **Watch:** the codec is the *code of record*, not the source of truth. If an implementation and
 `VARIABLES.md` disagree, the code is the bug.
@@ -38,7 +42,7 @@ exhaust the word) and one that proves an over-range argument can't bleed into a 
 build W3.
 
 Plan: [`event_shard/plan/`](../../components/server/spacetime/modules/event_shard/plan/README.md).
-Phases 1–2 are unblocked; 3–4 need the word format only where they extract targets.
+Phases 1–2 are unblocked; 3–4 scan `actions` per [`ACTIONS.md`](../../ACTIONS.md) to extract targets.
 
 **Done when**, with **no worker and no data shard in existence**:
 - `spacetime call queue` inserts a row whose `event_reference` is an `entity_reference`

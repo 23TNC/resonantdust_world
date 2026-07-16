@@ -114,8 +114,8 @@ Deleted because it had **zero call sites**. Its only consumers were `shared/tick
 shard. It outlived them only because it lived in `shared/codec`, which survived, so a sweep for
 dangling crate references didn't catch it.
 
-The rebuild still wants an RPN `actions: Vec<u64>` but has not specified a word format. That's its
-call to make, not a shape to inherit. Recover the old one from
+Its replacement is [`../ACTIONS.md`](../ACTIONS.md) — and not a frame at all: the action leads and
+its arity says what follows, so no word is tagged. Recover the old one from
 `git show checkpoint/pre-shard-rebuild:shared/codec/src/event_word.rs`.
 
 ### `entity_reference : u64` → `u32` — 2026-07-15

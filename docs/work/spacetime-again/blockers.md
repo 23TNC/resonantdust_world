@@ -4,39 +4,47 @@ _Needs your input. Open → resolved; resolved rows keep a date._
 
 ---
 
-## B-1 · The word format for `actions : Vec<u32>` — OPEN
+## B-1 · The word format for `actions : Vec<u32>` — RESOLVED 2026-07-15
 
-**Blocks:** W1 (partly), W2 phases 3–4, W4, W6. Everything that *interprets* a program. W1's uid /
-status helpers, W2 phases 1–2 and all of W3 are unaffected — start there.
+**[`ACTIONS.md`](../../ACTIONS.md).** The action leads and its arity says how many u32s follow and
+what they are — so an operand needs no tag, which is what replaces the reference type. `ECHO` /
+`PUSH` / `POP` are the machine; `PROMOTE_STATE` / `PROMOTE_EVENT` are latched, not executed.
 
-**Why it blocks.** `event_word` was deleted (it had zero call sites — it belonged to the old
-pipeline), and nothing replaced it. A worker cannot extract targets from a program it can't decode,
-and the edge can't compose one.
+It closed all three riders at once:
+- **Read set** — the action's *signature* declares, per operand, written vs read. Both sets fall out
+  of one scan, no `action_reads_actor`, no game semantics in the spine.
+- **`promote_*`** — palette entries 4 and 5.
+- **Target extraction** — the same scan.
 
-**Why it's yours.** Three other open questions collapse into this one, which is the argument for
-deciding it deliberately rather than letting the first implementation settle it:
+And it made a word a whole u32, which the old tagged frame couldn't: `op_code:4 +
+entity_reference:32 = 36` doesn't fit a u32, so tagging forced either a u64 word with 28 bits spare
+or a reference narrower than a reference.
 
-- **The read set.** Writes fall out of `actions` — every reference is a `u32` carrying its
-  `server_id`. Reads don't: a read reference and a write reference are *identical* in the stream.
-  Telling them apart is game semantics (`action_reads_actor`), unless the encoding separates them.
-- **`promote_state` / `promote_event`.** Named as verbs; the palette that held `ACTION_MOVE` went
-  with `event_word`. They need to exist somewhere in the encoding.
-- **Target extraction.** W2/W4 both need "which references does this program write" as a structural
-  scan, not an interpretation.
+**It exposed one new constraint** — see B-3.
 
-**The old shape, for reference** (`git show checkpoint/pre-shard-rebuild:shared/codec/src/event_word.rs`):
-`u64 = op_code:4 | reserved:12 | server_reference:16 | payload:32`, with `OP_LITERAL/OBJECT/ACTION/
-ALIAS` and an append-only `ACTION_*` palette.
+---
 
-**What's changed since:** a word carrying a reference now needs **32 bits, not 48** — an
-`entity_reference` is a u32. `op_code:4 + entity_reference:32 = 36`, so a word is either a u64 with
-28 spare, or the fields are narrower than the old ones. `actions : Vec<u32>` in `TABLES.md` says a
-word is a **u32**, which forces a split encoding (a reference occupies a whole word; the op-tag lives
-in a separate word or in bits stolen from the payload).
+## B-3 · `POP`'d targets can't be declared — OPEN
 
-**Suggested path:** decide the frame first — u32 words, and how an op-tag coexists with a 32-bit
-reference in one. Read/write distinction and the `promote_*` verbs then follow from it rather than
-being bolted on.
+**Blocks:** W4, and the shape of a "legal program". Not W1–W3.
+
+**Why.** The write set must be known at **enqueue** (T=1): `declare_pending` stands up the
+`(entity, tic)` slots one tic before the program runs, so `dirty` is right and composition can be
+ordered. A `POP`'d operand has no value until **run time** (T=2). So a program whose target arrives
+off the stack cannot have its slots declared — the whole enqueue/execute split assumes the write set
+is static.
+
+**Three ways out** (fuller in [`notes/actions.md`](../../notes/actions.md)):
+
+| | |
+|---|---|
+| **targets must be literal** | `POP` is fine for numbers and read operands, never for a written `entity_reference`. Costs "damage whatever the last action returned". |
+| **static-fold `ECHO`-sourced pops** | a pass tracks the stack: a `POP` tracing to `ECHO <lit> PUSH` is knowable; one tracing to an action's *output* still isn't, so the rule is still needed. |
+| **over-approximate** | declare a superset, withdraw what wasn't touched. Burns slots on entities the event never writes — contention the four-slot cap will feel. |
+
+**Recommendation:** the first. The enqueue/execute split is what buys the design its determinism,
+and a dynamically-targeted event is asking to opt out of it. Cheap to relax later; expensive to
+retrofit the other way.
 
 ---
 

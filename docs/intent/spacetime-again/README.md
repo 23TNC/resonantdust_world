@@ -293,11 +293,13 @@ master → event_shard.settle(t):
   unblocked the moment the previous tic settles, and `dirty` counts them without ordering them.
   Whether that can happen — and if so whether ascending `event_reference` breaks the tie — decides
   whether anything more than `dirty` is needed.
-- **Read set derivation.** Writes fall out of `actions`; reads do not. Telling which operands a verb
-  *reads* rather than *writes* needs `action_reads_actor`-style knowledge, and the references look
-  identical in the word stream. Probably resolves with the word format.
-- **The word format.** `actions : Vec<u32>` has no encoding — `event_word` was deleted with the old
-  pipeline. `promote_state` / `promote_event` are named as verbs but the palette went with it.
+- **`POP`'d targets.** The write set must be known at enqueue (T=1); a `POP`'d operand has no value
+  until run time (T=2). So a program whose target arrives off the stack cannot have its slots
+  declared. Options in [`notes/actions.md`](../../notes/actions.md); the honest default is that a
+  written `entity_reference` must be literal.
+- ~~The word format.~~ **Decided** — [`ACTIONS.md`](../../ACTIONS.md). Action-leads-arity, so an
+  operand needs no tag; `ECHO`/`PUSH`/`POP` are the machine; the signature carries read-vs-write, so
+  both sets fall out of one scan and neither is a column.
 - **Partition policy.** `request_work` hands out an ascending batch, so two workers get disjoint
   rows — but nothing makes a worker's rows *local*. This is what keeps the four-slot cap free:
   batching every event that touches an entity onto one worker costs that entity one slot. Ungoverned,

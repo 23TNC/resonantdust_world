@@ -120,7 +120,7 @@ Shapes to build **to**. No module implements them yet. The flow that uses them i
 | `worker_reference` | `u8` | idx | subscription key. `SERVER_REF_NONE` = unassigned |
 | `event_tic` | `u16` | idx | `tic` — wraps |
 | `status` | `u8` | idx | `event_status` — `flags:4 \| status:4`. Phase in `status`, `FAILED` / `PROMOTE` in `flags`. |
-| `actions` | `Vec<u32>` | | the RPN program; **word format undefined** |
+| `actions` | `Vec<u32>` | | the event program — [`ACTIONS.md`](ACTIONS.md) |
 | `lease_tic` | `u16` | | `tic` — assignment expiry; the reclaim clock |
 
 sub `SELECT * FROM event_log WHERE worker_reference = self` (worker)
@@ -137,7 +137,7 @@ See [`notes/tables.md`](notes/tables.md).
 | `event_tic` | `u16` | | `tic` |
 | `event_reference` | `u32` | idx | the event; **not** unique here |
 | `status` | `u8` | | `event_status`, frozen — terminal only (`COMPLETE`, or `FAILED` on the phase it died in) |
-| `actions` | `Vec<u32>` | | frozen |
+| `actions` | `Vec<u32>` | | frozen — [`ACTIONS.md`](ACTIONS.md) |
 
 **One row per zone the event's targets occupy** — an event touching three zones writes three rows.
 That is what lets a client subscribed to one zone see a **cross-zone** event that reaches into it,
@@ -222,7 +222,7 @@ A row lands here **only** when a program says so, via a `promote_state` action.
 |---|---|
 | **two events on one `(entity, tic)`** | Across tics, `dirty` at an earlier tic blocks a later one and the worker sees it. Within one tic, two events with the same `event_tic` on the same entity unblock together and `dirty` counts them without ordering them. |
 | **the read set** | Writes are recoverable from `actions` (each reference carries its `server_id`). Reads are not — telling which operands a verb *reads* needs `action_reads_actor`, which the design's §Open already flags. |
-| **`promote_state` / `promote_event`** | Named as actions, but the verb palette (`ACTION_MOVE` and friends) died with `event_word`. They land wherever the word format does. |
+| **the world verb palette** | The machine + `promote_*` exist ([`ACTIONS.md`](ACTIONS.md)); no gameplay verb does. Each needs a signature naming, per operand, written vs read — that is what the write and read sets are scanned out of. |
 
 See [`notes/tables.md`](notes/tables.md) and the intent doc.
 

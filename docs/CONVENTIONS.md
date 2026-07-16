@@ -22,7 +22,8 @@ entry too, because *how they change dictates how their consumers operate*.
 - **Not components:** an **individual table** (the *module* that holds it is the component); a
   **build output** (`shared/pkg`, `shared/target`); a **piece of a component** (worldgen ⊂ edge).
 - **Cross-cutting concepts** are documented where they live, not minted as fake deployables — and
-  when they span *every* component, they get a top-level file: `VARIABLES.md`, `TABLES.md`.
+  when they span *every* component, they get a top-level file: `VARIABLES.md` (variables),
+  `TABLES.md` (tables), `ACTIONS.md` (the event program).
 
 The full list — every component, its path, what it deploys/shares, and alive-vs-dead — is the
 **map: [`docs/components/README.md`](components/README.md)**. Keep it current; it's the antidote
@@ -127,6 +128,7 @@ A work-folder headers the component(s) + plan phase it executes; plans link back
 |---|---|
 | **a cross-component variable's name / width / bit layout** | **`docs/VARIABLES.md` — authoritative; never re-state a layout in a component doc as if it owned it** |
 | **a cross-component table's columns / keys / readers / writers** | **`docs/TABLES.md` — authoritative; module-internal tables stay in the module** |
+| **an action, its arity, or the program encoding** | **`docs/ACTIONS.md` — authoritative; append-only, arity is wire** |
 | the final shape of a component (tables/types/protocol) | `components/<c>/design/` |
 | why the shape is that way, what's stored/read where + entry/exit | `components/<c>/intent/` |
 | what's implemented vs not, right now | `components/<c>/current/` |
