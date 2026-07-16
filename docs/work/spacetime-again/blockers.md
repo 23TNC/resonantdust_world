@@ -75,3 +75,26 @@ read target's previous row is dirty; never partial-write. This is safe because w
 code (a trusted-server model). The enforceable-without-trust alternative is two-phase (write all
 tentative → verify all settled → clear dirty), at more round trips; we take "block correctly" for now.
 Recorded in [`TABLES.md`](../../TABLES.md) §"The block is a worker requirement" and intent §Why 4.
+
+---
+
+## B-5 · The first verbs — CREATE / PLACE / MOVE_TO — OPEN
+
+Drafted in [`ACTIONS.md`](../../ACTIONS.md) §World. Enough to start; four sub-decisions before
+`MOVE_TO` runs (`PLACE` and the happy-path `CREATE` are buildable now):
+
+- **`CREATE`'s replay-safe id.** A spawn insert isn't idempotent. Leaning: a data-shard spawn-log
+  keyed by `(event_reference, index) → minted entity_reference`, so replay reads instead of
+  re-minting. Alternative — derive the id from the event — doesn't fit (32-bit `event_reference` → 24-bit
+  `object_reference`). Also: which data shard the new object lands on (spawn position's zone?).
+- **Movement speed.** `MOVE_TO` schedules the next hop `k` tics out, `k` = tics-per-tile — a per-kind
+  property with no home. Content-derived from `definition_reference` is the natural fit.
+- **A verb that queues an event.** `MOVE_TO`'s continuation appends a future `MOVE_TO`. Baked into the
+  verb for now; whether it generalizes to a `QUEUE` primitive is later.
+- **`event_tic ≥ master + 3`.** Generalizes `queue` from "exactly +3" so a hop can land further out.
+  The completeness barrier is unaffected (a tic freezes at `T-2` regardless of birth tic). Confirm.
+- **`PROMOTE_STATE` re-anchor cadence.** To avoid per-tile fan-out, continuations don't promote every
+  hop. Every N tiles? First + last only? A tuning knob — a gameplay/bandwidth call.
+
+**Why yours:** these are gameplay + content-model decisions, not schema ones. The schemas don't change
+for any of them (except a spawn-log table, if that's the `CREATE` choice).

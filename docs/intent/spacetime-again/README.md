@@ -247,7 +247,9 @@ surprising. Overloaded regions lag and self-heal; they don't corrupt.
 - **`POP`'d targets.** A written `entity_reference` must be statically known at grouping, but a
   `POP`'d operand has no value until run time. Default: a written target must be literal; `POP` is for
   numbers and read operands. See [`notes/actions.md`](../../notes/actions.md).
-- **The world verb palette.** The machine + `PROMOTE_*` exist ([`ACTIONS.md`](../../ACTIONS.md)); no
-  gameplay verb does. Each needs a signature naming, per operand, written vs read.
+- **The world verb palette.** `CREATE` / `PLACE` / `MOVE_TO` are drafted
+  ([`ACTIONS.md`](../../ACTIONS.md) §World). Their opens: `CREATE`'s replay-safe id (spawn-log
+  leaning) and spawn-shard; movement speed's home (per-kind); the `PROMOTE_STATE` re-anchor cadence;
+  and `MOVE_TO`'s two new capabilities — a verb that queues an event, and `event_tic ≥ master+3`.
 - **Cold.** No cold tier yet — no table, no `find-or-mint`. Where a settled object is resolved to a
   live one is unshaped.
