@@ -1,6 +1,6 @@
 # Components — index / map
 
-_Last mapped: 2026-07-14._
+_Last mapped: 2026-07-15._
 
 A **component** is a self-contained chunk we **deploy** or **share**. Shared components get their
 own entry because *how they change dictates how their consumers operate*. Each component gets a
@@ -22,41 +22,36 @@ dead. It's the antidote to "I forget… which is why we need this."
 - **client/pixijs** — browser renderer (TS + pixi.js). The web client bundle.
 
 ## `server/` — deployable
-- **server/edge** — the world server clients log into: per-session zone subs, appends events to
-  the shard, serves `/content` + `/textures`. **Contains `worldgen`** (`edge/src/worldgen.rs`) —
-  server-only biome generation that reads `content/` and seeds the shard's `cold` table when a
-  client subscribes a zone (anchor/subscribe-driven). *Worldgen is a piece of edge, not its own
-  component.*
+- **server/edge** — the world server clients log into. Today: login + clock sync, and it serves
+  `/content` + `/textures`. **Contains `worldgen`** (`edge/src/worldgen.rs`) — server-only biome
+  generation that reads `content/`; it has nothing to seed until a shard exists. *Worldgen is a
+  piece of edge, not its own component.* Its zone-subscription surface went with the shard.
 - **server/gateway** — directory over the `index` DB; the client's first hop (`GET /server` →
   world-server URL).
-- **server/master** — ticks a shard: `drop_timed_out → bump`, periodic GC. Respects `paused`.
-- **server/worker** — resolves `event_log → state` (two-phase lifecycle, composition, cross-shard
-  convergence, actor-reads).
 - **server/spacetime** — the SpacetimeDB workspace; not itself deployed — it *holds* the modules
-  + the pipeline macro + build scripts.
+  + build scripts.
+- **server/master, server/worker — ☠ GONE (2026-07-15).** The tic metronome and the event resolver.
+  Both existed only to drive the deleted pipeline. The rebuild's worker is
+  [`intent/spacetime-again/`](../intent/spacetime-again/README.md).
 
 ## `server/spacetime/server/modules/` — deployable ST modules
-- **shard** — the unified tick pipeline: `event_log`/`state`/`state_log`/`holder`/`cold`/
-  `tic_meta`/… + lifecycle reducers. The game's live + cold data. Its `cold` table (object model)
-  **supersedes cold_tiles/cold_things.**
 - **players** — auth/login (`claim_or_login`) + player records.
-- **index** — the **directory + presence**: region→shard routing (`region_shards`), shard registry
-  (`shards`), server registry + heartbeat/liveness (`servers`), **player→server assignment =
-  presence** (`player_servers`), GC. gateway reads it; edge registers + heartbeats into it.
+- **index** — the **directory + presence**: server registry + heartbeat/liveness (`servers`),
+  **player→server assignment = presence** (`player_servers`), GC. gateway reads it; edge registers
+  + heartbeats into it. Also holds the vestigial region→shard tier (`region_shards` / `shards`) —
+  see [`../notes/tables.md`](../notes/tables.md).
 - **chat** — chat messages.
-- **cold_tiles / cold_things / experiment — ☠ GONE (2026-07-14, T-7).** Superseded by shard's
-  `cold` table (div #3, commits `2b2fc58` / `d47f152`, which deleted the sources). What lingered
-  was untracked build detritus + two dead `redeploy.sh` `fam` arms — both removed; div #3 closed.
-
-## `server/spacetime/server/` (shared, ST-side)
-- **pipeline** (`resonantdust-pipeline`) — the `decl_tick_pipeline!` macro that generates a
-  module's tables + lifecycle reducers. Shared *by* modules (today: shard). A change here changes
-  every module built on it — hence tracked as a component.
+- **shard — ☠ GONE (2026-07-15).** The unified tick pipeline. Deleted with `server/spacetime/server/
+  pipeline` for a ground-up rebuild; nothing legacy was kept. Its replacement is designed in
+  [`intent/spacetime-again/`](../intent/spacetime-again/README.md) and shaped in
+  [`../TABLES.md`](../TABLES.md) — **not built**.
+- **cold_tiles / cold_things / experiment — ☠ GONE (2026-07-14).**
 
 ## `shared/` — shared crates (change here dictates how consumers operate)
-- **shared/codec** (`resonantdust-codec`) — bit-packing: `event_word` (the DSL word frame),
-  entity/zone `refs`, the `object` model. The wire shapes everything agrees on.
-- **shared/tick** (`resonantdust-tick`) — domain effects + the **event-DSL VM** (interpreter).
+- **shared/codec** (`resonantdust-codec`) — bit-packing: the `refs` / `object` reference layouts,
+  the `tic` ring, and the legacy `packed` zone_id. The wire shapes everything agrees on —
+  authoritative in [`../VARIABLES.md`](../VARIABLES.md).
+- **shared/tick — ☠ GONE (2026-07-15)** with the pipeline it was the SDK-free core of.
 - **shared/dsl** (`resonantdust-dsl`) — the **content DSL**: `content/*.rd` → runnable `Bundle`
   (data/visual defs).
 - **shared/wasm** (`resonantdust-shared`) — the `#[wasm_bindgen]` layer (`WorldClient`, content
@@ -67,9 +62,10 @@ dead. It's the antidote to "I forget… which is why we need this."
   cargo target dir). No design/intent docs.
 
 ## The two DSLs (prefix them so they don't blur)
-- **event-dsl** — the `Vec<u64>` action-program (event *definitions*). Not a deploy component; a
-  cross-cutting concept defined by **shared/codec** (`event_word` frame) + **shared/tick** (the
-  VM). Spec: `components/server/spacetime/modules/shard/design/event-dsl.md`.
+- **event-dsl** — the action-program an event carries (`actions : Vec<u32>`). Not a deploy
+  component. **Currently undefined**: the `event_word` frame and the VM were deleted with the
+  pipeline, and the rebuild has not chosen an encoding — see
+  [`intent/spacetime-again/`](../intent/spacetime-again/README.md) §Open.
 - **content-dsl** — the `.rd` files (data/visual defs). Crate: **shared/dsl**. Authoring specs:
   `dev/dsl` (below).
 
@@ -89,6 +85,10 @@ Held as components because scripts are the foundation of how we develop.
 - The **dev/ reorg** (`bin/` → `dev/scripts/`) is proposed, not done.
 - Per lazy-create, per-component `{design,intent,current,plan}` folders come as we work each — so a
   component **listed above with no folder is normal**, not a gap; this map is its home until it
-  earns one. **Folders so far:** `shard` + `shared/codec` (all four, verified against the code
-  2026-07-14); partial, as work touched them: `client/core`, `client/pixijs`,
-  `server/spacetime/pipeline`, `server/gateway`, `dev/{scripts,textures}`.
+  earns one. **Folders so far:** partial, as work touched them — `client/core`, `client/pixijs`,
+  `server/gateway`, `dev/{scripts,textures}`, `shared/codec` (a pointer only; its shapes live in
+  `VARIABLES.md`).
+- **Cross-component shapes do not get component folders.** Variables live in
+  [`../VARIABLES.md`](../VARIABLES.md), tables in [`../TABLES.md`](../TABLES.md), the reasoning in
+  [`../notes/`](../notes/tables.md). A component doc that restates a layout is drift waiting to
+  happen.

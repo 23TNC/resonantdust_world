@@ -10,10 +10,10 @@ trajectory independently. We store the intent; we derive the position.
 > is: [`work/pathfinding/todo.md`](../../work/pathfinding/todo.md); decisions:
 > [`work/pathfinding/forks.md`](../../work/pathfinding/forks.md). §7's open question is **answered
 > below**. Written against the 0.2.3 tick pipeline
-> ([`pipeline-generalization.md`](../../components/server/spacetime/pipeline/design/pipeline-generalization.md)), the action
-> model in [`shared/tick/src/domain.rs`](../../../shared/tick/src/domain.rs), and the
+> (the tick pipeline (deleted 2026-07-15)), the action
+> model in `shared/tick/src/domain.rs` (deleted 2026-07-15), and the
 > client sync model ([`sync.md`](../sync.md)). Terminology follows
-> [`object-model.md`](../../components/shared/codec/design/object-model.md). Nothing here is built yet.
+> [`VARIABLES.md`](../../VARIABLES.md). Nothing here is built yet.
 
 ---
 

@@ -3,9 +3,6 @@
 Supporting material for [`../VARIABLES.md`](../VARIABLES.md), which is authoritative and carries the
 shapes alone. Nothing here defines a layout. If the two disagree, VARIABLES.md wins.
 
-Deeper reasoning for the codec's types (the definition/position/data split, the cold/hot boundary):
-[`../components/shared/codec/design/reference-model.md`](../components/shared/codec/design/reference-model.md).
-
 ## Why a single registry
 
 These names cross the codec, the spacetime modules, the edge, the DSL and the client. A name — or a

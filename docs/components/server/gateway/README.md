@@ -8,4 +8,4 @@ server (edge) and hands back its URL. Pure routing — it holds no game state.
 - **[`intent/gateway.md`](intent/gateway.md)** — the two-hop login handshake, what it reads from
   `index`, entry/exit points.
 - `design/`, `current/`, `plan/` — lazy (add when worked). Consumes the
-  [`index`](../spacetime/modules/) module's directory tables.
+  `index` module's directory tables ([`../../../TABLES.md`](../../../TABLES.md)).

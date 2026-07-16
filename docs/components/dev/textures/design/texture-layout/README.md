@@ -9,7 +9,7 @@ Read this before touching `bin/lib/texpath.py`, `bin/art`, `bin/lib/*.py`, `mari
 the server texture resolvers, or `client/pixijs/src/textures/*`. The migration plan is in
 [migration.md](migration.md).
 
-Status legend (same as [`docs/spacetime-tables/`](../../../../server/spacetime/modules/shard/design/README.md)): ✅ AGREED ·
+Status legend: ✅ AGREED ·
 ✏️ DRAFT (confirm) · ❓ OPEN · ⚠️ NOT YET (code doesn't match).
 
 ---
@@ -22,7 +22,7 @@ textures / <type> / <subtype> / <kind> / <subkind> / <variant> / <map>.<dir>.<pa
 ```
 
 - ✅ **`<type>/<subtype>/<kind>/<subkind>`** — the object-model taxonomy, the same axes as
-  [`object_type_reference` + `object_kind_reference`](../../../../shared/codec/design/references/object-reference.md)
+  [`type_reference` + `kind_reference`](../../../../../VARIABLES.md)
   (`type_id`/`subtype_id`/`kind_id`/`subkind_id`). e.g. `pawn/animal/wolf/…`,
   `biome-thing/default/berry/…`.
 - ✅ **`<variant>`** — the variation index (`variant_id`) — one folder per variation, the
@@ -47,7 +47,7 @@ Nothing needs a separate id level, so it's gone.
 
 | segment | is | notes |
 |---------|-----|-------|
-| `type` / `subtype` / `kind` / `subkind` | object-model taxonomy | [object-reference.md](../../../../shared/codec/design/references/object-reference.md); `type` reserved → dirs use these exact words |
+| `type` / `subtype` / `kind` / `subkind` | object-model taxonomy | [VARIABLES.md](../../../../../VARIABLES.md); `type` reserved → dirs use these exact words |
 | `variant` | variation index | the `variant_id`; a `readdir` enumerates variations |
 | `map` | the texture channel | `albedo` / `normal` / `diffuse` / `emissive` / `packed` / `sprite` / … |
 | `dir` | facing / direction | ✅ **compact**: `s`/`e`/`n` (west = mirrored east), `l` = omni/linked. From object-model rotation (`rot`→`dir`) |
@@ -113,5 +113,5 @@ numeric parts) — the `map.dir.part` **order** is what produces the grouping.
 
 - ❓ **`linked/…` → taxonomy mapping.** Which `<type>/<subtype>` do walls/fences/rocks land
    under? The object-model `type_id` palette has no "built/linked" type yet
-   ([object-reference.md](../../../../shared/codec/design/references/object-reference.md)) — needs a type assignment (or a
+   ([VARIABLES.md](../../../../../VARIABLES.md)) — needs a type assignment (or a
    `layer`-on-`biome-tile` decision) before `linked/` can be relocated.

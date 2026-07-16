@@ -1,21 +1,19 @@
 # Component — `shared/codec` (`resonantdust-codec`)
 
 _Path: `shared/codec`. **Shared** crate — how it changes dictates how its consumers operate.
-Last updated: 2026-07-14._
+Last updated: 2026-07-15._
 
-Bit-packing + the shared object model: `event_word` (the event-DSL word frame), the entity /
-zone / object **reference** layouts, and the object taxonomy (`type` / `kind` / `variant`).
-The wire shapes everything agrees on — consumed by shard, edge, worker, client/core, wasm.
+The bit-packing layer: the reference layouts (`refs`, `object`), the tic ring (`tic`), and the
+legacy `zone_id` / thing-tile packing (`packed`). Consumed by the spacetime modules, edge,
+client/core and wasm.
 
-- **[`design/`](design/)** — the shape: [`object-model.md`](design/object-model.md) (the taxonomy
-  + packed references + shard classes) and [`references/`](design/references/) (the bit-layouts:
-  object/hot/cold refs, the spatial ladder, reference-vs-id vocab).
-- **[`current/`](current/)** — [`object-model-status.md`](current/object-model-status.md):
-  implementation status + the object-model's **open decisions**, which gate the shard's
-  representation re-keys ([`work/spacetime-rewrite/blockers.md`](../../../work/spacetime-rewrite/blockers.md) B-1).
-- **[`intent/`](intent/)** / **[`plan/`](plan/)** — why the refs are shaped this way + the path
-  to settling the open decisions.
+**It has no `design/` or `intent/` of its own.** Its shapes are cross-component by definition, so
+they live where every consumer looks:
 
-The **event-dsl** word frame lives here (`event_word`); its *spec* is documented with the shard
-([`event-dsl.md`](../../server/spacetime/modules/shard/design/event-dsl.md)) since that's where
-the VM + lifecycle give it meaning.
+| | |
+|---|---|
+| the layouts — names, widths, bits | [`docs/VARIABLES.md`](../../../VARIABLES.md) — **authoritative** |
+| why they're shaped that way, and what was removed | [`docs/notes/variables.md`](../../../notes/variables.md) |
+
+This crate is the **code of record**, not the source of truth: when it disagrees with VARIABLES.md,
+the code is the bug.

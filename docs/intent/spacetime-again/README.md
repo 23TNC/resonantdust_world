@@ -1,10 +1,9 @@
 # spacetime-again — event/data shard split + per-worker subscriptions
 
-> **Status: PSEUDOCODE / intent.** Nothing built. This is the flow; the table shapes are in
-> [`docs/TABLES.md`](../../TABLES.md) and the bit layouts in [`docs/VARIABLES.md`](../../VARIABLES.md).
-> Terminology: [reference-model.md](../../components/shared/codec/design/reference-model.md).
-> Revised 2026-07-15; the model it replaces is
-> [shard/intent/lifecycle.md](../../components/server/spacetime/modules/shard/intent/lifecycle.md).
+> **Status: PSEUDOCODE / intent.** Nothing built. This is the **flow**; the table shapes are in
+> [`docs/TABLES.md`](../../TABLES.md), the bit layouts and vocabulary in
+> [`docs/VARIABLES.md`](../../VARIABLES.md), and the reasoning behind both in
+> [`docs/notes/`](../../notes/tables.md). Revised 2026-07-15.
 
 **What this is for.** Two problems the old pipeline had:
 1. **Every worker mirrored the whole shard** — 6 blanket `SELECT *` subscriptions. A "pool" where
@@ -302,6 +301,6 @@ master → event_shard.settle(t):
   rows — but nothing makes a worker's rows *local*. This is what keeps the four-slot cap free:
   batching every event that touches an entity onto one worker costs that entity one slot. Ungoverned,
   five workers can want the same entity and the fifth fails on load rather than logic.
-- **Cold.** The worker can't see `cold`, so `find-or-mint` (resolving a settled object to a live one
-  at enqueue) needs a home: probably `declare_pending`, since the store *can* see cold. Touches
-  [hot-cold.md](../../components/server/spacetime/modules/shard/intent/hot-cold.md).
+- **Cold.** There is no cold tier in this design yet — no table, no `find-or-mint`. Resolving a
+  settled object to a live one at enqueue probably belongs in `declare_pending`, since the store can
+  see whatever cold turns out to be. Unshaped.

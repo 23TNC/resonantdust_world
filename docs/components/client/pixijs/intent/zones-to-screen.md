@@ -4,21 +4,21 @@
 proven (P1–P4c green), but **nothing on the zone path reaches pixels yet**. This doc is the
 concrete, ground-truthed gap list and the shortest path to close it. It refines step 4
 ("client zone rendering") of the *Next* list in
-[`pipeline-generalization.md`](../../../server/spacetime/pipeline/design/pipeline-generalization.md) and supersedes the storage half
-of [`world-on-pipeline.md`](../../../server/spacetime/pipeline/intent/world-on-pipeline.md) (which still holds the milestone framing).
+the tick pipeline (deleted 2026-07-15) and supersedes the storage half
+of the tick pipeline (deleted 2026-07-15) (which still holds the milestone framing).
 
 ## Current reality — every stage of zone → screen
 
 | Stage | State | File | Gap |
 |---|---|---|---|
 | Generalized pipeline core (P1–P4c) | ✅ built, green | `shared/tick`, `resonantdust_pipeline` macro | — |
-| `zone` module (divergent-payload proof) | ⚠️ exists, **superseded payload** | [`server/spacetime/server/modules/zone/src/lib.rs`](../../../../../server/spacetime/server/modules/zone/src/lib.rs) | payload is the old `cells: Vec<u64>` `[u64;256]`; no worldgen feed, no edge sub, no render — proof only |
+| `zone` module (divergent-payload proof) | ⚠️ exists, **superseded payload** | ``server/spacetime/server/modules/zone/src/lib.rs`` | payload is the old `cells: Vec<u64>` `[u64;256]`; no worldgen feed, no edge sub, no render — proof only |
 | Worldgen (biome classify → tiles + things) | ✅ intact, **called by nobody** | [`server/edge/src/worldgen.rs`](../../../../../server/edge/src/worldgen.rs) | `zone_terrain(zone_id) -> (Vec<u16>, Vec<u32>)` returns terrain no one consumes |
 | Edge zone subscription / seeding | ❌ missing | [`server/edge/src/ws.rs`](../../../../../server/edge/src/ws.rs) `handle_sub_zone` | subscribes `state` only; no `seed_zone_if_empty`, no zone-row relay |
 | Client protocol row type | ❌ missing | [`client/core/src/protocol.rs`](../../../../../client/core/src/protocol.rs) `RowData` | only `State`; no zone row variant |
 | Client events / wasm marshalling | ❌ stripped | `client/core/src/{api,protocol,web}.rs`, `shared/wasm/src/lib.rs` | `ZoneTiles`/`ZoneThings` removed in `f366c21`, `19845d1` |
 | pixijs terrain painter | ❌ gutted | [`client/pixijs/src/game/world/WorldBridge.ts`](../../../../../client/pixijs/src/game/world/WorldBridge.ts) | camera/anchor bridge only; `zoneTilePrims`/`zoneThingPrims` maps removed |
-| `shared/codec/cells.rs` | ⚠️ old design | [`shared/codec/src/cells.rs`](../../../../../shared/codec/src/cells.rs) | `[u64;256]` packed cell + biome-folding; **to be replaced** by `zone_tiles`/`zone_objects` |
+| `shared/codec/cells.rs` | ⚠️ old design | ``shared/codec/src/cells.rs`` | `[u64;256]` packed cell + biome-folding; **to be replaced** by `zone_tiles`/`zone_objects` |
 
 **The render primitives survive.** `Content::zoneTilePrims` / `zoneThingPrims` (shared/wasm)
 still expand packed Vecs → texture + tint via the DSL — kept precisely for the restore.
@@ -30,21 +30,21 @@ edits. A seeded zone that is never mutated **never ticks**, so this needs **neit
 worker `data_type` dispatch **nor** the pack/unpack saga. This is the short path below.
 
 **Scope B — live, mutable world.** Pickup/place, hot per-cell cells, terrain edits. Adds the
-rest of the [`pipeline-generalization.md`](../../../server/spacetime/pipeline/design/pipeline-generalization.md) *Next* list: worker
+rest of the the tick pipeline (deleted 2026-07-15) *Next* list: worker
 `data_type` dispatch → pack/unpack saga + `event_log` provenance → per-layer client overlay.
 Scope A is a strict prefix of B — nothing built for A is thrown away.
 
 ## Scope A — the shortest path to pixels
 
 1. **Reshape the `zone` module payload** — from the superseded `cells: Vec<u64>` to the
-   settled split ([`pipeline-generalization.md`](../../../server/spacetime/pipeline/design/pipeline-generalization.md) status log):
+   settled split (the tick pipeline (deleted 2026-07-15) status log):
    - `zone_tiles`: `{ tiles: Vec<u8>, biome: u16, version: u32 }` — dense, len 256, one floor
      per cell, present for every zone (~0.25 KB).
    - `zone_objects`: `{ objects: Vec<u32> }` — sparse, only occupied cells; entry =
      `x:4 | y:4 | kind:16 | layer:3 | data:5`.
    - Add a `seed_zone(zone_id, tiles, biome[, objects])` reducer that **inserts only if
      absent** (a worldgen re-run must never clobber a live/edited zone).
-   - Retire [`shared/codec/cells.rs`](../../../../../shared/codec/src/cells.rs) in the same pass.
+   - Retire ``shared/codec/cells.rs`` in the same pass.
    - **Decision to lock first:** fold `zone_objects` in now, or ship tiles-only first?
      Recommended **now** — worldgen already returns `things: Vec<u32>`, so a tiles-only
      first cut just means a second wiring round-trip for the same data.
@@ -71,7 +71,7 @@ legacy `cold_zones` / `hot_*` tables can finally be deleted (gap #9).
 
 ## Pitfall — do not resurrect the cold-blob
 
-[`world-on-pipeline.md`](../../../server/spacetime/pipeline/intent/world-on-pipeline.md) M1 describes a `zone_data` **side-table on the
+the tick pipeline (deleted 2026-07-15) M1 describes a `zone_data` **side-table on the
 `shard` module**. That storage is **retired**. Zones are their own module/pipeline; the table
 above is a payload on the **`zone`** module, not a table on `shard`. (An exploration pass
 following the old doc mis-recommended the `shard` side-table — hence this note.)

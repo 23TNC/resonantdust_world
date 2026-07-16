@@ -6,8 +6,8 @@ updated: 2026-07-14._
 
 | Archived | Was | Superseded by |
 |---|---|---|
-| `simulation.md` | the original server-simulation pipeline (event/state split, tic frontier) | the `shard` component ([`design/`](../components/server/spacetime/modules/shard/design/) + [`intent/`](../components/server/spacetime/modules/shard/intent/)) |
-| `simulation-plan.md` | the original implementation plan | shard [`plan/stages/`](../components/server/spacetime/modules/shard/plan/stages/) (S0–S7) |
-| `gaps.md` | the old known-gaps list | shard [`current/divergences.md`](../components/server/spacetime/modules/shard/current/divergences.md) + [`work/spacetime-rewrite/`](../work/spacetime-rewrite/) |
-| `data-shards.md` | the split cold_tiles/cold_things shard design | the `shard` module's `cold` table (object model); the dead modules' removal is shard [`plan/cleanup.md`](../components/server/spacetime/modules/shard/plan/cleanup.md) |
+| `simulation.md` | the original server-simulation pipeline (event/state split, tic frontier) | the shard rebuild — [`intent/spacetime-again/`](../intent/spacetime-again/README.md) + [`TABLES.md`](../TABLES.md) |
+| `simulation-plan.md` | the original implementation plan | nothing — the shard it planned was deleted 2026-07-15 |
+| `gaps.md` | the old known-gaps list | nothing — that shard and its ledger were deleted 2026-07-15 |
+| `data-shards.md` | the split cold_tiles/cold_things shard design | nothing — the shard that absorbed them was itself deleted 2026-07-15 |
 | `object-shard.md` | the 2nd shard-class (object-shard) design | the unified `shard` (hot+cold in one module) |

@@ -4,7 +4,7 @@
 several **classes** of data shard, and how the edge routes to each. Reconciles the pre-0.2
 [`object-shard.md`](object-shard.md) (written against `region_shard`/`object_shard`/
 `cold_zones`/`hot_things`, most of which 0.2 merged away) with the current
-`decl_tick_pipeline!` world ([`pipeline-generalization.md`](../components/server/spacetime/pipeline/design/pipeline-generalization.md)).
+`decl_tick_pipeline!` world (deleted 2026-07-15).
 
 ## Where we are
 
@@ -120,7 +120,7 @@ per-class split. Promote `cold_tiles` (terrain) off `default_cold_tiles_db()` on
 
 ## Cold objects on the object model (0.2.3)
 
-The [object model](../components/shared/codec/design/object-model.md) makes tiles and things the *same* thing — cold
+The object model ([`VARIABLES.md`](../VARIABLES.md)) makes tiles and things the *same* thing — cold
 **objects**, each an `object_reference`. A zone's cold data becomes **N `ColdRow`s
 split by (type, subtype, layer)** (`object-model.md` §4): each row = a shared
 `object_type_reference : u32` + a `Vec<object_kind_reference : u32>`. `biome-tile`
