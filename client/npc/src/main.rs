@@ -11,27 +11,23 @@
 //! npc type arrives, [`Bot`] extracts into a shared `npc` lib and the behaviors become thin
 //! bins on top — the seam is already drawn here so that split is a file move, not a rewrite.
 //!
-//! Lifecycle (phase 1–3): log in → anchor zone (0,0) so its shard connects → **spawn** 4
-//! wolves through the event pipeline (`Command::Spawn` → `ACTION_SPAWN`, born hot, drawn as
+//! Lifecycle (phase 1–3): log in → anchor zone (0,0) so its shard connects → **place** 4
+//! wolves (`Command::Place` → a `PROMOTE_STATE`+`PLACE` program, promoted into `state`, drawn as
 //! debug circles by the pixijs mover layer) → on a timer **move** each wolf to a random cell
-//! (`Command::Move` with the wolf's key). Spawn and move share one event path.
+//! (`Command::Move` → a `MOVE_TO` program). Both travel the same queue → event path.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::mpsc;
 
 use client::{AnchorRadii, Client, ClientConfig, Command, Event};
-use resonantdust_codec::refs::{pack_hot_entity, SERVER_REF_NONE};
+use resonantdust_codec::object::TYPE_PAWN;
+use resonantdust_codec::refs::{pack_entity_reference, pack_server_reference};
 
 /// The zone the pack lives in — zone (0,0), `zone_id == 0`.
 const ZONE: u32 = 0;
 /// Cells per zone edge (16×16 = 256 locations).
 const ZONE_DIM: u32 = 16;
-/// The wolf's `kind` — its `object_id` in the content thing corpus (append order in
-/// `content/data/things.rd`: tree,shrub,cactus,reed,rock,flora,**wolf** = 7). The client
-/// resolves this `kind` to a sprite later; for now the mover layer draws every pawn as a
-/// debug circle, so the exact value only needs to be non-zero (a live, non-tombstone entity).
-const KIND_WOLF: u16 = 7;
 /// The first pawns: a small pack in zone (0,0). Kept tiny + single-zone so the whole pack is
 /// on screen near the origin. Forest-aware, multi-zone spawning is a later expansion.
 const WOLF_COUNT: u32 = 4;
@@ -57,12 +53,12 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
-/// The stable key an npc addresses a wolf by. Wolves are hot objects, self-minted (no shard
-/// round-trip): the index `i` is the `hot_reference`, and `SERVER_REF_NONE` marks "not
-/// shard-minted" (the qualifying server). Their pawn-ness lives in the payload `kind`
-/// (`KIND_WOLF`), not the identity. The npc keeps these keys so it can move each wolf later.
-fn wolf_key(index: u32) -> u64 {
-    pack_hot_entity(SERVER_REF_NONE, index)
+/// The stable `entity_reference` an npc addresses a wolf by. Client-minted (no shard round-trip):
+/// the server byte is `TYPE_PAWN` (server id 0), the object reference is `index + 1`. The npc keeps
+/// these so it can move each wolf later. (Client-chosen ids work until `CREATE`'s minted-id claim
+/// lands; two npcs would need disjoint object ranges then.)
+fn wolf_key(index: u32) -> u32 {
+    pack_entity_reference(pack_server_reference(TYPE_PAWN, 0), index + 1)
 }
 
 /// The automated-player harness: owns the `client` handle and its event stream, and hides the
@@ -199,11 +195,10 @@ async fn main() {
 
 /// The wildlife behavior: spawn a wolf pack in zone (0,0), then wander it cell-by-cell.
 ///
-/// Every action is an ordinary player command. Spawn (phase 1) mints each wolf through the
-/// event pipeline (`Command::Spawn` → `ACTION_SPAWN`); move (phase 3) relocates a specific
-/// wolf by its key (`Command::Move { pawn: Some(key) }`). The pixijs mover layer draws each
-/// pawn as a debug circle, so a browser logged into the same world sees the pack spawn and
-/// move — the phase-4 end-to-end check.
+/// Every action is an ordinary player command. Place (phase 1) promotes each wolf into `state`
+/// (`Command::Place`); move (phase 3) relocates a specific wolf by its `entity_reference`
+/// (`Command::Move`). The pixijs mover layer draws each pawn as a debug circle, so a browser
+/// logged into the same world sees the pack place and move — the phase-4 end-to-end check.
 async fn wildlife(mut bot: Bot, rng: &mut Rng) {
     let move_ms: u64 = env_or("MOVE_MS", "1000").parse().unwrap_or(1000);
 
@@ -211,10 +206,12 @@ async fn wildlife(mut bot: Bot, rng: &mut Rng) {
     bot.anchor_and_wait(0, 0, ZONE, Duration::from_secs(5)).await;
 
     // Spawn the pack near the origin (cells x:0..9, y:0..6) so the whole pack is on screen at
-    // world (0,0) without panning. Each wolf is addressed by its stable key hereafter.
+    // world (0,0) without panning. `place` promotes each wolf into `state`; its content kind
+    // (wolf sprite) isn't set yet — `PLACE` carries position only, so the mover draws a debug
+    // circle until `CREATE` (or a definition verb) plumbs `definition_reference` through.
     for i in 0..WOLF_COUNT {
         let (x, y) = (rng.below(9) as i32, rng.below(6) as i32);
-        if bot.client.spawn_entity(wolf_key(i), KIND_WOLF, x, y).is_err() {
+        if bot.client.place(wolf_key(i), x, y).is_err() {
             tracing::error!("engine gone during spawn; exiting");
             return;
         }
@@ -237,7 +234,7 @@ async fn wildlife(mut bot: Bot, rng: &mut Rng) {
         }
         for i in 0..WOLF_COUNT {
             let (x, y) = (rng.below(ZONE_DIM) as i32, rng.below(ZONE_DIM) as i32);
-            if bot.client.move_pawn(wolf_key(i), x, y).is_err() {
+            if bot.client.move_entity(wolf_key(i), x, y).is_err() {
                 tracing::error!("engine gone during move; exiting");
                 return;
             }
@@ -255,8 +252,8 @@ fn log_event(event: &Event) {
         Event::LoginFailed { reason } => tracing::error!(%reason, "login failed"),
         Event::Disconnected { reason } => tracing::warn!(?reason, "disconnected"),
         Event::Status(msg) => tracing::debug!(%msg, "status"),
-        Event::StateObject { zone_id, object_id, location, .. } => {
-            tracing::debug!(zone_id, object_id, location, "state object")
+        Event::StateObject { zone_id, entity_reference, tile_x, tile_y, .. } => {
+            tracing::debug!(zone_id, entity_reference, tile_x, tile_y, "state object")
         }
         Event::ColdObjects { zone_id, .. } => tracing::debug!(zone_id, "cold objects"),
         Event::ZoneClosed { zone_id } => tracing::debug!(zone_id, "zone closed"),

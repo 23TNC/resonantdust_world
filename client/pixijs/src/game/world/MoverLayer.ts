@@ -24,19 +24,13 @@ import type { PackedChannel } from "../viewport/material";
 import { thingTexture } from "./WorldBridge";
 import { placeThing, readLayout } from "./thingPlacement";
 
-/** The reference variant drawn here. `objType` is the `reference_id` from
- *  `resonantdust_codec::refs` (0.2.3 reference model); `REF_HOT` (1) is any live/minted object
- *  — wolves + the player self-object. Game-type (pawn vs player) now lives in the payload `kind`,
- *  not the identity, so the mover layer draws every hot object and distinguishes by `objKind`. */
-const REF_HOT = 1;
-
 /** Base zIndex for warm pawn sprites — above the ground (tiles are `0`), matching cold things
  *  ({@link WorldBridge}'s `THING_Z_BASE`); the pawn's anchor tile-row is added so overlapping
  *  pawns/things paint front-over-back. */
 const PAWN_Z_BASE = 1;
 
 /** A well-distributed 32-bit hash → `[0, 1)` — a stable per-instance material seed from the
- *  pawn's `objectId`, so instances differ without the noise pattern swimming as the pawn walks. */
+ *  pawn's `entityReference`, so instances differ without the noise pattern swimming as it walks. */
 function hash01(a: number): number {
   a = Math.imul(a ^ (a >>> 16), 0x45d9f3b);
   a = Math.imul(a ^ (a >>> 16), 0x45d9f3b);
@@ -119,26 +113,31 @@ export class MoverLayer {
   }
 
   private onStateObject(obj: StateObject): void {
-    if (obj.objType !== REF_HOT) return; // hot movers only (wolves + player self-object)
-    const key = obj.objectId;
+    const key = obj.entityReference;
     if (obj.removed) {
       this.remove(key);
       return;
     }
-    // World TILE + tint/geoColor for the pawn's cell (stem/layout/packed come from the content
-    // tables, keyed by objKind). Placed via the shared def layout exactly like cold things, so
-    // the z-sort by anchor row makes overlapping pawns/things paint front-over-back and a tall
-    // sprite rises past its cell.
-    const prim = this.content.moverPrim(obj.zoneId, obj.location, obj.objKind);
-    const tileX = prim[0];
-    const tileY = prim[1];
+    // Content kind → sprite. A placed pawn carries `definitionReference` 0 (no definition verb
+    // yet), so fall back to the first thing kind so a mover still renders + moves; real per-pawn
+    // sprites arrive when `CREATE` (or a definition verb) plumbs the kind through.
+    const kind =
+      obj.definitionReference >= 1 && obj.definitionReference <= this.thingStems.length
+        ? obj.definitionReference
+        : 1;
+
+    // Position comes straight from the event's GLOBAL tile now (no zone/location decode). tint +
+    // geoColor still come from the kind's visual (moverPrim, whose tile output we ignore).
+    const tileX = obj.tileX;
+    const tileY = obj.tileY;
+    const prim = this.content.moverPrim(obj.zoneId, 0, kind);
     const tint = prim[2];
     const geoColor = prim[3];
 
-    // Facing (+ west flip) from the entity's rotation; variant is a stable per-entity pick.
-    const stem = this.thingStems[obj.objKind - 1];
-    const tex = thingTexture(stem, obj.rotation, obj.objectId, /* mover */ true);
-    const box = placeThing(tileX, tileY, readLayout(this.thingLayout, obj.objKind), tex.flipX);
+    // Facing (+ west flip) from the entity's facing; variant is a stable per-entity pick.
+    const stem = this.thingStems[kind - 1];
+    const tex = thingTexture(stem, obj.facing, obj.entityReference, /* mover */ true);
+    const box = placeThing(tileX, tileY, readLayout(this.thingLayout, kind), tex.flipX);
     const { x, y } = box;
     const size = box.width; // square box; used for warm prim width/height
     const zIndex = PAWN_Z_BASE + box.zRow;
@@ -156,8 +155,8 @@ export class MoverLayer {
         height: size,
         tint,
         geoColor,
-        packed: this.packedFor(obj.objKind),
-        seed: hash01(obj.objectId),
+        packed: this.packedFor(kind),
+        seed: hash01(obj.entityReference),
         zIndex,
       });
       this.movers.set(key, {

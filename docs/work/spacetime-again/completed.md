@@ -5,6 +5,34 @@ carried out — the "done when" bar it cleared._
 
 ---
 
+## W9 · `shared/wasm` + `client/npc` + `client/pixijs` — a wolf moves ✓ 2026-07-16
+
+The last item — the three host components, each consuming the one before. **All four build gates green
+for the first time since the deletion**, and the wolves move over the real WS surface.
+
+- **`shared/wasm`** (JS bridge): `WorldClient` exposes `queue`/`moveEntity`/`place` (was `moveTo`/
+  `interact`/`setPaused`); `event_to_js` marshals the new `stateObject` (`entityReference`,
+  `definitionReference`, `tileX`/`tileY`, `facing`, `tic`). wasm32 `--features js` check green.
+- **`client/npc`**: `wolf_key` = `pack_entity_reference(TYPE_PAWN server byte, index+1)` (was the
+  deleted `pack_hot_entity`); spawns via `place`, wanders via `move_entity`. `npc --check` green.
+- **`client/pixijs`**: `MoverLayer` drops the deleted `REF_HOT` filter and renders every `state`
+  object at its **global** `(tileX, tileY)` keyed by `entityReference`, facing from `facing`
+  (content sprite by `definitionReference`, falling back to the first thing while pawn defs are 0);
+  `WasmClient` mirrors the new event + `moveSelf`/`placeSelf`; `WorldScene` click → `moveSelf`/
+  `placeSelf`, `/pause` reports unavailable (no freeze verb yet). `tsc --noEmit` green.
+- **The move-must-promote fix** (`client/core` `world.rs`): `move_to_program` now prepends
+  `PROMOTE_STATE`, so each step reaches the client-visible `state` (a bare `MOVE_TO` composes in
+  `state_log` but the client never sees it — promotion is opt-in).
+
+**Done-when — all met:** `rd build shared` ✓, `core --check` ✓, `npc --check` ✓, `tsc --noEmit` ✓;
+and end-to-end the npc (same `client/core` a browser uses) placed 4 wolves and wandered them — a WS
+client subscribed to zone 0 received **8 moving `state` frames per wolf** (tics 3731..3753, 8 distinct
+positions each), which is exactly what `MoverLayer` renders. The pixel proof needs a real browser; the
+data path a browser renders is verified.
+
+**The rebuild (W1-W9) is complete and live end-to-end:** client → edge `queue` → orchestrator groups →
+worker composes → promoted `state` → edge relays → client, tic durable in `index.master_clock`.
+
 ## W8 · `client/core` — reconcile ✓ 2026-07-16
 
 Rewrote the Rust client's WS-facing layer to the edge's W7 surface (the old bitemporal `StateRow` /

@@ -67,9 +67,12 @@ pub fn facing(data: u8) -> u8 {
     data >> 6
 }
 
-/// The action program for [`crate::api::Command::Move`]: `MOVE_TO entity dest`.
+/// The action program for [`crate::api::Command::Move`]: `PROMOTE_STATE entity`, `MOVE_TO entity
+/// dest` — move *and* promote, so each step reaches the client-visible `state` (promotion is opt-in;
+/// a bare `MOVE_TO` composes in `state_log` but the client never sees it). A cadenced promote
+/// (first + every N tiles) is a later tuning; per-step is correct and simplest.
 pub fn move_to_program(entity: u32, tile_x: i32, tile_y: i32) -> Vec<u32> {
-    vec![MOVE_TO, entity, tile_to_position(tile_x, tile_y)]
+    vec![PROMOTE_STATE, entity, MOVE_TO, entity, tile_to_position(tile_x, tile_y)]
 }
 
 /// The action program for [`crate::api::Command::Place`]: `PROMOTE_STATE entity`, `PLACE entity dest`

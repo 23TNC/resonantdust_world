@@ -504,25 +504,25 @@ impl WorldClient {
         let _ = self.inner.remove_anchor(name);
     }
 
-    /// Move the controllable thing toward global tile `(tile_x, tile_y)` — the
-    /// server pathfinds and commits the move. No-op before login / if disconnected.
-    #[wasm_bindgen(js_name = moveTo)]
-    pub fn move_to(&self, tile_x: i32, tile_y: i32) {
-        let _ = self.inner.move_to(tile_x, tile_y);
+    /// Queue a raw action program (`docs/ACTIONS.md`) into the simulation — the general world door.
+    /// No-op before login / if disconnected.
+    #[wasm_bindgen(js_name = queue)]
+    pub fn queue(&self, actions: Vec<u32>) {
+        let _ = self.inner.queue(actions);
     }
 
-    /// Interact with (unpack) the cold thing at global tile `(tile_x, tile_y)` — the
-    /// server promotes it to a live `state` entity. No-op before login / if disconnected.
-    #[wasm_bindgen(js_name = interact)]
-    pub fn interact(&self, tile_x: i32, tile_y: i32) {
-        let _ = self.inner.interact(tile_x, tile_y);
+    /// Move `entity` (an `entity_reference`) toward global tile `(tile_x, tile_y)` — compiles to a
+    /// `MOVE_TO` program. No-op before login / if disconnected.
+    #[wasm_bindgen(js_name = moveEntity)]
+    pub fn move_entity(&self, entity: u32, tile_x: i32, tile_y: i32) {
+        let _ = self.inner.move_entity(entity, tile_x, tile_y);
     }
 
-    /// Freeze / unfreeze the simulation (debug `/pause`) — the server stops advancing the
-    /// tic, so movement halts for every client. No-op before login / if disconnected.
-    #[wasm_bindgen(js_name = setPaused)]
-    pub fn set_paused(&self, paused: bool) {
-        let _ = self.inner.set_paused(paused);
+    /// Place + promote `entity` at global tile `(tile_x, tile_y)` — compiles to a `PROMOTE_STATE` +
+    /// `PLACE` program (the spawn path until `CREATE`'s minted-id claim lands). No-op before login.
+    #[wasm_bindgen(js_name = place)]
+    pub fn place(&self, entity: u32, tile_x: i32, tile_y: i32) {
+        let _ = self.inner.place(entity, tile_x, tile_y);
     }
 
     /// Drop the world-server connection, keeping the client alive for reconnect.
@@ -589,27 +589,25 @@ fn event_to_js(event: &client::Event) -> JsValue {
         }
         Event::StateObject {
             zone_id,
-            obj_type,
-            object_id,
-            kind,
+            entity_reference,
+            definition_reference,
+            tile_x,
+            tile_y,
+            facing,
             tic,
-            location,
-            rotation,
-            offset,
             removed,
         } => {
             set("kind", &JsValue::from_str("stateObject"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));
-            set("objType", &JsValue::from_f64(*obj_type as f64));
-            // 48-bit object_id fits JS's 2^53 safe-integer range.
-            set("objectId", &JsValue::from_f64(*object_id as f64));
-            // The entity's content kind → sprite (`kind` the JS key is taken by the
-            // event discriminator above, so the entity kind marshals as `objKind`).
-            set("objKind", &JsValue::from_f64(*kind as f64));
+            // entity_reference (server_reference:8 | object_reference:24) is a u32 — JS-safe. Its
+            // top nibble is the object type; the host keys the mover by the whole reference.
+            set("entityReference", &JsValue::from_f64(*entity_reference as f64));
+            // The content kind → sprite (`kind` the JS key is the event discriminator above).
+            set("definitionReference", &JsValue::from_f64(*definition_reference as f64));
+            set("tileX", &JsValue::from_f64(*tile_x as f64));
+            set("tileY", &JsValue::from_f64(*tile_y as f64));
+            set("facing", &JsValue::from_f64(*facing as f64));
             set("tic", &JsValue::from_f64(*tic as f64));
-            set("location", &JsValue::from_f64(*location as f64));
-            set("rotation", &JsValue::from_f64(*rotation as f64));
-            set("offset", &JsValue::from_f64(*offset as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
         Event::ColdObjects { zone_id, type_reference, layer_id, kinds } => {

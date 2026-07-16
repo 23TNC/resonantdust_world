@@ -104,24 +104,24 @@ export class WorldScene extends Scene {
   };
   private readonly onPointerUp = (e: PointerEvent): void => {
     if (this.dragId !== e.pointerId) return;
-    // A press-release that never crossed the slop is a click: left → move the mover to
-    // the clicked tile, right → interact with (unpack) the cold thing there.
+    // A press-release that never crossed the slop is a click: left → move the session's own
+    // pawn to the clicked tile, right → place (spawn/relocate) it there.
     if (!this.dragged) {
-      if (this.downButton === 2) this.tileClick(e, "interact");
+      if (this.downButton === 2) this.tileClick(e, "place");
       else this.tileClick(e, "move");
     }
     this.dragId = null;
   };
-  /** Convert a click to a global tile and send the intent. `move` (left click) pathfinds
-   *  the mover there; `interact` (right click) unpacks the cold thing at that cell into a
-   *  live entity. */
-  private tileClick(e: PointerEvent, kind: "move" | "interact"): void {
+  /** Convert a click to a global tile and drive the session's own pawn: `move` (left click) sends
+   *  a `MOVE_TO`, `place` (right click) a `PROMOTE_STATE`+`PLACE` (spawn or relocate). Both queue an
+   *  action program via the edge. */
+  private tileClick(e: PointerEvent, kind: "move" | "place"): void {
     const r = this.ctx.app.canvas.getBoundingClientRect();
     const w = this.viewport.view.screenToWorld(e.clientX - r.left, e.clientY - r.top);
     const tx = Math.floor(w.x / SQUARE);
     const ty = Math.floor(w.y / SQUARE);
-    if (kind === "interact") this.ctx.client.interact(tx, ty);
-    else this.ctx.client.moveTo(tx, ty);
+    if (kind === "place") this.ctx.client.placeSelf(tx, ty);
+    else this.ctx.client.moveSelf(tx, ty);
   }
   /** End the drag when the cursor leaves the canvas: the matching `pointerup`
    *  fires off-canvas where we don't hear it, so without this we'd keep panning
@@ -198,17 +198,11 @@ export class WorldScene extends Scene {
     // `/showRT` — open (or re-focus) the render-texture preview for the viewport.
     this.chat.registerCommand("showRT", () => this.showRenderTextures());
 
-    // `/pause` + `/unpause` (debug) — freeze/resume the whole simulation. The server stops
-    // advancing the tic, so every client's movement halts (npcs stop issuing commands too).
-    // The authoritative state relays back via `onPaused`, echoed as a system line below.
-    this.chat.registerCommand("pause", () => {
-      this.ctx.client.setPaused(true);
-      return "Pausing simulation…";
-    });
-    this.chat.registerCommand("unpause", () => {
-      this.ctx.client.setPaused(false);
-      return "Resuming simulation…";
-    });
+    // `/pause` + `/unpause` (debug) — no server-side pause in the rebuild yet (the master's
+    // metronome has no freeze verb), so these report unavailability rather than silently do
+    // nothing. `onPaused` stays wired (it simply never fires) for when a freeze verb returns.
+    this.chat.registerCommand("pause", () => "Pause isn't wired in the rebuild yet.");
+    this.chat.registerCommand("unpause", () => "Pause isn't wired in the rebuild yet.");
     this.unsubPaused = this.ctx.client.onPaused((paused) => {
       this.chat.systemLine(paused ? "⏸ Simulation paused (tic frozen)." : "▶ Simulation resumed.");
     });

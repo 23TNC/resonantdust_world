@@ -125,23 +125,21 @@ export type ColdObjectsHandler = (zoneId: number, typeReference: number, kinds: 
 /** A zone's subscription closed — drop its entities. */
 export type ZoneClosedHandler = (zoneId: number) => void;
 
-/** A resolved entity from the shard's tick pipeline (`state`). The raw u64
- *  `entity_key` exceeds JS's safe-integer range, so the wasm core decodes it into the
- *  object's class (`objType`) and its 48-bit `objectId` (JS-safe); the demo layer keys
- *  a circle by `objectId` and only renders demo/player classes. */
+/** A composed entity from `data_shard.state`. `entityReference` (`server_reference:8 |
+ *  object_reference:24`) is JS-safe (a `u32`); its top nibble is the object type. The host keys
+ *  the mover by it and draws `definitionReference` (the content kind → sprite) at global
+ *  `(tileX, tileY)` facing `facing`, interpolating position by `tic`. */
 export interface StateObject {
   zoneId: number;
-  objType: number;
-  objectId: number;
-  /** The entity's content kind → sprite (a wolf's thing id). Distinct from `objType`
-   *  (the entity class: demo / player / pawn). */
-  objKind: number;
-  tic: number;
-  location: number;
+  entityReference: number;
+  /** The entity's content kind → sprite (`0` until a definition verb plumbs it). */
+  definitionReference: number;
+  /** Global tile coordinates. */
+  tileX: number;
+  tileY: number;
   /** Facing: 0=south, 1=east, 2=north, 3=west. */
-  rotation: number;
-  /** Sub-tile offset, `x_off:4 | y_off:4` (8/16 = centred). */
-  offset: number;
+  facing: number;
+  tic: number;
   removed: boolean;
 }
 /** A state object changed — upsert or drop it. */
@@ -166,13 +164,12 @@ type WorldEvent =
   | {
       kind: "stateObject";
       zoneId: number;
-      objType: number;
-      objectId: number;
-      objKind: number;
+      entityReference: number;
+      definitionReference: number;
+      tileX: number;
+      tileY: number;
+      facing: number;
       tic: number;
-      location: number;
-      rotation: number;
-      offset: number;
       removed: boolean;
     }
   | { kind: "zoneClosed"; zoneId: number }
@@ -208,6 +205,8 @@ interface PendingLogin {
 export class WasmClient {
   /** The wasm world client, or null before the first login. */
   private world: WorldClient | null = null;
+  /** This session's `player_id`, set on `loggedIn` (`0` before). Derives the controllable pawn. */
+  private playerId = 0;
   /** The gateway the live `world` was constructed against, to detect repoints. */
   private worldGateway: string | null = null;
   /** The in-flight login, if any. */
@@ -414,23 +413,40 @@ export class WasmClient {
     this.world?.removeAnchor(name);
   }
 
-  /** Move the player's own object toward global tile `(tileX, tileY)`. The server
-   *  appends an `ACTION_MOVE` event to the shard's tick pipeline, which arrives as
-   *  a `state` row on the zone subscription. No-op before login. */
-  moveTo(tileX: number, tileY: number): void {
-    this.world?.moveTo(tileX, tileY);
+  /** Queue a raw action program (`docs/ACTIONS.md`) into the simulation. No-op before login. */
+  queue(actions: Uint32Array): void {
+    this.world?.queue(actions);
   }
 
-  /** Interact with (unpack) the cold thing at global tile `(tileX, tileY)`. The server
-   *  promotes it to a live `state` entity (cold→hot). No-op before login. */
-  interact(tileX: number, tileY: number): void {
-    this.world?.interact(tileX, tileY);
+  /** Move `entity` (an `entity_reference`) toward global tile `(tileX, tileY)`. No-op before login. */
+  moveEntity(entity: number, tileX: number, tileY: number): void {
+    this.world?.moveEntity(entity, tileX, tileY);
   }
 
-  /** Freeze (`true`) / unfreeze (`false`) the simulation (debug `/pause`). The server stops
-   *  advancing the tic, so movement halts for every client until unpaused. No-op before login. */
-  setPaused(paused: boolean): void {
-    this.world?.setPaused(paused);
+  /** Place + promote `entity` at global tile `(tileX, tileY)`. No-op before login. */
+  place(entity: number, tileX: number, tileY: number): void {
+    this.world?.place(entity, tileX, tileY);
+  }
+
+  /** This session's controllable pawn `entity_reference` — a `TYPE_PAWN` (server byte `0x30`)
+   *  reference whose object part is the `player_id`, so it never collides with an npc's wolves
+   *  (objects `1..n`). `0` before login (no session). */
+  private selfEntity(): number {
+    return this.playerId ? 0x30_00_00_00 + (this.playerId & 0xff_ffff) : 0;
+  }
+
+  /** Move the session's own pawn toward global tile `(tileX, tileY)` (left-click). No-op if not
+   *  logged in or the pawn hasn't been placed yet. */
+  moveSelf(tileX: number, tileY: number): void {
+    const e = this.selfEntity();
+    if (e) this.moveEntity(e, tileX, tileY);
+  }
+
+  /** Place + promote the session's own pawn at global tile `(tileX, tileY)` (right-click) — the
+   *  spawn/relocate of the controllable marker. No-op if not logged in. */
+  placeSelf(tileX: number, tileY: number): void {
+    const e = this.selfEntity();
+    if (e) this.place(e, tileX, tileY);
   }
 
   /** Subscribe to simulation freeze changes (debug `/pause`). Fires with the new paused
@@ -534,6 +550,7 @@ export class WasmClient {
         // target it, then notify listeners (they repoint the texture resolver +
         // pull the server's corpus).
         this.serverUrl = ev.serverUrl;
+        this.playerId = ev.playerId;
         this.pending?.resolve({
           playerId: ev.playerId,
           playerShardReference: ev.playerShardReference,
@@ -564,13 +581,12 @@ export class WasmClient {
         for (const cb of this.stateObjectCbs) {
           cb({
             zoneId: ev.zoneId,
-            objType: ev.objType,
-            objectId: ev.objectId,
-            objKind: ev.objKind,
+            entityReference: ev.entityReference,
+            definitionReference: ev.definitionReference,
+            tileX: ev.tileX,
+            tileY: ev.tileY,
+            facing: ev.facing,
             tic: ev.tic,
-            location: ev.location,
-            rotation: ev.rotation,
-            offset: ev.offset,
             removed: ev.removed,
           });
         }
