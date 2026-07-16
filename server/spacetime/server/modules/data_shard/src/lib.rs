@@ -13,7 +13,7 @@ use resonantdust_codec::uid::pack_state_uid;
 
 // ── the tic clock (same shape as every shard; the master bumps it in lockstep) ─────
 
-#[table(accessor = clock)]
+#[table(accessor = clock, public)]
 pub struct Clock {
     #[primary_key]
     pub id: u8,

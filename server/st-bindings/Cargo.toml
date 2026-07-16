@@ -1,0 +1,8 @@
+[package]
+name = "resonantdust-st-bindings"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Pinned to the CLI that generated the bindings (spacetime 2.3.0) — a caret would drift.
+spacetimedb-sdk = "=2.3.0"

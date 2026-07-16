@@ -1,0 +1,19 @@
+[package]
+name = "master"
+version = "0.1.0"
+edition = "2021"
+
+# master — the simulation metronome. An SDK client that advances master_tic on every shard in
+# lockstep (bump), then sweeps (settle terminal events, gc old state rows). Owns no state logic;
+# liveness lives here because the master is the one thing guaranteed to run.
+
+[[bin]]
+name = "master"
+path = "src/main.rs"
+
+[dependencies]
+spacetimedb-sdk = "=2.3.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+resonantdust-st-bindings = { path = "../st-bindings" }

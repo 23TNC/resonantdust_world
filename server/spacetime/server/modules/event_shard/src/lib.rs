@@ -27,7 +27,7 @@ const TIC_GAP: u16 = 3;
 // Single row this shard *reads*; the master bumps it in lockstep with every other shard. Owned
 // here (not shared) so the module is self-contained — the master just writes it. Seeded at init.
 
-#[table(accessor = clock)]
+#[table(accessor = clock, public)]
 pub struct Clock {
     #[primary_key]
     pub id: u8,
