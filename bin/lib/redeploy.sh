@@ -87,11 +87,16 @@ rd_deploy_module() {
   local target="$1" reset="$2" idx=0
   local src; src="$target"   # module directory under spacetime/server/modules
   rd_require_module "$src"
-  # DB family this module deploys to. Every module keeps its own name today. The
-  # deleted `shard` module was the one exception (it mapped to the `zone` family);
-  # the rebuild (`docs/intent/spacetime-again/`) picks its own families — add the
-  # mapping back here if a module name and its DB family diverge again.
-  local fam="$target"
+  # DB family this module deploys to. Usually the module's own name — but a SpacetimeDB
+  # database name may not contain underscores ("invalid characters in database name"), so the
+  # rebuild's `event_shard` / `data_shard` modules map to hyphenated families. The module
+  # *directory* + crate keep the underscore; only the DB name is hyphenated.
+  local fam
+  case "$target" in
+    event_shard) fam="event-shard" ;;
+    data_shard)  fam="data-shard" ;;
+    *)           fam="$target" ;;
+  esac
   rd_log "deploy module $src → $(rd_db_for "$fam" "$idx")"
   rd_st_dcl run --rm --workdir "/workspace/server/modules/$src" build
   local crate wasm

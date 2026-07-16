@@ -43,8 +43,9 @@ const SERVER_REF_NIBBLE_MASK: u8 = 0xF;
 /// spawn not yet bound to a server; the worker routes it to whichever shard processes its event).
 pub const SERVER_REF_NONE: u8 = 0;
 
-/// Compose a `server_reference`: `type_id:4 | server_id:4`.
-pub fn pack_server_reference(type_id: u8, server_id: u8) -> u8 {
+/// Compose a `server_reference`: `type_id:4 | server_id:4`. `const` so a shard can name its own
+/// `SERVER_REFERENCE` in a `const`.
+pub const fn pack_server_reference(type_id: u8, server_id: u8) -> u8 {
     ((type_id & SERVER_REF_NIBBLE_MASK) << SERVER_REF_TYPE_SHIFT) | (server_id & SERVER_REF_NIBBLE_MASK)
 }
 

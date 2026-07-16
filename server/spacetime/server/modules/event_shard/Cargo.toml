@@ -1,0 +1,13 @@
+[package]
+name = "resonantdust_event_shard"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb = { version = "=2.1.0" }
+# The shared vocabulary: entity/status/uid/action layouts + the tic ring. Reached via the
+# `../shared:/workspace/shared` bind-mount (container-relative path). One definition, no drift.
+resonantdust-codec = { path = "../../../shared/codec" }

@@ -94,6 +94,8 @@ writes `send_chat_message` · reads pixijs (via wasm core) — **not wired**, se
 | `players` | `player_id_counter` | id allocation |
 | `chat` | `chat_retention` | scheduled retention sweep |
 | `index` | `gc_schedule` | scheduled stale server/pin reaping |
+| `event_shard` | `clock` | single row: current `master_tic`, read by the shard, bumped by the master |
+| `event_shard` | `event_counter` | single row: the `++counter:24` for minting `event_reference` |
 
 ## Vestigial
 
@@ -127,9 +129,10 @@ Nothing composes on data from its own tic — every read is `< tic`.
 | `event_tic` | `u16` | idx | `tic` — wraps |
 | `status` | `u8` | idx | `event_status` — `flags:4 \| status:4` |
 | `actions` | `Vec<u32>` | | the event program — [`ACTIONS.md`](ACTIONS.md) |
-| `event_group` | `u32` | idx | the shard-local group: events sharing a target entity. The orchestrator merges these across shards into work-groups. |
+| `event_group` | `u32` | idx | the shard-local group: events sharing a target entity. The orchestrator merges these across shards into work-groups. Singleton (`= event_reference`) until real local grouping lands. |
 | `orchestrator_reference` | `u8` | idx | the orchestrator that owns this tic (subscription key) |
 | `worker_reference` | `u8` | idx | the worker the orchestrator assigned (subscription key). `SERVER_REF_NONE` = unassigned |
+| `zones` | `Vec<u16>` | | the `macro_position_reference`s the event's targets occupy — the worker supplies them at `complete` (it holds the targets' positions), and `settle` fans `event` out one row per zone from them. Empty until `complete`. |
 
 subs: `SELECT * FROM event_log WHERE orchestrator_reference = self` (orchestrator) ·
 `SELECT * FROM event_log WHERE worker_reference = self` (worker)
