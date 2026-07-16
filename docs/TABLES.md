@@ -179,9 +179,7 @@ Payload = the reference model's three orthogonal references, carried by both `st
 | `entity_reference` | `u32` | idx | also in `uid`; a column because packed fields can't be filtered or worked with |
 | `tic` | `u16` | idx | same |
 | `worker_reference` | `u8` | idx | the worker that **writes** this row (its component's owner). `SERVER_REF_NONE` = none |
-| `worker_lease` | `u16` | | `tic` — the worker's expiry |
 | `observer_reference` | `u8` | idx | the worker that **reads** this row as the base for its next-tic work (the `(E, next)` component's owner) |
-| `observer_lease` | `u16` | | `tic` — the observer's expiry |
 | `dirty` | `bool` | | `true` = work pending; `false` = settled. One worker owns the component, so it's binary, not a count. |
 | *payload* | | | the composed value; written once, absolute |
 | `status` | `u8` | | `state_status` — `flags:4 \| status:4` (`PROMOTE` / `PROMOTED`) |
@@ -194,6 +192,13 @@ the worker's window: rows it writes, and the previous rows it reads as base.
 reads this row as its base; the per-entity chain has exactly one next, so one observer. The old
 four-slot scheme was for a world where several workers touched one row — the orchestrator makes that
 impossible, so it collapses to write-role + read-role.
+
+**No lease here.** A worker is evicted by **event**, not by data-shard row: the orchestrator owns its
+worker pool, so it tracks each worker's liveness and, on a hang or death, re-assigns the whole
+component — which overwrites `worker_reference` (the write-fence), fencing the old worker out. So the
+row needs no lease; a per-component deadline replicated onto every entity's row would be N copies of
+one value. The lease lives with the orchestrator (in memory, regenerated on takeover; `event_log` if a
+durable home is ever wanted). The data shard never reaps roles.
 
 **The base is read live, not seeded.** A worker computes `(E, T)` from `(E, prev)`'s payload at
 execution — `prev` is the most-recent row `< T` for E, which it holds as observer. It computes only

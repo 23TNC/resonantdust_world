@@ -60,7 +60,7 @@ Plan: [`event_shard/plan/`](../../components/server/spacetime/modules/event_shar
 ## W3 · `data_shard` module — composition + state
 
 **Component:** `server/spacetime/server/modules/data_shard` only.
-**Surface it exposes:** reducers (`claim`, `write`, `reap`, `gc`) + `state_log` / `state`.
+**Surface it exposes:** reducers (`claim`, `write`, `gc`) + `state_log` / `state`.
 **Consumes:** `shared/codec` (W1). Independent of W2 — the two shards never call each other.
 
 Plan: [`data_shard/plan/`](../../components/server/spacetime/modules/data_shard/plan/README.md).
@@ -70,12 +70,13 @@ Plan: [`data_shard/plan/`](../../components/server/spacetime/modules/data_shard/
 rejected, two subscriptions is the fallback. Know before phase 2.
 
 **Done when**, with **no orchestrator or worker in existence**:
-- `claim` creates `(E, tic)` (`dirty = true`), stamps `worker_reference` + lease, and stamps
-  `observer_reference` + lease on E's most-recent row `< tic`.
+- `claim` creates `(E, tic)` (`dirty = true`), stamps `worker_reference`, and stamps
+  `observer_reference` on E's most-recent row `< tic`. **No lease** — a re-`claim` overwrites the
+  stamp, which is the eviction.
 - `write` requires caller == `worker_reference`, skips already-`!dirty` rows (replay-safe), sets the
   absolute payload, clears `dirty`, and `state.upsert`s only on `PROMOTE` + not-yet-`PROMOTED`.
 - `write` is **idempotent** — call it twice with the same values, same result.
-- `reap` clears an expired role; `gc` drops old `!dirty` rows but **never the latest per entity**.
+- `gc` drops old `!dirty` rows but **never the latest per entity**. (No `reap` — nothing expires.)
 
 ---
 
@@ -124,15 +125,17 @@ whole component; never partial-write.
 ## W6 · `server/master` — the metronome
 
 **Component:** a new `server/master` crate. The old one was deleted.
-**Surface it consumes:** `bump`, `settle`, `reap`, `gc`; also **assigns the orchestrator per tic**
-(the leaning resolution — it's singular, lockstep, guaranteed to run).
+**Surface it consumes:** `bump`, `settle`, `gc`; also **assigns the orchestrator per tic** and reaps a
+dead orchestrator (the leaning resolution — it's singular, lockstep, guaranteed to run). It does
+**not** reap `state_log` roles — that's the orchestrator's job (worker liveness), not the master's.
 
-Advances `master_tic` every `1/TIC_HZ` on all shards in lockstep, then sweeps: `reap` expired roles,
-`settle` terminal events, `gc` old rows. Liveness lives here because the master is the one thing
-guaranteed to run.
+Advances `master_tic` every `1/TIC_HZ` on all shards in lockstep, then sweeps: `settle` terminal
+events, `gc` old rows, and re-assign the tic's orchestrator if it died. Liveness lives here because
+the master is the one thing guaranteed to run.
 
-**Done when:** the tic advances in lockstep, orchestrator assignment is stable per tic, leases reap,
-terminal events settle, old rows GC — and it survives the u16 wrap (~9h at 2 Hz). Every comparison
+**Done when:** the tic advances in lockstep, orchestrator assignment is stable per tic, a dead
+orchestrator's tic gets reassigned, terminal events settle, old rows GC — and it survives the u16 wrap
+(~9h at 2 Hz). Every comparison
 `tic::`, never `<`.
 
 ---

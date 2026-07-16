@@ -98,11 +98,13 @@ orchestrator for tic T:
 data_shard.claim(entities, tic, worker):
     for E in entities:
         row = state_log.find_or_create(state_uid(E, tic))      // dirty = true on create
-        row.worker_reference = worker ; row.worker_lease = tic::add(master_tic, LEASE)
+        row.worker_reference = worker
         prev = most-recent state_log row for E with tic::before(prev.tic, tic)   // always exists — latest is never GC'd
-        prev.observer_reference = worker ; prev.observer_lease = tic::add(master_tic, LEASE)
+        prev.observer_reference = worker
         // worker now sees, over its subscription: the row it will write (worker), and the
         // previous row it reads as base (observer). Two roles, one per direction.
+        // NO lease on the row. If worker dies, the orchestrator re-assigns the component and
+        // re-stamps worker_reference here — which fences the old worker out (write checks it).
 ```
 
 ## Execute (the worker)
@@ -157,9 +159,9 @@ value is final regardless of them (reads are `< tic`), so its observer may proce
 
 ```
 master → bump(master_tic + 1) on every shard in lockstep     // the tic advances everywhere at once
-master → data_shard.reap():
-    for row in state_log where a lease expired (tic::before(lease, master_tic)):
-        clear that worker_reference / observer_reference       // a dead worker's rows return
+// No state_log reap: worker liveness is the orchestrator's, and it reclaims by re-assigning the
+// component (re-stamping worker_reference). The master reaps only the ORCHESTRATOR (it owns that
+// assignment) — a dead orchestrator's tic gets a fresh one, which recomputes and re-assigns.
 master → data_shard.gc(t):
     delete state_log rows that are !dirty, not the latest for their entity, older than the horizon
     // NEVER the latest per entity — that is every base. horizon must stay << TIC_WINDOW.
@@ -231,17 +233,21 @@ surprising. Overloaded regions lag and self-heal; they don't corrupt.
 
 ## Open
 
-- **Orchestrator assignment.** Which orchestrator owns tic T. Doubling is safe (§Why 2), so this needs
-  a good deterministic hint, not consensus. Leaning: the **master** assigns it per tic (singular,
-  lockstep, guaranteed to run, already reaps leases) rather than a per-shard `tic % len` vec, which
-  has `len`-change instability and cross-shard divergence. The orchestrator stays **stateless** — a
-  pure function of the shard-durable event set — so a replacement just recomputes.
-- **`POP`'d targets.** A written `entity_reference` must be statically known at grouping/enqueue, but a
+- **Orchestrator assignment + liveness.** Which orchestrator owns tic T, and who notices it died.
+  Doubling is safe (§Why 2), so assignment needs a good deterministic hint, not consensus — leaning:
+  the **master** assigns per tic (singular, lockstep, guaranteed to run) and reaps a dead orchestrator
+  by handing its tic to a fresh one, which recomputes (the orchestrator stays **stateless** — a pure
+  function of the shard-durable event set). The master↔orchestrator liveness signal (heartbeat vs
+  lease, where) is unshaped.
+- **Worker eviction is the orchestrator's**, not the store's. The orchestrator owns its pool, so it
+  tracks worker liveness (in memory — regenerated on takeover, since a new orchestrator re-assigns
+  everything) and reclaims by re-assigning the component, which re-stamps `worker_reference` and
+  fences the old worker out. There is **no lease on `state_log`**. What's unshaped is the exact
+  hang-detection (a durable lease on `event_log` is the fallback if in-memory proves insufficient).
+- **`POP`'d targets.** A written `entity_reference` must be statically known at grouping, but a
   `POP`'d operand has no value until run time. Default: a written target must be literal; `POP` is for
   numbers and read operands. See [`notes/actions.md`](../../notes/actions.md).
 - **The world verb palette.** The machine + `PROMOTE_*` exist ([`ACTIONS.md`](../../ACTIONS.md)); no
   gameplay verb does. Each needs a signature naming, per operand, written vs read.
-- **Worker eviction.** A hung worker holds its component until its lease expires and `reap` frees it;
-  the precise reclaim (and whether the orchestrator re-assigns or a fresh sweep does) is deferred.
 - **Cold.** No cold tier yet — no table, no `find-or-mint`. Where a settled object is resolved to a
   live one is unshaped.

@@ -10,7 +10,7 @@ _Last updated: 2026-07-16._
   base the worker will read).
 - `write(event_refs, tic, results)` — the **worker** calls it with each target's **absolute final**
   value. It sets the payload, clears `dirty`, and promotes if asked.
-- `reap` / `gc` — the **master**.
+- `gc` — the **master**. (No `reap`: `state_log` roles don't expire — see below.)
 
 A slot's payload is the reference model's three orthogonal references — `definition_reference` (what),
 `position_reference` (where), `data` (state).
@@ -71,4 +71,4 @@ subscription. Writers must keep the two in step — nothing in the schema does.
 |---|---|
 | in | `claim` (orchestrator: slots + roles), `write` (worker: absolute finals) |
 | out | `state`, on a `PROMOTE_STATE` action, once settled |
-| sweep | `reap` frees expired roles; `gc` drops old settled rows (never the latest per entity) |
+| sweep | `gc` drops old settled rows (never the latest per entity). No `reap`: worker liveness is the orchestrator's; a stale role is overwritten by its next `claim`. |

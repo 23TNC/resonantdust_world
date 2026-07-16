@@ -6,7 +6,7 @@ _Last updated: 2026-07-16. Nothing is built. Active work:
 Flow: [`intent/spacetime-again/`](../../../../../../intent/spacetime-again/README.md). Shapes:
 [`TABLES.md`](../../../../../../TABLES.md). This module owns `state_log` (the composition slots) and
 `state` (client-visible latest). Reducers are called by the orchestrator (`claim`) and by workers
-(`write`); the master calls `reap` / `gc`.
+(`write`); the master calls `gc`.
 
 ## Do this first
 
@@ -26,18 +26,19 @@ phase 2.
    entity-major, and *is* the key — so `entity_reference` and `tic` are duplicated out as columns
    (a subscription filters on columns, a reducer needs values). `dirty` is a **boolean** (one worker
    owns a component, so binary — not a count). Two role columns: `worker_reference` (writes),
-   `observer_reference` (reads as the next tic's base), each with a lease.
+   `observer_reference` (reads as the next tic's base). **No lease** — worker liveness is the
+   orchestrator's; re-assignment re-stamps `worker_reference` and fences the old worker out.
 2. **`claim`.** The orchestrator calls it per data shard. For each entity: find-or-create `(E, tic)`
-   (`dirty = true`), stamp `worker_reference` + lease; find E's most-recent row `< tic` (always exists
-   — the latest per entity is never GC'd) and stamp `observer_reference` + lease on it. Confirm the
-   §Do-first subscription actually delivers the two roles.
+   (`dirty = true`), stamp `worker_reference`; find E's most-recent row `< tic` (always exists — the
+   latest per entity is never GC'd) and stamp `observer_reference` on it. Confirm the §Do-first
+   subscription actually delivers the two roles.
 3. **`write`.** The worker calls it, per shard, with **absolute final** values. Require caller ==
    `worker_reference`. Skip a row already `!dirty` (a replay). Set payload, clear `dirty` (this
    unblocks the observer). `state.upsert` if `PROMOTE` and not yet `PROMOTED`. **Idempotent by
    construction** — absolute values from immutable `T-1`, so a re-execution writes the same thing.
-4. **`reap` + `gc`.** `reap`: clear a role whose lease expired. `gc`: drop `!dirty` rows that are
-   **not** the latest for their entity and older than the horizon. **Never the latest per entity** —
-   it is every base.
+4. **`gc`.** Drop `!dirty` rows that are **not** the latest for their entity and older than the
+   horizon. **Never the latest per entity** — it is every base. (No `reap` — nothing on `state_log`
+   expires; a stale `worker_reference` is overwritten by the orchestrator's next `claim`.)
 
 ## Watch
 
@@ -55,4 +56,4 @@ phase 2.
 
 - **orchestrator** — calls `claim`.
 - **worker** (`server/worker`) — subscribes to `state_log`, calls `write`.
-- **master** — calls `reap` / `gc`. This module and `event_shard` never call each other.
+- **master** — calls `gc`. This module and `event_shard` never call each other.

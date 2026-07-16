@@ -132,12 +132,19 @@ It's an `entity_reference` (`server_reference:8 | object_reference:24`), not a b
 because the server half says *which* object exactly.
 
 **Two roles, not four slots.** `worker_reference` (writes the row) + `observer_reference` (the *next*
-tic's worker, reading this row as its base) — one column each, with a lease each. One worker owns a
+tic's worker, reading this row as its base) — one column each, **no lease**. One worker owns a
 component, so exactly one writes a row; the per-entity chain has exactly one next, so exactly one
 reads it. An earlier sketch had four slots (`worker_a..d`) for a world where several workers touched
 one row — the orchestrator makes that impossible, so it collapses to write-role + read-role. The
 subscription is `WHERE worker_reference = self OR observer_reference = self` (two subscriptions if the
 grammar rejects the `OR`).
+
+**No lease on the row.** A worker is evicted by *event*, not by row: the orchestrator owns its pool,
+tracks worker liveness, and reclaims by re-assigning the component — which overwrites
+`worker_reference`, and since `write` fences on `caller == worker_reference`, that fences the old
+worker out. A lease was a per-*component* deadline; putting it on `state_log` replicated one value onto
+every entity's row. It lives with the orchestrator (in memory, regenerated on takeover; `event_log` if
+a durable home is wanted). The data shard has no `reap`.
 
 **`dirty` is a boolean, not a count.** One worker owns the component, so a row is *pending* or
 *settled*. No count to increment/decrement, so the old `state_events` reverse index is gone too.
