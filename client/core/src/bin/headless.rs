@@ -113,18 +113,24 @@ fn log_event(event: &Event) {
         Event::Status(msg) => info!(%msg, "status"),
         Event::StateObject {
             zone_id,
-            obj_type,
-            object_id,
-            kind,
+            entity_reference,
+            definition_reference,
+            tile_x,
+            tile_y,
+            facing,
             tic,
-            location,
-            rotation,
-            offset,
             removed,
         } => {
             info!(
                 zone_id = format!("{zone_id:#010x}"),
-                obj_type, object_id, kind, tic, location, rotation, offset, removed, "state object"
+                entity_reference = format!("{entity_reference:#010x}"),
+                definition_reference,
+                tile_x,
+                tile_y,
+                facing,
+                tic,
+                removed,
+                "state object"
             )
         }
         Event::ColdObjects { zone_id, type_reference, layer_id, kinds } => {

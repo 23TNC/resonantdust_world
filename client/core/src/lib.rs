@@ -43,6 +43,7 @@ pub mod clock;
 pub mod config;
 pub mod gateway;
 pub mod protocol;
+pub mod world;
 pub mod zones;
 
 #[cfg(feature = "native")]

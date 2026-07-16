@@ -1,25 +1,9 @@
 # Todo — spacetime-again
 
-_Planned, not started. W1-W7 are done — see [`completed.md`](completed.md). Move an item to
+_Planned, not started. W1-W8 are done — see [`completed.md`](completed.md). Move an item to
 `remaining.md` when you begin it. Ordered by dependency — each item's surface is what the next one
-consumes. **W8 (client/core) is next** — the edge world surface is live (queue + zone state/event
-relay, verified over WS); client/core is the Rust client's decode/reconcile of it, a rewrite (the old
-`StateRow` decode assumed the deleted union)._
-
----
-
-## W8 · `client/core` — reconcile
-
-**Component:** `client/core` only.
-**Surface it consumes:** the WS protocol (W7).
-
-It does not build today: `entity_ref_is_positional`, `entity_ref_reference_id` and `pack_hot_entity`
-are gone with the union. Its `StateRow` decode is the *old* pipeline's.
-
-**This is a rewrite of that path, not a repair.** The mover decode assumed a `reference_id` variant
-tag; the type now comes from the server byte (`entity_ref_type_id`). Port the intent, not the code.
-
-**Done when:** it builds, and a subscribed zone's `state` rows render as movers.
+consumes. **W9 is last** — `shared/wasm` (the JS bridge), `client/npc` (drive pawns via the new
+program/queue path), `client/pixijs` (render the movers). Then a wolf moves in the browser._
 
 ---
 

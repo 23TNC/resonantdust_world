@@ -14,7 +14,6 @@
 //! `login_ok` / `login_err` is handled when it arrives on the read stream. That
 //! keeps the loop responsive and puts all reply handling in one place.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -28,7 +27,8 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use crate::api::{Command, Event, EventSink, ServerInfo};
 use crate::clock::Clock;
 use crate::config::ClientConfig;
-use crate::protocol::{ClientMsg, RowData, RowOp, ServerMsg};
+use crate::protocol::{ClientMsg, ServerMsg};
+use crate::world;
 use crate::zones::{AnchorRadii, ZoneManager};
 
 /// How often to send a clock-sync ping while connected. Fast enough that a fresh
@@ -113,54 +113,20 @@ impl Client {
         self.send(Command::RemoveAnchor { name: name.into() })
     }
 
-    /// Convenience: move the player's **own** object toward global tile
-    /// `(tile_x, tile_y)` — a self-move (see [`Command::Move`]).
-    pub fn move_to(&self, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
-        self.send(Command::Move {
-            pawn: None,
-            tile_x,
-            tile_y,
-        })
+    /// Convenience: queue a raw action program (see [`Command::Queue`]).
+    pub fn queue(&self, actions: Vec<u32>) -> Result<(), SendError> {
+        self.send(Command::Queue { actions })
     }
 
-    /// Convenience: move a **specific** entity toward global tile `(tile_x, tile_y)`
-    /// (see [`Command::Move`]) — the automated-player path (an `npc` driving its pawns).
-    pub fn move_pawn(&self, pawn: u64, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
-        self.send(Command::Move {
-            pawn: Some(pawn),
-            tile_x,
-            tile_y,
-        })
+    /// Convenience: move `entity` toward global tile `(tile_x, tile_y)` (see [`Command::Move`]).
+    pub fn move_entity(&self, entity: u32, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
+        self.send(Command::Move { entity, tile_x, tile_y })
     }
 
-    /// Convenience: materialize an entity at global tile `(tile_x, tile_y)` through the
-    /// event pipeline (see [`Command::Spawn`]). `entity_key` is the host-chosen handle
-    /// (typically `pack_minted_entity`) it will address for later moves.
-    pub fn spawn_entity(
-        &self,
-        entity_key: u64,
-        kind: u16,
-        tile_x: i32,
-        tile_y: i32,
-    ) -> Result<(), SendError> {
-        self.send(Command::Spawn {
-            entity_key,
-            kind,
-            tile_x,
-            tile_y,
-        })
-    }
-
-    /// Convenience: interact with (unpack) the cold thing at global tile
-    /// `(tile_x, tile_y)` (see [`Command::Interact`]).
-    pub fn interact(&self, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
-        self.send(Command::Interact { tile_x, tile_y })
-    }
-
-    /// Convenience: freeze / unfreeze the simulation (debug `/pause`; see
-    /// [`Command::SetPaused`]).
-    pub fn set_paused(&self, paused: bool) -> Result<(), SendError> {
-        self.send(Command::SetPaused { paused })
+    /// Convenience: place + promote `entity` at global tile `(tile_x, tile_y)` (see
+    /// [`Command::Place`]).
+    pub fn place(&self, entity: u32, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
+        self.send(Command::Place { entity, tile_x, tile_y })
     }
 
     /// Convenience: drop the world-server connection but keep the engine alive.
@@ -197,15 +163,13 @@ struct Engine {
     /// The established player id, set on login. Carried back to the gateway on a
     /// subsequent login for reconnect affinity.
     player_id: Option<u32>,
-    /// The anchor-driven zone subscription manager. Decides which zones to keep a
-    /// `SubZone` open on; the engine maps its intents to wire frames.
+    /// The anchor-driven zone subscription manager. Decides which zones to keep open; the engine
+    /// maps its `zone_id` intents to `subscribe_zone` / `unsubscribe_zone` frames (keyed by the
+    /// `macro_position_reference` — the middle two bytes of `zone_id`).
     zones: ZoneManager,
-    /// `zone_id` → the `sid` we opened it under, so an intent to close a zone
-    /// resolves to the right `Unsub`. The wire-level `sid` lives here, not in the
-    /// pure manager. Cleared with the session on disconnect.
-    subs: HashMap<u32, u32>,
-    /// Monotonic source of subscription ids for this session.
-    next_sid: u32,
+    /// This session's realm (the high byte of `player_shard_reference`), used to rebuild a `zone_id`
+    /// from an inbound row's `macro_position_reference`. `0` until login.
+    realm: u8,
     /// Rolling clock-offset estimate, fed by ping/pong round-trips and the login
     /// seed. Reset (to a fresh, unsynced estimate) on every disconnect.
     clock: Clock,
@@ -222,8 +186,7 @@ impl Engine {
             pending: None,
             player_id: None,
             zones: ZoneManager::default(),
-            subs: HashMap::new(),
-            next_sid: 1,
+            realm: 0,
             clock: Clock::new(),
         }
     }
@@ -276,45 +239,12 @@ impl Engine {
                     .await
             }
             Command::RemoveAnchor { name } => self.handle_remove_anchor(name).await,
-            Command::Interact { tile_x, tile_y } => {
-                if let Err(err) = self.send_frame(&ClientMsg::Interact { tile_x, tile_y }).await {
-                    tracing::warn!(%err, "interact frame send failed");
-                }
+            Command::Queue { actions } => self.handle_queue(actions).await,
+            Command::Move { entity, tile_x, tile_y } => {
+                self.handle_queue(world::move_to_program(entity, tile_x, tile_y)).await;
             }
-            Command::Spawn {
-                entity_key,
-                kind,
-                tile_x,
-                tile_y,
-            } => {
-                let frame = ClientMsg::Spawn {
-                    entity_key,
-                    kind,
-                    tile_x,
-                    tile_y,
-                };
-                if let Err(err) = self.send_frame(&frame).await {
-                    self.emit(Event::Status(format!("spawn send failed: {err}")));
-                }
-            }
-            Command::Move {
-                pawn,
-                tile_x,
-                tile_y,
-            } => {
-                let frame = ClientMsg::Move {
-                    pawn,
-                    tile_x,
-                    tile_y,
-                };
-                if let Err(err) = self.send_frame(&frame).await {
-                    self.emit(Event::Status(format!("move send failed: {err}")));
-                }
-            }
-            Command::SetPaused { paused } => {
-                if let Err(err) = self.send_frame(&ClientMsg::SetPaused { paused }).await {
-                    self.emit(Event::Status(format!("set_paused send failed: {err}")));
-                }
+            Command::Place { entity, tile_x, tile_y } => {
+                self.handle_queue(world::place_program(entity, tile_x, tile_y)).await;
             }
             Command::Logout => {
                 self.disconnect(read, Some("logout".to_string()), /*emit=*/ true)
@@ -354,32 +284,34 @@ impl Engine {
         self.flush_zone_intents().await;
     }
 
-    /// Drain the zone manager's pending intents and translate each into a
-    /// `sub_zone` / `unsub` frame, maintaining the `zone_id` → `sid` map. Only
-    /// runs meaningfully while connected; a send failure is surfaced and skipped.
+    /// Drain the zone manager's pending intents and translate each into a `subscribe_zone` /
+    /// `unsubscribe_zone` frame, keyed by the zone's `macro_position_reference`. Only runs
+    /// meaningfully while connected; a send failure is surfaced and skipped.
     async fn flush_zone_intents(&mut self) {
         for intent in self.zones.take_intents() {
+            let zone = world::zone_id_to_macro(intent.zone_id);
             let frame = if intent.on {
-                let sid = self.take_sid();
-                self.subs.insert(intent.zone_id, sid);
-                ClientMsg::SubZone {
-                    sid,
-                    zone_id: intent.zone_id,
-                }
+                ClientMsg::SubscribeZone { zone }
             } else {
-                match self.subs.remove(&intent.zone_id) {
-                    Some(sid) => {
-                        self.emit(Event::ZoneClosed {
-                            zone_id: intent.zone_id,
-                        });
-                        ClientMsg::Unsub { sid }
-                    }
-                    None => continue, // not open on the wire; nothing to drop
-                }
+                self.emit(Event::ZoneClosed { zone_id: intent.zone_id });
+                ClientMsg::UnsubscribeZone { zone }
             };
             if let Err(err) = self.send_frame(&frame).await {
                 self.emit(Event::Status(format!("subscription send failed: {err}")));
             }
+        }
+    }
+
+    /// Queue an action program on the live session. Mints a `cid`; the `QueueOk`/`QueueErr` reply is
+    /// surfaced (only errors, to keep the stream quiet) in [`Self::handle_server_msg`].
+    async fn handle_queue(&mut self, actions: Vec<u32>) {
+        if self.write.is_none() {
+            self.emit(Event::Status("queue ignored: not logged in".to_string()));
+            return;
+        }
+        let cid = self.take_cid();
+        if let Err(err) = self.send_frame(&ClientMsg::Queue { cid, actions }).await {
+            self.emit(Event::Status(format!("queue send failed: {err}")));
         }
     }
 
@@ -479,6 +411,9 @@ impl Engine {
                 }
                 self.pending = None;
                 self.player_id = Some(player_id);
+                // The realm is the high byte of the player's shard reference; the low half of an
+                // inbound row's zone is rebuilt against it.
+                self.realm = (player_shard_reference >> 8) as u8;
                 // Coarse offset seed so the clock is usable before the first pong;
                 // a real round-trip refines it within `PING_INTERVAL`.
                 self.clock.seed_login(server_micros / 1_000, now_ms());
@@ -511,52 +446,35 @@ impl Engine {
             ServerMsg::Error { error } => {
                 self.emit(Event::Status(format!("server error: {error}")));
             }
-            // The simulation's freeze state changed (debug `/pause`) — surface it so
-            // tic-driven hosts pause and pixijs can echo a chat line.
-            ServerMsg::Paused { paused } => {
-                self.emit(Event::Paused { paused });
+            // A queued intent's outcome. Success is silent (the effect arrives as a `state` row);
+            // a rejection is surfaced.
+            ServerMsg::QueueOk { .. } => {}
+            ServerMsg::QueueErr { error, .. } => {
+                self.emit(Event::Status(format!("queue rejected: {error}")));
             }
-            // A subscription's initial rows have all arrived.
-            ServerMsg::Applied { sid } => {
-                self.emit(Event::Status(format!("subscription {sid} applied")));
-            }
-            // One upstream row change. `sid` is 0 (the shard connection
-            // multiplexes every zone); route by the row's own `zone_id`. Feeding
-            // it to the manager ages any candidate sub on that zone (warmth), which
-            // may evict it — flush the resulting intents.
-            ServerMsg::Row { row, op, .. } => {
-                match &row {
-                    RowData::State(sr) => {
-                        use resonantdust_codec::refs;
-                        let (obj_type, object_id) = if !refs::entity_ref_is_positional(sr.entity_key) {
-                            (refs::entity_ref_reference_id(sr.entity_key), refs::entity_ref_object_reference(sr.entity_key) as u64)
-                        } else {
-                            (0, 0)
-                        };
-                        self.emit(Event::StateObject {
-                            zone_id: sr.zone_id,
-                            obj_type,
-                            object_id,
-                            kind: sr.kind,
-                            tic: sr.tic,
-                            location: sr.location,
-                            rotation: sr.rotation,
-                            offset: sr.offset,
-                            removed: matches!(op, RowOp::Delete),
-                        });
-                    }
-                    RowData::ColdObjects(z) => {
-                        self.emit(Event::ColdObjects {
-                            zone_id: z.zone_id,
-                            type_reference: z.type_reference,
-                            layer_id: z.layer_id,
-                            kinds: z.kinds.clone(),
-                        });
-                    }
-                }
-                self.zones.note_update(row_zone_id(&row), text.len() as u64, now_ms());
+            // A composed entity changed in a subscribed zone. Decode to a mover and age the zone's
+            // subscription (warmth), which may evict it — flush the resulting intents.
+            ServerMsg::State(row) => {
+                self.emit(world::state_event(&row, self.realm, /*removed=*/ false));
+                let zone_id = world::macro_to_zone_id(row.zone, self.realm);
+                self.zones.note_update(zone_id, text.len() as u64, now_ms());
                 self.flush_zone_intents().await;
             }
+            // A composed entity left a subscribed zone.
+            ServerMsg::StateGone { entity_reference, zone } => {
+                self.emit(Event::StateObject {
+                    zone_id: world::macro_to_zone_id(zone, self.realm),
+                    entity_reference,
+                    definition_reference: 0,
+                    tile_x: 0,
+                    tile_y: 0,
+                    facing: 0,
+                    tic: 0,
+                    removed: true,
+                });
+            }
+            // Settled, promoted events aren't rendered as movers yet — a later feature. Ignore.
+            ServerMsg::Event { .. } => {}
         }
     }
 
@@ -604,12 +522,9 @@ impl Engine {
         }
         *read = None;
         self.server_url = None;
-        // Subscriptions die with the socket: drop anchors and the sid map so a
-        // reconnecting host starts from an empty anchor list (no stale subs, no
-        // sid reuse against a fresh server session).
+        // Subscriptions die with the socket: drop anchors so a reconnecting host starts from an
+        // empty anchor list (no stale subs against a fresh server session).
         self.zones.clear();
-        self.subs.clear();
-        self.next_sid = 1;
         // The clock offset is per-session (a new server, a new clock to sync to).
         self.clock = Clock::new();
         // A pending login that never got its reply dies with the connection.
@@ -635,12 +550,6 @@ impl Engine {
         let cid = self.next_cid;
         self.next_cid = self.next_cid.wrapping_add(1);
         cid
-    }
-
-    fn take_sid(&mut self) -> u32 {
-        let sid = self.next_sid;
-        self.next_sid = self.next_sid.wrapping_add(1);
-        sid
     }
 
     fn emit(&self, event: Event) {
@@ -673,14 +582,6 @@ async fn next_frame(read: &mut Option<WsRead>) -> FrameOutcome {
             None => FrameOutcome::Closed,
         },
         None => std::future::pending().await,
-    }
-}
-
-/// The `zone_id` a relayed row belongs to, whichever table it came from.
-fn row_zone_id(row: &RowData) -> u32 {
-    match row {
-        RowData::State(r) => r.zone_id,
-        RowData::ColdObjects(r) => r.zone_id,
     }
 }
 

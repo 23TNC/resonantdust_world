@@ -81,39 +81,26 @@ pub enum Command {
     },
     /// Remove the anchor named `name`, closing any subscriptions only it held.
     RemoveAnchor { name: String },
-    /// Materialize an entity through the event pipeline: the server appends an
-    /// `ACTION_SPAWN` event targeting `entity_key`, which the tick pipeline resolves
-    /// into a live `state` row (`kind` + placement). The one spawn path — an automated
-    /// player (`npc`) mints its pawns this way, exactly as a `Move` travels, rather than
-    /// a privileged direct write. The host chooses `entity_key` (typically
-    /// `pack_minted_entity`) so it can address the entity later. Requires a live session
-    /// and a subscribed zone (the shard must be connected); ignored otherwise.
-    Spawn {
-        entity_key: u64,
-        kind: u16,
-        tile_x: i32,
-        tile_y: i32,
-    },
-    /// Move an object toward global tile `(tile_x, tile_y)` by appending an `ACTION_MOVE`
-    /// event, which surfaces as a `state` row on the zone subscription. `pawn` selects the
-    /// target: `None` moves the player's **own** object (the pixijs host sends this on a
-    /// click — a self-move); `Some(entity_key)` moves that specific entity (an `npc`
-    /// driving its wolves). Authority: today any live session may move any pawn — no
-    /// ownership check yet (see the edge `handle_move`). Requires a live session; ignored
-    /// otherwise.
+    /// Queue a raw action program (`docs/ACTIONS.md`) into the simulation — the general world door.
+    /// The typed helpers ([`Move`](Command::Move) / [`Place`](Command::Place)) compile to this. An
+    /// `npc` driving pawns can send programs directly. Requires a live session; ignored otherwise.
+    Queue { actions: Vec<u32> },
+    /// Move `entity` toward global tile `(tile_x, tile_y)` — compiles to a `MOVE_TO` program. Any
+    /// live session may move any entity (no ownership model yet). `entity` is the
+    /// `entity_reference`. Requires a live session; ignored otherwise.
     Move {
-        pawn: Option<u64>,
+        entity: u32,
         tile_x: i32,
         tile_y: i32,
     },
-    /// Interact with the cold thing at global tile `(tile_x, tile_y)` — the pixijs host
-    /// sends this on a right-click; the server `unpack`s the cold object (cold→hot) into a
-    /// live `state` entity. Requires a live session; ignored otherwise.
-    Interact { tile_x: i32, tile_y: i32 },
-    /// Debug: freeze (`true`) / unfreeze (`false`) the simulation on the current shard. The
-    /// server stops advancing the tic, so movement halts for every client; the pixijs `/pause`
-    /// command sends this. Requires a live session; ignored otherwise.
-    SetPaused { paused: bool },
+    /// Place `entity` at global tile `(tile_x, tile_y)` and promote it into `state` — compiles to a
+    /// `PROMOTE_STATE` + `PLACE` program. Bootstraps an entity the client addresses by `entity` (the
+    /// spawn path until `CREATE`'s minted-id claim lands). Requires a live session; ignored otherwise.
+    Place {
+        entity: u32,
+        tile_x: i32,
+        tile_y: i32,
+    },
     /// Drop the world-server connection and clear the session, without stopping
     /// the client (a later [`Command::Login`] can reconnect).
     Logout,
@@ -146,26 +133,19 @@ pub enum Event {
     /// A non-fatal status line worth surfacing (e.g. a server-pushed
     /// [`crate::protocol::ServerMsg::Error`]).
     Status(String),
-    /// A resolved entity from the shard's tick pipeline (`state`) changed in a
-    /// subscribed zone. The raw u64 `entity_key` (an `entity_reference`) exceeds JS's 2^53
-    /// integer range, so it's decoded host-side into the reference variant (`obj_type`, the
-    /// `reference_id` — `REF_HOT` for a live object) and its 32-bit `object_id` (the
-    /// `object_reference`/`hot_reference`, JS-safe), which the host keys the mover by; the mover
-    /// layer draws `REF_HOT` objects. `removed` on delete.
+    /// A composed entity in a subscribed zone changed (`state` insert/update) or left it
+    /// (`removed` — a `StateGone`). `entity_reference` (`server_reference:8 | object_reference:24`)
+    /// is JS-safe (fits 2^53) and keys the mover; its top nibble is the object type. The host draws
+    /// `definition_reference` as the sprite at global tile `(tile_x, tile_y)` facing `facing`
+    /// (0=south, 1=east, 2=north, 3=west), interpolating position by `tic`.
     StateObject {
         zone_id: u32,
-        obj_type: u8,
-        object_id: u64,
-        /// The entity's `kind` — its content thing/pawn id, which the host resolves to a
-        /// sprite (a wolf carries the wolf thing id). This is the *game-type*; `obj_type` is the
-        /// reference *variant* (hot/cold), a separate axis in the reference model.
-        kind: u16,
-        tic: u32,
-        location: u8,
-        /// Facing (0=south, 1=east, 2=north, 3=west) and sub-tile `offset`
-        /// (`x_off:4 | y_off:4`), so a moving pawn renders with the right facing sprite.
-        rotation: u8,
-        offset: u8,
+        entity_reference: u32,
+        definition_reference: u32,
+        tile_x: i32,
+        tile_y: i32,
+        facing: u8,
+        tic: u16,
         removed: bool,
     },
     /// A subscribed zone's cold-object row arrived (a module's generic `cold` table —

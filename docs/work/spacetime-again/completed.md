@@ -5,6 +5,32 @@ carried out — the "done when" bar it cleared._
 
 ---
 
+## W8 · `client/core` — reconcile ✓ 2026-07-16
+
+Rewrote the Rust client's WS-facing layer to the edge's W7 surface (the old bitemporal `StateRow` /
+`Row` / `Applied` decode assumed the deleted reference union). Builds green on **native and wasm32**;
+decode unit-tested.
+
+- **protocol.rs** mirrors the edge exactly: `ClientMsg` = Login/Ping/Queue/SubscribeZone/
+  UnsubscribeZone; `ServerMsg` = LoginOk/LoginErr/Pong/QueueOk/QueueErr/State/StateGone/Event/Error.
+- **world.rs** (new, pure, tested): `position_reference` ⇄ global tile; `zone_id` ⇄
+  `macro_position_reference` (the macro *is* the middle two bytes of `zone_id`, so the anchor manager
+  keeps thinking in `zone_id` and only the wire boundary converts — `zones.rs` untouched); `state_event`
+  decodes a row to the host mover; `move_to`/`place` program builders.
+- **api.rs**: `Command` gains `Queue`/`Move`/`Place` (typed verbs compile to action programs);
+  `Event::StateObject` carries the new model — `entity_reference:u32` (JS-safe), `definition_reference`,
+  global `(tile_x, tile_y)`, `facing`, `tic`.
+- **engine.rs** + **web.rs** (the native + wasm twins) rewired: subscribe/unsubscribe by macro,
+  `Queue`→`ClientMsg::Queue`, `State`/`StateGone`→mover decode, realm taken from
+  `player_shard_reference`. The sid map is gone (the protocol keys by zone).
+
+**Done-when:** builds (native `cargo check` + wasm32 `-p client --features web`) ✓; a subscribed
+zone's `state` row decodes to a mover (`state_event` test: entity/zone_id/tile/facing/tic) ✓. The
+pixel proof ("renders as movers") is W9 (pixijs); the mover event it renders is now correctly produced.
+
+**Deferred (no server source yet):** `Event::ColdObjects`/`Paused` variants kept for W9 compat but
+never fire (terrain + pause are the deferred tracks); settled `event` frames aren't rendered as movers.
+
 ## W7 · `server/edge` — the door ✓ 2026-07-16
 
 Restored the edge's world surface (stripped to login + ping when the pipeline was deleted).
