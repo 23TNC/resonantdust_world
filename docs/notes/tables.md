@@ -19,14 +19,15 @@ exists *because* of it:
 
 | component | query | against |
 |---|---|---|
+| orchestrator | `SELECT * FROM event_log WHERE orchestrator_reference = self` | `event_shard` |
 | worker | `SELECT * FROM event_log WHERE worker_reference = self` | `event_shard` |
-| worker | `SELECT * FROM state_log WHERE worker_a = <self> OR worker_b = <self> OR worker_c = <self> OR worker_d = <self>` | `data_shard` — **the 4-way OR is unverified against SpacetimeDB's subscription grammar** |
+| worker | `SELECT * FROM state_log WHERE worker_reference = self OR observer_reference = self` | `data_shard` — **the `OR` is unverified against SpacetimeDB's grammar; two subscriptions is the fallback** |
 | edge (per zone) | `SELECT * FROM state WHERE macro_position_reference = <zone>` | `data_shard` |
 | edge (per zone) | `SELECT * FROM event WHERE macro_position_reference = <zone>` | `event_shard` |
 
-Two axes, and they're the whole model: a **worker** subscribes by *its own id* (work is pushed to it
-by assignment); the **edge and client** subscribe by *locality* (zone). Nothing subscribes to a log
-it doesn't own a row in.
+Two axes, and they're the whole model: a **worker/orchestrator** subscribes by *its own id* (work is
+pushed to it by assignment); the **edge and client** subscribe by *locality* (zone). Nothing
+subscribes to a log it doesn't own a row in.
 
 ## Trust and correctness notes
 
@@ -84,11 +85,9 @@ payload (`kind:u16, zone_id:u32, location:u8, rotation:u8, offset:u8, data0:u64,
 legacy — `zone_id` is retiring, `offset` was `sub_position` and is gone, and `rotation` now lives
 inside `data`.
 
-**`state`'s primary key.** The design line reads `PK target_reference : u64 ; tic : u32 ; payload…`,
-which is ambiguous. Taken as PK `target_reference` alone with `tic` a plain column, because the table
-is described as "client-visible **latest**" and `promote` does `state.upsert(target_reference, tic,
-payload)` — an upsert that replaces. A composite `(target, tic)` key would accumulate a row per tic
-and stop being "latest".
+**`state`'s primary key is `entity_reference` alone**, `tic` a plain column — it's the client-visible
+*latest*, and `promote` upserts by entity, replacing. A composite `(entity, tic)` key would accumulate
+a row per tic and stop being "latest".
 
 **`actions : Vec<u32>`** — the encoding is [`../ACTIONS.md`](../ACTIONS.md). Narrowed u64 → u32
 because an `entity_reference` is a u32: a word carrying a reference needs 32 bits, not 64, and the
@@ -109,169 +108,95 @@ the point of having the columns in the first place.
 That is what closed the `action_reads_actor` question: the same fact, moved from a function that
 knows game semantics into a declaration.
 
-### `state_log` — composite `uid`, `flags`, and the events split
+### The orchestrator, and what one-worker-per-component buys
 
-**`uid` is not a surrogate.** `reserved:16 | entity_reference:32 | tic:16` — it *is* `(entity, tic)`,
-so `find_or_create(entity, tic)` is an exact PK lookup and `entity_reference` / `tic` are read off it
-rather than stored again. It replaces the design's `idx (target_reference, tic)`.
+**The grouping is the whole design.** An orchestrator unions each tic's events by shared target into
+components (union-find, across every event shard, *after* the set is complete) and hands each
+component to one worker. One worker per component means no two workers ever touch the same entity in
+the same tic — so no lock, no contention, and a cross-entity transaction is just sequential code in
+one worker's scratch. Full walkthrough in [`../intent/spacetime-again/`](../intent/spacetime-again/README.md).
 
-**Entity-major, because `tic` wraps.** Putting `tic` high would look like it buys `promote`'s
-`where tic <= t` a range scan. It doesn't: the table would sort by *raw* tic, and a wrapping tic makes
-raw order ≠ temporal order. With rows spanning a wrap (65530…65535, 0…5) and `t = 3`, a numeric range
-scan returns 0…3 and **misses 65530…65535** — the oldest rows, the ones most needing promotion. No key
-ordering can give a sound tic range while the tic is a ring, so `promote` scans and serial-compares
-regardless of layout, and `tic` costs nothing in the low bits.
+Everything below is downstream of that one fact.
 
-`entity_reference` doesn't wrap, so entity-major locality is real: one entity's slots are contiguous.
-Within an entity the rows still sort by raw tic — filter with `tic::` serial comparison, not `<`.
-Cheap, because an entity's slot count is bounded by the GC horizon.
+### `state_log` — the composition slot
 
-**The blocking rule is why.** Everything hot is per-entity-across-tics: *"is any earlier tic for this
-entity still dirty?"* (the worker's block check, and `apply`'s re-check), and `request_state` claims a
-slot on **every** row for a target. Entity-major makes each a range scan. `promote` walks the table
-regardless — no key order can give a wrapping tic a sound range.
+**`uid` is `(entity, tic)`, not a surrogate.** `reserved:16 | entity_reference:32 | tic:16` — so
+`find_or_create(entity, tic)` is an exact PK lookup. **Entity-major** (`entity_reference` above `tic`)
+because `tic` wraps: a wrapping tic in the high bits sorts by *raw* value, so a `tic <= t` range scan
+straddling a wrap misses the oldest rows. Entity-major instead makes one entity's rows contiguous —
+which is what the per-entity block check needs — and the tic is filtered with `tic::` serial
+comparison within an entity's run. `entity_reference` and `tic` are duplicated out as columns because
+a subscription filters on columns and a reducer needs values; a packed field is neither.
 
-**Why `entity_reference` and not `object_reference`.** The slot's 32 bits are an `entity_reference`
-(`server_reference:8 | object_reference:24`), not a bare `object_reference` (u24). The server half is
-load-bearing: it says *which* object exactly. A shard could in principle imply it — `declare_pending`
-routes to `home_shard(target)`, so every row is homed locally — but the reference is then no longer
-self-describing, and a bare handle only means something next to the server that minted it.
+It's an `entity_reference` (`server_reference:8 | object_reference:24`), not a bare `object_reference`,
+because the server half says *which* object exactly.
 
-**`state.macro_position_reference` is deliberate duplication.** It's already inside the payload's
-`position_reference` (high half, `region:8 | zone:8`), but a subscription filters on **columns** —
-`WHERE (position_reference >> 16) = X` isn't expressible. The edge scopes a client's world to the
-zones it subscribes, so the zone key has to be its own indexed column or there is no per-zone
-subscription. The old shard carried the same duplication for the same reason
-(`SELECT * FROM cold WHERE macro_position = …`).
+**Two roles, not four slots.** `worker_reference` (writes the row) + `observer_reference` (the *next*
+tic's worker, reading this row as its base) — one column each, with a lease each. One worker owns a
+component, so exactly one writes a row; the per-entity chain has exactly one next, so exactly one
+reads it. An earlier sketch had four slots (`worker_a..d`) for a world where several workers touched
+one row — the orchestrator makes that impossible, so it collapses to write-role + read-role. The
+subscription is `WHERE worker_reference = self OR observer_reference = self` (two subscriptions if the
+grammar rejects the `OR`).
 
-Only `state` needs it. `state_log` is keyed by entity and no one subscribes to it per-zone; workers
-subscribe to nothing but their holds.
+**`dirty` is a boolean, not a count.** One worker owns the component, so a row is *pending* or
+*settled*. No count to increment/decrement, so the old `state_events` reverse index is gone too.
 
-Writers must keep the two halves in step — the column is a projection of the payload, and nothing in
-the schema enforces that. A row whose `macro_position_reference` disagrees with its
-`position_reference` is invisible in the zone it's actually in, and visible in one it isn't.
+**The base is read live, and the block is the worker's job.** A worker computes `(E, T)` from `(E,
+prev)`'s payload at execution, once `prev` is `!dirty`. Checking the *immediate previous* suffices:
+rows are created in tic order (nothing earlier appears late) and clean propagates by induction. The
+block **cannot** be a store fence — `A += B` reads B, possibly on another shard, and A's shard sees
+only A's chain. So the worker must block (it's subscribed to its read targets); the store fences only
+`caller == worker_reference`. The most-recent row per entity is **never GC'd**, so `prev` always
+exists in `state_log` — the base never comes from `state`.
 
-**`flags : u8` replaces `settled` + `promoted`.** Two bools were two bytes in practice. Bit 0
-`SETTLED`, bit 1 `PROMOTED`, six spare.
+**Writes are absolute, so replay is free.** The worker sees all of an entity's tic-T events and writes
+the *final* value; a dead worker's replay recomputes the identical value from the immutable `T-1` and
+`write` skips already-`!dirty` rows. No deltas, no dedup. (Spawns are the exception: an insert isn't
+idempotent by value, so a spawned `entity_reference` must be a pure function of `(event_reference,
+index)`, not a mutable counter.)
 
-### The four-worker rule, and why `base` is gone
-
-**Only four servers may act on one `state_log` row in one tic.** `worker_a..worker_d` hold their
-`server_reference`s, and a worker subscribes with a fixed-width disjunction:
-
-```sql
-SELECT * FROM state_log WHERE worker_a = <self> OR worker_b = <self> OR worker_c = <self> OR worker_d = <self>
-```
-
-That bound is what makes the subscription possible at all. The three shapes it beats:
-
-| | why not |
-|---|---|
-| a single `worker_reference` on the row | multiple events touch one row — one column can't name them all |
-| subscribe by target | a bazillion subscriptions |
-| subscribe by event | multiple events touch the same rows in one tic |
-
-**The payoff: the worker sees the row, so a hold needs no `base`.** The design's `state_hold` carried
-a payload copy *because* the worker couldn't see `state_log` — §"the consequence that drives
-everything below", and the §Open cost concern (*"every hold carries a payload copy … measure"*). Both
-dissolve: the worker reads the payload off the row it's subscribed to. That is what this rule buys,
-and it's why it's worth a hard cap.
-
-**The `lease_*` are plain `tic`s** — u16, same as every other tic, compared with the same `tic::`
-serial arithmetic. A u8 would only hold `tic & 0xFF`, which would work (a lease is ~4 tics, far
-inside a u8's 127-tic window) but would put the ring math at two widths: `tic.rs` is u16-only, so the
-u8 comparison would be hand-rolled at four call sites. That is how nibble orders get reversed. Twelve
-bytes of slot state per row buys one ring.
-
-**`dirty : u8`** is the count of events holding a slot; `0` = settled, so `SETTLED` leaves `flags`
-(only `PROMOTED` remains).
-
-### The worker keeps its assignment through queueing → running
-
-The design released the worker between phases — `enqueue_done(ok) → status = QUEUE_SUCCESS,
-worker_reference = 0` (*"released; re-assigned for execute"*). It no longer does: the worker that
-stands the `state_log` rows up and pushes `QUEUEING → RUNNING` keeps the row.
-
-That is what makes early acquisition work. A worker can claim `state_log` slots any time after it
-holds the event in `RUNNING`, so it acquires the rows during the enqueue tic and the data is already
-in its subscription when the execute tic arrives — one worker, one flow, no re-assignment churn and
-no window where nobody owns the event. The subscription is the delivery mechanism, so it has to be
-armed a tic early; releasing and re-assigning would disarm it exactly when it's needed.
-
-### Promotion is an action, not a sweep
-
-`state` and `event` are **projections, and opt-in ones**. A row reaches them only when a program
-executes `promote_state` / `promote_event`; the master does not sweep settled rows into them.
-
-The consequence is the point: **a program that promotes nothing runs entirely server-side.**
-`state_log` composes, `event_log` settles, and `state` / `event` never see a single change — so no
-client ever observes it. Visibility becomes something a program asks for rather than something the
-spine does by default.
-
-This replaces the design's `promote(t)`, which promoted every settled row automatically:
-
-> `for row in state_log where tic <= t and settled and !promoted: state.upsert(…)`
-
-`flags.PROMOTED` survives to mark what has already been projected, so promotion stays idempotent. `state_events` (`event_reference → Vec<uid>`) is the reverse index that
-makes increment/decrement a direct lookup rather than a search — internal, never subscribed, so the
-per-event keying that sank the last attempt is fine here: nothing asks it a per-slot question.
-
-**`entity_reference` and `tic` are columns despite being inside `uid`.** A subscription filters on
-columns, and a reducer needs them as values — a packed field is neither. Same reason
-`state.macro_position_reference` is duplicated out of `position_reference`. The `uid` stays the key;
-the columns are for working with.
-
-**A slot is a worker address, not a per-event lock.** One worker holding a thousand events against a
-row occupies one slot — the event shard can hand a worker a zillion inspections of a shared object
-and they cost that row one address. So the cap binds only when five *distinct workers* want one
-entity in one window, which is a partitioning question, not a contention one. With a single worker it
-is unreachable.
-
-**If the subscription grammar rejects the 4-way `OR`**, use four subscriptions — one per slot
-column. Same rows, same cost, no redesign.
-
-**`state.target_reference` → `entity_reference`** for the same vocabulary, though only `state_log` was
-named in the instruction — the two address the same thing and diverging names would be worse than the
-edit.
-
-### Ordering — by tic, not by a per-slot head
-
-An earlier sketch carried the design's `events : Vec<event_reference>` per slot, so the store could
-answer *"which event composes next here"*. That relation is gone and isn't needed. The rule is:
-
-> A row at tic T may not be written while any earlier tic for that entity is still dirty. The
-> entity's settled value is the newest row with `dirty == 0`.
-
-The worker evaluates that itself, because `request_state` gives it a slot on **every** `state_log`
-row for its targets — it holds the entity's history, not one slot. `apply` re-checks, since a worker
-may have computed from a base another worker dirtied underneath it in the meantime.
-
-That covers ordering *across* tics. Two events at the *same* `event_tic` on the same entity are a
-separate question — see the intent doc's §Open.
+**`state.macro_position_reference` is deliberate duplication.** It's already in the payload's
+`position_reference` (high half), but a subscription filters on **columns** — `WHERE
+(position_reference >> 16) = X` isn't expressible — so the zone key must be its own indexed column or
+there's no per-zone subscription. Only `state` needs it (`state_log` is entity-keyed, no one
+subscribes to it per-zone). Writers must keep the two in step; nothing in the schema does.
 
 ### `status : u8` = `flags:4 | status:4`
 
-Both logs carry one. `status` is *where it is*; `flags` is *what was asked of it or happened to it*.
-The split does real work rather than just packing:
+`status` is *where it is*, `flags` is *what was asked / happened*. `event_status.status`:
+`QUEUED → GROUPED → ASSIGNED → RUNNING → COMPLETE` (the phase). `flags`: `FAILED` (the terminal
+signal, keeping the phase it died in — one flag beside the phase replaces a `QUEUE_FAILED` vs `FAILED`
+pair), `PROMOTE` (latched from the program).
 
-**`QUEUE_FAILED` and `FAILED` collapse into one `FAILED` flag.** They were two terminal states whose
-only difference was *which phase* died. With the phase already in `status`, the flag says failed and
-`status` says where — `QUEUEING|FAILED` is the old `QUEUE_FAILED`, `RUNNING|FAILED` the old `FAILED`.
-An earlier `failed : bool` beside a `QUEUE_FAILED` status was the same information twice; this is it
-once, and it keeps the phase, which a lone bool lost.
+`state_status.status`: `OPEN → PROMOTED`. `flags`: `PROMOTE`. **`PROMOTE` is a request, `PROMOTED` a
+fact** — one is latched at `claim`, the other set by `write` once the row settles, keeping promotion
+idempotent. Composition-settled stays `dirty == false`, not duplicated into `status`.
 
-`event_status.status` is then just the phase — `QUEUED → QUEUEING → RUNNING → COMPLETE` — four
-values in a nibble that holds sixteen.
+### Promotion is an action, not a sweep
 
-**`PROMOTE` is a flag, `PROMOTED` a status.** One is a request, the other a fact. `PROMOTE` is
-latched from the program at `queue` (event) and at `declare_pending` (each slot, sticky — one event
-asking is enough). `state_status.status = PROMOTED` is set by `apply` once the slot settles, which
-keeps promotion idempotent.
+`state` and `event` are opt-in projections, written only where a program ran `PROMOTE_STATE` /
+`PROMOTE_EVENT`. There is no `promote(t)` sweep. So **a program that promotes nothing runs entirely
+server-side** — `state_log` composes, `event_log` settles, and no client sees a thing. Visibility is
+something a program asks for, not a tax the spine charges.
 
-**Settled stays `dirty == 0`** — not duplicated into `status`. One source.
+### `event_reference` is the composition order
 
-**Still open in the design itself** (not translation gaps): partition policy, read-set derivation,
-`base` copy cost, and where cold `find-or-mint` lives. See the intent doc's §Open.
+Within a component, a worker applies events in ascending `event_reference`. It's already a global
+total order (the server byte keeps shards disjoint, the counter orders within), so it needs no
+orchestrator-assigned order field and survives failover trivially — it's a property of the events.
+Mint it (`server_reference:8 | ++counter:24`), **not** column `auto_inc`, which would increment the
+server byte and break the order.
+
+### No `targets` / `reads` columns
+
+Every reference is already in `actions`, so a column would restate the program. The event shard scans
+it to group (write targets) and the worker scans it to execute; an action's *signature* declares per
+operand written-vs-read ([`../ACTIONS.md`](../ACTIONS.md)), so both sets fall out of one scan with no
+game semantics in the spine.
+
+**Still open** (intent §Open): orchestrator assignment (master-hint leaning), the world verb palette,
+worker eviction, `POP`'d targets, and cold `find-or-mint`.
 
 ## History
 

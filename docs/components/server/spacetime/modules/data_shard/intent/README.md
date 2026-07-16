@@ -1,66 +1,74 @@
 # Intent — `data_shard` (what goes in, and why)
 
-_Last updated: 2026-07-15._
+_Last updated: 2026-07-16._
 
 ## What goes in
 
-`declare_pending(event, tic, entity, promote)` creates the `(entity, tic)` slot and increments its
-`dirty`. `apply` composes an event's result into the slot and decrements it. Both are called by a
-worker; neither is a client door.
+- `claim(entities, tic, worker)` — the **orchestrator** calls it, having grouped tic T's events into
+  components and picked a worker per component. It creates each `(entity, tic)` slot (`dirty = true`),
+  stamps `worker_reference` on it, and stamps `observer_reference` on the entity's previous row (the
+  base the worker will read).
+- `write(event_refs, tic, results)` — the **worker** calls it with each target's **absolute final**
+  value. It sets the payload, clears `dirty`, and promotes if asked.
+- `reap` / `gc` — the **master**.
 
-A slot's payload is the reference model's three orthogonal references — `definition_reference`
-(what), `position_reference` (where), `data` (state). Seeded from the resolved value at `< tic`.
+A slot's payload is the reference model's three orthogonal references — `definition_reference` (what),
+`position_reference` (where), `data` (state).
 
 ## Who reads it
 
-- **A worker**, only rows it holds a slot on:
-  `SELECT * FROM state_log WHERE worker_a = self OR worker_b = self OR worker_c = self OR worker_d = self`.
+- **A worker**, only its own rows: `SELECT * FROM state_log WHERE worker_reference = self OR
+  observer_reference = self` — the rows it writes, and the previous rows it reads as base.
 - **The edge / client**, on `state`, by zone. Never `state_log`.
-- `state_events` is **internal** — nothing subscribes to it.
 
-## Why four worker slots
+## Why worker + observer, not four slots
 
-This is the load-bearing decision. It is what lets a worker subscribe to `state_log` *itself*
-rather than to a projection of it — and therefore **read the payload off the row it is assigned**.
+One worker owns a whole component (the orchestrator guarantees it), so exactly **one** worker writes a
+given row — `worker_reference`, a single column, not four. The `observer` is the worker of the
+entity's *next* tic, which reads this row as its base; the per-entity chain has exactly one next, so
+exactly one observer. Two roles, one per direction.
 
-The alternatives all fail: a single `worker_reference` column can't name the several workers
-touching a row; per-target subscriptions are a bazillion subscriptions; per-event ones collide when
-two events share a row in a tic.
+This is what lets a worker subscribe to `state_log` itself and **read the payload off the row** — so
+there is no `state_hold` table, no `ready` go-signal, and no `base` copy. Those existed only because
+an older design had multiple workers per row and none could see the whole picture; the orchestrator
+removed the premise.
 
-What it buys is the deletion of an entire machine. The design this replaces needed a `state_hold`
-table carrying `ready` (a go-signal) and `base` (a payload copy) *because the worker couldn't see
-`state_log`*. Remove that premise and the hold, the go-signal, the copy, and the scheduler mirror
-all go with it.
+## Why `dirty` is a boolean, and how ordering works
 
-A slot is a worker **address**, not a per-event lock: one worker holding a thousand events against
-a row takes one slot. So the cap binds only when five *distinct workers* want one entity at once —
-a partitioning question, not a contention one.
+`dirty` is a boolean because one worker owns the component — the row is *pending* or *settled*, never
+a count. The ordering rule:
 
-## Why `dirty`, and how ordering works
+> A row at tic T may not be written while its entity's previous row is still `dirty`. The entity's
+> settled value is its newest `!dirty` row.
 
-`dirty` is the count of events holding a slot; `dirty == 0` is settled. The rule:
+Checking the *immediate previous* is enough, because rows are created in tic order (nothing earlier
+appears late) and clean propagates by induction (a row is written clean only after its previous was).
 
-> A row at tic T may not be written while any earlier tic for that entity is still dirty. The
-> entity's settled value is the newest row with `dirty == 0`.
+**The block is the worker's job — this module cannot enforce it.** `A += B` reads B, which may be on
+another shard; `write(A)` sees only A's chain, not B's dirtiness. A worker that skips the block reads
+a stale B and writes a wrong-but-clean A. The worker *can* block (it's subscribed to its read
+targets); the store can't. `write` fences only `caller == worker_reference`.
 
-The worker evaluates that itself, because `request_state` gives it a slot on **every** row for its
-targets — it holds the entity's history, not a snapshot. `apply` re-checks, since a worker may have
-computed from a base another worker dirtied underneath it.
+## Why writes are absolute, and replay is free
+
+The worker holds the whole component, so it computes each target's *final* value and writes it
+absolutely. A dead worker's replay recomputes the identical value from the immutable `T-1` — so
+`write` just skips already-`!dirty` rows and is idempotent. No deltas, no applied-event set.
 
 ## Why promotion is opt-in
 
-`state` is written only where a program asked (`PROMOTE`, latched per slot at `declare_pending`),
-and only once the slot settles. A program that promotes nothing composes in `state_log` and no
-client sees it — **the simulation can run entirely server-side**.
+`state` is written only where a program ran `PROMOTE_STATE`, and only once the row settles. A program
+that promotes nothing composes in `state_log` and no client sees it — the simulation can run entirely
+server-side.
 
-`state.macro_position_reference` duplicates the payload's `position_reference` high half on purpose:
-a subscription filters on columns, not expressions, so without the column there is no per-zone
-subscription at all. Writers must keep the two in step — nothing in the schema does.
+`state.macro_position_reference` duplicates the payload's `position_reference` high half on purpose: a
+subscription filters on columns, not expressions, so without the column there's no per-zone
+subscription. Writers must keep the two in step — nothing in the schema does.
 
 ## Entry / exit
 
 | | |
 |---|---|
-| in | `declare_pending` (slot + `dirty`), `request_state` (claim a worker slot), `apply` (compose) |
-| out | `state`, on a `promote_state` action, once settled |
-| sweep | `reap()` frees dead workers' slots; `gc(t)` drops old settled rows |
+| in | `claim` (orchestrator: slots + roles), `write` (worker: absolute finals) |
+| out | `state`, on a `PROMOTE_STATE` action, once settled |
+| sweep | `reap` frees expired roles; `gc` drops old settled rows (never the latest per entity) |

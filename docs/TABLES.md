@@ -110,6 +110,13 @@ Shapes to build **to**. No module implements them yet. The flow that uses them i
 [`intent/spacetime-again/`](intent/spacetime-again/README.md); the reasoning is
 [`notes/tables.md`](notes/tables.md).
 
+**The model in one breath.** Events are grouped per tic by shared target entity — transitively, so a
+whole conflict-**component** lands on **one worker**. An **orchestrator** does that grouping (union-find
+across every event shard, after the event set is complete) and hands each component to a worker. One
+worker per component means no lock, no contention, and cross-entity transactions are just sequential
+code. Writes are absolute finals from the `< tic` base, so a dead worker's work replays identically.
+Nothing composes on data from its own tic — every read is `< tic`.
+
 ## `event_shard`
 
 ### `event_log` — the queue (in flight only)
@@ -117,13 +124,15 @@ Shapes to build **to**. No module implements them yet. The flow that uses them i
 | column | type | key | notes |
 |---|---|---|---|
 | `event_reference` | `u32` | PK | `entity_reference`, `type_id` = `TYPE_EVENT`. Ascending = composition order. |
-| `worker_reference` | `u8` | idx | subscription key. `SERVER_REF_NONE` = unassigned |
 | `event_tic` | `u16` | idx | `tic` — wraps |
-| `status` | `u8` | idx | `event_status` — `flags:4 \| status:4`. Phase in `status`, `FAILED` / `PROMOTE` in `flags`. |
+| `status` | `u8` | idx | `event_status` — `flags:4 \| status:4` |
 | `actions` | `Vec<u32>` | | the event program — [`ACTIONS.md`](ACTIONS.md) |
-| `lease_tic` | `u16` | | `tic` — assignment expiry; the reclaim clock |
+| `event_group` | `u32` | idx | the shard-local group: events sharing a target entity. The orchestrator merges these across shards into work-groups. |
+| `orchestrator_reference` | `u8` | idx | the orchestrator that owns this tic (subscription key) |
+| `worker_reference` | `u8` | idx | the worker the orchestrator assigned (subscription key). `SERVER_REF_NONE` = unassigned |
 
-sub `SELECT * FROM event_log WHERE worker_reference = self` (worker)
+subs: `SELECT * FROM event_log WHERE orchestrator_reference = self` (orchestrator) ·
+`SELECT * FROM event_log WHERE worker_reference = self` (worker)
 
 The write set is **not** a column — it comes out of `actions`, routed by each reference's top byte.
 See [`notes/tables.md`](notes/tables.md).
@@ -136,7 +145,7 @@ See [`notes/tables.md`](notes/tables.md).
 | `macro_position_reference` | `u16` | idx | the zone-subscription key |
 | `event_tic` | `u16` | | `tic` |
 | `event_reference` | `u32` | idx | the event; **not** unique here |
-| `status` | `u8` | | `event_status`, frozen — terminal only (`COMPLETE`, or `FAILED` on the phase it died in) |
+| `status` | `u8` | | `event_status`, frozen — terminal only |
 | `actions` | `Vec<u32>` | | frozen — [`ACTIONS.md`](ACTIONS.md) |
 
 **One row per zone the event's targets occupy** — an event touching three zones writes three rows.
@@ -147,9 +156,9 @@ rather than only events wholly inside it. `event_reference` is therefore not the
 reads edge, client · workers never subscribe ·
 sub `SELECT * FROM event WHERE macro_position_reference = <zone>` (edge, per subscribed zone)
 
-`event_log`'s queue mechanics (`worker_reference`, `lease_tic`) do not come across — they are
-in-flight state and this row is settled. A row lands here **only** when a program says so, via a
-`promote_event` action.
+The queue mechanics (`event_group`, `orchestrator_reference`, `worker_reference`) do not come across —
+they are in-flight state and this row is settled. A row lands here **only** when a program says so, via
+a `promote_event` action.
 
 ## `data_shard`
 
@@ -169,38 +178,31 @@ Payload = the reference model's three orthogonal references, carried by both `st
 | `uid` | `u64` | PK | `state_uid` — `reserved:16 \| entity_reference:32 \| tic:16` |
 | `entity_reference` | `u32` | idx | also in `uid`; a column because packed fields can't be filtered or worked with |
 | `tic` | `u16` | idx | same |
-| `worker_a` | `u8` | idx | `server_reference` acting on this row this tic. `SERVER_REF_NONE` = free |
-| `worker_b` | `u8` | idx | |
-| `worker_c` | `u8` | idx | |
-| `worker_d` | `u8` | idx | |
-| `lease_a` | `u16` | | `tic` — `worker_a`'s expiry |
-| `lease_b` | `u16` | | |
-| `lease_c` | `u16` | | |
-| `lease_d` | `u16` | | |
-| `dirty` | `u8` | | count of events holding this slot. `0` = settled |
-| *payload* | | | composed so far; seeded from the resolved value at `< tic` |
-| `status` | `u8` | | `state_status` — `flags:4 \| status:4` |
+| `worker_reference` | `u8` | idx | the worker that **writes** this row (its component's owner). `SERVER_REF_NONE` = none |
+| `worker_lease` | `u16` | | `tic` — the worker's expiry |
+| `observer_reference` | `u8` | idx | the worker that **reads** this row as the base for its next-tic work (the `(E, next)` component's owner) |
+| `observer_lease` | `u16` | | `tic` — the observer's expiry |
+| `dirty` | `bool` | | `true` = work pending; `false` = settled. One worker owns the component, so it's binary, not a count. |
+| *payload* | | | the composed value; written once, absolute |
+| `status` | `u8` | | `state_status` — `flags:4 \| status:4` (`PROMOTE` / `PROMOTED`) |
 
-sub `SELECT * FROM state_log WHERE worker_a = <self> OR worker_b = <self> OR worker_c = <self> OR
-worker_d = <self>` (worker) — the worker's window into a data shard.
+sub `SELECT * FROM state_log WHERE worker_reference = self OR observer_reference = self` (worker) —
+the worker's window: rows it writes, and the previous rows it reads as base.
 
-**At most four servers may act on one row in one tic.** That bound is what makes the subscription a
-fixed-width disjunction instead of a per-target subscription, and it lets the worker read the payload
-off the row — so nothing carries a `base` copy. A worker claims a slot by calling the shard with the
-entity ids it intends to work; the shard allocates a free `worker_*` and stamps the matching `lease_*`.
+**Two roles, not four slots.** One worker owns a whole component, so exactly one worker writes a row —
+`worker_reference`, a single column. The `observer` is the worker of the entity's *next* tic, which
+reads this row as its base; the per-entity chain has exactly one next, so one observer. The old
+four-slot scheme was for a world where several workers touched one row — the orchestrator makes that
+impossible, so it collapses to write-role + read-role.
+
+**The base is read live, not seeded.** A worker computes `(E, T)` from `(E, prev)`'s payload at
+execution — `prev` is the most-recent row `< T` for E, which it holds as observer. It computes only
+once `prev` is `dirty == false`; **the worker must block on that** (see the correctness note below).
+The most-recent row per entity is **never GC'd**, so `prev` always exists in `state_log` — the base is
+never fetched from `state`.
 
 `uid` is entity-major; `entity_reference` and `tic` are duplicated out of it because a subscription
 filters on columns and a reducer needs them as values.
-
-### `state_events` — an event's slots on this shard
-
-| column | type | key | notes |
-|---|---|---|---|
-| `event_reference` | `u32` | PK | |
-| `uid` | `Vec<u64>` | | the `state_log` slots this event holds **here** |
-
-**Internal** — never subscribed. The reverse index: add/remove an event and this gives its `uid`s
-directly, so `dirty` can be incremented and decremented without a search.
 
 ### `state` — client-visible latest
 
@@ -216,15 +218,31 @@ sub `SELECT * FROM state WHERE macro_position_reference = <zone>` (edge, per sub
 
 A row lands here **only** when a program says so, via a `promote_state` action.
 
+### The block is a worker requirement, not a fence
+
+`A += B` writes A and reads B. Its correctness depends on **B being settled** (`dirty == false` on B's
+latest row) — but B may live on a different shard than A, so **A's shard cannot enforce it.** A local
+fence checks A's *own* previous row; it can't see B. A worker that skips the block reads a stale B,
+writes a wrong-but-clean A, and the next tic composes on the corruption.
+
+So the worker **must** block on every read target's dirtiness. It can, because it is subscribed to
+every target it touches — write targets and the read targets' rows both. The block is a correctness
+invariant of the worker (our own code), the one place the store cannot cover. (The alternative is
+two-phase: write all tentative, verify all settled, then clear dirty — more round trips, enforceable
+without trusting the worker. We take "block correctly" while workers are our code.)
+
 ### Not shaped yet
 
 | | |
 |---|---|
-| **two events on one `(entity, tic)`** | Across tics, `dirty` at an earlier tic blocks a later one and the worker sees it. Within one tic, two events with the same `event_tic` on the same entity unblock together and `dirty` counts them without ordering them. |
-| **the read set** | Writes are recoverable from `actions` (each reference carries its `server_id`). Reads are not — telling which operands a verb *reads* needs `action_reads_actor`, which the design's §Open already flags. |
-| **the world verb palette** | The machine + `promote_*` exist ([`ACTIONS.md`](ACTIONS.md)); no gameplay verb does. Each needs a signature naming, per operand, written vs read — that is what the write and read sets are scanned out of. |
+| **orchestrator assignment** | Which orchestrator owns tic T. Given the completeness barrier, doubling is safe (two orchestrators compute the same groups; assignment is idempotent), so it needs a good hint, not consensus — master-assigned is the leaning. See [`notes/tables.md`](notes/tables.md). |
+| **the world verb palette** | The machine + `promote_*` exist ([`ACTIONS.md`](ACTIONS.md)); no gameplay verb does. Each needs a signature naming, per operand, written vs read. |
+| **worker eviction** | A hung worker holds its component. Lease expiry frees it; the exact reclaim is deferred. |
 
-See [`notes/tables.md`](notes/tables.md) and the intent doc.
+**Resolved and gone:** the four worker slots (→ worker + observer), `dirty`-as-count (→ boolean),
+`state_events` (the reverse index — no count to decrement), and B-2 "two events on one `(entity,
+tic)`" (dissolved: same-entity events share a component, one worker composes them in `event_reference`
+order). See [`notes/tables.md`](notes/tables.md).
 
 ---
 

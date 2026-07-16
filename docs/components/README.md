@@ -30,9 +30,12 @@ dead. It's the antidote to "I forget… which is why we need this."
   world-server URL).
 - **server/spacetime** — the SpacetimeDB workspace; not itself deployed — it *holds* the modules
   + build scripts.
-- **server/master, server/worker — ☠ GONE (2026-07-15).** The tic metronome and the event resolver.
-  Both existed only to drive the deleted pipeline. The rebuild's worker is
-  [`intent/spacetime-again/`](../intent/spacetime-again/README.md).
+- **server/master, server/worker, server/orchestrator — the rebuild's SDK-client processes. NOT
+  BUILT.** master = metronome (bumps the tic in lockstep, sweeps, assigns the per-tic orchestrator);
+  orchestrator = groups each tic's events into components and assigns a worker each; worker = composes
+  a component. Flow: [`intent/spacetime-again/`](../intent/spacetime-again/README.md); items W4–W6 in
+  [`work/spacetime-again/`](../work/spacetime-again/README.md). (An earlier master/worker existed to
+  drive the deleted pipeline and were removed 2026-07-15; these are fresh.)
 
 ## `server/spacetime/server/modules/` — deployable ST modules
 _Map + conventions: [`server/spacetime/`](server/spacetime/README.md)._

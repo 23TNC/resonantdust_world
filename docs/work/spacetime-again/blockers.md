@@ -26,13 +26,12 @@ or a reference narrower than a reference.
 
 ## B-3 · `POP`'d targets can't be declared — OPEN
 
-**Blocks:** W4, and the shape of a "legal program". Not W1–W3.
+**Blocks:** the shape of a "legal program", and W2's grouping. Not the store schemas.
 
-**Why.** The write set must be known at **enqueue** (T=1): `declare_pending` stands up the
-`(entity, tic)` slots one tic before the program runs, so `dirty` is right and composition can be
-ordered. A `POP`'d operand has no value until **run time** (T=2). So a program whose target arrives
-off the stack cannot have its slots declared — the whole enqueue/execute split assumes the write set
-is static.
+**Why.** The write set must be known at **grouping** (N=0–1): the event shard unions events by shared
+write-target, and the orchestrator forms components from those targets — all before the program runs
+(N=2+). A `POP`'d operand has no value until **run time**. So a program whose written target arrives
+off the stack cannot be grouped — the whole model assumes the write set is static.
 
 **Three ways out** (fuller in [`notes/actions.md`](../../notes/actions.md)):
 
@@ -40,7 +39,7 @@ is static.
 |---|---|
 | **targets must be literal** | `POP` is fine for numbers and read operands, never for a written `entity_reference`. Costs "damage whatever the last action returned". |
 | **static-fold `ECHO`-sourced pops** | a pass tracks the stack: a `POP` tracing to `ECHO <lit> PUSH` is knowable; one tracing to an action's *output* still isn't, so the rule is still needed. |
-| **over-approximate** | declare a superset, withdraw what wasn't touched. Burns slots on entities the event never writes — contention the four-slot cap will feel. |
+| **over-approximate** | group a superset. Pulls entities the event never writes into the component — bigger components, more serialization. |
 
 **Recommendation:** the first. The enqueue/execute split is what buys the design its determinism,
 and a dynamically-targeted event is asking to opt out of it. Cheap to relax later; expensive to
@@ -48,25 +47,31 @@ retrofit the other way.
 
 ---
 
-## B-2 · Two events on one `(entity, tic)` — OPEN
+## B-2 · Two events on one `(entity, tic)` — DISSOLVED 2026-07-16
 
-**Blocks:** nothing yet. W3's `apply` will need an answer, but the schema doesn't change either way
-if the answer is "can't happen" or "last write wins".
+The orchestrator dissolved it. Two events touching the same entity **share a component** (union-find
+by shared target), so they go to **one worker**, which composes them sequentially in ascending
+`event_reference` order in local scratch. There is no second writer, so nothing to order at the store,
+no first-arrival race. The determinism is `event_reference` (already a global total order); the
+isolation is one-worker-per-component. `dirty` reverts to a boolean.
 
-**The question.** Ordering *across* tics is settled: a row at T can't be written while an earlier tic
-for that entity is dirty, and the worker sees that because it holds a slot on every row for its
-targets. *Within* one tic it isn't. Two players hit the same door at tic T: both events carry
-`event_tic = T`, both target the door, `dirty(door, T) = 2`, and both unblock the moment T-1 settles.
-Whichever `apply` lands first wins, and the outcome depends on network timing.
+This is the same resolution that made cross-entity transactions and conditionals into ordinary code —
+all three were the same problem (no agent saw the whole conflict set), and the orchestrator gives one
+agent the whole component. See [`intent/spacetime-again/`](../../intent/spacetime-again/README.md)
+§Why 1.
 
-**Three answers, any of which is fine — they just need choosing:**
+---
 
-| | |
-|---|---|
-| **can't happen** | the edge or `declare_pending` rejects a second event on an occupied `(entity, tic)`. `dirty` is then only ever 0 or 1 and nothing more is needed. |
-| **last write wins** | accept the non-determinism. Cheapest; means the same inputs can produce different worlds. |
-| **order by `event_reference`** | the events compose in ascending order — deterministic. Needs *something* per slot that says which is next; `dirty` counts, it doesn't order. |
+## B-4 · The cross-shard read block — RESOLVED 2026-07-16 (as a worker requirement)
 
-**Why it's yours:** it's a gameplay-determinism call, not a schema one. The old design took the third
-answer and called it "the one property that must not be broken" — but that was a different machine,
-and I've been wrong once already assuming its reasoning carried over.
+`A += B` reads B; B may be on a different shard than A; so A's shard **cannot** enforce "B settled" —
+a local fence sees only A's own chain. A worker that skips the block reads a stale B, writes a
+wrong-but-clean A, and the next tic composes on the corruption. There is no store-side fix that stays
+one-reducer-atomic.
+
+**Resolution:** the block is a **worker correctness requirement**, not a store fence. The worker is
+subscribed to every target it reads, so it *can* check, and must — defer the whole component if any
+read target's previous row is dirty; never partial-write. This is safe because workers are our own
+code (a trusted-server model). The enforceable-without-trust alternative is two-phase (write all
+tentative → verify all settled → clear dirty), at more round trips; we take "block correctly" for now.
+Recorded in [`TABLES.md`](../../TABLES.md) §"The block is a worker requirement" and intent §Why 4.

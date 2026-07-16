@@ -67,8 +67,8 @@ renumber. Aliases are for reading; the wire is the number.
 | `PROMOTE_EVENT` | 5 | 0 | project this event to `event` on settle |
 
 Both are latched, not executed: `PROMOTE_EVENT` sets `event_status.flags.PROMOTE` at `queue`;
-`PROMOTE_STATE` sets `state_status.flags.PROMOTE` at `declare_pending` for that target. A program
-carrying neither runs entirely server-side.
+`PROMOTE_STATE` sets `state_status.flags.PROMOTE` when the target's slot is created (`claim`). A
+program carrying neither runs entirely server-side.
 
 ### World
 

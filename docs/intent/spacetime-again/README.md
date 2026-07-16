@@ -1,309 +1,247 @@
-# spacetime-again — event/data shard split + per-worker subscriptions
+# spacetime-again — orchestrated event/data shards
 
 > **Status: PSEUDOCODE / intent.** Nothing built. This is the **flow**; the table shapes are in
-> [`docs/TABLES.md`](../../TABLES.md), the bit layouts and vocabulary in
-> [`docs/VARIABLES.md`](../../VARIABLES.md), and the reasoning behind both in
+> [`docs/TABLES.md`](../../TABLES.md), the bit layouts in [`docs/VARIABLES.md`](../../VARIABLES.md),
+> the program encoding in [`docs/ACTIONS.md`](../../ACTIONS.md), and the reasoning in
 > [`docs/notes/`](../../notes/tables.md). Execution: [`work/spacetime-again/`](../../work/spacetime-again/README.md).
-> Revised 2026-07-15.
+> Revised 2026-07-16.
 
-**What this is for.** Two problems the old pipeline had:
-1. **Every worker mirrored the whole shard** — 6 blanket `SELECT *` subscriptions. A "pool" where
-   every member held every row and they raced on `claim`.
-2. **The queue and the log were the same table** — `event_log` was both, so there was no narrow
-   relation a worker could subscribe to instead.
+**What this is for.** Simulate a world across many shards, where an event can touch entities on
+different shards (`pawn.mana--` on one, `pawn.health--` on another), without locks, without a
+distributed-transaction protocol, and without any single point owning the whole world.
 
-**The ideas that fix them.**
-- **A subscription is an assignment.** A worker subscribes by *its own id*, on exactly two
-  relations. Work reaches it because a shard stamps its id on a row. The edge and client subscribe
-  by *locality* instead. Nothing subscribes to a log it doesn't own a row in.
-- **The queue is not the log.** `event_log` holds only work in flight; settled rows leave.
-- **At most four servers may touch one `state_log` row per tic.** That cap is what lets a worker
-  subscribe to `state_log` *itself* (a fixed-width `OR` over `worker_a..worker_d`) rather than to a
-  projection of it. So the worker **reads the payload off the row it is assigned** — no hold table,
-  no `base` copy, no scheduler mirror.
-- **Visibility is opt-in.** `state` and `event` are projections written only by a `promote_state` /
-  `promote_event` action. A program that promotes nothing runs entirely server-side.
+**The one idea.** Group each tic's events by **shared target entity** — transitively — so a whole
+conflict-**component** lands on **one worker**. Then:
+
+- **One worker per component** ⇒ no two workers ever touch the same entity in the same tic ⇒ no lock,
+  no contention. Cross-entity transactions (`if bob has apple, bob.apples--, alice.apples++`) are just
+  sequential code in one worker's scratch.
+- **Read only `< tic`.** A worker computes tic T from settled `T-1` values. So a row's final never
+  depends on any *other* row's same-tic outcome — each row is independently final the instant it's
+  written.
+- **Write absolute finals** from that base. A dead worker's work replays identically (same base, same
+  events, same order), so re-execution is idempotent — no delta accumulation, no dedup.
+- **An orchestrator does the grouping.** One coordinator per tic sweeps every event shard, unions the
+  events into components *after the event set is complete*, and hands each component to a worker. That
+  is what makes "one worker per component" true by construction.
+
+**Subscriptions are assignments.** A worker subscribes by *its own id*; work reaches it because a
+shard stamps its id on a row. The edge and client subscribe by *locality* (zone). Nothing subscribes
+to a log it doesn't own a row in.
 
 ---
 
-## T=init — a worker's entire world
+## The pipeline
 
-```
-for shard in spacetime.event_shard.served_by(self):
-    subscribe: SELECT * FROM event_log WHERE worker_reference = self.server_reference
+An event queued at N becomes valid at **N+3**. Using N=0 → valid at N=3:
 
-for shard in spacetime.data_shard.served_by(self):
-    subscribe: SELECT * FROM state_log WHERE worker_a = self.server_reference
-                                          OR worker_b = self.server_reference
-                                          OR worker_c = self.server_reference
-                                          OR worker_d = self.server_reference
+| tic | what happens |
+|---|---|
+| **N=0** | edge queues events for N=3 (`event_tic = master + 3`). Each event shard groups its own events by shared target into `event_group`s, and stamps `orchestrator_reference` (the orchestrator that owns tic 3). |
+| **N=1** | the N=3 set is **frozen** — no event can be born for N=3 after this (they're all born at N=0). The event shard now serves its N=3 groups to the orchestrator (not before — that's the completeness barrier). The orchestrator unions `event_group`s across all shards into **work-groups** (merge any two that share an entity). |
+| **N=2** | partition frozen. An `event_group` still spanning two work-groups is **failed** (too late to merge). Workers assigned to work-groups; the assignment stamps `worker`/`observer` onto event and state rows. Workers begin, computing from state at `≤ N=2`. |
+| **N=3** | values valid; promoted rows go live. Workers may still be chewing — a slow component just makes its value *late*, not wrong (see §Running behind). |
 
-// and NOTHING else. No state, no event, no state_events, no cold.
-// Both subscriptions are keyed by the worker's own id, so a shard hands work over by
-// writing that id onto a row. The state_log rows it is assigned carry the payload it
-// computes from — there is nothing to copy and nothing else to read.
-```
+---
 
-## T=0 — queue
+## Queue (N=0)
 
 ```
 client.core → server.edge: request
 server.edge  validates (authenticated · owns the object · legal verb · rate)
 server.edge  → event_shard.queue(actions):
     event_log.insert{ event_reference : shard mints (server_reference:8 | ++counter:24),
-                      event_tic       : tic::add(master_tic, TIC_GAP)          // +3
+                      event_tic       : tic::add(master_tic, 3),
                       status          : { status: QUEUED,
-                                          flags: actions has promote_event ? PROMOTE : 0 },
-                      worker_reference: SERVER_REF_NONE,
-                      lease_tic       : 0,
-                      actions }
+                                          flags: actions has PROMOTE_EVENT ? PROMOTE : 0 },
+                      actions,
+                      event_group     : (assigned by the shard's grouping, below),
+                      orchestrator_reference : orchestrator_for(event_tic),
+                      worker_reference : SERVER_REF_NONE }
 
-// No targets/reads columns. Every reference in `actions` is a u32 whose top byte is the
-// server_id that homes it, so the write set is read off the program.
-// PROMOTE is latched here, from the program: whoever composes it knows whether it asked.
+// event_reference is minted, NOT auto_inc on the column — auto_inc would increment the server byte
+// and break the global total order. Ascending event_reference is the composition order (below).
 ```
 
-## T=1 — assign, then enqueue
+**Shard-local grouping.** As events arrive, the shard scans each program's write targets
+([`ACTIONS.md`](../../ACTIONS.md) — every reference is a `u32` with its `server_id` on top) and unions
+events that share a target into an `event_group`. This is the shard's *local* component; the
+orchestrator merges local groups across shards next.
+
+## Group + assign (the orchestrator, N=1 → N=2)
 
 ```
-// ── assignment is PULL, and this reducer is also the ONLY rescue path ─────────────
-// Filtered subscriptions mean an orphaned row is visible to NOBODY. So reclaim lives here,
-// at the guaranteed entry point (workers poll it every tic).
-worker → event_shard.request_work(self.server_reference, max_batch):
-    now = master_tic
+// One orchestrator per tic (assignment mechanism — §Open; doubling is safe, see below).
+orchestrator for tic T:
+    subscribe: SELECT * FROM event_log WHERE orchestrator_reference = self   // on every event shard
 
-    // 1. RECLAIM expired assignments (a worker died mid-flight).
-    //    Rewind to THIS PHASE's start, not to the beginning: an event that already declared its
-    //    slots must not redo it. The phases exist for exactly this — a worker can die between any
-    //    two of them, and reclaim has to know where it was.
-    for e in event_log where status.status in (QUEUEING, QUEUE_SUCCESS, RUNNING)
-                         and tic::before(e.lease_tic, now):
-        e.worker_reference = SERVER_REF_NONE
-        e.status.status = (e.status.status == QUEUEING) ? QUEUED : QUEUE_SUCCESS
-        // its state_log slots expire on their own lease_*; see data_shard.reap()
+    // ── N=1: COMPLETENESS BARRIER, then union ───────────────────────────────────────
+    // A shard refuses to serve T's groups until it has read master ≥ T-2, i.e. T's event set is
+    // frozen. So every batch the orchestrator receives is a shard's COMPLETE contribution.
+    wait until a complete batch has arrived from every event shard in the realm
+    work_groups = union-find over all event_groups, merging any two that share an entity
+    // Union-find on the COMPLETE set is order-independent: any orchestrator computes the same
+    // partition. That is why doubling is safe — see §Why.
 
-    // 2. DROP what can no longer make its tic — the causality guard. In the module, NOT
-    //    the worker: a row nobody claimed must still fail, or it rots silently.
-    for e in event_log where status.status in (QUEUED, QUEUEING) and tic::at_or_before(e.event_tic, now):
-        e.status.flags |= FAILED          // status keeps the phase it died in
-
-    // 3. ASSIGN — bounded batch, ascending, only what is runnable THIS tic.
-    n = 0
-    for e in event_log where worker_reference == SERVER_REF_NONE order by event_reference:
-        if n >= max_batch: break
-        if   e.status.status == QUEUED        and tic::at_or_before(e.event_tic, tic::add(now, 2)):
-            e.status.status = QUEUEING        // enqueue window
-        elif e.status.status == QUEUE_SUCCESS and e.event_tic == tic::add(now, 1):
-            e.status.status = RUNNING         // a reclaimed one, already declared: straight to execute
-        else: continue
-        e.worker_reference = requester
-        e.lease_tic        = tic::add(now, LEASE)
-        n += 1
-    // assigned rows now enter the requester's subscription. It acts on them next pass.
-    // Batching by locality here is what keeps the four-slot cap free — one worker holding every
-    // event that touches a row takes ONE slot on it, however many events that is. See §Open.
-
-// ── enqueue: stand the slots up, then KEEP the event ──────────────────────────────
-for e in worker.event_log where status.status == QUEUEING:
-    if tic::at_or_before(e.event_tic, master_tic):                    // missed the window
-        worker → event_shard.fail(e.event_reference) ; continue      // flags |= FAILED
-
-    targets = entity references in e.actions            // top byte = the shard that homes it
-    ok = true
-    for target in targets:
-        ok &= worker → home_shard(target).declare_pending(e.event_reference, e.event_tic, target,
-                                                          promote: e.actions asks promote_state(target))
-    if !ok:
-        for target in targets: home_shard(target).withdraw_pending(e.event_reference, target)
-        worker → event_shard.fail(e.event_reference) ; continue      // flags |= FAILED
-
-    worker → event_shard.enqueue_done(e.event_reference)
-        // status.status = QUEUE_SUCCESS. worker_reference NOT cleared — the SAME worker executes.
-        // Releasing here would disarm the subscription exactly when it is needed (below). The
-        // state still bumps: if this worker dies, reclaim must know the slots are already declared.
-
-// ── acquire EARLY: allowed as soon as the worker holds a declared event ──────────
-// This is what not releasing buys. The worker claims next tic's rows during THIS tic, so the
-// data has already arrived over the subscription when the execute tic comes.
-for e in worker.event_log where status.status in (QUEUE_SUCCESS, RUNNING):
-    for shard, group in targets(e).group_by(home_shard):
-        worker → shard.request_state(self.server_reference, group)
-
-data_shard.declare_pending(event_reference, tic, entity_reference, promote) -> bool:
-    uid = state_uid(entity_reference, tic)
-    row = state_log.find_or_create(uid)     // payload seeded from the resolved value at < tic
-    if event_reference not already holding row:
-        row.dirty += 1                                       // dirty = events holding this slot
-        state_events[event_reference].uid.push(uid)          // the reverse index; internal
-    if promote: row.status.flags |= PROMOTE   // sticky: any event asking is enough
-    return true
-
-data_shard.request_state(worker, entities) -> bool:
-    for entity in entities:
-        // EVERY row for that entity, not just the one at event_tic — the worker needs the
-        // entity's history to know what is settled and what it is blocked behind.
-        for row in state_log where entity_reference == entity:
-            slot = row's worker_a..worker_d already == worker ? that one : first free
-            if none free: return false                       // the four-worker cap
-            row.worker_<slot> = worker
-            row.lease_<slot>  = tic::add(master_tic, LEASE)
-    return true
-    // the rows now enter the worker's subscription — a tic BEFORE it executes them.
-    // A slot is a worker ADDRESS, not a per-event lock: one worker holding a thousand events
-    // against this row occupies one slot. The cap is on distinct workers, so it only binds when
-    // five servers want the same entity in the same window — which locality-batched assignment
-    // is what avoids.
+    // ── N=2: freeze, fail stragglers, assign ────────────────────────────────────────
+    for each event_group still spanning two work_groups:      // arrived too late to merge
+        event_shard.fail(event_group)                          // load-shed; NOT delayed — see §Why
+    for each work_group WG:
+        w = pick a worker (least-loaded)
+        for shard, events in WG.events.group_by(event_shard):
+            event_shard.assign(events, worker: w)              // stamps worker_reference on the rows
+        for shard, entities in WG.targets.group_by(data_shard):
+            data_shard.claim(entities, tic: T, worker: w)      // stamps worker + observer, below
 ```
 
-## T=2 — execute
+```
+data_shard.claim(entities, tic, worker):
+    for E in entities:
+        row = state_log.find_or_create(state_uid(E, tic))      // dirty = true on create
+        row.worker_reference = worker ; row.worker_lease = tic::add(master_tic, LEASE)
+        prev = most-recent state_log row for E with tic::before(prev.tic, tic)   // always exists — latest is never GC'd
+        prev.observer_reference = worker ; prev.observer_lease = tic::add(master_tic, LEASE)
+        // worker now sees, over its subscription: the row it will write (worker), and the
+        // previous row it reads as base (observer). Two roles, one per direction.
+```
+
+## Execute (the worker)
 
 ```
-for e in worker.event_log where status.status == RUNNING:
-    if tic::at_or_before(e.event_tic, master_tic):    // the tic is sealed — too late to write it
-        worker → event_shard.fail(e.event_reference) ; continue      // flags |= FAILED
-    if e.event_tic != tic::add(master_tic, 1): continue        // execute exactly one tic early
+worker subscribes:
+    SELECT * FROM event_log  WHERE worker_reference = self                      // its programs
+    SELECT * FROM state_log  WHERE worker_reference = self OR observer_reference = self   // its rows + their bases
 
-    // 1. BLOCKED = an earlier tic for one of my targets is still dirty. The worker can see
-    //    this: it holds a slot on EVERY row for each target, so it has the history.
-    //    Defer, never block — leave the row and revisit next pass.
-    for target in targets(e):
-        if any state_log row (target, t) with tic::before(t, e.event_tic) and dirty > 0:
-            continue outer
+for WG in my assigned work_groups (identifiable by shared worker_reference):
+    // Compose the whole component in local scratch, from T-1 values. One worker owns it, so this is
+    // ordinary sequential code — no lock, no coordination.
+    order WG.events by event_reference ascending          // the global composition order
+    scratch = { E: base(E)  for E in WG.targets }         // base = prev row's payload
 
-    // 2. compute — from the payload on the rows already in the subscription.
-    //    base = the newest settled row for the target at or before event_tic. No table
-    //    reads, no base copy: they arrived at T=1.
-    scratch = {}
-    for target in targets(e):
-        base = newest state_log row (target, t) with tic::at_or_before(t, e.event_tic) and dirty == 0
-        scratch[target] = vm.run(e.actions, base: base.payload)
+    // BLOCK — the correctness requirement, not an optimization. A local shard fence CANNOT enforce
+    // this: `A += B` reads B, which may be on another shard, so A's shard can't see B's dirtiness.
+    // The worker CAN — it is subscribed to every target it reads. If any target's prev is dirty,
+    // defer the whole component and revisit next pass. Never spin, never partial-write.
+    if any E in WG.targets has prev(E).dirty:  defer WG ; continue
 
-    // 3. commit — ONE call per data shard (atomic there), never one per target.
-    for shard, group in scratch.group_by(home_shard):
-        ok = worker → shard.apply(e.event_reference, e.event_tic, group as Vec<TargetState>)
-        if !ok: break                          // convergent: re-drive replays; apply is idempotent
-    if all ok: worker → event_shard.complete(e.event_reference)
+    for e in WG.events:                                   // sequential, in event_reference order
+        apply e.actions to scratch                        // reads other scratch entries freely — same tic, in-worker
+    // scratch now holds each target's ABSOLUTE final for tic T.
 
-data_shard.apply(event_reference, tic, results: Vec<TargetState>) -> bool:
+    for shard, group in scratch.group_by(data_shard):
+        data_shard.write(WG.events.refs, tic: T, group)   // one call per shard; absolute values
+    event_shard.complete(WG.events)
+```
+
+```
+data_shard.write(event_refs, tic, results):               // idempotent: absolute values from immutable T-1
     for r in results:
-        row = state_log[state_uid(r.entity_reference, tic)]
-        // The store re-checks the block: a worker may have computed from a base that a
-        // faster worker has since dirtied at an earlier tic.
-        require(no state_log row (r.entity_reference, t) with tic::before(t, tic) and dirty > 0)
-        require(event_reference is holding row and caller occupies one of row.worker_a..d)
+        row = state_log[state_uid(r.entity, tic)]
+        require(caller == row.worker_reference)            // only the assigned worker writes
+        if !row.dirty:  continue                           // already written (a replay) — skip
         row.payload = r.payload
-        row.dirty  -= 1
-        state_events[event_reference].uid.remove(row.uid)
-
-        // Visibility is opt-in: the program asked, and the slot has no events left.
-        if (row.status.flags & PROMOTE) and row.dirty == 0 and row.status.status != PROMOTED:
-            state.upsert(entity_reference          : r.entity_reference,
-                         macro_position_reference  : macro_of(r.payload.position_reference),
-                         tic                       : tic,
-                         payload                   : r.payload)
+        row.dirty   = false                                // this row is now final and unblocks its observer
+        if (row.status.flags & PROMOTE) and row.status.status != PROMOTED:
+            state.upsert(entity_reference: r.entity,
+                         macro_position_reference: macro_of(r.payload.position_reference),
+                         tic: tic, payload: r.payload)
             row.status.status = PROMOTED
-    release_slots(event_reference)             // free its worker_a..d slots + leases
-    return true
-
-data_shard.reap():                             // called by the master
-    for row in state_log, for slot in a..d:
-        if row.worker_<slot> != SERVER_REF_NONE and tic::before(row.lease_<slot>, master_tic):
-            row.worker_<slot> = SERVER_REF_NONE          // a dead worker's slot returns
 ```
 
-## T=3 — settle (the master, right after `bump`)
+Note `write` clears `dirty` **per row**, even if the event's *other* targets aren't done — a row's
+value is final regardless of them (reads are `< tic`), so its observer may proceed. The event isn't
+`COMPLETE` until every row is written; if the worker dies mid-way, replay finds the written rows clean
+(skipped) and the rest dirty (redone) — same finals either way.
+
+## Master (each tic, right after `bump`)
 
 ```
-// The master is the metronome — it is GUARANTEED to run. So liveness lives here, not in a
-// worker that may never ask.
-master → data_shard.reap()
+master → bump(master_tic + 1) on every shard in lockstep     // the tic advances everywhere at once
+master → data_shard.reap():
+    for row in state_log where a lease expired (tic::before(lease, master_tic)):
+        clear that worker_reference / observer_reference       // a dead worker's rows return
 master → data_shard.gc(t):
-    delete state_log rows with dirty == 0, slot-free, not the latest for their entity,
-    and older than the horizon        // tic::before, and the horizon must stay << TIC_WINDOW
-
+    delete state_log rows that are !dirty, not the latest for their entity, older than the horizon
+    // NEVER the latest per entity — that is every base. horizon must stay << TIC_WINDOW.
 master → event_shard.settle(t):
-    for e in event_log where (status.status == COMPLETE or status.flags & FAILED)
-        and tic::at_or_before(e.event_tic, t):
+    for e in event_log where (COMPLETE or FAILED) and tic::at_or_before(e.event_tic, t):
         if e.status.flags & PROMOTE:
-            // ONE ROW PER ZONE the event's targets occupy — so a client subscribed to any one
-            // of them sees the event, even though it reached across several.
-            for zone in distinct macro_position_reference of e's targets:
-                event.insert{ uid: event_uid(zone, e.event_tic, e.event_reference),
-                              macro_position_reference: zone,
-                              event_tic, event_reference, status, actions }
-        event_log.delete(e)          // THE QUEUE stays small — this is what keeps the
-                                     // worker's subscription cheap, permanently.
+            for zone in distinct macro_position of e's targets:    // one event row PER ZONE it touched
+                event.insert{ uid: event_uid(zone, e.event_tic, e.event_reference), ... }
+        event_log.delete(e)                                    // the queue stays small forever
 ```
 
-**There is no `promote(t)` sweep.** `state` and `event` are written only where a program asked, in
-`apply` and `settle`. A program that promotes nothing composes in `state_log`, settles in
-`event_log`, and no client sees a thing.
+**Promotion is opt-in.** `state` and `event` are written only where a program ran `PROMOTE_STATE` /
+`PROMOTE_EVENT`. A program that promotes nothing composes in `state_log`, settles in `event_log`, and
+no client ever sees it — the simulation can run entirely server-side.
+
+## Running behind
+
+Execution isn't tic-gated after assignment — a worker may still be composing N=3 at N=4, N=5, because
+its base (N=2 and earlier) persists. Per entity the chain is serial (N+1 blocks on N's row being
+clean); across entities it's parallel, and different tics can be different workers. So a stalled
+component holds up *its* entity's future, not the world's. Once it clears, downstream workers zip
+through the unblocked chain and catch up.
+
+The failure surface is **latency, not correctness**. If health hits 0 at N=3 and a heal was valid at
+N=4, the heal fails — and it fails whether computed on time or late, because validity is per *logical*
+tic, not wall-clock. Actions on an object that's logically dead get dropped; correct, occasionally
+surprising. Overloaded regions lag and self-heal; they don't corrupt.
 
 ---
 
 ## Why it is shaped this way
 
-1. **`status` and `worker_reference` are separate fields.** An early sketch assigned `"queueing"`
-   *to* `worker_reference`, so `WHERE worker_reference = self` could never match and the worker would
-   never receive the work it just requested. Assignment sets **both**.
-2. **The worker is not released mid-flow, but the phases still bump.** One worker carries an event
-   from `QUEUED` to `COMPLETE`, which is what allows early acquisition (T=1) — releasing between
-   phases would disarm the subscription exactly when it is needed. The phases remain because a worker
-   *can* die: reclaim rewinds to the phase's start, and only the status says which that is. Not
-   releasing removes the ownership gap in the happy path; it does not remove the edge case, and the
-   edge case is what the states are for.
-3. **Four servers per row, and the worker reads the row.** Every alternative fails: one
-   `worker_reference` column can't name the several workers touching a row; subscribing per target is
-   a bazillion subscriptions; subscribing per event collides when two events share a row in a tic.
-   The cap makes a fixed-width disjunction possible, and *that* is what deletes the hold table,
-   `ready`, and `base` — the worker computes from the row it is subscribed to. A slot is a worker
-   **address**, not a per-event lock: one worker holding a thousand events against a row takes one
-   slot, so the cap binds only on distinct workers, which is a partitioning question (§Open).
-4. **Ordering is by tic, and `dirty` is the signal.** A row at tic T may not be written while any
-   earlier tic for that entity is still dirty; the newest row with `dirty == 0` is the entity's
-   settled value. The worker can evaluate that itself because `request_state` gives it a slot on
-   **every** row for its targets — it holds the history, not a snapshot. `apply` re-checks, since a
-   worker may have computed from a base another worker has since dirtied underneath it.
-   (Within a single tic, see §Open.)
-5. **The write set comes from the program.** Every reference in `actions` is a `u32` carrying its
-   `server_id`, so the worker knows which shards to call without a `targets` column. No game
-   semantics in the spine — collecting operands is structural.
-6. **Reclaim + drop live in the module, not the worker.** Filtered subscriptions make an orphaned
-   row invisible to every other worker, so `claim`-on-lease-expiry is impossible. `request_work`
-   reclaims; the master's `reap` frees dead slots. A row nobody claims still fails.
-7. **Commit batches per data shard** (`Vec<TargetState>`), not per target. Per-target calls let a
-   row half-land; a row is atomic. Across shards it stays convergent (idempotent re-drive).
-8. **Execute has a late guard** (`event_tic <= master_tic → fail`), mirroring enqueue's. Without it
-   a late worker writes into a tic that was already promoted.
-9. **`event_log` = queue, `event` = log.** What keeps the worker's subscription small forever
-   instead of growing with history.
-10. **Execute at `event_tic - 1`, promote at `event_tic`.** A tic is sealed once no new event can
-    land on it: appends go to `master + 3`, so tic N is sealed at `master = N-2`. Executing at N-1 is
-    therefore safe and makes the value go live exactly on its tic.
-11. **Every tic comparison is `tic::` serial arithmetic, never `<`.** `tic` is a wrapping u16 ring —
-    `0` is *after* `65535`. `<` inverts across the wrap, which would stop the causality guard firing
-    and let promote miss its oldest rows. Ordering holds only within `TIC_WINDOW` (32767), which
-    bounds the GC horizon.
+1. **One worker per component dissolves the hard problem.** Same-entity contention, cross-entity
+   transactions, and conditionals were three faces of one thing: no single agent saw the whole
+   conflict set. The orchestrator gives one agent the whole component, so a transaction is just code,
+   and there is nothing to serialize because there is no second writer.
+2. **The completeness barrier is the load-bearing correctness piece.** Union-find on a *complete* set
+   is deterministic, so any orchestrator computes the same partition — which is why **exactly-one
+   orchestrator is not required**: two that both wait for completeness produce the same work-groups,
+   and a double worker-assignment is safe (idempotent writes). What is *not* safe is assigning on a
+   partial view — split `{a,b}` and `{c,d}`, then a late `(b,c)` reveals one component across two
+   workers, and they compute `a` from different subsets → corruption. So: **never assign before the
+   set is complete**; everything else may double.
+3. **Composition order is `event_reference`.** It is already a global total order (the server byte
+   keeps shards disjoint, the counter orders within). A worker sorts its component's events by it.
+   Deterministic, needs no orchestrator, survives failover trivially — it's a property of the events.
+4. **The block is a worker requirement, not a fence.** `A += B` reads B; B may be on another shard; so
+   A's shard cannot enforce "B settled." The worker can — it is subscribed to its read targets. Skip
+   the block and you read a stale B, write a wrong-but-clean A, and next tic composes on corruption.
+   (The store-enforceable alternative is two-phase — write tentative, verify all settled, then clear
+   dirty — more round trips. We take "block correctly" while workers are our own code.)
+5. **Absolute finals ⇒ idempotent replay.** One worker sees all of an entity's tic-T events, so it
+   writes the final value, not a delta. Replay recomputes the identical value from the immutable
+   `T-1`. No applied-event set, no dedup. Deltas were only ever needed when several workers each
+   contributed a piece to one row — the orchestrator removes that.
+6. **Spawns need deterministic ids.** An insert isn't idempotent by value. A spawned `entity_reference`
+   must be a pure function of `(event_reference, index)`, not a mutable counter, or a replay inserts a
+   duplicate. (Events use the counter; spawns must not.)
+7. **Fail, don't delay, on a missed grouping.** Spanning-at-N=2 only fires under orchestrator
+   overload. Fail sheds load; delay *re-injects* it (the event re-enters a future tic's grouping),
+   which spirals under sustained overload. Delay also reorders order-dependent actions and can't be
+   proven to terminate. Surface the drop to the player at the edge; don't hide it as a delay.
+8. **The queue is not the log.** `event_log` holds only in-flight work; `settle` moves terminal rows
+   to `event` and deletes them. That keeps every subscription (worker's, orchestrator's) small
+   forever instead of growing with history.
+9. **Every tic comparison is `tic::` serial arithmetic, never `<`.** `tic` is a wrapping u16 ring; `<`
+   inverts across the wrap. Ordering holds only within `TIC_WINDOW` (32767), which bounds the GC
+   horizon.
 
 ## Open
 
-- **Two events on one `(entity, tic)`.** Ordering *across* tics is settled: an earlier dirty tic
-  blocks a later one, and the worker can see it because it holds a slot on every row for the target.
-  *Within* one tic it isn't: two events with the same `event_tic` targeting the same entity are both
-  unblocked the moment the previous tic settles, and `dirty` counts them without ordering them.
-  Whether that can happen — and if so whether ascending `event_reference` breaks the tie — decides
-  whether anything more than `dirty` is needed.
-- **`POP`'d targets.** The write set must be known at enqueue (T=1); a `POP`'d operand has no value
-  until run time (T=2). So a program whose target arrives off the stack cannot have its slots
-  declared. Options in [`notes/actions.md`](../../notes/actions.md); the honest default is that a
-  written `entity_reference` must be literal.
-- ~~The word format.~~ **Decided** — [`ACTIONS.md`](../../ACTIONS.md). Action-leads-arity, so an
-  operand needs no tag; `ECHO`/`PUSH`/`POP` are the machine; the signature carries read-vs-write, so
-  both sets fall out of one scan and neither is a column.
-- **Partition policy.** `request_work` hands out an ascending batch, so two workers get disjoint
-  rows — but nothing makes a worker's rows *local*. This is what keeps the four-slot cap free:
-  batching every event that touches an entity onto one worker costs that entity one slot. Ungoverned,
-  five workers can want the same entity and the fifth fails on load rather than logic.
-- **Cold.** There is no cold tier in this design yet — no table, no `find-or-mint`. Resolving a
-  settled object to a live one at enqueue probably belongs in `declare_pending`, since the store can
-  see whatever cold turns out to be. Unshaped.
+- **Orchestrator assignment.** Which orchestrator owns tic T. Doubling is safe (§Why 2), so this needs
+  a good deterministic hint, not consensus. Leaning: the **master** assigns it per tic (singular,
+  lockstep, guaranteed to run, already reaps leases) rather than a per-shard `tic % len` vec, which
+  has `len`-change instability and cross-shard divergence. The orchestrator stays **stateless** — a
+  pure function of the shard-durable event set — so a replacement just recomputes.
+- **`POP`'d targets.** A written `entity_reference` must be statically known at grouping/enqueue, but a
+  `POP`'d operand has no value until run time. Default: a written target must be literal; `POP` is for
+  numbers and read operands. See [`notes/actions.md`](../../notes/actions.md).
+- **The world verb palette.** The machine + `PROMOTE_*` exist ([`ACTIONS.md`](../../ACTIONS.md)); no
+  gameplay verb does. Each needs a signature naming, per operand, written vs read.
+- **Worker eviction.** A hung worker holds its component until its lease expires and `reap` frees it;
+  the precise reclaim (and whether the orchestrator re-assigns or a fresh sweep does) is deferred.
+- **Cold.** No cold tier yet — no table, no `find-or-mint`. Where a settled object is resolved to a
+  live one is unshaped.

@@ -15,8 +15,9 @@ never hand-rolls a shift.
   `macro_position_reference | event_tic | event_reference`). Both are `VARIABLES.md` layouts with no
   implementation — the modules will need them on day one, and four hand-rolled shifts is how a
   nibble order gets reversed.
-- `event_status` / `state_status` pack + accessors (`flags:4 | status:4`) + the `QUEUED`/`QUEUEING`/
-  `QUEUE_SUCCESS`/`RUNNING`/`COMPLETE`, `FAILED`/`PROMOTE`, `OPEN`/`PROMOTED` constants.
+- `event_status` / `state_status` pack + accessors (`flags:4 | status:4`) + the constants:
+  `event_status.status` `QUEUED`/`GROUPED`/`ASSIGNED`/`RUNNING`/`COMPLETE`, flags `FAILED`/`PROMOTE`;
+  `state_status.status` `OPEN`/`PROMOTED`, flag `PROMOTE`.
 - **The action program** — [`ACTIONS.md`](../../ACTIONS.md). `action_reference` + the palette +
   arity, `pack`/read helpers for the stream, and a signature table (per operand: written / read /
   number) — that table is what the write and read sets are scanned out of, so it belongs here, not
@@ -36,85 +37,107 @@ mis-frames the rest — there is no re-sync point, so arity is wire.
 ## W2 · `event_shard` module — the queue + the log
 
 **Component:** `server/spacetime/server/modules/event_shard` only.
-**Surface it exposes:** reducers (`queue`, `request_work`, `enqueue_done`, `running`, `fail`,
-`complete`, `settle`) + the `event_log` / `event` tables.
-**Consumes:** `shared/codec` (W1). Calls `declare_pending` on a data shard — **stub it**; W2 does not
-build W3.
+**Surface it exposes:** reducers (`queue`, `assign`, `fail`, `running`, `complete`, `settle`) +
+`event_log` / `event`, and the shard-local **grouping** (`event_group`) + the completeness barrier.
+**Consumes:** `shared/codec` (W1). Calls **nothing** on other components — the orchestrator and workers
+call *it*.
 
 Plan: [`event_shard/plan/`](../../components/server/spacetime/modules/event_shard/plan/README.md).
-Phases 1–2 are unblocked; 3–4 scan `actions` per [`ACTIONS.md`](../../ACTIONS.md) to extract targets.
 
-**Done when**, with **no worker and no data shard in existence**:
-- `spacetime call queue` inserts a row whose `event_reference` is an `entity_reference`
-  (`server_reference:8 | ++counter:24`, *not* `auto_inc` on the column — that would increment the
-  server byte and destroy the global order), `event_tic == master_tic + 3`, `status.status == QUEUED`.
-- `request_work` assigns an ascending bounded batch, reclaims an expired lease **to the phase's
-  start**, and fails what can no longer make its tic.
+**Done when**, with **no orchestrator, worker, or data shard in existence**:
+- `queue` mints `event_reference` (`server_reference:8 | ++counter:24`, *not* column `auto_inc`),
+  stamps `event_tic = master + 3`, `orchestrator_reference`, latches `PROMOTE`, and unions the event
+  into an `event_group` by shared write-target.
+- A `queue` for a tic whose birth window has passed is **rejected**.
+- A group request for tic T is **refused until the shard has read master ≥ T-2** (the completeness
+  barrier) — prove the refusal, it's a correctness invariant.
 - `settle` writes **one `event` row per zone** the targets occupy, then deletes the queue row.
-- A filtered subscription actually delivers a row the reducer just stamped. **Prove this in W2** —
-  the entire model rests on it and every later item assumes it.
+- A filtered subscription (`WHERE orchestrator_reference = self`, `WHERE worker_reference = self`)
+  actually delivers a row the reducer just stamped. **Prove this** — the whole model rests on it.
 
 ---
 
 ## W3 · `data_shard` module — composition + state
 
 **Component:** `server/spacetime/server/modules/data_shard` only.
-**Surface it exposes:** reducers (`declare_pending`, `request_state`, `apply`, `reap`, `gc`) + the
-`state_log` / `state_events` / `state` tables.
+**Surface it exposes:** reducers (`claim`, `write`, `reap`, `gc`) + `state_log` / `state`.
 **Consumes:** `shared/codec` (W1). Independent of W2 — the two shards never call each other.
 
 Plan: [`data_shard/plan/`](../../components/server/spacetime/modules/data_shard/plan/README.md).
 
-**Do first, before any of it:** verify SpacetimeDB accepts
-`WHERE worker_a = 1 OR worker_b = 1 OR worker_c = 1 OR worker_d = 1`. Subscription SQL is a string
-subset that fails at **runtime**; if rejected, four subscriptions is the fallback. An hour now, or a
-redesign later.
+**Do first:** verify SpacetimeDB accepts
+`WHERE worker_reference = 1 OR observer_reference = 1`. String-subset SQL, fails at runtime; if
+rejected, two subscriptions is the fallback. Know before phase 2.
 
-**Done when**, with **no worker in existence**:
-- `declare_pending` creates the slot, increments `dirty`, pushes the `state_events` reverse index,
-  latches `PROMOTE`. Re-driving it does **not** double-count — idempotence is what lets a reclaimed
-  event redeclare.
-- `request_state` claims a slot on **every** row for the entity (that's what hands the worker the
-  history), stamps `lease_*`, and returns false on the fifth distinct worker.
-- `apply` composes, decrements `dirty`, rejects when an earlier tic for that entity is still dirty,
-  and `state.upsert`s only on `PROMOTE` + settled.
-- `reap` frees an expired slot; `gc` drops old settled rows.
+**Done when**, with **no orchestrator or worker in existence**:
+- `claim` creates `(E, tic)` (`dirty = true`), stamps `worker_reference` + lease, and stamps
+  `observer_reference` + lease on E's most-recent row `< tic`.
+- `write` requires caller == `worker_reference`, skips already-`!dirty` rows (replay-safe), sets the
+  absolute payload, clears `dirty`, and `state.upsert`s only on `PROMOTE` + not-yet-`PROMOTED`.
+- `write` is **idempotent** — call it twice with the same values, same result.
+- `reap` clears an expired role; `gc` drops old `!dirty` rows but **never the latest per entity**.
 
 ---
 
-## W4 · `server/worker` — the resolver
+## W4 · `server/orchestrator` — the grouper
+
+**Component:** a new `server/orchestrator` crate. An SDK client; it owns no tables.
+**Surface it consumes:** every event shard's group-serving + `assign` / `fail` (W2), and every data
+shard's `claim` (W3). Nothing consumes *it*.
+
+Per tic T: subscribe `event_log WHERE orchestrator_reference = self`; wait for a **complete** batch
+from every event shard (the barrier); union `event_group`s across shards into work-groups (merge any
+two sharing an entity); fail a straggler that still spans two; assign a worker per work-group; batch
+one `assign` per event shard and one `claim` per data shard.
+
+**Done when:** given events across ≥2 event shards whose targets span ≥2 data shards, it produces
+work-groups where **no entity appears in two groups**, and stamps exactly one worker per group onto
+the event + state rows. Prove the barrier: assigning before the batch is complete must be impossible
+(a late bridging event otherwise splits a component). Stays **stateless** — kill it mid-tic, a fresh
+one recomputes the identical partition.
+
+**Watch:** doubling is safe *only* because of the barrier — never assign on a partial view.
+
+---
+
+## W5 · `server/worker` — the resolver
 
 **Component:** a new `server/worker` crate. The old one was deleted; do not resurrect it.
-**Surface it consumes:** W2's and W3's reducers, via `spacetimedb-sdk`, plus its two subscriptions.
-Nothing else. It has no tables of its own and no other component talks to it.
+**Surface it consumes:** its two subscriptions + `data_shard.write` + `event_shard.complete`. Nothing
+else, and nothing consumes it.
 
-The whole flow in one process: `request_work` → declare the slots (targets read off `actions`, routed
-by each reference's top byte) → `enqueue_done` → claim `state_log` slots **early, in the same tic** →
-next tic, compute from the payload on the subscribed row → `apply` → `complete`.
+Per assigned work-group: block until every read target's previous row is `!dirty` (**the correctness
+requirement** — a local fence can't cover a cross-shard read); compose the whole component in scratch
+in `event_reference` order, from `< tic` bases; `write` absolute finals, one call per data shard;
+`complete`.
 
-**Done when:** one worker drives one event from `queue` to a composed `state_log` row against live
-modules — and its subscriptions are the only way it learns anything. If it reads a table it isn't
-subscribed to, the design is being violated, not extended.
+**Done when:** one worker drives one component from assigned → composed `state_log` rows against live
+modules, and its subscriptions are the only thing it reads. A cross-entity transaction
+(`bob.apples--, alice.apples++` across two data shards) resolves atomically-on-replay: kill the worker
+mid-`write` and a fresh assignment recomputes the identical finals.
 
-**Watch:** `blocked` is *not* worker state — it's "an earlier tic for my target is still dirty",
-read off rows it already holds. Defer and revisit; never spin, never block.
+**Watch:** never write a target while a read target is dirty — that's the corruption case. Defer the
+whole component; never partial-write.
 
 ---
 
-## W5 · `server/master` — the metronome
+## W6 · `server/master` — the metronome
 
 **Component:** a new `server/master` crate. The old one was deleted.
-**Surface it consumes:** `bump`, `settle`, `reap`, `gc`.
+**Surface it consumes:** `bump`, `settle`, `reap`, `gc`; also **assigns the orchestrator per tic**
+(the leaning resolution — it's singular, lockstep, guaranteed to run).
 
-Advances `master_tic` every `1/TIC_HZ`, then sweeps. Liveness lives here **because the master is the
-one thing guaranteed to run** — a worker may never ask.
+Advances `master_tic` every `1/TIC_HZ` on all shards in lockstep, then sweeps: `reap` expired roles,
+`settle` terminal events, `gc` old rows. Liveness lives here because the master is the one thing
+guaranteed to run.
 
-**Done when:** the tic advances, expired leases are reaped, terminal events settle, old slots are
-GC'd — and it survives the tic wrapping (u16, ~9h at 2 Hz). Every comparison is `tic::`, never `<`.
+**Done when:** the tic advances in lockstep, orchestrator assignment is stable per tic, leases reap,
+terminal events settle, old rows GC — and it survives the u16 wrap (~9h at 2 Hz). Every comparison
+`tic::`, never `<`.
 
 ---
 
-## W6 · `server/edge` — the door
+## W7 · `server/edge` — the door
 
 **Component:** `server/edge` only.
 **Surface it exposes:** the WS protocol to clients. **Consumes:** `event_shard.queue` and a zone
@@ -135,10 +158,10 @@ the client that is subscribed to its zone.
 
 ---
 
-## W7 · `client/core` — reconcile
+## W8 · `client/core` — reconcile
 
 **Component:** `client/core` only.
-**Surface it consumes:** the WS protocol (W6).
+**Surface it consumes:** the WS protocol (W7).
 
 It does not build today: `entity_ref_is_positional`, `entity_ref_reference_id` and `pack_hot_entity`
 are gone with the union. Its `StateRow` decode is the *old* pipeline's.
@@ -150,7 +173,7 @@ tag; the type now comes from the server byte (`entity_ref_type_id`). Port the in
 
 ---
 
-## W8 · `shared/wasm`, `client/npc`, `client/pixijs` — follow
+## W9 · `shared/wasm`, `client/npc`, `client/pixijs` — follow
 
 **Components:** three, done **one at a time**, in this order — each consumes only the one before.
 

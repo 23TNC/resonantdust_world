@@ -88,7 +88,9 @@ An `entity_reference` is realm-unique only via its `server_reference`; crossing 
 
 | alias | names |
 |---|---|
-| `worker_reference` | the worker owning a piece of work |
+| `worker_reference` | the worker that writes a piece of work |
+| `observer_reference` | the worker that reads a `state_log` row as its next tic's base |
+| `orchestrator_reference` | the orchestrator that groups a tic's events |
 | `shard_reference` | a shard |
 
 **Aliases of `realm_server_reference`** (u16):
@@ -166,14 +168,16 @@ u8 state_status                   state_log.status
   u4 status                       bits 0–3
 ```
 
-`event_status.status`: `QUEUED` 0 · `QUEUEING` 1 · `QUEUE_SUCCESS` 2 · `RUNNING` 3 · `COMPLETE` 4 —
-the phase. Reclaim rewinds to the phase's start, so each one has to exist.
+`event_status.status`: `QUEUED` 0 · `GROUPED` 1 · `ASSIGNED` 2 · `RUNNING` 3 · `COMPLETE` 4 — the
+phase. `QUEUED` = created; `GROUPED` = the shard put it in a local `event_group`; `ASSIGNED` = the
+orchestrator gave its work-group a worker; `RUNNING`/`COMPLETE` = the worker.
 `event_status.flags`: bit 0 `FAILED` · bit 1 `PROMOTE`.
 
 `state_status.status`: `OPEN` 0 · `PROMOTED` 1.
 `state_status.flags`: bit 0 `PROMOTE`.
 
-Settled is `state_log.dirty == 0`, not a status.
+Composition-settled is `state_log.dirty == false` (a boolean, one worker per component); `PROMOTED`
+is the separate fact that the value reached `state`.
 
 ---
 

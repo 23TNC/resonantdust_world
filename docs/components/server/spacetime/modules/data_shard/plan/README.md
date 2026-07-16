@@ -1,44 +1,58 @@
 # Plan — `data_shard` (nothing → built)
 
-_Last updated: 2026-07-15. Nothing is built. Active work:
+_Last updated: 2026-07-16. Nothing is built. Active work:
 [`work/spacetime-again/`](../../../../../../work/spacetime-again/README.md) W3._
+
+Flow: [`intent/spacetime-again/`](../../../../../../intent/spacetime-again/README.md). Shapes:
+[`TABLES.md`](../../../../../../TABLES.md). This module owns `state_log` (the composition slots) and
+`state` (client-visible latest). Reducers are called by the orchestrator (`claim`) and by workers
+(`write`); the master calls `reap` / `gc`.
 
 ## Do this first
 
-**Verify SpacetimeDB's subscription grammar accepts the disjunction:**
+**Verify SpacetimeDB's subscription grammar accepts the two-way disjunction:**
 
 ```sql
-SELECT * FROM state_log WHERE worker_a = 1 OR worker_b = 1 OR worker_c = 1 OR worker_d = 1
+SELECT * FROM state_log WHERE worker_reference = 1 OR observer_reference = 1
 ```
 
-Subscription SQL is a string and a subset — this fails at **runtime**, against a live DB, and no
-build gate catches it. If it's rejected, use **four subscriptions**, one per column: same rows, same
-cost, no redesign. Either way, know before phase 2.
+Subscription SQL is a string subset — it fails at **runtime**, against a live DB, no build gate. If
+rejected, use two subscriptions (one per column): same rows, same cost, no redesign. Know before
+phase 2.
 
 ## Phases
 
-1. **Tables.** `state_log` + `state_events` + `state` per
-   [`TABLES.md`](../../../../../../TABLES.md). `state_uid` is composite
-   (`reserved | entity_reference | tic`) — entity-major, and it *is* the key, so `entity_reference`
-   and `tic` are duplicated out as columns because a subscription filters on columns and a reducer
-   needs values.
-2. **`declare_pending` + `request_state`.** Slot creation + `dirty`; the reverse index in
-   `state_events`; claiming a `worker_*` slot **on every row for the entity** (that's what gives the
-   worker the history) and stamping the matching `lease_*`. Then confirm the subscription from §Do
-   this first actually delivers.
-3. **`apply`.** Compose, decrement `dirty`, re-check the block (an earlier tic for this entity still
-   dirty → reject), release slots, and `state.upsert` if `PROMOTE` and settled.
-4. **`reap` + `gc`.** Free slots whose `lease_*` expired; drop old settled rows. The GC horizon must
-   stay far below `TIC_WINDOW` (32767) or tic comparison silently inverts.
+1. **Tables.** `state_log` + `state`. `state_uid` is composite (`reserved | entity_reference | tic`),
+   entity-major, and *is* the key — so `entity_reference` and `tic` are duplicated out as columns
+   (a subscription filters on columns, a reducer needs values). `dirty` is a **boolean** (one worker
+   owns a component, so binary — not a count). Two role columns: `worker_reference` (writes),
+   `observer_reference` (reads as the next tic's base), each with a lease.
+2. **`claim`.** The orchestrator calls it per data shard. For each entity: find-or-create `(E, tic)`
+   (`dirty = true`), stamp `worker_reference` + lease; find E's most-recent row `< tic` (always exists
+   — the latest per entity is never GC'd) and stamp `observer_reference` + lease on it. Confirm the
+   §Do-first subscription actually delivers the two roles.
+3. **`write`.** The worker calls it, per shard, with **absolute final** values. Require caller ==
+   `worker_reference`. Skip a row already `!dirty` (a replay). Set payload, clear `dirty` (this
+   unblocks the observer). `state.upsert` if `PROMOTE` and not yet `PROMOTED`. **Idempotent by
+   construction** — absolute values from immutable `T-1`, so a re-execution writes the same thing.
+4. **`reap` + `gc`.** `reap`: clear a role whose lease expired. `gc`: drop `!dirty` rows that are
+   **not** the latest for their entity and older than the horizon. **Never the latest per entity** —
+   it is every base.
 
 ## Watch
 
-- **Every tic comparison is `tic::` serial arithmetic, never `<`.** `tic` is a wrapping u16 ring.
-  `<` inverts across the wrap: the causality guard stops firing and `gc` misses its *oldest* rows.
-- **`state.macro_position_reference` is a projection of the payload** and nothing enforces it. A row
-  where the two disagree is invisible in the zone it's in and visible in one it isn't. The move verb
-  is where that breaks.
+- **The block is the *worker's* job, and this module cannot enforce it.** `A += B` reads B, possibly
+  on another shard; `write(A)` can only check A's own chain, not B's dirtiness. Do **not** pretend a
+  local fence covers cross-shard reads — it doesn't, and a stale read writes a wrong-but-clean value.
+  The check `require(caller == worker_reference)` is the only fence here; correctness of the *base*
+  rests on the worker having blocked. (See intent §Why 4.)
+- **Every tic comparison is `tic::` serial arithmetic, never `<`.** Wrapping ring; `<` inverts.
+- **`state.macro_position_reference` is a projection of the payload**, unenforced. Disagreement makes a
+  row invisible in its real zone and visible elsewhere. The move verb is where that breaks.
+- **The GC horizon must stay `<< TIC_WINDOW` (32767)** or tic comparison silently inverts.
 
 ## Ties into
 
-`event_shard`'s plan — its phase 3 calls into phases 2–3 here.
+- **orchestrator** — calls `claim`.
+- **worker** (`server/worker`) — subscribes to `state_log`, calls `write`.
+- **master** — calls `reap` / `gc`. This module and `event_shard` never call each other.

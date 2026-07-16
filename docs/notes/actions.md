@@ -33,12 +33,12 @@ data — a constraint that would otherwise leak into `entity_reference` allocati
 
 ## The one real constraint: `POP`'d targets
 
-The write set must be known at **enqueue** (T=1). `declare_pending` stands up the `(entity, tic)`
-slots one tic *before* the program runs, so `dirty` is right and the composition can be ordered. But
-a `POP`'d operand has no value until run time (T=2).
+The write set must be known at **grouping** — the event shard unions events by shared write-target,
+and the orchestrator forms components from those targets, all before the program runs. But a `POP`'d
+operand has no value until run time.
 
-So a program whose target arrives via `POP` cannot have its slots declared. Three ways out, and this
-needs deciding before W4:
+So a program whose written target arrives via `POP` cannot be grouped. Three ways out, and this needs
+deciding:
 
 | | |
 |---|---|
