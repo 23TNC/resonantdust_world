@@ -240,9 +240,11 @@ without trusting the worker. We take "block correctly" while workers are our cod
 
 | | |
 |---|---|
-| **orchestrator assignment** | Which orchestrator owns tic T. Given the completeness barrier, doubling is safe (two orchestrators compute the same groups; assignment is idempotent), so it needs a good hint, not consensus — master-assigned is the leaning. See [`notes/tables.md`](notes/tables.md). |
+| **orchestrator assignment + liveness** | Which orchestrator owns tic T (doubling is safe, so a good hint suffices — master-assigned is the leaning), and how the master detects a dead orchestrator (heartbeat vs lease). |
 | **the world verb palette** | The machine + `promote_*` exist ([`ACTIONS.md`](ACTIONS.md)); no gameplay verb does. Each needs a signature naming, per operand, written vs read. |
-| **worker eviction** | A hung worker holds its component. Lease expiry frees it; the exact reclaim is deferred. |
+| **worker hang-detection** | Death is handled (re-`claim` overwrites the stamp); a *hung* worker needs the orchestrator to notice. In-memory liveness is the leaning, `event_log` lease the fallback. |
+| **`POP`'d targets** | A written target must be known at grouping, but a `POP`'d operand isn't. Default: a written `entity_reference` must be literal. See [`notes/actions.md`](notes/actions.md). |
+| **cold** | No cold tier — no table, no `find-or-mint`. Unshaped. |
 
 **Resolved and gone:** the four worker slots (→ worker + observer), `dirty`-as-count (→ boolean),
 `state_events` (the reverse index — no count to decrement), and B-2 "two events on one `(entity,
