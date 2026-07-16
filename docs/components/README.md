@@ -35,16 +35,18 @@ dead. It's the antidote to "I forget… which is why we need this."
   [`intent/spacetime-again/`](../intent/spacetime-again/README.md).
 
 ## `server/spacetime/server/modules/` — deployable ST modules
-- **players** — auth/login (`claim_or_login`) + player records.
-- **index** — the **directory + presence**: server registry + heartbeat/liveness (`servers`),
-  **player→server assignment = presence** (`player_servers`), GC. gateway reads it; edge registers
-  + heartbeats into it. Also holds the vestigial region→shard tier (`region_shards` / `shards`) —
-  see [`../notes/tables.md`](../notes/tables.md).
-- **chat** — chat messages.
-- **shard — ☠ GONE (2026-07-15).** The unified tick pipeline. Deleted with `server/spacetime/server/
-  pipeline` for a ground-up rebuild; nothing legacy was kept. Its replacement is designed in
-  [`intent/spacetime-again/`](../intent/spacetime-again/README.md) and shaped in
-  [`../TABLES.md`](../TABLES.md) — **not built**.
+_Map + conventions: [`server/spacetime/`](server/spacetime/README.md)._
+- **[players](server/spacetime/modules/players/)** — auth/login + player→shard routing. Live.
+- **[index](server/spacetime/modules/index/)** — directory + presence (`servers`,
+  `player_servers`); the gateway routes on it, the edge heartbeats into it. Its region→shard tier
+  is vestigial. Live.
+- **[chat](server/spacetime/modules/chat/)** — the message feed. Live; client link missing.
+- **[event_shard](server/spacetime/modules/event_shard/)** — the event queue + log. **Not built.**
+- **[data_shard](server/spacetime/modules/data_shard/)** — composition slots + client-visible
+  state. **Not built.**
+- **shard, pipeline — ☠ GONE (2026-07-15).** The unified tick pipeline, deleted for a ground-up
+  rebuild; nothing legacy kept. Replaced by `event_shard` + `data_shard` above, whose flow is
+  [`intent/spacetime-again/`](../intent/spacetime-again/README.md).
 - **cold_tiles / cold_things / experiment — ☠ GONE (2026-07-14).**
 
 ## `shared/` — shared crates (change here dictates how consumers operate)
@@ -85,9 +87,9 @@ Held as components because scripts are the foundation of how we develop.
 - The **dev/ reorg** (`bin/` → `dev/scripts/`) is proposed, not done.
 - Per lazy-create, per-component `{design,intent,current,plan}` folders come as we work each — so a
   component **listed above with no folder is normal**, not a gap; this map is its home until it
-  earns one. **Folders so far:** partial, as work touched them — `client/core`, `client/pixijs`,
-  `server/gateway`, `dev/{scripts,textures}`, `shared/codec` (a pointer only; its shapes live in
-  `VARIABLES.md`).
+  earns one. **Folders so far:** the five `server/spacetime` modules (intent + current/plan);
+  partial, as work touched them — `client/core`, `client/pixijs`, `server/gateway`,
+  `dev/{scripts,textures}`, `shared/codec` (a pointer only; its shapes live in `VARIABLES.md`).
 - **Cross-component shapes do not get component folders.** Variables live in
   [`../VARIABLES.md`](../VARIABLES.md), tables in [`../TABLES.md`](../TABLES.md), the reasoning in
   [`../notes/`](../notes/tables.md). A component doc that restates a layout is drift waiting to
