@@ -63,12 +63,12 @@ slot is grouped/claimed) or **read** (in the read set → the worker blocks on i
 | `PLACE` | 4 | 2 | `obj:entity_reference` (**write**) · `position:position_reference` (imm) — set `obj`'s position absolutely. |
 | `MOVE_TO` | 5 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — step `obj` one tile toward `dest`, then queue the next hop. |
 
-**`CREATE`.** A spawn insert isn't idempotent by value, so replay must not double-spawn. **OPEN**: how
-the minted `entity_reference` survives replay — a small spawn-log on the data shard keyed by
-`(event_reference, index) → minted id` (replay reads it) is the leaning, rather than deriving a
-24-bit `object_reference` from a 32-bit `event_reference`. Which data shard the new object lands on
-(spawn `position`'s zone) also needs pinning. The new entity is its own singleton component (nothing
-references it yet), so it never conflicts at grouping.
+**`CREATE`.** A spawn insert isn't idempotent by value, so replay must not double-spawn. **Resolved:**
+a small **spawn-log** on the data shard, keyed by `(event_reference, index) → minted entity_reference`
+— replay reads it instead of re-minting (a 32-bit `event_reference` can't derive a 24-bit
+`object_reference`, so it's recorded, not computed). The object lands on the data shard owning the
+spawn `position`'s zone. It's its own singleton component (nothing references it yet), so it never
+conflicts at grouping. The spawn-log table is added to `data_shard` *when `CREATE` is built*.
 
 **`PLACE`** is the absolute set. It is where the `state.macro_position_reference` invariant is
 enforced: writing a position in a new zone must promote the row with the **new** zone key, or the
@@ -83,16 +83,15 @@ continuation** `MOVE_TO obj dest` for the tic the object reaches the next tile. 
 ## Movement, and the client's tic estimate
 
 `MOVE_TO` is a self-perpetuating chain: each hop writes one tile and queues the next, until `dest`.
-Two capabilities it needs, both **OPEN**:
+Two capabilities it uses:
 
-- **A verb that queues an event.** `MOVE_TO`'s effect includes appending a future `MOVE_TO` to
-  `event_log`. This is the continuation primitive — baked into the verb for now, not a general `QUEUE`
-  action.
+- **A verb that queues an event.** `MOVE_TO`'s effect appends a future `MOVE_TO` to `event_log` —
+  baked into the verb, not a general `QUEUE` action (yet).
 - **Queue-at-a-future-tic.** The next hop lands `k` tics out (`k` = tics-per-tile from the object's
-  speed). So `queue` generalizes from `event_tic = master + 3` to `event_tic ≥ master + 3`. The
-  completeness barrier still holds — a tic's set is frozen at `T-2` regardless of *when* its events
-  were born, and the shard accepts an event for `V` while `master ≤ V-3`. **Speed has no home yet**:
-  tics-per-tile is per-kind (content-derived from `definition_reference`), and nothing stores it.
+  speed). So `queue` accepts `event_tic ≥ master + 3`, not exactly `+3`. The completeness barrier is
+  unaffected — a tic's set is frozen at `T-2` regardless of *when* its events were born, and the shard
+  accepts an event for `V` while `master ≤ V-3`. Speed is per-kind (from `definition_reference`); the
+  tics-per-tile values are content, settled when `MOVE_TO` is built.
 
 **Don't promote every hop.** Promoting `state` on each tile is exactly the per-tile fan-out we're
 avoiding — one `state` upsert per tile, streamed to every subscriber. Instead:
@@ -103,8 +102,9 @@ avoiding — one `state` upsert per tile, streamed to every subscriber. Instead:
   land the final tile. Not every continuation.
 
 So the initial program is `MOVE_TO obj dest PROMOTE_STATE PROMOTE_EVENT`; the self-queued
-continuations are bare `MOVE_TO obj dest`, promoting only on the re-anchor cadence (**OPEN**: every N
-tiles? first + last only?).
+continuations are bare `MOVE_TO obj dest`, promoting only on the re-anchor cadence. Default: first +
+final + every N tiles; the `N` is a bandwidth-vs-smoothness knob, tuned against a running client when
+`MOVE_TO` is built.
 
 **The client speculates without a synced tic.** We never synced a tic/clock with the server — `state`
 is simply the latest authoritative truth. `PROMOTE_EVENT` on a move gives the client the one thing

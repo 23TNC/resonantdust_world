@@ -67,23 +67,26 @@ Recorded in [`TABLES.md`](../../TABLES.md) §"The block is a worker requirement"
 
 ---
 
-## B-5 · The first verbs — CREATE / PLACE / MOVE_TO — OPEN
+## B-5 · The first verbs — CREATE / PLACE / MOVE_TO — NOT A BLOCKER (2026-07-16)
 
-Drafted in [`ACTIONS.md`](../../ACTIONS.md) §World. Enough to start; four sub-decisions before
-`MOVE_TO` runs (`PLACE` and the happy-path `CREATE` are buildable now):
+Mis-filed. A blocker needs *your* input and gates work; B-5's items are mostly mine to decide, and
+**none gate current work** — `PLACE` and `CREATE` are buildable now, `MOVE_TO` is far off, and the
+shard plumbing (W2/W3) touches no verb. Sorted:
 
-- **`CREATE`'s replay-safe id.** A spawn insert isn't idempotent. Leaning: a data-shard spawn-log
-  keyed by `(event_reference, index) → minted entity_reference`, so replay reads instead of
-  re-minting. Alternative — derive the id from the event — doesn't fit (32-bit `event_reference` → 24-bit
-  `object_reference`). Also: which data shard the new object lands on (spawn position's zone?).
-- **Movement speed.** `MOVE_TO` schedules the next hop `k` tics out, `k` = tics-per-tile — a per-kind
-  property with no home. Content-derived from `definition_reference` is the natural fit.
-- **A verb that queues an event.** `MOVE_TO`'s continuation appends a future `MOVE_TO`. Baked into the
-  verb for now; whether it generalizes to a `QUEUE` primitive is later.
-- **`event_tic ≥ master + 3`.** Generalizes `queue` from "exactly +3" so a hop can land further out.
-  The completeness barrier is unaffected (a tic freezes at `T-2` regardless of birth tic). Confirm.
-- **`PROMOTE_STATE` re-anchor cadence.** To avoid per-tile fan-out, continuations don't promote every
-  hop. Every N tiles? First + last only? A tuning knob — a gameplay/bandwidth call.
+**Decided (engineering, mine):**
+- **`CREATE`'s replay-safe id → spawn-log.** A small `data_shard` table keyed by `(event_reference,
+  index) → minted entity_reference`; replay reads it instead of re-minting. (Adds one internal table
+  to `data_shard` *when `CREATE` is built* — not before.) The new object lands on the data shard that
+  owns the spawn `position`'s zone.
+- **`MOVE_TO` bakes in the queue.** Its continuation appends a future `MOVE_TO` directly; no general
+  `QUEUE` action yet.
+- **`event_tic ≥ master + 3`** — confirmed. The barrier is unaffected (a tic freezes at `T-2`
+  regardless of when its events were born), so a hop can land further out.
 
-**Why yours:** these are gameplay + content-model decisions, not schema ones. The schemas don't change
-for any of them (except a spawn-log table, if that's the `CREATE` choice).
+**Deferred (content/tuning, settle when `MOVE_TO` renders — has a safe default, not blocking):**
+- **Speed** is per-kind, from `definition_reference`; the actual tics-per-tile values are content
+  authoring.
+- **`PROMOTE_STATE` cadence** defaults to first + final + every N tiles; the N is a bandwidth-vs-
+  smoothness knob to tune against a running client.
+
+These now live as notes in [`ACTIONS.md`](../../ACTIONS.md) §World / §Movement, not as a blocker.

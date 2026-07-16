@@ -244,9 +244,9 @@ surprising. Overloaded regions lag and self-heal; they don't corrupt.
   everything) and reclaims by re-assigning the component, which re-stamps `worker_reference` and
   fences the old worker out. There is **no lease on `state_log`**. What's unshaped is the exact
   hang-detection (a durable lease on `event_log` is the fallback if in-memory proves insufficient).
-- **The world verb palette.** `CREATE` / `PLACE` / `MOVE_TO` are drafted
-  ([`ACTIONS.md`](../../ACTIONS.md) §World). Their opens: `CREATE`'s replay-safe id (spawn-log
-  leaning) and spawn-shard; movement speed's home (per-kind); the `PROMOTE_STATE` re-anchor cadence;
-  and `MOVE_TO`'s two new capabilities — a verb that queues an event, and `event_tic ≥ master+3`.
+- **The world verb palette.** `CREATE` / `PLACE` / `MOVE_TO` are specified
+  ([`ACTIONS.md`](../../ACTIONS.md) §World); their engineering questions are decided (spawn-log for
+  `CREATE`, `MOVE_TO` bakes in queuing, `event_tic ≥ master+3`). What's left is content/tuning settled
+  when `MOVE_TO` is built — speed values and the `PROMOTE_STATE` cadence — not blocking.
 - **Cold.** No cold tier yet — no table, no `find-or-mint`. Where a settled object is resolved to a
   live one is unshaped.
