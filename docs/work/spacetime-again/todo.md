@@ -1,9 +1,9 @@
 # Todo — spacetime-again
 
-_Planned, not started. W1/W2/W3/W6 are done — see [`completed.md`](completed.md). Move an item to
+_Planned, not started. W1/W2/W3/W4/W6 are done — see [`completed.md`](completed.md). Move an item to
 `remaining.md` when you begin it. Ordered by dependency — each item's surface is what the next one
-consumes. W1/W2/W3/W4/W6 are done ([`completed.md`](completed.md)); **W5 (worker) is next** — its
-intake (assigned `event_log` + claimed `state_log` rows) is live, produced by the orchestrator._
+consumes. **W5 (worker) is next** — its intake (assigned `event_log` + claimed `state_log` rows) is
+live, produced by the orchestrator._
 
 ---
 
