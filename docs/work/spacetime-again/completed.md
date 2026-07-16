@@ -34,27 +34,30 @@ multi-data-shard `claim` routing (one shard today); orchestrator liveness/takeov
 (can't occur under single-pass union). New reusable `bin/sim` build/run path for the SDK-client sim
 crates (master/orchestrator/worker) — cached builder image, `build`/`check`/`run`/`stop`/`logs`.
 
-## W6 · `server/master` — the metronome ✓ 2026-07-16
+## W6 · `server/master` — the metronome (durable index clock) ✓ 2026-07-16
 
-New `server/master` crate — a tokio SDK client over `server/st-bindings`. Live-verified.
+New `server/master` crate — a tokio SDK client over `server/st-bindings`. Live-verified. Revised the
+same day to make the tic **durable**, per the user's design.
 
-- Advances `master_tic` every `1/TIC_HZ` on `event_shard` + `data_shard` in **lockstep** via each
-  shard's `bump` (absolute write; the master is the sole writer, so a call is self-correcting).
-- **Seeds from the persisted clock, never resets.** The startup bug: reading the clock before its
-  subscription applied returned 0 and clobbered the persisted tic. Fixed — wait for `on_applied` on
-  both clock subscriptions, seed a local counter once, then own it locally (never re-read). Verified
-  12→24 over 3 s at 4 Hz, both shards equal, no reset.
-- Sweeps each tic: `settle(next-3)` drains terminal events (a tic seals once no append can reach it —
-  appends land at master+3), `gc(next-GC_BEHIND)` every `GC_EVERY` tics.
-- u16 tic ring — `wrapping_add`; all comparison elsewhere is `tic::` serial math.
+- **The tic's one durable home is `index.master_clock` (per realm), not the shard clocks.** The
+  master runs the metronome and calls `index.bump_tic(realm)` — the reducer owns the increment, so
+  the master holds **no counter of its own**. It then copies the tic (low 16 bits) into the event/
+  data shard `clock` **mirrors** (`bump`) — the only manual fan-out, because modules can't subscribe
+  cross-DB — and sweeps: `settle(tic-3)`, `gc(tic-GC_BEHIND)` every `GC_EVERY` tics.
+- **Why the redesign:** the first cut seeded a local counter from a shard clock, which reset to 0 on
+  any shard redeploy (and hit a read-before-subscription-applied race). Now the authority lives on
+  the index (the singleton control-plane DB that isn't wiped with a shard).
+- **Live-verified durability:** (Test C) stop+restart the master → tic **continued** from the durable
+  80→89, not reset. (Test B) redeploy a shard → its mirror inits to 0, and the master re-stamps it to
+  the current tic on restart (259→269 lockstep). Steady state: all three clocks equal.
+- **Gap noted (future hardening):** a shard *destroyed* while the master keeps its now-dead SDK
+  connection isn't auto-restored (the fire-and-forget `bump` is silently dropped) — the normal
+  redeploy flow restarts the SDK-client binaries (as `rd redeploy --run` does), which reconnects and
+  re-stamps. Live SDK auto-reconnect on `on_disconnect` is deferred.
 
-**Deferred to when the orchestrator exists (W4):** orchestrator-per-tic assignment + dead-orchestrator
-reaping. The master is the guaranteed-to-run liveness owner, but there is no orchestrator to assign
-yet. Metronome + settle + gc are the live-verified core.
-
-Prerequisites folded into the same commit: `server/st-bindings` (shared SDK bindings crate);
-`clock` made `public` in both modules (an SDK client can't read a private table); regenerated edge
-bindings; TABLES.md documents `clock` as public.
+Also folded in earlier: orchestrator-per-tic assignment stayed deferred (single orchestrator now,
+master assigns it at standup — see W4). `server/st-bindings` shared bindings crate; `index` bindings
+added; `bin/sim` build/run path.
 
 ---
 

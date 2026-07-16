@@ -7,3 +7,4 @@
 //! Each `<module>/` is self-contained (its own `DbConnection` / `RemoteModule` / `Reducer`).
 pub mod event_shard;
 pub mod data_shard;
+pub mod index;

@@ -26,9 +26,10 @@ use spacetimedb_sdk::{DbContext, Table as _};
 use resonantdust_codec::action;
 use resonantdust_codec::status::{status_phase, EVENT_QUEUED};
 use resonantdust_codec::tic::{tic_add, tic_after};
-use resonantdust_st_bindings::{data_shard, event_shard};
+use resonantdust_st_bindings::{data_shard, event_shard, index};
 use data_shard::claim as _;
-use event_shard::{assign as _, ClockTableAccess as _, EventLogTableAccess as _};
+use event_shard::{assign as _, EventLogTableAccess as _};
+use index::MasterClockTableAccess as _;
 
 mod grouping;
 use grouping::group;
@@ -56,17 +57,36 @@ async fn main() {
 
     let uri = env_or("ST_URI", "http://127.0.0.1:3000");
     let self_ref = parse_u8(&env_or("ORCHESTRATOR", "0x61"), 0x61);
+    let realm = parse_u8(&env_or("REALM", "0"), 0);
     let workers: Vec<u8> = env_or("WORKERS", "0x62")
         .split(',')
         .map(|s| parse_u8(s.trim(), 0x62))
         .collect();
     let tic_hz: f64 = env_or("TIC_HZ", "2").parse().unwrap_or(2.0);
     let period = Duration::from_secs_f64(1.0 / tic_hz);
+    let index_db = env_or("INDEX_DB", "resonantdust-dev-index-0");
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");
     let data_db = env_or("DATA_DB", "resonantdust-dev-data-shard-0");
-    tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), ?workers, %event_db, %data_db, "orchestrator starting");
+    tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, ?workers, %index_db, %event_db, %data_db, "orchestrator starting");
 
-    // ── event shard: subscribe the clock + our own queue slice ──────────────────────
+    // ── index: the canonical tic. Every SDK-client server reads it here, not off a shard clock. ──
+    let (tx_i, rx_i) = std::sync::mpsc::channel::<()>();
+    let index = index::DbConnection::builder()
+        .with_uri(&uri)
+        .with_database_name(&index_db)
+        .on_connect(|_c, id, _t| tracing::info!(%id, "index connected"))
+        .on_connect_error(|_c, err| tracing::error!(%err, "index connect error"))
+        .build()
+        .expect("build index connection");
+    index.run_threaded();
+    index
+        .subscription_builder()
+        .on_applied(move |_| {
+            let _ = tx_i.send(());
+        })
+        .subscribe([format!("SELECT * FROM master_clock WHERE realm = {realm}")]);
+
+    // ── event shard: subscribe our own queue slice (tic comes from index, above) ─────
     let (tx_e, rx_e) = std::sync::mpsc::channel::<()>();
     let event = event_shard::DbConnection::builder()
         .with_uri(&uri)
@@ -81,10 +101,9 @@ async fn main() {
         .on_applied(move |_| {
             let _ = tx_e.send(());
         })
-        .subscribe([
-            "SELECT * FROM clock".to_string(),
-            format!("SELECT * FROM event_log WHERE orchestrator_reference = {self_ref}"),
-        ]);
+        .subscribe([format!(
+            "SELECT * FROM event_log WHERE orchestrator_reference = {self_ref}"
+        )]);
 
     // ── data shard: no subscription, just a call surface for `claim` ────────────────
     let data = data_shard::DbConnection::builder()
@@ -99,8 +118,11 @@ async fn main() {
     rx_e
         .recv_timeout(Duration::from_secs(5))
         .expect("event_shard subscription applied");
-    let m0 = event.db().clock().iter().next().map(|c| c.master_tic).unwrap_or(0);
-    tracing::info!(master = m0, "subscription applied; grouping");
+    rx_i
+        .recv_timeout(Duration::from_secs(5))
+        .expect("index master_clock subscription applied");
+    let m0 = index.db().master_clock().realm().find(&realm).map(|c| c.tic as u16).unwrap_or(0);
+    tracing::info!(master = m0, "subscriptions applied; grouping");
 
     // Refs we've already assigned this run — skips redundant (idempotent) reducer calls between the
     // assign and the cache reflecting ASSIGNED. Pruned each pass to what's still in the queue, so it
@@ -111,7 +133,7 @@ async fn main() {
     loop {
         ticker.tick().await;
 
-        let master = event.db().clock().iter().next().map(|c| c.master_tic).unwrap_or(0);
+        let master = index.db().master_clock().realm().find(&realm).map(|c| c.tic as u16).unwrap_or(0);
         let frozen_through = tic_add(master, 2); // T is frozen once master ≥ T-2, i.e. T ≤ master+2
 
         // Gather this pass's work: frozen, still QUEUED, not already assigned. Bucket per tic — only

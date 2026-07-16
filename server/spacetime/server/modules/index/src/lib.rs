@@ -233,6 +233,43 @@ const PLAYER_TTL_MS: u64 = 5 * 60 * 1_000;
 const GC_INTERVAL_MS: i64 = 30 * 1_000;
 
 /// Recurring schedule. Single row, seeded by [`init`].
+// ── the simulation clock (the master's tic, per realm) ─────────────────────────
+//
+// The one authoritative tic for a realm. The **master** advances it (`bump_tic`); every SDK-client
+// server (master, orchestrator, worker, edge) subscribes to its realm's row and reads the tic
+// straight from here — the subscription push IS the fan-out. The SpacetimeDB *modules* (event/data
+// shards) can't subscribe cross-database, so the master alone copies this tic into their local
+// `clock` mirrors. Living on the index (the one singleton control-plane DB) means the tic survives
+// any shard reset — a redeployed shard is re-stamped on the very next tic.
+//
+// `tic` is a `u32` absolute counter (won't wrap for ~68 years at 2 Hz); the shards take its low 16
+// bits as their `master_tic` ring. Nothing compares the u32 against a shard u16 — the truncation
+// happens only at the master's fan-out boundary.
+
+#[table(accessor = master_clock, public)]
+pub struct MasterClock {
+    #[primary_key]
+    pub realm: u8,
+    pub tic: u32,
+}
+
+/// Advance a realm's tic by one. The master calls this each metronome interval; it holds no counter
+/// of its own, so the durable row is the only tic that exists — a restart resumes from it. Creates
+/// the row at 1 on first call.
+#[reducer]
+pub fn bump_tic(ctx: &ReducerContext, realm: u8) -> Result<(), String> {
+    let next = ctx
+        .db
+        .master_clock()
+        .realm()
+        .find(realm)
+        .map(|c| c.tic.wrapping_add(1))
+        .unwrap_or(1);
+    ctx.db.master_clock().realm().delete(realm);
+    ctx.db.master_clock().insert(MasterClock { realm, tic: next });
+    Ok(())
+}
+
 #[table(accessor = gc_schedule, scheduled(index_gc))]
 pub struct GcSchedule {
     #[primary_key]
@@ -251,6 +288,10 @@ pub fn init(ctx: &ReducerContext) {
                 GC_INTERVAL_MS.saturating_mul(1_000),
             )),
         });
+    }
+    // Seed realm 0's clock so subscribers see a row before the master's first bump.
+    if ctx.db.master_clock().realm().find(0).is_none() {
+        ctx.db.master_clock().insert(MasterClock { realm: 0, tic: 0 });
     }
 }
 

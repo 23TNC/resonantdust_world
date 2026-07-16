@@ -69,6 +69,22 @@ writes `claim_or_login` · reads none
 writes edge `set_server` (20s beat) · gateway `assign_player` / `touch_player` / `release_player` ·
 reads gateway · sub `SELECT * FROM servers`, `SELECT * FROM player_servers` (gateway)
 
+### `master_clock` — the simulation tic authority (public)
+
+| column | type | key | notes |
+|---|---|---|---|
+| `realm` | `u8` | PK | one row per realm |
+| `tic` | `u32` | | absolute counter; won't wrap for ~68y at 2 Hz |
+
+The **one** durable tic for a realm. The **master** advances it (`bump_tic`) and holds no counter of
+its own, so a restart resumes from here — the tic survives any shard reset. Every SDK-client server
+(master, orchestrator, worker, edge) subscribes to its realm's row and reads the tic straight from
+here; the SpacetimeDB *modules* (event/data shards) can't subscribe cross-DB, so the master alone
+copies its low 16 bits into their `clock` mirrors. See [`the clock`](#clock--every-shards-tic-mirror).
+
+writes master `bump_tic` · reads every SDK-client server ·
+sub `SELECT * FROM master_clock WHERE realm = self`
+
 ---
 
 ## `chat`
@@ -96,12 +112,15 @@ writes `send_chat_message` · reads pixijs (via wasm core) — **not wired**, se
 | `index` | `gc_schedule` | scheduled stale server/pin reaping |
 | `event_shard` | `event_counter` | single row: the `++counter:24` for minting `event_reference` (private) |
 
-## `clock` — every shard's tic (public)
+## `clock` — every shard's tic (mirror)
 
-Each shard (`event_shard`, `data_shard`) owns a single-row **public** `clock` table:
-`{ id:u8 PK, master_tic:u16 }`. The **master** bumps it in lockstep across shards (`bump`); the
-**orchestrator** reads it (the completeness barrier is `master_tic ≥ T-2`) and the master reads it
-once at startup to seed its counter. Public because those readers are SDK clients.
+Each shard module (`event_shard`, `data_shard`) owns a single-row `clock` table:
+`{ id:u8 PK, master_tic:u16 }`. It is a **mirror** of `index.master_clock`, not an authority — a
+module can't subscribe cross-DB, so the **master** copies the tic's low 16 bits into it each tic
+(`bump`). The shard's reducers (`queue`, `settle`, `gc`) read it locally to compute `event_tic =
+master+3`, the sealed tic, and the GC horizon. Wiped on redeploy and re-stamped by the master's next
+fan-out (the durable value lives in `index.master_clock`). SDK-client servers (orchestrator, worker)
+read the tic from `index.master_clock`, **not** from here.
 
 ## Vestigial
 

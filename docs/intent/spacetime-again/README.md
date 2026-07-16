@@ -157,10 +157,18 @@ value is final regardless of them (reads are `< tic`), so its observer may proce
 `COMPLETE` until every row is written; if the worker dies mid-way, replay finds the written rows clean
 (skipped) and the rest dirty (redone) — same finals either way.
 
-## Master (each tic, right after `bump`)
+## Master (each tic)
+
+The tic's one durable home is **`index.master_clock`** (per realm), not the shard clocks. The master
+runs the metronome and calls `index.bump_tic(realm)` — it holds no counter of its own, so a restart
+resumes from the durable row and never resets. Every SDK-client server (orchestrator, worker, edge)
+subscribes to `index.master_clock` and reads the tic there; the subscription push *is* their fan-out.
+The SpacetimeDB **modules** (event/data shards) can't subscribe cross-DB, so the master alone copies
+the tic (low 16 bits) into their `clock` mirrors — that's the only manual fan-out — then sweeps.
 
 ```
-master → bump(master_tic + 1) on every shard in lockstep     // the tic advances everywhere at once
+master → index.bump_tic(realm)                               // advance the one durable authority
+master → bump(tic) on every shard MODULE                     // copy the authority into the mirrors
 // No state_log reap: worker liveness is the orchestrator's, and it reclaims by re-assigning the
 // component (re-stamping worker_reference). The master reaps only the ORCHESTRATOR (it owns that
 // assignment) — a dead orchestrator's tic gets a fresh one, which recomputes and re-assigns.
