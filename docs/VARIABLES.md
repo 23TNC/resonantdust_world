@@ -108,6 +108,11 @@ u64 state_uid                     the (entity, tic) slot — PK of state_log
   u16 reserved                    bits 48–63
   u32 entity_reference            bits 16–47
   u16 tic                         bits 0–15
+
+u64 event_uid                     the (zone, tic, event) row — PK of event
+  u16 macro_position_reference    bits 48–63
+  u16 event_tic                   bits 32–47
+  u32 event_reference             bits 0–31
 ```
 
 `entity_reference` above `tic`: **entity-major**. One entity's slots are contiguous; `(entity, tic)`
@@ -161,7 +166,8 @@ u8 state_status                   state_log.status
   u4 status                       bits 0–3
 ```
 
-`event_status.status`: `QUEUED` 0 · `QUEUEING` 1 · `RUNNING` 2 · `COMPLETE` 3 — the phase.
+`event_status.status`: `QUEUED` 0 · `QUEUEING` 1 · `QUEUE_SUCCESS` 2 · `RUNNING` 3 · `COMPLETE` 4 —
+the phase. Reclaim rewinds to the phase's start, so each one has to exist.
 `event_status.flags`: bit 0 `FAILED` · bit 1 `PROMOTE`.
 
 `state_status.status`: `OPEN` 0 · `PROMOTED` 1.

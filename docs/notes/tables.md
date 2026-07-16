@@ -122,15 +122,14 @@ scan returns 0…3 and **misses 65530…65535** — the oldest rows, the ones mo
 ordering can give a sound tic range while the tic is a ring, so `promote` scans and serial-compares
 regardless of layout, and `tic` costs nothing in the low bits.
 
-`entity_reference` doesn't wrap, so entity-major locality is real: one entity's slots are contiguous,
-which is what the read rule needs (below). Within an entity the rows still sort by raw tic — filter
-them with `tic::` serial comparison, not `<`. Cheap, because an entity's slot count is bounded by the
-GC horizon.
+`entity_reference` doesn't wrap, so entity-major locality is real: one entity's slots are contiguous.
+Within an entity the rows still sort by raw tic — filter with `tic::` serial comparison, not `<`.
+Cheap, because an entity's slot count is bounded by the GC horizon.
 
-**The read rule is why.** `refresh_ready`'s READ branch asks *"no `state_log` row `(entity, t)` with
-`t <= h.tic` and not settled"* — a per-entity question, and `refresh_ready` is the scheduler's hot
-path (every `apply`, every `acquire`). Entity-major gives it a range scan. `promote` runs once per tic
-from the master and has to walk the table anyway to find settled-and-not-promoted rows.
+**The blocking rule is why.** Everything hot is per-entity-across-tics: *"is any earlier tic for this
+entity still dirty?"* (the worker's block check, and `apply`'s re-check), and `request_state` claims a
+slot on **every** row for a target. Entity-major makes each a range scan. `promote` walks the table
+regardless — no key order can give a wrapping tic a sound range.
 
 **Why `entity_reference` and not `object_reference`.** The slot's 32 bits are an `entity_reference`
 (`server_reference:8 | object_reference:24`), not a bare `object_reference` (u24). The server half is
@@ -222,55 +221,33 @@ columns, and a reducer needs them as values — a packed field is neither. Same 
 `state.macro_position_reference` is duplicated out of `position_reference`. The `uid` stays the key;
 the columns are for working with.
 
-**Two things to check before building on this:**
+**A slot is a worker address, not a per-event lock.** One worker holding a thousand events against a
+row occupies one slot — the event shard can hand a worker a zillion inspections of a shared object
+and they cost that row one address. So the cap binds only when five *distinct workers* want one
+entity in one window, which is a partitioning question, not a contention one. With a single worker it
+is unreachable.
 
-1. **Does SpacetimeDB's subscription grammar accept a 4-way `OR`?** Subscription SQL is a subset, and
-   this design has no fallback if the answer is no — the whole shape rests on that one query.
-   Verifiable only against a live DB (see §The subscription hazard).
-2. **What happens to the fifth server?** The cap is a real bound on concurrency, not just a schema
-   convenience: a row that five servers want has no slot for the fifth. Failing its event is
-   correct-ish (the causality guard already fails events that miss their tic) but it means load, not
-   logic, can fail an event.
-
-### The per-event hold — tried, deleted (2026-07-15)
-
-An earlier `state_events` — `event_reference → worker_reference | lease_tic | Vec<entity_reference>`
-— tried to be *both* the write set and the worker's subscription in one per-event row. Deleted. The
-name came back for a different thing (above: internal, never subscribed), so keep the two apart. Two
-facts killed the per-event hold, and they still constrain anything that carries a hold:
-
-**`base` is per-target; the row was per-event.** The worker can't see `state_log`, so the value to
-compute from has to ride its hold (`vm.run(actions, base: hold.base, …)`). A row keyed by event, with
-a vector of entities, would need one `base` per element of that vector — the only field that varies
-*within* the vector. Every field that is genuinely per-event (`worker_reference`, `lease_tic`) fit
-fine; `base` is the one that doesn't. **Whatever holds `base` must be keyed per (target, tic).**
-
-**The composition head is a per-slot question.** `refresh_ready` needs `row.events.first()` — the
-lowest pending `event_reference` for `(entity, tic)` — and `apply` fences on the same value ("only
-the head may write"). A per-event table answers the transpose ("which entities does X touch?"), so
-the head would need a scan, and it still couldn't finish: no `tic` on the row, so an event landing on
-`(E, T)` is indistinguishable from one on `(E, T+1)`, and `event_tic` lives on the *event* shard,
-which a data shard cannot see. **Whatever answers the head must be keyed per (entity, tic) and know
-the tic.**
-
-Both point the same way: the data shard's per-slot relation is the load-bearing one. The per-event
-write set is a convenience for `withdraw_pending` / `release_holds` and can be derived from it.
-
-Decision #4 calls this ordering "the one property that must not be broken" — it's what makes
-multi-target events deadlock-free. So the head lookup needs a home. Three shapes that would give it
-one:
-
-| | |
-|---|---|
-| add `tic:u16` to `state_events` | Answers "does X touch E at T", still by scan. Cheapest edit, worst lookup. |
-| key it `(entity, tic)` again | i.e. the previous `state_uid`-keyed `events: Vec<u32>`. Answers the head directly; loses the per-event write set that `withdraw_pending` / `release_holds` want. |
-| keep both | The write set *is* the transpose of the pending lists. Two relations, one truth — they must not drift. |
-
-Nothing is built, so this costs a doc edit today and a scheduler bug later.
+**If the subscription grammar rejects the 4-way `OR`**, use four subscriptions — one per slot
+column. Same rows, same cost, no redesign.
 
 **`state.target_reference` → `entity_reference`** for the same vocabulary, though only `state_log` was
 named in the instruction — the two address the same thing and diverging names would be worse than the
 edit.
+
+### Ordering — by tic, not by a per-slot head
+
+An earlier sketch carried the design's `events : Vec<event_reference>` per slot, so the store could
+answer *"which event composes next here"*. That relation is gone and isn't needed. The rule is:
+
+> A row at tic T may not be written while any earlier tic for that entity is still dirty. The
+> entity's settled value is the newest row with `dirty == 0`.
+
+The worker evaluates that itself, because `request_state` gives it a slot on **every** `state_log`
+row for its targets — it holds the entity's history, not one slot. `apply` re-checks, since a worker
+may have computed from a base another worker dirtied underneath it in the meantime.
+
+That covers ordering *across* tics. Two events at the *same* `event_tic` on the same entity are a
+separate question — see the intent doc's §Open.
 
 ### `status : u8` = `flags:4 | status:4`
 

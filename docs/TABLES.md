@@ -132,21 +132,24 @@ See [`notes/tables.md`](notes/tables.md).
 
 | column | type | key | notes |
 |---|---|---|---|
-| `event_reference` | `u32` | PK | |
+| `uid` | `u64` | PK | `event_uid` — `macro_position_reference:16 \| event_tic:16 \| event_reference:32` |
 | `macro_position_reference` | `u16` | idx | the zone-subscription key |
 | `event_tic` | `u16` | | `tic` |
+| `event_reference` | `u32` | idx | the event; **not** unique here |
 | `status` | `u8` | | `event_status`, frozen — terminal only (`COMPLETE`, or `FAILED` on the phase it died in) |
 | `actions` | `Vec<u32>` | | frozen |
+
+**One row per zone the event's targets occupy** — an event touching three zones writes three rows.
+That is what lets a client subscribed to one zone see a **cross-zone** event that reaches into it,
+rather than only events wholly inside it. `event_reference` is therefore not the key and not unique;
+`uid` is.
 
 reads edge, client · workers never subscribe ·
 sub `SELECT * FROM event WHERE macro_position_reference = <zone>` (edge, per subscribed zone)
 
-The counterpart of `state`: zone-scoped and client-visible, so a client can see the events in its
-locality, not just their outcome. `event_log`'s queue mechanics (`worker_reference`, `lease_tic`) do
-not come across — they are in-flight state, and this row is settled.
-
-A row lands here **only** when a program says so, via a `promote_event` action. See
-[`notes/tables.md`](notes/tables.md).
+`event_log`'s queue mechanics (`worker_reference`, `lease_tic`) do not come across — they are
+in-flight state and this row is settled. A row lands here **only** when a program says so, via a
+`promote_event` action.
 
 ## `data_shard`
 
@@ -217,7 +220,7 @@ A row lands here **only** when a program says so, via a `promote_state` action.
 
 | | |
 |---|---|
-| **the composition head** | The lowest pending `event_reference` for a slot — `apply`'s order fence, and how a worker knows it's its turn. `dirty` is a count; it answers *how many*, not *which is next*. Decision #4 ("the one property that must not be broken") rests on it. |
+| **two events on one `(entity, tic)`** | Across tics, `dirty` at an earlier tic blocks a later one and the worker sees it. Within one tic, two events with the same `event_tic` on the same entity unblock together and `dirty` counts them without ordering them. |
 | **the read set** | Writes are recoverable from `actions` (each reference carries its `server_id`). Reads are not — telling which operands a verb *reads* needs `action_reads_actor`, which the design's §Open already flags. |
 | **`promote_state` / `promote_event`** | Named as actions, but the verb palette (`ACTION_MOVE` and friends) died with `event_word`. They land wherever the word format does. |
 
