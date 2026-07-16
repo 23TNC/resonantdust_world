@@ -23,16 +23,25 @@ The split is **how often it changes**, which decides whether it needs the tic pi
 | | **hot** (movers) | **cold** (terrain) |
 |---|---|---|
 | examples | pawns, players | biome-tiles, biome-things |
-| row key | `entity_reference` (u32) | `cold_row_reference` (u64 = `macro_position:16 \| type_reference:16 \| layer_id:4`) |
+| row key (u32, realm-unique) | `entity_reference` = `server_reference:8 \| object_reference:24` | `cold_row_reference` = `macro_position:16 \| layer_reference:8 \| server_reference:8` |
+| slot uid (u64) | `reserved:16 \| entity_reference:32 \| tic:16` | `reserved:16 \| cold_row_reference:32 \| tic:16` |
 | granularity | one **entity** per row | one **zone-layer** per row (a Vec of members) |
 | changes | every tic (movement) | rarely (worldgen seed; an occasional edit) |
-| write path | the composition pipeline (orchestrator → worker → absolute finals), promoted to `state` | **direct**: worldgen bulk-seeds, an edit reducer patches; the row **is** the client-visible value |
-| history | per-`(entity, tic)` slots (`state_log`) | current-value only (no tic slots) |
+| write path | the composition pipeline (orchestrator → worker → absolute finals), promoted to `state` | worldgen bulk-seeds; an edit — see §Open |
+| history | per-`(entity, tic)` slots (`state_log`) | current-value; per-tic slots only if edits run the pipeline |
 
-They **share**: the payload-generic storage, the **zone-keyed client subscription**
-(`WHERE macro_position_reference = <zone>`), and the module skeleton. They **differ** in the write
-path — hot runs the pipeline (built: `spacetime-again`), cold writes directly. See §Open for whether
-cold *edits* should also flow through the pipeline.
+**The key is realm-unique in a `u32`** (realm is the shard's, never per reference), so the slot uid is
+the **same `u64` for both** — `reserved:16 \| key:32 \| tic:16`, `u16` reserved to spare. The
+composition core treats the key as an **opaque realm-unique u32**; only its *interpretation* differs.
+So `state_log` is one shape parameterized by payload alone. (This replaces the old `u64`
+`cold_row_reference` in [`VARIABLES.md`](../../VARIABLES.md) — the `u16 type_reference` was the fat
+part; `layer_reference:8` + `server_reference:8` carries the same in half the bits. **Consequence:**
+the row no longer carries `subtype_id:12` — if a cold row ever needs subtype, it moves to the per-entry
+`kind_reference` or the layer. Confirm when VARIABLES is revised.)
+
+They **share**: the payload-generic storage, the identical `state_log` slot, the **zone-keyed client
+subscription** (`WHERE macro_position_reference = <zone>`), and the module skeleton. They **differ**
+only in the write path — hot runs the pipeline (built: `spacetime-again`); cold's is §Open.
 
 ---
 
@@ -109,9 +118,10 @@ VARIABLES) + `seed`/`patch` reducers + the zone subscription. `hot` expands to t
 2. **Generalization mechanism:** `decl_shard!` macro (recommended — type-safe, zero-cost, "a bunch of
    modules" is literal) vs a raw-bytes payload column each module reinterprets (fewer modules, loses
    the typed schema) vs one enum payload (one module, all types coupled). Recommend the macro.
-3. **Slot key width for a cold composition (only if §Open 1 = b):** `(entity, tic)` is `u64`
-   (`reserved:16 | entity:32 | tic:16`). A cold row key is already `u64`; `(cold_row, tic)` needs a
-   `u128` uid or a narrower cold key. Decide when 1 is decided.
+3. ~~Slot key width for a cold composition.~~ **Dissolved** — the cold row key is `u32`
+   (`macro_position:16 | layer_reference:8 | server_reference:8`), realm-unique, so `(key, tic)` is
+   the *same* `u64` `state_uid` as hot (`reserved:16 | key:32 | tic:16`). No wider uid; the machinery
+   is literally one shape. Requires revising `cold_row_reference` `u64 → u32` in VARIABLES.
 4. **Where the core crate lives:** `shared/shard` (new, bind-mounted like `shared/codec`) vs folding
    into `shared/codec`. Recommend a dedicated crate — it pulls `spacetimedb`, which `codec` doesn't.
 5. **One module per type, or grouped by regime?** e.g. all cold types in one module keyed by
