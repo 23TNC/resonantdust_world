@@ -119,7 +119,7 @@ Shapes to build **to**. No module implements them yet. The flow that uses them i
 | `event_reference` | `u32` | PK | `entity_reference`, `type_id` = `TYPE_EVENT`. Ascending = composition order. |
 | `worker_reference` | `u8` | idx | subscription key. `SERVER_REF_NONE` = unassigned |
 | `event_tic` | `u16` | idx | `tic` — wraps |
-| `status` | `u8` | idx | `QUEUED` `QUEUEING` `RUNNING` `COMPLETE` `QUEUE_FAILED` `FAILED` |
+| `status` | `u8` | idx | `event_status` — `flags:4 \| status:4`. Phase in `status`, `FAILED` / `PROMOTE` in `flags`. |
 | `actions` | `Vec<u32>` | | the RPN program; **word format undefined** |
 | `lease_tic` | `u16` | | `tic` — assignment expiry; the reclaim clock |
 
@@ -135,7 +135,7 @@ See [`notes/tables.md`](notes/tables.md).
 | `event_reference` | `u32` | PK | |
 | `macro_position_reference` | `u16` | idx | the zone-subscription key |
 | `event_tic` | `u16` | | `tic` |
-| `status` | `u8` | | terminal only: `COMPLETE` · `QUEUE_FAILED` · `FAILED` |
+| `status` | `u8` | | `event_status`, frozen — terminal only (`COMPLETE`, or `FAILED` on the phase it died in) |
 | `actions` | `Vec<u32>` | | frozen |
 
 reads edge, client · workers never subscribe ·
@@ -176,7 +176,7 @@ Payload = the reference model's three orthogonal references, carried by both `st
 | `lease_d` | `u16` | | |
 | `dirty` | `u8` | | count of events holding this slot. `0` = settled |
 | *payload* | | | composed so far; seeded from the resolved value at `< tic` |
-| `flags` | `u8` | | bit 0 `PROMOTED` |
+| `status` | `u8` | | `state_status` — `flags:4 \| status:4` |
 
 sub `SELECT * FROM state_log WHERE worker_a = <self> OR worker_b = <self> OR worker_c = <self> OR
 worker_d = <self>` (worker) — the worker's window into a data shard.

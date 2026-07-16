@@ -272,16 +272,26 @@ Nothing is built, so this costs a doc edit today and a scheduler bug later.
 named in the instruction — the two address the same thing and diverging names would be worse than the
 edit.
 
-### `failed` dropped — folded into `status`
+### `status : u8` = `flags:4 | status:4`
 
-Pure redundancy: every site that set `failed = true` also set `status = QUEUE_FAILED`
-(`e.status = QUEUE_FAILED ; e.failed = true`), and the terminal-state query already reads
-`status in (COMPLETE, QUEUE_FAILED)`. The bool never carried information the status didn't.
+Both logs carry one. `status` is *where it is*; `flags` is *what was asked of it or happened to it*.
+The split does real work rather than just packing:
 
-`FAILED` was added alongside `QUEUE_FAILED` because the design's enum has no terminal value for the
-**execute**-phase failure its T=2 `event_shard.fail(e.event_reference)` triggers — the enum only
-covers the enqueue path. Keeping the two distinct preserves which phase failed, which the old
-`status` carried and a single flag would have lost.
+**`QUEUE_FAILED` and `FAILED` collapse into one `FAILED` flag.** They were two terminal states whose
+only difference was *which phase* died. With the phase already in `status`, the flag says failed and
+`status` says where — `QUEUEING|FAILED` is the old `QUEUE_FAILED`, `RUNNING|FAILED` the old `FAILED`.
+An earlier `failed : bool` beside a `QUEUE_FAILED` status was the same information twice; this is it
+once, and it keeps the phase, which a lone bool lost.
+
+`event_status.status` is then just the phase — `QUEUED → QUEUEING → RUNNING → COMPLETE` — four
+values in a nibble that holds sixteen.
+
+**`PROMOTE` is a flag, `PROMOTED` a status.** One is a request, the other a fact. `PROMOTE` is
+latched from the program at `queue` (event) and at `declare_pending` (each slot, sticky — one event
+asking is enough). `state_status.status = PROMOTED` is set by `apply` once the slot settles, which
+keeps promotion idempotent.
+
+**Settled stays `dirty == 0`** — not duplicated into `status`. One source.
 
 **Still open in the design itself** (not translation gaps): partition policy, read-set derivation,
 `base` copy cost, and where cold `find-or-mint` lives. See the intent doc's §Open.

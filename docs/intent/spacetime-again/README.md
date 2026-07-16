@@ -52,13 +52,15 @@ server.edge  validates (authenticated · owns the object · legal verb · rate)
 server.edge  → event_shard.queue(actions):
     event_log.insert{ event_reference : shard mints (server_reference:8 | ++counter:24),
                       event_tic       : tic::add(master_tic, TIC_GAP)          // +3
-                      status          : QUEUED,
+                      status          : { status: QUEUED,
+                                          flags: actions has promote_event ? PROMOTE : 0 },
                       worker_reference: SERVER_REF_NONE,
                       lease_tic       : 0,
                       actions }
 
 // No targets/reads columns. Every reference in `actions` is a u32 whose top byte is the
 // server_id that homes it, so the write set is read off the program.
+// PROMOTE is latched here, from the program: whoever composes it knows whether it asked.
 ```
 
 ## T=1 — assign, then enqueue
@@ -71,57 +73,59 @@ worker → event_shard.request_work(self.server_reference, max_batch):
     now = master_tic
 
     // 1. RECLAIM expired assignments (a worker died mid-flight).
-    for e in event_log where status in (QUEUEING, RUNNING) and tic::before(e.lease_tic, now):
+    for e in event_log where status.status in (QUEUEING, RUNNING) and tic::before(e.lease_tic, now):
         e.worker_reference = SERVER_REF_NONE
-        e.status = QUEUED                    // rewind to the start: one worker owns the whole flow
+        e.status.status = QUEUED             // rewind to the start: one worker owns the whole flow
         // its state_log slots expire on their own lease_*; see data_shard.reap()
 
     // 2. DROP what can no longer make its tic — the causality guard. In the module, NOT
     //    the worker: a row nobody claimed must still fail, or it rots silently.
-    for e in event_log where status in (QUEUED, QUEUEING) and tic::at_or_before(e.event_tic, now):
-        e.status = QUEUE_FAILED
+    for e in event_log where status.status in (QUEUED, QUEUEING) and tic::at_or_before(e.event_tic, now):
+        e.status.flags |= FAILED          // status keeps the phase it died in
 
     // 3. ASSIGN — bounded batch, ascending, only what is runnable THIS tic.
     n = 0
     for e in event_log where worker_reference == SERVER_REF_NONE order by event_reference:
         if n >= max_batch: break
-        if e.status == QUEUED and tic::at_or_before(e.event_tic, tic::add(now, 2)):
-            e.status           = QUEUEING
+        if e.status.status == QUEUED and tic::at_or_before(e.event_tic, tic::add(now, 2)):
+            e.status.status    = QUEUEING
             e.worker_reference = requester
             e.lease_tic        = tic::add(now, LEASE)
             n += 1
     // assigned rows now enter the requester's subscription. It acts on them next pass.
 
 // ── enqueue: stand the slots up, then KEEP the event ──────────────────────────────
-for e in worker.event_log where status == QUEUEING:
+for e in worker.event_log where status.status == QUEUEING:
     if tic::at_or_before(e.event_tic, master_tic):                    // missed the window
-        worker → event_shard.fail(e.event_reference, QUEUE_FAILED) ; continue
+        worker → event_shard.fail(e.event_reference) ; continue      // flags |= FAILED
 
     targets = entity references in e.actions            // top byte = the shard that homes it
     ok = true
     for target in targets:
-        ok &= worker → home_shard(target).declare_pending(e.event_reference, e.event_tic, target)
+        ok &= worker → home_shard(target).declare_pending(e.event_reference, e.event_tic, target,
+                                                          promote: e.actions asks promote_state(target))
     if !ok:
         for target in targets: home_shard(target).withdraw_pending(e.event_reference, target)
-        worker → event_shard.fail(e.event_reference, QUEUE_FAILED) ; continue
+        worker → event_shard.fail(e.event_reference) ; continue      // flags |= FAILED
 
     worker → event_shard.running(e.event_reference)
-        // status = RUNNING. worker_reference is NOT cleared — the SAME worker executes.
+        // status.status = RUNNING. worker_reference NOT cleared — the SAME worker executes.
         // Releasing here would disarm the subscription exactly when it is needed (below).
 
 // ── acquire EARLY: allowed any time the worker holds a RUNNING event ─────────────
 // This is why the worker is not released. It claims next tic's rows during THIS tic, so
 // the data has already arrived over the subscription when the execute tic comes.
-for e in worker.event_log where status == RUNNING:
+for e in worker.event_log where status.status == RUNNING:
     for shard, group in targets(e).group_by(home_shard):
         worker → shard.request_state(self.server_reference, e.event_tic, group)
 
-data_shard.declare_pending(event_reference, tic, entity_reference) -> bool:
+data_shard.declare_pending(event_reference, tic, entity_reference, promote) -> bool:
     uid = state_uid(entity_reference, tic)
     row = state_log.find_or_create(uid)     // payload seeded from the resolved value at < tic
     if event_reference not already holding row:
         row.dirty += 1                                       // dirty = events holding this slot
         state_events[event_reference].uid.push(uid)          // the reverse index; internal
+    if promote: row.status.flags |= PROMOTE   // sticky: any event asking is enough
     return true
 
 data_shard.request_state(worker, tic, entities) -> bool:
@@ -138,9 +142,9 @@ data_shard.request_state(worker, tic, entities) -> bool:
 ## T=2 — execute
 
 ```
-for e in worker.event_log where status == RUNNING:
+for e in worker.event_log where status.status == RUNNING:
     if tic::at_or_before(e.event_tic, master_tic):    // the tic is sealed — too late to write it
-        worker → event_shard.fail(e.event_reference, FAILED) ; continue
+        worker → event_shard.fail(e.event_reference) ; continue      // flags |= FAILED
     if e.event_tic != tic::add(master_tic, 1): continue        // execute exactly one tic early
 
     // 1. ORDER: only the head event of a slot may compose. Defer, never block —
@@ -169,12 +173,12 @@ data_shard.apply(event_reference, tic, results: Vec<TargetState>) -> bool:
         state_events[event_reference].uid.remove(row.uid)
 
         // Visibility is opt-in: the program asked, and the slot has no events left.
-        if r.promote_state and row.dirty == 0 and !(row.flags & PROMOTED):
+        if (row.status.flags & PROMOTE) and row.dirty == 0 and row.status.status != PROMOTED:
             state.upsert(entity_reference          : r.entity_reference,
                          macro_position_reference  : macro_of(r.payload.position_reference),
                          tic                       : tic,
                          payload                   : r.payload)
-            row.flags |= PROMOTED
+            row.status.status = PROMOTED
     release_slots(event_reference)             // free its worker_a..d slots + leases
     return true
 
@@ -195,9 +199,9 @@ master → data_shard.gc(t):
     and older than the horizon        // tic::before, and the horizon must stay << TIC_WINDOW
 
 master → event_shard.settle(t):
-    for e in event_log where status in (COMPLETE, QUEUE_FAILED, FAILED)
+    for e in event_log where (status.status == COMPLETE or status.flags & FAILED)
         and tic::at_or_before(e.event_tic, t):
-        if e asked promote_event:
+        if e.status.flags & PROMOTE:
             event.insert{ event_reference, macro_position_reference, event_tic, status, actions }
         event_log.delete(e)          // THE QUEUE stays small — this is what keeps the
                                      // worker's subscription cheap, permanently.

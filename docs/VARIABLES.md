@@ -149,6 +149,28 @@ identity. Reconstruction: `definition_reference` = row's `type_reference` + entr
 
 ---
 
+## Status bytes
+
+```
+u8 event_status                   event_log.status, event.status
+  u4 flags                        bits 4–7
+  u4 status                       bits 0–3
+
+u8 state_status                   state_log.status
+  u4 flags                        bits 4–7
+  u4 status                       bits 0–3
+```
+
+`event_status.status`: `QUEUED` 0 · `QUEUEING` 1 · `RUNNING` 2 · `COMPLETE` 3 — the phase.
+`event_status.flags`: bit 0 `FAILED` · bit 1 `PROMOTE`.
+
+`state_status.status`: `OPEN` 0 · `PROMOTED` 1.
+`state_status.flags`: bit 0 `PROMOTE`.
+
+Settled is `state_log.dirty == 0`, not a status.
+
+---
+
 ## Enumerations
 
 **`type_id : u4`** — append-only.
