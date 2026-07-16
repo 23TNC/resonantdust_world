@@ -1,30 +1,9 @@
 # Todo — spacetime-again
 
-_Planned, not started. W1/W2/W3/W4/W6 are done — see [`completed.md`](completed.md). Move an item to
+_Planned, not started. W1-W6 are done — see [`completed.md`](completed.md). Move an item to
 `remaining.md` when you begin it. Ordered by dependency — each item's surface is what the next one
-consumes. **W5 (worker) is next** — its intake (assigned `event_log` + claimed `state_log` rows) is
-live, produced by the orchestrator._
-
----
-
-## W5 · `server/worker` — the resolver
-
-**Component:** a new `server/worker` crate. The old one was deleted; do not resurrect it.
-**Surface it consumes:** its two subscriptions + `data_shard.write` + `event_shard.complete`. Nothing
-else, and nothing consumes it.
-
-Per assigned work-group: block until every read target's previous row is `!dirty` (**the correctness
-requirement** — a local fence can't cover a cross-shard read); compose the whole component in scratch
-in `event_reference` order, from `< tic` bases; `write` absolute finals, one call per data shard;
-`complete`.
-
-**Done when:** one worker drives one component from assigned → composed `state_log` rows against live
-modules, and its subscriptions are the only thing it reads. A cross-entity transaction
-(`bob.apples--, alice.apples++` across two data shards) resolves atomically-on-replay: kill the worker
-mid-`write` and a fresh assignment recomputes the identical finals.
-
-**Watch:** never write a target while a read target is dirty — that's the corruption case. Defer the
-whole component; never partial-write.
+consumes. **W7 (edge) is next** — the simulation core (W1-W6) is live end-to-end; the edge is the
+door: client requests → `event_shard.queue`, and zone subscriptions on `state`/`event` → client._
 
 ---
 

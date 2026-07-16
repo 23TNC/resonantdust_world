@@ -5,6 +5,35 @@ carried out — the "done when" bar it cleared._
 
 ---
 
+## W5 · `server/worker` — the resolver ✓ 2026-07-16
+
+New `server/worker` crate — a tokio SDK client over `server/st-bindings` + `shared/codec`.
+Live-verified against the full stack (master + orchestrator + both shards).
+
+- **Subscriptions are its assignment:** `event_log WHERE worker_reference = self` (its programs),
+  `state_log WHERE worker_reference = self OR observer_reference = self` (its slots + their bases),
+  `index.master_clock` (the tic). It owns no tables.
+- **Per assigned event tic** (ascending serial order): **block** if any target's base (`< tic`) is
+  still `dirty` (defer the whole tic — never partial-write); **compose** scratch from each target's
+  base, applying every event's program in ascending `event_reference` order; **write** absolute
+  finals (`data_shard.write`, one call per data shard); **complete** each event with the zones its
+  targets ended up in (`event_shard.complete`).
+- **Verbs:** `PLACE` (set position), `MOVE_TO` (arrive — multi-tile stepping + self-requeue is the
+  movement-content follow-up), `PROMOTE_STATE` (flag for promotion). `CREATE` deferred (its minted
+  id isn't a write operand, so no slot is claimed yet — needs the orchestrator's spawn-id claim).
+- **Live proof:**
+  - single-entity component (`PROMOTE_STATE A, PLACE A`) → composed, `state_log` clean, `state`
+    promoted with `macro_position` derived from the position;
+  - **cross-entity event** (`…B…C` in one program) → both B and C composed at one tic, both promoted
+    — the transaction is ordinary sequential code in one worker;
+  - **serial chain** — a later-tic `MOVE_TO A` composed from A's earlier clean base (A: tic 522 →
+    tic 727, `state` moved zones);
+  - **opt-in promotion** — `PROMOTE_STATE` populates `state`; `event` stays empty (no `PROMOTE_EVENT`);
+    `event_log` drains via `settle`;
+  - **stateless takeover / idempotent replay** — with the worker **down** the orchestrator still
+    claimed the dirty slot; a fresh worker instance picked up the durable assigned work and drove it
+    to completion (absolute writes + skip-clean = replay-safe).
+
 ## W4 · `server/orchestrator` — the grouper ✓ 2026-07-16
 
 New `server/orchestrator` crate — a tokio SDK client over `server/st-bindings` + `shared/codec`.
