@@ -96,6 +96,7 @@ writes `send_chat_message` · reads pixijs (via wasm core) — **not wired**, se
 | `index` | `gc_schedule` | scheduled stale server/pin reaping |
 | `event_shard` | `clock` | single row: current `master_tic`, read by the shard, bumped by the master |
 | `event_shard` | `event_counter` | single row: the `++counter:24` for minting `event_reference` |
+| `data_shard` | `clock` | single row: current `master_tic` (same shape; the master bumps every shard's) |
 
 ## Vestigial
 

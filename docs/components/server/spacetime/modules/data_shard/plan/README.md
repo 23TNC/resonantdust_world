@@ -8,17 +8,11 @@ Flow: [`intent/spacetime-again/`](../../../../../../intent/spacetime-again/READM
 `state` (client-visible latest). Reducers are called by the orchestrator (`claim`) and by workers
 (`write`); the master calls `gc`.
 
-## Do this first
+## Do this first — DONE (2026-07-16)
 
-**Verify SpacetimeDB's subscription grammar accepts the two-way disjunction:**
-
-```sql
-SELECT * FROM state_log WHERE worker_reference = 1 OR observer_reference = 1
-```
-
-Subscription SQL is a string subset — it fails at **runtime**, against a live DB, no build gate. If
-rejected, use two subscriptions (one per column): same rows, same cost, no redesign. Know before
-phase 2.
+SpacetimeDB **accepts** the two-way disjunction as a subscription and **delivers** it — verified live:
+`SELECT * FROM state_log WHERE worker_reference = 17 OR observer_reference = 17` returned the owning
+row in its initial update. No two-subscription fallback needed.
 
 ## Phases
 
