@@ -37,6 +37,16 @@ pub enum ClientMsg {
     /// [`ServerMsg::Pong`], echoing `client_send_ms` and adding its own clock, so
     /// the client can estimate the offset from the round-trip.
     Ping { client_send_ms: u64 },
+    /// Client intent: an action program to queue into the simulation. The edge validates it (logged
+    /// in · parses · — ownership/rate are future) and relays to `event_shard.queue`, which mints the
+    /// event and stamps `event_tic = master + 3`. `cid` correlates the `QueueOk`/`QueueErr` reply.
+    /// The program is the [`ACTIONS.md`](../../../docs/ACTIONS.md) `Vec<u32>` — the only door in.
+    Queue { cid: u32, actions: Vec<u32> },
+    /// Subscribe to a zone: stream its `state` (composed entities) and `event` (settled, promoted)
+    /// rows. `zone` is a `macro_position_reference`. Idempotent — re-subscribing is a no-op.
+    SubscribeZone { zone: u16 },
+    /// Stop streaming a zone. Unknown/duplicate zone is a no-op.
+    UnsubscribeZone { zone: u16 },
 }
 
 /// A frame the server sends to the client.
@@ -61,6 +71,27 @@ pub enum ServerMsg {
     /// Reply to [`ClientMsg::Ping`]: `client_send_ms` echoed back (the round-trip
     /// correlator) and `server_ms`, the server wall clock (ms) at reply time.
     Pong { client_send_ms: u64, server_ms: u64 },
+    /// The intent was accepted into the queue. Correlates `Queue.cid`. (The minted `event_reference`
+    /// isn't returned by the reducer; the client sees the event when it settles into a subscribed
+    /// zone's `event` stream.)
+    QueueOk { cid: u32 },
+    /// The intent was rejected (not logged in, malformed program, upstream error). Correlates `cid`.
+    QueueErr { cid: u32, error: String },
+    /// A composed entity in a subscribed zone — sent on insert and update. The client interpolates by
+    /// `tic`. `zone` is the row's `macro_position_reference`, echoed so a client tracking several
+    /// zones can bucket it.
+    State {
+        entity_reference: u32,
+        zone: u16,
+        tic: u16,
+        definition_reference: u32,
+        position_reference: u32,
+        data: u8,
+    },
+    /// A composed entity left a subscribed zone (its `state` row was deleted, e.g. despawned).
+    StateGone { entity_reference: u32, zone: u16 },
+    /// A settled, promoted event touching a subscribed zone (one per zone the event reached).
+    Event { event_reference: u32, zone: u16, tic: u16, actions: Vec<u32> },
     /// A protocol- or routing-level error not tied to a single `cid`.
     Error { error: String },
 }

@@ -15,6 +15,7 @@
 //! task, and the SDK row callbacks on the upstreams' threads — so they're funneled
 //! through one unbounded channel to a single writer task that owns the WS sink.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -22,13 +23,24 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
-use spacetimedb_sdk::{DbContext, Table as _};
+use spacetimedb_sdk::{DbContext, Table as _, TableWithPrimaryKey as _};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::bindings;
+use crate::bindings::data_shard::state_table::StateTableAccess as _;
+use crate::bindings::event_shard::event_table::EventTableAccess as _;
+use crate::bindings::event_shard::queue as _; // reducer trait → `reducers().queue_then`
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
-use crate::connections::{await_ready, connect_players, Pool};
+use crate::connections::{await_ready, connect_data_shard, connect_event_shard, connect_players, Pool};
 use crate::protocol::{ClientMsg, ServerMsg};
+
+/// The per-client world upstreams: the two sim shards. `event_shard` takes the client's `queue`
+/// intents and streams settled `event` rows; `data_shard` streams composed `state` rows. Each client
+/// gets its own pair so their zone subscriptions don't collide (the set-semantics hazard).
+struct World {
+    event: Option<Arc<bindings::event_shard::DbConnection>>,
+    data: Option<Arc<bindings::data_shard::DbConnection>>,
+}
 
 /// How long to wait for `claim_or_login` to commit before failing the login.
 const REDUCER_CALL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -84,12 +96,15 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
     // row read needs the subscription warm. A failure leaves `players = None`; login then
     // reports the outage instead of hanging.
     let players = build_players(&pool, &out_tx).await;
+    // World upstreams (the sim shards) — built eagerly and wired to relay row callbacks into this
+    // connection's outbound funnel. A failure leaves the side `None`; queue/subscribe then report it.
+    let world = build_world(&pool, &out_tx).await;
 
     // Stateful commands run on a dedicated worker task so the read loop never blocks on a
     // slow DB handler; the read loop answers pings inline and forwards everything else
     // over an ordered channel (per-connection command order is preserved).
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<ClientMsg>();
-    let worker = tokio::spawn(session_worker(players, out_tx.clone(), cmd_rx));
+    let worker = tokio::spawn(session_worker(players, world, out_tx.clone(), cmd_rx));
 
     while let Some(frame) = stream.next().await {
         let msg = match frame {
@@ -137,14 +152,23 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
     tracing::debug!("client session ended");
 }
 
-/// Drains stateful client commands in arrival order, owning all per-session DB state
-/// (currently just the session id). Runs teardown once the channel closes.
+/// One live zone subscription: the `state` (data shard) and `event` (event shard) handles. Dropping
+/// them unsubscribes, so removing a zone from the map is the unsubscribe.
+struct ZoneSub {
+    _state: bindings::data_shard::SubscriptionHandle,
+    _event: bindings::event_shard::SubscriptionHandle,
+}
+
+/// Drains stateful client commands in arrival order, owning all per-session state (the session id,
+/// and the set of subscribed zones). Runs teardown once the channel closes.
 async fn session_worker(
     players: Option<Arc<bindings::players::DbConnection>>,
+    world: World,
     out_tx: mpsc::UnboundedSender<String>,
     mut cmd_rx: mpsc::UnboundedReceiver<ClientMsg>,
 ) {
     let mut session: Option<u32> = None;
+    let mut zones: HashMap<u16, ZoneSub> = HashMap::new();
 
     while let Some(cmsg) = cmd_rx.recv().await {
         match cmsg {
@@ -152,15 +176,160 @@ async fn session_worker(
                 handle_login(players.as_ref(), &out_tx, &mut session, cid, client_time_ms, name)
                     .await;
             }
+            ClientMsg::Queue { cid, actions } => {
+                handle_queue(world.event.as_ref(), &out_tx, session, cid, actions);
+            }
+            ClientMsg::SubscribeZone { zone } => {
+                handle_subscribe(&world, &out_tx, &mut zones, zone);
+            }
+            ClientMsg::UnsubscribeZone { zone } => {
+                if zones.remove(&zone).is_some() {
+                    tracing::debug!(zone, "unsubscribed zone"); // drop → unsubscribe
+                }
+            }
             // Pings are answered on the read loop and never forwarded here.
             ClientMsg::Ping { .. } => {}
         }
     }
 
+    zones.clear(); // drop the handles → unsubscribe before the connections close
     if let Some(conn) = &players {
         let _ = conn.disconnect();
     }
+    if let Some(conn) = &world.event {
+        let _ = conn.disconnect();
+    }
+    if let Some(conn) = &world.data {
+        let _ = conn.disconnect();
+    }
     tracing::debug!(player = ?session, "client session worker ended");
+}
+
+/// Build the per-client world upstreams and register the row callbacks that relay `state`/`event`
+/// rows into this connection's outbound funnel. The callbacks fire for whatever the zone
+/// subscriptions (added later) put in the cache — the row carries its own `macro_position_reference`,
+/// so one set of callbacks serves every subscribed zone.
+async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -> World {
+    let event = match connect_event_shard(&pool.cfg.uri, &pool.cfg.event_shard_db()) {
+        Some((conn, ready)) => await_ready(ready).await.then_some(conn),
+        None => None,
+    };
+    if event.is_none() {
+        send(out_tx, err_frame("event shard upstream unavailable"));
+    }
+    let data = match connect_data_shard(&pool.cfg.uri, &pool.cfg.data_shard_db()) {
+        Some((conn, ready)) => await_ready(ready).await.then_some(conn),
+        None => None,
+    };
+    if data.is_none() {
+        send(out_tx, err_frame("data shard upstream unavailable"));
+    }
+
+    if let Some(d) = &data {
+        let o = out_tx.clone();
+        d.db().state().on_insert(move |_ctx, row| send(&o, state_frame(row)));
+        let o = out_tx.clone();
+        d.db().state().on_update(move |_ctx, _old, row| send(&o, state_frame(row)));
+        let o = out_tx.clone();
+        d.db().state().on_delete(move |_ctx, row| {
+            send(
+                &o,
+                ServerMsg::StateGone {
+                    entity_reference: row.entity_reference,
+                    zone: row.macro_position_reference,
+                },
+            )
+        });
+    }
+    if let Some(e) = &event {
+        let o = out_tx.clone();
+        e.db().event().on_insert(move |_ctx, row| {
+            send(
+                &o,
+                ServerMsg::Event {
+                    event_reference: row.event_reference,
+                    zone: row.macro_position_reference,
+                    tic: row.event_tic,
+                    actions: row.actions.clone(),
+                },
+            )
+        });
+    }
+
+    World { event, data }
+}
+
+fn state_frame(row: &bindings::data_shard::State) -> ServerMsg {
+    ServerMsg::State {
+        entity_reference: row.entity_reference,
+        zone: row.macro_position_reference,
+        tic: row.tic,
+        definition_reference: row.definition_reference,
+        position_reference: row.position_reference,
+        data: row.data,
+    }
+}
+
+/// Validate + relay a client intent to `event_shard.queue`. The door enforces "logged in" and "the
+/// program frames" here; ownership + rate limiting are future (no ownership model yet). The reducer's
+/// own validation (parses, has an orchestrator) is reported back via `queue_then`.
+fn handle_queue(
+    event: Option<&Arc<bindings::event_shard::DbConnection>>,
+    out_tx: &mpsc::UnboundedSender<String>,
+    session: Option<u32>,
+    cid: u32,
+    actions: Vec<u32>,
+) {
+    if session.is_none() {
+        send(out_tx, ServerMsg::QueueErr { cid, error: "not logged in".to_string() });
+        return;
+    }
+    for inst in resonantdust_codec::action::program(&actions) {
+        if let Err(e) = inst {
+            send(out_tx, ServerMsg::QueueErr { cid, error: format!("malformed program: {e:?}") });
+            return;
+        }
+    }
+    let Some(conn) = event else {
+        send(out_tx, ServerMsg::QueueErr { cid, error: "event shard unavailable".to_string() });
+        return;
+    };
+    let out = out_tx.clone();
+    let submit = conn.reducers().queue_then(actions, move |_ctx, res| match res {
+        Ok(Ok(())) => send(&out, ServerMsg::QueueOk { cid }),
+        Ok(Err(error)) => send(&out, ServerMsg::QueueErr { cid, error }),
+        Err(e) => send(&out, ServerMsg::QueueErr { cid, error: format!("internal: {e}") }),
+    });
+    if let Err(e) = submit {
+        send(out_tx, ServerMsg::QueueErr { cid, error: format!("submit failed: {e}") });
+    }
+}
+
+/// Subscribe the client to a zone's `state` + `event` streams. Idempotent per zone. The initial
+/// matching rows are delivered through the row callbacks as the subscription applies.
+fn handle_subscribe(
+    world: &World,
+    out_tx: &mpsc::UnboundedSender<String>,
+    zones: &mut HashMap<u16, ZoneSub>,
+    zone: u16,
+) {
+    if zones.contains_key(&zone) {
+        return; // already streaming this zone
+    }
+    let (Some(data), Some(event)) = (&world.data, &world.event) else {
+        send(out_tx, err_frame("world upstream unavailable"));
+        return;
+    };
+    let state = data
+        .subscription_builder()
+        .on_error(|_ctx, err| tracing::warn!(%err, "state subscription error"))
+        .subscribe([format!("SELECT * FROM state WHERE macro_position_reference = {zone}")]);
+    let event = event
+        .subscription_builder()
+        .on_error(|_ctx, err| tracing::warn!(%err, "event subscription error"))
+        .subscribe([format!("SELECT * FROM event WHERE macro_position_reference = {zone}")]);
+    zones.insert(zone, ZoneSub { _state: state, _event: event });
+    tracing::debug!(zone, "subscribed zone");
 }
 
 /// Build the per-client players upstream and subscribe to the auth table so the

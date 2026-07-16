@@ -179,6 +179,18 @@ impl ServerConfig {
         format!("resonantdust-{}-players-0", self.env)
     }
 
+    /// The `event_shard` DB — the event queue + client-visible settled `event` log. The edge queues
+    /// client intents here (`queue`) and subscribes to `event` per zone. Single instance today.
+    pub fn event_shard_db(&self) -> String {
+        format!("resonantdust-{}-event-shard-0", self.env)
+    }
+
+    /// The `data_shard` DB — the composition slots + client-visible `state`. The edge subscribes to
+    /// `state` per zone. Single instance today; multi-shard routing (via `index`) is future work.
+    pub fn data_shard_db(&self) -> String {
+        format!("resonantdust-{}-data-shard-0", self.env)
+    }
+
     /// Fallback shard database name for a region whose `region_shards` entry is
     /// missing — single-shard deployments run with no index rows seeded, so an
     /// unrouted region defaults to shard 0 on *this* SpacetimeDB server. Mirrors

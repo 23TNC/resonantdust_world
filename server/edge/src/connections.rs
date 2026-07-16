@@ -100,9 +100,11 @@ macro_rules! connector {
 
 connector!(connect_index, index);
 connector!(connect_players, players);
-// No data-shard connector: the shard module and the tick pipeline were deleted for a
-// ground-up rebuild (`docs/intent/spacetime-again/`). The macro above is what a new
-// `connect_<module>` costs — one line, once the module exists.
+// The rebuild's sim shards (`docs/intent/spacetime-again/`): the edge queues client intents to
+// `event_shard` and relays `state`/`event` rows from both, per client (own connection = own
+// subscriptions, avoiding the set-semantics hazard).
+connector!(connect_event_shard, event_shard);
+connector!(connect_data_shard, data_shard);
 
 /// Await an upstream's readiness oneshot with the connect timeout. `true` once
 /// the connection's `on_connect` fired; `false` on timeout (or a dropped sender,

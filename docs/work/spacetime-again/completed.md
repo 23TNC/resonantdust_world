@@ -5,6 +5,36 @@ carried out — the "done when" bar it cleared._
 
 ---
 
+## W7 · `server/edge` — the door ✓ 2026-07-16
+
+Restored the edge's world surface (stripped to login + ping when the pipeline was deleted).
+Live-verified end-to-end through the browser-facing WebSocket protocol.
+
+- **Protocol** (`protocol.rs`): `ClientMsg::Queue { cid, actions }`, `SubscribeZone { zone }`,
+  `UnsubscribeZone { zone }`; `ServerMsg::QueueOk`/`QueueErr`, `State`, `StateGone`, `Event`.
+- **Queue** — the only door in. Validates (logged in · program frames) and relays to
+  `event_shard.queue` via `queue_then`, reporting the reducer's own verdict back as `QueueOk`/`QueueErr`.
+  Ownership + rate limiting are future (no ownership model yet).
+- **Zone subscriptions** — per client, its own `event_shard`+`data_shard` upstreams (own connection =
+  own subscriptions, dodging the set-semantics hazard). `SubscribeZone` adds
+  `state`/`event WHERE macro_position_reference = zone`; row callbacks (registered once, on insert/
+  update/delete) relay `State`/`StateGone`/`Event` frames. `UnsubscribeZone` drops the handles
+  (= unsubscribe).
+- **Live proof:** a WS client logged in, subscribed zone 7, and queued `PROMOTE_STATE E, PLACE E`
+  → `QueueOk`, then the composed `State{entity, zone:7, position}` row arrived back — the whole path
+  client → `queue` → orchestrator → worker → `state` → edge → client.
+
+**`index.rs` / `worldgen.rs` decision:** they stay `#[allow(dead_code)]` — they belong to the
+**terrain** (cold-zone) subscription path (`zone → region → shard` routing + terrain seeding), not the
+dynamic-sim surface W7 built. The edge subscribes `state`/`event` directly on the single sim shards
+today; zone→shard routing returns when multi-shard data routing / the terrain pipeline is wired, not
+in W7. Not dangling — deferred to that track.
+
+**Operational note (not a code fix):** login first timed out because the **deployed** `players` module
+in `dev` was an older layout than the edge's (correct) bindings — a stale deploy, not stale code.
+Redeploying `players` from current source aligned it. (Also hit a WSL2/docker cargo mtime miss — a
+regenerated file didn't trigger recompilation until a source `touch`; see [[docker-cargo-mtime-miss]].)
+
 ## W5 · `server/worker` — the resolver ✓ 2026-07-16
 
 New `server/worker` crate — a tokio SDK client over `server/st-bindings` + `shared/codec`.
