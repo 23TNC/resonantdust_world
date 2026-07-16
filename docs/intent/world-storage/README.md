@@ -33,11 +33,17 @@ The split is **how often it changes**, which decides whether it needs the tic pi
 **The key is realm-unique in a `u32`** (realm is the shard's, never per reference), so the slot uid is
 the **same `u64` for both** — `reserved:16 \| key:32 \| tic:16`, `u16` reserved to spare. The
 composition core treats the key as an **opaque realm-unique u32**; only its *interpretation* differs.
-So `state_log` is one shape parameterized by payload alone. (This replaces the old `u64`
-`cold_row_reference` in [`VARIABLES.md`](../../VARIABLES.md) — the `u16 type_reference` was the fat
-part; `layer_reference:8` + `server_reference:8` carries the same in half the bits. **Consequence:**
-the row no longer carries `subtype_id:12` — if a cold row ever needs subtype, it moves to the per-entry
-`kind_reference` or the layer. Confirm when VARIABLES is revised.)
+So `state_log` is one shape parameterized by payload alone.
+
+**Open — a u32 key can't hold `type_reference:16`.** The old `cold_row_reference` was `u64` *to* fit
+`type_reference:16` (`macro:16 + type_reference:16` is already a full u32, no room for layer/server).
+So the u32-mirrors-hot key and a row-level `type_reference` are mutually exclusive:
+- **u32 key** — the row carries `layer_reference:8` (`type_id:4 | layer_id:4`), **not** `type_reference`.
+  Subtype, if a cold row needs it, lives in the per-entry `kind_reference:16`, not the row header.
+- **keep `type_reference:16`** — the key stays `u64` and does *not* mirror hot.
+
+`type_reference` the *variable* is unchanged either way (u16, used elsewhere in reconstruction); this
+is only about what the cold row *key* embeds. Decide before VARIABLES is revised. See §Open 6.
 
 They **share**: the payload-generic storage, the identical `state_log` slot, the **zone-keyed client
 subscription** (`WHERE macro_position_reference = <zone>`), and the module skeleton. They **differ**
@@ -127,3 +133,9 @@ VARIABLES) + `seed`/`patch` reducers + the zone subscription. `hot` expands to t
 5. **One module per type, or grouped by regime?** e.g. all cold types in one module keyed by
    `type_reference`, vs a module per type. Per-type modules (your suggestion) route + scale
    independently and keep payloads un-coupled; grouping is fewer DBs. Recommend per-type.
+6. **Cold key: `u32` (drop row-level `type_reference`) or `u64` (keep it)?** The u32 mirrors hot's
+   `state_uid` exactly and makes the composition core one shape (see the hot/cold table); the cost is
+   the row header carries `layer_reference:8` not `type_reference:16`, so `subtype_id:12` must move to
+   the per-entry `kind_reference` (or isn't needed at the row). Keeping `type_reference:16` keeps
+   subtype at the row but forces a `u64` key that doesn't mirror hot. This gates the VARIABLES
+   revision of `cold_row_reference`.
