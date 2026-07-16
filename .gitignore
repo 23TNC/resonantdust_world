@@ -34,7 +34,9 @@ dist/
 /client/core/target/
 /client/npc/target/
 /server/master/target/
+/server/orchestrator/target/
 /server/worker/target/
+/server/st-bindings/target/
 
 # spacetimedb data
 /spacetime-data/*

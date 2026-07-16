@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# sim — build & run the rebuild's SDK-client "sim" crates (master, orchestrator, worker).
+#
+# These are long-lived native binaries (like the edge), not wasm modules and not host-cargo builds.
+# They share ../st-bindings and ../../shared/codec by path, so the whole repo is mounted and the
+# workdir points at the crate. A small builder image (rust:slim + openssl/git) is cached so we don't
+# apt-get on every build; the same image runs the binary (it already carries libssl3).
+#
+#   sim build  <crate>            cargo build --release, in docker
+#   sim check  <crate>            cargo check --all-targets (fast, no link)
+#   sim run    <crate> [K=V ...]  (re)start the built binary detached, extra env passed through
+#   sim stop   <crate>            stop + remove its container
+#   sim logs   <crate> [-f]       tail its container logs
+#   sim ps                        list running sim containers
+#
+# Crates live under server/<crate>. ENV for `run` is whatever the binary reads (ST_URI, TIC_HZ,
+# ORCHESTRATOR, WORKERS, EVENT_DB, DATA_DB, RUST_LOG, …).
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE="rd-sim-builder"
+CARGO_VOL="rd-sim-cargo"       # shared registry cache so crates reuse each other's downloads
+SIM_CRATES=(master orchestrator worker)
+
+die() { echo "sim: $*" >&2; exit 1; }
+log() { echo "── $*"; }
+
+require_crate() {
+  local c="$1"
+  [[ -f "$REPO/server/$c/Cargo.toml" ]] || die "no crate at server/$c (have: ${SIM_CRATES[*]})"
+}
+
+# Build the cached builder image if missing (or FORCE_IMAGE=1). rust:slim + the TLS/build deps the
+# SDK needs; libssl3 comes in via libssl-dev, so this image also *runs* the binaries.
+ensure_image() {
+  if [[ "${FORCE_IMAGE:-0}" != 1 ]] && docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    return
+  fi
+  log "building $IMAGE (rust:slim + openssl/pkg-config/git)"
+  docker build -t "$IMAGE" - >/dev/null <<'DOCKERFILE'
+FROM rust:slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libssl-dev pkg-config git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+DOCKERFILE
+}
+
+# Run a one-shot cargo command in the builder, repo mounted, workdir at the crate.
+cargo_in() {
+  local crate="$1"; shift
+  ensure_image
+  docker run --rm --network host \
+    -v "$REPO":/workspace \
+    -v "$CARGO_VOL":/usr/local/cargo/registry \
+    -w "/workspace/server/$crate" \
+    "$IMAGE" "$@"
+}
+
+cmd_build() { require_crate "$1"; log "build $1 → release binary"; cargo_in "$1" cargo build --release; }
+cmd_check() { require_crate "$1"; log "check $1"; cargo_in "$1" cargo check --all-targets; }
+
+cmd_run() {
+  local crate="$1"; shift || true
+  require_crate "$crate"
+  ensure_image
+  local bin="server/$crate/target/release/$crate"
+  [[ -x "$REPO/$bin" ]] || die "not built — run 'sim build $crate' first ($bin missing)"
+  # Pass K=V args through as -e; default RUST_LOG if unset.
+  local envs=(-e "RUST_LOG=${RUST_LOG:-$crate=info}")
+  local kv
+  for kv in "$@"; do
+    [[ "$kv" == *=* ]] || die "run env must be K=V, got '$kv'"
+    envs+=(-e "$kv")
+  done
+  docker rm -f "rd-$crate" >/dev/null 2>&1 || true
+  log "run $crate (detached, container rd-$crate)"
+  docker run -d --name "rd-$crate" --network host \
+    -v "$REPO":/workspace -w /workspace \
+    "${envs[@]}" \
+    "$IMAGE" "/workspace/$bin" >/dev/null
+  echo "   logs: bin/sim logs $crate -f"
+}
+
+cmd_stop() { log "stop rd-$1"; docker rm -f "rd-$1" >/dev/null 2>&1 || true; }
+cmd_logs() { local c="$1"; shift || true; docker logs "$@" "rd-$c"; }
+cmd_ps()   { docker ps --filter "name=rd-" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'; }
+
+usage() {
+  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+main() {
+  local cmd="${1:-}"; [[ -n "$cmd" ]] && shift || { usage; exit 1; }
+  case "$cmd" in
+    build) cmd_build "$@" ;;
+    check) cmd_check "$@" ;;
+    run)   cmd_run "$@" ;;
+    stop)  cmd_stop "$@" ;;
+    logs)  cmd_logs "$@" ;;
+    ps)    cmd_ps ;;
+    -h|--help|help) usage ;;
+    *) die "unknown command '$cmd' (build|check|run|stop|logs|ps)" ;;
+  esac
+}
+main "$@"

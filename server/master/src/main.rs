@@ -16,7 +16,7 @@ use spacetimedb_sdk::{DbContext, Table as _};
 use resonantdust_st_bindings::{data_shard, event_shard};
 // Reducer + table-access traits (method resolution keys off the connection type).
 use data_shard::{bump as _, gc as _, ClockTableAccess as _};
-use event_shard::{bump as _, settle as _, ClockTableAccess as _};
+use event_shard::{bump as _, set_orchestrator as _, settle as _, ClockTableAccess as _};
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -38,6 +38,15 @@ async fn main() {
     // How far behind `master_tic` the GC horizon sits — old settled rows past it are reaped. Must
     // stay well under TIC_WINDOW (32767).
     let gc_behind: u16 = env_or("GC_BEHIND", "64").parse().unwrap_or(64);
+    // The orchestrator that owns this event shard's tics. The master provides it at standup — an
+    // event shard with no orchestrator rejects `queue`. Parsed as u8 (accepts `0x61` or decimal).
+    let orchestrator: u8 = {
+        let s = env_or("ORCHESTRATOR", "0x61");
+        s.strip_prefix("0x")
+            .and_then(|h| u8::from_str_radix(h, 16).ok())
+            .or_else(|| s.parse().ok())
+            .unwrap_or(0x61)
+    };
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");
     let data_db = env_or("DATA_DB", "resonantdust-dev-data-shard-0");
     tracing::info!(%uri, tic_hz, %event_db, %data_db, "master starting");
@@ -76,6 +85,14 @@ async fn main() {
     let applied = Duration::from_secs(5);
     rx_e.recv_timeout(applied).expect("event_shard clock subscription applied");
     rx_d.recv_timeout(applied).expect("data_shard clock subscription applied");
+
+    // Stand up initial state: hand each event shard its orchestrator. Idempotent (absolute write),
+    // so re-running the master just re-affirms it. Must precede any `queue` traffic.
+    if let Err(err) = event.reducers().set_orchestrator(orchestrator) {
+        tracing::warn!(%err, orchestrator, "set_orchestrator failed");
+    } else {
+        tracing::info!(orchestrator = format!("{orchestrator:#04x}"), "assigned orchestrator to event_shard");
+    }
 
     // Seed once from the shard's persisted tic; from here the master owns the counter (it is the
     // sole writer), so it never re-reads and never resets on a lagging subscription.

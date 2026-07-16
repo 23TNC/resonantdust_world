@@ -2,29 +2,8 @@
 
 _Planned, not started. W1/W2/W3/W6 are done — see [`completed.md`](completed.md). Move an item to
 `remaining.md` when you begin it. Ordered by dependency — each item's surface is what the next one
-consumes. W4 (orchestrator) is next: the master clock + both shards are live, so it has its full
-dependency surface._
-
----
-
-## W4 · `server/orchestrator` — the grouper
-
-**Component:** a new `server/orchestrator` crate. An SDK client; it owns no tables.
-**Surface it consumes:** every event shard's group-serving + `assign` / `fail` (W2), and every data
-shard's `claim` (W3). Nothing consumes *it*.
-
-Per tic T: subscribe `event_log WHERE orchestrator_reference = self`; wait for a **complete** batch
-from every event shard (the barrier); union `event_group`s across shards into work-groups (merge any
-two sharing an entity); fail a straggler that still spans two; assign a worker per work-group; batch
-one `assign` per event shard and one `claim` per data shard.
-
-**Done when:** given events across ≥2 event shards whose targets span ≥2 data shards, it produces
-work-groups where **no entity appears in two groups**, and stamps exactly one worker per group onto
-the event + state rows. Prove the barrier: assigning before the batch is complete must be impossible
-(a late bridging event otherwise splits a component). Stays **stateless** — kill it mid-tic, a fresh
-one recomputes the identical partition.
-
-**Watch:** doubling is safe *only* because of the barrier — never assign on a partial view.
+consumes. W1/W2/W3/W4/W6 are done ([`completed.md`](completed.md)); **W5 (worker) is next** — its
+intake (assigned `event_log` + claimed `state_log` rows) is live, produced by the orchestrator._
 
 ---
 

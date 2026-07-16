@@ -47,6 +47,38 @@ pub fn bump(ctx: &ReducerContext, master_tic: u16) -> Result<(), String> {
     Ok(())
 }
 
+// ── orchestrator assignment ─────────────────────────────────────────────────────────
+// Which orchestrator owns this shard's tics. The MASTER stamps it at standup (`set_orchestrator`);
+// `queue` reads it and writes it onto every event row, so the owning orchestrator receives the work
+// over `WHERE orchestrator_reference = self`. An event shard with no orchestrator assigned is
+// non-functional — `queue` rejects — which is why the edge routes only to shards that have one.
+
+#[table(accessor = orchestrator, public)]
+pub struct Orchestrator {
+    #[primary_key]
+    pub id: u8,
+    /// `orchestrator_reference` — `SERVER_REF_NONE` until the master assigns one.
+    pub orchestrator_reference: u8,
+}
+
+fn orchestrator_reference(ctx: &ReducerContext) -> u8 {
+    ctx.db
+        .orchestrator()
+        .id()
+        .find(0)
+        .map(|o| o.orchestrator_reference)
+        .unwrap_or(SERVER_REF_NONE)
+}
+
+/// The master assigns this shard's orchestrator at standup (and reassigns on takeover). Absolute
+/// write, master is the sole caller — idempotent.
+#[reducer]
+pub fn set_orchestrator(ctx: &ReducerContext, orchestrator_reference: u8) -> Result<(), String> {
+    ctx.db.orchestrator().id().delete(0);
+    ctx.db.orchestrator().insert(Orchestrator { id: 0, orchestrator_reference });
+    Ok(())
+}
+
 // ── the mint counter ──────────────────────────────────────────────────────────────
 // event_reference = server_reference:8 | ++counter:24. NOT SpacetimeDB auto_inc on the column —
 // that would carry into the server byte and break the global order. The shard composes it.
@@ -123,6 +155,9 @@ pub fn init(ctx: &ReducerContext) {
     if ctx.db.event_counter().id().find(0).is_none() {
         ctx.db.event_counter().insert(EventCounter { id: 0, next: 1 });
     }
+    if ctx.db.orchestrator().id().find(0).is_none() {
+        ctx.db.orchestrator().insert(Orchestrator { id: 0, orchestrator_reference: SERVER_REF_NONE });
+    }
 }
 
 // ── queue — the only door in (the edge) ─────────────────────────────────────────────
@@ -136,6 +171,14 @@ pub fn queue(ctx: &ReducerContext, actions: Vec<u32>) -> Result<(), String> {
         inst.map_err(|e| format!("bad program: {e:?}"))?;
     }
 
+    // No orchestrator ⇒ nothing would ever group or assign this event. Reject at the door rather
+    // than accept dead work; the edge routes only to shards that have one, so this fires only in a
+    // standup race.
+    let orchestrator = orchestrator_reference(ctx);
+    if orchestrator == SERVER_REF_NONE {
+        return Err("event shard has no orchestrator assigned".into());
+    }
+
     let event_reference = next_event_reference(ctx);
     let event_tic = tic::tic_add(master_tic(ctx), TIC_GAP);
     let flags = if action::asks_promote_event(&actions) { EVENT_FLAG_PROMOTE } else { 0 };
@@ -146,7 +189,7 @@ pub fn queue(ctx: &ReducerContext, actions: Vec<u32>) -> Result<(), String> {
         status: pack_status(flags, EVENT_QUEUED),
         actions,
         event_group: event_reference, // singleton until real local grouping
-        orchestrator_reference: SERVER_REF_NONE,
+        orchestrator_reference: orchestrator,
         worker_reference: SERVER_REF_NONE,
         zones: Vec::new(),
     });

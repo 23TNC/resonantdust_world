@@ -5,6 +5,35 @@ carried out — the "done when" bar it cleared._
 
 ---
 
+## W4 · `server/orchestrator` — the grouper ✓ 2026-07-16
+
+New `server/orchestrator` crate — a tokio SDK client over `server/st-bindings` + `shared/codec`.
+Live-verified against master + both shards.
+
+- **Intake, master-assigned.** The master hands each event shard its orchestrator at standup
+  (`event_shard.set_orchestrator`, stored in a new public `orchestrator` row); `queue` stamps that
+  reference onto every event and **rejects if none**. The orchestrator subscribes
+  `event_log WHERE orchestrator_reference = self` + `clock`.
+- **Drain-all-frozen loop, not one-tic-per-pass.** Each pass assigns every frozen (`event_tic ≤
+  master+2`) still-`QUEUED` event in the cache, grouped per tic — one tic normally, a backlog of
+  several on catch-up/takeover. Never groups the open tic (`master+3`), so union-find always runs on
+  a complete set (the completeness barrier).
+- **Union-find by write target** (pure, unit-tested in `grouping.rs`, 6 tests): events sharing a
+  write target merge transitively into one component → one worker. Reads don't conflict (`< tic`).
+- Per component: `event_shard.assign(events, worker)` + `data_shard.claim(entities, tic, worker)`,
+  least-loaded worker across the pass. Idempotent; a local `assigned` set skips redundant calls and
+  is pruned to the live queue (so a fresh orchestrator re-drives everything).
+- **Live proof:** queued PLACE A, MOVE_TO A, PLACE B → the two on A **merged** into one work-group
+  (`events=2, entities=1`), B was its own group; all three `event_log` rows stamped `orch=0x61`,
+  `worker=0x62`, `ASSIGNED`; `state_log` got exactly two `dirty` slots (A, B) — A once, despite two
+  events (claim dedups the component's entities).
+
+**Deferred (belongs to later items):** `CREATE`'s spawned slot (its minted id isn't a write operand,
+so a bare `CREATE` is a singleton with no claim — the worker/spawn path, W5, resolves the id);
+multi-data-shard `claim` routing (one shard today); orchestrator liveness/takeover (§Open); stragglers
+(can't occur under single-pass union). New reusable `bin/sim` build/run path for the SDK-client sim
+crates (master/orchestrator/worker) — cached builder image, `build`/`check`/`run`/`stop`/`logs`.
+
 ## W6 · `server/master` — the metronome ✓ 2026-07-16
 
 New `server/master` crate — a tokio SDK client over `server/st-bindings`. Live-verified.

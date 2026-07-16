@@ -127,6 +127,19 @@ Nothing composes on data from its own tic — every read is `< tic`.
 
 ## `event_shard`
 
+### `orchestrator` — this shard's assigned orchestrator (public)
+
+| column | type | key | notes |
+|---|---|---|---|
+| `id` | `u8` | PK | always `0` — single row |
+| `orchestrator_reference` | `u8` | | `SERVER_REF_NONE` until the master assigns |
+
+The **master** stamps it at standup (`set_orchestrator`). `queue` reads it onto every event row, and
+**rejects** if it is `SERVER_REF_NONE` — an event shard with no orchestrator would only accumulate
+work nothing groups. Public so the **edge** (W7) routes `queue` only to shards that have one.
+
+writes master `set_orchestrator` · reads `queue` (internal), edge (routing, future)
+
 ### `event_log` — the queue (in flight only)
 
 | column | type | key | notes |

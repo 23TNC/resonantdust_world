@@ -1,0 +1,20 @@
+[package]
+name = "orchestrator"
+version = "0.1.0"
+edition = "2021"
+
+# orchestrator — the grouper. An SDK client that, per tic, groups a shard's frozen events into
+# conflict-components (one worker per component) and assigns them. Owns no tables; subscribes to
+# event_log WHERE orchestrator_reference = self, calls event_shard.assign + data_shard.claim.
+
+[[bin]]
+name = "orchestrator"
+path = "src/main.rs"
+
+[dependencies]
+spacetimedb-sdk = "=2.3.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+resonantdust-st-bindings = { path = "../st-bindings" }
+resonantdust-codec = { path = "../../shared/codec" }

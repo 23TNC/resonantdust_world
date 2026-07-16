@@ -56,8 +56,10 @@ server.edge  → event_shard.queue(actions):
                                           flags: actions has PROMOTE_EVENT ? PROMOTE : 0 },
                       actions,
                       event_group     : (assigned by the shard's grouping, below),
-                      orchestrator_reference : orchestrator_for(event_tic),
+                      orchestrator_reference : shard's assigned orchestrator (rejects if NONE),
                       worker_reference : SERVER_REF_NONE }
+// The master assigned this shard's orchestrator at standup (event_shard.set_orchestrator). The edge
+// routes queue only to shards that have one, so the reject fires only in a standup race.
 
 // event_reference is minted, NOT auto_inc on the column — auto_inc would increment the server byte
 // and break the global total order. Ascending event_reference is the composition order (below).
@@ -233,12 +235,26 @@ surprising. Overloaded regions lag and self-heal; they don't corrupt.
 
 ## Open
 
-- **Orchestrator assignment + liveness.** Which orchestrator owns tic T, and who notices it died.
-  Doubling is safe (§Why 2), so assignment needs a good deterministic hint, not consensus — leaning:
-  the **master** assigns per tic (singular, lockstep, guaranteed to run) and reaps a dead orchestrator
-  by handing its tic to a fresh one, which recomputes (the orchestrator stays **stateless** — a pure
-  function of the shard-durable event set). The master↔orchestrator liveness signal (heartbeat vs
-  lease, where) is unshaped.
+- **Orchestrator assignment — DECIDED.** Every server has a unique `server_reference` (`u8`); some
+  are orchestrators. The **master** stands up initial state, which includes assigning an orchestrator
+  to each event shard (`event_shard.set_orchestrator`, stored in the shard's `orchestrator` row).
+  `queue` stamps that reference onto every event and **rejects if none is assigned** — an event shard
+  is non-functional without an orchestrator, so the **edge** routes `queue` only to shards that have
+  one. The orchestrator subscribes `WHERE orchestrator_reference = self`. One orchestrator per shard
+  today; per-tic rotation among several is a later refinement (doubling is safe, §Why 2).
+  Grouping runs each pass over **all** frozen unassigned events in the cache — one tic normally, a
+  backlog of several on catch-up/takeover — mirroring workers, which grind their assigned chains up
+  to the current tic.
+- **Orchestrator liveness — still open.** Who notices an orchestrator died and hands its shard to a
+  fresh one (the master is the guaranteed-to-run candidate). The orchestrator stays **stateless** — a
+  pure function of the shard-durable event set — so a takeover just recomputes. The master↔orchestrator
+  liveness signal (heartbeat vs lease, where) is unshaped.
+- **Infra-server reference allocation.** Orchestrators/workers/master take `server_reference`s under
+  `TYPE_SERVER` with distinct `server_id`s (env-configurable: `ORCHESTRATOR`, `WORKERS`), which
+  satisfies "every server a unique `u8`" without a new `type_id` nibble. Open question for
+  `VARIABLES.md`: whether these should instead carry a serve-type nibble (e.g. a worker as
+  `TYPE_PAWN`) — cosmetic for now (the byte is only ever a subscription key, never routed as an object
+  owner), so deferred, not blocking.
 - **Worker eviction is the orchestrator's**, not the store's. The orchestrator owns its pool, so it
   tracks worker liveness (in memory — regenerated on takeover, since a new orchestrator re-assigns
   everything) and reclaims by re-assigning the component, which re-stamps `worker_reference` and
