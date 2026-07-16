@@ -13,37 +13,26 @@ what they are — so an operand needs no tag, which is what replaces the referen
 It closed all three riders at once:
 - **Read set** — the action's *signature* declares, per operand, written vs read. Both sets fall out
   of one scan, no `action_reads_actor`, no game semantics in the spine.
-- **`promote_*`** — palette entries 4 and 5.
+- **`promote_*`** — palette entries.
 - **Target extraction** — the same scan.
 
 And it made a word a whole u32, which the old tagged frame couldn't: `op_code:4 +
 entity_reference:32 = 36` doesn't fit a u32, so tagging forced either a u64 word with 28 bits spare
 or a reference narrower than a reference.
 
-**It exposed one new constraint** — see B-3.
+The stack machine (`PUSH` / `POP` / `ECHO`) it also defined is now **deferred** — see B-3.
 
 ---
 
-## B-3 · `POP`'d targets can't be declared — OPEN
+## B-3 · `POP`'d targets can't be declared — DISSOLVED 2026-07-16
 
-**Blocks:** the shape of a "legal program", and W2's grouping. Not the store schemas.
+Dropped the stack (`PUSH` / `POP` / `ECHO`) for now — the current verbs don't compose in-program, so
+every operand is a **literal** and every written target is spelled out and known at grouping. No
+`POP`, no dynamic target, no problem.
 
-**Why.** The write set must be known at **grouping** (N=0–1): the event shard unions events by shared
-write-target, and the orchestrator forms components from those targets — all before the program runs
-(N=2+). A `POP`'d operand has no value until **run time**. So a program whose written target arrives
-off the stack cannot be grouped — the whole model assumes the write set is static.
-
-**Three ways out** (fuller in [`notes/actions.md`](../../notes/actions.md)):
-
-| | |
-|---|---|
-| **targets must be literal** | `POP` is fine for numbers and read operands, never for a written `entity_reference`. Costs "damage whatever the last action returned". |
-| **static-fold `ECHO`-sourced pops** | a pass tracks the stack: a `POP` tracing to `ECHO <lit> PUSH` is knowable; one tracing to an action's *output* still isn't, so the rule is still needed. |
-| **over-approximate** | group a superset. Pulls entities the event never writes into the component — bigger components, more serialization. |
-
-**Recommendation:** the first. The enqueue/execute split is what buys the design its determinism,
-and a dynamically-targeted event is asking to opt out of it. Cheap to relax later; expensive to
-retrofit the other way.
+If the stack ever returns (an additive palette entry), so does this constraint, and the resolution is
+the honest default already worked out: a `POP` is fine for a number or a read operand, never for a
+written `entity_reference`. See [`notes/actions.md`](../../notes/actions.md).
 
 ---
 

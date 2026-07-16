@@ -14,8 +14,7 @@ Encoding: [`ACTIONS.md`](../../../../../../ACTIONS.md). The module scans a progr
 **never interprets a verb**:
 
 - **write targets** — for grouping. Union events that share a target `entity_reference` into an
-  `event_group`. (Targets come off the program per ACTIONS.md; a written operand must be literal, not
-  `POP`'d — see the actions notes.)
+  `event_group`. Every operand is a literal (no stack), so targets are read straight off the program.
 - **`PROMOTE_EVENT` present** → latch `event_status.flags.PROMOTE` at `queue`.
 - **validity** — arity frames the stream with no re-sync point. Reject a program that doesn't parse
   *here*, at the only door in.

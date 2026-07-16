@@ -26,8 +26,8 @@ never hand-rolls a shift.
 **Done when:** `cargo test` green in `shared/codec`, every layout matches `VARIABLES.md` field for
 field, and each new packer has a test that saturates its fields (proves the spans are adjacent and
 exhaust the word) and one that proves an over-range argument can't bleed into a neighbour. For the
-stream: a reader that round-trips `ECHO 5 PUSH <action> POP`, and a test that a wrong arity
-mis-frames the rest — there is no re-sync point, so arity is wire.
+stream: a reader that round-trips a multi-action program (`PLACE obj pos MOVE_TO obj dest`), and a
+test that a wrong arity mis-frames the rest — there is no re-sync point, so arity is wire.
 
 **Watch:** the codec is the *code of record*, not the source of truth. If an implementation and
 `VARIABLES.md` disagree, the code is the bug.

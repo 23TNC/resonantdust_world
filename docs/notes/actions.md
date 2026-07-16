@@ -17,44 +17,30 @@ The payoff is that a word is a **whole u32**, which is exactly what an `entity_r
 old frame couldn't do that: `op_code:4 + entity_reference:32 = 36` doesn't fit a u32, so a tagged
 encoding forced either a u64 word (28 bits wasted) or a reference narrower than a reference.
 
-## Why `ECHO` exists
+## The stack machine is deferred (and why it dissolved B-3)
 
-It looks redundant — why say `ECHO 5 PUSH` when `5` is right there? Because an operand slot is
-**interpreted**: it's a literal *or* `POP`. So the value that `POP`'s sentinel occupies cannot be
-written inline. Any encoding where operands are interpreted has values it can't express, unless
-there is one slot that is never interpreted.
+`PUSH` / `POP` / `ECHO` — using one action's output as another's operand — are dropped for now. The
+current verbs (`CREATE` / `PLACE` / `MOVE_TO`) never compose in-program: each takes literal operands
+and stands alone. So every operand is a literal, and the whole "an operand is a literal *or* a `POP`"
+interpretation goes away.
 
-`ECHO`'s operand is that slot. Read raw, always. So the unexpressible value goes
-`ECHO <value> PUSH` onto the stack, and reaches any operand position via `POP`. The escape hatch is
-what makes the interpreted slot safe.
+That kills **B-3** at the root. The write set must be known at *grouping* (the event shard unions by
+shared write-target before the program runs), and a `POP`'d target had no value until run time — so a
+dynamically-targeted event couldn't be grouped. No `POP`, no dynamic target, no problem: every written
+`entity_reference` is spelled out and statically known.
 
-It also means `POP`'s numeric value doesn't have to be chosen carefully to avoid colliding with real
-data — a constraint that would otherwise leak into `entity_reference` allocation.
-
-## The one real constraint: `POP`'d targets
-
-The write set must be known at **grouping** — the event shard unions events by shared write-target,
-and the orchestrator forms components from those targets, all before the program runs. But a `POP`'d
-operand has no value until run time.
-
-So a program whose written target arrives via `POP` cannot be grouped. Three ways out, and this needs
-deciding:
-
-| | |
-|---|---|
-| **targets must be literal** | simplest. `POP` is allowed for numbers and read operands, never for a written `entity_reference`. Costs expressiveness: no "damage whatever the last action returned". |
-| **static-fold `ECHO`-sourced pops** | a pass tracks the stack; a `POP` that traces to `ECHO <literal> PUSH` is knowable, one that traces to an action's *output* is not. Buys a little, and the "is not" case still needs a rule. |
-| **over-approximate** | declare a superset and withdraw what wasn't touched. Costs slots on entities the event never writes, which is contention the four-slot cap will feel. |
-
-The first is the honest default: the enqueue/execute split is what buys the whole design its
-determinism, and a dynamically-targeted event is asking to opt out of it.
+**If composition is ever wanted back**, the machine returns as an *additive* palette entry (its own
+`action_reference`), and the rule it needs is the honest default from the B-3 analysis: a `POP` is
+fine for a *number* or a *read* operand, never for a *written* `entity_reference` — because a written
+target must survive to grouping. `ECHO` was the escape hatch that let an arbitrary value (even one
+colliding with `POP`'s sentinel) reach the stack; it's only meaningful alongside `POP`. Recover the
+full stack design from `git show`.
 
 ## Why the signature carries read-vs-write
 
 This is what closes the read-set question the design's §Open has carried since `targets`/`reads`
 stopped being columns. Both sets fall out of one scan, because the action's signature is a table
-lookup — `PUSH` and `POP` are structure, not semantics, and the spine never has to interpret a verb
-to know what it touches.
+lookup — the spine never has to interpret a verb to know what it touches.
 
 The alternative was `action_reads_actor`-shaped knowledge: a function that knows, per verb, which
 operands are read. That is game semantics living in the scheduler. The signature puts the same fact

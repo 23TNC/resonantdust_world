@@ -244,9 +244,6 @@ surprising. Overloaded regions lag and self-heal; they don't corrupt.
   everything) and reclaims by re-assigning the component, which re-stamps `worker_reference` and
   fences the old worker out. There is **no lease on `state_log`**. What's unshaped is the exact
   hang-detection (a durable lease on `event_log` is the fallback if in-memory proves insufficient).
-- **`POP`'d targets.** A written `entity_reference` must be statically known at grouping, but a
-  `POP`'d operand has no value until run time. Default: a written target must be literal; `POP` is for
-  numbers and read operands. See [`notes/actions.md`](../../notes/actions.md).
 - **The world verb palette.** `CREATE` / `PLACE` / `MOVE_TO` are drafted
   ([`ACTIONS.md`](../../ACTIONS.md) §World). Their opens: `CREATE`'s replay-safe id (spawn-log
   leaning) and spawn-shard; movement speed's home (per-kind); the `PROMOTE_STATE` re-anchor cadence;

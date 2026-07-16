@@ -24,47 +24,29 @@ is.
 
 ## Operands
 
-Each operand slot holds **either** a literal (an `entity_reference`, a number) **or** `POP`.
+Every operand is a **literal** u32 — an `entity_reference`, a `position_reference`, a
+`definition_reference`, or a plain number, per the action's signature. No stack, no indirection: a
+written target is always spelled out, so it's known at grouping.
 
-`POP` in a slot means *take this operand off the stack* instead of reading it inline. So
-`<action> POP POP` runs the action with both operands popped.
-
-## The stack
-
-| | | |
-|---|---|---|
-| `PUSH` | arity 0 | push the **previous action's output** onto the stack |
-| `POP` | — | an operand marker, not a standalone action. Consumes one stack entry. |
-| `ECHO` | arity 1 | return the next u32, **read raw** |
-
-`ECHO 5 PUSH` puts the literal `5` on the stack.
-
-**`ECHO`'s operand is the one slot that is never interpreted.** That is what it's for: any value —
-including one that would collide with `POP`'s sentinel — reaches the stack through `ECHO`, and from
-the stack into any slot via `POP`. Without it the encoding would have values it cannot express.
+> The stack machine (`PUSH` / `POP` / `ECHO`, using one action's output as another's operand) is
+> **deferred** — not needed by the current verbs, and it was the sole source of B-3 (a `POP`'d target
+> isn't statically known). Recover it from `git show` if composition is ever wanted; see
+> [`notes/actions.md`](notes/actions.md).
 
 ---
 
 ## Palette
 
-`action_reference : u32`. **Append-only** — a new action goes last so stored programs never
-renumber. Aliases are for reading; the wire is the number.
+`action_reference : u32`. **Append-only once a program is stored** — until then (nothing is built)
+the numbers are free to renumber. Aliases are for reading; the wire is the number.
 
-### The machine
+### Machine / visibility
 
 | action | value | arity | signature |
 |---|---|---|---|
 | `NONE` | 0 | 0 | reserved null |
-| `ECHO` | 1 | 1 | `raw:u32` → returns it |
-| `PUSH` | 2 | 0 | pushes the previous action's output |
-| `POP` | 3 | — | operand marker only |
-
-### Visibility
-
-| action | value | arity | signature |
-|---|---|---|---|
-| `PROMOTE_STATE` | 4 | 1 | `target:entity_reference` — project this slot to `state` once settled |
-| `PROMOTE_EVENT` | 5 | 0 | project this event to `event` on settle |
+| `PROMOTE_STATE` | 1 | 1 | `target:entity_reference` — project this slot to `state` once settled |
+| `PROMOTE_EVENT` | 2 | 0 | project this event to `event` on settle |
 
 Both are latched, not executed: `PROMOTE_EVENT` sets `event_status.flags.PROMOTE` at `queue`;
 `PROMOTE_STATE` sets `state_status.flags.PROMOTE` when the target's slot is created (`claim`). A
@@ -77,9 +59,9 @@ slot is grouped/claimed) or **read** (in the read set → the worker blocks on i
 
 | action | value | arity | signature |
 |---|---|---|---|
-| `CREATE` | 6 | 2 | `def:definition_reference` (imm) · `position:position_reference` (imm) → **mints** a new entity, returns its `entity_reference`. The written target is the *minted* id, not an operand. |
-| `PLACE` | 7 | 2 | `obj:entity_reference` (**write**) · `position:position_reference` (imm) — set `obj`'s position absolutely. |
-| `MOVE_TO` | 8 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — step `obj` one tile toward `dest`, then queue the next hop. |
+| `CREATE` | 3 | 2 | `def:definition_reference` (imm) · `position:position_reference` (imm) → **mints** a new entity. The written target is the *minted* id, not an operand. |
+| `PLACE` | 4 | 2 | `obj:entity_reference` (**write**) · `position:position_reference` (imm) — set `obj`'s position absolutely. |
+| `MOVE_TO` | 5 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — step `obj` one tile toward `dest`, then queue the next hop. |
 
 **`CREATE`.** A spawn insert isn't idempotent by value, so replay must not double-spawn. **OPEN**: how
 the minted `entity_reference` survives replay — a small spawn-log on the data shard keyed by
@@ -141,7 +123,6 @@ client makes it smooth.
 `entity_reference`s. **Read set** — the same scan, the operands the signature marks read. No
 interpretation, no game semantics in the spine: the signature is a table lookup.
 
-> ⚠️ **A `POP`'d operand has no value until run time.** The write set must be known at **grouping**
-> (the event shard unions by shared target, before the program runs). A written target that arrives
-> via `POP` is therefore not statically knowable, unless it traces to an `ECHO` literal. See
-> [`notes/actions.md`](notes/actions.md) — this constrains what a legal program is.
+Every operand is a literal, so both sets are fully known at grouping — the whole point of dropping the
+stack. (`CREATE`'s written target is the *minted* id, not an operand; a fresh entity is its own
+singleton component, so it never conflicts.)

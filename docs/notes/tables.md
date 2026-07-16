@@ -203,7 +203,7 @@ operand written-vs-read ([`../ACTIONS.md`](../ACTIONS.md)), so both sets fall ou
 game semantics in the spine.
 
 **Still open** (intent §Open): orchestrator assignment (master-hint leaning), the world verb palette,
-worker eviction, `POP`'d targets, and cold `find-or-mint`.
+worker eviction, and cold `find-or-mint`.
 
 ## History
 
