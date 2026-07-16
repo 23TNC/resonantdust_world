@@ -1,6 +1,7 @@
 # Plan — `event_shard` (nothing → built)
 
-_Last updated: 2026-07-15. Nothing is built._
+_Last updated: 2026-07-15. Nothing is built. Active work:
+[`work/spacetime-again/`](../../../../../../work/spacetime-again/README.md) W2._
 
 ## Blocked before phase 3
 

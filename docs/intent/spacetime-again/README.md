@@ -3,7 +3,8 @@
 > **Status: PSEUDOCODE / intent.** Nothing built. This is the **flow**; the table shapes are in
 > [`docs/TABLES.md`](../../TABLES.md), the bit layouts and vocabulary in
 > [`docs/VARIABLES.md`](../../VARIABLES.md), and the reasoning behind both in
-> [`docs/notes/`](../../notes/tables.md). Revised 2026-07-15.
+> [`docs/notes/`](../../notes/tables.md). Execution: [`work/spacetime-again/`](../../work/spacetime-again/README.md).
+> Revised 2026-07-15.
 
 **What this is for.** Two problems the old pipeline had:
 1. **Every worker mirrored the whole shard** — 6 blanket `SELECT *` subscriptions. A "pool" where
