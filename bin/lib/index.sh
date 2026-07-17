@@ -34,8 +34,11 @@ rd_seed_index() {
   now="$(date +%s%3N)"   # heartbeat stamp (epoch ms), host clock
   rd_log "seed index $db ← ${manifest/#$REPO\//}"
 
+  # Read the manifest on FD 3, not stdin: the reducer calls below run `docker compose exec` which
+  # attaches (and drains) the loop body's stdin — on stdin that ate the rest of the manifest, so only
+  # the first row ever seeded. FD 3 keeps the manifest out of the body's reach.
   local seeded=0
-  while read -r kind a b c d e _; do
+  while read -r kind a b c d e _ <&3; do
     [[ -z "$kind" || "$kind" == \#* ]] && continue
     case "$kind" in
       server)
@@ -59,7 +62,7 @@ rd_seed_index() {
         rd_die "index manifest: unknown row kind '$kind' (want: server | shard | region | cold)" ;;
     esac
     seeded=$((seeded + 1))
-  done < "$manifest"
+  done 3< "$manifest"
 
   rd_log "seeded $seeded row(s) into $db"
 }
