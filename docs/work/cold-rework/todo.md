@@ -2,7 +2,7 @@
 
 _Planned, not started. Dependency-ordered by phase (P1 gates the shape; P2/P3 stand up the router +
 overlay read-path; P4 is the mutation build). All blockers resolved — decisions in
-[`forks.md`](forks.md). Move an item to `remaining.md` on start, `completed.md` when it lands.
+[`forks.md`](forks.md). Move an item to `completed.md` when it lands.
 VARIABLES/TABLES already carry the target shape._
 
 ---

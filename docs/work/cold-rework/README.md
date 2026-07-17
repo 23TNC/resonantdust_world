@@ -52,5 +52,5 @@ through `index`.**
 
 ## Files
 
-`todo` → `remaining` → `completed`. `blockers` holds P4's open decisions (surfaced now).
-`forks`/`issues`/`deviations` appear if they gain content.
+`todo` → `completed`. `forks` holds the resolved decisions; `blockers` is empty (all resolved).
+`issues`/`deviations`/`remaining` appear only if they gain content.

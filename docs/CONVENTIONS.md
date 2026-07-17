@@ -89,9 +89,11 @@ ceremony is for substantial, multi-phase work):
 
 - **`todo.md`** — planned, not started. Written from the component plan/design/intent/current
   when we take on a work-stream.
-- **`remaining.md`** — actively executing now. Items move here from `todo` when we begin.
-- **`completed.md`** — done + verified. Items move here from `remaining`. Append-only history;
-  authoritative for what's done.
+- **`completed.md`** — done + verified. Items move here from `todo` (the default flow is
+  **`todo → completed`**). Append-only history; authoritative for what's done.
+- **`remaining.md`** *(optional)* — an in-flight tier for a **long** stream where several items run
+  at once and knowing *which* is mid-execution matters. Most streams skip it — go straight
+  `todo → completed`. Use it only when the extra tracking earns its keep; don't create it empty.
 - **`issues.md`** — problems hit + candidate solutions + which we chose + why.
 - **`forks.md`** — decision points + options + which we chose + why.
 - **`deviations.md`** — **where the code departs from the plan** (`components/<c>/{design,intent}`).
@@ -117,10 +119,11 @@ A work-folder headers the component(s) + plan phase it executes; plans link back
   ("this landed three days ago, that two days ago → here's what happened and what's next"), and
   it's how we catch code carrying an older design against a newer methodology. The commit is
   recoverable from the date; the date is the anchor. Datetime only if same-day order matters.
-- **Order:** newest-first for at-a-glance files (`remaining`, `todo`, `blockers`); chronological
-  append for history (`completed`, `issues`, `forks`).
-- **The lifecycle:** on starting work → write `todo`; on executing → move to `remaining`; on
-  finishing → move to `completed`. Issues / forks / blockers captured as they arise.
+- **Order:** newest-first for at-a-glance files (`todo`, `blockers`, `remaining` if used);
+  chronological append for history (`completed`, `issues`, `forks`).
+- **The lifecycle:** on planning work → write `todo`; on finishing an item → move it to `completed`
+  (default `todo → completed`). On a long stream, optionally park in-flight items in `remaining`
+  between the two. Issues / forks / blockers captured as they arise.
 
 ## Where a thing goes (quick reference)
 
@@ -135,7 +138,7 @@ A work-folder headers the component(s) + plan phase it executes; plans link back
 | phased path from current → design | `components/<c>/plan/` |
 | a feature's intent, components unknown/unscoped | `docs/intent/<feature>/` |
 | the same feature's intent once scoped to components | each `components/<c>/intent/` |
-| an item to do / doing / done | `work/<w>/{todo,remaining,completed}.md` |
+| an item to do / done (in-flight tier optional) | `work/<w>/{todo,completed}.md` (`remaining.md` only on long streams) |
 | a problem + how we resolved it / a decision between options | `work/<w>/{issues,forks}.md` |
 | something needing your input | `work/<w>/blockers.md` |
 | code that departs from the plan (yours or found) | `work/<w>/deviations.md` |
