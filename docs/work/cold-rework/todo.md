@@ -15,24 +15,18 @@ VARIABLES/TABLES already carry the target shape._
 
 ---
 
-## P3 · Overlay read-path — `state`/`state_log` on cold (shared macro)
+## P3 tail · Overlay **read path** (steps 1–2 done — see completed.md)
 
-Give cold the hot pair and composite it, before anything writes it. Via the shared macro ([F1]).
+The macro + cold overlay tables landed. Remaining — the render composite (build alongside P4, against
+real `state` rows):
 
-- **step 1 — extract `tick_pipeline!`**: lift `data_shard`'s `clock`/`state_log`/`state` +
-  `init`/`bump`/`claim`/`write`/`gc` into a shared macro crate; reduce `data_shard` to the payload +
-  the invocation. **Prove byte-identical** — regenerate bindings (clean diff), the wolf still moves —
-  *before* anything else builds on it. (Re-touches the live pipeline.)
-- **step 2 — cold invokes it**: `tile`/`thing` invoke `tick_pipeline!` (same three-ref payload) +
-  keep their baseline tables. No writes yet beyond `init`/`seed`.
 - **edge**: also subscribe a zone's cold `state` (`WHERE macro_position_reference = <zone>`) and relay
   it; a `ColdState` frame carries the per-entity override.
 - **client**: composite **baseline ⊕ state** — index `state` rows by `position_reference`; a cell with a
   `state` override renders from `state` (or hides, if removed), else from the baseline.
 
-**Done when:** `data_shard` is macro-generated and unchanged (wolf moves); and with a hand-inserted cold
-`state` row the client shows the override in place of the baseline cell, reverting when it's dropped —
-the composite is correct even though nothing yet *produces* the row.
+**Done when:** a cold `state` row shows the override in place of the baseline cell, reverting when it's
+dropped.
 
 ---
 

@@ -54,3 +54,28 @@ deployed. The routing directory + reducers + resolution path — the durable, re
 **Verified:** `rd build spacetime index` (cold_shards + reducers compile, bindings regenerated); edge
 `cargo check --all-targets` clean with the subscription + resolver + `build_world` routing. Live
 routing exercised on the next `rd redeploy --run` (re-seeds `cold_shards`).
+
+---
+
+## P3 (steps 1–2) · `tick_pipeline!` macro + cold overlay tables
+
+The F1 refactor: lift `data_shard`'s bespoke composition into a shared macro, then have cold ride it.
+
+- **codec** `pipeline.rs`: `tick_pipeline!()` — a `#[macro_export] macro_rules!` emitting the `clock` /
+  `state_log` / `state` tables + `init` / `bump` / `claim` / `write` / `gc` reducers, with
+  `spacetimedb::`-qualified items + `$crate::` codec helpers (a module needs only `use
+  spacetimedb::Table`). Inert in codec — expands only where invoked; codec doesn't dep spacetimedb.
+- **data_shard**: reduced to `use spacetimedb::Table; tick_pipeline!();` (242 → ~12 lines). **Proven
+  behavior-preserving** — the regenerated `data_shard` bindings are **byte-identical** (empty diff), so
+  schema + reducer signatures are unchanged. (Runtime "wolf still moves" confirms on deploy.)
+- **tile/thing**: invoke `tick_pipeline!()` (gaining `clock`/`state_log`/`state` — the mutation overlay)
+  alongside their baseline `cold_tile`/`cold_thing` + `seed`; drop their own empty `init`. Bindings
+  regenerated (the overlay tables now exist on the cold shards).
+
+**Verified:** `rd build spacetime data_shard` (byte-identical bindings) + `tile` + `thing` (overlay
+added, clean); edge `cargo check`; `core --check`; `shared` — all green.
+
+**P3 tail (not yet done):** the overlay **read path** — the edge subscribing a zone's cold `state` +
+relaying a `ColdState` frame, and the client compositing **baseline ⊕ state** (a `state` row at a
+position overrides that cell). Deferred to build alongside P4 (which *produces* the `state` rows), so
+the composite is exercised against real data rather than a hand-inserted row.
