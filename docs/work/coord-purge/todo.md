@@ -2,21 +2,7 @@
 
 _Ordered by dependency: **A gates**; B–E are independent safe deletions; **F/G** are the substantive
 reworks (F browser-verified). Move an item to `remaining.md` when you start it, `completed.md` when it
-lands. **A, B, C, D are done — see [`completed.md`](completed.md).**_
-
----
-
-## E · Fix the two latent transpositions in wasm
-
-`free_thing_prim` and `mover_prim` still decode the in-zone cell with `packed::cell_x/cell_y` (the
-transposing legacy convention — the same class as the ground bug). Neither is on the active path today
-(`mover_prim` is always called with `location = 0`; `free_thing_prim` is unused), so this is
-pre-emptive.
-
-- If a function is dead (`free_thing_prim`?), **delete it**. Otherwise switch its cell decode to the
-  canonical `object::ref_hi/ref_lo` (what `zone_tile_prims` + the things layer now use).
-
-**Done when:** no `packed::cell_x/cell_y` left in `shared/wasm`; `rd build shared` green.
+lands. **A–E are done — see [`completed.md`](completed.md).** F and G remain (the substantive reworks)._
 
 ---
 

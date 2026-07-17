@@ -212,29 +212,6 @@ impl Content {
         out
     }
 
-    /// Render coords + colour for one loose thing (object-shard `free_things`) —
-    /// the painter's per-thing call, the sub-tile sibling of [`zone_tile_prims`].
-    /// Returns the same **stride-5** record `[x, y, tint, geoColor, defId]`, where
-    /// `x`/`y` are **fractional global tile coordinates**: the tile origin plus the
-    /// `offset`'s `x_off/y_off` nibbles as a 1/16-tile fraction
-    /// (`resonantdust_codec::packed::pack_offset`). The host scales by the 64 px
-    /// tile size like a tile prim, but draws a smaller sprite so a loose thing sits
-    /// visibly within its cell. `id` is the thing def (an `object_id`), so its
-    /// visual comes from the THING namespace — `defId` indexes [`thingTextureStems`].
-    #[wasm_bindgen(js_name = freeThingPrim)]
-    pub fn free_thing_prim(&self, zone_id: u32, location: u8, offset: u8, id: u16) -> Vec<f64> {
-        let (origin_x, origin_y) = zone_origin(zone_id);
-        let tile_x = origin_x + packed::cell_x(location) as i64;
-        let tile_y = origin_y + packed::cell_y(location) as i64;
-        let steps = packed::OFFSET_STEPS as f64;
-        let x = tile_x as f64 + packed::offset_x(offset) as f64 / steps;
-        let y = tile_y as f64 + packed::offset_y(offset) as f64 / steps;
-        let visual = self.bundle.visual_for_object(id);
-        let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
-        let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
-        vec![x, y, tint as f64, geo as f64, id as f64]
-    }
-
     /// Expand a zone's sparse packed cold things into renderable prims — the thing-layer
     /// sibling of [`zone_tile_prims`]. Each entry is a `u64`
     /// `kind:16 | x:4 | y:4 | data:5 | layer:3 | variant:5 | …` ([`packed::pack_thing`]);
@@ -339,9 +316,13 @@ impl Content {
     /// mover the bot walks cell-by-cell lands on the same grid the cold things use.
     #[wasm_bindgen(js_name = moverPrim)]
     pub fn mover_prim(&self, zone_id: u32, location: u8, kind: u16) -> Vec<f64> {
+        use resonantdust_codec::object;
         let (origin_x, origin_y) = zone_origin(zone_id);
-        let tile_x = origin_x + packed::cell_x(location) as i64;
-        let tile_y = origin_y + packed::cell_y(location) as i64;
+        // `location` is a `tile_reference` (`tile_x:4 | tile_y:4`) — decode with the
+        // canonical high/low nibble split the cold things + ground use, NOT the
+        // transposing legacy `packed::cell_x/cell_y`.
+        let tile_x = origin_x + object::ref_hi(location) as i64;
+        let tile_y = origin_y + object::ref_lo(location) as i64;
         let visual = self.bundle.visual_for_object(kind);
         let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
         let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
@@ -351,8 +332,8 @@ impl Content {
 
 /// A zone's origin in **global tile coordinates**: which region, then which zone
 /// within it, each scaled by the zone/region edge in tiles. The shared prefix of
-/// every prim-expansion call ([`Content::zone_tile_prims`], `free_thing_prim`,
-/// `zone_thing_prims`).
+/// every prim-expansion call ([`Content::zone_tile_prims`], `zone_cold_prims`,
+/// `zone_thing_prims`, `mover_prim`).
 #[cfg(feature = "js")]
 fn zone_origin(zone_id: u32) -> (i64, i64) {
     let (ox, oy) = packed::global_tile(zone_id, 0); // realm ⊃ region ⊃ zone ⊃ tile

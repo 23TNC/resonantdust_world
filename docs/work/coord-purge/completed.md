@@ -73,3 +73,25 @@ decoders in the prim builders still use it (items E/F).
 
 **Verified:** `rd build shared` green; the regenerated `shared/pkg` `.d.ts`/`.js` no longer export the
 seven names; `tsc --noEmit` in pixijs green.
+
+---
+
+## E · Fix the two latent transpositions in wasm
+
+Two prim builders still decoded the in-zone cell with the transposing legacy `packed::cell_x/cell_y`
+(x in the low nibble — the exact class as the fixed ground-seam bug):
+
+- **`free_thing_prim`** (`freeThingPrim`) — **dead** (no pixijs/client caller; the loose-object
+  render path doesn't exist yet). Deleted it and its doc.
+- **`mover_prim`** (`moverPrim`) — the pawn/wolf render prim, called `moverPrim(zoneId, 0, kind)` (the
+  caller in `MoverLayer.ts` ignores its tile output and reads only tint/geoColor). Switched the
+  `location` decode to the canonical `object::ref_hi/ref_lo` (matching cold things + ground), so it's
+  correct the moment `location` carries a real `tile_reference`. Its origin still goes through
+  `zone_origin` — item F reworks that to macro.
+
+`packed` stays imported (the legacy `zone_thing_prims` u64 decoders + `zone_origin`'s `global_tile`
+still use it, both item-F territory). No `packed::cell_x/cell_y` **calls** remain in `shared/wasm`
+(only two explanatory comments mention the name).
+
+**Verified:** `rd build shared` green; `tsc --noEmit` in pixijs green (the dropped `freeThingPrim`
+export breaks nothing).
