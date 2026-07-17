@@ -27,8 +27,12 @@ shard (`tile` module = `TYPE_BIOME_TILE`, `thing` = `TYPE_BIOME_THING`), reconst
 
 **Verified (build gates):** codec object tests (9, incl. the new composite); `rd build core --check`;
 `rd build shared`; pixijs `tsc --noEmit`; `rd build spacetime tile thing` (bindings regenerated); edge
-`cargo test worldgen` (7, incl. the grouped-by-subtype + seam tests). **Browser pixel-confirm pending a
-redeploy + re-seed** (schema change — the deployed cold tables are the old shape until published).
+`cargo test worldgen` (7, incl. the grouped-by-subtype + seam tests).
+
+**Browser-confirmed live (2026-07-17):** after `rd redeploy --run` + reseed, the world renders
+correctly on `:5173` — cold **tiles** (gray mountains, green forest ground) *and* cold **things**
+(trees + shrubs) with biome variety, every cell rendered, no gaps at biome boundaries. The subtype fix
+is live and correct.
 
 ---
 
@@ -73,7 +77,10 @@ The F1 refactor: lift `data_shard`'s bespoke composition into a shared macro, th
   regenerated (the overlay tables now exist on the cold shards).
 
 **Verified:** `rd build spacetime data_shard` (byte-identical bindings) + `tile` + `thing` (overlay
-added, clean); edge `cargo check`; `core --check`; `shared` — all green.
+added, clean); edge `cargo check`; `core --check`; `shared` — all green. **Live-confirmed (2026-07-17):**
+after redeploy, the master/worker compose on the macro'd `data_shard` with no errors and **the wolf
+moves** — `state` positions change across tics (`49408`@322 → `2048`@328) — so the extraction is
+behavior-preserving at runtime, not just byte-identical statically.
 
 **P3 tail (not yet done):** the overlay **read path** — the edge subscribing a zone's cold `state` +
 relaying a `ColdState` frame, and the client compositing **baseline ⊕ state** (a `state` row at a
