@@ -133,11 +133,11 @@ fn log_event(event: &Event) {
                 "state object"
             )
         }
-        Event::ColdTiles { macro_position, layer_reference, tiles } => {
-            info!(macro_position = format!("{macro_position:#06x}"), layer_reference, tiles = tiles.len(), "cold tiles")
+        Event::ColdTiles { macro_position, subtype_id, layer_id, tiles } => {
+            info!(macro_position = format!("{macro_position:#06x}"), subtype_id, layer_id, tiles = tiles.len(), "cold tiles")
         }
-        Event::ColdThings { macro_position, layer_reference, things } => {
-            info!(macro_position = format!("{macro_position:#06x}"), layer_reference, things = things.len(), "cold things")
+        Event::ColdThings { macro_position, subtype_id, layer_id, things } => {
+            info!(macro_position = format!("{macro_position:#06x}"), subtype_id, layer_id, things = things.len(), "cold things")
         }
         Event::ZoneClosed { macro_position } => {
             info!(macro_position = format!("{macro_position:#06x}"), "zone closed")

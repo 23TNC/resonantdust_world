@@ -121,8 +121,8 @@ export interface AnchorRadii {
  *  shared `object_type_reference` (type / subtype = biome / layer), `kinds` its members
  *  as `object_kind_reference`s (u32 each). A `biome-tile` row is the ground, a
  *  `biome-thing` row the scatter. Supersedes tiles/things; fires per cold row. */
-export type ColdTilesHandler = (macroPosition: number, layerReference: number, tiles: Uint16Array) => void;
-export type ColdThingsHandler = (macroPosition: number, layerReference: number, things: Uint32Array) => void;
+export type ColdTilesHandler = (macroPosition: number, subtypeId: number, layerId: number, tiles: Uint16Array) => void;
+export type ColdThingsHandler = (macroPosition: number, subtypeId: number, layerId: number, things: Uint32Array) => void;
 /** A zone's subscription closed — drop its entities. */
 export type ZoneClosedHandler = (macroPosition: number) => void;
 
@@ -161,8 +161,8 @@ type WorldEvent =
   | { kind: "loginFailed"; reason: string }
   | { kind: "disconnected"; reason: string | null }
   | { kind: "status"; message: string }
-  | { kind: "coldTiles"; macroPosition: number; layerReference: number; tiles: Uint16Array }
-  | { kind: "coldThings"; macroPosition: number; layerReference: number; things: Uint32Array }
+  | { kind: "coldTiles"; macroPosition: number; subtypeId: number; layerId: number; tiles: Uint16Array }
+  | { kind: "coldThings"; macroPosition: number; subtypeId: number; layerId: number; things: Uint32Array }
   | {
       kind: "stateObject";
       macroPosition: number;
@@ -583,10 +583,10 @@ export class WasmClient {
         this.pending?.onProgress?.(ev.message);
         break;
       case "coldTiles":
-        for (const cb of this.coldTilesCbs) cb(ev.macroPosition, ev.layerReference, ev.tiles);
+        for (const cb of this.coldTilesCbs) cb(ev.macroPosition, ev.subtypeId, ev.layerId, ev.tiles);
         break;
       case "coldThings":
-        for (const cb of this.coldThingsCbs) cb(ev.macroPosition, ev.layerReference, ev.things);
+        for (const cb of this.coldThingsCbs) cb(ev.macroPosition, ev.subtypeId, ev.layerId, ev.things);
         break;
       case "stateObject":
         for (const cb of this.stateObjectCbs) {

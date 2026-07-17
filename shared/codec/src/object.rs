@@ -311,52 +311,51 @@ pub fn position_layer_reference(r: u32) -> u8 {
     (r & POSITION_BYTE_MASK) as u8
 }
 
-// ── cold_row_reference : u64 = reserved:28 | macro_position:16 | type_reference:16 | layer_id:4 ──
+// ── cold_row_reference : u32 = macro_position:16 | subtype_id:12 | layer_id:4 ────────────────────
 //
-// The **cold row's identity** — the composite of exactly the three header fields the plan gives a
-// row (`macro_position_reference`, `type_reference`, `layer_id`), not an opaque surrogate. Every
-// field a reader needs comes off a `position_reference`/`cold_reference`: macro + `layer_id` +
-// `type_id` (the last two from its `layer_reference`). `subtype_id` is deliberately NOT needed to
-// *find* a row — uniqueness is one object per `(type, layer, tile)`, **subtype-agnostic**.
+// The **cold row's identity** — the composite of the three header fields that identify a row:
+// `macro_position_reference` (the zone), `subtype_id` (the biome), and `layer_id`. The **`type_id`
+// is the shard** (the `tile` module *is* `TYPE_BIOME_TILE`, `thing` *is* `TYPE_BIOME_THING`), so it
+// is out of the key and off the row — dropping its `u4` (plus the old `reserved:8`) freed the `u12`
+// `subtype_id`. Reconstruction sources `type_id` from the shard: `type_reference = shard.type_id |
+// row.subtype_id`, `layer_reference = shard.type_id | row.layer_id`.
 //
-// Distinct from `cold_reference:u32`, which addresses an **object**; this addresses a **row**.
+// A zone with N biomes is N rows (same `macro`, different `subtype`) — a position alone does NOT
+// name a row (it lacks the biome), so there is no `position → row` pure function.
 
 const COLD_ROW_MACRO_SHIFT: u32 = 16;
-const COLD_ROW_LAYER_SHIFT: u32 = 8;
+const COLD_ROW_SUBTYPE_SHIFT: u32 = 4;
 const COLD_ROW_U16_MASK: u32 = 0xFFFF;
-const COLD_ROW_U8_MASK: u32 = 0xFF;
+const COLD_ROW_SUBTYPE_MASK: u32 = 0xFFF; // 12 bits
+const COLD_ROW_LAYER_ID_MASK: u32 = 0xF; // 4 bits
 
-/// Compose a `cold_row_reference`: `macro_position:16 | layer_reference:8 | reserved:8`. The server
-/// is the module (one cold shard per type per zone), so it's out of the key — a `u32` is unique
-/// within a module, mirroring `entity_reference` so the `(row, tic)` slot uid matches hot's.
-pub fn pack_cold_row_reference(macro_position: u16, layer_reference: u8) -> u32 {
+/// Compose a `cold_row_reference`: `macro_position:16 | subtype_id:12 | layer_id:4`. The `type_id` is
+/// the module (one cold shard per type), so it's out of the key — a `u32` is unique within a module,
+/// mirroring `entity_reference` so the `(row, tic)` slot uid matches hot's.
+pub fn pack_cold_row_reference(macro_position: u16, subtype_id: u16, layer_id: u8) -> u32 {
     ((macro_position as u32) << COLD_ROW_MACRO_SHIFT)
-        | ((layer_reference as u32) << COLD_ROW_LAYER_SHIFT)
+        | ((subtype_id as u32 & COLD_ROW_SUBTYPE_MASK) << COLD_ROW_SUBTYPE_SHIFT)
+        | (layer_id as u32 & COLD_ROW_LAYER_ID_MASK)
 }
 /// The `macro_position_reference` of a `cold_row_reference`.
 pub fn cold_row_macro_position(r: u32) -> u16 {
     ((r >> COLD_ROW_MACRO_SHIFT) & COLD_ROW_U16_MASK) as u16
 }
-/// The `layer_reference` (`type_id:4 | layer_id:4`) of a `cold_row_reference`.
-pub fn cold_row_layer_reference(r: u32) -> u8 {
-    ((r >> COLD_ROW_LAYER_SHIFT) & COLD_ROW_U8_MASK) as u8
+/// The `subtype_id` (the biome; 0..4096) of a `cold_row_reference`.
+pub fn cold_row_subtype(r: u32) -> u16 {
+    ((r >> COLD_ROW_SUBTYPE_SHIFT) & COLD_ROW_SUBTYPE_MASK) as u16
 }
-
-/// The `cold_row_reference` that holds the object at `position_reference` — filter a zone's rows on
-/// `(macro_position, layer_reference)`, then match `tile_reference` within the row. No subtype: the
-/// row header is subtype-agnostic (subtype rides the per-entry `kind_reference`).
-pub fn cold_row_of(position_reference: u32) -> u32 {
-    pack_cold_row_reference(
-        position_macro(position_reference),
-        position_layer_reference(position_reference),
-    )
+/// The `layer_id` (0..16) of a `cold_row_reference`.
+pub fn cold_row_layer_id(r: u32) -> u8 {
+    (r & COLD_ROW_LAYER_ID_MASK) as u8
 }
 
 // ── kind_pos_reference : u32 = kind_reference:16 | tile_reference:8 | data:8 ─────────────────────
 //
 // The cold row's per-object entry (one per object in its `Vec<u32>`), carrying the object's full
-// per-instance delta. The row header supplies the shared `(macro_position, type, subtype,
-// layer_id)`. Readers are `kind_pos_ref_*` — they read an **entry**, not a `kind_reference`.
+// per-instance delta. The row header supplies the shared `(macro_position, subtype, layer_id)` and
+// the shard supplies `type_id`. Readers are `kind_pos_ref_*` — they read an **entry**, not a
+// `kind_reference`.
 
 const KPR_KIND_SHIFT: u32 = 16;
 const KPR_TILE_SHIFT: u32 = 8;
@@ -534,38 +533,22 @@ mod tests {
     }
 
     #[test]
-    fn cold_row_reference_is_the_macro_layer_composite() {
-        for &(m, lr) in &[(0u16, 0u8), (0xABCD, pack_layer_reference(2, 3)), (0xFFFF, 0xFF)] {
-            let k = pack_cold_row_reference(m, lr);
+    fn cold_row_reference_is_the_macro_subtype_layer_composite() {
+        for &(m, sub, lid) in &[(0u16, 0u16, 0u8), (0xABCD, 0x678, 0x3), (0xFFFF, 0xFFF, 0xF)] {
+            let k = pack_cold_row_reference(m, sub, lid);
             assert_eq!(cold_row_macro_position(k), m);
-            assert_eq!(cold_row_layer_reference(k), lr);
+            assert_eq!(cold_row_subtype(k), sub);
+            assert_eq!(cold_row_layer_id(k), lid);
         }
-        // All-ones per field, disjoint; reserved:8 stays 0 → macro | layer occupy the high 24 bits.
-        assert_eq!(pack_cold_row_reference(0xFFFF, 0xFF), 0xFFFF_FF00);
-        // Distinct by macro_position, and by layer_reference (which folds type_id | layer_id).
-        assert_ne!(
-            pack_cold_row_reference(0x1234, pack_layer_reference(2, 0)),
-            pack_cold_row_reference(0x1235, pack_layer_reference(2, 0)),
-        );
-        assert_ne!(
-            pack_cold_row_reference(0x1234, pack_layer_reference(2, 0)),
-            pack_cold_row_reference(0x1234, pack_layer_reference(2, 1)),
-        );
-    }
-
-    #[test]
-    fn cold_row_of_derives_the_row_from_a_position() {
-        // A position carries macro + tile + layer_reference; the row key is macro + layer_reference
-        // (server = the module, subtype = the per-entry kind — neither is in the key).
-        let pos = pack_position_from_parts(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(2, 0));
-        let row = cold_row_of(pos);
-        assert_eq!(cold_row_macro_position(row), pack_macro_position(0x12, 0x34));
-        assert_eq!(cold_row_layer_reference(row), pack_layer_reference(2, 0));
-        // Same tile, different layer → a different row. Different tile (same row) → the SAME row.
-        let other_layer = pack_position_from_parts(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(2, 1));
-        assert_ne!(cold_row_of(other_layer), row);
-        let same_row = pack_position_from_parts(0x12, 0x34, pack_tile_reference(3, 9), pack_layer_reference(2, 0));
-        assert_eq!(cold_row_of(same_row), row);
+        // All-ones per field, disjoint, exactly fill the u32 (no type_id, no reserved).
+        assert_eq!(pack_cold_row_reference(0xFFFF, 0xFFF, 0xF), u32::MAX);
+        // Distinct by macro, by subtype (the biome), and by layer_id — each an independent axis.
+        assert_ne!(pack_cold_row_reference(0x1234, 6, 0), pack_cold_row_reference(0x1235, 6, 0));
+        assert_ne!(pack_cold_row_reference(0x1234, 6, 0), pack_cold_row_reference(0x1234, 7, 0));
+        assert_ne!(pack_cold_row_reference(0x1234, 6, 0), pack_cold_row_reference(0x1234, 6, 1));
+        // subtype/layer_id over-wide inputs mask, never bleed into a neighbour field.
+        assert_eq!(pack_cold_row_reference(0, 0x1000, 0), 0); // subtype bit 12 dropped
+        assert_eq!(pack_cold_row_reference(0, 0, 0x10), 0); // layer_id bit 4 dropped
     }
 
     #[test]

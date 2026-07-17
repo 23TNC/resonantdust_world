@@ -14,7 +14,8 @@ use spacetimedb_sdk::__codegen::{
 #[sats(crate = __lib)]
 pub(super) struct SeedArgs {
     pub macro_position: u16,
-    pub layer_reference: u8,
+    pub subtype_id: u16,
+    pub layer_id: u8,
     pub tiles: Vec::<u16>,
 }
 
@@ -22,7 +23,8 @@ impl From<SeedArgs> for super::Reducer {
     fn from(args: SeedArgs) -> Self {
         Self::Seed {
             macro_position: args.macro_position,
-            layer_reference: args.layer_reference,
+            subtype_id: args.subtype_id,
+            layer_id: args.layer_id,
             tiles: args.tiles,
 }
 }
@@ -44,10 +46,11 @@ pub trait seed {
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`seed:seed_then`] to run a callback after the reducer completes.
     fn seed(&self, macro_position: u16,
-layer_reference: u8,
+subtype_id: u16,
+layer_id: u8,
 tiles: Vec::<u16>,
 ) -> __sdk::Result<()> {
-        self.seed_then(macro_position, layer_reference, tiles,  |_, _| {})
+        self.seed_then(macro_position, subtype_id, layer_id, tiles,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `seed` to run as soon as possible,
@@ -59,7 +62,8 @@ tiles: Vec::<u16>,
     fn seed_then(
         &self,
         macro_position: u16,
-layer_reference: u8,
+subtype_id: u16,
+layer_id: u8,
 tiles: Vec::<u16>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
@@ -72,14 +76,15 @@ impl seed for super::RemoteReducers {
     fn seed_then(
         &self,
         macro_position: u16,
-layer_reference: u8,
+subtype_id: u16,
+layer_id: u8,
 tiles: Vec::<u16>,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(SeedArgs { macro_position, layer_reference, tiles,  }, callback)
+        self.imp.invoke_reducer_with_callback(SeedArgs { macro_position, subtype_id, layer_id, tiles,  }, callback)
     }
 }
 

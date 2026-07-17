@@ -286,7 +286,8 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
                 o,
                 ServerMsg::ColdTile {
                     zone: row.macro_position_reference,
-                    layer_reference: row.layer_reference,
+                    subtype_id: row.subtype_id,
+                    layer_id: row.layer_id,
                     tiles: row.tiles.clone(),
                 },
             )
@@ -306,7 +307,8 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
                 o,
                 ServerMsg::ColdThing {
                     zone: row.macro_position_reference,
-                    layer_reference: row.layer_reference,
+                    subtype_id: row.subtype_id,
+                    layer_id: row.layer_id,
                     things: row.things.clone(),
                 },
             )
@@ -415,14 +417,19 @@ fn seed_zone(pool: &Arc<Pool>, world: &World, zone: u16) {
     }
     let Some(worldgen) = pool.current_worldgen() else { return };
     let (Some(tile), Some(thing)) = (&world.tile, &world.thing) else { return };
-    // `zone` is the `macro_position_reference` worldgen keys on directly.
-    let (tiles, things) = worldgen.zone_cold(zone);
-    use resonantdust_codec::object::{pack_layer_reference, TYPE_BIOME_THING, TYPE_BIOME_TILE};
-    if let Err(err) = tile.reducers().seed(zone, pack_layer_reference(TYPE_BIOME_TILE, 0), tiles) {
-        tracing::warn!(%err, zone, "tile seed failed");
+    // `zone` is the `macro_position_reference` worldgen keys on directly. One row per biome present;
+    // `type_id` is the module, so `seed` takes `(macro, subtype_id, layer_id, payload)`. Worldgen
+    // writes the primary layer (`layer_id = 0`).
+    let layers = worldgen.zone_cold(zone);
+    for (subtype_id, tiles) in layers.tiles {
+        if let Err(err) = tile.reducers().seed(zone, subtype_id, 0, tiles) {
+            tracing::warn!(%err, zone, subtype_id, "tile seed failed");
+        }
     }
-    if let Err(err) = thing.reducers().seed(zone, pack_layer_reference(TYPE_BIOME_THING, 0), things) {
-        tracing::warn!(%err, zone, "thing seed failed");
+    for (subtype_id, things) in layers.things {
+        if let Err(err) = thing.reducers().seed(zone, subtype_id, 0, things) {
+            tracing::warn!(%err, zone, subtype_id, "thing seed failed");
+        }
     }
     tracing::debug!(zone, "seeded zone cold layers");
 }

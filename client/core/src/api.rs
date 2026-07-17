@@ -149,15 +149,15 @@ pub enum Event {
         tic: u16,
         removed: bool,
     },
-    /// A subscribed zone's cold **ground** — the dense 256 `kind_reference`s of one tile layer,
+    /// A subscribed zone's cold **ground** — the dense 256 `kind_reference`s of one biome-row,
     /// indexed by `tile_reference` (0..256). The host paints them as the terrain floor.
-    /// `macro_position` (`region:8 | zone:8`) is the wire zone address; the host expands the prims
-    /// from it via `macro_world_origin`.
-    ColdTiles { macro_position: u16, layer_reference: u8, tiles: Vec<u16> },
+    /// `macro_position` (`region:8 | zone:8`) is the wire zone address (the host expands prims via
+    /// `macro_world_origin`); `subtype_id` is the biome, `layer_id` the layer; `type_id` is
+    /// `TYPE_BIOME_TILE`.
+    ColdTiles { macro_position: u16, subtype_id: u16, layer_id: u8, tiles: Vec<u16> },
     /// A subscribed zone's cold **scatter** — sparse `kind_pos_reference`s (`kind:16 | tile:8 |
-    /// data:8`), one per occupied cell. The host decodes each to kind + tile + data and paints it
-    /// over the ground.
-    ColdThings { macro_position: u16, layer_reference: u8, things: Vec<u32> },
+    /// data:8`), one per occupied cell of one biome-row. `type_id` is `TYPE_BIOME_THING`.
+    ColdThings { macro_position: u16, subtype_id: u16, layer_id: u8, things: Vec<u32> },
     /// A zone's subscription closed (the anchor moved it out of range, or it was
     /// evicted). The host drops that zone's entities. `macro_position` = the wire zone address.
     ZoneClosed { macro_position: u16 },

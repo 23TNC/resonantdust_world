@@ -221,10 +221,12 @@ impl Content {
     /// `kindId` indexes that namespace's stems, `variant` the sprite. One boundary
     /// crossing per cold row. Unifies the legacy [`zoneTilePrims`]/[`zoneThingPrims`].
     #[wasm_bindgen(js_name = zoneColdPrims)]
-    pub fn zone_cold_prims(&self, macro_position: u16, layer_reference: u8, kinds: Vec<u32>) -> Vec<f64> {
+    pub fn zone_cold_prims(&self, macro_position: u16, type_id: u8, kinds: Vec<u32>) -> Vec<f64> {
         use resonantdust_codec::object;
         let (origin_x, origin_y) = macro_origin(macro_position);
-        let is_tile = object::layer_ref_type_id(layer_reference) == object::TYPE_BIOME_TILE;
+        // `type_id` is the cold shard (the frame: `biome-tile` vs `biome-thing`) — not read off a
+        // row field anymore. It only selects the sprite namespace here.
+        let is_tile = type_id == object::TYPE_BIOME_TILE;
         let mut out = Vec::new();
         for &k in &kinds {
             let kind_id = object::kind_pos_ref_kind_id(k);
@@ -493,19 +495,21 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("tic", &JsValue::from_f64(*tic as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
-        Event::ColdTiles { macro_position, layer_reference, tiles } => {
+        Event::ColdTiles { macro_position, subtype_id, layer_id, tiles } => {
             set("kind", &JsValue::from_str("coldTiles"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));
-            set("layerReference", &JsValue::from_f64(*layer_reference as f64));
+            set("subtypeId", &JsValue::from_f64(*subtype_id as f64));
+            set("layerId", &JsValue::from_f64(*layer_id as f64));
             // 256 dense u16 kind_references, index = tile_reference; ship as a Uint16Array.
             let arr = js_sys::Uint16Array::new_with_length(tiles.len() as u32);
             arr.copy_from(tiles);
             set("tiles", &arr);
         }
-        Event::ColdThings { macro_position, layer_reference, things } => {
+        Event::ColdThings { macro_position, subtype_id, layer_id, things } => {
             set("kind", &JsValue::from_str("coldThings"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));
-            set("layerReference", &JsValue::from_f64(*layer_reference as f64));
+            set("subtypeId", &JsValue::from_f64(*subtype_id as f64));
+            set("layerId", &JsValue::from_f64(*layer_id as f64));
             // Sparse u32 kind_pos_references; ship as a Uint32Array.
             let arr = js_sys::Uint32Array::new_with_length(things.len() as u32);
             arr.copy_from(things);

@@ -5,30 +5,8 @@ overlay read-path; P4 is the mutation build). All blockers resolved — decision
 [`forks.md`](forks.md). Move an item to `completed.md` when it lands.
 VARIABLES/TABLES already carry the target shape._
 
----
-
-## P1 · Subtype fix — restore biome, `type_id` → shard
-
-The defect: cold drops `subtype_id` (biome). Rework the row to `macro:16 | subtype:12 | layer_id:4`.
-
-- **modules** `tile`/`thing`: `cold_tile`/`cold_thing` columns → `cold_row_reference` (new pack),
-  `macro_position_reference` (idx), `subtype_id` (u16, idx), `layer_id` (u8); drop `layer_reference`.
-  `seed(macro, subtype_id, layer_id, payload)` packs the new key. Regenerate bindings; redeploy.
-- **codec** `object`: `pack_cold_row_reference(macro, subtype_id, layer_id)` + accessors
-  (`cold_row_subtype`, `cold_row_layer_id`); keep `type_id` out (shard-sourced). Update the 47-test
-  suite.
-- **worldgen** `zone_cold`: use `gen.biome → biome_subtype_id`; **group a zone's cells by subtype** and
-  return one `(subtype, layer_id, payload)` group per biome present (dense tiles: 256 with out-of-biome
-  cells `0`; sparse things: only that biome's entries).
-- **edge** `seed_zone`: loop the groups, one `seed` call each. `ColdTile`/`ColdThing` frames carry
-  `subtype_id` + `layer_id` (not `layer_reference`); relay one frame per biome-row.
-- **wasm/client** `zone_cold_prims`: take `subtype_id` + `layer_id`; reconstruct `type_reference =
-  shard.type_id | subtype` (shard = which frame) and `layer_reference = shard.type_id | layer_id`;
-  full `definition_reference`. pixijs keys cold rows by `(macro, subtype, layer)`.
-
-**Done when:** a cold object round-trips its full `definition_reference` (biome included) and
-`position_reference`; all four build gates green; **browser: biomes still flow across zones, multi-biome
-zones render every cell once** (no gaps/overlaps at biome seams within a zone).
+**P1 is done** (build gates green; browser confirm pending a redeploy) — see
+[`completed.md`](completed.md).
 
 ---
 

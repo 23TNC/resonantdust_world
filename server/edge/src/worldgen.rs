@@ -97,31 +97,38 @@ impl Worldgen {
     }
 
     /// A fresh zone's cold layers for the split `tile` / `thing` shards
-    /// ([`docs/intent/world-storage/`]): the **dense ground** (256 `kind_reference`s, index =
-    /// `tile_reference`) and the **sparse scatter** (`kind_pos_reference`s). The biome is implicit in
-    /// each cell's tile kind — one array each, no per-biome rows and no subtype in a row header.
-    /// Deterministic in world position, so a re-seed reproduces the zone.
-    pub fn zone_cold(&self, macro_position: u16) -> (Vec<u16>, Vec<u32>) {
+    /// ([`docs/intent/world-storage/`]), **grouped by biome `subtype`** — one row per biome present in
+    /// the zone (`cold_row_reference` = `macro | subtype | layer_id`; `type_id` is the shard). The
+    /// **dense ground** is 256 `kind_reference`s per subtype (cells outside that biome `0`); the
+    /// **sparse scatter** is that biome's `kind_pos_reference`s. Deterministic in world position +
+    /// subtype order, so a re-seed reproduces the zone. Worldgen writes `layer_id 0` (the primary
+    /// layer); the edge supplies it at `seed`.
+    pub fn zone_cold(&self, macro_position: u16) -> ColdLayers {
+        use std::collections::BTreeMap;
         let (ox, oy) = macro_world_origin(macro_position);
-        let mut tiles = vec![0u16; ZONE_TILES]; // dense, index = tile_reference
-        let mut things = Vec::new(); // sparse
+        let mut tiles: BTreeMap<u16, Vec<u16>> = BTreeMap::new(); // subtype → dense 256
+        let mut things: BTreeMap<u16, Vec<u32>> = BTreeMap::new(); // subtype → sparse
         for y in 0..ZONE_DIM {
             for x in 0..ZONE_DIM {
                 let (wx, wy) = (ox + x as i32, oy + y as i32);
                 let seed = tile_seed(wx, wy);
                 let gen = self.bundle.generate(&biome_dims(wx, wy), seed);
                 let tref = pack_tile_reference(x, y);
+                // The cell's biome = the row's `subtype` (0/default if it names none).
+                let subtype =
+                    gen.biome.as_deref().and_then(|b| self.bundle.biome_subtype_id(b)).unwrap_or(0);
 
-                // Ground — every cell. The biome shows up as which tile kind it chose.
+                // Ground — every cell, into its biome's dense row (allocated on first sight).
                 let tile_kind =
                     gen.tile.as_deref().and_then(|n| self.bundle.tile_def_id(n)).unwrap_or(self.default_tile);
                 let tile_variant = (seed >> 13) as u8 & 0x0F;
-                tiles[tref as usize] = pack_kind_reference(tile_kind, tile_variant);
+                tiles.entry(subtype).or_insert_with(|| vec![0u16; ZONE_TILES])[tref as usize] =
+                    pack_kind_reference(tile_kind, tile_variant);
 
-                // Scatter — sparse, only where the biome placed a thing.
+                // Scatter — sparse, into its biome's row, only where the biome placed a thing.
                 if let Some(thing_kind) = gen.thing1.as_deref().and_then(|n| self.bundle.thing_object_id(n)) {
                     let thing_variant = (seed >> 21) as u8 & 0x0F;
-                    things.push(pack_kind_pos_reference(
+                    things.entry(subtype).or_default().push(pack_kind_pos_reference(
                         pack_kind_reference(thing_kind, thing_variant),
                         tref,
                         0,
@@ -129,8 +136,19 @@ impl Worldgen {
                 }
             }
         }
-        (tiles, things)
+        ColdLayers { tiles: tiles.into_iter().collect(), things: things.into_iter().collect() }
     }
+}
+
+/// A fresh zone's cold rows, grouped by biome `subtype` — the [`Worldgen::zone_cold`] result. Each
+/// entry is `(subtype_id, payload)`; the edge seeds one `cold_tile` / `cold_thing` row per entry.
+/// Ordered by `subtype` (deterministic).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ColdLayers {
+    /// Per-biome dense ground: `(subtype_id, 256 kind_references)` — cells outside the biome `0`.
+    pub tiles: Vec<(u16, Vec<u16>)>,
+    /// Per-biome sparse scatter: `(subtype_id, kind_pos_references)`.
+    pub things: Vec<(u16, Vec<u32>)>,
 }
 
 /// Whether `prefix` is a leading sub-slice of `full` (same items, same order) —
@@ -149,6 +167,25 @@ mod tests {
     /// A region-0 `macro_position_reference` for zone `(zx, zy)` — what `zone_cold` keys on.
     fn zone_macro(zx: u8, zy: u8) -> u16 {
         pack_macro_position(0, pack_tile_reference(zx, zy))
+    }
+
+    /// Overlay a zone's per-biome dense ground rows into one 256-array — each cell from whichever
+    /// biome's row populated it (rows are disjoint by cell, so order doesn't matter).
+    fn merged_tiles(layers: &ColdLayers) -> Vec<u16> {
+        let mut out = vec![0u16; ZONE_TILES];
+        for (_subtype, tiles) in &layers.tiles {
+            for (i, &k) in tiles.iter().enumerate() {
+                if k != 0 {
+                    out[i] = k;
+                }
+            }
+        }
+        out
+    }
+
+    /// Every biome-row's scatter, flattened.
+    fn all_things(layers: &ColdLayers) -> Vec<u32> {
+        layers.things.iter().flat_map(|(_s, t)| t.iter().copied()).collect()
     }
 
     /// Hermetic worldgen over a small biome corpus shaped like the real
@@ -277,7 +314,7 @@ mod tests {
     fn every_cell_gets_a_known_tile() {
         use resonantdust_codec::object::kind_ref_kind_id;
         let w = worldgen();
-        let (tiles, _) = w.zone_cold(0);
+        let tiles = merged_tiles(&w.zone_cold(0));
         assert_eq!(tiles.len(), ZONE_TILES);
         // every dense ground slot resolves to one of the corpus tile-kinds (never 0/empty)
         let known: Vec<u16> = ["grass", "dirt", "water", "stone"]
@@ -299,8 +336,7 @@ mod tests {
         let tree = w.bundle.thing_object_id("tree").unwrap();
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
-                let (_, things) = w.zone_cold(zone_macro(zx, zy));
-                for &t in &things {
+                for t in all_things(&w.zone_cold(zone_macro(zx, zy))) {
                     assert_eq!(kind_pos_ref_kind_id(t), tree);
                 }
             }
@@ -318,7 +354,7 @@ mod tests {
         let mut saw_other = false;
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
-                let (tiles, _) = w.zone_cold(zone_macro(zx, zy));
+                let tiles = merged_tiles(&w.zone_cold(zone_macro(zx, zy)));
                 for &tile in &tiles {
                     if kind_ref_kind_id(tile) == grass {
                         saw_grass = true;
@@ -347,8 +383,8 @@ mod tests {
         // be read with the same `tile_reference` (x high nibble) worldgen wrote.
         use resonantdust_codec::object::kind_ref_kind_id;
         let w = worldgen();
-        let (west, _) = w.zone_cold(zone_macro(0, 0));
-        let (east, _) = w.zone_cold(zone_macro(1, 0));
+        let west = merged_tiles(&w.zone_cold(zone_macro(0, 0)));
+        let east = merged_tiles(&w.zone_cold(zone_macro(1, 0)));
         let ground = |wx: i32, wy: i32| {
             let g = w.bundle.generate(&biome_dims(wx, wy), tile_seed(wx, wy));
             g.tile.and_then(|n| w.bundle.tile_def_id(&n)).unwrap_or(w.default_tile) as u16

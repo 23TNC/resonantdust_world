@@ -92,12 +92,14 @@ pub enum ServerMsg {
     StateGone { entity_reference: u32, zone: u16 },
     /// A settled, promoted event touching a subscribed zone (one per zone the event reached).
     Event { event_reference: u32, zone: u16, tic: u16, actions: Vec<u32> },
-    /// A subscribed zone's **cold ground** — the dense 256 `kind_reference`s (index = `tile_reference`).
-    /// Sent on the `cold_tile` row's insert/update; the client paints it as the terrain floor.
-    ColdTile { zone: u16, layer_reference: u8, tiles: Vec<u16> },
+    /// A subscribed zone's **cold ground** — the dense 256 `kind_reference`s (index = `tile_reference`)
+    /// of one biome-row. Sent on the `cold_tile` row's insert/update; the client paints it as the
+    /// terrain floor. `subtype_id` is the biome, `layer_id` the layer; `type_id` is `TYPE_BIOME_TILE`.
+    ColdTile { zone: u16, subtype_id: u16, layer_id: u8, tiles: Vec<u16> },
     /// A subscribed zone's **cold scatter** — sparse `kind_pos_reference`s (`kind:16 | tile:8 |
-    /// data:8`). Sent on `cold_thing` insert/update; the client paints things over the ground.
-    ColdThing { zone: u16, layer_reference: u8, things: Vec<u32> },
+    /// data:8`) of one biome-row. Sent on `cold_thing` insert/update; the client paints things over
+    /// the ground. `type_id` is `TYPE_BIOME_THING`.
+    ColdThing { zone: u16, subtype_id: u16, layer_id: u8, things: Vec<u32> },
     /// A protocol- or routing-level error not tied to a single `cid`.
     Error { error: String },
 }

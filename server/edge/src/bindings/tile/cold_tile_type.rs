@@ -15,7 +15,8 @@ use spacetimedb_sdk::__codegen::{
 pub struct ColdTile {
     pub cold_row_reference: u32,
     pub macro_position_reference: u16,
-    pub layer_reference: u8,
+    pub subtype_id: u16,
+    pub layer_id: u8,
     pub tiles: Vec::<u16>,
 }
 
@@ -31,7 +32,8 @@ impl __sdk::InModule for ColdTile {
 pub struct ColdTileCols {
     pub cold_row_reference: __sdk::__query_builder::Col<ColdTile, u32>,
     pub macro_position_reference: __sdk::__query_builder::Col<ColdTile, u16>,
-    pub layer_reference: __sdk::__query_builder::Col<ColdTile, u8>,
+    pub subtype_id: __sdk::__query_builder::Col<ColdTile, u16>,
+    pub layer_id: __sdk::__query_builder::Col<ColdTile, u8>,
     pub tiles: __sdk::__query_builder::Col<ColdTile, Vec::<u16>>,
 }
 
@@ -41,7 +43,8 @@ impl __sdk::__query_builder::HasCols for ColdTile {
         ColdTileCols {
             cold_row_reference: __sdk::__query_builder::Col::new(table_name, "cold_row_reference"),
             macro_position_reference: __sdk::__query_builder::Col::new(table_name, "macro_position_reference"),
-            layer_reference: __sdk::__query_builder::Col::new(table_name, "layer_reference"),
+            subtype_id: __sdk::__query_builder::Col::new(table_name, "subtype_id"),
+            layer_id: __sdk::__query_builder::Col::new(table_name, "layer_id"),
             tiles: __sdk::__query_builder::Col::new(table_name, "tiles"),
 
         }
@@ -54,6 +57,7 @@ impl __sdk::__query_builder::HasCols for ColdTile {
 pub struct ColdTileIxCols {
     pub cold_row_reference: __sdk::__query_builder::IxCol<ColdTile, u32>,
     pub macro_position_reference: __sdk::__query_builder::IxCol<ColdTile, u16>,
+    pub subtype_id: __sdk::__query_builder::IxCol<ColdTile, u16>,
 }
 
 impl __sdk::__query_builder::HasIxCols for ColdTile {
@@ -62,6 +66,7 @@ impl __sdk::__query_builder::HasIxCols for ColdTile {
         ColdTileIxCols {
             cold_row_reference: __sdk::__query_builder::IxCol::new(table_name, "cold_row_reference"),
             macro_position_reference: __sdk::__query_builder::IxCol::new(table_name, "macro_position_reference"),
+            subtype_id: __sdk::__query_builder::IxCol::new(table_name, "subtype_id"),
 
         }
     }

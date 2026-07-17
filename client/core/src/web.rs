@@ -571,16 +571,16 @@ impl Engine {
                 self.record_row("event", text.len());
             }
             // A zone's cold ground / scatter — the terrain.
-            ServerMsg::ColdTile { zone, layer_reference, tiles } => {
+            ServerMsg::ColdTile { zone, subtype_id, layer_id, tiles } => {
                 self.record_row("cold_tile", text.len());
                 self.zones.note_update(zone, text.len() as u64, now_ms());
-                self.emit(Event::ColdTiles { macro_position: zone, layer_reference, tiles });
+                self.emit(Event::ColdTiles { macro_position: zone, subtype_id, layer_id, tiles });
                 self.flush_zone_intents().await;
             }
-            ServerMsg::ColdThing { zone, layer_reference, things } => {
+            ServerMsg::ColdThing { zone, subtype_id, layer_id, things } => {
                 self.record_row("cold_thing", text.len());
                 self.zones.note_update(zone, text.len() as u64, now_ms());
-                self.emit(Event::ColdThings { macro_position: zone, layer_reference, things });
+                self.emit(Event::ColdThings { macro_position: zone, subtype_id, layer_id, things });
                 self.flush_zone_intents().await;
             }
         }

@@ -121,8 +121,8 @@ export class WorldBridge {
    *  without re-requesting it. */
   private readonly coldRowsRaw = new Map<
     string,
-    | { macroPosition: number; layerReference: number; tiles: Uint16Array }
-    | { macroPosition: number; layerReference: number; things: Uint32Array }
+    | { macroPosition: number; subtypeId: number; layerId: number; tiles: Uint16Array }
+    | { macroPosition: number; subtypeId: number; layerId: number; things: Uint32Array }
   >();
   private readonly unsubs: Array<() => void> = [];
 
@@ -166,13 +166,13 @@ export class WorldBridge {
     private readonly resolver: TextureResolver,
   ) {
     this.unsubs.push(
-      client.onColdTiles((macroPosition, layerReference, tiles) =>
-        this.onColdTiles(macroPosition, layerReference, tiles),
+      client.onColdTiles((macroPosition, subtypeId, layerId, tiles) =>
+        this.onColdTiles(macroPosition, subtypeId, layerId, tiles),
       ),
     );
     this.unsubs.push(
-      client.onColdThings((macroPosition, layerReference, things) =>
-        this.onColdThings(macroPosition, layerReference, things),
+      client.onColdThings((macroPosition, subtypeId, layerId, things) =>
+        this.onColdThings(macroPosition, subtypeId, layerId, things),
       ),
     );
     this.unsubs.push(client.onZoneClosed((macroPosition) => this.onZoneClosed(macroPosition)));
@@ -286,8 +286,8 @@ export class WorldBridge {
     this.content = content;
     this.refreshStems(); // the new corpus may retexture / recolour defs
     for (const row of this.coldRowsRaw.values()) {
-      if ("tiles" in row) this.onColdTiles(row.macroPosition, row.layerReference, row.tiles);
-      else this.onColdThings(row.macroPosition, row.layerReference, row.things);
+      if ("tiles" in row) this.onColdTiles(row.macroPosition, row.subtypeId, row.layerId, row.tiles);
+      else this.onColdThings(row.macroPosition, row.subtypeId, row.layerId, row.things);
     }
   }
 
@@ -322,10 +322,10 @@ export class WorldBridge {
   /** A zone's cold **ground** arrived — the dense 256 `kind_reference`s, one per cell. Paints a
    *  64×64 sprite per non-empty cell. Keyed per `(zone, layer)` so a re-delivery clears + repaints
    *  only itself. */
-  private onColdTiles(macroPosition: number, layerReference: number, tiles: Uint16Array): void {
-    const key = `${macroPosition}:${layerReference}`;
+  private onColdTiles(macroPosition: number, subtypeId: number, layerId: number, tiles: Uint16Array): void {
+    const key = `${macroPosition}:${subtypeId}:${layerId}`;
     this.clearColdPrims(key);
-    this.coldRowsRaw.set(key, { macroPosition, layerReference, tiles }); // keep for hot-swap re-expand
+    this.coldRowsRaw.set(key, { macroPosition, subtypeId, layerId, tiles }); // keep for hot-swap re-expand
 
     // [tileX, tileY, tint, geoColor, defId, …] — stride 5.
     const flat = this.content.zoneTilePrims(macroPosition, tiles);
@@ -355,14 +355,15 @@ export class WorldBridge {
   }
 
   /** A zone's cold **scatter** arrived — sparse `kind_pos_reference`s. Paints a bottom-centred
-   *  sprite per thing, above the ground. Keyed per `(zone, layer)`. */
-  private onColdThings(macroPosition: number, layerReference: number, things: Uint32Array): void {
-    const key = `${macroPosition}:${layerReference}`;
+   *  sprite per thing, above the ground. Keyed per `(zone, biome subtype, layer)`. */
+  private onColdThings(macroPosition: number, subtypeId: number, layerId: number, things: Uint32Array): void {
+    const key = `${macroPosition}:${subtypeId}:${layerId}`;
     this.clearColdPrims(key);
-    this.coldRowsRaw.set(key, { macroPosition, layerReference, things });
+    this.coldRowsRaw.set(key, { macroPosition, subtypeId, layerId, things });
 
-    // [tileX, tileY, tint, geoColor, kindId, data, variant, …] — stride 7.
-    const flat = this.content.zoneColdPrims(macroPosition, layerReference, things);
+    // [tileX, tileY, tint, geoColor, kindId, data, variant, …] — stride 7. `type_id` is the shard
+    // (this is the thing frame → the THING namespace).
+    const flat = this.content.zoneColdPrims(macroPosition, this.content.typeBiomeThing(), things);
     const ids: number[] = [];
     for (let i = 0; i + 6 < flat.length; i += 7) {
       const tileX = flat[i];

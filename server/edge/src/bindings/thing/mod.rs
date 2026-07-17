@@ -29,7 +29,8 @@ pub use seed_reducer::seed;
 pub enum Reducer {
         Seed {
         macro_position: u16,
-        layer_reference: u8,
+        subtype_id: u16,
+        layer_id: u8,
         things: Vec::<u32>,
 }    ,
 }
@@ -51,11 +52,13 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
         match self {
                         Reducer::Seed{
                 macro_position,
-                layer_reference,
+                subtype_id,
+                layer_id,
                 things,
 }             => __sats::bsatn::to_vec(&seed_reducer::SeedArgs {
                 macro_position: macro_position.clone(),
-                layer_reference: layer_reference.clone(),
+                subtype_id: subtype_id.clone(),
+                layer_id: layer_id.clone(),
                 things: things.clone(),
 }),
             _ => unreachable!(),
