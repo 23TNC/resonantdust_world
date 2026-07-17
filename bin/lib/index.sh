@@ -29,13 +29,13 @@ rd_seed_index() {
   [[ -f "$manifest" ]] \
     || rd_die "no servers manifest at ${manifest/#$REPO\//} — create it to seed env '$RD_ENV'"
 
-  local db now kind a b c
+  local db now kind a b c d e
   db="$(rd_db_for index)"
   now="$(date +%s%3N)"   # heartbeat stamp (epoch ms), host clock
   rd_log "seed index $db ← ${manifest/#$REPO\//}"
 
   local seeded=0
-  while read -r kind a b c _; do
+  while read -r kind a b c d e _; do
     [[ -z "$kind" || "$kind" == \#* ]] && continue
     case "$kind" in
       server)
@@ -50,8 +50,13 @@ rd_seed_index() {
         [[ -n "$a" && -n "$b" ]] || rd_die "index manifest: 'region' needs <region_id> <shard_id> (got: $kind $a $b)"
         rd_log "  assign_region $a → shard $b"
         rd_stc call --server local "$db" assign_region "$(rd_idx_num "$a")" "$(rd_idx_num "$b")" ;;
+      cold)
+        [[ -n "$a" && -n "$b" && -n "$c" && -n "$d" && -n "$e" ]] \
+          || rd_die "index manifest: 'cold' needs <type_id> <region> <shard> <st_url> <db_name> (got: $kind $a $b $c $d $e)"
+        rd_log "  set_cold_shard type=$a region=$b shard=$c → $e"
+        rd_stc call --server local "$db" set_cold_shard "$(rd_idx_num "$a")" "$(rd_idx_num "$b")" "$(rd_idx_num "$c")" "$d" "$e" ;;
       *)
-        rd_die "index manifest: unknown row kind '$kind' (want: server | shard | region)" ;;
+        rd_die "index manifest: unknown row kind '$kind' (want: server | shard | region | cold)" ;;
     esac
     seeded=$((seeded + 1))
   done < "$manifest"

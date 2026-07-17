@@ -29,3 +29,28 @@ shard (`tile` module = `TYPE_BIOME_TILE`, `thing` = `TYPE_BIOME_THING`), reconst
 `rd build shared`; pixijs `tsc --noEmit`; `rd build spacetime tile thing` (bindings regenerated); edge
 `cargo test worldgen` (7, incl. the grouped-by-subtype + seam tests). **Browser pixel-confirm pending a
 redeploy + re-seed** (schema change — the deployed cold tables are the old shape until published).
+
+---
+
+## P2 · Region router — `index.cold_shards`
+
+Stood up the position → cold-shard indirection, region-keyed.
+
+- **module** `index`: `cold_shards` (`route_reference` PK = `type_id:4 | region:8`, `type_id` +
+  `region_reference` idx, `shard_reference`, `url`, `db_name`) + `set_cold_shard` / `remove_cold_shard`
+  reducers. Bindings regenerated.
+- **seed** (`rd index seed`, the dev bootstrap per F2): a `cold <type> <region> <shard> <url> <db>`
+  manifest row → `set_cold_shard`. `content/servers/dev` routes region 0 (every visible zone today)
+  → the local `tile-0` / `thing-0` for both families.
+- **edge**: subscribes `cold_shards` on the index connection; `Pool::cold_endpoint(type, region)`
+  resolves the endpoint; `build_world` connects cold through it (region-0 bootstrap), falling back to
+  the configured default when a region is unrouted.
+
+**Deferred (documented in `build_world`):** the multi-region → multi-shard *connection* pool — the edge
+today keeps one tile + one thing connection resolved for region 0, which is correct while single-shard;
+per-region lazy connections (resolve at subscribe time) land when a second cold shard is actually
+deployed. The routing directory + reducers + resolution path — the durable, reusable part — are done.
+
+**Verified:** `rd build spacetime index` (cold_shards + reducers compile, bindings regenerated); edge
+`cargo check --all-targets` clean with the subscription + resolver + `build_world` routing. Live
+routing exercised on the next `rd redeploy --run` (re-seeds `cold_shards`).

@@ -35,3 +35,12 @@ shard 0 http://start:3000 resonantdust-dev-region_shard-0
 # Example region split (single-shard dev doesn't need this — the fallback covers
 # every region). Uncomment + add more shards to route regions explicitly:
 # region 0x00000000 0
+
+#   cold <type_id:u8> <region:u8> <shard:u8> <st_url> <db_name>   → set_cold_shard
+#       Route a (cold type, region) to a cold shard endpoint. type_id: 1 = biome-tile,
+#       2 = biome-thing. <st_url> is reached FROM the world server (internal). The edge
+#       resolves a zone's cold subscription through these rows; an unrouted region falls
+#       back to the env's default (resonantdust-dev-{tile,thing}-0) while single-shard.
+# Region 0 (around the origin — every visible zone today) → the local cold shards.
+cold 1 0 0 http://start:3000 resonantdust-dev-tile-0
+cold 2 0 0 http://start:3000 resonantdust-dev-thing-0

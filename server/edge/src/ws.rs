@@ -276,7 +276,14 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
     }
 
     // Cold shards: a zone's ground + scatter. A cold row is a whole zone-layer, sent on insert/update.
-    let tile = match connect_tile(&pool.cfg.uri, &pool.cfg.tile_db()) {
+    // The endpoint comes from the index router (`cold_shards`), resolved for region 0 — the bootstrap
+    // while every visible zone is in region 0; falls back to the configured default if unrouted.
+    // Multi-region → multi-shard routing (a per-region connection, resolved at subscribe time) is the
+    // follow-up when a second cold shard is deployed.
+    use resonantdust_codec::object::{TYPE_BIOME_THING, TYPE_BIOME_TILE};
+    let (tile_url, tile_db) =
+        pool.cold_endpoint(TYPE_BIOME_TILE, 0).unwrap_or_else(|| (pool.cfg.uri.clone(), pool.cfg.tile_db()));
+    let tile = match connect_tile(&tile_url, &tile_db) {
         Some((conn, ready)) => await_ready(ready).await.then_some(conn),
         None => None,
     };
@@ -297,7 +304,9 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         let o = out_tx.clone();
         t.db().cold_tile().on_update(move |_ctx, _old, row| relay(&o, row));
     }
-    let thing = match connect_thing(&pool.cfg.uri, &pool.cfg.thing_db()) {
+    let (thing_url, thing_db) =
+        pool.cold_endpoint(TYPE_BIOME_THING, 0).unwrap_or_else(|| (pool.cfg.uri.clone(), pool.cfg.thing_db()));
+    let thing = match connect_thing(&thing_url, &thing_db) {
         Some((conn, ready)) => await_ready(ready).await.then_some(conn),
         None => None,
     };

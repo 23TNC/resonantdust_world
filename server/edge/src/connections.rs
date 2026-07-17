@@ -22,7 +22,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use spacetimedb_sdk::DbContext;
+use spacetimedb_sdk::{DbContext, Table as _};
 use tokio::sync::oneshot;
 
 use crate::bindings;
@@ -158,10 +158,12 @@ impl Pool {
     /// Connect the shared control-plane (index) upstream and wait until it's live.
     /// Returns an error string (for a clean process exit) if the connect fails —
     /// the edge can't register itself for allocation without the index, so this is
-    /// fatal at startup. No subscription: the connection is used write-only (the
-    /// `set_server` registration heartbeat); the old zone→shard router that
-    /// subscribed to `region_shards`/`shards` here is gone (coord-purge C).
+    /// fatal at startup. Subscribes `cold_shards` (the region→cold-shard router the
+    /// edge resolves cold subscriptions through); the connection is otherwise
+    /// write-only (the `set_server` registration heartbeat).
     pub async fn connect(cfg: ServerConfig) -> Result<Arc<Pool>, String> {
+        use crate::bindings::index::cold_shards_table::ColdShardsTableAccess as _;
+
         let index_db = cfg.index_db();
         tracing::info!(uri = %cfg.uri, db = %index_db, "connecting index upstream");
 
@@ -170,7 +172,28 @@ impl Pool {
         if !await_ready(ready).await {
             return Err("index upstream connect timed out".to_string());
         }
-        tracing::info!("index ready");
+
+        // Subscribe the cold router and block on the initial rows so the first
+        // zone's cold resolution sees a populated table (not an empty cache).
+        let (applied_tx, applied_rx) = oneshot::channel();
+        let applied_tx = Arc::new(Mutex::new(Some(applied_tx)));
+        let sub = index
+            .subscription_builder()
+            .on_applied({
+                let applied_tx = applied_tx.clone();
+                move |_ctx| {
+                    if let Some(tx) = applied_tx.lock().unwrap().take() {
+                        let _ = tx.send(());
+                    }
+                }
+            })
+            .on_error(|_ctx, err| tracing::error!(%err, "cold_shards subscription error"))
+            .subscribe(["SELECT * FROM cold_shards"]);
+        if !matches!(tokio::time::timeout(CONNECT_TIMEOUT, applied_rx).await, Ok(Ok(()))) {
+            return Err("cold_shards subscription apply timed out".to_string());
+        }
+        std::mem::forget(sub); // lives for the whole process; Pool stays Send + Sync
+        tracing::info!(routes = index.db().cold_shards().count(), "index ready");
 
         // Load the DSL content tree worldgen seeds zones from. Non-fatal: a
         // server with no content can still route + relay zones that already
@@ -190,6 +213,19 @@ impl Pool {
     /// zones generated after the swap.
     pub fn current_worldgen(&self) -> Option<Arc<Worldgen>> {
         self.content.read().unwrap().worldgen.clone()
+    }
+
+    /// The cold shard endpoint `(url, db_name)` serving `(type_id, region_reference)`, from the
+    /// `index.cold_shards` router — or `None` if the region isn't routed (the caller falls back to
+    /// the configured default while single-shard). One row per assigned `(type, region)`.
+    pub fn cold_endpoint(&self, type_id: u8, region_reference: u8) -> Option<(String, String)> {
+        use crate::bindings::index::cold_shards_table::ColdShardsTableAccess as _;
+        self.index
+            .db()
+            .cold_shards()
+            .iter()
+            .find(|r| r.type_id == type_id && r.region_reference == region_reference)
+            .map(|r| (r.url, r.db_name))
     }
 
     /// Claim the first-seed of `zone`: `true` if this call is the one to generate + seed it (it was

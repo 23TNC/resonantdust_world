@@ -10,21 +10,8 @@ VARIABLES/TABLES already carry the target shape._
 
 ---
 
-## P2 · Region router — `index.cold_shards`
-
-Stand up the position → cold-shard indirection now. **Explicit region rows** (no wildcard — [F3]).
-
-- **module** `index`: add `cold_shards` (`route_reference` PK = `type_id:4 | region_reference:8`,
-  `type_id`/`region_reference` idx, `shard_reference`, `url`, `db_name`) + `set_cold_shard`/
-  `remove_cold_shard` reducers. The **master** assigns `(type, region) → shard` as regions come online;
-  seed the region(s) in use today (around the origin) → shard 0, per family. An unassigned region has no
-  row.
-- **edge**: subscribe `cold_shards`; resolve a cold sub by `position → macro → region_reference →
-  (type, region)` → endpoint; connect there. Replace the hardcoded `tile_db()`/`thing_db()`. This same
-  lookup answers P4's `state` routing ([F2]).
-
-**Done when:** the edge reaches cold via the router (not hardcoded names); adding a row routes a region
-elsewhere with no code change; login → zone render still works.
+**P2 is done** (routing directory + seed + edge resolution; multi-shard connection pool deferred) — see
+[`completed.md`](completed.md).
 
 ---
 

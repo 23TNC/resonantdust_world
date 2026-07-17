@@ -11,41 +11,55 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
+pub mod cold_shard_type;
 pub mod gc_schedule_type;
+pub mod master_clock_type;
 pub mod player_server_type;
 pub mod region_shard_type;
 pub mod server_type;
 pub mod shard_type;
 pub mod assign_player_reducer;
 pub mod assign_region_reducer;
+pub mod bump_tic_reducer;
 pub mod heartbeat_server_reducer;
 pub mod release_player_reducer;
+pub mod remove_cold_shard_reducer;
 pub mod remove_server_reducer;
 pub mod remove_shard_reducer;
+pub mod set_cold_shard_reducer;
 pub mod set_server_reducer;
 pub mod set_shard_reducer;
 pub mod touch_player_reducer;
 pub mod unassign_region_reducer;
+pub mod cold_shards_table;
+pub mod master_clock_table;
 pub mod player_servers_table;
 pub mod region_shards_table;
 pub mod servers_table;
 pub mod shards_table;
 
+pub use cold_shard_type::ColdShard;
 pub use gc_schedule_type::GcSchedule;
+pub use master_clock_type::MasterClock;
 pub use player_server_type::PlayerServer;
 pub use region_shard_type::RegionShard;
 pub use server_type::Server;
 pub use shard_type::Shard;
+pub use cold_shards_table::*;
+pub use master_clock_table::*;
 pub use player_servers_table::*;
 pub use region_shards_table::*;
 pub use servers_table::*;
 pub use shards_table::*;
 pub use assign_player_reducer::assign_player;
 pub use assign_region_reducer::assign_region;
+pub use bump_tic_reducer::bump_tic;
 pub use heartbeat_server_reducer::heartbeat_server;
 pub use release_player_reducer::release_player;
+pub use remove_cold_shard_reducer::remove_cold_shard;
 pub use remove_server_reducer::remove_server;
 pub use remove_shard_reducer::remove_shard;
+pub use set_cold_shard_reducer::set_cold_shard;
 pub use set_server_reducer::set_server;
 pub use set_shard_reducer::set_shard;
 pub use touch_player_reducer::touch_player;
@@ -68,6 +82,9 @@ pub enum Reducer {
         region_id: u32,
         shard_id: u16,
 }    ,
+    BumpTic {
+        realm: u8,
+}    ,
     HeartbeatServer {
         server_id: u16,
         now_ms: u64,
@@ -75,11 +92,22 @@ pub enum Reducer {
     ReleasePlayer {
         player_id: u32,
 }    ,
+    RemoveColdShard {
+        type_id: u8,
+        region_reference: u8,
+}    ,
     RemoveServer {
         server_id: u16,
 }    ,
     RemoveShard {
         shard_id: u16,
+}    ,
+    SetColdShard {
+        type_id: u8,
+        region_reference: u8,
+        shard_reference: u8,
+        url: String,
+        db_name: String,
 }    ,
     SetServer {
         server_id: u16,
@@ -110,10 +138,13 @@ impl __sdk::Reducer for Reducer {
         match self {
                         Reducer::AssignPlayer { .. } => "assign_player",
             Reducer::AssignRegion { .. } => "assign_region",
+            Reducer::BumpTic { .. } => "bump_tic",
             Reducer::HeartbeatServer { .. } => "heartbeat_server",
             Reducer::ReleasePlayer { .. } => "release_player",
+            Reducer::RemoveColdShard { .. } => "remove_cold_shard",
             Reducer::RemoveServer { .. } => "remove_server",
             Reducer::RemoveShard { .. } => "remove_shard",
+            Reducer::SetColdShard { .. } => "set_cold_shard",
             Reducer::SetServer { .. } => "set_server",
             Reducer::SetShard { .. } => "set_shard",
             Reducer::TouchPlayer { .. } => "touch_player",
@@ -140,6 +171,11 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 region_id: region_id.clone(),
                 shard_id: shard_id.clone(),
 }),
+            Reducer::BumpTic{
+                realm,
+}             => __sats::bsatn::to_vec(&bump_tic_reducer::BumpTicArgs {
+                realm: realm.clone(),
+}),
             Reducer::HeartbeatServer{
                 server_id,
                 now_ms,
@@ -152,6 +188,13 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }             => __sats::bsatn::to_vec(&release_player_reducer::ReleasePlayerArgs {
                 player_id: player_id.clone(),
 }),
+            Reducer::RemoveColdShard{
+                type_id,
+                region_reference,
+}             => __sats::bsatn::to_vec(&remove_cold_shard_reducer::RemoveColdShardArgs {
+                type_id: type_id.clone(),
+                region_reference: region_reference.clone(),
+}),
             Reducer::RemoveServer{
                 server_id,
 }             => __sats::bsatn::to_vec(&remove_server_reducer::RemoveServerArgs {
@@ -161,6 +204,19 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 shard_id,
 }             => __sats::bsatn::to_vec(&remove_shard_reducer::RemoveShardArgs {
                 shard_id: shard_id.clone(),
+}),
+            Reducer::SetColdShard{
+                type_id,
+                region_reference,
+                shard_reference,
+                url,
+                db_name,
+}             => __sats::bsatn::to_vec(&set_cold_shard_reducer::SetColdShardArgs {
+                type_id: type_id.clone(),
+                region_reference: region_reference.clone(),
+                shard_reference: shard_reference.clone(),
+                url: url.clone(),
+                db_name: db_name.clone(),
 }),
             Reducer::SetServer{
                 server_id,
@@ -201,7 +257,9 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct DbUpdate {
-        player_servers: __sdk::TableUpdate<PlayerServer>,
+        cold_shards: __sdk::TableUpdate<ColdShard>,
+    master_clock: __sdk::TableUpdate<MasterClock>,
+    player_servers: __sdk::TableUpdate<PlayerServer>,
     region_shards: __sdk::TableUpdate<RegionShard>,
     servers: __sdk::TableUpdate<Server>,
     shards: __sdk::TableUpdate<Shard>,
@@ -215,7 +273,9 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
         for table_update in __sdk::transaction_update_iter_table_updates(raw) {
             match &table_update.table_name[..] {
 
-        "player_servers" => db_update.player_servers.append(player_servers_table::parse_table_update(table_update)?),
+        "cold_shards" => db_update.cold_shards.append(cold_shards_table::parse_table_update(table_update)?),
+    "master_clock" => db_update.master_clock.append(master_clock_table::parse_table_update(table_update)?),
+    "player_servers" => db_update.player_servers.append(player_servers_table::parse_table_update(table_update)?),
     "region_shards" => db_update.region_shards.append(region_shards_table::parse_table_update(table_update)?),
     "servers" => db_update.servers.append(servers_table::parse_table_update(table_update)?),
     "shards" => db_update.shards.append(shards_table::parse_table_update(table_update)?),
@@ -241,7 +301,9 @@ impl __sdk::DbUpdate for DbUpdate {
     fn apply_to_client_cache(&self, cache: &mut __sdk::ClientCache<RemoteModule>) -> AppliedDiff<'_> {
                     let mut diff = AppliedDiff::default();
                 
-                diff.player_servers = cache.apply_diff_to_table::<PlayerServer>("player_servers", &self.player_servers).with_updates_by_pk(|row| &row.player_id);
+                diff.cold_shards = cache.apply_diff_to_table::<ColdShard>("cold_shards", &self.cold_shards).with_updates_by_pk(|row| &row.route_reference);
+        diff.master_clock = cache.apply_diff_to_table::<MasterClock>("master_clock", &self.master_clock).with_updates_by_pk(|row| &row.realm);
+        diff.player_servers = cache.apply_diff_to_table::<PlayerServer>("player_servers", &self.player_servers).with_updates_by_pk(|row| &row.player_id);
         diff.region_shards = cache.apply_diff_to_table::<RegionShard>("region_shards", &self.region_shards).with_updates_by_pk(|row| &row.region_id);
         diff.servers = cache.apply_diff_to_table::<Server>("servers", &self.servers).with_updates_by_pk(|row| &row.server_id);
         diff.shards = cache.apply_diff_to_table::<Shard>("shards", &self.shards).with_updates_by_pk(|row| &row.shard_id);
@@ -252,7 +314,9 @@ fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "player_servers" => db_update.player_servers.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                                "cold_shards" => db_update.cold_shards.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "master_clock" => db_update.master_clock.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "player_servers" => db_update.player_servers.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "region_shards" => db_update.region_shards.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "servers" => db_update.servers.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "shards" => db_update.shards.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
@@ -263,7 +327,9 @@ fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "player_servers" => db_update.player_servers.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                                "cold_shards" => db_update.cold_shards.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "master_clock" => db_update.master_clock.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "player_servers" => db_update.player_servers.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "region_shards" => db_update.region_shards.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "servers" => db_update.servers.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "shards" => db_update.shards.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
@@ -276,7 +342,9 @@ for table_rows in raw.tables {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
-        player_servers: __sdk::TableAppliedDiff<'r, PlayerServer>,
+        cold_shards: __sdk::TableAppliedDiff<'r, ColdShard>,
+    master_clock: __sdk::TableAppliedDiff<'r, MasterClock>,
+    player_servers: __sdk::TableAppliedDiff<'r, PlayerServer>,
     region_shards: __sdk::TableAppliedDiff<'r, RegionShard>,
     servers: __sdk::TableAppliedDiff<'r, Server>,
     shards: __sdk::TableAppliedDiff<'r, Shard>,
@@ -290,7 +358,9 @@ impl __sdk::InModule for AppliedDiff<'_> {
 
 impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     fn invoke_row_callbacks(&self, event: &EventContext, callbacks: &mut __sdk::DbCallbacks<RemoteModule>) {
-                callbacks.invoke_table_row_callbacks::<PlayerServer>("player_servers", &self.player_servers, event);
+                callbacks.invoke_table_row_callbacks::<ColdShard>("cold_shards", &self.cold_shards, event);
+        callbacks.invoke_table_row_callbacks::<MasterClock>("master_clock", &self.master_clock, event);
+        callbacks.invoke_table_row_callbacks::<PlayerServer>("player_servers", &self.player_servers, event);
         callbacks.invoke_table_row_callbacks::<RegionShard>("region_shards", &self.region_shards, event);
         callbacks.invoke_table_row_callbacks::<Server>("servers", &self.servers, event);
         callbacks.invoke_table_row_callbacks::<Shard>("shards", &self.shards, event);
@@ -945,13 +1015,17 @@ impl __sdk::SpacetimeModule for RemoteModule {
     type QueryBuilder = __sdk::QueryBuilder;
 
 fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
-                player_servers_table::register_table(client_cache);
+                cold_shards_table::register_table(client_cache);
+        master_clock_table::register_table(client_cache);
+        player_servers_table::register_table(client_cache);
         region_shards_table::register_table(client_cache);
         servers_table::register_table(client_cache);
         shards_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
-                "player_servers",
+                "cold_shards",
+        "master_clock",
+        "player_servers",
         "region_shards",
         "servers",
         "shards",

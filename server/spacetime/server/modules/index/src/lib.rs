@@ -222,6 +222,67 @@ fn release_players_of(ctx: &ReducerContext, server_id: u16) {
     }
 }
 
+// ── cold-shard routing (position → cold shard) ───────────────────────────────
+
+/// Which cold shard serves a `(cold type, region)`. The fresh, **region-keyed** cold router (the
+/// dead `region_shards`/`shards` above was `zone_id`-keyed). The edge resolves a cold subscription by
+/// `position → macro_position → region_reference`, then `(type, region) →` this row `→` endpoint. One
+/// row per assigned `(type, region)`; an unassigned region has no row. `route_reference` = `type_id:4
+/// | region_reference:8` is the routed unit. See `docs/TABLES.md`.
+#[table(accessor = cold_shards, public)]
+pub struct ColdShard {
+    #[primary_key]
+    pub route_reference: u16,
+    /// Which cold family (`TYPE_BIOME_TILE` / `TYPE_BIOME_THING` / …).
+    #[index(btree)]
+    pub type_id: u8,
+    /// The region this row routes (the high byte of `macro_position_reference`).
+    #[index(btree)]
+    pub region_reference: u8,
+    /// The cold shard serving `(type, region)`.
+    pub shard_reference: u8,
+    /// That shard's endpoint (SpacetimeDB server url).
+    pub url: String,
+    /// Its database on that endpoint.
+    pub db_name: String,
+}
+
+/// `route_reference` = `type_id:4 | region_reference:8`.
+fn cold_route_reference(type_id: u8, region_reference: u8) -> u16 {
+    (((type_id & 0xF) as u16) << 8) | region_reference as u16
+}
+
+/// Assign (or reassign) `(type_id, region)` to a cold shard endpoint. Upsert. The master (allocator)
+/// calls this — or `rd index seed` for the dev bootstrap.
+#[reducer]
+pub fn set_cold_shard(
+    ctx: &ReducerContext,
+    type_id: u8,
+    region_reference: u8,
+    shard_reference: u8,
+    url: String,
+    db_name: String,
+) -> Result<(), String> {
+    let route_reference = cold_route_reference(type_id, region_reference);
+    ctx.db.cold_shards().route_reference().delete(route_reference);
+    ctx.db.cold_shards().insert(ColdShard {
+        route_reference,
+        type_id,
+        region_reference,
+        shard_reference,
+        url,
+        db_name,
+    });
+    Ok(())
+}
+
+/// Drop a `(type, region)` cold route.
+#[reducer]
+pub fn remove_cold_shard(ctx: &ReducerContext, type_id: u8, region_reference: u8) -> Result<(), String> {
+    ctx.db.cold_shards().route_reference().delete(cold_route_reference(type_id, region_reference));
+    Ok(())
+}
+
 // ── GC: reap dead servers + idle player pins ─────────────────────────────────
 
 /// A server is dead once its heartbeat is this stale; reaped, its players freed.
