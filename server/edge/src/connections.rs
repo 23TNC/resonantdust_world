@@ -18,6 +18,7 @@
 //! (`run_threaded`); row/applied callbacks fire there and hand frames to the
 //! per-client async writer over a channel.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -132,6 +133,10 @@ pub struct Pool {
     /// use** (per zone seed) — never cache the `Arc` across a reload, or a new zone
     /// would generate from stale content.
     content: RwLock<ContentState>,
+    /// Zones this edge has already generated + seeded into the cold shards, so a subscribe seeds a
+    /// zone at most once per process. Generation is deterministic and `seed` idempotent, so a double
+    /// seed (a race, or another edge) is harmless — this just avoids the redundant work.
+    seeded_zones: Mutex<HashSet<u16>>,
 }
 
 /// The server's content-derived state — the worldgen runtime plus the corpus
@@ -206,6 +211,7 @@ impl Pool {
             cfg,
             index,
             content: RwLock::new(content),
+            seeded_zones: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -214,6 +220,12 @@ impl Pool {
     /// zones generated after the swap.
     pub fn current_worldgen(&self) -> Option<Arc<Worldgen>> {
         self.content.read().unwrap().worldgen.clone()
+    }
+
+    /// Claim the first-seed of `zone`: `true` if this call is the one to generate + seed it (it was
+    /// not yet in the set and is now), `false` if already seeded. Cheap compare-and-insert.
+    pub fn claim_zone_seed(&self, zone: u16) -> bool {
+        self.seeded_zones.lock().unwrap().insert(zone)
     }
 
     /// The loaded corpus fingerprint (`0` if content failed to load).

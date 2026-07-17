@@ -217,6 +217,43 @@ impl Worldgen {
             .map(|((type_reference, layer_id), kinds)| ColdRow { type_reference, layer_id, kinds })
             .collect()
     }
+
+    /// A fresh zone's cold layers for the split `tile` / `thing` shards
+    /// ([`docs/intent/world-storage/`]): the **dense ground** (256 `kind_reference`s, index =
+    /// `tile_reference`) and the **sparse scatter** (`kind_pos_reference`s). Unlike
+    /// [`zone_cold_objects`], the biome is implicit in each cell's tile kind — one array each, no
+    /// per-biome rows and no subtype in a row header. Deterministic in world position, so a re-seed
+    /// reproduces the zone.
+    pub fn zone_cold(&self, zone_id: u32) -> (Vec<u16>, Vec<u32>) {
+        let (ox, oy) = zone_world_origin(zone_id);
+        let mut tiles = vec![0u16; ZONE_TILES]; // dense, index = tile_reference
+        let mut things = Vec::new(); // sparse
+        for y in 0..ZONE_DIM {
+            for x in 0..ZONE_DIM {
+                let (wx, wy) = (ox + x as i32, oy + y as i32);
+                let seed = tile_seed(wx, wy);
+                let gen = self.bundle.generate(&biome_dims(wx, wy), seed);
+                let tref = pack_tile_reference(x, y);
+
+                // Ground — every cell. The biome shows up as which tile kind it chose.
+                let tile_kind =
+                    gen.tile.as_deref().and_then(|n| self.bundle.tile_def_id(n)).unwrap_or(self.default_tile);
+                let tile_variant = (seed >> 13) as u8 & 0x0F;
+                tiles[tref as usize] = pack_kind_reference(tile_kind, tile_variant);
+
+                // Scatter — sparse, only where the biome placed a thing.
+                if let Some(thing_kind) = gen.thing1.as_deref().and_then(|n| self.bundle.thing_object_id(n)) {
+                    let thing_variant = (seed >> 21) as u8 & 0x0F;
+                    things.push(pack_kind_pos_reference(
+                        pack_kind_reference(thing_kind, thing_variant),
+                        tref,
+                        0,
+                    ));
+                }
+            }
+        }
+        (tiles, things)
+    }
 }
 
 /// Whether `prefix` is a leading sub-slice of `full` (same items, same order) —

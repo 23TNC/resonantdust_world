@@ -30,7 +30,9 @@ use crate::bindings;
 use crate::bindings::data_shard::state_table::StateTableAccess as _;
 use crate::bindings::event_shard::event_table::EventTableAccess as _;
 use crate::bindings::thing::cold_thing_table::ColdThingTableAccess as _;
+use crate::bindings::thing::seed as _; // reducer trait → thing.reducers().seed
 use crate::bindings::tile::cold_tile_table::ColdTileTableAccess as _;
+use crate::bindings::tile::seed as _; // reducer trait → tile.reducers().seed
 use crate::bindings::event_shard::queue as _; // reducer trait → `reducers().queue_then`
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
 use crate::connections::{
@@ -111,7 +113,7 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
     // slow DB handler; the read loop answers pings inline and forwards everything else
     // over an ordered channel (per-connection command order is preserved).
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<ClientMsg>();
-    let worker = tokio::spawn(session_worker(players, world, out_tx.clone(), cmd_rx));
+    let worker = tokio::spawn(session_worker(pool.clone(), players, world, out_tx.clone(), cmd_rx));
 
     while let Some(frame) = stream.next().await {
         let msg = match frame {
@@ -171,6 +173,7 @@ struct ZoneSub {
 /// Drains stateful client commands in arrival order, owning all per-session state (the session id,
 /// and the set of subscribed zones). Runs teardown once the channel closes.
 async fn session_worker(
+    pool: Arc<Pool>,
     players: Option<Arc<bindings::players::DbConnection>>,
     world: World,
     out_tx: mpsc::UnboundedSender<String>,
@@ -190,6 +193,7 @@ async fn session_worker(
             }
             ClientMsg::SubscribeZone { zone } => {
                 handle_subscribe(&world, &out_tx, &mut zones, zone);
+                seed_zone(&pool, &world, zone); // generate + seed the zone's cold layers on first sight
             }
             ClientMsg::UnsubscribeZone { zone } => {
                 if zones.remove(&zone).is_some() {
@@ -398,6 +402,30 @@ fn handle_subscribe(
     });
     zones.insert(zone, ZoneSub { _state: state, _event: event, _tile: tile, _thing: thing });
     tracing::debug!(zone, "subscribed zone");
+}
+
+/// Generate + seed a zone's cold layers (ground + scatter) into the tile/thing shards, **once per
+/// zone per edge process** (`claim_zone_seed`). Worldgen is deterministic and `seed` idempotent, so a
+/// race or a second edge just re-writes the same content. A missing corpus or cold upstream is a
+/// no-op — the zone simply has no terrain yet. The client's cold subscription then delivers the
+/// seeded rows, which relay as `ColdTile`/`ColdThing`.
+fn seed_zone(pool: &Arc<Pool>, world: &World, zone: u16) {
+    if !pool.claim_zone_seed(zone) {
+        return; // already seeded this process
+    }
+    let Some(worldgen) = pool.current_worldgen() else { return };
+    let (Some(tile), Some(thing)) = (&world.tile, &world.thing) else { return };
+    // zone (a macro_position_reference) → zone_id: realm 0 | region:8 | zone:8 | reserved 0.
+    let zone_id = (zone as u32) << 8;
+    let (tiles, things) = worldgen.zone_cold(zone_id);
+    use resonantdust_codec::object::{pack_layer_reference, TYPE_BIOME_THING, TYPE_BIOME_TILE};
+    if let Err(err) = tile.reducers().seed(zone, pack_layer_reference(TYPE_BIOME_TILE, 0), tiles) {
+        tracing::warn!(%err, zone, "tile seed failed");
+    }
+    if let Err(err) = thing.reducers().seed(zone, pack_layer_reference(TYPE_BIOME_THING, 0), things) {
+        tracing::warn!(%err, zone, "thing seed failed");
+    }
+    tracing::debug!(zone, "seeded zone cold layers");
 }
 
 /// Build the per-client players upstream and subscribe to the auth table so the
