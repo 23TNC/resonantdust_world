@@ -181,9 +181,12 @@ impl Content {
                 continue; // empty cell — no floor/wall
             }
             let def_id = object::kind_ref_kind_id(kind); // the u16 tile is a kind_reference; def = kind_id
+            // The dense index IS a canonical `tile_reference` (`tile_x:4 | tile_y:4`), same as the
+            // things layer + worldgen — NOT the legacy `packed::cell` (x in the low nibble), which
+            // transposes every zone across its diagonal and shears biomes at the seams.
             let location = i as u8;
-            let tile_x = origin_x + packed::cell_x(location) as i64;
-            let tile_y = origin_y + packed::cell_y(location) as i64;
+            let tile_x = origin_x + object::ref_hi(location) as i64;
+            let tile_y = origin_y + object::ref_lo(location) as i64;
             // The DSL on_create resolves the tint + geo colour; unknown defs fall
             // back to a white tint (and geo = tint).
             let visual = self.bundle.visual_for_def(def_id);
