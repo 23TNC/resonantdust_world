@@ -113,15 +113,9 @@ pub fn zone_macro_position(zone_id: u32) -> u16 {
 
 // ── zone geometry ────────────────────────────────────────────────────────────
 
-/// Tiles per zone edge. A zone is `ZONE_DIM × ZONE_DIM` cells.
-pub const ZONE_DIM: u8 = 16;
-/// Cells per zone (`ZONE_DIM²` = 256). The `location` byte indexes `0..ZONE_TILES`.
-pub const ZONE_TILES: usize = (ZONE_DIM as usize) * (ZONE_DIM as usize);
-/// Zones per region edge. A region is `REGION_DIM × REGION_DIM` zones
-/// (= 256×256 tiles).
-pub const REGION_DIM: u8 = 16;
-/// Regions per realm edge. A realm is `REALM_DIM × REALM_DIM` regions.
-pub const REALM_DIM: u8 = 16;
+// World-structure constants now live in [`crate::object`] (the go-forward home); re-exported here so
+// the legacy `packed` helpers still resolve them until they retire (docs/work/coord-purge).
+pub use crate::object::{REALM_DIM, REALM_TILES, REGION_DIM, REGION_TILES, ZONE_DIM, ZONE_TILES};
 
 /// Cell index `0..256` from in-zone `(x, y)` — row-major, `y << 4 | x`. Matches
 /// the `x`/`y` nibble positions of a [packed thing](pack_thing).
@@ -138,14 +132,6 @@ pub fn cell_x(location: u8) -> u8 {
 pub fn cell_y(location: u8) -> u8 {
     location >> 4
 }
-
-/// Tiles per region edge (`REGION_DIM` zones × `ZONE_DIM` tiles = 256). A region
-/// spans `REGION_TILES × REGION_TILES` tiles.
-pub const REGION_TILES: i32 = REGION_DIM as i32 * ZONE_DIM as i32;
-
-/// Tiles per realm edge (`REALM_DIM` regions × `REGION_TILES`). A realm spans
-/// `REALM_TILES × REALM_TILES` tiles.
-pub const REALM_TILES: i32 = REALM_DIM as i32 * REGION_TILES;
 
 /// Global tile `(gx, gy)` → its `(zone_id, location)`. Floor-division throughout so off-origin
 /// (negative) tiles map correctly. The global tile plane nests realm ⊃ region ⊃ zone ⊃ tile

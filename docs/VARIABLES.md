@@ -53,6 +53,23 @@ u32 position_reference
 
 No realm. One object per `(type, layer, tile)` within a zone, subtype-agnostic.
 
+**World structure.** Every geographic level is a `u4` nibble pair (`x:4 | y:4`), so every edge is 16:
+
+| const | value | meaning |
+|---|---|---|
+| `ZONE_DIM` | 16 | tiles per zone edge (`tile_reference = tile_x:4 \| tile_y:4`) |
+| `REGION_DIM` | 16 | zones per region edge (`zone_reference`) |
+| `REALM_DIM` | 16 | regions per realm edge (`region_reference`) |
+| `ZONE_TILES` | 256 | cells per zone (the dense tile array's length) |
+| `REGION_TILES` | 256 | tiles per region edge (`REGION_DIM · ZONE_DIM`) |
+| `REALM_TILES` | 4096 | tiles per realm edge |
+
+A realm is 4096 tiles/axis and **only realm 0 is used**. Grow the world by widening a reference
+(`u8 → u16`: a level `4 → 8` bits, `DIM 16 → 256`) or lighting up realms — the math reads these
+constants, so it doesn't change. A zone's **world-tile origin** is `macro_world_origin(macro)` =
+`(region_x·REGION_TILES + zone_x·ZONE_DIM, region_y·… + zone_y·…)`, straight from the region/zone
+nibbles. Constants + helper are authoritative in `shared/codec/object`; legacy `packed` re-exports them.
+
 ---
 
 ## Which one it is

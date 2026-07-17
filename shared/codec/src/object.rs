@@ -189,6 +189,36 @@ pub fn macro_position_zone(r: u16) -> u8 {
     (r & HALF_BYTE_MASK) as u8
 }
 
+// ── world structure — the nested 16×16 grids (docs/VARIABLES.md §World structure) ───────────────
+//
+// Each geographic level is a `u4` nibble pair (`x:4 | y:4`), so every DIM is 16. A bigger world comes
+// from widening a reference (`u8 → u16`, a level `4 → 8` bits, DIM `16 → 256`) or lighting up realms —
+// the math reads these constants, so it doesn't change. **Authoritative here** (`packed` re-exports).
+
+/// Tiles per zone edge — a zone is `ZONE_DIM × ZONE_DIM` cells (`tile_reference = tile_x:4 | tile_y:4`).
+pub const ZONE_DIM: u8 = 16;
+/// Cells per zone (`ZONE_DIM²` = 256) — the dense tile array's length; `tile_reference` indexes it.
+pub const ZONE_TILES: usize = (ZONE_DIM as usize) * (ZONE_DIM as usize);
+/// Zones per region edge (`zone_reference = zone_x:4 | zone_y:4`).
+pub const REGION_DIM: u8 = 16;
+/// Regions per realm edge (`region_reference = region_x:4 | region_y:4`).
+pub const REALM_DIM: u8 = 16;
+/// Tiles per region edge = `REGION_DIM · ZONE_DIM` = 256.
+pub const REGION_TILES: i32 = REGION_DIM as i32 * ZONE_DIM as i32;
+/// Tiles per realm edge = `REALM_DIM · REGION_TILES`.
+pub const REALM_TILES: i32 = REALM_DIM as i32 * REGION_TILES;
+
+/// The **world-tile origin** (top-left cell) of the zone named by a `macro_position_reference` —
+/// `region_x·REGION_TILES + zone_x·ZONE_DIM` per axis, straight from the region/zone nibbles. The
+/// go-forward replacement for the legacy `zone_id → global_tile` path (realm is 0, unused).
+pub fn macro_world_origin(macro_position: u16) -> (i32, i32) {
+    let region = macro_position_region(macro_position);
+    let zone = macro_position_zone(macro_position);
+    let ox = ref_hi(region) as i32 * REGION_TILES + ref_hi(zone) as i32 * ZONE_DIM as i32;
+    let oy = ref_lo(region) as i32 * REGION_TILES + ref_lo(zone) as i32 * ZONE_DIM as i32;
+    (ox, oy)
+}
+
 /// Pack a `micro_position_reference`: `tile_reference:8 | layer_reference:8` — the **micro half**
 /// of a `position_reference`.
 pub fn pack_micro_position(tile_reference: u8, layer_reference: u8) -> u16 {
@@ -523,6 +553,23 @@ mod tests {
         assert_ne!(cold_row_of(other_layer), row);
         let same_row = pack_position_from_parts(0x12, 0x34, pack_tile_reference(3, 9), pack_layer_reference(2, 0));
         assert_eq!(cold_row_of(same_row), row);
+    }
+
+    #[test]
+    fn macro_world_origin_tiles_continuously() {
+        let m = |rx, ry, zx, zy| pack_macro_position(pack_tile_reference(rx, ry), pack_tile_reference(zx, zy));
+        // Origin of region(0,0) zone(0,0) is the world origin.
+        assert_eq!(macro_world_origin(m(0, 0, 0, 0)), (0, 0));
+        // Adjacent zones are exactly ZONE_DIM apart — no gap, no overlap (the seam property).
+        let a = macro_world_origin(m(0, 0, 3, 5));
+        let b = macro_world_origin(m(0, 0, 4, 5));
+        assert_eq!((b.0 - a.0, b.1 - a.1), (ZONE_DIM as i32, 0));
+        // ...and the last zone of a region continues into the next region's zone 0.
+        let z15 = macro_world_origin(m(0, 0, 15, 0));
+        let r1 = macro_world_origin(m(1, 0, 0, 0));
+        assert_eq!(r1.0 - z15.0, ZONE_DIM as i32);
+        // y axis uses the low nibbles.
+        assert_eq!(macro_world_origin(m(0, 2, 0, 7)), (0, 2 * REGION_TILES + 7 * ZONE_DIM as i32));
     }
 
     #[test]
