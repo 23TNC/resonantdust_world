@@ -1,45 +1,8 @@
 # Todo — coord-purge
 
-_Planned, not started. Ordered by dependency: **A gates**; B–E are independent safe deletions; **F/G**
-are the substantive reworks (F browser-verified). Move an item to `remaining.md` when you start it,
-`completed.md` when it lands._
-
----
-
-## A · Authority — world dims + `macro_world_origin` in VARIABLES / object
-
-**Gates the rest.** Sets the canonical shapes the other items conform to.
-
-- Document the world-structure constants in [`VARIABLES.md`](../../VARIABLES.md): `ZONE_DIM` = 16 (tiles
-  per zone edge), `REGION_DIM` = 16 (zones per region edge), `REALM_DIM` = 16 (regions per realm edge)
-  — each `16` because every level is a `u4` nibble pair (`x:4 | y:4`). Note they're the world-size
-  knobs (widen a reference `u8→u16` ⇒ `DIM 16→256`), **neutral, not legacy**.
-- Expose them from the object model (`shared/codec/object`) — re-export or define — so code reads them
-  there, not from the legacy `packed`.
-- Define **`macro_world_origin(macro_position_reference) -> (i32, i32)`** in `object` (or `biome`):
-  `(region_x·(REGION_DIM·ZONE_DIM) + zone_x·ZONE_DIM, …_y)` = `(region_x·256 + zone_x·16, …)`, straight
-  from the `region_reference`/`zone_reference` nibbles. This replaces `biome::zone_world_origin(zone_id)`
-  → `packed::global_tile`. Add a unit test: adjacent macros differ by exactly `ZONE_DIM` (continuity).
-
-**Done when:** VARIABLES documents the three dims; `macro_world_origin` exists + tested; nothing else
-changed yet.
-
----
-
-## B · Delete the dead worldgen generators (+ port the seam test)
-
-`worldgen.rs` carries two superseded generators used **only by their own tests**:
-
-- `zone_terrain(zone_id) -> (Vec<u8>, Vec<u64>)` (old dense-u8 / sparse-u64) + its `pack_thing_at` /
-  `cell` imports.
-- `zone_cold_objects(zone_id) -> Vec<ColdRow>` + the `ColdRow` struct (old `type_reference` rows).
-
-Delete both, their imports, and their tests — **except** port the seam-continuity test (the
-`zone_terrain(0,0)` vs `(1,0)` edge check) onto `zone_cold`: assert the last column of one zone and the
-first of its east neighbour come from adjacent world coords (the property the seam bug broke).
-
-**Done when:** only `zone_cold` remains; `pack_thing_at`/`cell`/`ColdRow` gone from worldgen; the ported
-seam test passes; `rd build core`/edge green.
+_Ordered by dependency: **A gates**; B–E are independent safe deletions; **F/G** are the substantive
+reworks (F browser-verified). Move an item to `remaining.md` when you start it, `completed.md` when it
+lands. **A and B are done — see [`completed.md`](completed.md).**_
 
 ---
 

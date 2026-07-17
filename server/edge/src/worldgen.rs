@@ -27,10 +27,8 @@ use std::path::Path;
 
 use resonantdust_codec::biome::{biome_dims, tile_seed, zone_world_origin};
 use resonantdust_codec::object::{
-    pack_kind_pos_reference, pack_kind_reference, pack_tile_reference, pack_type_reference,
-    TYPE_BIOME_THING, TYPE_BIOME_TILE,
+    pack_kind_pos_reference, pack_kind_reference, pack_tile_reference, ZONE_DIM, ZONE_TILES,
 };
-use resonantdust_codec::packed::{cell, pack_thing_at, ZONE_DIM, ZONE_TILES};
 use resonantdust_dsl::Bundle;
 
 /// The tile a cell falls back to when its biome named no ground (or an unknown
@@ -52,28 +50,6 @@ pub struct LoadedWorldgen {
     pub version: u64,
     pub worldgen: Worldgen,
 }
-
-/// One cold-storage row of a zone — the reference model's cold row: the shared header
-/// (`type_reference` + `layer_id`; `macro_position` is the zone's, supplied upstream) plus its
-/// members as `kind_pos_reference`s. Both `biome-tile` (the dense ground, one per cell) and
-/// `biome-thing` (sparse scatter) use this shape — a zone is N such rows, split by
-/// **(type, subtype, layer)**, which is exactly the row identity
-/// (`cold_row_reference = macro_position:16 | type_reference:16 | layer_id:4`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ColdRow {
-    /// The shared type half — `type_id:4 | subtype_id:12`.
-    pub type_reference: u16,
-    /// The tile-slot this row occupies. Part of the row's identity: rows sharing
-    /// `(macro_position, type, subtype)` but differing in `layer_id` are **distinct rows**.
-    pub layer_id: u8,
-    /// One `kind_pos_reference` per member — `kind_reference:16 | tile_reference:8 | data:8`.
-    pub kinds: Vec<u32>,
-}
-
-/// The layer worldgen scatters onto. Ground and its primary scatter both sit on the tile-slot 0 of
-/// their own `type` (`biome-tile` / `biome-thing`) — they don't collide, because `type_id` is part
-/// of the row identity. Richer layering (wall / affixed) is content's to assign later.
-const WORLDGEN_LAYER: u8 = 0;
 
 impl Worldgen {
     /// Load the content tree under `content_dir` into a worldgen plus the corpus
@@ -118,112 +94,11 @@ impl Worldgen {
         &self.bundle
     }
 
-    /// A fresh zone's packed terrain: the `ZONE_TILES` ground slots (row-major,
-    /// `cell(x, y)`) and the things scattered across it. Each cell samples its
-    /// biome dimensions, lets the DSL classify it, and resolves the chosen tile /
-    /// thing names to `def_id`s. Deterministic in the zone's world position, so a
-    /// re-seed reproduces it and it's seamless across zone boundaries.
-    pub fn zone_terrain(&self, zone_id: u32) -> (Vec<u8>, Vec<u64>) {
-        let (ox, oy) = zone_world_origin(zone_id);
-        let mut tiles = vec![0u8; ZONE_TILES];
-        let mut things: Vec<u64> = Vec::new();
-        for y in 0..ZONE_DIM {
-            for x in 0..ZONE_DIM {
-                let (wx, wy) = (ox + x as i32, oy + y as i32);
-                let seed = tile_seed(wx, wy);
-                let gen = self.bundle.generate(&biome_dims(wx, wy), seed);
-                let loc = cell(x, y);
-
-                let tile_id = gen
-                    .tile
-                    .as_deref()
-                    .and_then(|name| self.bundle.tile_def_id(name))
-                    .unwrap_or(self.default_tile);
-                // Tile-kind is a plain u8 now (256 kinds; corpus ids are small).
-                tiles[loc as usize] = tile_id as u8;
-
-                if let Some(kind) = gen.thing1.as_deref().and_then(|n| self.bundle.thing_object_id(n))
-                {
-                    // Worldgen scatters one primary-layer thing per cell: data
-                    // (rotation/count) 0 for flora, layer 0. A deterministic per-cell
-                    // sprite variant (0..31) from a high slice of the same seed (kept off
-                    // the low bits the scatter draw uses); the client renders it modulo the
-                    // kind's actual variant count. Sparse — only occupied cells are pushed.
-                    let variant = (seed >> 21) as u8 & 0x1F;
-                    things.push(pack_thing_at(loc, kind, 0, 0, variant));
-                }
-            }
-        }
-        (tiles, things)
-    }
-
-    /// A fresh zone's cold objects as `object_reference`s, grouped into cold rows
-    /// (`docs/components/shared/codec/design/object-model.md` §4). Same generation as [`zone_terrain`], but every
-    /// cell contributes a **`biome-tile`** ground object (dense — one per cell) and,
-    /// where the biome scattered one, a **`biome-thing`** object (sparse). Each is an
-    /// `object_kind_reference` (its `kind` + in-zone `x`/`y` + `variant`) filed under
-    /// the `object_type_reference` for its `(type, biome subtype, layer 0)`. So a
-    /// zone is **N rows** split by (type, subtype, layer) — a `biome-tile` row per
-    /// biome present (which is how the tile layer carries its biome, since a zone
-    /// spans several), plus a `biome-thing` row per biome that scattered. Rows are
-    /// ordered by `type_reference` (a `BTreeMap`), so the result is deterministic.
-    ///
-    /// The NEW cold representation, built **alongside** `zone_terrain`'s legacy
-    /// `Vec<u8>` / `Vec<u64>` while the wire / shard / client migrate over. The biome
-    /// becomes the `subtype` (its `@subtype` id; `0`/`default` if it carries none),
-    /// which is what lets a cold row *be* the zone's biome. `variant` is `u4` (the
-    /// client renders modulo the kind's real variant count).
-    pub fn zone_cold_objects(&self, zone_id: u32) -> Vec<ColdRow> {
-        use std::collections::BTreeMap;
-        let (ox, oy) = zone_world_origin(zone_id);
-        // (type_reference, layer_id) — the row header — → its member kind_pos_references.
-        let mut rows: BTreeMap<(u16, u8), Vec<u32>> = BTreeMap::new();
-        for y in 0..ZONE_DIM {
-            for x in 0..ZONE_DIM {
-                let (wx, wy) = (ox + x as i32, oy + y as i32);
-                let seed = tile_seed(wx, wy);
-                let gen = self.bundle.generate(&biome_dims(wx, wy), seed);
-                // subtype = the cell's biome (0/default if it carries no @subtype).
-                let subtype =
-                    gen.biome.as_deref().and_then(|b| self.bundle.biome_subtype_id(b)).unwrap_or(0);
-
-                // Ground tile — dense (every cell), a biome-tile object at layer 0.
-                // Falls back to the default tile when the biome named none. Its
-                // variant comes from a seed slice distinct from the thing's, so the
-                // ground and its scatter vary independently.
-                let tile_kind =
-                    gen.tile.as_deref().and_then(|n| self.bundle.tile_def_id(n)).unwrap_or(self.default_tile);
-                let tile_type = pack_type_reference(TYPE_BIOME_TILE, subtype);
-                let tile_variant = (seed >> 13) as u8 & 0x0F;
-                rows.entry((tile_type, WORLDGEN_LAYER)).or_default().push(pack_kind_pos_reference(
-                    pack_kind_reference(tile_kind, tile_variant),
-                    pack_tile_reference(x, y),
-                    0,
-                ));
-
-                // Scattered primary-layer thing — sparse, a biome-thing at layer 0.
-                if let Some(thing_kind) = gen.thing1.as_deref().and_then(|n| self.bundle.thing_object_id(n)) {
-                    let thing_type = pack_type_reference(TYPE_BIOME_THING, subtype);
-                    let thing_variant = (seed >> 21) as u8 & 0x0F;
-                    rows.entry((thing_type, WORLDGEN_LAYER)).or_default().push(pack_kind_pos_reference(
-                        pack_kind_reference(thing_kind, thing_variant),
-                        pack_tile_reference(x, y),
-                        0,
-                    ));
-                }
-            }
-        }
-        rows.into_iter()
-            .map(|((type_reference, layer_id), kinds)| ColdRow { type_reference, layer_id, kinds })
-            .collect()
-    }
-
     /// A fresh zone's cold layers for the split `tile` / `thing` shards
     /// ([`docs/intent/world-storage/`]): the **dense ground** (256 `kind_reference`s, index =
-    /// `tile_reference`) and the **sparse scatter** (`kind_pos_reference`s). Unlike
-    /// [`zone_cold_objects`], the biome is implicit in each cell's tile kind — one array each, no
-    /// per-biome rows and no subtype in a row header. Deterministic in world position, so a re-seed
-    /// reproduces the zone.
+    /// `tile_reference`) and the **sparse scatter** (`kind_pos_reference`s). The biome is implicit in
+    /// each cell's tile kind — one array each, no per-biome rows and no subtype in a row header.
+    /// Deterministic in world position, so a re-seed reproduces the zone.
     pub fn zone_cold(&self, zone_id: u32) -> (Vec<u16>, Vec<u32>) {
         let (ox, oy) = zone_world_origin(zone_id);
         let mut tiles = vec![0u16; ZONE_TILES]; // dense, index = tile_reference
@@ -393,34 +268,34 @@ mod tests {
 
     #[test]
     fn every_cell_gets_a_known_tile() {
+        use resonantdust_codec::object::kind_ref_kind_id;
         let w = worldgen();
-        let (tiles, _) = w.zone_terrain(0);
+        let (tiles, _) = w.zone_cold(0);
         assert_eq!(tiles.len(), ZONE_TILES);
-        // every ground def resolves to one of the corpus tile-kinds (never 0/empty)
-        let known: Vec<u8> = ["grass", "dirt", "water", "stone"]
+        // every dense ground slot resolves to one of the corpus tile-kinds (never 0/empty)
+        let known: Vec<u16> = ["grass", "dirt", "water", "stone"]
             .iter()
-            .filter_map(|n| w.bundle.tile_def_id(n).map(|d| d as u8))
+            .filter_map(|n| w.bundle.tile_def_id(n).map(|d| d as u16))
             .collect();
         for &tile in &tiles {
-            assert!(known.contains(&tile), "unexpected tile-kind {tile}");
+            let kind = kind_ref_kind_id(tile);
+            assert!(known.contains(&kind), "unexpected tile-kind {kind}");
         }
     }
 
     #[test]
-    fn things_land_on_grass_cells_only() {
-        // The test forest scatters trees on grass; a thing must never sit on a
-        // water/stone cell (those biomes place nothing).
+    fn things_scatter_kind_tree_only() {
+        // The test forest is the only biome that scatters, and it scatters trees;
+        // every sparse thing must therefore carry kind `tree`.
+        use resonantdust_codec::object::kind_pos_ref_kind_id;
         let w = worldgen();
-        let grass = w.bundle.tile_def_id("grass").unwrap() as u8;
         let tree = w.bundle.thing_object_id("tree").unwrap();
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
                 let zone_id = pack_zone_id(0, 0, 0, 0, zx, zy);
-                let (tiles, things) = w.zone_terrain(zone_id);
+                let (_, things) = w.zone_cold(zone_id);
                 for &t in &things {
-                    use resonantdust_codec::packed::{thing_kind, thing_location};
-                    assert_eq!(thing_kind(t), tree);
-                    assert_eq!(tiles[thing_location(t) as usize], grass);
+                    assert_eq!(kind_pos_ref_kind_id(t), tree);
                 }
             }
         }
@@ -430,15 +305,16 @@ mod tests {
     fn a_region_shows_variety() {
         // A whole region (16×16 zones) should surface more than one biome's
         // ground — at minimum some non-grass tile from an elevation band.
+        use resonantdust_codec::object::kind_ref_kind_id;
         let w = worldgen();
-        let grass = w.bundle.tile_def_id("grass").unwrap() as u8;
+        let grass = w.bundle.tile_def_id("grass").unwrap() as u16;
         let mut saw_grass = false;
         let mut saw_other = false;
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
-                let (tiles, _) = w.zone_terrain(pack_zone_id(0, 0, 0, 0, zx, zy));
+                let (tiles, _) = w.zone_cold(pack_zone_id(0, 0, 0, 0, zx, zy));
                 for &tile in &tiles {
-                    if tile == grass {
+                    if kind_ref_kind_id(tile) == grass {
                         saw_grass = true;
                     } else {
                         saw_other = true;
@@ -453,64 +329,7 @@ mod tests {
     fn deterministic_reseed() {
         let w = worldgen();
         let zone_id = pack_zone_id(0, 0, 0, 0, 3, 5);
-        assert_eq!(w.zone_terrain(zone_id), w.zone_terrain(zone_id));
-    }
-
-    #[test]
-    fn cold_objects_carry_biome_subtype_and_kind() {
-        use resonantdust_codec::object::{kind_ref_kind_id, kind_ref_x, kind_ref_y, type_ref_subtype_id, type_ref_type_id};
-        // The test corpus scatters trees ONLY in forest (@subtype 6); ground tiles
-        // are dense (one biome-tile per cell) across whatever biomes a zone spans.
-        let w = worldgen();
-        let tree = w.bundle.thing_object_id("tree").unwrap();
-        let forest = w.bundle.biome_subtype_id("forest").unwrap();
-        assert_eq!(forest, 6);
-        let mut saw_tree = false;
-        let mut saw_tile = false;
-        for zy in 0..REGION_DIM {
-            for zx in 0..REGION_DIM {
-                for row in w.zone_cold_objects(pack_zone_id(0, 0, 0, 0, zx, zy)) {
-                    for k in &row.kinds {
-                        assert!(kind_ref_x(*k) < 16 && kind_ref_y(*k) < 16, "in-zone position");
-                    }
-                    match type_ref_type_id(row.type_reference) {
-                        // things only scatter in forest → subtype 6, kind tree.
-                        t if t == TYPE_BIOME_THING => {
-                            assert_eq!(type_ref_subtype_id(row.type_reference), forest);
-                            for k in &row.kinds {
-                                assert_eq!(kind_ref_kind_id(*k), tree);
-                                saw_tree = true;
-                            }
-                        }
-                        // a biome-tile row's subtype is a real biome (its @subtype id).
-                        t if t == TYPE_BIOME_TILE => saw_tile = true,
-                        other => panic!("unexpected cold type {other}"),
-                    }
-                }
-            }
-        }
-        assert!(saw_tree, "some zone should scatter a tree");
-        assert!(saw_tile, "every zone has ground tiles");
-    }
-
-    #[test]
-    fn cold_objects_match_the_legacy_terrain() {
-        use resonantdust_codec::object::type_ref_type_id;
-        // The new object_reference path must reproduce the legacy terrain: one
-        // biome-tile per cell (dense), and exactly the legacy thing scatter.
-        let w = worldgen();
-        for zy in 0..REGION_DIM {
-            for zx in 0..REGION_DIM {
-                let zone_id = pack_zone_id(0, 0, 0, 0, zx, zy);
-                let (legacy_tiles, legacy_things) = w.zone_terrain(zone_id);
-                let rows = w.zone_cold_objects(zone_id);
-                let count = |t: u8| -> usize {
-                    rows.iter().filter(|r| type_ref_type_id(r.type_reference) == t).map(|r| r.kinds.len()).sum()
-                };
-                assert_eq!(count(TYPE_BIOME_TILE), legacy_tiles.len(), "one biome-tile per cell");
-                assert_eq!(count(TYPE_BIOME_THING), legacy_things.len(), "same thing scatter as legacy");
-            }
-        }
+        assert_eq!(w.zone_cold(zone_id), w.zone_cold(zone_id));
     }
 
     #[test]
@@ -518,16 +337,23 @@ mod tests {
         // The east edge of a zone and the west edge of its neighbour read
         // adjacent world columns, so the ground must not break at the seam: the
         // noise is continuous and both columns sample the same world function.
+        // This is the property the transposition bug broke — the dense index must
+        // be read with the same `tile_reference` (x high nibble) worldgen wrote.
+        use resonantdust_codec::object::kind_ref_kind_id;
         let w = worldgen();
-        let (west, _) = w.zone_terrain(pack_zone_id(0, 0, 0, 0, 0, 0));
-        let (east, _) = w.zone_terrain(pack_zone_id(0, 0, 0, 0, 1, 0));
+        let (west, _) = w.zone_cold(pack_zone_id(0, 0, 0, 0, 0, 0));
+        let (east, _) = w.zone_cold(pack_zone_id(0, 0, 0, 0, 1, 0));
         let ground = |wx: i32, wy: i32| {
             let g = w.bundle.generate(&biome_dims(wx, wy), tile_seed(wx, wy));
-            g.tile.and_then(|n| w.bundle.tile_def_id(&n)).unwrap_or(w.default_tile) as u8
+            g.tile.and_then(|n| w.bundle.tile_def_id(&n)).unwrap_or(w.default_tile) as u16
         };
         for y in 0..ZONE_DIM as i32 {
-            assert_eq!(west[cell(ZONE_DIM - 1, y as u8) as usize], ground(15, y));
-            assert_eq!(east[cell(0, y as u8) as usize], ground(16, y));
+            // west zone's east edge column (tile_x = 15) → world column 15;
+            // east zone's west edge column (tile_x = 0) → world column 16. Adjacent.
+            let west_edge = pack_tile_reference(ZONE_DIM - 1, y as u8) as usize;
+            let east_edge = pack_tile_reference(0, y as u8) as usize;
+            assert_eq!(kind_ref_kind_id(west[west_edge]), ground(15, y));
+            assert_eq!(kind_ref_kind_id(east[east_edge]), ground(16, y));
         }
     }
 }
