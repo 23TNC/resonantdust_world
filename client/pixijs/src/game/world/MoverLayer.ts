@@ -41,7 +41,7 @@ function hash01(a: number): number {
  *  (so an unchanged state update skips the warm re-bake). */
 interface Mover {
   id: number;
-  zoneId: number;
+  macroPosition: number;
   x: number;
   y: number;
   texName: string | undefined;
@@ -70,7 +70,7 @@ export class MoverLayer {
     this.refreshTables();
     this.unsubs.push(client.onStateObject((obj) => this.onStateObject(obj)));
     // A zone leaving the subscription sends no per-entity delete, so drop its movers.
-    this.unsubs.push(client.onZoneClosed((zoneId) => this.onZoneClosed(zoneId)));
+    this.unsubs.push(client.onZoneClosed((macroPosition) => this.onZoneClosed(macroPosition)));
   }
 
   /** A content hot-swap: re-point the stem/layout/packed tables at the new bundle. */
@@ -130,7 +130,7 @@ export class MoverLayer {
     // geoColor still come from the kind's visual (moverPrim, whose tile output we ignore).
     const tileX = obj.tileX;
     const tileY = obj.tileY;
-    const prim = this.content.moverPrim(obj.zoneId, 0, kind);
+    const prim = this.content.moverPrim(obj.macroPosition, 0, kind);
     const tint = prim[2];
     const geoColor = prim[3];
 
@@ -160,7 +160,7 @@ export class MoverLayer {
         zIndex,
       });
       this.movers.set(key, {
-        id, zoneId: obj.zoneId, x, y, texName: tex.name, cell: tex.cell, flipX: tex.flipX, tint, geoColor, zIndex,
+        id, macroPosition: obj.macroPosition, x, y, texName: tex.name, cell: tex.cell, flipX: tex.flipX, tint, geoColor, zIndex,
       });
       return;
     }
@@ -168,7 +168,7 @@ export class MoverLayer {
     // Existing pawn: skip the warm re-bake when nothing that affects the bake changed.
     if (
       m.x === x && m.y === y && m.texName === tex.name && m.cell === tex.cell &&
-      m.flipX === tex.flipX && m.tint === tint && m.geoColor === geoColor && m.zoneId === obj.zoneId
+      m.flipX === tex.flipX && m.tint === tint && m.geoColor === geoColor && m.macroPosition === obj.macroPosition
     ) {
       return;
     }
@@ -184,7 +184,7 @@ export class MoverLayer {
       p.zIndex = zIndex;
       this.viewport.warmRefreshPrim(m.id);
     }
-    m.zoneId = obj.zoneId;
+    m.macroPosition = obj.macroPosition;
     m.x = x; m.y = y; m.texName = tex.name; m.cell = tex.cell; m.flipX = tex.flipX;
     m.tint = tint; m.geoColor = geoColor; m.zIndex = zIndex;
   }
@@ -197,9 +197,9 @@ export class MoverLayer {
     }
   }
 
-  private onZoneClosed(zoneId: number): void {
+  private onZoneClosed(macroPosition: number): void {
     for (const [key, m] of this.movers) {
-      if (m.zoneId === zoneId) {
+      if (m.macroPosition === macroPosition) {
         this.viewport.warmRemovePrim(m.id);
         this.movers.delete(key);
       }

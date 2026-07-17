@@ -415,9 +415,8 @@ fn seed_zone(pool: &Arc<Pool>, world: &World, zone: u16) {
     }
     let Some(worldgen) = pool.current_worldgen() else { return };
     let (Some(tile), Some(thing)) = (&world.tile, &world.thing) else { return };
-    // zone (a macro_position_reference) → zone_id: realm 0 | region:8 | zone:8 | reserved 0.
-    let zone_id = (zone as u32) << 8;
-    let (tiles, things) = worldgen.zone_cold(zone_id);
+    // `zone` is the `macro_position_reference` worldgen keys on directly.
+    let (tiles, things) = worldgen.zone_cold(zone);
     use resonantdust_codec::object::{pack_layer_reference, TYPE_BIOME_THING, TYPE_BIOME_TILE};
     if let Err(err) = tile.reducers().seed(zone, pack_layer_reference(TYPE_BIOME_TILE, 0), tiles) {
         tracing::warn!(%err, zone, "tile seed failed");

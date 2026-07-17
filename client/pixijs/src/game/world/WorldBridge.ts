@@ -112,7 +112,7 @@ export function thingTexture(stem: string | undefined, rotation: number, variant
 }
 
 export class WorldBridge {
-  /** Cold-object sprite ids per cold ROW, keyed `${zoneId}:${typeReference}`. A zone has
+  /** Cold-object sprite ids per cold ROW, keyed `${macroPosition}:${typeReference}`. A zone has
    *  several rows (a biome-tile row per biome + biome-thing rows), each cleared +
    *  repainted independently on delivery, so they coexist without clobbering each other. */
   private readonly coldPrims = new Map<string, number[]>();
@@ -121,8 +121,8 @@ export class WorldBridge {
    *  without re-requesting it. */
   private readonly coldRowsRaw = new Map<
     string,
-    | { zoneId: number; layerReference: number; tiles: Uint16Array }
-    | { zoneId: number; layerReference: number; things: Uint32Array }
+    | { macroPosition: number; layerReference: number; tiles: Uint16Array }
+    | { macroPosition: number; layerReference: number; things: Uint32Array }
   >();
   private readonly unsubs: Array<() => void> = [];
 
@@ -166,16 +166,16 @@ export class WorldBridge {
     private readonly resolver: TextureResolver,
   ) {
     this.unsubs.push(
-      client.onColdTiles((zoneId, layerReference, tiles) =>
-        this.onColdTiles(zoneId, layerReference, tiles),
+      client.onColdTiles((macroPosition, layerReference, tiles) =>
+        this.onColdTiles(macroPosition, layerReference, tiles),
       ),
     );
     this.unsubs.push(
-      client.onColdThings((zoneId, layerReference, things) =>
-        this.onColdThings(zoneId, layerReference, things),
+      client.onColdThings((macroPosition, layerReference, things) =>
+        this.onColdThings(macroPosition, layerReference, things),
       ),
     );
-    this.unsubs.push(client.onZoneClosed((zoneId) => this.onZoneClosed(zoneId)));
+    this.unsubs.push(client.onZoneClosed((macroPosition) => this.onZoneClosed(macroPosition)));
     // A thing's box is fixed by its def layout (see placeThing), so a texture tier landing
     // doesn't change geometry — the SquareCache re-bakes the geo→master swap itself.
     // The tiling noise atlas the material bake samples — a static, content-independent
@@ -286,8 +286,8 @@ export class WorldBridge {
     this.content = content;
     this.refreshStems(); // the new corpus may retexture / recolour defs
     for (const row of this.coldRowsRaw.values()) {
-      if ("tiles" in row) this.onColdTiles(row.zoneId, row.layerReference, row.tiles);
-      else this.onColdThings(row.zoneId, row.layerReference, row.things);
+      if ("tiles" in row) this.onColdTiles(row.macroPosition, row.layerReference, row.tiles);
+      else this.onColdThings(row.macroPosition, row.layerReference, row.things);
     }
   }
 
@@ -322,13 +322,13 @@ export class WorldBridge {
   /** A zone's cold **ground** arrived — the dense 256 `kind_reference`s, one per cell. Paints a
    *  64×64 sprite per non-empty cell. Keyed per `(zone, layer)` so a re-delivery clears + repaints
    *  only itself. */
-  private onColdTiles(zoneId: number, layerReference: number, tiles: Uint16Array): void {
-    const key = `${zoneId}:${layerReference}`;
+  private onColdTiles(macroPosition: number, layerReference: number, tiles: Uint16Array): void {
+    const key = `${macroPosition}:${layerReference}`;
     this.clearColdPrims(key);
-    this.coldRowsRaw.set(key, { zoneId, layerReference, tiles }); // keep for hot-swap re-expand
+    this.coldRowsRaw.set(key, { macroPosition, layerReference, tiles }); // keep for hot-swap re-expand
 
     // [tileX, tileY, tint, geoColor, defId, …] — stride 5.
-    const flat = this.content.zoneTilePrims(zoneId, tiles);
+    const flat = this.content.zoneTilePrims(macroPosition, tiles);
     const ids: number[] = [];
     for (let i = 0; i + 4 < flat.length; i += 5) {
       const tileX = flat[i];
@@ -356,13 +356,13 @@ export class WorldBridge {
 
   /** A zone's cold **scatter** arrived — sparse `kind_pos_reference`s. Paints a bottom-centred
    *  sprite per thing, above the ground. Keyed per `(zone, layer)`. */
-  private onColdThings(zoneId: number, layerReference: number, things: Uint32Array): void {
-    const key = `${zoneId}:${layerReference}`;
+  private onColdThings(macroPosition: number, layerReference: number, things: Uint32Array): void {
+    const key = `${macroPosition}:${layerReference}`;
     this.clearColdPrims(key);
-    this.coldRowsRaw.set(key, { zoneId, layerReference, things });
+    this.coldRowsRaw.set(key, { macroPosition, layerReference, things });
 
     // [tileX, tileY, tint, geoColor, kindId, data, variant, …] — stride 7.
-    const flat = this.content.zoneColdPrims(zoneId, layerReference, things);
+    const flat = this.content.zoneColdPrims(macroPosition, layerReference, things);
     const ids: number[] = [];
     for (let i = 0; i + 6 < flat.length; i += 7) {
       const tileX = flat[i];
@@ -399,8 +399,8 @@ export class WorldBridge {
   }
 
   /** A zone's subscription closed: drop all of its cold-object sprites (every row). */
-  private onZoneClosed(zoneId: number): void {
-    const prefix = `${zoneId}:`;
+  private onZoneClosed(macroPosition: number): void {
+    const prefix = `${macroPosition}:`;
     for (const key of [...this.coldPrims.keys()]) {
       if (key.startsWith(prefix)) this.clearColdPrims(key);
     }
@@ -409,7 +409,7 @@ export class WorldBridge {
     }
   }
 
-  /** Remove one cold ROW's sprites (keyed `${zoneId}:${typeReference}`) and forget them. */
+  /** Remove one cold ROW's sprites (keyed `${macroPosition}:${typeReference}`) and forget them. */
   private clearColdPrims(key: string): void {
     const ids = this.coldPrims.get(key);
     if (ids) {

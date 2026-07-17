@@ -2,9 +2,10 @@
 //!
 //! This is the server's `:data`-side use of the DSL: load the content corpus
 //! once at startup, then answer "what does a fresh zone look like?" as the dense
-//! `tiles` (`Vec<u8>`, one tile-kind per cell) and the sparse `things` (`Vec<u64>`,
-//! `kind:16|x:4|y:4|data:5|layer:3|variant:5|reserved:27`) a zone's baseline is seeded from — held in
-//! separate shards. The edge owns generation because the DSL is pure Rust it links as an
+//! `tiles` (`Vec<u16>`, one `kind_reference` per cell, indexed by `tile_reference`) and the sparse
+//! `things` (`Vec<u32>` of `kind_pos_reference`s, `kind:16 | tile:8 | data:8`) a zone's baseline is
+//! seeded from — held in separate cold shards, keyed by `macro_position_reference`. The edge owns
+//! generation because the DSL is pure Rust it links as an
 //! rlib and it already reads `content/` off disk — a SpacetimeDB module is wasm
 //! with neither, so it just stores what we hand it. (The cold-zone seeding path
 //! itself is a follow-up in the merged pipeline — see docs/archive/gaps.md.)
@@ -25,9 +26,10 @@
 
 use std::path::Path;
 
-use resonantdust_codec::biome::{biome_dims, tile_seed, zone_world_origin};
+use resonantdust_codec::biome::{biome_dims, tile_seed};
 use resonantdust_codec::object::{
-    pack_kind_pos_reference, pack_kind_reference, pack_tile_reference, ZONE_DIM, ZONE_TILES,
+    macro_world_origin, pack_kind_pos_reference, pack_kind_reference, pack_tile_reference, ZONE_DIM,
+    ZONE_TILES,
 };
 use resonantdust_dsl::Bundle;
 
@@ -99,8 +101,8 @@ impl Worldgen {
     /// `tile_reference`) and the **sparse scatter** (`kind_pos_reference`s). The biome is implicit in
     /// each cell's tile kind — one array each, no per-biome rows and no subtype in a row header.
     /// Deterministic in world position, so a re-seed reproduces the zone.
-    pub fn zone_cold(&self, zone_id: u32) -> (Vec<u16>, Vec<u32>) {
-        let (ox, oy) = zone_world_origin(zone_id);
+    pub fn zone_cold(&self, macro_position: u16) -> (Vec<u16>, Vec<u32>) {
+        let (ox, oy) = macro_world_origin(macro_position);
         let mut tiles = vec![0u16; ZONE_TILES]; // dense, index = tile_reference
         let mut things = Vec::new(); // sparse
         for y in 0..ZONE_DIM {
@@ -142,7 +144,12 @@ fn is_prefix(prefix: &[String], full: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use resonantdust_codec::packed::{pack_zone_id, REGION_DIM};
+    use resonantdust_codec::object::{pack_macro_position, REGION_DIM};
+
+    /// A region-0 `macro_position_reference` for zone `(zx, zy)` — what `zone_cold` keys on.
+    fn zone_macro(zx: u8, zy: u8) -> u16 {
+        pack_macro_position(0, pack_tile_reference(zx, zy))
+    }
 
     /// Hermetic worldgen over a small biome corpus shaped like the real
     /// content/{data,visual,biome} tree — no filesystem, so it runs anywhere.
@@ -292,8 +299,7 @@ mod tests {
         let tree = w.bundle.thing_object_id("tree").unwrap();
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
-                let zone_id = pack_zone_id(0, 0, 0, 0, zx, zy);
-                let (_, things) = w.zone_cold(zone_id);
+                let (_, things) = w.zone_cold(zone_macro(zx, zy));
                 for &t in &things {
                     assert_eq!(kind_pos_ref_kind_id(t), tree);
                 }
@@ -312,7 +318,7 @@ mod tests {
         let mut saw_other = false;
         for zy in 0..REGION_DIM {
             for zx in 0..REGION_DIM {
-                let (tiles, _) = w.zone_cold(pack_zone_id(0, 0, 0, 0, zx, zy));
+                let (tiles, _) = w.zone_cold(zone_macro(zx, zy));
                 for &tile in &tiles {
                     if kind_ref_kind_id(tile) == grass {
                         saw_grass = true;
@@ -328,8 +334,8 @@ mod tests {
     #[test]
     fn deterministic_reseed() {
         let w = worldgen();
-        let zone_id = pack_zone_id(0, 0, 0, 0, 3, 5);
-        assert_eq!(w.zone_cold(zone_id), w.zone_cold(zone_id));
+        let m = zone_macro(3, 5);
+        assert_eq!(w.zone_cold(m), w.zone_cold(m));
     }
 
     #[test]
@@ -341,8 +347,8 @@ mod tests {
         // be read with the same `tile_reference` (x high nibble) worldgen wrote.
         use resonantdust_codec::object::kind_ref_kind_id;
         let w = worldgen();
-        let (west, _) = w.zone_cold(pack_zone_id(0, 0, 0, 0, 0, 0));
-        let (east, _) = w.zone_cold(pack_zone_id(0, 0, 0, 0, 1, 0));
+        let (west, _) = w.zone_cold(zone_macro(0, 0));
+        let (east, _) = w.zone_cold(zone_macro(1, 0));
         let ground = |wx: i32, wy: i32| {
             let g = w.bundle.generate(&biome_dims(wx, wy), tile_seed(wx, wy));
             g.tile.and_then(|n| w.bundle.tile_def_id(&n)).unwrap_or(w.default_tile) as u16

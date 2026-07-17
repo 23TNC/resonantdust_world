@@ -137,9 +137,10 @@ pub enum Event {
     /// (`removed` — a `StateGone`). `entity_reference` (`server_reference:8 | object_reference:24`)
     /// is JS-safe (fits 2^53) and keys the mover; its top nibble is the object type. The host draws
     /// `definition_reference` as the sprite at global tile `(tile_x, tile_y)` facing `facing`
-    /// (0=south, 1=east, 2=north, 3=west), interpolating position by `tic`.
+    /// (0=south, 1=east, 2=north, 3=west), interpolating position by `tic`. `macro_position` is the
+    /// entity's zone (`region:8 | zone:8`) — the wire address, carried through unchanged.
     StateObject {
-        zone_id: u32,
+        macro_position: u16,
         entity_reference: u32,
         definition_reference: u32,
         tile_x: i32,
@@ -149,16 +150,17 @@ pub enum Event {
         removed: bool,
     },
     /// A subscribed zone's cold **ground** — the dense 256 `kind_reference`s of one tile layer,
-    /// indexed by `tile_reference` (0..256). The host paints them as the terrain floor. `zone_id` is
-    /// reconstructed from the wire `zone` (`macro_position_reference`) + the session realm.
-    ColdTiles { zone_id: u32, layer_reference: u8, tiles: Vec<u16> },
+    /// indexed by `tile_reference` (0..256). The host paints them as the terrain floor.
+    /// `macro_position` (`region:8 | zone:8`) is the wire zone address; the host expands the prims
+    /// from it via `macro_world_origin`.
+    ColdTiles { macro_position: u16, layer_reference: u8, tiles: Vec<u16> },
     /// A subscribed zone's cold **scatter** — sparse `kind_pos_reference`s (`kind:16 | tile:8 |
     /// data:8`), one per occupied cell. The host decodes each to kind + tile + data and paints it
     /// over the ground.
-    ColdThings { zone_id: u32, layer_reference: u8, things: Vec<u32> },
+    ColdThings { macro_position: u16, layer_reference: u8, things: Vec<u32> },
     /// A zone's subscription closed (the anchor moved it out of range, or it was
-    /// evicted). The host drops that zone's entities.
-    ZoneClosed { zone_id: u32 },
+    /// evicted). The host drops that zone's entities. `macro_position` = the wire zone address.
+    ZoneClosed { macro_position: u16 },
     /// The simulation's freeze state changed (debug `/pause`). `true` = frozen (the tic
     /// stopped, movement halts); `false` = running. Emitted to every subscriber when the
     /// shard's flag flips (and once on subscribe). Tic-driven hosts (npc) gate on this to

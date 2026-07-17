@@ -293,7 +293,7 @@ impl Engine {
             let frame = if intent.on {
                 ClientMsg::SubscribeZone { zone }
             } else {
-                self.emit(Event::ZoneClosed { zone_id: intent.zone_id });
+                self.emit(Event::ZoneClosed { macro_position: zone });
                 ClientMsg::UnsubscribeZone { zone }
             };
             if let Err(err) = self.send_frame(&frame).await {
@@ -455,15 +455,18 @@ impl Engine {
             // A composed entity changed in a subscribed zone. Decode to a mover and age the zone's
             // subscription (warmth), which may evict it — flush the resulting intents.
             ServerMsg::State(row) => {
-                self.emit(world::state_event(&row, self.realm, /*removed=*/ false));
+                // Age the zone's subscription warmth by its `zone_id` (the anchor manager still keys
+                // on `zone_id`; coord-purge G moves it to macro), but the render event carries the
+                // wire macro straight through.
                 let zone_id = world::macro_to_zone_id(row.zone, self.realm);
+                self.emit(world::state_event(&row, /*removed=*/ false));
                 self.zones.note_update(zone_id, text.len() as u64, now_ms());
                 self.flush_zone_intents().await;
             }
             // A composed entity left a subscribed zone.
             ServerMsg::StateGone { entity_reference, zone } => {
                 self.emit(Event::StateObject {
-                    zone_id: world::macro_to_zone_id(zone, self.realm),
+                    macro_position: zone,
                     entity_reference,
                     definition_reference: 0,
                     tile_x: 0,
@@ -479,13 +482,13 @@ impl Engine {
             ServerMsg::ColdTile { zone, layer_reference, tiles } => {
                 let zone_id = world::macro_to_zone_id(zone, self.realm);
                 self.zones.note_update(zone_id, text.len() as u64, now_ms());
-                self.emit(Event::ColdTiles { zone_id, layer_reference, tiles });
+                self.emit(Event::ColdTiles { macro_position: zone, layer_reference, tiles });
                 self.flush_zone_intents().await;
             }
             ServerMsg::ColdThing { zone, layer_reference, things } => {
                 let zone_id = world::macro_to_zone_id(zone, self.realm);
                 self.zones.note_update(zone_id, text.len() as u64, now_ms());
-                self.emit(Event::ColdThings { zone_id, layer_reference, things });
+                self.emit(Event::ColdThings { macro_position: zone, layer_reference, things });
                 self.flush_zone_intents().await;
             }
         }

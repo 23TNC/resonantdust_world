@@ -95,3 +95,39 @@ still use it, both item-F territory). No `packed::cell_x/cell_y` **calls** remai
 
 **Verified:** `rd build shared` green; `tsc --noEmit` in pixijs green (the dropped `freeThingPrim`
 export breaks nothing).
+
+---
+
+## F · Rework the origin to macro — the browser-verified purge
+
+Threaded `macro_position_reference` (u16) end-to-end through the cold + render path, replacing the
+`zone_id` (u32) the client reconstructed for the render. The edge wire already spoke macro (`ServerMsg`
+`zone: u16`); this removes the client-side reconstruction and the wasm origin's `zone_id` dependency.
+
+- **worldgen:** `zone_cold(macro_position: u16)` (was `zone_id: u32`), origin via `object::macro_world_origin`
+  (was `biome::zone_world_origin`). Edge `seed_zone` drops the `zone << 8` shim and passes the macro
+  straight in. Tests build a region-0 macro via a `zone_macro(zx, zy)` helper.
+- **wasm prims:** `zone_tile_prims` / `zone_cold_prims` / `mover_prim` take `macro_position: u16`;
+  `zone_origin(zone_id)` → `macro_origin(macro_position)` on `macro_world_origin`. Deleted the dead
+  legacy `zone_thing_prims` (last `packed::thing_*` u64 decoder) and dropped the now-unused
+  `pub use resonantdust_codec::packed` re-export.
+- **core Events:** `Event::{StateObject, ColdTiles, ColdThings, ZoneClosed}` carry `macro_position: u16`
+  (was `zone_id: u32`); `world::state_event` drops its `realm` param and carries `row.zone` through;
+  the `shared/wasm` Event→JS marshalling emits `macroPosition` (was `zoneId`). Native `headless.rs`
+  logs `macro_position`.
+- **pixijs:** `zoneId` → `macroPosition` across `WasmClient` / `WorldBridge` / `MoverLayer` (event DTOs,
+  handlers, cold-row map keys, `Mover` field, the `moverPrim`/`zoneTilePrims`/`zoneColdPrims` args).
+
+**Deviation D-1:** `world::macro_to_zone_id` is **not** deleted — it still feeds `note_update` into the
+anchor manager, which keys on `zone_id` until item G. See [`deviations.md`](deviations.md). Deleted in G.
+
+**Behavior-preserving by construction:** `macro_world_origin(macro)` computes the identical origin the
+old `zone_world_origin(macro << 8)` / `packed::global_tile` did (item A's continuity test + the passing
+`seamless_across_zone_boundary` test pin this), so the render moves no pixel from the already-confirmed
+seam-fixed state.
+
+**Verified:** all four gates green — `rd build shared`, edge `cargo test worldgen` (7 pass, macro-keyed),
+`rd build core --check` (native engine + headless), pixijs `tsc --noEmit`. No `zone_id` in
+worldgen / wasm-prims / cold-event payloads / pixijs-render. **Browser pixel-confirm pending the
+user's dev-loop refresh** (a valid check needs the rebuilt wasm served — a vite restart — which
+wasn't forced on the user's live session).

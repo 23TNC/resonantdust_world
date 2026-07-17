@@ -112,7 +112,7 @@ fn log_event(event: &Event) {
         Event::Disconnected { reason } => warn!(reason = ?reason, "disconnected"),
         Event::Status(msg) => info!(%msg, "status"),
         Event::StateObject {
-            zone_id,
+            macro_position,
             entity_reference,
             definition_reference,
             tile_x,
@@ -122,7 +122,7 @@ fn log_event(event: &Event) {
             removed,
         } => {
             info!(
-                zone_id = format!("{zone_id:#010x}"),
+                macro_position = format!("{macro_position:#06x}"),
                 entity_reference = format!("{entity_reference:#010x}"),
                 definition_reference,
                 tile_x,
@@ -133,14 +133,14 @@ fn log_event(event: &Event) {
                 "state object"
             )
         }
-        Event::ColdTiles { zone_id, layer_reference, tiles } => {
-            info!(zone_id = format!("{zone_id:#010x}"), layer_reference, tiles = tiles.len(), "cold tiles")
+        Event::ColdTiles { macro_position, layer_reference, tiles } => {
+            info!(macro_position = format!("{macro_position:#06x}"), layer_reference, tiles = tiles.len(), "cold tiles")
         }
-        Event::ColdThings { zone_id, layer_reference, things } => {
-            info!(zone_id = format!("{zone_id:#010x}"), layer_reference, things = things.len(), "cold things")
+        Event::ColdThings { macro_position, layer_reference, things } => {
+            info!(macro_position = format!("{macro_position:#06x}"), layer_reference, things = things.len(), "cold things")
         }
-        Event::ZoneClosed { zone_id } => {
-            info!(zone_id = format!("{zone_id:#010x}"), "zone closed")
+        Event::ZoneClosed { macro_position } => {
+            info!(macro_position = format!("{macro_position:#06x}"), "zone closed")
         }
         Event::Paused { paused } => info!(paused, "simulation freeze changed"),
         // The web engine emits these for the pixijs debug HUD; the headless driver

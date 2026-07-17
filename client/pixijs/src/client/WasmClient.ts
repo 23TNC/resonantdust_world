@@ -121,17 +121,17 @@ export interface AnchorRadii {
  *  shared `object_type_reference` (type / subtype = biome / layer), `kinds` its members
  *  as `object_kind_reference`s (u32 each). A `biome-tile` row is the ground, a
  *  `biome-thing` row the scatter. Supersedes tiles/things; fires per cold row. */
-export type ColdTilesHandler = (zoneId: number, layerReference: number, tiles: Uint16Array) => void;
-export type ColdThingsHandler = (zoneId: number, layerReference: number, things: Uint32Array) => void;
+export type ColdTilesHandler = (macroPosition: number, layerReference: number, tiles: Uint16Array) => void;
+export type ColdThingsHandler = (macroPosition: number, layerReference: number, things: Uint32Array) => void;
 /** A zone's subscription closed — drop its entities. */
-export type ZoneClosedHandler = (zoneId: number) => void;
+export type ZoneClosedHandler = (macroPosition: number) => void;
 
 /** A composed entity from `data_shard.state`. `entityReference` (`server_reference:8 |
  *  object_reference:24`) is JS-safe (a `u32`); its top nibble is the object type. The host keys
  *  the mover by it and draws `definitionReference` (the content kind → sprite) at global
  *  `(tileX, tileY)` facing `facing`, interpolating position by `tic`. */
 export interface StateObject {
-  zoneId: number;
+  macroPosition: number;
   entityReference: number;
   /** The entity's content kind → sprite (`0` until a definition verb plumbs it). */
   definitionReference: number;
@@ -161,11 +161,11 @@ type WorldEvent =
   | { kind: "loginFailed"; reason: string }
   | { kind: "disconnected"; reason: string | null }
   | { kind: "status"; message: string }
-  | { kind: "coldTiles"; zoneId: number; layerReference: number; tiles: Uint16Array }
-  | { kind: "coldThings"; zoneId: number; layerReference: number; things: Uint32Array }
+  | { kind: "coldTiles"; macroPosition: number; layerReference: number; tiles: Uint16Array }
+  | { kind: "coldThings"; macroPosition: number; layerReference: number; things: Uint32Array }
   | {
       kind: "stateObject";
-      zoneId: number;
+      macroPosition: number;
       entityReference: number;
       definitionReference: number;
       tileX: number;
@@ -174,7 +174,7 @@ type WorldEvent =
       tic: number;
       removed: boolean;
     }
-  | { kind: "zoneClosed"; zoneId: number }
+  | { kind: "zoneClosed"; macroPosition: number }
   | { kind: "paused"; paused: boolean }
   | { kind: "callStats"; stats: CallStat[] }
   | { kind: "subStats"; open: number; total: number; tables: SubStat[] }
@@ -583,15 +583,15 @@ export class WasmClient {
         this.pending?.onProgress?.(ev.message);
         break;
       case "coldTiles":
-        for (const cb of this.coldTilesCbs) cb(ev.zoneId, ev.layerReference, ev.tiles);
+        for (const cb of this.coldTilesCbs) cb(ev.macroPosition, ev.layerReference, ev.tiles);
         break;
       case "coldThings":
-        for (const cb of this.coldThingsCbs) cb(ev.zoneId, ev.layerReference, ev.things);
+        for (const cb of this.coldThingsCbs) cb(ev.macroPosition, ev.layerReference, ev.things);
         break;
       case "stateObject":
         for (const cb of this.stateObjectCbs) {
           cb({
-            zoneId: ev.zoneId,
+            macroPosition: ev.macroPosition,
             entityReference: ev.entityReference,
             definitionReference: ev.definitionReference,
             tileX: ev.tileX,
@@ -621,7 +621,7 @@ export class WasmClient {
         });
         break;
       case "zoneClosed":
-        for (const cb of this.zoneClosedCbs) cb(ev.zoneId);
+        for (const cb of this.zoneClosedCbs) cb(ev.macroPosition);
         break;
       case "paused":
         for (const cb of this.pausedCbs) cb(ev.paused);

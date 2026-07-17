@@ -81,12 +81,13 @@ pub fn place_program(entity: u32, tile_x: i32, tile_y: i32) -> Vec<u32> {
     vec![PROMOTE_STATE, entity, PLACE, entity, tile_to_position(tile_x, tile_y)]
 }
 
-/// Decode a composed `state` row into the host-facing [`Event::StateObject`]. `realm` scopes the
-/// reconstructed `zone_id`; `removed` marks a delete (a `StateGone`).
-pub fn state_event(row: &StateRow, realm: u8, removed: bool) -> Event {
+/// Decode a composed `state` row into the host-facing [`Event::StateObject`]. The row's `zone`
+/// (`macro_position_reference`) is carried through as-is — the render addresses zones by macro.
+/// `removed` marks a delete (a `StateGone`).
+pub fn state_event(row: &StateRow, removed: bool) -> Event {
     let (tile_x, tile_y) = position_to_tile(row.position_reference);
     Event::StateObject {
-        zone_id: macro_to_zone_id(row.zone, realm),
+        macro_position: row.zone,
         entity_reference: row.entity_reference,
         definition_reference: row.definition_reference,
         tile_x,
@@ -132,9 +133,9 @@ mod tests {
             position_reference: tile_to_position(300, 42),
             data: 0b01_000101, // facing east
         };
-        match state_event(&row, /*realm=*/ 0, /*removed=*/ false) {
+        match state_event(&row, /*removed=*/ false) {
             Event::StateObject {
-                zone_id,
+                macro_position,
                 entity_reference,
                 definition_reference,
                 tile_x,
@@ -144,7 +145,7 @@ mod tests {
                 removed,
             } => {
                 assert_eq!(entity_reference, 0x3000_0007);
-                assert_eq!(zone_id, 0x0001_0200); // realm 0 | zone | reserved 0
+                assert_eq!(macro_position, 0x0102); // the wire macro, carried through
                 assert_eq!((tile_x, tile_y), (300, 42));
                 assert_eq!(definition_reference, 9);
                 assert_eq!(facing, 1);
