@@ -311,8 +311,22 @@ writes `seed` (trusted worldgen generation, not a player mutation) · reads edge
 sub `SELECT * FROM cold_tile WHERE macro_position_reference = <zone>` (edge, per subscribed zone)
 
 Static-ish: seeded, subscribed, rendered as the ground. Mutation comes later via `UNPACK` → hot →
-`PACK` (with `cold_removed` tombstones); not built yet. `thing` (sparse `Vec<u32>` `kind_pos_reference`)
-is the same pattern, next.
+`PACK` (with `cold_removed` tombstones); not built yet.
+
+## `thing` — the cold scatter shard
+
+### `cold_thing` — one zone-layer's sparse scatter (public)
+
+| column | type | key | notes |
+|---|---|---|---|
+| `cold_row_reference` | `u32` | PK | `macro_position:16 \| layer_reference:8` |
+| `macro_position_reference` | `u16` | idx | the zone — subscription key |
+| `layer_reference` | `u8` | | `type_id:4 \| layer_id:4` |
+| `things` | `Vec<u32>` | | **sparse** `kind_pos_reference`s (`kind:16 \| tile:8 \| data:8`), one per occupied cell |
+
+writes `seed` · reads edge, client · sub `SELECT * FROM cold_thing WHERE macro_position_reference =
+<zone>`. Same shape as `cold_tile` but the entry is a full `u32` — a thing carries *where* + *data*,
+a tile carries only *kind* (its position is its dense index).
 
 ---
 
