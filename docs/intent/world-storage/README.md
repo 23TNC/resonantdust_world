@@ -23,10 +23,11 @@ finals. No side door.
 - **Cold** = packed, mostly-static data (a zone's whole tile/thing layer in one row), keyed by
   **`position` within its module**.
 
-They must be separate because **a position is not a hot identity**: thing-servers a/b/c can each hold
-a thing at zone (5,5) tile 3 — one position, three objects. So a hot id is **minted fresh and
-unique**; a cold entry is addressed by position *and its module* (the module = the server, so
-position is unique within it). Combining them would force a deconfliction that separation gives free.
+They must be separate because **a position is not a hot identity** — a mover isn't pinned to a cell, so
+a hot id is **minted fresh and unique**. The **cold** side, by contrast, *is* pure position: a zone
+lives in exactly **one cold shard per type**, so `(macro_position, type_id)` (the `type_id` rides in
+`layer_reference`) routes to that one shard, and position fully resolves the cold object — no separate
+cold identity, just position + routing. `GET(position)` and `UNPACK(position)` need nothing more.
 
 ## Cold is immutable-in-place; act in hot via `UNPACK` / `PACK`
 
@@ -67,6 +68,30 @@ objects.
 
 ---
 
+## Unpack coordination — the hard part, **deferred** to last
+
+Automatic pack/unpack is the one genuinely hard piece, so it's built **last** (see build order). What's
+already settled about it:
+
+- **Unpacks run at N+1, on the assigned worker.** Grouping puts every unpack of a cell on **one**
+  worker (the cell is its conflict-target), which run in sequence — no two workers unpack a tile.
+- **The tombstone tags the destination hot server.** `cold.unpack(position, hot_server)` writes the
+  tombstone *and* the server it sent the object to. A takeover worker (or a replay) reads that and does
+  `GET` instead of re-minting — this is what makes unpack **replay-safe**. The mint itself is
+  idempotent (deterministic-from-event id, check-exists-else-mint).
+- **The mint is async, so the worker polls.** `cold.unpack` → `hot.mint(macro_position, payload)` (the
+  hot shard stamps the worker on the row, so its subscription catches it), but the row isn't visible
+  the instant the reducer is issued. So the worker **batches unpacks/creates by destination server,
+  issues them, defers to its other work, and loops back**: for each, "does the hot row exist yet? no →
+  (re)mint idempotently; yes → `GET`." All resolve within the tic if it's quick; if not, **the pipeline
+  is tolerant — the component is just late, never wrong** (deterministic id + idempotent mint).
+
+**Why deferred:** this turns the worker from a *synchronous* composer into one doing async cross-shard
+round-trips mid-tic — a real step up from today's worker. It isn't needed to *render* cold (that's just
+a subscription); only to *act* on it. So we prove storage + rendering first, then build this with the
+storage solid and "late not wrong" as the safety net. The sketch above is the leaning approach, not a
+frozen design.
+
 ## The three shards
 
 | module | regime | key | payload |
@@ -85,19 +110,22 @@ tiles/things become ordinary hot entities in the `pawn`/hot shard.
 
 ---
 
-## Build order (one module at a time)
+## Build order (one module at a time) — storage & rendering first, the async monster last
 
-1. **`PACK` / `UNPACK` / `GET` in `shared/codec`** — palette + signatures (operand = a `position` for
-   `UNPACK`/`GET`; an `entity` for `PACK`) + the `cold_row`/`tile` split of a `position`. No behavior.
-2. **`pawn` shard** — re-scope `data_shard` to `pawn`; wire orchestrator/worker/edge. Also give it
-   `CREATE`'s deterministic spawn-id (needed by `UNPACK` too). Proves the rename + the spawn-log.
-3. **`tile` shard** — cold table (256×`u16`) + `cold_removed` tombstones + `GET`; then the cross-shard
-   `UNPACK`/`PACK` in the worker (mint hot entity in `pawn`, remove+tombstone in `tile`) + the program
-   pre-pass. Worldgen seeds cold (via `init`). Edge subscribes cold + hot; **revives the terrain path**
-   (`edge/index.rs`, `worldgen.rs`, `Event::ColdObjects`). Client renders the ground.
-4. **`thing` shard** — same, sparse `u32` payload; client renders scatter.
-5. **GC-queues-`PACK`** — the master (or a scheduled reducer) queues pack events for idle hot
-   entities; the worker's pack does the fit-check + drop-if-active.
+1. **codec** — `PACK` / `UNPACK` / `GET` palette + signatures (`UNPACK`/`GET` operand = a `position`;
+   `PACK` = an `entity`) + the `cold_row`/`tile` split of a `position`. No behavior.
+2. **`pawn` shard** — re-scope `data_shard` to `pawn`; wire orchestrator/worker/edge. Give it
+   `CREATE`'s deterministic spawn-id (the spawn-log `UNPACK` will reuse). Proves the rename.
+3. **`tile` shard — cold + render, NO unpack.** Cold table (256×`u16`) + `cold_removed` tombstones +
+   `GET`; worldgen seeds it (via `init`); edge subscribes the zone's cold rows; client draws the
+   ground. **This revives the terrain path** (`edge/index.rs`, `worldgen.rs`, `Event::ColdObjects`) and
+   is the big visible milestone — with none of the pack/unpack coordination.
+4. **`thing` shard — cold + render, NO unpack.** Sparse `u32`; client draws scatter over the ground.
+5. **`UNPACK` / `PACK` automation** — the hard phase (see §Unpack coordination): the cross-shard worker
+   path (batch → mint → poll → get), the tombstone-tags-server, and the program pre-pass. Now cold can
+   be *acted on*, not just rendered.
+6. **GC-queues-`PACK`** — the master (or a scheduled reducer) queues pack events for idle hot entities;
+   the worker's pack does the fit-check + drop-if-active.
 
 ---
 
