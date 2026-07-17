@@ -583,6 +583,26 @@ impl Engine {
                 self.emit(Event::ColdThings { macro_position: zone, subtype_id, layer_id, things });
                 self.flush_zone_intents().await;
             }
+            ServerMsg::ColdState {
+                zone,
+                entity_reference,
+                position_reference,
+                definition_reference,
+                data,
+                removed,
+            } => {
+                self.record_row("cold_state", text.len());
+                self.zones.note_update(zone, text.len() as u64, now_ms());
+                self.emit(Event::ColdState {
+                    macro_position: zone,
+                    entity_reference,
+                    position_reference,
+                    definition_reference,
+                    data,
+                    removed,
+                });
+                self.flush_zone_intents().await;
+            }
         }
     }
 

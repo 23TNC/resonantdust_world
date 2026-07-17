@@ -100,6 +100,19 @@ pub enum ServerMsg {
     /// data:8`) of one biome-row. Sent on `cold_thing` insert/update; the client paints things over
     /// the ground. `type_id` is `TYPE_BIOME_THING`.
     ColdThing { zone: u16, subtype_id: u16, layer_id: u8, things: Vec<u32> },
+    /// A **cold overlay** row — a per-cell mutation from a cold shard's `state` table (the hot-format
+    /// overlay). It overrides the baseline cell at `position_reference`: the client composites
+    /// baseline ⊕ this. `type_id` (tile vs thing) + `kind` come from `definition_reference`; the cell
+    /// from `position_reference`'s `tile_reference`. `removed` = the override cleared (baseline shows
+    /// through). Sent on the cold `state` row's insert/update/delete.
+    ColdState {
+        zone: u16,
+        entity_reference: u32,
+        position_reference: u32,
+        definition_reference: u32,
+        data: u8,
+        removed: bool,
+    },
     /// A protocol- or routing-level error not tied to a single `cid`.
     Error { error: String },
 }

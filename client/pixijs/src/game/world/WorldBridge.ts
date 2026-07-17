@@ -16,7 +16,7 @@
 //! atlas + the content's material registry), refreshed on a content hot-swap.
 
 import type { Texture } from "pixi.js";
-import type { WasmClient, AnchorRadii } from "../../client/WasmClient";
+import type { WasmClient, AnchorRadii, ColdStateOverride } from "../../client/WasmClient";
 import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
 import type { TextureResolver } from "../../textures";
@@ -124,6 +124,9 @@ export class WorldBridge {
     | { macroPosition: number; subtypeId: number; layerId: number; tiles: Uint16Array }
     | { macroPosition: number; subtypeId: number; layerId: number; things: Uint32Array }
   >();
+  /** Cold **overlay** prims — one per `entityReference` (a cold `state` row overriding a baseline
+   *  cell), with the zone it sits in so a zone-close can drop it. Composited on top of the baseline. */
+  private readonly coldOverrides = new Map<number, { id: number; macroPosition: number }>();
   private readonly unsubs: Array<() => void> = [];
 
   /** Texture-stem tables from the content bundle, indexed by `defId - 1` (the
@@ -175,6 +178,7 @@ export class WorldBridge {
         this.onColdThings(macroPosition, subtypeId, layerId, things),
       ),
     );
+    this.unsubs.push(client.onColdState((o) => this.onColdState(o)));
     this.unsubs.push(client.onZoneClosed((macroPosition) => this.onZoneClosed(macroPosition)));
     // A thing's box is fixed by its def layout (see placeThing), so a texture tier landing
     // doesn't change geometry — the SquareCache re-bakes the geo→master swap itself.
@@ -399,8 +403,73 @@ export class WorldBridge {
     if (ids.length) this.coldPrims.set(key, ids);
   }
 
-  /** A zone's subscription closed: drop all of its cold-object sprites (every row). */
+  /** A cold **overlay** row — composite it over the baseline cell, keyed by `entityReference`. A prior
+   *  override for the same entity (and `removed`) is dropped first; an empty override (kind 0) leaves
+   *  the cell bare. Draws the override *on top* of the baseline — suppressing the baseline cell itself
+   *  (e.g. hiding a removed tree) is a follow-up. */
+  private onColdState(o: ColdStateOverride): void {
+    const prev = this.coldOverrides.get(o.entityReference);
+    if (prev !== undefined) {
+      this.viewport.removePrim(prev.id);
+      this.coldOverrides.delete(o.entityReference);
+    }
+    if (o.removed) return; // cleared — baseline shows through
+    const flat = this.content.coldStatePrim(o.macroPosition, o.positionReference, o.definitionReference, o.data);
+    if (flat.length < 8) return; // empty override (kind 0) → bare cell
+    const tileX = flat[0];
+    const tileY = flat[1];
+    const tint = flat[2];
+    const geoColor = flat[3];
+    const kindId = flat[4];
+    const typeId = flat[5];
+    const data = flat[6];
+    const variant = flat[7];
+    let id: number;
+    if (typeId === this.content.typeBiomeTile()) {
+      // Ground override — a full cell on top of the baseline.
+      id = this.viewport.addPrim({
+        texture: this.white,
+        textureName: textureNameFor(this.tileStems[kindId - 1]),
+        x: tileX * SQUARE,
+        y: tileY * SQUARE,
+        width: SQUARE,
+        height: SQUARE,
+        tint,
+        geoColor,
+        packed: this.packedFor(this.tilePacked, kindId),
+        seed: cellSeed(tileX, tileY),
+      });
+    } else {
+      // Thing override — the thing sprite, bottom-anchored like the scatter.
+      const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
+      const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX);
+      id = this.viewport.addPrim({
+        texture: this.white,
+        textureName: tex.name,
+        flipX: tex.flipX,
+        cell: tex.cell,
+        x: p.x,
+        y: p.y,
+        width: p.width,
+        height: p.height,
+        tint,
+        geoColor,
+        packed: this.packedFor(this.thingPacked, kindId),
+        seed: cellSeed(tileX, tileY),
+        zIndex: this.thingZ(p.zRow),
+      });
+    }
+    this.coldOverrides.set(o.entityReference, { id, macroPosition: o.macroPosition });
+  }
+
+  /** A zone's subscription closed: drop all of its cold-object sprites (every row) + overlay prims. */
   private onZoneClosed(macroPosition: number): void {
+    for (const [ent, ov] of [...this.coldOverrides]) {
+      if (ov.macroPosition === macroPosition) {
+        this.viewport.removePrim(ov.id);
+        this.coldOverrides.delete(ent);
+      }
+    }
     const prefix = `${macroPosition}:`;
     for (const key of [...this.coldPrims.keys()]) {
       if (key.startsWith(prefix)) this.clearColdPrims(key);

@@ -15,18 +15,7 @@ VARIABLES/TABLES already carry the target shape._
 
 ---
 
-## P3 tail · Overlay **read path** (steps 1–2 done — see completed.md)
-
-The macro + cold overlay tables landed. Remaining — the render composite (build alongside P4, against
-real `state` rows):
-
-- **edge**: also subscribe a zone's cold `state` (`WHERE macro_position_reference = <zone>`) and relay
-  it; a `ColdState` frame carries the per-entity override.
-- **client**: composite **baseline ⊕ state** — index `state` rows by `position_reference`; a cell with a
-  `state` override renders from `state` (or hides, if removed), else from the baseline.
-
-**Done when:** a cold `state` row shows the override in place of the baseline cell, reverting when it's
-dropped.
+**P3 is done** (steps 1–2 + the overlay read path — all live-verified) — see [`completed.md`](completed.md).
 
 ---
 

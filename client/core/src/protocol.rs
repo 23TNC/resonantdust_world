@@ -81,6 +81,16 @@ pub enum ServerMsg {
     /// A subscribed zone's cold **scatter** — sparse `kind_pos_reference`s (`kind:16 | tile:8 | data:8`)
     /// of one biome-row. `type_id` = `TYPE_BIOME_THING`.
     ColdThing { zone: u16, subtype_id: u16, layer_id: u8, things: Vec<u32> },
+    /// A **cold overlay** row (from a cold shard's `state`) — a per-cell mutation the host composites
+    /// over the baseline at `position_reference`. `removed` = the override cleared.
+    ColdState {
+        zone: u16,
+        entity_reference: u32,
+        position_reference: u32,
+        definition_reference: u32,
+        data: u8,
+        removed: bool,
+    },
     /// A protocol- or routing-level error not tied to a single `cid`.
     Error { error: String },
 }

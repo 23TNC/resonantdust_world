@@ -82,7 +82,20 @@ after redeploy, the master/worker compose on the macro'd `data_shard` with no er
 moves** — `state` positions change across tics (`49408`@322 → `2048`@328) — so the extraction is
 behavior-preserving at runtime, not just byte-identical statically.
 
-**P3 tail (not yet done):** the overlay **read path** — the edge subscribing a zone's cold `state` +
-relaying a `ColdState` frame, and the client compositing **baseline ⊕ state** (a `state` row at a
-position overrides that cell). Deferred to build alongside P4 (which *produces* the `state` rows), so
-the composite is exercised against real data rather than a hand-inserted row.
+## P3 tail · Overlay read path — `baseline ⊕ state`
+
+The cold overlay renders end-to-end:
+
+- **edge**: per-zone subscribes each cold shard's `state` (alongside `cold_tile`/`cold_thing`) and
+  relays a `ColdState` frame (on insert/update/delete) — `position_reference` (the cell) +
+  `definition_reference` (the sprite: `type_id` picks tile-vs-thing, `kind_id`/`variant` the art) +
+  `data` + `removed`.
+- **core → wasm → pixijs**: `Event::ColdState` → `coldState` JS event → `WorldBridge.onColdState`
+  composites — `Content::coldStatePrim` decodes position + definition, and the override prim is drawn
+  over the baseline, tracked by `entityReference` (replaced on update, dropped on `removed`/zone-close).
+
+**Browser-confirmed live (2026-07-17):** a hand-inserted cold `state` row (a **water tile** at cell
+(8,8), zone 0) rendered as a blue square over the forest baseline; **deleting** the row (live, via
+`on_delete`) removed the override and the baseline showed through. Both directions of `baseline ⊕ state`
+work. (First-cut composite draws over the baseline; *suppressing* a baseline cell — e.g. hiding a
+removed tree — is a noted follow-up, and P4 will drive it with real mutations.)

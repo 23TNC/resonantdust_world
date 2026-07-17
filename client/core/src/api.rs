@@ -158,6 +158,18 @@ pub enum Event {
     /// A subscribed zone's cold **scatter** — sparse `kind_pos_reference`s (`kind:16 | tile:8 |
     /// data:8`), one per occupied cell of one biome-row. `type_id` is `TYPE_BIOME_THING`.
     ColdThings { macro_position: u16, subtype_id: u16, layer_id: u8, things: Vec<u32> },
+    /// A cold **overlay** row — a per-cell mutation the host composites over the baseline. The cell is
+    /// `position_reference`'s `tile_reference`; the sprite comes from `definition_reference`
+    /// (`type_reference | kind_reference` → tile vs thing namespace + kind); `data` is rotation/count.
+    /// `removed` clears the override (the baseline shows through). Keyed by `entity_reference`.
+    ColdState {
+        macro_position: u16,
+        entity_reference: u32,
+        position_reference: u32,
+        definition_reference: u32,
+        data: u8,
+        removed: bool,
+    },
     /// A zone's subscription closed (the anchor moved it out of range, or it was
     /// evicted). The host drops that zone's entities. `macro_position` = the wire zone address.
     ZoneClosed { macro_position: u16 },

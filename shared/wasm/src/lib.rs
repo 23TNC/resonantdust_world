@@ -290,6 +290,47 @@ impl Content {
         let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
         vec![tile_x as f64, tile_y as f64, tint as f64, geo as f64]
     }
+
+    /// Render data for one **cold overlay** cell (a cold `state` row the host composites over the
+    /// baseline). Decodes the `position_reference` → the cell, and `definition_reference` → the sprite
+    /// (`type_id` picks tile vs thing namespace, `kind_id`/`variant` the sprite). Returns
+    /// `[tileX, tileY, tint, geoColor, kindId, typeId, data, variant]` — stride 8. An empty vec (`kind
+    /// == 0`) means "nothing here" (a removal that leaves the cell bare).
+    #[wasm_bindgen(js_name = coldStatePrim)]
+    pub fn cold_state_prim(
+        &self,
+        macro_position: u16,
+        position_reference: u32,
+        definition_reference: u32,
+        data: u8,
+    ) -> Vec<f64> {
+        use resonantdust_codec::object;
+        let kind_id = object::def_kind_id(definition_reference);
+        if kind_id == 0 {
+            return Vec::new(); // empty override — the cell renders bare (baseline suppressed)
+        }
+        let (origin_x, origin_y) = macro_origin(macro_position);
+        let tile = object::micro_position_tile(object::position_micro(position_reference));
+        let tile_x = origin_x + object::ref_hi(tile) as i64;
+        let tile_y = origin_y + object::ref_lo(tile) as i64;
+        let type_id = object::def_type_id(definition_reference);
+        let variant = object::def_variant_id(definition_reference);
+        let is_tile = type_id == object::TYPE_BIOME_TILE;
+        let visual =
+            if is_tile { self.bundle.visual_for_def(kind_id) } else { self.bundle.visual_for_object(kind_id) };
+        let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
+        let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
+        vec![
+            tile_x as f64,
+            tile_y as f64,
+            tint as f64,
+            geo as f64,
+            kind_id as f64,
+            type_id as f64,
+            data as f64,
+            variant as f64,
+        ]
+    }
 }
 
 /// A macro position's origin in **global tile coordinates**: its region + zone
@@ -514,6 +555,15 @@ fn event_to_js(event: &client::Event) -> JsValue {
             let arr = js_sys::Uint32Array::new_with_length(things.len() as u32);
             arr.copy_from(things);
             set("things", &arr);
+        }
+        Event::ColdState { macro_position, entity_reference, position_reference, definition_reference, data, removed } => {
+            set("kind", &JsValue::from_str("coldState"));
+            set("macroPosition", &JsValue::from_f64(*macro_position as f64));
+            set("entityReference", &JsValue::from_f64(*entity_reference as f64));
+            set("positionReference", &JsValue::from_f64(*position_reference as f64));
+            set("definitionReference", &JsValue::from_f64(*definition_reference as f64));
+            set("data", &JsValue::from_f64(*data as f64));
+            set("removed", &JsValue::from_bool(*removed));
         }
         Event::ZoneClosed { macro_position } => {
             set("kind", &JsValue::from_str("zoneClosed"));

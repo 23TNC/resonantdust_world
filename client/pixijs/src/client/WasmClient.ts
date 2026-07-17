@@ -123,6 +123,17 @@ export interface AnchorRadii {
  *  `biome-thing` row the scatter. Supersedes tiles/things; fires per cold row. */
 export type ColdTilesHandler = (macroPosition: number, subtypeId: number, layerId: number, tiles: Uint16Array) => void;
 export type ColdThingsHandler = (macroPosition: number, subtypeId: number, layerId: number, things: Uint32Array) => void;
+/** A cold **overlay** row (a cold shard's `state`) — a per-cell mutation composited over the
+ *  baseline at `positionReference`. `removed` clears it. Keyed by `entityReference`. */
+export interface ColdStateOverride {
+  macroPosition: number;
+  entityReference: number;
+  positionReference: number;
+  definitionReference: number;
+  data: number;
+  removed: boolean;
+}
+export type ColdStateHandler = (o: ColdStateOverride) => void;
 /** A zone's subscription closed — drop its entities. */
 export type ZoneClosedHandler = (macroPosition: number) => void;
 
@@ -163,6 +174,15 @@ type WorldEvent =
   | { kind: "status"; message: string }
   | { kind: "coldTiles"; macroPosition: number; subtypeId: number; layerId: number; tiles: Uint16Array }
   | { kind: "coldThings"; macroPosition: number; subtypeId: number; layerId: number; things: Uint32Array }
+  | {
+      kind: "coldState";
+      macroPosition: number;
+      entityReference: number;
+      positionReference: number;
+      definitionReference: number;
+      data: number;
+      removed: boolean;
+    }
   | {
       kind: "stateObject";
       macroPosition: number;
@@ -240,6 +260,7 @@ export class WasmClient {
   private readonly loggedInCbs = new Set<(serverUrl: string) => void>();
   private readonly coldTilesCbs = new Set<ColdTilesHandler>();
   private readonly coldThingsCbs = new Set<ColdThingsHandler>();
+  private readonly coldStateCbs = new Set<ColdStateHandler>();
   private readonly zoneClosedCbs = new Set<ZoneClosedHandler>();
   private readonly stateObjectCbs = new Set<StateObjectHandler>();
   private readonly pausedCbs = new Set<(paused: boolean) => void>();
@@ -471,6 +492,12 @@ export class WasmClient {
     return () => this.coldThingsCbs.delete(cb);
   }
 
+  /** Subscribe to cold **overlay** rows (per-cell mutations to composite over the baseline). Unsub. */
+  onColdState(cb: ColdStateHandler): () => void {
+    this.coldStateCbs.add(cb);
+    return () => this.coldStateCbs.delete(cb);
+  }
+
   /** Subscribe to zone-close notifications (a sub dropped). Returns an unsub. */
   onZoneClosed(cb: ZoneClosedHandler): () => void {
     this.zoneClosedCbs.add(cb);
@@ -587,6 +614,17 @@ export class WasmClient {
         break;
       case "coldThings":
         for (const cb of this.coldThingsCbs) cb(ev.macroPosition, ev.subtypeId, ev.layerId, ev.things);
+        break;
+      case "coldState":
+        for (const cb of this.coldStateCbs)
+          cb({
+            macroPosition: ev.macroPosition,
+            entityReference: ev.entityReference,
+            positionReference: ev.positionReference,
+            definitionReference: ev.definitionReference,
+            data: ev.data,
+            removed: ev.removed,
+          });
         break;
       case "stateObject":
         for (const cb of this.stateObjectCbs) {
