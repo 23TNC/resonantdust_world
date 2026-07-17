@@ -121,7 +121,8 @@ export class WorldBridge {
    *  without re-requesting it. */
   private readonly coldRowsRaw = new Map<
     string,
-    { zoneId: number; typeReference: number; kinds: Uint32Array }
+    | { zoneId: number; layerReference: number; tiles: Uint16Array }
+    | { zoneId: number; layerReference: number; things: Uint32Array }
   >();
   private readonly unsubs: Array<() => void> = [];
 
@@ -165,8 +166,13 @@ export class WorldBridge {
     private readonly resolver: TextureResolver,
   ) {
     this.unsubs.push(
-      client.onColdObjects((zoneId, typeReference, kinds) =>
-        this.onColdObjects(zoneId, typeReference, kinds),
+      client.onColdTiles((zoneId, layerReference, tiles) =>
+        this.onColdTiles(zoneId, layerReference, tiles),
+      ),
+    );
+    this.unsubs.push(
+      client.onColdThings((zoneId, layerReference, things) =>
+        this.onColdThings(zoneId, layerReference, things),
       ),
     );
     this.unsubs.push(client.onZoneClosed((zoneId) => this.onZoneClosed(zoneId)));
@@ -280,7 +286,8 @@ export class WorldBridge {
     this.content = content;
     this.refreshStems(); // the new corpus may retexture / recolour defs
     for (const row of this.coldRowsRaw.values()) {
-      this.onColdObjects(row.zoneId, row.typeReference, row.kinds);
+      if ("tiles" in row) this.onColdTiles(row.zoneId, row.layerReference, row.tiles);
+      else this.onColdThings(row.zoneId, row.layerReference, row.things);
     }
   }
 
@@ -312,19 +319,50 @@ export class WorldBridge {
     return { active, hot: active + 2, warm: this.stickyActive + 4, cold: this.stickyActive + 6 };
   }
 
-  /** A zone's cold-object ROW arrived (the object model). A `biome-tile` row paints the
-   *  ground (a 64×64 sprite per cell), a `biome-thing` row paints scattered sprites
-   *  (smaller, bottom-centred, above the ground); the row's `type_id` picks which. Keyed
-   *  per `(zone, type_reference)` so a zone's many rows (one per biome) coexist and each
-   *  re-delivery clears + repaints only itself. Unifies the old tiles/things painters. */
-  private onColdObjects(zoneId: number, typeReference: number, kinds: Uint32Array): void {
-    const key = `${zoneId}:${typeReference}`;
+  /** A zone's cold **ground** arrived — the dense 256 `kind_reference`s, one per cell. Paints a
+   *  64×64 sprite per non-empty cell. Keyed per `(zone, layer)` so a re-delivery clears + repaints
+   *  only itself. */
+  private onColdTiles(zoneId: number, layerReference: number, tiles: Uint16Array): void {
+    const key = `${zoneId}:${layerReference}`;
     this.clearColdPrims(key);
-    this.coldRowsRaw.set(key, { zoneId, typeReference, kinds }); // keep for hot-swap re-expand
+    this.coldRowsRaw.set(key, { zoneId, layerReference, tiles }); // keep for hot-swap re-expand
 
-    const isTile = this.content.objectTypeId(typeReference) === this.content.typeBiomeTile();
-    // [tileX, tileY, tint, geoColor, kindId, data, variant, …]
-    const flat = this.content.zoneColdPrims(zoneId, typeReference, kinds);
+    // [tileX, tileY, tint, geoColor, defId, …] — stride 5.
+    const flat = this.content.zoneTilePrims(zoneId, tiles);
+    const ids: number[] = [];
+    for (let i = 0; i + 4 < flat.length; i += 5) {
+      const tileX = flat[i];
+      const tileY = flat[i + 1];
+      const tint = flat[i + 2];
+      const geoColor = flat[i + 3];
+      const defId = flat[i + 4];
+      ids.push(
+        this.viewport.addPrim({
+          texture: this.white,
+          textureName: textureNameFor(this.tileStems[defId - 1]),
+          x: tileX * SQUARE,
+          y: tileY * SQUARE,
+          width: SQUARE,
+          height: SQUARE,
+          tint,
+          geoColor,
+          packed: this.packedFor(this.tilePacked, defId),
+          seed: cellSeed(tileX, tileY),
+        }),
+      );
+    }
+    if (ids.length) this.coldPrims.set(key, ids);
+  }
+
+  /** A zone's cold **scatter** arrived — sparse `kind_pos_reference`s. Paints a bottom-centred
+   *  sprite per thing, above the ground. Keyed per `(zone, layer)`. */
+  private onColdThings(zoneId: number, layerReference: number, things: Uint32Array): void {
+    const key = `${zoneId}:${layerReference}`;
+    this.clearColdPrims(key);
+    this.coldRowsRaw.set(key, { zoneId, layerReference, things });
+
+    // [tileX, tileY, tint, geoColor, kindId, data, variant, …] — stride 7.
+    const flat = this.content.zoneColdPrims(zoneId, layerReference, things);
     const ids: number[] = [];
     for (let i = 0; i + 6 < flat.length; i += 7) {
       const tileX = flat[i];
@@ -334,45 +372,28 @@ export class WorldBridge {
       const kindId = flat[i + 4];
       const data = flat[i + 5];
       const variant = flat[i + 6];
-      if (isTile) {
-        ids.push(
-          this.viewport.addPrim({
-            texture: this.white,
-            textureName: textureNameFor(this.tileStems[kindId - 1]),
-            x: tileX * SQUARE,
-            y: tileY * SQUARE,
-            width: SQUARE,
-            height: SQUARE,
-            tint,
-            geoColor,
-            packed: this.packedFor(this.tilePacked, kindId),
-            seed: cellSeed(tileX, tileY),
-          }),
-        );
-      } else {
-        const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
-        // Anchor/size/footprint from the def layout; a tall sprite rises past its cell,
-        // a west facing mirrors the pivot with the art (see placeThing).
-        const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX);
-        ids.push(
-          this.viewport.addPrim({
-            texture: this.white,
-            textureName: tex.name,
-            flipX: tex.flipX,
-            cell: tex.cell,
-            x: p.x,
-            y: p.y,
-            width: p.width,
-            height: p.height,
-            tint,
-            geoColor,
-            packed: this.packedFor(this.thingPacked, kindId),
-            // Cold objects don't move → seed by their world cell (their tile_seed).
-            seed: cellSeed(tileX, tileY),
-            zIndex: this.thingZ(p.zRow),
-          }),
-        );
-      }
+      const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
+      // Anchor/size/footprint from the def layout; a tall sprite rises past its cell,
+      // a west facing mirrors the pivot with the art (see placeThing).
+      const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX);
+      ids.push(
+        this.viewport.addPrim({
+          texture: this.white,
+          textureName: tex.name,
+          flipX: tex.flipX,
+          cell: tex.cell,
+          x: p.x,
+          y: p.y,
+          width: p.width,
+          height: p.height,
+          tint,
+          geoColor,
+          packed: this.packedFor(this.thingPacked, kindId),
+          // Cold objects don't move → seed by their world cell (their tile_seed).
+          seed: cellSeed(tileX, tileY),
+          zIndex: this.thingZ(p.zRow),
+        }),
+      );
     }
     if (ids.length) this.coldPrims.set(key, ids);
   }

@@ -574,6 +574,21 @@ impl Engine {
             ServerMsg::Event { .. } => {
                 self.record_row("event", text.len());
             }
+            // A zone's cold ground / scatter — the terrain.
+            ServerMsg::ColdTile { zone, layer_reference, tiles } => {
+                self.record_row("cold_tile", text.len());
+                let zone_id = world::macro_to_zone_id(zone, self.realm);
+                self.zones.note_update(zone_id, text.len() as u64, now_ms());
+                self.emit(Event::ColdTiles { zone_id, layer_reference, tiles });
+                self.flush_zone_intents().await;
+            }
+            ServerMsg::ColdThing { zone, layer_reference, things } => {
+                self.record_row("cold_thing", text.len());
+                let zone_id = world::macro_to_zone_id(zone, self.realm);
+                self.zones.note_update(zone_id, text.len() as u64, now_ms());
+                self.emit(Event::ColdThings { zone_id, layer_reference, things });
+                self.flush_zone_intents().await;
+            }
         }
     }
 

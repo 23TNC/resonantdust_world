@@ -120,7 +120,9 @@ impl Bot {
             match tokio::time::timeout_at(deadline, self.events.recv()).await {
                 Ok(Some(event)) => {
                     let ready = matches!(&event,
-                        Event::ColdObjects { zone_id, .. } | Event::StateObject { zone_id, .. }
+                        Event::ColdTiles { zone_id, .. }
+                            | Event::ColdThings { zone_id, .. }
+                            | Event::StateObject { zone_id, .. }
                             if *zone_id == zone);
                     log_event(&event);
                     if ready {
@@ -255,7 +257,8 @@ fn log_event(event: &Event) {
         Event::StateObject { zone_id, entity_reference, tile_x, tile_y, .. } => {
             tracing::debug!(zone_id, entity_reference, tile_x, tile_y, "state object")
         }
-        Event::ColdObjects { zone_id, .. } => tracing::debug!(zone_id, "cold objects"),
+        Event::ColdTiles { zone_id, .. } => tracing::debug!(zone_id, "cold tiles"),
+        Event::ColdThings { zone_id, .. } => tracing::debug!(zone_id, "cold things"),
         Event::ZoneClosed { zone_id } => tracing::debug!(zone_id, "zone closed"),
         Event::Paused { paused } => tracing::debug!(paused, "paused"),
         Event::CallStats(_) | Event::SubStats { .. } | Event::ClockSync(_) => {}

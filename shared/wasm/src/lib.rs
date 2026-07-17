@@ -172,14 +172,15 @@ impl Content {
     /// Empty cells (`def_id == 0`) are skipped. One wasm-boundary crossing per
     /// zone, not 256.
     #[wasm_bindgen(js_name = zoneTilePrims)]
-    pub fn zone_tile_prims(&self, zone_id: u32, tiles: Vec<u8>) -> Vec<f64> {
+    pub fn zone_tile_prims(&self, zone_id: u32, tiles: Vec<u16>) -> Vec<f64> {
+        use resonantdust_codec::object;
         let (origin_x, origin_y) = zone_origin(zone_id);
         let mut out = Vec::new();
         for (i, &kind) in tiles.iter().enumerate() {
             if kind == 0 {
                 continue; // empty cell — no floor/wall
             }
-            let def_id = kind as u16; // tile-kind IS the def-id (its own u8 namespace)
+            let def_id = object::kind_ref_kind_id(kind); // the u16 tile is a kind_reference; def = kind_id
             let location = i as u8;
             let tile_x = origin_x + packed::cell_x(location) as i64;
             let tile_y = origin_y + packed::cell_y(location) as i64;
@@ -343,10 +344,10 @@ impl Content {
     /// `kindId` indexes that namespace's stems, `variant` the sprite. One boundary
     /// crossing per cold row. Unifies the legacy [`zoneTilePrims`]/[`zoneThingPrims`].
     #[wasm_bindgen(js_name = zoneColdPrims)]
-    pub fn zone_cold_prims(&self, zone_id: u32, type_reference: u16, kinds: Vec<u32>) -> Vec<f64> {
+    pub fn zone_cold_prims(&self, zone_id: u32, layer_reference: u8, kinds: Vec<u32>) -> Vec<f64> {
         use resonantdust_codec::object;
         let (origin_x, origin_y) = zone_origin(zone_id);
-        let is_tile = object::type_ref_type_id(type_reference) == object::TYPE_BIOME_TILE;
+        let is_tile = object::layer_ref_type_id(layer_reference) == object::TYPE_BIOME_TILE;
         let mut out = Vec::new();
         for &k in &kinds {
             let kind_id = object::kind_pos_ref_kind_id(k);
@@ -610,17 +611,23 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("tic", &JsValue::from_f64(*tic as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
-        Event::ColdObjects { zone_id, type_reference, layer_id, kinds } => {
-            set("kind", &JsValue::from_str("coldObjects"));
+        Event::ColdTiles { zone_id, layer_reference, tiles } => {
+            set("kind", &JsValue::from_str("coldTiles"));
             set("zoneId", &JsValue::from_f64(*zone_id as f64));
-            set("typeReference", &JsValue::from_f64(*type_reference as f64));
-            set("layerId", &JsValue::from_f64(*layer_id as f64));
-            // Each member is a u32 kind_pos_reference; ship as a Uint32Array — the host
-            // hands it straight back to `zoneColdPrims`, which unpacks + expands it
-            // (tile + kind + variant + data) in wasm.
-            let arr = js_sys::Uint32Array::new_with_length(kinds.len() as u32);
-            arr.copy_from(kinds);
-            set("kinds", &arr);
+            set("layerReference", &JsValue::from_f64(*layer_reference as f64));
+            // 256 dense u16 kind_references, index = tile_reference; ship as a Uint16Array.
+            let arr = js_sys::Uint16Array::new_with_length(tiles.len() as u32);
+            arr.copy_from(tiles);
+            set("tiles", &arr);
+        }
+        Event::ColdThings { zone_id, layer_reference, things } => {
+            set("kind", &JsValue::from_str("coldThings"));
+            set("zoneId", &JsValue::from_f64(*zone_id as f64));
+            set("layerReference", &JsValue::from_f64(*layer_reference as f64));
+            // Sparse u32 kind_pos_references; ship as a Uint32Array.
+            let arr = js_sys::Uint32Array::new_with_length(things.len() as u32);
+            arr.copy_from(things);
+            set("things", &arr);
         }
         Event::ZoneClosed { zone_id } => {
             set("kind", &JsValue::from_str("zoneClosed"));

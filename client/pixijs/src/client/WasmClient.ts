@@ -121,7 +121,8 @@ export interface AnchorRadii {
  *  shared `object_type_reference` (type / subtype = biome / layer), `kinds` its members
  *  as `object_kind_reference`s (u32 each). A `biome-tile` row is the ground, a
  *  `biome-thing` row the scatter. Supersedes tiles/things; fires per cold row. */
-export type ColdObjectsHandler = (zoneId: number, typeReference: number, kinds: Uint32Array) => void;
+export type ColdTilesHandler = (zoneId: number, layerReference: number, tiles: Uint16Array) => void;
+export type ColdThingsHandler = (zoneId: number, layerReference: number, things: Uint32Array) => void;
 /** A zone's subscription closed — drop its entities. */
 export type ZoneClosedHandler = (zoneId: number) => void;
 
@@ -160,7 +161,8 @@ type WorldEvent =
   | { kind: "loginFailed"; reason: string }
   | { kind: "disconnected"; reason: string | null }
   | { kind: "status"; message: string }
-  | { kind: "coldObjects"; zoneId: number; typeReference: number; kinds: Uint32Array }
+  | { kind: "coldTiles"; zoneId: number; layerReference: number; tiles: Uint16Array }
+  | { kind: "coldThings"; zoneId: number; layerReference: number; things: Uint32Array }
   | {
       kind: "stateObject";
       zoneId: number;
@@ -236,7 +238,8 @@ export class WasmClient {
   /** Whether the clock has at least one estimate (login seed or a pong). */
   private clockSynced = false;
   private readonly loggedInCbs = new Set<(serverUrl: string) => void>();
-  private readonly coldObjectsCbs = new Set<ColdObjectsHandler>();
+  private readonly coldTilesCbs = new Set<ColdTilesHandler>();
+  private readonly coldThingsCbs = new Set<ColdThingsHandler>();
   private readonly zoneClosedCbs = new Set<ZoneClosedHandler>();
   private readonly stateObjectCbs = new Set<StateObjectHandler>();
   private readonly pausedCbs = new Set<(paused: boolean) => void>();
@@ -456,11 +459,16 @@ export class WasmClient {
     return () => this.pausedCbs.delete(cb);
   }
 
-  /** Subscribe to cold-zone OBJECT rows (the object model — biome-tile ground +
-   *  biome-thing scatter). Returns an unsubscribe. */
-  onColdObjects(cb: ColdObjectsHandler): () => void {
-    this.coldObjectsCbs.add(cb);
-    return () => this.coldObjectsCbs.delete(cb);
+  /** Subscribe to a zone's cold **ground** (dense `kind_reference`s). Returns an unsubscribe. */
+  onColdTiles(cb: ColdTilesHandler): () => void {
+    this.coldTilesCbs.add(cb);
+    return () => this.coldTilesCbs.delete(cb);
+  }
+
+  /** Subscribe to a zone's cold **scatter** (sparse `kind_pos_reference`s). Returns an unsubscribe. */
+  onColdThings(cb: ColdThingsHandler): () => void {
+    this.coldThingsCbs.add(cb);
+    return () => this.coldThingsCbs.delete(cb);
   }
 
   /** Subscribe to zone-close notifications (a sub dropped). Returns an unsub. */
@@ -574,8 +582,11 @@ export class WasmClient {
       case "status":
         this.pending?.onProgress?.(ev.message);
         break;
-      case "coldObjects":
-        for (const cb of this.coldObjectsCbs) cb(ev.zoneId, ev.typeReference, ev.kinds);
+      case "coldTiles":
+        for (const cb of this.coldTilesCbs) cb(ev.zoneId, ev.layerReference, ev.tiles);
+        break;
+      case "coldThings":
+        for (const cb of this.coldThingsCbs) cb(ev.zoneId, ev.layerReference, ev.things);
         break;
       case "stateObject":
         for (const cb of this.stateObjectCbs) {

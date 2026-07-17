@@ -475,6 +475,19 @@ impl Engine {
             }
             // Settled, promoted events aren't rendered as movers yet — a later feature. Ignore.
             ServerMsg::Event { .. } => {}
+            // A zone's cold ground / scatter — the terrain. Age the zone's cost, then emit.
+            ServerMsg::ColdTile { zone, layer_reference, tiles } => {
+                let zone_id = world::macro_to_zone_id(zone, self.realm);
+                self.zones.note_update(zone_id, text.len() as u64, now_ms());
+                self.emit(Event::ColdTiles { zone_id, layer_reference, tiles });
+                self.flush_zone_intents().await;
+            }
+            ServerMsg::ColdThing { zone, layer_reference, things } => {
+                let zone_id = world::macro_to_zone_id(zone, self.realm);
+                self.zones.note_update(zone_id, text.len() as u64, now_ms());
+                self.emit(Event::ColdThings { zone_id, layer_reference, things });
+                self.flush_zone_intents().await;
+            }
         }
     }
 

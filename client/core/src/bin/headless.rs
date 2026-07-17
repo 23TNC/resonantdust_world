@@ -133,14 +133,11 @@ fn log_event(event: &Event) {
                 "state object"
             )
         }
-        Event::ColdObjects { zone_id, type_reference, layer_id, kinds } => {
-            info!(
-                zone_id = format!("{zone_id:#010x}"),
-                type_reference = format!("{type_reference:#06x}"),
-                layer_id,
-                kinds = kinds.len(),
-                "cold objects"
-            )
+        Event::ColdTiles { zone_id, layer_reference, tiles } => {
+            info!(zone_id = format!("{zone_id:#010x}"), layer_reference, tiles = tiles.len(), "cold tiles")
+        }
+        Event::ColdThings { zone_id, layer_reference, things } => {
+            info!(zone_id = format!("{zone_id:#010x}"), layer_reference, things = things.len(), "cold things")
         }
         Event::ZoneClosed { zone_id } => {
             info!(zone_id = format!("{zone_id:#010x}"), "zone closed")

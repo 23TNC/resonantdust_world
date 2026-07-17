@@ -148,14 +148,14 @@ pub enum Event {
         tic: u16,
         removed: bool,
     },
-    /// A subscribed zone's cold-object row arrived (a module's generic `cold` table —
-    /// the object model): the shared `object_type_reference` (type / subtype = biome /
-    /// layer) plus its members as `object_kind_reference`s. A `biome-tile` row is the
-    /// dense ground for one biome, a `biome-thing` row the sparse scatter. The host
-    /// decodes each `object_kind_reference` (`shared/codec` `object`) to position + kind
-    /// + variant and expands it via the DSL. Supersedes [`Event::ZoneTiles`] /
-    /// [`Event::ZoneThings`]. Fired per cold row for the zone (seed + any later rewrite).
-    ColdObjects { zone_id: u32, type_reference: u16, layer_id: u8, kinds: Vec<u32> },
+    /// A subscribed zone's cold **ground** — the dense 256 `kind_reference`s of one tile layer,
+    /// indexed by `tile_reference` (0..256). The host paints them as the terrain floor. `zone_id` is
+    /// reconstructed from the wire `zone` (`macro_position_reference`) + the session realm.
+    ColdTiles { zone_id: u32, layer_reference: u8, tiles: Vec<u16> },
+    /// A subscribed zone's cold **scatter** — sparse `kind_pos_reference`s (`kind:16 | tile:8 |
+    /// data:8`), one per occupied cell. The host decodes each to kind + tile + data and paints it
+    /// over the ground.
+    ColdThings { zone_id: u32, layer_reference: u8, things: Vec<u32> },
     /// A zone's subscription closed (the anchor moved it out of range, or it was
     /// evicted). The host drops that zone's entities.
     ZoneClosed { zone_id: u32 },
