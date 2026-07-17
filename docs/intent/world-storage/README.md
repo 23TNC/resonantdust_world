@@ -60,15 +60,18 @@ event** — the worker mints the hot row and tombstones the cold cell in one pas
 Because `UNPACK` and the op are **separate events across tics**, no single program both unpacks and
 references the result — so there is **no in-program pre-pass** and B-3 (the dropped stack) stays dead.
 
+**Keys are server-minted — the client never picks them.** Spacetime mints every `entity_reference`
+(unique, deterministic-from-event via the spawn-log), for `CREATE` and `UNPACK` alike; the client only
+*learns* it by watching `state` (there is no client-chosen or local/alias key — a client picking keys
+collides the instant two clients pick the same one). **Stopgap in the code today:** the npc picks its
+own `wolf_key`s — that survives only because there is one automated player and no ownership model yet;
+it is replaced by server-minted `CREATE` in the `pawn`-shard step.
+
 **Pre-emption hides the latency.** Core owns the intent, so when it knows a sequence is coming
 (move-to-then-pick-up) it sends the `UNPACK` **alongside the earlier action**. If that action takes ≥
 the unpack latency (a multi-tile move easily does), the hot row is ready exactly when the op is issued
 — the unpack is effectively **free**. It's **safe by construction**: correctness never depends on the
 guess (a wrong one is a wasted unpack GC re-packs; a missing one is just late). Keep it conservative.
-
-*(Alternative, not taken: if core **chose** the destination id — as it already does for spawns — unpack
-and op could ride one program with no wait. Trades server-minted safety for core-side id allocation;
-pre-emption hides the round-trip well enough that we keep server-minted.)*
 
 ## Tombstones stop re-transmission; GC queues the packs
 
@@ -122,8 +125,10 @@ tiles/things become ordinary hot entities in the `pawn`/hot shard.
 
 1. **codec** — `PACK` / `UNPACK` / `GET` palette + signatures (`UNPACK`/`GET` operand = a `position`;
    `PACK` = an `entity`) + the `cold_row`/`tile` split of a `position`. No behavior.
-2. **`pawn` shard** — re-scope `data_shard` to `pawn`; wire orchestrator/worker/edge. Give it
-   `CREATE`'s deterministic spawn-id (the spawn-log `UNPACK` will reuse). Proves the rename.
+2. **`pawn` shard** — re-scope `data_shard` to `pawn`; wire orchestrator/worker/edge. Build
+   **server-minted `CREATE`** (deterministic spawn-id via the spawn-log) and **retire the client-picks-
+   keys stopgap** (today's npc `wolf_key`) — the client issues `CREATE` and learns the minted id by
+   watching `state`. `UNPACK` reuses this spawn-log. Proves the rename + real minting.
 3. **`tile` shard — cold + render, NO unpack.** Cold table (256×`u16`) + `cold_removed` tombstones +
    `GET`; worldgen seeds it (via `init`); edge subscribes the zone's cold rows; client draws the
    ground. **This revives the terrain path** (`edge/index.rs`, `worldgen.rs`, `Event::ColdObjects`) and
