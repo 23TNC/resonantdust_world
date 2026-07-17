@@ -5,11 +5,11 @@
 //!     post-`claim_or_login` row read hits a warm cache;
 //!   * the gate-owned session: WS → `player_id`, set at login.
 //!
-//! Scope: login + clock sync. The world surface — zone subscription, entity streaming,
-//! and client intent (spawn/move/interact) — was removed with the shard and pipeline; it
-//! returns with the rebuild (`docs/intent/spacetime-again/`). Zone routing itself survives
-//! in [`crate::index`], which still resolves `zone_id → region → shard endpoint`; nothing
-//! consumes that resolution until the new shard exists.
+//! Scope: login + clock sync, plus the world surface — zone subscription and the cold
+//! `tile`/`thing` relay ([`build_world`]/[`seed_zone`]) — rebuilt on the pipeline
+//! (`docs/intent/spacetime-again/`). A zone maps directly to its shard DBs on this
+//! server (single instance); the old `region → shard endpoint` router is retired
+//! (coord-purge C), to be replaced macro-keyed when multi-shard is a real need.
 //!
 //! Outbound frames come from two places — the request/response handlers on this async
 //! task, and the SDK row callbacks on the upstreams' threads — so they're funneled

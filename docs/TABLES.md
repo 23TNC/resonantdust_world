@@ -126,8 +126,8 @@ read the tic from `index.master_clock`, **not** from here.
 
 | DB | table | state |
 |---|---|---|
-| `index` | `region_shards` | `region_id`→`shard_id`. No consumer; edge still subscribes. |
-| `index` | `shards` | `shard_id`→`{url, db_name}`. Same chain. |
+| `index` | `region_shards` | `region_id`→`shard_id`. **Dead** — the edge no longer subscribes or resolves against it (coord-purge C removed the router). Left inert in the module; a fresh macro-keyed router replaces it when multi-shard is a real need. |
+| `index` | `shards` | `shard_id`→`{url, db_name}`. Same — inert, no edge consumer. |
 
 ---
 

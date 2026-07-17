@@ -1,11 +1,11 @@
 //! Static deployment config: the SpacetimeDB server URI + environment, plus the
-//! naming convention that turns a module (and the index's routing tier) into a
-//! concrete database name.
+//! naming convention that turns a module into a concrete database name.
 //!
-//! This answers *what a control-plane database is called* (`index`, `players`).
-//! *Which* shard a given region lives on — and the URL + db_name of that shard —
-//! is answered at runtime by the `index` database (`region_shards` → `shards`),
-//! not by this config; see [`crate::index`].
+//! This answers *what a database is called* (`index`, `players`, the pipeline
+//! shards, the cold `tile`/`thing` DBs) for a single-instance deployment. The
+//! zone→data-shard router that once mapped a region to an arbitrary shard
+//! endpoint is retired (coord-purge C); a fresh, macro-keyed router will replace
+//! it when multi-shard becomes a real need.
 
 /// SpacetimeDB server the control-plane DBs live on. On the `resonantdust`
 /// docker network the spacetime container is reachable as `start`; override
@@ -91,10 +91,9 @@ impl std::fmt::Debug for R2Settings {
 /// Resolved server configuration.
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
-    /// SpacetimeDB server URI the `index` and `players` control-plane DBs live
-    /// on. Data shards may live on *other* SpacetimeDB servers — each `shards`
-    /// row in the index carries its own `url`, so a shard connection uses that,
-    /// not this.
+    /// SpacetimeDB server URI every DB this edge talks to lives on — the `index`
+    /// and `players` control-plane DBs plus the pipeline + cold shards. Single
+    /// instance today; a future multi-shard router will carry per-shard URLs.
     pub uri: String,
     /// Deployment environment tag (`dev` / `claude` / `test` / …). Selects the
     /// control-plane database names.
@@ -201,22 +200,6 @@ impl ServerConfig {
         format!("resonantdust-{}-thing-0", self.env)
     }
 
-    /// Fallback shard database name for a region whose `region_shards` entry is
-    /// missing — single-shard deployments run with no index rows seeded, so an
-    /// unrouted region defaults to shard 0 on *this* SpacetimeDB server. Mirrors
-    /// the old gateway's "default to shard 0" posture.
-    ///
-    /// The unified `shard` module deploys to the `zone` db family
-    /// (`rd_db_for zone 0`): SpacetimeDB db names are DNS-like, so the db is named
-    /// `zone-0` (matching `bin/rd`'s `RD_DB`). A single shard now carries both a
-    /// zone's terrain and its loose objects through one tick pipeline, so there is
-    /// no separate object-shard db family anymore.
-    pub fn default_shard_db(&self) -> String {
-        format!("resonantdust-{}-zone-0", self.env)
-    }
-
-    // The standalone cold-tiles / cold-things DBs are retired — a zone's cold objects live in
-    // the shard's own `cold` table now (spacetime-rewrite S7, divergence #3).
 }
 
 fn env_or(key: &str, default: &str) -> String {

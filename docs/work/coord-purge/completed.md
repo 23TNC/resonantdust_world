@@ -35,3 +35,28 @@ Ported the four value-carrying tests onto `zone_cold` (they read `kind_reference
 
 **Verified:** `cargo test worldgen` in the edge build container — 7 passed, 0 failed (incl. the ported
 seam test); edge compiles clean; no external references to the deleted `pub` symbols.
+
+---
+
+## C · Delete the dead zone→shard router in `index.rs`
+
+Deleted `server/edge/src/index.rs` whole (`ShardEndpoint`, `resolve_zone_or_default`, the `region_of`
+re-export) and its `mod index;` — every item was `#[allow(dead_code)]`, no consumer. Removed the dead
+router bleed from the rest of the edge: the `region_shards`/`shards` subscription + count-log +
+binding imports in `connections.rs` (the index connection is now write-only — the `set_server`
+registration heartbeat, i.e. live player routing, is all it does), and `config::default_shard_db()`
+(the router's single-shard fallback, only `resolve_zone_or_default` called it). Refreshed the stale
+router prose in `config.rs` / `ws.rs` docs.
+
+**Tables decision — leave inert (not drop from the module).** `region_shards`/`shards` stay in the
+deployed `index` module but with no edge consumer. Dropping them would mean editing a live module +
+regenerating two binding sets + a redeploy, for tables the future router won't reuse (it'll be
+macro-keyed, per the README). The edge code is fully purged either way — that's what the invariant
+asks. TABLES marks both **Dead / inert**.
+
+**Left untouched:** `servers` / `player_servers` / `master_clock` (live player routing + durable tic),
+and `data_shard_db()` (the live pipeline data shard — unrelated to the region router).
+
+**Verified:** `cargo check --all-targets` in the edge build container — clean, no warnings; grep
+confirms no `region_of` / `resolve_zone_or_default` / `default_shard_db` / `crate::index` left in the
+edge source; `set_server` registration path intact.

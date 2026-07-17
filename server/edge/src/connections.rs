@@ -22,13 +22,11 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use spacetimedb_sdk::{DbContext, Table as _};
+use spacetimedb_sdk::DbContext;
 use tokio::sync::oneshot;
 
 use crate::bindings;
-use crate::bindings::index::region_shards_table::RegionShardsTableAccess;
 use crate::bindings::index::set_server;
-use crate::bindings::index::shards_table::ShardsTableAccess;
 use crate::config::ServerConfig;
 use crate::worldgen::Worldgen;
 
@@ -123,8 +121,11 @@ pub async fn await_ready(ready: oneshot::Receiver<()>) -> bool {
 /// see [`Pool::connect`]).
 pub struct Pool {
     pub cfg: ServerConfig,
-    /// The shared routing-directory connection, subscribed to `region_shards` +
-    /// `shards`. Read by [`crate::index`] resolution.
+    /// The shared control-plane connection. Used write-only: the edge registers
+    /// itself in the index's `servers` table via [`set_server`] (see
+    /// [`spawn_registration`](Pool::spawn_registration)) so the gateway can allocate
+    /// it to players. No subscription — the old zone→shard router that read
+    /// `region_shards`/`shards` off this connection is gone (coord-purge C).
     pub index: Arc<bindings::index::DbConnection>,
     /// Hot-reloadable content-derived state (currently the worldgen runtime),
     /// behind an `RwLock` so [`spawn_content_poll`](Pool::spawn_content_poll) can
@@ -154,10 +155,12 @@ struct ContentState {
 }
 
 impl Pool {
-    /// Connect the shared index upstream, subscribe to the routing tables, and
-    /// wait until both the connection and the subscription are live. Returns an
-    /// error string (for a clean process exit) if either step fails — the server
-    /// can't route a single zone without the index, so this is fatal at startup.
+    /// Connect the shared control-plane (index) upstream and wait until it's live.
+    /// Returns an error string (for a clean process exit) if the connect fails —
+    /// the edge can't register itself for allocation without the index, so this is
+    /// fatal at startup. No subscription: the connection is used write-only (the
+    /// `set_server` registration heartbeat); the old zone→shard router that
+    /// subscribed to `region_shards`/`shards` here is gone (coord-purge C).
     pub async fn connect(cfg: ServerConfig) -> Result<Arc<Pool>, String> {
         let index_db = cfg.index_db();
         tracing::info!(uri = %cfg.uri, db = %index_db, "connecting index upstream");
@@ -167,40 +170,7 @@ impl Pool {
         if !await_ready(ready).await {
             return Err("index upstream connect timed out".to_string());
         }
-
-        // Subscribe to the full routing directory and block until the initial
-        // rows are cached, so the first client's zone lookup sees a populated
-        // index rather than racing an empty cache.
-        let (applied_tx, applied_rx) = oneshot::channel();
-        let applied_tx = Arc::new(Mutex::new(Some(applied_tx)));
-        let sub = index
-            .subscription_builder()
-            .on_applied({
-                let applied_tx = applied_tx.clone();
-                move |_ctx| {
-                    if let Some(tx) = applied_tx.lock().unwrap().take() {
-                        let _ = tx.send(());
-                    }
-                }
-            })
-            .on_error(|_ctx, err| tracing::error!(%err, "index subscription error"))
-            .subscribe(["SELECT * FROM region_shards", "SELECT * FROM shards"]);
-
-        if !matches!(
-            tokio::time::timeout(CONNECT_TIMEOUT, applied_rx).await,
-            Ok(Ok(()))
-        ) {
-            return Err("index subscription apply timed out".to_string());
-        }
-
-        // The index subscription lives for the whole process; leak the handle so
-        // `Pool` (shared as axum state) carries no possibly-!Sync handle and the
-        // subscription is never torn down. Dropping it would unsubscribe.
-        std::mem::forget(sub);
-
-        let regions = index.db().region_shards().count();
-        let shards = index.db().shards().count();
-        tracing::info!(regions, shards, "index ready");
+        tracing::info!("index ready");
 
         // Load the DSL content tree worldgen seeds zones from. Non-fatal: a
         // server with no content can still route + relay zones that already

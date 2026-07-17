@@ -2,23 +2,7 @@
 
 _Ordered by dependency: **A gates**; B–E are independent safe deletions; **F/G** are the substantive
 reworks (F browser-verified). Move an item to `remaining.md` when you start it, `completed.md` when it
-lands. **A and B are done — see [`completed.md`](completed.md).**_
-
----
-
-## C · Delete the dead zone→shard router in `index.rs`
-
-The edge's `resolve_zone_or_default` (`region_of(zone_id) → region_shards → shards`) is
-`#[allow(dead_code)]` — no consumer (single-shard; the edge uses hardcoded DB names). It + the vestigial
-`region_shards` / `shards` tables (already "Vestigial" in TABLES) are the dead zone→data-shard router.
-
-- Remove `resolve_zone_or_default`, the `region_of` re-export/use, and the now-dead helpers in
-  `index.rs`. **Leave** `servers` / `player_servers` (live player routing) untouched.
-- Decide the tables: drop `region_shards`/`shards` from the `index` module + TABLES, or leave them
-  inert with a one-line "no router until multi-shard" note (record the choice in `completed.md`).
-
-**Done when:** no `region_of`/`zone_id` in `index.rs`; player routing still builds + works; TABLES
-reflects the removal.
+lands. **A, B, C are done — see [`completed.md`](completed.md).**_
 
 ---
 
