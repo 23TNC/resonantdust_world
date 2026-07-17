@@ -284,12 +284,35 @@ without trusting the worker. We take "block correctly" while workers are our cod
 | **orchestrator assignment + liveness** | Which orchestrator owns tic T (doubling is safe, so a good hint suffices — master-assigned is the leaning), and how the master detects a dead orchestrator (heartbeat vs lease). |
 | **the world verb palette** | The machine + `promote_*` exist ([`ACTIONS.md`](ACTIONS.md)); no gameplay verb does. Each needs a signature naming, per operand, written vs read. |
 | **worker hang-detection** | Death is handled (re-`claim` overwrites the stamp); a *hung* worker needs the orchestrator to notice. In-memory liveness is the leaning, `event_log` lease the fallback. |
-| **cold** | No cold tier — no table, no `find-or-mint`. Unshaped. |
+| **cold** | Being built — the `tile`/`thing` cold shards ([`intent/world-storage/`](intent/world-storage/README.md)). `tile` exists (below). |
 
 **Resolved and gone:** the four worker slots (→ worker + observer), `dirty`-as-count (→ boolean),
 `state_events` (the reverse index — no count to decrement), and B-2 "two events on one `(entity,
 tic)`" (dissolved: same-entity events share a component, one worker composes them in `event_reference`
 order). See [`notes/tables.md`](notes/tables.md).
+
+---
+
+## `tile` — the cold ground shard
+
+Plan: [`intent/world-storage/`](intent/world-storage/README.md). One cold shard per type per zone
+(server = the module), so the key drops the server and is a `u32`.
+
+### `cold_tile` — one zone-layer's dense ground (public)
+
+| column | type | key | notes |
+|---|---|---|---|
+| `cold_row_reference` | `u32` | PK | `macro_position:16 \| layer_reference:8` ([`VARIABLES.md`](VARIABLES.md)) |
+| `macro_position_reference` | `u16` | idx | the zone — the client's subscription key |
+| `layer_reference` | `u8` | | `type_id:4 \| layer_id:4` |
+| `tiles` | `Vec<u16>` | | **exactly 256** `kind_reference`s, index = `tile_reference` (dense; no per-entry tile/data) |
+
+writes `seed` (trusted worldgen generation, not a player mutation) · reads edge, client ·
+sub `SELECT * FROM cold_tile WHERE macro_position_reference = <zone>` (edge, per subscribed zone)
+
+Static-ish: seeded, subscribed, rendered as the ground. Mutation comes later via `UNPACK` → hot →
+`PACK` (with `cold_removed` tombstones); not built yet. `thing` (sparse `Vec<u32>` `kind_pos_reference`)
+is the same pattern, next.
 
 ---
 

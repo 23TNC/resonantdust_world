@@ -131,11 +131,10 @@ A ring, not a line. **Never compare with `<` / `<=`** — across the wrap they i
 ## Cold storage
 
 ```
-u64 cold_row_reference
-  u28 reserved                    bits 36–63
-  u16 macro_position_reference    bits 20–35
-  u16 type_reference              bits 4–19
-  u4  layer_id                    bits 0–3
+u32 cold_row_reference            realm-unique within its module (server = the module)
+  u16 macro_position_reference    bits 16–31
+  u8  layer_reference             bits 8–15     type_id:4 | layer_id:4
+  u8  reserved                    bits 0–7
 
 u32 kind_pos_reference
   u16 kind_reference              bits 16–31
@@ -147,10 +146,11 @@ u8 data
   u6 count                        bits 0–5      0–63
 ```
 
-Row header = `(macro_position_reference, type_reference, layer_id)`; those three **are** the row's
-identity. Reconstruction: `definition_reference` = row's `type_reference` + entry's
-`kind_reference`; `position_reference` = row's `macro_position` + `layer_id` + `type_id` + entry's
-`tile_reference`.
+Row header = `(macro_position_reference, layer_reference)` — the two **are** the row's identity
+(the `cold_row_reference`). `layer_reference` folds `type_id | layer_id`; **server = the module**, so
+it's out of the key. Reconstruction: `definition_reference` = the `layer_reference`'s `type_id` +
+entry's `kind_reference` (which carries the subtype as `kind_id` — no row-level `type_reference`);
+`position_reference` = row's `macro_position` + `layer_reference` + entry's `tile_reference`.
 
 `cold_removed` shares `cold_row_reference` 1:1; a tombstone is one `tile_reference : u8`.
 

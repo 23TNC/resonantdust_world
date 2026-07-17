@@ -287,63 +287,35 @@ pub fn position_layer_reference(r: u32) -> u8 {
 //
 // Distinct from `cold_reference:u32`, which addresses an **object**; this addresses a **row**.
 
-const COLD_ROW_MACRO_SHIFT: u64 = 20;
-const COLD_ROW_TYPE_SHIFT: u64 = 4;
-const COLD_ROW_U16_MASK: u64 = 0xFFFF;
-const COLD_ROW_LAYER_MASK: u64 = 0xF;
+const COLD_ROW_MACRO_SHIFT: u32 = 16;
+const COLD_ROW_LAYER_SHIFT: u32 = 8;
+const COLD_ROW_U16_MASK: u32 = 0xFFFF;
+const COLD_ROW_U8_MASK: u32 = 0xFF;
 
-/// Compose a `cold_row_reference`: `reserved:28 | macro_position:16 | type_reference:16 | layer_id:4`.
-pub fn pack_cold_row_reference(macro_position: u16, type_reference: u16, layer_id: u8) -> u64 {
-    ((macro_position as u64) << COLD_ROW_MACRO_SHIFT)
-        | ((type_reference as u64) << COLD_ROW_TYPE_SHIFT)
-        | ((layer_id as u64) & COLD_ROW_LAYER_MASK)
+/// Compose a `cold_row_reference`: `macro_position:16 | layer_reference:8 | reserved:8`. The server
+/// is the module (one cold shard per type per zone), so it's out of the key — a `u32` is unique
+/// within a module, mirroring `entity_reference` so the `(row, tic)` slot uid matches hot's.
+pub fn pack_cold_row_reference(macro_position: u16, layer_reference: u8) -> u32 {
+    ((macro_position as u32) << COLD_ROW_MACRO_SHIFT)
+        | ((layer_reference as u32) << COLD_ROW_LAYER_SHIFT)
 }
 /// The `macro_position_reference` of a `cold_row_reference`.
-pub fn cold_row_macro_position(r: u64) -> u16 {
+pub fn cold_row_macro_position(r: u32) -> u16 {
     ((r >> COLD_ROW_MACRO_SHIFT) & COLD_ROW_U16_MASK) as u16
 }
-/// The `type_reference` of a `cold_row_reference`.
-pub fn cold_row_type_reference(r: u64) -> u16 {
-    ((r >> COLD_ROW_TYPE_SHIFT) & COLD_ROW_U16_MASK) as u16
-}
-/// The `layer_id` of a `cold_row_reference`.
-pub fn cold_row_layer_id(r: u64) -> u8 {
-    (r & COLD_ROW_LAYER_MASK) as u8
+/// The `layer_reference` (`type_id:4 | layer_id:4`) of a `cold_row_reference`.
+pub fn cold_row_layer_reference(r: u32) -> u8 {
+    ((r >> COLD_ROW_LAYER_SHIFT) & COLD_ROW_U8_MASK) as u8
 }
 
-/// The `cold_row_reference` that holds the object at `position_reference`, given its `subtype_id`
-/// (the one field a position doesn't carry). This is the row-selection key: filter on
-/// `(macro_position, type_id, layer_id)` — all off the position — then match `tile_reference`
-/// within the row.
-pub fn cold_row_of(position_reference: u32, subtype_id: u16) -> u64 {
-    let layer = position_layer_reference(position_reference);
+/// The `cold_row_reference` that holds the object at `position_reference` — filter a zone's rows on
+/// `(macro_position, layer_reference)`, then match `tile_reference` within the row. No subtype: the
+/// row header is subtype-agnostic (subtype rides the per-entry `kind_reference`).
+pub fn cold_row_of(position_reference: u32) -> u32 {
     pack_cold_row_reference(
         position_macro(position_reference),
-        pack_type_reference(layer_ref_type_id(layer), subtype_id),
-        layer_ref_layer_id(layer),
+        position_layer_reference(position_reference),
     )
-}
-
-/// Does a cold row's **header** hold the object at `position_reference`? Filter a zone's rows with
-/// this, then match `kind_pos_ref_tile(entry) == position_tile(position_reference)` within the
-/// survivors — together those two are the whole row-selection rule.
-///
-/// Subtype is deliberately not compared: uniqueness is one object per `(type, layer, tile)`
-/// **subtype-agnostic**, so across a zone's several subtype rows at this `(type, layer)` exactly one
-/// holds the tile. Use this rather than [`cold_row_of`] when you have the rows but not the subtype.
-///
-/// Comparing all three header fields is what D-3 lost: dropping them let a target naming a *thing*
-/// match the *ground* row under it (the ground layer is dense, so nearly every cell matched both).
-pub fn cold_row_selects(
-    position_reference: u32,
-    row_macro_position: u16,
-    row_type_reference: u16,
-    row_layer_id: u8,
-) -> bool {
-    let layer = position_layer_reference(position_reference);
-    row_macro_position == position_macro(position_reference)
-        && type_ref_type_id(row_type_reference) == layer_ref_type_id(layer)
-        && row_layer_id == layer_ref_layer_id(layer)
 }
 
 // ── kind_pos_reference : u32 = kind_reference:16 | tile_reference:8 | data:8 ─────────────────────
@@ -519,102 +491,38 @@ mod tests {
     }
 
     #[test]
-    fn cold_row_reference_is_the_header_composite() {
-        for &(m, tr, l) in &[(0u16, 0u16, 0u8), (0xABCD, 0x2006, 3), (0xFFFF, 0xFFFF, 0xF)] {
-            let k = pack_cold_row_reference(m, tr, l);
+    fn cold_row_reference_is_the_macro_layer_composite() {
+        for &(m, lr) in &[(0u16, 0u8), (0xABCD, pack_layer_reference(2, 3)), (0xFFFF, 0xFF)] {
+            let k = pack_cold_row_reference(m, lr);
             assert_eq!(cold_row_macro_position(k), m);
-            assert_eq!(cold_row_type_reference(k), tr);
-            assert_eq!(cold_row_layer_id(k), l);
+            assert_eq!(cold_row_layer_reference(k), lr);
         }
-        // all-ones per field, disjoint; reserved:28 stays 0 → 36 bits used.
-        assert_eq!(pack_cold_row_reference(0xFFFF, 0xFFFF, 0xF), 0x0000_000F_FFFF_FFFF);
-        // Rows differing ONLY by layer are distinct keys — the property v1 lost (D-3).
+        // All-ones per field, disjoint; reserved:8 stays 0 → macro | layer occupy the high 24 bits.
+        assert_eq!(pack_cold_row_reference(0xFFFF, 0xFF), 0xFFFF_FF00);
+        // Distinct by macro_position, and by layer_reference (which folds type_id | layer_id).
         assert_ne!(
-            pack_cold_row_reference(0x1234, 0x2006, 0),
-            pack_cold_row_reference(0x1234, 0x2006, 1),
-        );
-        // ...and only by macro_position, or only by subtype.
-        assert_ne!(
-            pack_cold_row_reference(0x1234, 0x2006, 0),
-            pack_cold_row_reference(0x1235, 0x2006, 0),
+            pack_cold_row_reference(0x1234, pack_layer_reference(2, 0)),
+            pack_cold_row_reference(0x1235, pack_layer_reference(2, 0)),
         );
         assert_ne!(
-            pack_cold_row_reference(0x1234, 0x2006, 0),
-            pack_cold_row_reference(0x1234, 0x2007, 0),
+            pack_cold_row_reference(0x1234, pack_layer_reference(2, 0)),
+            pack_cold_row_reference(0x1234, pack_layer_reference(2, 1)),
         );
     }
 
     #[test]
-    fn cold_row_of_selects_by_macro_type_and_layer() {
-        // A cold_reference names macro + tile + (type_id, layer_id) — everything the row key needs
-        // except subtype, which uniqueness makes unnecessary to *find* a row.
-        let cr = pack_position_from_parts(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(2, 0));
-        let row = cold_row_of(cr, 6); // subtype 6 = forest
+    fn cold_row_of_derives_the_row_from_a_position() {
+        // A position carries macro + tile + layer_reference; the row key is macro + layer_reference
+        // (server = the module, subtype = the per-entry kind — neither is in the key).
+        let pos = pack_position_from_parts(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(2, 0));
+        let row = cold_row_of(pos);
         assert_eq!(cold_row_macro_position(row), pack_macro_position(0x12, 0x34));
-        assert_eq!(cold_row_type_reference(row), pack_type_reference(2, 6));
-        assert_eq!(cold_row_layer_id(row), 0);
-        // The SAME tile at a different layer resolves to a DIFFERENT row (the D-3 bug).
-        let cr_l1 = pack_position_from_parts(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(2, 1));
-        assert_ne!(cold_row_of(cr_l1, 6), row);
-        // ...and a different TYPE at the same tile+layer likewise (ground vs thing).
-        let cr_tile = pack_position_from_parts(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(1, 0));
-        assert_ne!(cold_row_of(cr_tile, 6), row);
-    }
-
-    /// D-3 regression: **a tile holding both ground and a thing resolves to the one the target
-    /// names.** This is the live bug — `find_or_mint` compared neither type nor layer, so it took
-    /// the first row with *any* entry at the tile. The ground layer is dense, so nearly every
-    /// occupied cell matched ≥2 rows and the winner was iteration-order luck: an Interact on a tree
-    /// could mint the grass under it.
-    ///
-    /// Mirrors the live zone exactly, including the detail that masked the bug for so long — the
-    /// tree and the grass **share `kind = 1`** (tree is thing-id 1, grass is tile-def 1), so the
-    /// worker logged `kind=1` whichever row won.
-    #[test]
-    fn a_target_mints_the_object_it_names_not_the_ground_under_it() {
-        const GROUND: u8 = 1;
-        const THING: u8 = 2;
-        let (region, zone, tile) = (0x00, 0x00, pack_tile_reference(7, 7));
-        let macro_position = pack_macro_position(region, zone);
-        let entry = |kind| pack_kind_pos_reference(pack_kind_reference(kind, 0), tile, 0);
-
-        // The zone's rows. Both hold tile (7,7) on layer 0; they differ only in `type_id`.
-        // `kinds` are equal — nothing in the *entry* can tell these apart, only the header can.
-        let rows = [
-            (macro_position, pack_type_reference(GROUND, 6), 0u8, entry(1)), // grass, biome 6
-            (macro_position, pack_type_reference(THING, 6), 0u8, entry(1)),  // tree,  biome 6
-        ];
-
-        // Two targets at the SAME tile, differing only in `layer_reference`.
-        let select = |type_id| {
-            let cr = pack_position_from_parts(region, zone, tile, pack_layer_reference(type_id, 0));
-            rows.iter()
-                .filter(|&&(m, tr, l, _)| cold_row_selects(cr, m, tr, l))
-                .find_map(|&(_, tr, _, e)| (kind_pos_ref_tile(e) == position_tile(cr)).then_some(tr))
-        };
-        assert_eq!(select(THING), Some(pack_type_reference(THING, 6)), "tree target must mint the tree");
-        assert_eq!(select(GROUND), Some(pack_type_reference(GROUND, 6)), "ground target must mint the ground");
-
-        // Exactly one row survives each filter — the selection is deterministic, not first-wins.
-        for type_id in [GROUND, THING] {
-            let cr = pack_position_from_parts(region, zone, tile, pack_layer_reference(type_id, 0));
-            assert_eq!(rows.iter().filter(|&&(m, tr, l, _)| cold_row_selects(cr, m, tr, l)).count(), 1);
-        }
-
-        // A target on a layer nothing occupies selects nothing (rather than the layer-0 ground).
-        let empty = pack_position_from_parts(region, zone, tile, pack_layer_reference(THING, 1));
-        assert!(!rows.iter().any(|&(m, tr, l, _)| cold_row_selects(empty, m, tr, l)));
-
-        // ...and a neighbouring zone's identical rows never match (macro_position discriminates).
-        let far = pack_position_from_parts(region, zone + 1, tile, pack_layer_reference(THING, 0));
-        assert!(!rows.iter().any(|&(m, tr, l, _)| cold_row_selects(far, m, tr, l)));
-
-        // The row a filter picks IS the composite of its header — the invariant `find_or_mint`
-        // debug_asserts, and what lets PACK recompose the key from provenance alone.
-        for &(m, tr, l, _) in &rows {
-            let cr = pack_position_from_parts(region, zone, tile, pack_layer_reference(type_ref_type_id(tr), l));
-            assert_eq!(pack_cold_row_reference(m, tr, l), cold_row_of(cr, type_ref_subtype_id(tr)));
-        }
+        assert_eq!(cold_row_layer_reference(row), pack_layer_reference(2, 0));
+        // Same tile, different layer → a different row. Different tile (same row) → the SAME row.
+        let other_layer = pack_position_from_parts(0x12, 0x34, pack_tile_reference(7, 7), pack_layer_reference(2, 1));
+        assert_ne!(cold_row_of(other_layer), row);
+        let same_row = pack_position_from_parts(0x12, 0x34, pack_tile_reference(3, 9), pack_layer_reference(2, 0));
+        assert_eq!(cold_row_of(same_row), row);
     }
 
     #[test]
