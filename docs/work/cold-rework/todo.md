@@ -54,11 +54,11 @@ elsewhere with no code change; login → zone render still works.
 
 Give cold the hot pair and composite it, before anything writes it. Via the shared macro ([F1]).
 
-- **step 1 — extract `decl_tick_pipeline!`**: lift `data_shard`'s `clock`/`state_log`/`state` +
+- **step 1 — extract `tick_pipeline!`**: lift `data_shard`'s `clock`/`state_log`/`state` +
   `init`/`bump`/`claim`/`write`/`gc` into a shared macro crate; reduce `data_shard` to the payload +
   the invocation. **Prove byte-identical** — regenerate bindings (clean diff), the wolf still moves —
   *before* anything else builds on it. (Re-touches the live pipeline.)
-- **step 2 — cold invokes it**: `tile`/`thing` invoke `decl_tick_pipeline!` (same three-ref payload) +
+- **step 2 — cold invokes it**: `tile`/`thing` invoke `tick_pipeline!` (same three-ref payload) +
   keep their baseline tables. No writes yet beyond `init`/`seed`.
 - **edge**: also subscribe a zone's cold `state` (`WHERE macro_position_reference = <zone>`) and relay
   it; a `ColdState` frame carries the per-entity override.

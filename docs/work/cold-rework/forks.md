@@ -6,7 +6,7 @@ _Decision points, options, what we chose, why. Chronological._
 
 ## F1 · Composition machinery: **shared macro** (was BK1)
 
-**Decision.** Factor `data_shard`'s bespoke composition into a shared `decl_tick_pipeline!` macro that
+**Decision.** Factor `data_shard`'s bespoke composition into a shared `tick_pipeline!` macro that
 `data_shard`, `tile`, and `thing` all invoke — not duplicate it three times.
 
 **What moves:** the `clock` / `state_log` / `state` tables and `init` / `bump` / `claim` / `write` /
