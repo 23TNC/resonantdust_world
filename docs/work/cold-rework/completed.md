@@ -99,3 +99,24 @@ The cold overlay renders end-to-end:
 `on_delete`) removed the override and the baseline showed through. Both directions of `baseline ⊕ state`
 work. (First-cut composite draws over the baseline; *suppressing* a baseline cell — e.g. hiding a
 removed tree — is a noted follow-up, and P4 will drive it with real mutations.)
+
+---
+
+## P4 (foundation) · mint + `set_tile` — a server-side cold mutation
+
+The `tile` shard gained the **mint** primitive: a `mint_counter` (private) + a `SERVER_REFERENCE` const
+(`type_id = TYPE_BIOME_TILE`, server_id 0 — a stopgap; F2 makes it master-assigned at multi-shard), and
+a **`set_tile(macro, subtype, layer, tile_reference, kind_reference)`** reducer that mints (or reuses,
+idempotent by `position_reference` — one entity per cold cell) an `entity_reference`, writes a settled +
+promoted `state_log` slot, and upserts the `state` override. A cold cell mutates **without touching the
+baseline `cold_tile`**.
+
+**Browser-confirmed live (2026-07-17):** `set_tile 0 0 0 136 64` (zone 0, cell (8,8), water) **minted**
+`entity_reference 0x10000001` and rendered the water tile over the forest — a *server-produced* mutation
+(not a hand-inserted row), flowing reducer → mint → `state_log`+promote → edge relay → client composite.
+
+**Remaining P4** (documented in `set_tile` + `intent/world-storage/`): the **event-driven** `UNPACK`
+routing (edge → orchestrator → worker calls the mint, with a deterministic-from-event id for replay
+safety) instead of a direct reducer; the **GC fold (`PACK`)** back into the baseline + `state` drop +
+`state_log` tombstone; **`thing`-side** mutation (scatter, not just ground); **baseline suppression** for
+removals; and core's **two-phase** (`UNPACK`@N=0 → learn id → op).

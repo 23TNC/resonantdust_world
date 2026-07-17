@@ -13,6 +13,7 @@ use spacetimedb_sdk::__codegen::{
 
 pub mod clock_type;
 pub mod cold_tile_type;
+pub mod mint_counter_type;
 pub mod state_type;
 pub mod state_log_type;
 pub mod target_state_type;
@@ -20,6 +21,7 @@ pub mod bump_reducer;
 pub mod claim_reducer;
 pub mod gc_reducer;
 pub mod seed_reducer;
+pub mod set_tile_reducer;
 pub mod write_reducer;
 pub mod clock_table;
 pub mod cold_tile_table;
@@ -28,6 +30,7 @@ pub mod state_log_table;
 
 pub use clock_type::Clock;
 pub use cold_tile_type::ColdTile;
+pub use mint_counter_type::MintCounter;
 pub use state_type::State;
 pub use state_log_type::StateLog;
 pub use target_state_type::TargetState;
@@ -39,6 +42,7 @@ pub use bump_reducer::bump;
 pub use claim_reducer::claim;
 pub use gc_reducer::gc;
 pub use seed_reducer::seed;
+pub use set_tile_reducer::set_tile;
 pub use write_reducer::write;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -66,6 +70,13 @@ pub enum Reducer {
         layer_id: u8,
         tiles: Vec::<u16>,
 }    ,
+    SetTile {
+        macro_position: u16,
+        subtype_id: u16,
+        layer_id: u8,
+        tile_reference: u8,
+        kind_reference: u16,
+}    ,
     Write {
         worker: u8,
         tic: u16,
@@ -85,6 +96,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::Claim { .. } => "claim",
             Reducer::Gc { .. } => "gc",
             Reducer::Seed { .. } => "seed",
+            Reducer::SetTile { .. } => "set_tile",
             Reducer::Write { .. } => "write",
             _ => unreachable!(),
 }
@@ -121,6 +133,19 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 subtype_id: subtype_id.clone(),
                 layer_id: layer_id.clone(),
                 tiles: tiles.clone(),
+}),
+            Reducer::SetTile{
+                macro_position,
+                subtype_id,
+                layer_id,
+                tile_reference,
+                kind_reference,
+}             => __sats::bsatn::to_vec(&set_tile_reducer::SetTileArgs {
+                macro_position: macro_position.clone(),
+                subtype_id: subtype_id.clone(),
+                layer_id: layer_id.clone(),
+                tile_reference: tile_reference.clone(),
+                kind_reference: kind_reference.clone(),
 }),
             Reducer::Write{
                 worker,
