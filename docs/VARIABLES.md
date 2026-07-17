@@ -148,28 +148,35 @@ A ring, not a line. **Never compare with `<` / `<=`** — across the wrap they i
 ## Cold storage
 
 ```
-u32 cold_row_reference            realm-unique within its module (server = the module)
+u32 cold_row_reference            realm-unique within its module (the module's type_id IS the shard)
   u16 macro_position_reference    bits 16–31
-  u8  layer_reference             bits 8–15     type_id:4 | layer_id:4
-  u8  reserved                    bits 0–7
+  u12 subtype_id                  bits  4–15
+  u4  layer_id                    bits  0–3
 
 u32 kind_pos_reference
   u16 kind_reference              bits 16–31
   u8  tile_reference              bits 8–15
   u8  data                        bits 0–7
 
-u8 data
+u8 data                           things only (tiles are kind-only, no data)
   u2 rotation                     bits 6–7      4 facings; west mirrors east
   u6 count                        bits 0–5      0–63
 ```
 
-Row header = `(macro_position_reference, layer_reference)` — the two **are** the row's identity
-(the `cold_row_reference`). `layer_reference` folds `type_id | layer_id`; **server = the module**, so
-it's out of the key. Reconstruction: `definition_reference` = the `layer_reference`'s `type_id` +
-entry's `kind_reference` (which carries the subtype as `kind_id` — no row-level `type_reference`);
-`position_reference` = row's `macro_position` + `layer_reference` + entry's `tile_reference`.
+Row identity = `(macro_position_reference, subtype_id, layer_id)` — the `cold_row_reference`. **The
+`type_id` is the shard**: the `tile` module *is* `TYPE_BIOME_TILE`, `thing` *is* `TYPE_BIOME_THING`,
+so `type_id` is out of the key **and** off the row — dropping its `u4` (plus the old `reserved:8`) is
+exactly what freed the `u12 subtype_id`. A zone with N biomes is **N rows**, one per `subtype`.
 
-`cold_removed` shares `cold_row_reference` 1:1; a tombstone is one `tile_reference : u8`.
+Reconstruction sources `type_id` from the shard:
+`type_reference` = `shard.type_id:4 | row.subtype_id:12` → `definition_reference` =
+`type_reference:16 | entry.kind_reference:16`; `layer_reference` = `shard.type_id:4 | row.layer_id:4` →
+`position_reference` = `row.macro_position:16 | (entry.tile_reference:8 | layer_reference:8)`.
+
+`data` is **universal for things** — always `rotation:2 | count:6`, no per-type parse; game rules
+manipulate/display `count`. Mutation never writes the cold table: a changed cell is a `state_log` row
+in the shard's own hot-format overlay (`TABLES.md`), folded back into cold by GC. There is no separate
+tombstone table — a removal is a `state_log`/`state` row with the removed marker.
 
 ---
 
