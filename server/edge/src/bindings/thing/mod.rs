@@ -11,13 +11,35 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
+pub mod clock_type;
 pub mod cold_thing_type;
+pub mod state_type;
+pub mod state_log_type;
+pub mod target_state_type;
+pub mod bump_reducer;
+pub mod claim_reducer;
+pub mod gc_reducer;
 pub mod seed_reducer;
+pub mod write_reducer;
+pub mod clock_table;
 pub mod cold_thing_table;
+pub mod state_table;
+pub mod state_log_table;
 
+pub use clock_type::Clock;
 pub use cold_thing_type::ColdThing;
+pub use state_type::State;
+pub use state_log_type::StateLog;
+pub use target_state_type::TargetState;
+pub use clock_table::*;
 pub use cold_thing_table::*;
+pub use state_table::*;
+pub use state_log_table::*;
+pub use bump_reducer::bump;
+pub use claim_reducer::claim;
+pub use gc_reducer::gc;
 pub use seed_reducer::seed;
+pub use write_reducer::write;
 
 #[derive(Clone, PartialEq, Debug)]
 
@@ -27,11 +49,27 @@ pub use seed_reducer::seed;
 /// to indicate which reducer caused the event.
 
 pub enum Reducer {
-        Seed {
+        Bump {
+        master_tic: u16,
+}    ,
+    Claim {
+        entities: Vec::<u32>,
+        tic: u16,
+        worker: u8,
+}    ,
+    Gc {
+        horizon: u16,
+}    ,
+    Seed {
         macro_position: u16,
         subtype_id: u16,
         layer_id: u8,
         things: Vec::<u32>,
+}    ,
+    Write {
+        worker: u8,
+        tic: u16,
+        results: Vec::<TargetState>,
 }    ,
 }
 
@@ -43,14 +81,37 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
-                        Reducer::Seed { .. } => "seed",
+                        Reducer::Bump { .. } => "bump",
+            Reducer::Claim { .. } => "claim",
+            Reducer::Gc { .. } => "gc",
+            Reducer::Seed { .. } => "seed",
+            Reducer::Write { .. } => "write",
             _ => unreachable!(),
 }
 }
     #[allow(clippy::clone_on_copy)]
 fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
         match self {
-                        Reducer::Seed{
+                        Reducer::Bump{
+                master_tic,
+}             => __sats::bsatn::to_vec(&bump_reducer::BumpArgs {
+                master_tic: master_tic.clone(),
+}),
+            Reducer::Claim{
+                entities,
+                tic,
+                worker,
+}             => __sats::bsatn::to_vec(&claim_reducer::ClaimArgs {
+                entities: entities.clone(),
+                tic: tic.clone(),
+                worker: worker.clone(),
+}),
+            Reducer::Gc{
+                horizon,
+}             => __sats::bsatn::to_vec(&gc_reducer::GcArgs {
+                horizon: horizon.clone(),
+}),
+            Reducer::Seed{
                 macro_position,
                 subtype_id,
                 layer_id,
@@ -61,6 +122,15 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 layer_id: layer_id.clone(),
                 things: things.clone(),
 }),
+            Reducer::Write{
+                worker,
+                tic,
+                results,
+}             => __sats::bsatn::to_vec(&write_reducer::WriteArgs {
+                worker: worker.clone(),
+                tic: tic.clone(),
+                results: results.clone(),
+}),
             _ => unreachable!(),
 }
 }
@@ -70,7 +140,10 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct DbUpdate {
-        cold_thing: __sdk::TableUpdate<ColdThing>,
+        clock: __sdk::TableUpdate<Clock>,
+    cold_thing: __sdk::TableUpdate<ColdThing>,
+    state: __sdk::TableUpdate<State>,
+    state_log: __sdk::TableUpdate<StateLog>,
 }
 
 
@@ -81,7 +154,10 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
         for table_update in __sdk::transaction_update_iter_table_updates(raw) {
             match &table_update.table_name[..] {
 
-        "cold_thing" => db_update.cold_thing.append(cold_thing_table::parse_table_update(table_update)?),
+        "clock" => db_update.clock.append(clock_table::parse_table_update(table_update)?),
+    "cold_thing" => db_update.cold_thing.append(cold_thing_table::parse_table_update(table_update)?),
+    "state" => db_update.state.append(state_table::parse_table_update(table_update)?),
+    "state_log" => db_update.state_log.append(state_log_table::parse_table_update(table_update)?),
 
                 unknown => {
                     return Err(__sdk::InternalError::unknown_name(
@@ -104,7 +180,10 @@ impl __sdk::DbUpdate for DbUpdate {
     fn apply_to_client_cache(&self, cache: &mut __sdk::ClientCache<RemoteModule>) -> AppliedDiff<'_> {
                     let mut diff = AppliedDiff::default();
                 
-                diff.cold_thing = cache.apply_diff_to_table::<ColdThing>("cold_thing", &self.cold_thing).with_updates_by_pk(|row| &row.cold_row_reference);
+                diff.clock = cache.apply_diff_to_table::<Clock>("clock", &self.clock).with_updates_by_pk(|row| &row.id);
+        diff.cold_thing = cache.apply_diff_to_table::<ColdThing>("cold_thing", &self.cold_thing).with_updates_by_pk(|row| &row.cold_row_reference);
+        diff.state = cache.apply_diff_to_table::<State>("state", &self.state).with_updates_by_pk(|row| &row.entity_reference);
+        diff.state_log = cache.apply_diff_to_table::<StateLog>("state_log", &self.state_log).with_updates_by_pk(|row| &row.uid);
 
                     diff
                 }
@@ -112,7 +191,10 @@ fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "cold_thing" => db_update.cold_thing.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                                "clock" => db_update.clock.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "cold_thing" => db_update.cold_thing.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "state" => db_update.state.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "state_log" => db_update.state_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
 }
@@ -120,7 +202,10 @@ fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "cold_thing" => db_update.cold_thing.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                                "clock" => db_update.clock.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "cold_thing" => db_update.cold_thing.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "state" => db_update.state.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "state_log" => db_update.state_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
 }
@@ -130,7 +215,10 @@ for table_rows in raw.tables {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
-        cold_thing: __sdk::TableAppliedDiff<'r, ColdThing>,
+        clock: __sdk::TableAppliedDiff<'r, Clock>,
+    cold_thing: __sdk::TableAppliedDiff<'r, ColdThing>,
+    state: __sdk::TableAppliedDiff<'r, State>,
+    state_log: __sdk::TableAppliedDiff<'r, StateLog>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
 
@@ -141,7 +229,10 @@ impl __sdk::InModule for AppliedDiff<'_> {
 
 impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     fn invoke_row_callbacks(&self, event: &EventContext, callbacks: &mut __sdk::DbCallbacks<RemoteModule>) {
-                callbacks.invoke_table_row_callbacks::<ColdThing>("cold_thing", &self.cold_thing, event);
+                callbacks.invoke_table_row_callbacks::<Clock>("clock", &self.clock, event);
+        callbacks.invoke_table_row_callbacks::<ColdThing>("cold_thing", &self.cold_thing, event);
+        callbacks.invoke_table_row_callbacks::<State>("state", &self.state, event);
+        callbacks.invoke_table_row_callbacks::<StateLog>("state_log", &self.state_log, event);
 }
 }
 
@@ -793,9 +884,15 @@ impl __sdk::SpacetimeModule for RemoteModule {
     type QueryBuilder = __sdk::QueryBuilder;
 
 fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
-                cold_thing_table::register_table(client_cache);
+                clock_table::register_table(client_cache);
+        cold_thing_table::register_table(client_cache);
+        state_table::register_table(client_cache);
+        state_log_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
-                "cold_thing",
+                "clock",
+        "cold_thing",
+        "state",
+        "state_log",
 ];
 }

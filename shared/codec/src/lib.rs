@@ -27,3 +27,8 @@ pub mod refs;
 pub mod status;
 pub mod tic;
 pub mod uid;
+
+// The `tick_pipeline!` macro (crate-root via `#[macro_export]`) — the shared tic-composition
+// machinery SpacetimeDB shards stamp out. Inert here (only expands where invoked); references
+// `spacetimedb::`, which codec doesn't depend on, purely in its emitted tokens.
+mod pipeline;

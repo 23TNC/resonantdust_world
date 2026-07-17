@@ -17,6 +17,11 @@ use spacetimedb::{reducer, table, ReducerContext, Table};
 
 use resonantdust_codec::object::pack_cold_row_reference;
 
+// The shared tic-composition overlay: `clock` / `state_log` / `state` + `init` / `bump` / `claim` /
+// `write` / `gc`. A cold cell mutates by minting a `state_log` row here (never rewriting the baseline
+// `cold_thing`); GC folds it back. Same machinery as `data_shard`, so cold rides the whole pipeline.
+resonantdust_codec::tick_pipeline!();
+
 // ── cold_thing — one zone-layer-biome's sparse scatter ──────────────────────────────
 
 #[table(accessor = cold_thing, public)]
@@ -35,9 +40,6 @@ pub struct ColdThing {
     /// Sparse `kind_pos_reference`s — one per occupied cell (`kind:16 | tile:8 | data:8`).
     pub things: Vec<u32>,
 }
-
-#[reducer(init)]
-pub fn init(_ctx: &ReducerContext) {}
 
 /// Seed (or overwrite) a zone-layer-biome's scatter. Trusted server-side **generation** (worldgen),
 /// not a player mutation — player edits go through the overlay. `type_id` is the module. Idempotent:
