@@ -45,17 +45,30 @@ it back. Both are cross-shard, riding the inter-shard event machinery already li
   this to **build** a program (click a tile → read what's there → decide what to `UNPACK`), separate
   from the worker's execution.
 
-## The program pre-pass — resolving minted ids (replaces the dropped stack)
+## Core owns the two-phase — the worker never waits
 
-A program may `UNPACK` a thing and then act on it — but its hot id isn't known until the `UNPACK`
-runs. So execution is two passes: **sweep the program's `UNPACK`s (and `CREATE`s) first, run them to
-learn each minted id, rewrite the remaining operands with those ids, then execute the rest.** Because
-the ids are deterministic-from-event, the rewrite is deterministic and replay-safe.
+The hard version had the *worker* wait for the async mint mid-tic. Instead, **core** does the
+sequencing (it's already async and subscribed to `state`), and `UNPACK` becomes a **fire-and-forget
+event** — the worker mints the hot row and tombstones the cold cell in one pass and completes, no poll.
 
-This is the answer to blocker **B-3** (dropped `PUSH`/`POP`/`ECHO`): a later action *can* reference a
-target that didn't exist at queue time — via this rewrite, not a stack. Chosen over `UNPACK` then
-`GET(position)`, which needs a mid-program round-trip and the id flowing back. **Open:** how an
-operand names "the thing unpacked by step N" for the rewrite (a position stand-in, or a step index).
+1. **N=0** — core issues `UNPACK(position)` (often **pre-empted**, below).
+2. **~N=3** — the hot row appears in `state`. Core learns its id by **watching for the entity at
+   `position`** (one thing per cold cell, so position disambiguates — no alias table).
+3. **~N=3+** — core issues the real op with the resolved id; it **gates the op on seeing the row**, so
+   it never fires against a not-yet-existing id. The op settles ~N=6.
+
+Because `UNPACK` and the op are **separate events across tics**, no single program both unpacks and
+references the result — so there is **no in-program pre-pass** and B-3 (the dropped stack) stays dead.
+
+**Pre-emption hides the latency.** Core owns the intent, so when it knows a sequence is coming
+(move-to-then-pick-up) it sends the `UNPACK` **alongside the earlier action**. If that action takes ≥
+the unpack latency (a multi-tile move easily does), the hot row is ready exactly when the op is issued
+— the unpack is effectively **free**. It's **safe by construction**: correctness never depends on the
+guess (a wrong one is a wasted unpack GC re-packs; a missing one is just late). Keep it conservative.
+
+*(Alternative, not taken: if core **chose** the destination id — as it already does for spawns — unpack
+and op could ride one program with no wait. Trades server-minted safety for core-side id allocation;
+pre-emption hides the round-trip well enough that we keep server-minted.)*
 
 ## Tombstones stop re-transmission; GC queues the packs
 
@@ -68,29 +81,24 @@ objects.
 
 ---
 
-## Unpack coordination — the hard part, **deferred** to last
+## The `UNPACK` event itself — fire-and-forget, **deferred** to last
 
-Automatic pack/unpack is the one genuinely hard piece, so it's built **last** (see build order). What's
-already settled about it:
+With core owning the wait (above), the worker-side `UNPACK` is a plain event, not an async monster.
+What's settled:
 
-- **Unpacks run at N+1, on the assigned worker.** Grouping puts every unpack of a cell on **one**
-  worker (the cell is its conflict-target), which run in sequence — no two workers unpack a tile.
-- **The tombstone tags the destination hot server.** `cold.unpack(position, hot_server)` writes the
-  tombstone *and* the server it sent the object to. A takeover worker (or a replay) reads that and does
-  `GET` instead of re-minting — this is what makes unpack **replay-safe**. The mint itself is
-  idempotent (deterministic-from-event id, check-exists-else-mint).
-- **The mint is async, so the worker polls.** `cold.unpack` → `hot.mint(macro_position, payload)` (the
-  hot shard stamps the worker on the row, so its subscription catches it), but the row isn't visible
-  the instant the reducer is issued. So the worker **batches unpacks/creates by destination server,
-  issues them, defers to its other work, and loops back**: for each, "does the hot row exist yet? no →
-  (re)mint idempotently; yes → `GET`." All resolve within the tic if it's quick; if not, **the pipeline
-  is tolerant — the component is just late, never wrong** (deterministic id + idempotent mint).
+- **Unpacks run on the assigned worker.** Grouping puts every unpack of a cell on **one** worker (the
+  cell is its conflict-target) — no two workers unpack a tile.
+- **The worker mints and tombstones, then completes — no poll.** `cold.unpack(position, hot_server)`
+  writes the tombstone tagged with the destination server; `hot.mint(macro_position, payload)` mints
+  the hot row (deterministic-from-event id). The worker issues both and is done; it does **not** read
+  the row back — core does that. If the mint lands slowly, the component is just **late, never wrong**
+  (deterministic id + idempotent mint).
+- **The tombstone-tagged server makes it replay-safe.** A takeover worker (or replay) reads the
+  tombstone, sees "already unpacked to server S," and skips the re-mint (idempotent by the fixed id).
 
-**Why deferred:** this turns the worker from a *synchronous* composer into one doing async cross-shard
-round-trips mid-tic — a real step up from today's worker. It isn't needed to *render* cold (that's just
-a subscription); only to *act* on it. So we prove storage + rendering first, then build this with the
-storage solid and "late not wrong" as the safety net. The sketch above is the leaning approach, not a
-frozen design.
+**Why deferred:** it isn't needed to *render* cold (that's just a subscription) — only to *act* on it,
+and it needs the cold storage + the `pawn` hot shard in place first. So we prove storage + rendering,
+then add this. It's now a tractable cross-shard event plus core sequencing — not a worker rewrite.
 
 ## The three shards
 
@@ -134,7 +142,8 @@ tiles/things become ordinary hot entities in the `pawn`/hot shard.
 - **Cold key = `u32`** `macro_position:16 | layer_reference:8` (server is the module) — **ratified.**
   Requires revising `cold_row_reference` `u64 → u32` in VARIABLES (drop `reserved:28`, `type_reference`
   → `layer_reference:8`, server out). Subtype lives in the per-entry `kind_reference:16`.
-- **Pre-pass operand encoding** — how a later operand names "the entity `UNPACK`/`CREATE` minted at
-  step N" so the sweep can rewrite it (a position stand-in vs a step index). Settle when step 3 builds
-  the pre-pass.
+- ~~Pre-pass operand encoding.~~ **Dissolved** — core issues `UNPACK` and the op as separate events
+  and resolves the id by watching `state` at the position, so no single program carries a dynamic id.
 - **`PACK` fit-check** — per payload: tile (kind in range, no extra state), thing (kind/tile/data fit).
+- **Pre-emption policy** — which sequences core pre-empts an `UNPACK` for (conservative; a wrong guess
+  is a wasted unpack→GC-repack). Tune against a running client, not blocking.
