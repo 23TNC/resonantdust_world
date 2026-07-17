@@ -1,141 +1,105 @@
-# world-storage — a generic shard family for the world's objects
+# world-storage — pawn, tile, and thing shards (cold ⇄ hot via pack/unpack)
 
 > **Status: PLAN / intent.** Nothing built. Shapes cite [`VARIABLES.md`](../../VARIABLES.md) (the
-> object model — `cold_row_reference`, `kind_pos_reference`, `type_id`) and
-> [`TABLES.md`](../../TABLES.md). Builds on the live sim core (`intent/spacetime-again/`). Authored
-> 2026-07-16.
+> object model) + [`TABLES.md`](../../TABLES.md). Builds on the live sim core
+> (`intent/spacetime-again/`). Authored 2026-07-16.
 
-**What this is for.** Store every kind of world object — terrain tiles, scattered things, pawns,
-players, items — across many shards, **sharing one storage/composition machinery** while each object
-type defines its **own payload**. Instead of a bespoke module per type, we stamp out a module per
-type from one generic core and a payload definition.
-
-**The one idea.** A shard is `(row-key, payload)` + a zone-keyed client-visible projection. The
-*machinery* (the tables, the zone subscription, the write path, and — for movers — the tic
-composition pipeline) is generic; the *payload* is the type parameter. Define a payload, get a module.
+**What this is for.** Store every world object — pawns, terrain tiles, scattered things — and mutate
+it **only** through the event pipeline that's already live (edge → orchestrator → worker). Three
+concrete shard modules now; **no generic abstraction yet** (a `decl_shard!` macro can factor them
+later, once two are proven divergent).
 
 ---
 
-## Two regimes: hot and cold
+## The one rule: everything flows through the pipeline
 
-The split is **how often it changes**, which decides whether it needs the tic pipeline:
+**No component writes a shard directly — workers do, driven by events. The only direct write is
+`init`.** A pawn move, a tile change, a tree chopped: all are events an orchestrator groups and a
+worker composes into absolute finals. There is no side door.
 
-| | **hot** (movers) | **cold** (terrain) |
-|---|---|---|
-| examples | pawns, players | biome-tiles, biome-things |
-| row key (u32, realm-unique) | `entity_reference` = `server_reference:8 \| object_reference:24` | `cold_row_reference` = `macro_position:16 \| layer_reference:8 \| server_reference:8` |
-| slot uid (u64) | `reserved:16 \| entity_reference:32 \| tic:16` | `reserved:16 \| cold_row_reference:32 \| tic:16` |
-| granularity | one **entity** per row | one **zone-layer** per row (a Vec of members) |
-| changes | every tic (movement) | rarely (worldgen seed; an occasional edit) |
-| write path | the composition pipeline (orchestrator → worker → absolute finals), promoted to `state` | worldgen bulk-seeds; an edit — see §Open |
-| history | per-`(entity, tic)` slots (`state_log`) | current-value; per-tic slots only if edits run the pipeline |
+## Cold is immutable-in-place; act in hot
 
-**The key is realm-unique in a `u32`** (realm is the shard's, never per reference), so the slot uid is
-the **same `u64` for both** — `reserved:16 \| key:32 \| tic:16`, `u16` reserved to spare. The
-composition core treats the key as an **opaque realm-unique u32**; only its *interpretation* differs.
-So `state_log` is one shape parameterized by payload alone.
+Cold data (packed terrain) **cannot be modified where it sits.** To change it you **`UNPACK`** it into
+a hot entity, act on it in hot (the normal `MOVE_TO` / `PLACE` / … pipeline), and later **`PACK`** it
+back. `PACK` / `UNPACK` are new actions ([`ACTIONS.md`](../../ACTIONS.md)) that act on a
+**`position_reference`** — the cell whose cold entry is promoted/demoted.
 
-**Open — a u32 key can't hold `type_reference:16`.** The old `cold_row_reference` was `u64` *to* fit
-`type_reference:16` (`macro:16 + type_reference:16` is already a full u32, no room for layer/server).
-So the u32-mirrors-hot key and a row-level `type_reference` are mutually exclusive:
-- **u32 key** — the row carries `layer_reference:8` (`type_id:4 | layer_id:4`), **not** `type_reference`.
-  Subtype, if a cold row needs it, lives in the per-entry `kind_reference:16`, not the row header.
-- **keep `type_reference:16`** — the key stays `u64` and does *not* mirror hot.
+- **`UNPACK(position)`** — read the cold row's entry at that tile, mint a hot entity from it (payload
+  from the cold entry: kind → definition, the position, data), and write a **tombstone** for that
+  `tile_reference` in the cold row. The client now sees the hot entity, not the cold entry.
+- **`PACK(position/entity)`** — read the hot entity, and **if its payload fits the cold payload**,
+  write the entry back into the cold row, clear the tombstone, drop the hot entity. **If it doesn't
+  fit, `PACK` fails** and the object stays hot (see below).
 
-`type_reference` the *variable* is unchanged either way (u16, used elsewhere in reconstruction); this
-is only about what the cold row *key* embeds. Decide before VARIABLES is revised. See §Open 6.
+**Cold payloads may carry less than hot.** If a hot object grew past what cold can compress, it can't
+be packed — it just **stays hot**. That's fine: such objects are rare enough that widening cold to fit
+them isn't worth 2 bytes × 256 × every zone. The hot set is "everything that didn't fit or is still
+active"; cold is the quiet majority.
 
-They **share**: the payload-generic storage, the identical `state_log` slot, the **zone-keyed client
-subscription** (`WHERE macro_position_reference = <zone>`), and the module skeleton. They **differ**
-only in the write path — hot runs the pipeline (built: `spacetime-again`); cold's is §Open.
+## Tombstones stop re-transmission
 
----
+A cold row is mostly-static and cheap to hold subscribed (a zone's whole layer in one row). When an
+entry goes hot, its **tombstone** in the cold row says "this cell is hot — ignore the cold entry."
+So the client holds the cold row *and* the hot entities *and* the tombstones, and never re-fetches a
+cold row just because one cell changed. `cold_removed` (a `tile_reference:u8` per VARIABLES) is the
+tombstone.
 
-## The payloads (per type — all cite [`VARIABLES.md`](../../VARIABLES.md) §Cold storage)
+## GC queues pack work; workers run it
 
-- **biome-tile** (cold, dense): payload `Vec<u16>` — 256 `kind_reference`s, one per tile, indexed by
-  `tile_reference` (0..256 = the 16×16 zone). **No** per-entry `tile_reference` (it's the index) and
-  **no** `data` — a tile is only *what kind*. (Stretch: `Vec<u8>` if kinds stay < 256.)
-- **biome-thing** (cold, sparse): payload `Vec<u32>` — `kind_pos_reference` per member
-  (`kind_reference:16 \| tile_reference:8 \| data:8`), because a thing carries *where in the zone* and
-  *its data* (facing/count). Sparse: only occupied tiles.
-- **pawn** (hot): payload = the three orthogonal references already live in `data_shard`
-  (`definition_reference:u32 \| position_reference:u32 \| data:u8`). A per-pawn definition (sprite)
-  wants a definition verb — the `spacetime-again` deferred item.
-- **player**, **item**, … : new modules, new payloads, later.
-
-Row header `(macro_position_reference, type_reference, layer_id)` reconstructs each member's full
-identity: `definition_reference` = row `type_reference` + entry `kind_reference`; `position_reference`
-= row `macro_position` + `layer_id` + `type_id` + entry `tile_reference` (VARIABLES §Cold storage).
+Nothing packs synchronously. **GC queues `PACK` events** for idle hot entities; a worker composes each
+like any event. Because it's queued, a worker can **order the pack around other events on that entity,
+and drop it entirely** if the entity is about to be unpacked/modified again anyway (no point packing
+then immediately re-promoting). This keeps the hot set to *actively-changing* objects without a
+stop-the-world pack.
 
 ---
 
-## The generic core
+## The three shards
 
-A declarative macro — `decl_shard!` — stamps a module's tables + reducers from `(regime, payload)`,
-the way `spacetime-again`'s pipeline generalized over payloads ([[pipeline-generalization]] in memory).
-It lives in a shared crate (`shared/shard`?) bind-mounted like `shared/codec`, so every module is a
-thin instantiation:
+| shard | regime | cold table? | payload |
+|---|---|---|---|
+| **`pawn`** | hot only | no | `definition_reference:u32 \| position_reference:u32 \| data:u8` (today's `data_shard`) |
+| **`tile`** | cold + hot | yes | **cold:** `u16` `kind_reference` (dense, 256/zone, index = `tile_reference`). **hot:** the 3-ref pawn-style payload when unpacked |
+| **`thing`** | cold + hot | yes | **cold:** `u32` = `kind_reference:16 \| tile_reference:8 \| data:8` (sparse). **hot:** 3-ref when unpacked |
 
-```
-// server/spacetime/server/modules/biome_tile/src/lib.rs
-decl_shard!(cold, payload = Vec<u16>);   // → cold table (zone-keyed), seed + patch reducers, subs
+- **`pawn`** has no cold — pawns are always hot. It is the current `data_shard`, re-scoped.
+- **`tile`** cold is a dense `Vec<u16>` of exactly 256 `kind_reference`s (position implicit by index,
+  no per-entry `tile_reference` or `data` — a tile is only *what kind*). Saving those 2 bytes/tile ×
+  256 × every zone is worth carrying tiles as their own narrower payload.
+- **`thing`** cold is a sparse `Vec<u32>` of `kind_pos_reference`s — a thing carries *where in the
+  zone* and *its data* (facing/count), so it can't share the tile payload.
 
-// modules/biome_thing/src/lib.rs
-decl_shard!(cold, payload = Vec<u32>);
-
-// modules/pawn/src/lib.rs  (today's data_shard, re-expressed)
-decl_shard!(hot,  payload = Pawn);       // → state_log + state, claim/write/gc — unchanged behavior
-```
-
-`cold` expands to: a public `cold` table `{ cold_row_reference PK, macro_position_reference idx,
-type_reference, layer_id, members: Vec<P> }` + `cold_removed` tombstones (a `tile_reference:u8`, per
-VARIABLES) + `seed`/`patch` reducers + the zone subscription. `hot` expands to today's
-`state_log`/`state` + `claim`/`write`/`gc`. Both are payload-parametric.
+Each shard has its own `state_log` + `state` (hot composition, exactly like `data_shard` — **not
+generalized yet**), and `tile`/`thing` add a `cold` table + `cold_removed` tombstones. All are
+zone-keyed (`macro_position_reference`) for the edge/client subscription.
 
 ---
 
-## Phasing (one module at a time — the method that carried `spacetime-again`)
+## Build order (one module at a time, the method that carried `spacetime-again`)
 
-1. **Extract the core.** Lift `data_shard`'s machinery into `shared/shard` behind `decl_shard!(hot,
-   …)` and re-instantiate the pawn module from it — **zero behavior change**, proven by re-running the
-   live W3/W5 checks. This is the generalization proof (one macro, the existing module falls out).
-2. **`cold` regime + biome-tile module** (`Vec<u16>`). Worldgen seeds it; the edge subscribes the
-   zone's cold rows; the client renders the ground. This **revives the deferred terrain path** —
-   `edge/index.rs` (zone→shard routing) and `worldgen.rs` return here, and `Event::ColdObjects`
-   (kept in `client/core` for exactly this) finally fires.
-3. **biome-thing module** (`Vec<u32>`). Sparse scatter; client renders things over the ground.
-4. **pawn definition** — plumb `definition_reference` so pawns render their real sprite (ties to
-   `spacetime-again`'s deferred `CREATE`/definition verb), not the fallback thing.
-5. **more types** (player, items) as new `decl_shard!` instantiations, as gameplay needs them.
+1. **`PACK` / `UNPACK` in `shared/codec`** — palette + signatures (operand = a `position_reference`),
+   `Program` support. No behavior yet.
+2. **`pawn` shard** — rename/re-scope `data_shard` to `pawn`; wire the orchestrator/worker/edge to it.
+   Zero new mechanics (proves the rename is clean).
+3. **`tile` shard** — cold table (256×`u16`) + tombstones + `UNPACK`/`PACK` in the worker
+   (read-modify-write the cold Vec, mint/drop the hot entity). Worldgen seeds cold via `init` (the one
+   direct write) or a seed event. Edge subscribes cold + hot; **revives the deferred terrain path**
+   (`edge/index.rs`, `worldgen.rs`, `Event::ColdObjects`). Client renders the ground.
+4. **`thing` shard** — same, sparse `u32` payload; client renders scatter over the ground.
+5. **GC-queues-`PACK`** — the master (or a scheduled reducer) queues pack events for idle hot
+   entities; the worker's pack handles the fit-check + drop-if-active.
 
 ---
 
-## Open — decisions to make before Phase 1
+## Open — small, mostly settled
 
-1. **Cold edits: direct or through the pipeline?** Worldgen seeds cold directly regardless. But an
-   *edit* (chop a tree → change a `biome-thing` member) happens at a tic. **(a)** Direct: an edit
-   reducer read-modify-writes the row's Vec, out of band — simplest, but cold edits get no ordering
-   vs hot events and no worker isolation. **(b)** Through the pipeline: a cold row is an "entity", an
-   edit is an event a worker composes (read prev Vec → apply → write absolute Vec), so *all* mutation
-   shares one ordered path. (b) is the cleanest "share the machinery" but makes the composition core
-   handle a `u64` row key + a Vec payload (read-modify-write, not overwrite). **Leaning (b)** for
-   uniformity; (a) is fine if cold edits stay rare and unordered-with-hot is acceptable. **Your call.**
-2. **Generalization mechanism:** `decl_shard!` macro (recommended — type-safe, zero-cost, "a bunch of
-   modules" is literal) vs a raw-bytes payload column each module reinterprets (fewer modules, loses
-   the typed schema) vs one enum payload (one module, all types coupled). Recommend the macro.
-3. ~~Slot key width for a cold composition.~~ **Dissolved** — the cold row key is `u32`
-   (`macro_position:16 | layer_reference:8 | server_reference:8`), realm-unique, so `(key, tic)` is
-   the *same* `u64` `state_uid` as hot (`reserved:16 | key:32 | tic:16`). No wider uid; the machinery
-   is literally one shape. Requires revising `cold_row_reference` `u64 → u32` in VARIABLES.
-4. **Where the core crate lives:** `shared/shard` (new, bind-mounted like `shared/codec`) vs folding
-   into `shared/codec`. Recommend a dedicated crate — it pulls `spacetimedb`, which `codec` doesn't.
-5. **One module per type, or grouped by regime?** e.g. all cold types in one module keyed by
-   `type_reference`, vs a module per type. Per-type modules (your suggestion) route + scale
-   independently and keep payloads un-coupled; grouping is fewer DBs. Recommend per-type.
-6. **Cold key: `u32` (drop row-level `type_reference`) or `u64` (keep it)?** The u32 mirrors hot's
-   `state_uid` exactly and makes the composition core one shape (see the hot/cold table); the cost is
-   the row header carries `layer_reference:8` not `type_reference:16`, so `subtype_id:12` must move to
-   the per-entry `kind_reference` (or isn't needed at the row). Keeping `type_reference:16` keeps
-   subtype at the row but forces a `u64` key that doesn't mirror hot. This gates the VARIABLES
-   revision of `cold_row_reference`.
+- **Cold row key = `u32`** `macro_position:16 | layer_reference:8 | server_reference:8` (realm implied),
+  so a cold `(row, tic)` slot is the *same* `u64` `state_uid` as hot (`reserved:16 | key:32 | tic:16`).
+  Subtype lives in the per-entry `kind_reference:16`, not the row — the row carries `layer_reference:8`
+  (`type_id:4 | layer_id:4`), not `type_reference:16`. Requires revising `cold_row_reference` `u64 →
+  u32` in VARIABLES. (Confirm; this is the only shape still to ratify.)
+- **Unpacked entity id.** A hot tile/thing needs an `entity_reference`; deriving it from the cell's
+  `position` (so `PACK`/`UNPACK` round-trips deterministically and replays idempotently) is the
+  natural scheme — settle the exact bit map when the `tile` worker path is built.
+- **`PACK` fit-check** is per-payload: does this hot payload compress into this cold entry? Defined per
+  shard (tile: is the kind in range + no extra state; thing: kind/tile/data all fit).
