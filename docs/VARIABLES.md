@@ -211,6 +211,7 @@ is the separate fact that the value reached `state`.
 | `TYPE_PLAYER` | 4 |
 | `TYPE_EVENT` | 5 |
 | `TYPE_SERVER` | 6 |
+| `TYPE_THING` | 7 |
 
 ---
 

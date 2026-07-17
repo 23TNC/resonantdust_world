@@ -62,6 +62,10 @@ pub const TYPE_PLAYER: u8 = 4;
 pub const TYPE_EVENT: u8 = 5;
 /// A server / shard (provenance).
 pub const TYPE_SERVER: u8 = 6;
+/// A biome-invariant thing — an **item**: a resource or a piece of equipment whose appearance does
+/// **not** change with biome. The counterpart to [`TYPE_BIOME_THING`] (biome-varying scenery like
+/// trees); `subtype` classifies the item family (resource / equipment / …) rather than a biome.
+pub const TYPE_THING: u8 = 7;
 
 /// Compose a `definition_reference` from its two `u16` halves: `type_reference | kind_reference`.
 /// This is the plan's shape — the halves *are* the definition, so it composes rather than
@@ -430,7 +434,16 @@ mod tests {
 
     #[test]
     fn type_id_palette_fits_u4_and_is_contiguous() {
-        let all = [TYPE_NONE, TYPE_BIOME_TILE, TYPE_BIOME_THING, TYPE_PAWN, TYPE_PLAYER, TYPE_EVENT, TYPE_SERVER];
+        let all = [
+            TYPE_NONE,
+            TYPE_BIOME_TILE,
+            TYPE_BIOME_THING,
+            TYPE_PAWN,
+            TYPE_PLAYER,
+            TYPE_EVENT,
+            TYPE_SERVER,
+            TYPE_THING,
+        ];
         for (i, &t) in all.iter().enumerate() {
             assert_eq!(t as usize, i, "append-only, contiguous from 0");
             assert!(t <= 0xF, "fits u4");
