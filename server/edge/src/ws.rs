@@ -29,9 +29,14 @@ use tokio::sync::{mpsc, oneshot};
 use crate::bindings;
 use crate::bindings::data_shard::state_table::StateTableAccess as _;
 use crate::bindings::event_shard::event_table::EventTableAccess as _;
+use crate::bindings::thing::cold_thing_table::ColdThingTableAccess as _;
+use crate::bindings::tile::cold_tile_table::ColdTileTableAccess as _;
 use crate::bindings::event_shard::queue as _; // reducer trait → `reducers().queue_then`
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
-use crate::connections::{await_ready, connect_data_shard, connect_event_shard, connect_players, Pool};
+use crate::connections::{
+    await_ready, connect_data_shard, connect_event_shard, connect_players, connect_thing,
+    connect_tile, Pool,
+};
 use crate::protocol::{ClientMsg, ServerMsg};
 
 /// The per-client world upstreams: the two sim shards. `event_shard` takes the client's `queue`
@@ -40,6 +45,8 @@ use crate::protocol::{ClientMsg, ServerMsg};
 struct World {
     event: Option<Arc<bindings::event_shard::DbConnection>>,
     data: Option<Arc<bindings::data_shard::DbConnection>>,
+    tile: Option<Arc<bindings::tile::DbConnection>>,
+    thing: Option<Arc<bindings::thing::DbConnection>>,
 }
 
 /// How long to wait for `claim_or_login` to commit before failing the login.
@@ -157,6 +164,8 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
 struct ZoneSub {
     _state: bindings::data_shard::SubscriptionHandle,
     _event: bindings::event_shard::SubscriptionHandle,
+    _tile: Option<bindings::tile::SubscriptionHandle>,
+    _thing: Option<bindings::thing::SubscriptionHandle>,
 }
 
 /// Drains stateful client commands in arrival order, owning all per-session state (the session id,
@@ -200,6 +209,12 @@ async fn session_worker(
         let _ = conn.disconnect();
     }
     if let Some(conn) = &world.data {
+        let _ = conn.disconnect();
+    }
+    if let Some(conn) = &world.tile {
+        let _ = conn.disconnect();
+    }
+    if let Some(conn) = &world.thing {
         let _ = conn.disconnect();
     }
     tracing::debug!(player = ?session, "client session worker ended");
@@ -256,7 +271,49 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         });
     }
 
-    World { event, data }
+    // Cold shards: a zone's ground + scatter. A cold row is a whole zone-layer, sent on insert/update.
+    let tile = match connect_tile(&pool.cfg.uri, &pool.cfg.tile_db()) {
+        Some((conn, ready)) => await_ready(ready).await.then_some(conn),
+        None => None,
+    };
+    if let Some(t) = &tile {
+        let relay = |o: &mpsc::UnboundedSender<String>, row: &bindings::tile::ColdTile| {
+            send(
+                o,
+                ServerMsg::ColdTile {
+                    zone: row.macro_position_reference,
+                    layer_reference: row.layer_reference,
+                    tiles: row.tiles.clone(),
+                },
+            )
+        };
+        let o = out_tx.clone();
+        t.db().cold_tile().on_insert(move |_ctx, row| relay(&o, row));
+        let o = out_tx.clone();
+        t.db().cold_tile().on_update(move |_ctx, _old, row| relay(&o, row));
+    }
+    let thing = match connect_thing(&pool.cfg.uri, &pool.cfg.thing_db()) {
+        Some((conn, ready)) => await_ready(ready).await.then_some(conn),
+        None => None,
+    };
+    if let Some(t) = &thing {
+        let relay = |o: &mpsc::UnboundedSender<String>, row: &bindings::thing::ColdThing| {
+            send(
+                o,
+                ServerMsg::ColdThing {
+                    zone: row.macro_position_reference,
+                    layer_reference: row.layer_reference,
+                    things: row.things.clone(),
+                },
+            )
+        };
+        let o = out_tx.clone();
+        t.db().cold_thing().on_insert(move |_ctx, row| relay(&o, row));
+        let o = out_tx.clone();
+        t.db().cold_thing().on_update(move |_ctx, _old, row| relay(&o, row));
+    }
+
+    World { event, data, tile, thing }
 }
 
 fn state_frame(row: &bindings::data_shard::State) -> ServerMsg {
@@ -328,7 +385,18 @@ fn handle_subscribe(
         .subscription_builder()
         .on_error(|_ctx, err| tracing::warn!(%err, "event subscription error"))
         .subscribe([format!("SELECT * FROM event WHERE macro_position_reference = {zone}")]);
-    zones.insert(zone, ZoneSub { _state: state, _event: event });
+    // Cold ground + scatter for the zone (best-effort — a missing cold shard doesn't fail the zone).
+    let tile = world.tile.as_ref().map(|t| {
+        t.subscription_builder()
+            .on_error(|_ctx, err| tracing::warn!(%err, "cold_tile subscription error"))
+            .subscribe([format!("SELECT * FROM cold_tile WHERE macro_position_reference = {zone}")])
+    });
+    let thing = world.thing.as_ref().map(|t| {
+        t.subscription_builder()
+            .on_error(|_ctx, err| tracing::warn!(%err, "cold_thing subscription error"))
+            .subscribe([format!("SELECT * FROM cold_thing WHERE macro_position_reference = {zone}")])
+    });
+    zones.insert(zone, ZoneSub { _state: state, _event: event, _tile: tile, _thing: thing });
     tracing::debug!(zone, "subscribed zone");
 }
 

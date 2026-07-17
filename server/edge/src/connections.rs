@@ -105,6 +105,9 @@ connector!(connect_players, players);
 // subscriptions, avoiding the set-semantics hazard).
 connector!(connect_event_shard, event_shard);
 connector!(connect_data_shard, data_shard);
+// The cold shards (`docs/intent/world-storage/`): a zone's ground + scatter, relayed per zone.
+connector!(connect_tile, tile);
+connector!(connect_thing, thing);
 
 /// Await an upstream's readiness oneshot with the connect timeout. `true` once
 /// the connection's `on_connect` fired; `false` on timeout (or a dropped sender,

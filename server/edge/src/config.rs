@@ -191,6 +191,16 @@ impl ServerConfig {
         format!("resonantdust-{}-data-shard-0", self.env)
     }
 
+    /// The `tile` cold DB — a zone's dense ground (`cold_tile`), subscribed per zone.
+    pub fn tile_db(&self) -> String {
+        format!("resonantdust-{}-tile-0", self.env)
+    }
+
+    /// The `thing` cold DB — a zone's sparse scatter (`cold_thing`), subscribed per zone.
+    pub fn thing_db(&self) -> String {
+        format!("resonantdust-{}-thing-0", self.env)
+    }
+
     /// Fallback shard database name for a region whose `region_shards` entry is
     /// missing — single-shard deployments run with no index rows seeded, so an
     /// unrouted region defaults to shard 0 on *this* SpacetimeDB server. Mirrors
