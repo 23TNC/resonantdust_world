@@ -1,8 +1,9 @@
 # Todo — cold-rework
 
 _Planned, not started. Dependency-ordered by phase (P1 gates the shape; P2/P3 stand up the router +
-overlay read-path; P4 is the mutation build, gated on [`blockers.md`](blockers.md)). Move an item to
-`remaining.md` on start, `completed.md` when it lands. VARIABLES/TABLES already carry the target shape._
+overlay read-path; P4 is the mutation build). All blockers resolved — decisions in
+[`forks.md`](forks.md). Move an item to `remaining.md` on start, `completed.md` when it lands.
+VARIABLES/TABLES already carry the target shape._
 
 ---
 
@@ -33,47 +34,57 @@ zones render every cell once** (no gaps/overlaps at biome seams within a zone).
 
 ## P2 · Region router — `index.cold_shards`
 
-Stand up the position → cold-shard indirection now, one default row.
+Stand up the position → cold-shard indirection now. **Explicit region rows** (no wildcard — [F3]).
 
-- **module** `index`: add `cold_shards` (`route_reference` PK, `type_id`/`region_reference` idx,
-  `shard_reference`, `url`, `db_name`) + `set_cold_shard`/`remove_cold_shard` reducers; `init` seeds the
-  default route(s) (`region * → shard 0`, per family) — **encoding of "region \*" is [blocker BK3].**
+- **module** `index`: add `cold_shards` (`route_reference` PK = `type_id:4 | region_reference:8`,
+  `type_id`/`region_reference` idx, `shard_reference`, `url`, `db_name`) + `set_cold_shard`/
+  `remove_cold_shard` reducers. The **master** assigns `(type, region) → shard` as regions come online;
+  seed the region(s) in use today (around the origin) → shard 0, per family. An unassigned region has no
+  row.
 - **edge**: subscribe `cold_shards`; resolve a cold sub by `position → macro → region_reference →
-  (type, region)` → endpoint; connect there (today always the single default). Replace the hardcoded
-  `tile_db()`/`thing_db()` with the router result.
+  (type, region)` → endpoint; connect there. Replace the hardcoded `tile_db()`/`thing_db()`. This same
+  lookup answers P4's `state` routing ([F2]).
 
-**Done when:** the edge reaches cold via the router (not hardcoded names); adding a second row would
-route a region elsewhere with no code change; login → zone render still works.
+**Done when:** the edge reaches cold via the router (not hardcoded names); adding a row routes a region
+elsewhere with no code change; login → zone render still works.
 
 ---
 
-## P3 · Overlay read-path — `state`/`state_log` on cold
+## P3 · Overlay read-path — `state`/`state_log` on cold (shared macro)
 
-Give cold the hot pair and composite it, before anything writes it.
+Give cold the hot pair and composite it, before anything writes it. Via the shared macro ([F1]).
 
-- **modules** `tile`/`thing`: add `clock` mirror + `state_log` + `state` (identical to `data_shard` —
-  see [blocker BK1] on how the machinery is shared vs duplicated). No writes yet beyond `init`.
+- **step 1 — extract `decl_tick_pipeline!`**: lift `data_shard`'s `clock`/`state_log`/`state` +
+  `init`/`bump`/`claim`/`write`/`gc` into a shared macro crate; reduce `data_shard` to the payload +
+  the invocation. **Prove byte-identical** — regenerate bindings (clean diff), the wolf still moves —
+  *before* anything else builds on it. (Re-touches the live pipeline.)
+- **step 2 — cold invokes it**: `tile`/`thing` invoke `decl_tick_pipeline!` (same three-ref payload) +
+  keep their baseline tables. No writes yet beyond `init`/`seed`.
 - **edge**: also subscribe a zone's cold `state` (`WHERE macro_position_reference = <zone>`) and relay
   it; a `ColdState` frame carries the per-entity override.
 - **client**: composite **baseline ⊕ state** — index `state` rows by `position_reference`; a cell with a
   `state` override renders from `state` (or hides, if removed), else from the baseline.
 
-**Done when:** with a hand-inserted cold `state` row, the client shows the override in place of the
-baseline cell, and dropping it reverts — the composite is correct even though nothing yet *produces* the
-row.
+**Done when:** `data_shard` is macro-generated and unchanged (wolf moves); and with a hand-inserted cold
+`state` row the client shows the override in place of the baseline cell, reverting when it's dropped —
+the composite is correct even though nothing yet *produces* the row.
 
 ---
 
 ## P4 · Mutation — mint → compose → fold (the large build)
 
-Gated on [`blockers.md`](blockers.md) (BK1 composition reuse, BK2 minting/routing).
+Decisions settled ([`forks.md`](forks.md) F1/F2). Builds on P2's router + P3's overlay.
 
-- **mint (`UNPACK`)**: a cold shard mints an `entity_reference` (const `SERVER_REFERENCE` + counter, the
+- **server_reference (master-assigned, [F2])**: each cold shard gets a `server` table set by the master
+  at standup (like `set_orchestrator`); the mint reads it. (`event_shard`'s hardcoded const migrates to
+  this pattern as a small follow-up.)
+- **mint (`UNPACK`)**: a cold shard mints an `entity_reference` (`server_reference` + counter, the
   `event_shard` pattern) for a touched cell and writes its first `state_log` row; deterministic-from-event.
 - **compose**: events targeting the cell run on the assigned worker composing cold `state_log` exactly
-  like `data_shard`; `promote_state` publishes to `state` (throttled — movement fans out start/end only).
-- **route**: the edge routes an entity's `state` by `entity_reference`'s `type_id` to the right cold
-  shard (type_id→shard — not built; edge is single-instance today).
+  like `data_shard` (same macro); `promote_state` publishes to `state` (throttled — movement fans out
+  start/end only).
+- **route ([F2])**: the edge routes an entity's `state` by `entity_reference`'s `type_id` → region →
+  shard through the **same `index.cold_shards`** lookup P2 built.
 - **fold (`PACK`/GC)**: GC queues a fold — write the settled cell back into the baseline, drop its
   `state` row, tombstone (not drop) its `state_log` rows. Removal = a `state_log`/`state` row with the
   removed marker (no `cold_removed` table).

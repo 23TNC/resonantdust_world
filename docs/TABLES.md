@@ -102,11 +102,12 @@ sub `SELECT * FROM master_clock WHERE realm = self`
 
 The fresh, **macro/region-keyed** cold router (not the dead `zone_id`-keyed `region_shards`, Vestigial
 above). The edge resolves a cold subscription by `position_reference → macro_position → region_reference`,
-then `(type, region) →` this table `→` shard endpoint. **Built now with a single default row per
-family** (`region * → shard 0`) so the indirection exists; assigning a second shard is one more row,
-no code change. `route_reference`'s wildcard-region encoding is [Not shaped yet](#not-shaped-yet).
+then `(type, region) →` this table `→` shard endpoint — the **same** lookup routes a cold entity's
+`state`. **Explicit region rows** (no wildcard): the master assigns `(type, region) → shard` as regions
+come online; today only the region(s) in use (around the origin) are seeded → shard 0. Adding a shard is
+one more row, no code change.
 
-writes an admin/allocator (future) · reads edge · sub `SELECT * FROM cold_shards` (edge)
+writes the master (allocator) · reads edge · sub `SELECT * FROM cold_shards` (edge)
 
 **Status:** not built — [`work/cold-rework`](work/cold-rework/README.md).
 
@@ -310,8 +311,7 @@ without trusting the worker. We take "block correctly" while workers are our cod
 | **orchestrator assignment + liveness** | Which orchestrator owns tic T (doubling is safe, so a good hint suffices — master-assigned is the leaning), and how the master detects a dead orchestrator (heartbeat vs lease). |
 | **the world verb palette** | The machine + `promote_*` exist ([`ACTIONS.md`](ACTIONS.md)); no gameplay verb does. Each needs a signature naming, per operand, written vs read. |
 | **worker hang-detection** | Death is handled (re-`claim` overwrites the stamp); a *hung* worker needs the orchestrator to notice. In-memory liveness is the leaning, `event_log` lease the fallback. |
-| **cold rework** | The cold baseline is built + live but on the *old* shape (no `subtype`, `layer_reference` column). The rework — `subtype`-keyed rows, the `state`/`state_log` overlay, the `cold_shards` router, and the mint/`UNPACK` → fold/`PACK` lifecycle ([`world-storage`](intent/world-storage/README.md)) — is planned in [`work/cold-rework`](work/cold-rework/README.md). |
-| **`route_reference` wildcard** | `cold_shards` needs a "region *" default row (route a whole family to one shard) — the encoding of a wildcard region in `route_reference` isn't nailed. |
+| **cold rework** | The cold baseline is built + live but on the *old* shape (no `subtype`, `layer_reference` column). The rework — `subtype`-keyed rows, the `state`/`state_log` overlay, the `cold_shards` router, and the mint/`UNPACK` → fold/`PACK` lifecycle ([`world-storage`](intent/world-storage/README.md)) — is planned in [`work/cold-rework`](work/cold-rework/README.md), all blockers resolved. |
 
 **Resolved and gone:** the four worker slots (→ worker + observer), `dirty`-as-count (→ boolean),
 `state_events` (the reverse index — no count to decrement), and B-2 "two events on one `(entity,
