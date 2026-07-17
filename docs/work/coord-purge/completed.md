@@ -131,3 +131,27 @@ seam-fixed state.
 worldgen / wasm-prims / cold-event payloads / pixijs-render. **Browser pixel-confirm pending the
 user's dev-loop refresh** (a valid check needs the rebuilt wasm served — a vite restart — which
 wasn't forced on the user's live session).
+
+---
+
+## G · Rework the anchor manager to `macro_position_reference`
+
+Re-keyed the 657-line anchor manager (`zones.rs`) from `zone_id` (u32) to `macro_position` (u16)
+throughout: `ZoneIntent.macro_position`, `subs: HashMap<u16, Sub>`, `note_update(macro_position: u16)`,
+and every internal helper (`desired_tiers` / `recompute` / `open_sub` / `harden` / `make_soft` /
+`close_sub` / `anchor_coverage`). `zone_at(zgx, zgy)` now packs a `macro_position` via
+`object::pack_macro_position` + `pack_tile_reference` (region ⊃ zone, realm-0-only, no realm nibble,
+range 16×16 = 256/axis) — replacing `packed::pack_zone_id`. Tests re-keyed to u16; all pass.
+
+Because the anchor manager now speaks macro, the engine loop passes the wire macro straight into
+`note_update` — so **`world::macro_to_zone_id` and `world::zone_id_to_macro` are both deleted** (D-1
+resolved), along with their test. The now-orphaned `realm` field (`Engine` + `WebEngine`), whose sole
+purpose was `zone_id` reconstruction, is removed from both engines (it was write-only after the bridge
+functions went).
+
+**Verified:** `rd build core --check` (native engine) + `rd build shared` (wasm web engine) green;
+`cargo test --lib` in the core container — 18 pass incl. all `zones` tests (macro-keyed) and
+`world::state_event`; pixijs `tsc --noEmit` green. Final invariant sweep: **no `zone_id` /
+`pack_zone_id` / `macro_to_zone_id` / `zone_id_to_macro` in code, and no legacy `packed` geo-helper
+(`cell` / `global_tile` / `zone_world_origin` / `region_of` / `thing_*`), anywhere in the
+cold / render / worldgen / anchor paths.** coord-purge complete.

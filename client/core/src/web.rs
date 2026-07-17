@@ -204,9 +204,6 @@ struct Engine {
     /// The zones currently subscribed on the wire (by `macro_position_reference`); its length is the
     /// live "open" gauge. Replaces the old `zone_id → sid` map — the new protocol keys by zone.
     open_zones: HashSet<u16>,
-    /// This session's realm (high byte of `player_shard_reference`), to rebuild a `zone_id` from an
-    /// inbound row's `macro_position_reference`. `0` until login.
-    realm: u8,
     /// Connection generation, bumped on every (re)connect and teardown. The pump
     /// stamps frames with the generation live when it started; the loop ignores
     /// any whose generation no longer matches (a superseded socket's tail).
@@ -249,7 +246,6 @@ impl Engine {
             player_id: None,
             zones: ZoneManager::default(),
             open_zones: HashSet::new(),
-            realm: 0,
             generation: 0,
             frame_tx,
             calls: BTreeMap::new(),
@@ -362,7 +358,7 @@ impl Engine {
     async fn flush_zone_intents(&mut self) {
         let mut subs_changed = false;
         for intent in self.zones.take_intents() {
-            let zone = world::zone_id_to_macro(intent.zone_id);
+            let zone = intent.macro_position;
             let frame = if intent.on {
                 if self.open_zones.insert(zone) {
                     self.subs_total += 1;
@@ -499,7 +495,6 @@ impl Engine {
                 }
                 self.pending = None;
                 self.player_id = Some(player_id);
-                self.realm = (player_shard_reference >> 8) as u8;
                 // Coarse offset seed so the clock is usable before the first pong;
                 // a real round-trip refines it within `PING_INTERVAL_MS`. Timed by
                 // the frame's ingress, not by when we got round to processing it.
@@ -552,11 +547,10 @@ impl Engine {
             // soft-held sub.
             ServerMsg::State(row) => {
                 self.record_row("state", text.len());
-                // Age the zone by `zone_id` (anchor manager keys on it until coord-purge G); the
-                // render event carries the wire macro straight through.
-                let zone_id = world::macro_to_zone_id(row.zone, self.realm);
+                // Age the zone by its wire macro (the anchor manager keys on it); the render event
+                // carries that same macro straight through.
                 self.emit(world::state_event(&row, /*removed=*/ false));
-                self.zones.note_update(zone_id, text.len() as u64, now_ms());
+                self.zones.note_update(row.zone, text.len() as u64, now_ms());
                 self.flush_zone_intents().await;
             }
             // A composed entity left a subscribed zone.
@@ -579,15 +573,13 @@ impl Engine {
             // A zone's cold ground / scatter — the terrain.
             ServerMsg::ColdTile { zone, layer_reference, tiles } => {
                 self.record_row("cold_tile", text.len());
-                let zone_id = world::macro_to_zone_id(zone, self.realm);
-                self.zones.note_update(zone_id, text.len() as u64, now_ms());
+                self.zones.note_update(zone, text.len() as u64, now_ms());
                 self.emit(Event::ColdTiles { macro_position: zone, layer_reference, tiles });
                 self.flush_zone_intents().await;
             }
             ServerMsg::ColdThing { zone, layer_reference, things } => {
                 self.record_row("cold_thing", text.len());
-                let zone_id = world::macro_to_zone_id(zone, self.realm);
-                self.zones.note_update(zone_id, text.len() as u64, now_ms());
+                self.zones.note_update(zone, text.len() as u64, now_ms());
                 self.emit(Event::ColdThings { macro_position: zone, layer_reference, things });
                 self.flush_zone_intents().await;
             }

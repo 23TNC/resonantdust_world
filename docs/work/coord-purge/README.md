@@ -1,7 +1,9 @@
 # Work — coord-purge (retire `zone_id` / legacy `packed` from the live paths)
 
-_Opened 2026-07-17. Conforms the coordinate code to the object model in
-[`VARIABLES.md`](../../VARIABLES.md); no new design. Follows [`world-storage`](../../intent/world-storage/README.md)._
+_Opened 2026-07-17. **Complete 2026-07-17** — all items A–G landed; see [`completed.md`](completed.md).
+Conforms the coordinate code to the object model in [`VARIABLES.md`](../../VARIABLES.md); no new design.
+Follows [`world-storage`](../../intent/world-storage/README.md). One hand-off remains: F's browser
+pixel-confirm on a dev-loop refresh (behaviour-preserving by construction — see completed.md / todo.md)._
 
 ## What & why
 

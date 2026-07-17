@@ -63,7 +63,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use resonantdust_codec::packed::{pack_zone_id, REALM_DIM, REGION_DIM, ZONE_DIM};
+use resonantdust_codec::object::{pack_macro_position, pack_tile_reference, REALM_DIM, REGION_DIM, ZONE_DIM};
 
 /// Default ceiling on simultaneously open zone subscriptions. Candidates beyond
 /// it are evicted least-recently-demoted first; hard-held subs are never evicted,
@@ -112,11 +112,12 @@ fn tier_rank(t: ZoneTier) -> u8 {
 
 /// A subscription decision the manager made that needs IO. The engine drains
 /// these (via [`ZoneManager::take_intents`]) and maps each to a `sub_zone`
-/// (`on = true`) or `unsub` (`on = false`) frame, owning the `sid` ↔ `zone_id`
-/// mapping itself.
+/// (`on = true`) or `unsub` (`on = false`) frame, owning the `sid` ↔ `macro_position`
+/// mapping itself. `macro_position` (`region:8 | zone:8`) is the wire zone address the
+/// protocol's `SubscribeZone`/`UnsubscribeZone` carry — no `zone_id` translation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ZoneIntent {
-    pub zone_id: u32,
+    pub macro_position: u16,
     pub on: bool,
 }
 
@@ -169,8 +170,8 @@ struct Sub {
 /// [`note_update`](Self::note_update), then drain [`take_intents`](Self::take_intents).
 pub struct ZoneManager {
     anchors: HashMap<String, Anchor>,
-    /// Open subscriptions, keyed by `zone_id`. Presence == open.
-    subs: HashMap<u32, Sub>,
+    /// Open subscriptions, keyed by `macro_position` (`region:8 | zone:8`). Presence == open.
+    subs: HashMap<u16, Sub>,
     intents: Vec<ZoneIntent>,
     max_open_subs: usize,
 }
@@ -222,13 +223,13 @@ impl ZoneManager {
         }
     }
 
-    /// Record an inbound row of `bytes` for `zone_id`. Within a sub's initial-load
+    /// Record an inbound row of `bytes` for `macro_position`. Within a sub's initial-load
     /// window the bytes seed its re-transmit estimate; once the sub is soft-held they
     /// accrue as retention, and when retention reaches that estimate the sub is
     /// released (holding it has now cost as much as re-fetching would). A hard-held sub
     /// past its load window just renders the delta — no cost is tracked, no eviction.
-    pub fn note_update(&mut self, zone_id: u32, bytes: u64, now: u64) {
-        let release = match self.subs.get_mut(&zone_id) {
+    pub fn note_update(&mut self, macro_position: u16, bytes: u64, now: u64) {
+        let release = match self.subs.get_mut(&macro_position) {
             // Initial-load window: (re-)transmit cost, whether or not the player has
             // already panned past — so a fast pan-by never instant-drops a zone the
             // moment its baseline lands.
@@ -245,7 +246,7 @@ impl ZoneManager {
             _ => false,
         };
         if release {
-            self.close_sub(zone_id);
+            self.close_sub(macro_position);
         }
     }
 
@@ -270,8 +271,8 @@ impl ZoneManager {
     // ── internals ────────────────────────────────────────────────────────────
 
     /// The tightest tier each covered zone wants, max-tier-wins across all anchors.
-    fn desired_tiers(&self) -> HashMap<u32, ZoneTier> {
-        let mut desired: HashMap<u32, ZoneTier> = HashMap::new();
+    fn desired_tiers(&self) -> HashMap<u16, ZoneTier> {
+        let mut desired: HashMap<u16, ZoneTier> = HashMap::new();
         for anchor in self.anchors.values() {
             anchor_coverage(anchor, &mut |zone, tier| {
                 let e = desired.entry(zone).or_insert(tier);
@@ -290,7 +291,7 @@ impl ZoneManager {
 
         // Visit every zone that is either wanted or currently open, so departed
         // zones get closed and re-entered ones re-harden.
-        let mut zones: HashSet<u32> = desired.keys().copied().collect();
+        let mut zones: HashSet<u16> = desired.keys().copied().collect();
         zones.extend(self.subs.keys().copied());
 
         for zone in zones {
@@ -332,7 +333,7 @@ impl ZoneManager {
 
     /// Open a sub for `zone` at `now` (inserted hard-held at active; the caller
     /// assigns the final tier) and emit the intent.
-    fn open_sub(&mut self, zone: u32, now: u64) {
+    fn open_sub(&mut self, zone: u16, now: u64) {
         self.subs.insert(
             zone,
             Sub {
@@ -344,13 +345,13 @@ impl ZoneManager {
             },
         );
         self.intents.push(ZoneIntent {
-            zone_id: zone,
+            macro_position: zone,
             on: true,
         });
     }
 
     /// Mark an open sub hard-held at `tier` (active/hot): clears any candidacy.
-    fn harden(&mut self, zone: u32, tier: ZoneTier) {
+    fn harden(&mut self, zone: u16, tier: ZoneTier) {
         if let Some(s) = self.subs.get_mut(&zone) {
             s.tier = tier;
             s.candidate_since_ms = None;
@@ -361,7 +362,7 @@ impl ZoneManager {
     /// resets the retention budget only on the transition into soft-hold, so a sub
     /// that stays soft keeps its LRU age and does not forget the `held_bytes` it has
     /// paid since it first demoted.
-    fn make_soft(&mut self, zone: u32, tier: ZoneTier, now: u64) {
+    fn make_soft(&mut self, zone: u16, tier: ZoneTier, now: u64) {
         if let Some(s) = self.subs.get_mut(&zone) {
             s.tier = tier;
             if s.candidate_since_ms.is_none() {
@@ -372,10 +373,10 @@ impl ZoneManager {
     }
 
     /// Close a sub and emit the intent.
-    fn close_sub(&mut self, zone: u32) {
+    fn close_sub(&mut self, zone: u16) {
         if self.subs.remove(&zone).is_some() {
             self.intents.push(ZoneIntent {
-                zone_id: zone,
+                macro_position: zone,
                 on: false,
             });
         }
@@ -400,10 +401,10 @@ impl ZoneManager {
     }
 }
 
-/// Walk the zones an anchor covers, reporting each `(zone_id, tier)`. Each tier is
+/// Walk the zones an anchor covers, reporting each `(macro_position, tier)`. Each tier is
 /// a Chebyshev tile-disk; the disk's tile span folds to the zones it overlaps.
 /// Tiers with a non-positive radius and zones outside the world are skipped.
-fn anchor_coverage(anchor: &Anchor, sink: &mut impl FnMut(u32, ZoneTier)) {
+fn anchor_coverage(anchor: &Anchor, sink: &mut impl FnMut(u16, ZoneTier)) {
     for (tier, radius) in anchor.radii.tiers() {
         if radius <= 0 {
             continue;
@@ -428,10 +429,10 @@ const ZONE_EDGE: i32 = ZONE_DIM as i32;
 const REGION_EDGE: i32 = REGION_DIM as i32;
 /// Regions per realm edge.
 const REALM_EDGE: i32 = REALM_DIM as i32;
-/// Region cells per world axis (`realm_x`·`region_x` = 16×16 = 256 regions/axis).
-const REGION_AXIS: i32 = REALM_EDGE * REGION_EDGE;
-/// Zones per world axis — the valid range for a global zone coordinate.
-const ZONES_PER_AXIS: i32 = REGION_AXIS * REGION_EDGE;
+/// Zones per world axis within realm 0 — regions/realm × zones/region (16×16 = 256). The valid
+/// range for a global zone coordinate. Only realm 0 is used, so a global zone address fits a
+/// `macro_position` (`region:8 | zone:8`) with no realm nibble.
+const ZONES_PER_AXIS: i32 = REALM_EDGE * REGION_EDGE;
 
 /// The global zone coordinate containing global tile coordinate `tile` (floor
 /// division, so it is correct for off-origin tiles).
@@ -439,24 +440,21 @@ fn zone_axis(tile: i32) -> i32 {
     tile.div_euclid(ZONE_EDGE)
 }
 
-/// Pack a global zone coordinate `(zgx, zgy)` into a geographic `zone_id`, or `None` if it
-/// falls outside the world. `zgx` nests realm ⊃ region ⊃ zone (each 16 per axis).
-fn zone_at(zgx: i32, zgy: i32) -> Option<u32> {
+/// Pack a global zone coordinate `(zgx, zgy)` into a `macro_position_reference`
+/// (`region:8 | zone:8`), or `None` if it falls outside realm 0's world. `zgx` nests region ⊃ zone
+/// (16 zones per region, 16 regions per realm axis) — no realm level, realm 0 only.
+fn zone_at(zgx: i32, zgy: i32) -> Option<u16> {
     if !(0..ZONES_PER_AXIS).contains(&zgx) || !(0..ZONES_PER_AXIS).contains(&zgy) {
         return None;
     }
-    let split = |zg: i32| -> (u8, u8, u8) {
-        let zone = (zg % REGION_EDGE) as u8;
-        let region_full = zg / REGION_EDGE;
-        (
-            (region_full / REALM_EDGE) as u8, // realm
-            (region_full % REALM_EDGE) as u8, // region within realm
-            zone,                             // zone within region
-        )
-    };
-    let (realm_x, region_x, zone_x) = split(zgx);
-    let (realm_y, region_y, zone_y) = split(zgy);
-    Some(pack_zone_id(realm_x, realm_y, region_x, region_y, zone_x, zone_y))
+    // (region within realm, zone within region), each a `hi:4 | lo:4` spatial reference.
+    let split = |zg: i32| -> (u8, u8) { ((zg / REGION_EDGE) as u8, (zg % REGION_EDGE) as u8) };
+    let (region_x, zone_x) = split(zgx);
+    let (region_y, zone_y) = split(zgy);
+    Some(pack_macro_position(
+        pack_tile_reference(region_x, region_y),
+        pack_tile_reference(zone_x, zone_y),
+    ))
 }
 
 #[cfg(test)]
@@ -474,15 +472,15 @@ mod tests {
         }
     }
 
-    fn zone(zgx: i32, zgy: i32) -> u32 {
+    fn zone(zgx: i32, zgy: i32) -> u16 {
         zone_at(zgx, zgy).unwrap()
     }
 
-    fn is_open(zm: &ZoneManager, z: u32) -> bool {
+    fn is_open(zm: &ZoneManager, z: u16) -> bool {
         zm.subs.contains_key(&z)
     }
 
-    fn is_candidate(zm: &ZoneManager, z: u32) -> bool {
+    fn is_candidate(zm: &ZoneManager, z: u16) -> bool {
         zm.subs
             .get(&z)
             .map(|s| s.candidate_since_ms.is_some())
@@ -642,7 +640,7 @@ mod tests {
         let z = zone(0, 0);
         // Opening the active zone emits an open intent.
         zm.set_anchor("a", 8, 8, AnchorRadii { active: 4, ..Default::default() }, 0, 0);
-        assert_eq!(zm.take_intents(), vec![ZoneIntent { zone_id: z, on: true }]);
+        assert_eq!(zm.take_intents(), vec![ZoneIntent { macro_position: z, on: true }]);
 
         // Stream a baseline, pan away so z soft-holds (the move opens a fresh active
         // zone at the new spot — drain that), then let retention reach the re-fetch
@@ -650,8 +648,8 @@ mod tests {
         zm.note_update(z, 500, 0);
         zm.set_anchor("a", 44, 8, AnchorRadii { active: 4, warm: 40, ..Default::default() }, 0, 10);
         let panned = zm.take_intents();
-        assert!(!panned.contains(&ZoneIntent { zone_id: z, on: false }), "pan-away does not close z");
+        assert!(!panned.contains(&ZoneIntent { macro_position: z, on: false }), "pan-away does not close z");
         zm.note_update(z, 500, LOAD_SETTLE_MS + 1);
-        assert_eq!(zm.take_intents(), vec![ZoneIntent { zone_id: z, on: false }]);
+        assert_eq!(zm.take_intents(), vec![ZoneIntent { macro_position: z, on: false }]);
     }
 }

@@ -1,13 +1,12 @@
 //! World-model helpers shared by both host engines — the reference-model decode of the WS
-//! [`crate::protocol::StateRow`] into what a host renders, plus the coordinate conversions between
-//! the geographic `zone_id` (`u32`) the anchor manager thinks in and the `macro_position_reference`
-//! (`u16`) the wire speaks.
+//! [`crate::protocol::StateRow`] into what a host renders, plus the global-tile ⇄
+//! `position_reference` conversions.
 //!
 //! **Coordinates.** A `position_reference` is `region:8 | zone:8 | tile:8 | layer:8`, each spatial
 //! byte `hi:4 | lo:4`. A global tile axis is therefore `region_nibble * 256 + zone_nibble * 16 +
-//! tile_nibble` (0..4096). The `macro_position_reference` (`region:8 | zone:8`) is exactly the middle
-//! two bytes of `zone_id` (`realm:8 | region:8 | zone:8 | reserved:8`), so the two zone identities
-//! convert by a shift — no re-derivation, and the anchor manager keeps thinking in `zone_id`.
+//! tile_nibble` (0..4096). The wire addresses a zone by its `macro_position_reference`
+//! (`region:8 | zone:8`) throughout — the anchor manager, the render events, and the subscription
+//! frames all speak macro, so there is no `zone_id` to convert.
 
 use resonantdust_codec::action::{MOVE_TO, PLACE, PROMOTE_STATE};
 use resonantdust_codec::object::{
@@ -46,19 +45,6 @@ pub fn tile_to_position(tile_x: i32, tile_y: i32) -> u32 {
 fn split_axis(t: i32) -> (u8, u8, u8) {
     let t = t.rem_euclid(NIBBLE * NIBBLE * NIBBLE) as u32; // 0..4096
     (((t >> 8) & 0xF) as u8, ((t >> 4) & 0xF) as u8, (t & 0xF) as u8)
-}
-
-/// The `macro_position_reference` of a geographic `zone_id` — its middle two bytes
-/// (`region | zone`), the wire's zone-subscription key.
-pub fn zone_id_to_macro(zone_id: u32) -> u16 {
-    ((zone_id >> 8) & 0xFFFF) as u16
-}
-
-/// Rebuild a `zone_id` from a `macro_position_reference` in realm `realm` (reserved byte `0`). The
-/// inverse of [`zone_id_to_macro`] within a realm — used to route an inbound row's `zone` back to
-/// the anchor manager, which keys on `zone_id`.
-pub fn macro_to_zone_id(macro_position: u16, realm: u8) -> u32 {
-    ((realm as u32) << 24) | ((macro_position as u32) << 8)
 }
 
 /// The facing (`0`=south, `1`=east, `2`=north, `3`=west) packed in the top two bits of the `data`
@@ -108,13 +94,6 @@ mod tests {
             let pos = tile_to_position(x, y);
             assert_eq!(position_to_tile(pos), (x, y), "tile ({x},{y})");
         }
-    }
-
-    #[test]
-    fn macro_is_the_middle_two_bytes_of_zone_id() {
-        let zone_id = 0x0A_1B_2C_00; // realm 0x0A | region 0x1B | zone 0x2C | reserved 0
-        assert_eq!(zone_id_to_macro(zone_id), 0x1B2C);
-        assert_eq!(macro_to_zone_id(0x1B2C, 0x0A), zone_id);
     }
 
     #[test]

@@ -5,7 +5,12 @@ plan, with the reason._
 
 ---
 
-## D-1 · `macro_to_zone_id` survives item F (deleted in G instead)
+## D-1 · `macro_to_zone_id` survives item F (deleted in G instead) — RESOLVED in G
+
+**Status:** Resolved. Item G re-keyed the anchor manager to macro, so the engine passes the wire macro
+straight into `note_update`; `macro_to_zone_id` and `zone_id_to_macro` were both deleted in G. The
+render invariant F targeted held throughout.
+
 
 **Planned (todo F):** "Delete `world.rs::macro_to_zone_id` (its only purpose was reconstructing
 `zone_id` for the render)."

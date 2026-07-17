@@ -164,12 +164,8 @@ struct Engine {
     /// subsequent login for reconnect affinity.
     player_id: Option<u32>,
     /// The anchor-driven zone subscription manager. Decides which zones to keep open; the engine
-    /// maps its `zone_id` intents to `subscribe_zone` / `unsubscribe_zone` frames (keyed by the
-    /// `macro_position_reference` — the middle two bytes of `zone_id`).
+    /// maps its `macro_position` intents straight to `subscribe_zone` / `unsubscribe_zone` frames.
     zones: ZoneManager,
-    /// This session's realm (the high byte of `player_shard_reference`), used to rebuild a `zone_id`
-    /// from an inbound row's `macro_position_reference`. `0` until login.
-    realm: u8,
     /// Rolling clock-offset estimate, fed by ping/pong round-trips and the login
     /// seed. Reset (to a fresh, unsynced estimate) on every disconnect.
     clock: Clock,
@@ -186,7 +182,6 @@ impl Engine {
             pending: None,
             player_id: None,
             zones: ZoneManager::default(),
-            realm: 0,
             clock: Clock::new(),
         }
     }
@@ -289,7 +284,7 @@ impl Engine {
     /// meaningfully while connected; a send failure is surfaced and skipped.
     async fn flush_zone_intents(&mut self) {
         for intent in self.zones.take_intents() {
-            let zone = world::zone_id_to_macro(intent.zone_id);
+            let zone = intent.macro_position;
             let frame = if intent.on {
                 ClientMsg::SubscribeZone { zone }
             } else {
@@ -411,9 +406,6 @@ impl Engine {
                 }
                 self.pending = None;
                 self.player_id = Some(player_id);
-                // The realm is the high byte of the player's shard reference; the low half of an
-                // inbound row's zone is rebuilt against it.
-                self.realm = (player_shard_reference >> 8) as u8;
                 // Coarse offset seed so the clock is usable before the first pong;
                 // a real round-trip refines it within `PING_INTERVAL`.
                 self.clock.seed_login(server_micros / 1_000, now_ms());
@@ -455,12 +447,10 @@ impl Engine {
             // A composed entity changed in a subscribed zone. Decode to a mover and age the zone's
             // subscription (warmth), which may evict it — flush the resulting intents.
             ServerMsg::State(row) => {
-                // Age the zone's subscription warmth by its `zone_id` (the anchor manager still keys
-                // on `zone_id`; coord-purge G moves it to macro), but the render event carries the
-                // wire macro straight through.
-                let zone_id = world::macro_to_zone_id(row.zone, self.realm);
+                // Age the zone's subscription warmth (the anchor manager keys on the wire macro),
+                // then emit — the render event carries that same macro straight through.
                 self.emit(world::state_event(&row, /*removed=*/ false));
-                self.zones.note_update(zone_id, text.len() as u64, now_ms());
+                self.zones.note_update(row.zone, text.len() as u64, now_ms());
                 self.flush_zone_intents().await;
             }
             // A composed entity left a subscribed zone.
@@ -480,14 +470,12 @@ impl Engine {
             ServerMsg::Event { .. } => {}
             // A zone's cold ground / scatter — the terrain. Age the zone's cost, then emit.
             ServerMsg::ColdTile { zone, layer_reference, tiles } => {
-                let zone_id = world::macro_to_zone_id(zone, self.realm);
-                self.zones.note_update(zone_id, text.len() as u64, now_ms());
+                self.zones.note_update(zone, text.len() as u64, now_ms());
                 self.emit(Event::ColdTiles { macro_position: zone, layer_reference, tiles });
                 self.flush_zone_intents().await;
             }
             ServerMsg::ColdThing { zone, layer_reference, things } => {
-                let zone_id = world::macro_to_zone_id(zone, self.realm);
-                self.zones.note_update(zone_id, text.len() as u64, now_ms());
+                self.zones.note_update(zone, text.len() as u64, now_ms());
                 self.emit(Event::ColdThings { macro_position: zone, layer_reference, things });
                 self.flush_zone_intents().await;
             }
