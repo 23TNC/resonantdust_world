@@ -60,3 +60,16 @@ and `data_shard_db()` (the live pipeline data shard — unrelated to the region 
 **Verified:** `cargo check --all-targets` in the edge build container — clean, no warnings; grep
 confirms no `region_of` / `resolve_zone_or_default` / `default_shard_db` / `crate::index` left in the
 edge source; `set_server` registration path intact.
+
+---
+
+## D · Remove the unused wasm JS coord helpers
+
+Deleted the seven `#[wasm_bindgen(js = ...)]` `zone_id` helpers exported to JS from `shared/wasm`:
+`packZoneId` / `regionOf` / `zoneRegionX` / `zoneRegionY` / `zoneRealm` / `zoneX` / `zoneY` (thin
+wrappers over the legacy `packed::` `zone_id` decoders). pixijs referenced **none** (grep confirmed,
+both snake and camelCase). `packed` stays imported in the crate — the `cell`/`global_tile`/`thing_*`
+decoders in the prim builders still use it (items E/F).
+
+**Verified:** `rd build shared` green; the regenerated `shared/pkg` `.d.ts`/`.js` no longer export the
+seven names; `tsc --noEmit` in pixijs green.

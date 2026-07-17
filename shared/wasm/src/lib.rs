@@ -33,69 +33,6 @@ pub fn greeting_js(name: &str) -> String {
     greeting(name)
 }
 
-// ---------- zone_id codec (js feature) ----------
-//
-// The client composes a `zone_id` to subscribe to a zone and decomposes the
-// ids it receives. Thin wrappers over the shared [`packed`] functions the server
-// also calls — same bit-layout on both sides, by construction.
-
-/// Compose a `zone_id` from its geographic parts `realm | region | zone` (each `hi:4 | lo:4`).
-#[cfg(feature = "js")]
-#[wasm_bindgen(js_name = packZoneId)]
-pub fn pack_zone_id_js(
-    realm_x: u8,
-    realm_y: u8,
-    region_x: u8,
-    region_y: u8,
-    zone_x: u8,
-    zone_y: u8,
-) -> u32 {
-    packed::pack_zone_id(realm_x, realm_y, region_x, region_y, zone_x, zone_y)
-}
-
-/// The `region_id` owning a `zone_id` (its shard-routing key).
-#[cfg(feature = "js")]
-#[wasm_bindgen(js_name = regionOf)]
-pub fn region_of_js(zone_id: u32) -> u32 {
-    packed::region_of(zone_id)
-}
-
-/// The `region_x` byte of a `zone_id`.
-#[cfg(feature = "js")]
-#[wasm_bindgen(js_name = zoneRegionX)]
-pub fn zone_region_x_js(zone_id: u32) -> u8 {
-    packed::zone_region_x(zone_id)
-}
-
-/// The `region_y` byte of a `zone_id`.
-#[cfg(feature = "js")]
-#[wasm_bindgen(js_name = zoneRegionY)]
-pub fn zone_region_y_js(zone_id: u32) -> u8 {
-    packed::zone_region_y(zone_id)
-}
-
-/// The `realm` byte (`realm_x:4 | realm_y:4`) of a `zone_id`. (Was `zoneSurface` — `surface`
-/// is retired; `realm` is the go-forward top geographic level.)
-#[cfg(feature = "js")]
-#[wasm_bindgen(js_name = zoneRealm)]
-pub fn zone_realm_js(zone_id: u32) -> u8 {
-    packed::zone_realm(zone_id)
-}
-
-/// The in-region `zone_x` nibble of a `zone_id`.
-#[cfg(feature = "js")]
-#[wasm_bindgen(js_name = zoneX)]
-pub fn zone_x_js(zone_id: u32) -> u8 {
-    packed::zone_x(zone_id)
-}
-
-/// The in-region `zone_y` nibble of a `zone_id`.
-#[cfg(feature = "js")]
-#[wasm_bindgen(js_name = zoneY)]
-pub fn zone_y_js(zone_id: u32) -> u8 {
-    packed::zone_y(zone_id)
-}
-
 // ---------- content runtime (js feature) ----------
 //
 // The client's view of the DSL: load the fetched `.rd` corpus once, then answer

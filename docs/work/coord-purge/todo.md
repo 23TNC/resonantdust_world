@@ -2,17 +2,7 @@
 
 _Ordered by dependency: **A gates**; B–E are independent safe deletions; **F/G** are the substantive
 reworks (F browser-verified). Move an item to `remaining.md` when you start it, `completed.md` when it
-lands. **A, B, C are done — see [`completed.md`](completed.md).**_
-
----
-
-## D · Remove the unused wasm JS coord helpers
-
-`shared/wasm` exposes `pack_zone_id_js`, `region_of_js`, `zone_region_x_js`/`_y`, `zone_realm_js`,
-`zone_x_js`/`_y` — legacy coord helpers to JS. pixijs references **none** of them (confirm with a grep
-first). Delete them (and any now-unused `packed` imports).
-
-**Done when:** the helpers are gone; `rd build shared` + `tsc --noEmit` green.
+lands. **A, B, C, D are done — see [`completed.md`](completed.md).**_
 
 ---
 
