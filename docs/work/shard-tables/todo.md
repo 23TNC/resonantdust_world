@@ -28,8 +28,12 @@ Design: [`README`](README.md) · [`TABLES.md`](../../TABLES.md) · [`ACTIONS.md`
       `pack(macro, micro)` for the wire**, so `ServerMsg::State` is unchanged and the **client needs no
       change** (server-side only). Verified: builds green; a mover composed with `macro=0, micro=30512`.
       See [`completed.md`](completed.md).
-- [ ] Author `dense_entity_tables!` / `sparse_entity_tables!` — payload = `Vec<DenseItem<T>>` /
-      `Vec<SparseItem<T>>`, keyed by `cold_uid`. And `overlay_tables!` (= sparse, named `overlay`).
+- [x] **Authored** `dense_entity_tables!` / `sparse_entity_tables!` (baseline, `Vec<DenseItem>` /
+      `Vec<SparseItem>`, own the `clock` + `claim`/`write`/`gc`) + `overlay_tables!` (clock-less,
+      `overlay`/`overlay_log`, `*_overlay` reducers — F7 coexistence). Shared `__cold_clock!` +
+      `__cold_baseline_tables!($item)` (literal accessors — F7). **Spike-validated**: `data_shard`
+      temporarily pointed at `dense_entity_tables!() + overlay_tables!()` compiled to wasm (no reducer/
+      table collision), reverted clean. Not wired to `tile`/`thing` yet — that's P3.
 
 ## P2 · The `PROMOTE` prefix + smart-atomic promote
 

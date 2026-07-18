@@ -72,3 +72,24 @@ split + `base_row` reassembly), `edge` (3 reassembly sites), both binding sets r
 **Verified:** codec/modules/worker/orchestrator/master/edge build; reset-published + rebuilt sim; a
 `PLACE` composed a mover into `entity_state` with `macro=0, micro=30512` (position 0x7730 = 30512
 correctly split). Browser regression: **no console errors**; movers/wire unaffected. Ground was black — but that is the **pre-existing cold acquire race** (`cold_tile` reseeded fine, 11 rows, same relay path as the rendering `cold_thing`), NOT a split regression (the split never touches `cold_tile`). The rework fixes it at P6.
+
+## P1 (step 4) · Author the cold sibling macros — `dense_`/`sparse_entity_tables!` + `overlay_tables!`
+
+The cold composition macros, parallel siblings of `entity_tables!` ([`forks.md` F7](forks.md) — the
+`#[table]` accessor can't be a macro param, so no fully-shared inner macro). All `cold_row_reference`-
+addressed, `uid` = `cold_uid` (= `pack_state_uid(cold_row, tic)`):
+
+- **`dense_entity_tables!(T)`** / **`sparse_entity_tables!(T)`** — the baseline pair
+  `entity_state`/`entity_state_log`, `items: Vec<DenseItem>` (ZONE_DIM², index) / `Vec<SparseItem>`
+  (occupied, each carries `tile_reference`). Each **owns the shard's `clock`** + `claim`/`write`/`gc`.
+- **`overlay_tables!(T)`** — the override pair `overlay`/`overlay_log`, always sparse; **clock-less**
+  with **`claim_overlay`/`write_overlay`/`gc_overlay`** so it coexists with the baseline on one shard
+  without table/reducer collisions (F7 coexistence constraint).
+- Shared helpers: `__cold_clock!` (the one clock, literal accessor) + `__cold_baseline_tables!($item)`
+  (baseline tables + reducers, parameterized only by the *item type* — a param, not an accessor, so
+  F7-safe). dense/sparse differ only in the item struct.
+
+**Spike-validated:** `data_shard` (which is *just* the macro) temporarily pointed at
+`dense_entity_tables!() + overlay_tables!()` — **compiled to wasm** (both baseline + overlay expand, no
+`Clock`/`claim`/`write`/`gc` collision), bindings generated, then reverted clean. `sparse_entity_tables!`
+shares `__cold_baseline_tables!`, so validated transitively. Not yet wired to `tile`/`thing` (P3).
