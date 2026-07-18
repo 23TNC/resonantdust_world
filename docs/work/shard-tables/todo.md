@@ -73,14 +73,21 @@ Design: [`README`](README.md) · [`TABLES.md`](../../TABLES.md) · [`ACTIONS.md`
 
 ## P4 · Events replace direct writes
 
-- [ ] `init_zone macro` action — worker builds the whole baseline row in scratch, writes
-      `entity_state_log`; `promote init_zone` projects it. Edge **queues** this instead of calling
-      `seed`. Retire `seed`.
-- [ ] Per-cell override → `overlay_log` (reconcile `SET` to the biome-row + `tile_reference` addressing
-      — [`ACTIONS.md`](../../ACTIONS.md) `SET` note). Retire `set_tile`/`set_thing`.
+- [x] **codec addressing (F11)** — `SET` redefined as the cold-row overlay verb (`SET cold_row type_id
+      tile_reference kind_reference data`, arity 5); `Route` + `target_routes` (spelled cold_row target,
+      action-derived shard+tier routing). 49 codec tests green. (`9e56553`)
+- [ ] **`SET`→overlay end-to-end** (the first live increment, coupled): orchestrator uses `target_routes`
+      to `claim`/`claim_overlay` per target's tier; worker un-gates + composes a **cold overlay row**
+      (merge grouped `SET` cells over the current overlay base → `write_overlay` + `PROMOTE`); edge
+      **queues** `SET` instead of calling `set_tile`. Verify a queued `SET` renders an override. Retire
+      `set_tile`/`set_thing`.
+- [ ] `init_zone` action — worker builds the whole baseline row (F12: event-carried `Vec` vs worker-side
+      worldgen) → `entity_state_log` (`ColdBaseline`); `promote init_zone` projects it. Edge queues it
+      instead of `seed`. Retire `seed`. **← the P6 acquire-race structural fix.**
 - [ ] `PACK` action — worker folds settled `overlay` cells into `entity_state_log`; GC queues
       `promote pack …` (atomic promote of folded baseline + cleared overlay). Retire `fold`.
-- [ ] Worker: compose a **cold row** — whole-`Vec` scratch, block/write/promote like a hot entity.
+- [ ] Worker: compose a **cold row** — whole-`Vec` scratch, block/write/promote like a hot entity
+      (the shared mechanism the three cold verbs above build on).
 
 ## P5 · Seed content source
 
