@@ -60,7 +60,7 @@ macro_rules! entity_tables {
             pub macro_position_reference: u16,
             pub micro_position_reference: u16,
             $(pub $pf: $pt,)*
-            /// If set, promote this target to `state` once settled (the program ran `PROMOTE_STATE`).
+            /// If set, promote this target to `state` once settled (the program had a `PROMOTE` prefix).
             pub promote: bool,
         }
 

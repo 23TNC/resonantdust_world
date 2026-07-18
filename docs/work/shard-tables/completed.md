@@ -93,3 +93,21 @@ addressed, `uid` = `cold_uid` (= `pack_state_uid(cold_row, tic)`):
 `dense_entity_tables!() + overlay_tables!()` — **compiled to wasm** (both baseline + overlay expand, no
 `Clock`/`claim`/`write`/`gc` collision), bindings generated, then reverted clean. `sparse_entity_tables!`
 shares `__cold_baseline_tables!`, so validated transitively. Not yet wired to `tile`/`thing` (P3).
+
+## P2 · The `PROMOTE` prefix
+
+`PROMOTE_STATE` (arity 1, explicit target) → **`PROMOTE`** (value 1, **arity 0** prefix). Executing
+left-to-right, the worker's `apply` sets a pending bit on `PROMOTE` and the **next** action's write
+targets join `promote` (then the bit clears) — so the promote is written as part of that action's
+result, no post-pass. `core`'s `move_to_program`/`place_program` emit the prefix (`[PROMOTE, MOVE_TO,
+entity, dest]`). codec tests updated + green (48).
+
+**Verified:** `[PROMOTE, PLACE, 0x30000001, 50000]` queued at the event shard flowed orchestrator →
+worker → `entity_state` (mover at micro 50000, "composed component"). **Operational lesson:** rebuild
+**all** sim binaries after a codec change — the *orchestrator* also frames programs (`write_targets`),
+and a stale one mis-frames the new `PROMOTE` arity (`UnknownAction`), silently skipping events.
+
+**Deferred to P4/fold:** the cross-table *smart-atomic* promote (copy `entity_state` **and** `overlay`
+in one commit). Per F7 the baseline + overlay are separate reducers (`write` / `write_overlay`), so a
+single transaction across both isn't available — a fold's no-flash comes from **ordering** (promote
+baseline before clearing overlay) unless a combined fold reducer is added. Decided when `PACK` is built.

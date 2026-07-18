@@ -14,9 +14,12 @@
 
 /// Reserved null.
 pub const ACTION_NONE: u32 = 0;
-/// Latch: project this target's slot to `state` once settled. Operand: `target` (write).
-pub const PROMOTE_STATE: u32 = 1;
-/// Latch: project this event to `event` on settle. No operand.
+/// **Prefix modifier** (arity 0): set the promote bit for the **next** action, so its write targets
+/// project to their client-visible table (`entity_state`/`overlay`) once settled. Executed
+/// left-to-right — the next action writes the bit as part of its own result, so there's no post-pass
+/// (see `docs/ACTIONS.md`). Replaces the old `PROMOTE_STATE` (which named a target explicitly).
+pub const PROMOTE: u32 = 1;
+/// Latch: project this event to `event` on settle. No operand. **Tabled** — revisited with movement.
 pub const PROMOTE_EVENT: u32 = 2;
 /// Mint a new entity at a position. Operands: `def` (imm), `position` (imm). Written target is the
 /// minted id, not an operand.
@@ -63,7 +66,7 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
     use OperandKind::*;
     Some(match action {
         ACTION_NONE => &[],
-        PROMOTE_STATE => &[Write],   // the promoted target needs a slot to carry the flag
+        PROMOTE => &[],              // prefix — no operand; it flags the NEXT action's write targets
         PROMOTE_EVENT => &[],
         CREATE => &[Imm, Imm],       // def, position — the write is the minted id, not an operand
         PLACE => &[Write, Imm],      // obj, position
@@ -178,15 +181,16 @@ pub fn asks_promote_event(words: &[u32]) -> bool {
 mod tests {
     use super::*;
 
-    // A representative program: place obj at pos, then move it to dest, promoting both.
-    // PLACE obj pos  MOVE_TO obj dest  PROMOTE_STATE obj  PROMOTE_EVENT
+    // A representative program: promote-then-place obj at pos, then move it to dest, promote the event.
+    // PROMOTE  PLACE obj pos  MOVE_TO obj dest  PROMOTE_EVENT
     fn sample(obj: u32, pos: u32, dest: u32) -> Vec<u32> {
-        vec![PLACE, obj, pos, MOVE_TO, obj, dest, PROMOTE_STATE, obj, PROMOTE_EVENT]
+        vec![PROMOTE, PLACE, obj, pos, MOVE_TO, obj, dest, PROMOTE_EVENT]
     }
 
     #[test]
     fn arity_is_the_signature_length() {
         assert_eq!(arity(PLACE), Some(2));
+        assert_eq!(arity(PROMOTE), Some(0));
         assert_eq!(arity(PROMOTE_EVENT), Some(0));
         assert_eq!(arity(MOVE_TO), Some(2));
         assert_eq!(arity(0xDEAD), None);
@@ -197,17 +201,17 @@ mod tests {
         let p = sample(0x11, 0x22, 0x33);
         let insts: Vec<_> = program(&p).map(|r| r.unwrap()).collect();
         assert_eq!(insts.len(), 4);
-        assert_eq!(insts[0], Instruction { action: PLACE, operands: &[0x11, 0x22] });
-        assert_eq!(insts[1], Instruction { action: MOVE_TO, operands: &[0x11, 0x33] });
-        assert_eq!(insts[2], Instruction { action: PROMOTE_STATE, operands: &[0x11] });
+        assert_eq!(insts[0], Instruction { action: PROMOTE, operands: &[] });
+        assert_eq!(insts[1], Instruction { action: PLACE, operands: &[0x11, 0x22] });
+        assert_eq!(insts[2], Instruction { action: MOVE_TO, operands: &[0x11, 0x33] });
         assert_eq!(insts[3], Instruction { action: PROMOTE_EVENT, operands: &[] });
     }
 
     #[test]
     fn write_and_read_sets_fall_out_of_the_scan() {
         let p = sample(0x11, 0x22, 0x33);
-        // writes: PLACE.obj, MOVE_TO.obj, PROMOTE_STATE.obj — all 0x11
-        assert_eq!(write_targets(&p).unwrap(), vec![0x11, 0x11, 0x11]);
+        // writes: PLACE.obj, MOVE_TO.obj — all 0x11 (PROMOTE is arity 0, no target)
+        assert_eq!(write_targets(&p).unwrap(), vec![0x11, 0x11]);
         // reads: MOVE_TO.obj (ReadWrite)
         assert_eq!(read_targets(&p).unwrap(), vec![0x11]);
         assert!(asks_promote_event(&p));

@@ -35,14 +35,19 @@ Design: [`README`](README.md) · [`TABLES.md`](../../TABLES.md) · [`ACTIONS.md`
       temporarily pointed at `dense_entity_tables!() + overlay_tables!()` compiled to wasm (no reducer/
       table collision), reverted clean. Not wired to `tile`/`thing` yet — that's P3.
 
-## P2 · The `PROMOTE` prefix + smart-atomic promote
+## P2 · The `PROMOTE` prefix
 
-- [ ] codec: `PROMOTE` action (value 1, arity 0) — retire `PROMOTE_STATE`/`PROMOTE_COLD`.
-- [ ] worker `apply`: on `PROMOTE`, set a pending bit; the next action marks its write targets to
-      promote (in scratch); pass the bit to the write reducer.
-- [ ] macro `write` reducer: when promote is set, copy `entity_state`←`entity_state_log` **and**
-      `overlay`←`overlay_log` where `visible.tic != log.tic`, **in one transaction**.
-- [ ] Verify: `promote place <mover> <dest>` still lands a mover in `entity_state`.
+- [x] codec: **`PROMOTE`** (value 1, **arity 0**) — a prefix, retires `PROMOTE_STATE`. Tests updated
+      (`PROMOTE PLACE obj pos` frames; write-set excludes the arity-0 `PROMOTE`).
+- [x] worker `apply`: a pending bit set by `PROMOTE`, consumed by the **next** action (its write
+      targets join `promote`, then the bit clears). `core`'s program builders emit the prefix form.
+- [x] **Verified:** `[PROMOTE, PLACE, 0x30000001, 50000]` queued at the event shard composed the mover
+      into `entity_state` at micro 50000 (worker "composed component"). **Rebuild *all* sim binaries
+      after a codec change** — a stale orchestrator mis-frames the new arity (caught + fixed).
+- [ ] _(Deferred to P4/fold)_ the cross-table **smart-atomic** promote (`entity_state` **and** `overlay`
+      in one commit) — a fold concern; separate `write`/`write_overlay` reducers exist (F7), so the
+      fold's no-flash comes from **ordering** (baseline before overlay) unless a combined reducer is
+      added. Revisit when building `PACK`/fold.
 
 ## P3 · Convert the shards + rename tables
 

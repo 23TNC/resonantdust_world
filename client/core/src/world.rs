@@ -8,7 +8,7 @@
 //! (`region:8 | zone:8`) throughout — the anchor manager, the render events, and the subscription
 //! frames all speak macro, so there is no `zone_id` to convert.
 
-use resonantdust_codec::action::{MOVE_TO, PLACE, PROMOTE_STATE};
+use resonantdust_codec::action::{MOVE_TO, PLACE, PROMOTE};
 use resonantdust_codec::object::{
     micro_position_tile, pack_position_from_parts, pack_tile_reference, position_micro,
     position_region, position_zone, ref_hi, ref_lo,
@@ -53,18 +53,18 @@ pub fn facing(data: u8) -> u8 {
     data >> 6
 }
 
-/// The action program for [`crate::api::Command::Move`]: `PROMOTE_STATE entity`, `MOVE_TO entity
-/// dest` — move *and* promote, so each step reaches the client-visible `state` (promotion is opt-in;
-/// a bare `MOVE_TO` composes in `state_log` but the client never sees it). A cadenced promote
+/// The action program for [`crate::api::Command::Move`]: `PROMOTE` (prefix) then `MOVE_TO entity dest`
+/// — move *and* promote, so each step reaches the client-visible `entity_state` (promotion is opt-in;
+/// a bare `MOVE_TO` composes in `entity_state_log` but the client never sees it). A cadenced promote
 /// (first + every N tiles) is a later tuning; per-step is correct and simplest.
 pub fn move_to_program(entity: u32, tile_x: i32, tile_y: i32) -> Vec<u32> {
-    vec![PROMOTE_STATE, entity, MOVE_TO, entity, tile_to_position(tile_x, tile_y)]
+    vec![PROMOTE, MOVE_TO, entity, tile_to_position(tile_x, tile_y)]
 }
 
-/// The action program for [`crate::api::Command::Place`]: `PROMOTE_STATE entity`, `PLACE entity dest`
+/// The action program for [`crate::api::Command::Place`]: `PROMOTE` (prefix) then `PLACE entity dest`
 /// — place the entity and make it client-visible in one event.
 pub fn place_program(entity: u32, tile_x: i32, tile_y: i32) -> Vec<u32> {
-    vec![PROMOTE_STATE, entity, PLACE, entity, tile_to_position(tile_x, tile_y)]
+    vec![PROMOTE, PLACE, entity, tile_to_position(tile_x, tile_y)]
 }
 
 /// Decode a composed `state` row into the host-facing [`Event::StateObject`]. The row's `zone`

@@ -17,7 +17,7 @@
 //! `index.master_clock`, never a shard clock.
 //!
 //! Scope: `PLACE` (set position) and `MOVE_TO` (arrive — multi-tile stepping + self-requeue is the
-//! movement-content follow-up) and `PROMOTE_STATE`. `CREATE` is deferred: its minted id isn't a write
+//! movement-content follow-up) and `PROMOTE` (a prefix). `CREATE` is deferred: its minted id isn't a write
 //! operand, so no slot is claimed for it yet (needs the orchestrator's spawn-id claim).
 
 use std::collections::{HashMap, HashSet};
@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use spacetimedb_sdk::{DbContext, Table as _};
 
-use resonantdust_codec::action::{self, MOVE_TO, PLACE, PROMOTE_STATE, SET};
+use resonantdust_codec::action::{self, MOVE_TO, PLACE, PROMOTE, SET};
 use resonantdust_codec::object::{pack_position_reference, position_macro, position_micro, TYPE_BIOME_THING, TYPE_BIOME_TILE};
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED};
@@ -352,18 +352,28 @@ async fn main() {
     }
 }
 
-/// Apply one event's program to the scratch, in place. Each action writes exactly one entity's row.
+/// Apply one event's program to the scratch, in place. `PROMOTE` is a **prefix**: it flags the *next*
+/// action, whose write targets then join `promote` (they project to the client-visible table on write).
 fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut HashSet<u32>) {
+    let mut pending_promote = false; // set by a `PROMOTE` prefix; consumed by the next action
     for inst in action::program(actions) {
         let inst = match inst {
             Ok(i) => i,
             Err(_) => return, // validated at queue; a malformed program can't be framed
         };
         match inst.action {
+            PROMOTE => {
+                // Prefix — flag the next action's write targets; don't clear the flag here.
+                pending_promote = true;
+                continue;
+            }
             PLACE => {
                 // PLACE obj pos — set absolute position.
                 if let [obj, pos] = inst.operands {
                     scratch.entry(*obj).or_default().position_reference = *pos;
+                    if pending_promote {
+                        promote.insert(*obj);
+                    }
                 }
             }
             MOVE_TO => {
@@ -371,6 +381,9 @@ fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut Has
                 // is the movement-content follow-up (ACTIONS.md §Movement).
                 if let [obj, dest] = inst.operands {
                     scratch.entry(*obj).or_default().position_reference = *dest;
+                    if pending_promote {
+                        promote.insert(*obj);
+                    }
                 }
             }
             SET => {
@@ -381,17 +394,15 @@ fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut Has
                     p.definition_reference = *def;
                     p.position_reference = *pos;
                     p.data = *data as u8;
-                }
-            }
-            PROMOTE_STATE => {
-                // PROMOTE_STATE obj — flag the target for promotion into `state` on write.
-                if let [obj] = inst.operands {
-                    promote.insert(*obj);
+                    if pending_promote {
+                        promote.insert(*obj);
+                    }
                 }
             }
             // CREATE (deferred — no claimed slot), PROMOTE_EVENT (latched at queue), NONE: no scratch effect.
             _ => {}
         }
+        pending_promote = false; // any non-PROMOTE action consumes the prefix
     }
 }
 
