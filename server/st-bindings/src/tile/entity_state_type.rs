@@ -9,16 +9,17 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
+use super::dense_item_type::DenseItem;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub struct EntityState {
-    pub entity_reference: u32,
+    pub cold_row_reference: u32,
     pub macro_position_reference: u16,
-    pub micro_position_reference: u16,
+    pub subtype_id: u16,
+    pub layer_id: u8,
     pub tic: u16,
-    pub definition_reference: u32,
-    pub data: u8,
+    pub items: Vec::<DenseItem>,
 }
 
 
@@ -31,24 +32,24 @@ impl __sdk::InModule for EntityState {
 ///
 /// Provides typed access to columns for query building.
 pub struct EntityStateCols {
-    pub entity_reference: __sdk::__query_builder::Col<EntityState, u32>,
+    pub cold_row_reference: __sdk::__query_builder::Col<EntityState, u32>,
     pub macro_position_reference: __sdk::__query_builder::Col<EntityState, u16>,
-    pub micro_position_reference: __sdk::__query_builder::Col<EntityState, u16>,
+    pub subtype_id: __sdk::__query_builder::Col<EntityState, u16>,
+    pub layer_id: __sdk::__query_builder::Col<EntityState, u8>,
     pub tic: __sdk::__query_builder::Col<EntityState, u16>,
-    pub definition_reference: __sdk::__query_builder::Col<EntityState, u32>,
-    pub data: __sdk::__query_builder::Col<EntityState, u8>,
+    pub items: __sdk::__query_builder::Col<EntityState, Vec::<DenseItem>>,
 }
 
 impl __sdk::__query_builder::HasCols for EntityState {
     type Cols = EntityStateCols;
     fn cols(table_name: &'static str) -> Self::Cols {
         EntityStateCols {
-            entity_reference: __sdk::__query_builder::Col::new(table_name, "entity_reference"),
+            cold_row_reference: __sdk::__query_builder::Col::new(table_name, "cold_row_reference"),
             macro_position_reference: __sdk::__query_builder::Col::new(table_name, "macro_position_reference"),
-            micro_position_reference: __sdk::__query_builder::Col::new(table_name, "micro_position_reference"),
+            subtype_id: __sdk::__query_builder::Col::new(table_name, "subtype_id"),
+            layer_id: __sdk::__query_builder::Col::new(table_name, "layer_id"),
             tic: __sdk::__query_builder::Col::new(table_name, "tic"),
-            definition_reference: __sdk::__query_builder::Col::new(table_name, "definition_reference"),
-            data: __sdk::__query_builder::Col::new(table_name, "data"),
+            items: __sdk::__query_builder::Col::new(table_name, "items"),
 
         }
     }
@@ -58,7 +59,7 @@ impl __sdk::__query_builder::HasCols for EntityState {
 ///
 /// Provides typed access to indexed columns for query building.
 pub struct EntityStateIxCols {
-    pub entity_reference: __sdk::__query_builder::IxCol<EntityState, u32>,
+    pub cold_row_reference: __sdk::__query_builder::IxCol<EntityState, u32>,
     pub macro_position_reference: __sdk::__query_builder::IxCol<EntityState, u16>,
 }
 
@@ -66,7 +67,7 @@ impl __sdk::__query_builder::HasIxCols for EntityState {
     type IxCols = EntityStateIxCols;
     fn ix_cols(table_name: &'static str) -> Self::IxCols {
         EntityStateIxCols {
-            entity_reference: __sdk::__query_builder::IxCol::new(table_name, "entity_reference"),
+            cold_row_reference: __sdk::__query_builder::IxCol::new(table_name, "cold_row_reference"),
             macro_position_reference: __sdk::__query_builder::IxCol::new(table_name, "macro_position_reference"),
 
         }

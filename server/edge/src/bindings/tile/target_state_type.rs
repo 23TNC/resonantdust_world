@@ -9,15 +9,16 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
+use super::dense_item_type::DenseItem;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub struct TargetState {
-    pub entity_reference: u32,
-    pub definition_reference: u32,
+    pub cold_row_reference: u32,
     pub macro_position_reference: u16,
-    pub micro_position_reference: u16,
-    pub data: u8,
+    pub subtype_id: u16,
+    pub layer_id: u8,
+    pub items: Vec::<DenseItem>,
     pub promote: bool,
 }
 

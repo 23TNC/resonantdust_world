@@ -13,7 +13,7 @@ use spacetimedb_sdk::__codegen::{
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub(super) struct ClaimArgs {
-    pub entities: Vec::<u32>,
+    pub rows: Vec::<u32>,
     pub tic: u16,
     pub worker: u8,
 }
@@ -21,7 +21,7 @@ pub(super) struct ClaimArgs {
 impl From<ClaimArgs> for super::Reducer {
     fn from(args: ClaimArgs) -> Self {
         Self::Claim {
-            entities: args.entities,
+            rows: args.rows,
             tic: args.tic,
             worker: args.worker,
 }
@@ -43,11 +43,11 @@ pub trait claim {
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`claim:claim_then`] to run a callback after the reducer completes.
-    fn claim(&self, entities: Vec::<u32>,
+    fn claim(&self, rows: Vec::<u32>,
 tic: u16,
 worker: u8,
 ) -> __sdk::Result<()> {
-        self.claim_then(entities, tic, worker,  |_, _| {})
+        self.claim_then(rows, tic, worker,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `claim` to run as soon as possible,
@@ -58,7 +58,7 @@ worker: u8,
     ///  and its status can be observed with the `callback`.
     fn claim_then(
         &self,
-        entities: Vec::<u32>,
+        rows: Vec::<u32>,
 tic: u16,
 worker: u8,
 
@@ -71,7 +71,7 @@ worker: u8,
 impl claim for super::RemoteReducers {
     fn claim_then(
         &self,
-        entities: Vec::<u32>,
+        rows: Vec::<u32>,
 tic: u16,
 worker: u8,
 
@@ -79,7 +79,7 @@ worker: u8,
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(ClaimArgs { entities, tic, worker,  }, callback)
+        self.imp.invoke_reducer_with_callback(ClaimArgs { rows, tic, worker,  }, callback)
     }
 }
 

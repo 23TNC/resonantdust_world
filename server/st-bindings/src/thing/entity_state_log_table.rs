@@ -9,6 +9,7 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 use super::entity_state_log_type::EntityStateLog;
+use super::dense_item_type::DenseItem;
 
 /// Table handle for the table `entity_state_log`.
 ///

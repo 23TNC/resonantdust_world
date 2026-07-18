@@ -12,40 +12,54 @@ use spacetimedb_sdk::__codegen::{
 };
 
 pub mod clock_type;
-pub mod cold_tile_type;
+pub mod dense_item_type;
 pub mod entity_state_type;
 pub mod entity_state_log_type;
-pub mod mint_counter_type;
+pub mod overlay_type;
+pub mod overlay_item_type;
+pub mod overlay_log_type;
+pub mod overlay_target_type;
 pub mod target_state_type;
 pub mod bump_reducer;
 pub mod claim_reducer;
+pub mod claim_overlay_reducer;
 pub mod fold_reducer;
 pub mod gc_reducer;
+pub mod gc_overlay_reducer;
 pub mod seed_reducer;
 pub mod set_tile_reducer;
 pub mod write_reducer;
+pub mod write_overlay_reducer;
 pub mod clock_table;
-pub mod cold_tile_table;
 pub mod entity_state_table;
 pub mod entity_state_log_table;
+pub mod overlay_table;
+pub mod overlay_log_table;
 
 pub use clock_type::Clock;
-pub use cold_tile_type::ColdTile;
+pub use dense_item_type::DenseItem;
 pub use entity_state_type::EntityState;
 pub use entity_state_log_type::EntityStateLog;
-pub use mint_counter_type::MintCounter;
+pub use overlay_type::Overlay;
+pub use overlay_item_type::OverlayItem;
+pub use overlay_log_type::OverlayLog;
+pub use overlay_target_type::OverlayTarget;
 pub use target_state_type::TargetState;
 pub use clock_table::*;
-pub use cold_tile_table::*;
 pub use entity_state_table::*;
 pub use entity_state_log_table::*;
+pub use overlay_table::*;
+pub use overlay_log_table::*;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
+pub use claim_overlay_reducer::claim_overlay;
 pub use fold_reducer::fold;
 pub use gc_reducer::gc;
+pub use gc_overlay_reducer::gc_overlay;
 pub use seed_reducer::seed;
 pub use set_tile_reducer::set_tile;
 pub use write_reducer::write;
+pub use write_overlay_reducer::write_overlay;
 
 #[derive(Clone, PartialEq, Debug)]
 
@@ -59,12 +73,20 @@ pub enum Reducer {
         master_tic: u16,
 }    ,
     Claim {
-        entities: Vec::<u32>,
+        rows: Vec::<u32>,
+        tic: u16,
+        worker: u8,
+}    ,
+    ClaimOverlay {
+        rows: Vec::<u32>,
         tic: u16,
         worker: u8,
 }    ,
     Fold ,
     Gc {
+        horizon: u16,
+}    ,
+    GcOverlay {
         horizon: u16,
 }    ,
     Seed {
@@ -85,6 +107,11 @@ pub enum Reducer {
         tic: u16,
         results: Vec::<TargetState>,
 }    ,
+    WriteOverlay {
+        worker: u8,
+        tic: u16,
+        results: Vec::<OverlayTarget>,
+}    ,
 }
 
 
@@ -97,11 +124,14 @@ impl __sdk::Reducer for Reducer {
         match self {
                         Reducer::Bump { .. } => "bump",
             Reducer::Claim { .. } => "claim",
+            Reducer::ClaimOverlay { .. } => "claim_overlay",
             Reducer::Fold => "fold",
             Reducer::Gc { .. } => "gc",
+            Reducer::GcOverlay { .. } => "gc_overlay",
             Reducer::Seed { .. } => "seed",
             Reducer::SetTile { .. } => "set_tile",
             Reducer::Write { .. } => "write",
+            Reducer::WriteOverlay { .. } => "write_overlay",
             _ => unreachable!(),
 }
 }
@@ -114,11 +144,20 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 master_tic: master_tic.clone(),
 }),
             Reducer::Claim{
-                entities,
+                rows,
                 tic,
                 worker,
 }             => __sats::bsatn::to_vec(&claim_reducer::ClaimArgs {
-                entities: entities.clone(),
+                rows: rows.clone(),
+                tic: tic.clone(),
+                worker: worker.clone(),
+}),
+            Reducer::ClaimOverlay{
+                rows,
+                tic,
+                worker,
+}             => __sats::bsatn::to_vec(&claim_overlay_reducer::ClaimOverlayArgs {
+                rows: rows.clone(),
                 tic: tic.clone(),
                 worker: worker.clone(),
 }),
@@ -127,6 +166,11 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 Reducer::Gc{
                 horizon,
 }             => __sats::bsatn::to_vec(&gc_reducer::GcArgs {
+                horizon: horizon.clone(),
+}),
+            Reducer::GcOverlay{
+                horizon,
+}             => __sats::bsatn::to_vec(&gc_overlay_reducer::GcOverlayArgs {
                 horizon: horizon.clone(),
 }),
             Reducer::Seed{
@@ -162,6 +206,15 @@ Reducer::Gc{
                 tic: tic.clone(),
                 results: results.clone(),
 }),
+            Reducer::WriteOverlay{
+                worker,
+                tic,
+                results,
+}             => __sats::bsatn::to_vec(&write_overlay_reducer::WriteOverlayArgs {
+                worker: worker.clone(),
+                tic: tic.clone(),
+                results: results.clone(),
+}),
             _ => unreachable!(),
 }
 }
@@ -172,9 +225,10 @@ Reducer::Gc{
 #[doc(hidden)]
 pub struct DbUpdate {
         clock: __sdk::TableUpdate<Clock>,
-    cold_tile: __sdk::TableUpdate<ColdTile>,
     entity_state: __sdk::TableUpdate<EntityState>,
     entity_state_log: __sdk::TableUpdate<EntityStateLog>,
+    overlay: __sdk::TableUpdate<Overlay>,
+    overlay_log: __sdk::TableUpdate<OverlayLog>,
 }
 
 
@@ -186,9 +240,10 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
             match &table_update.table_name[..] {
 
         "clock" => db_update.clock.append(clock_table::parse_table_update(table_update)?),
-    "cold_tile" => db_update.cold_tile.append(cold_tile_table::parse_table_update(table_update)?),
     "entity_state" => db_update.entity_state.append(entity_state_table::parse_table_update(table_update)?),
     "entity_state_log" => db_update.entity_state_log.append(entity_state_log_table::parse_table_update(table_update)?),
+    "overlay" => db_update.overlay.append(overlay_table::parse_table_update(table_update)?),
+    "overlay_log" => db_update.overlay_log.append(overlay_log_table::parse_table_update(table_update)?),
 
                 unknown => {
                     return Err(__sdk::InternalError::unknown_name(
@@ -212,9 +267,10 @@ impl __sdk::DbUpdate for DbUpdate {
                     let mut diff = AppliedDiff::default();
                 
                 diff.clock = cache.apply_diff_to_table::<Clock>("clock", &self.clock).with_updates_by_pk(|row| &row.id);
-        diff.cold_tile = cache.apply_diff_to_table::<ColdTile>("cold_tile", &self.cold_tile).with_updates_by_pk(|row| &row.cold_row_reference);
-        diff.entity_state = cache.apply_diff_to_table::<EntityState>("entity_state", &self.entity_state).with_updates_by_pk(|row| &row.entity_reference);
+        diff.entity_state = cache.apply_diff_to_table::<EntityState>("entity_state", &self.entity_state).with_updates_by_pk(|row| &row.cold_row_reference);
         diff.entity_state_log = cache.apply_diff_to_table::<EntityStateLog>("entity_state_log", &self.entity_state_log).with_updates_by_pk(|row| &row.uid);
+        diff.overlay = cache.apply_diff_to_table::<Overlay>("overlay", &self.overlay).with_updates_by_pk(|row| &row.cold_row_reference);
+        diff.overlay_log = cache.apply_diff_to_table::<OverlayLog>("overlay_log", &self.overlay_log).with_updates_by_pk(|row| &row.uid);
 
                     diff
                 }
@@ -223,9 +279,10 @@ fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
 for table_rows in raw.tables {
             match &table_rows.table[..] {
                                 "clock" => db_update.clock.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
-                "cold_tile" => db_update.cold_tile.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "entity_state" => db_update.entity_state.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "entity_state_log" => db_update.entity_state_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "overlay" => db_update.overlay.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "overlay_log" => db_update.overlay_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
 }
@@ -234,9 +291,10 @@ fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
 for table_rows in raw.tables {
             match &table_rows.table[..] {
                                 "clock" => db_update.clock.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
-                "cold_tile" => db_update.cold_tile.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "entity_state" => db_update.entity_state.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "entity_state_log" => db_update.entity_state_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "overlay" => db_update.overlay.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "overlay_log" => db_update.overlay_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
 }
@@ -247,9 +305,10 @@ for table_rows in raw.tables {
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
         clock: __sdk::TableAppliedDiff<'r, Clock>,
-    cold_tile: __sdk::TableAppliedDiff<'r, ColdTile>,
     entity_state: __sdk::TableAppliedDiff<'r, EntityState>,
     entity_state_log: __sdk::TableAppliedDiff<'r, EntityStateLog>,
+    overlay: __sdk::TableAppliedDiff<'r, Overlay>,
+    overlay_log: __sdk::TableAppliedDiff<'r, OverlayLog>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
 
@@ -261,9 +320,10 @@ impl __sdk::InModule for AppliedDiff<'_> {
 impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     fn invoke_row_callbacks(&self, event: &EventContext, callbacks: &mut __sdk::DbCallbacks<RemoteModule>) {
                 callbacks.invoke_table_row_callbacks::<Clock>("clock", &self.clock, event);
-        callbacks.invoke_table_row_callbacks::<ColdTile>("cold_tile", &self.cold_tile, event);
         callbacks.invoke_table_row_callbacks::<EntityState>("entity_state", &self.entity_state, event);
         callbacks.invoke_table_row_callbacks::<EntityStateLog>("entity_state_log", &self.entity_state_log, event);
+        callbacks.invoke_table_row_callbacks::<Overlay>("overlay", &self.overlay, event);
+        callbacks.invoke_table_row_callbacks::<OverlayLog>("overlay_log", &self.overlay_log, event);
 }
 }
 
@@ -916,14 +976,16 @@ impl __sdk::SpacetimeModule for RemoteModule {
 
 fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
                 clock_table::register_table(client_cache);
-        cold_tile_table::register_table(client_cache);
         entity_state_table::register_table(client_cache);
         entity_state_log_table::register_table(client_cache);
+        overlay_table::register_table(client_cache);
+        overlay_log_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
                 "clock",
-        "cold_tile",
         "entity_state",
         "entity_state_log",
+        "overlay",
+        "overlay_log",
 ];
 }

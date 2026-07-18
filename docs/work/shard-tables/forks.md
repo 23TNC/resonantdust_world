@@ -5,6 +5,31 @@ _Decision points, options, what we chose, why. (The design-shaping F4–F6 live 
 
 ---
 
+## F9 · P3 converts the shards to the macros but keeps *adapted* direct reducers; events wait for P4 (2026-07-18)
+
+**Context.** Converting `tile`/`thing` to `dense_entity_tables!() + overlay_tables!()` (P3) vs. also
+making all writes event-driven / retiring `seed`/`set_*`/`fold` (P4) — do them together or separately?
+
+**Options.** (A) P3 = tables + rename + client render, with `seed`/`set_tile`/`fold` *adapted* to the
+new `entity_state` (dense baseline) + `overlay` tables but still **direct reducers**; P4 then retires
+them for events. (B) Merge P3+P4 — convert *and* go event-driven in one pass.
+
+**Decision: (A).** Smaller, verifiable steps. P3's win is the table shapes + a client that renders
+`entity_state ⊕ overlay` (and, crucially, lets me confirm the dense/overlay macros work end-to-end).
+The adapted `seed`/`set_tile`/`fold` are throwaway (P4 replaces them with `init_zone`/`SET`→overlay/
+`PACK` events), but the throwaway is small next to the risk of a merged tables+events+client change
+landing unverifiable. P3 does **not** fix the acquire race (that's P6, when the baseline goes
+event-driven + promoted) — it's the plumbing P4/P6 build on.
+
+**Tile conversion shape (P3).** `entity_tables!(data:u8)` (old hot overlay) + `cold_tile` (baseline) →
+`dense_entity_tables!()` (baseline `entity_state`, `items: Vec<DenseItem{kind_reference}>`) +
+`overlay_tables!()` (`overlay`, `items: Vec<OverlayItem>`). `seed` writes `entity_state` (dense);
+`set_tile` writes an `overlay` item; `fold` folds `overlay` → `entity_state`. `mint`/`mint_counter`
+drop (cold is `cold_row_reference`-addressed, no per-cell entity mint). `thing` mirrors with
+`sparse_entity_tables!`. The macros' own `claim`/`write`/`gc` stay dead until P4 wires the worker.
+
+---
+
 ## F7 · The four table macros are **parallel siblings**, not a shared inner macro (2026-07-18)
 
 **Context.** `entity_tables!`, `dense_entity_tables!`, `sparse_entity_tables!`, `overlay_tables!` share

@@ -9,6 +9,7 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 use super::entity_state_type::EntityState;
+use super::dense_item_type::DenseItem;
 
 /// Table handle for the table `entity_state`.
 ///
@@ -96,30 +97,30 @@ impl<'ctx> __sdk::TableWithPrimaryKey for EntityStateTableHandle<'ctx> {
     }
 }
 
-        /// Access to the `entity_reference` unique index on the table `entity_state`,
+        /// Access to the `cold_row_reference` unique index on the table `entity_state`,
         /// which allows point queries on the field of the same name
-        /// via the [`EntityStateEntityReferenceUnique::find`] method.
+        /// via the [`EntityStateColdRowReferenceUnique::find`] method.
         ///
         /// Users are encouraged not to explicitly reference this type,
         /// but to directly chain method calls,
-        /// like `ctx.db.entity_state().entity_reference().find(...)`.
-        pub struct EntityStateEntityReferenceUnique<'ctx> {
+        /// like `ctx.db.entity_state().cold_row_reference().find(...)`.
+        pub struct EntityStateColdRowReferenceUnique<'ctx> {
             imp: __sdk::UniqueConstraintHandle<EntityState, u32>,
             phantom: std::marker::PhantomData<&'ctx super::RemoteTables>,
         }
 
         impl<'ctx> EntityStateTableHandle<'ctx> {
-            /// Get a handle on the `entity_reference` unique index on the table `entity_state`.
-            pub fn entity_reference(&self) -> EntityStateEntityReferenceUnique<'ctx> {
-                EntityStateEntityReferenceUnique {
-                    imp: self.imp.get_unique_constraint::<u32>("entity_reference"),
+            /// Get a handle on the `cold_row_reference` unique index on the table `entity_state`.
+            pub fn cold_row_reference(&self) -> EntityStateColdRowReferenceUnique<'ctx> {
+                EntityStateColdRowReferenceUnique {
+                    imp: self.imp.get_unique_constraint::<u32>("cold_row_reference"),
                     phantom: std::marker::PhantomData,
                 }
             }
         }
 
-        impl<'ctx> EntityStateEntityReferenceUnique<'ctx> {
-            /// Find the subscribed row whose `entity_reference` column value is equal to `col_val`,
+        impl<'ctx> EntityStateColdRowReferenceUnique<'ctx> {
+            /// Find the subscribed row whose `cold_row_reference` column value is equal to `col_val`,
             /// if such a row is present in the client cache.
             pub fn find(&self, col_val: &u32) -> Option<EntityState> {
                 self.imp.find(col_val)
@@ -130,7 +131,7 @@ impl<'ctx> __sdk::TableWithPrimaryKey for EntityStateTableHandle<'ctx> {
 pub(super) fn register_table(client_cache: &mut __sdk::ClientCache<super::RemoteModule>) {
 
     let _table = client_cache.get_or_make_table::<EntityState>("entity_state");
-    _table.add_unique_constraint::<u32>("entity_reference", |row| &row.entity_reference);
+    _table.add_unique_constraint::<u32>("cold_row_reference", |row| &row.cold_row_reference);
 }
 
 #[doc(hidden)]

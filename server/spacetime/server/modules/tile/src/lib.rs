@@ -1,90 +1,45 @@
 //! tile — the **cold** shard for a zone's ground tiles (`TYPE_BIOME_TILE`).
 //!
-//! One row per `(zone, biome, layer)`: the dense 16×16 = 256 `kind_reference`s, indexed by
-//! `tile_reference` (0..256). A tile carries only **what kind** it is — no per-entry `tile_reference`
-//! (that's the index) and no `data`, which is what lets a tile be a `u16` where a thing needs a
-//! `u32`. A zone spanning several biomes is several rows (one per `subtype`); cells outside a row's
-//! biome are `0`.
+//! One row per `(zone, biome, layer)`: the dense 16×16 = 256 `kind_reference`s, one per
+//! `tile_reference` (0..256), held as `entity_state.items` (`Vec<DenseItem>`). A tile carries only
+//! **what kind** it is (`DenseItem.kind_reference`) — no per-entry `tile_reference` (that's the
+//! index), which is what lets a dense cell be cheaper than a thing. A zone spanning several biomes is
+//! several rows (one per `subtype`); cells outside a row's biome are `0`.
 //!
-//! Cold is static-ish: worldgen seeds it, the edge subscribes it per zone, the client draws the
-//! ground. Mutation (chop/place) comes later via the `state`/`state_log` overlay; this increment is
-//! storage + `seed` + the zone-keyed subscription, no tics.
+//! Storage is the cold macros ([`resonantdust_codec::dense_entity_tables!`] +
+//! [`resonantdust_codec::overlay_tables!`]): the **baseline** is `entity_state`/`entity_state_log`
+//! (dense, `cold_row_reference`-addressed, owns the shard `clock`); the **override** tier is
+//! `overlay`/`overlay_log` (sparse — occupied cells only). The client composites `entity_state ⊕
+//! overlay` (an overlay cell shadows the baseline). `seed` fills the baseline; `set_tile` writes an
+//! overlay cell; `fold` (`PACK`) folds the overlay back into the baseline. These are **direct**
+//! reducers for now — P4 replaces them with `init_zone` / `SET` / `PACK` events driven through the
+//! worker + `PROMOTE` (see `docs/work/shard-tables/`).
 //!
 //! Shapes: `docs/VARIABLES.md` (`cold_row_reference` = `macro_position:16 | subtype_id:12 |
 //! layer_id:4`), `docs/TABLES.md`. **`type_id` is this module** (`TYPE_BIOME_TILE`), so it's off the
 //! row — reconstruct with `type_reference = TYPE_BIOME_TILE | subtype_id`.
 
-use spacetimedb::{reducer, table, ReducerContext, Table};
+use spacetimedb::{reducer, ReducerContext, Table};
 
-use resonantdust_codec::object::{
-    def_kind_reference, def_subtype_id, pack_cold_row_reference, pack_definition_reference,
-    pack_layer_reference, pack_type_reference, TYPE_BIOME_TILE,
-};
-use resonantdust_codec::refs::{pack_entity_reference, pack_server_reference, OBJECT_REF_MAX, SERVER_REF_NONE};
-use resonantdust_codec::status::{pack_status, STATE_FLAG_PROMOTE, STATE_PROMOTED};
-use resonantdust_codec::uid::pack_state_uid;
+use resonantdust_codec::object::pack_cold_row_reference;
 
-// The shared tic-composition overlay: `clock` / `state_log` / `state` + `init` / `bump` / `claim` /
-// `write` / `gc`. A cold cell mutates by minting a `state_log` row here (never rewriting the baseline
-// `cold_tile`); GC folds it back. Same machinery as `data_shard`, so cold rides the whole pipeline.
-resonantdust_codec::entity_tables!(data: u8);
-
-/// This cold shard's `server_reference` (`type_id = TYPE_BIOME_TILE`, server_id 0) — the high byte of
-/// every `entity_reference` it mints on unpack. Const stopgap (matches `event_shard`); F2 makes it
-/// master-assigned once a family has more than one shard.
-const SERVER_REFERENCE: u8 = pack_server_reference(TYPE_BIOME_TILE, 0);
-
-/// The mint counter — `entity_reference = server_reference:8 | ++counter:24`. Single row, lazily seeded.
-#[table(accessor = mint_counter)]
-pub struct MintCounter {
-    #[primary_key]
-    pub id: u8,
-    pub next: u32,
-}
-
-/// Allocate the next `entity_reference` for an unpacked cell.
-fn mint(ctx: &ReducerContext) -> u32 {
-    let n = ctx.db.mint_counter().id().find(0).map(|c| c.next).unwrap_or(1);
-    ctx.db.mint_counter().id().delete(0);
-    ctx.db.mint_counter().insert(MintCounter { id: 0, next: n.wrapping_add(1) & OBJECT_REF_MAX });
-    pack_entity_reference(SERVER_REFERENCE, n)
-}
+// Cold storage: the dense baseline (`entity_state`, owns the shard `clock`) + the sparse overlay
+// (`overlay`). Both `cold_row_reference`-addressed; the client reads `entity_state ⊕ overlay`.
+resonantdust_codec::dense_entity_tables!();
+resonantdust_codec::overlay_tables!();
 
 /// A zone is 16×16 tiles.
 const TILES_PER_ZONE: usize = 256;
-
-// ── cold_tile — one zone-layer-biome's dense ground ─────────────────────────────────
-
-#[table(accessor = cold_tile, public)]
-pub struct ColdTile {
-    /// `cold_row_reference` = `macro_position:16 | subtype_id:12 | layer_id:4`.
-    #[primary_key]
-    pub cold_row_reference: u32,
-    /// The zone — the client's subscription key (`WHERE macro_position_reference = <zone>`).
-    #[index(btree)]
-    pub macro_position_reference: u16,
-    /// The biome (holds `u12`); searchable.
-    #[index(btree)]
-    pub subtype_id: u16,
-    /// The layer (holds `u4`).
-    pub layer_id: u8,
-    /// The `tic` this baseline is current as of (set at `seed`, bumped by `fold`). A cold row is a
-    /// compressed `state` row, so it carries `tic` for the same reason: a location's truth is whichever
-    /// of the baseline and the `state` override is **more recent**.
-    pub tic: u16,
-    /// 256 `kind_reference`s, one per tile (index = `tile_reference`); cells outside this biome are
-    /// `0`. Dense.
-    pub tiles: Vec<u16>,
-}
 
 /// The cold shard's current tic (its `clock` mirror, bumped by the master).
 fn now_tic(ctx: &ReducerContext) -> u16 {
     ctx.db.clock().id().find(0).map(|c| c.master_tic).unwrap_or(0)
 }
 
-/// Seed (or overwrite) a zone-layer-biome's ground. This is trusted server-side **generation**
-/// (worldgen), not a player mutation — player edits go through the overlay. `type_id` is the module.
-/// Idempotent: re-seeding a `(zone, subtype, layer)` overwrites deterministically.
+/// Seed (or overwrite) a zone-layer-biome's ground into the **baseline** `entity_state`. This is
+/// trusted server-side **generation** (worldgen), not a player mutation — player edits go through the
+/// overlay. `type_id` is the module. Idempotent: re-seeding a `(zone, subtype, layer)` overwrites
+/// deterministically.
 #[reducer]
 pub fn seed(
     ctx: &ReducerContext,
@@ -97,30 +52,30 @@ pub fn seed(
         return Err(format!("a zone has {TILES_PER_ZONE} tiles, got {}", tiles.len()));
     }
     let cold_row_reference = pack_cold_row_reference(macro_position, subtype_id, layer_id);
-    let row = ColdTile {
+    let items: Vec<DenseItem> = tiles.into_iter().map(|kind_reference| DenseItem { kind_reference }).collect();
+    let row = EntityState {
         cold_row_reference,
         macro_position_reference: macro_position,
         subtype_id,
         layer_id,
         tic: now_tic(ctx),
-        tiles,
+        items,
     };
-    if ctx.db.cold_tile().cold_row_reference().find(cold_row_reference).is_some() {
-        ctx.db.cold_tile().cold_row_reference().update(row);
+    if ctx.db.entity_state().cold_row_reference().find(cold_row_reference).is_some() {
+        ctx.db.entity_state().cold_row_reference().update(row);
     } else {
-        ctx.db.cold_tile().insert(row);
+        ctx.db.entity_state().insert(row);
     }
     Ok(())
 }
 
-/// **Mutate a ground cell** to `kind_reference` via the overlay: mint (or reuse) an `entity_reference`
-/// for the cell and write a settled, promoted `state` row — a **cold mutation** that never touches the
-/// baseline `cold_tile`. The client composites this over the baseline (proven in P3). Idempotent by
-/// position (one entity per cold cell), so a re-issue reuses the entity and just re-writes the value.
+/// **Mutate a ground cell** to `kind_reference` via the **overlay** — a sparse per-cell override that
+/// never touches the baseline `entity_state`. The client composites the overlay cell over the
+/// baseline. Idempotent by `(cold_row, tile_reference)`: a re-issue rewrites the same cell.
 ///
-/// This is the direct mint+write primitive that proves the path end-to-end. The **event-driven**
-/// `UNPACK` routing (edge → orchestrator → worker, deterministic-from-event id) and the **GC fold**
-/// back into the baseline are the remaining P4 steps — see `docs/intent/world-storage/`.
+/// This is the direct write primitive that proves the composite path. The **event-driven** `SET`
+/// routing (edge → orchestrator → worker) and the `PACK` fold back into the baseline are the
+/// remaining P4 steps — see `docs/work/shard-tables/`.
 #[reducer]
 pub fn set_tile(
     ctx: &ReducerContext,
@@ -130,105 +85,76 @@ pub fn set_tile(
     tile_reference: u8,
     kind_reference: u16,
 ) -> Result<(), String> {
-    let layer_reference = pack_layer_reference(TYPE_BIOME_TILE, layer_id);
-    let micro = ((tile_reference as u16) << 8) | layer_reference as u16;
-    // A mutation keeps the cell's biome — find the baseline row that holds this cell (its non-empty
-    // `subtype`), so the eventual `fold` writes back to the *right* row. `subtype_id` is a fallback.
+    // A mutation keeps the cell's biome — find the baseline row that actually holds this cell (its
+    // non-empty `subtype`), so the eventual `fold` writes back to the *right* row. `subtype_id` is a
+    // fallback when no baseline row claims the cell.
     let subtype_id = ctx
         .db
-        .cold_tile()
+        .entity_state()
         .macro_position_reference()
         .filter(macro_position)
-        .find(|r| r.layer_id == layer_id && r.tiles.get(tile_reference as usize).copied().unwrap_or(0) != 0)
+        .find(|r| {
+            r.layer_id == layer_id
+                && r.items.get(tile_reference as usize).map(|it| it.kind_reference).unwrap_or(0) != 0
+        })
         .map(|r| r.subtype_id)
         .unwrap_or(subtype_id);
-    let definition = pack_definition_reference(pack_type_reference(TYPE_BIOME_TILE, subtype_id), kind_reference);
-    let tic = ctx.db.clock().id().find(0).map(|c| c.master_tic).unwrap_or(0);
-    // Reuse the cell's entity if already unpacked, else mint a fresh one.
-    let entity = ctx
+    let cold_row_reference = pack_cold_row_reference(macro_position, subtype_id, layer_id);
+    // Merge the cell into the row's existing overlay (replace if already overridden, else append).
+    let mut items = ctx
         .db
-        .entity_state()
-        .iter()
-        .find(|s| s.macro_position_reference == macro_position && s.micro_position_reference == micro)
-        .map(|s| s.entity_reference)
-        .unwrap_or_else(|| mint(ctx));
-    // Settled, promoted composition slot (the source of truth).
-    let uid = pack_state_uid(entity, tic);
-    ctx.db.entity_state_log().uid().delete(uid);
-    ctx.db.entity_state_log().insert(EntityStateLog {
-        uid,
-        entity_reference: entity,
-        tic,
-        worker_reference: SERVER_REF_NONE,
-        observer_reference: SERVER_REF_NONE,
-        dirty: false,
-        definition_reference: definition,
+        .overlay()
+        .cold_row_reference()
+        .find(cold_row_reference)
+        .map(|o| o.items)
+        .unwrap_or_default();
+    match items.iter_mut().find(|it| it.tile_reference == tile_reference) {
+        Some(it) => it.kind_reference = kind_reference,
+        None => items.push(OverlayItem { tile_reference, kind_reference }),
+    }
+    let row = Overlay {
+        cold_row_reference,
         macro_position_reference: macro_position,
-        micro_position_reference: micro,
-        data: 0,
-        status: pack_status(STATE_FLAG_PROMOTE, STATE_PROMOTED),
-    });
-    // The client-visible override.
-    let row = EntityState {
-        entity_reference: entity,
-        macro_position_reference: macro_position,
-        micro_position_reference: micro,
-        tic,
-        definition_reference: definition,
-        data: 0,
+        subtype_id,
+        layer_id,
+        tic: now_tic(ctx),
+        items,
     };
-    if ctx.db.entity_state().entity_reference().find(entity).is_some() {
-        ctx.db.entity_state().entity_reference().update(row);
+    if ctx.db.overlay().cold_row_reference().find(cold_row_reference).is_some() {
+        ctx.db.overlay().cold_row_reference().update(row);
     } else {
-        ctx.db.entity_state().insert(row);
+        ctx.db.overlay().insert(row);
     }
     Ok(())
 }
 
-/// **GC fold (`PACK`)** — fold every settled `state` override back into the compressed baseline
-/// `cold_tile`, then drop the `state` row + `state_log` slot. The client sees no change (it read the
-/// value from the overlay; now it reads the same value from the baseline). This is the write-back half
-/// of the mutation lifecycle — the mint/`set_tile` puts a cell hot, this returns it to cold. The
-/// master's GC calls it on a cadence.
+/// **GC fold (`PACK`)** — fold every settled overlay cell back into the compressed baseline
+/// `entity_state`, then drop the overlay row. The client sees no change (it read the value from the
+/// overlay; now it reads the same value from the baseline). This is the write-back half of the
+/// mutation lifecycle — `set_tile` puts a cell hot, this returns it to cold. The master's GC calls it
+/// on a cadence.
 ///
-/// Uses the override's own `subtype`/`layer` (which `set_tile` preserved from the baseline) to hit the
-/// right `cold_tile` row. Only `!dirty` rows are folded (settled truth). Tombstone-not-drop of
-/// `state_log` (for a slow reader / takeover) is a refinement — this drops it.
+/// The overlay shares the baseline's `cold_row_reference`, so each overlay row folds straight into its
+/// baseline sibling (no def-reconstruction). Tombstone-not-drop (for a slow reader / takeover) is a
+/// refinement — this drops it.
 #[reducer]
 pub fn fold(ctx: &ReducerContext) -> Result<(), String> {
     // The baseline is current as of *now* once folded — `now_tic` is ≥ every settled override's tic,
-    // so all of them become superseded (the client reads the baseline, not the stale override).
+    // so the client reads the folded value from the baseline, not the (stale) override.
     let ftic = now_tic(ctx);
-    let settled: Vec<EntityState> = ctx.db.entity_state().iter().collect();
-    for s in settled {
-        // Only fold settled truth — a still-`dirty` `state_log` slot means work is pending.
-        let log_settled = ctx
-            .db
-            .entity_state_log()
-            .uid()
-            .find(pack_state_uid(s.entity_reference, s.tic))
-            .map(|l| !l.dirty)
-            .unwrap_or(true);
-        if !log_settled {
-            continue;
-        }
-        let tile_reference = ((s.micro_position_reference >> 8) & 0xFF) as usize;
-        let layer_id = (s.micro_position_reference & 0xF) as u8;
-        let subtype_id = def_subtype_id(s.definition_reference);
-        let kind_reference = def_kind_reference(s.definition_reference);
-        let cold_row = pack_cold_row_reference(s.macro_position_reference, subtype_id, layer_id);
-        if let Some(mut row) = ctx.db.cold_tile().cold_row_reference().find(cold_row) {
-            if let Some(slot) = row.tiles.get_mut(tile_reference) {
-                *slot = kind_reference;
-                // The baseline now reflects the override — bump its tic to now, so the client reads the
-                // folded value from the baseline, not the (stale) override.
-                row.tic = ftic;
-                ctx.db.cold_tile().cold_row_reference().update(row);
+    let overlays: Vec<Overlay> = ctx.db.overlay().iter().collect();
+    for o in overlays {
+        if let Some(mut base) = ctx.db.entity_state().cold_row_reference().find(o.cold_row_reference) {
+            for it in &o.items {
+                if let Some(slot) = base.items.get_mut(it.tile_reference as usize) {
+                    slot.kind_reference = it.kind_reference;
+                }
             }
+            base.tic = ftic;
+            ctx.db.entity_state().cold_row_reference().update(base);
         }
         // The value now lives in the baseline the client already reads — drop the overlay.
-        ctx.db.entity_state().entity_reference().delete(s.entity_reference);
-        ctx.db.entity_state_log().uid().delete(pack_state_uid(s.entity_reference, s.tic));
+        ctx.db.overlay().cold_row_reference().delete(o.cold_row_reference);
     }
     Ok(())
 }

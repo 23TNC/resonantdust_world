@@ -9,71 +9,70 @@ use spacetimedb_sdk::__codegen::{
 	__ws,
 };
 
+use super::overlay_item_type::OverlayItem;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub struct ColdThing {
+pub struct Overlay {
     pub cold_row_reference: u32,
     pub macro_position_reference: u16,
     pub subtype_id: u16,
     pub layer_id: u8,
     pub tic: u16,
-    pub things: Vec::<u32>,
+    pub items: Vec::<OverlayItem>,
 }
 
 
-impl __sdk::InModule for ColdThing {
+impl __sdk::InModule for Overlay {
     type Module = super::RemoteModule;
 }
 
 
-/// Column accessor struct for the table `ColdThing`.
+/// Column accessor struct for the table `Overlay`.
 ///
 /// Provides typed access to columns for query building.
-pub struct ColdThingCols {
-    pub cold_row_reference: __sdk::__query_builder::Col<ColdThing, u32>,
-    pub macro_position_reference: __sdk::__query_builder::Col<ColdThing, u16>,
-    pub subtype_id: __sdk::__query_builder::Col<ColdThing, u16>,
-    pub layer_id: __sdk::__query_builder::Col<ColdThing, u8>,
-    pub tic: __sdk::__query_builder::Col<ColdThing, u16>,
-    pub things: __sdk::__query_builder::Col<ColdThing, Vec::<u32>>,
+pub struct OverlayCols {
+    pub cold_row_reference: __sdk::__query_builder::Col<Overlay, u32>,
+    pub macro_position_reference: __sdk::__query_builder::Col<Overlay, u16>,
+    pub subtype_id: __sdk::__query_builder::Col<Overlay, u16>,
+    pub layer_id: __sdk::__query_builder::Col<Overlay, u8>,
+    pub tic: __sdk::__query_builder::Col<Overlay, u16>,
+    pub items: __sdk::__query_builder::Col<Overlay, Vec::<OverlayItem>>,
 }
 
-impl __sdk::__query_builder::HasCols for ColdThing {
-    type Cols = ColdThingCols;
+impl __sdk::__query_builder::HasCols for Overlay {
+    type Cols = OverlayCols;
     fn cols(table_name: &'static str) -> Self::Cols {
-        ColdThingCols {
+        OverlayCols {
             cold_row_reference: __sdk::__query_builder::Col::new(table_name, "cold_row_reference"),
             macro_position_reference: __sdk::__query_builder::Col::new(table_name, "macro_position_reference"),
             subtype_id: __sdk::__query_builder::Col::new(table_name, "subtype_id"),
             layer_id: __sdk::__query_builder::Col::new(table_name, "layer_id"),
             tic: __sdk::__query_builder::Col::new(table_name, "tic"),
-            things: __sdk::__query_builder::Col::new(table_name, "things"),
+            items: __sdk::__query_builder::Col::new(table_name, "items"),
 
         }
     }
 }
 
-/// Indexed column accessor struct for the table `ColdThing`.
+/// Indexed column accessor struct for the table `Overlay`.
 ///
 /// Provides typed access to indexed columns for query building.
-pub struct ColdThingIxCols {
-    pub cold_row_reference: __sdk::__query_builder::IxCol<ColdThing, u32>,
-    pub macro_position_reference: __sdk::__query_builder::IxCol<ColdThing, u16>,
-    pub subtype_id: __sdk::__query_builder::IxCol<ColdThing, u16>,
+pub struct OverlayIxCols {
+    pub cold_row_reference: __sdk::__query_builder::IxCol<Overlay, u32>,
+    pub macro_position_reference: __sdk::__query_builder::IxCol<Overlay, u16>,
 }
 
-impl __sdk::__query_builder::HasIxCols for ColdThing {
-    type IxCols = ColdThingIxCols;
+impl __sdk::__query_builder::HasIxCols for Overlay {
+    type IxCols = OverlayIxCols;
     fn ix_cols(table_name: &'static str) -> Self::IxCols {
-        ColdThingIxCols {
+        OverlayIxCols {
             cold_row_reference: __sdk::__query_builder::IxCol::new(table_name, "cold_row_reference"),
             macro_position_reference: __sdk::__query_builder::IxCol::new(table_name, "macro_position_reference"),
-            subtype_id: __sdk::__query_builder::IxCol::new(table_name, "subtype_id"),
 
         }
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for ColdThing {}
+impl __sdk::__query_builder::CanBeLookupTable for Overlay {}
 
