@@ -1,6 +1,6 @@
 //! data_shard — the composition slots (`state_log`) and the client-visible latest (`state`).
 //!
-//! The whole module is the shared [`resonantdust_codec::tick_pipeline!`] machinery: the `clock` /
+//! The whole module is the shared [`resonantdust_codec::entity_tables!`] machinery: the `clock` /
 //! `state_log` / `state` tables and the `init` / `bump` / `claim` / `write` / `gc` reducers. The
 //! orchestrator calls `claim`, the worker calls `write`, the master calls `bump` / `gc`. This module
 //! and `event_shard` never call each other. Shapes: `docs/TABLES.md`. Flow:
@@ -9,4 +9,4 @@
 
 use spacetimedb::Table as _;
 
-resonantdust_codec::tick_pipeline!(definition_reference: u32, position_reference: u32, data: u8);
+resonantdust_codec::entity_tables!(definition_reference: u32, position_reference: u32, data: u8);

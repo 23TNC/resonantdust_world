@@ -31,13 +31,13 @@ use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED};
 use resonantdust_codec::tic::{tic_after, tic_before};
 use resonantdust_st_bindings::{data_shard, event_shard, index, thing, tile};
-use data_shard::{write as _, StateLogTableAccess as _};
+use data_shard::{write as _, EntityStateLogTableAccess as _};
 use event_shard::{complete as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
 // The cold shards ride the same composition macro, so their `write` + `state_log` surfaces are the
 // same shape — a cold-cell mutation composes + writes exactly like a hot one, just on its shard.
-use thing::{write as _, StateLogTableAccess as _};
-use tile::{write as _, StateLogTableAccess as _};
+use thing::{write as _, EntityStateLogTableAccess as _};
+use tile::{write as _, EntityStateLogTableAccess as _};
 
 /// Which composing shard an entity lives on — routed by its `server_reference`'s `type_id` (the top
 /// nibble). A cold cell's `SET` target carries `TYPE_BIOME_TILE`/`TYPE_BIOME_THING`; everything else
@@ -150,12 +150,12 @@ async fn main() {
             let _ = tx_d.send(());
         })
         .subscribe([format!(
-            "SELECT * FROM state_log WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"
+            "SELECT * FROM entity_state_log WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"
         )]);
 
     // ── cold shards: my cold slots to write + the bases I read (same overlay shape as data) ──────
     let sub_sql = format!(
-        "SELECT * FROM state_log WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"
+        "SELECT * FROM entity_state_log WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"
     );
     let (tx_t, rx_t) = std::sync::mpsc::channel::<()>();
     let tile = tile::DbConnection::builder()
@@ -393,7 +393,7 @@ fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut Has
 }
 
 /// A composed base — the three payload refs + whether the slot is still dirty. Shard-agnostic (the
-/// three shards' `StateLog` rows are the same shape from the shared macro, but distinct Rust types).
+/// three shards' `EntityStateLog` rows are the same shape from the shared macro, but distinct Rust types).
 #[derive(Clone, Copy)]
 struct Base {
     definition_reference: u32,
@@ -418,7 +418,7 @@ fn base_row(
         ($conn:expr) => {
             $conn
                 .db()
-                .state_log()
+                .entity_state_log()
                 .iter()
                 .filter(|r| r.entity_reference == entity && tic_before(r.tic, tic))
                 .reduce(|a, b| if tic_after(b.tic, a.tic) { b } else { a })

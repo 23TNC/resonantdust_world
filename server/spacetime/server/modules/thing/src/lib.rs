@@ -27,7 +27,7 @@ use resonantdust_codec::uid::pack_state_uid;
 // The shared tic-composition overlay: `clock` / `state_log` / `state` + `init` / `bump` / `claim` /
 // `write` / `gc`. A cold cell mutates by minting a `state_log` row here (never rewriting the baseline
 // `cold_thing`); GC folds it back. Same machinery as `data_shard`, so cold rides the whole pipeline.
-resonantdust_codec::tick_pipeline!(definition_reference: u32, position_reference: u32, data: u8);
+resonantdust_codec::entity_tables!(definition_reference: u32, position_reference: u32, data: u8);
 
 /// This cold shard's `server_reference` (`type_id = TYPE_BIOME_THING`, server_id 0) — the high byte of
 /// every `entity_reference` it mints. Const stopgap; F2 makes it master-assigned at multi-shard.
@@ -137,14 +137,14 @@ pub fn set_thing(
     let tic = ctx.db.clock().id().find(0).map(|c| c.master_tic).unwrap_or(0);
     let entity = ctx
         .db
-        .state()
+        .entity_state()
         .iter()
         .find(|s| s.position_reference == position)
         .map(|s| s.entity_reference)
         .unwrap_or_else(|| mint(ctx));
     let uid = pack_state_uid(entity, tic);
-    ctx.db.state_log().uid().delete(uid);
-    ctx.db.state_log().insert(StateLog {
+    ctx.db.entity_state_log().uid().delete(uid);
+    ctx.db.entity_state_log().insert(EntityStateLog {
         uid,
         entity_reference: entity,
         tic,
@@ -156,7 +156,7 @@ pub fn set_thing(
         data,
         status: pack_status(STATE_FLAG_PROMOTE, STATE_PROMOTED),
     });
-    let row = State {
+    let row = EntityState {
         entity_reference: entity,
         macro_position_reference: macro_position,
         tic,
@@ -164,10 +164,10 @@ pub fn set_thing(
         position_reference: position,
         data,
     };
-    if ctx.db.state().entity_reference().find(entity).is_some() {
-        ctx.db.state().entity_reference().update(row);
+    if ctx.db.entity_state().entity_reference().find(entity).is_some() {
+        ctx.db.entity_state().entity_reference().update(row);
     } else {
-        ctx.db.state().insert(row);
+        ctx.db.entity_state().insert(row);
     }
     Ok(())
 }
@@ -182,11 +182,11 @@ pub fn fold(ctx: &ReducerContext) -> Result<(), String> {
     // The baseline is current as of *now* once folded — `now_tic` is ≥ every settled override's tic,
     // so all of them become superseded (the client reads the baseline, not the stale override).
     let ftic = now_tic(ctx);
-    let settled: Vec<State> = ctx.db.state().iter().collect();
+    let settled: Vec<EntityState> = ctx.db.entity_state().iter().collect();
     for s in settled {
         let log_settled = ctx
             .db
-            .state_log()
+            .entity_state_log()
             .uid()
             .find(pack_state_uid(s.entity_reference, s.tic))
             .map(|l| !l.dirty)
@@ -221,8 +221,8 @@ pub fn fold(ctx: &ReducerContext) -> Result<(), String> {
             }
             None => {}
         }
-        ctx.db.state().entity_reference().delete(s.entity_reference);
-        ctx.db.state_log().uid().delete(pack_state_uid(s.entity_reference, s.tic));
+        ctx.db.entity_state().entity_reference().delete(s.entity_reference);
+        ctx.db.entity_state_log().uid().delete(pack_state_uid(s.entity_reference, s.tic));
     }
     Ok(())
 }

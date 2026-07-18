@@ -12,7 +12,7 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub struct StateLog {
+pub struct EntityStateLog {
     pub uid: u64,
     pub entity_reference: u32,
     pub tic: u16,
@@ -26,31 +26,31 @@ pub struct StateLog {
 }
 
 
-impl __sdk::InModule for StateLog {
+impl __sdk::InModule for EntityStateLog {
     type Module = super::RemoteModule;
 }
 
 
-/// Column accessor struct for the table `StateLog`.
+/// Column accessor struct for the table `EntityStateLog`.
 ///
 /// Provides typed access to columns for query building.
-pub struct StateLogCols {
-    pub uid: __sdk::__query_builder::Col<StateLog, u64>,
-    pub entity_reference: __sdk::__query_builder::Col<StateLog, u32>,
-    pub tic: __sdk::__query_builder::Col<StateLog, u16>,
-    pub worker_reference: __sdk::__query_builder::Col<StateLog, u8>,
-    pub observer_reference: __sdk::__query_builder::Col<StateLog, u8>,
-    pub dirty: __sdk::__query_builder::Col<StateLog, bool>,
-    pub definition_reference: __sdk::__query_builder::Col<StateLog, u32>,
-    pub position_reference: __sdk::__query_builder::Col<StateLog, u32>,
-    pub data: __sdk::__query_builder::Col<StateLog, u8>,
-    pub status: __sdk::__query_builder::Col<StateLog, u8>,
+pub struct EntityStateLogCols {
+    pub uid: __sdk::__query_builder::Col<EntityStateLog, u64>,
+    pub entity_reference: __sdk::__query_builder::Col<EntityStateLog, u32>,
+    pub tic: __sdk::__query_builder::Col<EntityStateLog, u16>,
+    pub worker_reference: __sdk::__query_builder::Col<EntityStateLog, u8>,
+    pub observer_reference: __sdk::__query_builder::Col<EntityStateLog, u8>,
+    pub dirty: __sdk::__query_builder::Col<EntityStateLog, bool>,
+    pub definition_reference: __sdk::__query_builder::Col<EntityStateLog, u32>,
+    pub position_reference: __sdk::__query_builder::Col<EntityStateLog, u32>,
+    pub data: __sdk::__query_builder::Col<EntityStateLog, u8>,
+    pub status: __sdk::__query_builder::Col<EntityStateLog, u8>,
 }
 
-impl __sdk::__query_builder::HasCols for StateLog {
-    type Cols = StateLogCols;
+impl __sdk::__query_builder::HasCols for EntityStateLog {
+    type Cols = EntityStateLogCols;
     fn cols(table_name: &'static str) -> Self::Cols {
-        StateLogCols {
+        EntityStateLogCols {
             uid: __sdk::__query_builder::Col::new(table_name, "uid"),
             entity_reference: __sdk::__query_builder::Col::new(table_name, "entity_reference"),
             tic: __sdk::__query_builder::Col::new(table_name, "tic"),
@@ -66,21 +66,21 @@ impl __sdk::__query_builder::HasCols for StateLog {
     }
 }
 
-/// Indexed column accessor struct for the table `StateLog`.
+/// Indexed column accessor struct for the table `EntityStateLog`.
 ///
 /// Provides typed access to indexed columns for query building.
-pub struct StateLogIxCols {
-    pub entity_reference: __sdk::__query_builder::IxCol<StateLog, u32>,
-    pub observer_reference: __sdk::__query_builder::IxCol<StateLog, u8>,
-    pub tic: __sdk::__query_builder::IxCol<StateLog, u16>,
-    pub uid: __sdk::__query_builder::IxCol<StateLog, u64>,
-    pub worker_reference: __sdk::__query_builder::IxCol<StateLog, u8>,
+pub struct EntityStateLogIxCols {
+    pub entity_reference: __sdk::__query_builder::IxCol<EntityStateLog, u32>,
+    pub observer_reference: __sdk::__query_builder::IxCol<EntityStateLog, u8>,
+    pub tic: __sdk::__query_builder::IxCol<EntityStateLog, u16>,
+    pub uid: __sdk::__query_builder::IxCol<EntityStateLog, u64>,
+    pub worker_reference: __sdk::__query_builder::IxCol<EntityStateLog, u8>,
 }
 
-impl __sdk::__query_builder::HasIxCols for StateLog {
-    type IxCols = StateLogIxCols;
+impl __sdk::__query_builder::HasIxCols for EntityStateLog {
+    type IxCols = EntityStateLogIxCols;
     fn ix_cols(table_name: &'static str) -> Self::IxCols {
-        StateLogIxCols {
+        EntityStateLogIxCols {
             entity_reference: __sdk::__query_builder::IxCol::new(table_name, "entity_reference"),
             observer_reference: __sdk::__query_builder::IxCol::new(table_name, "observer_reference"),
             tic: __sdk::__query_builder::IxCol::new(table_name, "tic"),
@@ -91,5 +91,5 @@ impl __sdk::__query_builder::HasIxCols for StateLog {
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for StateLog {}
+impl __sdk::__query_builder::CanBeLookupTable for EntityStateLog {}
 

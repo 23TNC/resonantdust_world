@@ -1,9 +1,9 @@
-//! `tick_pipeline!` — the shared tic-composition machinery every composing shard stamps out.
+//! `entity_tables!` — the shared tic-composition machinery every composing shard stamps out.
 //!
 //! A shard that composes per tic (`data_shard`, and the cold `tile`/`thing` overlays) needs the
 //! *same* `clock` / `state_log` / `state` tables and `init` / `bump` / `claim` / `write` / `gc`
 //! reducers. That machinery used to be hand-copied per module (a drift hazard on string-typed
-//! subscription SQL); this macro is the single source of truth. Each module invokes `tick_pipeline!()`
+//! subscription SQL); this macro is the single source of truth. Each module invokes `entity_tables!()`
 //! once and adds only its own extras (a cold module adds its baseline tables + mint + fold).
 //!
 //! The payload is the reference model's three orthogonal references (`definition_reference |
@@ -22,10 +22,10 @@
 /// `TargetState` / `state_log` / `state` (in order, after the fixed composition columns). The payload
 /// **must include a `position_reference: u32`** — the `state` upsert derives `macro_position_reference`
 /// (the zone-subscription key) from it. Invoke unqualified, e.g.:
-/// `resonantdust_codec::tick_pipeline!(definition_reference: u32, position_reference: u32, data: u8);`.
+/// `resonantdust_codec::entity_tables!(definition_reference: u32, position_reference: u32, data: u8);`.
 /// (This is the first generalization step toward the `*_tables!` family — see `work/shard-tables`.)
 #[macro_export]
-macro_rules! tick_pipeline {
+macro_rules! entity_tables {
     ($($pf:ident : $pt:ty),* $(,)?) => {
         // ── the tic clock (the master bumps it in lockstep across every shard) ──────────
         #[spacetimedb::table(accessor = clock, public)]
@@ -60,8 +60,8 @@ macro_rules! tick_pipeline {
         }
 
         // ── state_log — per (entity, tic) composition slot ─────────────────────────────
-        #[spacetimedb::table(accessor = state_log, public)]
-        pub struct StateLog {
+        #[spacetimedb::table(accessor = entity_state_log, public)]
+        pub struct EntityStateLog {
             /// `state_uid` = `reserved:16 | entity_reference:32 | tic:16`. Entity-major.
             #[primary_key]
             pub uid: u64,
@@ -84,8 +84,8 @@ macro_rules! tick_pipeline {
         }
 
         // ── state — client-visible latest ──────────────────────────────────────────────
-        #[spacetimedb::table(accessor = state, public)]
-        pub struct State {
+        #[spacetimedb::table(accessor = entity_state, public)]
+        pub struct EntityState {
             #[primary_key]
             pub entity_reference: u32,
             /// The zone-subscription key — the payload's `position_reference` high half, kept as its
@@ -109,19 +109,19 @@ macro_rules! tick_pipeline {
         ) -> Result<(), String> {
             for e in entities {
                 let uid = $crate::uid::pack_state_uid(e, tic);
-                if let Some(prev) = tick_pipeline_previous_row(ctx, e, tic) {
+                if let Some(prev) = entity_tables_previous_row(ctx, e, tic) {
                     let mut p = prev;
                     p.observer_reference = worker;
-                    ctx.db.state_log().uid().update(p);
+                    ctx.db.entity_state_log().uid().update(p);
                 }
-                match ctx.db.state_log().uid().find(uid) {
+                match ctx.db.entity_state_log().uid().find(uid) {
                     Some(mut row) => {
                         row.worker_reference = worker;
                         row.dirty = true;
-                        ctx.db.state_log().uid().update(row);
+                        ctx.db.entity_state_log().uid().update(row);
                     }
                     None => {
-                        ctx.db.state_log().insert(StateLog {
+                        ctx.db.entity_state_log().insert(EntityStateLog {
                             uid,
                             entity_reference: e,
                             tic,
@@ -138,13 +138,13 @@ macro_rules! tick_pipeline {
         }
 
         /// The serially-latest existing `state_log` row for `entity` strictly before `tic`, if any.
-        fn tick_pipeline_previous_row(
+        fn entity_tables_previous_row(
             ctx: &spacetimedb::ReducerContext,
             entity: u32,
             tic: u16,
-        ) -> Option<StateLog> {
+        ) -> Option<EntityStateLog> {
             ctx.db
-                .state_log()
+                .entity_state_log()
                 .entity_reference()
                 .filter(entity)
                 .filter(|r| $crate::tic::tic_before(r.tic, tic))
@@ -166,7 +166,7 @@ macro_rules! tick_pipeline {
                 let uid = $crate::uid::pack_state_uid(r.entity_reference, tic);
                 let mut row = ctx
                     .db
-                    .state_log()
+                    .entity_state_log()
                     .uid()
                     .find(uid)
                     .ok_or_else(|| format!("no slot for entity {:#010x} tic {tic}", r.entity_reference))?;
@@ -183,33 +183,33 @@ macro_rules! tick_pipeline {
                         $crate::status::pack_status($crate::status::STATE_FLAG_PROMOTE, $crate::status::STATE_OPEN);
                 }
                 let status = row.status;
-                ctx.db.state_log().uid().update(row);
+                ctx.db.entity_state_log().uid().update(row);
 
                 if $crate::status::status_has_flag(status, $crate::status::STATE_FLAG_PROMOTE)
                     && $crate::status::status_phase(status) != $crate::status::STATE_PROMOTED
                 {
-                    tick_pipeline_upsert_state(ctx, &r, tic);
-                    let mut promoted = ctx.db.state_log().uid().find(uid).expect("just wrote");
+                    entity_tables_upsert_state(ctx, &r, tic);
+                    let mut promoted = ctx.db.entity_state_log().uid().find(uid).expect("just wrote");
                     promoted.status =
                         $crate::status::pack_status($crate::status::STATE_FLAG_PROMOTE, $crate::status::STATE_PROMOTED);
-                    ctx.db.state_log().uid().update(promoted);
+                    ctx.db.entity_state_log().uid().update(promoted);
                 }
             }
             Ok(())
         }
 
-        fn tick_pipeline_upsert_state(ctx: &spacetimedb::ReducerContext, r: &TargetState, tic: u16) {
+        fn entity_tables_upsert_state(ctx: &spacetimedb::ReducerContext, r: &TargetState, tic: u16) {
             let macro_position = $crate::object::position_macro(r.position_reference);
-            let row = State {
+            let row = EntityState {
                 entity_reference: r.entity_reference,
                 macro_position_reference: macro_position,
                 tic,
                 $($pf: r.$pf.clone(),)*
             };
-            if ctx.db.state().entity_reference().find(r.entity_reference).is_some() {
-                ctx.db.state().entity_reference().update(row);
+            if ctx.db.entity_state().entity_reference().find(r.entity_reference).is_some() {
+                ctx.db.entity_state().entity_reference().update(row);
             } else {
-                ctx.db.state().insert(row);
+                ctx.db.entity_state().insert(row);
             }
         }
 
@@ -219,7 +219,7 @@ macro_rules! tick_pipeline {
         #[spacetimedb::reducer]
         pub fn gc(ctx: &spacetimedb::ReducerContext, horizon: u16) -> Result<(), String> {
             let mut latest: std::collections::HashMap<u32, u16> = std::collections::HashMap::new();
-            for row in ctx.db.state_log().iter() {
+            for row in ctx.db.entity_state_log().iter() {
                 latest
                     .entry(row.entity_reference)
                     .and_modify(|t| {
@@ -231,7 +231,7 @@ macro_rules! tick_pipeline {
             }
             let doomed: Vec<u64> = ctx
                 .db
-                .state_log()
+                .entity_state_log()
                 .iter()
                 .filter(|r| {
                     !r.dirty
@@ -241,7 +241,7 @@ macro_rules! tick_pipeline {
                 .map(|r| r.uid)
                 .collect();
             for uid in doomed {
-                ctx.db.state_log().uid().delete(uid);
+                ctx.db.entity_state_log().uid().delete(uid);
             }
             Ok(())
         }

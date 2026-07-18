@@ -12,24 +12,24 @@ use spacetimedb_sdk::__codegen::{
 };
 
 pub mod clock_type;
-pub mod state_type;
-pub mod state_log_type;
+pub mod entity_state_type;
+pub mod entity_state_log_type;
 pub mod target_state_type;
 pub mod bump_reducer;
 pub mod claim_reducer;
 pub mod gc_reducer;
 pub mod write_reducer;
 pub mod clock_table;
-pub mod state_table;
-pub mod state_log_table;
+pub mod entity_state_table;
+pub mod entity_state_log_table;
 
 pub use clock_type::Clock;
-pub use state_type::State;
-pub use state_log_type::StateLog;
+pub use entity_state_type::EntityState;
+pub use entity_state_log_type::EntityStateLog;
 pub use target_state_type::TargetState;
 pub use clock_table::*;
-pub use state_table::*;
-pub use state_log_table::*;
+pub use entity_state_table::*;
+pub use entity_state_log_table::*;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
 pub use gc_reducer::gc;
@@ -117,8 +117,8 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 #[doc(hidden)]
 pub struct DbUpdate {
         clock: __sdk::TableUpdate<Clock>,
-    state: __sdk::TableUpdate<State>,
-    state_log: __sdk::TableUpdate<StateLog>,
+    entity_state: __sdk::TableUpdate<EntityState>,
+    entity_state_log: __sdk::TableUpdate<EntityStateLog>,
 }
 
 
@@ -130,8 +130,8 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
             match &table_update.table_name[..] {
 
         "clock" => db_update.clock.append(clock_table::parse_table_update(table_update)?),
-    "state" => db_update.state.append(state_table::parse_table_update(table_update)?),
-    "state_log" => db_update.state_log.append(state_log_table::parse_table_update(table_update)?),
+    "entity_state" => db_update.entity_state.append(entity_state_table::parse_table_update(table_update)?),
+    "entity_state_log" => db_update.entity_state_log.append(entity_state_log_table::parse_table_update(table_update)?),
 
                 unknown => {
                     return Err(__sdk::InternalError::unknown_name(
@@ -155,8 +155,8 @@ impl __sdk::DbUpdate for DbUpdate {
                     let mut diff = AppliedDiff::default();
                 
                 diff.clock = cache.apply_diff_to_table::<Clock>("clock", &self.clock).with_updates_by_pk(|row| &row.id);
-        diff.state = cache.apply_diff_to_table::<State>("state", &self.state).with_updates_by_pk(|row| &row.entity_reference);
-        diff.state_log = cache.apply_diff_to_table::<StateLog>("state_log", &self.state_log).with_updates_by_pk(|row| &row.uid);
+        diff.entity_state = cache.apply_diff_to_table::<EntityState>("entity_state", &self.entity_state).with_updates_by_pk(|row| &row.entity_reference);
+        diff.entity_state_log = cache.apply_diff_to_table::<EntityStateLog>("entity_state_log", &self.entity_state_log).with_updates_by_pk(|row| &row.uid);
 
                     diff
                 }
@@ -165,8 +165,8 @@ fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
 for table_rows in raw.tables {
             match &table_rows.table[..] {
                                 "clock" => db_update.clock.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
-                "state" => db_update.state.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
-                "state_log" => db_update.state_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "entity_state" => db_update.entity_state.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "entity_state_log" => db_update.entity_state_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
 }
@@ -175,8 +175,8 @@ fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
 for table_rows in raw.tables {
             match &table_rows.table[..] {
                                 "clock" => db_update.clock.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
-                "state" => db_update.state.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
-                "state_log" => db_update.state_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "entity_state" => db_update.entity_state.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "entity_state_log" => db_update.entity_state_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
 }
@@ -187,8 +187,8 @@ for table_rows in raw.tables {
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
         clock: __sdk::TableAppliedDiff<'r, Clock>,
-    state: __sdk::TableAppliedDiff<'r, State>,
-    state_log: __sdk::TableAppliedDiff<'r, StateLog>,
+    entity_state: __sdk::TableAppliedDiff<'r, EntityState>,
+    entity_state_log: __sdk::TableAppliedDiff<'r, EntityStateLog>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
 
@@ -200,8 +200,8 @@ impl __sdk::InModule for AppliedDiff<'_> {
 impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     fn invoke_row_callbacks(&self, event: &EventContext, callbacks: &mut __sdk::DbCallbacks<RemoteModule>) {
                 callbacks.invoke_table_row_callbacks::<Clock>("clock", &self.clock, event);
-        callbacks.invoke_table_row_callbacks::<State>("state", &self.state, event);
-        callbacks.invoke_table_row_callbacks::<StateLog>("state_log", &self.state_log, event);
+        callbacks.invoke_table_row_callbacks::<EntityState>("entity_state", &self.entity_state, event);
+        callbacks.invoke_table_row_callbacks::<EntityStateLog>("entity_state_log", &self.entity_state_log, event);
 }
 }
 
@@ -854,12 +854,12 @@ impl __sdk::SpacetimeModule for RemoteModule {
 
 fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
                 clock_table::register_table(client_cache);
-        state_table::register_table(client_cache);
-        state_log_table::register_table(client_cache);
+        entity_state_table::register_table(client_cache);
+        entity_state_log_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
                 "clock",
-        "state",
-        "state_log",
+        "entity_state",
+        "entity_state_log",
 ];
 }

@@ -12,7 +12,7 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub struct State {
+pub struct EntityState {
     pub entity_reference: u32,
     pub macro_position_reference: u16,
     pub tic: u16,
@@ -22,27 +22,27 @@ pub struct State {
 }
 
 
-impl __sdk::InModule for State {
+impl __sdk::InModule for EntityState {
     type Module = super::RemoteModule;
 }
 
 
-/// Column accessor struct for the table `State`.
+/// Column accessor struct for the table `EntityState`.
 ///
 /// Provides typed access to columns for query building.
-pub struct StateCols {
-    pub entity_reference: __sdk::__query_builder::Col<State, u32>,
-    pub macro_position_reference: __sdk::__query_builder::Col<State, u16>,
-    pub tic: __sdk::__query_builder::Col<State, u16>,
-    pub definition_reference: __sdk::__query_builder::Col<State, u32>,
-    pub position_reference: __sdk::__query_builder::Col<State, u32>,
-    pub data: __sdk::__query_builder::Col<State, u8>,
+pub struct EntityStateCols {
+    pub entity_reference: __sdk::__query_builder::Col<EntityState, u32>,
+    pub macro_position_reference: __sdk::__query_builder::Col<EntityState, u16>,
+    pub tic: __sdk::__query_builder::Col<EntityState, u16>,
+    pub definition_reference: __sdk::__query_builder::Col<EntityState, u32>,
+    pub position_reference: __sdk::__query_builder::Col<EntityState, u32>,
+    pub data: __sdk::__query_builder::Col<EntityState, u8>,
 }
 
-impl __sdk::__query_builder::HasCols for State {
-    type Cols = StateCols;
+impl __sdk::__query_builder::HasCols for EntityState {
+    type Cols = EntityStateCols;
     fn cols(table_name: &'static str) -> Self::Cols {
-        StateCols {
+        EntityStateCols {
             entity_reference: __sdk::__query_builder::Col::new(table_name, "entity_reference"),
             macro_position_reference: __sdk::__query_builder::Col::new(table_name, "macro_position_reference"),
             tic: __sdk::__query_builder::Col::new(table_name, "tic"),
@@ -54,18 +54,18 @@ impl __sdk::__query_builder::HasCols for State {
     }
 }
 
-/// Indexed column accessor struct for the table `State`.
+/// Indexed column accessor struct for the table `EntityState`.
 ///
 /// Provides typed access to indexed columns for query building.
-pub struct StateIxCols {
-    pub entity_reference: __sdk::__query_builder::IxCol<State, u32>,
-    pub macro_position_reference: __sdk::__query_builder::IxCol<State, u16>,
+pub struct EntityStateIxCols {
+    pub entity_reference: __sdk::__query_builder::IxCol<EntityState, u32>,
+    pub macro_position_reference: __sdk::__query_builder::IxCol<EntityState, u16>,
 }
 
-impl __sdk::__query_builder::HasIxCols for State {
-    type IxCols = StateIxCols;
+impl __sdk::__query_builder::HasIxCols for EntityState {
+    type IxCols = EntityStateIxCols;
     fn ix_cols(table_name: &'static str) -> Self::IxCols {
-        StateIxCols {
+        EntityStateIxCols {
             entity_reference: __sdk::__query_builder::IxCol::new(table_name, "entity_reference"),
             macro_position_reference: __sdk::__query_builder::IxCol::new(table_name, "macro_position_reference"),
 
@@ -73,5 +73,5 @@ impl __sdk::__query_builder::HasIxCols for State {
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for State {}
+impl __sdk::__query_builder::CanBeLookupTable for EntityState {}
 

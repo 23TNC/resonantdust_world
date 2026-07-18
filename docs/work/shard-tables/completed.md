@@ -32,3 +32,22 @@ order, after the fixed composition columns) + `claim` (`Default::default()`) + `
 **Remaining in P1:** rename `tick_pipeline!` → `entity_tables!` (+ `state`→`entity_state`); split
 `position_reference` → `macro`/`micro` first-class columns; author `dense_entity_tables!` /
 `sparse_entity_tables!` / `overlay_tables!` siblings.
+
+## P1 (step 2) · Rename `tick_pipeline!` → `entity_tables!`, `state` → `entity_state`
+
+Mechanical rename to the target names (fixed literals — the accessor can't be a metavariable, P0
+caveat). `state`/`state_log` tables + `State`/`StateLog` structs → `entity_state`/`entity_state_log` +
+`EntityState`/`EntityStateLog`; `TargetState` kept. Swept: `shared/codec/pipeline.rs`, the 3 modules
+(invocation + `tile`/`thing` manual constructions), `worker` (`entity_state_log` subs + accessors +
+traits), `edge` (binding accessors/types + `SELECT * FROM entity_state` subs — **surgical**, preserving
+axum `State` and the wire `ServerMsg::State`), and regenerated **both** binding sets (edge + st).
+
+**The client wire is unchanged** — `ServerMsg::State` is a protocol frame, not the DB table, so
+core/wasm/pixijs need no change.
+
+**Verified:** codec + `data_shard`/`tile`/`thing` build (bindings cleanly renamed — old `state_*.rs`
+deleted, new `entity_state_*.rs` written); worker/orchestrator/master `check`; edge builds. Reset-
+published the 3 modules (a rename is an incompatible migration) + **rebuilt the sim binaries** (a stale
+binary subscribing to the vanished `state_log` panics — caught + fixed). Runtime: a `PLACE` composed a
+mover into `entity_state` at the target position ("composed component").
+

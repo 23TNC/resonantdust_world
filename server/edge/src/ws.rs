@@ -27,14 +27,14 @@ use spacetimedb_sdk::{DbContext, Table as _, TableWithPrimaryKey as _};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::bindings;
-use crate::bindings::data_shard::state_table::StateTableAccess as _;
+use crate::bindings::data_shard::entity_state_table::EntityStateTableAccess as _;
 use crate::bindings::event_shard::event_table::EventTableAccess as _;
 use crate::bindings::thing::cold_thing_table::ColdThingTableAccess as _;
 use crate::bindings::thing::seed as _; // reducer trait → thing.reducers().seed
-use crate::bindings::thing::state_table::StateTableAccess as _; // cold overlay `state`
+use crate::bindings::thing::entity_state_table::EntityStateTableAccess as _; // cold overlay `state`
 use crate::bindings::tile::cold_tile_table::ColdTileTableAccess as _;
 use crate::bindings::tile::seed as _; // reducer trait → tile.reducers().seed
-use crate::bindings::tile::state_table::StateTableAccess as _; // cold overlay `state`
+use crate::bindings::tile::entity_state_table::EntityStateTableAccess as _; // cold overlay `state`
 use crate::bindings::event_shard::queue as _; // reducer trait → `reducers().queue_then`
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
 use crate::connections::{
@@ -248,11 +248,11 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
 
     if let Some(d) = &data {
         let o = out_tx.clone();
-        d.db().state().on_insert(move |_ctx, row| send(&o, state_frame(row)));
+        d.db().entity_state().on_insert(move |_ctx, row| send(&o, state_frame(row)));
         let o = out_tx.clone();
-        d.db().state().on_update(move |_ctx, _old, row| send(&o, state_frame(row)));
+        d.db().entity_state().on_update(move |_ctx, _old, row| send(&o, state_frame(row)));
         let o = out_tx.clone();
-        d.db().state().on_delete(move |_ctx, row| {
+        d.db().entity_state().on_delete(move |_ctx, row| {
             send(
                 &o,
                 ServerMsg::StateGone {
@@ -295,15 +295,15 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         let o = out_tx.clone();
         t.db().cold_tile().on_update(move |_ctx, _old, row| send(&o, cold_tile_frame(row)));
         // The cold overlay: a per-cell mutation in the tile shard's `state` table.
-        let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::tile::State, removed: bool| {
+        let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::tile::EntityState, removed: bool| {
             send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, row.position_reference, row.definition_reference, row.data, row.tic, removed))
         };
         let o = out_tx.clone();
-        t.db().state().on_insert(move |_ctx, row| s(&o, row, false));
+        t.db().entity_state().on_insert(move |_ctx, row| s(&o, row, false));
         let o = out_tx.clone();
-        t.db().state().on_update(move |_ctx, _old, row| s(&o, row, false));
+        t.db().entity_state().on_update(move |_ctx, _old, row| s(&o, row, false));
         let o = out_tx.clone();
-        t.db().state().on_delete(move |_ctx, row| s(&o, row, true));
+        t.db().entity_state().on_delete(move |_ctx, row| s(&o, row, true));
     }
     let (thing_url, thing_db) =
         pool.cold_endpoint(TYPE_BIOME_THING, 0).unwrap_or_else(|| (pool.cfg.uri.clone(), pool.cfg.thing_db()));
@@ -317,15 +317,15 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         let o = out_tx.clone();
         t.db().cold_thing().on_update(move |_ctx, _old, row| send(&o, cold_thing_frame(row)));
         // The cold overlay: a per-cell mutation in the thing shard's `state` table.
-        let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::thing::State, removed: bool| {
+        let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::thing::EntityState, removed: bool| {
             send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, row.position_reference, row.definition_reference, row.data, row.tic, removed))
         };
         let o = out_tx.clone();
-        t.db().state().on_insert(move |_ctx, row| s(&o, row, false));
+        t.db().entity_state().on_insert(move |_ctx, row| s(&o, row, false));
         let o = out_tx.clone();
-        t.db().state().on_update(move |_ctx, _old, row| s(&o, row, false));
+        t.db().entity_state().on_update(move |_ctx, _old, row| s(&o, row, false));
         let o = out_tx.clone();
-        t.db().state().on_delete(move |_ctx, row| s(&o, row, true));
+        t.db().entity_state().on_delete(move |_ctx, row| s(&o, row, true));
     }
 
     World { event, data, tile, thing }
@@ -367,7 +367,7 @@ fn cold_state_frame(
     ServerMsg::ColdState { zone, entity_reference, position_reference, definition_reference, data, tic, removed }
 }
 
-fn state_frame(row: &bindings::data_shard::State) -> ServerMsg {
+fn state_frame(row: &bindings::data_shard::EntityState) -> ServerMsg {
     ServerMsg::State {
         entity_reference: row.entity_reference,
         zone: row.macro_position_reference,
@@ -431,7 +431,7 @@ fn handle_subscribe(
     let state = data
         .subscription_builder()
         .on_error(|_ctx, err| tracing::warn!(%err, "state subscription error"))
-        .subscribe([format!("SELECT * FROM state WHERE macro_position_reference = {zone}")]);
+        .subscribe([format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}")]);
     let event = event
         .subscription_builder()
         .on_error(|_ctx, err| tracing::warn!(%err, "event subscription error"))
@@ -459,7 +459,7 @@ fn handle_subscribe(
             })
             .subscribe([
                 format!("SELECT * FROM cold_tile WHERE macro_position_reference = {zone}"),
-                format!("SELECT * FROM state WHERE macro_position_reference = {zone}"),
+                format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}"),
             ])
     });
     let o = out_tx.clone();
@@ -473,7 +473,7 @@ fn handle_subscribe(
             })
             .subscribe([
                 format!("SELECT * FROM cold_thing WHERE macro_position_reference = {zone}"),
-                format!("SELECT * FROM state WHERE macro_position_reference = {zone}"),
+                format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}"),
             ])
     });
     zones.insert(zone, ZoneSub { _state: state, _event: event, _tile: tile, _thing: thing });

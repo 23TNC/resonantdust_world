@@ -17,8 +17,11 @@ Design: [`README`](README.md) · [`TABLES.md`](../../TABLES.md) · [`ACTIONS.md`
 - [x] **Payload is a parameter** — `tick_pipeline!` now takes the composed payload as a macro arg,
       spliced into `TargetState`/`state_log`/`state`. Proven **byte-identical** (empty bindings diff)
       + `--keep` redeploy + a mover composes at runtime. See [`completed.md`](completed.md).
-- [ ] Rename `tick_pipeline!` → `entity_tables!`; `state`/`state_log` → `entity_state`/`entity_state_log`
-      (fixed literal names — the accessor can't be a metavariable, P0 caveat).
+- [x] **Renamed** `tick_pipeline!` → `entity_tables!`; tables/structs `state`/`state_log` →
+      `entity_state`/`entity_state_log`. Swept codec + 3 modules + worker + edge + bindings (st +
+      edge); the client wire (`ServerMsg::State`) is untouched. Runtime-verified — a mover composes into
+      `entity_state`. (Reset-publish needed — a rename is an incompatible migration; **rebuild the sim
+      binaries after**, not just check.) See [`completed.md`](completed.md).
 - [ ] Split `position_reference` → first-class `macro_position_reference` + `micro_position_reference`
       columns (the design's fixed columns; `data` stays the generic payload). Updates worker/edge/client
       to the split — a runtime-preserving (not byte-identical) step, verify **wolf still moves**.
