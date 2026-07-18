@@ -29,6 +29,14 @@ pub const PLACE: u32 = 4;
 /// Step an object one tile toward a destination, then queue the next hop. Operands: `obj`
 /// (read+write), `dest` (imm).
 pub const MOVE_TO: u32 = 5;
+/// **Generate a zone's whole baseline row** through the pipeline (the event-driven `seed`, F12).
+/// **Variable arity** (the only such verb): `INIT_ZONE cold_row type_id count item×count` — `cold_row`
+/// (write — the target), `type_id` (imm — the cold shard), `count` (imm — how many `item` words
+/// follow), then `count` `item`s (imm — the row's payload: tile = dense `kind_reference` by index,
+/// thing = `kind_pos_reference` per occupied cell). The worker builds the shard's `Vec<DenseItem>` and
+/// writes it to `entity_state_log` (`ColdBaseline` tier) + promotes. `PROMOTE INIT_ZONE …` makes it
+/// client-visible.
+pub const INIT_ZONE: u32 = 7;
 /// **Override one cold cell** through the `overlay` tier. Operands: `cold_row` (write — the target,
 /// `cold_row_reference` = `macro:16 | subtype:12 | layer:4`, spelled so grouping unions by it),
 /// `type_id` (imm — which cold shard, `TYPE_BIOME_TILE`/`TYPE_BIOME_THING`; a cold_row has no type
@@ -123,11 +131,27 @@ impl<'a> Iterator for Program<'a> {
             return None;
         }
         let action = self.words[self.pos];
-        let ar = match arity(action) {
-            Some(a) => a,
-            None => {
-                self.done = true;
-                return Some(Err(ProgramError::UnknownAction(action)));
+        // `INIT_ZONE` is the one **variable-arity** verb (F12): `cold_row type_id count item×count`, so
+        // its arity is `3 + count` (the `count` word sits at `pos + 3`). Every other verb is fixed.
+        let ar = if action == INIT_ZONE {
+            match self.words.get(self.pos + 3) {
+                Some(&count) => 3 + count as usize,
+                None => {
+                    self.done = true;
+                    return Some(Err(ProgramError::Truncated {
+                        action,
+                        want: 3,
+                        got: self.words.len() - self.pos - 1,
+                    }));
+                }
+            }
+        } else {
+            match arity(action) {
+                Some(a) => a,
+                None => {
+                    self.done = true;
+                    return Some(Err(ProgramError::UnknownAction(action)));
+                }
             }
         };
         let first = self.pos + 1;
@@ -153,6 +177,16 @@ fn collect_operands(
     let mut out = Vec::new();
     for inst in program(words) {
         let inst = inst?;
+        // INIT_ZONE is variable-arity (no fixed signature): `cold_row` (write) + `type_id`/`count`/
+        // `item×count` (all imm). Only the `cold_row` target matters to the sets.
+        if inst.action == INIT_ZONE {
+            if keep(OperandKind::Write) {
+                if let Some(cold_row) = inst.operands.first() {
+                    out.push(*cold_row);
+                }
+            }
+            continue;
+        }
         let sig = signature(inst.action).expect("parsed, so known");
         for (op, &k) in inst.operands.iter().zip(sig) {
             if keep(k) {
@@ -207,6 +241,12 @@ pub fn target_routes(words: &[u32]) -> Result<Vec<(u32, Route)>, ProgramError> {
             SET => {
                 if let [cold_row, type_id, ..] = inst.operands {
                     out.push((*cold_row, Route::ColdOverlay { type_id: *type_id as u8 }));
+                }
+            }
+            // INIT_ZONE cold_row type_id count item×count — the cold baseline verb (cold_row is Write).
+            INIT_ZONE => {
+                if let [cold_row, type_id, ..] = inst.operands {
+                    out.push((*cold_row, Route::ColdBaseline { type_id: *type_id as u8 }));
                 }
             }
             // Hot verbs: every Write/ReadWrite operand routes by its own nibble.
@@ -280,6 +320,32 @@ mod tests {
             target_routes(&p).unwrap(),
             vec![(cold_row, Route::ColdOverlay { type_id: TYPE_BIOME_TILE })]
         );
+    }
+
+    #[test]
+    fn init_zone_frames_variable_arity_and_routes_to_the_baseline() {
+        use crate::object::TYPE_BIOME_TILE;
+        let cold_row = 0x0102_0030_u32;
+        // PROMOTE  INIT_ZONE cold_row type_id count=3 [a,b,c]  — then a trailing PROMOTE_EVENT to prove
+        // the variable arity frames the *next* instruction correctly.
+        let p = vec![PROMOTE, INIT_ZONE, cold_row, TYPE_BIOME_TILE as u32, 3, 0xAA, 0xBB, 0xCC, PROMOTE_EVENT];
+        let insts: Vec<_> = program(&p).map(|r| r.unwrap()).collect();
+        assert_eq!(insts.len(), 3);
+        assert_eq!(insts[0].action, PROMOTE);
+        assert_eq!(insts[1], Instruction { action: INIT_ZONE, operands: &[cold_row, TYPE_BIOME_TILE as u32, 3, 0xAA, 0xBB, 0xCC] });
+        assert_eq!(insts[2].action, PROMOTE_EVENT); // framed correctly after the variable payload
+        assert_eq!(write_targets(&p).unwrap(), vec![cold_row]); // only cold_row, not the items
+        assert_eq!(
+            target_routes(&p).unwrap(),
+            vec![(cold_row, Route::ColdBaseline { type_id: TYPE_BIOME_TILE })]
+        );
+    }
+
+    #[test]
+    fn init_zone_truncated_before_its_count_errors() {
+        // INIT_ZONE needs at least cold_row, type_id, count — this stops before count.
+        let p = vec![INIT_ZONE, 0x11, 0x01];
+        assert!(write_targets(&p).is_err());
     }
 
     #[test]

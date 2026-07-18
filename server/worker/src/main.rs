@@ -25,10 +25,11 @@ use std::time::Duration;
 
 use spacetimedb_sdk::{DbContext, Table as _};
 
-use resonantdust_codec::action::{self, Route, MOVE_TO, PLACE, PROMOTE, SET};
+use resonantdust_codec::action::{self, Route, INIT_ZONE, MOVE_TO, PLACE, PROMOTE, SET};
 use resonantdust_codec::object::{
-    cold_row_layer_id, cold_row_macro_position, cold_row_subtype, pack_position_reference, position_macro,
-    position_micro, TYPE_BIOME_THING, TYPE_BIOME_TILE,
+    cold_row_layer_id, cold_row_macro_position, cold_row_subtype, kind_pos_ref_data,
+    kind_pos_ref_kind_reference, kind_pos_ref_tile, pack_position_reference, position_macro, position_micro,
+    TYPE_BIOME_THING, TYPE_BIOME_TILE,
 };
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED};
@@ -37,9 +38,10 @@ use resonantdust_st_bindings::{data_shard, event_shard, index, thing, tile};
 use data_shard::{write as _, EntityStateLogTableAccess as _};
 use event_shard::{complete as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
-// P4: the worker also composes cold **overlay** rows (`SET`) — read `overlay_log`, write `write_overlay`.
-use tile::{write_overlay as _, OverlayLogTableAccess as _};
-use thing::{write_overlay as _, OverlayLogTableAccess as _};
+// P4: the worker also composes cold rows — the **baseline** (`INIT_ZONE` → `write`) and the **overlay**
+// (`SET` → `write_overlay`, reading the `overlay_log` base).
+use tile::{write as _, write_overlay as _, OverlayLogTableAccess as _};
+use thing::{write as _, write_overlay as _, OverlayLogTableAccess as _};
 // P3: the cold shards (tile/thing) are now `cold_row_reference`-addressed (dense/sparse `entity_state`
 // + a sparse `overlay`) — a cold cell no longer has a per-entity `entity_state_log` slot the worker
 // composes. Cold writes go through the shards' direct `seed`/`set_*`/`fold` reducers for now; the
@@ -393,6 +395,61 @@ async fn main() {
                 }
             }
 
+            // ── COMPOSE + WRITE (cold baseline) ── each `INIT_ZONE` builds a whole baseline row from its
+            // event payload (absolute — no base read), interpreted per shard, then `write` + `PROMOTE`
+            // (the event-driven `seed`, F12). `PACK` (fold overlay → baseline) is a later increment.
+            let cold_inits = collect_cold_baseline(&events);
+            let mut tile_base: Vec<tile::TargetState> = Vec::new();
+            let mut thing_base: Vec<thing::TargetState> = Vec::new();
+            for (&cold_row, (items, promoted)) in &cold_inits {
+                match route_of.get(&cold_row) {
+                    Some(Route::ColdBaseline { type_id }) if *type_id == TYPE_BIOME_TILE => {
+                        // Dense: each item word is a `kind_reference`, indexed by position.
+                        let dense = items.iter().map(|&k| tile::DenseItem { kind_reference: k as u16 }).collect();
+                        tile_base.push(tile::TargetState {
+                            cold_row_reference: cold_row,
+                            macro_position_reference: cold_row_macro_position(cold_row),
+                            subtype_id: cold_row_subtype(cold_row),
+                            layer_id: cold_row_layer_id(cold_row),
+                            items: dense,
+                            promote: *promoted,
+                        });
+                    }
+                    Some(Route::ColdBaseline { type_id }) if *type_id == TYPE_BIOME_THING => {
+                        // Sparse: each item word is a `kind_pos_reference` (kind:16 | tile:8 | data:8).
+                        let sparse = items
+                            .iter()
+                            .map(|&e| thing::DenseItem {
+                                tile_reference: kind_pos_ref_tile(e),
+                                kind_reference: kind_pos_ref_kind_reference(e),
+                                data: kind_pos_ref_data(e),
+                            })
+                            .collect();
+                        thing_base.push(thing::TargetState {
+                            cold_row_reference: cold_row,
+                            macro_position_reference: cold_row_macro_position(cold_row),
+                            subtype_id: cold_row_subtype(cold_row),
+                            layer_id: cold_row_layer_id(cold_row),
+                            items: sparse,
+                            promote: *promoted,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            if !tile_base.is_empty() {
+                if let Err(err) = tile.reducers().write(self_ref, t, tile_base) {
+                    tracing::warn!(%err, tic = t, shard = "tile", "baseline write failed — will retry next pass");
+                    continue;
+                }
+            }
+            if !thing_base.is_empty() {
+                if let Err(err) = thing.reducers().write(self_ref, t, thing_base) {
+                    tracing::warn!(%err, tic = t, shard = "thing", "baseline write failed — will retry next pass");
+                    continue;
+                }
+            }
+
             // ── COMPLETE ── each event, with the zones its targets ended up in (a hot target's zone from
             // its composed position; a cold_row's from its address).
             for (event_reference, actions) in &events {
@@ -417,7 +474,8 @@ async fn main() {
                 master,
                 events = events.len(),
                 hot = scratch.len(),
-                cold_rows = cold_sets.len(),
+                cold_overlay = cold_sets.len(),
+                cold_baseline = cold_inits.len(),
                 "composed component"
             );
         }
@@ -503,6 +561,38 @@ fn collect_cold_overlay(events: &[(u32, Vec<u32>)]) -> HashMap<u32, (Vec<ColdCel
                         if pending_promote {
                             entry.1 = true;
                         }
+                    }
+                }
+                _ => {}
+            }
+            pending_promote = false;
+        }
+    }
+    out
+}
+
+/// Group this tic's `INIT_ZONE` baseline payloads per cold_row target (+ promote bit). The raw `item`
+/// words are the row's whole payload — interpreted per shard at write (tile: dense `kind_reference` by
+/// index; thing: `kind_pos_reference`). `INIT_ZONE` is absolute (no base read), like a whole-row `SET`.
+fn collect_cold_baseline(events: &[(u32, Vec<u32>)]) -> HashMap<u32, (Vec<u32>, bool)> {
+    let mut out: HashMap<u32, (Vec<u32>, bool)> = HashMap::new();
+    for (_, actions) in events {
+        let mut pending_promote = false;
+        for inst in action::program(actions) {
+            let inst = match inst {
+                Ok(i) => i,
+                Err(_) => break,
+            };
+            match inst.action {
+                PROMOTE => {
+                    pending_promote = true;
+                    continue;
+                }
+                // INIT_ZONE cold_row type_id count item×count — the items are operands[3..].
+                INIT_ZONE => {
+                    if let [cold_row, _type_id, _count, items @ ..] = inst.operands {
+                        // Last write wins if a row is re-inited in one tic (absolute payload).
+                        out.insert(*cold_row, (items.to_vec(), pending_promote));
                     }
                 }
                 _ => {}

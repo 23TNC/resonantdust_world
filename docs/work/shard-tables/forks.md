@@ -94,6 +94,35 @@ is confirmed edge-coupled — worker-side is a later optimization. Revisit when 
 
 ---
 
+## F12 · `init_zone` is an **event-carried variable-arity** action (2026-07-18)
+
+**Context.** `init_zone` replaces the direct `seed` — the worker must compose+promote a zone's whole
+baseline **row** so it lands via a `PROMOTE` (uniformity; generation through the pipeline). Where does
+the row payload come from, given the action stream is fixed-arity?
+
+**Options.** (a) **event-carried** — the edge worldgens (as today) and packs the row's `Vec<u32>` into
+`init_zone`; the worker writes it + promotes (simple worker, but a **variable-arity** action).
+(b) **worker-side worldgen** — tiny `init_zone cold_row`, the worker regenerates (needs the DSL content
+stack the edge owns — `server/edge/src/worldgen.rs` + corpus load/hot-reload — a heavy new worker dep).
+(c) **seed-writes-log + init_zone-promotes** — `seed` keeps edge-side worldgen but writes
+`entity_state_log` (unpromoted); a tiny `init_zone` makes the worker read that base + write(promote).
+Keeps a (thinner) `seed`; splits generation across two steps + a two-slot dance.
+
+**Decision: (a).** Worldgen is confirmed edge-coupled, so (b) is a large dep; (c) doesn't retire `seed`
+and needs the same worker baseline-compose *plus* a base-read dance. (a) retires `seed` cleanly and the
+worker path is simplest (items straight from the event, no base read). Cost: a **variable-arity**
+`init_zone` (`INIT_ZONE cold_row type_id count item×count`) — a contained special-case in the codec
+framer + the `write_targets`/`target_routes` derivations (the only variable-arity verb; the rest stay
+fixed). The worker builds per-shard `DenseItem`s from the `item` words (tile: dense `kind_reference` by
+index; thing: `kind_pos_reference`), writes the whole baseline row + `PROMOTE`.
+
+**Note on P6.** Retiring the `on_applied` band-aid is *separate* — a subscription snapshot delivers
+pre-existing rows with no `on_insert` regardless of how they were written, so the band-aid likely stays
+for pre-seeded zones; `init_zone` gives promote-visibility for *live* seeds + uniformity, not (by
+itself) band-aid removal. Re-assess P6 empirically after `init_zone`.
+
+---
+
 ## F7 · The four table macros are **parallel siblings**, not a shared inner macro (2026-07-18)
 
 **Context.** `entity_tables!`, `dense_entity_tables!`, `sparse_entity_tables!`, `overlay_tables!` share
