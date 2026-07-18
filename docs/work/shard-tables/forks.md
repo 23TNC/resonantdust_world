@@ -57,6 +57,43 @@ now iterating `entity_state` instead of `cold_tile`.
 
 ---
 
+## F11 · P4 cold composition: **spelled `cold_row` target + action-derived routing** (2026-07-18)
+
+**Context (the P4 crux).** Cold composition must group by the **cold ROW** (concurrent edits to
+different cells of one row must land on one worker, or their `write_overlay`s race and clobber each
+other). But a `cold_row_reference` (`macro:16 | subtype:12 | layer:4`) has **no `type_id` nibble** —
+`shard_of(target)` (top-nibble routing, what hot uses) can't tell tile from thing. And a cold **row**
+target isn't a spelled operand today (the old per-cell `SET` spelled a `cold_entity_reference` whose
+nibble *did* route).
+
+**Options.** (A) **Derive** the cold-row target from operands (position+def) at grouping — breaks the
+action model's "every written target is a **literal** operand" invariant (adds per-action
+interpretation to the grouper). (B) **Spell** the `cold_row_reference` as the literal Write operand and
+carry the shard's `type_id` as a second operand; **grouping is unchanged** (unions by the literal
+cold_row), only **routing** (`claim`/worker shard+tier selection) becomes action-derived via a new
+`codec::target_routes`.
+
+**Decision: (B).** It preserves the "targets are literal" invariant the whole grouper/union-find rests
+on — only `shard_of` is replaced (for cold targets) by a `Route` read off the action. `write_targets`
+still returns the cold_row (grouping works untouched); `target_routes` pairs each target with
+`Hot | ColdBaseline{type_id} | ColdOverlay{type_id}`. `SET` is redefined for the row model:
+`SET cold_row(Write) type_id tile_reference kind_reference data` (arity 5) → the **overlay** tier.
+Nothing live emits `SET`, so the redefinition is free.
+
+**First increment = `SET`→overlay** (single cell, fixed arity, no worldgen) — it exercises the entire
+cold-row-through-events mechanism (grouping by cold_row · `claim_overlay` · worker composes the overlay
+row · `write_overlay` + `PROMOTE` · edge relay). `init_zone`/`PACK` (baseline tier) build on the same
+`Route` afterward.
+
+**Deferred sub-fork (F12, decide at `init_zone`).** init_zone's payload is a whole variable-length row
+(256 tiles). Fixed-arity stream vs the payload: (a) **event-carried** — the edge worldgens (as today)
+and packs the `Vec` into a length-prefixed variable-arity `init_zone` (worldgen stays edge-side, large
+event); (b) **worker-side** — small event, the worker regenerates (needs the DSL content stack the
+edge currently owns — `server/edge/src/worldgen.rs` is edge-coupled). **Leaning (a)** now that worldgen
+is confirmed edge-coupled — worker-side is a later optimization. Revisit when building `init_zone`.
+
+---
+
 ## F7 · The four table macros are **parallel siblings**, not a shared inner macro (2026-07-18)
 
 **Context.** `entity_tables!`, `dense_entity_tables!`, `sparse_entity_tables!`, `overlay_tables!` share

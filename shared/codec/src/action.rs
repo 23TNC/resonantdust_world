@@ -29,11 +29,13 @@ pub const PLACE: u32 = 4;
 /// Step an object one tile toward a destination, then queue the next hop. Operands: `obj`
 /// (read+write), `dest` (imm).
 pub const MOVE_TO: u32 = 5;
-/// Set an object's **full payload absolutely** — `definition`, `position`, `data` all at once (the
-/// composed base is irrelevant; `SET` overwrites). Operands: `obj` (write), `def` (imm), `position`
-/// (imm), `data` (imm, low byte used). The cold-cell mutation verb: the `obj` is the cell's
-/// deterministic [`crate::object::cold_entity_reference`], so the pipeline groups/claims/composes it
-/// with no mint. (`PLACE` sets only position; a cell change also sets the kind, hence `def`.)
+/// **Override one cold cell** through the `overlay` tier. Operands: `cold_row` (write — the target,
+/// `cold_row_reference` = `macro:16 | subtype:12 | layer:4`, spelled so grouping unions by it),
+/// `type_id` (imm — which cold shard, `TYPE_BIOME_TILE`/`TYPE_BIOME_THING`; a cold_row has no type
+/// nibble, so routing reads this — see [`target_routes`]), `tile_reference` (imm — the cell),
+/// `kind_reference` (imm — the new kind, `0` = clear), `data` (imm — thing rotation/count; tiles
+/// ignore). Concurrent `SET`s to one row **group** (shared `cold_row` target) so one worker composes
+/// the whole overlay row — they can't race. Replaces the old per-cell `cold_entity_reference` SET.
 pub const SET: u32 = 6;
 
 /// What an operand is, for deriving the write/read sets. Only `entity_reference` operands matter to
@@ -71,7 +73,7 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         CREATE => &[Imm, Imm],       // def, position — the write is the minted id, not an operand
         PLACE => &[Write, Imm],      // obj, position
         MOVE_TO => &[ReadWrite, Imm], // obj (reads its own position, writes the next), dest
-        SET => &[Write, Imm, Imm, Imm], // obj, def, position, data — absolute full payload
+        SET => &[Write, Imm, Imm, Imm, Imm], // cold_row, type_id, tile_reference, kind_reference, data
         _ => return None,
     })
 }
@@ -177,6 +179,50 @@ pub fn asks_promote_event(words: &[u32]) -> bool {
     program(words).any(|i| matches!(i, Ok(Instruction { action: PROMOTE_EVENT, .. })))
 }
 
+/// Where a write target routes to compose — the shard **and tier**. Hot targets (pawns, …) route by
+/// the target's own `server_reference` nibble (the caller's `shard_of`); a **cold** target is a
+/// `cold_row_reference`, which carries no type nibble, so its action names the shard's `type_id` and
+/// whether it hits the baseline (`entity_state`, via `claim`/`write`) or the `overlay` tier (via
+/// `claim_overlay`/`write_overlay`). See [`crate::action`] head + `docs/work/shard-tables/` (F11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// Hot `data_shard` (or any entity-addressed shard) — route by the target's own nibble.
+    Hot,
+    /// Cold baseline (`entity_state`) on the shard with this `type_id` — `init_zone`/`PACK`.
+    ColdBaseline { type_id: u8 },
+    /// Cold override (`overlay`) on the shard with this `type_id` — `SET`.
+    ColdOverlay { type_id: u8 },
+}
+
+/// Each write target paired with its [`Route`], in program order — the routing companion to
+/// [`write_targets`] (same targets, same order). The grouper unions by the bare targets
+/// (`write_targets`); the claimer + worker use this to pick the shard **and** the `claim`/`write` vs
+/// `claim_overlay`/`write_overlay` reducer per target. `Err` if the program doesn't parse.
+pub fn target_routes(words: &[u32]) -> Result<Vec<(u32, Route)>, ProgramError> {
+    let mut out = Vec::new();
+    for inst in program(words) {
+        let inst = inst?;
+        match inst.action {
+            // SET cold_row type_id tile kind data — the cold-cell overlay verb (cold_row is Write).
+            SET => {
+                if let [cold_row, type_id, ..] = inst.operands {
+                    out.push((*cold_row, Route::ColdOverlay { type_id: *type_id as u8 }));
+                }
+            }
+            // Hot verbs: every Write/ReadWrite operand routes by its own nibble.
+            _ => {
+                let sig = signature(inst.action).expect("parsed, so known");
+                for (op, &k) in inst.operands.iter().zip(sig) {
+                    if k.is_write() {
+                        out.push((*op, Route::Hot));
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,15 +264,29 @@ mod tests {
     }
 
     #[test]
-    fn set_frames_and_its_target_is_in_the_write_set() {
-        // SET obj def pos data — arity 4; obj is the (only) write target, def/pos/data are Imm.
-        let p = vec![SET, 0x0100_0088, 0x1006_0040, 0x0000_8810, 0x00];
+    fn set_frames_a_cold_row_target_routed_to_the_overlay() {
+        use crate::object::TYPE_BIOME_TILE;
+        // SET cold_row type_id tile kind data — arity 5; cold_row is the (only) write target.
+        let cold_row = 0x0102_0030_u32; // macro 0x0102, subtype/layer in the low half
+        let p = vec![SET, cold_row, TYPE_BIOME_TILE as u32, 0x40, 0x0088, 0x00];
         let insts: Vec<_> = program(&p).map(|r| r.unwrap()).collect();
         assert_eq!(insts.len(), 1);
-        assert_eq!(insts[0], Instruction { action: SET, operands: &[0x0100_0088, 0x1006_0040, 0x0000_8810, 0x00] });
-        assert_eq!(write_targets(&p).unwrap(), vec![0x0100_0088]);
+        assert_eq!(arity(SET), Some(5));
+        // grouping sees the spelled cold_row; the type_id/tile/kind/data are Imm.
+        assert_eq!(write_targets(&p).unwrap(), vec![cold_row]);
         assert_eq!(read_targets(&p).unwrap(), Vec::<u32>::new());
-        assert_eq!(arity(SET), Some(4));
+        // routing reads the action → the overlay tier on the tile shard.
+        assert_eq!(
+            target_routes(&p).unwrap(),
+            vec![(cold_row, Route::ColdOverlay { type_id: TYPE_BIOME_TILE })]
+        );
+    }
+
+    #[test]
+    fn target_routes_marks_hot_verbs_hot() {
+        // PROMOTE PLACE obj pos  MOVE_TO obj dest  PROMOTE_EVENT — both writes are hot (route by nibble).
+        let p = sample(0x11, 0x22, 0x33);
+        assert_eq!(target_routes(&p).unwrap(), vec![(0x11, Route::Hot), (0x11, Route::Hot)]);
     }
 
     #[test]

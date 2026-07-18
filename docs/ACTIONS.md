@@ -81,9 +81,16 @@ slot is grouped/claimed) or **read** (in the read set → the worker blocks on i
 | `CREATE` | 3 | 2 | `def:definition_reference` (imm) · `position:position_reference` (imm) → **mints** a new entity. The written target is the *minted* id, not an operand. |
 | `PLACE` | 4 | 2 | `obj:entity_reference` (**write**) · `position:position_reference` (imm) — set `obj`'s position absolutely. |
 | `MOVE_TO` | 5 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — step `obj` one tile toward `dest`, then queue the next hop. |
-| `SET` | 6 | 4 | `obj` (**write**) · `def:definition_reference` (imm) · `position` (imm) · `data` (imm) — set `obj`'s **full payload absolutely**. The cell-override verb (the cell within a biome-row; `PLACE` sets only position, a cell change also sets kind → `def`). _(As-built `SET` targets a per-cell `cold_entity_reference`; under the `overlay` design it targets the biome-row + a `tile_reference` operand — to reconcile at build.)_ |
-| `init_zone` | *tbd* | *tbd* | build a zone's **whole baseline row** in scratch (worldgen) and write it to `entity_state_log`. `promote init_zone macro` projects it visible. The event-driven replacement for the direct `seed`. |
+| `SET` | 6 | 5 | `cold_row:cold_row_reference` (**write**) · `type_id` (imm) · `tile_reference` (imm) · `kind_reference` (imm, `0`=clear) · `data` (imm) — **override one cold cell** through the `overlay` tier. The `cold_row` is spelled (so concurrent `SET`s to one row **group** — see routing below) and `type_id` names the shard (a `cold_row_reference` carries no type nibble). Replaces the old per-cell `cold_entity_reference` SET. |
+| `init_zone` | *tbd* | *tbd* | build a zone's **whole baseline row** in scratch (worldgen) and write it to `entity_state_log` (`ColdBaseline` tier). `promote init_zone` projects it visible. The event-driven replacement for the direct `seed`. Payload is a whole row (F12 — event-carried `Vec` vs worker-side worldgen, decided at build). |
 | `PACK` | *tbd* | *tbd* | fold a zone's settled `overlay` cells into its `entity_state_log` row (the GC write-back). Operands settle when built — likely the target `cold_row_reference` (**write**); the worker reads the row's settled `overlay` cells and composes the new baseline. GC queues `promote pack …` — the smart, atomic `PROMOTE` projects the folded `entity_state` **and** cleared `overlay` in one commit. |
+
+**Cold routing (F11).** Hot targets (pawns) route to their shard by their own `server_reference`
+nibble. A **cold** target is a `cold_row_reference` with no type nibble, so grouping still unions by the
+spelled `cold_row` (`write_targets`) but **routing** reads the action: `codec::target_routes` pairs each
+target with `Hot | ColdBaseline{type_id} | ColdOverlay{type_id}` — the claimer + worker pick the shard
+**and** the `claim`/`write` (baseline) vs `claim_overlay`/`write_overlay` (overlay) reducer from it.
+`SET`→`ColdOverlay`; `init_zone`/`PACK`→`ColdBaseline`.
 
 **`CREATE`.** A spawn insert isn't idempotent by value, so replay must not double-spawn. **Resolved:**
 a small **spawn-log** on the data shard, keyed by `(event_reference, index) → minted entity_reference`
