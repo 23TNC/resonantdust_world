@@ -25,8 +25,11 @@ use std::time::Duration;
 
 use spacetimedb_sdk::{DbContext, Table as _};
 
-use resonantdust_codec::action::{self, MOVE_TO, PLACE, PROMOTE, SET};
-use resonantdust_codec::object::{pack_position_reference, position_macro, position_micro, TYPE_BIOME_THING, TYPE_BIOME_TILE};
+use resonantdust_codec::action::{self, Route, MOVE_TO, PLACE, PROMOTE, SET};
+use resonantdust_codec::object::{
+    cold_row_layer_id, cold_row_macro_position, cold_row_subtype, pack_position_reference, position_macro,
+    position_micro, TYPE_BIOME_THING, TYPE_BIOME_TILE,
+};
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED};
 use resonantdust_codec::tic::{tic_after, tic_before};
@@ -34,6 +37,9 @@ use resonantdust_st_bindings::{data_shard, event_shard, index, thing, tile};
 use data_shard::{write as _, EntityStateLogTableAccess as _};
 use event_shard::{complete as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
+// P4: the worker also composes cold **overlay** rows (`SET`) — read `overlay_log`, write `write_overlay`.
+use tile::{write_overlay as _, OverlayLogTableAccess as _};
+use thing::{write_overlay as _, OverlayLogTableAccess as _};
 // P3: the cold shards (tile/thing) are now `cold_row_reference`-addressed (dense/sparse `entity_state`
 // + a sparse `overlay`) — a cold cell no longer has a per-entity `entity_state_log` slot the worker
 // composes. Cold writes go through the shards' direct `seed`/`set_*`/`fold` reducers for now; the
@@ -155,10 +161,13 @@ async fn main() {
             "SELECT * FROM entity_state_log WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"
         )]);
 
-    // ── cold shards: my cold slots to write + the bases I read (same overlay shape as data) ──────
-    let sub_sql = format!(
-        "SELECT * FROM entity_state_log WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"
-    );
+    // ── cold shards: my cold slots to write + the bases I read. P4: the baseline
+    // (`entity_state_log`, `init_zone`/`PACK`) *and* the override (`overlay_log`, `SET`) tiers — the
+    // worker composes cold ROWS on both (routed by `codec::target_routes`). ──────
+    let cold_sql: Vec<String> = ["entity_state_log", "overlay_log"]
+        .iter()
+        .map(|t| format!("SELECT * FROM {t} WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"))
+        .collect();
     let (tx_t, rx_t) = std::sync::mpsc::channel::<()>();
     let tile = tile::DbConnection::builder()
         .with_uri(&uri)
@@ -168,7 +177,7 @@ async fn main() {
         .build()
         .expect("build tile shard connection");
     tile.run_threaded();
-    tile.subscription_builder().on_applied(move |_| { let _ = tx_t.send(()); }).subscribe([sub_sql.clone()]);
+    tile.subscription_builder().on_applied(move |_| { let _ = tx_t.send(()); }).subscribe(cold_sql.clone());
 
     let (tx_h, rx_h) = std::sync::mpsc::channel::<()>();
     let thing = thing::DbConnection::builder()
@@ -179,7 +188,7 @@ async fn main() {
         .build()
         .expect("build thing shard connection");
     thing.run_threaded();
-    thing.subscription_builder().on_applied(move |_| { let _ = tx_h.send(()); }).subscribe([sub_sql.clone()]);
+    thing.subscription_builder().on_applied(move |_| { let _ = tx_h.send(()); }).subscribe(cold_sql.clone());
 
     for (rx, what) in [
         (&rx_i, "index"),
@@ -221,10 +230,12 @@ async fn main() {
             let mut events = per_tic.remove(&t).unwrap();
             events.sort_by_key(|(r, _)| *r); // ascending event_reference = composition order
 
-            // The entities this tic writes (union of every event's write targets) — each has a claimed
-            // slot. Read targets ⊆ write targets under the current verbs, so blocking on these covers
-            // the read block too.
+            // The entities this tic writes (union of every event's write targets) + how each routes
+            // (F11): hot (`data_shard`, composed via `apply`) vs cold **overlay** (`SET`, composed as a
+            // whole row below). Read targets ⊆ write targets under the current verbs, so blocking on the
+            // write targets covers the read block too.
             let mut targets: Vec<u32> = Vec::new();
+            let mut route_of: HashMap<u32, Route> = HashMap::new();
             for (_, actions) in &events {
                 if let Ok(w) = action::write_targets(actions) {
                     for e in w {
@@ -233,27 +244,68 @@ async fn main() {
                         }
                     }
                 }
+                if let Ok(rs) = action::target_routes(actions) {
+                    for (tgt, r) in rs {
+                        route_of.entry(tgt).or_insert(r);
+                    }
+                }
+            }
+            let hot_targets: Vec<u32> = targets
+                .iter()
+                .copied()
+                .filter(|e| !matches!(route_of.get(e), Some(Route::ColdOverlay { .. }) | Some(Route::ColdBaseline { .. })))
+                .collect();
+            // The cold overlay (`SET`) cells this tic writes, grouped per cold_row (+ its promote bit).
+            let cold_sets = collect_cold_overlay(&events);
+
+            // A cold_row's latest `overlay_log` strictly before `tic`, on `$conn` (tile/thing `OverlayLog`
+            // are distinct types, so this inlines per call rather than routing through a shared fn).
+            macro_rules! overlay_latest {
+                ($conn:expr, $row:expr) => {
+                    $conn
+                        .db()
+                        .overlay_log()
+                        .iter()
+                        .filter(|r| r.cold_row_reference == $row && tic_before(r.tic, t))
+                        .reduce(|a, b| if tic_after(b.tic, a.tic) { b } else { a })
+                };
             }
 
-            // ── BLOCK ── any target whose base (`< tic`) is still dirty ⇒ defer the whole tic. Each
-            // target is read from *its own* shard (a cold cell's base lives in the tile/thing overlay).
+            // ── BLOCK ── any target whose base (`< tic`) is still dirty ⇒ defer the whole tic. Hot bases
+            // live in `data_shard.entity_state_log`; a cold overlay base in the shard's `overlay_log`.
             let mut blocked_on = None;
-            for &e in &targets {
-                if let Some(base) = base_row(&data, e, t) {
-                    if base.dirty {
-                        blocked_on = Some(e);
+            for &e in &hot_targets {
+                if base_row(&data, e, t).map(|b| b.dirty).unwrap_or(false) {
+                    blocked_on = Some(e);
+                    break;
+                }
+            }
+            if blocked_on.is_none() {
+                for cold_row in cold_sets.keys() {
+                    let dirty = match route_of.get(cold_row) {
+                        Some(Route::ColdOverlay { type_id }) if *type_id == TYPE_BIOME_TILE => {
+                            overlay_latest!(tile, *cold_row).map(|r| r.dirty).unwrap_or(false)
+                        }
+                        Some(Route::ColdOverlay { type_id }) if *type_id == TYPE_BIOME_THING => {
+                            overlay_latest!(thing, *cold_row).map(|r| r.dirty).unwrap_or(false)
+                        }
+                        _ => false,
+                    };
+                    if dirty {
+                        blocked_on = Some(*cold_row);
                         break;
                     }
                 }
             }
             if let Some(e) = blocked_on {
-                tracing::debug!(tic = t, entity = format!("{e:#010x}"), "base dirty — deferring tic");
+                tracing::debug!(tic = t, target = format!("{e:#010x}"), "base dirty — deferring tic");
                 continue;
             }
 
-            // ── COMPOSE ── scratch from each target's base, then apply every event in order.
+            // ── COMPOSE (hot) ── scratch from each hot target's base, then apply every event in order.
+            // `apply` skips `SET` (a cold verb) — the overlay is composed below.
             let mut scratch: HashMap<u32, Payload> = HashMap::new();
-            for &e in &targets {
+            for &e in &hot_targets {
                 let base = base_row(&data, e, t)
                     .map(|r| Payload {
                         definition_reference: r.definition_reference,
@@ -268,28 +320,18 @@ async fn main() {
                 apply(actions, &mut scratch, &mut promote);
             }
 
-            // ── WRITE ── absolute finals, routed to each target's shard by its `server_reference`. A
-            // component may span shards (an event that both moves a pawn and sets a tile); each shard
-            // gets one `write` of its own targets. A cross-shard partial write just retries next pass
-            // (`write` is idempotent — it skips already-clean slots).
-            let mut data_w: Vec<data_shard::TargetState> = Vec::new();
-            for &e in &targets {
-                let p = scratch[&e];
-                let promote = promote.contains(&e);
-                match shard_of(e) {
-                    Shard::Data => data_w.push(data_shard::TargetState {
-                        entity_reference: e,
-                        definition_reference: p.definition_reference,
-                        macro_position_reference: position_macro(p.position_reference),
-                        micro_position_reference: position_micro(p.position_reference),
-                        data: p.data,
-                        promote,
-                    }),
-                    // P3: cold targets (tile/thing) are composed by the shards' direct reducers, not
-                    // here — the worker's cold-row composition (`write`/`write_overlay`) is P4.
-                    Shard::Tile | Shard::Thing => {}
-                }
-            }
+            // ── WRITE (hot) ── absolute finals to `data_shard`.
+            let data_w: Vec<data_shard::TargetState> = scratch
+                .iter()
+                .map(|(&e, p)| data_shard::TargetState {
+                    entity_reference: e,
+                    definition_reference: p.definition_reference,
+                    macro_position_reference: position_macro(p.position_reference),
+                    micro_position_reference: position_micro(p.position_reference),
+                    data: p.data,
+                    promote: promote.contains(&e),
+                })
+                .collect();
             if !data_w.is_empty() {
                 if let Err(err) = data.reducers().write(self_ref, t, data_w) {
                     tracing::warn!(%err, tic = t, shard = "data", "write failed — will retry next pass");
@@ -297,12 +339,70 @@ async fn main() {
                 }
             }
 
-            // ── COMPLETE ── each event, with the zones its targets ended up in.
+            // ── COMPOSE + WRITE (cold overlay) ── each cold_row's whole overlay row = its current base
+            // (`overlay_latest`) with this tic's `SET` cells merged in by `tile_reference` (a `kind==0`
+            // cell stays as a clear-marker so the edge relays a removal), then `write_overlay` per shard.
+            // (`init_zone`/`PACK` — the `ColdBaseline` tier — are a later P4 increment.)
+            let mut tile_ov: Vec<tile::OverlayTarget> = Vec::new();
+            let mut thing_ov: Vec<thing::OverlayTarget> = Vec::new();
+            for (&cold_row, (cells, promoted)) in &cold_sets {
+                match route_of.get(&cold_row) {
+                    Some(Route::ColdOverlay { type_id }) if *type_id == TYPE_BIOME_TILE => {
+                        let mut items = overlay_latest!(tile, cold_row).map(|r| r.items).unwrap_or_default();
+                        for c in cells {
+                            items.retain(|it| it.tile_reference != c.tile_reference);
+                            items.push(tile::OverlayItem { tile_reference: c.tile_reference, kind_reference: c.kind_reference });
+                        }
+                        tile_ov.push(tile::OverlayTarget {
+                            cold_row_reference: cold_row,
+                            macro_position_reference: cold_row_macro_position(cold_row),
+                            subtype_id: cold_row_subtype(cold_row),
+                            layer_id: cold_row_layer_id(cold_row),
+                            items,
+                            promote: *promoted,
+                        });
+                    }
+                    Some(Route::ColdOverlay { type_id }) if *type_id == TYPE_BIOME_THING => {
+                        let mut items = overlay_latest!(thing, cold_row).map(|r| r.items).unwrap_or_default();
+                        for c in cells {
+                            items.retain(|it| it.tile_reference != c.tile_reference);
+                            items.push(thing::OverlayItem { tile_reference: c.tile_reference, kind_reference: c.kind_reference, data: c.data });
+                        }
+                        thing_ov.push(thing::OverlayTarget {
+                            cold_row_reference: cold_row,
+                            macro_position_reference: cold_row_macro_position(cold_row),
+                            subtype_id: cold_row_subtype(cold_row),
+                            layer_id: cold_row_layer_id(cold_row),
+                            items,
+                            promote: *promoted,
+                        });
+                    }
+                    _ => {} // ColdBaseline (init_zone/PACK) — a later increment.
+                }
+            }
+            if !tile_ov.is_empty() {
+                if let Err(err) = tile.reducers().write_overlay(self_ref, t, tile_ov) {
+                    tracing::warn!(%err, tic = t, shard = "tile", "write_overlay failed — will retry next pass");
+                    continue;
+                }
+            }
+            if !thing_ov.is_empty() {
+                if let Err(err) = thing.reducers().write_overlay(self_ref, t, thing_ov) {
+                    tracing::warn!(%err, tic = t, shard = "thing", "write_overlay failed — will retry next pass");
+                    continue;
+                }
+            }
+
+            // ── COMPLETE ── each event, with the zones its targets ended up in (a hot target's zone from
+            // its composed position; a cold_row's from its address).
             for (event_reference, actions) in &events {
                 let mut zones: Vec<u16> = Vec::new();
                 if let Ok(w) = action::write_targets(actions) {
                     for e in w {
-                        let z = position_macro(scratch[&e].position_reference);
+                        let z = scratch
+                            .get(&e)
+                            .map(|p| position_macro(p.position_reference))
+                            .unwrap_or_else(|| cold_row_macro_position(e));
                         if !zones.contains(&z) {
                             zones.push(z);
                         }
@@ -316,7 +416,8 @@ async fn main() {
                 tic = t,
                 master,
                 events = events.len(),
-                entities = targets.len(),
+                hot = scratch.len(),
+                cold_rows = cold_sets.len(),
                 "composed component"
             );
         }
@@ -357,24 +458,59 @@ fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut Has
                     }
                 }
             }
-            SET => {
-                // SET obj def pos data — absolute full payload (the cold-cell mutation verb). The
-                // composed base is irrelevant; SET overwrites. `data` is `u8` (low byte of the imm).
-                if let [obj, def, pos, data] = inst.operands {
-                    let p = scratch.entry(*obj).or_default();
-                    p.definition_reference = *def;
-                    p.position_reference = *pos;
-                    p.data = *data as u8;
-                    if pending_promote {
-                        promote.insert(*obj);
-                    }
-                }
-            }
+            // SET is a **cold overlay** verb (targets a cold_row, not a hot entity) — composed as a
+            // whole overlay row in the tic loop (`collect_cold_overlay` + `write_overlay`), not here.
             // CREATE (deferred — no claimed slot), PROMOTE_EVENT (latched at queue), NONE: no scratch effect.
             _ => {}
         }
         pending_promote = false; // any non-PROMOTE action consumes the prefix
     }
+}
+
+/// One overlay cell a `SET` writes this tic — the payload merged into its cold_row's `overlay` row.
+struct ColdCell {
+    tile_reference: u8,
+    kind_reference: u16,
+    data: u8,
+}
+
+/// Group this tic's `SET` cells per cold_row target (event + program order), with the row's promote
+/// bit (a `PROMOTE` prefix on any of its `SET`s promotes the whole composed overlay row). Only `SET`
+/// writes the overlay; hot verbs are composed via [`apply`], cold-baseline verbs in a later increment.
+fn collect_cold_overlay(events: &[(u32, Vec<u32>)]) -> HashMap<u32, (Vec<ColdCell>, bool)> {
+    let mut out: HashMap<u32, (Vec<ColdCell>, bool)> = HashMap::new();
+    for (_, actions) in events {
+        let mut pending_promote = false; // a PROMOTE prefix; consumed by the next action
+        for inst in action::program(actions) {
+            let inst = match inst {
+                Ok(i) => i,
+                Err(_) => break, // validated at queue; a malformed program can't be framed
+            };
+            match inst.action {
+                PROMOTE => {
+                    pending_promote = true;
+                    continue;
+                }
+                // SET cold_row type_id tile_reference kind_reference data.
+                SET => {
+                    if let [cold_row, _type_id, tile_reference, kind_reference, data] = inst.operands {
+                        let entry = out.entry(*cold_row).or_insert_with(|| (Vec::new(), false));
+                        entry.0.push(ColdCell {
+                            tile_reference: *tile_reference as u8,
+                            kind_reference: *kind_reference as u16,
+                            data: *data as u8,
+                        });
+                        if pending_promote {
+                            entry.1 = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            pending_promote = false;
+        }
+    }
+    out
 }
 
 /// A composed base — the three payload refs + whether the slot is still dirty. Shard-agnostic (the

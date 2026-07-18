@@ -23,37 +23,30 @@ use std::time::Duration;
 
 use spacetimedb_sdk::{DbContext, Table as _};
 
-use resonantdust_codec::action;
+use resonantdust_codec::action::{self, Route};
 use resonantdust_codec::object::{TYPE_BIOME_THING, TYPE_BIOME_TILE};
-use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_QUEUED};
 use resonantdust_codec::tic::{tic_add, tic_after};
 use resonantdust_st_bindings::{data_shard, event_shard, index, thing, tile};
 use data_shard::claim as _;
 use event_shard::{assign as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
-// Cold shards ride the same overlay, so a cold-cell mutation's slot is `claim`ed on its shard.
-use thing::claim as _;
-use tile::claim as _;
+// A cold slot is claimed on its shard + tier (F11): the baseline via `claim`, the `overlay` via
+// `claim_overlay` — routed per target by `codec::target_routes`.
+use thing::{claim as _, claim_overlay as _};
+use tile::{claim as _, claim_overlay as _};
 
 mod grouping;
 use grouping::group;
 
-/// Which composing shard an entity's slot lives on — routed by its `server_reference` `type_id` (top
-/// nibble). A cold-cell `SET` target is `TYPE_BIOME_TILE`/`TYPE_BIOME_THING`; anything else (a pawn,
-/// …) is the hot `data_shard`, unchanged.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Shard {
-    Data,
-    Tile,
-    Thing,
-}
-
-fn shard_of(entity: u32) -> Shard {
-    match entity_ref_type_id(entity) {
-        TYPE_BIOME_TILE => Shard::Tile,
-        TYPE_BIOME_THING => Shard::Thing,
-        _ => Shard::Data,
+/// A cold shard's claim key from its `type_id` (F11): `1` = tile, `2` = thing, `0` = the hot
+/// `data_shard`. Cold routing is **action-derived** (`codec::target_routes`), not read off the target —
+/// a `cold_row_reference` carries no type nibble, so the action names its shard's `type_id`.
+fn shard_key_of_type(type_id: u8) -> u8 {
+    match type_id {
+        TYPE_BIOME_TILE => 1,
+        TYPE_BIOME_THING => 2,
+        _ => 0,
     }
 }
 
@@ -182,6 +175,10 @@ async fn main() {
         // same-tic events compose together.
         let mut in_queue: HashSet<u32> = HashSet::new();
         let mut per_tic: HashMap<u16, Vec<(u32, Vec<u32>)>> = HashMap::new();
+        // Each write target's route (F11) — how to claim its slot: hot (`data_shard`) vs a cold shard's
+        // baseline/overlay tier. Built alongside `write_targets`; a target's route is consistent, so
+        // first-seen wins.
+        let mut route_of: HashMap<u32, Route> = HashMap::new();
         for row in event.db().event_log().iter() {
             in_queue.insert(row.event_reference);
             if status_phase(row.status) != EVENT_QUEUED {
@@ -202,6 +199,11 @@ async fn main() {
                     continue;
                 }
             };
+            if let Ok(rs) = action::target_routes(&row.actions) {
+                for (tgt, r) in rs {
+                    route_of.entry(tgt).or_insert(r);
+                }
+            }
             per_tic.entry(row.event_tic).or_default().push((row.event_reference, targets));
         }
         assigned.retain(|r| in_queue.contains(r)); // prune settled/failed refs
@@ -231,28 +233,31 @@ async fn main() {
                     tracing::warn!(%err, tic = t, worker, "assign failed");
                     continue;
                 }
-                // Claim the component's slots, each on the shard that owns the entity (routed by its
-                // `server_reference` top byte) — a component may span shards (a cold cell + a pawn),
-                // so partition and claim per shard. A pawn's `0x30` → `data_shard`, unchanged.
+                // Claim the component's slots, each on the shard **and tier** its action routes to
+                // (F11) — a component may span shards + tiers (a cold overlay cell + a pawn), so bucket
+                // by `(shard_key, overlay?)` and claim per bucket: hot → `data_shard` baseline; cold →
+                // its shard's `claim` (baseline) or `claim_overlay` (overlay).
                 if !wg.entities.is_empty() {
-                    let mut by_shard: HashMap<u8, Vec<u32>> = HashMap::new();
+                    let mut by_route: HashMap<(u8, bool), Vec<u32>> = HashMap::new();
                     for &e in &wg.entities {
-                        let key = match shard_of(e) {
-                            Shard::Data => 0,
-                            Shard::Tile => 1,
-                            Shard::Thing => 2,
+                        let key = match route_of.get(&e) {
+                            Some(Route::ColdOverlay { type_id }) => (shard_key_of_type(*type_id), true),
+                            Some(Route::ColdBaseline { type_id }) => (shard_key_of_type(*type_id), false),
+                            _ => (0, false), // hot → data_shard baseline
                         };
-                        by_shard.entry(key).or_default().push(e);
+                        by_route.entry(key).or_default().push(e);
                     }
                     let mut claim_ok = true;
-                    for (key, ents) in by_shard {
-                        let res = match key {
-                            1 => tile.reducers().claim(ents, t, worker),
-                            2 => thing.reducers().claim(ents, t, worker),
+                    for ((shard, overlay), ents) in by_route {
+                        let res = match (shard, overlay) {
+                            (1, false) => tile.reducers().claim(ents, t, worker),
+                            (1, true) => tile.reducers().claim_overlay(ents, t, worker),
+                            (2, false) => thing.reducers().claim(ents, t, worker),
+                            (2, true) => thing.reducers().claim_overlay(ents, t, worker),
                             _ => data.reducers().claim(ents, t, worker),
                         };
                         if let Err(err) = res {
-                            tracing::warn!(%err, tic = t, worker, shard = key, "claim failed");
+                            tracing::warn!(%err, tic = t, worker, shard, overlay, "claim failed");
                             claim_ok = false;
                             break;
                         }
