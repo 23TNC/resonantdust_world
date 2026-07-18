@@ -1,0 +1,34 @@
+# Completed — shard-tables
+
+_Landed + verified, newest last. One increment each._
+
+---
+
+## P0 · Payload-generic `#[table]` — spiked + confirmed
+
+A throwaway macro stamped, from one invocation, `spike_with` (payload `data: u8` spliced) and
+`spike_without` (no payload) — both compiled to wasm + generated correct SDK bindings. Payload-as-macro-
+parameter works (compile-time splice). Caveat: a table's name/accessor must be a **literal**, not a
+metavariable (real macros have fixed names). Spike reverted. See [`blockers.md` B-2](blockers.md).
+
+## P1 (step 1) · `tick_pipeline!` payload is now a **parameter** — byte-identical
+
+First generalization step: the composed payload — `definition_reference` / `position_reference` / `data`
+— moved from hardcoded to a **macro argument** spliced into `TargetState` / `state_log` / `state` (in
+order, after the fixed composition columns) + `claim` (`Default::default()`) + `write` / upsert
+(`r.$pf.clone()`, so a future `Vec` payload works). The macro **requires a `position_reference`** (the
+`state` upsert derives `macro_position_reference` from it). All three shards invoke it explicitly:
+`tick_pipeline!(definition_reference: u32, position_reference: u32, data: u8)`.
+
+**Verified behavior-preserving:**
+- **Byte-identical bindings** — `data_shard` + `tile` + `thing` rebuilt, `git diff` of the generated
+  bindings is **empty** (schema + reducer signatures unchanged; only macro-mechanical body changes).
+- **Schema-compatible deploy** — redeployed all three `--keep` (no reset); identities preserved (a
+  hot-swap, not a wipe), exactly as byte-identical predicts.
+- **Runtime** — a `PLACE` queued at the event shard composed a mover fresh (compose-from-empty →
+  `PLACE` → promote) into `data_shard.state` at the target position — the full event → claim → worker
+  → macro'd `write` → promote path works through the parameterized macro (the "wolf moves" check).
+
+**Remaining in P1:** rename `tick_pipeline!` → `entity_tables!` (+ `state`→`entity_state`); split
+`position_reference` → `macro`/`micro` first-class columns; author `dense_entity_tables!` /
+`sparse_entity_tables!` / `overlay_tables!` siblings.

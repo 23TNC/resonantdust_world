@@ -14,14 +14,16 @@ Design: [`README`](README.md) · [`TABLES.md`](../../TABLES.md) · [`ACTIONS.md`
 
 ## P1 · The macros in `shared/codec` (behavior-preserving on `data_shard`)
 
-- [ ] Author `entity_tables!` — the composition columns (`uid`, subject, `tic`, `worker_reference`,
-      `observer_reference`, `dirty`, `status`) + `write`/`claim`/`gc` reducers + `entity_state` /
-      `entity_state_log` + the single payload. Generalizes `tick_pipeline!`.
-- [ ] Author `dense_entity_tables!` / `sparse_entity_tables!` — same, payload = `Vec<DenseItem<T>>` /
+- [x] **Payload is a parameter** — `tick_pipeline!` now takes the composed payload as a macro arg,
+      spliced into `TargetState`/`state_log`/`state`. Proven **byte-identical** (empty bindings diff)
+      + `--keep` redeploy + a mover composes at runtime. See [`completed.md`](completed.md).
+- [ ] Rename `tick_pipeline!` → `entity_tables!`; `state`/`state_log` → `entity_state`/`entity_state_log`
+      (fixed literal names — the accessor can't be a metavariable, P0 caveat).
+- [ ] Split `position_reference` → first-class `macro_position_reference` + `micro_position_reference`
+      columns (the design's fixed columns; `data` stays the generic payload). Updates worker/edge/client
+      to the split — a runtime-preserving (not byte-identical) step, verify **wolf still moves**.
+- [ ] Author `dense_entity_tables!` / `sparse_entity_tables!` — payload = `Vec<DenseItem<T>>` /
       `Vec<SparseItem<T>>`, keyed by `cold_uid`. And `overlay_tables!` (= sparse, named `overlay`).
-- [ ] **Prove behavior-preserving:** point `data_shard` at `entity_tables!{data:u8}`; bindings
-      byte-identical (as the `tick_pipeline!` extraction was) OR a clean explained diff; **wolf still
-      moves** live. Do this *before* any table rename lands.
 
 ## P2 · The `PROMOTE` prefix + smart-atomic promote
 

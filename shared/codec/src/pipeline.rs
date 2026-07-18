@@ -16,10 +16,17 @@
 
 /// Stamp out the tic-composition tables (`clock`, `state_log`, `state`), the `TargetState` payload,
 /// and the `init` / `bump` / `claim` / `write` / `gc` reducers into the invoking module. See the
-/// module docs. Invoke once, unqualified: `resonantdust_codec::tick_pipeline!();`.
+/// module docs.
+///
+/// **Payload is a parameter** — the caller lists the composed value's fields, spliced into
+/// `TargetState` / `state_log` / `state` (in order, after the fixed composition columns). The payload
+/// **must include a `position_reference: u32`** — the `state` upsert derives `macro_position_reference`
+/// (the zone-subscription key) from it. Invoke unqualified, e.g.:
+/// `resonantdust_codec::tick_pipeline!(definition_reference: u32, position_reference: u32, data: u8);`.
+/// (This is the first generalization step toward the `*_tables!` family — see `work/shard-tables`.)
 #[macro_export]
 macro_rules! tick_pipeline {
-    () => {
+    ($($pf:ident : $pt:ty),* $(,)?) => {
         // ── the tic clock (the master bumps it in lockstep across every shard) ──────────
         #[spacetimedb::table(accessor = clock, public)]
         pub struct Clock {
@@ -47,9 +54,7 @@ macro_rules! tick_pipeline {
         #[derive(spacetimedb::SpacetimeType, Clone)]
         pub struct TargetState {
             pub entity_reference: u32,
-            pub definition_reference: u32,
-            pub position_reference: u32,
-            pub data: u8,
+            $(pub $pf: $pt,)*
             /// If set, promote this target to `state` once settled (the program ran `PROMOTE_STATE`).
             pub promote: bool,
         }
@@ -73,9 +78,7 @@ macro_rules! tick_pipeline {
             pub observer_reference: u8,
             /// `true` = work pending; `false` = settled (one worker per component → binary).
             pub dirty: bool,
-            pub definition_reference: u32,
-            pub position_reference: u32,
-            pub data: u8,
+            $(pub $pf: $pt,)*
             /// `state_status` — `flags:4 | status:4` (`PROMOTE` / `PROMOTED`).
             pub status: u8,
         }
@@ -90,9 +93,7 @@ macro_rules! tick_pipeline {
             #[index(btree)]
             pub macro_position_reference: u16,
             pub tic: u16,
-            pub definition_reference: u32,
-            pub position_reference: u32,
-            pub data: u8,
+            $(pub $pf: $pt,)*
         }
 
         // ── claim — the orchestrator stands up a component's slots ──────────────────────
@@ -127,9 +128,7 @@ macro_rules! tick_pipeline {
                             worker_reference: worker,
                             observer_reference: $crate::refs::SERVER_REF_NONE,
                             dirty: true,
-                            definition_reference: 0,
-                            position_reference: 0,
-                            data: 0,
+                            $($pf: Default::default(),)*
                             status: $crate::status::pack_status(0, $crate::status::STATE_OPEN),
                         });
                     }
@@ -177,9 +176,7 @@ macro_rules! tick_pipeline {
                 if !row.dirty {
                     continue; // already written — a replay
                 }
-                row.definition_reference = r.definition_reference;
-                row.position_reference = r.position_reference;
-                row.data = r.data;
+                $(row.$pf = r.$pf.clone();)*
                 row.dirty = false;
                 if r.promote {
                     row.status =
@@ -207,9 +204,7 @@ macro_rules! tick_pipeline {
                 entity_reference: r.entity_reference,
                 macro_position_reference: macro_position,
                 tic,
-                definition_reference: r.definition_reference,
-                position_reference: r.position_reference,
-                data: r.data,
+                $($pf: r.$pf.clone(),)*
             };
             if ctx.db.state().entity_reference().find(r.entity_reference).is_some() {
                 ctx.db.state().entity_reference().update(row);

@@ -9,4 +9,4 @@
 
 use spacetimedb::Table as _;
 
-resonantdust_codec::tick_pipeline!();
+resonantdust_codec::tick_pipeline!(definition_reference: u32, position_reference: u32, data: u8);

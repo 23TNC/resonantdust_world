@@ -27,7 +27,7 @@ use resonantdust_codec::uid::pack_state_uid;
 // The shared tic-composition overlay: `clock` / `state_log` / `state` + `init` / `bump` / `claim` /
 // `write` / `gc`. A cold cell mutates by minting a `state_log` row here (never rewriting the baseline
 // `cold_thing`); GC folds it back. Same machinery as `data_shard`, so cold rides the whole pipeline.
-resonantdust_codec::tick_pipeline!();
+resonantdust_codec::tick_pipeline!(definition_reference: u32, position_reference: u32, data: u8);
 
 /// This cold shard's `server_reference` (`type_id = TYPE_BIOME_THING`, server_id 0) — the high byte of
 /// every `entity_reference` it mints. Const stopgap; F2 makes it master-assigned at multi-shard.
