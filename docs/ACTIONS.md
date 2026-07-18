@@ -45,12 +45,31 @@ the numbers are free to renumber. Aliases are for reading; the wire is the numbe
 | action | value | arity | signature |
 |---|---|---|---|
 | `NONE` | 0 | 0 | reserved null |
-| `PROMOTE_STATE` | 1 | 1 | `target:entity_reference` — project this slot to `state` once settled |
-| `PROMOTE_EVENT` | 2 | 0 | project this event to `event` on settle |
+| `PROMOTE` | 1 | 0 | **prefix modifier** — set the promote bit for the **next** action's writes |
+| `PROMOTE_EVENT` | 2 | 0 | project this event to `event` on settle — **tabled** until movement |
 
-Both are latched, not executed: `PROMOTE_EVENT` sets `event_status.flags.PROMOTE` at `queue`;
-`PROMOTE_STATE` sets `state_status.flags.PROMOTE` when the target's slot is created (`claim`). A
-program carrying neither runs entirely server-side.
+**`PROMOTE` is a prefix, not a target-latch.** The stream runs left-to-right; `PROMOTE` (arity 0) sets
+a promote bit in scratch, and the **next** action consumes it — writing the promote flag as part of
+*its own* result, per target (both `a` and `b`). So `promote place obj dest`, `promote init_zone
+macro` — the worker knows *during* the `place`/`init_zone` that its write should promote, and passes
+the bit to the write reducer. No post-pass reasoning about what a trailing promote "meant."
+
+**Promote is smart + atomic — it copies whatever changed, in one transaction.** The write reducer,
+given the bit, promotes **both** `entity_state` (from `entity_state_log`) and `overlay` (from
+`overlay_log`), but only where `visible.tic != log.tic` — so it syncs exactly the table(s) the action
+touched, without the worker figuring out which shard/table. Because both project in the **same reducer
+transaction**, a fold's baseline update + overlay clear land on the client **atomically** — there is
+**no flash and no promote-ordering to get wrong** (atomicity replaces the old `PROMOTE_COLD`-before-
+`PROMOTE_STATE` rule). A hot shard has no `overlay`, so its promote copies `entity_state` only.
+
+`PROMOTE_EVENT` is unchanged in spirit (latch `event_status.flags.PROMOTE` at `queue`) but **tabled**
+— revisited with movement. A program carrying no `PROMOTE` runs entirely server-side.
+
+**Cell addressing — `tile_reference` resolves per row form.** An action's cell operand resolves against
+the target's baseline form: on a **`dense`** row `tile_reference` is a **direct index** into `items`
+(`ZONE_DIM²` allocated); on a **`sparse`**/`overlay` row it **matches** the item carrying that
+`tile_reference`. The worker + actions are written against the generic macros, so this is the one place
+the forms differ. See [`VARIABLES.md § Cold storage`](VARIABLES.md).
 
 ### World
 
@@ -62,6 +81,9 @@ slot is grouped/claimed) or **read** (in the read set → the worker blocks on i
 | `CREATE` | 3 | 2 | `def:definition_reference` (imm) · `position:position_reference` (imm) → **mints** a new entity. The written target is the *minted* id, not an operand. |
 | `PLACE` | 4 | 2 | `obj:entity_reference` (**write**) · `position:position_reference` (imm) — set `obj`'s position absolutely. |
 | `MOVE_TO` | 5 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — step `obj` one tile toward `dest`, then queue the next hop. |
+| `SET` | 6 | 4 | `obj` (**write**) · `def:definition_reference` (imm) · `position` (imm) · `data` (imm) — set `obj`'s **full payload absolutely**. The cell-override verb (the cell within a biome-row; `PLACE` sets only position, a cell change also sets kind → `def`). _(As-built `SET` targets a per-cell `cold_entity_reference`; under the `overlay` design it targets the biome-row + a `tile_reference` operand — to reconcile at build.)_ |
+| `init_zone` | *tbd* | *tbd* | build a zone's **whole baseline row** in scratch (worldgen) and write it to `entity_state_log`. `promote init_zone macro` projects it visible. The event-driven replacement for the direct `seed`. |
+| `PACK` | *tbd* | *tbd* | fold a zone's settled `overlay` cells into its `entity_state_log` row (the GC write-back). Operands settle when built — likely the target `cold_row_reference` (**write**); the worker reads the row's settled `overlay` cells and composes the new baseline. GC queues `promote pack …` — the smart, atomic `PROMOTE` projects the folded `entity_state` **and** cleared `overlay` in one commit. |
 
 **`CREATE`.** A spawn insert isn't idempotent by value, so replay must not double-spawn. **Resolved:**
 a small **spawn-log** on the data shard, keyed by `(event_reference, index) → minted entity_reference`
@@ -81,6 +103,10 @@ continuation** `MOVE_TO obj dest` for the tic the object reaches the next tile. 
 ---
 
 ## Movement, and the client's tic estimate
+
+> **Tabled.** This section predates the `PROMOTE`-prefix change and still writes `PROMOTE_STATE` /
+> `PROMOTE_EVENT` postfix in its example programs. Movement (and `PROMOTE_EVENT`) is revisited as its
+> own pass; read the promotes here as "promote this" pending that rework.
 
 `MOVE_TO` is a self-perpetuating chain: each hop writes one tile and queues the next, until `dest`.
 Two capabilities it uses:

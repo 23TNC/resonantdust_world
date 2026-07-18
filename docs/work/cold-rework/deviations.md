@@ -6,6 +6,12 @@ _Plan deviations, logged at the moment of deviating. What the plan said, what we
 
 ## D-1 · Cold entity id is **deterministic-from-position**, not a minted counter — collapsing the two-phase
 
+> **Superseded by F6 (2026-07-18).** The `overlay`-is-`sparse!` model drops per-cell
+> `entity_reference`s entirely — a cold cell is addressed by its biome-row (`cold_row_reference`) + a
+> `tile_reference` within it, no `cold_entity_reference` and no per-cell id. Kept for the reasoning
+> (why a deterministic-from-position key beat a minted counter — the same instinct the row-addressing
+> now embodies). The built `SET`-to-`state` path from this deviation is what `overlay` replaces.
+
 **Plan (intent §"The mutation lifecycle" + §"Core owns the two-phase").** `UNPACK` *mints* an
 `entity_reference` (a server counter), and core learns the id by **watching the position in `state`**
 across tics (N=0 pre-empt → ~N=3 the row appears → issue the op against the resolved id). The

@@ -1,41 +1,72 @@
 # world-storage — hot & cold, one machinery
 
-> **Status: intent / design.** The cold **baseline** is built + live (seed → edge relay → render).
-> The shape below — `subtype`-keyed rows, the `state`/`state_log` overlay, region routing, and the
-> mutation lifecycle — is the target the [`cold-rework`](../../work/cold-rework/README.md) work stream
-> builds to. Layouts cite [`VARIABLES.md`](../../VARIABLES.md) + [`TABLES.md`](../../TABLES.md); builds
-> on the live sim core ([`spacetime-again`](../spacetime-again/README.md)). Authored 2026-07-16,
-> reworked 2026-07-17.
+> **Status: intent / design.** The cold `subtype`-keyed baseline, a per-cell overlay, region routing,
+> the `tic`-ordered composite, and the event-driven per-cell `SET` are **built + live** (on the
+> pre-generalization `cold_tile`/`cold_thing` + old `state`/`state_log`). The **2026-07-18 direction
+> shift below is design-only, not yet built**: fold every shard into the generic **`*_tables!`** macros
+> — a primary `entity_state`/`entity_state_log` pair (`entity_tables!` / `dense_entity_tables!` /
+> `sparse_entity_tables!`) + a cold override `overlay`/`overlay_log` (`overlay_tables!`) — drive every
+> write through **events** (retiring the direct `seed`/`set_*`/`fold` reducers), and make **`PROMOTE`** a
+> smart + atomic prefix. Closes the seed/acquire race by construction. Tracked in
+> [`cold-rework`](../../work/cold-rework/README.md). Layouts [`VARIABLES.md`](../../VARIABLES.md) +
+> [`TABLES.md`](../../TABLES.md); actions [`ACTIONS.md`](../../ACTIONS.md); builds on the live sim core
+> ([`spacetime-again`](../spacetime-again/README.md)). Authored 2026-07-16, reworked 2026-07-18.
 
 **What this is for.** Store every world object — pawns, terrain tiles, scattered things — and mutate
 it **only** through the live event pipeline (edge → orchestrator → worker). Hot and cold are separate
-shard *classes*, but they share one composition machinery: **`state_log` (truth) + `state` (the
-client projection)**.
+shard *classes*, but they share **one convention**: a server-side **`*_log`** (truth + history the
+worker composes) and a client-visible **`*`** (the throttled projection) — run for `event`, `state`,
+**and now `cold`**.
 
 ---
 
 ## The one rule: everything flows through the pipeline
 
-**No component writes a shard directly — workers do, driven by events. The only direct write is
-`init`/`seed`.** A pawn move, a tile change, a tree chopped: each is an event a worker composes into
-absolute finals. No side door. Cold's baseline (`cold_tile`/`cold_thing`) is written *once* at seed;
-after that, every change is a `state_log` row, exactly like a hot entity.
+**No component writes a shard directly — workers do, driven by events.** A pawn move, a tile change, a
+tree chopped, *and even the initial seed* (`init_zone`): each is an event a worker composes into
+absolute finals, then a `PROMOTE` makes visible. No side door — not even `init`. A baseline row lands
+in `entity_state_log` (whole-row) and a per-cell change in `overlay_log`, both exactly like a hot
+entity's `entity_state_log`.
 
-## Hot and cold share the spine, differ in the baseline
+## One convention everywhere: a server-side `*_log`, a client-visible `*`
 
-Both shard classes carry the **same** `state_log` / `state` pair (`TABLES.md § data_shard`):
+The whole system is built on **one pair-shape**: a server-side **`*_log`** (truth + history, what
+workers compose) and a client-visible **`*`** (the throttled projection the edge ships to core). We
+already run it twice — `event_log`/`event` and `state_log`/`state`. **Cold now uses the *same* shape**,
+so there is no bespoke cold machinery to drift:
 
-- **`state_log`** — server-side truth, one row per `(entity, tic)`, written/modified by events. The
-  server runs *entirely* on `state_log`.
-- **`state`** — the **client projection**: the most-recent row the edge ships to core. Deliberately
-  *throttled* — see below.
+- **`*_log`** — server truth, one row per `(subject, tic)`, written/modified by events, composed by the
+  worker. The server runs *entirely* on the log.
+- **`*`** — the client projection: the most-recent promoted row the edge ships. Deliberately *throttled*
+  — a value reaches `*` only when an event `PROMOTE`s it (§throttling).
 
-**Hot** (`data_shard` today; a `pawn` shard tomorrow) is *only* that pair — every entity is an
-`entity_reference`-keyed row, id-addressed, because a mover isn't pinned to a cell.
+**Hot** (`data_shard` today; a `pawn` shard tomorrow) carries exactly one pair — `state_log`/`state`,
+each entity an `entity_reference`-keyed row, id-addressed (a mover isn't pinned to a cell).
 
-**Cold** (`tile`, `thing`) is that pair **plus** a compressed, position-addressed **baseline**
-(`cold_tile`/`cold_thing`). The baseline is the immutable seed; `state`/`state_log` are the mutation
-overlay. The client renders **baseline ⊕ state** — a `state` row at a position overrides that cell.
+**"Cold" isn't one thing — it's two row *forms*, `dense` and `sparse`** (the word "cold" survives only
+in `cold_row_reference`). A shard carries **two** pairs, because a cell has two very different kinds of
+change, and conflating them fans out 256 tiles for a one-cell edit:
+
+| role | pair | macro | addressed by | holds | changes |
+|---|---|---|---|---|---|
+| **baseline** | `entity_state`/`entity_state_log` | `dense_entity_tables!` or `sparse_entity_tables!` | `cold_row_reference` (the biome-row) | the compressed row — `Vec<DenseItem>` (full `ZONE_DIM²`) or `Vec<SparseItem>` (occupied only) | **whole-row**, infrequent — seed, or a GC fold |
+| **overlay** | `overlay`/`overlay_log` | **`overlay_tables!`** (sparse) | `cold_row_reference`, cell by `tile_reference` | the **overridden** cells (a sparse shadow of the baseline) | **few cells**, frequent — a placed wall, a chopped tree |
+
+The **overlay is always sparse** — an override touches a handful of cells, so it's a sparse shadow of
+the baseline; the hot, `entity_reference`-addressed pair (`entity_tables!`) is for **hot** shards only.
+All are **generic macros over an optional payload `<T>`** ([`TABLES.md`](../../TABLES.md)), composed per
+shard: `data_shard = entity_tables!{data:u8}`, `tile = dense_entity_tables!() + overlay_tables!()`,
+`thing = sparse_entity_tables!{data:u8} + overlay_tables!{data:u8}`. Written once, they let actions + the
+worker machinery be written once too. The client renders **`entity_state` ⊕ `overlay`** — an overlay
+cell shadows its baseline cell (overlay present ⇒ override wins; no per-cell `tic` compare needed).
+
+**Why two pairs, not one.** A player placing a wall every 3 tics must not re-broadcast the zone's whole
+256-tile `entity_state` row to every subscriber every 3 tics — that's catastrophic fan-out. Instead the
+edit is one small `overlay` cell, streamed cheaply; the big `entity_state` row only changes when GC
+*folds* accumulated overrides back into it (a `PACK`), infrequently. Placing a water tile needs **no
+hot shard** — it's an `overlay` cell written straight on the cold shard. Giving the baseline its own
+`entity_state_log` (the same **history** the overlay has) is what lets the *same worker machinery*
+compose both.
 
 ## Cold row identity — `type_id` is the shard
 
@@ -74,45 +105,45 @@ sim progress: some actions never fan out.
 > resolves correctly), but only **start + end** promote to `state` — clients interpolate the rest. The
 > in-between is real server truth the client never needs.
 
-## The mutation lifecycle — mint → act → fold
+## Everything through events — no direct writes
 
-A cold cell is never rewritten in place. To change it:
+**The only writer of a shard is a worker, driven by an event** (§the one rule). The old *direct*
+reducers — `seed`, `set_tile`/`set_thing`, `fold` — are **removed**. They were the seed/acquire-race
+source (a baseline row written directly, its `tic` never bumping, so a relay the edge missed never
+re-fired → black ground under rendered scatter). In the event model a row becomes visible only on
+`PROMOTE`, which the client acquires like any `*` update — no special path, no race.
 
-1. **`UNPACK` (mint).** The cell has no id until it's touched. The first mutating event **mints an
-   `entity_reference`** for the cell (server-minted, deterministic-from-event) and writes a `state_log`
-   row in *the same cold shard* — the baseline stays untouched; the `state_log` row now *is* the truth
-   for that position. (This is the old "UNPACK," but the entity lives in the cold shard's own overlay,
-   not migrated to a separate hot shard.)
-2. **Act.** Further events compose that `state_log` row like any hot entity — same worker, same
-   `state_uid`, same `promote_state`. Client-visible changes promote to `state`; internal ones don't.
-3. **GC = PACK (fold).** GC **queues** a fold for a settled cell: write its final back into the
-   compressed baseline (`cold_tile`/`cold_thing`), **drop the `state` row** (the info now lives in the
-   baseline the client already reads), and **tombstone — not drop —** the `state_log` rows (a takeover
-   or a still-pending read may need them). A removal is just a `state_log`/`state` row with the removed
-   marker — there is **no separate `cold_removed` table** anymore.
+**Write a baseline row (seed / regen).** Queue an event for the zone (`promote init_zone macro`). A
+worker builds the **whole row** in scratch, writes it to `entity_state_log`, and — because the
+`promote` prefix set the bit — the write reducer projects it to `entity_state` in the same call. Until
+the worker finishes and promotes, the new row **isn't visible** — so a zone that takes several tics to
+write never shows a half-built baseline.
 
-The client always sees **baseline ⊕ state** = current truth: while a cell is hot, its `state` row wins;
-once GC folds it, the `state` row drops and the baseline carries the same value — the pixel never moves.
+**A per-cell override (place a wall, water a tile).** Queue an event targeting the cell's biome-row
+(`cold_row_reference`), addressed by `tile_reference`. The worker composes the change into
+`overlay_log`; the `promote` bit projects it to `overlay`. The client renders `entity_state ⊕ overlay`.
+Cheap, frequent — one small cell, never the whole row.
 
-## Core owns the two-phase — the worker never waits
+**GC = PACK (fold overrides into the baseline).** When a zone's overrides have settled, GC queues a
+`promote pack …` event: the worker folds each settled `overlay` cell into the row's `entity_state_log`
+(the new baseline) *and* clears the `overlay_log`, then the smart `promote` projects **both** —
+`entity_state` and `overlay` — in **one reducer transaction**.
 
-The mint is async, but the **worker never polls for it**. Core (already async, subscribed to `state`)
-sequences a mint-then-use across tics; the worker mints + writes and completes in one pass.
+### Atomic promote replaces promote-ordering
 
-1. **N=0** — core issues `UNPACK(position)` (often **pre-empted** — sent alongside an earlier action
-   so the mint is ready by the time the op fires; safe by construction, a wrong guess is just a wasted
-   unpack GC re-folds).
-2. **~N=3** — the row appears in `state`; core learns the id by **watching the position** (one thing
-   per cell, so position disambiguates — no alias table).
-3. **~N=3+** — core issues the real op against the resolved id, gated on seeing the row.
+The client sees the fold's baseline-update + overlay-clear as **one atomic update** (a single commit),
+so there's no window where the overrides are gone but the baseline hasn't caught up — **no flash of the
+pre-edit terrain, and no `PROMOTE`-ordering to get wrong**. (Smart promote copies only what changed:
+`entity_state`/`overlay` where `visible.tic != log.tic`.) This is simpler than the earlier ordered
+`PROMOTE_COLD`-then-`PROMOTE_STATE` scheme it supersedes — atomicity does the work ordering used to.
 
-Because `UNPACK` and the op are separate events across tics, no single program both mints and
-references the result — no in-program pre-pass.
+## Keys are server-derived — the client never picks them
 
-**Keys are server-minted — the client never picks them.** Every `entity_reference` (for `CREATE` and
-`UNPACK` alike) is minted by the shard, unique and deterministic-from-event; the client only *learns*
-it by watching `state`. (Today's npc `wolf_key` stopgap — one automated player, no ownership — is
-replaced by server-minted `CREATE`.)
+A baseline cell is addressed by its **position** (`cold_row_reference` + `tile_reference`), a pure
+function of where it is — so there's no mint to wait on and no id-watch for cold. A *general* `CREATE`
+(a pawn, whose identity is **not** its position) still needs a server-minted, deterministic-from-event
+id learned by watching `entity_state`; that remains the hot-shard concern. (Today's npc `wolf_key`
+stopgap is the placeholder until `CREATE`'s minted-id claim lands.)
 
 ## Routing — position → cold shard, via `index`
 
@@ -125,11 +156,19 @@ shard is one more row, no code change. (This is coord-purge's "rebuild the route
 
 ## The shard classes
 
-| module | class | key | payload |
-|---|---|---|---|
-| **`data_shard`** (→ `pawn`) | hot | `entity_reference` (u32) | `definition_reference:u32 \| position_reference:u32 \| data:u8` — `state_log`/`state` only |
-| **`tile`** | cold | baseline `cold_row_reference` (`macro:16 \| subtype:12 \| layer_id:4`); overlay `entity_reference` | baseline `Vec<u16>` dense `kind_reference`; overlay = `state_log`/`state` |
-| **`thing`** | cold | same | baseline `Vec<u32>` sparse `kind_reference:16 \| tile_reference:8 \| data:8`; overlay = `state_log`/`state` |
+| module | class | macros → pairs | keys | payloads |
+|---|---|---|---|---|
+| **`data_shard`** (→ `pawn`) | hot | `entity_tables!{data:u8}` → `entity_state`/`entity_state_log` | `entity_reference` (u32) | `definition` + `micro_position` + `u8 data` |
+| **`tile`** | cold | `dense_entity_tables!()` + `overlay_tables!()` → `entity_state` + `overlay` | baseline `cold_row_reference` (`macro:16 \| subtype:12 \| layer_id:4`); overlay same | baseline `Vec<DenseItem>` (`kind` only); overlay `Vec<SparseItem>` |
+| **`thing`** | cold | `sparse_entity_tables!{data:u8}` + `overlay_tables!{data:u8}` → same | same | baseline `Vec<SparseItem>` (`tile \| kind \| u8 data`); overlay same |
 
-A cold `(entity, tic)` slot is the **same `u64 state_uid`** as hot — the composition machinery is one
-shape, so cold rides everything the sim core already does.
+Every pair rides the **same composition slot shape**: an `entity_state_log` slot is a `u64` uid
+(hot: `state_uid` = `entity, tic`; cold: `cold_uid` = `cold_row_reference, tic`) — same layout,
+different subject. So the worker's compose/block/write/`PROMOTE` machinery serves all pairs; only the
+payload differs (a single row for the hot entity, a `Vec` of items for a cold row).
+
+**One structural note (open at build time).** The composition *columns* (`uid`, subject, `tic`,
+`worker_reference`, `observer_reference`, `dirty`, `status`) are identical across all pairs; only the
+payload column differs (a single payload vs a `Vec<DenseItem>`/`Vec<SparseItem>`). Whether the
+`*_tables!` macros share one payload-generic core or each hand-roll their payload is a build decision;
+the *shape* is settled here.

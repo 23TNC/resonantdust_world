@@ -230,16 +230,18 @@ a `promote_event` action.
 
 ## `data_shard`
 
-Payload = the reference model's three orthogonal references, carried by both `state_log` and
-`state`:
+`data_shard` is **`entity_tables!{data:u8}`** — the hot mover pair, id-addressed, no baseline. Its
+`entity_state`/`entity_state_log` follow the generalized
+[§`entity_tables!`](#entity_tables--the-primary-pair-entity_stateentity_state_log-generic-t) shape
+(`macro`+`micro` split, `definition_reference`, `payload = u8 data`). The columns below are that shape;
+the semantic prose (two roles, no lease, base-read-live) is canonical here and applies to **every**
+`*_log` the macros emit.
 
-| column | type | notes |
-|---|---|---|
-| `definition_reference` | `u32` | what it is |
-| `position_reference` | `u32` | where it is |
-| `data` | `u8` | its state |
+> _**Live names lag:** the deployed tables are still `state`/`state_log` with three flat refs
+> (`definition | position | data`); the generalization renames them to `entity_state`/`entity_state_log`
+> and promotes `definition`/`macro`/`micro` to first-class columns + a generic `payload`. Not yet built._
 
-### `state_log` — per `(entity, tic)` composition slot
+### `entity_state_log` — per `(entity, tic)` composition slot
 
 | column | type | key | notes |
 |---|---|---|---|
@@ -277,17 +279,18 @@ never fetched from `state`.
 `uid` is entity-major; `entity_reference` and `tic` are duplicated out of it because a subscription
 filters on columns and a reducer needs them as values.
 
-### `state` — client-visible latest
+### `entity_state` — client-visible latest
 
 | column | type | key | notes |
 |---|---|---|---|
 | `entity_reference` | `u32` | PK | |
-| `macro_position_reference` | `u16` | idx | the zone-subscription key. Duplicates `position_reference`'s high half — a subscription filters on columns, not expressions. |
+| `macro_position_reference` | `u16` | idx | the zone-subscription key. Duplicates `micro`'s macro half — a subscription filters on columns, not expressions. |
 | `tic` | `u16` | | `tic` — the tic this value went live on |
-| *payload* | | | |
+| *payload* | | | `micro_position_reference` / `definition_reference` / `<T>` (§`entity_tables!`) |
 
 reads edge, client · workers never subscribe ·
-sub `SELECT * FROM state WHERE macro_position_reference = <zone>` (edge, per subscribed zone)
+sub `SELECT * FROM entity_state WHERE macro_position_reference = <zone>` (edge, per subscribed zone).
+_Live name: `state` (renamed in the generalization)._
 
 A row lands here **only** when a program says so, via a `promote_state` action.
 
@@ -320,68 +323,111 @@ order). See [`notes/tables.md`](notes/tables.md).
 
 ---
 
-# Cold storage
+# Cold storage — the `*_tables!` macros: `entity_state` / `overlay`
 
-A cold shard is **an immutable baseline + a hot-format overlay**, both public:
+Every composing shard is stamped from **table macros**, each emitting one `*_log`/`*` pair (server-side
+truth+history / client-visible projection), generic over an **optional payload `<T>`** (monomorphized
+at macro-time). `kind_reference` is **always** present (we must know *what* an object is); the payload
+is the *extra* (e.g. `u8 data` = `rotation:2|count:6`). Every shard's primary pair is
+**`entity_state`/`entity_state_log`**; a cold shard adds an override pair **`overlay`/`overlay_log`**:
 
-- **Baseline** — `cold_tile` / `cold_thing`: a zone-layer's terrain, position-addressed, **written
-  only at `init`/`seed` + `fold`** (a cold row *is* a compressed `state` row, so it carries a `tic`).
-  The `type_id` is the shard (the `tile` module *is* `TYPE_BIOME_TILE`, `thing` *is*
-  `TYPE_BIOME_THING`), so the `u32 cold_row_reference` carries `macro:16 | subtype:12 | layer_id:4` and
-  a multi-biome zone is one row per `subtype`.
-- **Overlay** — `state` / `state_log`, **the same shape as `data_shard`'s** ([above](#data_shard)). A
-  cold cell is *never* rewritten in place; a change mints a `state_log` row (the source of truth) that
-  augments the baseline, and `fold` eventually folds settled `state` back into the baseline (bumping
-  its `tic`). The client renders **`cold_tile`/`cold_thing` ⊕ `state`**, ordered by `tic` — **the more
-  recent of the baseline row and the override wins** for a cell, so a cold-row/overlay arrival race
-  (e.g. a `fold` that bumps the baseline past its now-stale override) resolves deterministically. So
-  cold rides the exact hot machinery — same `state_uid`, same worker composition, same `promote_state`.
+| macro | pair | subject | items | addressing |
+|---|---|---|---|---|
+| **`entity_tables!`** | `entity_state` / `entity_state_log` | `entity_reference` | single row | per-entity (hot movers) |
+| **`dense_entity_tables!`** | ″ | `cold_row_reference` (a biome-row) | `Vec<DenseItem<T>>` | **full `ZONE_DIM²`** → `tile_reference` **indexes** |
+| **`sparse_entity_tables!`** | ″ | `cold_row_reference` | `Vec<SparseItem<T>>` | occupied cells → `tile_reference` **matches** |
+| **`overlay_tables!`** | `overlay` / `overlay_log` | `cold_row_reference` | `Vec<SparseItem<T>>` | a sparse override shadowing `entity_state` |
 
-Design + lifecycle (mint/`UNPACK` → `state_log` → GC-fold/`PACK`): [`world-storage`](intent/world-storage/README.md).
-Which shard a position lives on is resolved through `index` ([cold_shards](#cold_shards--regioncold-shard-routing-public)) by **region**.
+**The overlay is always sparse** — an override touches a handful of cells, so it's a sparse shadow of
+the baseline (`overlay_tables!`), never the entity-addressed hot pair. Shards compose the macros:
 
-> **Status.** Baseline + `state`/`state_log` overlay + `tic`-ordered composite are **built + live**
-> (seed → mint/`set_tile`·`set_thing` → edge relay → `baseline ⊕ state` render → `fold`-to-baseline,
-> browser-verified). The **event-driven `UNPACK` routing** (mutate through edge → worker rather than
-> the direct reducer) + core two-phase remain. Tracked in [`work/cold-rework`](work/cold-rework/README.md).
+| shard | macros | `TYPE` |
+|---|---|---|
+| **`data_shard`** (→ `pawn`) | `entity_tables!{data:u8}` — movers, id-addressed, **no overlay** | — |
+| **`tile`** | `dense_entity_tables!()` + `overlay_tables!()` | `TYPE_BIOME_TILE` |
+| **`thing`** | `sparse_entity_tables!{data:u8}` + `overlay_tables!{data:u8}` | `TYPE_BIOME_THING` |
 
-## `tile` — the cold ground shard (`TYPE_BIOME_TILE`)
+Client renders **`entity_state` ⊕ `overlay`** — an overlay cell shadows its baseline cell (overlay
+present ⇒ override wins). Nothing writes any table directly — a worker composes `*_log` and a
+[`PROMOTE`](ACTIONS.md) prefix projects it to `*` (see below); GC `PACK`s the settled `overlay` down
+into `entity_state_log`. **`PROMOTE` is smart + atomic** — it copies `entity_state` and `overlay` from
+their logs where `visible.tic != log.tic`, in one transaction, so a fold's baseline-update +
+overlay-clear land together — **no flash, no ordering**. Item layouts + dense-index vs sparse-match:
+[`VARIABLES.md § Cold storage`](VARIABLES.md); region routing:
+[`cold_shards`](#cold_shards--regioncold-shard-routing-public); lifecycle:
+[`world-storage`](intent/world-storage/README.md).
 
-### `cold_tile` — one zone-layer-biome's dense ground (public)
+> **Status.** The live shards are still the *pre-generalization* `cold_tile`/`cold_thing` + old
+> fixed-shape `state`/`state_log` + the built `SET` overlay + `tic` composite. The
+> **`*_tables!` generalization** below — `entity_state`/`overlay`, payload-generic macros,
+> `Vec<DenseItem>`/`Vec<SparseItem>`, the smart-atomic `PROMOTE` prefix, and `PACK` — is the
+> **2026-07-18 design target, not yet built**. Tracked in [`work/cold-rework`](work/cold-rework/README.md).
+
+## `entity_tables!` — the primary pair `entity_state`/`entity_state_log` (generic `<T>`)
+
+The hot form is `entity_reference`-addressed (a mover isn't cell-pinned); the cold forms
+(`dense_entity_tables!` / `sparse_entity_tables!`) are `cold_row_reference`-addressed biome-rows. All
+three emit `entity_state`/`entity_state_log`; the columns below are the hot form (movers). "state" as a
+column name is retired — the *table* is `entity_state`, freeing `data` to stay a payload field.
+
+### `entity_state` — client-visible latest (public)
+
+The **hot** form's columns (a mover). The cold forms replace the payload row with `items:
+Vec<DenseItem>`/`Vec<SparseItem>` (below).
 
 | column | type | key | notes |
 |---|---|---|---|
-| `cold_row_reference` | `u32` | PK | `macro_position:16 \| subtype_id:12 \| layer_id:4` ([`VARIABLES.md`](VARIABLES.md)) |
+| `entity_reference` | `u32` | PK | the subject — a mover (hot) |
 | `macro_position_reference` | `u16` | idx | the zone — the client's subscription key |
-| `subtype_id` | `u16` | idx | the biome (holds `u12`); searchable |
-| `layer_id` | `u8` | | the layer (holds `u4`) |
-| `tic` | `u16` | | the tic this baseline is current as of (set at `seed`, bumped by `fold`); orders it against a `state` override — most recent wins |
-| `tiles` | `Vec<u16>` | | **exactly 256** `kind_reference`s, index = `tile_reference`; cells outside this biome are `0` (dense; no per-entry tile/data) |
+| `micro_position_reference` | `u16` | | the cell within the zone (`tile_reference:8 \| layer_reference:8`) — `macro \| micro` is the full `position_reference` |
+| `tic` | `u16` | | the tic this projection is current as of |
+| `definition_reference` | `u32` | | the object (`type_reference:16 \| kind_reference:16`) |
+| `payload` | `<T>` | | optional per-shard payload (`u8 data` for thing/pawn; absent for tile) |
 
-writes `seed(macro, subtype_id, layer_id, tiles)` (trusted worldgen; `type_id` is the module) · reads
-edge, client · sub `SELECT * FROM cold_tile WHERE macro_position_reference = <zone>` (edge, per zone —
-returns every biome-row for the zone)
-
-## `thing` — the cold scatter shard (`TYPE_BIOME_THING`)
-
-### `cold_thing` — one zone-layer-biome's sparse scatter (public)
+### `entity_state_log` — the composed truth + history (public)
 
 | column | type | key | notes |
 |---|---|---|---|
-| `cold_row_reference` | `u32` | PK | `macro_position:16 \| subtype_id:12 \| layer_id:4` |
+| `uid` | `u64` | PK | hot: `state_uid` = `reserved:16 \| entity_reference:32 \| tic:16`; cold: `cold_uid` = `…cold_row_reference:32 \| tic:16` |
+| `worker_reference` | `u8` | idx | the composing worker (`SERVER_REF_NONE` = none) |
+| `observer_reference` | `u8` | idx | the worker reading this as its next-tic base |
+| `status` | `u8` | | `state_status` — `flags:4 \| status:4` (`PROMOTE` / `PROMOTED`) |
+
+_(plus the `entity_state` payload columns carried through composition; `dirty` is the boolean settle
+flag. A `counterpart_reference` for cross-shard transfers is **deferred** — not needed while mutation
+stays in-shard.)_
+
+## `dense_entity_tables!(T)` — a fully-allocated biome-row (generic `<T>`)
+
+The dense-baseline form of `entity_state`/`entity_state_log`. `tile = dense_entity_tables!()` (`T` =
+none). `cold_row_reference`-addressed.
+
+### `entity_state` (dense form) — client-visible baseline (public) · _was `cold_tile`_
+
+| column | type | key | notes |
+|---|---|---|---|
+| `cold_row_reference` | `u32` | PK | `macro:16 \| subtype:12 \| layer_id:4` ([`VARIABLES.md`](VARIABLES.md)) |
 | `macro_position_reference` | `u16` | idx | the zone — subscription key |
 | `subtype_id` | `u16` | idx | the biome (holds `u12`) |
 | `layer_id` | `u8` | | the layer (holds `u4`) |
-| `tic` | `u16` | | current-as-of tic (set at `seed`, bumped by `fold`); orders the baseline against a `state` override |
-| `things` | `Vec<u32>` | | **sparse** `kind_pos_reference`s (`kind:16 \| tile:8 \| data:8`), one per occupied cell |
+| `tic` | `u16` | | current-as-of tic (set by `PROMOTE`) |
+| `items` | `Vec<DenseItem<T>>` | | **`ZONE_DIM²`** entries, index = `tile_reference`; `DenseItem` = `kind_reference:u16 \| payload:T` (tile: no payload; empty cell = `kind 0`) |
 
-writes `seed` · reads edge, client · sub `SELECT * FROM cold_thing WHERE macro_position_reference =
-<zone>`. Same shape as `cold_tile` but each entry is a full `u32` — a thing carries *where* + *data*
-(`data = rotation:2 | count:6`, universal), a tile carries only *kind* (its position is its dense index).
+**`entity_state_log`** (dense) — `cold_uid` PK; shared composition columns (`worker_reference`,
+`observer_reference`, `status`, `dirty`) + the base columns + `items`. Worker-composed; `PROMOTE` →
+`entity_state`; GC `PACK`s the `overlay` into it.
 
-Each cold shard also holds the `state` / `state_log` overlay pair — see [`data_shard`](#data_shard)
-for their columns (identical), and [`world-storage`](intent/world-storage/README.md) for how a cold
-cell becomes a `state_log` row and folds back.
+## `sparse_entity_tables!(T)` / `overlay_tables!(T)` — occupied-cells rows (generic `<T>`)
+
+The sparse form. `sparse_entity_tables!` is a **baseline** (`entity_state`/`entity_state_log`, e.g.
+`thing`); `overlay_tables!` is the **overlay** (`overlay`/`overlay_log`, on both cold shards). Same
+columns as the dense form, but `items: Vec<SparseItem<T>>` holds **only occupied cells** — `SparseItem`
+= `tile_reference:u8 \| kind_reference:u16 \| payload:T` (each carries its own cell). A `tile_reference`
+**matches** an item, rather than indexing (dense).
+
+- **`overlay`** — the cells overriding the baseline; the client renders `entity_state ⊕ overlay`.
+- **`overlay_log`** — mirror of `entity_state_log`, `cold_uid` PK, shared composition columns;
+  `PROMOTE` → `overlay`; GC `PACK`s these into `entity_state_log`.
 
 ---
 

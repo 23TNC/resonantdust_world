@@ -128,6 +128,11 @@ u64 state_uid                     the (entity, tic) slot — PK of state_log
   u32 entity_reference            bits 16–47
   u16 tic                         bits 0–15
 
+u64 cold_uid                      the (cold_row, tic) slot — PK of BOTH dense_log and sparse_log
+  u16 reserved                    bits 48–63
+  u32 cold_row_reference          bits 16–47
+  u16 tic                         bits 0–15
+
 u64 event_uid                     the (zone, tic, event) row — PK of event
   u16 macro_position_reference    bits 48–63
   u16 event_tic                   bits 32–47
@@ -145,7 +150,11 @@ A ring, not a line. **Never compare with `<` / `<=`** — across the wrap they i
 
 ---
 
-## Cold storage
+## Cold storage — the `DenseItem` / `SparseItem` row items
+
+A cold shard's baseline (`entity_state`/`entity_state_log`) and overlay (`overlay`/`overlay_log`) come
+in **two forms** (both keyed by `cold_row_reference`, promoted by `PROMOTE`). The forms differ only in
+the **item** their `items: Vec<_>` holds — generic over an optional user payload `<T>`:
 
 ```
 u32 cold_row_reference            realm-unique within its module (the module's type_id IS the shard)
@@ -153,30 +162,43 @@ u32 cold_row_reference            realm-unique within its module (the module's t
   u12 subtype_id                  bits  4–15
   u4  layer_id                    bits  0–3
 
-u32 kind_pos_reference
-  u16 kind_reference              bits 16–31
-  u8  tile_reference              bits 8–15
-  u8  data                        bits 0–7
+struct DenseItem<T>               dense_entity_tables! — one entry PER CELL, ZONE_DIM² (index = tile_reference)
+  u16 kind_reference              ALWAYS present (fixed) — what object the cell holds
+  T   payload                     the optional EXTRA; none for tile, `u8 data` for a dense-with-data
 
-u8 data                           things only (tiles are kind-only, no data)
-  u2 rotation                     bits 6–7      4 facings; west mirrors east
-  u6 count                        bits 0–5      0–63
+struct SparseItem<T>              sparse_entity_tables! / overlay_tables! — one entry per OCCUPIED cell
+  u8  tile_reference
+  u16 kind_reference              ALWAYS present (fixed)
+  T   payload                     the optional extra; `u8 data` for thing
+
+u8 data                           the usual thing payload: rotation:2 | count:6 (west mirrors east)
 ```
 
-Row identity = `(macro_position_reference, subtype_id, layer_id)` — the `cold_row_reference`. **The
-`type_id` is the shard**: the `tile` module *is* `TYPE_BIOME_TILE`, `thing` *is* `TYPE_BIOME_THING`,
-so `type_id` is out of the key **and** off the row — dropping its `u4` (plus the old `reserved:8`) is
-exactly what freed the `u12 subtype_id`. A zone with N biomes is **N rows**, one per `subtype`.
+Row identity = `(macro_position_reference, subtype_id, layer_id)` = the `cold_row_reference`. **The
+`type_id` is the shard** (`tile` *is* `TYPE_BIOME_TILE`, `thing` *is* `TYPE_BIOME_THING`) — out of the
+key and off the row, which freed the `u12 subtype_id`. A zone with N biomes is **N rows**, one per
+`subtype`. Reconstruction: `type_reference` = `shard.type_id:4 | row.subtype_id:12`;
+`definition_reference` = `type_reference:16 | item.kind_reference:16`; `layer_reference` =
+`shard.type_id:4 | row.layer_id:4`; a cell's `position_reference` = `row.macro:16 | item_or_index
+tile_reference:8 | layer_reference:8`.
 
-Reconstruction sources `type_id` from the shard:
-`type_reference` = `shard.type_id:4 | row.subtype_id:12` → `definition_reference` =
-`type_reference:16 | entry.kind_reference:16`; `layer_reference` = `shard.type_id:4 | row.layer_id:4` →
-`position_reference` = `row.macro_position:16 | (entry.tile_reference:8 | layer_reference:8)`.
+**Dense vs sparse addressing.** A **dense** row allocates the full `ZONE_DIM²` items, so a
+`tile_reference` is a **direct index** into `items`. A **sparse**/overlay row holds only occupied
+cells, so a `tile_reference` **selects** the item whose `tile_reference` matches (each `SparseItem`
+carries its own). Actions resolve a cell this way — index for dense, match for sparse.
 
-`data` is **universal for things** — always `rotation:2 | count:6`, no per-type parse; game rules
-manipulate/display `count`. Mutation never writes the cold table: a changed cell is a `state_log` row
-in the shard's own hot-format overlay (`TABLES.md`), folded back into cold by GC. There is no separate
-tombstone table — a removal is a `state_log`/`state` row with the removed marker.
+**Both forms are `*_log`/`*` pairs**, keyed by `cold_uid` (`cold_row_reference:32 | tic:16`, above) with
+the shared composition columns (`worker_reference`, `observer_reference`, `status`). A shard's
+**baseline** is `dense_entity_tables!` (tile) or `sparse_entity_tables!{data}` (thing) →
+`entity_state`/`entity_state_log`; its **overlay** is a **second sparse table**, `overlay_tables!` →
+`overlay`/`overlay_log`, because an override touches only a few cells. (The hot, `entity_reference`-
+addressed `entity_tables!` is for hot shards only.) Nothing writes any of these directly — a worker
+composes `*_log`, a [`PROMOTE`](ACTIONS.md) prefix projects it to `*` (smart + atomic), GC `PACK`s the
+settled `overlay` into `entity_state_log`. Client renders **`entity_state` ⊕ `overlay`** — an overlay
+cell shadows its baseline cell (no per-cell `tic` compare; atomic promote prevents any flash).
+
+> **Naming.** The row id keeps the name `cold_row_reference` (and `cold_uid`) even though the tables are
+> now `entity_state`/`overlay` — "cold" survives only in the reference name, a later cleanup.
 
 ---
 

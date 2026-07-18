@@ -1,9 +1,19 @@
-# Work — cold-rework (subtype fix + `state`/`state_log` overlay + region router)
+# Work — cold-rework (subtype fix + overlay + region router → the `*_tables!` generalization)
 
-_Opened 2026-07-17. Builds cold to the [`world-storage`](../../intent/world-storage/README.md) design:
-restore the biome `subtype` the current baseline drops, then give cold the same `state_log`/`state`
-machinery hot uses so a cold cell mutates through the pipeline. Layouts:
-[`VARIABLES.md`](../../VARIABLES.md) · [`TABLES.md`](../../TABLES.md)._
+> **Current direction (2026-07-18): the `*_tables!` generalization.** Phases P1–P4 below (subtype fix,
+> region router, `state`/`state_log` overlay, event-driven `SET`) are **built + live**. The design then
+> shifted (see [`forks.md`](forks.md) **F4→F5→F6**): every shard folds into generic macros —
+> `entity_tables!`/`dense_entity_tables!`/`sparse_entity_tables!` (→ `entity_state`/`entity_state_log`)
+> + `overlay_tables!` (→ `overlay`/`overlay_log`); **all writes go through events** (retiring the direct
+> `seed`/`set_*`/`fold`); and **`PROMOTE`** is a smart, atomic prefix. This closes the seed/acquire race
+> by construction and unifies cold with hot. **Implementation plan:
+> [`work/shard-tables`](../shard-tables/README.md).** Authoritative shapes:
+> [`TABLES.md`](../../TABLES.md) · [`VARIABLES.md`](../../VARIABLES.md) · [`ACTIONS.md`](../../ACTIONS.md)
+> · [`world-storage`](../../intent/world-storage/README.md). **Not yet built.**
+
+_Opened 2026-07-17. Original scope: restore the biome `subtype` the baseline dropped, then give cold the
+same `state_log`/`state` machinery hot uses so a cold cell mutates through the pipeline — since
+generalized (above)._
 
 ## What & why
 
