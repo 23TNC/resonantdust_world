@@ -34,10 +34,12 @@ use resonantdust_st_bindings::{data_shard, event_shard, index, thing, tile};
 use data_shard::{write as _, EntityStateLogTableAccess as _};
 use event_shard::{complete as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
-// The cold shards ride the same composition macro, so their `write` + `state_log` surfaces are the
-// same shape — a cold-cell mutation composes + writes exactly like a hot one, just on its shard.
-use thing::{write as _, EntityStateLogTableAccess as _};
-use tile::{write as _, EntityStateLogTableAccess as _};
+// P3: the cold shards (tile/thing) are now `cold_row_reference`-addressed (dense/sparse `entity_state`
+// + a sparse `overlay`) — a cold cell no longer has a per-entity `entity_state_log` slot the worker
+// composes. Cold writes go through the shards' direct `seed`/`set_*`/`fold` reducers for now; the
+// worker's **cold-row** composition (whole-`Vec` scratch → `write`/`write_overlay` + `PROMOTE`) is P4
+// (`docs/work/shard-tables/`). The worker still connects to the cold shards below (their tic clocks +
+// future cold-row slots) but neither reads a cold base nor writes a cold target this phase.
 
 /// Which composing shard an entity lives on — routed by its `server_reference`'s `type_id` (the top
 /// nibble). A cold cell's `SET` target carries `TYPE_BIOME_TILE`/`TYPE_BIOME_THING`; everything else
@@ -237,7 +239,7 @@ async fn main() {
             // target is read from *its own* shard (a cold cell's base lives in the tile/thing overlay).
             let mut blocked_on = None;
             for &e in &targets {
-                if let Some(base) = base_row(&data, &tile, &thing, e, t) {
+                if let Some(base) = base_row(&data, e, t) {
                     if base.dirty {
                         blocked_on = Some(e);
                         break;
@@ -252,7 +254,7 @@ async fn main() {
             // ── COMPOSE ── scratch from each target's base, then apply every event in order.
             let mut scratch: HashMap<u32, Payload> = HashMap::new();
             for &e in &targets {
-                let base = base_row(&data, &tile, &thing, e, t)
+                let base = base_row(&data, e, t)
                     .map(|r| Payload {
                         definition_reference: r.definition_reference,
                         position_reference: r.position_reference,
@@ -271,8 +273,6 @@ async fn main() {
             // gets one `write` of its own targets. A cross-shard partial write just retries next pass
             // (`write` is idempotent — it skips already-clean slots).
             let mut data_w: Vec<data_shard::TargetState> = Vec::new();
-            let mut tile_w: Vec<tile::TargetState> = Vec::new();
-            let mut thing_w: Vec<thing::TargetState> = Vec::new();
             for &e in &targets {
                 let p = scratch[&e];
                 let promote = promote.contains(&e);
@@ -285,45 +285,16 @@ async fn main() {
                         data: p.data,
                         promote,
                     }),
-                    Shard::Tile => tile_w.push(tile::TargetState {
-                        entity_reference: e,
-                        definition_reference: p.definition_reference,
-                        macro_position_reference: position_macro(p.position_reference),
-                        micro_position_reference: position_micro(p.position_reference),
-                        data: p.data,
-                        promote,
-                    }),
-                    Shard::Thing => thing_w.push(thing::TargetState {
-                        entity_reference: e,
-                        definition_reference: p.definition_reference,
-                        macro_position_reference: position_macro(p.position_reference),
-                        micro_position_reference: position_micro(p.position_reference),
-                        data: p.data,
-                        promote,
-                    }),
+                    // P3: cold targets (tile/thing) are composed by the shards' direct reducers, not
+                    // here — the worker's cold-row composition (`write`/`write_overlay`) is P4.
+                    Shard::Tile | Shard::Thing => {}
                 }
             }
-            let mut write_ok = true;
             if !data_w.is_empty() {
                 if let Err(err) = data.reducers().write(self_ref, t, data_w) {
                     tracing::warn!(%err, tic = t, shard = "data", "write failed — will retry next pass");
-                    write_ok = false;
+                    continue;
                 }
-            }
-            if write_ok && !tile_w.is_empty() {
-                if let Err(err) = tile.reducers().write(self_ref, t, tile_w) {
-                    tracing::warn!(%err, tic = t, shard = "tile", "write failed — will retry next pass");
-                    write_ok = false;
-                }
-            }
-            if write_ok && !thing_w.is_empty() {
-                if let Err(err) = thing.reducers().write(self_ref, t, thing_w) {
-                    tracing::warn!(%err, tic = t, shard = "thing", "write failed — will retry next pass");
-                    write_ok = false;
-                }
-            }
-            if !write_ok {
-                continue;
             }
 
             // ── COMPLETE ── each event, with the zones its targets ended up in.
@@ -421,32 +392,22 @@ struct Base {
 /// `observer_reference = self` on it (or the worker wrote it). `None` for a never-mutated entity —
 /// a cold cell whose truth is still the baseline — whose base is the default (empty) payload; a `SET`
 /// overwrites it absolutely, so the empty base is correct.
-fn base_row(
-    data: &data_shard::DbConnection,
-    tile: &tile::DbConnection,
-    thing: &thing::DbConnection,
-    entity: u32,
-    tic: u16,
-) -> Option<Base> {
-    macro_rules! latest {
-        ($conn:expr) => {
-            $conn
-                .db()
-                .entity_state_log()
-                .iter()
-                .filter(|r| r.entity_reference == entity && tic_before(r.tic, tic))
-                .reduce(|a, b| if tic_after(b.tic, a.tic) { b } else { a })
-                .map(|r| Base {
-                    definition_reference: r.definition_reference,
-                    position_reference: pack_position_reference(r.macro_position_reference, r.micro_position_reference),
-                    data: r.data,
-                    dirty: r.dirty,
-                })
-        };
+fn base_row(data: &data_shard::DbConnection, entity: u32, tic: u16) -> Option<Base> {
+    // P3: only the hot `data_shard` has a per-entity `entity_state_log` base. Cold cells (tile/thing)
+    // are cold-row-addressed with no per-entity slot — their base is the baseline, read/written by the
+    // shards' own reducers. Worker cold-row composition is P4.
+    if shard_of(entity) != Shard::Data {
+        return None;
     }
-    match shard_of(entity) {
-        Shard::Data => latest!(data),
-        Shard::Tile => latest!(tile),
-        Shard::Thing => latest!(thing),
-    }
+    data.db()
+        .entity_state_log()
+        .iter()
+        .filter(|r| r.entity_reference == entity && tic_before(r.tic, tic))
+        .reduce(|a, b| if tic_after(b.tic, a.tic) { b } else { a })
+        .map(|r| Base {
+            definition_reference: r.definition_reference,
+            position_reference: pack_position_reference(r.macro_position_reference, r.micro_position_reference),
+            data: r.data,
+            dirty: r.dirty,
+        })
 }

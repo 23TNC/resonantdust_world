@@ -29,12 +29,12 @@ use tokio::sync::{mpsc, oneshot};
 use crate::bindings;
 use crate::bindings::data_shard::entity_state_table::EntityStateTableAccess as _;
 use crate::bindings::event_shard::event_table::EventTableAccess as _;
-use crate::bindings::thing::cold_thing_table::ColdThingTableAccess as _;
 use crate::bindings::thing::seed as _; // reducer trait → thing.reducers().seed
-use crate::bindings::thing::entity_state_table::EntityStateTableAccess as _; // cold overlay `state`
-use crate::bindings::tile::cold_tile_table::ColdTileTableAccess as _;
+use crate::bindings::thing::entity_state_table::EntityStateTableAccess as _; // cold baseline
+use crate::bindings::thing::overlay_table::OverlayTableAccess as _; // cold override
 use crate::bindings::tile::seed as _; // reducer trait → tile.reducers().seed
-use crate::bindings::tile::entity_state_table::EntityStateTableAccess as _; // cold overlay `state`
+use crate::bindings::tile::entity_state_table::EntityStateTableAccess as _; // cold baseline
+use crate::bindings::tile::overlay_table::OverlayTableAccess as _; // cold override
 use crate::bindings::event_shard::queue as _; // reducer trait → `reducers().queue_then`
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
 use crate::connections::{
@@ -291,19 +291,18 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
     };
     if let Some(t) = &tile {
         let o = out_tx.clone();
-        t.db().cold_tile().on_insert(move |_ctx, row| send(&o, cold_tile_frame(row)));
+        t.db().entity_state().on_insert(move |_ctx, row| send(&o, cold_tile_frame(row)));
         let o = out_tx.clone();
-        t.db().cold_tile().on_update(move |_ctx, _old, row| send(&o, cold_tile_frame(row)));
-        // The cold overlay: a per-cell mutation in the tile shard's `state` table.
-        let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::tile::EntityState, removed: bool| {
-            send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, resonantdust_codec::object::pack_position_reference(row.macro_position_reference, row.micro_position_reference), row.definition_reference, row.data, row.tic, removed))
-        };
+        t.db().entity_state().on_update(move |_ctx, _old, row| send(&o, cold_tile_frame(row)));
+        // The cold overlay: a whole-row override in the tile shard's `overlay` table, re-framed to the
+        // per-cell `ColdState` wire (F10 — client-transparent). A row insert/update relays all its
+        // cells; a row delete (a `fold`) clears them (the value now lives in the baseline).
         let o = out_tx.clone();
-        t.db().entity_state().on_insert(move |_ctx, row| s(&o, row, false));
+        t.db().overlay().on_insert(move |_ctx, row| relay_tile_overlay(&o, row, false));
         let o = out_tx.clone();
-        t.db().entity_state().on_update(move |_ctx, _old, row| s(&o, row, false));
+        t.db().overlay().on_update(move |_ctx, _old, row| relay_tile_overlay(&o, row, false));
         let o = out_tx.clone();
-        t.db().entity_state().on_delete(move |_ctx, row| s(&o, row, true));
+        t.db().overlay().on_delete(move |_ctx, row| relay_tile_overlay(&o, row, true));
     }
     let (thing_url, thing_db) =
         pool.cold_endpoint(TYPE_BIOME_THING, 0).unwrap_or_else(|| (pool.cfg.uri.clone(), pool.cfg.thing_db()));
@@ -313,58 +312,108 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
     };
     if let Some(t) = &thing {
         let o = out_tx.clone();
-        t.db().cold_thing().on_insert(move |_ctx, row| send(&o, cold_thing_frame(row)));
+        t.db().entity_state().on_insert(move |_ctx, row| send(&o, cold_thing_frame(row)));
         let o = out_tx.clone();
-        t.db().cold_thing().on_update(move |_ctx, _old, row| send(&o, cold_thing_frame(row)));
-        // The cold overlay: a per-cell mutation in the thing shard's `state` table.
-        let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::thing::EntityState, removed: bool| {
-            send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, resonantdust_codec::object::pack_position_reference(row.macro_position_reference, row.micro_position_reference), row.definition_reference, row.data, row.tic, removed))
-        };
+        t.db().entity_state().on_update(move |_ctx, _old, row| send(&o, cold_thing_frame(row)));
         let o = out_tx.clone();
-        t.db().entity_state().on_insert(move |_ctx, row| s(&o, row, false));
+        t.db().overlay().on_insert(move |_ctx, row| relay_thing_overlay(&o, row, false));
         let o = out_tx.clone();
-        t.db().entity_state().on_update(move |_ctx, _old, row| s(&o, row, false));
+        t.db().overlay().on_update(move |_ctx, _old, row| relay_thing_overlay(&o, row, false));
         let o = out_tx.clone();
-        t.db().entity_state().on_delete(move |_ctx, row| s(&o, row, true));
+        t.db().overlay().on_delete(move |_ctx, row| relay_thing_overlay(&o, row, true));
     }
 
     World { event, data, tile, thing }
 }
 
-/// A `ColdTile` baseline frame — a cold `tile` shard's `cold_tile` row.
-fn cold_tile_frame(row: &bindings::tile::ColdTile) -> ServerMsg {
+/// A `ColdTile` baseline frame — a cold `tile` shard's dense `entity_state` row, re-packed to the wire
+/// `tiles: Vec<u16>` (the dense `items[i].kind_reference`, `tile_reference` = the index).
+fn cold_tile_frame(row: &bindings::tile::EntityState) -> ServerMsg {
     ServerMsg::ColdTile {
         zone: row.macro_position_reference,
         subtype_id: row.subtype_id,
         layer_id: row.layer_id,
         tic: row.tic,
-        tiles: row.tiles.clone(),
+        tiles: row.items.iter().map(|it| it.kind_reference).collect(),
     }
 }
 
-/// A `ColdThing` baseline frame — a cold `thing` shard's `cold_thing` row.
-fn cold_thing_frame(row: &bindings::thing::ColdThing) -> ServerMsg {
+/// A `ColdThing` baseline frame — a cold `thing` shard's sparse `entity_state` row, re-packed to the
+/// wire `things: Vec<u32>` (`kind_pos_reference` = `kind:16 | tile:8 | data:8` per occupied cell).
+fn cold_thing_frame(row: &bindings::thing::EntityState) -> ServerMsg {
     ServerMsg::ColdThing {
         zone: row.macro_position_reference,
         subtype_id: row.subtype_id,
         layer_id: row.layer_id,
         tic: row.tic,
-        things: row.things.clone(),
+        things: row
+            .items
+            .iter()
+            .map(|it| {
+                resonantdust_codec::object::pack_kind_pos_reference(it.kind_reference, it.tile_reference, it.data)
+            })
+            .collect(),
     }
 }
 
-/// A `ColdState` overlay frame — a cold shard's `state` row, echoed to the client to composite over
-/// the baseline cell at `position_reference`. `removed` marks the override clearing (a `state` delete).
-fn cold_state_frame(
-    zone: u16,
-    entity_reference: u32,
-    position_reference: u32,
-    definition_reference: u32,
-    data: u8,
-    tic: u16,
-    removed: bool,
-) -> ServerMsg {
-    ServerMsg::ColdState { zone, entity_reference, position_reference, definition_reference, data, tic, removed }
+/// Re-frame a tile `overlay` row's cells to per-cell `ColdState` (F10). Each cell gets a stable
+/// pseudo `entity_reference` (`cold_entity_reference(server, position)`) so a re-issue updates rather
+/// than duplicates; `removed` (a row delete / `kind == 0`) tells the client to drop the override and
+/// read the baseline.
+fn relay_tile_overlay(o: &mpsc::UnboundedSender<String>, row: &bindings::tile::Overlay, removed: bool) {
+    use resonantdust_codec::object::{
+        cold_entity_reference, pack_definition_reference, pack_layer_reference, pack_position_reference,
+        pack_type_reference, TYPE_BIOME_TILE,
+    };
+    let server = resonantdust_codec::refs::pack_server_reference(TYPE_BIOME_TILE, 0);
+    for it in &row.items {
+        let layer_reference = pack_layer_reference(TYPE_BIOME_TILE, row.layer_id);
+        let micro = ((it.tile_reference as u16) << 8) | layer_reference as u16;
+        let position = pack_position_reference(row.macro_position_reference, micro);
+        let definition =
+            pack_definition_reference(pack_type_reference(TYPE_BIOME_TILE, row.subtype_id), it.kind_reference);
+        send(
+            o,
+            ServerMsg::ColdState {
+                zone: row.macro_position_reference,
+                entity_reference: cold_entity_reference(server, position),
+                position_reference: position,
+                definition_reference: definition,
+                data: 0,
+                tic: row.tic,
+                removed: removed || it.kind_reference == 0,
+            },
+        );
+    }
+}
+
+/// Re-frame a thing `overlay` row's cells to per-cell `ColdState` (F10) — as [`relay_tile_overlay`] but
+/// carrying the thing's `data` byte.
+fn relay_thing_overlay(o: &mpsc::UnboundedSender<String>, row: &bindings::thing::Overlay, removed: bool) {
+    use resonantdust_codec::object::{
+        cold_entity_reference, pack_definition_reference, pack_layer_reference, pack_position_reference,
+        pack_type_reference, TYPE_BIOME_THING,
+    };
+    let server = resonantdust_codec::refs::pack_server_reference(TYPE_BIOME_THING, 0);
+    for it in &row.items {
+        let layer_reference = pack_layer_reference(TYPE_BIOME_THING, row.layer_id);
+        let micro = ((it.tile_reference as u16) << 8) | layer_reference as u16;
+        let position = pack_position_reference(row.macro_position_reference, micro);
+        let definition =
+            pack_definition_reference(pack_type_reference(TYPE_BIOME_THING, row.subtype_id), it.kind_reference);
+        send(
+            o,
+            ServerMsg::ColdState {
+                zone: row.macro_position_reference,
+                entity_reference: cold_entity_reference(server, position),
+                position_reference: position,
+                definition_reference: definition,
+                data: it.data,
+                tic: row.tic,
+                removed: removed || it.kind_reference == 0,
+            },
+        );
+    }
 }
 
 fn state_frame(row: &bindings::data_shard::EntityState) -> ServerMsg {
@@ -437,43 +486,43 @@ fn handle_subscribe(
         .on_error(|_ctx, err| tracing::warn!(%err, "event subscription error"))
         .subscribe([format!("SELECT * FROM event WHERE macro_position_reference = {zone}")]);
     // Cold ground + scatter + overlay for the zone (best-effort — a missing cold shard doesn't fail
-    // the zone). One subscription per shard covers the baseline (`cold_tile`/`cold_thing`) and its
-    // hot-format overlay (`state`), both zone-keyed.
+    // the zone). One subscription per shard covers the baseline (dense/sparse `entity_state`) and its
+    // sparse override (`overlay`), both zone-keyed.
     //
     // **`on_applied` snapshot relay (delivery guarantee).** The baseline is seeded (`seed_zone`) right
-    // *after* this subscribe, and a `cold_tile`/`cold_thing` row's `tic` never bumps again — so relying
-    // on the `on_insert` callback alone races the seed: a row that lands in the SDK cache via this
+    // *after* this subscribe, and an `entity_state` row's `tic` never bumps again — so relying on the
+    // `on_insert` callback alone races the seed: a row that lands in the SDK cache via this
     // subscription's initial snapshot (rather than a live insert) fires no `on_insert`, and with no
     // later change fires no `on_update` — the client would never receive it (black ground under
     // rendered scatter). So when the subscription **applies**, we explicitly push the zone's current
-    // rows. `on_insert`/`on_update` (in `build_world`) still carry live changes + late seeds; a double
-    // relay is harmless (the client re-expands the row idempotently).
+    // baseline rows. `on_insert`/`on_update` (in `build_world`) still carry live changes + late seeds;
+    // a double relay is harmless (the client re-expands the row idempotently).
     let o = out_tx.clone();
     let tile = world.tile.as_ref().map(|t| {
         t.subscription_builder()
-            .on_error(|_ctx, err| tracing::warn!(%err, "cold_tile subscription error"))
+            .on_error(|_ctx, err| tracing::warn!(%err, "tile cold subscription error"))
             .on_applied(move |ctx| {
-                for row in ctx.db.cold_tile().iter().filter(|r| r.macro_position_reference == zone) {
+                for row in ctx.db.entity_state().iter().filter(|r| r.macro_position_reference == zone) {
                     send(&o, cold_tile_frame(&row));
                 }
             })
             .subscribe([
-                format!("SELECT * FROM cold_tile WHERE macro_position_reference = {zone}"),
                 format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}"),
+                format!("SELECT * FROM overlay WHERE macro_position_reference = {zone}"),
             ])
     });
     let o = out_tx.clone();
     let thing = world.thing.as_ref().map(|t| {
         t.subscription_builder()
-            .on_error(|_ctx, err| tracing::warn!(%err, "cold_thing subscription error"))
+            .on_error(|_ctx, err| tracing::warn!(%err, "thing cold subscription error"))
             .on_applied(move |ctx| {
-                for row in ctx.db.cold_thing().iter().filter(|r| r.macro_position_reference == zone) {
+                for row in ctx.db.entity_state().iter().filter(|r| r.macro_position_reference == zone) {
                     send(&o, cold_thing_frame(&row));
                 }
             })
             .subscribe([
-                format!("SELECT * FROM cold_thing WHERE macro_position_reference = {zone}"),
                 format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}"),
+                format!("SELECT * FROM overlay WHERE macro_position_reference = {zone}"),
             ])
     });
     zones.insert(zone, ZoneSub { _state: state, _event: event, _tile: tile, _thing: thing });

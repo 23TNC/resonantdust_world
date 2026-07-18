@@ -30,6 +30,33 @@ drop (cold is `cold_row_reference`-addressed, no per-cell entity mint). `thing` 
 
 ---
 
+## F10 · P3 edge relay is **wire-transparent** — the client is unchanged (2026-07-18)
+
+**Context.** The tile/thing baseline is now `entity_state` (dense/sparse `items`) and the override is a
+whole-row `overlay` (`items: Vec<OverlayItem>`, `cold_row_reference`-addressed, **no per-cell
+entity_reference**). The old wire is `ColdTile{tiles:Vec<u16>}` / `ColdThing{things:Vec<u32>}` +
+per-cell `ColdState{entity_reference, position_reference, tic, …}`. Do we change the wire (and rework
+the pixijs client to composite `entity_state ⊕ overlay` natively) or keep it?
+
+**Options.** (A) **Wire-transparent** — the edge re-packs `entity_state.items` → the existing
+`ColdTile.tiles`/`ColdThing.things` and re-frames each `overlay` item → the existing per-cell
+`ColdState` (synthesizing `position_reference` from `(macro, tile_reference, layer)` and a stable
+pseudo-id via `object::cold_entity_reference`). **Client + protocol untouched.** (B) New wire
+(`ColdOverlay{items}`, retire `ColdState`) + rework the client composite (drop the `tic`/
+`cold_entity_reference` path, whole-row overlay wins by cell).
+
+**Decision: (A) for P3; (B) deferred to P3′.** Wire-transparency makes P3 a **single edge-side,
+deployable, browser-verifiable** increment — it proves the dense/sparse/overlay macros end-to-end (the
+[F9](#) win) against an *unchanged* client, the safest way to confirm the table conversion. The
+client composite-simplification (todo P3 bullet 4 — drop the per-cell `tic` composite +
+`cold_entity_reference`, move to whole-row `overlay`) is orthogonal and lands cleaner against a proven
+backend, as **P3′**. Cost: the edge synthesizes a stable per-cell `entity_reference`
+(`cold_entity_reference(server, position)`) + `position_reference` for each overlay item to fit
+`ColdState` — throwaway that P3′ deletes. The `on_applied` baseline snapshot relay (P6 band-aid) stays,
+now iterating `entity_state` instead of `cold_tile`.
+
+---
+
 ## F7 · The four table macros are **parallel siblings**, not a shared inner macro (2026-07-18)
 
 **Context.** `entity_tables!`, `dense_entity_tables!`, `sparse_entity_tables!`, `overlay_tables!` share
