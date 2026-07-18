@@ -15,30 +15,36 @@ pub mod clock_type;
 pub mod event_type;
 pub mod event_counter_type;
 pub mod event_log_type;
+pub mod orchestrator_type;
 pub mod assign_reducer;
 pub mod bump_reducer;
 pub mod complete_reducer;
 pub mod fail_reducer;
 pub mod queue_reducer;
 pub mod running_reducer;
+pub mod set_orchestrator_reducer;
 pub mod settle_reducer;
 pub mod clock_table;
 pub mod event_table;
 pub mod event_log_table;
+pub mod orchestrator_table;
 
 pub use clock_type::Clock;
 pub use event_type::Event;
 pub use event_counter_type::EventCounter;
 pub use event_log_type::EventLog;
+pub use orchestrator_type::Orchestrator;
 pub use clock_table::*;
 pub use event_table::*;
 pub use event_log_table::*;
+pub use orchestrator_table::*;
 pub use assign_reducer::assign;
 pub use bump_reducer::bump;
 pub use complete_reducer::complete;
 pub use fail_reducer::fail;
 pub use queue_reducer::queue;
 pub use running_reducer::running;
+pub use set_orchestrator_reducer::set_orchestrator;
 pub use settle_reducer::settle;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -69,6 +75,9 @@ pub enum Reducer {
     Running {
         event_reference: u32,
 }    ,
+    SetOrchestrator {
+        orchestrator_reference: u8,
+}    ,
     Settle {
         through_tic: u16,
 }    ,
@@ -88,6 +97,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::Fail { .. } => "fail",
             Reducer::Queue { .. } => "queue",
             Reducer::Running { .. } => "running",
+            Reducer::SetOrchestrator { .. } => "set_orchestrator",
             Reducer::Settle { .. } => "settle",
             _ => unreachable!(),
 }
@@ -129,6 +139,11 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }             => __sats::bsatn::to_vec(&running_reducer::RunningArgs {
                 event_reference: event_reference.clone(),
 }),
+            Reducer::SetOrchestrator{
+                orchestrator_reference,
+}             => __sats::bsatn::to_vec(&set_orchestrator_reducer::SetOrchestratorArgs {
+                orchestrator_reference: orchestrator_reference.clone(),
+}),
             Reducer::Settle{
                 through_tic,
 }             => __sats::bsatn::to_vec(&settle_reducer::SettleArgs {
@@ -146,6 +161,7 @@ pub struct DbUpdate {
         clock: __sdk::TableUpdate<Clock>,
     event: __sdk::TableUpdate<Event>,
     event_log: __sdk::TableUpdate<EventLog>,
+    orchestrator: __sdk::TableUpdate<Orchestrator>,
 }
 
 
@@ -159,6 +175,7 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
         "clock" => db_update.clock.append(clock_table::parse_table_update(table_update)?),
     "event" => db_update.event.append(event_table::parse_table_update(table_update)?),
     "event_log" => db_update.event_log.append(event_log_table::parse_table_update(table_update)?),
+    "orchestrator" => db_update.orchestrator.append(orchestrator_table::parse_table_update(table_update)?),
 
                 unknown => {
                     return Err(__sdk::InternalError::unknown_name(
@@ -184,6 +201,7 @@ impl __sdk::DbUpdate for DbUpdate {
                 diff.clock = cache.apply_diff_to_table::<Clock>("clock", &self.clock).with_updates_by_pk(|row| &row.id);
         diff.event = cache.apply_diff_to_table::<Event>("event", &self.event).with_updates_by_pk(|row| &row.uid);
         diff.event_log = cache.apply_diff_to_table::<EventLog>("event_log", &self.event_log).with_updates_by_pk(|row| &row.event_reference);
+        diff.orchestrator = cache.apply_diff_to_table::<Orchestrator>("orchestrator", &self.orchestrator).with_updates_by_pk(|row| &row.id);
 
                     diff
                 }
@@ -194,6 +212,7 @@ for table_rows in raw.tables {
                                 "clock" => db_update.clock.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "event" => db_update.event.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "orchestrator" => db_update.orchestrator.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
 }
@@ -204,6 +223,7 @@ for table_rows in raw.tables {
                                 "clock" => db_update.clock.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "event" => db_update.event.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "event_log" => db_update.event_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "orchestrator" => db_update.orchestrator.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
 }
@@ -216,6 +236,7 @@ pub struct AppliedDiff<'r> {
         clock: __sdk::TableAppliedDiff<'r, Clock>,
     event: __sdk::TableAppliedDiff<'r, Event>,
     event_log: __sdk::TableAppliedDiff<'r, EventLog>,
+    orchestrator: __sdk::TableAppliedDiff<'r, Orchestrator>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
 
@@ -229,6 +250,7 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
                 callbacks.invoke_table_row_callbacks::<Clock>("clock", &self.clock, event);
         callbacks.invoke_table_row_callbacks::<Event>("event", &self.event, event);
         callbacks.invoke_table_row_callbacks::<EventLog>("event_log", &self.event_log, event);
+        callbacks.invoke_table_row_callbacks::<Orchestrator>("orchestrator", &self.orchestrator, event);
 }
 }
 
@@ -883,10 +905,12 @@ fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
                 clock_table::register_table(client_cache);
         event_table::register_table(client_cache);
         event_log_table::register_table(client_cache);
+        orchestrator_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
                 "clock",
         "event",
         "event_log",
+        "orchestrator",
 ];
 }

@@ -24,15 +24,38 @@ use std::time::Duration;
 use spacetimedb_sdk::{DbContext, Table as _};
 
 use resonantdust_codec::action;
+use resonantdust_codec::object::{TYPE_BIOME_THING, TYPE_BIOME_TILE};
+use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_QUEUED};
 use resonantdust_codec::tic::{tic_add, tic_after};
-use resonantdust_st_bindings::{data_shard, event_shard, index};
+use resonantdust_st_bindings::{data_shard, event_shard, index, thing, tile};
 use data_shard::claim as _;
 use event_shard::{assign as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
+// Cold shards ride the same overlay, so a cold-cell mutation's slot is `claim`ed on its shard.
+use thing::claim as _;
+use tile::claim as _;
 
 mod grouping;
 use grouping::group;
+
+/// Which composing shard an entity's slot lives on — routed by its `server_reference` `type_id` (top
+/// nibble). A cold-cell `SET` target is `TYPE_BIOME_TILE`/`TYPE_BIOME_THING`; anything else (a pawn,
+/// …) is the hot `data_shard`, unchanged.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shard {
+    Data,
+    Tile,
+    Thing,
+}
+
+fn shard_of(entity: u32) -> Shard {
+    match entity_ref_type_id(entity) {
+        TYPE_BIOME_TILE => Shard::Tile,
+        TYPE_BIOME_THING => Shard::Thing,
+        _ => Shard::Data,
+    }
+}
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -67,7 +90,10 @@ async fn main() {
     let index_db = env_or("INDEX_DB", "resonantdust-dev-index-0");
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");
     let data_db = env_or("DATA_DB", "resonantdust-dev-data-shard-0");
-    tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, ?workers, %index_db, %event_db, %data_db, "orchestrator starting");
+    // Cold shards get their slots claimed here too when a cold-cell mutation is grouped.
+    let tile_db = env_or("TILE_DB", "resonantdust-dev-tile-0");
+    let thing_db = env_or("THING_DB", "resonantdust-dev-thing-0");
+    tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, ?workers, %index_db, %event_db, %data_db, %tile_db, %thing_db, "orchestrator starting");
 
     // ── index: the canonical tic. Every SDK-client server reads it here, not off a shard clock. ──
     let (tx_i, rx_i) = std::sync::mpsc::channel::<()>();
@@ -105,7 +131,7 @@ async fn main() {
             "SELECT * FROM event_log WHERE orchestrator_reference = {self_ref}"
         )]);
 
-    // ── data shard: no subscription, just a call surface for `claim` ────────────────
+    // ── data + cold shards: no subscription, just a call surface for `claim` ────────
     let data = data_shard::DbConnection::builder()
         .with_uri(&uri)
         .with_database_name(&data_db)
@@ -114,6 +140,22 @@ async fn main() {
         .build()
         .expect("build data_shard connection");
     data.run_threaded();
+    let tile = tile::DbConnection::builder()
+        .with_uri(&uri)
+        .with_database_name(&tile_db)
+        .on_connect(|_c, id, _t| tracing::info!(%id, "tile shard connected"))
+        .on_connect_error(|_c, err| tracing::error!(%err, "tile shard connect error"))
+        .build()
+        .expect("build tile shard connection");
+    tile.run_threaded();
+    let thing = thing::DbConnection::builder()
+        .with_uri(&uri)
+        .with_database_name(&thing_db)
+        .on_connect(|_c, id, _t| tracing::info!(%id, "thing shard connected"))
+        .on_connect_error(|_c, err| tracing::error!(%err, "thing shard connect error"))
+        .build()
+        .expect("build thing shard connection");
+    thing.run_threaded();
 
     rx_e
         .recv_timeout(Duration::from_secs(5))
@@ -189,11 +231,33 @@ async fn main() {
                     tracing::warn!(%err, tic = t, worker, "assign failed");
                     continue;
                 }
-                // Claim the component's slots on the data shard. One data shard today; multi-shard
-                // routing (group entities by their server_reference's top byte) is future work.
+                // Claim the component's slots, each on the shard that owns the entity (routed by its
+                // `server_reference` top byte) — a component may span shards (a cold cell + a pawn),
+                // so partition and claim per shard. A pawn's `0x30` → `data_shard`, unchanged.
                 if !wg.entities.is_empty() {
-                    if let Err(err) = data.reducers().claim(wg.entities.clone(), t, worker) {
-                        tracing::warn!(%err, tic = t, worker, "claim failed");
+                    let mut by_shard: HashMap<u8, Vec<u32>> = HashMap::new();
+                    for &e in &wg.entities {
+                        let key = match shard_of(e) {
+                            Shard::Data => 0,
+                            Shard::Tile => 1,
+                            Shard::Thing => 2,
+                        };
+                        by_shard.entry(key).or_default().push(e);
+                    }
+                    let mut claim_ok = true;
+                    for (key, ents) in by_shard {
+                        let res = match key {
+                            1 => tile.reducers().claim(ents, t, worker),
+                            2 => thing.reducers().claim(ents, t, worker),
+                            _ => data.reducers().claim(ents, t, worker),
+                        };
+                        if let Err(err) = res {
+                            tracing::warn!(%err, tic = t, worker, shard = key, "claim failed");
+                            claim_ok = false;
+                            break;
+                        }
+                    }
+                    if !claim_ok {
                         continue;
                     }
                 }

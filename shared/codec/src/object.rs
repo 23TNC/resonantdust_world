@@ -311,6 +311,19 @@ pub fn position_layer_reference(r: u32) -> u8 {
     (r & POSITION_BYTE_MASK) as u8
 }
 
+/// A cold cell's **deterministic** `entity_reference` — a pure function of position, because a cold
+/// cell's identity *is* its position (one entity per cell). `object_reference` = `macro_position:16 |
+/// tile_reference:8` (fits the `u24` exactly; the layer is the shard's). The caller computes this and
+/// spells it as a `SET` write operand, so the event pipeline groups/claims/composes it with **no**
+/// mint (no deferred spawn-id claim, no position→id watch). `server_reference` is the cold shard's
+/// (`TYPE_BIOME_TILE`/`TYPE_BIOME_THING` | `server_id`). Idempotent: re-issuing for a cell reuses the
+/// id. See `docs/work/cold-rework/deviations.md` D-1.
+pub fn cold_entity_reference(server_reference: u8, position_reference: u32) -> u32 {
+    let object_reference =
+        ((position_macro(position_reference) as u32) << 8) | (position_tile(position_reference) as u32);
+    crate::refs::pack_entity_reference(server_reference, object_reference)
+}
+
 // ── cold_row_reference : u32 = macro_position:16 | subtype_id:12 | layer_id:4 ────────────────────
 //
 // The **cold row's identity** — the composite of the three header fields that identify a row:
@@ -549,6 +562,29 @@ mod tests {
         // subtype/layer_id over-wide inputs mask, never bleed into a neighbour field.
         assert_eq!(pack_cold_row_reference(0, 0x1000, 0), 0); // subtype bit 12 dropped
         assert_eq!(pack_cold_row_reference(0, 0, 0x10), 0); // layer_id bit 4 dropped
+    }
+
+    #[test]
+    fn cold_entity_reference_is_deterministic_from_position() {
+        use crate::refs::{entity_ref_server_reference, pack_server_reference};
+        let srv = pack_server_reference(TYPE_BIOME_TILE, 0);
+        for &(reg, z, t, l) in &[(0u8, 0u8, 0u8, 0u8), (1, 2, 3, 4), (0xAB, 0xCD, 0xEF, 0x35)] {
+            let p = pack_position_from_parts(reg, z, t, l);
+            let e = cold_entity_reference(srv, p);
+            // The server byte routes it; the object_reference is macro:16 | tile:8.
+            assert_eq!(entity_ref_server_reference(e), srv);
+            assert_eq!(e & 0x00FF_FFFF, ((position_macro(p) as u32) << 8) | position_tile(p) as u32);
+            // Deterministic + idempotent: same position → same id; the layer does NOT change it
+            // (one cold entity per cell, layer is the shard's).
+            assert_eq!(e, cold_entity_reference(srv, p));
+            assert_eq!(e, cold_entity_reference(srv, pack_position_from_parts(reg, z, t, l ^ 0x0F)));
+        }
+        // Distinct cells (by macro or by tile) get distinct ids.
+        let a = cold_entity_reference(srv, pack_position_from_parts(0, 0, 0x11, 0));
+        let b = cold_entity_reference(srv, pack_position_from_parts(0, 0, 0x12, 0));
+        let c = cold_entity_reference(srv, pack_position_from_parts(0, 1, 0x11, 0));
+        assert_ne!(a, b);
+        assert_ne!(a, c);
     }
 
     #[test]

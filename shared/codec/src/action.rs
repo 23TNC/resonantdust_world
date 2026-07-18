@@ -26,6 +26,12 @@ pub const PLACE: u32 = 4;
 /// Step an object one tile toward a destination, then queue the next hop. Operands: `obj`
 /// (read+write), `dest` (imm).
 pub const MOVE_TO: u32 = 5;
+/// Set an object's **full payload absolutely** — `definition`, `position`, `data` all at once (the
+/// composed base is irrelevant; `SET` overwrites). Operands: `obj` (write), `def` (imm), `position`
+/// (imm), `data` (imm, low byte used). The cold-cell mutation verb: the `obj` is the cell's
+/// deterministic [`crate::object::cold_entity_reference`], so the pipeline groups/claims/composes it
+/// with no mint. (`PLACE` sets only position; a cell change also sets the kind, hence `def`.)
+pub const SET: u32 = 6;
 
 /// What an operand is, for deriving the write/read sets. Only `entity_reference` operands matter to
 /// the sets; `Imm` operands (numbers, positions, definitions) are neither.
@@ -62,6 +68,7 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         CREATE => &[Imm, Imm],       // def, position — the write is the minted id, not an operand
         PLACE => &[Write, Imm],      // obj, position
         MOVE_TO => &[ReadWrite, Imm], // obj (reads its own position, writes the next), dest
+        SET => &[Write, Imm, Imm, Imm], // obj, def, position, data — absolute full payload
         _ => return None,
     })
 }
@@ -204,6 +211,18 @@ mod tests {
         // reads: MOVE_TO.obj (ReadWrite)
         assert_eq!(read_targets(&p).unwrap(), vec![0x11]);
         assert!(asks_promote_event(&p));
+    }
+
+    #[test]
+    fn set_frames_and_its_target_is_in_the_write_set() {
+        // SET obj def pos data — arity 4; obj is the (only) write target, def/pos/data are Imm.
+        let p = vec![SET, 0x0100_0088, 0x1006_0040, 0x0000_8810, 0x00];
+        let insts: Vec<_> = program(&p).map(|r| r.unwrap()).collect();
+        assert_eq!(insts.len(), 1);
+        assert_eq!(insts[0], Instruction { action: SET, operands: &[0x0100_0088, 0x1006_0040, 0x0000_8810, 0x00] });
+        assert_eq!(write_targets(&p).unwrap(), vec![0x0100_0088]);
+        assert_eq!(read_targets(&p).unwrap(), Vec::<u32>::new());
+        assert_eq!(arity(SET), Some(4));
     }
 
     #[test]

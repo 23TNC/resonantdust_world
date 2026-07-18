@@ -11,13 +11,22 @@
 `state` override) → `fold` (PACK back into the baseline). See [`completed.md`](completed.md). What's
 left, by kind:
 
-**The big pipeline integration** (touches the delicate live wolf pipeline)
-- **Event-driven `UNPACK`** — route a mutate through edge → orchestrator → worker (the worker calls the
-  mint), instead of the direct `set_tile`/`set_thing` reducer, with a deterministic-from-event id
-  (replay-safe). The **CREATE/mint spawn-id claim is currently *deferred* in the worker/orchestrator**,
-  so this is genuinely new logic in the most correctness-critical code.
-- **Core two-phase** — core issues `UNPACK`@N=0 (pre-empted), learns the id by watching the position in
-  `state`, then issues the op. Pairs with the above.
+**Event-driven `UNPACK` — DONE + live-verified** (see [`completed.md`](completed.md)). The
+deterministic cold entity id ([`deviations.md`](deviations.md) D-1) sidestepped the deferred
+spawn-claim: a `SET` action carries the position-derived id as a normal write operand, so the existing
+grouping/claim/worker machinery routes it — the worker + orchestrator gained only shard-routing by
+`server_reference`. A `SET` queued at the event shard flows orchestrator (claims on the cold shard) →
+worker (composes + writes the cold shard) → `state` → edge `ColdState` → **blue water rendered**; the
+hot wolf path is unchanged (regression-checked). **Core two-phase collapsed** — the id is
+deterministic, so core needn't watch a position to learn it.
+
+**Remaining**
+- **Core-side command** — a `client/core` verb that computes `cold_entity_reference(position)` +
+  queues the `SET` program (`[SET, id, def, pos, data, PROMOTE_STATE, id]`), so a *client* (not just a
+  CLI-queued event) drives a cold mutation. Small — the pipeline behind it is proven. Pixijs may expose
+  it (a debug click-to-paint) once core has it.
+- **`fold` through events** — GC currently folds via the direct `fold` reducer (proven). Driving the
+  fold itself as an event is a later nicety; the fold logic is unchanged.
 
 **Stopgap promotions** (low urgency, recorded)
 - `server_reference` **master-assigned** (F2) — the `tile`/`thing` const only bites at multi-shard.

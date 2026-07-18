@@ -162,3 +162,33 @@ A cold row *is* a compressed `state` row, so it carries a `tic` — resolving th
 to the baseline exactly as designed. Thing lifecycle (place → kind-0 tombstone → fold) flows clean
 server-side (the client suppression path is type-agnostic, shared with the proven tile path). No
 console errors.
+
+---
+
+## P4 · Event-driven `UNPACK` — a cold mutation through the live pipeline
+
+The remaining "big one": route a cold-cell mutation through edge → orchestrator → worker (not the
+direct `set_tile` reducer). The **deterministic cold entity id** ([`deviations.md`](deviations.md) D-1)
+made it tractable — no deferred spawn-claim, no position→id watch.
+
+- **codec** `action`: new `SET obj def pos data` verb (`[Write, Imm, Imm, Imm]`) — set a target's full
+  payload absolutely (the base is irrelevant). `object`: `cold_entity_reference(server_reference,
+  position)` = `server:8 | macro:16 | tile:8` — a cell's id is a pure function of its position. Tests
+  added (both green in the 48-test codec suite).
+- **worker**: connects to the `tile`/`thing` shards + subscribes their `state_log`; a `shard_of(entity)`
+  routes each target's **base read + write** by `server_reference` top nibble (`TYPE_BIOME_TILE`→tile,
+  `TYPE_BIOME_THING`→thing, else `data_shard`). Composes `SET`. A component may span shards — each shard
+  gets its own `write`.
+- **orchestrator**: connects to the cold shards; partitions a work-group's entities by shard and
+  `claim`s each on its own shard.
+- **event_shard**: rebuilt so `queue`'s program-validation knows `SET`'s arity (republished `--keep`).
+
+**Browser-confirmed live (2026-07-18):** a `SET` water program queued at the event shard
+(`[SET, 0x10000088, 0x10060040, 0x8810, 0, PROMOTE_STATE, 0x10000088]`) flowed **entirely through
+events** — orchestrator assigned the group + claimed the slot **on the tile shard**, worker `0x62`
+composed the `SET` and wrote it → tile `state_log` (settled) → promoted to `state` → edge `ColdState`
+→ a **blue water tile rendered** in the forest (a lone override cell, unmistakably not biome). A second
+`SET` at (10,5) appeared live. The hot **wolf** path was regression-checked through the same modified
+worker/orchestrator (a `PLACE` on `0x30000001` still landed in `data_shard.state`, tic 2346→51171) — the
+routing is additive, the live pipeline unbroken. No console errors. Test data reset afterward (fresh
+worldgen reseed).
