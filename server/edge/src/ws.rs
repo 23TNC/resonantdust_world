@@ -290,22 +290,10 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         None => None,
     };
     if let Some(t) = &tile {
-        let relay = |o: &mpsc::UnboundedSender<String>, row: &bindings::tile::ColdTile| {
-            send(
-                o,
-                ServerMsg::ColdTile {
-                    zone: row.macro_position_reference,
-                    subtype_id: row.subtype_id,
-                    layer_id: row.layer_id,
-                    tic: row.tic,
-                    tiles: row.tiles.clone(),
-                },
-            )
-        };
         let o = out_tx.clone();
-        t.db().cold_tile().on_insert(move |_ctx, row| relay(&o, row));
+        t.db().cold_tile().on_insert(move |_ctx, row| send(&o, cold_tile_frame(row)));
         let o = out_tx.clone();
-        t.db().cold_tile().on_update(move |_ctx, _old, row| relay(&o, row));
+        t.db().cold_tile().on_update(move |_ctx, _old, row| send(&o, cold_tile_frame(row)));
         // The cold overlay: a per-cell mutation in the tile shard's `state` table.
         let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::tile::State, removed: bool| {
             send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, row.position_reference, row.definition_reference, row.data, row.tic, removed))
@@ -324,22 +312,10 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         None => None,
     };
     if let Some(t) = &thing {
-        let relay = |o: &mpsc::UnboundedSender<String>, row: &bindings::thing::ColdThing| {
-            send(
-                o,
-                ServerMsg::ColdThing {
-                    zone: row.macro_position_reference,
-                    subtype_id: row.subtype_id,
-                    layer_id: row.layer_id,
-                    tic: row.tic,
-                    things: row.things.clone(),
-                },
-            )
-        };
         let o = out_tx.clone();
-        t.db().cold_thing().on_insert(move |_ctx, row| relay(&o, row));
+        t.db().cold_thing().on_insert(move |_ctx, row| send(&o, cold_thing_frame(row)));
         let o = out_tx.clone();
-        t.db().cold_thing().on_update(move |_ctx, _old, row| relay(&o, row));
+        t.db().cold_thing().on_update(move |_ctx, _old, row| send(&o, cold_thing_frame(row)));
         // The cold overlay: a per-cell mutation in the thing shard's `state` table.
         let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::thing::State, removed: bool| {
             send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, row.position_reference, row.definition_reference, row.data, row.tic, removed))
@@ -353,6 +329,28 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
     }
 
     World { event, data, tile, thing }
+}
+
+/// A `ColdTile` baseline frame — a cold `tile` shard's `cold_tile` row.
+fn cold_tile_frame(row: &bindings::tile::ColdTile) -> ServerMsg {
+    ServerMsg::ColdTile {
+        zone: row.macro_position_reference,
+        subtype_id: row.subtype_id,
+        layer_id: row.layer_id,
+        tic: row.tic,
+        tiles: row.tiles.clone(),
+    }
+}
+
+/// A `ColdThing` baseline frame — a cold `thing` shard's `cold_thing` row.
+fn cold_thing_frame(row: &bindings::thing::ColdThing) -> ServerMsg {
+    ServerMsg::ColdThing {
+        zone: row.macro_position_reference,
+        subtype_id: row.subtype_id,
+        layer_id: row.layer_id,
+        tic: row.tic,
+        things: row.things.clone(),
+    }
 }
 
 /// A `ColdState` overlay frame — a cold shard's `state` row, echoed to the client to composite over
@@ -441,17 +439,38 @@ fn handle_subscribe(
     // Cold ground + scatter + overlay for the zone (best-effort — a missing cold shard doesn't fail
     // the zone). One subscription per shard covers the baseline (`cold_tile`/`cold_thing`) and its
     // hot-format overlay (`state`), both zone-keyed.
+    //
+    // **`on_applied` snapshot relay (delivery guarantee).** The baseline is seeded (`seed_zone`) right
+    // *after* this subscribe, and a `cold_tile`/`cold_thing` row's `tic` never bumps again — so relying
+    // on the `on_insert` callback alone races the seed: a row that lands in the SDK cache via this
+    // subscription's initial snapshot (rather than a live insert) fires no `on_insert`, and with no
+    // later change fires no `on_update` — the client would never receive it (black ground under
+    // rendered scatter). So when the subscription **applies**, we explicitly push the zone's current
+    // rows. `on_insert`/`on_update` (in `build_world`) still carry live changes + late seeds; a double
+    // relay is harmless (the client re-expands the row idempotently).
+    let o = out_tx.clone();
     let tile = world.tile.as_ref().map(|t| {
         t.subscription_builder()
             .on_error(|_ctx, err| tracing::warn!(%err, "cold_tile subscription error"))
+            .on_applied(move |ctx| {
+                for row in ctx.db.cold_tile().iter().filter(|r| r.macro_position_reference == zone) {
+                    send(&o, cold_tile_frame(&row));
+                }
+            })
             .subscribe([
                 format!("SELECT * FROM cold_tile WHERE macro_position_reference = {zone}"),
                 format!("SELECT * FROM state WHERE macro_position_reference = {zone}"),
             ])
     });
+    let o = out_tx.clone();
     let thing = world.thing.as_ref().map(|t| {
         t.subscription_builder()
             .on_error(|_ctx, err| tracing::warn!(%err, "cold_thing subscription error"))
+            .on_applied(move |ctx| {
+                for row in ctx.db.cold_thing().iter().filter(|r| r.macro_position_reference == zone) {
+                    send(&o, cold_thing_frame(&row));
+                }
+            })
             .subscribe([
                 format!("SELECT * FROM cold_thing WHERE macro_position_reference = {zone}"),
                 format!("SELECT * FROM state WHERE macro_position_reference = {zone}"),
