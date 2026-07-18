@@ -7,7 +7,15 @@ item back to `todo` once cleared (leave a dated resolution line here)._
 
 ## B1 · No reliable in-browser draw-call measurement (blocks P1 baseline) — 2026-07-18
 
-**Blocked.** P1's "measure the honest draw-call breakdown at `x=100,y=50`" can't be trusted yet.
+**✅ RESOLVED 2026-07-18 (user call): we don't need a precise measurement to implement correctly.**
+Informal baseline from the DebugPanel: **~460** draw calls, of which **~200** is the shadow pass
+(deferred). The batching win will be self-evident when the mesh geometry lands — measure the delta then,
+not before. P1 unblocked (the live-baseline bullet de-scoped to "the panel's ~460/~200 is the
+before-number"). The panel-accuracy sub-question is likewise parked — the after/before delta is what
+matters, and the panel measures it consistently.
+
+**Blocked.** _(historical)_ P1's "measure the honest draw-call breakdown at `x=100,y=50`" can't be
+trusted yet.
 
 **Why.** The ad-hoc probe (patch `gl.drawElements` from the console via
 `document.querySelector('canvas').getContext(...)`) returned **2.5 draws/frame** in an empty ocean

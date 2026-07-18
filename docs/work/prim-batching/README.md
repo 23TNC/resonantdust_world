@@ -1,5 +1,17 @@
 # Work — prim-batching (one mesh per atlas page, not one per prim)
 
+> **⛔ CLOSED 2026-07-18 — premise refuted. The bake is NOT the draw-call cost.**
+> With `?nocursorlight` (shadows off), the whole scene renders in **6 draw calls** — the G-buffer bake
+> is fully amortized (static prims bake once, then one lighting mesh samples), exactly as the RT/atlas
+> design intends. The ~460 was almost entirely the **shadow pass** (one non-batched `Mesh` per caster,
+> over every cached standing thing). So there is nothing to batch here.
+>
+> **The one-mesh-per-atlas + per-prim-uniforms→vertex-attributes technique below is correct — but its
+> real target is the SHADOW PASS**, which is the actual per-mesh-per-caster antipattern *and* the actual
+> cost. Carry [`forks.md` F1](forks.md) + the attribute-batching design over to a **shadow-batching**
+> stream; the bake stays as-is. (Lesson: the `shadow=157, bake=0` measurement already said this —
+> trust the instrumentation over the hunch.)
+
 _Opened 2026-07-18. A `client/pixijs` rendering-perf stream: collapse the G-buffer **bake** from one
 draw call per prim to one per atlas **page**. Touches [`viewport`](../../components/client/pixijs)
 (`SquareCache` + the four bake shaders + `TextureResolver`/`TextureAtlas`). No server/protocol change._

@@ -1,18 +1,18 @@
 # Todo — prim-batching
 
+> **⛔ CLOSED — see [`README`](README.md) banner.** The bake is amortized (6 draw calls with shadows
+> off); the draw-call cost is the shadow pass. P2–P5 below are moot for the bake; the `PageBatch` +
+> attribute-batching design carries over to a **shadow-batching** stream instead. Kept for the design.
+
 _Phased. Items move to `completed.md` as they land + verify. Design: [`README`](README.md) ·
 decision [`forks.md`](forks.md)._
 
 ---
 
-## P1 · Baseline (measure right)
+## P1 · Baseline (informal — [B1](blockers.md#b1) resolved: no precise measurement needed)
 
-- [ ] At `x=100,y=50` (a populated **forest** — avoids the world-edge black + the empty ocean), record
-      the honest draw-call breakdown: idle, and during a slow pan. Attribute **bake vs shadow vs
-      stage/UI** (per-pass `gl.drawElements` deltas around `warm.bakeDirty` / `map.bakeDirty` / the
-      shadow pass; stage/UI = total − tick). Note it in `notes/baseline.md` — the before-number every
-      later phase is measured against. **⛔ BLOCKED on [B1](blockers.md#b1) — need a trustworthy
-      measurement path (ad-hoc console probe gave contradictory numbers).**
+- [x] Baseline = the DebugPanel's **~460** draw calls (~200 shadow, deferred). The batching delta will be
+      self-evident when the geometry lands; measure then. (Precise per-pass attribution de-scoped.)
 - [ ] Confirm the per-prim-mesh count: for a typical forest square, how many prims × which channels take
       the `materialNode`/`surfaceNode`/`depthNode`/`normalNode` (mesh) path vs `spriteNode` (already
       batched). This sizes the win.
