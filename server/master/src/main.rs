@@ -19,11 +19,13 @@ use std::time::Duration;
 
 use spacetimedb_sdk::DbContext;
 
-use resonantdust_st_bindings::{data_shard, event_shard, index};
+use resonantdust_st_bindings::{data_shard, event_shard, index, thing, tile};
 // Reducer + table-access traits (method resolution keys off the connection type).
 use data_shard::{bump as _, gc as _};
 use event_shard::{bump as _, set_orchestrator as _, settle as _};
 use index::{bump_tic as _, MasterClockTableAccess as _};
+use thing::bump as _;
+use tile::bump as _;
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -58,7 +60,11 @@ async fn main() {
     let index_db = env_or("INDEX_DB", "resonantdust-dev-index-0");
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");
     let data_db = env_or("DATA_DB", "resonantdust-dev-data-shard-0");
-    tracing::info!(%uri, realm, tic_hz, %index_db, %event_db, %data_db, "master starting");
+    // Cold shards ride the same clock — their `state_log`/`state` overlay + the `tic` on cold rows
+    // need the tic to advance, so the master fans out to them too.
+    let tile_db = env_or("TILE_DB", "resonantdust-dev-tile-0");
+    let thing_db = env_or("THING_DB", "resonantdust-dev-thing-0");
+    tracing::info!(%uri, realm, tic_hz, %index_db, %event_db, %data_db, %tile_db, %thing_db, "master starting");
 
     // ── index: the tic authority. Subscribe our realm's row and wait for it before ticking. ──────
     let (tx_i, rx_i) = std::sync::mpsc::channel::<()>();
@@ -95,6 +101,24 @@ async fn main() {
         .build()
         .expect("build data_shard connection");
     data.run_threaded();
+
+    let tile = tile::DbConnection::builder()
+        .with_uri(&uri)
+        .with_database_name(&tile_db)
+        .on_connect(|_c, id, _t| tracing::info!(%id, "tile shard connected"))
+        .on_connect_error(|_c, err| tracing::error!(%err, "tile shard connect error"))
+        .build()
+        .expect("build tile shard connection");
+    tile.run_threaded();
+
+    let thing = thing::DbConnection::builder()
+        .with_uri(&uri)
+        .with_database_name(&thing_db)
+        .on_connect(|_c, id, _t| tracing::info!(%id, "thing shard connected"))
+        .on_connect_error(|_c, err| tracing::error!(%err, "thing shard connect error"))
+        .build()
+        .expect("build thing shard connection");
+    thing.run_threaded();
 
     rx_i
         .recv_timeout(Duration::from_secs(5))
@@ -142,6 +166,12 @@ async fn main() {
         }
         if let Err(err) = data.reducers().bump(tic16) {
             tracing::warn!(%err, tic = tic16, "data_shard bump failed");
+        }
+        if let Err(err) = tile.reducers().bump(tic16) {
+            tracing::warn!(%err, tic = tic16, "tile shard bump failed");
+        }
+        if let Err(err) = thing.reducers().bump(tic16) {
+            tracing::warn!(%err, tic = tic16, "thing shard bump failed");
         }
 
         // A tic seals once no append can reach it: appends land at master + 3, so `tic16 - 3`.

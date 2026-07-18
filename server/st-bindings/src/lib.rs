@@ -8,3 +8,5 @@
 pub mod event_shard;
 pub mod data_shard;
 pub mod index;
+pub mod tile;
+pub mod thing;
