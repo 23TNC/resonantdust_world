@@ -158,6 +158,9 @@ export class WorldScene extends Scene {
     }
     // `?grid` overlays a red per-tile grid over the viewport as a gfx debug layer.
     if (dbg.grid) this.viewport.view.setDebugGrid(true);
+    // `?nocursorlight` kills the cursor point light — and the shadow pass it casts — so the
+    // non-shadow draw-call count reads in isolation.
+    if (dbg.noCursorLight) this.viewport.view.lights.disableCursor();
 
     // Wire the client's zone stream into the viewport and start the anchor — login has
     // completed by the time this scene enters, so the first anchor immediately subscribes

@@ -9,6 +9,10 @@
 //!   ?grid           overlay a debug grid over the viewport (gfx debug layer): red tile
 //!                   boundaries, magenta zone boundaries, blue region boundaries — so cell,
 //!                   zone and region edges are easy to read. `?grid=0`/`grid=false` turns it off.
+//!   ?nocursorlight  disable the cursor/hover point light — and therefore the shadow pass it
+//!                   casts (the shadow pass has no light → it just blanks). Lets you read the
+//!                   non-shadow draw-call count in isolation. Pair with `?ambient=<f>` to still
+//!                   see the scene.
 //!
 //! e.g. http://localhost:5173/?user=Developer&x=9&y=3&ambient=1.5&grid
 
@@ -19,6 +23,7 @@ export interface DebugParams {
   y: number | null;
   ambient: number | null;
   grid: boolean;
+  noCursorLight: boolean;
 }
 
 /** Parse a query value as a finite number, or `null` if absent/malformed. */
@@ -46,5 +51,6 @@ export function debugParams(): DebugParams {
     y: num(p.get("y")),
     ambient: num(p.get("ambient")),
     grid: flag(p, "grid"),
+    noCursorLight: flag(p, "nocursorlight"),
   };
 }

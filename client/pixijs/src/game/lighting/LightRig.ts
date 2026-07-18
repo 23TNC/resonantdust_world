@@ -54,6 +54,8 @@ export class LightRig {
   private readonly lights = new Set<PointLight>();
   /** The distinguished cursor/hover light, or null when the pointer is off the world. */
   private cursor: PointLight | null = null;
+  /** Debug (`?nocursorlight`): keep the cursor light permanently off, so nothing casts shadows. */
+  private cursorDisabled = false;
 
   /** Reused scratch for the packed uniform arrays (no per-frame allocation churn). */
   private readonly data = new Float32Array(MAX_HOT_LIGHTS * 4);
@@ -73,7 +75,7 @@ export class LightRig {
   /** Position the cursor light at a world-px point, or clear it (pointer left the world).
    *  Cheap to call every pointermove — it mutates one record. */
   setCursorWorld(x: number | null, y = 0): void {
-    if (x === null) {
+    if (x === null || this.cursorDisabled) {
       this.cursor = null;
       return;
     }
@@ -82,6 +84,13 @@ export class LightRig {
       this.cursor.x = x;
       this.cursor.y = y;
     }
+  }
+
+  /** Debug: permanently disable the cursor light (and clear it now), so nothing casts shadows —
+   *  the shadow pass gets no caster light and just blanks. Wired from `?nocursorlight`. */
+  disableCursor(): void {
+    this.cursorDisabled = true;
+    this.cursor = null;
   }
 
   /** The point lights that cast shadows (cursor first, then registered), for the shadow
