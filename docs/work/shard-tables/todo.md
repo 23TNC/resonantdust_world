@@ -84,13 +84,19 @@ Design: [`README`](README.md) · [`TABLES.md`](../../TABLES.md) · [`ACTIONS.md`
       `overlay_log` `dirty=false status=PROMOTE|PROMOTED`, orchestrator `claim_overlay` clean.
 - [ ] _(follow-up)_ a **client `SET` verb** (paint-a-cell — the UX trigger; the pipeline behind it is
       proven) + then retire the direct `set_tile`/`set_thing` (kept for now — no live emitter, no gap).
-- [ ] `init_zone` action — worker builds the whole baseline row (F12: event-carried `Vec` vs worker-side
-      worldgen) → `entity_state_log` (`ColdBaseline`); `promote init_zone` projects it. Edge queues it
-      instead of `seed`. Retire `seed`. **← the P6 acquire-race structural fix.**
+- [x] **`INIT_ZONE`** codec + worker (F12 = event-carried, `563590f`): the one variable-arity verb
+      (`INIT_ZONE cold_row type_id count item×count`); worker composes the whole baseline row absolutely
+      from the event items (tile dense / thing sparse) → `write` + `PROMOTE`. **Verified live** — queued
+      `[PROMOTE,INIT_ZONE,327696,1,3,10,20,30]` → NEW tile `entity_state` row `cold_row=327696`
+      (macro=5,subtype=1,layer=0) items `[10,20,30]`, promoted. **Both cold tiers now compose via events.**
+- [ ] _(wiring)_ edge **queues** `INIT_ZONE` instead of calling `seed` (build the program from
+      `worldgen.zone_cold`), then retire `seed`. Note: async (queue→compose→promote, ~tics of latency)
+      vs the immediate direct `seed`, and a ~261-word event per zone-layer — weigh vs uniformity.
 - [ ] `PACK` action — worker folds settled `overlay` cells into `entity_state_log`; GC queues
-      `promote pack …` (atomic promote of folded baseline + cleared overlay). Retire `fold`.
-- [ ] Worker: compose a **cold row** — whole-`Vec` scratch, block/write/promote like a hot entity
-      (the shared mechanism the three cold verbs above build on).
+      `promote pack …` (atomic promote of folded baseline + cleared overlay — the deferred F7 cross-table
+      concern). Retire `fold`.
+- [x] Worker composes a **cold row** — whole-`Vec` scratch, `write`/`write_overlay` + `PROMOTE` like a
+      hot entity (the shared mechanism; proven for both `SET`→overlay and `INIT_ZONE`→baseline).
 
 ## P5 · Seed content source
 
