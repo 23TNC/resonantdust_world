@@ -346,10 +346,14 @@ export class WorldBridge {
    *  64×64 sprite per non-empty cell. Keyed per `(zone, layer)` so a re-delivery clears + repaints
    *  only itself. */
   private onColdTiles(macroPosition: number, subtypeId: number, layerId: number, tic: number, tiles: Uint16Array): void {
-    const key = `${macroPosition}:${subtypeId}:${layerId}`;
+    const typeId = this.content.typeBiomeTile();
+    // Key by TYPE too — a tile row and a thing row can share `(macro, subtype, layer)`, so without the
+    // type they collide and `clearColdPrims` in the other handler wipes this row's prims (black ground
+    // under scatter). Type goes after `macroPosition` so `onZoneClosed`'s `${macroPosition}:` prefix
+    // still matches.
+    const key = `${macroPosition}:${typeId}:${subtypeId}:${layerId}`;
     this.clearColdPrims(key);
     this.coldRowsRaw.set(key, { macroPosition, subtypeId, layerId, tic, tiles }); // keep for hot-swap re-expand
-    const typeId = this.content.typeBiomeTile();
 
     // [tileX, tileY, tint, geoColor, defId, …] — stride 5.
     const flat = this.content.zoneTilePrims(macroPosition, tiles);
@@ -383,10 +387,12 @@ export class WorldBridge {
   /** A zone's cold **scatter** arrived — sparse `kind_pos_reference`s. Paints a bottom-centred
    *  sprite per thing, above the ground. Keyed per `(zone, biome subtype, layer)`. */
   private onColdThings(macroPosition: number, subtypeId: number, layerId: number, tic: number, things: Uint32Array): void {
-    const key = `${macroPosition}:${subtypeId}:${layerId}`;
+    const typeId = this.content.typeBiomeThing();
+    // Type-qualified key — see onColdTiles: without the type, a thing row clears the tile row that
+    // shares its `(macro, subtype, layer)`.
+    const key = `${macroPosition}:${typeId}:${subtypeId}:${layerId}`;
     this.clearColdPrims(key);
     this.coldRowsRaw.set(key, { macroPosition, subtypeId, layerId, tic, things });
-    const typeId = this.content.typeBiomeThing();
 
     // [tileX, tileY, tint, geoColor, kindId, data, variant, …] — stride 7. `type_id` is the shard
     // (this is the thing frame → the THING namespace).
