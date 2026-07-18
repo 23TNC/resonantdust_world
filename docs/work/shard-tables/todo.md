@@ -49,18 +49,27 @@ Design: [`README`](README.md) · [`TABLES.md`](../../TABLES.md) · [`ACTIONS.md`
       fold's no-flash comes from **ordering** (baseline before overlay) unless a combined reducer is
       added. Revisit when building `PACK`/fold.
 
-## P3 · Convert the shards + rename tables
+## P3 · Convert the shards + rename tables — ✅ DONE (see `completed.md`)
 
-- [ ] `data_shard` → `entity_tables!{data:u8}`: `state`/`state_log` → `entity_state`/`entity_state_log`.
-- [ ] `tile` → `dense_entity_tables!() + overlay_tables!()`; `thing` →
+- [x] `data_shard` → `entity_tables!{data:u8}` (P1).
+- [x] `tile` → `dense_entity_tables!() + overlay_tables!()`; `thing` →
       `sparse_entity_tables!{data:u8} + overlay_tables!{data:u8}`. `cold_tile`/`cold_thing` → the dense/
-      sparse `entity_state`; add `overlay`/`overlay_log`. Regenerate bindings (edge + st-bindings).
-- [ ] Edge relay: `entity_state` + `overlay` per zone (fold the two subscriptions; keep the
-      `on_applied` snapshot relay until P6).
-- [ ] Client render: `entity_state ⊕ overlay` (overlay cell shadows baseline) — **drop** the
-      `cold_entity_reference` id path + the per-cell `tic` composite (`baselineSuppressed`); an overlay
-      cell simply wins.
-- [ ] Reset + reseed (dev); browser: terrain + overrides render on the new tables.
+      sparse `entity_state`; `overlay`/`overlay_log` added. Bindings regenerated (edge + st-bindings).
+- [x] Edge relay: `entity_state` (baseline) + `overlay` (override) per zone, **wire-transparent** (F10 —
+      re-packs to the existing `ColdTile`/`ColdThing`/`ColdState` wire, so the client is unchanged); the
+      `on_applied` snapshot relay now iterates `entity_state` (kept until P6).
+- [x] Worker cold path **gated** to P4 (F9): `base_row` data-only, `write` routing drops Tile/Thing —
+      cold writes go through the direct reducers; nothing live emits `SET`.
+- [x] Reset + reseed (dev); browser at `?x=8&y=8` — terrain (grass/stone/dirt) + scatter render on the
+      new tables, no in-zone black holes, console clean.
+
+## P3′ · Client composite-simplification (deferred — F10)
+
+- [ ] Client render → **native** `entity_state ⊕ overlay` (whole-row overlay wins by cell): retire the
+      per-cell `ColdState` wire + the `tic` composite (`baselineSuppressed`) + the `cold_entity_reference`
+      id path; add a `ColdOverlay{items}` frame. Do once wanted — the wire-transparent P3 works today.
+- [ ] Live `set_tile` check of the new `relay_tile_overlay`/`relay_thing_overlay` path (build-validated;
+      mirrors the proven baseline relay).
 
 ## P4 · Events replace direct writes
 

@@ -111,3 +111,34 @@ and a stale one mis-frames the new `PROMOTE` arity (`UnknownAction`), silently s
 in one commit). Per F7 the baseline + overlay are separate reducers (`write` / `write_overlay`), so a
 single transaction across both isn't available — a fold's no-flash comes from **ordering** (promote
 baseline before clearing overlay) unless a combined fold reducer is added. Decided when `PACK` is built.
+
+## P3 · Convert the shards + rename tables — baseline + edge relay (client-transparent)
+
+`tile` → `dense_entity_tables!() + overlay_tables!()`; `thing` → `sparse_entity_tables!{data:u8} +
+overlay_tables!{data:u8}`. The bespoke `cold_tile`/`cold_thing` baseline + the hot-format
+`entity_state` overlay + the per-cell entity mint are **gone**: the baseline is now the dense/sparse
+`entity_state` (`cold_row_reference`-addressed, owns the shard `clock`), the override is the sparse
+`overlay`/`overlay_log`. `seed` fills the baseline; `set_tile`/`set_thing` write an `overlay` cell
+(merge by `tile_reference`, `kind==0`=removal); `fold` (PACK) folds the overlay into its baseline
+sibling by shared `cold_row_reference`. Direct reducers still (F9) — events are P4.
+
+**Edge relay — wire-transparent (F10).** The baseline callbacks read `entity_state` and re-pack
+`items` → the existing `ColdTile.tiles`/`ColdThing.things` wire; the override callbacks read the
+whole-row `overlay` and re-frame each cell → the existing per-cell `ColdState` (stable pseudo
+`entity_reference` via `cold_entity_reference`, reconstructed `position_reference`; row-delete /
+`kind==0` = removal). Zone subscription now `SELECT`s `entity_state` + `overlay`; the `on_applied`
+snapshot band-aid (P6) iterates `entity_state`. **Protocol + client untouched.**
+
+**Worker cold path gated (F9 → P4).** tile/thing are now `cold_row_reference`-addressed with no
+per-entity slot, so `base_row` is data-only and the `write` routing drops the Tile/Thing arms; cold
+writes go through the direct reducers. Nothing live emits `SET`, so the gated path is dead this phase.
+
+**Live-verified (browser).** Full redeploy (tile/thing reset + reseed, edge rebuilt on :8473, all three
+sim binaries restarted — worker "subscriptions applied" clean, no schema-mismatch panic). At
+`?x=8&y=8`: ground renders across biomes (grass / stone / dirt) from the dense baseline, scatter
+(trees) from the sparse baseline, **no black-ground holes inside subscribed zones** (the acquire-race
+symptom that started the rework), console clean.
+
+**Remaining:** P3′ — the client composite-simplification (todo P3 bullet 4: drop the per-cell `tic`
+composite + `cold_entity_reference`, move to whole-row `overlay`) once wanted; a live `set_tile` check
+of the new `relay_*_overlay` path (validated by build + mirrors the proven baseline relay).
