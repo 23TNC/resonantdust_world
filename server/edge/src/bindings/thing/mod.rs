@@ -13,13 +13,16 @@ use spacetimedb_sdk::__codegen::{
 
 pub mod clock_type;
 pub mod cold_thing_type;
+pub mod mint_counter_type;
 pub mod state_type;
 pub mod state_log_type;
 pub mod target_state_type;
 pub mod bump_reducer;
 pub mod claim_reducer;
+pub mod fold_reducer;
 pub mod gc_reducer;
 pub mod seed_reducer;
+pub mod set_thing_reducer;
 pub mod write_reducer;
 pub mod clock_table;
 pub mod cold_thing_table;
@@ -28,6 +31,7 @@ pub mod state_log_table;
 
 pub use clock_type::Clock;
 pub use cold_thing_type::ColdThing;
+pub use mint_counter_type::MintCounter;
 pub use state_type::State;
 pub use state_log_type::StateLog;
 pub use target_state_type::TargetState;
@@ -37,8 +41,10 @@ pub use state_table::*;
 pub use state_log_table::*;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
+pub use fold_reducer::fold;
 pub use gc_reducer::gc;
 pub use seed_reducer::seed;
+pub use set_thing_reducer::set_thing;
 pub use write_reducer::write;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -57,6 +63,7 @@ pub enum Reducer {
         tic: u16,
         worker: u8,
 }    ,
+    Fold ,
     Gc {
         horizon: u16,
 }    ,
@@ -65,6 +72,14 @@ pub enum Reducer {
         subtype_id: u16,
         layer_id: u8,
         things: Vec::<u32>,
+}    ,
+    SetThing {
+        macro_position: u16,
+        subtype_id: u16,
+        layer_id: u8,
+        tile_reference: u8,
+        kind_reference: u16,
+        data: u8,
 }    ,
     Write {
         worker: u8,
@@ -83,8 +98,10 @@ impl __sdk::Reducer for Reducer {
         match self {
                         Reducer::Bump { .. } => "bump",
             Reducer::Claim { .. } => "claim",
+            Reducer::Fold => "fold",
             Reducer::Gc { .. } => "gc",
             Reducer::Seed { .. } => "seed",
+            Reducer::SetThing { .. } => "set_thing",
             Reducer::Write { .. } => "write",
             _ => unreachable!(),
 }
@@ -106,7 +123,9 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 tic: tic.clone(),
                 worker: worker.clone(),
 }),
-            Reducer::Gc{
+            Reducer::Fold => __sats::bsatn::to_vec(&fold_reducer::FoldArgs {
+                }),
+Reducer::Gc{
                 horizon,
 }             => __sats::bsatn::to_vec(&gc_reducer::GcArgs {
                 horizon: horizon.clone(),
@@ -121,6 +140,21 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 subtype_id: subtype_id.clone(),
                 layer_id: layer_id.clone(),
                 things: things.clone(),
+}),
+            Reducer::SetThing{
+                macro_position,
+                subtype_id,
+                layer_id,
+                tile_reference,
+                kind_reference,
+                data,
+}             => __sats::bsatn::to_vec(&set_thing_reducer::SetThingArgs {
+                macro_position: macro_position.clone(),
+                subtype_id: subtype_id.clone(),
+                layer_id: layer_id.clone(),
+                tile_reference: tile_reference.clone(),
+                kind_reference: kind_reference.clone(),
+                data: data.clone(),
 }),
             Reducer::Write{
                 worker,
