@@ -17,6 +17,7 @@ pub struct ColdTile {
     pub macro_position_reference: u16,
     pub subtype_id: u16,
     pub layer_id: u8,
+    pub tic: u16,
     pub tiles: Vec::<u16>,
 }
 
@@ -34,6 +35,7 @@ pub struct ColdTileCols {
     pub macro_position_reference: __sdk::__query_builder::Col<ColdTile, u16>,
     pub subtype_id: __sdk::__query_builder::Col<ColdTile, u16>,
     pub layer_id: __sdk::__query_builder::Col<ColdTile, u8>,
+    pub tic: __sdk::__query_builder::Col<ColdTile, u16>,
     pub tiles: __sdk::__query_builder::Col<ColdTile, Vec::<u16>>,
 }
 
@@ -45,6 +47,7 @@ impl __sdk::__query_builder::HasCols for ColdTile {
             macro_position_reference: __sdk::__query_builder::Col::new(table_name, "macro_position_reference"),
             subtype_id: __sdk::__query_builder::Col::new(table_name, "subtype_id"),
             layer_id: __sdk::__query_builder::Col::new(table_name, "layer_id"),
+            tic: __sdk::__query_builder::Col::new(table_name, "tic"),
             tiles: __sdk::__query_builder::Col::new(table_name, "tiles"),
 
         }

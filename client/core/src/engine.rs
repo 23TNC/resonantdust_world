@@ -469,14 +469,14 @@ impl Engine {
             // Settled, promoted events aren't rendered as movers yet — a later feature. Ignore.
             ServerMsg::Event { .. } => {}
             // A zone's cold ground / scatter — the terrain. Age the zone's cost, then emit.
-            ServerMsg::ColdTile { zone, subtype_id, layer_id, tiles } => {
+            ServerMsg::ColdTile { zone, subtype_id, layer_id, tic, tiles } => {
                 self.zones.note_update(zone, text.len() as u64, now_ms());
-                self.emit(Event::ColdTiles { macro_position: zone, subtype_id, layer_id, tiles });
+                self.emit(Event::ColdTiles { macro_position: zone, subtype_id, layer_id, tic, tiles });
                 self.flush_zone_intents().await;
             }
-            ServerMsg::ColdThing { zone, subtype_id, layer_id, things } => {
+            ServerMsg::ColdThing { zone, subtype_id, layer_id, tic, things } => {
                 self.zones.note_update(zone, text.len() as u64, now_ms());
-                self.emit(Event::ColdThings { macro_position: zone, subtype_id, layer_id, things });
+                self.emit(Event::ColdThings { macro_position: zone, subtype_id, layer_id, tic, things });
                 self.flush_zone_intents().await;
             }
             ServerMsg::ColdState {
@@ -485,6 +485,7 @@ impl Engine {
                 position_reference,
                 definition_reference,
                 data,
+                tic,
                 removed,
             } => {
                 self.zones.note_update(zone, text.len() as u64, now_ms());
@@ -494,6 +495,7 @@ impl Engine {
                     position_reference,
                     definition_reference,
                     data,
+                    tic,
                     removed,
                 });
                 self.flush_zone_intents().await;

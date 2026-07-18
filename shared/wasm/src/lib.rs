@@ -331,6 +331,21 @@ impl Content {
             variant as f64,
         ]
     }
+
+    /// The **cell + type** of a cold overlay, independent of its `kind` — so a *removal* override
+    /// (`kind == 0`, for which [`Content::cold_state_prim`] returns empty) still names the baseline
+    /// cell it suppresses. Returns `[tileX, tileY, typeId]`. `type_id` (tile vs thing) comes from
+    /// `definition_reference`; the cell from `position_reference`'s `tile_reference`.
+    #[wasm_bindgen(js_name = coldCell)]
+    pub fn cold_cell(&self, macro_position: u16, position_reference: u32, definition_reference: u32) -> Vec<f64> {
+        use resonantdust_codec::object;
+        let (origin_x, origin_y) = macro_origin(macro_position);
+        let tile = object::micro_position_tile(object::position_micro(position_reference));
+        let tile_x = origin_x + object::ref_hi(tile) as i64;
+        let tile_y = origin_y + object::ref_lo(tile) as i64;
+        let type_id = object::def_type_id(definition_reference);
+        vec![tile_x as f64, tile_y as f64, type_id as f64]
+    }
 }
 
 /// A macro position's origin in **global tile coordinates**: its region + zone
@@ -536,33 +551,36 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("tic", &JsValue::from_f64(*tic as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
-        Event::ColdTiles { macro_position, subtype_id, layer_id, tiles } => {
+        Event::ColdTiles { macro_position, subtype_id, layer_id, tic, tiles } => {
             set("kind", &JsValue::from_str("coldTiles"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));
             set("subtypeId", &JsValue::from_f64(*subtype_id as f64));
             set("layerId", &JsValue::from_f64(*layer_id as f64));
+            set("tic", &JsValue::from_f64(*tic as f64));
             // 256 dense u16 kind_references, index = tile_reference; ship as a Uint16Array.
             let arr = js_sys::Uint16Array::new_with_length(tiles.len() as u32);
             arr.copy_from(tiles);
             set("tiles", &arr);
         }
-        Event::ColdThings { macro_position, subtype_id, layer_id, things } => {
+        Event::ColdThings { macro_position, subtype_id, layer_id, tic, things } => {
             set("kind", &JsValue::from_str("coldThings"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));
             set("subtypeId", &JsValue::from_f64(*subtype_id as f64));
             set("layerId", &JsValue::from_f64(*layer_id as f64));
+            set("tic", &JsValue::from_f64(*tic as f64));
             // Sparse u32 kind_pos_references; ship as a Uint32Array.
             let arr = js_sys::Uint32Array::new_with_length(things.len() as u32);
             arr.copy_from(things);
             set("things", &arr);
         }
-        Event::ColdState { macro_position, entity_reference, position_reference, definition_reference, data, removed } => {
+        Event::ColdState { macro_position, entity_reference, position_reference, definition_reference, data, tic, removed } => {
             set("kind", &JsValue::from_str("coldState"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));
             set("entityReference", &JsValue::from_f64(*entity_reference as f64));
             set("positionReference", &JsValue::from_f64(*position_reference as f64));
             set("definitionReference", &JsValue::from_f64(*definition_reference as f64));
             set("data", &JsValue::from_f64(*data as f64));
+            set("tic", &JsValue::from_f64(*tic as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
         Event::ZoneClosed { macro_position } => {

@@ -135,3 +135,30 @@ into cold storage. This is the heart of the world-storage design, proven live.
 **Remaining P4** (`todo.md`): the **event-driven** `UNPACK` routing (edge → orchestrator → worker, with
 a deterministic-from-event id) instead of the direct reducer; **`thing`-side** mutation; **baseline
 suppression** for removals; core's **two-phase**; and `server_reference` **master-assigned** (F2).
+
+---
+
+## P4 · `tic` on cold rows — most-recent-wins composite + baseline suppression
+
+A cold row *is* a compressed `state` row, so it carries a `tic` — resolving the cold-row/overlay
+**arrival race** and driving proper **baseline suppression**.
+
+- **schema** `cold_tile`/`cold_thing` gain `tic: u16` — stamped at `seed` (`now_tic`, the shard's clock
+  mirror) and re-stamped by `fold` to *now* (≥ every folded override, so all become superseded).
+- **master** fans the tic out to the `tile`/`thing` clocks each tic (commit `562a4a3`) — cold clocks
+  must advance or the overlay/`tic` stay 0. Both clocks verified advancing live (28288+).
+- **wire** `ColdTile`/`ColdThing` carry the baseline `tic`; `ColdState` carries the override `tic` —
+  through edge `protocol`/`ws` → core `protocol`/`api`/`engine`/`web` → `shared/wasm` marshal.
+- **client composite** (`WorldBridge`): a per-cell baseline index (`coldCellPrims`) + winner reverse
+  index (`coldCellWinner`). An override draws only when `ticAfter(override.tic, baseline.tic)` — it
+  then **suppresses** the baseline cell (removes its prim; a kind-0 removal / tombstone draws nothing);
+  once the baseline catches up (`fold`), the override is ignored and the baseline shows. A cleared
+  override re-expands its row (the "dirty-rect" redraw). New wasm `coldCell` decodes an override's
+  cell + type *independently of kind*, so a kind-0 removal still names the cell it suppresses.
+
+**Browser-confirmed live (2026-07-17):** `set_tile` water override (tic 28317) beat the tic-0 baseline
+→ water rendered, forest cell suppressed; `fold` bumped the baseline to tic 28373 (> 28317) → water
+**persisted from the baseline**, override dropped, **no flicker** — most-recent-wins flipped authority
+to the baseline exactly as designed. Thing lifecycle (place → kind-0 tombstone → fold) flows clean
+server-side (the client suppression path is type-agnostic, shared with the proven tile path). No
+console errors.

@@ -121,16 +121,18 @@ export interface AnchorRadii {
  *  shared `object_type_reference` (type / subtype = biome / layer), `kinds` its members
  *  as `object_kind_reference`s (u32 each). A `biome-tile` row is the ground, a
  *  `biome-thing` row the scatter. Supersedes tiles/things; fires per cold row. */
-export type ColdTilesHandler = (macroPosition: number, subtypeId: number, layerId: number, tiles: Uint16Array) => void;
-export type ColdThingsHandler = (macroPosition: number, subtypeId: number, layerId: number, things: Uint32Array) => void;
+export type ColdTilesHandler = (macroPosition: number, subtypeId: number, layerId: number, tic: number, tiles: Uint16Array) => void;
+export type ColdThingsHandler = (macroPosition: number, subtypeId: number, layerId: number, tic: number, things: Uint32Array) => void;
 /** A cold **overlay** row (a cold shard's `state`) — a per-cell mutation composited over the
- *  baseline at `positionReference`. `removed` clears it. Keyed by `entityReference`. */
+ *  baseline at `positionReference`. `removed` clears it. Keyed by `entityReference`. `tic` orders it
+ *  against the baseline row's `tic` (most recent wins — resolves the cold-row/overlay arrival race). */
 export interface ColdStateOverride {
   macroPosition: number;
   entityReference: number;
   positionReference: number;
   definitionReference: number;
   data: number;
+  tic: number;
   removed: boolean;
 }
 export type ColdStateHandler = (o: ColdStateOverride) => void;
@@ -172,8 +174,8 @@ type WorldEvent =
   | { kind: "loginFailed"; reason: string }
   | { kind: "disconnected"; reason: string | null }
   | { kind: "status"; message: string }
-  | { kind: "coldTiles"; macroPosition: number; subtypeId: number; layerId: number; tiles: Uint16Array }
-  | { kind: "coldThings"; macroPosition: number; subtypeId: number; layerId: number; things: Uint32Array }
+  | { kind: "coldTiles"; macroPosition: number; subtypeId: number; layerId: number; tic: number; tiles: Uint16Array }
+  | { kind: "coldThings"; macroPosition: number; subtypeId: number; layerId: number; tic: number; things: Uint32Array }
   | {
       kind: "coldState";
       macroPosition: number;
@@ -181,6 +183,7 @@ type WorldEvent =
       positionReference: number;
       definitionReference: number;
       data: number;
+      tic: number;
       removed: boolean;
     }
   | {
@@ -610,10 +613,10 @@ export class WasmClient {
         this.pending?.onProgress?.(ev.message);
         break;
       case "coldTiles":
-        for (const cb of this.coldTilesCbs) cb(ev.macroPosition, ev.subtypeId, ev.layerId, ev.tiles);
+        for (const cb of this.coldTilesCbs) cb(ev.macroPosition, ev.subtypeId, ev.layerId, ev.tic, ev.tiles);
         break;
       case "coldThings":
-        for (const cb of this.coldThingsCbs) cb(ev.macroPosition, ev.subtypeId, ev.layerId, ev.things);
+        for (const cb of this.coldThingsCbs) cb(ev.macroPosition, ev.subtypeId, ev.layerId, ev.tic, ev.things);
         break;
       case "coldState":
         for (const cb of this.coldStateCbs)
@@ -623,6 +626,7 @@ export class WasmClient {
             positionReference: ev.positionReference,
             definitionReference: ev.definitionReference,
             data: ev.data,
+            tic: ev.tic,
             removed: ev.removed,
           });
         break;

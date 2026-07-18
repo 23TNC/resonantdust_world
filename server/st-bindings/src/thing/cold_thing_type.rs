@@ -17,6 +17,7 @@ pub struct ColdThing {
     pub macro_position_reference: u16,
     pub subtype_id: u16,
     pub layer_id: u8,
+    pub tic: u16,
     pub things: Vec::<u32>,
 }
 
@@ -34,6 +35,7 @@ pub struct ColdThingCols {
     pub macro_position_reference: __sdk::__query_builder::Col<ColdThing, u16>,
     pub subtype_id: __sdk::__query_builder::Col<ColdThing, u16>,
     pub layer_id: __sdk::__query_builder::Col<ColdThing, u8>,
+    pub tic: __sdk::__query_builder::Col<ColdThing, u16>,
     pub things: __sdk::__query_builder::Col<ColdThing, Vec::<u32>>,
 }
 
@@ -45,6 +47,7 @@ impl __sdk::__query_builder::HasCols for ColdThing {
             macro_position_reference: __sdk::__query_builder::Col::new(table_name, "macro_position_reference"),
             subtype_id: __sdk::__query_builder::Col::new(table_name, "subtype_id"),
             layer_id: __sdk::__query_builder::Col::new(table_name, "layer_id"),
+            tic: __sdk::__query_builder::Col::new(table_name, "tic"),
             things: __sdk::__query_builder::Col::new(table_name, "things"),
 
         }

@@ -68,9 +68,18 @@ pub struct ColdTile {
     pub subtype_id: u16,
     /// The layer (holds `u4`).
     pub layer_id: u8,
+    /// The `tic` this baseline is current as of (set at `seed`, bumped by `fold`). A cold row is a
+    /// compressed `state` row, so it carries `tic` for the same reason: a location's truth is whichever
+    /// of the baseline and the `state` override is **more recent**.
+    pub tic: u16,
     /// 256 `kind_reference`s, one per tile (index = `tile_reference`); cells outside this biome are
     /// `0`. Dense.
     pub tiles: Vec<u16>,
+}
+
+/// The cold shard's current tic (its `clock` mirror, bumped by the master).
+fn now_tic(ctx: &ReducerContext) -> u16 {
+    ctx.db.clock().id().find(0).map(|c| c.master_tic).unwrap_or(0)
 }
 
 /// Seed (or overwrite) a zone-layer-biome's ground. This is trusted server-side **generation**
@@ -93,6 +102,7 @@ pub fn seed(
         macro_position_reference: macro_position,
         subtype_id,
         layer_id,
+        tic: now_tic(ctx),
         tiles,
     };
     if ctx.db.cold_tile().cold_row_reference().find(cold_row_reference).is_some() {
@@ -186,6 +196,9 @@ pub fn set_tile(
 /// `state_log` (for a slow reader / takeover) is a refinement — this drops it.
 #[reducer]
 pub fn fold(ctx: &ReducerContext) -> Result<(), String> {
+    // The baseline is current as of *now* once folded — `now_tic` is ≥ every settled override's tic,
+    // so all of them become superseded (the client reads the baseline, not the stale override).
+    let ftic = now_tic(ctx);
     let settled: Vec<State> = ctx.db.state().iter().collect();
     for s in settled {
         // Only fold settled truth — a still-`dirty` `state_log` slot means work is pending.
@@ -207,6 +220,9 @@ pub fn fold(ctx: &ReducerContext) -> Result<(), String> {
         if let Some(mut row) = ctx.db.cold_tile().cold_row_reference().find(cold_row) {
             if let Some(slot) = row.tiles.get_mut(tile_reference) {
                 *slot = kind_reference;
+                // The baseline now reflects the override — bump its tic to now, so the client reads the
+                // folded value from the baseline, not the (stale) override.
+                row.tic = ftic;
                 ctx.db.cold_tile().cold_row_reference().update(row);
             }
         }

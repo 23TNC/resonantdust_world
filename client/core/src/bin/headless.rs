@@ -133,19 +133,20 @@ fn log_event(event: &Event) {
                 "state object"
             )
         }
-        Event::ColdTiles { macro_position, subtype_id, layer_id, tiles } => {
-            info!(macro_position = format!("{macro_position:#06x}"), subtype_id, layer_id, tiles = tiles.len(), "cold tiles")
+        Event::ColdTiles { macro_position, subtype_id, layer_id, tic, tiles } => {
+            info!(macro_position = format!("{macro_position:#06x}"), subtype_id, layer_id, tic, tiles = tiles.len(), "cold tiles")
         }
-        Event::ColdThings { macro_position, subtype_id, layer_id, things } => {
-            info!(macro_position = format!("{macro_position:#06x}"), subtype_id, layer_id, things = things.len(), "cold things")
+        Event::ColdThings { macro_position, subtype_id, layer_id, tic, things } => {
+            info!(macro_position = format!("{macro_position:#06x}"), subtype_id, layer_id, tic, things = things.len(), "cold things")
         }
-        Event::ColdState { macro_position, entity_reference, position_reference, definition_reference, data, removed } => {
+        Event::ColdState { macro_position, entity_reference, position_reference, definition_reference, data, tic, removed } => {
             info!(
                 macro_position = format!("{macro_position:#06x}"),
                 entity_reference = format!("{entity_reference:#010x}"),
                 position_reference = format!("{position_reference:#010x}"),
                 definition_reference = format!("{definition_reference:#010x}"),
                 data,
+                tic,
                 removed,
                 "cold state override"
             )

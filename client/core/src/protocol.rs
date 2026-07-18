@@ -77,18 +77,20 @@ pub enum ServerMsg {
     },
     /// A subscribed zone's cold **ground** — dense 256 `kind_reference`s (index = `tile_reference`) of
     /// one biome-row. `subtype_id` = biome, `layer_id` = layer; `type_id` = `TYPE_BIOME_TILE`.
-    ColdTile { zone: u16, subtype_id: u16, layer_id: u8, tiles: Vec<u16> },
+    ColdTile { zone: u16, subtype_id: u16, layer_id: u8, tic: u16, tiles: Vec<u16> },
     /// A subscribed zone's cold **scatter** — sparse `kind_pos_reference`s (`kind:16 | tile:8 | data:8`)
     /// of one biome-row. `type_id` = `TYPE_BIOME_THING`.
-    ColdThing { zone: u16, subtype_id: u16, layer_id: u8, things: Vec<u32> },
+    ColdThing { zone: u16, subtype_id: u16, layer_id: u8, tic: u16, things: Vec<u32> },
     /// A **cold overlay** row (from a cold shard's `state`) — a per-cell mutation the host composites
-    /// over the baseline at `position_reference`. `removed` = the override cleared.
+    /// over the baseline at `position_reference`. `removed` = the override cleared. `tic` orders it
+    /// against the baseline row's `tic` (most recent wins).
     ColdState {
         zone: u16,
         entity_reference: u32,
         position_reference: u32,
         definition_reference: u32,
         data: u8,
+        tic: u16,
         removed: bool,
     },
     /// A protocol- or routing-level error not tied to a single `cid`.

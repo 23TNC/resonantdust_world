@@ -297,6 +297,7 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
                     zone: row.macro_position_reference,
                     subtype_id: row.subtype_id,
                     layer_id: row.layer_id,
+                    tic: row.tic,
                     tiles: row.tiles.clone(),
                 },
             )
@@ -307,7 +308,7 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         t.db().cold_tile().on_update(move |_ctx, _old, row| relay(&o, row));
         // The cold overlay: a per-cell mutation in the tile shard's `state` table.
         let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::tile::State, removed: bool| {
-            send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, row.position_reference, row.definition_reference, row.data, removed))
+            send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, row.position_reference, row.definition_reference, row.data, row.tic, removed))
         };
         let o = out_tx.clone();
         t.db().state().on_insert(move |_ctx, row| s(&o, row, false));
@@ -330,6 +331,7 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
                     zone: row.macro_position_reference,
                     subtype_id: row.subtype_id,
                     layer_id: row.layer_id,
+                    tic: row.tic,
                     things: row.things.clone(),
                 },
             )
@@ -340,7 +342,7 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         t.db().cold_thing().on_update(move |_ctx, _old, row| relay(&o, row));
         // The cold overlay: a per-cell mutation in the thing shard's `state` table.
         let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::thing::State, removed: bool| {
-            send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, row.position_reference, row.definition_reference, row.data, removed))
+            send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, row.position_reference, row.definition_reference, row.data, row.tic, removed))
         };
         let o = out_tx.clone();
         t.db().state().on_insert(move |_ctx, row| s(&o, row, false));
@@ -361,9 +363,10 @@ fn cold_state_frame(
     position_reference: u32,
     definition_reference: u32,
     data: u8,
+    tic: u16,
     removed: bool,
 ) -> ServerMsg {
-    ServerMsg::ColdState { zone, entity_reference, position_reference, definition_reference, data, removed }
+    ServerMsg::ColdState { zone, entity_reference, position_reference, definition_reference, data, tic, removed }
 }
 
 fn state_frame(row: &bindings::data_shard::State) -> ServerMsg {

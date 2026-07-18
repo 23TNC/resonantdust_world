@@ -325,23 +325,25 @@ order). See [`notes/tables.md`](notes/tables.md).
 A cold shard is **an immutable baseline + a hot-format overlay**, both public:
 
 - **Baseline** — `cold_tile` / `cold_thing`: a zone-layer's terrain, position-addressed, **written
-  only at `init`/`seed`**. The `type_id` is the shard (the `tile` module *is* `TYPE_BIOME_TILE`,
-  `thing` *is* `TYPE_BIOME_THING`), so the `u32 cold_row_reference` carries `macro:16 | subtype:12 |
-  layer_id:4` and a multi-biome zone is one row per `subtype`.
+  only at `init`/`seed` + `fold`** (a cold row *is* a compressed `state` row, so it carries a `tic`).
+  The `type_id` is the shard (the `tile` module *is* `TYPE_BIOME_TILE`, `thing` *is*
+  `TYPE_BIOME_THING`), so the `u32 cold_row_reference` carries `macro:16 | subtype:12 | layer_id:4` and
+  a multi-biome zone is one row per `subtype`.
 - **Overlay** — `state` / `state_log`, **the same shape as `data_shard`'s** ([above](#data_shard)). A
   cold cell is *never* rewritten in place; a change mints a `state_log` row (the source of truth) that
-  augments the baseline, and GC eventually folds settled `state_log` back into the baseline. The
-  client renders **`cold_tile`/`cold_thing` ⊕ `state`** (a `state` row at a position overrides that
-  cell). So cold rides the exact hot machinery — same `state_uid`, same worker composition, same
-  `promote_state`.
+  augments the baseline, and `fold` eventually folds settled `state` back into the baseline (bumping
+  its `tic`). The client renders **`cold_tile`/`cold_thing` ⊕ `state`**, ordered by `tic` — **the more
+  recent of the baseline row and the override wins** for a cell, so a cold-row/overlay arrival race
+  (e.g. a `fold` that bumps the baseline past its now-stale override) resolves deterministically. So
+  cold rides the exact hot machinery — same `state_uid`, same worker composition, same `promote_state`.
 
 Design + lifecycle (mint/`UNPACK` → `state_log` → GC-fold/`PACK`): [`world-storage`](intent/world-storage/README.md).
 Which shard a position lives on is resolved through `index` ([cold_shards](#cold_shards--regioncold-shard-routing-public)) by **region**.
 
-> **Status.** The baseline is built + live (seed → edge relay → render). It is being reworked to this
-> shape — the deployed `cold_tile`/`cold_thing` still carry the old `layer_reference:8` column and drop
-> `subtype`; the `state`/`state_log` overlay and the router are not built. Tracked in
-> [`work/cold-rework`](work/cold-rework/README.md).
+> **Status.** Baseline + `state`/`state_log` overlay + `tic`-ordered composite are **built + live**
+> (seed → mint/`set_tile`·`set_thing` → edge relay → `baseline ⊕ state` render → `fold`-to-baseline,
+> browser-verified). The **event-driven `UNPACK` routing** (mutate through edge → worker rather than
+> the direct reducer) + core two-phase remain. Tracked in [`work/cold-rework`](work/cold-rework/README.md).
 
 ## `tile` — the cold ground shard (`TYPE_BIOME_TILE`)
 
@@ -353,6 +355,7 @@ Which shard a position lives on is resolved through `index` ([cold_shards](#cold
 | `macro_position_reference` | `u16` | idx | the zone — the client's subscription key |
 | `subtype_id` | `u16` | idx | the biome (holds `u12`); searchable |
 | `layer_id` | `u8` | | the layer (holds `u4`) |
+| `tic` | `u16` | | the tic this baseline is current as of (set at `seed`, bumped by `fold`); orders it against a `state` override — most recent wins |
 | `tiles` | `Vec<u16>` | | **exactly 256** `kind_reference`s, index = `tile_reference`; cells outside this biome are `0` (dense; no per-entry tile/data) |
 
 writes `seed(macro, subtype_id, layer_id, tiles)` (trusted worldgen; `type_id` is the module) · reads
@@ -369,6 +372,7 @@ returns every biome-row for the zone)
 | `macro_position_reference` | `u16` | idx | the zone — subscription key |
 | `subtype_id` | `u16` | idx | the biome (holds `u12`) |
 | `layer_id` | `u8` | | the layer (holds `u4`) |
+| `tic` | `u16` | | current-as-of tic (set at `seed`, bumped by `fold`); orders the baseline against a `state` override |
 | `things` | `Vec<u32>` | | **sparse** `kind_pos_reference`s (`kind:16 \| tile:8 \| data:8`), one per occupied cell |
 
 writes `seed` · reads edge, client · sub `SELECT * FROM cold_thing WHERE macro_position_reference =

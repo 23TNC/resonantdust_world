@@ -95,11 +95,11 @@ pub enum ServerMsg {
     /// A subscribed zone's **cold ground** — the dense 256 `kind_reference`s (index = `tile_reference`)
     /// of one biome-row. Sent on the `cold_tile` row's insert/update; the client paints it as the
     /// terrain floor. `subtype_id` is the biome, `layer_id` the layer; `type_id` is `TYPE_BIOME_TILE`.
-    ColdTile { zone: u16, subtype_id: u16, layer_id: u8, tiles: Vec<u16> },
+    ColdTile { zone: u16, subtype_id: u16, layer_id: u8, tic: u16, tiles: Vec<u16> },
     /// A subscribed zone's **cold scatter** — sparse `kind_pos_reference`s (`kind:16 | tile:8 |
     /// data:8`) of one biome-row. Sent on `cold_thing` insert/update; the client paints things over
     /// the ground. `type_id` is `TYPE_BIOME_THING`.
-    ColdThing { zone: u16, subtype_id: u16, layer_id: u8, things: Vec<u32> },
+    ColdThing { zone: u16, subtype_id: u16, layer_id: u8, tic: u16, things: Vec<u32> },
     /// A **cold overlay** row — a per-cell mutation from a cold shard's `state` table (the hot-format
     /// overlay). It overrides the baseline cell at `position_reference`: the client composites
     /// baseline ⊕ this. `type_id` (tile vs thing) + `kind` come from `definition_reference`; the cell
@@ -111,6 +111,10 @@ pub enum ServerMsg {
         position_reference: u32,
         definition_reference: u32,
         data: u8,
+        /// The override's `tic` — the client draws it over the baseline only when it is *more recent*
+        /// than the baseline row's `tic` (serial compare), so a cold-row/state arrival race resolves
+        /// deterministically (most recent wins).
+        tic: u16,
         removed: bool,
     },
     /// A protocol- or routing-level error not tied to a single `cid`.

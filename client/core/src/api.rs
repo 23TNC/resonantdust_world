@@ -154,20 +154,23 @@ pub enum Event {
     /// `macro_position` (`region:8 | zone:8`) is the wire zone address (the host expands prims via
     /// `macro_world_origin`); `subtype_id` is the biome, `layer_id` the layer; `type_id` is
     /// `TYPE_BIOME_TILE`.
-    ColdTiles { macro_position: u16, subtype_id: u16, layer_id: u8, tiles: Vec<u16> },
+    ColdTiles { macro_position: u16, subtype_id: u16, layer_id: u8, tic: u16, tiles: Vec<u16> },
     /// A subscribed zone's cold **scatter** — sparse `kind_pos_reference`s (`kind:16 | tile:8 |
     /// data:8`), one per occupied cell of one biome-row. `type_id` is `TYPE_BIOME_THING`.
-    ColdThings { macro_position: u16, subtype_id: u16, layer_id: u8, things: Vec<u32> },
+    ColdThings { macro_position: u16, subtype_id: u16, layer_id: u8, tic: u16, things: Vec<u32> },
     /// A cold **overlay** row — a per-cell mutation the host composites over the baseline. The cell is
     /// `position_reference`'s `tile_reference`; the sprite comes from `definition_reference`
     /// (`type_reference | kind_reference` → tile vs thing namespace + kind); `data` is rotation/count.
-    /// `removed` clears the override (the baseline shows through). Keyed by `entity_reference`.
+    /// `removed` clears the override (the baseline shows through). Keyed by `entity_reference`. `tic`
+    /// orders the override against the baseline row's `tic` (most recent wins — resolves the arrival
+    /// race between a cold-row update and its overlay).
     ColdState {
         macro_position: u16,
         entity_reference: u32,
         position_reference: u32,
         definition_reference: u32,
         data: u8,
+        tic: u16,
         removed: bool,
     },
     /// A zone's subscription closed (the anchor moved it out of range, or it was

@@ -121,12 +121,25 @@ export class WorldBridge {
    *  without re-requesting it. */
   private readonly coldRowsRaw = new Map<
     string,
-    | { macroPosition: number; subtypeId: number; layerId: number; tiles: Uint16Array }
-    | { macroPosition: number; subtypeId: number; layerId: number; things: Uint32Array }
+    | { macroPosition: number; subtypeId: number; layerId: number; tic: number; tiles: Uint16Array }
+    | { macroPosition: number; subtypeId: number; layerId: number; tic: number; things: Uint32Array }
   >();
+  /** The baseline prim currently drawn at each **cell** (`cellKey` = `${typeId}:${tileX}:${tileY}`),
+   *  carrying its row's `tic` and owning `rowKey`. A cell a winning override suppresses is *absent*
+   *  here (its prim removed). Lets an override find + hide the exact baseline cell, and lets a cleared
+   *  override restore it by re-expanding `rowKey`. */
+  private readonly coldCellPrims = new Map<string, { primId: number; tic: number; rowKey: string }>();
   /** Cold **overlay** prims — one per `entityReference` (a cold `state` row overriding a baseline
-   *  cell), with the zone it sits in so a zone-close can drop it. Composited on top of the baseline. */
-  private readonly coldOverrides = new Map<number, { id: number; macroPosition: number }>();
+   *  cell). `id` is `null` for a winning *removal* (kind 0 / tombstone) that draws nothing but still
+   *  suppresses the baseline. `cellKey`/`rowKey` locate the suppressed baseline cell + its row; `tic`
+   *  orders the override against the baseline row (most recent wins). */
+  private readonly coldOverrides = new Map<
+    number,
+    { id: number | null; macroPosition: number; cellKey: string; rowKey: string; tic: number }
+  >();
+  /** Reverse index `cellKey → entityReference` of the override currently winning (suppressing) that
+   *  cell — so a baseline (re-)expand knows which cells to skip. */
+  private readonly coldCellWinner = new Map<string, number>();
   private readonly unsubs: Array<() => void> = [];
 
   /** Texture-stem tables from the content bundle, indexed by `defId - 1` (the
@@ -169,13 +182,13 @@ export class WorldBridge {
     private readonly resolver: TextureResolver,
   ) {
     this.unsubs.push(
-      client.onColdTiles((macroPosition, subtypeId, layerId, tiles) =>
-        this.onColdTiles(macroPosition, subtypeId, layerId, tiles),
+      client.onColdTiles((macroPosition, subtypeId, layerId, tic, tiles) =>
+        this.onColdTiles(macroPosition, subtypeId, layerId, tic, tiles),
       ),
     );
     this.unsubs.push(
-      client.onColdThings((macroPosition, subtypeId, layerId, things) =>
-        this.onColdThings(macroPosition, subtypeId, layerId, things),
+      client.onColdThings((macroPosition, subtypeId, layerId, tic, things) =>
+        this.onColdThings(macroPosition, subtypeId, layerId, tic, things),
       ),
     );
     this.unsubs.push(client.onColdState((o) => this.onColdState(o)));
@@ -277,8 +290,14 @@ export class WorldBridge {
     for (const ids of this.coldPrims.values()) {
       for (const id of ids) this.viewport.removePrim(id);
     }
+    for (const ov of this.coldOverrides.values()) {
+      if (ov.id !== null) this.viewport.removePrim(ov.id);
+    }
     this.coldPrims.clear();
     this.coldRowsRaw.clear();
+    this.coldCellPrims.clear();
+    this.coldOverrides.clear();
+    this.coldCellWinner.clear();
     this.client.removeAnchor(ANCHOR);
   }
 
@@ -290,8 +309,8 @@ export class WorldBridge {
     this.content = content;
     this.refreshStems(); // the new corpus may retexture / recolour defs
     for (const row of this.coldRowsRaw.values()) {
-      if ("tiles" in row) this.onColdTiles(row.macroPosition, row.subtypeId, row.layerId, row.tiles);
-      else this.onColdThings(row.macroPosition, row.subtypeId, row.layerId, row.things);
+      if ("tiles" in row) this.onColdTiles(row.macroPosition, row.subtypeId, row.layerId, row.tic, row.tiles);
+      else this.onColdThings(row.macroPosition, row.subtypeId, row.layerId, row.tic, row.things);
     }
   }
 
@@ -326,10 +345,11 @@ export class WorldBridge {
   /** A zone's cold **ground** arrived — the dense 256 `kind_reference`s, one per cell. Paints a
    *  64×64 sprite per non-empty cell. Keyed per `(zone, layer)` so a re-delivery clears + repaints
    *  only itself. */
-  private onColdTiles(macroPosition: number, subtypeId: number, layerId: number, tiles: Uint16Array): void {
+  private onColdTiles(macroPosition: number, subtypeId: number, layerId: number, tic: number, tiles: Uint16Array): void {
     const key = `${macroPosition}:${subtypeId}:${layerId}`;
     this.clearColdPrims(key);
-    this.coldRowsRaw.set(key, { macroPosition, subtypeId, layerId, tiles }); // keep for hot-swap re-expand
+    this.coldRowsRaw.set(key, { macroPosition, subtypeId, layerId, tic, tiles }); // keep for hot-swap re-expand
+    const typeId = this.content.typeBiomeTile();
 
     // [tileX, tileY, tint, geoColor, defId, …] — stride 5.
     const flat = this.content.zoneTilePrims(macroPosition, tiles);
@@ -340,34 +360,37 @@ export class WorldBridge {
       const tint = flat[i + 2];
       const geoColor = flat[i + 3];
       const defId = flat[i + 4];
-      ids.push(
-        this.viewport.addPrim({
-          texture: this.white,
-          textureName: textureNameFor(this.tileStems[defId - 1]),
-          x: tileX * SQUARE,
-          y: tileY * SQUARE,
-          width: SQUARE,
-          height: SQUARE,
-          tint,
-          geoColor,
-          packed: this.packedFor(this.tilePacked, defId),
-          seed: cellSeed(tileX, tileY),
-        }),
-      );
+      const ck = cellKey(typeId, tileX, tileY);
+      if (this.baselineSuppressed(ck, key, tic)) continue; // a newer override wins this cell — skip baseline
+      const primId = this.viewport.addPrim({
+        texture: this.white,
+        textureName: textureNameFor(this.tileStems[defId - 1]),
+        x: tileX * SQUARE,
+        y: tileY * SQUARE,
+        width: SQUARE,
+        height: SQUARE,
+        tint,
+        geoColor,
+        packed: this.packedFor(this.tilePacked, defId),
+        seed: cellSeed(tileX, tileY),
+      });
+      ids.push(primId);
+      this.coldCellPrims.set(ck, { primId, tic, rowKey: key });
     }
     if (ids.length) this.coldPrims.set(key, ids);
   }
 
   /** A zone's cold **scatter** arrived — sparse `kind_pos_reference`s. Paints a bottom-centred
    *  sprite per thing, above the ground. Keyed per `(zone, biome subtype, layer)`. */
-  private onColdThings(macroPosition: number, subtypeId: number, layerId: number, things: Uint32Array): void {
+  private onColdThings(macroPosition: number, subtypeId: number, layerId: number, tic: number, things: Uint32Array): void {
     const key = `${macroPosition}:${subtypeId}:${layerId}`;
     this.clearColdPrims(key);
-    this.coldRowsRaw.set(key, { macroPosition, subtypeId, layerId, things });
+    this.coldRowsRaw.set(key, { macroPosition, subtypeId, layerId, tic, things });
+    const typeId = this.content.typeBiomeThing();
 
     // [tileX, tileY, tint, geoColor, kindId, data, variant, …] — stride 7. `type_id` is the shard
     // (this is the thing frame → the THING namespace).
-    const flat = this.content.zoneColdPrims(macroPosition, this.content.typeBiomeThing(), things);
+    const flat = this.content.zoneColdPrims(macroPosition, typeId, things);
     const ids: number[] = [];
     for (let i = 0; i + 6 < flat.length; i += 7) {
       const tileX = flat[i];
@@ -377,73 +400,13 @@ export class WorldBridge {
       const kindId = flat[i + 4];
       const data = flat[i + 5];
       const variant = flat[i + 6];
+      const ck = cellKey(typeId, tileX, tileY);
+      if (this.baselineSuppressed(ck, key, tic)) continue; // a newer override wins this cell — skip baseline
       const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
       // Anchor/size/footprint from the def layout; a tall sprite rises past its cell,
       // a west facing mirrors the pivot with the art (see placeThing).
       const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX);
-      ids.push(
-        this.viewport.addPrim({
-          texture: this.white,
-          textureName: tex.name,
-          flipX: tex.flipX,
-          cell: tex.cell,
-          x: p.x,
-          y: p.y,
-          width: p.width,
-          height: p.height,
-          tint,
-          geoColor,
-          packed: this.packedFor(this.thingPacked, kindId),
-          // Cold objects don't move → seed by their world cell (their tile_seed).
-          seed: cellSeed(tileX, tileY),
-          zIndex: this.thingZ(p.zRow),
-        }),
-      );
-    }
-    if (ids.length) this.coldPrims.set(key, ids);
-  }
-
-  /** A cold **overlay** row — composite it over the baseline cell, keyed by `entityReference`. A prior
-   *  override for the same entity (and `removed`) is dropped first; an empty override (kind 0) leaves
-   *  the cell bare. Draws the override *on top* of the baseline — suppressing the baseline cell itself
-   *  (e.g. hiding a removed tree) is a follow-up. */
-  private onColdState(o: ColdStateOverride): void {
-    const prev = this.coldOverrides.get(o.entityReference);
-    if (prev !== undefined) {
-      this.viewport.removePrim(prev.id);
-      this.coldOverrides.delete(o.entityReference);
-    }
-    if (o.removed) return; // cleared — baseline shows through
-    const flat = this.content.coldStatePrim(o.macroPosition, o.positionReference, o.definitionReference, o.data);
-    if (flat.length < 8) return; // empty override (kind 0) → bare cell
-    const tileX = flat[0];
-    const tileY = flat[1];
-    const tint = flat[2];
-    const geoColor = flat[3];
-    const kindId = flat[4];
-    const typeId = flat[5];
-    const data = flat[6];
-    const variant = flat[7];
-    let id: number;
-    if (typeId === this.content.typeBiomeTile()) {
-      // Ground override — a full cell on top of the baseline.
-      id = this.viewport.addPrim({
-        texture: this.white,
-        textureName: textureNameFor(this.tileStems[kindId - 1]),
-        x: tileX * SQUARE,
-        y: tileY * SQUARE,
-        width: SQUARE,
-        height: SQUARE,
-        tint,
-        geoColor,
-        packed: this.packedFor(this.tilePacked, kindId),
-        seed: cellSeed(tileX, tileY),
-      });
-    } else {
-      // Thing override — the thing sprite, bottom-anchored like the scatter.
-      const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
-      const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX);
-      id = this.viewport.addPrim({
+      const primId = this.viewport.addPrim({
         texture: this.white,
         textureName: tex.name,
         flipX: tex.flipX,
@@ -455,19 +418,156 @@ export class WorldBridge {
         tint,
         geoColor,
         packed: this.packedFor(this.thingPacked, kindId),
+        // Cold objects don't move → seed by their world cell (their tile_seed).
         seed: cellSeed(tileX, tileY),
         zIndex: this.thingZ(p.zRow),
       });
+      ids.push(primId);
+      this.coldCellPrims.set(ck, { primId, tic, rowKey: key });
     }
-    this.coldOverrides.set(o.entityReference, { id, macroPosition: o.macroPosition });
+    if (ids.length) this.coldPrims.set(key, ids);
+  }
+
+  /** Is the baseline for cell `ck` (in row `rowKey`, tic `rowTic`) suppressed by a winning override?
+   *  True when an override claims the cell with a *more recent* tic — the baseline stays hidden (and
+   *  the winner learns `rowKey`, so a later clear can restore this exact row). When the baseline has
+   *  instead caught up (a fold folded the override in → `rowTic ≥ override.tic`), the override is
+   *  stale: drop it here and let the baseline draw. */
+  private baselineSuppressed(ck: string, rowKey: string, rowTic: number): boolean {
+    const ent = this.coldCellWinner.get(ck);
+    if (ent === undefined) return false;
+    const ov = this.coldOverrides.get(ent);
+    if (ov === undefined) {
+      this.coldCellWinner.delete(ck);
+      return false;
+    }
+    if (ticAfter(ov.tic, rowTic)) {
+      if (ov.rowKey !== rowKey) this.coldOverrides.set(ent, { ...ov, rowKey }); // learn the owning row
+      return true;
+    }
+    if (ov.id !== null) this.viewport.removePrim(ov.id);
+    this.coldOverrides.delete(ent);
+    this.coldCellWinner.delete(ck);
+    return false;
+  }
+
+  /** Redraw one cold ROW from its cached raw (the "dirty rect" redraw) — used to restore a baseline
+   *  cell once its override clears or goes stale. */
+  private reExpandRow(rowKey: string): void {
+    const row = this.coldRowsRaw.get(rowKey);
+    if (row === undefined) return;
+    if ("tiles" in row) this.onColdTiles(row.macroPosition, row.subtypeId, row.layerId, row.tic, row.tiles);
+    else this.onColdThings(row.macroPosition, row.subtypeId, row.layerId, row.tic, row.things);
+  }
+
+  /** A cold **overlay** row — composite it over the baseline cell, keyed by `entityReference`. The
+   *  baseline row's `tic` and the override's `tic` order them (most recent wins), so a cold-row/state
+   *  arrival race resolves deterministically: an override *more recent* than the baseline wins — it
+   *  suppresses the baseline cell (hides its prim; a kind-0 removal draws nothing, a tombstone) and
+   *  draws on top; once the baseline catches up (a fold), the override is ignored and the baseline
+   *  shows. A cleared override (`removed`) re-expands its row to restore the cell. */
+  private onColdState(o: ColdStateOverride): void {
+    // Drop any prior override for this entity first (its prim + winner claim).
+    const prev = this.coldOverrides.get(o.entityReference);
+    if (prev !== undefined) {
+      if (prev.id !== null) this.viewport.removePrim(prev.id);
+      this.coldOverrides.delete(o.entityReference);
+      if (this.coldCellWinner.get(prev.cellKey) === o.entityReference) this.coldCellWinner.delete(prev.cellKey);
+    }
+
+    // The cell + type — decoded independently of `kind`, so a kind-0 removal still names its cell.
+    const cell = this.content.coldCell(o.macroPosition, o.positionReference, o.definitionReference);
+    if (cell.length < 3) {
+      if (prev !== undefined) this.reExpandRow(prev.rowKey);
+      return;
+    }
+    const tileX = cell[0];
+    const tileY = cell[1];
+    const typeId = cell[2];
+    const ck = cellKey(typeId, tileX, tileY);
+
+    // The baseline row that owns the cell — its tic decides the winner. Prefer a currently-drawn
+    // baseline prim; else fall back to the prior override's remembered row (an override may arrive
+    // before its baseline, in which case tic 0 lets it win until the row lands + re-evaluates).
+    const baseline = this.coldCellPrims.get(ck);
+    const rowKey = baseline?.rowKey ?? prev?.rowKey ?? "";
+    const baselineTic = baseline?.tic ?? this.coldRowsRaw.get(rowKey)?.tic ?? 0;
+
+    // A deleted state row (the override is simply gone) — restore the baseline by re-expanding its row.
+    if (o.removed) {
+      if (rowKey !== "") this.reExpandRow(rowKey);
+      return;
+    }
+
+    // Race resolution: only draw the override if it is MORE RECENT than the baseline. If the baseline
+    // has caught up (folded the value in), it is authoritative — ignore the stale override.
+    if (!ticAfter(o.tic, baselineTic)) {
+      if (rowKey !== "") this.reExpandRow(rowKey);
+      return;
+    }
+
+    // The override wins → suppress the baseline cell (hide its prim), then draw the override on top.
+    if (baseline !== undefined) {
+      this.viewport.removePrim(baseline.primId);
+      this.coldCellPrims.delete(ck);
+    }
+
+    const flat = this.content.coldStatePrim(o.macroPosition, o.positionReference, o.definitionReference, o.data);
+    let id: number | null = null;
+    if (flat.length >= 8) {
+      const tint = flat[2];
+      const geoColor = flat[3];
+      const kindId = flat[4];
+      const data = flat[6];
+      const variant = flat[7];
+      if (typeId === this.content.typeBiomeTile()) {
+        // Ground override — a full cell in place of the baseline.
+        id = this.viewport.addPrim({
+          texture: this.white,
+          textureName: textureNameFor(this.tileStems[kindId - 1]),
+          x: tileX * SQUARE,
+          y: tileY * SQUARE,
+          width: SQUARE,
+          height: SQUARE,
+          tint,
+          geoColor,
+          packed: this.packedFor(this.tilePacked, kindId),
+          seed: cellSeed(tileX, tileY),
+        });
+      } else {
+        // Thing override — the thing sprite, bottom-anchored like the scatter.
+        const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
+        const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX);
+        id = this.viewport.addPrim({
+          texture: this.white,
+          textureName: tex.name,
+          flipX: tex.flipX,
+          cell: tex.cell,
+          x: p.x,
+          y: p.y,
+          width: p.width,
+          height: p.height,
+          tint,
+          geoColor,
+          packed: this.packedFor(this.thingPacked, kindId),
+          seed: cellSeed(tileX, tileY),
+          zIndex: this.thingZ(p.zRow),
+        });
+      }
+    }
+    // Register the winner even when it draws nothing (kind-0 removal / tombstone) — it still suppresses
+    // the baseline cell.
+    this.coldOverrides.set(o.entityReference, { id, macroPosition: o.macroPosition, cellKey: ck, rowKey, tic: o.tic });
+    this.coldCellWinner.set(ck, o.entityReference);
   }
 
   /** A zone's subscription closed: drop all of its cold-object sprites (every row) + overlay prims. */
   private onZoneClosed(macroPosition: number): void {
     for (const [ent, ov] of [...this.coldOverrides]) {
       if (ov.macroPosition === macroPosition) {
-        this.viewport.removePrim(ov.id);
+        if (ov.id !== null) this.viewport.removePrim(ov.id);
         this.coldOverrides.delete(ent);
+        if (this.coldCellWinner.get(ov.cellKey) === ent) this.coldCellWinner.delete(ov.cellKey);
       }
     }
     const prefix = `${macroPosition}:`;
@@ -486,5 +586,22 @@ export class WorldBridge {
       for (const id of ids) this.viewport.removePrim(id);
       this.coldPrims.delete(key);
     }
+    // Forget this row's per-cell baseline entries (they'll be re-registered on re-expand).
+    for (const [ck, cell] of [...this.coldCellPrims]) {
+      if (cell.rowKey === key) this.coldCellPrims.delete(ck);
+    }
   }
+}
+
+/** A cold cell's key — `${typeId}:${tileX}:${tileY}`. `type_id` (tile vs thing) is part of the key so
+ *  a ground override and a thing override on the same cell are tracked (and suppress) independently. */
+function cellKey(typeId: number, tileX: number, tileY: number): string {
+  return `${typeId}:${tileX}:${tileY}`;
+}
+
+/** Serial (wrapping `u16`) tic compare — `a` strictly after `b`. Half the ring is "after", so a
+ *  wrap (65535 → 0) still orders correctly. Mirrors the codec's `tic_after`. */
+function ticAfter(a: number, b: number): boolean {
+  const d = (a - b) & 0xffff;
+  return d !== 0 && d < 0x8000;
 }

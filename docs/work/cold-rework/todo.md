@@ -11,12 +11,6 @@
 `state` override) → `fold` (PACK back into the baseline). See [`completed.md`](completed.md). What's
 left, by kind:
 
-**Render refinement**
-- **Baseline suppression** — the client hiding a baseline cell a `state` override *removes* (currently
-  the override draws on top; a removal / `kind == 0` leaves the baseline showing). Needs type-specific,
-  position-keyed baseline-prim tracking + suppress/restore that plays with the `fold` re-expand — real
-  render state-management, best done deliberately.
-
 **The big pipeline integration** (touches the delicate live wolf pipeline)
 - **Event-driven `UNPACK`** — route a mutate through edge → orchestrator → worker (the worker calls the
   mint), instead of the direct `set_tile`/`set_thing` reducer, with a deterministic-from-event id

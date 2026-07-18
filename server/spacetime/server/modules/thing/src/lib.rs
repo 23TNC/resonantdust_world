@@ -64,8 +64,16 @@ pub struct ColdThing {
     pub subtype_id: u16,
     /// The layer (holds `u4`).
     pub layer_id: u8,
+    /// The `tic` this baseline is current as of (set at `seed`, bumped by `fold`) — a cold row is a
+    /// compressed `state` row, so `tic` orders it against a `state` override (most recent wins).
+    pub tic: u16,
     /// Sparse `kind_pos_reference`s — one per occupied cell (`kind:16 | tile:8 | data:8`).
     pub things: Vec<u32>,
+}
+
+/// The cold shard's current tic (its `clock` mirror, bumped by the master).
+fn now_tic(ctx: &ReducerContext) -> u16 {
+    ctx.db.clock().id().find(0).map(|c| c.master_tic).unwrap_or(0)
 }
 
 /// Seed (or overwrite) a zone-layer-biome's scatter. Trusted server-side **generation** (worldgen),
@@ -87,6 +95,7 @@ pub fn seed(
         macro_position_reference: macro_position,
         subtype_id,
         layer_id,
+        tic: now_tic(ctx),
         things,
     };
     if ctx.db.cold_thing().cold_row_reference().find(cold_row_reference).is_some() {
@@ -170,6 +179,9 @@ pub fn set_thing(
 /// Only `!dirty` rows fold; the master's GC calls it on cadence.
 #[reducer]
 pub fn fold(ctx: &ReducerContext) -> Result<(), String> {
+    // The baseline is current as of *now* once folded — `now_tic` is ≥ every settled override's tic,
+    // so all of them become superseded (the client reads the baseline, not the stale override).
+    let ftic = now_tic(ctx);
     let settled: Vec<State> = ctx.db.state().iter().collect();
     for s in settled {
         let log_settled = ctx
@@ -193,6 +205,7 @@ pub fn fold(ctx: &ReducerContext) -> Result<(), String> {
                 if kind_reference != 0 {
                     row.things.push(pack_kind_pos_reference(kind_reference, tile_reference, s.data));
                 }
+                row.tic = ftic;
                 ctx.db.cold_thing().cold_row_reference().update(row);
             }
             None if kind_reference != 0 => {
@@ -202,6 +215,7 @@ pub fn fold(ctx: &ReducerContext) -> Result<(), String> {
                     macro_position_reference: s.macro_position_reference,
                     subtype_id,
                     layer_id,
+                    tic: ftic,
                     things: vec![pack_kind_pos_reference(kind_reference, tile_reference, s.data)],
                 });
             }

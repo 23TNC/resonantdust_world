@@ -4,9 +4,11 @@
 //!   1. runs the metronome — every `1/TIC_HZ` it calls `index.bump_tic(realm)`, so the authoritative
 //!      counter lives entirely in that row and the master holds none of its own (a restart resumes
 //!      from the durable value, never resets);
-//!   2. copies that tic into the SpacetimeDB *modules* — the event/data shards can't subscribe
-//!      cross-database, so the master alone `bump`s their local `clock` mirrors, then sweeps (`settle`
-//!      terminal events, `gc` old rows).
+//!   2. copies that tic into the SpacetimeDB *modules* — the event/data shards **and the cold shards
+//!      (tile/thing)** can't subscribe cross-database, so the master alone `bump`s every one of their
+//!      local `clock` mirrors, then sweeps (`settle` terminal events, `gc` old rows). The cold shards
+//!      need the tic just as much: their `state_log`/`state` overlay and the `tic` on the baseline
+//!      `cold_tile`/`cold_thing` rows all order by it.
 //!
 //! Every *other* server (orchestrator, worker, edge) is an SDK client and reads the tic straight from
 //! its `index.master_clock` subscription — the subscription push is their fan-out, so the master
