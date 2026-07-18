@@ -9,4 +9,4 @@
 
 use spacetimedb::Table as _;
 
-resonantdust_codec::entity_tables!(definition_reference: u32, position_reference: u32, data: u8);
+resonantdust_codec::entity_tables!(data: u8);

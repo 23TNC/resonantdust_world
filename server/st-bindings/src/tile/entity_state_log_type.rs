@@ -20,7 +20,8 @@ pub struct EntityStateLog {
     pub observer_reference: u8,
     pub dirty: bool,
     pub definition_reference: u32,
-    pub position_reference: u32,
+    pub macro_position_reference: u16,
+    pub micro_position_reference: u16,
     pub data: u8,
     pub status: u8,
 }
@@ -42,7 +43,8 @@ pub struct EntityStateLogCols {
     pub observer_reference: __sdk::__query_builder::Col<EntityStateLog, u8>,
     pub dirty: __sdk::__query_builder::Col<EntityStateLog, bool>,
     pub definition_reference: __sdk::__query_builder::Col<EntityStateLog, u32>,
-    pub position_reference: __sdk::__query_builder::Col<EntityStateLog, u32>,
+    pub macro_position_reference: __sdk::__query_builder::Col<EntityStateLog, u16>,
+    pub micro_position_reference: __sdk::__query_builder::Col<EntityStateLog, u16>,
     pub data: __sdk::__query_builder::Col<EntityStateLog, u8>,
     pub status: __sdk::__query_builder::Col<EntityStateLog, u8>,
 }
@@ -58,7 +60,8 @@ impl __sdk::__query_builder::HasCols for EntityStateLog {
             observer_reference: __sdk::__query_builder::Col::new(table_name, "observer_reference"),
             dirty: __sdk::__query_builder::Col::new(table_name, "dirty"),
             definition_reference: __sdk::__query_builder::Col::new(table_name, "definition_reference"),
-            position_reference: __sdk::__query_builder::Col::new(table_name, "position_reference"),
+            macro_position_reference: __sdk::__query_builder::Col::new(table_name, "macro_position_reference"),
+            micro_position_reference: __sdk::__query_builder::Col::new(table_name, "micro_position_reference"),
             data: __sdk::__query_builder::Col::new(table_name, "data"),
             status: __sdk::__query_builder::Col::new(table_name, "status"),
 

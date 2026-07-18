@@ -18,12 +18,13 @@
 /// and the `init` / `bump` / `claim` / `write` / `gc` reducers into the invoking module. See the
 /// module docs.
 ///
-/// **Payload is a parameter** — the caller lists the composed value's fields, spliced into
-/// `TargetState` / `state_log` / `state` (in order, after the fixed composition columns). The payload
-/// **must include a `position_reference: u32`** — the `state` upsert derives `macro_position_reference`
-/// (the zone-subscription key) from it. Invoke unqualified, e.g.:
-/// `resonantdust_codec::entity_tables!(definition_reference: u32, position_reference: u32, data: u8);`.
-/// (This is the first generalization step toward the `*_tables!` family — see `work/shard-tables`.)
+/// **Payload is a parameter.** The fixed columns are `entity_reference`, `definition_reference`,
+/// `macro_position_reference` + `micro_position_reference` (the split `position_reference`), `tic`; the
+/// caller lists only the shard's **extra** payload fields, spliced in after them. E.g. the hot mover /
+/// current overlay: `resonantdust_codec::entity_tables!(data: u8);` (a tile shard would pass none).
+/// The worker splits `position_reference` → `macro`/`micro` when it builds a `TargetState`, and the
+/// edge reassembles `position_reference` = `macro | micro` for the wire — so the client is untouched.
+/// (First generalization step toward the `*_tables!` family — see `work/shard-tables`.)
 #[macro_export]
 macro_rules! entity_tables {
     ($($pf:ident : $pt:ty),* $(,)?) => {
@@ -54,6 +55,10 @@ macro_rules! entity_tables {
         #[derive(spacetimedb::SpacetimeType, Clone)]
         pub struct TargetState {
             pub entity_reference: u32,
+            pub definition_reference: u32,
+            /// Position, split: `macro` (the zone-subscription key) + `micro` (the cell within it).
+            pub macro_position_reference: u16,
+            pub micro_position_reference: u16,
             $(pub $pf: $pt,)*
             /// If set, promote this target to `state` once settled (the program ran `PROMOTE_STATE`).
             pub promote: bool,
@@ -78,6 +83,9 @@ macro_rules! entity_tables {
             pub observer_reference: u8,
             /// `true` = work pending; `false` = settled (one worker per component → binary).
             pub dirty: bool,
+            pub definition_reference: u32,
+            pub macro_position_reference: u16,
+            pub micro_position_reference: u16,
             $(pub $pf: $pt,)*
             /// `state_status` — `flags:4 | status:4` (`PROMOTE` / `PROMOTED`).
             pub status: u8,
@@ -88,11 +96,14 @@ macro_rules! entity_tables {
         pub struct EntityState {
             #[primary_key]
             pub entity_reference: u32,
-            /// The zone-subscription key — the payload's `position_reference` high half, kept as its
-            /// own column because a subscription filters on columns, not expressions.
+            /// The zone-subscription key — a subscription filters on columns, not expressions.
             #[index(btree)]
             pub macro_position_reference: u16,
+            /// The cell within the zone (`tile_reference:8 | layer_reference:8`); `macro | micro` is the
+            /// full `position_reference` the edge reassembles for the wire.
+            pub micro_position_reference: u16,
             pub tic: u16,
+            pub definition_reference: u32,
             $(pub $pf: $pt,)*
         }
 
@@ -128,6 +139,9 @@ macro_rules! entity_tables {
                             worker_reference: worker,
                             observer_reference: $crate::refs::SERVER_REF_NONE,
                             dirty: true,
+                            definition_reference: 0,
+                            macro_position_reference: 0,
+                            micro_position_reference: 0,
                             $($pf: Default::default(),)*
                             status: $crate::status::pack_status(0, $crate::status::STATE_OPEN),
                         });
@@ -176,6 +190,9 @@ macro_rules! entity_tables {
                 if !row.dirty {
                     continue; // already written — a replay
                 }
+                row.definition_reference = r.definition_reference;
+                row.macro_position_reference = r.macro_position_reference;
+                row.micro_position_reference = r.micro_position_reference;
                 $(row.$pf = r.$pf.clone();)*
                 row.dirty = false;
                 if r.promote {
@@ -199,11 +216,12 @@ macro_rules! entity_tables {
         }
 
         fn entity_tables_upsert_state(ctx: &spacetimedb::ReducerContext, r: &TargetState, tic: u16) {
-            let macro_position = $crate::object::position_macro(r.position_reference);
             let row = EntityState {
                 entity_reference: r.entity_reference,
-                macro_position_reference: macro_position,
+                macro_position_reference: r.macro_position_reference,
+                micro_position_reference: r.micro_position_reference,
                 tic,
+                definition_reference: r.definition_reference,
                 $($pf: r.$pf.clone(),)*
             };
             if ctx.db.entity_state().entity_reference().find(r.entity_reference).is_some() {

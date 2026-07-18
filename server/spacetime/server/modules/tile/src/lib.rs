@@ -18,7 +18,7 @@ use spacetimedb::{reducer, table, ReducerContext, Table};
 
 use resonantdust_codec::object::{
     def_kind_reference, def_subtype_id, pack_cold_row_reference, pack_definition_reference,
-    pack_layer_reference, pack_position_reference, pack_type_reference, TYPE_BIOME_TILE,
+    pack_layer_reference, pack_type_reference, TYPE_BIOME_TILE,
 };
 use resonantdust_codec::refs::{pack_entity_reference, pack_server_reference, OBJECT_REF_MAX, SERVER_REF_NONE};
 use resonantdust_codec::status::{pack_status, STATE_FLAG_PROMOTE, STATE_PROMOTED};
@@ -27,7 +27,7 @@ use resonantdust_codec::uid::pack_state_uid;
 // The shared tic-composition overlay: `clock` / `state_log` / `state` + `init` / `bump` / `claim` /
 // `write` / `gc`. A cold cell mutates by minting a `state_log` row here (never rewriting the baseline
 // `cold_tile`); GC folds it back. Same machinery as `data_shard`, so cold rides the whole pipeline.
-resonantdust_codec::entity_tables!(definition_reference: u32, position_reference: u32, data: u8);
+resonantdust_codec::entity_tables!(data: u8);
 
 /// This cold shard's `server_reference` (`type_id = TYPE_BIOME_TILE`, server_id 0) — the high byte of
 /// every `entity_reference` it mints on unpack. Const stopgap (matches `event_shard`); F2 makes it
@@ -132,7 +132,6 @@ pub fn set_tile(
 ) -> Result<(), String> {
     let layer_reference = pack_layer_reference(TYPE_BIOME_TILE, layer_id);
     let micro = ((tile_reference as u16) << 8) | layer_reference as u16;
-    let position = pack_position_reference(macro_position, micro);
     // A mutation keeps the cell's biome — find the baseline row that holds this cell (its non-empty
     // `subtype`), so the eventual `fold` writes back to the *right* row. `subtype_id` is a fallback.
     let subtype_id = ctx
@@ -150,7 +149,7 @@ pub fn set_tile(
         .db
         .entity_state()
         .iter()
-        .find(|s| s.position_reference == position)
+        .find(|s| s.macro_position_reference == macro_position && s.micro_position_reference == micro)
         .map(|s| s.entity_reference)
         .unwrap_or_else(|| mint(ctx));
     // Settled, promoted composition slot (the source of truth).
@@ -164,7 +163,8 @@ pub fn set_tile(
         observer_reference: SERVER_REF_NONE,
         dirty: false,
         definition_reference: definition,
-        position_reference: position,
+        macro_position_reference: macro_position,
+        micro_position_reference: micro,
         data: 0,
         status: pack_status(STATE_FLAG_PROMOTE, STATE_PROMOTED),
     });
@@ -172,9 +172,9 @@ pub fn set_tile(
     let row = EntityState {
         entity_reference: entity,
         macro_position_reference: macro_position,
+        micro_position_reference: micro,
         tic,
         definition_reference: definition,
-        position_reference: position,
         data: 0,
     };
     if ctx.db.entity_state().entity_reference().find(entity).is_some() {
@@ -212,8 +212,8 @@ pub fn fold(ctx: &ReducerContext) -> Result<(), String> {
         if !log_settled {
             continue;
         }
-        let tile_reference = ((s.position_reference >> 8) & 0xFF) as usize;
-        let layer_id = (s.position_reference & 0xF) as u8;
+        let tile_reference = ((s.micro_position_reference >> 8) & 0xFF) as usize;
+        let layer_id = (s.micro_position_reference & 0xF) as u8;
         let subtype_id = def_subtype_id(s.definition_reference);
         let kind_reference = def_kind_reference(s.definition_reference);
         let cold_row = pack_cold_row_reference(s.macro_position_reference, subtype_id, layer_id);

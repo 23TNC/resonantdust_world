@@ -26,7 +26,7 @@ use std::time::Duration;
 use spacetimedb_sdk::{DbContext, Table as _};
 
 use resonantdust_codec::action::{self, MOVE_TO, PLACE, PROMOTE_STATE, SET};
-use resonantdust_codec::object::{position_macro, TYPE_BIOME_THING, TYPE_BIOME_TILE};
+use resonantdust_codec::object::{pack_position_reference, position_macro, position_micro, TYPE_BIOME_THING, TYPE_BIOME_TILE};
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED};
 use resonantdust_codec::tic::{tic_after, tic_before};
@@ -280,21 +280,24 @@ async fn main() {
                     Shard::Data => data_w.push(data_shard::TargetState {
                         entity_reference: e,
                         definition_reference: p.definition_reference,
-                        position_reference: p.position_reference,
+                        macro_position_reference: position_macro(p.position_reference),
+                        micro_position_reference: position_micro(p.position_reference),
                         data: p.data,
                         promote,
                     }),
                     Shard::Tile => tile_w.push(tile::TargetState {
                         entity_reference: e,
                         definition_reference: p.definition_reference,
-                        position_reference: p.position_reference,
+                        macro_position_reference: position_macro(p.position_reference),
+                        micro_position_reference: position_micro(p.position_reference),
                         data: p.data,
                         promote,
                     }),
                     Shard::Thing => thing_w.push(thing::TargetState {
                         entity_reference: e,
                         definition_reference: p.definition_reference,
-                        position_reference: p.position_reference,
+                        macro_position_reference: position_macro(p.position_reference),
+                        micro_position_reference: position_micro(p.position_reference),
                         data: p.data,
                         promote,
                     }),
@@ -424,7 +427,7 @@ fn base_row(
                 .reduce(|a, b| if tic_after(b.tic, a.tic) { b } else { a })
                 .map(|r| Base {
                     definition_reference: r.definition_reference,
-                    position_reference: r.position_reference,
+                    position_reference: pack_position_reference(r.macro_position_reference, r.micro_position_reference),
                     data: r.data,
                     dirty: r.dirty,
                 })

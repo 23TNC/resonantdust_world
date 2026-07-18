@@ -22,9 +22,12 @@ Design: [`README`](README.md) · [`TABLES.md`](../../TABLES.md) · [`ACTIONS.md`
       edge); the client wire (`ServerMsg::State`) is untouched. Runtime-verified — a mover composes into
       `entity_state`. (Reset-publish needed — a rename is an incompatible migration; **rebuild the sim
       binaries after**, not just check.) See [`completed.md`](completed.md).
-- [ ] Split `position_reference` → first-class `macro_position_reference` + `micro_position_reference`
-      columns (the design's fixed columns; `data` stays the generic payload). Updates worker/edge/client
-      to the split — a runtime-preserving (not byte-identical) step, verify **wolf still moves**.
+- [x] **Split `position_reference`** → first-class `macro`/`micro` + `definition_reference` columns;
+      `data` is the sole generic payload (`entity_tables!(data: u8)`). The worker splits at
+      `TargetState` write + reassembles in `base_row`; the **edge reassembles `position_reference` =
+      `pack(macro, micro)` for the wire**, so `ServerMsg::State` is unchanged and the **client needs no
+      change** (server-side only). Verified: builds green; a mover composed with `macro=0, micro=30512`.
+      See [`completed.md`](completed.md).
 - [ ] Author `dense_entity_tables!` / `sparse_entity_tables!` — payload = `Vec<DenseItem<T>>` /
       `Vec<SparseItem<T>>`, keyed by `cold_uid`. And `overlay_tables!` (= sparse, named `overlay`).
 

@@ -15,7 +15,8 @@ use spacetimedb_sdk::__codegen::{
 pub struct TargetState {
     pub entity_reference: u32,
     pub definition_reference: u32,
-    pub position_reference: u32,
+    pub macro_position_reference: u16,
+    pub micro_position_reference: u16,
     pub data: u8,
     pub promote: bool,
 }

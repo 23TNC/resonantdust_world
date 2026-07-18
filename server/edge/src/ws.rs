@@ -296,7 +296,7 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         t.db().cold_tile().on_update(move |_ctx, _old, row| send(&o, cold_tile_frame(row)));
         // The cold overlay: a per-cell mutation in the tile shard's `state` table.
         let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::tile::EntityState, removed: bool| {
-            send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, row.position_reference, row.definition_reference, row.data, row.tic, removed))
+            send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, resonantdust_codec::object::pack_position_reference(row.macro_position_reference, row.micro_position_reference), row.definition_reference, row.data, row.tic, removed))
         };
         let o = out_tx.clone();
         t.db().entity_state().on_insert(move |_ctx, row| s(&o, row, false));
@@ -318,7 +318,7 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         t.db().cold_thing().on_update(move |_ctx, _old, row| send(&o, cold_thing_frame(row)));
         // The cold overlay: a per-cell mutation in the thing shard's `state` table.
         let s = |o: &mpsc::UnboundedSender<String>, row: &bindings::thing::EntityState, removed: bool| {
-            send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, row.position_reference, row.definition_reference, row.data, row.tic, removed))
+            send(o, cold_state_frame(row.macro_position_reference, row.entity_reference, resonantdust_codec::object::pack_position_reference(row.macro_position_reference, row.micro_position_reference), row.definition_reference, row.data, row.tic, removed))
         };
         let o = out_tx.clone();
         t.db().entity_state().on_insert(move |_ctx, row| s(&o, row, false));
@@ -373,7 +373,7 @@ fn state_frame(row: &bindings::data_shard::EntityState) -> ServerMsg {
         zone: row.macro_position_reference,
         tic: row.tic,
         definition_reference: row.definition_reference,
-        position_reference: row.position_reference,
+        position_reference: resonantdust_codec::object::pack_position_reference(row.macro_position_reference, row.micro_position_reference),
         data: row.data,
     }
 }

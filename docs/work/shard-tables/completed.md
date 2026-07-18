@@ -51,3 +51,24 @@ published the 3 modules (a rename is an incompatible migration) + **rebuilt the 
 binary subscribing to the vanished `state_log` panics — caught + fixed). Runtime: a `PLACE` composed a
 mover into `entity_state` at the target position ("composed component").
 
+
+## P1 (step 3) · Split `position_reference` → `macro`/`micro` first-class columns
+
+Reached the design's fixed-column shape: `entity_state`/`entity_state_log`/`TargetState` gain
+`definition_reference` + `macro_position_reference` + `micro_position_reference` as **fixed** columns;
+`data` becomes the **sole** generic payload — so the contract is `entity_tables!(data: u8)` (a tile
+shard would pass none). The macro no longer derives `macro_position` from a payload `position_reference`.
+
+**Kept the client wire unchanged (server-side only):** the worker splits `position_reference` →
+`macro`/`micro` when it builds a `TargetState` and reassembles it in `base_row` (from the log's
+macro/micro); the **edge reassembles `position_reference = pack(macro, micro)`** in `state_frame` +
+both cold-overlay relays, so `ServerMsg::State`/`ColdState` are byte-for-byte the same and core/wasm/
+pixijs need no change. (`pack ∘ split = id`, so the wire value is provably identical.)
+
+Swept: `pipeline.rs` (structs + claim/write/upsert), the 3 module invocations + `tile`/`thing` manual
+constructions + `fold`/reuse-find (now compare `macro`+`micro`), `worker` (imports + `TargetState`
+split + `base_row` reassembly), `edge` (3 reassembly sites), both binding sets regenerated.
+
+**Verified:** codec/modules/worker/orchestrator/master/edge build; reset-published + rebuilt sim; a
+`PLACE` composed a mover into `entity_state` with `macro=0, micro=30512` (position 0x7730 = 30512
+correctly split). Browser regression (terrain renders, no errors) pending.

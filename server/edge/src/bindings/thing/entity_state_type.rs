@@ -15,9 +15,9 @@ use spacetimedb_sdk::__codegen::{
 pub struct EntityState {
     pub entity_reference: u32,
     pub macro_position_reference: u16,
+    pub micro_position_reference: u16,
     pub tic: u16,
     pub definition_reference: u32,
-    pub position_reference: u32,
     pub data: u8,
 }
 
@@ -33,9 +33,9 @@ impl __sdk::InModule for EntityState {
 pub struct EntityStateCols {
     pub entity_reference: __sdk::__query_builder::Col<EntityState, u32>,
     pub macro_position_reference: __sdk::__query_builder::Col<EntityState, u16>,
+    pub micro_position_reference: __sdk::__query_builder::Col<EntityState, u16>,
     pub tic: __sdk::__query_builder::Col<EntityState, u16>,
     pub definition_reference: __sdk::__query_builder::Col<EntityState, u32>,
-    pub position_reference: __sdk::__query_builder::Col<EntityState, u32>,
     pub data: __sdk::__query_builder::Col<EntityState, u8>,
 }
 
@@ -45,9 +45,9 @@ impl __sdk::__query_builder::HasCols for EntityState {
         EntityStateCols {
             entity_reference: __sdk::__query_builder::Col::new(table_name, "entity_reference"),
             macro_position_reference: __sdk::__query_builder::Col::new(table_name, "macro_position_reference"),
+            micro_position_reference: __sdk::__query_builder::Col::new(table_name, "micro_position_reference"),
             tic: __sdk::__query_builder::Col::new(table_name, "tic"),
             definition_reference: __sdk::__query_builder::Col::new(table_name, "definition_reference"),
-            position_reference: __sdk::__query_builder::Col::new(table_name, "position_reference"),
             data: __sdk::__query_builder::Col::new(table_name, "data"),
 
         }
