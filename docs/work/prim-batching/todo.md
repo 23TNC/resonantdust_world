@@ -11,7 +11,8 @@ decision [`forks.md`](forks.md)._
       the honest draw-call breakdown: idle, and during a slow pan. Attribute **bake vs shadow vs
       stage/UI** (per-pass `gl.drawElements` deltas around `warm.bakeDirty` / `map.bakeDirty` / the
       shadow pass; stage/UI = total − tick). Note it in `notes/baseline.md` — the before-number every
-      later phase is measured against.
+      later phase is measured against. **⛔ BLOCKED on [B1](blockers.md#b1) — need a trustworthy
+      measurement path (ad-hoc console probe gave contradictory numbers).**
 - [ ] Confirm the per-prim-mesh count: for a typical forest square, how many prims × which channels take
       the `materialNode`/`surfaceNode`/`depthNode`/`normalNode` (mesh) path vs `spriteNode` (already
       batched). This sizes the win.
