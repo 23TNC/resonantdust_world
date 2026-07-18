@@ -115,8 +115,23 @@ baseline `cold_tile`**.
 `entity_reference 0x10000001` and rendered the water tile over the forest — a *server-produced* mutation
 (not a hand-inserted row), flowing reducer → mint → `state_log`+promote → edge relay → client composite.
 
-**Remaining P4** (documented in `set_tile` + `intent/world-storage/`): the **event-driven** `UNPACK`
-routing (edge → orchestrator → worker calls the mint, with a deterministic-from-event id for replay
-safety) instead of a direct reducer; the **GC fold (`PACK`)** back into the baseline + `state` drop +
-`state_log` tombstone; **`thing`-side** mutation (scatter, not just ground); **baseline suppression** for
-removals; and core's **two-phase** (`UNPACK`@N=0 → learn id → op).
+## P4 · GC fold (`PACK`) + biome-preserving `set_tile` — the full lifecycle
+
+Completed the tile mutation *lifecycle* — a cell goes hot (mint), then folds back into cold:
+
+- **`set_tile` derives the cell's biome subtype** from the baseline (the `cold_tile` row whose
+  `tiles[tile_ref] != 0`) instead of trusting the caller — so a mutation stays in its biome and the
+  fold hits the right row. Verified live: `set_tile` at (8,8) minted `definition_reference 0x1006_0040`
+  — **subtype 6 (forest)**, not the passed 0.
+- **`fold()` (PACK)**: folds every settled `state` override back into `cold_tile` (using the override's
+  own subtype/layer), then drops the `state` row + `state_log` slot. Only `!dirty` rows fold; the
+  master's GC calls it on cadence.
+
+**Browser-confirmed live end-to-end (2026-07-17):** `set_tile` → a blue water override rendered over the
+forest; `fold` → the override **dropped** but the client **still showed water** — now served from the
+**baseline `cold_tile`** the fold wrote. `mint → override → fold-to-baseline`, the mutation persisted
+into cold storage. This is the heart of the world-storage design, proven live.
+
+**Remaining P4** (`todo.md`): the **event-driven** `UNPACK` routing (edge → orchestrator → worker, with
+a deterministic-from-event id) instead of the direct reducer; **`thing`-side** mutation; **baseline
+suppression** for removals; core's **two-phase**; and `server_reference` **master-assigned** (F2).
