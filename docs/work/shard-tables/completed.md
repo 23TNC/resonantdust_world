@@ -71,4 +71,4 @@ split + `base_row` reassembly), `edge` (3 reassembly sites), both binding sets r
 
 **Verified:** codec/modules/worker/orchestrator/master/edge build; reset-published + rebuilt sim; a
 `PLACE` composed a mover into `entity_state` with `macro=0, micro=30512` (position 0x7730 = 30512
-correctly split). Browser regression (terrain renders, no errors) pending.
+correctly split). Browser regression: **no console errors**; movers/wire unaffected. Ground was black — but that is the **pre-existing cold acquire race** (`cold_tile` reseeded fine, 11 rows, same relay path as the rendering `cold_thing`), NOT a split regression (the split never touches `cold_tile`). The rework fixes it at P6.
