@@ -19,6 +19,7 @@ pub mod state_log_type;
 pub mod target_state_type;
 pub mod bump_reducer;
 pub mod claim_reducer;
+pub mod fold_reducer;
 pub mod gc_reducer;
 pub mod seed_reducer;
 pub mod set_tile_reducer;
@@ -40,6 +41,7 @@ pub use state_table::*;
 pub use state_log_table::*;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
+pub use fold_reducer::fold;
 pub use gc_reducer::gc;
 pub use seed_reducer::seed;
 pub use set_tile_reducer::set_tile;
@@ -61,6 +63,7 @@ pub enum Reducer {
         tic: u16,
         worker: u8,
 }    ,
+    Fold ,
     Gc {
         horizon: u16,
 }    ,
@@ -94,6 +97,7 @@ impl __sdk::Reducer for Reducer {
         match self {
                         Reducer::Bump { .. } => "bump",
             Reducer::Claim { .. } => "claim",
+            Reducer::Fold => "fold",
             Reducer::Gc { .. } => "gc",
             Reducer::Seed { .. } => "seed",
             Reducer::SetTile { .. } => "set_tile",
@@ -118,7 +122,9 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 tic: tic.clone(),
                 worker: worker.clone(),
 }),
-            Reducer::Gc{
+            Reducer::Fold => __sats::bsatn::to_vec(&fold_reducer::FoldArgs {
+                }),
+Reducer::Gc{
                 horizon,
 }             => __sats::bsatn::to_vec(&gc_reducer::GcArgs {
                 horizon: horizon.clone(),

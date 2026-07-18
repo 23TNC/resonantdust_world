@@ -17,8 +17,8 @@
 use spacetimedb::{reducer, table, ReducerContext, Table};
 
 use resonantdust_codec::object::{
-    pack_cold_row_reference, pack_definition_reference, pack_layer_reference, pack_position_reference,
-    pack_type_reference, TYPE_BIOME_TILE,
+    def_kind_reference, def_subtype_id, pack_cold_row_reference, pack_definition_reference,
+    pack_layer_reference, pack_position_reference, pack_type_reference, TYPE_BIOME_TILE,
 };
 use resonantdust_codec::refs::{pack_entity_reference, pack_server_reference, OBJECT_REF_MAX, SERVER_REF_NONE};
 use resonantdust_codec::status::{pack_status, STATE_FLAG_PROMOTE, STATE_PROMOTED};
@@ -123,6 +123,16 @@ pub fn set_tile(
     let layer_reference = pack_layer_reference(TYPE_BIOME_TILE, layer_id);
     let micro = ((tile_reference as u16) << 8) | layer_reference as u16;
     let position = pack_position_reference(macro_position, micro);
+    // A mutation keeps the cell's biome — find the baseline row that holds this cell (its non-empty
+    // `subtype`), so the eventual `fold` writes back to the *right* row. `subtype_id` is a fallback.
+    let subtype_id = ctx
+        .db
+        .cold_tile()
+        .macro_position_reference()
+        .filter(macro_position)
+        .find(|r| r.layer_id == layer_id && r.tiles.get(tile_reference as usize).copied().unwrap_or(0) != 0)
+        .map(|r| r.subtype_id)
+        .unwrap_or(subtype_id);
     let definition = pack_definition_reference(pack_type_reference(TYPE_BIOME_TILE, subtype_id), kind_reference);
     let tic = ctx.db.clock().id().find(0).map(|c| c.master_tic).unwrap_or(0);
     // Reuse the cell's entity if already unpacked, else mint a fresh one.
@@ -161,6 +171,48 @@ pub fn set_tile(
         ctx.db.state().entity_reference().update(row);
     } else {
         ctx.db.state().insert(row);
+    }
+    Ok(())
+}
+
+/// **GC fold (`PACK`)** — fold every settled `state` override back into the compressed baseline
+/// `cold_tile`, then drop the `state` row + `state_log` slot. The client sees no change (it read the
+/// value from the overlay; now it reads the same value from the baseline). This is the write-back half
+/// of the mutation lifecycle — the mint/`set_tile` puts a cell hot, this returns it to cold. The
+/// master's GC calls it on a cadence.
+///
+/// Uses the override's own `subtype`/`layer` (which `set_tile` preserved from the baseline) to hit the
+/// right `cold_tile` row. Only `!dirty` rows are folded (settled truth). Tombstone-not-drop of
+/// `state_log` (for a slow reader / takeover) is a refinement — this drops it.
+#[reducer]
+pub fn fold(ctx: &ReducerContext) -> Result<(), String> {
+    let settled: Vec<State> = ctx.db.state().iter().collect();
+    for s in settled {
+        // Only fold settled truth — a still-`dirty` `state_log` slot means work is pending.
+        let log_settled = ctx
+            .db
+            .state_log()
+            .uid()
+            .find(pack_state_uid(s.entity_reference, s.tic))
+            .map(|l| !l.dirty)
+            .unwrap_or(true);
+        if !log_settled {
+            continue;
+        }
+        let tile_reference = ((s.position_reference >> 8) & 0xFF) as usize;
+        let layer_id = (s.position_reference & 0xF) as u8;
+        let subtype_id = def_subtype_id(s.definition_reference);
+        let kind_reference = def_kind_reference(s.definition_reference);
+        let cold_row = pack_cold_row_reference(s.macro_position_reference, subtype_id, layer_id);
+        if let Some(mut row) = ctx.db.cold_tile().cold_row_reference().find(cold_row) {
+            if let Some(slot) = row.tiles.get_mut(tile_reference) {
+                *slot = kind_reference;
+                ctx.db.cold_tile().cold_row_reference().update(row);
+            }
+        }
+        // The value now lives in the baseline the client already reads — drop the overlay.
+        ctx.db.state().entity_reference().delete(s.entity_reference);
+        ctx.db.state_log().uid().delete(pack_state_uid(s.entity_reference, s.tic));
     }
     Ok(())
 }
