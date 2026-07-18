@@ -76,11 +76,14 @@ Design: [`README`](README.md) · [`TABLES.md`](../../TABLES.md) · [`ACTIONS.md`
 - [x] **codec addressing (F11)** — `SET` redefined as the cold-row overlay verb (`SET cold_row type_id
       tile_reference kind_reference data`, arity 5); `Route` + `target_routes` (spelled cold_row target,
       action-derived shard+tier routing). 49 codec tests green. (`9e56553`)
-- [ ] **`SET`→overlay end-to-end** (the first live increment, coupled): orchestrator uses `target_routes`
-      to `claim`/`claim_overlay` per target's tier; worker un-gates + composes a **cold overlay row**
-      (merge grouped `SET` cells over the current overlay base → `write_overlay` + `PROMOTE`); edge
-      **queues** `SET` instead of calling `set_tile`. Verify a queued `SET` renders an override. Retire
-      `set_tile`/`set_thing`.
+- [x] **`SET`→overlay end-to-end** (the cold-row-through-events core, `1326824`): orchestrator routes
+      claims via `target_routes` (`claim`/`claim_overlay` per tier); worker un-gated + composes a **cold
+      overlay row** (grouped `SET` cells merged over the `overlay_log` base → `write_overlay` +
+      `PROMOTE`; blocks on a dirty overlay base). **Verified live** — queued `[PROMOTE,SET,32,1,5,59,0]`
+      → worker "composed component cold_rows=1" → tile `overlay` row `cold_row=32 {tile 5: kind 59}`,
+      `overlay_log` `dirty=false status=PROMOTE|PROMOTED`, orchestrator `claim_overlay` clean.
+- [ ] _(follow-up)_ a **client `SET` verb** (paint-a-cell — the UX trigger; the pipeline behind it is
+      proven) + then retire the direct `set_tile`/`set_thing` (kept for now — no live emitter, no gap).
 - [ ] `init_zone` action — worker builds the whole baseline row (F12: event-carried `Vec` vs worker-side
       worldgen) → `entity_state_log` (`ColdBaseline`); `promote init_zone` projects it. Edge queues it
       instead of `seed`. Retire `seed`. **← the P6 acquire-race structural fix.**
