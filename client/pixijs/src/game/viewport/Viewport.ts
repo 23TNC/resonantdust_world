@@ -491,6 +491,7 @@ export class Viewport extends LayoutNode {
       { name: "normal-cold", texture: this.map.displayComposite("normal-cold") },
       { name: "surface-cold", texture: this.map.displayComposite("surface-cold") },
       { name: "zdepth-world-cold", texture: this.map.displayComposite("zdepth-world-cold") },
+      { name: "lightmap-cold", texture: this.map.displayComposite("lightmap-cold") },
       { name: "albedo-warm", texture: this.warm.displayComposite("albedo-warm") },
       { name: "normal-warm", texture: this.warm.displayComposite("normal-warm") },
       { name: "surface-warm", texture: this.warm.displayComposite("surface-warm") },
