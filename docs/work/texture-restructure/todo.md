@@ -3,44 +3,34 @@
 _Items move to [`completed.md`](completed.md) as they land + verify. Design: [`README`](README.md)
 · decisions [`forks.md`](forks.md) · issues [`issues.md`](issues.md) · blockers [`blockers.md`](blockers.md)._
 
-> **Status (2026-07-19).** **The migration is functionally complete.** The leaf reshape is done for
-> EVERY existing texture kind; edge readers + DSL stems flipped; **`bin/art`'s read/write core cut over**
-> (R3); **`linked/` folded into `biome-tile/`** (R2) + the `rock` stand-in reverted to a gray primitive;
-> browser-verified throughout. See [`completed.md`](completed.md). What remains is tied to the **biome-tile
-> object model** (placing walls/fences/rocks as tiles) — a separate feature, not this stream — plus a
-> non-blocking `bin/art manifest` rework.
+> **Status (2026-07-19).** **The texture restructure is COMPLETE + verified.** Every existing kind on
+> the new leaf `<type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>`; `linked/` folded into
+> `biome-tile/` (material→kind, form→variant); the `rock` stand-in reverted to a gray primitive; the
+> **edge serves both canonical and named-variant stems**; **`bin/art` fully cut over** (read/write +
+> `manifest`); browser-verified throughout. See [`completed.md`](completed.md). Nothing below is
+> restructure work — the two follow-ons are a different *kind* of work:
 
 ---
 
-## R2-serving · biome-tile named-variant linked stems + re-master  _(gated on wall placement)_
+## F1 · Art production — re-master the never-mastered kinds  _(not layout; art)_
 
-The **texture fold is done** (`biome-tile/default/<material>/<form>/`; `wall.smooth` a clean held-whole
-atlas — see [`completed.md`](completed.md)). What's left only matters once the object model actually
-**places** walls/fences/rocks as biome-tile tiles (`kind_id ≥ 0x800`) — there is no consumer today
-(the `rock` thing was reverted to a primitive):
+`wall.blueprint` (a superseded 16-cell split), the raw-source `fence.*`/`rock.*`/`wall.{brick,plank}`,
+and the double-encoded `wall.smooth` source masters have **no held-whole atlas** — they were never
+mastered (predates this stream). Their sources are preserved under `biome-tile/default/<material>/<form>/`.
 
-- [ ] **P0 registry** — `textures/<type>/<subtype>/meta.json`: `form → variant_id` (F2), tile/linked
-      classification (`0x800`). **Not** the `kind_id` authority (that's the data DSL — [F5](forks.md)).
-- [ ] Edge/DSL/client resolve the **named-variant** biome-tile linked stems (variant = the form, e.g.
-      `wall`) — `register_kind`/`master_map_rel` currently assume canonical variant `1`.
-- [ ] **Re-master** the un-mastered kinds to held-whole atlases: `wall.blueprint` (superseded 16-split),
-      the raw-source `fence.*`/`rock.*`/`wall.{brick,plank}`, and the double-encoded `wall.smooth` source
-      masters. All preserved under `biome-tile/default/…` awaiting `bin/art` re-master.
+- [ ] `bin/art remaster` each to a held-whole atlas (per-kind grid config; some sources are `.psd`).
+      `bin/art`'s grid-remaster write is already on the new leaf, so the output lands correctly.
 
-## R3-manifest · `bin/art manifest` variant/layer counters  _(non-blocking; the last R3 piece)_
+## F2 · The biome-tile object model  _(a separate feature — gameplay, not textures)_
 
-`bin/art`'s read/write core is cut over (done — see completed.md). Only the **`bin/art manifest`**
-generators (`_id_variant_pairs`, `_layer_count`) still walk the old `<id>.<dir>.<layer>` pose dirs
-(flagged ⚠ in-code). They regenerate `content/visual/manifest/*.rd` only, which **nothing renders off**
-(the edge builds its own runtime manifest) — hence non-blocking.
+Nothing places walls/fences/rocks as biome-tile **tiles** (`kind_id ≥ 0x800`) yet, so nothing consumes
+the biome-tile textures at runtime. When that feature is built:
 
-- [ ] Rework the two counters to the new leaf: variants = the kind's direct numeric subdirs; facing/part
-      from the `<map>.<dir>.<part>.png` filename; no `<id>` level. **Truncate `variant_id ≥ 16`** out of
-      the manifest (`u4`) + `log()` the drop. Do this next time `content/visual/manifest/*.rd` matters.
+- [ ] **P0 registry** — `textures/<type>/<subtype>/meta.json`: `form → variant_id`, tile/linked
+      classification (`0x800`). Not the `kind_id` authority (the data DSL is — [F5](forks.md)).
+- [ ] worldgen places biome-tile objects; the client renders them off the (already-serving) atlases.
 
 ---
 
-**Done when:** both deferred items land — `bin/art manifest` regenerates the new leaf, and (R2) walls/
-fences/rocks fold under `biome-tile/…` once the object model places them. The functional migration
-(every existing kind on `<type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>`, served + rendered)
-is **already done + verified**.
+**The restructure is done.** F1 (art) and F2 (object model) are follow-on work of a different kind,
+tracked here only so the biome-tile textures have a clear next owner.

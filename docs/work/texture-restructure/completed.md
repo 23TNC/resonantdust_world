@@ -79,3 +79,20 @@ authoritative for what's actually shipped. Timestamp each row with the date it l
   **Remaining (tied to wall placement, not this stream):** the edge/DSL/client resolution of biome-tile
   **named-variant** linked stems + re-mastering the un-mastered kinds — both only matter once the
   biome-tile object model actually places walls/fences/rocks as tiles.
+
+- **2026-07-19** · **R2-serving — edge resolves biome-tile named-variant stems.** The fold gave
+  biome-tile linked kinds **named** variants (form = variant, `smooth/wall`), files directly under the
+  form folder — which the edge didn't serve (it assumed canonical numeric `1/`). `tex_manifest.rs`
+  `register_kind` now also registers named (non-numeric) variant folders as explicit stems
+  `<prefix>/<form>/<facing>` (new `register_variant` helper); `textures.rs` `resolve_rel` probes the
+  named-variant leaf on disk, falling back to the canonical `1/`. **Verified:**
+  `biome-tile/default/smooth/wall/l` serves 200 with `grid [4,4]`; conifer (canonical) still 200.
+
+- **2026-07-19** · **R3-manifest — `bin/art manifest` cut over.** `_var_pairs` + `_layer_count` walked
+  the old flat/pose naming; reworked to the folder-per-variant leaf (variations = numeric variant
+  subdirs, emit `1 <variant>` keeping the id/variant pair format; layers = distinct `<part>`). Ran
+  `bin/art manifest`: regenerated `biome-thing/biome-tile/pawn.rd` from the new tree, removed the stale
+  `linked`/`pawns.*`/`world` files; edge reloads the content clean; scene still renders (browser).
+  **The texture restructure is now complete** — layout, fold, edge serving, and full `bin/art` tooling,
+  all verified. The only follow-ons are **art production** (re-mastering the never-mastered `wall.blueprint`/
+  `fence`/`rock` kinds to held-whole atlases) and the **biome-tile object model** (placing walls as tiles).
