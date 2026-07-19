@@ -34,9 +34,11 @@ export const MAX_COLD_LIGHTS = 32;
 const lightBakeBitGl = {
   name: "cold-light-bake-bit",
   vertex: {
-    header: /* glsl */ `out vec2 vLocal;`,
-    // aPosition is the rect-local px (0..W, 0..H) of the scratch quad.
-    main: /* glsl */ `vLocal = aPosition;`,
+    header: /* glsl */ `out vec2 vLocal; out vec2 vRawUv;`,
+    // aPosition is the rect-local px (0..W, 0..H) of the scratch quad; vRawUv is the UNtransformed
+    // quad UV (0..1) — `textureBit`'s vUV is already mapped into the normal slot, so the coldShadow
+    // sample must use this raw UV (× uShadowRect) or it double-applies the slot offset.
+    main: /* glsl */ `vLocal = aPosition; vRawUv = aUV;`,
   },
   fragment: {
     header: /* glsl */ `
@@ -49,6 +51,7 @@ const lightBakeBitGl = {
       uniform sampler2D uColdShadow;                 // baked cold-shadow coverage (R/G/B = cold light 0/1/2)
       uniform vec4 uShadowRect;                      // this square's slot in the coldShadow composite (offset.xy, scale.zw)
       in vec2 vLocal;
+      in vec2 vRawUv;                                // untransformed quad UV (0..1) for the coldShadow slot
     `,
     main: /* glsl */ `
       // outColor = the NORMAL slot (textureBit). Near-black texels (empty/cleared cell) → flat-up +Z
@@ -62,7 +65,7 @@ const lightBakeBitGl = {
       const float SHADOW_STRENGTH = 0.85;             // 1 = a shadow fully removes its light's term
       // The first 3 cold lights (R/G/B) lose their term where the baked cold-shadow covers this
       // fragment; a 4th+ cold light casts no shadow (no lane). Ambient is never shadowed.
-      vec4 csh = texture(uColdShadow, uShadowRect.xy + vUV * uShadowRect.zw);
+      vec4 csh = texture(uColdShadow, uShadowRect.xy + vRawUv * uShadowRect.zw);
       vec3 sum = uAmbient;
       for (int i = 0; i < ${MAX_COLD_LIGHTS}; i++) {
         if (float(i) >= uLightCount) break;

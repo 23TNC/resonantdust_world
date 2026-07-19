@@ -130,6 +130,12 @@ export class TextureResolver {
     this.manifest.setRoot(texturesRoot);
   }
 
+  /** The current `/textures` root (empty until login) — so siblings like the `OutlineCache` can
+   *  fetch from the same origin without re-plumbing login. */
+  rootUrl(): string {
+    return this.root;
+  }
+
   /** Set the target LOD from the viewport's on-screen tile size (`64 × zoom`). The
    *  next `resolve` aims loads at the matching bucket; a landing re-bakes in place. */
   setTargetLod(px: number): void {

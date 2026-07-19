@@ -26,6 +26,7 @@ import { makeLightingShader, type LightingShader } from "./lightingShader";
 import { LightRig } from "../lighting/LightRig";
 import { ShadowPass, type ShadowCaster } from "./shadowPass";
 import { makeLightingBakeShader } from "./lightingBakeShader";
+import { OutlineCache } from "../../textures/OutlineCache";
 
 /** Dirty squares baked per frame. A fresh window dirties its whole grid; the budget
  *  spreads that over a few frames so the first open never hitches. */
@@ -137,6 +138,8 @@ export class Viewport extends LayoutNode {
   /** The cold-light lightmap bake material (lighting P1), enabled on the cold cache; packed each
    *  frame from the rig's cold lights, its output (`lightmap-cold`) sampled by the display. */
   private readonly lightBake = makeLightingBakeShader();
+  /** On-demand caster silhouettes for the cold-shadow bake (lighting P4); root set from the resolver. */
+  private readonly outlines = new OutlineCache();
   /** Per-stem sprite bounding box (present pixels, fractions of the texture) — the shadow floors
    *  derive from it. Computed once from the surface pixels and reused every frame. */
   private readonly bboxCache = new Map<string, SpriteBBox>();
@@ -278,7 +281,10 @@ export class Viewport extends LayoutNode {
       // The cold LIGHTMAP (cold cache only): a DERIVED composite baked from the normal slot (the cold
       // lights summed, amortized). `resolve` is never called (derived); a placeholder keeps the type.
       ...(suffix === "cold"
-        ? [{ key: "lightmap-cold", derived: true, resolve: () => ({ texture: resolver.white, tint: 0 }) } as ChannelSpec]
+        ? [
+            { key: "coldshadow-cold", derived: true, resolve: () => ({ texture: resolver.white, tint: 0 }) } as ChannelSpec,
+            { key: "lightmap-cold", derived: true, resolve: () => ({ texture: resolver.white, tint: 0 }) } as ChannelSpec,
+          ]
         : []),
     ];
     this.map = new SquareCache(chan("cold"));
@@ -286,6 +292,20 @@ export class Viewport extends LayoutNode {
     // Cold-light lightmap bake (lighting P1) on the cold cache: the Viewport packs the rig's cold
     // lights onto it before each `bakeDirty`; the display samples `lightmap-cold`.
     this.map.enableLightBake(this.lightBake);
+    // Cold SHADOWS (P4): resolve a standing prim → its Caster box + silhouette (OutlineCache), so the
+    // bake projects it through the cold lights. `lightmap-cold` finds the `derived` channel by
+    // `.derived`, so the coldshadow channel is keyed distinctly + found by its `coldshadow` prefix.
+    this.map.enableColdShadow((prim) => {
+      if (!prim.textureName) return null;
+      const outline = this.outlines.get(prim.textureName);
+      if (!outline) return null;
+      let footNY = 0; // the silhouette's lowest contour point (normalized) = the ground line
+      for (const pg of outline.polygons) for (const c of pg.contour) if (c[1] > footNY) footNY = c[1];
+      return {
+        caster: { feetX: prim.x + prim.width / 2, groundY: prim.y + prim.height, footNY, h: prim.height, w: prim.width, left: prim.x },
+        outline,
+      };
+    });
     // When a tier lands, re-dirty every prim'd square (both tiers) so the bake upgrades.
     this.unsubLoad = resolver.onLoad(() => {
       this.map.invalidateAll();
@@ -492,6 +512,7 @@ export class Viewport extends LayoutNode {
       { name: "surface-cold", texture: this.map.displayComposite("surface-cold") },
       { name: "zdepth-world-cold", texture: this.map.displayComposite("zdepth-world-cold") },
       { name: "lightmap-cold", texture: this.map.displayComposite("lightmap-cold") },
+      { name: "coldshadow-cold", texture: this.map.displayComposite("coldshadow-cold") },
       { name: "albedo-warm", texture: this.warm.displayComposite("albedo-warm") },
       { name: "normal-warm", texture: this.warm.displayComposite("normal-warm") },
       { name: "surface-warm", texture: this.warm.displayComposite("surface-warm") },
@@ -532,6 +553,13 @@ export class Viewport extends LayoutNode {
     // Pack the current cold lights onto the bake shader so a dirty cold rect re-sums them into the
     // cold_lightmap (lighting P1). The bake runs inside `this.map.bakeDirty` (the derived channel).
     this.rig.packCold(this.lightBake);
+    // Cold SHADOWS (P4): the caster silhouettes fetch from the same textures root, and the first 3
+    // cold lights (same order as packCold) get baked shadow lanes.
+    this.outlines.setRoot(this.resolver.rootUrl());
+    this.map.setColdShadowLights(this.rig.coldShadowLights());
+    // Outlines load async: a caster throws no shadow until its silhouette lands. When any lands,
+    // re-dirty the cold squares so their shadow lanes re-bake now that the geometry exists.
+    if (this.outlines.takeResolved()) this.map.invalidateAll();
     this.map.bakeDirty(renderer, Math.max(BAKE_BUDGET - this.warm.lastBaked, COLD_BAKE_FLOOR));
     if (!this.map.ready) return;
 

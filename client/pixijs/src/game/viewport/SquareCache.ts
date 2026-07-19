@@ -41,6 +41,9 @@ import { makeDepthBakeShader, type DepthBakeShader } from "./depthBakeShader";
 import { makeNormalBakeShader, type NormalBakeShader } from "./normalBakeShader";
 import { makeSurfaceBakeShader, type SurfaceBakeShader } from "./surfaceBakeShader";
 import type { LightingBakeShader } from "./lightingBakeShader";
+import { makeShadowMaskShader, makeShadowGeometry, channelForLight, type ShadowMaskShader } from "./scatterShader";
+import { projectCaster, type Caster } from "./projectCaster";
+import type { Outline } from "../../textures/OutlineCache";
 import type { PackedChannel } from "./material";
 import {
   mod,
@@ -307,6 +310,15 @@ export class SquareCache {
   /** The rect-local quad + its mesh for the lightmap bake (lazily built, reused). */
   private lightmapQuad: MeshGeometry | null = null;
   private lightmapMesh: Mesh | null = null;
+  // ── cold SHADOW bake (lighting P4): project casters through the cold lights into a coldShadow
+  //    composite (R/G/B = cold light 0/1/2), sampled by the lightmap bake. One shader/geo/mesh per
+  //    lane (their own uChannel). The Viewport supplies the caster resolver + the cold lights.
+  private readonly shadowShaders: ShadowMaskShader[] = [];
+  private readonly shadowGeos: ReturnType<typeof makeShadowGeometry>[] = [];
+  private readonly shadowMeshes: Mesh<Geometry, ShadowMaskShader>[] = [];
+  private readonly shadowContainer = new Container();
+  private coldShadowLights: { x: number; y: number; z: number; radius: number }[] = [];
+  private resolveCaster: ((prim: Primitive) => { caster: Caster; outline: Outline } | null) | null = null;
   /** The tiling noise atlas bound to every material bake (rows = fields). `null` until the
    *  viewport sets it — a null noise atlas disables the material path (flat, as before). */
   private noiseTex: Texture | null = null;
@@ -336,6 +348,29 @@ export class SquareCache {
    *  lights + ambient before `bakeDirty`. Call once (the cold cache only). */
   enableLightBake(shader: LightingBakeShader): void {
     this.lightBake = shader;
+  }
+
+  /** Enable the cold-SHADOW bake (lighting P4): `resolve` turns a standing prim into a {@link Caster}
+   *  + its silhouette (the Viewport wires it to `OutlineCache`); the coldShadow composite gets 3 lanes
+   *  (R/G/B), each a shadow shader/geo/mesh with its own `uChannel`, additive so lanes don't clobber. */
+  enableColdShadow(resolve: (prim: Primitive) => { caster: Caster; outline: Outline } | null): void {
+    this.resolveCaster = resolve;
+    for (let i = 0; i < 3; i++) {
+      const s = makeShadowMaskShader();
+      s.setChannel(channelForLight(i)); // fixed lane R/G/B
+      const g = makeShadowGeometry();
+      const m = new Mesh({ geometry: g.geometry, shader: s });
+      m.blendMode = "add"; // lanes accumulate (a light's overlapping caster tris clamp at 1)
+      this.shadowShaders.push(s);
+      this.shadowGeos.push(g);
+      this.shadowMeshes.push(m);
+    }
+  }
+
+  /** The cold lights that cast baked shadows this pass (≤3, the first three cold lights). Set by the
+   *  Viewport before `bakeDirty`, in the SAME order `LightingBakeShader.setLights` packed them. */
+  setColdShadowLights(lights: { x: number; y: number; z: number; radius: number }[]): void {
+    this.coldShadowLights = lights;
   }
 
   /** The buffer the viewport's display mesh samples for channel `key` — the outgoing
@@ -820,7 +855,7 @@ export class SquareCache {
     ay: number,
     s: number,
   ): void {
-    const lm = this.channels.find((c) => c.derived);
+    const lm = this.channels.find((c) => c.key.startsWith("lightmap"));
     const nrm = this.channels.find((c) => c.key.startsWith("normal"));
     if (!this.lightBake || !lm?.bufs || !nrm?.bufs) return;
     if (!this.lightmapQuad) {
@@ -837,9 +872,60 @@ export class SquareCache {
     this.lightBake.normal = nrm.bufs[this.active];
     this.lightBake.setNormalUv(slotX / this.fixedCW, slotY / this.fixedCH, this.slotPx / this.fixedCW, this.slotPx / this.fixedCH);
     this.lightBake.setRectWorld(squareWorldX(wc), squareWorldY(wr));
+    // Cold SHADOWS (P4): bake this square's coldShadow slot FIRST, then point the lightmap bake at it
+    // (its own read-of-coldShadow, write-to-lightmap — no conflict). No-op if not enabled.
+    const csh = this.channels.find((c) => c.key.startsWith("coldshadow"));
+    if (csh?.bufs && this.resolveCaster) {
+      this.bakeColdShadowSquare(renderer, wc, wr, slotX, slotY, ax, ay, s);
+      this.lightBake.coldShadow = csh.bufs[this.active];
+      this.lightBake.setShadowRect(slotX / this.fixedCW, slotY / this.fixedCH, this.slotPx / this.fixedCW, this.slotPx / this.fixedCH);
+    }
     const ms = new Matrix(s, 0, 0, s, 0, 0); // scale-only: rect-local 0..SQUARE → 0..slotPx
     renderer.render({ container: this.lightmapMesh, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 1], transform: ms });
     const target = lm.bufs[this.active];
+    this.blit(renderer, this.scratchTex!, slotX, slotY, target);
+    if (ax >= 0) this.blit(renderer, this.scratchTex!, ax, slotY, target);
+    if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);
+    if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
+  }
+
+  /** Bake this square's coldShadow slot (lighting P4): project every nearby caster's silhouette
+   *  through each cold light (≤3) into its lane (world-space, `pan = 0`), all lanes additive so they
+   *  don't clobber, then blit to the `coldshadow` composite slot. Reuses the world→slot transform. */
+  private bakeColdShadowSquare(
+    renderer: Renderer,
+    wc: number,
+    wr: number,
+    slotX: number,
+    slotY: number,
+    ax: number,
+    ay: number,
+    s: number,
+  ): void {
+    const csh = this.channels.find((c) => c.key.startsWith("coldshadow"));
+    if (!csh?.bufs || !this.resolveCaster) return;
+    // world → slot: scale s + translate the square's world origin to the slot origin (as bakeSquare's m).
+    const m = new Matrix(s, 0, 0, s, -squareWorldX(wc) * s, -squareWorldY(wr) * s);
+    this.shadowContainer.removeChildren();
+    const nLights = Math.min(3, this.coldShadowLights.length);
+    for (let i = 0; i < nLights; i++) {
+      const L = this.coldShadowLights[i];
+      const geo = this.shadowGeos[i];
+      const pos = geo.pos.data as Float32Array;
+      let v = 0;
+      for (const prim of this.standingPrims()) {
+        if (Math.hypot(prim.x - L.x, prim.y - L.y) > L.radius + 300) continue; // coarse light-reach cull
+        const r = this.resolveCaster(prim);
+        if (!r) continue;
+        v = projectCaster(pos, v, r.caster, r.outline, L.x, L.y, L.z, 0, 0); // world-space (pan 0)
+      }
+      pos.fill(0, v * 2); // degenerate tail → draws nothing
+      geo.pos.update();
+      if (v > 0) this.shadowContainer.addChild(this.shadowMeshes[i]);
+    }
+    // One render (additive lanes) → scratch via m (world→slot), then blit to the coldShadow slot.
+    renderer.render({ container: this.shadowContainer, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 1], transform: m });
+    const target = csh.bufs[this.active];
     this.blit(renderer, this.scratchTex!, slotX, slotY, target);
     if (ax >= 0) this.blit(renderer, this.scratchTex!, ax, slotY, target);
     if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);

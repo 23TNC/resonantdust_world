@@ -114,6 +114,18 @@ export class LightRig {
     return out;
   }
 
+  /** The first ≤3 cold lights as shadow casters (`{x, y, z, radius}`), in the SAME order `packCold`
+   *  packs them (so lane i in the coldShadow bake matches cold light i in the lightmap). Lighting P4. */
+  coldShadowLights(): { x: number; y: number; z: number; radius: number }[] {
+    const out: { x: number; y: number; z: number; radius: number }[] = [];
+    for (const l of this.lights) {
+      if (l.tier !== "cold" || !l.castsShadow) continue;
+      out.push({ x: l.x, y: l.y, z: l.height, radius: l.radius });
+      if (out.length >= 3) break;
+    }
+    return out;
+  }
+
   /** Pack the cold lights into the lightmap-bake shader (lighting P1) — `data = xy,z,radius`,
    *  `color = rgb,brightness` (no shadow sign; cold shadows bake separately). Called before the cold
    *  cache's `bakeDirty` so a dirty rect re-sums the current cold set. */

@@ -30,6 +30,9 @@ export class OutlineCache {
   /** `undefined` = not fetched; `null` = fetched, no outline (a 404 / no caster silhouette). */
   private readonly cache = new Map<string, Outline | null>();
   private readonly pending = new Set<string>();
+  /** Set when a real outline lands since the last {@link takeResolved} — lets the owner coalesce a
+   *  whole startup burst of async loads into one re-dirty (re-bake the shadows now that they exist). */
+  private resolved = false;
 
   /** Point at the world server's `/textures` root (empty until login; a repoint clears the cache). */
   setRoot(root: string): void {
@@ -37,6 +40,14 @@ export class OutlineCache {
     this.root = root;
     this.cache.clear();
     this.pending.clear();
+  }
+
+  /** True (once) if any outline has landed since the previous call — the owner re-dirties the shadow
+   *  bake on a `true`, coalescing the whole async load burst into one re-bake per frame. */
+  takeResolved(): boolean {
+    const r = this.resolved;
+    this.resolved = false;
+    return r;
   }
 
   /** This stem's outline, or `null` if it has none / isn't loaded yet — a miss fires one async fetch
@@ -58,6 +69,7 @@ export class OutlineCache {
       }
       const meta = (await res.json()) as { outline?: Outline };
       this.cache.set(stem, meta.outline ?? null);
+      if (meta.outline) this.resolved = true; // signal a re-dirty so this caster's square re-bakes
     } catch {
       // Transient (network) — leave UNcached so a later frame retries (don't hammer, `pending` gates).
     } finally {
