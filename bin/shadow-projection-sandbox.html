@@ -1,0 +1,313 @@
+<title>Shadow projection sandbox</title>
+<style>
+  :root{
+    --page:#eceff4; --card:#ffffff; --ink:#1a2030; --muted:#5b6474; --hairline:#d5dae4;
+    --field:#f6f8fb; --accent:#d9860f; --radius:8px;
+    --border:var(--hairline); --text-primary:var(--ink); --text-secondary:var(--muted); --surface-2:var(--card);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono","Roboto Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --page:#0e1118; --card:#191d27; --ink:#e7ebf3; --muted:#97a1b3; --hairline:#2a3142; --field:#131722; --accent:#efa631; }
+  }
+  :root[data-theme="dark"]{ --page:#0e1118; --card:#191d27; --ink:#e7ebf3; --muted:#97a1b3; --hairline:#2a3142; --field:#131722; --accent:#efa631; }
+  :root[data-theme="light"]{ --page:#eceff4; --card:#ffffff; --ink:#1a2030; --muted:#5b6474; --hairline:#d5dae4; --field:#f6f8fb; --accent:#d9860f; }
+
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--page); color:var(--ink); font-family:var(--sans); line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .app{ max-width:1120px; margin:0 auto; padding:26px 20px 44px; }
+
+  header.hd{ display:flex; flex-direction:column; gap:4px; padding-bottom:18px; margin-bottom:20px; border-bottom:1px solid var(--hairline); }
+  header.hd h1{ font-size:20px; font-weight:600; letter-spacing:-0.01em; margin:0; }
+  header.hd .eyebrow{ font-size:11px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:var(--accent); }
+  header.hd p{ font-size:13.5px; color:var(--muted); margin:2px 0 0; max-width:74ch; }
+  header.hd code{ font-family:var(--mono); font-size:0.92em; }
+
+  .views{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  @media (max-width:720px){ .views{ grid-template-columns:1fr; } }
+  .view .cap{ font-size:11px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); margin:0 0 4px 2px; }
+  canvas{ width:100%; height:210px; display:block; background:#fff; border:1px solid var(--hairline); border-radius:var(--radius); }
+
+  .bar{ display:flex; gap:14px 18px; flex-wrap:wrap; align-items:center; margin-top:16px; padding:12px 14px; background:var(--card); border:1px solid var(--hairline); border-radius:var(--radius); font-size:13px; }
+  .bar label{ display:flex; align-items:center; gap:6px; }
+  .bar .sep{ color:var(--muted); }
+
+  .lower{ display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start; margin-top:18px; }
+  .picker h2{ font-size:11px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); margin:0 0 6px; }
+  #grid{ display:grid; grid-template-columns:repeat(3,28px); grid-template-rows:repeat(1,28px); gap:4px; }
+  #grid button{ width:28px; height:28px; padding:0; border-radius:5px; cursor:pointer; border:1px solid var(--hairline); background:var(--field); transition:transform .06s ease; }
+  #grid button:hover{ transform:scale(1.06); }
+
+  .panels{ flex:1; min-width:280px; }
+  .grp-title{ font-size:11px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); margin:0 0 8px; }
+  .grp-title b{ color:var(--accent); font-weight:600; }
+  .ctlgrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(188px,1fr)); gap:10px 18px; }
+  .ctl{ display:flex; flex-direction:column; gap:3px; font-size:13px; }
+  .ctl .top{ display:flex; justify-content:space-between; align-items:baseline; }
+  .ctl .nm{ color:var(--muted); }
+  .ctl .vl{ color:var(--ink); font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:12.5px; }
+
+  input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; height:4px; border-radius:3px; background:var(--hairline); outline:none; }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:16px; height:16px; border-radius:50%; background:var(--accent); border:2px solid var(--card); cursor:pointer; box-shadow:0 0 0 1px var(--hairline); }
+  input[type=range]::-moz-range-thumb{ width:16px; height:16px; border-radius:50%; background:var(--accent); border:2px solid var(--card); cursor:pointer; }
+  input[type=range]:disabled{ opacity:.45; }
+  input[type=checkbox],input[type=radio]{ accent-color:var(--accent); width:auto; }
+  select{ font-family:var(--sans); font-size:13px; color:var(--ink); background:var(--field); border:1px solid var(--hairline); border-radius:6px; padding:3px 6px; }
+  :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  footer.ft{ margin-top:26px; font-size:12px; color:var(--muted); }
+  footer.ft code{ font-family:var(--mono); font-size:0.92em; }
+  .swatch{ display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:1px; vertical-align:baseline; }
+</style>
+
+<div class="app">
+  <header class="hd">
+    <span class="eyebrow">resonantdust &middot; shadow model</span>
+    <h1>Shadow projection sandbox</h1>
+  </header>
+
+  <div class="views">
+    <div class="view"><p class="cap">From east &middot; N&larr;&rarr;S, z up</p><canvas id="east"></canvas></div>
+    <div class="view"><p class="cap">From south &middot; W&larr;&rarr;E, z up</p><canvas id="south"></canvas></div>
+    <div class="view"><p class="cap">Top &middot; N up, E right</p><canvas id="top" style="touch-action:none;"></canvas></div>
+  </div>
+
+  <div class="bar">
+    <label><input type="radio" name="mode" value="ew" checked> E/W</label>
+    <label><input type="radio" name="mode" value="ns"> N/S</label>
+    <span class="sep">|</span>
+    <label><input type="checkbox" id="color"> vertical color check</label>
+    <label><input type="checkbox" id="colorH"> horizontal color check</label>
+    <label><input type="checkbox" id="autodepth" checked> auto depth</label>
+  </div>
+
+  <div class="lower">
+    <div class="picker"><h2>Grounded point</h2><div id="grid"></div></div>
+    <div class="panels">
+      <div class="grp-title">Shape &middot; <b id="modeLbl">E/W</b> mode</div>
+      <div id="shape" class="ctlgrid"></div>
+      <div class="grp-title" style="margin-top:16px;">Light &middot; shared</div>
+      <div id="light" class="ctlgrid"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const EW={ theta:65, W:100, H:60, dA:20, dB:20, ax:0.5, ay:1 };
+  const NS={ theta:115, W:100, H:60, dA:20, dB:20, ax:0.5, ay:1 };
+  const L ={ Lz:140, lightX:-70, lightY:120, scale:0.85 };
+
+  const mode=()=>document.querySelector('input[name=mode]:checked').value;
+  const cur=()=>mode()==="ew"?EW:NS;
+  const rollSign=()=>1;   // roll fixed at +90 (s) — UI selector removed
+  const colorOn=()=>document.getElementById("color").checked;
+  const colorHOn=()=>document.getElementById("colorH").checked;
+
+  const shapeDefs=[
+    {k:"theta",label:"Ground angle θ",min:0,max:180,step:1,unit:"°"},
+    {k:"W",label:"Quad width",min:16,max:200,step:2,unit:"px"},
+    {k:"H",label:"Quad height",min:16,max:220,step:2,unit:"px"},
+    {k:"dA",label:"Depth",min:0,max:80,step:1,unit:"px",dyn:{ew:"Depth left",ns:"Depth top"}},
+    {k:"dB",label:"Depth",min:0,max:80,step:1,unit:"px",dyn:{ew:"Depth right",ns:"Depth bottom"}},
+  ];
+  const lightDefs=[
+    {k:"Lz",label:"Light height Lz",min:20,max:500,step:5,unit:"px"},
+    {k:"scale",label:"View zoom",min:0.3,max:1.8,step:0.05,unit:"×"},
+  ];
+  function mkCtl(host,d,get,set){const w=document.createElement("label");w.className="ctl";
+    const t=document.createElement("div");t.className="top";
+    const nm=document.createElement("span");nm.className="nm";nm.textContent=d.label;
+    const vl=document.createElement("span");vl.className="vl";t.append(nm,vl);
+    const i=document.createElement("input");i.type="range";i.min=d.min;i.max=d.max;i.step=d.step;i.value=get();
+    i.addEventListener("input",()=>{set(parseFloat(i.value));draw();});w.append(t,i);host.append(w);
+    return {i,vl,nm,fmt:v=>(d.step<1?v.toFixed(2):Math.round(v))+(d.unit||"")};}
+
+  const shapeC={}, lightC={};
+  shapeDefs.forEach(d=>{shapeC[d.k]=mkCtl(document.getElementById("shape"),d,()=>cur()[d.k],v=>{cur()[d.k]=v;});});
+  lightDefs.forEach(d=>{lightC[d.k]=mkCtl(document.getElementById("light"),d,()=>L[d.k],v=>{L[d.k]=v;});});
+  function reloadShape(){shapeDefs.forEach(d=>{shapeC[d.k].i.value=cur()[d.k];if(d.dyn)shapeC[d.k].nm.textContent=d.dyn[mode()];});}
+  reloadShape();
+
+  document.querySelectorAll('input[name=mode]').forEach(r=>r.addEventListener("change",()=>{
+    document.getElementById("modeLbl").textContent=mode()==="ew"?"E/W":"N/S";reloadShape();syncGrid();draw();}));
+  document.getElementById("color").addEventListener("change",draw);
+  document.getElementById("colorH").addEventListener("change",draw);
+  document.getElementById("autodepth").addEventListener("change",draw);
+
+  const grid=document.getElementById("grid"); const cells=[];
+  [0,.5,1].forEach(ax=>{
+    const b=document.createElement("button");
+    b.addEventListener("click",()=>{cur().ax=ax;cur().ay=1;syncGrid();draw();}); grid.append(b); cells.push({b,ax,ay:1});});
+  function syncGrid(){cells.forEach(c=>{const on=c.ax===cur().ax&&c.ay===cur().ay;
+    c.b.style.background=on?"#E24B4A":"var(--field)";c.b.style.borderColor=on?"#A32D2D":"var(--hairline)";});}
+
+  // Corners for orientation ('ew'/'ns') using variable set c. Ground angle is ALWAYS R_x(θ) (mixes
+  // Y&Z, never X). N/S first rolls R_y(±90) so worldX stays 0 (edge-on). The quad is CENTERED in Y
+  // regardless of the grounded point; the grounded point sets Z (which point touches z=0) and X.
+  function cornersWith(orient,c){
+    const th=c.theta*Math.PI/180, ct=Math.cos(th), st=Math.sin(th);
+    const W3=(u,v)=>{ if(orient==="ew"){const hgt=(1-v)*c.H; return {x:(u-.5)*c.W, y:-hgt*ct, z:hgt*st};}
+      const rs=rollSign(), uOff=(u-.5)*c.W, vOff=(1-v)*c.H; return {x:0, y:rs*uOff*st-vOff*ct, z:rs*uOff*ct+vOff*st}; };
+    const a=W3(c.ax,c.ay), cc=W3(0.5,0.5);
+    const P=(u,v)=>{const p=W3(u,v);return {x:p.x-a.x, y:p.y-cc.y, z:p.z-a.z};};
+    const uv=[[0,0],[1,0],[1,1],[0,1]];
+    return { pts: uv.map(([u,v])=>P(u,v)), anchor: P(c.ax,c.ay) };
+  }
+  // The game sprite billboard as a flat rectangle in the TOP (N-E) view. E/W: width=W, foot edge on
+  // y=0 extending north. N/S: centred, width=N/S height, height=N/S width (swapped).
+  function billboardRect(){
+    const c=cur();
+    if(mode()==="ew"){ const Wx=c.W/2, Hh=c.H;
+      return [{x:-Wx,y:-Hh},{x:Wx,y:-Hh},{x:Wx,y:0},{x:-Wx,y:0}]; }
+    const Wx=c.H/2, Hy=c.W/2;
+    return [{x:-Wx,y:-Hy},{x:Wx,y:-Hy},{x:Wx,y:Hy},{x:-Wx,y:Hy}];
+  }
+  function proj(p){ if(p.z<=0) return {x:p.x, y:p.y};         // sub-ground → straight up (footprint)
+    const t=Math.min(L.Lz/Math.max(L.Lz-p.z,1),8);            // TMAX clamp fixed at 8×
+    return {x:L.lightX+t*(p.x-L.lightX), y:L.lightY+t*(p.y-L.lightY)};}
+
+  function setup(id){const cv=document.getElementById(id);const dpr=window.devicePixelRatio||1,r=cv.getBoundingClientRect();
+    cv.width=r.width*dpr;cv.height=r.height*dpr;const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);
+    c.fillStyle="#fff";c.fillRect(0,0,r.width,r.height);return{ctx:c,w:r.width,h:r.height};}
+  function poly(ctx,pts,fill,stroke,dash,lw){ctx.fillStyle=fill;ctx.strokeStyle=stroke;ctx.lineWidth=lw||1.5;if(dash)ctx.setLineDash(dash);
+    ctx.beginPath();pts.forEach((p,i)=>{i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);});ctx.closePath();if(fill)ctx.fill();ctx.stroke();ctx.setLineDash([]);}
+
+  // Billboard "textures" with a faint grid to reveal UV warp: TEX = vertical split (left red / right
+  // blue); TEXH = horizontal split (top blue / bottom red). Same UVs — only the sampled texture differs.
+  const TS=128;
+  function makeTex(paint){const t=document.createElement("canvas");t.width=t.height=TS;const g=t.getContext("2d");
+    g.save();g.beginPath();g.ellipse(TS/2,TS/2,TS/2,TS/2,0,0,7);g.clip();   // oval fills the square — corners stay transparent
+    paint(g);
+    g.strokeStyle="rgba(255,255,255,0.30)";g.lineWidth=1;for(let i=1;i<8;i++){const p=i*TS/8;g.beginPath();g.moveTo(p,0);g.lineTo(p,TS);g.moveTo(0,p);g.lineTo(TS,p);g.stroke();}
+    g.restore();
+    g.strokeStyle="rgba(0,0,0,0.45)";g.beginPath();g.ellipse(TS/2,TS/2,TS/2-.5,TS/2-.5,0,0,7);g.stroke();return t;}
+  const TEX =makeTex(g=>{g.fillStyle="#e24b4a";g.fillRect(0,0,TS/2,TS); g.fillStyle="#3f7fe0";g.fillRect(TS/2,0,TS/2,TS);});
+  const TEXH=makeTex(g=>{g.fillStyle="#3f7fe0";g.fillRect(0,0,TS,TS/2); g.fillStyle="#e24b4a";g.fillRect(0,TS/2,TS,TS/2);});
+
+  // Presence map (opaque=1), sampled ONCE from the oval texture into a map — analyse geometry, never
+  // per-draw alpha. Same shape for both textures, so TEX is fine.
+  const PRES=(function(){const data=TEX.getContext("2d").getImageData(0,0,TS,TS).data, m=new Uint8Array(TS*TS);
+    for(let i=0;i<TS*TS;i++) m[i]=data[i*4+3]>127?1:0; return m;})();
+  // Work IN from both edges to the first presence; span = opaque extent (texture px) of a row / column.
+  function avgW(y0,y1){let s=0,n=0;for(let y=y0;y<y1;y++){let L=-1,R=-1;for(let x=0;x<TS;x++)if(PRES[y*TS+x]){L=x;break;}for(let x=TS-1;x>=0;x--)if(PRES[y*TS+x]){R=x;break;}if(L>=0){s+=R-L+1;n++;}}return n?s/n:0;}
+  function avgH(x0,x1){let s=0,n=0;for(let x=x0;x<x1;x++){let T=-1,B=-1;for(let y=0;y<TS;y++)if(PRES[y*TS+x]){T=y;break;}for(let y=TS-1;y>=0;y--)if(PRES[y*TS+x]){B=y;break;}if(T>=0){s+=B-T+1;n++;}}return n?s/n:0;}
+  // General rule: depth = ½ · average opaque extent over the relevant half, scaled texture→sprite.
+  // Both scale by H — the depth-bearing axis spans the quad HEIGHT: E/W's north-south lean is H tall,
+  // and the N/S footprint is rolled so its east-west width equals the quad height (billboardRect swap).
+  //   N/S: avg WIDTH of the top / bottom half rows (·H).  E/W: avg HEIGHT of the left / right half cols (·H).
+  function autoDepths(){const M=TS/2,c=cur();
+    if(mode()==="ew") return { dA: avgH(0,M)/TS*c.H/2, dB: avgH(M,TS)/TS*c.H/2 };   // left, right
+    return { dA: avgW(0,M)/TS*c.H/2, dB: avgW(M,TS)/TS*c.H/2 };                       // top, bottom
+  }
+  // Affine texture-mapped triangle: maps texture pixels (s,t) -> screen (x,y) for the 3 verts, clips
+  // to the screen triangle, draws the texture. For a flat (already-projected) triangle this is exactly
+  // what a UV shader does — barycentric/affine interpolation of the same UVs. Ports 1:1 to the game.
+  function texTri(ctx,img, s0,t0,s1,t1,s2,t2, x0,y0,x1,y1,x2,y2){
+    const det=s0*(t1-t2)-t0*(s1-s2)+(s1*t2-s2*t1); if(Math.abs(det)<1e-6) return;
+    const a=(x0*(t1-t2)-t0*(x1-x2)+(x1*t2-x2*t1))/det, c=(s0*(x1-x2)-x0*(s1-s2)+(s1*x2-s2*x1))/det, e=(s0*(t1*x2-t2*x1)-t0*(s1*x2-s2*x1)+x0*(s1*t2-s2*t1))/det;
+    const b=(y0*(t1-t2)-t0*(y1-y2)+(y1*t2-y2*t1))/det, dd=(s0*(y1-y2)-y0*(s1-s2)+(s1*y2-s2*y1))/det, f=(s0*(t1*y2-t2*y1)-t0*(s1*y2-s2*y1)+y0*(s1*t2-s2*t1))/det;
+    ctx.save();ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x1,y1);ctx.lineTo(x2,y2);ctx.closePath();ctx.clip();
+    ctx.transform(a,b,c,dd,e,f);ctx.drawImage(img,0,0);ctx.restore();}
+
+  function draw(){
+    // auto depth = the general rule (½ avg opaque extent); sliders stay as manual overrides when off.
+    const auto=document.getElementById("autodepth").checked;
+    if(auto){const ad=autoDepths();cur().dA=ad.dA;cur().dB=ad.dB;}
+    shapeC.dA.i.disabled=shapeC.dB.i.disabled=auto;
+    shapeC.dA.i.value=cur().dA; shapeC.dB.i.value=cur().dB;
+    shapeDefs.forEach(d=>shapeC[d.k].vl.textContent=shapeC[d.k].fmt(cur()[d.k]));
+    lightDefs.forEach(d=>lightC[d.k].vl.textContent=lightC[d.k].fmt(L[d.k]));
+    const act=cornersWith(mode(),cur()), cs=act.pts, anch=act.anchor;
+    // "align base to billboard": OVERRIDE the two bottom corners (BR=2, BL=3) onto the billboard's
+    // footprint edge on the ground (z=0). E/W → y=0, x=±W/2; N/S → x=0, y=±W/2 (rs = roll sign).
+    { const W2=cur().W/2, rs=rollSign();
+      if(mode()==="ew"){ cs[2]={x:W2,y:0,z:0}; cs[3]={x:-W2,y:0,z:0}; }
+      else { cs[2]={x:0,y:rs*W2,z:0}; cs[3]={x:0,y:-rs*W2,z:0}; } }
+    const sh=cs.map(proj);
+
+    function side(id, axis, lightAxisVal, lblL, lblR, flip){
+      const {ctx,w,h}=setup(id); const sc=L.scale, ox=w*.5, gy=h*.68;
+      const X=a=>flip?ox-a*sc:ox+a*sc, Z=z=>gy-z*sc;
+      ctx.strokeStyle="#ededed";ctx.beginPath();for(let g=-500;g<=500;g+=32){ctx.moveTo(X(g),0);ctx.lineTo(X(g),h);}for(let z=-300;z<=400;z+=32){ctx.moveTo(0,Z(z));ctx.lineTo(w,Z(z));}ctx.stroke();
+      ctx.strokeStyle="#888";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(w,gy);ctx.stroke();
+      cs.forEach((c,i)=>{const g=sh[i];
+        const straight=Math.abs(g.x-c.x)<0.01 && Math.abs(g.y-c.y)<0.01;
+        if(c.z>0 && !straight){ ctx.strokeStyle="rgba(217,134,15,0.85)";ctx.lineWidth=1;
+          ctx.beginPath();ctx.moveTo(X(lightAxisVal),Z(L.Lz));ctx.lineTo(X(g[axis]),Z(0));ctx.stroke();
+          ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(X(g[axis]),Z(0));ctx.lineTo(X(c[axis]),Z(c.z));ctx.stroke();ctx.setLineDash([]);
+        } else { ctx.strokeStyle="#E24B4A";ctx.lineWidth=1.5;
+          ctx.beginPath();ctx.moveTo(X(c[axis]),Z(c.z));ctx.lineTo(X(g[axis]),Z(0));ctx.stroke(); }
+        ctx.strokeStyle="#333";ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(X(g[axis]),Z(0),3.5,0,7);ctx.stroke();});
+      poly(ctx,cs.map(c=>[X(c[axis]),Z(c.z)]),"rgba(55,138,221,0.22)","#378ADD");
+      cs.forEach(c=>{ctx.fillStyle=c.z<-0.01?"#E24B4A":"#378ADD";ctx.beginPath();ctx.arc(X(c[axis]),Z(c.z),3,0,7);ctx.fill();});
+      ctx.fillStyle="#E24B4A";ctx.beginPath();ctx.arc(X(anch[axis]),Z(anch.z),5,0,7);ctx.fill();
+      ctx.fillStyle="#d9860f";ctx.beginPath();ctx.arc(X(lightAxisVal),Z(L.Lz),6,0,7);ctx.fill();
+      ctx.fillStyle="#999";ctx.font="11px system-ui,sans-serif";ctx.fillText(lblL,5,gy-4);ctx.fillText(lblR,w-11,gy-4);
+    }
+    side("east","y",L.lightY,"N","S",true);
+    side("south","x",L.lightX,"W","E",false);
+
+    (function(){const {ctx,w,h}=setup("top"); const sc=L.scale, ox=w*.5, oy=h*.5, X=x=>ox+x*sc, Y=y=>oy+y*sc;
+      ctx.strokeStyle="#ededed";ctx.beginPath();for(let g=-500;g<=500;g+=32){ctx.moveTo(X(g),0);ctx.lineTo(X(g),h);ctx.moveTo(0,Y(g));ctx.lineTo(w,Y(g));}ctx.stroke();
+      ctx.strokeStyle="#bbb";ctx.beginPath();ctx.moveTo(X(0),0);ctx.lineTo(X(0),h);ctx.moveTo(0,Y(0));ctx.lineTo(w,Y(0));ctx.stroke();
+      // 5-triangle shadow (game method). sh = [TL,TR,BR,BL]; BC = base centre. Two depths per mode:
+      //   T1 (TL,TR,BC) = gray · T2/T3 (…,BL+/BR+,BC) = red (+) · T4/T5 (…,BL-/BR-,BC) = green (-).
+      // N/S offsets ±depth on x. E/W offsets on y BUT its + variant is +0 — the red edge sits on the
+      // un-offset base (foot); only the green - variant spreads (north).
+      const dA=cur().dA, dB=cur().dB, ew=mode()==="ew";
+      const BR=sh[2], BL=sh[3], BC={x:(BR.x+BL.x)/2, y:(BR.y+BL.y)/2}, P=p=>[X(p.x),Y(p.y)];
+      const off=(pt,s,d)=> ew?{x:pt.x,y:pt.y+s*d}:{x:pt.x+s*d,y:pt.y};
+      const sp = ew ? 0 : 1;   // E/W +variant = +0 (red seats on the base / foot); N/S +variant = +depth
+      // dA drives the BL corner (E/W left · N/S top); dB drives the BR corner (E/W right · N/S bottom)
+      const BLp=off(BL,sp,dA), BLm=off(BL,-1,dA), BRp=off(BR,sp,dB), BRm=off(BR,-1,dB);
+      if(colorOn()||colorHOn()){
+        const SX=p=>X(p.x), SY=p=>Y(p.y), M=TS/2, AT=colorHOn()?TEXH:TEX;
+        ctx.globalAlpha=0.62;
+        if(ew){
+          // E/W: sample the bottom edge — TL(0,0) TR(1,0) BL±(0,1) BR±(1,1) BC(.5,1). Halves fall per triangle.
+          texTri(ctx,AT, 0,0, TS,0, M,TS,  SX(sh[0]),SY(sh[0]), SX(sh[1]),SY(sh[1]), SX(BC),SY(BC));   // T1
+          texTri(ctx,AT, 0,0, 0,TS, M,TS,  SX(sh[0]),SY(sh[0]), SX(BLp),SY(BLp),     SX(BC),SY(BC));   // T2 BL+
+          texTri(ctx,AT, TS,0, TS,TS, M,TS,SX(sh[1]),SY(sh[1]), SX(BRp),SY(BRp),     SX(BC),SY(BC));   // T3 BR+
+          texTri(ctx,AT, 0,0, 0,TS, M,TS,  SX(sh[0]),SY(sh[0]), SX(BLm),SY(BLm),     SX(BC),SY(BC));   // T4 BL-
+          texTri(ctx,AT, TS,0, TS,TS, M,TS,SX(sh[1]),SY(sh[1]), SX(BRm),SY(BRm),     SX(BC),SY(BC));   // T5 BR-
+        } else {
+          // N/S: base pts sample the vertical CENTER line (u=.5). Top pts — T2/T3 use the RIGHT edge
+          // (u=1, blue), T4/T5 use the LEFT edge (u=0, red); only T1's tip swaps to the edge nearest
+          // the light (left→red, right→blue). So the +depth pair reads blue, the -depth pair red.
+          const e=(L.lightX<anch.x)?0:TS;
+          texTri(ctx,AT, e,0, e,TS, M,M,   SX(sh[0]),SY(sh[0]), SX(sh[1]),SY(sh[1]), SX(BC),SY(BC));  // T1 swaps by light
+          texTri(ctx,AT, TS,0, M,0, M,M,   SX(sh[0]),SY(sh[0]), SX(BLp),SY(BLp),     SX(BC),SY(BC));  // T2 BL+  right/blue
+          texTri(ctx,AT, TS,TS, M,TS, M,M, SX(sh[1]),SY(sh[1]), SX(BRp),SY(BRp),     SX(BC),SY(BC));  // T3 BR+  right/blue
+          texTri(ctx,AT, 0,0, M,0, M,M,    SX(sh[0]),SY(sh[0]), SX(BLm),SY(BLm),     SX(BC),SY(BC));  // T4 BL-  left/red
+          texTri(ctx,AT, 0,TS, M,TS, M,M,  SX(sh[1]),SY(sh[1]), SX(BRm),SY(BRm),     SX(BC),SY(BC));  // T5 BR-  left/red
+        }
+        ctx.globalAlpha=1;
+        // the source: billboard footprint filled with the same texture (2 tris), then its outline
+        const r=billboardRect().map(p=>({x:X(p.x),y:Y(p.y)})); ctx.globalAlpha=0.9;
+        texTri(ctx,AT, 0,0, TS,0, TS,TS, r[0].x,r[0].y, r[1].x,r[1].y, r[2].x,r[2].y);
+        texTri(ctx,AT, 0,0, TS,TS, 0,TS, r[0].x,r[0].y, r[2].x,r[2].y, r[3].x,r[3].y);
+        ctx.globalAlpha=1;
+        poly(ctx,billboardRect().map(p=>[X(p.x),Y(p.y)]),null,"#7f77dd",[5,3]);
+      } else {
+        poly(ctx,billboardRect().map(p=>[X(p.x),Y(p.y)]),null,"#7f77dd",[5,3]);
+        poly(ctx,[P(sh[0]),P(sh[1]),P(BC)],"rgba(20,22,30,0.45)","rgba(20,22,30,0.45)");   // T1 gray
+        poly(ctx,[P(sh[0]),P(BLp),P(BC)],"rgba(226,75,74,0.32)","rgba(226,75,74,0.32)");   // T2 red   BL+
+        poly(ctx,[P(sh[1]),P(BRp),P(BC)],"rgba(226,75,74,0.32)","rgba(226,75,74,0.32)");   // T3 red   BR+
+        poly(ctx,[P(sh[0]),P(BLm),P(BC)],"rgba(38,160,102,0.30)","rgba(38,160,102,0.30)"); // T4 green BL-
+        poly(ctx,[P(sh[1]),P(BRm),P(BC)],"rgba(38,160,102,0.30)","rgba(38,160,102,0.30)"); // T5 green BR-
+      }
+      ctx.fillStyle="#E24B4A";ctx.beginPath();ctx.arc(X(anch.x),Y(anch.y),5,0,7);ctx.fill();
+      ctx.fillStyle="#d9860f";ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.beginPath();ctx.arc(X(L.lightX),Y(L.lightY),8,0,7);ctx.fill();ctx.stroke();
+      ctx.fillStyle="#999";ctx.font="11px system-ui,sans-serif";ctx.fillText("N",X(0)+4,12);ctx.fillText("E",w-11,Y(0)-4);})();
+  }
+  const cv=document.getElementById("top");let drag=false;
+  function toLight(e){const r=cv.getBoundingClientRect();const mx=(e.touches?e.touches[0].clientX:e.clientX)-r.left,my=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+    L.lightX=Math.round((mx-r.width*.5)/L.scale/5)*5;L.lightY=Math.round((my-r.height*.5)/L.scale/5)*5;draw();}
+  cv.addEventListener("pointerdown",e=>{drag=true;cv.setPointerCapture(e.pointerId);toLight(e);});
+  cv.addEventListener("pointermove",e=>{if(drag)toLight(e);});
+  cv.addEventListener("pointerup",()=>drag=false);
+  window.addEventListener("resize",draw);syncGrid();draw();
+})();
+</script>

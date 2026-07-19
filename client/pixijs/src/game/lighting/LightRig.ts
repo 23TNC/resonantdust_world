@@ -99,11 +99,17 @@ export class LightRig {
     }
   }
 
-  /** Debug: permanently disable the cursor light (and clear it now), so nothing casts shadows —
-   *  the shadow pass gets no caster light and just blanks. Wired from `?nocursorlight`. */
+  /** Debug: enable/disable the cursor light. Disabled clears it now and blocks re-creation, so
+   *  nothing casts shadows (the shadow pass gets no caster light and just blanks); enabled lets the
+   *  next pointer move re-seed it. Driven by the `/nocursorlight` command (chat or URL). */
+  setCursorDisabled(disabled: boolean): void {
+    this.cursorDisabled = disabled;
+    if (disabled) this.cursor = null;
+  }
+
+  /** Permanently disable the cursor light — {@link setCursorDisabled}(true). */
   disableCursor(): void {
-    this.cursorDisabled = true;
-    this.cursor = null;
+    this.setCursorDisabled(true);
   }
 
   /** The **cold** (static) lights — summed into the per-rect baked `cold_lightmap` (lighting P1),

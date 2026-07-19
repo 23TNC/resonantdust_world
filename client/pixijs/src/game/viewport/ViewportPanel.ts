@@ -16,6 +16,7 @@ import { Viewport } from "./Viewport";
 export class ViewportPanel extends PixiPanel {
   private readonly viewport: Viewport;
   private readonly renderer: Renderer;
+  private readonly ctx: GameContext;
   private readonly unsubResize: () => void;
   /** Window pointer listener driving the viewport's cursor light. */
   private readonly onPointerMove: (e: PointerEvent) => void;
@@ -32,6 +33,7 @@ export class ViewportPanel extends PixiPanel {
       uiEditMode: ctx.uiEditMode,
     });
     this.renderer = ctx.app.renderer;
+    this.ctx = ctx;
     this.viewport = new Viewport(ctx.textureResolver);
     this.content.addChild(this.viewport);
     this.sizeViewport();
@@ -49,8 +51,10 @@ export class ViewportPanel extends PixiPanel {
       if (lx >= 0 && lx < r.width && ly >= 0 && ly < r.height) {
         const w = this.viewport.screenToWorld(lx, ly);
         this.viewport.lights.setCursorWorld(w.x, w.y);
+        this.ctx.debugPanel?.setCursorCoords(w);
       } else {
         this.viewport.lights.setCursorWorld(null);
+        this.ctx.debugPanel?.setCursorCoords(null);
       }
     };
     window.addEventListener("pointermove", this.onPointerMove);

@@ -10,7 +10,7 @@ import { WorldBridge } from "../../game/world/WorldBridge";
 import { MoverLayer } from "../../game/world/MoverLayer";
 import { pointLight } from "../../game/lighting/LightRig";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
-import { debugParams } from "../../debug/urlParams";
+import { parseUrl, argFlag, type UrlCommand } from "../../debug/urlParams";
 import { SQUARE } from "../../game/viewport/squareMath";
 
 /** Accumulated wheel `deltaY` that halves or doubles the zoom (one LOD octave). */
@@ -58,6 +58,9 @@ export class WorldScene extends Scene {
   private moverLayer!: MoverLayer;
   /** Unsubscribe from content hot-swaps; called on scene exit. */
   private contentUnsub: (() => void) | null = null;
+  /** Commands parsed from the URL query (see `debug/urlParams`) — replayed ONCE after the scene
+   *  is wired, so a `?ambient=1.5` param runs the same handler as typing `/ambient 1.5`. */
+  private urlCommands: UrlCommand[] = [];
   /** Drag-to-pan state: pointer id + last client-px position while dragging. */
   private dragId: number | null = null;
   private dragX = 0;
@@ -148,41 +151,20 @@ export class WorldScene extends Scene {
     this.viewport = new ViewportPanel(ctx, this.panelLayer);
     this.viewport.open();
 
-    // Debug conveniences (debug/urlParams): `?ambient=<f>` lifts the ambient floor to a
-    // neutral white boost so the scene reads clearly instead of fighting the lighting;
-    // `?x=/?y=` jump the initial camera centre to a tile.
-    const dbg = debugParams();
-    if (dbg.ambient !== null) {
-      const amb = this.viewport.view.lights.ambient;
-      amb.color = 0xffffff;
-      amb.intensity = dbg.ambient;
-    }
-    // `?grid` overlays a red per-tile grid over the viewport as a gfx debug layer.
-    if (dbg.grid) this.viewport.view.setDebugGrid(true);
-    // `?nocursorlight` kills the cursor point light — and the shadow pass it casts — so the
-    // non-shadow draw-call count reads in isolation.
-    if (dbg.noCursorLight) this.viewport.view.lights.disableCursor();
-    // `?coldlight` seeds a debug STATIC (cold) light at the camera centre — proves the P1 cold_lightmap
-    // bake (a baked, amortized pool of light on the ground) end-to-end until content authors cold lights.
-    if (dbg.coldLight) {
-      this.viewport.view.lights.register(
-        pointLight({
-          x: (dbg.x ?? 0) * SQUARE,
-          y: (dbg.y ?? 0) * SQUARE,
-          height: 120,
-          radius: 8 * SQUARE,
-          color: 0xff8040,
-          brightness: 3,
-          tier: "cold",
-        }),
-      );
-    }
+    // URL query params are replayed as chat commands once this scene is wired (see
+    // `debug/urlParams` + `runUrlCommands`). The camera-jump one (`?focus=x,y` → `/focus`) also
+    // seeds the INITIAL anchor here, so the first subscription is already at the target tile (no
+    // origin flash / wasted subscription) — the replayed `/focus` then re-applies it as a no-op.
+    this.urlCommands = parseUrl().commands;
+    const focusCmd = this.urlCommands.find((c) => c.name === "focus");
+    const startX = focusCmd ? Number(focusCmd.args[0]) || 0 : 0;
+    const startY = focusCmd ? Number(focusCmd.args[1]) || 0 : 0;
 
     // Wire the client's zone stream into the viewport and start the anchor — login has
     // completed by the time this scene enters, so the first anchor immediately subscribes
-    // the zones around it (at the origin, or the debug `?x=/?y=` tile).
+    // the zones around it (at the origin, or the `?focus=x,y` tile).
     this.bridge = new WorldBridge(ctx.client, ctx.content, this.viewport.view, ctx.textureResolver.white, ctx.textureResolver);
-    this.bridge.start(dbg.x ?? 0, dbg.y ?? 0);
+    this.bridge.start(startX, startY);
     // Mobile entities (pawns) from the shard `state` stream — the bot-driven wolves,
     // drawn as an overlay above the world.
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.viewport.view);
@@ -214,17 +196,102 @@ export class WorldScene extends Scene {
     this.chat = new ChatPanel(ctx);
     this.chat.open();
 
+    this.registerCommands();
+    this.unsubPaused = this.ctx.client.onPaused((paused) => {
+      this.chat.systemLine(paused ? "⏸ Simulation paused (tic frozen)." : "▶ Simulation resumed.");
+    });
+
+    // Replay the URL query as chat commands, once, now that the viewport/bridge/chat are wired.
+    // Auto-login (`?user`) or manual login both reach here — the params run either way.
+    this.runUrlCommands();
+  }
+
+  /** Register every chat command against the chat panel. Each is also reachable from the URL query
+   *  (`debug/urlParams` → {@link runUrlCommands}), so `?ambient=1.5` and typing `/ambient 1.5` hit
+   *  the same handler. Debug/lighting commands sit alongside the panel/pause ones. */
+  private registerCommands(): void {
+    const view = () => this.viewport.view;
+
     // `/showRT` — open (or re-focus) the render-texture preview for the viewport.
     this.chat.registerCommand("showRT", () => this.showRenderTextures());
+
+    // `/overlayRT <channel>` — draw one G-buffer composite over the lit viewport (world-aligned,
+    // full size). Toggles: the same channel again turns it off. Empty/default values (flat normal,
+    // black lightmap/shadow/depth) read through to the lit scene beneath.
+    this.chat.registerCommand("overlayRT", (args) => this.overlayRenderTexture(args));
+
+    // `/ambient <f>` — lift the ambient floor to a neutral white boost of intensity `<f>`, so the
+    // scene reads clearly instead of fighting the lighting/shadows while debugging.
+    this.chat.registerCommand("ambient", (args) => {
+      const v = Number(args[0]);
+      if (!Number.isFinite(v)) return "Usage: /ambient <intensity>  (e.g. /ambient 1.0)";
+      const amb = view().lights.ambient;
+      amb.color = 0xffffff;
+      amb.intensity = v;
+      return `Ambient floor set to ${v} (white).`;
+    });
+
+    // `/nocursorlight [0|1]` — disable the cursor/hover point light (and the shadow pass it casts),
+    // so the non-shadow draw-call count reads in isolation. `/nocursorlight 0` re-enables it.
+    this.chat.registerCommand("nocursorlight", (args) => {
+      const disabled = argFlag(args[0], true);
+      view().lights.setCursorDisabled(disabled);
+      return disabled ? "Cursor light disabled." : "Cursor light enabled.";
+    });
+
+    // `/grid [0|1|2|3]` — overlay the debug grid at a DETAIL LEVEL: 1 = region + zone + tile,
+    // 2 = region + zone, 3 = region only, 0 = off. No arg TOGGLES (off ⇄ full detail).
+    const gridLabel = ["Debug grid off.", "Debug grid: region + zone + tile.", "Debug grid: region + zone.", "Debug grid: region."];
+    this.chat.registerCommand("grid", (args) => {
+      let level: number;
+      if (args.length === 0) {
+        level = view().debugGrid > 0 ? 0 : 1; // toggle: off ⇄ full detail
+      } else {
+        const n = Number(args[0]);
+        if (!Number.isInteger(n) || n < 0 || n > 3) {
+          return "Usage: /grid [0|1|2|3]  (0 off, 1 region+zone+tile, 2 region+zone, 3 region)";
+        }
+        level = n;
+      }
+      view().setDebugGrid(level);
+      return gridLabel[level];
+    });
+
+    // `/coldlight` — seed a debug STATIC (cold) light at the current camera centre, proving the P1
+    // cold_lightmap bake end-to-end until content authors cold lights.
+    this.chat.registerCommand("coldlight", () => {
+      const a = view().anchor;
+      view().lights.register(
+        pointLight({ x: a.x, y: a.y, height: 120, radius: 8 * SQUARE, color: 0xff8040, brightness: 3, tier: "cold" }),
+      );
+      return "Cold debug light seeded at the camera centre.";
+    });
+
+    // `/focus <tileX> <tileY>` — jump the camera centre to a tile (the `?focus=x,y` URL param).
+    this.chat.registerCommand("focus", (args) => {
+      const x = Number(args[0]);
+      const y = Number(args[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return "Usage: /focus <tileX> <tileY>";
+      this.bridge.setAnchor(x * SQUARE, y * SQUARE);
+      return `Camera focused on tile (${x}, ${y}).`;
+    });
 
     // `/pause` + `/unpause` (debug) — no server-side pause in the rebuild yet (the master's
     // metronome has no freeze verb), so these report unavailability rather than silently do
     // nothing. `onPaused` stays wired (it simply never fires) for when a freeze verb returns.
     this.chat.registerCommand("pause", () => "Pause isn't wired in the rebuild yet.");
     this.chat.registerCommand("unpause", () => "Pause isn't wired in the rebuild yet.");
-    this.unsubPaused = this.ctx.client.onPaused((paused) => {
-      this.chat.systemLine(paused ? "⏸ Simulation paused (tic frozen)." : "▶ Simulation resumed.");
-    });
+  }
+
+  /** Replay the URL-passed commands (parsed in {@link onEnter}) through the chat panel, once. Each
+   *  runs the exact handler a typed `/command` would; unrecognized params are skipped silently
+   *  (they may be unrelated query keys), and a bad arg surfaces the command's own usage line. */
+  private runUrlCommands(): void {
+    for (const c of this.urlCommands) {
+      if (!this.chat.execCommand(c.name, c.args)) {
+        console.warn(`[WorldScene] URL command /${c.name} is not a known command — skipped.`);
+      }
+    }
   }
 
   /** `/showRT` chat command — open (or re-focus) the render-texture preview panel
@@ -251,6 +318,23 @@ export class WorldScene extends Scene {
       return panel;
     });
     return "Showing render textures.";
+  }
+
+  /** `/overlayRT <channel>` chat command — toggle a render-texture composite as a full-viewport
+   *  overlay over the lit world. No arg (or an unknown channel) echoes the valid channel list;
+   *  a valid one switches the overlay to it, or turns it off if it's already showing. */
+  private overlayRenderTexture(args: string[]): string {
+    const names = this.viewport.view.overlayChannelNames();
+    const name = args[0];
+    if (!name) {
+      const cur = this.viewport.view.overlayChannel;
+      return `Usage: /overlayRT <channel>. ${cur ? `Showing ${cur}. ` : ""}Channels: ${names.join(", ")}.`;
+    }
+    if (!names.includes(name)) {
+      return `Unknown channel "${name}". Channels: ${names.join(", ")}.`;
+    }
+    const now = this.viewport.view.setOverlay(name);
+    return now ? `Overlaying ${now}.` : `Overlay off (${name}).`;
   }
 
   onResize(_width: number, _height: number): void {

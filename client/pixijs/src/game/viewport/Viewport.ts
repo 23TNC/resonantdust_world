@@ -23,6 +23,7 @@ import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } fro
 import { NOISE_FIELDS, PACKED_UNIFORM_LEN, type MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { makeLightingShader, type LightingShader } from "./lightingShader";
+import { makeOverlayShader, overlayModeFor, type OverlayShader } from "./overlayShader";
 import { LightRig } from "../lighting/LightRig";
 import { ShadowPass, type ShadowCaster } from "./shadowPass";
 import { makeLightingBakeShader } from "./lightingBakeShader";
@@ -129,6 +130,13 @@ export class Viewport extends LayoutNode {
    *  normal + albedo composites and lights per-fragment (ambient + sun; point lights +
    *  shadows in later phases). Owned here, bound with the live composites each frame. */
   private readonly lightingShader: LightingShader = makeLightingShader();
+  /** The `/overlayRT` debug overlay: a second mesh SHARING the display geometry (so it samples a
+   *  composite in exact world register with the lit scene), drawn above the world with
+   *  {@link OverlayShader}. {@link overlayChannelName} names the composite to show, or null (off);
+   *  the mesh is built lazily on first enable. */
+  private readonly overlayShader: OverlayShader = makeOverlayShader();
+  private overlayMesh: Mesh<Geometry> | null = null;
+  private overlayChannelName: string | null = null;
   /** The light rig — sun + ambient + dynamic point lights — packed into the shader each
    *  frame. Callers reach it via {@link lights} to register world lights / drive the cursor. */
   private readonly rig = new LightRig();
@@ -172,6 +180,9 @@ export class Viewport extends LayoutNode {
    *  {@link setDebugGrid}; `null` (and undrawn) until then. Redrawn each frame in {@link tick}
    *  since the line positions follow the camera pan/zoom. */
   private gridGfx: Graphics | null = null;
+  /** Debug-grid DETAIL LEVEL (which nested divisions draw): `0` off, `1` region+zone+tile,
+   *  `2` region+zone, `3` region only. Set by {@link setDebugGrid} (the `/grid` command). */
+  private gridLevel = 0;
 
   constructor(resolver: TextureResolver) {
     super();
@@ -343,6 +354,12 @@ export class Viewport extends LayoutNode {
     return this.zoomFactor;
   }
 
+  /** The world-px point centred in the viewport (the camera anchor). `/coldlight` seeds its debug
+   *  light here. */
+  get anchor(): { x: number; y: number } {
+    return { x: this.anchorX, y: this.anchorY };
+  }
+
   /** Zoom by `factor` about the body-local point `(sx,sy)` — the world point under
    *  the cursor stays fixed. Returns the new anchor the caller must apply (through
    *  the world bridge, so zone subscriptions follow), or null if the zoom clamped to
@@ -421,15 +438,22 @@ export class Viewport extends LayoutNode {
     return this.overlayContainer;
   }
 
-  /** Toggle the red debug tile grid (the `?grid` URL param). Lazily builds the gfx layer on
-   *  first enable; the actual lines are (re)drawn each frame in {@link tick} against the live
-   *  camera. Disabling hides it (kept around, cheaply, for a later re-enable). */
-  setDebugGrid(on: boolean): void {
-    if (on && !this.gridGfx) {
+  /** Set the debug-grid DETAIL LEVEL (see {@link gridLevel}): `0` off, `1` region+zone+tile,
+   *  `2` region+zone, `3` region only. Lazily builds the gfx layer on first enable; the lines are
+   *  (re)drawn each frame in {@link tick} against the live camera. Level `0` hides it (kept around,
+   *  cheaply, for a later re-enable). */
+  setDebugGrid(level: number): void {
+    this.gridLevel = level;
+    if (level > 0 && !this.gridGfx) {
       this.gridGfx = new Graphics();
       this.overlayContainer.addChild(this.gridGfx);
     }
-    if (this.gridGfx) this.gridGfx.visible = on;
+    if (this.gridGfx) this.gridGfx.visible = level > 0;
+  }
+
+  /** The current debug-grid detail level (`0` = off) — the `/grid` command reads it to toggle. */
+  get debugGrid(): number {
+    return this.gridLevel;
   }
 
   /** Redraw the debug grid for the current camera: three nested line sets, each on the
@@ -449,10 +473,12 @@ export class Viewport extends LayoutNode {
     if (w <= 0 || h <= 0 || z <= 0) return;
     const zonePx = SQUARE * ZONE_DIM;
     const regionPx = zonePx * REGION_DIM;
-    // Fine → coarse: the region lines paint over the zone + tile lines at shared boundaries.
-    // Line weight scales with the division — thin tiles, heavier zones, heaviest regions.
-    this.drawGridLines(g, SQUARE, 0xff0000, 1);
-    this.drawGridLines(g, zonePx, 0xff00ff, 2);
+    // Fine → coarse: the region lines paint over the zone + tile lines at shared boundaries. Line
+    // weight scales with the division — thin tiles, heavier zones, heaviest regions. The detail
+    // level gates the finer divisions: level 1 draws all three, 2 drops tiles, 3 keeps region only.
+    const lvl = this.gridLevel;
+    if (lvl <= 1) this.drawGridLines(g, SQUARE, 0xff0000, 1);
+    if (lvl <= 2) this.drawGridLines(g, zonePx, 0xff00ff, 2);
     this.drawGridLines(g, regionPx, 0x0000ff, 3);
   }
 
@@ -519,6 +545,36 @@ export class Viewport extends LayoutNode {
       { name: "zdepth-world-warm", texture: this.warm.displayComposite("zdepth-world-warm") },
       { name: "zdepth-hot", texture: this.shadowPass.texture },
     ];
+  }
+
+  /** Toggle the `/overlayRT` debug overlay to composite `name` (a channel from
+   *  {@link renderTextures}) over the lit display. Passing the CURRENTLY-shown channel turns it
+   *  off; any other switches to it; `null` turns it off. Returns the channel now shown, or null.
+   *  An unknown name is rejected (returns null); the caller validates + reports. */
+  setOverlay(name: string | null): string | null {
+    if (name === null || name === this.overlayChannelName) {
+      this.overlayChannelName = null;
+    } else if (this.overlayChannelNames().includes(name)) {
+      this.overlayChannelName = name;
+    } else {
+      return null; // unknown channel — leave the current overlay untouched
+    }
+    if (this.overlayMesh) this.overlayMesh.visible = this.overlayChannelName !== null;
+    return this.overlayChannelName;
+  }
+
+  /** The channel the `/overlayRT` overlay is currently showing, or null (off). */
+  get overlayChannel(): string | null {
+    return this.overlayChannelName;
+  }
+
+  /** The channels the `/overlayRT` overlay can show — the WORLD-space composites from
+   *  {@link renderTextures}. `zdepth-hot` (the screen-space shadow RT) is excluded: it has no
+   *  world→UV map, so it can't be sampled through the world-aligned display geometry. */
+  overlayChannelNames(): string[] {
+    return this.renderTextures()
+      .map((c) => c.name)
+      .filter((n) => n !== "zdepth-hot");
   }
 
   /** Display aspect ratio (width / height) — the `/showRT` preview sizes its tiles
@@ -629,8 +685,46 @@ export class Viewport extends LayoutNode {
       this.lightingShader.setShadowUv(z / w, z / h, 0, 0);
     }
 
+    // `/overlayRT`: draw the selected composite over the lit world (shares the display geometry,
+    // so it's in exact world register), with the per-channel drop-empty rule.
+    this.updateOverlay(z);
+
     // Debug tile grid (the `?grid` param): a red gfx overlay redrawn against the live camera.
     this.drawGrid();
+  }
+
+  /** Drive the `/overlayRT` mesh: bind the selected composite + its drop-mode, size it to the
+   *  zoom, and show/hide it. Builds the mesh (sharing the display geometry) on first enable; a
+   *  no-op cheap path when no overlay is selected. `z` = the current zoom (mesh scale). */
+  private updateOverlay(z: number): void {
+    const name = this.overlayChannelName;
+    if (!name || !this.mesh) {
+      if (this.overlayMesh) this.overlayMesh.visible = false;
+      return;
+    }
+    const tex = this.overlayComposite(name);
+    if (!tex) {
+      if (this.overlayMesh) this.overlayMesh.visible = false;
+      return;
+    }
+    if (!this.overlayMesh) {
+      this.overlayMesh = new Mesh<Geometry>({ geometry: this.mesh.geometry, shader: this.overlayShader });
+      this.overlayMesh.roundPixels = true;
+      this.overlayMesh.zIndex = 2; // above the world mesh (0) AND the grid/markers (overlayContainer = 1)
+      this.container.addChild(this.overlayMesh);
+    }
+    this.overlayShader.texture = tex;
+    this.overlayShader.mode = overlayModeFor(name);
+    this.overlayMesh.scale.set(z);
+    this.overlayMesh.visible = true;
+  }
+
+  /** The live composite for an overlay channel name — warm (`this.warm`) by the `-warm` suffix,
+   *  else cold (`this.map`). Null if the channel isn't produced yet. Only the world-space
+   *  composites reach here ({@link overlayChannelNames} excludes the screen-space shadow RT). */
+  private overlayComposite(name: string): Texture | null {
+    if (name.endsWith("-warm")) return this.warm.displayComposite(name);
+    return this.map.displayComposite(name);
   }
 
   /** The shadow-pass caster list: each standing prim's billboard box + its resolved SURFACE
@@ -711,6 +805,9 @@ export class Viewport extends LayoutNode {
     } else {
       const old = this.mesh.geometry;
       this.mesh.geometry = geo;
+      // The `/overlayRT` mesh SHARES this geometry (same per-frame pos/uv buffers) — repoint it
+      // before freeing the old geometry so it never dangles.
+      if (this.overlayMesh) this.overlayMesh.geometry = geo;
       old.destroy();
     }
     this.curQuads = quads;
@@ -722,6 +819,9 @@ export class Viewport extends LayoutNode {
     this.map.destroy();
     this.warm.destroy();
     this.shadowPass.destroy();
+    // The overlay mesh SHARES the display mesh's geometry (freed once via `this.mesh.geometry`
+    // below); `super.destroy()` destroys the mesh child itself, so only its shader needs freeing.
+    this.overlayShader.destroy();
     this.mesh?.geometry.destroy();
     this.lightingShader.destroy();
     this.posBuf?.destroy();

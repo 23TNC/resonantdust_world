@@ -143,4 +143,4 @@ A work-folder headers the component(s) + plan phase it executes; plans link back
 | something needing your input | `work/<w>/blockers.md` |
 | code that departs from the plan (yours or found) | `work/<w>/deviations.md` |
 | a cross-session hint for me (not project state) | `memory/` |
-| a superseded / pre-rewrite design (kept for history) | `docs/archive/` (with a pointer to what replaced it) |
+| a superseded / pre-rewrite design | **delete it** — git is the history. Do **not** keep an in-repo `archive/` (it gets read as current + confuses). Strays that predate git live out-of-repo in `../resonantdust_world_docs_archive/`. |

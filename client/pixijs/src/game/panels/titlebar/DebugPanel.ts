@@ -6,6 +6,7 @@ import { panelTitle, panelText } from "../panelStrings";
 import { currentEnvironment, gatewayUrlFor } from "../../../client/environments";
 import { getContentVersion } from "../../definitions/contentBoot";
 import type { CallStat, SubStatsSnapshot } from "../../../client/WasmClient";
+import { SQUARE, ZONE_DIM, REGION_DIM, mod } from "../../viewport/squareMath";
 
 /** A `versions.json` snapshot: a build number + per-component source-closure
  *  hashes. Both the gate's baked copy (`server`) and the freshest pushed copy
@@ -438,9 +439,9 @@ export class DebugPanel {
     this.mainFps       = this.addRow(mainContent, panelText("debugPanel", "fps"));
     this.mainDrawCalls = this.addRow(mainContent, panelText("debugPanel", "drawCalls"));
     this.mainBandwidth = this.addRow(mainContent, "net (↓ · ↑)");
-    this.mainTile      = this.addRow(mainContent, "tile local (world)");
-    this.mainZone      = this.addRow(mainContent, "zone (q,r)");
-    this.mainRegion    = this.addRow(mainContent, "region (q,r)");
+    this.mainRegion    = this.addRow(mainContent, "region x,y");
+    this.mainZone      = this.addRow(mainContent, "zone x,y");
+    this.mainTile      = this.addRow(mainContent, "tile x,y");
 
     // ── Textures tab — atlas / slot counts ────────────────────────
     // Atlas-page total, then a packed-texture count per power-of-two bucket, then
@@ -509,20 +510,38 @@ export class DebugPanel {
     void this.refreshVersions();
   }
 
-  /** Live cursor coordinate readout. `tileLocal` is the cell INSIDE the current
-   *  macro_zone (0..6, the owner-origin at 3,3); `tileWorld` is the global tile.
-   *  `zone` / `region` are the macro_zone / region the cell maps to (codec
-   *  formula). Drives the debug bug-hunt for the 7×7 / centre-at-(0,0) handling. */
-  setCursorCoords(
-    tileLocal: { q: number; r: number },
-    tileWorld: { q: number; r: number },
-    zone: { q: number; r: number },
-    region: { q: number; r: number },
-  ): void {
+  /** Live cursor coordinate readout, derived from the world-pixel point under the
+   *  cursor (or `null` to clear when the pointer leaves the viewport). The world is
+   *  a nested 16×16 lattice — region ⊃ zone ⊃ tile — so each level shows its cell
+   *  WITHIN its parent (`region` is a global index; `zone`/`tile` are local to the
+   *  enclosing region/zone) plus the global coordinate in parentheses. The formula
+   *  mirrors `resonantdust_codec::packed` (see {@link squareMath}), so this is the
+   *  reference to compare against where tiles actually load/render. */
+  setCursorCoords(world: { x: number; y: number } | null): void {
     if (!this.panel.isOpen) return;
-    this.mainTile.textContent   = `${tileLocal.q}, ${tileLocal.r}   (w ${tileWorld.q}, ${tileWorld.r})`;
-    this.mainZone.textContent   = `${zone.q}, ${zone.r}`;
-    this.mainRegion.textContent = `${region.q}, ${region.r}`;
+    if (!world) {
+      this.mainRegion.textContent = "—";
+      this.mainZone.textContent   = "—";
+      this.mainTile.textContent   = "—";
+      return;
+    }
+    // World tile (SQUARE world px per tile); floor-div so off-origin/negative
+    // coords land in the correct cell.
+    const tx = Math.floor(world.x / SQUARE);
+    const ty = Math.floor(world.y / SQUARE);
+    // Global zone, then region — each a floor-div of the finer index.
+    const zx = Math.floor(tx / ZONE_DIM);
+    const zy = Math.floor(ty / ZONE_DIM);
+    const rx = Math.floor(zx / REGION_DIM);
+    const ry = Math.floor(zy / REGION_DIM);
+    // Cell within its parent (0..dim-1) — `mod` keeps it non-negative.
+    const tileInZoneX = mod(tx, ZONE_DIM);
+    const tileInZoneY = mod(ty, ZONE_DIM);
+    const zoneInRegionX = mod(zx, REGION_DIM);
+    const zoneInRegionY = mod(zy, REGION_DIM);
+    this.mainRegion.textContent = `${rx}, ${ry}`;
+    this.mainZone.textContent   = `${zoneInRegionX}, ${zoneInRegionY}   (w ${zx}, ${zy})`;
+    this.mainTile.textContent   = `${tileInZoneX}, ${tileInZoneY}   (w ${tx}, ${ty})`;
   }
 
   /** Live viewport zoom readout (textures tab). Scene-pushed each frame; the

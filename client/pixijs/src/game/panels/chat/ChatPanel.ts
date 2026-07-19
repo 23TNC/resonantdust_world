@@ -10,6 +10,9 @@ import { panelTitle, panelText } from "../panelStrings";
  *  in that case we don't yank the viewport to the new message. */
 const AUTO_SCROLL_EPSILON = 4;
 
+/** How many submitted input lines the terminal-style arrow-up/down history keeps. */
+const MAX_HISTORY = 100;
+
 const TAB_CONTENT_CSS: Partial<CSSStyleDeclaration> = {
   flex: "1 1 auto",
   overflowY: "auto",
@@ -120,6 +123,16 @@ export class ChatPanel {
    *  itself knows nothing about what they do. */
   private readonly commands = new Map<string, ChatCommand>();
 
+  /** Terminal-style input history: every submitted line (command or message), oldest → newest,
+   *  capped at {@link MAX_HISTORY}. Arrow-up/down over the focused input walks it. */
+  private readonly history: string[] = [];
+  /** Cursor into {@link history} while walking it: `history.length` = not navigating (showing the
+   *  live {@link draft}); lower = an older entry. Reset to `history.length` on submit/edit. */
+  private historyPos = 0;
+  /** The in-progress text stashed when history navigation STARTS, so arrow-down past the newest
+   *  entry restores what the user was typing (like a shell). */
+  private draft = "";
+
   get isOpen(): boolean { return this.panel.isOpen; }
 
   constructor(ctx: GameContext) {
@@ -217,6 +230,7 @@ export class ChatPanel {
       const text = this.inputEl.value.trim();
       this.inputEl.value = "";
       if (text.length > 0) {
+        this.pushHistory(text);
         // A leading `/` is a command, not a message — parse + dispatch locally,
         // never hit the wire. `//foo` escapes to a literal message starting `/`.
         if (text.startsWith("/") && !text.startsWith("//")) {
@@ -229,12 +243,51 @@ export class ChatPanel {
           this.client.sendChat(body);
         }
       }
+    } else if (e.key === "ArrowUp") {
+      // Terminal-style: walk backward through submitted lines. A single-line <input> ignores
+      // ArrowUp natively, so hijacking it is safe (no caret movement to fight).
+      e.preventDefault();
+      this.recallHistory(-1);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      this.recallHistory(+1);
     } else if (e.key === "Escape") {
       e.preventDefault();
       this.inputEl.blur();
     }
     // Keep keystrokes from bubbling to the game's input handling.
     e.stopPropagation();
+  }
+
+  /** Record a submitted line at the end of history (dropping a run of identical entries, like a
+   *  shell's ignore-dups), cap the buffer, and reset the navigation cursor to the live draft. */
+  private pushHistory(line: string): void {
+    if (this.history[this.history.length - 1] !== line) {
+      this.history.push(line);
+      if (this.history.length > MAX_HISTORY) this.history.shift();
+    }
+    this.historyPos = this.history.length; // not navigating; next ArrowUp starts from the newest
+    this.draft = "";
+  }
+
+  /** Move the history cursor by `dir` (−1 = older, +1 = newer) and load that line into the input.
+   *  Stepping up from the live line stashes the in-progress {@link draft}; stepping down past the
+   *  newest entry restores it. Caret goes to end so continued typing appends. */
+  private recallHistory(dir: -1 | 1): void {
+    if (this.history.length === 0) return;
+    if (this.historyPos === this.history.length) {
+      if (dir === 1) return; // already at the live draft — nothing newer
+      this.draft = this.inputEl.value; // starting to walk back — remember what was typed
+    }
+    const next = this.historyPos + dir;
+    if (next < 0 || next > this.history.length) return; // clamp at both ends
+    this.historyPos = next;
+    const value = next === this.history.length ? this.draft : this.history[next];
+    this.inputEl.value = value;
+    // Caret to end so continued typing appends (the ArrowUp/Down default is already prevented,
+    // so nothing moves it back).
+    const end = value.length;
+    this.inputEl.setSelectionRange(end, end);
   }
 
   /** Parse `/<name> <args…>` and dispatch to a registered handler. Unknown
@@ -244,15 +297,19 @@ export class ChatPanel {
     const name = (parts.shift() ?? "").toLowerCase();
     if (name.length === 0) return;
     debug.log(["chat"], `[ChatPanel] command /${name} args=[${parts.join(", ")}]`);
-    const handler = this.commands.get(name);
-    if (!handler) {
-      this.appendSystemLine(`Unknown command: /${name}`);
-      return;
-    }
-    const feedback = handler(parts);
-    if (typeof feedback === "string" && feedback.length > 0) {
-      this.appendSystemLine(feedback);
-    }
+    if (!this.execCommand(name, parts)) this.appendSystemLine(`Unknown command: /${name}`);
+  }
+
+  /** Run a registered command programmatically — the seam URL-passed commands replay through
+   *  after login (see `debug/urlParams`), so a query param and a typed `/command` hit the exact
+   *  same handler. A returned string echoes as a system line, just like a typed command. Returns
+   *  false (no echo) if no such command is registered, so the caller can skip unrelated URL keys. */
+  execCommand(name: string, args: string[]): boolean {
+    const handler = this.commands.get(name.toLowerCase());
+    if (!handler) return false;
+    const feedback = handler(args);
+    if (typeof feedback === "string" && feedback.length > 0) this.appendSystemLine(feedback);
+    return true;
   }
 
   /** Append a chat message's `<div>` to the general tab, keyed by

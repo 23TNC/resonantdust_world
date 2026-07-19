@@ -1,58 +1,56 @@
-//! Debug URL query parameters — conveniences for driving the client without the UI,
-//! read once from `location.search`. Supported:
+//! URL query parameters — a way to drive the client without the UI, read once from
+//! `location.search`. The query is unified with the in-game **chat commands**: every param
+//! (except `user`) names a chat command that runs ONCE after login, so `?ambient=1.5` does the
+//! same thing as typing `/ambient 1.5`. See {@link parseUrl}.
 //!
-//!   ?user=<name>    auto-login as <name> on the default server (skips the login form)
-//!   ?x=<tile>       initial viewport-centre tile X (default 0) — jump the camera there
-//!   ?y=<tile>       initial viewport-centre tile Y (default 0)
-//!   ?ambient=<f>    ambient-floor intensity (e.g. 1.5) — brighten the whole scene instead
-//!                   of fighting the lighting/shadows while debugging
-//!   ?grid           overlay a debug grid over the viewport (gfx debug layer): red tile
-//!                   boundaries, magenta zone boundaries, blue region boundaries — so cell,
-//!                   zone and region edges are easy to read. `?grid=0`/`grid=false` turns it off.
-//!   ?nocursorlight  disable the cursor/hover point light — and therefore the shadow pass it
-//!                   casts (the shadow pass has no light → it just blanks). Lets you read the
-//!                   non-shadow draw-call count in isolation. Pair with `?ambient=<f>` to still
-//!                   see the scene.
+//!   ?user=<name>    auto-login as <name> on the remembered server (skips the login form). NOT a
+//!                   command — it's the login identity. Absent → the form waits for a manual login;
+//!                   the other params still run once that manual login completes.
 //!
-//! e.g. http://localhost:5173/?user=Developer&x=9&y=3&ambient=1.5&grid
+//! Everything else is `?<command>=<args>` (or a bare `?<command>` flag), replayed after login as
+//! `/<command> <args>`. Args split on spaces/commas. Current commands (see WorldScene):
+//!
+//!   ?ambient=<f>    → /ambient <f>        lift the ambient floor to a neutral white boost
+//!   ?nocursorlight  → /nocursorlight      disable the cursor/hover light (and the shadow it casts)
+//!   ?grid           → /grid               overlay the tile/zone/region debug grid (`?grid=0` off)
+//!   ?coldlight      → /coldlight          seed a debug static (cold) light at the camera centre
+//!   ?focus=<x>,<y>  → /focus <x> <y>      jump the camera centre to a tile (args split on the comma)
+//!
+//! e.g. http://localhost:5173/?user=Developer&focus=9,3&ambient=1.5&grid
 
-/** Parsed debug params. `null` = absent (use the normal default). */
-export interface DebugParams {
+/** One URL-passed command: the chat-command name + its whitespace/comma-split args. */
+export interface UrlCommand {
+  name: string;
+  args: string[];
+}
+
+/** Parsed URL: the special `user` login identity (or null) + the ordered command queue. */
+export interface UrlParams {
   user: string | null;
-  x: number | null;
-  y: number | null;
-  ambient: number | null;
-  grid: boolean;
-  noCursorLight: boolean;
-  coldLight: boolean;
+  commands: UrlCommand[];
 }
 
-/** Parse a query value as a finite number, or `null` if absent/malformed. */
-function num(v: string | null): number | null {
-  if (v === null) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
+/** Interpret a command ARG as an on/off flag — on unless it's an explicit `0`/`false`/`no`/`off`.
+ *  A missing arg falls back to `dflt` (so a bare `/grid` enables, `/grid 0` disables). Shared by
+ *  the flag-style commands so chat + URL parse identically. */
+export function argFlag(arg: string | undefined, dflt = true): boolean {
+  if (arg === undefined) return dflt;
+  const v = arg.trim().toLowerCase();
+  return v !== "0" && v !== "false" && v !== "no" && v !== "off";
 }
 
-/** A bare flag param: present is `true` unless explicitly `0`/`false`/`no` (so `?grid`,
- *  `?grid=1`, `?grid=true` all enable; `?grid=0` disables). Absent is `false`. */
-function flag(p: URLSearchParams, key: string): boolean {
-  if (!p.has(key)) return false;
-  const v = (p.get(key) ?? "").trim().toLowerCase();
-  return v !== "0" && v !== "false" && v !== "no";
-}
-
-/** Read the debug params from the current URL. Cheap; call at scene entry. */
-export function debugParams(): DebugParams {
+/** Read `user` + the command queue from the current URL. Cheap; call at boot / scene entry.
+ *  Every param except `user` maps straight to a `{name, args}` command — the value splits on
+ *  spaces/commas, so `?focus=5,5` → `/focus 5 5`. */
+export function parseUrl(): UrlParams {
   const p = new URLSearchParams(window.location.search);
-  const user = p.get("user");
-  return {
-    user: user && user.trim() !== "" ? user.trim() : null,
-    x: num(p.get("x")),
-    y: num(p.get("y")),
-    ambient: num(p.get("ambient")),
-    grid: flag(p, "grid"),
-    noCursorLight: flag(p, "nocursorlight"),
-    coldLight: flag(p, "coldlight"),
-  };
+  const rawUser = (p.get("user") ?? "").trim();
+  const commands: UrlCommand[] = [];
+  for (const [rawKey, rawVal] of p.entries()) {
+    const name = rawKey.toLowerCase();
+    if (name === "user") continue; // login identity, not a command
+    const val = rawVal.trim();
+    commands.push({ name, args: val ? val.split(/[\s,]+/) : [] });
+  }
+  return { user: rawUser !== "" ? rawUser : null, commands };
 }
