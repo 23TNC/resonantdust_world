@@ -874,7 +874,7 @@ export class SquareCache {
     this.lightBake.setRectWorld(squareWorldX(wc), squareWorldY(wr));
     // Cold SHADOWS (P4): bake this square's coldShadow slot FIRST, then point the lightmap bake at it
     // (its own read-of-coldShadow, write-to-lightmap — no conflict). No-op if not enabled.
-    const csh = this.channels.find((c) => c.key.startsWith("coldshadow"));
+    const csh = this.channels.find((c) => c.key.startsWith("shadow"));
     if (csh?.bufs && this.resolveCaster) {
       this.bakeColdShadowSquare(renderer, wc, wr, slotX, slotY, ax, ay, s);
       this.lightBake.coldShadow = csh.bufs[this.active];
@@ -891,7 +891,7 @@ export class SquareCache {
 
   /** Bake this square's coldShadow slot (lighting P4): project every nearby caster's silhouette
    *  through each cold light (≤3) into its lane (world-space, `pan = 0`), all lanes additive so they
-   *  don't clobber, then blit to the `coldshadow` composite slot. Reuses the world→slot transform. */
+   *  don't clobber, then blit to the `shadow` composite slot. Reuses the world→slot transform. */
   private bakeColdShadowSquare(
     renderer: Renderer,
     wc: number,
@@ -902,7 +902,7 @@ export class SquareCache {
     ay: number,
     s: number,
   ): void {
-    const csh = this.channels.find((c) => c.key.startsWith("coldshadow"));
+    const csh = this.channels.find((c) => c.key.startsWith("shadow"));
     if (!csh?.bufs || !this.resolveCaster) return;
     // world → slot: scale s + translate the square's world origin to the slot origin (as bakeSquare's m).
     const m = new Matrix(s, 0, 0, s, -squareWorldX(wc) * s, -squareWorldY(wr) * s);

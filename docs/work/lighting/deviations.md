@@ -10,7 +10,7 @@ _Plan-deviations logged at the moment they happen. "Less churn" is never a reaso
 **Plan** ([`todo.md`](todo.md) P4, from the old game): a CPU-built 32-bit/pixel `active` map per
 cold light, rect-aware, folded into the `cold_lightmap` bake.
 
-**Did:** baked the cold shadows GPU-side into a derived `coldshadow-cold` SquareCache composite
+**Did:** baked the cold shadows GPU-side into a derived `shadow-cold` SquareCache composite
 (R/G/B = cold light 0/1/2), by reusing `projectCaster` — the SAME billboard-silhouette shear the
 pending P3 dynamic scatter uses. The cold lightmap bake samples that composite and subtracts the
 shadowed light's term.

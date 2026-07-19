@@ -63,19 +63,19 @@ piece by piece, not big-bang). Items move to `completed.md` as they land + verif
 
 Implemented GPU-side (not the CPU `active` map originally planned — see
 [`deviations.md`](deviations.md) D-1): reuse `projectCaster` (shared with the pending P3 scatter)
-to bake caster silhouettes into a derived `coldshadow-cold` composite, sampled by the cold lightmap
+to bake caster silhouettes into a derived `shadow-cold` composite, sampled by the cold lightmap
 bake. Rect-boundary crossings are handled by baking each square in WORLD space over ALL nearby
 casters (radius+300 cull), not per-rect clipping.
 
-- [x] **`coldshadow-cold` derived composite** — R/G/B = cold light 0/1/2 occlusion. `SquareCache`
+- [x] **`shadow-cold` derived composite** — R/G/B = cold light 0/1/2 occlusion. `SquareCache`
       `enableColdShadow`/`setColdShadowLights` + `bakeColdShadowSquare` (world→slot transform, additive
       lanes), run from `bakeLightmapSquare` (bake shadow slot → sample it → write lightmap).
 - [x] **Fold into the bake** — `Σ cold·N·falloff·(1 − shadow·SHADOW_STRENGTH)`; ambient never shadowed.
       `LightRig.coldShadowLights()` supplies the ≤3 casters in `packCold` order (lanes match lights).
 - [x] **Async-outline re-dirty** — `OutlineCache.takeResolved()` → `invalidateAll` once/frame as
       silhouettes land, so late-loaded outlines bake their shadows. `/showRT` exposes the slot.
-- [x] **Verified live** — coldshadow-cold radiates lanes away from the light; a debug passthrough
-      (`outColor = csh.rgb`) matched lightmap-cold to coldshadow-cold pixel-for-pixel, proving the
+- [x] **Verified live** — shadow-cold radiates lanes away from the light; a debug passthrough
+      (`outColor = csh.rgb`) matched lightmap-cold to shadow-cold pixel-for-pixel, proving the
       binding + `vRawUv` slot sampling are aligned.
 - [ ] _(follow-up)_ Shadows are correct but visually subtle with a single central light (narrow
       tree-width stripes fall on the dim outer ring; the brightest ground at the light has no caster).

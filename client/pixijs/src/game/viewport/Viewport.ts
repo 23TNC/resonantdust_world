@@ -282,7 +282,7 @@ export class Viewport extends LayoutNode {
       // lights summed, amortized). `resolve` is never called (derived); a placeholder keeps the type.
       ...(suffix === "cold"
         ? [
-            { key: "coldshadow-cold", derived: true, resolve: () => ({ texture: resolver.white, tint: 0 }) } as ChannelSpec,
+            { key: "shadow-cold", derived: true, resolve: () => ({ texture: resolver.white, tint: 0 }) } as ChannelSpec,
             { key: "lightmap-cold", derived: true, resolve: () => ({ texture: resolver.white, tint: 0 }) } as ChannelSpec,
           ]
         : []),
@@ -294,7 +294,7 @@ export class Viewport extends LayoutNode {
     this.map.enableLightBake(this.lightBake);
     // Cold SHADOWS (P4): resolve a standing prim → its Caster box + silhouette (OutlineCache), so the
     // bake projects it through the cold lights. `lightmap-cold` finds the `derived` channel by
-    // `.derived`, so the coldshadow channel is keyed distinctly + found by its `coldshadow` prefix.
+    // `.derived`, so the shadow channel is keyed distinctly + found by its `shadow` prefix.
     this.map.enableColdShadow((prim) => {
       if (!prim.textureName) return null;
       const outline = this.outlines.get(prim.textureName);
@@ -512,7 +512,7 @@ export class Viewport extends LayoutNode {
       { name: "surface-cold", texture: this.map.displayComposite("surface-cold") },
       { name: "zdepth-world-cold", texture: this.map.displayComposite("zdepth-world-cold") },
       { name: "lightmap-cold", texture: this.map.displayComposite("lightmap-cold") },
-      { name: "coldshadow-cold", texture: this.map.displayComposite("coldshadow-cold") },
+      { name: "shadow-cold", texture: this.map.displayComposite("shadow-cold") },
       { name: "albedo-warm", texture: this.warm.displayComposite("albedo-warm") },
       { name: "normal-warm", texture: this.warm.displayComposite("normal-warm") },
       { name: "surface-warm", texture: this.warm.displayComposite("surface-warm") },
