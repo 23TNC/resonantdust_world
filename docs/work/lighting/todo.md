@@ -1,76 +1,74 @@
 # Todo — lighting
 
-_Phased so the renderer keeps working after each step (the single-pass stopgap is replaced piece by
-piece). Items move to [`completed.md`](completed.md) as they land + verify. Design: [`README`](README.md)
-· strategy [`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md) ·
-decisions [`forks.md`](forks.md) · deps [`blockers.md`](blockers.md)._
+_Phased so the renderer keeps working after each step. Items move to [`completed.md`](completed.md) as
+they land + verify. Design (authoritative):
+[`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md) · this work
+[`README`](README.md) · decisions [`forks.md`](forks.md) · deps [`blockers.md`](blockers.md)._
 
-_Shipped so far (in [`completed.md`](completed.md)): P0 tier routing, B1 outline serve/consume, P1 cold
-lightmap, P3 scatter-shader foundation, P4 **interim** materialized `shadow-cold`._
-
----
-
-## P1 follow-ups · cold lightmap refinements
-
-- [ ] **Cold `data`/`color` light textures** so **cards** (things) re-evaluate cold lights on their OWN
-      normal (the bake uses the ground normal). Port `coldLightTex.ts`.
-- [ ] A proper **`lightDirty`** trigger — rebake a rect when an in-range cold light changes even if
-      geometry didn't; today it relies on a geometry rebake / `invalidateAll`.
-
-## P2 · Dynamic pool (real-time, gate stubbed all-lit)
-
-- [ ] Restructure the current 32-light live loop into the **dynamic pool**: 32 lights in uniforms
-      (`32 × 2 vec4`), structured **4 channels × 8** to dodge ES-1.00 dynamic indexing; per light
-      `falloff·N·L`, gated by `gate(i)` (stub `gate=1`). Visually identical to today — just restructured
-      for the bitfield gate P3 adds.
-
-## P3 · Projected-silhouette shadows, dynamic (the per-light win) — retire the stopgaps
-
-- [ ] Bit helpers: float-mod byte/bit extraction (GLSL ES 1.00, `mod(floor(byte/exp2(b)),2.0)`) shared by
-      the display + combine shaders (the `warm_shadowmap` gate reads these).
-- [ ] **`ScatterPass` driving** — the 2 RGBA maps + per-light render: adapt `Viewport.buildCasters` to
-      yield `{feetX, groundY, footNY, h, w, left, stem}` + `OutlineCache.get(stem)`; per shadow-casting
-      light (≤8), gather its casters (within radius), run `projectCaster` into its lane. **⚠ the
-      `projectCaster` shear constants were tuned to the OLD coord space — re-tune in the browser
-      (`/showRT` the scatter maps).**
-- [ ] **`warm_shadowmap`** — 32-bit/pixel, world-space, **double-buffered ping-pong**: each frame read
-      `prev warm + the 8 fresh scatter channels`, write `next warm` with those 8 bits updated (round-robin
-      32/8 = 4-frame cycle; deferred writeback = "commit last frame's slice at the top of this one").
-- [ ] Display `gate(i)` = the warm bit, with a **cross-fade** for the 8 fresh (`0.5·(warmBit+freshBit)`)
-      so a shadow's catch-up is a 1-frame fade, not a snap.
-- [ ] **Retire** the wedge [`shadowPass.ts`](../../../client/pixijs/src/game/viewport/shadowPass.ts) + the
-      single global-shadow multiply in the display. Verify multi-light: two shadow-casters, B lighting A's
-      shadow does NOT un-shadow it. (Also reconcile the `nsProject` axis — [D-2](deviations.md).)
-
-## P4 · Cold shadows — inline occlusion in the bake, replacing the interim map
-
-**Target = the inline sweep** ([intent/tiered-lighting.md](../../components/client/pixijs/intent/tiered-lighting.md),
-[F7](forks.md#f7)): the bake tests each light's projected silhouettes per pixel and only adds the light
-where unshadowed — no materialized map, **unbounded** cold shadow-casters. Replaces the interim
-`shadow-cold` composite ([completed.md](completed.md), [D-1](deviations.md)). Gated on [B3](blockers.md#b3)
-(the inline data-texture + point-in-shape technique, matched to `../resonantdust`).
-
-- [ ] **Cold lights → a light-data texture** (rgba8, N texels/light: `xy`,`z`,color,intensity,radius),
-      replacing the `uLightData[32]` uniform array in `lightingBakeShader`. Unbounded loop from the texture.
-- [ ] **Projected-caster geometry into a data texture** the bake indexes per light (radius-culled), + a
-      hard-decimated shadow silhouette (≪ the ~180-pt render outline) — see [B3](blockers.md#b3).
-- [ ] **Inline occlusion in the bake sum** — per pixel, per in-range light: point-in-silhouette test;
-      `sum += lit ? color·intensity·N·L·falloff : 0`.
-- [ ] **Remove the interim materialized path** — `shadow-cold` composite + `bakeColdShadowSquare` +
-      `enableColdShadow`/`setColdShadowLights` + `LightRig.coldShadowLights()` + the `/showRT` slot +
-      `uColdShadow` in the bake shader.
-- [ ] Verify live: >3 cold shadow-casters on one square ALL cast (the cap is gone); shadows track lights.
-
-## P5 · Content + cleanup
-
-- [ ] **DSL static lights** — author cold point lights in content, classify light→tier at worldgen/load
-      (the "dense many-lights" payoff; [B2](blockers.md#b2)).
-- [ ] Migrate the **cursor** light into the dynamic pool; delete the flat live-loop stopgap + dead
-      single-shadow plumbing.
-- [ ] Graduate the [`README`](README.md) architecture into a `client/pixijs` **design** doc.
+_Shipped ([`completed.md`](completed.md)): the G-buffer tiers, cold `lightmap-cold` bake (32 uniform
+lights + an **interim** RGB=3 `shadow-cold`), `projectCaster`, the scatter-shader shell. What's below
+converges those onto the [design](../../components/client/pixijs/intent/tiered-lighting.md): cold 3→32
+shadow bitfield, the whole warm/rt dynamic path, retire the wedge._
 
 ---
 
-**Done when:** the display is `albedo × (cold_lightmap + Σ dynamic·falloff·N·L·gate)` — many static
-lights amortized in cold (inline shadows, no cap), 32 dynamic with per-light projected-silhouette shadows
-(round-robin + fade), no global-mask cross-contamination, the wedge/stopgap paths deleted, browser-verified.
+## P1 · Foundation
+
+- [ ] **Fix the scatter blend** `add` → **`max`** (`SquareCache:363`) so overlapping caster tris clamp at 1.
+- [ ] **Port the 32-bit bitfield helpers** from `../resonantdust/view/src/game/lighting/bitfield.ts`:
+      `packBitfield`/`bitSetCPU` (CPU + test oracle) + `BITFIELD_GLSL` (`bf_byte`/`bf_bit` float-mod,
+      ES-1.00 safe). Shared by cold + warm.
+- [ ] **Verify the 4th (alpha) lane** end-to-end (`uChannel` + `max` blend + non-premult writeback →
+      4 clean lanes/map). This sets the per-frame throughput; everything keys off it.
+
+## P2 · Cold upgrade — 3 → 32 shadow-casters (bake-time)
+
+- [ ] **Per-rect cold light-data texture** (port `coldLightTex.ts`): 2 texels/light (`xy`,`z`,`radius`;
+      colour,brightness), `alphaMode: no-premultiply-alpha`, `nearest`. The cold bake reads its rect's
+      ≤32 lights from this texture instead of `uLightData[32]` uniforms (each rect's nearest 32 differ).
+- [ ] **`shadow-cold` as a 32-bit bitfield** — built **on dirty** via the shared scatter engine (32 lights
+      = 8 scatter passes @ 4 lanes → ping-pong writeback into the bitfield). Rect-aware over all casters
+      within reach.
+- [ ] **Cold bake reads the bitfield** (`bf_bit`) not the RGB lanes → every cold light in a rect casts a
+      shadow. `sum += light·N·L·atten·(1 − occludedBit·STRENGTH)`.
+- [ ] **Remove the interim RGB=3 path** — the old `uColdShadow` 3-lane sample + `bakeColdShadowSquare`'s
+      RGB lanes (keep the scatter machinery, now feeding the bitfield). [D-1](deviations.md).
+- [ ] Verify live: >3 cold shadow-casters on one rect ALL cast.
+
+## P3 · Warm dynamic path (currently 0% — the wedge fakes it)
+
+- [ ] **`ScatterPass`** — each frame, gather the round-robin batch (4 warm lights), run `projectCaster`
+      per caster within radius, rasterize into **`shadow-hot`** (4 lanes). Adapt `Viewport.buildCasters`
+      to yield `{feetX, groundY, footNY, h, w, left, stem}` + `OutlineCache.get(stem)`.
+- [ ] **`shadow-warm` 32-bit bitfield + ping-pong writeback** — combine `prev shadow-warm` + the 4 fresh
+      `shadow-hot` lanes → `next shadow-warm` with those 4 bits set (deferred writeback at frame top).
+      4/frame → 8-frame refresh.
+- [ ] **Display loop** — restructure the 32-light sum: each light gated by its occlusion — the 4 fresh via
+      their `shadow-hot` lane (zero-lag), the other 28 via `shadow-warm` `bf_bit`; **cross-fade** the fresh
+      4 (`0.5·(warmBit+freshLane)`) so catch-up is a 1-frame fade. `uFreshChannel`-style uniform names the
+      batch.
+
+## P4 · RT priority (zero-staleness)
+
+- [ ] **`shadow-rt`** — 4 highest-priority lights rasterized **every frame** into their own 4-lane map
+      (never round-robin, never written to a bitfield). Display reads the lane directly.
+- [ ] Migrate the **cursor** light into the rt set.
+
+## P5 · Retire the stopgaps
+
+- [ ] Delete the wedge [`shadowPass.ts`](../../../client/pixijs/src/game/viewport/shadowPass.ts) + the
+      single global `uShadow` multiply in the display. Verify multi-light: two casters, B lighting A's spot
+      does NOT un-shadow it. (Reconcile the `nsProject` axis when the caster geometry is next touched —
+      [D-2](deviations.md).)
+
+## P6 · Content + cleanup
+
+- [ ] **DSL static lights** — author cold point lights in content; classify light→tier at worldgen/load
+      ([B2](blockers.md#b2)).
+- [ ] Graduate this README's residue into `design/lighting.md` (the intent doc is already the target).
+
+---
+
+**Done when:** `lit = albedo × (lightmap_cold + Σ₃₂ warm·N·L·!occ + Σ₄ rt·N·L·!occ)` — cold baked with
+**32** shadow-casters/rect, 32 warm on a round-robin bitfield, 4 rt always-fresh, no cross-contamination,
+the wedge + RGB=3 cap deleted, browser-verified.

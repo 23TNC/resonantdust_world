@@ -18,53 +18,30 @@ and **added**, so summing can't cross-contaminate.
 
 ## Architecture (target)
 
-Two tiers, composited into the display:
+**Three tiers by update rate, sharing one scatter→bitfield shadow engine.** Full design (the authoritative
+owner): [**intent/tiered-lighting.md**](../../components/client/pixijs/intent/tiered-lighting.md) — not
+restated here.
 
-| Tier | Count | Light data | Shadow build | Lightmap | Update |
-|---|---|---|---|---|---|
-| **Cold** | **unlimited** (radius-culled per rect + world) | **light-data texture** (rgba8, N texels/light) | **inline** per-px per-light occlusion — **no shadow map** | pre-summed `cold_lightmap`, dirty-rect rebake | on settle / content change |
-| **Dynamic** (warm+hot) | 32 **global** | uniforms | 2 RGBA **scatter maps** (8 lights/frame) → 32-bit `warm_shadowmap` (ping-pong) | recomputed every frame at display | every frame (pos), shadow round-robin |
+| tier | # lights | light data | shadow | computed |
+|---|---|---|---|---|
+| **cold** | 32/rect | per-rect **texture** | `shadow-cold` **32-bit bitfield** (32 casters) | **baked** `lightmap-cold`, on dirty |
+| **warm** | 32 global | uniforms | `shadow-warm` 32-bit bitfield (round-robin) + `shadow-hot` (4 fresh) | display, 4/frame → 8-frame cycle |
+| **rt** | 4 global | uniforms | `shadow-rt` (always fresh) | display, every frame |
 
-The two tiers build shadows **oppositely**, on purpose. **Dynamic** runs every frame over the whole
-viewport, so it *can't* afford a per-pixel light sweep — it **rasterizes** each light's silhouettes into
-a map (scatter → bitfield) and the display *reads* the map. **Cold** is amortized (only dirty rects, a
-few per frame), so it does the sweep **inline** and never materializes a shadow map — which is what frees
-it from the map's channel cap and lets it carry *unlimited* lights (see [Cold strategy](#cold-lighting-strategy--the-inline-sweep)).
-
-"Hot" and "warm" are **freshness states of one 32-light dynamic pool**, not separate tiers — each frame 8
-of the 32 get a fresh scattered shadow, the other 24 carry a ≤3-frame-stale cached shadow.
-
-**Display composite, per pixel:**
 ```
-lit = albedo × ( cold_lightmap                                  // 1 texture read (ambient + baked cold)
-               + Σ_32 dynamic[i] · falloff · N·L · gate(i) )    // gate from the warm bit / fresh scatter
+lit = albedo × ( lightmap_cold + Σ₃₂ warm·falloff·N·L·!occ(warm|hot) + Σ₄ rt·falloff·N·L·!occ(rt) )
 ```
 
-**Both tiers project the same earcut silhouettes** (the [art-metadata](../art-metadata) `outline`
-sidecars): a caster's triangulation is sheared through a light onto the ground (`h/(lightZ−h)`). What
-differs is the consume: **dynamic** rasterizes them into a **channel** of an RGBA scatter map (filled
-tris, no per-fragment fetch, holes free — the reason we ported earcut, and cheaper than a coverage quad
-on the per-frame path); **cold** tests them **inline** (below), no map. Both **replace** the stopgaps —
-the per-caster wedge [`shadowPass.ts`](../../../client/pixijs/src/game/viewport/shadowPass.ts) and the
-single global shadow in the display.
-
-## Cold lighting strategy — the inline sweep
-
-The cold tier's full strategy (bake `lightmap-cold` per dirty square; loop a **light-data texture** per
-pixel; test each light's silhouettes **inline**; no shadow map → **unbounded** cold shadow-casters) is the
-durable target and lives in
-[**intent/tiered-lighting.md**](../../components/client/pixijs/intent/tiered-lighting.md) — the owner for
-it; not restated here. The open sub-problem (getting the projected geometry into the fragment shader +
-decimating the silhouette) is [B3](blockers.md#b3). The current build is the interim materialized
-`shadow-cold` map ([completed.md](completed.md), [D-1](deviations.md)), replaced by the sweep in
-[`todo.md`](todo.md) P4.
+This is the old game's proven design + two upgrades: **`shadow-cold` as a 32-bit bitfield** (old game was
+RGB=3) and a dedicated always-fresh **`shadow-rt`**. It **replaces** the stopgaps — the wedge
+[`shadowPass.ts`](../../../client/pixijs/src/game/viewport/shadowPass.ts) and the single global shadow.
+All tiers share `projectCaster` + the scatter shader (`outColor=uChannel`, `max` blend, 4 lanes/map).
 
 ## The load-bearing constraints (from `tiered_lighting.md` — don't relitigate)
 
-_Scope: the channel/bitfield constraints below govern the **dynamic** tier's **rasterized-scatter**
-shadow build. The **cold** tier does a **gather** (inline per-pixel sweep), free of the merge wall (4th
-bullet), so it inherits only **"cold can't subtract."** The channel cap does **not** apply to cold — that
-is exactly why the interim `shadow-cold` map ([D-1](deviations.md)) is only interim._
+_These govern the shared scatter→bitfield engine (cold + warm + rt all use it). The `max`-blend + 4-lane
+`uChannel` constraints are why a scatter map holds 4 lights and the occlusion field is a 32-bit bitfield
+(not RGB=3). "Cold can't subtract" is why cold **bakes** while warm/rt sum at display._
 
 - **A texture channel is 8 bits, a texel is 32.** Lights are quantization-tolerant → rgba8 is enough for
   light *data* (depth's precision bar does not apply). (Applies to both — the cold light-data texture too.)
@@ -87,12 +64,11 @@ is exactly why the interim `shadow-cold` map ([D-1](deviations.md)) is only inte
 cold+warm, dirty bake, toroidal, normal/albedo/surface/zdepth); [`LightRig`](../../../client/pixijs/src/game/lighting/LightRig.ts)
 (point lights, cursor, z/radius); the display mesh + shader; the **outline** sidecars (art-metadata).
 
-**Net-new** — the `cold_lightmap` bake on the rect tiers + the cold **light-data texture** + **inline
-occlusion** in the bake ([F7](forks.md#f7), no shadow map); the `Light { …, castsShadow, tier }`
-unification + rig routing (cold vs dynamic); the dynamic projected-silhouette **scatter** (consuming the
-outlines) → 2 RGBA maps; the `warm_shadowmap` bitfield + **ping-pong** combine (round-robin, deferred
-writeback); the display rework (cold_lightmap + dynamic loop + gate + cross-fade).
-**Stopgaps to retire:** the wedge `shadowPass`, the single global shadow, the flat 32-light live loop.
+**Net-new** — the cold **light-data texture** + the **32-bit `shadow-cold` bitfield** ([F7](forks.md#f7),
+32 casters, bake-time); the dynamic **scatter → `shadow-warm` bitfield** + **ping-pong** writeback
+(round-robin) + the fresh `shadow-hot`; the always-fresh **`shadow-rt`** priority map; the display rework
+(`lightmap_cold` + the 32-warm + 4-rt loop gated by the bitfields + cross-fade).
+**Stopgaps to retire:** the wedge `shadowPass`, the single global shadow, the RGB=3 cold cap.
 
 **Dependencies:** the outline **serve/consume** path (art-metadata P3 — fold `meta.json` into the
 manifest, client decodes it); a source of **static (cold) lights** — DSL point lights in content (the

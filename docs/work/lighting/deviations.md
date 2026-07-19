@@ -5,21 +5,18 @@ _Plan-deviations logged at the moment they happen. "Less churn" is never a reaso
 
 ---
 
-## D-1 · Cold shadows: a materialized `shadow-cold` map (interim), not the inline sweep — 2026-07-19
+## D-1 · Cold shadow is an RGB=3 map; the design is a 32-bit bitfield — 2026-07-19
 
 **Design** ([intent/tiered-lighting.md](../../components/client/pixijs/intent/tiered-lighting.md),
-[F7](forks.md#f7)): cold occlusion is an **inline per-pixel sweep** in the bake — no shadow map,
-unbounded shadow-casting lights.
+[F7](forks.md#f7)): `shadow-cold` is a **32-bit occlusion bitfield** — up to **32** cold shadow-casters
+per rect, read by the bake via `bf_bit`.
 
-**Code:** the built path **materializes** a `shadow-cold` `SquareCache` composite — `bakeColdShadowSquare`
-projects the ≤3 nearest cold lights' silhouettes (`projectCaster`) into R/G/B lanes, and the cold lightmap
-bake samples + subtracts them. Reuses `projectCaster` (the shared cold+dynamic shear) + the existing
-derived-composite machinery, which got cold shadows working end-to-end fast.
+**Code:** the built `bakeColdShadowSquare` projects the ≤3 nearest cold lights into **R/G/B lanes** of a
+`shadow-cold` composite; the bake samples RGB (`i==0?r : i==1?g : i==2?b : 0`), so only **3** cast a shadow.
 
-**The gap:** the 3-lane RGBA cap limits it to **3 shadow-casting cold lights per square** — the exact
-limit the inline sweep exists to remove (a gather has no channel cap; the cap is a *rasterized-scatter*
-constraint, dynamic-only). Interim only: replaced by the inline sweep in [`todo.md`](todo.md) P4, gated on
-[B3](blockers.md#b3). Live-verified working in the meantime.
+**The gap:** RGB=3 vs the design's 32. Interim only — [`todo.md`](todo.md) P2 swaps the RGB sample for the
+bitfield (keeping the `projectCaster`/scatter machinery, now writing bits instead of lanes). Live-verified
+working in the meantime.
 
 ---
 

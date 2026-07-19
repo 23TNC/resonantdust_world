@@ -32,11 +32,13 @@ toroidal/apron/amortization; the light bake is one more `ChannelSpec`-like pass 
 (Warm-tier cards re-evaluate cold lights on their own normal via the cold light *textures* — same split
 as the old game, since the bake uses the ground normal.)
 
-## F4 · Round-robin freshness is one **dynamic pool**, not a warm/hot split (carried)
+## F4 · Warm = one round-robin pool; **rt = a separate always-fresh pool** (revised 2026-07-19)
 
-Per `tiered_lighting.md`: 32 global dynamic lights, 8 get a fresh scattered shadow each frame, the rest
-carry a ≤3-frame-stale bit. "warm"/"hot" are freshness states, not separate tiers or buffers — so the
-port builds ONE dynamic pool + ONE `warm_shadowmap` with a round-robin, not two light sets.
+The old game's warm tier is ONE 32-light pool, round-robin: a few get a fresh scattered shadow each frame,
+the rest carry a stale `shadow-warm` bit. **Revised:** the converged design ADDS a small **`rt` pool** (4
+priority lights) on its own always-fresh `shadow-rt` map — never round-robin, never bumped to the bitfield —
+so the cursor has zero staleness. So: 32 warm (round-robin bitfield) + 4 rt (every-frame map). See
+[`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md).
 
 ## F5 · _(open — decide at P0)_ how `meta.json` reaches the client
 
@@ -55,30 +57,20 @@ trigger (a cold light in range changed) rebakes a rect even when its geometry di
 `displayComposite("cold-lightmap")`; the display shader samples it into the albedo multiply. Least new
 machinery; amortization + wrap-apron for free. Port `rectLightBakeShader.ts`'s math.
 
-## F7 · Cold shadows are tested **inline in the bake**, NOT rasterized to a map (decided — corrects a miss)
+## F7 · Cold shadows = a 32-bit bitfield (lifts the cap 3→32), built by the shared scatter engine (decided)
 
-**This fork should have existed from the start; it didn't, and its absence produced the wrong build.**
-The architecture table + F1 above frame *all* shadows as "rasterize each light's silhouette into a channel
-of an RGBA map." That is right for the **dynamic** tier (per-frame, whole viewport — a per-pixel light
-sweep is too expensive there). It is **wrong for cold**, and treating it as a given (never a fork) is how
-the first cold-shadow build ([D-1](deviations.md)) inherited a materialized `shadow-cold` map with a
-**3-lights-per-square cap** — the exact limit the cold tier exists to avoid.
+**Decision.** `shadow-cold` is a **32-bit-per-pixel occlusion bitfield** (one bit per cold light, 32
+lights in an RGBA8 texel), built **on dirty** by the same `projectCaster`→scatter→writeback engine the
+warm tier uses. The cold bake reads a light's bit (`bf_bit`) and drops its term where occluded. This lifts
+the cold shadow-caster cap from **3 (the old RGB `uColdShadow`) to 32** — every cold light in a rect casts
+a shadow, which is the whole point of the "dense many-lights" cold tier.
 
-**Decision.** The cold bake computes occlusion **inline**, per pixel, per light, inside the accumulation
-(the [Cold strategy](README.md#cold-lighting-strategy--the-inline-sweep) sweep): loop the light-data
-texture, cull by radius, test the light's projected silhouettes against this pixel, add the light if lit.
-**No shadow map is materialized.**
+**Considered + rejected: an inline per-fragment sweep** (loop the light texture per pixel, point-in-polygon
+per light, no map). It would be *green-field GPU R&D* — the old game does **not** do this (its cold path is
+exactly the materialized coverage we're bitfield-ing) — with real per-fragment cost + a hard
+geometry-in-shader problem. The bitfield is **proven** (old game `bitfield.ts` + `rectLightBakeShader`),
+cheap (bake-time only, one texel/pixel), and gives 32 casters. Not worth reinventing.
 
-**Why this is the right call for cold specifically:**
-- **Unbounded lights.** A gather (sum-in-one-invocation) has no merge wall (README constraint 4). Looping
-  a light-data *texture* means the count is limited by texture size + ALU, not by 3–4 RGBA channels.
-- **Cold can afford it.** The bake is amortized — only dirty rects, budgeted per frame — so the per-pixel
-  ×per-light ×per-caster cost the dynamic path can't pay, cold can.
-- **"Dense many-lights" is the cold tier's entire reason to exist.** A 3-light cap defeats the point.
-
-**Cost / open piece.** Getting the geometry into the fragment shader for the inline test (a data texture
-of projected tris/contours) + simplifying the shadow silhouette hard enough for a per-fragment
-point-in-polygon. Pin down against `../resonantdust`'s working version before building — [B3](blockers.md#b3).
-
-**Supersedes** the cold-column of the architecture table's original "CPU 32-bit active map" and the
-`shadow-cold` materialized composite built under D-1 (to be removed in the P4 rework).
+**Supersedes** the RGB=3 `shadow-cold` composite (the interim, [D-1](deviations.md)) and the old
+architecture table's "CPU 32-bit active map." Full design:
+[`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md).

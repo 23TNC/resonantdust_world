@@ -34,5 +34,5 @@ what's actually shipped. Commit + verification per row._
   samples it and subtracts the shadowed light's term (`1 − shadow·SHADOW_STRENGTH`). `OutlineCache.takeResolved`
   → `invalidateAll` re-bakes as outlines land. Fixed a slot-UV double-offset (`vRawUv`). **Verified live** —
   a debug passthrough matched `lightmap-cold` to `shadow-cold` pixel-for-pixel.
-  ⚠ **Interim, capped at 3 lights** — the target is the inline sweep ([`todo.md`](todo.md) P4,
-  [D-1](deviations.md)); this is the thing it replaces.
+  ⚠ **Interim, capped at 3 lights** — the target is the **32-bit `shadow-cold` bitfield** (32 casters,
+  [`todo.md`](todo.md) P2, [F7](forks.md#f7), [D-1](deviations.md)); this RGB=3 path is what it replaces.

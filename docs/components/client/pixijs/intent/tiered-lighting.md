@@ -1,76 +1,105 @@
-# Tiered lighting — the cold inline sweep (durable intent)
+# Tiered lighting — cold/warm/rt with a shared bitfield shadow engine (durable intent)
 
-**Status (2026-07-19).** The target lighting architecture, kept here so it survives the
-[`docs/work/lighting`](../../../../work/lighting/README.md) work docs being archived. The current
-renderer is the 0.1 forward pass (`design/lighting.md`, "Where we are"); this is what it must grow into.
-The **cold strategy below is the load-bearing, easily-lost insight** — it has already been built the
-wrong way once (a materialized, capped shadow map). Do not lose it again.
+**Status (2026-07-19).** The target lighting architecture. This is the old game's proven design
+(`../resonantdust/view/src/game/lighting` + `viewport/rects`) plus **two upgrades**: a 32-bit cold-shadow
+bitfield (lifts the cold shadow-caster cap 3→32) and a dedicated always-fresh priority map. The current
+renderer is the 0.1 forward pass (`design/lighting.md`); this is what it grows into.
 
 ## The frame — dense many-lights, split by update rate
 
-This is a **dense many-lights** world (point lights authored on DSL prims; darkness + light pools is the
-aesthetic — ambient/sun are a faint floor, never the model). The dominating cost is rebuilding **shadows**,
-which is *per-light*, so lights are split by how often they change:
+A **dense many-lights** world (point lights on DSL prims; darkness + light pools is the aesthetic —
+ambient/sun are a faint floor). The dominating cost is rebuilding **shadows** (per-light), so lights are
+split by how often they move, and all three tiers share **one scatter→bitfield shadow engine**.
 
-- **Cold** — static lights (the authored bulk, hundreds). Baked once into `lightmap-cold`, rebaked only
-  when a dirty rect's geometry or an in-range cold light changes. Amortized. **← this doc's subject.**
-- **Dynamic** (warm/hot) — moving lights (torches on pawns, the cursor). A live pool re-evaluated every
-  frame at display, with round-robin scatter-map shadows. See the work docs; not repeated here.
+| tier | # lights | light DATA in | shadow stored in | when computed |
+|---|---|---|---|---|
+| **cold** | 32 **per rect** (unbounded across world) | a **per-rect texture** (2 texels/light) | `shadow-cold` — **32-bit bitfield** | **baked** into `lightmap-cold` (on dirty) |
+| **warm** | 32 **global** | **uniforms** | `shadow-warm` (32-bit bitfield, round-robin) + `shadow-hot` (4 fresh this frame) | **display**, 4 lights refreshed/frame → 8-frame cycle |
+| **rt** | 4 **global** priority | **uniforms** (with warm → 36) | `shadow-rt` (4 lanes, always fresh, never round-robin) | **display**, every frame |
 
-Both must give **per-light occlusion** (each light lit *with its own shadow*, then summed) so a second
-light can't "un-shadow" a spot the first shadowed — the thing the current single global shadow can't do.
+**Display, per pixel:**
+```
+lit = albedo × ( lightmap_cold                                  // hundreds of static lights, BAKED (N·L already in it)
+               + Σ₃₂ warm·falloff·N·L·!occ(warm|hot)            // occ from the 32-bit warm bitfield / fresh shadow-hot lane
+               + Σ₄  rt·falloff·N·L·!occ(rt) )                  // occ from the always-fresh shadow-rt lanes
+```
 
-## Cold strategy — an inline per-pixel sweep, NO shadow map
+## Cold — baked, 32 lights/rect, 32-bit shadow bitfield
 
-The cold lightmap is baked by a **fragment shader over each dirty square**. Per pixel:
+Static lights (the authored bulk, hundreds). Baked into `lightmap-cold`, a derived `SquareCache`
+composite, rebaked only when a rect's geometry or an in-range cold light changes.
 
-1. Read this square's baked **normal** → `N`; seed the sum with **ambient**.
-2. **Loop the cold lights** from a **light-data texture** (rgba8, N texels/light: world `xy`, height `z`,
-   colour, intensity, radius). It is a *texture*, not a uniform array — that is what makes the light count
-   **unbounded**.
-3. Per light: **cull by radius** (cheap distance test; most fail). For a survivor compute `falloff` +
-   half-Lambert `N·L`.
-4. **Test occlusion inline** — right here, decide whether this pixel can see this light: do any of the
-   light's nearby casters' projected billboard silhouettes (the earcut `outline` sidecars, sheared through
-   the light) cover this pixel? If shadowed, the light adds nothing; else add `colour·intensity·N·L·falloff`.
-5. Write the sum (opaque) into `lightmap-cold`; the display reads that one texture.
+- **Lights come from a per-rect texture**, not uniforms — each rect's nearest 32 differ, so a per-rect
+  texture (2 texels/light: `xy`,`z`,`radius` then colour,brightness) avoids re-uploading 32 uniforms per
+  rect. (The old game's `coldDataTex`.)
+- **Shadows are a 32-bit `shadow-cold` bitfield** (built on dirty via the shared scatter engine — 32
+  lights = 8 scatter passes at 4 lanes each, written into the bitfield). The bake reads a light's bit and
+  drops its term where occluded. **This lifts the cold shadow-caster cap from 3 to 32** — every cold light
+  in a rect casts a shadow, the thing the old game's 3-lane `uColdShadow` could not.
+- **N·L is baked in** — the bake samples the normal composite, so `albedo × lightmap_cold` is correct for
+  ground + static things with no display-time light loop.
+- `shadow-cold` is a **bake-time input only** — consumed when `lightmap-cold` re-bakes; the display never
+  reads it. Cold's 32-light shadows cost nothing per frame, only on dirty.
 
-**Why it must be this way — and why NOT a shadow map:**
+## Warm — display-summed, round-robin bitfield
 
-- **Unbounded shadow-casting lights.** A *gather* (summing lights in one shader invocation) has no
-  merge wall. A materialized shadow map does: the GPU can't merge per-light masks by blend, so each
-  casting light needs its own texture channel → a hard **3–4 lights** cap. That cap is the entire failure
-  mode — it kills "dense many-lights," which is the only reason the cold tier exists.
-- **Cold can afford the sweep.** The bake is amortized (only dirty rects, a few per frame), so the
-  per-pixel × per-light × per-caster cost the *dynamic* (whole-viewport, every-frame) path can't pay,
-  cold can. This is exactly why the two tiers build shadows **oppositely**: dynamic rasterizes to a map,
-  cold sweeps inline.
-- **Rect boundaries are free.** Baking each square in world space over all casters within a light's reach
-  (not per-rect clipping) means a caster outside the square still throws its shadow into the square.
+32 global dynamic lights (movers). Evaluated **at display** every frame (they move, so nothing bakes).
 
-**The one hard sub-problem** (why it isn't built yet): the inline test needs each light's projected
-caster geometry addressable *per fragment* — encode the radius-culled projected tris/contours into a
-**data texture** the bake indexes, and decimate the shadow silhouette far below the ~180-pt render
-outline (too heavy for a per-fragment point-in-polygon). Match `../resonantdust`'s working inline sweep
-before building. Tracked in [work `blockers.md` B3](../../../../work/lighting/blockers.md).
+- **Light data in uniforms** (global — the same 32 everywhere).
+- **`shadow-warm`** is a 32-bit-per-pixel occlusion bitfield (bit i = light i occluded). Refreshed
+  **round-robin**: each frame the shared scatter engine rasterizes **4 fresh** lights into `shadow-hot`
+  (4 lanes), then a **ping-pong writeback** sets those 4 bits in `shadow-warm`. 4/frame → the whole 32
+  refresh in **8 frames** (~130ms); a warm light's shadow is at most that stale.
+- Display: the **4 fresh** lights read their `shadow-hot` lane directly (zero-lag); the other **28** read
+  their `shadow-warm` bit (a `bf_bit` float-mod extract, ES-1.00 safe).
+
+## RT — display-summed, always fresh (zero staleness)
+
+4 highest-priority lights (the cursor, key torches). Same display path as warm, but their shadows go into
+**`shadow-rt`** (4 lanes) **rasterized every frame** — never round-robin, never written to a bitfield. So
+they have **zero staleness**. Their data rides the same uniform array as warm (36 total).
+
+## The shared scatter→bitfield engine
+
+One primitive serves cold, warm, and rt:
+
+- **`projectCaster`** shears a caster's earcut silhouette (the `outline` sidecar) through a light onto the
+  ground (`h/(lightZ−h)`).
+- **`scatterShader`** rasterizes it into one **lane** of an RGBA map: `outColor = uChannel` (a `1` in one
+  lane — bypasses the tint premultiply that couples RGB↔A), **`max` blend** (coverage clamps at 1). The
+  `uChannel` trick gives **4 clean lanes/map**.
+- **Ping-pong writeback** packs fresh lanes into the 32-bit bitfield (`blendMode "none"` verbatim RGBA so
+  alpha survives).
+
+Warm drives it round-robin (4/frame); cold drives it on-dirty (8 passes to fill 32 bits); rt drives it
+every-frame into its own map. **Same code, different light sets + triggers.**
+
+## RTs + budget
+
+`lightmap-cold`, `shadow-cold` (×2 ping-pong), `shadow-warm` (×2 ping-pong), `shadow-hot`, `shadow-rt`,
++ the per-rect **cold light-data texture**. Uniform lights: 32 warm + 4 rt = **36** (72 vec4 — well within
+limits). All these RTs are RGBA8, `nearest`, and any verbatim/bitfield write is non-premultiplied.
+
+## What's the old game vs net-new
+
+- **From the old game (proven):** the G-buffer rect tiers, cold `lightmap` bake, `projectCaster`, the
+  scatter shader (`uChannel`/4-lane/max), the 32-bit warm bitfield + ping-pong, the cold light-data
+  texture, the display bitfield gate.
+- **Net-new (the two upgrades):** `shadow-cold` as a **32-bit bitfield** (old game was RGB=3);
+  **`shadow-rt`** as a dedicated always-fresh priority map (old game left the cursor in the round-robin).
 
 ## Anti-goals (the traps)
 
-- **Do NOT materialize a cold shadow map** (a `shadow-cold` RGBA composite with per-light lanes). It
-  reintroduces the 3-light cap. An interim build did exactly this — see
-  [work `forks.md` F7](../../../../work/lighting/forks.md) + [`deviations.md` D-1](../../../../work/lighting/deviations.md);
-  it stands only until the inline sweep replaces it.
-- **Do NOT put cold lights in a uniform array.** A fixed `uLightData[N]` caps the count; the light-data
-  texture is the point.
-- **Do NOT reuse the dynamic tier's channel/bitfield constraints for cold.** Those govern the *rasterized
-  scatter* path; cold is a gather and inherits only "a baked sum can't subtract one term" (so a leaving
-  cold light makes its rect light-dirty → rebuild).
+- **Do NOT bake warm/rt lights.** They move; baking forces a re-accumulation you can't cheaply undo
+  (a baked sum can't subtract one term). Only **cold** bakes — it doesn't move.
+- **Do NOT cap cold shadows at 3 (RGB lanes).** That's the old `uColdShadow`; use the 32-bit bitfield.
+- **Do NOT use `add` blend for the scatter lanes** — `max`, so overlapping caster tris clamp at 1.
+- **Do NOT put cold lights in global uniforms** — they're per-rect; use the per-rect texture.
 
 ## References
 
-- Work (in-flight, will archive): [`docs/work/lighting/`](../../../../work/lighting/README.md) — the
-  phased port + the interim materialized build + open blockers.
-- Current renderer + design directions: [`design/lighting.md`](../design/lighting.md).
-- Prior working design: `../resonantdust/docs/tiered_lighting.md` + `../resonantdust/view/src/game/lighting`.
-  (Note: that doc frames shadows as materialized scatter/bitfield — right for **dynamic**, not for
-  **cold**; the cold inline sweep is the correction this doc preserves.)
+- Work (in-flight): [`docs/work/lighting/`](../../../../work/lighting/README.md).
+- Current renderer: [`design/lighting.md`](../design/lighting.md).
+- Prior working design: `../resonantdust/view/src/game/lighting` (`bitfield.ts`, `shadowMaskShader.ts`,
+  `rectLightBakeShader.ts`, `coldLightTex.ts`, `rectDisplayShader.ts`, `RectComposite.ts`) +
+  `../resonantdust/docs/tiered_lighting.md`.
