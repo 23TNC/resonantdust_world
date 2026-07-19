@@ -50,42 +50,21 @@ single global shadow in the display.
 
 ## Cold lighting strategy — the inline sweep
 
-The cold tier is the "**dense many-lights**" tier: a scene can hold hundreds of static point lights
-(torches, windows, embers). They're static, so their whole contribution is **baked once** into
-`lightmap-cold` (a derived `SquareCache` composite, [F6](forks.md#f6)) and only rebaked when a square is
-geometry- or light-dirty. The display then reads that one texture.
-
-The bake is a **fragment shader over the dirty square**. Per pixel:
-
-1. Read this square's baked **normal** (from the normal composite) → `N`. Seed the sum with **ambient**.
-2. **Loop the cold lights** — read from a **light-data texture** (not uniforms), `N` texels/light packing
-   world `xy` + height `z`, color, intensity, radius. Looping a texture (not a fixed uniform array) is
-   what makes the light count *unbounded*.
-3. Per light: **cull by radius** (distance in tiles vs the light's radius — most lights fail this cheaply).
-   For a survivor, compute `falloff` + half-Lambert `N·L`.
-4. **Inline occlusion** — decide right here whether this pixel can *see* the light: do any of the light's
-   nearby casters' projected billboard silhouettes cover this pixel? If shadowed, this light adds nothing;
-   else add `color · intensity · N·L · falloff` to the sum.
-5. Write `sum` (opaque) into `lightmap-cold`.
-
-**No shadow map is ever written.** Occlusion is computed *inside* the accumulation, per light, so the
-number of shadow-casting cold lights is bounded only by the light-data texture + per-pixel ALU — **not by
-texture channels**. This is the crux: it's why the cold tier can be "dense," and why it does **not**
-inherit the dynamic path's 3–4-lights-per-map cap (see [F7](forks.md#f7)).
-
-**Open sub-problem — how the silhouettes reach the fragment shader.** The inline test needs each light's
-projected caster geometry addressable per pixel. Candidate: encode the (few, radius-culled) projected
-triangles/contours per light into a **data texture** the bake indexes, and simplify the shadow silhouette
-far more aggressively than the render outline (the ~180-pt contour is too heavy for a per-fragment
-point-in-polygon). This is the piece to pin down against `../resonantdust`'s working implementation
-before building — tracked in [`todo.md`](todo.md) P4 and [B3](blockers.md#b3).
+The cold tier's full strategy (bake `lightmap-cold` per dirty square; loop a **light-data texture** per
+pixel; test each light's silhouettes **inline**; no shadow map → **unbounded** cold shadow-casters) is the
+durable target and lives in
+[**intent/tiered-lighting.md**](../../components/client/pixijs/intent/tiered-lighting.md) — the owner for
+it; not restated here. The open sub-problem (getting the projected geometry into the fragment shader +
+decimating the silhouette) is [B3](blockers.md#b3). The current build is the interim materialized
+`shadow-cold` map ([completed.md](completed.md), [D-1](deviations.md)), replaced by the sweep in
+[`todo.md`](todo.md) P4.
 
 ## The load-bearing constraints (from `tiered_lighting.md` — don't relitigate)
 
 _Scope: the channel/bitfield constraints below govern the **dynamic** tier's **rasterized-scatter**
-shadow build. The **cold** tier does a **gather** (inline per-pixel sweep), which the 4th bullet says is
-free of the merge wall — so cold inherits only **"cold can't subtract."** The channel cap does **not**
-apply to cold; that was the [D-1](deviations.md) mistake._
+shadow build. The **cold** tier does a **gather** (inline per-pixel sweep), free of the merge wall (4th
+bullet), so it inherits only **"cold can't subtract."** The channel cap does **not** apply to cold — that
+is exactly why the interim `shadow-cold` map ([D-1](deviations.md)) is only interim._
 
 - **A texture channel is 8 bits, a texel is 32.** Lights are quantization-tolerant → rgba8 is enough for
   light *data* (depth's precision bar does not apply). (Applies to both — the cold light-data texture too.)

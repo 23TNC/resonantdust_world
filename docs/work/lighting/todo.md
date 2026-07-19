@@ -1,98 +1,76 @@
 # Todo — lighting
 
-_Phased so the renderer keeps working after each step (the current single-pass stopgap is replaced
-piece by piece, not big-bang). Items move to `completed.md` as they land + verify. Design:
-[`README`](README.md) · decisions [`forks.md`](forks.md) · deps [`blockers.md`](blockers.md)._
+_Phased so the renderer keeps working after each step (the single-pass stopgap is replaced piece by
+piece). Items move to [`completed.md`](completed.md) as they land + verify. Design: [`README`](README.md)
+· strategy [`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md) ·
+decisions [`forks.md`](forks.md) · deps [`blockers.md`](blockers.md)._
+
+_Shipped so far (in [`completed.md`](completed.md)): P0 tier routing, B1 outline serve/consume, P1 cold
+lightmap, P3 scatter-shader foundation, P4 **interim** materialized `shadow-cold`._
 
 ---
 
-## P0 · Foundation (plumbing — no visual change)
+## P1 follow-ups · cold lightmap refinements
 
-- [ ] **`Light` unification** — one struct `{x, y, z, radius, r, g, b, brightness, castsShadow, tier}`
-      (replaces the current ad-hoc `PointLight`); `LightRig` routes each to **cold** (static, per-rect
-      bake) vs the **dynamic** pool (moving / real-time) by `tier`.
-- [ ] **Serve + consume the outline** (art-metadata P3): fold `meta.json` into the content manifest
-      (like `atlas.json`); client decodes `outline` (Sidecar → per-def polygons + earcut tris) +
-      `channel_tints`. Gate P3 (scatter) on this.
-- [ ] Bit helpers: float-mod byte/bit extraction (GLSL ES 1.00, `mod(floor(byte/exp2(b)),2.0)`) shared
-      by the display + combine shaders.
-
-## P1 · Cold lightmap (baked static light, no shadow yet) — ✅ core DONE + live-verified
-
-- [x] **`cold_lightmap` bake** — a **derived** `SquareCache` composite (F6): `bakeLightmapSquare` samples
-      each just-baked square's NORMAL slot + sums the cold lights into `lightmap-cold`
-      (`Σ cold·brightness·max(N·L,0)·falloff²`), world-space via `uRectWorld`, reusing the toroidal
-      scratch/apron/dirty machinery. `LightingBakeShader` + `LightRig.packCold` + `enableLightBake`.
-- [x] Display samples `lightmap-cold` and adds it to the light sum (`+ cold`). `?coldlight` seeds a debug
-      static light. **Verified live** — `?ambient=0.3&coldlight` renders a baked amortized orange pool on
-      the ground (soft falloff, world-space, trees on top), console clean.
-- [ ] _(follow-up)_ **cold `data`/`color` light textures** so **cards** (things) re-evaluate cold lights
-      on their OWN normal (the bake uses the ground normal). Port `coldLightTex.ts`.
-- [ ] _(follow-up)_ a proper **`lightDirty`** trigger (rebake a rect when a cold light in range changes
-      even if geometry didn't); today a cold-light change relies on a geometry rebake / `invalidateAll`.
+- [ ] **Cold `data`/`color` light textures** so **cards** (things) re-evaluate cold lights on their OWN
+      normal (the bake uses the ground normal). Port `coldLightTex.ts`.
+- [ ] A proper **`lightDirty`** trigger — rebake a rect when an in-range cold light changes even if
+      geometry didn't; today it relies on a geometry rebake / `invalidateAll`.
 
 ## P2 · Dynamic pool (real-time, gate stubbed all-lit)
 
 - [ ] Restructure the current 32-light live loop into the **dynamic pool**: 32 lights in uniforms
-      (`32 × 2 vec4`), structured as **4 channels × 8** to dodge ES-1.00 dynamic indexing; per light
-      `falloff·N·L`, gated by `gate(i)` (stub `gate=1`). Keep it visually identical to today, just
-      restructured for the bitfield gate P3 adds.
+      (`32 × 2 vec4`), structured **4 channels × 8** to dodge ES-1.00 dynamic indexing; per light
+      `falloff·N·L`, gated by `gate(i)` (stub `gate=1`). Visually identical to today — just restructured
+      for the bitfield gate P3 adds.
 
-## P3 · Projected-silhouette shadows (the per-light win) — retire the stopgaps
+## P3 · Projected-silhouette shadows, dynamic (the per-light win) — retire the stopgaps
 
-- [x] **Scatter shader + geometry** (`37f6cc8`) — `scatterShader.ts` ported: the lane shader
-      (`outColor = uChannel`, `max`-blend), `makeShadowGeometry`, + the tuning constants
-      (`SHADOW_MAPS`/caps/height-falloff/`channelForLight`). B1 (`OutlineCache`) feeds it.
-- [ ] **`ScatterPass` driving** — the 2 RGBA maps + per-light render: adapt the Viewport's
-      `buildCasters` to yield `{feetX, groundY, footNY, h, w, left, stem}` + `OutlineCache.get(stem)`;
-      per shadow-casting light (≤8), gather its casters (within radius), **port `projectCaster`** (the
-      billboard shear per outline vertex, emitting the earcut tris into the geo buffer), render each
-      light's casters into its lane. **⚠ the `projectCaster` shear constants were tuned to the OLD
-      coordinate space — re-tune in the browser (`/showRT` the scatter maps).**
+- [ ] Bit helpers: float-mod byte/bit extraction (GLSL ES 1.00, `mod(floor(byte/exp2(b)),2.0)`) shared by
+      the display + combine shaders (the `warm_shadowmap` gate reads these).
+- [ ] **`ScatterPass` driving** — the 2 RGBA maps + per-light render: adapt `Viewport.buildCasters` to
+      yield `{feetX, groundY, footNY, h, w, left, stem}` + `OutlineCache.get(stem)`; per shadow-casting
+      light (≤8), gather its casters (within radius), run `projectCaster` into its lane. **⚠ the
+      `projectCaster` shear constants were tuned to the OLD coord space — re-tune in the browser
+      (`/showRT` the scatter maps).**
 - [ ] **`warm_shadowmap`** — 32-bit/pixel, world-space, **double-buffered ping-pong**: each frame read
-      `prev warm + the 8 fresh scatter channels`, write `next warm` with those 8 bits updated
-      (round-robin 32/8 = 4-frame cycle; the deferred writeback = "commit last frame's slice at the top
-      of this one"). Port `bitfield.ts` combine.
+      `prev warm + the 8 fresh scatter channels`, write `next warm` with those 8 bits updated (round-robin
+      32/8 = 4-frame cycle; deferred writeback = "commit last frame's slice at the top of this one").
 - [ ] Display `gate(i)` = the warm bit, with a **cross-fade** for the 8 fresh (`0.5·(warmBit+freshBit)`)
       so a shadow's catch-up is a 1-frame fade, not a snap.
-- [ ] **Retire** the wedge [`shadowPass.ts`](../../../client/pixijs/src/game/viewport/shadowPass.ts) +
-      the single global-shadow multiply in the display. Verify multi-light: two shadow-casters, B lighting
-      A's shadow does NOT un-shadow it.
+- [ ] **Retire** the wedge [`shadowPass.ts`](../../../client/pixijs/src/game/viewport/shadowPass.ts) + the
+      single global-shadow multiply in the display. Verify multi-light: two shadow-casters, B lighting A's
+      shadow does NOT un-shadow it. (Also reconcile the `nsProject` axis — [D-2](deviations.md).)
 
-## P4 · Cold shadows — inline occlusion in the bake (NO shadow map)
+## P4 · Cold shadows — inline occlusion in the bake, replacing the interim map
 
-**Target = the [Cold strategy](README.md#cold-lighting-strategy--the-inline-sweep) inline sweep** ([F7](forks.md#f7)):
-the bake tests each light's projected silhouettes per pixel and only adds the light where unshadowed —
-no materialized map, **unlimited** cold shadow-casters. Gated on [B3](blockers.md#b3) (the inline
-data-texture + point-in-shape technique, to match `../resonantdust`).
+**Target = the inline sweep** ([intent/tiered-lighting.md](../../components/client/pixijs/intent/tiered-lighting.md),
+[F7](forks.md#f7)): the bake tests each light's projected silhouettes per pixel and only adds the light
+where unshadowed — no materialized map, **unbounded** cold shadow-casters. Replaces the interim
+`shadow-cold` composite ([completed.md](completed.md), [D-1](deviations.md)). Gated on [B3](blockers.md#b3)
+(the inline data-texture + point-in-shape technique, matched to `../resonantdust`).
 
 - [ ] **Cold lights → a light-data texture** (rgba8, N texels/light: `xy`,`z`,color,intensity,radius),
       replacing the `uLightData[32]` uniform array in `lightingBakeShader`. Unbounded loop from the texture.
-- [ ] **Projected-caster geometry into a data texture** the bake indexes per light (radius-culled), +
-      a hard-decimated shadow silhouette (≪ the ~180-pt render outline) — see [B3](blockers.md#b3).
+- [ ] **Projected-caster geometry into a data texture** the bake indexes per light (radius-culled), + a
+      hard-decimated shadow silhouette (≪ the ~180-pt render outline) — see [B3](blockers.md#b3).
 - [ ] **Inline occlusion in the bake sum** — per pixel, per in-range light: point-in-silhouette test;
-      `sum += lit ? color·intensity·N·L·falloff : 0`. Retire the `shadow-cold` sample.
+      `sum += lit ? color·intensity·N·L·falloff : 0`.
 - [ ] **Remove the interim materialized path** — `shadow-cold` composite + `bakeColdShadowSquare` +
-      `enableColdShadow`/`setColdShadowLights` + `LightRig.coldShadowLights()` + the `/showRT` slot.
+      `enableColdShadow`/`setColdShadowLights` + `LightRig.coldShadowLights()` + the `/showRT` slot +
+      `uColdShadow` in the bake shader.
 - [ ] Verify live: >3 cold shadow-casters on one square ALL cast (the cap is gone); shadows track lights.
-
-### Interim (built, capped — to be replaced above) — [D-1](deviations.md)
-
-A materialized `shadow-cold` composite currently stands in: `projectCaster` bakes caster silhouettes into
-R/G/B lanes (≤3 cold shadow-casters/square), sampled by the cold lightmap bake. Live-verified (a debug
-passthrough matched `lightmap-cold` to `shadow-cold` pixel-for-pixel). It works but carries the **3-light
-cap** the inline rework removes; it stays only until B3 is cleared.
 
 ## P5 · Content + cleanup
 
-- [ ] **DSL static lights** — author cold point lights in content (`content/…`), the source the cold
-      tier exists for; classify light→tier at worldgen/load. (The "dense many-lights" payoff.)
-- [ ] Migrate the **cursor** light into the dynamic pool (real-time slot); delete the flat live-loop
-      stopgap + any dead single-shadow plumbing.
+- [ ] **DSL static lights** — author cold point lights in content, classify light→tier at worldgen/load
+      (the "dense many-lights" payoff; [B2](blockers.md#b2)).
+- [ ] Migrate the **cursor** light into the dynamic pool; delete the flat live-loop stopgap + dead
+      single-shadow plumbing.
 - [ ] Graduate the [`README`](README.md) architecture into a `client/pixijs` **design** doc.
 
 ---
 
 **Done when:** the display is `albedo × (cold_lightmap + Σ dynamic·falloff·N·L·gate)` — many static
-lights amortized in cold, 32 dynamic with per-light projected-silhouette shadows (round-robin + fade),
-no global-mask cross-contamination, the wedge/stopgap paths deleted, browser-verified.
+lights amortized in cold (inline shadows, no cap), 32 dynamic with per-light projected-silhouette shadows
+(round-robin + fade), no global-mask cross-contamination, the wedge/stopgap paths deleted, browser-verified.
