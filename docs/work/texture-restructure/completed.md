@@ -63,3 +63,19 @@ authoritative for what's actually shipped. Timestamp each row with the date it l
   `bin/art manifest` variant/layer counters (`_id_variant_pairs`/`_layer_count`) still walk the old
   `<id>.<dir>.<layer>` pose dirs — they only regenerate `content/visual/manifest/*.rd`, which nothing
   renders off (the edge builds its own runtime manifest). Reworking that to the new model is the last piece.
+
+- **2026-07-19** · **R2 — linked → biome-tile fold + rock revert (user-directed).** Two moves:
+  - **Reverted the `rock` thing to a gray-square primitive** (`content/visual/things.rd`): dropped the
+    `"linked/wall.smooth" &thing.texture set` stand-in (it had borrowed the wall material because it was
+    the only mastered linked kind) — now `"white"` + a gray tint. Rock was a placeholder; the wall
+    material belongs to walls, not rock.
+  - **Folded `linked/` → `biome-tile/`** (`bin/lib/migrate_fold.py`, 48 files): material→kind, form→variant,
+    biome→`default` (`linked/<form>.<material>/…` → `biome-tile/default/<material>/<form>/…`). `wall.smooth`'s
+    held-whole atlas folded cleanly (`biome-tile/default/smooth/wall/albedo.l.0.png` + `atlas.json`); the
+    10 un-mastered kinds (superseded 16-split `wall.blueprint`, raw sources) were **moved, not dropped** —
+    preserved under their new home for a later `bin/art` re-master. `linked/` removed.
+  - **Verified** (edge redeploy + browser): no wall/linked stems in the manifest (folded away), scene
+    renders, rocks now draw as gray squares, no console errors.
+  **Remaining (tied to wall placement, not this stream):** the edge/DSL/client resolution of biome-tile
+  **named-variant** linked stems + re-mastering the un-mastered kinds — both only matter once the
+  biome-tile object model actually places walls/fences/rocks as tiles.

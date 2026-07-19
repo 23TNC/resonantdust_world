@@ -12,7 +12,7 @@ session is driving — inferred, not a field here); see [`docs-authority`](docs-
 | Stream | Status | What it is |
 |---|---|---|
 | [docs-authority](docs-authority/README.md) | open | This system: front-door index + `docs-check`/`work-check` audits + the enforcement hooks. |
-| [texture-restructure](texture-restructure/README.md) | done | Reshaped the on-disk texture tree to the new leaf for every existing kind; edge/DSL/bin/art cut over; browser-verified. Two items deferred (biome-tile fold — object-model-coupled; `bin/art manifest` rework — non-blocking). |
+| [texture-restructure](texture-restructure/README.md) | done | Reshaped the texture tree to the new leaf for every kind; edge/DSL/bin/art cut over; `linked/` folded into `biome-tile/`; browser-verified. Remaining is tied to the biome-tile object model (placing walls as tiles) + a non-blocking `bin/art manifest` rework. |
 | [shard-tables](shard-tables/README.md) | open | The `*_tables!` generalization: fold every composing shard into generic table macros; all writes via events. P1–P3 live, P4 pending. |
 | [lighting](lighting/README.md) | open | Port the old game's tiered cold/dynamic lighting onto the new G-buffer; depends on art-metadata outlines. |
 | [art-metadata](art-metadata/README.md) | open | Per-variant `meta.json` sidecar from `bin/art` (channel tints + shadow outline). P1–P2 done. |

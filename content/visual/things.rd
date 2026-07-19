@@ -81,15 +81,13 @@
         :visual>
             @on_create>
                 "thing ^prim call &thing export
-                ; A real texture stem: the client appends a direction (`l` for a
-                ; linked-category object) and the gate resolves it to a master albedo
-                ; (master/linked/wall.smooth/1.l.0.1.albedo.png) and derives the
-                ; preview. Uses wall.smooth because it's mastered (rock.smooth is
-                ; still a raw sprite — `bin/art remaster` masters new kinds). tint
-                ; stays white so it doesn't recolour the art; geoColor is the flat
-                ; silhouette shown until the sprite streams in.
-                "linked/wall.smooth &thing.texture set
-                #ffffff &thing.tint set
+                ; Placeholder: a gray square primitive (the `white` 1×1 tinted gray),
+                ; NOT the wall material. `rock` was a stand-in that borrowed
+                ; `linked/wall.smooth` because it was the only mastered linked kind;
+                ; the wall materials now live under `biome-tile/` (their real home) and
+                ; `rock` is intentionally just a gray square until real rock art exists.
+                "white &thing.texture set
+                #7a7a7a &thing.tint set
                 #7a7a7a &thing.geoColor set
                 0.5 &thing.size set
                 1.0 &thing.anchor.y set

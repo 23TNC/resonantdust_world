@@ -4,28 +4,28 @@ _Items move to [`completed.md`](completed.md) as they land + verify. Design: [`R
 · decisions [`forks.md`](forks.md) · issues [`issues.md`](issues.md) · blockers [`blockers.md`](blockers.md)._
 
 > **Status (2026-07-19).** **The migration is functionally complete.** The leaf reshape is done for
-> EVERY existing texture kind (biome-thing, pawn/animal, pawn/human body-types folded to
-> `<kind>.<subkind>`, `linked/`); edge readers + DSL stems flipped; **`bin/art`'s read/write core cut
-> over** (R3); browser-verified (conifer/flora render, linked atlas decodes, folded human kinds serve
-> 200). See [`completed.md`](completed.md). **Two items remain, both deliberately deferred** (neither has
-> a current render target):
+> EVERY existing texture kind; edge readers + DSL stems flipped; **`bin/art`'s read/write core cut over**
+> (R3); **`linked/` folded into `biome-tile/`** (R2) + the `rock` stand-in reverted to a gray primitive;
+> browser-verified throughout. See [`completed.md`](completed.md). What remains is tied to the **biome-tile
+> object model** (placing walls/fences/rocks as tiles) — a separate feature, not this stream — plus a
+> non-blocking `bin/art manifest` rework.
 
 ---
 
-## R2 · The full biome-tile fold  _(rename `linked/` → `biome-tile/`; deferred — object-model-coupled)_
+## R2-serving · biome-tile named-variant linked stems + re-master  _(gated on wall placement)_
 
-The linked **leaf reshape** is done (`linked/<kind>/<variant>/<map>.<dir>.<part>` + `atlas.json`).
-The **fold** — renaming to `biome-tile/<biome>/<material>/<form>/` (material→kind, form→variant,
-`kind_id ≥ 0x800`) — is **not**, and is premature: walls/fences/rocks aren't worldgen-placed, so nothing
-renders differently. Do this **when the biome-tile object model / wall placement lands** ([F3](forks.md)).
+The **texture fold is done** (`biome-tile/default/<material>/<form>/`; `wall.smooth` a clean held-whole
+atlas — see [`completed.md`](completed.md)). What's left only matters once the object model actually
+**places** walls/fences/rocks as biome-tile tiles (`kind_id ≥ 0x800`) — there is no consumer today
+(the `rock` thing was reverted to a primitive):
 
 - [ ] **P0 registry** — `textures/<type>/<subtype>/meta.json`: `form → variant_id` (F2), tile/linked
-      classification (`0x800`), sheet-split info. **Not** the `kind_id` authority (that's the data DSL —
-      [F5](forks.md)). Author for `biome-tile/default` + the linked materials.
-- [ ] `texpath` biome-tile fold (given a linked source, emit `biome-tile/<biome>/<material>/<form>/…`);
-      edge + DSL + client resolve the **named-variant** biome-tile linked stems.
-- [ ] **Re-master** the kinds not yet held-whole atlases: `wall.blueprint` (still 16-split), the empty
-      `fence.*`/`rock.*`, and the double-encoded `wall.smooth` `1.l.0.l.0` source masters.
+      classification (`0x800`). **Not** the `kind_id` authority (that's the data DSL — [F5](forks.md)).
+- [ ] Edge/DSL/client resolve the **named-variant** biome-tile linked stems (variant = the form, e.g.
+      `wall`) — `register_kind`/`master_map_rel` currently assume canonical variant `1`.
+- [ ] **Re-master** the un-mastered kinds to held-whole atlases: `wall.blueprint` (superseded 16-split),
+      the raw-source `fence.*`/`rock.*`/`wall.{brick,plank}`, and the double-encoded `wall.smooth` source
+      masters. All preserved under `biome-tile/default/…` awaiting `bin/art` re-master.
 
 ## R3-manifest · `bin/art manifest` variant/layer counters  _(non-blocking; the last R3 piece)_
 
