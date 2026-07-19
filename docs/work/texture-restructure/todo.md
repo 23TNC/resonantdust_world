@@ -25,7 +25,6 @@ _All items 2026-07-19._
 - [ ] **Biome-tile fold** in `texpath` — given a linked source (`<form>.<material>`), emit
       `biome-tile/<biome>/<material>/<form>/…` (material→kind, form→variant via the **P0 registry**).
       Sequenced after P0 (needs the registry to resolve form→variant).
-- [ ] **Mirror** the new leaf composition in `marigold/delight.py` (separate venv, re-implements texpath).
 
 ## P2 · `bin/art` write + manifest sites
 

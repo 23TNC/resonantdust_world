@@ -34,11 +34,23 @@ import sys
 import time
 from pathlib import Path
 
-# A variant leaf's diffuse member in the folder-per-variant layout — the shape's
-# single source of truth is docs/texture-paths.md. This module re-implements it
-# natively because the marigold venv can't import bin/lib/texpath. normals.py /
-# depth.py / normal_depth.py all route through find_diffuse + out_path here.
-DIFFUSE_FILE = "diffuse.png"
+# A variant leaf's diffuse member in the new leaf layout — the shape's single source
+# of truth is docs/components/dev/textures/design/texture-layout/. This module
+# re-implements it natively (the marigold venv can't import bin/lib/texpath). The
+# diffuse is a directional map `diffuse.<dir>.<part>.png` in a <variant>/ leaf; each
+# emitted map is a `<target>.<dir>.<part>.png` sibling at the same dir/part.
+# normals.py / depth.py / normal_depth.py all route through find_diffuse + out_path.
+
+
+def _diffuse_dir_part(diffuse) -> tuple[str, str]:
+    """(<dir>, <part>) parsed from a `diffuse.<dir>.<part>.png` leaf filename."""
+    parts = diffuse.name.split(".")   # [diffuse, dir, part, png]
+    return (parts[1], parts[2]) if len(parts) == 4 else ("s", "0")
+
+
+def _is_diffuse(name: str) -> bool:
+    """True for a `diffuse.<dir>.<part>.png` directional leaf file."""
+    return name.startswith("diffuse.") and name.endswith(".png") and name.count(".") == 3
 DEFAULT_MODEL = "prs-eth/marigold-iid-lighting-v1-1"
 # User-facing emit targets → the "lighting" checkpoint's visualize_intrinsics keys.
 # The IID by-products are prefixed `albedo_` so they (a) read as products of the
@@ -53,12 +65,12 @@ EMIT_TARGETS = {
 
 
 def find_diffuse(paths: list[Path]) -> list[Path]:
-    """Every variant-leaf diffuse.png under the given files/dirs (sorted, de-duped)."""
+    """Every variant-leaf `diffuse.<dir>.<part>.png` under the given files/dirs (sorted, de-duped)."""
     out: list[Path] = []
     for p in paths:
         if p.is_dir():
-            out.extend(sorted(p.rglob(DIFFUSE_FILE)))
-        elif p.name == DIFFUSE_FILE:
+            out.extend(sorted(q for q in p.rglob("diffuse.*.png") if _is_diffuse(q.name)))
+        elif _is_diffuse(p.name):
             out.append(p)
         else:
             print(f"marigold: skipping non-diffuse path {p}", file=sys.stderr)
@@ -74,17 +86,16 @@ def find_diffuse(paths: list[Path]) -> list[Path]:
 
 
 def out_path(diffuse: Path, target: str, out_dir: Path | None) -> Path:
-    """The `<target>.png` sibling in the diffuse's variant leaf, or a collision-free
-    flat name under out_dir if given."""
+    """The `<target>.<dir>.<part>.png` sibling in the diffuse's variant leaf (same dir/part),
+    or a collision-free flat name under out_dir if given."""
+    d, part = _diffuse_dir_part(diffuse)
     if out_dir is None:
-        return diffuse.parent / f"{target}.png"
-    # Flat mode: <kind>.<pose>.<variant>.<target>.png from the leaf's last three path
-    # components (…/<kind>/<id>.<dir>.<layer>/<variant>/diffuse.png) so spikes over
-    # many objects/variants don't collide.
+        return diffuse.parent / f"{target}.{d}.{part}.png"
+    # Flat mode: <kind>.<variant>.<target>.<dir>.<part>.png from the new leaf
+    # …/<kind>/<variant>/diffuse.<dir>.<part>.png so spikes over many variants don't collide.
     variant = diffuse.parent.name
-    pose = diffuse.parent.parent.name
-    kind = diffuse.parent.parent.parent.name
-    return out_dir / f"{kind}.{pose}.{variant}.{target}.png"
+    kind = diffuse.parent.parent.name
+    return out_dir / f"{kind}.{variant}.{target}.{d}.{part}.png"
 
 
 def load_pipeline(model: str, half: bool, device: str):
