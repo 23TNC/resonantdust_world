@@ -5,4 +5,4 @@ resolver = "2"
 # client gets the whole surface as one wasm bundle via the `wasm` crate, which
 # re-exports the pieces. Add each new crate's folder here as it appears
 # (codec / state / protocol / rules …).
-members = ["core", "codec", "dsl", "wasm"]
+members = ["core", "codec", "dsl", "wasm", "geometry"]
