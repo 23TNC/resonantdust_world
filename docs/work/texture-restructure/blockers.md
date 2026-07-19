@@ -6,18 +6,13 @@ resolved rows keep a dated resolution line. Goal: fewer over time (a well-unders
 
 ---
 
-## B1 · Confirm dense-storage scope (soft — sequencing, not code) — 2026-07-19
+## B1 · ~~Dense-storage widening~~ — WITHDRAWN, never real — 2026-07-19
 
-**Needs.** A yes on the [F4](forks.md#f4) boundary: the `u8→u16` cold-tile dense widening (so linked
-rows fit the biome-tile vector) is a **separate server-side stream**, not part of this file-structure
-migration.
-
-**Why a human.** It's a scope/sequencing call with a downstream cost (codec/worldgen/edge + the
-[cold-rework](../cold-rework/README.md) storage). Reasonable either way; the user flagged it.
-
-**Suggested path.** Keep it separate (this stream stays file-only, ships independently); open a
-`biome-tile-dense-width` stream when the runtime side is taken on. **Not hard-blocking** — P0–P6 here
-can proceed without it (texture files don't depend on the dense cell width).
+**Resolved 2026-07-19 (withdrawn).** This blocker asked whether a `u8→u16` cold-tile widening should be
+in-scope. There **is no widening** — the dense tile vector is **already `Vec<u16>` `kind_reference`**
+(`action.rs`, `tile/*.rs`), so a linked object (`kind_id ≥ 0x800`) already fits. The `u8` came from a
+misread of the **legacy** `VARIABLES.md` line + a stale pixijs-intent doc (both now corrected). No human
+input needed; no storage work in this stream. See [F4](forks.md#f4).
 
 ## B2 · `type/subtype` registry — kind_id / variant_id authority (soft) — 2026-07-19
 

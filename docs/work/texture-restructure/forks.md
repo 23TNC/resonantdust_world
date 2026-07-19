@@ -34,11 +34,16 @@ facing's sub-indices) or genuine **art variations** (→ stay variations, but of
 **To clear.** `find`/inspect the actual `linked/*/1.l.0/*` contents before P3 collapses them; the mapping
 follows what they are. Do **not** blind-collapse. Flag per-kind if they differ.
 
-## F4 · Dense-storage width is a SEPARATE stream (boundary) — 2026-07-19
+## F4 · Storage needs NO change — the dense tile vector is already `Vec<u16>` kind_reference — 2026-07-19
 
-**Decision.** This stream is **file structure only**. Folding `linked/`→`biome-tile` in the *texture
-tree* does not require the runtime dense-storage change. The consequence — a biome-tile dense cell must
-hold `kind_id`(u12)+`variant_id`(u4) = **u16**, so the cold-tile `Vec<u8>` widens `u8→u16` in
-codec/worldgen/edge — is **its own server-side work** (touches the [cold-rework](../cold-rework/README.md)
-storage), triggered by the same decision. Kept out of here so the texture migration isn't gated on a
-server refactor. Confirm the split with the user ([blockers B1](blockers.md#b1)).
+**Decision.** Folding `linked/`→`biome-tile` requires **zero server-storage work**. The dense tile
+vector already holds a **`u16` `kind_reference` per cell** (`kind_id:12 | variant_id:4`) —
+`shared/codec/src/action.rs` ("tile = dense `kind_reference` by index") + `server/st-bindings/src/tile/*.rs`
+(`tiles: Vec::<u16>`). A linked object is just a `kind_reference` with `kind_id ≥ 0x800`; it drops into
+the existing vector unchanged. This stream is therefore **purely file structure** — no codec/worldgen/edge
+storage change rides with it.
+
+**Correction (2026-07-19):** an earlier draft of this fork + [B1] claimed a `u8→u16` widening was needed.
+That was a misread of the **legacy** `u8 tile … dense Vec<u8>[256]` line (`VARIABLES.md`, "Legacy —
+retiring") and a stale pixijs-intent doc — **not** the current storage, which is already `u16`. No
+separate stream exists; withdrawn.

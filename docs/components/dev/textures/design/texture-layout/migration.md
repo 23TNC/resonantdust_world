@@ -74,10 +74,11 @@ source-of-truth** and should change first, the rest follow. Paths per the 0.2.2 
 5. **Scripted `mv`/copy** migration of the existing tree (dry-run → apply): leaf reshape + drop
    `<subkind>` + `linked/→biome-tile` fold, one pass. **Copy, don't move, until verified** (`textures/`
    is gitignored → the old tree is the only rollback).
-6. **Dense storage width** (README §"Still to pin") — if this pass: widen the cold-tile dense cell
-   `u8 → u16` (`kind_id`+`variant_id`) in codec/worldgen/edge so linked rows fit the tile vector.
-7. **Server resolvers**, then **client** fetch/cache contract (URL + cache key gain `.dir.part`,
+6. **Server resolvers**, then **client** fetch/cache contract (URL + cache key gain `.dir.part`,
    lose `<subkind>`).
-8. **Verify end-to-end on the running stack** (`rd up` → `rd deploy` → browser renders a
+7. **Verify end-to-end on the running stack** (`rd up` → `rd deploy` → browser renders a
    pawn/thing/wall) — this changes what the client fetches, so unit tests can't close it. Drop the
    old leaves once satisfied.
+
+_No storage step: the dense tile vector is already `Vec<u16>` `kind_reference`, so linked
+(`kind_id ≥ 0x800`) fits with no codec/worldgen/edge change (README §"Still to pin")._

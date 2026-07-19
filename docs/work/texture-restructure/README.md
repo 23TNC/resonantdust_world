@@ -26,13 +26,14 @@ biome-thing/default/conifer/default/1.e.0/3/albedo.png  →  biome-thing/default
 linked/wall.smooth/1.l.0/1/albedo.png                   →  biome-tile/default/smooth/wall/albedo.l.0.png
 ```
 
-## Scope — FILE STRUCTURE only
+## Scope — FILE STRUCTURE only (storage already accommodates linked)
 
-This stream migrates **texture files + the code that writes/reads their paths**. The runtime
-**dense-storage** consequence of the linked fold — a biome-tile cell must hold `kind_id`(u12)+
-`variant_id`(u4) = u16, so the cold-tile dense `Vec<u8>` widens to `u16` — is a **separate,
-server-side stream** (codec/worldgen/edge/cold-rework), triggered by the same decision but not a
-texture-file change. Tracked as a boundary in [`forks.md`](forks.md) F4; do **not** pull it in here.
+This stream migrates **texture files + the code that writes/reads their paths**. It needs **no
+server-storage change**: the dense tile vector is **already `Vec<u16>` of `kind_reference`**
+(`kind_id:12 | variant_id:4` — `action.rs` "tile = dense `kind_reference` by index"; `tile/*.rs`
+`tiles: Vec::<u16>`), so a linked object is just a `kind_reference` with `kind_id ≥ 0x800` dropped into
+the existing vector. That's the whole point of folding linked into biome-tile — it **already fits**. See
+[`forks.md`](forks.md) F4.
 
 ## The chain (each encodes the leaf shape — must change together)
 

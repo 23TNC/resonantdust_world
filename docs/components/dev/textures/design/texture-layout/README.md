@@ -131,8 +131,10 @@ numeric parts) — the `map.dir.part` **order** is what produces the grouping.
 
 ### Still to pin (mechanical, not blocking the shape)
 
-- ✏️ **Storage width.** Folding linked into the dense **tile** vector: today it's `Vec<u8>` (u8
-   tile-kind). A biome-tile row now needs `kind_id`(u12)+`variant_id`(u4) = **u16**, so the dense cell
-   widens `u8 → u16` (worldgen/codec/edge follow). Confirm scope: this pass, or a follow-up.
+- ✅ **Storage already fits.** No widening — the dense **tile** vector is already `Vec<u16>` of
+   `kind_reference` (`kind_id:12 | variant_id:4`; `shared/codec/src/action.rs` "tile = dense
+   `kind_reference` by index", `server/st-bindings/src/tile/*.rs` `tiles: Vec::<u16>`). A linked object
+   is a `kind_reference` with `kind_id ≥ 0x800` — it drops into the existing vector. (The `Vec<u8>` in
+   `VARIABLES.md` is the **legacy** line.)
 - ✏️ **Form → `variant_id` numbering.** The exact `wall`/`fence`/`rock`/… → 0/1/2 assignment lives in
    the `type/subtype` `meta.json` registry; not yet enumerated.
