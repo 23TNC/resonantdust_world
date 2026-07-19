@@ -43,3 +43,14 @@ port builds ONE dynamic pool + ONE `warm_shadowmap` with a round-robin, not two 
 `atlas.json` already folds into the content manifest server-side. Presumably `meta.json` folds the same
 way (the edge/content path). Confirm the fold picks up the new sidecar + that `outline`/`channel_tints`
 survive to the client; if not, that's the P0 serve work. Tracked as [B1](blockers.md).
+
+## F6 · `cold_lightmap` = a derived `SquareCache` composite baked from the normal (P1 integration)
+
+Refines [F3](#f3). The cold lightmap is **not** a prim-baked channel (albedo/normal/…) — it's a
+post-process over the already-baked **normal** composite: `ambient + Σ cold·N·L·falloff²`. So it's added
+as a **derived composite** in the `SquareCache` — baked per square, LAST in the per-square pass (so the
+normal slot is ready), from a screen-quad reading the normal slot + the cold-light uniforms, into its
+own ping-pong composite. It reuses the cache's toroidal layout + apron + dirty machinery; a `lightDirty`
+trigger (a cold light in range changed) rebakes a rect even when its geometry didn't. Exposed via
+`displayComposite("cold-lightmap")`; the display shader samples it into the albedo multiply. Least new
+machinery; amortization + wrap-apron for free. Port `rectLightBakeShader.ts`'s math.
