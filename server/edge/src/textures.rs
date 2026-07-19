@@ -83,6 +83,18 @@ impl TextureSource {
             .map(|bytes| ServedTexture { bytes, content_type: "image/png" }))
     }
 
+    /// The `meta.json` sidecar for `stem` (packed-channel tints + the shadow-cast silhouette outline),
+    /// served on demand — it sits beside the maps in the resolved leaf, so resolve via `albedo` then
+    /// swap the filename. `Ok(None)` when absent (a stem `bin/art` hasn't written meta for yet).
+    pub async fn serve_meta(&self, stem: &str) -> Result<Option<ServedTexture>, String> {
+        let rel = master_map_rel(stem, "albedo").ok_or_else(|| format!("bad texture stem: {stem}"))?;
+        let meta_rel = rel.with_file_name("meta.json");
+        Ok(self
+            .read_master(&meta_rel)
+            .await?
+            .map(|bytes| ServedTexture { bytes, content_type: "application/json" }))
+    }
+
     /// The half-res preview for `stem`, derived from the master. Disk sources cache
     /// the derived PNG (re-deriving when the master is newer); R2 derives fresh.
     /// `Ok(None)` when the master is absent.

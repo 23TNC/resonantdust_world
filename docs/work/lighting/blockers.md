@@ -7,8 +7,15 @@ _Dependencies gating a `todo` item. Each: what's blocked, why, the plan to clear
 
 ## B1 · Outline sidecar not yet served to the client (blocks P3 scatter) — 2026-07-18
 
-**Blocked.** P3's projected-silhouette scatter needs each caster's `outline` (earcut tris) **client-side**;
-today it's only in the per-leaf `meta.json` on disk.
+**Server half ✅ DONE 2026-07-18.** The edge serves the sidecar on demand: `GET /textures/meta/{*stem}`
+→ the leaf's `meta.json` as `application/json` (`TextureSource::serve_meta`, `TextureTier::Meta`).
+Verified: `…/conifer/default/e` → the 179-triangle outline JSON. **Chosen on-demand** (not manifest-fold)
+because outlines are large — mirrors the old game's `/textures/geo/` sidecars. **Remaining (client half):**
+a fetch+decode+cache path (like the LOD fetches) turning `outline` into per-def polygons/tris for the
+scatter — do it when P3 needs it (it's the caster silhouette lookup).
+
+**Blocked.** _(historical)_ P3's projected-silhouette scatter needs each caster's `outline` (earcut tris)
+**client-side**; today it's only in the per-leaf `meta.json` on disk.
 
 **Why.** `bin/art` now writes `meta.json` (art-metadata P1/P2), but nothing folds it into the content
 manifest the client fetches. `atlas.json` is already folded server-side (edge/content path) — `meta.json`

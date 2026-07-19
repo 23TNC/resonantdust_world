@@ -124,6 +124,7 @@ async fn main() {
         .route("/content/refresh", post(refresh_content))
         .route("/textures/master/{*stem}", get(serve_master))
         .route("/textures/preview/{*stem}", get(serve_preview))
+        .route("/textures/meta/{*stem}", get(serve_meta))
         .route("/textures/lod/{hash}/{size}/{map}/{*stem}", get(serve_lod))
         .route("/textures-manifest", get(serve_texture_manifest))
         .route("/textures-manifest-version", get(serve_texture_manifest_version))
@@ -266,6 +267,11 @@ async fn serve_preview(State(state): State<AppState>, headers: HeaderMap, Path(s
     texture_response(&state, &stem, TextureTier::Preview, &headers).await
 }
 
+/// `GET /textures/meta/{*stem}` — the stem's `meta.json` (channel tints + shadow outline), on demand.
+async fn serve_meta(State(state): State<AppState>, headers: HeaderMap, Path(stem): Path<String>) -> impl IntoResponse {
+    texture_response(&state, &stem, TextureTier::Meta, &headers).await
+}
+
 /// `GET /textures/lod/{hash}/{size}/{map}/{*stem}` — one LOD (short axis `size` px) of a
 /// stem's `map` (albedo|normal|layers|surface|…), derived from that map's master and clamped
 /// to it. The `hash` is validated against the current master: a stale (re-mastered) or
@@ -330,6 +336,8 @@ async fn serve_texture_manifest_version(State(state): State<AppState>) -> impl I
 enum TextureTier {
     Master,
     Preview,
+    /// The `meta.json` sidecar (channel tints + shadow outline) — served on demand (JSON, not a PNG).
+    Meta,
 }
 
 /// Shared body of the two texture routes: honour a conditional `If-None-Match`
@@ -352,6 +360,7 @@ async fn texture_response(state: &AppState, stem: &str, tier: TextureTier, heade
     let served = match tier {
         TextureTier::Master => source.serve_master(stem).await,
         TextureTier::Preview => source.serve_preview(stem).await,
+        TextureTier::Meta => source.serve_meta(stem).await,
     };
     match served {
         Ok(Some(asset)) => {
