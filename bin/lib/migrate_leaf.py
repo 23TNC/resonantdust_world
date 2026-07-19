@@ -31,21 +31,30 @@ def _is_iddirpart(name: str) -> bool:
     return len(p) == 3 and p[0].isdigit()
 
 
-def plan(kind_dir: str):
-    """Yield (src_abs, dst_abs) moves for one `<type>/<subtype>/<kind>` dir, or raise for
-    a non-default subkind (caller skips + logs)."""
-    subs = [d for d in sorted(os.listdir(kind_dir)) if os.path.isdir(os.path.join(kind_dir, d))]
-    for sub in subs:
-        if sub == "default":
-            continue
-        raise ValueError(f"non-default subkind {sub!r}")
-    idp_root = os.path.join(kind_dir, "default")
-    if not os.path.isdir(idp_root):
-        return
+def plan(kind_dir: str) -> tuple[list, list]:
+    """Return (moves, prune_dirs) for one `<kind>` dir. Handles both layouts:
+      * **subkind** (biome-thing/pawn): `<kind>/default/<id.dir.part>/<variant>/…`
+        — a non-`default` subkind raises (caller skips + logs).
+      * **no-subkind** (linked): `<kind>/<id.dir.part>/<variant>/…` directly.
+    Both → `<kind>/<variant>/<map>.<dir>.<part>.<ext>`. Raises ValueError to skip a kind."""
+    dirs = [d for d in sorted(os.listdir(kind_dir)) if os.path.isdir(os.path.join(kind_dir, d))]
+    idp_here = [d for d in dirs if _is_iddirpart(d)]
+    if idp_here:                                    # no-subkind (linked): id-dirs are direct children
+        idp_root = kind_dir
+        prune = [os.path.join(kind_dir, d) for d in idp_here]
+    else:                                           # subkind: expect a single `default`
+        for sub in dirs:
+            if sub != "default":
+                raise ValueError(f"non-default subkind {sub!r}")
+        idp_root = os.path.join(kind_dir, "default")
+        if not os.path.isdir(idp_root):
+            return [], []
+        prune = [idp_root]
+    moves = []
     for idp in sorted(os.listdir(idp_root)):
         idp_dir = os.path.join(idp_root, idp)
         if not (os.path.isdir(idp_dir) and _is_iddirpart(idp)):
-            continue  # stray source atlas / psd at the subkind level — left in place
+            continue  # stray source atlas / psd — left in place
         _id, d, part = idp.split(".")
         for variant in sorted(os.listdir(idp_dir)):
             vdir = os.path.join(idp_dir, variant)
@@ -56,11 +65,9 @@ def plan(kind_dir: str):
                 if not os.path.isfile(src):
                     continue
                 stem, _, ext = fn.rpartition(".")
-                if ext == "json":                       # per-variant (meta.json): no dir/part
-                    dst_name = fn
-                else:                                   # directional map: fold dir/part in
-                    dst_name = f"{stem}.{d}.{part}.{ext}"
-                yield src, os.path.join(kind_dir, variant, dst_name)
+                dst_name = fn if ext == "json" else f"{stem}.{d}.{part}.{ext}"
+                moves.append((src, os.path.join(kind_dir, variant, dst_name)))
+    return moves, prune
 
 
 def main(argv: list[str]) -> int:
@@ -71,25 +78,27 @@ def main(argv: list[str]) -> int:
     skipped: list[str] = []
     for root in roots:
         rabs = os.path.join(REPO, root)
-        # a kind dir = <type>/<subtype>/<kind>; walk two levels under the type root
         if not os.path.isdir(rabs):
             print(f"skip (absent): {root}", file=sys.stderr); continue
-        for subtype in sorted(os.listdir(rabs)):
-            st = os.path.join(rabs, subtype)
-            if not os.path.isdir(st):
+        # `linked` kinds sit at depth 1 (linked/<kind>); others at depth 2 (<type>/<subtype>/<kind>).
+        if os.path.basename(root) == "linked":
+            kind_dirs = [os.path.join(rabs, k) for k in sorted(os.listdir(rabs))
+                         if os.path.isdir(os.path.join(rabs, k))]
+        else:
+            kind_dirs = []
+            for subtype in sorted(os.listdir(rabs)):
+                st = os.path.join(rabs, subtype)
+                if os.path.isdir(st):
+                    kind_dirs += [os.path.join(st, k) for k in sorted(os.listdir(st))
+                                  if os.path.isdir(os.path.join(st, k))]
+        for kd in kind_dirs:
+            try:
+                km, kp = plan(kd)
+            except ValueError as e:
+                skipped.append(f"{os.path.relpath(kd, REPO)}  ({e})")
                 continue
-            for kind in sorted(os.listdir(st)):
-                kd = os.path.join(st, kind)
-                if not os.path.isdir(kd):
-                    continue
-                try:
-                    km = list(plan(kd))
-                except ValueError as e:
-                    skipped.append(f"{os.path.relpath(kd, REPO)}  ({e})")
-                    continue
-                moves.extend(km)
-                if km:
-                    prune_dirs.append(os.path.join(kd, "default"))  # this kind's subkind dir only
+            moves.extend(km)
+            prune_dirs.extend(kp)
 
     print(f"=== migrate_leaf: {len(moves)} files, {len(skipped)} kinds skipped ===")
     for s in skipped:

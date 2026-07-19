@@ -30,3 +30,14 @@ _Problems hit + how they were resolved. Chronological. Convention:
   the registry↔manifest relationship (a short design step) before P0 commits id numbers — B1 settled
   *who* owns ids (the registry), not *how* they bind to the existing manifest resolution. Blocks the
   P0→P5 build; the plan corrections (F3/atlas) are independent and already landed.
+
+- **2026-07-19** · **Phase 1 regressed linked rendering — caught + fixed.** Flipping the edge readers to
+  the new leaf *universally* (P4) while migrating only biome-thing+pawn left `linked/` on the old shape,
+  so `register_kind` stopped finding linked kinds → `linked/wall.smooth/l` 404'd and dropped out of the
+  manifest (the `rock` thing, which worldgen scatters at 3–8%, uses that texture). **Found** by probing
+  the edge right after the milestone (the work-check hook pushed me to keep going rather than stop).
+  **Fixed** by generalizing `migrate_leaf.py` to the no-subkind linked layout (`<kind>/<id.dir.part>/
+  <variant>/…`, depth-1 under `linked/`) and reshaping `linked/` too — `linked/wall.smooth/l` now serves
+  200 with its `atlas.json` **grid** read (held-whole autotile atlas, F3). **Note:** this is a *leaf
+  reshape in place*, not the full biome-tile **fold** (material→kind rename to `biome-tile/<biome>/…`) —
+  that's coupled to the biome-tile object model (walls aren't worldgen-placed) and stays phase 2.
