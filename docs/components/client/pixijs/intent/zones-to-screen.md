@@ -39,12 +39,9 @@ Scope A is a strict prefix of B — nothing built for A is thrown away.
 1. **Reshape the `zone` module payload** — from the superseded `cells: Vec<u64>` to the
    settled split (the tick pipeline (deleted 2026-07-15) status log):
    - `zone_tiles`: `{ tiles: Vec<u8>, biome: u16, version: u32 }` — dense, len 256, one floor
-     per cell, present for every zone (~0.25 KB). ⚠️ **SUPERSEDED** — the shipped storage is
-     `tiles: Vec<u16>` of **`kind_reference`** (`kind_id:12 | variant_id:4`), not `Vec<u8>` tile-kind
-     (cold-rework / [VARIABLES.md](../../../../VARIABLES.md); `shared/codec/src/action.rs`).
+     per cell, present for every zone (~0.25 KB).
    - `zone_objects`: `{ objects: Vec<u32> }` — sparse, only occupied cells; entry =
-     `x:4 | y:4 | kind:16 | layer:3 | data:5`. ⚠️ **SUPERSEDED** — now `kind_pos_reference`
-     (`kind_reference:16 | tile_reference:8 | data:8`).
+     `x:4 | y:4 | kind:16 | layer:3 | data:5`.
    - Add a `seed_zone(zone_id, tiles, biome[, objects])` reducer that **inserts only if
      absent** (a worldgen re-run must never clobber a live/edited zone).
    - Retire ``shared/codec/cells.rs`` in the same pass.

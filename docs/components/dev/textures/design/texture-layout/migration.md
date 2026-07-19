@@ -81,4 +81,4 @@ source-of-truth** and should change first, the rest follow. Paths per the 0.2.2 
    old leaves once satisfied.
 
 _No storage step: the dense tile vector is already `Vec<u16>` `kind_reference`, so linked
-(`kind_id ≥ 0x800`) fits with no codec/worldgen/edge change (README §"Still to pin")._
+(`kind_id ≥ 0x800`) fits with no codec/worldgen/edge change._

@@ -265,29 +265,6 @@ is the separate fact that the value reached `state`.
 
 ---
 
-## Legacy — retiring, do not build on
-
-```
-u32 zone_id                       superseded by macro_position_reference + realm_reference
-  u8 realm                        bits 24–31
-  u8 region                       bits 16–23
-  u8 zone                         bits 8–15
-  u8 reserved                     bits 0–7
-
-u32 region_id                     = zone_id & REGION_ID_MASK (0xFFFF_0000)
-  u8 realm                        bits 24–31
-  u8 region                       bits 16–23
-  u16 reserved                    bits 0–15
-
-u64 thing                         superseded by kind_pos_reference + data
-  u16 kind | u4 x | u4 y | u5 data | u3 layer | u5 variant | u27 reserved
-
-u8  tile                          tile-kind; a zone's tiles are a dense Vec<u8>[256]
-u8  offset                        x_off:4 | y_off:4
-```
-
----
-
 ## Removed
 
 `valid_at`, `cold_reference`, `hot_reference`, `reference_id`, `event_word` — see

@@ -65,7 +65,8 @@ trunk-base probe, and the presence read all key off `surface.B`.
   receiver's own tile-depth (the `depth` composite) with a wrapped difference: where the receiver
   sits at/in front of the caster the shadow is behind it, so only the see-through fraction
   `sh.a·(1−opacity)` shows through (opaque → full light, glass → the shadowed background reveals).
-  See `docs/shadow-design.md` for the wedge geometry.
+  This wedge fake is **superseded** by the projected billboard-quad model in
+  [`design/shadows.md`](shadows.md) (converged in the shadow sandbox); reconcile `shadowPass` to it.
 - **E — ambient occlusion (surface.G).** AO is derived offline (`art ao`, `bin/lib/depth_ao.py`
   integrates the untilted normal → height → HBAO horizon march → `occlusion.png`) and packed into
   **surface.G** (was normal.α). The lighting pass reads `ao = surface.G / surface.A`: ambient

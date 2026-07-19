@@ -128,13 +128,3 @@ numeric parts) — the `map.dir.part` **order** is what produces the grouping.
    registry (name → `kind_id`, so the pipeline knows which materials are linked vs tile), the form →
    `variant_id` map, and sprite-sheet split info. Distinct from the **leaf** `meta.json` (per-variant
    outline/bbox/tints for shadows). Lives at `textures/<type>/<subtype>/meta.json`.
-
-### Still to pin (mechanical, not blocking the shape)
-
-- ✅ **Storage already fits.** No widening — the dense **tile** vector is already `Vec<u16>` of
-   `kind_reference` (`kind_id:12 | variant_id:4`; `shared/codec/src/action.rs` "tile = dense
-   `kind_reference` by index", `server/st-bindings/src/tile/*.rs` `tiles: Vec::<u16>`). A linked object
-   is a `kind_reference` with `kind_id ≥ 0x800` — it drops into the existing vector. (The `Vec<u8>` in
-   `VARIABLES.md` is the **legacy** line.)
-- ✏️ **Form → `variant_id` numbering.** The exact `wall`/`fence`/`rock`/… → 0/1/2 assignment lives in
-   the `type/subtype` `meta.json` registry; not yet enumerated.

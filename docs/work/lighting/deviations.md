@@ -42,3 +42,20 @@ capacity. Matches the P3 scatter's 3-lanes-per-map constraint (the GPU-can't-mer
 in the README), so it's the same ceiling we already accept for dynamic. A 4th+ cold shadow-caster
 casts light but no shadow. Revisit if content authors >3 overlapping shadow-casting cold lights in
 one square.
+
+---
+
+## D-2 · `shadowPass.nsProject` uses the wrong roll axis vs the converged model — 2026-07-19
+
+**Design** ([`design/shadows.md`](../../components/client/pixijs/design/shadows.md)): an N/S billboard
+rolls **`R_y(±90)·R_x(θ)`** (edge-on, `worldX=0`, rooted on the centerline) before projecting.
+
+**Code:** `shadowPass.ts` `nsProject` still uses a `θ`-on-X/Z axis (`worldX = eCenter + off·cosθ;
+z = |off|·sinθ`), a rotation about **Y**, not the roll-then-tilt above. Also still carries the older
+"wedge" silhouette from [`lighting.md` §D](../../components/client/pixijs/design/lighting.md), and
+does not yet sample the sprite via the per-triangle UVs the model specifies.
+
+**Why (still open):** the model converged in the sandbox *after* the current `shadowPass` was written;
+the code predates it. Not yet reconciled — flagged so the geometry is ported deliberately (not the
+stale axis) when the shadow pass is next touched. Fix: port the 5-triangle fan + presence-derived
+depths + UV sampling from `design/shadows.md`.
