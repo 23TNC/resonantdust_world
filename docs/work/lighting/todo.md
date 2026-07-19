@@ -40,10 +40,15 @@ piece by piece, not big-bang). Items move to `completed.md` as they land + verif
 
 ## P3 · Projected-silhouette shadows (the per-light win) — retire the stopgaps
 
-- [ ] **Scatter maps** — 2 RGBA maps (8 lanes). Each frame, for this frame's 8-light batch: gather
-      nearby casters, **project each caster's earcut triangulation** through the light onto the ground
-      (`h/(lightZ−h)` shear) and rasterize into its lane (`uChannel` uniform output, `max`-blend, one
-      container `render`). Port `shadowMaskShader.ts` onto the **new outline sidecars**.
+- [x] **Scatter shader + geometry** (`37f6cc8`) — `scatterShader.ts` ported: the lane shader
+      (`outColor = uChannel`, `max`-blend), `makeShadowGeometry`, + the tuning constants
+      (`SHADOW_MAPS`/caps/height-falloff/`channelForLight`). B1 (`OutlineCache`) feeds it.
+- [ ] **`ScatterPass` driving** — the 2 RGBA maps + per-light render: adapt the Viewport's
+      `buildCasters` to yield `{feetX, groundY, footNY, h, w, left, stem}` + `OutlineCache.get(stem)`;
+      per shadow-casting light (≤8), gather its casters (within radius), **port `projectCaster`** (the
+      billboard shear per outline vertex, emitting the earcut tris into the geo buffer), render each
+      light's casters into its lane. **⚠ the `projectCaster` shear constants were tuned to the OLD
+      coordinate space — re-tune in the browser (`/showRT` the scatter maps).**
 - [ ] **`warm_shadowmap`** — 32-bit/pixel, world-space, **double-buffered ping-pong**: each frame read
       `prev warm + the 8 fresh scatter channels`, write `next warm` with those 8 bits updated
       (round-robin 32/8 = 4-frame cycle; the deferred writeback = "commit last frame's slice at the top
