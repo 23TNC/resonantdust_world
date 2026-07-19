@@ -63,6 +63,7 @@ const lightBitGl = {
       uniform vec2 uPan;                             // fillDisplay's pan: vWorld = trueWorld + uPan
       uniform sampler2D uShadow;                     // zdepth_screen (screen space, OPAQUE): G = caster tile-Y depth (5+row%251); 0..4 = no shadow
       uniform vec4 uShadowUv;                        // vWorld → shadow uv: uv = vWorld·xy + zw (zw carries any Y flip)
+      uniform sampler2D uColdLightmap;               // cold_lightmap (lighting P1): baked static-light SUM (RGB), added to the light sum
       in vec2 vWorld;
 
       // The shadow pass (zdepth_screen) rasterises billboard "wedge" shadows into a screen-space
@@ -167,7 +168,10 @@ const lightBitGl = {
       // Pass the fragment's opacity so a shadow behind a transparent thing shows through it.
       const float SHADOW_STRENGTH = 0.7;
       float cov = shadowCoverage(receiverDepth, presence);
-      vec3 lightSum = uAmbient * ao + direct * (1.0 - cov * SHADOW_STRENGTH);
+      // Cold lightmap (lighting P1): the baked static-light sum for this fragment (its own N·L/falloff
+      // frozen at bake). Added to the live ambient + dynamic light — cold + hot light one surface.
+      vec3 cold = texture(uColdLightmap, vUV).rgb;
+      vec3 lightSum = uAmbient * ao + direct * (1.0 - cov * SHADOW_STRENGTH) + cold;
 
       // Coverage (visual alpha) is applied at OUTPUT only — premultiplied so it composites over
       // the canvas background. Opaque maps in, alpha out: empty cells (α 0) show the background,
@@ -259,6 +263,12 @@ export class LightingShader extends Shader {
     this.resources.uShadow = value.source;
     this.resources.uShadowSampler = value.source.style;
   }
+  /** The cold `lightmap-cold` composite (lighting P1) — the baked static-light sum, sampled at `vUV`
+   *  and added to the light sum. Left EMPTY (black → adds nothing) until a cold light bakes. */
+  set coldLightmap(value: Texture) {
+    this.resources.uColdLightmap = value.source;
+    this.resources.uColdLightmapSampler = value.source.style;
+  }
   /** Map `vWorld` → shadow uv: `uv = vWorld·(sx,sy) + (ox,oy)`. The offset carries the RT's
    *  Y flip (`sy` negative, `oy` = 1) when the render target samples flipped. Set each frame
    *  (it moves with the zoom + body size). */
@@ -323,6 +333,8 @@ export function makeLightingShader(): LightingShader {
       uDepthWarmSampler: empty.source.style,
       uShadow: empty.source,
       uShadowSampler: empty.source.style,
+      uColdLightmap: empty.source,
+      uColdLightmapSampler: empty.source.style,
       lightUniforms: new UniformGroup({
         uAmbient: { value: new Float32Array([0.12, 0.14, 0.18]), type: "vec3<f32>" },
         uSunDir: { value: new Float32Array([-0.4, -0.5, 0.75]), type: "vec3<f32>" },

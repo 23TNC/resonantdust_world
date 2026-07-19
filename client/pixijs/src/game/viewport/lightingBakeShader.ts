@@ -116,6 +116,14 @@ export class LightingBakeShader extends Shader {
     this.resources.bakeUniforms.uniforms.uRectWorld = new Float32Array([x, y]);
     this.resources.bakeUniforms.update();
   }
+  /** Map the quad's `vUV` (0..1) to this square's NORMAL **slot** within the toroidal composite —
+   *  `(sx,sy)` slot offset, `(sw,sh)` slot size, in composite-UV (px / composite px). `textureBit`
+   *  reads `uTexture` through this matrix, so a full-quad samples just the slot. Set per square. */
+  setNormalUv(sx: number, sy: number, sw: number, sh: number): void {
+    const g = this.resources.textureUniforms;
+    (g.uniforms.uTextureMatrix as Matrix).set(sw, 0, 0, sh, sx, sy);
+    g.update();
+  }
   /** The ambient floor (`0xRRGGBB` × intensity). */
   setAmbient(color: number, intensity: number): void {
     this.resources.bakeUniforms.uniforms.uAmbient = rgb(color, intensity);

@@ -24,6 +24,7 @@ export interface DebugParams {
   ambient: number | null;
   grid: boolean;
   noCursorLight: boolean;
+  coldLight: boolean;
 }
 
 /** Parse a query value as a finite number, or `null` if absent/malformed. */
@@ -52,5 +53,6 @@ export function debugParams(): DebugParams {
     ambient: num(p.get("ambient")),
     grid: flag(p, "grid"),
     noCursorLight: flag(p, "nocursorlight"),
+    coldLight: flag(p, "coldlight"),
   };
 }

@@ -8,6 +8,7 @@ import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { RtPanel } from "../../game/panels/rt/RtPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
 import { MoverLayer } from "../../game/world/MoverLayer";
+import { pointLight } from "../../game/lighting/LightRig";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
 import { debugParams } from "../../debug/urlParams";
 import { SQUARE } from "../../game/viewport/squareMath";
@@ -161,6 +162,21 @@ export class WorldScene extends Scene {
     // `?nocursorlight` kills the cursor point light — and the shadow pass it casts — so the
     // non-shadow draw-call count reads in isolation.
     if (dbg.noCursorLight) this.viewport.view.lights.disableCursor();
+    // `?coldlight` seeds a debug STATIC (cold) light at the camera centre — proves the P1 cold_lightmap
+    // bake (a baked, amortized pool of light on the ground) end-to-end until content authors cold lights.
+    if (dbg.coldLight) {
+      this.viewport.view.lights.register(
+        pointLight({
+          x: (dbg.x ?? 0) * SQUARE,
+          y: (dbg.y ?? 0) * SQUARE,
+          height: 120,
+          radius: 8 * SQUARE,
+          color: 0xff8040,
+          brightness: 3,
+          tier: "cold",
+        }),
+      );
+    }
 
     // Wire the client's zone stream into the viewport and start the anchor — login has
     // completed by the time this scene enters, so the first anchor immediately subscribes

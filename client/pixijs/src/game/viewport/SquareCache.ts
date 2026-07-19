@@ -40,6 +40,7 @@ import { makeMaterialBakeShader, type MaterialBakeShader } from "./materialBakeS
 import { makeDepthBakeShader, type DepthBakeShader } from "./depthBakeShader";
 import { makeNormalBakeShader, type NormalBakeShader } from "./normalBakeShader";
 import { makeSurfaceBakeShader, type SurfaceBakeShader } from "./surfaceBakeShader";
+import type { LightingBakeShader } from "./lightingBakeShader";
 import type { PackedChannel } from "./material";
 import {
   mod,
@@ -132,6 +133,10 @@ export type PrimitiveSpec = Omit<Primitive, "id" | "tint" | "zIndex"> &
 export interface ChannelSpec {
   key: string;
   resolve: (prim: Primitive) => ResolvedPrim;
+  /** A **derived** composite — NOT baked per-prim, but by a post-pass over another channel (the cold
+   *  `lightmap`, from the `normal` slot; lighting P1). Skipped in the per-prim channel loop; rides the
+   *  same buffers / swap / reproject / display lifecycle as any channel. `resolve` is never called. */
+  derived?: boolean;
 }
 
 interface PrimEntry {
@@ -190,6 +195,8 @@ interface PrevLayer {
 class Channel {
   readonly key: string;
   readonly resolve: (prim: Primitive) => ResolvedPrim;
+  /** Derived (post-pass) composite — skipped in the per-prim bake loop. See {@link ChannelSpec}. */
+  readonly derived: boolean;
   bufs: [RenderTexture, RenderTexture] | null = null;
   /** The outgoing buffer, held one frame during a LOD swap. */
   prevComposite: RenderTexture | null = null;
@@ -197,6 +204,7 @@ class Channel {
   constructor(spec: ChannelSpec) {
     this.key = spec.key;
     this.resolve = spec.resolve;
+    this.derived = spec.derived ?? false;
   }
 
   /** (Re)allocate the fixed ping-pong pair `cw × ch` at `res`, both cleared. */
@@ -293,6 +301,12 @@ export class SquareCache {
   /** The unit-quad geometry every material mesh shares (per-prim world rect comes from the
    *  mesh transform; per-prim params from its shader). Lazily built (needs no renderer). */
   private materialQuad: MeshGeometry | null = null;
+  /** The cold-light lightmap bake material (the `derived` lightmap channel), or null when this cache
+   *  doesn't light (the warm cache). Its lights/ambient are set by the Viewport before each bake. */
+  private lightBake: LightingBakeShader | null = null;
+  /** The rect-local quad + its mesh for the lightmap bake (lazily built, reused). */
+  private lightmapQuad: MeshGeometry | null = null;
+  private lightmapMesh: Mesh | null = null;
   /** The tiling noise atlas bound to every material bake (rows = fields). `null` until the
    *  viewport sets it — a null noise atlas disables the material path (flat, as before). */
   private noiseTex: Texture | null = null;
@@ -315,6 +329,13 @@ export class SquareCache {
   setNoise(texture: Texture | null, rows: number, uvTile: number, worldTile: number): void {
     this.noiseTex = texture;
     this.noiseGlobals = [rows, uvTile, worldTile];
+  }
+
+  /** Enable the cold-light lightmap bake (lighting P1): a `derived: true` `lightmap` channel is baked
+   *  from the `normal` slot after each square's geometry bakes. The Viewport sets `shader`'s cold
+   *  lights + ambient before `bakeDirty`. Call once (the cold cache only). */
+  enableLightBake(shader: LightingBakeShader): void {
+    this.lightBake = shader;
   }
 
   /** The buffer the viewport's display mesh samples for channel `key` — the outgoing
@@ -754,6 +775,7 @@ export class SquareCache {
     const ay = sy === 0 ? (rows + 1) * slotPx : sy === rows - 1 ? 0 : -1;
 
     for (const ch of this.channels) {
+      if (ch.derived) continue; // baked by the post-pass below (cold lightmap), not per-prim
       const target = ch.bufs![active];
       this.bakeContainer.removeChildren();
       for (let i = 0; i < list.length; i++) {
@@ -780,6 +802,48 @@ export class SquareCache {
       if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);
       if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
     }
+    // Derived: bake this square's cold LIGHTMAP from its just-baked NORMAL slot (lighting P1).
+    if (this.lightBake) this.bakeLightmapSquare(renderer, wc, wr, slotX, slotY, ax, ay, s);
+  }
+
+  /** Bake the derived `lightmap` composite for a just-baked square: sample its NORMAL slot + sum the
+   *  cold lights (`this.lightBake`, its lights/ambient set by the Viewport before `bakeDirty`) into
+   *  the scratch, then blit to the lightmap slot (interior + wrap-apron). Reuses the square's slot
+   *  geometry from {@link bakeSquare} + the same `blit`. `s = slotPx/SQUARE` (rect-local → slot). */
+  private bakeLightmapSquare(
+    renderer: Renderer,
+    wc: number,
+    wr: number,
+    slotX: number,
+    slotY: number,
+    ax: number,
+    ay: number,
+    s: number,
+  ): void {
+    const lm = this.channels.find((c) => c.derived);
+    const nrm = this.channels.find((c) => c.key.startsWith("normal"));
+    if (!this.lightBake || !lm?.bufs || !nrm?.bufs) return;
+    if (!this.lightmapQuad) {
+      // Rect-local quad (0..SQUARE world px), aUV 0..1; the scale-only transform maps it to the slot.
+      this.lightmapQuad = new MeshGeometry({
+        positions: new Float32Array([0, 0, SQUARE, 0, SQUARE, SQUARE, 0, SQUARE]),
+        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+      });
+    }
+    if (!this.lightmapMesh) this.lightmapMesh = new Mesh({ geometry: this.lightmapQuad, shader: this.lightBake });
+    else this.lightmapMesh.shader = this.lightBake;
+    // Sample the NORMAL composite through this square's slot UV (vUV 0..1 → the slot sub-rect).
+    this.lightBake.normal = nrm.bufs[this.active];
+    this.lightBake.setNormalUv(slotX / this.fixedCW, slotY / this.fixedCH, this.slotPx / this.fixedCW, this.slotPx / this.fixedCH);
+    this.lightBake.setRectWorld(squareWorldX(wc), squareWorldY(wr));
+    const ms = new Matrix(s, 0, 0, s, 0, 0); // scale-only: rect-local 0..SQUARE → 0..slotPx
+    renderer.render({ container: this.lightmapMesh, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 1], transform: ms });
+    const target = lm.bufs[this.active];
+    this.blit(renderer, this.scratchTex!, slotX, slotY, target);
+    if (ax >= 0) this.blit(renderer, this.scratchTex!, ax, slotY, target);
+    if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);
+    if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
   }
 
   /** Mirror the west facing: shift the origin by the width so the flipped quad still

@@ -17,17 +17,19 @@ piece by piece, not big-bang). Items move to `completed.md` as they land + verif
 - [ ] Bit helpers: float-mod byte/bit extraction (GLSL ES 1.00, `mod(floor(byte/exp2(b)),2.0)`) shared
       by the display + combine shaders.
 
-## P1 · Cold lightmap (baked static light, no shadow yet)
+## P1 · Cold lightmap (baked static light, no shadow yet) — ✅ core DONE + live-verified
 
-- [ ] **`cold_lightmap` bake** on the `SquareCache` rect tiers — a per-rect quad samples the rect's
-      NORMAL slot and writes `ambient + Σ cold·brightness·max(N·L,0)·falloff²` into a `lightmap` channel,
-      **world-space** (pans free), dirty-rect rebake (`lightDirty` = a cold light in range changed).
-      Port `rectLightBakeShader.ts`.
-- [ ] **cold `data`/`color` light textures** (per-rect, rect-local rgba8) — `encodeColdLight`
-      (`x−128,y−128,z,radius` + `r,g,b,brightness`) so **cards** (things) can re-evaluate cold lights on
-      their OWN normal at display (the bake used the ground normal). Port `coldLightTex.ts`.
-- [ ] Display: `lit = albedo × (cold_lightmap + <existing dynamic loop>)`. Verify static lights render +
-      **amortize** (no per-frame cost at rest; only dirty rects rebake).
+- [x] **`cold_lightmap` bake** — a **derived** `SquareCache` composite (F6): `bakeLightmapSquare` samples
+      each just-baked square's NORMAL slot + sums the cold lights into `lightmap-cold`
+      (`Σ cold·brightness·max(N·L,0)·falloff²`), world-space via `uRectWorld`, reusing the toroidal
+      scratch/apron/dirty machinery. `LightingBakeShader` + `LightRig.packCold` + `enableLightBake`.
+- [x] Display samples `lightmap-cold` and adds it to the light sum (`+ cold`). `?coldlight` seeds a debug
+      static light. **Verified live** — `?ambient=0.3&coldlight` renders a baked amortized orange pool on
+      the ground (soft falloff, world-space, trees on top), console clean.
+- [ ] _(follow-up)_ **cold `data`/`color` light textures** so **cards** (things) re-evaluate cold lights
+      on their OWN normal (the bake uses the ground normal). Port `coldLightTex.ts`.
+- [ ] _(follow-up)_ a proper **`lightDirty`** trigger (rebake a rect when a cold light in range changes
+      even if geometry didn't); today a cold-light change relies on a geometry rebake / `invalidateAll`.
 
 ## P2 · Dynamic pool (real-time, gate stubbed all-lit)
 

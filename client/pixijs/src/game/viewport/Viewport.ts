@@ -25,6 +25,7 @@ import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { makeLightingShader, type LightingShader } from "./lightingShader";
 import { LightRig } from "../lighting/LightRig";
 import { ShadowPass, type ShadowCaster } from "./shadowPass";
+import { makeLightingBakeShader } from "./lightingBakeShader";
 
 /** Dirty squares baked per frame. A fresh window dirties its whole grid; the budget
  *  spreads that over a few frames so the first open never hitches. */
@@ -133,6 +134,9 @@ export class Viewport extends LayoutNode {
   /** The wedge shadow pass — rasterizes billboard shadows into a screen-space coverage RT
    *  (viewable as the `shadow` channel in `/showRT`). Not yet sampled by the lighting pass. */
   private readonly shadowPass = new ShadowPass();
+  /** The cold-light lightmap bake material (lighting P1), enabled on the cold cache; packed each
+   *  frame from the rig's cold lights, its output (`lightmap-cold`) sampled by the display. */
+  private readonly lightBake = makeLightingBakeShader();
   /** Per-stem sprite bounding box (present pixels, fractions of the texture) — the shadow floors
    *  derive from it. Computed once from the surface pixels and reused every frame. */
   private readonly bboxCache = new Map<string, SpriteBBox>();
@@ -271,9 +275,17 @@ export class Viewport extends LayoutNode {
           return { texture: resolver.white, tint: 0xffffff, depth: -1 }; // ground / geo → opaque black (no thing)
         },
       },
+      // The cold LIGHTMAP (cold cache only): a DERIVED composite baked from the normal slot (the cold
+      // lights summed, amortized). `resolve` is never called (derived); a placeholder keeps the type.
+      ...(suffix === "cold"
+        ? [{ key: "lightmap-cold", derived: true, resolve: () => ({ texture: resolver.white, tint: 0 }) } as ChannelSpec]
+        : []),
     ];
     this.map = new SquareCache(chan("cold"));
     this.warm = new SquareCache(chan("warm"));
+    // Cold-light lightmap bake (lighting P1) on the cold cache: the Viewport packs the rig's cold
+    // lights onto it before each `bakeDirty`; the display samples `lightmap-cold`.
+    this.map.enableLightBake(this.lightBake);
     // When a tier lands, re-dirty every prim'd square (both tiers) so the bake upgrades.
     this.unsubLoad = resolver.onLoad(() => {
       this.map.invalidateAll();
@@ -516,6 +528,9 @@ export class Viewport extends LayoutNode {
     // remaining budget (floored so a warm flood on a fresh window / LOD swap never fully
     // starves the static world).
     this.warm.bakeDirty(renderer, BAKE_BUDGET);
+    // Pack the current cold lights onto the bake shader so a dirty cold rect re-sums them into the
+    // cold_lightmap (lighting P1). The bake runs inside `this.map.bakeDirty` (the derived channel).
+    this.rig.packCold(this.lightBake);
     this.map.bakeDirty(renderer, Math.max(BAKE_BUDGET - this.warm.lastBaked, COLD_BAKE_FLOOR));
     if (!this.map.ready) return;
 
@@ -543,6 +558,9 @@ export class Viewport extends LayoutNode {
       this.lightingShader.normal = normal;
       this.lightingShader.surface = surface;
       this.lightingShader.depth = zdepthWorld;
+      // Cold lightmap (lighting P1) — the baked static-light sum, added to the display's light sum.
+      const coldLightmap = this.map.displayComposite("lightmap-cold");
+      if (coldLightmap) this.lightingShader.coldLightmap = coldLightmap;
       // Warm tier: the same four composites for the movers, slot-aligned with cold (same
       // window). The lighting shader composites warm OVER cold per-fragment by warm surface.B,
       // then lights the merged G-buffer — so pawns light + shadow like the world. When warm

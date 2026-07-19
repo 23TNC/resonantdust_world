@@ -12,6 +12,7 @@
 //! is a distinguished slot so a hover highlight needs no register/unregister churn.
 
 import { MAX_HOT_LIGHTS, type LightingShader } from "../viewport/lightingShader";
+import { MAX_COLD_LIGHTS, type LightingBakeShader } from "../viewport/lightingBakeShader";
 
 /** Which lighting tier a light belongs to (docs/work/lighting). **cold** = static → summed into the
  *  per-rect baked `cold_lightmap`, effectively unlimited (amortized, dirty-rebake). **dynamic** =
@@ -69,6 +70,9 @@ export class LightRig {
   /** Reused scratch for the packed uniform arrays (no per-frame allocation churn). */
   private readonly data = new Float32Array(MAX_HOT_LIGHTS * 4);
   private readonly color = new Float32Array(MAX_HOT_LIGHTS * 4);
+  /** Reused scratch for the COLD packing ({@link packCold}). */
+  private readonly coldData = new Float32Array(MAX_COLD_LIGHTS * 4);
+  private readonly coldColor = new Float32Array(MAX_COLD_LIGHTS * 4);
 
   /** Add a dynamic light; returns the same record so the caller can mutate/remove it. */
   register(light: PointLight): PointLight {
@@ -108,6 +112,27 @@ export class LightRig {
     const out: PointLight[] = [];
     for (const l of this.lights) if (l.tier === "cold") out.push(l);
     return out;
+  }
+
+  /** Pack the cold lights into the lightmap-bake shader (lighting P1) — `data = xy,z,radius`,
+   *  `color = rgb,brightness` (no shadow sign; cold shadows bake separately). Called before the cold
+   *  cache's `bakeDirty` so a dirty rect re-sums the current cold set. */
+  packCold(shader: LightingBakeShader): void {
+    let n = 0;
+    for (const l of this.lights) {
+      if (l.tier !== "cold" || n >= MAX_COLD_LIGHTS) continue;
+      const o = n * 4;
+      this.coldData[o] = l.x;
+      this.coldData[o + 1] = l.y;
+      this.coldData[o + 2] = l.height;
+      this.coldData[o + 3] = l.radius;
+      this.coldColor[o] = ((l.color >> 16) & 0xff) / 255;
+      this.coldColor[o + 1] = ((l.color >> 8) & 0xff) / 255;
+      this.coldColor[o + 2] = (l.color & 0xff) / 255;
+      this.coldColor[o + 3] = l.brightness;
+      n++;
+    }
+    shader.setLights(this.coldData, this.coldColor, n);
   }
 
   /** The **dynamic** point lights that cast shadows (cursor first, then registered), for the
