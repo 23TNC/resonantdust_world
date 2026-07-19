@@ -120,9 +120,12 @@ starting point that must grow into this. (See `../resonantdust/view/src/game/lig
 
 - **Tiered static-light baking (the headline).** Bake cold/static lights (the DSL-authored bulk)
   into a per-region lightmap so hundreds cost one texture sample; keep dynamic/mover lights in the
-  live uniform pool; shadow via scatter maps / an occlusion bitfield. This is the scalability
-  spine, not a "later" item — the light count demands it from the start. Wire DSL `^light` prims
-  into `LightRig` as first-class registrants.
+  live pool. **Cold and dynamic build shadows oppositely:** dynamic rasterizes per-light scatter
+  maps / an occlusion bitfield (per frame), but **cold sweeps the lights inline in the bake with no
+  shadow map** — which is what lets it carry *unbounded* casting lights. Full target + the traps in
+  [`intent/tiered-lighting.md`](../intent/tiered-lighting.md). This is the scalability spine, not a
+  "later" item — the light count demands it from the start. Wire DSL `^light` prims into `LightRig`
+  as first-class registrants.
 
 - **Two-regime shader.** Tag object pixels in the composite (a flag bit, e.g. via the depth blue
   band as the old game did, or a dedicated channel) and branch: ground pixels use the current

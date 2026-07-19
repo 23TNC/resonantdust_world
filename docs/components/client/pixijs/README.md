@@ -8,7 +8,8 @@ wasm): terrain + trees (WorldBridge) and pawns (MoverLayer), with the lighting m
 - **[`design/`](design/)** — [`lighting.md`](design/lighting.md),
   [`de-lighting.md`](design/de-lighting.md) (albedo extraction).
 - **[`intent/`](intent/)** — [`zones-to-screen.md`](intent/zones-to-screen.md) (the wiring:
-  biomes+trees → browser).
+  biomes+trees → browser); [`tiered-lighting.md`](intent/tiered-lighting.md) (the target lighting
+  architecture — the cold **inline sweep**, no shadow map).
 - `current/`, `plan/` — lazy.
 
 > `client.md` **moved to [`client/core/intent/`](../core/intent/client.md)** (2026-07-14). It was

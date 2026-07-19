@@ -121,6 +121,8 @@ manifest, client decodes it); a source of **static (cold) lights** — DSL point
 
 ## State
 
-Phased in [`todo.md`](todo.md); decisions in [`forks.md`](forks.md). The architecture here should
-graduate to a `client/pixijs` **design** doc once the port stabilizes (per docs conventions — work
-executes, design endures).
+Phased in [`todo.md`](todo.md); decisions in [`forks.md`](forks.md). The durable **target** (which
+outlives this work dir) lives in [`client/pixijs/intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md)
+— the cold inline-sweep strategy + the traps. The rest here (phased plan, interim build, blockers)
+graduates into that intent + a `client/pixijs` **design** doc once the port stabilizes (per docs
+conventions — work executes, design endures).
