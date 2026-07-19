@@ -3,11 +3,12 @@
 _Items move to [`completed.md`](completed.md) as they land + verify. Design: [`README`](README.md)
 · decisions [`forks.md`](forks.md) · issues [`issues.md`](issues.md) · blockers [`blockers.md`](blockers.md)._
 
-> **Status (2026-07-19).** **The leaf reshape is DONE for EVERY existing texture kind** (see
-> [`completed.md`](completed.md)): biome-thing, pawn/animal (wolf), pawn/human (body-types folded to
-> `<kind>.<subkind>`), and `linked/`; edge readers + DSL stems flipped; browser-verified (conifer/flora
-> render, linked atlas decodes, folded human kinds serve 200). What's below is **phase 2** — neither
-> item has a current render target, so it's ordered by value, not urgency.
+> **Status (2026-07-19).** **The migration is functionally complete.** The leaf reshape is done for
+> EVERY existing texture kind (biome-thing, pawn/animal, pawn/human body-types folded to
+> `<kind>.<subkind>`, `linked/`); edge readers + DSL stems flipped; **`bin/art`'s read/write core cut
+> over** (R3); browser-verified (conifer/flora render, linked atlas decodes, folded human kinds serve
+> 200). See [`completed.md`](completed.md). **Two items remain, both deliberately deferred** (neither has
+> a current render target):
 
 ---
 
@@ -26,18 +27,20 @@ renders differently. Do this **when the biome-tile object model / wall placement
 - [ ] **Re-master** the kinds not yet held-whole atlases: `wall.blueprint` (still 16-split), the empty
       `fence.*`/`rock.*`, and the double-encoded `wall.smooth` `1.l.0.l.0` source masters.
 
-## R3 · `bin/art` regeneration into the new leaf  _(offline tooling; no pending new art)_
+## R3-manifest · `bin/art manifest` variant/layer counters  _(non-blocking; the last R3 piece)_
 
-So *newly generated* art is written in-shape (this stream only reshaped **existing** art). Large bash
-surface in `bin/art` (~3127 lines) + `bin/lib/*.py`.
+`bin/art`'s read/write core is cut over (done — see completed.md). Only the **`bin/art manifest`**
+generators (`_id_variant_pairs`, `_layer_count`) still walk the old `<id>.<dir>.<layer>` pose dirs
+(flagged ⚠ in-code). They regenerate `content/visual/manifest/*.rd` only, which **nothing renders off**
+(the edge builds its own runtime manifest) — hence non-blocking.
 
-- [ ] Every **write** site emits the new leaf: `split_layers.py`, `generate.py`, `emissive.py`,
-      `marigold/delight.py` (all texpath consumers already reshaped), `meta.py`.
-- [ ] The **manifest walk** (`_kind_maps`, variant/part counters) globs the new leaf; **truncate
-      `variant_id ≥ 16`** out of the manifest (`u4`) — and `log()` the drop (no silent cap).
+- [ ] Rework the two counters to the new leaf: variants = the kind's direct numeric subdirs; facing/part
+      from the `<map>.<dir>.<part>.png` filename; no `<id>` level. **Truncate `variant_id ≥ 16`** out of
+      the manifest (`u4`) + `log()` the drop. Do this next time `content/visual/manifest/*.rd` matters.
 
 ---
 
-**Done when:** `textures/` is `<type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>` end to end —
-including walls/fences/rocks under `biome-tile/…` and human body-types resolved — the registry
-authoritative, `bin/art` writing the new leaf, browser-verified, old tree dropped.
+**Done when:** both deferred items land — `bin/art manifest` regenerates the new leaf, and (R2) walls/
+fences/rocks fold under `biome-tile/…` once the object model places them. The functional migration
+(every existing kind on `<type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>`, served + rendered)
+is **already done + verified**.

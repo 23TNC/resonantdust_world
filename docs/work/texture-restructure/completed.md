@@ -52,3 +52,14 @@ authoritative for what's actually shipped. Timestamp each row with the date it l
   manifest. (No browser render — humans aren't worldgen-placed — but the serving path is identical to the
   rendered conifer/wolf.) `dead.thin` etc. that carry only a `template` (no albedo) aren't stems yet, as
   expected. **The leaf reshape is now complete for every existing texture kind.**
+
+- **2026-07-19** · **R3 (core) — `bin/art` cut over to the new leaf.** The migration had broken
+  `bin/art` (its `_find_diffuse`/`_map_path` looked for bare `diffuse.png`/`<map>.png`). Cut over the
+  read/derive helpers (`diffuse.*.png`; `_map_path` preserves the `<dir>.<part>` suffix), both remaster
+  write sites (grid atlas → `<kind>/<id>/<map>.l.0.png` + `atlas.json`; non-grid → reads `sprite.*.png`,
+  writes `diffuse.<dir>.<part>.png`), and the existence/map-bit checks + map-scaler exclusions
+  (`<map>.png` → `<map>.*.png`). Verified: `bash -n` clean; `_find_diffuse` finds the migrated
+  grid/non-grid/dotted-kind trees (was 0). **Remaining (flagged in-code, non-blocking):** the
+  `bin/art manifest` variant/layer counters (`_id_variant_pairs`/`_layer_count`) still walk the old
+  `<id>.<dir>.<layer>` pose dirs — they only regenerate `content/visual/manifest/*.rd`, which nothing
+  renders off (the edge builds its own runtime manifest). Reworking that to the new model is the last piece.
