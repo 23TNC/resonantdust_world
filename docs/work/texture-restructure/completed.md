@@ -42,3 +42,13 @@ authoritative for what's actually shipped. Timestamp each row with the date it l
   reshape is done + verified for **all existing texture kinds** with a render target. **Still phase 2:**
   the full biome-tile **fold** (material→kind rename; object-model-coupled, walls unplaced), `bin/art`
   regeneration (offline), and human-pawn body-type subkinds (a modeling question — no `body-type` def field).
+
+- **2026-07-19** · **R1 — human-pawn body-types folded (user's call).** Body-type is **not** dropped or
+  crammed into the variant space — it **folds into the kind name** `<kind>.<subkind>` (a distinct kind),
+  matching the `linked/<form>.<material>` dotted-kind convention. Generalized `migrate_leaf.py` to fold
+  any non-`default` subkind (drop `default`) + clean up emptied `<kind>/` dirs; reshaped 183 files:
+  `pawn/human/{dead,male,female}/{average,thin,fat,fit}/…` → `…/male.average/<variant>/<map>.<dir>.<part>`
+  etc. Verified: the dotted human kinds serve 200 (`pawn/human/male.average/{e,s,n}`) + appear in the
+  manifest. (No browser render — humans aren't worldgen-placed — but the serving path is identical to the
+  rendered conifer/wolf.) `dead.thin` etc. that carry only a `template` (no albedo) aren't stems yet, as
+  expected. **The leaf reshape is now complete for every existing texture kind.**

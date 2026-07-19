@@ -3,24 +3,13 @@
 _Items move to [`completed.md`](completed.md) as they land + verify. Design: [`README`](README.md)
 · decisions [`forks.md`](forks.md) · issues [`issues.md`](issues.md) · blockers [`blockers.md`](blockers.md)._
 
-> **Status (2026-07-19).** **The leaf reshape is DONE + verified for every existing texture kind with
-> a render target** (see [`completed.md`](completed.md)): P1 texpath+marigold, migrate (biome-thing +
-> pawn/wolf + `linked/`), edge readers, DSL stems, browser render (conifer/flora) + linked-atlas decode.
-> What's below is **phase 2** — none of it has a current render target, so it's ordered by value,
-> not urgency.
+> **Status (2026-07-19).** **The leaf reshape is DONE for EVERY existing texture kind** (see
+> [`completed.md`](completed.md)): biome-thing, pawn/animal (wolf), pawn/human (body-types folded to
+> `<kind>.<subkind>`), and `linked/`; edge readers + DSL stems flipped; browser-verified (conifer/flora
+> render, linked atlas decodes, folded human kinds serve 200). What's below is **phase 2** — neither
+> item has a current render target, so it's ordered by value, not urgency.
 
 ---
-
-## R1 · Human-pawn body-type subkinds  _(the last un-reshaped existing art)_
-
-`pawn/human/{dead,male,female}/{average,thin,fat,fit}` still use `<subkind>` for **body type** —
-`migrate_leaf.py` currently **skips** them (a blind subkind-drop would collide average/thin).
-
-- [ ] **Decide the modeling** (a fork): the def model is `type/subtype/kind/variant` with **no
-      `body-type` field**. Does body-type become the `variant` (art-variations flattened under it), a
-      new `kind` per body-type, or something else? Ties into how humans get spawned. — *the one genuine
-      user-input piece here.*
-- [ ] Extend `migrate_leaf.py` for the chosen mapping; reshape the human trees; drop the old leaves.
 
 ## R2 · The full biome-tile fold  _(rename `linked/` → `biome-tile/`; deferred — object-model-coupled)_
 

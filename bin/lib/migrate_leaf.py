@@ -2,15 +2,18 @@
 """Migrate `<kind>/<subkind>/<id>.<dir>.<part>/<variant>/<map>.<ext>` leaves to the new
 `<kind>/<variant>/<map>.<dir>.<part>.<ext>` shape (texture-restructure P3).
 
-This first pass handles the **clean `subkind == "default"`** kinds (biome-thing + the
-default-subkind pawns like wolf): drop `<subkind>` + `<id>`, fold `<dir>`/`<part>` into
-the filename, collapse the direction/part folders into ONE `<variant>/` folder.
+Handles every current layout: drop `<id>`, fold `<dir>`/`<part>` into the filename,
+collapse the direction/part folders into ONE `<variant>/` folder, and resolve `<subkind>`:
 
   * directional maps `<map>.<ext>`  → `<variant>/<map>.<dir>.<part>.<ext>`
   * per-variant `*.json` (meta.json) → `<variant>/<name>`  (no dir/part)
+  * `subkind == "default"` **drops** (kind stays `<kind>`); any other subkind **folds into
+    the kind name** `<kind>.<subkind>` — matching `linked/<form>.<material>` — so
+    `pawn/human/male/fat/…` → `pawn/human/male.fat/…` (body-type becomes a distinct kind).
+  * `linked/` (no subkind) is reshaped in place: `linked/<kind>/<variant>/<map>.l.0.<ext>`.
 
-**Skipped** (phase 2, need per-kind decisions): `subkind != "default"` (human pawn
-body-types collide on a blind drop) and `linked/` (held-whole atlas + registry fold).
+Note: the full biome-tile **fold** (rename `linked/` → `biome-tile/`, material→kind) is
+NOT here — it's object-model-coupled (phase 2). This does the leaf reshape only.
 
 In-place under textures/ (backed up out-of-tree first — textures/ is gitignored, no git
 rollback). Dry-run by default; `--apply` performs it. Usage:
@@ -31,25 +34,9 @@ def _is_iddirpart(name: str) -> bool:
     return len(p) == 3 and p[0].isdigit()
 
 
-def plan(kind_dir: str) -> tuple[list, list]:
-    """Return (moves, prune_dirs) for one `<kind>` dir. Handles both layouts:
-      * **subkind** (biome-thing/pawn): `<kind>/default/<id.dir.part>/<variant>/…`
-        — a non-`default` subkind raises (caller skips + logs).
-      * **no-subkind** (linked): `<kind>/<id.dir.part>/<variant>/…` directly.
-    Both → `<kind>/<variant>/<map>.<dir>.<part>.<ext>`. Raises ValueError to skip a kind."""
-    dirs = [d for d in sorted(os.listdir(kind_dir)) if os.path.isdir(os.path.join(kind_dir, d))]
-    idp_here = [d for d in dirs if _is_iddirpart(d)]
-    if idp_here:                                    # no-subkind (linked): id-dirs are direct children
-        idp_root = kind_dir
-        prune = [os.path.join(kind_dir, d) for d in idp_here]
-    else:                                           # subkind: expect a single `default`
-        for sub in dirs:
-            if sub != "default":
-                raise ValueError(f"non-default subkind {sub!r}")
-        idp_root = os.path.join(kind_dir, "default")
-        if not os.path.isdir(idp_root):
-            return [], []
-        prune = [idp_root]
+def _idp_moves(idp_root: str, target_kind_dir: str) -> list:
+    """Reshape every `<id.dir.part>/<variant>/<file>` under `idp_root` into
+    `target_kind_dir/<variant>/<map>.<dir>.<part>.<ext>` (per-variant `*.json` kept as-is)."""
     moves = []
     for idp in sorted(os.listdir(idp_root)):
         idp_dir = os.path.join(idp_root, idp)
@@ -66,7 +53,35 @@ def plan(kind_dir: str) -> tuple[list, list]:
                     continue
                 stem, _, ext = fn.rpartition(".")
                 dst_name = fn if ext == "json" else f"{stem}.{d}.{part}.{ext}"
-                moves.append((src, os.path.join(kind_dir, variant, dst_name)))
+                moves.append((src, os.path.join(target_kind_dir, variant, dst_name)))
+    return moves
+
+
+def _has_idp(d: str) -> bool:
+    return any(_is_iddirpart(x) and os.path.isdir(os.path.join(d, x)) for x in os.listdir(d))
+
+
+def plan(kind_dir: str) -> tuple[list, list]:
+    """Return (moves, prune_dirs) for one `<kind>` dir, → `<kind>/<variant>/<map>.<dir>.<part>.<ext>`:
+      * **no-subkind** (linked): `<kind>/<id.dir.part>/…` reshaped in place.
+      * **subkind**: each subkind reshaped — `default` **drops** (kind stays `<kind>`); any other
+        subkind **folds into the kind name** `<kind>.<subkind>` (a sibling dir), matching the
+        `linked/<form>.<material>` dotted-kind convention. e.g. `pawn/human/male/fat/…` →
+        `pawn/human/male.fat/<variant>/…`. Emptied `<kind>/` dirs are cleaned up by the caller.
+    Already-reshaped kinds (variant dirs, no id.dir.part) yield no moves (idempotent)."""
+    dirs = [d for d in sorted(os.listdir(kind_dir)) if os.path.isdir(os.path.join(kind_dir, d))]
+    if any(_is_iddirpart(d) for d in dirs):         # no-subkind (linked): id-dirs are direct children
+        return _idp_moves(kind_dir, kind_dir), [os.path.join(kind_dir, d) for d in dirs if _is_iddirpart(d)]
+    kind_name = os.path.basename(kind_dir)
+    parent = os.path.dirname(kind_dir)
+    moves, prune = [], []
+    for sub in dirs:
+        sub_dir = os.path.join(kind_dir, sub)
+        if not _has_idp(sub_dir):
+            continue  # not a leaf-holding subkind (e.g. an already-reshaped variant dir)
+        target = kind_dir if sub == "default" else os.path.join(parent, f"{kind_name}.{sub}")
+        moves += _idp_moves(sub_dir, target)
+        prune.append(sub_dir)
     return moves, prune
 
 
@@ -114,10 +129,17 @@ def main(argv: list[str]) -> int:
     for src, dst in moves:
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(src, dst)
-    for old in prune_dirs:                       # each is exactly <kind>/default, never a subtype
+    for old in prune_dirs:                       # a subkind dir or a linked <id.dir.part> dir
         if os.path.isdir(old):
             shutil.rmtree(old)
-    print(f"\napplied: {len(moves)} files copied, {len(prune_dirs)} <kind>/default dirs pruned.")
+    # remove any dir left empty by the fold (e.g. pawn/human/male/ after its subkinds folded to siblings)
+    removed = 0
+    for root in roots:
+        rabs = os.path.join(REPO, root)
+        for dp, _dn, _fn in os.walk(rabs, topdown=False):
+            if dp != rabs and not os.listdir(dp):
+                os.rmdir(dp); removed += 1
+    print(f"\napplied: {len(moves)} files copied, {len(prune_dirs)} dirs pruned, {removed} empty dirs removed.")
     return 0
 
 
