@@ -12,14 +12,11 @@ shadow bitfield, the whole warm/rt dynamic path, retire the wedge._
 
 ---
 
-## P1 · Foundation
+## P1 · Foundation — ✅ DONE (`a37be74`, see completed.md)
 
-- [ ] **Fix the scatter blend** `add` → **`max`** (`SquareCache:363`) so overlapping caster tris clamp at 1.
-- [ ] **Port the 32-bit bitfield helpers** from `../resonantdust/view/src/game/lighting/bitfield.ts`:
-      `packBitfield`/`bitSetCPU` (CPU + test oracle) + `BITFIELD_GLSL` (`bf_byte`/`bf_bit` float-mod,
-      ES-1.00 safe). Shared by cold + warm.
-- [ ] **Verify the 4th (alpha) lane** end-to-end (`uChannel` + `max` blend + non-premult writeback →
-      4 clean lanes/map). This sets the per-frame throughput; everything keys off it.
+The `add`→`max` fix + the ported bitfield helpers landed. Remaining foundation item folds into P3:
+- [ ] **Verify the 4th (alpha) lane** end-to-end (`uChannel` + `max` + non-premult writeback → 4
+      lanes/map) — only testable once the ScatterPass renders into lanes; do it there. Sets throughput.
 
 ## P2 · Cold upgrade — 3 → 32 shadow-casters (bake-time)
 

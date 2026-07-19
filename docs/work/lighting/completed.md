@@ -28,6 +28,13 @@ what's actually shipped. Commit + verification per row._
   billboard-silhouette shear (cold + dynamic). Foundation only — the `ScatterPass` that drives it per-frame
   is still in [`todo.md`](todo.md) P3.
 
+- **2026-07-19** · **P1 — scatter blend fix + bitfield helpers** (`a37be74`). Shadow-lane blend
+  `add`→`max` (`SquareCache`, coverage clamps at 1). Ported `lighting/bitfield.ts` from the old game:
+  `packBitfield`/`bitSetCPU` (CPU oracle), `BITFIELD_GLSL` (`bf_byte`/`bf_bit`, ES-1.00 float-mod),
+  `runBitfieldSpike` (dev round-trip check). The shadow storage for `shadow-warm` + `shadow-cold`.
+  Typecheck clean. _(P1's alpha-lane throughput verify folds into P3 — only testable once the ScatterPass
+  renders into lanes.)_
+
 - **2026-07-19** · **P4 interim — materialized `shadow-cold` cold shadows** (`ea9a26f`, `9a1b045`,
   `583d87d` rename). `SquareCache.bakeColdShadowSquare` projects the ≤3 nearest cold lights' caster
   silhouettes (`projectCaster`) into a derived `shadow-cold` composite (R/G/B lanes); the cold lightmap bake
