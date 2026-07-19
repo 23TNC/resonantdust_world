@@ -45,6 +45,12 @@ from blurring). Folders are created **lazily** — as we actually work a compone
   its job is to **cut re-derivation time**: a convenience cache of known state so we don't
   re-investigate what we already established.
 
+  Every `current/` file carries a **freshness stamp** — `Last updated: YYYY-MM-DD` or
+  `verified @ <git-sha>` (the commit it was actually checked against). `rd docs-check` **requires**
+  the stamp, and (warning-only) compares it against the component's code path: if the code changed
+  *after* the stamp, it flags the cache as possibly stale. That comparison is the mechanical guard
+  against the phantom-project trap below — a lagging cache now announces its own age.
+
   ⚠️ **A cache that may lag is safe to *read* and unsafe to *plan from*.** Learned the hard way on
   2026-07-14: the shard's `divergences.md` had three rows (#1, #6, #7) describing code that had been
   deleted months earlier — `completed.md` said so the whole time — and a whole phase sequence got

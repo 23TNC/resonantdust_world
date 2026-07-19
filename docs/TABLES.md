@@ -37,7 +37,7 @@ bottom. Column layouts are cited from [`VARIABLES.md`](VARIABLES.md), never rede
 | `player_shard_reference` | `u16` | | `realm_server_reference` |
 | `name` | `String` | uniq | case-sensitive, ≤ `MAX_PLAYER_NAME_LEN` (64) |
 | `last_login_secs` | `u32` | | unix seconds; 0 until first login |
-| `flags` | `u32` | | `faction` bits 0–1 (deprecated); `permissions` bits 8–15 |
+| `flags` | `u32` | | `permissions` bits 8–15; bits 0–1 reserved |
 
 writes `claim_or_login`, `set_last_login` · reads edge · sub `SELECT * FROM players` (edge, per session)
 

@@ -1,17 +1,17 @@
-# Client/server sync — authoritative bitemporal event log + deterministic projection
+# Client sync + deterministic projection
 
-> **0.2 note (2026-07-09):** the **server** model below is superseded by the tick
-> pipeline (`server_master`/`server_edge`/`server_simulation`, event/state split,
-> per-object tic frontier). The **client** model here — synced clock, render delay
-> `D`, interpolate-by-`valid_at`, gray-out — is **retained**.
+_Intent (client/core). The **client** model — synced clock, render delay `D`,
+interpolate, and the fact-based projection below. The authoritative **server** side
+this feeds is the shard rebuild in
+[`intent/spacetime-again`](../../../../intent/spacetime-again/README.md); the
+old tick/pipeline split named in earlier drafts is retired. The `valid_at`
+vocabulary here predates the tic clock — the projection **concepts** stand
+(facts-not-positions, speed-aware tween, determinism); the timestamp specifics
+re-fit to the tic when the movement slices are actually built._
 
-**Status:** Design locked (2026-07-08); substrate partly built. Live today: clock
-sync, client interpolation, and a **stopgap** debug mover that streams a position
-every 150 ms. Not yet built: **Slice 0**, which converts motion from
-position-streaming to future-stamped per-tile `free_things` rows and makes the
-client projector speed-aware. This doc is the plan for how every client stays in
-sync with the server for a RimWorld-like MMO simulation, and the incremental path
-to get there. Companion to [`client.md`](../components/client/core/intent/client.md).
+Live today: clock sync + client interpolation (`client/core/src/clock.rs`), plus a
+stopgap debug mover streaming a position every ~150 ms — the very thing the
+projection model below is designed to replace. Companion to [`client.md`](client.md).
 
 ## The problem
 

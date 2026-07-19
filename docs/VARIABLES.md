@@ -109,6 +109,10 @@ u32 entity_reference
 u16 realm_server_reference        cross-realm only
   u8 realm_reference              bits 8–15
   u8 server_reference             bits 0–7
+
+u16 route_reference               cold-routing key: which family, which region
+  u4 type_id                      bits 8–11     TYPE_BIOME_TILE / TYPE_BIOME_THING / …
+  u8 region_reference             bits 0–7      (bits 12–15 reserved)
 ```
 
 `SERVER_REF_NONE` = 0. `OBJECT_REF_MAX` = 0xFF_FFFF.

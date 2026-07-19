@@ -98,6 +98,8 @@ commands:
                                     from content/servers/<env>
   logs <spacetime|edge|gateway> [-f]    tail a component's log
   ps                                container status across all three stacks
+  docs-check [--quiet|--list]       audit docs/ invariants (see docs/README.md)
+  work-check [--quiet]              flag a premature pause in the active work stream
 
 typical local test loop:
   rd up                 # network + spacetime daemon + idle edge/gateway containers
@@ -120,6 +122,8 @@ case "$cmd" in
   deploy)   source "$RD_LIB/build.sh"; source "$RD_LIB/redeploy.sh"; source "$RD_LIB/stack.sh"; rd_deploy "$@" ;;
   redeploy) source "$RD_LIB/build.sh"; source "$RD_LIB/redeploy.sh"; source "$RD_LIB/index.sh"; rd_redeploy "$@" ;;
   index)    source "$RD_LIB/index.sh";   rd_index "$@" ;;
+  docs-check) source "$RD_LIB/docs.sh";  rd_docs_check "$@" ;;
+  work-check) source "$RD_LIB/docs.sh";  rd_work_check "$@" ;;
   -h|--help|help|"") usage ;;
   *) rd_warn "unknown command '$cmd'"; usage; exit 1 ;;
 esac

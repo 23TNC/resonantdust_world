@@ -95,3 +95,6 @@ client/pixijs/node_modules/*
 /marigold/.cache/
 __pycache__/
 *.pyc
+
+# docs-authority: ephemeral per-session stop-reason markers (work-check)
+docs/work/*/.stop-reason

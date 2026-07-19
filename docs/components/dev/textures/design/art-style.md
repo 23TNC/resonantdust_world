@@ -90,8 +90,8 @@ Sprites are delivered as **transparent alpha cutouts**.
 
 ## Pipeline pointers
 
-- **Prompt templates:** `docs/prompts/sprite.{east,south,north}.txt` (the hand
-  authored versions — being superseded by the generation pipeline).
+- **Prompt templates:** `docs/prompts/sprite.{east,south,north}.txt` (hand-authored;
+  the ComfyUI generation pipeline is replacing them — see `dev/scripts/art/plan`).
 - **Sprite generation** (in progress): ComfyUI-driven, SDXL + ControlNet + rembg.
   See the `sprite-gen-pipeline` memory for the working recipe and status.
 - **Texture pipeline:** `bin/art` slices/keys/masters sprites; masters normalize

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# git **pre-commit** hook — the hard gate: refuse a commit that would leave docs/
+# out of compliance. Complements the Claude Code Stop hook (per-turn feedback);
+# this guarantees the committed history is never broken, from any source.
+#
+# Installed as a symlink at .git/hooks/pre-commit (see docs/work/docs-authority/).
+# Escape hatch for a deliberate exception:  SKIP_DOCS_CHECK=1 git commit ...
+set -uo pipefail
+
+[[ "${SKIP_DOCS_CHECK:-}" == "1" ]] && { echo "pre-commit: docs-check skipped (SKIP_DOCS_CHECK=1)" >&2; exit 0; }
+
+REPO="$(git rev-parse --show-toplevel)"
+if ! "$REPO/bin/rd" docs-check; then
+  {
+    echo
+    echo "pre-commit: docs-check failed — fix the above, or bypass with:"
+    echo "    SKIP_DOCS_CHECK=1 git commit ..."
+  } >&2
+  exit 1
+fi
+exit 0

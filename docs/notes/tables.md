@@ -59,7 +59,8 @@ its only reader (`resolve_zone_or_default`) is `#[allow(dead_code)]`, and a play
 on their own row (`players.player_shard_reference`) rather than being derived from geography.
 
 The routing itself isn't wrong — `zone_id → region → endpoint` is unchanged by the rebuild, which is
-why [`index.rs`](../../server/edge/src/index.rs) was kept whole rather than deleted and re-derived.
+why the edge's zone-routing (`resolve_zone_or_default`, now `#[allow(dead_code)]`) was kept whole
+rather than deleted and re-derived.
 Whether zone→shard routing returns at all is the rebuild's call. Written by the operator via
 `rd index seed` → `assign_region` / `set_shard`; topology source `content/servers/<env>`.
 
