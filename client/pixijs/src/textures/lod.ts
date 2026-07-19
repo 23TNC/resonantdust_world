@@ -57,6 +57,12 @@ export function previewUrl(root: string, stem: string): string {
   return `${root}/preview/${stem}`;
 }
 
+/** The `meta.json` sidecar URL for a stem — channel tints + the shadow-cast silhouette outline
+ *  (`GET /textures/meta/{stem}`, JSON), fetched on demand by the lighting scatter. */
+export function metaUrl(root: string, stem: string): string {
+  return `${root}/meta/${stem}`;
+}
+
 /** The LOD buckets the resolver requests, in px (short axis). A stem's texture is
  *  fetched at the smallest bucket ≥ its on-screen size, clamped to the master. */
 export const LOD_SIZES = [16, 32, 64, 128, 256, 512, 1024] as const;

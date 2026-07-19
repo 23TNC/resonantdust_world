@@ -10,9 +10,11 @@ _Dependencies gating a `todo` item. Each: what's blocked, why, the plan to clear
 **Server half ✅ DONE 2026-07-18.** The edge serves the sidecar on demand: `GET /textures/meta/{*stem}`
 → the leaf's `meta.json` as `application/json` (`TextureSource::serve_meta`, `TextureTier::Meta`).
 Verified: `…/conifer/default/e` → the 179-triangle outline JSON. **Chosen on-demand** (not manifest-fold)
-because outlines are large — mirrors the old game's `/textures/geo/` sidecars. **Remaining (client half):**
-a fetch+decode+cache path (like the LOD fetches) turning `outline` into per-def polygons/tris for the
-scatter — do it when P3 needs it (it's the caster silhouette lookup).
+because outlines are large — mirrors the old game's `/textures/geo/` sidecars. **Client half ✅ DONE:**
+`textures/OutlineCache.ts` — `get(stem)` returns the cached `Outline` (polygons + earcut tris, decoded
+from the sidecar) or `null` on a miss, firing one async `metaUrl` fetch + caching. Ready for P3's scatter
+to look up a caster's silhouette; P3 wires `setRoot(texturesRoot)` on login + feeds it the caster stems.
+**B1 fully resolved** — P3 unblocked.
 
 **Blocked.** _(historical)_ P3's projected-silhouette scatter needs each caster's `outline` (earcut tris)
 **client-side**; today it's only in the per-leaf `meta.json` on disk.
