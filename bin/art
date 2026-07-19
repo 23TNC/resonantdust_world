@@ -2344,7 +2344,15 @@ cmd_maps() {
   # exists (if --ao); degrades to G=1 (no occlusion) otherwise.
   echo "art: maps [$kind] surface (R=height, G=ao, B=coverage) ..."
   _surface_kind "$kind" || return 1
-  echo "art: maps for $kind — normal + albedo + albedo_residual + surface co-located under $src_root/ (emissive deferred)"
+  # Shadow OUTLINE (silhouette earcut) → each leaf's meta.json, from its diffuse alpha. Needs the
+  # `outline` Rust CLI (shared/geometry); if it isn't built, skip with a hint rather than fail maps.
+  if [[ -x "$REPO_ROOT/shared/target/release/outline" ]]; then
+    echo "art: maps [$kind] outline (silhouette -> meta.json) ..."
+    RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/outline.py" "$src_root" || return 1
+  else
+    echo "art: maps [$kind] outline SKIPPED — build it: docker run --rm -v \"\$PWD\":/workspace -v rd-sim-cargo:/usr/local/cargo/registry -w /workspace/shared/geometry rd-sim-builder cargo build --release --features generate --bin outline" >&2
+  fi
+  echo "art: maps for $kind — normal + albedo + albedo_residual + surface + outline co-located under $src_root/ (emissive deferred)"
 }
 
 # Count the display variations in KINDDIR: unique sprite stems carrying a colour
@@ -3074,12 +3082,22 @@ cmd_split_layers() {
   RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/split_layers.py" "$@"
 }
 
+cmd_outline() {
+  # Generate the shadow-cast SILHOUETTE (boundary polygons + earcut triangulation) into each
+  # variant leaf's meta.json, from its diffuse alpha — the vector outline the tiered-lighting
+  # scatter projects through each light. Delegates to lib/outline.py + the `outline` Rust CLI
+  # (shared/geometry). `bin/art maps` runs this automatically when the CLI is built.
+  command -v python3 >/dev/null || { echo "art outline: python3 not found" >&2; exit 1; }
+  RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/outline.py" "$@"
+}
+
 main() {
   local cmd=${1:-}
   shift || true
   case "$cmd" in
     generate) cmd_generate "$@" ;;
     split_layers) cmd_split_layers "$@" ;;
+    outline) cmd_outline "$@" ;;
     remaster) cmd_remaster "$@" ;;
     split) cmd_split "$@" ;;
     flatten) cmd_flatten "$@" ;;

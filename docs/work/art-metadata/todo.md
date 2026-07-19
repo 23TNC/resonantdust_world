@@ -11,19 +11,19 @@ _Items move to `completed.md` as they land + verify. Design: [`README`](README.m
 - [x] `split_layers.py` emits `channel_tints` (the per-channel `Bcol·255` it already computed, was only
       logged). **Verified:** `wall.smooth` → `meta.json` = `{"channel_tints":[[244,244,243]]}`.
 
-## P2 · Outline generation (the tiered-lighting dependency)
+## P2 · Outline generation (the tiered-lighting dependency) — ✅ DONE
 
-- [ ] **Deps** — pick the Python path (`cv2.findContours` / `scipy` / pure-numpy for contours; a
-      simplify; an earcut — `mapbox_earcut` / `triangle` / pure-py). Check what's available in the art
-      toolchain before committing; keep it dependency-light if possible.
-- [ ] `bin/lib/outline.py` — from the sprite's **silhouette** (surface `A` / diffuse alpha): threshold →
-      contours (incl. holes) → Visvalingam–Whyatt (or Douglas–Peucker) simplify → group holes into
-      outers → earcut. Normalize to the content box (so it's resolution-independent, like the old
-      sidecars). Write `outline: { polygons, triangles }` via `meta.update`.
-- [ ] Wire into `cmd_maps` (run after surface is baked, so the silhouette exists). Skip-if-present +
-      `--force`, matching the other generators.
-- [ ] Verify on a tree/rock: reasonable triangle count (Visvalingam target), holes excluded, outline
-      hugs the silhouette. Port reference: `../resonantdust/shared/geometry/src/lib.rs`.
+- [x] **Deps (F1):** toolchain had only numpy+PIL (no earcut), so **ported the Rust `geometry` crate**
+      (`shared/geometry`, added to the workspace) + a CLI `src/bin/outline.rs` — `sprite PNG → Sidecar
+      JSON`. Built in the rust:slim builder; runs natively on the host.
+- [x] `bin/lib/outline.py` — runs the CLI per leaf on **`diffuse.png`** (its alpha is the silhouette —
+      things are RGBA cutouts; opaque tiles are `L` → harmless square, and don't cast). Merges the
+      `Sidecar` (polygons + earcut triangulation, content-box-normalized) into `meta.json` via
+      `meta.update`. Skip-if-present + `--force`.
+- [x] Wired into `cmd_maps` (after `_surface_kind`; guarded on the CLI being built → skip-with-hint,
+      never fails maps) + a standalone `bin/art outline` dispatch.
+- [x] **Verified:** conifer leaves → 163–183-tri silhouettes hugging the shape (contour `x[0.22,0.77]`,
+      not a square); read-merge-write proven — wall meta has **both** `channel_tints` + `outline`.
 
 ## P3 · Serve + consume
 
