@@ -2405,40 +2405,29 @@ _var_pairs() {  # kinddir
   if ! find "$d" -type f -name 'albedo.*.png' -print -quit 2>/dev/null | grep -q .; then
     map=diffuse
   fi
-  # ⚠ NOT YET CUT OVER to the new leaf (texture-restructure R3): this walks the OLD
-  # `<id>.<facing>.0/<variant>/<map>.png` pose dirs, which no longer exist. Only used by
-  # `bin/art manifest` (content/visual/manifest/*.rd) — non-blocking, since the edge builds
-  # its own runtime texture manifest. Rework: variants = the kind's direct numeric subdirs;
-  # facing/part come from the `<map>.<dir>.<part>.png` filename; there is no `<id>` level.
-  local pose pn id vdir var
-  for pose in "$d"/*/; do
-    [[ -d "$pose" ]] || continue
-    pn=$(basename "${pose%/}")
-    [[ "$pn" =~ ^([0-9]+)\.${FACINGS_RE}\.0$ ]] || continue
-    id=${BASH_REMATCH[1]}
-    for vdir in "$pose"*/; do
-      [[ -f "${vdir}${map}.png" ]] || continue
-      var=$(basename "$vdir")
-      [[ "$var" =~ ^[0-9]+$ ]] && printf '%s %s\n' "$id" "$var"
-    done
-  done | sort -n -k1,1 -k2,2 -u
+  # New leaf: variations are the kind's direct numeric variant subdirs holding a `<map>` leaf
+  # (`<variant>/<map>.<dir>.<part>.png`). `<id>` is folded away, so emit `1 <variant>` to keep
+  # the (id, variant) pair format the manifest + DSL expect. Named (form) variants — biome-tile
+  # linked forms like `wall` — aren't numeric variations, so they're skipped here.
+  local v vn
+  for v in "$d"/*/; do
+    [[ -d "$v" ]] || continue
+    vn=$(basename "${v%/}")
+    [[ "$vn" =~ ^[0-9]+$ ]] || continue
+    find "$v" -maxdepth 1 -type f -name "$map.*.png" -print -quit 2>/dev/null | grep -q . \
+      && printf '1 %s\n' "$vn"
+  done | sort -n -k2,2 -u
 }
 
 # Number of LAYERS in KINDDIR = distinct `<layer>` segment across its sprites
 # (contiguous from 0: layer 0 = the base layer, 1.. = overlays). 1 if absent.
 _layer_count() {  # kinddir
-  # ⚠ NOT YET CUT OVER to the new leaf (texture-restructure R3): walks the OLD `<id>.<dir>.<layer>`
-  # pose dirs. New leaf folds the layer into the `<map>.<dir>.<part>.png` filename (part = old layer).
-  # Only `bin/art manifest` uses this (non-blocking — the edge builds its own runtime manifest).
-  local d=$1 n pose pn
+  # New leaf: the layer is folded into the `<map>.<dir>.<part>.png` filename (part = old layer).
+  # Count distinct `<part>` across the kind's diffuse leaves. Only `bin/art manifest` uses this.
+  local d=$1 n
   [[ -d "$d" ]] || { echo 1; return; }
-  n=$(for pose in "$d"/*/; do
-        [[ -d "$pose" ]] || continue
-        pn=$(basename "${pose%/}")
-        [[ "$pn" =~ ^[0-9]+\.${FACINGS_RE}\.([0-9]+)$ ]] || continue
-        find "$pose" -maxdepth 2 -type f -name 'diffuse.png' -print -quit 2>/dev/null | grep -q . \
-          && echo "${BASH_REMATCH[1]}"
-      done | sort -un | wc -l)
+  n=$(find "$d" -type f -name 'diffuse.*.*.png' -printf '%f\n' 2>/dev/null \
+        | sed -nE 's/^diffuse\.[a-z]+\.([0-9]+)\.png$/\1/p' | sort -un | wc -l)
   (( n == 0 )) && n=1
   echo "$n"
 }
