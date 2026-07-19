@@ -202,24 +202,25 @@ fn scan_dir(tex_root: &Path, dir: &Path, entries: &mut BTreeMap<String, Entry>) 
 fn register_kind(kind_path: &Path, stem_prefix: &str, entries: &mut BTreeMap<String, Entry>) -> bool {
     let mut found = false;
     for facing in FACINGS {
-        // Canonical instance leaf: 1.<facing>.0/1/. The albedo is the master (its presence
-        // makes the stem a stem); its sibling maps are probed alongside.
-        let leaf = kind_path.join(format!("1.{facing}.0")).join("1");
-        let master = leaf.join("albedo.png");
+        // Canonical instance: variant leaf `1/`, the facing in the filename. The albedo
+        // `albedo.<facing>.0.png` is the master (its presence makes the stem a stem); its
+        // sibling maps are probed alongside.
+        let leaf = kind_path.join("1");
+        let master = leaf.join(format!("albedo.{facing}.0.png"));
         if !master.is_file() {
             continue;
         }
         let Ok((w, h)) = image::image_dimensions(&master) else { continue };
-        // Which of the known maps have a leaf here (albedo always does).
+        // Which of the known maps have a leaf here for this facing (albedo always does).
         let maps: BTreeSet<String> = crate::textures::MAPS
             .iter()
-            .filter(|m| leaf.join(format!("{m}.png")).is_file())
+            .filter(|m| leaf.join(format!("{m}.{facing}.0.png")).is_file())
             .map(|m| m.to_string())
             .collect();
         // Hash ALL present map files, not just the albedo — re-mastering any sibling map
         // must move the hash so the cache-buster URL changes. The `atlas.json` sidecar (if
         // any) is folded in too, so re-authoring the grid busts the hash.
-        let Some(hash) = leaf_hash(&leaf, &maps) else { continue };
+        let Some(hash) = leaf_hash(&leaf, &maps, facing) else { continue };
         // A `bin/art` linked atlas drops an `atlas.json` beside its maps: the cell grid +
         // normalized per-cell inset. Absent → an ordinary single-image stem.
         let (grid, pad) = match read_atlas_meta(&leaf) {
@@ -241,10 +242,10 @@ fn dir_name(name: &std::ffi::OsStr) -> Option<String> {
 /// (sorted by map name for determinism). Moves on any map's rewrite — a re-mastered
 /// `albedo` OR `layers` OR `surface` all bust it, so the client's hash-addressed
 /// caches (HTTP + IndexedDB) never serve stale map bytes.
-fn leaf_hash(leaf: &Path, maps: &BTreeSet<String>) -> Option<String> {
+fn leaf_hash(leaf: &Path, maps: &BTreeSet<String>, facing: &str) -> Option<String> {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
     for map in maps {
-        let meta = std::fs::metadata(leaf.join(format!("{map}.png"))).ok()?;
+        let meta = std::fs::metadata(leaf.join(format!("{map}.{facing}.0.png"))).ok()?;
         let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
         for b in format!("{map}:{mtime:x}-{:x};", meta.len()).bytes() {
             h ^= b as u64;

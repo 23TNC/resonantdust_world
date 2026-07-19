@@ -11,7 +11,7 @@
                 ; the gate resolves the "world/conifer stem and derives the preview.
                 ; tint stays white so it doesn't recolour the art; geoColor is the
                 ; flat green silhouette shown until the sprite streams in.
-                "biome-thing/default/conifer/default &thing.texture set
+                "biome-thing/default/conifer &thing.texture set
                 #ffffff &thing.tint set
                 #2f4a2a &thing.geoColor set
                 ; size is the SQUARE sprite scale in TILES (default 1). 2 → the conifer
@@ -105,7 +105,7 @@
         :visual>
             @on_create>
                 "thing ^prim call &thing export
-                "biome-thing/default/flora/default &thing.texture set
+                "biome-thing/default/flora &thing.texture set
                 #ffffff &thing.tint set
                 #4a7a3a &thing.geoColor set
                 0.5 &thing.size set
@@ -124,7 +124,7 @@
         :visual>
             @on_create>
                 "thing ^prim call &thing export
-                "pawn/animal/wolf/default &thing.texture set
+                "pawn/animal/wolf &thing.texture set
                 #ffffff &thing.tint set
                 #6a6a6a &thing.geoColor set
                 ; `size` is the SQUARE sprite scale in TILES. Masters are square canvases

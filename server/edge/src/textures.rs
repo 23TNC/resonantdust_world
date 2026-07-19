@@ -238,11 +238,10 @@ fn master_map_rel(stem: &str, map: &str) -> Option<PathBuf> {
     for seg in segs {
         out.push(seg);
     }
-    // Canonical instance: id 1, layer 0, variant 1 — the leaf `1.<facing>.0/1/<map>.png`
-    // (the per-instance variation picker, the old `^r2`, is still future work).
-    out.push(format!("1.{facing}.0"));
+    // Canonical instance: variant 1 — the new leaf `1/<map>.<facing>.0.png` (dir+part fold
+    // into the filename; the per-instance variation picker, the old `^r2`, is future work).
     out.push("1");
-    out.push(format!("{map}.png"));
+    out.push(format!("{map}.{facing}.0.png"));
     Some(out)
 }
 
