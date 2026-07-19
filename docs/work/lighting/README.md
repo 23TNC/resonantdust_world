@@ -22,8 +22,14 @@ Two tiers, composited into the display:
 
 | Tier | Count | Light data | Shadow build | Lightmap | Update |
 |---|---|---|---|---|---|
-| **Cold** | ≤32 **per rect** (unlimited across world) | per-rect `data`/`color` rgba8 (rect-local) | CPU per-pixel 32-bit **active map** | pre-summed `cold_lightmap`, dirty-rect rebake | on settle / content change |
+| **Cold** | **unlimited** (radius-culled per rect + world) | **light-data texture** (rgba8, N texels/light) | **inline** per-px per-light occlusion — **no shadow map** | pre-summed `cold_lightmap`, dirty-rect rebake | on settle / content change |
 | **Dynamic** (warm+hot) | 32 **global** | uniforms | 2 RGBA **scatter maps** (8 lights/frame) → 32-bit `warm_shadowmap` (ping-pong) | recomputed every frame at display | every frame (pos), shadow round-robin |
+
+The two tiers build shadows **oppositely**, on purpose. **Dynamic** runs every frame over the whole
+viewport, so it *can't* afford a per-pixel light sweep — it **rasterizes** each light's silhouettes into
+a map (scatter → bitfield) and the display *reads* the map. **Cold** is amortized (only dirty rects, a
+few per frame), so it does the sweep **inline** and never materializes a shadow map — which is what frees
+it from the map's channel cap and lets it carry *unlimited* lights (see [Cold strategy](#cold-lighting-strategy--the-inline-sweep)).
 
 "Hot" and "warm" are **freshness states of one 32-light dynamic pool**, not separate tiers — each frame 8
 of the 32 get a fresh scattered shadow, the other 24 carry a ≤3-frame-stale cached shadow.
@@ -34,17 +40,55 @@ lit = albedo × ( cold_lightmap                                  // 1 texture re
                + Σ_32 dynamic[i] · falloff · N·L · gate(i) )    // gate from the warm bit / fresh scatter
 ```
 
-**Shadows are projected earcut silhouettes** (the [art-metadata](../art-metadata) `outline` sidecars):
-each caster's triangulation is sheared through a light onto the ground (`h/(lightZ−h)`) and rasterized
-into one **channel** of an RGBA scatter map. Cheaper than a coverage-mask quad (filled tris, no
-per-fragment fetch, holes free) — the reason we ported earcut. This **replaces** both stopgaps: the
-per-caster wedge [`shadowPass.ts`](../../../client/pixijs/src/game/viewport/shadowPass.ts) and the single
-global shadow in the display.
+**Both tiers project the same earcut silhouettes** (the [art-metadata](../art-metadata) `outline`
+sidecars): a caster's triangulation is sheared through a light onto the ground (`h/(lightZ−h)`). What
+differs is the consume: **dynamic** rasterizes them into a **channel** of an RGBA scatter map (filled
+tris, no per-fragment fetch, holes free — the reason we ported earcut, and cheaper than a coverage quad
+on the per-frame path); **cold** tests them **inline** (below), no map. Both **replace** the stopgaps —
+the per-caster wedge [`shadowPass.ts`](../../../client/pixijs/src/game/viewport/shadowPass.ts) and the
+single global shadow in the display.
+
+## Cold lighting strategy — the inline sweep
+
+The cold tier is the "**dense many-lights**" tier: a scene can hold hundreds of static point lights
+(torches, windows, embers). They're static, so their whole contribution is **baked once** into
+`lightmap-cold` (a derived `SquareCache` composite, [F6](forks.md#f6)) and only rebaked when a square is
+geometry- or light-dirty. The display then reads that one texture.
+
+The bake is a **fragment shader over the dirty square**. Per pixel:
+
+1. Read this square's baked **normal** (from the normal composite) → `N`. Seed the sum with **ambient**.
+2. **Loop the cold lights** — read from a **light-data texture** (not uniforms), `N` texels/light packing
+   world `xy` + height `z`, color, intensity, radius. Looping a texture (not a fixed uniform array) is
+   what makes the light count *unbounded*.
+3. Per light: **cull by radius** (distance in tiles vs the light's radius — most lights fail this cheaply).
+   For a survivor, compute `falloff` + half-Lambert `N·L`.
+4. **Inline occlusion** — decide right here whether this pixel can *see* the light: do any of the light's
+   nearby casters' projected billboard silhouettes cover this pixel? If shadowed, this light adds nothing;
+   else add `color · intensity · N·L · falloff` to the sum.
+5. Write `sum` (opaque) into `lightmap-cold`.
+
+**No shadow map is ever written.** Occlusion is computed *inside* the accumulation, per light, so the
+number of shadow-casting cold lights is bounded only by the light-data texture + per-pixel ALU — **not by
+texture channels**. This is the crux: it's why the cold tier can be "dense," and why it does **not**
+inherit the dynamic path's 3–4-lights-per-map cap (see [F7](forks.md#f7)).
+
+**Open sub-problem — how the silhouettes reach the fragment shader.** The inline test needs each light's
+projected caster geometry addressable per pixel. Candidate: encode the (few, radius-culled) projected
+triangles/contours per light into a **data texture** the bake indexes, and simplify the shadow silhouette
+far more aggressively than the render outline (the ~180-pt contour is too heavy for a per-fragment
+point-in-polygon). This is the piece to pin down against `../resonantdust`'s working implementation
+before building — tracked in [`todo.md`](todo.md) P4 and [B3](blockers.md#b3).
 
 ## The load-bearing constraints (from `tiered_lighting.md` — don't relitigate)
 
+_Scope: the channel/bitfield constraints below govern the **dynamic** tier's **rasterized-scatter**
+shadow build. The **cold** tier does a **gather** (inline per-pixel sweep), which the 4th bullet says is
+free of the merge wall — so cold inherits only **"cold can't subtract."** The channel cap does **not**
+apply to cold; that was the [D-1](deviations.md) mistake._
+
 - **A texture channel is 8 bits, a texel is 32.** Lights are quantization-tolerant → rgba8 is enough for
-  light *data* (depth's precision bar does not apply).
+  light *data* (depth's precision bar does not apply). (Applies to both — the cold light-data texture too.)
 - **The GPU can't merge a bitfield by blend** (`max` drops bits, `add` carries) → each scattered light
   needs its **own channel** (4/RGBA; premultiplied tint couples rgb↔alpha, so the `uChannel`-uniform
   trick recovers the 4th lane → 8 with two maps).
@@ -64,10 +108,11 @@ global shadow in the display.
 cold+warm, dirty bake, toroidal, normal/albedo/surface/zdepth); [`LightRig`](../../../client/pixijs/src/game/lighting/LightRig.ts)
 (point lights, cursor, z/radius); the display mesh + shader; the **outline** sidecars (art-metadata).
 
-**Net-new** — the `cold_lightmap` bake on the rect tiers + cold `data`/`color`/`active` maps; the
-`Light { …, castsShadow, tier }` unification + rig routing (cold vs dynamic); the projected-silhouette
-**scatter** (consuming the outlines) → 2 RGBA maps; the `warm_shadowmap` bitfield + **ping-pong** combine
-(round-robin, deferred writeback); the display rework (cold_lightmap + dynamic loop + gate + cross-fade).
+**Net-new** — the `cold_lightmap` bake on the rect tiers + the cold **light-data texture** + **inline
+occlusion** in the bake ([F7](forks.md#f7), no shadow map); the `Light { …, castsShadow, tier }`
+unification + rig routing (cold vs dynamic); the dynamic projected-silhouette **scatter** (consuming the
+outlines) → 2 RGBA maps; the `warm_shadowmap` bitfield + **ping-pong** combine (round-robin, deferred
+writeback); the display rework (cold_lightmap + dynamic loop + gate + cross-fade).
 **Stopgaps to retire:** the wedge `shadowPass`, the single global shadow, the flat 32-light live loop.
 
 **Dependencies:** the outline **serve/consume** path (art-metadata P3 — fold `meta.json` into the

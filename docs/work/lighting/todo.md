@@ -59,28 +59,29 @@ piece by piece, not big-bang). Items move to `completed.md` as they land + verif
       the single global-shadow multiply in the display. Verify multi-light: two shadow-casters, B lighting
       A's shadow does NOT un-shadow it.
 
-## P4 · Cold shadows (baked, per-pixel) — ✅ DONE + live-verified
+## P4 · Cold shadows — inline occlusion in the bake (NO shadow map)
 
-Implemented GPU-side (not the CPU `active` map originally planned — see
-[`deviations.md`](deviations.md) D-1): reuse `projectCaster` (shared with the pending P3 scatter)
-to bake caster silhouettes into a derived `shadow-cold` composite, sampled by the cold lightmap
-bake. Rect-boundary crossings are handled by baking each square in WORLD space over ALL nearby
-casters (radius+300 cull), not per-rect clipping.
+**Target = the [Cold strategy](README.md#cold-lighting-strategy--the-inline-sweep) inline sweep** ([F7](forks.md#f7)):
+the bake tests each light's projected silhouettes per pixel and only adds the light where unshadowed —
+no materialized map, **unlimited** cold shadow-casters. Gated on [B3](blockers.md#b3) (the inline
+data-texture + point-in-shape technique, to match `../resonantdust`).
 
-- [x] **`shadow-cold` derived composite** — R/G/B = cold light 0/1/2 occlusion. `SquareCache`
-      `enableColdShadow`/`setColdShadowLights` + `bakeColdShadowSquare` (world→slot transform, additive
-      lanes), run from `bakeLightmapSquare` (bake shadow slot → sample it → write lightmap).
-- [x] **Fold into the bake** — `Σ cold·N·falloff·(1 − shadow·SHADOW_STRENGTH)`; ambient never shadowed.
-      `LightRig.coldShadowLights()` supplies the ≤3 casters in `packCold` order (lanes match lights).
-- [x] **Async-outline re-dirty** — `OutlineCache.takeResolved()` → `invalidateAll` once/frame as
-      silhouettes land, so late-loaded outlines bake their shadows. `/showRT` exposes the slot.
-- [x] **Verified live** — shadow-cold radiates lanes away from the light; a debug passthrough
-      (`outColor = csh.rgb`) matched lightmap-cold to shadow-cold pixel-for-pixel, proving the
-      binding + `vRawUv` slot sampling are aligned.
-- [ ] _(follow-up)_ Shadows are correct but visually subtle with a single central light (narrow
-      tree-width stripes fall on the dim outer ring; the brightest ground at the light has no caster).
-      Re-tune the `projectCaster` shear constants + `SHADOW_STRENGTH` once content authors off-center
-      cold lights (P5) — the dramatic case. The old-space constants are unverified against real scenes.
+- [ ] **Cold lights → a light-data texture** (rgba8, N texels/light: `xy`,`z`,color,intensity,radius),
+      replacing the `uLightData[32]` uniform array in `lightingBakeShader`. Unbounded loop from the texture.
+- [ ] **Projected-caster geometry into a data texture** the bake indexes per light (radius-culled), +
+      a hard-decimated shadow silhouette (≪ the ~180-pt render outline) — see [B3](blockers.md#b3).
+- [ ] **Inline occlusion in the bake sum** — per pixel, per in-range light: point-in-silhouette test;
+      `sum += lit ? color·intensity·N·L·falloff : 0`. Retire the `shadow-cold` sample.
+- [ ] **Remove the interim materialized path** — `shadow-cold` composite + `bakeColdShadowSquare` +
+      `enableColdShadow`/`setColdShadowLights` + `LightRig.coldShadowLights()` + the `/showRT` slot.
+- [ ] Verify live: >3 cold shadow-casters on one square ALL cast (the cap is gone); shadows track lights.
+
+### Interim (built, capped — to be replaced above) — [D-1](deviations.md)
+
+A materialized `shadow-cold` composite currently stands in: `projectCaster` bakes caster silhouettes into
+R/G/B lanes (≤3 cold shadow-casters/square), sampled by the cold lightmap bake. Live-verified (a debug
+passthrough matched `lightmap-cold` to `shadow-cold` pixel-for-pixel). It works but carries the **3-light
+cap** the inline rework removes; it stays only until B3 is cleared.
 
 ## P5 · Content + cleanup
 
