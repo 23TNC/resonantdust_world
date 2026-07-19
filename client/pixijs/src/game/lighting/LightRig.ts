@@ -13,8 +13,14 @@
 
 import { MAX_HOT_LIGHTS, type LightingShader } from "../viewport/lightingShader";
 
-/** A dynamic point light, positioned in WORLD px. `height` (z above the ground plane) drives
- *  the N·L term on flat terrain and the shadow projection; `radius` is the falloff cutoff. */
+/** Which lighting tier a light belongs to (docs/work/lighting). **cold** = static → summed into the
+ *  per-rect baked `cold_lightmap`, effectively unlimited (amortized, dirty-rebake). **dynamic** =
+ *  moving / real-time → the 32-light pool evaluated live at display, with round-robin scatter shadows.
+ *  A light only ever lives in one; a light that starts moving migrates cold→dynamic. */
+export type LightTier = "cold" | "dynamic";
+
+/** A point light, positioned in WORLD px. `height` (z above the ground plane) drives the N·L term on
+ *  flat terrain and the shadow projection; `radius` is the falloff cutoff. */
 export interface PointLight {
   x: number;
   y: number;
@@ -26,8 +32,10 @@ export interface PointLight {
   color: number;
   /** Intensity scalar, decoupled from colour. */
   brightness: number;
-  /** Whether this light casts occlusion shadows (Phase D). Fill lights set false. */
+  /** Whether this light casts occlusion shadows. Fill lights set false. */
   castsShadow: boolean;
+  /** Its tier — see {@link LightTier}. Defaults `dynamic`. */
+  tier: LightTier;
 }
 
 /** Sensible defaults for a point light, so callers spell out only what differs. */
@@ -38,6 +46,7 @@ export function pointLight(p: Partial<PointLight> & Pick<PointLight, "x" | "y">)
     color: 0xffffff,
     brightness: 1.5,
     castsShadow: true,
+    tier: "dynamic",
     ...p,
   };
 }
@@ -93,12 +102,20 @@ export class LightRig {
     this.cursor = null;
   }
 
-  /** The point lights that cast shadows (cursor first, then registered), for the shadow
-   *  pass. Fill lights (`castsShadow: false`) are excluded. */
+  /** The **cold** (static) lights — summed into the per-rect baked `cold_lightmap` (lighting P1),
+   *  not evaluated live. Empty until content authors static lights (a debug light seeds P1). */
+  coldLights(): PointLight[] {
+    const out: PointLight[] = [];
+    for (const l of this.lights) if (l.tier === "cold") out.push(l);
+    return out;
+  }
+
+  /** The **dynamic** point lights that cast shadows (cursor first, then registered), for the
+   *  scatter pass. Fill lights + cold lights (baked, not scattered) are excluded. */
   shadowCasters(): PointLight[] {
     const out: PointLight[] = [];
     if (this.cursor?.castsShadow) out.push(this.cursor);
-    for (const l of this.lights) if (l.castsShadow) out.push(l);
+    for (const l of this.lights) if (l.castsShadow && l.tier === "dynamic") out.push(l);
     return out;
   }
 
@@ -124,8 +141,10 @@ export class LightRig {
       this.color[o + 3] = l.brightness;
       n++;
     };
+    // The DYNAMIC pool only — cursor first, then registered dynamic lights. Cold lights are summed
+    // into the baked `cold_lightmap` (lighting P1), never uploaded to the live display loop.
     if (this.cursor) push(this.cursor);
-    for (const l of this.lights) push(l);
+    for (const l of this.lights) if (l.tier === "dynamic") push(l);
 
     shader.setLights(this.data, this.color, n);
   }
