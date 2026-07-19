@@ -37,6 +37,28 @@ per-cell folders are **dropped**. The disk is **half-migrated** — `wall.smooth
 `wall.blueprint` still the 16-split, `fence.*`/`rock.*` empty — so P3 must **re-master** the
 still-split/empty kinds to an atlas, *not* uniformly rename. Full write-up: [`issues.md`](issues.md) I1.
 
+## F5 · registry ↔ manifest ↔ kind_id binding (decided) — 2026-07-19
+
+**Decided (mine, from the live code).** Traced how ids actually flow before authoring any:
+
+- **`kind_id` authority = the content DATA DSL**, unchanged. The loader assigns `def_id`/`object_id`
+  as **append-stable first-appearance index+1** ([`loader.rs:127`](../../../shared/dsl/src/loader.rs));
+  `subtype_id` is authored explicitly in `biomes.rd`. Stored zones carry these, so **never renumber** —
+  the texture reshape must not touch id allocation.
+- **The `0x800` tile/linked split** is honored *at allocation*: linked kinds number from the `≥0x800`
+  half. Safe to introduce cleanly because walls aren't worldgen-placed yet (no stored zone carries a
+  linked `kind_id` today). Mechanism (the data side flags a kind's half) is a later DSL-integration
+  step — not this file-reshape stream's job.
+- **The `type/subtype` registry is a TEXTURE-PIPELINE artifact, not the id SoT.** It carries
+  `form → variant_id` (F2), the tile-vs-linked classification per kind (so `bin/art` places files +
+  generates the manifest into the right half), and sheet-split info. Consumed by `bin/art`/manifest;
+  may be cross-validated against the DSL but does **not** own `kind_id`.
+- **The generated manifest** (`content/visual/manifest/*.rd`) stays a **stem-keyed** visual existence
+  index; the reshape changes its stem keys, not the id authority.
+
+**Revises B1** (`blockers.md`): the registry is *not* the `kind_id` authority — the data DSL is. See
+[`issues.md`](issues.md) I2.
+
 ## F4 · Storage needs no change — the dense tile vector is already `Vec<u16>` kind_reference — 2026-07-19
 
 Folding `linked/`→`biome-tile` requires **zero server-storage work**. The dense tile vector already holds

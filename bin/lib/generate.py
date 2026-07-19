@@ -177,12 +177,13 @@ def resolve_prompts(args, from_path):
     return _expand(key, pos, "pos") or pos, _expand(key, neg, "neg") or neg
 
 # ---------------------------------------------------------------- naming / templates / bg
-# Folder-per-variant layout (docs/texture-paths.md): each map is <map>.png inside a
-# <id>.<dir>.<layer>/<variant>/ leaf. These return the leaf-relative path to a member.
-def template_name(tid, d, layer, tvar):   # the pose reference (map=template)
-    return os.path.join(texpath.variant_leaf(tid, d, layer, tvar), "template.png")
-def sprite_name(tid, d, layer, seed):     # generated sprite: SEED is the variant (map=sprite)
-    return os.path.join(texpath.variant_leaf(tid, d, layer, seed), "sprite.png")
+# Leaf layout (docs/components/dev/textures/design/texture-layout/): each directional map is
+# <map>.<dir>.<part>.png inside a single <variant>/ leaf (no <id>/<subkind>). These return the
+# leaf-relative path to a member. `part` is the old `layer` segment (renamed, moved into the file).
+def template_name(tid, d, part, tvar):   # the pose reference (map=template); tid dropped
+    return os.path.join(texpath.variant_leaf(tvar), texpath.map_name("template", d, part))
+def sprite_name(tid, d, part, seed):     # generated sprite: SEED is the variant (map=sprite)
+    return os.path.join(texpath.variant_leaf(seed), texpath.map_name("sprite", d, part))
 
 def load_template(from_path, tid, d, layer, tvar):
     p = os.path.join(REPO, "textures", from_path, template_name(tid, d, layer, tvar))

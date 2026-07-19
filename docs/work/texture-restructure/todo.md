@@ -20,15 +20,12 @@ _All items 2026-07-19._
       materials (`smooth`/`brick`/`plank`/`metal`/`flecked`/`blueprint`…) into the `≥0x800` half.
 - [ ] Decode helper (Python side for `bin/art`; Rust/TS side later reads it via the manifest).
 
-## P1 · `bin/lib/texpath.py` — the shape SoT
+## P1 · `bin/lib/texpath.py` — the shape SoT  _(leaf reshape ✅ → [completed.md](completed.md); remain:)_
 
-- [ ] New leaf composition: **drop `<id>`**, **drop `<subkind>`**, filename `<map>.<dir>.<part>.<ext>`,
-      `<variant>` folder (named **or** numeric, [forks F1](forks.md#f1)).
-- [ ] **Biome-tile fold** — given a linked source (`<form>.<material>`), emit
-      `biome-tile/<biome>/<material>/<form>/…` (material→kind via the registry, form→variant).
-- [ ] Update `variant_leaf`, `map_name`, `sibling`, `find_maps`, `is_map`, `flat_name` for the new leaf.
-- [ ] **Mirror** the composition in `marigold/delight.py` (it re-implements texpath natively).
-- [ ] Drop the stale docstring pointer (`docs/texture-paths.md`) → the texture-layout design.
+- [ ] **Biome-tile fold** in `texpath` — given a linked source (`<form>.<material>`), emit
+      `biome-tile/<biome>/<material>/<form>/…` (material→kind, form→variant via the **P0 registry**).
+      Sequenced after P0 (needs the registry to resolve form→variant).
+- [ ] **Mirror** the new leaf composition in `marigold/delight.py` (separate venv, re-implements texpath).
 
 ## P2 · `bin/art` write + manifest sites
 
@@ -40,8 +37,8 @@ _All items 2026-07-19._
 
 ## P3 · Scripted copy migration of the existing tree
 
-- [ ] `bin/lib/migrate_texpaths.py`-style tool (the prior migration is the precedent): **dry-run table
-      first**, then `--apply`. **Copy, don't move** (`textures/` gitignored → the old tree is rollback).
+- [ ] A fresh migration script (the prior 0.1→0.2 migration in **git history** is the precedent):
+      **dry-run table first**, then `--apply`. **Copy, don't move** (`textures/` gitignored → old tree = rollback).
 - [ ] Two transforms: (a) thing/tile leaf reshape + drop subkind; (b) linked fold + kind↔material invert,
       **carrying the held-whole atlas + `atlas.json`** and **dropping** the per-cell `1..16` folders ([F3](forks.md#f3)).
 - [ ] **Re-master to an atlas** the kinds not yet held-whole — `wall.blueprint` (still 16-split), the empty

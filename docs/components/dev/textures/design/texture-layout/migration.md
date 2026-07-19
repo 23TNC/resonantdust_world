@@ -39,8 +39,8 @@ folders and carries `{albedo,normal,…}.l.0.<ext>` + `atlas.json`. The on-disk 
 (`wall.smooth` already an atlas; `wall.blueprint` still 16-split; `fence.*`/`rock.*` empty) — so
 still-split/empty kinds must be **re-mastered** to an atlas, not renamed.
 
-- **Scripted `mv` pass**, same discipline as the prior migration
-  (`bin/lib/migrate_texpaths.py` is the precedent — dry-run table first, then `--apply`).
+- **Scripted `mv` pass**, same discipline as the prior 0.1→0.2 migration
+  (in **git history** — dry-run table first, then `--apply`).
   `textures/` is gitignored, so the on-disk old tree is the only rollback — **copy, don't
   move, until verified**, then drop the old leaves.
 - Watch the known-broken `wall.smooth` masters (double-encoded `1.l.0.l.0` stem, flagged in

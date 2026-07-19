@@ -1,61 +1,83 @@
-"""Canonical folder-per-variant texture paths (bin/lib side).
+"""Canonical texture leaf paths (bin/lib side).
 
-The single source of truth for the *shape* is docs/texture-paths.md. Leaf layout:
+Shape source-of-truth: docs/components/dev/textures/design/texture-layout/. Full path:
 
-    <category>.<subcategory>/<kind>.<subkind>/<id>.<dir>.<layer>/<variant>/<map>.<ext>
+    <type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>
 
-The trailing `<id>.<dir>.<layer>/<variant>/` is the "variant leaf": every
-co-located map for that variant is a `<map>.<ext>` file inside it. A map is
-discovered and addressed by its FILENAME (`albedo.png`, `normal.png`, …), NOT by
-a dotted suffix on a flat filename as in the pre-migration layout.
+The trailing `<variant>/` is the "variant leaf": ONE folder holding every co-located
+file for that variant, so a plain `ls` groups by map → dir → part. Two file kinds live
+there:
 
-The marigold venv (marigold/delight.py) re-implements the same trivial shape
-natively — it can't import across venvs — so keep the two in step with the doc.
+  * **directional maps** `<map>.<dir>.<part>.<ext>` — albedo / normal / diffuse /
+    emissive / layers / sprite / template / …  (dir ∈ s/e/n/l, part = sprite piece).
+  * **per-variant files** `<name>.<ext>` — `meta.json` (outline/bbox/tints), and for
+    a linked/autotile kind `atlas.json` (the held-whole grid sidecar). No dir/part.
+
+No `<id>` or `<subkind>` segment (both dropped vs the old
+`<id>.<dir>.<layer>/<variant>/<map>.<ext>` leaf). marigold/delight.py re-implements this
+shape natively (separate venv) — keep the two in step.
 """
 import os
 
-# Normalize-on-write defaults for the fields a sparse reference omits. Match the
-# server's canonical instance (1.s.0.1) and bin/art's _parse_sheet_ref.
-DIR, LAYER, VARIANT = "s", "0", "1"
+# Normalize-on-write defaults for the fields a sparse reference omits.
+DIR, PART, VARIANT = "s", "0", "1"
 
 
-def variant_leaf(id, dir=DIR, layer=LAYER, variant=VARIANT):
-    """`<id>.<dir>.<layer>/<variant>` — the two-level variant-leaf subpath."""
-    return os.path.join(f"{id}.{dir}.{layer}", str(variant))
+def variant_leaf(variant=VARIANT):
+    """`<variant>` — the single variant-leaf folder (was `<id>.<dir>.<layer>/<variant>`)."""
+    return str(variant)
 
 
-def map_name(map, ext="png"):
-    """The in-leaf file name for a map, e.g. `map_name('albedo')` -> `albedo.png`."""
-    return f"{map}.{ext}"
+def map_name(map, dir=DIR, part=PART, ext="png"):
+    """A directional map's in-leaf filename: `map_name('albedo','e','1')` -> `albedo.e.1.png`."""
+    return f"{map}.{dir}.{part}.{ext}"
+
+
+def parse_map(filename):
+    """Split a directional leaf filename `<map>.<dir>.<part>.<ext>` -> (map, dir, part, ext),
+    or None if it isn't one (e.g. a per-variant `meta.json`)."""
+    parts = filename.split(".")
+    if len(parts) != 4:
+        return None
+    return (parts[0], parts[1], parts[2], parts[3])
 
 
 def sibling(a_map_path, map, ext="png"):
-    """The `<map>.<ext>` sibling of a map file in the same variant leaf, e.g.
-    `sibling('…/1.s.0/1/albedo.png', 'normal')` -> `…/1.s.0/1/normal.png`."""
-    return os.path.join(os.path.dirname(a_map_path), map_name(map, ext))
+    """The `<map>.<dir>.<part>.<ext>` sibling of a directional map in the same leaf, at the
+    SAME dir/part, e.g. `sibling('…/3/albedo.e.1.png', 'normal')` -> `…/3/normal.e.1.png`."""
+    p = parse_map(os.path.basename(a_map_path))
+    d, part = (p[1], p[2]) if p else (DIR, PART)
+    return os.path.join(os.path.dirname(a_map_path), map_name(map, d, part, ext))
+
+
+def leaf_file(a_map_path, name, ext):
+    """A **per-variant** file (no dir/part) beside `a_map_path` in the same variant leaf:
+    `leaf_file('…/3/albedo.e.1.png', 'meta', 'json')` -> `…/3/meta.json`."""
+    return os.path.join(os.path.dirname(a_map_path), f"{name}.{ext}")
 
 
 def find_maps(root, map, ext="png"):
-    """Every variant-leaf `<map>.<ext>` file under `root` (sorted). Replaces the
-    old `*.<map>.png` glob — the map is now an exact filename in a leaf dir."""
-    want = map_name(map, ext)
+    """Every directional `<map>.<dir>.<part>.<ext>` file under `root` (sorted). The map is
+    the FIRST dotted segment; matches any dir/part."""
+    prefix, suffix = f"{map}.", f".{ext}"
     hits = []
     for dirpath, _dirs, files in os.walk(root):
-        if want in files:
-            hits.append(os.path.join(dirpath, want))
+        for f in files:
+            if f.startswith(prefix) and f.endswith(suffix) and f.count(".") == 3:
+                hits.append(os.path.join(dirpath, f))
     return sorted(hits)
 
 
 def is_map(a_map_path, map, ext="png"):
-    """True if `a_map_path` is a `<map>.<ext>` leaf file (basename match)."""
-    return os.path.basename(a_map_path) == map_name(map, ext)
+    """True if `a_map_path` is a `<map>.<dir>.<part>.<ext>` leaf file for `map`."""
+    p = parse_map(os.path.basename(a_map_path))
+    return p is not None and p[0] == map and p[3] == ext
 
 
-def flat_name(a_map_path, map, ext="png"):
-    """A collision-free flat name for `--out-dir` mode: `<kind>.<pose>.<variant>.<map>.<ext>`
-    where kind/pose/variant are the leaf's last three path components — reconstructs
-    the pre-migration flat identity so spikes over many objects don't collide."""
+def flat_name(a_map_path):
+    """A collision-free flat name for `--out-dir` mode: `<kind>.<variant>.<map>.<dir>.<part>.<ext>`
+    — the kind + variant folder names prepended to the leaf filename."""
+    fn = os.path.basename(a_map_path)
     variant = os.path.basename(os.path.dirname(a_map_path))
-    pose = os.path.basename(os.path.dirname(os.path.dirname(a_map_path)))
-    kind = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(a_map_path))))
-    return f"{kind}.{pose}.{variant}.{map_name(map, ext)}"
+    kind = os.path.basename(os.path.dirname(os.path.dirname(a_map_path)))
+    return f"{kind}.{variant}.{fn}"

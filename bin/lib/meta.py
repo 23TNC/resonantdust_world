@@ -25,8 +25,9 @@ import texpath
 
 
 def path_for(a_map_path):
-    """The `meta.json` sidecar of a map file, in the same variant leaf."""
-    return texpath.sibling(a_map_path, "meta", ext="json")
+    """The per-variant `meta.json` sidecar in the same variant leaf (one per variant,
+    no dir/part — outline/bbox/tints)."""
+    return texpath.leaf_file(a_map_path, "meta", "json")
 
 
 def load(a_map_path):
