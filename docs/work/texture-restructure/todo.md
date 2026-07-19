@@ -1,77 +1,54 @@
 # Todo — texture-restructure
 
-_Phased so nothing breaks mid-migration: the new write path + registry land first, then a **copy**
-(not move) migration, then readers, then verify + drop the old tree. Items move to
-[`completed.md`](completed.md) as they land + verify (`todo → completed`). Design:
-[`README`](README.md) · decisions [`forks.md`](forks.md) · blockers [`blockers.md`](blockers.md)._
+_Items move to [`completed.md`](completed.md) as they land + verify. Design: [`README`](README.md)
+· decisions [`forks.md`](forks.md) · issues [`issues.md`](issues.md) · blockers [`blockers.md`](blockers.md)._
 
-_All items 2026-07-19._
-
-> **Status (2026-07-19).** **Phase 1 — the clean `subkind==default` leaf reshape — is DONE and
-> browser-verified** (conifer/flora render from the new leaf; see [`completed.md`](completed.md)):
-> P1 texpath+marigold, P3 migrate (573 files), P4 edge readers, P5 DSL stems, P6 browser.
-> **Phase 2 (remaining):** P0 registry + the linked→biome-tile **atlas fold** (walls/fences/rocks),
-> P2 **`bin/art`** regeneration into the new leaf (so *new* art is written in-shape, not just migrated),
-> and the **human-pawn body-type subkinds** (average/thin — fold into variants). The items below are
-> phase-2 unless struck as done in `completed.md`.
+> **Status (2026-07-19).** **The leaf reshape is DONE + verified for every existing texture kind with
+> a render target** (see [`completed.md`](completed.md)): P1 texpath+marigold, migrate (biome-thing +
+> pawn/wolf + `linked/`), edge readers, DSL stems, browser render (conifer/flora) + linked-atlas decode.
+> What's below is **phase 2** — none of it has a current render target, so it's ordered by value,
+> not urgency.
 
 ---
 
-## P0 · The `type/subtype` `meta.json` registry
+## R1 · Human-pawn body-type subkinds  _(the last un-reshaped existing art)_
 
-- [ ] **Schema** — define `textures/<type>/<subtype>/meta.json`: the **kind registry** (`kind` name →
-      `kind_id`, carrying the `0x800` tile/linked flag), the **form → `variant_id`** map (linked), and
-      **sheet-split** info (which source sheet a kind/variant came from — the metadata we dropped when
-      type/subtype sheets went away). See [forks F2](forks.md#f2).
-- [ ] **Author** it for every `type/subtype` on disk today: `biome-tile/default`, `biome-thing/default`,
-      `pawn/animal` (+ any others a `find textures -maxdepth 2 -type d` turns up). Seed the linked
-      materials (`smooth`/`brick`/`plank`/`metal`/`flecked`/`blueprint`…) into the `≥0x800` half.
-- [ ] Decode helper (Python side for `bin/art`; Rust/TS side later reads it via the manifest).
+`pawn/human/{dead,male,female}/{average,thin,fat,fit}` still use `<subkind>` for **body type** —
+`migrate_leaf.py` currently **skips** them (a blind subkind-drop would collide average/thin).
 
-## P1 · `bin/lib/texpath.py` — the shape SoT  _(leaf reshape ✅ → [completed.md](completed.md); remain:)_
+- [ ] **Decide the modeling** (a fork): the def model is `type/subtype/kind/variant` with **no
+      `body-type` field**. Does body-type become the `variant` (art-variations flattened under it), a
+      new `kind` per body-type, or something else? Ties into how humans get spawned. — *the one genuine
+      user-input piece here.*
+- [ ] Extend `migrate_leaf.py` for the chosen mapping; reshape the human trees; drop the old leaves.
 
-- [ ] **Biome-tile fold** in `texpath` — given a linked source (`<form>.<material>`), emit
-      `biome-tile/<biome>/<material>/<form>/…` (material→kind, form→variant via the **P0 registry**).
-      Sequenced after P0 (needs the registry to resolve form→variant).
+## R2 · The full biome-tile fold  _(rename `linked/` → `biome-tile/`; deferred — object-model-coupled)_
 
-## P2 · `bin/art` write + manifest sites
+The linked **leaf reshape** is done (`linked/<kind>/<variant>/<map>.<dir>.<part>` + `atlas.json`).
+The **fold** — renaming to `biome-tile/<biome>/<material>/<form>/` (material→kind, form→variant,
+`kind_id ≥ 0x800`) — is **not**, and is premature: walls/fences/rocks aren't worldgen-placed, so nothing
+renders differently. Do this **when the biome-tile object model / wall placement lands** ([F3](forks.md)).
+
+- [ ] **P0 registry** — `textures/<type>/<subtype>/meta.json`: `form → variant_id` (F2), tile/linked
+      classification (`0x800`), sheet-split info. **Not** the `kind_id` authority (that's the data DSL —
+      [F5](forks.md)). Author for `biome-tile/default` + the linked materials.
+- [ ] `texpath` biome-tile fold (given a linked source, emit `biome-tile/<biome>/<material>/<form>/…`);
+      edge + DSL + client resolve the **named-variant** biome-tile linked stems.
+- [ ] **Re-master** the kinds not yet held-whole atlases: `wall.blueprint` (still 16-split), the empty
+      `fence.*`/`rock.*`, and the double-encoded `wall.smooth` `1.l.0.l.0` source masters.
+
+## R3 · `bin/art` regeneration into the new leaf  _(offline tooling; no pending new art)_
+
+So *newly generated* art is written in-shape (this stream only reshaped **existing** art). Large bash
+surface in `bin/art` (~3127 lines) + `bin/lib/*.py`.
 
 - [ ] Every **write** site emits the new leaf: `split_layers.py`, `generate.py`, `emissive.py`,
-      `marigold/delight.py`, `meta.py` (the leaf `meta.json`).
+      `marigold/delight.py` (all texpath consumers already reshaped), `meta.py`.
 - [ ] The **manifest walk** (`_kind_maps`, variant/part counters) globs the new leaf; **truncate
-      `variant_id ≥ 16`** out of the manifest (`u4`) — and `log()` what was dropped (no silent cap).
-- [ ] Manifest entries lose `<subkind>`, gain the `biome-tile` prefix for former-linked kinds.
-
-## P3 · Scripted copy migration of the existing tree
-
-- [ ] A fresh migration script (the prior 0.1→0.2 migration in **git history** is the precedent):
-      **dry-run table first**, then `--apply`. **Copy, don't move** (`textures/` gitignored → old tree = rollback).
-- [ ] Two transforms: (a) thing/tile leaf reshape + drop subkind; (b) linked fold + kind↔material invert,
-      **carrying the held-whole atlas + `atlas.json`** and **dropping** the per-cell `1..16` folders ([F3](forks.md#f3)).
-- [ ] **Re-master to an atlas** the kinds not yet held-whole — `wall.blueprint` (still 16-split), the empty
-      `fence.*`/`rock.*` — plus the known-broken `wall.smooth` double-encoded `1.l.0.l.0` masters. Disk is
-      half-migrated, so P3 is per-kind, not a uniform rename.
-
-## P4 · Server resolvers (edge)
-
-- [ ] `server/edge` `textures.rs` (`master_albedo_rel`) + `tex_manifest.rs` (`scan_masters`) build/probe
-      the new leaf (`…/<kind>/<variant>/<map>.<dir>.<part>.png`, no subkind).
-- [ ] The `/textures/meta/{stem}` serve path resolves the leaf `meta.json` under the new shape.
-
-## P5 · Client fetch/cache contract
-
-- [ ] `client/pixijs/src/textures/*` (`TextureResolver`, `lod.ts`/`metaUrl`, `MaxRectsPacker`,
-      `previewCache`, `textureManifest`): fetch URL + cache key gain `<dir>.<part>`, lose `<subkind>`;
-      former-linked resolve under the `biome-tile/…` prefix.
-
-## P6 · Verify + retire
-
-- [ ] End-to-end on the running stack (`rd up` → `rd deploy` → browser renders a thing + a tile + a
-      wall). Path change → unit tests can't close it; the browser is the gate.
-- [ ] Drop the **old** leaves once satisfied (the copy's originals).
+      `variant_id ≥ 16`** out of the manifest (`u4`) — and `log()` the drop (no silent cap).
 
 ---
 
-**Done when:** `textures/` is `<type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>` end to end
-— walls/fences/rocks under `biome-tile/…`, no `<id>`/`<subkind>`, the registry authoritative, art +
-edge + client all on the new leaf, browser-verified, old tree dropped.
+**Done when:** `textures/` is `<type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>` end to end —
+including walls/fences/rocks under `biome-tile/…` and human body-types resolved — the registry
+authoritative, `bin/art` writing the new leaf, browser-verified, old tree dropped.
