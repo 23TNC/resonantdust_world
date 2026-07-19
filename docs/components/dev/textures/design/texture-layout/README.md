@@ -128,3 +128,10 @@ numeric parts) — the `map.dir.part` **order** is what produces the grouping.
    registry (name → `kind_id`, so the pipeline knows which materials are linked vs tile), the form →
    `variant_id` map, and sprite-sheet split info. Distinct from the **leaf** `meta.json` (per-variant
    outline/bbox/tints for shadows). Lives at `textures/<type>/<subtype>/meta.json`.
+7. ✅ **Linked kinds are held-whole autotile atlases** (not per-cell folders). A linked form is ONE
+   master texture holding a `cols×rows` cell grid + an **`atlas.json`** (`grid`,`pad`) sidecar; the
+   client samples a cell by UV from neighbour connectivity ([`tex_manifest.rs`](../../../../../../server/edge/src/tex_manifest.rs)
+   `grid`/`pad`, [`SquareCache.ts`](../../../../../../client/pixijs/src/game/viewport/SquareCache.ts)). So a
+   linked leaf has **no per-cell `<variant>` folders** — it is
+   `biome-tile/<biome>/<material>/<form>/{albedo,normal,…}.l.0.<ext>` **+ a sibling `atlas.json`**. The
+   old per-cell `1.l.0/<1..16>/` split is superseded (`texture-paths.md`).

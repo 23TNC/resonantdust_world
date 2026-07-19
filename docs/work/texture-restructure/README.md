@@ -23,8 +23,15 @@ Three moves, one pass, applied to `textures/`:
 
 ```
 biome-thing/default/conifer/default/1.e.0/3/albedo.png  →  biome-thing/default/conifer/3/albedo.e.0.png
-linked/wall.smooth/1.l.0/1/albedo.png                   →  biome-tile/default/smooth/wall/albedo.l.0.png
+linked/wall.smooth/1.l.0/<atlas>/albedo.png             →  biome-tile/default/smooth/wall/albedo.l.0.png + atlas.json
 ```
+
+**Linked = held-whole autotile atlas** (see [`issues.md`](issues.md) I1, [`forks.md` F3](forks.md)).
+A linked kind is ONE atlas per form — a master + an `atlas.json` (`[cols,rows]`+`pad`) sidecar, the
+client sampling a cell by UV — **not** per-cell `<variant>` folders (that `1..16` split is superseded).
+So the linked leaf is `biome-tile/<biome>/<material>/<form>/{albedo,normal,…}.l.0.png` **+ `atlas.json`**.
+The disk is **half-migrated** (`wall.smooth`=atlas, `wall.blueprint`=16-split, `fence`/`rock`=empty), so
+P3 **re-masters** the still-split/empty kinds — it is not a uniform rename.
 
 ## Scope — FILE STRUCTURE only (storage already accommodates linked)
 

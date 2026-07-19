@@ -30,8 +30,14 @@ Mechanically: discard `<id>` and `<subkind>`; append `<dir>`/`<part>` to the map
 (or, for linked, the `<form>`) becomes the folder directly under `<kind>`. Multiple direction/part
 folders that shared a variant **collapse into one folder** of co-located files. For `linked/`, split the
 old `<form>.<material>` stem: **material → `<kind>`**, **form → the `<variant>` folder**, biome →
-`<subtype>` (`default`). ⚠️ The old linked numeric `<variant>` folders (auto-tile pieces vs art
-variations) need remapping — inspect before collapsing; `blueprint` old-subkind becomes its own `kind`.
+`<subtype>` (`default`); `blueprint` old-subkind becomes its own `kind`.
+
+**Linked is a held-whole atlas, not per-cell.** The old per-cell `1.l.0/<1..16>/` numeric `<variant>`
+folders are the earlier autotile split, now retired (README §7): a linked form is ONE atlas master + an
+`atlas.json` (`grid`,`pad`) sidecar, client cell-by-UV. So the migration **drops** the per-cell
+folders and carries `{albedo,normal,…}.l.0.<ext>` + `atlas.json`. The on-disk tree is **half-migrated**
+(`wall.smooth` already an atlas; `wall.blueprint` still 16-split; `fence.*`/`rock.*` empty) — so
+still-split/empty kinds must be **re-mastered** to an atlas, not renamed.
 
 - **Scripted `mv` pass**, same discipline as the prior migration
   (`bin/lib/migrate_texpaths.py` is the precedent — dry-run table first, then `--apply`).

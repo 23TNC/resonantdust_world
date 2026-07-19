@@ -6,15 +6,15 @@ resolved rows keep a dated resolution line. Goal: fewer over time (a well-unders
 
 ---
 
-## B1 · `type/subtype` registry — kind_id / variant_id authority (soft) — 2026-07-19
+## Open
 
-**Needs.** Confirmation of who **owns** the `kind`→`kind_id` and `form`→`variant_id` assignments authored
-into the `type/subtype` `meta.json` ([todo P0](todo.md), [forks F2](forks.md#f2)) — is the registry file
-itself the source of truth, or does it mirror a codec-side enum?
+None open.
 
-**Why a human.** `kind_id`/`variant_id` are append-only object-model ids ([VARIABLES.md](../../VARIABLES.md));
-picking their allocation authority now avoids a later re-number.
+## Resolved
 
-**Suggested path.** Make the `type/subtype` `meta.json` the **authoring** source, and (later) have the
-codec read/validate against it — mirror the "folder-as-SoT" discipline used elsewhere. Confirm before
-P0 authors ids. **Not hard-blocking** the shape; blocks *committing* specific id numbers.
+- **B1 · `type/subtype` registry — kind_id / variant_id authority — resolved 2026-07-19.** The
+  `type/subtype` `meta.json` is the **authoring source of truth** for `kind`→`kind_id` and
+  `form`→`variant_id` (the "folder-as-SoT" discipline used elsewhere); the codec may later
+  read/validate against it, but there is **no competing codec-side enum**, so there is nothing to
+  re-number against — which is exactly why picking this authority now closes the re-number risk. P0
+  authors the ids there. Adopted the suggested path (soft, low-regret) per decide-and-proceed.

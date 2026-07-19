@@ -42,10 +42,11 @@ _All items 2026-07-19._
 
 - [ ] `bin/lib/migrate_texpaths.py`-style tool (the prior migration is the precedent): **dry-run table
       first**, then `--apply`. **Copy, don't move** (`textures/` gitignored → the old tree is rollback).
-- [ ] Two transforms: (a) thing/tile leaf reshape + drop subkind; (b) linked fold + kind↔material invert.
-- [ ] Resolve the **linked old-variant remapping** ([forks F3](forks.md#f3)) — the old
-      `wall.smooth/1.l.0/0..8/` numeric variants (auto-tile pieces vs art variations) — before collapsing.
-- [ ] Re-master (don't blind-rename) the known-broken `wall.smooth` double-encoded `1.l.0.l.0` masters.
+- [ ] Two transforms: (a) thing/tile leaf reshape + drop subkind; (b) linked fold + kind↔material invert,
+      **carrying the held-whole atlas + `atlas.json`** and **dropping** the per-cell `1..16` folders ([F3](forks.md#f3)).
+- [ ] **Re-master to an atlas** the kinds not yet held-whole — `wall.blueprint` (still 16-split), the empty
+      `fence.*`/`rock.*` — plus the known-broken `wall.smooth` double-encoded `1.l.0.l.0` masters. Disk is
+      half-migrated, so P3 is per-kind, not a uniform rename.
 
 ## P4 · Server resolvers (edge)
 

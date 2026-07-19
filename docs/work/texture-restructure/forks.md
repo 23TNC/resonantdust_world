@@ -14,25 +14,28 @@ resolve to `variant_id`; the `type/subtype` registry ([todo P0](todo.md)) maps n
 truncates** out of the manifest (`u4`) — extra on-disk variations exist but go unused, and the manifest
 walk must `log()` the drop, not silently cap.
 
-## F2 · `form → variant_id` numbering (open — proposal) — 2026-07-19
+## F2 · `form → variant_id` numbering (decided) — 2026-07-19
 
-**Context.** Linked forms need a stable `variant_id`. Numbering lives in the `type/subtype` registry,
-not hardcoded in `texpath.py`.
+**Decided.** Assign `variant_id` in the `type/subtype` registry by an **explicit list** (never
+`readdir` order, which is unstable): `wall=0, fence=1, rock=2, …`, low indices for the common forms.
+The registry file is the source of truth ([B1](blockers.md)); `texpath.py` never hardcodes it.
 
-**Proposal (confirm).** Assign in the registry by first-appearance / explicit list, e.g.
-`wall=0, fence=1, rock=2, …`, reserving low indices for the common forms. Keep it **explicit in the
-registry file** (not derived from a `readdir` order, which is unstable). Open until the registry is
-authored (P0).
+## F3 · Linked variants were the SUPERSEDED per-cell split → held-whole atlas (resolved, user) — 2026-07-19
 
-## F3 · Linked old-variant remapping (open — needs inspection) — 2026-07-19
+**Resolved (user, 2026-07-19).** The old `linked/<form>.<material>/1.l.0/1..16/` numeric `<variant>`
+folders are the **superseded per-cell autotile split**, *not* art variations. The live edge + client
+already use a **held-whole autotile atlas**: one master texture holding a `cols×rows` cell grid + an
+`atlas.json` (`grid`,`pad`) sidecar, the client sampling a cell by UV
+([`tex_manifest.rs`](../../../server/edge/src/tex_manifest.rs) `grid`/`pad`,
+[`textureManifest.ts`](../../../client/pixijs/src/textures/textureManifest.ts),
+[`SquareCache.ts`](../../../client/pixijs/src/game/viewport/SquareCache.ts); texture-paths.md:
+"held whole… Superseded the earlier per-cell `1.l.0/<1..16>` split").
 
-**Context.** Old linked leaves like `wall.smooth/1.l.0/0..8/` carry numeric `<variant>` folders. In the
-new model a linked object's `<variant>` is the **form**, so these old numerics must map to *something* —
-but it's unclear whether they were **auto-tile connectivity pieces** (→ belong in `dir`/`part`, the `l`
-facing's sub-indices) or genuine **art variations** (→ stay variations, but of which form?).
-
-**To clear.** `find`/inspect the actual `linked/*/1.l.0/*` contents before P3 collapses them; the mapping
-follows what they are. Do **not** blind-collapse. Flag per-kind if they differ.
+So there is **no per-variant remap**. A linked kind is **one atlas per form**. Target leaf:
+`biome-tile/<biome>/<material>/<form>/{albedo,normal,…}.l.0.<ext>` + a sibling **`atlas.json`**; the
+per-cell folders are **dropped**. The disk is **half-migrated** — `wall.smooth` is already an atlas,
+`wall.blueprint` still the 16-split, `fence.*`/`rock.*` empty — so P3 must **re-master** the
+still-split/empty kinds to an atlas, *not* uniformly rename. Full write-up: [`issues.md`](issues.md) I1.
 
 ## F4 · Storage needs no change — the dense tile vector is already `Vec<u16>` kind_reference — 2026-07-19
 
