@@ -46,6 +46,8 @@ const lightBakeBitGl = {
       uniform vec3 uAmbient;                         // ambient floor (colour × intensity), never shadowed
       uniform float uNormalYSign;                    // flip normal Y into the screen convention (-1)
       uniform vec2 uRectWorld;                       // this rect's world origin (world px)
+      uniform sampler2D uColdShadow;                 // baked cold-shadow coverage (R/G/B = cold light 0/1/2)
+      uniform vec4 uShadowRect;                      // this square's slot in the coldShadow composite (offset.xy, scale.zw)
       in vec2 vLocal;
     `,
     main: /* glsl */ `
@@ -57,7 +59,11 @@ const lightBakeBitGl = {
       // Half-Lambert wrap — KEEP IN SYNC with the display shader's LIGHT_WRAP (cold + hot light the
       // same surface): ndotl = max((N·L + w)/(1+w), 0), w>0 softens the terminator.
       const float LIGHT_WRAP = 0.4;
-      vec3 sum = uAmbient;                            // ambient is never shadowed
+      const float SHADOW_STRENGTH = 0.85;             // 1 = a shadow fully removes its light's term
+      // The first 3 cold lights (R/G/B) lose their term where the baked cold-shadow covers this
+      // fragment; a 4th+ cold light casts no shadow (no lane). Ambient is never shadowed.
+      vec4 csh = texture(uColdShadow, uShadowRect.xy + vUV * uShadowRect.zw);
+      vec3 sum = uAmbient;
       for (int i = 0; i < ${MAX_COLD_LIGHTS}; i++) {
         if (float(i) >= uLightCount) break;
         vec4 ld = uLightData[i];
@@ -65,7 +71,8 @@ const lightBakeBitGl = {
         float atten = clamp(1.0 - length(toLight.xy) / max(ld.w, 1.0), 0.0, 1.0);
         atten *= atten;                               // quadratic falloff
         float ndotl = max((dot(N, normalize(toLight)) + LIGHT_WRAP) / (1.0 + LIGHT_WRAP), 0.0);
-        sum += uLightColor[i].rgb * uLightColor[i].a * ndotl * atten;
+        float sh = i == 0 ? csh.r : (i == 1 ? csh.g : (i == 2 ? csh.b : 0.0));
+        sum += uLightColor[i].rgb * uLightColor[i].a * ndotl * atten * (1.0 - sh * SHADOW_STRENGTH);
       }
       outColor = vec4(sum, 1.0);                       // OPAQUE — the composite is opaque light data
     `,
@@ -124,6 +131,16 @@ export class LightingBakeShader extends Shader {
     (g.uniforms.uTextureMatrix as Matrix).set(sw, 0, 0, sh, sx, sy);
     g.update();
   }
+  /** The baked cold-shadow composite (R/G/B = cold light 0/1/2 coverage). */
+  set coldShadow(value: Texture) {
+    this.resources.uColdShadow = value.source;
+    this.resources.uColdShadowSampler = value.source.style;
+  }
+  /** This square's slot in the coldShadow composite (`vUV·zw + xy`, composite-UV). Set per square. */
+  setShadowRect(sx: number, sy: number, sw: number, sh: number): void {
+    this.resources.bakeUniforms.uniforms.uShadowRect = new Float32Array([sx, sy, sw, sh]);
+    this.resources.bakeUniforms.update();
+  }
   /** The ambient floor (`0xRRGGBB` × intensity). */
   setAmbient(color: number, intensity: number): void {
     this.resources.bakeUniforms.uniforms.uAmbient = rgb(color, intensity);
@@ -148,12 +165,15 @@ export function makeLightingBakeShader(): LightingBakeShader {
     resources: {
       uTexture: empty.source,
       uSampler: empty.source.style,
+      uColdShadow: empty.source,
+      uColdShadowSampler: empty.source.style,
       // Identity — vUV = aUV (the normal composite stores it upright).
       textureUniforms: { uTextureMatrix: { type: "mat3x3<f32>", value: new Matrix() } },
       bakeUniforms: new UniformGroup({
         uAmbient: { value: new Float32Array([0.0, 0.0, 0.0]), type: "vec3<f32>" },
         uNormalYSign: { value: -1, type: "f32" },
         uRectWorld: { value: new Float32Array([0, 0]), type: "vec2<f32>" },
+        uShadowRect: { value: new Float32Array([0, 0, 1, 1]), type: "vec4<f32>" },
         uLightData: { value: new Float32Array(MAX_COLD_LIGHTS * 4), type: "vec4<f32>", size: MAX_COLD_LIGHTS },
         uLightColor: { value: new Float32Array(MAX_COLD_LIGHTS * 4), type: "vec4<f32>", size: MAX_COLD_LIGHTS },
         uLightCount: { value: 0, type: "f32" },
