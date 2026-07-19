@@ -1,0 +1,72 @@
+# Todo — texture-restructure
+
+_Phased so nothing breaks mid-migration: the new write path + registry land first, then a **copy**
+(not move) migration, then readers, then verify + drop the old tree. Items move to
+[`completed.md`](completed.md) as they land + verify (`todo → completed`). Design:
+[`README`](README.md) · decisions [`forks.md`](forks.md) · blockers [`blockers.md`](blockers.md)._
+
+_All items 2026-07-19._
+
+---
+
+## P0 · The `type/subtype` `meta.json` registry
+
+- [ ] **Schema** — define `textures/<type>/<subtype>/meta.json`: the **kind registry** (`kind` name →
+      `kind_id`, carrying the `0x800` tile/linked flag), the **form → `variant_id`** map (linked), and
+      **sheet-split** info (which source sheet a kind/variant came from — the metadata we dropped when
+      type/subtype sheets went away). See [forks F2](forks.md#f2).
+- [ ] **Author** it for every `type/subtype` on disk today: `biome-tile/default`, `biome-thing/default`,
+      `pawn/animal` (+ any others a `find textures -maxdepth 2 -type d` turns up). Seed the linked
+      materials (`smooth`/`brick`/`plank`/`metal`/`flecked`/`blueprint`…) into the `≥0x800` half.
+- [ ] Decode helper (Python side for `bin/art`; Rust/TS side later reads it via the manifest).
+
+## P1 · `bin/lib/texpath.py` — the shape SoT
+
+- [ ] New leaf composition: **drop `<id>`**, **drop `<subkind>`**, filename `<map>.<dir>.<part>.<ext>`,
+      `<variant>` folder (named **or** numeric, [forks F1](forks.md#f1)).
+- [ ] **Biome-tile fold** — given a linked source (`<form>.<material>`), emit
+      `biome-tile/<biome>/<material>/<form>/…` (material→kind via the registry, form→variant).
+- [ ] Update `variant_leaf`, `map_name`, `sibling`, `find_maps`, `is_map`, `flat_name` for the new leaf.
+- [ ] **Mirror** the composition in `marigold/delight.py` (it re-implements texpath natively).
+- [ ] Drop the stale docstring pointer (`docs/texture-paths.md`) → the texture-layout design.
+
+## P2 · `bin/art` write + manifest sites
+
+- [ ] Every **write** site emits the new leaf: `split_layers.py`, `generate.py`, `emissive.py`,
+      `marigold/delight.py`, `meta.py` (the leaf `meta.json`).
+- [ ] The **manifest walk** (`_kind_maps`, variant/part counters) globs the new leaf; **truncate
+      `variant_id ≥ 16`** out of the manifest (`u4`) — and `log()` what was dropped (no silent cap).
+- [ ] Manifest entries lose `<subkind>`, gain the `biome-tile` prefix for former-linked kinds.
+
+## P3 · Scripted copy migration of the existing tree
+
+- [ ] `bin/lib/migrate_texpaths.py`-style tool (the prior migration is the precedent): **dry-run table
+      first**, then `--apply`. **Copy, don't move** (`textures/` gitignored → the old tree is rollback).
+- [ ] Two transforms: (a) thing/tile leaf reshape + drop subkind; (b) linked fold + kind↔material invert.
+- [ ] Resolve the **linked old-variant remapping** ([forks F3](forks.md#f3)) — the old
+      `wall.smooth/1.l.0/0..8/` numeric variants (auto-tile pieces vs art variations) — before collapsing.
+- [ ] Re-master (don't blind-rename) the known-broken `wall.smooth` double-encoded `1.l.0.l.0` masters.
+
+## P4 · Server resolvers (edge)
+
+- [ ] `server/edge` `textures.rs` (`master_albedo_rel`) + `tex_manifest.rs` (`scan_masters`) build/probe
+      the new leaf (`…/<kind>/<variant>/<map>.<dir>.<part>.png`, no subkind).
+- [ ] The `/textures/meta/{stem}` serve path resolves the leaf `meta.json` under the new shape.
+
+## P5 · Client fetch/cache contract
+
+- [ ] `client/pixijs/src/textures/*` (`TextureResolver`, `lod.ts`/`metaUrl`, `MaxRectsPacker`,
+      `previewCache`, `textureManifest`): fetch URL + cache key gain `<dir>.<part>`, lose `<subkind>`;
+      former-linked resolve under the `biome-tile/…` prefix.
+
+## P6 · Verify + retire
+
+- [ ] End-to-end on the running stack (`rd up` → `rd deploy` → browser renders a thing + a tile + a
+      wall). Path change → unit tests can't close it; the browser is the gate.
+- [ ] Drop the **old** leaves once satisfied (the copy's originals).
+
+---
+
+**Done when:** `textures/` is `<type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>` end to end
+— walls/fences/rocks under `biome-tile/…`, no `<id>`/`<subkind>`, the registry authoritative, art +
+edge + client all on the new leaf, browser-verified, old tree dropped.
