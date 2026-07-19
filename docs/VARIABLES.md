@@ -33,7 +33,28 @@ u32 definition_reference
     u4  variant_id                bits 0–3
 ```
 
-16 types × 4096 subtypes × 4096 kinds × 16 variants.
+16 types × 4096 subtypes × 4096 kinds × 16 variants. **No `subkind`** — these four fields are the
+whole definition; the texture folder taxonomy matches 1:1 (`type/subtype/kind/variant`, see
+[texture-layout](components/dev/textures/design/texture-layout/README.md)).
+
+### `kind_id` partition — ground tiles vs linked objects (biome-tile)
+
+`TYPE_BIOME_TILE` carries **both** ground tiles **and** linked/constructed objects (walls, fences,
+rocks, blueprints) so they ride the **one dense tile vector** per zone (the point: a brick wall and a
+grass floor are the same row shape in the same dense vector). `kind_id` (u12) is split by its top bit:
+
+| `kind_id` | is | `kind` names | `variant` = |
+|---|---|---|---|
+| `0x000–0x7FF` (2048) | ground tile | material (grass, dirt, sand, water…) | art variation `0..15` |
+| `0x800–0xFFF` (2048) | linked object | material / blueprint (smooth, brick, plank, metal, flecked; blueprint) | form (wall, fence, rock…) |
+
+For **every** biome-tile object: **`subtype_id`** = the biome (`0x000` = default, 4096 biomes);
+**`kind_id`** = the material (or `blueprint`), tile-half or linked-half per the split; **`variant_id`**
+= the form for linked, or the art variation for a plain tile. Only 16 variants fit the `u4` — extra
+on-disk variations may exist but **truncate out of the manifest** (`variant_id ≥ 16` unused). A
+scattered `TYPE_BIOME_THING` (e.g. `conifer`) uses the same shape: `subtype` = biome, `kind` = the
+thing, `variant` = art variation. `TYPE_THING` (7) stays for genuinely biome-invariant freestanding
+objects; walls/fences/rocks do **not** use it — they are biome-tile.
 
 ---
 

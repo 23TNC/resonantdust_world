@@ -1,31 +1,37 @@
 # Migrating to the reshaped leaf
 
-Two moves, ideally one pass ([README.md](README.md) Decided):
+Three moves, one pass ([README.md](README.md) Decided):
 
-1. **Leaf reshape** — `<id>.<dir>.<part>/<variant>/<map>.<ext>` → `<variant>/<map>.<dir>.<part>.<ext>`
-   (drop `<id>`, fold `dir`/`part` into the map filename).
-2. **Finish the taxonomy move** — relocate the still-legacy `linked/<kind>.<subkind>/…` trees
-   onto `<type>/<subtype>/<kind>/<subkind>/…` (blocked on the `linked → type/subtype` mapping,
-   README Decided §"Still to pin").
+1. **Leaf reshape** — fold `dir`/`part` into the map filename, drop `<id>`.
+2. **Drop `<subkind>`** — never a `definition_reference` field; taxonomy → `type/subtype/kind/variant`.
+   Affects existing trees (`…/conifer/default/<v>` → `…/conifer/<v>`).
+3. **Fold `linked/`→`biome-tile`** — material→`kind`, form→`variant`, `blueprint`→a `kind`; `kind_id`
+   0x800-split ([VARIABLES.md](../../../../../VARIABLES.md#kind_id-partition--ground-tiles-vs-linked-objects-biome-tile)).
 
 ## The transform (leaf)
 
-Per file:
+Per file — two shapes, since `linked/` also inverts kind↔material and folds to `biome-tile`:
 
 ```
-FROM   …/<kind>/<subkind>/<id>.<dir>.<part>/<variant>/<map>.<ext>
-TO     …/<kind>/<subkind>/<variant>/<map>.<dir>.<part>.<ext>
+scattered thing / plain tile:
+FROM   <type>/<subtype>/<kind>/<subkind>/<id>.<dir>.<part>/<variant>/<map>.<ext>
+TO     <type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>
+e.g.   biome-thing/default/conifer/default/1.e.0/3/albedo.png
+   →   biome-thing/default/conifer/3/albedo.e.0.png
 
+linked object:
+FROM   linked/<form>.<material>/<id>.<dir>.<part>/<variant>/<map>.<ext>
+TO     biome-tile/<biome>/<material>/<form>/<map>.<dir>.<part>.<ext>
 e.g.   linked/wall.smooth/1.l.0/1/albedo.png
-   →   linked/wall.smooth/1/albedo.l.0.png
+   →   biome-tile/default/smooth/wall/albedo.l.0.png
 ```
 
-Mechanically: split the `<id>.<dir>.<part>` folder stem; **discard `<id>`**, append `<dir>`
-and `<part>` to the map filename (`<map>.<dir>.<part>.<ext>`); `<variant>` becomes the folder
-directly under `<kind>/<subkind>`. Multiple direction/part folders that shared a `<variant>`
-**collapse into one `<variant>/` folder** of co-located files. (Since `<id>` was almost always
-`1`, dropping it just removes a redundant level — but confirm no kind actually used a second
-id before discarding.)
+Mechanically: discard `<id>` and `<subkind>`; append `<dir>`/`<part>` to the map filename; `<variant>`
+(or, for linked, the `<form>`) becomes the folder directly under `<kind>`. Multiple direction/part
+folders that shared a variant **collapse into one folder** of co-located files. For `linked/`, split the
+old `<form>.<material>` stem: **material → `<kind>`**, **form → the `<variant>` folder**, biome →
+`<subtype>` (`default`). ⚠️ The old linked numeric `<variant>` folders (auto-tile pieces vs art
+variations) need remapping — inspect before collapsing; `blueprint` old-subkind becomes its own `kind`.
 
 - **Scripted `mv` pass**, same discipline as the prior migration
   (`bin/lib/migrate_texpaths.py` is the precedent — dry-run table first, then `--apply`).
@@ -56,14 +62,22 @@ source-of-truth** and should change first, the rest follow. Paths per the 0.2.2 
 
 ## Order
 
-1. **Pin the `linked → type/subtype` mapping** (README §"Still to pin") — the only remaining
-   unknown; everything else in the shape is Decided.
-2. **`bin/lib/texpath.py`** — new leaf composition, `<id>`-free (the SoT), mirror in
-   `marigold/delight.py`.
-3. **`bin/art` write + manifest** sites.
-4. **Scripted `mv`/copy** migration of the existing tree (dry-run → apply): the leaf reshape +
-   the `linked/…` taxonomy relocation, in one pass.
-5. **Server resolvers**, then **client** fetch/cache contract.
-6. **Verify end-to-end on the running stack** (`rd up` → `rd deploy` → browser renders a
-   pawn/thing) — this changes what the client fetches, so unit tests can't close it. Drop the
+1. ✅ **`linked → type/subtype` mapping** — resolved: `linked/`→`biome-tile`, material→`kind`
+   (0x800-split), form→`variant`, biome→`subtype` ([README.md](README.md) Decided §5).
+2. **`type/subtype` `meta.json`** ([README.md](README.md) Decided §6) — the kind registry
+   (name → `kind_id`, so the tooling knows tile-vs-linked) + form → `variant_id`. `bin/art` needs it
+   to place files and to split sheets. Author it before the write sites depend on it.
+3. **`bin/lib/texpath.py`** — new leaf composition: `<id>`-free, `<subkind>`-free, `map.dir.part`
+   filename, biome-tile fold (the SoT); mirror in `marigold/delight.py`.
+4. **`bin/art` write + manifest** sites — every write + the manifest walk; the manifest truncates
+   `variant_id ≥ 16`.
+5. **Scripted `mv`/copy** migration of the existing tree (dry-run → apply): leaf reshape + drop
+   `<subkind>` + `linked/→biome-tile` fold, one pass. **Copy, don't move, until verified** (`textures/`
+   is gitignored → the old tree is the only rollback).
+6. **Dense storage width** (README §"Still to pin") — if this pass: widen the cold-tile dense cell
+   `u8 → u16` (`kind_id`+`variant_id`) in codec/worldgen/edge so linked rows fit the tile vector.
+7. **Server resolvers**, then **client** fetch/cache contract (URL + cache key gain `.dir.part`,
+   lose `<subkind>`).
+8. **Verify end-to-end on the running stack** (`rd up` → `rd deploy` → browser renders a
+   pawn/thing/wall) — this changes what the client fetches, so unit tests can't close it. Drop the
    old leaves once satisfied.

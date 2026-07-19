@@ -17,16 +17,19 @@ Status legend: ✅ AGREED ·
 ## The canonical path
 
 ```
-textures / <type> / <subtype> / <kind> / <subkind> / <variant> / <map>.<dir>.<part>.<ext>
-          └───────── object-model taxonomy ─────────┘ └ variation ┘ └──── the leaf file ────┘
+textures / <type> / <subtype> / <kind> / <variant> / <map>.<dir>.<part>.<ext>
+          └────── object-model taxonomy ──────┘ └ form/var ┘ └──── the leaf file ────┘
 ```
 
-- ✅ **`<type>/<subtype>/<kind>/<subkind>`** — the object-model taxonomy, the same axes as
-  [`type_reference` + `kind_reference`](../../../../../VARIABLES.md)
-  (`type_id`/`subtype_id`/`kind_id`/`subkind_id`). e.g. `pawn/animal/wolf/…`,
-  `biome-thing/default/berry/…`.
-- ✅ **`<variant>`** — the variation index (`variant_id`) — one folder per variation, the
-  first level directly under the taxonomy. **No `<id>` segment** (see below).
+- ✅ **`<type>/<subtype>/<kind>/<variant>`** — the object-model taxonomy, the **exact four fields**
+  of [`definition_reference`](../../../../../VARIABLES.md) (`type_id`/`subtype_id`/`kind_id`/`variant_id`).
+  e.g. `pawn/animal/wolf/0/`, `biome-thing/default/conifer/3/`, `biome-tile/default/plank/wall/`.
+  **No `<subkind>`** — it was never a `definition_reference` field (the old u4 was `variant_id`, not
+  `subkind_id`); dropping it makes the folders match the id 1:1.
+- ✅ **`<variant>`** — the `variant_id`. May be **named or numeric**: a scattered thing's art variations
+  are numeric folders (`0..15`, straight off a sprite sheet); a linked object's are named **forms**
+  (`wall`/`fence`/`rock`) that a registry maps to an index. Both resolve to `variant_id`. **≥ 16 truncates**
+  out of the manifest (`u4`). **No `<id>` segment** (see below).
 - ✅ **the leaf file `<map>.<dir>.<part>.<ext>`** — this is the change (below).
 
 ### No `<id>` segment ✅
@@ -47,8 +50,8 @@ Nothing needs a separate id level, so it's gone.
 
 | segment | is | notes |
 |---------|-----|-------|
-| `type` / `subtype` / `kind` / `subkind` | object-model taxonomy | [VARIABLES.md](../../../../../VARIABLES.md); `type` reserved → dirs use these exact words |
-| `variant` | variation index | the `variant_id`; a `readdir` enumerates variations |
+| `type` / `subtype` / `kind` | object-model taxonomy | [VARIABLES.md](../../../../../VARIABLES.md); `type` reserved → dirs use these exact words. **No `subkind`** (not a field). For `biome-tile`: `subtype`=biome, `kind`=material/blueprint (0x800-split tile-vs-linked) |
+| `variant` | `variant_id` (u4) | named (linked **form**: `wall`/`fence`/`rock`) or numeric (art variation `0..15`); a registry maps names → index; ≥16 truncates |
 | `map` | the texture channel | `albedo` / `normal` / `diffuse` / `emissive` / `packed` / `sprite` / … |
 | `dir` | facing / direction | ✅ **compact**: `s`/`e`/`n` (west = mirrored east), `l` = omni/linked. From object-model rotation (`rot`→`dir`) |
 | `part` | sprite piece within the object | ✅ named **`part`** (not `layer` — `layer` is the object-model tile slot). Compact numeric: `0` body, `1` head, … |
@@ -57,20 +60,22 @@ Nothing needs a separate id level, so it's gone.
 
 ## The change — reshape the leaf
 
-We moved the upper path onto `type/subtype/kind/subkind` but **stopped before reshaping the
-leaf**. Today the direction/part sit in a *folder* name and the map is a bare file:
+We moved the upper path onto the taxonomy but **stopped before reshaping the leaf** (and before
+dropping `subkind` / folding `linked/`). Today direction/part sit in a *folder* name, the map is a
+bare file, and there's a redundant `<id>` + `<subkind>`:
 
 ```
 CURRENT   …/<kind>/<subkind>/<id>.<dir>.<part>/<variant>/<map>.<ext>
 real      textures/linked/wall.smooth/1.l.0/1/albedo.png
 ```
 
-**Target** — drop `<id>`, move `<dir>` and `<part>` off the folder into the map filename, and
-make `<variant>` the folder that holds them all:
+**Target** — drop `<id>` and `<subkind>`, fold `linked/`→`biome-tile` (material→`kind`, form→`variant`),
+move `<dir>`/`<part>` into the map filename, and make `<variant>` the one folder that holds them all:
 
 ```
-TARGET    …/<kind>/<subkind>/<variant>/<map>.<dir>.<part>.<ext>
-real      textures/linked/wall.smooth/1/albedo.l.0.png
+TARGET    <type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>
+real      biome-tile/default/smooth/wall/albedo.l.0.png   (was linked/wall.smooth/1.l.0/1/albedo.png)
+          biome-thing/default/conifer/3/albedo.e.0.png     (was biome-thing/default/conifer/default/3/albedo.png)
 ```
 
 ### Why — one folder per variant, grouped by map → dir → part
@@ -105,13 +110,29 @@ numeric parts) — the `map.dir.part` **order** is what produces the grouping.
    multi-variant sheet's own filename + metadata). Path starts variations at `<variant>/`.
 2. ✅ **Compact names.** Keep `s`/`e`/`n` + numeric parts; do **not** expand to full words.
 3. ✅ **`part`, not `layer`.** `layer` stays reserved for the object-model tile slot.
-4. ✅ **Finish the taxonomy move.** `linked/…` (still legacy `<category>/<kind>.<subkind>`)
-   moves onto `<type>/<subtype>/<kind>/<subkind>` as part of this pass — see
-   [migration.md](migration.md).
+4. ✅ **No `subkind`.** Dropped — never a `definition_reference` field (the u4 is `variant_id`).
+   Taxonomy is the four fields `type/subtype/kind/variant`. Affects existing trees too:
+   `biome-thing/default/conifer/default/<v>` → `biome-thing/default/conifer/<v>`.
+5. ✅ **`linked/` folds into `biome-tile`.** Walls/fences/rocks/blueprints become `TYPE_BIOME_TILE`
+   objects so they ride the dense tile vector — **no new `type_id`**. The old `<kind>.<subkind>`
+   inverts: the **material** (old subkind: `plank`/`brick`/`smooth`/…) becomes `kind`; the **form**
+   (old kind: `wall`/`fence`/`rock`) becomes `variant`. `blueprint` is a `kind` (N generic blueprints
+   across the forms). `kind_id` is split at `0x800` (tile < 0x800 ≤ linked); see
+   [VARIABLES.md](../../../../../VARIABLES.md#kind_id-partition--ground-tiles-vs-linked-objects-biome-tile).
+   ```
+   linked/wall.plank/1.l.0/<v>/albedo.png  →  biome-tile/default/plank/wall/albedo.l.0.png
+   linked/rock.flecked/…                    →  biome-tile/default/flecked/rock/albedo.l.0.png
+   ```
+6. ✅ **A `type/subtype`-level `meta.json`.** Retained/reintroduced (we dropped the type/subtype sprite
+   sheets + their split metadata). It's the spot that "tells art what it's looking at": the kind
+   registry (name → `kind_id`, so the pipeline knows which materials are linked vs tile), the form →
+   `variant_id` map, and sprite-sheet split info. Distinct from the **leaf** `meta.json` (per-variant
+   outline/bbox/tints for shadows). Lives at `textures/<type>/<subtype>/meta.json`.
 
 ### Still to pin (mechanical, not blocking the shape)
 
-- ❓ **`linked/…` → taxonomy mapping.** Which `<type>/<subtype>` do walls/fences/rocks land
-   under? The object-model `type_id` palette has no "built/linked" type yet
-   ([VARIABLES.md](../../../../../VARIABLES.md)) — needs a type assignment (or a
-   `layer`-on-`biome-tile` decision) before `linked/` can be relocated.
+- ✏️ **Storage width.** Folding linked into the dense **tile** vector: today it's `Vec<u8>` (u8
+   tile-kind). A biome-tile row now needs `kind_id`(u12)+`variant_id`(u4) = **u16**, so the dense cell
+   widens `u8 → u16` (worldgen/codec/edge follow). Confirm scope: this pass, or a follow-up.
+- ✏️ **Form → `variant_id` numbering.** The exact `wall`/`fence`/`rock`/… → 0/1/2 assignment lives in
+   the `type/subtype` `meta.json` registry; not yet enumerated.
