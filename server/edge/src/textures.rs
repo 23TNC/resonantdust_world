@@ -73,10 +73,29 @@ impl TextureSource {
         }
     }
 
+    /// Resolve a stem+map to the master leaf rel, honouring BOTH the canonical numeric
+    /// variant leaf (`<…>/1/<map>.<facing>.0.png`) and a NAMED-variant leaf
+    /// (`<…>/<form>/<map>.<facing>.0.png`, files directly — a biome-tile form like
+    /// `smooth/wall`). On disk we probe which exists (named first); R2 uses the canonical.
+    fn resolve_rel(&self, stem: &str, map: &str) -> Option<PathBuf> {
+        if !MAPS.contains(&map) {
+            return None;
+        }
+        // Named-variant probe (disk only): <segs>/<map>.<facing>.0.png (the form IS the last seg).
+        if let TextureSource::Disk { root, .. } = self {
+            let (segs, facing) = stem_segs_facing(stem)?;
+            let named: PathBuf = segs.iter().collect::<PathBuf>().join(format!("{map}.{facing}.0.png"));
+            if root.join(&named).exists() {
+                return Some(named);
+            }
+        }
+        master_map_rel(stem, map) // canonical <segs>/1/<map>.<facing>.0.png
+    }
+
     /// The full-res master albedo for `stem`, served verbatim. `Ok(None)` is a
     /// clean miss (404).
     pub async fn serve_master(&self, stem: &str) -> Result<Option<ServedTexture>, String> {
-        let rel = master_map_rel(stem, "albedo").ok_or_else(|| format!("bad texture stem: {stem}"))?;
+        let rel = self.resolve_rel(stem, "albedo").ok_or_else(|| format!("bad texture stem: {stem}"))?;
         Ok(self
             .read_master(&rel)
             .await?
@@ -87,7 +106,7 @@ impl TextureSource {
     /// served on demand — it sits beside the maps in the resolved leaf, so resolve via `albedo` then
     /// swap the filename. `Ok(None)` when absent (a stem `bin/art` hasn't written meta for yet).
     pub async fn serve_meta(&self, stem: &str) -> Result<Option<ServedTexture>, String> {
-        let rel = master_map_rel(stem, "albedo").ok_or_else(|| format!("bad texture stem: {stem}"))?;
+        let rel = self.resolve_rel(stem, "albedo").ok_or_else(|| format!("bad texture stem: {stem}"))?;
         let meta_rel = rel.with_file_name("meta.json");
         Ok(self
             .read_master(&meta_rel)
@@ -99,7 +118,7 @@ impl TextureSource {
     /// the derived PNG (re-deriving when the master is newer); R2 derives fresh.
     /// `Ok(None)` when the master is absent.
     pub async fn serve_preview(&self, stem: &str) -> Result<Option<ServedTexture>, String> {
-        let rel = master_map_rel(stem, "albedo").ok_or_else(|| format!("bad texture stem: {stem}"))?;
+        let rel = self.resolve_rel(stem, "albedo").ok_or_else(|| format!("bad texture stem: {stem}"))?;
 
         // Disk: serve a fresh cached derivation, else re-derive + cache.
         if let TextureSource::Disk { root, cache } = self {
@@ -138,7 +157,7 @@ impl TextureSource {
     /// `derived/lod/<size>/…` (re-derived when the master is newer); R2 derives
     /// fresh. `Ok(None)` when the master is absent.
     pub async fn serve_lod(&self, stem: &str, size: u32, map: &str) -> Result<Option<ServedTexture>, String> {
-        let rel = master_map_rel(stem, map).ok_or_else(|| format!("bad texture stem/map: {stem} {map}"))?;
+        let rel = self.resolve_rel(stem, map).ok_or_else(|| format!("bad texture stem/map: {stem} {map}"))?;
 
         // Disk: serve a fresh cached derivation, else re-derive + cache.
         if let TextureSource::Disk { root, cache } = self {
@@ -176,7 +195,7 @@ impl TextureSource {
     /// Disk: the master's `mtime-size`; R2: `None` (no cheap stat — R2 skips
     /// conditional revalidation for now). `None` too when the master is absent.
     pub fn etag(&self, stem: &str) -> Option<String> {
-        let rel = master_map_rel(stem, "albedo")?;
+        let rel = self.resolve_rel(stem, "albedo")?;
         match self {
             TextureSource::Disk { root, .. } => disk_etag(&root.join(rel)),
             TextureSource::R2(_) => None,
@@ -208,38 +227,40 @@ impl TextureSource {
 /// re-synced to the same group-less layout before an R2 deploy (docs "R2 step").
 const FACINGS: [&str; 4] = ["n", "e", "s", "l"];
 
-fn master_map_rel(stem: &str, map: &str) -> Option<PathBuf> {
-    // `map` names the leaf file (`<map>.png`); reject anything outside the allowlist so a
-    // crafted map segment can never name an arbitrary file (belt-and-braces over `sanitize`).
-    if !MAPS.contains(&map) {
-        return None;
-    }
+// Parse a client stem into (path segments, facing). A trailing facing (`s`/`e`/`n`/`l`)
+// folds out only when a `<cat>/<kind>` prefix precedes it (≥3 segs), so a 2-segment kind
+// whose name happens to be a facing letter is never mistaken for one. Absent → south (`s`).
+fn stem_segs_facing(stem: &str) -> Option<(Vec<String>, &'static str)> {
     let safe = sanitize(stem)?;
-    let mut segs: Vec<&str> = Vec::new();
+    let mut segs: Vec<String> = Vec::new();
     for c in safe.components() {
         match c {
-            Component::Normal(seg) => segs.push(seg.to_str()?),
+            Component::Normal(seg) => segs.push(seg.to_str()?.to_string()),
             _ => return None,
         }
     }
-    // A trailing facing segment folds into the filename's `<dir>` field — but only
-    // when a `<cat>/<kind>` prefix precedes it (≥3 segments), so a 2-segment kind
-    // whose name happens to be a facing letter is never mistaken for one. Absent →
-    // south (`s`), the canonical single-facing default.
-    let facing = if segs.len() >= 3 && FACINGS.contains(segs.last()?) {
-        segs.pop()?
-    } else {
-        "s"
-    };
+    let mut facing = "s";
+    if segs.len() >= 3 {
+        if let Some(f) = FACINGS.iter().copied().find(|&f| f == segs.last().unwrap().as_str()) {
+            facing = f;
+            segs.pop();
+        }
+    }
     if segs.is_empty() {
         return None;
     }
-    let mut out = PathBuf::new();
-    for seg in segs {
-        out.push(seg);
+    Some((segs, facing))
+}
+
+// The CANONICAL numeric-variant leaf: `<segs>/1/<map>.<facing>.0.png`. `map` must be in the
+// allowlist so a crafted segment can never name an arbitrary file. Pure (no fs) — the
+// fs-aware named-variant resolution is `TextureSource::resolve_rel`.
+fn master_map_rel(stem: &str, map: &str) -> Option<PathBuf> {
+    if !MAPS.contains(&map) {
+        return None;
     }
-    // Canonical instance: variant 1 — the new leaf `1/<map>.<facing>.0.png` (dir+part fold
-    // into the filename; the per-instance variation picker, the old `^r2`, is future work).
+    let (segs, facing) = stem_segs_facing(stem)?;
+    let mut out: PathBuf = segs.iter().collect();
     out.push("1");
     out.push(format!("{map}.{facing}.0.png"));
     Some(out)

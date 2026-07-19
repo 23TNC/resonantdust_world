@@ -200,12 +200,32 @@ fn scan_dir(tex_root: &Path, dir: &Path, entries: &mut BTreeMap<String, Entry>) 
 /// Register a kind dir's per-facing stems (`<stem_prefix>/<facing>`) if it holds the
 /// canonical instance leaf `1.<facing>.0/1/albedo.png`. Returns whether any facing matched.
 fn register_kind(kind_path: &Path, stem_prefix: &str, entries: &mut BTreeMap<String, Entry>) -> bool {
+    // Canonical numeric variant `1/` → the implicit stem `<prefix>/<facing>`.
+    let mut found = register_variant(&kind_path.join("1"), stem_prefix, entries);
+    // NAMED (non-numeric) variant folders → explicit stems `<prefix>/<form>/<facing>` — a
+    // biome-tile form like `smooth/wall`. A numeric variant is the (future) per-instance
+    // variation picker, not addressable by a stem yet, so it's skipped here.
+    if let Ok(kids) = std::fs::read_dir(kind_path) {
+        for kid in kids.flatten() {
+            let p = kid.path();
+            if !p.is_dir() {
+                continue;
+            }
+            let Some(name) = dir_name(&kid.file_name()) else { continue };
+            if name.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            found |= register_variant(&p, &format!("{stem_prefix}/{name}"), entries);
+        }
+    }
+    found
+}
+
+// Register one variant leaf dir (`<kind>/1` or `<kind>/<form>`): a stem per facing whose
+// `albedo.<facing>.0.png` is present, with its sibling maps + optional linked-atlas grid.
+fn register_variant(leaf: &Path, stem_prefix: &str, entries: &mut BTreeMap<String, Entry>) -> bool {
     let mut found = false;
     for facing in FACINGS {
-        // Canonical instance: variant leaf `1/`, the facing in the filename. The albedo
-        // `albedo.<facing>.0.png` is the master (its presence makes the stem a stem); its
-        // sibling maps are probed alongside.
-        let leaf = kind_path.join("1");
         let master = leaf.join(format!("albedo.{facing}.0.png"));
         if !master.is_file() {
             continue;
@@ -217,18 +237,18 @@ fn register_kind(kind_path: &Path, stem_prefix: &str, entries: &mut BTreeMap<Str
             .filter(|m| leaf.join(format!("{m}.{facing}.0.png")).is_file())
             .map(|m| m.to_string())
             .collect();
-        // Hash ALL present map files, not just the albedo — re-mastering any sibling map
-        // must move the hash so the cache-buster URL changes. The `atlas.json` sidecar (if
-        // any) is folded in too, so re-authoring the grid busts the hash.
-        let Some(hash) = leaf_hash(&leaf, &maps, facing) else { continue };
-        // A `bin/art` linked atlas drops an `atlas.json` beside its maps: the cell grid +
-        // normalized per-cell inset. Absent → an ordinary single-image stem.
-        let (grid, pad) = match read_atlas_meta(&leaf) {
+        // Hash ALL present map files (+ the `atlas.json` sidecar) so re-mastering any of them
+        // moves the cache-buster hash.
+        let Some(hash) = leaf_hash(leaf, &maps, facing) else { continue };
+        // A `bin/art` linked atlas drops an `atlas.json` beside its maps: the cell grid + inset.
+        let (grid, pad) = match read_atlas_meta(leaf) {
             Some((g, p)) => (Some(g), Some(p)),
             None => (None, None),
         };
-        let stem = format!("{stem_prefix}/{facing}");
-        entries.insert(stem, Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps, grid, pad });
+        entries.insert(
+            format!("{stem_prefix}/{facing}"),
+            Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps, grid, pad },
+        );
         found = true;
     }
     found
