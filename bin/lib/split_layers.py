@@ -51,6 +51,7 @@ from PIL import Image
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import texpath
+import meta
 REPO = os.environ.get("RD_REPO_ROOT") or os.path.abspath(os.path.join(HERE, "..", ".."))
 TEXROOT = os.path.join(REPO, "textures")   # source root; the <group> dir is gone
 
@@ -404,6 +405,9 @@ def main():
         shutil.copy2(alb, marigold_path)   # preserve this de-lit (the reconstruction/re-split source)
         res.save(alb)               # residual -> albedo.png (the render base)
         layers.save(layers_path)    # co-located weight map
+        # The packed channels' base colours → meta.json, so the client can reconstruct
+        # `albedo + Σ layersᵢ·tintᵢ` and re-tint per DSL. `info[i][2]` is channel i's Bcol·255.
+        meta.update(alb, channel_tints=[tint for (_, _, tint) in info])
         done += 1
         print(f"  {os.path.relpath(alb, REPO)}: {len(info)} layer(s) -> {os.path.basename(layers_path)} + albedo.png (residual) + albedo_marigold.png")
         for i, (kind, n, seed) in enumerate(info):
