@@ -65,14 +65,19 @@ R2_AWSCLI_IMAGE="${R2_AWSCLI_IMAGE:-amazon/aws-cli:latest}"
 # "what diffuse sprites are here", used wherever master is walked; the exact name
 # skips both the derived maps AND any flat `<id>.diffuse.png` source atlas.
 _find_diffuse() {  # dir
-  find "$1" -type f -name 'diffuse.png' -print0 | sort -z
+  # New leaf: the diffuse member is `diffuse.<dir>.<part>.png` (dir+part folded into the
+  # filename). Matches diffuse.s.0.png / diffuse.e.1.png / diffuse.l.0.png; the glob's
+  # required middle segment skips the flat `<id>.diffuse.png` source atlas + derived maps.
+  find "$1" -type f -name 'diffuse.*.png' -print0 | sort -z
 }
 
 # The co-located map path for a diffuse sprite: the `<type>.png` sibling in the
-# diffuse's variant leaf. So _map_path(…/1.s.0/1/diffuse.png, normal) ->
-# …/1.s.0/1/normal.png — the leaf dir IS the identity, so the base is gone.
+# diffuse's variant leaf, preserving its `<dir>.<part>` suffix. So
+# _map_path(…/3/diffuse.e.1.png, normal) -> …/3/normal.e.1.png — one variant folder holds
+# every map/dir/part, grouped by an `ls` as map → dir → part.
 _map_path() {  # diffuse_png type
-  printf '%s/%s.png' "$(dirname "$1")" "$2"
+  local suffix; suffix=$(basename "$1"); suffix=${suffix#diffuse.}   # <dir>.<part>.png
+  printf '%s/%s.%s' "$(dirname "$1")" "$2" "$suffix"
 }
 
 # Magenta cutout predicate (ImageMagick -fx): 0 for the key colour, 1 to
@@ -1577,9 +1582,9 @@ _grid_slice_id() {  # src_dir id out_cat out_kind
     echo "art: $id.diffuse.png is ${w}x${h}, not evenly divisible by the ${cols}x${rows} grid — cell UVs will be approximate" >&2
   fi
 
-  # clean this id's existing output leaves in the kind dir (drops any legacy per-cell
-  # variant dirs; re-run safe).
-  rm -rf "$MASTER_DIR/$out_cat/$out_kind/$id".*/ 2>/dev/null || true
+  # clean this id's existing output leaf in the kind dir — the new `<kind>/<id>/` variant
+  # folder plus any legacy `<id>.<dir>.<layer>/` per-cell dirs; re-run safe.
+  rm -rf "$MASTER_DIR/$out_cat/$out_kind/$id" "$MASTER_DIR/$out_cat/$out_kind/$id".*/ 2>/dev/null || true
 
   # gather this id's source map atlases: the diffuse + any <id>.<map>.png sibling
   # (normal, overlay, …). A purely-numeric middle segment (a legacy integer layer) is
@@ -1593,11 +1598,13 @@ _grid_slice_id() {  # src_dir id out_cat out_kind
     matlases+=("$f"); mtypes+=("$mt")
   done
 
-  local outdir="$MASTER_DIR/$out_cat/$out_kind/$id.l.0/1"; mkdir -p "$outdir"
+  # New leaf: `<kind>/<id>/<map>.l.0.png` (variant = id; `l` = linked/autotile facing, part 0)
+  # + the per-variant `atlas.json` sidecar. Drops the old `<id>.l.0/1/<map>.png` nesting.
+  local outdir="$MASTER_DIR/$out_cat/$out_kind/$id"; mkdir -p "$outdir"
   local mi
   for mi in "${!matlases[@]}"; do
     local atlas=${matlases[$mi]} mtype=${mtypes[$mi]}
-    local out="$outdir/$mtype.png"
+    local out="$outdir/$mtype.l.0.png"
     if [[ "$mtype" == diffuse ]]; then
       # Key the whole atlas (magenta → transparent), then edge-bleed it once.
       _key_stack "$atlas"
@@ -1614,7 +1621,7 @@ _grid_slice_id() {  # src_dir id out_cat out_kind
     'BEGIN{ printf "%.6f %.6f", f/c, f/r }')
   printf '{"cols":%d,"rows":%d,"padU":%s,"padV":%s}\n' "$cols" "$rows" "$pu" "$pv" > "$outdir/atlas.json"
 
-  echo "    id $id: atlas ${w}x${h} → 1.l.0/1 (${cols}x${rows} cells, inset ${GRID_INSET_FRAC}) × ${#matlases[@]} map(s) [${mtypes[*]}]"
+  echo "    id $id: atlas ${w}x${h} → $id/<map>.l.0.png (${cols}x${rows} cells, inset ${GRID_INSET_FRAC}) × ${#matlases[@]} map(s) [${mtypes[*]}]"
   LAST_TOTAL=1
 }
 
@@ -1665,7 +1672,7 @@ _wipe_master_leaves() {  # root depth
     # source lives INSIDE its leaf, so wiping it would delete the source (see
     # _remaster_leaf_sprites). Level-2 leaves are pure master output (sheet lives at the
     # kind top-level) and carry no sprite, so they wipe normally.
-    if find "$d" -type f -name 'sprite.png' -print -quit 2>/dev/null | grep -q .; then continue; fi
+    if find "$d" -type f -name 'sprite.*.png' -print -quit 2>/dev/null | grep -q .; then continue; fi
     rm -rf "$d"
   done < <(find "$root" -mindepth "$depth" -maxdepth "$depth" -type d -print0 2>/dev/null)
 }
@@ -1693,7 +1700,7 @@ _remaster_leaf_sprites() {  # src_kind
     w=${bbox%%x*}; h=${bbox#*x}; h=${h%%+*}
     (( w > maxdim )) && maxdim=$w
     (( h > maxdim )) && maxdim=$h
-  done < <(find "$src_kind" -type f -name 'sprite.png' -print0 | sort -z)
+  done < <(find "$src_kind" -type f -name 'sprite.*.png' -print0 | sort -z)
   if (( maxdim < 1 )); then LAST_TOTAL=0; return; fi
   # Pass 2: shared canvas + common scale for the whole kind.
   local side; side=$(nearest_pow2 "$maxdim")
@@ -1701,7 +1708,8 @@ _remaster_leaf_sprites() {  # src_kind
   local i
   for i in "${!sps[@]}"; do
     sp=${sps[$i]}; leaf=$(dirname "$sp")
-    CROP_GEOMS=( "${bxs[$i]}" ); CROP_OUTS=( "$leaf/diffuse.png" ); EMIT_BLEED=1
+    local sfx; sfx=$(basename "$sp"); sfx=${sfx#sprite.}   # <dir>.<part>.png — mirror into the diffuse
+    CROP_GEOMS=( "${bxs[$i]}" ); CROP_OUTS=( "$leaf/diffuse.$sfx" ); EMIT_BLEED=1
     _emit_crops "$sp"
     total=$(( total + LAST_COUNT ))
   done
@@ -2207,8 +2215,8 @@ cmd_remaster() {
       convert "$mp" -background none -filter Lanczos -resize "${size}x${size}^" "$mp" || return 1
       nsz=$((nsz+1))
     done < <(find "$MASTER_DIR/$SPLIT_TARGET" -type f -name '*.png' \
-               ! -name 'sprite.png'   ! -name '*.sprite.png' \
-               ! -name 'template.png' ! -name '*.template.png' -print0 | sort -z)
+               ! -name 'sprite.png'   ! -name 'sprite.*.png'   ! -name '*.sprite.png' \
+               ! -name 'template.png' ! -name 'template.*.png' ! -name '*.template.png' -print0 | sort -z)
     echo "art: --size $size -> scaled $nsz master map(s) to ${size}px short-axis (sources kept full-res)"
   fi
 
@@ -2394,12 +2402,14 @@ _var_pairs() {  # kinddir
   local d=$1 map=albedo
   [[ -d "$d" ]] || return
   # post-maps uses albedo; pre-maps (remaster only) falls back to diffuse.
-  if ! find "$d" -type f -name 'albedo.png' -print -quit 2>/dev/null | grep -q .; then
+  if ! find "$d" -type f -name 'albedo.*.png' -print -quit 2>/dev/null | grep -q .; then
     map=diffuse
   fi
-  # Folder-per-variant: <id>.<dir>.<layer>/<variant>/<map>.png. Walk the LAYER-0 pose
-  # dirs (`<id>.<facing>.0`); each `<variant>/` subdir holding <map>.png is a (id,
-  # variant) pair, deduped across facings.
+  # ⚠ NOT YET CUT OVER to the new leaf (texture-restructure R3): this walks the OLD
+  # `<id>.<facing>.0/<variant>/<map>.png` pose dirs, which no longer exist. Only used by
+  # `bin/art manifest` (content/visual/manifest/*.rd) — non-blocking, since the edge builds
+  # its own runtime texture manifest. Rework: variants = the kind's direct numeric subdirs;
+  # facing/part come from the `<map>.<dir>.<part>.png` filename; there is no `<id>` level.
   local pose pn id vdir var
   for pose in "$d"/*/; do
     [[ -d "$pose" ]] || continue
@@ -2417,8 +2427,9 @@ _var_pairs() {  # kinddir
 # Number of LAYERS in KINDDIR = distinct `<layer>` segment across its sprites
 # (contiguous from 0: layer 0 = the base layer, 1.. = overlays). 1 if absent.
 _layer_count() {  # kinddir
-  # Folder-per-variant: <id>.<dir>.<layer>/<variant>/diffuse.png — the layer is the
-  # 3rd field of the pose dir. Count distinct <layer> across pose dirs holding a diffuse.
+  # ⚠ NOT YET CUT OVER to the new leaf (texture-restructure R3): walks the OLD `<id>.<dir>.<layer>`
+  # pose dirs. New leaf folds the layer into the `<map>.<dir>.<part>.png` filename (part = old layer).
+  # Only `bin/art manifest` uses this (non-blocking — the edge builds its own runtime manifest).
   local d=$1 n pose pn
   [[ -d "$d" ]] || { echo 1; return; }
   n=$(for pose in "$d"/*/; do
@@ -2598,9 +2609,9 @@ _kind_maps() {  # kinddir
   local d=$1 bits=0
   [[ -d "$d" ]] || { echo 0; return; }
   # Folder-per-variant: maps are bare <map>.png files inside variant leaves.
-  find "$d" -type f -name 'albedo.png'   -print -quit 2>/dev/null | grep -q . && bits=$((bits | 1))
-  find "$d" -type f -name 'normal.png'   -print -quit 2>/dev/null | grep -q . && bits=$((bits | 2))
-  find "$d" -type f -name 'emissive.png' -print -quit 2>/dev/null | grep -q . && bits=$((bits | 4))
+  find "$d" -type f -name 'albedo.*.png'   -print -quit 2>/dev/null | grep -q . && bits=$((bits | 1))
+  find "$d" -type f -name 'normal.*.png'   -print -quit 2>/dev/null | grep -q . && bits=$((bits | 2))
+  find "$d" -type f -name 'emissive.*.png' -print -quit 2>/dev/null | grep -q . && bits=$((bits | 4))
   echo "$bits"
 }
 
