@@ -7,6 +7,14 @@ _Phased so nothing breaks mid-migration: the new write path + registry land firs
 
 _All items 2026-07-19._
 
+> **Status (2026-07-19).** **Phase 1 — the clean `subkind==default` leaf reshape — is DONE and
+> browser-verified** (conifer/flora render from the new leaf; see [`completed.md`](completed.md)):
+> P1 texpath+marigold, P3 migrate (573 files), P4 edge readers, P5 DSL stems, P6 browser.
+> **Phase 2 (remaining):** P0 registry + the linked→biome-tile **atlas fold** (walls/fences/rocks),
+> P2 **`bin/art`** regeneration into the new leaf (so *new* art is written in-shape, not just migrated),
+> and the **human-pawn body-type subkinds** (average/thin — fold into variants). The items below are
+> phase-2 unless struck as done in `completed.md`.
+
 ---
 
 ## P0 · The `type/subtype` `meta.json` registry

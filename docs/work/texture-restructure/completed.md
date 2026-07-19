@@ -20,3 +20,16 @@ authoritative for what's actually shipped. Timestamp each row with the date it l
   unchanged, so `normals.py`/`depth.py`/`normal_depth.py` are untouched. Syntax-checked all four; verified
   the path logic **agrees with `texpath.py`**. **Remaining in P1:** only the biome-tile fold in texpath
   (sequenced after the P0 registry).
+
+- **2026-07-19** · **P3/P4/P5/P6 — clean-case cutover, BROWSER-VERIFIED.** For the `subkind==default`
+  kinds (biome-thing + wolf):
+  - **P3** [`bin/lib/migrate_leaf.py`](../../../bin/lib/migrate_leaf.py) reshaped 573 files on disk
+    (`<kind>/default/<id>.<dir>.<part>/<variant>/<map>.<ext>` → `<kind>/<variant>/<map>.<dir>.<part>.<ext>`);
+    skipped human-pawn body-type subkinds + linked (phase 2). Caught + fixed a prune bug (the `default`
+    *subtype* collided with the subkind) via immediate on-disk verification.
+  - **P4** edge readers flipped: `master_map_rel` → `1/<map>.<facing>.0.png`; `register_kind` + `leaf_hash`
+    scan the variant leaf `1/` with the facing in the filename. Compiled + redeployed.
+  - **P5** DSL stems dropped the trailing `/default` (conifer/flora/wolf); the client is stem-based (no change).
+  - **P6** verified in the browser (Chrome ext, debug scene): conifer + flora **render** from the migrated
+    new-leaf textures; the edge serves the subkind-less stems 200 for albedo/normal/surface/layers
+    (`GET /textures/lod/<hash>/256/<map>/biome-thing/default/conifer/e` → 200). End-to-end works.
