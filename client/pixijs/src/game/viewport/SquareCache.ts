@@ -360,7 +360,7 @@ export class SquareCache {
       s.setChannel(channelForLight(i)); // fixed lane R/G/B
       const g = makeShadowGeometry();
       const m = new Mesh({ geometry: g.geometry, shader: s });
-      m.blendMode = "add"; // lanes accumulate (a light's overlapping caster tris clamp at 1)
+      m.blendMode = "max"; // coverage per lane clamps at 1 (add would sum overlapping caster tris past 1)
       this.shadowShaders.push(s);
       this.shadowGeos.push(g);
       this.shadowMeshes.push(m);
