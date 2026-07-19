@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WORK = os.path.join(REPO, "docs", "work")
@@ -102,16 +103,32 @@ def _has_stop_reason(stream: str) -> bool:
     return os.path.exists(os.path.join(WORK, stream, ".stop-reason"))
 
 
+def _active_stream() -> str | None:
+    """The open stream worked most recently — but only if 'recently' is within the
+    recency window (default 3h, env WORK_CHECK_WINDOW_MIN). A stale mtime means no
+    session is mid-stream, so there's nothing to nag about. This is what keeps a
+    fresh session (or an incidental edit) from mis-firing the continuation hook."""
+    window = float(os.environ.get("WORK_CHECK_WINDOW_MIN", "180")) * 60
+    streams = _open_streams()
+    if not streams:
+        return None
+    cand = max(streams, key=lambda s: _mtime(os.path.join(WORK, s)))
+    return cand if _mtime(os.path.join(WORK, cand)) >= time.time() - window else None
+
+
 def main(argv: list[str]) -> int:
     quiet = "--quiet" in argv
     enforce = "--enforce" in argv
 
-    streams = _open_streams()
-    if not streams:
-        if not quiet:
-            print("[work-check] no open work stream — nothing to check.")
+    active = _active_stream()
+    if "--active" in argv:
+        if active:
+            print(active)
         return 0
-    active = max(streams, key=lambda s: _mtime(os.path.join(WORK, s)))
+    if not active:
+        if not quiet:
+            print("[work-check] no recently-active work stream — nothing to check.")
+        return 0
 
     open_todo = _has_open_todo(active)
     blocker = _has_open_blocker(active)

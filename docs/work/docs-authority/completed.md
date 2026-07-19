@@ -33,7 +33,7 @@ _Executes: [`docs/CONVENTIONS.md`](../../CONVENTIONS.md). Done + verified, chron
 
 - **2026-07-19** · **P3 — the hooks (automatic enforcement, F2/F5).** Verified the exact Claude Code
   Stop-hook contract first (no `stop_hook_active` field → external loop guard; block via exit 2 +
-  stderr; cwd = project root). Built [`bin/hooks/stop-docs-check.sh`](../../../bin/hooks/stop-docs-check.sh)
+  stderr; cwd = project root). Built [`bin/hooks/stop-check.sh`](../../../bin/hooks/stop-check.sh)
   (Stop hook: exit-2 block on failure, **progress-aware** loop guard via a failure-hash so a
   non-convergent case can't trap the session) + [`bin/hooks/pre-commit`](../../../bin/hooks/pre-commit)
   (hard commit gate, `SKIP_DOCS_CHECK=1` escape), wired via [`.claude/settings.json`](../../../.claude/settings.json)
@@ -60,3 +60,14 @@ _Executes: [`docs/CONVENTIONS.md`](../../CONVENTIONS.md). Done + verified, chron
   D5). All paths verified: premature→exit 2 (`--enforce`), blocker-open→OK, marker→OK. **Blocking-wire
   into the Stop hook is deferred** to the F6 autonomy dial — recorded as an open [`blocker`](blockers.md);
   advisory `rd work-check` is live now.
+
+- **2026-07-19** · **P5 wiring — continuation hook LIVE (F6 dial → default).** User: "wire with your
+  default." Merged docs-check + work-check into one two-stage Stop hook
+  [`bin/hooks/stop-check.sh`](../../../bin/hooks/stop-check.sh) (renamed from `stop-docs-check.sh`;
+  the rename left broken links that `docs-check` immediately caught + I fixed — the audit earning its
+  keep again). Stage 2 = `work-check --enforce`, **blocking-but-bounded**: added a **recency window**
+  (`WORK_CHECK_WINDOW_MIN`, default 180) so a fresh/idle session never nags, a **progress guard** (no
+  new `completed.md` entry since the last nudge → release), and `SKIP_WORK_CHECK=1` + `.stop-reason` +
+  blocker escapes. **Full matrix tested:** green→exit 0; docs-broken→stage-1 block; premature→stage-2
+  block; no-progress repeat→release; fresh nudge→block again (bounded, never infinite). F6 resolved
+  (dial=default) in [`forks.md`](forks.md); blocker closed in [`blockers.md`](blockers.md).

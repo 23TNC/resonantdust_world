@@ -68,3 +68,8 @@ _Decision points: options · choice · why. Chronological append. Executes:
   it never loops unsupervised. **Turn-up option:** push through phase boundaries autonomously.
   **Turn-down option:** pause at each phase boundary for review even when unblocked. Left as a dial
   because how much unsupervised execution is acceptable is the user's call, not mine.
+- **2026-07-19 · Dial set → DEFAULT (blocking-but-bounded).** User: "wire with your default." So
+  `work-check --enforce` is stage 2 of the Stop hook: it blocks a premature pause, but the progress
+  guard + recency window + `.stop-reason`/blocker escapes bound it (never loops, never mis-fires on a
+  fresh/idle session). Not turned up (no push through phase boundaries) and not left advisory. Retune
+  by editing `bin/hooks/stop-check.sh` or setting `WORK_CHECK_WINDOW_MIN` / `SKIP_WORK_CHECK`.

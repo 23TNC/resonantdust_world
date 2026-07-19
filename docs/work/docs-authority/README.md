@@ -38,17 +38,20 @@ Scope, in order of value: (1) bring the tree into compliance with the convention
 
 ## The hooks (how the forcing function fires)
 
-Two hooks, both over `bin/rd docs-check`:
-
 - **Stop hook** (Claude Code) — `.claude/settings.json` runs
-  [`bin/hooks/stop-docs-check.sh`](../../../bin/hooks/stop-docs-check.sh) at the end of every turn.
-  Green → silent, exit 0. Broken → **exit 2**, the failures print to stderr and the turn can't end
-  until they're fixed. **Loop guard:** it hashes the failure set; if the *same* failures recur (agent
-  tried, no change) it lets the turn end rather than trap the session — any progress re-blocks on the
-  new set. Escape: `SKIP_DOCS_CHECK=1` in the hook env.
+  [`bin/hooks/stop-check.sh`](../../../bin/hooks/stop-check.sh) at the end of every turn, in two stages:
+  - **Stage 1 · docs-check** — docs/ must be compliant. Broken → **exit 2**, failures to stderr, turn
+    can't end. Loop guard: an identical failure set twice → release (a non-convergent case can't trap
+    the turn). Escape: `SKIP_DOCS_CHECK=1`.
+  - **Stage 2 · work-check** (`--enforce`) — if docs are clean, a *silent premature pause* (open,
+    unblocked, executable work in the active stream + no `.stop-reason`) also blocks, pushing me to
+    continue. Bounded: progress guard (no new `completed.md` entry since the last nudge → release),
+    recency window (`WORK_CHECK_WINDOW_MIN`, default 180, so a fresh/idle session doesn't nag), and
+    escapes (a `blockers.md` row, a `.stop-reason` file, or `SKIP_WORK_CHECK=1`). Dial = default
+    (blocking-but-bounded); see [`forks.md`](forks.md) F6.
 - **git pre-commit** — [`bin/hooks/pre-commit`](../../../bin/hooks/pre-commit), symlinked to
-  `.git/hooks/pre-commit`, runs the full audit and **refuses the commit** if docs/ is broken. Escape:
-  `SKIP_DOCS_CHECK=1 git commit …`.
+  `.git/hooks/pre-commit`, runs the full `docs-check` and **refuses the commit** if docs/ is broken
+  (work-check does *not* gate commits — WIP is fine to commit). Escape: `SKIP_DOCS_CHECK=1 git commit …`.
 
 **Install (pre-commit is not tracked — a fresh clone must redo it):**
 `ln -sf ../../bin/hooks/pre-commit .git/hooks/pre-commit`. The Stop hook is tracked (in

@@ -22,7 +22,7 @@ Precision refinements from the first run in [`deviations.md`](deviations.md) D4.
 
 ## P3 — Wire the automatic hook · ✅ DONE (see [`completed.md`](completed.md))
 
-Stop hook (`.claude/settings.json` → `bin/hooks/stop-docs-check.sh`, exit-2 block + progress-aware
+Stop hook (`.claude/settings.json` → `bin/hooks/stop-check.sh`, exit-2 block + progress-aware
 loop guard) + git pre-commit (`bin/hooks/pre-commit`, symlinked), both tested. Hook behaviour +
 install documented in this stream's README. Deferred: an `rd docs install-hooks` to auto-symlink
 pre-commit on a fresh clone (low value; the one-line `ln -sf` is documented).
@@ -33,14 +33,10 @@ Stamp convention documented in `CONVENTIONS.md` (§ `current/`); the staleness *
 built (warning-only) and reuses the component README's existing `Path:` field as the code-path map —
 no new `code:` line needed. It caught a real 2-day lag on `index/current` on its first run.
 
-## P5 — `bin/rd work-check` (detector) · ✅ DONE · blocking-wire BLOCKED on F6 dial
+## P5 — `bin/rd work-check` + continuation hook · ✅ DONE (see [`completed.md`](completed.md))
 
-Detector [`bin/lib/work_check.py`](../../../bin/lib/work_check.py) built + tested (all 3 paths
-deterministic). Firing condition, as-built: **active stream** (most-recently-modified `open` stream)
-has open executable todo items AND no open blocker AND no `.stop-reason` marker → premature. The
-fork check was **dropped** (a fork is self-resolved; only a blocker/stop-reason justifies a pause —
-see [`deviations.md`](deviations.md) D5).
-
-Remaining item — **wiring `work-check --enforce` into the blocking Stop hook** — is an open blocker
-(needs the F6 autonomy-dial decision): see [`blockers.md`](blockers.md). Advisory `rd work-check`
-works today; the progress-guard-vs-block behaviour is settled at the hook layer when the dial is set.
+Detector [`bin/lib/work_check.py`](../../../bin/lib/work_check.py) built + tested; **wired into the
+Stop hook** (stage 2, `--enforce`, blocking-but-bounded — F6 dial resolved to default, see
+[`forks.md`](forks.md) / [`blockers.md`](blockers.md)). Firing condition, as-built: active stream
+(most-recently-modified `open` stream, within the recency window) has open executable todo items AND
+no open blocker AND no `.stop-reason` → premature. Fork check dropped (D5).
