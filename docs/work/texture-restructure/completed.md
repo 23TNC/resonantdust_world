@@ -33,3 +33,12 @@ authoritative for what's actually shipped. Timestamp each row with the date it l
   - **P6** verified in the browser (Chrome ext, debug scene): conifer + flora **render** from the migrated
     new-leaf textures; the edge serves the subkind-less stems 200 for albedo/normal/surface/layers
     (`GET /textures/lod/<hash>/256/<map>/biome-thing/default/conifer/e` → 200). End-to-end works.
+
+- **2026-07-19** · **Linked leaf reshape + regression fix — verified.** Phase 1 had regressed linked
+  rendering (see [`issues.md`](issues.md)); reshaped `linked/` too (generalized `migrate_leaf.py` to the
+  no-subkind layout). Verified via the client's own texture path (JS in the browser): `linked/wall.smooth/l`
+  is in the manifest with **`grid: [4,4]`** (held-whole 16-cell autotile atlas — the `1..16` split was of
+  *this* atlas, confirming F3), the LOD serves 200 and **decodes to a 256×256 ImageBitmap**. So the leaf
+  reshape is done + verified for **all existing texture kinds** with a render target. **Still phase 2:**
+  the full biome-tile **fold** (material→kind rename; object-model-coupled, walls unplaced), `bin/art`
+  regeneration (offline), and human-pawn body-type subkinds (a modeling question — no `body-type` def field).
