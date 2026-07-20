@@ -24,5 +24,23 @@ hues** (`bit = index mod 24`, so a per-row diagonal shift), **all 24 colours pre
 bitwise is unavailable through the bit system; float-mod is the working path. This **reverses the
 "ES 3.00 is free" premise** behind F14 / `rendering-platform.md`, now corrected.
 
-**Remaining:** E5 (ping-pong read-modify-write proof — the accumulate path `shadow-cold` needs), E6
-(graduate the proven config into `shadows`).
+## E5 · Ping-pong read-modify-write — DONE + verified in-browser 2026-07-20
+
+`/bitpingpong` on: a full-viewport diagonal rainbow that **marches one hue-step per frame**, cleanly and
+stably (two frames captured a moment apart show the whole field advanced; no freeze / re-seed / garble /
+black). This proves the exact loop the user asked for and that `shadow-cold`'s pack inherits:
+
+- **read** the current bitfield RT → **write** the marched (all-cells-updated) bitfield into the **other**
+  RT → **display** the just-written RT **the same frame** → **swap**; next frame the roles reverse.
+- **Source ≠ destination** every step (no framebuffer feedback loop — [shadows I-8](../shadows/issues.md#i-8)).
+- **State persists + accumulates across the ping-pong** — the march is continuous (not resetting to the
+  seed), which only holds if the read-back returns the just-written state each frame.
+
+Implementation: [`bitStepShader.ts`](../../../client/pixijs/src/game/viewport/bitStepShader.ts) (read →
+march bit → write, float-mod) + [`bitPingPong.ts`](../../../client/pixijs/src/game/viewport/bitPingPong.ts)
+(two unorm RGBA8 RTs, A=1, nearest; display reuses `overlayShader` BITS). Two RTs, swap each frame.
+
+**Conclusion: the whole bitfield mechanism `shadows` needs is proven** — storage (E1–E4) + read-modify-
+write accumulate + ping-pong + same-frame display (E5), all on unorm RGBA8 + float-mod (ES 1.00, [I-8](issues.md#i-8)).
+
+**Remaining:** E6 — graduate the proven recipe into `shadows` + archive this folder.

@@ -256,6 +256,14 @@ export class WorldScene extends Scene {
       return `Zoom set to ${view().zoom}×.`;
     });
 
+    // `/bitpingpong` (bitfield-rt E5) — toggle the ping-pong read-modify-write proof: each frame reads
+    // one bitfield RT, writes the marched bitfield into the other, and displays it that frame, swapping
+    // buffers. A stable marching rainbow proves the read→write→display→ping-pong loop.
+    this.chat.registerCommand("bitpingpong", () => {
+      const on = view().toggleBitPingPong();
+      return on ? "Bitfield ping-pong ON (marching rainbow = RMW round-trip works)." : "Bitfield ping-pong OFF.";
+    });
+
     // `/pause` + `/unpause` (debug) — no server-side pause in the rebuild yet (the master's
     // metronome has no freeze verb), so these report unavailability rather than silently do
     // nothing. `onPaused` stays wired (it simply never fires) for when a freeze verb returns.

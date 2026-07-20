@@ -24,6 +24,7 @@ import { NOISE_FIELDS, PACKED_UNIFORM_LEN, type MaterialRegistry } from "./mater
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { makeAlbedoBlitShader, type AlbedoBlitShader } from "./albedoBlitShader";
 import { makeOverlayShader, overlayModeFor, type OverlayShader } from "./overlayShader";
+import { BitPingPong } from "./bitPingPong";
 
 /** Dirty squares baked per frame. A fresh window dirties its whole grid; the budget
  *  spreads that over a few frames so the first open never hitches. */
@@ -100,6 +101,8 @@ export class Viewport extends LayoutNode {
   private readonly overlayShader: OverlayShader = makeOverlayShader();
   private overlayMesh: Mesh<Geometry> | null = null;
   private overlayChannelName: string | null = null;
+  /** bitfield-rt E5 — the ping-pong RMW proof (`/bitpingpong`), lazily created. Screen-space overlay. */
+  private bitPingPong: BitPingPong | null = null;
   private curQuads = -1;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -382,6 +385,16 @@ export class Viewport extends LayoutNode {
     return this.gridLevel;
   }
 
+  /** bitfield-rt E5: toggle the ping-pong read-modify-write proof (`/bitpingpong`). Lazily builds the
+   *  two-buffer harness + its screen-space display; returns whether it's now running. */
+  toggleBitPingPong(): boolean {
+    if (!this.bitPingPong) {
+      this.bitPingPong = new BitPingPong();
+      this.overlayContainer.addChild(this.bitPingPong.container);
+    }
+    return this.bitPingPong.toggle();
+  }
+
   /** Redraw the debug grid for the current camera: three nested line sets, each on the
    *  boundaries of a world division — tiles (red, {@link SQUARE} px), zones (magenta,
    *  {@link ZONE_DIM} tiles) and regions (blue, {@link REGION_DIM}·{@link ZONE_DIM} tiles).
@@ -567,6 +580,10 @@ export class Viewport extends LayoutNode {
 
     // Debug tile grid (the `?grid` param): a red gfx overlay redrawn against the live camera.
     this.drawGrid();
+
+    // bitfield-rt E5: step the ping-pong RMW proof (read cur buffer → write other → display it this
+    // frame). No-op unless `/bitpingpong` is on. Screen-space, so pass CSS px at resolution 1.
+    this.bitPingPong?.tick(renderer, w, h, 1);
   }
 
   /** Drive the `/overlayRT` mesh: bind the selected composite + its drop-mode, size it to the
@@ -649,6 +666,7 @@ export class Viewport extends LayoutNode {
     this.overlayContainer.destroy({ children: true });
     this.map.destroy();
     this.warm.destroy();
+    this.bitPingPong?.destroy();
     // The overlay mesh SHARES the display mesh's geometry (freed once via `this.mesh.geometry`
     // below); `super.destroy()` destroys the mesh child itself, so only its shader needs freeing.
     this.overlayShader.destroy();
