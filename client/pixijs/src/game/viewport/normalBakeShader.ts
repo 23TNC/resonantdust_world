@@ -16,7 +16,6 @@
 //! console.error; a backtick inside a GLSL comment closes the template literal.
 
 import {
-  compileHighShaderGlProgram,
   localUniformBitGl,
   roundPixelsBitGl,
   GlProgram,
@@ -24,6 +23,7 @@ import {
   Texture,
   UniformGroup,
 } from "pixi.js";
+import { compileHighShaderGlProgramES300 } from "./es3HighShader";
 
 /** A texture's atlas-page uv rect `[offsetU, offsetV, scaleU, scaleV]`. */
 function uvRect(t: Texture): Float32Array {
@@ -54,7 +54,7 @@ const normalBitGl = {
 
 let program: GlProgram | null = null;
 function normalProgram(): GlProgram {
-  if (!program) program = compileHighShaderGlProgram({ name: "normal-bake", bits: [localUniformBitGl, normalBitGl, roundPixelsBitGl] });
+  if (!program) program = compileHighShaderGlProgramES300({ name: "normal-bake", bits: [localUniformBitGl, normalBitGl, roundPixelsBitGl] });
   return program;
 }
 

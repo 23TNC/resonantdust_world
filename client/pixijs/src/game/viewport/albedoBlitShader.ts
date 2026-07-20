@@ -18,7 +18,6 @@
 //! `console.error`; a backtick inside a GLSL comment closes the `/* glsl */` template literal.
 
 import {
-  compileHighShaderGlProgram,
   localUniformBitGl,
   textureBitGl,
   roundPixelsBitGl,
@@ -27,6 +26,7 @@ import {
   Texture,
   Matrix,
 } from "pixi.js";
+import { compileHighShaderGlProgramES300 } from "./es3HighShader";
 
 /** The high-shader bit that draws the albedo. `textureBit` runs BEFORE this and samples the
  *  mesh's main texture (bound to the COLD ALBEDO composite) into `outColor`, so `outColor` here
@@ -58,7 +58,7 @@ const blitBitGl = {
 let program: GlProgram | null = null;
 function blitProgram(): GlProgram {
   if (!program) {
-    program = compileHighShaderGlProgram({
+    program = compileHighShaderGlProgramES300({
       name: "viewport-albedo-blit",
       // textureBit BEFORE blitBit: outColor must hold the cold-albedo sample when blitBit runs.
       bits: [localUniformBitGl, textureBitGl, blitBitGl, roundPixelsBitGl],

@@ -17,7 +17,6 @@
 //! BLACK with only a `console.error`; a backtick inside a GLSL comment closes the literal).
 
 import {
-  compileHighShaderGlProgram,
   localUniformBitGl,
   textureBitGl,
   roundPixelsBitGl,
@@ -27,6 +26,7 @@ import {
   Matrix,
   UniformGroup,
 } from "pixi.js";
+import { compileHighShaderGlProgramES300 } from "./es3HighShader";
 
 /** Overlay draw modes — which "empty" value the shader treats as transparent so the lit scene
  *  shows through. Passed to {@link OverlayShader.mode}. */
@@ -88,7 +88,7 @@ const overlayBitGl = {
 let program: GlProgram | null = null;
 function overlayProgram(): GlProgram {
   if (!program) {
-    program = compileHighShaderGlProgram({
+    program = compileHighShaderGlProgramES300({
       name: "viewport-overlay",
       // textureBit BEFORE overlayBit: outColor must hold the composite sample when overlayBit runs.
       bits: [localUniformBitGl, textureBitGl, overlayBitGl, roundPixelsBitGl],

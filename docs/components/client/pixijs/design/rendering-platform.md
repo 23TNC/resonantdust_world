@@ -1,60 +1,49 @@
-# Rendering platform — WebGL2 context, GLSL ES 1.00 shaders (design / shape)
+# Rendering platform — WebGL2 context, GLSL ES 3.00 shaders (design / shape)
 
-The client's rendering floor. Decided 2026-07-20, then **corrected the same day** when the `bitfield-rt`
-experiment disproved the initial premise — read the correction note before planning shader work.
+The client's rendering floor. **Every shader is GLSL ES 3.00** as of 2026-07-20 (the `es300-migration`
+work). This doc records the current standard; the history (an ES 1.00 phase, then the migration) lives in
+git and the work folders.
 
-## What actually holds
+## What holds
 
-- **Context: WebGL2.** Pixi v8 defaults `preferWebGLVersion: 2`; `main.ts` pins it. WebGL2 is universal
-  in 2026, so this is a safe baseline — but see the caveat: a WebGL2 *context* does **not** make our
-  shaders ES 3.00.
-- **Shader dialect: GLSL ES 1.00.** Pixi v8's high-shader system (`compileHighShaderGlProgram` + the stock
-  `localUniformBit` / `textureBit` / `roundPixelsBit`) compiles to **ES 1.00 with WebGL1-compat shims**
-  (`#define in varying`, `#define finalColor gl_FragColor`, `precision mediump float;`, **no
-  `#version 300 es`**) — *even on a WebGL2 context*. So through the bit system there is **no `uint`, no
-  bitwise operators, no integer textures, no MRT**.
-- **Bit ops go through float math.** `rgba8` stores `n/255` exactly, so a bit is tested with
-  `mod(floor(byte*255.0 / exp2(b)), 2.0)` (exact for bits 0–7). This is what the `bitfield-rt` experiment
-  proved works end-to-end for a 24-bit RGB bitfield.
+- **Context: WebGL2.** Pixi v8 defaults `preferWebGLVersion: 2`; `main.ts` pins it. Universal in 2026.
+- **Shader dialect: GLSL ES 3.00, one standard.** Every program compiles through
+  **`compileHighShaderGlProgramES300`** (`game/viewport/es3HighShader.ts`) — a thin wrapper that hands Pixi's
+  own `compileHighShaderGlProgram` an extra bit planting `#version 300 es` in the fragment. Pixi's `GlProgram`
+  detects that, drops the WebGL1 shims, and re-inserts the directive as line 1. Pixi's high-shader templates
+  are already version-agnostic (`in`/`out`/`texture`/`finalColor`), so its vertex / global-uniform /
+  round-pixel plumbing rides along **unchanged** — the migration was a per-shader one-line swap, no
+  hand-rolled builder. `uint`, bitwise operators, `texelFetch`, integer textures and MRT are all available.
+- **Raw filters too:** `GlProgram.from({ vertex, fragment })` with `#version 300 es` in the fragment goes
+  ES 3.00 (Pixi's `defaultFilterVert` is `in`/`out` style, so it upgrades cleanly).
 
-## The correction (why this doc first said ES 3.00)
+## Bit ops — still float-mod for now (behaviour-identical)
 
-The initial version claimed the client "already runs ES 3.00" because Pixi's GL **template** uses `in`/
-`out`/`finalColor`. That was wrong: Pixi **shims** those back to ES 1.00 (`#define in varying`, etc.) at
-compile time unless the shader source literally contains `#version 300 es`. Executing `bitfield-rt` E3
-settled it — a `uint` in an overlay bit compiled to *"'uint' : undeclared identifier"*
-(bitfield-rt I-8, archived out-of-repo). **ES 3.00 is not free.**
+The shadow/overlay bitfield math is still `mod(floor(byte*255.0 / exp2(b)), 2.0)` on the unorm8 bytes. That
+was kept as-is through the migration (behaviour-preserving); real `uint`/bitwise is now *available* and is
+the natural cleanup when the storage moves to integer textures (see below). Both are exact on unorm8.
 
-## Reaching ES 3.00 (deferred)
+## Bitfield storage — unorm RGBA8 today, integer textures next
 
-ES 3.00 is only reachable by hand-writing a **raw `GlProgram` with `#version 300 es`**, bypassing the
-stock ES-1.00-shimmed bits — which means reimplementing the projection / local-uniform / round-pixel
-plumbing those bits provide. That's a **real cost**, taken on only when a concrete need justifies it:
+Bitfields live in a **unorm RGBA8** RT (`nearest`, linear, not sRGB): **24 bits in RGB, A held at 1**.
 
-- **MRT** (multiple render targets) — the many-separable-lights scale.
-- **Integer textures** (`RGBA8UI` / `usampler2D`) or **>32-bit** fields.
+> **RULE (user, 2026-07-20): the alpha channel is NEVER used for data** — premultiply mangles it. So a
+> single unorm8 RT holds **at most 24 separable bits** (RGB); A is opacity/colour only.
 
-Until such a need lands, **stay on ES 1.00 + float-mod**. It is proven and sufficient for the bitfield
-work at ≤32 bits.
-
-## Bitfield storage consequence (for the shadow work)
-
-Store bitfields in a **unorm RGBA8** RT (`nearest` — the global `TextureStyle.defaultOptions` — linear,
-not sRGB): **24 bits in RGB, A held at 1**. Premultiply is a no-op on an opaque texel, so the exact bytes
-round-trip with no special write — proven by `bitfield-rt`.
-
-> **RULE (user decision, 2026-07-20): the alpha channel is NEVER used for data.** Premultiply mangles it
-> and the verbatim-write workaround isn't worth the risk. So a single RT holds **at most 24 separable
-> bits** (RGB); A is opacity/colour only. Do not plan around 32-bit-per-texel. (Beyond 24 separable
-> lights, add render targets — but MRT needs raw ES 3.00 shaders, deferred.)
+This 24-bit ceiling is a property of the *unorm8 + fixed-function-blend* storage, **not** of the shader
+dialect (that constraint is gone — see above). The lift is the **integer-texture switch** (`caster-lut` C5):
+`RGBA8UI` gives 32 bits (integer textures don't premultiply — the A taboo evaporates) and `RGBA32UI` gives
+128; the cost is that integer RTs disable fixed-function blend, forcing the OR into a shader (which the cast
+is moving to anyway). Plan around 24 until that lands.
 
 ## Gotchas
 
-- A GLSL compile error draws the mesh **BLACK / nothing** with only a `console.error` — the failure is
-  silent on the surface. (This is how the ES-3.00 mistake was caught.)
+- A GLSL compile error draws the mesh **BLACK / nothing** with only a `console.error` — silent on the
+  surface. Verify a migrated shader by looking at what it renders, not just the absence of a thrown error.
 - A backtick inside a `/* glsl */` template literal closes the literal and breaks the build.
 
 ## References
 
-- Proven in `work/bitfield-rt/` (E1–E4 + the I-8 finding; archived out-of-repo 2026-07-20).
-- Consumed by the shadow bitfield work in [`work/shadows/`](../../../../work/shadows/README.md).
+- `es300-hello` (proved a raw ES 3.00 program renders) → `es300-migration` (unified all shaders).
+- Enables the integer-bitfield lift in [`caster-lut`](../../../../work/caster-lut/README.md) C5 and an MRT
+  bake-collapse.

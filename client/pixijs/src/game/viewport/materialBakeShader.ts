@@ -21,7 +21,6 @@
 //! console.error; `packed` is a GLSL reserved word (uniforms are `uLayers…`).
 
 import {
-  compileHighShaderGlProgram,
   localUniformBitGl,
   roundPixelsBitGl,
   GlProgram,
@@ -29,6 +28,7 @@ import {
   Texture,
   UniformGroup,
 } from "pixi.js";
+import { compileHighShaderGlProgramES300 } from "./es3HighShader";
 import { OKLAB_GLSL } from "../lighting/oklab";
 
 /** Material weight channels the shader reconstructs — the width of the `uCh*` uniform arrays
@@ -111,7 +111,7 @@ const materialBitGl = {
 let program: GlProgram | null = null;
 function materialProgram(): GlProgram {
   if (!program) {
-    program = compileHighShaderGlProgram({
+    program = compileHighShaderGlProgramES300({
       name: "material-bake",
       bits: [localUniformBitGl, materialBitGl, roundPixelsBitGl],
     });

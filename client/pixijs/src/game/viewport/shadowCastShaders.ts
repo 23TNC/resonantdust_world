@@ -1,5 +1,6 @@
-//! shadow-tiered experiment — shaders. GLSL ES 1.00 float-mod (Pixi high-shader is ES 1.00). Bits live in
-//! the RED byte, bits 0..4 = the 5 lights; A is never data.
+//! shadow-tiered experiment — shaders. GLSL ES 3.00 (via compileHighShaderGlProgramES300 — es300-migration).
+//! Bit ops are still float-mod on the RED byte's bits 0..4 (the 5 lights); A is never data. (uint bitwise is
+//! now available and an optional cleanup, but the float-mod is behaviour-identical on the unorm8 bytes.)
 //!
 //! - MERGE: builds the new world bitfield in ONE pass — `cur-world = (prev-world with the dirty bits
 //!   cleared) OR (prev-screen, remapped screen→world)`. Reads `prev-world` (main texture, at the buffer
@@ -9,7 +10,6 @@
 //!   `cur-screen` (sampled directly) → 5 colours, additive overlap.
 
 import {
-  compileHighShaderGlProgram,
   localUniformBitGl,
   textureBitGl,
   roundPixelsBitGl,
@@ -21,6 +21,7 @@ import {
   Matrix,
   UniformGroup,
 } from "pixi.js";
+import { compileHighShaderGlProgramES300 } from "./es3HighShader";
 
 // ── shared GLSL: decode RED byte's bits 0..4 → 5 colours ──────────────────────────
 const DECODE = /* glsl */ `
@@ -82,7 +83,7 @@ const mergeBitGl = {
 
 let mergeProgram: GlProgram | null = null;
 function mergeProg(): GlProgram {
-  if (!mergeProgram) mergeProgram = compileHighShaderGlProgram({ name: "shadow-merge", bits: [localUniformBitGl, textureBitGl, mergeBitGl, roundPixelsBitGl] });
+  if (!mergeProgram) mergeProgram = compileHighShaderGlProgramES300({ name: "shadow-merge", bits: [localUniformBitGl, textureBitGl, mergeBitGl, roundPixelsBitGl] });
   return mergeProgram;
 }
 
@@ -184,7 +185,7 @@ const displayBitGl = {
 
 let displayProgram: GlProgram | null = null;
 function displayProg(): GlProgram {
-  if (!displayProgram) displayProgram = compileHighShaderGlProgram({ name: "shadow-tdisplay", bits: [localUniformBitGl, textureBitGl, displayBitGl, roundPixelsBitGl] });
+  if (!displayProgram) displayProgram = compileHighShaderGlProgramES300({ name: "shadow-tdisplay", bits: [localUniformBitGl, textureBitGl, displayBitGl, roundPixelsBitGl] });
   return displayProgram;
 }
 
@@ -250,7 +251,7 @@ export function makeShadowTDisplayShader(): ShadowTDisplayShader {
 // preview so the `shadow-a`/`shadow-b` thumbnails read as the same 5 per-light colours the
 // on-screen shadow display uses, instead of the near-black raw bits. Same {@link DECODE} as
 // the display, so both stay in lockstep. GL-only (the whole renderer is WebGL here).
-const decodeFilterFrag = /* glsl */ `
+const decodeFilterFrag = /* glsl */ `#version 300 es
   in vec2 vTextureCoord;
   out vec4 finalColor;
   uniform sampler2D uTexture;
