@@ -1,86 +1,124 @@
-# Work — shadows (the cold-shadow bitfield foundation)
+# Work — shadows (the screen-hot → world-cold bitfield foundation)
 
 _Opened 2026-07-19. The clean restart after the tiered-lighting port was nuked (the reverted
-`lighting` stream, archived out-of-repo). This stream builds the **shadow RT +
-bit-packing pipeline** from scratch, at the smallest scale that exercises every moving part, so the
-full design can grow on top of a working, understood core. Component:
-[`client/pixijs`](../../components/client/pixijs/). Builds toward
-[`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md) (the shared
-scatter→bitfield shadow engine) and [`design/shadows.md`](../../components/client/pixijs/design/shadows.md)
-(the billboard-quad projection)._
+`lighting` stream, archived out-of-repo). This stream builds the **shadow RT + bit-packing pipeline**
+from scratch, at the smallest scale that exercises every moving part, so the full design can grow on top
+of a working, understood core. Component: [`client/pixijs`](../../components/client/pixijs/). Builds
+toward [`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md) (the
+shared bitfield shadow engine) and
+[`design/shadows.md`](../../components/client/pixijs/design/shadows.md) (the billboard-quad projection)._
 
-## Why — one honest slice of the shadow engine, end to end
+## Why — stop fighting the rects and world-space
 
-The nuked attempt tried to land the whole tiered engine (32-bit bitfield, 8-lane scatter maps, textured
-silhouettes, cold/warm/rt, the lit display) at once, and never got a clean result. This stream inverts
-that: build the **thinnest vertical slice** that still touches every hard part —
+The nuked attempt died **fighting the rects and world-space**: it baked shadows **per-rect in
+world-space**, which forced two problems that never resolved cleanly —
 
-- a **`shadow-hot` RT** that stages a few lights' shadows in separate channels,
-- a **`shadow-cold` RT** that is a **packed bitfield** (one bit per light),
-- a **project → stage → pack** loop that fills the bitfield in batches, and
-- a **decode overlay** that proves what's in the bitfield, per-bit.
+- **partial shadows** — a shadow crossing a rect boundary had to be split and drawn into each rect, and
+- **which-rect-when-a-light-moves** — moving a light meant recomputing which rects its shadow now touches
+  and re-dirtying them.
 
-Everything else (32 bits, per-rect light textures, textured silhouettes, the lit display) is a
-*widening* of this slice, deferred on purpose. **This is the foundation the more complex operations
-build off of.**
+This stream **sidesteps both** by generating shadows in the space they're easy in and translating once:
 
-## The slice (target of THIS stream)
+> **`shadow-hot` is SCREEN space. `shadow-cold` is WORLD space. One copy bridges them.**
 
-**Two RTs.**
+Shadows are cast in **screen space** into `shadow-hot` — the whole viewport at once, so there are no rect
+boundaries to split across and no per-rect bookkeeping. `shadow-hot` is thrown away and **regenerated
+every frame**, so it never goes stale and never needs reprojection. Then its screen-space result is
+**copied into the world-space `shadow-cold`** in one step (see the toroidal copy below). That's it: cast
+where it's easy (screen), store where it must live (world), bridge with a copy.
 
-- **`shadow-hot`** — an RGBA8 staging RT. **RGB = three shadow lanes** (one light each); **A unused**.
-  Written fresh per batch, consumed immediately by the pack, then reused for the next batch. (Data in
-  RGB, never A — A is the premultiply/opacity lane and unreliable for data; see [F2](forks.md#f2).)
-- **`shadow-cold`** — an RGBA8 bitfield RT. **RED channel = an 8-bit occlusion bitfield** (bit `i` =
-  light `i` casts a shadow here); **A held at 1** so the premultiply path never corrupts the RED byte
-  (see [D-1](deviations.md#d-1)). This stream uses **6 of the 8 bits**.
+## The two RTs
 
-**The loop.** Seed **6 cold lights** around tile **(100, 50)**. Then, in **two batches of three**:
+- **`shadow-hot`** — a **screen-space** RGBA8 RT, viewport-sized, **regenerated every frame**.
+  **RGB = three shadow lanes**, one light each; **A unused** (A never survives premultiply — see
+  [F2](forks.md#f2)). Because it's rebuilt each frame at the current zoom, it has **no staleness and no
+  scaling problem** by construction.
+- **`shadow-cold`** — a **world-space** RGBA8 bitfield RT, in the **same toroidal layout the other
+  G-buffer RTs use** (so it pans + scales with zoom exactly like `albedo-cold` et al.). **It does NOT
+  hold per-rect geometry like the other RTs — it holds LIGHTS**: each **bit** of a pixel = "light `i`
+  shadows this world point". **This iteration: 6 lights in the RED byte.** **Goal: 24 lights in RGB**
+  (3 bytes × 8 bits; **A never works** — [F11](forks.md#f11)).
 
-1. Project batch's 3 casters' shadows → write each into its **own `shadow-hot` channel** (light→R, light→G, light→B).
-2. **Pack** `shadow-hot`'s RGB into three **bits** of `shadow-cold`'s RED byte (batch 0 → bits 0/1/2,
-   batch 1 → bits 3/4/5), preserving the bits already set.
+## The screen → world translation (the 4-copy)
 
-Two batches ⇒ `shadow-cold` holds **6 shadows, one bit each**.
+`shadow-cold` lives in the SquareCache's **toroidal** world-space buffer — the viewport window wraps
+around the buffer's seams. So the screen-space `shadow-hot` rectangle lands as **up to 4 rectangles** in
+the world-space layout (it can straddle the horizontal seam, the vertical seam, or both → 4 quadrants).
+The translation is therefore **4 copy commands**, each blitting one wrapped quadrant of `shadow-hot`
+into `shadow-cold` at its world position. This is the *same* toroidal-wrap the cache already does for its
+window; we reuse it.
 
-**Casters are pure billboards.** A caster is the standing prim's **billboard quad** (W×H box, tilted by
-the ground angle), projected radially from the light to the ground per
+The copy is where the **bit-pack** happens: each copy reads `shadow-hot`'s RGB (this frame's 3 lights)
+plus the existing `shadow-cold`, sets those 3 lights' **bits**, and writes back — preserving the other
+bits. So "copy" = "pack-and-copy, 4× for the wrap".
+
+**This is the whole point:** casting in screen space kills the partial-shadow split, and the single
+copy-to-world kills the which-rect-when-a-light-moves bookkeeping — a moved light just re-casts into the
+fresh screen-space `shadow-hot` next frame and copies in.
+
+## The round-robin — 3 hot lights/frame → 24 cold in ~8 frames
+
+`shadow-hot` holds **3 lights/frame**. Each frame we cast the **next 3** lights, copy them into their 3
+bits of `shadow-cold`, and advance. With the 24-light goal that's **8 frames to refresh all 24** (~130ms
+at 60fps) — a light's shadow is at most that stale. This is the design's warm-tier round-robin, and it's
+why **"cold" here is provisional: we'll swap cold → warm later** ([D-6](deviations.md#d-6)). This
+iteration proves it with **6 lights** (2 frames to fill the RED byte).
+
+## Zoom — cold scales with the other RTs; hot has no scale issue
+
+On zoom, `shadow-cold` **scales the same as the other G-buffer RTs** (it shares their window/slot
+geometry). Because `shadow-hot` is **regenerated every frame at the current zoom**, we're always casting
+shadows at the right scale and copying them into the freshly-scaled `shadow-cold` — **no shadow-specific
+scaling artifacts**. (A bitfield can't be *bilinearly* resampled — that garbles the bits — so the
+zoom-reproject of `shadow-cold` is **nearest**, and the round-robin refills any not-yet-refreshed bits
+over the next few frames; see [I-1](issues.md#i-1).)
+
+## Casters — pure billboards
+
+A caster is the standing prim's **billboard quad** (W×H box, tilted by the ground angle), projected
+radially from the light to the ground per
 [`design/shadows.md` §Projection](../../components/client/pixijs/design/shadows.md) — drawn as a **solid
-2-triangle quad**. **No texture sampling, no alpha mask, no `outline` silhouette** — those are the next
-layer, deliberately out of scope (see [D-3](deviations.md#d-3)).
+2-triangle quad** in screen space. **No texture sampling, no alpha mask, no `outline` silhouette** — those
+are the next layer, deliberately out of scope ([D-3](deviations.md#d-3)).
 
-**The overlay proves it.** `/overlayRT shadow-cold` gets a new decode: read the RED byte, split its 6
-bits, and paint **each bit a unique colour** (6 colours for 6 bits). **Overlapping shadows combine
-colours** (additive), so where lights 0 and 1 both shadow a spot you see colour 0 + colour 1.
+## The overlay proves it
 
-## How this maps onto the target design (and where it intentionally shrinks)
+`/overlayRT shadow-cold` gets a new decode: read the pixel's bits and paint **each set bit a unique
+colour**. This iteration: **6 colours for the 6 RED bits**; at the goal, 24 colours across RGB.
+**Overlapping shadows combine colours** (additive), so a spot shadowed by lights 0 and 1 shows colour 0 +
+colour 1. This is the only "display" in the stream — there's no lit render yet, the overlay *is* the
+verification surface.
 
-The [tiered-lighting](../../components/client/pixijs/intent/tiered-lighting.md) engine is this slice,
-widened. The gaps are deliberate and pre-logged in [`deviations.md`](deviations.md):
+## How this maps onto the target design (and where it intentionally shrinks / diverges)
 
-| target design | this foundation | widened later |
+Deliberate, pre-logged in [`deviations.md`](deviations.md):
+
+| target design | this foundation | later |
 |---|---|---|
-| `shadow-cold` = **32-bit** bitfield (full RGBA texel) | **RED byte**, 6 bits used | D-1 → pack across all 4 bytes for 32 |
-| scatter via **2 maps × 4 `uChannel` lanes** (8) | **`shadow-hot` RGB**, 3 lanes | D-2 → the 4-lane/`uChannel` maps |
-| casters = **textured earcut silhouette** (`outline`) w/ UV alpha | **solid billboard quad** | D-3 → the 5-tri fan + UV alpha of `design/shadows.md` |
-| cold lights from a **per-rect light-data texture** | **6 debug lights** (uniforms) | D-4 → the per-rect texture w/ real content lights |
-| `shadow-cold` is a **bake-time input** to `lightmap-cold` (display never reads it) | `shadow-cold` inspected **directly** via the overlay (no lit display yet) | the lit display consumes it once lighting returns |
+| cold **baked per-rect in world-space** (on dirty) + separate warm round-robin | **one** bitfield: cast **screen-space** every frame, copied into **world-space** `shadow-cold`, round-robin | D-5 → split back into a true baked-cold tier + warm tier |
+| `shadow-cold` = **32-bit** across RGBA | **RED byte** (6 bits) now → **RGB 24 bits** goal (A never works) | D-1 → RGB pack |
+| 8-lane `uChannel` scatter maps | **`shadow-hot` RGB**, 3 screen-space lanes | D-2 → more lanes |
+| casters = **textured earcut silhouette** (`outline`) + UV alpha | **solid billboard quad** | D-3 → the 5-tri fan + UV alpha |
+| cold lights from a **per-rect light-data texture** | **6→24 debug lights** (uniforms) | D-4 → per-rect texture, real content lights |
+| `shadow-cold` a **bake input** to `lightmap-cold` (never displayed) | inspected **directly** via the overlay (no lit display yet) | consumed by the lit display once lighting returns |
+| "cold" = static baked | **"cold" = round-robin** (warm behaviour), provisional name | D-6 → rename/split cold vs warm |
 
-None of these shrink the *mechanism* being proven — projecting, staging in channels, packing to bits,
-decoding — they only shrink the counts. That's the point: get the mechanism right small, then scale it.
+The screen-hot/world-cold split (row 1) is the load-bearing *new* idea — it's what makes the counts
+scalable without the rect-fighting that sank the last attempt. The rest are count-shrinks.
 
 ## Current ground truth (post-nuke) this builds on
 
 - **Kept:** the G-buffer `SquareCache` (cold+warm tiers; albedo/normal/surface/zdepth per-prim bakes,
-  dirty-tracked, toroidal), the unlit `albedoBlitShader` display, `/showRT` + `/overlayRT` via
-  `overlayShader` + `overlayModeFor`.
-- **Gone (this stream re-adds, minimally):** any light source (`LightRig` deleted — need a small cold-light
-  list), any shadow/scatter machinery, the derived/post-pass channel hook, `standingPrims()` (the caster
-  enumerator). All rebuilt clean and simple here, not restored.
+  dirty-tracked, **toroidal** world-space window + reproject-on-zoom + the 4-way wrap apron), the unlit
+  `albedoBlitShader` display, `/showRT` + `/overlayRT` via `overlayShader` + `overlayModeFor`.
+- **Gone (this stream re-adds, minimally):** any light source (`LightRig` deleted — need a small light
+  list), any shadow machinery, `standingPrims()` (the caster enumerator). Rebuilt clean, not restored.
+- **Reused, not rebuilt:** the toroidal window→buffer wrap math is exactly the 4-copy this stream needs —
+  lift it from the cache's existing apron/reproject rather than reinventing it.
 
 ## State
 
 Phased in [`todo.md`](todo.md); decisions in [`forks.md`](forks.md); intentional design deltas in
 [`deviations.md`](deviations.md); anticipated technical gotchas in [`issues.md`](issues.md). The durable
-target outlives this folder in the component
-`intent/`/`design/` — this stream graduates its proven mechanism into those as it stabilises.
+target outlives this folder in the component `intent/`/`design/` — this stream graduates its proven
+mechanism into those as it stabilises.

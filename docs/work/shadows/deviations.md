@@ -2,57 +2,85 @@
 
 _Where this foundation departs from the durable design
 ([`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md),
-[`design/shadows.md`](../../components/client/pixijs/design/shadows.md)). Pre-logged here because they
-are **deliberate foundation-scoping**, not accidents — each shrinks a *count*, never the *mechanism*,
-and each names the phase that lifts it. A deviation with a strong reason + a documented un-shrink is the
-opposite of drift. Format: what the design says → what this stream does → why → un-shrink._
+[`design/shadows.md`](../../components/client/pixijs/design/shadows.md)). Pre-logged because they are
+**deliberate**, not accidents. D-1..D-4 are count-shrinks (each names its un-shrink phase). **D-5 is a
+genuine architecture divergence** — the design bakes cold per-rect in world-space; this stream casts in
+screen-space and copies to world-space, specifically because the per-rect world-space bake is what sank
+the nuked attempt. Format: what the design says → what this stream does → why → un-shrink/status._
 
 ---
 
-## D-1 · `shadow-cold` is a RED byte (6 bits), not a 32-bit bitfield — 2026-07-19
+## D-5 · Screen-space cast + copy-to-world, NOT a per-rect world-space bake — 2026-07-19
 
 **Design** ([tiered-lighting §Cold](../../components/client/pixijs/intent/tiered-lighting.md)):
-`shadow-cold` is a **32-bit** occlusion bitfield across the full RGBA texel (32 cold casters/rect).
+`shadow-cold` is **baked per-rect in world-space** (on dirty), rect by rect, via the scatter engine.
 
-**This stream:** stores the bitfield in the **RED byte only**, using **6 of 8 bits**, A held at 1.
+**This stream:** casts shadows **once, in screen space** (`shadow-hot`, whole viewport, every frame), then
+**copies** that into the world-space `shadow-cold` bitfield with the 4-way toroidal wrap
+([F8](forks.md#f8)–[F10](forks.md#f10)).
 
-**Why:** 6 lights fit one byte; a single data channel keeps the pack/decode shaders minimal while still
-exercising bit-set (pack) and bit-test (overlay). **Un-shrink:** pack across G/B/A too (32 bits) — the
-combine shader gains a byte-select, the overlay gains 32 bit-tests. (Note: at 32 bits A becomes a data
-lane, so that step must switch to the **verbatim non-premultiply blit** the nuked build called its
-"bitfield linchpin"; at 6 bits A=1 avoids it.)
+**Why (the load-bearing reason):** the per-rect world-space bake forced **partial-shadow splitting**
+(a shadow crossing rect boundaries drawn into each) and **which-rect-when-a-light-moves** re-dirtying —
+the two problems the nuked build fought and lost. Casting in screen space erases both: one surface, no
+boundaries, and a moved light just re-casts next frame. This is not a shrink of the design — it's a
+**better mechanism for the same result**, and it may well *replace* the per-rect bake in the design once
+proven. **Status:** if it holds up, promote it into `intent/tiered-lighting.md`; the true "cold = baked
+static" tier (for hundreds of never-moving authored lights) can layer on later as an optimisation, not a
+prerequisite. Related: [D-6](#d-6).
 
-## D-2 · `shadow-hot` is RGB (3 lanes), not 2×4 `uChannel` scatter maps — 2026-07-19
+## D-6 · "cold" here is round-robin (warm behaviour) — provisional name — 2026-07-19
+
+**Design:** *cold* = static, baked-on-dirty; *warm* = dynamic, round-robin-refreshed at display.
+
+**This stream:** the single bitfield is called `shadow-cold` but is **refreshed round-robin** (3 lights/
+frame, ~8-frame cycle — [F12](forks.md#f12)), which is *warm* behaviour.
+
+**Why:** the foundation needs one bitfield, and round-robin is the general case (a static light is just one
+that never changes between refreshes). Naming it "cold" now keeps continuity with the RT name; the true
+cold/warm split is a later concern. **Un-shrink:** "we'll swap cold → warm later" — rename and, if worth
+it, add a separately-baked static-cold tier.
+
+## D-1 · Bitfield is a RED byte (6 bits) now → RGB (24) goal, not 32-bit — 2026-07-19
+
+**Design** ([tiered-lighting §Cold](../../components/client/pixijs/intent/tiered-lighting.md)):
+`shadow-cold` is a **32-bit** bitfield across the full RGBA texel.
+
+**This stream:** **RED byte** (6 bits) this iteration; **RGB (24 bits)** goal — **A held at 1**.
+
+**Why:** 6 lights fit one byte; a single channel keeps pack/decode minimal to bring up. RGB is the same
+shader over 3 bytes. **Not 32:** **A never works** as a data lane on the premultiply paths
+([F2](forks.md#f2)), so the ceiling is 24. **Un-shrink:** pack across G/B (RED→RGB, 6→24).
+
+## D-2 · `shadow-hot` is 3 screen-space RGB lanes, not 8-lane `uChannel` scatter maps — 2026-07-19
 
 **Design** ([tiered-lighting §engine](../../components/client/pixijs/intent/tiered-lighting.md)): the
-scatter engine writes **8 lanes** (2 RGBA maps × 4) via the `outColor = uChannel` trick that dodges the
-tint premultiply coupling RGB↔A.
+scatter engine writes **8 lanes** (2 RGBA maps × 4) via the `outColor = uChannel` trick.
 
-**This stream:** one RT, **RGB = 3 lanes**, A free ([F2](forks.md#f2)).
+**This stream:** one **screen-space** RT, **RGB = 3 lanes**, A free.
 
-**Why:** 3 plain colour lanes need no `uChannel`/premultiply subtlety and pair 1:1 with the byte's
-batches of 3. **Un-shrink:** reclaim the 4th lane (`uChannel`) and add the 2nd map for 8 lanes/batch.
+**Why:** 3 plain colour lanes need no `uChannel`/premultiply subtlety and pair 1:1 with the byte's batches
+of 3. **Un-shrink:** reclaim more lanes if the throughput target (3/frame) needs raising.
 
 ## D-3 · Casters are solid billboard quads, not textured silhouettes — 2026-07-19
 
-**Design** ([design/shadows.md](../../components/client/pixijs/design/shadows.md)): a caster projects a
-**5-triangle fan** of its billboard silhouette with per-corner depth, sampling the sprite **alpha as the
-shadow mask** via per-triangle UVs (and the `outline` earcut for the dynamic tier).
+**Design** ([design/shadows.md](../../components/client/pixijs/design/shadows.md)): a **5-triangle fan**
+of the billboard silhouette with per-corner depth, sampling sprite **alpha** via per-triangle UVs (+ the
+`outline` earcut).
 
-**This stream:** projects the **4 billboard corners** and draws a **solid 2-triangle quad** — no fan, no
-per-corner depth, no UV, no alpha, no `outline`.
+**This stream:** the **4 billboard corners** → a **solid 2-triangle quad**. No fan, depth, UV, alpha, or
+`outline`.
 
-**Why:** the RT/stage/pack/decode pipeline is what's being proven; the silhouette is a fragment-level
-refinement that layers on without touching that pipeline. A blocky rectangular shadow is the correct
-foundation output. **Un-shrink:** swap the solid quad for the 5-tri fan + presence depths + UV-alpha
-sampling from `design/shadows.md` (and reconcile its `nsProject` axis note).
+**Why:** the cast→copy→pack→decode pipeline is what's being proven; the silhouette is a fragment-level
+refinement that layers on without touching it. A blocky rectangular shadow is the correct foundation
+output. **Un-shrink:** swap the solid quad for the 5-tri fan + presence depths + UV-alpha of `design/shadows.md`.
 
-## D-4 · Cold lights are 6 debug uniforms, not a per-rect light-data texture — 2026-07-19
+## D-4 · Lights are 6→24 debug uniforms, not a per-rect light-data texture — 2026-07-19
 
-**Design** ([tiered-lighting §Cold](../../components/client/pixijs/intent/tiered-lighting.md)): each rect
-reads its nearest 32 cold lights from a **per-rect light-data texture** (2 texels/light).
+**Design:** each rect reads its nearest 32 cold lights from a **per-rect light-data texture**.
 
-**This stream:** **6 debug lights** in a plain array, passed as uniforms ([F6](forks.md#f6)).
+**This stream:** **6 (→24) debug lights** in a plain array ([F6](forks.md#f6)). (And since casting is
+screen-space + global, there's no per-rect light set to texture anyway — the per-rect texture is a
+cold-bake concept that D-5 sidesteps for now.)
 
-**Why:** there is no content source of cold lights yet, and 6 is all this slice needs. **Un-shrink:** the
-per-rect texture arrives with authored (DSL) cold lights — a separate concern from the shadow mechanism.
+**Why:** no content source of cold lights yet, and 24 is the whole target. **Un-shrink:** the per-rect
+texture arrives with authored (DSL) cold lights, alongside a true baked-cold tier ([D-5](#d-5)).
