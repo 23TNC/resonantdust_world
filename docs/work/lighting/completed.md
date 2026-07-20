@@ -28,16 +28,12 @@ what's actually shipped. Commit + verification per row._
   billboard-silhouette shear (cold + dynamic). Foundation only — the `ScatterPass` that drives it per-frame
   is still in [`todo.md`](todo.md) P3.
 
-- **2026-07-19** · **P2 core — cold shadow 3→32-bit bitfield build** (`a40bb9e` blocks, `14f4b0b` build).
-  `shadow-cold` is now a **32-bit occlusion bitfield** (up to 32 casters/rect), not RGB=3. Ported
-  `warmCombineShader` (ping-pong bit writeback) + `coldLightTex`; `SquareCache.bakeColdShadowSquare`
-  rebuilt as a 4-batch scatter→combine (8 lanes/batch via `MAX_SHADOW_LIGHTS`) with a square-level
-  light-reach cull + `nBatches`-by-count; `lightingBakeShader` reads `bf_bit`; `LightRig` cap 3→32.
-  **Verified working** via a diagnostic (nLights 1, prims 323, 8190 verts built + bits set — the
-  "empty shadow-cold" scare was a misread: a set bit-0 = value 1/255, ~black in `/showRT`).
-  **Follow-ups (todo P2):** wire the per-rect `coldLightTex` (bake still uses `uLightData[32]` uniforms);
-  `projectCaster` hits the 8192-vert cap (~16 conifers) → excess casters dropped, needs a bigger buffer
-  or the decimated shadow silhouette; visual shadow-wedge confirm + a >3-light test.
+- **2026-07-19** · **P2 building blocks ported** (`a40bb9e`, `711e19a`). `bitfield.ts` (32-bit
+  pack/read + `BITFIELD_GLSL`), `warmCombineShader.ts` (ping-pong bit writeback), `coldLightTex.ts`
+  (per-rect cold light-data texture); `add`→`max` scatter blend (`a37be74`); vert-cap 8192→24576.
+  All committed + typecheck-clean, ready for the bitfield build. **The build itself is NOT done** — the
+  32-bit `shadow-cold` bitfield attempt (`14f4b0b`) produced empty shadows and was **reverted** to the
+  RGB=3 interim (`91d4363`). See [`issues.md`](issues.md) I1.
 
 - **2026-07-19** · **P1 — scatter blend fix + bitfield helpers** (`a37be74`). Shadow-lane blend
   `add`→`max` (`SquareCache`, coverage clamps at 1). Ported `lighting/bitfield.ts` from the old game:
