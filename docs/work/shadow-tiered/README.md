@@ -51,13 +51,13 @@ set into the persistent store.
 
 Each light owns one bit; a bit is set by exactly **one** source. Given that **disjointness**:
 
-- **ADD is OR, done with additive blend.** `b1010 + b0101 = b1111` — because the bits don't collide,
-  a fixed-function **additive blend** (`src + dst`) equals OR. Crucially, additive blend reads the
-  destination through the *blend unit*, **not** a texture fetch in the shader — so adding
-  `screen-shadow-b` into `shadow-a` is **not** a feedback loop (that rule only forbids *sampling* the
-  bound target). The disjointness invariant is load-bearing: if the same bit were set in both operands,
-  `0x02 + 0x02 = 0x04` would carry into a *different light's* bit. Never let two sources share a bit at a
-  pixel.
+- **ADD is OR** (`b1010 + b0101 = b1111`), because the bits don't collide. Two safe ways to do it — the
+  feedback rule only forbids *sampling the RT you're writing in one draw* ([I-6](issues.md#i-6)), so
+  either (a) a **single shader pass** that samples `shadow-b` + `screen-shadow-b` (remapped) and writes
+  `shadow-a` — legal, `shadow-a` is never sampled — or (b) a clear pass + **additive-blend blits** (blend
+  reads the target through the blend unit, not a fetch). The disjointness invariant is load-bearing: if
+  the same bit were set in both operands, `0x02 + 0x02 = 0x04` carries into a *different light's* bit.
+  Never let two sources share a bit at a pixel (which is exactly what the remove-first step guarantees).
 - **REMOVE can't subtract — clear per bit.** To drop `l-a`'s bits: a shader pass reads the source buffer
   and, for each light `i` in `l-a`, does `n -= (bit i set ? 2^i : 0)` (float-mod, ES 1.00 — the clear-bit
   op the combine already uses). This is the ping-pong read (`shadow-b`) → write (`shadow-a`) pass; source
@@ -72,8 +72,10 @@ wrapped rects of `screen-shadow-b` onto `shadow-a`.
 `screen-shadow-*` is screen space; `shadow-*` is the toroidal buffer. The screen rectangle maps into the
 buffer at the window's position and **wraps into up to 4 rectangles** (H seam × V seam). So the merge is
 **4 additive-blend blits** — the same wrap the composites' window uses, and window-bounded because the
-screen only contains on-screen (in-window) shadows. (This needs the window origin, `winCol`/`winRow`,
-which `SquareCache.bufferMapping()` must now expose — the missing piece that sank `shadow-world`.)
+screen only contains on-screen (in-window) shadows. This needs the window origin, `winCol`/`winRow`,
+which `SquareCache.bufferMapping()` must now expose (the missing piece that sank `shadow-world`) — and,
+because the merge is **deferred** a frame, the window/pan **from the frame `screen-shadow-b` was cast**,
+not the current frame's ([I-8](issues.md#i-8)).
 
 ## Alignment with the durable design
 

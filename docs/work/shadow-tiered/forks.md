@@ -12,12 +12,23 @@ The `shadow-world` bug was casting into the toroidal buffer by raw `mod`, aliasi
 by construction (only on-screen shadows exist), exactly like the composites' per-rectangle bake only
 touches resident squares. Then copy screen→world (F2/[T5](todo.md)). This is the design's `shadow-hot`.
 
-## F2 · Four RTs, both tiers ping-ponged — 2026-07-20
+## F2 · Four RTs, both tiers ping-ponged — 2026-07-20 (CONFIRMED — keep 4-RT)
 
 `screen-shadow-a/-b` (screen, realtime) + `shadow-a/-b` (world, persistent). Both ping-pong because a
 frame **reads** last frame's buffers (`shadow-b`, `screen-shadow-b`) while **writing** this frame's
-(`shadow-a`, `screen-shadow-a`) — the read≠write constraint that forced the design (you can't RMW one RT
-in a draw). 4 RTs is the minimum that respects it.
+(`shadow-a`, `screen-shadow-a`).
+
+**The feedback rule is narrower than it feels** ([I-6](issues.md#i-6)): the only thing blocked is
+*sampling the RT you're writing, in one draw* (source == destination). "write → read → write" across
+passes is fine — reading `screen-shadow-a` (a source) to write `shadow-b` (a different target) is legal.
+So every pass here is safe by construction.
+
+**Why keep 4-RT over a leaner "cast-screen, merge-same-frame" 3-RT (which was floated):** the persistent
+world buffers mean a light's shadow is **written once** (when it's dirty) and then just *sticks to the
+world* — panning re-samples the toroidal buffer, no re-cast, no clear/recompute. The screen ping-pong lets
+us **defer** baking last frame's realtime set into the world buffer to the next frame without re-reading —
+so the realtime tier shows with zero lag *and* everything ends up written exactly once. The cost is 4 RTs
++ the deferred-merge timing note ([I-8](issues.md#i-8)); accepted.
 
 ## F3 · ADD = OR via additive blend (disjoint bits) — 2026-07-20
 
