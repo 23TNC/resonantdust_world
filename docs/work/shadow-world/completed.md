@@ -36,3 +36,14 @@ toroidal wrap, combine, markers), removed `ShadowDisplayShader` from `shadowCast
 [`shadows`](../shadows/README.md) engine needs. Known limits (fine for the experiment): large pans can
 leave toroidal-seam staleness until the next re-cast; zoom clears + refills.
 
+## SUPERSEDED 2026-07-20 — the world-cast aliases off-window lights
+
+Found on pan: the world-space cast maps a light/prim into the buffer by **raw `mod(worldX/SQUARE, cols)`
+with no window-bounds check**, so a light outside the resident window stamps its shadow onto whatever
+square currently occupies its mod-slot → the shadow appears aliased in other zones. The composites don't
+have this because they bake **per resident rectangle** (the loop is over in-window squares); the shadow
+path inverted that and lost the window check (and `bufferMapping()` never exposed `winCol`/`winRow` to do
+one). **Fix = [`../shadow-tiered/`](../shadow-tiered/README.md)**: cast realtime in screen space
+(window-bounded) and copy into the world buffer, which is window-correct for the same reason the
+per-rectangle bake is. This stream is closed; its world-space RT + `/overlayRT` decode carry forward.
+
