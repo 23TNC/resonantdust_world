@@ -34,7 +34,7 @@ dead. It's the antidote to "I forget… which is why we need this."
   BUILT.** master = metronome (bumps the tic in lockstep, sweeps, assigns the per-tic orchestrator);
   orchestrator = groups each tic's events into components and assigns a worker each; worker = composes
   a component. Flow: [`intent/spacetime-again/`](../intent/spacetime-again/README.md); items W4–W6 in
-  [`work/spacetime-again/`](../work/spacetime-again/README.md). (An earlier master/worker existed to
+  `work/spacetime-again/` (archived out-of-repo 2026-07-19). (An earlier master/worker existed to
   drive the deleted pipeline and were removed 2026-07-15; these are fresh.)
 
 ## `server/spacetime/server/modules/` — deployable ST modules

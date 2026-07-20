@@ -21,7 +21,7 @@ _Executes: [`docs/CONVENTIONS.md`](../../CONVENTIONS.md). Done + verified, chron
 - **2026-07-19** · **P1 — the front door.** Created [`docs/README.md`](../../README.md) (the root
   entry point: precedence order, the three authorities, the trees, "read `design/` not the ticket")
   and [`docs/work/README.md`](../README.md) (the work index — 10 streams with lifecycle status).
-  Added the missing [`docs-migration/README.md`](../docs-migration/README.md) (invariant-5 gap).
+  Added the missing `docs-migration/README.md` (invariant-5 gap; `docs-migration` archived out-of-repo 2026-07-19).
 
 - **2026-07-19** · **P2 — the audit `bin/rd docs-check`.** [`bin/lib/docs_check.py`](../../../bin/lib/docs_check.py)
   (engine: 6 invariants — decay-markers, ref-integrity, link-integrity, freshness, work-linkage,

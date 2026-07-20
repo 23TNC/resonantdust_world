@@ -98,7 +98,8 @@ limits). All these RTs are RGBA8, `nearest`, and any verbatim/bitfield write is 
 
 ## References
 
-- Work (in-flight): [`docs/work/lighting/`](../../../../work/lighting/README.md).
+- Work (in-flight): [`docs/work/shadows/`](../../../../work/shadows/README.md) — the shadow-engine
+  foundation restart (the prior `work/lighting` port was nuked 2026-07-19, archived out-of-repo).
 - Current renderer: [`design/lighting.md`](../design/lighting.md).
 - Prior working design: `../resonantdust/view/src/game/lighting` (`bitfield.ts`, `shadowMaskShader.ts`,
   `rectLightBakeShader.ts`, `coldLightTex.ts`, `rectDisplayShader.ts`, `RectComposite.ts`) +

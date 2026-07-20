@@ -8,7 +8,7 @@
 > `sparse_entity_tables!`) + a cold override `overlay`/`overlay_log` (`overlay_tables!`) — drive every
 > write through **events** (retiring the direct `seed`/`set_*`/`fold` reducers), and make **`PROMOTE`** a
 > smart + atomic prefix. Closes the seed/acquire race by construction. Tracked in
-> [`cold-rework`](../../work/cold-rework/README.md). Layouts [`VARIABLES.md`](../../VARIABLES.md) +
+> `cold-rework` (archived out-of-repo 2026-07-19). Layouts [`VARIABLES.md`](../../VARIABLES.md) +
 > [`TABLES.md`](../../TABLES.md); actions [`ACTIONS.md`](../../ACTIONS.md); builds on the live sim core
 > ([`spacetime-again`](../spacetime-again/README.md)). Authored 2026-07-16, reworked 2026-07-18.
 

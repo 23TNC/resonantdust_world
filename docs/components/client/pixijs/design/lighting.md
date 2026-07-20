@@ -67,7 +67,7 @@ trunk-base probe, and the presence read all key off `surface.B`.
   `sh.a·(1−opacity)` shows through (opaque → full light, glass → the shadowed background reveals).
   This wedge is the current approximation of the projected billboard-quad model in
   [`design/shadows.md`](shadows.md) — the converged target (shadow sandbox); `shadowPass` reconciles
-  to it (tracked in [`work/lighting`](../../../../work/lighting/README.md)).
+  to it (the tiered rework was nuked 2026-07-19; the restart is [`work/shadows/`](../../../../work/shadows/README.md)).
 - **E — ambient occlusion (surface.G).** AO is derived offline (`art ao`, `bin/lib/depth_ao.py`
   integrates the untilted normal → height → HBAO horizon march → `occlusion.png`) and packed into
   **surface.G** (was normal.α). The lighting pass reads `ao = surface.G / surface.A`: ambient

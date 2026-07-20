@@ -109,7 +109,7 @@ one more row, no code change.
 
 writes the master (allocator) · reads edge · sub `SELECT * FROM cold_shards` (edge)
 
-**Status:** not built — [`work/cold-rework`](work/cold-rework/README.md).
+**Status:** not built — was tracked in `work/cold-rework` (archived out-of-repo 2026-07-19).
 
 ---
 
@@ -314,7 +314,7 @@ without trusting the worker. We take "block correctly" while workers are our cod
 | **orchestrator assignment + liveness** | Which orchestrator owns tic T (doubling is safe, so a good hint suffices — master-assigned is the leaning), and how the master detects a dead orchestrator (heartbeat vs lease). |
 | **the world verb palette** | The machine + `promote_*` exist ([`ACTIONS.md`](ACTIONS.md)); no gameplay verb does. Each needs a signature naming, per operand, written vs read. |
 | **worker hang-detection** | Death is handled (re-`claim` overwrites the stamp); a *hung* worker needs the orchestrator to notice. In-memory liveness is the leaning, `event_log` lease the fallback. |
-| **cold rework** | The cold baseline is built + live but on the *old* shape (no `subtype`, `layer_reference` column). The rework — `subtype`-keyed rows, the `state`/`state_log` overlay, the `cold_shards` router, and the mint/`UNPACK` → fold/`PACK` lifecycle ([`world-storage`](intent/world-storage/README.md)) — is planned in [`work/cold-rework`](work/cold-rework/README.md), all blockers resolved. |
+| **cold rework** | The cold baseline is built + live but on the *old* shape (no `subtype`, `layer_reference` column). The rework — `subtype`-keyed rows, the `state`/`state_log` overlay, the `cold_shards` router, and the mint/`UNPACK` → fold/`PACK` lifecycle ([`world-storage`](intent/world-storage/README.md)) — is planned in `work/cold-rework` (archived out-of-repo 2026-07-19), all blockers resolved. |
 
 **Resolved and gone:** the four worker slots (→ worker + observer), `dirty`-as-count (→ boolean),
 `state_events` (the reverse index — no count to decrement), and B-2 "two events on one `(entity,
@@ -361,7 +361,7 @@ overlay-clear land together — **no flash, no ordering**. Item layouts + dense-
 > fixed-shape `state`/`state_log` + the built `SET` overlay + `tic` composite. The
 > **`*_tables!` generalization** below — `entity_state`/`overlay`, payload-generic macros,
 > `Vec<DenseItem>`/`Vec<SparseItem>`, the smart-atomic `PROMOTE` prefix, and `PACK` — is the
-> **2026-07-18 design target, not yet built**. Tracked in [`work/cold-rework`](work/cold-rework/README.md).
+> **2026-07-18 design target, not yet built**. Was tracked in `work/cold-rework` (archived out-of-repo 2026-07-19).
 
 ## `entity_tables!` — the primary pair `entity_state`/`entity_state_log` (generic `<T>`)
 

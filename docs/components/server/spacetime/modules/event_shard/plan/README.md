@@ -1,7 +1,7 @@
 # Plan — `event_shard` (nothing → built)
 
 _Last updated: 2026-07-16. Nothing is built. Active work:
-[`work/spacetime-again/`](../../../../../../work/spacetime-again/README.md) W2._
+`work/spacetime-again/` (archived out-of-repo 2026-07-19) W2._
 
 Flow: [`intent/spacetime-again/`](../../../../../../intent/spacetime-again/README.md). Shapes:
 [`TABLES.md`](../../../../../../TABLES.md). This module owns the queue (`event_log`) and the settled,

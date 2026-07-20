@@ -3,7 +3,7 @@
 > **Status: PSEUDOCODE / intent.** Nothing built. This is the **flow**; the table shapes are in
 > [`docs/TABLES.md`](../../TABLES.md), the bit layouts in [`docs/VARIABLES.md`](../../VARIABLES.md),
 > the program encoding in [`docs/ACTIONS.md`](../../ACTIONS.md), and the reasoning in
-> [`docs/notes/`](../../notes/tables.md). Execution: [`work/spacetime-again/`](../../work/spacetime-again/README.md).
+> [`docs/notes/`](../../notes/tables.md). Execution: `work/spacetime-again/` (archived out-of-repo 2026-07-19).
 > Revised 2026-07-16.
 
 **What this is for.** Simulate a world across many shards, where an event can touch entities on

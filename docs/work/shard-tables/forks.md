@@ -1,7 +1,7 @@
 # Forks — shard-tables
 
 _Decision points, options, what we chose, why. (The design-shaping F4–F6 live in
-[`cold-rework/forks.md`](../cold-rework/forks.md); this stream's build-time decisions are here.)_
+`cold-rework/forks.md` (archived out-of-repo 2026-07-19); this stream's build-time decisions are here.)_
 
 ---
 

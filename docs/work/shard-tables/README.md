@@ -1,7 +1,7 @@
 # Work — shard-tables (the `*_tables!` generalization)
 
 _Opened 2026-07-18. Builds the [`world-storage`](../../intent/world-storage/README.md) **direction
-shift** (decided in [`cold-rework/forks.md`](../cold-rework/forks.md) F4→F5→F6): fold every composing
+shift** (decided in `cold-rework/forks.md` F4→F5→F6; `cold-rework` archived out-of-repo 2026-07-19): fold every composing
 shard into a small family of generic table macros, drive **all** writes through events, and make
 `PROMOTE` a smart, atomic prefix. Authoritative shapes: [`TABLES.md`](../../TABLES.md) ·
 [`VARIABLES.md`](../../VARIABLES.md) · actions [`ACTIONS.md`](../../ACTIONS.md)._
@@ -92,4 +92,4 @@ These are the concerns to address **after** this rework nails the tables down (o
 
 `README` (this) → `todo` → `completed`. `forks`/`issues`/`blockers`/`deviations`/`remaining` appear
 only as they gain content. The design decisions that spawned this stream live in
-[`cold-rework/forks.md`](../cold-rework/forks.md) F4–F6.
+`cold-rework/forks.md` F4–F6 (archived out-of-repo 2026-07-19).

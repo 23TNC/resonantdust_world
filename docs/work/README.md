@@ -12,12 +12,13 @@ session is driving — inferred, not a field here); see [`docs-authority`](docs-
 | Stream | Status | What it is |
 |---|---|---|
 | [docs-authority](docs-authority/README.md) | open | This system: front-door index + `docs-check`/`work-check` audits + the enforcement hooks. |
-| [texture-restructure](texture-restructure/README.md) | done | COMPLETE + verified: every kind on the new leaf; `linked/` folded into `biome-tile/`; edge serves canonical + named-variant stems; `bin/art` fully cut over (read/write + `manifest`); rock reverted to a primitive. Follow-ons are a different kind of work — art re-mastering + the biome-tile object model (placing walls). |
 | [shard-tables](shard-tables/README.md) | open | The `*_tables!` generalization: fold every composing shard into generic table macros; all writes via events. P1–P3 live, P4 pending. |
-| [lighting](lighting/README.md) | open | Port the old game's tiered cold/dynamic lighting onto the new G-buffer; depends on art-metadata outlines. |
 | [art-metadata](art-metadata/README.md) | open | Per-variant `meta.json` sidecar from `bin/art` (channel tints + shadow outline). P1–P2 done. |
-| [spacetime-again](spacetime-again/README.md) | done | The shard rebuild — W1–W9 complete + live end-to-end; deferred follow-ups tracked in its `todo.md`. |
-| [coord-purge](coord-purge/README.md) | done | Retired `zone_id` + legacy `packed` from live paths (A–G landed); one browser pixel-confirm hand-off. |
-| [cold-rework](cold-rework/README.md) | done | Subtype fix + overlay + region router — built + live; the ongoing generalization continued as **shard-tables**. |
-| [docs-migration](docs-migration/README.md) | done | Migrated scattered docs into the `components/` + `work/` convention; two items deliberately deferred. |
-| [prim-batching](prim-batching/README.md) | closed | Premise refuted 2026-07-18 — the G-buffer bake is not the draw-call cost; it was the shadow pass. |
+| [shadows](shadows/README.md) | open | The clean restart after `lighting` was nuked: build the shadow-cold **bitfield** + shadow-hot staging + billboard projection + bit-decode overlay as the thin end-to-end foundation. |
+
+**Archived out-of-repo (2026-07-19)** — the delivered/reverted streams were moved out of the repo
+(to `../resonantdust_world_docs_archive/work-stripped-2026-07-19/`) to keep the working tree focused on
+live work; git history retains them at their last in-repo commit: `texture-restructure` (done),
+`spacetime-again` (done), `coord-purge` (done), `cold-rework` (done → continued as **shard-tables**),
+`docs-migration` (done), `prim-batching` (closed), and `lighting` (closed — nuked 2026-07-19; the
+restart is **shadows**; its durable target survives in the pixijs component `intent`/`design`).
