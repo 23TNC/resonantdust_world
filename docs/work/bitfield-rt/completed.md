@@ -36,11 +36,22 @@ black). This proves the exact loop the user asked for and that `shadow-cold`'s p
 - **State persists + accumulates across the ping-pong** — the march is continuous (not resetting to the
   seed), which only holds if the read-back returns the just-written state each frame.
 
-Implementation: [`bitStepShader.ts`](../../../client/pixijs/src/game/viewport/bitStepShader.ts) (read →
-march bit → write, float-mod) + [`bitPingPong.ts`](../../../client/pixijs/src/game/viewport/bitPingPong.ts)
-(two unorm RGBA8 RTs, A=1, nearest; display reuses `overlayShader` BITS). Two RTs, swap each frame.
+Implementation (since removed — see E6): `bitStepShader.ts` (read → march bit → write, float-mod) +
+`bitPingPong.ts` (two unorm RGBA8 RTs, A=1, nearest; display reused `overlayShader` BITS). Two RTs, swap
+each frame.
 
 **Conclusion: the whole bitfield mechanism `shadows` needs is proven** — storage (E1–E4) + read-modify-
 write accumulate + ping-pong + same-frame display (E5), all on unorm RGBA8 + float-mod (ES 1.00, [I-8](issues.md#i-8)).
 
-**Remaining:** E6 — graduate the proven recipe into `shadows` + archive this folder.
+## E6 · Graduate + remove — DONE 2026-07-20
+
+The proven **recipe** `shadow-cold` inherits (recorded in `shadows` F11/I-5/I-6/F14): world-space **unorm
+RGBA8**, `nearest`, linear; **24 bits in RGB, A held at 1, alpha NEVER used for data** (user decision —
+premultiply-error-prone, so 24 not 32); **float-mod** bit pack/decode (ES 1.00); **ping-pong** two RTs
+(read old → write new → display new same frame → swap; source ≠ destination, no feedback loop).
+
+The **experiment code was removed** 2026-07-20 (the `/bitpingpong` toggle, the `lightmap-cold` fill
+channel + `SquareCache` fill hook, the `OVERLAY_BITS` decode, `bitStepShader`/`bitPingPong`) — it was a
+throwaway proof; the recipe lives on in `shadows`. This folder stays as the completed proof-of-record.
+**Stream DONE.** The next experiment ([`../shadow-cast/`](../shadow-cast/README.md)) builds on this
+recipe — casting real shadows into the ping-pong bitfield.

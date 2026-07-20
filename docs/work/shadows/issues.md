@@ -40,10 +40,9 @@ caster quads clamp at 1. `add` would overflow; the tiered-lighting anti-goals ca
 Premultiply (`RGB × A`, zeroing data where A=0) is a **float-RGBA8 / blend / batch-shader** artifact.
 - **`shadow-hot`** IS a float RGBA8 with `max`-blend (to union casters per light), so it keeps data in
   **RGB, A free** ([F2](forks.md#f2)) — premultiply still applies here.
-- **`shadow-cold`** is a **unorm RGBA8** (ES 1.00 — [F14](forks.md#f14)); at **24 bits, A=1** premultiply
-  is a no-op (proven by `bitfield-rt`). To reclaim A → **32 bits**, write with the nuked build's
-  **verbatim non-premultiply Mesh blit** ("bitfield linchpin"). (An integer `RGBA8UI` target would dodge
-  premultiply entirely but needs raw ES 3.00 shaders — deferred, [F14](forks.md#f14).)
+- **`shadow-cold`** is a **unorm RGBA8** (ES 1.00 — [F14](forks.md#f14)); **24 bits in RGB, A held at 1**
+  so premultiply is a no-op (proven by `bitfield-rt`). **A is never used for data** ([F11](forks.md#f11),
+  settled) — so 24 is the per-RT ceiling, not 32.
 
 ## I-6 · Bit set/test — float-mod on GLSL ES 1.00 — corrected 2026-07-20
 

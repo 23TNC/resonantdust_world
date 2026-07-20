@@ -40,21 +40,19 @@ that never changes between refreshes). Naming it "cold" now keeps continuity wit
 cold/warm split is a later concern. **Un-shrink:** "we'll swap cold → warm later" — rename and, if worth
 it, add a separately-baked static-cold tier.
 
-## D-1 · Bitfield starts as a RED byte (6 bits); full texel = 32, MRT = 128 — updated 2026-07-20
+## D-1 · Bitfield starts as a RED byte (6 bits); ceiling = RGB (24), A never used — updated 2026-07-20
 
 **Design** ([tiered-lighting §Cold](../../components/client/pixijs/intent/tiered-lighting.md)):
 `shadow-cold` is a **32-bit** bitfield across the full RGBA texel.
 
-**This stream:** **RED byte** (6 bits) for bring-up → the **full RGBA texel (32 bits)** as the per-RT
-target, and **MRT** (4 targets) → **128** separable lights.
+**This stream:** **RED byte** (6 bits) for bring-up → the **RGB texel = 24 bits** as the per-RT ceiling.
 
-**Why start in RED:** 6 lights fit one byte; one channel keeps the first pack/decode trivial. **Why 32,
-not the earlier "24":** A is reclaimed with the **verbatim non-premultiply write** (ES-1.00-compatible),
-so the full RGBA texel = 32 — matching the design's ceiling. (At 24 bits, A=1 needs no special write —
-proven by `bitfield-rt`.) **Corrected 2026-07-20:** this is *not* done with an ES 3.00 integer texture —
-Pixi's high-shader is ES 1.00 ([F14](forks.md#f14)), so bits are float-mod and A-reclaim is the verbatim
-write. **Un-shrink:** RED→RGBA (6→32) is a shader widening; **32→128 via MRT needs raw ES 3.00 shaders**
-(deferred). So the remaining shrink is the *starting* count; the >32 scale carries a real ES-3.00 cost.
+**Why start in RED:** 6 lights fit one byte; one channel keeps the first pack/decode trivial. **Why 24,
+not 32 ([F11](forks.md#f11), SETTLED 2026-07-20):** the **alpha channel is never used for data** (user
+decision — premultiply-error-prone, not worth the verbatim-write risk). A=1 always; bits live in RGB.
+Storage is a unorm RGBA8 with float-mod bits (ES 1.00, [F14](forks.md#f14)) — proven by `bitfield-rt`.
+**Un-shrink:** RED→RGB (6→24) is a shader widening; **beyond 24 → more render targets** (24 each), gated
+behind raw ES 3.00 shaders for MRT (deferred).
 
 ## D-2 · `shadow-hot` is 3 screen-space RGB lanes, not 8-lane `uChannel` scatter maps — 2026-07-19
 

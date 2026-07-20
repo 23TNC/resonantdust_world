@@ -132,12 +132,6 @@ export type PrimitiveSpec = Omit<Primitive, "id" | "tint" | "zIndex"> &
 export interface ChannelSpec {
   key: string;
   resolve: (prim: Primitive) => ResolvedPrim;
-  /** A **fill** channel — instead of rendering prims, each square is filled with one solid opaque
-   *  colour computed from its world square `(wc, wr)`. Returns a packed `0xRRGGBB` (drawn at α = 1, so
-   *  premultiply is a no-op and the exact bytes survive), or `null` for "leave black". Used by the
-   *  bitfield-rt experiment to write a per-rect bitfield into a world-space RT. When set, `resolve` is
-   *  ignored. */
-  fill?: (wc: number, wr: number) => number | null;
 }
 
 interface PrimEntry {
@@ -196,8 +190,6 @@ interface PrevLayer {
 class Channel {
   readonly key: string;
   readonly resolve: (prim: Primitive) => ResolvedPrim;
-  /** Per-square solid fill (see {@link ChannelSpec.fill}); when set, prims are ignored. */
-  readonly fill: ((wc: number, wr: number) => number | null) | null;
   bufs: [RenderTexture, RenderTexture] | null = null;
   /** The outgoing buffer, held one frame during a LOD swap. */
   prevComposite: RenderTexture | null = null;
@@ -205,7 +197,6 @@ class Channel {
   constructor(spec: ChannelSpec) {
     this.key = spec.key;
     this.resolve = spec.resolve;
-    this.fill = spec.fill ?? null;
   }
 
   /** (Re)allocate the fixed ping-pong pair `cw × ch` at `res`, both cleared. */
@@ -755,22 +746,6 @@ export class SquareCache {
 
     for (const ch of this.channels) {
       const target = ch.bufs![active];
-      // FILL channel (bitfield-rt): write one solid opaque colour for this square (from its world
-      // square coords), instead of rendering prims. Clear the scratch straight to the packed colour
-      // at α = 1 — a raw framebuffer clear, no premultiply/gamma — then blit it to the slot + apron
-      // exactly like a normal channel, so it rides the same toroidal window / reproject.
-      if (ch.fill) {
-        const packed = ch.fill(wc, wr);
-        const r = packed == null ? 0 : ((packed >> 16) & 0xff) / 255;
-        const g = packed == null ? 0 : ((packed >> 8) & 0xff) / 255;
-        const b = packed == null ? 0 : (packed & 0xff) / 255;
-        renderer.render({ container: this.empty, target: this.scratchRT!, clear: true, clearColor: [r, g, b, 1] });
-        this.blit(renderer, this.scratchTex!, slotX, slotY, target);
-        if (ax >= 0) this.blit(renderer, this.scratchTex!, ax, slotY, target);
-        if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);
-        if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
-        continue;
-      }
       this.bakeContainer.removeChildren();
       for (let i = 0; i < list.length; i++) {
         const prim = list[i];

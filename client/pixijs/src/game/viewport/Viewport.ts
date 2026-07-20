@@ -24,7 +24,6 @@ import { NOISE_FIELDS, PACKED_UNIFORM_LEN, type MaterialRegistry } from "./mater
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { makeAlbedoBlitShader, type AlbedoBlitShader } from "./albedoBlitShader";
 import { makeOverlayShader, overlayModeFor, type OverlayShader } from "./overlayShader";
-import { BitPingPong } from "./bitPingPong";
 
 /** Dirty squares baked per frame. A fresh window dirties its whole grid; the budget
  *  spreads that over a few frames so the first open never hitches. */
@@ -50,24 +49,6 @@ function depthUnit(worldY: number): number {
 /** Zero material-channel params (no jitter) — shared by the albedo path when a prim has no
  *  varying materials (the reconstruction is then just the residual). Read-only. */
 const ZERO_CH = new Float32Array(PACKED_UNIFORM_LEN);
-
-/** bitfield-rt EXPERIMENT — the 16×16 zone whose tiles get a one-hot bitfield, origin = the
- *  `ZONE_DIM`-aligned cell containing the debug focus tile (100, 50) → (96, 48). See
- *  `docs/work/bitfield-rt/`. */
-const BITFIELD_ZONE_X = Math.floor(100 / ZONE_DIM) * ZONE_DIM;
-const BITFIELD_ZONE_Y = Math.floor(50 / ZONE_DIM) * ZONE_DIM;
-/** Experiment fill: each square in the zone sets exactly ONE bit (rect index `mod 24`), packed into
- *  RGB (bits 0–7 → R, 8–15 → G, 16–23 → B; A stays 1 so premultiply can't touch it). Squares outside
- *  the zone are `null` (black). Proves a bitfield survives the world-space RT round-trip. */
-function bitfieldFill(wc: number, wr: number): number | null {
-  const lx = wc - BITFIELD_ZONE_X;
-  const ly = wr - BITFIELD_ZONE_Y;
-  if (lx < 0 || lx >= ZONE_DIM || ly < 0 || ly >= ZONE_DIM) return null;
-  const bit = (lx + ly * ZONE_DIM) % 24; // rect index 0..255 → one of 24 bits
-  const byteVal = 1 << (bit % 8); // the bit within its byte
-  const chan = Math.floor(bit / 8); // 0 = R, 1 = G, 2 = B
-  return chan === 0 ? byteVal << 16 : chan === 1 ? byteVal << 8 : byteVal;
-}
 
 export class Viewport extends LayoutNode {
   /** The COLD world cache — bakes the `*-cold` channels (albedo/normal/surface/zdepth-world)
@@ -101,8 +82,6 @@ export class Viewport extends LayoutNode {
   private readonly overlayShader: OverlayShader = makeOverlayShader();
   private overlayMesh: Mesh<Geometry> | null = null;
   private overlayChannelName: string | null = null;
-  /** bitfield-rt E5 — the ping-pong RMW proof (`/bitpingpong`), lazily created. Screen-space overlay. */
-  private bitPingPong: BitPingPong | null = null;
   private curQuads = -1;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -241,12 +220,6 @@ export class Viewport extends LayoutNode {
           return { texture: resolver.white, tint: 0xffffff, depth: -1 }; // ground / geo → opaque black (no thing)
         },
       },
-      // bitfield-rt EXPERIMENT (cold only): a world-space bitfield RT filled per-square with a one-hot
-      // bit (see `bitfieldFill`), decoded to 24 colours by the `/overlayRT lightmap-cold` bits mode.
-      // Proves a bitfield survives the RT round-trip. `resolve` is unused (fill channel).
-      ...(suffix === "cold"
-        ? [{ key: "lightmap-cold", resolve: () => ({ texture: resolver.white, tint: 0 }), fill: bitfieldFill } as ChannelSpec]
-        : []),
     ];
     this.map = new SquareCache(chan("cold"));
     this.warm = new SquareCache(chan("warm"));
@@ -385,16 +358,6 @@ export class Viewport extends LayoutNode {
     return this.gridLevel;
   }
 
-  /** bitfield-rt E5: toggle the ping-pong read-modify-write proof (`/bitpingpong`). Lazily builds the
-   *  two-buffer harness + its screen-space display; returns whether it's now running. */
-  toggleBitPingPong(): boolean {
-    if (!this.bitPingPong) {
-      this.bitPingPong = new BitPingPong();
-      this.overlayContainer.addChild(this.bitPingPong.container);
-    }
-    return this.bitPingPong.toggle();
-  }
-
   /** Redraw the debug grid for the current camera: three nested line sets, each on the
    *  boundaries of a world division — tiles (red, {@link SQUARE} px), zones (magenta,
    *  {@link ZONE_DIM} tiles) and regions (blue, {@link REGION_DIM}·{@link ZONE_DIM} tiles).
@@ -474,8 +437,6 @@ export class Viewport extends LayoutNode {
       { name: "normal-cold", texture: this.map.displayComposite("normal-cold") },
       { name: "surface-cold", texture: this.map.displayComposite("surface-cold") },
       { name: "zdepth-world-cold", texture: this.map.displayComposite("zdepth-world-cold") },
-      // bitfield-rt experiment: the world-space bitfield RT (decoded to 24 colours by `/overlayRT`).
-      { name: "lightmap-cold", texture: this.map.displayComposite("lightmap-cold") },
       { name: "albedo-warm", texture: this.warm.displayComposite("albedo-warm") },
       { name: "normal-warm", texture: this.warm.displayComposite("normal-warm") },
       { name: "surface-warm", texture: this.warm.displayComposite("surface-warm") },
@@ -580,10 +541,6 @@ export class Viewport extends LayoutNode {
 
     // Debug tile grid (the `?grid` param): a red gfx overlay redrawn against the live camera.
     this.drawGrid();
-
-    // bitfield-rt E5: step the ping-pong RMW proof (read cur buffer → write other → display it this
-    // frame). No-op unless `/bitpingpong` is on. Screen-space, so pass CSS px at resolution 1.
-    this.bitPingPong?.tick(renderer, w, h, 1);
   }
 
   /** Drive the `/overlayRT` mesh: bind the selected composite + its drop-mode, size it to the
@@ -666,7 +623,6 @@ export class Viewport extends LayoutNode {
     this.overlayContainer.destroy({ children: true });
     this.map.destroy();
     this.warm.destroy();
-    this.bitPingPong?.destroy();
     // The overlay mesh SHARES the display mesh's geometry (freed once via `this.mesh.geometry`
     // below); `super.destroy()` destroys the mesh child itself, so only its shader needs freeing.
     this.overlayShader.destroy();

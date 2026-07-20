@@ -10,10 +10,9 @@ same day it opened (the screen-hot/world-cold model, F8–F12, superseded the fi
 
 **Options:** (a) a 32-bit bitfield across the full RGBA texel (the target design); (b) start in the **RED
 byte** and grow. **Chose (b).** This iteration: **6 lights in RED** — one channel keeps the first
-pack/decode trivial. The **ceiling is the full RGBA texel = 32** (A reclaimed via the verbatim
-non-premultiply write on a unorm RGBA8 — see [F11](forks.md#f11); *not* an integer texture). **128 via
-MRT** is gated behind raw ES 3.00 shaders ([F14](forks.md#f14)). Widening RED→RGBA is the same float-mod
-shader over more bytes. See [D-1](deviations.md#d-1).
+pack/decode trivial. The **ceiling is RGB = 24** (the **alpha channel is never used for data** —
+[F11](forks.md#f11), settled). Widening RED→RGB is the same float-mod shader over more bytes; beyond 24
+needs more render targets (MRT = raw ES 3.00, deferred). See [D-1](deviations.md#d-1).
 
 ## F2 · Shadow lanes in RGB, never A — 2026-07-19
 
@@ -77,17 +76,15 @@ wrap math. Each copy is a **pack**: reads `shadow-hot` RGB + prev `shadow-cold`,
 writes back. This single bridge is what lets us cast in the easy space (screen) and store in the required
 space (world) — sidestepping both partial shadows and light-move rect bookkeeping.
 
-## F11 · Bitfield ceiling: 32/RT, 128 via MRT — updated 2026-07-20 (was "24, A never works")
+## F11 · Bitfield ceiling: 24/RT (RGB), A never used — SETTLED 2026-07-20
 
-**Originally (2026-07-19):** goal 24 (RGB), because A never survives premultiply on a float RGBA8 RT.
-**Revised 2026-07-20 (after the [F14](#f14) correction — NOT via integer textures):** the ceiling is
-still **32 lights/RT**, but reached on a **unorm RGBA8** bitfield: A is reclaimed with the **verbatim
-non-premultiply Mesh write** (the nuked build's "linchpin"), which is ES-1.00-compatible — *not* an
-integer `RGBA8UI` texture (that needs raw ES 3.00 shaders, deferred). At **24 bits (RGB, A=1)** no special
-write is even needed — premultiply is a no-op, proven by [`bitfield-rt`](../bitfield-rt/completed.md).
-**128 via MRT** remains the multi-target scale but is **gated behind raw ES 3.00 shaders** ([F14](#f14)).
-`shadow-hot` stays a float RGBA8, RGB = 3 lanes (A avoided, `max`-blend). Throughput unchanged: **≥3
-hot/frame ⇒ ≥24 cold cyclable in ~8 frames**. **Iteration starts at 6 in the RED byte.**
+**Final (user decision):** **24 separable lights per RT — RGB only, the alpha channel is NEVER used for
+data.** Premultiply mangles A, and the verbatim-write workaround to reclaim it isn't worth the risk (it's
+"error-prone"). So drop the earlier "32 via A" idea entirely. Storage is a **unorm RGBA8** bitfield with
+**A held at 1** (premultiply is a no-op — proven by [`bitfield-rt`](../bitfield-rt/completed.md)).
+`shadow-hot` stays a float RGBA8, RGB = 3 lanes (A avoided). Throughput unchanged: **≥3 hot/frame ⇒ ≥24
+cold cyclable in ~8 frames**. Beyond 24 separable lights → **more render targets** (24 each), but MRT is
+gated behind raw ES 3.00 shaders ([F14](#f14)), deferred. See [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md).
 
 ## F13 · Shadow geometry: CPU place + cull, GPU rasterise — 2026-07-19
 

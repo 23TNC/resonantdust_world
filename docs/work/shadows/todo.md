@@ -28,10 +28,10 @@ architecture and [`forks.md`](forks.md) for the decisions._
       reprojected ([F8](forks.md#f8)).
 - [ ] **`shadow-cold`** — a **world-space** bitfield RT in the SquareCache **toroidal** layout (share its
       window/slot geometry so it pans + scales with the other composites), **unorm RGBA8**, `nearest`.
-      RED byte = the light-bitfield (6 bits this iteration, A=1 → premultiply is a no-op; widen to the full
-      RGBA texel = 32 via the **verbatim non-premultiply write** to reclaim A — [F11](forks.md#f11),
-      [I-5](issues.md#i-5), and the pattern `bitfield-rt` E1–E4 proved). **Filled by copy, not baked
-      per-prim** — no per-rect dirty loop, just the window geometry + a nearest reproject on zoom.
+      RED byte = the light-bitfield (6 bits this iteration, A=1 → premultiply is a no-op; widen to **RGB =
+      24 bits** — the **alpha channel is never used for data**, [F11](forks.md#f11), [I-5](issues.md#i-5);
+      the pattern `bitfield-rt` E1–E4 proved). **Filled by copy, not baked per-prim** — no per-rect dirty
+      loop, just the window geometry + a nearest reproject on zoom.
 - [ ] List `shadow-cold` in `Viewport.renderTextures()` so `/showRT` + `/overlayRT` see it. (`shadow-hot`
       is screen-space, so it isn't world-overlayable — expose it in `/showRT` only if useful for debug.)
 
@@ -77,7 +77,7 @@ architecture and [`forks.md`](forks.md) for the decisions._
 - [ ] The **`OVERLAY_BITS`** decode mode already exists — `bitfield-rt` built + proved it in
       `overlayShader` (float-mod bit extraction on a unorm RGBA8, HSV palette, additive; `overlayModeFor`
       routes `lightmap`/`shadow`-style bitfields to it). For `shadows`, route `shadow-cold` to it and reuse
-      as-is: 6 colours (RED) this iteration, up to 32 (full RGBA) at goal ([F5](forks.md#f5)).
+      as-is: 6 colours (RED) this iteration, up to 24 (RGB) at goal ([F5](forks.md#f5)).
 
 ## P7 · Verify the foundation — 2026-07-19
 

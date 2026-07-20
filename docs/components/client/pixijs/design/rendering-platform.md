@@ -40,12 +40,13 @@ work at ≤32 bits.
 ## Bitfield storage consequence (for the shadow work)
 
 Store bitfields in a **unorm RGBA8** RT (`nearest` — the global `TextureStyle.defaultOptions` — linear,
-not sRGB):
+not sRGB): **24 bits in RGB, A held at 1**. Premultiply is a no-op on an opaque texel, so the exact bytes
+round-trip with no special write — proven by `bitfield-rt`.
 
-- **24 bits** in RGB with **A held at 1** → premultiply is a no-op, exact round-trip, **no special write
-  needed** (proven by `bitfield-rt`).
-- **32 bits** (reclaim A) → write with the **verbatim, non-premultiply Mesh blit** (the nuked build's
-  "linchpin") so A survives as data. This is ES-1.00-compatible — *not* an integer texture.
+> **RULE (user decision, 2026-07-20): the alpha channel is NEVER used for data.** Premultiply mangles it
+> and the verbatim-write workaround isn't worth the risk. So a single RT holds **at most 24 separable
+> bits** (RGB); A is opacity/colour only. Do not plan around 32-bit-per-texel. (Beyond 24 separable
+> lights, add render targets — but MRT needs raw ES 3.00 shaders, deferred.)
 
 ## Gotchas
 

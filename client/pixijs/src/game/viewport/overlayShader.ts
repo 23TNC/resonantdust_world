@@ -33,16 +33,13 @@ import {
 export const OVERLAY_ALL = 0; // opaque everywhere (albedo, surface)
 export const OVERLAY_FLAT = 1; // drop flat-up normal + empty cells (normal)
 export const OVERLAY_BLACK = 2; // drop near-black (zdepth)
-export const OVERLAY_BITS = 3; // decode a packed bitfield → one colour per set bit (bitfield-rt: lightmap-cold)
 
 /** Pick the drop-mode for a composite by its channel name — normals hide their flat-up default,
- *  the depth channel hides its black "no data", the bitfield RT decodes per-bit, everything else is opaque. */
+ *  the depth channel hides its black "no data", everything else is opaque. */
 export function overlayModeFor(name: string): number {
   if (name.startsWith("normal")) return OVERLAY_FLAT;
   // zdepth hides its black "no data" so the scene reads through where there's no thing depth.
   if (name.startsWith("zdepth")) return OVERLAY_BLACK;
-  // bitfield-rt experiment: lightmap-cold is a packed bitfield, decoded to 24 colours.
-  if (name.startsWith("lightmap")) return OVERLAY_BITS;
   return OVERLAY_ALL;
 }
 
@@ -50,33 +47,13 @@ const overlayBitGl = {
   name: "viewport-overlay-bit",
   fragment: {
     header: /* glsl */ `
-      uniform float uMode;   // OVERLAY_ALL | OVERLAY_FLAT | OVERLAY_BLACK | OVERLAY_BITS
-
-      // HSV→RGB for the bitfield palette: bit i → hue i/24, so 24 bits map to 24 spread hues.
-      vec3 hsv2rgb(vec3 c) {
-        vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-        vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-        return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
-      }
+      uniform float uMode;   // OVERLAY_ALL | OVERLAY_FLAT | OVERLAY_BLACK
     `,
     main: /* glsl */ `
       // outColor = the composite sample (textureBit, OPAQUE RGB). Re-emit it opaque, but drop the
       // channel's "empty" value to α = 0 so the lit viewport reads through where there's no data.
       vec3 c = outColor.rgb;
-      if (uMode > 2.5) {
-        // BITS mode (bitfield-rt): the RGB bytes ARE a 24-bit field (bits 0-7 R, 8-15 G, 16-23 B).
-        // Pixi's high-shader compiles to GLSL ES 1.00 (no uint/bitwise), so extract bits with float
-        // math — exact on rgba8 (bytes are k/255). Sum a unique hue per set bit → overlaps add.
-        vec3 acc = vec3(0.0);
-        float count = 0.0;
-        for (int i = 0; i < 24; i++) {
-          float chVal = i < 8 ? c.r : (i < 16 ? c.g : c.b);   // which byte holds bit i
-          float n = floor(chVal * 255.0 + 0.5);               // reconstruct the byte 0..255
-          float set = mod(floor(n / exp2(mod(float(i), 8.0))), 2.0); // bit (i mod 8) of that byte
-          if (set > 0.5) { acc += hsv2rgb(vec3(float(i) / 24.0, 0.9, 1.0)); count += 1.0; }
-        }
-        outColor = count < 0.5 ? vec4(0.0) : vec4(clamp(acc, 0.0, 1.0), 1.0);
-      } else if (uMode > 1.5) {
+      if (uMode > 1.5) {
         // BLACK mode: zdepth — near-black is "nothing here".
         outColor = length(c) < 0.02 ? vec4(0.0) : vec4(c, 1.0);
       } else if (uMode > 0.5) {
@@ -121,7 +98,7 @@ export class OverlayShader extends Shader {
     this.resources.uSampler = value.source.style;
   }
 
-  /** The drop-mode ({@link OVERLAY_ALL} | {@link OVERLAY_FLAT} | {@link OVERLAY_BLACK} | {@link OVERLAY_BITS}). */
+  /** The drop-mode ({@link OVERLAY_ALL} | {@link OVERLAY_FLAT} | {@link OVERLAY_BLACK}). */
   set mode(value: number) {
     this.resources.overlayUniforms.uniforms.uMode = value;
     this.resources.overlayUniforms.update();

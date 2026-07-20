@@ -37,9 +37,9 @@ where it's easy (screen), store where it must live (world), bridge with a copy.
   use** (so it pans + scales with zoom exactly like `albedo-cold` et al.). **It does NOT hold per-rect
   geometry like the other RTs — it holds LIGHTS**: each **bit** of a pixel = "light `i` shadows this world
   point". **This iteration: 6 lights in the RED byte** (unorm RGBA8, A=1 — premultiply is a no-op).
-  **Goal: 32 lights in the full RGBA texel**, A reclaimed via the verbatim non-premultiply write (ES 1.00,
-  *not* an integer texture — [F11](forks.md#f11), [F14](forks.md#f14)). **128 via MRT** is gated behind
-  raw ES 3.00 shaders (deferred).
+  **Goal: 24 lights in RGB** — the **alpha channel is never used for data** (premultiply-error-prone;
+  [F11](forks.md#f11), settled). Beyond 24 → more render targets, gated behind raw ES 3.00 for MRT
+  (deferred).
 
 ## The screen → world translation (the 4-copy)
 
@@ -98,7 +98,7 @@ Deliberate, pre-logged in [`deviations.md`](deviations.md):
 | target design | this foundation | later |
 |---|---|---|
 | cold **baked per-rect in world-space** (on dirty) + separate warm round-robin | **one** bitfield: cast **screen-space** every frame, copied into **world-space** `shadow-cold`, round-robin | D-5 → split back into a true baked-cold tier + warm tier |
-| `shadow-cold` = **32-bit** across RGBA | **RED byte** (6 bits, A=1) → **full RGBA 32** (A reclaimed via verbatim write, unorm) | D-1 → widen to RGBA; 128 via MRT needs raw ES 3.00 |
+| `shadow-cold` = **32-bit** across RGBA | **RED byte** (6 bits) → **RGB = 24** (A never used for data) | D-1 → widen to RGB; >24 needs more RTs (MRT = raw ES 3.00) |
 | 8-lane `uChannel` scatter maps | **`shadow-hot` RGB**, 3 screen-space lanes | D-2 → more lanes |
 | casters = **textured earcut silhouette** (`outline`) + UV alpha | **solid billboard quad** | D-3 → the 5-tri fan + UV alpha |
 | cold lights from a **per-rect light-data texture** | **6→24 debug lights** (uniforms) | D-4 → per-rect texture, real content lights |
