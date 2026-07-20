@@ -46,6 +46,7 @@ const ZONE_SPAN = 16 * 64;
 const LIGHT_Z = 480;
 const LIGHT_RADIUS = 4 * 64;
 const MOVE_INTERVAL_MS = 1000;
+const COLOR_INTERVAL_MS = 1000; // re-roll the lights' colours once/sec
 const TMAX = 3;
 /** Fill colour that writes light k's bit into the RED byte (2^k << 16). */
 const bitColor = (k: number): number => (1 << k) << 16;
@@ -60,6 +61,7 @@ export class ShadowCast {
   ];
   private nextMove = 0;
   private lastMoveMs = 0;
+  private lastColorMs = -1e9; // < -COLOR_INTERVAL_MS so the first frame always rolls
   private seeded = false;
 
   private worldA: RenderTexture | null = null;
@@ -108,10 +110,12 @@ export class ShadowCast {
     });
   }
 
-  /** Pack every light into its column of the data texture and re-upload. Row 3 gets a fresh random colour
-   *  each call (mirrored into `curColors` for the markers) — the per-frame change that proves the shader
-   *  is genuinely reading the texture. Float mode stores world-px directly, so region/zone/tile stay 0. */
-  private fillLightData(): void {
+  /** Pack every light into its column of the data texture and re-upload. When `rollColors`, row 3 gets a
+   *  fresh random colour (mirrored into `curColors` for the markers) — the change that proves the shader
+   *  is genuinely reading the texture; otherwise the existing `curColors` are re-written unchanged. Colours
+   *  are re-rolled once/sec (COLOR_INTERVAL_MS). Float mode stores world-px directly, so region/zone/tile
+   *  stay 0. */
+  private fillLightData(rollColors: boolean): void {
     const d = this.lightData;
     for (let k = 0; k < this.lights.length; k++) {
       const L = this.lights[k];
@@ -122,10 +126,12 @@ export class ShadowCast {
       d[px(1) + 0] = 0; d[px(1) + 1] = 0; d[px(1) + 2] = L.x; d[px(1) + 3] = L.y;
       // row 2 — anchor_z, radius, intensity, reserved
       d[px(2) + 0] = L.z; d[px(2) + 1] = L.radius; d[px(2) + 2] = 1; d[px(2) + 3] = 0;
-      // row 3 — red, green, blue, alpha (fresh random, biased bright so shadows stay visible)
-      const r = 0.3 + 0.7 * Math.random(), g = 0.3 + 0.7 * Math.random(), b = 0.3 + 0.7 * Math.random();
-      d[px(3) + 0] = r; d[px(3) + 1] = g; d[px(3) + 2] = b; d[px(3) + 3] = 1;
-      this.curColors[k].r = r; this.curColors[k].g = g; this.curColors[k].b = b;
+      // row 3 — red, green, blue, alpha (bright-biased random on a re-roll, held otherwise)
+      const c = this.curColors[k];
+      if (rollColors) {
+        c.r = 0.3 + 0.7 * Math.random(); c.g = 0.3 + 0.7 * Math.random(); c.b = 0.3 + 0.7 * Math.random();
+      }
+      d[px(3) + 0] = c.r; d[px(3) + 1] = c.g; d[px(3) + 2] = c.b; d[px(3) + 3] = 1;
       // row 4 — reserved (growth)
       d[px(4) + 0] = 0; d[px(4) + 1] = 0; d[px(4) + 2] = 0; d[px(4) + 3] = 0;
     }
@@ -287,9 +293,11 @@ export class ShadowCast {
     this.lastWinCol = m.winCol; // this frame's window becomes prev-world's window for next tick's invalidation
     this.lastWinRow = m.winRow;
 
-    // Pack the lights into the data texture (fresh random colours) + re-upload — the display reads colour
-    // straight from here, so this is the per-frame proof the texture path is live.
-    this.fillLightData();
+    // Pack the lights into the data texture + re-upload — the display reads colour straight from here.
+    // Re-roll the random colours once/sec (not every frame); lastColorMs starts in the past so frame 1 rolls.
+    const rollColors = now - this.lastColorMs >= COLOR_INTERVAL_MS;
+    if (rollColors) this.lastColorMs = now;
+    this.fillLightData(rollColors);
 
     // 3. Display cur-world OR cur-screen (this frame's camera for both); colour from the data texture.
     this.display.curWorld = curWorld;

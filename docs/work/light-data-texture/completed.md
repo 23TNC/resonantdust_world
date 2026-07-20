@@ -13,10 +13,11 @@ Column x = light index, rows y = the 5 data pixels.
 
 ## L2 · Fill + randomise every frame — 2026-07-20
 
-`fillLightData()` packs each light's column each tick — anchor_x/_y/_z + radius + intensity as real
-world-px floats (region/zone/tile left 0; float mode stores world-px directly), and **row 3 = a fresh
-random bright RGB** — then `source.update()` re-uploads. The colour is mirrored into `curColors` so the
-debug markers draw the same colour the shader reads.
+`fillLightData(rollColors)` packs each light's column each tick — anchor_x/_y/_z + radius + intensity as
+real world-px floats (region/zone/tile left 0; float mode stores world-px directly) — then
+`source.update()` re-uploads. **Row 3 (colour) is re-rolled once/sec** (`COLOR_INTERVAL_MS`), held steady
+between rolls; `lastColorMs` starts in the past so frame 1 initialises. The colour is mirrored into
+`curColors` so the debug markers draw the same colour the shader reads.
 
 ## L3 · Display reads colour from the texture — 2026-07-20
 
@@ -26,12 +27,12 @@ hardcoded `LIGHT_COLORS`/`DECODE` palette (constant removed). Colour now comes *
 
 ## L4 · Verified in-browser — 2026-07-20
 
-`?focus=100,50&shadowcast`: consecutive frames show each light's shadow **changing colour every frame,
-independently per light** (magenta→peach, blue→indigo, …), and **each marker dot matches its shadow's
-colour** — the shader-sampled texel equals the JS value written that frame. The full path (JS → float
-texture → `update()` → shader sample) is live. Panning far still shows no ghosts (the `shadow-tiered`
-merge/invalidation is untouched). Console clean — no incomplete-texture/format errors, so the float path
-worked and the u8 fallback ([F1](forks.md#f1)) was not needed.
+`?focus=100,50&shadowcast`: each light's shadow **changes colour once per second, independently per
+light** (holds steady between rolls — verified back-to-back frames identical, a frame ~1s later changed),
+and **each marker dot matches its shadow's colour** — the shader-sampled texel equals the JS value written.
+The full path (JS → float texture → `update()` → shader sample) is live. Panning far still shows no ghosts
+(the `shadow-tiered` merge/invalidation is untouched). Console clean — no incomplete-texture/format errors,
+so the float path worked and the u8 fallback ([F1](forks.md#f1)) was not needed.
 
 ---
 

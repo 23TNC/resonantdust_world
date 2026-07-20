@@ -11,7 +11,7 @@ live in a **texture** the shader samples._
 never scales: the durable design ([`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md))
 is **many** point lights. The standard answer is a **data texture** — one texel-column per light, sampled
 in the shader by light index. This experiment proves that path end-to-end on our stack (Pixi high-shader,
-GLSL ES 1.00), with the shadow **coloured from the texture** and the colours **rewritten every frame** so
+GLSL ES 1.00), with the shadow **coloured from the texture** and the colours **re-rolled once per second** so
 a live data flow is unmistakable.
 
 ## The texture — 5×5, one column per light
@@ -49,9 +49,10 @@ coordinates into 0–255 bytes. In the **float** format the same slots just hold
 
 1. **Core proof — colour.** The display shader, for each shadow bit it decodes, samples that light's
    colour (row 3) from the data texture and tints the shadow with it — **replacing the hardcoded
-   `LIGHT_COLORS`**. JS randomises all 5 lights' colours **every frame**, rewrites the texture. Shadows
-   must then flicker through colours, independently per light ⇒ the texture→shader path is live
-   ([I-3](issues.md#i-3): colour must come *only* from the texture, or the proof is vacuous).
+   `LIGHT_COLORS`**. JS re-rolls all 5 lights' colours **once per second**, rewrites the texture. Shadows
+   must then change colour on that cadence (steady between rolls), independently per light ⇒ the
+   texture→shader path is live ([I-3](issues.md#i-3): colour must come *only* from the texture, or the
+   proof is vacuous).
 2. **Stretch — position ([F2](forks.md#f2)).** Have the cast (or the debug markers) read a light's
    position/radius from the texture instead of the JS `lights[]` array, unifying the source of truth.
    Bigger change (the cast is JS `Graphics` today), so it's a stretch, not the gate.
