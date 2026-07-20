@@ -35,3 +35,9 @@ combine → read → blit → read) before wiring the full 4-batch loop — not 
 **Cost note:** this ate a very long session with much browser round-tripping and false "it works" calls
 (a set bit reads as value 1/255 ≈ black, which I misread as success). Verify the *rendered result*, not
 just that geometry was generated.
+
+**Update 2026-07-19:** two follow-ups landed. (1) The **RGB=3 interim is now solid** — a buffer-grow fix
+(`3442557`) made it cast *all* trees in range (was silently dropping casters), browser-verified. That's a
+good fallback. (2) The **root cause is very likely the Sprite `blit()` premultiplying** the field
+(`RGB × A`, `A = 0` → bits zeroed); the fix = a non-premultiply **Mesh** copy for the field blit. The
+staged re-attempt (A → D, read-back each stage) is [`todo.md`](todo.md) P2. Building blocks all committed.

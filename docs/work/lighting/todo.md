@@ -5,10 +5,12 @@ they land + verify. Design (authoritative):
 [`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md) · this work
 [`README`](README.md) · decisions [`forks.md`](forks.md) · deps [`blockers.md`](blockers.md)._
 
-_Shipped ([`completed.md`](completed.md)): the G-buffer tiers, cold `lightmap-cold` bake (32 uniform
-lights + an **interim** RGB=3 `shadow-cold`), `projectCaster`, the scatter-shader shell. What's below
-converges those onto the [design](../../components/client/pixijs/intent/tiered-lighting.md): cold 3→32
-shadow bitfield, the whole warm/rt dynamic path, retire the wedge._
+_Shipped ([`completed.md`](completed.md)): the G-buffer tiers; cold `lightmap-cold` bake (32 uniform
+lights); the **RGB=3 interim `shadow-cold`** — now **solid** (buffer-grow: casts ALL trees in range,
+≤3 cold lights, browser-verified); `projectCaster`; the ported bitfield building blocks
+(`bitfield.ts`, `warmCombineShader`, `coldLightTex`). What's below lifts that onto the
+[design](../../components/client/pixijs/intent/tiered-lighting.md): cold 3→32 bitfield, the warm/rt
+dynamic path, retire the wedge. **The RGB=3 interim is the working fallback until the bitfield lands.**_
 
 ---
 
@@ -18,19 +20,28 @@ The `add`→`max` fix + the ported bitfield helpers landed. Remaining foundation
 - [ ] **Verify the 4th (alpha) lane** end-to-end (`uChannel` + `max` + non-premult writeback → 4
       lanes/map) — only testable once the ScatterPass renders into lanes; do it there. Sets throughput.
 
-## P2 · Cold upgrade — 3 → 32 shadow-casters (bake-time)
+## P2 · Cold 3 → 32 bitfield — RE-ATTEMPT (first try reverted; root cause known — [issues.md I1](issues.md))
 
-- [ ] **Per-rect cold light-data texture** (port `coldLightTex.ts`): 2 texels/light (`xy`,`z`,`radius`;
-      colour,brightness), `alphaMode: no-premultiply-alpha`, `nearest`. The cold bake reads its rect's
-      ≤32 lights from this texture instead of `uLightData[32]` uniforms (each rect's nearest 32 differ).
-- [ ] **`shadow-cold` as a 32-bit bitfield** — built **on dirty** via the shared scatter engine (32 lights
-      = 8 scatter passes @ 4 lanes → ping-pong writeback into the bitfield). Rect-aware over all casters
-      within reach.
-- [ ] **Cold bake reads the bitfield** (`bf_bit`) not the RGB lanes → every cold light in a rect casts a
-      shadow. `sum += light·N·L·atten·(1 − occludedBit·STRENGTH)`.
-- [ ] **Remove the interim RGB=3 path** — the old `uColdShadow` 3-lane sample + `bakeColdShadowSquare`'s
-      RGB lanes (keep the scatter machinery, now feeding the bitfield). [D-1](deviations.md).
-- [ ] Verify live: >3 cold shadow-casters on one rect ALL cast.
+**Do it stage-by-stage with read-back verification** — the first attempt (`14f4b0b`) was built end-to-end
+blind and produced an empty `shadow-cold`. Root cause found: the **Sprite-based `blit()` premultiplies**
+the field (`RGB × A`), and a bitfield texel with `A = 0` gets its bits zeroed. The interim survived only
+because its scratch cleared to `A = 1`.
+
+- [ ] **Stage A — one lane round-trips.** Render ONE cold light's silhouettes into a scatter lane; **read it
+      back** (a bright coverage blit to `shadow-cold`, `overlayRT` it) and confirm the lane holds coverage.
+- [ ] **Stage B — combine → bits.** Feed the lane through `warmCombineShader` into a 32-bit field; **read
+      back** the field and confirm the expected bit is set.
+- [ ] **Stage C — field reaches the composite.** Blit the field to `shadow-cold` with a **non-premultiply
+      Mesh copy** (`blendMode "none"`, like the old game's `warmMesh`), NOT the Sprite `blit()`. Also confirm
+      the `shadow-cold` **composite** isn't premultiplied. `overlayRT` → confirm the bits survive to it.
+- [ ] **Stage D — bake reads it.** `lightingBakeShader` reads `bf_bit(bf_byte(csh, i/8), i%8)`; confirm the
+      shadow renders (dark wedge in the lit pool).
+- [ ] **Then the full loop:** 4 batches @ 8 lanes → all 32 bits; the square-level light-reach cull; the
+      `nBatches`-by-count + buffer-grow (already in the interim) carried over.
+- [ ] **Per-rect cold light-data texture** (`coldLightTex.ts`, ported): `alphaMode: no-premultiply-alpha`,
+      `nearest`; bake reads its rect's ≤32 lights from it instead of `uLightData[32]` uniforms.
+- [ ] **Remove the interim RGB=3 path** ONLY once the bitfield is browser-verified. [D-1](deviations.md).
+- [ ] Verify live: **>3 cold shadow-casters on one rect ALL cast** (the whole point).
 
 ## P3 · Warm dynamic path (currently 0% — the wedge fakes it)
 

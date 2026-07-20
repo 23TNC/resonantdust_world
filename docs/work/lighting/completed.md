@@ -5,6 +5,13 @@ what's actually shipped. Commit + verification per row._
 
 ---
 
+- **2026-07-19** · **Interim shadow — grow the buffer, cast ALL trees** (`3442557`). `bakeColdShadowSquare`
+  filled a fixed vertex buffer and silently dropped casters past it → near-light + far trees vanished.
+  Now: gather all in-range casters, sum the vertex `need`, grow the lane buffer (doubling, ported from the
+  old game's `ensureShadowMesh`) before projecting. **Browser-verified** (`overlayRT=shadow-cold`): shadows
+  radiate from the light in every direction, from every tree in range. So the **RGB=3 interim is now solid**
+  (casts all trees, ≤3 cold lights) — a good fallback while the 32-bit bitfield is re-attempted.
+
 - **2026-07-18** · **P0 — `LightRig` tier routing** (`1268ed1`). `PointLight` carries `tier`
   (`cold`|`dynamic`); `LightRig` routes each — `coldLights()`/`packCold()` feed the bake, `shadowCasters()`
   the (interim) shadow path, `pack()` the display pool. The `{x,y,z,radius,color,brightness,castsShadow,tier}`
