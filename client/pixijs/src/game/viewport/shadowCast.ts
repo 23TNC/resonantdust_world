@@ -81,10 +81,10 @@ export class ShadowCast {
   private running = false;
 
   // ── light-data-texture experiment ──────────────────────────────────────────────
-  // A 5×5 RGBA32F data texture: column x = light index, rows y = the 5 data pixels (see the field table
-  // in docs/work/light-data-texture). Row 3 = the light's RGBA colour, which the DISPLAY shader samples
-  // (no hardcoded palette). Re-uploaded every frame with fresh random colours to prove the live path.
-  private readonly lightData = new Float32Array(5 * 5 * 4);
+  // A 5×2 RGBA32F data texture: column x = light index, 2 rows (32-bit floats pack a light into 2 texels):
+  //   row 0 = world_x, world_y, world_z, radius   ·   row 1 = red, green, blue, alpha (intensity folded in).
+  // The DISPLAY shader samples row 1 for the colour (no hardcoded palette). Re-uploaded every frame.
+  private readonly lightData = new Float32Array(5 * 2 * 4);
   private lightTex: Texture | null = null;
   /** The colour written to each light's row-3 this frame (mirror of the texture, for the debug markers). */
   private readonly curColors: { r: number; g: number; b: number }[] = this.lights.map(() => ({ r: 1, g: 1, b: 1 }));
@@ -106,34 +106,27 @@ export class ShadowCast {
     // out true u32 integer textures; float is the full-precision path — light-data-texture F1). `nearest`
     // so texel-centre samples land exactly on one light/row (I-5).
     this.lightTex = new Texture({
-      source: new BufferImageSource({ resource: this.lightData, width: 5, height: 5, format: "rgba32float", scaleMode: "nearest" }),
+      source: new BufferImageSource({ resource: this.lightData, width: 5, height: 2, format: "rgba32float", scaleMode: "nearest" }),
     });
   }
 
-  /** Pack every light into its column of the data texture and re-upload. When `rollColors`, row 3 gets a
-   *  fresh random colour (mirrored into `curColors` for the markers) — the change that proves the shader
-   *  is genuinely reading the texture; otherwise the existing `curColors` are re-written unchanged. Colours
-   *  are re-rolled once/sec (COLOR_INTERVAL_MS). Float mode stores world-px directly, so region/zone/tile
-   *  stay 0. */
+  /** Pack every light into its 2-texel column of the data texture and re-upload. When `rollColors`, row 1
+   *  gets a fresh random colour (mirrored into `curColors` for the markers) — the change that proves the
+   *  shader is genuinely reading the texture; otherwise the existing `curColors` are re-written unchanged.
+   *  Colours are re-rolled once/sec (COLOR_INTERVAL_MS). 32-bit floats hold world-px directly. */
   private fillLightData(rollColors: boolean): void {
     const d = this.lightData;
     for (let k = 0; k < this.lights.length; k++) {
       const L = this.lights[k];
       const px = (row: number): number => (row * 5 + k) * 4; // texel (col=k, row) → base index
-      // row 0 — region_x, region_y, zone_x, zone_y (unused in float mode)
-      d[px(0) + 0] = 0; d[px(0) + 1] = 0; d[px(0) + 2] = 0; d[px(0) + 3] = 0;
-      // row 1 — tile_x, tile_y, anchor_x, anchor_y (world px)
-      d[px(1) + 0] = 0; d[px(1) + 1] = 0; d[px(1) + 2] = L.x; d[px(1) + 3] = L.y;
-      // row 2 — anchor_z, radius, intensity, reserved
-      d[px(2) + 0] = L.z; d[px(2) + 1] = L.radius; d[px(2) + 2] = 1; d[px(2) + 3] = 0;
-      // row 3 — red, green, blue, alpha (bright-biased random on a re-roll, held otherwise)
+      // row 0 — world_x, world_y, world_z, radius
+      d[px(0) + 0] = L.x; d[px(0) + 1] = L.y; d[px(0) + 2] = L.z; d[px(0) + 3] = L.radius;
+      // row 1 — red, green, blue, alpha (bright-biased random on a re-roll, held otherwise; intensity in rgba)
       const c = this.curColors[k];
       if (rollColors) {
         c.r = 0.3 + 0.7 * Math.random(); c.g = 0.3 + 0.7 * Math.random(); c.b = 0.3 + 0.7 * Math.random();
       }
-      d[px(3) + 0] = c.r; d[px(3) + 1] = c.g; d[px(3) + 2] = c.b; d[px(3) + 3] = 1;
-      // row 4 — reserved (growth)
-      d[px(4) + 0] = 0; d[px(4) + 1] = 0; d[px(4) + 2] = 0; d[px(4) + 3] = 0;
+      d[px(1) + 0] = c.r; d[px(1) + 1] = c.g; d[px(1) + 2] = c.b; d[px(1) + 3] = 1;
     }
     this.lightTex!.source.update();
   }

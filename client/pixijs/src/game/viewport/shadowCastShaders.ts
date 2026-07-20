@@ -150,18 +150,18 @@ const displayBitGl = {
   fragment: {
     header: /* glsl */ `
       uniform sampler2D uScreen;   // cur-screen (screen space)
-      uniform sampler2D uLightData; // 5×5 light-data texture: column = light, row 3 = RGBA colour
+      uniform sampler2D uLightData; // 5×2 light-data texture: column = light, row 0 = pos+radius, row 1 = RGBA colour
       uniform vec4 uMapA;          // cols, rows, slotPx, fixedCW
       uniform vec4 uMapB;          // fixedCH, SQUARE, (unused, unused)
       uniform vec4 uCam;           // panX, panY, zoom, (unused)
       uniform vec2 uView;          // viewport w, h
       // Decode the RED-byte bitfield, colouring each set bit with that light's colour READ FROM the data
-      // texture (row 3, texel-centre) — no hardcoded palette. This is the light-data-texture proof.
+      // texture (row 1 of 2, texel-centre) — no hardcoded palette. This is the light-data-texture proof.
       vec3 decodeBitsTex(float n) {
         vec3 acc = vec3(0.0);
         for (int i = 0; i < 5; i++) {
           if (mod(floor(n / exp2(float(i))), 2.0) > 0.5)
-            acc += texture(uLightData, vec2((float(i) + 0.5) / 5.0, 3.5 / 5.0)).rgb;
+            acc += texture(uLightData, vec2((float(i) + 0.5) / 5.0, 1.5 / 2.0)).rgb;
         }
         return acc;
       }

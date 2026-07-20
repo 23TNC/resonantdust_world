@@ -14,25 +14,25 @@ in the shader by light index. This experiment proves that path end-to-end on our
 GLSL ES 1.00), with the shadow **coloured from the texture** and the colours **re-rolled once per second** so
 a live data flow is unmistakable.
 
-## The texture — 5×5, one column per light
+## The texture — 5×2, one column per light
 
-- **5 wide × 5 tall.** Column `x = light index` (0–4). Rows `y = 0–4` are that light's 5 data pixels.
-- `nearest` sampling; sample light `k` row `r` at uv `((k + 0.5) / 5, (r + 0.5) / 5)`.
-- Rewritten (re-uploaded) **every frame** from a JS-side `Float32Array` (5·5·4 = 100 values).
+- **5 wide × 2 tall.** Column `x = light index` (0–4). The 2 rows are that light's 2 data pixels.
+- `nearest` sampling; sample light `k` row `r` at uv `((k + 0.5) / 5, (r + 0.5) / 2)` (colour = row 1 →
+  uv.y `1.5 / 2`).
+- Rewritten (re-uploaded) **every frame** from a JS-side `Float32Array` (5·2·4 = 40 values).
 
-### Field layout (per light column, 5 rows × RGBA)
+### Field layout (per light column, 2 rows × RGBA)
 
 | row | R | G | B | A |
 |-----|-----|-----|-----|-----|
-| 0 | region_x | region_y | zone_x | zone_y |
-| 1 | tile_x | tile_y | anchor_x | anchor_y |
-| 2 | anchor_z | radius | intensity | reserved |
-| 3 | red | green | blue | alpha |
-| 4 | reserved | reserved | reserved | reserved |
+| 0 | world_x | world_y | world_z | radius |
+| 1 | red | green | blue | alpha |
 
-The hierarchical position split (region→zone→tile→anchor) is what the **u8** format needs to fit world
-coordinates into 0–255 bytes. In the **float** format the same slots just hold real values — you can store
-`anchor_x`/`anchor_y` as full world-px and leave the coarser fields 0. Same table, both formats.
+Because each channel is a full `f32`, position goes straight in as world-px (no region→zone→tile→anchor
+split needed — that hierarchy only exists to fit world coords into u8 bytes, see the u8 fallback below) and
+**intensity is folded into the RGBA colour** (its magnitude carries brightness). That collapses the old
+5-row layout to **2 rows**, halving the texture to 5×2. The **u8 fallback** ([F1](forks.md#f1)) still needs
+the wider hierarchical packing.
 
 ## Format — float32 if we can, u8 if we must ([F1](forks.md#f1))
 
@@ -42,8 +42,9 @@ coordinates into 0–255 bytes. In the **float** format the same slots just hold
   in ES 1.00 (WebGL2 core; `nearest` needs no float-linear extension). This is the practical form of "use
   u32s": full precision, store real world-px / radius / intensity / colour with **no packing or
   quantization**. Needs `precision highp float` ([I-2](issues.md#i-2)).
-- **`RGBA8` unorm (fallback)** — the 16-field u8 packing above; decode `v = texel.c * 255.0`. Only if the
-  float texture misbehaves on this context ([I-4](issues.md#i-4)).
+- **`RGBA8` unorm (fallback)** — u8 can't hold world-px in one channel, so it needs the wider
+  region→zone→tile→anchor hierarchical packing (the pre-compaction 5-row layout); decode
+  `v = texel.c * 255.0`. Only if the float texture misbehaves on this context ([I-4](issues.md#i-4)).
 
 ## What consumes it
 

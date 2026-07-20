@@ -4,25 +4,26 @@ _Done + verified. Items move here from [`todo.md`](todo.md)._
 
 ---
 
-## L1 · 5×5 float data texture — 2026-07-20
+## L1 · Float data texture — 2026-07-20
 
-`ShadowCast` holds a `Float32Array(5·5·4)` and a `Texture` over a `BufferImageSource`
+`ShadowCast` holds a `Float32Array` and a `Texture` over a `BufferImageSource`
 (`format: "rgba32float"`, `scaleMode: "nearest"`), built in the constructor. Pixi 8.9.1 maps
 `rgba32float` → `gl.RGBA32F` internal + `gl.FLOAT` type (WebGL2 core) — verified, no extension needed.
-Column x = light index, rows y = the 5 data pixels.
+Column x = light index. **Compacted to 5×2** (2 rows/light) once the f32 precision was proven: row 0 =
+`world_x, world_y, world_z, radius`, row 1 = the RGBA colour — no hierarchical position split, intensity
+folded into the colour. (Started 5×5 with the u8-parity 5-row layout; see the README field table.)
 
-## L2 · Fill + randomise every frame — 2026-07-20
+## L2 · Fill + re-roll colour once/sec — 2026-07-20
 
-`fillLightData(rollColors)` packs each light's column each tick — anchor_x/_y/_z + radius + intensity as
-real world-px floats (region/zone/tile left 0; float mode stores world-px directly) — then
-`source.update()` re-uploads. **Row 3 (colour) is re-rolled once/sec** (`COLOR_INTERVAL_MS`), held steady
-between rolls; `lastColorMs` starts in the past so frame 1 initialises. The colour is mirrored into
-`curColors` so the debug markers draw the same colour the shader reads.
+`fillLightData(rollColors)` packs each light's 2-texel column each tick — row 0 world_x/_y/_z + radius as
+real world-px floats — then `source.update()` re-uploads. **Row 1 (colour) is re-rolled once/sec**
+(`COLOR_INTERVAL_MS`), held steady between rolls; `lastColorMs` starts in the past so frame 1 initialises.
+The colour is mirrored into `curColors` so the debug markers draw the same colour the shader reads.
 
 ## L3 · Display reads colour from the texture — 2026-07-20
 
 `ShadowTDisplayShader` gained a `uLightData` sampler and a `decodeBitsTex(n)` that, for each set bit `k`,
-samples column `k` row 3 at the texel centre `((k+0.5)/5, 3.5/5)` and accumulates it — replacing the
+samples column `k` row 1 at the texel centre `((k+0.5)/5, 1.5/2)` and accumulates it — replacing the
 hardcoded `LIGHT_COLORS`/`DECODE` palette (constant removed). Colour now comes **only** from the texture.
 
 ## L4 · Verified in-browser — 2026-07-20
