@@ -889,6 +889,20 @@ export class SquareCache {
     if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
   }
 
+  /** Grow shadow lane `i`'s vertex buffer (doubling from its current cap) to hold `need` vertices, so
+   *  `projectCaster` never silently drops casters once the buffer fills. Ports the old game's
+   *  `ensureShadowMesh` growth. Only reallocates when it must; a bigger buffer is kept across squares. */
+  private ensureShadowCap(i: number, need: number): void {
+    const cur = this.shadowGeos[i].pos.data.length / 2; // current vertex capacity
+    if (need <= cur) return;
+    let cap = cur;
+    while (cap < need) cap *= 2;
+    const g = makeShadowGeometry(cap);
+    this.shadowMeshes[i].geometry.destroy();
+    this.shadowMeshes[i].geometry = g.geometry;
+    this.shadowGeos[i] = g;
+  }
+
   /** Bake this square's coldShadow slot (lighting P4): project every nearby caster's silhouette
    *  through each cold light (≤3) into its lane (world-space, `pan = 0`), all lanes additive so they
    *  don't clobber, then blit to the `shadow` composite slot. Reuses the world→slot transform. */
@@ -910,15 +924,23 @@ export class SquareCache {
     const nLights = Math.min(3, this.coldShadowLights.length);
     for (let i = 0; i < nLights; i++) {
       const L = this.coldShadowLights[i];
-      const geo = this.shadowGeos[i];
-      const pos = geo.pos.data as Float32Array;
-      let v = 0;
+      // Gather EVERY in-range, resolvable caster + sum the vertex `need` first, so the lane buffer grows
+      // to hold them all — projectCaster silently drops casters once its buffer fills (the bug: near +
+      // far trees just vanished depending on iteration order).
+      const casters: { caster: Caster; outline: Outline }[] = [];
+      let need = 0;
       for (const prim of this.standingPrims()) {
         if (Math.hypot(prim.x - L.x, prim.y - L.y) > L.radius + 300) continue; // coarse light-reach cull
         const r = this.resolveCaster(prim);
         if (!r) continue;
-        v = projectCaster(pos, v, r.caster, r.outline, L.x, L.y, L.z, 0, 0); // world-space (pan 0)
+        casters.push(r);
+        for (const pg of r.outline.polygons) need += pg.triangles.length;
       }
+      this.ensureShadowCap(i, need); // grow (doubling) so no caster is dropped
+      const geo = this.shadowGeos[i];
+      const pos = geo.pos.data as Float32Array;
+      let v = 0;
+      for (const r of casters) v = projectCaster(pos, v, r.caster, r.outline, L.x, L.y, L.z, 0, 0); // pan 0 → world
       pos.fill(0, v * 2); // degenerate tail → draws nothing
       geo.pos.update();
       if (v > 0) this.shadowContainer.addChild(this.shadowMeshes[i]);
