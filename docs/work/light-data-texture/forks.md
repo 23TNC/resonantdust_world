@@ -17,7 +17,8 @@ _Decisions with live alternatives. Resolve in place; record the pick + why._
 - **True `u32` integer texture — NOT available.** `usampler2D` / `texelFetch` / `uint` need ES 3.00; Pixi's
   high-shader is ES 1.00 ([I-1](issues.md#i-1)). Out of scope until we hand-write a raw ES 3.00 shader.
 
-**Pick:** start float32; fall back to u8 only on a demonstrated failure. _(pending execution)_
+**PICKED:** float32. Verified working (`rgba32float` → `gl.RGBA32F`/`gl.FLOAT`, sampled `nearest` in
+ES 1.00) — no failure, u8 fallback never needed. — 2026-07-20
 
 ## F2 · What reads the texture — colour only (core) vs also position (stretch)
 
@@ -27,7 +28,8 @@ _Decisions with live alternatives. Resolve in place; record the pick + why._
   JS `lights[]`. Unifies the source of truth toward the real engine, but the cast is JS `Graphics` today, so
   it's a larger change. Do it only if cheap ([L5](todo.md)).
 
-**Pick:** colour-only gates the experiment; position is a stretch. _(pending execution)_
+**PICKED:** colour-only. The per-frame colour flicker proved the path; position (L5) deferred as an
+optional stretch. — 2026-07-20
 
 ## F3 · Per-frame upload — rewrite the whole 5×5 vs partial update
 
@@ -36,4 +38,4 @@ _Decisions with live alternatives. Resolve in place; record the pick + why._
 - **Partial / dirty-only upload.** Premature at 5 lights; revisit only if a real light count makes the full
   re-upload measurable.
 
-**Pick:** full rewrite. _(pending execution)_
+**PICKED:** full rewrite — 100 floats/frame, trivially cheap at this size. — 2026-07-20

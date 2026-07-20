@@ -150,11 +150,21 @@ const displayBitGl = {
   fragment: {
     header: /* glsl */ `
       uniform sampler2D uScreen;   // cur-screen (screen space)
+      uniform sampler2D uLightData; // 5×5 light-data texture: column = light, row 3 = RGBA colour
       uniform vec4 uMapA;          // cols, rows, slotPx, fixedCW
       uniform vec4 uMapB;          // fixedCH, SQUARE, (unused, unused)
       uniform vec4 uCam;           // panX, panY, zoom, (unused)
       uniform vec2 uView;          // viewport w, h
-      ${DECODE}
+      // Decode the RED-byte bitfield, colouring each set bit with that light's colour READ FROM the data
+      // texture (row 3, texel-centre) — no hardcoded palette. This is the light-data-texture proof.
+      vec3 decodeBitsTex(float n) {
+        vec3 acc = vec3(0.0);
+        for (int i = 0; i < 5; i++) {
+          if (mod(floor(n / exp2(float(i))), 2.0) > 0.5)
+            acc += texture(uLightData, vec2((float(i) + 0.5) / 5.0, 3.5 / 5.0)).rgb;
+        }
+        return acc;
+      }
     `,
     main: /* glsl */ `
       // vUV = screen 0..1. Forward-map screen → world → buffer uv to sample cur-world (uTexture).
@@ -165,7 +175,7 @@ const displayBitGl = {
       vec2 buv = vec2((mod(wx / sq, cols) + 1.0) * slotPx / fixedCW, (mod(wy / sq, rows) + 1.0) * slotPx / fixedCH);
       float worldN = floor(texture(uTexture, buv).r * 255.0 + 0.5);
       float screenN = floor(texture(uScreen, vUV).r * 255.0 + 0.5);
-      vec3 acc = decodeBits(worldN) + decodeBits(screenN);
+      vec3 acc = decodeBitsTex(worldN) + decodeBitsTex(screenN);
       outColor = length(acc) < 0.01 ? vec4(0.0) : vec4(clamp(acc, 0.0, 1.0), 1.0);
     `,
   },
@@ -194,6 +204,10 @@ export class ShadowTDisplayShader extends Shader {
     this.resources.uScreen = v.source;
     this.resources.uScreenSampler = v.source.style;
   }
+  set lightData(v: Texture) {
+    this.resources.uLightData = v.source;
+    this.resources.uLightDataSampler = v.source.style;
+  }
   setMapping(cols: number, rows: number, slotPx: number, fixedCW: number, fixedCH: number, sq: number): void {
     const u = this.resources.dispUniforms.uniforms;
     u.uMapA = new Float32Array([cols, rows, slotPx, fixedCW]);
@@ -218,6 +232,8 @@ export function makeShadowTDisplayShader(): ShadowTDisplayShader {
       textureUniforms: { uTextureMatrix: { type: "mat3x3<f32>", value: new Matrix() } },
       uScreen: e.source,
       uScreenSampler: e.source.style,
+      uLightData: e.source,
+      uLightDataSampler: e.source.style,
       dispUniforms: new UniformGroup({
         uMapA: { value: new Float32Array(4), type: "vec4<f32>" },
         uMapB: { value: new Float32Array(4), type: "vec4<f32>" },

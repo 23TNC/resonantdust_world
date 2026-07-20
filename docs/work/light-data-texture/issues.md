@@ -38,3 +38,9 @@ console error. Watch the console on first run; if it fails, switch to the `RGBA8
 
 With `nearest` on a 5×5 texture, sample at texel **centres**, not edges, or a rounding wobble reads the
 neighbouring light/row. Light `k` row `r` → uv `((k + 0.5) / 5, (r + 0.5) / 5)`.
+
+## I-4 · RESOLVED — float texture worked, no fallback needed — 2026-07-20
+
+`RGBA32F` sample + `nearest` created and sampled cleanly on this WebGL2 context (`preferWebGLVersion: 2`);
+no incomplete-texture or format errors in the console. The `RGBA8` packing was not needed. Keep it
+documented ([F1](forks.md#f1)) as the fallback if a future context lacks float-texture support.

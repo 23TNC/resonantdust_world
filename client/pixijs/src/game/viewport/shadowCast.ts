@@ -11,7 +11,7 @@
 //! The merge uses prev-screen's CAST-frame camera (stashed) so a pan between cast and merge doesn't slide
 //! the shadows (shadow-tiered I-8). Casters = in-radius standing prims; billboard-quad shadows.
 
-import { Container, Buffer, BufferUsage, Filter, Geometry, Graphics, Mesh, RenderTexture, type Renderer } from "pixi.js";
+import { BufferImageSource, Container, Buffer, BufferUsage, Filter, Geometry, Graphics, Mesh, RenderTexture, Texture, type Renderer } from "pixi.js";
 import type { Primitive } from "./SquareCache";
 import { SQUARE } from "./squareMath";
 import { makeShadowDecodeFilter, makeShadowMergeShader, makeShadowTDisplayShader, type ShadowMergeShader, type ShadowTDisplayShader } from "./shadowCastShaders";
@@ -47,7 +47,6 @@ const LIGHT_Z = 480;
 const LIGHT_RADIUS = 4 * 64;
 const MOVE_INTERVAL_MS = 1000;
 const TMAX = 3;
-const LIGHT_COLORS = [0xff4040, 0x40ff4d, 0x4d8cff, 0xfff240, 0xff59ff];
 /** Fill colour that writes light k's bit into the RED byte (2^k << 16). */
 const bitColor = (k: number): number => (1 << k) << 16;
 
@@ -79,6 +78,15 @@ export class ShadowCast {
   private vh = 0;
   private running = false;
 
+  // ── light-data-texture experiment ──────────────────────────────────────────────
+  // A 5×5 RGBA32F data texture: column x = light index, rows y = the 5 data pixels (see the field table
+  // in docs/work/light-data-texture). Row 3 = the light's RGBA colour, which the DISPLAY shader samples
+  // (no hardcoded palette). Re-uploaded every frame with fresh random colours to prove the live path.
+  private readonly lightData = new Float32Array(5 * 5 * 4);
+  private lightTex: Texture | null = null;
+  /** The colour written to each light's row-3 this frame (mirror of the texture, for the debug markers). */
+  private readonly curColors: { r: number; g: number; b: number }[] = this.lights.map(() => ({ r: 1, g: 1, b: 1 }));
+
   private readonly castGfx = new Graphics();
   private readonly markerGfx = new Graphics();
   private readonly merge: ShadowMergeShader = makeShadowMergeShader();
@@ -92,6 +100,36 @@ export class ShadowCast {
   constructor() {
     this.container.addChild(this.markerGfx);
     this.container.visible = false;
+    // 5×5 float data texture over `lightData`. RGBA32F → 4× full-precision f32 per texel (ES 1.00 rules
+    // out true u32 integer textures; float is the full-precision path — light-data-texture F1). `nearest`
+    // so texel-centre samples land exactly on one light/row (I-5).
+    this.lightTex = new Texture({
+      source: new BufferImageSource({ resource: this.lightData, width: 5, height: 5, format: "rgba32float", scaleMode: "nearest" }),
+    });
+  }
+
+  /** Pack every light into its column of the data texture and re-upload. Row 3 gets a fresh random colour
+   *  each call (mirrored into `curColors` for the markers) — the per-frame change that proves the shader
+   *  is genuinely reading the texture. Float mode stores world-px directly, so region/zone/tile stay 0. */
+  private fillLightData(): void {
+    const d = this.lightData;
+    for (let k = 0; k < this.lights.length; k++) {
+      const L = this.lights[k];
+      const px = (row: number): number => (row * 5 + k) * 4; // texel (col=k, row) → base index
+      // row 0 — region_x, region_y, zone_x, zone_y (unused in float mode)
+      d[px(0) + 0] = 0; d[px(0) + 1] = 0; d[px(0) + 2] = 0; d[px(0) + 3] = 0;
+      // row 1 — tile_x, tile_y, anchor_x, anchor_y (world px)
+      d[px(1) + 0] = 0; d[px(1) + 1] = 0; d[px(1) + 2] = L.x; d[px(1) + 3] = L.y;
+      // row 2 — anchor_z, radius, intensity, reserved
+      d[px(2) + 0] = L.z; d[px(2) + 1] = L.radius; d[px(2) + 2] = 1; d[px(2) + 3] = 0;
+      // row 3 — red, green, blue, alpha (fresh random, biased bright so shadows stay visible)
+      const r = 0.3 + 0.7 * Math.random(), g = 0.3 + 0.7 * Math.random(), b = 0.3 + 0.7 * Math.random();
+      d[px(3) + 0] = r; d[px(3) + 1] = g; d[px(3) + 2] = b; d[px(3) + 3] = 1;
+      this.curColors[k].r = r; this.curColors[k].g = g; this.curColors[k].b = b;
+      // row 4 — reserved (growth)
+      d[px(4) + 0] = 0; d[px(4) + 1] = 0; d[px(4) + 2] = 0; d[px(4) + 3] = 0;
+    }
+    this.lightTex!.source.update();
   }
 
   get enabled(): boolean {
@@ -249,9 +287,14 @@ export class ShadowCast {
     this.lastWinCol = m.winCol; // this frame's window becomes prev-world's window for next tick's invalidation
     this.lastWinRow = m.winRow;
 
-    // 3. Display cur-world OR cur-screen (this frame's camera for both).
+    // Pack the lights into the data texture (fresh random colours) + re-upload — the display reads colour
+    // straight from here, so this is the per-frame proof the texture path is live.
+    this.fillLightData();
+
+    // 3. Display cur-world OR cur-screen (this frame's camera for both); colour from the data texture.
     this.display.curWorld = curWorld;
     this.display.curScreen = curScreen;
+    this.display.lightData = this.lightTex!;
     this.display.setMapping(m.cols, m.rows, m.slotPx, m.fixedCW, m.fixedCH, SQUARE);
     this.display.setCam(panX, panY, zoom, vw, vh);
 
@@ -266,13 +309,16 @@ export class ShadowCast {
       const L = this.lights[k];
       const sx = (L.x + panX) * z;
       const sy = (L.y + panY) * z;
+      const c = this.curColors[k]; // same colour the shader reads from the texture this frame
+      const rgb = (Math.round(c.r * 255) << 16) | (Math.round(c.g * 255) << 8) | Math.round(c.b * 255);
       g.circle(sx, sy, L.radius * z).stroke({ width: 4, color: 0x000000, alpha: 1 });
-      g.circle(sx, sy, 10).fill({ color: LIGHT_COLORS[k], alpha: 1 }).stroke({ width: 4, color: 0x000000, alpha: 1 });
+      g.circle(sx, sy, 10).fill({ color: rgb, alpha: 1 }).stroke({ width: 4, color: 0x000000, alpha: 1 });
     }
   }
 
   destroy(): void {
     for (const rt of [this.worldA, this.worldB, this.screenA, this.screenB]) rt?.destroy(true);
+    this.lightTex?.destroy(true);
     this.mergeGeo?.destroy(true);
     this.dispGeo?.destroy(true);
     this.castGfx.destroy();
