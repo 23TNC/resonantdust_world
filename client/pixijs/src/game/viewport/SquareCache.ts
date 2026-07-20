@@ -363,6 +363,15 @@ export class SquareCache {
     return this.cols > 0 && this.channels.length > 0 && this.channels[0].bufs != null;
   }
 
+  /** The fixed-buffer / toroidal mapping — for an external world-space RT (shadow-world) that must
+   *  register 1:1 with the composites. A world square `(wc, wr)` lives at buffer slot
+   *  `(mod(wc,cols)+1, mod(wr,rows)+1) · slotPx`, so a world px `(wx,wy)` maps to buffer px
+   *  `(mod(wx/SQUARE, cols)+1)·slotPx` (the +1 = the wrap-apron ring). Buffer is `fixedCW × fixedCH` at
+   *  resolution 1; the display samples it by normalized UV, so an external RT of the same size aligns. */
+  bufferMapping(): { fixedCW: number; fixedCH: number; cols: number; rows: number; slotPx: number } {
+    return { fixedCW: this.fixedCW, fixedCH: this.fixedCH, cols: this.cols, rows: this.rows, slotPx: this.slotPx };
+  }
+
   /** Number of display quads {@link fillDisplay} emits — ONE per resident world square
    *  of the DISPLAYED layer (the held `prev` during a swap, else the live grid). */
   get displayQuadCount(): number {

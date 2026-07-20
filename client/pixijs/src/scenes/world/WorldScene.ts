@@ -261,7 +261,9 @@ export class WorldScene extends Scene {
     // moves per second, re-casting only it. Proves shadow-casting into a bitfield + incremental updates.
     this.chat.registerCommand("shadowcast", () => {
       const on = view().toggleShadowCast();
-      return on ? "Shadow-cast ON (5 lights, 5 colours; one moves/sec)." : "Shadow-cast OFF.";
+      return on
+        ? "Shadow-cast ON (5 lights, world-space bitfield; one moves/sec). Use /overlayRT shadow-a to see the colours."
+        : "Shadow-cast OFF.";
     });
 
     // `/pause` + `/unpause` (debug) — no server-side pause in the rebuild yet (the master's

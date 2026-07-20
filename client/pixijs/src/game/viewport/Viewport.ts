@@ -450,6 +450,9 @@ export class Viewport extends LayoutNode {
       { name: "normal-cold", texture: this.map.displayComposite("normal-cold") },
       { name: "surface-cold", texture: this.map.displayComposite("surface-cold") },
       { name: "zdepth-world-cold", texture: this.map.displayComposite("zdepth-world-cold") },
+      // shadow-world experiment: the two world-space ping-pong bitfield buffers (null when off).
+      { name: "shadow-a", texture: this.shadowCast?.texFor("shadow-a") ?? null },
+      { name: "shadow-b", texture: this.shadowCast?.texFor("shadow-b") ?? null },
       { name: "albedo-warm", texture: this.warm.displayComposite("albedo-warm") },
       { name: "normal-warm", texture: this.warm.displayComposite("normal-warm") },
       { name: "surface-warm", texture: this.warm.displayComposite("surface-warm") },
@@ -555,10 +558,10 @@ export class Viewport extends LayoutNode {
     // Debug tile grid (the `?grid` param): a red gfx overlay redrawn against the live camera.
     this.drawGrid();
 
-    // shadow-cast experiment: cast the 5 cold lights' shadows into the ping-pong bitfield + display.
-    // No-op unless `/shadowcast` is on. Casters = the cold cache's standing prims (things); world→screen
-    // via the same pan + zoom the display mesh uses.
-    this.shadowCast?.tick(renderer, w, h, this.map.standingPrims(), panX, panY, z);
+    // shadow-world experiment: cast the 5 cold lights' shadows into the WORLD-space ping-pong bitfield.
+    // No-op unless `/shadowcast` is on. Casters = the cold cache's standing prims; the shadow RTs share
+    // the cache's toroidal buffer mapping (so `/overlayRT shadow-a`/`-b` shows them world-aligned).
+    this.shadowCast?.tick(renderer, this.map.bufferMapping(), this.map.standingPrims(), panX, panY, z);
   }
 
   /** Drive the `/overlayRT` mesh: bind the selected composite + its drop-mode, size it to the
@@ -587,10 +590,11 @@ export class Viewport extends LayoutNode {
     this.overlayMesh.visible = true;
   }
 
-  /** The live composite for an overlay channel name — warm (`this.warm`) by the `-warm` suffix,
-   *  else cold (`this.map`). Null if the channel isn't produced yet. Only the world-space
-   *  composites reach here ({@link overlayChannelNames} excludes the screen-space shadow RT). */
+  /** The live composite for an overlay channel name — the shadow-world bitfield buffers (`shadow-*`),
+   *  warm (`this.warm`) by the `-warm` suffix, else cold (`this.map`). All are world-space (same toroidal
+   *  buffer layout), so the overlay samples them through the display geometry aligned. Null if not ready. */
   private overlayComposite(name: string): Texture | null {
+    if (name.startsWith("shadow")) return this.shadowCast?.texFor(name) ?? null;
     if (name.endsWith("-warm")) return this.warm.displayComposite(name);
     return this.map.displayComposite(name);
   }

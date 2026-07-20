@@ -1,14 +1,18 @@
-//! shadow-cast experiment — cast shadows from in-radius prims through 5 cold lights into a ping-pong
-//! bitfield RT, one bit per light (RED byte, bits 0–4), displayed as 5 colours. Move one light/second and
-//! re-cast ONLY the dirty light: cast its shadows → `mask`, then combine `mask` + `src` → `dest` (clear
-//! bit k, set it where the mask covers, carry the other 4 bits). Ping-pong `shadow-a`/`shadow-b`.
+//! shadow-world experiment (edit of shadow-cast) — cast 5 cold lights' shadows into a WORLD-space
+//! ping-pong bitfield, one bit per light (RED byte, bits 0–4). The bitfield RTs live in the SAME toroidal
+//! layout as the composites (`albedo-cold` etc.), so shadows stick to the world under pan/zoom. The
+//! coloured display is GONE — inspect via `/overlayRT shadow-a` / `shadow-b` (the overlay decodes the
+//! bits to 5 colours). Only the light dot + radius-ring markers draw here (screen-space debug).
 //!
-//! A miniature of the real pipeline: `mask` ≈ shadow-hot (a light's coverage), a/b ≈ shadow-cold (the
-//! bitfield). Screen-space; unorm RGBA8, A=1 (alpha never carries data). Toggled via `/shadowcast`.
+//! Per update (one light moves/second): cast the dirty light's in-radius billboard shadows onto the
+//! GROUND in world coords → world-space `mask` (mapped into the toroidal buffer, ±period copies for the
+//! wrap); combine reads `src` bitfield + `mask` → writes `dest` (clear bit k, set where masked, carry the
+//! other 4 bits); swap. Source ≠ destination (no feedback). unorm RGBA8, A=1, float-mod (ES 1.00).
 
-import { Container, Buffer, BufferUsage, Geometry, Graphics, Mesh, RenderTexture, Texture, type Renderer } from "pixi.js";
+import { Container, Buffer, BufferUsage, Geometry, Graphics, Mesh, RenderTexture, type Renderer } from "pixi.js";
 import type { Primitive } from "./SquareCache";
-import { makeShadowCombineShader, makeShadowDisplayShader, type ShadowCombineShader, type ShadowDisplayShader } from "./shadowCastShaders";
+import { SQUARE } from "./squareMath";
+import { makeShadowCombineShader, type ShadowCombineShader } from "./shadowCastShaders";
 
 interface Light {
   x: number;
@@ -17,17 +21,25 @@ interface Light {
   radius: number;
 }
 
-/** The (100,50) zone in world px — origin tile (96,48), 16 tiles = 1024 px. Lights spawn/move here. */
+/** The toroidal buffer mapping the shadow RTs share with the composites (from `SquareCache.bufferMapping`). */
+interface Mapping {
+  fixedCW: number;
+  fixedCH: number;
+  cols: number;
+  rows: number;
+  slotPx: number;
+}
+
 const ZONE_X0 = 96 * 64;
 const ZONE_Y0 = 48 * 64;
 const ZONE_SPAN = 16 * 64;
-const LIGHT_Z = 480; // well above the casters → short, readable shadows (factor ≈ 1.5)
-const LIGHT_RADIUS = 4 * 64; // fewer casters per light → the 5 colours stay legible
+const LIGHT_Z = 480;
+const LIGHT_RADIUS = 4 * 64;
 const MOVE_INTERVAL_MS = 1000;
-const TMAX = 3; // clamp runaway grazing shadow projections
-
-/** Debug-marker colours per light — match the display shader's 5 bit-colours (red/green/blue/yellow/magenta). */
+const TMAX = 3;
 const LIGHT_COLORS = [0xff4040, 0x40ff4d, 0x4d8cff, 0xfff240, 0xff59ff];
+
+const wmod = (n: number, m: number): number => ((n % m) + m) % m;
 
 export class ShadowCast {
   private readonly lights: Light[] = [
@@ -37,43 +49,36 @@ export class ShadowCast {
     { x: ZONE_X0 + 820, y: ZONE_Y0 + 720, z: LIGHT_Z, radius: LIGHT_RADIUS },
     { x: ZONE_X0 + 560, y: ZONE_Y0 + 900, z: LIGHT_Z, radius: LIGHT_RADIUS },
   ];
-  /** Lights waiting to be (re)cast — a dirty queue; one processed per tick. */
   private queue: number[] = [];
   private nextMove = 0;
   private lastMoveMs = 0;
 
   private a: RenderTexture | null = null;
   private b: RenderTexture | null = null;
-  private aTex: Texture | null = null;
-  private bTex: Texture | null = null;
   private mask: RenderTexture | null = null;
-  private maskTex: Texture | null = null;
   /** True when A holds the CURRENT bitfield; flips each processed light. */
   private curIsA = true;
-  private w = 0;
-  private h = 0;
+  /** Last buffer mapping — recreate RTs when the fixed size changes, re-seed when the toroidal grid does. */
+  private map: Mapping = { fixedCW: 0, fixedCH: 0, cols: 0, rows: 0, slotPx: 0 };
   private running = false;
   private seeded = false;
 
   private readonly castGfx = new Graphics();
-  /** Debug markers (drawn over the display): each light's colour-matched dot + its radius ring. */
   private readonly markerGfx = new Graphics();
   private readonly combine: ShadowCombineShader = makeShadowCombineShader();
-  private readonly display: ShadowDisplayShader = makeShadowDisplayShader();
   private geo: Geometry | null = null;
   private combineMesh: Mesh<Geometry> | null = null;
-  private displayMesh: Mesh<Geometry> | null = null;
-  /** Screen-space display object — add to the viewport's overlay layer. */
+  /** Screen-space markers layer — add to the viewport's overlay. */
   readonly container = new Container();
 
   constructor() {
+    this.container.addChild(this.markerGfx);
     this.container.visible = false;
   }
 
   get enabled(): boolean {
     return this.running;
   }
-  /** Toggle on/off. On → re-seed (cast all 5 lights fresh). */
   toggle(): boolean {
     this.running = !this.running;
     this.container.visible = this.running;
@@ -81,88 +86,109 @@ export class ShadowCast {
     return this.running;
   }
 
-  private ensure(w: number, h: number, renderer: Renderer): void {
-    if (this.a && this.w === w && this.h === h) return;
-    this.w = w;
-    this.h = h;
-    for (const rt of [this.a, this.b, this.mask]) rt?.destroy(true);
-    for (const t of [this.aTex, this.bTex, this.maskTex]) t?.destroy();
-    const mk = (): [RenderTexture, Texture] => {
-      const rt = RenderTexture.create({ width: w, height: h, resolution: 1 });
-      rt.source.scaleMode = "nearest";
-      return [rt, new Texture({ source: rt.source, dynamic: true })];
-    };
-    [this.a, this.aTex] = mk();
-    [this.b, this.bTex] = mk();
-    [this.mask, this.maskTex] = mk();
-    // Clear both bitfields opaque (A=1, all bits clear).
-    const empty = new Container();
-    renderer.render({ container: empty, target: this.a, clear: true, clearColor: [0, 0, 0, 1] });
-    renderer.render({ container: empty, target: this.b, clear: true, clearColor: [0, 0, 0, 1] });
-
-    this.geo?.destroy(true);
-    const pos = new Float32Array([0, 0, w, 0, w, h, 0, h]);
-    const uv = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
-    this.geo = new Geometry({
-      attributes: {
-        aPosition: { buffer: new Buffer({ data: pos, usage: BufferUsage.VERTEX }), format: "float32x2" },
-        aUV: { buffer: new Buffer({ data: uv, usage: BufferUsage.VERTEX }), format: "float32x2" },
-      },
-      indexBuffer: new Buffer({ data: new Uint32Array([0, 1, 2, 0, 2, 3]), usage: BufferUsage.INDEX }),
-    });
-    if (!this.combineMesh) this.combineMesh = new Mesh<Geometry>({ geometry: this.geo, shader: this.combine });
-    else this.combineMesh.geometry = this.geo;
-    if (!this.displayMesh) {
-      this.displayMesh = new Mesh<Geometry>({ geometry: this.geo, shader: this.display });
-      this.container.addChild(this.displayMesh);
-    } else {
-      this.displayMesh.geometry = this.geo;
-    }
-    // Debug markers on TOP of the display (re-add keeps it above the mesh).
-    this.container.addChild(this.markerGfx);
-    this.seeded = false;
+  /** The world-space bitfield RT for `/overlayRT` — `shadow-a` = buffer A, `shadow-b` = buffer B. Both
+   *  hold a complete field (carry-forward); the latest is whichever was written most recently. */
+  texFor(name: string): RenderTexture | null {
+    if (!this.running) return null;
+    if (name === "shadow-a") return this.a;
+    if (name === "shadow-b") return this.b;
+    return null;
   }
 
-  /** Cast the dirty light `k`'s billboard shadows (its in-radius prims) into `mask`, in screen px. */
-  private castLight(renderer: Renderer, k: number, prims: Primitive[], panX: number, panY: number, z: number): void {
+  private ensure(renderer: Renderer, m: Mapping): boolean {
+    const sizeChanged = m.fixedCW !== this.map.fixedCW || m.fixedCH !== this.map.fixedCH;
+    const gridChanged = m.cols !== this.map.cols || m.rows !== this.map.rows || m.slotPx !== this.map.slotPx;
+    this.map = m;
+    if (m.fixedCW <= 0 || m.fixedCH <= 0) return false;
+    if (sizeChanged || !this.a) {
+      for (const rt of [this.a, this.b, this.mask]) rt?.destroy(true);
+      const mk = (): RenderTexture => {
+        const rt = RenderTexture.create({ width: m.fixedCW, height: m.fixedCH, resolution: 1 });
+        rt.source.scaleMode = "nearest";
+        return rt;
+      };
+      this.a = mk();
+      this.b = mk();
+      this.mask = mk();
+      this.geo?.destroy(true);
+      const pos = new Float32Array([0, 0, m.fixedCW, 0, m.fixedCW, m.fixedCH, 0, m.fixedCH]);
+      const uv = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
+      this.geo = new Geometry({
+        attributes: {
+          aPosition: { buffer: new Buffer({ data: pos, usage: BufferUsage.VERTEX }), format: "float32x2" },
+          aUV: { buffer: new Buffer({ data: uv, usage: BufferUsage.VERTEX }), format: "float32x2" },
+        },
+        indexBuffer: new Buffer({ data: new Uint32Array([0, 1, 2, 0, 2, 3]), usage: BufferUsage.INDEX }),
+      });
+      if (!this.combineMesh) this.combineMesh = new Mesh<Geometry>({ geometry: this.geo, shader: this.combine });
+      else this.combineMesh.geometry = this.geo;
+    }
+    if (sizeChanged || gridChanged) {
+      // The toroidal mapping changed (resize / zoom) → the stored bitfields are misaligned. Clear both
+      // and re-cast all 5 lights fresh (nearest-reproject would garble a bitfield; refill is simpler).
+      const empty = new Container();
+      renderer.render({ container: empty, target: this.a!, clear: true, clearColor: [0, 0, 0, 1] });
+      renderer.render({ container: empty, target: this.b!, clear: true, clearColor: [0, 0, 0, 1] });
+      this.seeded = false;
+    }
+    return true;
+  }
+
+  /** Cast the dirty light `k`'s billboard shadows onto the ground (world), map into the toroidal buffer,
+   *  rasterise into `mask` with ±period copies for the wrap. */
+  private castLight(renderer: Renderer, k: number, prims: Primitive[]): void {
     const L = this.lights[k];
+    const { cols, rows, slotPx } = this.map;
+    const per = slotPx / SQUARE; // buffer px per world px
     const g = this.castGfx;
     g.clear();
-    const sx = (wx: number): number => (wx + panX) * z;
-    const sy = (wy: number): number => (wy + panY) * z;
     for (const p of prims) {
       const cx = p.x + p.width / 2;
       const baseY = p.y + p.height;
-      if (Math.hypot(cx - L.x, baseY - L.y) > L.radius) continue; // in-radius cull
+      if (Math.hypot(cx - L.x, baseY - L.y) > L.radius) continue;
       const W = p.width;
       const H = p.height;
-      // Project the billboard's top edge (height H) from the light to the ground; the base edge stays put.
       const factor = L.z <= H + 1 ? TMAX : Math.min(L.z / (L.z - H), TMAX);
       const bLx = cx - W / 2;
       const bRx = cx + W / 2;
       const tLx = L.x + factor * (bLx - L.x);
       const tRx = L.x + factor * (bRx - L.x);
       const tY = L.y + factor * (baseY - L.y);
-      // Shadow quad: base-left, base-right, projected-top-right, projected-top-left (screen px).
-      g.poly([sx(bLx), sy(baseY), sx(bRx), sy(baseY), sx(tRx), sy(tY), sx(tLx), sy(tY)]).fill(0xffffff);
+      // Map to the toroidal buffer: reference = the first corner's mod slot, others offset from it (so a
+      // seam-crossing quad isn't torn; the ±period copies below cover the wrap). +1 slot = the apron ring.
+      const refBx = (wmod(bLx / SQUARE, cols) + 1) * slotPx;
+      const refBy = (wmod(baseY / SQUARE, rows) + 1) * slotPx;
+      const bx = (wx: number): number => refBx + (wx - bLx) * per;
+      const by = (wy: number): number => refBy + (wy - baseY) * per;
+      g.poly([bx(bLx), by(baseY), bx(bRx), by(baseY), bx(tRx), by(tY), bx(tLx), by(tY)]).fill(0xffffff);
     }
-    renderer.render({ container: g, target: this.mask!, clear: true, clearColor: [0, 0, 0, 1] });
+    // Rasterise into `mask`, re-drawing at ±period offsets so quads that cross the buffer seam wrap.
+    const periodX = cols * slotPx;
+    const periodY = rows * slotPx;
+    let first = true;
+    for (const ox of [-periodX, 0, periodX]) {
+      for (const oy of [-periodY, 0, periodY]) {
+        g.position.set(ox, oy);
+        renderer.render({ container: g, target: this.mask!, clear: first, clearColor: [0, 0, 0, 1] });
+        first = false;
+      }
+    }
+    g.position.set(0, 0);
   }
 
-  /** Per-frame: seed on first run; move one light/second; process one dirty light (cast → combine →
-   *  swap) if any; display the current bitfield. `prims` are the world casters; `pan`/`z` map world→screen. */
-  tick(renderer: Renderer, w: number, h: number, prims: Primitive[], panX: number, panY: number, z: number): void {
-    if (!this.running || w <= 0 || h <= 0) return;
-    this.ensure(w, h, renderer);
+  /** Per-frame. `m` = the cache's buffer mapping; `prims` the world casters; `pan`/`z` map world→screen
+   *  for the markers only (the shadows are world-space now). */
+  tick(renderer: Renderer, m: Mapping, prims: Primitive[], panX: number, panY: number, z: number): void {
+    if (!this.running) return;
+    if (!this.ensure(renderer, m)) return;
     const now = performance.now();
     if (!this.seeded) {
-      this.queue = [0, 1, 2, 3, 4]; // cast all 5 fresh
+      this.queue = [0, 1, 2, 3, 4];
       this.seeded = true;
       this.lastMoveMs = now;
       this.nextMove = 0;
       this.curIsA = true;
     }
-    // Move one light every second → it becomes the dirty light to re-cast.
     if (now - this.lastMoveMs >= MOVE_INTERVAL_MS) {
       this.lastMoveMs = now;
       const k = this.nextMove;
@@ -171,24 +197,22 @@ export class ShadowCast {
       this.lights[k].y = ZONE_Y0 + Math.random() * ZONE_SPAN;
       this.queue.push(k);
     }
-    // Process ONE dirty light: cast → mask, combine src+mask → dest (rewrite bit k), swap.
     if (this.queue.length > 0) {
       const k = this.queue.shift()!;
-      const srcTex = this.curIsA ? this.aTex! : this.bTex!;
+      const srcRT = this.curIsA ? this.a! : this.b!;
       const dstRT = this.curIsA ? this.b! : this.a!;
-      this.castLight(renderer, k, prims, panX, panY, z);
-      this.combine.field = srcTex;
-      this.combine.mask = this.maskTex!;
+      this.castLight(renderer, k, prims);
+      this.combine.field = srcRT;
+      this.combine.mask = this.mask!;
       this.combine.setBit(k);
       renderer.render({ container: this.combineMesh!, target: dstRT, clear: true, clearColor: [0, 0, 0, 1] });
-      this.curIsA = !this.curIsA; // dest is now current
+      this.curIsA = !this.curIsA;
     }
-    this.display.field = this.curIsA ? this.aTex! : this.bTex!;
     this.drawMarkers(panX, panY, z);
   }
 
-  /** Draw each light as a colour-matched dot (thick black outline) + its radius ring (thick black
-   *  outline), in screen px — so you can eyeball which prims fall in a light's radius vs which cast. */
+  /** Each light as a colour-matched dot (thick black outline) + its radius ring (thick black outline),
+   *  in screen px — to eyeball which prims fall in a light's radius. */
   private drawMarkers(panX: number, panY: number, z: number): void {
     const g = this.markerGfx;
     g.clear();
@@ -196,21 +220,17 @@ export class ShadowCast {
       const L = this.lights[k];
       const sx = (L.x + panX) * z;
       const sy = (L.y + panY) * z;
-      // Radius ring: a thick black circle outline at the light's reach.
       g.circle(sx, sy, L.radius * z).stroke({ width: 4, color: 0x000000, alpha: 1 });
-      // Light dot: the light's shadow colour, with a thick black outline.
       g.circle(sx, sy, 10).fill({ color: LIGHT_COLORS[k], alpha: 1 }).stroke({ width: 4, color: 0x000000, alpha: 1 });
     }
   }
 
   destroy(): void {
     for (const rt of [this.a, this.b, this.mask]) rt?.destroy(true);
-    for (const t of [this.aTex, this.bTex, this.maskTex]) t?.destroy();
     this.geo?.destroy(true);
     this.castGfx.destroy();
     this.markerGfx.destroy();
     this.combine.destroy();
-    this.display.destroy();
     this.container.destroy({ children: true });
   }
 }

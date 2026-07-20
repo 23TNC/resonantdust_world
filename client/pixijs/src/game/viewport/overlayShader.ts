@@ -33,13 +33,16 @@ import {
 export const OVERLAY_ALL = 0; // opaque everywhere (albedo, surface)
 export const OVERLAY_FLAT = 1; // drop flat-up normal + empty cells (normal)
 export const OVERLAY_BLACK = 2; // drop near-black (zdepth)
+export const OVERLAY_BITS = 3; // decode a shadow bitfield's RED byte → one colour per set bit (shadow-*)
 
 /** Pick the drop-mode for a composite by its channel name — normals hide their flat-up default,
- *  the depth channel hides its black "no data", everything else is opaque. */
+ *  the depth channel hides its black "no data", a shadow bitfield decodes per-bit, else opaque. */
 export function overlayModeFor(name: string): number {
   if (name.startsWith("normal")) return OVERLAY_FLAT;
   // zdepth hides its black "no data" so the scene reads through where there's no thing depth.
   if (name.startsWith("zdepth")) return OVERLAY_BLACK;
+  // shadow-* is a light-bitfield (RED byte, bits 0..4 = 5 lights) — decode to 5 colours.
+  if (name.startsWith("shadow")) return OVERLAY_BITS;
   return OVERLAY_ALL;
 }
 
@@ -47,13 +50,25 @@ const overlayBitGl = {
   name: "viewport-overlay-bit",
   fragment: {
     header: /* glsl */ `
-      uniform float uMode;   // OVERLAY_ALL | OVERLAY_FLAT | OVERLAY_BLACK
+      uniform float uMode;   // OVERLAY_ALL | OVERLAY_FLAT | OVERLAY_BLACK | OVERLAY_BITS
     `,
     main: /* glsl */ `
       // outColor = the composite sample (textureBit, OPAQUE RGB). Re-emit it opaque, but drop the
       // channel's "empty" value to α = 0 so the lit viewport reads through where there's no data.
       vec3 c = outColor.rgb;
-      if (uMode > 1.5) {
+      if (uMode > 2.5) {
+        // BITS mode: shadow bitfield — the RED byte's bits 0..4 are the 5 lights. Pixi's high-shader is
+        // GLSL ES 1.00 (no uint), so extract bits with float math (exact on rgba8). Sum a colour per set
+        // bit → overlaps add. Transparent where no bit is set (the world reads through).
+        float n = floor(c.r * 255.0 + 0.5);
+        vec3 acc = vec3(0.0);
+        if (mod(floor(n /  1.0), 2.0) > 0.5) acc += vec3(1.0, 0.25, 0.25); // light 0 — red
+        if (mod(floor(n /  2.0), 2.0) > 0.5) acc += vec3(0.25, 1.0, 0.30); // light 1 — green
+        if (mod(floor(n /  4.0), 2.0) > 0.5) acc += vec3(0.30, 0.55, 1.0); // light 2 — blue
+        if (mod(floor(n /  8.0), 2.0) > 0.5) acc += vec3(1.0, 0.95, 0.25); // light 3 — yellow
+        if (mod(floor(n / 16.0), 2.0) > 0.5) acc += vec3(1.0, 0.35, 1.0);  // light 4 — magenta
+        outColor = length(acc) < 0.01 ? vec4(0.0) : vec4(clamp(acc, 0.0, 1.0), 1.0);
+      } else if (uMode > 1.5) {
         // BLACK mode: zdepth — near-black is "nothing here".
         outColor = length(c) < 0.02 ? vec4(0.0) : vec4(c, 1.0);
       } else if (uMode > 0.5) {
@@ -98,7 +113,7 @@ export class OverlayShader extends Shader {
     this.resources.uSampler = value.source.style;
   }
 
-  /** The drop-mode ({@link OVERLAY_ALL} | {@link OVERLAY_FLAT} | {@link OVERLAY_BLACK}). */
+  /** The drop-mode ({@link OVERLAY_ALL} | {@link OVERLAY_FLAT} | {@link OVERLAY_BLACK} | {@link OVERLAY_BITS}). */
   set mode(value: number) {
     this.resources.overlayUniforms.uniforms.uMode = value;
     this.resources.overlayUniforms.update();
