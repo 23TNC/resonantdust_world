@@ -40,10 +40,6 @@ import { makeMaterialBakeShader, type MaterialBakeShader } from "./materialBakeS
 import { makeDepthBakeShader, type DepthBakeShader } from "./depthBakeShader";
 import { makeNormalBakeShader, type NormalBakeShader } from "./normalBakeShader";
 import { makeSurfaceBakeShader, type SurfaceBakeShader } from "./surfaceBakeShader";
-import type { LightingBakeShader } from "./lightingBakeShader";
-import { makeShadowMaskShader, makeShadowGeometry, channelForLight, type ShadowMaskShader } from "./scatterShader";
-import { projectCaster, type Caster } from "./projectCaster";
-import type { Outline } from "../../textures/OutlineCache";
 import type { PackedChannel } from "./material";
 import {
   mod,
@@ -136,10 +132,6 @@ export type PrimitiveSpec = Omit<Primitive, "id" | "tint" | "zIndex"> &
 export interface ChannelSpec {
   key: string;
   resolve: (prim: Primitive) => ResolvedPrim;
-  /** A **derived** composite — NOT baked per-prim, but by a post-pass over another channel (the cold
-   *  `lightmap`, from the `normal` slot; lighting P1). Skipped in the per-prim channel loop; rides the
-   *  same buffers / swap / reproject / display lifecycle as any channel. `resolve` is never called. */
-  derived?: boolean;
 }
 
 interface PrimEntry {
@@ -198,8 +190,6 @@ interface PrevLayer {
 class Channel {
   readonly key: string;
   readonly resolve: (prim: Primitive) => ResolvedPrim;
-  /** Derived (post-pass) composite — skipped in the per-prim bake loop. See {@link ChannelSpec}. */
-  readonly derived: boolean;
   bufs: [RenderTexture, RenderTexture] | null = null;
   /** The outgoing buffer, held one frame during a LOD swap. */
   prevComposite: RenderTexture | null = null;
@@ -207,7 +197,6 @@ class Channel {
   constructor(spec: ChannelSpec) {
     this.key = spec.key;
     this.resolve = spec.resolve;
-    this.derived = spec.derived ?? false;
   }
 
   /** (Re)allocate the fixed ping-pong pair `cw × ch` at `res`, both cleared. */
@@ -286,7 +275,6 @@ export class SquareCache {
   private readonly empty = new Container();
   private readonly bakeContainer = new Container();
   private readonly blitSprite = new Sprite();
-  private blitMesh: Mesh<Geometry> | null = null; // verbatim (non-premultiply) blit — plain textured mesh, blendMode "none"
   private readonly bakePool: Sprite[] = [];
   /** Material-bake meshes, pooled parallel to {@link bakePool} — a prim resolving to a
    *  {@link MaterialResolve} draws through one of these (its own shader = its own
@@ -305,21 +293,6 @@ export class SquareCache {
   /** The unit-quad geometry every material mesh shares (per-prim world rect comes from the
    *  mesh transform; per-prim params from its shader). Lazily built (needs no renderer). */
   private materialQuad: MeshGeometry | null = null;
-  /** The cold-light lightmap bake material (the `derived` lightmap channel), or null when this cache
-   *  doesn't light (the warm cache). Its lights/ambient are set by the Viewport before each bake. */
-  private lightBake: LightingBakeShader | null = null;
-  /** The rect-local quad + its mesh for the lightmap bake (lazily built, reused). */
-  private lightmapQuad: MeshGeometry | null = null;
-  private lightmapMesh: Mesh | null = null;
-  // ── cold SHADOW bake (lighting P4): project casters through the cold lights into a coldShadow
-  //    composite (R/G/B = cold light 0/1/2), sampled by the lightmap bake. One shader/geo/mesh per
-  //    lane (their own uChannel). The Viewport supplies the caster resolver + the cold lights.
-  private readonly shadowShaders: ShadowMaskShader[] = [];
-  private readonly shadowGeos: ReturnType<typeof makeShadowGeometry>[] = [];
-  private readonly shadowMeshes: Mesh<Geometry, ShadowMaskShader>[] = [];
-  private readonly shadowContainer = new Container();
-  private coldShadowLights: { x: number; y: number; z: number; radius: number }[] = [];
-  private resolveCaster: ((prim: Primitive) => { caster: Caster; outline: Outline } | null) | null = null;
   /** The tiling noise atlas bound to every material bake (rows = fields). `null` until the
    *  viewport sets it — a null noise atlas disables the material path (flat, as before). */
   private noiseTex: Texture | null = null;
@@ -342,36 +315,6 @@ export class SquareCache {
   setNoise(texture: Texture | null, rows: number, uvTile: number, worldTile: number): void {
     this.noiseTex = texture;
     this.noiseGlobals = [rows, uvTile, worldTile];
-  }
-
-  /** Enable the cold-light lightmap bake (lighting P1): a `derived: true` `lightmap` channel is baked
-   *  from the `normal` slot after each square's geometry bakes. The Viewport sets `shader`'s cold
-   *  lights + ambient before `bakeDirty`. Call once (the cold cache only). */
-  enableLightBake(shader: LightingBakeShader): void {
-    this.lightBake = shader;
-  }
-
-  /** Enable the cold-SHADOW bake (lighting P4): `resolve` turns a standing prim into a {@link Caster}
-   *  + its silhouette (the Viewport wires it to `OutlineCache`); the coldShadow composite gets 3 lanes
-   *  (R/G/B), each a shadow shader/geo/mesh with its own `uChannel`, additive so lanes don't clobber. */
-  enableColdShadow(resolve: (prim: Primitive) => { caster: Caster; outline: Outline } | null): void {
-    this.resolveCaster = resolve;
-    for (let i = 0; i < 3; i++) {
-      const s = makeShadowMaskShader();
-      s.setChannel(channelForLight(i)); // fixed lane R/G/B
-      const g = makeShadowGeometry();
-      const m = new Mesh({ geometry: g.geometry, shader: s });
-      m.blendMode = "max"; // coverage per lane clamps at 1 (add would sum overlapping caster tris past 1)
-      this.shadowShaders.push(s);
-      this.shadowGeos.push(g);
-      this.shadowMeshes.push(m);
-    }
-  }
-
-  /** The cold lights that cast baked shadows this pass (≤3, the first three cold lights). Set by the
-   *  Viewport before `bakeDirty`, in the SAME order `LightingBakeShader.setLights` packed them. */
-  setColdShadowLights(lights: { x: number; y: number; z: number; radius: number }[]): void {
-    this.coldShadowLights = lights;
   }
 
   /** The buffer the viewport's display mesh samples for channel `key` — the outgoing
@@ -674,15 +617,6 @@ export class SquareCache {
     return this.prims.get(id)?.prim ?? null;
   }
 
-  /** The STANDING prims — `zIndex ≥ 1` (things, not ground tiles) — the shadow pass casts
-   *  from. Ground tiles (`zIndex 0`) don't cast. Insertion order; the caller resolves each
-   *  prim's silhouette texture + depth. */
-  standingPrims(): Primitive[] {
-    const out: Primitive[] = [];
-    for (const { prim } of this.prims.values()) if (prim.zIndex >= 1) out.push(prim);
-    return out;
-  }
-
   /** Re-evaluate `id`'s footprint after a mutation: relink if it moved/resized, and dirty
    *  both the old and new squares (its art/tint may also have changed). */
   refreshPrim(id: number): void {
@@ -811,7 +745,6 @@ export class SquareCache {
     const ay = sy === 0 ? (rows + 1) * slotPx : sy === rows - 1 ? 0 : -1;
 
     for (const ch of this.channels) {
-      if (ch.derived) continue; // baked by the post-pass below (cold lightmap), not per-prim
       const target = ch.bufs![active];
       this.bakeContainer.removeChildren();
       for (let i = 0; i < list.length; i++) {
@@ -838,124 +771,6 @@ export class SquareCache {
       if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);
       if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
     }
-    // Derived: bake this square's cold LIGHTMAP from its just-baked NORMAL slot (lighting P1).
-    if (this.lightBake) this.bakeLightmapSquare(renderer, wc, wr, slotX, slotY, ax, ay, s);
-  }
-
-  /** Bake the derived `lightmap` composite for a just-baked square: sample its NORMAL slot + sum the
-   *  cold lights (`this.lightBake`, its lights/ambient set by the Viewport before `bakeDirty`) into
-   *  the scratch, then blit to the lightmap slot (interior + wrap-apron). Reuses the square's slot
-   *  geometry from {@link bakeSquare} + the same `blit`. `s = slotPx/SQUARE` (rect-local → slot). */
-  private bakeLightmapSquare(
-    renderer: Renderer,
-    wc: number,
-    wr: number,
-    slotX: number,
-    slotY: number,
-    ax: number,
-    ay: number,
-    s: number,
-  ): void {
-    const lm = this.channels.find((c) => c.key.startsWith("lightmap"));
-    const nrm = this.channels.find((c) => c.key.startsWith("normal"));
-    if (!this.lightBake || !lm?.bufs || !nrm?.bufs) return;
-    if (!this.lightmapQuad) {
-      // Rect-local quad (0..SQUARE world px), aUV 0..1; the scale-only transform maps it to the slot.
-      this.lightmapQuad = new MeshGeometry({
-        positions: new Float32Array([0, 0, SQUARE, 0, SQUARE, SQUARE, 0, SQUARE]),
-        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
-      });
-    }
-    if (!this.lightmapMesh) this.lightmapMesh = new Mesh({ geometry: this.lightmapQuad, shader: this.lightBake });
-    else this.lightmapMesh.shader = this.lightBake;
-    // Sample the NORMAL composite through this square's slot UV (vUV 0..1 → the slot sub-rect).
-    this.lightBake.normal = nrm.bufs[this.active];
-    this.lightBake.setNormalUv(slotX / this.fixedCW, slotY / this.fixedCH, this.slotPx / this.fixedCW, this.slotPx / this.fixedCH);
-    this.lightBake.setRectWorld(squareWorldX(wc), squareWorldY(wr));
-    // Cold SHADOWS (P4): bake this square's coldShadow slot FIRST, then point the lightmap bake at it
-    // (its own read-of-coldShadow, write-to-lightmap — no conflict). No-op if not enabled.
-    const csh = this.channels.find((c) => c.key.startsWith("shadow"));
-    if (csh?.bufs && this.resolveCaster) {
-      this.bakeColdShadowSquare(renderer, wc, wr, slotX, slotY, ax, ay, s);
-      this.lightBake.coldShadow = csh.bufs[this.active];
-      this.lightBake.setShadowRect(slotX / this.fixedCW, slotY / this.fixedCH, this.slotPx / this.fixedCW, this.slotPx / this.fixedCH);
-    }
-    const ms = new Matrix(s, 0, 0, s, 0, 0); // scale-only: rect-local 0..SQUARE → 0..slotPx
-    renderer.render({ container: this.lightmapMesh, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 1], transform: ms });
-    const target = lm.bufs[this.active];
-    this.blit(renderer, this.scratchTex!, slotX, slotY, target);
-    if (ax >= 0) this.blit(renderer, this.scratchTex!, ax, slotY, target);
-    if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);
-    if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
-  }
-
-  /** Grow shadow lane `i`'s vertex buffer (doubling from its current cap) to hold `need` vertices, so
-   *  `projectCaster` never silently drops casters once the buffer fills. Ports the old game's
-   *  `ensureShadowMesh` growth. Only reallocates when it must; a bigger buffer is kept across squares. */
-  private ensureShadowCap(i: number, need: number): void {
-    const cur = this.shadowGeos[i].pos.data.length / 2; // current vertex capacity
-    if (need <= cur) return;
-    let cap = cur;
-    while (cap < need) cap *= 2;
-    const g = makeShadowGeometry(cap);
-    this.shadowMeshes[i].geometry.destroy();
-    this.shadowMeshes[i].geometry = g.geometry;
-    this.shadowGeos[i] = g;
-  }
-
-  /** Bake this square's coldShadow slot (lighting P4): project every nearby caster's silhouette
-   *  through each cold light (≤3) into its lane (world-space, `pan = 0`), all lanes additive so they
-   *  don't clobber, then blit to the `shadow` composite slot. Reuses the world→slot transform. */
-  private bakeColdShadowSquare(
-    renderer: Renderer,
-    wc: number,
-    wr: number,
-    slotX: number,
-    slotY: number,
-    ax: number,
-    ay: number,
-    s: number,
-  ): void {
-    const csh = this.channels.find((c) => c.key.startsWith("shadow"));
-    if (!csh?.bufs || !this.resolveCaster) return;
-    // world → slot: scale s + translate the square's world origin to the slot origin (as bakeSquare's m).
-    const m = new Matrix(s, 0, 0, s, -squareWorldX(wc) * s, -squareWorldY(wr) * s);
-    this.shadowContainer.removeChildren();
-    const nLights = Math.min(3, this.coldShadowLights.length);
-    for (let i = 0; i < nLights; i++) {
-      const L = this.coldShadowLights[i];
-      // Gather EVERY in-range, resolvable caster + sum the vertex `need` first, so the lane buffer grows
-      // to hold them all — projectCaster silently drops casters once its buffer fills (the bug: near +
-      // far trees just vanished depending on iteration order).
-      const casters: { caster: Caster; outline: Outline }[] = [];
-      let need = 0;
-      for (const prim of this.standingPrims()) {
-        if (Math.hypot(prim.x - L.x, prim.y - L.y) > L.radius + 300) continue; // coarse light-reach cull
-        const r = this.resolveCaster(prim);
-        if (!r) continue;
-        casters.push(r);
-        for (const pg of r.outline.polygons) need += pg.triangles.length;
-      }
-      this.ensureShadowCap(i, need); // grow (doubling) so no caster is dropped
-      const geo = this.shadowGeos[i];
-      const pos = geo.pos.data as Float32Array;
-      let v = 0;
-      for (const r of casters) v = projectCaster(pos, v, r.caster, r.outline, L.x, L.y, L.z, 0, 0); // pan 0 → world
-      pos.fill(0, v * 2); // degenerate tail → draws nothing
-      geo.pos.update();
-      if (v > 0) this.shadowContainer.addChild(this.shadowMeshes[i]);
-    }
-    // One render (max lanes) → scratch via m (world→slot), then blit to the coldShadow slot.
-    // Scratch clears to A=0 (a data-lane zero, not opacity) and the blit is VERBATIM (a Mesh, not a
-    // premultiplying Sprite) — this is the bitfield write path proven on the interim: if RGB coverage
-    // survives A=0 here, low-alpha bitfield texels will survive too. [P2 stage A/C]
-    renderer.render({ container: this.shadowContainer, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 0], transform: m });
-    const target = csh.bufs[this.active];
-    this.blitVerbatim(renderer, this.scratchTex!, slotX, slotY, target);
-    if (ax >= 0) this.blitVerbatim(renderer, this.scratchTex!, ax, slotY, target);
-    if (ay >= 0) this.blitVerbatim(renderer, this.scratchTex!, slotX, ay, target);
-    if (ax >= 0 && ay >= 0) this.blitVerbatim(renderer, this.scratchTex!, ax, ay, target);
   }
 
   /** Mirror the west facing: shift the origin by the width so the flipped quad still
@@ -1102,34 +917,6 @@ export class SquareCache {
     this.blitSprite.width = this.slotPx;
     this.blitSprite.height = this.slotPx;
     renderer.render({ container: this.blitSprite, target, clear: false });
-  }
-
-  /** Like {@link blit}, but via a plain textured Mesh + `blendMode "none"` (the same path the
-   *  reproject copy uses) instead of a Sprite. A Sprite's batch shader **premultiplies** `RGB × A`,
-   *  which zeroes the bits of a bitfield texel whose `A = 0`; a Mesh writes the sampled texel
-   *  verbatim. Used for the 32-bit `shadow-cold` field, where alpha is a data lane not opacity. */
-  private blitVerbatim(renderer: Renderer, srcTex: Texture, dx: number, dy: number, target: RenderTexture): void {
-    const f = srcTex.frame;
-    f.x = 0;
-    f.y = 0;
-    f.width = this.slotPx;
-    f.height = this.slotPx;
-    srcTex.updateUvs();
-    if (!this.blitMesh) {
-      const p = this.slotPx;
-      const geo = new Geometry({
-        attributes: {
-          aPosition: { buffer: new Buffer({ data: new Float32Array([0, 0, p, 0, p, p, 0, p]), usage: BufferUsage.VERTEX }), format: "float32x2" },
-          aUV: { buffer: new Buffer({ data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), usage: BufferUsage.VERTEX }), format: "float32x2" },
-        },
-        indexBuffer: new Buffer({ data: new Uint32Array([0, 1, 2, 0, 2, 3]), usage: BufferUsage.INDEX }),
-      });
-      this.blitMesh = new Mesh({ geometry: geo, texture: srcTex });
-      this.blitMesh.blendMode = "none";
-    }
-    this.blitMesh.texture = srcTex;
-    this.blitMesh.position.set(dx, dy);
-    renderer.render({ container: this.blitMesh, target, clear: false });
   }
 
   // ── display ──────────────────────────────────────────────────────────────────

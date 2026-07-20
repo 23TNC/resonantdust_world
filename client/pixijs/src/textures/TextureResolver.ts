@@ -130,8 +130,8 @@ export class TextureResolver {
     this.manifest.setRoot(texturesRoot);
   }
 
-  /** The current `/textures` root (empty until login) — so siblings like the `OutlineCache` can
-   *  fetch from the same origin without re-plumbing login. */
+  /** The current `/textures` root (empty until login) — so sibling caches can fetch from the same
+   *  origin without re-plumbing login. */
   rootUrl(): string {
     return this.root;
   }

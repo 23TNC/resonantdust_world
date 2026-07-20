@@ -34,3 +34,23 @@ does not yet sample the sprite via the per-triangle UVs the model specifies.
 the code predates it. Not yet reconciled — flagged so the geometry is ported deliberately (not the
 stale axis) when the shadow pass is next touched. Fix: port the 5-triangle fan + presence-derived
 depths + UV sampling from `design/shadows.md`.
+
+---
+
+## D-3 · Whole interim lighting/shadow build removed ("nuke and try again") — 2026-07-19
+
+**Plan** ([`todo.md`](todo.md)/[`completed.md`](completed.md)): iterate the tiered build forward from the
+3-lane interim (P2 bitfield re-attempt, P5 stopgap retire, etc.).
+
+**What we did:** at the user's direction, DELETED the entire lighting + shadow stack instead — `LightRig`,
+`lightingShader`, `lightingBakeShader`, `shadowPass`, `scatterShader`, `projectCaster`,
+`warmCombineShader`, `coldLightTex`, the cold `lightmap`/`shadow` channels + their bakes, the cursor
+light/shadow, and `OutlineCache`. The viewport display is now a new **unlit** `albedoBlitShader` that
+still composites warm-over-cold (pawns draw). The G-buffer bakes (albedo/normal/surface/zdepth in
+`SquareCache`) were **kept** as the retry foundation. Build + typecheck green; verified in-browser
+(flat albedo terrain renders, no black, no console errors).
+
+**Why:** the tiered port failed to land a working result; the user chose to reset to a clean unlit
+base and re-plan the lighting from scratch rather than keep iterating the broken interim. The **Why** +
+**Architecture** (README) and intent/design docs stay as the target; the phased `todo`/`completed`
+here describe the reverted attempt and are pending re-planning (see the README status banner).

@@ -1,5 +1,14 @@
 # Work — lighting (tiered cold / dynamic light-accumulation)
 
+> **STATUS 2026-07-19 — NUKED, restarting.** The interim build failed and was removed: the whole
+> lighting + shadow stack (`LightRig`, `lightingShader`, `lightingBakeShader`, `shadowPass`,
+> `scatterShader`, `projectCaster`, `warmCombineShader`, the cold `lightmap`/`shadow` channels, the
+> cursor light + shadows, `OutlineCache`) is gone. The viewport now renders **unlit albedo** via a new
+> `albedoBlitShader` (warm-over-cold composite preserved so pawns still draw); the G-buffer bakes
+> (albedo/normal/surface/zdepth) survive as the retry foundation. The **Why** + **Architecture** below
+> and the intent/design docs remain the target to rebuild toward — but the phased plan / interim state
+> in `todo.md` + `completed.md` describe the reverted attempt and need re-planning before the next go.
+
 _Opened 2026-07-18. Port the old game's **tiered lighting** onto the new game's rect/G-buffer, replacing
 the current single-pass stopgap (ambient + sun + a 32-light real-time loop gated by ONE global cursor
 shadow). Authoritative prior design: `../resonantdust/docs/tiered_lighting.md` (design-locked). Depends
@@ -8,9 +17,9 @@ on the [art-metadata](../art-metadata/README.md) **outline** sidecars (now built
 ## Why — the problem the current renderer can't solve
 
 Lighting a 2.5D board with **many** lights, each with **per-light** shadows. The cost that dominates is
-rebuilding shadows — a *per-light* cost — so lights are split by how often they change. The new game's
-[`lightingShader.ts`](../../../client/pixijs/src/game/viewport/lightingShader.ts) sums all lights into
-one `direct` term and multiplies it by a **single** screen-space shadow (from `shadowCasters()[0]`, the
+rebuilding shadows — a *per-light* cost — so lights are split by how often they change. The reverted
+interim `lightingShader.ts` summed all lights into
+one `direct` term and multiplied it by a **single** screen-space shadow (from `shadowCasters()[0]`, the
 cursor). That's a global lit/unlit mask: it breaks the instant a second shadow-caster exists (light B
 lighting a spot "un-shadows" it for A). The fix is **per-light occlusion inside the accumulation**, which
 the tiered model gives by construction — each light's contribution is computed *with its own occlusion*
@@ -34,7 +43,7 @@ lit = albedo × ( lightmap_cold + Σ₃₂ warm·falloff·N·L·!occ(warm|hot) +
 
 This is the old game's proven design + two upgrades: **`shadow-cold` as a 32-bit bitfield** (old game was
 RGB=3) and a dedicated always-fresh **`shadow-rt`**. It **replaces** the stopgaps — the wedge
-[`shadowPass.ts`](../../../client/pixijs/src/game/viewport/shadowPass.ts) and the single global shadow.
+`shadowPass` and the single global shadow.
 All tiers share `projectCaster` + the scatter shader (`outColor=uChannel`, `max` blend, 4 lanes/map).
 
 ## The load-bearing constraints (from `tiered_lighting.md` — don't relitigate)
@@ -61,8 +70,9 @@ _These govern the shared scatter→bitfield engine (cold + warm + rt all use it)
 ## What's already in place (new game) vs net-new
 
 **In place** — the G-buffer **rect tiers** ([`SquareCache`](../../../client/pixijs/src/game/viewport/SquareCache.ts):
-cold+warm, dirty bake, toroidal, normal/albedo/surface/zdepth); [`LightRig`](../../../client/pixijs/src/game/lighting/LightRig.ts)
-(point lights, cursor, z/radius); the display mesh + shader; the **outline** sidecars (art-metadata).
+cold+warm, dirty bake, toroidal, normal/albedo/surface/zdepth); the display mesh + shader; the
+**outline** sidecars (art-metadata). (`LightRig` — point lights, cursor, z/radius — was part of the
+nuked build; the retry re-adds a light source.)
 
 **Net-new** — the cold **light-data texture** + the **32-bit `shadow-cold` bitfield** ([F7](forks.md#f7),
 32 casters, bake-time); the dynamic **scatter → `shadow-warm` bitfield** + **ping-pong** writeback

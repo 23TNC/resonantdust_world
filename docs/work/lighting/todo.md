@@ -64,7 +64,7 @@ because its scratch cleared to `A = 1`.
 
 ## P5 · Retire the stopgaps
 
-- [ ] Delete the wedge [`shadowPass.ts`](../../../client/pixijs/src/game/viewport/shadowPass.ts) + the
+- [ ] Delete the wedge `shadowPass` + the
       single global `uShadow` multiply in the display. Verify multi-light: two casters, B lighting A's spot
       does NOT un-shadow it. (Reconcile the `nsProject` axis when the caster geometry is next touched —
       [D-2](deviations.md).)

@@ -8,10 +8,10 @@
 //! one quad per resident world square, panned around the anchor and scaled by the
 //! zoom. The mesh renders as an ordinary child of the Pixi scene graph.
 //!
-//! DEFERRED LIGHTING display: the cache bakes albedo + normal + depth channels, and the
-//! mesh draws with {@link LightingShader}, which samples the normal + albedo composites
-//! and lights per-fragment (ambient + directional sun today; point lights + depth shadows
-//! extend the shader in place). The depth composite is bound once the shadow pass lands.
+//! UNLIT display (lighting nuked, to be rebuilt): the cache still bakes the full G-buffer
+//! (albedo + normal + surface + depth) as the foundation for the lighting retry, but the mesh
+//! draws with {@link AlbedoBlitShader} — a straight albedo blit, warm (movers) composited over
+//! cold by warm coverage. No lighting or shadow pass runs.
 
 import { Buffer, BufferUsage, Container, Geometry, Graphics, Mesh, Texture } from "pixi.js";
 import type { Renderer } from "pixi.js";
@@ -22,12 +22,8 @@ import type { RtChannel } from "../panels/rt/RtPanel";
 import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } from "./SquareCache";
 import { NOISE_FIELDS, PACKED_UNIFORM_LEN, type MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
-import { makeLightingShader, type LightingShader } from "./lightingShader";
+import { makeAlbedoBlitShader, type AlbedoBlitShader } from "./albedoBlitShader";
 import { makeOverlayShader, overlayModeFor, type OverlayShader } from "./overlayShader";
-import { LightRig } from "../lighting/LightRig";
-import { ShadowPass, type ShadowCaster } from "./shadowPass";
-import { makeLightingBakeShader } from "./lightingBakeShader";
-import { OutlineCache } from "../../textures/OutlineCache";
 
 /** Dirty squares baked per frame. A fresh window dirties its whole grid; the budget
  *  spreads that over a few frames so the first open never hitches. */
@@ -37,48 +33,6 @@ const BAKE_BUDGET = 128;
  *  flood (fresh window / LOD swap re-dirties every warm slot, mostly empty) can't starve the
  *  static world of bake budget. */
 const COLD_BAKE_FLOOR = 64;
-
-/** The wedge's ground angle (0 = flat / depth vertical, π/2 = standing / depth N–S). */
-const GROUND_ANGLE = (65 * Math.PI) / 180;
-
-/** The tight bounding box of a sprite's PRESENT pixels — the SURFACE map's B channel (coverage)
- *  at/above the hard threshold — as fractions 0..1 of the texture (x: 0 left → 1 right, y: 0 top →
- *  1 bottom). The shadow FLOORS derive from it: the E/W floor is the box's BOTTOM edge (`maxY`, the
- *  foot the sprite stands on), the N/S floor its LEFT-RIGHT CENTRE (`(minX+maxX)/2`, the vertical
- *  midline a rolled sprite pivots on). Pixi discards the CPU bitmap after upload, so we read it
- *  back through `extract`. Null on failure (caller falls back to the whole box); a fully-transparent
- *  sprite returns the whole 0..1 box. Computed once per stem and cached. */
-interface SpriteBBox {
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
-}
-const FULL_BBOX: SpriteBBox = { minX: 0, maxX: 1, minY: 0, maxY: 1 };
-function spriteBBox(renderer: Renderer, texture: Texture): SpriteBBox | null {
-  try {
-    const out = renderer.extract.pixels(texture) as { pixels: Uint8ClampedArray | Uint8Array; width: number; height: number };
-    const { pixels, width, height } = out;
-    if (!width || !height || !pixels) return null;
-    let minX = width, maxX = -1, minY = height, maxY = -1;
-    for (let y = 0; y < height; y++) {
-      const row = y * width;
-      for (let x = 0; x < width; x++) {
-        if (pixels[(row + x) * 4 + 2] >= 250) {
-          // B = coverage
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-    if (maxX < 0) return FULL_BBOX; // fully transparent → no crop
-    return { minX: minX / width, maxX: (maxX + 1) / width, minY: minY / height, maxY: (maxY + 1) / height };
-  } catch {
-    return null;
-  }
-}
 
 /** Encode a prim's SUB-TILE ROW as its depth byte: `5 + (row % 251)` → the range 5..255, with 0..4
  *  RESERVED (0 = blank / no depth, so the reserved band itself signals "nothing here" — no extra
@@ -90,15 +44,6 @@ function spriteBBox(renderer: Renderer, texture: Texture): SpriteBBox | null {
 function depthUnit(worldY: number): number {
   const row = Math.floor(worldY / (SQUARE / 3)); // 3 sub-rows per tile: top/center/bottom
   return (5 + (((row % 251) + 251) % 251)) / 255; // 5..255; 0..4 reserved
-}
-
-/** The shadow billboard roll for a texture stem's FACING (its trailing `/<dir>` segment): a
- *  front/back sprite (`s`/`n`) rolls its card edge-on to cast E/W (±1, sign per s vs n — north
- *  rolls opposite south); a side (`e`, west = `e`+flip) or linked (`l`) sprite uses the standard
- *  billboard (0). See {@link ShadowCaster.nsRoll}. */
-function nsRollFor(textureName: string): number {
-  const dir = textureName.slice(textureName.lastIndexOf("/") + 1);
-  return dir === "s" ? 1 : dir === "n" ? -1 : 0;
 }
 
 /** Zero material-channel params (no jitter) — shared by the albedo path when a prim has no
@@ -126,31 +71,17 @@ export class Viewport extends LayoutNode {
 
   // ── display mesh (one quad per resident world square) ───────────────────────────
   private mesh: Mesh<Geometry> | null = null;
-  /** The deferred lighting material the display mesh draws with — samples the cache's
-   *  normal + albedo composites and lights per-fragment (ambient + sun; point lights +
-   *  shadows in later phases). Owned here, bound with the live composites each frame. */
-  private readonly lightingShader: LightingShader = makeLightingShader();
+  /** The UNLIT display material the mesh draws with — a straight albedo blit (warm over cold),
+   *  no lighting/shadow. Owned here, bound with the live albedo/surface composites each frame.
+   *  The tiered lighting was removed; this is the stopgap until it's rebuilt. */
+  private readonly blitShader: AlbedoBlitShader = makeAlbedoBlitShader();
   /** The `/overlayRT` debug overlay: a second mesh SHARING the display geometry (so it samples a
-   *  composite in exact world register with the lit scene), drawn above the world with
+   *  composite in exact world register with the scene), drawn above the world with
    *  {@link OverlayShader}. {@link overlayChannelName} names the composite to show, or null (off);
    *  the mesh is built lazily on first enable. */
   private readonly overlayShader: OverlayShader = makeOverlayShader();
   private overlayMesh: Mesh<Geometry> | null = null;
   private overlayChannelName: string | null = null;
-  /** The light rig — sun + ambient + dynamic point lights — packed into the shader each
-   *  frame. Callers reach it via {@link lights} to register world lights / drive the cursor. */
-  private readonly rig = new LightRig();
-  /** The wedge shadow pass — rasterizes billboard shadows into a screen-space coverage RT
-   *  (viewable as the `shadow` channel in `/showRT`). Not yet sampled by the lighting pass. */
-  private readonly shadowPass = new ShadowPass();
-  /** The cold-light lightmap bake material (lighting P1), enabled on the cold cache; packed each
-   *  frame from the rig's cold lights, its output (`lightmap-cold`) sampled by the display. */
-  private readonly lightBake = makeLightingBakeShader();
-  /** On-demand caster silhouettes for the cold-shadow bake (lighting P4); root set from the resolver. */
-  private readonly outlines = new OutlineCache();
-  /** Per-stem sprite bounding box (present pixels, fractions of the texture) — the shadow floors
-   *  derive from it. Computed once from the surface pixels and reused every frame. */
-  private readonly bboxCache = new Map<string, SpriteBBox>();
   private curQuads = -1;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -289,34 +220,9 @@ export class Viewport extends LayoutNode {
           return { texture: resolver.white, tint: 0xffffff, depth: -1 }; // ground / geo → opaque black (no thing)
         },
       },
-      // The cold LIGHTMAP (cold cache only): a DERIVED composite baked from the normal slot (the cold
-      // lights summed, amortized). `resolve` is never called (derived); a placeholder keeps the type.
-      ...(suffix === "cold"
-        ? [
-            { key: "shadow-cold", derived: true, resolve: () => ({ texture: resolver.white, tint: 0 }) } as ChannelSpec,
-            { key: "lightmap-cold", derived: true, resolve: () => ({ texture: resolver.white, tint: 0 }) } as ChannelSpec,
-          ]
-        : []),
     ];
     this.map = new SquareCache(chan("cold"));
     this.warm = new SquareCache(chan("warm"));
-    // Cold-light lightmap bake (lighting P1) on the cold cache: the Viewport packs the rig's cold
-    // lights onto it before each `bakeDirty`; the display samples `lightmap-cold`.
-    this.map.enableLightBake(this.lightBake);
-    // Cold SHADOWS (P4): resolve a standing prim → its Caster box + silhouette (OutlineCache), so the
-    // bake projects it through the cold lights. `lightmap-cold` finds the `derived` channel by
-    // `.derived`, so the shadow channel is keyed distinctly + found by its `shadow` prefix.
-    this.map.enableColdShadow((prim) => {
-      if (!prim.textureName) return null;
-      const outline = this.outlines.get(prim.textureName);
-      if (!outline) return null;
-      let footNY = 0; // the silhouette's lowest contour point (normalized) = the ground line
-      for (const pg of outline.polygons) for (const c of pg.contour) if (c[1] > footNY) footNY = c[1];
-      return {
-        caster: { feetX: prim.x + prim.width / 2, groundY: prim.y + prim.height, footNY, h: prim.height, w: prim.width, left: prim.x },
-        outline,
-      };
-    });
     // When a tier lands, re-dirty every prim'd square (both tiers) so the bake upgrades.
     this.unsubLoad = resolver.onLoad(() => {
       this.map.invalidateAll();
@@ -352,12 +258,6 @@ export class Viewport extends LayoutNode {
   /** Current zoom (screen px per world px). */
   get zoom(): number {
     return this.zoomFactor;
-  }
-
-  /** The world-px point centred in the viewport (the camera anchor). `/coldlight` seeds its debug
-   *  light here. */
-  get anchor(): { x: number; y: number } {
-    return { x: this.anchorX, y: this.anchorY };
   }
 
   /** Zoom by `factor` about the body-local point `(sx,sy)` — the world point under
@@ -424,12 +324,6 @@ export class Viewport extends LayoutNode {
   /** Remove a warm mover primitive. */
   warmRemovePrim(id: number): void {
     this.warm.removePrim(id);
-  }
-
-  /** The light rig — register world-space point lights (mutate them to move a torch), set
-   *  the sun/ambient, or drive the cursor light. Lights are in WORLD px. */
-  get lights(): LightRig {
-    return this.rig;
   }
 
   /** The screen-space overlay layer above the baked world (see {@link overlayContainer}) —
@@ -511,8 +405,7 @@ export class Viewport extends LayoutNode {
   }
 
   /** Map a body-local screen point (px, origin at the viewport's top-left) to a WORLD-px
-   *  point — the same inverse transform {@link zoomAt} uses. Feed a pointermove through
-   *  this into {@link LightRig.setCursorWorld} to attach a hover light. */
+   *  point — the same inverse transform {@link zoomAt} uses (e.g. a pointermove → world tile). */
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
     const z = this.zoomFactor;
     return { x: this.anchorX + (sx - this.width / 2) / z, y: this.anchorY + (sy - this.height / 2) / z };
@@ -527,23 +420,19 @@ export class Viewport extends LayoutNode {
     return { x: (wx - this.anchorX) * z + this.width / 2, y: (wy - this.anchorY) * z + this.height / 2 };
   }
 
-  /** Named render-texture channels for the `/showRT` dev preview. Stable order so
-   *  the preview tiles don't reshuffle as channels light up: `albedo` is the live
-   *  fixed-slot composite (the map itself); `normal`/`emissive` are dormant until
-   *  their composites come online (the multi-channel bake), reporting `null`. */
+  /** Named render-texture channels for the `/showRT` dev preview + the `/overlayRT` overlay.
+   *  Stable order so the preview tiles don't reshuffle as channels come online — the full
+   *  G-buffer for both tiers (the lighting/shadow channels were removed with the lighting stack). */
   renderTextures(): RtChannel[] {
     return [
       { name: "albedo-cold", texture: this.map.displayComposite("albedo-cold") },
       { name: "normal-cold", texture: this.map.displayComposite("normal-cold") },
       { name: "surface-cold", texture: this.map.displayComposite("surface-cold") },
       { name: "zdepth-world-cold", texture: this.map.displayComposite("zdepth-world-cold") },
-      { name: "lightmap-cold", texture: this.map.displayComposite("lightmap-cold") },
-      { name: "shadow-cold", texture: this.map.displayComposite("shadow-cold") },
       { name: "albedo-warm", texture: this.warm.displayComposite("albedo-warm") },
       { name: "normal-warm", texture: this.warm.displayComposite("normal-warm") },
       { name: "surface-warm", texture: this.warm.displayComposite("surface-warm") },
       { name: "zdepth-world-warm", texture: this.warm.displayComposite("zdepth-world-warm") },
-      { name: "zdepth-hot", texture: this.shadowPass.texture },
     ];
   }
 
@@ -569,12 +458,9 @@ export class Viewport extends LayoutNode {
   }
 
   /** The channels the `/overlayRT` overlay can show — the WORLD-space composites from
-   *  {@link renderTextures}. `zdepth-hot` (the screen-space shadow RT) is excluded: it has no
-   *  world→UV map, so it can't be sampled through the world-aligned display geometry. */
+   *  {@link renderTextures} (all world-aligned, so all are sampleable through the display geometry). */
   overlayChannelNames(): string[] {
-    return this.renderTextures()
-      .map((c) => c.name)
-      .filter((n) => n !== "zdepth-hot");
+    return this.renderTextures().map((c) => c.name);
   }
 
   /** Display aspect ratio (width / height) — the `/showRT` preview sizes its tiles
@@ -597,7 +483,7 @@ export class Viewport extends LayoutNode {
     // Aim texture loads at the on-screen tile size (a tile is SQUARE world px).
     this.resolver.setTargetLod(SQUARE * z);
     // Both caches share the window/slot geometry (identical resize/recenter inputs), so their
-    // composites stay slot-aligned for the warm-over-cold composite in the lighting pass.
+    // composites stay slot-aligned for the warm-over-cold composite in the display blit.
     this.map.resize(w, h, renderer, z, this.anchorX, this.anchorY);
     this.warm.resize(w, h, renderer, z, this.anchorX, this.anchorY);
     this.map.recenter(this.anchorX, this.anchorY);
@@ -606,16 +492,6 @@ export class Viewport extends LayoutNode {
     // remaining budget (floored so a warm flood on a fresh window / LOD swap never fully
     // starves the static world).
     this.warm.bakeDirty(renderer, BAKE_BUDGET);
-    // Pack the current cold lights onto the bake shader so a dirty cold rect re-sums them into the
-    // cold_lightmap (lighting P1). The bake runs inside `this.map.bakeDirty` (the derived channel).
-    this.rig.packCold(this.lightBake);
-    // Cold SHADOWS (P4): the caster silhouettes fetch from the same textures root, and the first 3
-    // cold lights (same order as packCold) get baked shadow lanes.
-    this.outlines.setRoot(this.resolver.rootUrl());
-    this.map.setColdShadowLights(this.rig.coldShadowLights());
-    // Outlines load async: a caster throws no shadow until its silhouette lands. When any lands,
-    // re-dirty the cold squares so their shadow lanes re-bake now that the geometry exists.
-    if (this.outlines.takeResolved()) this.map.invalidateAll();
     this.map.bakeDirty(renderer, Math.max(BAKE_BUDGET - this.warm.lastBaked, COLD_BAKE_FLOOR));
     if (!this.map.ready) return;
 
@@ -631,61 +507,27 @@ export class Viewport extends LayoutNode {
     this.posBuf!.update();
     this.uvBuf!.update();
     if (this.mesh) this.mesh.scale.set(z);
-    // Bind the live composites to the lighting shader (both share the same swap state, so
-    // they stay consistent through a LOD swap). The mesh's main texture IS the normal
-    // composite (textureBit samples it); albedo is a second sampler the shader reads.
+    // Bind the live composites to the display blit (both share the same swap state, so they stay
+    // consistent through a LOD swap). The mesh's main texture IS the cold albedo composite
+    // (textureBit samples it); the cold surface + warm albedo/surface are extra samplers that
+    // let the blit composite warm (movers) over cold by warm coverage.
     const albedo = this.map.displayComposite("albedo-cold");
-    const normal = this.map.displayComposite("normal-cold");
     const surface = this.map.displayComposite("surface-cold");
-    const zdepthWorld = this.map.displayComposite("zdepth-world-cold");
-    if (albedo && normal && surface && zdepthWorld && this.mesh) {
-      this.lightingShader.albedo = albedo;
-      this.lightingShader.normal = normal;
-      this.lightingShader.surface = surface;
-      this.lightingShader.depth = zdepthWorld;
-      // Cold lightmap (lighting P1) — the baked static-light sum, added to the display's light sum.
-      const coldLightmap = this.map.displayComposite("lightmap-cold");
-      if (coldLightmap) this.lightingShader.coldLightmap = coldLightmap;
-      // Warm tier: the same four composites for the movers, slot-aligned with cold (same
-      // window). The lighting shader composites warm OVER cold per-fragment by warm surface.B,
-      // then lights the merged G-buffer — so pawns light + shadow like the world. When warm
-      // isn't ready yet its samplers stay EMPTY (coverage 0 → pure cold).
+    if (albedo && surface && this.mesh) {
+      this.blitShader.albedo = albedo;
+      this.blitShader.surface = surface;
+      // Warm tier: mover albedo/surface, slot-aligned with cold (same window). The blit composites
+      // warm OVER cold per-fragment by warm surface.B so pawns draw. When warm isn't ready its
+      // samplers stay EMPTY (coverage 0 → pure cold).
       const albedoW = this.warm.displayComposite("albedo-warm");
-      const normalW = this.warm.displayComposite("normal-warm");
       const surfaceW = this.warm.displayComposite("surface-warm");
-      const zdepthWorldW = this.warm.displayComposite("zdepth-world-warm");
-      if (albedoW && normalW && surfaceW && zdepthWorldW) {
-        this.lightingShader.albedoWarm = albedoW;
-        this.lightingShader.normalWarm = normalW;
-        this.lightingShader.surfaceWarm = surfaceW;
-        this.lightingShader.depthWarm = zdepthWorldW;
+      if (albedoW && surfaceW) {
+        this.blitShader.albedoWarm = albedoW;
+        this.blitShader.surfaceWarm = surfaceW;
       }
-      // The mesh's aPosition is the PANNED world coord (worldX + panX); world-space lights
-      // add this pan to line up with the fragment's vWorld.
-      this.lightingShader.setPan(panX, panY);
-    }
-    // Upload the sun + ambient + dynamic point lights for this frame.
-    this.rig.pack(this.lightingShader);
-
-    // Shadow pass: rasterize wedge shadows for the first shadow-casting light into the coverage
-    // RT (body px, so it aligns 1:1 with the display), then bind it to the lighting shader so
-    // the display pass darkens the direct light where shadowed.
-    const shLight = this.rig.shadowCasters()[0];
-    const casters = shLight ? this.buildCasters(renderer) : [];
-    if (shLight && casters.length) {
-      this.shadowPass.render(renderer, w, h, 1, casters, shLight, GROUND_ANGLE, (wx) => (wx + panX) * z, (wy) => (wy + panY) * z);
-    } else {
-      this.shadowPass.clear(renderer, w, h, 1);
-    }
-    const shadowTex = this.shadowPass.texture;
-    if (shadowTex && this.mesh) {
-      this.lightingShader.shadow = shadowTex;
-      // vWorld = worldX + panX; bodyPx = vWorld·zoom; shadow uv = bodyPx / bodySize. The last
-      // pair is the Y flip (0,0 = none) — dialed in against the RT's sample orientation.
-      this.lightingShader.setShadowUv(z / w, z / h, 0, 0);
     }
 
-    // `/overlayRT`: draw the selected composite over the lit world (shares the display geometry,
+    // `/overlayRT`: draw the selected composite over the world (shares the display geometry,
     // so it's in exact world register), with the per-channel drop-empty rule.
     this.updateOverlay(z);
 
@@ -727,51 +569,6 @@ export class Viewport extends LayoutNode {
     return this.map.displayComposite(name);
   }
 
-  /** The shadow-pass caster list: each standing prim's billboard box + its resolved SURFACE
-   *  texture (its B channel is the silhouette/coverage the shadow rasterizes) + a placeholder
-   *  depth. Skips prims still on the geo tier (no surface) so only true silhouettes cast. */
-  private buildCasters(renderer: Renderer): ShadowCaster[] {
-    const out: ShadowCaster[] = [];
-    // Cold things AND warm movers cast — both are standing prims with a resolved silhouette.
-    for (const p of [...this.map.standingPrims(), ...this.warm.standingPrims()]) {
-      if (!p.textureName) continue;
-      // Only cast from things on the real tier (albedo AND surface loaded) — same gate as the
-      // depth/normal/surface bakes — so a geo-tier thing (still a box in albedo) doesn't throw
-      // a shadow from an invisible caster.
-      const alb = this.resolver.resolve(p.textureName, "albedo", p.cell);
-      const { texture, geo } = this.resolver.resolve(p.textureName, "surface", p.cell);
-      if (alb.geo || geo) continue;
-      // Sprite bounding box (present pixels) — read back from the GPU once per stem, then cached
-      // (fall back to the whole box if the readback fails, so the caster still shadows). A linked
-      // cell keys by (stem, cell) since each cell has its own silhouette. The shadow floors derive
-      // from it in the shadow pass.
-      const okey = p.cell != null ? `${p.textureName}#${p.cell}` : p.textureName;
-      let bbox = this.bboxCache.get(okey);
-      if (bbox === undefined) {
-        bbox = spriteBBox(renderer, texture) ?? FULL_BBOX;
-        this.bboxCache.set(okey, bbox);
-      }
-      out.push({
-        x: p.x,
-        y: p.y,
-        width: p.width,
-        height: p.height,
-        texture,
-        flipX: !!p.flipX,
-        depth: Math.max(4, p.width * 0.15), // placeholder until a real per-def depth lands
-        // Facing → billboard roll: the texture stem's trailing segment is the facing (`s`/`e`/`n`,
-        // west ships as `e`+flipX). A front/back (`s`/`n`) sprite rolls its card edge-on (±1, sign
-        // per s vs n); a side (`e`) or linked (`l`) sprite uses the standard billboard (0).
-        nsRoll: nsRollFor(p.textureName),
-        bbox,
-        // Same depth encoding as the `depth` composite (base y) so a thing's shadow matches its
-        // own receiver depth exactly → it never self-shadows.
-        tileDepth: depthUnit(p.y + p.height),
-      });
-    }
-    return out;
-  }
-
   /** (Re)allocate the display mesh's buffers when the resident-square count changes.
    *  Indices are a static two-triangle quad list; positions/UVs are filled per frame
    *  by {@link SquareCache.fillDisplay}. */
@@ -796,7 +593,7 @@ export class Viewport extends LayoutNode {
       indexBuffer: new Buffer({ data: idx, usage: BufferUsage.INDEX | BufferUsage.COPY_DST }),
     });
     if (!this.mesh) {
-      this.mesh = new Mesh<Geometry>({ geometry: geo, shader: this.lightingShader });
+      this.mesh = new Mesh<Geometry>({ geometry: geo, shader: this.blitShader });
       // Snap final vertex positions to whole device pixels in the shader, so the
       // grid's shared edges coincide exactly (no sub-pixel crack between quads).
       this.mesh.roundPixels = true;
@@ -818,12 +615,11 @@ export class Viewport extends LayoutNode {
     this.overlayContainer.destroy({ children: true });
     this.map.destroy();
     this.warm.destroy();
-    this.shadowPass.destroy();
     // The overlay mesh SHARES the display mesh's geometry (freed once via `this.mesh.geometry`
     // below); `super.destroy()` destroys the mesh child itself, so only its shader needs freeing.
     this.overlayShader.destroy();
     this.mesh?.geometry.destroy();
-    this.lightingShader.destroy();
+    this.blitShader.destroy();
     this.posBuf?.destroy();
     this.uvBuf?.destroy();
     super.destroy();

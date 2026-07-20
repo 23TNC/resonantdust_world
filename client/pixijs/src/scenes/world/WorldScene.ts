@@ -8,9 +8,8 @@ import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { RtPanel } from "../../game/panels/rt/RtPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
 import { MoverLayer } from "../../game/world/MoverLayer";
-import { pointLight } from "../../game/lighting/LightRig";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
-import { parseUrl, argFlag, type UrlCommand } from "../../debug/urlParams";
+import { parseUrl, type UrlCommand } from "../../debug/urlParams";
 import { SQUARE } from "../../game/viewport/squareMath";
 
 /** Accumulated wheel `deltaY` that halves or doubles the zoom (one LOD octave). */
@@ -54,7 +53,7 @@ export class WorldScene extends Scene {
    *  viewport camera into the client's anchor. */
   private bridge!: WorldBridge;
   /** The tick pipeline's mobile entities (pawns — the wolves): synced into the viewport's
-   *  WARM cache as prims (lit + shadowed like the world), not a separate overlay. */
+   *  WARM cache as prims (composited over the cold world), not a separate overlay. */
   private moverLayer!: MoverLayer;
   /** Unsubscribe from content hot-swaps; called on scene exit. */
   private contentUnsub: (() => void) | null = null;
@@ -207,8 +206,8 @@ export class WorldScene extends Scene {
   }
 
   /** Register every chat command against the chat panel. Each is also reachable from the URL query
-   *  (`debug/urlParams` → {@link runUrlCommands}), so `?ambient=1.5` and typing `/ambient 1.5` hit
-   *  the same handler. Debug/lighting commands sit alongside the panel/pause ones. */
+   *  (`debug/urlParams` → {@link runUrlCommands}), so `?grid=1` and typing `/grid 1` hit the same
+   *  handler. Debug commands sit alongside the panel/pause ones. */
   private registerCommands(): void {
     const view = () => this.viewport.view;
 
@@ -219,25 +218,6 @@ export class WorldScene extends Scene {
     // full size). Toggles: the same channel again turns it off. Empty/default values (flat normal,
     // black lightmap/shadow/depth) read through to the lit scene beneath.
     this.chat.registerCommand("overlayRT", (args) => this.overlayRenderTexture(args));
-
-    // `/ambient <f>` — lift the ambient floor to a neutral white boost of intensity `<f>`, so the
-    // scene reads clearly instead of fighting the lighting/shadows while debugging.
-    this.chat.registerCommand("ambient", (args) => {
-      const v = Number(args[0]);
-      if (!Number.isFinite(v)) return "Usage: /ambient <intensity>  (e.g. /ambient 1.0)";
-      const amb = view().lights.ambient;
-      amb.color = 0xffffff;
-      amb.intensity = v;
-      return `Ambient floor set to ${v} (white).`;
-    });
-
-    // `/nocursorlight [0|1]` — disable the cursor/hover point light (and the shadow pass it casts),
-    // so the non-shadow draw-call count reads in isolation. `/nocursorlight 0` re-enables it.
-    this.chat.registerCommand("nocursorlight", (args) => {
-      const disabled = argFlag(args[0], true);
-      view().lights.setCursorDisabled(disabled);
-      return disabled ? "Cursor light disabled." : "Cursor light enabled.";
-    });
 
     // `/grid [0|1|2|3]` — overlay the debug grid at a DETAIL LEVEL: 1 = region + zone + tile,
     // 2 = region + zone, 3 = region only, 0 = off. No arg TOGGLES (off ⇄ full detail).
@@ -255,16 +235,6 @@ export class WorldScene extends Scene {
       }
       view().setDebugGrid(level);
       return gridLabel[level];
-    });
-
-    // `/coldlight` — seed a debug STATIC (cold) light at the current camera centre, proving the P1
-    // cold_lightmap bake end-to-end until content authors cold lights.
-    this.chat.registerCommand("coldlight", () => {
-      const a = view().anchor;
-      view().lights.register(
-        pointLight({ x: a.x, y: a.y, height: 120, radius: 8 * SQUARE, color: 0xff8040, brightness: 3, tier: "cold" }),
-      );
-      return "Cold debug light seeded at the camera centre.";
     });
 
     // `/focus <tileX> <tileY>` — jump the camera centre to a tile (the `?focus=x,y` URL param).

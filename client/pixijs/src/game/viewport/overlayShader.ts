@@ -1,20 +1,20 @@
 //! The `/overlayRT` debug material — draws ONE of the viewport's G-buffer composites straight
-//! over the lit display, so a channel (albedo / normal / surface / depth / lightmap / shadow)
-//! can be inspected in-place, world-aligned, at full viewport size.
+//! over the display, so a channel (albedo / normal / surface / depth) can be inspected in-place,
+//! world-aligned, at full viewport size.
 //!
-//! It reuses the display mesh's geometry (the same per-square `aPosition`/`aUV` the lighting
-//! pass fills each frame), so the overlay samples the chosen composite in exact register with
-//! the world beneath it. `textureBit` samples the mesh's main texture (bound to the composite)
-//! into `outColor`; this bit then re-emits it with a per-mode "drop the empty/default value"
-//! rule so the overlay reveals only the channel's MEANINGFUL pixels and the lit scene shows
-//! through everywhere else:
+//! It reuses the display mesh's geometry (the same per-square `aPosition`/`aUV` the display blit
+//! fills each frame), so the overlay samples the chosen composite in exact register with the
+//! world beneath it. `textureBit` samples the mesh's main texture (bound to the composite) into
+//! `outColor`; this bit then re-emits it with a per-mode "drop the empty/default value" rule so
+//! the overlay reveals only the channel's MEANINGFUL pixels and the scene shows through
+//! everywhere else:
 //!
 //!   • {@link OVERLAY_ALL}   — albedo / surface: every texel opaque (nothing dropped).
 //!   • {@link OVERLAY_FLAT}  — normal: drop flat-up (`0x8080ff`) + empty/black cells (no relief).
-//!   • {@link OVERLAY_BLACK} — lightmap / coldshadow / zdepth: drop near-black (no data there).
+//!   • {@link OVERLAY_BLACK} — zdepth: drop near-black (no data there).
 //!
-//! Same Pixi v8 high-shader assembly as {@link lightingShader} (a GLSL compile error draws the
-//! mesh BLACK with only a `console.error`; a backtick inside a GLSL comment closes the literal).
+//! Same Pixi v8 high-shader assembly as the display blit (a GLSL compile error draws the mesh
+//! BLACK with only a `console.error`; a backtick inside a GLSL comment closes the literal).
 
 import {
   compileHighShaderGlProgram,
@@ -32,22 +32,14 @@ import {
  *  shows through. Passed to {@link OverlayShader.mode}. */
 export const OVERLAY_ALL = 0; // opaque everywhere (albedo, surface)
 export const OVERLAY_FLAT = 1; // drop flat-up normal + empty cells (normal)
-export const OVERLAY_BLACK = 2; // drop near-black (lightmap, coldshadow, zdepth)
+export const OVERLAY_BLACK = 2; // drop near-black (zdepth)
 
 /** Pick the drop-mode for a composite by its channel name — normals hide their flat-up default,
- *  the derived light/shadow/depth channels hide their black "no data", everything else is opaque. */
+ *  the depth channel hides its black "no data", everything else is opaque. */
 export function overlayModeFor(name: string): number {
   if (name.startsWith("normal")) return OVERLAY_FLAT;
-  // These channels hide their black "no data" so the lit scene reads through. `shadow-*` and
-  // `coldshadow-*` are DISTINCT prefixes (each matched on its own — not a loose "shadow" substring).
-  if (
-    name.startsWith("shadow") ||
-    name.startsWith("coldshadow") ||
-    name.startsWith("lightmap") ||
-    name.startsWith("zdepth")
-  ) {
-    return OVERLAY_BLACK;
-  }
+  // zdepth hides its black "no data" so the scene reads through where there's no thing depth.
+  if (name.startsWith("zdepth")) return OVERLAY_BLACK;
   return OVERLAY_ALL;
 }
 
@@ -62,7 +54,7 @@ const overlayBitGl = {
       // channel's "empty" value to α = 0 so the lit viewport reads through where there's no data.
       vec3 c = outColor.rgb;
       if (uMode > 1.5) {
-        // BLACK mode: lightmap / coldshadow / zdepth — near-black is "nothing here".
+        // BLACK mode: zdepth — near-black is "nothing here".
         outColor = length(c) < 0.02 ? vec4(0.0) : vec4(c, 1.0);
       } else if (uMode > 0.5) {
         // FLAT mode: normal — flat-up (0.5,0.5,1.0) is bare ground, black is an empty/cleared cell.

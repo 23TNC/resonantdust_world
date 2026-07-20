@@ -31,8 +31,8 @@ thousands of draw calls.
 Measured (2026-07-18, at rest): `tick()`'s draws were **100 % the shadow pass** with both bakes at 0 —
 i.e. the bake is correctly *amortized* (static prims bake once, then we sample). So this work is about
 the **pan / zoom / load** draw-call spikes (when squares go dirty and re-bake), not the idle frame.
-The [shadow pass](../../../client/pixijs/src/game/viewport/shadowPass.ts) is the *other* per-prim-mesh
-site and the idle-frame cost — **explicitly deferred** to a later stream.
+The shadow pass (removed with the nuked lighting build, to return in the retry) is the *other*
+per-prim-mesh site and the idle-frame cost — **explicitly deferred** to a later stream.
 
 ## The fix
 

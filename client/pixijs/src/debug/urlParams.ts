@@ -1,7 +1,7 @@
 //! URL query parameters — a way to drive the client without the UI, read once from
 //! `location.search`. The query is unified with the in-game **chat commands**: every param
-//! (except `user`) names a chat command that runs ONCE after login, so `?ambient=1.5` does the
-//! same thing as typing `/ambient 1.5`. See {@link parseUrl}.
+//! (except `user`) names a chat command that runs ONCE after login, so `?grid=1` does the
+//! same thing as typing `/grid 1`. See {@link parseUrl}.
 //!
 //!   ?user=<name>    auto-login as <name> on the remembered server (skips the login form). NOT a
 //!                   command — it's the login identity. Absent → the form waits for a manual login;
@@ -10,13 +10,10 @@
 //! Everything else is `?<command>=<args>` (or a bare `?<command>` flag), replayed after login as
 //! `/<command> <args>`. Args split on spaces/commas. Current commands (see WorldScene):
 //!
-//!   ?ambient=<f>    → /ambient <f>        lift the ambient floor to a neutral white boost
-//!   ?nocursorlight  → /nocursorlight      disable the cursor/hover light (and the shadow it casts)
 //!   ?grid           → /grid               overlay the tile/zone/region debug grid (`?grid=0` off)
-//!   ?coldlight      → /coldlight          seed a debug static (cold) light at the camera centre
 //!   ?focus=<x>,<y>  → /focus <x> <y>      jump the camera centre to a tile (args split on the comma)
 //!
-//! e.g. http://localhost:5173/?user=Developer&focus=9,3&ambient=1.5&grid
+//! e.g. http://localhost:5173/?user=Developer&focus=9,3&grid
 
 /** One URL-passed command: the chat-command name + its whitespace/comma-split args. */
 export interface UrlCommand {
