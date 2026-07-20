@@ -25,6 +25,7 @@ import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { makeAlbedoBlitShader, type AlbedoBlitShader } from "./albedoBlitShader";
 import { makeOverlayShader, overlayModeFor, type OverlayShader } from "./overlayShader";
 import { ShadowCast } from "./shadowCast";
+import { Es300Hello } from "./es300Hello";
 
 /** Dirty squares baked per frame. A fresh window dirties its whole grid; the budget
  *  spreads that over a few frames so the first open never hitches. */
@@ -85,6 +86,7 @@ export class Viewport extends LayoutNode {
   private overlayChannelName: string | null = null;
   /** shadow-cast experiment (`/shadowcast`), lazily created. Screen-space overlay. */
   private shadowCast: ShadowCast | null = null;
+  private es300: Es300Hello | null = null;
   private curQuads = -1;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -371,6 +373,16 @@ export class Viewport extends LayoutNode {
     return this.shadowCast.toggle();
   }
 
+  /** es300-hello experiment: toggle a full-viewport raw GLSL ES 3.00 checkerboard (`/es300`). Proves a
+   *  hand-written `#version 300 es` program compiles + renders here — the foundation for caster-lut C5. */
+  toggleEs300(): boolean {
+    if (!this.es300) {
+      this.es300 = new Es300Hello();
+      this.overlayContainer.addChild(this.es300.container);
+    }
+    return this.es300.toggle();
+  }
+
   /** Redraw the debug grid for the current camera: three nested line sets, each on the
    *  boundaries of a world division — tiles (red, {@link SQUARE} px), zones (magenta,
    *  {@link ZONE_DIM} tiles) and regions (blue, {@link REGION_DIM}·{@link ZONE_DIM} tiles).
@@ -647,6 +659,7 @@ export class Viewport extends LayoutNode {
     this.map.destroy();
     this.warm.destroy();
     this.shadowCast?.destroy();
+    this.es300?.destroy();
     // The overlay mesh SHARES the display mesh's geometry (freed once via `this.mesh.geometry`
     // below); `super.destroy()` destroys the mesh child itself, so only its shader needs freeing.
     this.overlayShader.destroy();

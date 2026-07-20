@@ -4,13 +4,15 @@ _Gotchas to respect. The proof is small; the sharp edges are all about the raw-s
 
 ---
 
-## I-1 · `#version 300 es` MUST be the first line — verify Pixi injects nothing before it
+## I-1 · `#version 300 es` MUST be the first line — RESOLVED: Pixi handles it — 2026-07-20
 
-The version directive has to be the **very first line** of the source (only comments/whitespace may
-precede it). Pixi's `GlProgram` may prepend a preamble (precision, `#define`s, extensions) — if any of that
-lands before `#version`, compilation fails with a version error. **This is the #1 risk.** Verify the actual
-string handed to `gl.shaderSource` (log it, or read the compile error). If Pixi injects, either use the API
-that preserves leading `#version`, or drop to manual GL ([F1](forks.md#f1)).
+The version directive has to be the **very first line** (only comments/whitespace before it). **Pixi v8
+does this for us:** `GlProgram` detects `isES300 = options.fragment.includes("#version 300 es")`, then runs
+`stripVersion` (removes the directive wherever it is) → `ensurePrecision` → `addProgramDefines` (no-op for
+ES3 — no WebGL1 shims) → `insertVersion` (re-prepends `#version 300 es` as line 1). So the final source is
+version-first, precision-after, shim-free. No manual GL needed. The one requirement: the **fragment** must
+contain the literal `#version 300 es` (it's the detection trigger); include it in the vertex too for
+clarity (it's stripped + re-inserted regardless).
 
 ## I-2 · Both stages same version — no mixing ES 1.00 + ES 3.00 in one program
 

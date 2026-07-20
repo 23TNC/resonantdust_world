@@ -18,7 +18,9 @@ _Decisions with live alternatives. Resolve in place; record the pick + why._
   interference (guaranteed the version passes through), but mixes awkwardly with Pixi's render loop and
   state. The fallback if Pixi's `GlProgram` won't pass `#version 300 es` through cleanly.
 
-**PICK:** `GlProgram` + `Mesh`; drop to manual GL only if Pixi mangles the version directive. _(pending)_
+**PICKED:** `GlProgram` + `Mesh` — worked first try. Pixi passed the ES 3.00 source through cleanly
+([I-1](issues.md#i-1)); the only wrinkle was the mesh pipe wanting a `texture` accessor on the shader
+(trivial no-op stub). No manual GL needed. — 2026-07-20
 
 ## F2 · Which ES-3.00-only feature proves it
 

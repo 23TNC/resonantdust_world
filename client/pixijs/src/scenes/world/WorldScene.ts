@@ -266,6 +266,16 @@ export class WorldScene extends Scene {
         : "Shadow-cast OFF.";
     });
 
+    // `/es300` (es300-hello experiment) — toggle a full-viewport raw GLSL ES 3.00 checkerboard drawn with
+    // uint/bitwise syntax ES 1.00 can't compile. Proves hand-written ES 3.00 shaders work (foundation for
+    // the caster-lut GPU cast).
+    this.chat.registerCommand("es300", () => {
+      const on = view().toggleEs300();
+      return on
+        ? "ES 3.00 ON — a cyan checkerboard from uint/bitwise math means the raw #version 300 es shader compiled + rendered."
+        : "ES 3.00 OFF.";
+    });
+
     // `/pause` + `/unpause` (debug) — no server-side pause in the rebuild yet (the master's
     // metronome has no freeze verb), so these report unavailability rather than silently do
     // nothing. `onPaused` stays wired (it simply never fires) for when a freeze verb returns.
