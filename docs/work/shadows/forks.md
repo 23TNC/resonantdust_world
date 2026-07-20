@@ -6,12 +6,13 @@ same day it opened (the screen-hot/world-cold model, F8–F12, superseded the fi
 
 ---
 
-## F1 · `shadow-cold` bit storage: RED byte now, RGB (24) goal — 2026-07-19
+## F1 · `shadow-cold` bit storage: start in RED, grow to the full texel — 2026-07-19 (ceiling updated 2026-07-20)
 
 **Options:** (a) a 32-bit bitfield across the full RGBA texel (the target design); (b) start in the **RED
-byte** and grow to **RGB** (24 bits). **Chose (b).** This iteration: **6 lights in RED**. Goal: **24
-lights in RGB** — *not* 32, because **A never works** ([F11](forks.md#f11)). One channel keeps the
-pack/decode trivial to bring up; RGB is the same shader over 3 bytes. See [D-1](deviations.md#d-1).
+byte** and grow. **Chose (b).** This iteration: **6 lights in RED** — one channel keeps the first
+pack/decode trivial. The **ceiling is the full RGBA texel = 32** (A usable on the ES 3.00 *integer*
+bitfield — see [F11](forks.md#f11)), and **128 via MRT**. Widening RED→RGBA is the same shader over more
+bytes. See [D-1](deviations.md#d-1).
 
 ## F2 · Shadow lanes in RGB, never A — 2026-07-19
 
@@ -75,12 +76,41 @@ wrap math. Each copy is a **pack**: reads `shadow-hot` RGB + prev `shadow-cold`,
 writes back. This single bridge is what lets us cast in the easy space (screen) and store in the required
 space (world) — sidestepping both partial shadows and light-move rect bookkeeping.
 
-## F11 · Goal = 24 lights (RGB), not 32 — 2026-07-19
+## F11 · Bitfield ceiling: 32/RT, 128 via MRT — updated 2026-07-20 (was "24, A never works")
 
-The design says 32-bit. **Chose 24** because **A never works** (F2): the bitfield lives in RGB = 3 bytes ×
-8 bits = 24. Theory: **≥3 hot lights/frame** is achievable, ⇒ **≥24 cold** lights cyclable in ~8 frames.
-If A ever proved usable (it won't, on the premultiply paths), 32 would follow for free — but the plan
-targets 24.
+**Originally (2026-07-19):** goal 24 (RGB), because A never survives premultiply on a float RGBA8 RT.
+**Revised 2026-07-20 after [F14](#f14):** on the ES 3.00 **integer** bitfield (`RGBA8UI`, packed via
+read-modify-write — no blending, no premultiply), **A is usable data** → **32 lights per RT**. And **MRT**
+(4 integer targets) → **128** separable lights. The "A never works" limit was a float-RGBA8/premultiply
+artifact that the integer target removes. `shadow-hot` still avoids A (it's a float RGBA8 that needs
+`max`-blend to union casters — A stays coupled there), so it stays RGB = 3 lanes/frame. Throughput target
+unchanged: **≥3 hot/frame ⇒ ≥24 cold cyclable in ~8 frames**; the storage ceiling is now 32/RT (128 MRT),
+not 24. **Iteration still starts at 6 in the RED byte** — widen to the full texel + MRT later
+([D-1](deviations.md#d-1)).
+
+## F13 · Shadow geometry: CPU place + cull, GPU rasterise — 2026-07-19
+
+**Options:** (a) build the projected shadow-quad vertices on the **CPU** and upload; (b) project in a
+**GPU vertex shader** (instanced). **Chose a hybrid, weighted to (a) for now.** Fill (rasterisation) is
+always GPU. Projection math is trivial either way, but at the foundation's small counts (round-robin ×
+in-range culling) CPU-placing the geometry is simplest in Pixi and the per-frame upload is tiny. The real
+CPU job is **culling** the (light, prim) pairs to those within a light's reach — a spatial query that
+belongs on the CPU regardless. So: **CPU culls + places the small batch; GPU rasterises.** Revisit
+vertex-shader projection only if a profile shows the JS build/upload cost at scale. (The future textured
+silhouette fan — [D-3](deviations.md#d-3) — is variable per-caster geometry, which *further* favours CPU
+placement.)
+
+## F14 · Target GLSL ES 3.00 / require WebGL2 — 2026-07-20
+
+**Decision:** author the shadow shaders as **`#version 300 es`** and treat **WebGL2 as a hard
+requirement** (durable stance: [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md)).
+**Why:** the app already runs on a WebGL2 context (Pixi defaults `preferWebGLVersion: 2`); "ES 1.00" was
+only Pixi's authoring default + a moot WebGL1 fallback. ES 3.00 gives the shadow work **real `uint`
+bitwise** (kills the `n/255` float-mod footgun — [I-6](issues.md#i-6)), **`texelFetch`** (exact bitfield
+reads), **integer textures** (store `shadow-cold` as `RGBA8UI`; A becomes usable → [F11](#f11)), and
+**MRT** (the many-lights separability path). Scope: new shaders declare `#version 300 es`; the kept
+G-buffer bakes + albedo blit migrate opportunistically, not now. Renderer init should pin WebGL2 so it
+can't silently fall back and break the ES 3.00 shaders.
 
 ## F12 · 3 hot/frame ⇒ ≥24 cold, ~8-frame cycle — 2026-07-19
 

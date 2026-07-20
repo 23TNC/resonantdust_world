@@ -51,7 +51,8 @@ composite, rebaked only when a rect's geometry or an in-range cold light changes
   (4 lanes), then a **ping-pong writeback** sets those 4 bits in `shadow-warm`. 4/frame → the whole 32
   refresh in **8 frames** (~130ms); a warm light's shadow is at most that stale.
 - Display: the **4 fresh** lights read their `shadow-hot` lane directly (zero-lag); the other **28** read
-  their `shadow-warm` bit (a `bf_bit` float-mod extract, ES-1.00 safe).
+  their `shadow-warm` bit (a real `uint` bitwise extract — the client is GLSL ES 3.00, see
+  [`design/rendering-platform.md`](../design/rendering-platform.md)).
 
 ## RT — display-summed, always fresh (zero staleness)
 

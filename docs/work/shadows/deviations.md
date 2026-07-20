@@ -40,16 +40,19 @@ that never changes between refreshes). Naming it "cold" now keeps continuity wit
 cold/warm split is a later concern. **Un-shrink:** "we'll swap cold → warm later" — rename and, if worth
 it, add a separately-baked static-cold tier.
 
-## D-1 · Bitfield is a RED byte (6 bits) now → RGB (24) goal, not 32-bit — 2026-07-19
+## D-1 · Bitfield starts as a RED byte (6 bits); full texel = 32, MRT = 128 — updated 2026-07-20
 
 **Design** ([tiered-lighting §Cold](../../components/client/pixijs/intent/tiered-lighting.md)):
 `shadow-cold` is a **32-bit** bitfield across the full RGBA texel.
 
-**This stream:** **RED byte** (6 bits) this iteration; **RGB (24 bits)** goal — **A held at 1**.
+**This stream:** **RED byte** (6 bits) for bring-up → the **full RGBA texel (32 bits)** as the per-RT
+target, and **MRT** (4 targets) → **128** separable lights.
 
-**Why:** 6 lights fit one byte; a single channel keeps pack/decode minimal to bring up. RGB is the same
-shader over 3 bytes. **Not 32:** **A never works** as a data lane on the premultiply paths
-([F2](forks.md#f2)), so the ceiling is 24. **Un-shrink:** pack across G/B (RED→RGB, 6→24).
+**Why start in RED:** 6 lights fit one byte; one channel keeps the first pack/decode trivial. **Why 32,
+not the earlier "24":** on the ES 3.00 **integer** bitfield ([F14](forks.md#f14), [F11](forks.md#f11)),
+A is usable data (no premultiply on an integer target), so the full texel is 32 — this **matches** the
+design's ceiling rather than shrinking it. **Un-shrink:** RED→RGBA (6→32) is a shader widening; 32→128
+adds MRT targets. So the only remaining shrink here is the *starting* count, not the ceiling.
 
 ## D-2 · `shadow-hot` is 3 screen-space RGB lanes, not 8-lane `uChannel` scatter maps — 2026-07-19
 

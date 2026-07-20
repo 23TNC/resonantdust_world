@@ -35,22 +35,27 @@ Multiple casters for the **same** light must **union** into that light's channel
 per-light channel-write shader (`outColor = uChannel`, a 1 in one lane) with **`max` blend** — overlapping
 caster quads clamp at 1. `add` would overflow; the tiered-lighting anti-goals call this out.
 
-## I-5 · Premultiply corrupts a bitfield byte — sidestepped at ≤24 bits, 2026-07-19
+## I-5 · Premultiply corrupts a data byte — now only a `shadow-hot` concern, updated 2026-07-20
 
-A Sprite/tint batch **premultiplies** `RGB × A`, zeroing data bytes where A=0 — the nuked build needed a
-**verbatim non-premultiply Mesh blit** ("bitfield linchpin"). This stream sidesteps it: `shadow-cold`
-**A is held at 1**, so RGB×1 is a no-op and any path is safe. This is exactly why the ceiling is **24
-(RGB), not 32** ([F11](forks.md#f11)) — A can never carry a data lane. The pack copy still writes
-non-premultiplied to be safe.
+Premultiply (`RGB × A`, zeroing data where A=0) is a **float-RGBA8 / blend / batch-shader** artifact.
+- **`shadow-hot`** IS a float RGBA8 with `max`-blend (to union casters per light), so it keeps data in
+  **RGB, A free** ([F2](forks.md#f2)) — premultiply still applies here.
+- **`shadow-cold`** as an ES 3.00 **integer** texture (`RGBA8UI`, [F14](forks.md#f14)) is **not**
+  blended/premultiplied, and its pack is an explicit read-modify-write — so **all 4 bytes, A included, are
+  usable data** (→ 32/RT, [F11](forks.md#f11)). If `shadow-cold` is instead kept a unorm RGBA8, reclaim A
+  with the nuked build's **verbatim non-premultiply Mesh blit** ("bitfield linchpin").
 
-## I-6 · Bit set/test on GLSL ES 1.00 (no integer ops) — open, 2026-07-19
+## I-6 · Bit set/test — real `uint` bitwise (GLSL ES 3.00) — updated 2026-07-20
 
-The pack (set bit `i`) and overlay (test bit `i`) are float math on ES-1.00. `rgba8` stores `n/255`
-exactly, so:
-- **test:** `mod(floor(byte*255 / exp2(float(i))), 2.0)` — exact for bits 0..7 of each channel.
-- **set (pack):** each frame writes *distinct* bits (its round-robin batch) into a byte that already holds
-  the others, so `byte' = prevByte + present · (exp2(i)/255)` is an OR (never a double-count). Proven-safe
-  from the nuked `warmCombine`.
+Since [F14](forks.md#f14) the shadow shaders are `#version 300 es`, so bits use **real integer ops**, not
+the ES-1.00 float-mod emulation:
+- **`shadow-cold` as `RGBA8UI` / `usampler2D`:** pack = read-modify-write via `texelFetch` (no blend) —
+  `bits |= (mask << shift)`; test/decode = `(bits >> i) & 1u`. Exact, no `n/255` discipline.
+- **if `shadow-cold` is kept a unorm RGBA8** (simpler Pixi plumbing): unpack in-shader
+  (`uint b = uint(v*255.0 + 0.5)`), do the same bitwise, repack (`float(b)/255.0`). Still real ops.
+
+The retired ES-1.00 shape — `mod(floor(byte*255 / exp2(i)), 2.0)` to test, `+ exp2(i)/255` to set — is
+kept only as the fallback if some shader must ever stay ES 1.00; it isn't the plan anymore.
 
 ## I-7 · Casting is in screen space — need caster + light screen coords — resolved-by-design, 2026-07-19
 

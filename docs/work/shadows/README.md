@@ -33,11 +33,12 @@ where it's easy (screen), store where it must live (world), bridge with a copy.
   **RGB = three shadow lanes**, one light each; **A unused** (A never survives premultiply — see
   [F2](forks.md#f2)). Because it's rebuilt each frame at the current zoom, it has **no staleness and no
   scaling problem** by construction.
-- **`shadow-cold`** — a **world-space** RGBA8 bitfield RT, in the **same toroidal layout the other
-  G-buffer RTs use** (so it pans + scales with zoom exactly like `albedo-cold` et al.). **It does NOT
-  hold per-rect geometry like the other RTs — it holds LIGHTS**: each **bit** of a pixel = "light `i`
-  shadows this world point". **This iteration: 6 lights in the RED byte.** **Goal: 24 lights in RGB**
-  (3 bytes × 8 bits; **A never works** — [F11](forks.md#f11)).
+- **`shadow-cold`** — a **world-space** bitfield RT, in the **same toroidal layout the other G-buffer RTs
+  use** (so it pans + scales with zoom exactly like `albedo-cold` et al.). **It does NOT hold per-rect
+  geometry like the other RTs — it holds LIGHTS**: each **bit** of a pixel = "light `i` shadows this world
+  point". **This iteration: 6 lights in the RED byte.** **Goal: 32 lights in the full RGBA texel** — an
+  ES 3.00 **integer** bitfield (`RGBA8UI`), where A is usable data (no premultiply on an integer target);
+  **128 via 4-way MRT** ([F11](forks.md#f11), [F14](forks.md#f14)).
 
 ## The screen → world translation (the 4-copy)
 
@@ -96,7 +97,7 @@ Deliberate, pre-logged in [`deviations.md`](deviations.md):
 | target design | this foundation | later |
 |---|---|---|
 | cold **baked per-rect in world-space** (on dirty) + separate warm round-robin | **one** bitfield: cast **screen-space** every frame, copied into **world-space** `shadow-cold`, round-robin | D-5 → split back into a true baked-cold tier + warm tier |
-| `shadow-cold` = **32-bit** across RGBA | **RED byte** (6 bits) now → **RGB 24 bits** goal (A never works) | D-1 → RGB pack |
+| `shadow-cold` = **32-bit** across RGBA | **RED byte** (6 bits) now → **full RGBA 32** (integer bitfield, A usable) | D-1 → widen to RGBA + 128 via MRT |
 | 8-lane `uChannel` scatter maps | **`shadow-hot` RGB**, 3 screen-space lanes | D-2 → more lanes |
 | casters = **textured earcut silhouette** (`outline`) + UV alpha | **solid billboard quad** | D-3 → the 5-tri fan + UV alpha |
 | cold lights from a **per-rect light-data texture** | **6→24 debug lights** (uniforms) | D-4 → per-rect texture, real content lights |
@@ -115,6 +116,10 @@ scalable without the rect-fighting that sank the last attempt. The rest are coun
   list), any shadow machinery, `standingPrims()` (the caster enumerator). Rebuilt clean, not restored.
 - **Reused, not rebuilt:** the toroidal window→buffer wrap math is exactly the 4-copy this stream needs —
   lift it from the cache's existing apron/reproject rather than reinventing it.
+- **Platform:** the shadow shaders are **GLSL ES 3.00** (WebGL2 required —
+  [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md),
+  [F14](forks.md#f14)): real `uint` bitwise for pack/decode, `texelFetch`, an **integer** `shadow-cold`,
+  and MRT for the many-lights scale. This is the first ES-3.00 shader set in the client.
 
 ## State
 
