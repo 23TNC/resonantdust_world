@@ -26,7 +26,6 @@ import {
   Matrix,
   UniformGroup,
 } from "pixi.js";
-import { BITFIELD_GLSL } from "../lighting/bitfield";
 
 /** Max COLD (static, baked) lights summed into the lightmap. High because they cost nothing per
  *  frame (baked once); the loop breaks on `uLightCount`. Structured 32 to mirror the dynamic pool. */
@@ -49,11 +48,10 @@ const lightBakeBitGl = {
       uniform vec3 uAmbient;                         // ambient floor (colour × intensity), never shadowed
       uniform float uNormalYSign;                    // flip normal Y into the screen convention (-1)
       uniform vec2 uRectWorld;                       // this rect's world origin (world px)
-      uniform sampler2D uColdShadow;                 // cold-shadow 32-bit occlusion BITFIELD (bit i = cold light i shadowed)
+      uniform sampler2D uColdShadow;                 // baked cold-shadow coverage (R/G/B = cold light 0/1/2)
       uniform vec4 uShadowRect;                      // this square's slot in the coldShadow composite (offset.xy, scale.zw)
       in vec2 vLocal;
       in vec2 vRawUv;                                // untransformed quad UV (0..1) for the coldShadow slot
-      ${BITFIELD_GLSL}
     `,
     main: /* glsl */ `
       // outColor = the NORMAL slot (textureBit). Near-black texels (empty/cleared cell) → flat-up +Z
@@ -76,8 +74,7 @@ const lightBakeBitGl = {
         float atten = clamp(1.0 - length(toLight.xy) / max(ld.w, 1.0), 0.0, 1.0);
         atten *= atten;                               // quadratic falloff
         float ndotl = max((dot(N, normalize(toLight)) + LIGHT_WRAP) / (1.0 + LIGHT_WRAP), 0.0);
-        int shc = i / 8; int shb = i - shc * 8;         // cold light i → bitfield channel shc, bit shb
-        float sh = bf_bit(bf_byte(csh, shc), shb);      // 1 = occluded (all 32 cold lights)
+        float sh = i == 0 ? csh.r : (i == 1 ? csh.g : (i == 2 ? csh.b : 0.0));
         sum += uLightColor[i].rgb * uLightColor[i].a * ndotl * atten * (1.0 - sh * SHADOW_STRENGTH);
       }
       outColor = vec4(sum, 1.0);                       // OPAQUE — the composite is opaque light data

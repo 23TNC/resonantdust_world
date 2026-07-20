@@ -41,9 +41,7 @@ import { makeDepthBakeShader, type DepthBakeShader } from "./depthBakeShader";
 import { makeNormalBakeShader, type NormalBakeShader } from "./normalBakeShader";
 import { makeSurfaceBakeShader, type SurfaceBakeShader } from "./surfaceBakeShader";
 import type { LightingBakeShader } from "./lightingBakeShader";
-import { makeShadowMaskShader, makeShadowGeometry, channelForLight, MAX_SHADOW_LIGHTS, type ShadowMaskShader } from "./scatterShader";
-import { makeWarmCombineShader, makeWarmQuadGeometry, type WarmCombineShader } from "./warmCombineShader";
-import { MAX_COLD_LIGHTS } from "./lightingBakeShader";
+import { makeShadowMaskShader, makeShadowGeometry, channelForLight, type ShadowMaskShader } from "./scatterShader";
 import { projectCaster, type Caster } from "./projectCaster";
 import type { Outline } from "../../textures/OutlineCache";
 import type { PackedChannel } from "./material";
@@ -319,13 +317,6 @@ export class SquareCache {
   private readonly shadowGeos: ReturnType<typeof makeShadowGeometry>[] = [];
   private readonly shadowMeshes: Mesh<Geometry, ShadowMaskShader>[] = [];
   private readonly shadowContainer = new Container();
-  private readonly shadowContainer2 = new Container();
-  private coldCombine: WarmCombineShader | null = null;
-  private coldCombineMesh: Mesh<Geometry, WarmCombineShader> | null = null;
-  private readonly coldScatterRT: (RenderTexture | null)[] = [null, null];
-  private readonly coldScatterTex: (Texture | null)[] = [null, null];
-  private readonly coldFieldRT: (RenderTexture | null)[] = [null, null];
-  private readonly coldFieldTex: (Texture | null)[] = [null, null];
   private coldShadowLights: { x: number; y: number; z: number; radius: number }[] = [];
   private resolveCaster: ((prim: Primitive) => { caster: Caster; outline: Outline } | null) | null = null;
   /** The tiling noise atlas bound to every material bake (rows = fields). `null` until the
@@ -364,17 +355,16 @@ export class SquareCache {
    *  (R/G/B), each a shadow shader/geo/mesh with its own `uChannel`, additive so lanes don't clobber. */
   enableColdShadow(resolve: (prim: Primitive) => { caster: Caster; outline: Outline } | null): void {
     this.resolveCaster = resolve;
-    for (let i = 0; i < MAX_SHADOW_LIGHTS; i++) {
-      const sh = makeShadowMaskShader();
-      sh.setChannel(channelForLight(i & 3)); // lane R/G/B/A within its map (map = i>>2)
+    for (let i = 0; i < 3; i++) {
+      const s = makeShadowMaskShader();
+      s.setChannel(channelForLight(i)); // fixed lane R/G/B
       const g = makeShadowGeometry();
-      const m = new Mesh({ geometry: g.geometry, shader: sh });
+      const m = new Mesh({ geometry: g.geometry, shader: s });
       m.blendMode = "max"; // coverage per lane clamps at 1 (add would sum overlapping caster tris past 1)
-      this.shadowShaders.push(sh);
+      this.shadowShaders.push(s);
       this.shadowGeos.push(g);
       this.shadowMeshes.push(m);
     }
-    this.coldCombine = makeWarmCombineShader(); // packs 8 fresh lanes → one byte-channel of the 32-bit field
   }
 
   /** The cold lights that cast baked shadows this pass (≤3, the first three cold lights). Set by the
@@ -503,24 +493,6 @@ export class SquareCache {
     this.scratchTex?.destroy();
     this.scratchRT = RenderTexture.create({ width: slotPx, height: slotPx, resolution: this.res });
     this.scratchTex = new Texture({ source: this.scratchRT.source, dynamic: true });
-    // Cold-shadow bitfield build (P2): 2 scatter maps + 2 ping-pong field buffers + the combine quad,
-    // all slot-sized. Only the cold cache (resolveCaster set) needs them.
-    if (this.resolveCaster) {
-      for (let k = 0; k < 2; k++) {
-        this.coldScatterRT[k]?.destroy(true);
-        this.coldScatterTex[k]?.destroy();
-        this.coldScatterRT[k] = RenderTexture.create({ width: slotPx, height: slotPx, resolution: this.res });
-        this.coldScatterRT[k]!.source.scaleMode = "nearest";
-        this.coldScatterTex[k] = new Texture({ source: this.coldScatterRT[k]!.source, dynamic: true });
-        this.coldFieldRT[k]?.destroy(true);
-        this.coldFieldTex[k]?.destroy();
-        this.coldFieldRT[k] = RenderTexture.create({ width: slotPx, height: slotPx, resolution: this.res });
-        this.coldFieldRT[k]!.source.scaleMode = "nearest";
-        this.coldFieldTex[k] = new Texture({ source: this.coldFieldRT[k]!.source, dynamic: true });
-      }
-      this.coldCombineMesh = new Mesh({ geometry: makeWarmQuadGeometry(slotPx, slotPx), shader: this.coldCombine! });
-      this.coldCombineMesh.blendMode = "none";
-    }
     this.slotOwnerCol = new Int32Array(cols * rows);
     this.slotOwnerRow = new Int32Array(cols * rows);
     this.slotBaked = new Uint8Array(cols * rows);
@@ -931,78 +903,33 @@ export class SquareCache {
     s: number,
   ): void {
     const csh = this.channels.find((c) => c.key.startsWith("shadow"));
-    if (!csh?.bufs || !this.resolveCaster || !this.coldCombine || !this.coldCombineMesh) return;
+    if (!csh?.bufs || !this.resolveCaster) return;
     // world → slot: scale s + translate the square's world origin to the slot origin (as bakeSquare's m).
     const m = new Matrix(s, 0, 0, s, -squareWorldX(wc) * s, -squareWorldY(wr) * s);
-    const nLights = Math.min(MAX_COLD_LIGHTS, this.coldShadowLights.length);
-    // Square-level cull: shadows only matter where a cold light reaches (outside a light's radius its
-    // term is 0 anyway). If none reaches, this square's field is all-lit (0) — seed + blit + skip the
-    // expensive build. NOTE: cull the whole square, never reorder lights — bit i must stay = light i.
-    const scx = squareWorldX(wc) + SQUARE / 2;
-    const scy = squareWorldY(wr) + SQUARE / 2;
-    let anyReach = false;
+    this.shadowContainer.removeChildren();
+    const nLights = Math.min(3, this.coldShadowLights.length);
     for (let i = 0; i < nLights; i++) {
       const L = this.coldShadowLights[i];
-      if (Math.hypot(L.x - scx, L.y - scy) <= L.radius + SQUARE) { anyReach = true; break; }
-    }
-    this.shadowContainer.removeChildren();
-    if (!anyReach) {
-      renderer.render({ container: this.shadowContainer, target: this.coldFieldRT[0]!, clear: true, clearColor: [0, 0, 0, 0] });
-      const t = csh.bufs[this.active];
-      this.blit(renderer, this.coldFieldTex[0]!, slotX, slotY, t);
-      if (ax >= 0) this.blit(renderer, this.coldFieldTex[0]!, ax, slotY, t);
-      if (ay >= 0) this.blit(renderer, this.coldFieldTex[0]!, slotX, ay, t);
-      if (ax >= 0 && ay >= 0) this.blit(renderer, this.coldFieldTex[0]!, ax, ay, t);
-      return;
-    }
-    const prims = this.standingPrims(); // gather once — reused across every lane
-    // Seed the ping-pong field to 0 (all lit) as batch 0's `prev`.
-    renderer.render({ container: this.shadowContainer, target: this.coldFieldRT[0]!, clear: true, clearColor: [0, 0, 0, 0] });
-    let cur = 0;
-    // Only the batches the light count needs (≤4). Each batch: rasterize 8 lights into 2 scatter maps
-    // (4 lanes each), then combine those 8 lanes into byte-channel `b` (carrying the other channels).
-    // Unwritten channels stay at the seed 0 (lit) — correct, since those lights don't exist.
-    const nBatches = Math.ceil(nLights / 8); // 1 light → 1 batch, 32 → 4
-    for (let b = 0; b < nBatches; b++) {
-      for (let mp = 0; mp < 2; mp++) {
-        const cont = mp === 0 ? this.shadowContainer : this.shadowContainer2;
-        cont.removeChildren();
-        for (let lane = 0; lane < 4; lane++) {
-          const idx = mp * 4 + lane; // mesh/geo index 0..7
-          const i = b * 8 + idx; // global cold light index
-          const geo = this.shadowGeos[idx];
-          const pos = geo.pos.data as Float32Array;
-          let v = 0;
-          if (i < nLights) {
-            const L = this.coldShadowLights[i];
-            for (const prim of prims) {
-              if (Math.hypot(prim.x - L.x, prim.y - L.y) > L.radius + 300) continue; // coarse light-reach cull
-              const r = this.resolveCaster(prim);
-              if (!r) continue;
-              v = projectCaster(pos, v, r.caster, r.outline, L.x, L.y, L.z, 0, 0); // world-space (pan 0)
-            }
-          }
-          pos.fill(0, v * 2); // degenerate tail → draws nothing
-          geo.pos.update();
-          if (v > 0) cont.addChild(this.shadowMeshes[idx]);
-        }
-        renderer.render({ container: cont, target: this.coldScatterRT[mp]!, clear: true, clearColor: [0, 0, 0, 0], transform: m });
+      const geo = this.shadowGeos[i];
+      const pos = geo.pos.data as Float32Array;
+      let v = 0;
+      for (const prim of this.standingPrims()) {
+        if (Math.hypot(prim.x - L.x, prim.y - L.y) > L.radius + 300) continue; // coarse light-reach cull
+        const r = this.resolveCaster(prim);
+        if (!r) continue;
+        v = projectCaster(pos, v, r.caster, r.outline, L.x, L.y, L.z, 0, 0); // world-space (pan 0)
       }
-      // Combine the 8 fresh lanes → byte-channel `b`, carrying the rest (pan 0 — whole rebuild).
-      this.coldCombine.prevWarm = this.coldFieldTex[cur]!;
-      this.coldCombine.scatter0 = this.coldScatterTex[0]!;
-      this.coldCombine.scatter1 = this.coldScatterTex[1]!;
-      this.coldCombine.setFresh(b);
-      this.coldCombine.setPanDelta(0, 0);
-      renderer.render({ container: this.coldCombineMesh, target: this.coldFieldRT[1 - cur]!, clear: true, clearColor: [0, 0, 0, 0] });
-      cur = 1 - cur;
+      pos.fill(0, v * 2); // degenerate tail → draws nothing
+      geo.pos.update();
+      if (v > 0) this.shadowContainer.addChild(this.shadowMeshes[i]);
     }
-    // Blit the finished 32-bit field to the shadow composite slot + apron.
+    // One render (additive lanes) → scratch via m (world→slot), then blit to the coldShadow slot.
+    renderer.render({ container: this.shadowContainer, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 1], transform: m });
     const target = csh.bufs[this.active];
-    this.blit(renderer, this.coldFieldTex[cur]!, slotX, slotY, target);
-    if (ax >= 0) this.blit(renderer, this.coldFieldTex[cur]!, ax, slotY, target);
-    if (ay >= 0) this.blit(renderer, this.coldFieldTex[cur]!, slotX, ay, target);
-    if (ax >= 0 && ay >= 0) this.blit(renderer, this.coldFieldTex[cur]!, ax, ay, target);
+    this.blit(renderer, this.scratchTex!, slotX, slotY, target);
+    if (ax >= 0) this.blit(renderer, this.scratchTex!, ax, slotY, target);
+    if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);
+    if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
   }
 
   /** Mirror the west facing: shift the origin by the width so the flipped quad still

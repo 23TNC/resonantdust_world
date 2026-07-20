@@ -120,15 +120,14 @@ export class LightRig {
     return out;
   }
 
-  /** The cold lights that cast shadows (`{x, y, z, radius}`), in the SAME order `packCold` packs them
-   *  (so bit i in the `shadow-cold` bitfield matches cold light i in the lightmap). Up to
-   *  {@link MAX_COLD_LIGHTS} — the 32-bit field holds all of them. Lighting P2. */
+  /** The first ≤3 cold lights as shadow casters (`{x, y, z, radius}`), in the SAME order `packCold`
+   *  packs them (so lane i in the coldShadow bake matches cold light i in the lightmap). Lighting P4. */
   coldShadowLights(): { x: number; y: number; z: number; radius: number }[] {
     const out: { x: number; y: number; z: number; radius: number }[] = [];
     for (const l of this.lights) {
       if (l.tier !== "cold" || !l.castsShadow) continue;
       out.push({ x: l.x, y: l.y, z: l.height, radius: l.radius });
-      if (out.length >= MAX_COLD_LIGHTS) break;
+      if (out.length >= 3) break;
     }
     return out;
   }
