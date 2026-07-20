@@ -81,7 +81,7 @@ space (world) — sidestepping both partial shadows and light-move rect bookkeep
 **Final (user decision):** **24 separable lights per RT — RGB only, the alpha channel is NEVER used for
 data.** Premultiply mangles A, and the verbatim-write workaround to reclaim it isn't worth the risk (it's
 "error-prone"). So drop the earlier "32 via A" idea entirely. Storage is a **unorm RGBA8** bitfield with
-**A held at 1** (premultiply is a no-op — proven by [`bitfield-rt`](../bitfield-rt/completed.md)).
+**A held at 1** (premultiply is a no-op — proven by `bitfield-rt`, archived).
 `shadow-hot` stays a float RGBA8, RGB = 3 lanes (A avoided). Throughput unchanged: **≥3 hot/frame ⇒ ≥24
 cold cyclable in ~8 frames**. Beyond 24 separable lights → **more render targets** (24 each), but MRT is
 gated behind raw ES 3.00 shaders ([F14](#f14)), deferred. See [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md).
@@ -106,7 +106,7 @@ kept as a context baseline** but not for ES 3.00. Durable stance:
 
 **The reversal:** this fork first said "author `#version 300 es`, ES 3.00 is free because the app already
 runs WebGL2." **That premise was wrong**, proven by executing
-[`bitfield-rt`](../bitfield-rt/issues.md#i-8): Pixi v8's high-shader system compiles **ES 1.00 with
+`bitfield-rt` (archived): Pixi v8's high-shader system compiles **ES 1.00 with
 WebGL1-compat shims** even on a WebGL2 context (`#define in varying`, `gl_FragColor`, no `#version 300
 es`), so `uint`/bitwise/integer-textures/MRT are **not** available through the bit system — a `uint` in an
 overlay bit failed to compile. ES 3.00 is reachable only by **hand-writing raw `GlProgram`s** (bypassing

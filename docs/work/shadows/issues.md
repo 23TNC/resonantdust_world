@@ -47,7 +47,7 @@ Premultiply (`RGB × A`, zeroing data where A=0) is a **float-RGBA8 / blend / ba
 ## I-6 · Bit set/test — float-mod on GLSL ES 1.00 — corrected 2026-07-20
 
 **Corrected** (the [F14](forks.md#f14) reversal): the shaders are **ES 1.00** — Pixi's high-shader
-compiles no `uint`/bitwise ([bitfield-rt I-8](../bitfield-rt/issues.md#i-8)). So bits use **float math**,
+compiles no `uint`/bitwise (bitfield-rt I-8, archived). So bits use **float math**,
 which `bitfield-rt` proved exact on rgba8 (bytes are `k/255`):
 - **test/decode:** `mod(floor(byte*255.0 / exp2(float(i))), 2.0)` — 0/1, exact for bits 0–7 per byte.
 - **set (pack):** each round-robin batch writes *distinct* bits into a byte holding the others, so
@@ -73,7 +73,7 @@ then `bits | (batchMask << shift)`; untouched texels get mask 0 → bits copied 
 ≤4 quadrants don't cover reverts to its 2-frames-ago value → shadows flicker every other frame. (2)
 **clear-on-change clears BOTH** buffers (extends [I-3](#i-3)'s single-buffer clear), or the next
 carry-forward re-imports stale bits. Cost: a second `RGBA8UI` toroidal buffer (a few MB) — cheap vs relying
-on UB. This is the mechanism [`bitfield-rt`](../bitfield-rt/issues.md#i-7) should prove before `shadows`
+on UB. This is the mechanism `bitfield-rt` (archived) proved before `shadows`
 builds on it.
 
 ## I-7 · Casting is in screen space — need caster + light screen coords — resolved-by-design, 2026-07-19

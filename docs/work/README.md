@@ -14,13 +14,12 @@ session is driving — inferred, not a field here); see [`docs-authority`](docs-
 | [docs-authority](docs-authority/README.md) | open | This system: front-door index + `docs-check`/`work-check` audits + the enforcement hooks. |
 | [shard-tables](shard-tables/README.md) | open | The `*_tables!` generalization: fold every composing shard into generic table macros; all writes via events. P1–P3 live, P4 pending. |
 | [art-metadata](art-metadata/README.md) | open | Per-variant `meta.json` sidecar from `bin/art` (channel tints + shadow outline). P1–P2 done. |
-| [shadow-cast](shadow-cast/README.md) | done | Proved (S0–S5, in-browser) **casting shadows into a bitfield** + **incremental per-light updates**: 5 cold lights cast billboard shadows from in-radius prims → 5 bits of a ping-pong RT (5 colours); one light moves/sec, only its colour relocates (carry-forward). The `shadow-hot → shadow-cold` seam, proven. `/shadowcast` toggle kept. |
-| [bitfield-rt](bitfield-rt/README.md) | done | Proved a packed **bitfield survives an RT round-trip** (E1–E4: world-space RT, 24 colours) **and** survives **read-modify-write ping-pong with same-frame display** (E5: marching rainbow). Recipe (unorm RGBA8, A=1, 24 bits RGB, float-mod, ping-pong) graduated into `shadows`; experiment code removed. |
+| [shadow-world](shadow-world/README.md) | open | Next experiment (builds on the archived `shadow-cast`): move `shadow-a`/`shadow-b` to **world-space** (toroidal, like albedo/normal); drop the built-in colour display and instead decode the bit-colours in **`/overlayRT shadow-a`/`-b`** as a debug view. |
 | [shadows](shadows/README.md) | open | The clean restart after `lighting` was nuked. Cast shadows **screen-space** (`shadow-hot`, every frame, billboards) → copy into a **world-space** `shadow-cold` **light-bitfield** via the 4-way toroidal wrap; round-robin 3/frame → 24 lights; per-bit colour `/overlayRT`. Sidesteps the per-rect world-space baking that sank the last attempt. |
 
-**Archived out-of-repo (2026-07-19)** — the delivered/reverted streams were moved out of the repo
-(to `../resonantdust_world_docs_archive/work-stripped-2026-07-19/`) to keep the working tree focused on
-live work; git history retains them at their last in-repo commit: `texture-restructure` (done),
-`spacetime-again` (done), `coord-purge` (done), `cold-rework` (done → continued as **shard-tables**),
-`docs-migration` (done), `prim-batching` (closed), and `lighting` (closed — nuked 2026-07-19; the
-restart is **shadows**; its durable target survives in the pixijs component `intent`/`design`).
+**Archived out-of-repo** — completed/reverted streams live in **`../archive/`** (git history retains them
+at their last in-repo commit). **2026-07-20:** `bitfield-rt` (done — bitfield RT round-trip + ping-pong)
+and `shadow-cast` (done — shadow-casting into a bitfield + incremental updates), which the new
+`shadow-world` builds on. **2026-07-19** (`../archive/work-stripped-2026-07-19/`): `texture-restructure`,
+`spacetime-again`, `coord-purge`, `cold-rework` (→ **shard-tables**), `docs-migration`, `prim-batching`,
+and `lighting` (nuked; restart is **shadows**, target in the pixijs component `intent`/`design`).

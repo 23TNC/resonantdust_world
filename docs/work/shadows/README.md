@@ -119,7 +119,7 @@ scalable without the rect-fighting that sank the last attempt. The rest are coun
   lift it from the cache's existing apron/reproject rather than reinventing it.
 - **Platform:** the shadow shaders are **GLSL ES 1.00** (Pixi's high-shader compiles ES 1.00 even on the
   WebGL2 context — [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md),
-  [F14](forks.md#f14), proven by [`bitfield-rt`](../bitfield-rt/issues.md#i-8)): **float-mod** bit
+  [F14](forks.md#f14), proven by `bitfield-rt` (archived)): **float-mod** bit
   pack/decode on a **unorm RGBA8** `shadow-cold`. ES 3.00 (integer textures, MRT) is deferred behind
   hand-written raw shaders.
 

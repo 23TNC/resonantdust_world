@@ -23,7 +23,7 @@ The initial version claimed the client "already runs ES 3.00" because Pixi's GL 
 `out`/`finalColor`. That was wrong: Pixi **shims** those back to ES 1.00 (`#define in varying`, etc.) at
 compile time unless the shader source literally contains `#version 300 es`. Executing `bitfield-rt` E3
 settled it — a `uint` in an overlay bit compiled to *"'uint' : undeclared identifier"*
-([bitfield-rt I-8](../../../../work/bitfield-rt/issues.md#i-8)). **ES 3.00 is not free.**
+(bitfield-rt I-8, archived out-of-repo). **ES 3.00 is not free.**
 
 ## Reaching ES 3.00 (deferred)
 
@@ -56,5 +56,5 @@ round-trip with no special write — proven by `bitfield-rt`.
 
 ## References
 
-- Proven in [`work/bitfield-rt/`](../../../../work/bitfield-rt/README.md) (E1–E4 + the I-8 finding).
+- Proven in `work/bitfield-rt/` (E1–E4 + the I-8 finding; archived out-of-repo 2026-07-20).
 - Consumed by the shadow bitfield work in [`work/shadows/`](../../../../work/shadows/README.md).
