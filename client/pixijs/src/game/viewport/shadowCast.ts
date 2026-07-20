@@ -51,6 +51,24 @@ const TMAX = 3;
 /** Fill colour that writes light k's bit into the RED byte (2^k << 16). */
 const bitColor = (k: number): number => (1 << k) << 16;
 
+// ── caster-lut: standard 1024×12 RGBA32F data texture ──────────────────────────────
+// 1024 = fixed cross-platform-safe width; 12 rows = 4 bands of 3, and a definition (light or caster) is
+// 3 px = 12 f32, so 4 bands × 1024 = MAX_DEFS slots. The LUT reuses the same shape as a flat index array.
+const STD_W = 1024;
+const STD_H = 12;
+const DEF_PX = 3; // px per definition
+const TEX_FLOATS = STD_W * STD_H * 4; // 49152
+const MAX_DEFS = STD_W * (STD_H / DEF_PX); // 4096 def slots per def-texture
+const LUT_ENTRIES = STD_W * STD_H * 4; // 49152 caster-index entries (4/px)
+/** Float base-index of px `p` (0..2) of definition `k` in a STD_W×STD_H RGBA32F array (caster-lut I-5). */
+function defBase(k: number, p: number): number {
+  const col = k % STD_W;
+  const band = (k / STD_W) | 0;
+  return ((band * DEF_PX + p) * STD_W + col) * 4;
+}
+// LUT entry `i` lives at pixel `i>>2`, channel `i&3` → flat float index `(i>>2)*4 + (i&3) = i`, so the LUT
+// Float32Array is indexed by entry directly: `lutData[i]`.
+
 export class ShadowCast {
   private readonly lights: Light[] = [
     { x: ZONE_X0 + 260, y: ZONE_Y0 + 300, z: LIGHT_Z, radius: LIGHT_RADIUS },
@@ -80,13 +98,21 @@ export class ShadowCast {
   private vh = 0;
   private running = false;
 
-  // ── light-data-texture experiment ──────────────────────────────────────────────
-  // A 5×2 RGBA32F data texture: column x = light index, 2 rows (32-bit floats pack a light into 2 texels):
-  //   row 0 = world_x, world_y, world_z, radius   ·   row 1 = red, green, blue, alpha (intensity folded in).
-  // The DISPLAY shader samples row 1 for the colour (no hardcoded palette). Re-uploaded every frame.
-  private readonly lightData = new Float32Array(5 * 2 * 4);
+  // ── caster-lut: casters + per-light range lists in textures (all 1024×12 RGBA32F) ──────────────────
+  // LIGHT def (3 px): px0 world_x,_y,_z,radius · px1 rgba colour · px2 start_index,count,—,—.
+  // CASTER def (3 px): px0 world_x,_y,_z,facing · px1 width,height,depth1,depth2 · px2 frame_x,_y,_w,_h.
+  // LUT: flat caster-index array (4/px). Light k's in-range casters are LUT[start .. start+count).
+  // The DISPLAY shader samples the light colour (px1); the cast walks light→LUT→caster off the CPU mirrors
+  // (identical to the uploaded textures) — the GPU projection is the next step (caster-lut C5).
+  private readonly lightData = new Float32Array(TEX_FLOATS);
+  private readonly primData = new Float32Array(TEX_FLOATS);
+  private readonly lutData = new Float32Array(LUT_ENTRIES);
   private lightTex: Texture | null = null;
-  /** The colour written to each light's row-3 this frame (mirror of the texture, for the debug markers). */
+  private primTex: Texture | null = null;
+  private lutTex: Texture | null = null;
+  /** Standing-prim count at the last caster-texture rebuild — rebuild when it changes (zones stream in). */
+  private lastCasterCount = -1;
+  /** The colour written to each light's px1 this frame (mirror of the texture, for the debug markers). */
   private readonly curColors: { r: number; g: number; b: number }[] = this.lights.map(() => ({ r: 1, g: 1, b: 1 }));
 
   private readonly castGfx = new Graphics();
@@ -102,33 +128,65 @@ export class ShadowCast {
   constructor() {
     this.container.addChild(this.markerGfx);
     this.container.visible = false;
-    // 5×5 float data texture over `lightData`. RGBA32F → 4× full-precision f32 per texel (ES 1.00 rules
-    // out true u32 integer textures; float is the full-precision path — light-data-texture F1). `nearest`
-    // so texel-centre samples land exactly on one light/row (I-5).
-    this.lightTex = new Texture({
-      source: new BufferImageSource({ resource: this.lightData, width: 5, height: 2, format: "rgba32float", scaleMode: "nearest" }),
-    });
+    // Three standard 1024×12 RGBA32F textures. Float (not true u32) — ES 1.00 has no integer textures, and
+    // f32 is exact for the integer indices we store (< 2²⁴; caster-lut I-1). `nearest` = texel-centre samples.
+    this.lightTex = mkDataTex(this.lightData);
+    this.primTex = mkDataTex(this.primData);
+    this.lutTex = mkDataTex(this.lutData);
   }
 
-  /** Pack every light into its 2-texel column of the data texture and re-upload. When `rollColors`, row 1
-   *  gets a fresh random colour (mirrored into `curColors` for the markers) — the change that proves the
-   *  shader is genuinely reading the texture; otherwise the existing `curColors` are re-written unchanged.
-   *  Colours are re-rolled once/sec (COLOR_INTERVAL_MS). 32-bit floats hold world-px directly. */
+  /** Write each light's px0 (pos + radius) and px1 (colour) into `lightData` (px2 start/count is written by
+   *  {@link buildCasterData}). When `rollColors`, px1 gets a fresh random colour (mirrored into `curColors`
+   *  for the markers) — re-rolled once/sec (COLOR_INTERVAL_MS), held otherwise. No upload — the caller
+   *  ({@link tick}) gates the `lightTex` upload on what actually changed. */
   private fillLightData(rollColors: boolean): void {
     const d = this.lightData;
     for (let k = 0; k < this.lights.length; k++) {
       const L = this.lights[k];
-      const px = (row: number): number => (row * 5 + k) * 4; // texel (col=k, row) → base index
-      // row 0 — world_x, world_y, world_z, radius
-      d[px(0) + 0] = L.x; d[px(0) + 1] = L.y; d[px(0) + 2] = L.z; d[px(0) + 3] = L.radius;
-      // row 1 — red, green, blue, alpha (bright-biased random on a re-roll, held otherwise; intensity in rgba)
+      let b = defBase(k, 0); // px0 — world_x, world_y, world_z, radius
+      d[b + 0] = L.x; d[b + 1] = L.y; d[b + 2] = L.z; d[b + 3] = L.radius;
+      b = defBase(k, 1); // px1 — red, green, blue, alpha (intensity folded in)
       const c = this.curColors[k];
       if (rollColors) {
         c.r = 0.3 + 0.7 * Math.random(); c.g = 0.3 + 0.7 * Math.random(); c.b = 0.3 + 0.7 * Math.random();
       }
-      d[px(1) + 0] = c.r; d[px(1) + 1] = c.g; d[px(1) + 2] = c.b; d[px(1) + 3] = 1;
+      d[b + 0] = c.r; d[b + 1] = c.g; d[b + 2] = c.b; d[b + 3] = 1;
     }
-    this.lightTex!.source.update();
+  }
+
+  /** Rebuild the caster textures from the resident standing prims: write each caster's rect into the prim
+   *  texture, then per light cull the in-range casters (`hypot ≤ radius`) into a contiguous LUT run and
+   *  record `(start, count)` into the light's px2. Writes the CPU mirrors (`primData`/`lutData`/`lightData`
+   *  px2); {@link tick} uploads. This is the light → LUT → caster indirection the design specifies. */
+  private buildCasterData(prims: Primitive[]): void {
+    const pd = this.primData, lut = this.lutData, ld = this.lightData;
+    const n = Math.min(prims.length, MAX_DEFS);
+    if (prims.length > MAX_DEFS) console.warn(`[caster-lut] ${prims.length} casters > ${MAX_DEFS} slots — truncated`);
+    // 1. Prim texture: each caster's def (world rect; depth/facing/frame reserved for the fuller wedge).
+    for (let i = 0; i < n; i++) {
+      const p = prims[i];
+      let b = defBase(i, 0); pd[b + 0] = p.x; pd[b + 1] = p.y; pd[b + 2] = 0; pd[b + 3] = 0; // world_x/_y/_z, facing
+      b = defBase(i, 1); pd[b + 0] = p.width; pd[b + 1] = p.height; pd[b + 2] = 0; pd[b + 3] = 0; // w, h, depth1, depth2
+      b = defBase(i, 2); pd[b + 0] = 0; pd[b + 1] = 0; pd[b + 2] = 0; pd[b + 3] = 0; // frame_x/_y/_w/_h
+    }
+    // 2. LUT + light (start, count): one contiguous run of in-range caster indices per light.
+    let cursor = 0;
+    for (let k = 0; k < this.lights.length; k++) {
+      const lb = defBase(k, 0);
+      const Lx = ld[lb + 0], Ly = ld[lb + 1], R = ld[lb + 3];
+      const start = cursor;
+      let count = 0;
+      for (let i = 0; i < n; i++) {
+        const cx = pd[defBase(i, 0) + 0] + pd[defBase(i, 1) + 0] / 2;
+        const baseY = pd[defBase(i, 0) + 1] + pd[defBase(i, 1) + 1];
+        if (Math.hypot(cx - Lx, baseY - Ly) > R) continue;
+        if (cursor >= LUT_ENTRIES) { console.warn("[caster-lut] LUT overflow — run truncated"); break; }
+        lut[cursor++] = i;
+        count++;
+      }
+      const pb = defBase(k, 2); // px2 — start_index, count, reserved, reserved
+      ld[pb + 0] = start; ld[pb + 1] = count; ld[pb + 2] = 0; ld[pb + 3] = 0;
+    }
   }
 
   get enabled(): boolean {
@@ -209,27 +267,34 @@ export class ShadowCast {
     return true;
   }
 
-  /** Cast the dirty lights' billboard shadows in SCREEN space into `dst`, each light in its own bit. */
-  private castScreen(renderer: Renderer, dst: RenderTexture, dirty: number[], prims: Primitive[], cam: Cam): void {
+  /** Cast the dirty lights' billboard shadows in SCREEN space into `dst`, each light in its own bit — driven
+   *  by the light → LUT → caster indirection: read the light's `(start,count)`, walk its LUT run, fetch each
+   *  caster's rect from the prim mirror, project the wedge. (Reads the CPU mirrors, byte-identical to the
+   *  uploaded textures; the GPU-side read of these textures is caster-lut C5.) */
+  private castScreen(renderer: Renderer, dst: RenderTexture, dirty: number[], cam: Cam): void {
     this.clearRT(renderer, dst); // A=1 opaque, all bits clear
+    const ld = this.lightData, pd = this.primData, lut = this.lutData;
     for (const k of dirty) {
-      const L = this.lights[k];
+      const lb = defBase(k, 0);
+      const Lx = ld[lb + 0], Ly = ld[lb + 1], Lz = ld[lb + 2];
+      const pb = defBase(k, 2);
+      const start = ld[pb + 0] | 0, count = ld[pb + 1] | 0;
       const g = this.castGfx;
       g.clear();
       const sx = (wx: number): number => (wx + cam.panX) * cam.zoom;
       const sy = (wy: number): number => (wy + cam.panY) * cam.zoom;
-      for (const p of prims) {
-        const cx = p.x + p.width / 2;
-        const baseY = p.y + p.height;
-        if (Math.hypot(cx - L.x, baseY - L.y) > L.radius) continue;
-        const W = p.width;
-        const H = p.height;
-        const factor = L.z <= H + 1 ? TMAX : Math.min(L.z / (L.z - H), TMAX);
+      for (let j = 0; j < count; j++) {
+        const c = lut[start + j] | 0; // caster index
+        const b0 = defBase(c, 0), b1 = defBase(c, 1);
+        const X = pd[b0 + 0], Y = pd[b0 + 1], W = pd[b1 + 0], H = pd[b1 + 1];
+        const cx = X + W / 2;
+        const baseY = Y + H;
+        const factor = Lz <= H + 1 ? TMAX : Math.min(Lz / (Lz - H), TMAX);
         const bLx = cx - W / 2;
         const bRx = cx + W / 2;
-        const tLx = L.x + factor * (bLx - L.x);
-        const tRx = L.x + factor * (bRx - L.x);
-        const tY = L.y + factor * (baseY - L.y);
+        const tLx = Lx + factor * (bLx - Lx);
+        const tRx = Lx + factor * (bRx - Lx);
+        const tY = Ly + factor * (baseY - Ly);
         g.poly([sx(bLx), sy(baseY), sx(bRx), sy(baseY), sx(tRx), sy(tY), sx(tLx), sy(tY)]).fill(bitColor(k));
       }
       g.blendMode = "add"; // different lights → distinct bits → OR; same light's polys are one fill (union)
@@ -272,9 +337,21 @@ export class ShadowCast {
     const curCam = this.curIsA ? this.camA : this.camB;
     const prevCam = this.curIsA ? this.camB : this.camA;
 
+    // Rebuild the light + caster textures. fillLightData writes light pos/colour (colour re-rolls once/sec);
+    // buildCasterData writes the prim texture + LUT + light (start,count) when a light moved (dirty) or the
+    // resident caster set changed. Upload only what changed. This runs BEFORE the cast, which reads it.
+    const rollColors = now - this.lastColorMs >= COLOR_INTERVAL_MS;
+    if (rollColors) this.lastColorMs = now;
+    this.fillLightData(rollColors);
+    const casterCountChanged = prims.length !== this.lastCasterCount;
+    const rebuilt = dirty.length > 0 || casterCountChanged;
+    if (rebuilt) { this.buildCasterData(prims); this.lastCasterCount = prims.length; }
+    if (rebuilt) { this.primTex!.source.update(); this.lutTex!.source.update(); }
+    if (rebuilt || rollColors) this.lightTex!.source.update();
+
     // 1. Cast the dirty lights' shadows in screen space → cur-screen; stash the camera it was cast at.
     curCam.panX = panX; curCam.panY = panY; curCam.zoom = zoom; curCam.vw = vw; curCam.vh = vh;
-    this.castScreen(renderer, curScreen, dirty, prims, curCam);
+    this.castScreen(renderer, curScreen, dirty, curCam);
 
     // 2. Merge: cur-world = (prev-world − dirty) OR prev-screen(remapped with prev-screen's cast cam).
     this.merge.prevWorld = prevWorld;
@@ -285,12 +362,6 @@ export class ShadowCast {
     renderer.render({ container: this.mergeMesh!, target: curWorld, clear: true, clearColor: [0, 0, 0, 1] });
     this.lastWinCol = m.winCol; // this frame's window becomes prev-world's window for next tick's invalidation
     this.lastWinRow = m.winRow;
-
-    // Pack the lights into the data texture + re-upload — the display reads colour straight from here.
-    // Re-roll the random colours once/sec (not every frame); lastColorMs starts in the past so frame 1 rolls.
-    const rollColors = now - this.lastColorMs >= COLOR_INTERVAL_MS;
-    if (rollColors) this.lastColorMs = now;
-    this.fillLightData(rollColors);
 
     // 3. Display cur-world OR cur-screen (this frame's camera for both); colour from the data texture.
     this.display.curWorld = curWorld;
@@ -320,6 +391,8 @@ export class ShadowCast {
   destroy(): void {
     for (const rt of [this.worldA, this.worldB, this.screenA, this.screenB]) rt?.destroy(true);
     this.lightTex?.destroy(true);
+    this.primTex?.destroy(true);
+    this.lutTex?.destroy(true);
     this.mergeGeo?.destroy(true);
     this.dispGeo?.destroy(true);
     this.castGfx.destroy();
@@ -329,6 +402,12 @@ export class ShadowCast {
     this.decodeFilterInst?.destroy();
     this.container.destroy({ children: true });
   }
+}
+
+/** A standard 1024×12 RGBA32F data texture over `data` (nearest). Shared shape for the light, caster and
+ *  LUT textures (caster-lut). */
+function mkDataTex(data: Float32Array): Texture {
+  return new Texture({ source: new BufferImageSource({ resource: data, width: STD_W, height: STD_H, format: "rgba32float", scaleMode: "nearest" }) });
 }
 
 /** A `w × h` quad with uv 0..1. */

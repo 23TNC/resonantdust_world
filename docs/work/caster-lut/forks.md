@@ -35,5 +35,8 @@ strategy. Revisit only if `Σ count` pressures 49,152 ([I-4](issues.md#i-4)). _(
 - **Interim JS cast reading the textures.** Keep `castScreen` in JS but source caster rects + the in-range
   list from the LUT (JS already holds the arrays, so this only proves the *build*, not the GPU read).
 
-**PICK:** the shader cast is the meaningful proof (C5); if it proves fiddly, fall back to verifying the
-build first (the light/LUT/prim arrays are correct) before the GPU read. _(pending execution)_
+**PICKED (staged):** landed the build-first fallback — the three textures are built + uploaded and the
+light → LUT → caster indirection drives the cast off the CPU mirrors, verified ([D-1](deviations.md#d-1)).
+The GPU read (raw ES-3.00 instanced cast with VTF) is the remaining C5. Rationale: the GPU read is the
+first raw-shader work in the client and high-risk to one-shot; splitting keeps the data-structure proof
+verified. — 2026-07-20
