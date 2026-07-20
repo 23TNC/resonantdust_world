@@ -53,7 +53,9 @@ export const SHADOW_MAX_LEN = 280;
  *  does (shadows only; the light's REAL height still drives N·L). */
 export const SHADOW_MIN_Z = 90;
 /** Initial projected-vertex capacity per light (3/tri). Doubles on demand. */
-export const MAX_SHADOW_VERTS = 8192;
+export const MAX_SHADOW_VERTS = 24576; // ~49 conifer silhouettes/lane (was 8192 ≈ 16 → dropped casters in
+// dense forest). Stopgap headroom; the real fix is a decimated shadow silhouette (a coarse hull in
+// meta.json) so far more casters fit — see docs/work/lighting intent (B3-style follow-up).
 
 /** Occluder modelled height as a fraction of sprite px (base; taller casters diminish). */
 export const SHADOW_OCC_HEIGHT_SCALE = 0.5;
