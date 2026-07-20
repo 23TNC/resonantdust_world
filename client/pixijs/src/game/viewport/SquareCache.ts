@@ -286,6 +286,7 @@ export class SquareCache {
   private readonly empty = new Container();
   private readonly bakeContainer = new Container();
   private readonly blitSprite = new Sprite();
+  private blitMesh: Mesh<Geometry> | null = null; // verbatim (non-premultiply) blit — plain textured mesh, blendMode "none"
   private readonly bakePool: Sprite[] = [];
   /** Material-bake meshes, pooled parallel to {@link bakePool} — a prim resolving to a
    *  {@link MaterialResolve} draws through one of these (its own shader = its own
@@ -945,13 +946,16 @@ export class SquareCache {
       geo.pos.update();
       if (v > 0) this.shadowContainer.addChild(this.shadowMeshes[i]);
     }
-    // One render (additive lanes) → scratch via m (world→slot), then blit to the coldShadow slot.
-    renderer.render({ container: this.shadowContainer, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 1], transform: m });
+    // One render (max lanes) → scratch via m (world→slot), then blit to the coldShadow slot.
+    // Scratch clears to A=0 (a data-lane zero, not opacity) and the blit is VERBATIM (a Mesh, not a
+    // premultiplying Sprite) — this is the bitfield write path proven on the interim: if RGB coverage
+    // survives A=0 here, low-alpha bitfield texels will survive too. [P2 stage A/C]
+    renderer.render({ container: this.shadowContainer, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 0], transform: m });
     const target = csh.bufs[this.active];
-    this.blit(renderer, this.scratchTex!, slotX, slotY, target);
-    if (ax >= 0) this.blit(renderer, this.scratchTex!, ax, slotY, target);
-    if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);
-    if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
+    this.blitVerbatim(renderer, this.scratchTex!, slotX, slotY, target);
+    if (ax >= 0) this.blitVerbatim(renderer, this.scratchTex!, ax, slotY, target);
+    if (ay >= 0) this.blitVerbatim(renderer, this.scratchTex!, slotX, ay, target);
+    if (ax >= 0 && ay >= 0) this.blitVerbatim(renderer, this.scratchTex!, ax, ay, target);
   }
 
   /** Mirror the west facing: shift the origin by the width so the flipped quad still
@@ -1098,6 +1102,34 @@ export class SquareCache {
     this.blitSprite.width = this.slotPx;
     this.blitSprite.height = this.slotPx;
     renderer.render({ container: this.blitSprite, target, clear: false });
+  }
+
+  /** Like {@link blit}, but via a plain textured Mesh + `blendMode "none"` (the same path the
+   *  reproject copy uses) instead of a Sprite. A Sprite's batch shader **premultiplies** `RGB × A`,
+   *  which zeroes the bits of a bitfield texel whose `A = 0`; a Mesh writes the sampled texel
+   *  verbatim. Used for the 32-bit `shadow-cold` field, where alpha is a data lane not opacity. */
+  private blitVerbatim(renderer: Renderer, srcTex: Texture, dx: number, dy: number, target: RenderTexture): void {
+    const f = srcTex.frame;
+    f.x = 0;
+    f.y = 0;
+    f.width = this.slotPx;
+    f.height = this.slotPx;
+    srcTex.updateUvs();
+    if (!this.blitMesh) {
+      const p = this.slotPx;
+      const geo = new Geometry({
+        attributes: {
+          aPosition: { buffer: new Buffer({ data: new Float32Array([0, 0, p, 0, p, p, 0, p]), usage: BufferUsage.VERTEX }), format: "float32x2" },
+          aUV: { buffer: new Buffer({ data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), usage: BufferUsage.VERTEX }), format: "float32x2" },
+        },
+        indexBuffer: new Buffer({ data: new Uint32Array([0, 1, 2, 0, 2, 3]), usage: BufferUsage.INDEX }),
+      });
+      this.blitMesh = new Mesh({ geometry: geo, texture: srcTex });
+      this.blitMesh.blendMode = "none";
+    }
+    this.blitMesh.texture = srcTex;
+    this.blitMesh.position.set(dx, dy);
+    renderer.render({ container: this.blitMesh, target, clear: false });
   }
 
   // ── display ──────────────────────────────────────────────────────────────────
