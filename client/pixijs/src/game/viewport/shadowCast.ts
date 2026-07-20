@@ -26,6 +26,9 @@ const LIGHT_RADIUS = 4 * 64; // fewer casters per light → the 5 colours stay l
 const MOVE_INTERVAL_MS = 1000;
 const TMAX = 3; // clamp runaway grazing shadow projections
 
+/** Debug-marker colours per light — match the display shader's 5 bit-colours (red/green/blue/yellow/magenta). */
+const LIGHT_COLORS = [0xff4040, 0x40ff4d, 0x4d8cff, 0xfff240, 0xff59ff];
+
 export class ShadowCast {
   private readonly lights: Light[] = [
     { x: ZONE_X0 + 260, y: ZONE_Y0 + 300, z: LIGHT_Z, radius: LIGHT_RADIUS },
@@ -53,6 +56,8 @@ export class ShadowCast {
   private seeded = false;
 
   private readonly castGfx = new Graphics();
+  /** Debug markers (drawn over the display): each light's colour-matched dot + its radius ring. */
+  private readonly markerGfx = new Graphics();
   private readonly combine: ShadowCombineShader = makeShadowCombineShader();
   private readonly display: ShadowDisplayShader = makeShadowDisplayShader();
   private geo: Geometry | null = null;
@@ -113,6 +118,8 @@ export class ShadowCast {
     } else {
       this.displayMesh.geometry = this.geo;
     }
+    // Debug markers on TOP of the display (re-add keeps it above the mesh).
+    this.container.addChild(this.markerGfx);
     this.seeded = false;
   }
 
@@ -177,6 +184,23 @@ export class ShadowCast {
       this.curIsA = !this.curIsA; // dest is now current
     }
     this.display.field = this.curIsA ? this.aTex! : this.bTex!;
+    this.drawMarkers(panX, panY, z);
+  }
+
+  /** Draw each light as a colour-matched dot (thick black outline) + its radius ring (thick black
+   *  outline), in screen px — so you can eyeball which prims fall in a light's radius vs which cast. */
+  private drawMarkers(panX: number, panY: number, z: number): void {
+    const g = this.markerGfx;
+    g.clear();
+    for (let k = 0; k < this.lights.length; k++) {
+      const L = this.lights[k];
+      const sx = (L.x + panX) * z;
+      const sy = (L.y + panY) * z;
+      // Radius ring: a thick black circle outline at the light's reach.
+      g.circle(sx, sy, L.radius * z).stroke({ width: 4, color: 0x000000, alpha: 1 });
+      // Light dot: the light's shadow colour, with a thick black outline.
+      g.circle(sx, sy, 10).fill({ color: LIGHT_COLORS[k], alpha: 1 }).stroke({ width: 4, color: 0x000000, alpha: 1 });
+    }
   }
 
   destroy(): void {
@@ -184,6 +208,7 @@ export class ShadowCast {
     for (const t of [this.aTex, this.bTex, this.maskTex]) t?.destroy();
     this.geo?.destroy(true);
     this.castGfx.destroy();
+    this.markerGfx.destroy();
     this.combine.destroy();
     this.display.destroy();
     this.container.destroy({ children: true });

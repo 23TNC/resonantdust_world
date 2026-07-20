@@ -31,6 +31,11 @@ Implementation: [`shadowCastShaders.ts`](../../../client/pixijs/src/game/viewpor
 (5 lights, 2 ping-pong RTs + mask, cast/move/queue) + `SquareCache.standingPrims` re-added; toggled by
 `/shadowcast`.
 
+**Debug markers** (added 2026-07-20): each light draws a **colour-matched dot** (thick black outline) at
+its position + its **radius ring** (thick black circle outline), on top of the display — so you can
+eyeball that a light's shadows come from the prims inside its radius. Confirmed in-browser: the red
+light's ring encircles the trees casting its red shadows.
+
 **Conclusion:** casting real shadows into a ping-pong bitfield with cheap per-light incremental updates
 works. This is the last piece before the real [`shadows`](../shadows/README.md) engine — the `shadow-hot`
 → `shadow-cold` seam is now proven end to end.
