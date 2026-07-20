@@ -19,19 +19,19 @@ architecture and [`forks.md`](forks.md) for the decisions._
 
 ## P1 · Platform + the two RTs — 2026-07-20
 
-- [ ] **Pin WebGL2** in the renderer init (don't let Pixi silently fall back to WebGL1, which would break
-      the ES 3.00 shaders) and author the shadow shaders as **`#version 300 es`** ([F14](forks.md#f14),
-      [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md)).
+- [ ] WebGL2 is already pinned (`preferWebGLVersion: 2`, done in `bitfield-rt`). Shaders are **GLSL
+      ES 1.00** — Pixi's high-shader compiles ES 1.00 even on WebGL2 ([F14](forks.md#f14),
+      [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md)); use
+      **float-mod** for bits, not `uint`.
 - [ ] **`shadow-hot`** — a **screen-space** float RGBA8 RT, viewport-sized (body px), `nearest`. RGB = 3
       lanes, A unused (float+blend → A avoided). Cleared + regenerated every frame; never persisted, never
       reprojected ([F8](forks.md#f8)).
 - [ ] **`shadow-cold`** — a **world-space** bitfield RT in the SquareCache **toroidal** layout (share its
-      window/slot geometry so it pans + scales with the other composites), `nearest`. Prefer an **integer
-      `RGBA8UI`** target (real `uint` bitwise, A usable → 32 bits) — or a unorm RGBA8 with verbatim
-      non-premultiply writes if the Pixi plumbing for integer RTs is fiddly ([F11](forks.md#f11),
-      [I-5](issues.md#i-5)). RED byte = the light-bitfield (6 bits this iteration; full RGBA/32 at goal)
-      ([F9](forks.md#f9)). **Filled by copy, not baked per-prim** — no per-rect dirty loop, just the window
-      geometry + a nearest reproject on zoom.
+      window/slot geometry so it pans + scales with the other composites), **unorm RGBA8**, `nearest`.
+      RED byte = the light-bitfield (6 bits this iteration, A=1 → premultiply is a no-op; widen to the full
+      RGBA texel = 32 via the **verbatim non-premultiply write** to reclaim A — [F11](forks.md#f11),
+      [I-5](issues.md#i-5), and the pattern `bitfield-rt` E1–E4 proved). **Filled by copy, not baked
+      per-prim** — no per-rect dirty loop, just the window geometry + a nearest reproject on zoom.
 - [ ] List `shadow-cold` in `Viewport.renderTextures()` so `/showRT` + `/overlayRT` see it. (`shadow-hot`
       is screen-space, so it isn't world-overlayable — expose it in `/showRT` only if useful for debug.)
 
@@ -50,10 +50,11 @@ architecture and [`forks.md`](forks.md) for the decisions._
 
 - [ ] Compute where the screen rect maps in the **toroidal** world buffer — up to **4 wrapped quadrants**
       (straddling the H seam, the V seam, or both). Reuse the cache's existing window→buffer wrap math.
-- [ ] For each of the ≤4 quadrants, blit `shadow-hot` → `shadow-cold` through a **pack shader**
-      (`#version 300 es`): `texelFetch` the existing `shadow-cold` bits + read `shadow-hot` RGB (the frame's
-      3 lights), **OR in** those 3 lights' bits (`bits |= mask << shift`), write the `uvec4` back. No blend
-      (read-modify-write); real `uint` bitwise, so no `n/255` float-mod ([I-6](issues.md#i-6)).
+- [ ] For each of the ≤4 quadrants, blit `shadow-hot` → `shadow-cold` through a **pack shader** (ES 1.00,
+      **float-mod** — [I-6](issues.md#i-6)): read the frame's 3 lights from `shadow-hot` RGB + the **old**
+      `shadow-cold` buffer, **OR in** those 3 lights' bits (float add into the batch's distinct bits),
+      write the **new** buffer. **Ping-pong** (read old, write new — never sample the bound RT), per
+      [I-8](issues.md#i-8); this is the mechanism `bitfield-rt` E5 proves. No blend.
 - [ ] The 3 bits are chosen by the round-robin (P4): frame's batch `b` → bits `{3b, 3b+1, 3b+2}` (RED byte
       for the 6-light iteration; spilling into G/B/A as the count grows toward 32).
 
@@ -73,11 +74,10 @@ architecture and [`forks.md`](forks.md) for the decisions._
 
 ## P6 · The `/overlayRT shadow-cold` bit-decode — 2026-07-19
 
-- [ ] A **shadow-bits** overlay mode: route `shadow-cold` → it in `overlayModeFor`.
-- [ ] In `overlayShader` (`#version 300 es`), decode the bits with real bitwise — `(bits >> i) & 1u` — and
-      sum each set bit's unique colour into the output: 6 colours (RED bits) this iteration, up to 32 (full
-      RGBA) at goal, **additive** so overlaps combine ([F5](forks.md#f5)). Transparent where no bit is set.
-      (If `shadow-cold` is an integer `usampler2D`, the overlay samples it with `texelFetch`.)
+- [ ] The **`OVERLAY_BITS`** decode mode already exists — `bitfield-rt` built + proved it in
+      `overlayShader` (float-mod bit extraction on a unorm RGBA8, HSV palette, additive; `overlayModeFor`
+      routes `lightmap`/`shadow`-style bitfields to it). For `shadows`, route `shadow-cold` to it and reuse
+      as-is: 6 colours (RED) this iteration, up to 32 (full RGBA) at goal ([F5](forks.md#f5)).
 
 ## P7 · Verify the foundation — 2026-07-19
 

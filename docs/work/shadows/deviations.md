@@ -49,10 +49,12 @@ it, add a separately-baked static-cold tier.
 target, and **MRT** (4 targets) → **128** separable lights.
 
 **Why start in RED:** 6 lights fit one byte; one channel keeps the first pack/decode trivial. **Why 32,
-not the earlier "24":** on the ES 3.00 **integer** bitfield ([F14](forks.md#f14), [F11](forks.md#f11)),
-A is usable data (no premultiply on an integer target), so the full texel is 32 — this **matches** the
-design's ceiling rather than shrinking it. **Un-shrink:** RED→RGBA (6→32) is a shader widening; 32→128
-adds MRT targets. So the only remaining shrink here is the *starting* count, not the ceiling.
+not the earlier "24":** A is reclaimed with the **verbatim non-premultiply write** (ES-1.00-compatible),
+so the full RGBA texel = 32 — matching the design's ceiling. (At 24 bits, A=1 needs no special write —
+proven by `bitfield-rt`.) **Corrected 2026-07-20:** this is *not* done with an ES 3.00 integer texture —
+Pixi's high-shader is ES 1.00 ([F14](forks.md#f14)), so bits are float-mod and A-reclaim is the verbatim
+write. **Un-shrink:** RED→RGBA (6→32) is a shader widening; **32→128 via MRT needs raw ES 3.00 shaders**
+(deferred). So the remaining shrink is the *starting* count; the >32 scale carries a real ES-3.00 cost.
 
 ## D-2 · `shadow-hot` is 3 screen-space RGB lanes, not 8-lane `uChannel` scatter maps — 2026-07-19
 

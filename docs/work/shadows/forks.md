@@ -10,9 +10,10 @@ same day it opened (the screen-hot/world-cold model, F8–F12, superseded the fi
 
 **Options:** (a) a 32-bit bitfield across the full RGBA texel (the target design); (b) start in the **RED
 byte** and grow. **Chose (b).** This iteration: **6 lights in RED** — one channel keeps the first
-pack/decode trivial. The **ceiling is the full RGBA texel = 32** (A usable on the ES 3.00 *integer*
-bitfield — see [F11](forks.md#f11)), and **128 via MRT**. Widening RED→RGBA is the same shader over more
-bytes. See [D-1](deviations.md#d-1).
+pack/decode trivial. The **ceiling is the full RGBA texel = 32** (A reclaimed via the verbatim
+non-premultiply write on a unorm RGBA8 — see [F11](forks.md#f11); *not* an integer texture). **128 via
+MRT** is gated behind raw ES 3.00 shaders ([F14](forks.md#f14)). Widening RED→RGBA is the same float-mod
+shader over more bytes. See [D-1](deviations.md#d-1).
 
 ## F2 · Shadow lanes in RGB, never A — 2026-07-19
 
@@ -79,14 +80,14 @@ space (world) — sidestepping both partial shadows and light-move rect bookkeep
 ## F11 · Bitfield ceiling: 32/RT, 128 via MRT — updated 2026-07-20 (was "24, A never works")
 
 **Originally (2026-07-19):** goal 24 (RGB), because A never survives premultiply on a float RGBA8 RT.
-**Revised 2026-07-20 after [F14](#f14):** on the ES 3.00 **integer** bitfield (`RGBA8UI`, packed via
-read-modify-write — no blending, no premultiply), **A is usable data** → **32 lights per RT**. And **MRT**
-(4 integer targets) → **128** separable lights. The "A never works" limit was a float-RGBA8/premultiply
-artifact that the integer target removes. `shadow-hot` still avoids A (it's a float RGBA8 that needs
-`max`-blend to union casters — A stays coupled there), so it stays RGB = 3 lanes/frame. Throughput target
-unchanged: **≥3 hot/frame ⇒ ≥24 cold cyclable in ~8 frames**; the storage ceiling is now 32/RT (128 MRT),
-not 24. **Iteration still starts at 6 in the RED byte** — widen to the full texel + MRT later
-([D-1](deviations.md#d-1)).
+**Revised 2026-07-20 (after the [F14](#f14) correction — NOT via integer textures):** the ceiling is
+still **32 lights/RT**, but reached on a **unorm RGBA8** bitfield: A is reclaimed with the **verbatim
+non-premultiply Mesh write** (the nuked build's "linchpin"), which is ES-1.00-compatible — *not* an
+integer `RGBA8UI` texture (that needs raw ES 3.00 shaders, deferred). At **24 bits (RGB, A=1)** no special
+write is even needed — premultiply is a no-op, proven by [`bitfield-rt`](../bitfield-rt/completed.md).
+**128 via MRT** remains the multi-target scale but is **gated behind raw ES 3.00 shaders** ([F14](#f14)).
+`shadow-hot` stays a float RGBA8, RGB = 3 lanes (A avoided, `max`-blend). Throughput unchanged: **≥3
+hot/frame ⇒ ≥24 cold cyclable in ~8 frames**. **Iteration starts at 6 in the RED byte.**
 
 ## F13 · Shadow geometry: CPU place + cull, GPU rasterise — 2026-07-19
 
@@ -100,17 +101,21 @@ vertex-shader projection only if a profile shows the JS build/upload cost at sca
 silhouette fan — [D-3](deviations.md#d-3) — is variable per-caster geometry, which *further* favours CPU
 placement.)
 
-## F14 · Target GLSL ES 3.00 / require WebGL2 — 2026-07-20
+## F14 · Shaders are GLSL ES 1.00 (float-mod); ES 3.00 deferred — decided 2026-07-20, CORRECTED same day
 
-**Decision:** author the shadow shaders as **`#version 300 es`** and treat **WebGL2 as a hard
-requirement** (durable stance: [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md)).
-**Why:** the app already runs on a WebGL2 context (Pixi defaults `preferWebGLVersion: 2`); "ES 1.00" was
-only Pixi's authoring default + a moot WebGL1 fallback. ES 3.00 gives the shadow work **real `uint`
-bitwise** (kills the `n/255` float-mod footgun — [I-6](issues.md#i-6)), **`texelFetch`** (exact bitfield
-reads), **integer textures** (store `shadow-cold` as `RGBA8UI`; A becomes usable → [F11](#f11)), and
-**MRT** (the many-lights separability path). Scope: new shaders declare `#version 300 es`; the kept
-G-buffer bakes + albedo blit migrate opportunistically, not now. Renderer init should pin WebGL2 so it
-can't silently fall back and break the ES 3.00 shaders.
+**Decision (corrected):** the shadow shaders are **GLSL ES 1.00** and bits use **float-mod**; **WebGL2 is
+kept as a context baseline** but not for ES 3.00. Durable stance:
+[`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md).
+
+**The reversal:** this fork first said "author `#version 300 es`, ES 3.00 is free because the app already
+runs WebGL2." **That premise was wrong**, proven by executing
+[`bitfield-rt`](../bitfield-rt/issues.md#i-8): Pixi v8's high-shader system compiles **ES 1.00 with
+WebGL1-compat shims** even on a WebGL2 context (`#define in varying`, `gl_FragColor`, no `#version 300
+es`), so `uint`/bitwise/integer-textures/MRT are **not** available through the bit system — a `uint` in an
+overlay bit failed to compile. ES 3.00 is reachable only by **hand-writing raw `GlProgram`s** (bypassing
+the stock bits) — a real cost. **So:** stay on ES 1.00 + float-mod (proven exact on rgba8); defer ES 3.00
+(and with it integer textures + MRT) until a concrete need — the many-lights **MRT** scale, or >32-bit
+fields — justifies hand-written raw shaders.
 
 ## F12 · 3 hot/frame ⇒ ≥24 cold, ~8-frame cycle — 2026-07-19
 

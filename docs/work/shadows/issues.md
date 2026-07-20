@@ -40,22 +40,22 @@ caster quads clamp at 1. `add` would overflow; the tiered-lighting anti-goals ca
 Premultiply (`RGB × A`, zeroing data where A=0) is a **float-RGBA8 / blend / batch-shader** artifact.
 - **`shadow-hot`** IS a float RGBA8 with `max`-blend (to union casters per light), so it keeps data in
   **RGB, A free** ([F2](forks.md#f2)) — premultiply still applies here.
-- **`shadow-cold`** as an ES 3.00 **integer** texture (`RGBA8UI`, [F14](forks.md#f14)) is **not**
-  blended/premultiplied, and its pack is an explicit read-modify-write — so **all 4 bytes, A included, are
-  usable data** (→ 32/RT, [F11](forks.md#f11)). If `shadow-cold` is instead kept a unorm RGBA8, reclaim A
-  with the nuked build's **verbatim non-premultiply Mesh blit** ("bitfield linchpin").
+- **`shadow-cold`** is a **unorm RGBA8** (ES 1.00 — [F14](forks.md#f14)); at **24 bits, A=1** premultiply
+  is a no-op (proven by `bitfield-rt`). To reclaim A → **32 bits**, write with the nuked build's
+  **verbatim non-premultiply Mesh blit** ("bitfield linchpin"). (An integer `RGBA8UI` target would dodge
+  premultiply entirely but needs raw ES 3.00 shaders — deferred, [F14](forks.md#f14).)
 
-## I-6 · Bit set/test — real `uint` bitwise (GLSL ES 3.00) — updated 2026-07-20
+## I-6 · Bit set/test — float-mod on GLSL ES 1.00 — corrected 2026-07-20
 
-Since [F14](forks.md#f14) the shadow shaders are `#version 300 es`, so bits use **real integer ops**, not
-the ES-1.00 float-mod emulation:
-- **`shadow-cold` as `RGBA8UI` / `usampler2D`:** pack = read-modify-write via `texelFetch` (no blend) —
-  `bits |= (mask << shift)`; test/decode = `(bits >> i) & 1u`. Exact, no `n/255` discipline.
-- **if `shadow-cold` is kept a unorm RGBA8** (simpler Pixi plumbing): unpack in-shader
-  (`uint b = uint(v*255.0 + 0.5)`), do the same bitwise, repack (`float(b)/255.0`). Still real ops.
+**Corrected** (the [F14](forks.md#f14) reversal): the shaders are **ES 1.00** — Pixi's high-shader
+compiles no `uint`/bitwise ([bitfield-rt I-8](../bitfield-rt/issues.md#i-8)). So bits use **float math**,
+which `bitfield-rt` proved exact on rgba8 (bytes are `k/255`):
+- **test/decode:** `mod(floor(byte*255.0 / exp2(float(i))), 2.0)` — 0/1, exact for bits 0–7 per byte.
+- **set (pack):** each round-robin batch writes *distinct* bits into a byte holding the others, so
+  `byte' = prevByte + present · (exp2(i)/255.0)` is an OR (no double-count).
 
-The retired ES-1.00 shape — `mod(floor(byte*255 / exp2(i)), 2.0)` to test, `+ exp2(i)/255` to set — is
-kept only as the fallback if some shader must ever stay ES 1.00; it isn't the plan anymore.
+Real `uint` bitwise (`(bits >> i) & 1u`, integer `usampler2D`) is only available if a shader is
+hand-written as a **raw `#version 300 es` `GlProgram`** — deferred with the rest of ES 3.00 ([F14](forks.md#f14)).
 
 ## I-8 · The pack reads + writes `shadow-cold` in one draw — a feedback loop; needs ping-pong — open, 2026-07-20
 

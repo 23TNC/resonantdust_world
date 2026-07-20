@@ -5,9 +5,9 @@ _Path: `client/pixijs`. Deploys as: the browser client bundle (TS + pixi.js). La
 Renders the world from the shard's `state` + `cold` (relayed by edge, via `client/core` over
 wasm): terrain + trees (WorldBridge) and pawns (MoverLayer), with the lighting model.
 
-- **[`design/`](design/)** — [`rendering-platform.md`](design/rendering-platform.md) (**WebGL2 /
-  GLSL ES 3.00** — the shader floor); [`lighting.md`](design/lighting.md),
-  [`de-lighting.md`](design/de-lighting.md) (albedo extraction).
+- **[`design/`](design/)** — [`rendering-platform.md`](design/rendering-platform.md) (**WebGL2 context,
+  GLSL ES 1.00 shaders** — float-mod for bits; ES 3.00 deferred behind raw shaders);
+  [`lighting.md`](design/lighting.md), [`de-lighting.md`](design/de-lighting.md) (albedo extraction).
 - **[`intent/`](intent/)** — [`zones-to-screen.md`](intent/zones-to-screen.md) (the wiring:
   biomes+trees → browser); [`tiered-lighting.md`](intent/tiered-lighting.md) (the target lighting
   architecture — the cold **inline sweep**, no shadow map).

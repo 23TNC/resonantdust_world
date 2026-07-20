@@ -60,9 +60,10 @@ async function main(): Promise<void> {
     // Force WebGL — the draw-call counter patches the GL context, and the
     // (yet-to-return) lighting shaders are GLSL-only.
     preference: "webgl",
-    // Require WebGL2: the client authors shaders as GLSL ES 3.00 (real uint bitwise, integer
-    // textures, MRT) — see docs/components/client/pixijs/design/rendering-platform.md. Don't let
-    // Pixi silently fall back to WebGL1, which would fail to compile the ES 3.00 shaders.
+    // WebGL2 baseline (universal in 2026). NOTE: this does NOT make our shaders ES 3.00 — Pixi's
+    // high-shader system compiles GLSL ES 1.00 with WebGL1-compat shims regardless, so bit ops use
+    // float-mod (see docs/components/client/pixijs/design/rendering-platform.md). Kept as a floor for
+    // any future hand-written raw #version 300 es shaders (MRT / integer textures).
     preferWebGLVersion: 2,
   });
   const host = document.getElementById("app");
