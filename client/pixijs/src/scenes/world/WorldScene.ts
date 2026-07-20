@@ -246,6 +246,16 @@ export class WorldScene extends Scene {
       return `Camera focused on tile (${x}, ${y}).`;
     });
 
+    // `/zoom <level>` — set the ABSOLUTE zoom (screen px per world px), holding the viewport centre.
+    // Clamps to the LOD range: 1 = native 64px tiles, 2 = 2× in, 0.5 = 2× out (the `?zoom=` param).
+    this.chat.registerCommand("zoom", (args) => {
+      const z = Number(args[0]);
+      if (!Number.isFinite(z) || z <= 0) return "Usage: /zoom <level>  (1 = native, 2 = 2× in, 0.5 = out)";
+      const anchor = view().setZoom(z);
+      if (anchor) this.bridge.zoomTo(anchor.x, anchor.y, view().zoom);
+      return `Zoom set to ${view().zoom}×.`;
+    });
+
     // `/pause` + `/unpause` (debug) — no server-side pause in the rebuild yet (the master's
     // metronome has no freeze verb), so these report unavailability rather than silently do
     // nothing. `onPaused` stays wired (it simply never fires) for when a freeze verb returns.

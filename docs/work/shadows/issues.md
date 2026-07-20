@@ -57,6 +57,26 @@ the ES-1.00 float-mod emulation:
 The retired ES-1.00 shape — `mod(floor(byte*255 / exp2(i)), 2.0)` to test, `+ exp2(i)/255` to set — is
 kept only as the fallback if some shader must ever stay ES 1.00; it isn't the plan anymore.
 
+## I-8 · The pack reads + writes `shadow-cold` in one draw — a feedback loop; needs ping-pong — open, 2026-07-20
+
+The pack ([F10](forks.md#f10), [I-5](#i-5), [I-6](#i-6), P3) is described as an **in-place read-modify-write**:
+"reads `shadow-hot` RGB **+ prev `shadow-cold`**, ORs the frame's 3 bits, writes back." That reads and
+writes the **same** `shadow-cold` texture in one draw — a **framebuffer feedback loop**, undefined in WebGL2
+(you can't sample the texture bound as the current render target; core WebGL2 has no texture-barrier /
+`framebuffer_fetch` guarantee). It happens to be a 1:1 texel copy, which some drivers tolerate, but it's UB
+and must not be relied on. **Solution: ping-pong** — two world-space bitfield buffers (`shadow-cold-a/-b`).
+Each frame the pack **reads the old** buffer (bound as a `usampler2D`) and **writes the new** one (bound as
+the RT); source ≠ destination, so it's legal. Then every consumer (lighting, `/overlayRT`) samples the
+**buffer just written** (the destination), not the older one — same-frame write-then-read is fine once the
+RT is unbound, so there's no added latency. **Two correctness riders:** (1) **carry-forward the whole
+window** — the pack must write *every* texel of the destination (`texelFetch` its counterpart in the source,
+then `bits | (batchMask << shift)`; untouched texels get mask 0 → bits copied through), or any texel the
+≤4 quadrants don't cover reverts to its 2-frames-ago value → shadows flicker every other frame. (2)
+**clear-on-change clears BOTH** buffers (extends [I-3](#i-3)'s single-buffer clear), or the next
+carry-forward re-imports stale bits. Cost: a second `RGBA8UI` toroidal buffer (a few MB) — cheap vs relying
+on UB. This is the mechanism [`bitfield-rt`](../bitfield-rt/issues.md#i-7) should prove before `shadows`
+builds on it.
+
 ## I-7 · Casting is in screen space — need caster + light screen coords — resolved-by-design, 2026-07-19
 
 Projection happens in **screen** space now ([F8](forks.md#f8)), so both the light and the caster's

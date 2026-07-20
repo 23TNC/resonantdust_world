@@ -12,8 +12,9 @@
 //!
 //!   ?grid           → /grid               overlay the tile/zone/region debug grid (`?grid=0` off)
 //!   ?focus=<x>,<y>  → /focus <x> <y>      jump the camera centre to a tile (args split on the comma)
+//!   ?zoom=<level>   → /zoom <level>       set the absolute zoom (1 = native, 2 = 2× in, 0.5 = out)
 //!
-//! e.g. http://localhost:5173/?user=Developer&focus=9,3&grid
+//! e.g. http://localhost:5173/?user=Developer&focus=9,3&zoom=2&grid
 
 /** One URL-passed command: the chat-command name + its whitespace/comma-split args. */
 export interface UrlCommand {

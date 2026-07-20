@@ -60,6 +60,10 @@ async function main(): Promise<void> {
     // Force WebGL — the draw-call counter patches the GL context, and the
     // (yet-to-return) lighting shaders are GLSL-only.
     preference: "webgl",
+    // Require WebGL2: the client authors shaders as GLSL ES 3.00 (real uint bitwise, integer
+    // textures, MRT) — see docs/components/client/pixijs/design/rendering-platform.md. Don't let
+    // Pixi silently fall back to WebGL1, which would fail to compile the ES 3.00 shaders.
+    preferWebGLVersion: 2,
   });
   const host = document.getElementById("app");
   if (!host) throw new Error("#app element not found");

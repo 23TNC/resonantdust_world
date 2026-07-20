@@ -42,10 +42,22 @@ respect._
 - [ ] If any [FAIL-mode](README.md) shows, record which in [`issues.md`](issues.md) with the cause it
       points at — that's the whole deliverable of the experiment.
 
-## E5 · Graduate — 2026-07-20
+## E5 · Ping-pong read-modify-write proof — 2026-07-20
 
-- [ ] On PASS: note the proven config (format / sampler / blend / colorspace / pack + decode shape) in
-      [`shadows/issues.md`](../shadows/issues.md) so `shadow-cold` inherits it, and archive this folder.
-- [ ] *(Optional stretch)* set **two** bits in a handful of rects and confirm the decode **adds** their
-      colours — proves the additive-overlap path `shadows` needs (overlapping shadows combine), beyond the
-      one-hot base case.
+_The accumulate path `shadow-cold` actually needs, proven on the known-good storage layer from E1–E4
+([I-7](issues.md#i-7), [shadows I-8](../shadows/issues.md#i-8))._
+
+- [ ] Two world-space bitfield buffers, **A** and **B** (ping-pong). Pass 1: write bit `i` per rect into A
+      (as E2). Pass 2: a shader that **`texelFetch`es A** (source) and writes **`bits_A | (1u << j)`** into
+      **B** (destination) — source ≠ destination, so no framebuffer feedback loop.
+- [ ] Decode **B** via the overlay → each rect shows **both** colours (bit `i` + bit `j`) combined. That
+      proves: bits **survive a read-back**, the **OR preserves** the existing bit, and **ping-pong** avoids
+      the in-place feedback loop — the exact mechanism `shadows`' pack inherits.
+- [ ] **Carry-forward check:** the pass-2 shader must write *every* texel (OR with 0 where no new bit), so
+      confirm rects that get no pass-2 bit still keep their pass-1 bit in B (no dropped texels).
+
+## E6 · Graduate — 2026-07-20
+
+- [ ] On PASS (E4 storage + E5 RMW): note the proven config (format / sampler / blend / colorspace / pack +
+      decode shape / ping-pong) in [`shadows/issues.md`](../shadows/issues.md) so `shadow-cold` inherits it,
+      and archive this folder.
