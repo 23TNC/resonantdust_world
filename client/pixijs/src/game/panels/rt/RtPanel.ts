@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Text, type RenderTexture } from "pixi.js";
+import { Container, Graphics, Sprite, Text, type Filter, type RenderTexture } from "pixi.js";
 import type { LayoutNode } from "../../layout/LayoutNode";
 import type { PanelTaskbar } from "../../../ui/dom/PanelTaskbar";
 import type { UiEditMode } from "../../../ui/dom/UiEditMode";
@@ -6,10 +6,13 @@ import { PixiPanel } from "../../../ui/dom/PixiPanel";
 
 /** One render-texture channel to preview. `texture` is null for a channel that
  *  isn't produced yet (a dormant G-buffer) — the tile draws an empty placeholder
- *  so the panel doubles as a checklist of what's live. */
+ *  so the panel doubles as a checklist of what's live. `filter`, when set, decodes the
+ *  raw RT for display (e.g. the `shadow-*` bitfields → per-light colours) instead of
+ *  showing the bytes verbatim. */
 export interface RtChannel {
   name: string;
   texture: RenderTexture | null;
+  filter?: Filter | null;
 }
 
 /** A snapshot of what to preview, re-read each tick: the viewport's display aspect
@@ -211,6 +214,9 @@ export class RtPanel extends PixiPanel {
       const tex = ch.texture && !ch.texture.destroyed ? ch.texture : null;
       if (tex && tex.width > 0 && tex.height > 0) {
         if (t.sprite.texture !== tex) t.sprite.texture = tex;
+        // A channel may ship a decode filter (the `shadow-*` bitfield → per-light colours) so the
+        // thumbnail reads like the on-screen decode instead of the raw bytes; else draw verbatim.
+        t.sprite.filters = ch.filter ? [ch.filter] : [];
         t.sprite.visible = true;
         // contain-fit (tex aspect already matches, this just guards rounding).
         const scale = Math.min(cellW / tex.width, imgH / tex.height);

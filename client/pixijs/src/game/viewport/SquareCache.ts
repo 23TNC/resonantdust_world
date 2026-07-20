@@ -368,8 +368,8 @@ export class SquareCache {
    *  `(mod(wc,cols)+1, mod(wr,rows)+1) · slotPx`, so a world px `(wx,wy)` maps to buffer px
    *  `(mod(wx/SQUARE, cols)+1)·slotPx` (the +1 = the wrap-apron ring). Buffer is `fixedCW × fixedCH` at
    *  resolution 1; the display samples it by normalized UV, so an external RT of the same size aligns. */
-  bufferMapping(): { fixedCW: number; fixedCH: number; cols: number; rows: number; slotPx: number } {
-    return { fixedCW: this.fixedCW, fixedCH: this.fixedCH, cols: this.cols, rows: this.rows, slotPx: this.slotPx };
+  bufferMapping(): { fixedCW: number; fixedCH: number; cols: number; rows: number; slotPx: number; winCol: number; winRow: number } {
+    return { fixedCW: this.fixedCW, fixedCH: this.fixedCH, cols: this.cols, rows: this.rows, slotPx: this.slotPx, winCol: this.winCol, winRow: this.winRow };
   }
 
   /** Number of display quads {@link fillDisplay} emits — ONE per resident world square

@@ -450,9 +450,10 @@ export class Viewport extends LayoutNode {
       { name: "normal-cold", texture: this.map.displayComposite("normal-cold") },
       { name: "surface-cold", texture: this.map.displayComposite("surface-cold") },
       { name: "zdepth-world-cold", texture: this.map.displayComposite("zdepth-world-cold") },
-      // shadow-world experiment: the two world-space ping-pong bitfield buffers (null when off).
-      { name: "shadow-a", texture: this.shadowCast?.texFor("shadow-a") ?? null },
-      { name: "shadow-b", texture: this.shadowCast?.texFor("shadow-b") ?? null },
+      // shadow-world experiment: the two world-space ping-pong bitfield buffers (null when off). The
+      // decode filter colourises the raw red-byte bits → 5 per-light colours in the `/showRT` preview.
+      { name: "shadow-a", texture: this.shadowCast?.texFor("shadow-a") ?? null, filter: this.shadowCast?.decodeFilter },
+      { name: "shadow-b", texture: this.shadowCast?.texFor("shadow-b") ?? null, filter: this.shadowCast?.decodeFilter },
       { name: "albedo-warm", texture: this.warm.displayComposite("albedo-warm") },
       { name: "normal-warm", texture: this.warm.displayComposite("normal-warm") },
       { name: "surface-warm", texture: this.warm.displayComposite("surface-warm") },
@@ -561,7 +562,7 @@ export class Viewport extends LayoutNode {
     // shadow-world experiment: cast the 5 cold lights' shadows into the WORLD-space ping-pong bitfield.
     // No-op unless `/shadowcast` is on. Casters = the cold cache's standing prims; the shadow RTs share
     // the cache's toroidal buffer mapping (so `/overlayRT shadow-a`/`-b` shows them world-aligned).
-    this.shadowCast?.tick(renderer, this.map.bufferMapping(), this.map.standingPrims(), panX, panY, z);
+    this.shadowCast?.tick(renderer, this.map.bufferMapping(), this.map.standingPrims(), panX, panY, z, w, h);
   }
 
   /** Drive the `/overlayRT` mesh: bind the selected composite + its drop-mode, size it to the

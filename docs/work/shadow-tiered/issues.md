@@ -68,3 +68,27 @@ same-frame merge avoids this by never deferring — the tradeoff we accepted in 
 Per frame: 1 screen cast (realtime set) + 1 remove pass (full buffer) + 4 additive blits (screen→world) +
 1 display. Four persistent RTs (2 screen + 2 world). Fine at 5 lights; at 24 it's the same pass count
 (bits widen to RGB, cast set grows). Log it if a real budget bites.
+
+## I-9 · Stale shadow in freshly-panned zones — FIXED 2026-07-20
+
+**Symptom:** panning revealed the *evicted* zone's shadow briefly painted onto the newly-entered zone,
+until a light recast overwrote it (seconds later).
+
+**Cause:** a world-buffer slot's address is `mod(wc, cols)` — a fixed function of the world column,
+independent of pan. Panning admits a new world square that *collides on an occupied slot* (its mod-slot
+still holds the evicted square's bits). The composites don't show this because they **re-bake per resident
+rectangle** every frame; the shadow buffer's persistent carry-forward was a **verbatim per-slot copy**
+(`wN = prev-world.r` at the same `vUV`) with no per-square invalidation, so the old bits were reinterpreted
+as the new square's shadow.
+
+**Fix:** the merge zeroes `wN` when a slot's resident world square differs from the frame that wrote
+`prev-world`. Threaded `prevWinCol`/`prevWinRow` (last tick's window) through `uMapC`; compute
+`wcPrev = prevWinCol + mod(sc - prevWinCol, cols)` and, if `wc != wcPrev` (or the row equivalent), clear.
+This is the targeted "clear on pan" — only the leading-edge slots whose owner rotated, not a full clear
+(which would nuke all persistent shadows every pan step). Fresh zones show no ghost; correct shadows
+repopulate over the next few seconds as lights recast.
+
+**Caveat for the real engine:** repopulation relies on lights becoming dirty. Static **cold** lights never
+recast, so a zone that scrolls out and back would stay dark. The durable fix is a real **per-square
+re-bake on entry** (re-cast every light whose radius covers the newly-resident square), the exact analogue
+of the composite bake — deferred to the `shadows` engine, noted here so it isn't lost.

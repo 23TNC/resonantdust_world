@@ -1,18 +1,20 @@
-//! shadow-world experiment (edit of shadow-cast) — cast 5 cold lights' shadows into a WORLD-space
-//! ping-pong bitfield, one bit per light (RED byte, bits 0–4). The bitfield RTs live in the SAME toroidal
-//! layout as the composites (`albedo-cold` etc.), so shadows stick to the world under pan/zoom. The
-//! coloured display is GONE — inspect via `/overlayRT shadow-a` / `shadow-b` (the overlay decodes the
-//! bits to 5 colours). Only the light dot + radius-ring markers draw here (screen-space debug).
+//! shadow-tiered experiment (4-RT) — cast the realtime (dirty) lights' shadows in SCREEN space (window-
+//! bounded by construction, no aliasing), keep the settled shadows in a WORLD-space toroidal bitfield.
+//! One bit per light (RED byte, bits 0–4); A never data; float-mod (ES 1.00).
 //!
-//! Per update (one light moves/second): cast the dirty light's in-radius billboard shadows onto the
-//! GROUND in world coords → world-space `mask` (mapped into the toroidal buffer, ±period copies for the
-//! wrap); combine reads `src` bitfield + `mask` → writes `dest` (clear bit k, set where masked, carry the
-//! other 4 bits); swap. Source ≠ destination (no feedback). unorm RGBA8, A=1, float-mod (ES 1.00).
+//! Four RTs: screen-a/-b (screen space, this frame's realtime set) + world-a/-b (toroidal world space,
+//! persistent). Ping-pong: on an "a" frame read the -b buffers, write the -a buffers.
+//!   1. cast the dirty set's shadows in screen space → cur-screen.
+//!   2. cur-world = (prev-world with the dirty bits cleared) OR (prev-screen remapped screen→world)
+//!      — one MERGE pass (reads prev-world + prev-screen, writes cur-world; no feedback, no blend).
+//!   3. display cur-world (world-aligned) OR cur-screen (screen) → 5 colours.
+//! The merge uses prev-screen's CAST-frame camera (stashed) so a pan between cast and merge doesn't slide
+//! the shadows (shadow-tiered I-8). Casters = in-radius standing prims; billboard-quad shadows.
 
-import { Container, Buffer, BufferUsage, Geometry, Graphics, Mesh, RenderTexture, type Renderer } from "pixi.js";
+import { Container, Buffer, BufferUsage, Filter, Geometry, Graphics, Mesh, RenderTexture, type Renderer } from "pixi.js";
 import type { Primitive } from "./SquareCache";
 import { SQUARE } from "./squareMath";
-import { makeShadowCombineShader, type ShadowCombineShader } from "./shadowCastShaders";
+import { makeShadowDecodeFilter, makeShadowMergeShader, makeShadowTDisplayShader, type ShadowMergeShader, type ShadowTDisplayShader } from "./shadowCastShaders";
 
 interface Light {
   x: number;
@@ -20,14 +22,22 @@ interface Light {
   z: number;
   radius: number;
 }
-
-/** The toroidal buffer mapping the shadow RTs share with the composites (from `SquareCache.bufferMapping`). */
 interface Mapping {
   fixedCW: number;
   fixedCH: number;
   cols: number;
   rows: number;
   slotPx: number;
+  winCol: number;
+  winRow: number;
+}
+/** Camera at the moment a screen buffer was cast — used to remap it screen→world at merge (I-8). */
+interface Cam {
+  panX: number;
+  panY: number;
+  zoom: number;
+  vw: number;
+  vh: number;
 }
 
 const ZONE_X0 = 96 * 64;
@@ -38,8 +48,8 @@ const LIGHT_RADIUS = 4 * 64;
 const MOVE_INTERVAL_MS = 1000;
 const TMAX = 3;
 const LIGHT_COLORS = [0xff4040, 0x40ff4d, 0x4d8cff, 0xfff240, 0xff59ff];
-
-const wmod = (n: number, m: number): number => ((n % m) + m) % m;
+/** Fill colour that writes light k's bit into the RED byte (2^k << 16). */
+const bitColor = (k: number): number => (1 << k) << 16;
 
 export class ShadowCast {
   private readonly lights: Light[] = [
@@ -49,26 +59,34 @@ export class ShadowCast {
     { x: ZONE_X0 + 820, y: ZONE_Y0 + 720, z: LIGHT_Z, radius: LIGHT_RADIUS },
     { x: ZONE_X0 + 560, y: ZONE_Y0 + 900, z: LIGHT_Z, radius: LIGHT_RADIUS },
   ];
-  private queue: number[] = [];
   private nextMove = 0;
   private lastMoveMs = 0;
-
-  private a: RenderTexture | null = null;
-  private b: RenderTexture | null = null;
-  private mask: RenderTexture | null = null;
-  /** True when A holds the CURRENT bitfield; flips each processed light. */
-  private curIsA = true;
-  /** Last buffer mapping — recreate RTs when the fixed size changes, re-seed when the toroidal grid does. */
-  private map: Mapping = { fixedCW: 0, fixedCH: 0, cols: 0, rows: 0, slotPx: 0 };
-  private running = false;
   private seeded = false;
+
+  private worldA: RenderTexture | null = null;
+  private worldB: RenderTexture | null = null;
+  private screenA: RenderTexture | null = null;
+  private screenB: RenderTexture | null = null;
+  private camA: Cam = { panX: 0, panY: 0, zoom: 1, vw: 1, vh: 1 };
+  private camB: Cam = { panX: 0, panY: 0, zoom: 1, vw: 1, vh: 1 };
+  /** True when the "-a" buffers are the ones written this frame. */
+  private curIsA = true;
+  /** Window (winCol/winRow) of the tick that wrote prev-world — for leading-edge slot invalidation. */
+  private lastWinCol = 0;
+  private lastWinRow = 0;
+  private map: Mapping = { fixedCW: 0, fixedCH: 0, cols: 0, rows: 0, slotPx: 0, winCol: 0, winRow: 0 };
+  private vw = 0;
+  private vh = 0;
+  private running = false;
 
   private readonly castGfx = new Graphics();
   private readonly markerGfx = new Graphics();
-  private readonly combine: ShadowCombineShader = makeShadowCombineShader();
-  private geo: Geometry | null = null;
-  private combineMesh: Mesh<Geometry> | null = null;
-  /** Screen-space markers layer — add to the viewport's overlay. */
+  private readonly merge: ShadowMergeShader = makeShadowMergeShader();
+  private readonly display: ShadowTDisplayShader = makeShadowTDisplayShader();
+  private mergeGeo: Geometry | null = null; // full world-buffer quad
+  private mergeMesh: Mesh<Geometry> | null = null;
+  private dispGeo: Geometry | null = null; // full-viewport quad
+  private displayMesh: Mesh<Geometry> | null = null;
   readonly container = new Container();
 
   constructor() {
@@ -86,133 +104,161 @@ export class ShadowCast {
     return this.running;
   }
 
-  /** The world-space bitfield RT for `/overlayRT` — `shadow-a` = buffer A, `shadow-b` = buffer B. Both
-   *  hold a complete field (carry-forward); the latest is whichever was written most recently. */
+  /** `/overlayRT` inspection — the CURRENT world buffer (latest). */
   texFor(name: string): RenderTexture | null {
     if (!this.running) return null;
-    if (name === "shadow-a") return this.a;
-    if (name === "shadow-b") return this.b;
+    if (name === "shadow-a") return this.curIsA ? this.worldA : this.worldB;
+    if (name === "shadow-b") return this.curIsA ? this.worldB : this.worldA;
     return null;
   }
 
-  private ensure(renderer: Renderer, m: Mapping): boolean {
-    const sizeChanged = m.fixedCW !== this.map.fixedCW || m.fixedCH !== this.map.fixedCH;
+  /** The `/showRT` decode filter (lazily built) — colourises a `shadow-*` bitfield thumbnail into
+   *  the 5 per-light colours instead of the raw near-black red byte. Stateless, so both thumbnails
+   *  share this one instance. */
+  get decodeFilter(): Filter {
+    if (!this.decodeFilterInst) this.decodeFilterInst = makeShadowDecodeFilter();
+    return this.decodeFilterInst;
+  }
+  private decodeFilterInst: Filter | null = null;
+
+  private mkRT(w: number, h: number): RenderTexture {
+    const rt = RenderTexture.create({ width: w, height: h, resolution: 1 });
+    rt.source.scaleMode = "nearest";
+    return rt;
+  }
+  private clearRT(renderer: Renderer, rt: RenderTexture): void {
+    renderer.render({ container: new Container(), target: rt, clear: true, clearColor: [0, 0, 0, 1] });
+  }
+
+  private ensure(renderer: Renderer, m: Mapping, vw: number, vh: number): boolean {
+    if (m.fixedCW <= 0 || vw <= 0) return false;
+    const worldResized = m.fixedCW !== this.map.fixedCW || m.fixedCH !== this.map.fixedCH;
     const gridChanged = m.cols !== this.map.cols || m.rows !== this.map.rows || m.slotPx !== this.map.slotPx;
+    const screenResized = vw !== this.vw || vh !== this.vh;
     this.map = m;
-    if (m.fixedCW <= 0 || m.fixedCH <= 0) return false;
-    if (sizeChanged || !this.a) {
-      for (const rt of [this.a, this.b, this.mask]) rt?.destroy(true);
-      const mk = (): RenderTexture => {
-        const rt = RenderTexture.create({ width: m.fixedCW, height: m.fixedCH, resolution: 1 });
-        rt.source.scaleMode = "nearest";
-        return rt;
-      };
-      this.a = mk();
-      this.b = mk();
-      this.mask = mk();
-      this.geo?.destroy(true);
-      const pos = new Float32Array([0, 0, m.fixedCW, 0, m.fixedCW, m.fixedCH, 0, m.fixedCH]);
-      const uv = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
-      this.geo = new Geometry({
-        attributes: {
-          aPosition: { buffer: new Buffer({ data: pos, usage: BufferUsage.VERTEX }), format: "float32x2" },
-          aUV: { buffer: new Buffer({ data: uv, usage: BufferUsage.VERTEX }), format: "float32x2" },
-        },
-        indexBuffer: new Buffer({ data: new Uint32Array([0, 1, 2, 0, 2, 3]), usage: BufferUsage.INDEX }),
-      });
-      if (!this.combineMesh) this.combineMesh = new Mesh<Geometry>({ geometry: this.geo, shader: this.combine });
-      else this.combineMesh.geometry = this.geo;
+    this.vw = vw;
+    this.vh = vh;
+    if (worldResized || !this.worldA) {
+      this.worldA?.destroy(true);
+      this.worldB?.destroy(true);
+      this.worldA = this.mkRT(m.fixedCW, m.fixedCH);
+      this.worldB = this.mkRT(m.fixedCW, m.fixedCH);
+      this.mergeGeo?.destroy(true);
+      this.mergeGeo = quadGeo(m.fixedCW, m.fixedCH);
+      if (!this.mergeMesh) this.mergeMesh = new Mesh<Geometry>({ geometry: this.mergeGeo, shader: this.merge });
+      else this.mergeMesh.geometry = this.mergeGeo;
     }
-    if (sizeChanged || gridChanged) {
-      // The toroidal mapping changed (resize / zoom) → the stored bitfields are misaligned. Clear both
-      // and re-cast all 5 lights fresh (nearest-reproject would garble a bitfield; refill is simpler).
-      const empty = new Container();
-      renderer.render({ container: empty, target: this.a!, clear: true, clearColor: [0, 0, 0, 1] });
-      renderer.render({ container: empty, target: this.b!, clear: true, clearColor: [0, 0, 0, 1] });
+    if (screenResized || !this.screenA) {
+      this.screenA?.destroy(true);
+      this.screenB?.destroy(true);
+      this.screenA = this.mkRT(vw, vh);
+      this.screenB = this.mkRT(vw, vh);
+      this.dispGeo?.destroy(true);
+      this.dispGeo = quadGeo(vw, vh);
+      if (!this.displayMesh) {
+        this.displayMesh = new Mesh<Geometry>({ geometry: this.dispGeo, shader: this.display });
+        this.container.addChildAt(this.displayMesh, 0); // below the markers
+      } else {
+        this.displayMesh.geometry = this.dispGeo;
+      }
+    }
+    if (worldResized || gridChanged || screenResized) {
+      this.clearRT(renderer, this.worldA!);
+      this.clearRT(renderer, this.worldB!);
+      this.clearRT(renderer, this.screenA!);
+      this.clearRT(renderer, this.screenB!);
       this.seeded = false;
     }
     return true;
   }
 
-  /** Cast the dirty light `k`'s billboard shadows onto the ground (world), map into the toroidal buffer,
-   *  rasterise into `mask` with ±period copies for the wrap. */
-  private castLight(renderer: Renderer, k: number, prims: Primitive[]): void {
-    const L = this.lights[k];
-    const { cols, rows, slotPx } = this.map;
-    const per = slotPx / SQUARE; // buffer px per world px
-    const g = this.castGfx;
-    g.clear();
-    for (const p of prims) {
-      const cx = p.x + p.width / 2;
-      const baseY = p.y + p.height;
-      if (Math.hypot(cx - L.x, baseY - L.y) > L.radius) continue;
-      const W = p.width;
-      const H = p.height;
-      const factor = L.z <= H + 1 ? TMAX : Math.min(L.z / (L.z - H), TMAX);
-      const bLx = cx - W / 2;
-      const bRx = cx + W / 2;
-      const tLx = L.x + factor * (bLx - L.x);
-      const tRx = L.x + factor * (bRx - L.x);
-      const tY = L.y + factor * (baseY - L.y);
-      // Map to the toroidal buffer: reference = the first corner's mod slot, others offset from it (so a
-      // seam-crossing quad isn't torn; the ±period copies below cover the wrap). +1 slot = the apron ring.
-      const refBx = (wmod(bLx / SQUARE, cols) + 1) * slotPx;
-      const refBy = (wmod(baseY / SQUARE, rows) + 1) * slotPx;
-      const bx = (wx: number): number => refBx + (wx - bLx) * per;
-      const by = (wy: number): number => refBy + (wy - baseY) * per;
-      g.poly([bx(bLx), by(baseY), bx(bRx), by(baseY), bx(tRx), by(tY), bx(tLx), by(tY)]).fill(0xffffff);
-    }
-    // Rasterise into `mask`, re-drawing at ±period offsets so quads that cross the buffer seam wrap.
-    const periodX = cols * slotPx;
-    const periodY = rows * slotPx;
-    let first = true;
-    for (const ox of [-periodX, 0, periodX]) {
-      for (const oy of [-periodY, 0, periodY]) {
-        g.position.set(ox, oy);
-        renderer.render({ container: g, target: this.mask!, clear: first, clearColor: [0, 0, 0, 1] });
-        first = false;
+  /** Cast the dirty lights' billboard shadows in SCREEN space into `dst`, each light in its own bit. */
+  private castScreen(renderer: Renderer, dst: RenderTexture, dirty: number[], prims: Primitive[], cam: Cam): void {
+    this.clearRT(renderer, dst); // A=1 opaque, all bits clear
+    for (const k of dirty) {
+      const L = this.lights[k];
+      const g = this.castGfx;
+      g.clear();
+      const sx = (wx: number): number => (wx + cam.panX) * cam.zoom;
+      const sy = (wy: number): number => (wy + cam.panY) * cam.zoom;
+      for (const p of prims) {
+        const cx = p.x + p.width / 2;
+        const baseY = p.y + p.height;
+        if (Math.hypot(cx - L.x, baseY - L.y) > L.radius) continue;
+        const W = p.width;
+        const H = p.height;
+        const factor = L.z <= H + 1 ? TMAX : Math.min(L.z / (L.z - H), TMAX);
+        const bLx = cx - W / 2;
+        const bRx = cx + W / 2;
+        const tLx = L.x + factor * (bLx - L.x);
+        const tRx = L.x + factor * (bRx - L.x);
+        const tY = L.y + factor * (baseY - L.y);
+        g.poly([sx(bLx), sy(baseY), sx(bRx), sy(baseY), sx(tRx), sy(tY), sx(tLx), sy(tY)]).fill(bitColor(k));
       }
+      g.blendMode = "add"; // different lights → distinct bits → OR; same light's polys are one fill (union)
+      renderer.render({ container: g, target: dst, clear: false });
     }
-    g.position.set(0, 0);
   }
 
-  /** Per-frame. `m` = the cache's buffer mapping; `prims` the world casters; `pan`/`z` map world→screen
-   *  for the markers only (the shadows are world-space now). */
-  tick(renderer: Renderer, m: Mapping, prims: Primitive[], panX: number, panY: number, z: number): void {
+  /** Per-frame. `m` = cache buffer mapping; `prims` world casters; pan/zoom/viewport for screen. */
+  tick(renderer: Renderer, m: Mapping, prims: Primitive[], panX: number, panY: number, zoom: number, vw: number, vh: number): void {
     if (!this.running) return;
-    if (!this.ensure(renderer, m)) return;
+    if (!this.ensure(renderer, m, vw, vh)) return;
     const now = performance.now();
+    let dirty: number[];
     if (!this.seeded) {
-      this.queue = [0, 1, 2, 3, 4];
+      dirty = [0, 1, 2, 3, 4]; // seed: cast every light
       this.seeded = true;
       this.lastMoveMs = now;
       this.nextMove = 0;
       this.curIsA = true;
+      this.lastWinCol = m.winCol; // prev-world is empty on seed — no eviction to invalidate
+      this.lastWinRow = m.winRow;
+    } else {
+      dirty = [];
+      if (now - this.lastMoveMs >= MOVE_INTERVAL_MS) {
+        this.lastMoveMs = now;
+        const k = this.nextMove;
+        this.nextMove = (this.nextMove + 1) % this.lights.length;
+        this.lights[k].x = ZONE_X0 + Math.random() * ZONE_SPAN;
+        this.lights[k].y = ZONE_Y0 + Math.random() * ZONE_SPAN;
+        dirty = [k];
+      }
     }
-    if (now - this.lastMoveMs >= MOVE_INTERVAL_MS) {
-      this.lastMoveMs = now;
-      const k = this.nextMove;
-      this.nextMove = (this.nextMove + 1) % this.lights.length;
-      this.lights[k].x = ZONE_X0 + Math.random() * ZONE_SPAN;
-      this.lights[k].y = ZONE_Y0 + Math.random() * ZONE_SPAN;
-      this.queue.push(k);
-    }
-    if (this.queue.length > 0) {
-      const k = this.queue.shift()!;
-      const srcRT = this.curIsA ? this.a! : this.b!;
-      const dstRT = this.curIsA ? this.b! : this.a!;
-      this.castLight(renderer, k, prims);
-      this.combine.field = srcRT;
-      this.combine.mask = this.mask!;
-      this.combine.setBit(k);
-      renderer.render({ container: this.combineMesh!, target: dstRT, clear: true, clearColor: [0, 0, 0, 1] });
-      this.curIsA = !this.curIsA;
-    }
-    this.drawMarkers(panX, panY, z);
+    let dirtyMask = 0;
+    for (const k of dirty) dirtyMask |= 1 << k;
+
+    const curWorld = this.curIsA ? this.worldA! : this.worldB!;
+    const prevWorld = this.curIsA ? this.worldB! : this.worldA!;
+    const curScreen = this.curIsA ? this.screenA! : this.screenB!;
+    const prevScreen = this.curIsA ? this.screenB! : this.screenA!;
+    const curCam = this.curIsA ? this.camA : this.camB;
+    const prevCam = this.curIsA ? this.camB : this.camA;
+
+    // 1. Cast the dirty lights' shadows in screen space → cur-screen; stash the camera it was cast at.
+    curCam.panX = panX; curCam.panY = panY; curCam.zoom = zoom; curCam.vw = vw; curCam.vh = vh;
+    this.castScreen(renderer, curScreen, dirty, prims, curCam);
+
+    // 2. Merge: cur-world = (prev-world − dirty) OR prev-screen(remapped with prev-screen's cast cam).
+    this.merge.prevWorld = prevWorld;
+    this.merge.prevScreen = prevScreen;
+    this.merge.setClear(dirtyMask);
+    this.merge.setMapping(m.winCol, m.winRow, m.cols, m.rows, m.slotPx, m.fixedCW, m.fixedCH, SQUARE, this.lastWinCol, this.lastWinRow);
+    this.merge.setCam(prevCam.panX, prevCam.panY, prevCam.zoom, prevCam.vw, prevCam.vh);
+    renderer.render({ container: this.mergeMesh!, target: curWorld, clear: true, clearColor: [0, 0, 0, 1] });
+    this.lastWinCol = m.winCol; // this frame's window becomes prev-world's window for next tick's invalidation
+    this.lastWinRow = m.winRow;
+
+    // 3. Display cur-world OR cur-screen (this frame's camera for both).
+    this.display.curWorld = curWorld;
+    this.display.curScreen = curScreen;
+    this.display.setMapping(m.cols, m.rows, m.slotPx, m.fixedCW, m.fixedCH, SQUARE);
+    this.display.setCam(panX, panY, zoom, vw, vh);
+
+    this.drawMarkers(panX, panY, zoom);
+    this.curIsA = !this.curIsA;
   }
 
-  /** Each light as a colour-matched dot (thick black outline) + its radius ring (thick black outline),
-   *  in screen px — to eyeball which prims fall in a light's radius. */
   private drawMarkers(panX: number, panY: number, z: number): void {
     const g = this.markerGfx;
     g.clear();
@@ -226,11 +272,25 @@ export class ShadowCast {
   }
 
   destroy(): void {
-    for (const rt of [this.a, this.b, this.mask]) rt?.destroy(true);
-    this.geo?.destroy(true);
+    for (const rt of [this.worldA, this.worldB, this.screenA, this.screenB]) rt?.destroy(true);
+    this.mergeGeo?.destroy(true);
+    this.dispGeo?.destroy(true);
     this.castGfx.destroy();
     this.markerGfx.destroy();
-    this.combine.destroy();
+    this.merge.destroy();
+    this.display.destroy();
+    this.decodeFilterInst?.destroy();
     this.container.destroy({ children: true });
   }
+}
+
+/** A `w × h` quad with uv 0..1. */
+function quadGeo(w: number, h: number): Geometry {
+  return new Geometry({
+    attributes: {
+      aPosition: { buffer: new Buffer({ data: new Float32Array([0, 0, w, 0, w, h, 0, h]), usage: BufferUsage.VERTEX }), format: "float32x2" },
+      aUV: { buffer: new Buffer({ data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), usage: BufferUsage.VERTEX }), format: "float32x2" },
+    },
+    indexBuffer: new Buffer({ data: new Uint32Array([0, 1, 2, 0, 2, 3]), usage: BufferUsage.INDEX }),
+  });
 }
