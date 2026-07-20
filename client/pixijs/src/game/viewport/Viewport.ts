@@ -24,6 +24,7 @@ import { NOISE_FIELDS, PACKED_UNIFORM_LEN, type MaterialRegistry } from "./mater
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { makeAlbedoBlitShader, type AlbedoBlitShader } from "./albedoBlitShader";
 import { makeOverlayShader, overlayModeFor, type OverlayShader } from "./overlayShader";
+import { ShadowCast } from "./shadowCast";
 
 /** Dirty squares baked per frame. A fresh window dirties its whole grid; the budget
  *  spreads that over a few frames so the first open never hitches. */
@@ -82,6 +83,8 @@ export class Viewport extends LayoutNode {
   private readonly overlayShader: OverlayShader = makeOverlayShader();
   private overlayMesh: Mesh<Geometry> | null = null;
   private overlayChannelName: string | null = null;
+  /** shadow-cast experiment (`/shadowcast`), lazily created. Screen-space overlay. */
+  private shadowCast: ShadowCast | null = null;
   private curQuads = -1;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -358,6 +361,16 @@ export class Viewport extends LayoutNode {
     return this.gridLevel;
   }
 
+  /** shadow-cast experiment: toggle it (`/shadowcast`). Lazily builds the 5-light shadow-casting harness
+   *  + its screen-space display; returns whether it's now running. */
+  toggleShadowCast(): boolean {
+    if (!this.shadowCast) {
+      this.shadowCast = new ShadowCast();
+      this.overlayContainer.addChild(this.shadowCast.container);
+    }
+    return this.shadowCast.toggle();
+  }
+
   /** Redraw the debug grid for the current camera: three nested line sets, each on the
    *  boundaries of a world division — tiles (red, {@link SQUARE} px), zones (magenta,
    *  {@link ZONE_DIM} tiles) and regions (blue, {@link REGION_DIM}·{@link ZONE_DIM} tiles).
@@ -541,6 +554,11 @@ export class Viewport extends LayoutNode {
 
     // Debug tile grid (the `?grid` param): a red gfx overlay redrawn against the live camera.
     this.drawGrid();
+
+    // shadow-cast experiment: cast the 5 cold lights' shadows into the ping-pong bitfield + display.
+    // No-op unless `/shadowcast` is on. Casters = the cold cache's standing prims (things); world→screen
+    // via the same pan + zoom the display mesh uses.
+    this.shadowCast?.tick(renderer, w, h, this.map.standingPrims(), panX, panY, z);
   }
 
   /** Drive the `/overlayRT` mesh: bind the selected composite + its drop-mode, size it to the
@@ -623,6 +641,7 @@ export class Viewport extends LayoutNode {
     this.overlayContainer.destroy({ children: true });
     this.map.destroy();
     this.warm.destroy();
+    this.shadowCast?.destroy();
     // The overlay mesh SHARES the display mesh's geometry (freed once via `this.mesh.geometry`
     // below); `super.destroy()` destroys the mesh child itself, so only its shader needs freeing.
     this.overlayShader.destroy();

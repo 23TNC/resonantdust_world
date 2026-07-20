@@ -617,6 +617,14 @@ export class SquareCache {
     return this.prims.get(id)?.prim ?? null;
   }
 
+  /** The STANDING prims — `zIndex ≥ 1` (things, not ground tiles) — i.e. the shadow casters.
+   *  Insertion order; the caller culls by light radius + resolves each prim's world rect. */
+  standingPrims(): Primitive[] {
+    const out: Primitive[] = [];
+    for (const { prim } of this.prims.values()) if (prim.zIndex >= 1) out.push(prim);
+    return out;
+  }
+
   /** Re-evaluate `id`'s footprint after a mutation: relink if it moved/resized, and dirty
    *  both the old and new squares (its art/tint may also have changed). */
   refreshPrim(id: number): void {

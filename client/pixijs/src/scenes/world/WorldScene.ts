@@ -256,6 +256,14 @@ export class WorldScene extends Scene {
       return `Zoom set to ${view().zoom}×.`;
     });
 
+    // `/shadowcast` (shadow-cast experiment) — toggle: 5 cold lights in the (100,50) zone cast shadows
+    // from in-radius prims into a ping-pong bitfield RT (one bit each), shown as 5 colours; one light
+    // moves per second, re-casting only it. Proves shadow-casting into a bitfield + incremental updates.
+    this.chat.registerCommand("shadowcast", () => {
+      const on = view().toggleShadowCast();
+      return on ? "Shadow-cast ON (5 lights, 5 colours; one moves/sec)." : "Shadow-cast OFF.";
+    });
+
     // `/pause` + `/unpause` (debug) — no server-side pause in the rebuild yet (the master's
     // metronome has no freeze verb), so these report unavailability rather than silently do
     // nothing. `onPaused` stays wired (it simply never fires) for when a freeze verb returns.
