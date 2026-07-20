@@ -45,8 +45,11 @@ All four channels key on the same silhouette (`surface.B` coverage), so a fragme
 coverage tests. But note: the surface bake writes `presence` where covered and the depth/normal key on it —
 so compute coverage first, `discard` if zero, then all four outputs write.
 
-## I-7 · The flat-tint (geo) path must still work
+## I-7 · The flat-tint (geo) path is the "solid material", not a branch
 
-Geo-tier / untextured prims currently bake as a flat tinted sprite (no material reconstruction). The MRT
-shader's tier branch ([F2](forks.md#f2)) must produce a sensible surface/normal/depth for them too (flat
-normal, full coverage, tile depth) — i.e. the flat path isn't just "albedo = tint", it feeds all four.
+Geo-tier / untextured prims bake today as a flat tinted sprite. Under the [F2](forks.md#f2) approach they're
+a **solid material** (white maps + flat-up + full coverage + `geoColor` tint + tile depth), so the one
+material path produces all four channels for them — no branch. Verify the flat cases specifically (ground
+tiles, geo-tier things, untextured rects) bake **identically** through the material path: `white × tint`
+must equal the old flat sprite, flat-up normal, opaque surface (`0x00ffff`), and the right tile depth. This
+is why B2 (universal material) is verifiable on its own, before any MRT.

@@ -16,16 +16,25 @@ _Decisions with live alternatives. Resolve in place; record the pick + why._
 
 **PICK:** scratch-then-blit — smallest change to a proven hot path. _(pending)_
 
-## F2 · Tier branch — one shader with a uniform, or two MRT shaders
+## F2 · How the flat/geo tier is handled — NO branch; a "solid material"
 
-- **One shader, per-prim uniform branch (chosen).** A `uMaterial` flag (or `uTier`) selects the material
-  reconstruction path vs the flat-tint path inside the one MRT fragment. One program, one pipeline; the branch
-  is per-draw-uniform (coherent, cheap).
-- **Two MRT programs** (material-tier + flat-tier), pick per prim. Avoids the in-shader branch but doubles the
-  program/pipeline and splits the batch by tier.
+**PICKED (user, 2026-07-20): unify every prim to ONE material descriptor; no per-prim branch or uniform.**
+Instead of the MRT fragment (or the resolve) choosing a material path vs a flat-tint path, make the flat/geo
+case a **degenerate material** — a "solid material": `residual = white`, `layers = null`, `surface = white`
+(opaque/present/un-occluded), `normal = null` (→ flat-up), `tint = geoColor`, plus the tile depth. The
+material reconstruction already handles tint and null layers, so a white residual × tint = the exact solid
+colour the flat sprite produced today. Every prim then flows through the **one** material path; the MRT
+fragment has a single code path.
 
-**PICK:** one shader + uniform branch, matching how the four separate bakes already resolve per prim. Revisit
-only if the branch bloats the fragment. _(pending)_
+Why this beats the branch:
+- **One decision, not four.** Today each channel's `resolve` independently re-checks real-tier readiness
+  (`alb.geo || surf.geo`) — the comments even worry about "a thing baking real in one channel but geo in
+  another". Deciding solid-vs-real **once** per prim, producing one material that feeds all four outputs,
+  makes that inconsistency impossible by construction.
+- No `uMaterial` uniform, no batch split, no two programs.
+
+Rejected: the per-prim uniform branch (my original draft) and two MRT programs — both keep the tier split
+alive that the solid-material approach dissolves.
 
 ## F3 · Keep the existing per-channel `Channel`/ping-pong structure?
 

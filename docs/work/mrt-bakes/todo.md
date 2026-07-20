@@ -13,21 +13,28 @@ _Planned, not started. Items move to [`completed.md`](completed.md) when done + 
       got its colour (blit each to screen / `/overlayRT`). Nails how `renderer` targets a multi-attachment
       `RenderTarget` and that `drawBuffers` is wired ([I-1](issues.md#i-1)). Gate the rest on this.
 
-## B2 · The combined MRT bake shader — 2026-07-20
+## B2 · Universal material — every prim through one path — 2026-07-20
 
-- [ ] One ES 3.00 fragment (via `compileHighShaderGlProgramES300` or a raw program) with four outs computing
-      `albedo` (material reconstruction) + `surface` (presence/AO/coverage) + `normal` (silhouette-keyed) +
-      `zdepth_world` (tile depth), from one prim draw. Shared `discard` on coverage ([I-6](issues.md#i-6)).
-      Per-prim **tier branch** (material vs flat tint) via a uniform ([F2](forks.md#f2)). Watch the
-      sampler-unit budget ([I-5](issues.md#i-5)).
+- [ ] Extend the per-prim "material" to a superset (albedo residual/layers + surface + normal + depth +
+      tint) and make every channel `resolve` produce one. The flat/geo case = a **solid material** (white
+      maps + flat-up + full coverage + `geoColor` tint + tile depth), so no branch ([F2](forks.md#f2)). Decide
+      solid-vs-real **once** per prim. This unifies the albedo bake even pre-MRT and is verifiable on its own
+      (flat/geo prims still bake identically through the material path).
 
-## B3 · Restructure `bakeSquare` — one MRT render — 2026-07-20
+## B3 · The combined MRT bake shader — 2026-07-20
 
-- [ ] Replace the per-channel loop with: resolve each prim's combined inputs once, render the square's prims
+- [ ] One ES 3.00 fragment (raw program likely cleaner — the high-shader template hard-codes a single
+      `finalColor` out; [I-2](issues.md#i-2)) with four outs computing `albedo` + `surface` + `normal` +
+      `zdepth_world` from the one universal material, one prim draw. Shared `discard` on coverage
+      ([I-6](issues.md#i-6)). Watch the sampler-unit budget ([I-5](issues.md#i-5)).
+
+## B4 · Restructure `bakeSquare` — one MRT render — 2026-07-20
+
+- [ ] Replace the per-channel loop with: resolve each prim's one universal material, render the square's prims
       ONCE into the 4-attachment scratch (MRT), then blit each attachment to its channel's slot + apron (keep
       the existing apron logic — [F1](forks.md#f1), [F3](forks.md#f3)). Drop the per-channel scratch renders.
 
-## B4 · Verify — 2026-07-20
+## B5 · Verify — 2026-07-20
 
 - [ ] Each channel **pixel-identical** to before: `/overlayRT albedo-cold|surface-cold|normal-cold|
       zdepth-world-cold`, plus the albedo display + `/shadowcast` (casters come from the surface bake). Pan +

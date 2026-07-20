@@ -37,18 +37,25 @@ four attachments, so the four channel buffers stay in lockstep — which they al
 - **ES 3.00 is the enabler** — `layout(location=i) out` is ES 3.00-only, so this is unreachable before the
   migration. The migration wasn't just cleanup; it unlocked this.
 
-## The real work — merging four shaders into one
+## The real work — one universal material, one fragment
 
-The cost isn't the plumbing, it's consolidating four per-prim materials
+The cost isn't the plumbing, it's consolidating the four per-prim materials
 ([material](../../../client/pixijs/src/game/viewport/materialBakeShader.ts)/surface/normal/depth) into one
-fragment that computes all four outputs from one prim draw. Two wrinkles:
+fragment that computes all four outputs from one prim draw. The approach ([F2](forks.md#f2)):
 
-- **Tier branching.** Today a prim bakes through different node types — the **material** path (real-tier
-  albedo reconstruction) vs a **flat tinted sprite** (geo tier / untextured). The MRT shader must handle
-  both, via a per-prim uniform branch ([F2](forks.md#f2)).
+- **No tier branch — a "solid material".** Rather than the MRT shader choosing between a material path and a
+  flat-tint path, make the flat/geo case a **degenerate material** (white maps + flat-up normal + full
+  coverage + `tint = geoColor` + tile depth). The material reconstruction already handles tint and null
+  layers, so white × tint reproduces the flat sprite exactly. **Every** prim flows through the one material
+  path; the fragment has a single code path. This also collapses the four independent real-tier gates into
+  **one** solid-vs-real decision per prim, feeding all four outputs consistently ([F2](forks.md#f2)).
 - **Shared silhouette = shared discard.** All four channels key on the same coverage (`surface.B`), so **one
-  `discard` governs all four outputs** — a pixel outside the prim isn't part of *any* channel. That's a
-  clean simplification, not a complication ([I-6](issues.md#i-6)).
+  `discard` governs all four outputs** — a pixel outside the prim isn't part of *any* channel. A clean
+  simplification, not a complication ([I-6](issues.md#i-6)).
+
+So there's a **prep step**: extend the per-prim "material" to a superset (albedo residual/layers + surface +
+normal + depth + tint) and make every `resolve` return one — the flat cases as solid materials. That unifies
+the albedo bake path even before MRT; the MRT fragment then just consumes it.
 
 ## Scope — behaviour-preserving
 
