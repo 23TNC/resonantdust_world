@@ -31,12 +31,14 @@ import {
   Matrix,
   Mesh,
   MeshGeometry,
+  RenderTarget,
   RenderTexture,
   Sprite,
   Texture,
   type Renderer,
 } from "pixi.js";
 import { makeMaterialBakeShader, type MaterialBakeShader } from "./materialBakeShader";
+import { makeMrtBakeShader, type MrtBakeShader } from "./mrtBakeShader";
 import { makeDepthBakeShader, type DepthBakeShader } from "./depthBakeShader";
 import { makeNormalBakeShader, type NormalBakeShader } from "./normalBakeShader";
 import { makeSurfaceBakeShader, type SurfaceBakeShader } from "./surfaceBakeShader";
@@ -236,6 +238,20 @@ export class SquareCache {
   private scratchRT: RenderTexture | null = null;
   private scratchTex: Texture | null = null;
 
+  // ── mrt-bakes: one 4-attachment scratch the merged shader writes all channels into (B4) ──
+  /** Slot-sized 4-attachment target — attachment k = channel `mrtOrder[k]`'s output. */
+  private mrtScratch: RenderTarget | null = null;
+  private mrtScratchTex: Texture[] = [];
+  /** `gl.drawBuffers` must be set once per scratch FBO (Pixi omits it) — reset when the FBO is recreated. */
+  private mrtDrawBuffersSet = false;
+  private readonly mrtPool: Mesh[] = [];
+  /** Channels by role (found once from the keys) — the merged shader gathers albedo/normal/depth resolves;
+   *  blit attachment order is [albedo, surface, normal, depth]. */
+  private albedoCh: Channel | undefined;
+  private surfaceCh: Channel | undefined;
+  private normalCh: Channel | undefined;
+  private depthCh: Channel | undefined;
+
   private cols = 0;
   private rows = 0;
   private viewW = 0;
@@ -304,6 +320,11 @@ export class SquareCache {
 
   constructor(channels: ChannelSpec[]) {
     this.channels = channels.map((c) => new Channel(c));
+    // Role refs for the MRT bake (merged shader writes all four in one pass; blit order = these).
+    this.albedoCh = this.channels.find((c) => c.key.startsWith("albedo"));
+    this.surfaceCh = this.channels.find((c) => c.key.startsWith("surface"));
+    this.normalCh = this.channels.find((c) => c.key.startsWith("normal"));
+    this.depthCh = this.channels.find((c) => c.key.startsWith("zdepth"));
     // Verbatim slot copy — no premultiply/blend, so the scratch overwrites the slot exactly.
     this.blitSprite.blendMode = "none";
     (globalThis as any).__map = this;
@@ -446,6 +467,11 @@ export class SquareCache {
     this.scratchTex?.destroy();
     this.scratchRT = RenderTexture.create({ width: slotPx, height: slotPx, resolution: this.res });
     this.scratchTex = new Texture({ source: this.scratchRT.source, dynamic: true });
+    // MRT scratch: one slot-sized target with 4 colour attachments (the merged bake writes all channels).
+    this.mrtScratch?.destroy();
+    this.mrtScratch = new RenderTarget({ width: slotPx, height: slotPx, colorTextures: 4, resolution: this.res });
+    this.mrtScratchTex = this.mrtScratch.colorTextures.map((src) => new Texture({ source: src, dynamic: true }));
+    this.mrtDrawBuffersSet = false; // FBO recreated → re-enable its draw buffers on the next bake
     this.slotOwnerCol = new Int32Array(cols * rows);
     this.slotOwnerRow = new Int32Array(cols * rows);
     this.slotBaked = new Uint8Array(cols * rows);
@@ -761,32 +787,30 @@ export class SquareCache {
     const ax = sx === 0 ? (cols + 1) * slotPx : sx === cols - 1 ? 0 : -1;
     const ay = sy === 0 ? (rows + 1) * slotPx : sy === rows - 1 ? 0 : -1;
 
-    for (const ch of this.channels) {
-      const target = ch.bufs![active];
-      this.bakeContainer.removeChildren();
-      for (let i = 0; i < list.length; i++) {
-        const prim = list[i];
-        const r = ch.resolve(prim);
-        // Material prims (the single real-tier albedo path) draw through the reconstruction
-        // mesh; surface prims through the presence-premultiply mesh; depth prims through the
-        // tile-depth mesh; normal prims through the soft-α normal mesh; everything else is a
-        // flat tinted sprite (geo tier / untextured) as before.
-        const node = r.material
-          ? this.materialNode(i, prim, r, r.material)
-          : r.surface
-            ? this.surfaceNode(i, prim, r)
-            : r.depth !== undefined
-              ? this.depthNode(i, prim, r, r.depth)
-              : r.normal
-                ? this.normalNode(i, prim, r, r.normal)
-                : this.spriteNode(i, prim, r);
-        this.bakeContainer.addChild(node);
-      }
-      renderer.render({ container: this.bakeContainer, target: this.scratchRT!, clear: true, clearColor: [0, 0, 0, 1], transform: m }); // opaque clear — every bake outputs α=1
-      this.blit(renderer, this.scratchTex!, slotX, slotY, target);
-      if (ax >= 0) this.blit(renderer, this.scratchTex!, ax, slotY, target);
-      if (ay >= 0) this.blit(renderer, this.scratchTex!, slotX, ay, target);
-      if (ax >= 0 && ay >= 0) this.blit(renderer, this.scratchTex!, ax, ay, target);
+    // Build the merged nodes ONCE (all prims), gathering the albedo/normal/depth resolves per prim.
+    this.bakeContainer.removeChildren();
+    for (let i = 0; i < list.length; i++) {
+      const prim = list[i];
+      this.bakeContainer.addChild(this.mrtNode(i, prim, this.albedoCh!.resolve(prim), this.normalCh!.resolve(prim), this.depthCh!.resolve(prim)));
+    }
+    // ONE MRT render into the 4-attachment scratch. Pixi never calls gl.drawBuffers, so enable all four on
+    // the scratch FBO ourselves (per-FBO state, so once per FBO lifetime — mrt-bakes I-1).
+    const gl = (renderer as unknown as { gl: WebGL2RenderingContext }).gl;
+    renderer.renderTarget.bind(this.mrtScratch!, false);
+    if (!this.mrtDrawBuffersSet) {
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3]);
+      this.mrtDrawBuffersSet = true;
+    }
+    renderer.render({ container: this.bakeContainer, target: this.mrtScratch!, clear: true, clearColor: [0, 0, 0, 1], transform: m }); // opaque clear — every bake outputs α=1
+    // Blit each attachment to its channel's slot (interior + apron border). Order = [albedo, surface, normal, depth].
+    const order = [this.albedoCh!, this.surfaceCh!, this.normalCh!, this.depthCh!];
+    for (let k = 0; k < 4; k++) {
+      const tex = this.mrtScratchTex[k];
+      const target = order[k].bufs![active];
+      this.blit(renderer, tex, slotX, slotY, target);
+      if (ax >= 0) this.blit(renderer, tex, ax, slotY, target);
+      if (ay >= 0) this.blit(renderer, tex, slotX, ay, target);
+      if (ax >= 0 && ay >= 0) this.blit(renderer, tex, ax, ay, target);
     }
   }
 
@@ -815,6 +839,41 @@ export class SquareCache {
     sprite.height = prim.height;
     this.placeFlipped(sprite, prim);
     return sprite;
+  }
+
+  /** The MERGED path (mrt-bakes): a pooled {@link MrtBakeShader} mesh whose one fragment writes all four
+   *  channels. Gathers the albedo material (residual/layers/surface/tint), the normal resolve (real map or
+   *  flat-up), and the depth resolve (tile depth), from one prim draw. Shares the unit quad + placement. */
+  private mrtNode(i: number, prim: Primitive, albedoR: ResolvedPrim, normalR: ResolvedPrim, depthR: ResolvedPrim): Mesh {
+    if (!this.materialQuad) {
+      this.materialQuad = new MeshGeometry({
+        positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+      });
+    }
+    let mesh = this.mrtPool[i];
+    if (!mesh) {
+      mesh = new Mesh({ geometry: this.materialQuad, shader: makeMrtBakeShader() });
+      this.mrtPool[i] = mesh;
+    }
+    const shader = mesh.shader as MrtBakeShader;
+    const mat = albedoR.material!; // B2: albedo ALWAYS resolves to a material (solid for flat/geo)
+    shader.tint = albedoR.tint; // white for real (no-op), geoColor for solid
+    shader.residual = mat.residual;
+    shader.layers = mat.layers;
+    shader.surface = mat.surface; // coverage/discard AND the surface output (I-8)
+    shader.noise = this.noiseTex ?? Texture.EMPTY;
+    shader.setChannels(mat.chA, mat.chB);
+    const [rows, uvTile, worldTile] = this.noiseGlobals;
+    shader.setNoiseGlobals(rows, uvTile, worldTile);
+    shader.setWorldRect(prim.x, prim.y, prim.width, prim.height);
+    shader.setSeed(prim.seed ?? 0);
+    shader.normalTex = normalR.normal?.rgb ?? null; // real normal map, else flat-up
+    shader.tileDepth = depthR.depth ?? -1; // thing depth, else ground (black)
+    mesh.scale.set(prim.width, prim.height);
+    this.placeFlipped(mesh, prim);
+    return mesh;
   }
 
   /** The material path: a pooled mesh whose {@link MaterialBakeShader} reconstructs the
@@ -999,6 +1058,12 @@ export class SquareCache {
     for (const ch of this.channels) ch.destroy();
     this.scratchRT?.destroy(true);
     this.scratchTex?.destroy();
+    this.mrtScratch?.destroy();
+    for (const t of this.mrtScratchTex) t.destroy();
+    this.mrtScratchTex.length = 0;
+    for (const mesh of this.mrtPool) (mesh.shader as MrtBakeShader).destroy();
+    for (const mesh of this.mrtPool) mesh.destroy();
+    this.mrtPool.length = 0;
     for (const s of this.bakePool) s.destroy();
     this.bakePool.length = 0;
     for (const mesh of this.materialPool) (mesh.shader as MaterialBakeShader).destroy();

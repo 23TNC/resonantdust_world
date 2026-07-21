@@ -82,3 +82,20 @@ Reading material/surface/normal/depth to design the one 4-out fragment surfaced 
 
 These are why B3 is careful work, and why each channel must be diffed via `/overlayRT *-cold`, not just the
 albedo display.
+
+## I-9 · B3 shader approach — high-shader template vs raw program (2026-07-20)
+
+The merged fragment needs FOUR outputs, but Pixi's high-shader fragment template hard-codes a single
+`out vec4 finalColor` (location 0) and `finalColor = outColor * vColor`. Two ways:
+- **High-shader + extra outs (try first):** `compileHighShaderGlProgramES300` (keeps Pixi's transform/uniform
+  plumbing that B2 already uses) and declare `layout(location=1..3) out vec4 oSurface/oNormal/oDepth;` in the
+  bit header, writing them in `{{main}}`; `finalColor` stays location 0 = oAlbedo. Risk: mixing one implicit
+  location (finalColor) with explicit 1..3 — most WebGL2 drivers assign finalColor→0, but confirm it links.
+- **Raw ES 3.00 program:** full control of `layout(location=0..3)`, but must re-declare the vertex transform
+  (uProjectionMatrix·uWorldTransformMatrix·uTransformMatrix) AND confirm Pixi feeds `uTransformMatrix` (the
+  mesh's local transform) to a raw program — unverified (es300MrtSpike used a clip-space vertex, no transform).
+
+**Plan:** try the high-shader+extra-outs first (reuses the proven B2 plumbing); fall back to raw only if the
+output locations won't link. Also: gather the merged inputs from the albedo material (residual/layers/surface
++ tint — surface doubles as coverage AND the surface output) + the normal resolve (normal tex + hasNormal) +
+the depth resolve (tileDepth); the surface *resolve* isn't needed separately (white → (1,1,1) → same output).
