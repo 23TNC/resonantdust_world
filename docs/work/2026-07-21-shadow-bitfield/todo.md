@@ -22,16 +22,22 @@ open decisions in [`forks.md`](forks.md)._
 
 - Factor a **rect-accumulation** utility over the toroidal grid: coalesce dirty squares into larger
   pass **rectangles**, and **swallow clean squares** into a group when one larger pass beats many
-  small ones (cost heuristic). Toroidal `mod`-wrap aware; grid-square granularity shared with the
-  G-buffer. Consumers: `shadow-cold` (now) and `SquareCache` (later — it bakes 1 square at a time).
+  small ones (cost heuristic; weigh **added lights**, not just added area — F5 sizing tension).
+  Toroidal `mod`-wrap aware; grid-square granularity shared with the G-buffer. Consumers:
+  `shadow-cold` (now) and `SquareCache` (later — it bakes 1 square at a time).
+- Emit **each pass-rect's reaching-light list** (box-test each light's radius vs the rect AABB) for
+  P2's fragment to loop (F5(a) — the per-rectangle pre-cull that keeps the fragment loop short).
 
 ## P2 · The gather cast — 2026-07-21
 
-- One fragment pass per pass-rectangle. Per fragment: loop cold lights (`cold_light_data` via
-  `texelFetch`); **box-radius early-out** (cull if `|Δx|>r` **or** `|Δy|>r`); for survivors, walk the
-  light's LUT run of casters (`cold_light_prim_data`→`prim_definition_data`+`cold_prim_data`) and run
-  a **point-in-projected-silhouette** test (reuse `shadow-projection` math per-fragment); **OR** the
-  light's bit (`1u << lightIndex`) into the accumulator; write the full `u128` once. No ping-pong.
+- One fragment pass per pass-rectangle. Per fragment: loop **the rect's pre-culled light list**
+  (F5 — not all 128); for each, **box-radius early-out** (cull if `|Δx|>r` **or** `|Δy|>r`) as a
+  per-pixel refine; for survivors, walk the light's LUT run of casters
+  (`cold_light_prim_data`→`prim_definition_data`+`cold_prim_data`) via `texelFetch` and run a
+  **point-in-projected-silhouette** test (reuse `shadow-projection` math per-fragment); **OR** the
+  light's bit (`1u << lightIndex`) into a register; write the full `u128` once. No ping-pong, no blend.
+- Consumes the per-rect reaching-light list from P3; `texelFetch`es each light's full data from the
+  cold textures (only the index list is per-rect).
 - Retire the fan-scatter draw in `shadowCaster.ts` (its projection math moves into the fragment).
 
 ## P1 · `shadow-cold` buffer + dirty marking — 2026-07-21
