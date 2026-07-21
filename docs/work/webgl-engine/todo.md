@@ -78,14 +78,14 @@ Ordered vertical slices, each verifiable in-browser:
       warm-over-cold.
 - [ ] **W4f · Shadows + debug.** Port `shadowCast`/`shadowCastShaders` (the bitfield cast) and the debug
       `/commands` (`/showRT`, `/overlayRT`, `/shadowcast`). Milestone: `/shadowcast` casts, matching pixijs.
-- [ ] **W4g · Fix the subscription race ([I-8](issues.md#i-8)).** The world comes up blank on some loads —
-      `bridge.start()` subscribes the instant `login()` resolves, before the world-server subscription channel
-      is ready, so the cold snapshot is dropped. Latent bug our faster (no-Pixi) startup exposed (PixiJS's
-      heavy init masked it); the networking is byte-identical to pixijs. **Fix:** gate the first
-      `bridge.start()` on a real connection/subscription-ready signal from the `WasmClient` (add one if the
-      WASM core doesn't already expose it — e.g. don't resolve `login()` until the subscribe channel is live,
-      or a `whenReady`/first-`onColdState` hook), or retry / re-request the cold snapshot on connect. **Verify:**
-      load N fresh users back-to-back — every one must render (side-by-side vs pixijs).
+- [ ] **W4g · Fix the intermittent no-stream ([I-8](issues.md#i-8)) — deterministically, NO retries.** Traces
+      prove the client subscribes correctly every time (`loggedIn` → `setAnchor world=true` → on a good load
+      `coldTiles` ~50ms later); intermittently the server/edge never streams back for that valid subscribe and
+      no anchor change recovers it. Fix is at the core↔server contract: determine whether a `setAnchor` that
+      arrives before the edge subscription routing is live is QUEUED or DROPPED; if dropped, add a core
+      "subscription/edge-live" event to gate `bridge.start()` on (none exists today), or make the server queue
+      the pre-edge subscribe. Then confirm the separate "~9 zones on a good load" (world-bounds vs
+      under-subscription). The same-anchor retry was tried + removed (wrong fix).
 
 ## W5 · Port the UI — 2026-07-20
 

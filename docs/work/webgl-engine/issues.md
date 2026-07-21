@@ -83,8 +83,22 @@ insufficient — kept only as a best-effort for the dropped-first-push variant).
 render is perfect + fills the viewport. Intermittent (~half of fresh loads); refreshing gets a new connection
 that may work. Render side is exonerated.
 
-**Fix (open):** the recovery must be at the CONNECTION level, not the anchor level — detect "no cold row within
-N s of subscribing" and **reconnect** (drop + re-login for a fresh WS), OR find why the world-server
-subscription STREAM intermittently fails to start (client-core/WS handshake — likely our faster startup
-subscribing before the stream channel is truly live). Verify: N fresh loads back-to-back, every one streams.
-Touches the client-core ↔ server contract.
+**Event trace (2026-07-21).** Logged every core `on_event` + every `setAnchor`. On EVERY load — good or
+stuck — the client does its job correctly and deterministically: `loggedIn` fires, then ~90ms later
+`SETANCHOR (100,50) world=true` (core connected, correct tile), no `disconnected`, no fire-and-forget. On a
+GOOD load `coldTiles` stream ~50ms after the subscribe. On a STUCK load the identical-looking subscribe
+produces NO stream ever, and a genuine anchor CHANGE doesn't recover it. So:
+- RULED OUT: client dropping the subscribe (world=true), a missing poll (core is push-only via `on_event`),
+  and the render (renders correctly whenever data arrives).
+- REMAINING: the world-server / **edge** intermittently doesn't stream back for a valid, correctly-sent
+  subscription. Our fast client subscribes ~90ms after `loggedIn`; likely the server↔edge subscription
+  routing isn't live yet, and a subscribe that lands before edge-ready is DROPPED server-side (not queued).
+
+**NO RETRIES** (per the user — the same-anchor retry was removed; it was the wrong fix and can't help a
+correctly-sent subscribe). **Deterministic fix (needs the core↔server contract, the user's domain):** answer
+whether a pre-edge-ready `setAnchor` is QUEUED (delivered when edge readies) or DROPPED. If dropped, either
+(a) add a core event signalling "subscription channel / edge live" and gate `bridge.start()` on it (the
+current events — loginStarted/serverResolved/loggedIn/coldState/coldTiles/coldThings/stateObject/zoneClosed/
+callStats/subStats/clockSync — have none), or (b) make the server queue a subscribe that arrives pre-edge.
+Separate open item: with the grid on, a GOOD load shows content bounded to ~9 zones — confirm world-bounds
+vs under-subscription (needs a clean interactive test / the `/showRT` debug tools).
