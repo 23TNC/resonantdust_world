@@ -2,7 +2,7 @@
 //! Renderer) and wires the {@link WorldBridge} (subscribed-zone cold tiles/things → the cold
 //! SquareCache, camera anchor → client subscription) + the {@link MoverLayer} (pawns → the warm
 //! cache, composited over cold). Drag pans, scroll zooms (about the cursor), both routed THROUGH
-//! the bridge so zone subscriptions follow the view. `?x`/`?y`/`?focus` frame the initial anchor;
+//! the bridge so zone subscriptions follow the view. `?focus=x,y` frames the initial anchor;
 //! `?grid` overlays the debug grid. Chat, RT panels, and the debug `/commands` are later slices (W4f).
 
 import { Scene } from "../Scene";
@@ -12,8 +12,8 @@ import { WorldBridge } from "../../game/world/WorldBridge";
 import { MoverLayer } from "../../game/world/MoverLayer";
 import { parseUrl, argFlag } from "../../debug/urlParams";
 
-/** Accumulated wheel `deltaY` that halves or doubles the zoom (one LOD octave). */
-const WHEEL_OCTAVE = 240;
+/** Wheel deltaY per zoom octave: factor = 2^(-deltaY/this), applied per event (continuous). */
+const WHEEL_OCTAVE = 500;
 
 export class WorldScene extends Scene {
   private panel!: ViewportPanel;
@@ -22,7 +22,6 @@ export class WorldScene extends Scene {
   private dragId: number | null = null;
   private lastClientX = 0;
   private lastClientY = 0;
-  private wheelAccum = 0;
 
   onEnter(ctx: GameContext): void {
     this.panel = new ViewportPanel(ctx);
@@ -37,12 +36,11 @@ export class WorldScene extends Scene {
     let tileX = 0;
     let tileY = 0;
     for (const cmd of parseUrl().commands) {
-      if (cmd.name === "x") tileX = Number(cmd.args[0] ?? 0) || 0;
-      else if (cmd.name === "y") tileY = Number(cmd.args[0] ?? 0) || 0;
-      else if (cmd.name === "focus") {
-        const [fx, fy] = (cmd.args[0] ?? "").split(",");
-        tileX = Number(fx) || 0;
-        tileY = Number(fy) || 0;
+      if (cmd.name === "focus") {
+        // parseUrl splits the value on ',' → focus=100,50 arrives as args ["100","50"]
+        // (the same way pixijs reads it), NOT one "100,50" string.
+        tileX = Number(cmd.args[0]) || 0;
+        tileY = Number(cmd.args[1]) || 0;
       } else if (cmd.name === "grid") {
         const on = argFlag(cmd.args[0]);
         this.panel.view.setDebugGrid(on ? Number(cmd.args[0]) || 1 : 0);
@@ -106,20 +104,13 @@ export class WorldScene extends Scene {
   };
 
   // ── scroll-to-zoom (about the cursor, through the bridge) ─────────────────────────
+  // Continuous, per-event zoom (matching pixijs): every wheel tick applies a smooth
+  // factor 2^(-deltaY/WHEEL_OCTAVE) — no discrete accumulator (that made small ticks a
+  // no-op until they summed past a threshold).
   private readonly onWheel = (e: WheelEvent): void => {
     e.preventDefault();
-    this.wheelAccum += e.deltaY;
-    let factor = 1;
-    while (this.wheelAccum <= -WHEEL_OCTAVE) {
-      factor *= 2;
-      this.wheelAccum += WHEEL_OCTAVE;
-    }
-    while (this.wheelAccum >= WHEEL_OCTAVE) {
-      factor *= 0.5;
-      this.wheelAccum -= WHEEL_OCTAVE;
-    }
-    if (factor === 1) return;
     const r = this.panel.canvas.getBoundingClientRect();
+    const factor = Math.pow(2, -e.deltaY / WHEEL_OCTAVE);
     // zoomAt applies the zoom to the camera + returns the cursor-anchored point; zoomTo pushes
     // it (client subscription + viewport anchor).
     const anchor = this.panel.view.camera.zoomAt(e.clientX - r.left, e.clientY - r.top, factor);

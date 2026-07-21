@@ -243,12 +243,47 @@ export class WorldBridge {
     return THING_Z_BASE + anchorRow;
   }
 
+  // ── first-subscription robustness (webgl-engine I-8) ──────────────────────────
+  // `start()` subscribes the instant `login()` resolves. On a fast (no-Pixi) client that
+  // can outrun the world-server subscription channel becoming ready, so the initial cold
+  // snapshot is dropped and the world comes up blank. If no cold row arrives shortly after
+  // subscribing, re-issue the anchor to re-request it — bounded, and cleared on the first
+  // cold row of any kind. (PixiJS's heavier startup masked this race; it was always latent.)
+  private gotColdData = false;
+  private snapshotRetries = 0;
+  private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly SNAPSHOT_RETRY_MS = 400;
+  private static readonly SNAPSHOT_RETRY_MAX = 6;
+
+  private armSnapshotRetry(): void {
+    if (this.snapshotTimer !== null) clearTimeout(this.snapshotTimer);
+    this.snapshotTimer = setTimeout(() => {
+      this.snapshotTimer = null;
+      if (this.gotColdData || this.snapshotRetries >= WorldBridge.SNAPSHOT_RETRY_MAX) return;
+      this.snapshotRetries++;
+      // Re-issue the anchor subscription (the first push may have raced connect-ready).
+      this.anchorTileX = NaN;
+      this.setAnchor(this.anchorX, this.anchorY);
+      this.armSnapshotRetry();
+    }, WorldBridge.SNAPSHOT_RETRY_MS);
+  }
+
+  /** Called on the first cold row of any kind — the subscription is live; stop retrying. */
+  private markColdDataSeen(): void {
+    this.gotColdData = true;
+    if (this.snapshotTimer !== null) {
+      clearTimeout(this.snapshotTimer);
+      this.snapshotTimer = null;
+    }
+  }
+
   /** Begin: centre the anchor on tile `(tileX, tileY)` (default the world origin) and
    *  force the first client subscription. Call after login. `?focus=x,y` (debug/urlParams)
    *  jumps the camera straight to a cell instead of panning there. */
   start(tileX = 0, tileY = 0): void {
     this.anchorTileX = NaN; // force the first client push
     this.setAnchor(tileX * SQUARE, tileY * SQUARE);
+    this.armSnapshotRetry(); // I-8: re-request if the snapshot races connect-ready
   }
 
   /** Move the anchor to a world-px point: always recenter the viewport; push to the
@@ -285,6 +320,7 @@ export class WorldBridge {
 
   /** Drop everything: listeners, every zone's sprites, and the client anchor. */
   dispose(): void {
+    if (this.snapshotTimer !== null) { clearTimeout(this.snapshotTimer); this.snapshotTimer = null; }
     for (const unsub of this.unsubs) unsub();
     this.unsubs.length = 0;
     for (const ids of this.coldPrims.values()) {
@@ -346,6 +382,7 @@ export class WorldBridge {
    *  64×64 sprite per non-empty cell. Keyed per `(zone, layer)` so a re-delivery clears + repaints
    *  only itself. */
   private onColdTiles(macroPosition: number, subtypeId: number, layerId: number, tic: number, tiles: Uint16Array): void {
+    this.markColdDataSeen(); // I-8: subscription is live
     const typeId = this.content.typeBiomeTile();
     // Key by TYPE too — a tile row and a thing row can share `(macro, subtype, layer)`, so without the
     // type they collide and `clearColdPrims` in the other handler wipes this row's prims (black ground
@@ -387,6 +424,7 @@ export class WorldBridge {
   /** A zone's cold **scatter** arrived — sparse `kind_pos_reference`s. Paints a bottom-centred
    *  sprite per thing, above the ground. Keyed per `(zone, biome subtype, layer)`. */
   private onColdThings(macroPosition: number, subtypeId: number, layerId: number, tic: number, things: Uint32Array): void {
+    this.markColdDataSeen(); // I-8: subscription is live
     const typeId = this.content.typeBiomeThing();
     // Type-qualified key — see onColdTiles: without the type, a thing row clears the tile row that
     // shares its `(macro, subtype, layer)`.
@@ -473,6 +511,7 @@ export class WorldBridge {
    *  draws on top; once the baseline catches up (a fold), the override is ignored and the baseline
    *  shows. A cleared override (`removed`) re-expands its row to restore the cell. */
   private onColdState(o: ColdStateOverride): void {
+    this.markColdDataSeen(); // I-8: subscription is live
     // Drop any prior override for this entity first (its prim + winner claim).
     const prev = this.coldOverrides.get(o.entityReference);
     if (prev !== undefined) {

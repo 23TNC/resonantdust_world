@@ -101,3 +101,14 @@ viewport's white) and wired it into `WorldScene`. **Verified: typechecks, and th
 warm cache active + bound (pure cold where no mover sits).** The mover VISUAL is unverified-live — there are no
 pawns in the world right now (the wolves need the npc driver running server-side; the pixijs client showed none
 either). The warm pipeline is a faithful port and will render pawns as geo boxes when they exist.
+
+## Input + URL fixes — wheel zoom, cursor readout, focus parsing — 2026-07-21
+
+Three real bugs the port introduced, found while diagnosing the world-render issues, now fixed + verified:
+- **Wheel zoom** was a discrete accumulator (only zoomed once `deltaY` summed past a threshold, so most ticks
+  did nothing). Restored pixijs's **continuous per-event** zoom (`factor = 2^(-deltaY/500)`).
+- **Cursor readout** (the debug HUD's region/zone/tile x,y rows — copied verbatim but never fed): re-wired the
+  `ViewportPanel` window-`pointermove` → `debugPanel.setCursorCoords(screenToWorld(...))`, exactly as pixijs did.
+- **`?focus=x,y` parsing** read `args[0].split(",")` (→ tileY always 0) but `parseUrl` already splits on
+  `[\s,]+`, so it arrives as `args ["x","y"]`; now reads `args[0]`/`args[1]` (matching pixijs). Dropped the
+  ad-hoc `?x=`/`?y=` (old syntax). Verified: `focus=100,50` now anchors the window on tile (100,50).

@@ -12,7 +12,10 @@ import { Viewport } from "./Viewport";
 
 export class ViewportPanel extends DomPanel {
   private readonly viewport = new Viewport();
+  private readonly ctx: GameContext;
   private readonly unsubResize: () => void;
+  /** Window pointer listener feeding the debug HUD's cursor region/zone/tile readout. */
+  private readonly onPointerMove: (e: PointerEvent) => void;
 
   constructor(ctx: GameContext) {
     super({
@@ -24,12 +27,28 @@ export class ViewportPanel extends DomPanel {
       pinned: true,
       uiEditMode: ctx.uiEditMode,
     });
+    this.ctx = ctx;
     const holder = document.createElement("div");
     holder.style.cssText = "position:absolute;inset:0;overflow:hidden;";
     holder.appendChild(this.viewport.canvas);
     this.setBody(holder);
     this.sizeViewport();
     this.unsubResize = this.onRectChange(() => this.sizeViewport());
+
+    // Feed the debug HUD's cursor-coordinate readout (region/zone/tile x,y): map the pointer
+    // to a world point when over the body, clear it when it leaves. A window listener so it
+    // also clears when the pointer moves off-panel.
+    this.onPointerMove = (e: PointerEvent): void => {
+      const r = this.bodyRect;
+      const lx = e.clientX - r.left;
+      const ly = e.clientY - r.top;
+      if (lx >= 0 && lx < r.width && ly >= 0 && ly < r.height) {
+        this.ctx.debugPanel?.setCursorCoords(this.viewport.screenToWorld(lx, ly));
+      } else {
+        this.ctx.debugPanel?.setCursorCoords(null);
+      }
+    };
+    window.addEventListener("pointermove", this.onPointerMove);
   }
 
   private sizeViewport(): void {
@@ -56,6 +75,7 @@ export class ViewportPanel extends DomPanel {
 
   override destroy(): void {
     this.unsubResize();
+    window.removeEventListener("pointermove", this.onPointerMove);
     this.viewport.destroy();
     super.destroy();
   }

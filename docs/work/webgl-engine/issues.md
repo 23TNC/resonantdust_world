@@ -74,6 +74,17 @@ high-shader compilation) gave the connection a beat before `start()` ran, **mask
 client mounts + subscribes sooner and loses the race — i.e. we _exposed_ a pre-existing bug, we didn't create
 one. (A good argument for the migration: the client is measurably faster.)
 
-**Fix:** see [W4g](todo.md#w4). Gate the first subscription on a real connection-ready signal rather than the
-login promise, or retry/re-request the cold snapshot on connect. Verify by loading N fresh users back-to-back
-— every one must render.
+**Refined diagnosis (2026-07-21).** Instrumented traces: on a stuck load the anchor subscription IS pushed
+correctly (`SUB tile=(100,50)`), but **zero cold rows ever arrive for the whole session** — and re-issuing the
+anchor does NOT recover it, **even when the anchor genuinely CHANGES** (nudged tile 100→103 → still nothing).
+So it's not a dropped-then-deduped command: the world-server cold-tile **stream never starts** on the bad
+connection, and no client-side re-subscribe fixes it (the [W4g](todo.md#w4) same-anchor retry is therefore
+insufficient — kept only as a best-effort for the dropped-first-push variant). When a load DOES stream, the
+render is perfect + fills the viewport. Intermittent (~half of fresh loads); refreshing gets a new connection
+that may work. Render side is exonerated.
+
+**Fix (open):** the recovery must be at the CONNECTION level, not the anchor level — detect "no cold row within
+N s of subscribing" and **reconnect** (drop + re-login for a fresh WS), OR find why the world-server
+subscription STREAM intermittently fails to start (client-core/WS handshake — likely our faster startup
+subscribing before the stream channel is truly live). Verify: N fresh loads back-to-back, every one streams.
+Touches the client-core ↔ server contract.
