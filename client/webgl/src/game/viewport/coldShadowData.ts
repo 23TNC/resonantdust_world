@@ -14,7 +14,7 @@
 import { Renderer, Texture } from "../../gl";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
-import { SQUARE } from "./squareMath";
+import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 
 /** `1 unit = SQUARE/16 = 4px` — the compile-time world unit everything (bar atlas px) is measured in. */
 export const UNIT = SQUARE / 16;
@@ -23,8 +23,36 @@ export const UNIT = SQUARE / 16;
  *  variants in play). Index `i` → texel `(i & 127, i >> 7)`. */
 const DEF_W = 128;
 const DEF_H = 64;
+/** `cold_prim_data` texture size — 2 entries/px; `256 × 128` px → 65536 caster slots. */
+const PRIM_W = 256;
+const PRIM_H = 128;
 
 const u10 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0x3ff);
+
+/** World px → `position_anchor_reference` (`region | zone | tile | anchor`, each `u8 = x:4|y:4`); the anchor
+ *  is the sub-tile offset in units (`SQUARE/16`). Assumes non-negative world coords. */
+export function encodePosition(wx: number, wy: number): number {
+  const tileX = Math.floor(wx / SQUARE), tileY = Math.floor(wy / SQUARE);
+  const ax = Math.min(15, Math.floor((wx - tileX * SQUARE) / UNIT));
+  const ay = Math.min(15, Math.floor((wy - tileY * SQUARE) / UNIT));
+  const zoneX = Math.floor(tileX / ZONE_DIM), ltX = tileX % ZONE_DIM;
+  const zoneY = Math.floor(tileY / ZONE_DIM), ltY = tileY % ZONE_DIM;
+  const regionX = Math.floor(zoneX / REGION_DIM) & 0xf, lzX = zoneX % REGION_DIM;
+  const regionY = Math.floor(zoneY / REGION_DIM) & 0xf, lzY = zoneY % REGION_DIM;
+  const region = (regionX << 4) | regionY;
+  const zone = (lzX << 4) | lzY;
+  const tile = (ltX << 4) | ltY;
+  const anchor = (ax << 4) | ay;
+  return (((region << 24) | (zone << 16) | (tile << 8) | anchor) >>> 0);
+}
+
+/** `position_anchor_reference` → world px (inverse of {@link encodePosition}; unit-quantised). Debug/verify. */
+export function decodePosition(pos: number): [number, number] {
+  const region = (pos >>> 24) & 0xff, zone = (pos >>> 16) & 0xff, tile = (pos >>> 8) & 0xff, anchor = pos & 0xff;
+  const wtx = (((region >> 4) * REGION_DIM + (zone >> 4)) * ZONE_DIM + (tile >> 4));
+  const wty = (((region & 0xf) * REGION_DIM + (zone & 0xf)) * ZONE_DIM + (tile & 0xf));
+  return [wtx * SQUARE + (anchor >> 4) * UNIT, wty * SQUARE + (anchor & 0xf) * UNIT];
+}
 
 export class ColdShadowData {
   /** `prim_definition_data` — one px/variant: geometry (units) + atlas frame (px) + page. */
@@ -35,8 +63,17 @@ export class ColdShadowData {
   private defNext = 0;
   private defDirty = false;
 
+  /** `cold_prim_data` — 2 entries/px: a placed caster's `position_anchor_reference` + `z`/`rotation`. */
+  private readonly primTex: Texture;
+  private readonly primMirror = new Uint32Array(PRIM_W * PRIM_H * 4);
+  /** prim.id → allocated prim_data_index. */
+  private readonly primIndex = new Map<number, number>();
+  private primNext = 0;
+  private primDirty = false;
+
   constructor(private readonly renderer: Renderer) {
     this.defTex = new Texture(renderer.gl, { width: DEF_W, height: DEF_H, format: "rgba32uint" });
+    this.primTex = new Texture(renderer.gl, { width: PRIM_W, height: PRIM_H, format: "rgba32uint" });
   }
 
   /** The `prim_definition_data` texture (bound as a `usampler2D` in the shadow shader). */
@@ -77,11 +114,43 @@ export class ColdShadowData {
     return idx;
   }
 
-  /** Upload any changed textures (call once per frame after populating). Cheap — no-op unless a def landed. */
+  get primTexture(): Texture {
+    return this.primTex;
+  }
+  get primWidth(): number {
+    return PRIM_W;
+  }
+
+  /** The `prim_data_index` for a PLACED caster (its position + orientation), allocated on first sight + cached
+   *  by `prim.id`. Cold things are static, so it's written once. `rotation` from `flipX` (E=1 / W=3 — both the
+   *  E/W regime) as a placeholder until the prim carries a real facing (F1/P5); `z` = 0 (ground). */
+  primDataFor(prim: Primitive): number {
+    const hit = this.primIndex.get(prim.id);
+    if (hit !== undefined) return hit;
+    const idx = this.primNext++;
+    const ax = prim.x + prim.width * 0.5; // ground anchor (bottom-centre)
+    const ay = prim.y + prim.height;
+    const rotation = prim.flipX ? 3 : 1; // W : E (both E/W regime for now)
+    const z = 0;
+    // 2 entries/px: even index → RG, odd → BA.
+    const base = (idx >> 1) * 4 + (idx & 1) * 2;
+    this.primMirror[base] = encodePosition(ax, ay); // position_anchor_reference
+    // orient: z(24–31) | rotation(22–23) | reserved(0–21)
+    this.primMirror[base + 1] = ((((z & 0xff) << 24) | ((rotation & 0x3) << 22)) >>> 0);
+    this.primIndex.set(prim.id, idx);
+    this.primDirty = true;
+    return idx;
+  }
+
+  /** Upload any changed textures (call once per frame after populating). Cheap — no-op unless a slot landed. */
   flush(): void {
     if (this.defDirty) {
       this.defTex.upload(this.defMirror);
       this.defDirty = false;
+    }
+    if (this.primDirty) {
+      this.primTex.upload(this.primMirror);
+      this.primDirty = false;
     }
   }
 
@@ -99,8 +168,18 @@ export class ColdShadowData {
   get debugDefCount(): number {
     return this.defNext;
   }
+  /** DEBUG (P2 verify): decode a cold_prim_data slot — position back to px + z + rotation. */
+  debugPrim(index: number): { pos: [number, number]; z: number; rotation: number } {
+    const base = (index >> 1) * 4 + (index & 1) * 2;
+    const pos = this.primMirror[base], orient = this.primMirror[base + 1];
+    return { pos: decodePosition(pos), z: (orient >>> 24) & 0xff, rotation: (orient >>> 22) & 0x3 };
+  }
+  get debugPrimCount(): number {
+    return this.primNext;
+  }
 
   destroy(): void {
     this.defTex.destroy();
+    this.primTex.destroy();
   }
 }

@@ -209,8 +209,10 @@ export class ShadowCaster {
       const surf = p.textureName && resolver ? resolver.resolve(p.textureName, "surface", p.cell) : null;
       const uv = surf && !surf.geo && surf.frame ? surf.frame.uvRect() : null;
       if (surf?.frame) surfacePage = surf.frame.source;
-      // Populate prim_definition_data (cold-data-textures P1) — generic per-variant geometry + frame.
+      // Populate the cold data textures (cold-data-textures): the generic def (P1) + this placed
+      // instance's position/orientation (P2). The shader reads them in P4.
       this.coldData.definitionFor(p, resolver);
+      this.coldData.primDataFor(p);
       for (let k = 0; k < nLights; k++) {
         if (n >= MAX_PAIRS) break;
         const L = this.lights[k];
