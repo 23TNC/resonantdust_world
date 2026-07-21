@@ -168,6 +168,19 @@ export class WorldScene extends Scene {
       return now ? `Overlaying ${now}.` : `Overlay off (${name}).`;
     });
 
+    // `/coldlights [tileX tileY]` — re-seed the 6 shadow-casting lights in a ring around a tile
+    // (default 100 50, the design's zone). Shadows cast off the standing prims (things) in range.
+    this.chat.registerCommand("coldlights", (args) => {
+      const x = args.length ? Number(args[0]) : 100;
+      const y = args.length ? Number(args[1]) : 50;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return "Usage: /coldlights [tileX tileY]  (default 100 50)";
+      view().seedLights(x, y);
+      return `Lights seeded around tile (${x}, ${y}).`;
+    });
+
+    // `/shadows` — toggle the shadow pass.
+    this.chat.registerCommand("shadows", () => (view().toggleShadows() ? "Shadows on." : "Shadows off."));
+
     // No server-side pause verb in the rebuild yet.
     this.chat.registerCommand("pause", () => "Pause isn't wired in the rebuild yet.");
     this.chat.registerCommand("unpause", () => "Pause isn't wired in the rebuild yet.");

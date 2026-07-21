@@ -13,6 +13,7 @@ import { Camera } from "./Camera";
 import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } from "./SquareCache";
 import { AlbedoBlitShader } from "./albedoBlitShader";
 import { OverlayShader, overlayModeFor } from "./overlayShader";
+import { ShadowCaster } from "./shadowCaster";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
@@ -76,6 +77,8 @@ export class Viewport {
   private readonly overlayShader: OverlayShader;
   /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
   private overlayChannelName: string | null = null;
+  /** The first lights + billboard shadows (cast off the cold cache's standing prims). */
+  private readonly shadows: ShadowCaster;
   private displayGeo: Geometry | null = null;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -95,6 +98,7 @@ export class Viewport {
     this.overlayShader = new OverlayShader(gl);
     this.map = new SquareCache(this.renderer, this.empty, this.channels("cold"));
     this.warm = new SquareCache(this.renderer, this.empty, this.channels("warm"));
+    this.shadows = new ShadowCaster(this.renderer);
 
     this.grid = new Program(gl, GRID_VERT, GRID_FRAG, "viewport-grid");
     this.gridQuad = new Geometry(gl, this.grid, {
@@ -188,6 +192,16 @@ export class Viewport {
   /** The composite for a channel name (`*-warm` → the warm cache, else cold). */
   private compositeFor(name: string): Texture | null {
     return name.endsWith("-warm") ? this.warm.displayComposite(name) : this.map.displayComposite(name);
+  }
+
+  // ── lights + shadows (`/coldlights`) ──────────────────────────────────────────────
+  /** Re-seed the shadow lights in a ring around a tile (defaults to the zone the design uses, 100,50). */
+  seedLights(tileX: number, tileY: number): void {
+    this.shadows.seed(tileX, tileY);
+  }
+  /** Toggle the shadow pass; returns whether it's now on. */
+  toggleShadows(): boolean {
+    return this.shadows.toggle();
   }
   /** Current zoom (screen px per world px). */
   get zoom(): number {
@@ -317,6 +331,11 @@ export class Viewport {
       }
     }
 
+    // The first lights + billboard shadows, cast off the cold cache's standing prims, over the world.
+    if (this.map.ready) {
+      this.shadows.tick(this.camera, this.map.standingPrims());
+    }
+
     if (this.gridLevel > 0) {
       this.renderer.draw({
         program: this.grid,
@@ -363,6 +382,7 @@ export class Viewport {
     this.grid.destroy();
     this.blitShader.destroy();
     this.overlayShader.destroy();
+    this.shadows.destroy();
     this.map.destroy();
     this.warm.destroy();
     this.white.destroy();
