@@ -44,7 +44,14 @@ export class Ticker {
         this.acc += dt;
         if (this.acc >= this.minIntervalMs) {
           const step = this.acc;
-          this.acc = 0;
+          // Carry the sub-interval remainder (NOT reset to 0) so the average
+          // dispatch rate holds exactly at maxFPS. Dropping it biases a 120Hz→
+          // 60fps cap down toward ~50: two 8.33ms frames land right on the
+          // 16.67ms boundary, so borderline pairs miss and wait a 3rd frame
+          // (40fps) instead of carrying the deficit forward. `%=` also collapses
+          // a large backlog after a tab-background stall into one step rather
+          // than a catch-up burst of same-tick dispatches.
+          this.acc %= this.minIntervalMs;
           for (const fn of this.fns) fn(step);
         }
       } else {
