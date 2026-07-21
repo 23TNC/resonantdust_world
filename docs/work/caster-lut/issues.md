@@ -47,3 +47,27 @@ Fix it once so the JS builder and the shader can't drift:
 `world_x/_y` are world-px (thousands); `mediump` (~10-bit mantissa) can't hold them without stepping. The
 caster/light samplers and the fragment math that consumes positions must be `highp` (same as the merge/
 display shaders). Colour, radius, depth, frame coords are small and precision-insensitive.
+
+## I-7 · Integer render targets have NO fixed-function blend — OR in-shader
+
+`RGBA8UI`/`RGBA32UI` targets can't use the fixed-function blender, so the **additive-blend OR** that
+`castScreen` uses to combine lights' bits (disjoint bits → `add` == OR) is gone. The OR must be done in a
+shader. The **merge already does** (reads prev-world + prev-screen, ORs, writes cur-world — no blend), so
+the world bitfield is fine; the **screen cast must become a shader** (C5c facet 3) and write bits directly.
+This is why the integer switch (C5b) and the GPU cast (C5c) are inseparable.
+
+## I-8 · The integer switch ripples across EVERY bitfield-reading shader
+
+Switching the bitfield storage to integer is not local to the cast. **All four** shaders that currently
+read the RED byte with float-mod must convert to `usampler2D` + `uint` bitwise: `ShadowMergeShader`,
+`ShadowTDisplayShader`, the `overlayShader` BITS mode, and the `makeShadowDecodeFilter`. Plan C5b as "flip
+the storage + rewrite these four together", verified identical, before the cast (C5c) writes into it. This
+is where the `es300-migration` D-2 float-mod-→-uint cleanup actually lands (uint is load-bearing now).
+
+## I-9 · Vertex-texture-fetch — sample the caster/light textures in the VERTEX stage
+
+The instanced cast builds each caster's wedge quad in the VERTEX shader, so it samples the light + caster
+records there (VTF). WebGL2 guarantees `MAX_VERTEX_TEXTURE_IMAGE_UNITS ≥ 16`, so VTF is available — but
+confirm in the C5a spike. Use `texelFetch` (integer coords, no LOD) for vertex sampling (no derivatives in
+the vertex stage, so `texture()` with implicit LOD is invalid there; `texelFetch`/`textureLod` are the
+vertex-safe reads). The data textures are `RGBA32F` (`highp`) — exact for the indices + world-px positions.

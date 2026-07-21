@@ -75,11 +75,41 @@ LUT ≤ 49,152) are far under, so `floor(texel + 0.5)` recovers them ([I-1](issu
 - Light texture is over-provisioned (4,096 slots, 5 used) — harmless; could shrink to `1024×3`
   independently if uniformity isn't worth 192 KB ([F1](forks.md#f1)).
 
+## C5 — the GPU cast + integer-texture bitfield (three coupled facets)
+
+C1–C4 built the light/LUT/caster textures; the cast currently reads them off the **CPU mirrors**
+([D-1](deviations.md#d-1)). C5 completes the design — move the cast onto the GPU **and** switch the shadow
+bitfield to integer storage. Three facets, tightly coupled (do them together):
+
+1. **GPU instanced cast.** A GLSL ES 3.00 instanced draw: per (light, caster) instance, read the light
+   (`texelFetch`) + its LUT run + the caster record (**vertex-texture-fetch**), build the wedge, write the
+   light's bit. Replaces the JS `Graphics` `castScreen`. `texelFetch` + VTF + instancing are the genuinely
+   new techniques — spike them first ([C5a](todo.md)). (The client is already all ES 3.00, so this is a
+   high-shader ES 3.00 or raw program, not a dialect leap.)
+2. **Integer-texture bitfield.** The shadow RTs move from unorm RGBA8 (float-mod, ≤24 bits, A taboo) to
+   **integer textures** — `RGBA8UI` (32 bits) or `RGBA32UI` (128 bits/texel; [F4](forks.md#f4)) — read via
+   `usampler2D` + `texelFetch`, bits via real `uint` bitwise. This **retires float-mod for real** (the
+   `es300-migration` [D-2](../es300-migration/deviations.md) cleanup lands here, where `uint` is finally
+   load-bearing) and lifts the light-per-RT ceiling. It **ripples across every shader that reads the
+   bitfield** — the merge, the display, the overlay BITS mode, the decode filter — all convert to
+   `usampler2D` + `uint` ([I-8](issues.md#i-8)). Bigger than "just the cast".
+3. **The cast MUST be a shader (consequence).** Integer render targets don't support fixed-function blend
+   ([I-7](issues.md#i-7)) — so the **additive-blend OR** the screen cast uses to combine lights is gone.
+   The OR must happen in-shader. The merge already ORs in-shader (no blend); the screen cast, now a shader
+   (facet 1), writes a dirty light's bit. Multi-light combining without blend needs a strategy
+   ([F5](forks.md#f5)).
+
+**The tension worth naming:** integer storage buys `uint` + 128 bits but **loses fixed-function
+additive-OR** — the mechanism that cheaply combined lights. It's fine here *because* the merge already
+shader-ORs and the cast becomes a shader anyway, but it's why facets 2 and 3 are inseparable. The
+light/LUT/caster textures stay `RGBA32F` (float *data*); only the shadow *bitfield* RTs go integer.
+
 ## Alignment with the durable design
 
 This is the data plumbing that lets the **cast move onto the GPU** — the deferred `light-data-texture` L5
 and the real [`shadows`](../shadows/README.md) engine. The CPU's job shrinks to maintaining the cull (which
-it already does in `castScreen`); the projection becomes a shader reading these three textures.
+it already does in `castScreen`); the projection becomes a shader reading these three textures. C5 is also
+the last thing gating `shadows`' graduation.
 
 ## State
 
