@@ -16,9 +16,14 @@ associations change every frame and **can't sit in a static texture**. Options:
 - **(b) Work items ARE the granular association** — drop the LUT indirection for hot; each hot work item lists
   its prims inline. Fewer indirections, but a different shape than cold.
 
-**Lean:** (a) — keep the hot path a mirror of the cold path (same LUT entry shape, just uniform vs texture),
-one decode. Hot prim **definitions** reuse the cold `prim_definition_data` (geometry is temp-agnostic) — no hot
-def texture.
+**Decided (user, 2026-07-21):** the work item is *(light temp+index, prim_temp, prim_index, prim_count)* — a run
+of PRIMS, whose **source follows `prim_temp`**: the **hot prim uniform** (hot) or the **cold LUT**
+(`cold_light_prim_data`, since cold light × cold prim are both static). **No separate hot-LUT texture** — the
+hot prim uniform is the list, indexed directly by the run. Hot prim **defs** reuse the cold
+`prim_definition_data` (geometry is temp-agnostic). (Rejected: writing the cold textures every frame for movers
+— too slow; uniforms carry the hot tier.) Work-item bits are unchanged; only the run's source is
+`prim_temp`-selected. _Open detail:_ a hot prim uniform entry likely carries its own `definition_index` (no LUT
+to pair it) — i.e. `cold_prim_data` shape + `def_index`.
 
 ## F2 · The bitfield write mechanism (OR bits) — 2026-07-21 (open; biggest new piece)
 
@@ -32,8 +37,7 @@ overlapping casters of one light must OR (not add → bit spillover). Options:
   via `max`), then add the light's bit into the accumulator; bits disjoint → add == OR. More passes.
 - **(c) `logicOp`(GL_OR)** — WebGL2 doesn't expose `glLogicOp` for blending, so out.
 
-**Lean:** (a). It's the design's stated mechanism and lands the integer-RT bitfield the migration promised
-(retire float-mod). Non-trivial — its own sub-phase within P2.
+**Decided (user, 2026-07-21):** (a) — ping-pong integer OR. Its own sub-phase within P2.
 
 ## F3 · `*-hot`/`*-cold` map space + reconcile with `shadows` — 2026-07-21 (open, user)
 
@@ -48,8 +52,20 @@ static (cold) tier **world space** (`shadow-cold`, persistent + toroidal). Optio
 - **(b) Both world-space** — simpler conceptually, but needs per-frame clearing of moved hot shadows (the
   problem the `shadows` stream was created to avoid).
 
-**Lean:** (a). Don't build a second, conflicting tiering — this stream is largely the `shadows` output with a
-cleaner input (work items + hot uniforms). Reconcile explicitly; likely **this absorbs the shadows output half**.
+**Decided (user, 2026-07-21): (b), WORLD-space — because shadows are separated per BIT.** The staleness worry
+dissolves once each light is its own bit: a cold light × cold prim shadow bit sits in the static `*-cold`
+bitfield; anything with a hot participant (a moved light, or a cold light shadowing a moving prim) sets its bit
+in the `*-hot` bitfield, which is **fully rebuilt each frame** (so no stale bits — the moved shadow is recast,
+not cleared-and-patched). No partial-shadow-split problem because the bits don't blend across rects — they're
+independent. The **lit output** (`lightmap-cold`) then **accumulates light per rect via the dirty-rect method**
+(the tiered-lighting model), kept static except dirtied rects, with a **hot light map added** on top each frame.
+
+**Consequence — this SUPERSEDES the `shadows` stream's screen→world approach.** `shadows` went screen-space
+specifically to dodge world-space rebuild + rect-fighting; the per-bit separation makes world-space viable
+instead. So this is NOT "absorb the shadows output" — it's a **different (world-space, per-bit + dirty-rect)
+model** that replaces it. → **close/supersede `shadows`** (its screen-hot→world-cold 4-copy is no longer the
+plan). The one cost to watch: rebuilding the world-space `*-hot` bitfield each frame over the window (budget +
+few hot things keep it bounded).
 
 ## F4 · One shared 128-bit map vs separate hot/cold; 128 vs 256 lights — 2026-07-21 (open, user)
 
@@ -61,8 +77,9 @@ cleaner input (work items + hot uniforms). Reconcile explicitly; likely **this a
   frame clear only the **hot** lights' bits (selective) and rebuild. Fewer textures/reads; trickier clear.
 - **256 lights** — two `RGBA32UI` (or an `RGBA32UI` ×2 MRT); `shadow_bit_index` `u8` already addresses 256.
 
-**Lean:** start **(a)** two maps at **128** (simplest correct); fold to one shared map / 256 if the read cost
-or the light budget warrants. `shadow_bit_index` `u8` leaves headroom for 256 either way.
+**Decided (user, 2026-07-21): (a) two separate maps** — F3 settled this: `*-cold` static (cold×cold) + `*-hot`
+rebuilt each frame, combined at read (cold | hot). Not one shared map. Start at 128; `shadow_bit_index` `u8`
+keeps 256 open (a second `RGBA32UI`) if the light count grows.
 
 ## F5 · Uniform sizes + budget granularity — 2026-07-21 (open)
 

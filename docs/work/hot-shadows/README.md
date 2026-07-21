@@ -68,20 +68,23 @@ The open items are details to pin, not flaws (see [`forks.md`](forks.md)):
   blend (there's no bitwise-OR blend), and overlapping casters of one light must **OR**, not add. This needs
   the pack approach (integer RT + ping-pong OR, or disjoint-bit accumulation with a per-light union) — the
   same machinery the `shadows` stream specs. It's the biggest genuinely-new piece.
-- **F3 — `*-hot`/`*-cold` map SPACE + reconcile with `shadows`.** A hot prim moves, so a *world-space* hot map
-  would need the old position cleared each frame (the "which-rect-when-a-light-moves" problem). The `shadows`
-  design sidesteps that by casting the hot tier in **screen space** (rebuilt every frame, no staleness) and
-  keeping cold in **world space**. This design's temporal hot/cold likely maps onto that spatial screen/world
-  split — worth reconciling so we don't build a second, conflicting tiering.
-- **F4 — one shared 128-bit map vs separate hot/cold (+ 256).** Sharing one `RGBA32UI` (128 lights, cold+hot)
-  means clearing only the hot bits each frame (selective); two maps (hot cleared/rebuilt, cold persistent,
-  OR'd at read) is simpler clearing. 256 lights = two `RGBA32UI`.
+- **F3 — map space (RESOLVED: WORLD-space, per-bit) — supersedes `shadows`.** Because each light is its own
+  **bit**, the staleness worry dissolves: cold×cold bits sit in the static `*-cold` bitfield; anything hot sets
+  its bit in the `*-hot` bitfield, **fully rebuilt each frame** (no stale bits, and no partial-shadow-split —
+  bits don't blend across rects). The lit output (`lightmap-cold`) then accumulates per rect via the
+  **dirty-rect method** (static + a hot light map added). This **world-space per-bit + dirty-rect** model
+  **replaces** `shadows`' screen→world 4-copy — so **`shadows` is superseded**, not absorbed. (Cost to watch:
+  rebuilding the world-space `*-hot` bitfield each frame over the window — budget + few hot things bound it.)
+- **F4 — two separate maps, 128 (RESOLVED).** `*-cold` static + `*-hot` rebuilt each frame, OR'd at read (F3
+  settled this — not one shared map). 256 = a second `RGBA32UI`; `shadow_bit_index` `u8` keeps it open.
 - **F5 — uniform limits + budget granularity.** The `hot-light-work` array + hot light/prim arrays are
   uniforms (GLSL component caps ~1–4k vec4). Movers are few, and the budget bounds the work list, but size the
   arrays + the per-frame budget explicitly.
 
-**Verdict: proceed.** It generalizes the `shadows` stream's warm/cold round-robin with a hot/cold split on
-*both* lights and prims plus a clean work-item/budget layer, and it lands the bitfield output. Phase it.
+**Verdict: proceed** (F1–F4 resolved). A hot/cold split on *both* lights and prims + a work-item/budget layer +
+a **world-space per-bit bitfield** output that **supersedes the `shadows` stream** (close it). The lit
+consumer (`lightmap-cold` dirty-rect accumulation + a hot light map) is the downstream stage this feeds. Phase
+it: P0 layouts → P1 work-item cast → P2 bitfield output → P3 hot uniforms → P4 budget → P5 combine → P6 verify.
 
 ## Relationship
 
