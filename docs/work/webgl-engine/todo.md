@@ -9,7 +9,8 @@ W4a viewport+camera · W4b essential shaders · W4c SquareCache · W4d viewport 
 renders) · W4e warm layer + movers (wired) · input/URL fixes · chat console · reliable-render content-reload
 fix · frame-cap fix.
 
-**Current front: W4f / W4g** (plus the deferred texture + smooth-LOD work, W4h).
+**Current front:** W4g (edge no-stream fix) · W4h remainder (smooth-LOD ping-pong + mover-verify) · then W5.
+W4f (basic shadows) + W4h (real textures) landed; the world renders textured sprites with lights + shadows.
 
 ---
 
