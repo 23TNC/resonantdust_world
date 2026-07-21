@@ -1,24 +1,41 @@
 //! WorldScene — the real world scene. Hosts the {@link ViewportPanel} (its own canvas + engine
 //! Renderer) and wires the {@link WorldBridge} (subscribed-zone cold tiles/things → the cold
 //! SquareCache, camera anchor → client subscription) + the {@link MoverLayer} (pawns → the warm
-//! cache, composited over cold). Drag pans, scroll zooms (about the cursor), both routed THROUGH
-//! the bridge so zone subscriptions follow the view. `?focus=x,y` frames the initial anchor;
-//! `?grid` overlays the debug grid. Chat, RT panels, and the debug `/commands` are later slices (W4f).
+//! cache) + the {@link ChatPanel} (slash-command console). Drag pans, scroll zooms (about the
+//! cursor), both routed THROUGH the bridge so zone subscriptions follow the view. URL params
+//! (`?focus=x,y`, `?grid`, `?zoom`) replay as chat commands once, after login. The RT-preview +
+//! shadow/spike commands need the render-texture debug infra still in W4f.
 
 import { Scene } from "../Scene";
 import type { GameContext } from "../../GameContext";
 import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
 import { MoverLayer } from "../../game/world/MoverLayer";
-import { parseUrl, argFlag } from "../../debug/urlParams";
+import { ChatPanel } from "../../game/panels/chat/ChatPanel";
+import { LogManager } from "../../game/panels/chat/LogManager";
+import { PanelManager } from "../../ui/panels/PanelManager";
+import { SQUARE } from "../../game/viewport/squareMath";
+import { parseUrl, type UrlCommand } from "../../debug/urlParams";
 
 /** Wheel deltaY per zoom octave: factor = 2^(-deltaY/this), applied per event (continuous). */
 const WHEEL_OCTAVE = 500;
+/** Commands whose infra (RT preview, shadow cast, ES 3.00 spikes) lands in W4f — registered so
+ *  they're discoverable + don't error, reporting their pending status. */
+const PENDING_W4F: Record<string, string> = {
+  showRT: "The render-texture preview (/showRT) isn't ported yet — lands with the RT debug panel (W4f).",
+  overlayRT: "The G-buffer overlay (/overlayRT) isn't ported yet — lands with the overlay shader (W4f).",
+  shadowcast: "The shadow-cast experiment (/shadowcast) isn't ported yet (W4f).",
+  es300: "The ES 3.00 spike (/es300) isn't ported yet (W4f).",
+  mrttest: "The MRT spike (/mrttest) isn't ported yet (W4f).",
+  inttest: "The integer-RT spike (/inttest) isn't ported yet (W4f).",
+};
 
 export class WorldScene extends Scene {
   private panel!: ViewportPanel;
   private bridge!: WorldBridge;
   private moverLayer!: MoverLayer;
+  private chat!: ChatPanel;
+  private urlCommands: UrlCommand[] = [];
   private dragId: number | null = null;
   private lastClientX = 0;
   private lastClientY = 0;
@@ -27,27 +44,28 @@ export class WorldScene extends Scene {
     this.panel = new ViewportPanel(ctx);
     this.panel.open();
 
+    // Open-panel registry + the client-only log feed (the chat panel's "logs" tab reads it).
+    ctx.panels = new PanelManager();
+    ctx.logs = new LogManager();
+
     // The client zone stream → viewport tiles, and the camera anchor → client subscription.
     this.bridge = new WorldBridge(ctx.client, ctx.content, this.panel.view, this.panel.view.white, ctx.textureResolver);
     // Pawns (the wolves): synced from the tick pipeline's mobile entities into the viewport's WARM cache.
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.panel.view);
 
-    // URL: initial anchor (x/y/focus tile coords) + the debug grid.
-    let tileX = 0;
-    let tileY = 0;
-    for (const cmd of parseUrl().commands) {
-      if (cmd.name === "focus") {
-        // parseUrl splits the value on ',' → focus=100,50 arrives as args ["100","50"]
-        // (the same way pixijs reads it), NOT one "100,50" string.
-        tileX = Number(cmd.args[0]) || 0;
-        tileY = Number(cmd.args[1]) || 0;
-      } else if (cmd.name === "grid") {
-        const on = argFlag(cmd.args[0]);
-        this.panel.view.setDebugGrid(on ? Number(cmd.args[0]) || 1 : 0);
-      }
-    }
-    // Centre the anchor + force the first client subscription (login has completed).
-    this.bridge.start(tileX, tileY);
+    // Seed the INITIAL anchor from `?focus=x,y` BEFORE the first subscription, so it opens at the
+    // target tile (no origin flash). The replayed `/focus` below then re-applies it as a no-op.
+    this.urlCommands = parseUrl().commands;
+    const focus = this.urlCommands.find((c) => c.name === "focus");
+    const startX = focus ? Number(focus.args[0]) || 0 : 0;
+    const startY = focus ? Number(focus.args[1]) || 0 : 0;
+    this.bridge.start(startX, startY);
+
+    // The chat console + slash commands, then replay the URL params through them (once).
+    this.chat = new ChatPanel(ctx);
+    this.chat.open();
+    this.registerCommands();
+    this.runUrlCommands();
 
     const canvas = this.panel.canvas;
     canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -70,9 +88,72 @@ export class WorldScene extends Scene {
       canvas.removeEventListener("pointercancel", this.onPointerUp);
       canvas.removeEventListener("wheel", this.onWheel);
     }
+    this.chat?.destroy();
     this.moverLayer?.dispose();
     this.bridge?.dispose();
     this.panel?.destroy();
+  }
+
+  // ── chat commands ─────────────────────────────────────────────────────────────────
+  /** Register every slash command against the chat panel. Each is also reachable from the URL
+   *  query (`?grid=1` ≡ `/grid 1`). Working commands drive the camera/grid live; the RT/shadow/
+   *  spike ones report their W4f-pending status so they're discoverable without erroring. */
+  private registerCommands(): void {
+    const view = (): ViewportPanel["view"] => this.panel.view;
+
+    // `/grid [0|1|2|3]` — 1 region+zone+tile, 2 region+zone, 3 region, 0 off. No arg toggles.
+    const gridLabel = ["Debug grid off.", "Debug grid: region + zone + tile.", "Debug grid: region + zone.", "Debug grid: region."];
+    this.chat.registerCommand("grid", (args) => {
+      let level: number;
+      if (args.length === 0) {
+        level = view().debugGrid > 0 ? 0 : 1;
+      } else {
+        const n = Number(args[0]);
+        if (!Number.isInteger(n) || n < 0 || n > 3) {
+          return "Usage: /grid [0|1|2|3]  (0 off, 1 region+zone+tile, 2 region+zone, 3 region)";
+        }
+        level = n;
+      }
+      view().setDebugGrid(level);
+      return gridLabel[level];
+    });
+
+    // `/focus <tileX> <tileY>` — jump the camera centre to a tile (through the bridge, so the
+    // subscription follows).
+    this.chat.registerCommand("focus", (args) => {
+      const x = Number(args[0]);
+      const y = Number(args[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return "Usage: /focus <tileX> <tileY>";
+      this.bridge.setAnchor(x * SQUARE, y * SQUARE);
+      return `Camera focused on tile (${x}, ${y}).`;
+    });
+
+    // `/zoom <level>` — absolute zoom (1 = native 64px, 2 = 2× in, 0.5 = out), holding the centre.
+    this.chat.registerCommand("zoom", (args) => {
+      const z = Number(args[0]);
+      if (!Number.isFinite(z) || z <= 0) return "Usage: /zoom <level>  (1 = native, 2 = 2× in, 0.5 = out)";
+      const anchor = view().setZoom(z);
+      if (anchor) this.bridge.zoomTo(anchor.x, anchor.y, view().zoom);
+      return `Zoom set to ${view().zoom}×.`;
+    });
+
+    // No server-side pause verb in the rebuild yet.
+    this.chat.registerCommand("pause", () => "Pause isn't wired in the rebuild yet.");
+    this.chat.registerCommand("unpause", () => "Pause isn't wired in the rebuild yet.");
+
+    // RT preview / overlay / shadow / spikes — infra pending (W4f); report rather than error.
+    for (const [name, msg] of Object.entries(PENDING_W4F)) {
+      this.chat.registerCommand(name, () => msg);
+    }
+  }
+
+  /** Replay the URL-passed commands (parsed in {@link onEnter}) through the chat, once. */
+  private runUrlCommands(): void {
+    for (const c of this.urlCommands) {
+      if (!this.chat.execCommand(c.name, c.args)) {
+        console.warn(`[WorldScene] URL command /${c.name} is not a known command — skipped.`);
+      }
+    }
   }
 
   // ── drag-to-pan (through the bridge, so zone subscriptions follow) ────────────────
@@ -105,14 +186,11 @@ export class WorldScene extends Scene {
 
   // ── scroll-to-zoom (about the cursor, through the bridge) ─────────────────────────
   // Continuous, per-event zoom (matching pixijs): every wheel tick applies a smooth
-  // factor 2^(-deltaY/WHEEL_OCTAVE) — no discrete accumulator (that made small ticks a
-  // no-op until they summed past a threshold).
+  // factor 2^(-deltaY/WHEEL_OCTAVE) — no discrete accumulator.
   private readonly onWheel = (e: WheelEvent): void => {
     e.preventDefault();
     const r = this.panel.canvas.getBoundingClientRect();
     const factor = Math.pow(2, -e.deltaY / WHEEL_OCTAVE);
-    // zoomAt applies the zoom to the camera + returns the cursor-anchored point; zoomTo pushes
-    // it (client subscription + viewport anchor).
     const anchor = this.panel.view.camera.zoomAt(e.clientX - r.left, e.clientY - r.top, factor);
     if (anchor) this.bridge.zoomTo(anchor.x, anchor.y, this.panel.view.camera.zoom);
   };

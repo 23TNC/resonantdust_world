@@ -112,3 +112,16 @@ Three real bugs the port introduced, found while diagnosing the world-render iss
 - **`?focus=x,y` parsing** read `args[0].split(",")` (→ tileY always 0) but `parseUrl` already splits on
   `[\s,]+`, so it arrives as `args ["x","y"]`; now reads `args[0]`/`args[1]` (matching pixijs). Dropped the
   ad-hoc `?x=`/`?y=` (old syntax). Verified: `focus=100,50` now anchors the window on tile (100,50).
+
+## Chat panel + slash-command console — 2026-07-21
+
+Wired the `ChatPanel` (copied Pixi-free in W3b, unwired) into `WorldScene` + the command registry, so debug
+functionality works again. `ctx.panels` (PanelManager) + `ctx.logs` (LogManager) installed; the chat opens on
+world entry, and `registerCommand`/`execCommand` back both typed `/commands` and the URL-param replay
+(`?focus=x,y`, `?grid`, `?zoom` run once through the same handlers). Added `Viewport.setZoom`/`zoom`. Working
+commands: **`/grid [0-3]`**, **`/focus x y`**, **`/zoom level`** (drive the camera/grid live, through the
+bridge so subscriptions follow), plus `/pause`/`/unpause` stubs. The RT-preview / overlay / shadow / spike
+commands (`/showRT`, `/overlayRT`, `/shadowcast`, `/es300`, `/mrttest`, `/inttest`) are registered but report
+their W4f-pending status (they need the render-texture debug infra). **Verified in-browser: chat opens, typed
+`/grid 1` prints its response + toggles the grid, and `?focus=100,50` replays as "Camera focused on tile
+(100, 50)." — zero console errors.**

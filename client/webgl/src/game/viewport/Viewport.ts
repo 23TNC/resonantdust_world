@@ -137,6 +137,15 @@ export class Viewport {
   get debugGrid(): number {
     return this.gridLevel;
   }
+  /** Current zoom (screen px per world px). */
+  get zoom(): number {
+    return this.camera.zoom;
+  }
+  /** Set an absolute zoom, holding the viewport centre; returns the anchor to push
+   *  through the bridge (so zone subscriptions follow), or null if it clamped to a no-op. */
+  setZoom(z: number): { x: number; y: number } | null {
+    return this.camera.setZoom(z);
+  }
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
     return this.camera.screenToWorld(sx, sy);
   }
