@@ -12,4 +12,6 @@ The design pass with the user, formalized. All five forks resolved ([`forks.md`]
 `prim_definition_data` (1 px/sprite variant, generic; `frame_page` + a spare `u32` for materials) ·
 `cold_prim_data` (2 entries/px: `position_anchor_reference` + `u8 z | u2 rotation | u22 reserved`). The
 normalization — a caster's position lives only in `cold_prim_data` — is the load-bearing choice: move a caster
-= one texel, not every light's run.
+= one texel, not every light's run. Refined in the same pass: one world **unit** = `SQUARE/16` (compile-time,
+everything world-space; atlas `frame_*` stay texture px), `radius` widened to **`u12`** (≈16 zones), and a
+**`cast_shadows`** flag (0 → the light lights without casting: no LUT run, skipped in the cast).

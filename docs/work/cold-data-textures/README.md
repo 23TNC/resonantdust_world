@@ -13,8 +13,9 @@ instance attributes). Component: `client/webgl`. The packed layouts are authorit
 definition / instance indirection. Exact bit layouts are authoritative in
 [`docs/VARIABLES.md` §Cold shadow data textures](../../VARIABLES.md); in brief:
 
-- **`cold_light_data`** — one px/light: position (`position_anchor_reference`), colour+intensity, radius+z, and
-  a **run** `(lut_index, lut_count)` into the LUT = this light's shadow casters.
+- **`cold_light_data`** — one px/light: position (`position_anchor_reference`), colour+intensity, `radius`+`z`,
+  a **`cast_shadows`** flag (0 → lights without casting: no LUT run, skipped in the cast), and a **run**
+  `(lut_index, lut_count)` into the LUT = this light's shadow casters.
 - **`cold_light_prim_data`** (the LUT) — the light → caster association, **indices only**: each entry =
   `(definition_index, prim_data_index)`. A light's casters are the contiguous run `[lut_index, +lut_count)`.
 - **`prim_definition_data`** — one px per sprite **variant**: **generic** geometry (billboard `width/height` +
@@ -39,7 +40,7 @@ N/S regime.
 
 [`shadow-projection`](../shadow-projection/README.md) P0–P4 already cast the GPU-instanced silhouette fan, but
 rebuilds the per-(light,caster) **instance attributes every frame** on the CPU. This stream replaces that
-upload with the three persistent textures: the same instanced draw, but the vertex shader `texelFetch`es the
+upload with the four persistent textures: the same instanced draw, but the vertex shader `texelFetch`es the
 light + LUT + prim data by index instead of reading re-uploaded attributes. The projection/fan math is
 unchanged.
 
@@ -57,7 +58,7 @@ DSL later, F5 the normalization + a shader radius safety check (rectangle distan
 
 ## Scope
 
-In: the three data-texture definitions (in `VARIABLES.md`) + their builders, the atlas→prim-texture update,
+In: the four data-texture definitions (in `VARIABLES.md`) + their builders, the atlas→prim-texture update,
 writing cold lights + LUT on zone/light change, and the shadow shader reading them via `texelFetch` (replacing
 the per-frame instance attrs). Out: DSL-authored cold lights (F4), atlas eviction, incremental LUT patching,
 the world-cold bitfield persistence (the `shadows` stream).
