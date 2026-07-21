@@ -15,6 +15,7 @@
 
 import { Renderer, RenderTarget, Program, Geometry, Texture } from "../../gl";
 import { MrtBakeShader } from "./mrtBakeShader";
+import type { PackedChannel } from "./material";
 import {
   mod,
   OVERSCAN,
@@ -40,7 +41,7 @@ export interface Primitive {
   geoColor?: number;
   flipX?: boolean;
   cell?: number;
-  packed?: readonly number[][];
+  packed?: readonly PackedChannel[];
   seed?: number;
   zIndex: number;
 }

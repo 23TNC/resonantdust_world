@@ -1,14 +1,14 @@
-//! WorldScene — W4a: the real world scene, hosting the {@link ViewportPanel} (its own
-//! canvas + engine Renderer) with a working camera. Drag to pan, scroll to zoom, the
-//! `?grid` debug grid. The world CONTENT (SquareCache G-buffer + albedo display, movers,
-//! shadows) plus the WorldBridge/MoverLayer/chat wiring land in W4c/W4d — until then the
-//! viewport shows the procedural grid so the camera is verifiable. The URL `x`/`y`/`focus`
-//! commands frame the initial anchor; `grid` toggles the overlay.
+//! WorldScene — W4d: the real world scene. Hosts the {@link ViewportPanel} (its own canvas +
+//! engine Renderer) and wires the {@link WorldBridge}, which streams subscribed-zone cold tiles
+//! (and things) into the viewport's SquareCache and drives the client anchor as the camera pans.
+//! Drag pans, scroll zooms (about the cursor), both routed THROUGH the bridge so zone
+//! subscriptions follow the view. `?x`/`?y`/`?focus` frame the initial anchor; `?grid` overlays
+//! the debug grid. Movers, chat, RT panels, and the debug `/commands` are later slices (W4e/W4f).
 
 import { Scene } from "../Scene";
 import type { GameContext } from "../../GameContext";
 import { ViewportPanel } from "../../game/viewport/ViewportPanel";
-import { SQUARE } from "../../game/viewport/squareMath";
+import { WorldBridge } from "../../game/world/WorldBridge";
 import { parseUrl, argFlag } from "../../debug/urlParams";
 
 /** Accumulated wheel `deltaY` that halves or doubles the zoom (one LOD octave). */
@@ -16,6 +16,7 @@ const WHEEL_OCTAVE = 240;
 
 export class WorldScene extends Scene {
   private panel!: ViewportPanel;
+  private bridge!: WorldBridge;
   private dragId: number | null = null;
   private lastClientX = 0;
   private lastClientY = 0;
@@ -24,6 +25,9 @@ export class WorldScene extends Scene {
   onEnter(ctx: GameContext): void {
     this.panel = new ViewportPanel(ctx);
     this.panel.open();
+
+    // The client zone stream → viewport tiles, and the camera anchor → client subscription.
+    this.bridge = new WorldBridge(ctx.client, ctx.content, this.panel.view, this.panel.view.white, ctx.textureResolver);
 
     // URL: initial anchor (x/y/focus tile coords) + the debug grid.
     let tileX = 0;
@@ -40,16 +44,8 @@ export class WorldScene extends Scene {
         this.panel.view.setDebugGrid(on ? Number(cmd.args[0]) || 1 : 0);
       }
     }
-    this.panel.view.camera.setAnchor(tileX * SQUARE, tileY * SQUARE);
-
-    // TEMP (W4c): a checkerboard of solid tiles to verify the SquareCache bake+display pipeline.
-    // Replaced by the WorldBridge (real zone tiles) in W4d.
-    for (let ty = 0; ty < 16; ty++) {
-      for (let tx = 0; tx < 16; tx++) {
-        const color = (tx + ty) & 1 ? 0x3a7d3a : 0x2d5f8f; // green / blue checker
-        this.panel.view.debugAddTile(tx, ty, color);
-      }
-    }
+    // Centre the anchor + force the first client subscription (login has completed).
+    this.bridge.start(tileX, tileY);
 
     const canvas = this.panel.canvas;
     canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -72,10 +68,11 @@ export class WorldScene extends Scene {
       canvas.removeEventListener("pointercancel", this.onPointerUp);
       canvas.removeEventListener("wheel", this.onWheel);
     }
+    this.bridge?.dispose();
     this.panel?.destroy();
   }
 
-  // ── drag-to-pan ────────────────────────────────────────────────────────────────
+  // ── drag-to-pan (through the bridge, so zone subscriptions follow) ────────────────
   private readonly onPointerDown = (e: PointerEvent): void => {
     this.dragId = e.pointerId;
     this.lastClientX = e.clientX;
@@ -85,12 +82,12 @@ export class WorldScene extends Scene {
 
   private readonly onPointerMove = (e: PointerEvent): void => {
     if (this.dragId !== e.pointerId) return;
-    const cam = this.panel.view.camera;
-    const dx = (e.clientX - this.lastClientX) / cam.zoom;
-    const dy = (e.clientY - this.lastClientY) / cam.zoom;
+    const z = this.panel.view.camera.zoom;
+    // Drag right → world slides right under the cursor → anchor moves left. A screen-px drag
+    // is 1/zoom world px.
+    this.bridge.moveBy((this.lastClientX - e.clientX) / z, (this.lastClientY - e.clientY) / z);
     this.lastClientX = e.clientX;
     this.lastClientY = e.clientY;
-    cam.setAnchor(cam.anchorX - dx, cam.anchorY - dy);
   };
 
   private readonly onPointerUp = (e: PointerEvent): void => {
@@ -103,7 +100,7 @@ export class WorldScene extends Scene {
     }
   };
 
-  // ── scroll-to-zoom (about the cursor) ────────────────────────────────────────────
+  // ── scroll-to-zoom (about the cursor, through the bridge) ─────────────────────────
   private readonly onWheel = (e: WheelEvent): void => {
     e.preventDefault();
     this.wheelAccum += e.deltaY;
@@ -118,7 +115,9 @@ export class WorldScene extends Scene {
     }
     if (factor === 1) return;
     const r = this.panel.canvas.getBoundingClientRect();
+    // zoomAt applies the zoom to the camera + returns the cursor-anchored point; zoomTo pushes
+    // it (client subscription + viewport anchor).
     const anchor = this.panel.view.camera.zoomAt(e.clientX - r.left, e.clientY - r.top, factor);
-    if (anchor) this.panel.view.camera.setAnchor(anchor.x, anchor.y);
+    if (anchor) this.bridge.zoomTo(anchor.x, anchor.y, this.panel.view.camera.zoom);
   };
 }

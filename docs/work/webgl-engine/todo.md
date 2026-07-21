@@ -71,7 +71,7 @@ Ordered vertical slices, each verifiable in-browser:
       `resize`/`recenter`/`markStale`/`fillDisplay` = the same math over engine draws. The real
       `TextureResolver` + atlas (`LodPool`/`TextureAtlas`/`MaxRectsPacker`) return here, sharing the viewport
       `Renderer`'s GL context (retire the W3 stub, [D-1](deviations.md#d-1)).
-- [ ] **W4d · Viewport pipeline + WorldBridge.** Wire the per-frame resize→recenter→bakeDirty→fillDisplay→
+- [x] **W4d · Viewport pipeline + WorldBridge.** DONE (completed.md) — THE WORLD RENDERS (geo tier). Wire the per-frame resize→recenter→bakeDirty→fillDisplay→
       blit into the viewport; port `WorldBridge` (world state → cold prims) + `thingPlacement`. **Milestone:
       the world renders — G-buffer + albedo display, zoom/LOD, pan — matching pixijs.**
 - [ ] **W4e · Warm layer + movers.** Port `MoverLayer` + the warm `SquareCache`; pawns bake + composite

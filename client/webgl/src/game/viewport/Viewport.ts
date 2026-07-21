@@ -13,6 +13,7 @@ import { Camera } from "./Camera";
 import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } from "./SquareCache";
 import { AlbedoBlitShader } from "./albedoBlitShader";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
+import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 
@@ -56,8 +57,10 @@ void main() {
 export class Viewport {
   readonly camera = new Camera();
   private readonly renderer: Renderer;
-  private readonly white: Texture;
+  /** The 1×1 white fill — the geo-tier residual/surface + the WorldBridge's prim texture. */
+  readonly white: Texture;
   private readonly empty: Texture;
+  private materialRegistry: MaterialRegistry | null = null;
 
   private readonly map: SquareCache;
   private readonly blitShader: AlbedoBlitShader;
@@ -105,6 +108,21 @@ export class Viewport {
   setBounds(width: number, height: number): void {
     this.camera.setBounds(width, height);
   }
+  /** Recenter on a world-px point (the WorldBridge drives this as the camera pans/zooms). */
+  setAnchor(x: number, y: number): void {
+    this.camera.setAnchor(x, y);
+  }
+  /** The material registry (from the content bundle). Stored for when real textures land; the
+   *  geo tier bakes flat regardless. Re-bakes so a hot-swap takes. */
+  setMaterialRegistry(registry: MaterialRegistry): void {
+    this.materialRegistry = registry;
+    this.map.invalidateAll();
+  }
+  /** Bind the tiling noise atlas the material bake samples (null = flat). Re-bakes. */
+  setNoiseAtlas(texture: Texture | null, rows = 1): void {
+    this.map.setNoise(texture, rows, 1, SQUARE * 2);
+    this.map.invalidateAll();
+  }
   setDebugGrid(level: number): void {
     this.gridLevel = level;
   }
@@ -136,18 +154,6 @@ export class Viewport {
     return this.map.getPrim(id);
   }
 
-  /** Debug (W4c): add a solid-colour tile at world tile `(tx,ty)`, `color` = 0xRRGGBB.
-   *  Verifies the bake+display pipeline before the WorldBridge feeds real tiles. */
-  debugAddTile(tx: number, ty: number, color: number, sizeTiles = 1): number {
-    return this.map.addPrim({
-      texture: this.white,
-      x: tx * SQUARE,
-      y: ty * SQUARE,
-      width: sizeTiles * SQUARE,
-      height: sizeTiles * SQUARE,
-      geoColor: color,
-    });
-  }
 
   /** Per-frame: resize buffer → recenter cache → bake dirty → rebuild + draw the display, then
    *  the debug grid. */

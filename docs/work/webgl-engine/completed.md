@@ -76,3 +76,16 @@ solid tiles renders through the full merged MRT bake + toroidal composite + disp
 zero errors.** SIMPLIFIED vs pixijs (deferred follow-ups): single buffer per channel (no ping-pong/reproject
 → a re-bake flash on zoom-LOD), and the real `TextureResolver`/atlas (master→preview textures) — the geo
 tier is the floor both start from. Fixed a `uSrc` vertex/fragment type collision in the blit program.
+
+## W4d · Viewport pipeline + WorldBridge — THE WORLD RENDERS — 2026-07-20
+
+Ported `WorldBridge` (613 lines) + `thingPlacement` onto the engine — its only Pixi seam was `type Texture`
+(swapped); it streams subscribed-zone cold tiles/things (via the WASM client + `content.zone*Prims`) into the
+viewport's SquareCache and drives the client anchor as the camera pans. Added the Viewport's `setAnchor`/
+`setMaterialRegistry`/`setNoiseAtlas` + exposed `white`; stubbed `noiseAtlas` (geo tier is flat). Rewired
+`WorldScene` to create the bridge and route drag-pan + scroll-zoom THROUGH it (so zone subscriptions follow
+the view). **Verified in-browser on `client/webgl`: the real world renders — the gray stone floor, the tan
+tile, the green/brown biome terrain, scattered things — matching the pixijs client's terrain byte-for-byte in
+layout + colour, correct Y-orientation, zero console errors.** Geo tier (things render as solid `geoColor`
+boxes, not sprites yet). Remaining W4 texture work (deferred): the real `TextureResolver`/atlas
+(master→preview→geo), so things become textured sprites; plus the ping-pong/reproject smooth-LOD (W4c).
