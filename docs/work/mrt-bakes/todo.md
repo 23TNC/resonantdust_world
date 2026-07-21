@@ -41,3 +41,8 @@ _Planned, not started. Items move to [`completed.md`](completed.md) when done + 
       LOD-swap still bake correctly.
 - [ ] Confirm the draw-count drop (the point): `lastBaked` squares now cost ~1 MRT render each, not 4. Log
       or eyeball the bake cost.
+
+
+---
+
+**B1–B5 all done + verified (2026-07-20).** Four G-buffer bakes collapsed to one MRT pass. Follow-up: remove the now-dead per-channel node methods / pools / single-attachment scratch + the 4 orphaned bake-shader files (spawned as a background task).
