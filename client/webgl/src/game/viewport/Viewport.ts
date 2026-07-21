@@ -12,6 +12,7 @@ import { Renderer, Program, Geometry, Texture } from "../../gl";
 import { Camera } from "./Camera";
 import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } from "./SquareCache";
 import { AlbedoBlitShader } from "./albedoBlitShader";
+import { OverlayShader, overlayModeFor } from "./overlayShader";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
@@ -71,6 +72,10 @@ export class Viewport {
    *  and the display blit composites warm OVER cold by warm coverage. */
   private readonly warm: SquareCache;
   private readonly blitShader: AlbedoBlitShader;
+  /** The `/overlayRT` debug material — draws one G-buffer composite over the display. */
+  private readonly overlayShader: OverlayShader;
+  /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
+  private overlayChannelName: string | null = null;
   private displayGeo: Geometry | null = null;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -87,6 +92,7 @@ export class Viewport {
     this.white = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([255, 255, 255, 255]) });
     this.empty = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([0, 0, 0, 0]) });
     this.blitShader = new AlbedoBlitShader(gl);
+    this.overlayShader = new OverlayShader(gl);
     this.map = new SquareCache(this.renderer, this.empty, this.channels("cold"));
     this.warm = new SquareCache(this.renderer, this.empty, this.channels("warm"));
 
@@ -136,6 +142,52 @@ export class Viewport {
   }
   get debugGrid(): number {
     return this.gridLevel;
+  }
+
+  // ── G-buffer debug composites (`/overlayRT`, `/showRT`) ───────────────────────────
+  /** The WORLD-space G-buffer composites — cold (static world) then warm (movers). All are
+   *  slot-aligned to the display, so all are sampleable through the display geometry. `/showRT`
+   *  previews them; `/overlayRT` draws one over the lit world. A composite may be null before its
+   *  cache has laid out (the caller skips those). */
+  renderTextures(): Array<{ name: string; texture: Texture | null }> {
+    return [
+      { name: "albedo-cold", texture: this.map.displayComposite("albedo-cold") },
+      { name: "normal-cold", texture: this.map.displayComposite("normal-cold") },
+      { name: "surface-cold", texture: this.map.displayComposite("surface-cold") },
+      { name: "zdepth-world-cold", texture: this.map.displayComposite("zdepth-world-cold") },
+      { name: "albedo-warm", texture: this.warm.displayComposite("albedo-warm") },
+      { name: "normal-warm", texture: this.warm.displayComposite("normal-warm") },
+      { name: "surface-warm", texture: this.warm.displayComposite("surface-warm") },
+      { name: "zdepth-world-warm", texture: this.warm.displayComposite("zdepth-world-warm") },
+    ];
+  }
+
+  /** The channels `/overlayRT` can show — the names from {@link renderTextures}. */
+  overlayChannelNames(): string[] {
+    return this.renderTextures().map((c) => c.name);
+  }
+
+  /** The channel the overlay is currently showing, or null (off). */
+  get overlayChannel(): string | null {
+    return this.overlayChannelName;
+  }
+
+  /** Toggle/select the `/overlayRT` composite: null or the current name turns it off; a known name
+   *  switches to it; an unknown name is a no-op (returns null). Returns the resulting channel. */
+  setOverlay(name: string | null): string | null {
+    if (name === null || name === this.overlayChannelName) {
+      this.overlayChannelName = null;
+    } else if (this.overlayChannelNames().includes(name)) {
+      this.overlayChannelName = name;
+    } else {
+      return null; // unknown channel — leave the current overlay untouched
+    }
+    return this.overlayChannelName;
+  }
+
+  /** The composite for a channel name (`*-warm` → the warm cache, else cold). */
+  private compositeFor(name: string): Texture | null {
+    return name.endsWith("-warm") ? this.warm.displayComposite(name) : this.map.displayComposite(name);
   }
   /** Current zoom (screen px per world px). */
   get zoom(): number {
@@ -240,6 +292,28 @@ export class Viewport {
           textures: this.blitShader.textures(this.empty),
           uniforms: (p) => p.uMat3("uProjection", proj),
         });
+
+        // Debug overlay (`/overlayRT`): draw one G-buffer composite over the lit world, in exact
+        // register (same display geometry + `uProjection`). The fragment drops the channel's "empty"
+        // value so the world reads through elsewhere.
+        const ov = this.overlayChannelName;
+        if (ov) {
+          const comp = this.compositeFor(ov);
+          if (comp) {
+            this.overlayShader.composite = comp;
+            this.overlayShader.mode = overlayModeFor(ov);
+            this.renderer.draw({
+              program: this.overlayShader.program,
+              geometry: this.displayGeo!,
+              blend: "normal",
+              textures: this.overlayShader.textures(this.empty),
+              uniforms: (p) => {
+                p.uMat3("uProjection", proj);
+                p.uFloat("uMode", this.overlayShader.mode);
+              },
+            });
+          }
+        }
       }
     }
 
@@ -288,6 +362,7 @@ export class Viewport {
     this.gridQuad.destroy();
     this.grid.destroy();
     this.blitShader.destroy();
+    this.overlayShader.destroy();
     this.map.destroy();
     this.warm.destroy();
     this.white.destroy();

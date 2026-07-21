@@ -24,7 +24,6 @@ const WHEEL_OCTAVE = 500;
  *  they're discoverable + don't error, reporting their pending status. */
 const PENDING_W4F: Record<string, string> = {
   showRT: "The render-texture preview (/showRT) isn't ported yet — lands with the RT debug panel (W4f).",
-  overlayRT: "The G-buffer overlay (/overlayRT) isn't ported yet — lands with the overlay shader (W4f).",
   shadowcast: "The shadow-cast experiment (/shadowcast) isn't ported yet (W4f).",
   es300: "The ES 3.00 spike (/es300) isn't ported yet (W4f).",
   mrttest: "The MRT spike (/mrttest) isn't ported yet (W4f).",
@@ -150,6 +149,23 @@ export class WorldScene extends Scene {
       const anchor = view().setZoom(z);
       if (anchor) this.bridge.zoomTo(anchor.x, anchor.y, view().zoom);
       return `Zoom set to ${view().zoom}×.`;
+    });
+
+    // `/overlayRT <channel>` — draw ONE G-buffer composite over the lit world (world-aligned,
+    // full-viewport). No arg (or an unknown channel) echoes the valid channels; a valid one
+    // switches to it, or turns the overlay off if it's already showing.
+    this.chat.registerCommand("overlayRT", (args) => {
+      const names = view().overlayChannelNames();
+      const name = args[0];
+      if (!name) {
+        const cur = view().overlayChannel;
+        return `Usage: /overlayRT <channel>. ${cur ? `Showing ${cur}. ` : ""}Channels: ${names.join(", ")}.`;
+      }
+      if (!names.includes(name)) {
+        return `Unknown channel "${name}". Channels: ${names.join(", ")}.`;
+      }
+      const now = view().setOverlay(name);
+      return now ? `Overlaying ${now}.` : `Overlay off (${name}).`;
     });
 
     // No server-side pause verb in the rebuild yet.
