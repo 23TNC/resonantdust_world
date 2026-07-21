@@ -28,6 +28,25 @@ design/contract pass with them). I won't unilaterally spend layout bits.
 
 **Suggested path:** (a). It's a small addition to a currently-reserved channel and the data already exists.
 
+---
+
+## B-2 · P5 (rotation → N/S regime) gated on multi-facing casters — 2026-07-21 (open)
+
+**What blocks:** P5 wires `cold_prim_data.rotation` to the E/W vs N/S regime in the vertex shader. The N/S
+branch is straightforward (the sandbox / `design/shadows.md` has the math), but it **can't be verified** —
+there are **no N/S-facing casters in the world**. All current cold things are single-facing (`DEFAULT_FACING`
+→ E/W, the regime P1–P4 already ship); the only multi-facing entities are movers (wolves), and none are
+present (the npc driver isn't running). Same gate as [`shadow-projection` B-1](../shadow-projection/blockers.md#b-1).
+
+**Why it needs a human:** shipping an unverified regime risks a silently-wrong shadow shape. The data path is
+ready — `cold_prim_data.rotation` is populated (currently E/W from `flipX`); only the shader branch + a live
+N/S caster are missing.
+
+**Suggested path:** defer until N/S content exists (run the npc driver for n/s-facing wolves, or when
+multi-facing cold things land). The stream's core (P0–P4, the data-driven cast) is **done + verified**; P6 is a
+holistic cross-check largely covered by the per-phase readbacks.
+
+
 **Status:** P1–P3 (all three populated data textures + the position codec) are done + verified; only P4's fan
 build waits on this. Resolve → wire P4 (the shader `texelFetch`ing all four textures, replacing the instance
 attributes), then P5 (rotation → regime) + P6 (verify identical, no per-frame cold upload).
