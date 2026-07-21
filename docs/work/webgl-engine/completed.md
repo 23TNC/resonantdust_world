@@ -152,3 +152,32 @@ stayed locked at 60 because it carries the remainder (`_lastFrame = now - delta 
 `this.acc %= this.minIntervalMs` (carry the remainder; `%=` also collapses a post-tab-stall backlog into one
 step rather than a catch-up burst). The renderer was never the bottleneck — webgl draws faster than pixijs;
 only the cap cadence was off. (Still reads ~56–57 on the box, not a clean 60 — a smaller residual to revisit.)
+
+## W4f (partial) · /overlayRT — G-buffer overlay on the engine — 2026-07-21
+
+Ported the pixijs `overlayShader` to a self-contained engine `Program` (GLSL drop-mode logic verbatim; the
+harness is a `uProjection` vertex + a single `uComposite` sampler replacing Pixi's textureBit/localUniform
+bits). The Viewport gained the composite API mirroring pixijs — `renderTextures()` (cold+warm albedo/normal/
+surface/zdepth), `overlayChannelNames()`/`overlayChannel`/`setOverlay()`/`compositeFor()` — and draws the
+overlay over the lit blit each frame in exact register (same display geometry + projection). `/overlayRT`
+wired in `WorldScene` (removed from the W4f-pending map). **Verified in-browser:** `/overlayRT surface-cold`
+paints opaque cyan aligned to the zone/region grid; `/overlayRT normal-cold` drops the all-flat-up geo
+normals (FLAT mode) so the world reads through — the distinct modes confirm the per-channel drop + the
+`uMode` upload. `/showRT` + the `/es300`/`/mrttest`/`/inttest` spikes intentionally **not** ported (the
+engine techniques they exercised are already proven in W2); `/showRT` deferred (needs a GL→DOM readback).
+
+## W4f (partial) · First lights + billboard shadows (geo tier) — 2026-07-21
+
+The first lights + shadow-casting on the owned engine — basic-functionality cut of the `docs/work/shadows/`
+design ([D-2](deviations.md#d-2)). 6 lights seed in a ring around tile (100,50); a `ShadowCaster` casts
+billboard-quad shadows off the cold cache's standing prims (things, `zIndex ≥ 1`, culled to a light's reach)
+each frame, drawing per-light **coloured** shadows over the world (overlaps combine additively) with light
+markers + reach rings. Done **analytically in ONE screen-space fullscreen pass**: per fragment → world pos
+(grid-shader mapping) → loop lights × in-range casters → point-in-projected-trapezoid → sum colours. No RTs /
+ping-pong / round-robin — recasting each frame is inherently world-stuck + zoom-correct. `/coldlights [tileX
+tileY]` (re-seed) + `/shadows` (toggle) wired. **Verified in-browser at `?focus=100,50`:** 6 coloured shadows
+fan off the prims, overlaps combine to white, markers + reach rings show; **pan keeps them stuck to the
+world** (a brown structure pans in with its own shadows); zero console errors. Cost ~49fps (from ~56 unlit) —
+the per-pixel analytic loop; the deferred world-cold persistence is the optimisation that recovers it.
+Deferred (D-2): world-space `shadow-cold` (so shadows aren't `/overlayRT`-inspectable yet), per-light bit
+packing, round-robin.

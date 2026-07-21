@@ -13,12 +13,19 @@ fix · frame-cap fix.
 
 ---
 
-## W4f · Shadows + debug commands — next
+## W4f · Shadows + debug — DONE for the basic cut (completed.md)
 
-- [ ] Port `shadowCast`/`shadowCastShaders` (the bitfield cast) onto the engine, and land the render-texture
-      debug infra so the registered-but-pending `/commands` become real: `/showRT`, `/overlayRT` (per channel),
-      `/shadowcast`, `/es300`, `/mrttest`, `/inttest` (they currently report W4f-pending in `WorldScene`).
-      Includes the **`overlayShader`** port deferred from W4b. **Milestone: `/shadowcast` casts, matching pixijs.**
+Done: **`/overlayRT`** (G-buffer overlay, absorbs the W4b `overlayShader` deferral) + the **first lights +
+billboard shadows** on the geo tier (`ShadowCaster`, analytic screen-space cast, `/coldlights` + `/shadows`).
+Descoped per the user: `/showRT` (deferred — needs a GL→DOM readback), and the `/es300`/`/mrttest`/`/inttest`
+engine spikes (the techniques are already proven in W2). Remaining, when the shadow work resumes past basic
+(see [D-2](deviations.md#d-2), builds toward the `docs/work/shadows/` design):
+
+- [ ] World-space **`shadow-cold`** bitfield (per-light bit packing in the toroidal cache layout) so shadows
+      persist + become `/overlayRT shadow-cold`-inspectable (the `OVERLAY_BITS` decode is already ported).
+- [ ] The **round-robin** (3 lights/frame → world-cold) + screen-hot generation, to lift the per-pixel
+      analytic cost and scale toward the 24-light goal.
+- [ ] Textured casters (the geo boxes → real sprite silhouettes) once the texture atlas lands (W4h).
 
 ## W4g · Fix the intermittent no-stream — deterministically, NO retries
 
