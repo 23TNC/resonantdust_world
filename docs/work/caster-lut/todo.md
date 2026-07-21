@@ -12,7 +12,7 @@ LUT → caster indirection drives the cast, producing shadows identical to befor
 
 ## C5 · GPU cast + integer-texture bitfield (three coupled facets — see the README)
 
-### C5a · Spike the new ES 3.00 techniques — 2026-07-20
+### C5a · Spike the new ES 3.00 techniques — DONE, re-scoped C5 ([D-2](deviations.md#d-2))
 
 - [ ] A small `/command` spike (like the MRT B1) proving all three genuinely-new techniques in isolation
       before the real cast: **`texelFetch`** (exact integer-coord read of an `RGBA32F` data texture — no

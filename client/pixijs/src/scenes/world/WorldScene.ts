@@ -285,6 +285,15 @@ export class WorldScene extends Scene {
         : "MRT spike OFF.";
     });
 
+    // `/inttest` (caster-lut C5a spike) — toggle the integer-RT / vertex-texture-fetch / usampler2D proof.
+    // Five decoded colour-quads mean all three new ES 3.00 techniques for the GPU cast work.
+    this.chat.registerCommand("inttest", () => {
+      const on = view().toggleIntSpike();
+      return on
+        ? "Int spike ON — five colour-quads means texelFetch-in-vertex + an RGBA8UI target + a usampler2D uint read all work."
+        : "Int spike OFF.";
+    });
+
     // `/pause` + `/unpause` (debug) — no server-side pause in the rebuild yet (the master's
     // metronome has no freeze verb), so these report unavailability rather than silently do
     // nothing. `onPaused` stays wired (it simply never fires) for when a freeze verb returns.

@@ -71,3 +71,20 @@ records there (VTF). WebGL2 guarantees `MAX_VERTEX_TEXTURE_IMAGE_UNITS ≥ 16`, 
 confirm in the C5a spike. Use `texelFetch` (integer coords, no LOD) for vertex sampling (no derivatives in
 the vertex stage, so `texture()` with implicit LOD is invalid there; `texelFetch`/`textureLod` are the
 vertex-safe reads). The data textures are `RGBA32F` (`highp`) — exact for the indices + world-px positions.
+
+## I-10 · VTF via a raw `GlProgram` didn't bind the texture (C5a)
+
+`texelFetch(uData, …)` in the VERTEX stage of a raw `GlProgram` mesh returned 0 — Pixi bound the texture
+resource for the fragment path but not the vertex sampler (or not at all for a raw program). The
+instanced wedge cast reads caster/light records in the vertex, so VTF is required. Resolve by using the
+**high-shader ES 3.00 path** (`compileHighShaderGlProgramES300` — its texture binding is proven by the
+material/shadow shaders) with a VTF **vertex bit**, or by driving the draw in **raw GL** (bind the sampler
+uniform + texture unit ourselves). Not a WebGL2 limitation — VTF is standard; it's a Pixi-binding gap.
+
+## I-11 · Integer render targets error through Pixi's mesh render (C5a)
+
+Rendering a `uvec4` fragment output into an `RGBA8UI` `RenderTarget` via `renderer.render({ target })` →
+`GL_INVALID_OPERATION`. Pixi's mesh pipeline (blend/clear/state) isn't set up for integer attachments (an
+integer FBO needs `gl.clearBufferuiv`, blend forced off, matching output types). The integer bitfield
+(facet 2) therefore needs a **raw-GL** cast/combine — own framebuffer, own clear + draw state — not Pixi's
+mesh render. Weigh this cost against de-scoping facet 2 ([D-2](deviations.md#d-2) option c).

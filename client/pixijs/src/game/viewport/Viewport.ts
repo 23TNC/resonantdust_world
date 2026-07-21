@@ -27,6 +27,7 @@ import { makeOverlayShader, overlayModeFor, type OverlayShader } from "./overlay
 import { ShadowCast } from "./shadowCast";
 import { Es300Hello } from "./es300Hello";
 import { Es300MrtSpike } from "./es300MrtSpike";
+import { Es300IntSpike } from "./es300IntSpike";
 
 /** Dirty squares baked per frame. A fresh window dirties its whole grid; the budget
  *  spreads that over a few frames so the first open never hitches. */
@@ -89,6 +90,7 @@ export class Viewport extends LayoutNode {
   private shadowCast: ShadowCast | null = null;
   private es300: Es300Hello | null = null;
   private mrtSpike: Es300MrtSpike | null = null;
+  private intSpike: Es300IntSpike | null = null;
   private curQuads = -1;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -403,6 +405,16 @@ export class Viewport extends LayoutNode {
     return this.mrtSpike.toggle();
   }
 
+  /** caster-lut C5a spike: toggle the integer-RT / VTF / usampler2D proof (`/inttest`). Five decoded
+   *  colour-quads mean texelFetch-in-vertex + an RGBA8UI target + a `usampler2D` uint read all work. */
+  toggleIntSpike(): boolean {
+    if (!this.intSpike) {
+      this.intSpike = new Es300IntSpike();
+      this.overlayContainer.addChild(this.intSpike.container);
+    }
+    return this.intSpike.toggle();
+  }
+
   /** Redraw the debug grid for the current camera: three nested line sets, each on the
    *  boundaries of a world division — tiles (red, {@link SQUARE} px), zones (magenta,
    *  {@link ZONE_DIM} tiles) and regions (blue, {@link REGION_DIM}·{@link ZONE_DIM} tiles).
@@ -596,6 +608,7 @@ export class Viewport extends LayoutNode {
     // the cache's toroidal buffer mapping (so `/overlayRT shadow-a`/`-b` shows them world-aligned).
     this.shadowCast?.tick(renderer, this.map.bufferMapping(), this.map.standingPrims(), panX, panY, z, w, h);
     this.mrtSpike?.render(renderer); // mrt-bakes B1 spike (no-op unless /mrttest on)
+    this.intSpike?.render(renderer); // caster-lut C5a spike (no-op unless /inttest on)
   }
 
   /** Drive the `/overlayRT` mesh: bind the selected composite + its drop-mode, size it to the
@@ -682,6 +695,7 @@ export class Viewport extends LayoutNode {
     this.shadowCast?.destroy();
     this.es300?.destroy();
     this.mrtSpike?.destroy();
+    this.intSpike?.destroy();
     // The overlay mesh SHARES the display mesh's geometry (freed once via `this.mesh.geometry`
     // below); `super.destroy()` destroys the mesh child itself, so only its shader needs freeing.
     this.overlayShader.destroy();
