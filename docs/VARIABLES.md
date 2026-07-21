@@ -298,7 +298,7 @@ u32 position_anchor_reference       region | zone | tile | anchor  (min unit = S
 ```
 R  u32 position_anchor_reference
 G  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
-B  u32 reach         u8 z (24–31, units) | u12 radius (12–23, units; ~16-zone max) | u12 reserved (0–11)
+B  u32 reach         u8 z (24–31, units) | u12 radius (12–23, units; ~16-zone max) | u11 reserved (1–11) | u1 cast_shadows (0)
 A  u32 lut           u16 lut_index (16–31) | u16 lut_count (0–15)   range into cold_light_prim_data
 ```
 
@@ -339,6 +339,9 @@ its light's run was patched) still culls correctly. (4) All world fields are in 
 = 4px`, compile-time); decode `region|zone|tile|anchor` → units via the `*_DIM` world constants (§Where it is),
 then units → px (×4) only at the clip transform. `radius` is `u12` units ≈ **16 zones** (256 tiles) — far past
 the ~8-zone view. Truly global ambient is better a **no-cull flag** (skip the radius check) than a max radius.
+(5) `cast_shadows` (bit 0 of reach): a **0** light lights without casting — it builds **no** LUT run
+(`lut_count = 0`) and is **skipped** in the shadow draw, so a fill/ambient light costs no shadow geometry. Only
+`cast_shadows = 1` lights get a caster run + a per-light cast.
 
 ## Removed
 
