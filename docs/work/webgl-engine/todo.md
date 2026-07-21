@@ -51,10 +51,32 @@ Survey ([forks F2](forks.md#f2)): 34/62 files Pixi-free (copy verbatim); 28 touc
 
 ## W4 · Port the viewport renderer — 2026-07-20
 
-- [ ] Re-implement `SquareCache` (the bakes + apron + toroidal window + reproject) and the display + shadows
-      on the engine core. **Copy the shader GLSL bodies verbatim** (already ES 3.00); rewrite only the
-      harness (`Program`) — [I-5](issues.md#i-5). Milestone: the world renders (G-buffer + albedo display,
-      zoom/LOD, pan) and `/shadowcast` casts, matching pixijs.
+The pixijs render layer (~2,500 lines: `SquareCache` 922, `Viewport` 708, `WorldBridge` 613, the shaders,
+`MoverLayer`) maps onto the engine core 1:1 — `RenderTexture`→`RenderTarget`, the 4-attachment MRT scratch →
+our `RenderTarget({formats:[×4]})` (drawBuffers built in), `Mesh`/`Shader`→`Program`/`Geometry`+`draw`,
+`Matrix`→a `uMat3`. The toroidal window / dirty / reproject / apron logic is pure math (copies ~verbatim);
+only the Pixi draw calls + the shader harnesses change. Shader GLSL copies verbatim ([I-5](issues.md#i-5)).
+Ordered vertical slices, each verifiable in-browser:
+
+- [x] **W4a · Viewport host + camera.** DONE (completed.md). Real `WorldScene` hosting a `ViewportPanel` = a `DomPanel` body with
+      its **own `<canvas>` + `Renderer`** (F6), driven by the ticker. The camera (anchor/zoom,
+      `screenToWorld`/`worldToScreen`, scroll-zoom + drag-pan input, the `?grid` debug grid). First render: a
+      cleared viewport + the grid, pannable/zoomable. No world content yet.
+- [ ] **W4b · Shaders → engine `Program`.** Port `mrtBakeShader` (the merged 4-out bake), `albedoBlitShader`
+      (warm-over-cold display), `overlayShader` (`/overlayRT`) — copy GLSL verbatim, rewrite each harness to
+      an engine `Program` + typed uniform/texture setters. Copy `material.ts` (Pixi-free) + `noiseAtlas`.
+- [ ] **W4c · SquareCache.** Port onto the engine: `Channel` ping-pong = two `RenderTarget`s; the MRT scratch
+      = one `RenderTarget({formats:[×4]})`; `bakeSquare` = one MRT `draw` + four apron blits; `reproject`/
+      `resize`/`recenter`/`markStale`/`fillDisplay` = the same math over engine draws. The real
+      `TextureResolver` + atlas (`LodPool`/`TextureAtlas`/`MaxRectsPacker`) return here, sharing the viewport
+      `Renderer`'s GL context (retire the W3 stub, [D-1](deviations.md#d-1)).
+- [ ] **W4d · Viewport pipeline + WorldBridge.** Wire the per-frame resize→recenter→bakeDirty→fillDisplay→
+      blit into the viewport; port `WorldBridge` (world state → cold prims) + `thingPlacement`. **Milestone:
+      the world renders — G-buffer + albedo display, zoom/LOD, pan — matching pixijs.**
+- [ ] **W4e · Warm layer + movers.** Port `MoverLayer` + the warm `SquareCache`; pawns bake + composite
+      warm-over-cold.
+- [ ] **W4f · Shadows + debug.** Port `shadowCast`/`shadowCastShaders` (the bitfield cast) and the debug
+      `/commands` (`/showRT`, `/overlayRT`, `/shadowcast`). Milestone: `/shadowcast` casts, matching pixijs.
 
 ## W5 · Port the UI — 2026-07-20
 

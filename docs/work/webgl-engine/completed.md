@@ -39,3 +39,15 @@ errors:** the login DOM form renders (DEV badge + ⚙/📊 title-bar tools + bot
 `loadContent` succeed, and **clicking Login runs the full gateway round-trip → world-server WebSocket →
 `claim_or_login` auth → scene handoff** to the (stub) world scene. The entire non-render half of the client
 now runs on the owned engine.
+
+## W4a · Viewport host + camera — 2026-07-20
+
+First slice of the render port. The real `WorldScene` now hosts a `ViewportPanel` — a `DomPanel` whose body
+holds the viewport's **own `<canvas>` + engine `Renderer`** (F6: the viewport is the one WebGL surface, it
+self-canvases; no shared Pixi canvas). `Camera` (lifted from the pixijs `Viewport`: anchor/zoom,
+`screenToWorld`/`worldToScreen`, `zoomAt`) drives a per-frame render, and `WorldScene` wires drag-to-pan +
+scroll-to-zoom (about the cursor) + the `?grid` overlay, with the URL `x`/`y`/`focus` framing the initial
+anchor. Until the G-buffer lands (W4c/W4d) the viewport draws a **procedural world-grid** (tiles/zones/regions,
+antialiased in a fullscreen fragment) so the camera is visible + verifiable. **Verified in-browser on
+`client/webgl`:** auto-login → world, the grid renders, and pan + zoom both track correctly, zero console
+errors. (Hit + fixed the recurring GLSL-backtick-in-template-literal foot-gun in the grid shader.)
