@@ -1,14 +1,15 @@
-//! WorldScene — W4d: the real world scene. Hosts the {@link ViewportPanel} (its own canvas +
-//! engine Renderer) and wires the {@link WorldBridge}, which streams subscribed-zone cold tiles
-//! (and things) into the viewport's SquareCache and drives the client anchor as the camera pans.
-//! Drag pans, scroll zooms (about the cursor), both routed THROUGH the bridge so zone
-//! subscriptions follow the view. `?x`/`?y`/`?focus` frame the initial anchor; `?grid` overlays
-//! the debug grid. Movers, chat, RT panels, and the debug `/commands` are later slices (W4e/W4f).
+//! WorldScene — the real world scene. Hosts the {@link ViewportPanel} (its own canvas + engine
+//! Renderer) and wires the {@link WorldBridge} (subscribed-zone cold tiles/things → the cold
+//! SquareCache, camera anchor → client subscription) + the {@link MoverLayer} (pawns → the warm
+//! cache, composited over cold). Drag pans, scroll zooms (about the cursor), both routed THROUGH
+//! the bridge so zone subscriptions follow the view. `?x`/`?y`/`?focus` frame the initial anchor;
+//! `?grid` overlays the debug grid. Chat, RT panels, and the debug `/commands` are later slices (W4f).
 
 import { Scene } from "../Scene";
 import type { GameContext } from "../../GameContext";
 import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
+import { MoverLayer } from "../../game/world/MoverLayer";
 import { parseUrl, argFlag } from "../../debug/urlParams";
 
 /** Accumulated wheel `deltaY` that halves or doubles the zoom (one LOD octave). */
@@ -17,6 +18,7 @@ const WHEEL_OCTAVE = 240;
 export class WorldScene extends Scene {
   private panel!: ViewportPanel;
   private bridge!: WorldBridge;
+  private moverLayer!: MoverLayer;
   private dragId: number | null = null;
   private lastClientX = 0;
   private lastClientY = 0;
@@ -28,6 +30,8 @@ export class WorldScene extends Scene {
 
     // The client zone stream → viewport tiles, and the camera anchor → client subscription.
     this.bridge = new WorldBridge(ctx.client, ctx.content, this.panel.view, this.panel.view.white, ctx.textureResolver);
+    // Pawns (the wolves): synced from the tick pipeline's mobile entities into the viewport's WARM cache.
+    this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.panel.view);
 
     // URL: initial anchor (x/y/focus tile coords) + the debug grid.
     let tileX = 0;
@@ -68,6 +72,7 @@ export class WorldScene extends Scene {
       canvas.removeEventListener("pointercancel", this.onPointerUp);
       canvas.removeEventListener("wheel", this.onWheel);
     }
+    this.moverLayer?.dispose();
     this.bridge?.dispose();
     this.panel?.destroy();
   }

@@ -18,6 +18,9 @@ import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 
 const BAKE_BUDGET = 128;
+/** Minimum cold squares baked per frame regardless of warm load — so a warm flood can't
+ *  starve the static world. */
+const COLD_BAKE_FLOOR = 64;
 /** Zero material channels (no jitter) — the geo path bakes flat. */
 const ZERO_CH = new Float32Array(PACKED_CHANNELS * 4);
 
@@ -63,6 +66,10 @@ export class Viewport {
   private materialRegistry: MaterialRegistry | null = null;
 
   private readonly map: SquareCache;
+  /** The WARM cache — same channels keyed `*-warm`, baked from the MOVER prims (pawns). Driven
+   *  with the identical window/slot geometry as {@link map}, so its composites are slot-aligned
+   *  and the display blit composites warm OVER cold by warm coverage. */
+  private readonly warm: SquareCache;
   private readonly blitShader: AlbedoBlitShader;
   private displayGeo: Geometry | null = null;
   private pos = new Float32Array(0);
@@ -81,6 +88,7 @@ export class Viewport {
     this.empty = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([0, 0, 0, 0]) });
     this.blitShader = new AlbedoBlitShader(gl);
     this.map = new SquareCache(this.renderer, this.empty, this.channels("cold"));
+    this.warm = new SquareCache(this.renderer, this.empty, this.channels("warm"));
 
     this.grid = new Program(gl, GRID_VERT, GRID_FRAG, "viewport-grid");
     this.gridQuad = new Geometry(gl, this.grid, {
@@ -154,6 +162,19 @@ export class Viewport {
     return this.map.getPrim(id);
   }
 
+  // ── warm (mover) prim index — the MoverLayer feeds pawns here ─────────────────────
+  warmAddPrim(spec: PrimitiveSpec): number {
+    return this.warm.addPrim(spec);
+  }
+  warmGetPrim(id: number): Primitive | null {
+    return this.warm.getPrim(id);
+  }
+  warmRefreshPrim(id: number): void {
+    this.warm.refreshPrim(id);
+  }
+  warmRemovePrim(id: number): void {
+    this.warm.removePrim(id);
+  }
 
   /** Per-frame: resize buffer → recenter cache → bake dirty → rebuild + draw the display, then
    *  the debug grid. */
@@ -167,9 +188,15 @@ export class Viewport {
     const ax = this.camera.anchorX;
     const ay = this.camera.anchorY;
 
+    // Both caches share the window/slot geometry (identical inputs), so their composites stay
+    // slot-aligned for the warm-over-cold display blit.
+    this.warm.resize(w, h, z, ax, ay);
     this.map.resize(w, h, z, ax, ay);
+    this.warm.recenter(ax, ay);
     this.map.recenter(ax, ay);
-    this.map.bakeDirty(BAKE_BUDGET);
+    // Warm has priority (movers — few — update first); cold gets the remaining budget, floored.
+    this.warm.bakeDirty(BAKE_BUDGET);
+    this.map.bakeDirty(Math.max(BAKE_BUDGET - this.warm.lastBaked, COLD_BAKE_FLOOR));
 
     this.renderer.clearScreen(0.05, 0.06, 0.08, 1.0);
 
@@ -183,6 +210,14 @@ export class Viewport {
       if (albedo && surface) {
         this.blitShader.albedo = albedo;
         this.blitShader.surface = surface;
+        // Warm tier (movers): slot-aligned with cold, composited OVER cold per-fragment by warm
+        // surface.B. Empty (coverage 0 → pure cold) until the warm cache has baked a mover.
+        const albedoW = this.warm.displayComposite("albedo-warm");
+        const surfaceW = this.warm.displayComposite("surface-warm");
+        if (albedoW && surfaceW) {
+          this.blitShader.albedoWarm = albedoW;
+          this.blitShader.surfaceWarm = surfaceW;
+        }
         // world px → clip: x = (wx-ax)*2z/w, y = -(wy-ay)*2z/h  (screen y-down → clip y-up)
         const proj = new Float32Array([
           (2 * z) / w, 0, 0,
@@ -245,6 +280,7 @@ export class Viewport {
     this.grid.destroy();
     this.blitShader.destroy();
     this.map.destroy();
+    this.warm.destroy();
     this.white.destroy();
     this.empty.destroy();
   }

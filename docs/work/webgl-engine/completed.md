@@ -89,3 +89,15 @@ tile, the green/brown biome terrain, scattered things — matching the pixijs cl
 layout + colour, correct Y-orientation, zero console errors.** Geo tier (things render as solid `geoColor`
 boxes, not sprites yet). Remaining W4 texture work (deferred): the real `TextureResolver`/atlas
 (master→preview→geo), so things become textured sprites; plus the ping-pong/reproject smooth-LOD (W4c).
+
+## W4e · Warm layer + movers (wired) — 2026-07-20
+
+Added a second (WARM) `SquareCache` to the Viewport, driven with the identical window/slot geometry as the
+cold cache, plus `warmAddPrim`/`warmGetPrim`/`warmRefreshPrim`/`warmRemovePrim`. The per-frame tick bakes warm
+first (priority — movers are few) then cold with the remaining budget (floored), and binds the warm
+albedo/surface composites into the display blit's warm samplers — so `AlbedoBlitShader` composites warm OVER
+cold by warm coverage (the path built in W4b). Ported `MoverLayer` (only Pixi seam: `Texture.EMPTY` → the
+viewport's white) and wired it into `WorldScene`. **Verified: typechecks, and the world still renders with the
+warm cache active + bound (pure cold where no mover sits).** The mover VISUAL is unverified-live — there are no
+pawns in the world right now (the wolves need the npc driver running server-side; the pixijs client showed none
+either). The warm pipeline is a faithful port and will render pawns as geo boxes when they exist.

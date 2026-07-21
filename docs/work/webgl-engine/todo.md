@@ -74,7 +74,7 @@ Ordered vertical slices, each verifiable in-browser:
 - [x] **W4d · Viewport pipeline + WorldBridge.** DONE (completed.md) — THE WORLD RENDERS (geo tier). Wire the per-frame resize→recenter→bakeDirty→fillDisplay→
       blit into the viewport; port `WorldBridge` (world state → cold prims) + `thingPlacement`. **Milestone:
       the world renders — G-buffer + albedo display, zoom/LOD, pan — matching pixijs.**
-- [ ] **W4e · Warm layer + movers.** Port `MoverLayer` + the warm `SquareCache`; pawns bake + composite
+- [~] **W4e · Warm layer + movers.** WIRED (completed.md) — warm cache + MoverLayer + warm-over-cold blit; mover visual pending live pawns. Port `MoverLayer` + the warm `SquareCache`; pawns bake + composite
       warm-over-cold.
 - [ ] **W4f · Shadows + debug.** Port `shadowCast`/`shadowCastShaders` (the bitfield cast) and the debug
       `/commands` (`/showRT`, `/overlayRT`, `/shadowcast`). Milestone: `/shadowcast` casts, matching pixijs.
