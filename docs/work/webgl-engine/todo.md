@@ -6,7 +6,7 @@ _Planned, not started. Items move to [`completed.md`](completed.md) when done + 
 
 ---
 
-## W1 · Scaffold `client/webgl` + a WebGL2 hello — 2026-07-20
+## W1 · Scaffold — DONE (completed.md)
 
 - [ ] New vite + TS project adjacent to `client/pixijs` (same tsconfig shape, dev/build, container-relative
       paths per [repo-layout](../../repo-layout.md)). Own the `<canvas>` + `getContext('webgl2', …)` + a
