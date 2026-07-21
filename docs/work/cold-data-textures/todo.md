@@ -5,32 +5,12 @@ _Items move to [`completed.md`](completed.md) when done + verified. Packed layou
 [`shadow-projection`](../shadow-projection/README.md) P0–P4 (the instanced fan) + delivers `caster-lut` C5's
 data layer. Verify each phase in-browser at `?focus=100,50`._
 
-**Done:** P0 (the four `RGBA32UI` layouts + `position_anchor_reference`, byte-checked in
-[`VARIABLES.md`](../../VARIABLES.md); forks F1–F5 resolved) · P1 `prim_definition_data` + atlas write · P2
-`cold_prim_data` + the position codec (both in `ColdShadowData`, populated by the ShadowCaster tick; render
-still on the instance-attr path). Readback-verified. Remaining:
+**Done:** P0 (layouts, byte-checked; forks F1–F6 resolved) · P1 `prim_definition_data` + atlas write · P2
+`cold_prim_data` + position codec · P3 `cold_light_data` + LUT · P4 **the shader reads all four textures**
+(no instance attrs — the payoff). All readback-verified; shadows render from the textures. The **data-driven
+cast is live** ([`completed.md`](completed.md)). Remaining is content-gated / a cross-check:
 
 ---
-
-## P3 · `cold_light_data` + `cold_light_prim_data` (the LUT) — 2026-07-21
-
-- [ ] `cold_light_data` (1 px/light) written on seed/change, NOT per frame: position, colour+intensity,
-      radius+z, and the `(lut_index, lut_count)` run. `cold_light_prim_data` = each light's in-range casters as
-      a contiguous run of `(definition_index, prim_data_index)` (4/px). Patch a run only on a **radius
-      crossing** ([F5](forks.md#f5)); full rebuild on bulk (zone stream-in).
-- [ ] **Verify:** a light's run lists the right casters; a spot shadowed by two lights appears in both runs; no
-      per-frame light/LUT upload.
-
-## P4 · The shader reads the four textures (replace instance attrs) — 2026-07-21
-
-- [ ] Rework the shadow cast: the vertex shader `texelFetch`es, per **per-light draw** (`instanceCount =
-      lut_count`, the draw's light = `cold_light_data[k]`), the LUT entry → `prim_definition_data[def]`
-      (geometry + `frame_page`) + `cold_prim_data[inst]` (position + rotation); **decode**
-      `position_anchor_reference` → px via the `*_DIM` constants; run the SAME `cornersWith`/`proj`/fan
-      (`shadow-projection` P0–P4). Add the **radius safety check** (rectangle distance) so a stale LUT still
-      culls. The alpha mask samples the atlas via the def's `frame` + `frame_page`.
-- [ ] **Verify:** shadows render identically to the instance-attr path, but with **no per-frame caster/light
-      upload** — only the texture writes on change; frame cost drops.
 
 ## P5 · Rotation → shadow regime (unblock shadow-projection P5) — 2026-07-21
 

@@ -48,3 +48,15 @@ ringed around (100,50), correct per-light colours, intensity 255, z=120 (480/4),
 
 _Data layer (P1–P3) complete + verified. P4 (the shader read) is blocked on [F6](forks.md#f6): the layout has
 no home for the fan's base-spread depth (`dA/dB`)._
+
+## P4 · The shader reads all four textures (no instance attributes) — 2026-07-21
+
+The payoff, live. The shadow cast builds the fan entirely on the GPU from the four data textures via
+`texelFetch` — **no per-frame instance attributes**. One instanced draw per light (15 fan vertices ×
+`lut_count` casters); the vertex shader fetches the light + LUT entry + prim def + placed instance by index,
+decodes `position_anchor_reference` → world units, runs the same `cornersWith`/`proj`/fan (in units, `×UNIT` at
+the clip transform), and the fragment alpha-masks via the def's atlas frame. Removed the instance-attr build +
+buffers + the old `depthFor` (depth now lives in `prim_definition_data`). **Verified in-browser at
+`?focus=100,50`:** silhouette-masked coloured shadows render from the textures, matching the instance-attr
+look, world-stuck, zero console errors — `caster-lut` C5 / [webgl-engine W7](../webgl-engine/todo.md) on the
+owned engine, live. Data layer + read complete: only P5 (N/S regime, content-gated) + P6 (cross-check) remain.
