@@ -6,5 +6,7 @@
 export { Program } from "./program";
 export { Geometry, type AttribSpec } from "./geometry";
 export { Texture, type TexFormat, type TextureOptions } from "./texture";
+export { TexFrame } from "./texFrame";
 export { RenderTarget, type RenderTargetOptions } from "./renderTarget";
 export { Renderer, type BlendMode, type DrawOptions } from "./renderer";
+export { Blitter } from "./blitter";

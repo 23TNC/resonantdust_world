@@ -34,6 +34,9 @@ export interface TextureOptions {
   data?: ArrayBufferView | TexImageSource | null;
   /** false → LINEAR (only valid for rgba8unorm); default NEAREST. */
   nearest?: boolean;
+  /** Premultiply RGB by alpha on a `TexImageSource` upload. Colour maps (albedo) want `true`;
+   *  data maps (surface/layers/normal — exact bytes) want `false`. Default `false` (verbatim). */
+  premultiply?: boolean;
 }
 
 export class Texture {
@@ -43,6 +46,12 @@ export class Texture {
   readonly format: TexFormat;
   private readonly gl: WebGL2RenderingContext;
   private readonly fmt: Fmt;
+  private readonly premultiply: boolean = false;
+
+  /** A 1×1 opaque-white texture — the geo-tier residual/surface fill + the atlas white stem. */
+  static white(gl: WebGL2RenderingContext): Texture {
+    return new Texture(gl, { width: 1, height: 1, data: new Uint8Array([255, 255, 255, 255]) });
+  }
 
   constructor(gl: WebGL2RenderingContext, opts: TextureOptions) {
     this.gl = gl;
@@ -50,6 +59,7 @@ export class Texture {
     this.height = opts.height;
     this.format = opts.format ?? "rgba8unorm";
     this.fmt = glFmt(gl, this.format);
+    this.premultiply = opts.premultiply ?? false;
     this.handle = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.handle);
     // Integer/float textures can't filter LINEAR; and we sample everything NEAREST anyway.
@@ -66,7 +76,11 @@ export class Texture {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.handle);
     if (data && !(ArrayBuffer.isView(data))) {
+      // A DOM image source (ImageBitmap/canvas): the atlas uploads sprites this way. Premultiply is
+      // per-map (colour vs data); the context is premultipliedAlpha so keep the store flag explicit.
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, this.premultiply);
       gl.texImage2D(gl.TEXTURE_2D, 0, this.fmt.internal, this.fmt.format, this.fmt.type, data as TexImageSource);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     } else {
       gl.texImage2D(gl.TEXTURE_2D, 0, this.fmt.internal, this.width, this.height, 0, this.fmt.format, this.fmt.type, (data as ArrayBufferView) ?? null);
     }
