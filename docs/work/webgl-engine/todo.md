@@ -45,15 +45,18 @@ Two failure modes were separated during diagnosis ([I-8](issues.md#i-8)):
       to acquire more — confirm world-bounds vs under-subscription (only the initial anchor's reach is handled).
       Needs a clean interactive test (ideally the `/showRT` tools from W4f).
 
-## W4h · Textures — real resolver/atlas + smooth-LOD (deferred from W4c/W4d)
+## W4h · Textures — smooth-LOD + mover-verify (resolver/atlas DONE, completed.md)
 
-- [ ] Return the real `TextureResolver` + atlas (`LodPool`/`TextureAtlas`/`MaxRectsPacker`) sharing the viewport
-      `Renderer`'s GL context (retire the W3 stub, [D-1](deviations.md#d-1)), so **things render as textured
-      sprites** (master→preview→geo) instead of solid `geoColor` boxes.
+DONE: the real `TextureResolver` + atlas (`TextureAtlas`/`LodPool`/`TexFrame`/`Blitter`) on the engine — **things
+render as real textured sprites** (master→preview→geo); the W3 stub is retired ([D-1](deviations.md#d-1)).
+Remaining:
+
 - [ ] Restore the `Channel` **ping-pong / reproject** so zoom-LOD shifts don't flash a re-bake (W4c shipped a
       single buffer per channel as the floor).
 - [ ] Live-verify the **mover visual** (W4e is wired but pawns render as geo boxes only; there are no pawns in
       the world until the npc driver runs server-side).
+- [ ] A few **flora variants flash geo** until their LOD streams in — confirm it's just load latency (a re-bake
+      lands them) vs a grid/cell resolve gap.
 
 ## W5 · Port the UI
 

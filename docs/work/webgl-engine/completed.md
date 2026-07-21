@@ -181,3 +181,27 @@ world** (a brown structure pans in with its own shadows); zero console errors. C
 the per-pixel analytic loop; the deferred world-cold persistence is the optimisation that recovers it.
 Deferred (D-2): world-space `shadow-cold` (so shadows aren't `/overlayRT`-inspectable yet), per-light bit
 packing, round-robin.
+
+## W4h (partial) · Real textures/atlas — things render as textured sprites — 2026-07-21
+
+Ported the pixijs texture layer onto the owned engine (survey-planned): **`TextureAtlas`** (one GPU page =
+a `RenderTarget`; packing = a `Blitter` composite; a packed LOD = a **`TexFrame`** UV sub-frame), **`LodPool`**
+(per-LOD atlas set, spill-to-new-page), and the real **`TextureResolver`** replacing the W3 stub — the tier
+logic / manifest / hash-addressed IndexedDB cache / dedupe / LOD math carry over verbatim; only the GL seams
+swap (`packInto` upload via `new Texture({data: bmp, premultiply})`, `cellFrame` on `TexFrame`, the packed
+type). GL is **lazy** (`attachRenderer`) since the viewport's context doesn't exist until the world scene.
+Added the two engine gaps the survey flagged: `TexFrame` + `Blitter` + a `premultiply` upload toggle
+([slice 0](completed.md), committed separately). Wired the bake: `MaterialResolve`/`normal` carry `TexFrame`s,
+`bakeSquare` passes each map's page + `uvRect()` to the already-rect-aware `MrtBakeShader`; `Viewport.channels()`
+resolves the real material (residual/surface/layers + `chA/chB` from the registry), geo box until albedo+surface
+load; the viewport drives `setTargetLod` each frame + re-bakes on a LOD landing.
+
+**Fixed a load-bearing bug the geo tier had masked:** the SquareCache `unitQuad` has **no `aUV` attribute**, so
+the bake's `in vec2 aUV` was unbound (constant) → every fragment sampled one texel → a flat box. It's a unit
+quad (0..1), so the bake vertex now uses `aPosition` as the UV directly. (Invisible on the geo tier — uniform
+white maps.) **Verified in-browser at `?focus=100,50`:** a forest of real conifer sprites (foliage + brown
+trunk) + shrubs, all silhouette-carved via the `surface.B` coverage discard, material reconstruction from the
+(correctly black) residual + layers; zero console errors. The black albedo residual is expected — `split_layers`
+puts the colour in the `layers` map + `chA/chB` tints. Deferred (still W4h): the `Channel` ping-pong/reproject
+smooth-LOD, and the mover live-verify (needs the npc driver); a few flora variants flash geo until their LOD
+streams in.
