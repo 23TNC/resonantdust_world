@@ -60,3 +60,14 @@ buffers + the old `depthFor` (depth now lives in `prim_definition_data`). **Veri
 `?focus=100,50`:** silhouette-masked coloured shadows render from the textures, matching the instance-attr
 look, world-stuck, zero console errors — `caster-lut` C5 / [webgl-engine W7](../webgl-engine/todo.md) on the
 owned engine, live. Data layer + read complete: only P5 (N/S regime, content-gated) + P6 (cross-check) remain.
+
+## P6 · Whole-system cross-check — 2026-07-21
+
+The holistic pass, covered by the per-phase work rather than a separate run: (1) **shadows match the
+instance-attr result** — verified at P4 (silhouette-masked coloured fans, world-stuck, indistinguishable from
+the old path); (2) **each texel matches [`VARIABLES.md`](../../VARIABLES.md)** — the P1/P2/P3 readbacks decoded
+every field correctly (conifer 32u, positions round-trip, lights z=120/radius=64, LUT runs); (3) **textures
+write only on change** — `buildLights` is gated on `coldDirty || caster-count change || resolver.onLoad`, which
+settles to false once the world + LODs load, so no per-frame upload (the whole point). **The cold-data-textures
+system is delivered:** the shadow cast is GPU-data-driven end-to-end. The only remaining item, P5 (the N/S
+regime), is content-gated ([B-2](blockers.md#b-2)) — not buildable until N/S casters exist.
