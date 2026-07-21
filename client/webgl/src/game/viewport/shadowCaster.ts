@@ -12,7 +12,7 @@
 //!
 //! GOTCHA: a backtick inside the GLSL closes the `/* glsl */` literal.
 
-import { Renderer, Program, Geometry } from "../../gl";
+import { Renderer, Program, Geometry, Texture } from "../../gl";
 import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
@@ -43,12 +43,18 @@ in vec4 aCaster;               // Ax, Ay (ground anchor world px), W, H (billboa
 in vec4 aParam;                // theta, dA, dB, (unused)
 in vec3 aLight;                // Lx, Ly, Lz (world px; z = height)
 in vec3 aColor;                // this light's colour
+in vec4 aFrame;                // surface atlas sub-frame uv rect [u0,v0,uw,vh] (zw=0 → no mask, solid)
 uniform mat3 uProjection;      // world px -> clip
 out vec3 vColor;
+out vec2 vUv;                  // sprite uv for the alpha mask
+flat out vec4 vFrame;
 
 // gl_VertexID role table. Roles: 0=TL 1=TR 2=BC 3=BL+ 4=BL- 5=BR+ 6=BR-.
 // T1(TL,TR,BC) T2(TL,BL+,BC) T3(TR,BR+,BC) T4(TL,BL-,BC) T5(TR,BR-,BC).
 const int ROLE[15] = int[15](0,1,2, 0,3,2, 1,5,2, 0,4,2, 1,6,2);
+// Sprite uv per role (E/W bottom-edge sampling): the shadow reads the whole sprite silhouette warped
+// onto the fan — top (v=0) → the projected top corners, base (v=1) → the footprint corners.
+const vec2 UV[7] = vec2[7](vec2(0.0,0.0), vec2(1.0,0.0), vec2(0.5,1.0), vec2(0.0,1.0), vec2(0.0,1.0), vec2(1.0,1.0), vec2(1.0,1.0));
 
 // Per-corner radial projection to the ground (z=0); sub-ground drops straight down (footprint).
 vec2 projGround(vec3 p, vec3 L) {
@@ -80,13 +86,26 @@ void main() {
   vec3 clip = uProjection * vec3(g, 1.0);
   gl_Position = vec4(clip.xy, 0.0, 1.0);
   vColor = aColor;
+  vUv = UV[role];
+  vFrame = aFrame;
 }
 `;
 const CAST_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 in vec3 vColor;
+in vec2 vUv;
+flat in vec4 vFrame;
+uniform sampler2D uSurface;     // the casters' shared surface page (B = silhouette coverage)
 out vec4 fragColor;
-void main() { fragColor = vec4(vColor, 0.5); }   // semi-transparent coloured shadow (P4 = alpha mask)
+void main() {
+  // Alpha mask: sample the sprite silhouette (surface.B) at this fragment's sprite uv, warped onto the
+  // fan; discard outside the silhouette so the shadow reads as the caster's shape, not a solid polygon.
+  if (vFrame.z > 0.0) {
+    float cov = texture(uSurface, vFrame.xy + vUv * vFrame.zw).b;
+    if (cov < 0.5) discard;
+  }
+  fragColor = vec4(vColor, 0.5);   // semi-transparent coloured shadow
+}
 `;
 
 /** Six distinct per-light colours (the design's bit-decode palette, extended to 6). */
@@ -107,6 +126,9 @@ export class ShadowCaster {
   private aParam = new Float32Array(0);
   private aLight = new Float32Array(0);
   private aColor = new Float32Array(0);
+  private aFrame = new Float32Array(0);
+  /** 1×1 fallback bound to `uSurface` when no caster's surface page is available (all instances solid). */
+  private readonly empty: Texture;
   private enabled = true;
   /** Silhouette-derived base depth `[dA, dB]` per sprite stem (the sandbox's auto rule), baked once from
    *  the surface coverage on first sight + cached; stems still resolving fall back to {@link DEPTH_FRAC}. */
@@ -115,7 +137,8 @@ export class ShadowCaster {
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
     this.program = new Program(gl, CAST_VERT, CAST_FRAG, "viewport-shadow-cast");
-    // aVid drives count=15 (non-instanced); the four instance attrs advance once per pair.
+    this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
+    // aVid drives count=15 (non-instanced); the instance attrs advance once per pair.
     const vid = new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
     this.geo = new Geometry(
       gl,
@@ -126,6 +149,7 @@ export class ShadowCaster {
         aParam: { data: new Float32Array(4), size: 4, instanced: true },
         aLight: { data: new Float32Array(3), size: 3, instanced: true },
         aColor: { data: new Float32Array(3), size: 3, instanced: true },
+        aFrame: { data: new Float32Array(4), size: 4, instanced: true },
       },
       undefined,
       0,
@@ -165,6 +189,8 @@ export class ShadowCaster {
     const param = this.grow("aParam", standing.length * nLights * 4, 4);
     const light = this.grow("aLight", standing.length * nLights * 3, 3);
     const color = this.grow("aColor", standing.length * nLights * 3, 3);
+    const frame = this.grow("aFrame", standing.length * nLights * 4, 4);
+    let surfacePage: Texture | null = null;
     for (const p of standing) {
       const Ax = p.x + p.width * 0.5; // ground anchor (bottom-centre of the sprite box)
       const Ay = p.y + p.height;
@@ -172,6 +198,11 @@ export class ShadowCaster {
       const d = this.depthFor(p, resolver);
       const dA = d ? d[0] : p.width * DEPTH_FRAC;
       const dB = d ? d[1] : p.width * DEPTH_FRAC;
+      // The surface silhouette sub-frame for the alpha mask (all casters' surfaces share one atlas page at
+      // a LOD; capture it to bind). zw=0 → no mask (solid) until the surface LOD resolves.
+      const surf = p.textureName && resolver ? resolver.resolve(p.textureName, "surface", p.cell) : null;
+      const uv = surf && !surf.geo && surf.frame ? surf.frame.uvRect() : null;
+      if (surf?.frame) surfacePage = surf.frame.source;
       for (let k = 0; k < nLights; k++) {
         if (n >= MAX_PAIRS) break;
         const L = this.lights[k];
@@ -181,6 +212,8 @@ export class ShadowCaster {
         light[n * 3] = L.x; light[n * 3 + 1] = L.y; light[n * 3 + 2] = L.z;
         const c = LIGHT_COLORS[k];
         color[n * 3] = c[0]; color[n * 3 + 1] = c[1]; color[n * 3 + 2] = c[2];
+        if (uv) { frame[n * 4] = uv[0]; frame[n * 4 + 1] = uv[1]; frame[n * 4 + 2] = uv[2]; frame[n * 4 + 3] = uv[3]; }
+        else { frame[n * 4] = 0; frame[n * 4 + 1] = 0; frame[n * 4 + 2] = 0; frame[n * 4 + 3] = 0; }
         n++;
       }
     }
@@ -191,6 +224,7 @@ export class ShadowCaster {
     this.geo.update("aParam", param.subarray(0, n * 4));
     this.geo.update("aLight", light.subarray(0, n * 3));
     this.geo.update("aColor", color.subarray(0, n * 3));
+    this.geo.update("aFrame", frame.subarray(0, n * 4));
     this.geo.instanceCount = n;
 
     const w = camera.width, h = camera.height, z = camera.zoom, ax = camera.anchorX, ay = camera.anchorY;
@@ -200,6 +234,7 @@ export class ShadowCaster {
       program: this.program,
       geometry: this.geo,
       blend: "normal",
+      textures: { uSurface: surfacePage ?? this.empty },
       uniforms: (prog) => prog.uMat3("uProjection", proj),
     });
   }
@@ -249,7 +284,7 @@ export class ShadowCaster {
   }
 
   /** Grow the named instance buffer to at least `len` floats, returning a working array. */
-  private grow(name: "aCaster" | "aParam" | "aLight" | "aColor", len: number, _size: number): Float32Array {
+  private grow(name: "aCaster" | "aParam" | "aLight" | "aColor" | "aFrame", len: number, _size: number): Float32Array {
     const cur = this[name];
     if (cur.length >= len) return cur;
     const next = new Float32Array(len);
@@ -260,5 +295,6 @@ export class ShadowCaster {
   destroy(): void {
     this.geo.destroy();
     this.program.destroy();
+    this.empty.destroy();
   }
 }
