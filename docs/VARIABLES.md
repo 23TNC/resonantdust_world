@@ -298,7 +298,7 @@ u32 position_anchor_reference       region | zone | tile | anchor  (min unit = S
 ```
 R  u32 position_anchor_reference
 G  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
-B  u32 reach         u8 radius (24–31, units; ~16-tile max) | u8 z (16–23, units) | u16 reserved (0–15)
+B  u32 reach         u8 z (24–31, units) | u12 radius (12–23, units; ~16-zone max) | u12 reserved (0–11)
 A  u32 lut           u16 lut_index (16–31) | u16 lut_count (0–15)   range into cold_light_prim_data
 ```
 
@@ -337,8 +337,8 @@ light id in the LUT. (3) The shader does a **radius safety check** on the light�
 Chebyshev distance where Euclidean isn't needed) so a slightly-stale LUT (a prim that moved out of range before
 its light's run was patched) still culls correctly. (4) All world fields are in **units** (`1 unit = SQUARE/16
 = 4px`, compile-time); decode `region|zone|tile|anchor` → units via the `*_DIM` world constants (§Where it is),
-then units → px (×4) only at the clip transform. `radius` caps at ~16 tiles (`u8` units) — enough for shadow
-reach; revisit if larger.
+then units → px (×4) only at the clip transform. `radius` is `u12` units ≈ **16 zones** (256 tiles) — far past
+the ~8-zone view. Truly global ambient is better a **no-cull flag** (skip the radius check) than a max radius.
 
 ## Removed
 

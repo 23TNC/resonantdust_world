@@ -12,10 +12,11 @@ existing `position_reference` shape (§Where it is / [`VARIABLES.md`](../../VARI
 replacing the low `layer` byte. Min unit `SQUARE/16` (tile/16); `anchor=(8,8)` centres a prim. Kills the world
 cap entirely (no `u16`-px ceiling) and matches the existing addressing + `shared/codec/object` helpers. Units:
 **one unit for everything world-space** — `1 unit = SQUARE/16 = 4px`, a **compile-time constant** (`TILE = 16
-units`, derivable; no per-frame scale uniform). `anchor` (u4) = 0..15 units = one tile; `z`/`radius` (u8) =
-0..255 units ≈ 16 tiles; `prim_width/height` (u10) ≈ 64 tiles. The shader works in units, converting to px
-(×4) only at the clip transform. The **only** non-unit fields are the atlas `frame_*` (texture px, they index
-the atlas). `radius` caps at ~16 tiles — enough for shadow reach; revisit if larger lights are wanted.
+units`, derivable; no per-frame scale uniform). `anchor` (u4) = 0..15 units = one tile; `z` (u8) =
+0..255 units ≈ 16 tiles; `radius` (**u12**) = 0..4095 units ≈ **16 zones** (256 tiles, far past the ~8-zone
+view); `prim_width/height` (u10) ≈ 64 tiles. The shader works in units, converting to px (×4) only at the clip
+transform. The **only** non-unit fields are the atlas `frame_*` (texture px, they index the atlas). For true
+global ambient, a **no-cull flag** beats a max radius.
 
 ## F2 · The atlas frame page identifier — 2026-07-21 (resolved)
 
