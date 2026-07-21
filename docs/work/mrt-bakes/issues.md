@@ -60,3 +60,25 @@ material path produces all four channels for them — no branch. Verify the flat
 tiles, geo-tier things, untextured rects) bake **identically** through the material path: `white × tint`
 must equal the old flat sprite, flat-up normal, opaque surface (`0x00ffff`), and the right tile depth. This
 is why B2 (universal material) is verifiable on its own, before any MRT.
+
+## I-8 · The merged fragment's subtleties (scoped from the 4 shaders, 2026-07-20)
+
+Reading material/surface/normal/depth to design the one 4-out fragment surfaced what B3 must get right for
+**pixel-identical** output:
+
+- **One shared `discard` on `cov = surface.B < 0.5`** works for all four — because in the [F2](forks.md#f2)
+  solid-material model, ground/flat prims carry a **white surface** (`cov = 1`), so they never discard and
+  fill their whole tile in every channel; real things carry real coverage and discard outside the
+  silhouette (ground behind survives in all four). No per-channel coverage test.
+- **`oSurface = vec4(1.0, s.g, s.b, 1.0)`** (presence=1, ao=surface.G, coverage=surface.B).
+- **`oNormal`** = normal-map sample, or flat-up `vec3(0.5,0.5,1.0)` when the stem has none.
+- **`oDepth = vec4(0,0, tileDepth<0 ? 0.0 : tileDepth, 1.0)`** — ground writes black, things write depth. In
+  the solid model, ground's `cov=1` so the shared discard never fires on it; the `<0` branch just picks
+  black.
+- **Albedo tint is the trap.** The material path applies tint via the per-material `uChA` channels and does
+  **NOT** multiply `prim.tint`; the flat sprite path applied `prim.tint`/`geoColor`. So the merged shader
+  needs a `uTint` multiply on `oAlbedo` = the resolved tint (**white** for real materials → no-op; `geoColor`
+  for solid) to preserve both. Verify real things are white-tinted so the no-op holds.
+
+These are why B3 is careful work, and why each channel must be diffed via `/overlayRT *-cold`, not just the
+albedo display.

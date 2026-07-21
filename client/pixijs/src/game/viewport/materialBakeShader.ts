@@ -61,6 +61,7 @@ const materialBitGl = {
       uniform vec4 uChA[${PACKED_CHANNELS}];     // per channel: tint.rgb, hueSwing (radians)
       uniform vec4 uChB[${PACKED_CHANNELS}];     // per channel: chromaSwing, warmCoolBias, noiseRow (-1 = none), sampleSpace (0 uv | 1 world)
       uniform vec4 uNoiseParams;                 // x = atlas row count, y = uv tiling, z = world px per noise tile
+      uniform vec3 uTint;                        // OUTPUT multiply — white for real materials (no-op), geoColor for a SOLID material
       uniform vec4 uWorldRect;                   // xy = prim world origin px, zw = prim world size px (world-space noise)
       uniform float uSeed;                       // STABLE per-instance seed (cell hash for static, objectId for movers)
       uniform float uHasLayers;                  // 1 = add the layer contributions, 0 = residual only
@@ -103,7 +104,7 @@ const materialBitGl = {
           outc += weights[i] * jit;                 // re-add this material's (jittered) contribution
         }
       }
-      outColor = vec4(outc, 1.0);                  // OPAQUE colour; coverage (alpha) is applied at DISPLAY from surface.B
+      outColor = vec4(outc * uTint, 1.0);          // OPAQUE colour × tint (white for real; geoColor for a solid material)
     `,
   },
 };
@@ -167,6 +168,12 @@ export class MaterialBakeShader extends Shader {
     this.resources.uNoise = value.source;
     this.resources.uNoiseSampler = value.source.style;
   }
+  /** OUTPUT tint multiply (0xRRGGBB). White (0xffffff) for a real material = no-op (tint lives in the
+   *  per-material channels); a SOLID material passes its `geoColor` here so white × geoColor = the flat box. */
+  set tint(rgb: number) {
+    this.resources.materialUniforms.uniforms.uTint = new Float32Array([((rgb >> 16) & 0xff) / 255, ((rgb >> 8) & 0xff) / 255, (rgb & 0xff) / 255]);
+    this.resources.materialUniforms.update();
+  }
 
   /** Push the material channels' params. `chA[i] = (tintR, tintG, tintB, hueSwing)`,
    *  `chB[i] = (chromaSwing, warmCoolBias, noiseRow, sampleSpace)`. */
@@ -218,6 +225,7 @@ export function makeMaterialBakeShader(): MaterialBakeShader {
         uChB: { value: new Float32Array(PACKED_CHANNELS * 4), type: "vec4<f32>", size: PACKED_CHANNELS },
         uNoiseParams: { value: new Float32Array([1, 1, 128, 0]), type: "vec4<f32>" },
         uWorldRect: { value: new Float32Array([0, 0, 64, 64]), type: "vec4<f32>" },
+        uTint: { value: new Float32Array([1, 1, 1]), type: "vec3<f32>" },
         uSeed: { value: 0, type: "f32" },
         uHasLayers: { value: 0, type: "f32" },
       }),

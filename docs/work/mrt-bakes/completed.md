@@ -12,3 +12,12 @@ Verified: four different colours (red/green/blue/yellow) → all four attachment
 unaffected. **Key finding ([I-1](issues.md#i-1)): Pixi never calls `gl.drawBuffers`, so MRT needs a manual
 `gl.drawBuffers([COLOR_ATTACHMENT0..3])` after binding the target's FBO** — per-FBO state, so it sticks and
 doesn't pollute the screen. That's the one non-native piece the B4 bake must carry.
+
+## B2 · Universal material — every prim through one path — 2026-07-20
+
+The albedo `resolve` now returns a material for EVERY prim: real → reconstruction (output tint white);
+flat/geo → a **solid material** (residual × `uTint`=geoColor, a WHITE surface so the shader never discards
+→ full box, no layers). Added `uTint` (output multiply) to `materialBakeShader` — white for real (no-op,
+tint lives in chA/chB), geoColor for solid — and `materialNode` sets it. No more flat-sprite path for
+albedo; one bake path. Verified: ground tiles, real trees (green) and geo-tier boxes all bake identically
+(steady-state pixel-match; the I-8 tint trap handled by the white-for-real rule).

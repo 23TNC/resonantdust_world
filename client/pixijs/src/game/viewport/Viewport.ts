@@ -140,14 +140,20 @@ export class Viewport extends LayoutNode {
       {
         key: `albedo-${suffix}`,
         resolve: (prim) => {
-          if (!prim.textureName) return { texture: prim.texture, tint: prim.tint };
-          // The `albedo` map is the residual base (RGB). Its visual alpha lives in `surface.B`,
-          // so the reconstruction needs BOTH loaded before it can composite — until then the
-          // prim stays a flat geo box (a solid rectangle, as the geo tier always was), never a
-          // silhouette-less residual box.
+          // Universal-material (mrt-bakes B2): EVERY prim resolves to a material, so there's one bake path.
+          // The flat/geo case is a "solid material" — residual × `uTint`(geoColor), a WHITE surface (coverage
+          // 1 → the material shader never discards → fills the whole box), no layers. white × tint == the old
+          // flat sprite. A real material passes tint = white (no-op; its tint lives in the packed channels).
+          if (!prim.textureName) {
+            return { texture: prim.texture, tint: prim.tint, material: { residual: prim.texture, layers: null, surface: resolver.white, chA: ZERO_CH, chB: ZERO_CH } };
+          }
+          // The `albedo` map is the residual base (RGB). Its visual alpha lives in `surface.B`, so the
+          // reconstruction needs BOTH loaded before it goes real — until then a solid material (geo box).
           const alb = resolver.resolve(prim.textureName, "albedo", prim.cell);
           const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
-          if (alb.geo || surf.geo) return { texture: alb.texture, tint: prim.geoColor ?? prim.tint };
+          if (alb.geo || surf.geo) {
+            return { texture: alb.texture, tint: prim.geoColor ?? prim.tint, material: { residual: alb.texture, layers: null, surface: resolver.white, chA: ZERO_CH, chB: ZERO_CH } };
+          }
           // Single real-tier path: reconstruct residual + Σ layers·jitter, alpha from surface.B.
           // ALWAYS reconstruct from the `layers` map when the stem has one (every split sprite
           // does). No material-variation gate: `packChannels` fills unauthored channels with
@@ -165,7 +171,9 @@ export class Viewport extends LayoutNode {
               ({ chA, chB } = reg.packChannels(prim.packed));
             }
           }
-          return { texture: alb.texture, tint: prim.tint, material: { residual: alb.texture, layers, surface: surf.texture, chA, chB } };
+          // Real material: OUTPUT tint = WHITE (0xffffff) — the reconstruction's tint lives in chA/chB, and
+          // the old material path never multiplied prim.tint, so white keeps it byte-identical.
+          return { texture: alb.texture, tint: 0xffffff, material: { residual: alb.texture, layers, surface: surf.texture, chA, chB } };
         },
       },
       // The normal channel: a real normal map bakes UNTINTED (0xffffff) so the albedo tint

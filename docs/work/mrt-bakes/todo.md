@@ -13,7 +13,7 @@ _Planned, not started. Items move to [`completed.md`](completed.md) when done + 
       got its colour (blit each to screen / `/overlayRT`). Nails how `renderer` targets a multi-attachment
       `RenderTarget` and that `drawBuffers` is wired ([I-1](issues.md#i-1)). Gate the rest on this.
 
-## B2 · Universal material — every prim through one path — 2026-07-20
+## B2 · Universal material — DONE (moved to completed.md)
 
 - [ ] Extend the per-prim "material" to a superset (albedo residual/layers + surface + normal + depth +
       tint) and make every channel `resolve` produce one. The flat/geo case = a **solid material** (white

@@ -834,6 +834,7 @@ export class SquareCache {
       this.materialPool[i] = mesh;
     }
     const shader = mesh.shader as MaterialBakeShader;
+    shader.tint = r.tint; // OUTPUT tint — white for a real material (no-op), geoColor for a SOLID material
     shader.residual = mat.residual; // the `albedo` map — the reconstruction base (RGB)
     shader.layers = mat.layers; // weight map, or null → residual only
     shader.surface = mat.surface; // its B channel supplies the visual alpha
