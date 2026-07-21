@@ -8,9 +8,10 @@
 //! box — white fill × tint), so the world renders without the texture atlas. The warm (mover)
 //! tier, real texture resolution, shadows, and the debug overlays are later slices.
 
-import { Renderer, Program, Geometry, Texture } from "../../gl";
+import { Renderer, Program, Geometry, Texture, TexFrame } from "../../gl";
 import { Camera } from "./Camera";
 import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } from "./SquareCache";
+import type { TextureResolver } from "../../textures";
 import { AlbedoBlitShader } from "./albedoBlitShader";
 import { OverlayShader, overlayModeFor } from "./overlayShader";
 import { ShadowCaster } from "./shadowCaster";
@@ -64,8 +65,14 @@ export class Viewport {
   private readonly renderer: Renderer;
   /** The 1×1 white fill — the geo-tier residual/surface + the WorldBridge's prim texture. */
   readonly white: Texture;
+  /** The white fill as an identity frame — the geo tier's residual/surface (whole-texture UV). */
+  private whiteFrame!: TexFrame;
   private readonly empty: Texture;
   private materialRegistry: MaterialRegistry | null = null;
+  /** The texture resolver (master→preview→geo). Null until the world scene attaches it + our GL
+   *  context ({@link setResolver}); the geo tier renders until then. */
+  private resolver: TextureResolver | null = null;
+  private resolverUnsub: (() => void) | null = null;
 
   private readonly map: SquareCache;
   /** The WARM cache — same channels keyed `*-warm`, baked from the MOVER prims (pawns). Driven
@@ -93,6 +100,7 @@ export class Viewport {
     this.renderer.canvas.style.cssText = "display:block;width:100%;height:100%;";
     const gl = this.renderer.gl;
     this.white = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([255, 255, 255, 255]) });
+    this.whiteFrame = TexFrame.whole(this.white);
     this.empty = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([0, 0, 0, 0]) });
     this.blitShader = new AlbedoBlitShader(gl);
     this.overlayShader = new OverlayShader(gl);
@@ -112,11 +120,64 @@ export class Viewport {
   private channels(suffix: string): ChannelSpec[] {
     const white = this.white;
     return [
-      { key: `albedo-${suffix}`, resolve: (prim) => ({ texture: white, tint: prim.geoColor ?? prim.tint, material: { residual: white, layers: null, surface: white, chA: ZERO_CH, chB: ZERO_CH } }) },
-      { key: `normal-${suffix}`, resolve: () => ({ texture: white, tint: 0x8080ff }) },
+      {
+        key: `albedo-${suffix}`,
+        resolve: (prim) => {
+          // Universal-material (mrt-bakes B2): every prim resolves to a material, one bake path. The geo
+          // case is a SOLID material — residual × geoColor, a WHITE surface (coverage 1 → never discards →
+          // fills the box). A real material passes tint = white (its tint lives in chA/chB). `residual`
+          // defaults to the white fill; a partially-loaded stem (albedo up, surface not yet) uses the real
+          // albedo so it doesn't flash white (matching pixijs).
+          const wf = this.whiteFrame;
+          const solid = (residual: TexFrame) => ({ texture: white, tint: prim.geoColor ?? prim.tint, material: { residual, layers: null, surface: wf, chA: ZERO_CH, chB: ZERO_CH } });
+          const r = this.resolver;
+          if (!prim.textureName || !r) return solid(wf);
+          // The albedo map is the residual base; the visual alpha lives in surface.B — need BOTH real.
+          const alb = r.resolve(prim.textureName, "albedo", prim.cell);
+          const surf = r.resolve(prim.textureName, "surface", prim.cell);
+          if (alb.geo || surf.geo || !alb.frame || !surf.frame) return solid(alb.frame ?? wf);
+          // Real tier: reconstruct residual + Σ layers·jitter (from the material registry), alpha from
+          // surface.B. A stem with no `layers` map keeps just the residual.
+          let layers: TexFrame | null = null;
+          let chA = ZERO_CH;
+          let chB = ZERO_CH;
+          const reg = this.materialRegistry;
+          if (reg) {
+            const lyr = r.resolve(prim.textureName, "layers", prim.cell);
+            if (!lyr.geo && lyr.frame) {
+              layers = lyr.frame;
+              ({ chA, chB } = reg.packChannels(prim.packed));
+            }
+          }
+          return { texture: white, tint: 0xffffff, material: { residual: alb.frame, layers, surface: surf.frame, chA, chB } };
+        },
+      },
+      {
+        key: `normal-${suffix}`,
+        resolve: (prim) => {
+          const r = this.resolver;
+          if (!prim.textureName || !r) return { texture: white, tint: 0x8080ff };
+          const n = r.resolve(prim.textureName, "normal", prim.cell);
+          return { texture: white, tint: 0x8080ff, normal: { rgb: n.geo ? null : n.frame } };
+        },
+      },
       { key: `surface-${suffix}`, resolve: () => ({ texture: white, tint: 0x00ffff }) },
       { key: `zdepth-world-${suffix}`, resolve: () => ({ texture: white, tint: 0xffffff, depth: -1 }) },
     ];
+  }
+
+  /** Attach the texture resolver (master→preview→geo) + our GL context. Called by the world scene once
+   *  the viewport exists (F6). A LOD landing re-bakes both caches so prims pick up the upgrade. */
+  setResolver(resolver: TextureResolver): void {
+    this.resolver = resolver;
+    resolver.attachRenderer(this.renderer);
+    this.resolverUnsub?.();
+    this.resolverUnsub = resolver.onLoad(() => {
+      this.map.invalidateAll();
+      this.warm.invalidateAll();
+    });
+    this.map.invalidateAll();
+    this.warm.invalidateAll();
   }
 
   get canvas(): HTMLCanvasElement {
@@ -262,6 +323,9 @@ export class Viewport {
     const z = this.camera.zoom;
     const ax = this.camera.anchorX;
     const ay = this.camera.anchorY;
+    // Aim texture loads at the on-screen tile size (a tile is SQUARE world px) so the resolver
+    // upgrades toward the zoom's target LOD.
+    this.resolver?.setTargetLod(SQUARE * z);
 
     // Both caches share the window/slot geometry (identical inputs), so their composites stay
     // slot-aligned for the warm-over-cold display blit.
@@ -380,6 +444,7 @@ export class Viewport {
     this.displayGeo?.destroy();
     this.gridQuad.destroy();
     this.grid.destroy();
+    this.resolverUnsub?.();
     this.blitShader.destroy();
     this.overlayShader.destroy();
     this.shadows.destroy();

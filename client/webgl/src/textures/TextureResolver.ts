@@ -1,61 +1,260 @@
-//! TextureResolver — STUB for the W3 login boot. The real resolver owns the
-//! three-tier prim resolution (master → preview → geo) over per-LOD MaxRects atlas
-//! pools, baking sub-textures with the renderer — all GPU work that rides the
-//! render layer being ported in [webgl-engine W4](../../../docs/work/webgl-engine/todo.md).
-//! Login needs no textures, so this satisfies the boot surface (`setRoot` +
-//! `lodStats` for the HUD) and no-ops the resolution API. Replace wholesale in W4
-//! with the atlas-backed resolver built on the engine `Texture`/`RenderTarget`.
+//! The N-LOD texture resolver (webgl port) — every prim that names a texture resolves through it to
+//! the best LOD available RIGHT NOW, and kicks the async load that upgrades it toward the zoom's
+//! target LOD:
+//!
+//!   geo (white)  →  a low LOD (streamed / IndexedDB floor)  →  the target LOD
+//!
+//! Ported from the pixijs resolver: the tier logic, manifest, hash-addressed IndexedDB cache, dedupe
+//! and LOD math are already Pixi-free and carry over verbatim. Only the GL seams change — a packed LOD
+//! is now a {@link TexFrame} (a UV sub-frame onto a shared atlas page) instead of a Pixi `Texture`,
+//! `packInto` uploads the `ImageBitmap` into an engine {@link Texture} (premultiply per-map), and
+//! `cellFrame` narrows a `TexFrame` rather than a `Rectangle`.
+//!
+//! GL is LAZY: the resolver is built at boot with no renderer (the viewport's GL context doesn't exist
+//! until the world scene), so {@link attachRenderer} wires the {@link Blitter} + pools when the
+//! viewport comes up. Before then `resolve` returns geo (nothing is packed yet). Geo returns a null
+//! frame — the caller supplies its own white fill (unlike pixijs, which packs a shared white stem).
 
-import type { Renderer } from "../gl";
+import { Blitter, type Renderer, Texture, TexFrame } from "../gl";
+import { LodPool } from "./LodPool";
+import { getLod, putLod } from "./previewCache";
+import { LOD_SIZES, lodUrl, pickLodForSize, type TexMap } from "./lod";
+import { TextureManifest } from "./textureManifest";
 
-/** LOD-pool occupancy for the debug HUD. Mirrors the real resolver's shape so the
- *  panel binds unchanged; the stub reports an empty set. */
+/** The index key for one (stem, map). */
+const mapKey = (stem: string, map: TexMap): string => `${stem}|${map}`;
+const stemOf = (key: string): string => key.slice(0, key.lastIndexOf("|"));
+
+/** A resolve result: the atlas sub-frame to bake (null for the GEO tier — the caller uses its own
+ *  white fill + the prim's silhouette colour), and whether it's geo rather than real pixels. */
+export interface ResolvedTexture {
+  frame: TexFrame | null;
+  geo: boolean;
+}
+
+/** LOD-pool occupancy for the debug HUD. */
 export interface LodStats {
-  /** Atlas pages summed across every LOD pool. */
   pages: number;
-  /** Packed-texture count per pow2 LOD size (empty until W4). */
   counts: ReadonlyMap<number, number>;
-  /** Preview (floor) tier module size in px. */
   previewSize: number;
-  /** Packed preview modules. */
   previewCount: number;
 }
 
-const EMPTY_STATS: LodStats = { pages: 0, counts: new Map(), previewSize: 0, previewCount: 0 };
+/** One tile at native scale — the target LOD floor (zoom 1 → 64px). */
+const BASE_LOD_PX = 64;
+/** A cheap low LOD fetched alongside the target while a stem has nothing on hand. */
+const FLOOR_LOD = 32;
+/** LODs at or below this pack into a 1024² page; larger into 2048². */
+const SMALL_LOD_MAX = 64;
 
 export class TextureResolver {
+  private renderer: Renderer | null;
+  private blitter: Blitter | null = null;
   private root: string;
 
-  // Renderer is nullable in W3: the real resolver shares the viewport's GL
-  // context, which doesn't exist until W4. Login needs no textures.
-  constructor(_renderer: Renderer | null, texturesRoot: string) {
+  /** One packing pool per LOD size present (shared across maps — keyed apart by {@link mapKey}). */
+  private readonly pools = new Map<number, LodPool>();
+  /** `stem|map` → its loaded LODs, keyed by size. */
+  private readonly packed = new Map<string, Map<number, TexFrame>>();
+  private readonly manifest = new TextureManifest();
+  private readonly packedHash = new Map<string, string>();
+  private readonly pending = new Set<string>();
+  /** Cached linked-atlas cell sub-frames, keyed by the packed frame then cell index. */
+  private readonly cellFrames = new WeakMap<TexFrame, Map<number, TexFrame>>();
+
+  private targetPx = BASE_LOD_PX;
+  private readonly listeners = new Set<() => void>();
+
+  constructor(renderer: Renderer | null, texturesRoot: string) {
+    this.renderer = renderer;
     this.root = texturesRoot;
+    if (renderer) this.blitter = new Blitter(renderer);
+    this.manifest.onChange(() => this.onManifestChange());
   }
 
-  /** Repoint at the world server's `/textures` base (recorded; no fetch in W3). */
-  setRoot(root: string): void {
-    this.root = root;
+  /** Attach the viewport's GL context once it exists (F6: the viewport self-canvases). Idempotent. */
+  attachRenderer(renderer: Renderer): void {
+    if (this.renderer) return;
+    this.renderer = renderer;
+    this.blitter = new Blitter(renderer);
   }
 
-  /** The `/textures` base this resolver would fetch from. */
-  get texturesRoot(): string {
+  /** Repoint the texture root at login + fetch/poll the manifest. */
+  setRoot(texturesRoot: string): void {
+    this.root = texturesRoot;
+    this.manifest.setRoot(texturesRoot);
+  }
+  rootUrl(): string {
     return this.root;
   }
 
-  /** HUD occupancy — empty until the atlas pools return (W4). */
+  /** Set the target LOD from the viewport's on-screen tile size (`64 × zoom`). */
+  setTargetLod(px: number): void {
+    this.targetPx = Math.max(LOD_SIZES[0], px);
+  }
+
+  /** Subscribe to "a LOD landed" — the viewport re-bakes to pick up the upgrade. */
+  onLoad(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+  private emit(): void {
+    for (const fn of this.listeners) fn();
+  }
+
   lodStats(): LodStats {
-    return EMPTY_STATS;
+    const counts = new Map<number, number>();
+    let pages = 0;
+    for (const [size, pool] of this.pools) {
+      counts.set(size, pool.count);
+      pages += pool.pageCount;
+    }
+    return { pages, counts, previewSize: FLOOR_LOD, previewCount: this.pools.get(FLOOR_LOD)?.count ?? 0 };
   }
 
-  /** Target LOD for the current zoom. No-op in the stub. */
-  setTargetLod(_lod: number): void {}
+  /** Best sub-frame for `stem`'s `map` available now (+ tier), kicking the upgrade toward the target
+   *  LOD. A falsy stem, no root/renderer, an unlisted stem, or a map the stem lacks → geo (null). */
+  resolve(stem: string | undefined, map: TexMap = "albedo", cell?: number): ResolvedTexture {
+    if (!stem || !this.root || !this.renderer) return { frame: null, geo: true };
 
-  /** Resolve a named prim to a texture. Returns null in the stub (no consumers
-   *  in the login path; the viewport that calls this returns in W4). */
-  resolve(_name: string): null {
-    return null;
+    const entry = this.manifest.entry(stem);
+    if (!entry) return { frame: null, geo: true };
+    if (map !== "albedo" && !entry.maps.includes(map)) return { frame: null, geo: true };
+
+    const key = mapKey(stem, map);
+    const cap = entry.maxSize;
+    const gridFactor = entry.grid ? Math.max(entry.grid[0], entry.grid[1]) : 1;
+    let desired = pickLodForSize(Math.min(this.targetPx * gridFactor, cap));
+    if (desired > cap) desired = LOD_SIZES.filter((s) => s <= cap).pop() ?? LOD_SIZES[0];
+    const loaded = this.packed.get(key);
+
+    if (!loaded?.has(desired)) void this.ensureLod(stem, desired, entry.hash, map);
+    if (!(loaded && loaded.size > 0) && desired > FLOOR_LOD && FLOOR_LOD <= cap)
+      void this.ensureLod(stem, FLOOR_LOD, entry.hash, map);
+
+    if (loaded && loaded.size > 0) {
+      const best = this.bestLoaded(loaded, desired);
+      if (best) {
+        if (entry.grid && cell != null) return { frame: this.cellFrame(best, cell, entry.grid, entry.pad), geo: false };
+        return { frame: best, geo: false };
+      }
+    }
+    return { frame: null, geo: true };
   }
 
-  /** Subscribe to in-place texture upgrades. No-op in the stub. */
-  onLoad(_fn: () => void): void {}
+  /** A cached UV sub-frame of a packed linked-atlas frame for `cell` (row-major, 0-based), trimmed by
+   *  the manifest inset `pad`. Narrows the packed frame's page rect to the cell's inset rect. */
+  private cellFrame(base: TexFrame, cell: number, grid: [number, number], pad?: [number, number]): TexFrame {
+    let byCell = this.cellFrames.get(base);
+    if (!byCell) this.cellFrames.set(base, (byCell = new Map()));
+    const hit = byCell.get(cell);
+    if (hit) return hit;
+
+    const [cols, rows] = grid;
+    const [pu, pv] = pad ?? [0, 0];
+    const cx = cell % cols;
+    const cy = Math.floor(cell / cols) % rows;
+    const u0 = cx / cols + pu;
+    const v0 = cy / rows + pv;
+    const uw = 1 / cols - 2 * pu;
+    const vh = 1 / rows - 2 * pv;
+    // Project the cell's [0,1] UV rect onto the packed frame's PIXEL rect on its page.
+    const t = new TexFrame(base.source, base.x + u0 * base.w, base.y + v0 * base.h, uw * base.w, vh * base.h);
+    byCell.set(cell, t);
+    return t;
+  }
+
+  private onManifestChange(): void {
+    for (const key of [...this.packed.keys()]) {
+      const e = this.manifest.entry(stemOf(key));
+      if (!e || this.packedHash.get(key) !== e.hash) {
+        this.packed.delete(key);
+        this.packedHash.delete(key);
+      }
+    }
+    this.emit();
+  }
+
+  /** The best-fit loaded LOD for `desired`: largest ≤ it, else smallest above. */
+  private bestLoaded(loaded: Map<number, TexFrame>, desired: number): TexFrame | null {
+    let below = -1;
+    let above = Infinity;
+    for (const size of loaded.keys()) {
+      if (size <= desired) {
+        if (size > below) below = size;
+      } else if (size < above) above = size;
+    }
+    const pick = below >= 0 ? below : above < Infinity ? above : -1;
+    return pick >= 0 ? loaded.get(pick) ?? null : null;
+  }
+
+  // ── loads ───────────────────────────────────────────────────────────────────
+  private async ensureLod(stem: string, size: number, hash: string, map: TexMap): Promise<void> {
+    const key = mapKey(stem, map);
+    const pkey = `${key}@${size}`;
+    if (this.pending.has(pkey) || this.packed.get(key)?.has(size)) return;
+    this.pending.add(pkey);
+    try {
+      const cached = await getLod(stem, size, map);
+      let bytes: ArrayBuffer;
+      if (cached && cached.v === hash) {
+        bytes = cached.bytes;
+      } else {
+        const res = await fetch(lodUrl(this.root, stem, hash, size, map));
+        if (res.status === 404) {
+          this.manifest.refresh();
+          return;
+        }
+        if (!res.ok) throw new Error(`lod fetch ${res.status}: ${lodUrl(this.root, stem, hash, size, map)}`);
+        bytes = await res.arrayBuffer();
+        void putLod(stem, size, map, { v: hash, bytes });
+      }
+
+      // albedo/layers/normal/surface are DATA maps — load them STRAIGHT-alpha (no premultiply) so
+      // their RGB survives intact; only true colour maps stay premultiplied.
+      const raw = map === "layers" || map === "albedo" || map === "normal" || map === "surface";
+      const bmp = await createImageBitmap(new Blob([bytes]), raw ? { premultiplyAlpha: "none" } : {});
+      const actualShort = Math.min(bmp.width, bmp.height);
+      const achieved = Math.min(size, actualShort);
+      const ok = this.packInto(key, achieved, bmp, raw);
+      bmp.close();
+      if (ok) {
+        this.packedHash.set(key, hash);
+        this.emit();
+      }
+    } catch {
+      /* LOD unavailable — stay on the current tier */
+    } finally {
+      this.pending.delete(pkey);
+    }
+  }
+
+  /** Pack a decoded bitmap into `size`'s pool under `(key, size)`. Uploads the bitmap into an engine
+   *  Texture (premultiply for colour, straight for data maps), blits it into the atlas, then drops the
+   *  scratch upload (the atlas page kept its own copy). */
+  private packInto(key: string, size: number, bmp: ImageBitmap, raw = false): boolean {
+    if (!this.renderer) return false;
+    const src = new Texture(this.renderer.gl, { width: bmp.width, height: bmp.height, data: bmp, premultiply: !raw });
+    let packed: TexFrame | null;
+    try {
+      packed = this.poolFor(size).add(key, src, bmp.width, bmp.height);
+    } finally {
+      src.destroy();
+    }
+    if (!packed) return false;
+    let byKey = this.packed.get(key);
+    if (!byKey) this.packed.set(key, (byKey = new Map()));
+    byKey.set(size, packed);
+    return true;
+  }
+
+  /** The pool for LOD `size`, created empty on first use (small → 1024², larger → 2048²). */
+  private poolFor(size: number): LodPool {
+    let pool = this.pools.get(size);
+    if (!pool) {
+      pool = new LodPool(this.renderer!, this.blitter!, size <= SMALL_LOD_MAX ? 1024 : 2048);
+      this.pools.set(size, pool);
+    }
+    return pool;
+  }
 }

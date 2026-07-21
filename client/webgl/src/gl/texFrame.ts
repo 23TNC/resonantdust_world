@@ -22,8 +22,9 @@ export class TexFrame {
     return new TexFrame(t, 0, 0, t.width, t.height);
   }
 
-  /** The bake's `[offU, offV, scaleU, scaleV]` — the frame as a 0..1 UV rect on its page. */
-  uvRect(): [number, number, number, number] {
-    return [this.x / this.source.width, this.y / this.source.height, this.w / this.source.width, this.h / this.source.height];
+  /** The bake's `[offU, offV, scaleU, scaleV]` — the frame as a 0..1 UV rect on its page (a
+   *  `Float32Array` to match the bake shader's rect uniforms directly). */
+  uvRect(): Float32Array {
+    return new Float32Array([this.x / this.source.width, this.y / this.source.height, this.w / this.source.width, this.h / this.source.height]);
   }
 }

@@ -4,6 +4,8 @@
 //! return with the render layer in [webgl-engine W4](../../../docs/work/webgl-engine/todo.md).
 
 export { TextureResolver } from "./TextureResolver";
-export type { LodStats } from "./TextureResolver";
-export { texturesRoot, realUrl, previewUrl, lodUrl, LOD_SIZES, pickLodForSize } from "./lod";
+export type { LodStats, ResolvedTexture } from "./TextureResolver";
+export { TextureAtlas } from "./TextureAtlas";
+export { LodPool } from "./LodPool";
+export { texturesRoot, realUrl, previewUrl, lodUrl, LOD_SIZES, pickLodForSize, type TexMap } from "./lod";
 export { persistStorage } from "./previewCache";

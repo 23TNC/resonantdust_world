@@ -13,7 +13,7 @@
 //! COORD CONVENTION: composite + scratch pixel coords have y increasing the same way GL texture
 //! rows do; the display's uProjection maps world→screen. Any net Y flip is corrected there.
 
-import { Renderer, RenderTarget, Program, Geometry, Texture } from "../../gl";
+import { Renderer, RenderTarget, Program, Geometry, Texture, TexFrame } from "../../gl";
 import { MrtBakeShader } from "./mrtBakeShader";
 import type { PackedChannel } from "./material";
 import {
@@ -52,14 +52,17 @@ export interface ResolvedPrim {
   tint: number;
   material?: MaterialResolve;
   depth?: number;
-  normal?: { rgb: Texture | null; alpha: Texture };
+  /** The normal map as an atlas sub-frame (or null → flat-up fallback). */
+  normal?: { rgb: TexFrame | null };
   surface?: boolean;
 }
 
+/** A prim's albedo material — each map is an atlas sub-frame ({@link TexFrame}); the bake reads its
+ *  `uvRect()` so a real sprite samples its packed region and the geo tier samples the whole white fill. */
 export interface MaterialResolve {
-  residual: Texture;
-  layers: Texture | null;
-  surface: Texture;
+  residual: TexFrame;
+  layers: TexFrame | null;
+  surface: TexFrame;
   chA: Float32Array;
   chB: Float32Array;
 }
@@ -457,16 +460,18 @@ export class SquareCache {
       const depthR = this.depthCh!.resolve(prim);
       const mat = albedoR.material!; // B2: albedo always resolves to a material
       this.bake.setTint(albedoR.tint);
-      this.bake.setResidual(mat.residual);
-      this.bake.setLayers(mat.layers);
-      this.bake.setSurface(mat.surface);
+      // Each material map is an atlas sub-frame — pass its page texture + UV rect so a real sprite
+      // samples only its packed region (geo maps are the whole white fill → identity rect).
+      this.bake.setResidual(mat.residual.source, mat.residual.uvRect());
+      this.bake.setLayers(mat.layers?.source ?? null, mat.layers?.uvRect());
+      this.bake.setSurface(mat.surface.source, mat.surface.uvRect());
       this.bake.setNoise(this.noiseTex);
       this.bake.setChannels(mat.chA, mat.chB);
       const [nrows, uvTile, worldTile] = this.noiseGlobals;
       this.bake.setNoiseGlobals(nrows, uvTile, worldTile);
       this.bake.setWorldRect(prim.x, prim.y, prim.width, prim.height);
       this.bake.setSeed(prim.seed ?? 0);
-      this.bake.setNormal(normalR.normal?.rgb ?? null);
+      this.bake.setNormal(normalR.normal?.rgb?.source ?? null, normalR.normal?.rgb?.uvRect());
       this.bake.setTileDepth(depthR.depth ?? -1);
       const model = this.primModel(prim, wcOrigin, wrOrigin);
       this.renderer.draw({

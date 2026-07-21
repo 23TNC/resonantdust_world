@@ -22,12 +22,11 @@ export const PACKED_CHANNELS = 3;
 const IDENTITY_RECT = (): Float32Array => new Float32Array([0, 0, 1, 1]);
 
 const MRT_VERT = /* glsl */ `#version 300 es
-in vec2 aPosition;              // unit quad 0..1
-in vec2 aUV;                    // 0..1
+in vec2 aPosition;              // unit quad 0..1 — IS the UV (the SquareCache's unitQuad has no aUV)
 uniform mat3 uModel;            // unit quad -> slot clip space
 out vec2 vUV;
 void main() {
-  vUV = aUV;
+  vUV = aPosition;              // 0..1 across the quad → the material-map sub-frame UV
   vec3 p = uModel * vec3(aPosition, 1.0);
   gl_Position = vec4(p.xy, 0.0, 1.0);
 }

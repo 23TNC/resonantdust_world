@@ -44,6 +44,9 @@ export class WorldScene extends Scene {
   onEnter(ctx: GameContext): void {
     this.panel = new ViewportPanel(ctx);
     this.panel.open();
+    // Attach the texture resolver + the viewport's GL context (F6: the viewport self-canvases, so the
+    // atlas-backed resolver shares its renderer). Things now resolve master→preview→geo textures.
+    this.panel.view.setResolver(ctx.textureResolver);
 
     // Open-panel registry + the client-only log feed (the chat panel's "logs" tab reads it).
     ctx.panels = new PanelManager();
