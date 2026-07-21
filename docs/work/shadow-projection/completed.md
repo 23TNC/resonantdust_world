@@ -2,3 +2,23 @@
 
 _Done + verified. Items move here from [`todo.md`](todo.md) (append-only history; authoritative for what's
 done). Nothing yet — the stream opened 2026-07-21._
+
+## P0–P2 · GPU-instanced projected 5-triangle fan — 2026-07-21
+
+The core strategy shift, landed in one slice: the `ShadowCaster` rewritten from the per-pixel analytic
+trapezoid to the sandbox's projected-silhouette fan, **built on the GPU**. One instance per (light, caster);
+the vertex shader (`shadowCaster.ts` `CAST_VERT`) reads the instance's caster (`Ax,Ay,W,H,θ,dA,dB`) + light
+(`Lx,Ly,Lz`), runs `cornersWith` + per-corner `proj` (each corner projects by its own z, TMAX 8), and emits
+the 15 fan vertices (**T1** body + **T2/T3/T4/T5** ±depth) via a `gl_VertexID`→role table. Instance data via
+**instance vertex attributes** ([F3](forks.md#f3) sub-choice (a)); the CPU keeps only the cheap in-range
+(light, caster) **pairing** — no per-frame CPU geometry. Engine tweak: `Geometry.instanceCount` is now mutable
+so a per-frame cast varies the pair count after `update()`-ing the instance buffers.
+
+**Verified in-browser at `?focus=100,50`:** shadows render as GPU triangle fans radiating from the conifers
+away from the lights, over the W4h textured world, world-stuck under pan/zoom, zero console errors — the
+strategy shift (analytic per-pixel → GPU-instanced geometry) is proven, and it is `caster-lut` C5 /
+[webgl-engine W7](../webgl-engine/todo.md) on the owned engine. This slice ships the **E/W regime** (all
+current cold things are single-facing → E/W), a **constant θ** (65°), a **rough width-fraction depth**
+(`W·0.22`), and **solid semi-transparent** triangles. The remaining phases refine it: P3 depth-from-presence,
+P4 the alpha-mask fragment (silhouette-shaped), P5 the N/S facing regime, plus a blending pass (per-light
+combine / the bitfield the `shadows` stream consumes).

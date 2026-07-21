@@ -9,43 +9,9 @@ overlay ([D-2](../webgl-engine/deviations.md#d-2))._
 
 ---
 
-## P0 · GLSL projection primitives (vertex-shader math) — 2026-07-21
-
-Port the sandbox's `cornersWith` + `proj` into a **vertex shader** (not CPU functions).
-
-- [ ] **Tilted billboard corner (GLSL)** — given a corner uv `(u,v)` + caster `{θ,W,H,ax,ay,facing,roll}`,
-      build its caster-local world-px position (`R_x(θ)`; N/S rolled `R_y(±90)`), with the anchor/centre
-      offsets, exactly as `cornersWith`. Output `z` = height off ground.
-- [ ] **Per-corner radial projection (GLSL)** — `proj(p, L)`: `p.z≤0 → footprint`; else
-      `t=min(Lz/(Lz−p.z), 8)`, `ground = L.xy + t·(p.xy − L.xy)`. **Each corner projects by ITS OWN z** (today:
-      one factor for the whole quad — the key delta).
-- [ ] **Root base to footprint (GLSL)** — the `BR/BL` roles emit the ground edge (E/W `(±W/2,0)`; N/S
-      `(0,±W/2)`); `BC` = their midpoint.
-- [ ] **Verify:** a single-instance test draw (one caster, one light, corners as points/lines) matches the
-      sandbox side/top views at the same `θ/Lz/W/H/light`.
-
-## P1 · The GPU-instanced 5-triangle fan — 2026-07-21
-
-- [ ] **Instanced draw** `drawArraysInstanced(TRIANGLES, 0, 15, N)` — 5 triangles = 15 vertices per instance,
-      one instance per (light, caster). A `gl_VertexID`→(triangle, corner-role) table in the vertex shader
-      selects which fan vertex to emit: **T1** `(TL,TR,BC)` · **T2/T3** `+depth` `(TL,BL⁺,BC)/(TR,BR⁺,BC)` ·
-      **T4/T5** `−depth` `(TL,BL⁻,BC)/(TR,BR⁻,BC)`. `off(±depth)` on **y** (E/W, `+`variant=`+0`) or **x** (N/S,
-      symmetric); `dA`→BL, `dB`→BR. The vertex runs P0's primitives then applies the role's ±depth.
-- [ ] World→clip via the viewport's `uProjection` (same as the display), so the fan is world-stuck + zoomed.
-- [ ] **Verify:** the solid fan (single caster, driven by uniforms) matches the sandbox top view (solid mode),
-      both facings; pan/zoom keep it stuck.
-
-## P2 · Caster + light data channel — 2026-07-21
-
-Feed the many (light, caster) instances without CPU-building geometry.
-
-- [ ] Per-instance data — caster `x,y,W,H,θ,facing,roll,dA,dB` + atlas frame `(u0,v0,uw,vh)` + light
-      `Lx,Ly,Lz` + the light's bit/colour — via **instance vertex attributes** or a **`caster-lut` data
-      texture** (`RGBA32F`, VTF/`texelFetch`) ([F3](forks.md#f3)).
-- [ ] The **CPU builds only the in-range (light, caster) pair list** (the `caster-lut` LUT — a cheap index
-      cull, `hypot ≤ radius`), not geometry. `N` = pair count.
-- [ ] **Verify:** all in-range casters cast from all lights, correct instance count; the per-frame CPU cost is
-      just the pair list (the projection/geometry is entirely GPU).
+**Done (in [`completed.md`](completed.md)):** P0 GLSL projection primitives · P1 the GPU-instanced
+5-triangle fan · P2 the caster+light data channel — the GPU projected fan renders (E/W, constant θ,
+rough depth, solid tris). Remaining phases refine the shape + blending:
 
 ## P3 · Depth-from-presence bake (one-time, feeds GPU data) — 2026-07-21
 
