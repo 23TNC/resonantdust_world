@@ -24,11 +24,30 @@ _Planned, not started. Items move to [`completed.md`](completed.md) when done + 
       (all attachments), integer target write + `usampler2D` read, instancing, **VTF** — the exact things
       that failed under Pixi ([caster-lut I-10/I-11](../caster-lut/issues.md)) must WORK here.
 
-## W3 · Copy the non-Pixi code + adapt the seams — 2026-07-20
+## W3 · The shell + non-Pixi substrate + login boot — DONE (completed.md)
 
-- [ ] Copy across: DOM panels + input, atlas/LOD/resolver logic, DSL, sync clock, login, content fetch, the
-      WASM client-core seam, `squareMath` + the viewport camera/LOD/shadow math. Adapt the thin Pixi seams
-      (`Texture`/`RenderTexture` types → the engine's) — [I-2](issues.md#i-2), [I-6](issues.md#i-6).
+Survey ([forks F2](forks.md#f2)): 34/62 files Pixi-free (copy verbatim); 28 touch Pixi. The shell shape is
+[F6](forks.md#f6) — DOM-composited, no global scene-graph; viewport self-canvases; chrome → CSS. Ordered:
+
+- [x] **W3a · Shell.** `app/Ticker` (RAF, deltaMS, add/remove) + `app/App` (ticker + resize dispatch +
+      SceneManager + mount host; **no global canvas**). Rewrite `Scene` (drop `root: Container`; self-mount
+      DOM/canvas in `onEnter`/`onExit`), `SceneManager` (App ticker/resize; no `stage.addChild`),
+      `GameContext` (`app: App`). `assets/fonts` keeps the `FontFace` registration, drops `BitmapFont`.
+- [x] **W3b · Pure substrate (verbatim).** `client/*` (WasmClient/wasm/environments — the WASM seam),
+      `debug/{urlParams,EnvOverlay,index}`, `game/definitions/contentBoot`, `game/lighting/oklab`,
+      `game/panels/{panelStrings,titlebar/SettingsMenu,titlebar/syncHistory,titlebar/DebugPanel,chat/*}`,
+      `game/viewport/squareMath`, `textures/{lod,textureManifest,previewCache,MaxRectsPacker}` +
+      `content/panels/defaults.json`. Fix import paths only.
+- [x] **W3c · Panel framework (DOM copy).** Copied `ui/dom/*` (minus `PixiPanel`) + `ui/panels/PanelManager`
+      + `pointerInteractions` verbatim; `LayoutNode` is a structural stub ([D-1](deviations.md#d-1)) so
+      `PanelManager` type-checks. **Deferred to [W5](#w5):** collapsing the `LayoutNode`/`PixiPanel` canvas
+      chrome into CSS on `DomPanel` — no chrome renders until the world-scene panels/cards return, so it moves
+      to the UI port ([F6](forks.md#f6)).
+- [x] **W3d · Login boot.** `scenes/{Scene,SceneManager,login/LoginScene,login/FormOverlay}` +
+      `main.ts` on the shell. `DrawCallCounter` → engine hook (or stub). `TextureResolver` constructed against
+      the engine `Renderer` (atlas GPU parts stubbed until [W4](#w4)); login needs no textures. Milestone:
+      **login DOM form renders, WASM inits, connect to the gateway works** on `client/webgl` — verified in
+      browser. `VideoPanel` (touches `app`) adapts here or stubs.
 
 ## W4 · Port the viewport renderer — 2026-07-20
 
@@ -39,9 +58,11 @@ _Planned, not started. Items move to [`completed.md`](completed.md) when done + 
 
 ## W5 · Port the UI — 2026-07-20
 
-- [ ] DOM panels copy across (they're DOM). The canvas-hosting panel hosts our `<canvas>`. `Text` → DOM
-      overlays; `Graphics` → the engine's line/rect/circle helper or CSS ([F4](forks.md#f4)). Wire the scene
-      graph (flat containers of draw items) + the frame loop.
+- [ ] DOM panels already copied (W3c). The canvas-hosting panel hosts our `<canvas>`. **Collapse the
+      `LayoutNode`/`PixiPanel` canvas chrome into CSS on `DomPanel`** (borders/outline/resize-grip via
+      `::before`/box-shadow) — deferred here from W3c ([F6](forks.md#f6)); retire the `LayoutNode` stub
+      ([D-1](deviations.md#d-1)). `Text` → DOM overlays; `Graphics`/cards → the engine's line/rect/circle
+      helper or CSS ([F4](forks.md#f4)).
 
 ## W6 · Parity sweep + cutover — 2026-07-20
 

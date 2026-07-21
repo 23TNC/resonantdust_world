@@ -14,7 +14,8 @@
     "types": ["vite/client"],
     "paths": {
       "@/*": ["./src/*"],
-      "@shared/*": ["../../shared/pkg/*"]
+      "@shared/*": ["../../shared/pkg/*"],
+      "@content/*": ["../../content/*"]
     }
   },
   "include": ["src"]

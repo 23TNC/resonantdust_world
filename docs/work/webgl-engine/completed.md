@@ -24,3 +24,18 @@ textured quad, render-to-target, MRT (2 attachments), integer target (`RGBA8UI` 
 read), instancing, and vertex-texture-fetch. Verified in-browser: the checker, the two MRT ramps, and the
 five VTF-positioned colour-quads all render, **zero engine errors** — no `GL_INVALID_OPERATION`, no state
 corruption. Everything Pixi couldn't do works cleanly on the owned engine.
+
+## W3 · The shell + non-Pixi substrate + login boot — 2026-07-20
+
+The bespoke app shell (`app/App` + `app/Ticker`) replaces Pixi's `Application`/`stage`/`Ticker` — DOM-composited,
+**no global canvas, no scene-graph** ([F6](forks.md#f6)). Rewrote `Scene` (dropped `root: Container`),
+`SceneManager` (App ticker/resize; scenes self-mount DOM), `GameContext` (`app: App`), `assets/fonts` (kept
+`FontFace`, dropped `BitmapFont`). Copied the Pixi-free substrate verbatim — the WASM client-core seam
+(`client/*`), content runtime, DOM panel framework (`ui/dom/*` minus `PixiPanel`), taskbars, popups, debug
+overlay, chat + titlebar panels, `squareMath`, texture URL/LOD helpers, locale + panel-default JSON, and the
+`public/` assets. Five render-layer files are W4 stubs (see [D-1](deviations.md#d-1)). Fixed the import seams
+(paths, `@content` tsconfig path). **Verified in-browser on `client/webgl` (5174), zero Pixi, zero console
+errors:** the login DOM form renders (DEV badge + ⚙/📊 title-bar tools + both taskbars), `initWasm` +
+`loadContent` succeed, and **clicking Login runs the full gateway round-trip → world-server WebSocket →
+`claim_or_login` auth → scene handoff** to the (stub) world scene. The entire non-render half of the client
+now runs on the owned engine.
