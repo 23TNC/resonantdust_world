@@ -37,7 +37,10 @@ float line(vec2 w, float pitch, float halfPx) {
 }
 
 void main() {
-  vec2 fragPx = (vClip * 0.5 + 0.5) * uViewport;
+  // Screen px, y DOWN (CSS convention, y=0 at top). The world is y-down — matching the
+  // camera's screenToWorld — so mapping clip-space (y-up) straight through would invert the
+  // grid's vertical pan. Flip y here so the displayed grid tracks the cursor on both axes.
+  vec2 fragPx = vec2((vClip.x * 0.5 + 0.5) * uViewport.x, (0.5 - vClip.y * 0.5) * uViewport.y);
   vec2 world = uAnchor + (fragPx - uViewport * 0.5) / uZoom;
   vec3 col = vec3(0.0);
   float a = 0.0;
