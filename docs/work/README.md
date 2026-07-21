@@ -12,7 +12,6 @@ session is driving — inferred, not a field here); see [`docs-authority`](docs-
 | Stream | Status | What it is |
 |---|---|---|
 | [docs-authority](docs-authority/README.md) | open | This system: front-door index + `docs-check`/`work-check` audits + the enforcement hooks. |
-| [billboard-depth](billboard-depth/README.md) | open | **Next, before continuing webgl-engine.** Size sprite-less billboards to their real W×H (conifers tall, not square) + start z-ordering through `zdepth-world` (write tiles + things, toroidal-wrapped): conifers over tiles + shadows, shadows over tiles. Shadows stay displayed-by-default (provisional) while shadows are in progress. |
 | [webgl-engine](webgl-engine/README.md) | open | **Retire PixiJS** — a new adjacent client (`client/webgl`) on a bespoke WebGL2 renderer. We use a thin slice of Pixi (render backend + Sprite/Graphics/Text) and it's exactly the slice blocking ES 3.00 (integer textures / MRT / VTF all hit Pixi walls). Copy the non-Pixi code (DOM UI, atlas, DSL, sync, shaders), rewrite the render seams ourselves, reach parity, retire Pixi. `caster-lut` C5 becomes W7 (clean, on the owned engine). |
 | [shard-tables](shard-tables/README.md) | open | The `*_tables!` generalization: fold every composing shard into generic table macros; all writes via events. P1–P3 live, P4 pending. |
 | [art-metadata](art-metadata/README.md) | open | Per-variant `meta.json` sidecar from `bin/art` (channel tints + shadow outline). P1–P2 done. |
