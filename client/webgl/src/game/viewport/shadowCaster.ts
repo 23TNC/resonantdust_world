@@ -134,9 +134,14 @@ export class ShadowCaster {
   /** Silhouette-derived base depth `[dA, dB]` per sprite stem (the sandbox's auto rule), baked once from
    *  the surface coverage on first sight + cached; stems still resolving fall back to {@link DEPTH_FRAC}. */
   private readonly depthCache = new Map<string, [number, number]>();
-  /** The GPU data textures (cold-data-textures). P1: `prim_definition_data` populated here; the shader
-   *  reading them + the other three textures land in P2–P4. */
+  /** The GPU data textures (cold-data-textures) — def + prim + light + LUT, rebuilt only on change. The
+   *  shader reads them in P4 (replacing the instance attrs). */
   private readonly coldData: ColdShadowData;
+  private lastCasterCount = -1;
+  private coldDirty = true;
+  /** Drops the resolver's onLoad subscription; a LOD landing re-dirties the cold build so newly-resolved
+   *  sprites get their defs (else the first pre-texture build sticks with 0 casters). */
+  private resolverUnsub: (() => void) | null = null;
 
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
@@ -173,6 +178,7 @@ export class ShadowCaster {
       this.lights.push({ x: cx + Math.cos(a) * RING_RADIUS, y: cy + Math.sin(a) * RING_RADIUS, z: LIGHT_Z, radius: LIGHT_RADIUS });
     }
     this.enabled = true;
+    this.coldDirty = true; // lights changed → rebuild the cold light/LUT textures next tick
   }
 
   get on(): boolean {
@@ -209,10 +215,6 @@ export class ShadowCaster {
       const surf = p.textureName && resolver ? resolver.resolve(p.textureName, "surface", p.cell) : null;
       const uv = surf && !surf.geo && surf.frame ? surf.frame.uvRect() : null;
       if (surf?.frame) surfacePage = surf.frame.source;
-      // Populate the cold data textures (cold-data-textures): the generic def (P1) + this placed
-      // instance's position/orientation (P2). The shader reads them in P4.
-      this.coldData.definitionFor(p, resolver);
-      this.coldData.primDataFor(p);
       for (let k = 0; k < nLights; k++) {
         if (n >= MAX_PAIRS) break;
         const L = this.lights[k];
@@ -227,7 +229,19 @@ export class ShadowCaster {
         n++;
       }
     }
-    this.coldData.flush(); // upload any newly-seen prim definitions (cold-data-textures P1)
+    // A LOD landing re-dirties the build (so sprites resolving after the first build get their defs).
+    if (!this.resolverUnsub && resolver) this.resolverUnsub = resolver.onLoad(() => { this.coldDirty = true; });
+
+    // Build the cold data textures (cold-data-textures P1–P3) only when the caster set / lights / resolved
+    // sprites change — NOT per frame (cold data is static). Populates def + prim + light + LUT.
+    if (this.coldDirty || standing.length !== this.lastCasterCount) {
+      const coldLights = this.lights.slice(0, nLights).map((L, k) => ({
+        x: L.x, y: L.y, z: L.z, radius: L.radius, color: LIGHT_COLORS[k], intensity: 1, castShadows: true,
+      }));
+      this.coldData.buildLights(coldLights, standing, resolver);
+      this.lastCasterCount = standing.length;
+      this.coldDirty = false;
+    }
     if (n === 0) return;
 
     // Upload the N pairs + draw N instances × 15 vertices (5 triangles each).
@@ -304,6 +318,7 @@ export class ShadowCaster {
   }
 
   destroy(): void {
+    this.resolverUnsub?.();
     this.geo.destroy();
     this.program.destroy();
     this.empty.destroy();

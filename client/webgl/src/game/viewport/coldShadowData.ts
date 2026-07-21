@@ -26,8 +26,24 @@ const DEF_H = 64;
 /** `cold_prim_data` texture size — 2 entries/px; `256 × 128` px → 65536 caster slots. */
 const PRIM_W = 256;
 const PRIM_H = 128;
+/** `cold_light_data` — 1 px/light. `cold_light_prim_data` (LUT) — 4 entries/px. */
+const LIGHT_W = 64;
+const LUT_W = 256;
+const LUT_H = 256;
 
 const u10 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0x3ff);
+const clamp = (v: number, hi: number): number => Math.min(Math.max(Math.round(v), 0), hi);
+
+/** One light to write into `cold_light_data` (world px + unit-scaled reach; colour 0..1). */
+export interface ColdLight {
+  x: number;
+  y: number;
+  z: number; // world px (→ units)
+  radius: number; // world px (→ units)
+  color: [number, number, number]; // 0..1
+  intensity: number; // 0..1
+  castShadows: boolean;
+}
 
 /** World px → `position_anchor_reference` (`region | zone | tile | anchor`, each `u8 = x:4|y:4`); the anchor
  *  is the sub-tile offset in units (`SQUARE/16`). Assumes non-negative world coords. */
@@ -71,9 +87,19 @@ export class ColdShadowData {
   private primNext = 0;
   private primDirty = false;
 
+  /** `cold_light_data` (1 px/light) + `cold_light_prim_data` (the LUT, 4 entries/px). Rebuilt by
+   *  {@link buildLights}; UNIT for cold data is once-per-change, not per frame (P4). */
+  private readonly lightTex: Texture;
+  private readonly lightMirror = new Uint32Array(LIGHT_W * 4);
+  private readonly lutTex: Texture;
+  private readonly lutMirror = new Uint32Array(LUT_W * LUT_H * 4);
+  private lightCount = 0;
+
   constructor(private readonly renderer: Renderer) {
     this.defTex = new Texture(renderer.gl, { width: DEF_W, height: DEF_H, format: "rgba32uint" });
     this.primTex = new Texture(renderer.gl, { width: PRIM_W, height: PRIM_H, format: "rgba32uint" });
+    this.lightTex = new Texture(renderer.gl, { width: LIGHT_W, height: 1, format: "rgba32uint" });
+    this.lutTex = new Texture(renderer.gl, { width: LUT_W, height: LUT_H, format: "rgba32uint" });
   }
 
   /** The `prim_definition_data` texture (bound as a `usampler2D` in the shadow shader). */
@@ -142,6 +168,59 @@ export class ColdShadowData {
     return idx;
   }
 
+  get lightTexture(): Texture {
+    return this.lightTex;
+  }
+  get lutTexture(): Texture {
+    return this.lutTex;
+  }
+  get lutWidth(): number {
+    return LUT_W;
+  }
+  get lights(): number {
+    return this.lightCount;
+  }
+
+  /** Build `cold_light_data` + the `cold_light_prim_data` LUT from the lights + resident casters, and upload
+   *  both. Each `cast_shadows` light gets a contiguous LUT run of `(definition_index, prim_data_index)` for its
+   *  in-range casters (Chebyshev cull; def skipped until its surface resolves). Cold data → call on change, not
+   *  per frame (P4). */
+  buildLights(lights: ColdLight[], standing: Primitive[], resolver: TextureResolver | null): void {
+    const n = Math.min(lights.length, LIGHT_W);
+    let cursor = 0;
+    for (let k = 0; k < n; k++) {
+      const L = lights[k];
+      const lutIndex = cursor;
+      if (L.castShadows) {
+        const rPx = L.radius;
+        for (const p of standing) {
+          const ax = p.x + p.width * 0.5, ay = p.y + p.height;
+          if (Math.abs(ax - L.x) > rPx || Math.abs(ay - L.y) > rPx) continue; // Chebyshev cull (F5)
+          const def = this.definitionFor(p, resolver);
+          if (def < 0) continue; // surface not resolved yet
+          const inst = this.primDataFor(p);
+          if (cursor >= LUT_W * LUT_H * 4) break;
+          this.lutMirror[cursor++] = (((def & 0xffff) << 16) | (inst & 0xffff)) >>> 0;
+        }
+      }
+      const lutCount = cursor - lutIndex;
+      const base = k * 4;
+      this.lightMirror[base] = encodePosition(L.x, L.y); // R: position
+      // G: r|g|b|intensity (u8 each)
+      const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
+      this.lightMirror[base + 1] = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0);
+      // B: z(24–31) | radius(12–23) | reserved(1–11) | cast_shadows(0)
+      const z = clamp(L.z / UNIT, 255), radius = clamp(L.radius / UNIT, 0xfff);
+      this.lightMirror[base + 2] = (((z << 24) | (radius << 12) | (L.castShadows ? 1 : 0)) >>> 0);
+      // A: lut_index(16–31) | lut_count(0–15)
+      this.lightMirror[base + 3] = ((((lutIndex & 0xffff) << 16) | (lutCount & 0xffff)) >>> 0);
+    }
+    this.lightCount = n;
+    this.lightTex.upload(this.lightMirror);
+    this.lutTex.upload(this.lutMirror);
+    this.flush(); // ensure any new defs/prims from the cull are uploaded too
+  }
+
   /** Upload any changed textures (call once per frame after populating). Cheap — no-op unless a slot landed. */
   flush(): void {
     if (this.defDirty) {
@@ -177,9 +256,30 @@ export class ColdShadowData {
   get debugPrimCount(): number {
     return this.primNext;
   }
+  /** DEBUG (P3 verify): decode a cold_light_data slot. */
+  debugLight(k: number): { pos: [number, number]; rgb: [number, number, number]; intensity: number; z: number; radius: number; castShadows: boolean; lutIndex: number; lutCount: number } {
+    const b = k * 4, R = this.lightMirror[b], G = this.lightMirror[b + 1], B = this.lightMirror[b + 2], A = this.lightMirror[b + 3];
+    return {
+      pos: decodePosition(R),
+      rgb: [(G >>> 24) & 0xff, (G >>> 16) & 0xff, (G >>> 8) & 0xff],
+      intensity: G & 0xff,
+      z: (B >>> 24) & 0xff,
+      radius: (B >>> 12) & 0xfff,
+      castShadows: (B & 1) === 1,
+      lutIndex: (A >>> 16) & 0xffff,
+      lutCount: A & 0xffff,
+    };
+  }
+  /** DEBUG (P3 verify): decode a LUT entry → (definition_index, prim_data_index). */
+  debugLut(i: number): [number, number] {
+    const e = this.lutMirror[i];
+    return [(e >>> 16) & 0xffff, e & 0xffff];
+  }
 
   destroy(): void {
     this.defTex.destroy();
     this.primTex.destroy();
+    this.lightTex.destroy();
+    this.lutTex.destroy();
   }
 }
