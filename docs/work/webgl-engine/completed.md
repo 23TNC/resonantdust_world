@@ -63,3 +63,16 @@ a class holding texture + uniform state with an `apply(program)` + `textures(emp
 Viewport will drive. Copied the Pixi-free `material.ts`. Both typecheck; runtime-verified when wired in
 W4c/W4d. Deferred: `overlayShader` → W4f (with the other debug `/commands`), `noiseAtlas` → W4c (with the
 material-bake wiring; the bake reads a null noise atlas as flat until then).
+
+## W4c · SquareCache — the world renders on the engine — 2026-07-20
+
+Ported the SquareCache (toroidal G-buffer) onto the engine core: `Channel` buffers = engine
+`RenderTarget`s (rgba8unorm), the MRT scratch = one `RenderTarget({formats:[×4]})`, `bakeSquare` = one
+merged MRT draw per prim (placed by a `uModel` mat3) + four apron blits (a small blit `Program`), and the
+window / dirty / markStale / fillDisplay logic copied verbatim. Wired the per-frame pipeline into the
+Viewport (resize→recenter→bakeDirty→fillDisplay→albedo blit with a world→clip `uProjection`), geo tier only
+(every prim a solid `geoColor` box — white fill × tint, no atlas). **Verified in-browser: a 16×16 checker of
+solid tiles renders through the full merged MRT bake + toroidal composite + display blit on `client/webgl`,
+zero errors.** SIMPLIFIED vs pixijs (deferred follow-ups): single buffer per channel (no ping-pong/reproject
+→ a re-bake flash on zoom-LOD), and the real `TextureResolver`/atlas (master→preview textures) — the geo
+tier is the floor both start from. Fixed a `uSrc` vertex/fragment type collision in the blit program.

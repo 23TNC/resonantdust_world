@@ -66,7 +66,7 @@ Ordered vertical slices, each verifiable in-browser:
       (warm-over-cold display) ported to engine `Program`s (GLSL verbatim); `material.ts` copied
       (completed.md). DEFERRED: `overlayShader` → [W4f](#w4) (with the debug `/commands`), `noiseAtlas` →
       [W4c](#w4) (with the material-bake wiring). Runtime-verified when wired in W4c/W4d.
-- [ ] **W4c · SquareCache.** Port onto the engine: `Channel` ping-pong = two `RenderTarget`s; the MRT scratch
+- [x] **W4c · SquareCache.** DONE (completed.md) — geo tier renders; ping-pong/reproject + real atlas deferred. Port onto the engine: `Channel` ping-pong = two `RenderTarget`s; the MRT scratch
       = one `RenderTarget({formats:[×4]})`; `bakeSquare` = one MRT `draw` + four apron blits; `reproject`/
       `resize`/`recenter`/`markStale`/`fillDisplay` = the same math over engine draws. The real
       `TextureResolver` + atlas (`LodPool`/`TextureAtlas`/`MaxRectsPacker`) return here, sharing the viewport

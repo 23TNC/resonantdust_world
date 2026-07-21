@@ -42,6 +42,15 @@ export class WorldScene extends Scene {
     }
     this.panel.view.camera.setAnchor(tileX * SQUARE, tileY * SQUARE);
 
+    // TEMP (W4c): a checkerboard of solid tiles to verify the SquareCache bake+display pipeline.
+    // Replaced by the WorldBridge (real zone tiles) in W4d.
+    for (let ty = 0; ty < 16; ty++) {
+      for (let tx = 0; tx < 16; tx++) {
+        const color = (tx + ty) & 1 ? 0x3a7d3a : 0x2d5f8f; // green / blue checker
+        this.panel.view.debugAddTile(tx, ty, color);
+      }
+    }
+
     const canvas = this.panel.canvas;
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);
