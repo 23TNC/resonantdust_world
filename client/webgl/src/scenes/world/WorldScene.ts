@@ -15,6 +15,7 @@ import { ChatPanel } from "../../game/panels/chat/ChatPanel";
 import { LogManager } from "../../game/panels/chat/LogManager";
 import { PanelManager } from "../../ui/panels/PanelManager";
 import { SQUARE } from "../../game/viewport/squareMath";
+import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
 import { parseUrl, type UrlCommand } from "../../debug/urlParams";
 
 /** Wheel deltaY per zoom octave: factor = 2^(-deltaY/this), applied per event (continuous). */
@@ -35,6 +36,7 @@ export class WorldScene extends Scene {
   private bridge!: WorldBridge;
   private moverLayer!: MoverLayer;
   private chat!: ChatPanel;
+  private contentUnsub: (() => void) | null = null;
   private urlCommands: UrlCommand[] = [];
   private dragId: number | null = null;
   private lastClientX = 0;
@@ -52,6 +54,17 @@ export class WorldScene extends Scene {
     this.bridge = new WorldBridge(ctx.client, ctx.content, this.panel.view, this.panel.view.white, ctx.textureResolver);
     // Pawns (the wolves): synced from the tick pipeline's mobile entities into the viewport's WARM cache.
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.panel.view);
+
+    // The corpus hot-swaps on login (`onLoggedIn` → `reloadContent` in main.ts pulls the server's
+    // corpus, replacing the boot embed). Push the new corpus into the bridge + mover layer so they
+    // RE-EXPAND every delivered cold row against it. Without this, a bridge created before
+    // `reloadContent` finished stays stuck on the embed — cold rows for the server's biomes expand
+    // to nothing (the intermittent blank world). `getContent()` is the freshly-swapped bundle.
+    this.contentUnsub = onContentReloaded(() => {
+      const c = getContent();
+      this.bridge.setContent(c);
+      this.moverLayer.setContent(c);
+    });
 
     // Seed the INITIAL anchor from `?focus=x,y` BEFORE the first subscription, so it opens at the
     // target tile (no origin flash). The replayed `/focus` below then re-applies it as a no-op.
@@ -88,6 +101,8 @@ export class WorldScene extends Scene {
       canvas.removeEventListener("pointercancel", this.onPointerUp);
       canvas.removeEventListener("wheel", this.onWheel);
     }
+    this.contentUnsub?.();
+    this.contentUnsub = null;
     this.chat?.destroy();
     this.moverLayer?.dispose();
     this.bridge?.dispose();

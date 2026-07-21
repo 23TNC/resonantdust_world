@@ -120,10 +120,10 @@ impl Bot {
             match tokio::time::timeout_at(deadline, self.events.recv()).await {
                 Ok(Some(event)) => {
                     let ready = matches!(&event,
-                        Event::ColdTiles { zone_id, .. }
-                            | Event::ColdThings { zone_id, .. }
-                            | Event::StateObject { zone_id, .. }
-                            if *zone_id == zone);
+                        Event::ColdTiles { macro_position: zone_id, .. }
+                            | Event::ColdThings { macro_position: zone_id, .. }
+                            | Event::StateObject { macro_position: zone_id, .. }
+                            if *zone_id as u32 == zone);
                     log_event(&event);
                     if ready {
                         tracing::info!(zone, "zone is streaming; shard connected");
@@ -254,13 +254,13 @@ fn log_event(event: &Event) {
         Event::LoginFailed { reason } => tracing::error!(%reason, "login failed"),
         Event::Disconnected { reason } => tracing::warn!(?reason, "disconnected"),
         Event::Status(msg) => tracing::debug!(%msg, "status"),
-        Event::StateObject { zone_id, entity_reference, tile_x, tile_y, .. } => {
+        Event::StateObject { macro_position: zone_id, entity_reference, tile_x, tile_y, .. } => {
             tracing::debug!(zone_id, entity_reference, tile_x, tile_y, "state object")
         }
-        Event::ColdTiles { zone_id, .. } => tracing::debug!(zone_id, "cold tiles"),
-        Event::ColdThings { zone_id, .. } => tracing::debug!(zone_id, "cold things"),
-        Event::ZoneClosed { zone_id } => tracing::debug!(zone_id, "zone closed"),
+        Event::ColdTiles { macro_position: zone_id, .. } => tracing::debug!(zone_id, "cold tiles"),
+        Event::ColdThings { macro_position: zone_id, .. } => tracing::debug!(zone_id, "cold things"),
+        Event::ZoneClosed { macro_position: zone_id } => tracing::debug!(zone_id, "zone closed"),
         Event::Paused { paused } => tracing::debug!(paused, "paused"),
-        Event::CallStats(_) | Event::SubStats { .. } | Event::ClockSync(_) => {}
+        Event::ColdState { .. } | Event::CallStats(_) | Event::SubStats { .. } | Event::ClockSync(_) => {}
     }
 }

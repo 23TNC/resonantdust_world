@@ -121,3 +121,19 @@ flakiness, agnostic to which client (pixijs hits it identically). **Fix is in th
 cold-shard `await_ready` timeout, don't serve a silently-broken session — FAIL the login (client gets a clean
 error / reconnects) or RETRY the shard connect, and/or investigate why the cold-shard `on_connect` intermittently
 exceeds 5s. Client `client/webgl` is exonerated; W4g is really an edge fix.
+
+**CLIENT-SIDE ROOT CAUSE FOUND + FIXED (2026-07-21).** There were TWO distinct failure modes, not one:
+- **(A) No deliveries** — the edge cold-shard `await_ready` 5s timeout above (server-side, relay dead). Real
+  but rarer.
+- **(B) Deliveries arrive but don't render** — the one the user's testing actually hit, and the bigger one.
+  Instrumented: on a stuck load core delivered **52 cold-tile rows to the bridge**, but the map held only
+  **3 prims**. Cause: the webgl `WorldScene` **never wired `onContentReloaded → bridge.setContent`** (pixijs
+  does). Boot loads the build-time **embed** corpus; login fires `reloadContent` (fetch the server's corpus,
+  async). The bridge is created at scene-enter with whatever `ctx.content` is then — if `reloadContent` hasn't
+  finished, it's the embed, whose biome defs don't cover the server's zones, so `content.zoneTilePrims` returns
+  empty → the rows expand to nothing. And webgl **never recovered** (the reload→setContent hook was dropped in
+  the W4d port), so it stayed blank — intermittent purely on whether the fetch beat scene-enter.
+  **Fix:** wire `onContentReloaded(() => { bridge.setContent(getContent()); moverLayer.setContent(getContent()); })`
+  in `WorldScene` (unsubscribe on exit) — `setContent` re-reads stems + **re-expands every stored cold row**
+  through the new corpus. Verified: loads now render reliably (2962 prims every time; the re-expansion fires,
+  visible as the cold-delivery counter climbing past 52). Mode (A) — the edge timeout — remains open as W4g.
