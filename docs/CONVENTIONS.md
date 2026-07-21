@@ -89,7 +89,11 @@ before it's a per-component contract.
 ## `docs/work/<work>/` — the flowing execution state
 
 A work-stream turns component `plan`s into executable items; **work spans components by nature**
-(one feature touches many), which is why it's separate from any single component's `plan`. Files
+(one feature touches many), which is why it's separate from any single component's `plan`.
+
+**Folder name — date-prefix new streams** (`YYYY-MM-DD-<slug>`, the date opened; from 2026-07-21).
+So folders sort chronologically and a glance dates the work. Pre-existing un-prefixed folders keep
+their names (rename lazily if touched). Files
 (create on demand — an empty one isn't required; a one-line change needs no work-folder; full
 ceremony is for substantial, multi-phase work):
 

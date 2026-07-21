@@ -39,6 +39,11 @@ overlapping casters of one light must OR (not add → bit spillover). Options:
 
 **Decided (user, 2026-07-21):** (a) — ping-pong integer OR. Its own sub-phase within P2.
 
+**RETIRED 2026-07-21 — superseded by the GATHER.** The user's dirty-rect gather
+([`2026-07-21-shadow-bitfield`](../2026-07-21-shadow-bitfield/forks.md#f1)) computes each pixel's
+full bitfield in a single fragment pass (loop lights, OR bits in a register, write once), so there is
+no read-modify-write and **no ping-pong**. This whole mechanism is unnecessary. Kept for the record.
+
 ## F3 · `*-hot`/`*-cold` map space + reconcile with `shadows` — 2026-07-21 (open, user)
 
 A world-space **hot** map is wrong: a moved hot prim leaves a stale shadow at its old world position (the
