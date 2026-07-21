@@ -11,22 +11,9 @@ data layer. Verify each phase in-browser at `?focus=100,50`._
 
 ---
 
-## P1 · `prim_definition_data` + atlas integration — 2026-07-21
-
-The generic, shared, longest-lived tier — stand it up first (the shader needs frames + page).
-
-- [ ] A `prim_definition_data` `RGBA32UI` texture (1 px/sprite variant) + a `definition_index` allocator keyed
-      by sprite stem+variant (a variant → one slot, shared by all its instances). On **atlas add**
-      (`TextureResolver.packInto` / `LodPool.add`) write `prim_width/height` + atlas `frame x/y/w/h` +
-      `frame_page`; `texSubImage2D` only the changed px. No eviction (mirrors the atlas).
-- [ ] **Verify:** read back a few texels — W/H + frame + page correct for the resident variants.
-
-## P2 · `cold_prim_data` — the placed-caster instances — 2026-07-21
-
-- [ ] A `cold_prim_data` `RGBA32UI` texture (2 entries/px) + a `prim_data_index` allocator per placed standing
-      prim. Write each caster's `position_anchor_reference` + `z` + `rotation`. Moving a caster updates **one**
-      texel (`texSubImage2D`); no LUT edit.
-- [ ] **Verify:** read back an instance — position/rotation match the prim; a moved prim updates one entry.
+**Done:** P0 (layouts) · P1 `prim_definition_data` + atlas write · P2 `cold_prim_data` + the position
+codec (both in `ColdShadowData`, populated by the ShadowCaster tick; render still on the instance-attr
+path). Readback-verified. Remaining:
 
 ## P3 · `cold_light_data` + `cold_light_prim_data` (the LUT) — 2026-07-21
 

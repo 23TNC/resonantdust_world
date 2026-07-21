@@ -15,3 +15,21 @@ normalization — a caster's position lives only in `cold_prim_data` — is the 
 = one texel, not every light's run. Refined in the same pass: one world **unit** = `SQUARE/16` (compile-time,
 everything world-space; atlas `frame_*` stay texture px), `radius` widened to **`u12`** (≈16 zones), and a
 **`cast_shadows`** flag (0 → the light lights without casting: no LUT run, skipped in the cast).
+
+## P1 · prim_definition_data + atlas integration — 2026-07-21
+
+New `ColdShadowData` module owning the shadow cast's GPU data textures. `prim_definition_data` (`RGBA32UI`,
+1 px/sprite variant): `prim_width/height` in units (px/`UNIT`, `UNIT=SQUARE/16=4`), the surface atlas frame
+`x/y/w/h` (atlas px), `frame_page` (0 — single page for now). Allocated + written lazily on first sight of a
+caster sprite from the resolver's surface frame, cached per stem+cell; uploaded only when a def lands. The
+`ShadowCaster` populates it in its tick; the render still uses the instance-attr path. **Verified (readback):**
+conifer = 32 units (2 tiles), flora = 8 units (0.5 tiles), correct frames + page 0.
+
+## P2 · cold_prim_data (placed caster instances) + position codec — 2026-07-21
+
+`cold_prim_data` (`RGBA32UI`, 2 entries/px): each placed caster's `position_anchor_reference` + `z` +
+`rotation`, allocated per `prim.id` + cached (cold things static → written once). `encodePosition`/
+`decodePosition` pack world px into `region|zone|tile|anchor` via the `ZONE_DIM`/`REGION_DIM` constants (anchor
+= sub-tile units). `rotation` from `flipX` (E=1/W=3) as a placeholder until the prim carries a real facing
+(F1/P5); `z=0`. **Verified (readback):** `encode(6432,3330)` round-trips to `[6432,3328]` (x exact, y
+unit-quantised to 4px); 658 casters, `z=0`, `rotation=1`.
