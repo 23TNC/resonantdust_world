@@ -102,3 +102,22 @@ current events — loginStarted/serverResolved/loggedIn/coldState/coldTiles/cold
 callStats/subStats/clockSync — have none), or (b) make the server queue a subscribe that arrives pre-edge.
 Separate open item: with the grid on, a GOOD load shows content bounded to ~9 zones — confirm world-bounds
 vs under-subscription (needs a clean interactive test / the `/showRT` debug tools).
+
+**ROOT CAUSE FOUND (2026-07-21) — it is a SERVER (edge) bug, NOT the client.** Traced the full path into
+`server/edge/src/ws.rs::build_world`. On each client WS connect the edge eagerly connects its per-client
+upstreams — players + event/data shards + the **cold-tile / cold-thing** shards — and for each does
+`await_ready(ready).await.then_some(conn)` with a **5s `CONNECT_TIMEOUT`** (`connections.rs`). The cold-tile/
+thing relay (`entity_state.on_insert/on_update → ColdTile/ColdThing frames`) is wired **only inside
+`if let Some(t) = &tile`**. So if the cold-shard's SpacetimeDB `on_connect` doesn't fire within 5s,
+`await_ready` returns false → `tile = None` → **the relay is never wired, silently, for the whole session.**
+The client's `SubscribeZone` still runs `seed_zone` (generates + inserts the cold rows into the shard), but
+nothing relays those inserts back → **no cold tiles ever.** A refresh = a new WS = a fresh `build_world` =
+another chance for the cold connect to beat 5s → intermittent.
+
+This explains EVERYTHING observed: subscribe sent correctly (`world=true`), zero rows for the whole session,
+an anchor change never recovers it (the relay is wired ONCE at connect, not per-subscribe), refresh sometimes
+works. **My earlier "our speed exposed a client race" was WRONG** — this is edge↔cold-shard connection
+flakiness, agnostic to which client (pixijs hits it identically). **Fix is in the edge, not the client:** on a
+cold-shard `await_ready` timeout, don't serve a silently-broken session — FAIL the login (client gets a clean
+error / reconnects) or RETRY the shard connect, and/or investigate why the cold-shard `on_connect` intermittently
+exceeds 5s. Client `client/webgl` is exonerated; W4g is really an edge fix.
