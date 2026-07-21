@@ -16,6 +16,7 @@ import { Renderer, Program, Geometry, Texture } from "../../gl";
 import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
+import { ColdShadowData } from "./coldShadowData";
 import { SQUARE } from "./squareMath";
 
 /** 6 lights this iteration; casters capped so a dense zone can't blow the instance buffer. */
@@ -133,11 +134,16 @@ export class ShadowCaster {
   /** Silhouette-derived base depth `[dA, dB]` per sprite stem (the sandbox's auto rule), baked once from
    *  the surface coverage on first sight + cached; stems still resolving fall back to {@link DEPTH_FRAC}. */
   private readonly depthCache = new Map<string, [number, number]>();
+  /** The GPU data textures (cold-data-textures). P1: `prim_definition_data` populated here; the shader
+   *  reading them + the other three textures land in P2–P4. */
+  private readonly coldData: ColdShadowData;
 
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
     this.program = new Program(gl, CAST_VERT, CAST_FRAG, "viewport-shadow-cast");
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
+    this.coldData = new ColdShadowData(renderer);
+    (globalThis as unknown as { __cold: unknown }).__cold = this.coldData; // DEBUG (cold-data-textures P1)
     // aVid drives count=15 (non-instanced); the instance attrs advance once per pair.
     const vid = new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
     this.geo = new Geometry(
@@ -203,6 +209,8 @@ export class ShadowCaster {
       const surf = p.textureName && resolver ? resolver.resolve(p.textureName, "surface", p.cell) : null;
       const uv = surf && !surf.geo && surf.frame ? surf.frame.uvRect() : null;
       if (surf?.frame) surfacePage = surf.frame.source;
+      // Populate prim_definition_data (cold-data-textures P1) — generic per-variant geometry + frame.
+      this.coldData.definitionFor(p, resolver);
       for (let k = 0; k < nLights; k++) {
         if (n >= MAX_PAIRS) break;
         const L = this.lights[k];
@@ -217,6 +225,7 @@ export class ShadowCaster {
         n++;
       }
     }
+    this.coldData.flush(); // upload any newly-seen prim definitions (cold-data-textures P1)
     if (n === 0) return;
 
     // Upload the N pairs + draw N instances × 15 vertices (5 triangles each).
@@ -296,5 +305,6 @@ export class ShadowCaster {
     this.geo.destroy();
     this.program.destroy();
     this.empty.destroy();
+    this.coldData.destroy();
   }
 }
