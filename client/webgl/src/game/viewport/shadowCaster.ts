@@ -1,14 +1,14 @@
 //! shadowCaster (webgl) — lights + billboard shadows, cast as GPU-instanced projected geometry (the
 //! `shadow-projection` stream). Aligns with the 5-triangle projected-silhouette model
 //! (`docs/components/client/pixijs/design/shadows.md`, proven in `bin/shadow-projection-sandbox.html`) but
-//! builds the fan **on the GPU, not the CPU**: one instance per (light, caster) pair, and the vertex shader
-//! reads the instance's caster (`Ax,Ay,W,H,θ,dA,dB`) + light (`Lx,Ly,Lz`), runs `cornersWith` + `proj`
-//! per-corner, and emits the 15 fan vertices. No per-frame CPU geometry rebuild — this is the `caster-lut`
-//! C5 / webgl-engine W7 payoff on the owned engine.
+//! builds the fan **on the GPU, not the CPU**, reading all caster/light data from the `cold-data-textures`
+//! GPU data textures via `texelFetch` (no per-frame instance attributes — the `caster-lut` C5 / webgl-engine
+//! W7 payoff). One instanced draw per light (15 fan vertices × its `lut_count` casters); the vertex shader
+//! fetches the light + LUT entry + prim def + placed instance by index, decodes the packed position, runs
+//! `cornersWith`/`proj`, and emits the 15 fan vertices. `ColdShadowData` owns + builds the four textures.
 //!
-//! This slice: the **E/W regime** (all current cold things are single-facing → E/W), a constant ground
-//! angle θ, and a rough depth (P3 replaces it with the sprite-silhouette presence bake); solid coloured
-//! triangles (P4 adds the alpha-mask fragment). CPU keeps only the cheap in-range (light, caster) pairing.
+//! This slice: the **E/W regime** (all current cold things are single-facing → E/W), constant θ, silhouette
+//! depth (`dA/dB` from `prim_definition_data`), alpha-masked. CPU keeps only the cheap on-change LUT build.
 //!
 //! GOTCHA: a backtick inside the GLSL closes the `/* glsl */` literal.
 
@@ -19,17 +19,12 @@ import type { TextureResolver } from "../../textures";
 import { ColdShadowData } from "./coldShadowData";
 import { SQUARE } from "./squareMath";
 
-/** 6 lights this iteration; casters capped so a dense zone can't blow the instance buffer. */
+/** 6 lights this iteration. */
 const MAX_LIGHTS = 6;
-const MAX_PAIRS = 4096;
 /** Default light ring around the seed tile, lit from above (world z). */
 const LIGHT_Z = 480;
 const LIGHT_RADIUS = 4 * SQUARE;
 const RING_RADIUS = 2 * SQUARE;
-/** Ground angle θ (E/W side-on) — the art-style oblique tilt (sandbox default 65°). Constant for now. */
-const THETA = (65 * Math.PI) / 180;
-/** Fallback base-spread depth as a fraction of the billboard width, until the presence bake resolves. */
-const DEPTH_FRAC = 0.22;
 
 interface Light {
   x: number;
@@ -40,55 +35,88 @@ interface Light {
 
 const CAST_VERT = /* glsl */ `#version 300 es
 in float aVid;                 // 0..14 — which of the 5 triangles' 15 vertices
-in vec4 aCaster;               // Ax, Ay (ground anchor world px), W, H (billboard px)
-in vec4 aParam;                // theta, dA, dB, (unused)
-in vec3 aLight;                // Lx, Ly, Lz (world px; z = height)
-in vec3 aColor;                // this light's colour
-in vec4 aFrame;                // surface atlas sub-frame uv rect [u0,v0,uw,vh] (zw=0 → no mask, solid)
+uniform highp usampler2D uLightData;  // cold_light_data (1/px)
+uniform highp usampler2D uLut;        // cold_light_prim_data (4/px)
+uniform highp usampler2D uPrimDef;    // prim_definition_data (1/px)
+uniform highp usampler2D uPrimData;   // cold_prim_data (2/px)
+uniform int  uLightIndex;      // which light (per-light draw)
+uniform int  uLutBase;         // this light's lut_index
+uniform int  uLightW;          // texture widths for index→texel
+uniform int  uLutW;
+uniform int  uDefW;
+uniform int  uPrimW;
 uniform mat3 uProjection;      // world px -> clip
 out vec3 vColor;
-out vec2 vUv;                  // sprite uv for the alpha mask
+out vec2 vUv;
 flat out vec4 vFrame;
 
-// gl_VertexID role table. Roles: 0=TL 1=TR 2=BC 3=BL+ 4=BL- 5=BR+ 6=BR-.
-// T1(TL,TR,BC) T2(TL,BL+,BC) T3(TR,BR+,BC) T4(TL,BL-,BC) T5(TR,BR-,BC).
 const int ROLE[15] = int[15](0,1,2, 0,3,2, 1,5,2, 0,4,2, 1,6,2);
-// Sprite uv per role (E/W bottom-edge sampling): the shadow reads the whole sprite silhouette warped
-// onto the fan — top (v=0) → the projected top corners, base (v=1) → the footprint corners.
 const vec2 UV[7] = vec2[7](vec2(0.0,0.0), vec2(1.0,0.0), vec2(0.5,1.0), vec2(0.0,1.0), vec2(0.0,1.0), vec2(1.0,1.0), vec2(1.0,1.0));
+const float UNIT = 4.0;        // SQUARE/16 (compile-time); world fields are in units
+const uint  ZD = 16u, RD = 16u; // ZONE_DIM, REGION_DIM
+const float ATLAS = 1024.0;    // atlas page size (F2: single page)
 
-// Per-corner radial projection to the ground (z=0); sub-ground drops straight down (footprint).
+uvec4 fetch(highp usampler2D t, int i, int w) { return texelFetch(t, ivec2(i % w, i / w), 0); }
+// position_anchor_reference (region|zone|tile|anchor) → world UNITS
+vec2 decodePos(uint p) {
+  uint region = (p >> 24) & 255u, zone = (p >> 16) & 255u, tile = (p >> 8) & 255u, anchor = p & 255u;
+  uint wtx = (((region >> 4u) * RD + (zone >> 4u)) * ZD + (tile >> 4u));
+  uint wty = (((region & 15u) * RD + (zone & 15u)) * ZD + (tile & 15u));
+  return vec2(float(wtx * 16u + (anchor >> 4u)), float(wty * 16u + (anchor & 15u)));
+}
 vec2 projGround(vec3 p, vec3 L) {
   if (p.z <= 0.0) return p.xy;
-  float t = min(L.z / max(L.z - p.z, 1.0), 8.0);   // TMAX = 8 (clamp grazing runaways)
+  float t = min(L.z / max(L.z - p.z, 1.0), 8.0);
   return L.xy + t * (p.xy - L.xy);
 }
 
 void main() {
   int role = ROLE[int(aVid + 0.5)];
-  vec2 A = aCaster.xy; float W = aCaster.z, H = aCaster.w;
-  float th = aParam.x, dA = aParam.y, dB = aParam.z;
-  float ct = cos(th), st = sin(th);
 
-  // E/W billboard, tilted by θ (leans north = -y as it rises in z); base rooted to the footprint.
-  // TL/TR from cornersWith (centre-frame y); base corners overridden to the ground edge; ± depth spread
-  // (E/W offsets on y, + variant = +0 seats on the foot, - variant spreads north).
+  // Light (this draw's light).
+  uvec4 Ld = fetch(uLightData, uLightIndex, uLightW);
+  vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));         // pos (units) + z (units)
+  float Lradius = float((Ld.z >> 12) & 4095u);
+  vec3 col = vec3(float((Ld.y >> 24) & 255u), float((Ld.y >> 16) & 255u), float((Ld.y >> 8) & 255u)) / 255.0;
+
+  // LUT entry → (definition_index, prim_data_index).
+  int e = uLutBase + gl_InstanceID;
+  uint entry = fetch(uLut, e / 4, uLutW)[e & 3];
+  int defIdx = int((entry >> 16) & 0xffffu), primIdx = int(entry & 0xffffu);
+
+  // Generic def: geometry (units) + atlas frame (px) + base spread.
+  uvec4 D = fetch(uPrimDef, defIdx, uDefW);
+  float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u);
+  float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
+  float dA = float((D.z >> 14) & 255u), dB = float((D.z >> 6) & 255u);
+
+  // Placed instance: position (rotation reserved for P5).
+  uvec4 Pd = fetch(uPrimData, primIdx / 2, uPrimW);
+  vec2 A = decodePos((primIdx & 1) == 0 ? Pd.x : Pd.z);
+
+  // Radius safety check (Chebyshev, units) for a STALE LUT entry (F5) — disabled: the LUT is fully rebuilt
+  // on change (always fresh + already CPU-culled), so no entry is out of range yet. Re-enable (with a fix —
+  // it currently over-culls) once incremental LUT patching can leave stale entries.
+  // if (abs(A.x - L.x) > Lradius || abs(A.y - L.y) > Lradius) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  Lradius; // silence unused (kept for the re-enable)
+
+  // E/W fan in UNITS (θ constant); ×UNIT to px only at the clip transform.
+  float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
   vec3 loc;
-  if (role == 0)      loc = vec3(-W * 0.5, -0.5 * H * ct, H * st);   // TL (projected)
-  else if (role == 1) loc = vec3( W * 0.5, -0.5 * H * ct, H * st);   // TR (projected)
-  else if (role == 2) loc = vec3(0.0, 0.0, 0.0);                     // BC
-  else if (role == 3) loc = vec3(-W * 0.5, 0.0, 0.0);                // BL+
-  else if (role == 4) loc = vec3(-W * 0.5, -dA, 0.0);               // BL-
-  else if (role == 5) loc = vec3( W * 0.5, 0.0, 0.0);                // BR+
-  else                loc = vec3( W * 0.5, -dB, 0.0);               // BR-
+  if (role == 0)      loc = vec3(-W * 0.5, -0.5 * H * ct, H * st);
+  else if (role == 1) loc = vec3( W * 0.5, -0.5 * H * ct, H * st);
+  else if (role == 2) loc = vec3(0.0, 0.0, 0.0);
+  else if (role == 3) loc = vec3(-W * 0.5, 0.0, 0.0);
+  else if (role == 4) loc = vec3(-W * 0.5, -dA, 0.0);
+  else if (role == 5) loc = vec3( W * 0.5, 0.0, 0.0);
+  else                loc = vec3( W * 0.5, -dB, 0.0);
 
-  vec3 world = vec3(A + loc.xy, loc.z);
-  vec2 g = projGround(world, aLight);
-  vec3 clip = uProjection * vec3(g, 1.0);
+  vec2 g = projGround(vec3(A + loc.xy, loc.z), L);
+  vec3 clip = uProjection * vec3(g * UNIT, 1.0);
   gl_Position = vec4(clip.xy, 0.0, 1.0);
-  vColor = aColor;
+  vColor = col;
   vUv = UV[role];
-  vFrame = aFrame;
+  vFrame = vec4(fx / ATLAS, fy / ATLAS, fw / ATLAS, fh / ATLAS);
 }
 `;
 const CAST_FRAG = /* glsl */ `#version 300 es
@@ -122,20 +150,11 @@ export class ShadowCaster {
   private readonly program: Program;
   private readonly geo: Geometry;
   private readonly lights: Light[] = [];
-  // Per-instance buffers (one (light, caster) pair each), grown as needed.
-  private aCaster = new Float32Array(0);
-  private aParam = new Float32Array(0);
-  private aLight = new Float32Array(0);
-  private aColor = new Float32Array(0);
-  private aFrame = new Float32Array(0);
-  /** 1×1 fallback bound to `uSurface` when no caster's surface page is available (all instances solid). */
+  /** 1×1 fallback bound to `uSurface` until a caster's surface page resolves (mask is a no-op then). */
   private readonly empty: Texture;
   private enabled = true;
-  /** Silhouette-derived base depth `[dA, dB]` per sprite stem (the sandbox's auto rule), baked once from
-   *  the surface coverage on first sight + cached; stems still resolving fall back to {@link DEPTH_FRAC}. */
-  private readonly depthCache = new Map<string, [number, number]>();
-  /** The GPU data textures (cold-data-textures) — def + prim + light + LUT, rebuilt only on change. The
-   *  shader reads them in P4 (replacing the instance attrs). */
+  /** The GPU data textures (cold-data-textures) — def + prim + light + LUT, rebuilt only on change; the
+   *  shader `texelFetch`es them (no instance attributes). */
   private readonly coldData: ColdShadowData;
   private lastCasterCount = -1;
   private coldDirty = true;
@@ -149,22 +168,10 @@ export class ShadowCaster {
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
     this.coldData = new ColdShadowData(renderer);
     (globalThis as unknown as { __cold: unknown }).__cold = this.coldData; // DEBUG (cold-data-textures P1)
-    // aVid drives count=15 (non-instanced); the instance attrs advance once per pair.
+    // aVid drives count=15 (the fan); instances = a light's lut_count (set per draw). All caster/light data
+    // is read from the cold data textures via texelFetch — no instance attributes.
     const vid = new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
-    this.geo = new Geometry(
-      gl,
-      this.program,
-      {
-        aVid: { data: vid, size: 1 },
-        aCaster: { data: new Float32Array(4), size: 4, instanced: true },
-        aParam: { data: new Float32Array(4), size: 4, instanced: true },
-        aLight: { data: new Float32Array(3), size: 3, instanced: true },
-        aColor: { data: new Float32Array(3), size: 3, instanced: true },
-        aFrame: { data: new Float32Array(4), size: 4, instanced: true },
-      },
-      undefined,
-      0,
-    );
+    this.geo = new Geometry(gl, this.program, { aVid: { data: vid, size: 1 } }, undefined, 0);
     this.seed(100, 50);
   }
 
@@ -190,50 +197,17 @@ export class ShadowCaster {
   }
 
   /** Draw the shadows over the world display. `standing` = the cold cache's standing prims (things);
-   *  `resolver` supplies each caster's surface silhouette for the depth bake (P3). */
+   *  `resolver` resolves each caster's sprite (for the def/depth/mask). The fan is built entirely on the GPU
+   *  from the four cold data textures — no per-frame instance attributes. */
   tick(camera: Camera, standing: Primitive[], resolver: TextureResolver | null): void {
     if (!this.enabled || this.lights.length === 0) return;
     const nLights = Math.min(this.lights.length, MAX_LIGHTS);
 
-    // CPU keeps only the cheap part: the in-range (light, caster) pair list. Everything geometric is GPU.
-    let n = 0;
-    const caster = this.grow("aCaster", standing.length * nLights * 4, 4);
-    const param = this.grow("aParam", standing.length * nLights * 4, 4);
-    const light = this.grow("aLight", standing.length * nLights * 3, 3);
-    const color = this.grow("aColor", standing.length * nLights * 3, 3);
-    const frame = this.grow("aFrame", standing.length * nLights * 4, 4);
-    let surfacePage: Texture | null = null;
-    for (const p of standing) {
-      const Ax = p.x + p.width * 0.5; // ground anchor (bottom-centre of the sprite box)
-      const Ay = p.y + p.height;
-      // Base spread from the sprite silhouette (auto rule), or the rough fallback until it's baked.
-      const d = this.depthFor(p, resolver);
-      const dA = d ? d[0] : p.width * DEPTH_FRAC;
-      const dB = d ? d[1] : p.width * DEPTH_FRAC;
-      // The surface silhouette sub-frame for the alpha mask (all casters' surfaces share one atlas page at
-      // a LOD; capture it to bind). zw=0 → no mask (solid) until the surface LOD resolves.
-      const surf = p.textureName && resolver ? resolver.resolve(p.textureName, "surface", p.cell) : null;
-      const uv = surf && !surf.geo && surf.frame ? surf.frame.uvRect() : null;
-      if (surf?.frame) surfacePage = surf.frame.source;
-      for (let k = 0; k < nLights; k++) {
-        if (n >= MAX_PAIRS) break;
-        const L = this.lights[k];
-        if (Math.hypot(Ax - L.x, Ay - L.y) > L.radius) continue; // out of this light's reach
-        caster[n * 4] = Ax; caster[n * 4 + 1] = Ay; caster[n * 4 + 2] = p.width; caster[n * 4 + 3] = p.height;
-        param[n * 4] = THETA; param[n * 4 + 1] = dA; param[n * 4 + 2] = dB; param[n * 4 + 3] = 0;
-        light[n * 3] = L.x; light[n * 3 + 1] = L.y; light[n * 3 + 2] = L.z;
-        const c = LIGHT_COLORS[k];
-        color[n * 3] = c[0]; color[n * 3 + 1] = c[1]; color[n * 3 + 2] = c[2];
-        if (uv) { frame[n * 4] = uv[0]; frame[n * 4 + 1] = uv[1]; frame[n * 4 + 2] = uv[2]; frame[n * 4 + 3] = uv[3]; }
-        else { frame[n * 4] = 0; frame[n * 4 + 1] = 0; frame[n * 4 + 2] = 0; frame[n * 4 + 3] = 0; }
-        n++;
-      }
-    }
     // A LOD landing re-dirties the build (so sprites resolving after the first build get their defs).
     if (!this.resolverUnsub && resolver) this.resolverUnsub = resolver.onLoad(() => { this.coldDirty = true; });
 
-    // Build the cold data textures (cold-data-textures P1–P3) only when the caster set / lights / resolved
-    // sprites change — NOT per frame (cold data is static). Populates def + prim + light + LUT.
+    // Build the cold data textures only on change (caster set / lights / a resolved sprite) — NOT per frame
+    // (cold data is static). Populates def + prim + light + LUT.
     if (this.coldDirty || standing.length !== this.lastCasterCount) {
       const coldLights = this.lights.slice(0, nLights).map((L, k) => ({
         x: L.x, y: L.y, z: L.z, radius: L.radius, color: LIGHT_COLORS[k], intensity: 1, castShadows: true,
@@ -242,79 +216,41 @@ export class ShadowCaster {
       this.lastCasterCount = standing.length;
       this.coldDirty = false;
     }
-    if (n === 0) return;
-
-    // Upload the N pairs + draw N instances × 15 vertices (5 triangles each).
-    this.geo.update("aCaster", caster.subarray(0, n * 4));
-    this.geo.update("aParam", param.subarray(0, n * 4));
-    this.geo.update("aLight", light.subarray(0, n * 3));
-    this.geo.update("aColor", color.subarray(0, n * 3));
-    this.geo.update("aFrame", frame.subarray(0, n * 4));
-    this.geo.instanceCount = n;
+    if (this.coldData.lights === 0) return;
 
     const w = camera.width, h = camera.height, z = camera.zoom, ax = camera.anchorX, ay = camera.anchorY;
     // world px → clip (pan + zoom + screen→clip; screen y-down → clip y-up), column-major mat3.
     const proj = new Float32Array([(2 * z) / w, 0, 0, 0, -(2 * z) / h, 0, (-ax * 2 * z) / w, (ay * 2 * z) / h, 1]);
-    this.renderer.draw({
-      program: this.program,
-      geometry: this.geo,
-      blend: "normal",
-      textures: { uSurface: surfacePage ?? this.empty },
-      uniforms: (prog) => prog.uMat3("uProjection", proj),
-    });
-  }
-
-  /** Silhouette base depth `[dA, dB]` for a caster, baked ONCE from its surface coverage + cached. Returns
-   *  null until the sprite's `surface` LOD has resolved (the caller falls back to the rough default). The
-   *  rule (E/W, `design/shadows.md` §Depth-from-presence): `depth = ½·(avg opaque HEIGHT of the half's
-   *  columns / TS)·H`, left half → `dA`, right half → `dB`. */
-  private depthFor(prim: Primitive, resolver: TextureResolver | null): [number, number] | null {
-    if (!prim.textureName || !resolver) return null;
-    const cached = this.depthCache.get(prim.textureName);
-    if (cached) return cached;
-    const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
-    if (surf.geo || !surf.frame) return null; // not loaded yet — rough fallback this frame
-
-    // Read back the surface frame's B channel (coverage) into a presence bitmap.
-    const gl = this.renderer.gl;
-    const f = surf.frame;
-    const w = f.w, h = f.h;
-    const fb = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, f.source.handle, 0);
-    const px = new Uint8Array(w * h * 4);
-    gl.readPixels(f.x, f.y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.deleteFramebuffer(fb);
-    const present = (x: number, y: number): boolean => px[(y * w + x) * 4 + 2] > 127; // B = coverage
-
-    // Avg opaque HEIGHT (top→bottom span) of columns [x0, x1).
-    const avgHeight = (x0: number, x1: number): number => {
-      let sum = 0, cols = 0;
-      for (let x = x0; x < x1; x++) {
-        let top = -1, bot = -1;
-        for (let y = 0; y < h; y++) if (present(x, y)) { top = y; break; }
-        for (let y = h - 1; y >= 0; y--) if (present(x, y)) { bot = y; break; }
-        if (top >= 0) { sum += bot - top + 1; cols++; }
-      }
-      return cols ? sum / cols : 0;
-    };
-    const mid = w >> 1;
-    const H = prim.height;
-    const dA = 0.5 * (avgHeight(0, mid) / h) * H;
-    const dB = 0.5 * (avgHeight(mid, w) / h) * H;
-    const out: [number, number] = [dA, dB];
-    this.depthCache.set(prim.textureName, out);
-    return out;
-  }
-
-  /** Grow the named instance buffer to at least `len` floats, returning a working array. */
-  private grow(name: "aCaster" | "aParam" | "aLight" | "aColor" | "aFrame", len: number, _size: number): Float32Array {
-    const cur = this[name];
-    if (cur.length >= len) return cur;
-    const next = new Float32Array(len);
-    this[name] = next;
-    return next;
+    const [lightW, lutW, defW, primW] = this.coldData.widths;
+    const surface = this.coldData.surfacePage ?? this.empty;
+    // One instanced draw per light: 15 fan vertices × lut_count casters, the vertex shader texelFetch-ing the
+    // light + LUT + def + instance by index. The light↔caster association is inherent in the per-light run.
+    for (let k = 0; k < this.coldData.lights; k++) {
+      const { lutIndex, lutCount } = this.coldData.lightRange(k);
+      if (lutCount === 0) continue; // non-casting light / no in-range casters
+      this.geo.instanceCount = lutCount;
+      this.renderer.draw({
+        program: this.program,
+        geometry: this.geo,
+        blend: "normal",
+        textures: {
+          uLightData: this.coldData.lightTexture,
+          uLut: this.coldData.lutTexture,
+          uPrimDef: this.coldData.definitionTexture,
+          uPrimData: this.coldData.primTexture,
+          uSurface: surface,
+        },
+        uniforms: (p) => {
+          p.uMat3("uProjection", proj);
+          p.uInt("uLightIndex", k);
+          p.uInt("uLutBase", lutIndex);
+          p.uInt("uLightW", lightW);
+          p.uInt("uLutW", lutW);
+          p.uInt("uDefW", defW);
+          p.uInt("uPrimW", primW);
+        },
+      });
+    }
   }
 
   destroy(): void {

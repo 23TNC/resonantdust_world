@@ -79,6 +79,8 @@ export class ColdShadowData {
   private readonly defIndex = new Map<string, number>();
   private defNext = 0;
   private defDirty = false;
+  /** The atlas page the casters' surface frames live on (F2: single page) — bound for the alpha mask. */
+  private surfacePageTex: Texture | null = null;
 
   /** `cold_prim_data` — 2 entries/px: a placed caster's `position_anchor_reference` + `z`/`rotation`. */
   private readonly primTex: Texture;
@@ -110,6 +112,10 @@ export class ColdShadowData {
   get definitionWidth(): number {
     return DEF_W;
   }
+  /** The shared surface atlas page (or null before any sprite resolved). */
+  get surfacePage(): Texture | null {
+    return this.surfacePageTex;
+  }
 
   /** The `definition_index` for a caster's sprite, allocating + writing its def on first sight from the
    *  resolver's surface frame (billboard `width/height` in units, atlas `frame x/y/w/h` in px, `frame_page`).
@@ -123,6 +129,7 @@ export class ColdShadowData {
     const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
     if (surf.geo || !surf.frame) return -1; // not loaded yet
     const f = surf.frame;
+    this.surfacePageTex = f.source; // capture the shared surface page for the mask
 
     const idx = this.defNext++;
     const base = idx * 4;
@@ -209,6 +216,15 @@ export class ColdShadowData {
   }
   get lights(): number {
     return this.lightCount;
+  }
+  /** A light's LUT run `(lut_index, lut_count)` (from its A channel) — drives the per-light instanced draw. */
+  lightRange(k: number): { lutIndex: number; lutCount: number } {
+    const A = this.lightMirror[k * 4 + 3];
+    return { lutIndex: (A >>> 16) & 0xffff, lutCount: A & 0xffff };
+  }
+  /** Texture widths `[lightW, lutW, defW, primW]` for the shader's index→texel maths. */
+  get widths(): [number, number, number, number] {
+    return [LIGHT_W, LUT_W, DEF_W, PRIM_W];
   }
 
   /** Build `cold_light_data` + the `cold_light_prim_data` LUT from the lights + resident casters, and upload
