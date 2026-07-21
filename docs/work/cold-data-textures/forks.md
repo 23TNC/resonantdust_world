@@ -64,6 +64,6 @@ building the fan from the textures) the depth must come from somewhere. Options:
 - **(c) Drop the ±depth in the cold-data version** — render only the body triangle (T1); a narrower shadow, no
   base spread. Simplest, a visible regression from `shadow-projection` P3.
 
-**Lean:** (a) — depth is generic per-sprite geometry, so it belongs beside `prim_width/height` in
-`prim_definition_data`'s spare `A` channel; the presence bake already computes it. Needs the user's nod (it
-extends the authoritative layout in `VARIABLES.md`).
+**Decided (a), 2026-07-21:** `dA`/`dB` go in `prim_definition_data`'s **B** channel (which had the `u22`
+reserved) as **two `u8`s in units** — `u10 frame_page | u8 dA | u8 dB | u6 reserved`. (`u8` is overkill for a
+sub-tile spread vs `u4`, but the space is free.) Computed from the presence bake at atlas-add. B-1 resolved.

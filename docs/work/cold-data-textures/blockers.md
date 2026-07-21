@@ -4,7 +4,11 @@ _Things needing human input before they can proceed. Open → resolved (resolved
 
 ---
 
-## B-1 · P4 is blocked on where the fan depth (dA/dB) lives — 2026-07-21 (open)
+## B-1 · P4 is blocked on where the fan depth (dA/dB) lives — 2026-07-21 (RESOLVED 2026-07-21)
+
+**Resolved:** (a) — `dA/dB` go in `prim_definition_data`'s B channel as two `u8`s in units (`u10 frame_page |
+u8 dA | u8 dB | u6 reserved`), computed from the presence bake. P4 unblocked. Original analysis below.
+
 
 **What blocks:** P4 has the shader build the shadow fan from the four data textures. The fan needs the
 per-caster **base-spread depth** `dA/dB` (the 5-triangle ±spread `shadow-projection` derives from each sprite's

@@ -11,7 +11,7 @@
 //! frame + page), written on first sight of a caster sprite from the resolver's surface frame. The other
 //! three textures (cold_prim_data, cold_light_data, cold_light_prim_data) + the shader read land in P2–P4.
 
-import { Renderer, Texture } from "../../gl";
+import { Renderer, Texture, type TexFrame } from "../../gl";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
@@ -32,6 +32,7 @@ const LUT_W = 256;
 const LUT_H = 256;
 
 const u10 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0x3ff);
+const u8 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0xff);
 const clamp = (v: number, hi: number): number => Math.min(Math.max(Math.round(v), 0), hi);
 
 /** One light to write into `cold_light_data` (world px + unit-scaled reach; colour 0..1). */
@@ -128,16 +129,45 @@ export class ColdShadowData {
     const pw = u10(prim.width / UNIT); // billboard width  (units)
     const ph = u10(prim.height / UNIT); // billboard height (units)
     const framePage = 0; // single atlas page for now (F2); the layout carries frame_page for later
+    const [dA, dB] = this.depthUnits(f, prim.height); // base spread from the silhouette (units)
     // R: prim_width(22–31) | prim_height(12–21) | frame_x(2–11) | rsvd(0–1)
     this.defMirror[base] = (((u10(pw) << 22) | (u10(ph) << 12) | (u10(f.x) << 2)) >>> 0);
     // G: frame_width(22–31) | frame_height(12–21) | frame_y(2–11) | rsvd(0–1)
     this.defMirror[base + 1] = (((u10(f.w) << 22) | (u10(f.h) << 12) | (u10(f.y) << 2)) >>> 0);
-    // B: frame_page(22–31) | rsvd(0–21)
-    this.defMirror[base + 2] = ((u10(framePage) << 22) >>> 0);
+    // B: frame_page(22–31) | dA(14–21) | dB(6–13) | rsvd(0–5)
+    this.defMirror[base + 2] = (((u10(framePage) << 22) | (u8(dA) << 14) | (u8(dB) << 6)) >>> 0);
     this.defMirror[base + 3] = 0; // A: reserved (materials later)
     this.defIndex.set(key, idx);
     this.defDirty = true;
     return idx;
+  }
+
+  /** Base spread `[dA, dB]` (units) from the sprite silhouette (the sandbox's E/W auto rule): `½·(avg opaque
+   *  HEIGHT of the half's columns / TS)·H`, left→dA, right→dB. Reads back the surface frame's B coverage once
+   *  (cached with the def). */
+  private depthUnits(f: TexFrame, hPx: number): [number, number] {
+    const gl = this.renderer.gl;
+    const w = f.w, h = f.h;
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, f.source.handle, 0);
+    const px = new Uint8Array(w * h * 4);
+    gl.readPixels(f.x, f.y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(fb);
+    const present = (x: number, y: number): boolean => px[(y * w + x) * 4 + 2] > 127; // B = coverage
+    const avgHeight = (x0: number, x1: number): number => {
+      let sum = 0, cols = 0;
+      for (let x = x0; x < x1; x++) {
+        let top = -1, bot = -1;
+        for (let y = 0; y < h; y++) if (present(x, y)) { top = y; break; }
+        for (let y = h - 1; y >= 0; y--) if (present(x, y)) { bot = y; break; }
+        if (top >= 0) { sum += bot - top + 1; cols++; }
+      }
+      return cols ? sum / cols : 0;
+    };
+    const mid = w >> 1;
+    return [(0.5 * (avgHeight(0, mid) / h) * hPx) / UNIT, (0.5 * (avgHeight(mid, w) / h) * hPx) / UNIT];
   }
 
   get primTexture(): Texture {
@@ -234,7 +264,7 @@ export class ColdShadowData {
   }
 
   /** DEBUG (P1 verify): decode a definition slot from the CPU mirror. */
-  debugDef(index: number): { prim_width: number; prim_height: number; frame: [number, number, number, number]; frame_page: number } {
+  debugDef(index: number): { prim_width: number; prim_height: number; frame: [number, number, number, number]; frame_page: number; dA: number; dB: number } {
     const b = index * 4;
     const R = this.defMirror[b], G = this.defMirror[b + 1], B = this.defMirror[b + 2];
     return {
@@ -242,6 +272,8 @@ export class ColdShadowData {
       prim_height: (R >>> 12) & 0x3ff,
       frame: [(R >>> 2) & 0x3ff, (G >>> 2) & 0x3ff, (G >>> 22) & 0x3ff, (G >>> 12) & 0x3ff], // x,y,w,h
       frame_page: (B >>> 22) & 0x3ff,
+      dA: (B >>> 14) & 0xff,
+      dB: (B >>> 6) & 0xff,
     };
   }
   get debugDefCount(): number {
