@@ -55,3 +55,25 @@ Owning the renderer means owning: context loss/restore, resize/DPR, the frame bu
 the draw pipeline — things Pixi handled quietly. Phase it (W1–W7) so each is a verifiable milestone, and
 don't chase Pixi's full generality — build only what THIS client uses (the copy-vs-rewrite table in the
 README is the scope boundary). "Bounded" ≠ "small".
+
+## I-8 · Subscription race — `bridge.start()` outruns connection-ready (a latent bug OUR SPEED exposed)
+
+**Symptom:** some loads come up with a blank viewport — the cold-tile snapshot never arrives (fresh users:
+some deliver 1300+ tiles + render the world, some deliver 0). The renderer is fine — when tiles arrive they
+draw correctly.
+
+**Cause:** `WorldScene.onEnter` calls `bridge.start()` (→ `client.setAnchor` → the first zone subscription)
+**synchronously the instant `login()` resolves**. `login()` resolves on `login_ok` (gateway resolve + connect
++ auth), but the world-server subscription channel isn't reliably ready that same tick — so the first
+setAnchor/subscribe races it and, when it loses, the server never streams the cold snapshot.
+
+**NOT introduced by the port** — verified: `client/WasmClient.ts`, `wasm.ts`, `environments.ts`, and
+`LoginScene.ts` are **byte-identical** to pixijs (comments aside), and both call `bridge.start()` the same
+way. The race was always latent. **PixiJS's heavier startup** (`Application.init`, WebGL context creation,
+high-shader compilation) gave the connection a beat before `start()` ran, **masking** it. Our leaner no-Pixi
+client mounts + subscribes sooner and loses the race — i.e. we _exposed_ a pre-existing bug, we didn't create
+one. (A good argument for the migration: the client is measurably faster.)
+
+**Fix:** see [W4g](todo.md#w4). Gate the first subscription on a real connection-ready signal rather than the
+login promise, or retry/re-request the cold snapshot on connect. Verify by loading N fresh users back-to-back
+— every one must render.

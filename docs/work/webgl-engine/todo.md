@@ -78,6 +78,14 @@ Ordered vertical slices, each verifiable in-browser:
       warm-over-cold.
 - [ ] **W4f · Shadows + debug.** Port `shadowCast`/`shadowCastShaders` (the bitfield cast) and the debug
       `/commands` (`/showRT`, `/overlayRT`, `/shadowcast`). Milestone: `/shadowcast` casts, matching pixijs.
+- [ ] **W4g · Fix the subscription race ([I-8](issues.md#i-8)).** The world comes up blank on some loads —
+      `bridge.start()` subscribes the instant `login()` resolves, before the world-server subscription channel
+      is ready, so the cold snapshot is dropped. Latent bug our faster (no-Pixi) startup exposed (PixiJS's
+      heavy init masked it); the networking is byte-identical to pixijs. **Fix:** gate the first
+      `bridge.start()` on a real connection/subscription-ready signal from the `WasmClient` (add one if the
+      WASM core doesn't already expose it — e.g. don't resolve `login()` until the subscribe channel is live,
+      or a `whenReady`/first-`onColdState` hook), or retry / re-request the cold snapshot on connect. **Verify:**
+      load N fresh users back-to-back — every one must render (side-by-side vs pixijs).
 
 ## W5 · Port the UI — 2026-07-20
 
