@@ -1,64 +1,62 @@
 # Todo — cold-data-textures (execution order)
 
-_Planned, not started. Items move to [`completed.md`](completed.md) when done + verified. The packed layouts
-are authoritative in [`docs/VARIABLES.md`](../../VARIABLES.md) — define them there, never restate. Builds on
+_Items move to [`completed.md`](completed.md) when done + verified. Packed layouts are authoritative in
+[`docs/VARIABLES.md` §Cold shadow data textures](../../VARIABLES.md) — never restate. Builds on
 [`shadow-projection`](../shadow-projection/README.md) P0–P4 (the instanced fan) + delivers `caster-lut` C5's
 data layer. Verify each phase in-browser at `?focus=100,50`._
 
+**Done:** P0 — the four `RGBA32UI` layouts (`cold_light_data`, `cold_light_prim_data`, `prim_definition_data`,
+`cold_prim_data`) + `position_anchor_reference` are authored + byte-checked in
+[`VARIABLES.md`](../../VARIABLES.md); forks F1–F5 resolved ([`forks.md`](forks.md)).
+
 ---
 
-## P0 · Define the three layouts in VARIABLES.md — 2026-07-21
+## P1 · `prim_definition_data` + atlas integration — 2026-07-21
 
-- [ ] Resolve [F1](forks.md#f1) (coord space + z/radius units) first — it fixes the field meanings. Then
-      author the **cold-light**, **caster-LUT**, and **prim** `RGBA32UI` layouts in
-      [`docs/VARIABLES.md`](../../VARIABLES.md) (the authoritative home for cross-component packed layouts):
-      each channel's bit fields, units, and packing. This is the contract every builder + the shader read from.
+The generic, shared, longest-lived tier — stand it up first (the shader needs frames + page).
 
-## P1 · Prim data texture + atlas integration — 2026-07-21
+- [ ] A `prim_definition_data` `RGBA32UI` texture (1 px/sprite variant) + a `definition_index` allocator keyed
+      by sprite stem+variant (a variant → one slot, shared by all its instances). On **atlas add**
+      (`TextureResolver.packInto` / `LodPool.add`) write `prim_width/height` + atlas `frame x/y/w/h` +
+      `frame_page`; `texSubImage2D` only the changed px. No eviction (mirrors the atlas).
+- [ ] **Verify:** read back a few texels — W/H + frame + page correct for the resident variants.
 
-The generic, shared, longest-lived tier — stand it up first (the shadow shader already needs frames).
+## P2 · `cold_prim_data` — the placed-caster instances — 2026-07-21
 
-- [ ] A `prim` `RGBA32UI` texture (2 prims/px) + a `prim_index` allocator keyed by sprite stem (a stem →
-      one slot, shared by all its casters). On **atlas add** (`TextureResolver.packInto` / `LodPool.add`),
-      write the sprite's `prim_width/height` + the atlas `frame x/y/w/h` into its slot ([F2](forks.md#f2): the
-      page identifier). `texSubImage2D` only the changed pixel. No eviction (mirrors the atlas).
-- [ ] **Verify:** the prim texture holds correct W/H + frame for the resident sprites (read back a few texels).
+- [ ] A `cold_prim_data` `RGBA32UI` texture (2 entries/px) + a `prim_data_index` allocator per placed standing
+      prim. Write each caster's `position_anchor_reference` + `z` + `rotation`. Moving a caster updates **one**
+      texel (`texSubImage2D`); no LUT edit.
+- [ ] **Verify:** read back an instance — position/rotation match the prim; a moved prim updates one entry.
 
-## P2 · Cold light data texture — 2026-07-21
+## P3 · `cold_light_data` + `cold_light_prim_data` (the LUT) — 2026-07-21
 
-- [ ] A `cold-light` `RGBA32UI` texture (1 px/light). Write the current lights once (on seed / change), NOT per
-      frame: position, colour+intensity, radius+z, and the `(lut_index, lut_count)` run (filled by P3).
-- [ ] **Verify:** the shader `texelFetch`es a light + reproduces the current cast (lights render identically to
-      the instance-attr path) with no per-frame light upload.
+- [ ] `cold_light_data` (1 px/light) written on seed/change, NOT per frame: position, colour+intensity,
+      radius+z, and the `(lut_index, lut_count)` run. `cold_light_prim_data` = each light's in-range casters as
+      a contiguous run of `(definition_index, prim_data_index)` (4/px). Patch a run only on a **radius
+      crossing** ([F5](forks.md#f5)); full rebuild on bulk (zone stream-in).
+- [ ] **Verify:** a light's run lists the right casters; a spot shadowed by two lights appears in both runs; no
+      per-frame light/LUT upload.
 
-## P3 · Caster-LUT data texture — 2026-07-21
+## P4 · The shader reads the four textures (replace instance attrs) — 2026-07-21
 
-- [ ] A `caster-LUT` `RGBA32UI` texture (2 refs/px). For each light, cull its in-range casters (the cheap CPU
-      pairing, as today) into a **contiguous run**; write each ref (position, `z`, `rotation`, `prim_index`)
-      and record the run into the light's `(lut_index, lut_count)`. Rebuild on caster-set change
-      ([F5](forks.md#f5)); no per-frame rebuild for static casters.
-- [ ] **Verify:** each light's run lists the right casters; a spot shadowed by two lights appears in both runs.
-
-## P4 · The shader reads the textures (replace instance attrs) — 2026-07-21
-
-- [ ] Rework the shadow cast so the vertex shader `texelFetch`es light + LUT + prim by index instead of reading
-      per-frame instance attributes: the draw enumerates (light, LUT-entry) instances ([F3](forks.md#f3):
-      per-light draws or a `light_index` in the LUT), reads the caster ref + its `prim` geometry + the owning
-      light, and runs the SAME `cornersWith`/`proj`/fan (`shadow-projection` P0–P4 unchanged). The alpha mask
-      samples the atlas via the prim `frame`.
+- [ ] Rework the shadow cast: the vertex shader `texelFetch`es, per **per-light draw** (`instanceCount =
+      lut_count`, the draw's light = `cold_light_data[k]`), the LUT entry → `prim_definition_data[def]`
+      (geometry + `frame_page`) + `cold_prim_data[inst]` (position + rotation); **decode**
+      `position_anchor_reference` → px via the `*_DIM` constants; run the SAME `cornersWith`/`proj`/fan
+      (`shadow-projection` P0–P4). Add the **radius safety check** (rectangle distance) so a stale LUT still
+      culls. The alpha mask samples the atlas via the def's `frame` + `frame_page`.
 - [ ] **Verify:** shadows render identically to the instance-attr path, but with **no per-frame caster/light
-      upload** — only the texture writes on change. Frame cost drops (no per-frame instance buffer rebuild).
+      upload** — only the texture writes on change; frame cost drops.
 
 ## P5 · Rotation → shadow regime (unblock shadow-projection P5) — 2026-07-21
 
-- [ ] The LUT ref's `rotation` (n/e/s/w) now drives the E/W vs N/S regime in the vertex shader — this is the
-      data [`shadow-projection` P5](../shadow-projection/blockers.md#b-1) was blocked on. Wire it; the N/S
-      branch (from `design/shadows.md`) drops into the same shader. (Verification still needs an N/S caster —
-      a mover or multi-facing thing; the data path is ready regardless.)
+- [ ] `cold_prim_data.rotation` drives the E/W vs N/S regime in the vertex shader — the data
+      [`shadow-projection` P5](../shadow-projection/blockers.md#b-1) was blocked on. Wire the N/S branch (from
+      `design/shadows.md`). (Live verification still needs an N/S caster — a mover / multi-facing thing.)
 
 ## P6 · Verify the whole cold-data system — 2026-07-21
 
-- [ ] In-browser at `?focus=100,50`: shadows match the instance-attr result; panning/zoom stay stuck; the
-      light/LUT textures write only on change (cold), the prim texture only on atlas add; per-frame CPU is just
-      the (unchanged) draw. Read back a texel of each texture to confirm the packing matches
-      [`VARIABLES.md`](../../VARIABLES.md). This is `caster-lut` C5's data layer, live.
+- [ ] In-browser at `?focus=100,50`: shadows match the instance-attr result; pan/zoom stuck; light/LUT textures
+      write only on change, `prim_definition_data` only on atlas add; per-frame CPU is just the draw. Read back
+      a texel of each texture to confirm the packing matches [`VARIABLES.md`](../../VARIABLES.md). `caster-lut`
+      C5's data layer, live.

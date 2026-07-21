@@ -269,6 +269,70 @@ is the separate fact that the value reached `state`.
 
 ---
 
+## Cold shadow data textures (`client/webgl`)
+
+The GPU-driven shadow cast reads its **static** (cold) light + caster data from `RGBA32UI` data textures
+(`texelFetch`, exact integer reads) instead of per-frame instance attributes — written on change, read every
+frame for free. Four normalized textures with a light → LUT → definition / instance indirection, so a caster's
+position lives in **one** place (`cold_prim_data`): moving it updates one texel, not every light that
+references it. Work stream: [`work/cold-data-textures`](work/cold-data-textures/README.md).
+
+**Shared position — full spatial address + sub-tile anchor** (extends `position_reference`: the low byte is a
+sub-tile `anchor` instead of a `layer`, giving `SQUARE/16` resolution; `anchor = (8,8)` centres a prim):
+
+```
+u32 position_anchor_reference       region | zone | tile | anchor  (min unit = SQUARE/16 px)
+  u8 region_reference               bits 24–31    x:4 | y:4
+  u8 zone_reference                 bits 16–23    x:4 | y:4
+  u8 tile_reference                 bits 8–15     x:4 | y:4
+  u8 anchor_reference               bits 0–7      anchor_x:4 | anchor_y:4   (0..15 within the tile)
+```
+
+**`cold_light_data`** — one `RGBA32UI` px per cold light (written once; not per frame):
+
+```
+R  u32 position_anchor_reference
+G  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
+B  u32 reach         u8 radius (24–31, tiles) | u8 z (16–23, SQUARE/16 units) | u16 reserved (0–15)
+A  u32 lut           u16 lut_index (16–31) | u16 lut_count (0–15)   range into cold_light_prim_data
+```
+
+**`cold_light_prim_data`** — the LUT (the light → caster association); a light's casters are the contiguous run
+`[lut_index, lut_index + lut_count)`. Normalized to indices only, so it never carries position:
+
+```
+u32 entry (4 per RGBA32UI px)
+  u16 definition_index              bits 16–31    → prim_definition_data
+  u16 prim_data_index               bits 0–15     → cold_prim_data
+```
+
+**`prim_definition_data`** — one `RGBA32UI` px per sprite **variant** (generic; shared by every instance of
+that sprite, ~16 px for a conifer's variants). Written on **atlas add**, evicted only if the atlas evicts (it
+doesn't yet):
+
+```
+R  u32   u10 prim_width (22–31) | u10 prim_height (12–21) | u10 frame_x (2–11) | u2 reserved (0–1)
+G  u32   u10 frame_width (22–31) | u10 frame_height (12–21) | u10 frame_y (2–11) | u2 reserved (0–1)
+B  u32   u10 frame_page (22–31) | u22 reserved (0–21)
+A  u32   reserved   (materials etc. — later)
+```
+
+**`cold_prim_data`** — one entry per **placed** caster instance (its position + orientation); the single place
+a prim's position lives (move → one texel update):
+
+```
+entry (2 per RGBA32UI px = 64 bits each)
+  u32 position_anchor_reference
+  u32 orient        u8 z (24–31, SQUARE/16 units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u22 reserved (0–21)
+```
+
+**Notes.** (1) `rotation` (n/e/s/w) picks the shadow regime (E/W vs N/S). (2) A light draws its run per-light
+(`instanceCount = lut_count`, the light index is the draw), so the light↔caster association is inherent — no
+light id in the LUT. (3) The shader does a **radius safety check** on the light↔prim positions (rectangle /
+Chebyshev distance where Euclidean isn't needed) so a slightly-stale LUT (a prim that moved out of range before
+its light's run was patched) still culls correctly. (4) Units `radius`=tiles, `z`=`SQUARE/16` are proposed —
+adjust here if the projection wants finer. Decode to px via the `*_DIM` world constants (§Where it is).
+
 ## Removed
 
 `valid_at`, `cold_reference`, `hot_reference`, `reference_id`, `event_word` — see

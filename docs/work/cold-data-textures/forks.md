@@ -1,61 +1,46 @@
 # Forks — cold-data-textures
 
-_Decision points + options + which we chose + why. F1–F2 are worth the user's input (they change the field
-meanings / cross-component layout); F3–F5 have clear leans I can resolve._
+_Decision points + options + which we chose + why. All resolved 2026-07-21 in the design pass with the user._
 
 ---
 
-## F1 · Coordinate space + z/radius units (resolve before P0) — 2026-07-21 (open, user)
+## F1 · Coordinate space + z/radius units — 2026-07-21 (resolved)
 
-`u16` x/y = 0..65535 px ≈ **1024 tiles ≈ 64 zones**; `u8` z = 255; `u8` radius = 255. Options:
+**Decided:** a full **spatial address + sub-tile anchor** — `u32 position_anchor_reference` =
+`region_reference | zone_reference | tile_reference | anchor_reference` (each `u8 = x:4 | y:4`), reusing the
+existing `position_reference` shape (§Where it is / [`VARIABLES.md`](../../VARIABLES.md)) with `anchor`
+replacing the low `layer` byte. Min unit `SQUARE/16` (tile/16); `anchor=(8,8)` centres a prim. Kills the world
+cap entirely (no `u16`-px ceiling) and matches the existing addressing + `shared/codec/object` helpers. Units:
+`radius` = **tiles** (`u8` = 255), `z` = **`SQUARE/16`** — `u8` in both `cold_light_data` and `cold_prim_data`
+(0..1020px, covers `Lz`=480; `z` sits on the top byte, byte-aligned) — proposed in `VARIABLES.md`, tune if the
+projection wants finer.
 
-- **(a) Zone-relative** — x/y are px WITHIN the light's zone (16 tiles = 1024px, fits `u16` with 6 spare bits
-  of sub-px if wanted); the shader adds the zone origin. Radius in **tiles** (`u8` = 255 tiles, ample); z in a
-  coarse unit (e.g. px÷4 → 0..1020, covers `Lz`=480) or also zone-relative. **Natural** — cold data is
-  zone-scoped, and it never clips.
-- **(b) World px** — simplest to reason about, but caps the world at ~1024 tiles and `Lz`/radius overflow `u8`
-  as px (my debug `Lz`=480, radius=256 already do).
+## F2 · The atlas frame page identifier — 2026-07-21 (resolved)
 
-**Lean:** (a) zone-relative + radius-in-tiles + a coarse z. It's the only option that doesn't clip a real
-world, and cold lights already belong to a zone. This is a `VARIABLES.md` decision (the field's meaning), so
-confirm before P0.
+**Decided:** grow `prim_definition_data` to a **full `RGBA32UI` px** (was 2 prims/px) and spend the new space
+on `frame_page` (`u10`) + reserved (`u22` + `u32`, for materials later). Defs are **shared per sprite variant**
+(~16 px for a conifer's variants, referenced by hundreds of instances), so the extra 64 bits/def is nearly
+free. Resolves the multi-page atlas gap — the shader knows which page to sample. No cap on distinct caster
+sprites.
 
-## F2 · The atlas frame needs a PAGE identifier (resolve before P1) — 2026-07-21 (open, user)
+## F3 · Light ↔ LUT-entry association for the draw — 2026-07-21 (resolved; my framing was wrong)
 
-`u10` frame x/y/w/h fit a **1024²** page, but the large-LOD `LodPool` uses **2048²**, and the layout carries
-**no page/texture id** — the shader can't know which atlas page to sample for a given prim. Options:
+**Decided:** per-light draw — the association is **inherent**, not a problem. Each light owns a contiguous LUT
+run (`lut_index, lut_count`); drawing light k iterates ITS run, so the light index IS the draw. The shader
+fetches `cold_light_data[k]` for the light's position + `rgb`/`intensity` (the shadow's debug colour), and the
+LUT names the caster. No `light_index` in the LUT.
 
-- **(a) One page for shadow-casting sprites** — commit their surface LODs to a single 1024² page; `u10` is
-  exact, no page id needed. Simplest; a soft cap on distinct caster sprites per page (fine at current counts —
-  ~7 thing types).
-- **(b) Page index in the layout** — spend some `reserved` bits on a page id + bind an atlas **texture array**
-  (`sampler2DArray`); the shader indexes the layer. General, more setup, lifts the cap.
+## F4 · The cold-light source — 2026-07-21 (resolved)
 
-**Lean:** (a) now (the current casters share one 64px page anyway — `shadow-projection` P4 already assumes it),
-graft (b) if distinct caster sprites outgrow a page. Note the cap in P1.
+**Decided:** lights are still **hand-authored debug lights** (lighting isn't fully implemented) written into
+`cold_light_data`. **DSL-driven cold lights** come later and fill the same texture — out of scope here.
 
-## F3 · Light ↔ LUT-entry association for the draw — 2026-07-21 (open)
+## F5 · LUT churn on caster movement — 2026-07-21 (resolved by the normalization)
 
-The instanced draw needs each caster-instance to know its light, but a LUT ref stores no light id. Options:
-
-- **(a) Per-light draws** — one instanced draw per light: `instanceCount = lut_count`, a `uLightIndex` uniform,
-  read `LUT[lut_index + gl_InstanceID]`. 6 draws (one per light); trivially correct, matches the LUT's run
-  shape.
-- **(b) `light_index` in the LUT ref** — store the owning light in the ref's `u6` reserved (≤64 lights); one
-  draw over all LUT entries, each reads its light. Fewer draws, spends the reserved bits.
-
-**Lean:** (a) to land it (6 draws is nothing; keeps the LUT ref clean), revisit (b) if the draw count matters.
-
-## F4 · The cold-light source — 2026-07-21 (open)
-
-The lights are still **debug-seeded** (the 6-light ring). This stream is the TRANSPORT (lights → texture), not
-the source. Real **DSL-authored cold lights** (zone content) are a separate, later source that fills the same
-texture. **Lean:** keep the debug seed writing into the texture for now; DSL cold lights are out of scope
-(they slot in behind the same `cold-light` layout when authored).
-
-## F5 · LUT rebuild strategy on caster-set change — 2026-07-21 (open)
-
-Contiguous per-light runs mean inserting a caster into light k's run shifts every later run. Options:
-**(a) full rebuild** on any caster-set change (rare for cold — a zone streams in / a light moves); **(b)**
-incremental patching (gap-buffer / free-list per light) later. **Lean:** (a) — cold data changes rarely, a full
-rebuild is cheap and simple; incremental is premature.
+**Decided:** the four-table split solves it. A caster's position lives ONLY in `cold_prim_data` (indexed by
+`prim_data_index`); the LUT holds indices, not position. So a prim **moving stays in range** = update **one**
+`cold_prim_data` texel, and every light referencing it sees the new position — **no LUT edit**. Only a prim
+crossing a light's **radius** patches that light's run (add/remove). Plus a **shader radius safety check**
+(rectangle / Chebyshev distance where Euclidean isn't needed) tolerates a slightly-stale LUT — a prim that left
+range before its run was patched still culls in the shader. Full LUT rebuild only on bulk change (zone stream
+in); incremental patching later if needed.
