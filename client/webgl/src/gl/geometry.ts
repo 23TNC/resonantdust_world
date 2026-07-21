@@ -23,7 +23,9 @@ interface Buf {
 
 export class Geometry {
   readonly count: number;
-  readonly instanceCount: number;
+  /** Instances to draw (0 = non-instanced). Mutable so a per-frame cast can vary the count after
+   *  `update()`-ing the instance buffers (the caster-lut / shadow cast pushes a new pair count each frame). */
+  instanceCount: number;
   private readonly gl: WebGL2RenderingContext;
   readonly vao: WebGLVertexArrayObject;
   private readonly bufs = new Map<string, Buf>();

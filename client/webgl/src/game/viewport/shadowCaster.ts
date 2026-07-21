@@ -1,15 +1,14 @@
-//! shadowCaster (webgl) — the FIRST lights + billboard shadows on the owned engine. Basic-functionality
-//! cut of the `docs/work/shadows/` design: a small light list seeded around a zone, casting billboard-quad
-//! shadows off the standing prims (things, `zIndex ≥ 1`) — geo tier, no textures yet.
+//! shadowCaster (webgl) — lights + billboard shadows, cast as GPU-instanced projected geometry (the
+//! `shadow-projection` stream). Aligns with the 5-triangle projected-silhouette model
+//! (`docs/components/client/pixijs/design/shadows.md`, proven in `bin/shadow-projection-sandbox.html`) but
+//! builds the fan **on the GPU, not the CPU**: one instance per (light, caster) pair, and the vertex shader
+//! reads the instance's caster (`Ax,Ay,W,H,θ,dA,dB`) + light (`Lx,Ly,Lz`), runs `cornersWith` + `proj`
+//! per-corner, and emits the 15 fan vertices. No per-frame CPU geometry rebuild — this is the `caster-lut`
+//! C5 / webgl-engine W7 payoff on the owned engine.
 //!
-//! This cut does the cast **analytically in ONE screen-space fullscreen pass** (the design's GPU-cast
-//! endpoint, caster-lut C5), deferring the screen-hot→world-cold bitfield persistence + round-robin (the
-//! scaling optimisations) to a later slice. Per fragment we compute its world position (same mapping as the
-//! grid shader), then for each light test whether the pixel falls inside any of that light's casters' shadow
-//! trapezoids; each covering light adds its colour (overlaps combine — additive), matching
-//! `design/shadows.md`'s projection. No RTs, no ping-pong: because it recasts every frame at the current
-//! camera it's automatically world-stuck + zoom-correct with no staleness (the README's `shadow-hot`
-//! insight). Casters are culled to those in range of a light on the CPU so the per-pixel loop stays short.
+//! This slice: the **E/W regime** (all current cold things are single-facing → E/W), a constant ground
+//! angle θ, and a rough depth (P3 replaces it with the sprite-silhouette presence bake); solid coloured
+//! triangles (P4 adds the alpha-mask fragment). CPU keeps only the cheap in-range (light, caster) pairing.
 //!
 //! GOTCHA: a backtick inside the GLSL closes the `/* glsl */` literal.
 
@@ -18,16 +17,17 @@ import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import { SQUARE } from "./squareMath";
 
-/** Max lights + casters the shader loops (uniform-array sizes). 6 lights this iteration (→ 24 goal);
- *  casters are the in-range standing prims, capped so a dense zone can't blow the per-pixel loop. */
+/** 6 lights this iteration; casters capped so a dense zone can't blow the instance buffer. */
 const MAX_LIGHTS = 6;
-const MAX_CASTERS = 48;
-/** Shadow length clamp: a caster as tall as the light casts to infinity; clamp the projection factor. */
-const TMAX = 3.0;
-/** Default light ring: N lights on a ~2-tile radius around the seed tile, lit from above (world z). */
+const MAX_PAIRS = 4096;
+/** Default light ring around the seed tile, lit from above (world z). */
 const LIGHT_Z = 480;
 const LIGHT_RADIUS = 4 * SQUARE;
 const RING_RADIUS = 2 * SQUARE;
+/** Ground angle θ (E/W side-on) — the art-style oblique tilt (sandbox default 65°). Constant for now. */
+const THETA = (65 * Math.PI) / 180;
+/** Rough base-spread depth as a fraction of the billboard width, until the presence bake (P3) lands. */
+const DEPTH_FRAC = 0.22;
 
 interface Light {
   x: number;
@@ -37,106 +37,95 @@ interface Light {
 }
 
 const CAST_VERT = /* glsl */ `#version 300 es
-in vec2 aPosition;                 // fullscreen triangle in clip space
-out vec2 vClip;
-void main() { vClip = aPosition; gl_Position = vec4(aPosition, 0.0, 1.0); }
-`;
-const CAST_FRAG = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vClip;
-uniform vec2  uView;               // viewport px
-uniform vec2  uAnchor;             // camera anchor (world px at viewport centre)
-uniform float uZoom;               // screen px per world px
-uniform int   uLightCount;
-uniform vec4  uLight[${MAX_LIGHTS}];   // xyz = world pos (+z height), w = radius
-uniform int   uCasterCount;
-uniform vec4  uCaster[${MAX_CASTERS}]; // x,y = world top-left, z,w = width,height
-out vec4 fragColor;
+in float aVid;                 // 0..14 — which of the 5 triangles' 15 vertices
+in vec4 aCaster;               // Ax, Ay (ground anchor world px), W, H (billboard px)
+in vec4 aParam;                // theta, dA, dB, (unused)
+in vec3 aLight;                // Lx, Ly, Lz (world px; z = height)
+in vec3 aColor;                // this light's colour
+uniform mat3 uProjection;      // world px -> clip
+out vec3 vColor;
 
-// Six distinct per-light colours (the design's bit-decode palette, extended to 6).
-vec3 lightColor(int k) {
-  if (k == 0) return vec3(1.0, 0.25, 0.25);
-  if (k == 1) return vec3(0.25, 1.0, 0.30);
-  if (k == 2) return vec3(0.30, 0.55, 1.0);
-  if (k == 3) return vec3(1.0, 0.95, 0.25);
-  if (k == 4) return vec3(1.0, 0.35, 1.0);
-  return vec3(0.30, 1.0, 1.0);
-}
+// gl_VertexID role table. Roles: 0=TL 1=TR 2=BC 3=BL+ 4=BL- 5=BR+ 6=BR-.
+// T1(TL,TR,BC) T2(TL,BL+,BC) T3(TR,BR+,BC) T4(TL,BL-,BC) T5(TR,BR-,BC).
+const int ROLE[15] = int[15](0,1,2, 0,3,2, 1,5,2, 0,4,2, 1,6,2);
 
-float cross2(vec2 u, vec2 v) { return u.x * v.y - u.y * v.x; }
-
-// Point inside a convex quad (either winding) — all edge cross-products share a sign.
-bool inQuad(vec2 p, vec2 a, vec2 b, vec2 c, vec2 d) {
-  float s1 = cross2(b - a, p - a);
-  float s2 = cross2(c - b, p - b);
-  float s3 = cross2(d - c, p - c);
-  float s4 = cross2(a - d, p - d);
-  bool neg = (s1 < 0.0) || (s2 < 0.0) || (s3 < 0.0) || (s4 < 0.0);
-  bool pos = (s1 > 0.0) || (s2 > 0.0) || (s3 > 0.0) || (s4 > 0.0);
-  return !(neg && pos);
+// Per-corner radial projection to the ground (z=0); sub-ground drops straight down (footprint).
+vec2 projGround(vec3 p, vec3 L) {
+  if (p.z <= 0.0) return p.xy;
+  float t = min(L.z / max(L.z - p.z, 1.0), 8.0);   // TMAX = 8 (clamp grazing runaways)
+  return L.xy + t * (p.xy - L.xy);
 }
 
 void main() {
-  // Fragment → world px (same mapping as the debug grid, so shadows register with the world).
-  vec2 fragPx = vec2((vClip.x * 0.5 + 0.5) * uView.x, (0.5 - vClip.y * 0.5) * uView.y);
-  vec2 w = uAnchor + (fragPx - uView * 0.5) / uZoom;
+  int role = ROLE[int(aVid + 0.5)];
+  vec2 A = aCaster.xy; float W = aCaster.z, H = aCaster.w;
+  float th = aParam.x, dA = aParam.y, dB = aParam.z;
+  float ct = cos(th), st = sin(th);
 
-  vec3 acc = vec3(0.0);
-  for (int k = 0; k < ${MAX_LIGHTS}; k++) {
-    if (k >= uLightCount) break;
-    vec3 L = uLight[k].xyz;
-    float R = uLight[k].w;
-    bool covered = false;
-    for (int i = 0; i < ${MAX_CASTERS}; i++) {
-      if (i >= uCasterCount) break;
-      vec4 C = uCaster[i];
-      float X = C.x, Y = C.y, W = C.z, H = C.w;
-      vec2 base = vec2(X + W * 0.5, Y + H);       // caster footprint base (bottom-centre)
-      if (distance(base, L.xy) > R) continue;      // out of this light's reach
-      // Project the billboard's bottom edge radially away from the light to the ground.
-      float factor = (L.z <= H + 1.0) ? ${TMAX.toFixed(1)} : min(L.z / (L.z - H), ${TMAX.toFixed(1)});
-      vec2 bL = vec2(X, Y + H);
-      vec2 bR = vec2(X + W, Y + H);
-      vec2 tL = L.xy + factor * (bL - L.xy);
-      vec2 tR = L.xy + factor * (bR - L.xy);
-      if (inQuad(w, bL, bR, tR, tL)) { covered = true; break; }
-    }
-    if (covered) acc += lightColor(k);
-  }
+  // E/W billboard, tilted by θ (leans north = -y as it rises in z); base rooted to the footprint.
+  // TL/TR from cornersWith (centre-frame y); base corners overridden to the ground edge; ± depth spread
+  // (E/W offsets on y, + variant = +0 seats on the foot, - variant spreads north).
+  vec3 loc;
+  if (role == 0)      loc = vec3(-W * 0.5, -0.5 * H * ct, H * st);   // TL (projected)
+  else if (role == 1) loc = vec3( W * 0.5, -0.5 * H * ct, H * st);   // TR (projected)
+  else if (role == 2) loc = vec3(0.0, 0.0, 0.0);                     // BC
+  else if (role == 3) loc = vec3(-W * 0.5, 0.0, 0.0);                // BL+
+  else if (role == 4) loc = vec3(-W * 0.5, -dA, 0.0);               // BL-
+  else if (role == 5) loc = vec3( W * 0.5, 0.0, 0.0);                // BR+
+  else                loc = vec3( W * 0.5, -dB, 0.0);               // BR-
 
-  // Light markers: a filled dot + a faint reach ring, so the light positions read against the shadows.
-  for (int k = 0; k < ${MAX_LIGHTS}; k++) {
-    if (k >= uLightCount) break;
-    vec2 ls = (uLight[k].xy - uAnchor) * uZoom + uView * 0.5;
-    float d = distance(fragPx, ls);
-    if (d < 6.0) { fragColor = vec4(lightColor(k), 1.0); return; }
-    float ring = uLight[k].w * uZoom;
-    if (abs(d - ring) < 1.0) acc += lightColor(k) * 0.4;
-  }
-
-  if (dot(acc, acc) < 0.0001) discard;             // no shadow here — the world shows through
-  fragColor = vec4(clamp(acc, 0.0, 1.0), 1.0);     // premultiplied (α=1) coloured shadow over the world
+  vec3 world = vec3(A + loc.xy, loc.z);
+  vec2 g = projGround(world, aLight);
+  vec3 clip = uProjection * vec3(g, 1.0);
+  gl_Position = vec4(clip.xy, 0.0, 1.0);
+  vColor = aColor;
 }
 `;
+const CAST_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+in vec3 vColor;
+out vec4 fragColor;
+void main() { fragColor = vec4(vColor, 0.5); }   // semi-transparent coloured shadow (P4 = alpha mask)
+`;
+
+/** Six distinct per-light colours (the design's bit-decode palette, extended to 6). */
+const LIGHT_COLORS: ReadonlyArray<[number, number, number]> = [
+  [1.0, 0.25, 0.25], [0.25, 1.0, 0.3], [0.3, 0.55, 1.0], [1.0, 0.95, 0.25], [1.0, 0.35, 1.0], [0.3, 1.0, 1.0],
+];
 
 /**
- * Owns the light list + the analytic screen-space shadow pass. The {@link Viewport} calls {@link tick}
- * each frame after the world display; casters come from the cold cache's {@link Primitive} standing prims.
+ * Owns the light list + the instanced projected-fan shadow pass. The {@link Viewport} calls {@link tick}
+ * each frame after the world display; casters come from the cold cache's standing prims.
  */
 export class ShadowCaster {
   private readonly program: Program;
-  private readonly quad: Geometry;
+  private readonly geo: Geometry;
   private readonly lights: Light[] = [];
-  private readonly lightBuf = new Float32Array(MAX_LIGHTS * 4);
-  private readonly casterBuf = new Float32Array(MAX_CASTERS * 4);
+  // Per-instance buffers (one (light, caster) pair each), grown as needed.
+  private aCaster = new Float32Array(0);
+  private aParam = new Float32Array(0);
+  private aLight = new Float32Array(0);
+  private aColor = new Float32Array(0);
   private enabled = true;
 
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
     this.program = new Program(gl, CAST_VERT, CAST_FRAG, "viewport-shadow-cast");
-    this.quad = new Geometry(gl, this.program, {
-      aPosition: { data: new Float32Array([-1, -1, 3, -1, -1, 3]), size: 2 },
-    });
+    // aVid drives count=15 (non-instanced); the four instance attrs advance once per pair.
+    const vid = new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    this.geo = new Geometry(
+      gl,
+      this.program,
+      {
+        aVid: { data: vid, size: 1 },
+        aCaster: { data: new Float32Array(4), size: 4, instanced: true },
+        aParam: { data: new Float32Array(4), size: 4, instanced: true },
+        aLight: { data: new Float32Array(3), size: 3, instanced: true },
+        aColor: { data: new Float32Array(3), size: 3, instanced: true },
+      },
+      undefined,
+      0,
+    );
     this.seed(100, 50);
   }
 
@@ -163,56 +152,61 @@ export class ShadowCaster {
   /** Draw the shadows over the world display. `standing` = the cold cache's standing prims (things). */
   tick(camera: Camera, standing: Primitive[]): void {
     if (!this.enabled || this.lights.length === 0) return;
-
-    // Lights → uniform buffer.
     const nLights = Math.min(this.lights.length, MAX_LIGHTS);
-    for (let k = 0; k < nLights; k++) {
-      const L = this.lights[k];
-      this.lightBuf[k * 4] = L.x;
-      this.lightBuf[k * 4 + 1] = L.y;
-      this.lightBuf[k * 4 + 2] = L.z;
-      this.lightBuf[k * 4 + 3] = L.radius;
-    }
 
-    // Cull casters to those in range of ANY light (keeps the per-pixel loop short), cap at MAX_CASTERS.
+    // CPU keeps only the cheap part: the in-range (light, caster) pair list. Everything geometric is GPU.
     let n = 0;
+    const caster = this.grow("aCaster", standing.length * nLights * 4, 4);
+    const param = this.grow("aParam", standing.length * nLights * 4, 4);
+    const light = this.grow("aLight", standing.length * nLights * 3, 3);
+    const color = this.grow("aColor", standing.length * nLights * 3, 3);
     for (const p of standing) {
-      if (n >= MAX_CASTERS) break;
-      const bx = p.x + p.width * 0.5;
-      const by = p.y + p.height;
-      let near = false;
+      const Ax = p.x + p.width * 0.5; // ground anchor (bottom-centre of the sprite box)
+      const Ay = p.y + p.height;
+      const depth = p.width * DEPTH_FRAC;
       for (let k = 0; k < nLights; k++) {
+        if (n >= MAX_PAIRS) break;
         const L = this.lights[k];
-        if (Math.hypot(bx - L.x, by - L.y) <= L.radius) { near = true; break; }
+        if (Math.hypot(Ax - L.x, Ay - L.y) > L.radius) continue; // out of this light's reach
+        caster[n * 4] = Ax; caster[n * 4 + 1] = Ay; caster[n * 4 + 2] = p.width; caster[n * 4 + 3] = p.height;
+        param[n * 4] = THETA; param[n * 4 + 1] = depth; param[n * 4 + 2] = depth; param[n * 4 + 3] = 0;
+        light[n * 3] = L.x; light[n * 3 + 1] = L.y; light[n * 3 + 2] = L.z;
+        const c = LIGHT_COLORS[k];
+        color[n * 3] = c[0]; color[n * 3 + 1] = c[1]; color[n * 3 + 2] = c[2];
+        n++;
       }
-      if (!near) continue;
-      this.casterBuf[n * 4] = p.x;
-      this.casterBuf[n * 4 + 1] = p.y;
-      this.casterBuf[n * 4 + 2] = p.width;
-      this.casterBuf[n * 4 + 3] = p.height;
-      n++;
     }
+    if (n === 0) return;
 
-    const w = camera.width;
-    const h = camera.height;
+    // Upload the N pairs + draw N instances × 15 vertices (5 triangles each).
+    this.geo.update("aCaster", caster.subarray(0, n * 4));
+    this.geo.update("aParam", param.subarray(0, n * 4));
+    this.geo.update("aLight", light.subarray(0, n * 3));
+    this.geo.update("aColor", color.subarray(0, n * 3));
+    this.geo.instanceCount = n;
+
+    const w = camera.width, h = camera.height, z = camera.zoom, ax = camera.anchorX, ay = camera.anchorY;
+    // world px → clip (pan + zoom + screen→clip; screen y-down → clip y-up), column-major mat3.
+    const proj = new Float32Array([(2 * z) / w, 0, 0, 0, -(2 * z) / h, 0, (-ax * 2 * z) / w, (ay * 2 * z) / h, 1]);
     this.renderer.draw({
       program: this.program,
-      geometry: this.quad,
+      geometry: this.geo,
       blend: "normal",
-      uniforms: (prog) => {
-        prog.uVec2("uView", w, h);
-        prog.uVec2("uAnchor", camera.anchorX, camera.anchorY);
-        prog.uFloat("uZoom", camera.zoom);
-        prog.uInt("uLightCount", nLights);
-        prog.uVec4Array("uLight", this.lightBuf);
-        prog.uInt("uCasterCount", n);
-        prog.uVec4Array("uCaster", this.casterBuf);
-      },
+      uniforms: (prog) => prog.uMat3("uProjection", proj),
     });
   }
 
+  /** Grow the named instance buffer to at least `len` floats, returning a working array. */
+  private grow(name: "aCaster" | "aParam" | "aLight" | "aColor", len: number, _size: number): Float32Array {
+    const cur = this[name];
+    if (cur.length >= len) return cur;
+    const next = new Float32Array(len);
+    this[name] = next;
+    return next;
+  }
+
   destroy(): void {
-    this.quad.destroy();
+    this.geo.destroy();
     this.program.destroy();
   }
 }
