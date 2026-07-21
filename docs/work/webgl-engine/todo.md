@@ -13,7 +13,7 @@ _Planned, not started. Items move to [`completed.md`](completed.md) when done + 
       `requestAnimationFrame` loop; render a cleared canvas → then a single triangle. Proves the context,
       loop, and build are ours end-to-end.
 
-## W2 · The engine core — the renderer that replaces Pixi's backend — 2026-07-20
+## W2 · The engine core — DONE (completed.md)
 
 - [ ] `Program` (raw ES 3.00 compile/link/cache; uniform/attr reflection; sampler binding incl. VERTEX
       stage + `usampler2D` + `uvec4` out), `Geometry` (VAO, per-instance divisors, indexed/instanced draw),

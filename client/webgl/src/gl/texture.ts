@@ -1,0 +1,90 @@
+//! Texture — a 2D GL texture with first-class support for the formats the shadow/lighting work needs:
+//! `rgba8unorm` (colour + the current bitfield), `rgba32float` (light/caster data), and the INTEGER formats
+//! `rgba8uint` / `rgba32uint` (the >24-bit bitfield, read via `usampler2D`). Integer + float textures use
+//! NEAREST filtering (LINEAR is invalid on them). Atlas frame UVs are the caller's job (we keep the whole
+//! page here); the resolver already computes frames.
+
+export type TexFormat = "rgba8unorm" | "rgba32float" | "rgba8uint" | "rgba32uint";
+
+interface Fmt {
+  internal: number;
+  format: number;
+  type: number;
+  integer: boolean;
+}
+
+function glFmt(gl: WebGL2RenderingContext, f: TexFormat): Fmt {
+  switch (f) {
+    case "rgba8unorm":
+      return { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE, integer: false };
+    case "rgba32float":
+      return { internal: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT, integer: false };
+    case "rgba8uint":
+      return { internal: gl.RGBA8UI, format: gl.RGBA_INTEGER, type: gl.UNSIGNED_BYTE, integer: true };
+    case "rgba32uint":
+      return { internal: gl.RGBA32UI, format: gl.RGBA_INTEGER, type: gl.UNSIGNED_INT, integer: true };
+  }
+}
+
+export interface TextureOptions {
+  width: number;
+  height: number;
+  format?: TexFormat;
+  /** Initial pixel data (or null for an empty/attachable texture). */
+  data?: ArrayBufferView | TexImageSource | null;
+  /** false → LINEAR (only valid for rgba8unorm); default NEAREST. */
+  nearest?: boolean;
+}
+
+export class Texture {
+  readonly handle: WebGLTexture;
+  readonly width: number;
+  readonly height: number;
+  readonly format: TexFormat;
+  private readonly gl: WebGL2RenderingContext;
+  private readonly fmt: Fmt;
+
+  constructor(gl: WebGL2RenderingContext, opts: TextureOptions) {
+    this.gl = gl;
+    this.width = opts.width;
+    this.height = opts.height;
+    this.format = opts.format ?? "rgba8unorm";
+    this.fmt = glFmt(gl, this.format);
+    this.handle = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.handle);
+    // Integer/float textures can't filter LINEAR; and we sample everything NEAREST anyway.
+    const filter = opts.nearest === false && !this.fmt.integer && this.format === "rgba8unorm" ? gl.LINEAR : gl.NEAREST;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.allocate(opts.data ?? null);
+  }
+
+  /** (Re)allocate storage at the current size with optional data. */
+  private allocate(data: ArrayBufferView | TexImageSource | null): void {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.handle);
+    if (data && !(ArrayBuffer.isView(data))) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, this.fmt.internal, this.fmt.format, this.fmt.type, data as TexImageSource);
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, this.fmt.internal, this.width, this.height, 0, this.fmt.format, this.fmt.type, (data as ArrayBufferView) ?? null);
+    }
+  }
+
+  /** Update the whole texture from a typed array (same size/format). */
+  upload(data: ArrayBufferView): void {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.handle);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.fmt.format, this.fmt.type, data);
+  }
+
+  bind(unit: number): void {
+    this.gl.activeTexture(this.gl.TEXTURE0 + unit);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this.handle);
+  }
+
+  destroy(): void {
+    this.gl.deleteTexture(this.handle);
+  }
+}
