@@ -4,13 +4,20 @@ _Gotchas to respect. The plumbing is Pixi-native; the work is the shader merge +
 
 ---
 
-## I-1 · MRT is Pixi-native — RESOLVED up front
+## I-1 · MRT works, but needs a MANUAL `gl.drawBuffers` — proven in B1 (2026-07-20)
 
-`RenderTarget({ colorTextures: BindableTexture[] })` + `GlRenderTargetAdaptor` attaching each via
-`gl.framebufferTexture2D(…, gl.COLOR_ATTACHMENT0 + i, …)`. No raw-GL framebuffer/`drawBuffers` juggling. The
-one thing B1 must pin: **how `renderer.render` targets a multi-attachment `RenderTarget`** (the bake currently
-targets a single `RenderTexture` via `renderer.render({ target })`) — confirm the API and that all four
-attachments receive their `out`.
+Half-native: `RenderTarget({ colorTextures })` + `GlRenderTargetAdaptor` **attach** all four textures
+(`gl.framebufferTexture2D(…, COLOR_ATTACHMENT0 + i, …)`), and `renderer.render({ target: renderTarget })`
+accepts a `RenderTarget` (`RenderSurface = ICanvas | BindableTexture | RenderTarget`). **But Pixi NEVER calls
+`gl.drawBuffers` anywhere** (grep-confirmed), and WebGL2 writes only to attachment 0 by default — so
+`layout(location=1..3) out` would write nowhere without intervention.
+
+**The fix (B1-proven, `es300MrtSpike.ts`):** after `renderer.renderTarget.bind(target, false)` (which creates
++ binds the FBO), call `gl.drawBuffers([COLOR_ATTACHMENT0, …1, …2, …3])` on `renderer.gl`, then
+`renderer.render({ container, target })`. `drawBuffers` is **per-FBO state**, so it persists for that FBO
+across re-binds and doesn't pollute the screen FBO. The B4 bake must do this once the scratch FBO exists (and
+re-apply after any resize that recreates the FBO). Verified: four `out`s → four distinct attachment colours,
+scene unaffected.
 
 ## I-2 · ES 3.00 is the prerequisite
 

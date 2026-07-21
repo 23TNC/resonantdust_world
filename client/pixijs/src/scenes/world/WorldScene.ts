@@ -276,6 +276,15 @@ export class WorldScene extends Scene {
         : "ES 3.00 OFF.";
     });
 
+    // `/mrttest` (mrt-bakes B1 spike) — toggle a 4-attachment MRT render shown as a 2×2 grid. Four distinct
+    // colours prove multiple render targets work here (with the manual gl.drawBuffers Pixi omits).
+    this.chat.registerCommand("mrttest", () => {
+      const on = view().toggleMrtSpike();
+      return on
+        ? "MRT spike ON — a 2×2 grid of four DIFFERENT colours means multiple render targets work."
+        : "MRT spike OFF.";
+    });
+
     // `/pause` + `/unpause` (debug) — no server-side pause in the rebuild yet (the master's
     // metronome has no freeze verb), so these report unavailability rather than silently do
     // nothing. `onPaused` stays wired (it simply never fires) for when a freeze verb returns.

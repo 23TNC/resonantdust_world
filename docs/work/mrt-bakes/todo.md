@@ -6,7 +6,7 @@ _Planned, not started. Items move to [`completed.md`](completed.md) when done + 
 
 ---
 
-## B1 · Spike — render 4 outputs into a 4-attachment target — 2026-07-20
+## B1 · Spike — DONE (moved to completed.md)
 
 - [ ] Build a `RenderTarget({ colorTextures: [t0,t1,t2,t3] })` (slot-sized) and render a trivial ES 3.00
       mesh whose fragment writes four DISTINCT colours to `layout(location=0..3) out`. Confirm each attachment
