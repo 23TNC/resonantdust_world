@@ -62,9 +62,10 @@ Ordered vertical slices, each verifiable in-browser:
       its **own `<canvas>` + `Renderer`** (F6), driven by the ticker. The camera (anchor/zoom,
       `screenToWorld`/`worldToScreen`, scroll-zoom + drag-pan input, the `?grid` debug grid). First render: a
       cleared viewport + the grid, pannable/zoomable. No world content yet.
-- [ ] **W4b · Shaders → engine `Program`.** Port `mrtBakeShader` (the merged 4-out bake), `albedoBlitShader`
-      (warm-over-cold display), `overlayShader` (`/overlayRT`) — copy GLSL verbatim, rewrite each harness to
-      an engine `Program` + typed uniform/texture setters. Copy `material.ts` (Pixi-free) + `noiseAtlas`.
+- [~] **W4b · Shaders → engine `Program`.** DONE: `mrtBakeShader` (merged 4-out bake) + `albedoBlitShader`
+      (warm-over-cold display) ported to engine `Program`s (GLSL verbatim); `material.ts` copied
+      (completed.md). DEFERRED: `overlayShader` → [W4f](#w4) (with the debug `/commands`), `noiseAtlas` →
+      [W4c](#w4) (with the material-bake wiring). Runtime-verified when wired in W4c/W4d.
 - [ ] **W4c · SquareCache.** Port onto the engine: `Channel` ping-pong = two `RenderTarget`s; the MRT scratch
       = one `RenderTarget({formats:[×4]})`; `bakeSquare` = one MRT `draw` + four apron blits; `reproject`/
       `resize`/`recenter`/`markStale`/`fillDisplay` = the same math over engine draws. The real

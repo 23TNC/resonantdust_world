@@ -51,3 +51,15 @@ anchor. Until the G-buffer lands (W4c/W4d) the viewport draws a **procedural wor
 antialiased in a fullscreen fragment) so the camera is visible + verifiable. **Verified in-browser on
 `client/webgl`:** auto-login → world, the grid renders, and pan + zoom both track correctly, zero console
 errors. (Hit + fixed the recurring GLSL-backtick-in-template-literal foot-gun in the grid shader.)
+
+## W4b (partial) · The essential shaders → engine Program — 2026-07-20
+
+Ported the two shaders on the critical path to "world renders" from the pixijs high-shader system to
+self-contained engine `Program`s (GLSL copied verbatim; only the harness changes): **`albedoBlitShader`**
+(the warm-over-cold display blit — a `uProjection` world→clip vertex replaces Pixi's transform/roundPixels
+boilerplate) and **`mrtBakeShader`** (the merged 4-output G-buffer bake — a `uModel` unit-quad→slot vertex,
+and the four outs declared `layout(location=0..3)` directly, so the `finalColor`-patch hack is gone). Each is
+a class holding texture + uniform state with an `apply(program)` + `textures(empty)` pair the SquareCache /
+Viewport will drive. Copied the Pixi-free `material.ts`. Both typecheck; runtime-verified when wired in
+W4c/W4d. Deferred: `overlayShader` → W4f (with the other debug `/commands`), `noiseAtlas` → W4c (with the
+material-bake wiring; the bake reads a null noise atlas as flat until then).
