@@ -47,3 +47,23 @@ crossing a light's **radius** patches that light's run (add/remove). Plus a **sh
 (rectangle / Chebyshev distance where Euclidean isn't needed) tolerates a slightly-stale LUT — a prim that left
 range before its run was patched still culls in the shader. Full LUT rebuild only on bulk change (zone stream
 in); incremental patching later if needed.
+
+## F6 · Where the shadow base-spread depth (dA/dB) lives — 2026-07-21 (open, user; blocks P4)
+
+The `shadow-projection` fan uses a per-caster **base spread** `dA/dB` (the 5-triangle ±depth) derived from the
+sprite silhouette (its presence bake). The **cold-data layout has no field for it** — `prim_definition_data`
+carries geometry + frame, `cold_prim_data` carries position + rotation, neither has depth. For P4 (the shader
+building the fan from the textures) the depth must come from somewhere. Options:
+
+- **(a) Store `dA/dB` in `prim_definition_data`** — it's **per-def, generic** (all conifers share a base
+  spread), exactly like `prim_width/height`. Spend the spare `A` channel: e.g. `u10 dA | u10 dB | u12
+  reserved` (units). Compute from the presence bake (the existing `depthFor`) at atlas-add. Natural home;
+  a small layout addition to the currently-reserved `A`.
+- **(b) Derive in the shader from `prim_width/height`** — a heuristic (e.g. `dA=dB=prim_width·k`); no layout
+  change, but loses the silhouette-accurate spread the sandbox's auto-rule gives.
+- **(c) Drop the ±depth in the cold-data version** — render only the body triangle (T1); a narrower shadow, no
+  base spread. Simplest, a visible regression from `shadow-projection` P3.
+
+**Lean:** (a) — depth is generic per-sprite geometry, so it belongs beside `prim_width/height` in
+`prim_definition_data`'s spare `A` channel; the presence bake already computes it. Needs the user's nod (it
+extends the authoritative layout in `VARIABLES.md`).

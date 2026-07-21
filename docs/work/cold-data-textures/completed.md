@@ -33,3 +33,18 @@ conifer = 32 units (2 tiles), flora = 8 units (0.5 tiles), correct frames + page
 = sub-tile units). `rotation` from `flipX` (E=1/W=3) as a placeholder until the prim carries a real facing
 (F1/P5); `z=0`. **Verified (readback):** `encode(6432,3330)` round-trips to `[6432,3328]` (x exact, y
 unit-quantised to 4px); 658 casters, `z=0`, `rotation=1`.
+
+## P3 · cold_light_data + cold_light_prim_data (the LUT) — 2026-07-21
+
+`cold_light_data` (`RGBA32UI`, 1 px/light): encoded position, colour+intensity (u8), radius+z in **units** +
+`cast_shadows`, and the `(lut_index, lut_count)` run. `cold_light_prim_data` (the LUT, 4 entries/px): each
+`cast_shadows` light's in-range casters as a contiguous run of `(definition_index, prim_data_index)`,
+Chebyshev-culled (F5). `buildLights` builds both + populates the def/prim caches; run only on change (caster
+set / lights / a LOD landing), not per frame. **Fixed a rebuild-gate deadlock** — the build only re-ran when
+`defCount` changed, but that only changes inside the build; now a `resolver.onLoad` subscription re-dirties it
+when a LOD lands, so sprites resolving after the first build get their defs. **Verified (readback):** 6 lights
+ringed around (100,50), correct per-light colours, intensity 255, z=120 (480/4), radius=64 (256/4),
+`cast_shadows=1`, contiguous LUT runs `[0,25][25,22][47,17]` listing each light's in-range casters.
+
+_Data layer (P1–P3) complete + verified. P4 (the shader read) is blocked on [F6](forks.md#f6): the layout has
+no home for the fan's base-spread depth (`dA/dB`)._

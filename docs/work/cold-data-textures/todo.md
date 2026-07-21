@@ -5,15 +5,12 @@ _Items move to [`completed.md`](completed.md) when done + verified. Packed layou
 [`shadow-projection`](../shadow-projection/README.md) P0–P4 (the instanced fan) + delivers `caster-lut` C5's
 data layer. Verify each phase in-browser at `?focus=100,50`._
 
-**Done:** P0 — the four `RGBA32UI` layouts (`cold_light_data`, `cold_light_prim_data`, `prim_definition_data`,
-`cold_prim_data`) + `position_anchor_reference` are authored + byte-checked in
-[`VARIABLES.md`](../../VARIABLES.md); forks F1–F5 resolved ([`forks.md`](forks.md)).
+**Done:** P0 (the four `RGBA32UI` layouts + `position_anchor_reference`, byte-checked in
+[`VARIABLES.md`](../../VARIABLES.md); forks F1–F5 resolved) · P1 `prim_definition_data` + atlas write · P2
+`cold_prim_data` + the position codec (both in `ColdShadowData`, populated by the ShadowCaster tick; render
+still on the instance-attr path). Readback-verified. Remaining:
 
 ---
-
-**Done:** P0 (layouts) · P1 `prim_definition_data` + atlas write · P2 `cold_prim_data` + the position
-codec (both in `ColdShadowData`, populated by the ShadowCaster tick; render still on the instance-attr
-path). Readback-verified. Remaining:
 
 ## P3 · `cold_light_data` + `cold_light_prim_data` (the LUT) — 2026-07-21
 
