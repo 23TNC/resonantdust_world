@@ -125,3 +125,30 @@ commands (`/showRT`, `/overlayRT`, `/shadowcast`, `/es300`, `/mrttest`, `/inttes
 their W4f-pending status (they need the render-texture debug infra). **Verified in-browser: chat opens, typed
 `/grid 1` prints its response + toggles the grid, and `?focus=100,50` replays as "Camera focused on tile
 (100, 50)." — zero console errors.**
+
+## Reliable render — content-reload wiring (the intermittent blank world) — 2026-07-21
+
+The primary cause of the intermittent blank viewport was client-side, not the edge race first suspected (see
+[I-8](issues.md#i-8) mode B). Boot loads the build-time **embed** corpus; login fires `reloadContent` (an async
+fetch of the server's corpus). The W4d `WorldBridge` port had **dropped pixijs's `onContentReloaded →
+setContent` wiring**, so a bridge created at scene-enter before the fetch resolved stayed stuck on the embed —
+whose biome defs don't cover the server's zones, so `content.zoneTilePrims` returned empty and the delivered
+cold rows expanded to ~nothing (instrumented: **52 rows delivered → 3 prims** on a stuck load). And it never
+recovered. **Fix:** wire `onContentReloaded(() => { bridge.setContent(c); moverLayer.setContent(c); })` in
+`WorldScene` (unsub on exit); `setContent` re-reads stems + **re-expands every stored cold row** through the new
+corpus. **Verified in-browser: loads now render reliably — 2962 prims every time, the world fills the viewport.**
+This is failure mode **B**; the edge 5s cold-shard `await_ready` timeout (mode **A**, no deliveries at all)
+remains open as [W4g](todo.md#w4). Also un-bitrotted `client/npc` to compile against current core (the
+`zone_id → macro_position` coord-purge) — it was the core-driver for the login-flow experiment
+(`docs/logs/{webgl,pixijs,core}`).
+
+## Frame-cap remainder — maxFPS locks cleanly — 2026-07-21
+
+The `Ticker` frame-cap reset its accumulator to 0 after each dispatch instead of **carrying the sub-interval
+remainder** (despite the comment claiming it carried it). On a 120Hz monitor with `maxFPS=60`, `minInterval`
+is 16.667ms and two RAF frames (8.333ms) sum right onto that boundary — so pairs that jitter a hair under it
+lose their progress and wait a 3rd frame (a 40fps cycle), mixing with 60fps cycles into a reported ~52. Pixi
+stayed locked at 60 because it carries the remainder (`_lastFrame = now - delta % _minElapsedMS`). **Fix:**
+`this.acc %= this.minIntervalMs` (carry the remainder; `%=` also collapses a post-tab-stall backlog into one
+step rather than a catch-up burst). The renderer was never the bottleneck — webgl draws faster than pixijs;
+only the cap cadence was off. (Still reads ~56–57 on the box, not a clean 60 — a smaller residual to revisit.)
