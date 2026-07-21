@@ -15,6 +15,7 @@
 import { Renderer, Program, Geometry } from "../../gl";
 import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
+import type { TextureResolver } from "../../textures";
 import { SQUARE } from "./squareMath";
 
 /** 6 lights this iteration; casters capped so a dense zone can't blow the instance buffer. */
@@ -26,7 +27,7 @@ const LIGHT_RADIUS = 4 * SQUARE;
 const RING_RADIUS = 2 * SQUARE;
 /** Ground angle θ (E/W side-on) — the art-style oblique tilt (sandbox default 65°). Constant for now. */
 const THETA = (65 * Math.PI) / 180;
-/** Rough base-spread depth as a fraction of the billboard width, until the presence bake (P3) lands. */
+/** Fallback base-spread depth as a fraction of the billboard width, until the presence bake resolves. */
 const DEPTH_FRAC = 0.22;
 
 interface Light {
@@ -107,6 +108,9 @@ export class ShadowCaster {
   private aLight = new Float32Array(0);
   private aColor = new Float32Array(0);
   private enabled = true;
+  /** Silhouette-derived base depth `[dA, dB]` per sprite stem (the sandbox's auto rule), baked once from
+   *  the surface coverage on first sight + cached; stems still resolving fall back to {@link DEPTH_FRAC}. */
+  private readonly depthCache = new Map<string, [number, number]>();
 
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
@@ -149,8 +153,9 @@ export class ShadowCaster {
     return this.enabled;
   }
 
-  /** Draw the shadows over the world display. `standing` = the cold cache's standing prims (things). */
-  tick(camera: Camera, standing: Primitive[]): void {
+  /** Draw the shadows over the world display. `standing` = the cold cache's standing prims (things);
+   *  `resolver` supplies each caster's surface silhouette for the depth bake (P3). */
+  tick(camera: Camera, standing: Primitive[], resolver: TextureResolver | null): void {
     if (!this.enabled || this.lights.length === 0) return;
     const nLights = Math.min(this.lights.length, MAX_LIGHTS);
 
@@ -163,13 +168,16 @@ export class ShadowCaster {
     for (const p of standing) {
       const Ax = p.x + p.width * 0.5; // ground anchor (bottom-centre of the sprite box)
       const Ay = p.y + p.height;
-      const depth = p.width * DEPTH_FRAC;
+      // Base spread from the sprite silhouette (auto rule), or the rough fallback until it's baked.
+      const d = this.depthFor(p, resolver);
+      const dA = d ? d[0] : p.width * DEPTH_FRAC;
+      const dB = d ? d[1] : p.width * DEPTH_FRAC;
       for (let k = 0; k < nLights; k++) {
         if (n >= MAX_PAIRS) break;
         const L = this.lights[k];
         if (Math.hypot(Ax - L.x, Ay - L.y) > L.radius) continue; // out of this light's reach
         caster[n * 4] = Ax; caster[n * 4 + 1] = Ay; caster[n * 4 + 2] = p.width; caster[n * 4 + 3] = p.height;
-        param[n * 4] = THETA; param[n * 4 + 1] = depth; param[n * 4 + 2] = depth; param[n * 4 + 3] = 0;
+        param[n * 4] = THETA; param[n * 4 + 1] = dA; param[n * 4 + 2] = dB; param[n * 4 + 3] = 0;
         light[n * 3] = L.x; light[n * 3 + 1] = L.y; light[n * 3 + 2] = L.z;
         const c = LIGHT_COLORS[k];
         color[n * 3] = c[0]; color[n * 3 + 1] = c[1]; color[n * 3 + 2] = c[2];
@@ -194,6 +202,50 @@ export class ShadowCaster {
       blend: "normal",
       uniforms: (prog) => prog.uMat3("uProjection", proj),
     });
+  }
+
+  /** Silhouette base depth `[dA, dB]` for a caster, baked ONCE from its surface coverage + cached. Returns
+   *  null until the sprite's `surface` LOD has resolved (the caller falls back to the rough default). The
+   *  rule (E/W, `design/shadows.md` §Depth-from-presence): `depth = ½·(avg opaque HEIGHT of the half's
+   *  columns / TS)·H`, left half → `dA`, right half → `dB`. */
+  private depthFor(prim: Primitive, resolver: TextureResolver | null): [number, number] | null {
+    if (!prim.textureName || !resolver) return null;
+    const cached = this.depthCache.get(prim.textureName);
+    if (cached) return cached;
+    const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
+    if (surf.geo || !surf.frame) return null; // not loaded yet — rough fallback this frame
+
+    // Read back the surface frame's B channel (coverage) into a presence bitmap.
+    const gl = this.renderer.gl;
+    const f = surf.frame;
+    const w = f.w, h = f.h;
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, f.source.handle, 0);
+    const px = new Uint8Array(w * h * 4);
+    gl.readPixels(f.x, f.y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(fb);
+    const present = (x: number, y: number): boolean => px[(y * w + x) * 4 + 2] > 127; // B = coverage
+
+    // Avg opaque HEIGHT (top→bottom span) of columns [x0, x1).
+    const avgHeight = (x0: number, x1: number): number => {
+      let sum = 0, cols = 0;
+      for (let x = x0; x < x1; x++) {
+        let top = -1, bot = -1;
+        for (let y = 0; y < h; y++) if (present(x, y)) { top = y; break; }
+        for (let y = h - 1; y >= 0; y--) if (present(x, y)) { bot = y; break; }
+        if (top >= 0) { sum += bot - top + 1; cols++; }
+      }
+      return cols ? sum / cols : 0;
+    };
+    const mid = w >> 1;
+    const H = prim.height;
+    const dA = 0.5 * (avgHeight(0, mid) / h) * H;
+    const dB = 0.5 * (avgHeight(mid, w) / h) * H;
+    const out: [number, number] = [dA, dB];
+    this.depthCache.set(prim.textureName, out);
+    return out;
   }
 
   /** Grow the named instance buffer to at least `len` floats, returning a working array. */

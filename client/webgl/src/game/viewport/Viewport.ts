@@ -397,7 +397,7 @@ export class Viewport {
 
     // The first lights + billboard shadows, cast off the cold cache's standing prims, over the world.
     if (this.map.ready) {
-      this.shadows.tick(this.camera, this.map.standingPrims());
+      this.shadows.tick(this.camera, this.map.standingPrims(), this.resolver);
     }
 
     if (this.gridLevel > 0) {
