@@ -37,11 +37,7 @@ import {
   Texture,
   type Renderer,
 } from "pixi.js";
-import { makeMaterialBakeShader, type MaterialBakeShader } from "./materialBakeShader";
 import { makeMrtBakeShader, type MrtBakeShader } from "./mrtBakeShader";
-import { makeDepthBakeShader, type DepthBakeShader } from "./depthBakeShader";
-import { makeNormalBakeShader, type NormalBakeShader } from "./normalBakeShader";
-import { makeSurfaceBakeShader, type SurfaceBakeShader } from "./surfaceBakeShader";
 import type { PackedChannel } from "./material";
 import {
   mod,
@@ -91,24 +87,20 @@ export interface Primitive {
   zIndex: number;
 }
 
-/** What a channel's {@link ChannelSpec.resolve} returns: the texture to bake and the
- *  tint to bake it WITH (the channel picks the tier-appropriate colour). When `material`
- *  is set, the bake draws this prim through the {@link MaterialBakeShader} (the single
- *  real-tier albedo path) instead of a flat tinted sprite — see {@link MaterialResolve}. */
+/** What a channel's {@link ChannelSpec.resolve} returns. The merged {@link MrtBakeShader} gathers the
+ *  albedo material ({@link MaterialResolve}), the normal, and the depth from the per-channel resolves and
+ *  writes all four G-buffer channels in one pass; `tint` is the albedo output multiply (white real,
+ *  geoColor solid). Every prim resolves to a `material` (B2 — the flat/geo case is a solid material). */
 export interface ResolvedPrim {
   texture: Texture;
   tint: number;
   material?: MaterialResolve;
-  /** When set, the prim bakes through the {@link DepthBakeShader} instead of a tinted sprite:
-   *  `texture` is the SURFACE source (its B → presence) and this scalar (0..1) is the tile
-   *  depth written into B where present. Used by the `depth` channel. */
+  /** The prim's tile depth (0..1) written into the depth channel's B; absent → ground/geo (black). */
   depth?: number;
-  /** When set, the prim bakes through the {@link NormalBakeShader}: `rgb` is the normal LOD
-   *  (or null → flat-up) and `alpha` (`texture`) is the SURFACE source (its B = soft coverage)
-   *  the normal is premultiplied by. Used by the `normal` channel. */
+  /** The normal LOD (`rgb`, or null → flat-up) + the surface source (`alpha`), from the `normal` resolve. */
   normal?: { rgb: Texture | null; alpha: Texture };
-  /** When set, the prim bakes through the {@link SurfaceBakeShader}: `texture` is the SURFACE
-   *  source (RGB), presence-premultiplied so the composite carries A = presence. `surface` channel. */
+  /** Set by the `surface` resolve for a real thing (presence). The MRT bake derives presence from depth, so
+   *  this is currently informational. */
   surface?: boolean;
 }
 
@@ -234,10 +226,6 @@ export class SquareCache {
   private active = 0;
   private fixedCW = 0;
   private fixedCH = 0;
-  /** One-square scratch the bake renders into before blitting to each channel's slot. */
-  private scratchRT: RenderTexture | null = null;
-  private scratchTex: Texture | null = null;
-
   // ── mrt-bakes: one 4-attachment scratch the merged shader writes all channels into (B4) ──
   /** Slot-sized 4-attachment target — attachment k = channel `mrtOrder[k]`'s output. */
   private mrtScratch: RenderTarget | null = null;
@@ -291,26 +279,11 @@ export class SquareCache {
   private readonly empty = new Container();
   private readonly bakeContainer = new Container();
   private readonly blitSprite = new Sprite();
-  private readonly bakePool: Sprite[] = [];
-  /** Material-bake meshes, pooled parallel to {@link bakePool} — a prim resolving to a
-   *  {@link MaterialResolve} draws through one of these (its own shader = its own
-   *  per-prim uniforms) instead of a flat sprite. All share {@link materialQuad}. */
-  private readonly materialPool: Mesh[] = [];
-  /** Depth-bake meshes, pooled parallel to {@link bakePool} — a prim resolving with a `depth`
-   *  scalar draws through one of these (its own shader = its own tile-depth). Shares
-   *  {@link materialQuad}. */
-  private readonly depthPool: Mesh[] = [];
-  /** Normal-bake meshes, pooled parallel to {@link bakePool} — a prim resolving with a `normal`
-   *  binding draws through one of these (silhouette-masked normal). Shares {@link materialQuad}. */
-  private readonly normalPool: Mesh[] = [];
-  /** Surface-bake meshes, pooled parallel to {@link bakePool} — a prim resolving with `surface`
-   *  draws through one of these (presence-premultiplied surface). Shares {@link materialQuad}. */
-  private readonly surfacePool: Mesh[] = [];
-  /** The unit-quad geometry every material mesh shares (per-prim world rect comes from the
-   *  mesh transform; per-prim params from its shader). Lazily built (needs no renderer). */
+  /** The unit-quad geometry every {@link mrtNode} mesh shares (per-prim world rect from the mesh transform;
+   *  per-prim params from its shader). Lazily built (needs no renderer). */
   private materialQuad: MeshGeometry | null = null;
-  /** The tiling noise atlas bound to every material bake (rows = fields). `null` until the
-   *  viewport sets it — a null noise atlas disables the material path (flat, as before). */
+  /** The tiling noise atlas bound to the merged bake (rows = fields). `null` until the viewport sets it —
+   *  a null noise atlas disables the material variation (flat). */
   private noiseTex: Texture | null = null;
   /** Noise globals pushed to each material shader: `[rows, uvTile, worldTile]`. */
   private noiseGlobals: readonly [number, number, number] = [1, 1, 128];
@@ -462,12 +435,8 @@ export class SquareCache {
     this.cols = cols;
     this.rows = rows;
     this.slotPx = slotPx;
-    // Scratch is one slot; re-allocate when the slot size changes.
-    this.scratchRT?.destroy(true);
-    this.scratchTex?.destroy();
-    this.scratchRT = RenderTexture.create({ width: slotPx, height: slotPx, resolution: this.res });
-    this.scratchTex = new Texture({ source: this.scratchRT.source, dynamic: true });
-    // MRT scratch: one slot-sized target with 4 colour attachments (the merged bake writes all channels).
+    // MRT scratch is one slot; re-allocate when the slot size changes — a slot-sized target with 4 colour
+    // attachments (the merged bake writes all channels in one pass).
     this.mrtScratch?.destroy();
     this.mrtScratch = new RenderTarget({ width: slotPx, height: slotPx, colorTextures: 4, resolution: this.res });
     this.mrtScratchTex = this.mrtScratch.colorTextures.map((src) => new Texture({ source: src, dynamic: true }));
@@ -590,7 +559,7 @@ export class SquareCache {
    *  re-dirties every slot that now addresses a different world square than it was last
    *  baked for — derived from slot ownership, not the pan delta, so it self-heals. */
   recenter(anchorWorldX: number, anchorWorldY: number): void {
-    if (!this.scratchRT) return;
+    if (!this.mrtScratch) return;
     const newCol = Math.floor((anchorWorldX - this.viewW / 2) / SQUARE) - OVERSCAN;
     const newRow = Math.floor((anchorWorldY - this.viewH / 2) / SQUARE) - OVERSCAN;
     if (this.aimed && newCol === this.winCol && newRow === this.winRow) return;
@@ -727,7 +696,7 @@ export class SquareCache {
    *  re-derives them from ownership if the window re-addresses the slot). */
   bakeDirty(renderer: Renderer, budget: number): void {
     this.lastBaked = 0;
-    if (!this.scratchRT || this.dirty.size === 0) return;
+    if (!this.mrtScratch || this.dirty.size === 0) return;
     const order = [...this.dirty.entries()].sort((a, b) => a[1] - b[1]);
     let baked = 0;
     for (const [key] of order) {
@@ -814,33 +783,6 @@ export class SquareCache {
     }
   }
 
-  /** Mirror the west facing: shift the origin by the width so the flipped quad still
-   *  occupies `[x, x+width]` in world px (the caller has already made `scale.x` negative). */
-  private placeFlipped(node: Sprite | Mesh, prim: Primitive): void {
-    if (prim.flipX) {
-      node.scale.x = -Math.abs(node.scale.x);
-      node.position.set(prim.x + prim.width, prim.y);
-    } else {
-      node.position.set(prim.x, prim.y); // world px; the transform maps → slot-local
-    }
-  }
-
-  /** The flat-tint path: a pooled sprite showing this channel's resolved texture + tint.
-   *  `Sprite.width/height` sets scale relative to the texture size. */
-  private spriteNode(i: number, prim: Primitive, r: ResolvedPrim): Sprite {
-    let sprite = this.bakePool[i];
-    if (!sprite) {
-      sprite = new Sprite();
-      this.bakePool[i] = sprite;
-    }
-    sprite.texture = r.texture;
-    sprite.tint = r.tint;
-    sprite.width = prim.width;
-    sprite.height = prim.height;
-    this.placeFlipped(sprite, prim);
-    return sprite;
-  }
-
   /** The MERGED path (mrt-bakes): a pooled {@link MrtBakeShader} mesh whose one fragment writes all four
    *  channels. Gathers the albedo material (residual/layers/surface/tint), the normal resolve (real map or
    *  flat-up), and the depth resolve (tile depth), from one prim draw. Shares the unit quad + placement. */
@@ -876,108 +818,15 @@ export class SquareCache {
     return mesh;
   }
 
-  /** The material path: a pooled mesh whose {@link MaterialBakeShader} reconstructs the
-   *  albedo with per-material hue/chroma variation. Its `width`/`height` set the unit-quad
-   *  scale; the shader reads the prim's world rect for world-space noise. */
-  private materialNode(i: number, prim: Primitive, r: ResolvedPrim, mat: MaterialResolve): Mesh {
-    if (!this.materialQuad) {
-      this.materialQuad = new MeshGeometry({
-        positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
-      });
+  /** Mirror the west facing: shift the origin by the width so the flipped quad still
+   *  occupies `[x, x+width]` in world px (the caller has already made `scale.x` negative). */
+  private placeFlipped(node: Sprite | Mesh, prim: Primitive): void {
+    if (prim.flipX) {
+      node.scale.x = -Math.abs(node.scale.x);
+      node.position.set(prim.x + prim.width, prim.y);
+    } else {
+      node.position.set(prim.x, prim.y); // world px; the transform maps → slot-local
     }
-    let mesh = this.materialPool[i];
-    if (!mesh) {
-      mesh = new Mesh({ geometry: this.materialQuad, shader: makeMaterialBakeShader() });
-      this.materialPool[i] = mesh;
-    }
-    const shader = mesh.shader as MaterialBakeShader;
-    shader.tint = r.tint; // OUTPUT tint — white for a real material (no-op), geoColor for a SOLID material
-    shader.residual = mat.residual; // the `albedo` map — the reconstruction base (RGB)
-    shader.layers = mat.layers; // weight map, or null → residual only
-    shader.surface = mat.surface; // its B channel supplies the visual alpha
-    shader.noise = this.noiseTex ?? Texture.EMPTY; // noise optional (identity 0.5 when absent)
-    shader.setChannels(mat.chA, mat.chB);
-    const [rows, uvTile, worldTile] = this.noiseGlobals;
-    shader.setNoiseGlobals(rows, uvTile, worldTile);
-    shader.setWorldRect(prim.x, prim.y, prim.width, prim.height);
-    shader.setSeed(prim.seed ?? 0);
-    // Unit-quad mesh: scale IS the world-px size (no texture-size division). Flip in place.
-    mesh.scale.set(prim.width, prim.height);
-    this.placeFlipped(mesh, prim);
-    return mesh;
-  }
-
-  /** The depth path: a pooled mesh whose {@link DepthBakeShader} writes this prim's constant
-   *  tile depth into B where the sprite is ≥95% opaque. Shares the unit quad + placement with
-   *  {@link materialNode}. */
-  private depthNode(i: number, prim: Primitive, r: ResolvedPrim, depth: number): Mesh {
-    if (!this.materialQuad) {
-      this.materialQuad = new MeshGeometry({
-        positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
-      });
-    }
-    let mesh = this.depthPool[i];
-    if (!mesh) {
-      mesh = new Mesh({ geometry: this.materialQuad, shader: makeDepthBakeShader() });
-      this.depthPool[i] = mesh;
-    }
-    const shader = mesh.shader as DepthBakeShader;
-    shader.texture = r.texture;
-    shader.tileDepth = depth;
-    mesh.scale.set(prim.width, prim.height);
-    this.placeFlipped(mesh, prim);
-    return mesh;
-  }
-
-  /** The normal path: a pooled mesh whose {@link NormalBakeShader} writes the prim's normal
-   *  (real LOD, or flat-up) masked by the silhouette alpha, so its flat background never
-   *  clobbers a thing behind. Shares the unit quad + placement with {@link materialNode}. */
-  private normalNode(i: number, prim: Primitive, r: ResolvedPrim, nrm: { rgb: Texture | null; alpha: Texture }): Mesh {
-    if (!this.materialQuad) {
-      this.materialQuad = new MeshGeometry({
-        positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
-      });
-    }
-    let mesh = this.normalPool[i];
-    if (!mesh) {
-      mesh = new Mesh({ geometry: this.materialQuad, shader: makeNormalBakeShader() });
-      this.normalPool[i] = mesh;
-    }
-    const shader = mesh.shader as NormalBakeShader;
-    shader.alpha = nrm.alpha; // surface coverage source (also the mesh's main texture)
-    shader.normalTex = nrm.rgb;
-    mesh.scale.set(prim.width, prim.height);
-    this.placeFlipped(mesh, prim);
-    return mesh;
-  }
-
-  /** The surface path: a pooled mesh whose {@link SurfaceBakeShader} presence-premultiplies the
-   *  surface source (RGB) so the composite carries A = presence. Shares the unit quad +
-   *  placement with {@link materialNode}. */
-  private surfaceNode(i: number, prim: Primitive, r: ResolvedPrim): Mesh {
-    if (!this.materialQuad) {
-      this.materialQuad = new MeshGeometry({
-        positions: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
-      });
-    }
-    let mesh = this.surfacePool[i];
-    if (!mesh) {
-      mesh = new Mesh({ geometry: this.materialQuad, shader: makeSurfaceBakeShader() });
-      this.surfacePool[i] = mesh;
-    }
-    const shader = mesh.shader as SurfaceBakeShader;
-    shader.texture = r.texture; // the surface source (RGB)
-    mesh.scale.set(prim.width, prim.height);
-    this.placeFlipped(mesh, prim);
-    return mesh;
   }
 
   /** Copy the full `slotPx` scratch into `target` at `(dx,dy)`, verbatim (blendMode
@@ -1056,28 +905,12 @@ export class SquareCache {
   destroy(): void {
     this.prev = null; // channel buffers are freed below, not here
     for (const ch of this.channels) ch.destroy();
-    this.scratchRT?.destroy(true);
-    this.scratchTex?.destroy();
     this.mrtScratch?.destroy();
     for (const t of this.mrtScratchTex) t.destroy();
     this.mrtScratchTex.length = 0;
     for (const mesh of this.mrtPool) (mesh.shader as MrtBakeShader).destroy();
     for (const mesh of this.mrtPool) mesh.destroy();
     this.mrtPool.length = 0;
-    for (const s of this.bakePool) s.destroy();
-    this.bakePool.length = 0;
-    for (const mesh of this.materialPool) (mesh.shader as MaterialBakeShader).destroy();
-    for (const mesh of this.materialPool) mesh.destroy();
-    this.materialPool.length = 0;
-    for (const mesh of this.depthPool) (mesh.shader as DepthBakeShader).destroy();
-    for (const mesh of this.depthPool) mesh.destroy();
-    this.depthPool.length = 0;
-    for (const mesh of this.normalPool) (mesh.shader as NormalBakeShader).destroy();
-    for (const mesh of this.normalPool) mesh.destroy();
-    this.normalPool.length = 0;
-    for (const mesh of this.surfacePool) (mesh.shader as SurfaceBakeShader).destroy();
-    for (const mesh of this.surfacePool) mesh.destroy();
-    this.surfacePool.length = 0;
     this.materialQuad?.destroy();
     this.blitSprite.destroy();
     this.bakeContainer.destroy();

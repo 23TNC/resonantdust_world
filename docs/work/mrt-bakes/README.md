@@ -40,7 +40,7 @@ four attachments, so the four channel buffers stay in lockstep — which they al
 ## The real work — one universal material, one fragment
 
 The cost isn't the plumbing, it's consolidating the four per-prim materials
-([material](../../../client/pixijs/src/game/viewport/materialBakeShader.ts)/surface/normal/depth) into one
+(material/surface/normal/depth — now the single [mrtBakeShader](../../../client/pixijs/src/game/viewport/mrtBakeShader.ts)) into one
 fragment that computes all four outputs from one prim draw. The approach ([F2](forks.md#f2)):
 
 - **No tier branch — a "solid material".** Rather than the MRT shader choosing between a material path and a

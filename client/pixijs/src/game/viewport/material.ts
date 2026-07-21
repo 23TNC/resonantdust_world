@@ -4,7 +4,7 @@
 //! variation to a flat albedo — never lightness, so it reads as pigment, not light. See
 //! `docs/lighting.md` and `content/material/materials.rd`.
 //!
-//! Reconstruction (in `materialBakeShader.ts`), per fragment, holding L fixed in OKLab:
+//! Reconstruction (in `mrtBakeShader.ts`), per fragment, holding L fixed in OKLab:
 //!   out.rgb = albedo.rgb + Σ packedᵢ · (jitter(tintᵢ, noise, paramsᵢ) − tintᵢ)
 //!   out.a   = albedo.a
 //! The DELTA form is identity-safe: an unbound channel (`tint = 0`) or a zero-swing

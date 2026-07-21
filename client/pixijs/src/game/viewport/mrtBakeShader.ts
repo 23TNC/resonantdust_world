@@ -11,7 +11,10 @@
 import { localUniformBitGl, roundPixelsBitGl, GlProgram, Shader, Texture, UniformGroup } from "pixi.js";
 import { compileHighShaderGlProgramES300 } from "./es3HighShader";
 import { OKLAB_GLSL } from "../lighting/oklab";
-import { PACKED_CHANNELS } from "./materialBakeShader";
+
+/** Material weight channels the reconstruction sums — the width of the `uCh*` arrays + the RGB channels of
+ *  the `layers` map. (The 4th/alpha channel was dropped: data in alpha fights the premultiply/downscale.) */
+export const PACKED_CHANNELS = 3;
 
 /** A texture's atlas-page uv rect `[offU, offV, scaleU, scaleV]` (identity for a whole-page texture). */
 function uvRect(t: Texture): Float32Array {
