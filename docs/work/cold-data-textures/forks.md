@@ -11,9 +11,11 @@ _Decision points + options + which we chose + why. All resolved 2026-07-21 in th
 existing `position_reference` shape (§Where it is / [`VARIABLES.md`](../../VARIABLES.md)) with `anchor`
 replacing the low `layer` byte. Min unit `SQUARE/16` (tile/16); `anchor=(8,8)` centres a prim. Kills the world
 cap entirely (no `u16`-px ceiling) and matches the existing addressing + `shared/codec/object` helpers. Units:
-`radius` = **tiles** (`u8` = 255), `z` = **`SQUARE/16`** — `u8` in both `cold_light_data` and `cold_prim_data`
-(0..1020px, covers `Lz`=480; `z` sits on the top byte, byte-aligned) — proposed in `VARIABLES.md`, tune if the
-projection wants finer.
+**one unit for everything world-space** — `1 unit = SQUARE/16 = 4px`, a **compile-time constant** (`TILE = 16
+units`, derivable; no per-frame scale uniform). `anchor` (u4) = 0..15 units = one tile; `z`/`radius` (u8) =
+0..255 units ≈ 16 tiles; `prim_width/height` (u10) ≈ 64 tiles. The shader works in units, converting to px
+(×4) only at the clip transform. The **only** non-unit fields are the atlas `frame_*` (texture px, they index
+the atlas). `radius` caps at ~16 tiles — enough for shadow reach; revisit if larger lights are wanted.
 
 ## F2 · The atlas frame page identifier — 2026-07-21 (resolved)
 

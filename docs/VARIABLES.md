@@ -277,8 +277,13 @@ frame for free. Four normalized textures with a light → LUT → definition / i
 position lives in **one** place (`cold_prim_data`): moving it updates one texel, not every light that
 references it. Work stream: [`work/cold-data-textures`](work/cold-data-textures/README.md).
 
+**Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `radius`, `prim_width/height`) is in
+**units**, a compile-time constant `1 unit = SQUARE/16 = 4px` (`TILE = 16 units`, derivable — not stored). The
+shader works in units; no per-frame scale uniform. The **only** exception is the atlas `frame_*` fields, which
+are **texture pixels** (they index the atlas image, a different space), not units.
+
 **Shared position — full spatial address + sub-tile anchor** (extends `position_reference`: the low byte is a
-sub-tile `anchor` instead of a `layer`, giving `SQUARE/16` resolution; `anchor = (8,8)` centres a prim):
+sub-tile `anchor` instead of a `layer`, giving `SQUARE/16` = 1-unit resolution; `anchor = (8,8)` centres a prim):
 
 ```
 u32 position_anchor_reference       region | zone | tile | anchor  (min unit = SQUARE/16 px)
@@ -293,7 +298,7 @@ u32 position_anchor_reference       region | zone | tile | anchor  (min unit = S
 ```
 R  u32 position_anchor_reference
 G  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
-B  u32 reach         u8 radius (24–31, tiles) | u8 z (16–23, SQUARE/16 units) | u16 reserved (0–15)
+B  u32 reach         u8 radius (24–31, units; ~16-tile max) | u8 z (16–23, units) | u16 reserved (0–15)
 A  u32 lut           u16 lut_index (16–31) | u16 lut_count (0–15)   range into cold_light_prim_data
 ```
 
@@ -311,8 +316,8 @@ that sprite, ~16 px for a conifer's variants). Written on **atlas add**, evicted
 doesn't yet):
 
 ```
-R  u32   u10 prim_width (22–31) | u10 prim_height (12–21) | u10 frame_x (2–11) | u2 reserved (0–1)
-G  u32   u10 frame_width (22–31) | u10 frame_height (12–21) | u10 frame_y (2–11) | u2 reserved (0–1)
+R  u32   u10 prim_width (22–31, units) | u10 prim_height (12–21, units) | u10 frame_x (2–11, atlas px) | u2 reserved (0–1)
+G  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas px) | u10 frame_y (2–11, atlas px) | u2 reserved (0–1)
 B  u32   u10 frame_page (22–31) | u22 reserved (0–21)
 A  u32   reserved   (materials etc. — later)
 ```
@@ -323,15 +328,17 @@ a prim's position lives (move → one texel update):
 ```
 entry (2 per RGBA32UI px = 64 bits each)
   u32 position_anchor_reference
-  u32 orient        u8 z (24–31, SQUARE/16 units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u22 reserved (0–21)
+  u32 orient        u8 z (24–31, units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u22 reserved (0–21)
 ```
 
 **Notes.** (1) `rotation` (n/e/s/w) picks the shadow regime (E/W vs N/S). (2) A light draws its run per-light
 (`instanceCount = lut_count`, the light index is the draw), so the light↔caster association is inherent — no
 light id in the LUT. (3) The shader does a **radius safety check** on the light↔prim positions (rectangle /
 Chebyshev distance where Euclidean isn't needed) so a slightly-stale LUT (a prim that moved out of range before
-its light's run was patched) still culls correctly. (4) Units `radius`=tiles, `z`=`SQUARE/16` are proposed —
-adjust here if the projection wants finer. Decode to px via the `*_DIM` world constants (§Where it is).
+its light's run was patched) still culls correctly. (4) All world fields are in **units** (`1 unit = SQUARE/16
+= 4px`, compile-time); decode `region|zone|tile|anchor` → units via the `*_DIM` world constants (§Where it is),
+then units → px (×4) only at the clip transform. `radius` caps at ~16 tiles (`u8` units) — enough for shadow
+reach; revisit if larger.
 
 ## Removed
 
