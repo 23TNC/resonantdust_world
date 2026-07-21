@@ -22,3 +22,24 @@ current cold things are single-facing → E/W), a **constant θ** (65°), a **ro
 (`W·0.22`), and **solid semi-transparent** triangles. The remaining phases refine it: P3 depth-from-presence,
 P4 the alpha-mask fragment (silhouette-shaped), P5 the N/S facing regime, plus a blending pass (per-light
 combine / the bitfield the `shadows` stream consumes).
+
+## P3 · Base depth from the sprite silhouette — 2026-07-21
+
+Replaced the rough width-fraction base spread with the sandbox's auto rule. The `ShadowCaster` takes the
+resolver, resolves each caster's `surface` frame, reads it back once (FBO + `readPixels` of the atlas region),
+thresholds `B > 0.5` into a presence bitmap, and computes `depth = ½·(avg opaque HEIGHT of the half's columns
+/ TS)·H` (left→`dA`, right→`dB`), **cached per stem** (not per frame). Falls back to the rough default until a
+stem's surface LOD resolves. Verified: shadows render with silhouette-derived base spread, zero console errors.
+
+## P4 · Alpha-masked silhouette shadows — 2026-07-21
+
+The fragment samples each caster's `surface.B` coverage through per-role sprite UVs (E/W bottom-edge:
+`TL(0,0) TR(1,0) BL±/BR±(0/1,1) BC(.5,1)`) and **discards outside the silhouette** — a shadow reads as the
+caster's SHAPE (a projected conifer), not a solid polygon. The vertex assigns the UV per role + passes the
+surface atlas sub-frame (`aFrame`, flat); the caster feeds its `uvRect` per instance + binds the shared
+surface page (all 64px surfaces share one page; `zw=0` → solid until resolved). **Verified in-browser at
+`?focus=100,50`:** shadows render as coloured **conifer silhouettes** projected away from the lights over the
+textured forest, world-stuck, zero console errors — the sandbox's projected-silhouette model, fully on the GPU.
+
+_Stream core delivered: the 5-triangle projected-silhouette fan, GPU-instanced, silhouette-masked, matching
+the sandbox. Remaining are non-core refinements (P5 below)._
