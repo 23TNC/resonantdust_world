@@ -30,23 +30,30 @@ The two-regime setup (P5) needs each caster's facing (0=S,1=E,2=N,3=W). A `Primi
 **Lean:** (a). The sandbox itself has a solid-tri mode (its default) precisely because the shape is the thing to
 get right first.
 
-## F3 · Geometry batching + how the fan feeds the shadow field — 2026-07-21 (open)
+## F3 · The GPU data channel (fan built on-GPU) — 2026-07-21 (decided: GPU-instanced; sub-choice open)
 
-Each (light, caster) is 5 triangles. With N casters × up-to-6 lights that's a lot of small draws. Options:
+**Decided (per the user): the fan is built on the GPU, not the CPU** — one instanced draw
+(`drawArraysInstanced(TRIANGLES, 0, 15, N)`), the vertex shader building + projecting the 15 fan vertices from
+per-instance caster/light data. No per-frame CPU vertex buffer. This delivers `caster-lut` C5 /
+[webgl-engine W7](../webgl-engine/todo.md). The CPU keeps only the cheap **pair list** (light→caster in-range
+cull — the LUT) + the one-time presence bake. Rejected: CPU-building the fan geometry each frame (the sandbox's
+JS approach), and per-caster draws.
 
-- **(a) One instanced draw** over all (light, caster) fans — an instance buffer of the 15 projected vertices
-  (or the corners + a vertex-shader that builds the fan), one draw per frame. Best throughput; more setup.
-- **(b) A batched dynamic vertex buffer** — CPU-build all fans into one buffer, one draw. Simpler than
-  instancing, still one draw; rebuilt per frame (the cast is per-frame anyway, like today).
-- **(c) Per-caster draws** — simplest, slowest; fine for the first port with few casters in a light's reach.
+**Sub-choice still open — how the per-instance data reaches the vertex shader:**
 
-Relatedly, **where the fan lands**: this stream draws into the SAME screen-space field the current cast writes
-(per-light colour, default-on overlay). Folding it into the persistent world-cold **bitfield** + round-robin is
-the [`shadows`](../shadows/README.md) stream — the fan is its `shadow-hot` generator, so keep the raster target
-swappable.
+- **(a) Instance vertex attributes** (`vertexAttribDivisor`) — pack caster+light per (light,caster) into an
+  interleaved instance buffer, rebuilt per frame (cheap — scalars, no geometry). Simplest to stand up; the
+  buffer is small (N pairs × a few floats).
+- **(b) A `caster-lut` data texture** (`RGBA32F`, VTF/`texelFetch`) — casters + lights in textures, the
+  instance reads by index; the pair list is a LUT texture. Matches `caster-lut`'s exact shape (`1024×12`),
+  scales past attribute limits, and is the design's end state. More setup.
 
-**Lean:** (b) to land the port (one dynamic buffer, CPU-built like the sandbox), revisit (a) if the per-frame
-rebuild costs; the analytic per-pixel loop it replaces was the real cost, so even (c) likely wins.
+**Lean:** (a) to land the GPU cast quickly (attributes are enough for ~hundreds of pairs), then graft (b) as
+the `caster-lut` LUT when the count/reuse warrants — the vertex-shader projection math is identical either way.
+
+**Raster target (both):** the fan draws into the SAME screen-space field the current cast writes (per-light
+colour, default-on overlay). Folding it into the persistent world-cold **bitfield** + round-robin is the
+[`shadows`](../shadows/README.md) stream — keep the raster target swappable so the fan feeds it later.
 
 ## F4 · Where `θ` (ground angle) + the depth bake live — 2026-07-21 (open)
 

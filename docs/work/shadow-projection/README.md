@@ -42,25 +42,36 @@ radially from the point light onto the ground:
    scaled ×`H`), from a per-facing presence map (the silhouette). W4h now gives us that silhouette
    (`surface.B` coverage), so this is unblocked. DSL-overridable when art needs it.
 
-## The strategy shift
+## The strategy shift — same geometry, built on the GPU
 
-**Analytic per-pixel → geometry.** Today the cast is a fullscreen fragment that loops casters and tests
-point-in-trapezoid. The model is **rasterized triangle geometry**: build the 5-tri fan per (light, caster) and
-draw it (into the screen-space shadow field). That's cheaper (only shadowed pixels are touched, by
-rasterization), gives the shaped/alpha-masked shadow, and is the design's intended path — the triangles are
-exactly the **`shadow-hot` generator** the [`shadows`](../shadows/README.md) stream's screen-hot→world-cold
-bitfield consumes. This stream produces the triangles; folding them into the persistent bitfield + round-robin
-stays in that stream ([webgl-engine W4f remainder](../webgl-engine/todo.md)).
+**Analytic per-pixel → GPU-built geometry.** Today the cast is a fullscreen fragment that loops casters and
+tests point-in-trapezoid. The target is the 5-tri fan — but built **on the GPU, not the CPU**. The sandbox
+(and the earlier draft of this plan) build the fan on the CPU: JS computes the projected corners + depth and
+uploads a vertex buffer. Instead, we upload only the **raw caster + light data** and let an **instanced vertex
+shader** do the work — one instance per (light, caster) pair, `drawArraysInstanced(TRIANGLES, 0, 15, N)`; the
+vertex shader reads the instance's caster (`x,y,W,H,θ,facing,dA,dB` + atlas frame) and light (`Lx,Ly,Lz`, bit),
+runs `cornersWith` + `proj` (§Projection above) to place each of the 15 fan vertices, and the fragment samples
+the sprite alpha as the mask. **No per-frame CPU geometry rebuild.**
+
+This is the design's intended path AND the migration's payoff — it **delivers `caster-lut` C5 / [webgl-engine
+W7](../webgl-engine/todo.md)** (the instanced VTF cast) on the owned engine, where Pixi's walls blocked it. The
+CPU keeps only the **cheap parts**: the light→caster in-range **pairing** (the `caster-lut` LUT — index work,
+not geometry) and the **once-per-sprite presence bake** for `dA/dB` (not per frame). Everything per-frame and
+per-vertex is GPU. The fan is exactly the **`shadow-hot` generator** the [`shadows`](../shadows/README.md)
+stream's screen-hot→world-cold bitfield consumes; folding it into the persistent bitfield + round-robin stays
+in that stream ([webgl-engine W4f remainder](../webgl-engine/todo.md)).
 
 ## Scope
 
-In: the projection primitives, the 5-tri fan, depth-from-presence, the two-regime facing, alpha-masked
-triangles, rasterizing them into the shadow field (replacing the analytic loop). Out: the world-cold bitfield
-persistence + round-robin (the `shadows` stream), real per-light lighting (the shadow is still a debug overlay,
-default-on per [D-2](../webgl-engine/deviations.md#d-2)), DSL depth/θ authoring (auto from presence first).
+In: the GLSL projection primitives (vertex-shader `cornersWith`/`proj`), the **GPU-instanced** 5-tri fan, the
+caster+light data channel (instance attrs / data texture), depth-from-presence (a one-time CPU bake feeding GPU
+data), the two-regime facing, alpha-masked triangles — the instanced draw replacing the analytic loop. Out: the
+world-cold bitfield persistence + round-robin (the `shadows` stream), real per-light lighting (the shadow stays
+a default-on debug overlay per [D-2](../webgl-engine/deviations.md#d-2)), DSL depth/θ authoring (auto first).
 
 ## Open decisions
 
 See [`forks.md`](forks.md): **F1** caster facing source (prims carry `flipX`/`cell`, not rotation); **F2**
-solid tris first vs alpha-masked from the start; **F3** geometry batching + how it feeds the shadow field;
-**F4** where `θ` + the depth bake live (art-style constant / per-def / DSL).
+solid tris first vs alpha-masked from the start; **F3** the GPU **data channel** — per-instance vertex attrs
+vs a `caster-lut` data texture (VTF/`texelFetch`) — and where the fan rasterizes (swappable target for the
+`shadows` bitfield); **F4** where `θ` + the depth bake live (art-style constant / per-def / DSL).
