@@ -43,13 +43,5 @@ earlier rect-accumulation phases (F3 dropped)._
   light reaching that tile. CPU-maintained: on a light add/move/radius change, set/clear its bit over
   the disk of tiles within its radius; upload the changed region. **Not** touched by caster moves.
 
-## P1 · Consolidate cold data to the fixed layout + `shadow-cold` buffer — 2026-07-21
-
-- Reshape the cold textures to **F6** (authoritative layout now in
-  [`docs/VARIABLES.md`](../../VARIABLES.md) §Cold shadow data textures): `light_data` **128×33** (row 0
-  = light record; rows 1–32 = 256× `u16` prim indexes — LUT folded in, `lut_index` implicit = column,
-  **sentinel `0`**-terminated, no count); `prim_data` **256×128** (2/px, prim carries `u16 def_index`
-  + `u8 z | u2 rot | u6 rsvd`; index 0 reserved); `prim_definition_data` **256×256**. **Delete**
-  `cold_light_prim_data`.
-- Allocate **`shadow-cold`** = a world-space toroidal `RGBA32UI` bitfield sized/windowed like a
-  `SquareCache` channel (same `cols×rows`, `slotPx`, `mod`-wrap, wrap-apron) — integer, not baked.
+_P1 (cold-texture reshape) done → [`completed.md`](completed.md). The `shadow-cold` RT allocation
+moved into P4 (built with the gather that writes it)._

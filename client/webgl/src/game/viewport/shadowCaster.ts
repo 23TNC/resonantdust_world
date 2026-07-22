@@ -35,15 +35,11 @@ interface Light {
 
 const CAST_VERT = /* glsl */ `#version 300 es
 in float aVid;                 // 0..14 — which of the 5 triangles' 15 vertices
-uniform highp usampler2D uLightData;  // cold_light_data (1/px)
-uniform highp usampler2D uLut;        // cold_light_prim_data (4/px)
+uniform highp usampler2D uLightData;  // light_data (128×33: row 0 record, rows 1–32 LUT)
 uniform highp usampler2D uPrimDef;    // prim_definition_data (1/px)
-uniform highp usampler2D uPrimData;   // cold_prim_data (2/px)
-uniform int  uLightIndex;      // which light (per-light draw)
-uniform int  uLutBase;         // this light's lut_index
-uniform int  uLightW;          // texture widths for index→texel
-uniform int  uLutW;
-uniform int  uDefW;
+uniform highp usampler2D uPrimData;   // prim_data (2/px)
+uniform int  uLightIndex;      // which light (per-light draw) = the column
+uniform int  uDefW;            // texture widths for index→texel
 uniform int  uPrimW;
 uniform mat3 uProjection;      // world px -> clip
 out vec3 vColor;
@@ -56,7 +52,7 @@ const float UNIT = 4.0;        // SQUARE/16 (compile-time); world fields are in 
 const uint  ZD = 16u, RD = 16u; // ZONE_DIM, REGION_DIM
 const float ATLAS = 1024.0;    // atlas page size (F2: single page)
 
-uvec4 fetch(highp usampler2D t, int i, int w) { return texelFetch(t, ivec2(i % w, i / w), 0); }
+uvec4 fetchLin(highp usampler2D t, int i, int w) { return texelFetch(t, ivec2(i % w, i / w), 0); }
 // position_anchor_reference (region|zone|tile|anchor) → world UNITS
 vec2 decodePos(uint p) {
   uint region = (p >> 24) & 255u, zone = (p >> 16) & 255u, tile = (p >> 8) & 255u, anchor = p & 255u;
@@ -72,33 +68,31 @@ vec2 projGround(vec3 p, vec3 L) {
 
 void main() {
   int role = ROLE[int(aVid + 0.5)];
+  int k = uLightIndex;
 
-  // Light (this draw's light).
-  uvec4 Ld = fetch(uLightData, uLightIndex, uLightW);
+  // Light record at column k, row 0.
+  uvec4 Ld = texelFetch(uLightData, ivec2(k, 0), 0);
   vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));         // pos (units) + z (units)
-  float Lradius = float((Ld.z >> 12) & 4095u);
   vec3 col = vec3(float((Ld.y >> 24) & 255u), float((Ld.y >> 16) & 255u), float((Ld.y >> 8) & 255u)) / 255.0;
 
-  // LUT entry → (definition_index, prim_data_index).
-  int e = uLutBase + gl_InstanceID;
-  uint entry = fetch(uLut, e / 4, uLutW)[e & 3];
-  int defIdx = int((entry >> 16) & 0xffffu), primIdx = int(entry & 0xffffu);
+  // Caster j = gl_InstanceID → its u16 prim index from the LUT (rows 1–32, 8× u16/px, sentinel-0).
+  int j = gl_InstanceID;
+  uvec4 lrow = texelFetch(uLightData, ivec2(k, 1 + (j >> 3)), 0);
+  uint packed = lrow[(j >> 1) & 3];
+  int primIdx = int((j & 1) == 0 ? (packed >> 16) : (packed & 0xffffu));
+
+  // Placed instance: position + def_index (rotation reserved for P5).
+  uvec4 Pd = fetchLin(uPrimData, primIdx / 2, uPrimW);
+  uint pos = (primIdx & 1) == 0 ? Pd.x : Pd.z;
+  uint orient = (primIdx & 1) == 0 ? Pd.y : Pd.w;
+  vec2 A = decodePos(pos);
+  int defIdx = int((orient >> 6) & 0xffffu);
 
   // Generic def: geometry (units) + atlas frame (px) + base spread.
-  uvec4 D = fetch(uPrimDef, defIdx, uDefW);
+  uvec4 D = fetchLin(uPrimDef, defIdx, uDefW);
   float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u);
   float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
   float dA = float((D.z >> 14) & 255u), dB = float((D.z >> 6) & 255u);
-
-  // Placed instance: position (rotation reserved for P5).
-  uvec4 Pd = fetch(uPrimData, primIdx / 2, uPrimW);
-  vec2 A = decodePos((primIdx & 1) == 0 ? Pd.x : Pd.z);
-
-  // Radius safety check (Chebyshev, units) for a STALE LUT entry (F5) — disabled: the LUT is fully rebuilt
-  // on change (always fresh + already CPU-culled), so no entry is out of range yet. Re-enable (with a fix —
-  // it currently over-culls) once incremental LUT patching can leave stale entries.
-  // if (abs(A.x - L.x) > Lradius || abs(A.y - L.y) > Lradius) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
-  Lradius; // silence unused (kept for the re-enable)
 
   // E/W fan in UNITS (θ constant); ×UNIT to px only at the clip transform.
   float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
@@ -221,21 +215,20 @@ export class ShadowCaster {
     const w = camera.width, h = camera.height, z = camera.zoom, ax = camera.anchorX, ay = camera.anchorY;
     // world px → clip (pan + zoom + screen→clip; screen y-down → clip y-up), column-major mat3.
     const proj = new Float32Array([(2 * z) / w, 0, 0, 0, -(2 * z) / h, 0, (-ax * 2 * z) / w, (ay * 2 * z) / h, 1]);
-    const [lightW, lutW, defW, primW] = this.coldData.widths;
+    const [, defW, primW] = this.coldData.widths;
     const surface = this.coldData.surfacePage ?? this.empty;
-    // One instanced draw per light: 15 fan vertices × lut_count casters, the vertex shader texelFetch-ing the
-    // light + LUT + def + instance by index. The light↔caster association is inherent in the per-light run.
+    // One instanced draw per light: 15 fan vertices × its caster count, the vertex shader texelFetch-ing the
+    // light record + LUT run (in light_data rows) + prim + def by index. Association is inherent (per-column).
     for (let k = 0; k < this.coldData.lights; k++) {
-      const { lutIndex, lutCount } = this.coldData.lightRange(k);
-      if (lutCount === 0) continue; // non-casting light / no in-range casters
-      this.geo.instanceCount = lutCount;
+      const count = this.coldData.casterCount(k);
+      if (count === 0) continue; // non-casting light / no in-range casters
+      this.geo.instanceCount = count;
       this.renderer.draw({
         program: this.program,
         geometry: this.geo,
         blend: "normal",
         textures: {
           uLightData: this.coldData.lightTexture,
-          uLut: this.coldData.lutTexture,
           uPrimDef: this.coldData.definitionTexture,
           uPrimData: this.coldData.primTexture,
           uSurface: surface,
@@ -243,9 +236,6 @@ export class ShadowCaster {
         uniforms: (p) => {
           p.uMat3("uProjection", proj);
           p.uInt("uLightIndex", k);
-          p.uInt("uLutBase", lutIndex);
-          p.uInt("uLightW", lightW);
-          p.uInt("uLutW", lutW);
           p.uInt("uDefW", defW);
           p.uInt("uPrimW", primW);
         },

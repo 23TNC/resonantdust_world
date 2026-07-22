@@ -1,15 +1,17 @@
-//! ColdShadowData — the GPU data textures the shadow cast reads via `texelFetch` instead of per-frame
-//! instance attributes (the `cold-data-textures` stream). Four normalized `RGBA32UI` textures with a
-//! light → LUT → definition / instance indirection; written on change, read every frame for free. Bit
-//! layouts are authoritative in `docs/VARIABLES.md` §Cold shadow data textures.
+//! ColdShadowData — the GPU data textures the shadow gather reads via `texelFetch` (the
+//! `2026-07-21-shadow-bitfield` stream). Fixed-size, normalized `RGBA32UI` textures; written on change
+//! (CPU-side; no ping-pong), read every frame for free. Bit layouts are authoritative in
+//! `docs/VARIABLES.md` §Cold shadow data textures.
 //!
-//! World unit: `1 unit = SQUARE/16 = 4px`, a compile-time constant (§Unit). Every world field is in units;
-//! only the atlas `frame_*` are texture px. Positions pack as `position_anchor_reference` (region | zone |
-//! tile | anchor, each `u8 = x:4|y:4`).
+//! Layout (fixed slots — `N=128` lights, `≤256` casters/light, `u16` indexes):
+//!   • `light_data`           128×33 — col = light; row 0 = record, rows 1–32 = 256× `u16` prim indexes
+//!                            (the LUT folded in; `lut_index` implicit = column; sentinel `0`-terminated).
+//!   • `prim_data`            256×128 — all placed casters, 2/px (`u64`); carries `u16 definition_index`.
+//!                            Index 0 is the SENTINEL (empty/end) → usable 1..65535.
+//!   • `prim_definition_data` 256×256 — one px/variant (generic geometry + atlas frame), keyed by def_index.
 //!
-//! This slice implements `prim_definition_data` (P1): one px per sprite variant (generic geometry + atlas
-//! frame + page), written on first sight of a caster sprite from the resolver's surface frame. The other
-//! three textures (cold_prim_data, cold_light_data, cold_light_prim_data) + the shader read land in P2–P4.
+//! World unit: `1 unit = SQUARE/16 = 4px`, compile-time (§Unit). Every world field is in units; only the
+//! atlas `frame_*` are texture px. Positions pack as `position_anchor_reference` (region|zone|tile|anchor).
 
 import { Renderer, Texture, type TexFrame } from "../../gl";
 import type { Primitive } from "./SquareCache";
@@ -19,23 +21,25 @@ import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 /** `1 unit = SQUARE/16 = 4px` — the compile-time world unit everything (bar atlas px) is measured in. */
 export const UNIT = SQUARE / 16;
 
-/** `prim_definition_data` texture size — 1 px/variant; `128 × 64` = 8192 slots (far more than the sprite
- *  variants in play). Index `i` → texel `(i & 127, i >> 7)`. */
-const DEF_W = 128;
-const DEF_H = 64;
-/** `cold_prim_data` texture size — 2 entries/px; `256 × 128` px → 65536 caster slots. */
+/** Fixed light count (bits in the shadow bitfield). */
+export const N_LIGHTS = 128;
+/** `light_data` — 128 wide (col = light) × 33 tall (row 0 record + 32 LUT rows). */
+const LIGHT_W = 128;
+const LIGHT_H = 33;
+/** Max shadow casters per light (32 LUT rows × 8 `u16`/px). */
+export const MAX_CASTERS = 256;
+/** `prim_data` — 2 entries/px; `256 × 128` = 65536 slots (index 0 = sentinel). */
 const PRIM_W = 256;
 const PRIM_H = 128;
-/** `cold_light_data` — 1 px/light. `cold_light_prim_data` (LUT) — 4 entries/px. */
-const LIGHT_W = 64;
-const LUT_W = 256;
-const LUT_H = 256;
+/** `prim_definition_data` — 1 px/variant; `256 × 256` = 65536 defs. */
+const DEF_W = 256;
+const DEF_H = 256;
 
 const u10 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0x3ff);
 const u8 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0xff);
 const clamp = (v: number, hi: number): number => Math.min(Math.max(Math.round(v), 0), hi);
 
-/** One light to write into `cold_light_data` (world px + unit-scaled reach; colour 0..1). */
+/** One light to write into `light_data` (world px + unit-scaled reach; colour 0..1). */
 export interface ColdLight {
   x: number;
   y: number;
@@ -82,27 +86,25 @@ export class ColdShadowData {
   /** The atlas page the casters' surface frames live on (F2: single page) — bound for the alpha mask. */
   private surfacePageTex: Texture | null = null;
 
-  /** `cold_prim_data` — 2 entries/px: a placed caster's `position_anchor_reference` + `z`/`rotation`. */
+  /** `prim_data` — 2 entries/px: a placed caster's `position_anchor_reference` + `z`/`rotation`/`def_index`. */
   private readonly primTex: Texture;
   private readonly primMirror = new Uint32Array(PRIM_W * PRIM_H * 4);
-  /** prim.id → allocated prim_data_index. */
+  /** prim.id → allocated prim_data_index (≥1; index 0 is the sentinel). */
   private readonly primIndex = new Map<number, number>();
-  private primNext = 0;
+  private primNext = 1; // 0 reserved as the LUT sentinel
   private primDirty = false;
 
-  /** `cold_light_data` (1 px/light) + `cold_light_prim_data` (the LUT, 4 entries/px). Rebuilt by
-   *  {@link buildLights}; UNIT for cold data is once-per-change, not per frame (P4). */
+  /** `light_data` (128×33): row 0 = record, rows 1–32 = the LUT. Rebuilt by {@link buildLights}. */
   private readonly lightTex: Texture;
-  private readonly lightMirror = new Uint32Array(LIGHT_W * 4);
-  private readonly lutTex: Texture;
-  private readonly lutMirror = new Uint32Array(LUT_W * LUT_H * 4);
+  private readonly lightMirror = new Uint32Array(LIGHT_W * LIGHT_H * 4);
   private lightCount = 0;
+  /** Per-light caster count (CPU-side; drives the fan draw's instanceCount — the gather sentinel-terminates). */
+  private lightCasterCounts: number[] = [];
 
   constructor(private readonly renderer: Renderer) {
     this.defTex = new Texture(renderer.gl, { width: DEF_W, height: DEF_H, format: "rgba32uint" });
     this.primTex = new Texture(renderer.gl, { width: PRIM_W, height: PRIM_H, format: "rgba32uint" });
-    this.lightTex = new Texture(renderer.gl, { width: LIGHT_W, height: 1, format: "rgba32uint" });
-    this.lutTex = new Texture(renderer.gl, { width: LUT_W, height: LUT_H, format: "rgba32uint" });
+    this.lightTex = new Texture(renderer.gl, { width: LIGHT_W, height: LIGHT_H, format: "rgba32uint" });
   }
 
   /** The `prim_definition_data` texture (bound as a `usampler2D` in the shadow shader). */
@@ -184,10 +186,10 @@ export class ColdShadowData {
     return PRIM_W;
   }
 
-  /** The `prim_data_index` for a PLACED caster (its position + orientation), allocated on first sight + cached
-   *  by `prim.id`. Cold things are static, so it's written once. `rotation` from `flipX` (E=1 / W=3 — both the
-   *  E/W regime) as a placeholder until the prim carries a real facing (F1/P5); `z` = 0 (ground). */
-  primDataFor(prim: Primitive): number {
+  /** The `prim_data_index` (≥1) for a PLACED caster (position + orientation + its `def_index`), allocated on
+   *  first sight + cached by `prim.id`. Cold things are static, so it's written once. `rotation` from `flipX`
+   *  (E=1 / W=3 — both the E/W regime) as a placeholder until the prim carries a real facing; `z` = 0. */
+  primDataFor(prim: Primitive, defIndex: number): number {
     const hit = this.primIndex.get(prim.id);
     if (hit !== undefined) return hit;
     const idx = this.primNext++;
@@ -198,8 +200,8 @@ export class ColdShadowData {
     // 2 entries/px: even index → RG, odd → BA.
     const base = (idx >> 1) * 4 + (idx & 1) * 2;
     this.primMirror[base] = encodePosition(ax, ay); // position_anchor_reference
-    // orient: z(24–31) | rotation(22–23) | reserved(0–21)
-    this.primMirror[base + 1] = ((((z & 0xff) << 24) | ((rotation & 0x3) << 22)) >>> 0);
+    // orient: z(24–31) | rotation(22–23) | definition_index(6–21) | reserved(0–5)
+    this.primMirror[base + 1] = ((((z & 0xff) << 24) | ((rotation & 0x3) << 22) | ((defIndex & 0xffff) << 6)) >>> 0);
     this.primIndex.set(prim.id, idx);
     this.primDirty = true;
     return idx;
@@ -208,62 +210,64 @@ export class ColdShadowData {
   get lightTexture(): Texture {
     return this.lightTex;
   }
-  get lutTexture(): Texture {
-    return this.lutTex;
-  }
-  get lutWidth(): number {
-    return LUT_W;
-  }
   get lights(): number {
     return this.lightCount;
   }
-  /** A light's LUT run `(lut_index, lut_count)` (from its A channel) — drives the per-light instanced draw. */
-  lightRange(k: number): { lutIndex: number; lutCount: number } {
-    const A = this.lightMirror[k * 4 + 3];
-    return { lutIndex: (A >>> 16) & 0xffff, lutCount: A & 0xffff };
+  /** A light's caster count (0..256) — drives the fan draw's per-light instanceCount. */
+  casterCount(k: number): number {
+    return this.lightCasterCounts[k] ?? 0;
   }
-  /** Texture widths `[lightW, lutW, defW, primW]` for the shader's index→texel maths. */
-  get widths(): [number, number, number, number] {
-    return [LIGHT_W, LUT_W, DEF_W, PRIM_W];
+  /** Texture widths `[lightW, defW, primW]` for the shader's index→texel maths. */
+  get widths(): [number, number, number] {
+    return [LIGHT_W, DEF_W, PRIM_W];
   }
 
-  /** Build `cold_light_data` + the `cold_light_prim_data` LUT from the lights + resident casters, and upload
-   *  both. Each `cast_shadows` light gets a contiguous LUT run of `(definition_index, prim_data_index)` for its
-   *  in-range casters (Chebyshev cull; def skipped until its surface resolves). Cold data → call on change, not
-   *  per frame (P4). */
+  /** Write a caster index into light `k`'s LUT (rows 1–32; 8× `u16`/px, sentinel-`0`-terminated). */
+  private writeCaster(k: number, j: number, primIdx: number): void {
+    const row = 1 + (j >> 3); // rows 1..32
+    const s = j & 7; // 0..7 within the px
+    const ch = s >> 1; // R/G/B/A
+    const flat = (row * LIGHT_W + k) * 4 + ch;
+    if ((s & 1) === 0) this.lightMirror[flat] = ((this.lightMirror[flat] & 0x0000ffff) | ((primIdx & 0xffff) << 16)) >>> 0;
+    else this.lightMirror[flat] = ((this.lightMirror[flat] & 0xffff0000) | (primIdx & 0xffff)) >>> 0;
+  }
+
+  /** Build `light_data` (record row 0 + LUT rows 1–32) from the lights + resident casters, and upload it. Each
+   *  `cast_shadows` light gets a dense `u16` prim-index run for its in-range casters (Chebyshev cull; def
+   *  skipped until its surface resolves), sentinel-`0`-terminated. Cold data → call on change, not per frame. */
   buildLights(lights: ColdLight[], standing: Primitive[], resolver: TextureResolver | null): void {
-    const n = Math.min(lights.length, LIGHT_W);
-    let cursor = 0;
+    const n = Math.min(lights.length, N_LIGHTS);
+    this.lightMirror.fill(0); // clears records + LUT → unwritten LUT slots are the 0 sentinel
+    this.lightCasterCounts = new Array(n).fill(0);
     for (let k = 0; k < n; k++) {
       const L = lights[k];
-      const lutIndex = cursor;
+      let count = 0;
       if (L.castShadows) {
         const rPx = L.radius;
         for (const p of standing) {
+          if (count >= MAX_CASTERS) break;
           const ax = p.x + p.width * 0.5, ay = p.y + p.height;
           if (Math.abs(ax - L.x) > rPx || Math.abs(ay - L.y) > rPx) continue; // Chebyshev cull (F5)
           const def = this.definitionFor(p, resolver);
           if (def < 0) continue; // surface not resolved yet
-          const inst = this.primDataFor(p);
-          if (cursor >= LUT_W * LUT_H * 4) break;
-          this.lutMirror[cursor++] = (((def & 0xffff) << 16) | (inst & 0xffff)) >>> 0;
+          const inst = this.primDataFor(p, def);
+          this.writeCaster(k, count, inst);
+          count++;
         }
       }
-      const lutCount = cursor - lutIndex;
+      this.lightCasterCounts[k] = count;
+      // Record row 0, texel (k, 0):
       const base = k * 4;
       this.lightMirror[base] = encodePosition(L.x, L.y); // R: position
-      // G: r|g|b|intensity (u8 each)
       const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
-      this.lightMirror[base + 1] = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0);
+      this.lightMirror[base + 1] = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0); // G
       // B: z(24–31) | radius(12–23) | reserved(1–11) | cast_shadows(0)
       const z = clamp(L.z / UNIT, 255), radius = clamp(L.radius / UNIT, 0xfff);
       this.lightMirror[base + 2] = (((z << 24) | (radius << 12) | (L.castShadows ? 1 : 0)) >>> 0);
-      // A: lut_index(16–31) | lut_count(0–15)
-      this.lightMirror[base + 3] = ((((lutIndex & 0xffff) << 16) | (lutCount & 0xffff)) >>> 0);
+      this.lightMirror[base + 3] = 0; // A: reserved (was lut_index|lut_count)
     }
     this.lightCount = n;
     this.lightTex.upload(this.lightMirror);
-    this.lutTex.upload(this.lutMirror);
     this.flush(); // ensure any new defs/prims from the cull are uploaded too
   }
 
@@ -279,7 +283,7 @@ export class ColdShadowData {
     }
   }
 
-  /** DEBUG (P1 verify): decode a definition slot from the CPU mirror. */
+  // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
   debugDef(index: number): { prim_width: number; prim_height: number; frame: [number, number, number, number]; frame_page: number; dA: number; dB: number } {
     const b = index * 4;
     const R = this.defMirror[b], G = this.defMirror[b + 1], B = this.defMirror[b + 2];
@@ -295,18 +299,18 @@ export class ColdShadowData {
   get debugDefCount(): number {
     return this.defNext;
   }
-  /** DEBUG (P2 verify): decode a cold_prim_data slot — position back to px + z + rotation. */
-  debugPrim(index: number): { pos: [number, number]; z: number; rotation: number } {
+  /** DEBUG: decode a prim_data slot — position back to px + z + rotation + def_index. */
+  debugPrim(index: number): { pos: [number, number]; z: number; rotation: number; def: number } {
     const base = (index >> 1) * 4 + (index & 1) * 2;
     const pos = this.primMirror[base], orient = this.primMirror[base + 1];
-    return { pos: decodePosition(pos), z: (orient >>> 24) & 0xff, rotation: (orient >>> 22) & 0x3 };
+    return { pos: decodePosition(pos), z: (orient >>> 24) & 0xff, rotation: (orient >>> 22) & 0x3, def: (orient >>> 6) & 0xffff };
   }
   get debugPrimCount(): number {
-    return this.primNext;
+    return this.primNext - 1; // index 0 is the sentinel
   }
-  /** DEBUG (P3 verify): decode a cold_light_data slot. */
-  debugLight(k: number): { pos: [number, number]; rgb: [number, number, number]; intensity: number; z: number; radius: number; castShadows: boolean; lutIndex: number; lutCount: number } {
-    const b = k * 4, R = this.lightMirror[b], G = this.lightMirror[b + 1], B = this.lightMirror[b + 2], A = this.lightMirror[b + 3];
+  /** DEBUG: decode a light record (row 0). */
+  debugLight(k: number): { pos: [number, number]; rgb: [number, number, number]; intensity: number; z: number; radius: number; castShadows: boolean; casterCount: number } {
+    const b = k * 4, R = this.lightMirror[b], G = this.lightMirror[b + 1], B = this.lightMirror[b + 2];
     return {
       pos: decodePosition(R),
       rgb: [(G >>> 24) & 0xff, (G >>> 16) & 0xff, (G >>> 8) & 0xff],
@@ -314,20 +318,19 @@ export class ColdShadowData {
       z: (B >>> 24) & 0xff,
       radius: (B >>> 12) & 0xfff,
       castShadows: (B & 1) === 1,
-      lutIndex: (A >>> 16) & 0xffff,
-      lutCount: A & 0xffff,
+      casterCount: this.casterCount(k),
     };
   }
-  /** DEBUG (P3 verify): decode a LUT entry → (definition_index, prim_data_index). */
-  debugLut(i: number): [number, number] {
-    const e = this.lutMirror[i];
-    return [(e >>> 16) & 0xffff, e & 0xffff];
+  /** DEBUG: light `k`'s caster prim index at LUT slot `j` (0 = sentinel/empty). */
+  debugCaster(k: number, j: number): number {
+    const row = 1 + (j >> 3), s = j & 7, ch = s >> 1;
+    const v = this.lightMirror[(row * LIGHT_W + k) * 4 + ch];
+    return (s & 1) === 0 ? (v >>> 16) & 0xffff : v & 0xffff;
   }
 
   destroy(): void {
     this.defTex.destroy();
     this.primTex.destroy();
     this.lightTex.destroy();
-    this.lutTex.destroy();
   }
 }
