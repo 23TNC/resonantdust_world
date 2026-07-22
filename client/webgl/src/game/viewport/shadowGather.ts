@@ -100,6 +100,7 @@ precision highp int;
 uniform highp usampler2D uLightData;  // light_data (128×33)
 uniform highp usampler2D uPrimDef;    // prim_definition_data
 uniform highp usampler2D uPrimData;   // prim_data (2/px)
+uniform highp usampler2D uPresence;   // light_presence_cold (cols×rows, 1 tile/px)
 uniform int uNLights, uDefW, uPrimW;
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window
 out uvec4 fragColor;
@@ -114,8 +115,11 @@ void main() {
   float ly = (float(fc.y) - float(sy * uSlot)) / float(uSlot);
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
 
+  uvec4 pres = texelFetch(uPresence, ivec2(sx, sy), 0);     // which lights reach this tile (F5 cull)
   uint b0 = 0u, b1 = 0u, b2 = 0u, b3 = 0u;
   for (int k = 0; k < uNLights; k++) {
+    uint pw = k < 32 ? pres.x : (k < 64 ? pres.y : (k < 96 ? pres.z : pres.w));
+    if ((pw & (1u << uint(k & 31))) == 0u) continue;        // light k out of range of this tile
     uvec4 Ld = texelFetch(uLightData, ivec2(k, 0), 0);
     if ((Ld.z & 1u) == 0u) continue;                        // cast_shadows
     vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));
@@ -215,11 +219,19 @@ export class ShadowGather {
   private rtCols = 0;
   private rtRows = 0;
 
+  /** light_presence_cold — per-tile light bitfield (cols×rows), the F5 cull. CPU-built on light/window
+   *  change (a `1×1` fallback until the first build so the gather always has a binding). */
+  private presenceTex: Texture;
+  private presenceMirror = new Uint32Array(0);
+  private presSig = "";
+  private lightsVer = 0;
+
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
     this.gather = new Program(gl, FULLSCREEN_VERT, GATHER_FRAG, "shadow-gather");
     this.overlay = new Program(gl, OVERLAY_VERT, OVERLAY_FRAG, "shadow-overlay");
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
+    this.presenceTex = new Texture(gl, { width: 1, height: 1, format: "rgba32uint" });
     this.coldData = new ColdShadowData(renderer);
     (globalThis as unknown as { __cold: unknown }).__cold = this.coldData; // DEBUG
     this.fsQuad = new Geometry(gl, this.gather, {
@@ -241,6 +253,37 @@ export class ShadowGather {
     }
     this.enabled = true;
     this.coldDirty = true;
+    this.lightsVer++; // invalidates light_presence_cold
+  }
+
+  /** Rebuild `light_presence_cold` when the lights or window change — one px/tile, bit L = light L's
+   *  radius box covers the tile (conservative; the lighting pass trims corners). */
+  private buildPresence(win: TileWindow): void {
+    const { cols, rows, winCol, winRow } = win;
+    const sig = `${winCol},${winRow},${cols},${rows},${this.lightsVer}`;
+    if (sig === this.presSig && this.presenceTex.width === cols) return;
+    this.presSig = sig;
+    if (this.presenceTex.width !== cols || this.presenceTex.height !== rows) {
+      this.presenceTex.destroy();
+      this.presenceTex = new Texture(this.renderer.gl, { width: cols, height: rows, format: "rgba32uint" });
+      this.presenceMirror = new Uint32Array(cols * rows * 4);
+    }
+    this.presenceMirror.fill(0);
+    const n = Math.min(this.lights.length, MAX_LIGHTS);
+    for (let k = 0; k < n; k++) {
+      const L = this.lights[k], r = L.radius;
+      const t0x = Math.max(winCol, Math.floor((L.x - r) / SQUARE)), t1x = Math.min(winCol + cols - 1, Math.floor((L.x + r) / SQUARE));
+      const t0y = Math.max(winRow, Math.floor((L.y - r) / SQUARE)), t1y = Math.min(winRow + rows - 1, Math.floor((L.y + r) / SQUARE));
+      const bit = (1 << (k & 31)) >>> 0, ch = k >> 5;
+      for (let wr = t0y; wr <= t1y; wr++) {
+        const sy = ((wr % rows) + rows) % rows;
+        for (let wc = t0x; wc <= t1x; wc++) {
+          const sx = ((wc % cols) + cols) % cols;
+          this.presenceMirror[(sy * cols + sx) * 4 + ch] |= bit;
+        }
+      }
+    }
+    this.presenceTex.upload(this.presenceMirror);
   }
 
   get on(): boolean {
@@ -277,6 +320,7 @@ export class ShadowGather {
     if (this.coldData.lights === 0 || win.cols === 0) return;
 
     this.ensureRT(win.cols, win.rows);
+    this.buildPresence(win); // F5 per-tile light cull (rebuilt on light/window change)
     const [, defW, primW] = this.coldData.widths;
     // Full recompute (P4-core): one fullscreen pass writes every texel's 128-bit mask.
     this.renderer.draw({
@@ -289,6 +333,7 @@ export class ShadowGather {
         uLightData: this.coldData.lightTexture,
         uPrimDef: this.coldData.definitionTexture,
         uPrimData: this.coldData.primTexture,
+        uPresence: this.presenceTex,
       },
       uniforms: (p) => {
         p.uInt("uNLights", this.coldData.lights);
@@ -336,6 +381,7 @@ export class ShadowGather {
     this.gather.destroy();
     this.overlay.destroy();
     this.empty.destroy();
+    this.presenceTex.destroy();
     this.shadowRT?.destroy();
     this.coldData.destroy();
   }

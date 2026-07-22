@@ -37,11 +37,7 @@ earlier rect-accumulation phases (F3 dropped)._
 - Write the dirty set into **`shadow_dirty`** — an `R8UI` `128×64` (window+overscan) texture,
   nonzero = dirty (F6 — a texture, not a uniform). Feed to P4.
 
-## P2 · `light_presence_cold` (per-tile light bitfield) — 2026-07-21
-
-- Allocate `light_presence_cold` = **128×64 (window+overscan) `RGBA32UI`**, one tile/px, bit = a
-  light reaching that tile. CPU-maintained: on a light add/move/radius change, set/clear its bit over
-  the disk of tiles within its radius; upload the changed region. **Not** touched by caster moves.
+_P2 (`light_presence_cold` per-tile cull) done + verified → [`completed.md`](completed.md)._
 
 _P1 (cold-texture reshape) done → [`completed.md`](completed.md). The `shadow-cold` RT allocation
 moved into P4 (built with the gather that writes it)._

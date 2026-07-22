@@ -21,6 +21,15 @@ P4 swap.
 
 Shadow-cold RT allocation folded into P4 (built with the gather that writes it).
 
+## P2 · `light_presence_cold` per-tile light cull — 2026-07-21
+
+`ShadowGather` now builds `light_presence_cold` (cols×rows `RGBA32UI`, one tile/px, bit L = light L's
+radius box covers the tile), CPU-rebuilt only on a light/window-signature change; the gather reads its
+tile's presence px and **skips lights whose bit is clear**. **Browser-verified** — shadows now **clip to
+each light's radius box** (visible straight cut-offs at the box edges). Correcting the D-1 note: presence
+is a **semantic** cull (a light only needs shadow bits where it illuminates), so it **does** change the
+debug picture (clips to radius) — not invisible; that clipping is correct. No console errors.
+
 ## P4-core · The gather + shadow-cold RT + bit-decode overlay — 2026-07-21
 
 New `shadowGather.ts` (`ShadowGather`) replaces the retired fan (`shadowCaster.ts` **deleted**).
