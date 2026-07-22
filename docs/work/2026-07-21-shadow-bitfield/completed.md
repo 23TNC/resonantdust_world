@@ -21,6 +21,14 @@ P4 swap.
 
 Shadow-cold RT allocation folded into P4 (built with the gather that writes it).
 
+## Debug-viz · 1 light + light/radius gizmos — 2026-07-21
+
+Per the user, for shadow debugging: `MAX_LIGHTS = 1` (a single light **centred** on the seed tile — all
+shadows now one colour), plus a **light gizmo** drawn with the shadow overlay (`/overlayRT shadow-cold`):
+a filled **dot** at the light and a **ring** at its radius, both screen-constant thickness (`GIZMO`
+program + unit quad, per-light draw in `drawOverlay`). Browser-verified. Makes the radial projection +
+radius clip legible.
+
 ## P4-rect · Switch the fan → a 4-corner projected quad — 2026-07-21
 
 Per the user (diagonal-line artifacts from the fan): `inShadow` now builds a **standard 4-corner

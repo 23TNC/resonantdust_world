@@ -19,8 +19,8 @@ import type { TextureResolver } from "../../textures";
 import { ColdShadowData, MAX_CASTERS } from "./coldShadowData";
 import { SQUARE } from "./squareMath";
 
-/** 6 lights this iteration (ring around the seed tile) — same seed as the retired fan. */
-const MAX_LIGHTS = 6;
+/** Lights this iteration (a single light, centred on the seed tile, for shadow debugging). */
+const MAX_LIGHTS = 1;
 const LIGHT_Z = 480;
 const LIGHT_RADIUS = 4 * SQUARE;
 const RING_RADIUS = 2 * SQUARE;
@@ -204,6 +204,35 @@ void main() {
 }
 `;
 
+/** Light gizmo: a filled dot at the light + a ring at its radius (screen-constant thickness). */
+const GIZMO_VERT = /* glsl */ `#version 300 es
+in vec2 aUnit;                   // 0..1 quad
+uniform vec2 uCenter;            // light world px
+uniform float uHalf;             // quad half-extent (world px) — covers the radius
+uniform mat3 uProjection;
+out vec2 vWorld;
+void main() {
+  vWorld = uCenter + (aUnit * 2.0 - 1.0) * uHalf;
+  vec3 p = uProjection * vec3(vWorld, 1.0);
+  gl_Position = vec4(p.xy, 0.0, 1.0);
+}
+`;
+const GIZMO_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vWorld;
+uniform vec2 uCenter;
+uniform float uRadius;           // world px
+uniform float uPxWorld;          // 1 screen px in world px (= 1/zoom) → constant on-screen thickness
+uniform vec3 uColor;
+out vec4 fragColor;
+void main() {
+  float dist = length(vWorld - uCenter);
+  if (dist < 6.0 * uPxWorld) { fragColor = vec4(uColor, 1.0); return; }              // light dot
+  if (abs(dist - uRadius) < 1.5 * uPxWorld) { fragColor = vec4(uColor, 0.9); return; } // radius ring
+  discard;
+}
+`;
+
 const LIGHT_COLORS: ReadonlyArray<[number, number, number]> = [
   [1.0, 0.25, 0.25], [0.25, 1.0, 0.3], [0.3, 0.55, 1.0], [1.0, 0.95, 0.25], [1.0, 0.35, 1.0], [0.3, 1.0, 1.0],
 ];
@@ -216,7 +245,9 @@ const LIGHT_COLORS: ReadonlyArray<[number, number, number]> = [
 export class ShadowGather {
   private readonly gather: Program;
   private readonly overlay: Program;
+  private readonly gizmo: Program;
   private readonly fsQuad: Geometry;
+  private readonly gizmoQuad: Geometry;
   private overlayGeo: Geometry | null = null;
   private readonly overlayPos = new Float32Array(8);
   private readonly lights: Light[] = [];
@@ -255,6 +286,7 @@ export class ShadowGather {
     const gl = renderer.gl;
     this.gather = new Program(gl, FULLSCREEN_VERT, GATHER_FRAG, "shadow-gather");
     this.overlay = new Program(gl, OVERLAY_VERT, OVERLAY_FRAG, "shadow-overlay");
+    this.gizmo = new Program(gl, GIZMO_VERT, GIZMO_FRAG, "shadow-gizmo");
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
     this.presenceTex = new Texture(gl, { width: 1, height: 1, format: "rgba32uint" });
     this.dirtyTex = new Texture(gl, { width: 1, height: 1, format: "r8uint" });
@@ -266,6 +298,9 @@ export class ShadowGather {
     this.overlayGeo = new Geometry(gl, this.overlay, {
       aWorld: { data: this.overlayPos, size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
+    this.gizmoQuad = new Geometry(gl, this.gizmo, {
+      aUnit: { data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), size: 2 },
+    }, new Uint32Array([0, 1, 2, 0, 2, 3]));
     this.seed(100, 50);
   }
 
@@ -274,8 +309,10 @@ export class ShadowGather {
     const cx = (tileX + 0.5) * SQUARE, cy = (tileY + 0.5) * SQUARE;
     this.lights.length = 0;
     for (let k = 0; k < MAX_LIGHTS; k++) {
+      // A single light sits at the tile centre; multiples ring it.
+      const rr = MAX_LIGHTS === 1 ? 0 : RING_RADIUS;
       const a = (k / MAX_LIGHTS) * Math.PI * 2;
-      this.lights.push({ x: cx + Math.cos(a) * RING_RADIUS, y: cy + Math.sin(a) * RING_RADIUS, z: LIGHT_Z, radius: LIGHT_RADIUS });
+      this.lights.push({ x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr, z: LIGHT_Z, radius: LIGHT_RADIUS });
     }
     this.enabled = true;
     this.coldDirty = true;
@@ -440,14 +477,35 @@ export class ShadowGather {
         p.uInt("uSlot", SHADOW_SLOT);
       },
     });
+
+    // Gizmos: a dot at each light + a ring at its radius (screen-constant thickness).
+    const pxWorld = 1 / z;
+    for (let k = 0; k < this.lights.length; k++) {
+      const L = this.lights[k], col = LIGHT_COLORS[k % LIGHT_COLORS.length];
+      this.renderer.draw({
+        program: this.gizmo,
+        geometry: this.gizmoQuad,
+        blend: "normal",
+        uniforms: (p) => {
+          p.uMat3("uProjection", proj);
+          p.uVec2("uCenter", L.x, L.y);
+          p.uFloat("uHalf", L.radius * 1.06);
+          p.uFloat("uRadius", L.radius);
+          p.uFloat("uPxWorld", pxWorld);
+          p.uVec3("uColor", col[0], col[1], col[2]);
+        },
+      });
+    }
   }
 
   destroy(): void {
     this.resolverUnsub?.();
     this.fsQuad.destroy();
     this.overlayGeo?.destroy();
+    this.gizmoQuad.destroy();
     this.gather.destroy();
     this.overlay.destroy();
+    this.gizmo.destroy();
     this.empty.destroy();
     this.presenceTex.destroy();
     this.dirtyTex.destroy();
