@@ -21,6 +21,15 @@ P4 swap.
 
 Shadow-cold RT allocation folded into P4 (built with the gather that writes it).
 
+## P4-silhouette · Mask the fan region by the sprite outline — 2026-07-21
+
+The gather predicate now masks by the **sprite silhouette**, not the solid fan trapezoid: for P inside
+one of the 5 fan triangles it computes barycentric weights, interpolates the fan's per-role sprite UVs
+(the retired fan's `SUV`/`TRI`, verbatim), and samples the shared surface page `.B` coverage — the bit
+is set only where covered. Added `uSurface` (bound from `ColdShadowData.surfacePage`, self-heals via the
+resolver-`onLoad` → `coldDirty` → force-all-dirty path). **Browser-verified:** shadows now read as the
+**conifer shape** (projected tree silhouettes), still per-light hues, overlaps still combine. No errors.
+
 ## P3 · Dirty-tile gating (`shadow_dirty`) + toroidal persistence — 2026-07-21
 
 Replaced the full-recompute-each-frame with a `discard`-gated single pass. `shadow_dirty` (`R8UI`

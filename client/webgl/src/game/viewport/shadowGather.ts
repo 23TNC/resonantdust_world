@@ -63,16 +63,23 @@ vec2 projGround(vec3 p, vec3 L) {
   float t = min(L.z / max(L.z - p.z, 1.0), 8.0);
   return L.xy + t * (p.xy - L.xy);
 }
-float cross2(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }
-bool inTri(vec2 p, vec2 a, vec2 b, vec2 c) {
-  float d1 = cross2(b - a, p - a), d2 = cross2(c - b, p - b), d3 = cross2(a - c, p - c);
-  bool neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
-  bool pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
-  return !(neg && pos);
+const float ATLAS = 1024.0;      // surface atlas page size (F2: single page)
+// Barycentric weights of P in triangle (a,b,c) — inside iff all >= 0.
+vec3 bary(vec2 p, vec2 a, vec2 b, vec2 c) {
+  vec2 v0 = b - a, v1 = c - a, v2 = p - a;
+  float d = v0.x * v1.y - v1.x * v0.y;
+  if (abs(d) < 1e-6) return vec3(-1.0);
+  float u = (v2.x * v1.y - v1.x * v2.y) / d;
+  float v = (v0.x * v2.y - v2.x * v0.y) / d;
+  return vec3(1.0 - u - v, u, v);
 }
-// Is world-UNIT point P inside caster (anchor A, geometry W/H/dA/dB) projected from light L? The exact fan
-// region: 7 projected points (roles 0–6) → union of the 5 fan triangles.
-bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float dA, float dB) {
+// The fan's per-role sprite UVs + the 5-triangle role list (verbatim from the retired fan).
+const vec2 SUV[7] = vec2[7](vec2(0.0,0.0), vec2(1.0,0.0), vec2(0.5,1.0), vec2(0.0,1.0), vec2(0.0,1.0), vec2(1.0,1.0), vec2(1.0,1.0));
+const int TRI[15] = int[15](0,1,2, 0,3,2, 1,5,2, 0,4,2, 1,6,2);
+// Is world-UNIT point P in caster (anchor A, geo W/H/dA/dB) projected from L, AND under the sprite
+// SILHOUETTE? Build the 7 projected fan points, find P's containing triangle, interpolate its UV, and
+// sample the surface coverage (.B) — the shadow reads as the sprite shape, not a solid trapezoid.
+bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float dA, float dB, sampler2D surf, vec4 frameUV) {
   float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
   vec3 loc[7];
   loc[0] = vec3(-W * 0.5, -0.5 * H * ct, H * st);
@@ -84,8 +91,15 @@ bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float dA, float dB) {
   loc[6] = vec3( W * 0.5, -dB, 0.0);
   vec2 g[7];
   for (int i = 0; i < 7; i++) g[i] = projGround(vec3(A + loc[i].xy, loc[i].z), L);
-  return inTri(P, g[0], g[1], g[2]) || inTri(P, g[0], g[3], g[2]) || inTri(P, g[1], g[5], g[2])
-      || inTri(P, g[0], g[4], g[2]) || inTri(P, g[1], g[6], g[2]);
+  for (int t = 0; t < 5; t++) {
+    int i0 = TRI[t * 3], i1 = TRI[t * 3 + 1], i2 = TRI[t * 3 + 2];
+    vec3 w = bary(P, g[i0], g[i1], g[i2]);
+    if (w.x >= 0.0 && w.y >= 0.0 && w.z >= 0.0) {
+      vec2 uv = w.x * SUV[i0] + w.y * SUV[i1] + w.z * SUV[i2];
+      if (texture(surf, frameUV.xy + uv * frameUV.zw).b >= 0.5) return true;
+    }
+  }
+  return false;
 }
 `;
 
@@ -102,6 +116,7 @@ uniform highp usampler2D uPrimDef;    // prim_definition_data
 uniform highp usampler2D uPrimData;   // prim_data (2/px)
 uniform highp usampler2D uPresence;   // light_presence_cold (cols×rows, 1 tile/px)
 uniform highp usampler2D uDirty;      // shadow_dirty (cols×rows R8UI): .r nonzero = recompute
+uniform sampler2D uSurface;           // casters' shared surface page (.B = silhouette coverage)
 uniform int uNLights, uDefW, uPrimW;
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window
 out uvec4 fragColor;
@@ -137,8 +152,10 @@ void main() {
       int defIdx = int((orient >> 6) & 0xffffu);
       uvec4 D = fetchLin(uPrimDef, defIdx, uDefW);
       float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u);
+      float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
       float dA = float((D.z >> 14) & 255u), dB = float((D.z >> 6) & 255u);
-      if (inShadow(P, A, L, W, H, dA, dB)) {
+      vec4 frameUV = vec4(fx, fy, fw, fh) / ATLAS;
+      if (inShadow(P, A, L, W, H, dA, dB, uSurface, frameUV)) {
         uint mask = 1u << uint(k & 31);
         int ch = k >> 5;
         if (ch == 0) b0 |= mask; else if (ch == 1) b1 |= mask; else if (ch == 2) b2 |= mask; else b3 |= mask;
@@ -390,6 +407,7 @@ export class ShadowGather {
         uPrimData: this.coldData.primTexture,
         uPresence: this.presenceTex,
         uDirty: this.dirtyTex,
+        uSurface: this.coldData.surfacePage ?? this.empty,
       },
       uniforms: (p) => {
         p.uInt("uNLights", this.coldData.lights);
