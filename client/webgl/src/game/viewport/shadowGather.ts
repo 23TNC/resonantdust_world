@@ -59,12 +59,14 @@ vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
   uint wty = (((region & 15u) * RD + (zone & 15u)) * ZD + (tile & 15u));
   return vec2(float(wtx * 16u + (anchor >> 4u)), float(wty * 16u + (anchor & 15u)));
 }
-const float ATLAS = 1024.0;      // surface atlas page size (F2: single page)
 // Sprite-UV coverage sample. framePx = the sprite's atlas frame in PIXELS (x,y,w,h); sample the
 // TEXEL CENTRE for uv in [0,1] (0.5 + uv*(size-1)) so the frame edges (uv=0/1) never bleed into the
 // neighbouring atlas frame — the cause of the false line along the shadow's (transparent) bottom edge.
+// ATLAS size comes from the bound page (textureSize), NOT a constant: the surface atlas grows
+// (1024 -> 2048 -> ...) as more sprites resolve, and a hardcoded size silently samples wrong texels.
 float cover(sampler2D surf, vec4 framePx, vec2 uv) {
-  vec2 t = (framePx.xy + 0.5 + uv * (framePx.zw - 1.0)) / ATLAS;
+  vec2 atlas = vec2(textureSize(surf, 0));
+  vec2 t = (framePx.xy + 0.5 + uv * (framePx.zw - 1.0)) / atlas;
   return texture(surf, t).b;
 }
 // Is ground point P (world UNITS) in caster (anchor A, geo W/H, base pad f) projected from L, AND under the
