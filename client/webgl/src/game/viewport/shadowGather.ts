@@ -429,21 +429,30 @@ export class ShadowGather {
     this.casterMirror.fill(0);
     const count = new Uint8Array(cols * rows);
     const pm = (a: number, m: number): number => ((a % m) + m) % m;
+    // The card is TILTED back 65° (see the shader), so its ground footprint spans from the base
+    // (anchor y) UP to the top (anchor y − 0.5·H·cos65). The corridor crosses the caster anywhere in
+    // that y-range (far shadow ↔ top, near ↔ base), so we must bucket every row it spans — bucketing
+    // only the base row missed casters whose top sits in the row above (I-7).
+    const TILT = 0.5 * Math.cos(65 * Math.PI / 180); // 0.5·cos65 ≈ 0.211 of the height, leaned back
     for (const p of standing) {
       const def = this.coldData.definitionFor(p, resolver);
       if (def < 0) continue; // surface not resolved yet
       const inst = this.coldData.primDataFor(p, def);
-      const baseRow = Math.floor((p.y + p.height) / SQUARE); // ground base row (anchor y)
+      const baseY = p.y + p.height, topY = baseY - TILT * p.height; // card ground y-extent (px)
+      const r0 = Math.floor(topY / SQUARE), r1 = Math.floor(baseY / SQUARE);
       const c0 = Math.floor(p.x / SQUARE), c1 = Math.floor((p.x + p.width) / SQUARE);
-      for (let wc = c0; wc <= c1; wc++) {
-        if (wc < winCol || wc >= winCol + cols || baseRow < winRow || baseRow >= winRow + rows) continue;
-        const si = pm(baseRow, rows) * cols + pm(wc, cols);
-        const n = count[si];
-        if (n >= 8) continue; // tile full — drop the rest (rare)
-        const base = si * 4 + (n >> 1);
-        if ((n & 1) === 0) this.casterMirror[base] = ((this.casterMirror[base] & 0x0000ffff) | ((inst & 0xffff) << 16)) >>> 0;
-        else this.casterMirror[base] = ((this.casterMirror[base] & 0xffff0000) | (inst & 0xffff)) >>> 0;
-        count[si] = n + 1;
+      for (let wr = r0; wr <= r1; wr++) {
+        if (wr < winRow || wr >= winRow + rows) continue;
+        for (let wc = c0; wc <= c1; wc++) {
+          if (wc < winCol || wc >= winCol + cols) continue;
+          const si = pm(wr, rows) * cols + pm(wc, cols);
+          const n = count[si];
+          if (n >= 8) continue; // tile full — drop the rest (rare)
+          const base = si * 4 + (n >> 1);
+          if ((n & 1) === 0) this.casterMirror[base] = ((this.casterMirror[base] & 0x0000ffff) | ((inst & 0xffff) << 16)) >>> 0;
+          else this.casterMirror[base] = ((this.casterMirror[base] & 0xffff0000) | (inst & 0xffff)) >>> 0;
+          count[si] = n + 1;
+        }
       }
     }
     this.casterTex.upload(this.casterMirror);
