@@ -27,6 +27,9 @@ const RING_RADIUS = 2 * SQUARE;
 /** shadow-cold resolution: `SHADOW_SLOT` texels per world tile (a tile is `SQUARE` world px). 16 = 1
  *  texel/world-px. Sized `cols·SHADOW_SLOT × rows·SHADOW_SLOT`, toroidal like the cold cache window. */
 const SHADOW_SLOT = 16;
+/** GLSL literals for the world constants (a tile is `SQUARE` world px; `1 unit = SQUARE/16`). */
+const SQF = SQUARE.toFixed(1);
+const UNITF = (SQUARE / 16).toFixed(4);
 
 interface Light {
   x: number;
@@ -45,8 +48,8 @@ export interface TileWindow {
 
 /** Shared GLSL: packed-position decode + ground projection + the fan region predicate (roles → tris). */
 const GATHER_COMMON = /* glsl */ `
-const float UNIT = 4.0;          // SQUARE/16 (compile-time)
-const float SQ = 16.0;           // SQUARE world px per tile
+const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
+const float SQ = ${SQF};          // SQUARE world px per tile
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 uvec4 fetchLin(highp usampler2D t, int i, int w) { return texelFetch(t, ivec2(i % w, i / w), 0); }
 vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
@@ -167,10 +170,10 @@ vec3 hueColour(int k) {
   return c;
 }
 void main() {
-  int tx = int(floor(vWorld.x / 16.0)), ty = int(floor(vWorld.y / 16.0));
+  int tx = int(floor(vWorld.x / ${SQF})), ty = int(floor(vWorld.y / ${SQF}));
   if (tx < uWinCol || tx >= uWinCol + uCols || ty < uWinRow || ty >= uWinRow + uRows) { fragColor = vec4(0.0); return; }
   int sx = pmod(tx, uCols), sy = pmod(ty, uRows);
-  float lx = fract(vWorld.x / 16.0), ly = fract(vWorld.y / 16.0);
+  float lx = fract(vWorld.x / ${SQF}), ly = fract(vWorld.y / ${SQF});
   ivec2 texel = ivec2(sx * uSlot + int(lx * float(uSlot)), sy * uSlot + int(ly * float(uSlot)));
   uvec4 bits = texelFetch(uShadow, texel, 0);
   vec3 acc = vec3(0.0);

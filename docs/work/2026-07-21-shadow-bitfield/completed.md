@@ -23,8 +23,12 @@ Shadow-cold RT allocation folded into P4 (built with the gather that writes it).
 
 ## P4-core · The gather + shadow-cold RT + bit-decode overlay — 2026-07-21
 
-New `shadowGather.ts` (`ShadowGather`) replaces the retired fan (`shadowCaster.ts` **deleted**). Builds +
-typechecks; **browser verify pending** (GLSL compiles at runtime).
+New `shadowGather.ts` (`ShadowGather`) replaces the retired fan (`shadowCaster.ts` **deleted**).
+**Browser-verified 2026-07-21** (`/overlayRT shadow-cold` at focus 100,50): projected-fan shadows
+render in per-light hues; **overlapping shadows combine to white** (multiple bits set → hues summed) —
+the design's per-bit decode + overlap-combine. No console errors. (First run showed nothing → caught
+`SQUARE = 64` world-px/tile, not 16; the gather/overlay GLSL had hardcoded `16.0`, 4×-compressing world
+positions so the region test missed everywhere. Fixed by injecting `SQUARE`/`UNIT` as GLSL literals.)
 
 - **shadow-cold** = a world-space toroidal `RGBA32UI` `RenderTarget` (`cols·16 × rows·16`, `SHADOW_SLOT`
   = 16 texels/tile), resized when the cold cache's tile window changes. `SquareCache.window` now exposes
