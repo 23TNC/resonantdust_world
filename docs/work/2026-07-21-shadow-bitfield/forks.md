@@ -54,18 +54,16 @@ Gather forces the shape test into the fragment. Options:
 `shadowCaster.ts` retires. Cost is per-fragment × per-reaching-light × per-caster — bounded by the
 box cull, LUT-bounded casters, the **per-rect light pre-cull** (F5), and the per-frame budget (P5).
 
-## F3 · Dirty-rect grouping granularity + clean-square swallow — 2026-07-21 (open)
+## F3 · Dirty-rect grouping granularity + clean-square swallow — 2026-07-21 (SUPERSEDED)
 
-The user wants dirty squares merged into larger pass rectangles, **including clean squares** when one
-larger pass beats many small passes. Open detail: the **cost heuristic** for "swallow a clean square."
+_Was: how to group dirty squares into pass rectangles (AABB vs greedy strips)._
 
-- **(a) Bounding-box merge** — group a connected dirty cluster into its AABB (on the toroidal grid),
-  swallowing every clean square inside. Simplest; can over-include for sparse/L-shaped clusters.
-- **(b) Greedy row/strip merge** — merge dirty squares into maximal horizontal (or 2D) strips, only
-  swallowing clean squares whose swallow-cost < the setup saved. Tighter, more logic.
-
-**Lean: (a) to start** (AABB per connected cluster, capped size), measure, tighten to (b) only if
-over-inclusion shows up in the budget. Decide during P3.
+**SUPERSEDED 2026-07-21 by the dirty-tile bitfield + single full-window pass (F6).** No grouping at
+all: one pass over the whole window, each fragment reads its tile's **dirty bit** (a 64-`uvec4`
+uniform, one bit/tile) and `discard`s if clean — leaving the persistent `shadow-cold` pixel
+untouched. So the rect-accumulation machinery is unnecessary for shadows. Budgeting survives trivially
+(send a subset of the dirty bits per frame). The shared rect-accumulation idea is now **decoupled
+from shadows** — it would only ever serve `SquareCache`'s per-square bakes, a separate question.
 
 ## F4 · Bit capacity + bit assignment — 2026-07-21 (RESOLVED for cold-only)
 
@@ -73,19 +71,57 @@ over-inclusion shows up in the budget. Decide during P3.
 **no `shadow_bit_index` field** needed. 256 lights = a 2nd `RGBA32UI` later; the explicit `u8`
 `shadow_bit_index` stays a **hot-tier** concern ([`hot-shadows`](../hot-shadows/README.md), tabled).
 
-## F5 · Per-rectangle light pre-cull (the lever) — 2026-07-21 (open)
+## F5 · The light cull — CPU per-rect list vs per-tile presence bitfield — 2026-07-21 (RESOLVED)
 
-The cost win (F1) hinges on the fragment looping only a **few** lights, not all 128. Because a pass
-rectangle's pixels share ~the same reaching set, compute **which lights reach the rect** once per
-rect (box-test each light's radius vs the rect AABB) and feed the fragment only that list — so the
-per-pixel outer loop is `L_rect` (a handful), not `L`. Options:
+The cost win (F1) hinges on the fragment looping only a **few** lights, not all 128. Options:
 
-- **(a) CPU pre-cull → per-rect light-index list** passed as a small uniform array (rect emits it in
-  P3). Simplest; the light list is tiny; the fragment still `texelFetch`es each light's full data.
-- **(b) GPU pre-cull** (compute/transform-feedback building per-rect lists) — premature; movers/hot
-  aren't here yet.
+- **(a) CPU pre-cull → per-rect light-index list** (uniform array). My original lean; fine but CPU
+  work + a variable-length uniform per rect.
+- **(b) `light_presence_cold` — a per-tile light bitfield texture.** A `128×64` (window+overscan)
+  `RGBA32UI`, one px per tile, **each bit = a light that reaches that tile** (distance cull, set
+  CPU-side when a light changes). The gather fragment reads its tile's presence px and iterates only
+  the **set bits** — a popcount, not a scan of 128. Data-driven, computed once per light-change.
 
-**Lean: (a).** The rect-accumulation (P3) emits each pass-rect's reaching-light list alongside its
-bounds. **Sizing tension (feeds F3):** a *bigger* rect reaches *more* lights (longer per-pixel loop +
-more warp divergence) but costs fewer passes; a *smaller* rect loops fewer lights but more passes.
-The grouping heuristic should weigh added lights, not just added area. Tune during P3/P5.
+**Decided (user, 2026-07-21): (b) `light_presence_cold`.** Strictly better than (a) — no per-rect CPU
+list, the cull is a texture read. Maintenance: presence changes **only** on a light add / move /
+radius change (pure reach — prims don't touch it), distinct from the dirty-tile set (F6), which
+changes on a light **or** caster move. Size to **window + `OVERSCAN`** so apron tiles get bits (else
+edge tearing on pan).
+
+## F6 · Fixed-size texture consolidation + single-pass dirty update — 2026-07-21 (RESOLVED, 1 pin)
+
+Fix everything to constant slots (the user: simplifies alloc + pre-shapes warm/hot as bit-partitions,
+not reallocations). **N = 128 lights**, **≤ 256 shadow casters/light**, `u16` def/prim indexes ⇒
+65 536 ceilings. The four cold textures consolidate (deletes the old `cold_light_prim_data` LUT):
+
+| texture | size (`RGBA32UI`) | contents |
+|---|---|---|
+| `light_data` | **128×33** | col = light. **row 0** = light record; **rows 1–32** = 256× `u16` prim indexes (the LUT, `lut_index` now **implicit** = column x) |
+| `prim_data` | **256×128** | all cold prims, **2/px** (`u64` each): `u32` position; `u8 z \| u2 rot \| u16 def_index \| u6 rsvd` |
+| `prim_definition_data` | **256×256** | one def/px (4 `u32`), keyed by `u16 def_index` |
+| `light_presence_cold` | **128×64** (window+overscan) | one tile/px; bit = a light reaching it (F5) |
+| dirty-tile bits | **64 `uvec4`** uniform (or a tiny texture) | one bit/tile; gates the single pass |
+
+**Update model: single full-window pass, `discard`-gated.** One pass over `shadow-cold`; each fragment
+reads its tile's dirty bit and `discard`s if clean (persistent RT untouched → **no ping-pong on
+`shadow-cold`**). CPU maintains `light_data`/`prim_data`/`prim_definition_data`/`light_presence_cold`
+and uploads changed regions (cold changes rarely — CPU handles it; no GPU ping-pong for the data
+either). Budget = send a subset of dirty bits per frame (optional).
+
+**Sizes:** ~1 MB defs + 512 KB prims + 128 KB presence + 66 KB light_data ≈ **1.7 MB** VRAM. Cheap.
+
+**The one pin — `caster_count` home.** Removing `lut_count` (and `lut_index`, now implicit) frees the
+light record's `u16 lut_index | u16 lut_count` A-channel; put a **`u16 caster_count`** (0..256) there
+so the fragment bounds the per-light caster loop instead of sentinel-scanning all 256. Proposed as
+decided pending the user's nod; **`VARIABLES.md` gets the authoritative layout once this is confirmed.**
+
+**Nits caught:** `prim_data` is **256×128** not 256×126 (256×126×2 = 64 512 < 65 536); a moved caster
+dirties tiles but **not** presence bits (F5); dirty-tile uniform (64/224 `uvec4`) competes with future
+warm/hot uniforms — a tiny dirty *texture* is the alternative if that space tightens.
+
+## F7 · Def-index width (u16) overrun — 2026-07-21 (RESOLVED, watch)
+
+`u16 def_index` ⇒ 65 536 distinct `(type,subtype,kind,variant)` definitions; the game's `u32` id space
+could theoretically exceed it. **In practice we won't** (65 k distinct object variants is implausible
+before other limits bite). If ever hit: bump `def_index` `u16→u20` (the prim's `u6 reserved` covers
+it) + grow `prim_definition_data`, or add eviction. Not now.

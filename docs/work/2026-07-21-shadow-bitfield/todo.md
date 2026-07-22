@@ -1,48 +1,55 @@
 # Todo — 2026-07-21-shadow-bitfield
 
-_Newest-first. Component: `client/webgl`. Design + assessment in [`README.md`](README.md);
-open decisions in [`forks.md`](forks.md)._
+_Newest-first. Component: `client/webgl`. Design + assessment in [`README.md`](README.md); the
+fixed-size layout + culling/update model in [`forks.md`](forks.md) (F6 consolidation, F5 presence,
+F1 gather). The plan below reflects the **2026-07-21 fixed-layout redesign** — it supersedes the
+earlier rect-accumulation phases (F3 dropped)._
 
-## P5 · Budget + verify — 2026-07-21
+## P6 · Budget + verify — 2026-07-21
 
-- Per-frame **square budget** on the gather (like `SquareCache.bakeDirty`) — cap rects/squares
-  cast per frame, priority-ordered (centre-out), `log()` any deferral rather than silently capping.
+- Optional per-frame **budget**: cast only a subset of dirty tiles by masking the dirty-bit uniform
+  (F6) across frames; `log()` deferrals. Default is single-pass (all dirty tiles at once).
 - Verify in-browser: overlapping cold-light shadows show **combined bit-colours** in `/overlayRT`;
-  the field is **stable on pan** (toroidal wrap correct, no aliasing off-window); moving a light
-  re-casts only its dirtied rects.
+  stable on pan (toroidal wrap + overscan correct); moving a light re-casts only its dirtied tiles;
+  presence cull correct (a tile out of a light's radius never gets its bit).
 
-## P4 · Per-bit overlay (`usampler2D`) — 2026-07-21
+## P5 · Per-bit overlay (`usampler2D`) — 2026-07-21
 
 - Extend `overlayShader` `OVERLAY_BITS` from float-mod on the RED byte to a real **`usampler2D`**
   decode of all 128 bits of `shadow-cold`; each set bit contributes its light's colour, **overlap =
-  OR of colours**. Debug only, enabled via `/overlayRT`.
-- Wire `shadow-cold` as an overlay-able target in `Viewport` (`/overlayRT shadow-cold`).
+  OR of colours**. Debug only, `/overlayRT shadow-cold`.
 
-## P3 · Shared rect-accumulation helper — 2026-07-21
+## P4 · The gather cast (single full-window pass) — 2026-07-21
 
-- Factor a **rect-accumulation** utility over the toroidal grid: coalesce dirty squares into larger
-  pass **rectangles**, and **swallow clean squares** into a group when one larger pass beats many
-  small ones (cost heuristic; weigh **added lights**, not just added area — F5 sizing tension).
-  Toroidal `mod`-wrap aware; grid-square granularity shared with the G-buffer. Consumers:
-  `shadow-cold` (now) and `SquareCache` (later — it bakes 1 square at a time).
-- Emit **each pass-rect's reaching-light list** (box-test each light's radius vs the rect AABB) for
-  P2's fragment to loop (F5(a) — the per-rectangle pre-cull that keeps the fragment loop short).
-
-## P2 · The gather cast — 2026-07-21
-
-- One fragment pass per pass-rectangle. Per fragment: loop **the rect's pre-culled light list**
-  (F5 — not all 128); for each, **box-radius early-out** (cull if `|Δx|>r` **or** `|Δy|>r`) as a
-  per-pixel refine; for survivors, walk the light's LUT run of casters
-  (`cold_light_prim_data`→`prim_definition_data`+`cold_prim_data`) via `texelFetch` and run a
-  **point-in-projected-silhouette** test (reuse `shadow-projection` math per-fragment); **OR** the
-  light's bit (`1u << lightIndex`) into a register; write the full `u128` once. No ping-pong, no blend.
-- Consumes the per-rect reaching-light list from P3; `texelFetch`es each light's full data from the
-  cold textures (only the index list is per-rect).
+- One pass over `shadow-cold`. Per fragment: derive my tile; read the **dirty bit** (64-`uvec4`
+  uniform) — `discard` if clean (persistent RT untouched, no ping-pong). If dirty: read
+  `light_presence_cold` for my tile; iterate only its **set light bits**; for each light walk its
+  `caster_count`-bounded LUT run in `light_data` rows 1–32 (`u16` prim indexes → `prim_data` →
+  `prim_definition_data`, all `texelFetch`); per caster box-cull + **point-in-projected-silhouette**
+  (reuse `shadow-projection` math); **OR** `1u << lightIndex` into a register; write the full `u128`.
 - Retire the fan-scatter draw in `shadowCaster.ts` (its projection math moves into the fragment).
 
-## P1 · `shadow-cold` buffer + dirty marking — 2026-07-21
+## P3 · Dirty-tile tracking + the dirty uniform — 2026-07-21
 
-- Allocate a **world-space toroidal `RGBA32UI`** buffer sized/windowed like a `SquareCache` channel
-  (same `cols×rows`, `slotPx`, `mod`-wrap window, wrap-apron) — but integer, not baked from prims.
-- **Dirty marking** on the existing square grid: a cold light's or caster's add/move/remove dirties
-  the squares its **radius reach** covers (box), queued with a centre-out priority like `bakeDirty`.
+- CPU dirty-tile set on the tile grid (window+overscan): a **light** add/move/radius **or** a
+  **caster** move dirties the affected tiles (old + new). Pan-exposed tiles dirty on recenter (cf.
+  `SquareCache.markStale`).
+- Pack the dirty set into the **64-`uvec4`** uniform (one bit/tile) each frame (or a tiny
+  `128×64` dirty texture — F6 nit, if uniform space tightens). Feed to P4.
+
+## P2 · `light_presence_cold` (per-tile light bitfield) — 2026-07-21
+
+- Allocate `light_presence_cold` = **128×64 (window+overscan) `RGBA32UI`**, one tile/px, bit = a
+  light reaching that tile. CPU-maintained: on a light add/move/radius change, set/clear its bit over
+  the disk of tiles within its radius; upload the changed region. **Not** touched by caster moves.
+
+## P1 · Consolidate cold data to the fixed layout + `shadow-cold` buffer — 2026-07-21
+
+- Reshape the cold textures to **F6**: `light_data` **128×33** (row 0 = light record; rows 1–32 =
+  256× `u16` prim indexes — LUT folded in, `lut_index` implicit = column); `prim_data` **256×128**
+  (2/px, prim carries `u16 def_index` + `u8 z | u2 rot | u6 rsvd`); `prim_definition_data`
+  **256×256**. **Delete** `cold_light_prim_data`. Add **`u16 caster_count`** to the light record
+  (freed A-channel) — pending user nod (F6 pin), then write the authoritative layout to
+  [`docs/VARIABLES.md`](../../VARIABLES.md).
+- Allocate **`shadow-cold`** = a world-space toroidal `RGBA32UI` bitfield sized/windowed like a
+  `SquareCache` channel (same `cols×rows`, `slotPx`, `mod`-wrap, wrap-apron) — integer, not baked.

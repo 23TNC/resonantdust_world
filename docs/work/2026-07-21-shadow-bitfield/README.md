@@ -10,22 +10,25 @@ is the **per-light mask** the lighting pass will consume later. Component: `clie
 ## The idea (the user's design, 2026-07-21)
 
 Hold a **`shadow-cold`** buffer as a **world-space toroidal `RGBA32UI`** (128 bits). **Every bit
-represents one cold light** in `cold_light_data`. Maintain it by **dirty rectangles** on the same
-toroidal grid we already use for the G-buffer:
+represents one cold light** in `cold_light_data`. Maintain it by **dirty tiles** on the same toroidal grid we already use for the G-buffer. The
+**fixed-layout redesign (2026-07-21, F5/F6)** settled the culling + update model:
 
-1. **Mark** rectangles whose cold shadowing changed (a light or caster moved / was added).
-2. **Group** dirty rectangles into a larger rectangle and update it in one pass; **swallow clean
-   squares** into the group when one larger pass is cheaper than many small ones.
-3. For each pass rectangle, **calculate all cold lights against it in a single fragment pass**. Per
-   fragment, loop the cold lights; **box-radius early-out** any light that can't reach in x **or** y
-   (Chebyshev — cheaper than a distance test, and the lighting pass corrects the corner error);
-   for a surviving light, test shadow and **set its bit**.
-4. **No ping-pong** — this is a *gather*, not a read-modify-write: each fragment computes its full
-   128-bit value locally (ORs bits in a register) and writes once. Overlap is just multiple bits set.
-5. The **`/overlayRT` overlay** (debug) colours each pixel by its set bits — up to 128 colours,
-   overlap combines them. The bitfield is later used as a **per-light mask** for lighting.
-6. The **rect-accumulation** (merge dirty rects, swallow clean squares) is a **shared utility** for
-   *every* dirty-rect world-space toroidal texture we keep (the G-buffer `SquareCache` can adopt it).
+1. **Fixed slots.** `N = 128` lights, `≤ 256` shadow casters/light, `u16` def/prim indexes. Four cold
+   textures consolidate to `light_data` (128×33 — row 0 lights, rows 1–32 the LUT), `prim_data`
+   (256×128, 2/px), `prim_definition_data` (256×256) — deleting the old `cold_light_prim_data`. See
+   [F6](forks.md#f6).
+2. **`light_presence_cold`** (128×64, window+overscan) — one tile/px, **each bit = a light reaching
+   that tile** (distance cull, CPU-set on light change). The gather reads its tile's presence px and
+   iterates only the **set bits** — a popcount, not a scan of 128. This *is* the cull ([F5](forks.md#f5)).
+3. **Dirty-tile bitfield** (64 `uvec4` uniform, one bit/tile) — a light **or** caster change marks
+   tiles dirty. **One full-window pass**; each fragment reads its tile's dirty bit and **`discard`s
+   if clean** (persistent RT untouched). No rect grouping ([F3](forks.md#f3) dropped).
+4. For a dirty pixel, loop the tile's present lights; per light walk its `caster_count`-bounded
+   casters, box-cull, test point-in-silhouette, **OR** its bit into a register, write the `u128` once.
+5. **No ping-pong** anywhere — the gather is not a read-modify-write (bits OR'd in-register); the RT
+   is updated in place via `discard`; the cold data is CPU-maintained + region-uploaded.
+6. The **`/overlayRT` overlay** (debug) colours each pixel by its set bits — up to 128 colours,
+   overlap combines them. The bitfield is later the **per-light mask** for lighting.
 
 ## Assessment (feedback, per the request)
 
@@ -45,32 +48,31 @@ and run a **point-in-projected-silhouette** test against the cold prim textures 
 as the per-fragment predicate** — not thrown away — but the draw shape changes from "N instanced
 fans" to "one quad per rect, heavy fragment." Right trade for a bitfield ([F2 here](forks.md#f2)).
 
-**We're half-way on the shared dirty-rect utility.** `SquareCache` already owns the world-space
-toroidal window + per-square dirty queue + wrap-apron + budgeted `bakeDirty`. Two real gaps:
-- It bakes **one `SQUARE` (16px) at a time** (`bakeSquare`) — it does **not** coalesce adjacent dirty
-  squares into larger rectangles. The user's group-and-swallow is genuinely new work → factor a
-  shared **rect-accumulation** helper both `shadow-cold` and `SquareCache` can consume.
-- Its unit is that fixed grid square — exactly what `shadow-cold` should reuse for dirty marking
-  (same grid ⇒ same window / apron / `mod`-wrap), with the accumulator merging runs into pass rects.
+**Rect-accumulation dropped — the redesign obsoletes it.** My earlier plan wanted a shared helper to
+group dirty squares into pass rectangles. The **dirty-tile bitfield + single full-window `discard`-
+gated pass** (point 3) removes any grouping: one pass, per-tile gate, done. `SquareCache`'s per-square
+bake is a *different* problem (scatter, one draw/prim) that this trick doesn't cover, so the shared
+helper is decoupled from shadows — revisit for `SquareCache` only if it ever pays off there.
 
-**Watch-items:** box cull = *survive iff within radius in x **and** y* (cull on failing **either**);
-bit = the light's **index** in `cold_light_data` (0..127 — no `shadow_bit_index` field for the
-cold-only tier; that explicit `u8` stays hot-tier); cost is per-fragment × per-reaching-light ×
-per-caster, so keep a per-frame square **budget** like `bakeDirty`'s — grouping amortizes setup, not
-the inner loop; overlay decode moves `overlayShader` `OVERLAY_BITS` from float-mod on the RED byte to
-a real `usampler2D` decode of all 128 bits.
+**Watch-items:** box cull = *survive iff within radius in x **and** y*; bit = the light's **index** in
+`light_data` (0..127); the inner **caster loop** is the one perf cliff (a tile under many lights, each
+with a long list) — `caster_count` bounds it and the dirty-bit **budget** (P6) caps a big-change spike;
+overlay decode moves `overlayShader` `OVERLAY_BITS` from float-mod on the RED byte to a real
+`usampler2D` decode of all 128 bits. **One pin before `VARIABLES.md`:** the `caster_count` home
+([F6](forks.md#f6)).
 
-**Verdict: proceed.** Phase it: P1 the `shadow-cold` `RGBA32UI` toroidal buffer + dirty marking on
-the existing grid → P2 the gather cast (fragment loops lights + casters, box-cull, OR bits) → P3 the
-shared rect-accumulation helper (group + swallow) → P4 the `usampler2D` per-bit `/overlayRT` overlay
-→ P5 budget + verify (overlapping shadows show combined bit-colours; no aliasing on pan).
+**Verdict: proceed.** Phase it: P1 consolidate the cold textures to the fixed layout + allocate
+`shadow-cold` → P2 `light_presence_cold` (per-tile light cull) → P3 dirty-tile tracking + the dirty
+uniform → P4 the gather cast (single `discard`-gated window pass) → P5 the `usampler2D` per-bit
+`/overlayRT` overlay → P6 budget + verify.
 
 ## Scope
 
-**In:** the `shadow-cold` `RGBA32UI` world-space toroidal buffer; dirty marking on the existing
-square grid; the single-pass fragment **gather** (loop cold lights, box-cull, per-caster
-point-in-silhouette, OR bits); the shared **rect-accumulation** helper; the `usampler2D` per-bit
-`/overlayRT` overlay; a per-frame square budget.
+**In:** consolidating the cold textures to the fixed layout (F6, deleting `cold_light_prim_data`);
+the `shadow-cold` `RGBA32UI` world-space toroidal buffer; `light_presence_cold` (per-tile light cull);
+dirty-tile tracking + the dirty-bit uniform; the single-pass `discard`-gated fragment **gather**
+(present lights → `caster_count` casters → point-in-silhouette → OR bits); the `usampler2D` per-bit
+`/overlayRT` overlay; an optional dirty-bit **budget**.
 
 **Out (deferred / tabled):** the **hot** tier ([`hot-shadows`](../hot-shadows/README.md) — tabled,
 "more thought"); the **lit** output (ambient + `lightmap-cold` accumulation) — this stream produces
