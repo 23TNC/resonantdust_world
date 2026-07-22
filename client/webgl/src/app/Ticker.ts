@@ -11,6 +11,7 @@ export class Ticker {
   private minIntervalMs = 0;
   private readonly fns = new Set<TickFn>();
   private last = 0;
+  private lastDispatch = 0;
   private acc = 0;
   private raf = 0;
   private running = false;
@@ -34,6 +35,7 @@ export class Ticker {
     if (this.running) return;
     this.running = true;
     this.last = performance.now();
+    this.lastDispatch = this.last;
     const loop = (t: number): void => {
       if (!this.running) return;
       const dt = t - this.last;
@@ -43,14 +45,14 @@ export class Ticker {
       if (this.minIntervalMs > 0) {
         this.acc += dt;
         if (this.acc >= this.minIntervalMs) {
-          const step = this.acc;
-          // Carry the sub-interval remainder (NOT reset to 0) so the average
-          // dispatch rate holds exactly at maxFPS. Dropping it biases a 120Hz→
-          // 60fps cap down toward ~50: two 8.33ms frames land right on the
-          // 16.67ms boundary, so borderline pairs miss and wait a 3rd frame
-          // (40fps) instead of carrying the deficit forward. `%=` also collapses
-          // a large backlog after a tab-background stall into one step rather
-          // than a catch-up burst of same-tick dispatches.
+          // deltaMS = the REAL time since the last dispatch — NOT `this.acc`. `acc` still holds the
+          // carried sub-interval remainder from the previous dispatch, so passing it double-counts
+          // that time: on a 120Hz display capped to 60fps it inflated deltaMS to ~22.9ms (should be
+          // 16.7), running the sim ~1.37× too fast and reading ~44fps instead of 60.
+          const step = t - this.lastDispatch;
+          this.lastDispatch = t;
+          // Carry the sub-interval remainder (NOT reset to 0) so the average dispatch RATE holds
+          // exactly at maxFPS; `%=` also collapses a large post-stall backlog into one step.
           this.acc %= this.minIntervalMs;
           for (const fn of this.fns) fn(step);
         }
