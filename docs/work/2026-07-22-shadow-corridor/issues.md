@@ -98,6 +98,18 @@ Note the earlier **clip-to-tile-bounds** idea is rejected for the same reason sl
 partition seams at the boundary (dark overlap / bright gap under float rounding). Whole-caster never
 partitions, so there is no seam to manage; dedup only prevents the double-*accumulate*.
 
+## I-7 · Some casters miss their shadow — OPEN (debug, noticed 2026-07-22)
+
+At 3–6 lights, `/overlayRT` shows **some in-reach trees casting no shadow**. Prime suspect: the
+**base-line bucketing is a single tile row** (`buildCasters` buckets a caster only into
+`floor((y+height)/SQUARE)` × width cols) intersected with a **1-tile-thin corridor** — a P→L march can
+cross the caster's *position* at a row just off its base row and never read its bucket, so the caster
+is never tested. Candidates when we debug: bucket the caster into a small **neighbourhood** (base row
+± 1, or its full footprint), and/or confirm the corridor Bresenham vs the base row alignment. Distinct
+from the accepted F9 corner-graze — this is systematic, not a rare edge. Isolating one light and
+walking a known tree↔light pair on `/overlayRT` (colours now match the gizmos, so attribution is
+clean) is the way in.
+
 ## I-5 · Hot↔cold migration must be symmetric — OPEN (design rule for P8)
 
 Promotion (cold→hot on any data change) is defined; the **settle** (hot→cold when a thing stops) must

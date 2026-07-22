@@ -60,6 +60,18 @@ _Items move here from [`todo.md`](todo.md) when done **and** verified on `/overl
 - **Verified**: shadow edges are visibly soft and widen with distance — the firelight look. `EMITTER_R`
   is a **constant** for now; the per-light `emitter_radius` field (distinct from `reach`,
   [F7](forks.md#f7)/[F10](forks.md#f10)) is the remaining refinement.
+- **Fix (2026-07-22): clamped the penumbra blur** to ≤0.25 UV. It was unbounded
+  (`EMITTER_R·|P−A|/|A−L|`) → exploded at far shadow tips, sampling ~the whole silhouette and smearing
+  coverage far past the real tip (the "shadow too far" the user caught). Clamp bounds it to a fraction
+  of the sprite.
+
+## Debug overlay: shadow colours now match the light gizmos — 2026-07-22 ✓
+
+- Overlay `hueColour(k)` → **`lightColour(k)`** = the same `LIGHT_COLORS` the gizmo rings use, so a
+  light's shadow reads as the *same* colour as its ring (attribution was scrambled before — golden-
+  ratio hue ≠ gizmo colour, which made per-light bug-hunting confusing). Debug: first 6 lights.
+- Also: `MAX_LIGHTS` is now `number`-typed so `MAX_LIGHTS = 1` (isolate one light) doesn't trip TS's
+  constant-comparison check; the seed isolates the k=4 (teal) ring position when set to 1.
 
 _Not built yet: **P5** (u16/per-slot for >128 lights), **P6 dedup** (toward-P, if a seam shows), **P8**
 (cold/hot split + dirty budget). P1′ = delete the dead `light_data` LUT rows. Per-light

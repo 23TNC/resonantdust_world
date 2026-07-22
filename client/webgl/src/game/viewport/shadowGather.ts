@@ -19,8 +19,9 @@ import type { TextureResolver } from "../../textures";
 import { ColdShadowData } from "./coldShadowData";
 import { SQUARE } from "./squareMath";
 
-/** Lights this iteration — a ring of debug lights around the seed tile (verifies the multi-light path). */
-const MAX_LIGHTS = 6;
+/** Lights this iteration — a ring of debug lights around the seed tile. `number`-typed so the
+ *  isolate-one-light debug path (`MAX_LIGHTS = 1`) below isn't flagged as a constant comparison. */
+const MAX_LIGHTS: number = 6;
 /** Light height: 256 world px = 4 tiles (`SQUARE`=64) — twice the tree billboard height (128 px / 2 tiles). */
 const LIGHT_Z = 256;
 const LIGHT_RADIUS = 4 * SQUARE;
@@ -102,7 +103,9 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float f, sampler2D s
   // (occluder→receiver)/(light→occluder) — near occluders stay sharp, far ones feather. EMITTER_R =
   // source size; =0 ⇒ hard shadow. 5-tap cross in card-UV space (card is W×H units → uv = world/size).
   float pen = EMITTER_R * length(P - A) / max(length(A - L.xy), 1.0);
-  float ru = pen / W, rv = pen / max(H, 1.0);
+  // CLAMP the blur to a fraction of the sprite — unbounded, it explodes at far shadow tips and
+  // samples (near-)the whole silhouette, smearing coverage way past the real tip ("shadow too far").
+  float ru = min(pen / W, 0.25), rv = min(pen / max(H, 1.0), 0.25);
   float sv = v * (1.0 - f);
   float cc = cover(surf, framePx, vec2(u, sv));
   cc += cover(surf, framePx, vec2(u - ru, sv)) + cover(surf, framePx, vec2(u + ru, sv));
@@ -227,11 +230,15 @@ uniform highp usampler2D uShadow;   // shadow-cold (RGBA32UI)
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;
 out vec4 fragColor;
 int pmod(int a, int m) { return ((a % m) + m) % m; }
-// Distinct-ish colour per bit index (hue wheel); overlap sums.
-vec3 hueColour(int k) {
-  float h = fract(float(k) * 0.61803398875);   // golden-ratio hue spread
-  vec3 c = clamp(abs(fract(h + vec3(0.0, 0.6666, 0.3333)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
-  return c;
+// Per-light colour — MUST match LIGHT_COLORS (the gizmo rings) so a light's shadow reads as the same
+// colour as its ring while debugging. (Debug: only the first 6 lights; overlap sums.)
+vec3 lightColour(int k) {
+  if (k == 0) return vec3(1.0, 0.25, 0.25);   // red
+  if (k == 1) return vec3(0.25, 1.0, 0.3);    // green
+  if (k == 2) return vec3(0.3, 0.55, 1.0);    // blue
+  if (k == 3) return vec3(1.0, 0.95, 0.25);   // yellow
+  if (k == 4) return vec3(1.0, 0.35, 1.0);    // magenta
+  return vec3(0.3, 1.0, 1.0);                 // cyan
 }
 void main() {
   int tx = int(floor(vWorld.x / ${SQF})), ty = int(floor(vWorld.y / ${SQF}));
@@ -245,7 +252,7 @@ void main() {
   for (int k = 0; k < 32; k++) {                            // 4-bit coverage per light: nibble (k&7) of channel k>>3
     uint word = k < 8 ? bits.x : (k < 16 ? bits.y : (k < 24 ? bits.z : bits.w));
     uint nib = (word >> uint((k & 7) * 4)) & 0xFu;
-    if (nib > 0u) { float cvg = float(nib) / 15.0; acc += hueColour(k) * cvg; any = max(any, cvg); }
+    if (nib > 0u) { float cvg = float(nib) / 15.0; acc += lightColour(k) * cvg; any = max(any, cvg); }
   }
   if (any <= 0.0) { fragColor = vec4(0.0); return; }
   fragColor = vec4(clamp(acc, 0.0, 1.0), any);             // alpha = coverage → penumbra fades (P7)
@@ -365,7 +372,8 @@ export class ShadowGather {
     const cx = (tileX + 0.5) * SQUARE, cy = (tileY + 0.5) * SQUARE;
     this.lights.length = 0;
     for (let k = 0; k < MAX_LIGHTS; k++) {
-      const a = (k / MAX_LIGHTS) * Math.PI * 2;  // ring the lights around the tile centre
+      // DIAG: isolate the teal light — the k=4 ring position (angle 240°, up-left of centre).
+      const a = MAX_LIGHTS === 1 ? (4 / 6) * Math.PI * 2 : (k / MAX_LIGHTS) * Math.PI * 2;
       this.lights.push({ x: cx + Math.cos(a) * RING_RADIUS, y: cy + Math.sin(a) * RING_RADIUS, z: LIGHT_Z, radius: LIGHT_RADIUS });
     }
     this.enabled = true;
