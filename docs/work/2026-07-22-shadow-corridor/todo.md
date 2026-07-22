@@ -7,27 +7,14 @@ _Planned, not started. Items move to [`completed.md`](completed.md) when done + 
 
 ---
 
-## P1 · Per-tile caster buckets (replace the per-light LUT)
+_P1 + P2 **done + verified** 2026-07-22 → [`completed.md`](completed.md). Below: cleanup + P3 onward._
 
-- [ ] A per-tile **caster list** texture (parallel to `light_presence_cold`): **8× `u16` caster
-      refs/tile** into `prim_data` (plain refs — no seq field, [I-6](issues.md)). CPU-built: bucket
-      each `cast_shadows` prim into every **bounding-box** tile it covers as a whole ref (not a column
-      — no slicing, [F5](forks.md#f5)); footprint from `prim_width`/`prim_height`. Update membership on
-      tile-boundary crossings; write the prim's x/y every frame it moves (independent streams).
-- [ ] Hot-caster path: on a caster move, **re-bucket** (drop old tile, add new) — O(1), the whole
-      point. (Cold casters bucket once.)
-- [ ] Delete the `light_data` rows 1–32 LUT + its CPU maintenance once the sweep (P2) reads buckets.
+## P1′ · LUT cleanup (deferred from P1)
 
-## P2 · The corridor sweep (tile → light), keeping the current 1-bit output
-
-- [ ] Define **`onCorridor(tile, P, L)`** — the **1-tile-wide** ([F9](forks.md#f9)) rasterized path
-      from `P` to `L`. **One predicate**, used to drive the sweep enumeration *and* (later) the dedup
-      — they must agree, so there is a single source of truth.
-- [ ] Gather change: for texel `P`, for each of its lights, **march from `P` toward `L`** along the
-      corridor, reading each tile's caster refs, testing point-in-projected-silhouette, **break on
-      first hit**, **cap at 64** ([F8](forks.md#f8)). Nearest-`P` first (naturally, marching from `P`).
-- [ ] Keep the existing 128-bit per-light output for now — verify the corridor finds the same
-      shadows the LUT did (overlay should match pre-change).
+- [ ] Delete the `light_data` rows 1–32 LUT + its CPU build in `ColdShadowData.buildLights` (now dead
+      — the corridor reads buckets). Shrink `light_data` to the record row; keep `buildLights` for the
+      records only. (`onCorridor` was inlined as the Bresenham march in P2; factor it into a shared
+      predicate when the dedup lands in P6, since both must agree.)
 
 ## P3 · Wide-caster correctness (whole-caster, no slicing — [F5](forks.md#f5))
 

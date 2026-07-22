@@ -16,7 +16,7 @@ import { Renderer, Program, Geometry, RenderTarget, Texture } from "../../gl";
 import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
-import { ColdShadowData, MAX_CASTERS } from "./coldShadowData";
+import { ColdShadowData } from "./coldShadowData";
 import { SQUARE } from "./squareMath";
 
 /** Lights this iteration (a single light, centred on the seed tile, for shadow debugging). */
@@ -55,6 +55,7 @@ export interface TileWindow {
 const GATHER_COMMON = /* glsl */ `
 const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
+const float UPT = SQ / UNIT;      // world UNITS per tile (= 16)
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 uvec4 fetchLin(highp usampler2D t, int i, int w) { return texelFetch(t, ivec2(i % w, i / w), 0); }
 vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
@@ -95,6 +96,23 @@ bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float f, sampler2D surf,
   if (u < 0.0 || u > 1.0) return false;
   return cover(surf, framePx, vec2(u, v * (1.0 - f))) >= 0.5; // card v -> sprite uv.v (opaque region [0,1-f])
 }
+// Test one caster (prim index into prim_data) against ground point P from light L: read the prim
+// record + its definition and run the silhouette test. primIdx 0 = empty slot.
+bool casterHits(uint primIdx, vec2 P, vec3 L, highp usampler2D primData, highp usampler2D primDef,
+                int primW, int defW, sampler2D surf) {
+  if (primIdx == 0u) return false;
+  uvec4 Pd = fetchLin(primData, int(primIdx) / 2, primW);
+  uint pos = (primIdx & 1u) == 0u ? Pd.x : Pd.z;
+  uint orient = (primIdx & 1u) == 0u ? Pd.y : Pd.w;
+  vec2 A = decodePos(pos);
+  int defIdx = int((orient >> 6) & 0xffffu);
+  uvec4 D = fetchLin(primDef, defIdx, defW);
+  float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u);
+  float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
+  float basePad = float((D.z >> 14) & 255u);              // transparent base rows (atlas px)
+  float f = fh > 0.5 ? basePad / fh : 0.0;                // → base fraction
+  return inShadow(P, A, L, W, H, f, surf, vec4(fx, fy, fw, fh));
+}
 `;
 
 const FULLSCREEN_VERT = /* glsl */ `#version 300 es
@@ -105,11 +123,12 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 const GATHER_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
-uniform highp usampler2D uLightData;  // light_data (128×33)
+uniform highp usampler2D uLightData;  // light_data (128×33): row 0 = light records (LUT rows ignored)
 uniform highp usampler2D uPrimDef;    // prim_definition_data
 uniform highp usampler2D uPrimData;   // prim_data (2/px)
 uniform highp usampler2D uPresence;   // light_presence_cold (cols×rows, 1 tile/px)
 uniform highp usampler2D uDirty;      // shadow_dirty (cols×rows R8UI): .r nonzero = recompute
+uniform highp usampler2D uCaster;     // per-tile caster buckets (cols×rows RGBA32UI = 8× u16 prim idx)
 uniform sampler2D uSurface;           // casters' shared surface page (.B = silhouette coverage)
 uniform int uNLights, uDefW, uPrimW;
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window
@@ -135,28 +154,34 @@ void main() {
     uvec4 Ld = texelFetch(uLightData, ivec2(k, 0), 0);
     if ((Ld.z & 1u) == 0u) continue;                        // cast_shadows
     vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));
-    for (int c = 0; c < ${MAX_CASTERS}; c++) {
-      uvec4 lrow = texelFetch(uLightData, ivec2(k, 1 + (c >> 3)), 0);
-      uint packed = lrow[(c >> 1) & 3];
-      uint primIdx = (c & 1) == 0 ? (packed >> 16) : (packed & 0xffffu);
-      if (primIdx == 0u) break;                             // sentinel → end of run
-      uvec4 Pd = fetchLin(uPrimData, int(primIdx) / 2, uPrimW);
-      uint pos = (primIdx & 1u) == 0u ? Pd.x : Pd.z;
-      uint orient = (primIdx & 1u) == 0u ? Pd.y : Pd.w;
-      vec2 A = decodePos(pos);
-      int defIdx = int((orient >> 6) & 0xffffu);
-      uvec4 D = fetchLin(uPrimDef, defIdx, uDefW);
-      float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u);
-      float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
-      float basePad = float((D.z >> 14) & 255u);            // transparent base rows (atlas px)
-      float f = fh > 0.5 ? basePad / fh : 0.0;              // → base fraction
-      vec4 framePx = vec4(fx, fy, fw, fh); // atlas frame in PIXELS (cover() does the texel-centre inset)
-      if (inShadow(P, A, L, W, H, f, uSurface, framePx)) {
-        uint mask = 1u << uint(k & 31);
-        int ch = k >> 5;
-        if (ch == 0) b0 |= mask; else if (ch == 1) b1 |= mask; else if (ch == 2) b2 |= mask; else b3 |= mask;
-        break;                                              // this light shadows P → next light
+    // Corridor march: 1-tile-wide Bresenham over tiles from P's tile toward L's tile, reading each
+    // tile's ≤8 caster prim indices and testing them. break on first hit; cap total tests at 64.
+    ivec2 cur = ivec2(int(floor(P.x / UPT)), int(floor(P.y / UPT)));  // P's tile
+    ivec2 lt  = ivec2(int(floor(L.x / UPT)), int(floor(L.y / UPT)));  // L's tile
+    ivec2 dd = lt - cur, ad = abs(dd);
+    ivec2 sp = ivec2(dd.x >= 0 ? 1 : -1, dd.y >= 0 ? 1 : -1);
+    int err = ad.x - ad.y, tested = 0;
+    bool hit = false;
+    for (int m = 0; m < 24 && !hit; m++) {
+      uvec4 cb = texelFetch(uCaster, ivec2(pmod(cur.x, uCols), pmod(cur.y, uRows)), 0);
+      for (int c = 0; c < 8; c++) {
+        uint word = cb[c >> 1];
+        uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
+        if (primIdx == 0u) continue;
+        tested++;
+        if (casterHits(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW, uSurface)) { hit = true; break; }
+        if (tested >= 64) break;
       }
+      if (tested >= 64) break;
+      if (cur == lt) break;                                 // reached the light
+      int e2 = 2 * err;
+      if (e2 > -ad.y) { err -= ad.y; cur.x += sp.x; }
+      if (e2 <  ad.x) { err += ad.x; cur.y += sp.y; }
+    }
+    if (hit) {
+      uint mask = 1u << uint(k & 31);
+      int ch = k >> 5;
+      if (ch == 0) b0 |= mask; else if (ch == 1) b1 |= mask; else if (ch == 2) b2 |= mask; else b3 |= mask;
     }
   }
   fragColor = uvec4(b0, b1, b2, b3);
@@ -272,6 +297,13 @@ export class ShadowGather {
   private presSig = "";
   private lightsVer = 0;
 
+  /** Per-tile caster buckets (cols×rows `RGBA32UI` = 8× `u16` prim indices/tile). Replaces the
+   *  per-light LUT: the corridor sweep reads these instead. CPU-built on caster/window change. */
+  private casterTex: Texture;
+  private casterMirror = new Uint32Array(0);
+  private casterCols = 0;
+  private casterRows = 0;
+
   /** shadow_dirty (cols×rows R8UI, nonzero = recompute) + per-slot owner tracking for toroidal
    *  persistence: a slot recomputes when its world-tile owner changes (pan) or the cold data rebuilds. */
   private dirtyTex: Texture;
@@ -291,6 +323,7 @@ export class ShadowGather {
     this.gizmo = new Program(gl, GIZMO_VERT, GIZMO_FRAG, "shadow-gizmo");
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
     this.presenceTex = new Texture(gl, { width: 1, height: 1, format: "rgba32uint" });
+    this.casterTex = new Texture(gl, { width: 1, height: 1, format: "rgba32uint" });
     this.dirtyTex = new Texture(gl, { width: 1, height: 1, format: "r8uint" });
     this.coldData = new ColdShadowData(renderer);
     (globalThis as unknown as { __cold: unknown }).__cold = this.coldData; // DEBUG
@@ -350,6 +383,44 @@ export class ShadowGather {
       }
     }
     this.presenceTex.upload(this.presenceMirror);
+  }
+
+  /** Rebuild the per-tile **caster buckets** (P1): allocate each standing caster's def+prim, then
+   *  drop its `prim_data` index into every tile of its **base line** (anchor row × width cols) that
+   *  the window covers, up to 8/tile. The corridor sweep reads these; casters are bucketed by where
+   *  they *stand* (ground base), not the billboard's aerial bbox. Cheap enough to rebuild each frame
+   *  for now; the O(1) re-bucket on move lands with the hot tier. */
+  private buildCasters(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
+    const { cols, rows, winCol, winRow } = win;
+    if (this.casterCols !== cols || this.casterRows !== rows) {
+      this.casterTex.destroy();
+      this.casterTex = new Texture(this.renderer.gl, { width: cols, height: rows, format: "rgba32uint" });
+      this.casterMirror = new Uint32Array(cols * rows * 4);
+      this.casterCols = cols;
+      this.casterRows = rows;
+    }
+    this.casterMirror.fill(0);
+    const count = new Uint8Array(cols * rows);
+    const pm = (a: number, m: number): number => ((a % m) + m) % m;
+    for (const p of standing) {
+      const def = this.coldData.definitionFor(p, resolver);
+      if (def < 0) continue; // surface not resolved yet
+      const inst = this.coldData.primDataFor(p, def);
+      const baseRow = Math.floor((p.y + p.height) / SQUARE); // ground base row (anchor y)
+      const c0 = Math.floor(p.x / SQUARE), c1 = Math.floor((p.x + p.width) / SQUARE);
+      for (let wc = c0; wc <= c1; wc++) {
+        if (wc < winCol || wc >= winCol + cols || baseRow < winRow || baseRow >= winRow + rows) continue;
+        const si = pm(baseRow, rows) * cols + pm(wc, cols);
+        const n = count[si];
+        if (n >= 8) continue; // tile full — drop the rest (rare)
+        const base = si * 4 + (n >> 1);
+        if ((n & 1) === 0) this.casterMirror[base] = ((this.casterMirror[base] & 0x0000ffff) | ((inst & 0xffff) << 16)) >>> 0;
+        else this.casterMirror[base] = ((this.casterMirror[base] & 0xffff0000) | (inst & 0xffff)) >>> 0;
+        count[si] = n + 1;
+      }
+    }
+    this.casterTex.upload(this.casterMirror);
+    this.coldData.flush(); // upload any newly-allocated defs/prims
   }
 
   /** Rebuild `shadow_dirty` for this frame: a slot is dirty when its world-tile **owner changed** (pan /
@@ -425,7 +496,8 @@ export class ShadowGather {
     if (this.coldData.lights === 0 || win.cols === 0) return;
 
     this.ensureRT(win.cols, win.rows);
-    this.buildPresence(win); // F5 per-tile light cull (rebuilt on light/window change)
+    this.buildPresence(win);                    // F5 per-tile light cull (rebuilt on light/window change)
+    this.buildCasters(standing, resolver, win); // P1 per-tile caster buckets (the corridor reads these)
     this.buildDirty(win);    // P3: owner-change (pan) + rebuild → dirty; clean tiles persist
     const [, defW, primW] = this.coldData.widths;
     // Single pass; each fragment `discard`s clean tiles (shadow-cold persists) — no clear, no ping-pong.
@@ -439,6 +511,7 @@ export class ShadowGather {
         uPrimDef: this.coldData.definitionTexture,
         uPrimData: this.coldData.primTexture,
         uPresence: this.presenceTex,
+        uCaster: this.casterTex,
         uDirty: this.dirtyTex,
         uSurface: this.coldData.surfacePage ?? this.empty,
       },
@@ -510,6 +583,7 @@ export class ShadowGather {
     this.gizmo.destroy();
     this.empty.destroy();
     this.presenceTex.destroy();
+    this.casterTex.destroy();
     this.dirtyTex.destroy();
     this.shadowRT?.destroy();
     this.coldData.destroy();
