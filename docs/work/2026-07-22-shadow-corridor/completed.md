@@ -41,5 +41,26 @@ _Items move here from [`todo.md`](todo.md) when done **and** verified on `/overl
   **P5** — u16 presence list + 8-bit per-slot output for the 65 536-light address space — is still to
   do; it's only needed to go *past* 128 lights and to make the coverage/penumbra output per-slot.
 
-_Not built yet: **P5** (u16/per-slot rep), **P6** (coverage+dedup), **P7** (penumbra), **P8**
-(cold/hot). P1′ = delete the dead `light_data` LUT rows. P3's center-approx sub-check rides with P6/P7._
+## P6 · 4-bit coverage — 2026-07-22 ✓ (partial — dedup pending)
+
+- `inShadow` → **`shadowCover`**: returns the silhouette **alpha** (0..1), not a hard `≥0.5` bool.
+  `casterCover` carries it through the height cull. The gather **accumulates** `cov += casterCover`,
+  clamps, **breaks at full (1.0)**, and packs a **4-bit nibble per light** (bit `(k&7)*4` of channel
+  `k>>3`, ≤32 lights). Overlay decodes the nibbles → per-light colour × coverage, `alpha = coverage`.
+- **Verified**: 6-light coverage renders correctly, no seams at this scale. The **toward-P dedup**
+  ([I-6](issues.md)) is **not yet wired** — deferred until a double-count seam actually appears (base-
+  line bucketing + break-at-full keeps it invisible so far). This is 4-bit-per-light on the existing
+  light-bitfield presence (≤32 lights); the full u16 **P5** (65 536-light space) rides separately.
+
+## P7 · Penumbra (fake area light) — 2026-07-22 ✓ (constant emitter)
+
+- `shadowCover` now blurs the silhouette sample by a **PCSS-style** radius
+  `EMITTER_R·|P−A|/|A−L|` (occluder→receiver / light→occluder) — a **5-tap cross** in card-UV space.
+  Near occluders stay sharp, far ones feather; `EMITTER_R = 0` ⇒ hard.
+- **Verified**: shadow edges are visibly soft and widen with distance — the firelight look. `EMITTER_R`
+  is a **constant** for now; the per-light `emitter_radius` field (distinct from `reach`,
+  [F7](forks.md#f7)/[F10](forks.md#f10)) is the remaining refinement.
+
+_Not built yet: **P5** (u16/per-slot for >128 lights), **P6 dedup** (toward-P, if a seam shows), **P8**
+(cold/hot split + dirty budget). P1′ = delete the dead `light_data` LUT rows. Per-light
+`emitter_radius`, and the `radius`→`reach` field rename, ride with P5's layout rewrite._

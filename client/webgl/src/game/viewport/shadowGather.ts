@@ -56,6 +56,7 @@ const GATHER_COMMON = /* glsl */ `
 const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= 16)
+const float EMITTER_R = 3.0;      // P7: light source physical radius (world units) — penumbra softness
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 uvec4 fetchLin(highp usampler2D t, int i, int w) { return texelFetch(t, ivec2(i % w, i / w), 0); }
 vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
@@ -80,27 +81,39 @@ float cover(sampler2D surf, vec4 framePx, vec2 uv) {
 // param (u,v) whose shadow lands on P — then sample the sprite there. Exact for a projected planar quad.
 //   card(u,v): x = A.x+(u-0.5)W ; y = mix(Yt,Yb,v) ; z = mix(Zt,0,v)   (v=0 top, v=1 base)
 //   shadow(u,v) = L.xy + (L.z/(L.z-z)) * (card.xy - L.xy)
-bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float f, sampler2D surf, vec4 framePx) {
+// Returns the caster's COVERAGE at P (0 = lit … 1 = fully occluded), = the sprite's silhouette alpha
+// at the solved (u,v); 0 when P is outside the projected card. (P6: coverage, not a hard bool — feeds
+// the 4-bit accumulate; translucent casters contribute their partial alpha.)
+float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float f, sampler2D surf, vec4 framePx) {
   float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
   float Yt = A.y - 0.5 * H * ct, Zt = H * st;   // card top (v=0): elevated + tilted
   float Yb = A.y - f * H;                        // card base (v=1): on the ground (z=0), at the opaque base
   float DY = Yb - Yt, DZ = -Zt;                  // d(y)/dv, d(z)/dv
   float Pd = P.y - L.y;
   float denom = L.z * DY + Pd * DZ;
-  if (abs(denom) < 1e-4) return false;
+  if (abs(denom) < 1e-4) return 0.0;
   float v = (Pd * (L.z - Zt) - L.z * (Yt - L.y)) / denom;  // solve shadow.y = P.y (linear in v)
-  if (v < 0.0 || v > 1.0) return false;
+  if (v < 0.0 || v > 1.0) return 0.0;
   float s = L.z / (L.z - (Zt + v * DZ));                   // projection factor at this height
-  if (s <= 0.0) return false;
+  if (s <= 0.0) return 0.0;
   float u = 0.5 + (L.x + (P.x - L.x) / s - A.x) / W;       // solve shadow.x = P.x
-  if (u < 0.0 || u > 1.0) return false;
-  return cover(surf, framePx, vec2(u, v * (1.0 - f))) >= 0.5; // card v -> sprite uv.v (opaque region [0,1-f])
+  if (u < -0.5 || u > 1.5) return 0.0;                     // allow a margin for the penumbra taps
+  // P7 penumbra (fake area light, PCSS-style): blur the silhouette sample by a radius that grows with
+  // (occluder→receiver)/(light→occluder) — near occluders stay sharp, far ones feather. EMITTER_R =
+  // source size; =0 ⇒ hard shadow. 5-tap cross in card-UV space (card is W×H units → uv = world/size).
+  float pen = EMITTER_R * length(P - A) / max(length(A - L.xy), 1.0);
+  float ru = pen / W, rv = pen / max(H, 1.0);
+  float sv = v * (1.0 - f);
+  float cc = cover(surf, framePx, vec2(u, sv));
+  cc += cover(surf, framePx, vec2(u - ru, sv)) + cover(surf, framePx, vec2(u + ru, sv));
+  cc += cover(surf, framePx, vec2(u, sv - rv)) + cover(surf, framePx, vec2(u, sv + rv));
+  return cc * 0.2;                                         // card v -> sprite uv.v (opaque region [0,1-f])
 }
-// Test one caster (prim index into prim_data) against ground point P from light L: read the prim
-// record + its definition and run the silhouette test. primIdx 0 = empty slot.
-bool casterHits(uint primIdx, vec2 P, vec3 L, highp usampler2D primData, highp usampler2D primDef,
-                int primW, int defW, sampler2D surf) {
-  if (primIdx == 0u) return false;
+// Coverage of one caster (prim index into prim_data) at P from light L: read the prim record + its
+// definition, height-cull, then the silhouette test. Returns 0..1 (0 = empty slot / not under / culled).
+float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData, highp usampler2D primDef,
+                  int primW, int defW, sampler2D surf) {
+  if (primIdx == 0u) return 0.0;
   uvec4 Pd = fetchLin(primData, int(primIdx) / 2, primW);
   uint pos = (primIdx & 1u) == 0u ? Pd.x : Pd.z;
   uint orient = (primIdx & 1u) == 0u ? Pd.y : Pd.w;
@@ -112,11 +125,11 @@ bool casterHits(uint primIdx, vec2 P, vec3 L, highp usampler2D primData, highp u
   // caster's shadow band only if 0 <= (dP - dC) <= (dP/L.z)·H (dP/dC = P/caster distance from the
   // light). H (full height) over-estimates the tilted extent → conservative, never drops a real hit.
   float dP = length(P - L.xy), dC = length(A - L.xy), delta = dP - dC;
-  if (delta < 0.0 || delta > (dP / L.z) * H) return false;
+  if (delta < 0.0 || delta > (dP / L.z) * H) return 0.0;
   float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
   float basePad = float((D.z >> 14) & 255u);              // transparent base rows (atlas px)
   float f = fh > 0.5 ? basePad / fh : 0.0;                // → base fraction
-  return inShadow(P, A, L, W, H, f, surf, vec4(fx, fy, fw, fh));
+  return shadowCover(P, A, L, W, H, f, surf, vec4(fx, fy, fw, fh));
 }
 `;
 
@@ -159,34 +172,36 @@ void main() {
     uvec4 Ld = texelFetch(uLightData, ivec2(k, 0), 0);
     if ((Ld.z & 1u) == 0u) continue;                        // cast_shadows
     vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));
-    // Corridor march: 1-tile-wide Bresenham over tiles from P's tile toward L's tile, reading each
-    // tile's ≤8 caster prim indices and testing them. break on first hit; cap total tests at 64.
+    // Corridor march: 1-tile-wide Bresenham over tiles from P's tile toward L's tile, ACCUMULATING
+    // coverage from each tile's ≤8 casters; break at full (0xF); cap total tests at 64.
     ivec2 cur = ivec2(int(floor(P.x / UPT)), int(floor(P.y / UPT)));  // P's tile
     ivec2 lt  = ivec2(int(floor(L.x / UPT)), int(floor(L.y / UPT)));  // L's tile
     ivec2 dd = lt - cur, ad = abs(dd);
     ivec2 sp = ivec2(dd.x >= 0 ? 1 : -1, dd.y >= 0 ? 1 : -1);
     int err = ad.x - ad.y, tested = 0;
-    bool hit = false;
-    for (int m = 0; m < 24 && !hit; m++) {
+    float cov = 0.0;
+    for (int m = 0; m < 24 && cov < 1.0; m++) {
       uvec4 cb = texelFetch(uCaster, ivec2(pmod(cur.x, uCols), pmod(cur.y, uRows)), 0);
       for (int c = 0; c < 8; c++) {
         uint word = cb[c >> 1];
         uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
         if (primIdx == 0u) continue;
         tested++;
-        if (casterHits(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW, uSurface)) { hit = true; break; }
-        if (tested >= 64) break;
+        cov = min(cov + casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW, uSurface), 1.0);
+        if (cov >= 1.0 || tested >= 64) break;
       }
-      if (tested >= 64) break;
+      if (cov >= 1.0 || tested >= 64) break;
       if (cur == lt) break;                                 // reached the light
       int e2 = 2 * err;
       if (e2 > -ad.y) { err -= ad.y; cur.x += sp.x; }
       if (e2 <  ad.x) { err += ad.x; cur.y += sp.y; }
     }
-    if (hit) {
-      uint mask = 1u << uint(k & 31);
-      int ch = k >> 5;
-      if (ch == 0) b0 |= mask; else if (ch == 1) b1 |= mask; else if (ch == 2) b2 |= mask; else b3 |= mask;
+    // Pack light k's coverage as a 4-bit nibble at bit (k&7)*4 of channel k>>3 (≤32 lights).
+    uint nib = uint(cov * 15.0 + 0.5);
+    if (nib > 0u) {
+      uint packed = nib << uint((k & 7) * 4);
+      int ch = k >> 3;
+      if (ch == 0) b0 |= packed; else if (ch == 1) b1 |= packed; else if (ch == 2) b2 |= packed; else b3 |= packed;
     }
   }
   fragColor = uvec4(b0, b1, b2, b3);
@@ -226,13 +241,14 @@ void main() {
   ivec2 texel = ivec2(sx * uSlot + int(lx * float(uSlot)), sy * uSlot + int(ly * float(uSlot)));
   uvec4 bits = texelFetch(uShadow, texel, 0);
   vec3 acc = vec3(0.0);
-  int set = 0;
-  for (int k = 0; k < 128; k++) {
-    uint word = k < 32 ? bits.x : (k < 64 ? bits.y : (k < 96 ? bits.z : bits.w));
-    if ((word & (1u << uint(k & 31))) != 0u) { acc += hueColour(k); set++; }
+  float any = 0.0;
+  for (int k = 0; k < 32; k++) {                            // 4-bit coverage per light: nibble (k&7) of channel k>>3
+    uint word = k < 8 ? bits.x : (k < 16 ? bits.y : (k < 24 ? bits.z : bits.w));
+    uint nib = (word >> uint((k & 7) * 4)) & 0xFu;
+    if (nib > 0u) { float cvg = float(nib) / 15.0; acc += hueColour(k) * cvg; any = max(any, cvg); }
   }
-  if (set == 0) { fragColor = vec4(0.0); return; }
-  fragColor = vec4(clamp(acc, 0.0, 1.0), 1.0);
+  if (any <= 0.0) { fragColor = vec4(0.0); return; }
+  fragColor = vec4(clamp(acc, 0.0, 1.0), any);             // alpha = coverage → penumbra fades (P7)
 }
 `;
 
@@ -349,10 +365,8 @@ export class ShadowGather {
     const cx = (tileX + 0.5) * SQUARE, cy = (tileY + 0.5) * SQUARE;
     this.lights.length = 0;
     for (let k = 0; k < MAX_LIGHTS; k++) {
-      // A single light sits at the tile centre; multiples ring it.
-      const rr = MAX_LIGHTS === 1 ? 0 : RING_RADIUS;
-      const a = (k / MAX_LIGHTS) * Math.PI * 2;
-      this.lights.push({ x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr, z: LIGHT_Z, radius: LIGHT_RADIUS });
+      const a = (k / MAX_LIGHTS) * Math.PI * 2;  // ring the lights around the tile centre
+      this.lights.push({ x: cx + Math.cos(a) * RING_RADIUS, y: cy + Math.sin(a) * RING_RADIUS, z: LIGHT_Z, radius: LIGHT_RADIUS });
     }
     this.enabled = true;
     this.coldDirty = true;

@@ -36,24 +36,21 @@ _P1 + P2 **done + verified** 2026-07-22 → [`completed.md`](completed.md). Belo
 - [ ] Update `/overlayRT` decode + the lighting join (slot `i` → light `presence[i]`, skip if
       shadowed). Verify parity with P2 on ≤8-light scenes, then push past 128 total lights.
 
-## P6 · 4-bit coverage (translucency)
+_P6 (4-bit coverage) + P7 (penumbra) **core done + verified** → [`completed.md`](completed.md).
+Remaining refinements below._
 
-- [ ] Output slot → **`u4`** (`0x0` lit … `0xF` opaque); accumulate the caster **alpha** from
-      `cover()` (drop the `≥0.5` threshold); **break at `0xF`**.
-- [ ] **Dedup multi-tile casters** ([I-6](issues.md)): a caster in >1 corridor tile would add its
-      coverage twice. **Cast iff none of the 3 toward-`P` neighbours** (backward along the corridor)
-      is in `prim ∩ corridor` (bbox test + the P2 `onCorridor`); else defer. Aim toward `P`, **not**
-      the anchor. No stored field, no neighbour-list read; flat 3 checks (corridor is 1-wide,
-      [F9](forks.md#f9)). Harmless before P6 (binary idempotent).
-- [ ] Verify foliage/glass casters produce partial shadow; opaque casters still `0xF`-and-break; a
-      wide tree and a tile-straddling pawn each cast a single (not doubled) shadow.
+## P6′ · Toward-P dedup (deferred — only if a seam shows)
 
-## P7 · Penumbra (fake area light)
+- [ ] Wire the **3 toward-`P` neighbour** dedup ([I-6](issues.md)) into the coverage accumulate: cast
+      iff none of the 3 toward-`P` neighbours is in `prim ∩ corridor` (bbox test + a shared
+      `onCorridor` predicate — currently the march is inline Bresenham; factor the predicate so both
+      agree). Not yet needed — base-line bucketing + break-at-full hides any double-count so far.
+- [ ] Verify foliage/glass casters produce partial shadow (needs translucent test content).
 
-- [ ] Add **`emitter_radius`** to the light record (distinct from `reach`).
-- [ ] Soften the `cover()` sample by `penumbra_width = emitter_radius·(tile→occluder)/(light→occluder)`
-      — blurred silhouette **mip** preferred (one read). Feeds the same P6 accumulate.
-- [ ] Verify: sharp base / soft tip; `emitter_radius = 0` ⇒ hard shadow.
+## P7′ · Per-light emitter radius (deferred)
+
+- [ ] Replace the constant `EMITTER_R` with a per-light **`emitter_radius`** field (distinct from
+      `reach`); rides with P5's `light_data` layout rewrite + the `radius`→`reach` rename.
 
 ## P8 · Cold / hot split
 
