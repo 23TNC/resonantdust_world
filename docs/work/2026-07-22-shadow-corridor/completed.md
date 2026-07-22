@@ -73,6 +73,24 @@ _Items move here from [`todo.md`](todo.md) when done **and** verified on `/overl
 - Also: `MAX_LIGHTS` is now `number`-typed so `MAX_LIGHTS = 1` (isolate one light) doesn't trip TS's
   constant-comparison check; the seed isolates the k=4 (teal) ring position when set to 1.
 
-_Not built yet: **P5** (u16/per-slot for >128 lights), **P6 dedup** (toward-P, if a seam shows), **P8**
-(cold/hot split + dirty budget). P1′ = delete the dead `light_data` LUT rows. Per-light
-`emitter_radius`, and the `radius`→`reach` field rename, ride with P5's layout rewrite._
+## I-7 · Casters miss shadow (base-row bucketing) — RESOLVED 2026-07-22 ✓
+
+- `buildCasters` bucketed casters into only the **single base row**, but the corridor crosses the
+  caster anywhere in its tilted card's y-extent `[topY, baseY]` (`topY = baseY − 0.5·H·cos65`). Now
+  buckets every row the card spans (1–2 for a tree). Verified: the gaps within the light rings filled.
+  Full write-up in [issues I-7](issues.md).
+
+## P1′ · Delete the dead LUT + P7′ · Per-light emitter — 2026-07-22 ✓
+
+- **P1′:** `light_data` shrunk **128×33 → 128×1** (record row only). `buildLights` is records-only now
+  (dropped the LUT loop, `writeCaster`, `MAX_CASTERS`, `lightCasterCounts`, `debugCaster`,
+  `casterCount`) — casters are found by the buckets + corridor, allocated in `buildCasters`.
+- **P7′ + rename:** the light range field is now **`reach`** (was `radius`) everywhere. Added
+  **`emitter_radius`** to the record (A channel, units) + `ColdLight.emitterRadius`; the gather reads
+  it per light (`Ld.w`) and threads it into `casterCover`/`shadowCover`, replacing the `EMITTER_R`
+  constant. Debug seed varies emitter size round the ring (`LIGHT_EMITTER·(1+k·0.6)`).
+- **Verified**: shadows render, per-light **softness visibly varies** (soft top vs crisp side), no
+  errors. The `light_data` layout change is ready for `VARIABLES.md` when P5 rewrites it.
+
+_Not built yet: **P5** (u16/per-slot for >128 lights — scale infra), **P8** (cold/hot split + dirty
+budget — needs moving casters to verify), **P6′ dedup** (toward-P, deferred until a seam shows)._

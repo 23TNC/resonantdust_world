@@ -7,14 +7,9 @@ _Planned, not started. Items move to [`completed.md`](completed.md) when done + 
 
 ---
 
-_P1 + P2 **done + verified** 2026-07-22 → [`completed.md`](completed.md). Below: cleanup + P3 onward._
-
-## P1′ · LUT cleanup (deferred from P1)
-
-- [ ] Delete the `light_data` rows 1–32 LUT + its CPU build in `ColdShadowData.buildLights` (now dead
-      — the corridor reads buckets). Shrink `light_data` to the record row; keep `buildLights` for the
-      records only. (`onCorridor` was inlined as the Bresenham march in P2; factor it into a shared
-      predicate when the dedup lands in P6, since both must agree.)
+_**Done + verified** 2026-07-22 → [`completed.md`](completed.md): P1, P2, P4, multi-light, P6
+(coverage), P7 (penumbra), **I-7** (base-row-bucketing fix), **P1′** (LUT deleted), **P7′** (per-light
+`emitter_radius` + `radius`→`reach`). Remaining below._
 
 ## P3 · Wide-caster correctness (whole-caster, no slicing — [F5](forks.md#f5))
 
@@ -46,11 +41,6 @@ Remaining refinements below._
       `onCorridor` predicate — currently the march is inline Bresenham; factor the predicate so both
       agree). Not yet needed — base-line bucketing + break-at-full hides any double-count so far.
 - [ ] Verify foliage/glass casters produce partial shadow (needs translucent test content).
-
-## P7′ · Per-light emitter radius (deferred)
-
-- [ ] Replace the constant `EMITTER_R` with a per-light **`emitter_radius`** field (distinct from
-      `reach`); rides with P5's `light_data` layout rewrite + the `radius`→`reach` rename.
 
 ## P8 · Cold / hot split
 

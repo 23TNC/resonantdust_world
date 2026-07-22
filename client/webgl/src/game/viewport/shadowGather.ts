@@ -24,7 +24,8 @@ import { SQUARE } from "./squareMath";
 const MAX_LIGHTS: number = 6;
 /** Light height: 256 world px = 4 tiles (`SQUARE`=64) — twice the tree billboard height (128 px / 2 tiles). */
 const LIGHT_Z = 256;
-const LIGHT_RADIUS = 4 * SQUARE;
+const LIGHT_REACH = 4 * SQUARE;      // illumination range (world px) — how far the light throws
+const LIGHT_EMITTER = 12;            // physical source size (world px = 3 units) — penumbra softness
 const RING_RADIUS = 2 * SQUARE;
 /** shadow-cold resolution: `SHADOW_SLOT` texels per world tile (a tile is `SQUARE` world px). 16 = 1
  *  texel/world-px. Sized `cols·SHADOW_SLOT × rows·SHADOW_SLOT`, toroidal like the cold cache window. */
@@ -41,7 +42,8 @@ interface Light {
   x: number;
   y: number;
   z: number;
-  radius: number;
+  reach: number;         // illumination range (world px)
+  emitterRadius: number; // physical source size (world px) — penumbra softness
 }
 
 /** The cold cache's toroidal tile window (from `SquareCache.window`) — shadow-cold aligns to it. */
@@ -57,7 +59,6 @@ const GATHER_COMMON = /* glsl */ `
 const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= 16)
-const float EMITTER_R = 3.0;      // P7: light source physical radius (world units) — penumbra softness
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 uvec4 fetchLin(highp usampler2D t, int i, int w) { return texelFetch(t, ivec2(i % w, i / w), 0); }
 vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
@@ -85,7 +86,7 @@ float cover(sampler2D surf, vec4 framePx, vec2 uv) {
 // Returns the caster's COVERAGE at P (0 = lit … 1 = fully occluded), = the sprite's silhouette alpha
 // at the solved (u,v); 0 when P is outside the projected card. (P6: coverage, not a hard bool — feeds
 // the 4-bit accumulate; translucent casters contribute their partial alpha.)
-float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float f, sampler2D surf, vec4 framePx) {
+float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float f, float emitterR, sampler2D surf, vec4 framePx) {
   float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
   float Yt = A.y - 0.5 * H * ct, Zt = H * st;   // card top (v=0): elevated + tilted
   float Yb = A.y - f * H;                        // card base (v=1): on the ground (z=0), at the opaque base
@@ -102,7 +103,7 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float f, sampler2D s
   // P7 penumbra (fake area light, PCSS-style): blur the silhouette sample by a radius that grows with
   // (occluder→receiver)/(light→occluder) — near occluders stay sharp, far ones feather. EMITTER_R =
   // source size; =0 ⇒ hard shadow. 5-tap cross in card-UV space (card is W×H units → uv = world/size).
-  float pen = EMITTER_R * length(P - A) / max(length(A - L.xy), 1.0);
+  float pen = emitterR * length(P - A) / max(length(A - L.xy), 1.0);
   // CLAMP the blur to a fraction of the sprite — unbounded, it explodes at far shadow tips and
   // samples (near-)the whole silhouette, smearing coverage way past the real tip ("shadow too far").
   float ru = min(pen / W, 0.25), rv = min(pen / max(H, 1.0), 0.25);
@@ -114,8 +115,8 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float f, sampler2D s
 }
 // Coverage of one caster (prim index into prim_data) at P from light L: read the prim record + its
 // definition, height-cull, then the silhouette test. Returns 0..1 (0 = empty slot / not under / culled).
-float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData, highp usampler2D primDef,
-                  int primW, int defW, sampler2D surf) {
+float casterCover(uint primIdx, vec2 P, vec3 L, float emitterR, highp usampler2D primData,
+                  highp usampler2D primDef, int primW, int defW, sampler2D surf) {
   if (primIdx == 0u) return 0.0;
   uvec4 Pd = fetchLin(primData, int(primIdx) / 2, primW);
   uint pos = (primIdx & 1u) == 0u ? Pd.x : Pd.z;
@@ -132,7 +133,7 @@ float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData, highp
   float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
   float basePad = float((D.z >> 14) & 255u);              // transparent base rows (atlas px)
   float f = fh > 0.5 ? basePad / fh : 0.0;                // → base fraction
-  return shadowCover(P, A, L, W, H, f, surf, vec4(fx, fy, fw, fh));
+  return shadowCover(P, A, L, W, H, f, emitterR, surf, vec4(fx, fy, fw, fh));
 }
 `;
 
@@ -175,6 +176,7 @@ void main() {
     uvec4 Ld = texelFetch(uLightData, ivec2(k, 0), 0);
     if ((Ld.z & 1u) == 0u) continue;                        // cast_shadows
     vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));
+    float emitterR = float((Ld.w >> 24) & 255u);            // per-light penumbra source size (units, F7)
     // Corridor march: 1-tile-wide Bresenham over tiles from P's tile toward L's tile, ACCUMULATING
     // coverage from each tile's ≤8 casters; break at full (0xF); cap total tests at 64.
     ivec2 cur = ivec2(int(floor(P.x / UPT)), int(floor(P.y / UPT)));  // P's tile
@@ -190,7 +192,7 @@ void main() {
         uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
         if (primIdx == 0u) continue;
         tested++;
-        cov = min(cov + casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW, uSurface), 1.0);
+        cov = min(cov + casterCover(primIdx, P, L, emitterR, uPrimData, uPrimDef, uPrimW, uDefW, uSurface), 1.0);
         if (cov >= 1.0 || tested >= 64) break;
       }
       if (cov >= 1.0 || tested >= 64) break;
@@ -374,7 +376,9 @@ export class ShadowGather {
     for (let k = 0; k < MAX_LIGHTS; k++) {
       // DIAG: isolate the teal light — the k=4 ring position (angle 240°, up-left of centre).
       const a = MAX_LIGHTS === 1 ? (4 / 6) * Math.PI * 2 : (k / MAX_LIGHTS) * Math.PI * 2;
-      this.lights.push({ x: cx + Math.cos(a) * RING_RADIUS, y: cy + Math.sin(a) * RING_RADIUS, z: LIGHT_Z, radius: LIGHT_RADIUS });
+      // Vary emitter size per light so the per-light softness is visible: k·(source growing round the ring).
+      const emitter = LIGHT_EMITTER * (1 + k * 0.6);
+      this.lights.push({ x: cx + Math.cos(a) * RING_RADIUS, y: cy + Math.sin(a) * RING_RADIUS, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: emitter });
     }
     this.enabled = true;
     this.coldDirty = true;
@@ -397,7 +401,7 @@ export class ShadowGather {
     this.presenceMirror.fill(0);
     const n = Math.min(this.lights.length, MAX_LIGHTS);
     for (let k = 0; k < n; k++) {
-      const L = this.lights[k], r = L.radius;
+      const L = this.lights[k], r = L.reach;
       const t0x = Math.max(winCol, Math.floor((L.x - r) / SQUARE)), t1x = Math.min(winCol + cols - 1, Math.floor((L.x + r) / SQUARE));
       const t0y = Math.max(winRow, Math.floor((L.y - r) / SQUARE)), t1y = Math.min(winRow + rows - 1, Math.floor((L.y + r) / SQUARE));
       const bit = (1 << (k & 31)) >>> 0, ch = k >> 5;
@@ -522,9 +526,10 @@ export class ShadowGather {
 
     if (this.coldDirty || standing.length !== this.lastCasterCount) {
       const coldLights = this.lights.slice(0, MAX_LIGHTS).map((L, k) => ({
-        x: L.x, y: L.y, z: L.z, radius: L.radius, color: LIGHT_COLORS[k], intensity: 1, castShadows: true,
+        x: L.x, y: L.y, z: L.z, reach: L.reach, emitterRadius: L.emitterRadius,
+        color: LIGHT_COLORS[k % LIGHT_COLORS.length], intensity: 1, castShadows: true,
       }));
-      this.coldData.buildLights(coldLights, standing, resolver);
+      this.coldData.buildLights(coldLights);
       this.lastCasterCount = standing.length;
       this.coldDirty = false;
       this.forceDirty = true; // lights/casters changed → every reached tile may change → force-all dirty
@@ -600,8 +605,8 @@ export class ShadowGather {
         uniforms: (p) => {
           p.uMat3("uProjection", proj);
           p.uVec2("uCenter", L.x, L.y);
-          p.uFloat("uHalf", L.radius * 1.06);
-          p.uFloat("uRadius", L.radius);
+          p.uFloat("uHalf", L.reach * 1.06);
+          p.uFloat("uRadius", L.reach);
           p.uFloat("uPxWorld", pxWorld);
           p.uVec3("uColor", col[0], col[1], col[2]);
         },

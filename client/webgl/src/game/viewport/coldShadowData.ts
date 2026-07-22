@@ -23,11 +23,10 @@ export const UNIT = SQUARE / 16;
 
 /** Fixed light count (bits in the shadow bitfield). */
 export const N_LIGHTS = 128;
-/** `light_data` — 128 wide (col = light) × 33 tall (row 0 record + 32 LUT rows). */
+/** `light_data` — 128 wide (col = light) × 1 tall (the record row). The per-light caster LUT is
+ *  retired: casters are found by the per-tile buckets + corridor sweep (`shadowGather`), not a LUT. */
 const LIGHT_W = 128;
-const LIGHT_H = 33;
-/** Max shadow casters per light (32 LUT rows × 8 `u16`/px). */
-export const MAX_CASTERS = 256;
+const LIGHT_H = 1;
 /** `prim_data` — 2 entries/px; `256 × 128` = 65536 slots (index 0 = sentinel). */
 const PRIM_W = 256;
 const PRIM_H = 128;
@@ -39,12 +38,13 @@ const u10 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0x3ff);
 const u8 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0xff);
 const clamp = (v: number, hi: number): number => Math.min(Math.max(Math.round(v), 0), hi);
 
-/** One light to write into `light_data` (world px + unit-scaled reach; colour 0..1). */
+/** One light to write into `light_data` (world px + unit-scaled fields; colour 0..1). */
 export interface ColdLight {
   x: number;
   y: number;
   z: number; // world px (→ units)
-  radius: number; // world px (→ units)
+  reach: number; // illumination range, world px (→ units) — how FAR the light throws
+  emitterRadius: number; // physical source size, world px (→ units) — penumbra softness (F7/F10)
   color: [number, number, number]; // 0..1
   intensity: number; // 0..1
   castShadows: boolean;
@@ -98,8 +98,6 @@ export class ColdShadowData {
   private readonly lightTex: Texture;
   private readonly lightMirror = new Uint32Array(LIGHT_W * LIGHT_H * 4);
   private lightCount = 0;
-  /** Per-light caster count (CPU-side; drives the fan draw's instanceCount — the gather sentinel-terminates). */
-  private lightCasterCounts: number[] = [];
 
   constructor(private readonly renderer: Renderer) {
     this.defTex = new Texture(renderer.gl, { width: DEF_W, height: DEF_H, format: "rgba32uint" });
@@ -218,62 +216,31 @@ export class ColdShadowData {
   get lights(): number {
     return this.lightCount;
   }
-  /** A light's caster count (0..256) — drives the fan draw's per-light instanceCount. */
-  casterCount(k: number): number {
-    return this.lightCasterCounts[k] ?? 0;
-  }
   /** Texture widths `[lightW, defW, primW]` for the shader's index→texel maths. */
   get widths(): [number, number, number] {
     return [LIGHT_W, DEF_W, PRIM_W];
   }
 
-  /** Write a caster index into light `k`'s LUT (rows 1–32; 8× `u16`/px, sentinel-`0`-terminated). */
-  private writeCaster(k: number, j: number, primIdx: number): void {
-    const row = 1 + (j >> 3); // rows 1..32
-    const s = j & 7; // 0..7 within the px
-    const ch = s >> 1; // R/G/B/A
-    const flat = (row * LIGHT_W + k) * 4 + ch;
-    if ((s & 1) === 0) this.lightMirror[flat] = ((this.lightMirror[flat] & 0x0000ffff) | ((primIdx & 0xffff) << 16)) >>> 0;
-    else this.lightMirror[flat] = ((this.lightMirror[flat] & 0xffff0000) | (primIdx & 0xffff)) >>> 0;
-  }
-
-  /** Build `light_data` (record row 0 + LUT rows 1–32) from the lights + resident casters, and upload it. Each
-   *  `cast_shadows` light gets a dense `u16` prim-index run for its in-range casters (Chebyshev cull; def
-   *  skipped until its surface resolves), sentinel-`0`-terminated. Cold data → call on change, not per frame. */
-  buildLights(lights: ColdLight[], standing: Primitive[], resolver: TextureResolver | null): void {
+  /** Build `light_data` (the record row) from the lights, and upload it. **Records only** — casters
+   *  are found by the per-tile buckets + corridor sweep now, so there's no LUT to build here (`standing`
+   *  is bucketed by `ShadowGather.buildCasters`, which also allocates defs/prims). Call on change. */
+  buildLights(lights: ColdLight[]): void {
     const n = Math.min(lights.length, N_LIGHTS);
-    this.lightMirror.fill(0); // clears records + LUT → unwritten LUT slots are the 0 sentinel
-    this.lightCasterCounts = new Array(n).fill(0);
+    this.lightMirror.fill(0);
     for (let k = 0; k < n; k++) {
       const L = lights[k];
-      let count = 0;
-      if (L.castShadows) {
-        const rPx = L.radius;
-        for (const p of standing) {
-          if (count >= MAX_CASTERS) break;
-          const ax = p.x + p.width * 0.5, ay = p.y + p.height;
-          if (Math.abs(ax - L.x) > rPx || Math.abs(ay - L.y) > rPx) continue; // Chebyshev cull (F5)
-          const def = this.definitionFor(p, resolver);
-          if (def < 0) continue; // surface not resolved yet
-          const inst = this.primDataFor(p, def);
-          this.writeCaster(k, count, inst);
-          count++;
-        }
-      }
-      this.lightCasterCounts[k] = count;
-      // Record row 0, texel (k, 0):
       const base = k * 4;
       this.lightMirror[base] = encodePosition(L.x, L.y); // R: position
       const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
       this.lightMirror[base + 1] = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0); // G
-      // B: z(24–31) | radius(12–23) | reserved(1–11) | cast_shadows(0)
-      const z = clamp(L.z / UNIT, 255), radius = clamp(L.radius / UNIT, 0xfff);
-      this.lightMirror[base + 2] = (((z << 24) | (radius << 12) | (L.castShadows ? 1 : 0)) >>> 0);
-      this.lightMirror[base + 3] = 0; // A: reserved (was lut_index|lut_count)
+      // B: z(24–31, units) | reach(12–23, units) | reserved(1–11) | cast_shadows(0)
+      const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff);
+      this.lightMirror[base + 2] = (((z << 24) | (reach << 12) | (L.castShadows ? 1 : 0)) >>> 0);
+      // A: emitter_radius(24–31, units) — penumbra softness; rest reserved.
+      this.lightMirror[base + 3] = ((clamp(L.emitterRadius / UNIT, 255) << 24) >>> 0);
     }
     this.lightCount = n;
     this.lightTex.upload(this.lightMirror);
-    this.flush(); // ensure any new defs/prims from the cull are uploaded too
   }
 
   /** Upload any changed textures (call once per frame after populating). Cheap — no-op unless a slot landed. */
@@ -312,24 +279,18 @@ export class ColdShadowData {
   get debugPrimCount(): number {
     return this.primNext - 1; // index 0 is the sentinel
   }
-  /** DEBUG: decode a light record (row 0). */
-  debugLight(k: number): { pos: [number, number]; rgb: [number, number, number]; intensity: number; z: number; radius: number; castShadows: boolean; casterCount: number } {
-    const b = k * 4, R = this.lightMirror[b], G = this.lightMirror[b + 1], B = this.lightMirror[b + 2];
+  /** DEBUG: decode a light record (the record row). */
+  debugLight(k: number): { pos: [number, number]; rgb: [number, number, number]; intensity: number; z: number; reach: number; emitterRadius: number; castShadows: boolean } {
+    const b = k * 4, R = this.lightMirror[b], G = this.lightMirror[b + 1], B = this.lightMirror[b + 2], A = this.lightMirror[b + 3];
     return {
       pos: decodePosition(R),
       rgb: [(G >>> 24) & 0xff, (G >>> 16) & 0xff, (G >>> 8) & 0xff],
       intensity: G & 0xff,
       z: (B >>> 24) & 0xff,
-      radius: (B >>> 12) & 0xfff,
+      reach: (B >>> 12) & 0xfff,
+      emitterRadius: (A >>> 24) & 0xff,
       castShadows: (B & 1) === 1,
-      casterCount: this.casterCount(k),
     };
-  }
-  /** DEBUG: light `k`'s caster prim index at LUT slot `j` (0 = sentinel/empty). */
-  debugCaster(k: number, j: number): number {
-    const row = 1 + (j >> 3), s = j & 7, ch = s >> 1;
-    const v = this.lightMirror[(row * LIGHT_W + k) * 4 + ch];
-    return (s & 1) === 0 ? (v >>> 16) & 0xffff : v & 0xffff;
   }
 
   destroy(): void {
