@@ -32,5 +32,14 @@ _Items move here from [`todo.md`](todo.md) when done **and** verified on `/overl
 - **Verified**: shadows pixel-identical to pre-cull (the cull only skips casters that can't reach the
   texel). Typecheck clean.
 
-_Not built yet: P5 8-slot, P6 coverage+dedup, P7 penumbra, P8 cold/hot. P1′ = delete the dead
-`light_data` LUT rows. P3's center-approx sub-check rides along with P6/P7._
+## Multi-light verified (partial P5) — 2026-07-22 ✓
+
+- `MAX_LIGHTS` 1 → **6** (the ring around tile (100,50), the plan's debug seed). Verified on
+  `/overlayRT`: 6 lights each cast tree-shaped shadows radiating from their own position, per-light
+  colours, combining on overlap. The corridor path is per-(texel, light), so it scales with no change.
+- This is the multi-light path on the **existing 128-bit-per-light output** (≤128 lights). The full
+  **P5** — u16 presence list + 8-bit per-slot output for the 65 536-light address space — is still to
+  do; it's only needed to go *past* 128 lights and to make the coverage/penumbra output per-slot.
+
+_Not built yet: **P5** (u16/per-slot rep), **P6** (coverage+dedup), **P7** (penumbra), **P8**
+(cold/hot). P1′ = delete the dead `light_data` LUT rows. P3's center-approx sub-check rides with P6/P7._
