@@ -21,6 +21,14 @@ P4 swap.
 
 Shadow-cold RT allocation folded into P4 (built with the gather that writes it).
 
+## P4-rect · Switch the fan → a 4-corner projected quad — 2026-07-21
+
+Per the user (diagonal-line artifacts from the fan): `inShadow` now builds a **standard 4-corner
+projected billboard rect** (bottom edge on the ground line, top edge projected away from L; 2 triangles,
+plain quad UVs) instead of the 5-triangle fan; `dA`/`dB` dropped (deviation D-2). Silhouette mask kept.
+**Browser-verified:** diagonals gone, clean tree-shaped shadows (a thin horizontal ground-contact line
+where bottom edges align across a row — flagged). All P1–P3 machinery unchanged.
+
 ## P4-silhouette · Mask the fan region by the sprite outline — 2026-07-21
 
 The gather predicate now masks by the **sprite silhouette**, not the solid fan trapezoid: for P inside

@@ -2,6 +2,21 @@
 
 _Where the code departs from the plan. Row: date · plan · code · why · status._
 
+## D-2 · 4-corner projected quad instead of the 5-triangle fan — 2026-07-21 (open, user-requested)
+
+- **Plan/design:** `shadow-projection` + `design/shadows.md` specify the **5-triangle projected-silhouette
+  fan** (7 points, incl. the `dA`/`dB` base-spread). The gather ported that (P4-silhouette).
+- **Code:** the gather predicate now builds a **standard 4-corner projected billboard rect** (2 triangles,
+  plain quad UVs); `dA`/`dB` are **dropped** (treated as 0) — still extracted + passed but unused in
+  `inShadow`. `SUV`/`TRI` fan constants removed.
+- **Why:** the user reported **diagonal-line artifacts** from the fan (the `dA`/`dB` base-spread slivers +
+  the center-anchor triangles); the 4-corner quad removes them. Browser-verified: diagonals gone, clean
+  tree-shaped shadows. (New: a thin horizontal ground-contact line where flat bottom edges align across a
+  tree row — inherent to the quad, flagged to the user.)
+- **Status:** open. If the quad sticks: the `prim_definition_data` `dA`/`dB` fields (VARIABLES.md) become
+  vestigial → reclaim or note; the `shadow-projection` design's 5-triangle model needs updating. Kept the
+  `dA`/`dB` data + params so a return to the fan is a one-function revert.
+
 ## D-1 · Implement gather-visible-first, then layer presence/dirty — 2026-07-21 (open)
 
 - **Plan (todo phase order):** P2 `light_presence_cold` → P3 dirty → P4 gather.

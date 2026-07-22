@@ -73,31 +73,25 @@ vec3 bary(vec2 p, vec2 a, vec2 b, vec2 c) {
   float v = (v0.x * v2.y - v2.x * v0.y) / d;
   return vec3(1.0 - u - v, u, v);
 }
-// The fan's per-role sprite UVs + the 5-triangle role list (verbatim from the retired fan).
-const vec2 SUV[7] = vec2[7](vec2(0.0,0.0), vec2(1.0,0.0), vec2(0.5,1.0), vec2(0.0,1.0), vec2(0.0,1.0), vec2(1.0,1.0), vec2(1.0,1.0));
-const int TRI[15] = int[15](0,1,2, 0,3,2, 1,5,2, 0,4,2, 1,6,2);
-// Is world-UNIT point P in caster (anchor A, geo W/H/dA/dB) projected from L, AND under the sprite
-// SILHOUETTE? Build the 7 projected fan points, find P's containing triangle, interpolate its UV, and
-// sample the surface coverage (.B) — the shadow reads as the sprite shape, not a solid trapezoid.
+// Is world-UNIT point P in caster (anchor A, geo W/H) projected from L, AND under the sprite SILHOUETTE?
+// Standard **4-corner projected billboard rect** (the base-spread dA/dB is dropped → no fan slivers/
+// diagonals): the bottom edge sits on the ground line at the anchor, the top edge projects away from L.
+// Two triangles, plain quad UVs; sample the surface coverage (.B) so the shadow keeps the sprite shape.
 bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float dA, float dB, sampler2D surf, vec4 frameUV) {
   float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
-  vec3 loc[7];
-  loc[0] = vec3(-W * 0.5, -0.5 * H * ct, H * st);
-  loc[1] = vec3( W * 0.5, -0.5 * H * ct, H * st);
-  loc[2] = vec3(0.0, 0.0, 0.0);
-  loc[3] = vec3(-W * 0.5, 0.0, 0.0);
-  loc[4] = vec3(-W * 0.5, -dA, 0.0);
-  loc[5] = vec3( W * 0.5, 0.0, 0.0);
-  loc[6] = vec3( W * 0.5, -dB, 0.0);
-  vec2 g[7];
-  for (int i = 0; i < 7; i++) g[i] = projGround(vec3(A + loc[i].xy, loc[i].z), L);
-  for (int t = 0; t < 5; t++) {
-    int i0 = TRI[t * 3], i1 = TRI[t * 3 + 1], i2 = TRI[t * 3 + 2];
-    vec3 w = bary(P, g[i0], g[i1], g[i2]);
-    if (w.x >= 0.0 && w.y >= 0.0 && w.z >= 0.0) {
-      vec2 uv = w.x * SUV[i0] + w.y * SUV[i1] + w.z * SUV[i2];
-      if (texture(surf, frameUV.xy + uv * frameUV.zw).b >= 0.5) return true;
-    }
+  vec2 bl = projGround(vec3(A + vec2(-W * 0.5, 0.0), 0.0), L);              // UV (0,1)
+  vec2 br = projGround(vec3(A + vec2( W * 0.5, 0.0), 0.0), L);              // UV (1,1)
+  vec2 tr = projGround(vec3(A + vec2( W * 0.5, -0.5 * H * ct), H * st), L); // UV (1,0)
+  vec2 tl = projGround(vec3(A + vec2(-W * 0.5, -0.5 * H * ct), H * st), L); // UV (0,0)
+  vec3 w = bary(P, bl, br, tr);                                            // triangle A
+  if (w.x >= 0.0 && w.y >= 0.0 && w.z >= 0.0) {
+    vec2 uv = w.x * vec2(0.0, 1.0) + w.y * vec2(1.0, 1.0) + w.z * vec2(1.0, 0.0);
+    if (texture(surf, frameUV.xy + uv * frameUV.zw).b >= 0.5) return true;
+  }
+  w = bary(P, bl, tr, tl);                                                 // triangle B
+  if (w.x >= 0.0 && w.y >= 0.0 && w.z >= 0.0) {
+    vec2 uv = w.x * vec2(0.0, 1.0) + w.y * vec2(1.0, 0.0) + w.z * vec2(0.0, 0.0);
+    if (texture(surf, frameUV.xy + uv * frameUV.zw).b >= 0.5) return true;
   }
   return false;
 }
