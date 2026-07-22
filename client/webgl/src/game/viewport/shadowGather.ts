@@ -59,21 +59,7 @@ vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
   uint wty = (((region & 15u) * RD + (zone & 15u)) * ZD + (tile & 15u));
   return vec2(float(wtx * 16u + (anchor >> 4u)), float(wty * 16u + (anchor & 15u)));
 }
-vec2 projGround(vec3 p, vec3 L) {
-  if (p.z <= 0.0) return p.xy;
-  float t = min(L.z / max(L.z - p.z, 1.0), 8.0);
-  return L.xy + t * (p.xy - L.xy);
-}
 const float ATLAS = 1024.0;      // surface atlas page size (F2: single page)
-// Barycentric weights of P in triangle (a,b,c) — inside iff all >= 0.
-vec3 bary(vec2 p, vec2 a, vec2 b, vec2 c) {
-  vec2 v0 = b - a, v1 = c - a, v2 = p - a;
-  float d = v0.x * v1.y - v1.x * v0.y;
-  if (abs(d) < 1e-6) return vec3(-1.0);
-  float u = (v2.x * v1.y - v1.x * v2.y) / d;
-  float v = (v0.x * v2.y - v2.x * v0.y) / d;
-  return vec3(1.0 - u - v, u, v);
-}
 // Sprite-UV coverage sample. framePx = the sprite's atlas frame in PIXELS (x,y,w,h); sample the
 // TEXEL CENTRE for uv in [0,1] (0.5 + uv*(size-1)) so the frame edges (uv=0/1) never bleed into the
 // neighbouring atlas frame — the cause of the false line along the shadow's (transparent) bottom edge.
@@ -81,31 +67,27 @@ float cover(sampler2D surf, vec4 framePx, vec2 uv) {
   vec2 t = (framePx.xy + 0.5 + uv * (framePx.zw - 1.0)) / ATLAS;
   return texture(surf, t).b;
 }
-// Is world-UNIT point P in caster (anchor A, geo W/H) projected from L, AND under the sprite SILHOUETTE?
-// Standard **4-corner projected billboard rect** (the base-spread dA/dB is dropped → no fan slivers/
-// diagonals): the bottom edge sits on the ground line at the anchor, the top edge projects away from L.
-// Two triangles, plain quad UVs; sample the surface coverage (.B) so the shadow keeps the sprite shape.
+// Is ground point P (world UNITS) in caster (anchor A, geo W/H, base pad f) projected from L, AND under the
+// sprite SILHOUETTE? PERSPECTIVE-CORRECT decode (no affine skew): the caster is a flat 3D card (top tilted +
+// elevated, base on the ground lifted by f·H to the opaque base). We INVERT the projection — solve the card
+// param (u,v) whose shadow lands on P — then sample the sprite there. Exact for a projected planar quad.
+//   card(u,v): x = A.x+(u-0.5)W ; y = mix(Yt,Yb,v) ; z = mix(Zt,0,v)   (v=0 top, v=1 base)
+//   shadow(u,v) = L.xy + (L.z/(L.z-z)) * (card.xy - L.xy)
 bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float f, sampler2D surf, vec4 framePx) {
-  // f = transparent base fraction (basePad / frame_h). Lift the BASE up by f·H (in world Y, on the ground)
-  // to the sprite's opaque base, and lift the base UV by f, so the shadow meets the caster (no base gap).
   float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
-  float vb = 1.0 - f;                                                       // base UV.v (opaque base row)
-  float bh = f * H;                                                         // base raised (units)
-  vec2 bl = projGround(vec3(A + vec2(-W * 0.5, -bh), 0.0), L);              // UV (0, vb)
-  vec2 br = projGround(vec3(A + vec2( W * 0.5, -bh), 0.0), L);              // UV (1, vb)
-  vec2 tr = projGround(vec3(A + vec2( W * 0.5, -0.5 * H * ct), H * st), L); // UV (1, 0)
-  vec2 tl = projGround(vec3(A + vec2(-W * 0.5, -0.5 * H * ct), H * st), L); // UV (0, 0)
-  vec3 w = bary(P, bl, br, tr);                                            // triangle A
-  if (w.x >= 0.0 && w.y >= 0.0 && w.z >= 0.0) {
-    vec2 uv = w.x * vec2(0.0, vb) + w.y * vec2(1.0, vb) + w.z * vec2(1.0, 0.0);
-    if (cover(surf, framePx, uv) >= 0.5) return true;
-  }
-  w = bary(P, bl, tr, tl);                                                 // triangle B
-  if (w.x >= 0.0 && w.y >= 0.0 && w.z >= 0.0) {
-    vec2 uv = w.x * vec2(0.0, vb) + w.y * vec2(1.0, 0.0) + w.z * vec2(0.0, 0.0);
-    if (cover(surf, framePx, uv) >= 0.5) return true;
-  }
-  return false;
+  float Yt = A.y - 0.5 * H * ct, Zt = H * st;   // card top (v=0): elevated + tilted
+  float Yb = A.y - f * H;                        // card base (v=1): on the ground (z=0), at the opaque base
+  float DY = Yb - Yt, DZ = -Zt;                  // d(y)/dv, d(z)/dv
+  float Pd = P.y - L.y;
+  float denom = L.z * DY + Pd * DZ;
+  if (abs(denom) < 1e-4) return false;
+  float v = (Pd * (L.z - Zt) - L.z * (Yt - L.y)) / denom;  // solve shadow.y = P.y (linear in v)
+  if (v < 0.0 || v > 1.0) return false;
+  float s = L.z / (L.z - (Zt + v * DZ));                   // projection factor at this height
+  if (s <= 0.0) return false;
+  float u = 0.5 + (L.x + (P.x - L.x) / s - A.x) / W;       // solve shadow.x = P.x
+  if (u < 0.0 || u > 1.0) return false;
+  return cover(surf, framePx, vec2(u, v * (1.0 - f))) >= 0.5; // card v -> sprite uv.v (opaque region [0,1-f])
 }
 `;
 

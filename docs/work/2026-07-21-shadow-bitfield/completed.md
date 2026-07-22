@@ -21,6 +21,17 @@ P4 swap.
 
 Shadow-cold RT allocation folded into P4 (built with the gather that writes it).
 
+## No-skew · Perspective-correct UV decode (inverse projection) — 2026-07-21
+
+The user flagged the PixiJS-era skew: interpolating UVs affinely across the projected trapezoid shears the
+sprite to one side (they'd worked around it with a 3-triangle fan). Since our gather is **per-fragment**
+(not vertex-rasterized), we do the exact fix instead of porting the hack: treat the caster as a flat 3D
+**card** and **invert the projection** — for ground point P, solve the card param `(u,v)` whose shadow is P
+(v is linear in P.y; then s, then u), and sample the sprite at `(u, v·(1−f))`. Exact for a projected planar
+quad → **zero skew**, and it *replaces* the two triangles + `bary` + `projGround` (all deleted) with a
+direct decode. Derivation checked (base-centre→v=1, top-centre→v=0). Browser-verified: clean conifer
+silhouettes, no lean.
+
 ## Base-gap · Lift the shadow base to the sprite's opaque base — 2026-07-21
 
 Per the user: the sprite has transparent padding along its base, so the shadow (a) started at the frame
