@@ -108,6 +108,11 @@ bool casterHits(uint primIdx, vec2 P, vec3 L, highp usampler2D primData, highp u
   int defIdx = int((orient >> 6) & 0xffffu);
   uvec4 D = fetchLin(primDef, defIdx, defW);
   float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u);
+  // Height cull (F6) — cheap radial gate BEFORE the projection + silhouette fetch: P is in this
+  // caster's shadow band only if 0 <= (dP - dC) <= (dP/L.z)·H (dP/dC = P/caster distance from the
+  // light). H (full height) over-estimates the tilted extent → conservative, never drops a real hit.
+  float dP = length(P - L.xy), dC = length(A - L.xy), delta = dP - dC;
+  if (delta < 0.0 || delta > (dP / L.z) * H) return false;
   float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
   float basePad = float((D.z >> 14) & 255u);              // transparent base rows (atlas px)
   float f = fh > 0.5 ? basePad / fh : 0.0;                // → base fraction

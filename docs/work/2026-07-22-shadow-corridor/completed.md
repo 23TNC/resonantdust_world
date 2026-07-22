@@ -24,5 +24,13 @@ _Items move here from [`todo.md`](todo.md) when done **and** verified on `/overl
 - Whole-caster (not sliced): 2-tile-wide conifers cast **seamless** shadows found from any base tile
   the corridor hits ([F5](forks.md#f5)) — the binary-level half of P3.
 
-_Not built yet: P3 (center-approx check waits on P4), P4 height cull, P5 8-slot, P6 coverage+dedup,
-P7 penumbra, P8 cold/hot. The `light_data` LUT rows are dead but not yet deleted (a P1 cleanup)._
+## P4 · Height cull (radial gate) — 2026-07-22 ✓
+
+- `casterHits` gates each candidate on `0 ≤ (dP − dC) ≤ (dP/L.z)·H` (P/caster distance from the light)
+  **before** the projection + silhouette fetch — 3 ALU ops, not a "shadow calculation". `H` (full
+  height) over-estimates the tilted extent → conservative, never drops a real hit.
+- **Verified**: shadows pixel-identical to pre-cull (the cull only skips casters that can't reach the
+  texel). Typecheck clean.
+
+_Not built yet: P5 8-slot, P6 coverage+dedup, P7 penumbra, P8 cold/hot. P1′ = delete the dead
+`light_data` LUT rows. P3's center-approx sub-check rides along with P6/P7._

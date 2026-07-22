@@ -26,14 +26,6 @@ _P1 + P2 **done + verified** 2026-07-22 → [`completed.md`](completed.md). Belo
 - [ ] Multi-tile appearance is harmless here (binary is idempotent); the dedup that prevents
       double-*accumulate* lands with coverage in P6 ([I-6](issues.md)).
 
-## P4 · Height cull (radial gate)
-
-- [ ] Precompute `k = d_P / L.z` per (texel, light); per caster **skip if `δ > k·h`** (`δ` = sweep
-      distance so far, `h` = caster height from def). Runs **before** the projection + silhouette
-      sample.
-- [ ] Verify: distant short casters no longer tested (perf), pawn head-shadow reaches farther than
-      hand-shadows (correctness of the fan).
-
 ## P5 · 8-slot representation (unlimited lights, per-slot output)
 
 - [ ] **Presence → 8× `u16` light indices** per tile (one `RGBA32UI`), nearest-N with **stable slot
