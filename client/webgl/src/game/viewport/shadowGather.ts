@@ -85,20 +85,24 @@ float cover(sampler2D surf, vec4 framePx, vec2 uv) {
 // Standard **4-corner projected billboard rect** (the base-spread dA/dB is dropped → no fan slivers/
 // diagonals): the bottom edge sits on the ground line at the anchor, the top edge projects away from L.
 // Two triangles, plain quad UVs; sample the surface coverage (.B) so the shadow keeps the sprite shape.
-bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float dA, float dB, sampler2D surf, vec4 framePx) {
+bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float f, sampler2D surf, vec4 framePx) {
+  // f = transparent base fraction (basePad / frame_h). Lift the BASE up by f·H (in world Y, on the ground)
+  // to the sprite's opaque base, and lift the base UV by f, so the shadow meets the caster (no base gap).
   float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
-  vec2 bl = projGround(vec3(A + vec2(-W * 0.5, 0.0), 0.0), L);              // UV (0,1)
-  vec2 br = projGround(vec3(A + vec2( W * 0.5, 0.0), 0.0), L);              // UV (1,1)
-  vec2 tr = projGround(vec3(A + vec2( W * 0.5, -0.5 * H * ct), H * st), L); // UV (1,0)
-  vec2 tl = projGround(vec3(A + vec2(-W * 0.5, -0.5 * H * ct), H * st), L); // UV (0,0)
+  float vb = 1.0 - f;                                                       // base UV.v (opaque base row)
+  float bh = f * H;                                                         // base raised (units)
+  vec2 bl = projGround(vec3(A + vec2(-W * 0.5, -bh), 0.0), L);              // UV (0, vb)
+  vec2 br = projGround(vec3(A + vec2( W * 0.5, -bh), 0.0), L);              // UV (1, vb)
+  vec2 tr = projGround(vec3(A + vec2( W * 0.5, -0.5 * H * ct), H * st), L); // UV (1, 0)
+  vec2 tl = projGround(vec3(A + vec2(-W * 0.5, -0.5 * H * ct), H * st), L); // UV (0, 0)
   vec3 w = bary(P, bl, br, tr);                                            // triangle A
   if (w.x >= 0.0 && w.y >= 0.0 && w.z >= 0.0) {
-    vec2 uv = w.x * vec2(0.0, 1.0) + w.y * vec2(1.0, 1.0) + w.z * vec2(1.0, 0.0);
+    vec2 uv = w.x * vec2(0.0, vb) + w.y * vec2(1.0, vb) + w.z * vec2(1.0, 0.0);
     if (cover(surf, framePx, uv) >= 0.5) return true;
   }
   w = bary(P, bl, tr, tl);                                                 // triangle B
   if (w.x >= 0.0 && w.y >= 0.0 && w.z >= 0.0) {
-    vec2 uv = w.x * vec2(0.0, 1.0) + w.y * vec2(1.0, 0.0) + w.z * vec2(0.0, 0.0);
+    vec2 uv = w.x * vec2(0.0, vb) + w.y * vec2(1.0, 0.0) + w.z * vec2(0.0, 0.0);
     if (cover(surf, framePx, uv) >= 0.5) return true;
   }
   return false;
@@ -155,9 +159,10 @@ void main() {
       uvec4 D = fetchLin(uPrimDef, defIdx, uDefW);
       float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u);
       float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
-      float dA = float((D.z >> 14) & 255u), dB = float((D.z >> 6) & 255u);
+      float basePad = float((D.z >> 14) & 255u);            // transparent base rows (atlas px)
+      float f = fh > 0.5 ? basePad / fh : 0.0;              // → base fraction
       vec4 framePx = vec4(fx, fy, fw, fh); // atlas frame in PIXELS (cover() does the texel-centre inset)
-      if (inShadow(P, A, L, W, H, dA, dB, uSurface, framePx)) {
+      if (inShadow(P, A, L, W, H, f, uSurface, framePx)) {
         uint mask = 1u << uint(k & 31);
         int ch = k >> 5;
         if (ch == 0) b0 |= mask; else if (ch == 1) b1 |= mask; else if (ch == 2) b2 |= mask; else b3 |= mask;

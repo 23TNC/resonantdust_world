@@ -138,23 +138,23 @@ export class ColdShadowData {
     const pw = u10(prim.width / UNIT); // billboard width  (units)
     const ph = u10(prim.height / UNIT); // billboard height (units)
     const framePage = 0; // single atlas page for now (F2); the layout carries frame_page for later
-    const [dA, dB] = this.depthUnits(f, prim.height); // base spread from the silhouette (units)
+    const [, , basePad] = this.depthUnits(f, prim.height); // transparent base padding (atlas px)
     // R: prim_width(22–31) | prim_height(12–21) | frame_x(2–11) | rsvd(0–1)
     this.defMirror[base] = (((u10(pw) << 22) | (u10(ph) << 12) | (u10(f.x) << 2)) >>> 0);
     // G: frame_width(22–31) | frame_height(12–21) | frame_y(2–11) | rsvd(0–1)
     this.defMirror[base + 1] = (((u10(f.w) << 22) | (u10(f.h) << 12) | (u10(f.y) << 2)) >>> 0);
-    // B: frame_page(22–31) | dA(14–21) | dB(6–13) | rsvd(0–5)
-    this.defMirror[base + 2] = (((u10(framePage) << 22) | (u8(dA) << 14) | (u8(dB) << 6)) >>> 0);
+    // B: frame_page(22–31) | base_pad(14–21, atlas px; was dA) | reserved(6–13; was dB) | rsvd(0–5)
+    this.defMirror[base + 2] = (((u10(framePage) << 22) | (u8(basePad) << 14)) >>> 0);
     this.defMirror[base + 3] = 0; // A: reserved (materials later)
     this.defIndex.set(key, idx);
     this.defDirty = true;
     return idx;
   }
 
-  /** Base spread `[dA, dB]` (units) from the sprite silhouette (the sandbox's E/W auto rule): `½·(avg opaque
-   *  HEIGHT of the half's columns / TS)·H`, left→dA, right→dB. Reads back the surface frame's B coverage once
-   *  (cached with the def). */
-  private depthUnits(f: TexFrame, hPx: number): [number, number] {
+  /** From the sprite silhouette (one surface-frame B readback, cached with the def): the base spread
+   *  `[dA, dB]` (units — the fan's, kept for a fan-return) and **`basePad`** = the transparent rows below
+   *  the bottom-most opaque pixel (**atlas px**), used to lift the shadow base to the opaque base. */
+  private depthUnits(f: TexFrame, hPx: number): [number, number, number] {
     const gl = this.renderer.gl;
     const w = f.w, h = f.h;
     const fb = gl.createFramebuffer();
@@ -176,7 +176,12 @@ export class ColdShadowData {
       return cols ? sum / cols : 0;
     };
     const mid = w >> 1;
-    return [(0.5 * (avgHeight(0, mid) / h) * hPx) / UNIT, (0.5 * (avgHeight(mid, w) / h) * hPx) / UNIT];
+    // Transparent base padding: rows below the bottom-most opaque pixel (atlas px).
+    let bottomOpaque = -1;
+    for (let y = h - 1; y >= 0 && bottomOpaque < 0; y--)
+      for (let x = 0; x < w; x++) if (present(x, y)) { bottomOpaque = y; break; }
+    const basePad = bottomOpaque < 0 ? 0 : h - 1 - bottomOpaque;
+    return [(0.5 * (avgHeight(0, mid) / h) * hPx) / UNIT, (0.5 * (avgHeight(mid, w) / h) * hPx) / UNIT, basePad];
   }
 
   get primTexture(): Texture {
@@ -284,7 +289,7 @@ export class ColdShadowData {
   }
 
   // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
-  debugDef(index: number): { prim_width: number; prim_height: number; frame: [number, number, number, number]; frame_page: number; dA: number; dB: number } {
+  debugDef(index: number): { prim_width: number; prim_height: number; frame: [number, number, number, number]; frame_page: number; basePad: number } {
     const b = index * 4;
     const R = this.defMirror[b], G = this.defMirror[b + 1], B = this.defMirror[b + 2];
     return {
@@ -292,8 +297,7 @@ export class ColdShadowData {
       prim_height: (R >>> 12) & 0x3ff,
       frame: [(R >>> 2) & 0x3ff, (G >>> 2) & 0x3ff, (G >>> 22) & 0x3ff, (G >>> 12) & 0x3ff], // x,y,w,h
       frame_page: (B >>> 22) & 0x3ff,
-      dA: (B >>> 14) & 0xff,
-      dB: (B >>> 6) & 0xff,
+      basePad: (B >>> 14) & 0xff,
     };
   }
   get debugDefCount(): number {

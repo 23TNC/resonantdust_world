@@ -331,7 +331,7 @@ on **atlas add**:
 ```
 R  u32   u10 prim_width (22–31, units) | u10 prim_height (12–21, units) | u10 frame_x (2–11, atlas px) | u2 reserved (0–1)
 G  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas px) | u10 frame_y (2–11, atlas px) | u2 reserved (0–1)
-B  u32   u10 frame_page (22–31) | u8 dA (14–21, units) | u8 dB (6–13, units) | u6 reserved (0–5)
+B  u32   u10 frame_page (22–31) | u8 base_pad (14–21, atlas px) | u8 reserved (6–13, was dB) | u6 reserved (0–5)
 A  u32   reserved   (materials etc. — later)
 ```
 

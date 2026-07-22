@@ -21,6 +21,17 @@ P4 swap.
 
 Shadow-cold RT allocation folded into P4 (built with the gather that writes it).
 
+## Base-gap · Lift the shadow base to the sprite's opaque base — 2026-07-21
+
+Per the user: the sprite has transparent padding along its base, so the shadow (a) started at the frame
+bottom, below the opaque sprite, and (b) projected that alpha outward — two gaps. Fix: pre-compute
+**`base_pad`** = transparent rows below the bottom-most opaque pixel (from the surface-B readback already
+in `depthUnits`), stored in the def's repurposed `dA` slot (bits 14–21, atlas px; VARIABLES updated). The
+gather lifts the quad **base** up by `f·H` (world Y, on the ground; `f = base_pad/frame_h`) **and** the
+base **UV** to `1−f`, so the shadow emanates from the opaque base and doesn't project the alpha. `dA`/`dB`
+(fan-only) retired from `inShadow`. Browser-verified (conifer `base_pad`=2 → ~4px world lift; shadows meet
+the trunks).
+
 ## Debug-viz · 1 light + light/radius gizmos — 2026-07-21
 
 Per the user, for shadow debugging: `MAX_LIGHTS = 1` (a single light **centred** on the seed tile — all
