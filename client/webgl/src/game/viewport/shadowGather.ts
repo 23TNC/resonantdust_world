@@ -31,6 +31,10 @@ const SHADOW_SLOT = 16;
 /** GLSL literals for the world constants (a tile is `SQUARE` world px; `1 unit = SQUARE/16`). */
 const SQF = SQUARE.toFixed(1);
 const UNITF = (SQUARE / 16).toFixed(4);
+/** Lift the rendered shadow up (toward smaller world-y) by this many world units — a fragment shows
+ *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Tunable. */
+const SHADOW_LIFT = 1.0;
+const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
 
 interface Light {
   x: number;
@@ -121,6 +125,7 @@ void main() {
   float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot); // 0..1 within the tile
   float ly = (float(fc.y) - float(sy * uSlot)) / float(uSlot);
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
+  P.y += ${SHADOW_LIFTF}; // lift the shadow up: test the ground point SHADOW_LIFT units below this one
 
   uvec4 pres = texelFetch(uPresence, ivec2(sx, sy), 0);     // which lights reach this tile (F5 cull)
   uint b0 = 0u, b1 = 0u, b2 = 0u, b3 = 0u;
