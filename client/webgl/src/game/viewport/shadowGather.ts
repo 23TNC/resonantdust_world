@@ -73,11 +73,18 @@ vec3 bary(vec2 p, vec2 a, vec2 b, vec2 c) {
   float v = (v0.x * v2.y - v2.x * v0.y) / d;
   return vec3(1.0 - u - v, u, v);
 }
+// Sprite-UV coverage sample. framePx = the sprite's atlas frame in PIXELS (x,y,w,h); sample the
+// TEXEL CENTRE for uv in [0,1] (0.5 + uv*(size-1)) so the frame edges (uv=0/1) never bleed into the
+// neighbouring atlas frame — the cause of the false line along the shadow's (transparent) bottom edge.
+float cover(sampler2D surf, vec4 framePx, vec2 uv) {
+  vec2 t = (framePx.xy + 0.5 + uv * (framePx.zw - 1.0)) / ATLAS;
+  return texture(surf, t).b;
+}
 // Is world-UNIT point P in caster (anchor A, geo W/H) projected from L, AND under the sprite SILHOUETTE?
 // Standard **4-corner projected billboard rect** (the base-spread dA/dB is dropped → no fan slivers/
 // diagonals): the bottom edge sits on the ground line at the anchor, the top edge projects away from L.
 // Two triangles, plain quad UVs; sample the surface coverage (.B) so the shadow keeps the sprite shape.
-bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float dA, float dB, sampler2D surf, vec4 frameUV) {
+bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float dA, float dB, sampler2D surf, vec4 framePx) {
   float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
   vec2 bl = projGround(vec3(A + vec2(-W * 0.5, 0.0), 0.0), L);              // UV (0,1)
   vec2 br = projGround(vec3(A + vec2( W * 0.5, 0.0), 0.0), L);              // UV (1,1)
@@ -86,12 +93,12 @@ bool inShadow(vec2 P, vec2 A, vec3 L, float W, float H, float dA, float dB, samp
   vec3 w = bary(P, bl, br, tr);                                            // triangle A
   if (w.x >= 0.0 && w.y >= 0.0 && w.z >= 0.0) {
     vec2 uv = w.x * vec2(0.0, 1.0) + w.y * vec2(1.0, 1.0) + w.z * vec2(1.0, 0.0);
-    if (texture(surf, frameUV.xy + uv * frameUV.zw).b >= 0.5) return true;
+    if (cover(surf, framePx, uv) >= 0.5) return true;
   }
   w = bary(P, bl, tr, tl);                                                 // triangle B
   if (w.x >= 0.0 && w.y >= 0.0 && w.z >= 0.0) {
     vec2 uv = w.x * vec2(0.0, 1.0) + w.y * vec2(1.0, 0.0) + w.z * vec2(0.0, 0.0);
-    if (texture(surf, frameUV.xy + uv * frameUV.zw).b >= 0.5) return true;
+    if (cover(surf, framePx, uv) >= 0.5) return true;
   }
   return false;
 }
@@ -148,8 +155,8 @@ void main() {
       float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u);
       float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
       float dA = float((D.z >> 14) & 255u), dB = float((D.z >> 6) & 255u);
-      vec4 frameUV = vec4(fx, fy, fw, fh) / ATLAS;
-      if (inShadow(P, A, L, W, H, dA, dB, uSurface, frameUV)) {
+      vec4 framePx = vec4(fx, fy, fw, fh); // atlas frame in PIXELS (cover() does the texel-centre inset)
+      if (inShadow(P, A, L, W, H, dA, dB, uSurface, framePx)) {
         uint mask = 1u << uint(k & 31);
         int ch = k >> 5;
         if (ch == 0) b0 |= mask; else if (ch == 1) b1 |= mask; else if (ch == 2) b2 |= mask; else b3 |= mask;
