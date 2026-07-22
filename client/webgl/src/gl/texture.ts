@@ -4,7 +4,7 @@
 //! NEAREST filtering (LINEAR is invalid on them). Atlas frame UVs are the caller's job (we keep the whole
 //! page here); the resolver already computes frames.
 
-export type TexFormat = "rgba8unorm" | "rgba32float" | "rgba8uint" | "rgba32uint";
+export type TexFormat = "rgba8unorm" | "rgba32float" | "rgba8uint" | "rgba32uint" | "r8uint";
 
 interface Fmt {
   internal: number;
@@ -23,6 +23,8 @@ function glFmt(gl: WebGL2RenderingContext, f: TexFormat): Fmt {
       return { internal: gl.RGBA8UI, format: gl.RGBA_INTEGER, type: gl.UNSIGNED_BYTE, integer: true };
     case "rgba32uint":
       return { internal: gl.RGBA32UI, format: gl.RGBA_INTEGER, type: gl.UNSIGNED_INT, integer: true };
+    case "r8uint":
+      return { internal: gl.R8UI, format: gl.RED_INTEGER, type: gl.UNSIGNED_BYTE, integer: true };
   }
 }
 
@@ -82,7 +84,10 @@ export class Texture {
       gl.texImage2D(gl.TEXTURE_2D, 0, this.fmt.internal, this.fmt.format, this.fmt.type, data as TexImageSource);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     } else {
+      // Tight packing so single-channel (R8UI) rows of any width upload correctly (default is 4).
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
       gl.texImage2D(gl.TEXTURE_2D, 0, this.fmt.internal, this.width, this.height, 0, this.fmt.format, this.fmt.type, (data as ArrayBufferView) ?? null);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
     }
   }
 
@@ -90,7 +95,9 @@ export class Texture {
   upload(data: ArrayBufferView): void {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.handle);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); // tight rows (R8UI widths aren't 4-aligned)
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.fmt.format, this.fmt.type, data);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
   }
 
   bind(unit: number): void {

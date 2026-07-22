@@ -101,6 +101,7 @@ uniform highp usampler2D uLightData;  // light_data (128×33)
 uniform highp usampler2D uPrimDef;    // prim_definition_data
 uniform highp usampler2D uPrimData;   // prim_data (2/px)
 uniform highp usampler2D uPresence;   // light_presence_cold (cols×rows, 1 tile/px)
+uniform highp usampler2D uDirty;      // shadow_dirty (cols×rows R8UI): .r nonzero = recompute
 uniform int uNLights, uDefW, uPrimW;
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window
 out uvec4 fragColor;
@@ -109,6 +110,7 @@ int pmod(int a, int m) { return ((a % m) + m) % m; }
 void main() {
   ivec2 fc = ivec2(gl_FragCoord.xy);
   int sx = fc.x / uSlot, sy = fc.y / uSlot;                 // toroidal slot
+  if (texelFetch(uDirty, ivec2(sx, sy), 0).r == 0u) discard; // clean tile → keep the persistent texel
   int wc = uWinCol + pmod(sx - pmod(uWinCol, uCols), uCols); // → world tile
   int wr = uWinRow + pmod(sy - pmod(uWinRow, uRows), uRows);
   float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot); // 0..1 within the tile
@@ -226,12 +228,25 @@ export class ShadowGather {
   private presSig = "";
   private lightsVer = 0;
 
+  /** shadow_dirty (cols×rows R8UI, nonzero = recompute) + per-slot owner tracking for toroidal
+   *  persistence: a slot recomputes when its world-tile owner changes (pan) or the cold data rebuilds. */
+  private dirtyTex: Texture;
+  private dirtyMirror = new Uint8Array(0);
+  private ownerCol = new Int32Array(0);
+  private ownerRow = new Int32Array(0);
+  private slotValid = new Uint8Array(0);
+  private dirtyCols = 0;
+  private dirtyRows = 0;
+  /** Sticky "recompute every tile next build" — set on a cold rebuild; survives a window-not-ready frame. */
+  private forceDirty = true;
+
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
     this.gather = new Program(gl, FULLSCREEN_VERT, GATHER_FRAG, "shadow-gather");
     this.overlay = new Program(gl, OVERLAY_VERT, OVERLAY_FRAG, "shadow-overlay");
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
     this.presenceTex = new Texture(gl, { width: 1, height: 1, format: "rgba32uint" });
+    this.dirtyTex = new Texture(gl, { width: 1, height: 1, format: "r8uint" });
     this.coldData = new ColdShadowData(renderer);
     (globalThis as unknown as { __cold: unknown }).__cold = this.coldData; // DEBUG
     this.fsQuad = new Geometry(gl, this.gather, {
@@ -254,6 +269,7 @@ export class ShadowGather {
     this.enabled = true;
     this.coldDirty = true;
     this.lightsVer++; // invalidates light_presence_cold
+    this.forceDirty = true; // lights changed → recompute every tile
   }
 
   /** Rebuild `light_presence_cold` when the lights or window change — one px/tile, bit L = light L's
@@ -286,6 +302,43 @@ export class ShadowGather {
     this.presenceTex.upload(this.presenceMirror);
   }
 
+  /** Rebuild `shadow_dirty` for this frame: a slot is dirty when its world-tile **owner changed** (pan /
+   *  resize) or `forceAll` (the cold data rebuilt — lights/casters changed). Clean slots `discard` in the
+   *  gather, so `shadow-cold` persists (F6). Mirrors `SquareCache.markStale`'s per-slot owner tracking. */
+  private buildDirty(win: TileWindow): void {
+    const { cols, rows, winCol, winRow } = win;
+    let forceAll = this.forceDirty;
+    this.forceDirty = false;
+    if (this.dirtyCols !== cols || this.dirtyRows !== rows) {
+      this.dirtyTex.destroy();
+      this.dirtyTex = new Texture(this.renderer.gl, { width: cols, height: rows, format: "r8uint" });
+      this.dirtyMirror = new Uint8Array(cols * rows);
+      this.ownerCol = new Int32Array(cols * rows);
+      this.ownerRow = new Int32Array(cols * rows);
+      this.slotValid = new Uint8Array(cols * rows);
+      this.dirtyCols = cols;
+      this.dirtyRows = rows;
+      forceAll = true;
+    }
+    const pm = (a: number, m: number): number => ((a % m) + m) % m;
+    const baseC = pm(winCol, cols), baseR = pm(winRow, rows);
+    this.dirtyMirror.fill(0);
+    for (let sy = 0; sy < rows; sy++) {
+      const wr = winRow + pm(sy - baseR, rows);
+      for (let sx = 0; sx < cols; sx++) {
+        const wc = winCol + pm(sx - baseC, cols);
+        const si = sy * cols + sx;
+        if (forceAll || this.slotValid[si] === 0 || this.ownerCol[si] !== wc || this.ownerRow[si] !== wr) {
+          this.dirtyMirror[si] = 1;
+          this.ownerCol[si] = wc;
+          this.ownerRow[si] = wr;
+          this.slotValid[si] = 1;
+        }
+      }
+    }
+    this.dirtyTex.upload(this.dirtyMirror);
+  }
+
   get on(): boolean {
     return this.enabled;
   }
@@ -300,11 +353,12 @@ export class ShadowGather {
     this.shadowRT = new RenderTarget(this.renderer.gl, {
       width: Math.max(1, cols * SHADOW_SLOT), height: Math.max(1, rows * SHADOW_SLOT), formats: ["rgba32uint"],
     });
+    this.shadowRT.clearInt(0, 0, 0, 0); // start persistence from a known-zero buffer (P3)
     this.rtCols = cols;
     this.rtRows = rows;
   }
 
-  /** Rebuild the cold data (on change) + recompute the shadow-cold bitfield for the window. */
+  /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield. */
   tick(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
     if (!this.enabled || this.lights.length === 0) return;
     if (!this.resolverUnsub && resolver) this.resolverUnsub = resolver.onLoad(() => { this.coldDirty = true; });
@@ -316,24 +370,26 @@ export class ShadowGather {
       this.coldData.buildLights(coldLights, standing, resolver);
       this.lastCasterCount = standing.length;
       this.coldDirty = false;
+      this.forceDirty = true; // lights/casters changed → every reached tile may change → force-all dirty
     }
     if (this.coldData.lights === 0 || win.cols === 0) return;
 
     this.ensureRT(win.cols, win.rows);
     this.buildPresence(win); // F5 per-tile light cull (rebuilt on light/window change)
+    this.buildDirty(win);    // P3: owner-change (pan) + rebuild → dirty; clean tiles persist
     const [, defW, primW] = this.coldData.widths;
-    // Full recompute (P4-core): one fullscreen pass writes every texel's 128-bit mask.
+    // Single pass; each fragment `discard`s clean tiles (shadow-cold persists) — no clear, no ping-pong.
     this.renderer.draw({
       program: this.gather,
       geometry: this.fsQuad,
       target: this.shadowRT!,
       blend: "none",
-      clearInt: [0, 0, 0, 0],
       textures: {
         uLightData: this.coldData.lightTexture,
         uPrimDef: this.coldData.definitionTexture,
         uPrimData: this.coldData.primTexture,
         uPresence: this.presenceTex,
+        uDirty: this.dirtyTex,
       },
       uniforms: (p) => {
         p.uInt("uNLights", this.coldData.lights);
@@ -382,6 +438,7 @@ export class ShadowGather {
     this.overlay.destroy();
     this.empty.destroy();
     this.presenceTex.destroy();
+    this.dirtyTex.destroy();
     this.shadowRT?.destroy();
     this.coldData.destroy();
   }

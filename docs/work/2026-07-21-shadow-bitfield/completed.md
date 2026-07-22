@@ -21,6 +21,17 @@ P4 swap.
 
 Shadow-cold RT allocation folded into P4 (built with the gather that writes it).
 
+## P3 · Dirty-tile gating (`shadow_dirty`) + toroidal persistence — 2026-07-21
+
+Replaced the full-recompute-each-frame with a `discard`-gated single pass. `shadow_dirty` (`R8UI`
+cols×rows, added `r8uint` to the `Texture` class + tight `UNPACK_ALIGNMENT`); the gather samples its tile
+and `discard`s clean tiles so `shadow-cold` **persists** (no per-frame clear, no ping-pong). CPU dirties a
+slot when its **world-tile owner changes** (pan/resize — per-slot `ownerCol/Row/valid` tracking à la
+`SquareCache.markStale`) or on a cold rebuild (sticky `forceDirty`, survives a window-not-ready frame).
+RT cleared once on alloc. **Browser-verified:** static picture identical to P2 (gating is a visual no-op);
+**panning keeps shadows world-locked** — they track their casters with no tearing / stale bits / smear
+(toroidal persistence correct). No console errors. Closes deviation D-1.
+
 ## P2 · `light_presence_cold` per-tile light cull — 2026-07-21
 
 `ShadowGather` now builds `light_presence_cold` (cols×rows `RGBA32UI`, one tile/px, bit L = light L's

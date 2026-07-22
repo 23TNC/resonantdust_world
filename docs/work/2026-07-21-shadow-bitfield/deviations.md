@@ -15,4 +15,7 @@ _Where the code departs from the plan. Row: date · plan · code · why · statu
 - **Correction (2026-07-21):** presence (P2) is **not** invisible — it's a *semantic* cull (a light
   only needs shadow bits where it illuminates), so it **clips shadows to each light's radius box**, a
   correct + expected picture change. Only **dirty (P3)** must be a true no-op on the picture.
-- **Status:** open (closes when P3 lands with the picture unchanged).
+- **Status:** RESOLVED 2026-07-21. P3 landed as a picture no-op (static identical to P2; pan world-locked).
+  Gather-first paid off — the SQUARE bug and the presence-clip semantics were caught against a live
+  picture before dirty gating went on top. Execution order (P4-core → P2 → P3) diverged from the plan's
+  numbering; both reach the same place.
