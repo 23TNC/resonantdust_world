@@ -14,7 +14,7 @@ import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } fro
 import type { TextureResolver } from "../../textures";
 import { AlbedoBlitShader } from "./albedoBlitShader";
 import { OverlayShader, overlayModeFor } from "./overlayShader";
-import { ShadowCaster } from "./shadowCaster";
+import { ShadowGather } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
@@ -84,8 +84,8 @@ export class Viewport {
   private readonly overlayShader: OverlayShader;
   /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
   private overlayChannelName: string | null = null;
-  /** The first lights + billboard shadows (cast off the cold cache's standing prims). */
-  private readonly shadows: ShadowCaster;
+  /** Lights + the per-light shadow **bitfield** (gathered off the cold cache's standing prims). */
+  private readonly shadows: ShadowGather;
   private displayGeo: Geometry | null = null;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -106,7 +106,7 @@ export class Viewport {
     this.overlayShader = new OverlayShader(gl);
     this.map = new SquareCache(this.renderer, this.empty, this.channels("cold"));
     this.warm = new SquareCache(this.renderer, this.empty, this.channels("warm"));
-    this.shadows = new ShadowCaster(this.renderer);
+    this.shadows = new ShadowGather(this.renderer);
 
     this.grid = new Program(gl, GRID_VERT, GRID_FRAG, "viewport-grid");
     this.gridQuad = new Geometry(gl, this.grid, {
@@ -227,9 +227,9 @@ export class Viewport {
     ];
   }
 
-  /** The channels `/overlayRT` can show — the names from {@link renderTextures}. */
+  /** The channels `/overlayRT` can show — the composites + the shadow bitfield (its own decode path). */
   overlayChannelNames(): string[] {
-    return this.renderTextures().map((c) => c.name);
+    return [...this.renderTextures().map((c) => c.name), "shadow-cold"];
   }
 
   /** The channel the overlay is currently showing, or null (off). */
@@ -375,7 +375,9 @@ export class Viewport {
         // register (same display geometry + `uProjection`). The fragment drops the channel's "empty"
         // value so the world reads through elsewhere.
         const ov = this.overlayChannelName;
-        if (ov) {
+        if (ov === "shadow-cold") {
+          this.shadows.drawOverlay(this.camera, this.map.window); // its own bitfield decode path
+        } else if (ov) {
           const comp = this.compositeFor(ov);
           if (comp) {
             this.overlayShader.composite = comp;
@@ -395,9 +397,9 @@ export class Viewport {
       }
     }
 
-    // The first lights + billboard shadows, cast off the cold cache's standing prims, over the world.
+    // Recompute the shadow bitfield (gather) off the cold cache's standing prims, into shadow-cold.
     if (this.map.ready) {
-      this.shadows.tick(this.camera, this.map.standingPrims(), this.resolver);
+      this.shadows.tick(this.map.standingPrims(), this.resolver, this.map.window);
     }
 
     if (this.gridLevel > 0) {

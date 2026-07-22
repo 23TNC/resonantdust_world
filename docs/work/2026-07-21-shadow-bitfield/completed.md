@@ -20,3 +20,20 @@ P4 swap.
   reads the folded LUT).
 
 Shadow-cold RT allocation folded into P4 (built with the gather that writes it).
+
+## P4-core · The gather + shadow-cold RT + bit-decode overlay — 2026-07-21
+
+New `shadowGather.ts` (`ShadowGather`) replaces the retired fan (`shadowCaster.ts` **deleted**). Builds +
+typechecks; **browser verify pending** (GLSL compiles at runtime).
+
+- **shadow-cold** = a world-space toroidal `RGBA32UI` `RenderTarget` (`cols·16 × rows·16`, `SHADOW_SLOT`
+  = 16 texels/tile), resized when the cold cache's tile window changes. `SquareCache.window` now exposes
+  `winCol/winRow/cols/rows/slotPx` for the alignment.
+- **The gather** = one fullscreen pass; each fragment maps its texel → world tile (toroidal inverse) →
+  world units, loops the lights, walks each light's sentinel-terminated caster run, and runs the **exact
+  fan region** (roles 0–6 → 5-triangle union, a direct port of the fan's projection) as the point-in-
+  shadow predicate; sets `1u<<lightIndex` and writes the full `uvec4`. **No** ping-pong.
+- **Overlay** (`/overlayRT shadow-cold`): a world-space window quad samples shadow-cold (`usampler2D`) and
+  decodes all 128 bits → per-bit hue colours (overlap sums). Wired into `Viewport` as its own decode path.
+- **Deviation D-1 in force:** P4-core is full-recompute, all-lights, no silhouette mask — presence cull
+  (P2), dirty gating (P3), and the mask land next as invisible optimisations.

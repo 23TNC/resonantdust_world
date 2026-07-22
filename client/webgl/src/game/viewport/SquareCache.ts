@@ -225,6 +225,13 @@ export class SquareCache {
     return this.cols * this.rows;
   }
 
+  /** The toroidal tile window geometry — for a sibling world-space toroidal map (shadow-cold) that must
+   *  align tile-for-tile with this cache: `cols`/`rows` tiles (incl. `OVERSCAN`), the window origin
+   *  (`winCol`/`winRow`, in world tiles), and the atlas slot px. */
+  get window(): { winCol: number; winRow: number; cols: number; rows: number; slotPx: number } {
+    return { winCol: this.winCol, winRow: this.winRow, cols: this.cols, rows: this.rows, slotPx: this.slotPx };
+  }
+
   // ── sizing ───────────────────────────────────────────────────────────────────
   resize(screenW: number, screenH: number, zoom: number, anchorX: number, anchorY: number): void {
     if (screenW <= 0 || screenH <= 0) return;
