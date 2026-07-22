@@ -309,6 +309,12 @@ export class ShadowGather {
   private overlayGeo: Geometry | null = null;
   private readonly overlayPos = new Float32Array(8);
   private readonly lights: Light[] = [];
+  /** DEBUG: orbit the lights every frame so the shadow recompute runs each frame — turns the FPS
+   *  panel into a live gather-cost readout (the "hot lights" perf case). Toggle with {@link setOrbit}. */
+  private orbit = true;
+  private orbitPhase = 0;
+  private seedX = 0;
+  private seedY = 0;
   private readonly empty: Texture;
   private enabled = true;
   private readonly coldData: ColdShadowData;
@@ -360,6 +366,8 @@ export class ShadowGather {
     this.dirtyTex = new Texture(gl, { width: 1, height: 1, format: "r8uint" });
     this.coldData = new ColdShadowData(renderer);
     (globalThis as unknown as { __cold: unknown }).__cold = this.coldData; // DEBUG
+    // DEBUG: console toggle for the orbit (perf measurement) — `__orbit(false)` to freeze the lights.
+    (globalThis as unknown as { __orbit: (on?: boolean) => boolean }).__orbit = (on?: boolean) => this.setOrbit(on);
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -375,6 +383,7 @@ export class ShadowGather {
   /** Seed 6 lights in a ring around a tile (world px). */
   seed(tileX: number, tileY: number): void {
     const cx = (tileX + 0.5) * SQUARE, cy = (tileY + 0.5) * SQUARE;
+    this.seedX = cx; this.seedY = cy;
     this.lights.length = 0;
     for (let k = 0; k < MAX_LIGHTS; k++) {
       // DIAG: isolate the teal light — the k=4 ring position (angle 240°, up-left of centre).
@@ -521,6 +530,13 @@ export class ShadowGather {
   get on(): boolean {
     return this.enabled;
   }
+  /** DEBUG: turn the light orbit on/off (no arg = toggle). Off freezes the lights so the scene is
+   *  static again (gather goes idle via dirty-gating); on drives a full recompute every frame. */
+  setOrbit(on?: boolean): boolean {
+    this.orbit = on ?? !this.orbit;
+    if (!this.orbit) this.forceDirty = true; // one last clean recompute at the frozen positions
+    return this.orbit;
+  }
   toggle(): boolean {
     this.enabled = !this.enabled;
     return this.enabled;
@@ -540,6 +556,22 @@ export class ShadowGather {
   /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield. */
   tick(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
     if (!this.enabled || this.lights.length === 0) return;
+
+    // DEBUG orbit: rotate the ring each frame so the whole shadow field recomputes every frame — the
+    // FPS panel then reads the real per-frame gather cost (the moving-light / P8 case). Dial MAX_LIGHTS
+    // to see light-count scaling; the per-tile 8-cap means cost only rises where >8 lights overlap.
+    if (this.orbit) {
+      this.orbitPhase += 0.01;
+      const n = this.lights.length;
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2 + this.orbitPhase;
+        this.lights[k].x = this.seedX + Math.cos(a) * RING_RADIUS;
+        this.lights[k].y = this.seedY + Math.sin(a) * RING_RADIUS;
+      }
+      this.coldDirty = true;   // light records changed
+      this.lightsVer++;        // presence changed
+      this.forceDirty = true;  // recompute every tile this frame
+    }
     if (!this.resolverUnsub && resolver) this.resolverUnsub = resolver.onLoad(() => { this.coldDirty = true; });
 
     if (this.coldDirty || standing.length !== this.lastCasterCount) {
