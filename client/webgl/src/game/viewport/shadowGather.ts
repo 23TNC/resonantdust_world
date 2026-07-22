@@ -21,7 +21,8 @@ import { SQUARE } from "./squareMath";
 
 /** Lights this iteration (a single light, centred on the seed tile, for shadow debugging). */
 const MAX_LIGHTS = 1;
-const LIGHT_Z = 480;
+/** Light height: 256 world px = 4 tiles (`SQUARE`=64) — twice the tree billboard height (128 px / 2 tiles). */
+const LIGHT_Z = 256;
 const LIGHT_RADIUS = 4 * SQUARE;
 const RING_RADIUS = 2 * SQUARE;
 /** shadow-cold resolution: `SHADOW_SLOT` texels per world tile (a tile is `SQUARE` world px). 16 = 1
