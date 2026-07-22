@@ -152,7 +152,7 @@ uniform highp usampler2D uPresence;   // light_presence_cold (cols×rows, 1 tile
 uniform highp usampler2D uDirty;      // shadow_dirty (cols×rows R8UI): .r nonzero = recompute
 uniform highp usampler2D uCaster;     // per-tile caster buckets (cols×rows RGBA32UI = 8× u16 prim idx)
 uniform sampler2D uSurface;           // casters' shared surface page (.B = silhouette coverage)
-uniform int uNLights, uDefW, uPrimW;
+uniform int uDefW, uPrimW;
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window
 out uvec4 fragColor;
 ${GATHER_COMMON}
@@ -168,12 +168,13 @@ void main() {
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
   P.y += ${SHADOW_LIFTF}; // lift the shadow up: test the ground point SHADOW_LIFT units below this one
 
-  uvec4 pres = texelFetch(uPresence, ivec2(sx, sy), 0);     // which lights reach this tile (F5 cull)
-  uint b0 = 0u, b1 = 0u, b2 = 0u, b3 = 0u;
-  for (int k = 0; k < uNLights; k++) {
-    uint pw = k < 32 ? pres.x : (k < 64 ? pres.y : (k < 96 ? pres.z : pres.w));
-    if ((pw & (1u << uint(k & 31))) == 0u) continue;        // light k out of range of this tile
-    uvec4 Ld = texelFetch(uLightData, ivec2(k, 0), 0);
+  uvec4 pres = texelFetch(uPresence, ivec2(sx, sy), 0);     // 8× u16 nearest light indices (0xFFFF empty)
+  uint out0 = 0u;                                            // per-SLOT 4-bit coverage: slot i at bit i*4
+  for (int slot = 0; slot < 8; slot++) {
+    uint pw = pres[slot >> 1];
+    uint li = (slot & 1) == 0 ? (pw >> 16) : (pw & 0xffffu);
+    if (li == 0xffffu) continue;                            // empty slot
+    uvec4 Ld = texelFetch(uLightData, ivec2(int(li), 0), 0);
     if ((Ld.z & 1u) == 0u) continue;                        // cast_shadows
     vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));
     float emitterR = float((Ld.w >> 24) & 255u);            // per-light penumbra source size (units, F7)
@@ -201,15 +202,11 @@ void main() {
       if (e2 > -ad.y) { err -= ad.y; cur.x += sp.x; }
       if (e2 <  ad.x) { err += ad.x; cur.y += sp.y; }
     }
-    // Pack light k's coverage as a 4-bit nibble at bit (k&7)*4 of channel k>>3 (≤32 lights).
+    // Pack this SLOT's coverage as a 4-bit nibble at bit slot*4 (8 slots → 32 bits → R channel).
     uint nib = uint(cov * 15.0 + 0.5);
-    if (nib > 0u) {
-      uint packed = nib << uint((k & 7) * 4);
-      int ch = k >> 3;
-      if (ch == 0) b0 |= packed; else if (ch == 1) b1 |= packed; else if (ch == 2) b2 |= packed; else b3 |= packed;
-    }
+    out0 |= nib << uint(slot * 4);
   }
-  fragColor = uvec4(b0, b1, b2, b3);
+  fragColor = uvec4(out0, 0u, 0u, 0u);
 }
 `;
 
@@ -228,7 +225,8 @@ const OVERLAY_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 in vec2 vWorld;
-uniform highp usampler2D uShadow;   // shadow-cold (RGBA32UI)
+uniform highp usampler2D uShadow;   // shadow-cold: per-slot 4-bit coverage (8 nibbles in R)
+uniform highp usampler2D uPresence; // 8× u16 light indices per tile (slot → global light)
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;
 out vec4 fragColor;
 int pmod(int a, int m) { return ((a % m) + m) % m; }
@@ -248,13 +246,16 @@ void main() {
   int sx = pmod(tx, uCols), sy = pmod(ty, uRows);
   float lx = fract(vWorld.x / ${SQF}), ly = fract(vWorld.y / ${SQF});
   ivec2 texel = ivec2(sx * uSlot + int(lx * float(uSlot)), sy * uSlot + int(ly * float(uSlot)));
-  uvec4 bits = texelFetch(uShadow, texel, 0);
+  uvec4 pres = texelFetch(uPresence, ivec2(sx, sy), 0);     // this tile's 8 slot → light index
+  uint sh = texelFetch(uShadow, texel, 0).x;                // 8 nibbles: slot i coverage at bit i*4
   vec3 acc = vec3(0.0);
   float any = 0.0;
-  for (int k = 0; k < 32; k++) {                            // 4-bit coverage per light: nibble (k&7) of channel k>>3
-    uint word = k < 8 ? bits.x : (k < 16 ? bits.y : (k < 24 ? bits.z : bits.w));
-    uint nib = (word >> uint((k & 7) * 4)) & 0xFu;
-    if (nib > 0u) { float cvg = float(nib) / 15.0; acc += lightColour(k) * cvg; any = max(any, cvg); }
+  for (int slot = 0; slot < 8; slot++) {
+    uint pw = pres[slot >> 1];
+    uint li = (slot & 1) == 0 ? (pw >> 16) : (pw & 0xffffu);
+    if (li == 0xffffu) continue;                            // empty slot
+    uint nib = (sh >> uint(slot * 4)) & 0xFu;
+    if (nib > 0u) { float cvg = float(nib) / 15.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
   }
   if (any <= 0.0) { fragColor = vec4(0.0); return; }
   fragColor = vec4(clamp(acc, 0.0, 1.0), any);             // alpha = coverage → penumbra fades (P7)
@@ -320,10 +321,12 @@ export class ShadowGather {
   private rtCols = 0;
   private rtRows = 0;
 
-  /** light_presence_cold — per-tile light bitfield (cols×rows), the F5 cull. CPU-built on light/window
-   *  change (a `1×1` fallback until the first build so the gather always has a binding). */
+  /** light presence — per-tile **8× `u16` light indices** (nearest-8 reaching lights, `0xFFFF` = empty),
+   *  one `RGBA32UI` texel/tile (P5). Makes per-texel gather cost O(8), independent of total light count.
+   *  `slotDist` tracks each slot's distance² for the nearest-N eviction. CPU-built on light/window change. */
   private presenceTex: Texture;
   private presenceMirror = new Uint32Array(0);
+  private slotDist = new Float32Array(0);
   private presSig = "";
   private lightsVer = 0;
 
@@ -386,8 +389,9 @@ export class ShadowGather {
     this.forceDirty = true; // lights changed → recompute every tile
   }
 
-  /** Rebuild `light_presence_cold` when the lights or window change — one px/tile, bit L = light L's
-   *  radius box covers the tile (conservative; the lighting pass trims corners). */
+  /** Rebuild the per-tile **presence** (P5) when the lights or window change: each tile gets the
+   *  **nearest 8** lights whose (reach−1, F10) circle covers it, as `u16` indices (`0xFFFF` = empty).
+   *  Nearest-N eviction via `slotDist`. This bounds the gather to O(8) lights/texel. */
   private buildPresence(win: TileWindow): void {
     const { cols, rows, winCol, winRow } = win;
     const sig = `${winCol},${winRow},${cols},${rows},${this.lightsVer}`;
@@ -397,19 +401,33 @@ export class ShadowGather {
       this.presenceTex.destroy();
       this.presenceTex = new Texture(this.renderer.gl, { width: cols, height: rows, format: "rgba32uint" });
       this.presenceMirror = new Uint32Array(cols * rows * 4);
+      this.slotDist = new Float32Array(cols * rows * 8);
     }
-    this.presenceMirror.fill(0);
+    this.presenceMirror.fill(0xffffffff); // every u16 slot = 0xFFFF (empty)
+    this.slotDist.fill(Infinity);
+    const pmod = (a: number, m: number): number => ((a % m) + m) % m;
     const n = Math.min(this.lights.length, MAX_LIGHTS);
     for (let k = 0; k < n; k++) {
-      const L = this.lights[k], r = L.reach;
+      const L = this.lights[k], r = L.reach - SQUARE; // reach−1 tile (F10): the outer ring is falloff-dark
+      if (r <= 0) continue;
+      const r2 = r * r;
       const t0x = Math.max(winCol, Math.floor((L.x - r) / SQUARE)), t1x = Math.min(winCol + cols - 1, Math.floor((L.x + r) / SQUARE));
       const t0y = Math.max(winRow, Math.floor((L.y - r) / SQUARE)), t1y = Math.min(winRow + rows - 1, Math.floor((L.y + r) / SQUARE));
-      const bit = (1 << (k & 31)) >>> 0, ch = k >> 5;
       for (let wr = t0y; wr <= t1y; wr++) {
-        const sy = ((wr % rows) + rows) % rows;
+        const cy = (wr + 0.5) * SQUARE;
         for (let wc = t0x; wc <= t1x; wc++) {
-          const sx = ((wc % cols) + cols) % cols;
-          this.presenceMirror[(sy * cols + sx) * 4 + ch] |= bit;
+          const cx = (wc + 0.5) * SQUARE;
+          const d2 = (cx - L.x) * (cx - L.x) + (cy - L.y) * (cy - L.y);
+          if (d2 > r2) continue; // circular reach
+          const si = pmod(wr, rows) * cols + pmod(wc, cols);
+          // nearest-8: replace the farthest slot (or an empty Infinity one) iff this light is closer.
+          let worst = -1, worstD = d2;
+          for (let s = 0; s < 8; s++) { const sd = this.slotDist[si * 8 + s]; if (sd > worstD) { worstD = sd; worst = s; } }
+          if (worst < 0) continue; // all 8 slots already closer → drop this light for this tile
+          this.slotDist[si * 8 + worst] = d2;
+          const base = si * 4 + (worst >> 1);
+          if ((worst & 1) === 0) this.presenceMirror[base] = ((this.presenceMirror[base] & 0x0000ffff) | ((k & 0xffff) << 16)) >>> 0;
+          else this.presenceMirror[base] = ((this.presenceMirror[base] & 0xffff0000) | (k & 0xffff)) >>> 0;
         }
       }
     }
@@ -557,7 +575,6 @@ export class ShadowGather {
         uSurface: this.coldData.surfacePage ?? this.empty,
       },
       uniforms: (p) => {
-        p.uInt("uNLights", this.coldData.lights);
         p.uInt("uDefW", defW);
         p.uInt("uPrimW", primW);
         p.uInt("uCols", win.cols);
@@ -583,7 +600,7 @@ export class ShadowGather {
       program: this.overlay,
       geometry: this.overlayGeo!,
       blend: "normal",
-      textures: { uShadow: this.shadowRT.textures[0] },
+      textures: { uShadow: this.shadowRT.textures[0], uPresence: this.presenceTex },
       uniforms: (p) => {
         p.uMat3("uProjection", proj);
         p.uInt("uCols", win.cols);

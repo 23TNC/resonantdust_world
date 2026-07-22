@@ -92,5 +92,19 @@ _Items move here from [`todo.md`](todo.md) when done **and** verified on `/overl
 - **Verified**: shadows render, per-light **softness visibly varies** (soft top vs crisp side), no
   errors. The `light_data` layout change is ready for `VARIABLES.md` when P5 rewrites it.
 
-_Not built yet: **P5** (u16/per-slot for >128 lights — scale infra), **P8** (cold/hot split + dirty
-budget — needs moving casters to verify), **P6′ dedup** (toward-P, deferred until a seam shows)._
+## P5 · 8-slot presence + per-slot output (unlimited lights) — 2026-07-22 ✓
+
+- **Presence** rewritten: per tile, **8× `u16` nearest-light indices** (`0xFFFF` = empty) via a
+  nearest-N eviction (`slotDist`), circular **reach−1** ([F10](forks.md#f10)). Replaces the 128-bit
+  bitfield. Bounds the gather to **O(8) lights/texel regardless of total light count** — the whole
+  point.
+- **Gather** loops the **8 slots** (not `uNLights`); reads each slot's light index → record → corridor
+  march; outputs **per-slot 4-bit coverage** (8 nibbles in the R channel). `uNLights` removed.
+- **Overlay** reads presence + shadow and decodes **by slot** (slot → light index → `lightColour`).
+- **Verified**: 6 lights render with correct colours, shadows now tightly contained within the reach−1
+  circles, no errors. **Light count is now a free dial** (`MAX_LIGHTS`, u16 space ⇒ up to 65535) — the
+  per-tile 8-cap means adding lights only costs where >8 overlap. (Debug `lightColour` still only has
+  6 hues; colours repeat past 6 — cosmetic, doesn't affect the perf character.)
+
+_Not built yet: **P8** (cold/hot split + dirty budget — needs moving casters to verify), **P6′ dedup**
+(toward-P, deferred until a seam shows). Slot-stability ([I-1](issues.md)) matters once lights move (P8)._

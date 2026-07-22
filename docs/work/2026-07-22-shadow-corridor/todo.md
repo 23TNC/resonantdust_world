@@ -21,15 +21,8 @@ _**Done + verified** 2026-07-22 → [`completed.md`](completed.md): P1, P2, P4, 
 - [ ] Multi-tile appearance is harmless here (binary is idempotent); the dedup that prevents
       double-*accumulate* lands with coverage in P6 ([I-6](issues.md)).
 
-## P5 · 8-slot representation (unlimited lights, per-slot output)
-
-- [ ] **Presence → 8× `u16` light indices** per tile (one `RGBA32UI`), nearest-N with **stable slot
-      assignment** (keep present lights in-slot, fill freed slots only). Built to **`reach − 1`**
-      ([F10](forks.md#f10)) — the light's illumination-range field is **`reach`** (rename `radius`).
-      Presence change **dirties** the tile.
-- [ ] **Output → per-slot 8-bit** (bit `i` = slot `i` shadowed) instead of 128-bit per-global-light.
-- [ ] Update `/overlayRT` decode + the lighting join (slot `i` → light `presence[i]`, skip if
-      shadowed). Verify parity with P2 on ≤8-light scenes, then push past 128 total lights.
+_**P5 done + verified** 2026-07-22 → [`completed.md`](completed.md): 8× u16 nearest-light presence
+(reach−1) + per-slot 4-bit output. Light count is now a free dial. Remaining: **P8** + **P6′**._
 
 _P6 (4-bit coverage) + P7 (penumbra) **core done + verified** → [`completed.md`](completed.md).
 Remaining refinements below._
