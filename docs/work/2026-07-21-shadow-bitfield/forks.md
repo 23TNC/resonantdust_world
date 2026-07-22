@@ -88,7 +88,13 @@ radius change (pure reach — prims don't touch it), distinct from the dirty-til
 changes on a light **or** caster move. Size to **window + `OVERSCAN`** so apron tiles get bits (else
 edge tearing on pan).
 
-## F6 · Fixed-size texture consolidation + single-pass dirty update — 2026-07-21 (RESOLVED, 1 pin)
+**Caster-move dirtying (user, 2026-07-21).** When a caster moves we know its **index**, so the CPU maps
+index → the lights that reference it (a reverse lookup it maintains), and each light's presence tells
+which tiles it reaches → **mark those tiles dirty**. This **over-approximates** (dirties the lights'
+whole reach, not just the caster's actual shadow footprint) — acceptable short-term. Tighter option
+(track the tiles a caster's shadow occupies) is deferred — "gets messy quick."
+
+## F6 · Fixed-size texture consolidation + single-pass dirty update — 2026-07-21 (RESOLVED)
 
 Fix everything to constant slots (the user: simplifies alloc + pre-shapes warm/hot as bit-partitions,
 not reallocations). **N = 128 lights**, **≤ 256 shadow casters/light**, `u16` def/prim indexes ⇒
@@ -103,21 +109,23 @@ not reallocations). **N = 128 lights**, **≤ 256 shadow casters/light**, `u16` 
 | dirty-tile bits | **64 `uvec4`** uniform (or a tiny texture) | one bit/tile; gates the single pass |
 
 **Update model: single full-window pass, `discard`-gated.** One pass over `shadow-cold`; each fragment
-reads its tile's dirty bit and `discard`s if clean (persistent RT untouched → **no ping-pong on
-`shadow-cold`**). CPU maintains `light_data`/`prim_data`/`prim_definition_data`/`light_presence_cold`
-and uploads changed regions (cold changes rarely — CPU handles it; no GPU ping-pong for the data
-either). Budget = send a subset of dirty bits per frame (optional).
+reads its tile's dirty flag (from `shadow_dirty`, an **`R8UI` texture** — decided over a uniform, to
+keep the fragment-uniform budget free for warm/hot) and `discard`s if clean (persistent RT untouched →
+**no ping-pong on `shadow-cold`**). CPU maintains `light_data`/`prim_data`/`prim_definition_data`/
+`light_presence_cold`/`shadow_dirty` and uploads changed regions (cold changes rarely; **no GPU
+ping-pong** for the data — CPU is the writer). Budget = mark only a subset of tiles dirty per frame
+(optional).
 
 **Sizes:** ~1 MB defs + 512 KB prims + 128 KB presence + 66 KB light_data ≈ **1.7 MB** VRAM. Cheap.
 
-**The one pin — `caster_count` home.** Removing `lut_count` (and `lut_index`, now implicit) frees the
-light record's `u16 lut_index | u16 lut_count` A-channel; put a **`u16 caster_count`** (0..256) there
-so the fragment bounds the per-light caster loop instead of sentinel-scanning all 256. Proposed as
-decided pending the user's nod; **`VARIABLES.md` gets the authoritative layout once this is confirmed.**
+**RESOLVED (user, 2026-07-21) — no `caster_count`; sentinel index 0.** The caster LUT run is a **dense
+list of `u16` prim indexes terminated by a `0`** (prim index 0 reserved as the sentinel). So the
+fragment loops until it hits 0 or 256; no count field — the freed light-record A-channel stays
+reserved. Cost: prim index 0 is unusable → **65 535** usable prim slots (1..65 535), not 65 536. This
+unblocked the authoritative `VARIABLES.md` layout (written 2026-07-21). `shadow_dirty` = an `R8UI`
+texture (nonzero = dirty), not the uniform.
 
-**Nits caught:** `prim_data` is **256×128** not 256×126 (256×126×2 = 64 512 < 65 536); a moved caster
-dirties tiles but **not** presence bits (F5); dirty-tile uniform (64/224 `uvec4`) competes with future
-warm/hot uniforms — a tiny dirty *texture* is the alternative if that space tightens.
+**Nit resolved:** `prim_data` is **256×128** (256×126×2 = 64 512 would under-address `u16`).
 
 ## F7 · Def-index width (u16) overrun — 2026-07-21 (RESOLVED, watch)
 

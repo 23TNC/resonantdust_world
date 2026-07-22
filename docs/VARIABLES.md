@@ -271,11 +271,12 @@ is the separate fact that the value reached `state`.
 
 ## Cold shadow data textures (`client/webgl`)
 
-The GPU-driven shadow cast reads its **static** (cold) light + caster data from `RGBA32UI` data textures
-(`texelFetch`, exact integer reads) instead of per-frame instance attributes — written on change, read every
-frame for free. Four normalized textures with a light → LUT → definition / instance indirection, so a caster's
-position lives in **one** place (`cold_prim_data`): moving it updates one texel, not every light that
-references it. Work stream: [`work/cold-data-textures`](work/cold-data-textures/README.md).
+The GPU shadow **gather** reads its **static** (cold) light + caster data from **fixed-size** `RGBA32UI` data
+textures (`texelFetch`, exact integer reads) — written on change (CPU-side; no GPU ping-pong), read every frame
+for free. Everything is fixed-slot: **`N = 128` lights**, **≤ 256 shadow casters/light**, `u16` def/prim
+indexes (⇒ 65 536 ceilings). The LUT (light → caster indices) is folded into `light_data`'s rows; a caster's
+position + definition live in **one** place (`prim_data`). Work stream:
+[`work/2026-07-21-shadow-bitfield`](work/2026-07-21-shadow-bitfield/README.md).
 
 **Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `radius`, `prim_width/height`) is in
 **units**, a compile-time constant `1 unit = SQUARE/16 = 4px` (`TILE = 16 units`, derivable — not stored). The
@@ -293,27 +294,39 @@ u32 position_anchor_reference       region | zone | tile | anchor  (min unit = S
   u8 anchor_reference               bits 0–7      anchor_x:4 | anchor_y:4   (0..15 within the tile)
 ```
 
-**`cold_light_data`** — one `RGBA32UI` px per cold light (written once; not per frame):
+**Bit convention** for the 128-bit maps (`light_presence_cold`, `shadow-cold`): channel `R`=lights 0–31,
+`G`=32–63, `B`=64–95, `A`=96–127; within a channel, light `L` is bit `L & 31`.
+
+**`light_data`** — a **128×33** `RGBA32UI` texture; **column `x` = light `x`'s entire record** (`lut_index` is
+therefore **implicit** = the column). Written on light change:
 
 ```
-R  u32 position_anchor_reference
-G  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
-B  u32 reach         u8 z (24–31, units) | u12 radius (12–23, units; ~16-zone max) | u11 reserved (1–11) | u1 cast_shadows (0)
-A  u32 lut           u16 lut_index (16–31) | u16 lut_count (0–15)   range into cold_light_prim_data
+row 0    (x, 0)  the light record:
+  R  u32 position_anchor_reference
+  G  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
+  B  u32 reach         u8 z (24–31, units) | u12 radius (12–23, units; ~16-zone max) | u11 reserved (1–11) | u1 cast_shadows (0)
+  A  u32 reserved      (was lut_index|lut_count — freed: index implicit, run sentinel-terminated)
+
+rows 1–32  (x, 1..32)  the caster LUT — 256× u16 prim indexes into prim_data, dense, terminated by a 0:
+  R  u16 idx[8y-8] (16–31) | u16 idx[8y-7] (0–15)
+  G  u16 idx[8y-6] (16–31) | u16 idx[8y-5] (0–15)
+  B  u16 idx[8y-4] (16–31) | u16 idx[8y-3] (0–15)
+  A  u16 idx[8y-2] (16–31) | u16 idx[8y-1] (0–15)          (y = 1..32 → indices 0..255)
 ```
 
-**`cold_light_prim_data`** — the LUT (the light → caster association); a light's casters are the contiguous run
-`[lut_index, lut_index + lut_count)`. Normalized to indices only, so it never carries position:
+**`prim_data`** — a **256×128** `RGBA32UI` texture, **2 prims/px** (`u64` each) → 65 536 slots; **index 0 is a
+sentinel** (empty / end-of-list), so usable prim indices are **1..65 535**. One entry per **placed** caster
+instance — the single place a prim's position + definition live (move → one texel):
 
 ```
-u32 entry (4 per RGBA32UI px)
-  u16 definition_index              bits 16–31    → prim_definition_data
-  u16 prim_data_index               bits 0–15     → cold_prim_data
+entry (2 per RGBA32UI px = 64 bits each)
+  u32 position_anchor_reference
+  u32 orient    u8 z (24–31, units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u16 definition_index (6–21) | u6 reserved (0–5)
 ```
 
-**`prim_definition_data`** — one `RGBA32UI` px per sprite **variant** (generic; shared by every instance of
-that sprite, ~16 px for a conifer's variants). Written on **atlas add**, evicted only if the atlas evicts (it
-doesn't yet):
+**`prim_definition_data`** — a **256×256** `RGBA32UI` texture, one px per sprite **variant** (generic; shared by
+every instance of the same `(type,subtype,kind,variant)`), keyed by `u16 definition_index` (0..65 535). Written
+on **atlas add**:
 
 ```
 R  u32   u10 prim_width (22–31, units) | u10 prim_height (12–21, units) | u10 frame_x (2–11, atlas px) | u2 reserved (0–1)
@@ -322,26 +335,28 @@ B  u32   u10 frame_page (22–31) | u8 dA (14–21, units) | u8 dB (6–13, unit
 A  u32   reserved   (materials etc. — later)
 ```
 
-**`cold_prim_data`** — one entry per **placed** caster instance (its position + orientation); the single place
-a prim's position lives (move → one texel update):
+**`light_presence_cold`** — a **128×64** `RGBA32UI` texture (sized to the **max-zoom tile window + `OVERSCAN`**),
+**one px per tile**; **bit `L` set = light `L` reaches this tile** (distance cull). CPU-set when a light is
+added / moves / changes radius (prims never touch it). The gather reads its tile's px and iterates only the set
+bits — the per-tile light cull.
 
-```
-entry (2 per RGBA32UI px = 64 bits each)
-  u32 position_anchor_reference
-  u32 orient        u8 z (24–31, units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u22 reserved (0–21)
-```
+**`shadow-cold`** — the **output**: a world-space **toroidal** `RGBA32UI` bitfield (windowed like a `SquareCache`
+channel, `slotPx` resolution), **bit `L` set = this pixel is in light `L`'s shadow**. Updated in place by the
+single-pass gather (`discard` on clean tiles → no ping-pong). Later the per-light **mask** for lighting.
 
-**Notes.** (1) `rotation` (n/e/s/w) picks the shadow regime (E/W vs N/S). (2) A light draws its run per-light
-(`instanceCount = lut_count`, the light index is the draw), so the light↔caster association is inherent — no
-light id in the LUT. (3) The shader does a **radius safety check** on the light↔prim positions (rectangle /
-Chebyshev distance where Euclidean isn't needed) so a slightly-stale LUT (a prim that moved out of range before
-its light's run was patched) still culls correctly. (4) All world fields are in **units** (`1 unit = SQUARE/16
-= 4px`, compile-time); decode `region|zone|tile|anchor` → units via the `*_DIM` world constants (§Where it is),
-then units → px (×4) only at the clip transform. `radius` is `u12` units ≈ **16 zones** (256 tiles) — far past
-the ~8-zone view. Truly global ambient is better a **no-cull flag** (skip the radius check) than a max radius.
-(5) `cast_shadows` (bit 0 of reach): a **0** light lights without casting — it builds **no** LUT run
-(`lut_count = 0`) and is **skipped** in the shadow draw, so a fill/ambient light costs no shadow geometry. Only
-`cast_shadows = 1` lights get a caster run + a per-light cast.
+**`shadow_dirty`** — an **`R8UI` 128×64** texture (max-zoom tile window + `OVERSCAN`), **nonzero = tile dirty**;
+gates the single-pass gather (clean tiles `discard`). Rebuilt per frame CPU-side; a texture, not a uniform, to
+keep the fragment-uniform budget free for warm/hot.
+
+**Notes.** (1) `rotation` (n/e/s/w) picks the shadow regime (E/W vs N/S). (2) The LUT is a **dense run of `u16`
+prim indexes** in `light_data` rows 1–32, **terminated by a `0`** (prim index 0 is the sentinel) or filling all
+256 — no `lut_count`; `lut_index` is implicit (the light's column). (3) The gather box-culls **per caster**
+(rectangle / Chebyshev) inside the loop; the **per-tile** light cull is `light_presence_cold`. (4) All world
+fields are in **units** (`1 unit = SQUARE/16 = 4px`, compile-time); decode `region|zone|tile|anchor` → units via
+the `*_DIM` world constants (§Where it is), then units → px (×4) only at the clip transform. `radius` is `u12`
+units ≈ **16 zones** (256 tiles). Global ambient is better a **no-cull flag** than a max radius. (5)
+`cast_shadows` (bit 0 of reach): a **0** light lights without casting — its LUT run is empty (first slot = the
+`0` sentinel) and it is skipped in the gather, so a fill/ambient light costs no shadow work.
 
 ## Removed
 

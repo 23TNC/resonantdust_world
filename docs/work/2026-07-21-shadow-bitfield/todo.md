@@ -21,21 +21,21 @@ earlier rect-accumulation phases (F3 dropped)._
 
 ## P4 · The gather cast (single full-window pass) — 2026-07-21
 
-- One pass over `shadow-cold`. Per fragment: derive my tile; read the **dirty bit** (64-`uvec4`
-  uniform) — `discard` if clean (persistent RT untouched, no ping-pong). If dirty: read
-  `light_presence_cold` for my tile; iterate only its **set light bits**; for each light walk its
-  `caster_count`-bounded LUT run in `light_data` rows 1–32 (`u16` prim indexes → `prim_data` →
-  `prim_definition_data`, all `texelFetch`); per caster box-cull + **point-in-projected-silhouette**
-  (reuse `shadow-projection` math); **OR** `1u << lightIndex` into a register; write the full `u128`.
+- One pass over `shadow-cold`. Per fragment: derive my tile; sample **`shadow_dirty`** — `discard` if
+  clean (persistent RT untouched, no ping-pong). If dirty: read `light_presence_cold` for my tile;
+  iterate only its **set light bits**; for each light walk its LUT run in `light_data` rows 1–32
+  (`u16` prim indexes, **stop at the `0` sentinel** or 256; `prim_data` → `prim_definition_data`, all
+  `texelFetch`); per caster box-cull + **point-in-projected-silhouette** (reuse `shadow-projection`
+  math); **OR** `1u << lightIndex` into a register; write the full `u128`.
 - Retire the fan-scatter draw in `shadowCaster.ts` (its projection math moves into the fragment).
 
-## P3 · Dirty-tile tracking + the dirty uniform — 2026-07-21
+## P3 · Dirty-tile tracking + the `shadow_dirty` texture — 2026-07-21
 
-- CPU dirty-tile set on the tile grid (window+overscan): a **light** add/move/radius **or** a
-  **caster** move dirties the affected tiles (old + new). Pan-exposed tiles dirty on recenter (cf.
-  `SquareCache.markStale`).
-- Pack the dirty set into the **64-`uvec4`** uniform (one bit/tile) each frame (or a tiny
-  `128×64` dirty texture — F6 nit, if uniform space tightens). Feed to P4.
+- CPU dirty-tile set on the tile grid (window+overscan): a **light** add/move/radius dirties its
+  reached tiles; a **caster** move maps index → its lights → their reached tiles (F5 caster-move
+  dirtying, over-approximate). Pan-exposed tiles dirty on recenter (cf. `SquareCache.markStale`).
+- Write the dirty set into **`shadow_dirty`** — an `R8UI` `128×64` (window+overscan) texture,
+  nonzero = dirty (F6 — a texture, not a uniform). Feed to P4.
 
 ## P2 · `light_presence_cold` (per-tile light bitfield) — 2026-07-21
 
@@ -45,11 +45,11 @@ earlier rect-accumulation phases (F3 dropped)._
 
 ## P1 · Consolidate cold data to the fixed layout + `shadow-cold` buffer — 2026-07-21
 
-- Reshape the cold textures to **F6**: `light_data` **128×33** (row 0 = light record; rows 1–32 =
-  256× `u16` prim indexes — LUT folded in, `lut_index` implicit = column); `prim_data` **256×128**
-  (2/px, prim carries `u16 def_index` + `u8 z | u2 rot | u6 rsvd`); `prim_definition_data`
-  **256×256**. **Delete** `cold_light_prim_data`. Add **`u16 caster_count`** to the light record
-  (freed A-channel) — pending user nod (F6 pin), then write the authoritative layout to
-  [`docs/VARIABLES.md`](../../VARIABLES.md).
+- Reshape the cold textures to **F6** (authoritative layout now in
+  [`docs/VARIABLES.md`](../../VARIABLES.md) §Cold shadow data textures): `light_data` **128×33** (row 0
+  = light record; rows 1–32 = 256× `u16` prim indexes — LUT folded in, `lut_index` implicit = column,
+  **sentinel `0`**-terminated, no count); `prim_data` **256×128** (2/px, prim carries `u16 def_index`
+  + `u8 z | u2 rot | u6 rsvd`; index 0 reserved); `prim_definition_data` **256×256**. **Delete**
+  `cold_light_prim_data`.
 - Allocate **`shadow-cold`** = a world-space toroidal `RGBA32UI` bitfield sized/windowed like a
   `SquareCache` channel (same `cols×rows`, `slotPx`, `mod`-wrap, wrap-apron) — integer, not baked.
