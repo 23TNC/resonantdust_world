@@ -129,7 +129,7 @@ float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData,
   float k = L.z / (L.z - t * H * st);                       // that row's projection factor
   float s = clamp(((P.x - L.x) / k + L.x - Ac.x) / W + 0.5, 0.0, 1.0);
   if (rot == 3u) s = 1.0 - s;                               // W-facing = mirrored E frame
-  float fx = float(D.z >> 16), fy = float(D.z & 0xffffu);
+  float fx = float((D.z >> 18) & 16383u), fy = float((D.z >> 4) & 16383u); // u14 page coords (16384 GL max)
   // Atlas rows are image-top-down; card t=0 is the sprite's BOTTOM row → v = 1−t.
   vec2 uv = vec2(fx + s * fw, fy + (1.0 - t) * fh);
   return q * texelFetch(surf, ivec2(uv), 0).b;              // surface B = coverage (straight-alpha data)

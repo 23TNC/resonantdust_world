@@ -169,12 +169,14 @@ export class ColdShadowData {
 
     const base = idx * 4;
     // R: W(22–31) | H(12–21) opaque size (units). G: (ox+512)(12–21) | (oy+512)(2–11) signed offset (units).
-    // B: frame_x(16–31) | frame_y(0–15) (atlas px — PAGE coords, u16).
-    // A: frame_w(22–31) | frame_h(12–21) (atlas px, u10 — ≤1024² per-prim ceiling; w = 0 → solid quad).
+    // B: frame_x(18–31) | frame_y(4–17) (atlas px — PAGE coords, u14 = the 16384 GL max texture size).
+    // A: frame_w(22–31) | frame_h(12–21) (u10 — ≤1024² per-prim ceiling; w = 0 → solid quad)
+    //    | frame_page(0–7) (u8 — ≤256 pages, the WebGL2 MAX_ARRAY_TEXTURE_LAYERS floor; 0 until C5).
+    const page = 0; // ONE bound surface page today — C5 (texture-array pages) assigns real indices
     const R = (((u10(ww / UNIT) << 22) | (u10(hh / UNIT) << 12)) >>> 0);
     const G = (((((ox + 512) & 0x3ff) << 12) | (((oy + 512) & 0x3ff) << 2)) >>> 0);
-    const B = ((((fx & 0xffff) << 16) | (fy & 0xffff)) >>> 0);
-    const A = (((u10(fw) << 22) | (u10(fh) << 12)) >>> 0);
+    const B = ((((fx & 0x3fff) << 18) | ((fy & 0x3fff) << 4)) >>> 0);
+    const A = (((u10(fw) << 22) | (u10(fh) << 12) | (page & 0xff)) >>> 0);
     const m = this.defMirror;
     if (m[base] !== R || m[base + 1] !== G || m[base + 2] !== B || m[base + 3] !== A) {
       m[base] = R; m[base + 1] = G; m[base + 2] = B; m[base + 3] = A;
@@ -265,14 +267,15 @@ export class ColdShadowData {
   }
 
   // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
-  debugDef(index: number): { prim_width: number; prim_height: number; offset: [number, number]; frame: [number, number, number, number] } {
+  debugDef(index: number): { prim_width: number; prim_height: number; offset: [number, number]; frame: [number, number, number, number]; frame_page: number } {
     const b = index * 4;
     const R = this.defMirror[b], G = this.defMirror[b + 1], B = this.defMirror[b + 2], A = this.defMirror[b + 3];
     return {
       prim_width: (R >>> 22) & 0x3ff,
       prim_height: (R >>> 12) & 0x3ff,
       offset: [((G >>> 12) & 0x3ff) - 512, ((G >>> 2) & 0x3ff) - 512], // units, opaque-base-centre − anchor
-      frame: [(B >>> 16) & 0xffff, B & 0xffff, (A >>> 22) & 0x3ff, (A >>> 12) & 0x3ff], // x,y (u16) w,h (u10, atlas px)
+      frame: [(B >>> 18) & 0x3fff, (B >>> 4) & 0x3fff, (A >>> 22) & 0x3ff, (A >>> 12) & 0x3ff], // x,y (u14) w,h (u10, atlas px)
+      frame_page: A & 0xff,
     };
   }
   get debugDefCount(): number {

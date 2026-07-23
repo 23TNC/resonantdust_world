@@ -325,14 +325,22 @@ frame is that bbox's sub-rect of the sprite's SURFACE frame on the **one shared 
 ```
 R  u32   u10 prim_width (22–31, units, opaque) | u10 prim_height (12–21, units, opaque) | u12 reserved (0–11)
 G  u32   u10 offset_x+512 (12–21, units) | u10 offset_y+512 (2–11, units) | reserved     (opaque-base-centre − game anchor)
-B  u32   u16 frame_x (16–31, atlas px) | u16 frame_y (0–15, atlas px)                    (PAGE coords — pages reach 2048²)
-A  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas px) | u12 reserved (0–11)   (width 0 ⇒ no silhouette — solid quad)
+B  u32   u14 frame_x (18–31, atlas px) | u14 frame_y (4–17, atlas px) | u4 reserved (0–3)
+A  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas px) | u4 reserved (8–11) | u8 frame_page (0–7)
+         (frame_width 0 ⇒ no silhouette — solid quad; frame_page 0 until C5 assigns real page indices)
 ```
 
-**Per-prim texture ceiling.** `frame_width/height` are **u10** by requirement: **no single prim uses a texture
-larger than 1024×1024** — at `SQUARE = 64` that is 16×16 tiles = **one full zone**, the natural cap for a
-placed object. (`frame_x/y` stay u16 — they are *positions* on an atlas page, and pages reach 2048².) A
-larger frame is a content bug: the writer warns once and clamps.
+**Field sizing (the ceilings behind the widths).**
+- `frame_width/height` — **u10**: REQUIREMENT — **no single prim uses a texture larger than 1024×1024**; at
+  `SQUARE = 64` that is 16×16 tiles = **one full zone**, the natural cap for a placed object. A larger frame
+  is a content bug: the writer warns once and clamps.
+- `frame_x/y` — **u14**: *positions* on an atlas page, bounded by the GL texture-size ceiling, not the prim
+  ceiling — WebGL2 `MAX_TEXTURE_SIZE` is 16384 on discrete GPUs (our pools allocate 1024²/2048² pages, well
+  inside it). u14 = 0..16383 addresses any page we could ever allocate.
+- `frame_page` — **u8**: ≤ **256 pages**, the WebGL2 **`MAX_ARRAY_TEXTURE_LAYERS` guaranteed floor** (the C5
+  multi-page mechanism is a texture array), and ≥4× headroom over any realistic VRAM budget (a 2048² RGBA8
+  page is 16 MB; ~32–64 resident pages/map ≈ 0.5–1 GB is the practical ceiling). Byte-aligned in the low
+  byte. Written **0** until C5 lands (one shared surface page bound; off-page defs fall back to solid quad).
 
 **`light_presence_cold`** — a **`cols×rows`** `RGBA32UI` **textile_tile map** (one texel/tile, toroidal with the
 window): per tile the **nearest ≤ 8 reaching lights** as `8× u16` light indices (`0xFFFF` = empty; R holds slots
