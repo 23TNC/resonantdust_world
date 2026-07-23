@@ -230,7 +230,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 
 /** Ambient floor — the small base light so unlit areas aren't pure black (F4/P4 tunes; not a global sun,
  *  just a floor per [[lighting-direction]]). GLSL literal. */
-const AMBIENTF = (0.12).toFixed(3);
+export const AMBIENT_LEVEL = 0.12;  // #4: added once in the blit (uAmbient), not baked into either lightmap
 
 // ── LIGHTING (`2026-07-23-lighting`) ──────────────────────────────────────────────────────────────
 // The baked LIGHTMAP (F1): a world-space toroidal RT aligned TEXEL-FOR-TEXEL with shadow-cold (same
@@ -244,13 +244,13 @@ precision highp float;
 precision highp int;
 uniform highp usampler2D uData;    // presence (sets 3/5) + light records (set 2)
 uniform highp usampler2D uDirty;   // shadow_dirty — same gate as the shadow gather (clean → persist)
-uniform highp usampler2D uShadow;  // shadow-cold (TEXEL-aligned) — per-slot u9 coverage; slot i ↔ presence slot i
-layout(location = 0) out vec4 oLight;  // irradiance RGB: ambient + Σ colour·intensity·falloff·(1−shadow)
+uniform highp usampler2D uShadow;  // this class's shadow RT (TEXEL-aligned) — per-slot u9 coverage; slot i ↔ presence slot i
+uniform int uLightClass;           // #4: accumulate only this class of light — 0 = COLD, 1 = HOT
+layout(location = 0) out vec4 oLight;  // irradiance RGB: Σ colour·intensity·falloff·(1−shadow) (NO ambient — blit adds it)
 layout(location = 1) out vec4 oDir;    // RG = irradiance-weighted mean horizontal light dir (enc 0.5+0.5) — for per-px relief
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
-const float AMBIENT = ${AMBIENTF};
 void main() {
   // Same window mapping as the shadow gather (constants row): fc → toroidal slot → world tile → P.
   uvec4 C0 = fetchLin(uData, CONST_BASE);
@@ -268,13 +268,14 @@ void main() {
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
-  uvec4 sh = texelFetch(uShadow, fc, 0);                    // P3: this texel's per-slot u9 shadow coverage
-  vec3 acc = vec3(AMBIENT);
+  uvec4 sh = texelFetch(uShadow, fc, 0);                    // P3: this texel's per-slot u9 shadow coverage (this class)
+  vec3 acc = vec3(0.0);                                     // #4: NO ambient here — the blit adds it once over cold+hot
   vec2 dirAcc = vec2(0.0);                                  // Σ weight · unit(Lxy − P) — the aggregate lit-from dir
   for (int slot = 0; slot < 14; slot++) {
     uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
-    uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // G = position, B = colour|intensity, A = z|reach|…
+    uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // G = position, B = colour|intensity, A = z|reach|hot|…
+    if (int((Ld.w >> 1) & 1u) != uLightClass) continue;     // #4: this pass accumulates only its class
     vec2 Lxy = decodePos(Ld.y);                             // light ground pos (world units)
     vec3 col = vec3(float((Ld.z >> 24) & 255u), float((Ld.z >> 16) & 255u), float((Ld.z >> 8) & 255u)) / 255.0;
     float intensity = float(Ld.z & 255u) / 255.0;
@@ -308,6 +309,7 @@ uniform highp usampler2D uDirty;      // shadow_dirty — textile_tile map (R8UI
 uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 uniform float uShadowLift;            // #2: slide the shadow up N units to meet the sprite base (live-tunable)
+uniform int uLightClass;              // #4: process only this class of light — 0 = COLD (static), 1 = HOT (dynamic)
 out uvec4 fragColor;
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
@@ -334,8 +336,9 @@ void main() {
   for (int slot = 0; slot < 14; slot++) {
     uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
-    uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // v2.1: G = position, A = z|reach|emitter|cast
+    uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // v2.1: G = position, A = z|reach|emitter|hot|cast
     if ((Ld.w & 1u) == 0u) continue;                        // cast_shadows
+    if (int((Ld.w >> 1) & 1u) != uLightClass) continue;     // #4: this pass handles only its class (cold/hot)
     vec3 L = vec3(decodePos(Ld.y), float((Ld.w >> 24) & 255u));
     float emitter = float((Ld.w >> 4) & 255u);              // emitter_radius (units) → penumbra width
     float cov = 0.0;
@@ -409,7 +412,8 @@ const OVERLAY_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 in vec2 vWorld;
-uniform highp usampler2D uShadow;   // shadow-cold — textile_unit map: per-slot 4-bit coverage (7 nibbles in R)
+uniform highp usampler2D uShadow;    // COLD shadow RT — per-slot u9 coverage (cold lights' slots)
+uniform highp usampler2D uShadowHot; // HOT shadow RT — hot lights' slots (#4: a slot lives in exactly one class)
 uniform highp usampler2D uData;     // presence rides the unified data texture (region-torus fold)
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot; // window mapping — the overlay is a per-draw
                                                    // DISPLAY consumer (F2: uniforms are its lane)
@@ -448,13 +452,16 @@ void main() {
   int fold = foldTile(tx, ty);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
-  uvec4 sh = texelFetch(uShadow, texel, 0);                 // 14× u8 coverage: slot i at ch i>>2, bit (i&3)*8
+  uvec4 shC = texelFetch(uShadow, texel, 0);                // cold class slots
+  uvec4 shH = texelFetch(uShadowHot, texel, 0);             // hot class slots (a slot is nonzero in one only)
   vec3 acc = vec3(0.0);
   float any = 0.0;
   for (int slot = 0; slot < 14; slot++) {
     uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
-    uint v = ((lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((sh.w >> uint(16 + slot)) & 1u) << 8); // u9
+    uint vC = ((lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((shC.w >> uint(16 + slot)) & 1u) << 8);
+    uint vH = ((lane4(shH, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((shH.w >> uint(16 + slot)) & 1u) << 8);
+    uint v = max(vC, vH);                                    // u9 — combine the two classes' RTs
     if (v > 0u) { float cvg = float(v) / 511.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
   }
   if (any <= 0.0) { fragColor = vec4(0.0); return; }        // lit → transparent
@@ -525,12 +532,16 @@ export class ShadowGather {
 
   /** shadow-cold RT — the **textile_unit map** (`cols·TEXTILE_UNIT × rows·TEXTILE_UNIT` RGBA32UI,
    *  world-space toroidal), resized when the tile window changes. */
-  private shadowRT: RenderTarget | null = null;
   private rtCols = 0;
   private rtRows = 0;
-  /** The LIGHTMAP RT — world-space toroidal `rgba8unorm`, TEXEL-aligned with {@link shadowRT} (same
-   *  dims + fc→world mapping). Baked by {@link lighting}; the display blit multiplies albedo × this. */
-  private lightRT: RenderTarget | null = null;
+  /** #4 COLD/HOT SPLIT — static (cold) and dynamic (hot) lights bake into SEPARATE shadow + lightmap RTs,
+   *  gated by independent dirty textures, so a moving hot light never re-bakes the static lights. All are
+   *  world-space toroidal + TEXEL-aligned. shadow = RGBA32UI (per-light u9 coverage); lightmap = MRT
+   *  [irradiance rgba8, aggregate-dir rgba8]. The display blit sums cold+hot (+ ambient once). */
+  private coldShadowRT: RenderTarget | null = null;
+  private hotShadowRT: RenderTarget | null = null;
+  private coldLightRT: RenderTarget | null = null;
+  private hotLightRT: RenderTarget | null = null;
 
   /** light presence — now folded into the data texture (set 3, region-torus). CPU scratch only: per
    *  in-window tile the **nearest 7** `u16` light indices (`0xFFFF` = empty); `slotDist` tracks each
@@ -547,27 +558,32 @@ export class ShadowGather {
   private castSlots = new Uint16Array(0);
   private castCount = new Uint8Array(0);
 
-  /** shadow_dirty — a **textile_tile map** (`R8UI`, nonzero = recompute) + per-slot owner tracking for toroidal
-   *  persistence: a slot recomputes when its world-tile owner changes (pan) or the cold data rebuilds. */
-  private dirtyTex: Texture;
-  private dirtyMirror = new Uint8Array(0);
+  /** #4 shadow_dirty — TWO **textile_tile maps** (`R8UI`, nonzero = recompute), one per class (cold/hot).
+   *  Owner tracking is SHARED (pan exposes tiles for both). A COLD tile recomputes on a static-light or
+   *  caster change or pan; a HOT tile on a dynamic-light move, caster change, or pan. The common frame
+   *  (only the green light moves) dirties HOT only → the cold shadow + lightmap are never re-baked. */
+  private coldDirtyTex: Texture;
+  private hotDirtyTex: Texture;
+  private coldMirror = new Uint8Array(0);
+  private hotMirror = new Uint8Array(0);
   private ownerCol = new Int32Array(0);
   private ownerRow = new Int32Array(0);
   private slotValid = new Uint8Array(0);
   private dirtyCols = 0;
   private dirtyRows = 0;
-  /** Sticky "recompute every tile next build" — set on a cold rebuild; survives a window-not-ready frame. */
-  private forceDirty = true;
+  /** Sticky "recompute every tile next build", per class — set on a rebuild; survives a not-ready frame. */
+  private forceColdDirty = true;
+  private forceHotDirty = true;
   /** P6: walk the segment corridor (true) or the brute-force reach box (false). Brute is the
    *  validation baseline — `__corridor(false)` + `__shadowDiff()` must report 0 mismatches. */
   private corridor = true;
   /** #2: world units the shadow slides up to meet the sprite base (a fixed anchor discrepancy). Live via `__lift`. */
   private shadowLift = SHADOW_LIFT;
-  /** P5 scoped dirty: world-tile rects `[x0,y0,x1,y1]` (inclusive) queued by a light MOVE — the union
-   *  of the light's old + new reach boxes. Applied (∩ window) on top of the owner pass in
-   *  {@link buildDirty}, then cleared. Correct because a moved light can only change presence/shadow
-   *  inside its old ∪ new reach; everything outside keeps its persistent texel. */
-  private pendingRects: [number, number, number, number][] = [];
+  /** P5 scoped dirty: world-tile rects `[x0,y0,x1,y1,cls]` (inclusive) queued by a light MOVE or caster
+   *  change — the union of old + new reach. `cls`: 0 = cold only, 1 = hot only, 2 = both (a caster change
+   *  affects every light that reaches it). Applied (∩ window) per class on top of the owner pass in
+   *  {@link buildDirty}, then cleared. A moved light only changes shadow inside its old ∪ new reach. */
+  private pendingRects: [number, number, number, number, number][] = [];
 
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
@@ -576,7 +592,8 @@ export class ShadowGather {
     this.overlay = new Program(gl, OVERLAY_VERT, OVERLAY_FRAG, "shadow-overlay");
     this.gizmo = new Program(gl, GIZMO_VERT, GIZMO_FRAG, "shadow-gizmo");
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
-    this.dirtyTex = new Texture(gl, { width: 1, height: 1, format: "r8uint" });
+    this.coldDirtyTex = new Texture(gl, { width: 1, height: 1, format: "r8uint" });
+    this.hotDirtyTex = new Texture(gl, { width: 1, height: 1, format: "r8uint" });
     this.coldData = new ColdShadowData(renderer);
     (globalThis as unknown as { __cold: unknown }).__cold = this.coldData; // DEBUG
     // DEBUG: console toggle for the orbit (perf measurement) — `__orbit(false)` to freeze the lights.
@@ -588,7 +605,7 @@ export class ShadowGather {
     (globalThis as unknown as { __emit: (px?: number) => number }).__emit = (px?: number) => this.setEmitter(px);
     // DEBUG (#2): slide the shadow up N world units to seat it on the sprite base.
     (globalThis as unknown as { __lift: (u?: number) => number }).__lift = (u?: number) => {
-      if (u !== undefined) { this.shadowLift = u; this.forceDirty = true; }
+      if (u !== undefined) { this.shadowLift = u; this.forceColdDirty = this.forceHotDirty = true; }
       return this.shadowLift;
     };
     this.fsQuad = new Geometry(gl, this.gather, {
@@ -616,7 +633,7 @@ export class ShadowGather {
     this.enabled = true;
     this.coldDirty = true;
     this.lightsVer++; // invalidates light_presence_cold
-    this.forceDirty = true; // lights changed → recompute every tile
+    this.forceColdDirty = this.forceHotDirty = true; // lights changed → recompute every tile
   }
 
   /** Rebuild the per-tile **presence** (P5) when the lights or window change: each tile gets the
@@ -728,13 +745,14 @@ export class ShadowGather {
   }
 
   /** Queue the scoped dirty rect for a light move (P5): the union box of the old + new reach,
-   *  +1 tile margin, in world tiles. Applied by {@link buildDirty} this frame. */
-  private markLightMove(ox: number, oy: number, nx: number, ny: number, reach: number): void {
+   *  +1 tile margin, in world tiles. `cls` = which class it dirties (0 cold / 1 hot / 2 both — #4).
+   *  Applied by {@link buildDirty} this frame. */
+  private markLightMove(ox: number, oy: number, nx: number, ny: number, reach: number, cls: number): void {
     const x0 = Math.floor((Math.min(ox, nx) - reach) / SQUARE) - 1;
     const y0 = Math.floor((Math.min(oy, ny) - reach) / SQUARE) - 1;
     const x1 = Math.floor((Math.max(ox, nx) + reach) / SQUARE) + 1;
     const y1 = Math.floor((Math.max(oy, ny) + reach) / SQUARE) + 1;
-    this.pendingRects.push([x0, y0, x1, y1]);
+    this.pendingRects.push([x0, y0, x1, y1, cls]);
   }
 
   /** The PRIM DIRTY CASCADE applied to texture/def changes: a prim changed (new immutable def —
@@ -750,14 +768,14 @@ export class ShadowGather {
   private markPrimChange(x: number, y: number, w: number, h: number): void {
     const x0 = Math.floor(x / SQUARE) - 1, y0 = Math.floor(y / SQUARE) - 1;
     const x1 = Math.floor((x + w) / SQUARE) + 1, y1 = Math.floor((y + h) / SQUARE) + 1;
-    this.pendingRects.push([x0, y0, x1, y1]);
+    this.pendingRects.push([x0, y0, x1, y1, 2]); // a caster affects BOTH classes at its own tiles
     for (let k = 0; k < this.lights.length; k++) {
       if (this.litSeen.has(k)) continue;
       const L = this.lights[k];
       const cx = Math.min(Math.max(L.x, x), x + w), cy = Math.min(Math.max(L.y, y), y + h);
       if (Math.hypot(cx - L.x, cy - L.y) > L.reach + SQUARE) continue; // light can't see the prim
       this.litSeen.add(k);
-      this.markLightMove(L.x, L.y, L.x, L.y, L.reach); // the light's whole cast region
+      this.markLightMove(L.x, L.y, L.x, L.y, L.reach, L.dynamic ? 1 : 0); // that light's class + cast region
     }
   }
 
@@ -767,46 +785,52 @@ export class ShadowGather {
    *  (F6). Mirrors `SquareCache.markStale`'s per-slot owner tracking. */
   private buildDirty(win: TileWindow): void {
     const { cols, rows, winCol, winRow } = win;
-    let forceAll = this.forceDirty;
-    this.forceDirty = false;
+    let forceCold = this.forceColdDirty, forceHot = this.forceHotDirty;
+    this.forceColdDirty = false; this.forceHotDirty = false;
     if (this.dirtyCols !== cols || this.dirtyRows !== rows) {
-      this.dirtyTex.destroy();
-      this.dirtyTex = new Texture(this.renderer.gl, { width: cols, height: rows, format: "r8uint" });
-      this.dirtyMirror = new Uint8Array(cols * rows);
+      this.coldDirtyTex.destroy(); this.hotDirtyTex.destroy();
+      this.coldDirtyTex = new Texture(this.renderer.gl, { width: cols, height: rows, format: "r8uint" });
+      this.hotDirtyTex = new Texture(this.renderer.gl, { width: cols, height: rows, format: "r8uint" });
+      this.coldMirror = new Uint8Array(cols * rows);
+      this.hotMirror = new Uint8Array(cols * rows);
       this.ownerCol = new Int32Array(cols * rows);
       this.ownerRow = new Int32Array(cols * rows);
       this.slotValid = new Uint8Array(cols * rows);
       this.dirtyCols = cols;
       this.dirtyRows = rows;
-      forceAll = true;
+      forceCold = forceHot = true;
     }
     const pm = (a: number, m: number): number => ((a % m) + m) % m;
     const baseC = pm(winCol, cols), baseR = pm(winRow, rows);
-    this.dirtyMirror.fill(0);
+    this.coldMirror.fill(0); this.hotMirror.fill(0);
     for (let sy = 0; sy < rows; sy++) {
       const wr = winRow + pm(sy - baseR, rows);
       for (let sx = 0; sx < cols; sx++) {
         const wc = winCol + pm(sx - baseC, cols);
         const si = sy * cols + sx;
-        if (forceAll || this.slotValid[si] === 0 || this.ownerCol[si] !== wc || this.ownerRow[si] !== wr) {
-          this.dirtyMirror[si] = 1;
-          this.ownerCol[si] = wc;
-          this.ownerRow[si] = wr;
-          this.slotValid[si] = 1;
-        }
+        // Owner change (pan/resize) exposes a NEW world tile → dirty BOTH classes there + adopt the owner.
+        const ownerChanged = this.slotValid[si] === 0 || this.ownerCol[si] !== wc || this.ownerRow[si] !== wr;
+        if (ownerChanged) { this.ownerCol[si] = wc; this.ownerRow[si] = wr; this.slotValid[si] = 1; }
+        if (forceCold || ownerChanged) this.coldMirror[si] = 1;
+        if (forceHot || ownerChanged) this.hotMirror[si] = 1;
       }
     }
-    // P5 scoped dirty: mark every window tile inside a queued light-move rect.
-    for (const [x0, y0, x1, y1] of this.pendingRects) {
+    // P5 scoped dirty: mark every window tile inside a queued rect, into its class(es) (cls 0/1/2).
+    for (const [x0, y0, x1, y1, cls] of this.pendingRects) {
       const c0 = Math.max(x0, winCol), c1 = Math.min(x1, winCol + cols - 1);
       const r0 = Math.max(y0, winRow), r1 = Math.min(y1, winRow + rows - 1);
       for (let wr = r0; wr <= r1; wr++)
-        for (let wc = c0; wc <= c1; wc++) this.dirtyMirror[pm(wr, rows) * cols + pm(wc, cols)] = 1;
+        for (let wc = c0; wc <= c1; wc++) {
+          const idx = pm(wr, rows) * cols + pm(wc, cols);
+          if (cls !== 1) this.coldMirror[idx] = 1; // cold (0) or both (2)
+          if (cls !== 0) this.hotMirror[idx] = 1;  // hot (1) or both (2)
+        }
     }
     this.pendingRects.length = 0;
-    let dc = 0; for (let i = 0; i < this.dirtyMirror.length; i++) if (this.dirtyMirror[i]) dc++;
-    this.debugDirtyTiles = dc; // DEBUG: shadow tiles recomputed this frame
-    this.dirtyTex.upload(this.dirtyMirror);
+    let dc = 0; for (let i = 0; i < this.coldMirror.length; i++) if (this.coldMirror[i] || this.hotMirror[i]) dc++;
+    this.debugDirtyTiles = dc; // DEBUG: tiles recomputed this frame (cold ∪ hot)
+    this.coldDirtyTex.upload(this.coldMirror);
+    this.hotDirtyTex.upload(this.hotMirror);
   }
 
   get on(): boolean {
@@ -816,13 +840,13 @@ export class ShadowGather {
    *  static again (gather goes idle via dirty-gating); on drives a full recompute every frame. */
   setOrbit(on?: boolean): boolean {
     this.orbit = on ?? !this.orbit;
-    if (!this.orbit) this.forceDirty = true; // one last clean recompute at the frozen positions
+    if (!this.orbit) this.forceColdDirty = this.forceHotDirty = true; // one last clean recompute at the frozen positions
     return this.orbit;
   }
   /** P6: switch corridor ↔ brute walk (no arg = toggle) + recompute everything under the new path. */
   setCorridor(on?: boolean): boolean {
     this.corridor = on ?? !this.corridor;
-    this.forceDirty = true;
+    this.forceColdDirty = this.forceHotDirty = true;
     return this.corridor;
   }
   /** DEBUG: set the emitter (area-light) radius on every light, world px (no arg = read). Rebuilds the
@@ -831,16 +855,18 @@ export class ShadowGather {
     if (px === undefined) return this.lights[0]?.emitterRadius ?? 0;
     for (const L of this.lights) L.emitterRadius = px;
     this.coldDirty = true;   // light records changed (emitter is in the record)
-    this.forceDirty = true;  // recompute every shadow/light tile
+    this.forceColdDirty = this.forceHotDirty = true;  // recompute every shadow/light tile
     return px;
   }
-  /** DEBUG (P6): read the shadow-cold RT back (RGBA32UI) — the corridor↔brute identity diff. */
-  debugReadShadow(): Uint32Array | null {
-    if (!this.shadowRT) return null;
+  /** DEBUG (P6): read a class's shadow RT back (RGBA32UI) — the corridor↔brute identity diff. `cls` 1 =
+   *  hot (default, the moving light), 0 = cold. Each class's gather is independently corridor-identical. */
+  debugReadShadow(cls = 1): Uint32Array | null {
+    const rt = cls === 0 ? this.coldShadowRT : this.hotShadowRT;
+    if (!rt) return null;
     const gl = this.renderer.gl;
-    const out = new Uint32Array(this.shadowRT.width * this.shadowRT.height * 4);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowRT.fbo);
-    gl.readPixels(0, 0, this.shadowRT.width, this.shadowRT.height, gl.RGBA_INTEGER, gl.UNSIGNED_INT, out);
+    const out = new Uint32Array(rt.width * rt.height * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fbo);
+    gl.readPixels(0, 0, rt.width, rt.height, gl.RGBA_INTEGER, gl.UNSIGNED_INT, out);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     return out;
   }
@@ -850,34 +876,37 @@ export class ShadowGather {
   }
 
   private ensureRT(cols: number, rows: number): void {
-    if (this.shadowRT && cols === this.rtCols && rows === this.rtRows) return;
-    this.shadowRT?.destroy();
-    this.lightRT?.destroy();
+    if (this.coldShadowRT && cols === this.rtCols && rows === this.rtRows) return;
+    this.coldShadowRT?.destroy(); this.hotShadowRT?.destroy();
+    this.coldLightRT?.destroy(); this.hotLightRT?.destroy();
+    const gl = this.renderer.gl;
     const w = Math.max(1, cols * TEXTILE_UNIT), h = Math.max(1, rows * TEXTILE_UNIT);
-    this.shadowRT = new RenderTarget(this.renderer.gl, { width: w, height: h, formats: ["rgba32uint"] });
-    this.shadowRT.clearInt(0, 0, 0, 0); // start persistence from a known-zero buffer (P3)
-    // The lightmap — same dims, texel-aligned. MRT: [0] irradiance, [1] aggregate light direction (for
-    // per-px relief). Clear to ambient (att0) so any tile not yet written (edges / pre-first-pass) reads
-    // the floor; persistence fills the rest on the forceDirty pass. att1's edge garbage is a mild dir on
-    // never-written texels only — invisible (the relief strength is small).
-    this.lightRT = new RenderTarget(this.renderer.gl, { width: w, height: h, formats: ["rgba8unorm", "rgba8unorm"] });
-    const amb = parseFloat(AMBIENTF);
-    this.lightRT.clear(amb, amb, amb, 1);
+    // Per-light u9 shadow coverage — one RT per class. Start persistence from a known-zero buffer (P3).
+    this.coldShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint"] });
+    this.hotShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint"] });
+    this.coldShadowRT.clearInt(0, 0, 0, 0); this.hotShadowRT.clearInt(0, 0, 0, 0);
+    // Lightmaps — MRT [0] irradiance, [1] aggregate light direction. NO ambient baked in (the blit adds it
+    // once over cold+hot). Clear att0 → 0 (no light) and att1 → 0.5 (the ENCODED zero vector — else an
+    // unwritten hot texel decodes to a spurious −1 dir that corrupts the summed relief, since hot is
+    // unwritten across most of the screen).
+    this.coldLightRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba8unorm", "rgba8unorm"] });
+    this.hotLightRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba8unorm", "rgba8unorm"] });
+    for (const rt of [this.coldLightRT, this.hotLightRT]) {
+      rt.bind();
+      gl.clearBufferfv(gl.COLOR, 0, new Float32Array([0, 0, 0, 1]));       // irradiance = 0
+      gl.clearBufferfv(gl.COLOR, 1, new Float32Array([0.5, 0.5, 0.5, 1])); // dir = zero vector (enc 0.5)
+    }
     this.rtCols = cols;
     this.rtRows = rows;
   }
 
-  /** The baked lightmap texture (world-space toroidal, TEXEL-aligned with shadow-cold) — the display
-   *  blit samples it by world position (window mapping via {@link SquareCache.window} + TEXTILE_UNIT)
-   *  and multiplies albedo × lightmap. Null until the first gather has laid out the RT. */
-  get lightmap(): Texture | null {
-    return this.lightRT?.textures[0] ?? null;
-  }
-  /** The aggregate light-direction map (RG = irradiance-weighted mean horizontal lit-from dir, enc
-   *  0.5+0.5) — the blit dots it with the per-px normal for relief (P2). Same layout as {@link lightmap}. */
-  get lightDir(): Texture | null {
-    return this.lightRT?.textures[1] ?? null;
-  }
+  /** The baked COLD/HOT lightmap irradiance + aggregate-dir textures (world-space toroidal, TEXEL-aligned).
+   *  The display blit samples all four by world position and composites `ambient + cold + hot`. Null until
+   *  the first bake has laid out the RTs. */
+  get coldLightmap(): Texture | null { return this.coldLightRT?.textures[0] ?? null; }
+  get hotLightmap(): Texture | null { return this.hotLightRT?.textures[0] ?? null; }
+  get coldLightDir(): Texture | null { return this.coldLightRT?.textures[1] ?? null; }
+  get hotLightDir(): Texture | null { return this.hotLightRT?.textures[1] ?? null; }
 
   /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield. */
   tick(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
@@ -895,7 +924,7 @@ export class ShadowGather {
         const L = this.lights[k], ox = L.x, oy = L.y;
         L.x = this.seedX + Math.cos(a) * RING_RADIUS;
         L.y = this.seedY + Math.sin(a) * RING_RADIUS;
-        this.markLightMove(ox, oy, L.x, L.y, L.reach); // P5 scoped dirty — NOT force-all
+        this.markLightMove(ox, oy, L.x, L.y, L.reach, L.dynamic ? 1 : 0); // debug: each light dirties its class
       }
       moved = true;
     } else {
@@ -905,7 +934,7 @@ export class ShadowGather {
         const ox = L.x, oy = L.y;
         L.x = L.hx + Math.cos(this.orbitPhase) * MOTION_RADIUS;
         L.y = L.hy + Math.sin(this.orbitPhase) * MOTION_RADIUS;
-        this.markLightMove(ox, oy, L.x, L.y, L.reach); // scoped dirty on its old ∪ new reach
+        this.markLightMove(ox, oy, L.x, L.y, L.reach, 1); // dynamic → HOT dirty only (cold lights untouched)
         moved = true;
       }
     }
@@ -917,6 +946,7 @@ export class ShadowGather {
       const coldLights = this.lights.slice(0, MAX_LIGHTS).map((L, k) => ({
         x: L.x, y: L.y, z: L.z, reach: L.reach, emitterRadius: L.emitterRadius,
         color: LIGHT_COLORS[k % LIGHT_COLORS.length], intensity: 1, castShadows: true,
+        hot: L.dynamic, // #4: dynamic lights are HOT (per-frame), static are COLD (baked once)
       }));
       this.coldData.buildLights(coldLights);
       const removed = standing.length < this.lastCasterCount;
@@ -926,7 +956,7 @@ export class ShadowGather {
       // Scoped dirty: a light MOVE queued its own rects; NEW casters cascade per prim
       // (markPrimChange on first sight). Force-all only for caster REMOVAL (stale shadows with no
       // owner to cascade from) or a light change with no scoped rects (e.g. a re-seed).
-      if (removed || (lightsChanged && this.pendingRects.length === 0)) this.forceDirty = true;
+      if (removed || (lightsChanged && this.pendingRects.length === 0)) this.forceColdDirty = this.forceHotDirty = true;
     }
     if (this.coldData.lights === 0 || win.cols === 0) return;
 
@@ -936,42 +966,53 @@ export class ShadowGather {
     this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, TEXTILE_UNIT, this.coldData.lights);
     this.buildPresence(win);                    // F5 per-tile light cull (rebuilt on light/window change)
     this.buildCasters(standing, resolver, win); // P1 per-tile caster buckets (the corridor reads these)
-    this.buildDirty(win);    // P3: owner-change (pan) + rebuild → dirty; clean tiles persist
-    // Single pass; each fragment `discard`s clean tiles (shadow-cold persists) — no clear, no ping-pong.
+    this.buildDirty(win);    // #4: owner-change (pan) + per-class rebuild → cold/hot dirty; clean tiles persist
+    // #4 COLD then HOT pass. Each is: gather (shadow-cold for that class) → lighting (its lightmap), gated
+    // by that class's dirty texture (clean tiles `discard` → persist). A frame where only the green (hot)
+    // light moves leaves cold-dirty EMPTY → both cold draws no-op (every fragment discards), so the static
+    // lights + their shadows are never recomputed. Each gather is corridor↔brute identical within its class.
+    this.classPass(0, this.coldDirtyTex, this.coldShadowRT!, this.coldLightRT!);
+    this.classPass(1, this.hotDirtyTex, this.hotShadowRT!, this.hotLightRT!);
+  }
+
+  /** One class's shadow + lighting bake (#4). `cls` 0 = cold / 1 = hot; `dirty` gates it (clean → persist);
+   *  the gather writes `shadowRT` (this class's per-light u9), the lighting reads it into `lightRT`. */
+  private classPass(cls: number, dirty: Texture, shadowRT: RenderTarget, lightRT: RenderTarget): void {
     this.renderer.draw({
       program: this.gather,
       geometry: this.fsQuad,
-      target: this.shadowRT!,
+      target: shadowRT,
       blend: "none",
       textures: {
         uData: this.coldData.dataTexture, // defs | prims | lights | presence | buckets
-        uDirty: this.dirtyTex,
+        uDirty: dirty,
         uSurface: this.coldData.surfacePage ?? this.empty, // no page yet → defs have no frame → solid quads
       },
       uniforms: (p) => {
         p.uInt("uCorridor", this.corridor ? 1 : 0);
         p.uFloat("uShadowLift", this.shadowLift);
+        p.uInt("uLightClass", cls);
       },
     });
-
-    // LIGHTING (P1) — bake the lightmap right after shadow-cold, into the texel-aligned RT, gated by the
-    // SAME uDirty (clean tiles persist). Each texel: ambient + Σ presence-light colour·intensity·falloff.
     this.renderer.draw({
       program: this.lighting,
       geometry: this.fsQuad,
-      target: this.lightRT!,
+      target: lightRT,
       blend: "none",
       textures: {
         uData: this.coldData.dataTexture, // presence (sets 3/5) + light records (set 2)
-        uDirty: this.dirtyTex,
-        uShadow: this.shadowRT!.textures[0], // P3: this frame's shadow-cold (written by the gather draw above)
+        uDirty: dirty,
+        uShadow: shadowRT.textures[0], // this class's shadow-cold (written by the gather draw above)
+      },
+      uniforms: (p) => {
+        p.uInt("uLightClass", cls);
       },
     });
   }
 
   /** Decode shadow-cold over the world (debug `/overlayRT shadow-cold`). */
   drawOverlay(camera: Camera, win: TileWindow): void {
-    if (!this.shadowRT || win.cols === 0) return;
+    if (!this.coldShadowRT || !this.hotShadowRT || win.cols === 0) return;
     const w = camera.width, h = camera.height, z = camera.zoom, ax = camera.anchorX, ay = camera.anchorY;
     // Cover the window's world rect.
     const x0 = win.winCol * SQUARE, y0 = win.winRow * SQUARE;
@@ -983,7 +1024,7 @@ export class ShadowGather {
       program: this.overlay,
       geometry: this.overlayGeo!,
       blend: "normal",
-      textures: { uShadow: this.shadowRT.textures[0], uData: this.coldData.dataTexture },
+      textures: { uShadow: this.coldShadowRT.textures[0], uShadowHot: this.hotShadowRT.textures[0], uData: this.coldData.dataTexture },
       uniforms: (p) => {
         p.uMat3("uProjection", proj);
         p.uInt("uCols", win.cols);
@@ -1023,9 +1064,9 @@ export class ShadowGather {
     this.overlay.destroy();
     this.gizmo.destroy();
     this.empty.destroy();
-    this.dirtyTex.destroy();
-    this.shadowRT?.destroy();
-    this.lightRT?.destroy();
+    this.coldDirtyTex.destroy(); this.hotDirtyTex.destroy();
+    this.coldShadowRT?.destroy(); this.hotShadowRT?.destroy();
+    this.coldLightRT?.destroy(); this.hotLightRT?.destroy();
     this.coldData.destroy();
   }
 }

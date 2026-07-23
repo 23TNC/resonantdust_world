@@ -35,12 +35,15 @@ uniform sampler2D uAlbedo;       // COLD albedo composite (the mesh's main textu
 uniform sampler2D uSurface;      // COLD surface: B = alpha (visual coverage)
 uniform sampler2D uAlbedoWarm;   // WARM tier: mover albedo (over cold by warm coverage)
 uniform sampler2D uSurfaceWarm;  // WARM tier: mover surface (its B = composite coverage)
-uniform sampler2D uLightmap;     // baked LIGHTMAP irradiance (world-space toroidal, TEXEL-aligned w/ shadow-cold)
-uniform sampler2D uLightDir;     // baked aggregate light DIR (RG = mean horizontal lit-from dir, enc 0.5+0.5)
+uniform sampler2D uColdLight;    // #4 COLD lightmap irradiance (static lights, baked once)
+uniform sampler2D uHotLight;     // #4 HOT lightmap irradiance (dynamic lights, per frame)
+uniform sampler2D uColdDir;      // COLD aggregate light DIR (RG = mean horizontal lit-from dir, enc 0.5+0.5)
+uniform sampler2D uHotDir;       // HOT aggregate light DIR
 uniform sampler2D uNormal;       // COLD normal composite (enc: flat = 0.5,0.5,1.0) — per-px relief
 uniform sampler2D uNormalWarm;   // WARM normal composite (mover relief)
 uniform int uLightEnable;        // 0 = UNLIT (albedo only) — the fallback when the lightmap isn't ready
 uniform float uReliefStrength;   // P2 normal-relief gain (F3/F5 — tuned by eye)
+uniform float uAmbient;          // #4 ambient floor — added ONCE over cold+hot (not baked into either map)
 uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mapping (F2: uniforms — a display consumer)
 out vec4 fragColor;
 const float SQ = ${SQF};
@@ -67,16 +70,19 @@ void main() {
     ivec2 lt = lightTexel(vWorld);
     if (lt.x < 0) { light = vec3(1.0); }        // outside window — shouldn't happen (resident squares only)
     else {
-      vec3 irr = texelFetch(uLightmap, lt, 0).rgb;
-      // P2 per-px relief: decode the normal (warm-over-cold) and dot its HORIZONTAL part with the
+      // #4: sum the COLD (static) + HOT (dynamic) lightmaps. The static map is baked once; only the hot
+      // map re-bakes as the green light moves.
+      vec3 irr = texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb;
+      // P2 per-px relief: decode the normal (warm-over-cold) and dot its HORIZONTAL part with the summed
       // aggregate lit-from direction. Flat ground (n.xy≈0) → relief 1 (neutral); a slope toward the
-      // dominant light brightens, away darkens. F3: normal +Y is sprite-north but world +y is south,
-      // so flip n.y into the world frame the direction lives in.
+      // dominant light brightens, away darkens. F3: normal +Y is sprite-north but world +y is south, so
+      // flip n.y into the world frame the direction lives in. Each dir is enc 0.5+0.5 → sum = ·2 − 2.
       vec3 nEnc = mix(texture(uNormal, vUV).rgb, texture(uNormalWarm, vUV).rgb, wcov);
       vec2 nxy = nEnc.xy * 2.0 - 1.0;
-      vec2 ldir = texelFetch(uLightDir, lt, 0).rg * 2.0 - 1.0;   // world-xy lit-from dir (mag = confidence)
+      vec2 ldir = (texelFetch(uColdDir, lt, 0).rg + texelFetch(uHotDir, lt, 0).rg) * 2.0 - 2.0;
       float relief = 1.0 + uReliefStrength * dot(vec2(nxy.x, -nxy.y), ldir);
-      light = irr * max(relief, 0.0);
+      // Ambient is directionless — add it OUTSIDE the relief so flat/dark areas aren't relief-modulated.
+      light = uAmbient + irr * max(relief, 0.0);
     }
   }
   // Coverage applied at OUTPUT only (premultiplied) so it composites over the canvas
@@ -94,10 +100,12 @@ export class AlbedoBlitShader {
   surface: Texture | null = null;
   albedoWarm: Texture | null = null;
   surfaceWarm: Texture | null = null;
-  /** The baked lightmap (from {@link ShadowGather}); null → the blit stays UNLIT (uLightEnable 0). */
-  lightmap: Texture | null = null;
-  /** The aggregate light-direction map (P2 relief) — sibling of {@link lightmap}. */
-  lightDir: Texture | null = null;
+  /** #4 The baked COLD/HOT lightmap irradiance maps (from {@link ShadowGather}); null → UNLIT fallback. */
+  coldLight: Texture | null = null;
+  hotLight: Texture | null = null;
+  /** The cold/hot aggregate light-direction maps (P2 relief). */
+  coldDir: Texture | null = null;
+  hotDir: Texture | null = null;
   /** The cold + warm normal composites (P2 per-px relief). */
   normal: Texture | null = null;
   normalWarm: Texture | null = null;
@@ -106,17 +114,18 @@ export class AlbedoBlitShader {
     this.program = new Program(gl, BLIT_VERT, BLIT_FRAG, "viewport-albedo-blit");
   }
 
-  /** The sampler bindings (unset ones fall back to `empty` — a 1×1 black texture whose B = 0, so a
-   *  missing warm tier reads as no coverage and a missing cold surface as alpha 0). A missing normal
-   *  falls back to `empty` (0,0,0) → decoded (-1,-1) is only sampled where alpha 0 (invisible). */
+  /** The sampler bindings (unset ones fall back to `empty`/`flat`). A missing irradiance map → `empty`
+   *  (0 = no light); a missing dir/normal → `flat` (0.5,0.5,1.0 = zero dir / flat-up normal → neutral). */
   textures(empty: Texture, flat: Texture): Record<string, Texture> {
     return {
       uAlbedo: this.albedo ?? empty,
       uSurface: this.surface ?? empty,
       uAlbedoWarm: this.albedoWarm ?? empty,
       uSurfaceWarm: this.surfaceWarm ?? empty,
-      uLightmap: this.lightmap ?? empty,
-      uLightDir: this.lightDir ?? flat,
+      uColdLight: this.coldLight ?? empty,
+      uHotLight: this.hotLight ?? empty,
+      uColdDir: this.coldDir ?? flat,
+      uHotDir: this.hotDir ?? flat,
       uNormal: this.normal ?? flat,
       uNormalWarm: this.normalWarm ?? flat,
     };

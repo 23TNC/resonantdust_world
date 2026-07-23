@@ -115,6 +115,7 @@ export interface ColdLight {
   color: [number, number, number]; // 0..1
   intensity: number; // 0..1
   castShadows: boolean;
+  hot: boolean; // #4: dynamic → the HOT class (baked per frame); static → COLD (baked once)
 }
 
 /** World px → `position_anchor_reference` (`region | zone | tile | anchor`, each `u8 = x:4|y:4`); the anchor
@@ -435,13 +436,13 @@ export class ColdShadowData {
       if (k < n) {
         const L = lights[k];
         // v2.1 self-addressing: R = u16 id | u16 reserved; G = position; B = colour;
-        // A = u8 z (24–31) | u12 reach (12–23) | u8 emitter (4–11) | u3 reserved | u1 cast_shadows (0).
+        // A = u8 z (24–31) | u12 reach (12–23) | u8 emitter (4–11) | u2 reserved (2–3) | u1 hot (1) | u1 cast_shadows (0).
         R = ((k & 0xffff) << 16) >>> 0;
         G = encodePosition(L.x, L.y);
         const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
         B = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0);
         const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff), em = clamp(L.emitterRadius / UNIT, 255);
-        A = (((z << 24) | (reach << 12) | (em << 4) | (L.castShadows ? 1 : 0)) >>> 0);
+        A = (((z << 24) | (reach << 12) | (em << 4) | (L.hot ? 2 : 0) | (L.castShadows ? 1 : 0)) >>> 0);
       }
       // Compare-write: a STATIC light's record is unchanged → no command (only movers re-scatter).
       if (m[base] !== R || m[base + 1] !== G || m[base + 2] !== B || m[base + 3] !== A) {

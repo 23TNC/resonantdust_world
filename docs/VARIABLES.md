@@ -370,7 +370,7 @@ u32 position_anchor_reference       region | zone | tile | anchor  (min unit = S
 R  u32   u16 id (16–31, self-addressing) | u16 reserved (0–15)
 G  u32 position_anchor_reference
 B  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
-A  u32 reach         u8 z (24–31, units) | u12 reach (12–23, units) | u8 emitter_radius (4–11, units) | u3 reserved (1–3) | u1 cast_shadows (0)
+A  u32 reach         u8 z (24–31, units) | u12 reach (12–23, units) | u8 emitter_radius (4–11, units) | u2 reserved (2–3) | u1 hot (1, dynamic→hot class) | u1 cast_shadows (0)
 ```
 
 **`prim_data` band** (rows 64–127) — **1 px per placed caster** (F1: the 2-prims/px packing is RETIRED —

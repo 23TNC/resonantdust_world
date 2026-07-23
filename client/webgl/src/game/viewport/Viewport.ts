@@ -14,7 +14,7 @@ import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } fro
 import type { TextureResolver } from "../../textures";
 import { AlbedoBlitShader } from "./albedoBlitShader";
 import { OverlayShader, overlayModeFor } from "./overlayShader";
-import { ShadowGather } from "./shadowGather";
+import { ShadowGather, AMBIENT_LEVEL } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_UNIT } from "./squareMath";
@@ -375,12 +375,14 @@ export class Viewport {
           this.blitShader.albedoWarm = albedoW;
           this.blitShader.surfaceWarm = surfaceW;
         }
-        // Lighting: the baked lightmap (albedo × lightmap). Sampled by world position via the cold
-        // window mapping (same toroidal tile grid as shadow-cold). Null → UNLIT fallback. P2 also binds
-        // the aggregate light-dir map + the cold/warm normal composites for per-px relief.
-        const lightmap = this.shadows.lightmap;
-        this.blitShader.lightmap = lightmap;
-        this.blitShader.lightDir = this.shadows.lightDir;
+        // Lighting (#4): sum the COLD (static) + HOT (dynamic) lightmaps + ambient. Sampled by world
+        // position via the cold window mapping (same toroidal tile grid as shadow-cold). Null → UNLIT
+        // fallback. P2 also binds the aggregate light-dir maps + the cold/warm normal composites for relief.
+        const coldLight = this.shadows.coldLightmap;
+        this.blitShader.coldLight = coldLight;
+        this.blitShader.hotLight = this.shadows.hotLightmap;
+        this.blitShader.coldDir = this.shadows.coldLightDir;
+        this.blitShader.hotDir = this.shadows.hotLightDir;
         this.blitShader.normal = this.map.displayComposite("normal-cold");
         this.blitShader.normalWarm = this.warm.displayComposite("normal-warm");
         const win = this.map.window;
@@ -397,8 +399,9 @@ export class Viewport {
           textures: this.blitShader.textures(this.empty, this.flat),
           uniforms: (p) => {
             p.uMat3("uProjection", proj);
-            p.uInt("uLightEnable", lightmap ? 1 : 0);
+            p.uInt("uLightEnable", coldLight ? 1 : 0);
             p.uFloat("uReliefStrength", this.reliefStrength);
+            p.uFloat("uAmbient", AMBIENT_LEVEL);
             p.uInt("uLCols", win.cols);
             p.uInt("uLRows", win.rows);
             p.uInt("uLWinCol", win.winCol);
