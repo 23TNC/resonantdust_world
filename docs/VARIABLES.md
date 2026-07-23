@@ -325,8 +325,8 @@ frame is that bbox's sub-rect of the sprite's SURFACE frame on the **one shared 
 ```
 R  u32   u10 prim_width (22–31, units, opaque) | u10 prim_height (12–21, units, opaque) | u12 reserved (0–11)
 G  u32   u10 offset_x+512 (12–21, units) | u10 offset_y+512 (2–11, units) | reserved     (opaque-base-centre − game anchor)
-B  u32   u14 frame_x (18–31, atlas px) | u14 frame_y (4–17, atlas px) | u4 reserved (0–3)
-A  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas px) | u4 reserved (8–11) | u8 frame_page (0–7)
+B  u32   u14 frame_x (18–31, atlas px) | u14 frame_y (4–17, atlas px) | u4 frame_page (0–3)   (FULL: 14+14+4)
+A  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas px) | u12 reserved (0–11)
          (frame_width 0 ⇒ no silhouette — solid quad; frame_page 0 until C5 assigns real page indices)
 ```
 
@@ -337,12 +337,13 @@ A  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas 
 - `frame_x/y` — **u14**: *positions* on an atlas page, bounded by the GL texture-size ceiling, not the prim
   ceiling — WebGL2 `MAX_TEXTURE_SIZE` is 16384 on discrete GPUs (our pools allocate 1024²/2048² pages, well
   inside it). u14 = 0..16383 addresses any page we could ever allocate.
-- `frame_page` — **u8**: ≤ **256 pages**, the WebGL2 **`MAX_ARRAY_TEXTURE_LAYERS` guaranteed floor** (the C5
-  multi-page mechanism is a texture array). This is **address width, not a target**: memory caps pages long
-  before the encoding does — a 2048² RGBA8 page is 16 MB, a texture array commits **all** layers up front
-  (`texStorage3D`), and there are several maps, so the shipped array is ~**8–32 layers** (u6 territory); u8
-  is kept for the byte-aligned low byte + the spec floor, with the real limit living in the allocator's
-  budget. Written **0** until C5 lands (one shared surface page bound; off-page defs fall back to solid quad).
+- `frame_page` — **u4**: ≤ **16 silhouette pages**, sized to the field's actual consumer, not the GL ceiling.
+  The def's frame addresses the **surface (silhouette) atlas** only; silhouettes need modest LOD, so a 2048²
+  page holds ~1024 variants at 64px — 16 pages ≈ 16k resident variants, and 16 × 16 MB = **256 MB**, already
+  beyond any sane silhouette budget (a C5 texture array also commits **all** layers up front via
+  `texStorage3D`, so the shipped array is a handful of layers). The nibble rounds B out to a full u32
+  (14+14+4) and reads as B's last hex digit. Written **0** until C5 lands (one shared surface page bound;
+  off-page defs fall back to solid quad).
 
 **`light_presence_cold`** — a **`cols×rows`** `RGBA32UI` **textile_tile map** (one texel/tile, toroidal with the
 window): per tile the **nearest ≤ 8 reaching lights** as `8× u16` light indices (`0xFFFF` = empty; R holds slots

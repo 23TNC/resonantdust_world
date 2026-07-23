@@ -169,14 +169,14 @@ export class ColdShadowData {
 
     const base = idx * 4;
     // R: W(22–31) | H(12–21) opaque size (units). G: (ox+512)(12–21) | (oy+512)(2–11) signed offset (units).
-    // B: frame_x(18–31) | frame_y(4–17) (atlas px — PAGE coords, u14 = the 16384 GL max texture size).
-    // A: frame_w(22–31) | frame_h(12–21) (u10 — ≤1024² per-prim ceiling; w = 0 → solid quad)
-    //    | frame_page(0–7) (u8 — ≤256 pages, the WebGL2 MAX_ARRAY_TEXTURE_LAYERS floor; 0 until C5).
+    // B: frame_x(18–31) | frame_y(4–17) (atlas px — PAGE coords, u14 = the 16384 GL max texture size)
+    //    | frame_page(0–3) (u4 — ≤16 silhouette pages, ~256 MB at 2048²; 0 until C5). B is FULL: 14+14+4.
+    // A: frame_w(22–31) | frame_h(12–21) (u10 — ≤1024² per-prim ceiling; w = 0 → solid quad) | u12 reserved.
     const page = 0; // ONE bound surface page today — C5 (texture-array pages) assigns real indices
     const R = (((u10(ww / UNIT) << 22) | (u10(hh / UNIT) << 12)) >>> 0);
     const G = (((((ox + 512) & 0x3ff) << 12) | (((oy + 512) & 0x3ff) << 2)) >>> 0);
-    const B = ((((fx & 0x3fff) << 18) | ((fy & 0x3fff) << 4)) >>> 0);
-    const A = (((u10(fw) << 22) | (u10(fh) << 12) | (page & 0xff)) >>> 0);
+    const B = ((((fx & 0x3fff) << 18) | ((fy & 0x3fff) << 4) | (page & 0xf)) >>> 0);
+    const A = (((u10(fw) << 22) | (u10(fh) << 12)) >>> 0);
     const m = this.defMirror;
     if (m[base] !== R || m[base + 1] !== G || m[base + 2] !== B || m[base + 3] !== A) {
       m[base] = R; m[base + 1] = G; m[base + 2] = B; m[base + 3] = A;
@@ -275,7 +275,7 @@ export class ColdShadowData {
       prim_height: (R >>> 12) & 0x3ff,
       offset: [((G >>> 12) & 0x3ff) - 512, ((G >>> 2) & 0x3ff) - 512], // units, opaque-base-centre − anchor
       frame: [(B >>> 18) & 0x3fff, (B >>> 4) & 0x3fff, (A >>> 22) & 0x3ff, (A >>> 12) & 0x3ff], // x,y (u14) w,h (u10, atlas px)
-      frame_page: A & 0xff,
+      frame_page: B & 0xf,
     };
   }
   get debugDefCount(): number {
