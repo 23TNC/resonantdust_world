@@ -4,12 +4,21 @@ _Problems hit + candidate solutions + which we chose + why. Chronological._
 
 ---
 
-## Grid (linked-atlas) stems can't scale-at-ingest — 2026-07-23
+## Grid (linked-atlas) stems are second-class in the ingest/def model — 2026-07-23
 
-One blit scales the whole packed grid image about its centre, which would slide cells off their
-grid slots; per-cell re-centring needs per-cell blits. No gridded stem casts shadows or authors a
-scale today → **packed unscaled + a one-shot warn**. Revisit with per-cell blits if a gridded stem
-ever needs a scale.
+USER: deferred ("I'll deal with it later"). The scale facet plus the latent ones, recorded for then:
+
+1. **Scale-at-ingest**: one blit scales the whole grid image about its centre → cells migrate off
+   their grid slots while `cellFrame` keeps slicing the original grid lines. Per-cell blits (each
+   cell scaled about its own centre into its own slot) fix the *mechanics* — but for LINKED
+   (edge-matched autotile) art, scaling is semantically questionable regardless: the art must run
+   edge-to-edge to tile seamlessly, and a scaled cell leaves gaps at every tile boundary. A scale
+   only makes sense for independent-cell variant sheets. → **packed unscaled + one-shot warn**.
+2. **Def-model facets (bite when walls become shadow casters):** a cell sub-frame's origin includes
+   the manifest `pad` inset — generally NOT 16-px aligned, so `frame_x/y` (u10 16-px grid) can't
+   address it exactly; and `spriteBBox` is whole-image — per-cell defs would derive their bbox from
+   the union silhouette of ALL cells. Both need per-cell treatment (per-cell bboxes; pad-free or
+   16-aligned cell geometry) before a gridded stem casts.
 
 ## Hot-swap sprite_scale change leaves stale defs — 2026-07-23
 
