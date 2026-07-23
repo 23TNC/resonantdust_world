@@ -100,6 +100,22 @@ export class Texture {
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
   }
 
+  /** Update a FULL-WIDTH row span `[rowStart, rowStart + rowCount)` straight out of the full-size
+   *  CPU mirror (no repacking — rows are contiguous, `srcOffset` indexes into the mirror). ONE call
+   *  per texture per frame over the dirty rows' bounding span is the cheap upload shape: per-call
+   *  overhead dominates transfer cost at data-texture sizes, and a full-width span is a single
+   *  driver memcpy. `elemsPerTexel` = typed-array elements per texel (e.g. 4 for RGBA32UI). */
+  uploadRows(rowStart: number, rowCount: number, mirror: ArrayBufferView, elemsPerTexel: number): void {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.handle);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage2D(
+      gl.TEXTURE_2D, 0, 0, rowStart, this.width, rowCount, this.fmt.format, this.fmt.type,
+      mirror as ArrayBufferView<ArrayBuffer>, rowStart * this.width * elemsPerTexel,
+    );
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  }
+
   bind(unit: number): void {
     this.gl.activeTexture(this.gl.TEXTURE0 + unit);
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.handle);

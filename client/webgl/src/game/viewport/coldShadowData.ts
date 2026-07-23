@@ -79,7 +79,9 @@ export class ColdShadowData {
   /** stem+cell → allocated definition_index. */
   private readonly defIndex = new Map<string, number>();
   private defNext = 0;
-  private defDirty = false;
+  /** Dirty ROW span of the def mirror (rows = def_index >> 8) — flushed as ONE texSubImage2D. */
+  private defRowLo = DEF_H;
+  private defRowHi = -1;
   /** P3 tight bbox per def (WORLD px, relative to the prim's top-left): `dx,dy` = offset to the
    *  opaque region, `w,h` = its size. Fraction-of-frame × prim size, so it's LOD-independent. */
   private readonly defTight = new Map<number, { dx: number; dy: number; w: number; h: number }>();
@@ -96,7 +98,9 @@ export class ColdShadowData {
   /** prim.id → allocated prim_data_index (≥1; index 0 is the sentinel). */
   private readonly primIndex = new Map<number, number>();
   private primNext = 1; // 0 reserved as the LUT sentinel
-  private primDirty = false;
+  /** Dirty ROW span of the prim mirror (rows = prim_index >> 9; 2 prims/px) — one upload per flush. */
+  private primRowLo = PRIM_H;
+  private primRowHi = -1;
 
   /** `light_data` (128×33): row 0 = record, rows 1–32 = the LUT. Rebuilt by {@link buildLights}. */
   private readonly lightTex: Texture;
@@ -217,7 +221,9 @@ export class ColdShadowData {
     this.defMirror[base + 1] = (((ux0 & 0x3ff) << 22) | ((uy0 & 0x3ff) << 12)) >>> 0;
     this.defMirror[base + 2] = (((fx16 & 0x3ff) << 22) | ((fy16 & 0x3ff) << 12) | ((page & 0xf) << 8) | ((lod & 0xf) << 4) | ((ax & 3) << 2) | (ay & 3)) >>> 0;
     this.defMirror[base + 3] = ((((nx + 2048) & 0xfff) << 20) | (((ny + 2048) & 0xfff) << 8) | ((nax & 3) << 6) | ((nay & 3) << 4)) >>> 0;
-    this.defDirty = true;
+    const row = idx >> 8; // DEF_W = 256 px/row, 1 def/px
+    if (row < this.defRowLo) this.defRowLo = row;
+    if (row > this.defRowHi) this.defRowHi = row;
     return idx;
   }
 
@@ -255,7 +261,7 @@ export class ColdShadowData {
       const curLod = (this.defMirror[curDef * 4 + 2] >>> 4) & 0xf;
       if (newLod < 4 && curLod >= 4) return { idx: hit, changed: false };
       this.primMirror[base + 1] = orient; // def swap (new lod) / orientation change — position untouched
-      this.primDirty = true;
+      this.markPrimRow(hit);
       return { idx: hit, changed: true };
     }
     const idx = this.primNext++;
@@ -267,7 +273,7 @@ export class ColdShadowData {
     // orient: z(24–31) | rotation(22–23) | definition_index(6–21) | reserved(0–5)
     this.primMirror[base + 1] = orient;
     this.primIndex.set(prim.id, idx);
-    this.primDirty = true;
+    this.markPrimRow(idx);
     return { idx, changed: true };
   }
 
@@ -307,16 +313,26 @@ export class ColdShadowData {
   /** Upload any changed textures (call once per frame after populating). Cheap — no-op unless a slot landed. */
   /** Returns true if anything was uploaded (def/prim changed) — the caller re-dirties the shadow. */
   flush(): boolean {
-    const changed = this.defDirty || this.primDirty;
-    if (this.defDirty) {
-      this.defTex.upload(this.defMirror);
-      this.defDirty = false;
+    const changed = this.defRowHi >= this.defRowLo || this.primRowHi >= this.primRowLo;
+    // ONE full-width row-span texSubImage2D per texture per flush, straight out of the mirror —
+    // per-call overhead dominates at these sizes, so fewer/larger rectangles win. Appends
+    // (immutable defs) and clustered prim swaps keep the bounding span naturally tight.
+    if (this.defRowHi >= this.defRowLo) {
+      this.defTex.uploadRows(this.defRowLo, this.defRowHi - this.defRowLo + 1, this.defMirror, 4);
+      this.defRowLo = DEF_H; this.defRowHi = -1;
     }
-    if (this.primDirty) {
-      this.primTex.upload(this.primMirror);
-      this.primDirty = false;
+    if (this.primRowHi >= this.primRowLo) {
+      this.primTex.uploadRows(this.primRowLo, this.primRowHi - this.primRowLo + 1, this.primMirror, 4);
+      this.primRowLo = PRIM_H; this.primRowHi = -1;
     }
     return changed;
+  }
+
+  /** Widen the prim mirror's dirty row span to cover `prim_index` (2 prims/px → row = idx >> 9). */
+  private markPrimRow(idx: number): void {
+    const row = idx >> 9;
+    if (row < this.primRowLo) this.primRowLo = row;
+    if (row > this.primRowHi) this.primRowHi = row;
   }
 
   // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
