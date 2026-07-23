@@ -230,10 +230,12 @@ precision highp float;
 precision highp int;
 uniform highp usampler2D uData;    // presence (sets 3/5) + light records (set 2)
 uniform highp usampler2D uDirty;   // shadow_dirty — same gate as the shadow gather (clean → persist)
-layout(location = 0) out vec4 oLight;  // irradiance RGB: ambient + Σ colour·intensity·falloff·(shadow at P3)
+uniform highp usampler2D uShadow;  // shadow-cold (TEXEL-aligned) — per-slot u9 coverage; slot i ↔ presence slot i
+layout(location = 0) out vec4 oLight;  // irradiance RGB: ambient + Σ colour·intensity·falloff·(1−shadow)
 layout(location = 1) out vec4 oDir;    // RG = irradiance-weighted mean horizontal light dir (enc 0.5+0.5) — for per-px relief
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
+uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
 const float AMBIENT = ${AMBIENTF};
 void main() {
   // Same window mapping as the shadow gather (constants row): fc → toroidal slot → world tile → P.
@@ -252,6 +254,7 @@ void main() {
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
+  uvec4 sh = texelFetch(uShadow, fc, 0);                    // P3: this texel's per-slot u9 shadow coverage
   vec3 acc = vec3(AMBIENT);
   vec2 dirAcc = vec2(0.0);                                  // Σ weight · unit(Lxy − P) — the aggregate lit-from dir
   for (int slot = 0; slot < 14; slot++) {
@@ -265,7 +268,13 @@ void main() {
     vec2 toL = Lxy - P;
     float dist = length(toL);                               // in-plane distance (units)
     float fall = smoothstep(reach, 0.0, dist);              // 1 at the light → 0 at reach (F2 smoothstep)
-    float contrib = intensity * fall;
+    // P3 SHADOW: mask by slot i's u9 coverage (low8 in channel i>>2, high bit in A[16+i]) — a shadowed
+    // pixel stops receiving this light. Applied to the contribution so it removes both the irradiance AND
+    // the relief drive (a fully-shadowed light must not light the sprite's lit side either). Penumbra and
+    // umbra (the gather's soft coverage) modulate it smoothly.
+    uint v9 = ((lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((sh.w >> uint(16 + slot)) & 1u) << 8);
+    float shadow = float(v9) / 511.0;
+    float contrib = intensity * fall * (1.0 - shadow);
     acc += col * contrib;
     // Weight the direction by this light's luminous contribution — the brighter/nearer light dominates
     // the relief, matching where its irradiance dominates. dist>0 guard (P == light → no direction).
@@ -921,6 +930,7 @@ export class ShadowGather {
       textures: {
         uData: this.coldData.dataTexture, // presence (sets 3/5) + light records (set 2)
         uDirty: this.dirtyTex,
+        uShadow: this.shadowRT!.textures[0], // P3: this frame's shadow-cold (written by the gather draw above)
       },
     });
   }
