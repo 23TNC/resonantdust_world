@@ -30,9 +30,14 @@ the sprite frame.
 
 ## F2 · Silhouette sample source: surface vs albedo {#f2}
 
-**2026-07-22 — lean SURFACE, pending what the gather is actually handed.**
+**2026-07-22 — DECIDED 2026-07-23: SURFACE.**
 
-P4 samples the sprite to apply the shadow's shape. **Surface** carries **presence** (coverage/alpha),
-which is exactly the silhouette we want. But the gather is currently passed **albedo**. Options:
-sample the surface's presence channel (correct), or derive coverage from albedo (workable, less
-clean). Decide when P4 lands; the README marks surface as preferred.
+P4 samples the sprite to apply the shadow's shape. **Surface** carries **coverage** (B channel),
+which is exactly the silhouette we want — and the opaque bbox is already computed from the surface
+at decode (`computeSpriteBBox`), so the frame and the bbox agree by construction. The def stores the
+opaque sub-rect of the **surface frame** (atlas px); the gather binds the one shared surface page as
+`uSurface` and reads `.b`. Albedo derivation rejected (its alpha is full — no silhouette there).
+
+- **Limitation accepted:** ONE surface page is bound; a def whose frame resolves onto a different
+  page (mixed LOD pools across stems) keeps `frame_w = 0` → solid quad + a one-shot console warn.
+  Proper multi-page lands with caster-lut C5 (integer textures / texture arrays).

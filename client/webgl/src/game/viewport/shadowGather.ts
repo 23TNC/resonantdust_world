@@ -95,9 +95,12 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H) {
   return (pos || neg) ? 1.0 : 0.0;               // solid quad: 1 occluded, 0 lit
 }
 // Coverage of one caster (prim index into prim_data) at P from light L: read the prim record + its
-// definition (position + geo W/H), then the pure-quad test. Returns 1 (occluded) or 0.
+// definition (position + geo W/H), then the pure-quad test; if occluded, apply the sprite's SHAPE
+// (P4) — invert P back to the card's (s,t) (in-range BY CONSTRUCTION: P is inside the projected
+// quad, so no u/v-out-of-range class of reject exists) and sample the surface silhouette (coverage,
+// B channel) at the def's opaque frame. frame_w = 0 (not resolved / off-page) → solid quad.
 float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData,
-                  highp usampler2D primDef, int primW, int defW) {
+                  highp usampler2D primDef, int primW, int defW, sampler2D surf) {
   if (primIdx == 0u) return 0.0;
   uvec4 Pd = fetchLin(primData, int(primIdx) / 2, primW);
   uint pos = (primIdx & 1u) == 0u ? Pd.x : Pd.z;
@@ -109,7 +112,27 @@ float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData,
   // Shift the game anchor by the sprite's opaque-frame offset (units, biased +512) → the shadow-cast
   // anchor. The prim's game position is untouched; only the bbox we cast from moves (per-sprite, in the def).
   vec2 off = vec2(float(int((D.y >> 12) & 1023u) - 512), float(int((D.y >> 2) & 1023u) - 512));
-  return shadowCover(P, A + off, L, W, H);
+  uint rot = (orient >> 22) & 3u;                           // 1 = E, 3 = W (mirrored E)
+  if (rot == 3u) off.x = -off.x;                            // flipped sprite → mirrored anchor offset
+  vec2 Ac = A + off;
+  float q = shadowCover(P, Ac, L, W, H);
+  if (q <= 0.0) return 0.0;
+  float fw = float(D.w >> 16), fh = float(D.w & 0xffffu);   // silhouette frame (atlas px)
+  if (fw < 1.0) return q;                                   // no frame yet → solid quad
+  // Invert the ground projection: card(s,t) → ground is linear in t (one division, no cliff).
+  //   y(t) = Ac.y − 0.5·t·H·cosθ, z(t) = t·H·sinθ; ground(C) = L.xy + (L.z/(L.z−C.z))·(C.xy−L.xy)
+  //   ⇒ t = L.z·(P.y − Ac.y) / (H·(sinθ·(P.y − L.y) − 0.5·L.z·cosθ))
+  float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
+  float denom = H * (st * (P.y - L.y) - 0.5 * L.z * ct);
+  if (abs(denom) < 1e-4) return q;                          // degenerate (grazing) — keep the solid quad
+  float t = clamp(L.z * (P.y - Ac.y) / denom, 0.0, 1.0);
+  float k = L.z / (L.z - t * H * st);                       // that row's projection factor
+  float s = clamp(((P.x - L.x) / k + L.x - Ac.x) / W + 0.5, 0.0, 1.0);
+  if (rot == 3u) s = 1.0 - s;                               // W-facing = mirrored E frame
+  float fx = float(D.z >> 16), fy = float(D.z & 0xffffu);
+  // Atlas rows are image-top-down; card t=0 is the sprite's BOTTOM row → v = 1−t.
+  vec2 uv = vec2(fx + s * fw, fy + (1.0 - t) * fh);
+  return q * texelFetch(surf, ivec2(uv), 0).b;              // surface B = coverage (straight-alpha data)
 }
 `;
 
@@ -127,6 +150,7 @@ uniform highp usampler2D uPrimData;   // prim_data (2/px)
 uniform highp usampler2D uPresence;   // light_presence_cold — textile_tile map (1 textile/tile)
 uniform highp usampler2D uDirty;      // shadow_dirty — textile_tile map (R8UI): .r nonzero = recompute
 uniform highp usampler2D uCaster;     // caster buckets — textile_tile map (RGBA32UI = 8× u16 prim idx)
+uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
 uniform int uDefW, uPrimW;
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window; uSlot = TEXTILE_UNIT
 out uvec4 fragColor;
@@ -169,7 +193,7 @@ void main() {
         for (int c = 0; c < 8; c++) {
           uint word = cb[c >> 1];
           uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
-          if (primIdx != 0u) cov = min(cov + casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW), 1.0);
+          if (primIdx != 0u) cov = min(cov + casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW, uSurface), 1.0);
         }
       }
     }
@@ -444,8 +468,10 @@ export class ShadowGather {
       if (def < 0) continue; // no textureName → not a caster
       const inst = this.coldData.primDataFor(p, def);
       // Bucket by the TIGHT opaque bbox (P3), not the full prim box — matches the quad we actually cast.
+      // A flipped (W-facing) prim mirrors the box within the prim rect, same as the gather mirrors `off.x`.
       const t = this.coldData.tightBoxOf(def) ?? { dx: 0, dy: 0, w: p.width, h: p.height };
-      const tx = p.x + t.dx, ty = p.y + t.dy;
+      const tdx = p.flipX ? p.width - (t.dx + t.w) : t.dx;
+      const tx = p.x + tdx, ty = p.y + t.dy;
       const baseY = ty + t.h, topY = baseY - TILT * t.h; // card ground y-extent (px)
       const r0 = Math.floor(topY / SQUARE), r1 = Math.floor(baseY / SQUARE);
       const c0 = Math.floor(tx / SQUARE), c1 = Math.floor((tx + t.w) / SQUARE);
@@ -583,6 +609,7 @@ export class ShadowGather {
         uPresence: this.presenceTex,
         uCaster: this.casterTex,
         uDirty: this.dirtyTex,
+        uSurface: this.coldData.surfacePage ?? this.empty, // no page yet → defs have no frame → solid quads
       },
       uniforms: (p) => {
         p.uInt("uDefW", defW);

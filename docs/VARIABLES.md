@@ -273,15 +273,17 @@ is the separate fact that the value reached `state`.
 
 The GPU shadow **gather** reads its **static** (cold) light + caster data from **fixed-size** `RGBA32UI` data
 textures (`texelFetch`, exact integer reads) — written on change (CPU-side; no GPU ping-pong), read every frame
-for free. Everything is fixed-slot: **`N = 128` lights**, **≤ 256 shadow casters/light**, `u16` def/prim
-indexes (⇒ 65 536 ceilings). The LUT (light → caster indices) is folded into `light_data`'s rows; a caster's
-position + definition live in **one** place (`prim_data`). Work stream:
-[`work/2026-07-21-shadow-bitfield`](work/2026-07-21-shadow-bitfield/README.md).
+for free. Fixed slots: **`N = 128` lights**, `u16` def/prim indexes (⇒ 65 536 ceilings). Casters are found via
+**per-tile buckets** (the per-light LUT is retired); a caster's position + definition live in **one** place
+(`prim_data`). The per-tile maps live on the shared toroidal TILE grid (`cols × rows` from the cold cache
+window; textile resolutions per the lighting-rebuild map-model). Work streams:
+[`work/2026-07-21-shadow-bitfield`](work/2026-07-21-shadow-bitfield/README.md),
+[`work/2026-07-22-lighting-rebuild`](work/2026-07-22-lighting-rebuild/README.md).
 
-**Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `radius`, `prim_width/height`) is in
-**units**, a compile-time constant `1 unit = SQUARE/16 = 4px` (`TILE = 16 units`, derivable — not stored). The
-shader works in units; no per-frame scale uniform. The **only** exception is the atlas `frame_*` fields, which
-are **texture pixels** (they index the atlas image, a different space), not units.
+**Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `reach`, opaque `prim_width/height`, the
+anchor `offset`) is in **units**, a compile-time constant `1 unit = SQUARE/16 = 4px` (`TILE = 16 units`,
+derivable — not stored). The shader works in units; no per-frame scale uniform. The **only** exception is the
+silhouette `frame_*` fields, which are **texture pixels** (they index the atlas page, a different space).
 
 **Shared position — full spatial address + sub-tile anchor** (extends `position_reference`: the low byte is a
 sub-tile `anchor` instead of a `layer`, giving `SQUARE/16` = 1-unit resolution; `anchor = (8,8)` centres a prim):
@@ -294,29 +296,19 @@ u32 position_anchor_reference       region | zone | tile | anchor  (min unit = S
   u8 anchor_reference               bits 0–7      anchor_x:4 | anchor_y:4   (0..15 within the tile)
 ```
 
-**Bit convention** for the 128-bit maps (`light_presence_cold`, `shadow-cold`): channel `R`=lights 0–31,
-`G`=32–63, `B`=64–95, `A`=96–127; within a channel, light `L` is bit `L & 31`.
-
-**`light_data`** — a **128×33** `RGBA32UI` texture; **column `x` = light `x`'s entire record** (`lut_index` is
-therefore **implicit** = the column). Written on light change:
+**`light_data`** — a **128×1** `RGBA32UI` texture; **column `x` = light `x`'s record**. Written on light change:
 
 ```
-row 0    (x, 0)  the light record:
-  R  u32 position_anchor_reference
-  G  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
-  B  u32 reach         u8 z (24–31, units) | u12 radius (12–23, units; ~16-zone max) | u11 reserved (1–11) | u1 cast_shadows (0)
-  A  u32 reserved      (was lut_index|lut_count — freed: index implicit, run sentinel-terminated)
-
-rows 1–32  (x, 1..32)  the caster LUT — 256× u16 prim indexes into prim_data, dense, terminated by a 0:
-  R  u16 idx[8y-8] (16–31) | u16 idx[8y-7] (0–15)
-  G  u16 idx[8y-6] (16–31) | u16 idx[8y-5] (0–15)
-  B  u16 idx[8y-4] (16–31) | u16 idx[8y-3] (0–15)
-  A  u16 idx[8y-2] (16–31) | u16 idx[8y-1] (0–15)          (y = 1..32 → indices 0..255)
+R  u32 position_anchor_reference
+G  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
+B  u32 reach         u8 z (24–31, units) | u12 reach (12–23, units; ~16-zone max) | u11 reserved (1–11) | u1 cast_shadows (0)
+A  u32 emitter       u8 emitter_radius (24–31, units — penumbra softness) | u24 reserved
 ```
 
 **`prim_data`** — a **256×128** `RGBA32UI` texture, **2 prims/px** (`u64` each) → 65 536 slots; **index 0 is a
 sentinel** (empty / end-of-list), so usable prim indices are **1..65 535**. One entry per **placed** caster
-instance — the single place a prim's position + definition live (move → one texel):
+instance — the single place a prim's position + definition live (move → one texel). The position is the prim's
+**true game anchor** (full-box base-centre) — the def's `offset` shifts the shadow, never the prim:
 
 ```
 entry (2 per RGBA32UI px = 64 bits each)
@@ -325,38 +317,43 @@ entry (2 per RGBA32UI px = 64 bits each)
 ```
 
 **`prim_definition_data`** — a **256×256** `RGBA32UI` texture, one px per sprite **variant** (generic; shared by
-every instance of the same `(type,subtype,kind,variant)`), keyed by `u16 definition_index` (0..65 535). Written
-on **atlas add**:
+every instance), keyed by `u16 definition_index`. Compare-written whenever its inputs change (surface decode,
+LOD upgrade — a write re-dirties the gather). The shadow quad is the sprite's **opaque bbox**; the silhouette
+frame is that bbox's sub-rect of the sprite's SURFACE frame on the **one shared surface page** (bound as
+`uSurface`; a frame on any other page stays 0 → solid quad, until multi-page lands with caster-lut C5):
 
 ```
-R  u32   u10 prim_width (22–31, units) | u10 prim_height (12–21, units) | u10 frame_x (2–11, atlas px) | u2 reserved (0–1)
-G  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas px) | u10 frame_y (2–11, atlas px) | u2 reserved (0–1)
-B  u32   u10 frame_page (22–31) | u8 base_pad (14–21, atlas px) | u8 reserved (6–13, was dB) | u6 reserved (0–5)
-A  u32   reserved   (materials etc. — later)
+R  u32   u10 prim_width (22–31, units, opaque) | u10 prim_height (12–21, units, opaque) | u12 reserved (0–11)
+G  u32   u10 offset_x+512 (12–21, units) | u10 offset_y+512 (2–11, units) | reserved     (opaque-base-centre − game anchor)
+B  u32   u16 frame_x (16–31, atlas px) | u16 frame_y (0–15, atlas px)
+A  u32   u16 frame_width (16–31, atlas px) | u16 frame_height (0–15, atlas px)           (width 0 ⇒ no silhouette — solid quad)
 ```
 
-**`light_presence_cold`** — a **128×64** `RGBA32UI` texture (sized to the **max-zoom tile window + `OVERSCAN`**),
-**one px per tile**; **bit `L` set = light `L` reaches this tile** (distance cull). CPU-set when a light is
-added / moves / changes radius (prims never touch it). The gather reads its tile's px and iterates only the set
-bits — the per-tile light cull.
+**`light_presence_cold`** — a **`cols×rows`** `RGBA32UI` **textile_tile map** (one texel/tile, toroidal with the
+window): per tile the **nearest ≤ 8 reaching lights** as `8× u16` light indices (`0xFFFF` = empty; R holds slots
+0–1 high|low, G 2–3, B 4–5, A 6–7). CPU-rebuilt on light/window change. Bounds the gather to O(8) lights/texel.
 
-**`shadow-cold`** — the **output**: a world-space **toroidal** `RGBA32UI` bitfield (windowed like a `SquareCache`
-channel, `slotPx` resolution), **bit `L` set = this pixel is in light `L`'s shadow**. Updated in place by the
-single-pass gather (`discard` on clean tiles → no ping-pong). Later the per-light **mask** for lighting.
+**`caster_buckets`** — a **`cols×rows`** `RGBA32UI` **textile_tile map**: per tile **≤ 8 casters** as `8× u16`
+`prim_data` indices (same slot packing as presence; `0` = empty). A caster is bucketed into every tile its
+tilted card's ground extent spans (base row up to `0.5·cos65°·H` above). The gather's reach-walk reads these.
 
-**`shadow_dirty`** — an **`R8UI` 128×64** texture (max-zoom tile window + `OVERSCAN`), **nonzero = tile dirty**;
-gates the single-pass gather (clean tiles `discard`). Rebuilt per frame CPU-side; a texture, not a uniform, to
-keep the fragment-uniform budget free for warm/hot.
+**`shadow_dirty`** — a **`cols×rows`** `R8UI` **textile_tile map**, **nonzero = recompute**; gates the
+single-pass gather (clean tiles `discard`, so `shadow-cold` persists). Per-slot owner tracking dirties a slot
+when its world tile changes (pan) or the cold data rebuilds.
 
-**Notes.** (1) `rotation` (n/e/s/w) picks the shadow regime (E/W vs N/S). (2) The LUT is a **dense run of `u16`
-prim indexes** in `light_data` rows 1–32, **terminated by a `0`** (prim index 0 is the sentinel) or filling all
-256 — no `lut_count`; `lut_index` is implicit (the light's column). (3) The gather box-culls **per caster**
-(rectangle / Chebyshev) inside the loop; the **per-tile** light cull is `light_presence_cold`. (4) All world
-fields are in **units** (`1 unit = SQUARE/16 = 4px`, compile-time); decode `region|zone|tile|anchor` → units via
-the `*_DIM` world constants (§Where it is), then units → px (×4) only at the clip transform. `radius` is `u12`
-units ≈ **16 zones** (256 tiles). Global ambient is better a **no-cull flag** than a max radius. (5)
-`cast_shadows` (bit 0 of reach): a **0** light lights without casting — its LUT run is empty (first slot = the
-`0` sentinel) and it is skipped in the gather, so a fill/ambient light costs no shadow work.
+**`shadow-cold`** — the **output**: a world-space **toroidal** `RGBA32UI` **textile_unit map**
+(`cols·16 × rows·16`; 1 texel = 1 unit²). Per texel, **R = 8× 4-bit coverage nibbles**, one per presence SLOT
+(slot `i` at bits `i·4..i·4+3`; the slot → light indirection is that tile's `light_presence_cold` texel).
+Updated in place by the single-pass gather (`discard` on clean tiles → no ping-pong). G/B/A reserved.
+
+**Notes.** (1) `rotation` (n/e/s/w) picks the shadow regime (E/W vs N/S); `3 = W` mirrors the E frame — the
+gather mirrors `offset_x` and the silhouette `s` coordinate. (2) The gather is bounded per texel: ≤ 8 lights
+(presence) × reach-walk of bucketed tiles × ≤ 8 casters/tile. (3) All world fields are in **units**; decode
+`region|zone|tile|anchor` → units via the `*_DIM` world constants (§Where it is), then units → px (×4) only at
+the clip transform. (4) `cast_shadows` (bit 0 of reach): a **0** light lights without casting — skipped in the
+gather, so a fill/ambient light costs no shadow work. (5) The silhouette sample happens only **after** the
+point-in-projected-quad test proves the texel occluded — the inverted `(s,t)` is in-range by construction, so
+no `u/v`-out-of-range reject class exists.
 
 ## Removed
 

@@ -3,17 +3,18 @@
 //! (CPU-side; no ping-pong), read every frame for free. Bit layouts are authoritative in
 //! `docs/VARIABLES.md` §Cold shadow data textures.
 //!
-//! Layout (fixed slots — `N=128` lights, `≤256` casters/light, `u16` indexes):
-//!   • `light_data`           128×33 — col = light; row 0 = record, rows 1–32 = 256× `u16` prim indexes
-//!                            (the LUT folded in; `lut_index` implicit = column; sentinel `0`-terminated).
+//! Layout (fixed slots — `N=128` lights, `u16` indexes):
+//!   • `light_data`           128×1 — col = light record (position/colour/reach). The per-light caster
+//!                            LUT is retired — casters come from the per-tile buckets (`shadowGather`).
 //!   • `prim_data`            256×128 — all placed casters, 2/px (`u64`); carries `u16 definition_index`.
 //!                            Index 0 is the SENTINEL (empty/end) → usable 1..65535.
-//!   • `prim_definition_data` 256×256 — one px/variant (generic geometry + atlas frame), keyed by def_index.
+//!   • `prim_definition_data` 256×256 — one px/variant: opaque bbox (units) + anchor offset + the P4
+//!                            silhouette frame (opaque surface sub-rect, atlas px), keyed by def_index.
 //!
 //! World unit: `1 unit = SQUARE/16 = 4px`, compile-time (§Unit). Every world field is in units; only the
 //! atlas `frame_*` are texture px. Positions pack as `position_anchor_reference` (region|zone|tile|anchor).
 
-import { Renderer, Texture, type TexFrame } from "../../gl";
+import { Renderer, Texture } from "../../gl";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
 import { SQUARE, UNIT, ZONE_DIM, REGION_DIM } from "./squareMath";
@@ -32,7 +33,6 @@ const DEF_W = 256;
 const DEF_H = 256;
 
 const u10 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0x3ff);
-const u8 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0xff);
 const clamp = (v: number, hi: number): number => Math.min(Math.max(Math.round(v), 0), hi);
 
 /** One light to write into `light_data` (world px + unit-scaled fields; colour 0..1). */
@@ -83,10 +83,11 @@ export class ColdShadowData {
   /** P3 tight bbox per def (WORLD px, relative to the prim's top-left): `dx,dy` = offset to the
    *  opaque region, `w,h` = its size. Fraction-of-frame × prim size, so it's LOD-independent. */
   private readonly defTight = new Map<number, { dx: number; dy: number; w: number; h: number }>();
-  /** defs built from the LOOSE fallback (surface not resolved yet) — upgrade to tight when it loads. */
-  private readonly defPending = new Set<number>();
-  /** The atlas page the casters' surface frames live on (F2: single page) — bound for the alpha mask. */
+  /** The ONE atlas page the casters' surface frames live on (F2: single page) — bound as `uSurface`
+   *  for the P4 silhouette sample. Adopted from the first resolved frame; a frame on any OTHER page
+   *  gets no silhouette (solid quad) until multi-page lands (caster-lut C5). */
   private surfacePageTex: Texture | null = null;
+  private pageWarned = false;
 
   /** `prim_data` — 2 entries/px: a placed caster's `position_anchor_reference` + `z`/`rotation`/`def_index`. */
   private readonly primTex: Texture;
@@ -119,76 +120,64 @@ export class ColdShadowData {
     return this.surfacePageTex;
   }
 
-  /** The `definition_index` for a caster's sprite, allocating + writing its def on first sight from the
-   *  resolver's surface frame (billboard `width/height` in units, atlas `frame x/y/w/h` in px, `frame_page`).
-   *  Returns -1 until the sprite's surface LOD has resolved (the caller falls back). Generic per variant —
-   *  every instance of the sprite shares the slot. */
+  /** The `definition_index` for a caster's sprite, allocating on first sight and (re)writing the def
+   *  whenever its inputs change (compare-write — a LOD upgrade moves the frame and lands here):
+   *
+   *  The shadow quad = the sprite's OPAQUE bbox. Its size (W/H, units) + its OFFSET from the prim's game
+   *  anchor live in the DEF (per-sprite, shared); `prim_data` keeps the true game anchor untouched, and
+   *  the gather shifts it by this offset. The bbox is pre-computed on the CPU at decode (frame fractions,
+   *  LOD-safe). P4: the def also carries the **silhouette frame** — the opaque sub-rect of the sprite's
+   *  SURFACE frame in atlas px on the shared page (F2) — sampled inside the proven quad; `frame_w = 0`
+   *  (not yet resolved / other page) → solid quad. No shadow is gated on any of it: a LOOSE fallback
+   *  (full box, zero offset, no frame) casts until the surface decodes, then the def UPGRADES in place —
+   *  which re-dirties the gather, no per-prim rewrite needed. */
   definitionFor(prim: Primitive, resolver: TextureResolver | null): number {
     if (!prim.textureName) return -1;
     const key = `${prim.textureName}|${prim.cell ?? 0}`;
     let idx = this.defIndex.get(key);
     if (idx === undefined) { idx = this.defNext++; this.defIndex.set(key, idx); }
-    else if (!this.defPending.has(idx)) return idx; // already tight
 
-    // The shadow quad = the sprite's OPAQUE bbox. Its size (W/H) + its OFFSET from the prim's game anchor
-    // both live in the DEF (per-sprite, shared); `prim_data` keeps the true game anchor untouched, and the
-    // gather shifts it by this offset. The bbox is pre-computed on the CPU at decode (frame fractions, LOD-
-    // safe). No shadow is gated on it: a LOOSE fallback (full box, zero offset) renders until it loads, then
-    // the def UPGRADES in place — which re-dirties the gather, no per-prim rewrite needed.
     const bbox = resolver ? resolver.opaqueBBox(prim.textureName) : null;
     const dx = bbox ? bbox.fx * prim.width : 0, dy = bbox ? bbox.fy * prim.height : 0;      // opaque top-left (px)
     const ww = bbox ? bbox.fw * prim.width : prim.width, hh = bbox ? bbox.fh * prim.height : prim.height;
-    if (bbox) this.defPending.delete(idx); else this.defPending.add(idx);
     this.defTight.set(idx, { dx, dy, w: ww, h: hh }); // opaque box (px, rel. prim top-left) — for bucketing
     // Offset (units) from the game anchor (full-box base-centre) to the opaque bbox base-centre.
     const ox = Math.round((dx + ww / 2 - prim.width / 2) / UNIT), oy = Math.round((dy + hh - prim.height) / UNIT);
 
+    // P4 silhouette frame: the opaque sub-rect of the surface frame (atlas px) on the shared page.
+    let fx = 0, fy = 0, fw = 0, fh = 0;
+    const surf = resolver && bbox ? resolver.resolve(prim.textureName, "surface", prim.cell).frame : null;
+    if (surf) {
+      if (!this.surfacePageTex) this.surfacePageTex = surf.source;
+      if (surf.source === this.surfacePageTex) {
+        fx = Math.round(surf.x + bbox!.fx * surf.w);
+        fy = Math.round(surf.y + bbox!.fy * surf.h);
+        fw = Math.max(1, Math.round(bbox!.fw * surf.w));
+        fh = Math.max(1, Math.round(bbox!.fh * surf.h));
+      } else if (!this.pageWarned) {
+        this.pageWarned = true;
+        console.warn("[cold-shadow] surface frame off the shared page — silhouette skipped (solid quad, C5)");
+      }
+    }
+
     const base = idx * 4;
     // R: W(22–31) | H(12–21) opaque size (units). G: (ox+512)(12–21) | (oy+512)(2–11) signed offset (units).
-    this.defMirror[base] = (((u10(ww / UNIT) << 22) | (u10(hh / UNIT) << 12)) >>> 0);
-    this.defMirror[base + 1] = (((((ox + 512) & 0x3ff) << 12) | (((oy + 512) & 0x3ff) << 2)) >>> 0);
-    this.defMirror[base + 2] = 0;
-    this.defMirror[base + 3] = 0;
-    this.defDirty = true;
+    // B: frame_x(16–31) | frame_y(0–15) · A: frame_w(16–31) | frame_h(0–15) (atlas px; w = 0 → solid quad).
+    const R = (((u10(ww / UNIT) << 22) | (u10(hh / UNIT) << 12)) >>> 0);
+    const G = (((((ox + 512) & 0x3ff) << 12) | (((oy + 512) & 0x3ff) << 2)) >>> 0);
+    const B = ((((fx & 0xffff) << 16) | (fy & 0xffff)) >>> 0);
+    const A = ((((fw & 0xffff) << 16) | (fh & 0xffff)) >>> 0);
+    const m = this.defMirror;
+    if (m[base] !== R || m[base + 1] !== G || m[base + 2] !== B || m[base + 3] !== A) {
+      m[base] = R; m[base + 1] = G; m[base + 2] = B; m[base + 3] = A;
+      this.defDirty = true;
+    }
     return idx;
   }
 
   /** The tight bbox (WORLD px, relative to the prim's top-left) for a placed caster's def, or null. */
   tightBoxOf(defIndex: number): { dx: number; dy: number; w: number; h: number } | null {
     return this.defTight.get(defIndex) ?? null;
-  }
-
-  /** From the sprite silhouette (one surface-frame B readback, cached with the def): the base spread
-   *  `[dA, dB]` (units — the fan's, kept for a fan-return) and **`basePad`** = the transparent rows below
-   *  the bottom-most opaque pixel (**atlas px**), used to lift the shadow base to the opaque base. */
-  private depthUnits(f: TexFrame, hPx: number): [number, number, number] {
-    const gl = this.renderer.gl;
-    const w = f.w, h = f.h;
-    const fb = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, f.source.handle, 0);
-    const px = new Uint8Array(w * h * 4);
-    gl.readPixels(f.x, f.y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.deleteFramebuffer(fb);
-    const present = (x: number, y: number): boolean => px[(y * w + x) * 4 + 2] > 127; // B = coverage
-    const avgHeight = (x0: number, x1: number): number => {
-      let sum = 0, cols = 0;
-      for (let x = x0; x < x1; x++) {
-        let top = -1, bot = -1;
-        for (let y = 0; y < h; y++) if (present(x, y)) { top = y; break; }
-        for (let y = h - 1; y >= 0; y--) if (present(x, y)) { bot = y; break; }
-        if (top >= 0) { sum += bot - top + 1; cols++; }
-      }
-      return cols ? sum / cols : 0;
-    };
-    const mid = w >> 1;
-    // Transparent base padding: rows below the bottom-most opaque pixel (atlas px).
-    let bottomOpaque = -1;
-    for (let y = h - 1; y >= 0 && bottomOpaque < 0; y--)
-      for (let x = 0; x < w; x++) if (present(x, y)) { bottomOpaque = y; break; }
-    const basePad = bottomOpaque < 0 ? 0 : h - 1 - bottomOpaque;
-    return [(0.5 * (avgHeight(0, mid) / h) * hPx) / UNIT, (0.5 * (avgHeight(mid, w) / h) * hPx) / UNIT, basePad];
   }
 
   get primTexture(): Texture {
@@ -268,15 +257,14 @@ export class ColdShadowData {
   }
 
   // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
-  debugDef(index: number): { prim_width: number; prim_height: number; frame: [number, number, number, number]; frame_page: number; basePad: number } {
+  debugDef(index: number): { prim_width: number; prim_height: number; offset: [number, number]; frame: [number, number, number, number] } {
     const b = index * 4;
-    const R = this.defMirror[b], G = this.defMirror[b + 1], B = this.defMirror[b + 2];
+    const R = this.defMirror[b], G = this.defMirror[b + 1], B = this.defMirror[b + 2], A = this.defMirror[b + 3];
     return {
       prim_width: (R >>> 22) & 0x3ff,
       prim_height: (R >>> 12) & 0x3ff,
-      frame: [(R >>> 2) & 0x3ff, (G >>> 2) & 0x3ff, (G >>> 22) & 0x3ff, (G >>> 12) & 0x3ff], // x,y,w,h
-      frame_page: (B >>> 22) & 0x3ff,
-      basePad: (B >>> 14) & 0xff,
+      offset: [((G >>> 12) & 0x3ff) - 512, ((G >>> 2) & 0x3ff) - 512], // units, opaque-base-centre − anchor
+      frame: [(B >>> 16) & 0xffff, B & 0xffff, (A >>> 16) & 0xffff, A & 0xffff], // x,y,w,h (atlas px)
     };
   }
   get debugDefCount(): number {

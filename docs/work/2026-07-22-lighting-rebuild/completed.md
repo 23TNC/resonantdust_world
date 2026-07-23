@@ -44,3 +44,20 @@ Append-only history; authoritative for what's done._
   caster's tile → no shadows, despite every value being correct end-to-end. Rewrote the sweep as a
   slot-space, **constant-bound** loop (no body-dependent condition, no break). **Shadows render,
   verified at zoom 0.5 / 1 / 2.** Conforms to [`map-model.md`](map-model.md).
+
+## P4 · Apply the shape (silhouette from SURFACE) — 2026-07-23 ✓
+
+- Shadows now carry the **sprite's silhouette**: inside the proven point-in-projected-quad test the
+  gather inverts `P` back to the card's `(s,t)` — linear in `t`, one division, **in-range by
+  construction** (no `u/v`-out-of-range class) — and samples the SURFACE coverage (B) at the def's
+  **silhouette frame** (the opaque sub-rect of the surface frame, atlas px; F2 → SURFACE, decided).
+- Def layout: B = `frame_x|frame_y`, A = `frame_w|frame_h` (u16 halves); `frame_w = 0` → solid-quad
+  fallback (surface not yet decoded / frame off the one shared page — C5 limitation, warns once).
+  Defs are **compare-written** each pass, so LOD upgrades move the frame and auto re-dirty.
+- W-facing (`rotation = 3`) mirrors both the anchor `offset_x` and the sample `s` (+ the CPU bucket
+  extent) — the flipped sprite's silhouette casts mirrored.
+- Also: maps grounded in the **textile resolutions** (`TEXTILE_TILE/UNIT/SQUARE` + `UNIT` in
+  `squareMath.ts`); dead `depthUnits`/`defPending`/`u8` deleted; `debugDef` decodes the real layout;
+  `docs/VARIABLES.md` §Cold shadow data conformed to the bucket-era layouts (LUT-era section was
+  stale). **Verified in browser at zoom 0.5 / 1 / 2** — conifer silhouettes taper away from the
+  light, shrubs cast crescents, all radial directions correct; console clean.
