@@ -61,6 +61,8 @@ export class TextureResolver {
   private readonly pending = new Set<string>();
   /** Cached linked-atlas cell sub-frames, keyed by the packed frame then cell index. */
   private readonly cellFrames = new WeakMap<TexFrame, Map<number, TexFrame>>();
+  /** stem → its sprite silhouette's opaque bbox (frame fractions), computed once on decode. */
+  private readonly spriteBBox = new Map<string, { fx: number; fy: number; fw: number; fh: number }>();
 
   private targetPx = BASE_LOD_PX;
   private readonly listeners = new Set<() => void>();
@@ -94,6 +96,12 @@ export class TextureResolver {
   }
 
   /** Subscribe to "a LOD landed" — the viewport re-bakes to pick up the upgrade. */
+  /** The tight opaque bbox (fractions of the frame, `0..1`) of `stem`'s sprite silhouette, computed
+   *  once on the CPU at decode; null until the albedo has loaded. Used to size shadow-cast quads. */
+  opaqueBBox(stem: string | undefined): { fx: number; fy: number; fw: number; fh: number } | null {
+    return stem ? this.spriteBBox.get(stem) ?? null : null;
+  }
+
   onLoad(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -214,6 +222,10 @@ export class TextureResolver {
       // their RGB survives intact; only true colour maps stay premultiplied.
       const raw = map === "layers" || map === "albedo" || map === "normal" || map === "surface";
       const bmp = await createImageBitmap(new Blob([bytes]), raw ? { premultiplyAlpha: "none" } : {});
+      // Pre-compute the sprite's opaque bbox ONCE on the CPU from the SURFACE map's coverage (B channel;
+      // the albedo alpha is full, so it's the surface that holds the silhouette). No GPU readback → no
+      // mid-render corruption. Fractions of the frame → LOD-independent.
+      if (map === "surface" && !this.spriteBBox.has(stem)) this.spriteBBox.set(stem, computeSpriteBBox(bmp));
       const actualShort = Math.min(bmp.width, bmp.height);
       const achieved = Math.min(size, actualShort);
       const ok = this.packInto(key, achieved, bmp, raw);
@@ -257,4 +269,26 @@ export class TextureResolver {
     }
     return pool;
   }
+}
+
+/** Tight opaque bbox of a decoded SURFACE sprite (fractions of the frame, `0..1`), from the coverage
+ *  (B) channel — the sprite's silhouette. Pure CPU (OffscreenCanvas getImageData); no GPU readback. */
+function computeSpriteBBox(bmp: ImageBitmap): { fx: number; fy: number; fw: number; fh: number } {
+  const w = bmp.width, h = bmp.height;
+  const c = new OffscreenCanvas(w, h);
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return { fx: 0, fy: 0, fw: 1, fh: 1 };
+  ctx.drawImage(bmp, 0, 0);
+  const d = ctx.getImageData(0, 0, w, h).data;
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (d[(y * w + x) * 4 + 2] > 127) { // B = coverage/presence
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+  if (maxX < 0) return { fx: 0, fy: 0, fw: 1, fh: 1 }; // fully transparent → treat as full frame
+  return { fx: minX / w, fy: minY / h, fw: (maxX - minX + 1) / w, fh: (maxY - minY + 1) / h };
 }

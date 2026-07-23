@@ -83,6 +83,11 @@ export class ColdShadowData {
   private readonly defIndex = new Map<string, number>();
   private defNext = 0;
   private defDirty = false;
+  /** P3 tight bbox per def (WORLD px, relative to the prim's top-left): `dx,dy` = offset to the
+   *  opaque region, `w,h` = its size. Fraction-of-frame × prim size, so it's LOD-independent. */
+  private readonly defTight = new Map<number, { dx: number; dy: number; w: number; h: number }>();
+  /** defs built from the LOOSE fallback (surface not resolved yet) — upgrade to tight when it loads. */
+  private readonly defPending = new Set<number>();
   /** The atlas page the casters' surface frames live on (F2: single page) — bound for the alpha mask. */
   private surfacePageTex: Texture | null = null;
 
@@ -121,28 +126,39 @@ export class ColdShadowData {
    *  resolver's surface frame (billboard `width/height` in units, atlas `frame x/y/w/h` in px, `frame_page`).
    *  Returns -1 until the sprite's surface LOD has resolved (the caller falls back). Generic per variant —
    *  every instance of the sprite shares the slot. */
-  definitionFor(prim: Primitive, _resolver: TextureResolver | null): number {
+  definitionFor(prim: Primitive, resolver: TextureResolver | null): number {
     if (!prim.textureName) return -1;
     const key = `${prim.textureName}|${prim.cell ?? 0}`;
-    const hit = this.defIndex.get(key);
-    if (hit !== undefined) return hit;
-    // PURE QUAD: the shadow is a projected billboard quad — it only needs the billboard W/H (units).
-    // We deliberately do NOT gate on the surface LOD resolving. That gate made shadows ZOOM-DEPENDENT:
-    // a tree whose texture LOD hadn't loaded at the current zoom got def=-1 and cast no shadow. W/H come
-    // from the prim geometry, not the atlas, so they're always available. (frame/base-pad were only for
-    // the silhouette sample, which the pure-quad gather no longer does.)
-    const idx = this.defNext++;
+    let idx = this.defIndex.get(key);
+    if (idx === undefined) { idx = this.defNext++; this.defIndex.set(key, idx); }
+    else if (!this.defPending.has(idx)) return idx; // already tight
+
+    // The shadow quad = the sprite's OPAQUE bbox. Its size (W/H) + its OFFSET from the prim's game anchor
+    // both live in the DEF (per-sprite, shared); `prim_data` keeps the true game anchor untouched, and the
+    // gather shifts it by this offset. The bbox is pre-computed on the CPU at decode (frame fractions, LOD-
+    // safe). No shadow is gated on it: a LOOSE fallback (full box, zero offset) renders until it loads, then
+    // the def UPGRADES in place — which re-dirties the gather, no per-prim rewrite needed.
+    const bbox = resolver ? resolver.opaqueBBox(prim.textureName) : null;
+    const dx = bbox ? bbox.fx * prim.width : 0, dy = bbox ? bbox.fy * prim.height : 0;      // opaque top-left (px)
+    const ww = bbox ? bbox.fw * prim.width : prim.width, hh = bbox ? bbox.fh * prim.height : prim.height;
+    if (bbox) this.defPending.delete(idx); else this.defPending.add(idx);
+    this.defTight.set(idx, { dx, dy, w: ww, h: hh }); // opaque box (px, rel. prim top-left) — for bucketing
+    // Offset (units) from the game anchor (full-box base-centre) to the opaque bbox base-centre.
+    const ox = Math.round((dx + ww / 2 - prim.width / 2) / UNIT), oy = Math.round((dy + hh - prim.height) / UNIT);
+
     const base = idx * 4;
-    const pw = u10(prim.width / UNIT); // billboard width  (units)
-    const ph = u10(prim.height / UNIT); // billboard height (units)
-    // R: prim_width(22–31) | prim_height(12–21) | (frame/pad fields unused in pure-quad mode → 0)
-    this.defMirror[base] = (((pw << 22) | (ph << 12)) >>> 0);
-    this.defMirror[base + 1] = 0;
+    // R: W(22–31) | H(12–21) opaque size (units). G: (ox+512)(12–21) | (oy+512)(2–11) signed offset (units).
+    this.defMirror[base] = (((u10(ww / UNIT) << 22) | (u10(hh / UNIT) << 12)) >>> 0);
+    this.defMirror[base + 1] = (((((ox + 512) & 0x3ff) << 12) | (((oy + 512) & 0x3ff) << 2)) >>> 0);
     this.defMirror[base + 2] = 0;
     this.defMirror[base + 3] = 0;
-    this.defIndex.set(key, idx);
     this.defDirty = true;
     return idx;
+  }
+
+  /** The tight bbox (WORLD px, relative to the prim's top-left) for a placed caster's def, or null. */
+  tightBoxOf(defIndex: number): { dx: number; dy: number; w: number; h: number } | null {
+    return this.defTight.get(defIndex) ?? null;
   }
 
   /** From the sprite silhouette (one surface-frame B readback, cached with the def): the base spread
@@ -190,9 +206,9 @@ export class ColdShadowData {
    *  (E=1 / W=3 — both the E/W regime) as a placeholder until the prim carries a real facing; `z` = 0. */
   primDataFor(prim: Primitive, defIndex: number): number {
     const hit = this.primIndex.get(prim.id);
-    if (hit !== undefined) return hit;
+    if (hit !== undefined) return hit; // static caster → written once; the opaque offset lives in the def
     const idx = this.primNext++;
-    const ax = prim.x + prim.width * 0.5; // ground anchor (bottom-centre)
+    const ax = prim.x + prim.width * 0.5; // the TRUE game anchor (full-box base-centre) — unchanged
     const ay = prim.y + prim.height;
     const rotation = prim.flipX ? 3 : 1; // W : E (both E/W regime for now)
     const z = 0;
@@ -240,7 +256,9 @@ export class ColdShadowData {
   }
 
   /** Upload any changed textures (call once per frame after populating). Cheap — no-op unless a slot landed. */
-  flush(): void {
+  /** Returns true if anything was uploaded (def/prim changed) — the caller re-dirties the shadow. */
+  flush(): boolean {
+    const changed = this.defDirty || this.primDirty;
     if (this.defDirty) {
       this.defTex.upload(this.defMirror);
       this.defDirty = false;
@@ -249,6 +267,7 @@ export class ColdShadowData {
       this.primTex.upload(this.primMirror);
       this.primDirty = false;
     }
+    return changed;
   }
 
   // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
@@ -272,6 +291,7 @@ export class ColdShadowData {
     const pos = this.primMirror[base], orient = this.primMirror[base + 1];
     return { pos: decodePosition(pos), z: (orient >>> 24) & 0xff, rotation: (orient >>> 22) & 0x3, def: (orient >>> 6) & 0xffff };
   }
+
   get debugPrimCount(): number {
     return this.primNext - 1; // index 0 is the sentinel
   }

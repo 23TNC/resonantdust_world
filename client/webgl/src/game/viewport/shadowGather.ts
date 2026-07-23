@@ -102,11 +102,14 @@ float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData,
   uvec4 Pd = fetchLin(primData, int(primIdx) / 2, primW);
   uint pos = (primIdx & 1u) == 0u ? Pd.x : Pd.z;
   uint orient = (primIdx & 1u) == 0u ? Pd.y : Pd.w;
-  vec2 A = decodePos(pos);
+  vec2 A = decodePos(pos);                                  // the prim's TRUE game anchor (full-box base-centre)
   int defIdx = int((orient >> 6) & 0xffffu);
   uvec4 D = fetchLin(primDef, defIdx, defW);
-  float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u);
-  return shadowCover(P, A, L, W, H);
+  float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u); // opaque frame w/h (units)
+  // Shift the game anchor by the sprite's opaque-frame offset (units, biased +512) → the shadow-cast
+  // anchor. The prim's game position is untouched; only the bbox we cast from moves (per-sprite, in the def).
+  vec2 off = vec2(float(int((D.y >> 12) & 1023u) - 512), float(int((D.y >> 2) & 1023u) - 512));
+  return shadowCover(P, A + off, L, W, H);
 }
 `;
 
@@ -155,20 +158,19 @@ void main() {
     // corridor rebuild comes after this proves the march was the culprit.
     int reachT = int((Ld.z >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin
     ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
+    ivec2 ls = ivec2(pmod(lc.x, uCols), pmod(lc.y, uRows));  // light's SLOT (rigid: caster-texel of the light tile)
     float cov = 0.0;
-    for (int dy = -16; dy <= 16 && cov < 1.0; dy++) {
+    for (int dy = -16; dy <= 16; dy++) {
       if (dy < -reachT || dy > reachT) continue;
       for (int dx = -16; dx <= 16; dx++) {
         if (dx < -reachT || dx > reachT) continue;
-        ivec2 t = lc + ivec2(dx, dy);
-        uvec4 cb = texelFetch(uCaster, ivec2(pmod(t.x, uCols), pmod(t.y, uRows)), 0);
+        ivec2 s = ivec2(pmod(ls.x + dx, uCols), pmod(ls.y + dy, uRows)); // wrap within the caster texture
+        uvec4 cb = texelFetch(uCaster, s, 0);
         for (int c = 0; c < 8; c++) {
           uint word = cb[c >> 1];
           uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
-          if (primIdx == 0u) continue;
-          cov = min(cov + casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW), 1.0);
+          if (primIdx != 0u) cov = min(cov + casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW), 1.0);
         }
-        if (cov >= 1.0) break;
       }
     }
     // Pack this SLOT's coverage as a 4-bit nibble at bit slot*4 (8 slots → 32 bits → R channel).
@@ -437,11 +439,14 @@ export class ShadowGather {
     const TILT = 0.5 * Math.cos(65 * Math.PI / 180); // 0.5·cos65 ≈ 0.211 of the height, leaned back
     for (const p of standing) {
       const def = this.coldData.definitionFor(p, resolver);
-      if (def < 0) continue; // surface not resolved yet
+      if (def < 0) continue; // no textureName → not a caster
       const inst = this.coldData.primDataFor(p, def);
-      const baseY = p.y + p.height, topY = baseY - TILT * p.height; // card ground y-extent (px)
+      // Bucket by the TIGHT opaque bbox (P3), not the full prim box — matches the quad we actually cast.
+      const t = this.coldData.tightBoxOf(def) ?? { dx: 0, dy: 0, w: p.width, h: p.height };
+      const tx = p.x + t.dx, ty = p.y + t.dy;
+      const baseY = ty + t.h, topY = baseY - TILT * t.h; // card ground y-extent (px)
       const r0 = Math.floor(topY / SQUARE), r1 = Math.floor(baseY / SQUARE);
-      const c0 = Math.floor(p.x / SQUARE), c1 = Math.floor((p.x + p.width) / SQUARE);
+      const c0 = Math.floor(tx / SQUARE), c1 = Math.floor((tx + t.w) / SQUARE);
       for (let wr = r0; wr <= r1; wr++) {
         if (wr < winRow || wr >= winRow + rows) continue;
         for (let wc = c0; wc <= c1; wc++) {
@@ -457,7 +462,9 @@ export class ShadowGather {
       }
     }
     this.casterTex.upload(this.casterMirror);
-    this.coldData.flush(); // upload any newly-allocated defs/prims
+    // A loose→tight def upgrade (surface resolved late) rewrites def/prim → re-dirty so the tighter
+    // shadow recomputes (otherwise the dirty-gate keeps the stale loose shadow).
+    if (this.coldData.flush()) this.forceDirty = true; // caster/def changed → recompute
   }
 
   /** Rebuild `shadow_dirty` for this frame: a slot is dirty when its world-tile **owner changed** (pan /
