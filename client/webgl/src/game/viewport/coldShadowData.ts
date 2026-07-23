@@ -1,17 +1,14 @@
-//! ColdShadowData — the GPU data textures the shadow gather reads via `texelFetch` (the
-//! `2026-07-21-shadow-bitfield` stream). Fixed-size, normalized `RGBA32UI` textures; written on change
-//! (CPU-side; no ping-pong), read every frame for free. Bit layouts are authoritative in
-//! `docs/VARIABLES.md` §Cold shadow data textures.
+//! ColdShadowData — the ONE unified `RGBA32UI` data texture the shadow gather reads via `texelFetch`
+//! (`2026-07-23-unified-data`). 1024×1024, linear index `i → (i & 1023, i >> 10)`, 64-row bands of
+//! 65 536 one-texel slots each; bit layouts authoritative in `docs/VARIABLES.md` §Cold shadow data:
 //!
-//! Layout (fixed slots — `N=128` lights, `u16` indexes):
-//!   • `light_data`           128×1 — col = light record (position/colour/reach). The per-light caster
-//!                            LUT is retired — casters come from the per-tile buckets (`shadowGather`).
-//!   • `prim_data`            256×128 — all placed casters, 2/px (`u64`); carries `u16 definition_index`.
-//!                            Index 0 is the SENTINEL (empty/end) → usable 1..65535.
-//!   • `prim_definition_data` 256×256 — one px/variant: minimum bbox (EVEN units) at a frame-relative
-//!                            offset, pow2-square frame by lod exponent + span + px nudges + 3×3
-//!                            anchors (the def-frame-anchors model), keyed by def_index.
+//!   rows   0–63    prim_definition_data  (band base 0)       1 px/def — IMMUTABLE, keyed (stem,cell,lod)
+//!   rows  64–127   prim_data             (band base 65 536)  1 px/placed caster (2/px retired — F1)
+//!   rows 128–191   light_data            (band base 131 072) 1 px/light record
+//!   rows 192–1022  reserved              (materials era)
+//!   row  1023      constants             (window mapping — P3)
 //!
+//! Transport: dirty ROW-SPAN `texSubImage2D` (P1; the P2 command-buffer scatter replaces it).
 //! World unit: `1 unit = SQUARE/16 = 4px`, compile-time (§Unit). Every world field is in units; only the
 //! atlas `frame_*` are texture px. Positions pack as `position_anchor_reference` (region|zone|tile|anchor).
 
@@ -20,18 +17,17 @@ import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
 import { SQUARE, UNIT, ZONE_DIM, REGION_DIM } from "./squareMath";
 
-/** Fixed light count (bits in the shadow bitfield). */
+/** Fixed light count (bits in the shadow bitfield — the light BAND holds 65 536 slots of headroom). */
 export const N_LIGHTS = 128;
-/** `light_data` — 128 wide (col = light) × 1 tall (the record row). The per-light caster LUT is
- *  retired: casters are found by the per-tile buckets + corridor sweep (`shadowGather`), not a LUT. */
-const LIGHT_W = 128;
-const LIGHT_H = 1;
-/** `prim_data` — 2 entries/px; `256 × 128` = 65536 slots (index 0 = sentinel). */
-const PRIM_W = 256;
-const PRIM_H = 128;
-/** `prim_definition_data` — 1 px/variant; `256 × 256` = 65536 defs. */
-const DEF_W = 256;
-const DEF_H = 256;
+/** The unified data texture: 1024×1024, linear index i → (i & 1023, i >> 10). */
+export const DATA_W = 1024;
+export const DATA_H = 1024;
+/** Band bases (linear indices) — 64-row bands of 65 536 one-texel slots. Mirrored in the GLSL. */
+export const DEF_BASE = 0;
+export const PRIM_BASE = 65536;
+export const LIGHT_BASE = 131072;
+/** The constants row (row 1023) — px0 window mapping, px1 slot/light-count (P3). */
+export const CONST_BASE = 1023 * DATA_W;
 
 const clamp = (v: number, hi: number): number => Math.min(Math.max(Math.round(v), 0), hi);
 
@@ -73,15 +69,15 @@ export function decodePosition(pos: number): [number, number] {
 }
 
 export class ColdShadowData {
-  /** `prim_definition_data` — one px/variant: geometry (units) + atlas frame (px) + page. */
-  private readonly defTex: Texture;
-  private readonly defMirror = new Uint32Array(DEF_W * DEF_H * 4);
-  /** stem+cell → allocated definition_index. */
+  /** THE unified data texture + its CPU mirror (16 MB — the source of truth for every band). */
+  private readonly dataTex: Texture;
+  private readonly dataMirror = new Uint32Array(DATA_W * DATA_H * 4);
+  /** Dirty ROW span of the unified mirror (row = linear index >> 10) — ONE texSubImage2D per flush. */
+  private rowLo = DATA_H;
+  private rowHi = -1;
+  /** stem+cell+lod → allocated definition_index (defs are IMMUTABLE — one per atlas frame). */
   private readonly defIndex = new Map<string, number>();
   private defNext = 0;
-  /** Dirty ROW span of the def mirror (rows = def_index >> 8) — flushed as ONE texSubImage2D. */
-  private defRowLo = DEF_H;
-  private defRowHi = -1;
   /** P3 tight bbox per def (WORLD px, relative to the prim's top-left): `dx,dy` = offset to the
    *  opaque region, `w,h` = its size. Fraction-of-frame × prim size, so it's LOD-independent. */
   private readonly defTight = new Map<number, { dx: number; dy: number; w: number; h: number }>();
@@ -92,33 +88,25 @@ export class ColdShadowData {
   private pageWarned = false;
   private frameSizeWarned = false;
 
-  /** `prim_data` — 2 entries/px: a placed caster's `position_anchor_reference` + `z`/`rotation`/`def_index`. */
-  private readonly primTex: Texture;
-  private readonly primMirror = new Uint32Array(PRIM_W * PRIM_H * 4);
   /** prim.id → allocated prim_data_index (≥1; index 0 is the sentinel). */
   private readonly primIndex = new Map<number, number>();
-  private primNext = 1; // 0 reserved as the LUT sentinel
-  /** Dirty ROW span of the prim mirror (rows = prim_index >> 9; 2 prims/px) — one upload per flush. */
-  private primRowLo = PRIM_H;
-  private primRowHi = -1;
-
-  /** `light_data` (128×33): row 0 = record, rows 1–32 = the LUT. Rebuilt by {@link buildLights}. */
-  private readonly lightTex: Texture;
-  private readonly lightMirror = new Uint32Array(LIGHT_W * LIGHT_H * 4);
+  private primNext = 1; // 0 reserved as the sentinel
   private lightCount = 0;
 
   constructor(private readonly renderer: Renderer) {
-    this.defTex = new Texture(renderer.gl, { width: DEF_W, height: DEF_H, format: "rgba32uint" });
-    this.primTex = new Texture(renderer.gl, { width: PRIM_W, height: PRIM_H, format: "rgba32uint" });
-    this.lightTex = new Texture(renderer.gl, { width: LIGHT_W, height: LIGHT_H, format: "rgba32uint" });
+    this.dataTex = new Texture(renderer.gl, { width: DATA_W, height: DATA_H, format: "rgba32uint" });
   }
 
-  /** The `prim_definition_data` texture (bound as a `usampler2D` in the shadow shader). */
-  get definitionTexture(): Texture {
-    return this.defTex;
+  /** THE unified data texture (bound once as `uData` in the shadow shader). */
+  get dataTexture(): Texture {
+    return this.dataTex;
   }
-  get definitionWidth(): number {
-    return DEF_W;
+
+  /** Widen the unified mirror's dirty row span to cover `linear` (texel index). */
+  private mark(linear: number): void {
+    const row = linear >> 10;
+    if (row < this.rowLo) this.rowLo = row;
+    if (row > this.rowHi) this.rowHi = row;
   }
   /** The shared surface atlas page (or null before any sprite resolved). */
   get surfacePage(): Texture | null {
@@ -213,17 +201,15 @@ export class ColdShadowData {
     // Bucketing box (world px, rel. prim top-left) — 1 frame unit ≡ 1 world unit by the span model.
     this.defTight.set(idx, { dx: ux0 * UNIT, dy: uy0 * UNIT, w: wu * UNIT, h: hu * UNIT });
 
-    const base = idx * 4;
+    const base = (DEF_BASE + idx) * 4;
     const page = 0;        // ONE bound surface page today — C5 (texture-array pages) assigns real indices
     const ax = 1, ay = 2;  // shadow casters hang the bbox at the prim's BOTTOM-CENTER anchor
     const nax = 1, nay = 2; // nudge alignment: x centered, y bottom — the default nudging operation
-    this.defMirror[base] = ((((wu >> 1) & 0x1ff) << 23) | (((hu >> 1) & 0x1ff) << 14) | (((st - 1) & 0xf) << 10)) >>> 0;
-    this.defMirror[base + 1] = (((ux0 & 0x3ff) << 22) | ((uy0 & 0x3ff) << 12)) >>> 0;
-    this.defMirror[base + 2] = (((fx16 & 0x3ff) << 22) | ((fy16 & 0x3ff) << 12) | ((page & 0xf) << 8) | ((lod & 0xf) << 4) | ((ax & 3) << 2) | (ay & 3)) >>> 0;
-    this.defMirror[base + 3] = ((((nx + 2048) & 0xfff) << 20) | (((ny + 2048) & 0xfff) << 8) | ((nax & 3) << 6) | ((nay & 3) << 4)) >>> 0;
-    const row = idx >> 8; // DEF_W = 256 px/row, 1 def/px
-    if (row < this.defRowLo) this.defRowLo = row;
-    if (row > this.defRowHi) this.defRowHi = row;
+    this.dataMirror[base] = ((((wu >> 1) & 0x1ff) << 23) | (((hu >> 1) & 0x1ff) << 14) | (((st - 1) & 0xf) << 10)) >>> 0;
+    this.dataMirror[base + 1] = (((ux0 & 0x3ff) << 22) | ((uy0 & 0x3ff) << 12)) >>> 0;
+    this.dataMirror[base + 2] = (((fx16 & 0x3ff) << 22) | ((fy16 & 0x3ff) << 12) | ((page & 0xf) << 8) | ((lod & 0xf) << 4) | ((ax & 3) << 2) | (ay & 3)) >>> 0;
+    this.dataMirror[base + 3] = ((((nx + 2048) & 0xfff) << 20) | (((ny + 2048) & 0xfff) << 8) | ((nax & 3) << 6) | ((nay & 3) << 4)) >>> 0;
+    this.mark(DEF_BASE + idx);
     return idx;
   }
 
@@ -232,12 +218,6 @@ export class ColdShadowData {
     return this.defTight.get(defIndex) ?? null;
   }
 
-  get primTexture(): Texture {
-    return this.primTex;
-  }
-  get primWidth(): number {
-    return PRIM_W;
-  }
 
   /** The `prim_data_index` (≥1) for a PLACED caster (position + orientation + its `def_index`),
    *  allocated on first sight + cached by `prim.id`. Defs are immutable, so a texture/lod change
@@ -250,42 +230,34 @@ export class ColdShadowData {
     const orient = ((((z & 0xff) << 24) | ((rotation & 0x3) << 22) | ((defIndex & 0xffff) << 6)) >>> 0);
     const hit = this.primIndex.get(prim.id);
     if (hit !== undefined) {
-      const base = (hit >> 1) * 4 + (hit & 1) * 2;
-      if (this.primMirror[base + 1] === orient) return { idx: hit, changed: false };
+      const base = (PRIM_BASE + hit) * 4; // 1 px/record (F1)
+      if (this.dataMirror[base + 1] === orient) return { idx: hit, changed: false };
       // RETENTION: "retain whatever the lod was until we get a NEW one" — a new one means a new
       // USABLE one. Never swap a standing prim DOWN to the loose (lod-0) def: if the freshly
       // resolved frame is unusable (off-page — e.g. a pool spill) the prim keeps casting its
       // current silhouette instead of degrading to a solid quad.
-      const curDef = (this.primMirror[base + 1] >>> 6) & 0xffff;
-      const newLod = (this.defMirror[defIndex * 4 + 2] >>> 4) & 0xf;
-      const curLod = (this.defMirror[curDef * 4 + 2] >>> 4) & 0xf;
+      const curDef = (this.dataMirror[base + 1] >>> 6) & 0xffff;
+      const newLod = (this.dataMirror[(DEF_BASE + defIndex) * 4 + 2] >>> 4) & 0xf;
+      const curLod = (this.dataMirror[(DEF_BASE + curDef) * 4 + 2] >>> 4) & 0xf;
       if (newLod < 4 && curLod >= 4) return { idx: hit, changed: false };
-      this.primMirror[base + 1] = orient; // def swap (new lod) / orientation change — position untouched
-      this.markPrimRow(hit);
+      this.dataMirror[base + 1] = orient; // def swap (new lod) / orientation change — position untouched
+      this.mark(PRIM_BASE + hit);
       return { idx: hit, changed: true };
     }
     const idx = this.primNext++;
     const ax = prim.x + prim.width * 0.5; // the TRUE game anchor (full-box base-centre) — unchanged
     const ay = prim.y + prim.height;
-    // 2 entries/px: even index → RG, odd → BA.
-    const base = (idx >> 1) * 4 + (idx & 1) * 2;
-    this.primMirror[base] = encodePosition(ax, ay); // position_anchor_reference
+    const base = (PRIM_BASE + idx) * 4; // 1 px/record: R position, G orient, B/A reserved (F1)
+    this.dataMirror[base] = encodePosition(ax, ay); // position_anchor_reference
     // orient: z(24–31) | rotation(22–23) | definition_index(6–21) | reserved(0–5)
-    this.primMirror[base + 1] = orient;
+    this.dataMirror[base + 1] = orient;
     this.primIndex.set(prim.id, idx);
-    this.markPrimRow(idx);
+    this.mark(PRIM_BASE + idx);
     return { idx, changed: true };
   }
 
-  get lightTexture(): Texture {
-    return this.lightTex;
-  }
   get lights(): number {
     return this.lightCount;
-  }
-  /** Texture widths `[lightW, defW, primW]` for the shader's index→texel maths. */
-  get widths(): [number, number, number] {
-    return [LIGHT_W, DEF_W, PRIM_W];
   }
 
   /** Build `light_data` (the record row) from the lights, and upload it. **Records only** — casters
@@ -293,46 +265,39 @@ export class ColdShadowData {
    *  is bucketed by `ShadowGather.buildCasters`, which also allocates defs/prims). Call on change. */
   buildLights(lights: ColdLight[]): void {
     const n = Math.min(lights.length, N_LIGHTS);
-    this.lightMirror.fill(0);
-    for (let k = 0; k < n; k++) {
+    for (let k = 0; k < Math.max(n, this.lightCount); k++) {
+      const base = (LIGHT_BASE + k) * 4;
+      if (k >= n) { // light removed — zero its record
+        this.dataMirror[base] = 0; this.dataMirror[base + 1] = 0; this.dataMirror[base + 2] = 0; this.dataMirror[base + 3] = 0;
+        this.mark(LIGHT_BASE + k);
+        continue;
+      }
       const L = lights[k];
-      const base = k * 4;
-      this.lightMirror[base] = encodePosition(L.x, L.y); // R: position
+      this.dataMirror[base] = encodePosition(L.x, L.y); // R: position
       const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
-      this.lightMirror[base + 1] = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0); // G
+      this.dataMirror[base + 1] = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0); // G
       // B: z(24–31, units) | reach(12–23, units) | reserved(1–11) | cast_shadows(0)
       const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff);
-      this.lightMirror[base + 2] = (((z << 24) | (reach << 12) | (L.castShadows ? 1 : 0)) >>> 0);
+      this.dataMirror[base + 2] = (((z << 24) | (reach << 12) | (L.castShadows ? 1 : 0)) >>> 0);
       // A: emitter_radius(24–31, units) — penumbra softness; rest reserved.
-      this.lightMirror[base + 3] = ((clamp(L.emitterRadius / UNIT, 255) << 24) >>> 0);
+      this.dataMirror[base + 3] = ((clamp(L.emitterRadius / UNIT, 255) << 24) >>> 0);
+      this.mark(LIGHT_BASE + k);
     }
     this.lightCount = n;
-    this.lightTex.upload(this.lightMirror);
   }
 
   /** Upload any changed textures (call once per frame after populating). Cheap — no-op unless a slot landed. */
   /** Returns true if anything was uploaded (def/prim changed) — the caller re-dirties the shadow. */
   flush(): boolean {
-    const changed = this.defRowHi >= this.defRowLo || this.primRowHi >= this.primRowLo;
-    // ONE full-width row-span texSubImage2D per texture per flush, straight out of the mirror —
-    // per-call overhead dominates at these sizes, so fewer/larger rectangles win. Appends
-    // (immutable defs) and clustered prim swaps keep the bounding span naturally tight.
-    if (this.defRowHi >= this.defRowLo) {
-      this.defTex.uploadRows(this.defRowLo, this.defRowHi - this.defRowLo + 1, this.defMirror, 4);
-      this.defRowLo = DEF_H; this.defRowHi = -1;
-    }
-    if (this.primRowHi >= this.primRowLo) {
-      this.primTex.uploadRows(this.primRowLo, this.primRowHi - this.primRowLo + 1, this.primMirror, 4);
-      this.primRowLo = PRIM_H; this.primRowHi = -1;
+    const changed = this.rowHi >= this.rowLo;
+    // ONE full-width row-span texSubImage2D over the unified texture per flush, straight out of the
+    // mirror. Bands are adjacent (defs 0–63, prims 64–127, lights 128–191), so mixed-band frames
+    // still ride one contiguous span. The P2 scatter replaces this transport entirely.
+    if (changed) {
+      this.dataTex.uploadRows(this.rowLo, this.rowHi - this.rowLo + 1, this.dataMirror, 4);
+      this.rowLo = DATA_H; this.rowHi = -1;
     }
     return changed;
-  }
-
-  /** Widen the prim mirror's dirty row span to cover `prim_index` (2 prims/px → row = idx >> 9). */
-  private markPrimRow(idx: number): void {
-    const row = idx >> 9;
-    if (row < this.primRowLo) this.primRowLo = row;
-    if (row > this.primRowHi) this.primRowHi = row;
   }
 
   // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
@@ -341,8 +306,8 @@ export class ColdShadowData {
     frame_xy: [number, number]; frame_page: number; frame_lod: number; anchor: [number, number];
     nudge: [number, number]; nudge_anchor: [number, number];
   } {
-    const b = index * 4;
-    const R = this.defMirror[b], G = this.defMirror[b + 1], B = this.defMirror[b + 2], A = this.defMirror[b + 3];
+    const b = (DEF_BASE + index) * 4;
+    const R = this.dataMirror[b], G = this.dataMirror[b + 1], B = this.dataMirror[b + 2], A = this.dataMirror[b + 3];
     return {
       prim_width: ((R >>> 23) & 0x1ff) * 2,  // units (stored /2 — even bbox)
       prim_height: ((R >>> 14) & 0x1ff) * 2,
@@ -361,8 +326,8 @@ export class ColdShadowData {
   }
   /** DEBUG: decode a prim_data slot — position back to px + z + rotation + def_index. */
   debugPrim(index: number): { pos: [number, number]; z: number; rotation: number; def: number } {
-    const base = (index >> 1) * 4 + (index & 1) * 2;
-    const pos = this.primMirror[base], orient = this.primMirror[base + 1];
+    const base = (PRIM_BASE + index) * 4;
+    const pos = this.dataMirror[base], orient = this.dataMirror[base + 1];
     return { pos: decodePosition(pos), z: (orient >>> 24) & 0xff, rotation: (orient >>> 22) & 0x3, def: (orient >>> 6) & 0xffff };
   }
 
@@ -371,7 +336,8 @@ export class ColdShadowData {
   }
   /** DEBUG: decode a light record (the record row). */
   debugLight(k: number): { pos: [number, number]; rgb: [number, number, number]; intensity: number; z: number; reach: number; emitterRadius: number; castShadows: boolean } {
-    const b = k * 4, R = this.lightMirror[b], G = this.lightMirror[b + 1], B = this.lightMirror[b + 2], A = this.lightMirror[b + 3];
+    const b = (LIGHT_BASE + k) * 4;
+    const R = this.dataMirror[b], G = this.dataMirror[b + 1], B = this.dataMirror[b + 2], A = this.dataMirror[b + 3];
     return {
       pos: decodePosition(R),
       rgb: [(G >>> 24) & 0xff, (G >>> 16) & 0xff, (G >>> 8) & 0xff],
@@ -384,8 +350,6 @@ export class ColdShadowData {
   }
 
   destroy(): void {
-    this.defTex.destroy();
-    this.primTex.destroy();
-    this.lightTex.destroy();
+    this.dataTex.destroy();
   }
 }

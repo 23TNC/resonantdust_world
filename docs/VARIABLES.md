@@ -271,14 +271,38 @@ is the separate fact that the value reached `state`.
 
 ## Cold shadow data textures (`client/webgl`)
 
-The GPU shadow **gather** reads its **static** (cold) light + caster data from **fixed-size** `RGBA32UI` data
-textures (`texelFetch`, exact integer reads) — written on change (CPU-side; no GPU ping-pong), read every frame
-for free. Fixed slots: **`N = 128` lights**, `u16` def/prim indexes (⇒ 65 536 ceilings). Casters are found via
+The GPU shadow **gather** reads its **static** (cold) light + caster data from **ONE unified** `RGBA32UI`
+**data texture** (`texelFetch`, exact integer reads), read every frame for free. Fixed slots: **`N = 128`
+lights** (the shadow-cold bitfield cap), `u16` def/prim indexes (⇒ 65 536 ceilings). Casters are found via
 **per-tile buckets** (the per-light LUT is retired); a caster's position + definition live in **one** place
-(`prim_data`). The per-tile maps live on the shared toroidal TILE grid (`cols × rows` from the cold cache
+(the prim band). The per-tile maps live on the shared toroidal TILE grid (`cols × rows` from the cold cache
 window; textile resolutions per the lighting-rebuild map-model). Work streams:
 [`work/2026-07-21-shadow-bitfield`](work/2026-07-21-shadow-bitfield/README.md),
-[`work/2026-07-22-lighting-rebuild`](work/2026-07-22-lighting-rebuild/README.md).
+[`work/2026-07-22-lighting-rebuild`](work/2026-07-22-lighting-rebuild/README.md),
+[`work/2026-07-23-unified-data`](work/2026-07-23-unified-data/README.md).
+
+**The unified data texture** — **1024×1024 `RGBA32UI`** (16 MB, provisioned once), linear index
+`i → (i & 1023, i >> 10)`, laid out in **64-row bands** (65 536 one-texel slots each):
+
+```
+rows    0–63    prim_definition_data   band base 0        1 px per def
+rows   64–127   prim_data              band base 65 536   1 px per placed caster (2/px RETIRED)
+rows  128–191   light_data             band base 131 072  1 px per light record
+rows  192–1022  reserved               (materials-era tables)
+row   1023      constants              px0: i32 cols | rows | winCol | winRow (two's-complement in u32 lanes)
+                                       px1: u32 slot (TEXTILE_UNIT) | light_count | reserved | reserved
+```
+
+Updates arrive by **command-buffer scatter** (P2 of unified-data; until then, dirty row-span
+`texSubImage2D`): a **64×64 `RGBA32UI` command buffer** uploaded as one contiguous row-span (rotating
+row cursor — never overwrite just-consumed rows) and applied by one point-scatter draw. Commands are
+**absolute whole-texel writes → replay-idempotent** (no clearing; the draw count is the only cursor):
+
+```
+command group (5 px = 4 commands; ~3 276 commands per 64×64 fill)
+  px0  header    4 × u32 lanes: u20 target linear index (0–19) | u12 reserved
+  px1–4 payload  the 4 targets' full RGBA32UI values, lane-ordered
+```
 
 **Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `reach`, opaque `prim_width/height`, the
 anchor `offset`) is in **units**, a compile-time constant `1 unit = SQUARE/16 = 4px` (`TILE = 16 units`,
@@ -296,7 +320,7 @@ u32 position_anchor_reference       region | zone | tile | anchor  (min unit = S
   u8 anchor_reference               bits 0–7      anchor_x:4 | anchor_y:4   (0..15 within the tile)
 ```
 
-**`light_data`** — a **128×1** `RGBA32UI` texture; **column `x` = light `x`'s record**. Written on light change:
+**`light_data` band** (rows 128–191) — 1 px per light record. Written on light change:
 
 ```
 R  u32 position_anchor_reference
@@ -305,18 +329,20 @@ B  u32 reach         u8 z (24–31, units) | u12 reach (12–23, units; ~16-zone
 A  u32 emitter       u8 emitter_radius (24–31, units — penumbra softness) | u24 reserved
 ```
 
-**`prim_data`** — a **256×128** `RGBA32UI` texture, **2 prims/px** (`u64` each) → 65 536 slots; **index 0 is a
-sentinel** (empty / end-of-list), so usable prim indices are **1..65 535**. One entry per **placed** caster
-instance — the single place a prim's position + definition live (move → one texel). The position is the prim's
-**true game anchor** (full-box base-centre) — the def's `offset` shifts the shadow, never the prim:
+**`prim_data` band** (rows 64–127) — **1 px per placed caster** (F1: the 2-prims/px packing is RETIRED —
+scatter commands write whole records, the shader drops the half-texel select, 64 spare bits/prim); **index 0
+is a sentinel**, so usable prim indices are **1..65 535**. The single place a prim's position + definition
+live (move → one texel). The position is the prim's **true game anchor** (full-box base-centre) — the def's
+`offset` shifts the shadow, never the prim:
 
 ```
-entry (2 per RGBA32UI px = 64 bits each)
-  u32 position_anchor_reference
-  u32 orient    u8 z (24–31, units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u16 definition_index (6–21) | u6 reserved (0–5)
+R  u32 position_anchor_reference
+G  u32 orient    u8 z (24–31, units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u16 definition_index (6–21) | u6 reserved (0–5)
+B  u32 reserved
+A  u32 reserved
 ```
 
-**`prim_definition_data`** — a **256×256** `RGBA32UI` texture, **one px per ATLAS FRAME**: defs are
+**`prim_definition_data` band** (rows 0–63) — **one px per ATLAS FRAME**: defs are
 **IMMUTABLE**, keyed `(stem, cell, lod)` — a new lod landing mints a NEW def, and `prim_data` keeps whatever
 def it holds until the writer swaps its `definition_index`, which rides the **prim dirty cascade** (prim
 tiles → lights reaching them → those lights' cast regions). Nothing ever rewrites a def, so texture/def

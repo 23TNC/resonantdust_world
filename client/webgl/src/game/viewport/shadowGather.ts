@@ -60,7 +60,9 @@ const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
-uvec4 fetchLin(highp usampler2D t, int i, int w) { return texelFetch(t, ivec2(i % w, i / w), 0); }
+// THE unified data texture (1024×1024): linear index → texel; 64-row bands (VARIABLES.md).
+const int DEF_BASE = 0, PRIM_BASE = 65536, LIGHT_BASE = 131072;
+uvec4 fetchLin(highp usampler2D t, int i) { return texelFetch(t, ivec2(i & 1023, i >> 10), 0); }
 vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
   uint region = (p >> 24) & 255u, zone = (p >> 16) & 255u, tile = (p >> 8) & 255u, anchor = p & 255u;
   uint wtx = (((region >> 4u) * RD + (zone >> 4u)) * ZD + (tile >> 4u));
@@ -99,15 +101,14 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H) {
 // (P4) — invert P back to the card's (s,t) (in-range BY CONSTRUCTION: P is inside the projected
 // quad, so no u/v-out-of-range class of reject exists) and sample the surface silhouette (coverage,
 // B channel) at the def's opaque frame. frame_w = 0 (not resolved / off-page) → solid quad.
-float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData,
-                  highp usampler2D primDef, int primW, int defW, sampler2D surf) {
+float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D data, sampler2D surf) {
   if (primIdx == 0u) return 0.0;
-  uvec4 Pd = fetchLin(primData, int(primIdx) / 2, primW);
-  uint pos = (primIdx & 1u) == 0u ? Pd.x : Pd.z;
-  uint orient = (primIdx & 1u) == 0u ? Pd.y : Pd.w;
+  uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));      // 1 px/record (F1): R position, G orient
+  uint pos = Pd.x;
+  uint orient = Pd.y;
   vec2 A = decodePos(pos);                                  // the prim's stored anchor (full-box base-centre)
   int defIdx = int((orient >> 6) & 0xffffu);
-  uvec4 D = fetchLin(primDef, defIdx, defW);
+  uvec4 D = fetchLin(data, DEF_BASE + defIdx);
   // R: bbox size (EVEN units, stored /2) + frame span (tiles, stored −1). G: bbox top-left in the
   // frame (units, unsigned). B: frame origin (16-px grid) + page + lod exponent + 3x3 anchors.
   float W = float(((D.x >> 23) & 511u) * 2u);
@@ -157,14 +158,11 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 const GATHER_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
-uniform highp usampler2D uLightData;  // light_data (128×33): row 0 = light records (LUT rows ignored)
-uniform highp usampler2D uPrimDef;    // prim_definition_data
-uniform highp usampler2D uPrimData;   // prim_data (2/px)
+uniform highp usampler2D uData;       // THE unified data texture (defs | prims | lights bands)
 uniform highp usampler2D uPresence;   // light_presence_cold — textile_tile map (1 textile/tile)
 uniform highp usampler2D uDirty;      // shadow_dirty — textile_tile map (R8UI): .r nonzero = recompute
 uniform highp usampler2D uCaster;     // caster buckets — textile_tile map (RGBA32UI = 8× u16 prim idx)
 uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
-uniform int uDefW, uPrimW;
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window; uSlot = TEXTILE_UNIT
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 out uvec4 fragColor;
@@ -187,7 +185,7 @@ void main() {
     uint pw = pres[slot >> 1];
     uint li = (slot & 1) == 0 ? (pw >> 16) : (pw & 0xffffu);
     if (li == 0xffffu) continue;                            // empty slot
-    uvec4 Ld = texelFetch(uLightData, ivec2(int(li), 0), 0);
+    uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));
     if ((Ld.z & 1u) == 0u) continue;                        // cast_shadows
     vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));
     float cov = 0.0;
@@ -215,7 +213,7 @@ void main() {
           for (int c = 0; c < 8; c++) {
             uint word = cb[c >> 1];
             uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
-            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
+            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, uData, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
           }
         }
       }
@@ -234,7 +232,7 @@ void main() {
           for (int c = 0; c < 8; c++) {
             uint word = cb[c >> 1];
             uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
-            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
+            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, uData, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
           }
         }
       }
@@ -711,7 +709,6 @@ export class ShadowGather {
     this.buildPresence(win);                    // F5 per-tile light cull (rebuilt on light/window change)
     this.buildCasters(standing, resolver, win); // P1 per-tile caster buckets (the corridor reads these)
     this.buildDirty(win);    // P3: owner-change (pan) + rebuild → dirty; clean tiles persist
-    const [, defW, primW] = this.coldData.widths;
     // Single pass; each fragment `discard`s clean tiles (shadow-cold persists) — no clear, no ping-pong.
     this.renderer.draw({
       program: this.gather,
@@ -719,17 +716,13 @@ export class ShadowGather {
       target: this.shadowRT!,
       blend: "none",
       textures: {
-        uLightData: this.coldData.lightTexture,
-        uPrimDef: this.coldData.definitionTexture,
-        uPrimData: this.coldData.primTexture,
+        uData: this.coldData.dataTexture,
         uPresence: this.presenceTex,
         uCaster: this.casterTex,
         uDirty: this.dirtyTex,
         uSurface: this.coldData.surfacePage ?? this.empty, // no page yet → defs have no frame → solid quads
       },
       uniforms: (p) => {
-        p.uInt("uDefW", defW);
-        p.uInt("uPrimW", primW);
         p.uInt("uCols", win.cols);
         p.uInt("uRows", win.rows);
         p.uInt("uWinCol", win.winCol);
