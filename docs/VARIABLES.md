@@ -327,10 +327,12 @@ slots are `u16` light indices (`0xFFFF` = empty); bucket slots are `u16` prim in
 Presence spans **two sets** (`_lo` slots 0–6, `_hi` slots 7–13) → **14 lights/tile**.
 
 **`shadow-cold`** (the gather OUTPUT RT, world-space toroidal `RGBA32UI`, textile_unit) packs **14 ×
-u8 coverage** — slot `i`'s u8 at channel `i>>2`, bits `(i&3)·8`: R = slots 0–3, G = 4–7, B = 8–11,
-A = slots 12–13 (+ u16 reserved) = **112 bits used**. u8 (256 levels, was u4/16) sharpens the
-silhouette-edge gradient and is the headroom for emitter-based penumbra. Slot `i` of the shadow
-matches slot `i` of presence (same light).
+u9 coverage** (512 levels) with NO channel straddle: the **low 8 bits** of slot `i` sit at channel
+`i>>2`, bits `(i&3)·8` (R = slots 0–3, G = 4–7, B = 8–11, A = slots 12–13 in bits 0–15); the **9th
+(high) bit** of slot `i` sits in **A bit `16+i`** (A bits 16–29 = the 14 high bits; bits 30–31
+reserved). So `value_i = low8_i | (high1_i << 8)`, `0..511` = **126 bits used**. Slot `i` of the
+shadow matches slot `i` of presence (same light). u9 is the coverage resolution emitter-based
+penumbra gradients need (work [`2026-07-23-penumbra`](work/2026-07-23-penumbra/README.md)).
 
 Updates arrive by **command-buffer scatter**: a **64×64 `RGBA32UI` command buffer** uploaded as one
 contiguous row-span (rotating row cursor — never overwrite just-consumed rows) and applied by one

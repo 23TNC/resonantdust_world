@@ -254,10 +254,13 @@ void main() {
         }
       }
     }
-    // Pack this SLOT's coverage as a u8 at channel slot>>2, bits (slot&3)*8 (14 slots → 112 bits).
-    uint cov8 = uint(clamp(cov, 0.0, 1.0) * 255.0 + 0.5) << uint((slot & 3) * 8);
+    // Pack this SLOT's coverage as u9 (0..511): low8 at channel slot>>2 bits (slot&3)*8; the 9th
+    // (high) bit into A at bit 16+slot (14 high bits in A[16:30]). No channel straddle.
+    uint v = uint(clamp(cov, 0.0, 1.0) * 511.0 + 0.5);
+    uint low8 = (v & 0xFFu) << uint((slot & 3) * 8);
     int ch = slot >> 2;                                     // static branch (no dynamic write-subscript)
-    if (ch == 0) o0 |= cov8; else if (ch == 1) o1 |= cov8; else if (ch == 2) o2 |= cov8; else o3 |= cov8;
+    if (ch == 0) o0 |= low8; else if (ch == 1) o1 |= low8; else if (ch == 2) o2 |= low8; else o3 |= low8;
+    o3 |= ((v >> 8) & 1u) << uint(16 + slot);               // high bit → A[16+slot]
   }
   fragColor = uvec4(o0, o1, o2, o3);
 }
@@ -323,8 +326,8 @@ void main() {
   for (int slot = 0; slot < 14; slot++) {
     uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
-    uint b = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
-    if (b > 0u) { float cvg = float(b) / 255.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
+    uint v = ((lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((sh.w >> uint(16 + slot)) & 1u) << 8); // u9
+    if (v > 0u) { float cvg = float(v) / 511.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
   }
   if (any <= 0.0) { fragColor = vec4(0.0); return; }        // lit → transparent
   fragColor = vec4(clamp(acc, 0.0, 1.0), any);              // shadow tint × coverage
