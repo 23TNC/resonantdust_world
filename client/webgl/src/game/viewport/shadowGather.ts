@@ -37,6 +37,9 @@ const UNITF = UNIT.toFixed(4);
  *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Tunable. */
 const SHADOW_LIFT = 0.0;             // DEBUG: shadow offset OFF (isolating the per-tile miscalc)
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
+/** Lights per tile in presence + shadow-cold: 14 (7 per presence set), each a u8 coverage in the
+ *  128-bit shadow-cold texel (slot i at channel i>>2, bits (i&3)·8). */
+const PRES_SLOTS = 14;
 
 interface Light {
   x: number;
@@ -62,7 +65,7 @@ const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 // THE unified data texture (1024×1024): linear index → texel; 64-row bands (VARIABLES.md).
 const int DEF_BASE = 0, PRIM_BASE = 65536, LIGHT_BASE = 131072, CONST_BASE = 1047552; // row 1023
-const int PRESENCE_BASE = 196608, CASTER_BASE = 262144; // tile-keyed sets 3, 4 (region-torus fold)
+const int PRESENCE_BASE = 196608, CASTER_BASE = 262144, PRESENCE_HI_BASE = 327680; // tile-keyed sets 3, 4, 5
 uvec4 fetchLin(highp usampler2D t, int i) { return texelFetch(t, ivec2(i & 1023, i >> 10), 0); }
 // Region-torus zone-strip fold: world tile → in-set id (matches TS foldTile). World tiles ≥ 0.
 int fmod16(int v) { return ((v % 16) + 16) % 16; }
@@ -197,10 +200,12 @@ void main() {
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
   P.y += ${SHADOW_LIFTF}; // lift the shadow up: test the ground point SHADOW_LIFT units below this one
 
-  uvec4 pres = fetchLin(uData, PRESENCE_BASE + foldTile(wc, wr)); // 7× u16 nearest lights (0xFFFF empty)
-  uint out0 = 0u;                                            // per-SLOT 4-bit coverage: slot i at bit i*4
-  for (int slot = 0; slot < 7; slot++) {
-    uint li = tileSlot(pres, slot);
+  int fold = foldTile(wc, wr);
+  uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
+  uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
+  uint o0 = 0u, o1 = 0u, o2 = 0u, o3 = 0u;                   // per-SLOT u8 coverage: slot i at ch i>>2, bit (i&3)*8
+  for (int slot = 0; slot < 14; slot++) {
+    uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
     uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // v2.1: G = position, A = z|reach|emitter|cast
     if ((Ld.w & 1u) == 0u) continue;                        // cast_shadows
@@ -249,11 +254,12 @@ void main() {
         }
       }
     }
-    // Pack this SLOT's coverage as a 4-bit nibble at bit slot*4 (8 slots → 32 bits → R channel).
-    uint nib = uint(cov * 15.0 + 0.5);
-    out0 |= nib << uint(slot * 4);
+    // Pack this SLOT's coverage as a u8 at channel slot>>2, bits (slot&3)*8 (14 slots → 112 bits).
+    uint cov8 = uint(clamp(cov, 0.0, 1.0) * 255.0 + 0.5) << uint((slot & 3) * 8);
+    int ch = slot >> 2;                                     // static branch (no dynamic write-subscript)
+    if (ch == 0) o0 |= cov8; else if (ch == 1) o1 |= cov8; else if (ch == 2) o2 |= cov8; else o3 |= cov8;
   }
-  fragColor = uvec4(out0, 0u, 0u, 0u);
+  fragColor = uvec4(o0, o1, o2, o3);
 }
 `;
 
@@ -278,7 +284,7 @@ uniform int uCols, uRows, uWinCol, uWinRow, uSlot; // window mapping — the ove
                                                    // DISPLAY consumer (F2: uniforms are its lane)
 out vec4 fragColor;
 int pmod(int a, int m) { return ((a % m) + m) % m; }
-const int PRESENCE_BASE = 196608;
+const int PRESENCE_BASE = 196608, PRESENCE_HI_BASE = 327680;
 uvec4 fetchLin(highp usampler2D t, int i) { return texelFetch(t, ivec2(i & 1023, i >> 10), 0); }
 int fmod16(int v) { return ((v % 16) + 16) % 16; }
 int foldTile(int wc, int wr) {
@@ -286,6 +292,7 @@ int foldTile(int wc, int wr) {
   return ((zx >> 2) + zy * 4) * 1024 + (zx & 3) * 256 + ty * 16 + tx;
 }
 uint laneN(uvec4 v, int c) { return c == 1 ? v.y : (c == 2 ? v.z : v.w); }
+uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
 uint tileSlot(uvec4 t, int i) {
   if (i == 0) return t.x & 0xffffu;
   uint w = laneN(t, (i + 1) >> 1);
@@ -307,15 +314,17 @@ void main() {
   int sx = pmod(tx, uCols), sy = pmod(ty, uRows);
   float lx = fract(vWorld.x / ${SQF}), ly = fract(vWorld.y / ${SQF});
   ivec2 texel = ivec2(sx * uSlot + int(lx * float(uSlot)), sy * uSlot + int(ly * float(uSlot)));
-  uvec4 pres = fetchLin(uData, PRESENCE_BASE + foldTile(tx, ty)); // this tile's 7 slot → light index
-  uint sh = texelFetch(uShadow, texel, 0).x;                // 7 nibbles: slot i coverage at bit i*4
+  int fold = foldTile(tx, ty);
+  uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
+  uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
+  uvec4 sh = texelFetch(uShadow, texel, 0);                 // 14× u8 coverage: slot i at ch i>>2, bit (i&3)*8
   vec3 acc = vec3(0.0);
   float any = 0.0;
-  for (int slot = 0; slot < 7; slot++) {
-    uint li = tileSlot(pres, slot);
+  for (int slot = 0; slot < 14; slot++) {
+    uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
-    uint nib = (sh >> uint(slot * 4)) & 0xFu;
-    if (nib > 0u) { float cvg = float(nib) / 15.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
+    uint b = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
+    if (b > 0u) { float cvg = float(b) / 255.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
   }
   if (any <= 0.0) { fragColor = vec4(0.0); return; }        // lit → transparent
   fragColor = vec4(clamp(acc, 0.0, 1.0), any);              // shadow tint × coverage
@@ -473,15 +482,15 @@ export class ShadowGather {
   private buildPresence(win: TileWindow): void {
     const { cols, rows, winCol, winRow } = win;
     const sig = `${winCol},${winRow},${cols},${rows},${this.lightsVer}`;
-    if (sig === this.presSig && this.presSlots.length === cols * rows * 7) return;
+    if (sig === this.presSig && this.presSlots.length === cols * rows * PRES_SLOTS) return;
     this.presSig = sig;
-    if (this.presSlots.length !== cols * rows * 7) {
-      this.presSlots = new Uint16Array(cols * rows * 7);
-      this.slotDist = new Float32Array(cols * rows * 7);
+    if (this.presSlots.length !== cols * rows * PRES_SLOTS) {
+      this.presSlots = new Uint16Array(cols * rows * PRES_SLOTS);
+      this.slotDist = new Float32Array(cols * rows * PRES_SLOTS);
     }
     this.presSlots.fill(0xffff); // every slot empty
     this.slotDist.fill(Infinity);
-    // Nearest-7 per in-window tile (dense window-local scratch; the GPU slot is the region-torus fold).
+    // Nearest-14 per in-window tile (dense window-local scratch; the GPU slot is the region-torus fold).
     const n = Math.min(this.lights.length, MAX_LIGHTS);
     for (let k = 0; k < n; k++) {
       const L = this.lights[k], r = L.reach;
@@ -497,10 +506,10 @@ export class ShadowGather {
           if (d2 > r2) continue; // circular reach
           const ti = (wr - winRow) * cols + (wc - winCol); // dense window-local tile
           let worst = -1, worstD = d2;
-          for (let s = 0; s < 7; s++) { const sd = this.slotDist[ti * 7 + s]; if (sd > worstD) { worstD = sd; worst = s; } }
-          if (worst < 0) continue; // all 7 slots already closer → drop this light for this tile
-          this.slotDist[ti * 7 + worst] = d2;
-          this.presSlots[ti * 7 + worst] = k & 0xffff;
+          for (let s = 0; s < PRES_SLOTS; s++) { const sd = this.slotDist[ti * PRES_SLOTS + s]; if (sd > worstD) { worstD = sd; worst = s; } }
+          if (worst < 0) continue; // all 14 slots already closer → drop this light for this tile
+          this.slotDist[ti * PRES_SLOTS + worst] = d2;
+          this.presSlots[ti * PRES_SLOTS + worst] = k & 0xffff;
         }
       }
     }
@@ -508,7 +517,7 @@ export class ShadowGather {
     for (let wr = winRow; wr < winRow + rows; wr++)
       for (let wc = winCol; wc < winCol + cols; wc++) {
         const ti = (wr - winRow) * cols + (wc - winCol);
-        this.coldData.writePresence(wc, wr, this.presSlots.subarray(ti * 7, ti * 7 + 7));
+        this.coldData.writePresence(wc, wr, this.presSlots.subarray(ti * PRES_SLOTS, ti * PRES_SLOTS + PRES_SLOTS));
       }
   }
 

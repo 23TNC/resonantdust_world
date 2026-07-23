@@ -290,9 +290,10 @@ The texture is **16 u16-addressable SETS** (1024×64 each; `set = linear >> 16`,
 set 0   rows   0–63    prim_definition_data   1 px per def
 set 1   rows  64–127   prim_data              1 px per placed caster (2/px RETIRED)
 set 2   rows 128–191   light_data             1 px per light record
-set 3   rows 192–255   light_presence         1 px per TILE (region-torus fold) — 7 light slots
+set 3   rows 192–255   light_presence_lo      1 px per TILE (region-torus fold) — light slots 0–6
 set 4   rows 256–319   caster_buckets         1 px per TILE (region-torus fold) — 7 caster slots
-sets 5–14              reserved               (materials-era tables)
+set 5   rows 320–383   light_presence_hi      1 px per TILE (region-torus fold) — light slots 7–13
+sets 6–14              reserved               (materials-era tables)
 set 15  row  1023 tail constants px (in-set id 64 512):
         R  u16 id | u16 cols        G  u16 rows | u16 slot (TEXTILE_UNIT)
         B  i16 winCol | i16 winRow  A  u16 light_count | u16 reserved
@@ -320,9 +321,16 @@ world tile (wc, wr):
   in_set_id = ((zx>>2) + zy*4) * 1024  +  (zx&3)*256 + ty*16 + tx
 ```
 
-`light_presence` / `caster_buckets` px: `R = u16 in_set_id | u16 slot0`, `G = slot1|slot2`,
+`light_presence_*` / `caster_buckets` px: `R = u16 in_set_id | u16 slot0`, `G = slot1|slot2`,
 `B = slot3|slot4`, `A = slot5|slot6` — **7 slots/tile** (the self-address costs the 8th). Presence
 slots are `u16` light indices (`0xFFFF` = empty); bucket slots are `u16` prim indices (`0` = empty).
+Presence spans **two sets** (`_lo` slots 0–6, `_hi` slots 7–13) → **14 lights/tile**.
+
+**`shadow-cold`** (the gather OUTPUT RT, world-space toroidal `RGBA32UI`, textile_unit) packs **14 ×
+u8 coverage** — slot `i`'s u8 at channel `i>>2`, bits `(i&3)·8`: R = slots 0–3, G = 4–7, B = 8–11,
+A = slots 12–13 (+ u16 reserved) = **112 bits used**. u8 (256 levels, was u4/16) sharpens the
+silhouette-edge gradient and is the headroom for emitter-based penumbra. Slot `i` of the shadow
+matches slot `i` of presence (same light).
 
 Updates arrive by **command-buffer scatter**: a **64×64 `RGBA32UI` command buffer** uploaded as one
 contiguous row-span (rotating row cursor — never overwrite just-consumed rows) and applied by one

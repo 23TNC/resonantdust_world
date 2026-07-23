@@ -27,8 +27,9 @@ export const DEF_BASE = 0;
 export const PRIM_BASE = 65536;
 export const LIGHT_BASE = 131072;
 /** Tile-keyed sets — region-torus addressed (presence-in-data). One set = one region's 65 536 tiles. */
-export const PRESENCE_BASE = 3 * 65536;
+export const PRESENCE_BASE = 3 * 65536;    // light_presence_lo (light slots 0–6)
 export const CASTER_BASE = 4 * 65536;
+export const PRESENCE_HI_BASE = 5 * 65536; // light_presence_hi (light slots 7–13)
 /** The constants row (row 1023) — px0 window mapping, px1 slot/light-count (P3). */
 export const CONST_BASE = 1023 * DATA_W;
 
@@ -217,10 +218,10 @@ export class ColdShadowData {
    *  self-addressing id (the fold) in R's high half, then the 7 slots. Compare-written — an
    *  unchanged tile costs no command. `empty` is the per-set sentinel (0xFFFF presence, 0 buckets).
    *  `slots` holds ≤7 u16 values; missing slots take `empty`. */
-  private writeTileSet(base: number, wc: number, wr: number, slots: ArrayLike<number>, empty: number): void {
+  private writeTileSet(base: number, wc: number, wr: number, slots: ArrayLike<number>, empty: number, off = 0): void {
     const id = foldTile(wc, wr);
     const b = (base + id) * 4;
-    const g = (i: number): number => (i < slots.length ? slots[i] & 0xffff : empty);
+    const g = (i: number): number => (off + i < slots.length ? slots[off + i] & 0xffff : empty);
     const R = (((id & 0xffff) << 16) | g(0)) >>> 0;
     const G = ((g(1) << 16) | g(2)) >>> 0;
     const B = ((g(3) << 16) | g(4)) >>> 0;
@@ -231,17 +232,20 @@ export class ColdShadowData {
       this.mark(base + id);
     }
   }
-  /** Presence tile: 7 nearest-light u16 indices (0xFFFF empty). */
+  /** Presence tile: **14** nearest-light u16 indices (0xFFFF empty) across two sets — lo = slots
+   *  0–6, hi = slots 7–13. */
   writePresence(wc: number, wr: number, slots: ArrayLike<number>): void {
-    this.writeTileSet(PRESENCE_BASE, wc, wr, slots, 0xffff);
+    this.writeTileSet(PRESENCE_BASE, wc, wr, slots, 0xffff, 0);
+    this.writeTileSet(PRESENCE_HI_BASE, wc, wr, slots, 0xffff, 7);
   }
   /** Caster-bucket tile: 7 u16 prim indices (0 empty — the prim sentinel). */
   writeCasters(wc: number, wr: number, slots: ArrayLike<number>): void {
     this.writeTileSet(CASTER_BASE, wc, wr, slots, 0x0000);
   }
-  /** Clear a tile's presence (all-empty) — eviction. */
+  /** Clear a tile's presence (both sets, all-empty) — eviction. */
   clearPresence(wc: number, wr: number): void {
     this.writeTileSet(PRESENCE_BASE, wc, wr, EMPTY7, 0xffff);
+    this.writeTileSet(PRESENCE_HI_BASE, wc, wr, EMPTY7, 0xffff);
   }
   /** Clear a tile's buckets (all-empty) — eviction. */
   clearCasters(wc: number, wr: number): void {
