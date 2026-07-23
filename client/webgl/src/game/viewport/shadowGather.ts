@@ -153,6 +153,7 @@ uniform highp usampler2D uCaster;     // caster buckets — textile_tile map (RG
 uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
 uniform int uDefW, uPrimW;
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window; uSlot = TEXTILE_UNIT
+uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 out uvec4 fragColor;
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
@@ -176,24 +177,52 @@ void main() {
     uvec4 Ld = texelFetch(uLightData, ivec2(int(li), 0), 0);
     if ((Ld.z & 1u) == 0u) continue;                        // cast_shadows
     vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));
-    // BRUTE FORCE (debug): the 1-tile corridor march misses casters whose QUAD spans tiles the march
-    // never visits (the wedge bug). So skip the corridor entirely — walk EVERY tile in the light's
-    // reach box and test each bucketed caster's quad against P. Correctness over speed; the real
-    // corridor rebuild comes after this proves the march was the culprit.
-    int reachT = int((Ld.z >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin
-    ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
-    ivec2 ls = ivec2(pmod(lc.x, uCols), pmod(lc.y, uRows));  // light's SLOT (rigid: caster-texel of the light tile)
     float cov = 0.0;
-    for (int dy = -16; dy <= 16; dy++) {
-      if (dy < -reachT || dy > reachT) continue;
-      for (int dx = -16; dx <= 16; dx++) {
-        if (dx < -reachT || dx > reachT) continue;
-        ivec2 s = ivec2(pmod(ls.x + dx, uCols), pmod(ls.y + dy, uRows)); // wrap within the caster texture
-        uvec4 cb = texelFetch(uCaster, s, 0);
-        for (int c = 0; c < 8; c++) {
-          uint word = cb[c >> 1];
-          uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
-          if (primIdx != 0u) cov = min(cov + casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW, uSurface), 1.0);
+    if (uCorridor == 1) {
+      // P6 CORRIDOR — the pure optimization, validated against the brute box below. Why the segment
+      // suffices: P occluded by a caster means P = ground(C) = L.xy + f·(C.xy − L.xy) for a card
+      // point C with f ≥ 1, so C.xy = L.xy + (P − L.xy)/f lies ON the segment light→P — and C.xy is
+      // inside the caster's ground rect, which is EXACTLY what buildCasters buckets (I-7). So every
+      // occluding caster has a bucketed tile on the segment. Walk the segment's tiles by sampling at
+      // ≤1-tile steps + a ±1 cross pad (covers corner crossings + float edges — no wedge bug, no
+      // step cap, same pmod slot mapping as the buckets). Constant loop bound; only m in the
+      // condition (the GLSL loop-condition foot-gun).
+      vec2 a = L.xy / UPT;                                   // light in tile coords
+      vec2 b = P / UPT;                                      // texel in tile coords
+      vec2 d = b - a;
+      int nsteps = int(ceil(abs(d.x)) + ceil(abs(d.y))) + 1; // ≥ max-axis span → ≤1 tile between samples
+      for (int m = 0; m <= 48; m++) {                        // constant bound (brute caps reach at 16 tiles too)
+        if (m > nsteps) break;
+        vec2 q = a + d * (float(m) / float(max(nsteps, 1)));
+        ivec2 qt = ivec2(floor(q));
+        for (int n = 0; n < 5; n++) {                        // cross pad: centre, ±x, ±y
+          ivec2 o = qt + ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0));
+          ivec2 s = ivec2(pmod(o.x, uCols), pmod(o.y, uRows));
+          uvec4 cb = texelFetch(uCaster, s, 0);
+          for (int c = 0; c < 8; c++) {
+            uint word = cb[c >> 1];
+            uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
+            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
+          }
+        }
+      }
+    } else {
+      // BRUTE FORCE (the baseline the corridor must match): walk EVERY tile in the light's reach box
+      // and test each bucketed caster's quad against P.
+      int reachT = int((Ld.z >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin
+      ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
+      ivec2 ls = ivec2(pmod(lc.x, uCols), pmod(lc.y, uRows));  // light's SLOT (rigid: caster-texel of the light tile)
+      for (int dy = -16; dy <= 16; dy++) {
+        if (dy < -reachT || dy > reachT) continue;
+        for (int dx = -16; dx <= 16; dx++) {
+          if (dx < -reachT || dx > reachT) continue;
+          ivec2 s = ivec2(pmod(ls.x + dx, uCols), pmod(ls.y + dy, uRows)); // wrap within the caster texture
+          uvec4 cb = texelFetch(uCaster, s, 0);
+          for (int c = 0; c < 8; c++) {
+            uint word = cb[c >> 1];
+            uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
+            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
+          }
         }
       }
     }
@@ -351,6 +380,9 @@ export class ShadowGather {
   private dirtyRows = 0;
   /** Sticky "recompute every tile next build" — set on a cold rebuild; survives a window-not-ready frame. */
   private forceDirty = true;
+  /** P6: walk the segment corridor (true) or the brute-force reach box (false). Brute is the
+   *  validation baseline — `__corridor(false)` + `__shadowDiff()` must report 0 mismatches. */
+  private corridor = true;
   /** P5 scoped dirty: world-tile rects `[x0,y0,x1,y1]` (inclusive) queued by a light MOVE — the union
    *  of the light's old + new reach boxes. Applied (∩ window) on top of the owner pass in
    *  {@link buildDirty}, then cleared. Correct because a moved light can only change presence/shadow
@@ -370,6 +402,9 @@ export class ShadowGather {
     (globalThis as unknown as { __cold: unknown }).__cold = this.coldData; // DEBUG
     // DEBUG: console toggle for the orbit (perf measurement) — `__orbit(false)` to freeze the lights.
     (globalThis as unknown as { __orbit: (on?: boolean) => boolean }).__orbit = (on?: boolean) => this.setOrbit(on);
+    // DEBUG (P6): corridor↔brute toggle + the gather itself (for `debugReadShadow` diffing).
+    (globalThis as unknown as { __corridor: (on?: boolean) => boolean }).__corridor = (on?: boolean) => this.setCorridor(on);
+    (globalThis as unknown as { __gather: ShadowGather }).__gather = this;
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -566,6 +601,22 @@ export class ShadowGather {
     if (!this.orbit) this.forceDirty = true; // one last clean recompute at the frozen positions
     return this.orbit;
   }
+  /** P6: switch corridor ↔ brute walk (no arg = toggle) + recompute everything under the new path. */
+  setCorridor(on?: boolean): boolean {
+    this.corridor = on ?? !this.corridor;
+    this.forceDirty = true;
+    return this.corridor;
+  }
+  /** DEBUG (P6): read the shadow-cold RT back (RGBA32UI) — the corridor↔brute identity diff. */
+  debugReadShadow(): Uint32Array | null {
+    if (!this.shadowRT) return null;
+    const gl = this.renderer.gl;
+    const out = new Uint32Array(this.shadowRT.width * this.shadowRT.height * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowRT.fbo);
+    gl.readPixels(0, 0, this.shadowRT.width, this.shadowRT.height, gl.RGBA_INTEGER, gl.UNSIGNED_INT, out);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return out;
+  }
   toggle(): boolean {
     this.enabled = !this.enabled;
     return this.enabled;
@@ -647,6 +698,7 @@ export class ShadowGather {
         p.uInt("uWinCol", win.winCol);
         p.uInt("uWinRow", win.winRow);
         p.uInt("uSlot", TEXTILE_UNIT);
+        p.uInt("uCorridor", this.corridor ? 1 : 0);
       },
     });
   }

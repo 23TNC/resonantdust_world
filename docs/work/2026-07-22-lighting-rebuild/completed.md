@@ -72,3 +72,23 @@ Append-only history; authoritative for what's done._
 - **Verified in browser** (orbit on → off, zoom 0.5): the whole field re-points correctly as the
   light orbits (the conifer streak hops between trees), **no stale shadows** linger outside the
   swept boxes, and freezing the orbit settles a clean field.
+
+## P6 · Corridor rebuilt as a pure optimization — 2026-07-23 ✓
+
+- **Why the segment suffices** (the proof the old corridor lacked): P occluded by a caster ⟹
+  `P = L.xy + f·(C.xy − L.xy)` for a card point `C`, `f ≥ 1` ⟹ `C.xy = L.xy + (P − L.xy)/f` lies
+  **on the segment light→P** — and `C.xy` is inside the caster's ground rect, which is **exactly
+  what `buildCasters` buckets** (I-7). So every occluding caster has a bucketed tile on the segment.
+- Walk: sample the segment at ≤1-tile steps (`nsteps = ⌈|dx|⌉+⌈|dy|⌉+1`) + a **±1 cross pad** per
+  sample (covers corner crossings + float edges). Constant loop bound (48), only the step index in
+  the loop condition (the miscompile foot-gun), same `pmod` slot mapping as the buckets. None of the
+  old failure modes: no 1-tile march (wedges), no test cap (3-tile shadows), no basis mismatch.
+- **Accumulation made idempotent** — `cov = max(cov, cover)` in BOTH paths (was `min(cov+…, 1)`):
+  a caster bucketed in several visited tiles is tested a different number of times per path, so any
+  additive accumulator breaks bit-identity on fractional silhouette edges. Max is also the honest
+  hard-shadow union.
+- Brute force kept in-shader behind `uCorridor` (`__corridor(false)`), + `__gather.debugReadShadow()`
+  RGBA32UI readback for the diff. **Acceptance: bit-identical** — 2 097 152 words diffed at two
+  light positions (seed + post-orbit), **0 mismatches**, 4 892 / 5 631 nonzero texels. Both paths
+  display-capped at 121 fps in this scene (1 light; the win is structural: ~125 vs ~729 bucket
+  reads per texel·light at reach 12). Corridor is now the default path.
