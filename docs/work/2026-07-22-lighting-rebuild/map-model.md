@@ -10,19 +10,32 @@ wrapping **by TILES**. Because the shape *and* the wrap are identical across eve
 so their x/y coordinates relate directly, and **panning never moves data**: only the window's
 tile-origin advances.
 
-## The three resolutions (texels per tile)
+## The three resolutions — `textile_tile` / `textile_unit` / `textile_square`
 
-Every map shares the tile grid; each picks a per-tile resolution `R`:
+A **textile** is one texel of a map. Every map shares the tile grid; each picks how many textiles
+it packs per tile:
 
-| resolution | R (texels/tile) | position stored in | used for |
+| name | textiles / tile | one textile covers | position stored in | used for |
+|---|---|---|---|---|
+| **`textile_tile`** | `1` | 1 tile | **tiles** (+ sub-tile anchor) | lights, caster buckets (prims), presence |
+| **`textile_unit`** | `SQUARE/UNIT` = **16** | 1 unit (`UNIT` px) | **units** | the shadow map |
+| **`textile_square`** | `SQUARE` = **64** | 1 px | **px** | albedo, normal, … |
+
+Fixed relations (`SQUARE` = px per tile, the one dial):
+`UNIT = SQUARE/16` (px per unit) · `16 units per tile` (`= SQUARE/UNIT`) · `SQUARE px per tile`.
+So `textile_unit` = **16 textiles/tile** (one per unit) — that count is `SQUARE/UNIT`, **not** the
+unit's pixel size `SQUARE/16`.
+
+## Scaling resolution — bump `SQUARE`
+
+The viewport is measured in **tiles**; `SQUARE` is the only resolution dial. Raise it and the
+`textile_square` maps (albedo/normal) get sharper, while `textile_unit` **stays 16 textiles/tile** —
+each just covers more px:
+
+| `SQUARE` | `UNIT = SQUARE/16` | `textile_unit` (per tile) | each `textile_unit` covers |
 |---|---|---|---|
-| **TILES** | `1` | **tiles** (+ sub-tile anchor) | per-tile data: **lights, caster buckets (prims), presence** |
-| **UNITS** | `SQUARE/UNIT` = **16** | **units** | sub-tile data: **the shadow map** |
-| **SQUARE** | `SQUARE` = **64** | **px** | full-res: **albedo, normal, …** |
-
-Fixed conversions: `UNIT` (the size of one unit) `= SQUARE/16 = 4 px`; `1 tile = SQUARE px = 16 units`
-(`= SQUARE/UNIT`). So the UNITS map's texels-per-tile is the **count** of units per tile (`SQUARE/UNIT
-= 16`), **not** the unit's pixel size (`SQUARE/16 = 4`) — the two I fat-fingered together.
+| 64  | 4 px | 16 | 4 px |
+| 128 | 8 px | 16 | 8 px |
 
 A map at resolution `R` is a texture of size **`cols·R × rows·R`**.
 
