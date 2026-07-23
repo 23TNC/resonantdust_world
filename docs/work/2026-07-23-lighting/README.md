@@ -1,0 +1,53 @@
+# Lighting — illuminate the world from the 3 lights — 2026-07-23
+
+_Component: [`client/webgl`](../../components/client/) · `game/viewport/` — a new lighting pass at
+the display seam (replaces/augments `albedoBlitShader`'s UNLIT blit), consuming the G-buffer +
+`coldShadowData` lights + `shadow-cold`. Phases in [`todo.md`](todo.md)._
+
+Stand up the **lighting pass** (deleted 2026-07-19 in the lighting/shadow nuke — the G-buffer + the
+whole shadow system have since been rebuilt; this re-lights the world on top of them). The pieces are
+all in place now:
+
+| input | where | holds |
+|---|---|---|
+| **albedo** | G-buffer (SquareCache `albedo-cold`/`-warm`) | base pigment (material-jittered, no light) |
+| **normal** | G-buffer `normal-*` | surface relief (+Y-up, OpenGL; [[marigold-delight]]) |
+| **surface** | G-buffer `surface-*` | R presence · G ao · B alpha ([[coverage-surface-model]]) |
+| **lights** | data texture set 2 (`coldShadowData`) | pos · colour · reach · emitter · intensity |
+| **presence** | data texture sets 3/5 | the ≤14 lights acting on each tile |
+| **shadow-cold** | the gather RT | per-light u9 coverage (14 slots) — [[lighting-rebuild-complete]] |
+
+## The model + phased plan (user's order)
+
+Per display pixel: world position → its tile's **presence** → for each acting light, accumulate its
+contribution; multiply the sum into **albedo**; output lit colour. Built up in phases:
+
+### P1 · Emission — lights illuminate the world
+Flat accumulation, no normal, no shadow. Per pixel: `light = ambient + Σ_i colour_i · intensity_i ·
+falloff(dist_i, reach_i)`; `out = albedo · light`. Proves the presence → light-record → falloff →
+sum path renders (a bright halo around each light, over the flat albedo). Falloff curve is a fork
+([`forks.md#f2`](forks.md#f2)).
+
+### P2 · Albedo + normal — shaded lighting
+Add **Lambert diffuse** from the normal map: per light, `diffuse = max(0, N · L̂)` with `L̂` the
+direction to the light (in-plane `light.xy − P`, combined with the normal's up component for the
+top-down 3/4 look). `out = albedo · (ambient + Σ_i colour_i · intensity_i · falloff_i · diffuse_i)`.
+Now relief reads (lit side bright, away side dark). Normal convention is a fork
+([`forks.md#f3`](forks.md#f3)).
+
+### P3 · Shadows — lights respect their shadow-cold coverage
+Mask each light's contribution by its shadow: `… · (1 − shadowCoverage_i)`, reading slot `i`'s u9
+coverage from `shadow-cold` at the pixel's unit-texel (presence slot `i` ↔ shadow slot `i`, same
+light). A shadowed pixel stops receiving that light — the penumbra/umbra we built modulate it
+smoothly. This is what the whole shadow stack was for.
+
+## Where the pass runs
+
+The Viewport currently blits UNLIT albedo (warm-over-cold) via `AlbedoBlitShader`. The lighting pass
+is that display draw, now sampling albedo + normal + surface + presence + shadow-cold and outputting
+lit colour ([`forks.md#f1`](forks.md#f1): extend the blit vs a separate composite RT; warm-over-cold
+compositing must stay — [[rt-tiers-cold-warm-hot]]).
+
+## Not sun/ambient — dense many-lights
+Per [[lighting-direction]]: this is DENSE point lights (the DSL emits them), not a global sun. Ambient
+is a small floor, not the main term. The 3 debug lights are the first consumers; content lights follow.
