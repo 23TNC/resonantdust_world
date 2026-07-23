@@ -43,9 +43,11 @@ r=3 px, slack=3 px → centered start needs a shift of `slack/2 − r = −1.5` 
   recording WHICH alignment the stored nudge encodes — defaults x = 1 (center), y = 2 (bottom, the
   shadow base) — future nudging operations write other anchors. ALPHA is now FULL (12+12+2+2+4).
 
-## F5 · GPU scatter queue for data-texture updates — DESIGNED, deferred {#f5}
+## F5 · GPU scatter queue for data-texture updates — GRADUATED to a stream {#f5}
 
-**2026-07-23 — user-proposed; build when scattered-sparse becomes the common write pattern.**
+**2026-07-23 — user-proposed; design + consolidation rider moved to
+[`2026-07-23-unified-data`](../2026-07-23-unified-data/README.md) (unified 1024² data texture,
+64-row bands + constants row, 64×64 command buffer, point-scatter draw). Details live THERE.**
 
 Instead of CPU `texSubImage2D` into the data textures, upload a small sequential **command buffer**
 (entries: `u16 target index` + the target texel's full RGBA32UI payload) and run a **point-scatter
