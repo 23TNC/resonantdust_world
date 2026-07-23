@@ -35,7 +35,24 @@ and by the foreshortening `s` (→ ∞ near the shadow tip). Both blow up as sha
 by point-in-quad membership** (four cross-products), which has no per-pixel division to blow up and
 **cannot produce out-of-range** — a point is simply in the quad or not.
 
-## Reach-walk reads the wrong toroidal tile {#reach-walk} — OPEN
+## Sweep loop miscompile — no shadows {#reach-walk} — RESOLVED 2026-07-23
+
+- **Real root cause (found 2026-07-23):** the brute-force sweep's outer loop
+  `for (int dy = -16; dy <= 16 && cov < 1.0; dy++)` put a **loop-body-modified variable (`cov`) in
+  the for-condition**. The GLSL compiler mishandled it and **silently skipped iterations**, so the
+  sweep never reached the caster's tile — every value was correct end-to-end (bucket held the prim,
+  GPU texel matched the mirror, `decodePos` was right, hardcoding the id rendered), yet the lookup
+  never fired. This produced a *pile of contradictory probes* (direct `pmod` read returned 192, but
+  the walk's `lc+(dx,dy)` iteration at that tile never executed, with `reachT` provably ≥13).
+- **Fix:** rewrote the sweep in slot-space with a **pure constant-bound loop** — no body-dependent
+  loop condition, no `break`. Iterate the caster texture around the light's slot
+  (`ls = pmod(lc, cols)`), wrap with `pmod`. Shadows render; verified at zoom 0.5/1/2.
+- **My earlier (wrong) diagnosis** below — a toroidal-basis mismatch — was a red herring; the
+  indexing was actually aligned. But [`map-model.md`](map-model.md) still stands as the right rigid
+  backbone (it's what makes this class of lookup bug impossible to reintroduce), and the sweep
+  rewrite conforms to it.
+
+### (superseded diagnosis) reach-walk reads the wrong toroidal tile
 
 - **2026-07-22:** A pinned light at tile (54,21) cast **no shadow** despite every value checking out
   end-to-end: the caster bucket at tile (52,18) held prim 192 (JS mirror **and** GPU readback), prim

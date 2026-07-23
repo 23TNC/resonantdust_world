@@ -32,3 +32,15 @@ Append-only history; authoritative for what's done._
   surface LOD resolving (pure quad needs only prim W/H) — the zoom-dependent dropout
   ([`issues.md#zoom`](issues.md)) is gone. Verified quads render identically at zoom **0.5, 1, 2**.
 - Still brute-force (walk all in-reach tiles); the corridor returns in P6 validated against this.
+
+## P3 · Tight opaque-bbox quads + P1.5 sweep fix — 2026-07-23 ✓
+
+- Shadow quad = the sprite's **opaque bbox**. Size (W/H) + **offset** (opaque-bbox base-centre −
+  game anchor) live in the **def** (per-sprite, shared); `prim_data` keeps the **true game anchor**;
+  the gather applies the offset. Bbox pre-computed on the CPU at decode (surface B-channel fractions,
+  LOD-safe) — no mid-render GPU readback. Removed the per-prim version/upgrade machinery.
+- **THE all-day bug — sweep loop miscompile** ([`issues.md#reach-walk`](issues.md)): a body-modified
+  `cov` in the sweep's for-condition made GLSL silently skip iterations → the walk never reached the
+  caster's tile → no shadows, despite every value being correct end-to-end. Rewrote the sweep as a
+  slot-space, **constant-bound** loop (no body-dependent condition, no break). **Shadows render,
+  verified at zoom 0.5 / 1 / 2.** Conforms to [`map-model.md`](map-model.md).
