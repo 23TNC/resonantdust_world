@@ -338,9 +338,11 @@ A  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas 
   ceiling — WebGL2 `MAX_TEXTURE_SIZE` is 16384 on discrete GPUs (our pools allocate 1024²/2048² pages, well
   inside it). u14 = 0..16383 addresses any page we could ever allocate.
 - `frame_page` — **u8**: ≤ **256 pages**, the WebGL2 **`MAX_ARRAY_TEXTURE_LAYERS` guaranteed floor** (the C5
-  multi-page mechanism is a texture array), and ≥4× headroom over any realistic VRAM budget (a 2048² RGBA8
-  page is 16 MB; ~32–64 resident pages/map ≈ 0.5–1 GB is the practical ceiling). Byte-aligned in the low
-  byte. Written **0** until C5 lands (one shared surface page bound; off-page defs fall back to solid quad).
+  multi-page mechanism is a texture array). This is **address width, not a target**: memory caps pages long
+  before the encoding does — a 2048² RGBA8 page is 16 MB, a texture array commits **all** layers up front
+  (`texStorage3D`), and there are several maps, so the shipped array is ~**8–32 layers** (u6 territory); u8
+  is kept for the byte-aligned low byte + the spec floor, with the real limit living in the allocator's
+  budget. Written **0** until C5 lands (one shared surface page bound; off-page defs fall back to solid quad).
 
 **`light_presence_cold`** — a **`cols×rows`** `RGBA32UI` **textile_tile map** (one texel/tile, toroidal with the
 window): per tile the **nearest ≤ 8 reaching lights** as `8× u16` light indices (`0xFFFF` = empty; R holds slots
