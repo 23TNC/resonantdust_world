@@ -181,12 +181,13 @@ export class Viewport {
         },
       },
       { key: `surface-${suffix}`, resolve: () => ({ texture: white, tint: 0x00ffff }) },
-      // #3 zdepth-world: encode the thing's DEPTH so the lighting can skip shadowing a sprite that stands
-      // in FRONT of the caster. B byte = 0 for ground (zIndex 0 → no depth test); for a thing (zIndex =
-      // 1 + anchorRow) the high bit 0x80 flags "is a thing" and the low 7 bits carry the anchor row
-      // (mod 128 — a local key, compared to the caster row by signed delta). Same row space as the
-      // gather's caster depth (decodePos(prim base-centre) row).
-      { key: `zdepth-world-${suffix}`, resolve: (prim) => ({ texture: white, tint: 0xffffff, depth: prim.zIndex >= 1 ? (0x80 | ((prim.zIndex - 1) & 0x7f)) / 255 : -1 }) },
+      // #3 zdepth-world: encode the thing's BASE-Y ROW (front/behind key) so the lighting can skip
+      // shadowing a sprite drawn in FRONT of the caster. B byte = 0 for ground (zIndex 0 → no depth test);
+      // for a thing the high bit 0x80 flags "is a thing" and the low 7 bits carry the base row (mod 128).
+      // MUST use the SAME row convention as the gather's caster depth: the draw-box bottom
+      // `prim.y + prim.height` (= coldShadowData's stored base-centre `ay`), NOT zRow — those differ by a
+      // per-sprite anchor offset, which biased the comparison (some trees right, some wrong).
+      { key: `zdepth-world-${suffix}`, resolve: (prim) => ({ texture: white, tint: 0xffffff, depth: prim.zIndex >= 1 ? (0x80 | (Math.floor((prim.y + prim.height) / SQUARE) & 0x7f)) / 255 : -1 }) },
     ];
   }
 

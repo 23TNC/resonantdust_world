@@ -52,15 +52,18 @@ uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mappi
 out vec4 fragColor;
 const float SQ = ${SQF};
 int pmod(int a, int m) { return ((a % m) + m) % m; }
-// #3: is this THING pixel (primRow, 7-bit) in FRONT of (higher row than) the frontmost caster? casterA
-// = the class's att2.a (caster row / 127). Signed 7-bit delta so nearby rows compare wrap-safely; a prim
-// ahead of (south of) the caster occludes the shadow, so light it. Ground (isThing 0) always takes shadow.
+// #3: is this THING pixel (primRow, 7-bit) at or IN FRONT of (row ≥) the frontmost caster? casterA =
+// the class's att2.a (caster row / 127). Signed 7-bit delta so nearby rows compare wrap-safely; a prim
+// at or ahead of (south of) the caster occludes the shadow, so light it. Ground (isThing 0) always takes
+// shadow. Uses delta >= 0 (not > 0) so a prim is not shadowed by its OWN shadow — a prim and the shadow
+// it casts resolve to the SAME tile row, so self-cast gives delta 0. (Same-tile prim-vs-prim occlusion is
+// a later problem needing sub-tile UNIT rows; for now same-tile things simply do not shadow each other.)
 bool inFront(bool isThing, int primRow, float casterA) {
   if (!isThing || uDepthTest == 0) return false;
   int casterRow = int(casterA * 127.0 + 0.5);
   int d = ((primRow - casterRow) + 128) & 0x7f;
   if (d >= 64) d -= 128;
-  return d > 0;
+  return d >= 0;
 }
 // World → the toroidal lightmap texel (matches the gather's fc→world), or (-1,-1) if outside the window.
 ivec2 lightTexel(vec2 world) {

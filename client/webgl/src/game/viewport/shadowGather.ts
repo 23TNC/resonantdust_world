@@ -50,8 +50,9 @@ const UNITF = UNIT.toFixed(4);
  *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Closes the ~1
  *  unit gap between the shadow base and the sprite's drawn base (a fixed anchor discrepancy: the sprite
  *  bottom sits ~1 unit south of the prim base-centre the shadow projects from). `__lift(u)` tunes live. */
-const SHADOW_LIFT = 2.0;             // measured in-browser: the base seats at ~2 units (sprite bottom sits
-                                    // ~2 units south of the prim base-centre the shadow projects from)
+const SHADOW_LIFT = 3.0;             // units the shadow slides up to seat on the sprite base (sprite bottom
+                                    // sits ~3 units south of the prim base-centre the shadow projects from)
+const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
 /** Lights per tile in presence + shadow-cold: 14 (7 per presence set), each a u8 coverage in the
  *  128-bit shadow-cold texel (slot i at channel i>>2, bits (i&3)·8). */
 const PRES_SLOTS = 14;
@@ -301,9 +302,11 @@ void main() {
     float contrib = contribU * (1.0 - shadow);              // shadowed
     acc += col * contrib;
     accU += col * contribU;                                 // #3: unshadowed sum (blit restores this for front things)
-    // Weight the direction by this light's luminous (shadowed) contribution — the brighter/nearer light
-    // dominates the relief. dist>0 guard (P == light → no direction).
-    float w = dot(col, vec3(0.299, 0.587, 0.114)) * contrib;
+    // Weight the direction by the UNSHADOWED luminous contribution — the light's geometric direction is
+    // valid even where it's shadowed, so a #3 depth-test restore (unshadowed irr for a front thing) still
+    // gets per-px normal relief instead of flat full-bright light. Shadowed pixels are ≈0 irr anyway, so
+    // using the unshadowed dir there is harmless (relief scales the tiny residual). dist>0 guard.
+    float w = dot(col, vec3(0.299, 0.587, 0.114)) * contribU;
     if (dist > 1e-3) dirAcc += (toL / dist) * w;
   }
   float casterRow = float(texelFetch(uCasterD, fc, 0).r & 0x7Fu); // #3: frontmost caster row for this texel
@@ -320,7 +323,6 @@ uniform highp usampler2D uData;       // THE unified data texture (defs|prims|li
 uniform highp usampler2D uDirty;      // shadow_dirty — textile_tile map (R8UI): .r nonzero = recompute
 uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
-uniform float uShadowLift;            // #2: slide the shadow up N units to meet the sprite base (live-tunable)
 uniform int uLightClass;              // #4: process only this class of light — 0 = COLD (static), 1 = HOT (dynamic)
 layout(location = 0) out uvec4 fragColor; // per-light u9 shadow coverage
 layout(location = 1) out uvec4 oCasterD;  // #3: frontmost caster row (R, 7-bit) shadowing this texel
@@ -340,7 +342,7 @@ void main() {
   float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot); // 0..1 within the tile
   float ly = (float(fc.y) - float(sy * uSlot)) / float(uSlot);
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
-  P.y += uShadowLift; // #2: lift the shadow up — test the ground point uShadowLift units below this one
+  P.y += ${SHADOW_LIFTF}; // #2: lift the shadow up — test the ground point SHADOW_LIFT units below this one
 
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
@@ -598,8 +600,6 @@ export class ShadowGather {
   /** P6: walk the segment corridor (true) or the brute-force reach box (false). Brute is the
    *  validation baseline — `__corridor(false)` + `__shadowDiff()` must report 0 mismatches. */
   private corridor = true;
-  /** #2: world units the shadow slides up to meet the sprite base (a fixed anchor discrepancy). Live via `__lift`. */
-  private shadowLift = SHADOW_LIFT;
   /** P5 scoped dirty: world-tile rects `[x0,y0,x1,y1,cls]` (inclusive) queued by a light MOVE or caster
    *  change — the union of old + new reach. `cls`: 0 = cold only, 1 = hot only, 2 = both (a caster change
    *  affects every light that reaches it). Applied (∩ window) per class on top of the owner pass in
@@ -624,11 +624,6 @@ export class ShadowGather {
     (globalThis as unknown as { __gather: ShadowGather }).__gather = this;
     // DEBUG: tune the emitter (area-light) RADIUS in world px live — bigger = softer penumbra.
     (globalThis as unknown as { __emit: (px?: number) => number }).__emit = (px?: number) => this.setEmitter(px);
-    // DEBUG (#2): slide the shadow up N world units to seat it on the sprite base.
-    (globalThis as unknown as { __lift: (u?: number) => number }).__lift = (u?: number) => {
-      if (u !== undefined) { this.shadowLift = u; this.forceColdDirty = this.forceHotDirty = true; }
-      return this.shadowLift;
-    };
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -1020,7 +1015,6 @@ export class ShadowGather {
       },
       uniforms: (p) => {
         p.uInt("uCorridor", this.corridor ? 1 : 0);
-        p.uFloat("uShadowLift", this.shadowLift);
         p.uInt("uLightClass", cls);
       },
     });
