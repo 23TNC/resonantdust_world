@@ -4,6 +4,10 @@ _Component: [`client/webgl`](../../components/client/) · `game/viewport/` — a
 the display seam (replaces/augments `albedoBlitShader`'s UNLIT blit), consuming the G-buffer +
 `coldShadowData` lights + `shadow-cold`. Phases in [`todo.md`](todo.md)._
 
+> **STATUS — P1–P4 DELIVERED + verified 2026-07-23** (baked lightmap: emission + per-px normal relief +
+> per-light shadows, 120 fps display cap). See [`completed.md`](completed.md). Remaining: **F6 shadow
+> ceiling** (P3b, deferred — [`todo.md`](todo.md)).
+
 Stand up the **lighting pass** (deleted 2026-07-19 in the lighting/shadow nuke — the G-buffer + the
 whole shadow system have since been rebuilt; this re-lights the world on top of them). The pieces are
 all in place now:
