@@ -170,6 +170,9 @@ export class ColdShadowData {
   /** prim.id → allocated prim_data_index (≥1; index 0 is the sentinel). */
   private readonly primIndex = new Map<number, number>();
   private primNext = 1; // 0 reserved as the sentinel
+  /** Freed prim_data indices (P2 free-list) — reused before bumping `primNext`, so the id space
+   *  survives pan/zone churn (high-water bounded by peak concurrent casters ≪ 65 536). */
+  private readonly primFreeList: number[] = [];
   private lightCount = 0;
 
   constructor(private readonly renderer: Renderer) {
@@ -382,7 +385,7 @@ export class ColdShadowData {
       this.mark(PRIM_BASE + hit);
       return { idx: hit, changed: true };
     }
-    const idx = this.primNext++;
+    const idx = this.primFreeList.pop() ?? this.primNext++; // reuse a freed slot before bumping (P2)
     const ax = prim.x + prim.width * 0.5; // the TRUE game anchor (full-box base-centre) — unchanged
     const ay = prim.y + prim.height;
     const base = (PRIM_BASE + idx) * 4; // v2.1: R = u16 id | u16 reserved, G = position, B = orient
@@ -393,6 +396,23 @@ export class ColdShadowData {
     this.primIndex.set(prim.id, idx);
     this.mark(PRIM_BASE + idx);
     return { idx, changed: true };
+  }
+
+  /** Free every allocated prim whose `prim.id` is NOT in `seen` (it left the resident/standing set —
+   *  zone evicted or destroyed). Returns its slot to the free-list. No slot clear + no bucket cascade
+   *  needed: `buildCasters` rebuilds every in-window bucket from the current `standing` (so a freed id
+   *  can't be referenced), and caster REMOVAL force-alls the shadow recompute. Reach gap makes it
+   *  safe: `standing` bounds who can cast, so a freed prim is beyond reach of every in-window tile.
+   *  Returns the number freed. */
+  freePrimsExcept(seen: Set<number>): number {
+    let dead: number[] | null = null;
+    for (const pid of this.primIndex.keys()) if (!seen.has(pid)) (dead ??= []).push(pid);
+    if (!dead) return 0;
+    for (const pid of dead) {
+      this.primFreeList.push(this.primIndex.get(pid)!);
+      this.primIndex.delete(pid);
+    }
+    return dead.length;
   }
 
   get lights(): number {
@@ -523,6 +543,10 @@ export class ColdShadowData {
 
   get debugPrimCount(): number {
     return this.primNext - 1; // index 0 is the sentinel
+  }
+  /** DEBUG (P2): free-list health — `next` high-water, `freed` reusable slots, `live` allocated. */
+  get debugPrimStats(): { next: number; freed: number; live: number } {
+    return { next: this.primNext - 1, freed: this.primFreeList.length, live: this.primIndex.size };
   }
   /** DEBUG: decode a light record (the record row). */
   debugLight(k: number): { pos: [number, number]; rgb: [number, number, number]; intensity: number; z: number; reach: number; emitterRadius: number; castShadows: boolean } {

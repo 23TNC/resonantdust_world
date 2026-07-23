@@ -532,10 +532,13 @@ export class ShadowGather {
     // only the base row missed casters whose top sits in the row above (I-7).
     const TILT = 0.5 * Math.cos(65 * Math.PI / 180); // 0.5·cos65 ≈ 0.211 of the height, leaned back
     this.litSeen.clear();
+    const seen = this.primSeen;
+    seen.clear();
     for (const p of standing) {
       const def = this.coldData.definitionFor(p, resolver);
       if (def < 0) continue; // no textureName → not a caster
       const inst = this.coldData.primDataFor(p, def);
+      seen.add(p.id); // resident this frame — everything else gets freed (P2)
       // Bucket by the TIGHT opaque bbox (P3), not the full prim box — matches the quad we actually cast.
       // A flipped (W-facing) prim mirrors the box within the prim rect, same as the gather mirrors `off.x`.
       const t = this.coldData.tightBoxOf(def) ?? { dx: 0, dy: 0, w: p.width, h: p.height };
@@ -558,6 +561,9 @@ export class ShadowGather {
         }
       }
     }
+    // Prims that left `standing` (zone evicted / destroyed) free their slots (P2 free-list); their
+    // buckets already clear via the rebuild below, and caster removal force-alls the recompute.
+    this.coldData.freePrimsExcept(seen);
     // Write EVERY in-window tile (compare-write diffs). The region-torus fold is the GPU slot.
     for (let wr = winRow; wr < winRow + rows; wr++)
       for (let wc = winCol; wc < winCol + cols; wc++) {
@@ -585,6 +591,8 @@ export class ShadowGather {
    *  written inside its light's presence, so the reach box bounds the cast). `x/y/w/h` = the prim's
    *  tight box in world px. `litSeen` dedupes light boxes within a frame (streaming floods). */
   private readonly litSeen = new Set<number>();
+  /** Prim ids resident this frame (P2) — anything allocated but absent gets freed via the free-list. */
+  private readonly primSeen = new Set<number>();
   private markPrimChange(x: number, y: number, w: number, h: number): void {
     const x0 = Math.floor(x / SQUARE) - 1, y0 = Math.floor(y / SQUARE) - 1;
     const x1 = Math.floor((x + w) / SQUARE) + 1, y1 = Math.floor((y + h) / SQUARE) + 1;
