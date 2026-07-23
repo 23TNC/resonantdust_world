@@ -13,7 +13,9 @@ tile-origin advances.
 ## The three resolutions — `textile_tile` / `textile_unit` / `textile_square`
 
 A **textile** is one texel of a map. Every map shares the tile grid; each picks how many textiles
-it packs per tile:
+it packs per tile. In code: `TEXTILE_TILE` / `TEXTILE_UNIT` / `TEXTILE_SQUARE` (+ `UNIT`) in
+`client/webgl/src/game/viewport/squareMath.ts` — the maps size and index off these, never a
+re-derived literal.
 
 | name | textiles / tile | one textile covers | position stored in | used for |
 |---|---|---|---|---|

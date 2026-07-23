@@ -12,6 +12,12 @@
 //!
 //! COORD CONVENTION: composite + scratch pixel coords have y increasing the same way GL texture
 //! rows do; the display's uProjection maps world→screen. Any net Y flip is corrected there.
+//!
+//! MAP MODEL: these channels are the **textile_square maps** (map-model.md) — `SQUARE` textiles/tile,
+//! 1 textile = 1 px — on the shared toroidal `cols × rows` TILE window ({@link window}) that the
+//! textile_tile maps (presence/buckets/dirty) and the textile_unit shadow map align to tile-for-tile.
+//! Only deviation from pure `cols·SQUARE × rows·SQUARE`: each slot carries a {@link PAD} seam gutter,
+//! so the atlas pitch is `SLOT_PW = SQUARE + 2·PAD` (sampling uses the interior only).
 
 import { Renderer, RenderTarget, Program, Geometry, Texture, TexFrame } from "../../gl";
 import { MrtBakeShader } from "./mrtBakeShader";

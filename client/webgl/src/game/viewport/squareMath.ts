@@ -12,6 +12,21 @@
 /** Square edge in world px. The grid unit — all map squares are this size. */
 export const SQUARE = 64;
 
+/** World UNIT in px — `UNIT = SQUARE/16`; 16 units per tile edge. Shadow math is in units. */
+export const UNIT = SQUARE / 16;
+
+// ── Textile resolutions — the shared toroidal TILE grid (map-model.md, lighting rebuild) ──
+// A TEXTILE is one texel of a map. EVERY map — data textures and full-res — shares the ONE
+// `cols × rows` TILE window and wraps by TILES (`mod(worldTile, cols/rows)`); each map picks one
+// of these per-tile-edge resolutions R and is sized `cols·R × rows·R`. `SQUARE` is the only dial:
+// raising it sharpens the textile_square maps while textile_unit stays 16 textiles/tile.
+/** 1 textile / tile — lights, caster buckets, presence, dirty. Positions in TILES (+ anchor). */
+export const TEXTILE_TILE = 1;
+/** `SQUARE/UNIT` = 16 textiles / tile (one per unit) — the shadow map. Positions in UNITS. */
+export const TEXTILE_UNIT = SQUARE / UNIT;
+/** `SQUARE` textiles / tile (one per px) — albedo, normal, surface, zdepth. Positions in PX. */
+export const TEXTILE_SQUARE = SQUARE;
+
 /** Tiles per zone edge — mirrors `resonantdust_codec::packed::ZONE_DIM`. A zone is
  *  `ZONE_DIM × ZONE_DIM` tiles. */
 export const ZONE_DIM = 16;

@@ -16,10 +16,7 @@
 import { Renderer, Texture, type TexFrame } from "../../gl";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
-import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
-
-/** `1 unit = SQUARE/16 = 4px` — the compile-time world unit everything (bar atlas px) is measured in. */
-export const UNIT = SQUARE / 16;
+import { SQUARE, UNIT, ZONE_DIM, REGION_DIM } from "./squareMath";
 
 /** Fixed light count (bits in the shadow bitfield). */
 export const N_LIGHTS = 128;

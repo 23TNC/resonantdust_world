@@ -17,22 +17,22 @@ import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
 import { ColdShadowData } from "./coldShadowData";
-import { SQUARE } from "./squareMath";
+import { SQUARE, UNIT, TEXTILE_UNIT } from "./squareMath";
 
 /** Lights this iteration — a ring of debug lights around the seed tile. `number`-typed so the
  *  isolate-one-light debug path (`MAX_LIGHTS = 1`) below isn't flagged as a constant comparison. */
 const MAX_LIGHTS: number = 1;
-/** Light height: 256 world px = 4 tiles (`SQUARE`=64) — twice the tree billboard height (128 px / 2 tiles). */
-const LIGHT_Z = 40 * (SQUARE / 16);  // 40 units high (SQUARE/16 = 1 unit in px) — lower = longer shadows
+/** Light height: 40 units = 160 world px = 2.5 tiles — above the tree billboard (2 tiles / 32 units).
+ *  Lower = longer shadows. */
+const LIGHT_Z = 40 * UNIT;
 const LIGHT_REACH = 12 * SQUARE;     // illumination range (world px) — how far the light throws (12 tiles)
 const LIGHT_EMITTER = 12;            // physical source size (world px = 3 units) — penumbra softness
 const RING_RADIUS = 2 * SQUARE;
-/** shadow-cold resolution: `SHADOW_SLOT` texels per world tile (a tile is `SQUARE` world px). 16 = 1
- *  texel/world-px. Sized `cols·SHADOW_SLOT × rows·SHADOW_SLOT`, toroidal like the cold cache window. */
-const SHADOW_SLOT = 16;
-/** GLSL literals for the world constants (a tile is `SQUARE` world px; `1 unit = SQUARE/16`). */
+// The shadow map is the TEXTILE_UNIT map (map-model.md): 16 textiles/tile, 1 textile = 1 unit
+// (= UNIT px). Sized `cols·TEXTILE_UNIT × rows·TEXTILE_UNIT`, toroidal like the cold cache window.
+/** GLSL literals for the world constants (a tile is `SQUARE` world px; `1 unit = SQUARE/16` px). */
 const SQF = SQUARE.toFixed(1);
-const UNITF = (SQUARE / 16).toFixed(4);
+const UNITF = UNIT.toFixed(4);
 /** Lift the rendered shadow up (toward smaller world-y) by this many world units — a fragment shows
  *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Tunable. */
 const SHADOW_LIFT = 0.0;             // DEBUG: shadow offset OFF (isolating the per-tile miscalc)
@@ -58,7 +58,7 @@ export interface TileWindow {
 const GATHER_COMMON = /* glsl */ `
 const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
-const float UPT = SQ / UNIT;      // world UNITS per tile (= 16)
+const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 uvec4 fetchLin(highp usampler2D t, int i, int w) { return texelFetch(t, ivec2(i % w, i / w), 0); }
 vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
@@ -124,11 +124,11 @@ precision highp int;
 uniform highp usampler2D uLightData;  // light_data (128×33): row 0 = light records (LUT rows ignored)
 uniform highp usampler2D uPrimDef;    // prim_definition_data
 uniform highp usampler2D uPrimData;   // prim_data (2/px)
-uniform highp usampler2D uPresence;   // light_presence_cold (cols×rows, 1 tile/px)
-uniform highp usampler2D uDirty;      // shadow_dirty (cols×rows R8UI): .r nonzero = recompute
-uniform highp usampler2D uCaster;     // per-tile caster buckets (cols×rows RGBA32UI = 8× u16 prim idx)
+uniform highp usampler2D uPresence;   // light_presence_cold — textile_tile map (1 textile/tile)
+uniform highp usampler2D uDirty;      // shadow_dirty — textile_tile map (R8UI): .r nonzero = recompute
+uniform highp usampler2D uCaster;     // caster buckets — textile_tile map (RGBA32UI = 8× u16 prim idx)
 uniform int uDefW, uPrimW;
-uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window
+uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window; uSlot = TEXTILE_UNIT
 out uvec4 fragColor;
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
@@ -196,9 +196,9 @@ const OVERLAY_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 in vec2 vWorld;
-uniform highp usampler2D uShadow;   // shadow-cold: per-slot 4-bit coverage (8 nibbles in R)
-uniform highp usampler2D uPresence; // 8× u16 light indices per tile (slot → global light)
-uniform int uCols, uRows, uWinCol, uWinRow, uSlot;
+uniform highp usampler2D uShadow;   // shadow-cold — textile_unit map: per-slot 4-bit coverage (8 nibbles in R)
+uniform highp usampler2D uPresence; // textile_tile map: 8× u16 light indices per tile (slot → global light)
+uniform int uCols, uRows, uWinCol, uWinRow, uSlot;  // uSlot = TEXTILE_UNIT
 out vec4 fragColor;
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 // Per-light colour — MUST match LIGHT_COLORS (the gizmo rings) so a light's shadow reads as the same
@@ -293,13 +293,15 @@ export class ShadowGather {
   private coldDirty = true;
   private resolverUnsub: (() => void) | null = null;
 
-  /** shadow-cold RT (world-space toroidal RGBA32UI), resized when the tile window changes. */
+  /** shadow-cold RT — the **textile_unit map** (`cols·TEXTILE_UNIT × rows·TEXTILE_UNIT` RGBA32UI,
+   *  world-space toroidal), resized when the tile window changes. */
   private shadowRT: RenderTarget | null = null;
   private rtCols = 0;
   private rtRows = 0;
 
-  /** light presence — per-tile **8× `u16` light indices** (nearest-8 reaching lights, `0xFFFF` = empty),
-   *  one `RGBA32UI` texel/tile (P5). Makes per-texel gather cost O(8), independent of total light count.
+  /** light presence — a **textile_tile map**: per-tile **8× `u16` light indices** (nearest-8 reaching
+   *  lights, `0xFFFF` = empty), one `RGBA32UI` textile/tile (P5). Per-texel gather cost O(8), light-count
+   *  independent.
    *  `slotDist` tracks each slot's distance² for the nearest-N eviction. CPU-built on light/window change. */
   private presenceTex: Texture;
   private presenceMirror = new Uint32Array(0);
@@ -307,14 +309,14 @@ export class ShadowGather {
   private presSig = "";
   private lightsVer = 0;
 
-  /** Per-tile caster buckets (cols×rows `RGBA32UI` = 8× `u16` prim indices/tile). Replaces the
-   *  per-light LUT: the corridor sweep reads these instead. CPU-built on caster/window change. */
+  /** Per-tile caster buckets — a **textile_tile map** (`RGBA32UI` = 8× `u16` prim indices/tile).
+   *  Replaces the per-light LUT: the corridor sweep reads these instead. CPU-built on caster/window change. */
   private casterTex: Texture;
   private casterMirror = new Uint32Array(0);
   private casterCols = 0;
   private casterRows = 0;
 
-  /** shadow_dirty (cols×rows R8UI, nonzero = recompute) + per-slot owner tracking for toroidal
+  /** shadow_dirty — a **textile_tile map** (`R8UI`, nonzero = recompute) + per-slot owner tracking for toroidal
    *  persistence: a slot recomputes when its world-tile owner changes (pan) or the cold data rebuilds. */
   private dirtyTex: Texture;
   private dirtyMirror = new Uint8Array(0);
@@ -523,7 +525,7 @@ export class ShadowGather {
     if (this.shadowRT && cols === this.rtCols && rows === this.rtRows) return;
     this.shadowRT?.destroy();
     this.shadowRT = new RenderTarget(this.renderer.gl, {
-      width: Math.max(1, cols * SHADOW_SLOT), height: Math.max(1, rows * SHADOW_SLOT), formats: ["rgba32uint"],
+      width: Math.max(1, cols * TEXTILE_UNIT), height: Math.max(1, rows * TEXTILE_UNIT), formats: ["rgba32uint"],
     });
     this.shadowRT.clearInt(0, 0, 0, 0); // start persistence from a known-zero buffer (P3)
     this.rtCols = cols;
@@ -589,7 +591,7 @@ export class ShadowGather {
         p.uInt("uRows", win.rows);
         p.uInt("uWinCol", win.winCol);
         p.uInt("uWinRow", win.winRow);
-        p.uInt("uSlot", SHADOW_SLOT);
+        p.uInt("uSlot", TEXTILE_UNIT);
       },
     });
   }
@@ -615,7 +617,7 @@ export class ShadowGather {
         p.uInt("uRows", win.rows);
         p.uInt("uWinCol", win.winCol);
         p.uInt("uWinRow", win.winRow);
-        p.uInt("uSlot", SHADOW_SLOT);
+        p.uInt("uSlot", TEXTILE_UNIT);
       },
     });
 
