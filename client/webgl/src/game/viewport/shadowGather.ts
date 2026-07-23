@@ -26,7 +26,9 @@ const MAX_LIGHTS: number = 1;
  *  Lower = longer shadows. */
 const LIGHT_Z = 40 * UNIT;
 const LIGHT_REACH = 12 * SQUARE;     // illumination range (world px) — how far the light throws (12 tiles)
-const LIGHT_EMITTER = 12;            // physical source size (world px = 3 units) — penumbra softness
+const LIGHT_EMITTER = 40;            // physical source size (world px = 10 units) — penumbra softness (debug: large to show the effect)
+/** GLSL literal — penumbra art scale over the physical width (1 = physical; raise for softer). */
+const PENUMBRA_SCALEF = (1.0).toFixed(2);
 const RING_RADIUS = 2 * SQUARE;
 // The shadow map is the TEXTILE_UNIT map (map-model.md): 16 textiles/tile, 1 textile = 1 unit
 // (= UNIT px). Sized `cols·TEXTILE_UNIT × rows·TEXTILE_UNIT`, toroidal like the cold cache window.
@@ -120,7 +122,25 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H) {
 // (P4) — invert P back to the card's (s,t) (in-range BY CONSTRUCTION: P is inside the projected
 // quad, so no u/v-out-of-range class of reject exists) and sample the surface silhouette (coverage,
 // B channel) at the def's opaque frame. frame_w = 0 (not resolved / off-page) → solid quad.
-float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D data, sampler2D surf) {
+// Soft silhouette sample: a 3x3 kernel of the surface B at radius kr px, averaged over 9 (out-of-
+// frame taps count as 0 so the penumbra fades at the sprite's frame edge). kr < 0.5 is a single
+// sharp tap (point light / near the base = umbra). Larger kr blurs (penumbra) AND drops the peak
+// where the feature is narrower than the kernel (the umbra recedes with distance).
+float sampleSoft(sampler2D surf, vec2 uv, float kr, vec2 fmin, vec2 fmax) {
+  if (kr < 0.5) {
+    if (uv.x < fmin.x || uv.x >= fmax.x || uv.y < fmin.y || uv.y >= fmax.y) return 0.0;
+    return texelFetch(surf, ivec2(uv), 0).b;
+  }
+  float sum = 0.0;
+  for (int j = -1; j <= 1; j++)
+    for (int i = -1; i <= 1; i++) {
+      vec2 tp = uv + vec2(float(i), float(j)) * kr;
+      if (tp.x < fmin.x || tp.x >= fmax.x || tp.y < fmin.y || tp.y >= fmax.y) continue; // outside frame → 0
+      sum += texelFetch(surf, ivec2(tp), 0).b;
+    }
+  return sum / 9.0;
+}
+float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D data, sampler2D surf) {
   if (primIdx == 0u) return 0.0;
   uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));      // v2.1: R = id|reserved, G = position, B = orient
   uint pos = Pd.y;
@@ -165,7 +185,14 @@ float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D data, sampler2D
   float nx = float(int((D.w >> 20) & 4095u) - 2048);   // u12, +2048 bias — full either-direction range
   float ny = float(int((D.w >> 8) & 4095u) - 2048);
   vec2 uv = vec2(fx, fy) + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(s * W, (1.0 - t) * H) * ppu;
-  return q * texelFetch(surf, ivec2(uv), 0).b;              // surface B = coverage (straight-alpha data)
+  // Emitter penumbra (P1): half-width w = emitter·(t·Zt)/(Lz − t·Zt) grows from 0 at the base to the
+  // tip → a t-scaled soft kernel. Ground→card by /k, world→px by ppu. Near base kr≈0 (sharp umbra);
+  // toward tip kr grows (penumbra + umbra recede). Clamp to keep the kernel bounded.
+  float Zt = H * st;
+  float w = emitter * (t * Zt) / max(L.z - t * Zt, 1e-3);   // world units
+  float kr = min(w * ppu / max(k, 1.0) * ${PENUMBRA_SCALEF}, 12.0);
+  float side = float(1u << lod);
+  return q * sampleSoft(surf, uv, kr, vec2(fx, fy), vec2(fx + side, fy + side));
 }
 `;
 
@@ -210,6 +237,7 @@ void main() {
     uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // v2.1: G = position, A = z|reach|emitter|cast
     if ((Ld.w & 1u) == 0u) continue;                        // cast_shadows
     vec3 L = vec3(decodePos(Ld.y), float((Ld.w >> 24) & 255u));
+    float emitter = float((Ld.w >> 4) & 255u);              // emitter_radius (units) → penumbra width
     float cov = 0.0;
     if (uCorridor == 1) {
       // P6 CORRIDOR — the pure optimization, validated against the brute box below. Why the segment
@@ -233,7 +261,7 @@ void main() {
           uvec4 cb = fetchLin(uData, CASTER_BASE + foldTile(o.x, o.y)); // region-torus bucket
           for (int c = 0; c < 7; c++) {
             uint primIdx = tileSlot(cb, c);
-            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, uData, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
+            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, emitter, uData, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
           }
         }
       }
@@ -249,7 +277,7 @@ void main() {
           uvec4 cb = fetchLin(uData, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy)); // region-torus bucket
           for (int c = 0; c < 7; c++) {
             uint primIdx = tileSlot(cb, c);
-            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, uData, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
+            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, emitter, uData, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
           }
         }
       }

@@ -1,4 +1,4 @@
-# Emitter-based soft shadows (penumbra) — 2026-07-23
+# Emitter-based soft shadows (penumbra + umbra) — 2026-07-23
 
 _Component: [`client/webgl`](../../components/client/) · `game/viewport/shadowGather.ts` (the
 `shadowCover` / `casterCover` GLSL) + `coldShadowData.ts` (light `emitter_radius`, already stored).
@@ -29,6 +29,22 @@ w_world = emitter_radius · (t·Zt) / (Lz − t·Zt)      // 0 at the base (t=0)
 
 (`Zt` = card top height, `Lz` = light height, `k` = the top's projection factor — all already in
 `shadowCover`.) This is the penumbra half-width in world units at the ground point P.
+
+## Umbra falls out of the same model (darker base → lighter tip)
+
+**Umbra** = the fully-occluded dark core (emitter *entirely* blocked, coverage 1.0). **Penumbra** =
+the partial-occlusion soft ring around it. They are one emitter model, not two mechanisms — and the
+multi-tap (B) produces both, giving the base-dark → tip-light gradient the design wants:
+
+- Near the base, `t→0 ⟹ w→0`: the kernel is tiny, coverage stays **1.0 (umbra)** — dark, sharp.
+- Toward the tip, `w` grows: the kernel averages over more than the (stretched, thinner) silhouette
+  feature, so the **peak coverage drops below 1** — the umbra shrinks away, leaving soft, lighter
+  penumbra. Wider casters keep an umbra farther (physically correct).
+
+So "implementing umbra" = making the kernel width grow with `t` (it does) so the umbra naturally
+recedes with distance. An **optional explicit contact-darkening dial** ([`forks.md#f4`](forks.md#f4))
+can strengthen the near-base darkness beyond the physical falloff for art control (RimWorld-style
+contact shadows) — default off / physical.
 
 ## The fork: WHERE penumbra applies ([`forks.md#f1`](forks.md#f1))
 

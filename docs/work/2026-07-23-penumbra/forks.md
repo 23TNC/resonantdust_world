@@ -39,3 +39,14 @@ Refine visually in P1.
 4-tap (rotated) is the cheap floor; 9-tap (3×3) is smoother. A radius-scaled Poisson set trades
 banding for noise. Decide by eye + perf in P1; the tap loop must be a constant bound (GLSL) with the
 radius as data.
+
+## F4 · Umbra: emergent vs explicit contact-darkening {#f4}
+
+**2026-07-23 — default EMERGENT; explicit dial optional.**
+
+The umbra (dark core, base-dark → tip-light falloff) **emerges** from the emitter multi-tap (B): the
+`t`-growing kernel keeps coverage ~1 near the base and drops the peak with distance. No separate term
+needed for physically-plausible behaviour. If the near-base darkness needs to be stronger/artier than
+physics gives (RimWorld-style contact shadows), add an **explicit contact-darkening multiplier** —
+`opacity = mix(1.0, contactBoost, 1 − t)` or a distance-from-base curve — as a tunable, default off.
+Decide by eye in P1; keep it a dial, not a hardcode.
