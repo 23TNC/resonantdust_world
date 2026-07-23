@@ -26,9 +26,11 @@ export function texturesRoot(serverBase: string): string {
 export type TexMap = "albedo" | "normal" | "depth" | "emissive" | "layers" | "surface";
 
 /** Zoom bounds (screen px per world px). 1 = tiles at their native 64px; the range
- *  spans two power-of-two steps in each direction. */
+ *  spans two power-of-two steps out (0.25×) and one step in (2×). Capping zoom-in at
+ *  2× (was 4×) halves `RESERVE_CSS`, shrinking every G-buffer channel ~45% — 2× is
+ *  plenty of magnification and a deeper zoom just reserved texture we never used. */
 export const ZOOM_MIN = 0.25;
-export const ZOOM_MAX = 4;
+export const ZOOM_MAX = 2;
 
 /** The power-of-two LOD tier a zoom sits in — the master LOD the resolver targets
  *  (`64 × tier` px). Rounded UP so a magnified square is super-sampled, not upscaled. */
