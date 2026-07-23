@@ -98,6 +98,8 @@ export class Viewport {
   private gridLevel = 0;
   /** P2 normal-relief gain (F3/F5) — tuned by eye via `__relief(n)`. */
   private reliefStrength = 1.1;
+  /** #3 skip shadowing things that stand in front of the caster — toggle via `__depthtest()`. */
+  private depthTest = true;
 
   constructor() {
     this.renderer = new Renderer();
@@ -123,6 +125,11 @@ export class Viewport {
     (globalThis as unknown as { __relief: (n?: number) => number }).__relief = (n?: number) => {
       if (n !== undefined) this.reliefStrength = n;
       return this.reliefStrength;
+    };
+    // DEBUG (#3): toggle the shadow-vs-prim depth test (no arg = flip). Off = shadows darken front things.
+    (globalThis as unknown as { __depthtest: (on?: boolean) => boolean }).__depthtest = (on?: boolean) => {
+      this.depthTest = on ?? !this.depthTest;
+      return this.depthTest;
     };
   }
 
@@ -174,7 +181,12 @@ export class Viewport {
         },
       },
       { key: `surface-${suffix}`, resolve: () => ({ texture: white, tint: 0x00ffff }) },
-      { key: `zdepth-world-${suffix}`, resolve: () => ({ texture: white, tint: 0xffffff, depth: -1 }) },
+      // #3 zdepth-world: encode the thing's DEPTH so the lighting can skip shadowing a sprite that stands
+      // in FRONT of the caster. B byte = 0 for ground (zIndex 0 → no depth test); for a thing (zIndex =
+      // 1 + anchorRow) the high bit 0x80 flags "is a thing" and the low 7 bits carry the anchor row
+      // (mod 128 — a local key, compared to the caster row by signed delta). Same row space as the
+      // gather's caster depth (decodePos(prim base-centre) row).
+      { key: `zdepth-world-${suffix}`, resolve: (prim) => ({ texture: white, tint: 0xffffff, depth: prim.zIndex >= 1 ? (0x80 | ((prim.zIndex - 1) & 0x7f)) / 255 : -1 }) },
     ];
   }
 
@@ -381,10 +393,13 @@ export class Viewport {
         const coldLight = this.shadows.coldLightmap;
         this.blitShader.coldLight = coldLight;
         this.blitShader.hotLight = this.shadows.hotLightmap;
+        this.blitShader.coldUnshadowed = this.shadows.coldUnshadowed; // #3
+        this.blitShader.hotUnshadowed = this.shadows.hotUnshadowed;   // #3
         this.blitShader.coldDir = this.shadows.coldLightDir;
         this.blitShader.hotDir = this.shadows.hotLightDir;
         this.blitShader.normal = this.map.displayComposite("normal-cold");
         this.blitShader.normalWarm = this.warm.displayComposite("normal-warm");
+        this.blitShader.zdepth = this.map.displayComposite("zdepth-world-cold"); // #3
         const win = this.map.window;
         // world px → clip: x = (wx-ax)*2z/w, y = -(wy-ay)*2z/h  (screen y-down → clip y-up)
         const proj = new Float32Array([
@@ -400,6 +415,7 @@ export class Viewport {
           uniforms: (p) => {
             p.uMat3("uProjection", proj);
             p.uInt("uLightEnable", coldLight ? 1 : 0);
+            p.uInt("uDepthTest", this.depthTest ? 1 : 0);
             p.uFloat("uReliefStrength", this.reliefStrength);
             p.uFloat("uAmbient", AMBIENT_LEVEL);
             p.uInt("uLCols", win.cols);

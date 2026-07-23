@@ -106,6 +106,11 @@ vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
   uint wty = (((region & 15u) * RD + (zone & 15u)) * ZD + (tile & 15u));
   return vec2(float(wtx * 16u + (anchor >> 4u)), float(wty * 16u + (anchor & 15u)));
 }
+// #3: a caster prim's anchor TILE ROW (its base-centre row) — the depth key compared against a receiving
+// thing's row so a sprite standing in front of the caster isn't shadowed. UPT units per tile.
+float casterRowOf(highp usampler2D data, uint primIdx) {
+  return floor(decodePos(fetchLin(data, PRIM_BASE + int(primIdx)).y).y / UPT);
+}
 // PURE QUAD placement (no texture sample, no u/v inversion). The caster is a flat 3D card: base on the
 // ground (y = Yb, z = 0), top tilted north + elevated (y = Yt, z = Zt). Project its 4 corners from the
 // light onto the ground → a convex ground quad; P is shadowed iff it lies inside that quad. The only
@@ -245,9 +250,11 @@ precision highp int;
 uniform highp usampler2D uData;    // presence (sets 3/5) + light records (set 2)
 uniform highp usampler2D uDirty;   // shadow_dirty — same gate as the shadow gather (clean → persist)
 uniform highp usampler2D uShadow;  // this class's shadow RT (TEXEL-aligned) — per-slot u9 coverage; slot i ↔ presence slot i
+uniform highp usampler2D uCasterD; // #3: this class's caster-depth map (R = frontmost caster row, 7-bit)
 uniform int uLightClass;           // #4: accumulate only this class of light — 0 = COLD, 1 = HOT
-layout(location = 0) out vec4 oLight;  // irradiance RGB: Σ colour·intensity·falloff·(1−shadow) (NO ambient — blit adds it)
-layout(location = 1) out vec4 oDir;    // RG = irradiance-weighted mean horizontal light dir (enc 0.5+0.5) — for per-px relief
+layout(location = 0) out vec4 oLight;  // SHADOWED irradiance RGB: Σ colour·intensity·falloff·(1−shadow) (no ambient)
+layout(location = 1) out vec4 oDir;    // RG = irradiance-weighted mean horizontal light dir (enc 0.5+0.5) — per-px relief
+layout(location = 2) out vec4 oUnshadowed; // #3: UNSHADOWED irradiance (no shadow) RGB + A = caster row/127 (for the depth test)
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
@@ -270,6 +277,7 @@ void main() {
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
   uvec4 sh = texelFetch(uShadow, fc, 0);                    // P3: this texel's per-slot u9 shadow coverage (this class)
   vec3 acc = vec3(0.0);                                     // #4: NO ambient here — the blit adds it once over cold+hot
+  vec3 accU = vec3(0.0);                                    // #3: UNSHADOWED irradiance (for the depth-test restore)
   vec2 dirAcc = vec2(0.0);                                  // Σ weight · unit(Lxy − P) — the aggregate lit-from dir
   for (int slot = 0; slot < 14; slot++) {
     uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
@@ -289,15 +297,19 @@ void main() {
     // umbra (the gather's soft coverage) modulate it smoothly.
     uint v9 = ((lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((sh.w >> uint(16 + slot)) & 1u) << 8);
     float shadow = float(v9) / 511.0;
-    float contrib = intensity * fall * (1.0 - shadow);
+    float contribU = intensity * fall;                      // #3: unshadowed contribution
+    float contrib = contribU * (1.0 - shadow);              // shadowed
     acc += col * contrib;
-    // Weight the direction by this light's luminous contribution — the brighter/nearer light dominates
-    // the relief, matching where its irradiance dominates. dist>0 guard (P == light → no direction).
+    accU += col * contribU;                                 // #3: unshadowed sum (blit restores this for front things)
+    // Weight the direction by this light's luminous (shadowed) contribution — the brighter/nearer light
+    // dominates the relief. dist>0 guard (P == light → no direction).
     float w = dot(col, vec3(0.299, 0.587, 0.114)) * contrib;
     if (dist > 1e-3) dirAcc += (toL / dist) * w;
   }
+  float casterRow = float(texelFetch(uCasterD, fc, 0).r & 0x7Fu); // #3: frontmost caster row for this texel
   oLight = vec4(clamp(acc, 0.0, 1.0), 1.0);                 // LDR clamp (F4: tonemap deferred to P4)
   oDir = vec4(clamp(dirAcc, -1.0, 1.0) * 0.5 + 0.5, 0.0, 1.0); // magnitude = directional confidence (cancels → 0)
+  oUnshadowed = vec4(clamp(accU, 0.0, 1.0), casterRow / 127.0); // #3: unshadowed light + caster row key
 }
 `;
 
@@ -310,7 +322,8 @@ uniform sampler2D uSurface;           // the shared surface atlas page (F2) — 
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 uniform float uShadowLift;            // #2: slide the shadow up N units to meet the sprite base (live-tunable)
 uniform int uLightClass;              // #4: process only this class of light — 0 = COLD (static), 1 = HOT (dynamic)
-out uvec4 fragColor;
+layout(location = 0) out uvec4 fragColor; // per-light u9 shadow coverage
+layout(location = 1) out uvec4 oCasterD;  // #3: frontmost caster row (R, 7-bit) shadowing this texel
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 void main() {
@@ -333,6 +346,7 @@ void main() {
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
   uint o0 = 0u, o1 = 0u, o2 = 0u, o3 = 0u;                   // per-SLOT u8 coverage: slot i at ch i>>2, bit (i&3)*8
+  float casterDepth = 0.0;                                   // #3: frontmost (max-row) covering caster (all lights)
   for (int slot = 0; slot < 14; slot++) {
     uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
@@ -364,7 +378,10 @@ void main() {
           uvec4 cb = fetchLin(uData, CASTER_BASE + foldTile(o.x, o.y)); // region-torus bucket
           for (int c = 0; c < 7; c++) {
             uint primIdx = tileSlot(cb, c);
-            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, emitter, uData, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
+            if (primIdx != 0u) {
+              float cc = casterCover(primIdx, P, L, emitter, uData, uSurface); // MAX: idempotent per caster (P6 identity)
+              if (cc > 0.0) { cov = max(cov, cc); casterDepth = max(casterDepth, casterRowOf(uData, primIdx)); } // #3
+            }
           }
         }
       }
@@ -380,7 +397,10 @@ void main() {
           uvec4 cb = fetchLin(uData, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy)); // region-torus bucket
           for (int c = 0; c < 7; c++) {
             uint primIdx = tileSlot(cb, c);
-            if (primIdx != 0u) cov = max(cov, casterCover(primIdx, P, L, emitter, uData, uSurface)); // MAX: idempotent per caster — visit-count must not matter (P6 identity)
+            if (primIdx != 0u) {
+              float cc = casterCover(primIdx, P, L, emitter, uData, uSurface); // MAX: idempotent per caster (P6 identity)
+              if (cc > 0.0) { cov = max(cov, cc); casterDepth = max(casterDepth, casterRowOf(uData, primIdx)); } // #3
+            }
           }
         }
       }
@@ -394,6 +414,7 @@ void main() {
     o3 |= ((v >> 8) & 1u) << uint(16 + slot);               // high bit → A[16+slot]
   }
   fragColor = uvec4(o0, o1, o2, o3);
+  oCasterD = uvec4(uint(casterDepth) & 0x7Fu, 0u, 0u, 0u);  // #3: frontmost caster row (7-bit local key)
 }
 `;
 
@@ -881,20 +902,25 @@ export class ShadowGather {
     this.coldLightRT?.destroy(); this.hotLightRT?.destroy();
     const gl = this.renderer.gl;
     const w = Math.max(1, cols * TEXTILE_UNIT), h = Math.max(1, rows * TEXTILE_UNIT);
-    // Per-light u9 shadow coverage — one RT per class. Start persistence from a known-zero buffer (P3).
-    this.coldShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint"] });
-    this.hotShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint"] });
-    this.coldShadowRT.clearInt(0, 0, 0, 0); this.hotShadowRT.clearInt(0, 0, 0, 0);
-    // Lightmaps — MRT [0] irradiance, [1] aggregate light direction. NO ambient baked in (the blit adds it
-    // once over cold+hot). Clear att0 → 0 (no light) and att1 → 0.5 (the ENCODED zero vector — else an
-    // unwritten hot texel decodes to a spurious −1 dir that corrupts the summed relief, since hot is
-    // unwritten across most of the screen).
-    this.coldLightRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba8unorm", "rgba8unorm"] });
-    this.hotLightRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba8unorm", "rgba8unorm"] });
+    // Shadow — MRT [0] per-light u9 coverage, [1] frontmost caster row (#3). One RT per class; clear both
+    // attachments to 0 (known-zero persistence baseline, P3).
+    this.coldShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
+    this.hotShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
+    for (const rt of [this.coldShadowRT, this.hotShadowRT]) {
+      rt.bind();
+      gl.clearBufferuiv(gl.COLOR, 0, new Uint32Array([0, 0, 0, 0]));
+      gl.clearBufferuiv(gl.COLOR, 1, new Uint32Array([0, 0, 0, 0]));
+    }
+    // Lightmaps — MRT [0] shadowed irradiance, [1] aggregate dir, [2] UNSHADOWED irradiance + caster row (#3).
+    // NO ambient baked (the blit adds it once over cold+hot). Clear att0/att2 → 0 (no light), att1 → 0.5
+    // (ENCODED zero dir — else an unwritten hot texel decodes to a spurious −1 dir corrupting the summed relief).
+    this.coldLightRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba8unorm", "rgba8unorm", "rgba8unorm"] });
+    this.hotLightRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba8unorm", "rgba8unorm", "rgba8unorm"] });
     for (const rt of [this.coldLightRT, this.hotLightRT]) {
       rt.bind();
-      gl.clearBufferfv(gl.COLOR, 0, new Float32Array([0, 0, 0, 1]));       // irradiance = 0
+      gl.clearBufferfv(gl.COLOR, 0, new Float32Array([0, 0, 0, 1]));       // shadowed irradiance = 0
       gl.clearBufferfv(gl.COLOR, 1, new Float32Array([0.5, 0.5, 0.5, 1])); // dir = zero vector (enc 0.5)
+      gl.clearBufferfv(gl.COLOR, 2, new Float32Array([0, 0, 0, 0]));       // unshadowed = 0, caster row = 0
     }
     this.rtCols = cols;
     this.rtRows = rows;
@@ -907,6 +933,10 @@ export class ShadowGather {
   get hotLightmap(): Texture | null { return this.hotLightRT?.textures[0] ?? null; }
   get coldLightDir(): Texture | null { return this.coldLightRT?.textures[1] ?? null; }
   get hotLightDir(): Texture | null { return this.hotLightRT?.textures[1] ?? null; }
+  /** #3 The UNSHADOWED irradiance + caster-row maps (att2) — the blit restores these where a thing stands
+   *  in front of the caster (so a foreground sprite isn't darkened by a shadow behind it). */
+  get coldUnshadowed(): Texture | null { return this.coldLightRT?.textures[2] ?? null; }
+  get hotUnshadowed(): Texture | null { return this.hotLightRT?.textures[2] ?? null; }
 
   /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield. */
   tick(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
@@ -1003,6 +1033,7 @@ export class ShadowGather {
         uData: this.coldData.dataTexture, // presence (sets 3/5) + light records (set 2)
         uDirty: dirty,
         uShadow: shadowRT.textures[0], // this class's shadow-cold (written by the gather draw above)
+        uCasterD: shadowRT.textures[1], // #3: this class's caster-depth map (att1 of the gather draw)
       },
       uniforms: (p) => {
         p.uInt("uLightClass", cls);
