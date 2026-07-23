@@ -17,10 +17,12 @@ Every map shares the tile grid; each picks a per-tile resolution `R`:
 | resolution | R (texels/tile) | position stored in | used for |
 |---|---|---|---|
 | **TILES** | `1` | **tiles** (+ sub-tile anchor) | per-tile data: **lights, caster buckets (prims), presence** |
-| **UNITS** | `SQUARE/16` = **16** | **units** | sub-tile data: **the shadow map** |
+| **UNITS** | `SQUARE/UNIT` = **16** | **units** | sub-tile data: **the shadow map** |
 | **SQUARE** | `SQUARE` = **64** | **px** | full-res: **albedo, normal, …** |
 
-Fixed conversions: `1 tile = SQUARE px = 16 units`; `1 unit = SQUARE/16 = 4 px`.
+Fixed conversions: `UNIT` (the size of one unit) `= SQUARE/16 = 4 px`; `1 tile = SQUARE px = 16 units`
+(`= SQUARE/UNIT`). So the UNITS map's texels-per-tile is the **count** of units per tile (`SQUARE/UNIT
+= 16`), **not** the unit's pixel size (`SQUARE/16 = 4`) — the two I fat-fingered together.
 
 A map at resolution `R` is a texture of size **`cols·R × rows·R`**.
 
