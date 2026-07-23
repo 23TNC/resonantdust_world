@@ -121,29 +121,25 @@ export class ColdShadowData {
    *  resolver's surface frame (billboard `width/height` in units, atlas `frame x/y/w/h` in px, `frame_page`).
    *  Returns -1 until the sprite's surface LOD has resolved (the caller falls back). Generic per variant —
    *  every instance of the sprite shares the slot. */
-  definitionFor(prim: Primitive, resolver: TextureResolver | null): number {
-    if (!prim.textureName || !resolver) return -1;
+  definitionFor(prim: Primitive, _resolver: TextureResolver | null): number {
+    if (!prim.textureName) return -1;
     const key = `${prim.textureName}|${prim.cell ?? 0}`;
     const hit = this.defIndex.get(key);
     if (hit !== undefined) return hit;
-    const surf = resolver.resolve(prim.textureName, "surface", prim.cell);
-    if (surf.geo || !surf.frame) return -1; // not loaded yet
-    const f = surf.frame;
-    this.surfacePageTex = f.source; // capture the shared surface page for the mask
-
+    // PURE QUAD: the shadow is a projected billboard quad — it only needs the billboard W/H (units).
+    // We deliberately do NOT gate on the surface LOD resolving. That gate made shadows ZOOM-DEPENDENT:
+    // a tree whose texture LOD hadn't loaded at the current zoom got def=-1 and cast no shadow. W/H come
+    // from the prim geometry, not the atlas, so they're always available. (frame/base-pad were only for
+    // the silhouette sample, which the pure-quad gather no longer does.)
     const idx = this.defNext++;
     const base = idx * 4;
     const pw = u10(prim.width / UNIT); // billboard width  (units)
     const ph = u10(prim.height / UNIT); // billboard height (units)
-    const framePage = 0; // single atlas page for now (F2); the layout carries frame_page for later
-    const [, , basePad] = this.depthUnits(f, prim.height); // transparent base padding (atlas px)
-    // R: prim_width(22–31) | prim_height(12–21) | frame_x(2–11) | rsvd(0–1)
-    this.defMirror[base] = (((u10(pw) << 22) | (u10(ph) << 12) | (u10(f.x) << 2)) >>> 0);
-    // G: frame_width(22–31) | frame_height(12–21) | frame_y(2–11) | rsvd(0–1)
-    this.defMirror[base + 1] = (((u10(f.w) << 22) | (u10(f.h) << 12) | (u10(f.y) << 2)) >>> 0);
-    // B: frame_page(22–31) | base_pad(14–21, atlas px; was dA) | reserved(6–13; was dB) | rsvd(0–5)
-    this.defMirror[base + 2] = (((u10(framePage) << 22) | (u8(basePad) << 14)) >>> 0);
-    this.defMirror[base + 3] = 0; // A: reserved (materials later)
+    // R: prim_width(22–31) | prim_height(12–21) | (frame/pad fields unused in pure-quad mode → 0)
+    this.defMirror[base] = (((pw << 22) | (ph << 12)) >>> 0);
+    this.defMirror[base + 1] = 0;
+    this.defMirror[base + 2] = 0;
+    this.defMirror[base + 3] = 0;
     this.defIndex.set(key, idx);
     this.defDirty = true;
     return idx;

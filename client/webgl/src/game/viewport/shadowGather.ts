@@ -21,10 +21,10 @@ import { SQUARE } from "./squareMath";
 
 /** Lights this iteration — a ring of debug lights around the seed tile. `number`-typed so the
  *  isolate-one-light debug path (`MAX_LIGHTS = 1`) below isn't flagged as a constant comparison. */
-const MAX_LIGHTS: number = 6;
+const MAX_LIGHTS: number = 1;
 /** Light height: 256 world px = 4 tiles (`SQUARE`=64) — twice the tree billboard height (128 px / 2 tiles). */
-const LIGHT_Z = 256;
-const LIGHT_REACH = 4 * SQUARE;      // illumination range (world px) — how far the light throws
+const LIGHT_Z = 40 * (SQUARE / 16);  // 40 units high (SQUARE/16 = 1 unit in px) — lower = longer shadows
+const LIGHT_REACH = 12 * SQUARE;     // illumination range (world px) — how far the light throws (12 tiles)
 const LIGHT_EMITTER = 12;            // physical source size (world px = 3 units) — penumbra softness
 const RING_RADIUS = 2 * SQUARE;
 /** shadow-cold resolution: `SHADOW_SLOT` texels per world tile (a tile is `SQUARE` world px). 16 = 1
@@ -35,7 +35,7 @@ const SQF = SQUARE.toFixed(1);
 const UNITF = (SQUARE / 16).toFixed(4);
 /** Lift the rendered shadow up (toward smaller world-y) by this many world units — a fragment shows
  *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Tunable. */
-const SHADOW_LIFT = 1.0;
+const SHADOW_LIFT = 0.0;             // DEBUG: shadow offset OFF (isolating the per-tile miscalc)
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
 
 interface Light {
@@ -67,56 +67,37 @@ vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
   uint wty = (((region & 15u) * RD + (zone & 15u)) * ZD + (tile & 15u));
   return vec2(float(wtx * 16u + (anchor >> 4u)), float(wty * 16u + (anchor & 15u)));
 }
-// Sprite-UV coverage sample. framePx = the sprite's atlas frame in PIXELS (x,y,w,h); sample the
-// TEXEL CENTRE for uv in [0,1] (0.5 + uv*(size-1)) so the frame edges (uv=0/1) never bleed into the
-// neighbouring atlas frame — the cause of the false line along the shadow's (transparent) bottom edge.
-// ATLAS size comes from the bound page (textureSize), NOT a constant: the surface atlas grows
-// (1024 -> 2048 -> ...) as more sprites resolve, and a hardcoded size silently samples wrong texels.
-float cover(sampler2D surf, vec4 framePx, vec2 uv) {
-  vec2 atlas = vec2(textureSize(surf, 0));
-  vec2 t = (framePx.xy + 0.5 + uv * (framePx.zw - 1.0)) / atlas;
-  return texture(surf, t).b;
-}
-// Is ground point P (world UNITS) in caster (anchor A, geo W/H, base pad f) projected from L, AND under the
-// sprite SILHOUETTE? PERSPECTIVE-CORRECT decode (no affine skew): the caster is a flat 3D card (top tilted +
-// elevated, base on the ground lifted by f·H to the opaque base). We INVERT the projection — solve the card
-// param (u,v) whose shadow lands on P — then sample the sprite there. Exact for a projected planar quad.
-//   card(u,v): x = A.x+(u-0.5)W ; y = mix(Yt,Yb,v) ; z = mix(Zt,0,v)   (v=0 top, v=1 base)
-//   shadow(u,v) = L.xy + (L.z/(L.z-z)) * (card.xy - L.xy)
-// Returns the caster's COVERAGE at P (0 = lit … 1 = fully occluded), = the sprite's silhouette alpha
-// at the solved (u,v); 0 when P is outside the projected card. (P6: coverage, not a hard bool — feeds
-// the 4-bit accumulate; translucent casters contribute their partial alpha.)
-float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float f, float emitterR, sampler2D surf, vec4 framePx) {
+// PURE QUAD placement (no texture sample, no u/v inversion). The caster is a flat 3D card: base on the
+// ground (y = Yb, z = 0), top tilted north + elevated (y = Yt, z = Zt). Project its 4 corners from the
+// light onto the ground → a convex ground quad; P is shadowed iff it lies inside that quad. The only
+// division is the single top-corner projection factor k — no per-pixel /denom or /s to blow up.
+//   card corners: base (A.x±W/2, Yb, 0)  ·  top (A.x±W/2, Yt, Zt)
+//   ground(C) = L.xy + (L.z/(L.z - C.z)) * (C.xy - L.xy)   → base stays put, top scales by k
+float cross2(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }
+float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H) {
   float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
-  float Yt = A.y - 0.5 * H * ct, Zt = H * st;   // card top (v=0): elevated + tilted
-  float Yb = A.y - f * H;                        // card base (v=1): on the ground (z=0), at the opaque base
-  float DY = Yb - Yt, DZ = -Zt;                  // d(y)/dv, d(z)/dv
-  float Pd = P.y - L.y;
-  float denom = L.z * DY + Pd * DZ;
-  if (abs(denom) < 1e-4) return 0.0;
-  float v = (Pd * (L.z - Zt) - L.z * (Yt - L.y)) / denom;  // solve shadow.y = P.y (linear in v)
-  if (v < 0.0 || v > 1.0) return 0.0;
-  float s = L.z / (L.z - (Zt + v * DZ));                   // projection factor at this height
-  if (s <= 0.0) return 0.0;
-  float u = 0.5 + (L.x + (P.x - L.x) / s - A.x) / W;       // solve shadow.x = P.x
-  if (u < -0.5 || u > 1.5) return 0.0;                     // allow a margin for the penumbra taps
-  // P7 penumbra (fake area light, PCSS-style): blur the silhouette sample by a radius that grows with
-  // (occluder→receiver)/(light→occluder) — near occluders stay sharp, far ones feather. EMITTER_R =
-  // source size; =0 ⇒ hard shadow. 5-tap cross in card-UV space (card is W×H units → uv = world/size).
-  float pen = emitterR * length(P - A) / max(length(A - L.xy), 1.0);
-  // CLAMP the blur to a fraction of the sprite — unbounded, it explodes at far shadow tips and
-  // samples (near-)the whole silhouette, smearing coverage way past the real tip ("shadow too far").
-  float ru = min(pen / W, 0.25), rv = min(pen / max(H, 1.0), 0.25);
-  float sv = v * (1.0 - f);
-  float cc = cover(surf, framePx, vec2(u, sv));
-  cc += cover(surf, framePx, vec2(u - ru, sv)) + cover(surf, framePx, vec2(u + ru, sv));
-  cc += cover(surf, framePx, vec2(u, sv - rv)) + cover(surf, framePx, vec2(u, sv + rv));
-  return cc * 0.2;                                         // card v -> sprite uv.v (opaque region [0,1-f])
+  float Yt = A.y - 0.5 * H * ct, Zt = H * st;    // card top: tilted north + elevated
+  float Yb = A.y;                                 // card base on the ground (z = 0)
+  float k = L.z / (L.z - Zt);                     // ground-projection factor for the top corners
+  if (k <= 0.0) return 0.0;                        // top at/above the light — no forward shadow
+  float hw = 0.5 * W;
+  vec2 bl = vec2(A.x - hw, Yb);                    // base corners project to themselves (z = 0)
+  vec2 br = vec2(A.x + hw, Yb);
+  vec2 tl = L.xy + k * (vec2(A.x - hw, Yt) - L.xy);   // top corners projected from the light
+  vec2 tr = L.xy + k * (vec2(A.x + hw, Yt) - L.xy);
+  // point in convex quad (bl → br → tr → tl): inside iff all four edge cross products share a sign.
+  float d0 = cross2(br - bl, P - bl);
+  float d1 = cross2(tr - br, P - br);
+  float d2 = cross2(tl - tr, P - tr);
+  float d3 = cross2(bl - tl, P - tl);
+  bool pos = d0 >= 0.0 && d1 >= 0.0 && d2 >= 0.0 && d3 >= 0.0;
+  bool neg = d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0 && d3 <= 0.0;
+  return (pos || neg) ? 1.0 : 0.0;               // solid quad: 1 occluded, 0 lit
 }
 // Coverage of one caster (prim index into prim_data) at P from light L: read the prim record + its
-// definition, height-cull, then the silhouette test. Returns 0..1 (0 = empty slot / not under / culled).
-float casterCover(uint primIdx, vec2 P, vec3 L, float emitterR, highp usampler2D primData,
-                  highp usampler2D primDef, int primW, int defW, sampler2D surf) {
+// definition (position + geo W/H), then the pure-quad test. Returns 1 (occluded) or 0.
+float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData,
+                  highp usampler2D primDef, int primW, int defW) {
   if (primIdx == 0u) return 0.0;
   uvec4 Pd = fetchLin(primData, int(primIdx) / 2, primW);
   uint pos = (primIdx & 1u) == 0u ? Pd.x : Pd.z;
@@ -125,15 +106,7 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitterR, highp usampler2D
   int defIdx = int((orient >> 6) & 0xffffu);
   uvec4 D = fetchLin(primDef, defIdx, defW);
   float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u);
-  // Height cull (F6) — cheap radial gate BEFORE the projection + silhouette fetch: P is in this
-  // caster's shadow band only if 0 <= (dP - dC) <= (dP/L.z)·H (dP/dC = P/caster distance from the
-  // light). H (full height) over-estimates the tilted extent → conservative, never drops a real hit.
-  float dP = length(P - L.xy), dC = length(A - L.xy), delta = dP - dC;
-  if (delta < 0.0 || delta > (dP / L.z) * H) return 0.0;
-  float fx = float((D.x >> 2) & 1023u), fw = float((D.y >> 22) & 1023u), fh = float((D.y >> 12) & 1023u), fy = float((D.y >> 2) & 1023u);
-  float basePad = float((D.z >> 14) & 255u);              // transparent base rows (atlas px)
-  float f = fh > 0.5 ? basePad / fh : 0.0;                // → base fraction
-  return shadowCover(P, A, L, W, H, f, emitterR, surf, vec4(fx, fy, fw, fh));
+  return shadowCover(P, A, L, W, H);
 }
 `;
 
@@ -151,7 +124,6 @@ uniform highp usampler2D uPrimData;   // prim_data (2/px)
 uniform highp usampler2D uPresence;   // light_presence_cold (cols×rows, 1 tile/px)
 uniform highp usampler2D uDirty;      // shadow_dirty (cols×rows R8UI): .r nonzero = recompute
 uniform highp usampler2D uCaster;     // per-tile caster buckets (cols×rows RGBA32UI = 8× u16 prim idx)
-uniform sampler2D uSurface;           // casters' shared surface page (.B = silhouette coverage)
 uniform int uDefW, uPrimW;
 uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window
 out uvec4 fragColor;
@@ -177,30 +149,27 @@ void main() {
     uvec4 Ld = texelFetch(uLightData, ivec2(int(li), 0), 0);
     if ((Ld.z & 1u) == 0u) continue;                        // cast_shadows
     vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));
-    float emitterR = float((Ld.w >> 24) & 255u);            // per-light penumbra source size (units, F7)
-    // Corridor march: 1-tile-wide Bresenham over tiles from P's tile toward L's tile, ACCUMULATING
-    // coverage from each tile's ≤8 casters; break at full (0xF); cap total tests at 64.
-    ivec2 cur = ivec2(int(floor(P.x / UPT)), int(floor(P.y / UPT)));  // P's tile
-    ivec2 lt  = ivec2(int(floor(L.x / UPT)), int(floor(L.y / UPT)));  // L's tile
-    ivec2 dd = lt - cur, ad = abs(dd);
-    ivec2 sp = ivec2(dd.x >= 0 ? 1 : -1, dd.y >= 0 ? 1 : -1);
-    int err = ad.x - ad.y, tested = 0;
+    // BRUTE FORCE (debug): the 1-tile corridor march misses casters whose QUAD spans tiles the march
+    // never visits (the wedge bug). So skip the corridor entirely — walk EVERY tile in the light's
+    // reach box and test each bucketed caster's quad against P. Correctness over speed; the real
+    // corridor rebuild comes after this proves the march was the culprit.
+    int reachT = int((Ld.z >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin
+    ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
     float cov = 0.0;
-    for (int m = 0; m < 24 && cov < 1.0; m++) {
-      uvec4 cb = texelFetch(uCaster, ivec2(pmod(cur.x, uCols), pmod(cur.y, uRows)), 0);
-      for (int c = 0; c < 8; c++) {
-        uint word = cb[c >> 1];
-        uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
-        if (primIdx == 0u) continue;
-        tested++;
-        cov = min(cov + casterCover(primIdx, P, L, emitterR, uPrimData, uPrimDef, uPrimW, uDefW, uSurface), 1.0);
-        if (cov >= 1.0 || tested >= 64) break;
+    for (int dy = -16; dy <= 16 && cov < 1.0; dy++) {
+      if (dy < -reachT || dy > reachT) continue;
+      for (int dx = -16; dx <= 16; dx++) {
+        if (dx < -reachT || dx > reachT) continue;
+        ivec2 t = lc + ivec2(dx, dy);
+        uvec4 cb = texelFetch(uCaster, ivec2(pmod(t.x, uCols), pmod(t.y, uRows)), 0);
+        for (int c = 0; c < 8; c++) {
+          uint word = cb[c >> 1];
+          uint primIdx = (c & 1) == 0 ? (word >> 16) : (word & 0xffffu);
+          if (primIdx == 0u) continue;
+          cov = min(cov + casterCover(primIdx, P, L, uPrimData, uPrimDef, uPrimW, uDefW), 1.0);
+        }
+        if (cov >= 1.0) break;
       }
-      if (cov >= 1.0 || tested >= 64) break;
-      if (cur == lt) break;                                 // reached the light
-      int e2 = 2 * err;
-      if (e2 > -ad.y) { err -= ad.y; cur.x += sp.x; }
-      if (e2 <  ad.x) { err += ad.x; cur.y += sp.y; }
     }
     // Pack this SLOT's coverage as a 4-bit nibble at bit slot*4 (8 slots → 32 bits → R channel).
     uint nib = uint(cov * 15.0 + 0.5);
@@ -257,8 +226,8 @@ void main() {
     uint nib = (sh >> uint(slot * 4)) & 0xFu;
     if (nib > 0u) { float cvg = float(nib) / 15.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
   }
-  if (any <= 0.0) { fragColor = vec4(0.0); return; }
-  fragColor = vec4(clamp(acc, 0.0, 1.0), any);             // alpha = coverage → penumbra fades (P7)
+  if (any <= 0.0) { fragColor = vec4(0.0); return; }        // lit → transparent
+  fragColor = vec4(clamp(acc, 0.0, 1.0), any);              // shadow tint × coverage
 }
 `;
 
@@ -311,7 +280,7 @@ export class ShadowGather {
   private readonly lights: Light[] = [];
   /** DEBUG: orbit the lights every frame so the shadow recompute runs each frame — turns the FPS
    *  panel into a live gather-cost readout (the "hot lights" perf case). Toggle with {@link setOrbit}. */
-  private orbit = true;
+  private orbit = false;            // orbit disabled — lights are static
   private orbitPhase = 0;
   private seedX = 0;
   private seedY = 0;
@@ -377,7 +346,7 @@ export class ShadowGather {
     this.gizmoQuad = new Geometry(gl, this.gizmo, {
       aUnit: { data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
-    this.seed(100, 50);
+    this.seed(54, 21);
   }
 
   /** Seed 6 lights in a ring around a tile (world px). */
@@ -386,11 +355,12 @@ export class ShadowGather {
     this.seedX = cx; this.seedY = cy;
     this.lights.length = 0;
     for (let k = 0; k < MAX_LIGHTS; k++) {
-      // DIAG: isolate the teal light — the k=4 ring position (angle 240°, up-left of centre).
-      const a = MAX_LIGHTS === 1 ? (4 / 6) * Math.PI * 2 : (k / MAX_LIGHTS) * Math.PI * 2;
+      const a = (k / MAX_LIGHTS) * Math.PI * 2;
+      // A single light sits AT the seed tile; multi-light debug still fans out on the ring.
+      const radius = MAX_LIGHTS === 1 ? 0 : RING_RADIUS;
       // Vary emitter size per light so the per-light softness is visible: k·(source growing round the ring).
       const emitter = LIGHT_EMITTER * (1 + k * 0.6);
-      this.lights.push({ x: cx + Math.cos(a) * RING_RADIUS, y: cy + Math.sin(a) * RING_RADIUS, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: emitter });
+      this.lights.push({ x: cx + Math.cos(a) * radius, y: cy + Math.sin(a) * radius, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: emitter });
     }
     this.enabled = true;
     this.coldDirty = true;
@@ -417,7 +387,7 @@ export class ShadowGather {
     const pmod = (a: number, m: number): number => ((a % m) + m) % m;
     const n = Math.min(this.lights.length, MAX_LIGHTS);
     for (let k = 0; k < n; k++) {
-      const L = this.lights[k], r = L.reach - SQUARE; // reach−1 tile (F10): the outer ring is falloff-dark
+      const L = this.lights[k], r = L.reach; // full reach (reach−1 F10 trim removed per request)
       if (r <= 0) continue;
       const r2 = r * r;
       const t0x = Math.max(winCol, Math.floor((L.x - r) / SQUARE)), t1x = Math.min(winCol + cols - 1, Math.floor((L.x + r) / SQUARE));
@@ -604,7 +574,6 @@ export class ShadowGather {
         uPresence: this.presenceTex,
         uCaster: this.casterTex,
         uDirty: this.dirtyTex,
-        uSurface: this.coldData.surfacePage ?? this.empty,
       },
       uniforms: (p) => {
         p.uInt("uDefW", defW);

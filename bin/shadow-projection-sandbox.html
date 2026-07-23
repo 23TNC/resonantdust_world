@@ -97,7 +97,7 @@
 (function(){
   const EW={ theta:65, W:100, H:60, dA:20, dB:20, ax:0.5, ay:1 };
   const NS={ theta:115, W:100, H:60, dA:20, dB:20, ax:0.5, ay:1 };
-  const L ={ Lz:140, lightX:-70, lightY:120, scale:0.85 };
+  const L ={ Lz:144, lightX:-70, lightY:120, scale:0.85 };
 
   const mode=()=>document.querySelector('input[name=mode]:checked').value;
   const cur=()=>mode()==="ew"?EW:NS;
@@ -165,7 +165,7 @@
     return [{x:-Wx,y:-Hy},{x:Wx,y:-Hy},{x:Wx,y:Hy},{x:-Wx,y:Hy}];
   }
   function proj(p){ if(p.z<=0) return {x:p.x, y:p.y};         // sub-ground → straight up (footprint)
-    const t=Math.min(L.Lz/Math.max(L.Lz-p.z,1),8);            // TMAX clamp fixed at 8×
+    const t=Math.min(L.Lz/Math.max(L.Lz-p.z,1),10);           // TMAX reach clamp (10×)
     return {x:L.lightX+t*(p.x-L.lightX), y:L.lightY+t*(p.y-L.lightY)};}
 
   function setup(id){const cv=document.getElementById(id);const dpr=window.devicePixelRatio||1,r=cv.getBoundingClientRect();
