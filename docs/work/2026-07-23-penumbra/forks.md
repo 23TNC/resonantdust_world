@@ -50,3 +50,25 @@ needed for physically-plausible behaviour. If the near-base darkness needs to be
 physics gives (RimWorld-style contact shadows), add an **explicit contact-darkening multiplier** —
 `opacity = mix(1.0, contactBoost, 1 − t)` or a distance-from-base curve — as a tunable, default off.
 Decide by eye in P1; keep it a dial, not a hardcode.
+
+## F5 · Image-space blur → AREA-LIGHT emitter sampling {#f5}
+
+**2026-07-23 — SUPERSEDED (F1's image multi-tap) by area-light sampling.** The delivered image-space
+multi-tap (F1 option B — blur the projected card silhouette in atlas-uv space) read as a **flat
+billboard translated + skewed**: a homography of one flat card is always going to look like the card,
+not a grounded shadow. Two tells — a hard projected-quad boundary with inward-only blur, and the tree's
+branch detail surviving (capped 12px / 9-tap) all the way to the tip.
+
+**Replaced by AREA-LIGHT emitter sampling** (`casterCover`): the light is a disk of radius `emitter`
+(units) at height Lz; for each of 16 sub-lights we re-invert P → card (s,t) and sample the HARD
+silhouette, averaging. Grounds the shadow by construction — a silhouette edge at height z casts to a
+ground point that shifts with the sub-light by `∝ z/(Lz−z)`: a **z≈0 contact edge doesn't move** (hard
+attached base), a **high edge moves a lot** (soft tip, detail dissolving). The penumbra is now
+"projected based on light + prim location" (the user's framing), not an image blur.
+
+**Constraint that shaped it:** the gate stays the **HARD projected quad** (not dilated), so the occluder
+set is unchanged and the **corridor↔brute identity holds** (verified 0 mismatches, lights frozen). A
+dilated gate (to add the outward feather beyond the silhouette extremes) broke identity — the corridor's
+segment walk isn't proven to reach occluders of the dilated region. **Follow-up:** widen the corridor
+pad by the penumbra width + re-prove sufficiency to earn the outward feather. `__emit(px)` tunes the
+radius live (default 20px = 5 units); F3's tap-count/F4's umbra now emerge from the 16 emitter samples.
