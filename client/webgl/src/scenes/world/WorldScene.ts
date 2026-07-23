@@ -31,6 +31,7 @@ const PENDING_W4F: Record<string, string> = {
 };
 
 export class WorldScene extends Scene {
+  private ctx!: GameContext;
   private panel!: ViewportPanel;
   private bridge!: WorldBridge;
   private moverLayer!: MoverLayer;
@@ -42,6 +43,7 @@ export class WorldScene extends Scene {
   private lastClientY = 0;
 
   onEnter(ctx: GameContext): void {
+    this.ctx = ctx;
     this.panel = new ViewportPanel(ctx);
     this.panel.open();
     // Attach the texture resolver + the viewport's GL context (F6: the viewport self-canvases, so the
@@ -92,6 +94,10 @@ export class WorldScene extends Scene {
 
   update(): void {
     this.panel?.tick();
+    // Push the live viewport zoom to the debug HUD (textures tab). The scene-
+    // independent `setStats` ticker in main.ts has no viewport handle, so drive it
+    // from here — covers wheel, `/zoom`, and the initial value in one place.
+    this.ctx?.debugPanel?.setZoom(this.panel.view.zoom);
   }
 
   onExit(): void {

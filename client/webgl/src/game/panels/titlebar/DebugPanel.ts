@@ -333,18 +333,15 @@ export class DebugPanel {
   // ── Main tab values ─────────────────────────────────────────────
   private readonly mainEnv:        HTMLSpanElement;
   private readonly mainSyncTime:   HTMLSpanElement;
-  private readonly mainOffset:     HTMLSpanElement;
   private readonly mainFps:        HTMLSpanElement;
   private readonly mainDrawCalls:  HTMLSpanElement;
   /** Estimated network bandwidth (↓ received / ↑ sent), a smoothed bytes/sec over
    *  the cumulative row + reply byte tallies. */
   private readonly mainBandwidth:  HTMLSpanElement;
-  // Cursor coordinate readout (debug): tile → zone (macro) → region, derived
-  // from the codec formula so it's the REFERENCE to compare against where tiles
-  // actually load/render.
-  private readonly mainTile:       HTMLSpanElement;
-  private readonly mainZone:       HTMLSpanElement;
-  private readonly mainRegion:     HTMLSpanElement;
+  // Cursor coordinate readout (debug): the nested region/zone/tile address on ONE
+  // line, derived from the codec formula so it's the REFERENCE to compare against
+  // where tiles actually load/render.
+  private readonly mainCoords:     HTMLSpanElement;
 
   // ── Textures tab values ─────────────────────────────────────────
   private readonly texFps:         HTMLSpanElement;
@@ -435,13 +432,10 @@ export class DebugPanel {
     );
     this.mainEnv       = this.addRow(mainContent, panelText("debugPanel", "environment"));
     this.mainSyncTime  = this.addRow(mainContent, panelText("debugPanel", "syncTime"));
-    this.mainOffset    = this.addRow(mainContent, panelText("debugPanel", "offset"));
     this.mainFps       = this.addRow(mainContent, panelText("debugPanel", "fps"));
     this.mainDrawCalls = this.addRow(mainContent, panelText("debugPanel", "drawCalls"));
     this.mainBandwidth = this.addRow(mainContent, "net (↓ · ↑)");
-    this.mainRegion    = this.addRow(mainContent, "region x,y");
-    this.mainZone      = this.addRow(mainContent, "zone x,y");
-    this.mainTile      = this.addRow(mainContent, "tile x,y");
+    this.mainCoords    = this.addRow(mainContent, "xy · reg · zone · tile");
 
     // ── Textures tab — atlas / slot counts ────────────────────────
     // Atlas-page total, then a packed-texture count per power-of-two bucket, then
@@ -520,9 +514,7 @@ export class DebugPanel {
   setCursorCoords(world: { x: number; y: number } | null): void {
     if (!this.panel.isOpen) return;
     if (!world) {
-      this.mainRegion.textContent = "—";
-      this.mainZone.textContent   = "—";
-      this.mainTile.textContent   = "—";
+      this.mainCoords.textContent = "—";
       return;
     }
     // World tile (SQUARE world px per tile); floor-div so off-origin/negative
@@ -539,9 +531,12 @@ export class DebugPanel {
     const tileInZoneY = mod(ty, ZONE_DIM);
     const zoneInRegionX = mod(zx, REGION_DIM);
     const zoneInRegionY = mod(zy, REGION_DIM);
-    this.mainRegion.textContent = `${rx}, ${ry}`;
-    this.mainZone.textContent   = `${zoneInRegionX}, ${zoneInRegionY}   (w ${zx}, ${zy})`;
-    this.mainTile.textContent   = `${tileInZoneX}, ${tileInZoneY}   (w ${tx}, ${ty})`;
+    // The absolute global TILE the cursor is over (`tx,ty`, floored so it names a
+    // whole tile) in parentheses, then the nested region ⊃ zone ⊃ tile address:
+    // each level's cell within its parent, `/`-separated from coarse to fine.
+    this.mainCoords.textContent =
+      `(${tx},${ty}) ` +
+      `${rx},${ry} / ${zoneInRegionX},${zoneInRegionY} / ${tileInZoneX},${tileInZoneY}`;
   }
 
   /** Live viewport zoom readout (textures tab). Scene-pushed each frame; the
@@ -615,7 +610,6 @@ export class DebugPanel {
     // local wall clock. "—" until the clock has an estimate.
     if (now) {
       this.mainSyncTime.textContent = formatHourClock(now.syncMs);
-      this.mainOffset.textContent   = formatSignedMs(now.disciplinedOffsetMs);
       this.syncNow.textContent =
         `Sync ${formatHourClock(now.syncMs)}\n` +
         `Date ${formatHourClock(now.dateMs)}\n` +
@@ -624,7 +618,6 @@ export class DebugPanel {
       this.syncSlew.textContent       = now.slew;
     } else {
       this.mainSyncTime.textContent   = "—";
-      this.mainOffset.textContent     = "—";
       this.syncNow.textContent        = "—";
       this.syncOffsetDisc.textContent = "—";
       this.syncSlew.textContent       = "—";
