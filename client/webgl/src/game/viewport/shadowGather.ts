@@ -21,7 +21,9 @@ import { SQUARE, UNIT, TEXTILE_UNIT } from "./squareMath";
 
 /** Lights this iteration — a ring of debug lights around the seed tile. `number`-typed so the
  *  isolate-one-light debug path (`MAX_LIGHTS = 1`) below isn't flagged as a constant comparison. */
-const MAX_LIGHTS: number = 1;
+const MAX_LIGHTS: number = 2;
+/** Extra fixed debug lights (world TILES) placed alongside the one at the seed tile. */
+const EXTRA_LIGHT_TILES: ReadonlyArray<[number, number]> = [[34, 25]];
 /** Light height: 40 units = 160 world px = 2.5 tiles — above the tree billboard (2 tiles / 32 units).
  *  Lower = longer shadows. */
 const LIGHT_Z = 40 * UNIT;
@@ -488,18 +490,14 @@ export class ShadowGather {
     this.seed(54, 21);
   }
 
-  /** Seed 6 lights in a ring around a tile (world px). */
+  /** Seed the debug lights: one at the seed tile + the {@link EXTRA_LIGHT_TILES} fixed set (world px). */
   seed(tileX: number, tileY: number): void {
     const cx = (tileX + 0.5) * SQUARE, cy = (tileY + 0.5) * SQUARE;
     this.seedX = cx; this.seedY = cy;
     this.lights.length = 0;
-    for (let k = 0; k < MAX_LIGHTS; k++) {
-      const a = (k / MAX_LIGHTS) * Math.PI * 2;
-      // A single light sits AT the seed tile; multi-light debug still fans out on the ring.
-      const radius = MAX_LIGHTS === 1 ? 0 : RING_RADIUS;
-      // Vary emitter size per light so the per-light softness is visible: k·(source growing round the ring).
-      const emitter = LIGHT_EMITTER * (1 + k * 0.6);
-      this.lights.push({ x: cx + Math.cos(a) * radius, y: cy + Math.sin(a) * radius, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: emitter });
+    this.lights.push({ x: cx, y: cy, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER });
+    for (const [tx, ty] of EXTRA_LIGHT_TILES) {
+      this.lights.push({ x: (tx + 0.5) * SQUARE, y: (ty + 0.5) * SQUARE, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER });
     }
     this.enabled = true;
     this.coldDirty = true;
