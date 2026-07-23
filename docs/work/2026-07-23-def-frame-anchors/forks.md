@@ -43,6 +43,27 @@ r=3 px, slack=3 px → centered start needs a shift of `slack/2 − r = −1.5` 
   recording WHICH alignment the stored nudge encodes — defaults x = 1 (center), y = 2 (bottom, the
   shadow base) — future nudging operations write other anchors. ALPHA is now FULL (12+12+2+2+4).
 
+## F5 · GPU scatter queue for data-texture updates — DESIGNED, deferred {#f5}
+
+**2026-07-23 — user-proposed; build when scattered-sparse becomes the common write pattern.**
+
+Instead of CPU `texSubImage2D` into the data textures, upload a small sequential **command buffer**
+(entries: `u16 target index` + the target texel's full RGBA32UI payload) and run a **point-scatter
+draw**: `drawArrays(POINTS, count)`, vertex shader `gl_VertexID → texelFetch(commands)` → point at
+the target texel's NDC, fragment writes the payload into the data texture (FBO attached; RGBA32UI
+is renderable — the engine already renders integer targets). No ping-pong: the pass reads ONLY the
+command buffer and writes WHOLE texels (a prim update ships both prims of its shared texel from the
+CPU mirror), so same-frame passes read the updated data cleanly.
+
+- **Wins**: scattered-sparse updates — random access into the tables for O(N) sequential bytes.
+  The zoom lod-swap (all prims' orient words, scattered) ships ~11 KB of commands vs a ~512 KB
+  bounding span. **Loses**: appends/clustered bursts (row spans are already exact; scatter
+  double-writes). Decision rule: spans for clustered, scatter for scattered.
+- Refinements over the spoken proposal: counts as uniforms/draw-count (no u6 header px, no 64-entry
+  ceiling); whole-texel commands (the prim-pair wrinkle).
+- **Deferred because** scattered-sparse is RARE today (zoom threshold crossings); it becomes the
+  common pattern when the hot tier / moving casters land — build it then, ordered before the gather.
+
 ## F3 · prim_data position semantics under anchors {#f3}
 
 **2026-07-23 — OPEN (P3).**
