@@ -21,9 +21,17 @@ import { SQUARE, UNIT, TEXTILE_UNIT } from "./squareMath";
 
 /** Lights this iteration — a ring of debug lights around the seed tile. `number`-typed so the
  *  isolate-one-light debug path (`MAX_LIGHTS = 1`) below isn't flagged as a constant comparison. */
-const MAX_LIGHTS: number = 2;
-/** Extra fixed debug lights (world TILES) placed alongside the one at the seed tile. */
-const EXTRA_LIGHT_TILES: ReadonlyArray<[number, number]> = [[34, 25]];
+const MAX_LIGHTS: number = 3;
+/** Debug lights placed at fixed world TILES beyond the one at the seed tile: `[tileX, tileY, dynamic]`.
+ *  A `dynamic` light orbits its home every frame (the moving-light case); static ones never move.
+ *  Seed = red static (few trees, clean debug); green = dynamic (in the forest, surfaces motion bugs);
+ *  blue = static, placed to overlap BOTH so light interactions are visible. */
+const EXTRA_LIGHT_TILES: ReadonlyArray<[number, number, boolean]> = [
+  [34, 25, true],   // green — dynamic, dense forest
+  [45, 40, false],  // blue  — static, interacts with red + green
+];
+/** World-px radius a dynamic light orbits its home. */
+const MOTION_RADIUS = 3 * SQUARE;
 /** Light height: 40 units = 160 world px = 2.5 tiles — above the tree billboard (2 tiles / 32 units).
  *  Lower = longer shadows. */
 const LIGHT_Z = 40 * UNIT;
@@ -51,6 +59,9 @@ interface Light {
   z: number;
   reach: number;         // illumination range (world px)
   emitterRadius: number; // physical source size (world px) — penumbra softness
+  hx: number;            // home (world px) — a dynamic light orbits this
+  hy: number;
+  dynamic: boolean;      // moves every frame (around its home); static lights never move
 }
 
 /** The cold cache's toroidal tile window (from `SquareCache.window`) — shadow-cold aligns to it. */
@@ -495,9 +506,10 @@ export class ShadowGather {
     const cx = (tileX + 0.5) * SQUARE, cy = (tileY + 0.5) * SQUARE;
     this.seedX = cx; this.seedY = cy;
     this.lights.length = 0;
-    this.lights.push({ x: cx, y: cy, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER });
-    for (const [tx, ty] of EXTRA_LIGHT_TILES) {
-      this.lights.push({ x: (tx + 0.5) * SQUARE, y: (ty + 0.5) * SQUARE, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER });
+    this.lights.push({ x: cx, y: cy, hx: cx, hy: cy, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER, dynamic: false });
+    for (const [tx, ty, dynamic] of EXTRA_LIGHT_TILES) {
+      const lx = (tx + 0.5) * SQUARE, ly = (ty + 0.5) * SQUARE;
+      this.lights.push({ x: lx, y: ly, hx: lx, hy: ly, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER, dynamic });
     }
     this.enabled = true;
     this.coldDirty = true;
@@ -737,9 +749,10 @@ export class ShadowGather {
   tick(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
     if (!this.enabled || this.lights.length === 0) return;
 
-    // DEBUG orbit: rotate the ring each frame so the whole shadow field recomputes every frame — the
-    // FPS panel then reads the real per-frame gather cost (the moving-light / P8 case). Dial MAX_LIGHTS
-    // to see light-count scaling; the per-tile 8-cap means cost only rises where >8 lights overlap.
+    // Motion. Default: only `dynamic` lights move (each orbits its own home) — the moving-light case
+    // in a scene with static reference lights. `__orbit` (DEBUG) instead rings EVERY light around the
+    // seed so the whole field recomputes each frame, reading the max per-frame gather cost.
+    let moved = false;
     if (this.orbit) {
       this.orbitPhase += 0.01;
       const n = this.lights.length;
@@ -750,6 +763,19 @@ export class ShadowGather {
         L.y = this.seedY + Math.sin(a) * RING_RADIUS;
         this.markLightMove(ox, oy, L.x, L.y, L.reach); // P5 scoped dirty — NOT force-all
       }
+      moved = true;
+    } else {
+      this.orbitPhase += 0.02;
+      for (const L of this.lights) {
+        if (!L.dynamic) continue;
+        const ox = L.x, oy = L.y;
+        L.x = L.hx + Math.cos(this.orbitPhase) * MOTION_RADIUS;
+        L.y = L.hy + Math.sin(this.orbitPhase) * MOTION_RADIUS;
+        this.markLightMove(ox, oy, L.x, L.y, L.reach); // scoped dirty on its old ∪ new reach
+        moved = true;
+      }
+    }
+    if (moved) {
       this.coldDirty = true;   // light records changed
       this.lightsVer++;        // presence changed
     }
