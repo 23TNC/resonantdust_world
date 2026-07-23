@@ -9,26 +9,48 @@
 //! logic is verbatim. GOTCHA: a backtick inside the GLSL closes the `/* glsl */` literal.
 
 import { Program, type Texture } from "../../gl";
+import { SQUARE } from "./squareMath";
+
+const SQF = SQUARE.toFixed(1);
 
 const BLIT_VERT = /* glsl */ `#version 300 es
 in vec2 aPosition;              // display-quad world px
 in vec2 aUV;                    // composite UV (identity: the bake stores upright)
 uniform mat3 uProjection;       // world px → clip (pan + zoom + screen→clip)
 out vec2 vUV;
+out vec2 vWorld;                // world px — for sampling the lightmap by world position
 void main() {
   vUV = aUV;
+  vWorld = aPosition;
   vec3 p = uProjection * vec3(aPosition, 1.0);
   gl_Position = vec4(p.xy, 0.0, 1.0);
 }
 `;
 const BLIT_FRAG = /* glsl */ `#version 300 es
 precision highp float;
+precision highp int;
 in vec2 vUV;
+in vec2 vWorld;
 uniform sampler2D uAlbedo;       // COLD albedo composite (the mesh's main texture)
 uniform sampler2D uSurface;      // COLD surface: B = alpha (visual coverage)
 uniform sampler2D uAlbedoWarm;   // WARM tier: mover albedo (over cold by warm coverage)
 uniform sampler2D uSurfaceWarm;  // WARM tier: mover surface (its B = composite coverage)
+uniform sampler2D uLightmap;     // baked LIGHTMAP (world-space toroidal, TEXEL-aligned w/ shadow-cold)
+uniform int uLightEnable;        // 0 = UNLIT (albedo only) — the fallback when the lightmap isn't ready
+uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mapping (F2: uniforms — a display consumer)
 out vec4 fragColor;
+const float SQ = ${SQF};
+int pmod(int a, int m) { return ((a % m) + m) % m; }
+// Sample the lightmap at a world position via the toroidal window mapping (matches the gather's
+// fc→world). Outside the window (shouldn't happen — the display only draws resident squares) → ambient-ish 1.
+vec3 sampleLight(vec2 world) {
+  int tx = int(floor(world.x / SQ)), ty = int(floor(world.y / SQ));
+  if (tx < uLWinCol || tx >= uLWinCol + uLCols || ty < uLWinRow || ty >= uLWinRow + uLRows) return vec3(1.0);
+  int sx = pmod(tx, uLCols), sy = pmod(ty, uLRows);
+  float lx = fract(world.x / SQ), ly = fract(world.y / SQ);
+  ivec2 texel = ivec2(sx * uLSlot + int(lx * float(uLSlot)), sy * uLSlot + int(ly * float(uLSlot)));
+  return texelFetch(uLightmap, texel, 0).rgb;
+}
 void main() {
   vec4 outColor = texture(uAlbedo, vUV);
   // WARM-over-COLD: warm is slot-aligned with cold, sampled at the SAME vUV. Where no mover
@@ -37,9 +59,11 @@ void main() {
   vec4 alb = mix(outColor, texture(uAlbedoWarm, vUV), wcov);
   vec4 surf = mix(texture(uSurface, vUV), texture(uSurfaceWarm, vUV), wcov);
   float alpha = surf.b;          // visual coverage -> output alpha
+  // LIGHTING: material (albedo) × illumination (lightmap). Unlit fallback keeps the old blit exactly.
+  vec3 light = uLightEnable == 1 ? sampleLight(vWorld) : vec3(1.0);
   // Coverage applied at OUTPUT only (premultiplied) so it composites over the canvas
   // background: empty cells (alpha 0) show through, ground/things (alpha 1) draw opaque.
-  fragColor = vec4(alb.rgb * alpha, alpha);
+  fragColor = vec4(alb.rgb * light * alpha, alpha);
 }
 `;
 
@@ -52,19 +76,22 @@ export class AlbedoBlitShader {
   surface: Texture | null = null;
   albedoWarm: Texture | null = null;
   surfaceWarm: Texture | null = null;
+  /** The baked lightmap (from {@link ShadowGather}); null → the blit stays UNLIT (uLightEnable 0). */
+  lightmap: Texture | null = null;
 
   constructor(gl: WebGL2RenderingContext) {
     this.program = new Program(gl, BLIT_VERT, BLIT_FRAG, "viewport-albedo-blit");
   }
 
-  /** The four sampler bindings (unset ones fall back to `empty` — a 1×1 black texture whose
-   *  B = 0, so a missing warm tier reads as no coverage and a missing cold surface as alpha 0). */
+  /** The sampler bindings (unset ones fall back to `empty` — a 1×1 black texture whose B = 0, so a
+   *  missing warm tier reads as no coverage and a missing cold surface as alpha 0). */
   textures(empty: Texture): Record<string, Texture> {
     return {
       uAlbedo: this.albedo ?? empty,
       uSurface: this.surface ?? empty,
       uAlbedoWarm: this.albedoWarm ?? empty,
       uSurfaceWarm: this.surfaceWarm ?? empty,
+      uLightmap: this.lightmap ?? empty,
     };
   }
 

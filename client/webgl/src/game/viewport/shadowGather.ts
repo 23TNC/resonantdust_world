@@ -214,6 +214,60 @@ in vec2 aPos;                    // NDC -1..1 (2 tris)
 void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 `;
 
+/** Ambient floor — the small base light so unlit areas aren't pure black (F4/P4 tunes; not a global sun,
+ *  just a floor per [[lighting-direction]]). GLSL literal. */
+const AMBIENTF = (0.12).toFixed(3);
+
+// ── LIGHTING (`2026-07-23-lighting`) ──────────────────────────────────────────────────────────────
+// The baked LIGHTMAP (F1): a world-space toroidal RT aligned TEXEL-FOR-TEXEL with shadow-cold (same
+// cols·TEXTILE_UNIT × rows·TEXTILE_UNIT, same fc→world→slot mapping, same uDirty gating → clean tiles
+// persist). Each texel: ambient + Σ over its presence lights of colour·intensity·falloff. The display
+// blit multiplies albedo × lightmap. P1 = emission only (no normal, no shadow); P2 folds Lambert
+// N·L; P3 masks each light by its shadow-cold u9 coverage. Reuses GATHER_COMMON (fetchLin / foldTile /
+// decodePos / tileSlot / SQ·UNIT·UPT + the data-texture BASE consts).
+const LIGHT_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+uniform highp usampler2D uData;    // presence (sets 3/5) + light records (set 2)
+uniform highp usampler2D uDirty;   // shadow_dirty — same gate as the shadow gather (clean → persist)
+out vec4 fragColor;
+${GATHER_COMMON}
+int pmod(int a, int m) { return ((a % m) + m) % m; }
+const float AMBIENT = ${AMBIENTF};
+void main() {
+  // Same window mapping as the shadow gather (constants row): fc → toroidal slot → world tile → P.
+  uvec4 C0 = fetchLin(uData, CONST_BASE);
+  int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0xFFFFu);
+  int uWinCol = int(C0.z) >> 16, uWinRow = (int(C0.z) << 16) >> 16;
+  ivec2 fc = ivec2(gl_FragCoord.xy);
+  int sx = fc.x / uSlot, sy = fc.y / uSlot;
+  if (texelFetch(uDirty, ivec2(sx, sy), 0).r == 0u) discard;   // clean tile → keep the persistent texel
+  int wc = uWinCol + pmod(sx - pmod(uWinCol, uCols), uCols);
+  int wr = uWinRow + pmod(sy - pmod(uWinRow, uRows), uRows);
+  float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot);
+  float ly = (float(fc.y) - float(sy * uSlot)) / float(uSlot);
+  vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
+
+  int fold = foldTile(wc, wr);
+  uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
+  uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
+  vec3 acc = vec3(AMBIENT);
+  for (int slot = 0; slot < 14; slot++) {
+    uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
+    if (li == 0xffffu) continue;                            // empty slot
+    uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // G = position, B = colour|intensity, A = z|reach|…
+    vec2 Lxy = decodePos(Ld.y);                             // light ground pos (world units)
+    vec3 col = vec3(float((Ld.z >> 24) & 255u), float((Ld.z >> 16) & 255u), float((Ld.z >> 8) & 255u)) / 255.0;
+    float intensity = float(Ld.z & 255u) / 255.0;
+    float reach = float((Ld.w >> 12) & 0xfffu);             // reach (units)
+    float dist = length(P - Lxy);                           // in-plane distance (units)
+    float fall = smoothstep(reach, 0.0, dist);              // 1 at the light → 0 at reach (F2 smoothstep)
+    acc += col * intensity * fall;
+  }
+  fragColor = vec4(clamp(acc, 0.0, 1.0), 1.0);              // LDR clamp (F4: tonemap deferred to P4)
+}
+`;
+
 const GATHER_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
@@ -415,6 +469,8 @@ const LIGHT_COLORS: ReadonlyArray<[number, number, number]> = [
  */
 export class ShadowGather {
   private readonly gather: Program;
+  /** The LIGHTING pass — bakes the world-space toroidal lightmap (P1+, `2026-07-23-lighting`). */
+  private readonly lighting: Program;
   private readonly overlay: Program;
   private readonly gizmo: Program;
   private readonly fsQuad: Geometry;
@@ -439,6 +495,9 @@ export class ShadowGather {
   private shadowRT: RenderTarget | null = null;
   private rtCols = 0;
   private rtRows = 0;
+  /** The LIGHTMAP RT — world-space toroidal `rgba8unorm`, TEXEL-aligned with {@link shadowRT} (same
+   *  dims + fc→world mapping). Baked by {@link lighting}; the display blit multiplies albedo × this. */
+  private lightRT: RenderTarget | null = null;
 
   /** light presence — now folded into the data texture (set 3, region-torus). CPU scratch only: per
    *  in-window tile the **nearest 7** `u16` light indices (`0xFFFF` = empty); `slotDist` tracks each
@@ -478,6 +537,7 @@ export class ShadowGather {
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
     this.gather = new Program(gl, FULLSCREEN_VERT, GATHER_FRAG, "shadow-gather");
+    this.lighting = new Program(gl, FULLSCREEN_VERT, LIGHT_FRAG, "world-lighting");
     this.overlay = new Program(gl, OVERLAY_VERT, OVERLAY_FRAG, "shadow-overlay");
     this.gizmo = new Program(gl, GIZMO_VERT, GIZMO_FRAG, "shadow-gizmo");
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
@@ -741,12 +801,24 @@ export class ShadowGather {
   private ensureRT(cols: number, rows: number): void {
     if (this.shadowRT && cols === this.rtCols && rows === this.rtRows) return;
     this.shadowRT?.destroy();
-    this.shadowRT = new RenderTarget(this.renderer.gl, {
-      width: Math.max(1, cols * TEXTILE_UNIT), height: Math.max(1, rows * TEXTILE_UNIT), formats: ["rgba32uint"],
-    });
+    this.lightRT?.destroy();
+    const w = Math.max(1, cols * TEXTILE_UNIT), h = Math.max(1, rows * TEXTILE_UNIT);
+    this.shadowRT = new RenderTarget(this.renderer.gl, { width: w, height: h, formats: ["rgba32uint"] });
     this.shadowRT.clearInt(0, 0, 0, 0); // start persistence from a known-zero buffer (P3)
+    // The lightmap — same dims, texel-aligned. Clear to ambient so any tile not yet written (edges /
+    // pre-first-pass) reads the floor, not garbage; persistence fills the rest on the forceDirty pass.
+    this.lightRT = new RenderTarget(this.renderer.gl, { width: w, height: h, formats: ["rgba8unorm"] });
+    const amb = parseFloat(AMBIENTF);
+    this.lightRT.clear(amb, amb, amb, 1);
     this.rtCols = cols;
     this.rtRows = rows;
+  }
+
+  /** The baked lightmap texture (world-space toroidal, TEXEL-aligned with shadow-cold) — the display
+   *  blit samples it by world position (window mapping via {@link SquareCache.window} + TEXTILE_UNIT)
+   *  and multiplies albedo × lightmap. Null until the first gather has laid out the RT. */
+  get lightmap(): Texture | null {
+    return this.lightRT?.textures[0] ?? null;
   }
 
   /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield. */
@@ -822,6 +894,19 @@ export class ShadowGather {
         p.uInt("uCorridor", this.corridor ? 1 : 0);
       },
     });
+
+    // LIGHTING (P1) — bake the lightmap right after shadow-cold, into the texel-aligned RT, gated by the
+    // SAME uDirty (clean tiles persist). Each texel: ambient + Σ presence-light colour·intensity·falloff.
+    this.renderer.draw({
+      program: this.lighting,
+      geometry: this.fsQuad,
+      target: this.lightRT!,
+      blend: "none",
+      textures: {
+        uData: this.coldData.dataTexture, // presence (sets 3/5) + light records (set 2)
+        uDirty: this.dirtyTex,
+      },
+    });
   }
 
   /** Decode shadow-cold over the world (debug `/overlayRT shadow-cold`). */
@@ -874,11 +959,13 @@ export class ShadowGather {
     this.overlayGeo?.destroy();
     this.gizmoQuad.destroy();
     this.gather.destroy();
+    this.lighting.destroy();
     this.overlay.destroy();
     this.gizmo.destroy();
     this.empty.destroy();
     this.dirtyTex.destroy();
     this.shadowRT?.destroy();
+    this.lightRT?.destroy();
     this.coldData.destroy();
   }
 }

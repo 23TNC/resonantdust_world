@@ -17,7 +17,7 @@ import { OverlayShader, overlayModeFor } from "./overlayShader";
 import { ShadowGather } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
-import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
+import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_UNIT } from "./squareMath";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 
 const BAKE_BUDGET = 128;
@@ -337,6 +337,12 @@ export class Viewport {
     this.warm.bakeDirty(BAKE_BUDGET);
     this.map.bakeDirty(Math.max(BAKE_BUDGET - this.warm.lastBaked, COLD_BAKE_FLOOR));
 
+    // Recompute the shadow bitfield + bake the LIGHTMAP (gather → RTs) BEFORE the display, so the blit
+    // multiplies this frame's lighting. Renders into the shadow/light RTs; the blit below draws to screen.
+    if (this.map.ready) {
+      this.shadows.tick(this.map.standingPrims(), this.resolver, this.map.window);
+    }
+
     this.renderer.clearScreen(0.05, 0.06, 0.08, 1.0);
 
     if (this.map.ready) {
@@ -357,6 +363,11 @@ export class Viewport {
           this.blitShader.albedoWarm = albedoW;
           this.blitShader.surfaceWarm = surfaceW;
         }
+        // Lighting: the baked lightmap (albedo × lightmap). Sampled by world position via the cold
+        // window mapping (same toroidal tile grid as shadow-cold). Null → UNLIT fallback.
+        const lightmap = this.shadows.lightmap;
+        this.blitShader.lightmap = lightmap;
+        const win = this.map.window;
         // world px → clip: x = (wx-ax)*2z/w, y = -(wy-ay)*2z/h  (screen y-down → clip y-up)
         const proj = new Float32Array([
           (2 * z) / w, 0, 0,
@@ -368,7 +379,15 @@ export class Viewport {
           geometry: this.displayGeo!,
           blend: "normal",
           textures: this.blitShader.textures(this.empty),
-          uniforms: (p) => p.uMat3("uProjection", proj),
+          uniforms: (p) => {
+            p.uMat3("uProjection", proj);
+            p.uInt("uLightEnable", lightmap ? 1 : 0);
+            p.uInt("uLCols", win.cols);
+            p.uInt("uLRows", win.rows);
+            p.uInt("uLWinCol", win.winCol);
+            p.uInt("uLWinRow", win.winRow);
+            p.uInt("uLSlot", TEXTILE_UNIT);
+          },
         });
 
         // Debug overlay (`/overlayRT`): draw one G-buffer composite over the lit world, in exact
@@ -395,11 +414,6 @@ export class Viewport {
           }
         }
       }
-    }
-
-    // Recompute the shadow bitfield (gather) off the cold cache's standing prims, into shadow-cold.
-    if (this.map.ready) {
-      this.shadows.tick(this.map.standingPrims(), this.resolver, this.map.window);
     }
 
     if (this.gridLevel > 0) {
