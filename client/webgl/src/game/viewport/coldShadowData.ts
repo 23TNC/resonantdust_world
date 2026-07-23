@@ -26,8 +26,22 @@ export const DATA_H = 1024;
 export const DEF_BASE = 0;
 export const PRIM_BASE = 65536;
 export const LIGHT_BASE = 131072;
+/** Tile-keyed sets — region-torus addressed (presence-in-data). One set = one region's 65 536 tiles. */
+export const PRESENCE_BASE = 3 * 65536;
+export const CASTER_BASE = 4 * 65536;
 /** The constants row (row 1023) — px0 window mapping, px1 slot/light-count (P3). */
 export const CONST_BASE = 1023 * DATA_W;
+
+/** Region-torus **zone-strip fold**: world tile (wc, wr) → its in-set id (0..65535), a zone's 256
+ *  tiles contiguous in one row. In-region zone coords carry no region bits (window ≤ region ⟹ no
+ *  residue collision on screen). MUST match the GLSL `foldTile`. */
+export function foldTile(wc: number, wr: number): number {
+  const zx = ((Math.floor(wc / 16) % 16) + 16) % 16;
+  const zy = ((Math.floor(wr / 16) % 16) + 16) % 16;
+  const tx = ((wc % 16) + 16) % 16;
+  const ty = ((wr % 16) + 16) % 16;
+  return ((zx >> 2) + zy * 4) * 1024 + (zx & 3) * 256 + ty * 16 + tx;
+}
 /** Command buffer v2 (user format): 64×64 RGBA32UI, replay-idempotent absolute writes. One FILL =
  *  a header px + 16 per-SET sections. Header: 16× u6 per-set command counts (5 per RGB lane at
  *  bits 0/6/12/18/24 + the 16th in A) + u8 opcode (A bits 0–7; 0 = write-data — presence/other
@@ -87,6 +101,8 @@ void main() { fragColor = texelFetch(uCmd, ivec2(vPayload & 63, vPayload >> 6), 
 `;
 
 const clamp = (v: number, hi: number): number => Math.min(Math.max(Math.round(v), 0), hi);
+/** Empty 7-slot payload — the eviction clear (length 0 → every slot takes the set sentinel). */
+const EMPTY7: number[] = [];
 
 /** One light to write into `light_data` (world px + unit-scaled fields; colour 0..1). */
 export interface ColdLight {
@@ -194,6 +210,41 @@ export class ColdShadowData {
     this.dataMirror[b0 + 3] = ((lights & 0xffff) << 16) >>> 0;
     this.mark(CONST_BASE);
   }
+  /** Write a TILE-keyed set texel (presence / buckets) at the region-torus fold of (wc,wr): the
+   *  self-addressing id (the fold) in R's high half, then the 7 slots. Compare-written — an
+   *  unchanged tile costs no command. `empty` is the per-set sentinel (0xFFFF presence, 0 buckets).
+   *  `slots` holds ≤7 u16 values; missing slots take `empty`. */
+  private writeTileSet(base: number, wc: number, wr: number, slots: ArrayLike<number>, empty: number): void {
+    const id = foldTile(wc, wr);
+    const b = (base + id) * 4;
+    const g = (i: number): number => (i < slots.length ? slots[i] & 0xffff : empty);
+    const R = (((id & 0xffff) << 16) | g(0)) >>> 0;
+    const G = ((g(1) << 16) | g(2)) >>> 0;
+    const B = ((g(3) << 16) | g(4)) >>> 0;
+    const A = ((g(5) << 16) | g(6)) >>> 0;
+    const m = this.dataMirror;
+    if (m[b] !== R || m[b + 1] !== G || m[b + 2] !== B || m[b + 3] !== A) {
+      m[b] = R; m[b + 1] = G; m[b + 2] = B; m[b + 3] = A;
+      this.mark(base + id);
+    }
+  }
+  /** Presence tile: 7 nearest-light u16 indices (0xFFFF empty). */
+  writePresence(wc: number, wr: number, slots: ArrayLike<number>): void {
+    this.writeTileSet(PRESENCE_BASE, wc, wr, slots, 0xffff);
+  }
+  /** Caster-bucket tile: 7 u16 prim indices (0 empty — the prim sentinel). */
+  writeCasters(wc: number, wr: number, slots: ArrayLike<number>): void {
+    this.writeTileSet(CASTER_BASE, wc, wr, slots, 0x0000);
+  }
+  /** Clear a tile's presence (all-empty) — eviction. */
+  clearPresence(wc: number, wr: number): void {
+    this.writeTileSet(PRESENCE_BASE, wc, wr, EMPTY7, 0xffff);
+  }
+  /** Clear a tile's buckets (all-empty) — eviction. */
+  clearCasters(wc: number, wr: number): void {
+    this.writeTileSet(CASTER_BASE, wc, wr, EMPTY7, 0x0000);
+  }
+
   /** The shared surface atlas page (or null before any sprite resolved). */
   get surfacePage(): Texture | null {
     return this.surfacePageTex;

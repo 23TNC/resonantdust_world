@@ -290,14 +290,39 @@ The texture is **16 u16-addressable SETS** (1024×64 each; `set = linear >> 16`,
 set 0   rows   0–63    prim_definition_data   1 px per def
 set 1   rows  64–127   prim_data              1 px per placed caster (2/px RETIRED)
 set 2   rows 128–191   light_data             1 px per light record
-sets 3–14              reserved               (materials-era tables)
+set 3   rows 192–255   light_presence         1 px per TILE (region-torus fold) — 7 light slots
+set 4   rows 256–319   caster_buckets         1 px per TILE (region-torus fold) — 7 caster slots
+sets 5–14              reserved               (materials-era tables)
 set 15  row  1023 tail constants px (in-set id 64 512):
         R  u16 id | u16 cols        G  u16 rows | u16 slot (TEXTILE_UNIT)
         B  i16 winCol | i16 winRow  A  u16 light_count | u16 reserved
 ```
 
+**DATA holds PERSISTENT state only** — a map lives here iff it survives across frames and changes on
+events (object created/moved/destroyed, zone streamed/evicted). `shadow_dirty` (rebuilt per frame)
+and the `shadow-cold` RT (GPU-written) are **NOT** in DATA — folding a per-frame map in would mean
+re-scattering ephemeral state every frame, worse than the `texSubImage` it replaces.
+
 **Every record SELF-ADDRESSES: its u16 in-set id lives in R's high half.** That makes scatter
 commands PURE PAYLOADS (v2.1 — the scatter reads the target out of the record itself).
+
+**Region-torus tile addressing** (`light_presence` / `caster_buckets`, work
+[`2026-07-23-presence-in-data`](work/2026-07-23-presence-in-data/README.md)). A tile-keyed set is
+**one region's tiles** (`REGION_DIM=16` zones × `ZONE_DIM=16` tiles, squared = 65 536 = one set),
+addressed by **in-region** coordinates with NO region bits — valid because the viewport window is
+≤ one region, so two zones sharing a residue (256 tiles apart) can never be visible together. The
+in-set id is the **zone-strip fold** (a zone's 256 tiles contiguous in one row):
+
+```
+world tile (wc, wr):
+  zx = pmod(floor(wc/16), 16)   zy = pmod(floor(wr/16), 16)   // in-region zone
+  tx = pmod(wc, 16)             ty = pmod(wr, 16)             // in-zone tile
+  in_set_id = ((zx>>2) + zy*4) * 1024  +  (zx&3)*256 + ty*16 + tx
+```
+
+`light_presence` / `caster_buckets` px: `R = u16 in_set_id | u16 slot0`, `G = slot1|slot2`,
+`B = slot3|slot4`, `A = slot5|slot6` — **7 slots/tile** (the self-address costs the 8th). Presence
+slots are `u16` light indices (`0xFFFF` = empty); bucket slots are `u16` prim indices (`0` = empty).
 
 Updates arrive by **command-buffer scatter**: a **64×64 `RGBA32UI` command buffer** uploaded as one
 contiguous row-span (rotating row cursor — never overwrite just-consumed rows) and applied by one
