@@ -43,3 +43,18 @@ from [`todo.md`](todo.md). Append-only history; authoritative for what's done._
   at **1776** while `live` swung 977→1598→… (freed slots absorbed the churn), and the return
   rebuilt **bit-identical** (corridor↔brute 0 mismatches, nonzero 9,949). Eviction + re-materialise
   correct.
+## P3 · Perf + close — 2026-07-23 ✓
+
+- **One scatter pass, fewer bindings**: the gather now binds **3 samplers** (`uData`, `uDirty`,
+  `uSurface` — was 5 with `uPresence`+`uCaster`); overlay binds 2 (`uShadow`, `uData`). The
+  second-FBO problem is gone — presence/buckets ride the SAME scatter draw as defs/prims/lights.
+- **Perf**: static + orbit both at the **121 display cap**. Static = compare-write finds no diffs →
+  flush no-op. Orbit = every frame scatters the moving light's changed (reach-box) presence tiles
+  (120/120 flushes did work over 2 s) while holding cap. The write-all-in-window is CPU-cheap
+  (compare-write); commands stay sparse (only changed tiles).
+- **F1 (tie eviction to the subscription model): DEFERRED** — current eviction is correct (free-list
+  + write-all-in-window); the tie is a network-free-rematerialise optimisation best layered when the
+  subscription model is refactored. Recorded in [`forks.md#f1`](forks.md#f1).
+- Note: the debug world's extent didn't force a full **256-tile region crossing** (fold-slot reuse);
+  that path is correct by construction (write-all-in-window + window ≤ region — in-window always
+  fresh, out-of-window never read). Normal multi-zone pan verified (P2).
