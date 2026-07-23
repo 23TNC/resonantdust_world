@@ -92,3 +92,8 @@ Append-only history; authoritative for what's done._
   light positions (seed + post-orbit), **0 mismatches**, 4 892 / 5 631 nonzero texels. Both paths
   display-capped at 121 fps in this scene (1 light; the win is structural: ~125 vs ~729 bucket
   reads per texel·light at reach 12). Corridor is now the default path.
+
+## P0 (deferred item) · shadow-corridor stream archived — 2026-07-23 ✓
+
+- `docs/work/2026-07-22-shadow-corridor/` moved out of the repo → `~/archive/shadow-corridor/`
+  (rebuild complete, cross-links resolved: work index row removed, README references de-linked).

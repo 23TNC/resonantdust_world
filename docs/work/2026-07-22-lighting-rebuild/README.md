@@ -4,7 +4,7 @@ _Component: [`client/webgl`](../../components/client/) · viewport shadow/lighti
 (`game/viewport/shadowGather.ts`, `game/viewport/coldShadowData.ts`)._
 
 Full teardown + clean re-implementation of the billboard-quad shadow system. Supersedes
-[`2026-07-22-shadow-corridor`](../2026-07-22-shadow-corridor/) (the corridor march is being
+`2026-07-22-shadow-corridor` (archived → `~/archive/shadow-corridor/`; the corridor march was
 removed — see [`issues.md`](issues.md) for why). Phases in [`todo.md`](todo.md); the LOD-coupling
 decision is [`forks.md`](forks.md#f1).
 
