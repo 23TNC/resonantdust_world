@@ -428,30 +428,38 @@ export class ColdShadowData {
    *  is bucketed by `ShadowGather.buildCasters`, which also allocates defs/prims). Call on change. */
   buildLights(lights: ColdLight[]): void {
     const n = Math.min(lights.length, N_LIGHTS);
+    const m = this.dataMirror;
     for (let k = 0; k < Math.max(n, this.lightCount); k++) {
       const base = (LIGHT_BASE + k) * 4;
-      if (k >= n) { // light removed — zero its record
-        this.dataMirror[base] = 0; this.dataMirror[base + 1] = 0; this.dataMirror[base + 2] = 0; this.dataMirror[base + 3] = 0;
-        this.mark(LIGHT_BASE + k);
-        continue;
+      let R = 0, G = 0, B = 0, A = 0; // k >= n → a removed light zeroes its record
+      if (k < n) {
+        const L = lights[k];
+        // v2.1 self-addressing: R = u16 id | u16 reserved; G = position; B = colour;
+        // A = u8 z (24–31) | u12 reach (12–23) | u8 emitter (4–11) | u3 reserved | u1 cast_shadows (0).
+        R = ((k & 0xffff) << 16) >>> 0;
+        G = encodePosition(L.x, L.y);
+        const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
+        B = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0);
+        const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff), em = clamp(L.emitterRadius / UNIT, 255);
+        A = (((z << 24) | (reach << 12) | (em << 4) | (L.castShadows ? 1 : 0)) >>> 0);
       }
-      const L = lights[k];
-      // v2.1 self-addressing: R = u16 id | u16 reserved; G = position; B = colour;
-      // A = u8 z (24–31) | u12 reach (12–23) | u8 emitter (4–11) | u3 reserved | u1 cast_shadows (0).
-      this.dataMirror[base] = ((k & 0xffff) << 16) >>> 0;
-      this.dataMirror[base + 1] = encodePosition(L.x, L.y);
-      const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
-      this.dataMirror[base + 2] = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0);
-      const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff), em = clamp(L.emitterRadius / UNIT, 255);
-      this.dataMirror[base + 3] = (((z << 24) | (reach << 12) | (em << 4) | (L.castShadows ? 1 : 0)) >>> 0);
-      this.mark(LIGHT_BASE + k);
+      // Compare-write: a STATIC light's record is unchanged → no command (only movers re-scatter).
+      if (m[base] !== R || m[base + 1] !== G || m[base + 2] !== B || m[base + 3] !== A) {
+        m[base] = R; m[base + 1] = G; m[base + 2] = B; m[base + 3] = A;
+        this.mark(LIGHT_BASE + k);
+      }
     }
     this.lightCount = n;
   }
 
   /** Upload any changed textures (call once per frame after populating). Cheap — no-op unless a slot landed. */
   /** Returns true if anything was uploaded (def/prim changed) — the caller re-dirties the shadow. */
+  /** DEBUG: commands scattered by the last flush (per-set breakdown). */
+  debugLastFlush: Record<number, number> = {};
   flush(): boolean {
+    // DEBUG per-set command tally (which sets got writes this flush).
+    this.debugLastFlush = {};
+    for (const t of this.dirtySet) { const s = t >> SET_SHIFT; this.debugLastFlush[s] = (this.debugLastFlush[s] ?? 0) + 1; }
     if (this.dirtySet.size === 0) return false;
     // v2 fills: bucket the changed texels by SET (linear >> 16), then emit fills until drained.
     // Each fill = header px (16× u6 per-set counts + u8 opcode 0) + per-set sections (address px

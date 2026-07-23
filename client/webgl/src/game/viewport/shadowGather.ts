@@ -643,6 +643,8 @@ export class ShadowGather {
   private readonly litSeen = new Set<number>();
   /** Prim ids resident this frame (P2) — anything allocated but absent gets freed via the free-list. */
   private readonly primSeen = new Set<number>();
+  /** DEBUG: shadow tiles marked dirty (recomputed) on the last frame. */
+  debugDirtyTiles = 0;
   private markPrimChange(x: number, y: number, w: number, h: number): void {
     const x0 = Math.floor(x / SQUARE) - 1, y0 = Math.floor(y / SQUARE) - 1;
     const x1 = Math.floor((x + w) / SQUARE) + 1, y1 = Math.floor((y + h) / SQUARE) + 1;
@@ -700,6 +702,8 @@ export class ShadowGather {
         for (let wc = c0; wc <= c1; wc++) this.dirtyMirror[pm(wr, rows) * cols + pm(wc, cols)] = 1;
     }
     this.pendingRects.length = 0;
+    let dc = 0; for (let i = 0; i < this.dirtyMirror.length; i++) if (this.dirtyMirror[i]) dc++;
+    this.debugDirtyTiles = dc; // DEBUG: shadow tiles recomputed this frame
     this.dirtyTex.upload(this.dirtyMirror);
   }
 
