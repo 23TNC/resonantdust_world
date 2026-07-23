@@ -37,3 +37,34 @@ art). Options: (a) **px-res lightmap** — bake `N·L` per-light into a full-res
 shadow) at unit-res (no normal) + an aggregate light direction; composite applies `N·L` per-px with
 that aggregate (cheaper, loses per-light directionality). Decide by eye/perf at P2. Lean: start px-res
 for correctness, drop to coarse if the light loop is too heavy.
+
+## F6 · Shadow ceiling — don't shadow billboards above the shadow's height {#f6}
+**2026-07-23 — RAISED (user), open; lands at P3.** shadow-cold is a GROUND coverage: it says *how
+much* light `i` is blocked at tile P, not *up to what height*. So a standing billboard sampling it
+flat gets darkened whole — head in the shade even when its head clears the low shadow. The missing
+quantity is the **shadow ceiling** `h(P)` = the height up to which the caster blocks light `i` at P
+(≈ caster height near the base, → 0 at the shadow tip).
+
+What we already have: **direction** (presence gives the acting lights per tile; shadows are separated
+per light, so `normalize(P − L_i)` is known) and the pixel's own depth (G-buffer `zdepth`). What we
+threw away: the **caster's height**, because coverage is a scalar max-accumulated over all casters.
+
+**The ceiling is recoverable in the gather for free** — `casterCover` already computes `t` (the
+card-height fraction where the grazing ray lands), so it can emit `ceiling = max_casters(caster_height
+· f(t))` as a companion channel, **max-accumulated** (idempotent — matches the existing invariant, no
+new corridor walk). The lighting pass then masks light `i` by `(pixel_height < ceiling_i)` AND its
+coverage: feet shadowed, head lit.
+
+Options:
+- **(A) per-light ceiling** *(lean)* — u3–u4 height next to each light's u9 coverage (≈one more set,
+  14×u4 = 56 bits, symmetric with the coverage doubling). Correct + consistent with per-light shadows
+  (a pawn can be in light-A's shadow while lit by light-B → the ceiling MUST be per-light).
+- **(E) single fixed ceiling** — one global height H, zero data; crude, catches the common case, misses
+  short-caster nuance.
+- **(D) ground-only shadows** — never shadow billboards (RimWorld does this); zero cost, loses "walk
+  into shade" entirely.
+
+**Blocker to verify before committing to (A)-cheap:** whether G-buffer `zdepth_world` is the pixel's
+HEIGHT above ground or its ground DEPTH (north–south) — different axes in the tilted-world projection.
+If it's ground-depth we need one height conversion; that's the only real unknown, the rest is machinery
+we own (`t` in the gather, max-accumulate, a companion set like presence lo/hi).

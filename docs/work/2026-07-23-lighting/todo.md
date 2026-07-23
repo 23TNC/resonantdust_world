@@ -23,6 +23,10 @@ inputs in [`README.md`](README.md); decisions in [`forks.md`](forks.md)._
       shadow-cold at the texel's unit position (presence slot i ↔ shadow slot i).
 - [ ] VERIFY: shadows go dark (that light removed there); penumbra/umbra modulate smoothly; the
       moving light's shadows sweep correctly; a pixel lit by two lights keeps the unshadowed light.
+- [ ] **Shadow ceiling** ([forks F6](forks.md#f6)) — don't shadow billboard pixels ABOVE the shadow's
+      height. Gather emits a per-light ceiling (max `caster_height·f(t)`, `t` already computed); the
+      mask becomes `(1 − coverage_i) OR (pixel_height ≥ ceiling_i)`. First verify `zdepth` = height
+      vs ground-depth. (Can land as P3b after flat shadows read correctly.)
 
 ## P4 · Polish + close
 - [ ] Ambient level, falloff, tonemap/clamp ([forks F4](forks.md#f4)); warm-over-cold composite intact.
