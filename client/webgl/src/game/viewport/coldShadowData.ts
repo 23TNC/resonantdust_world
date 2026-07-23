@@ -8,8 +8,9 @@
 //!                            LUT is retired — casters come from the per-tile buckets (`shadowGather`).
 //!   • `prim_data`            256×128 — all placed casters, 2/px (`u64`); carries `u16 definition_index`.
 //!                            Index 0 is the SENTINEL (empty/end) → usable 1..65535.
-//!   • `prim_definition_data` 256×256 — one px/variant: opaque bbox (units) + anchor offset + the P4
-//!                            silhouette frame (opaque surface sub-rect, atlas px), keyed by def_index.
+//!   • `prim_definition_data` 256×256 — one px/variant: minimum bbox (EVEN units) at a frame-relative
+//!                            offset, pow2-square frame by lod exponent + span + px nudges + 3×3
+//!                            anchors (the def-frame-anchors model), keyed by def_index.
 //!
 //! World unit: `1 unit = SQUARE/16 = 4px`, compile-time (§Unit). Every world field is in units; only the
 //! atlas `frame_*` are texture px. Positions pack as `position_anchor_reference` (region|zone|tile|anchor).
@@ -32,7 +33,6 @@ const PRIM_H = 128;
 const DEF_W = 256;
 const DEF_H = 256;
 
-const u10 = (v: number): number => Math.min(Math.max(Math.round(v), 0), 0x3ff);
 const clamp = (v: number, hi: number): number => Math.min(Math.max(Math.round(v), 0), hi);
 
 /** One light to write into `light_data` (world px + unit-scaled fields; colour 0..1). */
@@ -139,55 +139,75 @@ export class ColdShadowData {
     if (idx === undefined) { idx = this.defNext++; this.defIndex.set(key, idx); }
 
     const bbox = resolver ? resolver.opaqueBBox(prim.textureName) : null;
-    // World-px opaque box (rel. prim top-left) — recomputed from the DILATED atlas rect below when a
-    // frame exists, so quad ↔ sample ↔ bucket all describe the SAME box.
-    let dx = bbox ? bbox.fx * prim.width : 0, dy = bbox ? bbox.fy * prim.height : 0;
-    let ww = bbox ? bbox.fw * prim.width : prim.width, hh = bbox ? bbox.fh * prim.height : prim.height;
-
-    // P4 silhouette frame: the opaque sub-rect of the surface frame, DILATED OUT to the 16-px atlas
-    // grid (clamped to the frame). All frame_* fields are stored in 16-px GRID units (u10): the 1 px/
-    // unit minimum texture size makes 16×16 the smallest frame, so a 16384 page is a 1024×1024 grid —
-    // and pool placement is 16-aligned by construction (per-size pools, pow2 ≥16 frames, 0 padding).
-    // The dilation ring samples transparent coverage → the rendered silhouette is unchanged; the quad
-    // is re-derived from the dilated box so the (s,t) ↔ uv correspondence stays EXACT. Per-prim
-    // texture ceiling 1024² (one zone at SQUARE=64): a larger frame is a content bug — warn + clamp.
-    let fx = 0, fy = 0, fw = 0, fh = 0;
     const surf = resolver && bbox ? resolver.resolve(prim.textureName, "surface", prim.cell).frame : null;
+
+    // Frame world span in TILES (pow2, ≤ ZONE_DIM — u4 stores tiles−1, width = log2(ZONE_DIM)).
+    // Footprints are square (aspect plumbing removed); a non-pow2/oversized span is a content bug.
+    const stRaw = Math.max(1, Math.round(Math.max(prim.width, prim.height) / SQUARE));
+    let st = 1;
+    while (st < stRaw) st <<= 1;
+    if ((st !== stRaw || st > ZONE_DIM) && !this.frameSizeWarned) {
+      this.frameSizeWarned = true;
+      console.warn(`[cold-shadow] ${prim.textureName}: footprint ${stRaw} tiles is not pow2 ≤ ${ZONE_DIM} — span rounded`);
+    }
+    st = Math.min(st, ZONE_DIM);
+    const spanU = st * 16; // frame world span in units
+
+    // Whole-px-per-unit model (def-frame-anchors): the minimum bbox lives in EVEN units at an
+    // unsigned frame-relative offset; the frame is a pow2 square addressed by its lod exponent; px
+    // nudges align the sampled window to the opaque pixels (x centered, y bottom-aligned — shadows
+    // anchor at the base). ppu = 2^lod / spanU is a whole pow2 ≥ 1 by construction; a frame below
+    // the 1 px/unit floor (or off-page / non-pow2) resolves NO silhouette → lod 0 → solid quad.
+    let wu = spanU, hu = spanU, ux0 = 0, uy0 = 0; // LOOSE fallback: full-footprint bbox
+    let lod = 0, fx16 = 0, fy16 = 0, nx = 0, ny = 0;
     if (surf) {
       if (!this.surfacePageTex) this.surfacePageTex = surf.source;
-      if (surf.source === this.surfacePageTex) {
-        const ax0 = Math.max(surf.x, Math.floor((surf.x + bbox!.fx * surf.w) / 16) * 16);
-        const ay0 = Math.max(surf.y, Math.floor((surf.y + bbox!.fy * surf.h) / 16) * 16);
-        const ax1 = Math.min(surf.x + surf.w, Math.ceil((surf.x + (bbox!.fx + bbox!.fw) * surf.w) / 16) * 16);
-        const ay1 = Math.min(surf.y + surf.h, Math.ceil((surf.y + (bbox!.fy + bbox!.fh) * surf.h) / 16) * 16);
-        fx = ax0; fy = ay0; fw = Math.max(16, ax1 - ax0); fh = Math.max(16, ay1 - ay0);
-        if ((fw > 1024 || fh > 1024) && !this.frameSizeWarned) {
-          this.frameSizeWarned = true;
-          console.warn(`[cold-shadow] ${prim.textureName}: silhouette frame ${fw}×${fh} exceeds the 1024² per-prim texture ceiling — clamped`);
+      const ppu = surf.w / spanU;
+      const lodF = Math.log2(surf.w);
+      if (surf.source !== this.surfacePageTex) {
+        if (!this.pageWarned) {
+          this.pageWarned = true;
+          console.warn("[cold-shadow] surface frame off the shared page — silhouette skipped (solid quad, C5)");
         }
-        // The SAME dilated box in world px (scale: world px per atlas px).
-        const sx = prim.width / surf.w, sy = prim.height / surf.h;
-        dx = (ax0 - surf.x) * sx; dy = (ay0 - surf.y) * sy;
-        ww = fw * sx; hh = fh * sy;
-      } else if (!this.pageWarned) {
-        this.pageWarned = true;
-        console.warn("[cold-shadow] surface frame off the shared page — silhouette skipped (solid quad, C5)");
+      } else if (Number.isInteger(ppu) && ppu >= 1 && Number.isInteger(lodF)) {
+        lod = lodF;
+        fx16 = Math.round(surf.x / 16);
+        fy16 = Math.round(surf.y / 16);
+        // Opaque run, frame-relative px.
+        const rx0 = bbox!.fx * surf.w, ry0 = bbox!.fy * surf.h;
+        const rw = Math.max(1, bbox!.fw * surf.w), rh = Math.max(1, bbox!.fh * surf.h);
+        // Minimum bbox on the unit grid, top-left biased, rounded out to EVEN units.
+        ux0 = Math.floor(rx0 / ppu);
+        uy0 = Math.floor(ry0 / ppu);
+        wu = Math.ceil((rx0 + rw) / ppu) - ux0;
+        hu = Math.ceil((ry0 + rh) / ppu) - uy0;
+        if (wu & 1) wu++;
+        if (hu & 1) hu++;
+        wu = Math.min(wu, spanU); hu = Math.min(hu, spanU);
+        if (ux0 + wu > spanU) ux0 = Math.max(0, spanU - wu);
+        if (uy0 + hu > spanU) uy0 = Math.max(0, spanU - hu);
+        // Nudges (px at THIS lod; rewritten on lod swap): sample start = offset·ppu − nudge. Both
+        // SIGNED u12 (+2048 bias — F4 as ratified): full either-direction alignment range; which
+        // alignment they encode is `nudge_anchor` (default x centered = 1, y bottom = 2).
+        let sx0 = rx0 - (wu * ppu - rw) / 2;
+        let sy0 = ry0 + rh - hu * ppu;
+        sx0 = Math.min(Math.max(sx0, 0), surf.w - wu * ppu); // window stays inside the frame
+        sy0 = Math.min(Math.max(sy0, 0), surf.h - hu * ppu);
+        nx = Math.min(Math.max(Math.round(ux0 * ppu - sx0), -2048), 2047);
+        ny = Math.min(Math.max(Math.round(uy0 * ppu - sy0), -2048), 2047);
       }
     }
-    this.defTight.set(idx, { dx, dy, w: ww, h: hh }); // (dilated) opaque box, px rel. prim top-left — for bucketing
-    // Offset (units) from the game anchor (full-box base-centre) to the (dilated) opaque base-centre.
-    const ox = Math.round((dx + ww / 2 - prim.width / 2) / UNIT), oy = Math.round((dy + hh - prim.height) / UNIT);
+    // Bucketing box (world px, rel. prim top-left) — 1 frame unit ≡ 1 world unit by the span model.
+    this.defTight.set(idx, { dx: ux0 * UNIT, dy: uy0 * UNIT, w: wu * UNIT, h: hu * UNIT });
 
     const base = idx * 4;
-    // R: W(22–31) | H(12–21) opaque size (units). G: (ox+512)(12–21) | (oy+512)(2–11) signed offset (units).
-    // B: frame_x(22–31) | frame_y(12–21) (u10, 16-px GRID coords — 16384 max page / 16 min frame = 1024)
-    //    | u8 reserved (4–11) | frame_page(0–3) (u4 — ≤16 silhouette pages; 0 until C5).
-    // A: frame_w(22–31) | frame_h(12–21) (u10, 16-px GRID units — 1024² ceiling = 64 grid; w = 0 → solid quad).
-    const page = 0; // ONE bound surface page today — C5 (texture-array pages) assigns real indices
-    const R = (((u10(ww / UNIT) << 22) | (u10(hh / UNIT) << 12)) >>> 0);
-    const G = (((((ox + 512) & 0x3ff) << 12) | (((oy + 512) & 0x3ff) << 2)) >>> 0);
-    const B = (((u10(fx >> 4) << 22) | (u10(fy >> 4) << 12) | (page & 0xf)) >>> 0);
-    const A = (((u10(fw >> 4) << 22) | (u10(fh >> 4) << 12)) >>> 0);
+    const page = 0;        // ONE bound surface page today — C5 (texture-array pages) assigns real indices
+    const ax = 1, ay = 2;  // shadow casters hang the bbox at the prim's BOTTOM-CENTER anchor
+    const nax = 1, nay = 2; // nudge alignment: x centered, y bottom — the default nudging operation
+    const R = ((((wu >> 1) & 0x1ff) << 23) | (((hu >> 1) & 0x1ff) << 14) | (((st - 1) & 0xf) << 10)) >>> 0;
+    const G = (((ux0 & 0x3ff) << 22) | ((uy0 & 0x3ff) << 12)) >>> 0;
+    const B = (((fx16 & 0x3ff) << 22) | ((fy16 & 0x3ff) << 12) | ((page & 0xf) << 8) | ((lod & 0xf) << 4) | ((ax & 3) << 2) | (ay & 3)) >>> 0;
+    const A = ((((nx + 2048) & 0xfff) << 20) | (((ny + 2048) & 0xfff) << 8) | ((nax & 3) << 6) | ((nay & 3) << 4)) >>> 0;
     const m = this.defMirror;
     if (m[base] !== R || m[base + 1] !== G || m[base + 2] !== B || m[base + 3] !== A) {
       m[base] = R; m[base + 1] = G; m[base + 2] = B; m[base + 3] = A;
@@ -278,15 +298,24 @@ export class ColdShadowData {
   }
 
   // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
-  debugDef(index: number): { prim_width: number; prim_height: number; offset: [number, number]; frame: [number, number, number, number]; frame_page: number } {
+  debugDef(index: number): {
+    prim_width: number; prim_height: number; frame_span: number; offset: [number, number];
+    frame_xy: [number, number]; frame_page: number; frame_lod: number; anchor: [number, number];
+    nudge: [number, number]; nudge_anchor: [number, number];
+  } {
     const b = index * 4;
     const R = this.defMirror[b], G = this.defMirror[b + 1], B = this.defMirror[b + 2], A = this.defMirror[b + 3];
     return {
-      prim_width: (R >>> 22) & 0x3ff,
-      prim_height: (R >>> 12) & 0x3ff,
-      offset: [((G >>> 12) & 0x3ff) - 512, ((G >>> 2) & 0x3ff) - 512], // units, opaque-base-centre − anchor
-      frame: [((B >>> 22) & 0x3ff) * 16, ((B >>> 12) & 0x3ff) * 16, ((A >>> 22) & 0x3ff) * 16, ((A >>> 12) & 0x3ff) * 16], // x,y,w,h (16-px grid → px)
-      frame_page: B & 0xf,
+      prim_width: ((R >>> 23) & 0x1ff) * 2,  // units (stored /2 — even bbox)
+      prim_height: ((R >>> 14) & 0x1ff) * 2,
+      frame_span: ((R >>> 10) & 0xf) + 1,    // tiles
+      offset: [(G >>> 22) & 0x3ff, (G >>> 12) & 0x3ff], // units, frame-relative (unsigned)
+      frame_xy: [((B >>> 22) & 0x3ff) * 16, ((B >>> 12) & 0x3ff) * 16], // frame origin (px)
+      frame_page: (B >>> 8) & 0xf,
+      frame_lod: (B >>> 4) & 0xf,            // side = 2^lod; < 4 = no silhouette (solid quad)
+      anchor: [(B >>> 2) & 0x3, B & 0x3],
+      nudge: [((A >>> 20) & 0xfff) - 2048, ((A >>> 8) & 0xfff) - 2048], // px, signed (+2048 bias)
+      nudge_anchor: [(A >>> 6) & 0x3, (A >>> 4) & 0x3], // the alignment the nudge encodes (1,2 = center/bottom)
     };
   }
   get debugDefCount(): number {

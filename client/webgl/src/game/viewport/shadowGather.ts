@@ -105,20 +105,28 @@ float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData,
   uvec4 Pd = fetchLin(primData, int(primIdx) / 2, primW);
   uint pos = (primIdx & 1u) == 0u ? Pd.x : Pd.z;
   uint orient = (primIdx & 1u) == 0u ? Pd.y : Pd.w;
-  vec2 A = decodePos(pos);                                  // the prim's TRUE game anchor (full-box base-centre)
+  vec2 A = decodePos(pos);                                  // the prim's stored anchor (full-box base-centre)
   int defIdx = int((orient >> 6) & 0xffffu);
   uvec4 D = fetchLin(primDef, defIdx, defW);
-  float W = float((D.x >> 22) & 1023u), H = float((D.x >> 12) & 1023u); // opaque frame w/h (units)
-  // Shift the game anchor by the sprite's opaque-frame offset (units, biased +512) → the shadow-cast
-  // anchor. The prim's game position is untouched; only the bbox we cast from moves (per-sprite, in the def).
-  vec2 off = vec2(float(int((D.y >> 12) & 1023u) - 512), float(int((D.y >> 2) & 1023u) - 512));
+  // R: bbox size (EVEN units, stored /2) + frame span (tiles, stored −1). G: bbox top-left in the
+  // frame (units, unsigned). B: frame origin (16-px grid) + page + lod exponent + 3x3 anchors.
+  float W = float(((D.x >> 23) & 511u) * 2u);
+  float H = float(((D.x >> 14) & 511u) * 2u);
+  float spanU = float((((D.x >> 10) & 15u) + 1u) * 16u);    // frame world span (units)
+  float ox = float((D.y >> 22) & 1023u), oy = float((D.y >> 12) & 1023u);
+  uint lod = (D.z >> 4) & 15u;
+  float axf = float((D.z >> 2) & 3u), ayf = float(D.z & 3u); // anchors: 0 none | 1 half | 2 full
+  // Anchor shift (units): the bbox's anchored point minus the FULL footprint box's same-anchored
+  // point — prim_data stores the full box's base-centre (= anchor 1,2), so shadows land the bbox's
+  // base-centre on it; general anchors go live when prim_data carries reported x/y (F3/P5).
+  vec2 sh = vec2(ox + 0.5 * axf * W - 0.5 * axf * spanU,
+                 oy + 0.5 * ayf * H - 0.5 * ayf * spanU);
   uint rot = (orient >> 22) & 3u;                           // 1 = E, 3 = W (mirrored E)
-  if (rot == 3u) off.x = -off.x;                            // flipped sprite → mirrored anchor offset
-  vec2 Ac = A + off;
+  if (rot == 3u) sh.x = -sh.x;                              // flipped sprite → mirrored bbox placement
+  vec2 Ac = A + sh;
   float q = shadowCover(P, Ac, L, W, H);
   if (q <= 0.0) return 0.0;
-  float fw = float((D.w >> 22) & 1023u) * 16.0, fh = float((D.w >> 12) & 1023u) * 16.0; // silhouette frame w/h (u10 16-px grid units)
-  if (fw < 1.0) return q;                                   // no frame yet → solid quad
+  if (lod < 4u) return q;                                   // no silhouette resolved yet → solid quad
   // Invert the ground projection: card(s,t) → ground is linear in t (one division, no cliff).
   //   y(t) = Ac.y − 0.5·t·H·cosθ, z(t) = t·H·sinθ; ground(C) = L.xy + (L.z/(L.z−C.z))·(C.xy−L.xy)
   //   ⇒ t = L.z·(P.y − Ac.y) / (H·(sinθ·(P.y − L.y) − 0.5·L.z·cosθ))
@@ -129,9 +137,14 @@ float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData,
   float k = L.z / (L.z - t * H * st);                       // that row's projection factor
   float s = clamp(((P.x - L.x) / k + L.x - Ac.x) / W + 0.5, 0.0, 1.0);
   if (rot == 3u) s = 1.0 - s;                               // W-facing = mirrored E frame
-  float fx = float((D.z >> 22) & 1023u) * 16.0, fy = float((D.z >> 12) & 1023u) * 16.0; // u10 16-px grid coords
-  // Atlas rows are image-top-down; card t=0 is the sprite's BOTTOM row → v = 1−t.
-  vec2 uv = vec2(fx + s * fw, fy + (1.0 - t) * fh);
+  // Whole-px-per-unit sampling: ppu = 2^lod / spanU (a pow2 ≥ 1 by construction). Window top-left =
+  // frame origin + offset·ppu − nudge (x signed +1024 — centers the opaque run; y unsigned, upward —
+  // bottom-aligns it). Atlas rows are image-top-down; card t=0 is the sprite's BOTTOM row → v = 1−t.
+  float ppu = float(1u << lod) / spanU;
+  float fx = float((D.z >> 22) & 1023u) * 16.0, fy = float((D.z >> 12) & 1023u) * 16.0;
+  float nx = float(int((D.w >> 20) & 4095u) - 2048);   // u12, +2048 bias — full either-direction range
+  float ny = float(int((D.w >> 8) & 4095u) - 2048);
+  vec2 uv = vec2(fx, fy) + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(s * W, (1.0 - t) * H) * ppu;
   return q * texelFetch(surf, ivec2(uv), 0).b;              // surface B = coverage (straight-alpha data)
 }
 `;

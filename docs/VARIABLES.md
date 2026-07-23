@@ -318,35 +318,49 @@ entry (2 per RGBA32UI px = 64 bits each)
 
 **`prim_definition_data`** — a **256×256** `RGBA32UI` texture, one px per sprite **variant** (generic; shared by
 every instance), keyed by `u16 definition_index`. Compare-written whenever its inputs change (surface decode,
-LOD upgrade — a write re-dirties the gather). The shadow quad is the sprite's **opaque bbox**; the silhouette
-frame is that bbox's sub-rect of the sprite's SURFACE frame on the **one shared surface page** (bound as
-`uSurface`; a frame on any other page stays 0 → solid quad, until multi-page lands with caster-lut C5):
+LOD upgrade — a write re-dirties the gather). The model (work
+[`2026-07-23-def-frame-anchors`](work/2026-07-23-def-frame-anchors/README.md)): frames are **pow2 squares** on
+a 16-px atlas grid, addressed by a **lod exponent**; the **minimum bbox lives in world units** (even, so half-
+anchor shifts are integral) at an unsigned frame-relative offset; a **px nudge** aligns the sampled window to
+the opaque pixels (x centered, y bottom-aligned — shadows anchor at the base); **3×3 frame anchors** place the
+bbox against the prim's position:
 
 ```
-R  u32   u10 prim_width (22–31, units, opaque) | u10 prim_height (12–21, units, opaque) | u12 reserved (0–11)
-G  u32   u10 offset_x+512 (12–21, units) | u10 offset_y+512 (2–11, units) | reserved     (opaque-base-centre − game anchor)
-B  u32   u10 frame_x (22–31, 16-px grid) | u10 frame_y (12–21, 16-px grid) | u8 reserved (4–11) | u4 frame_page (0–3)
-A  u32   u10 frame_width (22–31, 16-px grid) | u10 frame_height (12–21, 16-px grid) | u12 reserved (0–11)
-         (frame_width 0 ⇒ no silhouette — solid quad; frame_page 0 until C5 assigns real page indices)
+R  u32   u9 prim_width (23–31, 2-unit steps) | u9 prim_height (14–22, 2-unit steps)
+         | u4 frame_span (10–13, tiles − 1; width = log2(ZONE_DIM)) | u10 reserved (0–9)
+G  u32   u10 offset_x (22–31, units) | u10 offset_y (12–21, units) | u12 reserved (0–11)
+         (UNSIGNED, frame-relative: the bbox top-left indexed into the frame — no bias)
+B  u32   u10 frame_x (22–31, 16-px grid) | u10 frame_y (12–21, 16-px grid) | u4 frame_page (8–11)
+         | u4 frame_lod (4–7, side = 2^lod) | u2 frame_anchor_x (2–3) | u2 frame_anchor_y (0–1)   (FULL)
+A  u32   u12 nudge_x (20–31, px, signed +2048) | u12 nudge_y (8–19, px, signed +2048)
+         | u2 nudge_anchor_x (6–7) | u2 nudge_anchor_y (4–5) | u4 reserved (0–3)   (FULL)
 ```
 
-**Field sizing (the ceilings behind the widths).**
-- `frame_width/height` — **u10**: REQUIREMENT — **no single prim uses a texture larger than 1024×1024**; at
-  `SQUARE = 64` that is 16×16 tiles = **one full zone**, the natural cap for a placed object. A larger frame
-  is a content bug: the writer warns once and clamps.
-- `frame_x/y` (and `frame_width/height`) — **u10 in 16-px GRID units**: REQUIREMENT — the **minimum texture
-  size is 1 px per unit**, so the smallest frame is **16×16 px** (16 units/tile), and the 16384 GL max page
-  is a **1024×1024 grid** of minimum frames → grid coords fit u10. Placement is 16-aligned by construction
-  (per-LOD-size pools pack uniform pow2 ≥16 frames with zero padding), and the def's rect is the opaque
-  sub-rect **dilated outward to the 16-px grid** (clamped to the frame) — the quad W/H/offset re-derive from
-  the *same* dilated box so the (s,t) ↔ uv correspondence stays exact, and the dilation ring is transparent
-  coverage (no visual change).
-- `frame_page` — **u4**: ≤ **16 silhouette pages**, sized to the field's actual consumer, not the GL ceiling.
-  The def's frame addresses the **surface (silhouette) atlas** only; silhouettes need modest LOD, so a 2048²
-  page holds ~1024 variants at 64px — 16 pages ≈ 16k resident variants, and 16 × 16 MB = **256 MB**, already
-  beyond any sane silhouette budget (a C5 texture array also commits **all** layers up front via
-  `texStorage3D`, so the shipped array is a handful of layers). The nibble rounds B out to a full u32
-  (14+14+4) and reads as B's last hex digit. Written **0** until C5 lands (one shared surface page bound;
+**The whole-px-per-unit invariant.** Minimum texture size is **1 px/unit** → smallest frame 16×16 (lod 4);
+`ppu = 2^frame_lod / (16 · frame_span_tiles)` **doubles** per lod and is a whole pow2 ≥ 1 by construction
+(pow2 frame over a pow2-tile span) — never fractional. `frame_lod < 4` ⇒ no silhouette resolved → solid quad.
+
+**Field sizing.**
+- `prim_width/height` — **u9 in 2-unit steps** (even bbox ⟹ integral half-anchors): ≤1022 units ≈ 4-zone
+  headroom over the 256-unit (one-zone) per-prim ceiling.
+- `frame_span` — **u4 = span tiles − 1**, capped at one zone; the width is `log2(ZONE_DIM)` so bumping the
+  zone size drags the field with it. Valid values are pow2 tiles (1/2/4/8/16) — required for integer ppu;
+  the writer rounds up + warns. Needed because lod alone can't give ppu (a 32px frame is 1-tile@2ppu OR
+  2-tile@1ppu).
+- `frame_x/y` — **u10 in 16-px grid**: the pow2 frame's ORIGIN on the page; 16384 GL max / 16 min frame =
+  1024 grid. 16-aligned by construction (per-LOD-size pools pack uniform pow2 ≥16 squares, zero padding).
+- `frame_lod` — **u4** side exponent (4..14): replaces a w/h pair — frames are square pow2, one exponent.
+- `frame_anchor_x/y` — **u2**: 0 none | 1 half | 2 full shift of the bbox against the prim position
+  (3×3 = TL..BR). Shadow casters use bottom-center (1, 2); rotation=W mirrors anchor_x. The gather applies
+  `bbox_anchored − fullbox_anchored` so `prim_data`'s base-centre position keeps working (F3: reported-x/y
+  positions land with the DSL size rework).
+- `nudge_x/y` — **u12 px at the resolved lod, both signed (+2048 bias)** (rewritten on lod swap): sample
+  start = `offset·ppu − nudge`. ±2048 covers 2 units × the max ppu 1024 in EITHER direction, so any
+  alignment (left/center/right, top/bottom) is expressible regardless of where the opaque run sits in its
+  unit. `nudge_anchor_x/y` (u2) record WHICH alignment the stored nudge encodes — default x = 1 (centered),
+  y = 2 (bottom, so shadows align at the base); future nudging operations write other anchors.
+- `frame_page` — **u4**: ≤16 silhouette pages (~256 MB at 2048² — beyond any sane silhouette budget; C5's
+  texture array commits all layers up front). Written **0** until C5 (one shared page bound as `uSurface`;
   off-page defs fall back to solid quad).
 
 **`light_presence_cold`** — a **`cols×rows`** `RGBA32UI` **textile_tile map** (one texel/tile, toroidal with the

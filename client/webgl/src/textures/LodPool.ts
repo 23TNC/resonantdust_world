@@ -41,16 +41,24 @@ export class LodPool {
   /** Pack `source` (at its decoded `width × height`) as `stem`'s texture. Spills to a fresh page when
    *  the current ones are full. Returns the framed sub-texture, or null if it can't fit a whole page. */
   add(stem: string, source: Texture, width: number, height: number): TexFrame | null {
+    // Def-grid invariants (def-frame-anchors P1): frames must be pow2 SQUARES ≥ 16px, placed on the
+    // 16-px page grid — the shadow def addresses them by u4 lod exponent + u10 16-px-grid origin.
+    if (width !== height || (width & (width - 1)) !== 0 || width < 16)
+      console.warn(`[lod-pool] ${stem}: frame ${width}×${height} violates pow2-square ≥16 — def grid addressing will degrade`);
+    let packed: TexFrame | null = null;
     for (const atlas of this.atlases) {
-      const packed = atlas.add(source, width, height, PADDING);
-      if (packed) {
-        this.byStem.set(stem, packed);
-        return packed;
-      }
+      packed = atlas.add(source, width, height, PADDING);
+      if (packed) break;
     }
-    if (width + PADDING > this.pageSize || height + PADDING > this.pageSize) return null;
-    const packed = this.newAtlas().add(source, width, height, PADDING);
-    if (packed) this.byStem.set(stem, packed);
+    if (!packed) {
+      if (width + PADDING > this.pageSize || height + PADDING > this.pageSize) return null;
+      packed = this.newAtlas().add(source, width, height, PADDING);
+    }
+    if (packed) {
+      if (packed.x % 16 !== 0 || packed.y % 16 !== 0)
+        console.warn(`[lod-pool] ${stem}: frame placed off the 16-px grid (${packed.x},${packed.y})`);
+      this.byStem.set(stem, packed);
+    }
     return packed;
   }
 

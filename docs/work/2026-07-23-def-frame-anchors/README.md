@@ -29,12 +29,14 @@ right. Supersedes the P4-era opaque-sub-rect fields (frame_x/y/w/h in 16-px grid
 
 ```
 R  u32  u9 prim_width (23–31, 2-unit steps) | u9 prim_height (14–22, 2-unit steps)
-        | u3 frame_span (11–13, log2 tiles — AMENDMENT F1) | u11 reserved (0–10)
+        | u4 frame_span (10–13, tiles − 1; width = log2(ZONE_DIM) — F1 as RATIFIED) | u10 reserved (0–9)
 G  u32  u10 offset_x (22–31, units) | u10 offset_y (12–21, units) | u12 reserved (0–11)
         (UNSIGNED, frame-relative: bbox top-left indexed into the frame from frame_x/y — no ±512 bias)
 B  u32  u10 frame_x (22–31, 16-px grid) | u10 frame_y (12–21, 16-px grid) | u4 frame_page (8–11)
         | u4 frame_lod (4–7, side = 2^lod) | u2 frame_anchor_x (2–3) | u2 frame_anchor_y (0–1)   FULL
-A  u32  u11 nudge_x (21–31, px, rightward) | u11 nudge_y (10–20, px, upward) | u10 reserved (0–9)
+A  u32  u12 nudge_x (20–31, px, signed +2048) | u12 nudge_y (8–19, px, signed +2048)
+        | u2 nudge_anchor_x (6–7, default 1 center) | u2 nudge_anchor_y (4–5, default 2 bottom)
+        | u4 reserved (0–3)   FULL (F4 as ratified)
 ```
 
 - `prim_width/height` — the minimum bbox in units, **even** (stored /2). u9 = ≤1022 units (~4-zone
