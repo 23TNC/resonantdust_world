@@ -325,8 +325,8 @@ frame is that bbox's sub-rect of the sprite's SURFACE frame on the **one shared 
 ```
 R  u32   u10 prim_width (22–31, units, opaque) | u10 prim_height (12–21, units, opaque) | u12 reserved (0–11)
 G  u32   u10 offset_x+512 (12–21, units) | u10 offset_y+512 (2–11, units) | reserved     (opaque-base-centre − game anchor)
-B  u32   u14 frame_x (18–31, atlas px) | u14 frame_y (4–17, atlas px) | u4 frame_page (0–3)   (FULL: 14+14+4)
-A  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas px) | u12 reserved (0–11)
+B  u32   u10 frame_x (22–31, 16-px grid) | u10 frame_y (12–21, 16-px grid) | u8 reserved (4–11) | u4 frame_page (0–3)
+A  u32   u10 frame_width (22–31, 16-px grid) | u10 frame_height (12–21, 16-px grid) | u12 reserved (0–11)
          (frame_width 0 ⇒ no silhouette — solid quad; frame_page 0 until C5 assigns real page indices)
 ```
 
@@ -334,9 +334,13 @@ A  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas 
 - `frame_width/height` — **u10**: REQUIREMENT — **no single prim uses a texture larger than 1024×1024**; at
   `SQUARE = 64` that is 16×16 tiles = **one full zone**, the natural cap for a placed object. A larger frame
   is a content bug: the writer warns once and clamps.
-- `frame_x/y` — **u14**: *positions* on an atlas page, bounded by the GL texture-size ceiling, not the prim
-  ceiling — WebGL2 `MAX_TEXTURE_SIZE` is 16384 on discrete GPUs (our pools allocate 1024²/2048² pages, well
-  inside it). u14 = 0..16383 addresses any page we could ever allocate.
+- `frame_x/y` (and `frame_width/height`) — **u10 in 16-px GRID units**: REQUIREMENT — the **minimum texture
+  size is 1 px per unit**, so the smallest frame is **16×16 px** (16 units/tile), and the 16384 GL max page
+  is a **1024×1024 grid** of minimum frames → grid coords fit u10. Placement is 16-aligned by construction
+  (per-LOD-size pools pack uniform pow2 ≥16 frames with zero padding), and the def's rect is the opaque
+  sub-rect **dilated outward to the 16-px grid** (clamped to the frame) — the quad W/H/offset re-derive from
+  the *same* dilated box so the (s,t) ↔ uv correspondence stays exact, and the dilation ring is transparent
+  coverage (no visual change).
 - `frame_page` — **u4**: ≤ **16 silhouette pages**, sized to the field's actual consumer, not the GL ceiling.
   The def's frame addresses the **surface (silhouette) atlas** only; silhouettes need modest LOD, so a 2048²
   page holds ~1024 variants at 64px — 16 pages ≈ 16k resident variants, and 16 × 16 MB = **256 MB**, already

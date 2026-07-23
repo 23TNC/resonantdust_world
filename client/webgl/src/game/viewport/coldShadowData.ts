@@ -139,44 +139,55 @@ export class ColdShadowData {
     if (idx === undefined) { idx = this.defNext++; this.defIndex.set(key, idx); }
 
     const bbox = resolver ? resolver.opaqueBBox(prim.textureName) : null;
-    const dx = bbox ? bbox.fx * prim.width : 0, dy = bbox ? bbox.fy * prim.height : 0;      // opaque top-left (px)
-    const ww = bbox ? bbox.fw * prim.width : prim.width, hh = bbox ? bbox.fh * prim.height : prim.height;
-    this.defTight.set(idx, { dx, dy, w: ww, h: hh }); // opaque box (px, rel. prim top-left) — for bucketing
-    // Offset (units) from the game anchor (full-box base-centre) to the opaque bbox base-centre.
-    const ox = Math.round((dx + ww / 2 - prim.width / 2) / UNIT), oy = Math.round((dy + hh - prim.height) / UNIT);
+    // World-px opaque box (rel. prim top-left) — recomputed from the DILATED atlas rect below when a
+    // frame exists, so quad ↔ sample ↔ bucket all describe the SAME box.
+    let dx = bbox ? bbox.fx * prim.width : 0, dy = bbox ? bbox.fy * prim.height : 0;
+    let ww = bbox ? bbox.fw * prim.width : prim.width, hh = bbox ? bbox.fh * prim.height : prim.height;
 
-    // P4 silhouette frame: the opaque sub-rect of the surface frame (atlas px) on the shared page.
-    // frame_w/h are u10 — REQUIREMENT: no prim texture exceeds 1024×1024 (at SQUARE=64 that is
-    // 16×16 tiles = one full zone). A larger frame is a content bug: warn once + clamp.
+    // P4 silhouette frame: the opaque sub-rect of the surface frame, DILATED OUT to the 16-px atlas
+    // grid (clamped to the frame). All frame_* fields are stored in 16-px GRID units (u10): the 1 px/
+    // unit minimum texture size makes 16×16 the smallest frame, so a 16384 page is a 1024×1024 grid —
+    // and pool placement is 16-aligned by construction (per-size pools, pow2 ≥16 frames, 0 padding).
+    // The dilation ring samples transparent coverage → the rendered silhouette is unchanged; the quad
+    // is re-derived from the dilated box so the (s,t) ↔ uv correspondence stays EXACT. Per-prim
+    // texture ceiling 1024² (one zone at SQUARE=64): a larger frame is a content bug — warn + clamp.
     let fx = 0, fy = 0, fw = 0, fh = 0;
     const surf = resolver && bbox ? resolver.resolve(prim.textureName, "surface", prim.cell).frame : null;
     if (surf) {
       if (!this.surfacePageTex) this.surfacePageTex = surf.source;
       if (surf.source === this.surfacePageTex) {
-        fx = Math.round(surf.x + bbox!.fx * surf.w);
-        fy = Math.round(surf.y + bbox!.fy * surf.h);
-        fw = Math.max(1, Math.round(bbox!.fw * surf.w));
-        fh = Math.max(1, Math.round(bbox!.fh * surf.h));
-        if ((fw > 0x3ff || fh > 0x3ff) && !this.frameSizeWarned) {
+        const ax0 = Math.max(surf.x, Math.floor((surf.x + bbox!.fx * surf.w) / 16) * 16);
+        const ay0 = Math.max(surf.y, Math.floor((surf.y + bbox!.fy * surf.h) / 16) * 16);
+        const ax1 = Math.min(surf.x + surf.w, Math.ceil((surf.x + (bbox!.fx + bbox!.fw) * surf.w) / 16) * 16);
+        const ay1 = Math.min(surf.y + surf.h, Math.ceil((surf.y + (bbox!.fy + bbox!.fh) * surf.h) / 16) * 16);
+        fx = ax0; fy = ay0; fw = Math.max(16, ax1 - ax0); fh = Math.max(16, ay1 - ay0);
+        if ((fw > 1024 || fh > 1024) && !this.frameSizeWarned) {
           this.frameSizeWarned = true;
-          console.warn(`[cold-shadow] ${prim.textureName}: silhouette frame ${fw}×${fh} exceeds the 1024² per-prim texture ceiling — clamped (u10)`);
+          console.warn(`[cold-shadow] ${prim.textureName}: silhouette frame ${fw}×${fh} exceeds the 1024² per-prim texture ceiling — clamped`);
         }
+        // The SAME dilated box in world px (scale: world px per atlas px).
+        const sx = prim.width / surf.w, sy = prim.height / surf.h;
+        dx = (ax0 - surf.x) * sx; dy = (ay0 - surf.y) * sy;
+        ww = fw * sx; hh = fh * sy;
       } else if (!this.pageWarned) {
         this.pageWarned = true;
         console.warn("[cold-shadow] surface frame off the shared page — silhouette skipped (solid quad, C5)");
       }
     }
+    this.defTight.set(idx, { dx, dy, w: ww, h: hh }); // (dilated) opaque box, px rel. prim top-left — for bucketing
+    // Offset (units) from the game anchor (full-box base-centre) to the (dilated) opaque base-centre.
+    const ox = Math.round((dx + ww / 2 - prim.width / 2) / UNIT), oy = Math.round((dy + hh - prim.height) / UNIT);
 
     const base = idx * 4;
     // R: W(22–31) | H(12–21) opaque size (units). G: (ox+512)(12–21) | (oy+512)(2–11) signed offset (units).
-    // B: frame_x(18–31) | frame_y(4–17) (atlas px — PAGE coords, u14 = the 16384 GL max texture size)
-    //    | frame_page(0–3) (u4 — ≤16 silhouette pages, ~256 MB at 2048²; 0 until C5). B is FULL: 14+14+4.
-    // A: frame_w(22–31) | frame_h(12–21) (u10 — ≤1024² per-prim ceiling; w = 0 → solid quad) | u12 reserved.
+    // B: frame_x(22–31) | frame_y(12–21) (u10, 16-px GRID coords — 16384 max page / 16 min frame = 1024)
+    //    | u8 reserved (4–11) | frame_page(0–3) (u4 — ≤16 silhouette pages; 0 until C5).
+    // A: frame_w(22–31) | frame_h(12–21) (u10, 16-px GRID units — 1024² ceiling = 64 grid; w = 0 → solid quad).
     const page = 0; // ONE bound surface page today — C5 (texture-array pages) assigns real indices
     const R = (((u10(ww / UNIT) << 22) | (u10(hh / UNIT) << 12)) >>> 0);
     const G = (((((ox + 512) & 0x3ff) << 12) | (((oy + 512) & 0x3ff) << 2)) >>> 0);
-    const B = ((((fx & 0x3fff) << 18) | ((fy & 0x3fff) << 4) | (page & 0xf)) >>> 0);
-    const A = (((u10(fw) << 22) | (u10(fh) << 12)) >>> 0);
+    const B = (((u10(fx >> 4) << 22) | (u10(fy >> 4) << 12) | (page & 0xf)) >>> 0);
+    const A = (((u10(fw >> 4) << 22) | (u10(fh >> 4) << 12)) >>> 0);
     const m = this.defMirror;
     if (m[base] !== R || m[base + 1] !== G || m[base + 2] !== B || m[base + 3] !== A) {
       m[base] = R; m[base + 1] = G; m[base + 2] = B; m[base + 3] = A;
@@ -274,7 +285,7 @@ export class ColdShadowData {
       prim_width: (R >>> 22) & 0x3ff,
       prim_height: (R >>> 12) & 0x3ff,
       offset: [((G >>> 12) & 0x3ff) - 512, ((G >>> 2) & 0x3ff) - 512], // units, opaque-base-centre − anchor
-      frame: [(B >>> 18) & 0x3fff, (B >>> 4) & 0x3fff, (A >>> 22) & 0x3ff, (A >>> 12) & 0x3ff], // x,y (u14) w,h (u10, atlas px)
+      frame: [((B >>> 22) & 0x3ff) * 16, ((B >>> 12) & 0x3ff) * 16, ((A >>> 22) & 0x3ff) * 16, ((A >>> 12) & 0x3ff) * 16], // x,y,w,h (16-px grid → px)
       frame_page: B & 0xf,
     };
   }
