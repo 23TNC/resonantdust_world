@@ -4,11 +4,13 @@ _Decision points + options + which we chose + why. Chronological._
 
 ---
 
-## F1 · Where the lighting pass runs {#f1}
-**2026-07-23 — open until P1.** Extend `AlbedoBlitShader`'s display draw (sample albedo+normal+
-surface+presence+shadow-cold, output lit) vs a separate lighting RT composited after. Extending the
-blit is fewer passes; a separate RT is cleaner for future post (bloom). Warm-over-cold compositing
-([[rt-tiers-cold-warm-hot]]) must survive either way. Lean: extend the blit for P1, split later if post needs it.
+## F1 · Lightmap, not per-pixel forward {#f1}
+**2026-07-23 — DECIDED (user): a baked LIGHTMAP.** Lighting accumulates into a cached, dirty-driven
+lightmap RT (`lightmap = ambient + Σ per-light colour·falloff·diffuse·(1−shadow)`); the display
+composites `albedo × lightmap` (warm-over-cold intact — [[rt-tiers-cold-warm-hot]]). NOT the per-pixel
+forward blit — the lightmap recomputes only dirty regions (reuses the shadow dirty system), matches
+the G-buffer map model, and is reusable by post (bloom). The `AlbedoBlitShader` display becomes the
+`albedo × lightmap` composite.
 
 ## F2 · Falloff curve {#f2}
 **2026-07-23 — open.** `intensity · f(dist/reach)`: smoothstep-to-0-at-reach (soft, cheap), inverse-
@@ -26,3 +28,12 @@ consistent with the bake.
 **2026-07-23 — open until P4.** Dense lights sum > 1. Clamp (cheap, clips bright overlaps) vs a
 tonemap (Reinhard/ACES — preserves colour in bright spots). Lean: clamp for P1–P3, add a cheap
 tonemap in P4 if overlaps blow out.
+
+## F5 · Lightmap resolution + where the normal is applied {#f5}
+**2026-07-23 — open until P2.** Lighting has two frequencies: falloff + shadow are LOW-freq (a coarse
+unit-res lightmap like shadow-cold, upsampled, is cheap + enough); normal RELIEF is HIGH-freq (per-px
+art). Options: (a) **px-res lightmap** — bake `N·L` per-light into a full-res lightmap (full detail,
+~16× the light math); (b) **coarse lightmap + per-px normal** — lightmap holds Σ(colour·falloff·
+shadow) at unit-res (no normal) + an aggregate light direction; composite applies `N·L` per-px with
+that aggregate (cheaper, loses per-light directionality). Decide by eye/perf at P2. Lean: start px-res
+for correctness, drop to coarse if the light loop is too heavy.

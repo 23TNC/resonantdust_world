@@ -17,10 +17,29 @@ all in place now:
 | **presence** | data texture sets 3/5 | the ≤14 lights acting on each tile |
 | **shadow-cold** | the gather RT | per-light u9 coverage (14 slots) — [[lighting-rebuild-complete]] |
 
-## The model + phased plan (user's order)
+## Architecture: a baked LIGHTMAP that combines with the maps (user, 2026-07-23)
 
-Per display pixel: world position → its tile's **presence** → for each acting light, accumulate its
-contribution; multiply the sum into **albedo**; output lit colour. Built up in phases:
+Lighting writes into a **lightmap** — a cached, dirty-driven map (like the G-buffer channels + the
+per-rect light texture of [[lighting-direction]]), NOT per-pixel-every-frame forward shading. It
+accumulates each acting light PER-LIGHT (shadow + normal fold in BEFORE the sum, since each is
+per-light); the display composites it into albedo:
+
+```
+lightmap = ambient + Σ_i  colour_i · intensity_i · falloff_i · diffuse(N, L_i) · (1 − shadow_i)
+out      = albedo × lightmap      // material (albedo/normal) × illumination (lightmap)
+```
+
+**Cached + dirty-driven is the point**: the lightmap recomputes only where lights/shadows changed —
+reusing the shadow dirty system (a static light over static trees bakes once; a mover re-bakes its
+reach box). **Resolution is the P2 fork** ([`forks.md#f5`](forks.md#f5)): falloff + shadow are
+LOW-frequency (a coarse unit-res lightmap like shadow-cold is cheap + enough), but normal relief is
+HIGH-frequency (per-px) — so either a px-res lightmap (full detail, 16× the light math) or a coarse
+lightmap + per-px normal at composite (cheaper, approximate).
+
+## The phased plan (user's order)
+
+Built up in phases; each writes the lightmap more completely, the display composite stays
+`albedo × lightmap`:
 
 ### P1 · Emission — lights illuminate the world
 Flat accumulation, no normal, no shadow. Per pixel: `light = ambient + Σ_i colour_i · intensity_i ·
