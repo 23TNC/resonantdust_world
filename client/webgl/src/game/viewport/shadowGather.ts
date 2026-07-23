@@ -103,18 +103,18 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H) {
 // B channel) at the def's opaque frame. frame_w = 0 (not resolved / off-page) → solid quad.
 float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D data, sampler2D surf) {
   if (primIdx == 0u) return 0.0;
-  uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));      // 1 px/record (F1): R position, G orient
-  uint pos = Pd.x;
-  uint orient = Pd.y;
+  uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));      // v2.1: R = id|reserved, G = position, B = orient
+  uint pos = Pd.y;
+  uint orient = Pd.z;
   vec2 A = decodePos(pos);                                  // the prim's stored anchor (full-box base-centre)
   int defIdx = int((orient >> 6) & 0xffffu);
   uvec4 D = fetchLin(data, DEF_BASE + defIdx);
-  // R: bbox size (EVEN units, stored /2) + frame span (tiles, stored −1). G: bbox top-left in the
-  // frame (units, unsigned). B: frame origin (16-px grid) + page + lod exponent + 3x3 anchors.
-  float W = float(((D.x >> 23) & 511u) * 2u);
-  float H = float(((D.x >> 14) & 511u) * 2u);
-  float spanU = float((((D.x >> 10) & 15u) + 1u) * 16u);    // frame world span (units)
-  float ox = float((D.y >> 22) & 1023u), oy = float((D.y >> 12) & 1023u);
+  // v2.1: R = u16 id | u10 offset_x | u6 reserved; G = u9 W | u9 H | u4 span (tiles−1) | u10 offset_y.
+  // B: frame origin (16-px grid) + page + lod exponent + 3x3 anchors. A: nudges.
+  float W = float(((D.y >> 23) & 511u) * 2u);
+  float H = float(((D.y >> 14) & 511u) * 2u);
+  float spanU = float((((D.y >> 10) & 15u) + 1u) * 16u);    // frame world span (units)
+  float ox = float((D.x >> 6) & 1023u), oy = float(D.y & 1023u);
   uint lod = (D.z >> 4) & 15u;
   float axf = float((D.z >> 2) & 3u), ayf = float(D.z & 3u); // anchors: 0 none | 1 half | 2 full
   // Anchor shift (units): the bbox's anchored point minus the FULL footprint box's same-anchored
@@ -168,12 +168,11 @@ out uvec4 fragColor;
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 void main() {
-  // P3: window mapping from the CONSTANTS row of the data texture (px0: cols|rows|winCol|winRow as
-  // i32-in-u32 lanes; px1: slot). Updated through the same command path as every other write.
+  // P3/v2.1: window mapping from the CONSTANTS px (R = id|cols, G = rows|slot,
+  // B = i16 winCol | i16 winRow — sign-extended halves). Updated through the command path.
   uvec4 C0 = fetchLin(uData, CONST_BASE);
-  uvec4 C1 = fetchLin(uData, CONST_BASE + 1);
-  int uCols = int(C0.x), uRows = int(C0.y), uWinCol = int(C0.z), uWinRow = int(C0.w);
-  int uSlot = int(C1.x);
+  int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0xFFFFu);
+  int uWinCol = int(C0.z) >> 16, uWinRow = (int(C0.z) << 16) >> 16;
   ivec2 fc = ivec2(gl_FragCoord.xy);
   int sx = fc.x / uSlot, sy = fc.y / uSlot;                 // toroidal slot
   if (texelFetch(uDirty, ivec2(sx, sy), 0).r == 0u) discard; // clean tile → keep the persistent texel
@@ -190,9 +189,9 @@ void main() {
     uint pw = pres[slot >> 1];
     uint li = (slot & 1) == 0 ? (pw >> 16) : (pw & 0xffffu);
     if (li == 0xffffu) continue;                            // empty slot
-    uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));
-    if ((Ld.z & 1u) == 0u) continue;                        // cast_shadows
-    vec3 L = vec3(decodePos(Ld.x), float((Ld.z >> 24) & 255u));
+    uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // v2.1: G = position, A = z|reach|emitter|cast
+    if ((Ld.w & 1u) == 0u) continue;                        // cast_shadows
+    vec3 L = vec3(decodePos(Ld.y), float((Ld.w >> 24) & 255u));
     float cov = 0.0;
     if (uCorridor == 1) {
       // P6 CORRIDOR — the pure optimization, validated against the brute box below. Why the segment
@@ -225,7 +224,7 @@ void main() {
     } else {
       // BRUTE FORCE (the baseline the corridor must match): walk EVERY tile in the light's reach box
       // and test each bucketed caster's quad against P.
-      int reachT = int((Ld.z >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin
+      int reachT = int((Ld.w >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin
       ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
       ivec2 ls = ivec2(pmod(lc.x, uCols), pmod(lc.y, uRows));  // light's SLOT (rigid: caster-texel of the light tile)
       for (int dy = -16; dy <= 16; dy++) {
@@ -267,7 +266,8 @@ precision highp int;
 in vec2 vWorld;
 uniform highp usampler2D uShadow;   // shadow-cold — textile_unit map: per-slot 4-bit coverage (8 nibbles in R)
 uniform highp usampler2D uPresence; // textile_tile map: 8× u16 light indices per tile (slot → global light)
-uniform highp usampler2D uData;     // the unified data texture — window constants from row 1023 (P3)
+uniform int uCols, uRows, uWinCol, uWinRow, uSlot; // window mapping — the overlay is a per-draw
+                                                   // DISPLAY consumer (F2: uniforms are its lane)
 out vec4 fragColor;
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 // Per-light colour — MUST match LIGHT_COLORS (the gizmo rings) so a light's shadow reads as the same
@@ -281,10 +281,6 @@ vec3 lightColour(int k) {
   return vec3(0.3, 1.0, 1.0);                 // cyan
 }
 void main() {
-  uvec4 C0 = texelFetch(uData, ivec2(0, 1023), 0);          // constants px0: cols|rows|winCol|winRow
-  uvec4 C1 = texelFetch(uData, ivec2(1, 1023), 0);          // px1: slot
-  int uCols = int(C0.x), uRows = int(C0.y), uWinCol = int(C0.z), uWinRow = int(C0.w);
-  int uSlot = int(C1.x);
   int tx = int(floor(vWorld.x / ${SQF})), ty = int(floor(vWorld.y / ${SQF}));
   if (tx < uWinCol || tx >= uWinCol + uCols || ty < uWinRow || ty >= uWinRow + uRows) { fragColor = vec4(0.0); return; }
   int sx = pmod(tx, uCols), sy = pmod(ty, uRows);
@@ -754,9 +750,14 @@ export class ShadowGather {
       program: this.overlay,
       geometry: this.overlayGeo!,
       blend: "normal",
-      textures: { uShadow: this.shadowRT.textures[0], uPresence: this.presenceTex, uData: this.coldData.dataTexture },
+      textures: { uShadow: this.shadowRT.textures[0], uPresence: this.presenceTex },
       uniforms: (p) => {
         p.uMat3("uProjection", proj);
+        p.uInt("uCols", win.cols);
+        p.uInt("uRows", win.rows);
+        p.uInt("uWinCol", win.winCol);
+        p.uInt("uWinRow", win.winRow);
+        p.uInt("uSlot", TEXTILE_UNIT);
       },
     });
 

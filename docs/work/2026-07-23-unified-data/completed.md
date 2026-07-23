@@ -38,3 +38,17 @@ _Done **and** verified (identity diff + zoom round-trip). Items move here from
 - Window mapping + slot/light-count in row 1023 (i32-in-u32 lanes), compare-written via the same
   command path; gather + overlay texelFetch them (window uniforms die; overlay binds uData).
 - Verified: pan/zoom/resize correct (the toroidal windowing renders right at both zooms).
+
+## P4 · Command format v2.1 (user) + perf close — 2026-07-23 ✓
+
+- **v2.1 — self-addressing records** (user): every record carries its **u16 in-set id in R's high
+  half**, so scatter commands are PURE PAYLOADS — fills are `1 header + Σn` px (≈1.06 px/command).
+  Header: 15× u6 per-set counts (5 per RGB lane) + count₁₅ and the **u8 opcode** in A (0 =
+  write-data; presence/other maps ride future opcodes). Record layouts re-cut: def R = id|offset_x,
+  G = W|H|span|offset_y; prim R = id, G = position, B = orient; light R = id, G = position,
+  B = colour, A = z|reach|emitter|cast (emitter folded from its own word); constants = ONE px
+  (id|cols · rows|slot · i16 winCol|winRow · light_count).
+- **Verified**: identity 0 mismatches; zoom round-trip {lod0, lod5, lod6}; nonzero exactly 9,949;
+  **orbit 121 fps** (display cap); light/def/prim debug decodes correct under v2.1.
+- **Perf numbers**: shadow tick ≈ 1 ms, flush ≈ 0 ms CPU; a fill is ≤18 rows of upload + one point
+  draw; the all-prim lod swap (≈1,347) batches as ~22 fills of microseconds each.

@@ -284,24 +284,33 @@ window; textile resolutions per the lighting-rebuild map-model). Work streams:
 **The unified data texture** — **1024×1024 `RGBA32UI`** (16 MB, provisioned once), linear index
 `i → (i & 1023, i >> 10)`, laid out in **64-row bands** (65 536 one-texel slots each):
 
-```
-rows    0–63    prim_definition_data   band base 0        1 px per def
-rows   64–127   prim_data              band base 65 536   1 px per placed caster (2/px RETIRED)
-rows  128–191   light_data             band base 131 072  1 px per light record
-rows  192–1022  reserved               (materials-era tables)
-row   1023      constants              px0: i32 cols | rows | winCol | winRow (two's-complement in u32 lanes)
-                                       px1: u32 slot (TEXTILE_UNIT) | light_count | reserved | reserved
-```
-
-Updates arrive by **command-buffer scatter** (P2 of unified-data; until then, dirty row-span
-`texSubImage2D`): a **64×64 `RGBA32UI` command buffer** uploaded as one contiguous row-span (rotating
-row cursor — never overwrite just-consumed rows) and applied by one point-scatter draw. Commands are
-**absolute whole-texel writes → replay-idempotent** (no clearing; the draw count is the only cursor):
+The texture is **16 u16-addressable SETS** (1024×64 each; `set = linear >> 16`, in-set id = the low u16):
 
 ```
-command group (5 px = 4 commands; ~3 276 commands per 64×64 fill)
-  px0  header    4 × u32 lanes: u20 target linear index (0–19) | u12 reserved
-  px1–4 payload  the 4 targets' full RGBA32UI values, lane-ordered
+set 0   rows   0–63    prim_definition_data   1 px per def
+set 1   rows  64–127   prim_data              1 px per placed caster (2/px RETIRED)
+set 2   rows 128–191   light_data             1 px per light record
+sets 3–14              reserved               (materials-era tables)
+set 15  row  1023 tail constants px (in-set id 64 512):
+        R  u16 id | u16 cols        G  u16 rows | u16 slot (TEXTILE_UNIT)
+        B  i16 winCol | i16 winRow  A  u16 light_count | u16 reserved
+```
+
+**Every record SELF-ADDRESSES: its u16 in-set id lives in R's high half.** That makes scatter
+commands PURE PAYLOADS (v2.1 — the scatter reads the target out of the record itself).
+
+Updates arrive by **command-buffer scatter**: a **64×64 `RGBA32UI` command buffer** uploaded as one
+contiguous row-span (rotating row cursor — never overwrite just-consumed rows) and applied by one
+point-scatter draw per fill. Commands are **absolute whole-texel writes → replay-idempotent** (no
+clearing; the draw count is the only cursor):
+
+```
+fill = 1 header px + 16 pure-payload SECTIONS in set order (1 px per command; ≤63/set per fill —
+       u6 counts; bursts batch as further fills)
+  header  R,G,B: 15× u6 per-set counts (5 per lane at bits 0/6/12/18/24)
+          A: u8 opcode (0–7; 0 = write-data — presence/other maps ride future opcodes)
+             | u6 count₁₅ (8–13) | u18 reserved
+  section k: counts[k] payload px — each the full RGBA32UI record (self-addressing via R's id)
 ```
 
 **Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `reach`, opaque `prim_width/height`, the
@@ -323,10 +332,10 @@ u32 position_anchor_reference       region | zone | tile | anchor  (min unit = S
 **`light_data` band** (rows 128–191) — 1 px per light record. Written on light change:
 
 ```
-R  u32 position_anchor_reference
-G  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
-B  u32 reach         u8 z (24–31, units) | u12 reach (12–23, units; ~16-zone max) | u11 reserved (1–11) | u1 cast_shadows (0)
-A  u32 emitter       u8 emitter_radius (24–31, units — penumbra softness) | u24 reserved
+R  u32   u16 id (16–31, self-addressing) | u16 reserved (0–15)
+G  u32 position_anchor_reference
+B  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
+A  u32 reach         u8 z (24–31, units) | u12 reach (12–23, units) | u8 emitter_radius (4–11, units) | u3 reserved (1–3) | u1 cast_shadows (0)
 ```
 
 **`prim_data` band** (rows 64–127) — **1 px per placed caster** (F1: the 2-prims/px packing is RETIRED —
@@ -336,9 +345,9 @@ live (move → one texel). The position is the prim's **true game anchor** (full
 `offset` shifts the shadow, never the prim:
 
 ```
-R  u32 position_anchor_reference
-G  u32 orient    u8 z (24–31, units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u16 definition_index (6–21) | u6 reserved (0–5)
-B  u32 reserved
+R  u32   u16 id (16–31, self-addressing) | u16 reserved (0–15)
+G  u32 position_anchor_reference
+B  u32 orient    u8 z (24–31, units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u16 definition_index (6–21) | u6 reserved (0–5)
 A  u32 reserved
 ```
 
@@ -355,10 +364,10 @@ the opaque pixels (x centered, y bottom-aligned — shadows anchor at the base);
 bbox against the prim's position:
 
 ```
-R  u32   u9 prim_width (23–31, 2-unit steps) | u9 prim_height (14–22, 2-unit steps)
-         | u4 frame_span (10–13, tiles − 1; width = log2(ZONE_DIM)) | u10 reserved (0–9)
-G  u32   u10 offset_x (22–31, units) | u10 offset_y (12–21, units) | u12 reserved (0–11)
-         (UNSIGNED, frame-relative: the bbox top-left indexed into the frame — no bias)
+R  u32   u16 id (16–31, self-addressing — v2.1) | u10 offset_x (6–15, units) | u6 reserved (0–5)
+G  u32   u9 prim_width (23–31, 2-unit steps) | u9 prim_height (14–22, 2-unit steps)
+         | u4 frame_span (10–13, tiles − 1; width = log2(ZONE_DIM)) | u10 offset_y (0–9, units)
+         (offsets UNSIGNED, frame-relative: the bbox top-left indexed into the frame — no bias)
 B  u32   u10 frame_x (22–31, 16-px grid) | u10 frame_y (12–21, 16-px grid) | u4 frame_page (8–11)
          | u4 frame_lod (4–7, side = 2^lod) | u2 frame_anchor_x (2–3) | u2 frame_anchor_y (0–1)   (FULL)
 A  u32   u12 nudge_x (20–31, px, signed +2048) | u12 nudge_y (8–19, px, signed +2048)

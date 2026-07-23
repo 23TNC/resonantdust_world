@@ -28,28 +28,49 @@ export const PRIM_BASE = 65536;
 export const LIGHT_BASE = 131072;
 /** The constants row (row 1023) — px0 window mapping, px1 slot/light-count (P3). */
 export const CONST_BASE = 1023 * DATA_W;
-/** Command buffer: 64×64 RGBA32UI; 5-px groups (1 header px = 4× u20 targets + 4 payload px);
- *  replay-idempotent absolute writes — no clearing, the draw count is the only cursor. */
+/** Command buffer v2 (user format): 64×64 RGBA32UI, replay-idempotent absolute writes. One FILL =
+ *  a header px + 16 per-SET sections. Header: 16× u6 per-set command counts (5 per RGB lane at
+ *  bits 0/6/12/18/24 + the 16th in A) + u8 opcode (A bits 0–7; 0 = write-data — presence/other
+ *  maps ride future opcodes) + reserved. A set's section = ceil(n/8) ADDRESS px (8× u16 in-set
+ *  addresses) + n PAYLOAD px. u6 caps a set at 63 updates/fill — bursts batch (fills are ~1 KB). */
 const CMD_W = 64;
 const CMD_H = 64;
-const CMD_GROUPS = Math.floor((CMD_W * CMD_H) / 5); // 819 groups → 3 276 commands per fill
-const MAX_CMDS = CMD_GROUPS * 4;
+/** The data texture's 16 u16-addressable SETS (1024×64 each; set = linear >> 16). */
+const SET_SHIFT = 16;
+const SET_COUNT = 16;
+const MAX_PER_SET = 63; // u6 count per fill
 
-/** Scatter: gl_VertexID-equivalent slot index → command header lane → point at the target texel of
- *  the 1024² data texture; fragment writes the payload. Reads ONLY the command buffer (no feedback). */
+/** Scatter v2: slot index → scan the header's per-set counts to find the owning set + in-section
+ *  offset → u16 in-set address → point at the target texel; fragment writes the payload px.
+ *  Constant-bound scan (16 sets), break inside — never a body-modified loop condition. */
 const SCATTER_VERT = /* glsl */ `#version 300 es
 precision highp int;
 uniform highp usampler2D uCmd;
-uniform int uCmdBase;            // px index of this batch's first group
-in uint aIndex;                  // command slot within the batch (0..count-1)
+uniform int uCmdBase;            // px index of this fill's header
+in uint aIndex;                  // command slot within the fill (0..count-1)
 flat out highp int vPayload;     // px index of this command's payload
+uvec4 px(int i) { return texelFetch(uCmd, ivec2(i & 63, i >> 6), 0); }
+uint laneOf(uvec4 v, int lane) { return lane == 0 ? v.x : (lane == 1 ? v.y : (lane == 2 ? v.z : v.w)); }
+int countOf(uvec4 hdr, int b) {  // 16× u6: 5 per RGB lane (bits 0/6/12/18/24), 16th in A bits 8–13
+  if (b >= 15) return int((hdr.w >> 8) & 63u);
+  int lane = b / 5;
+  int sh = (b - lane * 5) * 6;
+  return int((laneOf(hdr, lane) >> uint(sh)) & 63u);
+}
 void main() {
-  int k = int(aIndex);
-  int g = k >> 2, lane = k & 3;
-  int hp = uCmdBase + g * 5;
-  uvec4 hdr = texelFetch(uCmd, ivec2(hp & 63, hp >> 6), 0);
-  int target = int(hdr[lane] & 0xFFFFFu);   // u20 linear index into the data texture
-  vPayload = hp + 1 + lane;
+  uvec4 hdr = px(uCmdBase);
+  int rem = int(aIndex);
+  int sec = uCmdBase + 1;        // pure-payload sections start after the header px (v2.1: NO
+  int band = 15;                 // address blocks — every record carries its u16 id in R's high half)
+  for (int b = 0; b < 16; b++) { // constant bound; break inside
+    int c = countOf(hdr, b);
+    if (rem < c) { band = b; break; }
+    rem -= c;
+    sec += c;
+  }
+  vPayload = sec + rem;
+  uint id = px(vPayload).x >> 16;                  // the record's own in-set id (self-addressing)
+  int target = (band << 16) + int(id);
   float x = (float(target & 1023) + 0.5) / 1024.0 * 2.0 - 1.0;
   float y = (float(target >> 10) + 0.5) / 1024.0 * 2.0 - 1.0;
   gl_Position = vec4(x, y, 0.0, 1.0);
@@ -140,8 +161,8 @@ export class ColdShadowData {
     this.dataTex = new Texture(gl, { width: DATA_W, height: DATA_H, format: "rgba32uint" });
     this.cmdTex = new Texture(gl, { width: CMD_W, height: CMD_H, format: "rgba32uint" });
     this.scatter = new Program(gl, SCATTER_VERT, SCATTER_FRAG, "data-scatter");
-    const slots = new Uint32Array(MAX_CMDS);
-    for (let i = 0; i < MAX_CMDS; i++) slots[i] = i;
+    const slots = new Uint32Array(SET_COUNT * MAX_PER_SET); // max commands per fill (16 × 63)
+    for (let i = 0; i < slots.length; i++) slots[i] = i;
     this.scatterGeo = new Geometry(gl, this.scatter, { aIndex: { data: slots, size: 1, integer: true } });
     this.dataRT = new RenderTarget(gl, { width: DATA_W, height: DATA_H, wrap: [this.dataTex] });
   }
@@ -163,16 +184,15 @@ export class ColdShadowData {
     const c = this.lastConst;
     if (c[0] === cols && c[1] === rows && c[2] === winCol && c[3] === winRow && c[4] === slot && c[5] === lights) return;
     this.lastConst = [cols, rows, winCol, winRow, slot, lights];
+    // v2.1 — ONE self-addressing px: R = u16 id | u16 cols; G = u16 rows | u16 slot;
+    // B = i16 winCol | i16 winRow (two's complement halves); A = u16 light_count | u16 reserved.
     const b0 = CONST_BASE * 4;
-    this.dataMirror[b0] = cols >>> 0;
-    this.dataMirror[b0 + 1] = rows >>> 0;
-    this.dataMirror[b0 + 2] = winCol >>> 0; // i32 two's complement in a u32 lane — GLSL int() reinterprets
-    this.dataMirror[b0 + 3] = winRow >>> 0;
-    const b1 = (CONST_BASE + 1) * 4;
-    this.dataMirror[b1] = slot >>> 0;
-    this.dataMirror[b1 + 1] = lights >>> 0;
+    const inSet = CONST_BASE & 0xffff; // its own in-set id (set 15)
+    this.dataMirror[b0] = ((inSet << 16) | (cols & 0xffff)) >>> 0;
+    this.dataMirror[b0 + 1] = (((rows & 0xffff) << 16) | (slot & 0xffff)) >>> 0;
+    this.dataMirror[b0 + 2] = (((winCol & 0xffff) << 16) | (winRow & 0xffff)) >>> 0;
+    this.dataMirror[b0 + 3] = ((lights & 0xffff) << 16) >>> 0;
     this.mark(CONST_BASE);
-    this.mark(CONST_BASE + 1);
   }
   /** The shared surface atlas page (or null before any sprite resolved). */
   get surfacePage(): Texture | null {
@@ -271,8 +291,9 @@ export class ColdShadowData {
     const page = 0;        // ONE bound surface page today — C5 (texture-array pages) assigns real indices
     const ax = 1, ay = 2;  // shadow casters hang the bbox at the prim's BOTTOM-CENTER anchor
     const nax = 1, nay = 2; // nudge alignment: x centered, y bottom — the default nudging operation
-    this.dataMirror[base] = ((((wu >> 1) & 0x1ff) << 23) | (((hu >> 1) & 0x1ff) << 14) | (((st - 1) & 0xf) << 10)) >>> 0;
-    this.dataMirror[base + 1] = (((ux0 & 0x3ff) << 22) | ((uy0 & 0x3ff) << 12)) >>> 0;
+    // v2.1 self-addressing: R = u16 id | u10 offset_x | u6 reserved; G = u9 W | u9 H | u4 span | u10 offset_y.
+    this.dataMirror[base] = (((idx & 0xffff) << 16) | ((ux0 & 0x3ff) << 6)) >>> 0;
+    this.dataMirror[base + 1] = ((((wu >> 1) & 0x1ff) << 23) | (((hu >> 1) & 0x1ff) << 14) | (((st - 1) & 0xf) << 10) | (uy0 & 0x3ff)) >>> 0;
     this.dataMirror[base + 2] = (((fx16 & 0x3ff) << 22) | ((fy16 & 0x3ff) << 12) | ((page & 0xf) << 8) | ((lod & 0xf) << 4) | ((ax & 3) << 2) | (ay & 3)) >>> 0;
     this.dataMirror[base + 3] = ((((nx + 2048) & 0xfff) << 20) | (((ny + 2048) & 0xfff) << 8) | ((nax & 3) << 6) | ((nay & 3) << 4)) >>> 0;
     this.mark(DEF_BASE + idx);
@@ -296,27 +317,28 @@ export class ColdShadowData {
     const orient = ((((z & 0xff) << 24) | ((rotation & 0x3) << 22) | ((defIndex & 0xffff) << 6)) >>> 0);
     const hit = this.primIndex.get(prim.id);
     if (hit !== undefined) {
-      const base = (PRIM_BASE + hit) * 4; // 1 px/record (F1)
-      if (this.dataMirror[base + 1] === orient) return { idx: hit, changed: false };
+      const base = (PRIM_BASE + hit) * 4; // v2.1: R = id|reserved, G = position, B = orient, A reserved
+      if (this.dataMirror[base + 2] === orient) return { idx: hit, changed: false };
       // RETENTION: "retain whatever the lod was until we get a NEW one" — a new one means a new
       // USABLE one. Never swap a standing prim DOWN to the loose (lod-0) def: if the freshly
       // resolved frame is unusable (off-page — e.g. a pool spill) the prim keeps casting its
       // current silhouette instead of degrading to a solid quad.
-      const curDef = (this.dataMirror[base + 1] >>> 6) & 0xffff;
+      const curDef = (this.dataMirror[base + 2] >>> 6) & 0xffff;
       const newLod = (this.dataMirror[(DEF_BASE + defIndex) * 4 + 2] >>> 4) & 0xf;
       const curLod = (this.dataMirror[(DEF_BASE + curDef) * 4 + 2] >>> 4) & 0xf;
       if (newLod < 4 && curLod >= 4) return { idx: hit, changed: false };
-      this.dataMirror[base + 1] = orient; // def swap (new lod) / orientation change — position untouched
+      this.dataMirror[base + 2] = orient; // def swap (new lod) / orientation change — position untouched
       this.mark(PRIM_BASE + hit);
       return { idx: hit, changed: true };
     }
     const idx = this.primNext++;
     const ax = prim.x + prim.width * 0.5; // the TRUE game anchor (full-box base-centre) — unchanged
     const ay = prim.y + prim.height;
-    const base = (PRIM_BASE + idx) * 4; // 1 px/record: R position, G orient, B/A reserved (F1)
-    this.dataMirror[base] = encodePosition(ax, ay); // position_anchor_reference
+    const base = (PRIM_BASE + idx) * 4; // v2.1: R = u16 id | u16 reserved, G = position, B = orient
+    this.dataMirror[base] = ((idx & 0xffff) << 16) >>> 0;
+    this.dataMirror[base + 1] = encodePosition(ax, ay); // position_anchor_reference
     // orient: z(24–31) | rotation(22–23) | definition_index(6–21) | reserved(0–5)
-    this.dataMirror[base + 1] = orient;
+    this.dataMirror[base + 2] = orient;
     this.primIndex.set(prim.id, idx);
     this.mark(PRIM_BASE + idx);
     return { idx, changed: true };
@@ -339,14 +361,14 @@ export class ColdShadowData {
         continue;
       }
       const L = lights[k];
-      this.dataMirror[base] = encodePosition(L.x, L.y); // R: position
+      // v2.1 self-addressing: R = u16 id | u16 reserved; G = position; B = colour;
+      // A = u8 z (24–31) | u12 reach (12–23) | u8 emitter (4–11) | u3 reserved | u1 cast_shadows (0).
+      this.dataMirror[base] = ((k & 0xffff) << 16) >>> 0;
+      this.dataMirror[base + 1] = encodePosition(L.x, L.y);
       const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
-      this.dataMirror[base + 1] = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0); // G
-      // B: z(24–31, units) | reach(12–23, units) | reserved(1–11) | cast_shadows(0)
-      const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff);
-      this.dataMirror[base + 2] = (((z << 24) | (reach << 12) | (L.castShadows ? 1 : 0)) >>> 0);
-      // A: emitter_radius(24–31, units) — penumbra softness; rest reserved.
-      this.dataMirror[base + 3] = ((clamp(L.emitterRadius / UNIT, 255) << 24) >>> 0);
+      this.dataMirror[base + 2] = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0);
+      const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff), em = clamp(L.emitterRadius / UNIT, 255);
+      this.dataMirror[base + 3] = (((z << 24) | (reach << 12) | (em << 4) | (L.castShadows ? 1 : 0)) >>> 0);
       this.mark(LIGHT_BASE + k);
     }
     this.lightCount = n;
@@ -356,32 +378,49 @@ export class ColdShadowData {
   /** Returns true if anything was uploaded (def/prim changed) — the caller re-dirties the shadow. */
   flush(): boolean {
     if (this.dirtySet.size === 0) return false;
-    // P2 scatter transport: pack the changed texels into 5-px command groups (header = 4× u20
-    // targets, then 4 payload px from the mirror), upload ONE contiguous row span at the rotating
-    // cursor, and point-scatter them into the data texture. Absolute whole-texel writes → replay-
-    // idempotent (no clearing; the draw count is the only cursor). Oversized frames batch
-    // (flush-and-redraw, F3).
-    const targets = [...this.dirtySet];
+    // v2 fills: bucket the changed texels by SET (linear >> 16), then emit fills until drained.
+    // Each fill = header px (16× u6 per-set counts + u8 opcode 0) + per-set sections (address px
+    // of 8× u16 in-set addresses + payload pxs from the mirror). u6 caps 63/set/fill — bursts
+    // batch; a fill maxes at 1 + 16·(8+63) = 1137 px, always inside the 64×64 buffer.
+    const buckets: number[][] = Array.from({ length: SET_COUNT }, () => []);
+    for (const t of this.dirtySet) buckets[t >> SET_SHIFT].push(t & 0xffff);
     this.dirtySet.clear();
-    for (let done = 0; done < targets.length; done += MAX_CMDS) {
-      const n = Math.min(MAX_CMDS, targets.length - done);
-      const groups = Math.ceil(n / 4);
-      const rowsNeeded = Math.ceil((groups * 5) / CMD_W);
-      if (this.cmdCursorRow + rowsNeeded > CMD_H) this.cmdCursorRow = 0; // rotate — wrap the cursor
+    const cursors = new Array(SET_COUNT).fill(0) as number[];
+    const m = this.cmdMirror;
+    for (;;) {
+      let total = 0;
+      const counts = new Array(SET_COUNT).fill(0) as number[];
+      for (let b = 0; b < SET_COUNT; b++) {
+        counts[b] = Math.min(MAX_PER_SET, buckets[b].length - cursors[b]);
+        total += counts[b];
+      }
+      if (total === 0) break;
+      let pxNeeded = 1;
+      for (let b = 0; b < SET_COUNT; b++) pxNeeded += counts[b]; // v2.1: payload-only sections
+      const rowsNeeded = Math.ceil(pxNeeded / CMD_W);
+      if (this.cmdCursorRow + rowsNeeded > CMD_H) this.cmdCursorRow = 0; // rotate (F3) — never look back
       const basePx = this.cmdCursorRow * CMD_W;
-      for (let g = 0; g < groups; g++) {
-        const hp = (basePx + g * 5) * 4;
-        for (let lane = 0; lane < 4; lane++) {
-          const k = g * 4 + lane;
-          const target = k < n ? targets[done + k] : 0; // stray lanes never drawn (count-exact)
-          this.cmdMirror[hp + lane] = target >>> 0;
-          const pp = (basePx + g * 5 + 1 + lane) * 4;
-          const src = target * 4;
-          this.cmdMirror[pp] = this.dataMirror[src];
-          this.cmdMirror[pp + 1] = this.dataMirror[src + 1];
-          this.cmdMirror[pp + 2] = this.dataMirror[src + 2];
-          this.cmdMirror[pp + 3] = this.dataMirror[src + 3];
+      // Header: 5 counts per RGB lane (bits 0/6/12/18/24), the 16th in A bits 8–13; opcode 0 in A bits 0–7.
+      const h = basePx * 4;
+      m[h] = 0; m[h + 1] = 0; m[h + 2] = 0;
+      for (let b = 0; b < 15; b++) m[h + Math.floor(b / 5)] = (m[h + Math.floor(b / 5)] | (counts[b] << ((b % 5) * 6))) >>> 0;
+      m[h + 3] = (((counts[15] & 63) << 8) | 0) >>> 0;
+      // Sections, set order.
+      let p = basePx + 1;
+      for (let b = 0; b < SET_COUNT; b++) {
+        const n = counts[b];
+        if (n === 0) continue;
+        // v2.1 pure payloads — every record self-addresses (u16 id in R's high half).
+        for (let i = 0; i < n; i++) {
+          const src = ((b << SET_SHIFT) + buckets[b][cursors[b] + i]) * 4;
+          const dst = (p + i) * 4;
+          m[dst] = this.dataMirror[src];
+          m[dst + 1] = this.dataMirror[src + 1];
+          m[dst + 2] = this.dataMirror[src + 2];
+          m[dst + 3] = this.dataMirror[src + 3];
         }
+        cursors[b] += n;
+        p += n;
       }
       this.cmdTex.uploadRows(this.cmdCursorRow, rowsNeeded, this.cmdMirror, 4);
       this.renderer.draw({
@@ -390,14 +429,15 @@ export class ColdShadowData {
         target: this.dataRT,
         blend: "none",
         mode: this.renderer.gl.POINTS,
-        count: n,
+        count: total,
         textures: { uCmd: this.cmdTex },
-        uniforms: (p) => p.uInt("uCmdBase", basePx),
+        uniforms: (prog) => prog.uInt("uCmdBase", basePx),
       });
       this.cmdCursorRow += rowsNeeded;
     }
     return true;
   }
+
 
   // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
   debugDef(index: number): {
@@ -408,10 +448,10 @@ export class ColdShadowData {
     const b = (DEF_BASE + index) * 4;
     const R = this.dataMirror[b], G = this.dataMirror[b + 1], B = this.dataMirror[b + 2], A = this.dataMirror[b + 3];
     return {
-      prim_width: ((R >>> 23) & 0x1ff) * 2,  // units (stored /2 — even bbox)
-      prim_height: ((R >>> 14) & 0x1ff) * 2,
-      frame_span: ((R >>> 10) & 0xf) + 1,    // tiles
-      offset: [(G >>> 22) & 0x3ff, (G >>> 12) & 0x3ff], // units, frame-relative (unsigned)
+      prim_width: ((G >>> 23) & 0x1ff) * 2,  // units (stored /2 — even bbox)
+      prim_height: ((G >>> 14) & 0x1ff) * 2,
+      frame_span: ((G >>> 10) & 0xf) + 1,    // tiles
+      offset: [(R >>> 6) & 0x3ff, G & 0x3ff], // units, frame-relative (unsigned)
       frame_xy: [((B >>> 22) & 0x3ff) * 16, ((B >>> 12) & 0x3ff) * 16], // frame origin (px)
       frame_page: (B >>> 8) & 0xf,
       frame_lod: (B >>> 4) & 0xf,            // side = 2^lod; < 4 = no silhouette (solid quad)
@@ -426,7 +466,7 @@ export class ColdShadowData {
   /** DEBUG: decode a prim_data slot — position back to px + z + rotation + def_index. */
   debugPrim(index: number): { pos: [number, number]; z: number; rotation: number; def: number } {
     const base = (PRIM_BASE + index) * 4;
-    const pos = this.dataMirror[base], orient = this.dataMirror[base + 1];
+    const pos = this.dataMirror[base + 1], orient = this.dataMirror[base + 2]; // v2.1: G/B
     return { pos: decodePosition(pos), z: (orient >>> 24) & 0xff, rotation: (orient >>> 22) & 0x3, def: (orient >>> 6) & 0xffff };
   }
 
@@ -436,15 +476,15 @@ export class ColdShadowData {
   /** DEBUG: decode a light record (the record row). */
   debugLight(k: number): { pos: [number, number]; rgb: [number, number, number]; intensity: number; z: number; reach: number; emitterRadius: number; castShadows: boolean } {
     const b = (LIGHT_BASE + k) * 4;
-    const R = this.dataMirror[b], G = this.dataMirror[b + 1], B = this.dataMirror[b + 2], A = this.dataMirror[b + 3];
+    const G = this.dataMirror[b + 1], B = this.dataMirror[b + 2], A = this.dataMirror[b + 3]; // v2.1
     return {
-      pos: decodePosition(R),
-      rgb: [(G >>> 24) & 0xff, (G >>> 16) & 0xff, (G >>> 8) & 0xff],
-      intensity: G & 0xff,
-      z: (B >>> 24) & 0xff,
-      reach: (B >>> 12) & 0xfff,
-      emitterRadius: (A >>> 24) & 0xff,
-      castShadows: (B & 1) === 1,
+      pos: decodePosition(G),
+      rgb: [(B >>> 24) & 0xff, (B >>> 16) & 0xff, (B >>> 8) & 0xff],
+      intensity: B & 0xff,
+      z: (A >>> 24) & 0xff,
+      reach: (A >>> 12) & 0xfff,
+      emitterRadius: (A >>> 4) & 0xff,
+      castShadows: (A & 1) === 1,
     };
   }
 
