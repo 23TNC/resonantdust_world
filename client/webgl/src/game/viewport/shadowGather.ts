@@ -22,13 +22,17 @@ import { SQUARE, UNIT, TEXTILE_UNIT } from "./squareMath";
 /** Lights this iteration — a ring of debug lights around the seed tile. `number`-typed so the
  *  isolate-one-light debug path (`MAX_LIGHTS = 1`) below isn't flagged as a constant comparison. */
 const MAX_LIGHTS: number = 3;
-/** Debug lights placed at fixed world TILES beyond the one at the seed tile: `[tileX, tileY, dynamic]`.
- *  A `dynamic` light orbits its home every frame (the moving-light case); static ones never move.
- *  Seed = red static (few trees, clean debug); green = dynamic (in the forest, surfaces motion bugs);
- *  blue = static, placed to overlap BOTH so light interactions are visible. */
-const EXTRA_LIGHT_TILES: ReadonlyArray<[number, number, boolean]> = [
-  [34, 25, true],   // green — dynamic, dense forest
-  [45, 40, false],  // blue  — static, interacts with red + green
+/** Physical source RADIUS (world px); `/UNIT` → units in the light record. The AREA-LIGHT disk radius the
+ *  penumbra samples over (bigger = softer). Per-light (see the config below); `__emit(px)` tunes live. */
+const LIGHT_EMITTER = 20;            // 5 units — a modest area light for the emitter-sampled penumbra
+/** Debug lights placed at fixed world TILES beyond the one at the seed tile:
+ *  `[tileX, tileY, dynamic, emitterPx]`. A `dynamic` light orbits its home every frame (the moving-light
+ *  case); static ones never move. `emitterPx` is that light's own area-light radius (world px; per-light,
+ *  not a global) — bigger = softer penumbra. Seed = red static (few trees, clean debug); green = dynamic
+ *  (in the forest, surfaces motion bugs); blue = static, placed to overlap BOTH so interactions show. */
+const EXTRA_LIGHT_TILES: ReadonlyArray<[number, number, boolean, number]> = [
+  [34, 25, true, LIGHT_EMITTER],   // green — dynamic, dense forest
+  [45, 40, false, LIGHT_EMITTER],  // blue  — static, interacts with red + green
 ];
 /** World-px radius a dynamic light orbits its home. */
 const MOTION_RADIUS = 3 * SQUARE;
@@ -36,9 +40,6 @@ const MOTION_RADIUS = 3 * SQUARE;
  *  Lower = longer shadows. */
 const LIGHT_Z = 40 * UNIT;
 const LIGHT_REACH = 12 * SQUARE;     // illumination range (world px) — how far the light throws (12 tiles)
-/** Physical source RADIUS (world px); `/UNIT` → units in the light record. This is the AREA-LIGHT disk
- *  radius the penumbra samples over (bigger = softer). `__emit(px)` tunes it live. */
-const LIGHT_EMITTER = 20;            // 5 units — a modest area light for the emitter-sampled penumbra
 const RING_RADIUS = 2 * SQUARE;
 // The shadow map is the TEXTILE_UNIT map (map-model.md): 16 textiles/tile, 1 textile = 1 unit
 // (= UNIT px). Sized `cols·TEXTILE_UNIT × rows·TEXTILE_UNIT`, toroidal like the cold cache window.
@@ -46,9 +47,11 @@ const RING_RADIUS = 2 * SQUARE;
 const SQF = SQUARE.toFixed(1);
 const UNITF = UNIT.toFixed(4);
 /** Lift the rendered shadow up (toward smaller world-y) by this many world units — a fragment shows
- *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Tunable. */
-const SHADOW_LIFT = 0.0;             // DEBUG: shadow offset OFF (isolating the per-tile miscalc)
-const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
+ *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Closes the ~1
+ *  unit gap between the shadow base and the sprite's drawn base (a fixed anchor discrepancy: the sprite
+ *  bottom sits ~1 unit south of the prim base-centre the shadow projects from). `__lift(u)` tunes live. */
+const SHADOW_LIFT = 2.0;             // measured in-browser: the base seats at ~2 units (sprite bottom sits
+                                    // ~2 units south of the prim base-centre the shadow projects from)
 /** Lights per tile in presence + shadow-cold: 14 (7 per presence set), each a u8 coverage in the
  *  128-bit shadow-cold texel (slot i at channel i>>2, bits (i&3)·8). */
 const PRES_SLOTS = 14;
@@ -304,6 +307,7 @@ uniform highp usampler2D uData;       // THE unified data texture (defs|prims|li
 uniform highp usampler2D uDirty;      // shadow_dirty — textile_tile map (R8UI): .r nonzero = recompute
 uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
+uniform float uShadowLift;            // #2: slide the shadow up N units to meet the sprite base (live-tunable)
 out uvec4 fragColor;
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
@@ -321,7 +325,7 @@ void main() {
   float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot); // 0..1 within the tile
   float ly = (float(fc.y) - float(sy * uSlot)) / float(uSlot);
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
-  P.y += ${SHADOW_LIFTF}; // lift the shadow up: test the ground point SHADOW_LIFT units below this one
+  P.y += uShadowLift; // #2: lift the shadow up — test the ground point uShadowLift units below this one
 
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
@@ -557,6 +561,8 @@ export class ShadowGather {
   /** P6: walk the segment corridor (true) or the brute-force reach box (false). Brute is the
    *  validation baseline — `__corridor(false)` + `__shadowDiff()` must report 0 mismatches. */
   private corridor = true;
+  /** #2: world units the shadow slides up to meet the sprite base (a fixed anchor discrepancy). Live via `__lift`. */
+  private shadowLift = SHADOW_LIFT;
   /** P5 scoped dirty: world-tile rects `[x0,y0,x1,y1]` (inclusive) queued by a light MOVE — the union
    *  of the light's old + new reach boxes. Applied (∩ window) on top of the owner pass in
    *  {@link buildDirty}, then cleared. Correct because a moved light can only change presence/shadow
@@ -580,6 +586,11 @@ export class ShadowGather {
     (globalThis as unknown as { __gather: ShadowGather }).__gather = this;
     // DEBUG: tune the emitter (area-light) RADIUS in world px live — bigger = softer penumbra.
     (globalThis as unknown as { __emit: (px?: number) => number }).__emit = (px?: number) => this.setEmitter(px);
+    // DEBUG (#2): slide the shadow up N world units to seat it on the sprite base.
+    (globalThis as unknown as { __lift: (u?: number) => number }).__lift = (u?: number) => {
+      if (u !== undefined) { this.shadowLift = u; this.forceDirty = true; }
+      return this.shadowLift;
+    };
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -598,9 +609,9 @@ export class ShadowGather {
     this.seedX = cx; this.seedY = cy;
     this.lights.length = 0;
     this.lights.push({ x: cx, y: cy, hx: cx, hy: cy, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER, dynamic: false });
-    for (const [tx, ty, dynamic] of EXTRA_LIGHT_TILES) {
+    for (const [tx, ty, dynamic, emitter] of EXTRA_LIGHT_TILES) {
       const lx = (tx + 0.5) * SQUARE, ly = (ty + 0.5) * SQUARE;
-      this.lights.push({ x: lx, y: ly, hx: lx, hy: ly, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER, dynamic });
+      this.lights.push({ x: lx, y: ly, hx: lx, hy: ly, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: emitter, dynamic });
     }
     this.enabled = true;
     this.coldDirty = true;
@@ -939,6 +950,7 @@ export class ShadowGather {
       },
       uniforms: (p) => {
         p.uInt("uCorridor", this.corridor ? 1 : 0);
+        p.uFloat("uShadowLift", this.shadowLift);
       },
     });
 
