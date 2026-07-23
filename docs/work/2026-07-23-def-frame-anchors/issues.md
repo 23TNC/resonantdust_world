@@ -31,3 +31,17 @@ fix = def invalidation by stem when C5/eviction lands.
 
 `cargo` lives in docker; `rd build shared` compiles (green) but doesn't run the updated
 `thing_stem_and_layout_tables` test. Run it with the next dockerised test pass.
+
+## Mid-session zoom lost silhouettes (off-page) — RESOLVED 2026-07-23 {#zoom-offpage}
+
+- **Symptom** (user): shadows degrade to solid wedges on zoom in/out — every prim fell back to its
+  loose lod-0 def.
+- **Root cause:** the ONE bound surface page collided with **per-size pools**: each lod packs onto
+  its own pool's page, so the first-resolved lod's page got adopted and every OTHER lod's frame was
+  off-page → no silhouette. The immutable-def model makes this fatal by design: prims at MIXED lods
+  must sample simultaneously, which is impossible with per-lod pages and one sampler.
+- **Fix:** a **single shared surface pool across ALL lod sizes** (2048² page). 16-px def alignment
+  survives mixed sizes: every frame is a pow2 multiple of 16 and MaxRects coordinates are sums of
+  inserted extents. Verified: zoom 0.5 → in → out keeps silhouettes throughout, mints/retains
+  defs {lod0, lod5, lod6} on one page, corridor↔brute 0 mismatches, nonzero returns exactly to the
+  settled 9,949. A pool SPILL (page 2) re-triggers off-page — the C5 texture array is the real lift.

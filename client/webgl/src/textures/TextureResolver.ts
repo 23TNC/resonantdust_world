@@ -54,6 +54,13 @@ export class TextureResolver {
 
   /** One packing pool per LOD size present (shared across maps — keyed apart by {@link mapKey}). */
   private readonly pools = new Map<number, LodPool>();
+  /** ONE shared pool for every SURFACE frame across ALL lod sizes. The shadow gather binds a single
+   *  surface page while prims hold defs at MIXED lods (immutable per-lod defs), so every lod's
+   *  silhouette frame must live on the same page — per-size pools put each lod on its own page and
+   *  every mid-session lod change went off-page (solid quads). Mixed pow2 ≥16 frames keep the
+   *  16-px def alignment (MaxRects coordinates are sums of inserted extents, all multiples of 16).
+   *  2048² ≈ a thousand frames; a spill hits the off-page warn (the C5 texture array lifts this). */
+  private surfacePool: LodPool | null = null;
   /** `stem|map` → its loaded LODs, keyed by size. */
   private readonly packed = new Map<string, Map<number, TexFrame>>();
   private readonly manifest = new TextureManifest();
@@ -315,7 +322,8 @@ export class TextureResolver {
           sw: ((d1x - d0x) / dw) * W, sh: ((d1y - d0y) / dh) * H,
         };
       }
-      packed = this.poolFor(size).add(key, src, bmp.width, bmp.height, draw);
+      const pool = key.endsWith("|surface") ? this.surfacePoolFor() : this.poolFor(size);
+      packed = pool.add(key, src, bmp.width, bmp.height, draw);
     } finally {
       src.destroy();
     }
@@ -334,6 +342,12 @@ export class TextureResolver {
       this.pools.set(size, pool);
     }
     return pool;
+  }
+
+  /** The single shared surface pool (see {@link surfacePool}), created on first surface pack. */
+  private surfacePoolFor(): LodPool {
+    if (!this.surfacePool) this.surfacePool = new LodPool(this.renderer!, this.blitter!, 2048);
+    return this.surfacePool;
   }
 }
 
