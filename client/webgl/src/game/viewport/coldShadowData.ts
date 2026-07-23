@@ -246,6 +246,14 @@ export class ColdShadowData {
     if (hit !== undefined) {
       const base = (hit >> 1) * 4 + (hit & 1) * 2;
       if (this.primMirror[base + 1] === orient) return { idx: hit, changed: false };
+      // RETENTION: "retain whatever the lod was until we get a NEW one" — a new one means a new
+      // USABLE one. Never swap a standing prim DOWN to the loose (lod-0) def: if the freshly
+      // resolved frame is unusable (off-page — e.g. a pool spill) the prim keeps casting its
+      // current silhouette instead of degrading to a solid quad.
+      const curDef = (this.primMirror[base + 1] >>> 6) & 0xffff;
+      const newLod = (this.defMirror[defIndex * 4 + 2] >>> 4) & 0xf;
+      const curLod = (this.defMirror[curDef * 4 + 2] >>> 4) & 0xf;
+      if (newLod < 4 && curLod >= 4) return { idx: hit, changed: false };
       this.primMirror[base + 1] = orient; // def swap (new lod) / orientation change — position untouched
       this.primDirty = true;
       return { idx: hit, changed: true };
