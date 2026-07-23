@@ -230,7 +230,8 @@ precision highp float;
 precision highp int;
 uniform highp usampler2D uData;    // presence (sets 3/5) + light records (set 2)
 uniform highp usampler2D uDirty;   // shadow_dirty — same gate as the shadow gather (clean → persist)
-out vec4 fragColor;
+layout(location = 0) out vec4 oLight;  // irradiance RGB: ambient + Σ colour·intensity·falloff·(shadow at P3)
+layout(location = 1) out vec4 oDir;    // RG = irradiance-weighted mean horizontal light dir (enc 0.5+0.5) — for per-px relief
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 const float AMBIENT = ${AMBIENTF};
@@ -252,6 +253,7 @@ void main() {
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
   vec3 acc = vec3(AMBIENT);
+  vec2 dirAcc = vec2(0.0);                                  // Σ weight · unit(Lxy − P) — the aggregate lit-from dir
   for (int slot = 0; slot < 14; slot++) {
     uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
@@ -260,11 +262,18 @@ void main() {
     vec3 col = vec3(float((Ld.z >> 24) & 255u), float((Ld.z >> 16) & 255u), float((Ld.z >> 8) & 255u)) / 255.0;
     float intensity = float(Ld.z & 255u) / 255.0;
     float reach = float((Ld.w >> 12) & 0xfffu);             // reach (units)
-    float dist = length(P - Lxy);                           // in-plane distance (units)
+    vec2 toL = Lxy - P;
+    float dist = length(toL);                               // in-plane distance (units)
     float fall = smoothstep(reach, 0.0, dist);              // 1 at the light → 0 at reach (F2 smoothstep)
-    acc += col * intensity * fall;
+    float contrib = intensity * fall;
+    acc += col * contrib;
+    // Weight the direction by this light's luminous contribution — the brighter/nearer light dominates
+    // the relief, matching where its irradiance dominates. dist>0 guard (P == light → no direction).
+    float w = dot(col, vec3(0.299, 0.587, 0.114)) * contrib;
+    if (dist > 1e-3) dirAcc += (toL / dist) * w;
   }
-  fragColor = vec4(clamp(acc, 0.0, 1.0), 1.0);              // LDR clamp (F4: tonemap deferred to P4)
+  oLight = vec4(clamp(acc, 0.0, 1.0), 1.0);                 // LDR clamp (F4: tonemap deferred to P4)
+  oDir = vec4(clamp(dirAcc, -1.0, 1.0) * 0.5 + 0.5, 0.0, 1.0); // magnitude = directional confidence (cancels → 0)
 }
 `;
 
@@ -805,9 +814,11 @@ export class ShadowGather {
     const w = Math.max(1, cols * TEXTILE_UNIT), h = Math.max(1, rows * TEXTILE_UNIT);
     this.shadowRT = new RenderTarget(this.renderer.gl, { width: w, height: h, formats: ["rgba32uint"] });
     this.shadowRT.clearInt(0, 0, 0, 0); // start persistence from a known-zero buffer (P3)
-    // The lightmap — same dims, texel-aligned. Clear to ambient so any tile not yet written (edges /
-    // pre-first-pass) reads the floor, not garbage; persistence fills the rest on the forceDirty pass.
-    this.lightRT = new RenderTarget(this.renderer.gl, { width: w, height: h, formats: ["rgba8unorm"] });
+    // The lightmap — same dims, texel-aligned. MRT: [0] irradiance, [1] aggregate light direction (for
+    // per-px relief). Clear to ambient (att0) so any tile not yet written (edges / pre-first-pass) reads
+    // the floor; persistence fills the rest on the forceDirty pass. att1's edge garbage is a mild dir on
+    // never-written texels only — invisible (the relief strength is small).
+    this.lightRT = new RenderTarget(this.renderer.gl, { width: w, height: h, formats: ["rgba8unorm", "rgba8unorm"] });
     const amb = parseFloat(AMBIENTF);
     this.lightRT.clear(amb, amb, amb, 1);
     this.rtCols = cols;
@@ -819,6 +830,11 @@ export class ShadowGather {
    *  and multiplies albedo × lightmap. Null until the first gather has laid out the RT. */
   get lightmap(): Texture | null {
     return this.lightRT?.textures[0] ?? null;
+  }
+  /** The aggregate light-direction map (RG = irradiance-weighted mean horizontal lit-from dir, enc
+   *  0.5+0.5) — the blit dots it with the per-px normal for relief (P2). Same layout as {@link lightmap}. */
+  get lightDir(): Texture | null {
+    return this.lightRT?.textures[1] ?? null;
   }
 
   /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield. */

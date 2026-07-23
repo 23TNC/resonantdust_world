@@ -68,6 +68,8 @@ export class Viewport {
   /** The white fill as an identity frame — the geo tier's residual/surface (whole-texture UV). */
   private whiteFrame!: TexFrame;
   private readonly empty: Texture;
+  /** Flat-normal / zero-dir fallback (0.5,0.5,1.0) — neutral relief when no normal/dir map is bound. */
+  private readonly flat: Texture;
   private materialRegistry: MaterialRegistry | null = null;
   /** The texture resolver (master→preview→geo). Null until the world scene attaches it + our GL
    *  context ({@link setResolver}); the geo tier renders until then. */
@@ -94,6 +96,8 @@ export class Viewport {
   private readonly grid: Program;
   private readonly gridQuad: Geometry;
   private gridLevel = 0;
+  /** P2 normal-relief gain (F3/F5) — tuned by eye via `__relief(n)`. */
+  private reliefStrength = 1.1;
 
   constructor() {
     this.renderer = new Renderer();
@@ -102,6 +106,9 @@ export class Viewport {
     this.white = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([255, 255, 255, 255]) });
     this.whiteFrame = TexFrame.whole(this.white);
     this.empty = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([0, 0, 0, 0]) });
+    // Flat-normal / zero-direction fallback (0.5,0.5,1.0): decoded normal = (0,0,1) up, decoded dir = (0,0)
+    // → neutral relief where no normal/dir map is bound (the blit's uNormal/uLightDir default).
+    this.flat = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([128, 128, 255, 255]) });
     this.blitShader = new AlbedoBlitShader(gl);
     this.overlayShader = new OverlayShader(gl);
     this.map = new SquareCache(this.renderer, this.empty, this.channels("cold"));
@@ -112,6 +119,11 @@ export class Viewport {
     this.gridQuad = new Geometry(gl, this.grid, {
       aPosition: { data: new Float32Array([-1, -1, 3, -1, -1, 3]), size: 2 },
     });
+    // DEBUG: tune the P2 normal-relief strength live (F3/F5 by eye). `__relief()` reads the current value.
+    (globalThis as unknown as { __relief: (n?: number) => number }).__relief = (n?: number) => {
+      if (n !== undefined) this.reliefStrength = n;
+      return this.reliefStrength;
+    };
   }
 
   /** The four G-buffer channels' resolve hooks. Geo tier only (W4c): every prim resolves to a
@@ -364,9 +376,13 @@ export class Viewport {
           this.blitShader.surfaceWarm = surfaceW;
         }
         // Lighting: the baked lightmap (albedo × lightmap). Sampled by world position via the cold
-        // window mapping (same toroidal tile grid as shadow-cold). Null → UNLIT fallback.
+        // window mapping (same toroidal tile grid as shadow-cold). Null → UNLIT fallback. P2 also binds
+        // the aggregate light-dir map + the cold/warm normal composites for per-px relief.
         const lightmap = this.shadows.lightmap;
         this.blitShader.lightmap = lightmap;
+        this.blitShader.lightDir = this.shadows.lightDir;
+        this.blitShader.normal = this.map.displayComposite("normal-cold");
+        this.blitShader.normalWarm = this.warm.displayComposite("normal-warm");
         const win = this.map.window;
         // world px → clip: x = (wx-ax)*2z/w, y = -(wy-ay)*2z/h  (screen y-down → clip y-up)
         const proj = new Float32Array([
@@ -378,10 +394,11 @@ export class Viewport {
           program: this.blitShader.program,
           geometry: this.displayGeo!,
           blend: "normal",
-          textures: this.blitShader.textures(this.empty),
+          textures: this.blitShader.textures(this.empty, this.flat),
           uniforms: (p) => {
             p.uMat3("uProjection", proj);
             p.uInt("uLightEnable", lightmap ? 1 : 0);
+            p.uFloat("uReliefStrength", this.reliefStrength);
             p.uInt("uLCols", win.cols);
             p.uInt("uLRows", win.rows);
             p.uInt("uLWinCol", win.winCol);
@@ -468,5 +485,6 @@ export class Viewport {
     this.warm.destroy();
     this.white.destroy();
     this.empty.destroy();
+    this.flat.destroy();
   }
 }
