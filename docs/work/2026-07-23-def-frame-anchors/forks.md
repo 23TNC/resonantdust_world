@@ -28,6 +28,21 @@ swap the def compare-write recomputes nudge with the new frame — same cadence 
 frame_x/y/lod. Alternative (nudge in fixed sub-unit fractions, lod-independent) rejected: costs
 precision at high lod for no write savings.
 
+## F4 · nudge_x must be signed (bias +1024) {#f4}
+
+**2026-07-23 — AMENDMENT found during detailed design, pending P0 ratification.**
+
+The proposal assumed top-left grid bias ⟹ centering always nudges **right** (unsigned). False when
+the opaque run sits deep in its first grid cell with little slack: e.g. ppu=4, in-window offset
+r=3 px, slack=3 px → centered start needs a shift of `slack/2 − r = −1.5` px — **leftward**.
+
+- **Chosen (pending):** store `nudge_x` **signed via +1024 bias** in the u11 (range ±1023 px —
+  covers `|slack/2 − r| < ppu ≤ 1024` for every real lod; clamps only at the theoretical 16384
+  1-tile corner). `nudge_y` stays unsigned: window ⊇ opaque ⟹ bottom-align is always an
+  **upward** shift ≥ 0, per the proposal.
+- **Alternative:** center-biased grid placement (`ux0` from the opaque centre) keeps residuals
+  ≤ ppu/2 but abandons the deterministic top-left-bias construction the user specified.
+
 ## F3 · prim_data position semantics under anchors {#f3}
 
 **2026-07-23 — OPEN (P3).**
