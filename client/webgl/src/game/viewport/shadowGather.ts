@@ -36,9 +36,9 @@ const MOTION_RADIUS = 3 * SQUARE;
  *  Lower = longer shadows. */
 const LIGHT_Z = 40 * UNIT;
 const LIGHT_REACH = 12 * SQUARE;     // illumination range (world px) — how far the light throws (12 tiles)
-const LIGHT_EMITTER = 40;            // physical source size (world px = 10 units) — penumbra softness (debug: large to show the effect)
-/** GLSL literal — penumbra art scale over the physical width (1 = physical; raise for softer). */
-const PENUMBRA_SCALEF = (1.0).toFixed(2);
+/** Physical source RADIUS (world px); `/UNIT` → units in the light record. This is the AREA-LIGHT disk
+ *  radius the penumbra samples over (bigger = softer). `__emit(px)` tunes it live. */
+const LIGHT_EMITTER = 20;            // 5 units — a modest area light for the emitter-sampled penumbra
 const RING_RADIUS = 2 * SQUARE;
 // The shadow map is the TEXTILE_UNIT map (map-model.md): 16 textiles/tile, 1 textile = 1 unit
 // (= UNIT px). Sized `cols·TEXTILE_UNIT × rows·TEXTILE_UNIT`, toroidal like the cold cache window.
@@ -135,24 +135,24 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H) {
 // (P4) — invert P back to the card's (s,t) (in-range BY CONSTRUCTION: P is inside the projected
 // quad, so no u/v-out-of-range class of reject exists) and sample the surface silhouette (coverage,
 // B channel) at the def's opaque frame. frame_w = 0 (not resolved / off-page) → solid quad.
-// Soft silhouette sample: a 3x3 kernel of the surface B at radius kr px, averaged over 9 (out-of-
-// frame taps count as 0 so the penumbra fades at the sprite's frame edge). kr < 0.5 is a single
-// sharp tap (point light / near the base = umbra). Larger kr blurs (penumbra) AND drops the peak
-// where the feature is narrower than the kernel (the umbra recedes with distance).
-float sampleSoft(sampler2D surf, vec2 uv, float kr, vec2 fmin, vec2 fmax) {
-  if (kr < 0.5) {
-    if (uv.x < fmin.x || uv.x >= fmax.x || uv.y < fmin.y || uv.y >= fmax.y) return 0.0;
-    return texelFetch(surf, ivec2(uv), 0).b;
-  }
-  float sum = 0.0;
-  for (int j = -1; j <= 1; j++)
-    for (int i = -1; i <= 1; i++) {
-      vec2 tp = uv + vec2(float(i), float(j)) * kr;
-      if (tp.x < fmin.x || tp.x >= fmax.x || tp.y < fmin.y || tp.y >= fmax.y) continue; // outside frame → 0
-      sum += texelFetch(surf, ivec2(tp), 0).b;
-    }
-  return sum / 9.0;
+// A disk sample position (unit radius) for area-light emitter sampling — 16 taps: centre + a 6-ring +
+// a 9-ring. Deterministic (a pure function of the index) so the corridor and brute paths stay
+// bit-identical. Scaled by the emitter radius (world units) at the call site.
+vec2 emitterOffset(int i) {
+  if (i == 0) return vec2(0.0);
+  if (i <= 6) { float a = (float(i) - 1.0) / 6.0 * 6.2831853; return 0.55 * vec2(cos(a), sin(a)); }
+  float a = (float(i) - 7.0) / 9.0 * 6.2831853 + 0.4; return vec2(cos(a), sin(a));
 }
+// Coverage of one caster (prim index into prim_data) at P from light L. Reads the prim record + its
+// definition (position + geo W/H + frame), places the tilted card, then computes a GROUND-PROJECTED
+// penumbra by AREA-LIGHT sampling: the light is a disk of radius emitter (units) at height Lz; for
+// each sub-light we re-invert the ground projection P → card (s,t) and sample the HARD silhouette
+// (surface B) at that point; the average over the disk is the soft coverage. Why this grounds the
+// shadow (vs blurring the projected card image): a silhouette edge at height z casts to a ground point
+// that shifts with the sub-light by ∝ z/(Lz−z) — so a z≈0 CONTACT edge does not move (hard, attached
+// base), a high edge moves a lot (soft tip, detail dissolving), and points just outside the true edge
+// are covered by only SOME sub-lights (soft outer perimeter, no hard card boundary). lod<4 (no
+// silhouette resolved) or a point light (emitter≈0) falls back to the solid/hard quad.
 float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D data, sampler2D surf) {
   if (primIdx == 0u) return 0.0;
   uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));      // v2.1: R = id|reserved, G = position, B = orient
@@ -177,35 +177,46 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D 
   uint rot = (orient >> 22) & 3u;                           // 1 = E, 3 = W (mirrored E)
   if (rot == 3u) sh.x = -sh.x;                              // flipped sprite → mirrored bbox placement
   vec2 Ac = A + sh;
-  float q = shadowCover(P, Ac, L, W, H);
-  if (q <= 0.0) return 0.0;
-  if (lod < 4u) return q;                                   // no silhouette resolved yet → solid quad
-  // Invert the ground projection: card(s,t) → ground is linear in t (one division, no cliff).
-  //   y(t) = Ac.y − 0.5·t·H·cosθ, z(t) = t·H·sinθ; ground(C) = L.xy + (L.z/(L.z−C.z))·(C.xy−L.xy)
-  //   ⇒ t = L.z·(P.y − Ac.y) / (H·(sinθ·(P.y − L.y) − 0.5·L.z·cosθ))
   float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
-  float denom = H * (st * (P.y - L.y) - 0.5 * L.z * ct);
-  if (abs(denom) < 1e-4) return q;                          // degenerate (grazing) — keep the solid quad
-  float t = clamp(L.z * (P.y - Ac.y) / denom, 0.0, 1.0);
-  float k = L.z / (L.z - t * H * st);                       // that row's projection factor
-  float s = clamp(((P.x - L.x) / k + L.x - Ac.x) / W + 0.5, 0.0, 1.0);
-  if (rot == 3u) s = 1.0 - s;                               // W-facing = mirrored E frame
-  // Whole-px-per-unit sampling: ppu = 2^lod / spanU (a pow2 ≥ 1 by construction). Window top-left =
-  // frame origin + offset·ppu − nudge (x signed +1024 — centers the opaque run; y unsigned, upward —
-  // bottom-aligns it). Atlas rows are image-top-down; card t=0 is the sprite's BOTTOM row → v = 1−t.
+  // HARD-QUAD gate (NOT dilated) — a caster occludes P only where P is inside its projected quad, which
+  // is exactly the occluder set the corridor walk is proven to visit (P6 identity). The emitter penumbra
+  // lives INSIDE this quad: the silhouette edge softens as sub-lights partially cover it, the base stays
+  // hard (z≈0 edges don't move with the sub-light), and detail dissolves at the tip (high edges do). The
+  // outward feather beyond the silhouette extremes would need the corridor pad widened + re-proven — a
+  // follow-up, not worth breaking bit-identity for. Outside the quad → lit; skip the sub-light loop.
+  if (shadowCover(P, Ac, L, W, H) <= 0.0) return 0.0;
+  if (lod < 4u || emitter < 0.5) return shadowCover(P, Ac, L, W, H); // no silhouette / point light → hard quad
+  // Frame sampling constants (whole-px-per-unit; ppu = 2^lod / spanU is a pow2 ≥ 1 by construction).
+  // Window top-left = frame origin + offset·ppu − nudge. Atlas rows are image-top-down; card t=0 is the
+  // sprite's BOTTOM row → v = 1−t.
   float ppu = float(1u << lod) / spanU;
   float fx = float((D.z >> 22) & 1023u) * 16.0, fy = float((D.z >> 12) & 1023u) * 16.0;
   float nx = float(int((D.w >> 20) & 4095u) - 2048);   // u12, +2048 bias — full either-direction range
   float ny = float(int((D.w >> 8) & 4095u) - 2048);
-  vec2 uv = vec2(fx, fy) + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(s * W, (1.0 - t) * H) * ppu;
-  // Emitter penumbra (P1): half-width w = emitter·(t·Zt)/(Lz − t·Zt) grows from 0 at the base to the
-  // tip → a t-scaled soft kernel. Ground→card by /k, world→px by ppu. Near base kr≈0 (sharp umbra);
-  // toward tip kr grows (penumbra + umbra recede). Clamp to keep the kernel bounded.
-  float Zt = H * st;
-  float w = emitter * (t * Zt) / max(L.z - t * Zt, 1e-3);   // world units
-  float kr = min(w * ppu / max(k, 1.0) * ${PENUMBRA_SCALEF}, 12.0);
   float side = float(1u << lod);
-  return q * sampleSoft(surf, uv, kr, vec2(fx, fy), vec2(fx + side, fy + side));
+  vec2 fmin = vec2(fx, fy), fmax = vec2(fx + side, fy + side);
+  // Area-light emitter sampling — 16 sub-lights over the disk, HARD silhouette per sub-light, averaged.
+  //   invert P → card (s,t):  y(t) = Ac.y − 0.5·t·H·cosθ, z(t) = t·H·sinθ
+  //   ⇒ t = Lp.z·(P.y − Ac.y) / (H·(sinθ·(P.y − Lp.y) − 0.5·Lp.z·cosθ));  s from the row's k factor.
+  // A sub-light contributes only if its (s,t) lands inside the card AND the silhouette is opaque there;
+  // out-of-range sub-lights are "lit" (0) → the average is the projection-correct soft coverage.
+  float cov = 0.0;
+  for (int i = 0; i < 16; i++) {
+    vec3 Lp = vec3(L.xy + emitterOffset(i) * emitter, L.z); // a sub-light on the emitter disk
+    float denom = H * (st * (P.y - Lp.y) - 0.5 * Lp.z * ct);
+    if (abs(denom) < 1e-4) continue;
+    float t = Lp.z * (P.y - Ac.y) / denom;                  // card height where P's shadow ray grazes
+    if (t < 0.0 || t > 1.0) continue;                       // P not under this sub-light's card span → lit
+    float k = Lp.z / (Lp.z - t * H * st);
+    if (k <= 0.0) continue;
+    float s = ((P.x - Lp.x) / k + Lp.x - Ac.x) / W + 0.5;
+    if (s < 0.0 || s > 1.0) continue;
+    if (rot == 3u) s = 1.0 - s;                             // W-facing = mirrored E frame
+    vec2 uv = vec2(fx, fy) + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(s * W, (1.0 - t) * H) * ppu;
+    if (uv.x < fmin.x || uv.x >= fmax.x || uv.y < fmin.y || uv.y >= fmax.y) continue; // outside frame → lit
+    cov += texelFetch(surf, ivec2(uv), 0).b;                // hard silhouette coverage (B carries its own edge AA)
+  }
+  return cov / 16.0;
 }
 `;
 
@@ -567,6 +578,8 @@ export class ShadowGather {
     // DEBUG (P6): corridor↔brute toggle + the gather itself (for `debugReadShadow` diffing).
     (globalThis as unknown as { __corridor: (on?: boolean) => boolean }).__corridor = (on?: boolean) => this.setCorridor(on);
     (globalThis as unknown as { __gather: ShadowGather }).__gather = this;
+    // DEBUG: tune the emitter (area-light) RADIUS in world px live — bigger = softer penumbra.
+    (globalThis as unknown as { __emit: (px?: number) => number }).__emit = (px?: number) => this.setEmitter(px);
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -800,6 +813,15 @@ export class ShadowGather {
     this.corridor = on ?? !this.corridor;
     this.forceDirty = true;
     return this.corridor;
+  }
+  /** DEBUG: set the emitter (area-light) radius on every light, world px (no arg = read). Rebuilds the
+   *  light records + recomputes every tile so the softer/harder penumbra takes immediately. */
+  setEmitter(px?: number): number {
+    if (px === undefined) return this.lights[0]?.emitterRadius ?? 0;
+    for (const L of this.lights) L.emitterRadius = px;
+    this.coldDirty = true;   // light records changed (emitter is in the record)
+    this.forceDirty = true;  // recompute every shadow/light tile
+    return px;
   }
   /** DEBUG (P6): read the shadow-cold RT back (RGBA32UI) — the corridor↔brute identity diff. */
   debugReadShadow(): Uint32Array | null {
