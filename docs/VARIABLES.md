@@ -325,9 +325,14 @@ frame is that bbox's sub-rect of the sprite's SURFACE frame on the **one shared 
 ```
 R  u32   u10 prim_width (22–31, units, opaque) | u10 prim_height (12–21, units, opaque) | u12 reserved (0–11)
 G  u32   u10 offset_x+512 (12–21, units) | u10 offset_y+512 (2–11, units) | reserved     (opaque-base-centre − game anchor)
-B  u32   u16 frame_x (16–31, atlas px) | u16 frame_y (0–15, atlas px)
-A  u32   u16 frame_width (16–31, atlas px) | u16 frame_height (0–15, atlas px)           (width 0 ⇒ no silhouette — solid quad)
+B  u32   u16 frame_x (16–31, atlas px) | u16 frame_y (0–15, atlas px)                    (PAGE coords — pages reach 2048²)
+A  u32   u10 frame_width (22–31, atlas px) | u10 frame_height (12–21, atlas px) | u12 reserved (0–11)   (width 0 ⇒ no silhouette — solid quad)
 ```
+
+**Per-prim texture ceiling.** `frame_width/height` are **u10** by requirement: **no single prim uses a texture
+larger than 1024×1024** — at `SQUARE = 64` that is 16×16 tiles = **one full zone**, the natural cap for a
+placed object. (`frame_x/y` stay u16 — they are *positions* on an atlas page, and pages reach 2048².) A
+larger frame is a content bug: the writer warns once and clamps.
 
 **`light_presence_cold`** — a **`cols×rows`** `RGBA32UI` **textile_tile map** (one texel/tile, toroidal with the
 window): per tile the **nearest ≤ 8 reaching lights** as `8× u16` light indices (`0xFFFF` = empty; R holds slots

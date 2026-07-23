@@ -117,7 +117,7 @@ float casterCover(uint primIdx, vec2 P, vec3 L, highp usampler2D primData,
   vec2 Ac = A + off;
   float q = shadowCover(P, Ac, L, W, H);
   if (q <= 0.0) return 0.0;
-  float fw = float(D.w >> 16), fh = float(D.w & 0xffffu);   // silhouette frame (atlas px)
+  float fw = float((D.w >> 22) & 1023u), fh = float((D.w >> 12) & 1023u); // silhouette frame w/h (atlas px, u10 — 1024-squared per-prim ceiling)
   if (fw < 1.0) return q;                                   // no frame yet → solid quad
   // Invert the ground projection: card(s,t) → ground is linear in t (one division, no cliff).
   //   y(t) = Ac.y − 0.5·t·H·cosθ, z(t) = t·H·sinθ; ground(C) = L.xy + (L.z/(L.z−C.z))·(C.xy−L.xy)

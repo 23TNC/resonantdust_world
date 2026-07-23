@@ -88,6 +88,7 @@ export class ColdShadowData {
    *  gets no silhouette (solid quad) until multi-page lands (caster-lut C5). */
   private surfacePageTex: Texture | null = null;
   private pageWarned = false;
+  private frameSizeWarned = false;
 
   /** `prim_data` — 2 entries/px: a placed caster's `position_anchor_reference` + `z`/`rotation`/`def_index`. */
   private readonly primTex: Texture;
@@ -145,6 +146,8 @@ export class ColdShadowData {
     const ox = Math.round((dx + ww / 2 - prim.width / 2) / UNIT), oy = Math.round((dy + hh - prim.height) / UNIT);
 
     // P4 silhouette frame: the opaque sub-rect of the surface frame (atlas px) on the shared page.
+    // frame_w/h are u10 — REQUIREMENT: no prim texture exceeds 1024×1024 (at SQUARE=64 that is
+    // 16×16 tiles = one full zone). A larger frame is a content bug: warn once + clamp.
     let fx = 0, fy = 0, fw = 0, fh = 0;
     const surf = resolver && bbox ? resolver.resolve(prim.textureName, "surface", prim.cell).frame : null;
     if (surf) {
@@ -154,6 +157,10 @@ export class ColdShadowData {
         fy = Math.round(surf.y + bbox!.fy * surf.h);
         fw = Math.max(1, Math.round(bbox!.fw * surf.w));
         fh = Math.max(1, Math.round(bbox!.fh * surf.h));
+        if ((fw > 0x3ff || fh > 0x3ff) && !this.frameSizeWarned) {
+          this.frameSizeWarned = true;
+          console.warn(`[cold-shadow] ${prim.textureName}: silhouette frame ${fw}×${fh} exceeds the 1024² per-prim texture ceiling — clamped (u10)`);
+        }
       } else if (!this.pageWarned) {
         this.pageWarned = true;
         console.warn("[cold-shadow] surface frame off the shared page — silhouette skipped (solid quad, C5)");
@@ -162,11 +169,12 @@ export class ColdShadowData {
 
     const base = idx * 4;
     // R: W(22–31) | H(12–21) opaque size (units). G: (ox+512)(12–21) | (oy+512)(2–11) signed offset (units).
-    // B: frame_x(16–31) | frame_y(0–15) · A: frame_w(16–31) | frame_h(0–15) (atlas px; w = 0 → solid quad).
+    // B: frame_x(16–31) | frame_y(0–15) (atlas px — PAGE coords, u16).
+    // A: frame_w(22–31) | frame_h(12–21) (atlas px, u10 — ≤1024² per-prim ceiling; w = 0 → solid quad).
     const R = (((u10(ww / UNIT) << 22) | (u10(hh / UNIT) << 12)) >>> 0);
     const G = (((((ox + 512) & 0x3ff) << 12) | (((oy + 512) & 0x3ff) << 2)) >>> 0);
     const B = ((((fx & 0xffff) << 16) | (fy & 0xffff)) >>> 0);
-    const A = ((((fw & 0xffff) << 16) | (fh & 0xffff)) >>> 0);
+    const A = (((u10(fw) << 22) | (u10(fh) << 12)) >>> 0);
     const m = this.defMirror;
     if (m[base] !== R || m[base + 1] !== G || m[base + 2] !== B || m[base + 3] !== A) {
       m[base] = R; m[base + 1] = G; m[base + 2] = B; m[base + 3] = A;
@@ -264,7 +272,7 @@ export class ColdShadowData {
       prim_width: (R >>> 22) & 0x3ff,
       prim_height: (R >>> 12) & 0x3ff,
       offset: [((G >>> 12) & 0x3ff) - 512, ((G >>> 2) & 0x3ff) - 512], // units, opaque-base-centre − anchor
-      frame: [(B >>> 16) & 0xffff, B & 0xffff, (A >>> 16) & 0xffff, A & 0xffff], // x,y,w,h (atlas px)
+      frame: [(B >>> 16) & 0xffff, B & 0xffff, (A >>> 22) & 0x3ff, (A >>> 12) & 0x3ff], // x,y (u16) w,h (u10, atlas px)
     };
   }
   get debugDefCount(): number {
