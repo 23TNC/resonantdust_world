@@ -1,5 +1,18 @@
 {
   "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PROJECT_DIR}/bin/hooks/glsl-backtick-check.mjs",
+            "timeout": 15,
+            "statusMessage": "GLSL backtick guard"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "*",
