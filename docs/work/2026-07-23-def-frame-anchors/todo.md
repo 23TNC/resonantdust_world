@@ -5,11 +5,8 @@ diff (`__corridor(false)` + `__gather.debugReadShadow()`, must stay **0 mismatch
 [`completed.md`](completed.md) when done **and** verified. Layout + model in
 [`README.md`](README.md); amendments in [`forks.md`](forks.md)._
 
-_**P0–P4 done + verified 2026-07-23** → [`completed.md`](completed.md) (layout ratified with F1 u4 +
-F4 signed nudge_x; encode/decode live; identity 0 mismatches at zoom 0.5 AND 1; lod 5→6 swap
-exercised live). Only P5 remains._
-
-## P5 · Prim size sourcing (USER-DEFERRED — "we will fix that later")
-
-- [ ] Move prim size off the DSL pickup onto the def's bbox model (align `thingPlacement` /
-      `thing_layout` with anchored-bbox semantics). Scope TBD with the user.
+_**ALL PHASES COMPLETE + VERIFIED 2026-07-23** → [`completed.md`](completed.md): P0–P4 (ratified
+layout, encode/decode, identity), P5 (span + sprite_scale from the DSL, scale-at-ingest), P6
+(immutable per-lod defs + the prim dirty cascade). Open follow-ups in [`forks.md`](forks.md): F3
+(prim_data reported-x/y — full 3×3 anchors), plus issues.md notes (grid-stem scaling, hot-swap
+scale-change def invalidation)._

@@ -19,7 +19,7 @@ import { SQUARE } from "../viewport/squareMath";
 
 /** Floats per def in the flat `Content.thingLayout()` table (mirrors the Rust
  *  `Bundle::thing_layout` stride): `[fw, fh, ax, ay, size, sx, sy]`. */
-export const LAYOUT_STRIDE = 7;
+export const LAYOUT_STRIDE = 10; // [fw,fh,ax,ay,size,sx,sy,span,scw,sch] — span/scales unused by this legacy client
 
 /** One def's decoded layout — footprint (tiles), logical anchor (0..1), sprite size
  *  (tiles), sprite pivot (0..1). */

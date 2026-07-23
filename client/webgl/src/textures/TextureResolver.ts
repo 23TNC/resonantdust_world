@@ -61,8 +61,15 @@ export class TextureResolver {
   private readonly pending = new Set<string>();
   /** Cached linked-atlas cell sub-frames, keyed by the packed frame then cell index. */
   private readonly cellFrames = new WeakMap<TexFrame, Map<number, TexFrame>>();
-  /** stem → its sprite silhouette's opaque bbox (frame fractions), computed once on decode. */
+  /** stem → its sprite silhouette's opaque bbox (frame fractions, POST-ingest-transform),
+   *  computed once on surface decode. */
   private readonly spriteBBox = new Map<string, { fx: number; fy: number; fw: number; fh: number }>();
+  /** stem → the RAW (pre-scale) surface bbox fractions — drives the ingest re-centring. */
+  private readonly rawBBox = new Map<string, { fx: number; fy: number; fw: number; fh: number }>();
+  /** stem → pre-atlas sprite scale (def-frame-anchors P5): applied at pack — scaled, clipped
+   *  to the same pow2 frame, transparent-filled, re-centred on the surface presence. */
+  private readonly spriteScale = new Map<string, [number, number]>();
+  private scaleWarned = false;
 
   private targetPx = BASE_LOD_PX;
   private readonly listeners = new Set<() => void>();
@@ -100,6 +107,23 @@ export class TextureResolver {
    *  once on the CPU at decode; null until the albedo has loaded. Used to size shadow-cast quads. */
   opaqueBBox(stem: string | undefined): { fx: number; fy: number; fw: number; fh: number } | null {
     return stem ? this.spriteBBox.get(stem) ?? null : null;
+  }
+
+  /** Register `stem`'s pre-atlas sprite scale (from the DSL layout, def-frame-anchors P5). A
+   *  CHANGE evicts the stem's packed LODs + bboxes so they repack under the new transform
+   *  (bytes stay cached — only the pack redoes). */
+  setSpriteScale(stem: string, sw: number, sh: number): void {
+    const cur = this.spriteScale.get(stem);
+    if (cur && cur[0] === sw && cur[1] === sh) return;
+    if (!cur && sw === 1 && sh === 1) return;
+    this.spriteScale.set(stem, [sw, sh]);
+    for (const key of [...this.packed.keys()]) {
+      if (stemOf(key) !== stem) continue;
+      this.packed.delete(key);
+      this.packedHash.delete(key);
+    }
+    this.spriteBBox.delete(stem);
+    this.rawBBox.delete(stem);
   }
 
   onLoad(fn: () => void): () => void {
@@ -222,13 +246,34 @@ export class TextureResolver {
       // their RGB survives intact; only true colour maps stay premultiplied.
       const raw = map === "layers" || map === "albedo" || map === "normal" || map === "surface";
       const bmp = await createImageBitmap(new Blob([bytes]), raw ? { premultiplyAlpha: "none" } : {});
+      // Ingest transform (def-frame-anchors P5): a stem with a sprite_scale packs SCALED — clipped
+      // to the same pow2 frame, transparent-filled, re-centred on its surface presence. The raw
+      // (pre-scale) surface bbox drives the re-centre, so it must decode FIRST: a non-surface map
+      // arriving early defers (bytes are already cached — the next resolve retries cheaply).
+      const scale = this.spriteScale.get(stem);
+      const scaled = !!scale && (scale[0] !== 1 || scale[1] !== 1) && !this.manifest.entry(stem)?.grid;
+      if (scale && this.manifest.entry(stem)?.grid && !this.scaleWarned) {
+        this.scaleWarned = true;
+        console.warn(`[resolver] ${stem}: sprite_scale on a GRID stem is unsupported — packed unscaled`);
+      }
       // Pre-compute the sprite's opaque bbox ONCE on the CPU from the SURFACE map's coverage (B channel;
       // the albedo alpha is full, so it's the surface that holds the silhouette). No GPU readback → no
-      // mid-render corruption. Fractions of the frame → LOD-independent.
-      if (map === "surface" && !this.spriteBBox.has(stem)) this.spriteBBox.set(stem, computeSpriteBBox(bmp));
+      // mid-render corruption. Fractions of the frame → LOD-independent. With a scale, the RAW bbox
+      // drives the re-centre and the STORED bbox is the post-transform one.
+      if (map === "surface" && !this.spriteBBox.has(stem)) {
+        const rawB = computeSpriteBBox(bmp);
+        this.rawBBox.set(stem, rawB);
+        this.spriteBBox.set(stem, scaled ? transformedBBox(rawB, scale![0], scale![1]) : rawB);
+      }
+      if (scaled && map !== "surface" && !this.rawBBox.has(stem)) {
+        if (this.manifest.entry(stem)?.maps.includes("surface")) {
+          void this.ensureLod(stem, size, hash, "surface"); // the re-centre needs the surface first
+          return;
+        } // no surface map at all → centre on the frame (no presence to centre on)
+      }
       const actualShort = Math.min(bmp.width, bmp.height);
       const achieved = Math.min(size, actualShort);
-      const ok = this.packInto(key, achieved, bmp, raw);
+      const ok = this.packInto(key, achieved, bmp, raw, scaled ? scale : undefined, this.rawBBox.get(stem));
       bmp.close();
       if (ok) {
         this.packedHash.set(key, hash);
@@ -243,13 +288,34 @@ export class TextureResolver {
 
   /** Pack a decoded bitmap into `size`'s pool under `(key, size)`. Uploads the bitmap into an engine
    *  Texture (premultiply for colour, straight for data maps), blits it into the atlas, then drops the
-   *  scratch upload (the atlas page kept its own copy). */
-  private packInto(key: string, size: number, bmp: ImageBitmap, raw = false): boolean {
+   *  scratch upload (the atlas page kept its own copy). With a `scale`, the sprite draws SCALED into
+   *  the same-size frame — clipped to it, transparent-filled, re-centred so the (pre-scale) surface
+   *  bbox's centre lands at the frame centre (or plain frame-centred without a bbox). */
+  private packInto(
+    key: string, size: number, bmp: ImageBitmap, raw = false,
+    scale?: [number, number], rawB?: { fx: number; fy: number; fw: number; fh: number },
+  ): boolean {
     if (!this.renderer) return false;
     const src = new Texture(this.renderer.gl, { width: bmp.width, height: bmp.height, data: bmp, premultiply: !raw });
     let packed: TexFrame | null;
     try {
-      packed = this.poolFor(size).add(key, src, bmp.width, bmp.height);
+      let draw;
+      if (scale) {
+        const W = bmp.width, H = bmp.height;
+        const dw = W * scale[0], dh = H * scale[1];
+        // Content origin so the scaled (pre-scale-bbox) centre sits at the frame centre.
+        const cx = rawB ? rawB.fx + rawB.fw / 2 : 0.5, cy = rawB ? rawB.fy + rawB.fh / 2 : 0.5;
+        const ox = W / 2 - cx * dw, oy = H / 2 - cy * dh;
+        // Clip the dest rect to the frame; narrow the source UVs to match (exact, no scissor).
+        const d0x = Math.max(0, ox), d1x = Math.min(W, ox + dw);
+        const d0y = Math.max(0, oy), d1y = Math.min(H, oy + dh);
+        draw = {
+          dx: d0x, dy: d0y, dw: d1x - d0x, dh: d1y - d0y,
+          sx: ((d0x - ox) / dw) * W, sy: ((d0y - oy) / dh) * H,
+          sw: ((d1x - d0x) / dw) * W, sh: ((d1y - d0y) / dh) * H,
+        };
+      }
+      packed = this.poolFor(size).add(key, src, bmp.width, bmp.height, draw);
     } finally {
       src.destroy();
     }
@@ -269,6 +335,18 @@ export class TextureResolver {
     }
     return pool;
   }
+}
+
+/** The post-ingest-transform bbox fractions: scale the raw bbox about the origin, shift by the
+ *  re-centring offset (raw-bbox centre → frame centre), clamp to the frame (clipping may cut it). */
+function transformedBBox(
+  b: { fx: number; fy: number; fw: number; fh: number }, sw: number, sh: number,
+): { fx: number; fy: number; fw: number; fh: number } {
+  const cx = b.fx + b.fw / 2, cy = b.fy + b.fh / 2;
+  const ox = 0.5 - cx * sw, oy = 0.5 - cy * sh; // fraction-space content origin after re-centre
+  const x0 = Math.max(0, ox + b.fx * sw), x1 = Math.min(1, ox + (b.fx + b.fw) * sw);
+  const y0 = Math.max(0, oy + b.fy * sh), y1 = Math.min(1, oy + (b.fy + b.fh) * sh);
+  return { fx: x0, fy: y0, fw: Math.max(0, x1 - x0), fh: Math.max(0, y1 - y0) };
 }
 
 /** Tight opaque bbox of a decoded SURFACE sprite (fractions of the frame, `0..1`), from the coverage

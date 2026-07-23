@@ -11,6 +11,14 @@
 import { RenderTarget, TexFrame, type Texture, type Renderer, type Blitter } from "../gl";
 import { MaxRectsPacker } from "./MaxRectsPacker";
 
+/** A sub-rect composite (P5 ingest scale/clip/re-centre): draw the source's `(sx,sy,sw,sh)` px
+ *  sub-rect into the frame's `(dx,dy,dw,dh)` px sub-rect; the rest of the frame stays the page's
+ *  cleared transparency. */
+export interface AtlasDraw {
+  dx: number; dy: number; dw: number; dh: number;
+  sx: number; sy: number; sw: number; sh: number;
+}
+
 export class TextureAtlas {
   /** The page's backing target. Sub-frames reference its texture. */
   readonly page: RenderTarget;
@@ -39,12 +47,18 @@ export class TextureAtlas {
   }
 
   /** Pack `source` (scaled to `width × height`) into a free rect, drawing it into the page.
-   *  `padding` reserves a right/bottom gutter so neighbours can't sample into each other. Returns the
-   *  framed sub-texture, or `null` if the page is full. */
-  add(source: Texture, width: number, height: number, padding: number): TexFrame | null {
+   *  `padding` reserves a right/bottom gutter so neighbours can't sample into each other. `draw`
+   *  composites a source SUB-rect into a frame sub-rect instead of the whole frame (P5 ingest
+   *  scale/clip/re-centre). Returns the framed sub-texture, or `null` if the page is full. */
+  add(source: Texture, width: number, height: number, padding: number, draw?: AtlasDraw): TexFrame | null {
     const rect = this.packer.insert(width + padding, height + padding);
     if (!rect) return null;
-    this.blitter.blit(this.page, source, rect.x, rect.y, width, height);
+    if (draw) {
+      const srcFrame = new TexFrame(source, draw.sx, draw.sy, draw.sw, draw.sh);
+      this.blitter.blit(this.page, source, rect.x + draw.dx, rect.y + draw.dy, draw.dw, draw.dh, srcFrame);
+    } else {
+      this.blitter.blit(this.page, source, rect.x, rect.y, width, height);
+    }
     this.regionCount++;
     return new TexFrame(this.page.textures[0], rect.x, rect.y, width, height);
   }

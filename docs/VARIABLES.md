@@ -316,9 +316,12 @@ entry (2 per RGBA32UI px = 64 bits each)
   u32 orient    u8 z (24–31, units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u16 definition_index (6–21) | u6 reserved (0–5)
 ```
 
-**`prim_definition_data`** — a **256×256** `RGBA32UI` texture, one px per sprite **variant** (generic; shared by
-every instance), keyed by `u16 definition_index`. Compare-written whenever its inputs change (surface decode,
-LOD upgrade — a write re-dirties the gather). The model (work
+**`prim_definition_data`** — a **256×256** `RGBA32UI` texture, **one px per ATLAS FRAME**: defs are
+**IMMUTABLE**, keyed `(stem, cell, lod)` — a new lod landing mints a NEW def, and `prim_data` keeps whatever
+def it holds until the writer swaps its `definition_index`, which rides the **prim dirty cascade** (prim
+tiles → lights reaching them → those lights' cast regions). Nothing ever rewrites a def, so texture/def
+changes cost exactly a prim update. The lod-0 def is the LOOSE fallback (full-footprint box, solid quad).
+The model (work
 [`2026-07-23-def-frame-anchors`](work/2026-07-23-def-frame-anchors/README.md)): frames are **pow2 squares** on
 a 16-px atlas grid, addressed by a **lod exponent**; the **minimum bbox lives in world units** (even, so half-
 anchor shifts are integral) at an unsigned frame-relative offset; a **px nudge** aligns the sampled window to

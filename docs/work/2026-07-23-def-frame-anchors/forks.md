@@ -21,14 +21,13 @@ _Decision points + options + which we chose + why. Chronological._
 - Also corrected: ppu **doubles** per lod (`2^(lod−4)` for 1-tile), not `lod − 3`; GREEN reserve is
   u12 (10+10+12 = 32 — the proposal's u14 summed to 34).
 
-## F2 · Nudge stored at the current lod's px scale {#f2}
+## F2 · Nudge stored at the def's lod — MOOT under immutable defs {#f2}
 
-**2026-07-23 — chosen.**
+**2026-07-23 — superseded by P6 (immutable per-lod defs).**
 
-`nudge_x/y` are px at the **resolved lod** (bound: 2 units × max ppu 1024 = 2048 → u11). On a LOD
-swap the def compare-write recomputes nudge with the new frame — same cadence that already rewrites
-frame_x/y/lod. Alternative (nudge in fixed sub-unit fractions, lod-independent) rejected: costs
-precision at high lod for no write savings.
+Originally: nudges in the resolved lod's px, recomputed by the compare-write on lod swap. With ONE
+IMMUTABLE DEF PER ATLAS FRAME (user, P6) every lod's def owns its nudges forever — nothing is ever
+recomputed; a lod swap is a `prim_data` def-index swap riding the prim dirty cascade.
 
 ## F4 · nudges signed — RATIFIED as u12 ±2048 + nudge anchors {#f4}
 

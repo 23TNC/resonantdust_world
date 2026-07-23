@@ -10,7 +10,7 @@
 //! shared {@link Blitter}.
 
 import type { TexFrame, Texture, Renderer, Blitter } from "../gl";
-import { TextureAtlas } from "./TextureAtlas";
+import { TextureAtlas, type AtlasDraw } from "./TextureAtlas";
 
 /** Gutter around each packed texture. 0 is safe with nearest sampling + integer frames. */
 const PADDING = 0;
@@ -38,21 +38,23 @@ export class LodPool {
     return this.byStem.get(stem) ?? null;
   }
 
-  /** Pack `source` (at its decoded `width × height`) as `stem`'s texture. Spills to a fresh page when
-   *  the current ones are full. Returns the framed sub-texture, or null if it can't fit a whole page. */
-  add(stem: string, source: Texture, width: number, height: number): TexFrame | null {
+  /** Pack `source` as `stem`'s texture into a `width × height` frame. Spills to a fresh page when
+   *  the current ones are full. `draw`, if given, composites the source into a SUB-rect of the frame
+   *  from a source sub-rect (the P5 ingest scale/clip/re-centre; the rest of the frame stays the
+   *  page-clear transparency). Returns the framed sub-texture, or null if it can't fit a whole page. */
+  add(stem: string, source: Texture, width: number, height: number, draw?: AtlasDraw): TexFrame | null {
     // Def-grid invariants (def-frame-anchors P1): frames must be pow2 SQUARES ≥ 16px, placed on the
     // 16-px page grid — the shadow def addresses them by u4 lod exponent + u10 16-px-grid origin.
     if (width !== height || (width & (width - 1)) !== 0 || width < 16)
       console.warn(`[lod-pool] ${stem}: frame ${width}×${height} violates pow2-square ≥16 — def grid addressing will degrade`);
     let packed: TexFrame | null = null;
     for (const atlas of this.atlases) {
-      packed = atlas.add(source, width, height, PADDING);
+      packed = atlas.add(source, width, height, PADDING, draw);
       if (packed) break;
     }
     if (!packed) {
       if (width + PADDING > this.pageSize || height + PADDING > this.pageSize) return null;
-      packed = this.newAtlas().add(source, width, height, PADDING);
+      packed = this.newAtlas().add(source, width, height, PADDING, draw);
     }
     if (packed) {
       if (packed.x % 16 !== 0 || packed.y % 16 !== 0)

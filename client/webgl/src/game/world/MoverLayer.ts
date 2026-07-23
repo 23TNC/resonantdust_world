@@ -137,7 +137,7 @@ export class MoverLayer {
     // Facing (+ west flip) from the entity's facing; variant is a stable per-entity pick.
     const stem = this.thingStems[kind - 1];
     const tex = thingTexture(stem, obj.facing, obj.entityReference, /* mover */ true);
-    const box = placeThing(tileX, tileY, readLayout(this.thingLayout, kind), tex.flipX);
+    const box = placeThing(tileX, tileY, readLayout(this.thingLayout, kind), tex.flipX, !tex.name);
     const { x, y } = box;
     const size = box.width; // square box; used for warm prim width/height
     const zIndex = PAWN_Z_BASE + box.zRow;

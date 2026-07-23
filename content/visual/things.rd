@@ -20,6 +20,8 @@
                 ; wins). anchor + sprite_anchor y=1 pin the trunk base to the cell's front
                 ; edge (bottom-centre), so the extra height grows UP. x stays centred (0.5).
                 2 &thing.size set
+                ; def-frame-anchors P5: the frame spans 2×2 tiles (pow2; whole px/unit).
+                2 &thing.span set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
                 ; MATERIAL variation on the packed map: the conifer's albedo splits into
@@ -48,6 +50,8 @@
                 ; Small ground scatter: half-tile sprite (preserving the old host default),
                 ; bottom-anchored so it sits on its cell's front edge like the taller things.
                 0.5 &thing.size set
+                0.5 &thing.sprite_scale.w set
+                0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
                 0 return
@@ -60,6 +64,8 @@
                 "white &thing.texture set
                 #3e6b3a &thing.tint set
                 0.5 &thing.size set
+                0.5 &thing.sprite_scale.w set
+                0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
                 0 return
@@ -72,6 +78,8 @@
                 "white &thing.texture set
                 #6f7d3a &thing.tint set
                 0.5 &thing.size set
+                0.5 &thing.sprite_scale.w set
+                0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
                 0 return
@@ -90,6 +98,8 @@
                 #7a7a7a &thing.tint set
                 #7a7a7a &thing.geoColor set
                 0.5 &thing.size set
+                0.5 &thing.sprite_scale.w set
+                0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
                 0 return
@@ -107,6 +117,8 @@
                 #ffffff &thing.tint set
                 #4a7a3a &thing.geoColor set
                 0.5 &thing.size set
+                0.5 &thing.sprite_scale.w set
+                0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
                 0 return
@@ -133,6 +145,8 @@
                 ; shorter, as they should). anchor + sprite_anchor y=1 pin the feet to the
                 ; cell's front edge; a west facing mirrors the sprite pivot x with the art.
                 1.125 &thing.size set
+                1.125 &thing.sprite_scale.w set
+                1.125 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
                 0 return

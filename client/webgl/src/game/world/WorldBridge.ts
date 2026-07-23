@@ -211,6 +211,14 @@ export class WorldBridge {
     this.thingLayout = this.content.thingLayout();
     this.tilePacked = this.content.tilePackedChannels();
     this.thingPacked = this.content.thingPackedChannels();
+    // def-frame-anchors P5: register each real stem's pre-atlas sprite_scale with the resolver
+    // (applied at INGEST — scaled, clipped to the pow2 frame, re-centred on surface presence).
+    for (let kind = 1; kind <= this.thingStems.length; kind++) {
+      const stem = textureNameFor(this.thingStems[kind - 1]);
+      if (!stem) continue;
+      const l = readLayout(this.thingLayout, kind);
+      this.resolver.setSpriteScale(stem, l.scw, l.sch);
+    }
     this.viewport.setMaterialRegistry(
       MaterialRegistry.fromWasm(
         this.content.materialNoiseFields(),
@@ -411,7 +419,7 @@ export class WorldBridge {
       const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
       // Anchor/size/footprint from the def layout; a tall sprite rises past its cell,
       // a west facing mirrors the pivot with the art (see placeThing).
-      const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX);
+      const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX, !tex.name);
       const primId = this.viewport.addPrim({
         texture: this.white,
         textureName: tex.name,
@@ -543,7 +551,7 @@ export class WorldBridge {
       } else {
         // Thing override — the thing sprite, bottom-anchored like the scatter.
         const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
-        const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX);
+        const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX, !tex.name);
         id = this.viewport.addPrim({
           texture: this.white,
           textureName: tex.name,

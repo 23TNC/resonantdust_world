@@ -106,7 +106,19 @@ pub struct VisualParts {
   /// (one tile). Masters are square pow2 canvases with the subject letterboxed +
   /// centred (via `bin/art`), so drawing `size × size` shows the sprite at its true
   /// shape through the transparent padding — a `size 3` conifer draws 3 tiles tall.
+  /// SUPERSEDED by `span` + `sprite_scale` (def-frame-anchors P5) — kept while legacy
+  /// consumers migrate.
   pub size: f64,
+  /// The sprite frame's WORLD SPAN in tiles — pow2, ≤ one zone — default `1.0`. The
+  /// frame maps onto `span × span` tiles, fixing its px-per-unit (`2^lod / (16·span)`,
+  /// a whole pow2 — the def-frame-anchors model); prim width/height then DERIVE from
+  /// the sprite's opaque bbox, they are no longer authored.
+  pub span: f64,
+  /// Pre-atlas sprite scale `(w, h)`, default `(1, 1)`: applied to the decoded sprite
+  /// BEFORE it is packed (clipped to the same pow2 frame, transparent-filled,
+  /// re-centred on its surface presence). Corrects art proportions (e.g. a head
+  /// sprite too large for its body) without breaking whole-px-per-unit.
+  pub sprite_scale: (f64, f64),
   /// The pivot ON THE SPRITE that aligns to `anchor` — `(x, y)` in `0..1`, default
   /// `(0.5, 0.5)`. `(0.5, 1.0)` = the art's bottom-centre (its "feet"), which pinned
   /// to a bottom-centre `anchor` reproduces the old bottom-anchored placement. A
@@ -244,6 +256,10 @@ impl Bundle {
     let footprint = (read_f("prims.0.footprint.w", 1.0), read_f("prims.0.footprint.h", 1.0));
     let anchor = (read_f("prims.0.anchor.x", 0.5), read_f("prims.0.anchor.y", 0.5));
     let size = read_f("prims.0.size", 1.0);
+    // def-frame-anchors P5: `span` (frame world span, pow2 tiles) + `sprite_scale` (pre-atlas
+    // scale, re-centred on surface presence at ingest). `span` defaults to 1 tile.
+    let span = read_f("prims.0.span", 1.0);
+    let sprite_scale = (read_f("prims.0.sprite_scale.w", 1.0), read_f("prims.0.sprite_scale.h", 1.0));
     let sprite_anchor = (read_f("prims.0.sprite_anchor.x", 0.5), read_f("prims.0.sprite_anchor.y", 0.5));
     // Up to 4 packed-map channels: `&prim.packed.<i>.tint` is the channel's base colour
     // (what `split_layers` subtracted into the residual — the canonical reconstruction
@@ -262,7 +278,7 @@ impl Bundle {
         *ch = PackedChannel { material_id, tint };
       }
     }
-    Some(VisualParts { tint, geo_color, texture, footprint, anchor, size, sprite_anchor, packed })
+    Some(VisualParts { tint, geo_color, texture, footprint, anchor, size, span, sprite_scale, sprite_anchor, packed })
   }
 
   /// A tile's background colour as a packed `0xRRGGBB` (see [`node_color_bg`]).
@@ -346,20 +362,22 @@ impl Bundle {
       .collect()
   }
 
-  /// Every thing's spatial LAYOUT in `object_id` order, flattened **stride-7** per def
+  /// Every thing's spatial LAYOUT in `object_id` order, flattened **stride-10** per def
   /// (index 0 → object_id 1): `[footprint.w, footprint.h, anchor.x, anchor.y, size,
-  /// sprite_anchor.x, sprite_anchor.y]` — all in the units of [`VisualParts`] (footprint
-  /// + size in tiles, anchors in `0..1`). A def that builds no prim gets the default row
-  /// `[1, 1, 0.5, 0.5, 1, 0.5, 0.5]`, so the host never special-cases "unset". The host
-  /// (`WorldBridge`/`MoverLayer`) resolves it into a world-px box + z-row.
+  /// sprite_anchor.x, sprite_anchor.y, span, sprite_scale.w, sprite_scale.h]` — all in
+  /// the units of [`VisualParts`] (footprint + size + span in tiles, anchors in `0..1`,
+  /// scales unitless). A def that builds no prim gets the default row
+  /// `[1, 1, 0.5, 0.5, 1, 0.5, 0.5, 1, 1, 1]`, so the host never special-cases "unset".
+  /// The host (`WorldBridge`/`MoverLayer`) resolves it into a world-px box + z-row.
   pub fn thing_layout(&self) -> Vec<f64> {
-    let mut out = Vec::with_capacity(self.thing_ids.len() * 7);
+    let mut out = Vec::with_capacity(self.thing_ids.len() * 10);
     for name in &self.thing_ids {
       match self.thing(name).and_then(|n| self.node_visual(n)) {
         Some(v) => out.extend_from_slice(&[
           v.footprint.0, v.footprint.1, v.anchor.0, v.anchor.1, v.size, v.sprite_anchor.0, v.sprite_anchor.1,
+          v.span, v.sprite_scale.0, v.sprite_scale.1,
         ]),
-        None => out.extend_from_slice(&[1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5]),
+        None => out.extend_from_slice(&[1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 1.0, 1.0]),
       }
     }
     out
@@ -721,6 +739,8 @@ mod tests {
         \"world/conifer &thing.texture set
         #ffffff &thing.tint set
         3.0 &thing.size set
+        2.0 &thing.span set
+        0.75 &thing.sprite_scale.w set
         1.0 &thing.anchor.y set
         1.0 &thing.sprite_anchor.y set
         0 return
@@ -735,12 +755,12 @@ mod tests {
     let b = load(&[src("data/things.rd", data), src("visual/things.rd", visual)]).expect("load");
     assert_eq!(b.thing_texture_stems(), vec!["world/conifer".to_string(), "white".to_string()]);
     // tree: default 1×1 footprint, bottom anchor (y=1) + bottom sprite pivot (y=1),
-    // size 3 tiles. shrub authors none → the all-default row.
+    // size 3 tiles, span 2, sprite_scale (0.75, 1). shrub authors none → the all-default row.
     assert_eq!(
       b.thing_layout(),
       vec![
-        1.0, 1.0, 0.5, 1.0, 3.0, 0.5, 1.0, // tree
-        1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, // shrub (defaults)
+        1.0, 1.0, 0.5, 1.0, 3.0, 0.5, 1.0, 2.0, 0.75, 1.0, // tree
+        1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 1.0, 1.0, // shrub (defaults)
       ],
     );
   }

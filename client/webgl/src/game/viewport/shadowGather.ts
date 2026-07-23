@@ -357,7 +357,6 @@ export class ShadowGather {
   private readonly coldData: ColdShadowData;
   private lastCasterCount = -1;
   private coldDirty = true;
-  private resolverUnsub: (() => void) | null = null;
 
   /** shadow-cold RT — the **textile_unit map** (`cols·TEXTILE_UNIT × rows·TEXTILE_UNIT` RGBA32UI,
    *  world-space toroidal), resized when the tile window changes. */
@@ -516,6 +515,7 @@ export class ShadowGather {
     // that y-range (far shadow ↔ top, near ↔ base), so we must bucket every row it spans — bucketing
     // only the base row missed casters whose top sits in the row above (I-7).
     const TILT = 0.5 * Math.cos(65 * Math.PI / 180); // 0.5·cos65 ≈ 0.211 of the height, leaned back
+    this.litSeen.clear();
     for (const p of standing) {
       const def = this.coldData.definitionFor(p, resolver);
       if (def < 0) continue; // no textureName → not a caster
@@ -525,6 +525,8 @@ export class ShadowGather {
       const t = this.coldData.tightBoxOf(def) ?? { dx: 0, dy: 0, w: p.width, h: p.height };
       const tdx = p.flipX ? p.width - (t.dx + t.w) : t.dx;
       const tx = p.x + tdx, ty = p.y + t.dy;
+      // A changed prim (new immutable def — lod landed/zoom — or first sight) cascades its region.
+      if (inst.changed) this.markPrimChange(tx, ty, t.w, t.h);
       const baseY = ty + t.h, topY = baseY - TILT * t.h; // card ground y-extent (px)
       const r0 = Math.floor(topY / SQUARE), r1 = Math.floor(baseY / SQUARE);
       const c0 = Math.floor(tx / SQUARE), c1 = Math.floor((tx + t.w) / SQUARE);
@@ -536,8 +538,8 @@ export class ShadowGather {
           const n = count[si];
           if (n >= 8) continue; // tile full — drop the rest (rare)
           const base = si * 4 + (n >> 1);
-          if ((n & 1) === 0) this.casterMirror[base] = ((this.casterMirror[base] & 0x0000ffff) | ((inst & 0xffff) << 16)) >>> 0;
-          else this.casterMirror[base] = ((this.casterMirror[base] & 0xffff0000) | (inst & 0xffff)) >>> 0;
+          if ((n & 1) === 0) this.casterMirror[base] = ((this.casterMirror[base] & 0x0000ffff) | ((inst.idx & 0xffff) << 16)) >>> 0;
+          else this.casterMirror[base] = ((this.casterMirror[base] & 0xffff0000) | (inst.idx & 0xffff)) >>> 0;
           count[si] = n + 1;
         }
       }
@@ -545,7 +547,9 @@ export class ShadowGather {
     this.casterTex.upload(this.casterMirror);
     // A loose→tight def upgrade (surface resolved late) rewrites def/prim → re-dirty so the tighter
     // shadow recomputes (otherwise the dirty-gate keeps the stale loose shadow).
-    if (this.coldData.flush()) this.forceDirty = true; // caster/def changed → recompute
+    // Upload changed def/prim textures. NO force-all: def swaps + new prims already queued
+    // their scoped rects via the prim dirty cascade (markPrimChange).
+    this.coldData.flush();
   }
 
   /** Queue the scoped dirty rect for a light move (P5): the union box of the old + new reach,
@@ -556,6 +560,26 @@ export class ShadowGather {
     const x1 = Math.floor((Math.max(ox, nx) + reach) / SQUARE) + 1;
     const y1 = Math.floor((Math.max(oy, ny) + reach) / SQUARE) + 1;
     this.pendingRects.push([x0, y0, x1, y1]);
+  }
+
+  /** The PRIM DIRTY CASCADE applied to texture/def changes: a prim changed (new immutable def —
+   *  lod landed/zoomed — or first sight) → dirty the prim's own tiles, then every light whose reach
+   *  touches them, then those lights' full cast regions (their reach boxes — a shadow texel is only
+   *  written inside its light's presence, so the reach box bounds the cast). `x/y/w/h` = the prim's
+   *  tight box in world px. `litSeen` dedupes light boxes within a frame (streaming floods). */
+  private readonly litSeen = new Set<number>();
+  private markPrimChange(x: number, y: number, w: number, h: number): void {
+    const x0 = Math.floor(x / SQUARE) - 1, y0 = Math.floor(y / SQUARE) - 1;
+    const x1 = Math.floor((x + w) / SQUARE) + 1, y1 = Math.floor((y + h) / SQUARE) + 1;
+    this.pendingRects.push([x0, y0, x1, y1]);
+    for (let k = 0; k < this.lights.length; k++) {
+      if (this.litSeen.has(k)) continue;
+      const L = this.lights[k];
+      const cx = Math.min(Math.max(L.x, x), x + w), cy = Math.min(Math.max(L.y, y), y + h);
+      if (Math.hypot(cx - L.x, cy - L.y) > L.reach + SQUARE) continue; // light can't see the prim
+      this.litSeen.add(k);
+      this.markLightMove(L.x, L.y, L.x, L.y, L.reach); // the light's whole cast region
+    }
   }
 
   /** Rebuild `shadow_dirty` for this frame: a slot is dirty when its world-tile **owner changed** (pan /
@@ -666,20 +690,20 @@ export class ShadowGather {
       this.coldDirty = true;   // light records changed
       this.lightsVer++;        // presence changed
     }
-    if (!this.resolverUnsub && resolver) this.resolverUnsub = resolver.onLoad(() => { this.coldDirty = true; });
-
     if (this.coldDirty || standing.length !== this.lastCasterCount) {
       const coldLights = this.lights.slice(0, MAX_LIGHTS).map((L, k) => ({
         x: L.x, y: L.y, z: L.z, reach: L.reach, emitterRadius: L.emitterRadius,
         color: LIGHT_COLORS[k % LIGHT_COLORS.length], intensity: 1, castShadows: true,
       }));
       this.coldData.buildLights(coldLights);
-      const casterChange = standing.length !== this.lastCasterCount;
+      const removed = standing.length < this.lastCasterCount;
+      const lightsChanged = this.coldDirty;
       this.lastCasterCount = standing.length;
       this.coldDirty = false;
-      // Scoped dirty (P5): a pure light MOVE queued its own rects — only force-all when something
-      // else changed (caster set streamed in, or a change with no scoped rects, e.g. a re-seed).
-      if (casterChange || this.pendingRects.length === 0) this.forceDirty = true;
+      // Scoped dirty: a light MOVE queued its own rects; NEW casters cascade per prim
+      // (markPrimChange on first sight). Force-all only for caster REMOVAL (stale shadows with no
+      // owner to cascade from) or a light change with no scoped rects (e.g. a re-seed).
+      if (removed || (lightsChanged && this.pendingRects.length === 0)) this.forceDirty = true;
     }
     if (this.coldData.lights === 0 || win.cols === 0) return;
 
@@ -762,7 +786,6 @@ export class ShadowGather {
   }
 
   destroy(): void {
-    this.resolverUnsub?.();
     this.fsQuad.destroy();
     this.overlayGeo?.destroy();
     this.gizmoQuad.destroy();
