@@ -63,6 +63,15 @@ CPU mirror), so same-frame passes read the updated data cleanly.
   ceiling); whole-texel commands (the prim-pair wrinkle).
 - **Deferred because** scattered-sparse is RARE today (zoom threshold crossings); it becomes the
   common pattern when the hot tier / moving casters land — build it then, ordered before the gather.
+- **Consolidation rider (user):** under scatter, the three index tables (`light_data`, `prim_data`,
+  `prim_definition_data` — all RGBA32UI, all scatter-fed) merge into ONE stacked texture (row
+  regions: defs 0–255, prims 256–383, lights 384; shader adds a base-row constant) — gather
+  bindings 7 → 5. Safe because the merged texture takes NO CPU uploads (draw-writes only → no
+  ghost-copy coupling; per-texel granularity). Scope limits: the CPU-rebuilt tile-grid maps stay
+  OUT (wholesale clustered rebuilds — texSubImage territory; don't mix writers on one resource;
+  dirty is R8UI anyway), appends also ride scatter once merged (uniform write path), and the
+  feedback-loop rule makes the merged table one shared read-XOR-write domain per draw. Size
+  256×512 (2 MB) — NOT 1024² (16 MB for 1.5 MB of tables).
 
 ## F3 · prim_data position semantics under anchors {#f3}
 
