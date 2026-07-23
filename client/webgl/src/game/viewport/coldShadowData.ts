@@ -12,7 +12,7 @@
 //! World unit: `1 unit = SQUARE/16 = 4px`, compile-time (§Unit). Every world field is in units; only the
 //! atlas `frame_*` are texture px. Positions pack as `position_anchor_reference` (region|zone|tile|anchor).
 
-import { Renderer, Texture } from "../../gl";
+import { Renderer, Texture, Program, Geometry, RenderTarget } from "../../gl";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
 import { SQUARE, UNIT, ZONE_DIM, REGION_DIM } from "./squareMath";
@@ -28,6 +28,42 @@ export const PRIM_BASE = 65536;
 export const LIGHT_BASE = 131072;
 /** The constants row (row 1023) — px0 window mapping, px1 slot/light-count (P3). */
 export const CONST_BASE = 1023 * DATA_W;
+/** Command buffer: 64×64 RGBA32UI; 5-px groups (1 header px = 4× u20 targets + 4 payload px);
+ *  replay-idempotent absolute writes — no clearing, the draw count is the only cursor. */
+const CMD_W = 64;
+const CMD_H = 64;
+const CMD_GROUPS = Math.floor((CMD_W * CMD_H) / 5); // 819 groups → 3 276 commands per fill
+const MAX_CMDS = CMD_GROUPS * 4;
+
+/** Scatter: gl_VertexID-equivalent slot index → command header lane → point at the target texel of
+ *  the 1024² data texture; fragment writes the payload. Reads ONLY the command buffer (no feedback). */
+const SCATTER_VERT = /* glsl */ `#version 300 es
+precision highp int;
+uniform highp usampler2D uCmd;
+uniform int uCmdBase;            // px index of this batch's first group
+in uint aIndex;                  // command slot within the batch (0..count-1)
+flat out highp int vPayload;     // px index of this command's payload
+void main() {
+  int k = int(aIndex);
+  int g = k >> 2, lane = k & 3;
+  int hp = uCmdBase + g * 5;
+  uvec4 hdr = texelFetch(uCmd, ivec2(hp & 63, hp >> 6), 0);
+  int target = int(hdr[lane] & 0xFFFFFu);   // u20 linear index into the data texture
+  vPayload = hp + 1 + lane;
+  float x = (float(target & 1023) + 0.5) / 1024.0 * 2.0 - 1.0;
+  float y = (float(target >> 10) + 0.5) / 1024.0 * 2.0 - 1.0;
+  gl_Position = vec4(x, y, 0.0, 1.0);
+  gl_PointSize = 1.0;
+}
+`;
+const SCATTER_FRAG = /* glsl */ `#version 300 es
+precision highp int;
+precision highp float;
+uniform highp usampler2D uCmd;
+flat in highp int vPayload;
+out uvec4 fragColor;
+void main() { fragColor = texelFetch(uCmd, ivec2(vPayload & 63, vPayload >> 6), 0); }
+`;
 
 const clamp = (v: number, hi: number): number => Math.min(Math.max(Math.round(v), 0), hi);
 
@@ -72,9 +108,15 @@ export class ColdShadowData {
   /** THE unified data texture + its CPU mirror (16 MB — the source of truth for every band). */
   private readonly dataTex: Texture;
   private readonly dataMirror = new Uint32Array(DATA_W * DATA_H * 4);
-  /** Dirty ROW span of the unified mirror (row = linear index >> 10) — ONE texSubImage2D per flush. */
-  private rowLo = DATA_H;
-  private rowHi = -1;
+  /** Changed texels since the last flush (linear indices) — become scatter commands. */
+  private readonly dirtySet = new Set<number>();
+  /** Command buffer + scatter pass (P2): sequential upload in, random writes out. */
+  private readonly cmdTex: Texture;
+  private readonly cmdMirror = new Uint32Array(CMD_W * CMD_H * 4);
+  private cmdCursorRow = 0; // rotating row cursor — never overwrite just-consumed rows (F3)
+  private readonly scatter: Program;
+  private readonly scatterGeo: Geometry;
+  private readonly dataRT: RenderTarget;
   /** stem+cell+lod → allocated definition_index (defs are IMMUTABLE — one per atlas frame). */
   private readonly defIndex = new Map<string, number>();
   private defNext = 0;
@@ -94,7 +136,14 @@ export class ColdShadowData {
   private lightCount = 0;
 
   constructor(private readonly renderer: Renderer) {
-    this.dataTex = new Texture(renderer.gl, { width: DATA_W, height: DATA_H, format: "rgba32uint" });
+    const gl = renderer.gl;
+    this.dataTex = new Texture(gl, { width: DATA_W, height: DATA_H, format: "rgba32uint" });
+    this.cmdTex = new Texture(gl, { width: CMD_W, height: CMD_H, format: "rgba32uint" });
+    this.scatter = new Program(gl, SCATTER_VERT, SCATTER_FRAG, "data-scatter");
+    const slots = new Uint32Array(MAX_CMDS);
+    for (let i = 0; i < MAX_CMDS; i++) slots[i] = i;
+    this.scatterGeo = new Geometry(gl, this.scatter, { aIndex: { data: slots, size: 1, integer: true } });
+    this.dataRT = new RenderTarget(gl, { width: DATA_W, height: DATA_H, wrap: [this.dataTex] });
   }
 
   /** THE unified data texture (bound once as `uData` in the shadow shader). */
@@ -102,11 +151,28 @@ export class ColdShadowData {
     return this.dataTex;
   }
 
-  /** Widen the unified mirror's dirty row span to cover `linear` (texel index). */
+  /** Record a changed texel (linear index) — becomes one scatter command at flush. */
   private mark(linear: number): void {
-    const row = linear >> 10;
-    if (row < this.rowLo) this.rowLo = row;
-    if (row > this.rowHi) this.rowHi = row;
+    this.dirtySet.add(linear);
+  }
+
+  /** P3: the constants row — window mapping + slot/light-count, compare-written so an unchanged
+   *  window costs nothing. Rides the same command path as every other write. */
+  private lastConst = [NaN, NaN, NaN, NaN, NaN, NaN];
+  setConstants(cols: number, rows: number, winCol: number, winRow: number, slot: number, lights: number): void {
+    const c = this.lastConst;
+    if (c[0] === cols && c[1] === rows && c[2] === winCol && c[3] === winRow && c[4] === slot && c[5] === lights) return;
+    this.lastConst = [cols, rows, winCol, winRow, slot, lights];
+    const b0 = CONST_BASE * 4;
+    this.dataMirror[b0] = cols >>> 0;
+    this.dataMirror[b0 + 1] = rows >>> 0;
+    this.dataMirror[b0 + 2] = winCol >>> 0; // i32 two's complement in a u32 lane — GLSL int() reinterprets
+    this.dataMirror[b0 + 3] = winRow >>> 0;
+    const b1 = (CONST_BASE + 1) * 4;
+    this.dataMirror[b1] = slot >>> 0;
+    this.dataMirror[b1 + 1] = lights >>> 0;
+    this.mark(CONST_BASE);
+    this.mark(CONST_BASE + 1);
   }
   /** The shared surface atlas page (or null before any sprite resolved). */
   get surfacePage(): Texture | null {
@@ -289,15 +355,48 @@ export class ColdShadowData {
   /** Upload any changed textures (call once per frame after populating). Cheap — no-op unless a slot landed. */
   /** Returns true if anything was uploaded (def/prim changed) — the caller re-dirties the shadow. */
   flush(): boolean {
-    const changed = this.rowHi >= this.rowLo;
-    // ONE full-width row-span texSubImage2D over the unified texture per flush, straight out of the
-    // mirror. Bands are adjacent (defs 0–63, prims 64–127, lights 128–191), so mixed-band frames
-    // still ride one contiguous span. The P2 scatter replaces this transport entirely.
-    if (changed) {
-      this.dataTex.uploadRows(this.rowLo, this.rowHi - this.rowLo + 1, this.dataMirror, 4);
-      this.rowLo = DATA_H; this.rowHi = -1;
+    if (this.dirtySet.size === 0) return false;
+    // P2 scatter transport: pack the changed texels into 5-px command groups (header = 4× u20
+    // targets, then 4 payload px from the mirror), upload ONE contiguous row span at the rotating
+    // cursor, and point-scatter them into the data texture. Absolute whole-texel writes → replay-
+    // idempotent (no clearing; the draw count is the only cursor). Oversized frames batch
+    // (flush-and-redraw, F3).
+    const targets = [...this.dirtySet];
+    this.dirtySet.clear();
+    for (let done = 0; done < targets.length; done += MAX_CMDS) {
+      const n = Math.min(MAX_CMDS, targets.length - done);
+      const groups = Math.ceil(n / 4);
+      const rowsNeeded = Math.ceil((groups * 5) / CMD_W);
+      if (this.cmdCursorRow + rowsNeeded > CMD_H) this.cmdCursorRow = 0; // rotate — wrap the cursor
+      const basePx = this.cmdCursorRow * CMD_W;
+      for (let g = 0; g < groups; g++) {
+        const hp = (basePx + g * 5) * 4;
+        for (let lane = 0; lane < 4; lane++) {
+          const k = g * 4 + lane;
+          const target = k < n ? targets[done + k] : 0; // stray lanes never drawn (count-exact)
+          this.cmdMirror[hp + lane] = target >>> 0;
+          const pp = (basePx + g * 5 + 1 + lane) * 4;
+          const src = target * 4;
+          this.cmdMirror[pp] = this.dataMirror[src];
+          this.cmdMirror[pp + 1] = this.dataMirror[src + 1];
+          this.cmdMirror[pp + 2] = this.dataMirror[src + 2];
+          this.cmdMirror[pp + 3] = this.dataMirror[src + 3];
+        }
+      }
+      this.cmdTex.uploadRows(this.cmdCursorRow, rowsNeeded, this.cmdMirror, 4);
+      this.renderer.draw({
+        program: this.scatter,
+        geometry: this.scatterGeo,
+        target: this.dataRT,
+        blend: "none",
+        mode: this.renderer.gl.POINTS,
+        count: n,
+        textures: { uCmd: this.cmdTex },
+        uniforms: (p) => p.uInt("uCmdBase", basePx),
+      });
+      this.cmdCursorRow += rowsNeeded;
     }
-    return changed;
+    return true;
   }
 
   // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
@@ -350,6 +449,10 @@ export class ColdShadowData {
   }
 
   destroy(): void {
+    this.dataRT.destroy(); // wrapped — does not destroy dataTex
+    this.scatterGeo.destroy();
+    this.scatter.destroy();
+    this.cmdTex.destroy();
     this.dataTex.destroy();
   }
 }

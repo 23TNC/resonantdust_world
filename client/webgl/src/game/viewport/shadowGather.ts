@@ -61,7 +61,7 @@ const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 // THE unified data texture (1024×1024): linear index → texel; 64-row bands (VARIABLES.md).
-const int DEF_BASE = 0, PRIM_BASE = 65536, LIGHT_BASE = 131072;
+const int DEF_BASE = 0, PRIM_BASE = 65536, LIGHT_BASE = 131072, CONST_BASE = 1047552; // row 1023
 uvec4 fetchLin(highp usampler2D t, int i) { return texelFetch(t, ivec2(i & 1023, i >> 10), 0); }
 vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
   uint region = (p >> 24) & 255u, zone = (p >> 16) & 255u, tile = (p >> 8) & 255u, anchor = p & 255u;
@@ -163,12 +163,17 @@ uniform highp usampler2D uPresence;   // light_presence_cold — textile_tile ma
 uniform highp usampler2D uDirty;      // shadow_dirty — textile_tile map (R8UI): .r nonzero = recompute
 uniform highp usampler2D uCaster;     // caster buckets — textile_tile map (RGBA32UI = 8× u16 prim idx)
 uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
-uniform int uCols, uRows, uWinCol, uWinRow, uSlot;   // shadow-cold toroidal window; uSlot = TEXTILE_UNIT
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 out uvec4 fragColor;
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 void main() {
+  // P3: window mapping from the CONSTANTS row of the data texture (px0: cols|rows|winCol|winRow as
+  // i32-in-u32 lanes; px1: slot). Updated through the same command path as every other write.
+  uvec4 C0 = fetchLin(uData, CONST_BASE);
+  uvec4 C1 = fetchLin(uData, CONST_BASE + 1);
+  int uCols = int(C0.x), uRows = int(C0.y), uWinCol = int(C0.z), uWinRow = int(C0.w);
+  int uSlot = int(C1.x);
   ivec2 fc = ivec2(gl_FragCoord.xy);
   int sx = fc.x / uSlot, sy = fc.y / uSlot;                 // toroidal slot
   if (texelFetch(uDirty, ivec2(sx, sy), 0).r == 0u) discard; // clean tile → keep the persistent texel
@@ -262,7 +267,7 @@ precision highp int;
 in vec2 vWorld;
 uniform highp usampler2D uShadow;   // shadow-cold — textile_unit map: per-slot 4-bit coverage (8 nibbles in R)
 uniform highp usampler2D uPresence; // textile_tile map: 8× u16 light indices per tile (slot → global light)
-uniform int uCols, uRows, uWinCol, uWinRow, uSlot;  // uSlot = TEXTILE_UNIT
+uniform highp usampler2D uData;     // the unified data texture — window constants from row 1023 (P3)
 out vec4 fragColor;
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 // Per-light colour — MUST match LIGHT_COLORS (the gizmo rings) so a light's shadow reads as the same
@@ -276,6 +281,10 @@ vec3 lightColour(int k) {
   return vec3(0.3, 1.0, 1.0);                 // cyan
 }
 void main() {
+  uvec4 C0 = texelFetch(uData, ivec2(0, 1023), 0);          // constants px0: cols|rows|winCol|winRow
+  uvec4 C1 = texelFetch(uData, ivec2(1, 1023), 0);          // px1: slot
+  int uCols = int(C0.x), uRows = int(C0.y), uWinCol = int(C0.z), uWinRow = int(C0.w);
+  int uSlot = int(C1.x);
   int tx = int(floor(vWorld.x / ${SQF})), ty = int(floor(vWorld.y / ${SQF}));
   if (tx < uWinCol || tx >= uWinCol + uCols || ty < uWinRow || ty >= uWinRow + uRows) { fragColor = vec4(0.0); return; }
   int sx = pmod(tx, uCols), sy = pmod(ty, uRows);
@@ -706,6 +715,9 @@ export class ShadowGather {
     if (this.coldData.lights === 0 || win.cols === 0) return;
 
     this.ensureRT(win.cols, win.rows);
+    // P3: the window mapping rides the data texture's constants row (compare-written — an
+    // unchanged window costs nothing), through the same scatter path as every other write.
+    this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, TEXTILE_UNIT, this.coldData.lights);
     this.buildPresence(win);                    // F5 per-tile light cull (rebuilt on light/window change)
     this.buildCasters(standing, resolver, win); // P1 per-tile caster buckets (the corridor reads these)
     this.buildDirty(win);    // P3: owner-change (pan) + rebuild → dirty; clean tiles persist
@@ -723,11 +735,6 @@ export class ShadowGather {
         uSurface: this.coldData.surfacePage ?? this.empty, // no page yet → defs have no frame → solid quads
       },
       uniforms: (p) => {
-        p.uInt("uCols", win.cols);
-        p.uInt("uRows", win.rows);
-        p.uInt("uWinCol", win.winCol);
-        p.uInt("uWinRow", win.winRow);
-        p.uInt("uSlot", TEXTILE_UNIT);
         p.uInt("uCorridor", this.corridor ? 1 : 0);
       },
     });
@@ -747,14 +754,9 @@ export class ShadowGather {
       program: this.overlay,
       geometry: this.overlayGeo!,
       blend: "normal",
-      textures: { uShadow: this.shadowRT.textures[0], uPresence: this.presenceTex },
+      textures: { uShadow: this.shadowRT.textures[0], uPresence: this.presenceTex, uData: this.coldData.dataTexture },
       uniforms: (p) => {
         p.uMat3("uProjection", proj);
-        p.uInt("uCols", win.cols);
-        p.uInt("uRows", win.rows);
-        p.uInt("uWinCol", win.winCol);
-        p.uInt("uWinRow", win.winRow);
-        p.uInt("uSlot", TEXTILE_UNIT);
       },
     });
 

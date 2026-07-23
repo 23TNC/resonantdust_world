@@ -76,8 +76,9 @@ export class Geometry {
     this.gl.bufferData(this.gl.ARRAY_BUFFER, data, this.gl.DYNAMIC_DRAW);
   }
 
-  /** Draw (TRIANGLES by default). Instanced when `instanceCount > 0`. */
-  draw(mode?: number): void {
+  /** Draw (TRIANGLES by default). Instanced when `instanceCount > 0`. `count` overrides the vertex
+   *  count for a non-indexed draw (the scatter pass draws exactly N command points per flush). */
+  draw(mode?: number, count?: number): void {
     const gl = this.gl;
     const m = mode ?? gl.TRIANGLES;
     gl.bindVertexArray(this.vao);
@@ -87,7 +88,7 @@ export class Geometry {
     } else if (this.indexBuffer) {
       gl.drawElements(m, this.count, gl.UNSIGNED_INT, 0);
     } else {
-      gl.drawArrays(m, 0, this.count);
+      gl.drawArrays(m, 0, count ?? this.count);
     }
     gl.bindVertexArray(null);
   }

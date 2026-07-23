@@ -25,6 +25,8 @@ export interface DrawOptions {
   clear?: [number, number, number, number];
   clearInt?: [number, number, number, number];
   mode?: number;
+  /** Vertex count override for a non-indexed draw (scatter: exactly N command points). */
+  count?: number;
 }
 
 export class Renderer {
@@ -90,7 +92,7 @@ export class Renderer {
       }
     }
     opts.uniforms?.(opts.program);
-    opts.geometry.draw(opts.mode);
+    opts.geometry.draw(opts.mode, opts.count);
   }
 
   /** Clear the screen (default framebuffer). */

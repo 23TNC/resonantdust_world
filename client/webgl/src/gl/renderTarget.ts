@@ -9,7 +9,10 @@ export interface RenderTargetOptions {
   width: number;
   height: number;
   /** One format per colour attachment. `[fmt]` = single target; `[a,b,…]` = MRT. */
-  formats: TexFormat[];
+  formats?: TexFormat[];
+  /** WRAP existing textures as the attachments instead of allocating (they are NOT destroyed with
+   *  the target) — the scatter pass renders into the unified data texture this way. */
+  wrap?: Texture[];
 }
 
 export class RenderTarget {
@@ -20,15 +23,17 @@ export class RenderTarget {
   private readonly gl: WebGL2RenderingContext;
   private readonly formats: TexFormat[];
   private readonly integer: boolean;
+  private readonly wrapped: boolean;
 
   constructor(gl: WebGL2RenderingContext, opts: RenderTargetOptions) {
     this.gl = gl;
     this.width = opts.width;
     this.height = opts.height;
-    this.formats = opts.formats;
-    this.integer = opts.formats.every((f) => f === "rgba8uint" || f === "rgba32uint");
+    this.formats = opts.formats ?? [];
+    this.integer = (opts.formats ?? []).every((f) => f === "rgba8uint" || f === "rgba32uint");
+    this.wrapped = !!opts.wrap;
     this.fbo = gl.createFramebuffer()!;
-    this.textures = opts.formats.map((format) => new Texture(gl, { width: opts.width, height: opts.height, format }));
+    this.textures = opts.wrap ?? (opts.formats ?? []).map((format) => new Texture(gl, { width: opts.width, height: opts.height, format }));
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
     const buffers: number[] = [];
     this.textures.forEach((tex, i) => {
@@ -37,7 +42,7 @@ export class RenderTarget {
     });
     gl.drawBuffers(buffers); // enable ALL attachments (Pixi never did this — the MRT/integer gap)
     const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-    if (status !== gl.FRAMEBUFFER_COMPLETE) throw new Error(`[gl] RenderTarget incomplete: 0x${status.toString(16)} (formats ${opts.formats.join(",")})`);
+    if (status !== gl.FRAMEBUFFER_COMPLETE) throw new Error(`[gl] RenderTarget incomplete: 0x${status.toString(16)}`);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
@@ -63,6 +68,6 @@ export class RenderTarget {
 
   destroy(): void {
     this.gl.deleteFramebuffer(this.fbo);
-    for (const t of this.textures) t.destroy();
+    if (!this.wrapped) for (const t of this.textures) t.destroy();
   }
 }
