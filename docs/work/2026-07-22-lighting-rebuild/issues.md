@@ -35,6 +35,24 @@ and by the foreshortening `s` (→ ∞ near the shadow tip). Both blow up as sha
 by point-in-quad membership** (four cross-products), which has no per-pixel division to blow up and
 **cannot produce out-of-range** — a point is simply in the quad or not.
 
+## Reach-walk reads the wrong toroidal tile {#reach-walk} — OPEN
+
+- **2026-07-22:** A pinned light at tile (54,21) cast **no shadow** despite every value checking out
+  end-to-end: the caster bucket at tile (52,18) held prim 192 (JS mirror **and** GPU readback), prim
+  192's `pos` texel decoded to the right anchor, and hardcoding that anchor through `decodePos`
+  rendered the correct shadow. A shader debug that read tile (52,18) **directly** via
+  `pmod(52, uCols)` returned 192 **everywhere** (green) — so the bucket + toroidal indexing are
+  aligned and readable. But the brute-force **reach-walk** (`cur = lc + (dx,dy)`, `lc =
+  floor(L.xy/UPT)`) **never** read prim 192 — it walks a different set of tiles than the direct read
+  lands on.
+- **Root cause:** the caster buckets / reach-walk and the shadow-cold RT don't index on the **same
+  toroidal basis** — the reach-walk's `lc`-centred tile coords don't line up with the buckets'
+  `pmod(worldTile, cols)` cells. The `u/v`-correct, data-correct path still misses because the two
+  maps disagree on *which tile is which texel*.
+- **Fix:** [`map-model.md`](map-model.md) — put **every** map on one shared `cols × rows` TILE grid
+  with one tile-level `pmod` wrap, so the walk's tile coords equal the buckets' by construction.
+  Tracked as **P1.5** in [`todo.md`](todo.md).
+
 ## Zoom-dependent missing shadow {#zoom}
 
 - **2026-07-22:** A tree cast **no shadow at certain zoom levels**. Cause: `ColdShadowData.definitionFor`

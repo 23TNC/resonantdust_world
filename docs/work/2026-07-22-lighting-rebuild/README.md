@@ -8,6 +8,11 @@ Full teardown + clean re-implementation of the billboard-quad shadow system. Sup
 removed — see [`issues.md`](issues.md) for why). Phases in [`todo.md`](todo.md); the LOD-coupling
 decision is [`forks.md`](forks.md#f1).
 
+**Foundation: [`map-model.md`](map-model.md) — the shared toroidal TILE grid.** Every map (data
+textures AND full-res) is `cols × rows` **tiles**, same shape, same wrap; each picks a per-tile
+resolution (TILES=1 · UNITS=16 · SQUARE=64). This is the decision the rebuild stands on, and the fix
+for the reach-walk bug ([`issues.md`](issues.md)). Read it first.
+
 The system had accreted debug scaffolding, a broken 1-tile corridor march, a `u/v`-inversion with
 precision cliffs, and a **zoom-dependent** dropout (casters gated on texture-LOD resolution). We
 tear it back to a **geometric, texture-agnostic quad** shadow that works at every zoom, get it
