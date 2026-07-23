@@ -351,6 +351,11 @@ export class ShadowGather {
   private dirtyRows = 0;
   /** Sticky "recompute every tile next build" — set on a cold rebuild; survives a window-not-ready frame. */
   private forceDirty = true;
+  /** P5 scoped dirty: world-tile rects `[x0,y0,x1,y1]` (inclusive) queued by a light MOVE — the union
+   *  of the light's old + new reach boxes. Applied (∩ window) on top of the owner pass in
+   *  {@link buildDirty}, then cleared. Correct because a moved light can only change presence/shadow
+   *  inside its old ∪ new reach; everything outside keeps its persistent texel. */
+  private pendingRects: [number, number, number, number][] = [];
 
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
@@ -495,9 +500,20 @@ export class ShadowGather {
     if (this.coldData.flush()) this.forceDirty = true; // caster/def changed → recompute
   }
 
+  /** Queue the scoped dirty rect for a light move (P5): the union box of the old + new reach,
+   *  +1 tile margin, in world tiles. Applied by {@link buildDirty} this frame. */
+  private markLightMove(ox: number, oy: number, nx: number, ny: number, reach: number): void {
+    const x0 = Math.floor((Math.min(ox, nx) - reach) / SQUARE) - 1;
+    const y0 = Math.floor((Math.min(oy, ny) - reach) / SQUARE) - 1;
+    const x1 = Math.floor((Math.max(ox, nx) + reach) / SQUARE) + 1;
+    const y1 = Math.floor((Math.max(oy, ny) + reach) / SQUARE) + 1;
+    this.pendingRects.push([x0, y0, x1, y1]);
+  }
+
   /** Rebuild `shadow_dirty` for this frame: a slot is dirty when its world-tile **owner changed** (pan /
-   *  resize) or `forceAll` (the cold data rebuilt — lights/casters changed). Clean slots `discard` in the
-   *  gather, so `shadow-cold` persists (F6). Mirrors `SquareCache.markStale`'s per-slot owner tracking. */
+   *  resize), `forceAll` (the cold data rebuilt — lights/casters changed), or it falls in a queued
+   *  light-move rect (P5 scoped dirty). Clean slots `discard` in the gather, so `shadow-cold` persists
+   *  (F6). Mirrors `SquareCache.markStale`'s per-slot owner tracking. */
   private buildDirty(win: TileWindow): void {
     const { cols, rows, winCol, winRow } = win;
     let forceAll = this.forceDirty;
@@ -529,6 +545,14 @@ export class ShadowGather {
         }
       }
     }
+    // P5 scoped dirty: mark every window tile inside a queued light-move rect.
+    for (const [x0, y0, x1, y1] of this.pendingRects) {
+      const c0 = Math.max(x0, winCol), c1 = Math.min(x1, winCol + cols - 1);
+      const r0 = Math.max(y0, winRow), r1 = Math.min(y1, winRow + rows - 1);
+      for (let wr = r0; wr <= r1; wr++)
+        for (let wc = c0; wc <= c1; wc++) this.dirtyMirror[pm(wr, rows) * cols + pm(wc, cols)] = 1;
+    }
+    this.pendingRects.length = 0;
     this.dirtyTex.upload(this.dirtyMirror);
   }
 
@@ -570,12 +594,13 @@ export class ShadowGather {
       const n = this.lights.length;
       for (let k = 0; k < n; k++) {
         const a = (k / n) * Math.PI * 2 + this.orbitPhase;
-        this.lights[k].x = this.seedX + Math.cos(a) * RING_RADIUS;
-        this.lights[k].y = this.seedY + Math.sin(a) * RING_RADIUS;
+        const L = this.lights[k], ox = L.x, oy = L.y;
+        L.x = this.seedX + Math.cos(a) * RING_RADIUS;
+        L.y = this.seedY + Math.sin(a) * RING_RADIUS;
+        this.markLightMove(ox, oy, L.x, L.y, L.reach); // P5 scoped dirty — NOT force-all
       }
       this.coldDirty = true;   // light records changed
       this.lightsVer++;        // presence changed
-      this.forceDirty = true;  // recompute every tile this frame
     }
     if (!this.resolverUnsub && resolver) this.resolverUnsub = resolver.onLoad(() => { this.coldDirty = true; });
 
@@ -585,9 +610,12 @@ export class ShadowGather {
         color: LIGHT_COLORS[k % LIGHT_COLORS.length], intensity: 1, castShadows: true,
       }));
       this.coldData.buildLights(coldLights);
+      const casterChange = standing.length !== this.lastCasterCount;
       this.lastCasterCount = standing.length;
       this.coldDirty = false;
-      this.forceDirty = true; // lights/casters changed → every reached tile may change → force-all dirty
+      // Scoped dirty (P5): a pure light MOVE queued its own rects — only force-all when something
+      // else changed (caster set streamed in, or a change with no scoped rects, e.g. a re-seed).
+      if (casterChange || this.pendingRects.length === 0) this.forceDirty = true;
     }
     if (this.coldData.lights === 0 || win.cols === 0) return;
 

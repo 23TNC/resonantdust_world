@@ -61,3 +61,14 @@ Append-only history; authoritative for what's done._
   `docs/VARIABLES.md` §Cold shadow data conformed to the bucket-era layouts (LUT-era section was
   stale). **Verified in browser at zoom 0.5 / 1 / 2** — conifer silhouettes taper away from the
   light, shrubs cast crescents, all radial directions correct; console clean.
+
+## P5 · Moving light — scoped dirty routing — 2026-07-23 ✓
+
+- A light MOVE now dirties only the tiles in its **old ∪ new reach box** (+1 margin) via queued
+  world-tile rects applied in `buildDirty` — no more `forceDirty` full-window recompute on move.
+  Correct by construction: a moved light can only change presence/shadow inside old ∪ new reach;
+  every other tile keeps its persistent texel. Force-all remains for re-seed / caster-set changes /
+  def upgrades.
+- **Verified in browser** (orbit on → off, zoom 0.5): the whole field re-points correctly as the
+  light orbits (the conifer streak hops between trees), **no stale shadows** linger outside the
+  swept boxes, and freezing the orbit settles a clean field.

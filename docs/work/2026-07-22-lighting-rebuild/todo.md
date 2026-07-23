@@ -12,10 +12,6 @@ _**P0–P4 done + verified** → [`completed.md`](completed.md) (P0–P2 2026-07
 `2026-07-22-shadow-corridor` stream** out of the repo — deferred to the end so cross-links don't
 break mid-rebuild._
 
-## P5 · Moving light
-
-- [ ] Move the light and confirm the shadow map **updates correctly** (dirty routing).
-
 ## P6 · Rebuild the corridor (pure optimization)
 
 - [ ] Replace the brute-force reach-walk with a corridor that yields **identical output**.
