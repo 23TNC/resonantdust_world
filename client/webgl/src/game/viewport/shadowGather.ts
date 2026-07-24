@@ -247,7 +247,7 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D 
 // casterCover's prim/def decode, but with NO light projection — the sprite is drawn parallel to the view, so
 // (s,t) come straight from P's offset in the [Ac.x±W/2] × [Ac.y−H .. Ac.y] rect. Reads ONLY the data texture
 // + surface atlas by index — never a textile_slot map by world coord — so it is zoom-stable by construction.
-float receiverCover(uint primIdx, vec2 P, float recvOff, highp usampler2D data, sampler2D surf) {
+float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf) {
   uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));
   vec2 A = decodePos(Pd.y);
   uint orient = Pd.z;
@@ -264,8 +264,6 @@ float receiverCover(uint primIdx, vec2 P, float recvOff, highp usampler2D data, 
   uint rot = (orient >> 22) & 3u;
   if (rot == 3u) sh.x = -sh.x;
   vec2 Ac = A + sh;                                         // tight-bbox base-centre (same as casterCover)
-  Ac.y += recvOff;                                          // seat the receiver rect on the DRAWN sprite (the
-                                                           // anchor discrepancy SHADOW_LIFT fixes for ground)
   float baseRow = floor(Ac.y / UPT);
   float s = (P.x - (Ac.x - 0.5 * W)) / W;                   // 0 left → 1 right of the drawn rect
   float t = (Ac.y - P.y) / H;                              // 0 at the base → 1 at the top (north)
@@ -285,16 +283,16 @@ float receiverCover(uint primIdx, vec2 P, float recvOff, highp usampler2D data, 
 // prim's upright silhouette, and take the FRONTMOST (southmost = max row) cover. -1 = ground (no prim drawn).
 // The buckets + surface are contiguous/index-addressed (zoom-safe); this is the in-family replacement for the
 // reverted attempt's zdepth-composite read.
-float receiverAt(vec2 P, float recvOff, highp usampler2D data, sampler2D surf) {
+float receiverAt(vec2 P, highp usampler2D data, sampler2D surf) {
   int wc = int(floor(P.x / UPT));
-  int r0 = int(floor((P.y - recvOff) / UPT)) - 1;            // scan from the receiver's own row (recvOff-shifted), −1 pad
+  int r0 = int(floor(P.y / UPT));
   float best = -1.0;
-  for (int dy = 0; dy <= 6; dy++) {                         // constant bound; covers billboards up to ~5 tiles
+  for (int dy = 0; dy <= 5; dy++) {                         // constant bound; covers billboards up to ~5 tiles
     uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(wc, r0 + dy));
     for (int c = 0; c < 7; c++) {
       uint primIdx = tileSlot(cb, c);
       if (primIdx == 0u) continue;
-      float br = receiverCover(primIdx, P, recvOff, data, surf);
+      float br = receiverCover(primIdx, P, data, surf);
       if (br >= 0.0) best = max(best, br);                  // frontmost cover wins the base row
     }
   }
@@ -422,7 +420,6 @@ uniform sampler2D uSurface;           // the shared surface atlas page (F2) — 
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 uniform int uLightClass;              // #4: process only this class of light — 0 = COLD (static), 1 = HOT (dynamic)
 uniform float uElevK;                 // shadows-onto-prims: receiver-elevation gain (sin65 default; 0 = flat, __elevk)
-uniform float uRecvOff;               // shadows-onto-prims: vertical seat (units) of the receiver rect on the DRAWN sprite (__recvoff)
 layout(location = 0) out uvec4 fragColor; // per-light u9 shadow coverage
 layout(location = 1) out uvec4 oCasterD;  // #3: frontmost caster row (R, 7-bit) shadowing this texel
 ${GATHER_COMMON}
@@ -443,7 +440,7 @@ void main() {
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS (true texel position)
   // shadows-onto-prims: is a standing prim DRAWN at this texel, and its base row? IN-FAMILY (caster buckets
   // + surface atlas by index) — zoom-safe by construction, NOT the reverted zdepth-composite world read.
-  float rRow = receiverAt(P, uRecvOff, uData, uSurface);
+  float rRow = receiverAt(P, uData, uSurface);
   bool isThing = rRow >= 0.0;
   float baseRow = max(rRow, 0.0);
   // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
@@ -665,10 +662,6 @@ export class ShadowGather {
   /** shadows-onto-prims: receiver-elevation gain (sin65 by the world-geometry model). `__elevk` tunes the
    *  climb rate by eye; 0 collapses prim shadows to the flat ground shadow. */
   private elevK = ELEV_K_DEFAULT;
-  /** shadows-onto-prims: vertical seat (world units) of the receiver rect onto the DRAWN sprite.
-   *  NEUTRAL (0) pending the correct offset model from the user — `+3` was wrong (it drops the shadow base
-   *  into the gap below the sprite). `__recvoff` dials it live. See work/2026-07-24-shadows-onto-prims/blockers. */
-  private recvOff = 0;
   private readonly coldData: ColdShadowData;
   private lastCasterCount = -1;
   private coldDirty = true;
@@ -747,14 +740,6 @@ export class ShadowGather {
     // DEBUG (shadows-onto-prims): tune the receiver-elevation gain live — bigger = the prim shadow climbs
     // faster/higher up a billboard; 0 = flat ground shadow (the A/B baseline).
     (globalThis as unknown as { __elevk: (k?: number) => number }).__elevk = (k?: number) => this.setElevK(k);
-    // DEBUG (shadows-onto-prims): dial the receiver vertical seat (units) to align the on-prim shadow with
-    // the drawn sprite (negative = shift the receiver rect NORTH). `__recvoff()` reads the current value.
-    (globalThis as unknown as { __recvoff: (u?: number) => number }).__recvoff = (u?: number) => {
-      if (u === undefined) return this.recvOff;
-      this.recvOff = u;
-      this.forceColdDirty = this.forceHotDirty = true;
-      return this.recvOff;
-    };
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -1155,7 +1140,6 @@ export class ShadowGather {
         p.uInt("uCorridor", this.corridor ? 1 : 0);
         p.uInt("uLightClass", cls);
         p.uFloat("uElevK", this.elevK);
-        p.uFloat("uRecvOff", this.recvOff);
       },
     });
     this.renderer.draw({
