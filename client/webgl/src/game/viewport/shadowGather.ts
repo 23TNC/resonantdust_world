@@ -72,6 +72,11 @@ const RECV_ALIGN_X = 0.5;            // units EAST the mask over-shoots → shif
 const RECV_ALIGN_Y = 1.5;            // units SOUTH the mask over-shoots → shift up (north) by this
 const RECV_ALIGN_XF = RECV_ALIGN_X.toFixed(1);
 const RECV_ALIGN_YF = RECV_ALIGN_Y.toFixed(1);
+/** shadows-onto-prims: the seen-face cull excludes casters that aren't strictly SOUTH of the receiver base
+ *  — widened into a UNIT band so a caster within this many units of the receiver's base (nearly the same y,
+ *  i.e. self / same-object) is also excluded, killing near-self shadow. Measured in world units (user). */
+const SELF_BAND = 4.0;
+const SELF_BANDF = SELF_BAND.toFixed(1);
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
 /** Lights per tile in presence + shadow-cold: 14 (7 per presence set), each a u8 coverage in the
  *  128-bit shadow-cold texel (slot i at channel i>>2, bits (i&3)·8). */
@@ -257,8 +262,8 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D 
 // casterCover's prim/def decode, but with NO light projection — the sprite is drawn parallel to the view, so
 // (s,t) come straight from P's offset in the [Ac.x±W/2] × [Ac.y−H .. Ac.y] rect. Reads ONLY the data texture
 // + surface atlas by index — never a textile_slot map by world coord — so it is zoom-stable by construction.
-float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, out float baseRowOut) {
-  baseRowOut = 0.0;
+float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, out float baseYOut) {
+  baseYOut = 0.0;
   uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));
   vec2 A = decodePos(Pd.y);
   uint orient = Pd.z;
@@ -276,11 +281,10 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf,
   if (rot == 3u) sh.x = -sh.x;
   vec2 Ac = A + sh;                                         // tight-bbox base-centre (same as casterCover)
   Ac -= vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF});           // seat the CUT on the drawn albedo (NW: ~0.5u W, ~2u N)
-  float baseRow = floor(Ac.y / UPT);
   float s = (P.x - (Ac.x - 0.5 * W)) / W;                   // 0 left → 1 right of the drawn rect
   float t = (Ac.y - P.y) / H;                              // 0 at the base → 1 at the top (north)
   if (s < 0.0 || s > 1.0 || t < 0.0 || t > 1.0) return -1.0; // outside the drawn billboard → not this prim
-  baseRowOut = baseRow;
+  baseYOut = Ac.y;                                          // EXACT receiver base y (units) — not row-quantised
   if (lod < 4u) return 1.0;                                // no silhouette resolved → solid billboard rect (full)
   float ppu = float(1u << lod) / spanU;
   float fx = float((D.z >> 22) & 1023u) * 16.0, fy = float((D.z >> 12) & 1023u) * 16.0;
@@ -320,25 +324,26 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, out uint rprim, 
 //       the receiver row derives from the tight-bbox base (Ac) while a caster's row derives from the raw
 //       anchor (prim.y+height), so "same prim" is NOT "same row". Exact prim-id match kills self-casting
 //       (the user: prim == prim → cull).
-//   (1) SEEN-FACE — the caster must be strictly SOUTH of the receiver's base row (cr > baseRow). Billboards
-//       are seen from the south, so a shadow only lands on the VISIBLE face when the caster is in front
-//       (south) of the receiver; a caster north of / on the row would darken the unseen BACK.
+//   (1) SEEN-FACE + NEAR BAND — the caster's base must be more than SELF_BAND units SOUTH of the receiver
+//       base (Cb.y > Rbase.y + SELF_BAND), measured in UNITS. Billboards are seen from the south, so a
+//       shadow only lands on the VISIBLE face when the caster is in front (south) of the receiver; a caster
+//       north of / on / within SELF_BAND units of the receiver base is on nearly the same y (self / same
+//       object) and would darken the unseen BACK — excluded (user: wider same-y band, in units).
 //   (2) LIGHT-SIDE — the caster must sit between the light and the receiver: dot(Cb−Rbase, Rbase−L) < 0.
 //       (A north light + a caster south of the receiver would otherwise false-positive.)
 // Returns coverage + the caster row.
-float casterOne(uint primIdx, vec2 Q, vec3 L, float emitter, bool isThing, float baseRow, uint rprim, vec2 Rbase,
+float casterOne(uint primIdx, vec2 Q, vec3 L, float emitter, bool isThing, uint rprim, vec2 Rbase,
                 highp usampler2D data, sampler2D surf, out float row) {
   row = 0.0;
   if (primIdx == 0u) return 0.0;
   vec2 Cb = decodePos(fetchLin(data, PRIM_BASE + int(primIdx)).y); // caster base (anchor = base-centre)
-  float cr = floor(Cb.y / UPT);
   if (isThing) {
-    if (primIdx == rprim) return 0.0;                      // (0) self — exact same prim → no self-cast
-    if (cr <= baseRow) return 0.0;                          // (1) caster must be strictly SOUTH of the receiver
+    if (primIdx == rprim) return 0.0;                       // (0) self — exact same prim → no self-cast
+    if (Cb.y <= Rbase.y + ${SELF_BANDF}) return 0.0;        // (1) seen-face + near-band (units): caster must be >SELF_BAND south
     if (dot(Cb - Rbase, Rbase - L.xy) >= 0.0) return 0.0;   // (2) caster must block the light reaching it
   }
   float cc = casterCover(primIdx, Q, L, emitter, data, surf);
-  if (cc > 0.0) row = cr;
+  if (cc > 0.0) row = floor(Cb.y / UPT);
   return cc;
 }
 `;
@@ -447,7 +452,7 @@ int pmod(int a, int m) { return ((a % m) + m) % m; }
 // buckets, MAX-accumulating casterOne. Factored so a texel can evaluate BOTH the ground point AND the
 // elevated thing point and blend them at the silhouette edge. corr selects the path; the two must stay
 // bit-identical (P6). reachT bounds the brute box (unused by the corridor).
-float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, float baseRow, uint rprim, vec2 Rbase,
+float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rprim, vec2 Rbase,
                  int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
   cdepth = 0.0;
   float cov = 0.0;
@@ -465,7 +470,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, float baseRow, uin
         uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(o.x, o.y));
         for (int c = 0; c < 7; c++) {
           uint primIdx = tileSlot(cb, c);
-          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, rprim, Rbase, data, surf, r);
+          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, rprim, Rbase, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -479,7 +484,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, float baseRow, uin
         uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy));
         for (int c = 0; c < 7; c++) {
           uint primIdx = tileSlot(cb, c);
-          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, rprim, Rbase, data, surf, r);
+          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, rprim, Rbase, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -504,14 +509,13 @@ void main() {
   // shadows-onto-prims: is a standing prim DRAWN at this texel, and its base row? IN-FAMILY (caster buckets
   // + surface atlas by index) — zoom-safe by construction, NOT the reverted zdepth-composite world read.
   uint rprim; float rcov;
-  float rRow = receiverAt(P, uData, uSurface, rprim, rcov);
-  bool isThing = rRow >= 0.0;
+  float baseY = receiverAt(P, uData, uSurface, rprim, rcov); // EXACT receiver base y (units); rprim 0 = ground
+  bool isThing = rprim != 0u;
   float maskCov = clamp(rcov, 0.0, 1.0);                     // SOFT mask coverage → blends ground↔thing at the silhouette edge
-  float baseRow = max(rRow, 0.0);
   // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
   // projection below makes the shadow CLIMB the billboard. Rbase = the receiver base (the front/behind axis).
-  float zElev = isThing ? uElevK * max(0.0, baseRow * UPT - P.y) : 0.0;
-  vec2 Rbase = vec2(P.x, baseRow * UPT);
+  float zElev = isThing ? uElevK * max(0.0, baseY - P.y) : 0.0;
+  vec2 Rbase = vec2(P.x, baseY);
   vec2 Pground = P; Pground.y += ${SHADOW_LIFTF}; // #2 lift — GROUND path only (thing path projects instead)
 
   int fold = foldTile(wc, wr);
@@ -535,14 +539,14 @@ void main() {
     // held); cov==1 → thing only (identity held). Each walk is corridor↔brute bit-identical.
     float cdG = 0.0, cdT = 0.0;
     float shG = (maskCov < 1.0)
-      ? walkShadow(L, emitter, Pground, false, baseRow, rprim, Rbase, uCorridor, reachT, uData, uSurface, cdG)
+      ? walkShadow(L, emitter, Pground, false, rprim, Rbase, uCorridor, reachT, uData, uSurface, cdG)
       : 0.0;
     float shT = 0.0;
     if (maskCov > 0.0) {
       float ze = min(zElev, 0.9 * L.z);                     // keep the projection s bounded
       float sProj = L.z / (L.z - ze);
       vec2 Qt = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
-      shT = walkShadow(L, emitter, Qt, true, baseRow, rprim, Rbase, uCorridor, reachT, uData, uSurface, cdT);
+      shT = walkShadow(L, emitter, Qt, true, rprim, Rbase, uCorridor, reachT, uData, uSurface, cdT);
     }
     float cov = mix(shG, shT, maskCov);
     casterDepth = max(casterDepth, max(maskCov < 1.0 ? cdG : 0.0, maskCov > 0.0 ? cdT : 0.0)); // #3 (vestigial att1)
