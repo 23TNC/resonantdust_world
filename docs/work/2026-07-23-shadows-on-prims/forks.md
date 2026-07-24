@@ -27,7 +27,7 @@ depth-mode branch). Alternative (pick in the blit) keeps the bake simpler but pu
 display pixel + needs both shadow maps bound at display; bake-side is cleaner.
 
 ## F4 · Cold/hot for pass 2 {#f4}
-**2026-07-23 — lean: mirror the split.** Pass 1 is cold/hot ([[cold-light-map]]); pass 2 should be too (a
+**2026-07-23 — lean: mirror the split.** Pass 1 is cold/hot (the #4 light-map split); pass 2 should be too (a
 static prim shadowed by a static light re-bakes once; by the dynamic light re-bakes per frame). That's 2
 more gather draws — but pass 2 early-exits on tileless fragments, so most of the screen is cheap. Simpler
 first cut: a single pass-2 map (no split) to prove the geometry, then split for the perf win.

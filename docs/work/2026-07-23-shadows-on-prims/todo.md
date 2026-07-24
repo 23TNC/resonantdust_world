@@ -28,7 +28,7 @@ _Verifiable in-browser (the 3-light rig; focus the forest at `?focus=34,27&zoom=
       before. A/B against `__depthmode 1` (binary) to confirm the improvement; retire/keep binary per eye.
 
 ## P3 · Cold/hot + dirty
-- [ ] Mirror the [[cold/hot split]] for pass 2 (a static prim shadowed by a static light = cold; by the
+- [ ] Mirror the cold/hot light-map split (#4) for pass 2 (a static prim shadowed by a static light = cold; by the
       dynamic light = hot; [forks F4](forks.md#f4)). Gate pass 2 by the SAME dirty as pass 1 (+ prim
       changes cascade to it).
 - [ ] VERIFY: only the dynamic reach re-bakes (cold pass-2 dirty = 0 steady-state); corridor↔brute

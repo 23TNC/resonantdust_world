@@ -17,7 +17,7 @@ NOT on the ground — it's an **elevated** point. Two symptoms of ignoring that:
   behind: it's either fully lit or the ground band cuts across at the wrong height.
 
 ## The geometry (converged with the user)
-The world is a **65° tilted plane rendered flat** ([[art-style]]). One screen row maps to a ground
+The world is a **65° tilted plane rendered flat** (the oblique art style). One screen row maps to a ground
 point (far up the tilt) AND a billboard point (near) — they collapse only because we flatten the tilt.
 A billboard pixel drawn at world `(px, py)` is an elevated point at height `z`, where `z` comes from the
 depth map: `z = f(base_row − pixel_row)` (base row from `zdepth-world`, pixel row from the fragment).
@@ -46,7 +46,7 @@ position is exactly where it's drawn, so its shadow belongs at the same texel, j
   `__depthmode` binary path stays as a fallback while this comes up.
 
 ## What we already have
-`zdepth-world` (base row + is-thing, per [[coverage-surface-model]] — now populated), the caster
+`zdepth-world` (base row + is-thing, the coverage/surface G-buffer model — now populated), the caster
 **buckets** (prim indices) + light records in the unified data texture, `casterCover` + the corridor
 walk, the cold/hot **dirty** machinery, and the binary front/behind fallback (`__depthtest`). The
 self-shadowing re-sample shortcut was removed ([`issues.md#i1`](issues.md#i1)). Layouts authoritative in
