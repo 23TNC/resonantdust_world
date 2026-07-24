@@ -30,8 +30,19 @@ whole "bake a contiguous world normal map" problem ([old options a–c]) evapora
   fine leaves compose per prim at bake time.
 - **Plumbing:** the bake reuses `receiverAt` for the prim + `(s,t)`, reads cached `shadow-cold` per light,
   never re-walks a corridor.
-- **Ground:** ground texels have no caster-bucket prim → use flat-up (`ẑ`), no atlas fetch. A detailed
-  ground-normal path is a separate later concern; flat-up is correct for the macro and free.
+- **Ground = prims, not a special case (user, 2026-07-24).** Rather than branch "ground texel → flat-up",
+  make ground tiles **real prims** carrying a **generic white texture**: white albedo, everything in layer 1,
+  an **up-facing** normal (perpendicular to the world ground, not the screen), full-coverage surface. Then
+  they bake through the identical atlas path — no geo special-case, forward-compatible (swap the generic frame
+  for authored ground textures later, zero pipeline change). Prereq: **author that generic white texture** in
+  `bin/art` (today there's only a 1×1 white *fill* for the geo path, not an atlas entry with frames).
+- **The one non-uniform bit — a per-def ORIENTATION flag.** "Flat `(0,0,1)`" means different world normals by
+  prim: a ground tile's card lies *in* the ground plane (flat → world-up `ẑ`); a thing's card is
+  screen-parallel (flat → horizontal, perpendicular-to-ground). Same atlas value, two rotations — so the
+  in-shader pitch reads a **1-bit per-def orientation** (`lies-in-ground` vs `stands-perpendicular`) to pick
+  which. The atlas/sampling path stays uniform; only the pitch branches. This is the ground-vs-thing rotation
+  `normal-tilt` already owns; the flag lives there. The generic-white ground tile carries `orientation =
+  ground`.
 Rejected earlier options (contiguous normal target / sample composite by world coord / merge with SquareCache
 bake) are moot — the frame-indexed atlas read is strictly better (no extra RT, no double-bake, no cross-family
 risk).
