@@ -56,6 +56,10 @@ const TILT_RADF = (WORLD_TILT_DEG * Math.PI / 180).toFixed(6); // GLSL literal (
  *  a cast shadow climb the sprite. `__elevk(k)` tunes the climb by eye; 0 collapses it to the flat ground
  *  shadow. Empirical because the caster card runs its own internal ratio (the documented 0.5 north offset). */
 const ELEV_K_DEFAULT = Math.sin(WORLD_TILT_DEG * Math.PI / 180);
+/** world-space-lighting (P1): the N–S un-foreshorten factor = 1/cos(WORLD_TILT). Screen N–S is compressed
+ *  by cos65 (the ground is a 65° plane), so true world N–S = screen·(1/cos65). Derived in
+ *  work/2026-07-24-world-space-lighting/model.md; sin65-vs-cos65 is the flagged risk, so it's live-tunable. */
+const INV_COS_TILT_DEFAULT = 1 / Math.cos(WORLD_TILT_DEG * Math.PI / 180);
 /** Lift the rendered shadow up (toward smaller world-y) by this many world units — a fragment shows
  *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Closes the ~1
  *  unit gap between the shadow base and the sprite's drawn base (a fixed anchor discrepancy: the sprite
@@ -386,6 +390,8 @@ uniform highp usampler2D uDirty;   // shadow_dirty — same gate as the shadow g
 uniform highp usampler2D uShadow;  // this class's shadow RT (TEXEL-aligned) — per-slot u9 coverage; slot i ↔ presence slot i
 uniform highp usampler2D uCasterD; // #3: this class's caster-depth map (R = frontmost caster row, 7-bit)
 uniform int uLightClass;           // #4: accumulate only this class of light — 0 = COLD, 1 = HOT
+uniform int uWorldLight;           // world-space-lighting: 1 = TRUE-3D falloff distance (oval + light height), 0 = screen circle
+uniform float uNsInv;              // world-space-lighting: N–S un-foreshorten factor (1/cos65 ≈ 2.366; live-tunable)
 layout(location = 0) out vec4 oLight;  // SHADOWED irradiance RGB: Σ colour·intensity·falloff·(1−shadow) (no ambient)
 layout(location = 1) out vec4 oDir;    // RG = irradiance-weighted mean horizontal light dir (enc 0.5+0.5) — per-px relief
 layout(location = 2) out vec4 oUnshadowed; // #3: UNSHADOWED irradiance (no shadow) RGB + A = caster row/127 (for the depth test)
@@ -423,7 +429,18 @@ void main() {
     float intensity = float(Ld.z & 255u) / 255.0;
     float reach = float((Ld.w >> 12) & 0xfffu);             // reach (units)
     vec2 toL = Lxy - P;
-    float dist = length(toL);                               // in-plane distance (units)
+    // world-space-lighting P1: TRUE 3D distance instead of the screen radius — the world is a 65° plane, so
+    // the N–S screen axis is foreshortened (un-shorten by uNsInv = 1/cos65) and the light sits Lz above the
+    // ground. ⟹ the reach is an OVAL (flattened N–S) + a height term (a point under the light isn't at 0).
+    // Ground assumption (Pz=0); billboard elevation folds in at P2. Toggle off = the old screen circle.
+    float dist;
+    if (uWorldLight == 1) {
+      float Lz = float((Ld.w >> 24) & 255u);                // light height (units)
+      vec2 d = vec2(toL.x, toL.y * uNsInv);                 // un-foreshorten N–S
+      dist = sqrt(dot(d, d) + Lz * Lz);                     // true 3D distance (ground point)
+    } else {
+      dist = length(toL);                                   // in-plane screen distance (units)
+    }
     float fall = smoothstep(reach, 0.0, dist);              // 1 at the light → 0 at reach (F2 smoothstep)
     // P3 SHADOW: mask by slot i's u9 coverage (low8 in channel i>>2, high bit in A[16+i]) — a shadowed
     // pixel stops receiving this light. Applied to the contribution so it removes both the irradiance AND
@@ -709,6 +726,11 @@ export class ShadowGather {
   /** shadows-onto-prims: receiver-elevation gain (sin65 by the world-geometry model). `__elevk` tunes the
    *  climb rate by eye; 0 collapses prim shadows to the flat ground shadow. */
   private elevK = ELEV_K_DEFAULT;
+  /** world-space-lighting (P1): TRUE-3D elliptical falloff (`__worldlight`) + the live-tunable N–S
+   *  un-foreshorten factor (`__nsfactor`, default 1/cos65). Default ON so the corrected look shows; toggle
+   *  off to A/B against the screen circle. */
+  private worldLight = true;
+  private nsInv = INV_COS_TILT_DEFAULT;
   private readonly coldData: ColdShadowData;
   private lastCasterCount = -1;
   private coldDirty = true;
@@ -787,6 +809,17 @@ export class ShadowGather {
     // DEBUG (shadows-onto-prims): tune the receiver-elevation gain live — bigger = the prim shadow climbs
     // faster/higher up a billboard; 0 = flat ground shadow (the A/B baseline).
     (globalThis as unknown as { __elevk: (k?: number) => number }).__elevk = (k?: number) => this.setElevK(k);
+    // DEBUG (world-space-lighting): toggle true-3D elliptical falloff vs the screen circle; tune the N–S
+    // un-foreshorten factor (default 1/cos65 ≈ 2.366) by eye — the sim-check on cos65 vs sin65.
+    (globalThis as unknown as { __worldlight: (on?: boolean) => boolean }).__worldlight = (on?: boolean) => {
+      this.worldLight = on ?? !this.worldLight;
+      this.forceColdDirty = this.forceHotDirty = true;
+      return this.worldLight;
+    };
+    (globalThis as unknown as { __nsfactor: (f?: number) => number }).__nsfactor = (f?: number) => {
+      if (f !== undefined) { this.nsInv = f; this.forceColdDirty = this.forceHotDirty = true; }
+      return this.nsInv;
+    };
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -1202,6 +1235,8 @@ export class ShadowGather {
       },
       uniforms: (p) => {
         p.uInt("uLightClass", cls);
+        p.uInt("uWorldLight", this.worldLight ? 1 : 0);
+        p.uFloat("uNsInv", this.nsInv);
       },
     });
   }

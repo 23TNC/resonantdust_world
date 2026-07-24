@@ -4,24 +4,20 @@ _Model + framing in [`README.md`](README.md); decisions in [`forks.md`](forks.md
 debug light rig; A/B world-space vs the current screen-space path at every step (a toggle, e.g.
 `__worldlight`). Freeze the subject light + a zero-reach keep-alive so the change-gated loop keeps ticking._
 
-## P0 · Derive + write the world-space lighting model (NO shader code yet)
-- [ ] From the ratified `z = sin65·Δ` geometry ([world-geometry](../2026-07-23-world-geometry/README.md)),
-      derive the **true world-3D light→point vector** for: (a) a **ground** point, (b) a **billboard** point
-      at fictional elevation `z`. Pin the **N–S foreshorten factor** (is it `cos65`? `sin65`? tied to the
-      height model?) and how the light **height** `Z` enters. Ground it: 1:1 on E–W, foreshortened on N–S,
-      `Z` from the light record.
-- [ ] Write it down as a short **model** (a `model.md` here, or fold into world-geometry) — the single source
-      of truth, like `map-model.md` was for the maps.
-- [ ] **Confirm against the user's simulation** (the same check that settled world-geometry) BEFORE coding —
-      pick a light + a few points, compare the derived vector/oval to the simulation. Do not proceed on an
-      un-verified factor (world-geometry I-3/I-5).
+## P0 · Derive + write the world-space lighting model (NO shader code yet) — DONE
+- [x] Derived the true world-3D light→point vector + the N–S factor → [`model.md`](model.md). Result:
+      **true N–S = screen Δy / cos65** (E–W 1:1; light height `Lz` adds an up-term). The `sin65` (fictional
+      height) tension is flagged — high confidence on `cos65` but NOT sim-verified, so it's live-tunable.
+- [ ] **AWAITING USER SIM-CHECK of the factor** (`cos65` vs `sin65`) — resolved by eye via `__nsfactor` +
+      the P1 oval, or the user's simulation. This is the one gate before trusting P2.
 
-## P1 · Elliptical falloff
-- [ ] Replace the screen-radius `dist = length(Lxy − P)` in `LIGHT_FRAG` with the **true 3D distance** from
-      P0 (N–S un-foreshortened + light `Z`). Behind the `__worldlight` toggle.
-- [ ] VERIFY: the light's reach reads as an **oval** (flattened N–S), not a circle; the ground gradient looks
-      natural; A/B toggles cleanly back to the old circle. Confirm at ≥2 zooms (foreshorten is zoom-invariant
-      in world units, so it must NOT change with zoom).
+## P1 · Elliptical falloff — IMPLEMENTED (behind `__worldlight`, default on)
+- [x] `LIGHT_FRAG`: `dist = sqrt(Δx² + (Δy·uNsInv)² + Lz²)` (ground `Pz=0`) under `uWorldLight`; screen circle
+      when off. `uNsInv` = `__nsfactor` (default 1/cos65 ≈ 2.366). TS clean.
+- [ ] VERIFY (user, browser was disconnected on my end): reach reads as an **oval** flattened N–S; ground
+      gradient natural; `__worldlight(false)` A/Bs back to the circle; **oval shape identical across zooms**
+      (foreshorten is a world property — [issues.md#i3](issues.md#i3)). Tune `__nsfactor` to taste; that
+      value settles [forks F2](forks.md#f2).
 
 ## P2 · World-space light direction for the normal N·L
 - [ ] Feed the P0 **3D light direction** into the relief instead of the screen-space `toL/dist`, dotting it
