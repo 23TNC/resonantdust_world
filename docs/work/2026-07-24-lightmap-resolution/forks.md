@@ -96,7 +96,21 @@ to baking (same rotation, at bake-time vs ingest). Corpus stays RAW; no re-bake.
 bake-commit for a fixed pipeline — re-run `art --pitch_normal` + drop the in-shader pitch — but not the default.)
 
 ## F6 · Co-pack albedo/normal/surface/layers into one atlas (paired optimization) {#f6}
-**2026-07-24 — user proposal; do, but sequenceable.** Reserve a slot **one power of 2 larger** than the
+**2026-07-24 — BUILT (user directive). Replaces the F3-A interim.** The parallel normal-band ([#f3a](#f3a))
+pointed at a separately-packed per-lod normal page → the normal was present only at the ONE lod adopted (flat
+lighting at every other zoom — the user caught it). Root cause: `normal` used the per-size `poolFor(size)`
+pools (a page per lod) while `surface` had its own single shared pool; the single `normalPageTex` only matched
+one lod. Fix = the co-pack: the resolver packs a stem's four maps into ONE `2N` frame in a **single shared
+sprite pool** (albedo TL, normal TR, surface BL, layers BR); `resolve(stem,map)` returns the map's `N×N`
+quadrant; the shadow def stores the surface quadrant, and `primNormal` derives the normal quadrant = surface
+frame `+ (side, −side)` on the **same page** (`uSurface`) — present at every lod, no re-resolve, no band.
+`TextureAtlas.addCoPacked` + `LodPool.addCoPacked` + `TextureResolver.ensureCoPack`/`quadrant`. Bonus: with all
+lods co-located on one page, the immutable def can **swap lod** freely (was stuck at the first-adopted lod →
+off-page loose quads), so the silhouette + normal now sharpen with zoom. Verified: normal correct at zoom 1
+(was flat) through deep zoom-in; world renders; no GL errors. Ground-vs-thing + the DSL orientation bit still
+apply once ground becomes prims. Original proposal below.
+
+**2026-07-24 (original) — user proposal; do, but sequenceable.** Reserve a slot **one power of 2 larger** than the
 sprite (`2N×2N` around `N×N`) and lay the four maps in its quadrants; grab any channel by adding a fixed
 `(N,0)/(0,N)/(N,N)` offset to the frame origin — **one atlas binding, one frame lookup + a quadrant shift**,
 and albedo/normal/surface for the same texel become **cache-adjacent** (the per-pixel per-light loop reads
