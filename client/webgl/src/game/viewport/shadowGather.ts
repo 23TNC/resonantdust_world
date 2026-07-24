@@ -126,7 +126,12 @@ float casterRowOf(highp usampler2D data, uint primIdx) {
 float cross2(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }
 float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H) {
   float th = ${TILT_RADF}, ct = cos(th), st = sin(th); // WORLD_TILT (F4)
-  float Yt = A.y - 0.5 * H * ct, Zt = H * st;    // card top: tilted north + elevated
+  // KNOWN DEVIATION (kept deliberately — user, 2026-07-23): the north offset uses 0.5·H·cos65, HALF the
+  // strict parallel-to-view billboard (H·cos65). Likely the shadow-design "wedge" ±depth half; the
+  // elevation (Zt = H·sin65) already matches the canonical model. Left as-is because shadows read right.
+  // If the shadow GEOMETRY ever looks wrong, this 0.5 is a prime suspect — see
+  // docs/work/2026-07-23-world-geometry forks.md#f2 + issues.md#i1.
+  float Yt = A.y - 0.5 * H * ct, Zt = H * st;    // card top: tilted north (0.5·H·cos65) + elevated (H·sin65)
   float Yb = A.y;                                 // card base on the ground (z = 0)
   float k = L.z / (L.z - Zt);                     // ground-projection factor for the top corners
   if (k <= 0.0) return 0.0;                        // top at/above the light — no forward shadow
