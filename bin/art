@@ -171,12 +171,14 @@ GRID_MAPS="diffuse normal albedo depth emissive occlusion specular overlay"
 
 # World geometry — the ground plane meets the view plane at this angle. MUST match the
 # client's canonical constant (client/webgl/src/game/viewport/shadowGather.ts `WORLD_TILT_DEG`);
-# there is no shared bash⇄TS source, so keep the two in lock-step by hand. Standing billboards
-# are drawn parallel to the screen but are conceptually PERPENDICULAR to the tilted ground, so
-# their normals are pitched (90 − WORLD_TILT) DOWN into the ground plane at bake time — see
-# _normal_tilt. Grid/ground tiles are already in the ground frame and are NOT pitched.
+# there is no shared bash⇄TS source, so keep the two in lock-step by hand. A standing billboard
+# is drawn parallel to the screen but is conceptually PERPENDICULAR to the tilted ground, so its
+# normal belongs pitched (90 − WORLD_TILT) DOWN into the ground plane (lighting is world-space).
+# That derived value is the RECOMMENDED `--pitch_normal` (see cmd_remaster) — but the pitch is now
+# an explicit knob defaulting to 0 (no change), NOT auto-applied. Grid/ground tiles are already in
+# the ground frame and should never be pitched.
 WORLD_TILT_DEG=65
-NORMAL_PITCH_DEG=$((90 - WORLD_TILT_DEG))   # = 25° down, the billboard-normal pitch
+NORMAL_PITCH_DEG=$((90 - WORLD_TILT_DEG))   # = 25° — the geometrically-correct pitch to pass
 
 # True if FILE is named <stem>.<known-map>.png (so `1.normal.png` is a map atlas,
 # but a descriptive `Fence_Atlas.png` is not) — used to tell an authored map
@@ -876,8 +878,8 @@ cmd_normal() {
   # `marigold` (learned view-space normals, cleaner macro shape but not integrable
   # and starved on flat art — reach for it via --marigold). detail/detail_radius/
   # strength are Laigter-only tangent-space knobs, ignored by the marigold engine.
-  local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt=""
-  local -a pos=(kind preset detail detail_radius strength engine)
+  local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt="" pitch_normal=0
+  local -a pos=(kind preset detail detail_radius strength engine pitch_normal)
   local pi=0
   while (( $# )); do
     local arg=$1; shift
@@ -898,9 +900,10 @@ cmd_normal() {
     printf -v "$name" '%s' "$val"
   done
   if [[ -z "$kind" ]]; then
-    echo "usage: art normal <kind> [preset] [detail] [detail_radius] [strength] [engine]" >&2
+    echo "usage: art normal <kind> [preset] [detail] [detail_radius] [strength] [engine] [--pitch_normal DEG]" >&2
     echo "       default engine is laigter; pass --marigold (or --engine marigold) to override" >&2
-    echo "       object normals are pitched down into the ground plane by default; --no-tilt for tiles" >&2
+    echo "       --pitch_normal DEG pitches object normals DEG° down into the ground plane (default 0 = no" >&2
+    echo "       change; geometrically-correct = ${NORMAL_PITCH_DEG} = 90 − world tilt); grid tiles never pitch (--no-tilt)" >&2
     return 1
   fi
   kind=$(_resolve_master "$kind")   # `world/conifer` → master/world/conifer (verbatim)
@@ -953,15 +956,15 @@ cmd_normal() {
     done < <(_find_diffuse "$MASTER_DIR/$kind")
   fi
 
-  # Object pitch: rotate the billboard normal DOWN into the ground plane (= 90 − WORLD_TILT).
+  # Object pitch: rotate the billboard normal `pitch_normal`° DOWN into the ground plane.
   # AFTER strength (which reshapes tangent XY relative to flat-up +Z — meaningless once
-  # pitched). Default ON for standing objects, OFF for grid tiles (see _resolve_tilt).
-  if [[ "$(_resolve_tilt "$tilt" "$kind")" == 1 ]]; then
-    echo "art: pitching object normals ${NORMAL_PITCH_DEG}° down into the ground plane ..."
+  # pitched). Skipped at pitch 0 (default) or for grid tiles (_resolve_tilt OFF).
+  if [[ "$(_resolve_tilt "$tilt" "$kind")" == 1 ]] && awk "BEGIN{ exit !($pitch_normal != 0) }"; then
+    echo "art: pitching object normals ${pitch_normal}° down into the ground plane ..."
     while IFS= read -r -d '' src; do
       nrm=$(_map_path "$src" normal)
       [[ -f "$nrm" ]] || continue
-      _normal_tilt "$nrm" "$NORMAL_PITCH_DEG"
+      _normal_tilt "$nrm" "$pitch_normal"
     done < <(_find_diffuse "$MASTER_DIR/$kind")
   fi
 
@@ -2212,12 +2215,12 @@ cmd_remaster() {
   # --marigold (or --laigter) as a boolean shorthand for the engine.
   local path="" gap=4 radius="" choke=1 aa=0.5 outline_width=2 outline_color=0x000000 outline_blur=2 \
         preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter layers=3 size="" publish=0 \
-        tilt="" ao=0 sharpen_normal=0 ao_strength=1.0 sharpen_ao=0 \
+        tilt="" ao=0 sharpen_normal=0 ao_strength=1.0 sharpen_ao=0 pitch_normal=0 \
         split_normalize=1 black_threshold=0.05
   # Positional slots, filled in order by every non-flag argument. layers/size are
   # appended at the end so publish keeps its position; both are normally passed as flags.
   # (split_normalize/black_threshold are flag-only — dashed names, handled in the case below.)
-  local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish layers size sharpen_normal ao_strength sharpen_ao)
+  local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish layers size sharpen_normal ao_strength sharpen_ao pitch_normal)
   local pi=0
   while (( $# )); do
     local arg=$1; shift
@@ -2253,6 +2256,7 @@ cmd_remaster() {
     echo "       --layers N (default 3, max 3) channel-packs N tintable materials into layers.png R/G/B; the residual becomes albedo.png, de-lit preserved as albedo_marigold.png (0 = off; skipped for grid tiles)." >&2
     echo "       --split-normalize (DEFAULT on) pulls ALL colour into the layers, leaving only the black outline in albedo.png; disable with --split-normalize 0 (or --no-split-normalize). --black-threshold T (default 0.05) is its black cutoff." >&2
     echo "       --size PX scales masters to PX on the short axis (default: native); maps derive at FULL res, then downscale (sources kept full-res)." >&2
+    echo "       --pitch_normal DEG pitches object normals DEG° down into the ground plane (default 0 = no change; geometrically-correct = ${NORMAL_PITCH_DEG} = 90 − world tilt of ${WORLD_TILT_DEG}°); grid tiles never pitch." >&2
     echo "       normal engine defaults to laigter; --marigold overrides it. albedo=Marigold-IID." >&2
     echo "       depth is NOT generated (client integrates it from the normal). See 'art help'." >&2
     echo "       publish defaults to 0 (local masters only); the deploy tail isn't wired up in this repo yet." >&2
@@ -2274,6 +2278,7 @@ cmd_remaster() {
   [[ "$tilt" == 0 ]] && tilt_args+=(--no-tilt)
   [[ "$ao" == 0 ]] && tilt_args+=(--no-ao)
   tilt_args+=(--sharpen_normal "$sharpen_normal" --ao_strength "$ao_strength" --sharpen_ao "$sharpen_ao")
+  tilt_args+=(--pitch_normal "$pitch_normal")
   cmd_maps "$SPLIT_TARGET" "$preset" "$detail" "$detail_radius" "$strength" "$engine" "${tilt_args[@]}" || return 1
 
   # Channel-pack the just-made albedo(s) into up to `--layers` tintable materials:
@@ -2355,8 +2360,8 @@ cmd_remaster() {
 cmd_maps() {
   # Defaults; overridable positionally OR by --flag (--name value / --name=value).
   local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt="" ao=0 \
-        sharpen_normal=0 ao_strength=1.0 sharpen_ao=0
-  local -a pos=(kind preset detail detail_radius strength engine sharpen_normal ao_strength sharpen_ao)
+        sharpen_normal=0 ao_strength=1.0 sharpen_ao=0 pitch_normal=0
+  local -a pos=(kind preset detail detail_radius strength engine sharpen_normal ao_strength sharpen_ao pitch_normal)
   local pi=0
   while (( $# )); do
     local arg=$1; shift
@@ -2379,9 +2384,10 @@ cmd_maps() {
     printf -v "$name" '%s' "$val"
   done
   if [[ -z "$kind" ]]; then
-    echo "usage: art maps <kind> [preset] [detail] [detail_radius] [strength]" >&2
+    echo "usage: art maps <kind> [preset] [detail] [detail_radius] [strength] [--pitch_normal DEG]" >&2
     echo "       normal engine defaults to laigter; pass --marigold to override" >&2
-    echo "       object normals are pitched down into the ground plane by default; --no-tilt for tiles" >&2
+    echo "       --pitch_normal DEG pitches object normals DEG° down into the ground plane (default 0 = no" >&2
+    echo "       change; geometrically-correct = ${NORMAL_PITCH_DEG} = 90 − world tilt); grid tiles never pitch (--no-tilt)" >&2
     return 1
   fi
   kind=$(_resolve_master "$kind")   # kind path used verbatim (no `.0` shorthand)
@@ -2430,12 +2436,12 @@ cmd_maps() {
       _sharpen_kind_occlusion "$kind" "$sharpen_ao" || return 1
     fi
   fi
-  # Object pitch LAST: rotate the billboard normal DOWN into the ground plane (= 90 − WORLD_TILT).
-  # Laigter-only (view-space marigold normals need a different rotation, not wired yet);
-  # default ON for objects, OFF for grid tiles. Retains the flat opaque background.
-  if [[ "$engine" == laigter ]] && [[ "$(_resolve_tilt "$tilt" "$kind")" == 1 ]]; then
-    echo "art: pitching object normals ${NORMAL_PITCH_DEG}° down into the ground plane ..."
-    _tilt_kind_normals "$kind" "$NORMAL_PITCH_DEG" || return 1
+  # Object pitch LAST: rotate the billboard normal `pitch_normal`° DOWN into the ground plane.
+  # Laigter-only (view-space marigold normals need a different rotation, not wired yet).
+  # Skipped at pitch 0 (default) or for grid tiles (_resolve_tilt OFF). Retains the flat opaque bg.
+  if [[ "$engine" == laigter ]] && [[ "$(_resolve_tilt "$tilt" "$kind")" == 1 ]] && awk "BEGIN{ exit !($pitch_normal != 0) }"; then
+    echo "art: pitching object normals ${pitch_normal}° down into the ground plane ..."
+    _tilt_kind_normals "$kind" "$pitch_normal" || return 1
   fi
   # AO packing into normal.alpha is DROPPED (legacy): the client's normal composite is now OPAQUE
   # RGB (no alpha — the silhouette is a hard discard on surface.B), and AO is read from surface.G.
@@ -3027,13 +3033,14 @@ commands:
                            and apply only with the laigter engine; --marigold ignores
                            them. Order: normal → albedo(+residual) →
                            exaggerate the normal → pitch object normals down
-                           into the ground plane (emissive deferred). The pitch is a
-                           rigid rotation of (90 − WORLD_TILT) = 25° down, seating the
-                           billboard normal into the tilted ground: default ON for
-                           standing objects, OFF for grid tiles (linked) whose normals
-                           are already ground-frame; force with --tilt / --no-tilt.
-                           Flat opaque backgrounds are retained.
-  outline <kind> [color] [width] [blur]
+                           into the ground plane (emissive deferred). --pitch_normal
+                           DEG rigidly rotates the billboard normal DEG° down about the
+                           E–W axis to seat it in the tilted ground; DEFAULT 0 (no
+                           change), geometrically-correct = 25 (= 90 − world tilt 65°).
+                           Grid tiles (linked, already ground-frame) never pitch; force
+                           the category gate with --tilt / --no-tilt. Flat opaque
+                           backgrounds are retained.
+  border <kind> [color] [width] [blur]
                            Add a coloured outline around every master
                            sprite for <kind>, in place (defaults: color
                            0x000000, width 2, blur 2). Stacks on repeated

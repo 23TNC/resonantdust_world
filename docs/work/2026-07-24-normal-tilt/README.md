@@ -23,11 +23,16 @@ horizontal bias (`sin25 ≈ 0.42`), Laigter relief riding on top undistorted.
 
 ## The bake (rigid rotation about the E–W / screen-x axis)
 ```
-θ = 90° − WORLD_TILT_DEG        # = 25°
+θ = --pitch_normal degrees      # geometrically-correct = 25 (= 90 − WORLD_TILT)
 ny' = ny·cosθ − nz·sinθ
 nz' = ny·sinθ + nz·cosθ         # nx unchanged; renormalize
 ```
 Keep the runtime `uNormalYSign(-1)` convention (the downward pitch already yields negative green in-frame).
+
+**The pitch is an explicit knob, `--pitch_normal DEG`, defaulting to `0` (no change).** 25° is the
+geometrically-correct value (the complement of `WORLD_TILT_DEG=65`, kept as reference constant `NORMAL_PITCH_DEG`
++ echoed in help), but it is NOT auto-applied — the operator passes `--pitch_normal 25` to bake it, so the
+value can be tuned in-browser without editing the script. Skipped at 0 or for grid tiles (`_resolve_tilt` OFF).
 
 ## What's wrong today
 `_normal_tilt` ([`bin/art:767`](../../../bin/art)) does an **additive bias + Z-squash** — `ny -= 1.8;

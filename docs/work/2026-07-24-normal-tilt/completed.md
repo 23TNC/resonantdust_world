@@ -34,6 +34,13 @@
   the double `outline)` dispatch. Verified: `art remaster biome-thing/default/conifer` now runs ALL steps
   — split → border → normal(laigter) → albedo+residual(marigold) → strength/AO → **25° pitch** → surface →
   silhouette(meta.json, earcut OK) → channel-pack(layers). All 9 variants carry the full map set.
+- **Pitch is now an explicit `--pitch_normal DEG` knob (default 0 = no change).** Threaded through
+  `cmd_remaster` → `cmd_maps` → the pitch step (and `cmd_normal` standalone): each gets a `pitch_normal=0`
+  default + positional slot, remaster forwards `--pitch_normal` to maps. The pitch step now gates on
+  `_resolve_tilt==1 && pitch_normal != 0` (awk compare → floats OK), so the default bakes UNPITCHED normals
+  and the operator opts in with `--pitch_normal 25` (the geometrically-correct value, echoed in help as
+  `90 − world tilt`). Grid tiles still never pitch. Verified: `bash -n` clean; gate skips at 0, runs at 25/12.5;
+  `--pitch_normal` accepted by both `maps` and `remaster` (not "unknown flag"); help lists it + the recommended 25.
 - **P3 — retired `tilt_amount`/`tilt_z`.** Dropped from `cmd_normal`/`cmd_maps`/`cmd_remaster` defaults +
   positional arrays + the remaster `tilt_args` forwarding; `--tilt`/`--no-tilt` category gate kept. Help
   text + usage lines updated. `grep tilt_amount|tilt_z` is clean. `bash -n` passes; docs-check green.

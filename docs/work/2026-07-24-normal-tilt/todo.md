@@ -7,10 +7,12 @@ P0/P1/P2/P3 + the split-tooling fix delivered → [completed.md](completed.md).
 - [x] P4a — Re-bake conifer. `art remaster biome-thing/default/conifer` runs clean end-to-end; all 9
       variants re-baked with the 25° pitch (log: "pitching object normals 25° down into the ground plane").
       Normal spot-check: flat `#8080FF` bg, E/W relief intact (nx untouched), green carries the pitch.
-- [ ] P4b — Verify relief **in-browser** (user/runtime-gated): a light toward the viewer/south brightens
-      the front; behind/north darkens it gently — confirm it reads right vs the old ~84° over-pitch. Then
-      re-bake the rest of the standing-object corpus (`art remaster biome-thing/default` once P6 lands, or
-      per-kind).
+- [ ] P4b — Verify relief **in-browser** (user/runtime-gated): re-bake with `art remaster
+      biome-thing/default/conifer --pitch_normal 25` (the pitch now defaults to 0/no-change), then confirm a
+      viewer/south light brightens the front and a north light darkens it gently — vs the old ~84°
+      over-pitch. Tune the DEG in-browser if 25 needs nudging. Then re-bake the rest of the standing-object
+      corpus. NOTE: conifer masters currently carry the 25° pitch from the earlier hardcoded run; a plain
+      `remaster conifer` now (default 0) would bake them UNPITCHED — pass `--pitch_normal 25` to keep it.
 - [ ] P6 — Category-level split for new-style sheets: `cmd_split` handles an explicit `sprite.*.png` and a
       kind dir holding them, but a category/subcategory recursion (`split biome-thing/default`) still routes
       through the legacy `_remaster_dirpath`→`_remaster_id` (old-stem) path. Extend the recursion to detect
