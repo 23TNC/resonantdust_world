@@ -1841,6 +1841,52 @@ _normalize_grid_category() {  # cat_src_dir
   done
 }
 
+# Split a NEW folder-per-variant SOURCE SHEET into its kind's variant leaves. The sheet
+# lives at the KIND level as `sprite.<dir>.<layer>.png`: the map field `sprite` marks raw
+# multi-variant art (magenta-keyed + edge-bled like any diffuse, renamed `diffuse` on
+# output), dir/layer are folded into the filename, and the ID/kind + VARIANT come from the
+# DIRECTORY — the sheet sitting ONE level above the numbered variant leaves is exactly what
+# says "many variants of ONE kind" (one deeper = one sprite for one variant; one higher =
+# many kinds). Each detected blob, in reading order (rows top→bottom, left→right), becomes
+# variant K's diffuse at the go-forward FLAT leaf `maps`/_find_diffuse read:
+#   <kind>/<K>/diffuse.<dir>.<layer>.png
+# Downstream maps (normal/albedo/surface) are (re)generated afterwards by `maps`. LAST_TOTAL set.
+_split_variant_sheet() {  # sheet_png gap
+  local sheet=$1 gap=${2:-4}
+  local kind_dir bn rest dir layer
+  kind_dir=$(dirname "$sheet")
+  bn=$(basename "$sheet" .png)                 # sprite.<dir>.<layer>
+  rest=${bn#*.}                                # <dir>.<layer>  (drop the `sprite` map)
+  dir=${rest%%.*}; layer=${rest#*.}; layer=${layer%%.*}
+  # Variant blobs in reading order — index K is variant K.
+  _kept_geoms "$(_geoms_from_source "$sheet" "$gap")"
+  local ncount=${#KEPT_GEOMS[@]}
+  if (( ncount == 0 )); then
+    echo "art: $(basename "$sheet") sliced 0 blobs (skipped)" >&2; LAST_TOTAL=0; return 1
+  fi
+  CROP_GEOMS=(); CROP_OUTS=()
+  local k
+  for k in "${!KEPT_GEOMS[@]}"; do
+    CROP_GEOMS+=( "${KEPT_GEOMS[$k]}" )
+    CROP_OUTS+=( "$kind_dir/$k/diffuse.$dir.$layer.png" )
+  done
+  # Prune stale variant leaves for THIS (dir,layer) beyond the new count, so a shrunk
+  # sheet leaves no orphan variant behind for this facing.
+  local d n
+  for d in "$kind_dir"/*/; do
+    [[ -d "$d" ]] || continue
+    n=$(basename "$d")
+    [[ "$n" =~ ^[0-9]+$ ]] || continue
+    if (( n >= ncount )) && [[ -f "$d/diffuse.$dir.$layer.png" ]]; then
+      rm -f "$d/diffuse.$dir.$layer.png"; echo "    pruned stale variant $n/diffuse.$dir.$layer.png"
+    fi
+  done
+  _key_stack "$sheet"; EMIT_BLEED=1            # magenta despill + edge-bleed, like any diffuse
+  _emit_crops "$sheet" "${KEY_STACK[@]}"
+  echo "    sprite.$dir.$layer -> $ncount variant(s) [$dir l$layer] into $(basename "$kind_dir")/{0..$((ncount-1))}/"
+  LAST_TOTAL=$LAST_COUNT
+}
+
 LAST_TOTAL=0
 _remaster_id() {
   local src_dir=$1 id=$2 out_cat=$3 gap=$4 mode=$5 arg6=$6
@@ -1988,6 +2034,33 @@ cmd_split() {
   SPLIT_TARGET="$out_cat"
   local src_cat="$SPRITE_DIR/$cat_src"
   if [[ ! -d "$src_cat" ]]; then echo "art: no category dir (looked at $src_cat)" >&2; return 1; fi
+
+  # ── New folder-per-variant source sheets ─────────────────────────────────────────────
+  # A `sprite.<dir>.<layer>.png` at the KIND level holds EVERY variant of one kind (its
+  # position — one dir above the numbered variant leaves — says so). Route it to the
+  # variant-sheet splitter, which writes the go-forward FLAT leaves
+  # `<kind>/<v>/diffuse.<dir>.<layer>.png`. Detected here BEFORE the legacy id/sheet branches
+  # (they assume the old `<id>.….<map>` stem). Accepts an explicit sheet path, or a kind dir
+  # holding one/more such sheets (e.g. `remaster <kind>`). SPLIT_TARGET is the kind path
+  # (raw = the physical dir) so a combined `remaster`'s downstream `maps`/pack hit it.
+  local _tgt="$SPRITE_DIR/$path" _kindrel=""; local -a _vsheets=()
+  if [[ "${seg[$((nseg-1))]}" == sprite.*.png && -f "$_tgt" ]]; then
+    _vsheets=( "$_tgt" ); _kindrel=${path%/*}
+  elif [[ -d "$_tgt" ]] && compgen -G "$_tgt/sprite.*.png" >/dev/null; then
+    while IFS= read -r -d '' _f; do _vsheets+=( "$_f" ); done \
+      < <(find "$_tgt" -maxdepth 1 -type f -name 'sprite.*.png' -print0 | sort -z)
+    _kindrel=$path
+  fi
+  if (( ${#_vsheets[@]} > 0 )); then
+    SPLIT_TARGET=$_kindrel
+    local _s _grand=0
+    for _s in "${_vsheets[@]}"; do
+      echo "$_kindrel/$(basename "$_s")  (variant sheet)"
+      _split_variant_sheet "$_s" "$gap" && _grand=$(( _grand + LAST_TOTAL ))
+    done
+    echo "art: split wrote $_grand variant sprites under $MASTER_DIR/$SPLIT_TARGET/"
+    return 0
+  fi
 
   # Grid categories: convert psd atlases (and rename stray pngs) to the canonical
   # `1.diffuse.png` BEFORE the id walk below reads them — otherwise a psd-only

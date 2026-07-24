@@ -15,6 +15,15 @@
   pitch is correct for all four; E/W relief is preserved anyway (nx untouched by the E–W-axis rotation).
   Light-dir check: N-facing wolf under a north light backlights its (south-facing) rear → darkens ✓.
   ⇒ uniform `NORMAL_PITCH_DEG` across facings, no facing gate in `_normal_tilt`.
+- **Split tooling — new folder-per-variant source sheets (enables the P4 re-bake).** `cmd_split` now
+  recognizes a `sprite.<dir>.<layer>.png` at the KIND level as a multi-variant source sheet (map `sprite`
+  = raw multi-variant art; ID/kind + variant come from the directory position — the sheet sits one level
+  above the numbered variant leaves). New `_split_variant_sheet` keys + edge-bleeds it and writes each
+  reading-order blob to the go-forward FLAT leaf `<kind>/<K>/diffuse.<dir>.<layer>.png` (what
+  `_find_diffuse`/`maps` read), pruning stale higher-index variants for that facing. The legacy
+  `_remaster_id` path (old `<id>.<rot>.<layer>/<variant>/<map>.png` nested leaf) is untouched. Verified:
+  `art split biome-thing/default/conifer/sprite.e.0.png` → 9 variants into `conifer/{0..8}/diffuse.e.0.png`,
+  ordering correct (0=top-left small, 6=bottom-left), magenta keyed out. `bash -n` clean.
 - **P3 — retired `tilt_amount`/`tilt_z`.** Dropped from `cmd_normal`/`cmd_maps`/`cmd_remaster` defaults +
   positional arrays + the remaster `tilt_args` forwarding; `--tilt`/`--no-tilt` category gate kept. Help
   text + usage lines updated. `grep tilt_amount|tilt_z` is clean. `bash -n` passes; docs-check green.
