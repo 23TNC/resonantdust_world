@@ -62,11 +62,16 @@ const ELEV_K_DEFAULT = Math.sin(WORLD_TILT_DEG * Math.PI / 180);
  *  bottom sits ~1 unit south of the prim base-centre the shadow projects from). `__lift(u)` tunes live. */
 const SHADOW_LIFT = 3.0;             // units the shadow slides up to seat on the sprite base (sprite bottom
                                     // sits ~3 units south of the prim base-centre the shadow projects from)
-/** shadows-onto-prims: the receiver MASK (receiverCover) cuts the sprite-shaped hole ~2 units too far
- *  SOUTH of the drawn albedo (the def tight-bbox base vs the drawn opaque base); shift the mask NORTH by
- *  this so the cut aligns with the sprite. NOT a shadow-field shift — it's where we CUT (user, 2026-07-24). */
-const RECV_ALIGN = 2.0;
-const RECV_ALIGNF = RECV_ALIGN.toFixed(1);
+/** shadows-onto-prims: the receiver MASK (receiverCover) cuts the sprite-shaped hole slightly OFF from the
+ *  drawn albedo — the def tight-bbox anchor (`Ac`, from coldShadowData) doesn't land exactly where the
+ *  sprite is drawn (thingPlacement). Empirically it sits ~2 units too far SOUTH and ~0.5 unit too far EAST,
+ *  so shift the mask NORTH-WEST by this to seat the cut on the sprite. NOT a shadow-field shift — it's where
+ *  we CUT (user, 2026-07-24). Root cause (tight-bbox anchoring vs draw placement) not chased — see
+ *  issues.md#i4; if the alignment ever drifts, this pair is the knob. */
+const RECV_ALIGN_X = 0.5;            // units EAST the mask over-shoots → shift left (west) by this
+const RECV_ALIGN_Y = 2.0;            // units SOUTH the mask over-shoots → shift up (north) by this
+const RECV_ALIGN_XF = RECV_ALIGN_X.toFixed(1);
+const RECV_ALIGN_YF = RECV_ALIGN_Y.toFixed(1);
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
 /** Lights per tile in presence + shadow-cold: 14 (7 per presence set), each a u8 coverage in the
  *  128-bit shadow-cold texel (slot i at channel i>>2, bits (i&3)·8). */
@@ -269,7 +274,7 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf)
   uint rot = (orient >> 22) & 3u;
   if (rot == 3u) sh.x = -sh.x;
   vec2 Ac = A + sh;                                         // tight-bbox base-centre (same as casterCover)
-  Ac.y -= ${RECV_ALIGNF};                                   // seat the CUT on the drawn albedo (mask was ~2u too south)
+  Ac -= vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF});           // seat the CUT on the drawn albedo (NW: ~0.5u W, ~2u N)
   float baseRow = floor(Ac.y / UPT);
   float s = (P.x - (Ac.x - 0.5 * W)) / W;                   // 0 left → 1 right of the drawn rect
   float t = (Ac.y - P.y) / H;                              // 0 at the base → 1 at the top (north)
