@@ -5,12 +5,13 @@ every visible step (`__finelight`). The shadow gather + `shadow-cold` are NOT to
 accumulation + storage. VERIFY perf at each step: the bake grows (fine res × per-light `N·L`), so watch
 that dirty-gating still means a static scene re-bakes nothing._
 
-## P0 · Sample the prim normal from its atlas frame in the bake ([forks.md#f3](forks.md#f3))
-- [ ] Bind a normal atlas to `LIGHT_FRAG`; at a prim texel, reuse `receiverAt`'s prim + `(s,t)` to compute
-      the frame UV (identical to the surface silhouette sample) and `texelFetch` the raw normal. Pitch it to
-      the world frame in-shader from the data-map tilt (`normal-tilt`'s rotation). Ground texels → flat-up.
-- [ ] VERIFY: the sampled+pitched normal reads right per prim, **stable across zoom** (it's a frame-indexed
-      atlas read, not a world-coord composite read — so zoom-safe by construction; confirm it).
+## P0 · Sample the (world-frame-baked) prim normal from its atlas frame in the bake ([forks.md#f3](forks.md#f3))
+- [ ] Depends on `normal-tilt` baking **world-frame** normals at ingest ([forks.md#f7](forks.md#f7)) — the
+      atlas normal is already pitched, so no runtime rotation/flag.
+- [ ] Bind the normal atlas to `LIGHT_FRAG`; at a prim texel, reuse `receiverAt`'s prim + `(s,t)` to compute
+      the frame UV (identical to the surface silhouette sample) and `texelFetch` the world-frame normal.
+- [ ] VERIFY: the sampled normal reads right per prim, **stable across zoom** (frame-indexed atlas read, not
+      a world-coord composite read → zoom-safe by construction; confirm it).
 - [ ] (Optional, [forks.md#f6](forks.md#f6)) co-pack albedo/normal/surface into one atlas so a quadrant frame
       shift grabs the normal — sequenceable independently of the lighting work.
 

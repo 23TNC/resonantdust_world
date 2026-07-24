@@ -39,10 +39,12 @@ map** needed. Because the bake is doing **per-prim** lighting, it already finds 
 prim texel (`receiverAt`, the same code that samples the surface **silhouette**). Reading the **normal** is
 the identical move on a normal atlas — `frame_origin + (s,t)·frame_size`, `texelFetch` — an **atlas lookup
 indexed by frame, NOT a world-coord read of a `textile_slot` composite**, so it's in-family and zoom-safe by
-construction ([forks.md#f3](forks.md#f3), user). The atlas normal is Laigter-raw (card frame) and gets
-**pitched to the world frame in-shader from the data-map tilt** before `N·L`. Ground texels (no caster
-bucket) use flat-up. Optional paired win: co-pack albedo/normal/surface into one atlas so a **quadrant shift**
-of the frame grabs any channel ([forks.md#f6](forks.md#f6)).
+construction ([forks.md#f3](forks.md#f3), user). The atlas normal is **baked already in the world frame** —
+the pitch is applied at `bin/art` ingest (DSL orientation: ground → up, thing → horizontal), so the bake
+just `texelFetch`es it and dots — **no runtime pitch, no runtime orientation flag** ([forks.md#f7](forks.md#f7)).
+Cost: the world angle is **bake-committed** (re-ingest to change; `__tilt` live desyncs). Ground tiles are
+prims with a generic white texture (same path). Optional paired win: co-pack albedo/normal/surface into one
+atlas so a **quadrant shift** of the frame grabs any channel ([forks.md#f6](forks.md#f6)).
 
 ## Resolution + family
 Target `R` = **`TEXTILE_SQUARE` = 64/tile** (matches the composite's max detail), **contiguous** `cols·R ×

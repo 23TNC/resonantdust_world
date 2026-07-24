@@ -25,9 +25,11 @@ already finds the prim + `(s,t)` (via `receiverAt`, the same code that samples t
 `frame_origin + (s,t)·frame_size`, `texelFetch`. That is an **atlas lookup indexed by frame — NOT a
 world-coord read of a `textile_slot` composite** — so it is in-family and zoom-safe by construction. The
 whole "bake a contiguous world normal map" problem ([old options a–c]) evaporates.
-- **Pitch in-shader:** the atlas normal is Laigter-raw (card frame); the bake rotates it to the world frame
-  from the data-map tilt (the "tilt in-shader from raw normals" decision) before `N·L`. Macro-vertical +
-  fine leaves compose per prim at bake time.
+- **Pitch is BAKED at ingest (user, 2026-07-24), NOT in-shader.** The atlas normal is written **already in
+  the world frame** — `bin/art` applies the ground-vs-thing rotation at ingest, driven by a **DSL orientation**
+  per def. So the bake just `texelFetch`es a world-frame normal and dots it: **no runtime pitch, no runtime
+  orientation flag** (both move to ingest). Cost — accepted: the world angle is **bake-committed**; see
+  [#f7](#f7).
 - **Plumbing:** the bake reuses `receiverAt` for the prim + `(s,t)`, reads cached `shadow-cold` per light,
   never re-walks a corridor.
 - **Ground = prims, not a special case (user, 2026-07-24).** Rather than branch "ground texel → flat-up",
@@ -46,6 +48,21 @@ whole "bake a contiguous world normal map" problem ([old options a–c]) evapora
 Rejected earlier options (contiguous normal target / sample composite by world coord / merge with SquareCache
 bake) are moot — the frame-indexed atlas read is strictly better (no extra RT, no double-bake, no cross-family
 risk).
+
+## F7 · Bake the normal pitch at ingest → the world angle is bake-committed {#f7}
+**2026-07-24 — DECIDED (user): bake the pitch, accept a fixed world angle.** The normal pitch (card→world)
+is applied once at `bin/art` ingest, keyed by a DSL orientation (`lies-in-ground` → flat = up `ẑ`;
+`stands-perpendicular` → flat = horizontal). Runtime samples the world-frame normal directly — cheaper (no
+per-texel rotation), simpler (no runtime orientation flag).
+
+**The cost, stated plainly — it locks the ENTIRE tilt, not just normals.** The light **direction**
+(world-space-lighting) is computed in the world frame from the **data-map tilt**; the **normal** is baked in
+the world frame at the **ingest** angle. `N·L` is only correct if both share one frame ⟹ the data-map tilt
+**must equal** the ingest angle. So `__tilt(deg)` live would desync direction from normal; changing the world
+angle means **re-ingesting the corpus**. Fine because: the camera is fixed-angle (pan/zoom, no rotate), 55°
+is settled art direction, and the live dial already did its job (finding the angle). After the bake, the
+data-map tilt is "the angle the atlas was baked at", not a free knob. (Reverses the earlier "pitch in-shader
+so normals follow `__tilt`" lean — the only normal consumer is `N·L`, which wants world-frame, so baking wins.)
 
 ## F6 · Co-pack albedo/normal/surface/layers into one atlas (paired optimization) {#f6}
 **2026-07-24 — user proposal; do, but sequenceable.** Reserve a slot **one power of 2 larger** than the
