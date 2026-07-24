@@ -4,13 +4,14 @@
 Drives the ComfyUI box (SDXL i2i + ControlNet edge, east hero + IP-Adapter
 anchored south/north) to paint directional sprites from a template set.
 
-Naming — folder-per-variant layout (docs/texture-paths.md), each map a <map>.png in a
-<id>.<dir>.<layer>/<variant>/ leaf:
-  templates in  textures/<from>/<template-id>.<dir>.<layer>/<template-variant>/template.png
-  sprites  out  textures/<to-or-from>/<template-id>.<dir>.<layer>/<seed>/sprite.png  (SEED = variant; transparent RGBA)
-  prompt   out  textures/<from>/<seed>.prompt.txt                                    (reusable, --prompt; loose sidecar)
-The template supplies <id>.<dir>.<layer>; the SEED becomes the output <variant>, so many
-seeds share one <id>.<dir>.<layer> — i.e. multiple sprite variants/control-maps per object.
+Naming — object-model taxonomy leaf (docs/components/dev/textures/design/texture-layout/):
+<type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>. --from/--to IS a kind path
+(type/subtype/kind, any depth, e.g. pawn/animal/wolf). The TEMPLATE is held by the kind —
+one pose set shared by every variant — and each run paints a new numbered variant beside it:
+  template in   textures/<kind>/template.<dir>.<part>.png       (kind-level; the e/s/n poses)
+  sprites  out  textures/<kind>/<seed>/sprite.<dir>.<part>.png  (SEED = the variant folder, all dirs together; transparent RGBA)
+  prompt   out  textures/<kind>/<seed>.prompt.txt               (reusable, --prompt; loose sidecar)
+One kind-level template feeds many seed variants; each variant folder holds its own e/s/n sprites.
 
 Background is removed by a corner flood-fill (colour auto-detected from the four
 corners, stops at the sharp outline transition). Prompts are used verbatim unless
@@ -178,25 +179,32 @@ def resolve_prompts(args, from_path):
 
 # ---------------------------------------------------------------- naming / templates / bg
 # Leaf layout (docs/components/dev/textures/design/texture-layout/): each directional map is
-# <map>.<dir>.<part>.png inside a single <variant>/ leaf (no <id>/<subkind>). These return the
-# leaf-relative path to a member. `part` is the old `layer` segment (renamed, moved into the file).
-def template_name(tid, d, part, tvar):   # the pose reference (map=template); tid dropped
-    return os.path.join(texpath.variant_leaf(tvar), texpath.map_name("template", d, part))
-def sprite_name(tid, d, part, seed):     # generated sprite: SEED is the variant (map=sprite)
+# <map>.<dir>.<part>.png. Generated sprites sit in a per-variant <seed>/ leaf; the TEMPLATE is a
+# kind-level asset (no variant folder), one pose set shared by every variant of the kind.
+# `part` is the old `layer` segment (renamed, moved into the file).
+def template_name(d, part):              # the pose reference (map=template), held by the kind
+    return texpath.map_name("template", d, part)
+def sprite_name(d, part, seed):          # generated sprite: SEED is the variant leaf (map=sprite)
     return os.path.join(texpath.variant_leaf(seed), texpath.map_name("sprite", d, part))
 
-def load_template(from_path, tid, d, layer, tvar):
-    p = os.path.join(REPO, "textures", from_path, template_name(tid, d, layer, tvar))
+def load_template(from_path, d, part, tvar):
+    # Canonical: template held at the kind level (textures/<kind>/template.<dir>.<part>.png).
+    # Fallback: an old set still inside a <variant>/ leaf (textures/<kind>/<tvar>/template...).
+    kind_dir = os.path.join(REPO, "textures", from_path)
+    p = os.path.join(kind_dir, template_name(d, part))
     if not os.path.exists(p):
-        raise SystemExit(f"generate: template not found: {p}")
+        alt = os.path.join(kind_dir, texpath.variant_leaf(tvar), template_name(d, part))
+        if not os.path.exists(alt):
+            raise SystemExit(f"generate: template not found: {p}")
+        p = alt
     t = Image.open(p).convert("RGBA").resize((512, 512), Image.LANCZOS)
     f = Image.new("RGBA", (512, 512), (255, 255, 255, 255)); f.alpha_composite(t)
     return f.convert("RGB")
 
-def load_hero_from_disk(out_dir, tid, layer, seed):
-    """An already-generated east sprite (<id>.e.<layer>/<seed>/sprite.png), flattened
-    onto white, for use as the IP anchor when east isn't regenerated this run."""
-    p = os.path.join(out_dir, sprite_name(tid, "e", layer, seed))
+def load_hero_from_disk(out_dir, part, seed):
+    """An already-generated east sprite (<seed>/sprite.e.<part>.png), flattened onto
+    white, for use as the IP anchor when east isn't regenerated this run."""
+    p = os.path.join(out_dir, sprite_name("e", part, seed))
     if not os.path.exists(p):
         return None
     im = Image.open(p).convert("RGBA")
@@ -306,16 +314,15 @@ def graph_ip(pos, neg, ref_name, edge_name, hero_name, seed):
 def main():
     global DN, CN, CN_END, CFG   # --dn/--cn/--cn-end/--cfg override the module defaults
     ap = argparse.ArgumentParser(prog="art generate", description="Generate directional creature sprites from a template set.")
-    ap.add_argument("--from", dest="from_path", required=True, help="kind path under textures/ holding the template leaves, any depth (e.g. pawn/animal/wolf/default)")
+    ap.add_argument("--from", dest="from_path", required=True, help="kind path under textures/ holding the kind-level template (type/subtype/kind, e.g. pawn/animal/wolf)")
     ap.add_argument("--to", dest="to_path", default=None, help="output kind path under textures/ (default: same as --from)")
     ap.add_argument("--positive", default="", help="short creature description")
     ap.add_argument("--negative", default="", help="short 'avoid' description")
     ap.add_argument("--prompt", default=None, help="reuse a saved prompt: an id (textures/<from>/<id>.prompt.txt) or a path")
     ap.add_argument("--llm", action="store_true", help="expand --positive/--negative via Claude (spends API tokens; off by default)")
-    ap.add_argument("--seed", type=int, default=None, help="seed; also the output id. random if omitted")
-    ap.add_argument("--template-id", default="1", help="template <id> within the folder (default 1)")
-    ap.add_argument("--layer", default="0", help="template/sprite <layer> field (default 0)")
-    ap.add_argument("--template-variant", default="0", help="template <variant> field to read (default 0)")
+    ap.add_argument("--seed", type=int, default=None, help="seed; also the output variant folder. random if omitted")
+    ap.add_argument("--part", default="0", help="sprite <part> field — body=0, head=1, … (default 0)")
+    ap.add_argument("--template-variant", default="0", help="legacy fallback: variant folder to read the template from when none sits at the kind level (default 0)")
     ap.add_argument("--dirs", default="e,s,n", help="directions to generate (default e,s,n; e is the hero)")
     ap.add_argument("--dir", default=None, help="generate a single direction (overrides --dirs), e.g. --dir s")
     ap.add_argument("--size", type=int, default=512, help="output sprite size in px (default 512; generation stays at 512, only the saved file scales)")
@@ -340,7 +347,7 @@ def main():
         print(f"generate: --hsym/--vsym ignores unknown direction(s) {''.join(sorted(bad))} (valid: {''.join(FACE)})", file=sys.stderr)
 
     seed = args.seed if args.seed is not None else random.randint(1, 2**31 - 1)
-    tid, layer, tvar = args.template_id, args.layer, args.template_variant   # template <id>.<dir>.<layer>.<variant>
+    part, tvar = args.part, args.template_variant   # template.<dir>.<part>; tvar = legacy fallback variant folder
     dirs = [args.dir.strip()] if args.dir else [d.strip() for d in args.dirs.split(",") if d.strip()]
     if "e" in dirs: dirs = ["e"] + [d for d in dirs if d != "e"]   # hero first
     from_path = args.from_path.strip("/")
@@ -370,16 +377,16 @@ def main():
 
     hero_name = None
     if "e" not in dirs:   # regenerating only s/n — anchor to the existing east sprite if present
-        hero_img = load_hero_from_disk(out_dir, tid, layer, seed)
+        hero_img = load_hero_from_disk(out_dir, part, seed)
         if hero_img is not None:
             hero_name = _upload(hero_img, f"artgen_{seed}_hero.png")
-            print(f"  IP anchor: existing {sprite_name(tid, 'e', layer, seed)}")
+            print(f"  IP anchor: existing {sprite_name('e', part, seed)}")
         else:
-            print(f"generate: no existing east sprite ({sprite_name(tid, 'e', layer, seed)}); {dirs} generate without IP anchor", file=sys.stderr)
+            print(f"generate: no existing east sprite ({sprite_name('e', part, seed)}); {dirs} generate without IP anchor", file=sys.stderr)
     for d in dirs:
         if d not in FACE:
             print(f"generate: skipping unknown direction '{d}'", file=sys.stderr); continue
-        tpl = load_template(from_path, tid, d, layer, tvar)
+        tpl = load_template(from_path, d, part, tvar)
         ref_name = _upload(tpl, f"artgen_{seed}_{d}_ref.png")
         edge_name = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{seed}_{d}_edge.png")
         full_pos = f"{pos}, {STYLE.format(face=FACE[d])}"
@@ -394,11 +401,11 @@ def main():
         if d in hsym: sprite = make_symmetric(sprite, "h")             # force symmetry after the cut
         if d in vsym: sprite = make_symmetric(sprite, "v")
         sprite = resize_sprite(sprite, args.size)                       # scale AFTER the cut (premultiplied)
-        out = os.path.join(out_dir, sprite_name(tid, d, layer, seed))   # SEED = variant
+        out = os.path.join(out_dir, sprite_name(d, part, seed))         # SEED = variant leaf
         os.makedirs(os.path.dirname(out), exist_ok=True)                # ensure the variant leaf
         sprite.save(out)
         print(f"  wrote {os.path.relpath(out, REPO)}")
-    print(f"generate: done (id {tid} variant {seed})")
+    print(f"generate: done (kind {out_path} variant {seed})")
 
 if __name__ == "__main__":
     main()
