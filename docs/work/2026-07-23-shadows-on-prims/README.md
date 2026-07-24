@@ -8,6 +8,11 @@ shadow). Phases in [`todo.md`](todo.md); decisions in [`forks.md`](forks.md)._
 Make cast shadows land **on standing prims (billboards)** correctly — climbing the billboard at the
 right height instead of painting over it flat or being binary-removed as a whole.
 
+> **Depends on [`2026-07-23-world-geometry`](../2026-07-23-world-geometry/README.md).** That stream
+> ratifies the one vertical model (`z = sin65·(px.y − base)`) and conforms the caster projection to it.
+> Building receivers here while casters still run the old leaning-card fiction would put the two in
+> different vertical frames — align first.
+
 ## The problem
 Our shadow is evaluated on the **ground** (`z = 0`) at every pixel. A pixel on a standing billboard is
 NOT on the ground — it's an **elevated** point. Two symptoms of ignoring that:
