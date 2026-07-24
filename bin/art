@@ -177,8 +177,8 @@ GRID_MAPS="diffuse normal albedo depth emissive occlusion specular overlay"
 # That derived value is the RECOMMENDED `--pitch_normal` (see cmd_remaster) — but the pitch is now
 # an explicit knob defaulting to 0 (no change), NOT auto-applied. Grid/ground tiles are already in
 # the ground frame and should never be pitched.
-WORLD_TILT_DEG=65
-NORMAL_PITCH_DEG=$((90 - WORLD_TILT_DEG))   # = 25° — the geometrically-correct pitch to pass
+WORLD_TILT_DEG=55                           # MUST match client shadowGather.ts (baked pitch commits the angle)
+NORMAL_PITCH_DEG=$((90 - WORLD_TILT_DEG))   # = 35° — the geometrically-correct pitch to pass
 
 # True if FILE is named <stem>.<known-map>.png (so `1.normal.png` is a map atlas,
 # but a descriptive `Fence_Atlas.png` is not) — used to tell an authored map
