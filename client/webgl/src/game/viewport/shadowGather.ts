@@ -82,6 +82,12 @@ const SELF_BANDF = SELF_BAND.toFixed(1);
  *  it's not visibly coloured) to close the seam at the shadow base (user nit). */
 const SHADOW_BASE_PUSH = 0.75;
 const SHADOW_BASE_PUSHF = SHADOW_BASE_PUSH.toFixed(2);
+/** shadows-onto-prims: fade the receiver MASK to GROUND over this many units at the sprite BASE. Without it
+ *  the mask claims the trunk base as a thing texel, whose thing-path self-excludes the caster → the ground
+ *  contact shadow (incl. the pushed base) gets CULLED there, leaving a lit seam. Fading the bottom band to
+ *  ground lets that contact shadow show (thing ≈ ground at the base anyway). Units (user nit). */
+const MASK_BASE_FADE = 1.5;
+const MASK_BASE_FADEF = MASK_BASE_FADE.toFixed(1);
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
 /** Lights per tile in presence + shadow-cold: 14 (7 per presence set), each a u8 coverage in the
  *  128-bit shadow-cold texel (slot i at channel i>>2, bits (i&3)·8). */
@@ -290,7 +296,10 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf,
   float t = (Ac.y - P.y) / H;                              // 0 at the base → 1 at the top (north)
   if (s < 0.0 || s > 1.0 || t < 0.0 || t > 1.0) return -1.0; // outside the drawn billboard → not this prim
   baseYOut = Ac.y;                                          // EXACT receiver base y (units) — not row-quantised
-  if (lod < 4u) return 1.0;                                // no silhouette resolved → solid billboard rect (full)
+  // Fade the mask to GROUND over the bottom band so the ground contact-shadow shows at the trunk base
+  // (else the mask claims it as a thing texel and the thing-path self-excludes → a lit seam).
+  float bf = clamp((Ac.y - P.y) / ${MASK_BASE_FADEF}, 0.0, 1.0); // 0 at the base → 1 above the band
+  if (lod < 4u) return bf;                                  // no silhouette resolved → solid rect × base fade
   float ppu = float(1u << lod) / spanU;
   float fx = float((D.z >> 22) & 1023u) * 16.0, fy = float((D.z >> 12) & 1023u) * 16.0;
   float nx = float(int((D.w >> 20) & 4095u) - 2048), ny = float(int((D.w >> 8) & 4095u) - 2048);
@@ -298,7 +307,7 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf,
   if (rot == 3u) s = 1.0 - s;                              // W-facing = mirrored E frame (matches casterCover)
   vec2 uv = vec2(fx, fy) + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(s * W, (1.0 - t) * H) * ppu;
   if (uv.x < fx || uv.x >= fx + side || uv.y < fy || uv.y >= fy + side) return 0.0; // outside frame → gap (0 cover)
-  return texelFetch(surf, ivec2(uv), 0).b;                 // SOFT silhouette coverage 0..1 (edge blend)
+  return texelFetch(surf, ivec2(uv), 0).b * bf;            // SOFT silhouette coverage × base fade (0..1)
 }
 // Which standing prim is DRAWN at texel P, and its base row? Scan the caster buckets a few rows SOUTH (a
 // billboard draws NORTH of its base, so the covering prim's base sits at/south of the drawn texel), test each
