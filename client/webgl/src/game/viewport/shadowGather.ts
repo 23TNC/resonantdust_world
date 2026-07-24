@@ -51,6 +51,12 @@ const UNITF = UNIT.toFixed(4);
  *  place, so the world tilt is never a magic `65.0` scattered through the shaders. */
 const WORLD_TILT_DEG = 65;
 const TILT_RADF = (WORLD_TILT_DEG * Math.PI / 180).toFixed(6); // GLSL literal (radians)
+/** shadows-on-prims: a billboard pixel drawn Δ units above its own base has fictional height
+ *  `sin(WORLD_TILT)·Δ` (the ratified world-geometry model). This is the DEFAULT receiver-elevation
+ *  gain; `__elevk(k)` tunes the shadow's climb rate by eye (forks F5 — empirical, because the caster
+ *  card runs its own internal ratio via the documented 0.5 north-offset deviation, so the receiver
+ *  gain is a free knob to match the two by eye). 0 collapses prim shadows to the flat ground shadow. */
+const ELEV_K_DEFAULT = Math.sin(WORLD_TILT_DEG * Math.PI / 180);
 /** Lift the rendered shadow up (toward smaller world-y) by this many world units — a fragment shows
  *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Closes the ~1
  *  unit gap between the shadow base and the sprite's drawn base (a fixed anchor discrepancy: the sprite
@@ -73,12 +79,15 @@ interface Light {
   dynamic: boolean;      // moves every frame (around its home); static lights never move
 }
 
-/** The cold cache's toroidal tile window (from `SquareCache.window`) — shadow-cold aligns to it. */
+/** The cold cache's toroidal tile window (from `SquareCache.window`) — shadow-cold aligns to it.
+ *  `slotPx` is the COMPOSITE atlas slot px (padded slot-atlas; ≠ TEXTILE_UNIT) — shadows-on-prims
+ *  samples the zdepth composite by world position, and needs the composite's slot pitch to do so. */
 export interface TileWindow {
   winCol: number;
   winRow: number;
   cols: number;
   rows: number;
+  slotPx: number;
 }
 
 /** Shared GLSL: packed-position decode + ground projection + the fan region predicate (roles → tris). */
@@ -237,6 +246,34 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D 
   }
   return cov / 16.0;
 }
+// shadows-on-prims: ONE per-caster test shared by the corridor + brute walks (so both stay bit-identical
+// — the P6 identity invariant). Q = the point whose shadow we sample (ground texel = the lifted texel;
+// thing texel = the elevated pixel's ground projection G). Two THING-only culls implement the user's cone
+// method:
+//   (1) SELF / same-row — skip any caster whose anchor row == the receiver's base row: the receiver's own
+//       prim (or a same-tile-row neighbour) must not shadow the billboard it's drawn on (kills self-shadow;
+//       same-tile things don't shadow each other — tile-row granularity, per the user).
+//   (2) FRONT/BEHIND — the caster must be BETWEEN the light and the receiver (in front of the receiver's
+//       base). A caster behind the receiver casts away from it (onto its unseen back); including it is the
+//       "sample-the-ground-shadow-at-G" over-shadow bug. dot(Cb−Rbase, Rbase−L) < 0 means caster on the
+//       light side of the receiver base. This cull also bounds every valid caster inside the light's reach
+//       (Rbase is within reach ⇒ an in-front caster is nearer the light ⇒ corridor & brute both visit it).
+// The climb + far edge need no extra test: a high pixel projects to a far G that falls OUTSIDE the caster's
+// finite ground shadow (past shadow.tip) ⇒ casterCover returns 0 there. Returns coverage + the caster row.
+float casterOne(uint primIdx, vec2 Q, vec3 L, float emitter, bool isThing, float baseRow, vec2 Rbase,
+                highp usampler2D data, sampler2D surf, out float row) {
+  row = 0.0;
+  if (primIdx == 0u) return 0.0;
+  vec2 Cb = decodePos(fetchLin(data, PRIM_BASE + int(primIdx)).y); // caster base (anchor = base-centre)
+  float cr = floor(Cb.y / UPT);
+  if (isThing) {
+    if (abs(cr - baseRow) < 0.5) return 0.0;                 // (1) self / same-row
+    if (dot(Cb - Rbase, Rbase - L.xy) >= 0.0) return 0.0;    // (2) caster behind the receiver → no cast on its seen face
+  }
+  float cc = casterCover(primIdx, Q, L, emitter, data, surf);
+  if (cc > 0.0) row = cr;
+  return cc;
+}
 `;
 
 const FULLSCREEN_VERT = /* glsl */ `#version 300 es
@@ -334,6 +371,9 @@ uniform highp usampler2D uDirty;      // shadow_dirty — textile_tile map (R8UI
 uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 uniform int uLightClass;              // #4: process only this class of light — 0 = COLD (static), 1 = HOT (dynamic)
+uniform sampler2D uZDepth;            // shadows-on-prims: zdepth-world composite (B = 0x80|base_row thing, 0 ground)
+uniform int uZTexW, uZTexH, uZSlot;   // composite atlas dims (px) + slot pitch (padded slot-atlas → world→uv)
+uniform float uElevK;                 // receiver-elevation gain (sin65 default; 0 = flat ground shadow, __elevk)
 layout(location = 0) out uvec4 fragColor; // per-light u9 shadow coverage
 layout(location = 1) out uvec4 oCasterD;  // #3: frontmost caster row (R, 7-bit) shadowing this texel
 ${GATHER_COMMON}
@@ -351,8 +391,21 @@ void main() {
   int wr = uWinRow + pmod(sy - pmod(uWinRow, uRows), uRows);
   float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot); // 0..1 within the tile
   float ly = (float(fc.y) - float(sy * uSlot)) / float(uSlot);
-  vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
-  P.y += ${SHADOW_LIFTF}; // #2: lift the shadow up — test the ground point SHADOW_LIFT units below this one
+  vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS (true texel position)
+  // shadows-on-prims: is a standing prim DRAWN at this texel? Sample the zdepth composite (a padded
+  // slot-atlas on the SAME toroidal window as shadow-cold) by world position. B = 0x80|base_row for a
+  // thing, 0 for ground. sx/sy = the tile's slot; interior origin = (slot+1)·slotPx; frac within = lx/ly.
+  int sxz = pmod(wc, uCols), syz = pmod(wr, uRows);
+  vec2 zuv = vec2((float((sxz + 1) * uZSlot) + lx * float(uZSlot)) / float(uZTexW),
+                  (float((syz + 1) * uZSlot) + ly * float(uZSlot)) / float(uZTexH));
+  int zb = int(texture(uZDepth, zuv).b * 255.0 + 0.5);
+  bool isThing = (zb & 0x80) != 0;
+  float baseRow = float(zb & 0x7f);                          // the receiver prim's base tile row
+  // Fictional height of this billboard pixel above its OWN base (units); 0 for ground, clamps ≥ 0 below
+  // the base. This drives the per-light ground projection below → the shadow CLIMBS the billboard.
+  float zElev = isThing ? uElevK * max(0.0, baseRow * UPT - P.y) : 0.0;
+  vec2 Rbase = vec2(P.x, baseRow * UPT);                     // receiver base position (front/behind cull axis)
+  vec2 Pground = P; Pground.y += ${SHADOW_LIFTF}; // #2 lift — GROUND path only (thing path projects instead)
 
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
@@ -367,6 +420,16 @@ void main() {
     if (int((Ld.w >> 1) & 1u) != uLightClass) continue;     // #4: this pass handles only its class (cold/hot)
     vec3 L = vec3(decodePos(Ld.y), float((Ld.w >> 24) & 255u));
     float emitter = float((Ld.w >> 4) & 255u);              // emitter_radius (units) → penumbra width
+    // shadows-on-prims: the point whose shadow we sample. GROUND → the lifted texel (unchanged, so the
+    // identity invariant holds). THING → the texel's elevated pixel projected onto the ground along the
+    // light ray through it — pushed away from the light ∝ its height (s = Lz/(Lz−z)). That IS the
+    // climbing-billboard shadow: base pixels (z≈0) sample near P, high pixels project far.
+    vec2 Q = Pground;
+    if (isThing) {
+      float ze = min(zElev, 0.9 * L.z);                     // keep s bounded (pixel below the light)
+      float sProj = L.z / (L.z - ze);
+      Q = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
+    }
     float cov = 0.0;
     if (uCorridor == 1) {
       // P6 CORRIDOR — the pure optimization, validated against the brute box below. Why the segment
@@ -378,7 +441,7 @@ void main() {
       // step cap, same pmod slot mapping as the buckets). Constant loop bound; only m in the
       // condition (the GLSL loop-condition foot-gun).
       vec2 a = L.xy / UPT;                                   // light in tile coords
-      vec2 b = P / UPT;                                      // texel in tile coords
+      vec2 b = Q / UPT;                                      // sample point in tile coords (ground = P, thing = G)
       vec2 d = b - a;
       int nsteps = int(ceil(abs(d.x)) + ceil(abs(d.y))) + 1; // ≥ max-axis span → ≤1 tile between samples
       for (int m = 0; m <= 48; m++) {                        // constant bound (brute caps reach at 16 tiles too)
@@ -390,10 +453,8 @@ void main() {
           uvec4 cb = fetchLin(uData, CASTER_BASE + foldTile(o.x, o.y)); // region-torus bucket
           for (int c = 0; c < 7; c++) {
             uint primIdx = tileSlot(cb, c);
-            if (primIdx != 0u) {
-              float cc = casterCover(primIdx, P, L, emitter, uData, uSurface); // MAX: idempotent per caster (P6 identity)
-              if (cc > 0.0) { cov = max(cov, cc); casterDepth = max(casterDepth, casterRowOf(uData, primIdx)); } // #3
-            }
+            float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, Rbase, uData, uSurface, r); // shared w/ brute (P6 identity)
+            if (cc > 0.0) { cov = max(cov, cc); casterDepth = max(casterDepth, r); } // #3
           }
         }
       }
@@ -409,10 +470,8 @@ void main() {
           uvec4 cb = fetchLin(uData, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy)); // region-torus bucket
           for (int c = 0; c < 7; c++) {
             uint primIdx = tileSlot(cb, c);
-            if (primIdx != 0u) {
-              float cc = casterCover(primIdx, P, L, emitter, uData, uSurface); // MAX: idempotent per caster (P6 identity)
-              if (cc > 0.0) { cov = max(cov, cc); casterDepth = max(casterDepth, casterRowOf(uData, primIdx)); } // #3
-            }
+            float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, Rbase, uData, uSurface, r); // shared w/ corridor (P6 identity)
+            if (cc > 0.0) { cov = max(cov, cc); casterDepth = max(casterDepth, r); } // #3
           }
         }
       }
@@ -559,6 +618,14 @@ export class ShadowGather {
   private seedY = 0;
   private readonly empty: Texture;
   private enabled = true;
+  /** shadows-on-prims: the zdepth-world composite (cold cache) + its atlas slot pitch — the gather samples
+   *  it by world position to learn where a standing prim is DRAWN (is-thing + base row), so that prim's
+   *  shadow climbs the billboard instead of being painted flat. Null → every texel reads as ground. */
+  private depthTex: Texture | null = null;
+  private depthSlotPx = 0;
+  /** Receiver-elevation gain for prim shadows (sin65 by the world-geometry model). `__elevk` tunes the
+   *  climb rate by eye (forks F5); 0 collapses prim shadows back to the flat ground shadow. */
+  private elevK = ELEV_K_DEFAULT;
   private readonly coldData: ColdShadowData;
   private lastCasterCount = -1;
   private coldDirty = true;
@@ -634,6 +701,9 @@ export class ShadowGather {
     (globalThis as unknown as { __gather: ShadowGather }).__gather = this;
     // DEBUG: tune the emitter (area-light) RADIUS in world px live — bigger = softer penumbra.
     (globalThis as unknown as { __emit: (px?: number) => number }).__emit = (px?: number) => this.setEmitter(px);
+    // DEBUG (shadows-on-prims): tune the receiver-elevation gain live — bigger = the prim shadow climbs
+    // faster/higher up a billboard; 0 = flat ground shadow (the A/B baseline).
+    (globalThis as unknown as { __elevk: (k?: number) => number }).__elevk = (k?: number) => this.setElevK(k);
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -884,6 +954,14 @@ export class ShadowGather {
     this.forceColdDirty = this.forceHotDirty = true;  // recompute every shadow/light tile
     return px;
   }
+  /** DEBUG (shadows-on-prims): the receiver-elevation gain (no arg = read). Recomputes every tile so the
+   *  new climb takes immediately. */
+  setElevK(k?: number): number {
+    if (k === undefined) return this.elevK;
+    this.elevK = k;
+    this.forceColdDirty = this.forceHotDirty = true;
+    return this.elevK;
+  }
   /** DEBUG (P6): read a class's shadow RT back (RGBA32UI) — the corridor↔brute identity diff. `cls` 1 =
    *  hot (default, the moving light), 0 = cold. Each class's gather is independently corridor-identical. */
   debugReadShadow(cls = 1): Uint32Array | null {
@@ -943,9 +1021,13 @@ export class ShadowGather {
   get coldUnshadowed(): Texture | null { return this.coldLightRT?.textures[2] ?? null; }
   get hotUnshadowed(): Texture | null { return this.hotLightRT?.textures[2] ?? null; }
 
-  /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield. */
-  tick(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
+  /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield.
+   *  `depth` = the zdepth-world-cold composite (shadows-on-prims): the gather samples it to climb prim
+   *  shadows up standing billboards. Null (not yet baked) → every texel reads as ground. */
+  tick(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow, depth: Texture | null): void {
     if (!this.enabled || this.lights.length === 0) return;
+    this.depthTex = depth;
+    this.depthSlotPx = win.slotPx;
 
     // Motion. Default: only `dynamic` lights move (each orbits its own home) — the moving-light case
     // in a scene with static reference lights. `__orbit` (DEBUG) instead rings EVERY light around the
@@ -1022,10 +1104,15 @@ export class ShadowGather {
         uData: this.coldData.dataTexture, // defs | prims | lights | presence | buckets
         uDirty: dirty,
         uSurface: this.coldData.surfacePage ?? this.empty, // no page yet → defs have no frame → solid quads
+        uZDepth: this.depthTex ?? this.empty, // shadows-on-prims: is-thing + base row (null → all ground)
       },
       uniforms: (p) => {
         p.uInt("uCorridor", this.corridor ? 1 : 0);
         p.uInt("uLightClass", cls);
+        p.uInt("uZTexW", this.depthTex?.width ?? 1);
+        p.uInt("uZTexH", this.depthTex?.height ?? 1);
+        p.uInt("uZSlot", this.depthSlotPx);
+        p.uFloat("uElevK", this.elevK);
       },
     });
     this.renderer.draw({
