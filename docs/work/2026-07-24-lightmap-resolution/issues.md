@@ -28,11 +28,12 @@ deliverable that justifies the trade.
 the composite's variable `slotPx` `textile_slot` atlas — which would reintroduce the zoom-drift that
 reverted shadows-on-prims twice.
 
-## I-4 · The fine-normal-in-the-bake is the risk, and it's a cross-family read {#i4}
-**2026-07-24.** [F3](forks.md#f3) is the one genuinely hard part: the contiguous bake needs the fine normal,
-which currently lives in the `textile_slot` composite. Sampling that atlas from the bake by world coord is
-exactly the forbidden cross-family lookup (I-3). The safe route is a **contiguous** fine normal map for the
-bake to read — but that means the normal is produced twice (composite for display, contiguous for lighting)
-unless the bakes are unified. P0 must resolve this before any lighting code, or it silently re-introduces
-the zoom bug. (Same discipline as world-geometry / map-compat: don't build on an unverified cross-map read.)
+## I-4 · The fine-normal-in-the-bake — was feared cross-family, RESOLVED as a frame-indexed atlas read {#i4}
+**2026-07-24 — RESOLVED (user), what looked like the crux isn't.** The worry was that the contiguous bake
+would have to read the fine normal from the `textile_slot` composite by world coord — the forbidden
+cross-family lookup (I-3). The escape: the bake does **per-prim** lighting, so it reads the normal from the
+prim's **atlas frame** (`frame_origin + (s,t)·frame_size`), exactly as `casterCover` reads the silhouette.
+That's **indexed by frame, not by world coordinate**, so it's in-family and zoom-safe — no world normal map,
+no double-bake, no cross-family risk ([F3](forks.md#f3)). The map-compat discipline still holds (never read a
+`textile_slot` map by world coord); we simply don't need to — the frame index sidesteps it entirely.
 </content>

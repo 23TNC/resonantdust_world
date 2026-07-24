@@ -17,19 +17,33 @@ of resolution. Doing the `N·L` per light inside the bake (against the fine norm
 accumulated result. Needs the fine normal in the bake (→ [F3](#f3)), and drops the direction/unshadowed
 attachments (→ [F5](#f5)).
 
-## F3 · How the bake gets the fine normal (THE crux) {#f3}
-**2026-07-24 — OPEN, P0's job.** `LIGHT_FRAG` (contiguous world-space toroidal) must sample the fine normal
-per bake texel. The normal today lives in the `SquareCache` composite — a `textile_slot` atlas that is NOT
-safe to address by recomputed world coordinate (map-compatibility; the zoom-drift that reverted
-shadows-on-prims twice). Options:
-- **(a) Bake a contiguous normal map** aligned with the lightmap (a world-space toroidal `textile_square`
-  normal target, off the existing normal bake). The lightmap bake samples it safely. Lean — it's the
-  in-family, zoom-safe route; costs one more RT + a bake write.
-- **(b) Sample the composite from the bake by world coord.** Rejected — the exact fragile cross-family
-  lookup the map-compat lesson forbids.
-- **(c) Integrate the light bake with the SquareCache per-square bake** so it shares the composite's UV.
-  Cleaner in principle, larger restructure; revisit if (a) proves wasteful.
-The normal must arrive in the **pitched world frame** `normal-tilt` produces (or be pitched in-bake).
+## F3 · How the bake gets the fine normal — RESOLVED (sample the prim's atlas frame) {#f3}
+**2026-07-24 — RESOLVED (user): sample the prim's NORMAL from its ATLAS FRAME in the bake, exactly like the
+silhouette.** No world normal map at all. The bake is doing **per-prim** lighting, so at a prim texel it
+already finds the prim + `(s,t)` (via `receiverAt`, the same code that samples the surface silhouette in
+`casterCover`/`receiverCover`). Reading the **normal** is the identical move on a normal atlas:
+`frame_origin + (s,t)·frame_size`, `texelFetch`. That is an **atlas lookup indexed by frame — NOT a
+world-coord read of a `textile_slot` composite** — so it is in-family and zoom-safe by construction. The
+whole "bake a contiguous world normal map" problem ([old options a–c]) evaporates.
+- **Pitch in-shader:** the atlas normal is Laigter-raw (card frame); the bake rotates it to the world frame
+  from the data-map tilt (the "tilt in-shader from raw normals" decision) before `N·L`. Macro-vertical +
+  fine leaves compose per prim at bake time.
+- **Plumbing:** the bake reuses `receiverAt` for the prim + `(s,t)`, reads cached `shadow-cold` per light,
+  never re-walks a corridor.
+- **Ground:** ground texels have no caster-bucket prim → use flat-up (`ẑ`), no atlas fetch. A detailed
+  ground-normal path is a separate later concern; flat-up is correct for the macro and free.
+Rejected earlier options (contiguous normal target / sample composite by world coord / merge with SquareCache
+bake) are moot — the frame-indexed atlas read is strictly better (no extra RT, no double-bake, no cross-family
+risk).
+
+## F6 · Co-pack albedo/normal/surface/layers into one atlas (paired optimization) {#f6}
+**2026-07-24 — user proposal; do, but sequenceable.** Reserve a slot **one power of 2 larger** than the
+sprite (`2N×2N` around `N×N`) and lay the four maps in its quadrants; grab any channel by adding a fixed
+`(N,0)/(0,N)/(N,N)` offset to the frame origin — **one atlas binding, one frame lookup + a quadrant shift**,
+and albedo/normal/surface for the same texel become **cache-adjacent** (the per-pixel per-light loop reads
+all of them). Cost: `bin/art` co-packs at ingest, the resolver learns the quadrant offsets, the quadtree
+packer reserves 4× area/sprite. No net VRAM (same data, co-located). NOT required for [F3](#f3) (a standalone
+normal atlas also works) — it's an independent atlas win that pairs naturally.
 
 ## F4 · Target resolution + family {#f4}
 **2026-07-24 — `TEXTILE_SQUARE` = 64/tile, CONTIGUOUS.** Matches the composite's max detail; stays a

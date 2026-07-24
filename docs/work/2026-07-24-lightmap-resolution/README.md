@@ -33,15 +33,16 @@ Bonus: with `N·L` baked in, the separate **direction** (att1) and **unshadowed*
 the fine lightmap is a single irradiance RGB per class, so it's ~1 attachment where we had 3
 ([forks.md#f5](forks.md#f5)).
 
-## The central technical challenge — the fine normal inside the bake
-To bake `N·L` at fine res, `LIGHT_FRAG` needs the **normal at each bake texel**. The lightmap bake is a
-**contiguous world-space toroidal** map (`textile_unit` family); the normal today lives in the `SquareCache`
-**composite**, a `textile_slot` atlas that is NOT safe to address by recomputed world coordinate (the
-[map-compatibility](../2026-07-24-map-compatibility/README.md) lesson — the exact zoom-drift that reverted
-shadows-on-prims twice). So we need the fine normal in a **contiguous, world-coord-addressable** form for the
-bake ([forks.md#f3](forks.md#f3), the key open decision): most likely bake the normal into a contiguous
-world-space map aligned with the lightmap (a second normal target, or restructure the normal bake), NOT
-sample the slot atlas from the bake. This is the crux and where the risk lives.
+## The fine normal inside the bake — RESOLVED (sample the prim's atlas frame)
+To bake `N·L` at fine res, `LIGHT_FRAG` needs the normal at each bake texel — and there is **no world normal
+map** needed. Because the bake is doing **per-prim** lighting, it already finds the prim + `(s,t)` at each
+prim texel (`receiverAt`, the same code that samples the surface **silhouette**). Reading the **normal** is
+the identical move on a normal atlas — `frame_origin + (s,t)·frame_size`, `texelFetch` — an **atlas lookup
+indexed by frame, NOT a world-coord read of a `textile_slot` composite**, so it's in-family and zoom-safe by
+construction ([forks.md#f3](forks.md#f3), user). The atlas normal is Laigter-raw (card frame) and gets
+**pitched to the world frame in-shader from the data-map tilt** before `N·L`. Ground texels (no caster
+bucket) use flat-up. Optional paired win: co-pack albedo/normal/surface into one atlas so a **quadrant shift**
+of the frame grabs any channel ([forks.md#f6](forks.md#f6)).
 
 ## Resolution + family
 Target `R` = **`TEXTILE_SQUARE` = 64/tile** (matches the composite's max detail), **contiguous** `cols·R ×
