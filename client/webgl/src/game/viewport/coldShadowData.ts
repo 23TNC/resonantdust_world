@@ -198,21 +198,23 @@ export class ColdShadowData {
     this.dirtySet.add(linear);
   }
 
-  /** P3: the constants row — window mapping + slot/light-count, compare-written so an unchanged
-   *  window costs nothing. Rides the same command path as every other write. */
-  private lastConst = [NaN, NaN, NaN, NaN, NaN, NaN];
-  setConstants(cols: number, rows: number, winCol: number, winRow: number, slot: number, lights: number): void {
+  /** P3: the constants row — window mapping + slot/light-count + the WORLD TILT, compare-written so an
+   *  unchanged frame costs nothing. Rides the same command path as every other write. */
+  private lastConst = [NaN, NaN, NaN, NaN, NaN, NaN, NaN];
+  /** `tiltCentiDeg` = the world ground tilt in **centidegrees** (65° → 6500) — lives in the data map's A
+   *  reserve so every lighting shader reads the angle without a dedicated uniform (world-space-lighting). */
+  setConstants(cols: number, rows: number, winCol: number, winRow: number, slot: number, lights: number, tiltCentiDeg: number): void {
     const c = this.lastConst;
-    if (c[0] === cols && c[1] === rows && c[2] === winCol && c[3] === winRow && c[4] === slot && c[5] === lights) return;
-    this.lastConst = [cols, rows, winCol, winRow, slot, lights];
+    if (c[0] === cols && c[1] === rows && c[2] === winCol && c[3] === winRow && c[4] === slot && c[5] === lights && c[6] === tiltCentiDeg) return;
+    this.lastConst = [cols, rows, winCol, winRow, slot, lights, tiltCentiDeg];
     // v2.1 — ONE self-addressing px: R = u16 id | u16 cols; G = u16 rows | u16 slot;
-    // B = i16 winCol | i16 winRow (two's complement halves); A = u16 light_count | u16 reserved.
+    // B = i16 winCol | i16 winRow (two's complement halves); A = u16 light_count | u16 tilt_centideg.
     const b0 = CONST_BASE * 4;
     const inSet = CONST_BASE & 0xffff; // its own in-set id (set 15)
     this.dataMirror[b0] = ((inSet << 16) | (cols & 0xffff)) >>> 0;
     this.dataMirror[b0 + 1] = (((rows & 0xffff) << 16) | (slot & 0xffff)) >>> 0;
     this.dataMirror[b0 + 2] = (((winCol & 0xffff) << 16) | (winRow & 0xffff)) >>> 0;
-    this.dataMirror[b0 + 3] = ((lights & 0xffff) << 16) >>> 0;
+    this.dataMirror[b0 + 3] = (((lights & 0xffff) << 16) | (tiltCentiDeg & 0xffff)) >>> 0;
     this.mark(CONST_BASE);
   }
   /** Write a TILE-keyed set texel (presence / buckets) at the region-torus fold of (wc,wr): the

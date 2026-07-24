@@ -296,7 +296,9 @@ set 5   rows 320–383   light_presence_hi      1 px per TILE (region-torus fold
 sets 6–14              reserved               (materials-era tables)
 set 15  row  1023 tail constants px (in-set id 64 512):
         R  u16 id | u16 cols        G  u16 rows | u16 slot (TEXTILE_UNIT)
-        B  i16 winCol | i16 winRow  A  u16 light_count | u16 reserved
+        B  i16 winCol | i16 winRow  A  u16 light_count | u16 tilt_centideg
+          (tilt_centideg = world ground tilt × 100, e.g. 65.00° → 6500; every lighting shader reads
+           the live angle from here instead of a compile-time literal or a dedicated uniform)
 ```
 
 **DATA holds PERSISTENT state only** — a map lives here iff it survives across frames and changes on

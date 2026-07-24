@@ -10,6 +10,11 @@ debug light rig; A/B world-space vs the current screen-space path at every step 
       height) tension is flagged — high confidence on `cos65` but NOT sim-verified, so it's live-tunable.
 - [ ] **AWAITING USER SIM-CHECK of the factor** (`cos65` vs `sin65`) — resolved by eye via `__nsfactor` +
       the P1 oval, or the user's simulation. This is the one gate before trusting P2.
+- [x] **Live angle dial (`__tilt(deg)`)** — the world tilt now lives in the DATA MAP constants (centidegrees,
+      A reserve; [`VARIABLES.md`](../../VARIABLES.md)), read by the shadow projection with no burned uniform;
+      the shadow tilt was a compile-time literal before. `__tilt(deg)` re-tilts the whole geometry live
+      (shadow cos/sin + elevation `sin` + falloff `1/cos` + caster lean). Makes the factor A/B and any
+      "what if the world were 60°/70°" look-test a live dial instead of a recompile.
 
 ## P1 · Elliptical falloff — IMPLEMENTED (behind `__worldlight`, default on)
 - [x] `LIGHT_FRAG`: `dist = sqrt(Δx² + (Δy·uNsInv)² + Lz²)` (ground `Pz=0`) under `uWorldLight`; screen circle

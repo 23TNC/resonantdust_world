@@ -49,8 +49,8 @@ const UNITF = UNIT.toFixed(4);
 /** THE world ground tilt — the ground plane meets the view plane at this angle (docs/work/2026-07-23-world-geometry).
  *  A billboard is drawn parallel to the view; a point Δ up it has fictional height `sin(WORLD_TILT)·Δ`. One
  *  place, so the world tilt is never a magic `65.0` scattered through the shaders. */
-const WORLD_TILT_DEG = 65;
-const TILT_RADF = (WORLD_TILT_DEG * Math.PI / 180).toFixed(6); // GLSL literal (radians)
+const WORLD_TILT_DEG = 65;                    // DEFAULT ground tilt; the LIVE value lives in the data map
+                                             // constants (centidegrees), read by every lighting shader.
 /** shadows-onto-prims: a billboard pixel drawn Δ units above its own base has fictional height
  *  `sin(WORLD_TILT)·Δ` (the ratified world-geometry model) — the DEFAULT receiver-elevation gain that makes
  *  a cast shadow climb the sprite. `__elevk(k)` tunes the climb by eye; 0 collapses it to the flat ground
@@ -152,6 +152,12 @@ vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
 float casterRowOf(highp usampler2D data, uint primIdx) {
   return floor(decodePos(fetchLin(data, PRIM_BASE + int(primIdx)).y).y / UPT);
 }
+// The WORLD ground tilt (radians), read from the data map's constants A reserve (centidegrees). Lives in the
+// DATA MAP (not a dedicated uniform) so every lighting shader gets the angle for free; __tilt(deg) sets it
+// live and the whole geometry (shadow projection, elevation, falloff, caster lean) re-tilts together.
+float worldTiltRad(highp usampler2D data) {
+  return float(fetchLin(data, CONST_BASE).w & 0xffffu) * (0.01 * 3.14159265 / 180.0);
+}
 // PURE QUAD placement (no texture sample, no u/v inversion). The caster is a flat 3D card: base on the
 // ground (y = Yb, z = 0), top tilted north + elevated (y = Yt, z = Zt). Project its 4 corners from the
 // light onto the ground → a convex ground quad; P is shadowed iff it lies inside that quad. The only
@@ -159,8 +165,8 @@ float casterRowOf(highp usampler2D data, uint primIdx) {
 //   card corners: base (A.x±W/2, Yb, 0)  ·  top (A.x±W/2, Yt, Zt)
 //   ground(C) = L.xy + (L.z/(L.z - C.z)) * (C.xy - L.xy)   → base stays put, top scales by k
 float cross2(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }
-float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H) {
-  float th = ${TILT_RADF}, ct = cos(th), st = sin(th); // WORLD_TILT (F4)
+float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, highp usampler2D data) {
+  float th = worldTiltRad(data), ct = cos(th), st = sin(th); // WORLD_TILT — from the data map (F4)
   // KNOWN DEVIATION (kept deliberately — user, 2026-07-23): the north offset uses 0.5·H·cos65, HALF the
   // strict parallel-to-view billboard (H·cos65). Likely the shadow-design "wedge" ±depth half; the
   // elevation (Zt = H·sin65) already matches the canonical model. Left as-is because shadows read right.
@@ -231,15 +237,15 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D 
   uint rot = (orient >> 22) & 3u;                           // 1 = E, 3 = W (mirrored E)
   if (rot == 3u) sh.x = -sh.x;                              // flipped sprite → mirrored bbox placement
   vec2 Ac = A + sh;
-  float th = ${TILT_RADF}, ct = cos(th), st = sin(th); // WORLD_TILT (F4)
+  float th = worldTiltRad(data), ct = cos(th), st = sin(th); // WORLD_TILT — from the data map (F4)
   // HARD-QUAD gate (NOT dilated) — a caster occludes P only where P is inside its projected quad, which
   // is exactly the occluder set the corridor walk is proven to visit (P6 identity). The emitter penumbra
   // lives INSIDE this quad: the silhouette edge softens as sub-lights partially cover it, the base stays
   // hard (z≈0 edges don't move with the sub-light), and detail dissolves at the tip (high edges do). The
   // outward feather beyond the silhouette extremes would need the corridor pad widened + re-proven — a
   // follow-up, not worth breaking bit-identity for. Outside the quad → lit; skip the sub-light loop.
-  if (shadowCover(P, Ac, L, W, H) <= 0.0) return 0.0;
-  if (lod < 4u || emitter < 0.5) return shadowCover(P, Ac, L, W, H); // no silhouette / point light → hard quad
+  if (shadowCover(P, Ac, L, W, H, data) <= 0.0) return 0.0;
+  if (lod < 4u || emitter < 0.5) return shadowCover(P, Ac, L, W, H, data); // no silhouette / point light → hard quad
   // Frame sampling constants (whole-px-per-unit; ppu = 2^lod / spanU is a pow2 ≥ 1 by construction).
   // Window top-left = frame origin + offset·ppu − nudge. Atlas rows are image-top-down; card t=0 is the
   // sprite's BOTTOM row → v = 1−t.
@@ -731,6 +737,10 @@ export class ShadowGather {
    *  off to A/B against the screen circle. */
   private worldLight = true;
   private nsInv = INV_COS_TILT_DEFAULT;
+  /** The LIVE world ground tilt (degrees) — written into the data map constants each frame so the shadow
+   *  projection (and any shader) reads the angle without a uniform. `__tilt(deg)` re-tilts the whole model:
+   *  it updates this + the derived elevation gain (`sin`) + the falloff N–S factor (`1/cos`). */
+  private worldTiltDeg = WORLD_TILT_DEG;
   private readonly coldData: ColdShadowData;
   private lastCasterCount = -1;
   private coldDirty = true;
@@ -819,6 +829,19 @@ export class ShadowGather {
     (globalThis as unknown as { __nsfactor: (f?: number) => number }).__nsfactor = (f?: number) => {
       if (f !== undefined) { this.nsInv = f; this.forceColdDirty = this.forceHotDirty = true; }
       return this.nsInv;
+    };
+    // DEBUG (world-space-lighting): the ONE ground-angle dial. Sets the data-map tilt (shadow projection +
+    // caster lean) AND re-derives the elevation gain (sin) + falloff N–S factor (1/cos) so the whole
+    // geometry re-tilts together. No rebuild, no burned uniform (the angle rides the data map).
+    (globalThis as unknown as { __tilt: (deg?: number) => number }).__tilt = (deg?: number) => {
+      if (deg !== undefined) {
+        this.worldTiltDeg = deg;
+        const rad = deg * Math.PI / 180;
+        this.elevK = Math.sin(rad);
+        this.nsInv = 1 / Math.cos(rad);
+        this.forceColdDirty = this.forceHotDirty = true;
+      }
+      return this.worldTiltDeg;
     };
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
@@ -911,7 +934,7 @@ export class ShadowGather {
     // (anchor y) UP to the top (anchor y − 0.5·H·cos65). The corridor crosses the caster anywhere in
     // that y-range (far shadow ↔ top, near ↔ base), so we must bucket every row it spans — bucketing
     // only the base row missed casters whose top sits in the row above (I-7).
-    const TILT = 0.5 * Math.cos(WORLD_TILT_DEG * Math.PI / 180); // 0.5·cos65 ≈ 0.211 of the height, leaned back
+    const TILT = 0.5 * Math.cos(this.worldTiltDeg * Math.PI / 180); // 0.5·cos(tilt) of the height, leaned back (live tilt)
     this.litSeen.clear();
     const seen = this.primSeen;
     seen.clear();
@@ -1191,7 +1214,7 @@ export class ShadowGather {
     this.ensureRT(win.cols, win.rows);
     // P3: the window mapping rides the data texture's constants row (compare-written — an
     // unchanged window costs nothing), through the same scatter path as every other write.
-    this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, TEXTILE_UNIT, this.coldData.lights);
+    this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, TEXTILE_UNIT, this.coldData.lights, Math.round(this.worldTiltDeg * 100));
     this.buildPresence(win);                    // F5 per-tile light cull (rebuilt on light/window change)
     this.buildCasters(standing, resolver, win); // P1 per-tile caster buckets (the corridor reads these)
     this.buildDirty(win);    // #4: owner-change (pan) + per-class rebuild → cold/hot dirty; clean tiles persist
