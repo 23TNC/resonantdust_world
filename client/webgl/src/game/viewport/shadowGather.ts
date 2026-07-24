@@ -290,7 +290,7 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D 
 // casterCover's prim/def decode, but with NO light projection — the sprite is drawn parallel to the view, so
 // (s,t) come straight from P's offset in the [Ac.x±W/2] × [Ac.y−H .. Ac.y] rect. Reads ONLY the data texture
 // + surface atlas by index — never a textile_slot map by world coord — so it is zoom-stable by construction.
-float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, out float baseYOut) {
+float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out float baseYOut) {
   baseYOut = 0.0;
   uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));
   vec2 A = decodePos(Pd.y);
@@ -308,7 +308,7 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf,
   uint rot = (orient >> 22) & 3u;
   if (rot == 3u) sh.x = -sh.x;
   vec2 Ac = A + sh;                                         // tight-bbox base-centre (same as casterCover)
-  Ac -= vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF});           // seat the CUT on the drawn albedo (NW: ~0.5u W, ~2u N)
+  Ac -= align;                                             // seat on the drawn albedo — shadow + lighting pass their OWN offset
   float s = (P.x - (Ac.x - 0.5 * W)) / W;                   // 0 left → 1 right of the drawn rect
   float t = (Ac.y - P.y) / H;                              // 0 at the base → 1 at the top (north)
   if (s < 0.0 || s > 1.0 || t < 0.0 || t > 1.0) return -1.0; // outside the drawn billboard → not this prim
@@ -331,7 +331,7 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf,
 // prim's upright silhouette, and take the FRONTMOST (southmost = max row) cover. -1 = ground (no prim drawn).
 // The buckets + surface are contiguous/index-addressed (zoom-safe); this is the in-family replacement for the
 // reverted attempt's zdepth-composite read.
-float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, out uint rprim, out float rcov) {
+float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out uint rprim, out float rcov) {
   int wc = int(floor(P.x / UPT));
   int r0 = int(floor(P.y / UPT));
   float best = -1.0;
@@ -342,7 +342,7 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, out uint rprim, 
     for (int c = 0; c < 7; c++) {
       uint primIdx = tileSlot(cb, c);
       if (primIdx == 0u) continue;
-      float brOut; float cov = receiverCover(primIdx, P, data, surf, brOut);
+      float brOut; float cov = receiverCover(primIdx, P, data, surf, align, brOut);
       if (cov > 0.0 && brOut > best) { best = brOut; rprim = primIdx; rcov = cov; } // frontmost cover wins row+prim+cov
     }
   }
@@ -352,7 +352,7 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, out uint rprim, 
 // atlas frame (identical frameRel to the silhouette in receiverCover, only the frame ORIGIN swapped for the
 // normal band's). Atlas lookup indexed by frame (NOT a world-coord composite read) → zoom-stable, in-family.
 // Returns vec3(0) when unavailable (no normal frame yet / off-page / outside frame) → caller uses a flat up.
-vec3 primNormal(uint primIdx, vec2 P, highp usampler2D data, sampler2D nrm) {
+vec3 primNormal(uint primIdx, vec2 P, highp usampler2D data, sampler2D nrm, vec2 align) {
   uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));
   vec2 A = decodePos(Pd.y);
   uint orient = Pd.z;
@@ -373,7 +373,7 @@ vec3 primNormal(uint primIdx, vec2 P, highp usampler2D data, sampler2D nrm) {
   uint rot = (orient >> 22) & 3u;
   if (rot == 3u) shf.x = -shf.x;
   vec2 Ac = A + shf;
-  Ac -= vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF});           // same seat as the receiver mask (so (s,t) matches)
+  Ac -= align;                                             // lighting passes its OWN offset (decoupled from the shadow mask)
   float s = (P.x - (Ac.x - 0.5 * W)) / W;
   float t = (Ac.y - P.y) / H;
   if (s < 0.0 || s > 1.0 || t < 0.0 || t > 1.0) return vec3(0.0);
@@ -447,6 +447,7 @@ uniform sampler2D uSurface;        // lightmap F3-A: shared surface atlas (recei
 uniform sampler2D uNormal;         // lightmap F3-A: shared NORMAL atlas — primNormal samples the prim's world-frame normal
 uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = paint the sampled prim normal into oLight
 uniform float uNormalPitch;        // lightmap (__pitchnormal): standing-billboard normal pitch (rad, 90°−tilt; live, F7-reconsidered)
+uniform vec2 uLightAlign;          // lightmap (__lightalign): the LIGHTING receiver-mask seat (units, NW), decoupled from the shadow's RECV_ALIGN
 // lightmap P1: sprite-tangent normal to the WORLD frame. Rotate the flat/ground basis (image-up = north, out
 // = up) up by phi about the EAST axis: phi 0 = ground (lies in the plane), phi = 90deg minus tilt = a standing
 // billboard treated perpendicular to the ground. Image +Y is sprite-north = world -y, so it flips in.
@@ -479,8 +480,8 @@ void main() {
   // 0.5+0.5) where a prim is drawn, black on ground. Frame-indexed → must be rock-stable across zoom.
   if (uShowNormal == 1) {
     uint rp; float rc;
-    receiverAt(P, uData, uSurface, rp, rc);
-    vec3 n = rp != 0u ? primNormal(rp, P, uData, uNormal) : vec3(0.0);
+    receiverAt(P, uData, uSurface, uLightAlign, rp, rc);
+    vec3 n = rp != 0u ? primNormal(rp, P, uData, uNormal, uLightAlign) : vec3(0.0);
     oLight = vec4(n * 0.5 + 0.5, 1.0);
     return;
   }
@@ -489,8 +490,8 @@ void main() {
   // ndl = 1 — the old behaviour; ground-as-prims N·L is a later step). The corpus normal is RAW (camera-facing);
   // worldNormal pitches it to the world frame IN-SHADER (uNormalPitch = 90°−tilt, kept live — F7 reconsidered).
   uint rprimN; float rcovN;
-  receiverAt(P, uData, uSurface, rprimN, rcovN);
-  vec3 pn = rprimN != 0u ? primNormal(rprimN, P, uData, uNormal) : vec3(0.0);
+  receiverAt(P, uData, uSurface, uLightAlign, rprimN, rcovN);
+  vec3 pn = rprimN != 0u ? primNormal(rprimN, P, uData, uNormal, uLightAlign) : vec3(0.0);
   bool applyNL = rprimN != 0u && dot(pn, pn) > 0.0;            // thing with a loaded normal → real N·L
   vec3 N = applyNL ? worldNormal(pn, uNormalPitch) : vec3(0.0, 0.0, 1.0);
 
@@ -616,7 +617,7 @@ void main() {
   // shadows-onto-prims: is a standing prim DRAWN at this texel, and its base row? IN-FAMILY (caster buckets
   // + surface atlas by index) — zoom-safe by construction, NOT the reverted zdepth-composite world read.
   uint rprim; float rcov;
-  float baseY = receiverAt(P, uData, uSurface, rprim, rcov); // EXACT receiver base y (units); rprim 0 = ground
+  float baseY = receiverAt(P, uData, uSurface, vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF}), rprim, rcov); // shadow mask offset; rprim 0 = ground
   bool isThing = rprim != 0u;
   float maskCov = clamp(rcov, 0.0, 1.0);                     // SOFT mask coverage → blends ground↔thing at the silhouette edge
   // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
@@ -815,6 +816,11 @@ export class ShadowGather {
    *  live rather than bake-committed (F7 reconsidered): it's ~free in the dirty-gated bake and keeps the
    *  world angle adjustable. Ground (rprim 0) is unpitched (flat-up); things pitch to perpendicular. */
   private normalPitchDeg = 90 - WORLD_TILT_DEG;
+  /** lightmap: the LIGHTING receiver-mask seat (units, NW shift), DECOUPLED from the shadow's `RECV_ALIGN`.
+   *  The shadow's (0.5, 1.5) offset clipped the lit sprite's SE edge (bottom + right) — the lighting coverage
+   *  aligns to the RAW def anchor (the albedo draw), so this is 0. `__lightalign(x, y)` re-tunes by eye. */
+  private lightAlignX = 0;
+  private lightAlignY = 0;
   /** The LIVE world ground tilt (degrees) — written into the data map constants each frame so the shadow
    *  projection (and any shader) reads the angle without a uniform. `__tilt(deg)` re-tilts the whole model:
    *  it updates this + the derived elevation gain (`sin`) + the falloff N–S factor (`1/cos`). */
@@ -936,6 +942,14 @@ export class ShadowGather {
     (globalThis as unknown as { __pitchnormal: (deg?: number) => number }).__pitchnormal = (deg?: number) => {
       if (deg !== undefined) { this.normalPitchDeg = deg; this.forceColdDirty = this.forceHotDirty = true; }
       return this.normalPitchDeg;
+    };
+    // DEBUG (lightmap): the LIGHTING receiver-mask seat (units NW), decoupled from the shadow's RECV_ALIGN —
+    // dial by eye to stop the lit sprite clipping its bottom/right edge. Returns [x, y].
+    (globalThis as unknown as { __lightalign: (x?: number, y?: number) => number[] }).__lightalign = (x?: number, y?: number) => {
+      if (x !== undefined) this.lightAlignX = x;
+      if (y !== undefined) this.lightAlignY = y;
+      this.forceColdDirty = this.forceHotDirty = true;
+      return [this.lightAlignX, this.lightAlignY];
     };
     // DEBUG (lightmap P3): scatter n STATIC lights in a grid around the seed to stress the dirty-gated bake —
     // static lights bake ONCE then never re-bake, so fps should hold (the many-lights caching payoff). Returns
@@ -1373,6 +1387,7 @@ export class ShadowGather {
         p.uFloat("uNsInv", this.nsInv);
         p.uInt("uShowNormal", this.showNormal ? 1 : 0);
         p.uFloat("uNormalPitch", this.normalPitchDeg * Math.PI / 180);
+        p.uVec2("uLightAlign", this.lightAlignX, this.lightAlignY);
       },
     });
   }
