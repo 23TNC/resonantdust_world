@@ -98,8 +98,11 @@ export class Viewport {
   private gridLevel = 0;
   /** P2 normal-relief gain (F3/F5) — tuned by eye via `__relief(n)`. */
   private reliefStrength = 1.1;
-  /** #3 skip shadowing things that stand in front of the caster — toggle via `__depthtest()`. */
-  private depthTest = true;
+  /** #3 shadow-on-thing mode: 0 flat, 1 binary front/behind (default — the working state), 2 re-project
+   *  (EXPERIMENTAL: self-shadows via the receiver's own tree — see the commit note). `__depthmode(n)`. */
+  private depthMode = 1;
+  /** #3 re-projection climb gain — how far the shadow lookup slides per px of billboard height. `__climb(n)`. */
+  private climbGain = 1.5;
 
   constructor() {
     this.renderer = new Renderer();
@@ -126,10 +129,14 @@ export class Viewport {
       if (n !== undefined) this.reliefStrength = n;
       return this.reliefStrength;
     };
-    // DEBUG (#3): toggle the shadow-vs-prim depth test (no arg = flip). Off = shadows darken front things.
-    (globalThis as unknown as { __depthtest: (on?: boolean) => boolean }).__depthtest = (on?: boolean) => {
-      this.depthTest = on ?? !this.depthTest;
-      return this.depthTest;
+    // DEBUG (#3): shadow-on-thing mode (0 flat / 1 binary / 2 re-project) + the re-projection climb gain.
+    (globalThis as unknown as { __depthmode: (n?: number) => number }).__depthmode = (n?: number) => {
+      if (n !== undefined) this.depthMode = n;
+      return this.depthMode;
+    };
+    (globalThis as unknown as { __climb: (n?: number) => number }).__climb = (n?: number) => {
+      if (n !== undefined) this.climbGain = n;
+      return this.climbGain;
     };
   }
 
@@ -416,7 +423,8 @@ export class Viewport {
           uniforms: (p) => {
             p.uMat3("uProjection", proj);
             p.uInt("uLightEnable", coldLight ? 1 : 0);
-            p.uInt("uDepthTest", this.depthTest ? 1 : 0);
+            p.uInt("uDepthMode", this.depthMode);
+            p.uFloat("uClimbGain", this.climbGain);
             p.uFloat("uReliefStrength", this.reliefStrength);
             p.uFloat("uAmbient", AMBIENT_LEVEL);
             p.uInt("uLCols", win.cols);
