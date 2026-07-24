@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_north, back view, peacock
+rd_style, rd_animal, rd_biped, rd_winged, rd_north, back view, bird, peacock

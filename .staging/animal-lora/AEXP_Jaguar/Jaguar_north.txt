@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, jaguar
+rd_style, rd_animal, rd_quadruped, rd_north, back view, feline, jaguar

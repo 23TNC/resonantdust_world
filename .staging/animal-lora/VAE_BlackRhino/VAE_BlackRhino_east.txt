@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, black rhino
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, pachyderm, black rhino

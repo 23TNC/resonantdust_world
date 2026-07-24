@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, horse 2
+rd_style, rd_animal, rd_quadruped, rd_south, front view, equine, horse 2

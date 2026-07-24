@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, gila monster
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, reptile, gila monster

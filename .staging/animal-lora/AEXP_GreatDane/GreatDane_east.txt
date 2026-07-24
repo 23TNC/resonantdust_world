@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, great dane
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, great dane

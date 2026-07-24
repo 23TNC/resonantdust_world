@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, elk female
+rd_style, rd_animal, rd_quadruped, rd_south, front view, deer, elk female

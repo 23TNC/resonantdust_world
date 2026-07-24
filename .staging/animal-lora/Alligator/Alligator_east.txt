@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, alligator
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, reptile, alligator

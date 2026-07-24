@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, indian elephant
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, pachyderm, indian elephant

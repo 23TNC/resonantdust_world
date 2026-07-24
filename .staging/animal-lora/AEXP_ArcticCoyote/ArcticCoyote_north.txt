@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, arctic coyote
+rd_style, rd_animal, rd_quadruped, rd_north, back view, canine, arctic coyote

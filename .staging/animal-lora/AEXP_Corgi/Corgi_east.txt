@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, corgi
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, corgi

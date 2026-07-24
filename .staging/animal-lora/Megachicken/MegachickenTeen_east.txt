@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_east, side profile, megachicken teen
+rd_style, rd_animal, rd_biped, rd_winged, rd_east, side profile, bird, megachicken teen

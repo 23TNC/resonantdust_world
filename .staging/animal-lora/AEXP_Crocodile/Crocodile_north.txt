@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, crocodile
+rd_style, rd_animal, rd_quadruped, rd_north, back view, reptile, crocodile

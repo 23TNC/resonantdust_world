@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, tortoise
+rd_style, rd_animal, rd_quadruped, rd_north, back view, reptile, tortoise

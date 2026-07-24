@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, husky
+rd_style, rd_animal, rd_quadruped, rd_south, front view, canine, husky

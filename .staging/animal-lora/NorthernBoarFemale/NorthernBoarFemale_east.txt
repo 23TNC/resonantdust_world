@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, northern boar female
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, pig, northern boar female

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, hampshire male
+rd_style, rd_animal, rd_quadruped, rd_north, back view, pig, hampshire male

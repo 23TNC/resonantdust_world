@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, welsh terrier
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, welsh terrier

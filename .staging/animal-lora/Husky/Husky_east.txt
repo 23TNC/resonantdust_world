@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, husky
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, husky

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, gorilla
+rd_style, rd_animal, rd_quadruped, rd_south, front view, primate, gorilla

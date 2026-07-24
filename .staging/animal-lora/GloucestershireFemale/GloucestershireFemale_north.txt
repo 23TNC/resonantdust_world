@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, gloucestershire female
+rd_style, rd_animal, rd_quadruped, rd_north, back view, pig, gloucestershire female

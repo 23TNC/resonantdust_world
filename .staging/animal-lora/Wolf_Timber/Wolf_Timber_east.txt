@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, wolf timber
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, wolf timber

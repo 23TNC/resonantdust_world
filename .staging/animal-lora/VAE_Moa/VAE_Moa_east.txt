@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_east, side profile, moa
+rd_style, rd_animal, rd_biped, rd_east, side profile, bird, moa

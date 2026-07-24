@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, black bear
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, bear, black bear

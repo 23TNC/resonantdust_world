@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, angus female
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, cattle, angus female

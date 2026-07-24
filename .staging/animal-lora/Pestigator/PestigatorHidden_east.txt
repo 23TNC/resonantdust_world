@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, pestigator hidden
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, reptile, pestigator hidden

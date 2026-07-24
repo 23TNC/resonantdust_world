@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, chihuahua
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, chihuahua

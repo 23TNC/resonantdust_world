@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, wild dog
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, wild dog

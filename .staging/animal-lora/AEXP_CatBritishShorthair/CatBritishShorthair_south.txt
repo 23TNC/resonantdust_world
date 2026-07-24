@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, cat british shorthair
+rd_style, rd_animal, rd_quadruped, rd_south, front view, feline, cat british shorthair

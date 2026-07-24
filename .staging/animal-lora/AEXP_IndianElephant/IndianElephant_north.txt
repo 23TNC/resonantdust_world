@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, indian elephant
+rd_style, rd_animal, rd_quadruped, rd_north, back view, pachyderm, indian elephant

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, toxlion male
+rd_style, rd_animal, rd_quadruped, rd_north, back view, feline, toxlion male

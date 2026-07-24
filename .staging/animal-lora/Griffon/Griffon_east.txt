@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, griffon
+rd_style, rd_animal, rd_quadruped, rd_winged, rd_east, side profile, griffon

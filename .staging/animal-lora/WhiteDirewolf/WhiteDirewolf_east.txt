@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, white direwolf
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, white direwolf

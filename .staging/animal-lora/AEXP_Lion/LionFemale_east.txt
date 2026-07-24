@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, lion female
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, feline, lion female

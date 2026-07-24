@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, desert tortoise
+rd_style, rd_animal, rd_quadruped, rd_south, front view, reptile, desert tortoise

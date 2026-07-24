@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_north, back view, moa
+rd_style, rd_animal, rd_biped, rd_north, back view, bird, moa

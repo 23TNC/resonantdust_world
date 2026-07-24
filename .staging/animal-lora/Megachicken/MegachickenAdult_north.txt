@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_north, back view, megachicken adult
+rd_style, rd_animal, rd_biped, rd_winged, rd_north, back view, bird, megachicken adult

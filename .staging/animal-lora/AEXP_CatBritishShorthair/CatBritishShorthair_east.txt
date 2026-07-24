@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, cat british shorthair
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, feline, cat british shorthair

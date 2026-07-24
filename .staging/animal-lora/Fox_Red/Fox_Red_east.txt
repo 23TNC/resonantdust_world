@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, fox red
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, fox red

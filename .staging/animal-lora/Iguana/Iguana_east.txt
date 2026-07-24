@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, iguana
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, reptile, iguana

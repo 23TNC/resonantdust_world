@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_east, side profile, quail male
+rd_style, rd_animal, rd_biped, rd_winged, rd_east, side profile, bird, quail male

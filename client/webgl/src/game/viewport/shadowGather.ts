@@ -524,8 +524,11 @@ void main() {
     }
     float fall = smoothstep(reach, 0.0, dist);              // 1 at the light → 0 at reach (F2 smoothstep)
     // lightmap P1: per-light Lambert on THINGS — fold max(0, N·L̂) into the contribution so the lightmap stores
-    // Σ colour·falloff·(1−shadow)·N·L per light (no lossy aggregate-direction relief). ndl = 1 on ground/aggregate.
-    float ndl = applyNL ? max(dot(N, d3 / max(dist, 1e-3)), 0.0) : 1.0;
+    // Σ colour·falloff·(1−shadow)·N·L per light (no lossy aggregate-direction relief). CLIP-TO-PRESENCE: the
+    // fine lightmap (64/tile) is still coarser than the sprite edge, so a hard thing/ground classification spills
+    // one texel past the silhouette. Blend N·L → ground (ndl 1) by the sprite's soft coverage (rcovN) so the lit
+    // region fades exactly to presence — no coarse fringe, and the edge reveals ground not black. ndl = 1 on ground.
+    float ndl = applyNL ? mix(1.0, max(dot(N, d3 / max(dist, 1e-3)), 0.0), rcovN) : 1.0;
     // P3 SHADOW: mask by slot i's u9 coverage (low8 in channel i>>2, high bit in A[16+i]) — a shadowed
     // pixel stops receiving this light. Applied to the contribution so it removes both the irradiance AND
     // the relief drive (a fully-shadowed light must not light the sprite's lit side either). Penumbra and

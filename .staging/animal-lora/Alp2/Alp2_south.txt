@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, alp 2
+rd_style, rd_animal, rd_quadruped, rd_south, front view, camel, alp 2

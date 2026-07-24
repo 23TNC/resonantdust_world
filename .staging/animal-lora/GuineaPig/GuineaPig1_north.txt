@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, guinea pig 1
+rd_style, rd_animal, rd_quadruped, rd_north, back view, rodent, guinea pig 1

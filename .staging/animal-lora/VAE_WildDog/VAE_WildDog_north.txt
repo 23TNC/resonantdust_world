@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, wild dog
+rd_style, rd_animal, rd_quadruped, rd_north, back view, canine, wild dog

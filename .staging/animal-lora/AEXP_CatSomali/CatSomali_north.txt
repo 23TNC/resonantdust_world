@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, cat somali
+rd_style, rd_animal, rd_quadruped, rd_north, back view, feline, cat somali

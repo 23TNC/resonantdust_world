@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_north, back view, pheasant male
+rd_style, rd_animal, rd_biped, rd_winged, rd_north, back view, bird, pheasant male

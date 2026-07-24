@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, moose female
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, deer, moose female

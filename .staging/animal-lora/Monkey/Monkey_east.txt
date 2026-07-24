@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, monkey
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, primate, monkey

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, hampshire male
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, pig, hampshire male

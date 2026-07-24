@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, american beaver
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, rodent, american beaver

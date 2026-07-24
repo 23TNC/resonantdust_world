@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, horse 6
+rd_style, rd_animal, rd_quadruped, rd_north, back view, equine, horse 6

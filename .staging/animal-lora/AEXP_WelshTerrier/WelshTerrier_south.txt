@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, welsh terrier
+rd_style, rd_animal, rd_quadruped, rd_south, front view, canine, welsh terrier

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, dire boar
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, pig, dire boar

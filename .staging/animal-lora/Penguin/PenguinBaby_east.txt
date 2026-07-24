@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_east, side profile, penguin baby
+rd_style, rd_animal, rd_biped, rd_east, side profile, bird, penguin baby
