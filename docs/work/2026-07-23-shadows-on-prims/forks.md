@@ -19,12 +19,17 @@ it. For a light **above/north** of the receiver those casters throw their shadow
 rare. The true fix folds the caster's HEIGHT into the test (emit a per-caster ceiling — the shadow-ceiling
 idea from the lighting stream's F6). Polish, not a blocker.
 
-## F3 · Where to composite the two shadows {#f3}
-**2026-07-23 — DECIDED: in the LIGHTING BAKE, per texel.** Both shadow maps are world-space, so the
-lighting pass picks per texel — billboard shadow where `zdepth` says a prim is drawn there, ground shadow
-elsewhere — and bakes the chosen one into the lightmap. The blit then just samples the lightmap (no
-depth-mode branch). Alternative (pick in the blit) keeps the bake simpler but pushes the branch to every
-display pixel + needs both shadow maps bound at display; bake-side is cleaner.
+## F3 · Two maps + composite → ONE map, disjoint passes {#f3}
+**2026-07-23 — SUPERSEDED (user): one shadow map, no composite.** The earlier plan was two world-space
+maps (ground + prim) picked per texel in the lighting bake. The realization: the two passes write
+**disjoint** texels — ground shadow is invisible under a sprite, so pass 1 need not write prim texels at
+all. So pass 1 writes ground shadow and **discards where surface/`zdepth` says a prim is drawn**; pass 2
+writes prim shadow **only** on prim texels; both into the **same** `shadow-cold`. The consumer samples the
+one map by world position and gets the right value automatically — **no composite, no depth-mode branch,
+and half the shadow maps** (cold/hot × {ground,prim} = 4 → cold/hot = 2). Requires: run ground→prim,
+disjoint writes with no clear between, and a **union dirty** (a texel dirty if *either* shadow changed) so
+a prim moving in/out re-partitions cleanly. Transparent sprite gaps read as "no prim" (bake discards
+transparent) ⟹ ground shadow shows through — correct by construction.
 
 ## F4 · Cold/hot for pass 2 {#f4}
 **2026-07-23 — lean: mirror the split.** Pass 1 is cold/hot (the #4 light-map split); pass 2 should be too (a

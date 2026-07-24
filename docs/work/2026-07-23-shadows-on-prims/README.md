@@ -1,7 +1,7 @@
 # Shadows cast onto primitives — 2026-07-23
 
-_Component: [`client/webgl`](../../components/client/) · `game/viewport/` — a second shadow gather +
-a per-texel composite in the lighting bake. Builds on [`2026-07-23-lighting`](../2026-07-23-lighting/README.md)
+_Component: [`client/webgl`](../../components/client/) · `game/viewport/` — a second gather pass that
+writes the **same** `shadow-cold`, presence-partitioned (no composite). Builds on [`2026-07-23-lighting`](../2026-07-23-lighting/README.md)
 (the lightmap) + [`2026-07-22-lighting-rebuild`](../2026-07-22-lighting-rebuild/README.md) (the ground
 shadow). Phases in [`todo.md`](todo.md); decisions in [`forks.md`](forks.md)._
 
@@ -40,15 +40,20 @@ Both shadows live in the **same** world-space toroidal `shadow-cold` space — a
 position is exactly where it's drawn, so its shadow belongs at the same texel, just evaluated at `z ≠ 0`
 (the key correction — no separate screen/composite space).
 
-- **Pass 2** = the gather again, into a **second** `shadow-cold` (cold/hot, per-light u9), but:
-  (1) **early-exit** where the depth map says "no prim" (ground — pass 1 already has it);
-  (2) **lift the receiver to `z`** (re-project `G` per light from the depth-map height);
-  (3) walk the same caster buckets **excluding casters on the receiver's own tile** (self + same-tile —
-      kills the self-shadow). Reuses `casterCover` + the corridor.
-- **Composite in the lighting bake** — because both maps are world-space, the lighting pass picks
-  **per texel**: billboard shadow where the depth map says a prim is drawn there, ground shadow
-  everywhere else. So the blit just samples the lightmap (correct shadow already baked); the
-  `__depthmode` binary path stays as a fallback while this comes up.
+- **ONE shadow map, two disjoint passes** ([forks F3](forks.md#f3), user) — NOT two maps + a composite.
+  Pass 1 (ground) writes shadow wherever the surface/`zdepth` map says there's **no prim**, and
+  **discards on prim texels** (their ground shadow is invisible under the sprite anyway). Pass 2 (prim)
+  writes **only** on prim texels, into the **same** `shadow-cold` (cold/hot, per-light u9). Partitioned by
+  presence ⟹ they never collide, and there is **no composite** — the consumer samples the one map by
+  world position and gets ground-shadow on ground, prim-shadow on prims automatically.
+- **Pass 2** on a prim texel: **lift the receiver to `z`** (fictional height from the depth map) and cast
+  via the CONE construction (below) — reusing `casterCover` + the corridor, **excluding same-tile
+  casters** (self). The `__depthmode` binary path stays a fallback while this comes up.
+- **Order + dirty:** run ground then prim; disjoint writes, **no clear between**. The dirty is the UNION
+  (a texel dirty if *either* shadow changed); the owning pass rewrites it, the other discards. A prim
+  moving in/out flips a texel's owner — the move already dirties that region, so it re-partitions cleanly.
+- **Transparent gaps** read as "no prim" (the bake discards transparent fragments) ⟹ they correctly fall
+  to pass 1 and show the ground shadow through the sprite.
 
 ## Pass 2 — the CONE construction (ratified 2026-07-23, user)
 The per-caster→receiver test, built entirely on the [world-geometry](../2026-07-23-world-geometry/README.md)

@@ -12,9 +12,15 @@ _Verifiable in-browser (the 3-light rig; focus the forest at `?focus=34,27&zoom=
 - [ ] VERIFY: a debug view of `z` (or the re-projected `G`) reads sensibly — 0 on ground, growing up a
       billboard, capped near the sprite top.
 
+## P0b · Pass 1 discards prim texels
+- [ ] Make the ground gather **discard** where surface/`zdepth` says a prim is drawn, so its texels are
+      free for pass 2 to own ([forks F3](forks.md#f3)). Same `shadow-cold`, no second map.
+- [ ] VERIFY: ground shadow reads exactly as before **except** under prims (now blank, awaiting pass 2);
+      corridor↔brute still 0 mismatches on the ground texels.
+
 ## P1 · Pass 2 — the CONE construction (ratified — see README)
-- [ ] A **second `shadow-cold`** RT (per-light u9), written by a gather variant, per the ratified cone
-      method: early-exit where the depth map says no prim; compute `shadow.tip.y` (project caster-top
+- [ ] Written into the **SAME `shadow-cold`** (only on prim texels), by a gather variant, per the ratified
+      cone method: only where the depth map says a prim; compute `shadow.tip.y` (project caster-top
       through the light to the ground); **cull** casters by `shadow.tip.y < receiver.bottom.y <
       prim.bottom.y` + x-in-cone; **exact** test = ray∩caster-silhouette (`v` from the cone, `u` from
       `recv.x + s·(light.x − recv.x)`); exclude same-tile casters ([forks F1](forks.md#f1)); early-out lights that can't light the prim's front ([forks F8](forks.md#f8)); accumulate
@@ -23,12 +29,13 @@ _Verifiable in-browser (the 3-light rig; focus the forest at `?focus=34,27&zoom=
       billboard from foot up to the ray crossing; the receiver does NOT self-shadow (near bound is free
       — in-front casts on the invisible back); ground unchanged.
 
-## P2 · Composite in the lighting bake
-- [ ] Lighting pass picks per texel: **billboard** shadow where `zdepth` says a prim is drawn, **ground**
-      shadow elsewhere ([forks F3](forks.md#f3) — bake-side pick, blit stays simple). Bake the chosen
-      shadow into the lightmap as today.
+## P2 · Consume — no composite
+- [ ] Nothing to composite ([forks F3](forks.md#f3)): the one `shadow-cold` already holds ground-on-ground
+      and prim-on-prim (disjoint, presence-partitioned). The lighting bake samples it as today; confirm the
+      **union dirty** (dirty if either shadow changed) so a prim moving in/out re-partitions cleanly, and
+      the ground→prim pass order with no clear between.
 - [ ] VERIFY: full 3-light scene — shadows climb prims correctly, no crossing bands, ground reads as
-      before. A/B against `__depthmode 1` (binary) to confirm the improvement; retire/keep binary per eye.
+      before, transparent gaps show ground shadow. A/B against `__depthmode 1` (binary); retire/keep binary.
 
 ## P3 · Cold/hot + dirty
 - [ ] Mirror the cold/hot light-map split (#4) for pass 2 (a static prim shadowed by a static light = cold; by the
