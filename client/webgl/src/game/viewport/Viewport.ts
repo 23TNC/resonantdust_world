@@ -98,12 +98,9 @@ export class Viewport {
   private gridLevel = 0;
   /** P2 normal-relief gain (F3/F5) — tuned by eye via `__relief(n)`. */
   private reliefStrength = 1.1;
-  /** #3 skip shadowing things that stand in front of the caster — toggle via `__depthtest()`. Only the
-   *  BINARY A/B baseline (`primShadow` off) still uses it; the live path is shadows-on-prims. */
+  /** #3 skip shadowing things that stand in front of the caster — toggle via `__depthtest()`. The proper
+   *  shadow-climbs-the-billboard replacement is the 2026-07-23-shadows-on-prims stream. */
   private depthTest = true;
-  /** shadows-on-prims: consume the gather's climbing prim shadow directly (default). `__primshadow(false)`
-   *  reverts to the old binary front-thing restore for A/B comparison. */
-  private primShadow = true;
 
   constructor() {
     this.renderer = new Renderer();
@@ -134,11 +131,6 @@ export class Viewport {
     (globalThis as unknown as { __depthtest: (on?: boolean) => boolean }).__depthtest = (on?: boolean) => {
       this.depthTest = on ?? !this.depthTest;
       return this.depthTest;
-    };
-    // DEBUG (shadows-on-prims): toggle the climbing prim shadow (default on) vs the old binary restore.
-    (globalThis as unknown as { __primshadow: (on?: boolean) => boolean }).__primshadow = (on?: boolean) => {
-      this.primShadow = on ?? !this.primShadow;
-      return this.primShadow;
     };
   }
 
@@ -374,8 +366,7 @@ export class Viewport {
     // Recompute the shadow bitfield + bake the LIGHTMAP (gather → RTs) BEFORE the display, so the blit
     // multiplies this frame's lighting. Renders into the shadow/light RTs; the blit below draws to screen.
     if (this.map.ready) {
-      // shadows-on-prims: the zdepth-world composite lets the gather climb prim shadows up billboards.
-      this.shadows.tick(this.map.standingPrims(), this.resolver, this.map.window, this.map.displayComposite("zdepth-world-cold"));
+      this.shadows.tick(this.map.standingPrims(), this.resolver, this.map.window);
     }
 
     this.renderer.clearScreen(0.05, 0.06, 0.08, 1.0);
@@ -427,7 +418,6 @@ export class Viewport {
             p.uMat3("uProjection", proj);
             p.uInt("uLightEnable", coldLight ? 1 : 0);
             p.uInt("uDepthTest", this.depthTest ? 1 : 0);
-            p.uInt("uPrimShadow", this.primShadow ? 1 : 0);
             p.uFloat("uReliefStrength", this.reliefStrength);
             p.uFloat("uAmbient", AMBIENT_LEVEL);
             p.uInt("uLCols", win.cols);

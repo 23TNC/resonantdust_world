@@ -46,8 +46,6 @@ uniform sampler2D uNormalWarm;   // WARM normal composite (mover relief)
 uniform sampler2D uZDepth;       // #3 zdepth-world: B byte = 0x80|row for a thing, 0 for ground
 uniform int uLightEnable;        // 0 = UNLIT (albedo only) — the fallback when the lightmap isn't ready
 uniform int uDepthTest;          // #3 1 = a thing in front of the caster takes the unshadowed map (0 = flat)
-uniform int uPrimShadow;         // shadows-on-prims: 1 = consume the gather's climbing prim shadow directly
-                                 // (default); 0 = the OLD binary front-thing restore (A/B baseline)
 uniform float uReliefStrength;   // P2 normal-relief gain (F3/F5 — tuned by eye)
 uniform float uAmbient;          // #4 ambient floor — added ONCE over cold+hot (not baked into either map)
 uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mapping (F2: uniforms — a display consumer)
@@ -98,17 +96,8 @@ void main() {
       vec2 ldir = (texelFetch(uColdDir, lt, 0).rg + texelFetch(uHotDir, lt, 0).rg) * 2.0 - 2.0;
       vec4 coldU = texelFetch(uColdUnshadowed, lt, 0);
       vec4 hotU = texelFetch(uHotUnshadowed, lt, 0);
-      // shadows-on-prims: the gather now bakes the CLIMBING prim shadow directly into shadow-cold on
-      // thing texels, so the shadowed irradiance already reads correctly on billboards — consume it as-is
-      // (uPrimShadow == 1, default). uPrimShadow == 0 keeps the OLD binary restore (a whole front-thing
-      // takes the unshadowed map) as an A/B baseline (retire after P4).
-      vec3 irr;
-      if (uPrimShadow == 1) {
-        irr = texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb;
-      } else {
-        irr = (inFront(isThing, primRow, coldU.a) ? coldU.rgb : texelFetch(uColdLight, lt, 0).rgb)
-            + (inFront(isThing, primRow, hotU.a) ? hotU.rgb : texelFetch(uHotLight, lt, 0).rgb);
-      }
+      vec3 irr = (inFront(isThing, primRow, coldU.a) ? coldU.rgb : texelFetch(uColdLight, lt, 0).rgb)
+               + (inFront(isThing, primRow, hotU.a) ? hotU.rgb : texelFetch(uHotLight, lt, 0).rgb);
       // P2 per-px relief: decode the normal (warm-over-cold) and dot its HORIZONTAL part with the summed
       // aggregate lit-from direction. Flat ground (n.xy≈0) → relief 1 (neutral); a slope toward the
       // dominant light brightens, away darkens. F3: normal +Y is sprite-north but world +y is south, so
