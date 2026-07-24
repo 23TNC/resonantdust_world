@@ -69,7 +69,7 @@ const SHADOW_LIFT = 3.0;             // units the shadow slides up to seat on th
  *  we CUT (user, 2026-07-24). Root cause (tight-bbox anchoring vs draw placement) not chased — see
  *  issues.md#i4; if the alignment ever drifts, this pair is the knob. */
 const RECV_ALIGN_X = 0.5;            // units EAST the mask over-shoots → shift left (west) by this
-const RECV_ALIGN_Y = 2.0;            // units SOUTH the mask over-shoots → shift up (north) by this
+const RECV_ALIGN_Y = 1.5;            // units SOUTH the mask over-shoots → shift up (north) by this
 const RECV_ALIGN_XF = RECV_ALIGN_X.toFixed(1);
 const RECV_ALIGN_YF = RECV_ALIGN_Y.toFixed(1);
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
@@ -257,7 +257,8 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D 
 // casterCover's prim/def decode, but with NO light projection — the sprite is drawn parallel to the view, so
 // (s,t) come straight from P's offset in the [Ac.x±W/2] × [Ac.y−H .. Ac.y] rect. Reads ONLY the data texture
 // + surface atlas by index — never a textile_slot map by world coord — so it is zoom-stable by construction.
-float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf) {
+float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, out float baseRowOut) {
+  baseRowOut = 0.0;
   uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));
   vec2 A = decodePos(Pd.y);
   uint orient = Pd.z;
@@ -279,33 +280,35 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf)
   float s = (P.x - (Ac.x - 0.5 * W)) / W;                   // 0 left → 1 right of the drawn rect
   float t = (Ac.y - P.y) / H;                              // 0 at the base → 1 at the top (north)
   if (s < 0.0 || s > 1.0 || t < 0.0 || t > 1.0) return -1.0; // outside the drawn billboard → not this prim
-  if (lod < 4u) return baseRow;                            // no silhouette resolved → solid billboard rect
+  baseRowOut = baseRow;
+  if (lod < 4u) return 1.0;                                // no silhouette resolved → solid billboard rect (full)
   float ppu = float(1u << lod) / spanU;
   float fx = float((D.z >> 22) & 1023u) * 16.0, fy = float((D.z >> 12) & 1023u) * 16.0;
   float nx = float(int((D.w >> 20) & 4095u) - 2048), ny = float(int((D.w >> 8) & 4095u) - 2048);
   float side = float(1u << lod);
   if (rot == 3u) s = 1.0 - s;                              // W-facing = mirrored E frame (matches casterCover)
   vec2 uv = vec2(fx, fy) + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(s * W, (1.0 - t) * H) * ppu;
-  if (uv.x < fx || uv.x >= fx + side || uv.y < fy || uv.y >= fy + side) return -1.0; // outside frame → gap
-  return texelFetch(surf, ivec2(uv), 0).b > 0.5 ? baseRow : -1.0; // opaque → covered (hard is-thing)
+  if (uv.x < fx || uv.x >= fx + side || uv.y < fy || uv.y >= fy + side) return 0.0; // outside frame → gap (0 cover)
+  return texelFetch(surf, ivec2(uv), 0).b;                 // SOFT silhouette coverage 0..1 (edge blend)
 }
 // Which standing prim is DRAWN at texel P, and its base row? Scan the caster buckets a few rows SOUTH (a
 // billboard draws NORTH of its base, so the covering prim's base sits at/south of the drawn texel), test each
 // prim's upright silhouette, and take the FRONTMOST (southmost = max row) cover. -1 = ground (no prim drawn).
 // The buckets + surface are contiguous/index-addressed (zoom-safe); this is the in-family replacement for the
 // reverted attempt's zdepth-composite read.
-float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, out uint rprim) {
+float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, out uint rprim, out float rcov) {
   int wc = int(floor(P.x / UPT));
   int r0 = int(floor(P.y / UPT));
   float best = -1.0;
   rprim = 0u;                                                // the winning (frontmost) receiver prim — for self-exclusion
+  rcov = 0.0;                                                // its soft silhouette coverage at P (the edge blend)
   for (int dy = 0; dy <= 5; dy++) {                         // constant bound; covers billboards up to ~5 tiles
     uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(wc, r0 + dy));
     for (int c = 0; c < 7; c++) {
       uint primIdx = tileSlot(cb, c);
       if (primIdx == 0u) continue;
-      float br = receiverCover(primIdx, P, data, surf);
-      if (br > best) { best = br; rprim = primIdx; }         // frontmost (max-row) cover wins the base row + prim
+      float brOut; float cov = receiverCover(primIdx, P, data, surf, brOut);
+      if (cov > 0.0 && brOut > best) { best = brOut; rprim = primIdx; rcov = cov; } // frontmost cover wins row+prim+cov
     }
   }
   return best;
@@ -440,6 +443,50 @@ layout(location = 0) out uvec4 fragColor; // per-light u9 shadow coverage
 layout(location = 1) out uvec4 oCasterD;  // #3: frontmost caster row (R, 7-bit) shadowing this texel
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
+// One light's shadow at sample point Q — the corridor (corr=1) or brute (corr=0) walk of the caster
+// buckets, MAX-accumulating casterOne. Factored so a texel can evaluate BOTH the ground point AND the
+// elevated thing point and blend them at the silhouette edge. corr selects the path; the two must stay
+// bit-identical (P6). reachT bounds the brute box (unused by the corridor).
+float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, float baseRow, uint rprim, vec2 Rbase,
+                 int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
+  cdepth = 0.0;
+  float cov = 0.0;
+  if (corr == 1) {
+    vec2 a = L.xy / UPT;                                     // light in tile coords
+    vec2 b = Q / UPT;                                        // sample point in tile coords (ground = P, thing = G)
+    vec2 d = b - a;
+    int nsteps = int(ceil(abs(d.x)) + ceil(abs(d.y))) + 1;   // ≥ max-axis span → ≤1 tile between samples
+    for (int m = 0; m <= 48; m++) {                          // constant bound
+      if (m > nsteps) break;
+      vec2 q = a + d * (float(m) / float(max(nsteps, 1)));
+      ivec2 qt = ivec2(floor(q));
+      for (int n = 0; n < 5; n++) {                          // cross pad: centre, ±x, ±y
+        ivec2 o = qt + ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0));
+        uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(o.x, o.y));
+        for (int c = 0; c < 7; c++) {
+          uint primIdx = tileSlot(cb, c);
+          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, rprim, Rbase, data, surf, r);
+          if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
+        }
+      }
+    }
+  } else {
+    ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
+    for (int dy = -16; dy <= 16; dy++) {
+      if (dy < -reachT || dy > reachT) continue;
+      for (int dx = -16; dx <= 16; dx++) {
+        if (dx < -reachT || dx > reachT) continue;
+        uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy));
+        for (int c = 0; c < 7; c++) {
+          uint primIdx = tileSlot(cb, c);
+          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, rprim, Rbase, data, surf, r);
+          if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
+        }
+      }
+    }
+  }
+  return cov;
+}
 void main() {
   // P3/v2.1: window mapping from the CONSTANTS px (R = id|cols, G = rows|slot,
   // B = i16 winCol | i16 winRow — sign-extended halves). Updated through the command path.
@@ -456,9 +503,10 @@ void main() {
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS (true texel position)
   // shadows-onto-prims: is a standing prim DRAWN at this texel, and its base row? IN-FAMILY (caster buckets
   // + surface atlas by index) — zoom-safe by construction, NOT the reverted zdepth-composite world read.
-  uint rprim;
-  float rRow = receiverAt(P, uData, uSurface, rprim);
+  uint rprim; float rcov;
+  float rRow = receiverAt(P, uData, uSurface, rprim, rcov);
   bool isThing = rRow >= 0.0;
+  float maskCov = clamp(rcov, 0.0, 1.0);                     // SOFT mask coverage → blends ground↔thing at the silhouette edge
   float baseRow = max(rRow, 0.0);
   // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
   // projection below makes the shadow CLIMB the billboard. Rbase = the receiver base (the front/behind axis).
@@ -479,61 +527,25 @@ void main() {
     if (int((Ld.w >> 1) & 1u) != uLightClass) continue;     // #4: this pass handles only its class (cold/hot)
     vec3 L = vec3(decodePos(Ld.y), float((Ld.w >> 24) & 255u));
     float emitter = float((Ld.w >> 4) & 255u);              // emitter_radius (units) → penumbra width
-    // The point whose shadow we sample. GROUND → the lifted texel (unchanged ⟹ identity holds). THING → the
-    // elevated pixel projected onto the ground along the light ray through it (pushed away ∝ height): the
-    // climbing-billboard shadow, base pixels near P, high pixels far.
-    vec2 Q = Pground;
-    if (isThing) {
+    int reachT = int((Ld.w >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin (brute box)
+    // Sample the shadow at TWO points and blend by the mask coverage: the GROUND point (the lifted texel)
+    // and the elevated THING point (the pixel projected to the ground along the light ray through it — the
+    // climbing-billboard shadow). At the silhouette EDGE (0<cov<1) the pixel is partly sprite, partly the
+    // ground behind it, so the blend is a real 50/50 there — no hard cut. cov==0 → ground only (identity
+    // held); cov==1 → thing only (identity held). Each walk is corridor↔brute bit-identical.
+    float cdG = 0.0, cdT = 0.0;
+    float shG = (maskCov < 1.0)
+      ? walkShadow(L, emitter, Pground, false, baseRow, rprim, Rbase, uCorridor, reachT, uData, uSurface, cdG)
+      : 0.0;
+    float shT = 0.0;
+    if (maskCov > 0.0) {
       float ze = min(zElev, 0.9 * L.z);                     // keep the projection s bounded
       float sProj = L.z / (L.z - ze);
-      Q = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
+      vec2 Qt = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
+      shT = walkShadow(L, emitter, Qt, true, baseRow, rprim, Rbase, uCorridor, reachT, uData, uSurface, cdT);
     }
-    float cov = 0.0;
-    if (uCorridor == 1) {
-      // P6 CORRIDOR — the pure optimization, validated against the brute box below. Why the segment
-      // suffices: P occluded by a caster means P = ground(C) = L.xy + f·(C.xy − L.xy) for a card
-      // point C with f ≥ 1, so C.xy = L.xy + (P − L.xy)/f lies ON the segment light→P — and C.xy is
-      // inside the caster's ground rect, which is EXACTLY what buildCasters buckets (I-7). So every
-      // occluding caster has a bucketed tile on the segment. Walk the segment's tiles by sampling at
-      // ≤1-tile steps + a ±1 cross pad (covers corner crossings + float edges — no wedge bug, no
-      // step cap, same pmod slot mapping as the buckets). Constant loop bound; only m in the
-      // condition (the GLSL loop-condition foot-gun).
-      vec2 a = L.xy / UPT;                                   // light in tile coords
-      vec2 b = Q / UPT;                                      // sample point in tile coords (ground = P, thing = G)
-      vec2 d = b - a;
-      int nsteps = int(ceil(abs(d.x)) + ceil(abs(d.y))) + 1; // ≥ max-axis span → ≤1 tile between samples
-      for (int m = 0; m <= 48; m++) {                        // constant bound (brute caps reach at 16 tiles too)
-        if (m > nsteps) break;
-        vec2 q = a + d * (float(m) / float(max(nsteps, 1)));
-        ivec2 qt = ivec2(floor(q));
-        for (int n = 0; n < 5; n++) {                        // cross pad: centre, ±x, ±y
-          ivec2 o = qt + ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0));
-          uvec4 cb = fetchLin(uData, CASTER_BASE + foldTile(o.x, o.y)); // region-torus bucket
-          for (int c = 0; c < 7; c++) {
-            uint primIdx = tileSlot(cb, c);
-            float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, rprim, Rbase, uData, uSurface, r); // shared w/ brute (P6 identity)
-            if (cc > 0.0) { cov = max(cov, cc); casterDepth = max(casterDepth, r); } // #3
-          }
-        }
-      }
-    } else {
-      // BRUTE FORCE (the baseline the corridor must match): walk EVERY tile in the light's reach box
-      // and test each bucketed caster's quad against P.
-      int reachT = int((Ld.w >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin
-      ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
-      for (int dy = -16; dy <= 16; dy++) {
-        if (dy < -reachT || dy > reachT) continue;
-        for (int dx = -16; dx <= 16; dx++) {
-          if (dx < -reachT || dx > reachT) continue;
-          uvec4 cb = fetchLin(uData, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy)); // region-torus bucket
-          for (int c = 0; c < 7; c++) {
-            uint primIdx = tileSlot(cb, c);
-            float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, rprim, Rbase, uData, uSurface, r); // shared w/ corridor (P6 identity)
-            if (cc > 0.0) { cov = max(cov, cc); casterDepth = max(casterDepth, r); } // #3
-          }
-        }
-      }
-    }
+    float cov = mix(shG, shT, maskCov);
+    casterDepth = max(casterDepth, max(maskCov < 1.0 ? cdG : 0.0, maskCov > 0.0 ? cdT : 0.0)); // #3 (vestigial att1)
     // Pack this SLOT's coverage as u9 (0..511): low8 at channel slot>>2 bits (slot&3)*8; the 9th
     // (high) bit into A at bit 16+slot (14 high bits in A[16:30]). No channel straddle.
     uint v = uint(clamp(cov, 0.0, 1.0) * 511.0 + 0.5);
