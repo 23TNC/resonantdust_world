@@ -54,3 +54,13 @@ in-front receiver would only catch the shadow on its unseen back); the climb = t
 the shape = ray∩silhouette (`v` from the cone, `u` from `recv.x + s·(light.x−recv.x)`). Direct computation
 ⟹ self-shadow (skip same-tile) and caster-height (real 3-D intersection) are handled by construction, and
 it needs no ground-shadow map for billboards. The cull is conservative; the ray∩silhouette is the truth.
+
+## F8 · Back-lit cull — skip a light that can't light the prim's front {#f8}
+**2026-07-23 — DECIDED (user): per-(light, receiver) early-out.** A billboard's front faces the viewer;
+a light on the FAR side of it lights only the back, which we never render — so the visible front is dark
+from that light regardless of shadow. Early-out the whole `(light, prim)` pair (light "above"/behind the
+prim ⟹ skip), dropping entire prims per light. Consistent with the display's Lambert term (which already
+clamps a back-lit `N·L` to 0) — this just predicts that cheaply from the y-ordering and skips the shadow
+WORK. Safe: the only fuzzy zone is a light level with the prim (grazing), where its contribution is ~0
+anyway. IMPLEMENTATION DETAIL: anchor the cheap y-test's sign/threshold to how the diffuse computes `N·L`
+(light's true 3-D position incl. height) so the cull never drops a light the diffuse would actually light.

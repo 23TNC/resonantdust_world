@@ -17,7 +17,7 @@ _Verifiable in-browser (the 3-light rig; focus the forest at `?focus=34,27&zoom=
       method: early-exit where the depth map says no prim; compute `shadow.tip.y` (project caster-top
       through the light to the ground); **cull** casters by `shadow.tip.y < receiver.bottom.y <
       prim.bottom.y` + x-in-cone; **exact** test = ray∩caster-silhouette (`v` from the cone, `u` from
-      `recv.x + s·(light.x − recv.x)`); exclude same-tile casters ([forks F1](forks.md#f1)); accumulate
+      `recv.x + s·(light.x − recv.x)`); exclude same-tile casters ([forks F1](forks.md#f1)); early-out lights that can't light the prim's front ([forks F8](forks.md#f8)); accumulate
       (max). Reuse `casterCover` + the corridor. The climb bound = the caster-top ray∩receiver.
 - [ ] VERIFY: isolate one light + a caster behind a receiver — the shadow **climbs** the receiver
       billboard from foot up to the ray crossing; the receiver does NOT self-shadow (near bound is free
