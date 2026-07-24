@@ -98,9 +98,12 @@ export class Viewport {
   private gridLevel = 0;
   /** P2 normal-relief gain (F3/F5) — tuned by eye via `__relief(n)`. */
   private reliefStrength = 1.1;
-  /** #3 skip shadowing things that stand in front of the caster — toggle via `__depthtest()`. The proper
-   *  shadow-climbs-the-billboard replacement is the 2026-07-23-shadows-on-prims stream. */
+  /** #3 skip shadowing things that stand in front of the caster — only the `primShadow` OFF placeholder
+   *  still uses it (`__depthtest`). The live path is shadows-onto-prims. */
   private depthTest = true;
+  /** shadows-onto-prims (attempt #3): consume the gather's climbing prim shadow directly (default).
+   *  `__primshadow(false)` reverts to the placeholder (billboards take full light) for A/B. */
+  private primShadow = true;
 
   constructor() {
     this.renderer = new Renderer();
@@ -131,6 +134,11 @@ export class Viewport {
     (globalThis as unknown as { __depthtest: (on?: boolean) => boolean }).__depthtest = (on?: boolean) => {
       this.depthTest = on ?? !this.depthTest;
       return this.depthTest;
+    };
+    // DEBUG (shadows-onto-prims): toggle the climbing prim shadow (default on) vs the full-light placeholder.
+    (globalThis as unknown as { __primshadow: (on?: boolean) => boolean }).__primshadow = (on?: boolean) => {
+      this.primShadow = on ?? !this.primShadow;
+      return this.primShadow;
     };
   }
 
@@ -418,6 +426,7 @@ export class Viewport {
             p.uMat3("uProjection", proj);
             p.uInt("uLightEnable", coldLight ? 1 : 0);
             p.uInt("uDepthTest", this.depthTest ? 1 : 0);
+            p.uInt("uPrimShadow", this.primShadow ? 1 : 0);
             p.uFloat("uReliefStrength", this.reliefStrength);
             p.uFloat("uAmbient", AMBIENT_LEVEL);
             p.uInt("uLCols", win.cols);

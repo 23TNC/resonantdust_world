@@ -46,6 +46,8 @@ uniform sampler2D uNormalWarm;   // WARM normal composite (mover relief)
 uniform sampler2D uZDepth;       // #3 zdepth-world: B byte = 0x80|row for a thing, 0 for ground
 uniform int uLightEnable;        // 0 = UNLIT (albedo only) — the fallback when the lightmap isn't ready
 uniform int uDepthTest;          // #3 1 = a thing in front of the caster takes the unshadowed map (0 = flat)
+uniform int uPrimShadow;         // shadows-onto-prims: 1 = consume the gather's climbing prim shadow directly
+                                 // (default); 0 = placeholder (billboards take full light, no on-prim shadow)
 uniform float uReliefStrength;   // P2 normal-relief gain (F3/F5 — tuned by eye)
 uniform float uAmbient;          // #4 ambient floor — added ONCE over cold+hot (not baked into either map)
 uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mapping (F2: uniforms — a display consumer)
@@ -84,17 +86,24 @@ void main() {
     ivec2 lt = lightTexel(vWorld);
     if (lt.x < 0) { light = vec3(1.0); }        // outside window — shouldn't happen (resident squares only)
     else {
-      // #4: sum the COLD (static) + HOT (dynamic) lightmaps. #3: a THING at/in-front-of the caster takes
-      // the UNSHADOWED map (the shadow is behind the sprite); ground always takes the shadowed map. The
-      // proper shadow-climbs-the-billboard replacement is the 2026-07-23-shadows-on-prims stream.
+      // #4: sum the COLD (static) + HOT (dynamic) lightmaps.
       int zb = int(texture(uZDepth, vUV).b * 255.0 + 0.5);
       bool isThing = (zb & 0x80) != 0;
       int primRow = zb & 0x7f;
       vec2 ldir = (texelFetch(uColdDir, lt, 0).rg + texelFetch(uHotDir, lt, 0).rg) * 2.0 - 2.0;
       vec4 coldU = texelFetch(uColdUnshadowed, lt, 0);
       vec4 hotU = texelFetch(uHotUnshadowed, lt, 0);
-      vec3 irr = (inFront(isThing, primRow, coldU.a) ? coldU.rgb : texelFetch(uColdLight, lt, 0).rgb)
-               + (inFront(isThing, primRow, hotU.a) ? hotU.rgb : texelFetch(uHotLight, lt, 0).rgb);
+      // shadows-onto-prims (attempt #3): the gather now bakes the CLIMBING prim shadow into shadow-cold on
+      // thing texels (from an in-family, zoom-safe receiver mask) — so the shadowed irradiance reads
+      // correctly on billboards AND ground; consume it directly (uPrimShadow == 1, default). uPrimShadow == 0
+      // is the placeholder A/B: a billboard takes the UNSHADOWED map (full light, no on-prim shadow).
+      vec3 irr;
+      if (uPrimShadow == 1) {
+        irr = texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb;
+      } else {
+        irr = (inFront(isThing, primRow, coldU.a) ? coldU.rgb : texelFetch(uColdLight, lt, 0).rgb)
+            + (inFront(isThing, primRow, hotU.a) ? hotU.rgb : texelFetch(uHotLight, lt, 0).rgb);
+      }
       // P2 per-px relief: decode the normal (warm-over-cold) and dot its HORIZONTAL part with the summed
       // aggregate lit-from direction. Flat ground (n.xy≈0) → relief 1 (neutral); a slope toward the
       // dominant light brightens, away darkens. F3: normal +Y is sprite-north but world +y is south, so
