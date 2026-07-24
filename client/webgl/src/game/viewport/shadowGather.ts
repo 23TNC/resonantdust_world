@@ -77,6 +77,11 @@ const RECV_ALIGN_YF = RECV_ALIGN_Y.toFixed(1);
  *  i.e. self / same-object) is also excluded, killing near-self shadow. Measured in world units (user). */
 const SELF_BAND = 4.0;
 const SELF_BANDF = SELF_BAND.toFixed(1);
+/** shadows-onto-prims: extend the shadow quad's BASE (contact) edge this many units SOUTH — tucking the
+ *  bottom of the shadow into the caster's own footprint/trunk (which reads dark / is under the sprite, so
+ *  it's not visibly coloured) to close the seam at the shadow base (user nit). */
+const SHADOW_BASE_PUSH = 0.75;
+const SHADOW_BASE_PUSHF = SHADOW_BASE_PUSH.toFixed(2);
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
 /** Lights per tile in presence + shadow-cold: 14 (7 per presence set), each a u8 coverage in the
  *  128-bit shadow-cold texel (slot i at channel i>>2, bits (i&3)·8). */
@@ -152,7 +157,7 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H) {
   // If the shadow GEOMETRY ever looks wrong, this 0.5 is a prime suspect — see
   // docs/work/2026-07-23-world-geometry forks.md#f2 + issues.md#i1.
   float Yt = A.y - 0.5 * H * ct, Zt = H * st;    // card top: tilted north (0.5·H·cos65) + elevated (H·sin65)
-  float Yb = A.y;                                 // card base on the ground (z = 0)
+  float Yb = A.y + ${SHADOW_BASE_PUSHF};          // card base — pushed SOUTH into the caster footprint (seam close)
   float k = L.z / (L.z - Zt);                     // ground-projection factor for the top corners
   if (k <= 0.0) return 0.0;                        // top at/above the light — no forward shadow
   float hw = 0.5 * W;
