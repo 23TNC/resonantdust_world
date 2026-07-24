@@ -46,6 +46,11 @@ const RING_RADIUS = 2 * SQUARE;
 /** GLSL literals for the world constants (a tile is `SQUARE` world px; `1 unit = SQUARE/16` px). */
 const SQF = SQUARE.toFixed(1);
 const UNITF = UNIT.toFixed(4);
+/** THE world ground tilt — the ground plane meets the view plane at this angle (docs/work/2026-07-23-world-geometry).
+ *  A billboard is drawn parallel to the view; a point Δ up it has fictional height `sin(WORLD_TILT)·Δ`. One
+ *  place, so the world tilt is never a magic `65.0` scattered through the shaders. */
+const WORLD_TILT_DEG = 65;
+const TILT_RADF = (WORLD_TILT_DEG * Math.PI / 180).toFixed(6); // GLSL literal (radians)
 /** Lift the rendered shadow up (toward smaller world-y) by this many world units — a fragment shows
  *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Closes the ~1
  *  unit gap between the shadow base and the sprite's drawn base (a fixed anchor discrepancy: the sprite
@@ -120,7 +125,7 @@ float casterRowOf(highp usampler2D data, uint primIdx) {
 //   ground(C) = L.xy + (L.z/(L.z - C.z)) * (C.xy - L.xy)   → base stays put, top scales by k
 float cross2(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }
 float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H) {
-  float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
+  float th = ${TILT_RADF}, ct = cos(th), st = sin(th); // WORLD_TILT (F4)
   float Yt = A.y - 0.5 * H * ct, Zt = H * st;    // card top: tilted north + elevated
   float Yb = A.y;                                 // card base on the ground (z = 0)
   float k = L.z / (L.z - Zt);                     // ground-projection factor for the top corners
@@ -186,7 +191,7 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D 
   uint rot = (orient >> 22) & 3u;                           // 1 = E, 3 = W (mirrored E)
   if (rot == 3u) sh.x = -sh.x;                              // flipped sprite → mirrored bbox placement
   vec2 Ac = A + sh;
-  float th = 65.0 * 3.14159265 / 180.0, ct = cos(th), st = sin(th);
+  float th = ${TILT_RADF}, ct = cos(th), st = sin(th); // WORLD_TILT (F4)
   // HARD-QUAD gate (NOT dilated) — a caster occludes P only where P is inside its projected quad, which
   // is exactly the occluder set the corridor walk is proven to visit (P6 identity). The emitter penumbra
   // lives INSIDE this quad: the silhouette edge softens as sub-lights partially cover it, the base stays
@@ -715,7 +720,7 @@ export class ShadowGather {
     // (anchor y) UP to the top (anchor y − 0.5·H·cos65). The corridor crosses the caster anywhere in
     // that y-range (far shadow ↔ top, near ↔ base), so we must bucket every row it spans — bucketing
     // only the base row missed casters whose top sits in the row above (I-7).
-    const TILT = 0.5 * Math.cos(65 * Math.PI / 180); // 0.5·cos65 ≈ 0.211 of the height, leaned back
+    const TILT = 0.5 * Math.cos(WORLD_TILT_DEG * Math.PI / 180); // 0.5·cos65 ≈ 0.211 of the height, leaned back
     this.litSeen.clear();
     const seen = this.primSeen;
     seen.clear();

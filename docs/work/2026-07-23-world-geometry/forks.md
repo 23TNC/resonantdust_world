@@ -11,20 +11,21 @@ must outlive it. Options: (a) a `design/` doc under the client component (it's a
 spans everything that draws or casts. Lean **(a)** — it's a client-rendering model, not a data layout —
 with this stream's README linking to it, not restating it (a layout/model must live in exactly one place).
 
-## F2 · Conform the caster projection, or keep the tuned card? {#f2}
-**2026-07-23 — lean: CONFORM the code to the model.** `casterCover` places the card leaning
-(`0.5·H·cos65` north, `H·sin65` up ⟹ `2·tan65` per screen-unit) vs the confirmed `sin65`. Options:
-(a) **conform** — re-derive the projection from the ratified geometry; the shadow becomes explainable and
-the prim-shadow work inherits one vertical frame; (b) **keep the card**, document it as a deliberate
-art fiction, and give receivers a matching constant. (b) preserves the current tuned look with less
-churn, but leaves two models in the codebase — which is the exact problem this stream exists to end.
-Take (a); if the look regresses, tune *within* the honest model rather than reintroducing the card.
+## F2 · The north-offset `0.5` — wedge half-depth, or conform to parallel-to-view? {#f2}
+**2026-07-23 — OPEN, user's call (the only real decision left; scope corrected — see [issues I-1](issues.md#i1)).**
+The caster elevation already matches (`H·sin65`). The ONLY difference is the north offset: `shadowCover`
+uses `0.5·H·cos65`; strict parallel-to-view is `H·cos65`. Options: (a) **keep `0.5`** — plausibly the
+shadow-design "wedge" `±depth` half, i.e. deliberate; the shadows are tuned and read correctly; zero churn;
+(b) **conform to `H·cos65`** — matches the strict parallel-to-view model, but lengthens/re-shapes the
+projected shadow and needs re-tuning + a corridor↔brute re-check. Low-stakes either way (elevation
+unchanged), and testable in-browser by flipping the factor. Recommend leaving `0.5` unless the eye or the
+prim-shadow work shows a real inconsistency — it's a look call, not a correctness one.
 
-## F3 · What happens to `SHADOW_LIFT` {#f3}
-**2026-07-23 — expect it to trend to ~0.** The 3-unit lift was measured empirically to seat shadow bases
-on sprite bases — i.e. it is compensating for a base misplaced by the old card. If the model is right,
-the seating should be correct *by construction*. Keep a small dial only if the art genuinely wants one;
-don't preserve the number just because it's there.
+## F3 · `SHADOW_LIFT` — keep it {#f3}
+**2026-07-23 — CORRECTED: keep it (it's sprite-padding, not a card symptom).** `SHADOW_LIFT = 3` seats the
+shadow on the sprite's *visible* base past its transparent padding ([issues I-2](issues.md#i2)) — real
+regardless of the projection. It will NOT trend to 0. A cleaner long-term fix is to project from the
+sprite's content-bottom (a def-anchor change), out of scope here.
 
 ## F4 · One tilt constant {#f4}
 **2026-07-23 — yes.** `65.0` is currently written as a literal inside shader math in more than one place.
@@ -32,6 +33,9 @@ Name it once (shared constant + the model doc) so a future change is one edit, a
 visibly *the* world tilt rather than a magic number per shader.
 
 ## F5 · Scope — align before or after prim shadows? {#f5}
-**2026-07-23 — DECIDED: before.** [`shadows-on-prims`](../2026-07-23-shadows-on-prims/README.md) needs a
-receiver's true elevation. Building it while casters still project on the leaning card means two vertical
-frames and constants tuned against a fiction. Align first (this stream), then build prim shadows on it.
+**2026-07-23 — REVISED: no hard dependency.** Original call was "align first," on the belief the caster ran
+a ~4.7×-off vertical model. The audit corrected that: the **elevation already matches** (`sin65`), so a
+receiver's true elevation already shares the caster's frame. [`shadows-on-prims`](../2026-07-23-shadows-on-prims/README.md)
+can proceed **now**. The only lingering shared question is F2's north-offset `0.5`, which affects the
+caster's ground *placement*, not the elevation the receiver work needs — settle it whenever, in either
+stream.

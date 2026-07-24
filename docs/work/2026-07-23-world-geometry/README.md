@@ -25,15 +25,24 @@ answer in the codebase today, which is exactly what this stream fixes.
   billboard ⟹ **one y calculation per billboard**. Project only the **top-left / top-right x**; the
   **bottom two points are just the billboard's bottom corners**. That is the whole quad.
 
-## The misalignment (why this is work, not just a doc)
-`shadowCover` / `casterCover` model a caster as a card **leaning back**: top at `A.y − 0.5·H·cos65` with
-elevation `H·sin65`. Dividing elevation by that screen-offset gives **`2·tan65` ≈ 4.3** height-per-
-screen-unit — against the confirmed **`sin65` ≈ 0.91**. That's ~**4.7× apart**. The leaning card is a
-*tuned projection fiction*, not our geometry, and `SHADOW_LIFT` (3 units) exists partly to paper over the
-seating error it causes ([`issues.md`](issues.md)).
+## Audit result (P1) — the model is already mostly aligned
+The P1 audit ([`issues.md#i4`](issues.md#i4)) found the codebase is **more aligned than first claimed**:
+- **Elevation ALREADY matches.** `shadowCover`'s caster top elevation `Zt = H·sin65` is exactly the
+  ratified `sin65·Δ` for a drawn height `H`. Elevation-per-drawn-offset is `sin65` in both.
+- **The one open item is the north offset.** The card places the top at `0.5·H·cos65` north; a strictly
+  parallel-to-view billboard is `H·cos65` (a `0.5` factor). That `0.5` may be the shadow-design "wedge"
+  `±depth` half — i.e. **deliberate, not a bug** — so it's a design call ([forks F2](forks.md#f2)).
+- **`SHADOW_LIFT` is orthogonal** — it seats the shadow on the sprite's *visible* base past its transparent
+  padding ([`issues.md#i2`](issues.md#i2)); it is NOT a card symptom and won't go to 0.
 
-## Why now
-[`2026-07-23-shadows-on-prims`](../2026-07-23-shadows-on-prims/README.md) needs a receiver's **true**
-elevation. If casters keep projecting on the leaning card while receivers use the confirmed model, the
-two vertical frames disagree and every downstream constant gets tuned against a fiction. Align the model
-first, then build prim shadows on solid ground.
+**The original "~4.7× misalignment" was a misread** — I divided elevation by the *north* offset and
+compared it to elevation-per-*drawn*-offset (two different ratios). Retracted; see
+[`issues.md#i1`](issues.md#i1) / [#i5](issues.md#i5).
+
+## What this leaves
+Much smaller than first framed. **P0 (write the model down + name the tilt once) still stands** — the
+"firm understanding" is the point, and the model doc is worth having regardless. The only real *decision*
+is [F2](forks.md#f2): keep the wedge's `0.5` north offset or conform to strict parallel-to-view — a look
+call, testable in-browser, low risk (elevation unchanged). And because the **elevation already matches**,
+[`2026-07-23-shadows-on-prims`](../2026-07-23-shadows-on-prims/README.md) does **not** have to wait on a
+big conform — its receiver elevation shares the caster's `sin65` frame today ([forks F5](forks.md#f5)).
