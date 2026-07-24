@@ -1,4 +1,10 @@
-# Shadows cast onto primitives — 2026-07-23
+# Shadows cast onto primitives — 2026-07-23 · CLOSED (attempt #2, reverted)
+
+> **SUPERSEDED by [`2026-07-24-shadows-onto-prims`](../2026-07-24-shadows-onto-prims/README.md).** This
+> attempt was built and reverted (zoom regression — it read the `zdepth` `textile_slot` composite by world
+> coordinate). Its [`completed.md`](completed.md) holds the gather math (elevation + cone culls +
+> corridor identity) that was correct at a fixed zoom and is reused verbatim by attempt #3. Root cause:
+> [`2026-07-24-map-compatibility`](../2026-07-24-map-compatibility/README.md). Read below for history only.
 
 _Component: [`client/webgl`](../../components/client/) · `game/viewport/` — a second gather pass that
 writes the **same** `shadow-cold`, presence-partitioned (no composite). Builds on [`2026-07-23-lighting`](../2026-07-23-lighting/README.md)
