@@ -17,13 +17,10 @@
 
 import { Blitter, type Renderer, Texture, TexFrame } from "../gl";
 import { LodPool } from "./LodPool";
+import { type AtlasDraw } from "./TextureAtlas";
 import { getLod, putLod } from "./previewCache";
 import { LOD_SIZES, lodUrl, pickLodForSize, type TexMap } from "./lod";
 import { TextureManifest } from "./textureManifest";
-
-/** The index key for one (stem, map). */
-const mapKey = (stem: string, map: TexMap): string => `${stem}|${map}`;
-const stemOf = (key: string): string => key.slice(0, key.lastIndexOf("|"));
 
 /** A resolve result: the atlas sub-frame to bake (null for the GEO tier — the caller uses its own
  *  white fill + the prim's silhouette colour), and whether it's geo rather than real pixels. */
@@ -52,17 +49,18 @@ export class TextureResolver {
   private blitter: Blitter | null = null;
   private root: string;
 
-  /** One packing pool per LOD size present (shared across maps — keyed apart by {@link mapKey}). */
-  private readonly pools = new Map<number, LodPool>();
-  /** ONE shared pool for every SURFACE frame across ALL lod sizes. The shadow gather binds a single
-   *  surface page while prims hold defs at MIXED lods (immutable per-lod defs), so every lod's
-   *  silhouette frame must live on the same page — per-size pools put each lod on its own page and
-   *  every mid-session lod change went off-page (solid quads). Mixed pow2 ≥16 frames keep the
-   *  16-px def alignment (MaxRects coordinates are sums of inserted extents, all multiples of 16).
-   *  2048² ≈ a thousand frames; a spill hits the off-page warn (the C5 texture array lifts this). */
-  private surfacePool: LodPool | null = null;
-  /** `stem|map` → its loaded LODs, keyed by size. */
+  /** ONE shared pool for every CO-PACKED sprite frame across ALL lod sizes. Each frame is `2N × 2N`
+   *  holding the stem's four maps as quadrants (albedo TL, normal TR, surface BL, layers BR). The shadow
+   *  gather + the lighting bake bind a SINGLE page while prims hold defs at MIXED lods (immutable per-lod
+   *  defs), so every lod's frame must live on the same page — per-size pools put each lod on its own page
+   *  and every mid-session lod change went off-page. Co-packing keeps all four maps co-located at every lod
+   *  (normal = frame + a fixed quadrant offset), so there is no separate normal page/band. Mixed pow2 ≥16
+   *  frames keep the 16-px def alignment. 2048² spill hits the off-page warn (the C5 texture array lifts it). */
+  private spritePool: LodPool | null = null;
+  /** stem → its loaded CO-PACKED `2N` frames, keyed by lod size. */
   private readonly packed = new Map<string, Map<number, TexFrame>>();
+  /** Cached per-map quadrant sub-frames of a co-packed frame (frame → map → quadrant). */
+  private readonly quadFrames = new WeakMap<TexFrame, Map<TexMap, TexFrame>>();
   private readonly manifest = new TextureManifest();
   private readonly packedHash = new Map<string, string>();
   private readonly pending = new Set<string>();
@@ -124,11 +122,8 @@ export class TextureResolver {
     if (cur && cur[0] === sw && cur[1] === sh) return;
     if (!cur && sw === 1 && sh === 1) return;
     this.spriteScale.set(stem, [sw, sh]);
-    for (const key of [...this.packed.keys()]) {
-      if (stemOf(key) !== stem) continue;
-      this.packed.delete(key);
-      this.packedHash.delete(key);
-    }
+    this.packed.delete(stem); // co-packed by stem → drop the whole stem's frames; bytes stay cached
+    this.packedHash.delete(stem);
     this.spriteBBox.delete(stem);
     this.rawBBox.delete(stem);
   }
@@ -142,13 +137,12 @@ export class TextureResolver {
   }
 
   lodStats(): LodStats {
+    // Co-pack: ONE shared sprite pool holds every stem's 2N frame. Report per-lod frame counts + total pages.
     const counts = new Map<number, number>();
-    let pages = 0;
-    for (const [size, pool] of this.pools) {
-      counts.set(size, pool.count);
-      pages += pool.pageCount;
-    }
-    return { pages, counts, previewSize: FLOOR_LOD, previewCount: this.pools.get(FLOOR_LOD)?.count ?? 0 };
+    for (const byStem of this.packed.values())
+      for (const size of byStem.keys()) counts.set(size, (counts.get(size) ?? 0) + 1);
+    const pages = this.spritePool?.pageCount ?? 0;
+    return { pages, counts, previewSize: FLOOR_LOD, previewCount: counts.get(FLOOR_LOD) ?? 0 };
   }
 
   /** Best sub-frame for `stem`'s `map` available now (+ tier), kicking the upgrade toward the target
@@ -160,25 +154,43 @@ export class TextureResolver {
     if (!entry) return { frame: null, geo: true };
     if (map !== "albedo" && !entry.maps.includes(map)) return { frame: null, geo: true };
 
-    const key = mapKey(stem, map);
     const cap = entry.maxSize;
     const gridFactor = entry.grid ? Math.max(entry.grid[0], entry.grid[1]) : 1;
     let desired = pickLodForSize(Math.min(this.targetPx * gridFactor, cap));
     if (desired > cap) desired = LOD_SIZES.filter((s) => s <= cap).pop() ?? LOD_SIZES[0];
-    const loaded = this.packed.get(key);
+    // CO-PACK: one 2N frame per (stem, size) holds all four maps as quadrants; a map is a quadrant of it.
+    const loaded = this.packed.get(stem);
 
-    if (!loaded?.has(desired)) void this.ensureLod(stem, desired, entry.hash, map);
+    if (!loaded?.has(desired)) void this.ensureCoPack(stem, desired, entry.hash);
     if (!(loaded && loaded.size > 0) && desired > FLOOR_LOD && FLOOR_LOD <= cap)
-      void this.ensureLod(stem, FLOOR_LOD, entry.hash, map);
+      void this.ensureCoPack(stem, FLOOR_LOD, entry.hash);
 
     if (loaded && loaded.size > 0) {
-      const best = this.bestLoaded(loaded, desired);
+      const best = this.bestLoaded(loaded, desired); // the 2N co-packed frame at the best-loaded size
       if (best) {
-        if (entry.grid && cell != null) return { frame: this.cellFrame(best, cell, entry.grid, entry.pad), geo: false };
-        return { frame: best, geo: false };
+        const quad = this.quadrant(best, map); // this map's N×N quadrant of the co-packed frame
+        if (entry.grid && cell != null) return { frame: this.cellFrame(quad, cell, entry.grid, entry.pad), geo: false };
+        return { frame: quad, geo: false };
       }
     }
     return { frame: null, geo: true };
+  }
+
+  /** CO-PACK quadrant order — MUST match {@link TextureAtlas.addCoPacked} + the shadow gather's normal offset. */
+  private static readonly QUADRANT: Record<string, [number, number]> = {
+    albedo: [0, 0], normal: [1, 0], surface: [0, 1], layers: [1, 1],
+  };
+  /** The `map`'s N×N quadrant sub-frame of a `2N × 2N` co-packed frame (cached per (frame, map)). */
+  private quadrant(cf: TexFrame, map: TexMap): TexFrame {
+    let byMap = this.quadFrames.get(cf);
+    if (!byMap) this.quadFrames.set(cf, (byMap = new Map()));
+    const hit = byMap.get(map);
+    if (hit) return hit;
+    const n = cf.w / 2;
+    const [qx, qy] = TextureResolver.QUADRANT[map] ?? [0, 0];
+    const q = new TexFrame(cf.source, cf.x + qx * n, cf.y + qy * n, n, n);
+    byMap.set(map, q);
+    return q;
   }
 
   /** A cached UV sub-frame of a packed linked-atlas frame for `cell` (row-major, 0-based), trimmed by
@@ -204,11 +216,11 @@ export class TextureResolver {
   }
 
   private onManifestChange(): void {
-    for (const key of [...this.packed.keys()]) {
-      const e = this.manifest.entry(stemOf(key));
-      if (!e || this.packedHash.get(key) !== e.hash) {
-        this.packed.delete(key);
-        this.packedHash.delete(key);
+    for (const stem of [...this.packed.keys()]) {
+      const e = this.manifest.entry(stem);
+      if (!e || this.packedHash.get(stem) !== e.hash) {
+        this.packed.delete(stem);
+        this.packedHash.delete(stem);
       }
     }
     this.emit();
@@ -227,63 +239,44 @@ export class TextureResolver {
     return pick >= 0 ? loaded.get(pick) ?? null : null;
   }
 
-  // ── loads ───────────────────────────────────────────────────────────────────
-  private async ensureLod(stem: string, size: number, hash: string, map: TexMap): Promise<void> {
-    const key = mapKey(stem, map);
-    const pkey = `${key}@${size}`;
-    if (this.pending.has(pkey) || this.packed.get(key)?.has(size)) return;
+  // ── loads (CO-PACK) ───────────────────────────────────────────────────────────
+  /** Load ALL of `stem`'s maps at `size` and CO-PACK them into one `2N` frame (albedo TL, normal TR,
+   *  surface BL, layers BR). One 2N allocation per (stem, size) — the four maps land co-located on one
+   *  page, so a prim's def frame + a fixed quadrant offset resolves any map at any lod. */
+  private async ensureCoPack(stem: string, size: number, hash: string): Promise<void> {
+    const pkey = `${stem}@${size}`;
+    if (this.pending.has(pkey) || this.packed.get(stem)?.has(size)) return;
     this.pending.add(pkey);
     try {
-      const cached = await getLod(stem, size, map);
-      let bytes: ArrayBuffer;
-      if (cached && cached.v === hash) {
-        bytes = cached.bytes;
-      } else {
-        const res = await fetch(lodUrl(this.root, stem, hash, size, map));
-        if (res.status === 404) {
-          this.manifest.refresh();
-          return;
-        }
-        if (!res.ok) throw new Error(`lod fetch ${res.status}: ${lodUrl(this.root, stem, hash, size, map)}`);
-        bytes = await res.arrayBuffer();
-        void putLod(stem, size, map, { v: hash, bytes });
-      }
-
-      // albedo/layers/normal/surface are DATA maps — load them STRAIGHT-alpha (no premultiply) so
-      // their RGB survives intact; only true colour maps stay premultiplied.
-      const raw = map === "layers" || map === "albedo" || map === "normal" || map === "surface";
-      const bmp = await createImageBitmap(new Blob([bytes]), raw ? { premultiplyAlpha: "none" } : {});
-      // Ingest transform (def-frame-anchors P5): a stem with a sprite_scale packs SCALED — clipped
-      // to the same pow2 frame, transparent-filled, re-centred on its surface presence. The raw
-      // (pre-scale) surface bbox drives the re-centre, so it must decode FIRST: a non-surface map
-      // arriving early defers (bytes are already cached — the next resolve retries cheaply).
+      const entry = this.manifest.entry(stem);
+      if (!entry) return;
+      // CO-PACK order MUST match TextureResolver.QUADRANT / TextureAtlas.addCoPacked.
+      const order: TexMap[] = ["albedo", "normal", "surface", "layers"];
+      const want = order.map((m) => m === "albedo" || entry.maps.includes(m)); // absent → transparent quadrant
+      const bytes = await Promise.all(order.map((m, i) => (want[i] ? this.loadMapBytes(stem, size, hash, m) : Promise.resolve(null))));
+      // All four maps are DATA maps → STRAIGHT-alpha decode (RGB survives; no premultiply).
+      const raw = { premultiplyAlpha: "none" as const };
+      const bmps = await Promise.all(bytes.map((b) => (b ? createImageBitmap(new Blob([b]), raw) : Promise.resolve(null))));
+      const albedo = bmps[0], surf = bmps[2];
+      if (!albedo && !surf) return; // nothing usable
       const scale = this.spriteScale.get(stem);
-      const scaled = !!scale && (scale[0] !== 1 || scale[1] !== 1) && !this.manifest.entry(stem)?.grid;
-      if (scale && this.manifest.entry(stem)?.grid && !this.scaleWarned) {
+      const scaled = !!scale && (scale[0] !== 1 || scale[1] !== 1) && !entry.grid;
+      if (scale && entry.grid && !this.scaleWarned) {
         this.scaleWarned = true;
         console.warn(`[resolver] ${stem}: sprite_scale on a GRID stem is unsupported — packed unscaled`);
       }
-      // Pre-compute the sprite's opaque bbox ONCE on the CPU from the SURFACE map's coverage (B channel;
-      // the albedo alpha is full, so it's the surface that holds the silhouette). No GPU readback → no
-      // mid-render corruption. Fractions of the frame → LOD-independent. With a scale, the RAW bbox
-      // drives the re-centre and the STORED bbox is the post-transform one.
-      if (map === "surface" && !this.spriteBBox.has(stem)) {
-        const rawB = computeSpriteBBox(bmp);
+      // Sprite opaque bbox from the SURFACE map's coverage (B channel) — LOD-independent fractions; drives
+      // the re-centre + the shadow-cast quad. All maps decode together now, so there is no ordering defer.
+      if (surf && !this.spriteBBox.has(stem)) {
+        const rawB = computeSpriteBBox(surf);
         this.rawBBox.set(stem, rawB);
         this.spriteBBox.set(stem, scaled ? transformedBBox(rawB, scale![0], scale![1]) : rawB);
       }
-      if (scaled && map !== "surface" && !this.rawBBox.has(stem)) {
-        if (this.manifest.entry(stem)?.maps.includes("surface")) {
-          void this.ensureLod(stem, size, hash, "surface"); // the re-centre needs the surface first
-          return;
-        } // no surface map at all → centre on the frame (no presence to centre on)
-      }
-      const actualShort = Math.min(bmp.width, bmp.height);
-      const achieved = Math.min(size, actualShort);
-      const ok = this.packInto(key, achieved, bmp, raw, scaled ? scale : undefined, this.rawBBox.get(stem));
-      bmp.close();
+      const quadN = (albedo ?? surf)!.width; // square masters → every map is quadN × quadN at this lod
+      const ok = this.packCoPack(stem, size, quadN, bmps, scaled ? scale : undefined, this.rawBBox.get(stem));
+      for (const b of bmps) b?.close();
       if (ok) {
-        this.packedHash.set(key, hash);
+        this.packedHash.set(stem, hash);
         this.emit();
       }
     } catch {
@@ -293,61 +286,62 @@ export class TextureResolver {
     }
   }
 
-  /** Pack a decoded bitmap into `size`'s pool under `(key, size)`. Uploads the bitmap into an engine
-   *  Texture (premultiply for colour, straight for data maps), blits it into the atlas, then drops the
-   *  scratch upload (the atlas page kept its own copy). With a `scale`, the sprite draws SCALED into
-   *  the same-size frame — clipped to it, transparent-filled, re-centred so the (pre-scale) surface
-   *  bbox's centre lands at the frame centre (or plain frame-centred without a bbox). */
-  private packInto(
-    key: string, size: number, bmp: ImageBitmap, raw = false,
+  /** Fetch (or read the IndexedDB cache for) one map's LOD bytes; null on 404 (a stem lacking the map). */
+  private async loadMapBytes(stem: string, size: number, hash: string, map: TexMap): Promise<ArrayBuffer | null> {
+    const cached = await getLod(stem, size, map);
+    if (cached && cached.v === hash) return cached.bytes;
+    const res = await fetch(lodUrl(this.root, stem, hash, size, map));
+    if (res.status === 404) {
+      this.manifest.refresh();
+      return null;
+    }
+    if (!res.ok) throw new Error(`lod fetch ${res.status}: ${lodUrl(this.root, stem, hash, size, map)}`);
+    const bytes = await res.arrayBuffer();
+    void putLod(stem, size, map, { v: hash, bytes });
+    return bytes;
+  }
+
+  /** Upload the four decoded maps + CO-PACK them into one `2·quadN` frame in the shared sprite pool.
+   *  A `scale` draws each quadrant SCALED + re-centred on the (pre-scale) surface bbox (rare — grids/scaled
+   *  sprites); otherwise a straight quadrant blit. Stored under `(stem, size)`. */
+  private packCoPack(
+    stem: string, size: number, quadN: number, bmps: Array<ImageBitmap | null>,
     scale?: [number, number], rawB?: { fx: number; fy: number; fw: number; fh: number },
   ): boolean {
     if (!this.renderer) return false;
-    const src = new Texture(this.renderer.gl, { width: bmp.width, height: bmp.height, data: bmp, premultiply: !raw });
-    let packed: TexFrame | null;
+    const gl = this.renderer.gl;
+    const srcs = bmps.map((b) => (b ? new Texture(gl, { width: b.width, height: b.height, data: b, premultiply: false }) : null));
     try {
-      let draw;
+      let draws: Array<AtlasDraw | null> | undefined;
       if (scale) {
-        const W = bmp.width, H = bmp.height;
+        const W = quadN, H = quadN;
         const dw = W * scale[0], dh = H * scale[1];
-        // Content origin so the scaled (pre-scale-bbox) centre sits at the frame centre.
         const cx = rawB ? rawB.fx + rawB.fw / 2 : 0.5, cy = rawB ? rawB.fy + rawB.fh / 2 : 0.5;
         const ox = W / 2 - cx * dw, oy = H / 2 - cy * dh;
-        // Clip the dest rect to the frame; narrow the source UVs to match (exact, no scissor).
         const d0x = Math.max(0, ox), d1x = Math.min(W, ox + dw);
         const d0y = Math.max(0, oy), d1y = Math.min(H, oy + dh);
-        draw = {
+        const draw: AtlasDraw = {
           dx: d0x, dy: d0y, dw: d1x - d0x, dh: d1y - d0y,
           sx: ((d0x - ox) / dw) * W, sy: ((d0y - oy) / dh) * H,
           sw: ((d1x - d0x) / dw) * W, sh: ((d1y - d0y) / dh) * H,
         };
+        draws = srcs.map((s) => (s ? draw : null));
       }
-      const pool = key.endsWith("|surface") ? this.surfacePoolFor() : this.poolFor(size);
-      packed = pool.add(key, src, bmp.width, bmp.height, draw);
+      const frame = this.spritePoolFor().addCoPacked(stem, srcs, quadN, draws);
+      if (!frame) return false;
+      let byStem = this.packed.get(stem);
+      if (!byStem) this.packed.set(stem, (byStem = new Map()));
+      byStem.set(size, frame);
+      return true;
     } finally {
-      src.destroy();
+      for (const s of srcs) s?.destroy();
     }
-    if (!packed) return false;
-    let byKey = this.packed.get(key);
-    if (!byKey) this.packed.set(key, (byKey = new Map()));
-    byKey.set(size, packed);
-    return true;
   }
 
-  /** The pool for LOD `size`, created empty on first use (small → 1024², larger → 2048²). */
-  private poolFor(size: number): LodPool {
-    let pool = this.pools.get(size);
-    if (!pool) {
-      pool = new LodPool(this.renderer!, this.blitter!, size <= SMALL_LOD_MAX ? 1024 : 2048);
-      this.pools.set(size, pool);
-    }
-    return pool;
-  }
-
-  /** The single shared surface pool (see {@link surfacePool}), created on first surface pack. */
-  private surfacePoolFor(): LodPool {
-    if (!this.surfacePool) this.surfacePool = new LodPool(this.renderer!, this.blitter!, 2048);
-    return this.surfacePool;
+  /** The single shared CO-PACK pool (see {@link spritePool}), created on first pack. */
+  private spritePoolFor(): LodPool {
+    if (!this.spritePool) this.spritePool = new LodPool(this.renderer!, this.blitter!, 2048);
+    return this.spritePool;
   }
 }
 

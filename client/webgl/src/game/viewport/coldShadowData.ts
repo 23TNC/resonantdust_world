@@ -30,11 +30,6 @@ export const LIGHT_BASE = 131072;
 export const PRESENCE_BASE = 3 * 65536;    // light_presence_lo (light slots 0–6)
 export const CASTER_BASE = 4 * 65536;
 export const PRESENCE_HI_BASE = 5 * 65536; // light_presence_hi (light slots 7–13)
-/** prim_normal_data — 1 px/def, PARALLEL to (not inside) the immutable def band: holds the def's NORMAL
- *  atlas frame origin, refreshed on the per-tick caster walk once the normal lod loads (the surface + normal
- *  are separate pages with independent load timing, so the immutable def can't carry this — lightmap F3-A).
- *  Set 6 (was reserved). G = present<<20 | nfx16<<10 | nfy16 (R's high 16 = the scatter self-address id). */
-export const NORMAL_DEF_BASE = 6 * 65536;
 /** The constants row (row 1023) — px0 window mapping, px1 slot/light-count (P3). */
 export const CONST_BASE = 1023 * DATA_W;
 
@@ -173,10 +168,6 @@ export class ColdShadowData {
   private surfacePageTex: Texture | null = null;
   private pageWarned = false;
   private frameSizeWarned = false;
-  /** The ONE normal atlas page (lightmap F3-A) — adopted from the first resolved normal frame; a frame on
-   *  any OTHER page gets no baked normal (flat fallback) until multi-page lands. Parallel to `surfacePageTex`. */
-  private normalPageTex: Texture | null = null;
-  private normalPageWarned = false;
 
   /** prim.id → allocated prim_data_index (≥1; index 0 is the sentinel). */
   private readonly primIndex = new Map<number, number>();
@@ -269,47 +260,6 @@ export class ColdShadowData {
     return this.surfacePageTex;
   }
 
-  /** The shared NORMAL atlas page (or null before any normal resolved) — lightmap F3-A. */
-  get normalPage(): Texture | null {
-    return this.normalPageTex;
-  }
-
-  /** Refresh a def's NORMAL frame origin into the `NORMAL_DEF_BASE` band (compare-written — a stable
-   *  frame costs no command). Rides the per-tick caster walk: the def is immutable, but this parallel
-   *  texel is not, so a normal lod landing a tick after the surface backfills here. Accepts the normal
-   *  only when it sits on the shared page AND matches the def's lod (same frame side) — else marks it
-   *  absent (present = 0) and the bake falls back to a flat normal for that prim (lightmap F3-A). */
-  refreshNormalFrame(prim: Primitive, defIdx: number, resolver: TextureResolver | null): void {
-    if (defIdx < 0) return;
-    const b = (NORMAL_DEF_BASE + defIdx) * 4;
-    const lod = (this.dataMirror[(DEF_BASE + defIdx) * 4 + 2] >>> 4) & 0xf;
-    let present = 0, nfx16 = 0, nfy16 = 0;
-    if (lod >= 4 && resolver && prim.textureName) {
-      const nf = resolver.resolve(prim.textureName, "normal", prim.cell).frame;
-      if (nf) {
-        if (!this.normalPageTex) this.normalPageTex = nf.source;
-        if (nf.source !== this.normalPageTex) {
-          if (!this.normalPageWarned) {
-            this.normalPageWarned = true;
-            console.warn("[cold-shadow] normal frame off the shared page — flat normal (solid, C5)");
-          }
-        } else if (nf.w === (1 << lod)) {
-          // Same lod as the surface def (same frame side) → the surface's frameRel maps 1:1; just swap origin.
-          present = 1;
-          nfx16 = Math.round(nf.x / 16);
-          nfy16 = Math.round(nf.y / 16);
-        }
-      }
-    }
-    // R high-16 = the scatter self-address (defIdx); payload in G.
-    const R = ((defIdx & 0xffff) << 16) >>> 0;
-    const G = (((present & 1) << 20) | ((nfx16 & 0x3ff) << 10) | (nfy16 & 0x3ff)) >>> 0;
-    if (this.dataMirror[b] !== R || this.dataMirror[b + 1] !== G) {
-      this.dataMirror[b] = R;
-      this.dataMirror[b + 1] = G;
-      this.mark(NORMAL_DEF_BASE + defIdx);
-    }
-  }
 
   /** The `definition_index` for a caster's sprite at its CURRENTLY-RESOLVED lod. Defs are
    *  **immutable — one def per atlas frame** (keyed `stem|cell|lod`): a new lod landing mints a NEW

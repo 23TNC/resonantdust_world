@@ -63,6 +63,32 @@ export class TextureAtlas {
     return new TexFrame(this.page.textures[0], rect.x, rect.y, width, height);
   }
 
+  /** CO-PACK (shared atlas): allocate ONE `2·quadN × 2·quadN` frame and blit the four maps into its
+   *  quadrants — albedo TL, normal TR, surface BL, layers BR (`sources` in that order; a null quadrant
+   *  stays the page's cleared transparency). A prim references the returned 2N frame; each map is a
+   *  fixed `quadN` offset away, so all four share one page at every lod (no per-map page, no offset drift).
+   *  Optional per-quadrant `draws` apply the sprite-scale re-centre (rare); null = a straight quadrant blit. */
+  addCoPacked(sources: Array<Texture | null>, quadN: number, padding: number, draws?: Array<AtlasDraw | null>): TexFrame | null {
+    const full = quadN * 2;
+    const rect = this.packer.insert(full + padding, full + padding);
+    if (!rect) return null;
+    const q = [[0, 0], [1, 0], [0, 1], [1, 1]]; // albedo, normal, surface, layers
+    for (let i = 0; i < 4; i++) {
+      const src = sources[i];
+      if (!src) continue;
+      const ox = rect.x + q[i][0] * quadN, oy = rect.y + q[i][1] * quadN;
+      const draw = draws?.[i];
+      if (draw) {
+        const srcFrame = new TexFrame(src, draw.sx, draw.sy, draw.sw, draw.sh);
+        this.blitter.blit(this.page, src, ox + draw.dx, oy + draw.dy, draw.dw, draw.dh, srcFrame);
+      } else {
+        this.blitter.blit(this.page, src, ox, oy, quadN, quadN);
+      }
+    }
+    this.regionCount++;
+    return new TexFrame(this.page.textures[0], rect.x, rect.y, full, full);
+  }
+
   destroy(): void {
     this.page.destroy();
   }

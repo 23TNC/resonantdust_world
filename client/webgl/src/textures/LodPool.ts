@@ -64,6 +64,30 @@ export class LodPool {
     return packed;
   }
 
+  /** CO-PACK a stem's four maps into ONE `2·quadN × 2·quadN` frame (quadrants: albedo TL, normal TR,
+   *  surface BL, layers BR). Spills to a fresh page when full. Returns the 2N frame, or null if it can't
+   *  fit a whole page. The def-grid invariant holds: `2·quadN` is pow2-square ≥16 and lands on the 16-px grid. */
+  addCoPacked(stem: string, sources: Array<Texture | null>, quadN: number, draws?: Array<AtlasDraw | null>): TexFrame | null {
+    const full = quadN * 2;
+    if ((full & (full - 1)) !== 0 || full < 16)
+      console.warn(`[lod-pool] ${stem}: co-pack frame ${full}×${full} violates pow2-square ≥16 — def grid addressing will degrade`);
+    let packed: TexFrame | null = null;
+    for (const atlas of this.atlases) {
+      packed = atlas.addCoPacked(sources, quadN, PADDING, draws);
+      if (packed) break;
+    }
+    if (!packed) {
+      if (full + PADDING > this.pageSize) return null;
+      packed = this.newAtlas().addCoPacked(sources, quadN, PADDING, draws);
+    }
+    if (packed) {
+      if (packed.x % 16 !== 0 || packed.y % 16 !== 0)
+        console.warn(`[lod-pool] ${stem}: co-pack frame off the 16-px grid (${packed.x},${packed.y})`);
+      this.byStem.set(stem, packed);
+    }
+    return packed;
+  }
+
   get pageCount(): number {
     return this.atlases.length;
   }
