@@ -62,6 +62,11 @@ const ELEV_K_DEFAULT = Math.sin(WORLD_TILT_DEG * Math.PI / 180);
  *  bottom sits ~1 unit south of the prim base-centre the shadow projects from). `__lift(u)` tunes live. */
 const SHADOW_LIFT = 3.0;             // units the shadow slides up to seat on the sprite base (sprite bottom
                                     // sits ~3 units south of the prim base-centre the shadow projects from)
+/** shadows-onto-prims: the receiver MASK (receiverCover) cuts the sprite-shaped hole ~2 units too far
+ *  SOUTH of the drawn albedo (the def tight-bbox base vs the drawn opaque base); shift the mask NORTH by
+ *  this so the cut aligns with the sprite. NOT a shadow-field shift — it's where we CUT (user, 2026-07-24). */
+const RECV_ALIGN = 2.0;
+const RECV_ALIGNF = RECV_ALIGN.toFixed(1);
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
 /** Lights per tile in presence + shadow-cold: 14 (7 per presence set), each a u8 coverage in the
  *  128-bit shadow-cold texel (slot i at channel i>>2, bits (i&3)·8). */
@@ -264,6 +269,7 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf)
   uint rot = (orient >> 22) & 3u;
   if (rot == 3u) sh.x = -sh.x;
   vec2 Ac = A + sh;                                         // tight-bbox base-centre (same as casterCover)
+  Ac.y -= ${RECV_ALIGNF};                                   // seat the CUT on the drawn albedo (mask was ~2u too south)
   float baseRow = floor(Ac.y / UPT);
   float s = (P.x - (Ac.x - 0.5 * W)) / W;                   // 0 left → 1 right of the drawn rect
   float t = (Ac.y - P.y) / H;                              // 0 at the base → 1 at the top (north)
@@ -283,17 +289,18 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf)
 // prim's upright silhouette, and take the FRONTMOST (southmost = max row) cover. -1 = ground (no prim drawn).
 // The buckets + surface are contiguous/index-addressed (zoom-safe); this is the in-family replacement for the
 // reverted attempt's zdepth-composite read.
-float receiverAt(vec2 P, highp usampler2D data, sampler2D surf) {
+float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, out uint rprim) {
   int wc = int(floor(P.x / UPT));
   int r0 = int(floor(P.y / UPT));
   float best = -1.0;
+  rprim = 0u;                                                // the winning (frontmost) receiver prim — for self-exclusion
   for (int dy = 0; dy <= 5; dy++) {                         // constant bound; covers billboards up to ~5 tiles
     uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(wc, r0 + dy));
     for (int c = 0; c < 7; c++) {
       uint primIdx = tileSlot(cb, c);
       if (primIdx == 0u) continue;
       float br = receiverCover(primIdx, P, data, surf);
-      if (br >= 0.0) best = max(best, br);                  // frontmost cover wins the base row
+      if (br > best) { best = br; rprim = primIdx; }         // frontmost (max-row) cover wins the base row + prim
     }
   }
   return best;
@@ -301,20 +308,24 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf) {
 // shadows-onto-prims: ONE per-caster test shared by the corridor + brute walks (so both stay bit-identical —
 // the P6 identity invariant). Q = the point whose shadow we sample (ground texel = the lifted texel; thing
 // texel = the elevated pixel's ground projection G). Two THING-only culls (the user's cone method):
+//   (0) SELF — the caster must not be the receiver's OWN prim. The row cull (1) can't catch this on its own:
+//       the receiver row derives from the tight-bbox base (Ac) while a caster's row derives from the raw
+//       anchor (prim.y+height), so "same prim" is NOT "same row". Exact prim-id match kills self-casting
+//       (the user: prim == prim → cull).
 //   (1) SEEN-FACE — the caster must be strictly SOUTH of the receiver's base row (cr > baseRow). Billboards
 //       are seen from the south, so a shadow only lands on the VISIBLE face when the caster is in front
-//       (south) of the receiver; a caster north of / on the row would darken the unseen BACK. Also kills
-//       self-shadow (the receiver's own caster shares its row).
+//       (south) of the receiver; a caster north of / on the row would darken the unseen BACK.
 //   (2) LIGHT-SIDE — the caster must sit between the light and the receiver: dot(Cb−Rbase, Rbase−L) < 0.
 //       (A north light + a caster south of the receiver would otherwise false-positive.)
 // Returns coverage + the caster row.
-float casterOne(uint primIdx, vec2 Q, vec3 L, float emitter, bool isThing, float baseRow, vec2 Rbase,
+float casterOne(uint primIdx, vec2 Q, vec3 L, float emitter, bool isThing, float baseRow, uint rprim, vec2 Rbase,
                 highp usampler2D data, sampler2D surf, out float row) {
   row = 0.0;
   if (primIdx == 0u) return 0.0;
   vec2 Cb = decodePos(fetchLin(data, PRIM_BASE + int(primIdx)).y); // caster base (anchor = base-centre)
   float cr = floor(Cb.y / UPT);
   if (isThing) {
+    if (primIdx == rprim) return 0.0;                      // (0) self — exact same prim → no self-cast
     if (cr <= baseRow) return 0.0;                          // (1) caster must be strictly SOUTH of the receiver
     if (dot(Cb - Rbase, Rbase - L.xy) >= 0.0) return 0.0;   // (2) caster must block the light reaching it
   }
@@ -440,7 +451,8 @@ void main() {
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS (true texel position)
   // shadows-onto-prims: is a standing prim DRAWN at this texel, and its base row? IN-FAMILY (caster buckets
   // + surface atlas by index) — zoom-safe by construction, NOT the reverted zdepth-composite world read.
-  float rRow = receiverAt(P, uData, uSurface);
+  uint rprim;
+  float rRow = receiverAt(P, uData, uSurface, rprim);
   bool isThing = rRow >= 0.0;
   float baseRow = max(rRow, 0.0);
   // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
@@ -494,7 +506,7 @@ void main() {
           uvec4 cb = fetchLin(uData, CASTER_BASE + foldTile(o.x, o.y)); // region-torus bucket
           for (int c = 0; c < 7; c++) {
             uint primIdx = tileSlot(cb, c);
-            float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, Rbase, uData, uSurface, r); // shared w/ brute (P6 identity)
+            float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, rprim, Rbase, uData, uSurface, r); // shared w/ brute (P6 identity)
             if (cc > 0.0) { cov = max(cov, cc); casterDepth = max(casterDepth, r); } // #3
           }
         }
@@ -511,7 +523,7 @@ void main() {
           uvec4 cb = fetchLin(uData, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy)); // region-torus bucket
           for (int c = 0; c < 7; c++) {
             uint primIdx = tileSlot(cb, c);
-            float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, Rbase, uData, uSurface, r); // shared w/ corridor (P6 identity)
+            float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, baseRow, rprim, Rbase, uData, uSurface, r); // shared w/ corridor (P6 identity)
             if (cc > 0.0) { cov = max(cov, cc); casterDepth = max(casterDepth, r); } // #3
           }
         }
