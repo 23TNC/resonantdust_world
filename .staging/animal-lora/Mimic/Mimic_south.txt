@@ -1,0 +1,1 @@
+rd_style, rd_south, front view, mimic

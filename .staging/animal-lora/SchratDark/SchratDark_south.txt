@@ -1,0 +1,1 @@
+rd_style, rd_humanoid, rd_south, front view, schrat dark

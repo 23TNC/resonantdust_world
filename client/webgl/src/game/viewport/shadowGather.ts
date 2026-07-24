@@ -16,7 +16,7 @@ import { Renderer, Program, Geometry, RenderTarget, Texture } from "../../gl";
 import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
-import { ColdShadowData } from "./coldShadowData";
+import { ColdShadowData, N_LIGHTS } from "./coldShadowData";
 import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_SQUARE } from "./squareMath";
 
 /** lightmap P1 Step B: the fine lightmap is TEXTILE_SQUARE/tile; the shadow map stays TEXTILE_UNIT/tile.
@@ -446,7 +446,7 @@ uniform float uNsInv;              // world-space-lighting: N–S un-foreshorten
 uniform sampler2D uSurface;        // lightmap F3-A: shared surface atlas (receiverAt silhouette → which prim is drawn at P)
 uniform sampler2D uNormal;         // lightmap F3-A: shared NORMAL atlas — primNormal samples the prim's world-frame normal
 uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = paint the sampled prim normal into oLight
-uniform float uNormalPitch;        // lightmap P1 (__pitchnormal): thing normal DEV pitch (rad, 90°−tilt) — corpus still raw
+uniform float uNormalPitch;        // lightmap (__pitchnormal): standing-billboard normal pitch (rad, 90°−tilt; live, F7-reconsidered)
 // lightmap P1: sprite-tangent normal to the WORLD frame. Rotate the flat/ground basis (image-up = north, out
 // = up) up by phi about the EAST axis: phi 0 = ground (lies in the plane), phi = 90deg minus tilt = a standing
 // billboard treated perpendicular to the ground. Image +Y is sprite-north = world -y, so it flips in.
@@ -486,8 +486,8 @@ void main() {
   }
 
   // lightmap P1: the WORLD-frame normal for per-light N·L. Only THINGS get N·L for now (ground keeps falloff,
-  // ndl = 1 — the old behaviour; ground-as-prims N·L is a later step). Corpus normals are still RAW, so the
-  // world pitch is applied in-shader here (uNormalPitch, DEV) — bake-at-ingest retires it (F7).
+  // ndl = 1 — the old behaviour; ground-as-prims N·L is a later step). The corpus normal is RAW (camera-facing);
+  // worldNormal pitches it to the world frame IN-SHADER (uNormalPitch = 90°−tilt, kept live — F7 reconsidered).
   uint rprimN; float rcovN;
   receiverAt(P, uData, uSurface, rprimN, rcovN);
   vec3 pn = rprimN != 0u ? primNormal(rprimN, P, uData, uNormal) : vec3(0.0);
@@ -807,8 +807,10 @@ export class ShadowGather {
   /** lightmap P0 debug (`__shownormal`): paint the atlas-frame prim normal into the lightmap to verify the
    *  read (per-prim, zoom-stable). Off in normal operation. */
   private showNormal = false;
-  /** lightmap P1 DEV pitch (`__pitchnormal`, deg): the corpus normals are still RAW (camera-facing), so the
-   *  world pitch (90°−tilt) is applied in-shader until the corpus is re-baked world-frame (F7). */
+  /** lightmap: the standing-billboard normal pitch (deg, `__pitchnormal`; default 90°−tilt, re-derived by
+   *  `__tilt`). The corpus normals are RAW (camera-facing) and the world pitch is applied IN-SHADER — kept
+   *  live rather than bake-committed (F7 reconsidered): it's ~free in the dirty-gated bake and keeps the
+   *  world angle adjustable. Ground (rprim 0) is unpitched (flat-up); things pitch to perpendicular. */
   private normalPitchDeg = 90 - WORLD_TILT_DEG;
   /** The LIVE world ground tilt (degrees) — written into the data map constants each frame so the shadow
    *  projection (and any shader) reads the angle without a uniform. `__tilt(deg)` re-tilts the whole model:
@@ -904,14 +906,17 @@ export class ShadowGather {
       return this.nsInv;
     };
     // DEBUG (world-space-lighting): the ONE ground-angle dial. Sets the data-map tilt (shadow projection +
-    // caster lean) AND re-derives the elevation gain (sin) + falloff N–S factor (1/cos) so the whole
-    // geometry re-tilts together. No rebuild, no burned uniform (the angle rides the data map).
+    // caster lean) AND re-derives the elevation gain (sin), the falloff N–S factor (1/cos), AND the normal
+    // pitch (90°−tilt) so the WHOLE geometry — including the in-shader normal pitch — re-tilts coherently.
+    // (lightmap F7 reconsidered: the pitch stays in-shader, kept live, NOT bake-committed — it costs ~nothing
+    // in the dirty-gated bake, and this keeps the world angle a live knob.) No rebuild, no burned uniform.
     (globalThis as unknown as { __tilt: (deg?: number) => number }).__tilt = (deg?: number) => {
       if (deg !== undefined) {
         this.worldTiltDeg = deg;
         const rad = deg * Math.PI / 180;
         this.elevK = Math.sin(rad);
         this.nsInv = 1 / Math.cos(rad);
+        this.normalPitchDeg = 90 - deg;   // standing billboard: flat card → perpendicular-to-ground normal
         this.forceColdDirty = this.forceHotDirty = true;
       }
       return this.worldTiltDeg;
@@ -928,6 +933,27 @@ export class ShadowGather {
     (globalThis as unknown as { __pitchnormal: (deg?: number) => number }).__pitchnormal = (deg?: number) => {
       if (deg !== undefined) { this.normalPitchDeg = deg; this.forceColdDirty = this.forceHotDirty = true; }
       return this.normalPitchDeg;
+    };
+    // DEBUG (lightmap P3): scatter n STATIC lights in a grid around the seed to stress the dirty-gated bake —
+    // static lights bake ONCE then never re-bake, so fps should hold (the many-lights caching payoff). Returns
+    // the new total light count (capped at the N_LIGHTS bitfield ceiling).
+    (globalThis as unknown as { __manylights: (n?: number) => number }).__manylights = (n = 24) => {
+      const room = N_LIGHTS - this.lights.length;
+      const add = Math.max(0, Math.min(n, room));
+      const side = Math.max(1, Math.ceil(Math.sqrt(add)));
+      const step = 4 * SQUARE;                       // 4 tiles apart
+      const ox = this.seedX - (side - 1) * step / 2, oy = this.seedY - (side - 1) * step / 2;
+      let done = 0;
+      for (let i = 0; i < side && done < add; i++) {
+        for (let j = 0; j < side && done < add; j++, done++) {
+          const lx = ox + j * step, ly = oy + i * step;
+          this.lights.push({ x: lx, y: ly, hx: lx, hy: ly, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER, dynamic: false });
+        }
+      }
+      this.lightsVer++;
+      this.coldDirty = true;
+      this.forceColdDirty = this.forceHotDirty = true;
+      return this.lights.length;
     };
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },

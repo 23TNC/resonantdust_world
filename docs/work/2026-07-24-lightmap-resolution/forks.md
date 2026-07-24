@@ -86,6 +86,15 @@ is settled art direction, and the live dial already did its job (finding the ang
 data-map tilt is "the angle the atlas was baked at", not a free knob. (Reverses the earlier "pitch in-shader
 so normals follow `__tilt`" lean — the only normal consumer is `N·L`, which wants world-frame, so baking wins.)
 
+**RECONSIDERED 2026-07-24 (build) — KEEP the pitch IN-SHADER, do NOT bake-commit.** Once built, the pitch
+landed inside the **dirty-gated bake** (it feeds `N·L`, computed once per changed tile), not a per-frame path —
+so F7's core rationale ("avoid a per-texel runtime rotation") is ~moot: static scenes never re-pay it. Against
+that ~zero cost, baking would (a) **mutate + re-publish the corpus** and (b) **bake-commit the world angle**
+(kill `__tilt`). So the pitch stays in-shader (`worldNormal(n, 90°−tilt)`), and `__tilt` now re-derives it
+alongside `sin`/`1/cos` — the whole model re-tilts coherently, angle stays live. Functionally identical output
+to baking (same rotation, at bake-time vs ingest). Corpus stays RAW; no re-bake. (User may still opt to
+bake-commit for a fixed pipeline — re-run `art --pitch_normal` + drop the in-shader pitch — but not the default.)
+
 ## F6 · Co-pack albedo/normal/surface/layers into one atlas (paired optimization) {#f6}
 **2026-07-24 — user proposal; do, but sequenceable.** Reserve a slot **one power of 2 larger** than the
 sprite (`2N×2N` around `N×N`) and lay the four maps in its quadrants; grab any channel by adding a fixed

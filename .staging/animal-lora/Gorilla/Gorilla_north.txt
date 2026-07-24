@@ -1,0 +1,1 @@
+rd_style, rd_animal, rd_quadruped, rd_north, back view, gorilla

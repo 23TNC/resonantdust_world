@@ -54,11 +54,17 @@ _Split into Step A (correctness, current res) + Step B (resolution) so each step
 - [ ] VERIFY: per-light-correct lighting (a normal facing light A but away from B lights from A only, not
       the average); crisp; no zoom drift.
 
-## P3 · Scale + verify the spend
-- [ ] Push the light count UP (the whole point) — confirm many static lights cost ~nothing per frame
-      (dirty-gated bake), and a moving light only re-bakes its reach. Measure fps at the display cap + the
-      lightmap VRAM (write the MB numbers post the 4×→2× zoom reduction; [forks.md#f5](forks.md#f5)).
-- [ ] The A/B is the deliverable: fine per-light vs coarse aggregate, side by side on a many-light forest —
-      confirm the correctness + detail is visibly worth the VRAM ([issues.md#i2](issues.md#i2)).
-- [ ] Docs + memory. Note the shadow stayed coarse + the albedo untouched (both intentional).
+## P3 · Scale + verify the spend — ✅ DONE 2026-07-24
+- [x] Pushed the light count UP via `__manylights(n)` (scatters n static lights): **63 lights held the 120 fps
+      display cap** (baseline 3 lights = 120). Confirms the dirty-gated cache — static lights bake ONCE then
+      never re-bake, so per-frame cost is unchanged; only the moving light re-bakes its reach. Scene renders
+      correctly with many overlapping coloured lights (richer fill, multi-direction shadows, no artifacts).
+- [x] Normal pitch: **F7 reconsidered — kept IN-SHADER, not bake-committed** ([forks.md#f7](forks.md#f7)). The
+      pitch is ~free in the dirty-gated bake, so re-baking the corpus (mutate + re-publish) isn't worth killing
+      `__tilt`. `__tilt` now re-derives the pitch (90°−tilt) with `sin`/`1/cos` — the whole model re-tilts live.
+      The corpus stays RAW; the dev pitch is now the permanent path (de-"DEV"'d).
+- [x] Docs + memory ([[lightmap-fine-per-light]]). Shadow stayed coarse (16/tile) + albedo untouched (both
+      intentional). VRAM: fine lightmap = `cols·64 × rows·64 × 4B × 2` (cold+hot), 1 attachment each (was 3) —
+      the attachment drop offsets much of the 16× texel growth; LDR held (no HDR needed yet).
+- [ ] (Open, later) HDR (`rgba16f`) only IF many-light accumulation bands; ground-as-prims N·L; F6 co-pack.
 </content>
