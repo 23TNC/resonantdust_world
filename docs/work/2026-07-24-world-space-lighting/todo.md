@@ -8,8 +8,9 @@ debug light rig; A/B world-space vs the current screen-space path at every step 
 - [x] Derived the true world-3D light→point vector + the N–S factor → [`model.md`](model.md). Result:
       **true N–S = screen Δy / cos65** (E–W 1:1; light height `Lz` adds an up-term). The `sin65` (fictional
       height) tension is flagged — high confidence on `cos65` but NOT sim-verified, so it's live-tunable.
-- [ ] **AWAITING USER SIM-CHECK of the factor** (`cos65` vs `sin65`) — resolved by eye via `__nsfactor` +
-      the P1 oval, or the user's simulation. This is the one gate before trusting P2.
+- [x] **Factor RESOLVED — `1/cos65` by derivation** (the `Z·sin65` cross-terms cancel; [`model.md`](model.md)).
+      `sin65` is the height coefficient, never a falloff competitor. The only remaining eyeball is whether the
+      art is actually 65° — a `__tilt(deg)` sweep, and it does NOT gate P2. B-1 downgraded.
 - [x] **Live angle dial (`__tilt(deg)`)** — the world tilt now lives in the DATA MAP constants (centidegrees,
       A reserve; [`VARIABLES.md`](../../VARIABLES.md)), read by the shadow projection with no burned uniform;
       the shadow tilt was a compile-time literal before. `__tilt(deg)` re-tilts the whole geometry live
