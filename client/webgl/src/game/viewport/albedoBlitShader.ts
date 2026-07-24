@@ -72,6 +72,24 @@ ivec2 lightTexel(vec2 world) {
   float lx = fract(world.x / SQ), ly = fract(world.y / SQ);
   return ivec2(sx * uLSlot + int(lx * float(uLSlot)), sy * uLSlot + int(ly * float(uLSlot)));
 }
+// COLD+HOT shadowed irradiance at a world position (0 if outside the window). One nearest tap; bilinear
+// blends 4 of these below.
+vec3 irrAt(vec2 world) {
+  ivec2 lt = lightTexel(world);
+  if (lt.x < 0) return vec3(0.0);
+  return texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb;
+}
+// Bilinear the COARSE (uLSlot = 16 texels/tile) lightmap so its shadow edge blends into the sharp albedo,
+// instead of showing the map's blocky texels (the gap the user flagged). MANUAL 4-tap with a per-tap
+// toroidal fold — a GPU LINEAR sampler would bleed across the map's wrap seam, which can land on-screen.
+vec3 irrBilinear(vec2 world) {
+  float lmPx = SQ / float(uLSlot);            // world px per lightmap texel (= UNIT)
+  vec2 tp = world / lmPx - 0.5;               // lightmap-texel space, texel-CENTRE aligned
+  vec2 f = fract(tp), b = floor(tp);
+  vec3 i00 = irrAt((b + vec2(0.5, 0.5)) * lmPx), i10 = irrAt((b + vec2(1.5, 0.5)) * lmPx);
+  vec3 i01 = irrAt((b + vec2(0.5, 1.5)) * lmPx), i11 = irrAt((b + vec2(1.5, 1.5)) * lmPx);
+  return mix(mix(i00, i10, f.x), mix(i01, i11, f.x), f.y);
+}
 void main() {
   vec4 outColor = texture(uAlbedo, vUV);
   // WARM-over-COLD: warm is slot-aligned with cold, sampled at the SAME vUV. Where no mover
@@ -99,7 +117,7 @@ void main() {
       // is the placeholder A/B: a billboard takes the UNSHADOWED map (full light, no on-prim shadow).
       vec3 irr;
       if (uPrimShadow == 1) {
-        irr = texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb;
+        irr = irrBilinear(vWorld);            // blended → shadow edge fades into the albedo (no blocky gap)
       } else {
         irr = (inFront(isThing, primRow, coldU.a) ? coldU.rgb : texelFetch(uColdLight, lt, 0).rgb)
             + (inFront(isThing, primRow, hotU.a) ? hotU.rgb : texelFetch(uHotLight, lt, 0).rgb);
