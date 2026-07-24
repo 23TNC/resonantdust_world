@@ -19,12 +19,23 @@ that dirty-gating still means a static scene re-bakes nothing._
       eventual consolidation, sequenced after the lighting correctness lands.
 
 ## P1 · Bake per-light `N·L` into a fine, single-attachment lightmap
+_Split into Step A (correctness, current res) + Step B (resolution) so each step has ONE variable._
+### Step A · per-light `N·L` at the CURRENT res + blit collapse — ✅ DONE 2026-07-24
+- [x] `LIGHT_FRAG` bakes `Σ colour·falloff·(1−shadow)·max(0, N·L)` per light on THINGS (ground keeps falloff,
+      `ndl = 1` — unchanged; ground-as-prims `N·L` is a later step). World-space `dir_to_light`
+      (`toL.x, toL.y·nsInv, Lz`) dotted against the world-frame normal. `worldNormal()` maps sprite-tangent →
+      world (rotate the flat basis up by `90°−tilt` about east); corpus is RAW so the pitch is DEV in-shader
+      (`__pitchnormal`, [forks.md#f7](forks.md#f7)) until the re-bake.
+- [x] Blit collapse gated on `uNLbaked`: `light = ambient + irr` (the aggregate-direction relief path is
+      bypassed — it was the lossy stand-in). Old path retained under `__finelight(false)` for A/B.
+- [x] VERIFIED live: things show per-light directional facet shading (was flat aggregate glow); pitch sign
+      correct (highlights on light-facing facets); zoom-stable; A/B toggle works. Dimmer (inherent to Lambert).
+### Step B · bump to fine resolution (`TEXTILE_SQUARE` = 64/tile) — PENDING
 - [ ] Resize the cold/hot lightmap RTs to `cols·R × rows·R` (`R` = `TEXTILE_SQUARE`, [forks.md#f4](forks.md#f4)),
-      **1 irradiance attachment** each (drop att1 direction + att2 unshadowed — subsumed by baking `N·L`;
-      [forks.md#f5](forks.md#f5)). HDR format if accumulation overflows (many lights).
-- [ ] `LIGHT_FRAG` at fine res: per presence light, `color·falloff·(1−shadow)·max(0, N·L)` with the fine
-      normal (P0) and the world-space `dir_to_light` ([world-space-lighting](../2026-07-24-world-space-lighting/README.md)),
-      **upsampling** the coarse `shadow-cold` per light ([forks.md#f4](forks.md#f4)). Sum → the texel.
+      decoupled from the 16/tile shadow RT. `LIGHT_FRAG` maps its fine `fc`→world at `uSlot·4`; **upsamples**
+      the coarse `shadow-cold` (`fc/4`) per light. Blit reads the fine lightmap at its own slot.
+- [ ] Drop att1 (direction) + att2 (unshadowed) — subsumed by baking `N·L`; **1 irradiance attachment** each
+      ([forks.md#f5](forks.md#f5)). HDR (`rgba16f`) only if many-light accumulation bands.
 - [ ] Dirty-gating reworked for the new slot `R` (cold/hot independent; a normal change also dirties).
 
 ## P2 · Collapse the blit to `albedo × lightmap`

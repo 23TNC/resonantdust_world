@@ -48,6 +48,7 @@ uniform int uLightEnable;        // 0 = UNLIT (albedo only) — the fallback whe
 uniform int uDepthTest;          // #3 1 = a thing in front of the caster takes the unshadowed map (0 = flat)
 uniform int uPrimShadow;         // shadows-onto-prims: 1 = consume the gather's climbing prim shadow directly
                                  // (default); 0 = placeholder (billboards take full light, no on-prim shadow)
+uniform int uNLbaked;            // lightmap P1 (__finelight): 1 = irr already holds per-light N·L → skip aggregate relief
 uniform float uReliefStrength;   // P2 normal-relief gain (F3/F5 — tuned by eye)
 uniform float uAmbient;          // #4 ambient floor — added ONCE over cold+hot (not baked into either map)
 uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mapping (F2: uniforms — a display consumer)
@@ -126,11 +127,17 @@ void main() {
       // aggregate lit-from direction. Flat ground (n.xy≈0) → relief 1 (neutral); a slope toward the
       // dominant light brightens, away darkens. F3: normal +Y is sprite-north but world +y is south, so
       // flip n.y into the world frame the direction lives in.
-      vec3 nEnc = mix(texture(uNormal, vUV).rgb, texture(uNormalWarm, vUV).rgb, wcov);
-      vec2 nxy = nEnc.xy * 2.0 - 1.0;
-      float relief = 1.0 + uReliefStrength * dot(vec2(nxy.x, -nxy.y), ldir);
-      // Ambient is directionless — add it OUTSIDE the relief so flat/dark areas aren't relief-modulated.
-      light = uAmbient + irr * max(relief, 0.0);
+      // lightmap P1 (__finelight): when the per-light N·L is BAKED into irr, the aggregate-direction relief is
+      // gone (it was the lossy stand-in) — the irradiance already carries the surface response; use it directly.
+      if (uNLbaked == 1) {
+        light = uAmbient + irr;
+      } else {
+        vec3 nEnc = mix(texture(uNormal, vUV).rgb, texture(uNormalWarm, vUV).rgb, wcov);
+        vec2 nxy = nEnc.xy * 2.0 - 1.0;
+        float relief = 1.0 + uReliefStrength * dot(vec2(nxy.x, -nxy.y), ldir);
+        // Ambient is directionless — add it OUTSIDE the relief so flat/dark areas aren't relief-modulated.
+        light = uAmbient + irr * max(relief, 0.0);
+      }
     }
   }
   // Coverage applied at OUTPUT only (premultiplied) so it composites over the canvas

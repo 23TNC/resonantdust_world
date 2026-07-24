@@ -442,6 +442,15 @@ uniform float uNsInv;              // world-space-lighting: N–S un-foreshorten
 uniform sampler2D uSurface;        // lightmap F3-A: shared surface atlas (receiverAt silhouette → which prim is drawn at P)
 uniform sampler2D uNormal;         // lightmap F3-A: shared NORMAL atlas — primNormal samples the prim's world-frame normal
 uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = paint the sampled prim normal into oLight
+uniform int uNL;                   // lightmap P1 (__finelight): 1 = bake per-light N·L into the irradiance (things), 0 = aggregate
+uniform float uNormalPitch;        // lightmap P1 (__pitchnormal): thing normal DEV pitch (rad, 90°−tilt) — corpus still raw
+// lightmap P1: sprite-tangent normal to the WORLD frame. Rotate the flat/ground basis (image-up = north, out
+// = up) up by phi about the EAST axis: phi 0 = ground (lies in the plane), phi = 90deg minus tilt = a standing
+// billboard treated perpendicular to the ground. Image +Y is sprite-north = world -y, so it flips in.
+vec3 worldNormal(vec3 n, float phi) {
+  float c = cos(phi), s = sin(phi);
+  return vec3(n.x, -(n.y * c + n.z * s), -n.y * s + n.z * c);
+}
 layout(location = 0) out vec4 oLight;  // SHADOWED irradiance RGB: Σ colour·intensity·falloff·(1−shadow) (no ambient)
 layout(location = 1) out vec4 oDir;    // RG = irradiance-weighted mean horizontal light dir (enc 0.5+0.5) — per-px relief
 layout(location = 2) out vec4 oUnshadowed; // #3: UNSHADOWED irradiance (no shadow) RGB + A = caster row/127 (for the depth test)
@@ -474,6 +483,15 @@ void main() {
     return;
   }
 
+  // lightmap P1: the WORLD-frame normal for per-light N·L. Only THINGS get N·L for now (ground keeps falloff,
+  // ndl = 1 — the old behaviour; ground-as-prims N·L is a later step). Corpus normals are still RAW, so the
+  // world pitch is applied in-shader here (uNormalPitch, DEV) — bake-at-ingest retires it (F7).
+  uint rprimN; float rcovN;
+  receiverAt(P, uData, uSurface, rprimN, rcovN);
+  vec3 pn = rprimN != 0u ? primNormal(rprimN, P, uData, uNormal) : vec3(0.0);
+  bool applyNL = uNL == 1 && rprimN != 0u && dot(pn, pn) > 0.0; // thing with a loaded normal → real N·L
+  vec3 N = applyNL ? worldNormal(pn, uNormalPitch) : vec3(0.0, 0.0, 1.0);
+
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
@@ -495,22 +513,26 @@ void main() {
     // the N–S screen axis is foreshortened (un-shorten by uNsInv = 1/cos65) and the light sits Lz above the
     // ground. ⟹ the reach is an OVAL (flattened N–S) + a height term (a point under the light isn't at 0).
     // Ground assumption (Pz=0); billboard elevation folds in at P2. Toggle off = the old screen circle.
-    float dist;
+    float Lz = float((Ld.w >> 24) & 255u);                  // light height (units)
+    float dist; vec3 d3;                                     // world-space delta P→light (for dist + N·L dir)
     if (uWorldLight == 1) {
-      float Lz = float((Ld.w >> 24) & 255u);                // light height (units)
-      vec2 d = vec2(toL.x, toL.y * uNsInv);                 // un-foreshorten N–S
-      dist = sqrt(dot(d, d) + Lz * Lz);                     // true 3D distance (ground point)
+      d3 = vec3(toL.x, toL.y * uNsInv, Lz);                 // un-foreshorten N–S + light height
+      dist = length(d3);                                    // true 3D distance (ground point)
     } else {
+      d3 = vec3(toL, 0.0);
       dist = length(toL);                                   // in-plane screen distance (units)
     }
     float fall = smoothstep(reach, 0.0, dist);              // 1 at the light → 0 at reach (F2 smoothstep)
+    // lightmap P1: per-light Lambert on THINGS — fold max(0, N·L̂) into the contribution so the lightmap stores
+    // Σ colour·falloff·(1−shadow)·N·L per light (no lossy aggregate-direction relief). ndl = 1 on ground/aggregate.
+    float ndl = applyNL ? max(dot(N, d3 / max(dist, 1e-3)), 0.0) : 1.0;
     // P3 SHADOW: mask by slot i's u9 coverage (low8 in channel i>>2, high bit in A[16+i]) — a shadowed
     // pixel stops receiving this light. Applied to the contribution so it removes both the irradiance AND
     // the relief drive (a fully-shadowed light must not light the sprite's lit side either). Penumbra and
     // umbra (the gather's soft coverage) modulate it smoothly.
     uint v9 = ((lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((sh.w >> uint(16 + slot)) & 1u) << 8);
     float shadow = float(v9) / 511.0;
-    float contribU = intensity * fall;                      // #3: unshadowed contribution
+    float contribU = intensity * fall * ndl;                // #3: unshadowed contribution (× Lambert on things)
     float contrib = contribU * (1.0 - shadow);              // shadowed
     acc += col * contrib;
     accU += col * contribU;                                 // #3: unshadowed sum (blit restores this for front things)
@@ -796,6 +818,12 @@ export class ShadowGather {
   /** lightmap P0 debug (`__shownormal`): paint the atlas-frame prim normal into the lightmap to verify the
    *  read (per-prim, zoom-stable). Off in normal operation. */
   private showNormal = false;
+  /** lightmap P1 (`__finelight`): bake per-light N·L into the irradiance (things) + the blit consumes it
+   *  directly (no aggregate-direction relief). Default ON; toggle off to A/B against the old aggregate path. */
+  private bakeNL = true;
+  /** lightmap P1 DEV pitch (`__pitchnormal`, deg): the corpus normals are still RAW (camera-facing), so the
+   *  world pitch (90°−tilt) is applied in-shader until the corpus is re-baked world-frame (F7). */
+  private normalPitchDeg = 90 - WORLD_TILT_DEG;
   /** The LIVE world ground tilt (degrees) — written into the data map constants each frame so the shadow
    *  projection (and any shader) reads the angle without a uniform. `__tilt(deg)` re-tilts the whole model:
    *  it updates this + the derived elevation gain (`sin`) + the falloff N–S factor (`1/cos`). */
@@ -908,6 +936,18 @@ export class ShadowGather {
       this.showNormal = on ?? !this.showNormal;
       this.forceColdDirty = this.forceHotDirty = true;
       return this.showNormal;
+    };
+    // DEBUG (lightmap P1): A/B the per-light N·L bake (on) against the old aggregate-direction relief (off).
+    (globalThis as unknown as { __finelight: (on?: boolean) => boolean }).__finelight = (on?: boolean) => {
+      this.bakeNL = on ?? !this.bakeNL;
+      this.forceColdDirty = this.forceHotDirty = true;
+      return this.bakeNL;
+    };
+    // DEBUG (lightmap P1): the DEV in-shader normal pitch (deg) — eyeball the sign/magnitude while the corpus
+    // is still raw; default 90−tilt. Bake-at-ingest (F7) retires this.
+    (globalThis as unknown as { __pitchnormal: (deg?: number) => number }).__pitchnormal = (deg?: number) => {
+      if (deg !== undefined) { this.normalPitchDeg = deg; this.forceColdDirty = this.forceHotDirty = true; }
+      return this.normalPitchDeg;
     };
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
@@ -1217,6 +1257,8 @@ export class ShadowGather {
   /** The baked COLD/HOT lightmap irradiance + aggregate-dir textures (world-space toroidal, TEXEL-aligned).
    *  The display blit samples all four by world position and composites `ambient + cold + hot`. Null until
    *  the first bake has laid out the RTs. */
+  /** lightmap P1: is the per-light N·L baked into the irradiance (so the blit skips aggregate relief)? */
+  get nlBaked(): boolean { return this.bakeNL; }
   get coldLightmap(): Texture | null { return this.coldLightRT?.textures[0] ?? null; }
   get hotLightmap(): Texture | null { return this.hotLightRT?.textures[0] ?? null; }
   get coldLightDir(): Texture | null { return this.coldLightRT?.textures[1] ?? null; }
@@ -1330,6 +1372,8 @@ export class ShadowGather {
         p.uInt("uWorldLight", this.worldLight ? 1 : 0);
         p.uFloat("uNsInv", this.nsInv);
         p.uInt("uShowNormal", this.showNormal ? 1 : 0);
+        p.uInt("uNL", this.bakeNL ? 1 : 0);
+        p.uFloat("uNormalPitch", this.normalPitchDeg * Math.PI / 180);
       },
     });
   }

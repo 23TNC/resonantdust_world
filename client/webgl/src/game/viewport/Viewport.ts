@@ -427,6 +427,7 @@ export class Viewport {
             p.uInt("uLightEnable", coldLight ? 1 : 0);
             p.uInt("uDepthTest", this.depthTest ? 1 : 0);
             p.uInt("uPrimShadow", this.primShadow ? 1 : 0);
+            p.uInt("uNLbaked", this.shadows.nlBaked ? 1 : 0);
             p.uFloat("uReliefStrength", this.reliefStrength);
             p.uFloat("uAmbient", AMBIENT_LEVEL);
             p.uInt("uLCols", win.cols);
