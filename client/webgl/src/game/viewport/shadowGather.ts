@@ -17,7 +17,12 @@ import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
 import { ColdShadowData } from "./coldShadowData";
-import { SQUARE, UNIT, TEXTILE_UNIT } from "./squareMath";
+import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_SQUARE } from "./squareMath";
+
+/** lightmap P1 Step B: the fine lightmap is TEXTILE_SQUARE/tile; the shadow map stays TEXTILE_UNIT/tile.
+ *  This ratio maps a fine light texel to its coarse shadow texel (`fc / FINE_RATIO`) — the per-light shadow
+ *  upsample ([forks.md#f4]). */
+const FINE_RATIO = TEXTILE_SQUARE / TEXTILE_UNIT;
 
 /** Lights this iteration — a ring of debug lights around the seed tile. `number`-typed so the
  *  isolate-one-light debug path (`MAX_LIGHTS = 1`) below isn't flagged as a constant comparison. */
@@ -434,15 +439,13 @@ precision highp float;
 precision highp int;
 uniform highp usampler2D uData;    // presence (sets 3/5) + light records (set 2)
 uniform highp usampler2D uDirty;   // shadow_dirty — same gate as the shadow gather (clean → persist)
-uniform highp usampler2D uShadow;  // this class's shadow RT (TEXEL-aligned) — per-slot u9 coverage; slot i ↔ presence slot i
-uniform highp usampler2D uCasterD; // #3: this class's caster-depth map (R = frontmost caster row, 7-bit)
+uniform highp usampler2D uShadow;  // this class's shadow RT (COARSE — upsampled per fine texel) — per-slot u9 coverage
 uniform int uLightClass;           // #4: accumulate only this class of light — 0 = COLD, 1 = HOT
 uniform int uWorldLight;           // world-space-lighting: 1 = TRUE-3D falloff distance (oval + light height), 0 = screen circle
 uniform float uNsInv;              // world-space-lighting: N–S un-foreshorten factor (1/cos65 ≈ 2.366; live-tunable)
 uniform sampler2D uSurface;        // lightmap F3-A: shared surface atlas (receiverAt silhouette → which prim is drawn at P)
 uniform sampler2D uNormal;         // lightmap F3-A: shared NORMAL atlas — primNormal samples the prim's world-frame normal
 uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = paint the sampled prim normal into oLight
-uniform int uNL;                   // lightmap P1 (__finelight): 1 = bake per-light N·L into the irradiance (things), 0 = aggregate
 uniform float uNormalPitch;        // lightmap P1 (__pitchnormal): thing normal DEV pitch (rad, 90°−tilt) — corpus still raw
 // lightmap P1: sprite-tangent normal to the WORLD frame. Rotate the flat/ground basis (image-up = north, out
 // = up) up by phi about the EAST axis: phi 0 = ground (lies in the plane), phi = 90deg minus tilt = a standing
@@ -451,25 +454,26 @@ vec3 worldNormal(vec3 n, float phi) {
   float c = cos(phi), s = sin(phi);
   return vec3(n.x, -(n.y * c + n.z * s), -n.y * s + n.z * c);
 }
-layout(location = 0) out vec4 oLight;  // SHADOWED irradiance RGB: Σ colour·intensity·falloff·(1−shadow) (no ambient)
-layout(location = 1) out vec4 oDir;    // RG = irradiance-weighted mean horizontal light dir (enc 0.5+0.5) — per-px relief
-layout(location = 2) out vec4 oUnshadowed; // #3: UNSHADOWED irradiance (no shadow) RGB + A = caster row/127 (for the depth test)
+layout(location = 0) out vec4 oLight;  // lightmap P1: SINGLE attachment — Σ colour·intensity·falloff·(1−shadow)·N·L (no ambient)
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
+const int FINE = ${FINE_RATIO};        // fine light texels per coarse shadow texel (TEXTILE_SQUARE/TEXTILE_UNIT)
 void main() {
   // Same window mapping as the shadow gather (constants row): fc → toroidal slot → world tile → P.
   uvec4 C0 = fetchLin(uData, CONST_BASE);
   int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0xFFFFu);
   int uWinCol = int(C0.z) >> 16, uWinRow = (int(C0.z) << 16) >> 16;
-  ivec2 fc = ivec2(gl_FragCoord.xy);
-  int sx = fc.x / uSlot, sy = fc.y / uSlot;
+  int uSlotF = uSlot * FINE;                                   // this map is FINE (TEXTILE_SQUARE/tile); shadow stays coarse
+  ivec2 fc = ivec2(gl_FragCoord.xy);                           // FINE light texel
+  int sx = fc.x / uSlotF, sy = fc.y / uSlotF;                  // owning tile (fine slot)
   if (texelFetch(uDirty, ivec2(sx, sy), 0).r == 0u) discard;   // clean tile → keep the persistent texel
   int wc = uWinCol + pmod(sx - pmod(uWinCol, uCols), uCols);
   int wr = uWinRow + pmod(sy - pmod(uWinRow, uRows), uRows);
-  float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot);
-  float ly = (float(fc.y) - float(sy * uSlot)) / float(uSlot);
+  float lx = (float(fc.x) - float(sx * uSlotF)) / float(uSlotF);
+  float ly = (float(fc.y) - float(sy * uSlotF)) / float(uSlotF);
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
+  ivec2 fcC = fc / FINE;                                       // the coarse SHADOW texel this fine texel upsamples
 
   // lightmap P0 (__shownormal): verify the atlas-frame normal read — paint the prim's sampled normal (enc
   // 0.5+0.5) where a prim is drawn, black on ground. Frame-indexed → must be rock-stable across zoom.
@@ -478,8 +482,6 @@ void main() {
     receiverAt(P, uData, uSurface, rp, rc);
     vec3 n = rp != 0u ? primNormal(rp, P, uData, uNormal) : vec3(0.0);
     oLight = vec4(n * 0.5 + 0.5, 1.0);
-    oDir = vec4(0.5, 0.5, 0.0, 1.0);
-    oUnshadowed = oLight;
     return;
   }
 
@@ -489,16 +491,14 @@ void main() {
   uint rprimN; float rcovN;
   receiverAt(P, uData, uSurface, rprimN, rcovN);
   vec3 pn = rprimN != 0u ? primNormal(rprimN, P, uData, uNormal) : vec3(0.0);
-  bool applyNL = uNL == 1 && rprimN != 0u && dot(pn, pn) > 0.0; // thing with a loaded normal → real N·L
+  bool applyNL = rprimN != 0u && dot(pn, pn) > 0.0;            // thing with a loaded normal → real N·L
   vec3 N = applyNL ? worldNormal(pn, uNormalPitch) : vec3(0.0, 0.0, 1.0);
 
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
-  uvec4 sh = texelFetch(uShadow, fc, 0);                    // P3: this texel's per-slot u9 shadow coverage (this class)
+  uvec4 sh = texelFetch(uShadow, fcC, 0);                   // P3: per-slot u9 shadow coverage — COARSE, upsampled (fcC)
   vec3 acc = vec3(0.0);                                     // #4: NO ambient here — the blit adds it once over cold+hot
-  vec3 accU = vec3(0.0);                                    // #3: UNSHADOWED irradiance (for the depth-test restore)
-  vec2 dirAcc = vec2(0.0);                                  // Σ weight · unit(Lxy − P) — the aggregate lit-from dir
   for (int slot = 0; slot < 14; slot++) {
     uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
@@ -532,21 +532,10 @@ void main() {
     // umbra (the gather's soft coverage) modulate it smoothly.
     uint v9 = ((lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((sh.w >> uint(16 + slot)) & 1u) << 8);
     float shadow = float(v9) / 511.0;
-    float contribU = intensity * fall * ndl;                // #3: unshadowed contribution (× Lambert on things)
-    float contrib = contribU * (1.0 - shadow);              // shadowed
+    float contrib = intensity * fall * ndl * (1.0 - shadow); // shadowed contribution (× Lambert on things)
     acc += col * contrib;
-    accU += col * contribU;                                 // #3: unshadowed sum (blit restores this for front things)
-    // Weight the direction by the UNSHADOWED luminous contribution — the light's geometric direction is
-    // valid even where it's shadowed, so a #3 depth-test restore (unshadowed irr for a front thing) still
-    // gets per-px normal relief instead of flat full-bright light. Shadowed pixels are ≈0 irr anyway, so
-    // using the unshadowed dir there is harmless (relief scales the tiny residual). dist>0 guard.
-    float w = dot(col, vec3(0.299, 0.587, 0.114)) * contribU;
-    if (dist > 1e-3) dirAcc += (toL / dist) * w;
   }
-  float casterRow = float(texelFetch(uCasterD, fc, 0).r & 0x7Fu); // #3: frontmost caster row for this texel
   oLight = vec4(clamp(acc, 0.0, 1.0), 1.0);                 // LDR clamp (F4: tonemap deferred to P4)
-  oDir = vec4(clamp(dirAcc, -1.0, 1.0) * 0.5 + 0.5, 0.0, 1.0); // magnitude = directional confidence (cancels → 0)
-  oUnshadowed = vec4(clamp(accU, 0.0, 1.0), casterRow / 127.0); // #3: unshadowed light + caster row key
 }
 `;
 
@@ -818,9 +807,6 @@ export class ShadowGather {
   /** lightmap P0 debug (`__shownormal`): paint the atlas-frame prim normal into the lightmap to verify the
    *  read (per-prim, zoom-stable). Off in normal operation. */
   private showNormal = false;
-  /** lightmap P1 (`__finelight`): bake per-light N·L into the irradiance (things) + the blit consumes it
-   *  directly (no aggregate-direction relief). Default ON; toggle off to A/B against the old aggregate path. */
-  private bakeNL = true;
   /** lightmap P1 DEV pitch (`__pitchnormal`, deg): the corpus normals are still RAW (camera-facing), so the
    *  world pitch (90°−tilt) is applied in-shader until the corpus is re-baked world-frame (F7). */
   private normalPitchDeg = 90 - WORLD_TILT_DEG;
@@ -936,12 +922,6 @@ export class ShadowGather {
       this.showNormal = on ?? !this.showNormal;
       this.forceColdDirty = this.forceHotDirty = true;
       return this.showNormal;
-    };
-    // DEBUG (lightmap P1): A/B the per-light N·L bake (on) against the old aggregate-direction relief (off).
-    (globalThis as unknown as { __finelight: (on?: boolean) => boolean }).__finelight = (on?: boolean) => {
-      this.bakeNL = on ?? !this.bakeNL;
-      this.forceColdDirty = this.forceHotDirty = true;
-      return this.bakeNL;
     };
     // DEBUG (lightmap P1): the DEV in-shader normal pitch (deg) — eyeball the sign/magnitude while the corpus
     // is still raw; default 90−tilt. Bake-at-ingest (F7) retires this.
@@ -1239,34 +1219,26 @@ export class ShadowGather {
       gl.clearBufferuiv(gl.COLOR, 0, new Uint32Array([0, 0, 0, 0]));
       gl.clearBufferuiv(gl.COLOR, 1, new Uint32Array([0, 0, 0, 0]));
     }
-    // Lightmaps — MRT [0] shadowed irradiance, [1] aggregate dir, [2] UNSHADOWED irradiance + caster row (#3).
-    // NO ambient baked (the blit adds it once over cold+hot). Clear att0/att2 → 0 (no light), att1 → 0.5
-    // (ENCODED zero dir — else an unwritten hot texel decodes to a spurious −1 dir corrupting the summed relief).
-    this.coldLightRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba8unorm", "rgba8unorm", "rgba8unorm"] });
-    this.hotLightRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba8unorm", "rgba8unorm", "rgba8unorm"] });
+    // Lightmap — lightmap P1 Step B: a FINE (TEXTILE_SQUARE/tile) single-attachment map holding the fully
+    // accumulated per-light irradiance (Σ colour·falloff·(1−shadow)·N·L). 4× per axis of the coarse shadow;
+    // att1 (aggregate dir) + att2 (unshadowed) are gone — subsumed by baking N·L (F5). NO ambient baked (the
+    // blit adds it once over cold+hot). fw/fh = cols/rows · TEXTILE_SQUARE.
+    const fw = Math.max(1, cols * TEXTILE_SQUARE), fh = Math.max(1, rows * TEXTILE_SQUARE);
+    this.coldLightRT = new RenderTarget(gl, { width: fw, height: fh, formats: ["rgba8unorm"] });
+    this.hotLightRT = new RenderTarget(gl, { width: fw, height: fh, formats: ["rgba8unorm"] });
     for (const rt of [this.coldLightRT, this.hotLightRT]) {
       rt.bind();
-      gl.clearBufferfv(gl.COLOR, 0, new Float32Array([0, 0, 0, 1]));       // shadowed irradiance = 0
-      gl.clearBufferfv(gl.COLOR, 1, new Float32Array([0.5, 0.5, 0.5, 1])); // dir = zero vector (enc 0.5)
-      gl.clearBufferfv(gl.COLOR, 2, new Float32Array([0, 0, 0, 0]));       // unshadowed = 0, caster row = 0
+      gl.clearBufferfv(gl.COLOR, 0, new Float32Array([0, 0, 0, 1]));       // irradiance = 0
     }
     this.rtCols = cols;
     this.rtRows = rows;
   }
 
-  /** The baked COLD/HOT lightmap irradiance + aggregate-dir textures (world-space toroidal, TEXEL-aligned).
-   *  The display blit samples all four by world position and composites `ambient + cold + hot`. Null until
-   *  the first bake has laid out the RTs. */
-  /** lightmap P1: is the per-light N·L baked into the irradiance (so the blit skips aggregate relief)? */
-  get nlBaked(): boolean { return this.bakeNL; }
+  /** The baked COLD/HOT lightmap irradiance textures (FINE, world-space toroidal). Single attachment each —
+   *  the per-light N·L is baked in (F5), so there's no separate dir/unshadowed. The blit samples both by world
+   *  position and composites `ambient + cold + hot`. Null until the first bake has laid out the RTs. */
   get coldLightmap(): Texture | null { return this.coldLightRT?.textures[0] ?? null; }
   get hotLightmap(): Texture | null { return this.hotLightRT?.textures[0] ?? null; }
-  get coldLightDir(): Texture | null { return this.coldLightRT?.textures[1] ?? null; }
-  get hotLightDir(): Texture | null { return this.hotLightRT?.textures[1] ?? null; }
-  /** #3 The UNSHADOWED irradiance + caster-row maps (att2) — the blit restores these where a thing stands
-   *  in front of the caster (so a foreground sprite isn't darkened by a shadow behind it). */
-  get coldUnshadowed(): Texture | null { return this.coldLightRT?.textures[2] ?? null; }
-  get hotUnshadowed(): Texture | null { return this.hotLightRT?.textures[2] ?? null; }
 
   /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield. */
   tick(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
@@ -1362,8 +1334,7 @@ export class ShadowGather {
       textures: {
         uData: this.coldData.dataTexture, // presence (sets 3/5) + light records (set 2)
         uDirty: dirty,
-        uShadow: shadowRT.textures[0], // this class's shadow-cold (written by the gather draw above)
-        uCasterD: shadowRT.textures[1], // #3: this class's caster-depth map (att1 of the gather draw)
+        uShadow: shadowRT.textures[0], // this class's shadow-cold (COARSE — the fine bake upsamples it)
         uSurface: this.coldData.surfacePage ?? this.empty, // lightmap F3-A: which prim is drawn at P
         uNormal: this.coldData.normalPage ?? this.empty,   // lightmap F3-A: its world-frame normal
       },
@@ -1372,7 +1343,6 @@ export class ShadowGather {
         p.uInt("uWorldLight", this.worldLight ? 1 : 0);
         p.uFloat("uNsInv", this.nsInv);
         p.uInt("uShowNormal", this.showNormal ? 1 : 0);
-        p.uInt("uNL", this.bakeNL ? 1 : 0);
         p.uFloat("uNormalPitch", this.normalPitchDeg * Math.PI / 180);
       },
     });

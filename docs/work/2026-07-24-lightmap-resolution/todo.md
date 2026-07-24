@@ -30,13 +30,22 @@ _Split into Step A (correctness, current res) + Step B (resolution) so each step
       bypassed — it was the lossy stand-in). Old path retained under `__finelight(false)` for A/B.
 - [x] VERIFIED live: things show per-light directional facet shading (was flat aggregate glow); pitch sign
       correct (highlights on light-facing facets); zoom-stable; A/B toggle works. Dimmer (inherent to Lambert).
-### Step B · bump to fine resolution (`TEXTILE_SQUARE` = 64/tile) — PENDING
-- [ ] Resize the cold/hot lightmap RTs to `cols·R × rows·R` (`R` = `TEXTILE_SQUARE`, [forks.md#f4](forks.md#f4)),
-      decoupled from the 16/tile shadow RT. `LIGHT_FRAG` maps its fine `fc`→world at `uSlot·4`; **upsamples**
-      the coarse `shadow-cold` (`fc/4`) per light. Blit reads the fine lightmap at its own slot.
-- [ ] Drop att1 (direction) + att2 (unshadowed) — subsumed by baking `N·L`; **1 irradiance attachment** each
-      ([forks.md#f5](forks.md#f5)). HDR (`rgba16f`) only if many-light accumulation bands.
-- [ ] Dirty-gating reworked for the new slot `R` (cold/hot independent; a normal change also dirties).
+### Step B · bump to fine resolution (`TEXTILE_SQUARE` = 64/tile) — ✅ DONE 2026-07-24
+- [x] Light RTs resized to `cols·TEXTILE_SQUARE × rows·TEXTILE_SQUARE` (`FINE_RATIO` = 4× the coarse shadow RT,
+      decoupled). `LIGHT_FRAG` maps its fine `fc`→world at `uSlot·FINE`; **upsamples** the coarse `shadow-cold`
+      at `fc/FINE` per light. Blit reads the fine lightmap at `uLSlot = TEXTILE_SQUARE`.
+- [x] Dropped att1 (direction) + att2 (unshadowed) — subsumed by baking `N·L`; **1 `rgba8unorm` attachment**
+      each ([forks.md#f5](forks.md#f5)). LDR clamp holds so far; HDR deferred to P3 if many-light bands.
+- [x] Dirty-gating unchanged in shape (still per-tile via `uDirty`); the fine slot only rescales `fc→tile`.
+- [x] VERIFIED live: crisp per-facet tree lighting (the bilinear smear is GONE — nearest at fine res),
+      zoom-stable both directions, no errors. Ground shadows stay coarse-edged (shadow map is still 16/tile).
+
+## P2 · Collapse the blit to `albedo × lightmap` — ✅ DONE 2026-07-24 (merged with Step B)
+- [x] Blit is now `out = albedo × (ambient + coldLight + hotLight) × alpha`, sampled **NEAREST** at fine res.
+- [x] DELETED the whole aggregate path: `irrBilinear`, relief (`uColdDir`/`uHotDir`/`uNormal`/`uReliefStrength`),
+      the `#3` depth-test restore (`uColdUnshadowed`/`uHotUnshadowed`/`uZDepth`/`inFront`/`uDepthTest`),
+      `uPrimShadow`, and the `flat` fallback texture. Their `ShadowGather` getters + `Viewport` hooks
+      (`__relief`/`__depthtest`/`__primshadow`/`__finelight`) are gone too (delete-don't-deprecate; git holds it).
 
 ## P2 · Collapse the blit to `albedo × lightmap`
 - [ ] Blit reads the fine lightmap by world position (its own `R`), multiplies albedo, adds ambient. Remove

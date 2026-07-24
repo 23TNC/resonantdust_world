@@ -17,7 +17,7 @@ import { OverlayShader, overlayModeFor } from "./overlayShader";
 import { ShadowGather, AMBIENT_LEVEL } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
-import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_UNIT } from "./squareMath";
+import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_SQUARE } from "./squareMath";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 
 const BAKE_BUDGET = 128;
@@ -69,7 +69,6 @@ export class Viewport {
   private whiteFrame!: TexFrame;
   private readonly empty: Texture;
   /** Flat-normal / zero-dir fallback (0.5,0.5,1.0) — neutral relief when no normal/dir map is bound. */
-  private readonly flat: Texture;
   private materialRegistry: MaterialRegistry | null = null;
   /** The texture resolver (master→preview→geo). Null until the world scene attaches it + our GL
    *  context ({@link setResolver}); the geo tier renders until then. */
@@ -96,14 +95,6 @@ export class Viewport {
   private readonly grid: Program;
   private readonly gridQuad: Geometry;
   private gridLevel = 0;
-  /** P2 normal-relief gain (F3/F5) — tuned by eye via `__relief(n)`. */
-  private reliefStrength = 1.1;
-  /** #3 skip shadowing things that stand in front of the caster — only the `primShadow` OFF placeholder
-   *  still uses it (`__depthtest`). The live path is shadows-onto-prims. */
-  private depthTest = true;
-  /** shadows-onto-prims (attempt #3): consume the gather's climbing prim shadow directly (default).
-   *  `__primshadow(false)` reverts to the placeholder (billboards take full light) for A/B. */
-  private primShadow = true;
 
   constructor() {
     this.renderer = new Renderer();
@@ -112,9 +103,6 @@ export class Viewport {
     this.white = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([255, 255, 255, 255]) });
     this.whiteFrame = TexFrame.whole(this.white);
     this.empty = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([0, 0, 0, 0]) });
-    // Flat-normal / zero-direction fallback (0.5,0.5,1.0): decoded normal = (0,0,1) up, decoded dir = (0,0)
-    // → neutral relief where no normal/dir map is bound (the blit's uNormal/uLightDir default).
-    this.flat = new Texture(gl, { width: 1, height: 1, format: "rgba8unorm", data: new Uint8Array([128, 128, 255, 255]) });
     this.blitShader = new AlbedoBlitShader(gl);
     this.overlayShader = new OverlayShader(gl);
     this.map = new SquareCache(this.renderer, this.empty, this.channels("cold"));
@@ -125,21 +113,6 @@ export class Viewport {
     this.gridQuad = new Geometry(gl, this.grid, {
       aPosition: { data: new Float32Array([-1, -1, 3, -1, -1, 3]), size: 2 },
     });
-    // DEBUG: tune the P2 normal-relief strength live (F3/F5 by eye). `__relief()` reads the current value.
-    (globalThis as unknown as { __relief: (n?: number) => number }).__relief = (n?: number) => {
-      if (n !== undefined) this.reliefStrength = n;
-      return this.reliefStrength;
-    };
-    // DEBUG (#3): toggle the shadow-vs-prim depth test (no arg = flip). Off = shadows darken front things.
-    (globalThis as unknown as { __depthtest: (on?: boolean) => boolean }).__depthtest = (on?: boolean) => {
-      this.depthTest = on ?? !this.depthTest;
-      return this.depthTest;
-    };
-    // DEBUG (shadows-onto-prims): toggle the climbing prim shadow (default on) vs the full-light placeholder.
-    (globalThis as unknown as { __primshadow: (on?: boolean) => boolean }).__primshadow = (on?: boolean) => {
-      this.primShadow = on ?? !this.primShadow;
-      return this.primShadow;
-    };
   }
 
   /** The four G-buffer channels' resolve hooks. Geo tier only (W4c): every prim resolves to a
@@ -403,13 +376,6 @@ export class Viewport {
         const coldLight = this.shadows.coldLightmap;
         this.blitShader.coldLight = coldLight;
         this.blitShader.hotLight = this.shadows.hotLightmap;
-        this.blitShader.coldUnshadowed = this.shadows.coldUnshadowed; // #3
-        this.blitShader.hotUnshadowed = this.shadows.hotUnshadowed;   // #3
-        this.blitShader.coldDir = this.shadows.coldLightDir;
-        this.blitShader.hotDir = this.shadows.hotLightDir;
-        this.blitShader.normal = this.map.displayComposite("normal-cold");
-        this.blitShader.normalWarm = this.warm.displayComposite("normal-warm");
-        this.blitShader.zdepth = this.map.displayComposite("zdepth-world-cold"); // #3
         const win = this.map.window;
         // world px → clip: x = (wx-ax)*2z/w, y = -(wy-ay)*2z/h  (screen y-down → clip y-up)
         const proj = new Float32Array([
@@ -421,20 +387,16 @@ export class Viewport {
           program: this.blitShader.program,
           geometry: this.displayGeo!,
           blend: "normal",
-          textures: this.blitShader.textures(this.empty, this.flat),
+          textures: this.blitShader.textures(this.empty),
           uniforms: (p) => {
             p.uMat3("uProjection", proj);
             p.uInt("uLightEnable", coldLight ? 1 : 0);
-            p.uInt("uDepthTest", this.depthTest ? 1 : 0);
-            p.uInt("uPrimShadow", this.primShadow ? 1 : 0);
-            p.uInt("uNLbaked", this.shadows.nlBaked ? 1 : 0);
-            p.uFloat("uReliefStrength", this.reliefStrength);
             p.uFloat("uAmbient", AMBIENT_LEVEL);
             p.uInt("uLCols", win.cols);
             p.uInt("uLRows", win.rows);
             p.uInt("uLWinCol", win.winCol);
             p.uInt("uLWinRow", win.winRow);
-            p.uInt("uLSlot", TEXTILE_UNIT);
+            p.uInt("uLSlot", TEXTILE_SQUARE); // lightmap P1: the lightmap is FINE (TEXTILE_SQUARE/tile)
           },
         });
 
@@ -516,6 +478,5 @@ export class Viewport {
     this.warm.destroy();
     this.white.destroy();
     this.empty.destroy();
-    this.flat.destroy();
   }
 }
