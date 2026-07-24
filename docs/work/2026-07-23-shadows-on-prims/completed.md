@@ -4,7 +4,16 @@ _Delivered + verified. Newest first. Mechanisms in [`README.md`](README.md)._
 
 ---
 
-## P0–P3 · Shadows climb billboards — DELIVERED + verified 2026-07-24
+## P0–P3 · Shadows climb billboards — BUILT then REVERTED 2026-07-24 (zoom regression)
+> **REVERTED.** The gather MATH below was correct at a fixed zoom (corridor↔brute bit-identical; climb/flat/
+> binary A/B all right) — but its INPUT was fatal: it read `is-thing`+`base-row` from the `zdepth`
+> **composite** (a `textile_slot` map) by **recomputed world coordinate**, which drifts on zoom (the
+> composite's `slotPx` is a zoom-chosen `floor`) and corrupted even the ground shadows. Client change backed
+> out to the working lighting; the "verified" claim held only at the one zoom I tested. Root cause + the
+> compatibility rule: [`2026-07-24-map-compatibility`](../2026-07-24-map-compatibility/README.md). The
+> downstream math (elevation, cone culls, corridor identity) is REUSABLE once the receiver input comes from
+> a zoom-safe in-family source. Kept below as the record for the re-plan.
+
 Built as ONE fragment shader (not two draws): the gather branches per texel on the zdepth-world sample.
 - **P0 elevation + depth plumbing.** `GATHER_FRAG` binds `uZDepth` (the `zdepth-world-cold` composite) and
   samples it BY WORLD POSITION — the composite is a padded slot-atlas, so the UV is
