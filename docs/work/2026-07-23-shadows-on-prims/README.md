@@ -50,6 +50,26 @@ position is exactly where it's drawn, so its shadow belongs at the same texel, j
   everywhere else. So the blit just samples the lightmap (correct shadow already baked); the
   `__depthmode` binary path stays as a fallback while this comes up.
 
+## Pass 2 — the CONE construction (ratified 2026-07-23, user)
+The per-caster→receiver test, built entirely on the [world-geometry](../2026-07-23-world-geometry/README.md)
+model (`z = sin65·(px.y − base)`, `s = z_light/(z_light − z_point)`, x separable). This **supersedes the
+re-sample-the-ground-shadow framing** ([`issues.md#i1`](issues.md#i1)) — it computes the billboard shadow
+directly, so self-shadow and caster-height are handled by construction:
+
+- **`shadow.tip.y`** — project the caster's TOP (at its fictional height) through the light onto the
+  ground; that ground point's screen-y is the shadow's far edge.
+- **Cull (which casters hit a receiver):** `shadow.tip.y < receiver.bottom.y < prim.bottom.y` AND x
+  inside the cone. Far bound = within the shadow's reach (past the tip → lit); near bound = the receiver
+  is BEYOND the caster (caster between it and the light). The near bound is **free**: if the receiver is
+  in front of the caster, the shadow throws the other way and would only fall on the back face we never
+  render — "in front → no cast" needs no guard.
+- **Climb (extent on the receiver):** the caster-top ray crosses the receiver at some height; **below
+  that → shadowed, above → lit** (tiny at the tip, full near the caster). No separate top-edge calc.
+- **Shape:** within the band, sample the caster's **silhouette** (surface coverage) at the ray∩caster
+  point — `v` from the cone, `u` from the x-interpolation (`caster.x = recv.x + s·(light.x − recv.x)`).
+  This ray∩silhouette is the **exact** test; the cull is conservative (never misses). Exclude same-tile
+  casters (self). Accumulate over casters (max).
+
 ## What we already have
 `zdepth-world` (base row + is-thing, the coverage/surface G-buffer model — now populated), the caster
 **buckets** (prim indices) + light records in the unified data texture, `casterCover` + the corridor

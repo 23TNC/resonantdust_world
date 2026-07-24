@@ -44,3 +44,13 @@ magnitude) in the browser. `__climb` is the live knob on the scaffold; pass 2 ge
 fragments (one depth sample + discard — most of the screen); dirty-driven like pass 1 (only changed
 regions re-walk the corridor); the corridor bound is already the same as pass 1. If it bites, the
 prim-pixel fraction is small, so a coarser pass-2 resolution or a prim-only bounding pass are levers.
+
+## F7 · Pass 2 method — re-sample vs direct CONE {#f7}
+**2026-07-23 — DECIDED (user, ratified): the direct CONE method.** Not "re-project each receiver pixel to
+the ground and re-sample the combined shadow" (that self-shadowed — [`issues.md#i1`](issues.md#i1)).
+Instead, per caster→receiver: `shadow.tip.y` = caster-top projected through the light to the ground; a
+receiver is hit iff `shadow.tip.y < receiver.bottom.y < prim.bottom.y` + x-in-cone (near bound free — an
+in-front receiver would only catch the shadow on its unseen back); the climb = the caster-top ray∩receiver;
+the shape = ray∩silhouette (`v` from the cone, `u` from `recv.x + s·(light.x−recv.x)`). Direct computation
+⟹ self-shadow (skip same-tile) and caster-height (real 3-D intersection) are handled by construction, and
+it needs no ground-shadow map for billboards. The cull is conservative; the ray∩silhouette is the truth.

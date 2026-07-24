@@ -12,13 +12,16 @@ _Verifiable in-browser (the 3-light rig; focus the forest at `?focus=34,27&zoom=
 - [ ] VERIFY: a debug view of `z` (or the re-projected `G`) reads sensibly — 0 on ground, growing up a
       billboard, capped near the sprite top.
 
-## P1 · Pass 2 — the elevated, self-excluding gather
-- [ ] A **second `shadow-cold`** RT (per-light u9), written by a gather variant: early-exit where the
-      depth map says no prim; lift the receiver to `z` (re-project `G` per light); walk the caster
-      buckets **excluding casters on the receiver's own tile** ([forks F1](forks.md#f1)). Reuse
-      `casterCover` + the corridor.
+## P1 · Pass 2 — the CONE construction (ratified — see README)
+- [ ] A **second `shadow-cold`** RT (per-light u9), written by a gather variant, per the ratified cone
+      method: early-exit where the depth map says no prim; compute `shadow.tip.y` (project caster-top
+      through the light to the ground); **cull** casters by `shadow.tip.y < receiver.bottom.y <
+      prim.bottom.y` + x-in-cone; **exact** test = ray∩caster-silhouette (`v` from the cone, `u` from
+      `recv.x + s·(light.x − recv.x)`); exclude same-tile casters ([forks F1](forks.md#f1)); accumulate
+      (max). Reuse `casterCover` + the corridor. The climb bound = the caster-top ray∩receiver.
 - [ ] VERIFY: isolate one light + a caster behind a receiver — the shadow **climbs** the receiver
-      billboard at the right height; the receiver does NOT self-shadow; ground unchanged.
+      billboard from foot up to the ray crossing; the receiver does NOT self-shadow (near bound is free
+      — in-front casts on the invisible back); ground unchanged.
 
 ## P2 · Composite in the lighting bake
 - [ ] Lighting pass picks per texel: **billboard** shadow where `zdepth` says a prim is drawn, **ground**
