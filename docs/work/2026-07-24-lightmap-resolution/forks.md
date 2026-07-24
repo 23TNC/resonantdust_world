@@ -49,6 +49,28 @@ Rejected earlier options (contiguous normal target / sample composite by world c
 bake) are moot — the frame-indexed atlas read is strictly better (no extra RT, no double-bake, no cross-family
 risk).
 
+### F3-A · The frame-origin MECHANISM — parallel normal band (chosen), F6 co-pack consolidates {#f3a}
+**2026-07-24 — RESOLVED (build): a per-def NORMAL-frame band in the data texture; F6 co-pack subsumes it later.**
+F3 said "sample the atlas frame" but not *how the shader gets the normal frame's origin*. Tracing the code
+surfaced the gap: the surface + normal are **separate client atlas pages** (independent `LodPool`s → different
+frame origins) with **independent load timing**, and the def texel is **packed full (4×u32, 4 spare bits) and
+immutable** — so it can neither carry the normal origin nor be backfilled when the normal resolves a tick after
+the surface. Three ways to bridge it:
+- **A — parallel normal-frame band (CHOSEN).** Add `NORMAL_DEF_BASE` (set 6, was reserved) = 1 texel/def holding
+  the normal frame origin (`G = present<<20 | nfx16<<10 | nfy16`), refreshed on the per-tick caster walk
+  (`refreshNormalFrame`). Being a *separate* band from the immutable def band, it rewrites freely — a late normal
+  load just backfills it next tick. `primNormal()` reads it + the shared `uNormal` page with the **same frameRel**
+  as the silhouette (only the origin swapped). Client-only, rides the existing scatter/upload path, zoom-safe
+  (frame-indexed — verified live: normals stay locked to prims across a full zoom sweep, both directions).
+- **B — F6 co-pack.** Normal = surface frame + a fixed quadrant offset → no band, no timing issue, but a big
+  `bin/art` + resolver + quadtree change. Deferred: it's the eventual consolidation ([#f6](#f6)) that retires A's
+  band, sequenced *after* the lighting correctness lands, not before.
+- **C — widen the def to 8 words.** Rejected: doubles the def texture AND still has the immutable-backfill problem
+  (an 8-word def is still minted once).
+Guard: A accepts the normal only when it sits on the shared page AND matches the def's lod (same frame side) —
+else `present = 0` and the bake uses a flat up-normal for that prim (same fallback discipline as the surface's
+single-page/off-page path). Same multi-page limit as the surface today (C5 lifts both).
+
 ## F7 · Bake the normal pitch at ingest → the world angle is bake-committed {#f7}
 **2026-07-24 — DECIDED (user): bake the pitch, accept a fixed world angle.** The normal pitch (card→world)
 is applied once at `bin/art` ingest, keyed by a DSL orientation (`lies-in-ground` → flat = up `ẑ`;

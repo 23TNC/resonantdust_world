@@ -5,15 +5,18 @@ every visible step (`__finelight`). The shadow gather + `shadow-cold` are NOT to
 accumulation + storage. VERIFY perf at each step: the bake grows (fine res × per-light `N·L`), so watch
 that dirty-gating still means a static scene re-bakes nothing._
 
-## P0 · Sample the (world-frame-baked) prim normal from its atlas frame in the bake ([forks.md#f3](forks.md#f3))
-- [ ] Depends on `normal-tilt` baking **world-frame** normals at ingest ([forks.md#f7](forks.md#f7)) — the
-      atlas normal is already pitched, so no runtime rotation/flag.
-- [ ] Bind the normal atlas to `LIGHT_FRAG`; at a prim texel, reuse `receiverAt`'s prim + `(s,t)` to compute
-      the frame UV (identical to the surface silhouette sample) and `texelFetch` the world-frame normal.
-- [ ] VERIFY: the sampled normal reads right per prim, **stable across zoom** (frame-indexed atlas read, not
-      a world-coord composite read → zoom-safe by construction; confirm it).
-- [ ] (Optional, [forks.md#f6](forks.md#f6)) co-pack albedo/normal/surface into one atlas so a quadrant frame
-      shift grabs the normal — sequenceable independently of the lighting work.
+## P0 · Sample the prim normal from its atlas frame in the bake ([forks.md#f3](forks.md#f3), [#f3a](forks.md#f3a)) — ✅ DONE 2026-07-24
+- [x] Mechanism resolved: **parallel `NORMAL_DEF_BASE` band** (per-def normal frame origin, refreshed on the
+      per-tick caster walk) — the immutable def can't carry it ([#f3a](forks.md#f3a)). `bin/art` is aligned to 55°
+      but the **corpus normals are still RAW** (unpitched) — P1's `N·L` verifies against a **temporary in-shader
+      pitch** (dev), corpus re-bake to world-frame is the P3 follow-up ([forks.md#f7](forks.md#f7)).
+- [x] Bound `uSurface` + `uNormal` to `LIGHT_FRAG`; `primNormal()` reuses the silhouette's frameRel (only the
+      frame ORIGIN swapped) + `texelFetch`es the normal. W-facing mirrors `n.x`.
+- [x] VERIFIED live: the sampled normal reads right per prim (each tree/bush shows its own coherent normal map),
+      **rock-stable across a full zoom sweep both directions** — frame-indexed, NOT a world-coord composite read.
+      No console errors; non-debug path undisturbed. Debug hook `__shownormal`.
+- [ ] (Optional, [forks.md#f6](forks.md#f6)) co-pack albedo/normal/surface into one atlas — the F3-A band's
+      eventual consolidation, sequenced after the lighting correctness lands.
 
 ## P1 · Bake per-light `N·L` into a fine, single-attachment lightmap
 - [ ] Resize the cold/hot lightmap RTs to `cols·R × rows·R` (`R` = `TEXTILE_SQUARE`, [forks.md#f4](forks.md#f4)),

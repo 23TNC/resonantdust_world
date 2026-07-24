@@ -126,6 +126,7 @@ const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 // THE unified data texture (1024×1024): linear index → texel; 64-row bands (VARIABLES.md).
 const int DEF_BASE = 0, PRIM_BASE = 65536, LIGHT_BASE = 131072, CONST_BASE = 1047552; // row 1023
 const int PRESENCE_BASE = 196608, CASTER_BASE = 262144, PRESENCE_HI_BASE = 327680; // tile-keyed sets 3, 4, 5
+const int NORMAL_DEF_BASE = 393216; // set 6: per-def NORMAL frame origin (lightmap F3-A) — parallel to the def band
 uvec4 fetchLin(highp usampler2D t, int i) { return texelFetch(t, ivec2(i & 1023, i >> 10), 0); }
 // Region-torus zone-strip fold: world tile → in-set id (matches TS foldTile). World tiles ≥ 0.
 int fmod16(int v) { return ((v % 16) + 16) % 16; }
@@ -342,6 +343,45 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, out uint rprim, 
   }
   return best;
 }
+// lightmap F3-A: the world-frame NORMAL at texel P for the prim DRAWN there — sampled from the prim's NORMAL
+// atlas frame (identical frameRel to the silhouette in receiverCover, only the frame ORIGIN swapped for the
+// normal band's). Atlas lookup indexed by frame (NOT a world-coord composite read) → zoom-stable, in-family.
+// Returns vec3(0) when unavailable (no normal frame yet / off-page / outside frame) → caller uses a flat up.
+vec3 primNormal(uint primIdx, vec2 P, highp usampler2D data, sampler2D nrm) {
+  uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));
+  vec2 A = decodePos(Pd.y);
+  uint orient = Pd.z;
+  int defIdx = int((orient >> 6) & 0xffffu);
+  uvec4 D = fetchLin(data, DEF_BASE + defIdx);
+  float W = float(((D.y >> 23) & 511u) * 2u);
+  float H = float(((D.y >> 14) & 511u) * 2u);
+  if (W <= 0.0 || H <= 0.0) return vec3(0.0);
+  uint lod = (D.z >> 4) & 15u;
+  if (lod < 4u) return vec3(0.0);                            // no silhouette lod → no usable normal frame
+  uvec4 Nf = fetchLin(data, NORMAL_DEF_BASE + defIdx);
+  if (((Nf.y >> 20) & 1u) == 0u) return vec3(0.0);           // normal frame not present (not loaded / off-page)
+  float nfx = float((Nf.y >> 10) & 0x3ffu) * 16.0, nfy = float(Nf.y & 0x3ffu) * 16.0;
+  float spanU = float((((D.y >> 10) & 15u) + 1u) * 16u);
+  float ox = float((D.x >> 6) & 1023u), oy = float(D.y & 1023u);
+  float axf = float((D.z >> 2) & 3u), ayf = float(D.z & 3u);
+  vec2 shf = vec2(ox + 0.5 * axf * W - 0.5 * axf * spanU, oy + 0.5 * ayf * H - 0.5 * ayf * spanU);
+  uint rot = (orient >> 22) & 3u;
+  if (rot == 3u) shf.x = -shf.x;
+  vec2 Ac = A + shf;
+  Ac -= vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF});           // same seat as the receiver mask (so (s,t) matches)
+  float s = (P.x - (Ac.x - 0.5 * W)) / W;
+  float t = (Ac.y - P.y) / H;
+  if (s < 0.0 || s > 1.0 || t < 0.0 || t > 1.0) return vec3(0.0);
+  float ppu = float(1u << lod) / spanU;
+  float nx = float(int((D.w >> 20) & 4095u) - 2048), ny = float(int((D.w >> 8) & 4095u) - 2048);
+  float side = float(1u << lod);
+  if (rot == 3u) s = 1.0 - s;                               // W-facing = mirrored E frame
+  vec2 uv = vec2(nfx, nfy) + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(s * W, (1.0 - t) * H) * ppu;
+  if (uv.x < nfx || uv.x >= nfx + side || uv.y < nfy || uv.y >= nfy + side) return vec3(0.0);
+  vec3 n = texelFetch(nrm, ivec2(uv), 0).xyz * 2.0 - 1.0;    // RGB [0,1] → XYZ [-1,1] (OpenGL +Y-up, marigold-delight)
+  if (rot == 3u) n.x = -n.x;                                // mirror the normal's X with the frame
+  return normalize(n);
+}
 // shadows-onto-prims: ONE per-caster test shared by the corridor + brute walks (so both stay bit-identical —
 // the P6 identity invariant). Q = the point whose shadow we sample (ground texel = the lifted texel; thing
 // texel = the elevated pixel's ground projection G). Two THING-only culls (the user's cone method):
@@ -399,6 +439,9 @@ uniform highp usampler2D uCasterD; // #3: this class's caster-depth map (R = fro
 uniform int uLightClass;           // #4: accumulate only this class of light — 0 = COLD, 1 = HOT
 uniform int uWorldLight;           // world-space-lighting: 1 = TRUE-3D falloff distance (oval + light height), 0 = screen circle
 uniform float uNsInv;              // world-space-lighting: N–S un-foreshorten factor (1/cos65 ≈ 2.366; live-tunable)
+uniform sampler2D uSurface;        // lightmap F3-A: shared surface atlas (receiverAt silhouette → which prim is drawn at P)
+uniform sampler2D uNormal;         // lightmap F3-A: shared NORMAL atlas — primNormal samples the prim's world-frame normal
+uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = paint the sampled prim normal into oLight
 layout(location = 0) out vec4 oLight;  // SHADOWED irradiance RGB: Σ colour·intensity·falloff·(1−shadow) (no ambient)
 layout(location = 1) out vec4 oDir;    // RG = irradiance-weighted mean horizontal light dir (enc 0.5+0.5) — per-px relief
 layout(location = 2) out vec4 oUnshadowed; // #3: UNSHADOWED irradiance (no shadow) RGB + A = caster row/127 (for the depth test)
@@ -418,6 +461,18 @@ void main() {
   float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot);
   float ly = (float(fc.y) - float(sy * uSlot)) / float(uSlot);
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
+
+  // lightmap P0 (__shownormal): verify the atlas-frame normal read — paint the prim's sampled normal (enc
+  // 0.5+0.5) where a prim is drawn, black on ground. Frame-indexed → must be rock-stable across zoom.
+  if (uShowNormal == 1) {
+    uint rp; float rc;
+    receiverAt(P, uData, uSurface, rp, rc);
+    vec3 n = rp != 0u ? primNormal(rp, P, uData, uNormal) : vec3(0.0);
+    oLight = vec4(n * 0.5 + 0.5, 1.0);
+    oDir = vec4(0.5, 0.5, 0.0, 1.0);
+    oUnshadowed = oLight;
+    return;
+  }
 
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
@@ -738,6 +793,9 @@ export class ShadowGather {
    *  off to A/B against the screen circle. */
   private worldLight = true;
   private nsInv = INV_COS_TILT_DEFAULT;
+  /** lightmap P0 debug (`__shownormal`): paint the atlas-frame prim normal into the lightmap to verify the
+   *  read (per-prim, zoom-stable). Off in normal operation. */
+  private showNormal = false;
   /** The LIVE world ground tilt (degrees) — written into the data map constants each frame so the shadow
    *  projection (and any shader) reads the angle without a uniform. `__tilt(deg)` re-tilts the whole model:
    *  it updates this + the derived elevation gain (`sin`) + the falloff N–S factor (`1/cos`). */
@@ -844,6 +902,13 @@ export class ShadowGather {
       }
       return this.worldTiltDeg;
     };
+    // DEBUG (lightmap P0): paint the atlas-frame prim normal into the lightmap — verify the read is per-prim
+    // and rock-stable across zoom (frame-indexed, not a world-coord composite read).
+    (globalThis as unknown as { __shownormal: (on?: boolean) => boolean }).__shownormal = (on?: boolean) => {
+      this.showNormal = on ?? !this.showNormal;
+      this.forceColdDirty = this.forceHotDirty = true;
+      return this.showNormal;
+    };
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -942,6 +1007,7 @@ export class ShadowGather {
     for (const p of standing) {
       const def = this.coldData.definitionFor(p, resolver);
       if (def < 0) continue; // no textureName → not a caster
+      this.coldData.refreshNormalFrame(p, def, resolver); // lightmap F3-A: keep the def's normal frame current
       const inst = this.coldData.primDataFor(p, def);
       seen.add(p.id); // resident this frame — everything else gets freed (P2)
       // Bucket by the TIGHT opaque bbox (P3), not the full prim box — matches the quad we actually cast.
@@ -1256,11 +1322,14 @@ export class ShadowGather {
         uDirty: dirty,
         uShadow: shadowRT.textures[0], // this class's shadow-cold (written by the gather draw above)
         uCasterD: shadowRT.textures[1], // #3: this class's caster-depth map (att1 of the gather draw)
+        uSurface: this.coldData.surfacePage ?? this.empty, // lightmap F3-A: which prim is drawn at P
+        uNormal: this.coldData.normalPage ?? this.empty,   // lightmap F3-A: its world-frame normal
       },
       uniforms: (p) => {
         p.uInt("uLightClass", cls);
         p.uInt("uWorldLight", this.worldLight ? 1 : 0);
         p.uFloat("uNsInv", this.nsInv);
+        p.uInt("uShowNormal", this.showNormal ? 1 : 0);
       },
     });
   }
