@@ -45,8 +45,7 @@ uniform sampler2D uNormal;       // COLD normal composite (enc: flat = 0.5,0.5,1
 uniform sampler2D uNormalWarm;   // WARM normal composite (mover relief)
 uniform sampler2D uZDepth;       // #3 zdepth-world: B byte = 0x80|row for a thing, 0 for ground
 uniform int uLightEnable;        // 0 = UNLIT (albedo only) — the fallback when the lightmap isn't ready
-uniform int uDepthMode;          // shadow-on-thing mode: 0 = flat (ground) | 1 = binary front/behind | 2 = re-project
-uniform float uClimbGain;        // re-project: how far the shadow lookup slides per world-px of billboard height
+uniform int uDepthTest;          // #3 1 = a thing in front of the caster takes the unshadowed map (0 = flat)
 uniform float uReliefStrength;   // P2 normal-relief gain (F3/F5 — tuned by eye)
 uniform float uAmbient;          // #4 ambient floor — added ONCE over cold+hot (not baked into either map)
 uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mapping (F2: uniforms — a display consumer)
@@ -60,7 +59,7 @@ int pmod(int a, int m) { return ((a % m) + m) % m; }
 // it casts resolve to the SAME tile row, so self-cast gives delta 0. (Same-tile prim-vs-prim occlusion is
 // a later problem needing sub-tile UNIT rows; for now same-tile things simply do not shadow each other.)
 bool inFront(bool isThing, int primRow, float casterA) {
-  if (!isThing || uDepthMode != 1) return false;
+  if (!isThing || uDepthTest == 0) return false;
   int casterRow = int(casterA * 127.0 + 0.5);
   int d = ((primRow - casterRow) + 128) & 0x7f;
   if (d >= 64) d -= 128;
@@ -88,35 +87,17 @@ void main() {
     ivec2 lt = lightTexel(vWorld);
     if (lt.x < 0) { light = vec3(1.0); }        // outside window — shouldn't happen (resident squares only)
     else {
-      // #4: sum the COLD (static) + HOT (dynamic) lightmaps. The aggregate lit-from dir (enc 0.5+0.5 →
-      // ·2−2) drives both the relief and the re-projection shift.
+      // #4: sum the COLD (static) + HOT (dynamic) lightmaps. #3: a THING at/in-front-of the caster takes
+      // the UNSHADOWED map (the shadow is behind the sprite); ground always takes the shadowed map. The
+      // proper shadow-climbs-the-billboard replacement is the 2026-07-23-shadows-on-prims stream.
       int zb = int(texture(uZDepth, vUV).b * 255.0 + 0.5);
       bool isThing = (zb & 0x80) != 0;
       int primRow = zb & 0x7f;
       vec2 ldir = (texelFetch(uColdDir, lt, 0).rg + texelFetch(uHotDir, lt, 0).rg) * 2.0 - 2.0;
-      vec3 irr;
-      if (isThing && uDepthMode == 2) {
-        // #3 RE-PROJECTION: this pixel sits Δ up a billboard, so its shadow is the ground shadow at where
-        // the light ray through the elevated point meets the ground — the lookup slides AWAY from the
-        // light (−ldir) by an amount that grows with the billboard height above the base. dRow = base −
-        // pixel row (7-bit); dPx = drawn height above base (world px). Ground/base (dPx 0) → no slide.
-        int pixRow = int(floor(vWorld.y / SQ));
-        int dRow = ((primRow - (pixRow & 0x7f)) + 128) & 0x7f;
-        float dPx = max(float(pixRow + dRow) * SQ - vWorld.y, 0.0);
-        float ll = length(ldir);
-        vec2 gw = ll > 0.01 ? vWorld - (uClimbGain * dPx / ll) * ldir : vWorld;
-        ivec2 gt = lightTexel(gw);
-        ivec2 s = gt.x < 0 ? lt : gt;
-        irr = texelFetch(uColdLight, s, 0).rgb + texelFetch(uHotLight, s, 0).rgb;
-      } else if (isThing && uDepthMode == 1) {
-        // Binary front/behind: a thing at/in-front-of the caster takes the UNSHADOWED map (shadow behind it).
-        vec4 coldU = texelFetch(uColdUnshadowed, lt, 0);
-        vec4 hotU = texelFetch(uHotUnshadowed, lt, 0);
-        irr = (inFront(isThing, primRow, coldU.a) ? coldU.rgb : texelFetch(uColdLight, lt, 0).rgb)
-            + (inFront(isThing, primRow, hotU.a) ? hotU.rgb : texelFetch(uHotLight, lt, 0).rgb);
-      } else {
-        irr = texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb; // ground / mode 0
-      }
+      vec4 coldU = texelFetch(uColdUnshadowed, lt, 0);
+      vec4 hotU = texelFetch(uHotUnshadowed, lt, 0);
+      vec3 irr = (inFront(isThing, primRow, coldU.a) ? coldU.rgb : texelFetch(uColdLight, lt, 0).rgb)
+               + (inFront(isThing, primRow, hotU.a) ? hotU.rgb : texelFetch(uHotLight, lt, 0).rgb);
       // P2 per-px relief: decode the normal (warm-over-cold) and dot its HORIZONTAL part with the summed
       // aggregate lit-from direction. Flat ground (n.xy≈0) → relief 1 (neutral); a slope toward the
       // dominant light brightens, away darkens. F3: normal +Y is sprite-north but world +y is south, so
