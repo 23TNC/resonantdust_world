@@ -24,6 +24,16 @@
   `_remaster_id` path (old `<id>.<rot>.<layer>/<variant>/<map>.png` nested leaf) is untouched. Verified:
   `art split biome-thing/default/conifer/sprite.e.0.png` → 9 variants into `conifer/{0..8}/diffuse.e.0.png`,
   ordering correct (0=top-left small, 6=bottom-left), magenta keyed out. `bash -n` clean.
+- **Remaster no longer dies after the split (cmd_outline collision).** Two `cmd_outline` defs existed: the
+  image-**border** drawer (@511) and the shadow-**silhouette**/meta.json generator (@3173, which used
+  `exec`). Bash kept the second, so remaster's border call hit the silhouette fn and its `exec python3`
+  **replaced the shell**, truncating remaster right after the split (before maps/layers/pack). The
+  silhouette is already generated inside `maps` (calls `outline.py` directly), so the collision was pure
+  regression from `34e7fd0`. Fix: renamed the border fn → `cmd_border` (+ `border)` dispatch), pointed
+  remaster at it, removed the `exec` (+ `exit 1`→`return 1`) so `cmd_outline` can't nuke a caller, deduped
+  the double `outline)` dispatch. Verified: `art remaster biome-thing/default/conifer` now runs ALL steps
+  — split → border → normal(laigter) → albedo+residual(marigold) → strength/AO → **25° pitch** → surface →
+  silhouette(meta.json, earcut OK) → channel-pack(layers). All 9 variants carry the full map set.
 - **P3 — retired `tilt_amount`/`tilt_z`.** Dropped from `cmd_normal`/`cmd_maps`/`cmd_remaster` defaults +
   positional arrays + the remaster `tilt_args` forwarding; `--tilt`/`--no-tilt` category gate kept. Help
   text + usage lines updated. `grep tilt_amount|tilt_z` is clean. `bash -n` passes; docs-check green.

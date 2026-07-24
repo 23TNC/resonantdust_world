@@ -508,10 +508,15 @@ _read_alias() {  # alias_file
 #   color  0xRRGGBB (default 0x000000)   width px (default 2)   blur px (default 2)
 # The outline grows outward, so wide or repeatedly-stacked outlines can clip
 # at the sprite's grid-snapped border (as little as SPLIT_PADDING px of margin).
-cmd_outline() {
+# Draw a VISUAL black border around every master sprite of KIND, in place (the RimWorld/PA
+# outline look). Distinct from `cmd_outline` (which generates the shadow SILHOUETTE into
+# meta.json) — that name collided and silently shadowed this one, breaking remaster; renamed
+# to `cmd_border`. remaster calls this per-sprite; grid tiles skip it (borders between
+# auto-tiling pieces would break the seam).
+cmd_border() {
   local kind=${1:-} color=${2:-0x000000} width=${3:-2} blur=${4:-2}
   if [[ -z "$kind" ]]; then
-    echo "usage: art outline <kind> [color] [width] [blur]" >&2
+    echo "usage: art border <kind> [color] [width] [blur]" >&2
     return 1
   fi
   local src_root="$MASTER_DIR/$kind"
@@ -551,10 +556,10 @@ cmd_outline() {
       -compose over -composite \
       -strip "$tmp"
     mv "$tmp" "$src"
-    echo "$rel  (+outline $color w$width b$blur)"
+    echo "$rel  (+border $color w$width b$blur)"
     count=$((count + 1))
   done
-  echo "art: outlined $count master sprites under $src_root/"
+  echo "art: bordered $count master sprites under $src_root/"
 }
 
 # The Laigter map primitives, shared by the KIND-based commands (`normal`,
@@ -2261,7 +2266,7 @@ cmd_remaster() {
   # then overwrites them with the generated set (we're moving off hand-authoring).
   if ! _is_grid_cat "${path%%/*}"; then
     if awk -v w="$outline_width" 'BEGIN{ exit !(w>0) }'; then
-      cmd_outline "$SPLIT_TARGET" "$outline_color" "$outline_width" "$outline_blur" || return 1
+      cmd_border "$SPLIT_TARGET" "$outline_color" "$outline_width" "$outline_blur" || return 1
     fi
   fi
   local -a tilt_args=()
@@ -3175,8 +3180,10 @@ cmd_outline() {
   # variant leaf's meta.json, from its diffuse alpha — the vector outline the tiered-lighting
   # scatter projects through each light. Delegates to lib/outline.py + the `outline` Rust CLI
   # (shared/geometry). `bin/art maps` runs this automatically when the CLI is built.
-  command -v python3 >/dev/null || { echo "art outline: python3 not found" >&2; exit 1; }
-  RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/outline.py" "$@"
+  command -v python3 >/dev/null || { echo "art outline: python3 not found" >&2; return 1; }
+  # NOT `exec` — this runs as a sub-step of other commands; exec would replace the shell
+  # and kill the caller (it silently truncated `remaster` after the split).
+  RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/outline.py" "$@"
 }
 
 main() {
@@ -3192,7 +3199,7 @@ main() {
     templates) cmd_templates "$@" ;;
     key) cmd_key "$@" ;;
     maps) cmd_maps "$@" ;;
-    outline) cmd_outline "$@" ;;
+    border) cmd_border "$@" ;;
     normal) cmd_normal "$@" ;;
     occlusion) cmd_occlusion "$@" ;;
     ao) cmd_ao "$@" ;;
