@@ -49,8 +49,10 @@ const UNITF = UNIT.toFixed(4);
 /** THE world ground tilt — the ground plane meets the view plane at this angle (docs/work/2026-07-23-world-geometry).
  *  A billboard is drawn parallel to the view; a point Δ up it has fictional height `sin(WORLD_TILT)·Δ`. One
  *  place, so the world tilt is never a magic `65.0` scattered through the shaders. */
-const WORLD_TILT_DEG = 65;                    // DEFAULT ground tilt; the LIVE value lives in the data map
-                                             // constants (centidegrees), read by every lighting shader.
+const WORLD_TILT_DEG = 45;                    // DEFAULT ground tilt (was 65 — an empirical shadow-look pick;
+                                             // 45° chosen from the Fusion360 3D model now the lighting is
+                                             // honest 3D). LIVE value rides the data map (centidegrees);
+                                             // `__tilt(deg)` sweeps it without a rebuild.
 /** shadows-onto-prims: a billboard pixel drawn Δ units above its own base has fictional height
  *  `sin(WORLD_TILT)·Δ` (the ratified world-geometry model) — the DEFAULT receiver-elevation gain that makes
  *  a cast shadow climb the sprite. `__elevk(k)` tunes the climb by eye; 0 collapses it to the flat ground

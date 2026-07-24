@@ -1,4 +1,9 @@
-# World-space lighting — light the 65° world, not the flattened screen — 2026-07-24
+# World-space lighting — light the TILTED world, not the flattened screen — 2026-07-24
+
+_Ground tilt is now a single live dial (`__tilt(deg)`, data-map). **Default is 45°** (chosen from the user's
+Fusion360 3D model, 2026-07-24 — 65° was an empirical shadow-look pick from before the lighting was honest
+3D). The `65°`/`cos65` in the derivation below are illustrative; the model is `cos θ` for whatever `θ` the
+art wants._
 
 _Component: [`client/webgl`](../../components/client/) · `game/viewport/` — the lighting pass (`LIGHT_FRAG`
 in [`shadowGather.ts`](../../../client/webgl/src/game/viewport/shadowGather.ts)) + the display blit relief.
