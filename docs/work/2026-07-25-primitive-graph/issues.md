@@ -1,97 +1,92 @@
 # Primitive graph — issues
 
-_Problems found reviewing the 2026-07-25 design + candidate solutions. Chronological append.
-I1–I3 are **structural** (must be answered before P1 writes code); I5–I9 are mechanical._
+_Problems found reviewing the design + how they resolved. Chronological append.
+**I1–I7 RESOLVED by the user's 2026-07-25 revision** (parent ids, presence split, rotation semantics,
+fixed 8-px commands). **I10–I12 are the new open items.**_
 
-## I1 — A carried record cannot find its carrier: no absolute position, no upward link (2026-07-25) ⚠ CRITICAL
-**Problem.** `light_data` and `billboard_data` hold **offsets only** (`tile_offset`/`unit_offset`/
-`z_offset`) — no region/zone, no absolute position. Links run **downward only** (`prim.set/id → child`);
-nothing points **up**. But the GPU enters through the tile-keyed maps: `light_presence` gives a fragment a
-**light id**, `caster_buckets` gives it a **prim id**. Given a light id, the shader fetches `light_data`,
-finds only offsets, and **cannot determine where the light is** — the carrier is unreachable and the
-ancestor chain unknown. The same applies to the inherited `hot_cold` / `cast_shadows` (both are defined by
-"topmost wins", i.e. an ancestor property).
-**Candidate solutions.**
-1. **CPU resolves the graph and writes leaves absolutely** (pairs with [F1](forks.md#f1)-a). At build
-   time the CPU walks the tree, computes each leaf's absolute `region/zone/tile/unit` + effective
-   `hot_cold`/`cast_shadows`, and stores *that* in the leaf record. Requires the leaf to hold a full
-   position: `light_data` has `u12`+`u32` reserved, `billboard_data` has `u32`+`u32` reserved, so **the
-   room exists** (needs `u16 region|zone` alongside the existing tile/unit fields — the offset fields
-   become *resolved* position at bake time). GPU hot paths never walk the graph.
-2. **Add `u16 carrier_id` to the leaf** (upward pointer) and let the shader hop up. One hop is cheap, but
-   *multi-level* nesting (pawn → hand → torch → light) needs a chain walk in the hot loop, and inherited
-   flags need the full chain.
-3. **Presence/buckets store `(prim_id, slot)` instead of the leaf id**, so entry is always via a carrier.
-   Costs presence slot bits and still needs the chain for deeper nesting.
-**Lean: (1).** It keeps the GPU's read path flat (exactly as fast as today, zoom-safe by construction)
-and makes the graph a *CPU authoring/update* structure. See [F1](forks.md#f1) — this is the central fork.
+## I1 — A carried record cannot find its carrier ✅ RESOLVED (2026-07-25)
+**Was.** Leaves held offsets only, links ran downward only, so a light id from presence could not be
+located and the inherited flags (ancestor properties) were unreachable.
+**Resolved.** `u16 parent_id` added to `light_data` + `billboard_data` (RED), and `prim_data` gained a
+`child` bit that reinterprets RED's top half as `u16 parent_id`. The graph is now navigable **upward**,
+so either side can resolve — the CPU normally does (it must anyway, to build presence), and the GPU
+*can* if a shader needs to. See [I11](#i11) for where the walk should actually happen.
 
-## I2 — Child offsets appear UNSIGNED → children can only go right/down (2026-07-25) ⚠ CRITICAL
-**Problem.** `tile_offset` / `unit_offset` are `u8 = x:4|y:4`. Read as unsigned, a child can only be
-placed at **+x/+y** from its carrier. But a pawn's **left** hand, a torch held to the left, and a light
-centred on a billboard all need **negative** offsets. As specified, half the plane is unreachable.
-**Candidate solutions.** (a) **Signed nibbles** (two's complement `u4` → −8..+7 tiles / −8..+7 units);
-(b) **biased** (`stored − 8`), same range, simpler to reason about; (c) widen the field (costs bits we
-don't obviously have). **Lean: (b) bias-8** — identical cost, no sign-extension bugs in GLSL, and −8..+7
-tiles is ample for limbs/held items. **Must be decided at P0** — it's a layout semantic.
+## I2 — Child offsets unsigned ✅ RESOLVED (2026-07-25)
+**Resolved: bias-8** per nibble (−8..+7 tiles / units) — user agreed. Applies to every offset field
+(`tile_offset`, `unit_offset`) on child prims, billboards, and lights. To be written into VARIABLES at P0.
 
-## I3 — Hot-loop cost: buckets → prim → 4 children → def is 2 extra hops and up to 4× the tests (2026-07-25)
-**Problem.** The corridor walk is **the** cost of the shadow pass (established in
-[shadow-edge-refine](../2026-07-24-shadow-edge-refine/README.md)): per texel, per light, march the
-segment reading `caster_buckets` and testing silhouettes. Today a bucket slot is a caster prim → def →
-test. Under the graph, a bucket slot is a **carrier** → up to 4 `set/id` → billboard → def. That's 2 more
-indirections *and* up to **8 prims × 4 billboards = 32 silhouette tests/tile** where today it's 7.
-**Candidate solutions.** (1) **Bucket the resolved leaf billboards, not the carriers** — the CPU flattens
-(I1-1), so `caster_buckets` holds 8 *billboard* ids exactly as it holds 7 caster ids today; cost is
-unchanged and the "8 prims/tile" figure becomes "8 casting billboards/tile". (2) Keep carriers in buckets
-and accept the fan-out (needs a real perf test before committing). **Lean: (1).** Note this slightly
-re-reads the user's "8 prims per tile" — same slot count, leaf semantics.
+## I3 — Hot-loop fan-out through carriers ✅ RESOLVED (2026-07-25)
+**Resolved** by bucketing **leaves, not carriers**: `light_presence` holds `light_data` ids and
+**`billboard_presence`** (renamed from the caster buckets) holds `billboard_data` ids. The user's
+reasoning is the decisive one: bucketing carriers makes the per-tile billboard count **unbounded**
+(a carrier fans out to ≤4, recursively). Leaf bucketing keeps the corridor walk exactly as cheap as
+today, at 8 slots/tile.
 
-## I4 — `rotation` and `layer` appear at three levels with no precedence rule (2026-07-25)
-**Problem.** `rotation` (u2) is in `prim_data`, in `billboard_data`/`light_data`, **and** in
-`definition_data`; `layer` (u4) is in both the leaf and the def. `hot_cold`/`cast_shadows` have explicit
-rules ("topmost wins"); these don't. Unresolved, each reader invents its own.
-**Also a semantic question:** is a carrier's rotation **inherited** (a pawn turning west re-faces its
-hands) or **composed geometrically** (children orbit the parent)? For a billboard world the first is
-almost certainly right — rotation *selects the facing frame*, it does not rotate a coordinate frame — but
-if children orbit, the left/right hands must **swap** on an E↔W flip, which is a placement concern.
-**Candidate.** State it at P0 alongside the other inheritance rules: `rotation` inherits downward as a
-*facing* (leaf `rotation` = override when non-zero, else carrier's), `layer` is leaf-then-def fallback.
+## I4 — `rotation`/`layer` precedence ✅ RESOLVED (2026-07-25)
+**Resolved, and the question was mis-framed.** There is no render-time rotation precedence: **the shader
+always uses the definition's rotation**, because the definition *is* the active sprite. Stored `rotation`
+is the **desired facing** — a CPU-side reconciliation signal that triggers a *definition swap* when it
+disagrees with the active def. `parent_rotation` (1 bit, from RED's reserved) opts a piece into
+inheriting the carrier's facing; cleared, it stays independent (a tool aimed south under a pawn facing
+east). `layer` needs no precedence either — **one object per layer** means a prim's pieces occupy
+distinct layers, and `prim_data` carries no layer at all.
 
-## I5 — `u3` counts cannot express a full 8 groups (2026-07-25)
-**Problem.** Counts are in groups of 8 and a fill has 64 data px = **8 groups**, but `u3` maxes at **7**
-→ a single set can only fill 56 records/fill, and the last group of a full fill is unaddressable.
-**Solution.** Use **`u4` counts** — 16 sets × u4 = **u64 counts + u64 reserved**, still one px, and 0..8
-groups is expressible (with headroom). Costs nothing. **Lean: u4.**
+## I5 — `u3` counts cannot express 8 groups ✅ DISSOLVED (2026-07-25)
+The counts scheme is gone. **Fixed 8-px commands** (opcode + set + 7 ids + 7 payloads) give 56
+record-writes per 64-px row with no count field, no width problem, and no group padding.
 
-## I6 — The `u8 opcode` loses its home (2026-07-25)
-**Problem.** Today the header carries `u8 opcode` in A bits 0–7 (`0 = write-data`; future opcodes were
-reserved for presence/other maps). The new header is specified as "u48 counts + u80 reserved" with no
-opcode named.
-**Solution.** Park the opcode explicitly in the reserved bits (e.g. A bits 0–7, as today) so the future
-opcode path survives. Trivial, but must be *written down* or it will be silently dropped.
+## I6 — The opcode loses its home ✅ DISSOLVED (2026-07-25)
+The opcode is now **byte 0 of every command** and *defines* the rest of the command's layout —
+a stronger extension point than the old reserved field. `0x01` = write-data; future 8-px operations
+(presence writes, bulk clears) take their own opcodes.
 
-## I7 — 8-record granularity = write amplification on small updates (2026-07-25)
-**Problem.** One moved prim = 1 record, but the fill pads to a group of 8 → 8 data px + 1 id px + header
-(~10 px) where v2.1 cost 2 px. ~5× on the common single-mover update.
-**Analysis/solution.** Acceptable: the command texture is 64×64 = 4096 px (~56 fills of 73 px), and fills
-are batched per frame. Pad by **repeating the same id + payload** — the scatter does absolute,
-**replay-idempotent** writes, so a duplicate is a harmless second write of identical data. No sentinel id
-needed. (Write it down so nobody invents an "empty" id and has it scatter to record 0.)
+## I7 — 8-record write amplification ✅ MOSTLY DISSOLVED (2026-07-25)
+A command writes ≤7 records to **one set**. A partial command just issues fewer scatter points, so
+there's no padding requirement. *Implementation note:* the trivial index map (record `p` → command
+`p/7`, slot `p%7`) assumes full commands, so either (a) pad a partial command by **repeating an id +
+payload** (the scatter does absolute, replay-idempotent writes — a duplicate is a harmless second write
+of identical data), or (b) upload the `(command, slot)` pair per point in the existing `aIndex`
+attribute. **Lean (b)** — zero waste, and `scatterGeo` already carries a per-point integer attribute.
 
-## I8 — The 2026-07-24 `prim_*`→`billboard_*` rename needs partial reconciliation (2026-07-25)
-**Problem.** Yesterday's rename folded the old `prim_data` into `billboard_data` on the premise that
-"prim always meant billboard". This design **splits** it: `prim_data` returns as the composition node
-(position + carried ids) and `billboard_data` is a genuinely new leaf (def + offsets). Also
-`billboard_definition_data` now carries a `u4 type` and serves more than billboards.
-**Solution.** `prim_data` (node) / `billboard_data` (leaf) / `light_data` (leaf) /
-`definition_data` (revert from `billboard_definition_data`). The *vocabulary* from yesterday still
-holds — primitive is the umbrella, billboard is a presentation — only the band split changed.
+## I8 — Rename reconciliation (2026-07-24 → 2026-07-25) — OPEN, mechanical
+Yesterday's `prim_*`→`billboard_*` rename folded `prim_data` into `billboard_data`. This design
+**splits** them again. Land as: `prim_data` (node) / `billboard_data` (leaf, NEW) / `light_data` (leaf) /
+`definition_data` (revert from `billboard_definition_data` — it now carries a `u4 type` and serves more
+than billboards). The 2026-07-24 *vocabulary* still holds (primitive = umbrella, billboard = a
+presentation); only the band split changed. Also rename the caster buckets → `billboard_presence`.
 
-## I9 — Subtree lifetime: freeing a carrier must free what it carries (2026-07-25)
-**Problem.** The free-list (`billboardFreeList`, `freeBillboardsExcept`) frees flat records by "not seen
-this frame". With carriers, freeing a pawn must free its hands, their billboards, and the torch's light —
-a **recursive** free — and a carried record must not be reclaimed while its carrier lives.
-**Solution.** Free by reachability from the placed roots (mark-from-roots, then sweep), or refcount by
-carrier. Mark-from-roots matches the existing "seen this frame" sweep most closely. Also: `z` (u8) +
-`z_offset` (u8) can sum past u8 — clamp and document.
+## I9 — Subtree lifetime: freeing a carrier must free what it carries — OPEN
+Freeing a pawn must free its hands, their billboards, and the torch's light — a **recursive** free — and
+a carried record must not be reclaimed while its carrier lives. `parent_id` now makes the child→parent
+direction checkable, which helps. **Solution:** free by **reachability from placed roots**
+(mark-from-roots, then sweep), replacing the flat "seen this frame" sweep in `freeBillboardsExcept`.
+Also: `z` (u8) + `z_offset` (u8) can sum past u8 — clamp and document.
+
+## I10 — ⚠ `light_data` lost `emitter_radius` in the revision (2026-07-25) — OPEN, REGRESSION
+**Problem.** The first spec had `BLUE: u12 reach | u8 radius | u12 reserved`; the revision has
+`ALPHA: u12 reach | u20 reserved` — **`radius` is gone**. It is load-bearing: `emitter_radius` drives the
+entire **16-tap area-light penumbra** (the delivered [penumbra](../2026-07-23-penumbra/README.md)
+stream) — `casterCover(...)` takes `emitter` and falls back to a **hard quad** when it's < 0.5
+([`shadowGather.ts:225,257`](../../../client/webgl/src/game/viewport/shadowGather.ts)). Dropping it
+silently turns every soft shadow hard.
+**Solution (assumed an oversight, restored in the README).** `ALPHA: u12 reach | u8 radius | u12 reserved`
+— there is ample room (u20 was reserved). Flagged for confirmation in [blockers.md#b2](blockers.md#b2).
+
+## I11 — Where does the parent-chain walk actually happen? (2026-07-25) — OPEN
+**Problem.** `parent_id` means the GPU *can* resolve a leaf's absolute position, but the gather's light
+loop runs **per texel per light** — doing a chain walk there multiplies the hottest loop in the renderer
+(the same cost that makes a fine-res gather unaffordable). The CPU, by contrast, **must** compute each
+light's world position anyway to decide which tiles it reaches when building `light_presence`.
+**Candidate solutions.** (1) **CPU stamps the resolved absolute position** into the leaf, so the shader
+reads it directly (needs a u32 home — `RED`'s reserved u15 + a repurpose, or treat the offset fields as
+*resolved* tile/unit post-resolution with `region|zone` in RED's reserved). (2) GPU walks up, with a
+**constant-bounded** loop + `break` (never a body-modified loop condition — the known GLSL foot-gun) and
+a documented `MAX_DEPTH`. **Lean: (1)** for the hot paths, keeping (2) available for one-off reads.
+Needs a bit-home decision → [blockers.md#b2](blockers.md#b2).
+
+## I12 — Two resolvers risk drift (2026-07-25) — OPEN, low-stakes
+With both CPU and GPU able to resolve the graph, they must agree **exactly** (the class of bug that bit
+us twice on zoom). **Solution:** name **one** authority per consumer — CPU-resolved for presence,
+bucketing, and the baked position; GPU walk only for reads with no CPU-side equivalent — and state it in
+VARIABLES so nobody adds a second path later. Also cap and document `MAX_DEPTH` for any GPU walk.

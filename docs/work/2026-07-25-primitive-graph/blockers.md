@@ -2,29 +2,34 @@
 
 _Needs your input before P1 writes code. Open → resolved (archive resolved with a date)._
 
-## B1 — Four layout semantics the records don't yet state (2026-07-25, OPEN)
-The bit layouts are complete and self-consistent (every lane sums to 32 — verified). These are the
-*semantics* the layouts imply but don't fix, and each one is a decision a reader and a writer must agree
-on before either exists:
+## B1 — Four layout semantics ✅ RESOLVED by the user (2026-07-25)
+1. **Child offset signedness** → **bias-8** per nibble (−8..+7). Agreed.
+2. **CPU-resolved vs GPU-walked** → **both**, via `u16 parent_id` on leaves + a `child` bit on
+   `prim_data`; CPU resolves presence/bucketing, GPU can walk when required
+   ([F1](forks.md#f1)). One sub-decision remains → B2.
+3. **`rotation`/`layer` precedence** → dissolved: **the shader always uses the definition's rotation**;
+   stored rotation is a CPU **reconciliation signal** driving definition swaps, with `parent_rotation`
+   (1 bit) opting into carrier inheritance. `layer` needs no rule — one object per layer, and
+   `prim_data` carries none ([I4](issues.md#i4)).
+4. **Header count width** → dissolved by **fixed 8-px commands** (opcode + set + 7 ids + 7 payloads),
+   56 record-writes per row ([I5](issues.md#i5)).
 
-1. **Child offset signedness** ([I2](issues.md#i2)/[F3](forks.md#f3)) — **⚠ blocks everything.** As
-   literally specified, `tile_offset`/`unit_offset` are unsigned, so a child can only be placed **+x/+y**
-   of its carrier: no left hand, no torch held to the left, no light centred on a sprite. **Lean: bias-8**
-   per nibble (−8..+7 tiles / units).
-2. **[F1](forks.md#f1) — CPU-resolved vs GPU-walked graph** (the crux). **Lean: CPU-resolved**; the GPU
-   keeps its flat one-hop read, the graph lives in `prim_data` for updates. Determines
-   [I1](issues.md#i1) (how a carried record learns where it is) and [I3](issues.md#i3) (hot-loop cost).
-3. **`rotation` / `layer` precedence** ([I4](issues.md#i4)) — both appear at 3 levels with no stated rule
-   (unlike `hot_cold`/`cast_shadows`, which you defined). Plus: does a carrier's rotation **re-face**
-   children (billboard frame select) or **orbit** them geometrically? If it orbits, left/right hands must
-   swap on an E↔W flip.
-4. **Header count width** ([I5](issues.md#i5)/[F4](forks.md#f4)) — `u3` can't express the 8th group, so a
-   set caps at 56 records/fill and the last group of a full fill is unaddressable. **Lean: `u4`** (still
-   one header px, and leaves room for the opcode, [I6](issues.md#i6)).
+## B2 — Two items from the revision (2026-07-25, OPEN)
+1. **⚠ `light_data` lost `emitter_radius`** ([I10](issues.md#i10)). The revised ALPHA reads
+   `u12 reach | u20 reserved`; the first spec had `u8 radius`. It is **load-bearing** — it drives the
+   16-tap area-light penumbra from the delivered [penumbra](../2026-07-23-penumbra/README.md) stream, and
+   `casterCover` falls back to a **hard quad** when `emitter < 0.5`
+   ([`shadowGather.ts:225,257`](../../../client/webgl/src/game/viewport/shadowGather.ts)). Without it every
+   soft shadow goes hard. **Assumed an oversight — restored in the README as
+   `A: u12 reach | u8 radius | u12 reserved`.** Confirm, or tell me penumbra is being retired.
+2. **Where does a leaf's resolved position live?** ([I11](issues.md#i11)) The gather's light loop runs
+   per-texel-per-light, so walking parent chains *there* multiplies the hottest loop in the renderer.
+   The CPU already computes each light's world position to build presence. **Lean: the CPU stamps the
+   resolved absolute position into the leaf** — which needs a u32 home. Options: use RED's reserved
+   (`u15` after `parent_rotation`) for `region|zone` and treat `tile_offset`/`unit_offset` as *resolved*
+   tile/unit post-resolve; or carve it from ALPHA's reserved. Your call on the bit-home, since it's a
+   layout semantic. (Alternative: accept a GPU walk with a documented `MAX_DEPTH`.)
 
-**Why these need you:** 1 and 3 change what the bits *mean* (VARIABLES is authoritative and outranks
-code); 2 sets the architecture the rest of the stream is built on; 4 is mechanical but is a layout edit.
-
-**Suggested path:** take the leans on 1 (bias-8), 2 (CPU-resolved), 4 (u4) and answer 3 (I'd guess
-"rotation re-faces, doesn't orbit" — but that's yours), and I'll write all of it into VARIABLES at P0 and
-build P1 (transport-only, independently verifiable) before touching a single record layout.
+**Suggested path:** confirm the `radius` restore + pick the resolved-position home, and I'll write all
+the layouts into VARIABLES at P0 and build P1 — the command transport alone, which is independently
+provable pixel-identical before any record layout moves.

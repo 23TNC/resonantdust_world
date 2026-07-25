@@ -4,26 +4,30 @@ _Phases. This stream **preempts** the other lighting/shadow streams — it rewri
 so they resume on top of it. Ordering principle: **layouts first, then the transport, then the writers,
 then the readers** — the data texture must never be half-migrated across a frame boundary._
 
-## P0 — Ratify + land the layouts in VARIABLES (no code)
-- Write the four records (`prim_data`, `billboard_data`, `light_data`, `definition_data`) + the new
-  command format into [`VARIABLES.md`](../../VARIABLES.md) — authoritative, code conforms after.
-- **Settle the semantics the layouts don't yet state** ([blockers.md](blockers.md)):
-  - child offset signedness ([F3](forks.md#f3) — lean bias-8) — blocks every writer/reader.
-  - header count width ([F4](forks.md#f4) — lean u4) + the opcode's home ([I6](issues.md#i6)).
-  - `rotation`/`layer` precedence + whether carrier rotation re-faces or orbits children ([I4](issues.md#i4)).
-  - where leaves get an absolute position ([I1](issues.md#i1)) — falls out of [F1](forks.md#f1).
-- Decide **[F1](forks.md#f1)** (CPU-resolved vs GPU-walked). Everything downstream depends on it.
-- Update the presence/bucket spec to 8 slots (16 lights / 8 casters per tile).
+## P0 — Land the layouts in VARIABLES (no code)
+- Write the four records (`prim_data`, `billboard_data`, `light_data`, `definition_data`) + the fixed
+  8-px command format into [`VARIABLES.md`](../../VARIABLES.md) — authoritative, code conforms after.
+- **Settled 2026-07-25** (record, don't re-litigate): bias-8 signed offsets; `parent_id` on leaves +
+  `child` bit on `prim_data`; presence carries **leaves** (`light_presence` / `billboard_presence`);
+  rotation is a **CPU reconciliation signal**, the shader uses the **definition's** rotation, with
+  `parent_rotation` for inheritance; one object per layer, no layer on `prim_data`.
+- **Still open** ([blockers.md#b2](blockers.md#b2)): restore `emitter_radius` to `light_data`
+  ([I10](issues.md#i10)) and pick the bit-home for a leaf's **resolved position**
+  ([I11](issues.md#i11)).
+- Update the presence spec to 8 slots (16 lights / 8 billboards per tile) + rename the caster buckets to
+  `billboard_presence`; state the single resolve authority per consumer ([I12](issues.md#i12)).
 
-## P1 — Command buffer v3: ids in the command
-- Header → 16× count + opcode; add the **8 id px** block; `SCATTER_VERT` reads the target id from the id
-  block instead of `px(vPayload).x >> 16`.
-- Writer: group commands in 8s, pad by **repeating the id + payload** (replay-idempotent —
-  [I7](issues.md#i7)); rotating-cursor + multi-row fills already exist (`rowsNeeded`), a 73-px fill just
-  spans 2 rows.
-- **Verify in isolation before any record changes**: keep today's record layouts, flip only the
-  transport, confirm the scene is pixel-identical. This is the one phase that can be proven independently
-  — do not bundle it with the layout rewrite.
+## P1 — Command buffer v3: fixed 8-px commands
+- One command = 8 px: `px0 = u8 opcode (0x01) | u8 set | 7× u16 ids` (`R=opcode|set|id0`, `G=id1|id2`,
+  `B=id3|id4`, `A=id5|id6`), `px1..7` = the 7 payload records. 8 commands/row → **56 writes/row**.
+- `SCATTER_VERT`: **delete the 16-iteration count scan** — record `p` → command `p/7`, slot `p%7`,
+  target `(set << 16) | id[slot]`; payload px = `cmd*8 + 1 + slot`. Strictly cheaper than today.
+- Writer: group by set, ≤7 records per command; handle partial commands per [F7](forks.md#f7)
+  (lean: encode `(command, slot)` in the existing `aIndex` attribute — no padding waste).
+- Retire the self-address write (`R`'s high half) from every record writer.
+- **Verify in isolation before any record layout changes**: keep today's layouts, flip only the
+  transport, confirm the scene is pixel-identical. This phase is independently provable — do not bundle
+  it with the layout rewrite.
 
 ## P2 — Records: `prim_data` node + `billboard_data` leaf + `light_data`/`definition_data` rewrite
 - Drop the self-address from all four (freeing the u16); apply the new lanes.
@@ -34,9 +38,13 @@ then the readers** — the data texture must never be half-migrated across a fra
   `receiverCover`, `casterOne`, `billboardNormal`, the light loop).
 
 ## P3 — The graph: carriers, children, resolution
-- CPU: build/maintain the prim graph; resolve per [F1](forks.md#f1) (lean: walk roots → stamp leaves'
-  absolute position + effective `hot_cold`/`cast_shadows`/`rotation`; bucket resolved leaves).
+- CPU: build/maintain the prim graph; walk roots → stamp each leaf's absolute position + effective
+  `hot_cold`/`cast_shadows`; fill `light_presence` / `billboard_presence` with **resolved leaves**
+  ([F1](forks.md#f1)/[F2](forks.md#f2)).
 - Inheritance rules: topmost `hot` forces hot; topmost `!cast_shadows` forces no-cast.
+- **Rotation reconciliation** (the CPU's job, per the user's model): when a piece's desired `rotation`
+  disagrees with its active definition's rotation, swap the definition (honouring `parent_rotation` for
+  inherited facing). Until the swap lands the old sprite renders — by design.
 - Subtree lifetime: free by **reachability from placed roots** ([I9](issues.md#i9)), replacing the flat
   "seen this frame" sweep.
 - Retire the bespoke light array — a light is now *carried*, never placed
