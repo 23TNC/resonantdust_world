@@ -286,10 +286,25 @@ def resize_sprite(img, size):
     return Image.fromarray(np.dstack([np.clip(rgb, 0, 255), r[..., 3]]).astype(np.uint8), "RGBA")
 
 # ---------------------------------------------------------------- workflow
-def _tail(pos, neg, ref_name, edge_name, model_ref, seed):
+# LORA/LORA_STRENGTH are set from --lora/--lora-strength. When a LoRA is set, node 50
+# (LoraLoader) sits between the checkpoint and everything downstream, so BOTH the model
+# and the CLIP text encoders see the trained weights (a style LoRA trains the TE too).
+LORA, LORA_STRENGTH = None, 1.0
+
+def _base(g):
+    """Add the checkpoint (+ optional LoRA) loaders to graph `g`; return (model_ref, clip_ref)."""
+    g["4"] = {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":MODEL}}
+    if not LORA:
+        return ["4",0], ["4",1]
+    g["50"] = {"class_type":"LoraLoader","inputs":{"model":["4",0],"clip":["4",1],
+               "lora_name":LORA,"strength_model":LORA_STRENGTH,"strength_clip":LORA_STRENGTH}}
+    return ["50",0], ["50",1]
+
+def _tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref=("4",1)):
+    clip_ref = list(clip_ref)
     return {
-     "6":{"class_type":"CLIPTextEncode","inputs":{"text":pos,"clip":["4",1]}},
-     "7":{"class_type":"CLIPTextEncode","inputs":{"text":neg,"clip":["4",1]}},
+     "6":{"class_type":"CLIPTextEncode","inputs":{"text":pos,"clip":clip_ref}},
+     "7":{"class_type":"CLIPTextEncode","inputs":{"text":neg,"clip":clip_ref}},
      "20":{"class_type":"LoadImage","inputs":{"image":ref_name}},
      "21":{"class_type":"VAEEncode","inputs":{"pixels":["20",0],"vae":["4",2]}},
      "30":{"class_type":"LoadImage","inputs":{"image":edge_name}},
@@ -300,19 +315,22 @@ def _tail(pos, neg, ref_name, edge_name, model_ref, seed):
      "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"artgen","images":["8",0]}}}
 
 def graph_hero(pos, neg, ref_name, edge_name, seed):
-    g = {"4":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":MODEL}}}
-    g.update(_tail(pos, neg, ref_name, edge_name, ["4",0], seed)); return g
+    g = {}
+    model_ref, clip_ref = _base(g)
+    g.update(_tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref)); return g
 
 def graph_ip(pos, neg, ref_name, edge_name, hero_name, seed):
-    g = {"4":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":MODEL}},
-     "40":{"class_type":"IPAdapterUnifiedLoader","inputs":{"model":["4",0],"preset":"PLUS (high strength)"}},
+    g = {}
+    base_model, clip_ref = _base(g)
+    g.update({
+     "40":{"class_type":"IPAdapterUnifiedLoader","inputs":{"model":base_model,"preset":"PLUS (high strength)"}},
      "41":{"class_type":"LoadImage","inputs":{"image":hero_name}},
-     "42":{"class_type":"IPAdapter","inputs":{"model":["40",0],"ipadapter":["40",1],"image":["41",0],"weight":IP_WEIGHT,"weight_type":"style transfer","start_at":0.0,"end_at":1.0}}}
-    g.update(_tail(pos, neg, ref_name, edge_name, ["42",0], seed)); return g
+     "42":{"class_type":"IPAdapter","inputs":{"model":["40",0],"ipadapter":["40",1],"image":["41",0],"weight":IP_WEIGHT,"weight_type":"style transfer","start_at":0.0,"end_at":1.0}}})
+    g.update(_tail(pos, neg, ref_name, edge_name, ["42",0], seed, clip_ref)); return g
 
 # ---------------------------------------------------------------- main
 def main():
-    global DN, CN, CN_END, CFG   # --dn/--cn/--cn-end/--cfg override the module defaults
+    global DN, CN, CN_END, CFG, LORA, LORA_STRENGTH, STYLE   # CLI overrides of the module defaults
     ap = argparse.ArgumentParser(prog="art generate", description="Generate directional creature sprites from a template set.")
     ap.add_argument("--from", dest="from_path", required=True, help="kind path under textures/ holding the kind-level template (type/subtype/kind, e.g. pawn/animal/wolf)")
     ap.add_argument("--to", dest="to_path", default=None, help="output kind path under textures/ (default: same as --from)")
@@ -336,9 +354,14 @@ def main():
     ap.add_argument("--cn-end", type=float, default=CN_END, help=f"ControlNet end_percent: fraction of steps it stays active (default {CN_END}; higher holds the silhouette deeper into the paint-in phase)")
     ap.add_argument("--edge-thresh", type=int, default=30, help="FIND_EDGES cutoff for the ControlNet edge map (default 30; raise to 60-90 to keep only the strong silhouette and drop interior noise, so high CN doesn't blow up the lines)")
     ap.add_argument("--cfg", type=float, default=CFG, help=f"classifier-free guidance scale (default {CFG:g}; lower loosens prompt/prior adherence — the model chases 'wolf' less hard, so it adds legs less; higher pushes harder toward the prompt and control)")
+    ap.add_argument("--lora", default=None, help="style LoRA to apply, as ComfyUI sees it under models/loras (e.g. rd_quadruped_e07.safetensors); applied to BOTH the model and the text encoders")
+    ap.add_argument("--lora-strength", type=float, default=1.0, help="LoRA strength for model+clip (default 1.0; try 0.6-0.9 if it overpowers the template)")
+    ap.add_argument("--style", default=None, help="override the style boilerplate appended to --positive (use the LoRA's trained tags, e.g. 'rd_style, rd_animal, rd_quadruped, {face}')")
     args = ap.parse_args()
 
     DN, CN, CN_END, CFG = args.dn, args.cn, args.cn_end, args.cfg
+    LORA, LORA_STRENGTH = args.lora, args.lora_strength
+    if args.style: STYLE = args.style
 
     hsym = {c for c in args.hsym.lower() if not c.isspace() and c != ","}
     vsym = {c for c in args.vsym.lower() if not c.isspace() and c != ","}
