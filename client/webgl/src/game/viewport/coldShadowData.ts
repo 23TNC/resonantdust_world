@@ -24,7 +24,10 @@ export const DATA_W = 1024;
 export const DATA_H = 1024;
 /** Band bases (linear indices) — 64-row bands of 65 536 one-texel slots. Mirrored in the GLSL. */
 export const BILLBOARD_DEF_BASE = 0;
-export const BILLBOARD_BASE = 65536;
+export const PRIM_BASE = 65536;            // set 1 — prim_data, the composition node
+export const BILLBOARD_DATA_BASE = 6 * 65536; // set 6 — billboard_data, the sprite leaf
+/** A prim's `set_a..d` nibble naming the band a carried piece lives in (0 = "no data"). */
+const SET_BILLBOARD_DATA = 6;
 export const LIGHT_BASE = 131072;
 /** Tile-keyed sets — region-torus addressed (presence-in-data). One set = one region's 65 536 tiles. */
 export const PRESENCE_BASE = 3 * 65536;    // light_presence_lo (light slots 0–6)
@@ -377,37 +380,53 @@ export class ColdShadowData {
    *  arrives HERE as a `def_index` swap: the orient word rewrites in place and `changed` reports it —
    *  the caller runs the billboard dirty cascade (billboard tiles → reaching lights → their cast regions).
    *  First sight is `changed` too (the same cascade seeds the new caster's region — no force-all). */
+  /** Allocate/patch the pair of records a placed billboard needs under the primitive graph: a ROOT
+   *  `prim_data` node (set 1) carrying ONE billboard, and the `billboard_data` leaf (set 6) it points
+   *  at. The two are 1:1 in this degenerate form, so ONE index serves as both ids — P3 breaks that
+   *  apart when a prim can carry several pieces / nest. Both records compare-write, so an unchanged
+   *  billboard still emits no command. */
   billboardDataFor(billboard: Primitive, defIndex: number): { idx: number; changed: boolean } {
     const rotation = billboard.flipX ? 3 : 1; // W : E (both E/W regime for now)
     const z = 0;
-    const orient = ((((z & 0xff) << 24) | ((rotation & 0x3) << 22) | ((defIndex & 0xffff) << 6)) >>> 0);
+    const ax = billboard.x + billboard.width * 0.5; // the TRUE game anchor (full-box base-centre)
+    const ay = billboard.y + billboard.height;
+    const pos = encodePosition(ax, ay);             // region|zone|tile|unit
+    const tile = (pos >>> 8) & 0xff, unit = pos & 0xff;
+
     const hit = this.billboardIndex.get(billboard.id);
+    let idx: number;
     if (hit !== undefined) {
-      const base = (BILLBOARD_BASE + hit) * 4; // v2.1: R = id|reserved, G = position, B = orient, A reserved
-      if (this.dataMirror[base + 2] === orient) return { idx: hit, changed: false };
-      // RETENTION: "retain whatever the lod was until we get a NEW one" — a new one means a new
-      // USABLE one. Never swap a standing billboard DOWN to the loose (lod-0) def: if the freshly
-      // resolved frame is unusable (off-page — e.g. a pool spill) the billboard keeps casting its
-      // current silhouette instead of degrading to a solid quad.
-      const curDef = (this.dataMirror[base + 2] >>> 6) & 0xffff;
+      idx = hit;
+      // RETENTION: never swap a standing billboard DOWN to the loose (lod-0) def — if the freshly
+      // resolved frame is unusable (off-page) it keeps casting its current silhouette.
+      const curDef = (this.dataMirror[(BILLBOARD_DATA_BASE + idx) * 4 + 2] >>> 16) & 0xffff;
       const newLod = (this.dataMirror[(BILLBOARD_DEF_BASE + defIndex) * 4 + 2] >>> 4) & 0xf;
       const curLod = (this.dataMirror[(BILLBOARD_DEF_BASE + curDef) * 4 + 2] >>> 4) & 0xf;
-      if (newLod < 4 && curLod >= 4) return { idx: hit, changed: false };
-      this.dataMirror[base + 2] = orient; // def swap (new lod) / orientation change — position untouched
-      this.mark(BILLBOARD_BASE + hit);
-      return { idx: hit, changed: true };
+      if (newLod < 4 && curLod >= 4) defIndex = curDef;
+    } else {
+      idx = this.billboardFreeList.pop() ?? this.billboardNext++; // reuse a freed slot first (P2)
+      this.billboardIndex.set(billboard.id, idx);
     }
-    const idx = this.billboardFreeList.pop() ?? this.billboardNext++; // reuse a freed slot before bumping (P2)
-    const ax = billboard.x + billboard.width * 0.5; // the TRUE game anchor (full-box base-centre) — unchanged
-    const ay = billboard.y + billboard.height;
-    const base = (BILLBOARD_BASE + idx) * 4; // v2.1: R = u16 id | u16 reserved, G = position, B = orient
-    this.dataMirror[base] = ((idx & 0xffff) << 16) >>> 0;
-    this.dataMirror[base + 1] = encodePosition(ax, ay); // position_anchor_reference
-    // orient: z(24–31) | rotation(22–23) | definition_index(6–21) | reserved(0–5)
-    this.dataMirror[base + 2] = orient;
-    this.billboardIndex.set(billboard.id, idx);
-    this.mark(BILLBOARD_BASE + idx);
-    return { idx, changed: true };
+    // prim_data (set 1): a ROOT (child = 0) at the absolute position, carrying the billboard in slot a.
+    const primChanged = this.writeRecord(PRIM_BASE + idx, pos,
+      ((((rotation & 3) << 26) | ((z & 0xff) << 16) | ((SET_BILLBOARD_DATA & 0xf) << 12)) >>> 0),
+      (((idx & 0xffff) << 16) >>> 0), 0);
+    // billboard_data (set 6): parent + RESOLVED tile|unit + definition. Authored offsets are the
+    // bias-8 zero (0x88) — this billboard sits exactly on its carrier until P3 places it relatively.
+    const leafChanged = this.writeRecord(BILLBOARD_DATA_BASE + idx,
+      ((((idx & 0xffff) << 16) | (tile << 8) | unit) >>> 0),
+      ((((rotation & 3) << 26) | ((z & 0xff) << 16) | (0x88 << 8) | 0x88) >>> 0),
+      (((defIndex & 0xffff) << 16) >>> 0), 0);
+    return { idx, changed: primChanged || leafChanged };
+  }
+
+  /** Compare-write one whole record; marks it dirty (→ one scatter command) only if it changed. */
+  private writeRecord(linear: number, R: number, G: number, B: number, A: number): boolean {
+    const b = linear * 4, m = this.dataMirror;
+    if (m[b] === R && m[b + 1] === G && m[b + 2] === B && m[b + 3] === A) return false;
+    m[b] = R; m[b + 1] = G; m[b + 2] = B; m[b + 3] = A;
+    this.mark(linear);
+    return true;
   }
 
   /** Free every allocated billboard whose `billboard.id` is NOT in `seen` (it left the resident/standing set —
@@ -559,7 +578,7 @@ export class ColdShadowData {
   }
   /** DEBUG: decode a billboard_data slot — position back to px + z + rotation + def_index. */
   debugBillboard(index: number): { pos: [number, number]; z: number; rotation: number; def: number } {
-    const base = (BILLBOARD_BASE + index) * 4;
+    const base = (BILLBOARD_DATA_BASE + index) * 4;
     const pos = this.dataMirror[base + 1], orient = this.dataMirror[base + 2]; // v2.1: G/B
     return { pos: decodePosition(pos), z: (orient >>> 24) & 0xff, rotation: (orient >>> 22) & 0x3, def: (orient >>> 6) & 0xffff };
   }

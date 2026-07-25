@@ -85,3 +85,26 @@ The self-address leaves the tile-keyed px, which is what buys back the 8th slot:
 - Two stale reads found during verification ([I18](issues.md#i18)).
 
 **Verified** on a fresh load: relief, soft penumbra and shadow direction all correct. `tsc` clean.
+
+## P2d/P2e — `billboard_data` leaf (set 6) + `prim_data` node (set 1) (2026-07-25)
+The composition structure now exists in the data texture, in its **degenerate one-child form**: every
+placed `Primitive` becomes a ROOT prim carrying exactly one billboard.
+
+- **`billboardDataFor` rewritten** to allocate/patch BOTH records from one index (they are 1:1 here):
+  `prim_data[idx]` = absolute `region|zone|tile|unit`, `child = 0`, `set_a = 6`, `id_a = idx`;
+  `billboard_data[idx]` = `parent_id = idx`, resolved `tile|unit`, `definition_id`, authored offsets at
+  the bias-8 zero. New `writeRecord()` compare-write helper — an unchanged billboard still emits no
+  command, and a MOVED one now updates its position (the old code wrote position once at alloc).
+- **GLSL**: `BILLBOARD_BASE` moves to set 6 (the leaf) and `PRIM_BASE` names set 1; the four decoders
+  (`casterCover`, `receiverCover`, `billboardNormal`, `casterOne`) read position via the new
+  **`resolvedTilePos`** (16-tile period) and take `definition_id`/`rotation` from the leaf's new lanes.
+  Dead `casterRowOf` deleted.
+- **The resolve reference is threaded correctly** (the finding from the plan): `casterOne`/`casterCover`
+  take a `ref` and the walk passes **the visited bucket tile** — `(vec2(o) + 0.5) * UPT` in the corridor
+  branch, `lc + (dx,dy)` in the brute branch — never the sample point, which can be many tiles away.
+  `receiverCover` gets its bucket tile; `billboardNormal` uses `P` (the billboard is drawn there).
+
+**Verified** on a fresh load: scene renders with relief + soft shadows, and the records were read back
+from the mirror — prim #3 has `child=0, set_a=6, id_a=3`; leaf #3 has `parent_id=3`, resolved tile/unit,
+`def=34`, offsets `0x88/0x88`. The link is intact in both directions. Two compile breaks hit on the way
+([I19](issues.md#i19) backtick; three missed `receiverCover` call sites in the 4-corner straddle test).

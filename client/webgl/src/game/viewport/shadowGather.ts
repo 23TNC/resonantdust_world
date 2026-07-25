@@ -132,7 +132,8 @@ const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 // THE unified data texture (1024×1024): linear index → texel; 64-row bands (VARIABLES.md).
-const int BILLBOARD_DEF_BASE = 0, BILLBOARD_BASE = 65536, LIGHT_BASE = 131072, CONST_BASE = 1047552; // row 1023
+const int BILLBOARD_DEF_BASE = 0, PRIM_BASE = 65536, LIGHT_BASE = 131072, CONST_BASE = 1047552; // row 1023
+const int BILLBOARD_BASE = 393216;  // v3 set 6 — the BILLBOARD LEAF (set 1 = prim_data, the node)
 const int PRESENCE_BASE = 196608, CASTER_BASE = 262144, PRESENCE_HI_BASE = 327680; // tile-keyed sets 3, 4, 5
 uvec4 fetchLin(highp usampler2D t, int i) { return texelFetch(t, ivec2(i & 1023, i >> 10), 0); }
 // Region-torus zone-strip fold: world tile → in-set id (matches TS foldTile). World tiles ≥ 0.
@@ -169,10 +170,16 @@ vec2 resolvedPos(uint zone, uint tile, uint unit, vec2 ref) {
   d -= period * floor(d / period + 0.5);      // wrap to the nearest congruent representative
   return ref + d;
 }
-// #3: a caster billboard's anchor TILE ROW (its base-centre row) — the depth key compared against a receiving
-// thing's row so a sprite standing in front of the caster isn't shadowed. UPT units per tile.
-float casterRowOf(highp usampler2D data, uint billboardIdx) {
-  return floor(decodePos(fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).y).y / UPT);
+// v3 sibling of resolvedPos for a BILLBOARD leaf, which stores only tile|unit (no zone — its presence
+// is a CONTAINMENT relation). Period is therefore 16 tiles, so ref MUST be near the billboard: pass
+// the VISITED BUCKET TILE, never the sample point (which can be many tiles away during the walk).
+vec2 resolvedTilePos(uint tile, uint unit, vec2 ref) {
+  vec2 lm = vec2(float((tile >> 4) & 15u), float(tile & 15u)) * UPT
+          + vec2(float((unit >> 4) & 15u), float(unit & 15u));
+  float period = 16.0 * UPT;
+  vec2 d = lm - ref;
+  d -= period * floor(d / period + 0.5);
+  return ref + d;
 }
 // The WORLD ground tilt (radians), read from the data map's constants A reserve (centidegrees). Lives in the
 // DATA MAP (not a dedicated uniform) so every lighting shader gets the angle for free; __tilt(deg) sets it
@@ -235,13 +242,11 @@ vec2 emitterOffset(int i) {
 // base), a high edge moves a lot (soft tip, detail dissolving), and points just outside the true edge
 // are covered by only SOME sub-lights (soft outer perimeter, no hard card boundary). lod<4 (no
 // silhouette resolved) or a point light (emitter≈0) falls back to the solid/hard quad.
-float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, highp usampler2D data, sampler2D surf) {
+float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, vec2 ref, highp usampler2D data, sampler2D surf) {
   if (billboardIdx == 0u) return 0.0;
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));      // v2.1: R = id|reserved, G = position, B = orient
-  uint pos = Pd.y;
-  uint orient = Pd.z;
-  vec2 A = decodePos(pos);                                  // the billboard's stored anchor (full-box base-centre)
-  int defIdx = int((orient >> 6) & 0xffffu);
+  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref);   // v3 leaf: resolved tile|unit
+  int defIdx = int((Pd.z >> 16) & 0xffffu);
   uvec4 D = fetchLin(data, BILLBOARD_DEF_BASE + defIdx);
   // v2.1: R = u16 id | u10 offset_x | u6 reserved; G = u9 W | u9 H | u4 span (tiles−1) | u10 offset_y.
   // B: frame origin (16-px grid) + page + lod exponent + 3x3 anchors. A: nudges.
@@ -256,7 +261,7 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, highp usampl
   // base-centre on it; general anchors go live when billboard_data carries reported x/y (F3/P5).
   vec2 sh = vec2(ox + 0.5 * axf * W - 0.5 * axf * spanU,
                  oy + 0.5 * ayf * H - 0.5 * ayf * spanU);
-  uint rot = (orient >> 22) & 3u;                           // 1 = E, 3 = W (mirrored E)
+  uint rot = (Pd.y >> 26) & 3u;                           // 1 = E, 3 = W (mirrored E)
   if (rot == 3u) sh.x = -sh.x;                              // flipped sprite → mirrored bbox placement
   vec2 Ac = A + sh;
   float th = worldTiltRad(data), ct = cos(th), st = sin(th); // WORLD_TILT — from the data map (F4)
@@ -305,12 +310,11 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, highp usampl
 // casterCover's billboard/def decode, but with NO light projection — the sprite is drawn parallel to the view, so
 // (s,t) come straight from P's offset in the [Ac.x±W/2] × [Ac.y−H .. Ac.y] rect. Reads ONLY the data texture
 // + surface atlas by index — never a textile_slot map by world coord — so it is zoom-stable by construction.
-float receiverCover(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out float baseYOut) {
+float receiverCover(uint billboardIdx, vec2 P, vec2 ref, highp usampler2D data, sampler2D surf, vec2 align, out float baseYOut) {
   baseYOut = 0.0;
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));
-  vec2 A = decodePos(Pd.y);
-  uint orient = Pd.z;
-  int defIdx = int((orient >> 6) & 0xffffu);
+  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref);   // v3 leaf: resolved tile|unit
+  int defIdx = int((Pd.z >> 16) & 0xffffu);
   uvec4 D = fetchLin(data, BILLBOARD_DEF_BASE + defIdx);
   float W = float(((D.y >> 23) & 511u) * 2u);
   float H = float(((D.y >> 14) & 511u) * 2u);
@@ -320,7 +324,7 @@ float receiverCover(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D 
   uint lod = (D.z >> 4) & 15u;
   float axf = float((D.z >> 2) & 3u), ayf = float(D.z & 3u);
   vec2 sh = vec2(ox + 0.5 * axf * W - 0.5 * axf * spanU, oy + 0.5 * ayf * H - 0.5 * ayf * spanU);
-  uint rot = (orient >> 22) & 3u;
+  uint rot = (Pd.y >> 26) & 3u;
   if (rot == 3u) sh.x = -sh.x;
   vec2 Ac = A + sh;                                         // tight-bbox base-centre (same as casterCover)
   Ac -= align;                                             // seat on the drawn albedo — shadow + lighting pass their OWN offset
@@ -359,7 +363,7 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out 
     for (int c = 0; c < 8; c++) {
       uint billboardIdx = tileSlot(cb, c);
       if (billboardIdx == 0u) continue;
-      float brOut; float cov = receiverCover(billboardIdx, P, data, surf, align, brOut);
+      float brOut; float cov = receiverCover(billboardIdx, P, (vec2(float(wc), float(r0 + dy)) + 0.5) * UPT, data, surf, align, brOut);
       if (cov > 0.0 && brOut > best) { best = brOut; rbillboard = billboardIdx; rcov = cov; } // frontmost cover wins row+billboard+cov
     }
   }
@@ -371,11 +375,11 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out 
 // Frame-indexed (NOT a world-coord composite read) → zoom-stable; present at EVERY lod the surface is (same
 // frame). Returns vec3(0) when unavailable (no silhouette lod / outside frame) → caller uses a flat up.
 vec3 billboardNormal(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out float sOut) {
+  vec2 ref = P;   // the billboard is DRAWN at P, so P is within its own footprint (16-tile period is ample)
   sOut = -1.0;
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));
-  vec2 A = decodePos(Pd.y);
-  uint orient = Pd.z;
-  int defIdx = int((orient >> 6) & 0xffffu);
+  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref);   // v3 leaf: resolved tile|unit
+  int defIdx = int((Pd.z >> 16) & 0xffffu);
   uvec4 D = fetchLin(data, BILLBOARD_DEF_BASE + defIdx);
   float W = float(((D.y >> 23) & 511u) * 2u);
   float H = float(((D.y >> 14) & 511u) * 2u);
@@ -386,7 +390,7 @@ vec3 billboardNormal(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D
   float ox = float((D.x >> 14) & 1023u), oy = float((D.x >> 4) & 1023u); // v3: both offsets in R
   float axf = float((D.z >> 2) & 3u), ayf = float(D.z & 3u);
   vec2 shf = vec2(ox + 0.5 * axf * W - 0.5 * axf * spanU, oy + 0.5 * ayf * H - 0.5 * ayf * spanU);
-  uint rot = (orient >> 22) & 3u;
+  uint rot = (Pd.y >> 26) & 3u;
   if (rot == 3u) shf.x = -shf.x;
   vec2 Ac = A + shf;
   Ac -= align;                                             // lighting passes its OWN offset (decoupled from the shadow mask)
@@ -423,16 +427,17 @@ vec3 billboardNormal(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D
 //       (A north light + a caster south of the receiver would otherwise false-positive.)
 // Returns coverage + the caster row.
 float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, bool isThing, uint rbillboard, vec2 Rbase,
-                highp usampler2D data, sampler2D surf, out float row) {
+                vec2 ref, highp usampler2D data, sampler2D surf, out float row) {
   row = 0.0;
   if (billboardIdx == 0u) return 0.0;
-  vec2 Cb = decodePos(fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).y); // caster base (anchor = base-centre)
+  vec2 Cb = resolvedTilePos((fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).x >> 8) & 255u,
+                            fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).x & 255u, ref); // caster base
   if (isThing) {
     if (billboardIdx == rbillboard) return 0.0;                       // (0) self — exact same billboard → no self-cast
     if (Cb.y <= Rbase.y + ${SELF_BANDF}) return 0.0;        // (1) seen-face + near-band (units): caster must be >SELF_BAND south
     if (dot(Cb - Rbase, Rbase - L.xy) >= 0.0) return 0.0;   // (2) caster must block the light reaching it
   }
-  float cc = casterCover(billboardIdx, Q, L, emitter, data, surf);
+  float cc = casterCover(billboardIdx, Q, L, emitter, ref, data, surf);
   if (cc > 0.0) row = floor(Cb.y / UPT);
   return cc;
 }
@@ -457,9 +462,10 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
       for (int n = 0; n < 5; n++) {                          // cross pad: centre, ±x, ±y
         ivec2 o = qt + ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0));
         uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(o.x, o.y));
+        vec2 bref = (vec2(o) + 0.5) * UPT;                  // resolve casters against THEIR bucket tile
         for (int c = 0; c < 8; c++) {
           uint billboardIdx = tileSlot(cb, c);
-          float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, data, surf, r);
+          float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -471,9 +477,10 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
       for (int dx = -16; dx <= 16; dx++) {
         if (dx < -reachT || dx > reachT) continue;
         uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy));
+        vec2 bref = (vec2(float(lc.x + dx), float(lc.y + dy)) + 0.5) * UPT;
         for (int c = 0; c < 8; c++) {
           uint billboardIdx = tileSlot(cb, c);
-          float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, data, surf, r);
+          float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -677,9 +684,9 @@ void main() {
   if (maskCov > 0.0) {
     float b0, b1, b2;
     vec2 al = vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF});
-    allBillboard = receiverCover(rbillboard, P + vec2(1.0, 0.0), uData, uSurface, al, b0) > 0.0
-           && receiverCover(rbillboard, P + vec2(0.0, 1.0), uData, uSurface, al, b1) > 0.0
-           && receiverCover(rbillboard, P + vec2(1.0, 1.0), uData, uSurface, al, b2) > 0.0;
+    allBillboard = receiverCover(rbillboard, P + vec2(1.0, 0.0), P, uData, uSurface, al, b0) > 0.0
+           && receiverCover(rbillboard, P + vec2(0.0, 1.0), P, uData, uSurface, al, b1) > 0.0
+           && receiverCover(rbillboard, P + vec2(1.0, 1.0), P, uData, uSurface, al, b2) > 0.0;
   }
 
   int fold = foldTile(wc, wr);

@@ -173,3 +173,10 @@ Both compiled fine and produced a *plausible* picture, so `tsc` and a glance bot
 **Rule.** When a record's layout moves, `grep` every read of that record's lanes (`Ld.x/.y/.z/.w`,
 `D.x/…`, `Pd.x/…`) across all shader stages and check each one — the same record is decoded in several
 places (gather, lightmap, the fused edge-refine, the overlay), and a stale read is silent.
+
+## I19 — The GLSL backtick foot-gun, again (2026-07-25)
+Writing the `resolvedTilePos` doc comment I used **backticks around an identifier inside GLSL** — which
+lives in a JS `/* glsl */` template literal, so the literal closed mid-shader and the build broke with a
+bare `TS1005 ',' expected`. This is a **known recurring** mistake with its own standing note; the error
+message points at TypeScript syntax and says nothing about shaders, which is what makes it cost time.
+**Rule:** never use a backtick inside GLSL — not in code, not in a comment. Prefer plain identifiers.
