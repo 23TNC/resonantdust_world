@@ -43,53 +43,67 @@ export function foldTile(wc: number, wr: number): number {
   const ty = ((wr % 16) + 16) % 16;
   return ((zx >> 2) + zy * 4) * 1024 + (zx & 3) * 256 + ty * 16 + tx;
 }
-/** Command buffer v2 (user format): 64×64 RGBA32UI, replay-idempotent absolute writes. One FILL =
- *  a header px + 16 per-SET sections. Header: 16× u6 per-set command counts (5 per RGB lane at
- *  bits 0/6/12/18/24 + the 16th in A) + u8 opcode (A bits 0–7; 0 = write-data — presence/other
- *  maps ride future opcodes) + reserved. A set's section = ceil(n/8) ADDRESS px (8× u16 in-set
- *  addresses) + n PAYLOAD px. u6 caps a set at 63 updates/fill — bursts batch (fills are ~1 KB). */
+/** Command buffer v3 (user format, work 2026-07-25-primitive-graph): 64×64 RGBA32UI, replay-idempotent
+ *  absolute writes. One COMMAND = a fixed 8 px (128 B) targeting ONE set:
+ *    px 0 header  R: u8 operation (24–31) | u5 set (19–23) | u3 count (16–18) | u16 id0 (0–15)
+ *                 G: id1|id2   B: id3|id4   A: id5|id6            (7 target ids, high|low)
+ *    px 1–7       up to 7 payload records, written to (set, id0 .. id_{count-1})
+ *  8 commands tile a 64-px row = 56 record-writes/row; 512 commands per buffer. The `operation`
+ *  DEFINES the rest of the command, so future 8-px ops (presence writes, bulk clears) take their own
+ *  codes. `count` marks the live ids, so a partial command needs no sentinel and `id = 0` stays
+ *  writable — required, since the tile-keyed sets address by `foldTile` (range 0..65535 exhaustive,
+ *  so fold 0 is a real tile). Replaces v2's per-set count header + self-addressing payloads. */
 const CMD_W = 64;
 const CMD_H = 64;
-/** The data texture's 16 u16-addressable SETS (1024×64 each; set = linear >> 16). */
+/** v3 command geometry: one command is a header px + {@link IDS_PER_CMD} payload px, fixed stride, so
+ *  commands tile the row exactly (64 / 8 = 8 per row = 56 record-writes per row). */
+const CMD_PX = 8;
+const IDS_PER_CMD = CMD_PX - 1;
+const CMDS_PER_ROW = CMD_W / CMD_PX;
+const MAX_CMDS = (CMD_W * CMD_H) / CMD_PX;
+/** v3 header operation codes — the operation DEFINES the rest of the command (0x01 = write-data). */
+const OP_WRITE_DATA = 0x01;
+/** The data texture's 16 u16-addressable SETS (1024×64 each; set = linear >> 16). u5 in the header. */
 const SET_SHIFT = 16;
 const SET_COUNT = 16;
-const MAX_PER_SET = 63; // u6 count per fill
 
-/** Scatter v2: slot index → scan the header's per-set counts to find the owning set + in-section
- *  offset → u16 in-set address → point at the target texel; fragment writes the payload px.
- *  Constant-bound scan (16 sets), break inside — never a body-modified loop condition. */
+/** Scatter v3 (work 2026-07-25-primitive-graph): records no longer self-address — the COMMAND carries
+ *  the target ids. One command = ${CMD_PX} px: a header px (operation | set | count | 7× u16 ids) then
+ *  up to ${IDS_PER_CMD} payload px. The draw issues ${IDS_PER_CMD} points per command; a point past the
+ *  header's `count` goes off-clip (never rasterised), so a partial command needs NO sentinel id — which
+ *  matters because the tile-keyed sets address by `foldTile`, whose range covers 0..65535 exhaustively
+ *  (fold 0 is a real tile, so `id = 0` must stay writable). No per-set count scan any more. */
 const SCATTER_VERT = /* glsl */ `#version 300 es
 precision highp int;
 uniform highp usampler2D uCmd;
-uniform int uCmdBase;            // px index of this fill's header
-in uint aIndex;                  // command slot within the fill (0..count-1)
-flat out highp int vPayload;     // px index of this command's payload
+uniform int uCmdBase;            // px index of this batch's FIRST command
+in uint aIndex;                  // point index within the batch (command * ${IDS_PER_CMD} + slot)
+flat out highp int vPayload;     // px index of this point's payload record
 uvec4 px(int i) { return texelFetch(uCmd, ivec2(i & 63, i >> 6), 0); }
-uint laneOf(uvec4 v, int lane) { return lane == 0 ? v.x : (lane == 1 ? v.y : (lane == 2 ? v.z : v.w)); }
-int countOf(uvec4 hdr, int b) {  // 16× u6: 5 per RGB lane (bits 0/6/12/18/24), 16th in A bits 8–13
-  if (b >= 15) return int((hdr.w >> 8) & 63u);
-  int lane = b / 5;
-  int sh = (b - lane * 5) * 6;
-  return int((laneOf(hdr, lane) >> uint(sh)) & 63u);
+// header R = u8 operation (24-31) | u5 set (19-23) | u3 count (16-18) | u16 id0 (0-15);
+// G/B/A = id1|id2, id3|id4, id5|id6 (high|low). Slot s>0 -> lane (s+1)>>1, odd slot = high half.
+uint idOf(uvec4 h, int s) {
+  if (s == 0) return h.x & 0xffffu;
+  int lane = (s + 1) >> 1;
+  uint w = lane == 1 ? h.y : (lane == 2 ? h.z : h.w);
+  return (s & 1) == 1 ? (w >> 16) : (w & 0xffffu);
 }
 void main() {
-  uvec4 hdr = px(uCmdBase);
-  int rem = int(aIndex);
-  int sec = uCmdBase + 1;        // pure-payload sections start after the header px (v2.1: NO
-  int band = 15;                 // address blocks — every record carries its u16 id in R's high half)
-  for (int b = 0; b < 16; b++) { // constant bound; break inside
-    int c = countOf(hdr, b);
-    if (rem < c) { band = b; break; }
-    rem -= c;
-    sec += c;
+  int p = int(aIndex);
+  int cmd = p / ${IDS_PER_CMD};
+  int slot = p - cmd * ${IDS_PER_CMD};
+  int base = uCmdBase + cmd * ${CMD_PX};
+  uvec4 h = px(base);
+  gl_PointSize = 1.0;
+  if (slot >= int((h.x >> 16) & 7u)) {            // past this command's live count -> off-clip, no write
+    gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
+    return;
   }
-  vPayload = sec + rem;
-  uint id = px(vPayload).x >> 16;                  // the record's own in-set id (self-addressing)
-  int target = (band << 16) + int(id);
+  vPayload = base + 1 + slot;
+  int target = (int((h.x >> 19) & 31u) << 16) + int(idOf(h, slot));   // (set << 16) | in-set id
   float x = (float(target & 1023) + 0.5) / 1024.0 * 2.0 - 1.0;
   float y = (float(target >> 10) + 0.5) / 1024.0 * 2.0 - 1.0;
   gl_Position = vec4(x, y, 0.0, 1.0);
-  gl_PointSize = 1.0;
 }
 `;
 const SCATTER_FRAG = /* glsl */ `#version 300 es
@@ -182,7 +196,7 @@ export class ColdShadowData {
     this.dataTex = new Texture(gl, { width: DATA_W, height: DATA_H, format: "rgba32uint" });
     this.cmdTex = new Texture(gl, { width: CMD_W, height: CMD_H, format: "rgba32uint" });
     this.scatter = new Program(gl, SCATTER_VERT, SCATTER_FRAG, "data-scatter");
-    const slots = new Uint32Array(SET_COUNT * MAX_PER_SET); // max commands per fill (16 × 63)
+    const slots = new Uint32Array(MAX_CMDS * IDS_PER_CMD); // v3: 7 points per command, whole buffer
     for (let i = 0; i < slots.length; i++) slots[i] = i;
     this.scatterGeo = new Geometry(gl, this.scatter, { aIndex: { data: slots, size: 1, integer: true } });
     this.dataRT = new RenderTarget(gl, { width: DATA_W, height: DATA_H, wrap: [this.dataTex] });
@@ -449,49 +463,42 @@ export class ColdShadowData {
     this.debugLastFlush = {};
     for (const t of this.dirtySet) { const s = t >> SET_SHIFT; this.debugLastFlush[s] = (this.debugLastFlush[s] ?? 0) + 1; }
     if (this.dirtySet.size === 0) return false;
-    // v2 fills: bucket the changed texels by SET (linear >> 16), then emit fills until drained.
-    // Each fill = header px (16× u6 per-set counts + u8 opcode 0) + per-set sections (address px
-    // of 8× u16 in-set addresses + payload pxs from the mirror). u6 caps 63/set/fill — bursts
-    // batch; a fill maxes at 1 + 16·(8+63) = 1137 px, always inside the 64×64 buffer.
+    // v3 commands: bucket the changed texels by SET (linear >> 16), then cut each set's ids into
+    // chunks of <= IDS_PER_CMD. One command = header px (operation | set | count | 7× u16 ids) +
+    // IDS_PER_CMD payload px, fixed stride. The header's `count` marks the live ids, so a partial
+    // command needs no sentinel — `id = 0` stays writable (tile-keyed sets address by foldTile,
+    // whose range covers 0..65535 exhaustively, so fold 0 is a real tile).
     const buckets: number[][] = Array.from({ length: SET_COUNT }, () => []);
     for (const t of this.dirtySet) buckets[t >> SET_SHIFT].push(t & 0xffff);
     this.dirtySet.clear();
-    const cursors = new Array(SET_COUNT).fill(0) as number[];
+    const cmds: { set: number; ids: number[] }[] = [];
+    for (let b = 0; b < SET_COUNT; b++) {
+      const ids = buckets[b];
+      for (let i = 0; i < ids.length; i += IDS_PER_CMD) cmds.push({ set: b, ids: ids.slice(i, i + IDS_PER_CMD) });
+    }
     const m = this.cmdMirror;
-    for (;;) {
-      let total = 0;
-      const counts = new Array(SET_COUNT).fill(0) as number[];
-      for (let b = 0; b < SET_COUNT; b++) {
-        counts[b] = Math.min(MAX_PER_SET, buckets[b].length - cursors[b]);
-        total += counts[b];
-      }
-      if (total === 0) break;
-      let pxNeeded = 1;
-      for (let b = 0; b < SET_COUNT; b++) pxNeeded += counts[b]; // v2.1: payload-only sections
-      const rowsNeeded = Math.ceil(pxNeeded / CMD_W);
-      if (this.cmdCursorRow + rowsNeeded > CMD_H) this.cmdCursorRow = 0; // rotate (F3) — never look back
+    for (let c0 = 0; c0 < cmds.length; ) {
+      if (this.cmdCursorRow >= CMD_H) this.cmdCursorRow = 0;  // rotate (F3) — never look back
+      const batch = Math.min(cmds.length - c0, (CMD_H - this.cmdCursorRow) * CMDS_PER_ROW);
+      const rowsNeeded = Math.ceil(batch / CMDS_PER_ROW);
       const basePx = this.cmdCursorRow * CMD_W;
-      // Header: 5 counts per RGB lane (bits 0/6/12/18/24), the 16th in A bits 8–13; opcode 0 in A bits 0–7.
-      const h = basePx * 4;
-      m[h] = 0; m[h + 1] = 0; m[h + 2] = 0;
-      for (let b = 0; b < 15; b++) m[h + Math.floor(b / 5)] = (m[h + Math.floor(b / 5)] | (counts[b] << ((b % 5) * 6))) >>> 0;
-      m[h + 3] = (((counts[15] & 63) << 8) | 0) >>> 0;
-      // Sections, set order.
-      let p = basePx + 1;
-      for (let b = 0; b < SET_COUNT; b++) {
-        const n = counts[b];
-        if (n === 0) continue;
-        // v2.1 pure payloads — every record self-addresses (u16 id in R's high half).
-        for (let i = 0; i < n; i++) {
-          const src = ((b << SET_SHIFT) + buckets[b][cursors[b] + i]) * 4;
-          const dst = (p + i) * 4;
+      for (let k = 0; k < batch; k++) {
+        const { set, ids } = cmds[c0 + k];
+        const cmdPx = basePx + k * CMD_PX;
+        const h = cmdPx * 4;
+        // R = u8 operation (24–31) | u5 set (19–23) | u3 count (16–18) | u16 id0; G/B/A = id1..id6.
+        m[h] = (((OP_WRITE_DATA << 24) | (set << 19) | (ids.length << 16) | (ids[0] ?? 0)) >>> 0);
+        m[h + 1] = ((((ids[1] ?? 0) << 16) | (ids[2] ?? 0)) >>> 0);
+        m[h + 2] = ((((ids[3] ?? 0) << 16) | (ids[4] ?? 0)) >>> 0);
+        m[h + 3] = ((((ids[5] ?? 0) << 16) | (ids[6] ?? 0)) >>> 0);
+        for (let i = 0; i < ids.length; i++) {
+          const src = ((set << SET_SHIFT) + ids[i]) * 4;
+          const dst = (cmdPx + 1 + i) * 4;
           m[dst] = this.dataMirror[src];
           m[dst + 1] = this.dataMirror[src + 1];
           m[dst + 2] = this.dataMirror[src + 2];
           m[dst + 3] = this.dataMirror[src + 3];
         }
-        cursors[b] += n;
-        p += n;
       }
       this.cmdTex.uploadRows(this.cmdCursorRow, rowsNeeded, this.cmdMirror, 4);
       this.renderer.draw({
@@ -500,11 +507,12 @@ export class ColdShadowData {
         target: this.dataRT,
         blend: "none",
         mode: this.renderer.gl.POINTS,
-        count: total,
+        count: batch * IDS_PER_CMD,   // 7 points/command; those past `count` go off-clip
         textures: { uCmd: this.cmdTex },
         uniforms: (prog) => prog.uInt("uCmdBase", basePx),
       });
       this.cmdCursorRow += rowsNeeded;
+      c0 += batch;
     }
     return true;
   }

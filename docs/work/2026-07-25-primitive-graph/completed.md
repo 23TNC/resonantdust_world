@@ -30,3 +30,23 @@ code conforms to it from here, not the reverse. Landed:
   the trivial index map lets the scatter vertex drop its per-set count scan.
 
 Commit `d0b21e9`. `rd docs-check` green (235 files).
+
+## P1 — Command buffer v3 (transport only) (2026-07-25)
+Swapped the transport **without touching a single record layout**, so the change is behaviour-preserving
+by construction and independently provable.
+
+- **`SCATTER_VERT` rewritten**: the 16-iteration per-set count scan is **gone**. A point is now
+  `p → command p/7, slot p%7`, header at `uCmdBase + cmd·8`, payload at `base + 1 + slot`, target
+  `(set << 16) | id[slot]` — read straight from the command header instead of the payload's self-address.
+- **`flush()` rewritten**: buckets dirty texels by set, cuts each set into chunks of ≤7, emits fixed
+  **8-px commands** (`R = u8 operation | u5 set | u3 count | u16 id₀`, `G/B/A = id₁..id₆`, then 7
+  payload px). Batches fill the buffer from the rotating row cursor; the draw issues `batch·7` points and
+  the vertex sends `slot ≥ count` off-clip.
+- **No sentinel, nothing burned** — `id = 0` stays writable, which the tile-keyed sets require.
+- Constants: `CMD_PX`/`IDS_PER_CMD`/`CMDS_PER_ROW`/`MAX_CMDS`/`OP_WRITE_DATA` replace `MAX_PER_SET`;
+  the scatter geometry's point buffer sized to the whole buffer (512 commands × 7).
+
+**Verified**: `tsc --noEmit` clean; fresh load renders the scene correctly (trees, soft shadows,
+lighting); data confirmed flowing through the new path — 525 billboards live, 3 lights, last flush → set
+2 (the orbiting light). Records still self-address in the mirror; the scatter simply ignores it now, and
+P2 removes it. Gotcha hit + recorded: [I15](issues.md#i15) (HMR false failure).

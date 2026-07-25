@@ -104,10 +104,10 @@ Self-addressing is retired (that's what buys back the presence slot), so the com
 Rather than counts-in-groups, **every command is exactly 8 px (128 B)**, so 8 commands fit a 64-px row:
 
 ```
-px 0 = header   u8 opcode (0x01 = write-data) | u8 set | 7× u16 target ids
-px 1..7         the 7 payload records, written to (set, id[0..6])
+px 0 = header   u8 operation (0x01 = write-data) | u5 set | u3 count | 7× u16 target ids
+px 1..7         up to 7 payload records, written to (set, id[0..count-1])
 ```
-Concretely: `R = opcode | set | id0`, `G = id1|id2`, `B = id3|id4`, `A = id5|id6` — 7 ids exactly.
+Concretely: `R = operation | set | count | id0`, `G = id1|id2`, `B = id3|id4`, `A = id5|id6`.
 **56 record-writes per row**, 512 commands per 64×64 buffer. Benefits over the counts scheme:
 - No per-set count field, no `u3`/`u4` sizing problem, no group padding
   ([issues.md#i5](issues.md#i5) dissolves).
@@ -116,10 +116,11 @@ Concretely: `R = opcode | set | id0`, `G = id1|id2`, `B = id3|id4`, `A = id5|id6
 - The leading opcode byte is a real **extension point** — future 8-px operations (presence writes, bulk
   clears) get their own opcodes, which is what the old reserved-opcode field was for
   ([issues.md#i6](issues.md#i6) dissolves).
-- One command writes to **one set**, and **`id = 0` is a global sentinel** (user) — a partial command
-  **pads its unused id slots with 0** and the scatter discards those points (degenerate position → the
-  point is clipped, no write). Keeps the trivial `p/7`, `p%7` index map with no per-point bookkeeping.
-  Costs **one burned entry per set** ([issues.md#i14](issues.md#i14) — `defNext` must start at 1).
+- One command writes to **one set**, and the header's **`u3 count`** says how many of its 7 ids are
+  live — so a partial command needs **no sentinel** and **`id = 0` stays a usable id**. That matters:
+  the tile-keyed sets address by `foldTile`, whose range is **0..65535 exhaustively**, so fold 0 is a
+  real tile with no spare id to bias into ([issues.md#i14](issues.md#i14)). The scatter issues 7 points
+  per command and drops those with `slot ≥ count`, keeping the trivial `p/7`, `p%7` map.
 
 ## What this dissolves
 - **[light-prims](../2026-07-24-light-prims/README.md)** is subsumed — lights are never *placed*, they're

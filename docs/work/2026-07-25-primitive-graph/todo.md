@@ -6,17 +6,7 @@ then the readers** — the data texture must never be half-migrated across a fra
 
 _(P0 landed 2026-07-25 → [`completed.md`](completed.md).)_
 
-## P1 — Command buffer v3: fixed 8-px commands
-- One command = 8 px: `px0 = u8 opcode (0x01) | u8 set | 7× u16 ids` (`R=opcode|set|id0`, `G=id1|id2`,
-  `B=id3|id4`, `A=id5|id6`), `px1..7` = the 7 payload records. 8 commands/row → **56 writes/row**.
-- `SCATTER_VERT`: **delete the 16-iteration count scan** — record `p` → command `p/7`, slot `p%7`,
-  target `(set << 16) | id[slot]`; payload px = `cmd*8 + 1 + slot`. Strictly cheaper than today.
-- Writer: group by set, ≤7 records per command; **pad partial commands with `id = 0`**, and have the
-  scatter discard zero-id points via a degenerate `gl_Position` ([F7](forks.md#f7)).
-- Retire the self-address write (`R`'s high half) from every record writer.
-- **Verify in isolation before any record layout changes**: keep today's layouts, flip only the
-  transport, confirm the scene is pixel-identical. This phase is independently provable — do not bundle
-  it with the layout rewrite.
+_(P1 landed 2026-07-25 → [`completed.md`](completed.md).)_
 
 ## P2 — Records: `prim_data` node + `billboard_data` leaf + `light_data`/`definition_data` rewrite
 - Drop the self-address from all four (freeing the u16); apply the new lanes.

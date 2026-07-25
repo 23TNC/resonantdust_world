@@ -108,11 +108,28 @@ Room exists with no layout pressure: `light_data` ALPHA (`u12 reach | u8 radius 
 u4 reserved`) and `billboard_data` ALPHA (`u8 resolved_zone | u24 reserved`). **Applied in the README;
 needs your confirmation.**
 
-## I14 — `id = 0` sentinel: burned entries + writers that start at 0 (2026-07-25) — OPEN, mechanical
-**Problem/solution.** Adopting `id = 0` as the global sentinel (so commands can pad with zeros) burns
-in-set id 0 everywhere. `billboard_data` already reserves it (`billboardNext = 1`), but **`defNext`
-starts at 0** ([`coldShadowData.ts:161`](../../../client/webgl/src/game/viewport/coldShadowData.ts)) and
-light ids are 0-based today — both must become 1-based. The scatter must **discard** a zero-id point
-(degenerate `gl_Position` → clipped). Bonus simplification: presence currently uses **two** empty
-sentinels (`0xFFFF` for lights, `0` for casters); with `id = 0` reserved globally, both can standardise
-on `0`.
+## I14 — `id = 0` cannot be a global sentinel: tile-keyed sets address by fold ✅ RESOLVED (2026-07-25)
+**Problem.** The first plan made `id = 0` a global sentinel so partial commands could pad with zeros
+("burns one entry per set"). That is safe for **record** sets (defs/prims/billboards/lights — allocators
+just start at 1) but **not** for the three **tile-keyed** sets (`light_presence_lo/_hi`,
+`billboard_presence`), whose in-set id is not an allocated counter but a **computed fold**:
+`foldTile(0,0) = 0`, and the fold spans **0..65535 exhaustively** over a region (verified), so there is
+**no spare id to bias into** (`fold + 1` overflows u16). Since a command carries **one** `set` shared by
+all 7 slots, a partial command targeting a tile-keyed set would pad with `id = 0`; discarding `id == 0`
+would make that tile **permanently unwritable** — exactly one tile per region-torus silently holding no
+lights and casting no shadows.
+**Resolved (user).** Steal bits from the header instead: **`R = u8 operation | u5 set | u3 count |
+u16 id₀`**. `count` states how many of the 7 ids are live, so **no sentinel is needed anywhere** and
+`id = 0` stays fully usable. `set` narrows to **u5** (32 sets; 16 in use) — widen out of `operation`
+later if needed. The scatter issues 7 points per command and drops `slot ≥ count` (off-clip position),
+so the trivial `p/7`, `p%7` index map survives. Nothing is burned and no allocator needs to change.
+
+## I15 — Vite HMR gives a FALSE failure when the command format changes (2026-07-25) — verification gotcha
+**Problem.** After swapping the transport to v3, the scene rendered as flat blocks with no prims — but
+there were **no console errors**, and the logic was correct on inspection. Cause: **HMR had replaced the
+module while the live `ColdShadowData` instance (and its already-compiled scatter `Program`) survived**,
+so a NEW `flush()` was feeding an OLD shader — exactly a format mismatch. A full navigate to a
+cache-busted URL rendered correctly and the data confirmed flowing (525 billboards, 3 lights, last flush
+→ set 2).
+**Rule for this stream:** any command-format or record-layout change must be verified on a **fresh page
+load**, never on an HMR update. A silent flat/garbled frame with a clean console is the signature.

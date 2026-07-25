@@ -342,6 +342,15 @@ empty**, the same global sentinel commands pad with. Presence spans **two sets**
 **leaf** ids, never carrier prims — bucketing carriers would make the per-tile billboard count
 unbounded (a carrier fans out to ≤4, recursively).
 
+**The two maps are NOT the same relation, and that is deliberate.** A **light knows exactly which tiles
+it affects**, so it writes its id into every tile within reach — `light_presence` is a **reach** relation,
+and a light found there may sit up to `reach` tiles away (hence `resolved_zone`, above). A billboard
+cannot do the same for its *shadow*: shadows are **combinatorial** (every billboard × every light that
+reaches it), so their count is indefinite and storing shadow presence is impossible. Instead
+`billboard_presence` is a **containment** relation — a billboard is registered only on the tiles it
+itself occupies, so finding it there means you found **its** tile, and the gather **projects the shadow
+from there** during the corridor walk. That is why a billboard needs no `resolved_zone` and a light does.
+
 **`shadow-cold`** (the gather OUTPUT RT, world-space toroidal `RGBA32UI`, textile_unit) packs **14 ×
 u9 coverage** (512 levels) with NO channel straddle: the **low 8 bits** of slot `i` sit at channel
 `i>>2`, bits `(i&3)·8` (R = slots 0–3, G = 4–7, B = 8–11, A = slots 12–13 in bits 0–15); the **9th
@@ -361,18 +370,22 @@ records no longer self-address, so the **command carries the target ids**. Every
 
 ```
 command = 8 px, fixed stride (command k begins at px k·8)
-  px 0  header   R: u8 opcode (24–31) | u8 set (16–23) | u16 id₀ (0–15)
+  px 0  header   R: u8 operation (24–31) | u5 set (19–23) | u3 count (16–18) | u16 id₀ (0–15)
                  G: u16 id₁ | u16 id₂    B: u16 id₃ | u16 id₄    A: u16 id₅ | u16 id₆
-  px 1–7         the 7 payload records, written to (set, id₀..id₆)
-  opcode 0x01 = write-data; the opcode DEFINES the rest of the command, so further
-  8-px operations (presence writes, bulk clears) take their own opcodes
+  px 1–7         up to 7 payload records, written to (set, id₀ .. id_{count−1})
+  operation 0x01 = write-data; the operation DEFINES the rest of the command, so further
+  8-px operations (presence writes, bulk clears) take their own codes
 ```
 
-**`id = 0` is the GLOBAL SENTINEL** — a partial command pads its unused id slots with `0` and the
-scatter **discards** those points (degenerate `gl_Position` ⇒ clipped, no write). This keeps the index
-map trivial (record `p` → command `p/7`, slot `p%7`, payload px `p/7·8 + 1 + p%7`) and lets the scatter
-vertex **drop its per-set count scan** entirely. Cost: in-set id 0 is burned in every set, so every
-writer's allocator is **1-based**.
+**`count` (u3) states how many of the 7 ids are live**, so a partial command needs no sentinel and
+**`id = 0` stays a fully usable record id** — which is required, because the tile-keyed sets
+(`light_presence_*`, `billboard_presence`) address by **`foldTile`**, whose range is
+**0..65535 exhaustively**: fold `0` is a real tile (zone 0,0 / tile 0,0) and there is no spare id to
+bias into. `set` is **u5** (32 sets; 16 in use) — widen it out of `operation` later if ever needed.
+
+The scatter issues **7 points per command** and a point with `slot ≥ count` emits an off-clip position
+(never rasterised), so the index map stays trivial — record `p` → command `p/7`, slot `p%7`, payload px
+`(p/7)·8 + 1 + p%7` — and the scatter vertex **drops its per-set count scan** entirely.
 
 **Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `reach`, opaque `billboard_width/height`, the
 anchor `offset`) is in **units**, a compile-time constant `1 unit = SQUARE/16 = 4px` (`TILE = 16 units`,
