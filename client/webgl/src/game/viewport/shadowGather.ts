@@ -506,7 +506,10 @@ uniform int uHideRight;            // DEBUG (__hideright): 1 = blank the right h
 // billboard treated perpendicular to the ground. Image +Y is sprite-north = world -y, so it flips in.
 vec3 worldNormal(vec3 n, float phi) {
   float c = cos(phi), s = sin(phi);
-  return vec3(n.x, -(n.y * c + n.z * s), -n.y * s + n.z * c);
+  // The card's OUT axis (n.z, toward the viewer) IS world SOUTH (+y) — a screen-facing billboard's front faces
+  // the viewer / a south light. Rotate the (out, up-card) pair by the pitch φ: SOUTH = n.z·c − n.y·s, UP (+z) =
+  // n.z·s + n.y·c. (The earlier −(n.y·c+n.z·s) form gave an inverted N·L — trees toward the light read dark.)
+  return vec3(n.x, (n.z * c - n.y * s), (n.z * s + n.y * c));
 }
 layout(location = 0) out vec4 oLight;  // lightmap P1: SINGLE attachment — Σ colour·intensity·falloff·(1−shadow)·N·L (no ambient)
 ${GATHER_COMMON}
