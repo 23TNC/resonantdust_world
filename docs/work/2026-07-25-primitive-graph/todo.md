@@ -4,21 +4,7 @@ _Phases. This stream **preempts** the other lighting/shadow streams — it rewri
 so they resume on top of it. Ordering principle: **layouts first, then the transport, then the writers,
 then the readers** — the data texture must never be half-migrated across a frame boundary._
 
-## P0 — Land the layouts in VARIABLES (no code)
-- Write the four records (`prim_data`, `billboard_data`, `light_data`, `definition_data`) + the fixed
-  8-px command format into [`VARIABLES.md`](../../VARIABLES.md) — authoritative, code conforms after.
-- **Settled 2026-07-25** (record, don't re-litigate): bias-8 signed offsets; `parent_id` on leaves +
-  `child` bit on `prim_data`; presence carries **leaves** (`light_presence` / `billboard_presence`);
-  rotation is a **CPU reconciliation signal**, the shader uses the **definition's** rotation;
-  one object per layer, no layer on `prim_data`.
-- **Also settled 2026-07-25:** `emitter_radius` restored; the **CPU stamps the resolved position** into
-  the leaf's RED lane (authored offsets stay in GREEN); **`id = 0` is the global sentinel** (partial
-  commands pad with zeros); `inherit_rotation` lives on `definition_data` + `prim_data`, **one-step**.
-- **Still open** ([blockers.md#b3](blockers.md#b3)): ⚠ add **`u8 resolved_zone`** — tile+unit alone has a
-  16-tile period, ambiguous past 8 tiles of reach, and `LIGHT_REACH` is 12 ([I13](issues.md#i13)).
-  Plus the mechanical `id = 0` fallout ([I14](issues.md#i14): `defNext` 1-based, presence sentinels).
-- Update the presence spec to 8 slots (16 lights / 8 billboards per tile) + rename the caster buckets to
-  `billboard_presence`; state the single resolve authority per consumer ([I12](issues.md#i12)).
+_(P0 landed 2026-07-25 → [`completed.md`](completed.md).)_
 
 ## P1 — Command buffer v3: fixed 8-px commands
 - One command = 8 px: `px0 = u8 opcode (0x01) | u8 set | 7× u16 ids` (`R=opcode|set|id0`, `G=id1|id2`,
