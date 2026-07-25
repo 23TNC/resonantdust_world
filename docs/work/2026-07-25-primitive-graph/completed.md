@@ -141,3 +141,29 @@ The graph now holds **both** presentation types, and a carried leaf can no longe
 **Verified** on a fresh load — read back from the mirror: light 0 → prim 1 (`set_a=2, id_a=0`), light 1
 → prim 2 (`set_a=2, id_a=1`), billboard 3 → prim 6 (`set_a=6, id_a=3`); all prim ids distinct across the
 two kinds, links round-trip both directions, scene renders correctly. `tsc` clean.
+
+## P3b — The resolve walk + inheritance (2026-07-25)
+The mechanism the whole model rests on now exists, and both leaf writers go through it.
+
+- **`resolveCarried(prim, tileOff, unitOff, hot, cast)`** climbs `carrier → … → root`, summing
+  **bias-8 signed** offsets and folding the inherited flags: `hot_cold` by **OR** (any hot ancestor
+  forces the subtree hot — "topmost hot wins") and `cast_shadows` by **AND** (any non-casting ancestor
+  silences it — "topmost !cast wins"). The offset sum is applied in world px and re-encoded, so
+  unit→tile→zone carries come free. Bounded by **`MAX_PRIM_DEPTH = 8`** ([I12](issues.md#i12)) — a
+  malformed cycle costs a fixed walk, never a hang. This is the **single resolve authority**: the CPU
+  stamps what the GPU reads, and the GPU never walks the graph in its hot loop.
+- Both `billboardDataFor` and `buildLights` now derive the leaf's resolved position + effective flags
+  from the walk instead of assuming absolute placement. A no-op while every carrier is a root with
+  zero offsets — and correct the moment either stops being true, which is what nesting needs.
+- Ordering fix: the light's carrier is written **before** the resolve reads it (it used to be written
+  after the leaf, which would have resolved against an empty record on the first frame).
+
+**Bug caught by mirror readback** (a screenshot could not have shown it): billboard leaves came back
+`cast = 0`. Their carrier prim never set `cast_shadows`, and the AND-down-the-chain silenced them.
+Harmless *today* only because the gather reads that flag off the **light** record — it would have bitten
+the moment the billboard's own flag was consumed. Fixed at the carrier.
+
+**Verified** on a fresh load: the resolve reproduces each light's own absolute position exactly
+(`tile 101, unit 136` = independently recomputed expectation); billboards `cast=1, hot=0`; lights all
+`cast=1` with **only the dynamic green light `hot=1`** — inheritance flowing carrier→leaf. Renders
+correctly; `tsc` clean.

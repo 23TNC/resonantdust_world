@@ -29,6 +29,11 @@ export const BILLBOARD_DATA_BASE = 6 * 65536; // set 6 — billboard_data, the s
 /** A prim's `set_a..d` nibble naming the band a carried piece lives in (0 = "no data"). */
 const SET_BILLBOARD_DATA = 6;
 const SET_LIGHT_DATA = 2;
+/** How deep the carrier chain may go before the resolve walk gives up (I12). A pawn → hand → tool →
+ *  light is 4; 8 is generous headroom and makes a malformed cycle cost a bounded walk, not a hang. */
+const MAX_PRIM_DEPTH = 8;
+/** The bias-8 signed nibble pair meaning "no offset" — a carried piece sitting exactly on its carrier. */
+const OFFSET_ZERO = 0x88;
 export const LIGHT_BASE = 131072;
 /** Tile-keyed sets — region-torus addressed (presence-in-data). One set = one region's 65 536 tiles. */
 export const PRESENCE_BASE = 3 * 65536;    // light_presence_lo (light slots 0–6)
@@ -425,16 +430,53 @@ export class ColdShadowData {
     }
     this.primOfBillboard.set(billboard.id, prim);
     // prim_data (set 1): a ROOT (child = 0) at the absolute position, carrying the billboard in slot a.
+    // `cast_shadows` MUST be set here: it inherits by AND down the chain, so a carrier that leaves it
+    // clear silences everything it carries (caught by mirror readback — the leaf came back cast = 0).
     const primChanged = this.writeRecord(PRIM_BASE + prim, pos,
-      ((((rotation & 3) << 26) | ((z & 0xff) << 16) | ((SET_BILLBOARD_DATA & 0xf) << 12)) >>> 0),
+      ((((rotation & 3) << 26) | (1 << 24) | ((z & 0xff) << 16)
+        | ((SET_BILLBOARD_DATA & 0xf) << 12)) >>> 0),
       (((idx & 0xffff) << 16) >>> 0), 0);
-    // billboard_data (set 6): parent + RESOLVED tile|unit + definition. Authored offsets are the
-    // bias-8 zero (0x88) — this billboard sits exactly on its carrier until real nesting arrives.
+    // billboard_data (set 6): parent + the RESOLVED position + definition. The resolve walks this
+    // billboard's authored offsets up its carrier chain — a no-op while carriers are roots and the
+    // offsets are the bias-8 zero, and correct the moment either stops being true.
+    const r = this.resolveCarried(prim, OFFSET_ZERO, OFFSET_ZERO, false, true);
     const leafChanged = this.writeRecord(BILLBOARD_DATA_BASE + idx,
-      ((((prim & 0xffff) << 16) | (tile << 8) | unit) >>> 0),
-      ((((rotation & 3) << 26) | ((z & 0xff) << 16) | (0x88 << 8) | 0x88) >>> 0),
+      ((((prim & 0xffff) << 16) | (((r.pos >>> 8) & 0xff) << 8) | (r.pos & 0xff)) >>> 0),
+      ((((rotation & 3) << 26) | ((r.hot ? 1 : 0) << 25) | ((r.cast ? 1 : 0) << 24)
+        | ((z & 0xff) << 16) | (OFFSET_ZERO << 8) | OFFSET_ZERO) >>> 0),
       (((defIndex & 0xffff) << 16) >>> 0), 0);
     return { idx, changed: primChanged || leafChanged };
+  }
+
+  /** P3 THE RESOLVE WALK — turn a carried piece's *relative* placement into an absolute one by
+   *  climbing `carrier → … → root`, summing offsets and folding the inherited flags:
+   *    · `hot_cold`     — **topmost hot wins**: any hot ancestor forces the whole subtree hot (OR).
+   *    · `cast_shadows` — **topmost !cast wins**: any non-casting ancestor silences the subtree (AND).
+   *  Offsets are BIAS-8 signed nibbles (stored − 8 ⇒ −8..+7) so a child can sit in any direction. The
+   *  sum is applied in world px and re-encoded, which gets unit→tile→zone carries for free.
+   *  Bounded by {@link MAX_PRIM_DEPTH} — a malformed cycle costs a fixed walk, never a hang.
+   *  THIS is the single resolve authority ([I12]): the CPU stamps what the GPU reads, and the GPU
+   *  never walks the graph in its hot loop. */
+  private resolveCarried(prim: number, tileOff: number, unitOff: number, hot: boolean, cast: boolean):
+    { pos: number; hot: boolean; cast: boolean } {
+    let dtx = ((tileOff >>> 4) & 0xf) - 8, dty = (tileOff & 0xf) - 8;
+    let dux = ((unitOff >>> 4) & 0xf) - 8, duy = (unitOff & 0xf) - 8;
+    let p = prim, outHot = hot, outCast = cast, rootPos = 0;
+    for (let depth = 0; depth < MAX_PRIM_DEPTH; depth++) {
+      const b = (PRIM_BASE + p) * 4;
+      const R = this.dataMirror[b], G = this.dataMirror[b + 1];
+      outHot = outHot || ((G >>> 25) & 1) === 1;
+      outCast = outCast && ((G >>> 24) & 1) === 1;
+      if (((G >>> 28) & 1) === 0) { rootPos = R; break; }   // ROOT: R is the absolute address
+      dtx += ((R >>> 12) & 0xf) - 8; dty += ((R >>> 8) & 0xf) - 8;  // CHILD: accumulate + climb
+      dux += ((R >>> 4) & 0xf) - 8;  duy += (R & 0xf) - 8;
+      p = (R >>> 16) & 0xffff;
+    }
+    const [rx, ry] = decodePosition(rootPos);
+    return {
+      pos: encodePosition(rx + dtx * SQUARE + dux * UNIT, ry + dty * SQUARE + duy * UNIT),
+      hot: outHot, cast: outCast,
+    };
   }
 
   /** Compare-write one whole record; marks it dirty (→ one scatter command) only if it changed. */
@@ -493,14 +535,19 @@ export class ColdShadowData {
         //   B = u8 r | u8 g | u8 b | u8 intensity
         //   A = u12 reach (20–31) | u8 emitter_radius (12–19) | u8 resolved_zone (4–11) | u4 reserved
         // P3: a light is CARRIED, never placed — it gets a ROOT prim holding the absolute position,
-        // and the leaf points back at it. The offsets stay at the bias-8 zero (0x88) until real nesting
-        // places a light relative to its carrier (a torch's flame above the sprite's base).
-        const pos = encodePosition(L.x, L.y);
-        const zone = (pos >>> 16) & 0xff, tile = (pos >>> 8) & 0xff, unit = pos & 0xff;
-        const prim = this.primOfLight[k] ?? (this.primOfLight[k] = this.allocPrim());
-        R = (((prim & 0xffff) << 16) | (tile << 8) | unit) >>> 0;
+        // and the leaf points back at it. The carrier is written FIRST (below is too late: the resolve
+        // walk reads it), then the leaf's position comes from walking that chain.
         const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff), em = clamp(L.emitterRadius / UNIT, 255);
-        G = ((((L.hot ? 1 : 0) << 25) | ((L.castShadows ? 1 : 0) << 24) | (z << 16) | (0x88 << 8) | 0x88) >>> 0);
+        const prim = this.primOfLight[k] ?? (this.primOfLight[k] = this.allocPrim());
+        this.writeRecord(PRIM_BASE + prim, encodePosition(L.x, L.y),
+          ((((L.hot ? 1 : 0) << 25) | ((L.castShadows ? 1 : 0) << 24) | ((z & 0xff) << 16)
+            | ((SET_LIGHT_DATA & 0xf) << 12)) >>> 0),
+          (((k & 0xffff) << 16) >>> 0), 0);
+        const res = this.resolveCarried(prim, OFFSET_ZERO, OFFSET_ZERO, false, true);
+        const zone = (res.pos >>> 16) & 0xff, tile = (res.pos >>> 8) & 0xff, unit = res.pos & 0xff;
+        R = (((prim & 0xffff) << 16) | (tile << 8) | unit) >>> 0;
+        G = ((((res.hot ? 1 : 0) << 25) | ((res.cast ? 1 : 0) << 24) | (z << 16)
+          | (OFFSET_ZERO << 8) | OFFSET_ZERO) >>> 0);
         const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
         B = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0);
         A = (((reach << 20) | (em << 12) | (zone << 4)) >>> 0);
@@ -510,20 +557,13 @@ export class ColdShadowData {
         m[base] = R; m[base + 1] = G; m[base + 2] = B; m[base + 3] = A;
         this.mark(LIGHT_BASE + k);
       }
-      // The CARRIER prim: a ROOT holding the absolute position, carrying this light in slot a.
-      // A removed light (k >= n) releases its prim to the free-list and zeroes the node.
+      // A REMOVED light (k >= n) releases its carrier to the free-list and zeroes the node, so no
+      // stale carrier stays reachable. (The live carrier is written above, before the resolve.)
       const prim = this.primOfLight[k];
-      if (prim !== undefined) {
-        if (k < n) {
-          const L = lights[k];
-          this.writeRecord(PRIM_BASE + prim, encodePosition(L.x, L.y),
-            ((((clamp(L.z / UNIT, 255) & 0xff) << 16) | ((SET_LIGHT_DATA & 0xf) << 12)) >>> 0),
-            (((k & 0xffff) << 16) >>> 0), 0);
-        } else {
-          this.writeRecord(PRIM_BASE + prim, 0, 0, 0, 0);
-          this.primFreeList.push(prim);
-          delete this.primOfLight[k];
-        }
+      if (k >= n && prim !== undefined) {
+        this.writeRecord(PRIM_BASE + prim, 0, 0, 0, 0);
+        this.primFreeList.push(prim);
+        delete this.primOfLight[k];
       }
     }
     this.lightCount = n;
