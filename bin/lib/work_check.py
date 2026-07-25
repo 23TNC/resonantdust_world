@@ -475,11 +475,22 @@ def brief(stream: str, next_n: int = 3) -> str:
         L.append("JUST LANDED:")
         L += [f"  ✓ {r}" for r in recent]
 
-    devs = _tail_entries(os.path.join(d, "deviations.md"), 2)
+    # Deviations are keyed by `## D<n>` headings, not bullets — the bullets underneath are the
+    # row's fields ("Why:", "Status:"), so tailing bullets yielded meaningless fragments.
+    devs = []
+    dpath = os.path.join(d, "deviations.md")
+    if os.path.exists(dpath):
+        try:
+            for line in open(dpath, encoding="utf-8"):
+                h = HEADER.match(line)
+                if h and len(h.group(1)) == 2 and not RESOLVED_MARK.search(h.group(2)):
+                    devs.append(h.group(2).strip()[:180])
+        except OSError:
+            pass
     if devs:
         L.append("")
-        L.append("RECENT DEVIATIONS:")
-        L += [f"  ~ {r}" for r in devs]
+        L.append("OPEN DEVIATIONS:")
+        L += [f"  ~ {r}" for r in devs[-2:]]
 
     refs = [f for f in ("README.md", "forks.md", "issues.md") if os.path.exists(os.path.join(d, f))]
     L.append("")
@@ -682,9 +693,22 @@ def _cli_work(argv: list[str], sid: str) -> int:
     return 0
 
 
+def _cli_session() -> str:
+    """The session id to key arm-state on, as seen from a shell inside Claude Code.
+
+    MUST match the `session_id` the Stop hook receives, or `rd work arm` silently arms a
+    bucket nothing reads — the command would report success and the hook would never fire.
+    Claude Code exports it as CLAUDE_CODE_SESSION_ID (verified equal to the hook payload's
+    session_id); CLAUDE_SESSION_ID is accepted as a fallback for other harnesses.
+    """
+    return (os.environ.get("CLAUDE_CODE_SESSION_ID")
+            or os.environ.get("CLAUDE_SESSION_ID")
+            or "cli")
+
+
 def main(argv: list[str]) -> int:
     if argv and argv[0] in ("arm", "disarm", "status", "brief", "doctor"):
-        sid = os.environ.get("CLAUDE_SESSION_ID", "cli")
+        sid = _cli_session()
         if "--session" in argv:
             i = argv.index("--session")
             sid = argv[i + 1] if i + 1 < len(argv) else sid

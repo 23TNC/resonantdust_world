@@ -205,20 +205,28 @@ def sweep_pipeline(args):
     tm = measure(tpl); tpl_arr = np.asarray(tpl, dtype=float)
     pos = f"{args.positive}, {G.STYLE.format(face=G.FACE[d])}"
     neg = G.GENERIC_NEG
-    dns = [float(x) for x in args.dns.split(",")]
-    cns = [float(x) for x in args.cns.split(",")]
+    # --combos gives an explicit config list "dn:cn:cn_end,..." (cn_end optional, defaults to
+    # generate.py's CN_END). Otherwise sweep the dns x cns grid at the default cn_end.
+    if args.combos:
+        combos = []
+        for c in args.combos.split(","):
+            p = [float(x) for x in c.split(":")]
+            combos.append((p[0], p[1], p[2] if len(p) > 2 else G.CN_END))
+    else:
+        combos = [(dn, cn, G.CN_END) for dn in [float(x) for x in args.dns.split(",")]
+                                     for cn in [float(x) for x in args.cns.split(",")]]
     out = os.path.join(REPO, args.out); os.makedirs(out, exist_ok=True)
-    print(f"template aspect={tm['aspect']:.2f}  ({len(dns)}x{len(cns)} configs x {args.seeds} seeds)")
+    print(f"template aspect={tm['aspect']:.2f}  ({len(combos)} configs x {args.seeds} seeds)")
 
     rows = []
-    for dn in dns:
-        for cn in cns:
-            G.DN, G.CN = dn, cn
+    if True:
+        for (dn, cn, cn_end) in combos:
+            G.DN, G.CN, G.CN_END = dn, cn, cn_end
             imgs = []
             for i in range(args.seeds):
                 raw = G._run(G.graph_hero(pos, neg, ref_name, edge_name, 9000 + i))
                 im = Image.open(io.BytesIO(raw)).convert("RGB")
-                im.save(os.path.join(out, f"dn{dn:g}_cn{cn:g}_s{9000+i}.png")); imgs.append(im)
+                im.save(os.path.join(out, f"dn{dn:g}_cn{cn:g}_e{cn_end:g}_s{9000+i}.png")); imgs.append(im)
             ms = [measure(i) for i in imgs]
             arrs = [np.asarray(i.resize(tpl.size), dtype=float) for i in imgs]
             var = float(np.mean([np.abs(arrs[a]-arrs[b]).mean()
@@ -226,17 +234,17 @@ def sweep_pipeline(args):
             div = float(np.mean([np.abs(a - tpl_arr).mean() for a in arrs]))
             ok = sum(1 for m in ms if m["blobs"] == 1 and m["bg"] >= 0.97
                      and abs(m["aspect"]-tm["aspect"])/max(tm["aspect"], 1e-3) <= 0.25)
-            rows.append(dict(dn=dn, cn=cn, valid=ok, n=len(ms), variety=round(var,1),
+            rows.append(dict(dn=dn, cn=cn, cn_end=cn_end, valid=ok, n=len(ms), variety=round(var,1),
                              divergence=round(div,1),
                              aspect=round(float(np.mean([m["aspect"] for m in ms])), 2)))
-            print(f"  dn={dn:.2f} cn={cn:.2f}  valid={ok}/{len(ms)}  variety={var:5.1f}  div={div:5.1f}  asp={rows[-1]['aspect']:.2f}")
+            print(f"  dn={dn:.2f} cn={cn:.2f} cn_end={cn_end:.2f}  valid={ok}/{len(ms)}  variety={var:5.1f}  div={div:5.1f}  asp={rows[-1]['aspect']:.2f}")
 
     with open(os.path.join(out, "sweep.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
     good = [r for r in rows if r["valid"] == r["n"]]
     print(f"\n=== fully-valid configs ranked by VARIETY ({len(good)}/{len(rows)} passed geometry) ===")
     for r in sorted(good, key=lambda r: -r["variety"])[:8]:
-        print(f"  dn={r['dn']:.2f} cn={r['cn']:.2f}   variety={r['variety']:5.1f}  divergence={r['divergence']:5.1f}  aspect={r['aspect']:.2f}")
+        print(f"  dn={r['dn']:.2f} cn={r['cn']:.2f} e={r['cn_end']:.2f}  variety={r['variety']:5.1f}  divergence={r['divergence']:5.1f}  aspect={r['aspect']:.2f}")
     if not good: print("  (none fully valid — loosen the validity gate or tighten cn)")
     bad = [r for r in rows if r["valid"] < r["n"]]
     if bad:
@@ -261,6 +269,7 @@ def main():
     ap.add_argument("--dns", default="0.70,0.80,0.90,1.00", help="denoise values (--pipeline)")
     ap.add_argument("--cns", default="0.20,0.35,0.50,0.65", help="ControlNet strengths (--pipeline)")
     ap.add_argument("--seeds", type=int, default=3, help="seeds per config; >=2 needed to measure variety")
+    ap.add_argument("--combos", default=None, help="explicit configs 'dn:cn:cn_end,...' (cn_end optional) — overrides --dns/--cns")
     ap.add_argument("--edge-thresh", type=int, default=30)
     ap.add_argument("--lora", default=None, help="single LoRA for --pipeline mode")
     ap.add_argument("--lora-strength", type=float, default=0.85)

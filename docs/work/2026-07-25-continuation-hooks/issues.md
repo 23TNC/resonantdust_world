@@ -25,3 +25,26 @@ Items describe phases, not actions (`primitive-graph` P3's first item is three e
 bullet, with no acceptance criterion). A vague next step is itself a reason to check in — the session
 must re-plan before it can act, and planning invites ratification, which is a stop. So P4 (planning
 assist) is not a nice-to-have; it addresses a cause that no hook can reach.
+
+## I3 — `rd work arm` armed a bucket nothing read (found on first real use, 2026-07-25)
+
+The CLI keyed arm-state on `CLAUDE_SESSION_ID`, which **Claude Code does not set** — it exports
+`CLAUDE_CODE_SESSION_ID`. So `rd work arm` fell back to the literal `"cli"` bucket, printed a
+cheerful "ARMED on …", and the Stop hook — which keys on the `session_id` in its payload — would
+never have found it. The whole user-facing feature was a no-op, and it *reported success*.
+
+Found by checking the env rather than trusting the variable name, on the turn the user asked how to
+run the skills. Fixed in `_cli_session()` (verified `CLAUDE_CODE_SESSION_ID` == the hook payload's
+`session_id`), with `CLAUDE_SESSION_ID` kept as a fallback for other harnesses.
+
+**The lesson, again:** a component that reports success without the effect being observable is worse
+than one that fails — this is the same failure *shape* as the six-day silent no-op, arrived at by a
+different route. Anything that claims to have armed/enabled/registered something must be verified by
+observing the *other* side of the contract, not by reading its own return value.
+
+## I4 — the brief printed deviation fragments
+
+`_tail_entries` tails top-level bullets, which is right for `completed.md` (bullet per entry) but
+wrong for `deviations.md`, where the entry is a `## D<n>` heading and the bullets under it are its
+fields — so the brief showed "**Why**: …" / "**Status**: …" with no indication of which deviation.
+Now reads open `## D<n>` headings.
