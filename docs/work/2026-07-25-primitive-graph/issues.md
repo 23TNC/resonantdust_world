@@ -210,3 +210,18 @@ answered, resolve the row **in that turn** — before continuing the work it unb
 `.stop-reason` markers: delete on resume. Cheap self-check when a pause feels justified:
 `python3 bin/lib/work_check.py --nudge <<< '{"session_id":"<sid>"}'` — a silent exit 0 while real work
 remains means an escape is stale.
+
+## I22 — The continuation hook had TWO independent releases, not one (2026-07-25)
+Correcting [I21](#i21), which found only half the cause. The nudge stayed silent all session because
+**either** of two conditions alone releases it:
+1. **The work-index row said `blocked`.** The detector selected the active stream by index status
+   `open` — this row was indexed `blocked` from the write-up, and never updated once the blockers were
+   answered. This is the same defect the parallel
+   [`2026-07-25-continuation-hooks`](../2026-07-25-continuation-hooks/README.md) stream identifies as
+   having kept the hook **silently dead for six days**; its P6 fixes the selector.
+2. **A stale `OPEN` blocker row** ([B3](blockers.md)) — [I21](#i21).
+I found (2) and stopped looking, which is the same shape of error as the bug itself: one plausible
+cause accepted before the search was exhausted. Both are now fixed — the index row reads `open` and B3
+is closed.
+**Rule.** A stream's index status is machine-read, not decoration: move `blocked` → `open` in the turn
+the last blocker is answered, exactly as with the blocker row itself.

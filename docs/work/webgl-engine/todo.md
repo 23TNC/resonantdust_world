@@ -32,9 +32,9 @@ engine spikes (the techniques are already proven in W2). Remaining, when the sha
 
 Two failure modes were separated during diagnosis ([I-8](issues.md#i-8)):
 
-- **Mode B (client) — FIXED** (content-reload wiring, [`completed.md`](completed.md)): data arrived but the
+- [ ] **Mode B (client) — FIXED** (content-reload wiring, [`completed.md`](completed.md)): data arrived but the
   bridge, stuck on the boot embed corpus, expanded it to nothing. This was the case the testing mostly hit.
-- **Mode A (edge) — REMAINING:** on some connections **zero** cold rows ever arrive. Root-caused to
+- [ ] **Mode A (edge) — REMAINING:** on some connections **zero** cold rows ever arrive. Root-caused to
   `server/edge/src/ws.rs::build_world`: the cold-tile/thing relay is wired only `if let Some(t) = &tile`, and
   the per-client cold-shard connect has a **5s `CONNECT_TIMEOUT`** ([`connections.rs`](../../../server/edge/src/connections.rs)).
   If the shard's `on_connect` misses 5s, `await_ready` returns false → the relay is silently never wired for the

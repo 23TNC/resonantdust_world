@@ -10,7 +10,7 @@ Only an explicitly-optional budget remains._
 
 ## P6 · Budget (optional, deferred) — 2026-07-21
 
-- Optional per-frame **budget**: cap dirty tiles cast per frame (mask a subset of `shadow_dirty` across
+- [ ] Optional per-frame **budget**: cap dirty tiles cast per frame (mask a subset of `shadow_dirty` across
   frames), `log()` deferrals. **Low priority — deferred**: the gather is cheap at the current
   light/caster counts and pan-stability is already verified (P3). Revisit if a dense scene spikes.
 
