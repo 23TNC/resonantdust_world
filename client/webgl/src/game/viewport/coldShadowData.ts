@@ -28,6 +28,7 @@ export const PRIM_BASE = 65536;            // set 1 — prim_data, the compositi
 export const BILLBOARD_DATA_BASE = 6 * 65536; // set 6 — billboard_data, the sprite leaf
 /** A prim's `set_a..d` nibble naming the band a carried piece lives in (0 = "no data"). */
 const SET_BILLBOARD_DATA = 6;
+const SET_LIGHT_DATA = 2;
 export const LIGHT_BASE = 131072;
 /** Tile-keyed sets — region-torus addressed (presence-in-data). One set = one region's 65 536 tiles. */
 export const PRESENCE_BASE = 3 * 65536;    // light_presence_lo (light slots 0–6)
@@ -192,7 +193,20 @@ export class ColdShadowData {
   /** Freed billboard_data indices (P2 free-list) — reused before bumping `billboardNext`, so the id space
    *  survives pan/zone churn (high-water bounded by peak concurrent casters ≪ 65 536). */
   private readonly billboardFreeList: number[] = [];
+  /** P3: `prim_data` ids are their OWN space — a prim is what CARRIES a presentation, and both
+   *  billboards and lights need one, so they cannot share the leaf counters. */
+  private primNext = 1;
+  private readonly primFreeList: number[] = [];
+  /** billboard.id → the prim carrying it (allocated/freed together with its leaf). */
+  private readonly primOfBillboard = new Map<number, number>();
+  /** light slot k → the prim carrying it (P3: lights are CARRIED, never placed directly). */
+  private readonly primOfLight: number[] = [];
   private lightCount = 0;
+
+  /** P3: take a `prim_data` id (free-list first, so the space survives churn). */
+  private allocPrim(): number {
+    return this.primFreeList.pop() ?? this.primNext++;
+  }
 
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
@@ -394,9 +408,10 @@ export class ColdShadowData {
     const tile = (pos >>> 8) & 0xff, unit = pos & 0xff;
 
     const hit = this.billboardIndex.get(billboard.id);
-    let idx: number;
+    let idx: number, prim: number;
     if (hit !== undefined) {
       idx = hit;
+      prim = this.primOfBillboard.get(billboard.id) ?? this.allocPrim();
       // RETENTION: never swap a standing billboard DOWN to the loose (lod-0) def — if the freshly
       // resolved frame is unusable (off-page) it keeps casting its current silhouette.
       const curDef = (this.dataMirror[(BILLBOARD_DATA_BASE + idx) * 4 + 2] >>> 16) & 0xffff;
@@ -405,16 +420,18 @@ export class ColdShadowData {
       if (newLod < 4 && curLod >= 4) defIndex = curDef;
     } else {
       idx = this.billboardFreeList.pop() ?? this.billboardNext++; // reuse a freed slot first (P2)
+      prim = this.allocPrim();
       this.billboardIndex.set(billboard.id, idx);
     }
+    this.primOfBillboard.set(billboard.id, prim);
     // prim_data (set 1): a ROOT (child = 0) at the absolute position, carrying the billboard in slot a.
-    const primChanged = this.writeRecord(PRIM_BASE + idx, pos,
+    const primChanged = this.writeRecord(PRIM_BASE + prim, pos,
       ((((rotation & 3) << 26) | ((z & 0xff) << 16) | ((SET_BILLBOARD_DATA & 0xf) << 12)) >>> 0),
       (((idx & 0xffff) << 16) >>> 0), 0);
     // billboard_data (set 6): parent + RESOLVED tile|unit + definition. Authored offsets are the
-    // bias-8 zero (0x88) — this billboard sits exactly on its carrier until P3 places it relatively.
+    // bias-8 zero (0x88) — this billboard sits exactly on its carrier until real nesting arrives.
     const leafChanged = this.writeRecord(BILLBOARD_DATA_BASE + idx,
-      ((((idx & 0xffff) << 16) | (tile << 8) | unit) >>> 0),
+      ((((prim & 0xffff) << 16) | (tile << 8) | unit) >>> 0),
       ((((rotation & 3) << 26) | ((z & 0xff) << 16) | (0x88 << 8) | 0x88) >>> 0),
       (((defIndex & 0xffff) << 16) >>> 0), 0);
     return { idx, changed: primChanged || leafChanged };
@@ -442,6 +459,14 @@ export class ColdShadowData {
     for (const pid of dead) {
       this.billboardFreeList.push(this.billboardIndex.get(pid)!);
       this.billboardIndex.delete(pid);
+      // P3 subtree lifetime: a carried leaf never outlives its carrier — releasing the billboard
+      // releases the prim holding it, and zeroes the node so no stale carrier is reachable.
+      const prim = this.primOfBillboard.get(pid);
+      if (prim !== undefined) {
+        this.writeRecord(PRIM_BASE + prim, 0, 0, 0, 0);
+        this.primFreeList.push(prim);
+        this.primOfBillboard.delete(pid);
+      }
     }
     return dead.length;
   }
@@ -467,12 +492,13 @@ export class ColdShadowData {
         //     | u8 z_offset (16–23) | u8 tile_offset (8–15) | u8 unit_offset (0–7)   (offsets BIAS-8)
         //   B = u8 r | u8 g | u8 b | u8 intensity
         //   A = u12 reach (20–31) | u8 emitter_radius (12–19) | u8 resolved_zone (4–11) | u4 reserved
-        // These lights are still the debug scaffold: no carrier (parent 0), so the RESOLVED position is
-        // simply the light's own absolute position and the authored offsets are the bias-8 zero (0x88).
-        // P3 replaces this with a real resolve walk down the prim graph.
+        // P3: a light is CARRIED, never placed — it gets a ROOT prim holding the absolute position,
+        // and the leaf points back at it. The offsets stay at the bias-8 zero (0x88) until real nesting
+        // places a light relative to its carrier (a torch's flame above the sprite's base).
         const pos = encodePosition(L.x, L.y);
         const zone = (pos >>> 16) & 0xff, tile = (pos >>> 8) & 0xff, unit = pos & 0xff;
-        R = (((0 << 16) | (tile << 8) | unit) >>> 0);
+        const prim = this.primOfLight[k] ?? (this.primOfLight[k] = this.allocPrim());
+        R = (((prim & 0xffff) << 16) | (tile << 8) | unit) >>> 0;
         const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff), em = clamp(L.emitterRadius / UNIT, 255);
         G = ((((L.hot ? 1 : 0) << 25) | ((L.castShadows ? 1 : 0) << 24) | (z << 16) | (0x88 << 8) | 0x88) >>> 0);
         const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
@@ -483,6 +509,21 @@ export class ColdShadowData {
       if (m[base] !== R || m[base + 1] !== G || m[base + 2] !== B || m[base + 3] !== A) {
         m[base] = R; m[base + 1] = G; m[base + 2] = B; m[base + 3] = A;
         this.mark(LIGHT_BASE + k);
+      }
+      // The CARRIER prim: a ROOT holding the absolute position, carrying this light in slot a.
+      // A removed light (k >= n) releases its prim to the free-list and zeroes the node.
+      const prim = this.primOfLight[k];
+      if (prim !== undefined) {
+        if (k < n) {
+          const L = lights[k];
+          this.writeRecord(PRIM_BASE + prim, encodePosition(L.x, L.y),
+            ((((clamp(L.z / UNIT, 255) & 0xff) << 16) | ((SET_LIGHT_DATA & 0xf) << 12)) >>> 0),
+            (((k & 0xffff) << 16) >>> 0), 0);
+        } else {
+          this.writeRecord(PRIM_BASE + prim, 0, 0, 0, 0);
+          this.primFreeList.push(prim);
+          delete this.primOfLight[k];
+        }
       }
     }
     this.lightCount = n;

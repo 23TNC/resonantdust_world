@@ -122,3 +122,22 @@ from the mirror — prim #3 has `child=0, set_a=6, id_a=3`; leaf #3 has `parent_
 
 **Verified** on a fresh load: renders correctly; `tsc` clean; GLSL backtick guard clean on all four
 shader-bearing files.
+
+## P3a — Lights are CARRIED; prim ids get their own space; subtree free (2026-07-25)
+The graph now holds **both** presentation types, and a carried leaf can no longer outlive its carrier.
+
+- **`prim_data` ids are their own space** (`primNext`/`primFreeList`/`allocPrim`). The P2e shortcut —
+  one index serving as prim id *and* billboard leaf id — breaks the moment lights also need carriers,
+  since both would allocate from the same counter and collide. Billboards keep `billboardIndex` (leaf)
+  plus a new `primOfBillboard`; lights get `primOfLight`.
+- **A light is carried, never placed** ([F1](forks.md#f1) realised): each light allocates a ROOT prim
+  holding the absolute position with `set_a = 2` (`light_data`) + `id_a = k`, and the leaf's
+  `parent_id` points back at it. Offsets stay at the bias-8 zero until real nesting places a light
+  relative to its carrier (a torch's flame above the sprite's base).
+- **Subtree lifetime** ([I9](issues.md#i9)): freeing a billboard now also zeroes and releases its
+  carrier prim; a removed light (`k >= n`) releases its prim and clears the node. No stale carrier stays
+  reachable, and prim ids return to the free-list.
+
+**Verified** on a fresh load — read back from the mirror: light 0 → prim 1 (`set_a=2, id_a=0`), light 1
+→ prim 2 (`set_a=2, id_a=1`), billboard 3 → prim 6 (`set_a=6, id_a=3`); all prim ids distinct across the
+two kinds, links round-trip both directions, scene renders correctly. `tsc` clean.
