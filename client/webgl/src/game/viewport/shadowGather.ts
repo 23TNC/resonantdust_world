@@ -326,7 +326,9 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf,
   if (rot == 3u) s = 1.0 - s;                              // W-facing = mirrored E frame (matches casterCover)
   vec2 uv = vec2(fx, fy) + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(s * W, (1.0 - t) * H) * ppu;
   if (uv.x < fx || uv.x >= fx + side || uv.y < fy || uv.y >= fy + side) return 0.0; // outside frame → gap (0 cover)
-  return texelFetch(surf, ivec2(uv), 0).b * bf;            // SOFT silhouette coverage × base fade (0..1)
+  // HARD presence at the composite's 0.5 contour (the same threshold the MRT bake discards at) — sampling the
+  // sub-0.5 anti-aliased ramp let a prim's normal reach ~2px PAST its crisp silhouette onto the neighbour.
+  return (texelFetch(surf, ivec2(uv), 0).b >= 0.5 ? 1.0 : 0.0) * bf; // presence (0/1) × base fade
 }
 // Which standing prim is DRAWN at texel P, and its base row? Scan the caster buckets a few rows SOUTH (a
 // billboard draws NORTH of its base, so the covering prim's base sits at/south of the drawn texel), test each
@@ -585,7 +587,7 @@ void main() {
     // fine lightmap (64/tile) is still coarser than the sprite edge, so a hard thing/ground classification spills
     // one texel past the silhouette. Blend N·L → ground (ndl 1) by the sprite's soft coverage (rcovN) so the lit
     // region fades exactly to presence — no coarse fringe, and the edge reveals ground not black. ndl = 1 on ground.
-    float ndl = applyNL ? mix(1.0, max(dot(N, d3 / max(dist, 1e-3)), 0.0), rcovN) : 1.0;
+    float ndl = applyNL ? max(dot(N, d3 / max(dist, 1e-3)), 0.0) : 1.0;
     // P3 SHADOW: mask by slot i's u9 coverage (low8 in channel i>>2, high bit in A[16+i]) — a shadowed
     // pixel stops receiving this light. Applied to the contribution so it removes both the irradiance AND
     // the relief drive (a fully-shadowed light must not light the sprite's lit side either). Penumbra and
