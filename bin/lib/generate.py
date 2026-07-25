@@ -34,7 +34,13 @@ COMFY = os.environ.get("COMFYUI_URL", "http://172.16.10.10:8188").rstrip("/")
 MODEL   = "sdxl/cyberrealisticXL_v80.safetensors"
 CN_MODEL= "sdxl/diffusion_pytorch_model.safetensors"
 STEPS, CFG, SAMPLER, SCHED = 26, 6.0, "dpmpp_2m", "karras"
-DN, CN, CN_END = 0.70, 0.50, 0.90
+# Measured on the quadruped LoRA via `lora_eval.py --pipeline` (4x4 dn/cn grid + cn_end
+# probes, wolf e/s/n, 3 seeds each): with a style LoRA carrying the look, ControlNet only
+# has to hold the SILHOUETTE, so denoise can go to 1.0 (template pixels fully repainted)
+# and cn can drop far. dn1.0/cn0.20/cn_end0.30 scores ~3.4x the seed-to-seed variety of the
+# old 0.70/0.50/0.90 with 9/9 sprites still geometrically valid. Without a LoRA these are
+# too loose — pass --dn/--cn/--cn-end to restore the tighter legacy recipe.
+DN, CN, CN_END = 1.00, 0.20, 0.30
 IP_WEIGHT = 0.6
 DIRS = ["e", "s", "n"]                       # e generated first = the IP hero
 FACE = {
