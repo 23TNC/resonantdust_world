@@ -25,6 +25,12 @@ Invariants (see docs/work/docs-authority/{todo,deviations}.md for the why):
                     and every work link in that index resolves. Bidirectional.
   6 map-bijection   every component folder (one with a README) is linked from the
                     component map, and every components/ link in the map resolves.
+  7 work-items      a work/<w>/{todo,remaining}.md with plain bullets but NO checkbox
+                    is an ERROR — its work is invisible to the continuation hook, the
+                    fail-open mode that let that hook sit dead for six days. Items
+                    over 250 chars (wrapped lines folded in) warn as likely phases
+                    rather than actions; `--items` lists them individually instead of
+                    the one aggregate line.
 """
 from __future__ import annotations
 import os
@@ -36,6 +42,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 DOCS = os.path.join(REPO, "docs")
 
 TOP_AUTH = {"VARIABLES.md", "TABLES.md", "ACTIONS.md"}  # shapes-only, strictest
+
+# Set from argv: list every oversized item instead of one aggregate line.
+VERBOSE_ITEMS = False
 
 errors: list[str] = []
 warnings: list[str] = []
@@ -268,6 +277,7 @@ def check_work_items() -> None:
     if not os.path.isdir(work):
         return
     coarse = 0
+    per_stream: dict[str, int] = {}
     for name in sorted(os.listdir(work)):
         d = os.path.join(work, name)
         if not os.path.isdir(d):
@@ -303,12 +313,20 @@ def check_work_items() -> None:
                 size = len(" ".join(parts))
                 if size > 250:
                     coarse += 1
-                    warn(path, start, f"item is {size} chars — likely a phase, not an action; "
-                                      f"decompose it (`/rd-plan`) so it can be executed")
-    if coarse:
+                    per_stream[name] = per_stream.get(name, 0) + 1
+                    if VERBOSE_ITEMS:
+                        warn(path, start, f"item is {size} chars — likely a phase, not an action; "
+                                          f"decompose it (`/rd-plan`) so it can be executed")
+    # ONE aggregate line by default. Listing all 102 individually buried the real warnings and
+    # would have trained us to skim past them — which is how the last silent failure survived.
+    # `--items` prints them all when you actually want to go decompose.
+    if coarse and not VERBOSE_ITEMS:
+        top = sorted(per_stream.items(), key=lambda kv: -kv[1])[:3]
+        where = ", ".join(f"{s} ({n})" for s, n in top)
         warn(os.path.join(work, "README.md"), 1,
-             f"{coarse} oversized plan item(s) across the tree — these are what make a resumed "
-             f"session re-plan instead of execute")
+             f"{coarse} plan item(s) over 250 chars — likely phases, not actions; worst: {where}. "
+             f"These make a resumed session re-plan instead of execute. "
+             f"`rd docs-check --items` to list them; `/rd-plan` to decompose.")
 
 
 # ── check 6 · map ↔ folder bijection ─────────────────────────────────────────
@@ -344,6 +362,8 @@ CHECKS = [
 
 
 def main(argv: list[str]) -> int:
+    global VERBOSE_ITEMS
+    VERBOSE_ITEMS = "--items" in argv
     if "--list" in argv:
         print("docs-check invariants:")
         for name, fn in CHECKS:

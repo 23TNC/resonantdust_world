@@ -98,7 +98,7 @@ commands:
                                     from content/servers/<env>
   logs <spacetime|edge|gateway> [-f]    tail a component's log
   ps                                container status across all three stacks
-  docs-check [--quiet|--list]       audit docs/ invariants (see docs/README.md)
+  docs-check [--quiet|--list|--items]  audit docs/ invariants (see docs/README.md)
   work-check [--quiet|--doctor]     flag a premature pause in the active work stream
   work <sub>                        arm|disarm|status|brief|doctor — drive a work stream:
                                     `arm <stream>` turns the continuation hook ON for this
