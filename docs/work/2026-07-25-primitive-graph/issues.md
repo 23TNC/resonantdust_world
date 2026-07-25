@@ -192,3 +192,21 @@ call, so the atomicity argument for scripting is weak). If a bulk mechanical rew
 a script, run the guard by hand after:
 `echo '{"tool_input":{"file_path":"<file>"}}' | node bin/hooks/glsl-backtick-check.mjs`.
 Generalises to any guard wired to the file-editing tools — a shell edit is invisible to all of them.
+
+## I21 — A stale `OPEN` blocker row silently disarms the continuation hook (2026-07-25)
+**Problem.** The Stop hook's stage 2 (`work_check.py --nudge`) blocks a *silent premature pause* — but
+releases when the stream has an open blocker:
+`if not items or _has_open_blocker(stream) or _has_stop_reason(stream): return 0`.
+[B3](blockers.md) (`resolved_zone`) sat marked **OPEN** long after the user had answered it — the
+reach-vs-containment reasoning settled it, the field landed in VARIABLES at P0, and P2c had been
+*running on it* for several phases. So every pause in this session looked legitimately blocked and the
+hook stood down. Proven by experiment: with B3 still open the nudge exits **0** (silent); the moment the
+row is closed it exits **2** and names the next eight items.
+**Why it matters beyond this row.** The guard is only as honest as the bookkeeping it reads. A settled
+blocker left open is not a cosmetic lag — it **switches off** the mechanism that keeps a session
+executing the plan, and it does so invisibly (exit 0, no output).
+**Rule (this is CONVENTIONS' "close it in the same commit" made concrete).** The moment a blocker is
+answered, resolve the row **in that turn** — before continuing the work it unblocked. Same for
+`.stop-reason` markers: delete on resume. Cheap self-check when a pause feels justified:
+`python3 bin/lib/work_check.py --nudge <<< '{"session_id":"<sid>"}'` — a silent exit 0 while real work
+remains means an escape is stale.

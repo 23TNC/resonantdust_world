@@ -19,8 +19,22 @@ _Needs your input before P1 writes code. Open → resolved (archive resolved wit
    with zeros ([I7](issues.md#i7)), and `inherit_rotation` moves to `definition_data` + `prim_data` with
    **one-step** inheritance.
 
-## B3 — ⚠ `resolved_zone` is needed alongside resolved tile/unit (2026-07-25, OPEN)
-**The one thing left.** `resolved_tile` is `x:4|y:4` = the **in-zone** tile, so reconstructing a light's
+## B3 — `resolved_zone` alongside resolved tile/unit ✅ RESOLVED by the user (2026-07-25)
+**Resolved.** The user supplied the deciding reasoning: `light_presence` is a **reach** relation (a light
+knows exactly which tiles it affects, so it registers itself on all of them) while `billboard_presence`
+is a **containment** relation (shadows are combinatorial — every billboard × every light — so a
+billboard can only register the tiles it *occupies*, and the gather projects the shadow from there).
+That is precisely why a light needs `resolved_zone` and a billboard does not. `u8 resolved_zone` is in
+`light_data` ALPHA, landed in VARIABLES at P0, and **in use since P2c** — `resolvedPos()` reconstructs a
+light's absolute position from `zone|tile|unit` by nearest-congruent (256-tile period), and
+`resolvedTilePos()` is its 16-tile-period sibling for the containment case.
+
+_(Left marked OPEN long after it was settled, which silently released the continuation hook — see
+[I21](issues.md#i21). Close a blocker in the commit that closes it.)_
+
+<details><summary>original analysis</summary>
+
+`resolved_tile` is `x:4|y:4` = the **in-zone** tile, so reconstructing a light's
 absolute position from a fragment has a **16-tile period** — unambiguous only within **8 tiles**. But
 `LIGHT_REACH` is **12 tiles** today (and the `u12 reach` field allows far more), so a light 12 tiles north
 would reconstruct as 4 tiles south. The gather genuinely needs the absolute position: it computes
@@ -37,6 +51,10 @@ costs nothing structurally — the room is in reserved space:
 **Alternative if you'd rather not spend the bits:** cap effective light reach below 8 tiles (currently
 12) so the 16-tile period is unambiguous — but that's a gameplay/visual constraint imposed by an
 encoding, which seems like the wrong trade.
+
+</details>
+
+_No open blockers. The stream is executable._
 
 **Suggested path:** confirm `resolved_zone`, and I'll write the full layouts into VARIABLES at P0 and
 build P1 — the command transport alone, provable pixel-identical before any record layout moves.
