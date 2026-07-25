@@ -323,28 +323,12 @@ export class ColdShadowData {
     if (lod >= 4 && surf) {
       fx16 = Math.round(surf.x / 16);
       fy16 = Math.round(surf.y / 16);
-      // Opaque run, frame-relative px.
-      const rx0 = bbox!.fx * surf.w, ry0 = bbox!.fy * surf.h;
-      const rw = Math.max(1, bbox!.fw * surf.w), rh = Math.max(1, bbox!.fh * surf.h);
-      // Minimum bbox on the unit grid, top-left biased, rounded out to EVEN units.
-      ux0 = Math.floor(rx0 / ppu);
-      uy0 = Math.floor(ry0 / ppu);
-      wu = Math.ceil((rx0 + rw) / ppu) - ux0;
-      hu = Math.ceil((ry0 + rh) / ppu) - uy0;
-      if (wu & 1) wu++;
-      if (hu & 1) hu++;
-      wu = Math.min(wu, spanU); hu = Math.min(hu, spanU);
-      if (ux0 + wu > spanU) ux0 = Math.max(0, spanU - wu);
-      if (uy0 + hu > spanU) uy0 = Math.max(0, spanU - hu);
-      // Nudges (px at this def's lod — per-lod defs make them immutable too). Both SIGNED u12
-      // (+2048 bias, F4): full either-direction range; `nudge_anchor` records the alignment
-      // (default x centered = 1, y bottom = 2).
-      let sx0 = rx0 - (wu * ppu - rw) / 2;
-      let sy0 = ry0 + rh - hu * ppu;
-      sx0 = Math.min(Math.max(sx0, 0), surf.w - wu * ppu); // window stays inside the frame
-      sy0 = Math.min(Math.max(sy0, 0), surf.h - hu * ppu);
-      nx = Math.min(Math.max(Math.round(ux0 * ppu - sx0), -2048), 2047);
-      ny = Math.min(Math.max(Math.round(uy0 * ppu - sy0), -2048), 2047);
+      // COHERENCE (2026-07-24): sample the WHOLE square frame as received — the SAME coordinate system the
+      // composite draws EVERY map in (unit quad → the prim's world rect, full-frame UV). We do NOT re-derive a
+      // per-map opaque MINIMUM bbox here anymore: that gave the shadow + normal a DIFFERENT rectangle (even-unit
+      // rounded + nudged) than the albedo, which is the whole misalignment (and what RECV_ALIGN/uLightAlign were
+      // band-aiding). Transparent area casts no shadow, so the silhouette is identical — only the sampling
+      // WINDOW is now the full frame. wu/hu = spanU, ux0/uy0/nx/ny = 0 (the loose defaults, kept).
     }
     // Bucketing box (world px, rel. prim top-left) — 1 frame unit ≡ 1 world unit by the span model.
     this.defTight.set(idx, { dx: ux0 * UNIT, dy: uy0 * UNIT, w: wu * UNIT, h: hu * UNIT });

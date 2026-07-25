@@ -78,8 +78,11 @@ const SHADOW_LIFT = 3.0;             // units the shadow slides up to seat on th
  *  so shift the mask NORTH-WEST by this to seat the cut on the sprite. NOT a shadow-field shift — it's where
  *  we CUT (user, 2026-07-24). Root cause (tight-bbox anchoring vs draw placement) not chased — see
  *  issues.md#i4; if the alignment ever drifts, this pair is the knob. */
-const RECV_ALIGN_X = 0.5;            // units EAST the mask over-shoots → shift left (west) by this
-const RECV_ALIGN_Y = 1.5;            // units SOUTH the mask over-shoots → shift up (north) by this
+// COHERENCE (2026-07-24): the def now samples the FULL square frame (== the composite's coordinate system),
+// so the receiver mask lands on the drawn albedo with NO correction — the old NW shift was band-aiding the
+// per-map min-bbox offset that's now gone. Kept as a knob at 0; if a residual seat is ever needed it's here.
+const RECV_ALIGN_X = 0.0;
+const RECV_ALIGN_Y = 0.0;
 const RECV_ALIGN_XF = RECV_ALIGN_X.toFixed(1);
 const RECV_ALIGN_YF = RECV_ALIGN_Y.toFixed(1);
 /** shadows-onto-prims: the seen-face cull excludes casters that aren't strictly SOUTH of the receiver base
@@ -352,7 +355,8 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out 
 // page (uSurface) — identical frameRel to the silhouette in receiverCover, only the quadrant origin shifted.
 // Frame-indexed (NOT a world-coord composite read) → zoom-stable; present at EVERY lod the surface is (same
 // frame). Returns vec3(0) when unavailable (no silhouette lod / outside frame) → caller uses a flat up.
-vec3 primNormal(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, vec2 align) {
+vec3 primNormal(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out float sOut) {
+  sOut = -1.0;
   uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));
   vec2 A = decodePos(Pd.y);
   uint orient = Pd.z;
@@ -374,6 +378,7 @@ vec3 primNormal(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, vec
   float s = (P.x - (Ac.x - 0.5 * W)) / W;
   float t = (Ac.y - P.y) / H;
   if (s < 0.0 || s > 1.0 || t < 0.0 || t > 1.0) return vec3(0.0);
+  sOut = s;                                                 // sprite-relative horizontal (0 left → 1 right, pre-mirror) for debug
   float ppu = float(1u << lod) / spanU;
   float nx = float(int((D.w >> 20) & 4095u) - 2048), ny = float(int((D.w >> 8) & 4095u) - 2048);
   float side = float(1u << lod);                            // quadrant size (= surface frame side)
@@ -416,6 +421,51 @@ float casterOne(uint primIdx, vec2 Q, vec3 L, float emitter, bool isThing, uint 
   if (cc > 0.0) row = floor(Cb.y / UPT);
   return cc;
 }
+// One light's shadow at sample point Q — the corridor (corr=1) or brute (corr=0) walk of the caster buckets,
+// MAX-accumulating casterOne. Factored so a texel can evaluate BOTH the ground point AND the elevated thing
+// point and blend them at the silhouette edge. corr selects the path; the two must stay bit-identical (P6).
+// reachT bounds the brute box (unused by the corridor). In GATHER_COMMON so the lightmap bake can re-run it at
+// fine res to sharpen the shadow edge (shadow-edge-refine).
+float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rprim, vec2 Rbase,
+                 int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
+  cdepth = 0.0;
+  float cov = 0.0;
+  if (corr == 1) {
+    vec2 a = L.xy / UPT;                                     // light in tile coords
+    vec2 b = Q / UPT;                                        // sample point in tile coords (ground = P, thing = G)
+    vec2 d = b - a;
+    int nsteps = int(ceil(abs(d.x)) + ceil(abs(d.y))) + 1;   // ≥ max-axis span → ≤1 tile between samples
+    for (int m = 0; m <= 48; m++) {                          // constant bound
+      if (m > nsteps) break;
+      vec2 q = a + d * (float(m) / float(max(nsteps, 1)));
+      ivec2 qt = ivec2(floor(q));
+      for (int n = 0; n < 5; n++) {                          // cross pad: centre, ±x, ±y
+        ivec2 o = qt + ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0));
+        uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(o.x, o.y));
+        for (int c = 0; c < 7; c++) {
+          uint primIdx = tileSlot(cb, c);
+          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, rprim, Rbase, data, surf, r);
+          if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
+        }
+      }
+    }
+  } else {
+    ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
+    for (int dy = -16; dy <= 16; dy++) {
+      if (dy < -reachT || dy > reachT) continue;
+      for (int dx = -16; dx <= 16; dx++) {
+        if (dx < -reachT || dx > reachT) continue;
+        uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy));
+        for (int c = 0; c < 7; c++) {
+          uint primIdx = tileSlot(cb, c);
+          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, rprim, Rbase, data, surf, r);
+          if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
+        }
+      }
+    }
+  }
+  return cov;
+}
 `;
 
 const FULLSCREEN_VERT = /* glsl */ `#version 300 es
@@ -447,6 +497,8 @@ uniform sampler2D uSurface;        // lightmap (CO-PACK): the shared sprite atla
 uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = paint the sampled prim normal into oLight
 uniform float uNormalPitch;        // lightmap (__pitchnormal): standing-billboard normal pitch (rad, 90°−tilt; live, F7-reconsidered)
 uniform vec2 uLightAlign;          // lightmap (__lightalign): the LIGHTING receiver-mask seat (units, NW), decoupled from the shadow's RECV_ALIGN
+uniform int uEdgeRefine;           // shadow-edge-refine (__edgerefine): 1 = re-test the caster silhouette at fine res on (0,1) edge texels
+uniform int uHideRight;            // DEBUG (__hideright): 1 = blank the right half of each prim's normal in __shownormal
 // lightmap P1: sprite-tangent normal to the WORLD frame. Rotate the flat/ground basis (image-up = north, out
 // = up) up by phi about the EAST axis: phi 0 = ground (lies in the plane), phi = 90deg minus tilt = a standing
 // billboard treated perpendicular to the ground. Image +Y is sprite-north = world -y, so it flips in.
@@ -480,7 +532,11 @@ void main() {
   if (uShowNormal == 1) {
     uint rp; float rc;
     receiverAt(P, uData, uSurface, uLightAlign, rp, rc);
-    vec3 n = rp != 0u ? primNormal(rp, P, uData, uSurface, uLightAlign) : vec3(0.0);
+    float sD;
+    vec3 n = rp != 0u ? primNormal(rp, P, uData, uSurface, uLightAlign, sD) : vec3(0.0);
+    // DEBUG (__hideright): blank the RIGHT half of each prim's normal (sprite-relative s > 0.5) so the LEFT
+    // half can be compared edge-to-edge against the albedo.
+    if (uHideRight == 1 && rp != 0u && sD > 0.5) { oLight = vec4(0.0, 0.0, 0.0, 1.0); return; }
     oLight = vec4(n * 0.5 + 0.5, 1.0);
     return;
   }
@@ -490,7 +546,8 @@ void main() {
   // worldNormal pitches it to the world frame IN-SHADER (uNormalPitch = 90°−tilt, kept live — F7 reconsidered).
   uint rprimN; float rcovN;
   receiverAt(P, uData, uSurface, uLightAlign, rprimN, rcovN);
-  vec3 pn = rprimN != 0u ? primNormal(rprimN, P, uData, uSurface, uLightAlign) : vec3(0.0);
+  float sDbg;
+  vec3 pn = rprimN != 0u ? primNormal(rprimN, P, uData, uSurface, uLightAlign, sDbg) : vec3(0.0);
   bool applyNL = rprimN != 0u && dot(pn, pn) > 0.0;            // thing with a loaded normal → real N·L
   vec3 N = applyNL ? worldNormal(pn, uNormalPitch) : vec3(0.0, 0.0, 1.0);
 
@@ -535,6 +592,18 @@ void main() {
     // umbra (the gather's soft coverage) modulate it smoothly.
     uint v9 = ((lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((sh.w >> uint(16 + slot)) & 1u) << 8);
     float shadow = float(v9) / 511.0;
+    // shadow-edge-refine: the coarse shadow (16/tile) is nearest-upsampled → blocky edges. Where it's a PARTIAL
+    // (0,1) edge value, re-run the caster-silhouette walk at THIS fine texel to SELECT the sharp coverage (only
+    // edge texels pay; interior 0/1 is kept free). Ground cast shadow only for now (rprimN 0) — thing texels
+    // keep the coarse blended value. Same GROUND-path args as the gather (Pground = P + SHADOW_LIFT, corridor).
+    if (uEdgeRefine == 1 && rprimN == 0u && shadow > 0.0 && shadow < 1.0) {
+      vec3 L3 = vec3(Lxy, Lz);
+      float emitter = float((Ld.w >> 4) & 255u);
+      int reachT = int(reach) / int(UPT) + 1;
+      vec2 Pg = P; Pg.y += ${SHADOW_LIFTF};
+      float cd;
+      shadow = walkShadow(L3, emitter, Pg, false, 0u, P, 1, reachT, uData, uSurface, cd);
+    }
     float contrib = intensity * fall * ndl * (1.0 - shadow); // shadowed contribution (× Lambert on things)
     acc += col * contrib;
   }
@@ -555,50 +624,6 @@ layout(location = 0) out uvec4 fragColor; // per-light u9 shadow coverage
 layout(location = 1) out uvec4 oCasterD;  // #3: frontmost caster row (R, 7-bit) shadowing this texel
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
-// One light's shadow at sample point Q — the corridor (corr=1) or brute (corr=0) walk of the caster
-// buckets, MAX-accumulating casterOne. Factored so a texel can evaluate BOTH the ground point AND the
-// elevated thing point and blend them at the silhouette edge. corr selects the path; the two must stay
-// bit-identical (P6). reachT bounds the brute box (unused by the corridor).
-float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rprim, vec2 Rbase,
-                 int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
-  cdepth = 0.0;
-  float cov = 0.0;
-  if (corr == 1) {
-    vec2 a = L.xy / UPT;                                     // light in tile coords
-    vec2 b = Q / UPT;                                        // sample point in tile coords (ground = P, thing = G)
-    vec2 d = b - a;
-    int nsteps = int(ceil(abs(d.x)) + ceil(abs(d.y))) + 1;   // ≥ max-axis span → ≤1 tile between samples
-    for (int m = 0; m <= 48; m++) {                          // constant bound
-      if (m > nsteps) break;
-      vec2 q = a + d * (float(m) / float(max(nsteps, 1)));
-      ivec2 qt = ivec2(floor(q));
-      for (int n = 0; n < 5; n++) {                          // cross pad: centre, ±x, ±y
-        ivec2 o = qt + ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0));
-        uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(o.x, o.y));
-        for (int c = 0; c < 7; c++) {
-          uint primIdx = tileSlot(cb, c);
-          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, rprim, Rbase, data, surf, r);
-          if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
-        }
-      }
-    }
-  } else {
-    ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
-    for (int dy = -16; dy <= 16; dy++) {
-      if (dy < -reachT || dy > reachT) continue;
-      for (int dx = -16; dx <= 16; dx++) {
-        if (dx < -reachT || dx > reachT) continue;
-        uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy));
-        for (int c = 0; c < 7; c++) {
-          uint primIdx = tileSlot(cb, c);
-          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, rprim, Rbase, data, surf, r);
-          if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
-        }
-      }
-    }
-  }
-  return cov;
-}
 void main() {
   // P3/v2.1: window mapping from the CONSTANTS px (R = id|cols, G = rows|slot,
   // B = i16 winCol | i16 winRow — sign-extended halves). Updated through the command path.
@@ -820,6 +845,11 @@ export class ShadowGather {
    *  aligns to the RAW def anchor (the albedo draw), so this is 0. `__lightalign(x, y)` re-tunes by eye. */
   private lightAlignX = 0;
   private lightAlignY = 0;
+  /** shadow-edge-refine (`__edgerefine`): re-test the caster silhouette at fine res on `(0,1)` edge texels so
+   *  the cast shadow's edge is near-pixel-perfect instead of the coarse 16/tile blocks. Default ON; A/B off. */
+  private edgeRefine = true;
+  /** DEBUG (`__hideright`): blank the right half of each prim's normal in `__shownormal` (alignment probe). */
+  private hideRight = false;
   /** The LIVE world ground tilt (degrees) — written into the data map constants each frame so the shadow
    *  projection (and any shader) reads the angle without a uniform. `__tilt(deg)` re-tilts the whole model:
    *  it updates this + the derived elevation gain (`sin`) + the falloff N–S factor (`1/cos`). */
@@ -949,6 +979,18 @@ export class ShadowGather {
       if (y !== undefined) this.lightAlignY = y;
       this.forceColdDirty = this.forceHotDirty = true;
       return [this.lightAlignX, this.lightAlignY];
+    };
+    // DEBUG (shadow-edge-refine): A/B the fine caster-silhouette re-test (on) vs the coarse nearest shadow (off).
+    (globalThis as unknown as { __edgerefine: (on?: boolean) => boolean }).__edgerefine = (on?: boolean) => {
+      this.edgeRefine = on ?? !this.edgeRefine;
+      this.forceColdDirty = this.forceHotDirty = true;
+      return this.edgeRefine;
+    };
+    // DEBUG (__hideright): blank the right half of each prim's normal in __shownormal (alignment probe).
+    (globalThis as unknown as { __hideright: (on?: boolean) => boolean }).__hideright = (on?: boolean) => {
+      this.hideRight = on ?? !this.hideRight;
+      this.forceColdDirty = this.forceHotDirty = true;
+      return this.hideRight;
     };
     // DEBUG (lightmap P3): scatter n STATIC lights in a grid around the seed to stress the dirty-gated bake —
     // static lights bake ONCE then never re-bake, so fps should hold (the many-lights caching payoff). Returns
@@ -1385,6 +1427,8 @@ export class ShadowGather {
         p.uInt("uShowNormal", this.showNormal ? 1 : 0);
         p.uFloat("uNormalPitch", this.normalPitchDeg * Math.PI / 180);
         p.uVec2("uLightAlign", this.lightAlignX, this.lightAlignY);
+        p.uInt("uEdgeRefine", this.edgeRefine ? 1 : 0);
+        p.uInt("uHideRight", this.hideRight ? 1 : 0);
       },
     });
   }

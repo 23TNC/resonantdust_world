@@ -98,3 +98,4 @@ __pycache__/
 
 # docs-authority: ephemeral per-session stop-reason markers (work-check)
 docs/work/*/.stop-reason
+.staging/
