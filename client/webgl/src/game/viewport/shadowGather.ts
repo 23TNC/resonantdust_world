@@ -656,6 +656,18 @@ void main() {
   float zElev = isThing ? uElevK * max(0.0, baseY - P.y) : 0.0;
   vec2 Rbase = vec2(P.x, baseY);
   vec2 Pground = P; Pground.y += ${SHADOW_LIFTF}; // #2 lift — GROUND path only (thing path projects instead)
+  // Is this shadow texel ENTIRELY on the prim? A texel = 1/16 tile = 1 UNIT (= 4px @ 64px/tile); test its 4
+  // corners against rprim's silhouette (P is already on rprim since maskCov>0). If a corner falls OFF the prim
+  // the texel STRADDLES ground → we add the ground shadow below so its ground px darken; if all-on-prim we cull
+  // the ground (no ground visible there). Light-INDEPENDENT (geometry only) → computed ONCE, out of the loop.
+  bool allPrim = false;
+  if (maskCov > 0.0) {
+    float b0, b1, b2;
+    vec2 al = vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF});
+    allPrim = receiverCover(rprim, P + vec2(1.0, 0.0), uData, uSurface, al, b0) > 0.0
+           && receiverCover(rprim, P + vec2(0.0, 1.0), uData, uSurface, al, b1) > 0.0
+           && receiverCover(rprim, P + vec2(1.0, 1.0), uData, uSurface, al, b2) > 0.0;
+  }
 
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
@@ -671,20 +683,26 @@ void main() {
     vec3 L = vec3(decodePos(Ld.y), float((Ld.w >> 24) & 255u));
     float emitter = float((Ld.w >> 4) & 255u);              // emitter_radius (units) → penumbra width
     int reachT = int((Ld.w >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin (brute box)
-    // ONE shadow per texel + an ON-PRIM flag (user's phase-1 plan). ON-PRIM shadow FIRST — where this texel is
-    // on a prim, walk the ELEVATED thing point (the climbing-billboard shadow). If it EXISTS (cov>0) it takes
-    // PRIORITY (keep the tile) + the on-prim flag, and is NOT cut later (it spills over the prim but shares with
-    // ground shadow, so cutting adds bright spots). OTHERWISE store the GROUND shadow (lifted point) so the LIGHT
-    // bake can CUT it by the FINE presence (tight, like the normal). Value = u8 (0..255), 9th bit = on-prim flag.
-    float cd = 0.0, cov = 0.0; bool onPrim = false;
-    if (maskCov > 0.0) {
+    // ONE shadow per texel + an ON-PRIM flag. ON-PRIM = the texel sits on a prim (maskCov>0) → keep it, NOT
+    // cut by the fine presence (a prim texel isn't ground). We walk the ELEVATED thing point (the climbing
+    // shadow, shT). Then — UNLESS the texel is entirely on the prim — we ADD the GROUND shadow (shG): a straddle
+    // texel has ground px inside it (a notch/edge) that the fine bake does NOT cut (it's on-prim), so without
+    // this they'd stay bright. Entirely-on-prim texels cull the ground (no ground visible → no over-darken of
+    // the interior). Ground texels store shG alone, which the LIGHT bake cuts by FINE presence (tight edge).
+    // Value = u8 (0..255), 9th bit = on-prim flag.
+    float cd = 0.0, cov = 0.0; bool onPrim = maskCov > 0.0;
+    if (onPrim) {
       float ze = min(zElev, 0.9 * L.z);                     // keep the projection s bounded
       float sProj = L.z / (L.z - ze);
       vec2 Qt = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
-      cov = walkShadow(L, emitter, Qt, true, rprim, Rbase, uCorridor, reachT, uData, uSurface, cd);
-      onPrim = cov > 0.0;                                   // an on-prim shadow lands here → keep it (priority)
-    }
-    if (!onPrim) {                                          // no on-prim shadow → GROUND shadow (fine bake cuts it)
+      cov = walkShadow(L, emitter, Qt, true, rprim, Rbase, uCorridor, reachT, uData, uSurface, cd); // on-prim (climbing) shT
+      if (!allPrim) {                                       // straddles ground → add ground shadow (darkens the ground px within)
+        float cdG;
+        float shG = walkShadow(L, emitter, Pground, false, rprim, Rbase, uCorridor, reachT, uData, uSurface, cdG);
+        cov = max(cov, shG);                                // MAX not sum: identical where shT=0 (the bright px), no false over-dark where both overlap
+        cd = max(cd, cdG);
+      }
+    } else {                                                // ground texel → GROUND shadow (fine bake cuts it by fine presence)
       cov = walkShadow(L, emitter, Pground, false, rprim, Rbase, uCorridor, reachT, uData, uSurface, cd);
     }
     casterDepth = max(casterDepth, cd);                     // #3 (vestigial att1)
