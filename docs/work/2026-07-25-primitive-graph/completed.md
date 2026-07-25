@@ -201,3 +201,28 @@ and it only bites after enough churn.
 root: the **nested billboard** (reachable only *through* the child prim — the case the flat sweep could
 not see), the carried light, and both prims all come back zeroed, with **2 prims + 1 billboard**
 reclaimed. Live scene unaffected; renders correctly.
+
+## P4a — Two named dirty entry points; the force-alls retired (2026-07-25)
+The user's original design ([light-prims](../2026-07-24-light-prims/README.md) P3), now built on the graph.
+
+- **`markPrimDirty(x,y,w,h)`** is the shared cascade — dirty the prim's tiles, then every light reaching
+  them, then those lights' cast regions. **Contract:** the extent must cover the prim *and everything it
+  carries*, since moving a carrier moves its subtree. **`markBillboardDirty`** delegates to it;
+  **`markLightDirty(L, from?)`** is the light-side door.
+- **Class is derived at the door, not threaded by callers.** `markLightDirty` reads `L.dynamic` itself,
+  so the three call sites that each passed their own `cls` (and could drift out of step with the light's
+  actual class) no longer decide it.
+- **Caster-removal force-all retired**: each resident billboard records its tight box (`lastBox`) and a
+  departing one queues that box before its record goes. A removed caster has already left `standing`, so
+  its extent is unrecoverable afterwards — which is exactly why removal used to recompute every tile.
+- **Light-removal force-all retired** the same way via `lastLightBox`.
+- **`rebakeAll()`** now names the one legitimate force-all — a GLOBAL constant moved (`__tilt`,
+  `__pitchnormal`, `__worldlight`, …) so every baked texel is wrong. All 14 hand-set
+  `forceColdDirty = forceHotDirty = true` sites route through it, so "recompute everything" can no
+  longer be reached for as a shrug when the scoped path is inconvenient ([issues.md#i4](issues.md#i4)).
+
+**Verified** on a fresh load at `?focus=100,50&zoom=0.25` (window 7440 tiles): steady state dirties
+**216/7440 = 3.1%** — one moving light's cast region, not the world. Removing a light live kept it
+scoped (**840/7440**) instead of force-alling. An earlier 240/240 reading at `zoom=2` was a small-window
+artifact: the window was 20×12 and a single light's reach box is ~25×25, so it legitimately covered
+everything — worth knowing before reading that number as a regression.

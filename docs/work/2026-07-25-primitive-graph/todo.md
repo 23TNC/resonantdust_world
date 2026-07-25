@@ -17,10 +17,10 @@ _(P0, P1, P2a–P2f, P3a, P3b landed 2026-07-25 → [`completed.md`](completed.m
 _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](issues.md#i23).)_
 
 ## P4 — Dirty, generalised (inherited from light-prims P3)
-- [ ] Add `markPrimDirty`; make it cascade to the carried subtree ([F6](forks.md#f6)).
-- [ ] Add `markLightDirty` covering placement, move and removal (queue the last reach box before freeing).
-- [ ] Carry cold/hot class on the `markDirty` entry point; drop the ad-hoc `cls` args + `L.dynamic` scatter.
-- [ ] Replace the two force-all fallbacks at `tick:1396` with scoped cascades.
+- [x] Add `markPrimDirty`; make it cascade to the carried subtree ([F6](forks.md#f6)).
+- [x] Add `markLightDirty` covering placement, move and removal (queue the last reach box before freeing).
+- [x] Carry cold/hot class on the `markDirty` entry point; drop the ad-hoc `cls` args + `L.dynamic` scatter.
+- [x] Replace the two force-all fallbacks at `tick:1396` with scoped cascades.
 - [ ] Delete `coldDirty` / `forceColdDirty` / `lightsVer`; keep one explicit `rebakeAll()` for shader constants.
 
 ## P5 — Compose the real objects

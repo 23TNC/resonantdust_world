@@ -1240,6 +1240,9 @@ export class ShadowGather {
    *  it a departed caster's box is unrecoverable (it has left `standing`) — which is exactly why
    *  removal used to force-all every tile. */
   private readonly lastBox = new Map<number, [number, number, number, number]>();
+  /** P4: the same trick for LIGHTS — a removed light's reach box is unrecoverable once it is gone
+   *  from `this.lights`, so remember it and queue it on shrink. */
+  private readonly lastLightBox: Array<{ x: number; y: number; reach: number; dynamic: boolean }> = [];
   /** DEBUG: shadow tiles marked dirty (recomputed) on the last frame. */
   debugDirtyTiles = 0;
   /** P4 — **the PRIM dirty front door.** A carrier changed (placed / moved / re-carried / freed) →
@@ -1454,6 +1457,18 @@ export class ShadowGather {
         color: LIGHT_COLORS[k % LIGHT_COLORS.length], intensity: 1, castShadows: true,
         hot: L.dynamic, // #4: dynamic lights are HOT (per-frame), static are COLD (baked once)
       }));
+      // P4: a REMOVED light queues its last known cast region before the record goes — the light-side
+      // twin of `lastBox`. Without it a deleted light leaves its shadows baked in with no owner to
+      // cascade from, which is the other half of what used to force-all.
+      for (let k = this.lights.length; k < this.lastLightBox.length; k++) {
+        const B = this.lastLightBox[k];
+        this.markLightMove(B.x, B.y, B.x, B.y, B.reach, B.dynamic ? 1 : 0);
+      }
+      this.lastLightBox.length = this.lights.length;
+      for (let k = 0; k < this.lights.length; k++) {
+        const L = this.lights[k];
+        this.lastLightBox[k] = { x: L.x, y: L.y, reach: L.reach, dynamic: L.dynamic };
+      }
       this.coldData.buildLights(coldLights);
       const lightsChanged = this.coldDirty;
       this.lastCasterCount = standing.length;
