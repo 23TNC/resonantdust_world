@@ -167,3 +167,22 @@ the moment the billboard's own flag was consumed. Fixed at the carrier.
 (`tile 101, unit 136` = independently recomputed expectation); billboards `cast=1, hot=0`; lights all
 `cast=1` with **only the dynamic green light `hot=1`** — inheritance flowing carrier→leaf. Renders
 correctly; `tsc` clean.
+
+## P3c — Real nesting: child prims, offset accumulation, height summing (2026-07-25)
+- **`childPrimUnder(parent, dTileX, dTileY, dUnitX, dUnitY, set, carriedId, opts)`** authors a CHILD
+  prim — `child = 1` makes RED's top half the `parent_id`, and placement is by **bias-8 signed** tile +
+  unit offsets, so a piece can sit in any direction from its carrier. This is what P5 authoring calls to
+  hang a hand off a pawn or a torch off a hand.
+- **`z` now accumulates down the chain** and **saturates at u8** ([I9](issues.md#i9)) — heights add, so a
+  torch's flame sits above the hand that holds it. Clamping (not wrapping) matters: a clamped light sits
+  too low, a wrapped one teleports to the ground. Fixed a double-count found while wiring it: the light
+  wrote its height into *both* the carrier and the leaf; the carrier now holds the **authored** height
+  and the leaf the **resolved** sum, the same split position already uses.
+- **`debugResolveChain()`** self-test builds `root → child → leaf` with known offsets (including
+  negative ones), resolves, compares against hand-computed world arithmetic, then frees its scratch
+  prims — safe to run against the live scene.
+
+**Verified** on a fresh load: resolved `(2552, 1932)` == hand-computed `(2552, 1932)` — root
+`40·64+3·4`, child `−2` tiles + leaf `+1` = `−64`, child `+5` units + leaf `+6` = `+44`. The root was
+made hot + non-casting and the leaf came back `hot = true` (OR) and `cast = false` (AND), so both
+inheritance directions fold across two levels. Light heights read `40` (not `80`) — no double-count.

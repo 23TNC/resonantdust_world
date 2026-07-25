@@ -14,7 +14,7 @@ LUT → caster indirection drives the cast, producing shadows identical to befor
 
 ### C5a · Spike the new ES 3.00 techniques — DONE, re-scoped C5 ([D-2](deviations.md#d-2))
 
-- [ ] A small `/command` spike (like the MRT B1) proving all three genuinely-new techniques in isolation
+- [x] A small `/command` spike (like the MRT B1) proving all three genuinely-new techniques in isolation
       before the real cast: **`texelFetch`** (exact integer-coord read of an `RGBA32F` data texture — no
       filtering); an **integer render target** (`RGBA8UI`/`RGBA32UI` — sample a `usampler2D`, write `uint`
       via real bitwise); and **vertex-texture-fetch** (sample a texture in the VERTEX stage of an instanced

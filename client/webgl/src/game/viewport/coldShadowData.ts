@@ -439,13 +439,60 @@ export class ColdShadowData {
     // billboard_data (set 6): parent + the RESOLVED position + definition. The resolve walks this
     // billboard's authored offsets up its carrier chain — a no-op while carriers are roots and the
     // offsets are the bias-8 zero, and correct the moment either stops being true.
-    const r = this.resolveCarried(prim, OFFSET_ZERO, OFFSET_ZERO, false, true);
+    const r = this.resolveCarried(prim, OFFSET_ZERO, OFFSET_ZERO, false, true, 0);
     const leafChanged = this.writeRecord(BILLBOARD_DATA_BASE + idx,
       ((((prim & 0xffff) << 16) | (((r.pos >>> 8) & 0xff) << 8) | (r.pos & 0xff)) >>> 0),
       ((((rotation & 3) << 26) | ((r.hot ? 1 : 0) << 25) | ((r.cast ? 1 : 0) << 24)
-        | ((z & 0xff) << 16) | (OFFSET_ZERO << 8) | OFFSET_ZERO) >>> 0),
+        | ((r.z & 0xff) << 16) | (OFFSET_ZERO << 8) | OFFSET_ZERO) >>> 0),
       (((defIndex & 0xffff) << 16) >>> 0), 0);
     return { idx, changed: primChanged || leafChanged };
+  }
+
+  /** P3: author a CHILD prim under `parent` — placed by **bias-8 signed** offsets off its carrier
+   *  instead of an absolute address (`child = 1` makes RED's top half the `parent_id`). Offsets are
+   *  in tiles + units and may be negative, so a piece can sit in any direction from its carrier.
+   *  Returns the new prim id. This is what authoring (P5) calls to hang a hand off a pawn or a torch
+   *  off a hand; until then it is exercised by {@link debugResolveChain}. */
+  childPrimUnder(parent: number, dTileX: number, dTileY: number, dUnitX: number, dUnitY: number,
+                 setNib: number, carriedId: number, opts: { hot?: boolean; cast?: boolean; z?: number } = {}): number {
+    const prim = this.allocPrim();
+    const b8 = (v: number): number => (Math.max(-8, Math.min(7, v)) + 8) & 0xf;
+    const R = (((parent & 0xffff) << 16) | (b8(dTileX) << 12) | (b8(dTileY) << 8)
+      | (b8(dUnitX) << 4) | b8(dUnitY)) >>> 0;
+    const G = (((1 << 28) | ((opts.hot ? 1 : 0) << 25) | ((opts.cast === false ? 0 : 1) << 24)
+      | (((opts.z ?? 0) & 0xff) << 16) | ((setNib & 0xf) << 12)) >>> 0);
+    this.writeRecord(PRIM_BASE + prim, R, G, (((carriedId & 0xffff) << 16) >>> 0), 0);
+    return prim;
+  }
+
+  /** DEBUG/self-test for the resolve walk: build `root → child → leaf` with known offsets, resolve,
+   *  and compare against hand-computed world arithmetic. Frees its scratch prims, so it can be run
+   *  against the live scene without disturbing it. Proves the chain sums offsets AND folds inheritance
+   *  (the root is made hot + non-casting, which must force both onto the leaf). */
+  debugResolveChain(): Record<string, unknown> {
+    const rootX = 40 * SQUARE + 3 * UNIT, rootY = 30 * SQUARE + 5 * UNIT;
+    const root = this.allocPrim();
+    // root: hot + NON-casting, so inheritance has something to force down the chain.
+    this.writeRecord(PRIM_BASE + root, encodePosition(rootX, rootY),
+      (((1 << 25) | (0 << 24)) >>> 0), 0, 0);
+    const child = this.childPrimUnder(root, -2, 3, 5, -4, SET_BILLBOARD_DATA, 0, { cast: true });
+    const leafTileOff = ((8 + 1) << 4) | (8 - 3);   // +1 tile x, −3 tiles y  (bias-8)
+    const leafUnitOff = ((8 + 6) << 4) | (8 + 2);   // +6 units x, +2 units y
+    const got = this.resolveCarried(child, leafTileOff, leafUnitOff, false, true);
+    // Hand-computed: root + child offsets + leaf offsets.
+    const wx = rootX + (-2 + 1) * SQUARE + (5 + 6) * UNIT;
+    const wy = rootY + (3 - 3) * SQUARE + (-4 + 2) * UNIT;
+    const want = encodePosition(wx, wy);
+    const [gx, gy] = decodePosition(got.pos);
+    this.writeRecord(PRIM_BASE + child, 0, 0, 0, 0);
+    this.writeRecord(PRIM_BASE + root, 0, 0, 0, 0);
+    this.primFreeList.push(child, root);
+    return {
+      resolved: { x: gx, y: gy }, expected: { x: wx, y: wy },
+      posMatches: got.pos === want,
+      hot: got.hot, hotInherited: got.hot === true,      // root hot → leaf hot (OR)
+      cast: got.cast, castSilenced: got.cast === false,  // root !cast → leaf !cast (AND)
+    };
   }
 
   /** P3 THE RESOLVE WALK — turn a carried piece's *relative* placement into an absolute one by
@@ -457,16 +504,17 @@ export class ColdShadowData {
    *  Bounded by {@link MAX_PRIM_DEPTH} — a malformed cycle costs a fixed walk, never a hang.
    *  THIS is the single resolve authority ([I12]): the CPU stamps what the GPU reads, and the GPU
    *  never walks the graph in its hot loop. */
-  private resolveCarried(prim: number, tileOff: number, unitOff: number, hot: boolean, cast: boolean):
-    { pos: number; hot: boolean; cast: boolean } {
+  private resolveCarried(prim: number, tileOff: number, unitOff: number, hot: boolean, cast: boolean,
+                         zOff = 0): { pos: number; hot: boolean; cast: boolean; z: number } {
     let dtx = ((tileOff >>> 4) & 0xf) - 8, dty = (tileOff & 0xf) - 8;
     let dux = ((unitOff >>> 4) & 0xf) - 8, duy = (unitOff & 0xf) - 8;
-    let p = prim, outHot = hot, outCast = cast, rootPos = 0;
+    let p = prim, outHot = hot, outCast = cast, rootPos = 0, z = zOff;
     for (let depth = 0; depth < MAX_PRIM_DEPTH; depth++) {
       const b = (PRIM_BASE + p) * 4;
       const R = this.dataMirror[b], G = this.dataMirror[b + 1];
       outHot = outHot || ((G >>> 25) & 1) === 1;
       outCast = outCast && ((G >>> 24) & 1) === 1;
+      z += (G >>> 16) & 0xff;                                // heights ADD down the chain
       if (((G >>> 28) & 1) === 0) { rootPos = R; break; }   // ROOT: R is the absolute address
       dtx += ((R >>> 12) & 0xf) - 8; dty += ((R >>> 8) & 0xf) - 8;  // CHILD: accumulate + climb
       dux += ((R >>> 4) & 0xf) - 8;  duy += (R & 0xf) - 8;
@@ -476,6 +524,9 @@ export class ColdShadowData {
     return {
       pos: encodePosition(rx + dtx * SQUARE + dux * UNIT, ry + dty * SQUARE + duy * UNIT),
       hot: outHot, cast: outCast,
+      // The summed height is a u8 field, so a deep chain of tall carriers SATURATES rather than
+      // wrapping — a clamped light sits too low, a wrapped one teleports to the ground (I9).
+      z: Math.min(255, z),
     };
   }
 
@@ -543,10 +594,13 @@ export class ColdShadowData {
           ((((L.hot ? 1 : 0) << 25) | ((L.castShadows ? 1 : 0) << 24) | ((z & 0xff) << 16)
             | ((SET_LIGHT_DATA & 0xf) << 12)) >>> 0),
           (((k & 0xffff) << 16) >>> 0), 0);
-        const res = this.resolveCarried(prim, OFFSET_ZERO, OFFSET_ZERO, false, true);
+        // The carrier holds the AUTHORED height; the leaf's z field is what the GPU reads, so it takes
+        // the RESOLVED sum (carrier chain + own offset) — same split as position. Passing 0 as the
+        // leaf's own offset keeps today's single-level case at exactly the light's height.
+        const res = this.resolveCarried(prim, OFFSET_ZERO, OFFSET_ZERO, false, true, 0);
         const zone = (res.pos >>> 16) & 0xff, tile = (res.pos >>> 8) & 0xff, unit = res.pos & 0xff;
         R = (((prim & 0xffff) << 16) | (tile << 8) | unit) >>> 0;
-        G = ((((res.hot ? 1 : 0) << 25) | ((res.cast ? 1 : 0) << 24) | (z << 16)
+        G = ((((res.hot ? 1 : 0) << 25) | ((res.cast ? 1 : 0) << 24) | ((res.z & 0xff) << 16)
           | (OFFSET_ZERO << 8) | OFFSET_ZERO) >>> 0);
         const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
         B = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0);

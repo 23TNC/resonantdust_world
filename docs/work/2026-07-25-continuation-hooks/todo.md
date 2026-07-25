@@ -42,18 +42,26 @@ describes reads this file.
       normal gate instead of vanishing. Warning-only — it must never block a commit.
       Acceptance: `docs-check` reports the warning for a deliberately-broken stream, still exits 0.
 
-## P2 — Mechanism fixes (cheap, specific, independent of the above)
+## P2 — Arming: the hook is off until you say go ([F6](forks.md#f6))
 
-- [ ] **Execution-intent gate** — only nudge if the session actually wrote/edited a file this turn.
-      The Stop hook fires on *every* turn end, so a mid-stream question currently gets the asker
-      pushed back into stream work. Track per-session last-write in the bind hook; clear it on nudge.
-      Acceptance: a turn with only `Read` calls never nudges; a turn with an `Edit` does.
-- [ ] **`rd work focus <stream>` / `--clear`** — explicit session→stream override, beating the
-      touch-based binding (which drifts: a session that logs to stream A then works B's code stays on
-      A). Acceptance: `focus` wins over a later contradicting file touch until cleared.
+Replaces the planned "execution-intent gate" — that guessed intent from side effects, which is the
+same mistake as inferring item state from prose. Arming is the declaration.
+
+- [ ] **`rd work arm <stream>` / `disarm` / `status`** — persistent per-session arm state in
+      `.git/rd-work/armed/`. Armed = this session is executing that stream; disarmed = conversation.
+      Subsumes the planned `rd work focus` (arming *is* the binding, explicit and drift-free).
+      Acceptance: `arm` beats any contradicting file touch; `status` reports armed stream + nudge count.
+- [ ] **Hook nudges only when armed** — an unarmed session ends its turn silently, always. The
+      touch-based binding stays only as the *stream* resolver for an armed session that didn't name one.
+      Acceptance: unarmed session with open work → exit 0; armed → exit 2.
+- [ ] **Auto-disarm** on the three real exits: all items ticked, a blocker recorded, or `.stop-reason`
+      written. Acceptance: recording a blocker while armed disarms and the next stop is silent.
 - [ ] **Escalate on stall** — when the guard releases after `MAX_NUDGES` no-progress stops, auto-write
-      `.stop-reason` recording the stall, so the next session sees it instead of re-nudging blind.
-      Acceptance: the 4th no-progress stop writes the file; the following stop is silent because of it.
+      `.stop-reason`, disarm, and say so. Acceptance: the 4th no-progress stop writes the file, disarms,
+      and the following stop is silent.
+- [ ] **`/rd-execute` skill** (`.claude/skills/rd-execute/`) — the user-facing "go": pick/confirm the
+      stream, load its brief (P3), arm, and execute to completion. Acceptance: `/rd-execute
+      2026-07-25-primitive-graph` arms + starts P3 without further prompting.
 
 ## P3 — The resume brief (replace the nudge with context)
 
@@ -70,14 +78,24 @@ describes reads this file.
       sentences and no acceptance clause, as "not sized to execute". Warning-only, never blocking —
       it is a nudge to decompose, and the corpus has 67 such items today. Acceptance: count reported;
       no ERRORs introduced.
-- [ ] **`/plan-phase` skill** (`.claude/skills/plan-phase/`) — reads a stream's `design`/`intent`/
-      `current` + the named phase, and emits a checklist of one-action items, each with an acceptance
-      criterion, for the user to ratify before it replaces the paragraph. Acceptance: run it on
+- [ ] **`/rd-plan` skill** (`.claude/skills/rd-plan/`) — the planning counterpart to `/rd-execute`.
+      Opens or deepens a stream: reads `design`/`intent`/`current`, drafts or decomposes a phase into
+      one-action items each with an acceptance criterion, and presents it for ratification before it
+      replaces the paragraph. Never arms the hook — planning is a conversation. Acceptance: run it on
       `2026-07-25-primitive-graph` P3 and produce a ratifiable checklist.
 - [ ] **Decompose one real phase with it** end-to-end as the proof, and record what the decomposition
       changed about the items. Acceptance: the phase's items each name one action + a check.
 
-## P5 — Verify the whole system
+## P5 — Item lifecycle: items never move ([F7](forks.md#f7).1)
+
+- [ ] **Adopt "`[x]` IS the move"** — items stay in the plan file for the life of the stream;
+      `completed.md` becomes purely the dated **verification log**, not a second copy of the list.
+      Update `CONVENTIONS.md` (§ `docs/work/`) to say so, retiring the half-practised `todo → completed`
+      move. Acceptance: CONVENTIONS states it; `docs-check` does not require items to disappear.
+- [ ] **Fold the sparse files** (`blockers.md`, `deviations.md`) into plan sections — **held for the
+      user's yes** ([F7](forks.md#f7).2), since it rewrites ~26 files and edits CONVENTIONS.
+
+## P6 — Verify the whole system
 
 - [ ] **Corpus harness** — `bin/lib/work_check_selftest.py`: asserts the classifier against every
       stream (items, blockers, verdicts) so the next dialect drift fails loudly. This is the standing
