@@ -591,17 +591,19 @@ void main() {
     // one texel past the silhouette. Blend N·L → ground (ndl 1) by the sprite's soft coverage (rcovN) so the lit
     // region fades exactly to presence — no coarse fringe, and the edge reveals ground not black. ndl = 1 on ground.
     float ndl = applyNL ? max(dot(N, d3 / max(dist, 1e-3)), 0.0) : 1.0;
-    // P3 SHADOW: mask by slot i's u9 coverage (low8 in channel i>>2, high bit in A[16+i]) — a shadowed
-    // pixel stops receiving this light. Applied to the contribution so it removes both the irradiance AND
-    // the relief drive (a fully-shadowed light must not light the sprite's lit side either). Penumbra and
-    // umbra (the gather's soft coverage) modulate it smoothly.
-    uint v9 = ((lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((sh.w >> uint(16 + slot)) & 1u) << 8);
-    float shadow = float(v9) / 511.0;
+    // P3 SHADOW: slot i's u8 coverage (low8 in channel i>>2) + the ON-PRIM flag (A[16+i]). CUT the on-GROUND
+    // shadow where THIS fine texel is a prim (rprimN != 0) — the tight, fine-presence cut (like the normal),
+    // so a prim standing in a shadow isn't ground-darkened. On-prim shadows are LEFT UNCUT (they share tiles
+    // with ground shadows; cutting them causes more problems than it solves — user).
+    uint v8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
+    bool onPrim = ((sh.w >> uint(16 + slot)) & 1u) == 1u;
+    float shadow = float(v8) / 255.0;
+    if (!onPrim && rprimN != 0u) shadow = 0.0;              // cut ground shadow off prims (fine presence)
     // shadow-edge-refine: the coarse shadow (16/tile) is nearest-upsampled → blocky edges. Where it's a PARTIAL
     // (0,1) edge value, re-run the caster-silhouette walk at THIS fine texel to SELECT the sharp coverage (only
     // edge texels pay; interior 0/1 is kept free). Ground cast shadow only for now (rprimN 0) — thing texels
     // keep the coarse blended value. Same GROUND-path args as the gather (Pground = P + SHADOW_LIFT, corridor).
-    if (uEdgeRefine == 1 && rprimN == 0u && shadow > 0.0 && shadow < 1.0) {
+    if (uEdgeRefine == 1 && !onPrim && rprimN == 0u && shadow > 0.0 && shadow < 1.0) {
       vec3 L3 = vec3(Lxy, Lz);
       float emitter = float((Ld.w >> 4) & 255u);
       int reachT = int(reach) / int(UPT) + 1;
@@ -669,31 +671,28 @@ void main() {
     vec3 L = vec3(decodePos(Ld.y), float((Ld.w >> 24) & 255u));
     float emitter = float((Ld.w >> 4) & 255u);              // emitter_radius (units) → penumbra width
     int reachT = int((Ld.w >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin (brute box)
-    // Sample the shadow at TWO points and blend by the mask coverage: the GROUND point (the lifted texel)
-    // and the elevated THING point (the pixel projected to the ground along the light ray through it — the
-    // climbing-billboard shadow). At the silhouette EDGE (0<cov<1) the pixel is partly sprite, partly the
-    // ground behind it, so the blend is a real 50/50 there — no hard cut. cov==0 → ground only (identity
-    // held); cov==1 → thing only (identity held). Each walk is corridor↔brute bit-identical.
-    float cdG = 0.0, cdT = 0.0;
-    float shG = (maskCov < 1.0)
-      ? walkShadow(L, emitter, Pground, false, rprim, Rbase, uCorridor, reachT, uData, uSurface, cdG)
-      : 0.0;
-    float shT = 0.0;
+    // ONE shadow per texel + an ON-PRIM flag (user's phase-1 plan). ON-PRIM shadow FIRST — where this texel is
+    // on a prim, walk the ELEVATED thing point (the climbing-billboard shadow). If it EXISTS (cov>0) it takes
+    // PRIORITY (keep the tile) + the on-prim flag, and is NOT cut later (it spills over the prim but shares with
+    // ground shadow, so cutting adds bright spots). OTHERWISE store the GROUND shadow (lifted point) so the LIGHT
+    // bake can CUT it by the FINE presence (tight, like the normal). Value = u8 (0..255), 9th bit = on-prim flag.
+    float cd = 0.0, cov = 0.0; bool onPrim = false;
     if (maskCov > 0.0) {
       float ze = min(zElev, 0.9 * L.z);                     // keep the projection s bounded
       float sProj = L.z / (L.z - ze);
       vec2 Qt = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
-      shT = walkShadow(L, emitter, Qt, true, rprim, Rbase, uCorridor, reachT, uData, uSurface, cdT);
+      cov = walkShadow(L, emitter, Qt, true, rprim, Rbase, uCorridor, reachT, uData, uSurface, cd);
+      onPrim = cov > 0.0;                                   // an on-prim shadow lands here → keep it (priority)
     }
-    float cov = mix(shG, shT, maskCov);
-    casterDepth = max(casterDepth, max(maskCov < 1.0 ? cdG : 0.0, maskCov > 0.0 ? cdT : 0.0)); // #3 (vestigial att1)
-    // Pack this SLOT's coverage as u9 (0..511): low8 at channel slot>>2 bits (slot&3)*8; the 9th
-    // (high) bit into A at bit 16+slot (14 high bits in A[16:30]). No channel straddle.
-    uint v = uint(clamp(cov, 0.0, 1.0) * 511.0 + 0.5);
+    if (!onPrim) {                                          // no on-prim shadow → GROUND shadow (fine bake cuts it)
+      cov = walkShadow(L, emitter, Pground, false, rprim, Rbase, uCorridor, reachT, uData, uSurface, cd);
+    }
+    casterDepth = max(casterDepth, cd);                     // #3 (vestigial att1)
+    uint v = uint(clamp(cov, 0.0, 1.0) * 255.0 + 0.5);      // u8 coverage (was u9); 9th bit repurposed below
     uint low8 = (v & 0xFFu) << uint((slot & 3) * 8);
     int ch = slot >> 2;                                     // static branch (no dynamic write-subscript)
     if (ch == 0) o0 |= low8; else if (ch == 1) o1 |= low8; else if (ch == 2) o2 |= low8; else o3 |= low8;
-    o3 |= ((v >> 8) & 1u) << uint(16 + slot);               // high bit → A[16+slot]
+    o3 |= (onPrim ? 1u : 0u) << uint(16 + slot);            // A[16+slot] = ON-PRIM flag (was the u9 high bit)
   }
   fragColor = uvec4(o0, o1, o2, o3);
   oCasterD = uvec4(uint(casterDepth) & 0x7Fu, 0u, 0u, 0u);  // #3: frontmost caster row (7-bit local key)
@@ -762,10 +761,10 @@ void main() {
   for (int slot = 0; slot < 14; slot++) {
     uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
-    uint vC = ((lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((shC.w >> uint(16 + slot)) & 1u) << 8);
-    uint vH = ((lane4(shH, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) | (((shH.w >> uint(16 + slot)) & 1u) << 8);
-    uint v = max(vC, vH);                                    // u9 — combine the two classes' RTs
-    if (v > 0u) { float cvg = float(v) / 511.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
+    uint vC = (lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu; // u8 coverage (A[16+slot] is the on-prim flag now)
+    uint vH = (lane4(shH, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
+    uint v = max(vC, vH);                                    // u8 — combine the two classes' RTs
+    if (v > 0u) { float cvg = float(v) / 255.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
   }
   if (any <= 0.0) { fragColor = vec4(0.0); return; }        // lit → transparent
   fragColor = vec4(clamp(acc, 0.0, 1.0), any);              // shadow tint × coverage
