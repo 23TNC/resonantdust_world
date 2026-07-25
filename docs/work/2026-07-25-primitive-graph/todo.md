@@ -21,7 +21,7 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
 - [x] Add `markLightDirty` covering placement, move and removal (queue the last reach box before freeing).
 - [x] Carry cold/hot class on the `markDirty` entry point; drop the ad-hoc `cls` args + `L.dynamic` scatter.
 - [x] Replace the two force-all fallbacks at `tick:1396` with scoped cascades.
-- [ ] Delete `coldDirty` / `forceColdDirty` / `lightsVer`; keep one explicit `rebakeAll()` for shader constants.
+- [x] Delete `coldDirty` / `forceColdDirty` / `lightsVer`; keep one explicit `rebakeAll()` for shader constants.
 
 ## P5 — Compose the real objects
 - [ ] Build a torch = prim{ billboard, light }; verify both leaves resolve to the one carrier.

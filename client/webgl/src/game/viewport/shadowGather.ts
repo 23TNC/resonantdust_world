@@ -1059,9 +1059,7 @@ export class ShadowGather {
           this.lights.push({ x: lx, y: ly, hx: lx, hy: ly, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER, dynamic: false });
         }
       }
-      this.lightsVer++;
-      this.coldDirty = true;
-      this.rebakeAll();
+      this.rebakeAll();   // bulk placement: no region to scope from (it also flags records + presence)
       return this.lights.length;
     };
     this.fsQuad = new Geometry(gl, this.gather, {
@@ -1087,9 +1085,7 @@ export class ShadowGather {
       this.lights.push({ x: lx, y: ly, hx: lx, hy: ly, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: emitter, dynamic });
     }
     this.enabled = true;
-    this.coldDirty = true;
-    this.lightsVer++; // invalidates light_presence_cold
-    this.rebakeAll(); // lights changed → recompute every tile
+    this.rebakeAll(); // a re-seed replaces the whole light set — nothing to scope from
   }
 
   /** Rebuild the per-tile **presence** (P5) when the lights or window change: each tile gets the
@@ -1215,6 +1211,8 @@ export class ShadowGather {
    *  shrug whenever the scoped path is inconvenient ([issues.md#i4]). */
   rebakeAll(): void {
     this.forceColdDirty = this.forceHotDirty = true;
+    this.coldDirty = true;   // records may have changed with it
+    this.lightsVer++;        // and so may per-tile presence
   }
 
   /** Queue the scoped dirty rect for a light move (P5): the union box of the old + new reach,
@@ -1276,6 +1274,12 @@ export class ShadowGather {
    *  what let the routing drift out of step with `L.dynamic` in three separate places. */
   private markLightDirty(L: Light, from?: { x: number; y: number }): void {
     this.markLightMove(from?.x ?? L.x, from?.y ?? L.y, L.x, L.y, L.reach, L.dynamic ? 1 : 0);
+    // The bookkeeping a light change implies, DERIVED here rather than hand-set at each call site —
+    // its record may differ (`coldDirty`) and the per-tile light lists may differ (`lightsVer`).
+    // Those two used to be set by hand wherever someone remembered to; forgetting either is a silent
+    // stale-bake, which is why they now hang off the one door every light change passes through.
+    this.coldDirty = true;
+    this.lightsVer++;
   }
 
   /** Rebuild `shadow_dirty` for this frame: a slot is dirty when its world-tile **owner changed** (pan /
@@ -1353,8 +1357,7 @@ export class ShadowGather {
   setEmitter(px?: number): number {
     if (px === undefined) return this.lights[0]?.emitterRadius ?? 0;
     for (const L of this.lights) L.emitterRadius = px;
-    this.coldDirty = true;   // light records changed (emitter is in the record)
-    this.rebakeAll();  // recompute every shadow/light tile
+    this.rebakeAll();  // a property on EVERY light — no region to scope from
     return px;
   }
   /** DEBUG (shadows-onto-billboards): the receiver-elevation gain (no arg = read). Recomputes every tile. */
@@ -1447,10 +1450,8 @@ export class ShadowGather {
         moved = true;
       }
     }
-    if (moved) {
-      this.coldDirty = true;   // light records changed
-      this.lightsVer++;        // presence changed
-    }
+    // (no bookkeeping here any more — every mover above went through `markLightDirty`, which flags
+    //  the record + presence itself. That is the point of having one door.)
     if (this.coldDirty || standing.length !== this.lastCasterCount) {
       const coldLights = this.lights.slice(0, MAX_LIGHTS).map((L, k) => ({
         x: L.x, y: L.y, z: L.z, reach: L.reach, emitterRadius: L.emitterRadius,

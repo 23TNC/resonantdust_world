@@ -226,3 +226,22 @@ The user's original design ([light-prims](../2026-07-24-light-prims/README.md) P
 scoped (**840/7440**) instead of force-alling. An earlier 240/240 reading at `zoom=2` was a small-window
 artifact: the window was 20×12 and a single light's reach box is ~25×25, so it legitimately covered
 everything — worth knowing before reading that number as a regression.
+
+## P4b — The hand-set dirty flags derive from the entry points (2026-07-25)
+`coldDirty` and `lightsVer` are no longer set by hand anywhere. They hang off the two places a change
+can actually enter:
+- **`markLightDirty`** flags both — a light change may alter its record (`coldDirty`) and the per-tile
+  light lists (`lightsVer`). Previously each call site set whichever it remembered; forgetting one is a
+  silent stale bake, which is precisely the failure mode a single door removes.
+- **`rebakeAll()`** flags both plus the force-all, since a global constant change invalidates everything.
+- Deleted the hand-set pairs in `seed()`, `__manylights`, `setEmitter`, and the per-frame `if (moved)`
+  block in `tick` — every mover there already passes through `markLightDirty`.
+
+**Verified** at `?focus=100,50&zoom=0.25` (7440-tile window, 1632 billboards, **120.7 fps**): steady
+state dirties **2838/7440** (the moving light's region), and `setEmitter()` — a property on *every*
+light, with no region to scope from — spikes to **7440 for exactly two frames** (the cold then hot
+pass) before returning to scoped. The resolve-chain self-test still passes.
+
+**Verification note:** the first attempt sampled a single frame after `setEmitter` and read `2838`,
+which looked like the rebake had failed. It had already happened. A one-frame sample of a
+multi-frame effect is not evidence — sample a window and take the peak.
