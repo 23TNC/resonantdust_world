@@ -23,7 +23,7 @@ export const N_LIGHTS = 128;
 export const DATA_W = 1024;
 export const DATA_H = 1024;
 /** Band bases (linear indices) — 64-row bands of 65 536 one-texel slots. Mirrored in the GLSL. */
-export const BILLBOARD_DEF_BASE = 0;
+export const DEF_BASE = 0;
 export const PRIM_BASE = 65536;            // set 1 — prim_data, the composition node
 export const BILLBOARD_DATA_BASE = 6 * 65536; // set 6 — billboard_data, the sprite leaf
 /** A prim's `set_a..d` nibble naming the band a carried piece lives in (0 = "no data"). */
@@ -31,7 +31,7 @@ const SET_BILLBOARD_DATA = 6;
 export const LIGHT_BASE = 131072;
 /** Tile-keyed sets — region-torus addressed (presence-in-data). One set = one region's 65 536 tiles. */
 export const PRESENCE_BASE = 3 * 65536;    // light_presence_lo (light slots 0–6)
-export const CASTER_BASE = 4 * 65536;
+export const BILLBOARD_PRESENCE_BASE = 4 * 65536;
 export const PRESENCE_HI_BASE = 5 * 65536; // light_presence_hi (light slots 7–13)
 /** The constants row (row 1023) — px0 window mapping, px1 slot/light-count (P3). */
 export const CONST_BASE = 1023 * DATA_W;
@@ -261,8 +261,8 @@ export class ColdShadowData {
     this.writeTileSet(PRESENCE_HI_BASE, wc, wr, slots, 0xffff, 8);
   }
   /** Caster-bucket tile: 7 u16 billboard indices (0 empty — the billboard sentinel). */
-  writeCasters(wc: number, wr: number, slots: ArrayLike<number>): void {
-    this.writeTileSet(CASTER_BASE, wc, wr, slots, 0x0000);
+  writeBillboardPresence(wc: number, wr: number, slots: ArrayLike<number>): void {
+    this.writeTileSet(BILLBOARD_PRESENCE_BASE, wc, wr, slots, 0x0000);
   }
   /** Clear a tile's presence (both sets, all-empty) — eviction. */
   clearPresence(wc: number, wr: number): void {
@@ -271,7 +271,7 @@ export class ColdShadowData {
   }
   /** Clear a tile's buckets (all-empty) — eviction. */
   clearCasters(wc: number, wr: number): void {
-    this.writeTileSet(CASTER_BASE, wc, wr, EMPTY_SLOTS, 0x0000);
+    this.writeTileSet(BILLBOARD_PRESENCE_BASE, wc, wr, EMPTY_SLOTS, 0x0000);
   }
 
   /** The shared surface atlas page (or null before any sprite resolved). */
@@ -352,7 +352,7 @@ export class ColdShadowData {
     // Bucketing box (world px, rel. billboard top-left) — 1 frame unit ≡ 1 world unit by the span model.
     this.defTight.set(idx, { dx: ux0 * UNIT, dy: uy0 * UNIT, w: wu * UNIT, h: hu * UNIT });
 
-    const base = (BILLBOARD_DEF_BASE + idx) * 4;
+    const base = (DEF_BASE + idx) * 4;
     const page = 0;        // ONE bound surface page today — C5 (texture-array pages) assigns real indices
     const ax = 1, ay = 2;  // shadow casters hang the bbox at the billboard's BOTTOM-CENTER anchor
     const nax = 1, nay = 2; // nudge alignment: x centered, y bottom — the default nudging operation
@@ -365,7 +365,7 @@ export class ColdShadowData {
     this.dataMirror[base + 1] = ((((wu >> 1) & 0x1ff) << 23) | (((hu >> 1) & 0x1ff) << 14) | (((st - 1) & 0xf) << 10)) >>> 0;
     this.dataMirror[base + 2] = (((fx16 & 0x3ff) << 22) | ((fy16 & 0x3ff) << 12) | ((page & 0xf) << 8) | ((lod & 0xf) << 4) | ((ax & 3) << 2) | (ay & 3)) >>> 0;
     this.dataMirror[base + 3] = ((((nx + 2048) & 0xfff) << 20) | (((ny + 2048) & 0xfff) << 8) | ((nax & 3) << 6) | ((nay & 3) << 4)) >>> 0;
-    this.mark(BILLBOARD_DEF_BASE + idx);
+    this.mark(DEF_BASE + idx);
     return idx;
   }
 
@@ -400,8 +400,8 @@ export class ColdShadowData {
       // RETENTION: never swap a standing billboard DOWN to the loose (lod-0) def — if the freshly
       // resolved frame is unusable (off-page) it keeps casting its current silhouette.
       const curDef = (this.dataMirror[(BILLBOARD_DATA_BASE + idx) * 4 + 2] >>> 16) & 0xffff;
-      const newLod = (this.dataMirror[(BILLBOARD_DEF_BASE + defIndex) * 4 + 2] >>> 4) & 0xf;
-      const curLod = (this.dataMirror[(BILLBOARD_DEF_BASE + curDef) * 4 + 2] >>> 4) & 0xf;
+      const newLod = (this.dataMirror[(DEF_BASE + defIndex) * 4 + 2] >>> 4) & 0xf;
+      const curLod = (this.dataMirror[(DEF_BASE + curDef) * 4 + 2] >>> 4) & 0xf;
       if (newLod < 4 && curLod >= 4) defIndex = curDef;
     } else {
       idx = this.billboardFreeList.pop() ?? this.billboardNext++; // reuse a freed slot first (P2)
@@ -558,7 +558,7 @@ export class ColdShadowData {
     frame_xy: [number, number]; frame_page: number; frame_lod: number; anchor: [number, number];
     nudge: [number, number]; nudge_anchor: [number, number];
   } {
-    const b = (BILLBOARD_DEF_BASE + index) * 4;
+    const b = (DEF_BASE + index) * 4;
     const R = this.dataMirror[b], G = this.dataMirror[b + 1], B = this.dataMirror[b + 2], A = this.dataMirror[b + 3];
     return {
       billboard_width: ((G >>> 23) & 0x1ff) * 2,  // units (stored /2 — even bbox)

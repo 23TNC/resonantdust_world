@@ -102,9 +102,16 @@ const SHADOW_BASE_PUSHF = SHADOW_BASE_PUSH.toFixed(2);
 const MASK_BASE_FADE = 1.5;
 const MASK_BASE_FADEF = MASK_BASE_FADE.toFixed(1);
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
-/** Lights per tile in presence + shadow-cold: 14 (7 per presence set), each a u8 coverage in the
- *  128-bit shadow-cold texel (slot i at channel i>>2, bits (i&3)·8). */
-const PRES_SLOTS = 16;   // v3: 8 slots per presence px (self-address retired) x lo+hi
+/** Slots in ONE tile-keyed px — v3 retired the u16 self-address, so all four lanes hold pairs. */
+const TILE_SLOTS = 8;
+/** Lights per tile in presence + shadow-cold: {@link TILE_SLOTS} per presence set (lo + hi) = 16, each
+ *  a `u7 coverage | u1 on-billboard` byte in the 128-bit shadow-cold texel (slot i at channel i>>2,
+ *  bits (i&3)·8 — 16 × 8 = 128 exactly). */
+const PRES_SLOTS = TILE_SLOTS * 2;
+/** Casting billboards bucketed per tile — ONE px, so {@link TILE_SLOTS}. I17: this is the stride the
+ *  fill, the allocation AND the write must all agree on; when they were separate literals they
+ *  desynced (7 vs 8) and the buckets were built from misaligned memory. Derive, never re-type it. */
+const BILLBOARD_SLOTS = TILE_SLOTS;
 
 interface Light {
   x: number;
@@ -132,9 +139,9 @@ const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 // THE unified data texture (1024×1024): linear index → texel; 64-row bands (VARIABLES.md).
-const int BILLBOARD_DEF_BASE = 0, PRIM_BASE = 65536, LIGHT_BASE = 131072, CONST_BASE = 1047552; // row 1023
+const int DEF_BASE = 0, PRIM_BASE = 65536, LIGHT_BASE = 131072, CONST_BASE = 1047552; // row 1023
 const int BILLBOARD_BASE = 393216;  // v3 set 6 — the BILLBOARD LEAF (set 1 = prim_data, the node)
-const int PRESENCE_BASE = 196608, CASTER_BASE = 262144, PRESENCE_HI_BASE = 327680; // tile-keyed sets 3, 4, 5
+const int PRESENCE_BASE = 196608, BILLBOARD_PRESENCE_BASE = 262144, PRESENCE_HI_BASE = 327680; // tile-keyed sets 3, 4, 5
 uvec4 fetchLin(highp usampler2D t, int i) { return texelFetch(t, ivec2(i & 1023, i >> 10), 0); }
 // Region-torus zone-strip fold: world tile → in-set id (matches TS foldTile). World tiles ≥ 0.
 int fmod16(int v) { return ((v % 16) + 16) % 16; }
@@ -247,7 +254,7 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, vec2 ref, hi
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));      // v2.1: R = id|reserved, G = position, B = orient
   vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref);   // v3 leaf: resolved tile|unit
   int defIdx = int((Pd.z >> 16) & 0xffffu);
-  uvec4 D = fetchLin(data, BILLBOARD_DEF_BASE + defIdx);
+  uvec4 D = fetchLin(data, DEF_BASE + defIdx);
   // v2.1: R = u16 id | u10 offset_x | u6 reserved; G = u9 W | u9 H | u4 span (tiles−1) | u10 offset_y.
   // B: frame origin (16-px grid) + page + lod exponent + 3x3 anchors. A: nudges.
   float W = float(((D.y >> 23) & 511u) * 2u);
@@ -315,7 +322,7 @@ float receiverCover(uint billboardIdx, vec2 P, vec2 ref, highp usampler2D data, 
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));
   vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref);   // v3 leaf: resolved tile|unit
   int defIdx = int((Pd.z >> 16) & 0xffffu);
-  uvec4 D = fetchLin(data, BILLBOARD_DEF_BASE + defIdx);
+  uvec4 D = fetchLin(data, DEF_BASE + defIdx);
   float W = float(((D.y >> 23) & 511u) * 2u);
   float H = float(((D.y >> 14) & 511u) * 2u);
   if (W <= 0.0 || H <= 0.0) return -1.0;
@@ -359,8 +366,8 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out 
   rbillboard = 0u;                                                // the winning (frontmost) receiver billboard — for self-exclusion
   rcov = 0.0;                                                // its soft silhouette coverage at P (the edge blend)
   for (int dy = 0; dy <= 5; dy++) {                         // constant bound; covers billboards up to ~5 tiles
-    uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(wc, r0 + dy));
-    for (int c = 0; c < 8; c++) {
+    uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(wc, r0 + dy));
+    for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
       uint billboardIdx = tileSlot(cb, c);
       if (billboardIdx == 0u) continue;
       float brOut; float cov = receiverCover(billboardIdx, P, (vec2(float(wc), float(r0 + dy)) + 0.5) * UPT, data, surf, align, brOut);
@@ -380,7 +387,7 @@ vec3 billboardNormal(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));
   vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref);   // v3 leaf: resolved tile|unit
   int defIdx = int((Pd.z >> 16) & 0xffffu);
-  uvec4 D = fetchLin(data, BILLBOARD_DEF_BASE + defIdx);
+  uvec4 D = fetchLin(data, DEF_BASE + defIdx);
   float W = float(((D.y >> 23) & 511u) * 2u);
   float H = float(((D.y >> 14) & 511u) * 2u);
   if (W <= 0.0 || H <= 0.0) return vec3(0.0);
@@ -461,9 +468,9 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
       ivec2 qt = ivec2(floor(q));
       for (int n = 0; n < 5; n++) {                          // cross pad: centre, ±x, ±y
         ivec2 o = qt + ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0));
-        uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(o.x, o.y));
+        uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(o.x, o.y));
         vec2 bref = (vec2(o) + 0.5) * UPT;                  // resolve casters against THEIR bucket tile
-        for (int c = 0; c < 8; c++) {
+        for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
           uint billboardIdx = tileSlot(cb, c);
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
@@ -476,9 +483,9 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
       if (dy < -reachT || dy > reachT) continue;
       for (int dx = -16; dx <= 16; dx++) {
         if (dx < -reachT || dx > reachT) continue;
-        uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy));
+        uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(lc.x + dx, lc.y + dy));
         vec2 bref = (vec2(float(lc.x + dx), float(lc.y + dy)) + 0.5) * UPT;
-        for (int c = 0; c < 8; c++) {
+        for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
           uint billboardIdx = tileSlot(cb, c);
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
@@ -926,7 +933,7 @@ export class ShadowGather {
 
   /** caster buckets — folded into the data texture (set 4, region-torus). CPU scratch: per in-window
    *  tile ≤7 `u16` billboard indices (`0` = empty); `castCount` the per-tile fill. `buildCasters` writes each
-   *  tile via `coldData.writeCasters`. */
+   *  tile via `coldData.writeBillboardPresence`. */
   private castSlots = new Uint16Array(0);
   private castCount = new Uint8Array(0);
 
@@ -1137,8 +1144,8 @@ export class ShadowGather {
    *  for now; the O(1) re-bucket on move lands with the hot tier. */
   private buildCasters(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
     const { cols, rows, winCol, winRow } = win;
-    if (this.castSlots.length !== cols * rows * 8) {
-      this.castSlots = new Uint16Array(cols * rows * 8);
+    if (this.castSlots.length !== cols * rows * BILLBOARD_SLOTS) {
+      this.castSlots = new Uint16Array(cols * rows * BILLBOARD_SLOTS);
       this.castCount = new Uint8Array(cols * rows);
     }
     this.castSlots.fill(0); // 0 = empty (billboard sentinel)
@@ -1173,8 +1180,8 @@ export class ShadowGather {
           if (wc < winCol || wc >= winCol + cols) continue;
           const ti = (wr - winRow) * cols + (wc - winCol); // dense window-local tile
           const n = count[ti];
-          if (n >= 8) continue; // tile full — drop the rest (rare)
-          this.castSlots[ti * 8 + n] = inst.idx & 0xffff;
+          if (n >= BILLBOARD_SLOTS) continue; // tile full — drop the rest (rare)
+          this.castSlots[ti * BILLBOARD_SLOTS + n] = inst.idx & 0xffff;
           count[ti] = n + 1;
         }
       }
@@ -1186,7 +1193,7 @@ export class ShadowGather {
     for (let wr = winRow; wr < winRow + rows; wr++)
       for (let wc = winCol; wc < winCol + cols; wc++) {
         const ti = (wr - winRow) * cols + (wc - winCol);
-        this.coldData.writeCasters(wc, wr, this.castSlots.subarray(ti * 8, ti * 8 + 8));
+        this.coldData.writeBillboardPresence(wc, wr, this.castSlots.subarray(ti * BILLBOARD_SLOTS, ti * BILLBOARD_SLOTS + BILLBOARD_SLOTS));
       }
     // Flush all queued writes (def/billboard/presence/caster) as ONE scatter batch. NO force-all: def
     // swaps + new billboards queued their scoped rects via the billboard dirty cascade (markBillboardDirty).

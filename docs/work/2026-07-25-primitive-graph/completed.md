@@ -108,3 +108,17 @@ placed `Primitive` becomes a ROOT prim carrying exactly one billboard.
 from the mirror — prim #3 has `child=0, set_a=6, id_a=3`; leaf #3 has `parent_id=3`, resolved tile/unit,
 `def=34`, offsets `0x88/0x88`. The link is intact in both directions. Two compile breaks hit on the way
 ([I19](issues.md#i19) backtick; three missed `receiverCover` call sites in the 4-corner straddle test).
+
+## P2f — Naming reconciled to VARIABLES + the stride given a constant (2026-07-25)
+- `BILLBOARD_DEF_BASE` → **`DEF_BASE`** (the def band serves more than billboards — it carries a
+  `u4 type`), `CASTER_BASE` → **`BILLBOARD_PRESENCE_BASE`**, `writeCasters` →
+  **`writeBillboardPresence`** — code now matches the authoritative band names ([I8](issues.md#i8)).
+- **[I17](issues.md#i17) closed**: `TILE_SLOTS = 8` (slots in one tile-keyed px) now derives both
+  `PRES_SLOTS` (× lo+hi) and `BILLBOARD_SLOTS`, and every fill / allocation / write / GLSL bucket loop
+  reads from it instead of a bare literal. This is the exact desync that built buckets from misaligned
+  memory during P2b; it can no longer happen by re-typing a number in one place.
+- First change made with **Edit/Write instead of a bash heredoc**, so the project's PostToolUse guards
+  actually ran ([I20](issues.md#i20)).
+
+**Verified** on a fresh load: renders correctly; `tsc` clean; GLSL backtick guard clean on all four
+shader-bearing files.

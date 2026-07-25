@@ -180,3 +180,15 @@ lives in a JS `/* glsl */` template literal, so the literal closed mid-shader an
 bare `TS1005 ',' expected`. This is a **known recurring** mistake with its own standing note; the error
 message points at TypeScript syntax and says nothing about shaders, which is what makes it cost time.
 **Rule:** never use a backtick inside GLSL — not in code, not in a comment. Prefer plain identifiers.
+
+## I20 — Bash-heredoc edits bypass the repo's own PostToolUse hooks (2026-07-25)
+**Problem.** `.claude/settings.json` registers `bin/hooks/glsl-backtick-check.mjs` on **`Write|Edit`**.
+Every source edit this session went through `python3 - <<'PYEOF'` on the **Bash** tool, which matches
+neither and carries no `tool_input.file_path` — so the guard never ran, and the backtick of
+[I19](#i19) surfaced instead as a bare `TS1005 ',' expected` that never mentions shaders. Confirmed by
+replaying the exact case into the hook afterwards: it **blocks**, naming the line and the fix.
+**Rule.** Edit source files with **Edit/Write** so the guards fire (`Edit` is already all-or-nothing per
+call, so the atomicity argument for scripting is weak). If a bulk mechanical rewrite genuinely warrants
+a script, run the guard by hand after:
+`echo '{"tool_input":{"file_path":"<file>"}}' | node bin/hooks/glsl-backtick-check.mjs`.
+Generalises to any guard wired to the file-editing tools — a shell edit is invisible to all of them.
