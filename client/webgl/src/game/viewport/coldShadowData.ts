@@ -29,6 +29,7 @@ export const BILLBOARD_DATA_BASE = 6 * 65536; // set 6 — billboard_data, the s
 /** A prim's `set_a..d` nibble naming the band a carried piece lives in (0 = "no data"). */
 const SET_BILLBOARD_DATA = 6;
 const SET_LIGHT_DATA = 2;
+const SET_PRIM_DATA = 1;   // a prim carrying another prim — what makes the graph a graph
 /** How deep the carrier chain may go before the resolve walk gives up (I12). A pawn → hand → tool →
  *  light is 4; 8 is generous headroom and makes a malformed cycle cost a bounded walk, not a hang. */
 const MAX_PRIM_DEPTH = 8;
@@ -495,6 +496,33 @@ export class ColdShadowData {
     };
   }
 
+  /** DEBUG/self-test for the reachability free: build `root{ child{ billboard }, light }`, release the
+   *  root, and confirm every record in the subtree is zeroed and every id reclaimed. The nested
+   *  billboard is the case the old flat sweep could not reach. */
+  debugFreeSubtree(): Record<string, unknown> {
+    const primsBefore = this.primFreeList.length, bbBefore = this.billboardFreeList.length;
+    const root = this.allocPrim();
+    const bb = this.billboardFreeList.pop() ?? this.billboardNext++;
+    const light = N_LIGHTS - 1;                       // scratch slot, well past the live lights
+    const child = this.childPrimUnder(root, 1, 1, 0, 0, SET_BILLBOARD_DATA, bb);
+    // root carries the CHILD PRIM in slot a and a LIGHT in slot b.
+    this.writeRecord(PRIM_BASE + root, encodePosition(0, 0),
+      ((((SET_PRIM_DATA & 0xf) << 12) | ((SET_LIGHT_DATA & 0xf) << 8)) >>> 0),
+      ((((child & 0xffff) << 16) | (light & 0xffff)) >>> 0), 0);
+    this.writeRecord(BILLBOARD_DATA_BASE + bb, 0xdead0000, 0, 0, 0);
+    this.writeRecord(LIGHT_BASE + light, 0xbeef0000, 0, 0, 0);
+    this.freeSubtree(root);
+    const zero = (base: number, id: number): boolean => this.dataMirror[(base + id) * 4] === 0;
+    return {
+      nestedBillboardZeroed: zero(BILLBOARD_DATA_BASE, bb),   // reached through the child prim
+      lightZeroed: zero(LIGHT_BASE, light),
+      childPrimZeroed: zero(PRIM_BASE, child),
+      rootPrimZeroed: zero(PRIM_BASE, root),
+      primsReclaimed: this.primFreeList.length - primsBefore,       // expect 2 (root + child)
+      billboardsReclaimed: this.billboardFreeList.length - bbBefore, // expect 1
+    };
+  }
+
   /** P3 THE RESOLVE WALK — turn a carried piece's *relative* placement into an absolute one by
    *  climbing `carrier → … → root`, summing offsets and folding the inherited flags:
    *    · `hot_cold`     — **topmost hot wins**: any hot ancestor forces the whole subtree hot (OR).
@@ -553,15 +581,42 @@ export class ColdShadowData {
       this.billboardFreeList.push(this.billboardIndex.get(pid)!);
       this.billboardIndex.delete(pid);
       // P3 subtree lifetime: a carried leaf never outlives its carrier — releasing the billboard
-      // releases the prim holding it, and zeroes the node so no stale carrier is reachable.
+      // releases the prim holding it AND everything that prim carries, recursively.
       const prim = this.primOfBillboard.get(pid);
       if (prim !== undefined) {
-        this.writeRecord(PRIM_BASE + prim, 0, 0, 0, 0);
-        this.primFreeList.push(prim);
+        this.freeSubtree(prim);
         this.primOfBillboard.delete(pid);
       }
     }
     return dead.length;
+  }
+
+  /** P3 REACHABILITY FREE ([I9]) — release `prim` and everything it carries, depth-first. Replaces the
+   *  flat "was it seen this frame" sweep, which only knew about top-level billboards: once a prim can
+   *  carry other prims, dropping the root alone strands its whole subtree in the id space (records the
+   *  buckets no longer reference, ids the free-list never reclaims). Walks `set_a..d`, recurses into
+   *  carried PRIMS, and returns freed leaves to their own lists. `MAX_PRIM_DEPTH`-bounded and
+   *  cycle-safe via `seen`, so malformed data costs a bounded walk instead of a hang. */
+  private freeSubtree(prim: number, depth = 0, seen = new Set<number>()): void {
+    if (depth >= MAX_PRIM_DEPTH || prim === 0 || seen.has(prim)) return;
+    seen.add(prim);
+    const b = (PRIM_BASE + prim) * 4;
+    const G = this.dataMirror[b + 1], B = this.dataMirror[b + 2], A = this.dataMirror[b + 3];
+    const ids = [(B >>> 16) & 0xffff, B & 0xffff, (A >>> 16) & 0xffff, A & 0xffff];
+    for (let slot = 0; slot < 4; slot++) {
+      const set = (G >>> (12 - slot * 4)) & 0xf;              // set_a..d, high nibble first
+      const id = ids[slot];
+      if (set === 0) continue;                                 // set 0 = "no data carried"
+      if (set === SET_PRIM_DATA) { this.freeSubtree(id, depth + 1, seen); continue; }
+      if (set === SET_BILLBOARD_DATA) {
+        this.writeRecord(BILLBOARD_DATA_BASE + id, 0, 0, 0, 0);
+        this.billboardFreeList.push(id);
+      } else if (set === SET_LIGHT_DATA) {
+        this.writeRecord(LIGHT_BASE + id, 0, 0, 0, 0);
+      }
+    }
+    this.writeRecord(PRIM_BASE + prim, 0, 0, 0, 0);
+    this.primFreeList.push(prim);
   }
 
   get lights(): number {

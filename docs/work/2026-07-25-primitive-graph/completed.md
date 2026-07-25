@@ -186,3 +186,18 @@ correctly; `tsc` clean.
 `40·64+3·4`, child `−2` tiles + leaf `+1` = `−64`, child `+5` units + leaf `+6` = `+44`. The root was
 made hot + non-casting and the leaf came back `hot = true` (OR) and `cast = false` (AND), so both
 inheritance directions fold across two levels. Light heights read `40` (not `80`) — no double-count.
+
+## P3d — Reachability free replaces the flat sweep ([I9](issues.md#i9)) (2026-07-25)
+`freeSubtree(prim)` releases a prim **and everything it carries, depth-first**: it walks `set_a..d`,
+recurses into carried PRIMS, and returns carried billboards/lights to their own lists.
+`MAX_PRIM_DEPTH`-bounded and cycle-safe via a `seen` set, so malformed data costs a bounded walk.
+
+**Why the old sweep had to go:** "was this billboard seen this frame" only ever knew about *top-level*
+billboards. The moment a prim can carry another prim, dropping the root strands its whole subtree — leaf
+records the buckets no longer reference and ids the free-list never reclaims. Invisible in rendering,
+and it only bites after enough churn.
+
+**Verified** by `debugFreeSubtree()`, which builds `root{ child{ billboard }, light }` and frees the
+root: the **nested billboard** (reachable only *through* the child prim — the case the flat sweep could
+not see), the carried light, and both prims all come back zeroed, with **2 prims + 1 billboard**
+reclaimed. Live scene unaffected; renders correctly.

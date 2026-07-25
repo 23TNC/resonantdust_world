@@ -12,7 +12,7 @@ _(P0, P1, P2a–P2f, P3a, P3b landed 2026-07-25 → [`completed.md`](completed.m
 - [x] Set `child = 1` + `parent_id` when a prim is authored under another; verify a 2-level chain resolves.
 - [x] Sum a non-zero child offset in `resolveCarried`; verify against a hand-computed position.
 - [ ] Swap a piece's definition when its `rotation` disagrees with the active def's (`inherit_rotation`, one step).
-- [ ] Replace the "seen this frame" sweep with a mark-from-roots reachability sweep ([I9](issues.md#i9)).
+- [x] Replace the "seen this frame" sweep with a mark-from-roots reachability sweep ([I9](issues.md#i9)).
 - [ ] Delete `this.lights` + `seed()` + `__manylights`; drive lights from placed prims instead.
 - [x] Clamp `z + z_offset` to u8 and note the ceiling ([I9](issues.md#i9)).
 
