@@ -273,9 +273,9 @@ is the separate fact that the value reached `state`.
 
 The GPU shadow **gather** reads its **static** (cold) light + caster data from **ONE unified** `RGBA32UI`
 **data texture** (`texelFetch`, exact integer reads), read every frame for free. Fixed slots: **`N = 128`
-lights** (the shadow-cold bitfield cap), `u16` def/prim indexes (⇒ 65 536 ceilings). Casters are found via
-**per-tile buckets** (the per-light LUT is retired); a caster's position + definition live in **one** place
-(the prim band). The per-tile maps live on the shared toroidal TILE grid (`cols × rows` from the cold cache
+lights** (the shadow-cold bitfield cap), `u16` record ids (⇒ 65 536 ceilings, **id 0 reserved** as the
+global sentinel). Casters are found via **per-tile buckets** (the per-light LUT is retired); a billboard's
+resolved position + definition live in **one** place (the `billboard_data` band). The per-tile maps live on the shared toroidal TILE grid (`cols × rows` from the cold cache
 window; textile resolutions per the lighting-rebuild map-model). Work streams:
 [`work/2026-07-21-shadow-bitfield`](work/2026-07-21-shadow-bitfield/README.md),
 [`work/2026-07-22-lighting-rebuild`](work/2026-07-22-lighting-rebuild/README.md),
@@ -287,13 +287,16 @@ window; textile resolutions per the lighting-rebuild map-model). Work streams:
 The texture is **16 u16-addressable SETS** (1024×64 each; `set = linear >> 16`, in-set id = the low u16):
 
 ```
-set 0   rows   0–63    billboard_definition_data   1 px per def
-set 1   rows  64–127   billboard_data              1 px per placed caster (2/px RETIRED)
+set 0   rows   0–63    definition_data        1 px per def
+set 1   rows  64–127   prim_data              1 px per placed PRIM (composition node)
 set 2   rows 128–191   light_data             1 px per light record
-set 3   rows 192–255   light_presence_lo      1 px per TILE (region-torus fold) — light slots 0–6
-set 4   rows 256–319   caster_buckets         1 px per TILE (region-torus fold) — 7 caster slots
-set 5   rows 320–383   light_presence_hi      1 px per TILE (region-torus fold) — light slots 7–13
-sets 6–14              reserved               (materials-era tables)
+set 3   rows 192–255   light_presence_lo      1 px per TILE (region-torus fold) — light slots 0–7
+set 4   rows 256–319   billboard_presence     1 px per TILE (region-torus fold) — 8 billboard slots
+set 5   rows 320–383   light_presence_hi      1 px per TILE (region-torus fold) — light slots 8–15
+set 6   rows 384–447   billboard_data         1 px per billboard record
+sets 7–14              reserved               (materials-era tables)
+        (set 0 is the SENTINEL in a prim's set_a..d — "no data carried"; and in-set
+         id 0 is the GLOBAL SENTINEL so commands can pad with zeros)
 set 15  row  1023 tail constants px (in-set id 64 512):
         R  u16 id | u16 cols        G  u16 rows | u16 slot (TEXTILE_UNIT)
         B  i16 winCol | i16 winRow  A  u16 light_count | u16 tilt_centideg
@@ -317,7 +320,7 @@ re-scattering ephemeral state every frame, worse than the `texSubImage` it repla
 **Every record SELF-ADDRESSES: its u16 in-set id lives in R's high half.** That makes scatter
 commands PURE PAYLOADS (v2.1 — the scatter reads the target out of the record itself).
 
-**Region-torus tile addressing** (`light_presence` / `caster_buckets`, work
+**Region-torus tile addressing** (`light_presence` / `billboard_presence`, work
 [`2026-07-23-presence-in-data`](work/2026-07-23-presence-in-data/README.md)). A tile-keyed set is
 **one region's tiles** (`REGION_DIM=16` zones × `ZONE_DIM=16` tiles, squared = 65 536 = one set),
 addressed by **in-region** coordinates with NO region bits — valid because the viewport window is
@@ -331,10 +334,13 @@ world tile (wc, wr):
   in_set_id = ((zx>>2) + zy*4) * 1024  +  (zx&3)*256 + ty*16 + tx
 ```
 
-`light_presence_*` / `caster_buckets` px: `R = u16 in_set_id | u16 slot0`, `G = slot1|slot2`,
-`B = slot3|slot4`, `A = slot5|slot6` — **7 slots/tile** (the self-address costs the 8th). Presence
-slots are `u16` light indices (`0xFFFF` = empty); bucket slots are `u16` prim indices (`0` = empty).
-Presence spans **two sets** (`_lo` slots 0–6, `_hi` slots 7–13) → **14 lights/tile**.
+`light_presence_*` / `billboard_presence` px: `R = slot0|slot1`, `G = slot2|slot3`,
+`B = slot4|slot5`, `A = slot6|slot7` — **8 slots/tile**. (Retiring self-addressing freed the u16 the
+in-set id occupied, which is what buys back the 8th slot.) Slots are `u16` record ids with **`0` =
+empty**, the same global sentinel commands pad with. Presence spans **two sets** (`_lo` slots 0–7,
+`_hi` slots 8–15) → **16 lights/tile**; `billboard_presence` gives **8 billboards/tile**. Both carry
+**leaf** ids, never carrier prims — bucketing carriers would make the per-tile billboard count
+unbounded (a carrier fans out to ≤4, recursively).
 
 **`shadow-cold`** (the gather OUTPUT RT, world-space toroidal `RGBA32UI`, textile_unit) packs **14 ×
 u9 coverage** (512 levels) with NO channel straddle: the **low 8 bits** of slot `i` sit at channel
@@ -349,14 +355,24 @@ contiguous row-span (rotating row cursor — never overwrite just-consumed rows)
 point-scatter draw per fill. Commands are **absolute whole-texel writes → replay-idempotent** (no
 clearing; the draw count is the only cursor):
 
+**Command format v3** (work [`2026-07-25-primitive-graph`](work/2026-07-25-primitive-graph/README.md)) —
+records no longer self-address, so the **command carries the target ids**. Every command is exactly
+**8 px (128 B)**, so 8 commands tile a 64-px row = **56 record-writes/row**:
+
 ```
-fill = 1 header px + 16 pure-payload SECTIONS in set order (1 px per command; ≤63/set per fill —
-       u6 counts; bursts batch as further fills)
-  header  R,G,B: 15× u6 per-set counts (5 per lane at bits 0/6/12/18/24)
-          A: u8 opcode (0–7; 0 = write-data — presence/other maps ride future opcodes)
-             | u6 count₁₅ (8–13) | u18 reserved
-  section k: counts[k] payload px — each the full RGBA32UI record (self-addressing via R's id)
+command = 8 px, fixed stride (command k begins at px k·8)
+  px 0  header   R: u8 opcode (24–31) | u8 set (16–23) | u16 id₀ (0–15)
+                 G: u16 id₁ | u16 id₂    B: u16 id₃ | u16 id₄    A: u16 id₅ | u16 id₆
+  px 1–7         the 7 payload records, written to (set, id₀..id₆)
+  opcode 0x01 = write-data; the opcode DEFINES the rest of the command, so further
+  8-px operations (presence writes, bulk clears) take their own opcodes
 ```
+
+**`id = 0` is the GLOBAL SENTINEL** — a partial command pads its unused id slots with `0` and the
+scatter **discards** those points (degenerate `gl_Position` ⇒ clipped, no write). This keeps the index
+map trivial (record `p` → command `p/7`, slot `p%7`, payload px `p/7·8 + 1 + p%7`) and lets the scatter
+vertex **drop its per-set count scan** entirely. Cost: in-set id 0 is burned in every set, so every
+writer's allocator is **1-based**.
 
 **Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `reach`, opaque `billboard_width/height`, the
 anchor `offset`) is in **units**, a compile-time constant `1 unit = SQUARE/16 = 4px` (`TILE = 16 units`,
@@ -374,32 +390,79 @@ u32 position_anchor_reference       region | zone | tile | anchor  (min unit = S
   u8 anchor_reference               bits 0–7      anchor_x:4 | anchor_y:4   (0..15 within the tile)
 ```
 
-**`light_data` band** (rows 128–191) — 1 px per light record. Written on light change:
+### The primitive graph — a prim CARRIES presentations
+Work [`2026-07-25-primitive-graph`](work/2026-07-25-primitive-graph/README.md). A **primitive** is a
+DSL-declared world object. A **`prim_data`** record is a *composition node*: positioned, carrying **up to
+4 pieces of data** (`set_a..d` names the band, `id_a..d` the record; **set 0 = "no data"**). A piece may be
+a **`billboard_data`** (sprite presentation), a **`light_data`** (emitter presentation), or **another
+`prim_data`** — so a torch = prim{billboard, light}, a pawn = prim{head, body, hand-prim, hand-prim}, and a
+hand = prim{billboard, tool-prim}. **Records no longer self-address** — the command carries the ids.
+
+Inheritance is **downward-forcing**: topmost `hot_cold` **hot** wins; topmost **`!cast_shadows`** wins.
+**One object per layer**, so a prim's carried pieces occupy distinct layers (`prim_data` holds no layer).
+All offsets are **bias-8 signed** per nibble (stored − 8 ⇒ −8..+7), so children place in any direction.
+
+**`prim_data` band** (rows 64–127) — 1 px per placed prim. `child` reinterprets RED: a **root** is placed
+absolutely; a **child** points at its carrier and holds only offsets.
 
 ```
-R  u32   u16 id (16–31, self-addressing) | u16 reserved (0–15)
-G  u32 position_anchor_reference
-B  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
-A  u32 reach         u8 z (24–31, units) | u12 reach (12–23, units) | u8 emitter_radius (4–11, units) | u2 reserved (2–3) | u1 hot (1, dynamic→hot class) | u1 cast_shadows (0)
+R  u32   ROOT  (child=0)   u8 region_reference (24–31) | u8 zone_reference (16–23)
+                         | u8 tile_reference (8–15)   | u8 unit_reference (0–7)
+         CHILD (child=1)   u16 parent_id (16–31) | u8 tile_offset (8–15) | u8 unit_offset (0–7)
+G  u32   u2 reserved (30–31) | u1 inherit_rotation (29) | u1 child (28) | u2 rotation (26–27)
+         | u1 hot_cold (25) | u1 cast_shadows (24) | u8 z (16–23, units)
+         | u4 set_a (12–15) | u4 set_b (8–11) | u4 set_c (4–7) | u4 set_d (0–3)
+B  u32   u16 id_a (16–31) | u16 id_b (0–15)
+A  u32   u16 id_c (16–31) | u16 id_d (0–15)
 ```
 
-**`billboard_data` band** (rows 64–127) — **1 px per placed caster** (F1: the 2-prims/px packing is RETIRED —
-scatter commands write whole records, the shader drops the half-texel select, 64 spare bits/prim); **index 0
-is a sentinel**, so usable prim indices are **1..65 535**. The single place a prim's position + definition
-live (move → one texel). The position is the prim's **true game anchor** (full-box base-centre) — the def's
-`offset` shifts the shadow, never the prim:
+**`billboard_data` band** (rows 384–447) — 1 px per billboard. RED is **parent + the CPU-resolved
+position**; GREEN keeps the **authored** offsets (the durable relative placement).
 
 ```
-R  u32   u16 id (16–31, self-addressing) | u16 reserved (0–15)
-G  u32 position_anchor_reference
-B  u32 orient    u8 z (24–31, units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) | u16 definition_index (6–21) | u6 reserved (0–5)
-A  u32 reserved
+R  u32   u16 parent_id (16–31) | u8 resolved_tile (8–15) | u8 resolved_unit (0–7)
+G  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 hot_cold (25) | u1 cast_shadows (24)
+         | u8 z_offset (16–23) | u8 tile_offset (8–15) | u8 unit_offset (0–7)
+B  u32   u16 definition_id (16–31) | u16 reserved (0–15)
+A  u32   u32 reserved
 ```
+No `resolved_zone`: `billboard_presence` is a **containment** relation (a billboard is bucketed into the
+tiles its footprint covers), so the fragment's own tile pins it — nearest-congruent is exact for any
+footprint under 8 tiles.
 
-**`billboard_definition_data` band** (rows 0–63) — **one px per ATLAS FRAME**: defs are
+**`light_data` band** (rows 128–191) — 1 px per light. Props are **inline** (there is no light-def band).
+
+```
+R  u32   u16 parent_id (16–31) | u8 resolved_tile (8–15) | u8 resolved_unit (0–7)
+G  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 hot_cold (25) | u1 cast_shadows (24)
+         | u8 z_offset (16–23) | u8 tile_offset (8–15) | u8 unit_offset (0–7)
+B  u32   u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
+A  u32   u12 reach (20–31, units) | u8 emitter_radius (12–19, units)
+         | u8 resolved_zone (4–11) | u4 reserved (0–3)
+```
+**`resolved_zone` is required here** (unlike a billboard): `light_presence` is a **reach** relation, so a
+light sits up to `reach` tiles from the fragment reading it. `resolved_tile` pins the light only modulo
+**16 tiles**, which is ambiguous past **±8** — and `LIGHT_REACH` is **12 tiles** (the `u12` field allows
+255). With zone the period becomes **256 tiles**; region stays inferred by nearest-congruent, exactly as
+the region-torus fold already does.
+
+**Resolution.** `resolved_*` is the **CPU-computed absolute position**: start at the root's
+`tile`/`unit`, apply each child prim's offsets down the chain, stamp the leaf. The GPU reads only the
+resolved fields, so it **never walks the graph** in the gather's per-texel-per-light loop. `parent_id`
+exists for the CPU (dirty cascade, subtree free, rotation reconciliation) and permits a bounded GPU walk
+if one is ever needed.
+
+**Rotation is a reconciliation signal, not a render input.** The shader always uses the **definition's**
+rotation, because the definition *is* the active sprite. A record's `rotation` is the **desired facing**;
+when it disagrees with the active definition's, the **CPU swaps the definition** (until then the old
+sprite renders — by design). `inherit_rotation` lives on **`definition_data`** (all objects of a kind
+behave alike) with a **`prim_data`** override for an independent prim, and inherits **one step** — a
+child takes its parent's rotation, never a chain walk.
+
+**`definition_data` band** (rows 0–63) — **one px per ATLAS FRAME**: defs are
 **IMMUTABLE**, keyed `(stem, cell, lod)` — a new lod landing mints a NEW def, and `billboard_data` keeps whatever
-def it holds until the writer swaps its `definition_index`, which rides the **prim dirty cascade** (prim
-tiles → lights reaching them → those lights' cast regions). Nothing ever rewrites a def, so texture/def
+def it holds until the writer swaps its `definition_id`, which rides the **billboard dirty cascade**
+(billboard tiles → lights reaching them → those lights' cast regions). Nothing ever rewrites a def, so texture/def
 changes cost exactly a prim update. The lod-0 def is the LOOSE fallback (full-footprint box, solid quad).
 The model (work
 [`2026-07-23-def-frame-anchors`](work/2026-07-23-def-frame-anchors/README.md)): frames are **pow2 squares** on
@@ -409,9 +472,10 @@ the opaque pixels (x centered, y bottom-aligned — shadows anchor at the base);
 bbox against the prim's position:
 
 ```
-R  u32   u16 id (16–31, self-addressing — v2.1) | u10 offset_x (6–15, units) | u6 reserved (0–5)
+R  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 inherit_rotation (25) | u1 reserved (24)
+         | u10 offset_x (14–23, units) | u10 offset_y (4–13, units) | u4 type (0–3)
 G  u32   u9 billboard_width (23–31, 2-unit steps) | u9 billboard_height (14–22, 2-unit steps)
-         | u4 frame_span (10–13, tiles − 1; width = log2(ZONE_DIM)) | u10 offset_y (0–9, units)
+         | u4 frame_span (10–13, tiles − 1; width = log2(ZONE_DIM)) | u10 reserved (0–9)
          (offsets UNSIGNED, frame-relative: the bbox top-left indexed into the frame — no bias)
 B  u32   u10 frame_x (22–31, 16-px grid) | u10 frame_y (12–21, 16-px grid) | u4 frame_page (8–11)
          | u4 frame_lod (4–7, side = 2^lod) | u2 frame_anchor_x (2–3) | u2 frame_anchor_y (0–1)   (FULL)
@@ -450,8 +514,9 @@ A  u32   u12 nudge_x (20–31, px, signed +2048) | u12 nudge_y (8–19, px, sign
 window): per tile the **nearest ≤ 8 reaching lights** as `8× u16` light indices (`0xFFFF` = empty; R holds slots
 0–1 high|low, G 2–3, B 4–5, A 6–7). CPU-rebuilt on light/window change. Bounds the gather to O(8) lights/texel.
 
-**`caster_buckets`** — a **`cols×rows`** `RGBA32UI` **textile_tile map**: per tile **≤ 8 casters** as `8× u16`
-`billboard_data` indices (same slot packing as presence; `0` = empty). A caster is bucketed into every tile its
+**`billboard_presence`** (was `caster_buckets`) — a **`cols×rows`** `RGBA32UI` **textile_tile map**: per tile
+**≤ 8 casting billboards** as `8× u16` `billboard_data` ids (same slot packing as presence; `0` = empty). A
+caster is bucketed into every tile its
 tilted card's ground extent spans (base row up to `0.5·cos65°·H` above). The gather's reach-walk reads these.
 
 **`shadow_dirty`** — a **`cols×rows`** `R8UI` **textile_tile map**, **nonzero = recompute**; gates the
