@@ -4,7 +4,11 @@ _Open questions + known limits. Resolved ones stay with their resolution noted._
 
 ---
 
-## I1 · Cast-shadow SHAPE vs shadow-ON-a-prim (receiver clip) {#i1}
+## I1 · Cast-shadow SHAPE vs shadow-ON-a-prim (receiver clip) — RESOLVED {#i1}
+**2026-07-24 — RESOLVED (user): it's the CASTER's shadow (the cast-shape path).** And the broader intent — ALL
+the shadow/lighting clips move to the fine (`TEXTILE_SQUARE`) resolution, so the whole image sharpens, not just
+this one edge. Below is the distinction, kept for reference:
+
 Two different "blocky shadow" problems, only ONE of which this stream addresses:
 - **Cast-shadow shape (THIS stream):** the shadow projected onto the ground/receiver has a blocky edge because
   the CASTER silhouette was sampled coarse. Fixed by re-testing the caster silhouette at fine res in the bake.

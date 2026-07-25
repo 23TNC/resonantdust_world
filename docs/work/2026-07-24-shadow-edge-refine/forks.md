@@ -23,6 +23,20 @@ the walk stays coarse. Rasterization is cheap; the walk is not (user). So refine
   the shadow perimeter. Reuses `casterOne`/`walkShadow`. Chosen because it's self-contained + naturally bounded;
   (a) is the escape hatch if (b)'s per-edge walk measures too hot ([todo.md#p3](todo.md)).
 
+## F4 · The refine is a fine-px SELECTION fused into the lightmap write (not a separate pass) {#f4}
+**2026-07-24 — user framing, strengthens (b).** "We could just select the proper px because we're already
+writing out the lightmap anyway." The shadow is the caster silhouette PROJECTED — and that silhouette is a fine
+texture on the bound co-pack page. So the refine isn't a heavy new computation: at the fine lightmap texel we're
+ALREADY writing, we **select the proper caster-silhouette px** (project the fine point to the light, sample the
+caster's fine silhouette — exactly what `casterCover` does) and that px IS the sharp shadow value. It fuses into
+`LIGHT_FRAG` with no extra pass and no upsample. Implications:
+- Reinforces [F2](#f2) **(b)** — the bake already runs `receiverAt`/`casterCover`, so the machinery is in hand;
+  the only added work is the local re-walk to identify the caster + the fine silhouette sample, gated to `(0,1)`.
+- Weakens [F2](#f2) **(a)** — since the bake can select the px inline, plumbing a caster-id through the gather is
+  likely unnecessary (keep (a) only as the escape hatch if (b)'s per-edge walk measures too hot).
+- Still needs to know WHICH caster to project to (the walk / stored id) — "select the proper px" is the SAMPLE,
+  not the caster search; the search is the one cost that stays.
+
 ## F3 · Refine ALL casters/lights at an edge, or just the dominant one {#f3}
 **2026-07-24 — DECIDED: the dominant (shadowing) slot(s), not a full re-solve.** The coarse per-slot coverage
 already tells us WHICH light-slots are partially occluded at this texel — only those get re-tested. Where two
