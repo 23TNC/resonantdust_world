@@ -106,3 +106,17 @@ _Executes: [`docs/CONVENTIONS.md`](../../CONVENTIONS.md). Done + verified, chron
   progress→counter resets and re-arms; `.stop-reason`, `SKIP_WORK_CHECK=1`, and stale-window→exit 0.
   `docs-check` green throughout. Stage 2 of the Stop hook now delegates the whole decision to
   `work_check.py --nudge` (the payload is replayed on stdin so it can key on `session_id`).
+
+- **2026-07-25** · **P6a — two live detector bugs, found by auditing the corpus instead of the code.**
+  Asked to review P6's robustness, we measured what the parser actually sees across all 34 streams
+  rather than reasoning about it, which surfaced two defects shipped an hour earlier:
+  - **`- [x]` counted as open work.** 20 of 34 streams use checkboxes; ticked ones read as open →
+    **13 phantom items**, 11 of them in `shard-tables` (its whole done P1). The hook would have nudged
+    to redo finished work — the failure mode that destroys a forcing function's credibility, because
+    the correct response to it is to bypass the hook.
+  - **Wrapped bullets truncated at the first line.** **81%** (180/222) of bullets carry indented
+    continuation lines, so the nudge was emitting half-sentences ("…stamp each leaf's absolute
+    position + effective"). Continuations are now folded in; the width cap went 150 → 300.
+  Both fixed + re-measured (phantom items 13 → 0). **The standing lesson:** this detector's inputs are
+  hand-written prose in 4 different item dialects, so *test it against the corpus, not against
+  intuition* — every one of the 6 classification bugs so far was invisible from the code alone.

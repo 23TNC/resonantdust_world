@@ -134,34 +134,57 @@ def _status(stream: str) -> str:
     return ""
 
 
-def _open_items(stream: str, limit: int = 8) -> list[str]:
+CHECKED = re.compile(r"^\s*[-*]\s+\[[xX]\]")
+UNCHECKED = re.compile(r"^\s*[-*]\s+\[\s*\]")
+
+
+def _open_items(stream: str, limit: int = 8, width: int = 300) -> list[str]:
     """Open, executable items — bullets under a not-DONE header, across todo + remaining.
 
     `remaining.md` is the in-flight tier (CONVENTIONS): items being executed right now. It
     counts as open work — reading only todo.md missed exactly the streams mid-execution.
+
+    Two corpus facts this has to respect (both were live bugs, 2026-07-25):
+      - **`- [x]` means DONE.** 20 of 34 streams use checkboxes, and counting a ticked box as
+        open work made shard-tables report 11 phantom open items — the hook would have nudged
+        to redo finished work, which is how a forcing function loses its credibility.
+      - **Bullets wrap.** 81% of them carry indented continuation lines; reading only the first
+        line handed the nudge half-sentences ("…stamp each leaf's absolute position + effective"),
+        so continuations are folded back in before truncating.
     """
     out: list[str] = []
     for name in ("todo.md", "remaining.md"):
         path = os.path.join(WORK, stream, name)
         if not os.path.exists(path):
             continue
-        section = ""
-        skip = False
         try:
             lines = open(path, encoding="utf-8").read().splitlines()
         except OSError:
             continue
-        for line in lines:
+        section, skip, i = "", False, 0
+        while i < len(lines):
+            line = lines[i]
             h = HEADER.match(line)
             if h:
                 section = h.group(2).strip()
                 skip = bool(DONE_HEADER.search(section))
+                i += 1
                 continue
-            if skip or not BULLET.match(line):
+            if skip or not BULLET.match(line) or CHECKED.match(line):
+                i += 1
                 continue
-            item = re.sub(r"^\s*[-*]\s+", "", line)
+            parts = [line]
+            i += 1
+            while i < len(lines):
+                nxt = lines[i]
+                if not nxt.strip() or HEADER.match(nxt) or BULLET.match(nxt) or not nxt[:1].isspace():
+                    break
+                parts.append(nxt)
+                i += 1
+            item = " ".join(parts)
+            item = re.sub(r"^\s*[-*]\s+(\[\s*\]\s*)?", "", item)
             item = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", item)
-            item = re.sub(r"\s+", " ", item).strip()[:150]
+            item = re.sub(r"\s+", " ", item).strip()[:width]
             out.append(f"{section} · {item}" if section else item)
             if len(out) >= limit:
                 return out
