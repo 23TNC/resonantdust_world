@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, pig, pig
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, pig, pig, single creature, full body

@@ -163,7 +163,8 @@ A work-folder headers the component(s) + plan phase it executes; plans link back
 | phased path from current → design | `components/<c>/plan/` |
 | a feature's intent, components unknown/unscoped | `docs/intent/<feature>/` |
 | the same feature's intent once scoped to components | each `components/<c>/intent/` |
-| an item to do / done (in-flight tier optional) | `work/<w>/{todo,completed}.md` (`remaining.md` only on long streams) |
+| an item to do / done | `work/<w>/todo.md` as `- [ ]` / `- [x]` — items never move, the box is the move |
+| evidence that an item is really done | `work/<w>/completed.md` (dated: what landed + how verified) |
 | a problem + how we resolved it / a decision between options | `work/<w>/{issues,forks}.md` |
 | something needing your input | `work/<w>/blockers.md` |
 | code that departs from the plan (yours or found) | `work/<w>/deviations.md` |

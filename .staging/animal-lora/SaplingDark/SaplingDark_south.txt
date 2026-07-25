@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_south, front view, sapling dark
+rd_style, rd_humanoid, rd_south, front view, facing the viewer, facing forward, sapling dark, single creature, full body

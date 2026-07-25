@@ -1,1 +1,1 @@
-rd_style, rd_north, back view, mimic
+rd_style, rd_north, back view, facing away, seen from behind, mimic, single creature, full body

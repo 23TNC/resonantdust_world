@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_east, side profile, bird, emu
+rd_style, rd_animal, rd_biped, rd_east, side profile, side view, facing right, bird, emu, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_south, front view, bird, penguin
+rd_style, rd_animal, rd_biped, rd_south, front view, facing the viewer, facing forward, bird, penguin, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, rodent, capybara
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, rodent, capybara, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_legless, rd_south, front view, forest giant constrictor
+rd_style, rd_animal, rd_legless, rd_south, front view, facing the viewer, facing forward, forest giant constrictor, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_north, back view, golem iron
+rd_style, rd_humanoid, rd_north, back view, facing away, seen from behind, golem iron, single creature, full body

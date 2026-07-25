@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, canine, german shepherd
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, canine, german shepherd, single creature, full body

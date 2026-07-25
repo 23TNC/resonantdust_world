@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, feline, cat somali
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, feline, cat somali, single creature, full body

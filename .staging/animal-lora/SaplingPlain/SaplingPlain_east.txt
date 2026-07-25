@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_east, side profile, sapling plain
+rd_style, rd_humanoid, rd_east, side profile, side view, facing right, sapling plain, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_south, front view, schrat plain
+rd_style, rd_humanoid, rd_south, front view, facing the viewer, facing forward, schrat plain, single creature, full body

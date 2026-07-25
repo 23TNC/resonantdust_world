@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, arctic coyote
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, canine, arctic coyote, single creature, full body

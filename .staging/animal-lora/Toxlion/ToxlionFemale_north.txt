@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, feline, toxlion female
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, feline, toxlion female, single creature, full body

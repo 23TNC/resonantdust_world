@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, giraffe
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, giraffe, single creature, full body

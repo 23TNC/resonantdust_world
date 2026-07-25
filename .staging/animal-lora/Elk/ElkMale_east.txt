@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, deer, elk male
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, deer, elk male, single creature, full body

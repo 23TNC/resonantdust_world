@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, chihuahua
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, canine, chihuahua, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, deer, daer
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, deer, daer, single creature, full body

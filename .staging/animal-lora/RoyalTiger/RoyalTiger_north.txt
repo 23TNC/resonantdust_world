@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, feline, royal tiger
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, feline, royal tiger, single creature, full body

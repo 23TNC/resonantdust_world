@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_winged, rd_east, side profile, bird, quail female
+rd_style, rd_animal, rd_biped, rd_winged, rd_east, side profile, side view, facing right, bird, quail female, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, reptile, pestigator hidden
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, reptile, pestigator hidden, single creature, full body

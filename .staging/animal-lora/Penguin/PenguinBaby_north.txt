@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_north, back view, bird, penguin baby
+rd_style, rd_animal, rd_biped, rd_north, back view, facing away, seen from behind, bird, penguin baby, single creature, full body

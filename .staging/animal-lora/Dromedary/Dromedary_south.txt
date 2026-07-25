@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, camel, dromedary
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, camel, dromedary, single creature, full body

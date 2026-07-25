@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_north, back view, kangaroo
+rd_style, rd_animal, rd_biped, rd_north, back view, facing away, seen from behind, kangaroo, single creature, full body

@@ -987,11 +987,11 @@ export class ShadowGather {
     // un-foreshorten factor (default 1/cos65 ≈ 2.366) by eye — the sim-check on cos65 vs sin65.
     (globalThis as unknown as { __worldlight: (on?: boolean) => boolean }).__worldlight = (on?: boolean) => {
       this.worldLight = on ?? !this.worldLight;
-      this.forceColdDirty = this.forceHotDirty = true;
+      this.rebakeAll();
       return this.worldLight;
     };
     (globalThis as unknown as { __nsfactor: (f?: number) => number }).__nsfactor = (f?: number) => {
-      if (f !== undefined) { this.nsInv = f; this.forceColdDirty = this.forceHotDirty = true; }
+      if (f !== undefined) { this.nsInv = f; this.rebakeAll(); }
       return this.nsInv;
     };
     // DEBUG (world-space-lighting): the ONE ground-angle dial. Sets the data-map tilt (shadow projection +
@@ -1006,7 +1006,7 @@ export class ShadowGather {
         this.elevK = Math.sin(rad);
         this.nsInv = 1 / Math.cos(rad);
         this.normalPitchDeg = 90 - deg;   // standing billboard: flat card → perpendicular-to-ground normal
-        this.forceColdDirty = this.forceHotDirty = true;
+        this.rebakeAll();
       }
       return this.worldTiltDeg;
     };
@@ -1014,13 +1014,13 @@ export class ShadowGather {
     // and rock-stable across zoom (frame-indexed, not a world-coord composite read).
     (globalThis as unknown as { __shownormal: (on?: boolean) => boolean }).__shownormal = (on?: boolean) => {
       this.showNormal = on ?? !this.showNormal;
-      this.forceColdDirty = this.forceHotDirty = true;
+      this.rebakeAll();
       return this.showNormal;
     };
     // DEBUG (lightmap P1): the DEV in-shader normal pitch (deg) — eyeball the sign/magnitude while the corpus
     // is still raw; default 90−tilt. Bake-at-ingest (F7) retires this.
     (globalThis as unknown as { __pitchnormal: (deg?: number) => number }).__pitchnormal = (deg?: number) => {
-      if (deg !== undefined) { this.normalPitchDeg = deg; this.forceColdDirty = this.forceHotDirty = true; }
+      if (deg !== undefined) { this.normalPitchDeg = deg; this.rebakeAll(); }
       return this.normalPitchDeg;
     };
     // DEBUG (lightmap): the LIGHTING receiver-mask seat (units NW), decoupled from the shadow's RECV_ALIGN —
@@ -1028,19 +1028,19 @@ export class ShadowGather {
     (globalThis as unknown as { __lightalign: (x?: number, y?: number) => number[] }).__lightalign = (x?: number, y?: number) => {
       if (x !== undefined) this.lightAlignX = x;
       if (y !== undefined) this.lightAlignY = y;
-      this.forceColdDirty = this.forceHotDirty = true;
+      this.rebakeAll();
       return [this.lightAlignX, this.lightAlignY];
     };
     // DEBUG (shadow-edge-refine): A/B the fine caster-silhouette re-test (on) vs the coarse nearest shadow (off).
     (globalThis as unknown as { __edgerefine: (on?: boolean) => boolean }).__edgerefine = (on?: boolean) => {
       this.edgeRefine = on ?? !this.edgeRefine;
-      this.forceColdDirty = this.forceHotDirty = true;
+      this.rebakeAll();
       return this.edgeRefine;
     };
     // DEBUG (__hideright): blank the right half of each billboard's normal in __shownormal (alignment probe).
     (globalThis as unknown as { __hideright: (on?: boolean) => boolean }).__hideright = (on?: boolean) => {
       this.hideRight = on ?? !this.hideRight;
-      this.forceColdDirty = this.forceHotDirty = true;
+      this.rebakeAll();
       return this.hideRight;
     };
     // DEBUG (lightmap P3): scatter n STATIC lights in a grid around the seed to stress the dirty-gated bake —
@@ -1061,7 +1061,7 @@ export class ShadowGather {
       }
       this.lightsVer++;
       this.coldDirty = true;
-      this.forceColdDirty = this.forceHotDirty = true;
+      this.rebakeAll();
       return this.lights.length;
     };
     this.fsQuad = new Geometry(gl, this.gather, {
@@ -1089,7 +1089,7 @@ export class ShadowGather {
     this.enabled = true;
     this.coldDirty = true;
     this.lightsVer++; // invalidates light_presence_cold
-    this.forceColdDirty = this.forceHotDirty = true; // lights changed → recompute every tile
+    this.rebakeAll(); // lights changed → recompute every tile
   }
 
   /** Rebuild the per-tile **presence** (P5) when the lights or window change: each tile gets the
@@ -1171,6 +1171,7 @@ export class ShadowGather {
       const tx = p.x + tdx, ty = p.y + t.dy;
       // A changed billboard (new immutable def — lod landed/zoom — or first sight) cascades its region.
       if (inst.changed) this.markBillboardDirty(tx, ty, t.w, t.h);
+      this.lastBox.set(p.id, [tx, ty, t.w, t.h]); // P4: remembered so REMOVAL can dirty scopedly
       const baseY = ty + t.h, topY = baseY - TILT * t.h; // card ground y-extent (px)
       const r0 = Math.floor(topY / SQUARE), r1 = Math.floor(baseY / SQUARE);
       const c0 = Math.floor(tx / SQUARE), c1 = Math.floor((tx + t.w) / SQUARE);
@@ -1186,8 +1187,15 @@ export class ShadowGather {
         }
       }
     }
-    // Billboards that left `standing` (zone evicted / destroyed) free their slots (P2 free-list); their
-    // buckets already clear via the rebuild below, and caster removal force-alls the recompute.
+    // P4: billboards that left `standing` (zone evicted / destroyed) free their slots — and each one
+    // queues its LAST KNOWN extent before the record goes, which is what retires the caster-removal
+    // force-all. A removed caster is no longer in `standing`, so its box is unrecoverable after the
+    // fact; that is precisely why removal used to fall back to recomputing every tile.
+    for (const [pid, box] of this.lastBox) {
+      if (seen.has(pid)) continue;
+      this.markPrimDirty(box[0], box[1], box[2], box[3]);
+      this.lastBox.delete(pid);
+    }
     this.coldData.freeBillboardsExcept(seen);
     // Write EVERY in-window tile (compare-write diffs). The region-torus fold is the GPU slot.
     for (let wr = winRow; wr < winRow + rows; wr++)
@@ -1198,6 +1206,15 @@ export class ShadowGather {
     // Flush all queued writes (def/billboard/presence/caster) as ONE scatter batch. NO force-all: def
     // swaps + new billboards queued their scoped rects via the billboard dirty cascade (markBillboardDirty).
     this.coldData.flush();
+  }
+
+  /** P4 — **the one legitimate force-all.** Placement is always scoped (a prim/light/removal queues
+   *  its own rects), so this is reserved for changes with no region to scope from: a GLOBAL constant
+   *  moved (`__tilt`, `__pitchnormal`, `__worldlight`, …) and every baked texel is now wrong. Keeping
+   *  it named and separate is the point — it stops "recompute everything" being reached for as a
+   *  shrug whenever the scoped path is inconvenient ([issues.md#i4]). */
+  rebakeAll(): void {
+    this.forceColdDirty = this.forceHotDirty = true;
   }
 
   /** Queue the scoped dirty rect for a light move (P5): the union box of the old + new reach,
@@ -1219,9 +1236,18 @@ export class ShadowGather {
   private readonly litSeen = new Set<number>();
   /** Billboard ids resident this frame (P2) — anything allocated but absent gets freed via the free-list. */
   private readonly billboardSeen = new Set<number>();
+  /** P4: each resident billboard's last known tight box, so REMOVAL can queue a scoped rect. Without
+   *  it a departed caster's box is unrecoverable (it has left `standing`) — which is exactly why
+   *  removal used to force-all every tile. */
+  private readonly lastBox = new Map<number, [number, number, number, number]>();
   /** DEBUG: shadow tiles marked dirty (recomputed) on the last frame. */
   debugDirtyTiles = 0;
-  private markBillboardDirty(x: number, y: number, w: number, h: number): void {
+  /** P4 — **the PRIM dirty front door.** A carrier changed (placed / moved / re-carried / freed) →
+   *  dirty its own tiles, then every light whose reach touches them, then those lights' cast regions.
+   *  `x/y/w/h` is the extent of the prim **and everything it carries**: moving a carrier moves its whole
+   *  subtree, so a carrier's box must cover its children or their old tiles keep a stale shadow.
+   *  Billboard and light changes both funnel here ([F6](forks.md#f6)). */
+  private markPrimDirty(x: number, y: number, w: number, h: number): void {
     const x0 = Math.floor(x / SQUARE) - 1, y0 = Math.floor(y / SQUARE) - 1;
     const x1 = Math.floor((x + w) / SQUARE) + 1, y1 = Math.floor((y + h) / SQUARE) + 1;
     this.pendingRects.push([x0, y0, x1, y1, 2]); // a caster affects BOTH classes at its own tiles
@@ -1229,10 +1255,24 @@ export class ShadowGather {
       if (this.litSeen.has(k)) continue;
       const L = this.lights[k];
       const cx = Math.min(Math.max(L.x, x), x + w), cy = Math.min(Math.max(L.y, y), y + h);
-      if (Math.hypot(cx - L.x, cy - L.y) > L.reach + SQUARE) continue; // light can't see the billboard
+      if (Math.hypot(cx - L.x, cy - L.y) > L.reach + SQUARE) continue; // light can't see the prim
       this.litSeen.add(k);
-      this.markLightMove(L.x, L.y, L.x, L.y, L.reach, L.dynamic ? 1 : 0); // that light's class + cast region
+      this.markLightDirty(L);                       // that light's cast region, in its own class
     }
+  }
+
+  /** P4 — the BILLBOARD presentation changed (new def / lod / first sight). Its carrier's extent is
+   *  what actually needs redoing, so this is the prim cascade under a name that says what moved. */
+  private markBillboardDirty(x: number, y: number, w: number, h: number): void {
+    this.markPrimDirty(x, y, w, h);
+  }
+
+  /** P4 — **the LIGHT dirty front door.** Placement, movement, a prop change and removal all route
+   *  here; pass `from` when the light moved so the union of old ∪ new reach is queued. The cold/hot
+   *  **class is derived from the light itself** — callers no longer thread a `cls` argument, which is
+   *  what let the routing drift out of step with `L.dynamic` in three separate places. */
+  private markLightDirty(L: Light, from?: { x: number; y: number }): void {
+    this.markLightMove(from?.x ?? L.x, from?.y ?? L.y, L.x, L.y, L.reach, L.dynamic ? 1 : 0);
   }
 
   /** Rebuild `shadow_dirty` for this frame: a slot is dirty when its world-tile **owner changed** (pan /
@@ -1296,13 +1336,13 @@ export class ShadowGather {
    *  static again (gather goes idle via dirty-gating); on drives a full recompute every frame. */
   setOrbit(on?: boolean): boolean {
     this.orbit = on ?? !this.orbit;
-    if (!this.orbit) this.forceColdDirty = this.forceHotDirty = true; // one last clean recompute at the frozen positions
+    if (!this.orbit) this.rebakeAll(); // one last clean recompute at the frozen positions
     return this.orbit;
   }
   /** P6: switch corridor ↔ brute walk (no arg = toggle) + recompute everything under the new path. */
   setCorridor(on?: boolean): boolean {
     this.corridor = on ?? !this.corridor;
-    this.forceColdDirty = this.forceHotDirty = true;
+    this.rebakeAll();
     return this.corridor;
   }
   /** DEBUG: set the emitter (area-light) radius on every light, world px (no arg = read). Rebuilds the
@@ -1311,14 +1351,14 @@ export class ShadowGather {
     if (px === undefined) return this.lights[0]?.emitterRadius ?? 0;
     for (const L of this.lights) L.emitterRadius = px;
     this.coldDirty = true;   // light records changed (emitter is in the record)
-    this.forceColdDirty = this.forceHotDirty = true;  // recompute every shadow/light tile
+    this.rebakeAll();  // recompute every shadow/light tile
     return px;
   }
   /** DEBUG (shadows-onto-billboards): the receiver-elevation gain (no arg = read). Recomputes every tile. */
   setElevK(k?: number): number {
     if (k === undefined) return this.elevK;
     this.elevK = k;
-    this.forceColdDirty = this.forceHotDirty = true;
+    this.rebakeAll();
     return this.elevK;
   }
   /** DEBUG (P6): read a class's shadow RT back (RGBA32UI) — the corridor↔brute identity diff. `cls` 1 =
@@ -1390,7 +1430,7 @@ export class ShadowGather {
         const L = this.lights[k], ox = L.x, oy = L.y;
         L.x = this.seedX + Math.cos(a) * RING_RADIUS;
         L.y = this.seedY + Math.sin(a) * RING_RADIUS;
-        this.markLightMove(ox, oy, L.x, L.y, L.reach, L.dynamic ? 1 : 0); // debug: each light dirties its class
+        this.markLightDirty(L, { x: ox, y: oy });  // class derived at the door
       }
       moved = true;
     } else {
@@ -1400,7 +1440,7 @@ export class ShadowGather {
         const ox = L.x, oy = L.y;
         L.x = L.hx + Math.cos(this.orbitPhase) * MOTION_RADIUS;
         L.y = L.hy + Math.sin(this.orbitPhase) * MOTION_RADIUS;
-        this.markLightMove(ox, oy, L.x, L.y, L.reach, 1); // dynamic → HOT dirty only (cold lights untouched)
+        this.markLightDirty(L, { x: ox, y: oy });  // dynamic ⇒ HOT, decided by the light not the call site
         moved = true;
       }
     }
@@ -1415,14 +1455,14 @@ export class ShadowGather {
         hot: L.dynamic, // #4: dynamic lights are HOT (per-frame), static are COLD (baked once)
       }));
       this.coldData.buildLights(coldLights);
-      const removed = standing.length < this.lastCasterCount;
       const lightsChanged = this.coldDirty;
       this.lastCasterCount = standing.length;
       this.coldDirty = false;
-      // Scoped dirty: a light MOVE queued its own rects; NEW casters cascade per billboard
-      // (markBillboardDirty on first sight). Force-all only for caster REMOVAL (stale shadows with no
-      // owner to cascade from) or a light change with no scoped rects (e.g. a re-seed).
-      if (removed || (lightsChanged && this.pendingRects.length === 0)) this.forceColdDirty = this.forceHotDirty = true;
+      // P4: caster REMOVAL no longer force-alls — each departing billboard queues its last known box
+      // in `buildCasters` (see `lastBox`), so the stale region is scoped. What remains is a light
+      // change that produced NO rects at all (a re-seed / bulk prop change), where there is genuinely
+      // nothing to scope from; that is the `rebakeAll` case and the last force-all standing.
+      if (lightsChanged && this.pendingRects.length === 0) this.rebakeAll();
     }
     if (this.coldData.lights === 0 || win.cols === 0) return;
 

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, cattle, cow
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, cattle, cow, single creature, full body

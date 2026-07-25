@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_north, back view, unhold swamp
+rd_style, rd_humanoid, rd_north, back view, facing away, seen from behind, unhold swamp, single creature, full body

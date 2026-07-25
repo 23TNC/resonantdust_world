@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, pangolin
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, pangolin, single creature, full body

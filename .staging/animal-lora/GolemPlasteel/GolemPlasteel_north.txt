@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_north, back view, golem plasteel
+rd_style, rd_humanoid, rd_north, back view, facing away, seen from behind, golem plasteel, single creature, full body

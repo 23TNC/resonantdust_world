@@ -48,3 +48,9 @@ Audited on the user's report that turns still end after every task. The hook was
 binding via a PostToolUse hook (answers "was it *this* session's stream?"), status-agnostic
 selection, header-based blocker detection, a widened progress guard (`WORK_CHECK_MAX_NUDGES`,
 default 3), and an actionable nudge naming the next items + the four legitimate exits.
+
+## P7 — Continuation half handed off · ✅ DONE (see [`completed.md`](completed.md))
+
+The continuation hook's ongoing work moved to
+[`2026-07-25-continuation-hooks`](../2026-07-25-continuation-hooks/README.md) — item contract, arming,
+brief, decision log, planning assist. This stream retains the audit (`docs-check` + invariants).

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_winged, rd_south, front view, bird, duck female
+rd_style, rd_animal, rd_biped, rd_winged, rd_south, front view, facing the viewer, facing forward, bird, duck female, single creature, full body

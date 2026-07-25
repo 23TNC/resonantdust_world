@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, hedgehog
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, hedgehog, single creature, full body

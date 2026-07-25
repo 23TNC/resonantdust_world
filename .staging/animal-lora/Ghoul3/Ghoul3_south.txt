@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_south, front view, ghoul 3
+rd_style, rd_humanoid, rd_south, front view, facing the viewer, facing forward, ghoul 3, single creature, full body

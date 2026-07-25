@@ -248,6 +248,69 @@ def check_work() -> None:
             err(index, 1, f"work stream '{name}' not linked from the work index")
 
 
+# ── check 7 · work items are machine-readable ────────────────────────────────
+ITEM_RE = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s*(.*)$")
+PLAIN_BULLET_RE = re.compile(r"^\s*[-*]\s+(?!\[[ xX]\])\S")
+
+
+def check_work_items() -> None:
+    """A plan file's items must be checkboxes — the only thing the continuation hook can read.
+
+    ERROR: a `todo.md`/`remaining.md` with plain bullets but no checkbox anywhere. That file's
+    work is *invisible* to the hook, which then silently allows a stop — the fail-open mode that
+    let the continuation check sit dead for six days. Prose-only files are fine (no items claimed).
+
+    WARNING: an item too coarse to execute (>250 chars). A vague next step is itself a reason to
+    check in — the session must re-plan before it can act, and planning invites ratification,
+    which is a stop. Advisory only: the corpus has dozens today and blocking would help nobody.
+    """
+    work = os.path.join(DOCS, "work")
+    if not os.path.isdir(work):
+        return
+    coarse = 0
+    for name in sorted(os.listdir(work)):
+        d = os.path.join(work, name)
+        if not os.path.isdir(d):
+            continue
+        for fname in ("todo.md", "remaining.md"):
+            path = os.path.join(d, fname)
+            if not os.path.exists(path):
+                continue
+            text = open(path, encoding="utf-8").read()
+            lines = text.splitlines()
+            has_item = any(ITEM_RE.match(l) for l in lines)
+            if not has_item and any(PLAIN_BULLET_RE.match(l) for l in lines):
+                err(path, 1, "plan items must be checkboxes (`- [ ]` / `- [x]`) — this file's "
+                             "bullets are invisible to the continuation hook")
+                continue
+            # Measure the WHOLE item, folding its wrapped continuation lines: 81% of items wrap,
+            # so measuring the first line alone found nothing at all on the first run.
+            i = 0
+            while i < len(lines):
+                m = ITEM_RE.match(lines[i])
+                if not m:
+                    i += 1
+                    continue
+                start, parts = i + 1, [m.group(2)]
+                i += 1
+                while i < len(lines):
+                    nxt = lines[i]
+                    if (not nxt.strip() or nxt.startswith("#")
+                            or re.match(r"^\s*[-*]\s", nxt) or not nxt[:1].isspace()):
+                        break
+                    parts.append(nxt.strip())
+                    i += 1
+                size = len(" ".join(parts))
+                if size > 250:
+                    coarse += 1
+                    warn(path, start, f"item is {size} chars — likely a phase, not an action; "
+                                      f"decompose it (`/rd-plan`) so it can be executed")
+    if coarse:
+        warn(os.path.join(work, "README.md"), 1,
+             f"{coarse} oversized plan item(s) across the tree — these are what make a resumed "
+             f"session re-plan instead of execute")
+
+
 # ── check 6 · map ↔ folder bijection ─────────────────────────────────────────
 def check_map() -> None:
     comp = os.path.join(DOCS, "components")
@@ -275,6 +338,7 @@ CHECKS = [
     ("link-integrity", check_links),
     ("freshness", check_freshness),
     ("work-linkage", check_work),
+    ("work-items", check_work_items),
     ("map-bijection", check_map),
 ]
 

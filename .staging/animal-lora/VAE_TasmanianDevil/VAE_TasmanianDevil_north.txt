@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, tasmanian devil
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, tasmanian devil, single creature, full body

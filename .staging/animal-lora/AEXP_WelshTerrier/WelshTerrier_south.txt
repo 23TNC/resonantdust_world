@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, canine, welsh terrier
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, canine, welsh terrier, single creature, full body

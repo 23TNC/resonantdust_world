@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, deer, moose male
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, deer, moose male, single creature, full body

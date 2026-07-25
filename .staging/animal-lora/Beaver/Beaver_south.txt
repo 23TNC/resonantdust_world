@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, rodent, beaver
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, rodent, beaver, single creature, full body

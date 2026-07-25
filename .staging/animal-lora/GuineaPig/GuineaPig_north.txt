@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, rodent, guinea pig
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, rodent, guinea pig, single creature, full body

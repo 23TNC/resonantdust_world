@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, deer, caribou
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, deer, caribou, single creature, full body

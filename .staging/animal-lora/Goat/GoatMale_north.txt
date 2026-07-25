@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, goat male
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, goat male, single creature, full body

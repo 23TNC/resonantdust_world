@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, black footed ferret
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, black footed ferret, single creature, full body

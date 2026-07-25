@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_legless, rd_east, side profile, lindwurm forest
+rd_style, rd_animal, rd_legless, rd_east, side profile, side view, facing right, lindwurm forest, single creature, full body

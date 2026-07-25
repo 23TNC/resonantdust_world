@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, otter
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, otter, single creature, full body

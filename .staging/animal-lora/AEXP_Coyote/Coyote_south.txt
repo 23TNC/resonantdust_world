@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, canine, coyote
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, canine, coyote, single creature, full body

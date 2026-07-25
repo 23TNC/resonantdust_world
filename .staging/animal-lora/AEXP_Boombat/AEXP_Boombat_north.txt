@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_north, back view, boombat
+rd_style, rd_animal, rd_north, back view, facing away, seen from behind, boombat, single creature, full body

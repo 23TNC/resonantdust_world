@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, pig, northern boar female
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, pig, northern boar female, single creature, full body

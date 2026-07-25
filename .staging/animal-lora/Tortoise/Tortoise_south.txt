@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, reptile, tortoise
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, reptile, tortoise, single creature, full body

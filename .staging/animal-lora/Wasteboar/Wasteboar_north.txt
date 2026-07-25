@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, pig, wasteboar
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, pig, wasteboar, single creature, full body

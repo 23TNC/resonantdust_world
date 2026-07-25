@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_multiped, rd_south, front view, spelopede
+rd_style, rd_animal, rd_multiped, rd_south, front view, facing the viewer, facing forward, spelopede, single creature, full body

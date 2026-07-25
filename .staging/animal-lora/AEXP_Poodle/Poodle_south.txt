@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, canine, poodle
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, canine, poodle, single creature, full body

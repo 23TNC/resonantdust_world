@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_winged, rd_south, front view, bird, duck male
+rd_style, rd_animal, rd_biped, rd_winged, rd_south, front view, facing the viewer, facing forward, bird, duck male, single creature, full body

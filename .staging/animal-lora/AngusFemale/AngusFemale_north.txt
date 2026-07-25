@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, cattle, angus female
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, cattle, angus female, single creature, full body

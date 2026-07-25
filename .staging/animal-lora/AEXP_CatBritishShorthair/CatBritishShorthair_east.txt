@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, feline, cat british shorthair
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, feline, cat british shorthair, single creature, full body

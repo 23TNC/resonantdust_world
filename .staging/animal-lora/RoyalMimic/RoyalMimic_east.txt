@@ -1,1 +1,1 @@
-rd_style, rd_east, side profile, royal mimic
+rd_style, rd_east, side profile, side view, facing right, royal mimic, single creature, full body

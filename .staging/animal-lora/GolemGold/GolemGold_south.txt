@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_south, front view, golem gold
+rd_style, rd_humanoid, rd_south, front view, facing the viewer, facing forward, golem gold, single creature, full body

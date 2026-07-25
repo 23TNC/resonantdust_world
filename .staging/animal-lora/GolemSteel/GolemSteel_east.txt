@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_east, side profile, golem steel
+rd_style, rd_humanoid, rd_east, side profile, side view, facing right, golem steel, single creature, full body

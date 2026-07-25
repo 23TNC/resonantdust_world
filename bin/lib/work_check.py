@@ -56,8 +56,15 @@ STATE = os.path.join(REPO, ".git", "rd-work")
 
 BULLET = re.compile(r"^\s*[-*]\s+\S")
 HEADER = re.compile(r"^(#{1,6})\s+(.*)$")
-DONE_HEADER = re.compile(r"✅|\bDONE\b|\bDELIVERED\b|~~", re.I)
 MAX_NUDGES = int(os.environ.get("WORK_CHECK_MAX_NUDGES", "3"))
+
+# ── the item contract (P0) ───────────────────────────────────────────────────
+# An ITEM is a checkbox line in todo.md / remaining.md. Nothing else is an item: a plain
+# bullet is detail under an item, and prose is prose. This single rule replaces the whole
+# inference layer (DONE-header scanning, bullet-vs-prose, header casing) that produced eight
+# classification bugs — the state is now written by the human, not guessed from their prose.
+# Top-level vs nested is deliberately NOT part of the rule: a nested checkbox is still an item.
+ITEM = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s*(.*)$", re.M)
 
 
 # ── state ────────────────────────────────────────────────────────────────────
@@ -134,25 +141,18 @@ def _status(stream: str) -> str:
     return ""
 
 
-CHECKED = re.compile(r"^\s*[-*]\s+\[[xX]\]")
-UNCHECKED = re.compile(r"^\s*[-*]\s+\[\s*\]")
+def _scan_items(stream: str) -> list[tuple[str, bool, str]]:
+    """Every item in the stream's plan files, as (section, done, text).
 
+    The ONLY rule is the checkbox (`ITEM`). No DONE-header inference: where a ticked-looking
+    header disagreed with an unticked box the corpus was wrong, not the rule — 7 boxes under
+    "DONE (moved to completed.md)" had simply never been ticked, and 8 more were real deferred
+    work parked under a delivered phase (see forks F5). The heuristic was hiding both.
 
-def _open_items(stream: str, limit: int = 8, width: int = 300) -> list[str]:
-    """Open, executable items — bullets under a not-DONE header, across todo + remaining.
-
-    `remaining.md` is the in-flight tier (CONVENTIONS): items being executed right now. It
-    counts as open work — reading only todo.md missed exactly the streams mid-execution.
-
-    Two corpus facts this has to respect (both were live bugs, 2026-07-25):
-      - **`- [x]` means DONE.** 20 of 34 streams use checkboxes, and counting a ticked box as
-        open work made shard-tables report 11 phantom open items — the hook would have nudged
-        to redo finished work, which is how a forcing function loses its credibility.
-      - **Bullets wrap.** 81% of them carry indented continuation lines; reading only the first
-        line handed the nudge half-sentences ("…stamp each leaf's absolute position + effective"),
-        so continuations are folded back in before truncating.
+    Wrapped continuation lines are folded in: 81% of items carry them, and reading only the
+    first line handed the nudge half-sentences.
     """
-    out: list[str] = []
+    out: list[tuple[str, bool, str]] = []
     for name in ("todo.md", "remaining.md"):
         path = os.path.join(WORK, stream, name)
         if not os.path.exists(path):
@@ -161,19 +161,18 @@ def _open_items(stream: str, limit: int = 8, width: int = 300) -> list[str]:
             lines = open(path, encoding="utf-8").read().splitlines()
         except OSError:
             continue
-        section, skip, i = "", False, 0
+        section, i = "", 0
         while i < len(lines):
-            line = lines[i]
-            h = HEADER.match(line)
+            h = HEADER.match(lines[i])
             if h:
                 section = h.group(2).strip()
-                skip = bool(DONE_HEADER.search(section))
                 i += 1
                 continue
-            if skip or not BULLET.match(line) or CHECKED.match(line):
+            m = ITEM.match(lines[i])
+            if not m:
                 i += 1
                 continue
-            parts = [line]
+            done, parts = m.group(1).lower() == "x", [m.group(2)]
             i += 1
             while i < len(lines):
                 nxt = lines[i]
@@ -181,14 +180,46 @@ def _open_items(stream: str, limit: int = 8, width: int = 300) -> list[str]:
                     break
                 parts.append(nxt)
                 i += 1
-            item = " ".join(parts)
-            item = re.sub(r"^\s*[-*]\s+(\[\s*\]\s*)?", "", item)
-            item = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", item)
-            item = re.sub(r"\s+", " ", item).strip()[:width]
-            out.append(f"{section} · {item}" if section else item)
-            if len(out) >= limit:
-                return out
+            text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", " ".join(parts))
+            out.append((section, done, re.sub(r"\s+", " ", text).strip()))
     return out
+
+
+def _item_counts(stream: str) -> tuple[int, int]:
+    """(open, done) item counts — the exact progress signal the box contract buys us."""
+    items = _scan_items(stream)
+    return sum(1 for _s, d, _t in items if not d), sum(1 for _s, d, _t in items if d)
+
+
+def _open_items(stream: str, limit: int = 8, width: int = 300) -> list[str]:
+    out = []
+    for section, done, text in _scan_items(stream):
+        if done:
+            continue
+        out.append(f"{section} · {text[:width]}" if section else text[:width])
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _has_unreadable_plan(stream: str) -> bool:
+    """A plan file with bullets but no checkbox at all — work the detector cannot see.
+
+    This is the fail-open hole the contract closes: before P0, two `open` streams wrote
+    prose-only todos, so the parser reported zero work and could never nudge on them. Silence
+    is the failure mode that cost six days, so this is surfaced by --doctor and docs-check.
+    """
+    for name in ("todo.md", "remaining.md"):
+        path = os.path.join(WORK, stream, name)
+        if not os.path.exists(path):
+            continue
+        try:
+            text = open(path, encoding="utf-8").read()
+        except OSError:
+            continue
+        if not ITEM.search(text) and re.search(r"^\s*[-*]\s+(?!\[)\S", text, re.M):
+            return True
+    return False
 
 
 # Case-SENSITIVE by design. The corpus writes the state marker in caps ("✅ RESOLVED",
@@ -292,10 +323,13 @@ def _bound_stream(sid: str) -> tuple[str | None, str]:
 def _active_stream(sid: str = "") -> tuple[str | None, str]:
     """Question 2+3: which stream, and is it this session's?
 
-    Session binding first (authoritative). Falls back to the most-recently-touched stream
-    within the recency window — a heuristic, kept so the check still works before a binding
-    exists (e.g. the first turn after this lands), but no longer filtered by index status.
+    Arming first (a declaration), then the touch binding, then mtime (a guess). Each fallback
+    is weaker than the last; the mtime tier exists only so a session that never named a stream
+    still resolves one, and it can no longer nudge on its own (see `_do_nudge`).
     """
+    armed = _armed(sid)
+    if armed:
+        return armed, "armed"
     stream, how = _bound_stream(sid)
     if stream:
         return stream, how
@@ -308,6 +342,51 @@ def _active_stream(sid: str = "") -> tuple[str | None, str]:
     return cand, "mtime"
 
 
+# ── arming (P2 / F6) ─────────────────────────────────────────────────────────
+# The hook is OFF until the user says go. Arming replaces the planned "did the session edit a
+# file this turn?" heuristic, which guessed at intent from side effects — the same mistake as
+# inferring item state from prose. Disarmed sessions end their turn silently, always, so a
+# question asked mid-stream can never drag the asker back into stream work.
+def _armed(sid: str) -> str | None:
+    if not sid:
+        return None
+    rec = _read_json(_state_path("armed", sid))
+    stream = rec.get("stream")
+    if stream and os.path.isdir(os.path.join(WORK, stream)):
+        return stream
+    return None
+
+
+def _arm(sid: str, stream: str) -> None:
+    _write_json(_state_path("armed", sid), {"stream": stream, "ts": time.time()})
+
+
+def _disarm(sid: str, why: str = "") -> None:
+    path = _state_path("armed", sid)
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    _log_decision({"session": sid, "verdict": "disarm", "why": why})
+
+
+# ── decision log (P1) ────────────────────────────────────────────────────────
+def _log_decision(rec: dict) -> None:
+    """Append every Stop verdict, so the next silent death is visible in a file.
+
+    The six-day outage was invisible precisely because a no-op looks identical to a healthy
+    'nothing to do'. A log makes "why did it let me stop 40 times?" an answerable question.
+    """
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **rec}
+        with open(os.path.join(STATE, "decisions.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass  # telemetry must never break the hook
+
+
 # ── progress signal (the guard) ──────────────────────────────────────────────
 def _progress_sig(stream: str) -> str:
     """What "the session did something" looks like, cheaply.
@@ -316,8 +395,12 @@ def _progress_sig(stream: str) -> str:
     lands read as *no progress*, and the guard released after a single nudge. That is precisely
     the "stops after every task" complaint, so the signal now includes the stream's own state
     files, HEAD, and the working tree.
+
+    Leading the signature with the `(open, done)` box counts is the point of the P0 contract:
+    ticking a box is now *unambiguous* progress, where before we could only infer it from file
+    mtimes. The rest stays as a secondary signal for turns that are all code and no bookkeeping.
     """
-    parts = []
+    parts = ["boxes:%d/%d" % _item_counts(stream)]
     for name in ("completed.md", "todo.md", "remaining.md", "issues.md", "deviations.md"):
         p = os.path.join(WORK, stream, name)
         try:
@@ -334,35 +417,125 @@ def _progress_sig(stream: str) -> str:
     return "|".join(parts)
 
 
+# ── the brief (P3) ───────────────────────────────────────────────────────────
+def _tail_entries(path: str, n: int, width: int = 220) -> list[str]:
+    """The last n top-level bullets of an append-only log (completed/deviations)."""
+    if not os.path.exists(path):
+        return []
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError:
+        return []
+    out = []
+    for i, line in enumerate(lines):
+        if re.match(r"^[-*]\s+\S", line):
+            parts = [line]
+            for nxt in lines[i + 1:]:
+                if not nxt.strip() or HEADER.match(nxt) or re.match(r"^[-*]\s", nxt):
+                    break
+                parts.append(nxt)
+            t = re.sub(r"^[-*]\s+", "", " ".join(parts))
+            t = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", t)
+            out.append(re.sub(r"\s+", " ", t).strip()[:width])
+    return out[-n:]
+
+
+def brief(stream: str, next_n: int = 3) -> str:
+    """The compact resume payload — what a session needs to continue without re-deriving.
+
+    Resuming a stream by hand means reading its whole folder (45KB across 6 files for
+    primitive-graph). That cost is paid on every resume and is lossy, which is why the nudge
+    used to produce re-planning rather than execution. This assembles the same conclusion in
+    a few hundred bytes: where we are, what is next, what is decided, what is in the way.
+    """
+    d = os.path.join(WORK, stream)
+    items = _scan_items(stream)
+    open_items = [(s, t) for s, done, t in items if not done]
+    done_n = len(items) - len(open_items)
+    phase = open_items[0][0] if open_items else ""
+    L = [f"STREAM  docs/work/{stream}/   ({done_n}/{len(items)} items done · status={_status(stream) or '?'})"]
+    if phase:
+        L.append(f"PHASE   {phase}")
+    L.append("")
+    L.append(f"NEXT ({min(next_n, len(open_items))} of {len(open_items)} open):")
+    for _s, t in open_items[:next_n]:
+        L.append(f"  □ {t[:400]}")
+    if len(open_items) > next_n:
+        L.append(f"  … {len(open_items) - next_n} more open item(s)")
+
+    blockers = _open_blockers(stream)
+    if blockers:
+        L.append("")
+        L.append("OPEN BLOCKERS (needs the user — do not work around):")
+        L += [f"  ! {b}" for b in blockers]
+
+    recent = _tail_entries(os.path.join(d, "completed.md"), 2)
+    if recent:
+        L.append("")
+        L.append("JUST LANDED:")
+        L += [f"  ✓ {r}" for r in recent]
+
+    devs = _tail_entries(os.path.join(d, "deviations.md"), 2)
+    if devs:
+        L.append("")
+        L.append("RECENT DEVIATIONS:")
+        L += [f"  ~ {r}" for r in devs]
+
+    refs = [f for f in ("README.md", "forks.md", "issues.md") if os.path.exists(os.path.join(d, f))]
+    L.append("")
+    L.append("READ FOR CONTEXT: " + " · ".join(f"docs/work/{stream}/{f}" for f in refs))
+    return "\n".join(L)
+
+
 # ── the nudge ────────────────────────────────────────────────────────────────
 def _nudge_text(stream: str, items: list[str], count: int) -> str:
-    listing = "\n".join(f"    - {i}" for i in items) or "    (see the stream's todo.md)"
     return (
-        f"[work-check] PREMATURE PAUSE — you are driving `docs/work/{stream}/`, it has open,\n"
-        f"executable work, no open blocker, and no recorded stop-reason. Do not hand control back.\n"
-        f"Next up:\n{listing}\n"
+        f"[work-check] PREMATURE PAUSE — you are ARMED on `docs/work/{stream}/` and it has open,\n"
+        f"unblocked work. Do not hand control back; continue the plan through phase boundaries.\n"
+        f"\n{brief(stream)}\n"
         f"\n"
-        f"Continue the documented plan through phase boundaries. Stop only when one of these is\n"
-        f"true, and record it before you stop:\n"
-        f"  · COMPLETE   — move the items to docs/work/{stream}/completed.md\n"
+        f"Stop only when one of these is true, and record it before you stop:\n"
+        f"  · COMPLETE   — tick the item's box `- [x]` in todo.md; log the verification in\n"
+        f"                 docs/work/{stream}/completed.md (items stay put — the box IS the move)\n"
         f"  · BLOCKED    — needs the user: add a row to docs/work/{stream}/blockers.md\n"
         f"  · PLAN ERROR — the plan is wrong and not trivially fixable: log it in\n"
         f"                 docs/work/{stream}/issues.md (or deviations.md) and raise it\n"
         f"  · OTHER      — write one line of why to docs/work/{stream}/.stop-reason\n"
-        f"(nudge {count}/{MAX_NUDGES} · docs-authority continuation hook · SKIP_WORK_CHECK=1 bypasses)"
+        f"Any of those auto-disarms. (nudge {count}/{MAX_NUDGES} · `rd work disarm` to stop; "
+        f"SKIP_WORK_CHECK=1 bypasses)"
     )
 
 
 def _do_nudge(payload: dict) -> int:
     sid = str(payload.get("session_id") or "nosession")
-    stream, how = _active_stream(sid)
+
+    # Gate 0 — armed? An unarmed session is having a conversation, and a conversation must
+    # always be allowed to end. This is the single biggest false-positive class removed.
+    stream = _armed(sid)
     if not stream:
+        _log_decision({"session": sid, "verdict": "allow", "why": "not armed"})
         return 0
     if _status(stream) in ("done", "closed"):
+        _disarm(sid, f"stream status={_status(stream)}")
         return 0
 
-    items = _open_items(stream)
-    if not items or _has_open_blocker(stream) or _has_stop_reason(stream):
+    open_n, done_n = _item_counts(stream)
+    blockers = _open_blockers(stream)
+    reason = _has_stop_reason(stream)
+    base = {"session": sid, "stream": stream, "open": open_n, "done": done_n}
+
+    # The three real exits auto-disarm: finished, blocked, or a declared stop.
+    if not open_n:
+        _disarm(sid, "all items complete")
+        _log_decision({**base, "verdict": "allow", "why": "complete"})
+        return 0
+    if blockers:
+        _disarm(sid, f"blocker: {blockers[0][:80]}")
+        _log_decision({**base, "verdict": "allow", "why": "blocked"})
+        return 0
+    if reason:
+        _disarm(sid, "stop-reason recorded")
+        _log_decision({**base, "verdict": "allow", "why": "stop-reason"})
         return 0
 
     path = _state_path("nudge", sid)
@@ -371,18 +544,31 @@ def _do_nudge(payload: dict) -> int:
     count = 1 if (prev.get("stream") != stream or prev.get("sig") != sig) else prev.get("count", 0) + 1
 
     if count > MAX_NUDGES:
+        # Stalled. Record it where the NEXT session will see it, rather than releasing silently
+        # and letting the same stall be rediscovered from scratch.
         _write_json(path, {"stream": stream, "sig": sig, "count": 0})
+        note = os.path.join(WORK, stream, ".stop-reason")
+        try:
+            with open(note, "w", encoding="utf-8") as fh:
+                fh.write(f"Auto-recorded {time.strftime('%Y-%m-%d %H:%M')}: released after "
+                         f"{MAX_NUDGES} no-progress nudges with {open_n} item(s) still open. "
+                         f"Investigate the stall before re-arming; delete this file to resume.\n")
+        except OSError:
+            pass
+        _disarm(sid, "stalled")
+        _log_decision({**base, "verdict": "release", "why": f"{MAX_NUDGES} no-progress nudges"})
         print(
             f"[work-check] '{stream}' still has open work but no progress across {MAX_NUDGES} "
-            f"nudges — letting the turn end.\n"
-            f"  Stuck is the cue to record a blocker (docs/work/{stream}/blockers.md) or write "
-            f"docs/work/{stream}/.stop-reason.",
+            f"nudges — letting the turn end and DISARMING.\n"
+            f"  Recorded the stall in docs/work/{stream}/.stop-reason. Record a blocker if this "
+            f"needs the user, then re-arm with `rd work arm {stream}`.",
             file=sys.stderr,
         )
         return 0
 
-    _write_json(path, {"stream": stream, "sig": sig, "count": count, "how": how})
-    print(_nudge_text(stream, items, count), file=sys.stderr)
+    _write_json(path, {"stream": stream, "sig": sig, "count": count, "how": "armed"})
+    _log_decision({**base, "verdict": "nudge", "why": f"{open_n} open", "nudge": count})
+    print(_nudge_text(stream, _open_items(stream), count), file=sys.stderr)
     return 2
 
 
@@ -416,8 +602,99 @@ def _do_bind(payload: dict) -> int:
     return 0
 
 
+# ── doctor (P1) ──────────────────────────────────────────────────────────────
+def doctor(quiet: bool = False) -> int:
+    """What the detector actually sees, per stream — the drift detector.
+
+    Every one of the eight classification bugs was invisible from the code and only showed up
+    by measuring the corpus. This makes that measurement a command, so the next dialect drift
+    is a visible row rather than six weeks of silence.
+    """
+    rows, problems = [], 0
+    for s in sorted(_all_streams()):
+        st = _status(s)
+        op, dn = _item_counts(s)
+        bl = len(_open_blockers(s))
+        sr = "yes" if _has_stop_reason(s) else "-"
+        flag = ""
+        if _has_unreadable_plan(s):
+            flag, problems = "PARSE?", problems + 1
+        elif st not in ("done", "closed", "delivered") and op == 0 and dn == 0:
+            flag = "no-items"
+        rows.append((s, st or "?", op, dn, bl, sr, flag))
+    if not quiet:
+        print(f"{'stream':34} {'status':9} {'open':>4} {'done':>4} {'blk':>3} {'stop':>4}  flag")
+        for r in rows:
+            print(f"{r[0]:34} {r[1]:9} {r[2]:4} {r[3]:4} {r[4]:3} {r[5]:>4}  {r[6]}")
+        print(f"\n{len(rows)} streams · {problems} unreadable plan(s)")
+    return problems
+
+
 # ── entry ────────────────────────────────────────────────────────────────────
+def _cli_work(argv: list[str], sid: str) -> int:
+    """`rd work <arm|disarm|status|brief|doctor>` — the user-facing surface."""
+    sub = argv[0] if argv else "status"
+    rest = argv[1:]
+
+    if sub == "arm":
+        if not rest:
+            print("usage: rd work arm <stream>", file=sys.stderr)
+            return 1
+        stream = rest[0].strip("/").split("/")[-1] if "/" in rest[0] else rest[0]
+        if not os.path.isdir(os.path.join(WORK, stream)):
+            print(f"no such work stream: {stream}", file=sys.stderr)
+            return 1
+        _arm(sid, stream)
+        _log_decision({"session": sid, "stream": stream, "verdict": "arm"})
+        op, dn = _item_counts(stream)
+        print(f"ARMED on {stream} ({op} open / {dn} done). The Stop hook will now keep this "
+              f"session going until complete, blocked, or stalled.\n")
+        print(brief(stream))
+        return 0
+
+    if sub == "disarm":
+        cur = _armed(sid)
+        _disarm(sid, "manual")
+        print(f"disarmed{f' (was {cur})' if cur else ''}.")
+        return 0
+
+    if sub == "brief":
+        stream = rest[0] if rest else (_armed(sid) or _active_stream(sid)[0])
+        if not stream or not os.path.isdir(os.path.join(WORK, stream)):
+            print("usage: rd work brief <stream>", file=sys.stderr)
+            return 1
+        print(brief(stream))
+        return 0
+
+    if sub == "doctor":
+        return 0 if doctor() == 0 else 0  # advisory: report, never fail the shell
+
+    # status
+    cur = _armed(sid)
+    if cur:
+        op, dn = _item_counts(cur)
+        n = _read_json(_state_path("nudge", sid)).get("count", 0)
+        print(f"ARMED on {cur} — {op} open / {dn} done, nudge {n}/{MAX_NUDGES}")
+    else:
+        stream, how = _active_stream(sid)
+        print(f"disarmed (conversation mode). Nearest stream: {stream or 'none'}"
+              f"{f' via {how}' if stream else ''}.")
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if argv and argv[0] in ("arm", "disarm", "status", "brief", "doctor"):
+        sid = os.environ.get("CLAUDE_SESSION_ID", "cli")
+        if "--session" in argv:
+            i = argv.index("--session")
+            sid = argv[i + 1] if i + 1 < len(argv) else sid
+            argv = argv[:i] + argv[i + 2:]
+        return _cli_work(argv, sid)
+
+    if "--doctor" in argv:
+        doctor()
+        return 0
+
     if "--bind" in argv:
         try:
             _do_bind(_hook_payload())

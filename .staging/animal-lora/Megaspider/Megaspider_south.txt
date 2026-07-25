@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_multiped, rd_south, front view, megaspider
+rd_style, rd_animal, rd_multiped, rd_south, front view, facing the viewer, facing forward, megaspider, single creature, full body

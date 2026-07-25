@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_east, side profile, schrat plain
+rd_style, rd_humanoid, rd_east, side profile, side view, facing right, schrat plain, single creature, full body

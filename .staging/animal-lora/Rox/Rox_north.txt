@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, rox
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, rox, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, primate, monkey
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, primate, monkey, single creature, full body

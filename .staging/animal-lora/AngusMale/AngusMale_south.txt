@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, cattle, angus male
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, cattle, angus male, single creature, full body

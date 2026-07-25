@@ -120,3 +120,11 @@ _Executes: [`docs/CONVENTIONS.md`](../../CONVENTIONS.md). Done + verified, chron
   Both fixed + re-measured (phantom items 13 → 0). **The standing lesson:** this detector's inputs are
   hand-written prose in 4 different item dialects, so *test it against the corpus, not against
   intuition* — every one of the 6 classification bugs so far was invisible from the code alone.
+
+- **2026-07-25** · **P7 — continuation half handed off.** P6/P6a made the hook fire and corrected two
+  live defects; the remaining work (item contract, arming, brief, decision log, planning assist) is
+  substantial and multi-phase, with a different failure model from the audit — it fails *open and
+  silent*, where `docs-check` fails loud. Split to
+  [`2026-07-25-continuation-hooks`](../2026-07-25-continuation-hooks/README.md), cross-linked both
+  ways. `docs-authority` keeps the audit: `docs-check`, its invariants (now 7 — `work-items` added
+  there), the front door, and the git pre-commit.

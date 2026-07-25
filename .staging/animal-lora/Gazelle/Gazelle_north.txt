@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, gazelle
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, gazelle, single creature, full body

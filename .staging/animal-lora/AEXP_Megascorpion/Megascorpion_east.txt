@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_multiped, rd_east, side profile, megascorpion
+rd_style, rd_animal, rd_multiped, rd_east, side profile, side view, facing right, megascorpion, single creature, full body

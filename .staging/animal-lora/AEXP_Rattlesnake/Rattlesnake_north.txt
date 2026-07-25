@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_legless, rd_north, back view, rattlesnake
+rd_style, rd_animal, rd_legless, rd_north, back view, facing away, seen from behind, rattlesnake, single creature, full body

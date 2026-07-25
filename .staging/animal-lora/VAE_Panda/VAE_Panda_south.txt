@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, bear, panda
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, bear, panda, single creature, full body

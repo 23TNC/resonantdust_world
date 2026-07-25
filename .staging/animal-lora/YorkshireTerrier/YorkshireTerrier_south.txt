@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, canine, yorkshire terrier
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, canine, yorkshire terrier, single creature, full body

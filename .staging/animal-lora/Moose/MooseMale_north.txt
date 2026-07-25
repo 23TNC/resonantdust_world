@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, deer, moose male
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, deer, moose male, single creature, full body

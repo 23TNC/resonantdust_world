@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, bear, toxbear
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, bear, toxbear, single creature, full body

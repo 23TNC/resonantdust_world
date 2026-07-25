@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, feline, cat sphynx
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, feline, cat sphynx, single creature, full body

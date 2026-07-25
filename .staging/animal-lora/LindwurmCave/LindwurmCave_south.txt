@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_legless, rd_south, front view, lindwurm cave
+rd_style, rd_animal, rd_legless, rd_south, front view, facing the viewer, facing forward, lindwurm cave, single creature, full body

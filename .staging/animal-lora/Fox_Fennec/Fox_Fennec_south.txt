@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, canine, fox fennec
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, canine, fox fennec, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, deer, deer baby
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, deer, deer baby, single creature, full body

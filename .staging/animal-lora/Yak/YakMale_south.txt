@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, cattle, yak male
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, cattle, yak male, single creature, full body

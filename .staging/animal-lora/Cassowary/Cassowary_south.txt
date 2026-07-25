@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_south, front view, bird, cassowary
+rd_style, rd_animal, rd_biped, rd_south, front view, facing the viewer, facing forward, bird, cassowary, single creature, full body

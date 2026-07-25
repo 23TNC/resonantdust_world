@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_multiped, rd_north, back view, megatardi
+rd_style, rd_animal, rd_multiped, rd_north, back view, facing away, seen from behind, megatardi, single creature, full body

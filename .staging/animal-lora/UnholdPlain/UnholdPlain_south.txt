@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_south, front view, unhold plain
+rd_style, rd_humanoid, rd_south, front view, facing the viewer, facing forward, unhold plain, single creature, full body

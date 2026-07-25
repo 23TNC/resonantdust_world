@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_north, back view, ghoul 2
+rd_style, rd_humanoid, rd_north, back view, facing away, seen from behind, ghoul 2, single creature, full body

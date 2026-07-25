@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, shih tzu
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, canine, shih tzu, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, equine, zebra
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, equine, zebra, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_humanoid, rd_east, side profile, ghoul 2
+rd_style, rd_humanoid, rd_east, side profile, side view, facing right, ghoul 2, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_biped, rd_winged, rd_south, front view, bird, quail female
+rd_style, rd_animal, rd_biped, rd_winged, rd_south, front view, facing the viewer, facing forward, bird, quail female, single creature, full body

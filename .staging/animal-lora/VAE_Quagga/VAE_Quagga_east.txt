@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, equine, quagga
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, equine, quagga, single creature, full body

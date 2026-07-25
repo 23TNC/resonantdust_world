@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, feline, lion female
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, feline, lion female, single creature, full body

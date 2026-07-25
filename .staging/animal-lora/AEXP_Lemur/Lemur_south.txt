@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, primate, lemur
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, primate, lemur, single creature, full body

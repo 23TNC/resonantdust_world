@@ -22,3 +22,13 @@ rd_work_check() {
     return 0
   fi
 }
+
+# `rd work <arm|disarm|status|brief|doctor>` — the continuation surface (work-check's CLI half).
+rd_work() {
+  if [[ -f "$RD_LIB_DIR/work_check.py" ]]; then
+    python3 "$RD_LIB_DIR/work_check.py" "$@"
+  else
+    rd_warn "work not yet built (docs-authority P5)"
+    return 0
+  fi
+}

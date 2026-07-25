@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, feline, cat norwegian
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, feline, cat norwegian, single creature, full body

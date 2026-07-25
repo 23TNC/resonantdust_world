@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_multiped, rd_east, side profile, toxscorpion
+rd_style, rd_animal, rd_multiped, rd_east, side profile, side view, facing right, toxscorpion, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, pachyderm, indian elephant
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, pachyderm, indian elephant, single creature, full body

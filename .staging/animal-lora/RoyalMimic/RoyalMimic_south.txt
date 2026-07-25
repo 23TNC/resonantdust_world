@@ -1,1 +1,1 @@
-rd_style, rd_south, front view, royal mimic
+rd_style, rd_south, front view, facing the viewer, facing forward, royal mimic, single creature, full body

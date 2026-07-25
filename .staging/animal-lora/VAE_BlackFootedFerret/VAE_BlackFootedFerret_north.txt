@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, black footed ferret
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, black footed ferret, single creature, full body

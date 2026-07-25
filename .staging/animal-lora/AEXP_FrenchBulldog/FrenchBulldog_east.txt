@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, french bulldog
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, canine, french bulldog, single creature, full body

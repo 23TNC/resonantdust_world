@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, canine, toxafox
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, canine, toxafox, single creature, full body

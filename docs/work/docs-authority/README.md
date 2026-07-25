@@ -38,26 +38,25 @@ Scope, in order of value: (1) bring the tree into compliance with the convention
 
 ## The hooks (how the forcing function fires)
 
+> **The continuation half now lives in
+> [`2026-07-25-continuation-hooks`](../2026-07-25-continuation-hooks/README.md).** That stream owns
+> the item contract (`- [ ]`/`- [x]`), arming (`rd work arm`, `/rd-execute`), the brief, the decision
+> log, and the planning assist (`/rd-plan`). This stream keeps the **audit** — `docs-check`, the front
+> door, the invariants. Stage 2 below is described as-built there; the summary here is a pointer, not
+> a second spec.
+
+
 - **Stop hook** (Claude Code) — `.claude/settings.json` runs
   [`bin/hooks/stop-check.sh`](../../../bin/hooks/stop-check.sh) at the end of every turn, in two stages:
   - **Stage 1 · docs-check** — docs/ must be compliant. Broken → **exit 2**, failures to stderr, turn
     can't end. Loop guard: an identical failure set twice → release (a non-convergent case can't trap
     the turn). Escape: `SKIP_DOCS_CHECK=1`.
-  - **Stage 2 · work-check** (`--nudge`) — if docs are clean, a *silent premature pause* also blocks,
-    pushing me to continue. It answers four questions in order: **(1)** did a session pause (the hook
-    fired); **(2)** is a work stream in flight; **(3)** was it *this* session's stream — the
-    session→stream binding below, **not** a directory-mtime guess; **(4)** is there open, executable
-    work with no open blocker and no `.stop-reason`. All four → **exit 2** with the actual next items
-    and the four legitimate exits (complete · blocked · plan-error · other). Bounded: progress guard
-    (`WORK_CHECK_MAX_NUDGES`, default 3 consecutive *no-progress* stops → release; progress = any edit
-    to the stream's state files, a commit, or a working-tree change), recency window
-    (`WORK_CHECK_WINDOW_MIN`, default 180, so a fresh/idle session doesn't nag), and escapes (a
-    `blockers.md` row, a `.stop-reason` file, or `SKIP_WORK_CHECK=1`). Dial = default
-    (blocking-but-bounded); see [`forks.md`](forks.md) F6.
-- **PostToolUse hook · work-bind** — [`bin/hooks/work-bind.sh`](../../../bin/hooks/work-bind.sh) runs on
-  every `Read|Write|Edit|NotebookEdit`; when the path is under `docs/work/<stream>/` it records
-  **session → stream** in `.git/rd-work/sessions/` (an edit is a strong claim, a read a weak one).
-  This is what makes question 3 answerable. It never blocks and never fails a tool call.
+  - **Stage 2 · work-check** (`--nudge`) — blocks a *premature pause* while the session is **armed**
+    on a work stream. Off by default, so ordinary conversation is never interrupted. Spec + bounds:
+    [`2026-07-25-continuation-hooks`](../2026-07-25-continuation-hooks/README.md).
+- **PostToolUse hook · work-bind** — [`bin/hooks/work-bind.sh`](../../../bin/hooks/work-bind.sh)
+  records session → stream from file touches under `docs/work/<stream>/`, as the fallback resolver
+  when an armed session didn't name one. It never blocks and never fails a tool call.
 - **git pre-commit** — [`bin/hooks/pre-commit`](../../../bin/hooks/pre-commit), symlinked to
   `.git/hooks/pre-commit`, runs the full `docs-check` and **refuses the commit** if docs/ is broken
   (work-check does *not* gate commits — WIP is fine to commit). Escape: `SKIP_DOCS_CHECK=1 git commit …`.

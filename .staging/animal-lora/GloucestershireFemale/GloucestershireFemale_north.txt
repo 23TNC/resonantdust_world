@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, pig, gloucestershire female
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, pig, gloucestershire female, single creature, full body

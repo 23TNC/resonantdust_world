@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_legless, rd_north, back view, forest cobra
+rd_style, rd_animal, rd_legless, rd_north, back view, facing away, seen from behind, forest cobra, single creature, full body

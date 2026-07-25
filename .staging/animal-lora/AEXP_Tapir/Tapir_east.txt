@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, pachyderm, tapir
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, pachyderm, tapir, single creature, full body

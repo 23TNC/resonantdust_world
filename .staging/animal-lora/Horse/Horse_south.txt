@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, equine, horse
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, equine, horse, single creature, full body

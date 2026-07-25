@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, pig, hampshire male
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, pig, hampshire male, single creature, full body

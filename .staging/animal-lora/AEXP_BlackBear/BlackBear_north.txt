@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, bear, black bear
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, bear, black bear, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, cattle, muskox
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, cattle, muskox, single creature, full body

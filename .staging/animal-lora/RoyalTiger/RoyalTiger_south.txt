@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, feline, royal tiger
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, feline, royal tiger, single creature, full body

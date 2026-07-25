@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, camel, alp 3
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, camel, alp 3, single creature, full body

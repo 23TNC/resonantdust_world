@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, canine, fox fennec
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, canine, fox fennec, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_multiped, rd_north, back view, redback
+rd_style, rd_animal, rd_multiped, rd_north, back view, facing away, seen from behind, redback, single creature, full body

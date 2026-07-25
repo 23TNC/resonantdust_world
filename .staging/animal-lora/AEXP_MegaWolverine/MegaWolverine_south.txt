@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_south, front view, mega wolverine
+rd_style, rd_animal, rd_quadruped, rd_south, front view, facing the viewer, facing forward, mega wolverine, single creature, full body

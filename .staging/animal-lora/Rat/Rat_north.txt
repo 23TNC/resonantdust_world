@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, rodent, rat
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, rodent, rat, single creature, full body

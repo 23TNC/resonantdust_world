@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_winged, rd_north, back view, griffon
+rd_style, rd_animal, rd_quadruped, rd_winged, rd_north, back view, facing away, seen from behind, griffon, single creature, full body

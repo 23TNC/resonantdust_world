@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, canine, arctic coyote
+rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, canine, arctic coyote, single creature, full body

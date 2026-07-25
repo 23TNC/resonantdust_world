@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, reptile, iguana
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, reptile, iguana, single creature, full body

@@ -1,1 +1,1 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, deer, caribou
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, deer, caribou, single creature, full body
