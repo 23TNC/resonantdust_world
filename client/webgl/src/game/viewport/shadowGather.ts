@@ -104,7 +104,7 @@ const MASK_BASE_FADEF = MASK_BASE_FADE.toFixed(1);
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
 /** Lights per tile in presence + shadow-cold: 14 (7 per presence set), each a u8 coverage in the
  *  128-bit shadow-cold texel (slot i at channel i>>2, bits (i&3)·8). */
-const PRES_SLOTS = 14;
+const PRES_SLOTS = 16;   // v3: 8 slots per presence px (self-address retired) x lo+hi
 
 interface Light {
   x: number;
@@ -145,10 +145,10 @@ int foldTile(int wc, int wr) {
 // Slot i (0..6) of a tile-keyed texel: slot0 = R.low, slots 1–6 = G/B/A high|low. Static lane
 // select (no dynamic subscript — the ANGLE/D3D freeze foot-gun).
 uint laneN(uvec4 v, int c) { return c == 1 ? v.y : (c == 2 ? v.z : v.w); }
-uint tileSlot(uvec4 t, int i) {
-  if (i == 0) return t.x & 0xffffu;
-  uint w = laneN(t, (i + 1) >> 1);
-  return (i & 1) == 1 ? (w >> 16) : (w & 0xffffu);
+uint tileSlot(uvec4 t, int i) {   // v3: 8 slots/px — the self-address is gone (R=s0|s1 .. A=s6|s7)
+  int c = i >> 1;
+  uint w = c == 0 ? t.x : (c == 1 ? t.y : (c == 2 ? t.z : t.w));
+  return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
 }
 vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
   uint region = (p >> 24) & 255u, zone = (p >> 16) & 255u, tile = (p >> 8) & 255u, anchor = p & 255u;
@@ -343,7 +343,7 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out 
   rcov = 0.0;                                                // its soft silhouette coverage at P (the edge blend)
   for (int dy = 0; dy <= 5; dy++) {                         // constant bound; covers billboards up to ~5 tiles
     uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(wc, r0 + dy));
-    for (int c = 0; c < 7; c++) {
+    for (int c = 0; c < 8; c++) {
       uint billboardIdx = tileSlot(cb, c);
       if (billboardIdx == 0u) continue;
       float brOut; float cov = receiverCover(billboardIdx, P, data, surf, align, brOut);
@@ -444,7 +444,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
       for (int n = 0; n < 5; n++) {                          // cross pad: centre, ±x, ±y
         ivec2 o = qt + ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0));
         uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(o.x, o.y));
-        for (int c = 0; c < 7; c++) {
+        for (int c = 0; c < 8; c++) {
           uint billboardIdx = tileSlot(cb, c);
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
@@ -458,7 +458,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
       for (int dx = -16; dx <= 16; dx++) {
         if (dx < -reachT || dx > reachT) continue;
         uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy));
-        for (int c = 0; c < 7; c++) {
+        for (int c = 0; c < 8; c++) {
           uint billboardIdx = tileSlot(cb, c);
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
@@ -561,8 +561,8 @@ void main() {
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
   uvec4 sh = texelFetch(uShadow, fcC, 0);                   // P3: per-slot u9 shadow coverage — COARSE, upsampled (fcC)
   vec3 acc = vec3(0.0);                                     // #4: NO ambient here — the blit adds it once over cold+hot
-  for (int slot = 0; slot < 14; slot++) {
-    uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
+  for (int slot = 0; slot < 16; slot++) {
+    uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
     if (li == 0xffffu) continue;                            // empty slot
     uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // G = position, B = colour|intensity, A = z|reach|hot|…
     if (int((Ld.w >> 1) & 1u) != uLightClass) continue;     // #4: this pass accumulates only its class
@@ -595,9 +595,9 @@ void main() {
     // shadow where THIS fine texel is a billboard (rbillboardN != 0) — the tight, fine-presence cut (like the normal),
     // so a billboard standing in a shadow isn't ground-darkened. On-billboard shadows are LEFT UNCUT (they share tiles
     // with ground shadows; cutting them causes more problems than it solves — user).
-    uint v8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
-    bool onBillboard = ((sh.w >> uint(16 + slot)) & 1u) == 1u;
-    float shadow = float(v8) / 255.0;
+    uint b8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;  // u7 coverage | u1 on-billboard
+    bool onBillboard = (b8 & 1u) == 1u;
+    float shadow = float(b8 >> 1) / 127.0;   // the u7 re-expanded (the stored <<1 IS the x2 restore)
     if (!onBillboard && rbillboardN != 0u) shadow = 0.0;              // cut ground shadow off billboards (fine presence)
     // shadow-edge-refine: the coarse shadow (16/tile) is nearest-upsampled → blocky edges. Where it's a PARTIAL
     // (0,1) edge value, re-run the caster-silhouette walk at THIS fine texel to SELECT the sharp coverage (only
@@ -674,8 +674,8 @@ void main() {
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
   uint o0 = 0u, o1 = 0u, o2 = 0u, o3 = 0u;                   // per-SLOT u8 coverage: slot i at ch i>>2, bit (i&3)*8
   float casterDepth = 0.0;                                   // #3: frontmost (max-row) covering caster (all lights)
-  for (int slot = 0; slot < 14; slot++) {
-    uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
+  for (int slot = 0; slot < 16; slot++) {
+    uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
     if (li == 0xffffu) continue;                            // empty slot
     uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // v2.1: G = position, A = z|reach|emitter|hot|cast
     if ((Ld.w & 1u) == 0u) continue;                        // cast_shadows
@@ -706,11 +706,12 @@ void main() {
       cov = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, uCorridor, reachT, uData, uSurface, cd);
     }
     casterDepth = max(casterDepth, cd);                     // #3 (vestigial att1)
-    uint v = uint(clamp(cov, 0.0, 1.0) * 255.0 + 0.5);      // u8 coverage (was u9); 9th bit repurposed below
-    uint low8 = (v & 0xFFu) << uint((slot & 3) * 8);
+    // v3 (16 lights/tile): each slot is ONE byte = u7 coverage | u1 on-billboard. 16 x 8 = 128 bits
+    // exactly, so the flag rides its own slot's byte instead of a separate A-lane bit field.
+    uint v7 = uint(clamp(cov, 0.0, 1.0) * 127.0 + 0.5);
+    uint low8 = (((v7 & 0x7Fu) << 1) | (onBillboard ? 1u : 0u)) << uint((slot & 3) * 8);
     int ch = slot >> 2;                                     // static branch (no dynamic write-subscript)
     if (ch == 0) o0 |= low8; else if (ch == 1) o1 |= low8; else if (ch == 2) o2 |= low8; else o3 |= low8;
-    o3 |= (onBillboard ? 1u : 0u) << uint(16 + slot);            // A[16+slot] = ON-BILLBOARD flag (was the u9 high bit)
   }
   fragColor = uvec4(o0, o1, o2, o3);
   oCasterD = uvec4(uint(casterDepth) & 0x7Fu, 0u, 0u, 0u);  // #3: frontmost caster row (7-bit local key)
@@ -748,10 +749,10 @@ int foldTile(int wc, int wr) {
 }
 uint laneN(uvec4 v, int c) { return c == 1 ? v.y : (c == 2 ? v.z : v.w); }
 uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
-uint tileSlot(uvec4 t, int i) {
-  if (i == 0) return t.x & 0xffffu;
-  uint w = laneN(t, (i + 1) >> 1);
-  return (i & 1) == 1 ? (w >> 16) : (w & 0xffffu);
+uint tileSlot(uvec4 t, int i) {   // v3: 8 slots/px — the self-address is gone (R=s0|s1 .. A=s6|s7)
+  int c = i >> 1;
+  uint w = c == 0 ? t.x : (c == 1 ? t.y : (c == 2 ? t.z : t.w));
+  return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
 }
 // Per-light colour — MUST match LIGHT_COLORS (the gizmo rings) so a light's shadow reads as the same
 // colour as its ring while debugging. (Debug: only the first 6 lights; overlap sums.)
@@ -776,13 +777,13 @@ void main() {
   uvec4 shH = texelFetch(uShadowHot, texel, 0);             // hot class slots (a slot is nonzero in one only)
   vec3 acc = vec3(0.0);
   float any = 0.0;
-  for (int slot = 0; slot < 14; slot++) {
-    uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
+  for (int slot = 0; slot < 16; slot++) {
+    uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
     if (li == 0xffffu) continue;                            // empty slot
-    uint vC = (lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu; // u8 coverage (A[16+slot] is the on-billboard flag now)
-    uint vH = (lane4(shH, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
-    uint v = max(vC, vH);                                    // u8 — combine the two classes' RTs
-    if (v > 0u) { float cvg = float(v) / 255.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
+    uint vC = ((lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) >> 1; // u7 coverage (bit 0 = on-billboard)
+    uint vH = ((lane4(shH, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) >> 1;
+    uint v = max(vC, vH);                                    // u7 — combine the two classes' RTs
+    if (v > 0u) { float cvg = float(v) / 127.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
   }
   if (any <= 0.0) { fragColor = vec4(0.0); return; }        // lit → transparent
   fragColor = vec4(clamp(acc, 0.0, 1.0), any);              // shadow tint × coverage
@@ -1115,8 +1116,8 @@ export class ShadowGather {
    *  for now; the O(1) re-bucket on move lands with the hot tier. */
   private buildCasters(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
     const { cols, rows, winCol, winRow } = win;
-    if (this.castSlots.length !== cols * rows * 7) {
-      this.castSlots = new Uint16Array(cols * rows * 7);
+    if (this.castSlots.length !== cols * rows * 8) {
+      this.castSlots = new Uint16Array(cols * rows * 8);
       this.castCount = new Uint8Array(cols * rows);
     }
     this.castSlots.fill(0); // 0 = empty (billboard sentinel)
@@ -1151,8 +1152,8 @@ export class ShadowGather {
           if (wc < winCol || wc >= winCol + cols) continue;
           const ti = (wr - winRow) * cols + (wc - winCol); // dense window-local tile
           const n = count[ti];
-          if (n >= 7) continue; // tile full — drop the rest (rare)
-          this.castSlots[ti * 7 + n] = inst.idx & 0xffff;
+          if (n >= 8) continue; // tile full — drop the rest (rare)
+          this.castSlots[ti * 8 + n] = inst.idx & 0xffff;
           count[ti] = n + 1;
         }
       }
@@ -1164,7 +1165,7 @@ export class ShadowGather {
     for (let wr = winRow; wr < winRow + rows; wr++)
       for (let wc = winCol; wc < winCol + cols; wc++) {
         const ti = (wr - winRow) * cols + (wc - winCol);
-        this.coldData.writeCasters(wc, wr, this.castSlots.subarray(ti * 7, ti * 7 + 7));
+        this.coldData.writeCasters(wc, wr, this.castSlots.subarray(ti * 8, ti * 8 + 8));
       }
     // Flush all queued writes (def/billboard/presence/caster) as ONE scatter batch. NO force-all: def
     // swaps + new billboards queued their scoped rects via the billboard dirty cascade (markBillboardDirty).

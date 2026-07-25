@@ -50,3 +50,23 @@ by construction and independently provable.
 lighting); data confirmed flowing through the new path — 525 billboards live, 3 lights, last flush → set
 2 (the orbiting light). Records still self-address in the mirror; the scatter simply ignores it now, and
 P2 removes it. Gotcha hit + recorded: [I15](issues.md#i15) (HMR false failure).
+
+## P2a — `definition_data` on the v3 layout (2026-07-25)
+Both offsets move into RED, the u16 self-address is dropped, and `layer`/`rotation`/`inherit_rotation`/
+`type` are reserved-as-0 until the DSL supplies them (P5). One writer + three decoders
+(`receiverCover`/`casterCover`/`billboardNormal`) changed in lockstep. Verified on a fresh load —
+pixel-matches the reference. Commit `f83d084`.
+
+## P2b — Presence at 8 slots, 16 lights/tile, `shadow-cold` on u7|u1 (2026-07-25)
+The self-address leaves the tile-keyed px, which is what buys back the 8th slot:
+
+- **`tileSlot`** (GLSL, 2 copies) + **`writeTileSet`** (TS) → **8 slots/px**: `R = s0|s1`, `G = s2|s3`,
+  `B = s4|s5`, `A = s6|s7`. Presence `_hi` offset 7 → 8; `PRES_SLOTS` 14 → **16**; caster buckets
+  7 → **8**; every light loop `slot < 14` → `< 16`; every bucket loop `c < 7` → `c < 8`.
+- **`shadow-cold` repacked to u7 | u1 per slot** (user's call — [I16](issues.md#i16)): 16 × 8 = 128 bits
+  exactly, so each slot's byte carries its own on-billboard flag and the separate A-lane flag field is
+  retired. Decode is `float(b8 >> 1) / 127.0` — the stored `<< 1` **is** the ×2 restore, so full range
+  costs nothing.
+- Bug found + fixed during verification: a desynced slot-stride literal ([I17](issues.md#i17)).
+
+**Verified** on a fresh load: relief and shadows restored, matches the reference. `tsc` clean.

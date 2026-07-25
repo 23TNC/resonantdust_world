@@ -145,4 +145,21 @@ which today carries only a 7-bit caster row and is nearly empty) — cheap, no c
 attachment is already bound. (2) Drop coverage to **u7** (16·7 = 112 + 16 flags = 128 exactly) — costs
 half the penumbra resolution the [penumbra](../2026-07-23-penumbra/README.md) stream deliberately bought
 (u8→u9 then u8). (3) Cap the gather at 14 slots even though presence carries 16 — wastes the gain.
-**Lean: (1).** Decide before the presence rebuild lands (P2), since the two are one change.
+**RESOLVED (user, 2026-07-25): option (2) — u7 coverage | u1 on-billboard.** 16 slots × 8 bits = 128
+exactly, so the flag rides its own slot's byte and the separate A-lane flag field is retired. The u9→u8
+coverage was never fully used; u7 (128 levels) is restored to full range by a ×2 on read — and that is
+free, because the stored `coverage << 1` **is** the doubled value (`byte & 0xFE`). Implemented as
+`float(b8 >> 1) / 127.0`.
+
+## I17 — Parallel slot-stride literals desynced (7 vs 8) (2026-07-25) — fixed, lesson recorded
+**Problem.** Widening the caster buckets 7 → 8 slots, the *write* was updated
+(`castSlots.subarray(ti * 8, …)`, allocation `cols * rows * 8`) but the *fill* still used the old
+literal (`castSlots[ti * 7 + n]`). The two strides disagreed, so buckets were written from misaligned
+memory. Symptom on a fresh load: **trees rendered flat (no relief) and shadows mostly vanished** — both
+follow from `receiverAt` failing to find the covering billboard (no `rbillboard` ⇒ `applyNL` false ⇒
+`ndl = 1`, and no caster found ⇒ no shadow). One symptom pair, one root cause, easy to misread as two
+separate bugs.
+**Fix.** Aligned the fill stride. **Lesson:** the presence path already does this right — it derives
+every index from a single `PRES_SLOTS` constant, so widening it was a one-line change. The caster path
+used bare literals. Give the bucket stride its own named constant when P2's record work lands, so the
+next width change cannot desync.

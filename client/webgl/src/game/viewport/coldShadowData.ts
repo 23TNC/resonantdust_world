@@ -116,8 +116,8 @@ void main() { fragColor = texelFetch(uCmd, ivec2(vPayload & 63, vPayload >> 6), 
 `;
 
 const clamp = (v: number, hi: number): number => Math.min(Math.max(Math.round(v), 0), hi);
-/** Empty 7-slot payload — the eviction clear (length 0 → every slot takes the set sentinel). */
-const EMPTY7: number[] = [];
+/** Empty slot payload — the eviction clear (length 0 → every slot takes the set sentinel). */
+const EMPTY_SLOTS: number[] = [];
 
 /** One light to write into `light_data` (world px + unit-scaled fields; colour 0..1). */
 export interface ColdLight {
@@ -238,11 +238,13 @@ export class ColdShadowData {
   private writeTileSet(base: number, wc: number, wr: number, slots: ArrayLike<number>, empty: number, off = 0): void {
     const id = foldTile(wc, wr);
     const b = (base + id) * 4;
+    // v3: 8 slots/px — the u16 self-address is retired (the command carries the id), which is what
+    // buys back the 8th slot. R = s0|s1, G = s2|s3, B = s4|s5, A = s6|s7 (high|low).
     const g = (i: number): number => (off + i < slots.length ? slots[off + i] & 0xffff : empty);
-    const R = (((id & 0xffff) << 16) | g(0)) >>> 0;
-    const G = ((g(1) << 16) | g(2)) >>> 0;
-    const B = ((g(3) << 16) | g(4)) >>> 0;
-    const A = ((g(5) << 16) | g(6)) >>> 0;
+    const R = ((g(0) << 16) | g(1)) >>> 0;
+    const G = ((g(2) << 16) | g(3)) >>> 0;
+    const B = ((g(4) << 16) | g(5)) >>> 0;
+    const A = ((g(6) << 16) | g(7)) >>> 0;
     const m = this.dataMirror;
     if (m[b] !== R || m[b + 1] !== G || m[b + 2] !== B || m[b + 3] !== A) {
       m[b] = R; m[b + 1] = G; m[b + 2] = B; m[b + 3] = A;
@@ -253,7 +255,7 @@ export class ColdShadowData {
    *  0–6, hi = slots 7–13. */
   writePresence(wc: number, wr: number, slots: ArrayLike<number>): void {
     this.writeTileSet(PRESENCE_BASE, wc, wr, slots, 0xffff, 0);
-    this.writeTileSet(PRESENCE_HI_BASE, wc, wr, slots, 0xffff, 7);
+    this.writeTileSet(PRESENCE_HI_BASE, wc, wr, slots, 0xffff, 8);
   }
   /** Caster-bucket tile: 7 u16 billboard indices (0 empty — the billboard sentinel). */
   writeCasters(wc: number, wr: number, slots: ArrayLike<number>): void {
@@ -261,12 +263,12 @@ export class ColdShadowData {
   }
   /** Clear a tile's presence (both sets, all-empty) — eviction. */
   clearPresence(wc: number, wr: number): void {
-    this.writeTileSet(PRESENCE_BASE, wc, wr, EMPTY7, 0xffff);
-    this.writeTileSet(PRESENCE_HI_BASE, wc, wr, EMPTY7, 0xffff);
+    this.writeTileSet(PRESENCE_BASE, wc, wr, EMPTY_SLOTS, 0xffff);
+    this.writeTileSet(PRESENCE_HI_BASE, wc, wr, EMPTY_SLOTS, 0xffff);
   }
   /** Clear a tile's buckets (all-empty) — eviction. */
   clearCasters(wc: number, wr: number): void {
-    this.writeTileSet(CASTER_BASE, wc, wr, EMPTY7, 0x0000);
+    this.writeTileSet(CASTER_BASE, wc, wr, EMPTY_SLOTS, 0x0000);
   }
 
   /** The shared surface atlas page (or null before any sprite resolved). */
