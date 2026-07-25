@@ -97,13 +97,28 @@ their names (rename lazily if touched). Files
 (create on demand — an empty one isn't required; a one-line change needs no work-folder; full
 ceremony is for substantial, multi-phase work):
 
-- **`todo.md`** — planned, not started. Written from the component plan/design/intent/current
-  when we take on a work-stream.
-- **`completed.md`** — done + verified. Items move here from `todo` (the default flow is
-  **`todo → completed`**). Append-only history; authoritative for what's done.
+- **`todo.md`** — **the plan**, for the life of the stream. Written from the component
+  plan/design/intent/current when we take on a work-stream.
+
+  **The item contract.** An **item** is a checkbox line — `- [ ]` open, `- [x]` done. That is the
+  *only* thing that counts as an item: a plain bullet is detail under an item, and prose is prose.
+  `rd docs-check` enforces it (a plan file with bullets but no checkbox is an ERROR, because its work
+  is invisible to the continuation hook — which is how that hook once sat dead for six days). Write
+  each item as **one action plus its acceptance criterion**, under ~250 chars; `docs-check` warns
+  past that, because an item too coarse to execute forces a resuming session to re-plan, and planning
+  invites ratification, which is a stop. Use [`/rd-plan`](../.claude/skills/rd-plan/SKILL.md) to
+  decompose one.
+
+  **Items never move — `[x]` IS the move.** Tick the box in place; don't cut the line out. (Don't
+  strike it through either: `~~` is banned tree-wide, and a ticked box says the same thing where a
+  machine can read it.) The stream's full plan stays legible in one file, and `completed.md` stops
+  being a second copy of the list.
+- **`completed.md`** — the **verification log**: dated entries saying what landed and *how it was
+  checked*. Append-only; authoritative for what's done and why we believe it. It records evidence,
+  not item text — the items live in `todo.md` with their boxes ticked.
 - **`remaining.md`** *(optional)* — an in-flight tier for a **long** stream where several items run
-  at once and knowing *which* is mid-execution matters. Most streams skip it — go straight
-  `todo → completed`. Use it only when the extra tracking earns its keep; don't create it empty.
+  at once and knowing *which* is mid-execution matters. Most streams skip it — the box state already
+  says planned-vs-done. Use it only when the extra tracking earns its keep; don't create it empty.
 - **`issues.md`** — problems hit + candidate solutions + which we chose + why.
 - **`forks.md`** — decision points + options + which we chose + why.
 - **`deviations.md`** — **where the code departs from the plan** (`components/<c>/{design,intent}`).

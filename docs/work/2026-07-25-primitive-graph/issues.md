@@ -225,3 +225,21 @@ cause accepted before the search was exhausted. Both are now fixed — the index
 is closed.
 **Rule.** A stream's index status is machine-read, not decoration: move `blocked` → `open` in the turn
 the last blocker is answered, exactly as with the blocker row itself.
+
+## I23 — PLAN ORDERING: two P3 items depend on P5 authoring (2026-07-25)
+**Problem.** The remaining P3 items cannot be built before P5:
+1. **Rotation reconciliation** — the CPU is meant to swap a piece's definition when its desired
+   `rotation` disagrees with the active def's. But a facing is chosen by **`cell`**
+   ([`WorldBridge.ts:99`](../../../client/webgl/src/game/world/WorldBridge.ts) — "cell selects which grid
+   cell of the master atlas to bake: for a facing kind that's the packed facing"). Reconciling requires
+   the def to record which rotation its cell represents *and* the CPU to resolve a def for a different
+   rotation — i.e. the facing→cell mapping, which is authoring's to supply.
+2. **Deleting `this.lights`** — lights exist only in `seed()` / `EXTRA_LIGHT_TILES` / `__manylights`.
+   Deleting the array before a placement source exists means **no lights at all**; "drive lights from
+   placed prims" presupposes something placing them.
+**Resolution.** Not a wrong plan, a wrong order. Both items move to **P5**, after the authoring path
+lands. P4 (dirty generalisation) has no such dependency and is pulled forward — it operates on records
+that already exist, whoever placed them.
+**Lesson for the plan shape.** Both items *read* as executable ("delete X", "swap Y") while silently
+depending on a later phase. An item is only executable if its inputs exist; phase order should be
+checked against that, not against narrative flow.
