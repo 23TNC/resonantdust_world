@@ -8,13 +8,34 @@ _(P0 landed 2026-07-25 → [`completed.md`](completed.md).)_
 
 _(P1 landed 2026-07-25 → [`completed.md`](completed.md).)_
 
-## P2 — Records: `prim_data` node + `billboard_data` leaf + `light_data`/`definition_data` rewrite
-- Drop the self-address from all four (freeing the u16); apply the new lanes.
-- Reconcile naming ([I8](issues.md#i8)): `prim_data` (node), `billboard_data` (leaf, NEW),
-  `definition_data` (revert from `billboard_definition_data`).
-- Rebuild presence + buckets on 8 slots.
-- Update every shader read site (`fetchLin` decoders in `GATHER_COMMON`/`GATHER_FRAG`/`LIGHT_FRAG`:
-  `receiverCover`, `casterOne`, `billboardNormal`, the light loop).
+## P2d/P2e — `billboard_data` leaf (set 6) + `prim_data` node (set 1)  ← NEXT
+_The degenerate form first: today every `Primitive` is already a **root prim carrying exactly one
+billboard**, so the structure can land behaviour-preservingly and P3 then only adds real nesting._
+
+- **Allocation** (`coldShadowData.ts`): one index serves as **both** the prim id and its billboard id
+  (they are 1:1 in the degenerate case), which halves the bookkeeping.
+  - `prim_data[idx]` (set 1): `R` = absolute `region|zone|tile|unit`; `G` = `child=0`, rotation, hot,
+    cast, z, **`set_a = 6`**; `B` = `id_a = idx`.
+  - `billboard_data[idx]` (set 6, NEW `BILLBOARD_DATA_BASE = 6 * 65536`): `R` = `parent_id = idx` |
+    resolved tile|unit; `G` = layer/rotation/hot/cast/z_offset + authored offsets at the bias-8 zero
+    (`0x88`); `B` = `definition_id`.
+  - Rename the set-1 const `BILLBOARD_BASE` → `PRIM_BASE` (it *is* the node now).
+- **⚠ The non-obvious part — the resolve REFERENCE point.** A billboard leaf stores only `tile|unit`
+  (no `resolved_zone` — [F2](forks.md#f2)/containment), so its period is **16 tiles** and the congruent
+  representative must be taken **near the billboard**, i.e. **the visited bucket tile — NOT the sample
+  point `P`**. In `walkShadow` the sample point can be many tiles from the tile whose bucket is being
+  read, so passing `P` would silently mis-place casters at range. The visited tile IS available at both
+  call sites (`o` in the corridor branch, `lc + (dx,dy)` in the brute branch), so:
+  - add a `vec2 ref` parameter to `casterOne` / `casterCover`, passing `(vec2(o) + 0.5) * UPT`;
+  - `receiverCover` (via `receiverAt`) may pass its bucket tile — those are adjacent to `P`;
+  - add `vec2 resolvedTilePos(uint tile, uint unit, vec2 ref)` — the 16-tile-period sibling of the
+    `resolvedPos` (256-tile) helper P2c added for lights.
+  Alternative if this plumbing proves noisy: give the billboard leaf a `resolved_zone` in its reserved
+  ALPHA (period → 256 tiles, any nearby reference works) — costs 8 reserved bits, removes the parameter.
+- **Decoders to move** (all currently read the set-1 record's `G = position`, `B = orient`):
+  `casterCover`, `receiverCover`, `billboardNormal`, `baseRowOf` — position → `resolvedTilePos`,
+  `definition_id` → `B >> 16`, rotation → `G` bits 26–27, z → `G` bits 16–23.
+- Give the caster-bucket stride a named constant while here ([I17](issues.md#i17)).
 
 ## P3 — The graph: carriers, children, resolution
 - CPU: build/maintain the prim graph; walk roots → stamp each leaf's absolute position + effective
