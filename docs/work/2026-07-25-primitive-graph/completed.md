@@ -70,3 +70,18 @@ The self-address leaves the tile-keyed px, which is what buys back the 8th slot:
 - Bug found + fixed during verification: a desynced slot-stride literal ([I17](issues.md#i17)).
 
 **Verified** on a fresh load: relief and shadows restored, matches the reference. `tsc` clean.
+
+## P2c — `light_data` on the v3 layout (2026-07-25)
+- **Writer**: `R = parent_id | resolved_tile | resolved_unit`, `G = layer|rotation|hot|cast|z_offset|
+  tile_offset|unit_offset` (authored offsets at the **bias-8 zero**, `0x88`), `B = rgb|intensity`,
+  `A = reach | emitter_radius | resolved_zone`. Today's debug lights have no carrier, so `parent_id = 0`
+  and the resolved position is simply the light's own absolute position — P3 replaces that with the real
+  resolve walk.
+- **New shared GLSL `resolvedPos(zone, tile, unit, ref)`**: a leaf stores zone|tile|unit (period 256
+  tiles), and the region is recovered by taking the congruent representative **nearest the reading
+  point** — exact while the separation is under half a period (128 tiles), which any light reach
+  satisfies. This is the mechanism the `resolved_zone` argument was about, now implemented.
+- Both light decoders (`LIGHT_FRAG`, `GATHER_FRAG`) moved to the new field positions.
+- Two stale reads found during verification ([I18](issues.md#i18)).
+
+**Verified** on a fresh load: relief, soft penumbra and shadow direction all correct. `tsc` clean.

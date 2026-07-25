@@ -163,3 +163,13 @@ separate bugs.
 every index from a single `PRES_SLOTS` constant, so widening it was a one-line change. The caster path
 used bare literals. Give the bucket stride its own named constant when P2's record work lands, so the
 next width change cannot desync.
+
+## I18 — Relocating a record's fields: grep the whole LANE, not the block you're editing (2026-07-25)
+**Problem.** Moving `light_data`'s fields to v3, I updated the decode block I was looking at in each
+shader and missed **two** reads elsewhere in `LIGHT_FRAG`: `Lz` (still `(Ld.w >> 24)`, the old z slot —
+now reach's high bits) and the **edge-refine's** `emitter` (still `(Ld.w >> 4)` — now `resolved_zone`).
+Both compiled fine and produced a *plausible* picture, so `tsc` and a glance both passed; the tell was
+**hard-edged shadows** (a garbage `emitter` changes the penumbra) plus a wrong light height.
+**Rule.** When a record's layout moves, `grep` every read of that record's lanes (`Ld.x/.y/.z/.w`,
+`D.x/…`, `Pd.x/…`) across all shader stages and check each one — the same record is decoded in several
+places (gather, lightmap, the fused edge-refine, the overlay), and a stale read is silent.

@@ -442,14 +442,23 @@ export class ColdShadowData {
       let R = 0, G = 0, B = 0, A = 0; // k >= n → a removed light zeroes its record
       if (k < n) {
         const L = lights[k];
-        // v2.1 self-addressing: R = u16 id | u16 reserved; G = position; B = colour;
-        // A = u8 z (24–31) | u12 reach (12–23) | u8 emitter (4–11) | u2 reserved (2–3) | u1 hot (1) | u1 cast_shadows (0).
-        R = ((k & 0xffff) << 16) >>> 0;
-        G = encodePosition(L.x, L.y);
+        // v3 light_data (primitive-graph):
+        //   R = u16 parent_id (16–31) | u8 resolved_tile (8–15) | u8 resolved_unit (0–7)
+        //   G = u4 layer (28–31) | u2 rotation (26–27) | u1 hot_cold (25) | u1 cast_shadows (24)
+        //     | u8 z_offset (16–23) | u8 tile_offset (8–15) | u8 unit_offset (0–7)   (offsets BIAS-8)
+        //   B = u8 r | u8 g | u8 b | u8 intensity
+        //   A = u12 reach (20–31) | u8 emitter_radius (12–19) | u8 resolved_zone (4–11) | u4 reserved
+        // These lights are still the debug scaffold: no carrier (parent 0), so the RESOLVED position is
+        // simply the light's own absolute position and the authored offsets are the bias-8 zero (0x88).
+        // P3 replaces this with a real resolve walk down the prim graph.
+        const pos = encodePosition(L.x, L.y);
+        const zone = (pos >>> 16) & 0xff, tile = (pos >>> 8) & 0xff, unit = pos & 0xff;
+        R = (((0 << 16) | (tile << 8) | unit) >>> 0);
+        const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff), em = clamp(L.emitterRadius / UNIT, 255);
+        G = ((((L.hot ? 1 : 0) << 25) | ((L.castShadows ? 1 : 0) << 24) | (z << 16) | (0x88 << 8) | 0x88) >>> 0);
         const r = clamp(L.color[0] * 255, 255), g = clamp(L.color[1] * 255, 255), b = clamp(L.color[2] * 255, 255);
         B = (((r << 24) | (g << 16) | (b << 8) | clamp(L.intensity * 255, 255)) >>> 0);
-        const z = clamp(L.z / UNIT, 255), reach = clamp(L.reach / UNIT, 0xfff), em = clamp(L.emitterRadius / UNIT, 255);
-        A = (((z << 24) | (reach << 12) | (em << 4) | (L.hot ? 2 : 0) | (L.castShadows ? 1 : 0)) >>> 0);
+        A = (((reach << 20) | (em << 12) | (zone << 4)) >>> 0);
       }
       // Compare-write: a STATIC light's record is unchanged → no command (only movers re-scatter).
       if (m[base] !== R || m[base + 1] !== G || m[base + 2] !== B || m[base + 3] !== A) {

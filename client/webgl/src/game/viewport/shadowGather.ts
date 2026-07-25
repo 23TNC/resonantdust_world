@@ -156,6 +156,19 @@ vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
   uint wty = (((region & 15u) * RD + (zone & 15u)) * ZD + (tile & 15u));
   return vec2(float(wtx * 16u + (anchor >> 4u)), float(wty * 16u + (anchor & 15u)));
 }
+// v3: a leaf stores its RESOLVED position as zone|tile|unit (period = 256 tiles), not an absolute
+// address — the region is recovered by taking the congruent representative NEAREST the reading point.
+// Exact while the true separation is under half a period (128 tiles), which any light reach satisfies.
+vec2 resolvedPos(uint zone, uint tile, uint unit, vec2 ref) {
+  vec2 tl = vec2(float(((zone >> 4) & 15u) * 16u + ((tile >> 4) & 15u)),
+                 float((zone & 15u) * 16u + (tile & 15u)));
+  vec2 un = vec2(float((unit >> 4) & 15u), float(unit & 15u));
+  vec2 lm = tl * UPT + un;                    // position within the 256-tile period, in units
+  float period = 256.0 * UPT;
+  vec2 d = lm - ref;
+  d -= period * floor(d / period + 0.5);      // wrap to the nearest congruent representative
+  return ref + d;
+}
 // #3: a caster billboard's anchor TILE ROW (its base-centre row) — the depth key compared against a receiving
 // thing's row so a sprite standing in front of the caster isn't shadowed. UPT units per tile.
 float casterRowOf(highp usampler2D data, uint billboardIdx) {
@@ -565,17 +578,17 @@ void main() {
     uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
     if (li == 0xffffu) continue;                            // empty slot
     uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // G = position, B = colour|intensity, A = z|reach|hot|…
-    if (int((Ld.w >> 1) & 1u) != uLightClass) continue;     // #4: this pass accumulates only its class
-    vec2 Lxy = decodePos(Ld.y);                             // light ground pos (world units)
+    if (int((Ld.y >> 25) & 1u) != uLightClass) continue;    // #4: this pass accumulates only its class
+    vec2 Lxy = resolvedPos((Ld.w >> 4) & 255u, (Ld.x >> 8) & 255u, Ld.x & 255u, P); // v3 resolved pos
     vec3 col = vec3(float((Ld.z >> 24) & 255u), float((Ld.z >> 16) & 255u), float((Ld.z >> 8) & 255u)) / 255.0;
     float intensity = float(Ld.z & 255u) / 255.0;
-    float reach = float((Ld.w >> 12) & 0xfffu);             // reach (units)
+    float reach = float((Ld.w >> 20) & 0xfffu);             // reach (units)
     vec2 toL = Lxy - P;
     // world-space-lighting P1: TRUE 3D distance instead of the screen radius — the world is a 65° plane, so
     // the N–S screen axis is foreshortened (un-shorten by uNsInv = 1/cos65) and the light sits Lz above the
     // ground. ⟹ the reach is an OVAL (flattened N–S) + a height term (a point under the light isn't at 0).
     // Ground assumption (Pz=0); billboard elevation folds in at P2. Toggle off = the old screen circle.
-    float Lz = float((Ld.w >> 24) & 255u);                  // light height (units)
+    float Lz = float((Ld.y >> 16) & 255u);                  // v3: z_offset (units) moved to G
     float dist; vec3 d3;                                     // world-space delta P→light (for dist + N·L dir)
     if (uWorldLight == 1) {
       d3 = vec3(toL.x, toL.y * uNsInv, Lz);                 // un-foreshorten N–S + light height
@@ -605,7 +618,7 @@ void main() {
     // keep the coarse blended value. Same GROUND-path args as the gather (Pground = P + SHADOW_LIFT, corridor).
     if (uEdgeRefine == 1 && !onBillboard && rbillboardN == 0u && shadow > 0.0 && shadow < 1.0) {
       vec3 L3 = vec3(Lxy, Lz);
-      float emitter = float((Ld.w >> 4) & 255u);
+      float emitter = float((Ld.w >> 12) & 255u);          // v3: emitter_radius moved to A[12:19]
       int reachT = int(reach) / int(UPT) + 1;
       vec2 Pg = P; Pg.y += ${SHADOW_LIFTF};
       float cd;
@@ -678,11 +691,12 @@ void main() {
     uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
     if (li == 0xffffu) continue;                            // empty slot
     uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // v2.1: G = position, A = z|reach|emitter|hot|cast
-    if ((Ld.w & 1u) == 0u) continue;                        // cast_shadows
-    if (int((Ld.w >> 1) & 1u) != uLightClass) continue;     // #4: this pass handles only its class (cold/hot)
-    vec3 L = vec3(decodePos(Ld.y), float((Ld.w >> 24) & 255u));
-    float emitter = float((Ld.w >> 4) & 255u);              // emitter_radius (units) → penumbra width
-    int reachT = int((Ld.w >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin (brute box)
+    if (((Ld.y >> 24) & 1u) == 0u) continue;                // cast_shadows
+    if (int((Ld.y >> 25) & 1u) != uLightClass) continue;    // #4: this pass handles only its class (cold/hot)
+    vec3 L = vec3(resolvedPos((Ld.w >> 4) & 255u, (Ld.x >> 8) & 255u, Ld.x & 255u, P),
+                  float((Ld.y >> 16) & 255u));              // v3 resolved pos + z_offset
+    float emitter = float((Ld.w >> 12) & 255u);             // emitter_radius (units) → penumbra width
+    int reachT = int((Ld.w >> 20) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin (brute box)
     // ONE shadow per texel + an ON-BILLBOARD flag. ON-BILLBOARD = the texel sits on a billboard (maskCov>0) → keep it, NOT
     // cut by the fine presence (a billboard texel isn't ground). We walk the ELEVATED thing point (the climbing
     // shadow, shT). Then — UNLESS the texel is entirely on the billboard — we ADD the GROUND shadow (shG): a straddle
