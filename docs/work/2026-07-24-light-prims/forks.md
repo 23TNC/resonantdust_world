@@ -4,47 +4,43 @@ _Decision points. Order: chronological append. Leans are recommendations; F1/F2 
 [`VARIABLES.md`](../../VARIABLES.md) bands → ratify with the user before building
 ([`blockers.md`](blockers.md))._
 
-## F1 — How does a placed light populate `light_data`? (2026-07-24, OPEN)
-The gather reads a light from the `light_data` band (`VARIABLES.md` rows 128–191: position in G,
-colour/intensity in B, z/reach/emitter/hot/cast in A). If a light becomes a prim, where does the record
-come from?
+## F1 — Is `light_data` the light's placed record, or does a light need a `billboard_data` record too? (2026-07-24, reframed by the vocab)
+The ratified vocab answers most of this: `light_data` (rows 128–191: position in G, colour/intensity in B,
+z/reach/emitter/hot/cast in A) is the **LIGHT presentation's placed record**, symmetric to `billboard_data`
+for the billboard presentation (each carries its own position + presentation data). So:
 
-- **(a) Dual-record — light-prim writes `prim_data` (position + light-def) AND `light_data`.** The
-  `prim_data` record gives the light a placed position that rides the free-list + `markPrimChange`
-  cascade (`coldShadowData.ts:360-391`); `light_data` is **derived** from the prim's position + its
-  light-def each build. Gather read path unchanged. A light can also BE a caster/visual (a torch sprite
-  + a light) since it's a real prim. Cost: position lives in two records → derive keeps them in sync
-  ([issues.md#i3](issues.md#i3)).
-- **(b) Derived-only — keep just `light_data`, no `prim_data` for a light.** "Prim" is conceptual: the
-  light is delivered via a prim list (F3) but its sole record stays `light_data` (position already in G).
-  Minimal churn, no redundant record, gather unchanged — but a light is NOT a real prim (can't also be a
-  caster/visual; doesn't ride the prim free-list — needs its own).
-- **(c) Full-merge — retire `light_data`; light props live in a light-def, gather reads prim→def.**
-  Most unified (one record shape for everything placed), but rewrites the gather's light read
-  (`GATHER_FRAG`/`LIGHT_FRAG` `fetchLin(LIGHT_BASE…)`) and the presence→light indirection.
+- **A pure light writes ONLY `light_data`** — its position (G) + props/def-index. It rides the free-list +
+  scoped cascade via the **light** path (`markLightDirty`), not `billboard_data`. No redundant record, gather
+  read unchanged. (This supersedes the earlier "dual-record for every light" framing, which came from the
+  old confusion of treating a light as a billboard that needed a `billboard_data` record just for position.)
+- **A primitive that presents as BOTH** (an emissive sprite — torch + glow) writes `billboard_data` **and**
+  `light_data`, sharing the one placement position; a move compare-writes both (a static one still emits no
+  command).
 
-**Lean: (a).** It makes "a light is a prim" literally true (rides the caster free-list, eviction, and
-`markPrimChange` cascade for free) and lets an emissive thing be one object with both a sprite and a
-light — the general model the downstream effects want. Keep `light_data` as the derived read target so
-the bake is untouched. (b) is the minimal-viable if lights must stay position-only for now; (c) is a
-later unification, not worth the gather rewrite yet.
+**Open sub-point (the only real decision left):** for the both-presentations case, is position a single
+source in one record **derived** into the other, or **written to both** from the shared primitive placement?
+**Lean: written to both from the placement** — each presentation's record stays authoritative for its own
+read path (no hot-loop indirection), and compare-write keeps static ones command-free. ([issues.md#i3](issues.md#i3).)
+A later full-merge (retire `light_data`, read light props from a def in the gather) is possible but rewrites
+the gather's light read (`fetchLin(LIGHT_BASE…)`) — not worth it now.
 
 ## F2 — Where do a light's static properties live (the "light def")? (2026-07-24, OPEN)
 Colour / reach / emitter_radius / z-height / hot / cast_shadows — per placed light, or shared by type?
 
-- **(a) Dedicated light-def band** (parallel to `prim_definition_data`): "torch" / "moonlight" are defs;
+- **(a) Dedicated light-def band** (parallel to `billboard_definition_data`): "torch" / "moonlight" are defs;
   a placed light references one + carries only a position (+ overrides). Matches the prim→def
   indirection; shared types cost one def. New band in `VARIABLES.md`.
-- **(b) Reuse `prim_definition_data` with a light flag.** One def band for casters + lights. Fewer
-  bands, but overloads the def: a caster def is an **atlas frame** (frame_x/y/lod/nudge — geometric); a
-  light def is **radiometric** (colour/reach) — disjoint fields sharing 4 texels awkwardly.
+- **(b) Reuse `billboard_definition_data` with a light flag.** One def band for both. But the vocab makes
+  this a category error: a billboard def is an **atlas frame** (frame_x/y/lod/nudge — geometric); a light
+  def is **radiometric** (colour/reach) — different presentations, disjoint fields, awkward sharing.
 - **(c) No def — props inline on the light record** (as `light_data` is today). Simplest; no def reuse;
   every placed light carries full props (no "torch type" sharing). 
 
-**Lean: (a)** for the documented future (many light types — [preserve-future-intent]) — a dedicated
-light-def keeps the caster-def clean and gives shared light types. **(c)** is the honest minimal start
-if only a handful of ad-hoc lights exist; it's a strict subset of (a) (inline == a def-of-one), so
-starting (c) and adding the def band later is low-regret.
+**Lean: (a)** — a `light_definition_data` band **parallel to `billboard_definition_data`** is the symmetric
+model the vocab implies (billboard: def + data; light: def + data). Keeps the two presentations cleanly
+separate and gives shared light types for the many-lights future ([preserve-future-intent]). **(c)** is the
+honest minimal start (inline == a def-of-one, a strict subset of (a)), so shipping (c) and adding the def
+band when a second light type exists is low-regret. The vocab **rules (b) out**.
 
 ## F3 — How does `tick()` receive the lights? (2026-07-24, OPEN)
 Today `tick(standing, resolver, win)` gets `standing = SquareCache.standingPrims()` (zIndex ≥ 1,

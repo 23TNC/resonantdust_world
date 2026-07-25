@@ -287,8 +287,8 @@ window; textile resolutions per the lighting-rebuild map-model). Work streams:
 The texture is **16 u16-addressable SETS** (1024×64 each; `set = linear >> 16`, in-set id = the low u16):
 
 ```
-set 0   rows   0–63    prim_definition_data   1 px per def
-set 1   rows  64–127   prim_data              1 px per placed caster (2/px RETIRED)
+set 0   rows   0–63    billboard_definition_data   1 px per def
+set 1   rows  64–127   billboard_data              1 px per placed caster (2/px RETIRED)
 set 2   rows 128–191   light_data             1 px per light record
 set 3   rows 192–255   light_presence_lo      1 px per TILE (region-torus fold) — light slots 0–6
 set 4   rows 256–319   caster_buckets         1 px per TILE (region-torus fold) — 7 caster slots
@@ -300,6 +300,14 @@ set 15  row  1023 tail constants px (in-set id 64 512):
           (tilt_centideg = world ground tilt × 100, e.g. 65.00° → 6500; every lighting shader reads
            the live angle from here instead of a compile-time literal or a dedicated uniform)
 ```
+
+**Naming — a PRIMITIVE presents as a BILLBOARD or a LIGHT.** A *primitive* is a DSL-declared world
+object (delivered through the cache as `Primitive`). It can present in more than one way: as a
+**billboard** (a view-plane sprite — trees, pawns; the shadow *caster* + lit surface) or as a **light**
+(an emitter). The data-texture records are per-**presentation**: `billboard_definition_data` +
+`billboard_data` hold the billboard presentation (atlas-frame def + placed record); `light_data` holds
+the light presentation. (Renamed 2026-07-24 from `prim_*` — "prim" ambiguously meant the billboard;
+"primitive" is now the umbrella. See [`work/2026-07-24-light-prims`](work/2026-07-24-light-prims/README.md).)
 
 **DATA holds PERSISTENT state only** — a map lives here iff it survives across frames and changes on
 events (object created/moved/destroyed, zone streamed/evicted). `shadow_dirty` (rebuilt per frame)
@@ -350,7 +358,7 @@ fill = 1 header px + 16 pure-payload SECTIONS in set order (1 px per command; �
   section k: counts[k] payload px — each the full RGBA32UI record (self-addressing via R's id)
 ```
 
-**Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `reach`, opaque `prim_width/height`, the
+**Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `reach`, opaque `billboard_width/height`, the
 anchor `offset`) is in **units**, a compile-time constant `1 unit = SQUARE/16 = 4px` (`TILE = 16 units`,
 derivable — not stored). The shader works in units; no per-frame scale uniform. The **only** exception is the
 silhouette `frame_*` fields, which are **texture pixels** (they index the atlas page, a different space).
@@ -375,7 +383,7 @@ B  u32 colour        u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intens
 A  u32 reach         u8 z (24–31, units) | u12 reach (12–23, units) | u8 emitter_radius (4–11, units) | u2 reserved (2–3) | u1 hot (1, dynamic→hot class) | u1 cast_shadows (0)
 ```
 
-**`prim_data` band** (rows 64–127) — **1 px per placed caster** (F1: the 2-prims/px packing is RETIRED —
+**`billboard_data` band** (rows 64–127) — **1 px per placed caster** (F1: the 2-prims/px packing is RETIRED —
 scatter commands write whole records, the shader drops the half-texel select, 64 spare bits/prim); **index 0
 is a sentinel**, so usable prim indices are **1..65 535**. The single place a prim's position + definition
 live (move → one texel). The position is the prim's **true game anchor** (full-box base-centre) — the def's
@@ -388,8 +396,8 @@ B  u32 orient    u8 z (24–31, units) | u2 rotation (22–23, 0=S 1=E 2=N 3=W) 
 A  u32 reserved
 ```
 
-**`prim_definition_data` band** (rows 0–63) — **one px per ATLAS FRAME**: defs are
-**IMMUTABLE**, keyed `(stem, cell, lod)` — a new lod landing mints a NEW def, and `prim_data` keeps whatever
+**`billboard_definition_data` band** (rows 0–63) — **one px per ATLAS FRAME**: defs are
+**IMMUTABLE**, keyed `(stem, cell, lod)` — a new lod landing mints a NEW def, and `billboard_data` keeps whatever
 def it holds until the writer swaps its `definition_index`, which rides the **prim dirty cascade** (prim
 tiles → lights reaching them → those lights' cast regions). Nothing ever rewrites a def, so texture/def
 changes cost exactly a prim update. The lod-0 def is the LOOSE fallback (full-footprint box, solid quad).
@@ -402,7 +410,7 @@ bbox against the prim's position:
 
 ```
 R  u32   u16 id (16–31, self-addressing — v2.1) | u10 offset_x (6–15, units) | u6 reserved (0–5)
-G  u32   u9 prim_width (23–31, 2-unit steps) | u9 prim_height (14–22, 2-unit steps)
+G  u32   u9 billboard_width (23–31, 2-unit steps) | u9 billboard_height (14–22, 2-unit steps)
          | u4 frame_span (10–13, tiles − 1; width = log2(ZONE_DIM)) | u10 offset_y (0–9, units)
          (offsets UNSIGNED, frame-relative: the bbox top-left indexed into the frame — no bias)
 B  u32   u10 frame_x (22–31, 16-px grid) | u10 frame_y (12–21, 16-px grid) | u4 frame_page (8–11)
@@ -416,7 +424,7 @@ A  u32   u12 nudge_x (20–31, px, signed +2048) | u12 nudge_y (8–19, px, sign
 (pow2 frame over a pow2-tile span) — never fractional. `frame_lod < 4` ⇒ no silhouette resolved → solid quad.
 
 **Field sizing.**
-- `prim_width/height` — **u9 in 2-unit steps** (even bbox ⟹ integral half-anchors): ≤1022 units ≈ 4-zone
+- `billboard_width/height` — **u9 in 2-unit steps** (even bbox ⟹ integral half-anchors): ≤1022 units ≈ 4-zone
   headroom over the 256-unit (one-zone) per-prim ceiling.
 - `frame_span` — **u4 = span tiles − 1**, capped at one zone; the width is `log2(ZONE_DIM)` so bumping the
   zone size drags the field with it. Valid values are pow2 tiles (1/2/4/8/16) — required for integer ppu;
@@ -427,7 +435,7 @@ A  u32   u12 nudge_x (20–31, px, signed +2048) | u12 nudge_y (8–19, px, sign
 - `frame_lod` — **u4** side exponent (4..14): replaces a w/h pair — frames are square pow2, one exponent.
 - `frame_anchor_x/y` — **u2**: 0 none | 1 half | 2 full shift of the bbox against the prim position
   (3×3 = TL..BR). Shadow casters use bottom-center (1, 2); rotation=W mirrors anchor_x. The gather applies
-  `bbox_anchored − fullbox_anchored` so `prim_data`'s base-centre position keeps working (F3: reported-x/y
+  `bbox_anchored − fullbox_anchored` so `billboard_data`'s base-centre position keeps working (F3: reported-x/y
   positions land with the DSL size rework).
 - `nudge_x/y` — **u12 px at the resolved lod, both signed (+2048 bias)** (rewritten on lod swap): sample
   start = `offset·ppu − nudge`. ±2048 covers 2 units × the max ppu 1024 in EITHER direction, so any
@@ -443,7 +451,7 @@ window): per tile the **nearest ≤ 8 reaching lights** as `8× u16` light indic
 0–1 high|low, G 2–3, B 4–5, A 6–7). CPU-rebuilt on light/window change. Bounds the gather to O(8) lights/texel.
 
 **`caster_buckets`** — a **`cols×rows`** `RGBA32UI` **textile_tile map**: per tile **≤ 8 casters** as `8× u16`
-`prim_data` indices (same slot packing as presence; `0` = empty). A caster is bucketed into every tile its
+`billboard_data` indices (same slot packing as presence; `0` = empty). A caster is bucketed into every tile its
 tilted card's ground extent spans (base row up to `0.5·cos65°·H` above). The gather's reach-walk reads these.
 
 **`shadow_dirty`** — a **`cols×rows`** `R8UI` **textile_tile map**, **nonzero = recompute**; gates the

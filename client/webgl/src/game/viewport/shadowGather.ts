@@ -2,8 +2,8 @@
 //! (`2026-07-21-shadow-bitfield`). Each cold light is one bit in a world-space toroidal `RGBA32UI`
 //! `shadow-cold` buffer; a fragment computes its texel's full 128-bit mask by looping the reaching
 //! lights, testing point-in-projected-silhouette against each light's casters, and OR-ing bits in a
-//! register — one write, no ping-pong (F1). Data comes from `ColdShadowData` (`light_data` / `prim_data`
-//! / `prim_definition_data`) via `texelFetch`. Layouts authoritative in `docs/VARIABLES.md`.
+//! register — one write, no ping-pong (F1). Data comes from `ColdShadowData` (`light_data` / `billboard_data`
+//! / `billboard_definition_data`) via `texelFetch`. Layouts authoritative in `docs/VARIABLES.md`.
 //!
 //! Build order (deviation D-1): this slice is **P4-core** — full recompute each frame, **all** lights
 //! (no presence cull yet), the exact fan region (roles 0–6 → 5 triangles) as the per-fragment predicate
@@ -57,7 +57,7 @@ const UNITF = UNIT.toFixed(4);
 const WORLD_TILT_DEG = 55;                    // DEFAULT ground tilt — 55° felt right for the projection (user,
                                              // 2026-07-24; 65° oval too squished, 45° ground too steep).
                                              // LIVE value rides the data map; `__tilt(deg)` sweeps it live.
-/** shadows-onto-prims: a billboard pixel drawn Δ units above its own base has fictional height
+/** shadows-onto-billboards: a billboard pixel drawn Δ units above its own base has fictional height
  *  `sin(WORLD_TILT)·Δ` (the ratified world-geometry model) — the DEFAULT receiver-elevation gain that makes
  *  a cast shadow climb the sprite. `__elevk(k)` tunes the climb by eye; 0 collapses it to the flat ground
  *  shadow. Empirical because the caster card runs its own internal ratio (the documented 0.5 north offset). */
@@ -69,10 +69,10 @@ const INV_COS_TILT_DEFAULT = 1 / Math.cos(WORLD_TILT_DEG * Math.PI / 180);
 /** Lift the rendered shadow up (toward smaller world-y) by this many world units — a fragment shows
  *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Closes the ~1
  *  unit gap between the shadow base and the sprite's drawn base (a fixed anchor discrepancy: the sprite
- *  bottom sits ~1 unit south of the prim base-centre the shadow projects from). `__lift(u)` tunes live. */
+ *  bottom sits ~1 unit south of the billboard base-centre the shadow projects from). `__lift(u)` tunes live. */
 const SHADOW_LIFT = 3.0;             // units the shadow slides up to seat on the sprite base (sprite bottom
-                                    // sits ~3 units south of the prim base-centre the shadow projects from)
-/** shadows-onto-prims: the receiver MASK (receiverCover) cuts the sprite-shaped hole slightly OFF from the
+                                    // sits ~3 units south of the billboard base-centre the shadow projects from)
+/** shadows-onto-billboards: the receiver MASK (receiverCover) cuts the sprite-shaped hole slightly OFF from the
  *  drawn albedo — the def tight-bbox anchor (`Ac`, from coldShadowData) doesn't land exactly where the
  *  sprite is drawn (thingPlacement). Empirically it sits ~2 units too far SOUTH and ~0.5 unit too far EAST,
  *  so shift the mask NORTH-WEST by this to seat the cut on the sprite. NOT a shadow-field shift — it's where
@@ -85,17 +85,17 @@ const RECV_ALIGN_X = 0.0;
 const RECV_ALIGN_Y = 0.0;
 const RECV_ALIGN_XF = RECV_ALIGN_X.toFixed(1);
 const RECV_ALIGN_YF = RECV_ALIGN_Y.toFixed(1);
-/** shadows-onto-prims: the seen-face cull excludes casters that aren't strictly SOUTH of the receiver base
+/** shadows-onto-billboards: the seen-face cull excludes casters that aren't strictly SOUTH of the receiver base
  *  — widened into a UNIT band so a caster within this many units of the receiver's base (nearly the same y,
  *  i.e. self / same-object) is also excluded, killing near-self shadow. Measured in world units (user). */
 const SELF_BAND = 4.0;
 const SELF_BANDF = SELF_BAND.toFixed(1);
-/** shadows-onto-prims: extend the shadow quad's BASE (contact) edge this many units SOUTH — tucking the
+/** shadows-onto-billboards: extend the shadow quad's BASE (contact) edge this many units SOUTH — tucking the
  *  bottom of the shadow into the caster's own footprint/trunk (which reads dark / is under the sprite, so
  *  it's not visibly coloured) to close the seam at the shadow base (user nit). */
 const SHADOW_BASE_PUSH = 0.75;
 const SHADOW_BASE_PUSHF = SHADOW_BASE_PUSH.toFixed(2);
-/** shadows-onto-prims: fade the receiver MASK to GROUND over this many units at the sprite BASE. Without it
+/** shadows-onto-billboards: fade the receiver MASK to GROUND over this many units at the sprite BASE. Without it
  *  the mask claims the trunk base as a thing texel, whose thing-path self-excludes the caster → the ground
  *  contact shadow (incl. the pushed base) gets CULLED there, leaving a lit seam. Fading the bottom band to
  *  ground lets that contact shadow show (thing ≈ ground at the base anyway). Units (user nit). */
@@ -132,7 +132,7 @@ const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
 const uint  ZD = 16u, RD = 16u;  // ZONE_DIM, REGION_DIM
 // THE unified data texture (1024×1024): linear index → texel; 64-row bands (VARIABLES.md).
-const int DEF_BASE = 0, PRIM_BASE = 65536, LIGHT_BASE = 131072, CONST_BASE = 1047552; // row 1023
+const int BILLBOARD_DEF_BASE = 0, BILLBOARD_BASE = 65536, LIGHT_BASE = 131072, CONST_BASE = 1047552; // row 1023
 const int PRESENCE_BASE = 196608, CASTER_BASE = 262144, PRESENCE_HI_BASE = 327680; // tile-keyed sets 3, 4, 5
 uvec4 fetchLin(highp usampler2D t, int i) { return texelFetch(t, ivec2(i & 1023, i >> 10), 0); }
 // Region-torus zone-strip fold: world tile → in-set id (matches TS foldTile). World tiles ≥ 0.
@@ -156,10 +156,10 @@ vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
   uint wty = (((region & 15u) * RD + (zone & 15u)) * ZD + (tile & 15u));
   return vec2(float(wtx * 16u + (anchor >> 4u)), float(wty * 16u + (anchor & 15u)));
 }
-// #3: a caster prim's anchor TILE ROW (its base-centre row) — the depth key compared against a receiving
+// #3: a caster billboard's anchor TILE ROW (its base-centre row) — the depth key compared against a receiving
 // thing's row so a sprite standing in front of the caster isn't shadowed. UPT units per tile.
-float casterRowOf(highp usampler2D data, uint primIdx) {
-  return floor(decodePos(fetchLin(data, PRIM_BASE + int(primIdx)).y).y / UPT);
+float casterRowOf(highp usampler2D data, uint billboardIdx) {
+  return floor(decodePos(fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).y).y / UPT);
 }
 // The WORLD ground tilt (radians), read from the data map's constants A reserve (centidegrees). Lives in the
 // DATA MAP (not a dedicated uniform) so every lighting shader gets the angle for free; __tilt(deg) sets it
@@ -199,7 +199,7 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, highp usampler2D dat
   bool neg = d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0 && d3 <= 0.0;
   return (pos || neg) ? 1.0 : 0.0;               // solid quad: 1 occluded, 0 lit
 }
-// Coverage of one caster (prim index into prim_data) at P from light L: read the prim record + its
+// Coverage of one caster (billboard index into billboard_data) at P from light L: read the billboard record + its
 // definition (position + geo W/H), then the pure-quad test; if occluded, apply the sprite's SHAPE
 // (P4) — invert P back to the card's (s,t) (in-range BY CONSTRUCTION: P is inside the projected
 // quad, so no u/v-out-of-range class of reject exists) and sample the surface silhouette (coverage,
@@ -212,7 +212,7 @@ vec2 emitterOffset(int i) {
   if (i <= 6) { float a = (float(i) - 1.0) / 6.0 * 6.2831853; return 0.55 * vec2(cos(a), sin(a)); }
   float a = (float(i) - 7.0) / 9.0 * 6.2831853 + 0.4; return vec2(cos(a), sin(a));
 }
-// Coverage of one caster (prim index into prim_data) at P from light L. Reads the prim record + its
+// Coverage of one caster (billboard index into billboard_data) at P from light L. Reads the billboard record + its
 // definition (position + geo W/H + frame), places the tilted card, then computes a GROUND-PROJECTED
 // penumbra by AREA-LIGHT sampling: the light is a disk of radius emitter (units) at height Lz; for
 // each sub-light we re-invert the ground projection P → card (s,t) and sample the HARD silhouette
@@ -222,14 +222,14 @@ vec2 emitterOffset(int i) {
 // base), a high edge moves a lot (soft tip, detail dissolving), and points just outside the true edge
 // are covered by only SOME sub-lights (soft outer perimeter, no hard card boundary). lod<4 (no
 // silhouette resolved) or a point light (emitter≈0) falls back to the solid/hard quad.
-float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D data, sampler2D surf) {
-  if (primIdx == 0u) return 0.0;
-  uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));      // v2.1: R = id|reserved, G = position, B = orient
+float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, highp usampler2D data, sampler2D surf) {
+  if (billboardIdx == 0u) return 0.0;
+  uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));      // v2.1: R = id|reserved, G = position, B = orient
   uint pos = Pd.y;
   uint orient = Pd.z;
-  vec2 A = decodePos(pos);                                  // the prim's stored anchor (full-box base-centre)
+  vec2 A = decodePos(pos);                                  // the billboard's stored anchor (full-box base-centre)
   int defIdx = int((orient >> 6) & 0xffffu);
-  uvec4 D = fetchLin(data, DEF_BASE + defIdx);
+  uvec4 D = fetchLin(data, BILLBOARD_DEF_BASE + defIdx);
   // v2.1: R = u16 id | u10 offset_x | u6 reserved; G = u9 W | u9 H | u4 span (tiles−1) | u10 offset_y.
   // B: frame origin (16-px grid) + page + lod exponent + 3x3 anchors. A: nudges.
   float W = float(((D.y >> 23) & 511u) * 2u);
@@ -239,8 +239,8 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D 
   uint lod = (D.z >> 4) & 15u;
   float axf = float((D.z >> 2) & 3u), ayf = float(D.z & 3u); // anchors: 0 none | 1 half | 2 full
   // Anchor shift (units): the bbox's anchored point minus the FULL footprint box's same-anchored
-  // point — prim_data stores the full box's base-centre (= anchor 1,2), so shadows land the bbox's
-  // base-centre on it; general anchors go live when prim_data carries reported x/y (F3/P5).
+  // point — billboard_data stores the full box's base-centre (= anchor 1,2), so shadows land the bbox's
+  // base-centre on it; general anchors go live when billboard_data carries reported x/y (F3/P5).
   vec2 sh = vec2(ox + 0.5 * axf * W - 0.5 * axf * spanU,
                  oy + 0.5 * ayf * H - 0.5 * ayf * spanU);
   uint rot = (orient >> 22) & 3u;                           // 1 = E, 3 = W (mirrored E)
@@ -287,18 +287,18 @@ float casterCover(uint primIdx, vec2 P, vec3 L, float emitter, highp usampler2D 
   }
   return cov / 16.0;
 }
-// shadows-onto-prims (attempt #3, IN-FAMILY): is world point P inside prim's UPRIGHT drawn billboard, and
-// opaque there? Returns the prim's base tile ROW if so (drives the receiver elevation), else -1. Mirrors
-// casterCover's prim/def decode, but with NO light projection — the sprite is drawn parallel to the view, so
+// shadows-onto-billboards (attempt #3, IN-FAMILY): is world point P inside billboard's UPRIGHT drawn billboard, and
+// opaque there? Returns the billboard's base tile ROW if so (drives the receiver elevation), else -1. Mirrors
+// casterCover's billboard/def decode, but with NO light projection — the sprite is drawn parallel to the view, so
 // (s,t) come straight from P's offset in the [Ac.x±W/2] × [Ac.y−H .. Ac.y] rect. Reads ONLY the data texture
 // + surface atlas by index — never a textile_slot map by world coord — so it is zoom-stable by construction.
-float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out float baseYOut) {
+float receiverCover(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out float baseYOut) {
   baseYOut = 0.0;
-  uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));
+  uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));
   vec2 A = decodePos(Pd.y);
   uint orient = Pd.z;
   int defIdx = int((orient >> 6) & 0xffffu);
-  uvec4 D = fetchLin(data, DEF_BASE + defIdx);
+  uvec4 D = fetchLin(data, BILLBOARD_DEF_BASE + defIdx);
   float W = float(((D.y >> 23) & 511u) * 2u);
   float H = float(((D.y >> 14) & 511u) * 2u);
   if (W <= 0.0 || H <= 0.0) return -1.0;
@@ -313,7 +313,7 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf,
   Ac -= align;                                             // seat on the drawn albedo — shadow + lighting pass their OWN offset
   float s = (P.x - (Ac.x - 0.5 * W)) / W;                   // 0 left → 1 right of the drawn rect
   float t = (Ac.y - P.y) / H;                              // 0 at the base → 1 at the top (north)
-  if (s < 0.0 || s > 1.0 || t < 0.0 || t > 1.0) return -1.0; // outside the drawn billboard → not this prim
+  if (s < 0.0 || s > 1.0 || t < 0.0 || t > 1.0) return -1.0; // outside the drawn billboard → not this billboard
   baseYOut = Ac.y;                                          // EXACT receiver base y (units) — not row-quantised
   // Fade the mask to GROUND over the bottom band so the ground contact-shadow shows at the trunk base
   // (else the mask claims it as a thing texel and the thing-path self-excludes → a lit seam).
@@ -327,43 +327,43 @@ float receiverCover(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf,
   vec2 uv = vec2(fx, fy) + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(s * W, (1.0 - t) * H) * ppu;
   if (uv.x < fx || uv.x >= fx + side || uv.y < fy || uv.y >= fy + side) return 0.0; // outside frame → gap (0 cover)
   // HARD presence at the composite's 0.5 contour (the same threshold the MRT bake discards at) — sampling the
-  // sub-0.5 anti-aliased ramp let a prim's normal reach ~2px PAST its crisp silhouette onto the neighbour.
+  // sub-0.5 anti-aliased ramp let a billboard's normal reach ~2px PAST its crisp silhouette onto the neighbour.
   return (texelFetch(surf, ivec2(uv), 0).b >= 0.5 ? 1.0 : 0.0) * bf; // presence (0/1) × base fade
 }
-// Which standing prim is DRAWN at texel P, and its base row? Scan the caster buckets a few rows SOUTH (a
-// billboard draws NORTH of its base, so the covering prim's base sits at/south of the drawn texel), test each
-// prim's upright silhouette, and take the FRONTMOST (southmost = max row) cover. -1 = ground (no prim drawn).
+// Which standing billboard is DRAWN at texel P, and its base row? Scan the caster buckets a few rows SOUTH (a
+// billboard draws NORTH of its base, so the covering billboard's base sits at/south of the drawn texel), test each
+// billboard's upright silhouette, and take the FRONTMOST (southmost = max row) cover. -1 = ground (no billboard drawn).
 // The buckets + surface are contiguous/index-addressed (zoom-safe); this is the in-family replacement for the
 // reverted attempt's zdepth-composite read.
-float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out uint rprim, out float rcov) {
+float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out uint rbillboard, out float rcov) {
   int wc = int(floor(P.x / UPT));
   int r0 = int(floor(P.y / UPT));
   float best = -1.0;
-  rprim = 0u;                                                // the winning (frontmost) receiver prim — for self-exclusion
+  rbillboard = 0u;                                                // the winning (frontmost) receiver billboard — for self-exclusion
   rcov = 0.0;                                                // its soft silhouette coverage at P (the edge blend)
   for (int dy = 0; dy <= 5; dy++) {                         // constant bound; covers billboards up to ~5 tiles
     uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(wc, r0 + dy));
     for (int c = 0; c < 7; c++) {
-      uint primIdx = tileSlot(cb, c);
-      if (primIdx == 0u) continue;
-      float brOut; float cov = receiverCover(primIdx, P, data, surf, align, brOut);
-      if (cov > 0.0 && brOut > best) { best = brOut; rprim = primIdx; rcov = cov; } // frontmost cover wins row+prim+cov
+      uint billboardIdx = tileSlot(cb, c);
+      if (billboardIdx == 0u) continue;
+      float brOut; float cov = receiverCover(billboardIdx, P, data, surf, align, brOut);
+      if (cov > 0.0 && brOut > best) { best = brOut; rbillboard = billboardIdx; rcov = cov; } // frontmost cover wins row+billboard+cov
     }
   }
   return best;
 }
-// lightmap (CO-PACK): the world-frame NORMAL at texel P for the prim DRAWN there. The four maps are quadrants
+// lightmap (CO-PACK): the world-frame NORMAL at texel P for the billboard DRAWN there. The four maps are quadrants
 // of ONE co-packed atlas frame, so the NORMAL quadrant = the SURFACE frame origin + (side, -side) on the SAME
 // page (uSurface) — identical frameRel to the silhouette in receiverCover, only the quadrant origin shifted.
 // Frame-indexed (NOT a world-coord composite read) → zoom-stable; present at EVERY lod the surface is (same
 // frame). Returns vec3(0) when unavailable (no silhouette lod / outside frame) → caller uses a flat up.
-vec3 primNormal(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out float sOut) {
+vec3 billboardNormal(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out float sOut) {
   sOut = -1.0;
-  uvec4 Pd = fetchLin(data, PRIM_BASE + int(primIdx));
+  uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));
   vec2 A = decodePos(Pd.y);
   uint orient = Pd.z;
   int defIdx = int((orient >> 6) & 0xffffu);
-  uvec4 D = fetchLin(data, DEF_BASE + defIdx);
+  uvec4 D = fetchLin(data, BILLBOARD_DEF_BASE + defIdx);
   float W = float(((D.y >> 23) & 511u) * 2u);
   float H = float(((D.y >> 14) & 511u) * 2u);
   if (W <= 0.0 || H <= 0.0) return vec3(0.0);
@@ -394,13 +394,13 @@ vec3 primNormal(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, vec
   if (rot == 3u) n.x = -n.x;                                // mirror the normal's X with the frame
   return normalize(n);
 }
-// shadows-onto-prims: ONE per-caster test shared by the corridor + brute walks (so both stay bit-identical —
+// shadows-onto-billboards: ONE per-caster test shared by the corridor + brute walks (so both stay bit-identical —
 // the P6 identity invariant). Q = the point whose shadow we sample (ground texel = the lifted texel; thing
 // texel = the elevated pixel's ground projection G). Two THING-only culls (the user's cone method):
-//   (0) SELF — the caster must not be the receiver's OWN prim. The row cull (1) can't catch this on its own:
+//   (0) SELF — the caster must not be the receiver's OWN billboard. The row cull (1) can't catch this on its own:
 //       the receiver row derives from the tight-bbox base (Ac) while a caster's row derives from the raw
-//       anchor (prim.y+height), so "same prim" is NOT "same row". Exact prim-id match kills self-casting
-//       (the user: prim == prim → cull).
+//       anchor (billboard.y+height), so "same billboard" is NOT "same row". Exact billboard-id match kills self-casting
+//       (the user: billboard == billboard → cull).
 //   (1) SEEN-FACE + NEAR BAND — the caster's base must be more than SELF_BAND units SOUTH of the receiver
 //       base (Cb.y > Rbase.y + SELF_BAND), measured in UNITS. Billboards are seen from the south, so a
 //       shadow only lands on the VISIBLE face when the caster is in front (south) of the receiver; a caster
@@ -409,17 +409,17 @@ vec3 primNormal(uint primIdx, vec2 P, highp usampler2D data, sampler2D surf, vec
 //   (2) LIGHT-SIDE — the caster must sit between the light and the receiver: dot(Cb−Rbase, Rbase−L) < 0.
 //       (A north light + a caster south of the receiver would otherwise false-positive.)
 // Returns coverage + the caster row.
-float casterOne(uint primIdx, vec2 Q, vec3 L, float emitter, bool isThing, uint rprim, vec2 Rbase,
+float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, bool isThing, uint rbillboard, vec2 Rbase,
                 highp usampler2D data, sampler2D surf, out float row) {
   row = 0.0;
-  if (primIdx == 0u) return 0.0;
-  vec2 Cb = decodePos(fetchLin(data, PRIM_BASE + int(primIdx)).y); // caster base (anchor = base-centre)
+  if (billboardIdx == 0u) return 0.0;
+  vec2 Cb = decodePos(fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).y); // caster base (anchor = base-centre)
   if (isThing) {
-    if (primIdx == rprim) return 0.0;                       // (0) self — exact same prim → no self-cast
+    if (billboardIdx == rbillboard) return 0.0;                       // (0) self — exact same billboard → no self-cast
     if (Cb.y <= Rbase.y + ${SELF_BANDF}) return 0.0;        // (1) seen-face + near-band (units): caster must be >SELF_BAND south
     if (dot(Cb - Rbase, Rbase - L.xy) >= 0.0) return 0.0;   // (2) caster must block the light reaching it
   }
-  float cc = casterCover(primIdx, Q, L, emitter, data, surf);
+  float cc = casterCover(billboardIdx, Q, L, emitter, data, surf);
   if (cc > 0.0) row = floor(Cb.y / UPT);
   return cc;
 }
@@ -428,7 +428,7 @@ float casterOne(uint primIdx, vec2 Q, vec3 L, float emitter, bool isThing, uint 
 // point and blend them at the silhouette edge. corr selects the path; the two must stay bit-identical (P6).
 // reachT bounds the brute box (unused by the corridor). In GATHER_COMMON so the lightmap bake can re-run it at
 // fine res to sharpen the shadow edge (shadow-edge-refine).
-float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rprim, vec2 Rbase,
+float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, vec2 Rbase,
                  int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
   cdepth = 0.0;
   float cov = 0.0;
@@ -445,8 +445,8 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rprim, vec2 R
         ivec2 o = qt + ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0));
         uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(o.x, o.y));
         for (int c = 0; c < 7; c++) {
-          uint primIdx = tileSlot(cb, c);
-          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, rprim, Rbase, data, surf, r);
+          uint billboardIdx = tileSlot(cb, c);
+          float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -459,8 +459,8 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rprim, vec2 R
         if (dx < -reachT || dx > reachT) continue;
         uvec4 cb = fetchLin(data, CASTER_BASE + foldTile(lc.x + dx, lc.y + dy));
         for (int c = 0; c < 7; c++) {
-          uint primIdx = tileSlot(cb, c);
-          float r; float cc = casterOne(primIdx, Q, L, emitter, isThing, rprim, Rbase, data, surf, r);
+          uint billboardIdx = tileSlot(cb, c);
+          float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -496,11 +496,11 @@ uniform int uLightClass;           // #4: accumulate only this class of light �
 uniform int uWorldLight;           // world-space-lighting: 1 = TRUE-3D falloff distance (oval + light height), 0 = screen circle
 uniform float uNsInv;              // world-space-lighting: N–S un-foreshorten factor (1/cos65 ≈ 2.366; live-tunable)
 uniform sampler2D uSurface;        // lightmap (CO-PACK): the shared sprite atlas — silhouette (surface quadrant) AND normal (normal quadrant)
-uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = paint the sampled prim normal into oLight
+uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = paint the sampled billboard normal into oLight
 uniform float uNormalPitch;        // lightmap (__pitchnormal): standing-billboard normal pitch (rad, 90°−tilt; live, F7-reconsidered)
 uniform vec2 uLightAlign;          // lightmap (__lightalign): the LIGHTING receiver-mask seat (units, NW), decoupled from the shadow's RECV_ALIGN
 uniform int uEdgeRefine;           // shadow-edge-refine (__edgerefine): 1 = re-test the caster silhouette at fine res on (0,1) edge texels
-uniform int uHideRight;            // DEBUG (__hideright): 1 = blank the right half of each prim's normal in __shownormal
+uniform int uHideRight;            // DEBUG (__hideright): 1 = blank the right half of each billboard's normal in __shownormal
 // lightmap P1: sprite-tangent normal to the WORLD frame. Rotate the flat/ground basis (image-up = north, out
 // = up) up by phi about the EAST axis: phi 0 = ground (lies in the plane), phi = 90deg minus tilt = a standing
 // billboard treated perpendicular to the ground. Image +Y is sprite-north = world -y, so it flips in.
@@ -532,14 +532,14 @@ void main() {
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
   ivec2 fcC = fc / FINE;                                       // the coarse SHADOW texel this fine texel upsamples
 
-  // lightmap P0 (__shownormal): verify the atlas-frame normal read — paint the prim's sampled normal (enc
-  // 0.5+0.5) where a prim is drawn, black on ground. Frame-indexed → must be rock-stable across zoom.
+  // lightmap P0 (__shownormal): verify the atlas-frame normal read — paint the billboard's sampled normal (enc
+  // 0.5+0.5) where a billboard is drawn, black on ground. Frame-indexed → must be rock-stable across zoom.
   if (uShowNormal == 1) {
     uint rp; float rc;
     receiverAt(P, uData, uSurface, uLightAlign, rp, rc);
     float sD;
-    vec3 n = rp != 0u ? primNormal(rp, P, uData, uSurface, uLightAlign, sD) : vec3(0.0);
-    // DEBUG (__hideright): blank the RIGHT half of each prim's normal (sprite-relative s > 0.5) so the LEFT
+    vec3 n = rp != 0u ? billboardNormal(rp, P, uData, uSurface, uLightAlign, sD) : vec3(0.0);
+    // DEBUG (__hideright): blank the RIGHT half of each billboard's normal (sprite-relative s > 0.5) so the LEFT
     // half can be compared edge-to-edge against the albedo.
     if (uHideRight == 1 && rp != 0u && sD > 0.5) { oLight = vec4(0.0, 0.0, 0.0, 1.0); return; }
     oLight = vec4(n * 0.5 + 0.5, 1.0);
@@ -547,13 +547,13 @@ void main() {
   }
 
   // lightmap P1: the WORLD-frame normal for per-light N·L. Only THINGS get N·L for now (ground keeps falloff,
-  // ndl = 1 — the old behaviour; ground-as-prims N·L is a later step). The corpus normal is RAW (camera-facing);
+  // ndl = 1 — the old behaviour; ground-as-billboards N·L is a later step). The corpus normal is RAW (camera-facing);
   // worldNormal pitches it to the world frame IN-SHADER (uNormalPitch = 90°−tilt, kept live — F7 reconsidered).
-  uint rprimN; float rcovN;
-  receiverAt(P, uData, uSurface, uLightAlign, rprimN, rcovN);
+  uint rbillboardN; float rcovN;
+  receiverAt(P, uData, uSurface, uLightAlign, rbillboardN, rcovN);
   float sDbg;
-  vec3 pn = rprimN != 0u ? primNormal(rprimN, P, uData, uSurface, uLightAlign, sDbg) : vec3(0.0);
-  bool applyNL = rprimN != 0u && dot(pn, pn) > 0.0;            // thing with a loaded normal → real N·L
+  vec3 pn = rbillboardN != 0u ? billboardNormal(rbillboardN, P, uData, uSurface, uLightAlign, sDbg) : vec3(0.0);
+  bool applyNL = rbillboardN != 0u && dot(pn, pn) > 0.0;            // thing with a loaded normal → real N·L
   vec3 N = applyNL ? worldNormal(pn, uNormalPitch) : vec3(0.0, 0.0, 1.0);
 
   int fold = foldTile(wc, wr);
@@ -591,19 +591,19 @@ void main() {
     // one texel past the silhouette. Blend N·L → ground (ndl 1) by the sprite's soft coverage (rcovN) so the lit
     // region fades exactly to presence — no coarse fringe, and the edge reveals ground not black. ndl = 1 on ground.
     float ndl = applyNL ? max(dot(N, d3 / max(dist, 1e-3)), 0.0) : 1.0;
-    // P3 SHADOW: slot i's u8 coverage (low8 in channel i>>2) + the ON-PRIM flag (A[16+i]). CUT the on-GROUND
-    // shadow where THIS fine texel is a prim (rprimN != 0) — the tight, fine-presence cut (like the normal),
-    // so a prim standing in a shadow isn't ground-darkened. On-prim shadows are LEFT UNCUT (they share tiles
+    // P3 SHADOW: slot i's u8 coverage (low8 in channel i>>2) + the ON-BILLBOARD flag (A[16+i]). CUT the on-GROUND
+    // shadow where THIS fine texel is a billboard (rbillboardN != 0) — the tight, fine-presence cut (like the normal),
+    // so a billboard standing in a shadow isn't ground-darkened. On-billboard shadows are LEFT UNCUT (they share tiles
     // with ground shadows; cutting them causes more problems than it solves — user).
     uint v8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
-    bool onPrim = ((sh.w >> uint(16 + slot)) & 1u) == 1u;
+    bool onBillboard = ((sh.w >> uint(16 + slot)) & 1u) == 1u;
     float shadow = float(v8) / 255.0;
-    if (!onPrim && rprimN != 0u) shadow = 0.0;              // cut ground shadow off prims (fine presence)
+    if (!onBillboard && rbillboardN != 0u) shadow = 0.0;              // cut ground shadow off billboards (fine presence)
     // shadow-edge-refine: the coarse shadow (16/tile) is nearest-upsampled → blocky edges. Where it's a PARTIAL
     // (0,1) edge value, re-run the caster-silhouette walk at THIS fine texel to SELECT the sharp coverage (only
-    // edge texels pay; interior 0/1 is kept free). Ground cast shadow only for now (rprimN 0) — thing texels
+    // edge texels pay; interior 0/1 is kept free). Ground cast shadow only for now (rbillboardN 0) — thing texels
     // keep the coarse blended value. Same GROUND-path args as the gather (Pground = P + SHADOW_LIFT, corridor).
-    if (uEdgeRefine == 1 && !onPrim && rprimN == 0u && shadow > 0.0 && shadow < 1.0) {
+    if (uEdgeRefine == 1 && !onBillboard && rbillboardN == 0u && shadow > 0.0 && shadow < 1.0) {
       vec3 L3 = vec3(Lxy, Lz);
       float emitter = float((Ld.w >> 4) & 255u);
       int reachT = int(reach) / int(UPT) + 1;
@@ -621,12 +621,12 @@ void main() {
 const GATHER_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
-uniform highp usampler2D uData;       // THE unified data texture (defs|prims|lights|presence|buckets)
+uniform highp usampler2D uData;       // THE unified data texture (defs|billboards|lights|presence|buckets)
 uniform highp usampler2D uDirty;      // shadow_dirty — textile_tile map (R8UI): .r nonzero = recompute
 uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 uniform int uLightClass;              // #4: process only this class of light — 0 = COLD (static), 1 = HOT (dynamic)
-uniform float uElevK;                 // shadows-onto-prims: receiver-elevation gain (sin65 default; 0 = flat, __elevk)
+uniform float uElevK;                 // shadows-onto-billboards: receiver-elevation gain (sin65 default; 0 = flat, __elevk)
 layout(location = 0) out uvec4 fragColor; // per-light u9 shadow coverage
 layout(location = 1) out uvec4 oCasterD;  // #3: frontmost caster row (R, 7-bit) shadowing this texel
 ${GATHER_COMMON}
@@ -645,28 +645,28 @@ void main() {
   float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot); // 0..1 within the tile
   float ly = (float(fc.y) - float(sy * uSlot)) / float(uSlot);
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS (true texel position)
-  // shadows-onto-prims: is a standing prim DRAWN at this texel, and its base row? IN-FAMILY (caster buckets
+  // shadows-onto-billboards: is a standing billboard DRAWN at this texel, and its base row? IN-FAMILY (caster buckets
   // + surface atlas by index) — zoom-safe by construction, NOT the reverted zdepth-composite world read.
-  uint rprim; float rcov;
-  float baseY = receiverAt(P, uData, uSurface, vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF}), rprim, rcov); // shadow mask offset; rprim 0 = ground
-  bool isThing = rprim != 0u;
+  uint rbillboard; float rcov;
+  float baseY = receiverAt(P, uData, uSurface, vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF}), rbillboard, rcov); // shadow mask offset; rbillboard 0 = ground
+  bool isThing = rbillboard != 0u;
   float maskCov = clamp(rcov, 0.0, 1.0);                     // SOFT mask coverage → blends ground↔thing at the silhouette edge
   // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
   // projection below makes the shadow CLIMB the billboard. Rbase = the receiver base (the front/behind axis).
   float zElev = isThing ? uElevK * max(0.0, baseY - P.y) : 0.0;
   vec2 Rbase = vec2(P.x, baseY);
   vec2 Pground = P; Pground.y += ${SHADOW_LIFTF}; // #2 lift — GROUND path only (thing path projects instead)
-  // Is this shadow texel ENTIRELY on the prim? A texel = 1/16 tile = 1 UNIT (= 4px @ 64px/tile); test its 4
-  // corners against rprim's silhouette (P is already on rprim since maskCov>0). If a corner falls OFF the prim
-  // the texel STRADDLES ground → we add the ground shadow below so its ground px darken; if all-on-prim we cull
+  // Is this shadow texel ENTIRELY on the billboard? A texel = 1/16 tile = 1 UNIT (= 4px @ 64px/tile); test its 4
+  // corners against rbillboard's silhouette (P is already on rbillboard since maskCov>0). If a corner falls OFF the billboard
+  // the texel STRADDLES ground → we add the ground shadow below so its ground px darken; if all-on-billboard we cull
   // the ground (no ground visible there). Light-INDEPENDENT (geometry only) → computed ONCE, out of the loop.
-  bool allPrim = false;
+  bool allBillboard = false;
   if (maskCov > 0.0) {
     float b0, b1, b2;
     vec2 al = vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF});
-    allPrim = receiverCover(rprim, P + vec2(1.0, 0.0), uData, uSurface, al, b0) > 0.0
-           && receiverCover(rprim, P + vec2(0.0, 1.0), uData, uSurface, al, b1) > 0.0
-           && receiverCover(rprim, P + vec2(1.0, 1.0), uData, uSurface, al, b2) > 0.0;
+    allBillboard = receiverCover(rbillboard, P + vec2(1.0, 0.0), uData, uSurface, al, b0) > 0.0
+           && receiverCover(rbillboard, P + vec2(0.0, 1.0), uData, uSurface, al, b1) > 0.0
+           && receiverCover(rbillboard, P + vec2(1.0, 1.0), uData, uSurface, al, b2) > 0.0;
   }
 
   int fold = foldTile(wc, wr);
@@ -683,34 +683,34 @@ void main() {
     vec3 L = vec3(decodePos(Ld.y), float((Ld.w >> 24) & 255u));
     float emitter = float((Ld.w >> 4) & 255u);              // emitter_radius (units) → penumbra width
     int reachT = int((Ld.w >> 12) & 0xfffu) / int(UPT) + 1; // reach (units) → tiles, +1 margin (brute box)
-    // ONE shadow per texel + an ON-PRIM flag. ON-PRIM = the texel sits on a prim (maskCov>0) → keep it, NOT
-    // cut by the fine presence (a prim texel isn't ground). We walk the ELEVATED thing point (the climbing
-    // shadow, shT). Then — UNLESS the texel is entirely on the prim — we ADD the GROUND shadow (shG): a straddle
-    // texel has ground px inside it (a notch/edge) that the fine bake does NOT cut (it's on-prim), so without
-    // this they'd stay bright. Entirely-on-prim texels cull the ground (no ground visible → no over-darken of
+    // ONE shadow per texel + an ON-BILLBOARD flag. ON-BILLBOARD = the texel sits on a billboard (maskCov>0) → keep it, NOT
+    // cut by the fine presence (a billboard texel isn't ground). We walk the ELEVATED thing point (the climbing
+    // shadow, shT). Then — UNLESS the texel is entirely on the billboard — we ADD the GROUND shadow (shG): a straddle
+    // texel has ground px inside it (a notch/edge) that the fine bake does NOT cut (it's on-billboard), so without
+    // this they'd stay bright. Entirely-on-billboard texels cull the ground (no ground visible → no over-darken of
     // the interior). Ground texels store shG alone, which the LIGHT bake cuts by FINE presence (tight edge).
-    // Value = u8 (0..255), 9th bit = on-prim flag.
-    float cd = 0.0, cov = 0.0; bool onPrim = maskCov > 0.0;
-    if (onPrim) {
+    // Value = u8 (0..255), 9th bit = on-billboard flag.
+    float cd = 0.0, cov = 0.0; bool onBillboard = maskCov > 0.0;
+    if (onBillboard) {
       float ze = min(zElev, 0.9 * L.z);                     // keep the projection s bounded
       float sProj = L.z / (L.z - ze);
       vec2 Qt = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
-      cov = walkShadow(L, emitter, Qt, true, rprim, Rbase, uCorridor, reachT, uData, uSurface, cd); // on-prim (climbing) shT
-      if (!allPrim) {                                       // straddles ground → add ground shadow (darkens the ground px within)
+      cov = walkShadow(L, emitter, Qt, true, rbillboard, Rbase, uCorridor, reachT, uData, uSurface, cd); // on-billboard (climbing) shT
+      if (!allBillboard) {                                       // straddles ground → add ground shadow (darkens the ground px within)
         float cdG;
-        float shG = walkShadow(L, emitter, Pground, false, rprim, Rbase, uCorridor, reachT, uData, uSurface, cdG);
+        float shG = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, uCorridor, reachT, uData, uSurface, cdG);
         cov = max(cov, shG);                                // MAX not sum: identical where shT=0 (the bright px), no false over-dark where both overlap
         cd = max(cd, cdG);
       }
     } else {                                                // ground texel → GROUND shadow (fine bake cuts it by fine presence)
-      cov = walkShadow(L, emitter, Pground, false, rprim, Rbase, uCorridor, reachT, uData, uSurface, cd);
+      cov = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, uCorridor, reachT, uData, uSurface, cd);
     }
     casterDepth = max(casterDepth, cd);                     // #3 (vestigial att1)
     uint v = uint(clamp(cov, 0.0, 1.0) * 255.0 + 0.5);      // u8 coverage (was u9); 9th bit repurposed below
     uint low8 = (v & 0xFFu) << uint((slot & 3) * 8);
     int ch = slot >> 2;                                     // static branch (no dynamic write-subscript)
     if (ch == 0) o0 |= low8; else if (ch == 1) o1 |= low8; else if (ch == 2) o2 |= low8; else o3 |= low8;
-    o3 |= (onPrim ? 1u : 0u) << uint(16 + slot);            // A[16+slot] = ON-PRIM flag (was the u9 high bit)
+    o3 |= (onBillboard ? 1u : 0u) << uint(16 + slot);            // A[16+slot] = ON-BILLBOARD flag (was the u9 high bit)
   }
   fragColor = uvec4(o0, o1, o2, o3);
   oCasterD = uvec4(uint(casterDepth) & 0x7Fu, 0u, 0u, 0u);  // #3: frontmost caster row (7-bit local key)
@@ -779,7 +779,7 @@ void main() {
   for (int slot = 0; slot < 14; slot++) {
     uint li = slot < 7 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 7);
     if (li == 0xffffu) continue;                            // empty slot
-    uint vC = (lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu; // u8 coverage (A[16+slot] is the on-prim flag now)
+    uint vC = (lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu; // u8 coverage (A[16+slot] is the on-billboard flag now)
     uint vH = (lane4(shH, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
     uint v = max(vC, vH);                                    // u8 — combine the two classes' RTs
     if (v > 0u) { float cvg = float(v) / 255.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
@@ -846,21 +846,21 @@ export class ShadowGather {
   private seedY = 0;
   private readonly empty: Texture;
   private enabled = true;
-  /** shadows-onto-prims: receiver-elevation gain (sin65 by the world-geometry model). `__elevk` tunes the
-   *  climb rate by eye; 0 collapses prim shadows to the flat ground shadow. */
+  /** shadows-onto-billboards: receiver-elevation gain (sin65 by the world-geometry model). `__elevk` tunes the
+   *  climb rate by eye; 0 collapses billboard shadows to the flat ground shadow. */
   private elevK = ELEV_K_DEFAULT;
   /** world-space-lighting (P1): TRUE-3D elliptical falloff (`__worldlight`) + the live-tunable N–S
    *  un-foreshorten factor (`__nsfactor`, default 1/cos65). Default ON so the corrected look shows; toggle
    *  off to A/B against the screen circle. */
   private worldLight = true;
   private nsInv = INV_COS_TILT_DEFAULT;
-  /** lightmap P0 debug (`__shownormal`): paint the atlas-frame prim normal into the lightmap to verify the
-   *  read (per-prim, zoom-stable). Off in normal operation. */
+  /** lightmap P0 debug (`__shownormal`): paint the atlas-frame billboard normal into the lightmap to verify the
+   *  read (per-billboard, zoom-stable). Off in normal operation. */
   private showNormal = false;
   /** lightmap: the standing-billboard normal pitch (deg, `__pitchnormal`; default 90°−tilt, re-derived by
    *  `__tilt`). The corpus normals are RAW (camera-facing) and the world pitch is applied IN-SHADER — kept
    *  live rather than bake-committed (F7 reconsidered): it's ~free in the dirty-gated bake and keeps the
-   *  world angle adjustable. Ground (rprim 0) is unpitched (flat-up); things pitch to perpendicular. */
+   *  world angle adjustable. Ground (rbillboard 0) is unpitched (flat-up); things pitch to perpendicular. */
   private normalPitchDeg = 90 - WORLD_TILT_DEG;
   /** lightmap: the LIGHTING receiver-mask seat (units, NW shift), DECOUPLED from the shadow's `RECV_ALIGN`.
    *  The shadow's (0.5, 1.5) offset clipped the lit sprite's SE edge (bottom + right) — the lighting coverage
@@ -870,7 +870,7 @@ export class ShadowGather {
   /** shadow-edge-refine (`__edgerefine`): re-test the caster silhouette at fine res on `(0,1)` edge texels so
    *  the cast shadow's edge is near-pixel-perfect instead of the coarse 16/tile blocks. Default ON; A/B off. */
   private edgeRefine = true;
-  /** DEBUG (`__hideright`): blank the right half of each prim's normal in `__shownormal` (alignment probe). */
+  /** DEBUG (`__hideright`): blank the right half of each billboard's normal in `__shownormal` (alignment probe). */
   private hideRight = false;
   /** The LIVE world ground tilt (degrees) — written into the data map constants each frame so the shadow
    *  projection (and any shader) reads the angle without a uniform. `__tilt(deg)` re-tilts the whole model:
@@ -903,7 +903,7 @@ export class ShadowGather {
   private lightsVer = 0;
 
   /** caster buckets — folded into the data texture (set 4, region-torus). CPU scratch: per in-window
-   *  tile ≤7 `u16` prim indices (`0` = empty); `castCount` the per-tile fill. `buildCasters` writes each
+   *  tile ≤7 `u16` billboard indices (`0` = empty); `castCount` the per-tile fill. `buildCasters` writes each
    *  tile via `coldData.writeCasters`. */
   private castSlots = new Uint16Array(0);
   private castCount = new Uint8Array(0);
@@ -951,7 +951,7 @@ export class ShadowGather {
     (globalThis as unknown as { __gather: ShadowGather }).__gather = this;
     // DEBUG: tune the emitter (area-light) RADIUS in world px live — bigger = softer penumbra.
     (globalThis as unknown as { __emit: (px?: number) => number }).__emit = (px?: number) => this.setEmitter(px);
-    // DEBUG (shadows-onto-prims): tune the receiver-elevation gain live — bigger = the prim shadow climbs
+    // DEBUG (shadows-onto-billboards): tune the receiver-elevation gain live — bigger = the billboard shadow climbs
     // faster/higher up a billboard; 0 = flat ground shadow (the A/B baseline).
     (globalThis as unknown as { __elevk: (k?: number) => number }).__elevk = (k?: number) => this.setElevK(k);
     // DEBUG (world-space-lighting): toggle true-3D elliptical falloff vs the screen circle; tune the N–S
@@ -981,7 +981,7 @@ export class ShadowGather {
       }
       return this.worldTiltDeg;
     };
-    // DEBUG (lightmap P0): paint the atlas-frame prim normal into the lightmap — verify the read is per-prim
+    // DEBUG (lightmap P0): paint the atlas-frame billboard normal into the lightmap — verify the read is per-billboard
     // and rock-stable across zoom (frame-indexed, not a world-coord composite read).
     (globalThis as unknown as { __shownormal: (on?: boolean) => boolean }).__shownormal = (on?: boolean) => {
       this.showNormal = on ?? !this.showNormal;
@@ -1008,7 +1008,7 @@ export class ShadowGather {
       this.forceColdDirty = this.forceHotDirty = true;
       return this.edgeRefine;
     };
-    // DEBUG (__hideright): blank the right half of each prim's normal in __shownormal (alignment probe).
+    // DEBUG (__hideright): blank the right half of each billboard's normal in __shownormal (alignment probe).
     (globalThis as unknown as { __hideright: (on?: boolean) => boolean }).__hideright = (on?: boolean) => {
       this.hideRight = on ?? !this.hideRight;
       this.forceColdDirty = this.forceHotDirty = true;
@@ -1108,8 +1108,8 @@ export class ShadowGather {
       }
   }
 
-  /** Rebuild the per-tile **caster buckets** (P1): allocate each standing caster's def+prim, then
-   *  drop its `prim_data` index into every tile of its **base line** (anchor row × width cols) that
+  /** Rebuild the per-tile **caster buckets** (P1): allocate each standing caster's def+billboard, then
+   *  drop its `billboard_data` index into every tile of its **base line** (anchor row × width cols) that
    *  the window covers, up to 8/tile. The corridor sweep reads these; casters are bucketed by where
    *  they *stand* (ground base), not the billboard's aerial bbox. Cheap enough to rebuild each frame
    *  for now; the O(1) re-bucket on move lands with the hot tier. */
@@ -1119,7 +1119,7 @@ export class ShadowGather {
       this.castSlots = new Uint16Array(cols * rows * 7);
       this.castCount = new Uint8Array(cols * rows);
     }
-    this.castSlots.fill(0); // 0 = empty (prim sentinel)
+    this.castSlots.fill(0); // 0 = empty (billboard sentinel)
     this.castCount.fill(0);
     const count = this.castCount;
     // The card is TILTED back 65° (see the shader), so its ground footprint spans from the base
@@ -1128,20 +1128,20 @@ export class ShadowGather {
     // only the base row missed casters whose top sits in the row above (I-7).
     const TILT = 0.5 * Math.cos(this.worldTiltDeg * Math.PI / 180); // 0.5·cos(tilt) of the height, leaned back (live tilt)
     this.litSeen.clear();
-    const seen = this.primSeen;
+    const seen = this.billboardSeen;
     seen.clear();
     for (const p of standing) {
       const def = this.coldData.definitionFor(p, resolver);
       if (def < 0) continue; // no textureName → not a caster
-      const inst = this.coldData.primDataFor(p, def);
+      const inst = this.coldData.billboardDataFor(p, def);
       seen.add(p.id); // resident this frame — everything else gets freed (P2)
-      // Bucket by the TIGHT opaque bbox (P3), not the full prim box — matches the quad we actually cast.
-      // A flipped (W-facing) prim mirrors the box within the prim rect, same as the gather mirrors `off.x`.
+      // Bucket by the TIGHT opaque bbox (P3), not the full billboard box — matches the quad we actually cast.
+      // A flipped (W-facing) billboard mirrors the box within the billboard rect, same as the gather mirrors `off.x`.
       const t = this.coldData.tightBoxOf(def) ?? { dx: 0, dy: 0, w: p.width, h: p.height };
       const tdx = p.flipX ? p.width - (t.dx + t.w) : t.dx;
       const tx = p.x + tdx, ty = p.y + t.dy;
-      // A changed prim (new immutable def — lod landed/zoom — or first sight) cascades its region.
-      if (inst.changed) this.markPrimChange(tx, ty, t.w, t.h);
+      // A changed billboard (new immutable def — lod landed/zoom — or first sight) cascades its region.
+      if (inst.changed) this.markBillboardDirty(tx, ty, t.w, t.h);
       const baseY = ty + t.h, topY = baseY - TILT * t.h; // card ground y-extent (px)
       const r0 = Math.floor(topY / SQUARE), r1 = Math.floor(baseY / SQUARE);
       const c0 = Math.floor(tx / SQUARE), c1 = Math.floor((tx + t.w) / SQUARE);
@@ -1157,17 +1157,17 @@ export class ShadowGather {
         }
       }
     }
-    // Prims that left `standing` (zone evicted / destroyed) free their slots (P2 free-list); their
+    // Billboards that left `standing` (zone evicted / destroyed) free their slots (P2 free-list); their
     // buckets already clear via the rebuild below, and caster removal force-alls the recompute.
-    this.coldData.freePrimsExcept(seen);
+    this.coldData.freeBillboardsExcept(seen);
     // Write EVERY in-window tile (compare-write diffs). The region-torus fold is the GPU slot.
     for (let wr = winRow; wr < winRow + rows; wr++)
       for (let wc = winCol; wc < winCol + cols; wc++) {
         const ti = (wr - winRow) * cols + (wc - winCol);
         this.coldData.writeCasters(wc, wr, this.castSlots.subarray(ti * 7, ti * 7 + 7));
       }
-    // Flush all queued writes (def/prim/presence/caster) as ONE scatter batch. NO force-all: def
-    // swaps + new prims queued their scoped rects via the prim dirty cascade (markPrimChange).
+    // Flush all queued writes (def/billboard/presence/caster) as ONE scatter batch. NO force-all: def
+    // swaps + new billboards queued their scoped rects via the billboard dirty cascade (markBillboardDirty).
     this.coldData.flush();
   }
 
@@ -1182,17 +1182,17 @@ export class ShadowGather {
     this.pendingRects.push([x0, y0, x1, y1, cls]);
   }
 
-  /** The PRIM DIRTY CASCADE applied to texture/def changes: a prim changed (new immutable def —
-   *  lod landed/zoomed — or first sight) → dirty the prim's own tiles, then every light whose reach
+  /** The BILLBOARD DIRTY CASCADE applied to texture/def changes: a billboard changed (new immutable def —
+   *  lod landed/zoomed — or first sight) → dirty the billboard's own tiles, then every light whose reach
    *  touches them, then those lights' full cast regions (their reach boxes — a shadow texel is only
-   *  written inside its light's presence, so the reach box bounds the cast). `x/y/w/h` = the prim's
+   *  written inside its light's presence, so the reach box bounds the cast). `x/y/w/h` = the billboard's
    *  tight box in world px. `litSeen` dedupes light boxes within a frame (streaming floods). */
   private readonly litSeen = new Set<number>();
-  /** Prim ids resident this frame (P2) — anything allocated but absent gets freed via the free-list. */
-  private readonly primSeen = new Set<number>();
+  /** Billboard ids resident this frame (P2) — anything allocated but absent gets freed via the free-list. */
+  private readonly billboardSeen = new Set<number>();
   /** DEBUG: shadow tiles marked dirty (recomputed) on the last frame. */
   debugDirtyTiles = 0;
-  private markPrimChange(x: number, y: number, w: number, h: number): void {
+  private markBillboardDirty(x: number, y: number, w: number, h: number): void {
     const x0 = Math.floor(x / SQUARE) - 1, y0 = Math.floor(y / SQUARE) - 1;
     const x1 = Math.floor((x + w) / SQUARE) + 1, y1 = Math.floor((y + h) / SQUARE) + 1;
     this.pendingRects.push([x0, y0, x1, y1, 2]); // a caster affects BOTH classes at its own tiles
@@ -1200,7 +1200,7 @@ export class ShadowGather {
       if (this.litSeen.has(k)) continue;
       const L = this.lights[k];
       const cx = Math.min(Math.max(L.x, x), x + w), cy = Math.min(Math.max(L.y, y), y + h);
-      if (Math.hypot(cx - L.x, cy - L.y) > L.reach + SQUARE) continue; // light can't see the prim
+      if (Math.hypot(cx - L.x, cy - L.y) > L.reach + SQUARE) continue; // light can't see the billboard
       this.litSeen.add(k);
       this.markLightMove(L.x, L.y, L.x, L.y, L.reach, L.dynamic ? 1 : 0); // that light's class + cast region
     }
@@ -1285,7 +1285,7 @@ export class ShadowGather {
     this.forceColdDirty = this.forceHotDirty = true;  // recompute every shadow/light tile
     return px;
   }
-  /** DEBUG (shadows-onto-prims): the receiver-elevation gain (no arg = read). Recomputes every tile. */
+  /** DEBUG (shadows-onto-billboards): the receiver-elevation gain (no arg = read). Recomputes every tile. */
   setElevK(k?: number): number {
     if (k === undefined) return this.elevK;
     this.elevK = k;
@@ -1390,8 +1390,8 @@ export class ShadowGather {
       const lightsChanged = this.coldDirty;
       this.lastCasterCount = standing.length;
       this.coldDirty = false;
-      // Scoped dirty: a light MOVE queued its own rects; NEW casters cascade per prim
-      // (markPrimChange on first sight). Force-all only for caster REMOVAL (stale shadows with no
+      // Scoped dirty: a light MOVE queued its own rects; NEW casters cascade per billboard
+      // (markBillboardDirty on first sight). Force-all only for caster REMOVAL (stale shadows with no
       // owner to cascade from) or a light change with no scoped rects (e.g. a re-seed).
       if (removed || (lightsChanged && this.pendingRects.length === 0)) this.forceColdDirty = this.forceHotDirty = true;
     }
@@ -1421,7 +1421,7 @@ export class ShadowGather {
       target: shadowRT,
       blend: "none",
       textures: {
-        uData: this.coldData.dataTexture, // defs | prims | lights | presence | buckets
+        uData: this.coldData.dataTexture, // defs | billboards | lights | presence | buckets
         uDirty: dirty,
         uSurface: this.coldData.surfacePage ?? this.empty, // no page yet → defs have no frame → solid quads
       },

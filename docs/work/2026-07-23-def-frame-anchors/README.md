@@ -4,7 +4,7 @@ _Component: [`client/webgl`](../../components/client/) · `game/viewport/coldSha
 `shadowGather.ts` (+ later `thingPlacement`/DSL size sourcing). Phases in [`todo.md`](todo.md);
 layout amendments are [`forks.md`](forks.md)._
 
-Rework `prim_definition_data` onto the **whole-px-per-unit** model: frames are **pow2 squares**, so
+Rework `billboard_definition_data` onto the **whole-px-per-unit** model: frames are **pow2 squares**, so
 the def stores a **lod exponent** instead of a width/height pair, the **minimum bbox lives in world
 units**, and a **px nudge** aligns the sampled window to the opaque pixels. Adds **3×3 frame
 anchors** so a prim's reported x/y can carry the bbox at any of top/middle/bottom × left/center/

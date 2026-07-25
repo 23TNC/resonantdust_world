@@ -1,9 +1,17 @@
 # Light prims — make lights first-class world objects (placed + auto-dirtied like things) — 2026-07-24
 
 _Component: [`client/webgl`](../../components/client/) · `game/viewport/` — the shadow/light bake
-(`shadowGather.ts`) + the unified data texture (`coldShadowData.ts`) + the prim cache
+(`shadowGather.ts`) + the unified data texture (`coldShadowData.ts`) + the primitive cache
 (`SquareCache.ts`). Layouts are authoritative in [`VARIABLES.md`](../../VARIABLES.md) (the `light_data`,
-`prim_data`, `prim_definition_data` bands). Phases in [`todo.md`](todo.md); decisions in
+`billboard_data`, `billboard_definition_data` bands).
+
+**Vocabulary (ratified 2026-07-24).** A **primitive** is a DSL-declared world object. It *presents* as a
+**billboard** (a view-plane sprite — the shadow *caster* + lit surface: trees, pawns) or as a **light**
+(an emitter) — or both (an emissive sprite). The data bands are per-**presentation**:
+`billboard_definition_data` + `billboard_data` = the billboard presentation; `light_data`
+(+ a future `light_definition_data`, [F2](forks.md#f2)) = the light presentation. What the code used to
+call "prim" was always the billboard; "primitive" is the umbrella. (Rename landed 2026-07-24 —
+`prim_* → billboard_*`, `markPrimChange → markBillboardDirty`; the `Primitive` cache type stays.) Phases in [`todo.md`](todo.md); decisions in
 [`forks.md`](forks.md); problems in [`issues.md`](issues.md). Builds on
 [`2026-07-23-unified-data`](../2026-07-23-unified-data/README.md) +
 [`2026-07-23-presence-in-data`](../2026-07-23-presence-in-data/README.md) +
@@ -16,11 +24,12 @@ a light reaches the bake is `buildLights()` (`coldShadowData.ts:417`), called fr
 (`shadowGather.ts:1349`) **gated on the hand-set `this.coldDirty` flag**. Nothing about a light flows
 through the pipeline that actual world content uses.
 
-Contrast a **prim** (a tree): world content → `SquareCache` → `standingPrims()` (`SquareCache.ts:350`)
+Contrast a **billboard** (a tree): world content → `SquareCache` → `standingPrims()` (`SquareCache.ts:350`)
 → `shadows.tick(standingPrims(), …)` every frame (`Viewport.ts:350`) → `buildCasters()`
 (`shadowGather.ts:1116`) allocates its def + record into the data texture and **dirties automatically**
-via the prim cascade + free-list + zone eviction. Placement, movement, and removal are all handled by
-the content path — no hand-set flags.
+via the billboard cascade (`markBillboardDirty`) + free-list + zone eviction. Placement, movement, and
+removal are all handled by the content path — no hand-set flags. The light presentation should work the
+same way.
 
 This session proved the gap the hard way: to run a 50-light perf test I pushed 50 lights straight into
 `g.lights` and set `g.coldDirty = true` by hand. Nothing happened — `coldData.lightCount` stayed **3**
@@ -30,46 +39,56 @@ are effectively unusable as a game feature** until they become placeable objects
 
 ## Two pillars
 
-### 1. A light IS a prim — place it in the world, not inject it into the gather
-Model a light as a world object with its own kind/def, delivered to the bake through the **same path
-things take** (content → `SquareCache` → a `tick()` prim list → data-texture allocation). The two
-records already sit in parallel bands of the unified data texture:
-- **`prim_data`** (rows 64–127) — position (`position_anchor_reference`) + a `definition_index`. A light
-  gets a record here so its **position** is a placed prim: move the prim → one texel changes → the prim
-  dirty cascade fires. This is the anchor everything else keys off.
-- **`light_data`** (rows 128–191) — colour · intensity · z · reach · emitter · `hot` · `cast_shadows`.
-  Today this is written directly from `this.lights`. Under this stream it becomes **derived from the
-  light-prim + its light-def**, not from a bespoke array.
-- **light def** — the static light properties (colour/reach/emitter/height/hot/cast) belong to a
-  **definition** (like a prim's atlas-frame def), so "torch" vs "moonlight" are defs and a placed light
-  just references one + carries a position. Whether this reuses `prim_definition_data` with a light flag
-  or is a new light-def band is [forks.md#f2](forks.md#f2).
+### 1. The light presentation is placed, not injected
+A **light** is one presentation of a primitive. Deliver it to the bake through the **same path** the
+billboard presentation uses (content → `SquareCache` → a `tick()` primitive list → data-texture
+allocation), so it rides the free-list, eviction, and the scoped dirty cascade for free. The
+presentation records sit in **parallel bands** of the unified data texture:
+- **`billboard_definition_data` + `billboard_data`** (rows 0–127) — the **billboard** presentation: an
+  atlas-frame def + a placed record (position + `definition_index`). A primitive that presents as a
+  billboard writes these (the tree path today).
+- **`light_data`** (rows 128–191) — the **light** presentation: position + colour · intensity · z · reach ·
+  emitter · `hot` · `cast_shadows`. A primitive that presents as a light writes this. Today it's written
+  from the `this.lights` scaffold; under this stream, from the placed light primitive — allocated with the
+  same free-list + compare-write + `mark` the billboard record uses (`billboardDataFor`).
+- **`light_definition_data`** ([F2](forks.md#f2), lean: a new band **parallel to
+  `billboard_definition_data`**) — the static light props (colour/reach/emitter/height/hot/cast) as a
+  shared **def**, so "torch"/"moonlight" are defs a placed light references; `light_data` then carries a
+  position + a `definition_index`, exactly mirroring `billboard_data`.
 
-The exact record wiring — light writes both `prim_data` + `light_data`, vs `light_data` derived from a
-light-prim each frame, vs retiring `light_data` and reading light props from the def — is
-[forks.md#f1](forks.md#f1).
+A primitive that presents as **both** (an emissive sprite — a torch with a glow) writes `billboard_data`
+**and** `light_data`: one placed object, two presentations, one shared position. Whether a pure light
+also needs a `billboard_data` record (it doesn't — light_data carries its position) is [F1](forks.md#f1).
 
-### 2. Dirty light behaviour, systematised — stop flipping flags by hand
+### 2. Dirty behaviour, systematised — two named entry points, stop flipping flags by hand (user)
 Today the gather juggles `coldDirty`, `forceColdDirty`, `forceHotDirty`, `lightsVer`, `pendingRects`,
 `lastCasterCount`, `markLightMove()`, and `buildDirty()` — and the debug hooks set several of them by
-hand on every mutation (the exact thing that failed this session). Once a light is a prim, its
-dirtying should ride the **existing prim cascade** (a prim change dirties its tiles → the lights reaching
-those tiles → those lights' cast regions), the same machinery `buildCasters`/`markPrimChange` already
-run for casters. **Placing / moving / removing a light-prim dirties the correct rects automatically**;
-the manual `coldDirty`-and-friends flag-flipping retires. The full flag inventory + who sets/clears each
-+ the target automatic model is enumerated in [`todo.md`](todo.md) (P0) and [`issues.md`](issues.md).
+hand on every mutation (the exact thing that failed this session). The model (user): **two entry points
+by presentation** —
+- **`markBillboardDirty`** (the renamed `markPrimChange`, `shadowGather.ts:1185`) — a billboard changed
+  (placed / moved / re-def'd) → dirty its tiles + cascade to the lights reaching them.
+- **`markLightDirty`** (new) — a light changed (placed / moved / props) → dirty its cast region.
+
+Both **cascade into `pendingRects` → `buildDirty`** (the existing scoped-rect path, `:1177-1183` /
+`:1246-1256`) — so placement/movement/removal dirties the correct rects automatically and the manual
+`coldDirty`/`forceColdDirty`/`lightsVer` flag-flipping retires. **Agreed follow-on (user): generalise the
+cold/hot split** — today a light's class (static→cold / dynamic→hot) is bound to `L.dynamic` and routed by
+ad-hoc `cls` args; the two `markDirty` entry points should carry class generically so a presentation's
+dirty lands in the right class pass without bespoke wiring. Flag inventory + target model: [`todo.md`](todo.md)
+P3, [`issues.md`](issues.md), [F4](forks.md#f4).
 
 ## The payoff
 Lights become an **authorable, placeable game feature**: a light is declared in content (a light kind,
-alongside `<thing>` in `content/data/things.rd`) and/or attached to an emissive prim, placed by worldgen
+alongside `<thing>` in `content/data/things.rd`) and/or attached to an emissive primitive, placed by worldgen
 or gameplay, cached and delivered like any object, and baked with correct automatic dirtying. The
 `seed()`/`__manylights()`/`this.lights` scaffold + the hand-set flags are deleted. This is the
 prerequisite for every downstream lighting effect (day/night, emissive things, torches) — they all need
 lights that exist **in the world**, not in a debug array.
 
 ## What it composes with / does NOT change
-- **Unblocks, doesn't re-architect the bake**: the gather/lightmap math, the cold/hot class split, the
-  presence cull (≤14 lights/tile), and corridor↔brute identity are unchanged. This stream changes **how a
+- **Unblocks, doesn't re-architect the bake**: the gather/lightmap math, the cold/hot class **semantics**
+  (static baked once / dynamic per-frame — the routing is generalised, not the split), the presence cull
+  (≤14 lights/tile), and corridor↔brute identity are unchanged. This stream changes **how a
   light gets INTO the data texture and how its change dirties the bake**, not how the bake reads it.
 - Rides [`2026-07-23-presence-in-data`](../2026-07-23-presence-in-data/README.md)'s per-tile light cull and
   the two-layer eviction (a light-prim evicts on zone exit like any prim).

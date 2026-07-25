@@ -2,8 +2,8 @@
 //! (`2026-07-23-unified-data`). 1024×1024, linear index `i → (i & 1023, i >> 10)`, 64-row bands of
 //! 65 536 one-texel slots each; bit layouts authoritative in `docs/VARIABLES.md` §Cold shadow data:
 //!
-//!   rows   0–63    prim_definition_data  (band base 0)       1 px/def — IMMUTABLE, keyed (stem,cell,lod)
-//!   rows  64–127   prim_data             (band base 65 536)  1 px/placed caster (2/px retired — F1)
+//!   rows   0–63    billboard_definition_data  (band base 0)       1 px/def — IMMUTABLE, keyed (stem,cell,lod)
+//!   rows  64–127   billboard_data             (band base 65 536)  1 px/placed caster (2/px retired — F1)
 //!   rows 128–191   light_data            (band base 131 072) 1 px/light record
 //!   rows 192–1022  reserved              (materials era)
 //!   row  1023      constants             (window mapping — P3)
@@ -23,8 +23,8 @@ export const N_LIGHTS = 128;
 export const DATA_W = 1024;
 export const DATA_H = 1024;
 /** Band bases (linear indices) — 64-row bands of 65 536 one-texel slots. Mirrored in the GLSL. */
-export const DEF_BASE = 0;
-export const PRIM_BASE = 65536;
+export const BILLBOARD_DEF_BASE = 0;
+export const BILLBOARD_BASE = 65536;
 export const LIGHT_BASE = 131072;
 /** Tile-keyed sets — region-torus addressed (presence-in-data). One set = one region's 65 536 tiles. */
 export const PRESENCE_BASE = 3 * 65536;    // light_presence_lo (light slots 0–6)
@@ -159,8 +159,8 @@ export class ColdShadowData {
   /** stem+cell+lod → allocated definition_index (defs are IMMUTABLE — one per atlas frame). */
   private readonly defIndex = new Map<string, number>();
   private defNext = 0;
-  /** P3 tight bbox per def (WORLD px, relative to the prim's top-left): `dx,dy` = offset to the
-   *  opaque region, `w,h` = its size. Fraction-of-frame × prim size, so it's LOD-independent. */
+  /** P3 tight bbox per def (WORLD px, relative to the billboard's top-left): `dx,dy` = offset to the
+   *  opaque region, `w,h` = its size. Fraction-of-frame × billboard size, so it's LOD-independent. */
   private readonly defTight = new Map<number, { dx: number; dy: number; w: number; h: number }>();
   /** The ONE atlas page the casters' surface frames live on (F2: single page) — bound as `uSurface`
    *  for the P4 silhouette sample. Adopted from the first resolved frame; a frame on any OTHER page
@@ -169,12 +169,12 @@ export class ColdShadowData {
   private pageWarned = false;
   private frameSizeWarned = false;
 
-  /** prim.id → allocated prim_data_index (≥1; index 0 is the sentinel). */
-  private readonly primIndex = new Map<number, number>();
-  private primNext = 1; // 0 reserved as the sentinel
-  /** Freed prim_data indices (P2 free-list) — reused before bumping `primNext`, so the id space
+  /** billboard.id → allocated billboard_data_index (≥1; index 0 is the sentinel). */
+  private readonly billboardIndex = new Map<number, number>();
+  private billboardNext = 1; // 0 reserved as the sentinel
+  /** Freed billboard_data indices (P2 free-list) — reused before bumping `billboardNext`, so the id space
    *  survives pan/zone churn (high-water bounded by peak concurrent casters ≪ 65 536). */
-  private readonly primFreeList: number[] = [];
+  private readonly billboardFreeList: number[] = [];
   private lightCount = 0;
 
   constructor(private readonly renderer: Renderer) {
@@ -241,7 +241,7 @@ export class ColdShadowData {
     this.writeTileSet(PRESENCE_BASE, wc, wr, slots, 0xffff, 0);
     this.writeTileSet(PRESENCE_HI_BASE, wc, wr, slots, 0xffff, 7);
   }
-  /** Caster-bucket tile: 7 u16 prim indices (0 empty — the prim sentinel). */
+  /** Caster-bucket tile: 7 u16 billboard indices (0 empty — the billboard sentinel). */
   writeCasters(wc: number, wr: number, slots: ArrayLike<number>): void {
     this.writeTileSet(CASTER_BASE, wc, wr, slots, 0x0000);
   }
@@ -263,27 +263,27 @@ export class ColdShadowData {
 
   /** The `definition_index` for a caster's sprite at its CURRENTLY-RESOLVED lod. Defs are
    *  **immutable — one def per atlas frame** (keyed `stem|cell|lod`): a new lod landing mints a NEW
-   *  def instead of rewriting the old one, and `prim_data` keeps pointing at whatever def it holds
-   *  until {@link primDataFor} swaps it — which reports `changed` so the caller runs the prim dirty
-   *  cascade (prim tiles → reaching lights → their cast regions). The lod-0 def is the LOOSE
+   *  def instead of rewriting the old one, and `billboard_data` keeps pointing at whatever def it holds
+   *  until {@link billboardDataFor} swaps it — which reports `changed` so the caller runs the billboard dirty
+   *  cascade (billboard tiles → reaching lights → their cast regions). The lod-0 def is the LOOSE
    *  fallback (full-footprint box, no frame → solid quad) used until the surface resolves.
    *
    *  The shadow quad = the sprite's minimum bbox (EVEN units) at an unsigned frame-relative offset;
-   *  nudges align the sampled window; anchors place the bbox on the prim's position. */
-  definitionFor(prim: Primitive, resolver: TextureResolver | null): number {
-    if (!prim.textureName) return -1;
+   *  nudges align the sampled window; anchors place the bbox on the billboard's position. */
+  definitionFor(billboard: Primitive, resolver: TextureResolver | null): number {
+    if (!billboard.textureName) return -1;
 
-    const bbox = resolver ? resolver.opaqueBBox(prim.textureName) : null;
-    const surf = resolver && bbox ? resolver.resolve(prim.textureName, "surface", prim.cell).frame : null;
+    const bbox = resolver ? resolver.opaqueBBox(billboard.textureName) : null;
+    const surf = resolver && bbox ? resolver.resolve(billboard.textureName, "surface", billboard.cell).frame : null;
 
     // Frame world span in TILES (pow2, ≤ ZONE_DIM — u4 stores tiles−1, width = log2(ZONE_DIM)).
     // Footprints are square (aspect plumbing removed); a non-pow2/oversized span is a content bug.
-    const stRaw = Math.max(1, Math.round(Math.max(prim.width, prim.height) / SQUARE));
+    const stRaw = Math.max(1, Math.round(Math.max(billboard.width, billboard.height) / SQUARE));
     let st = 1;
     while (st < stRaw) st <<= 1;
     if ((st !== stRaw || st > ZONE_DIM) && !this.frameSizeWarned) {
       this.frameSizeWarned = true;
-      console.warn(`[cold-shadow] ${prim.textureName}: footprint ${stRaw} tiles is not pow2 ≤ ${ZONE_DIM} — span rounded`);
+      console.warn(`[cold-shadow] ${billboard.textureName}: footprint ${stRaw} tiles is not pow2 ≤ ${ZONE_DIM} — span rounded`);
     }
     st = Math.min(st, ZONE_DIM);
     const spanU = st * 16; // frame world span in units
@@ -307,10 +307,10 @@ export class ColdShadowData {
     }
 
     // IMMUTABLE defs — ONE def per atlas frame, keyed (stem, cell, lod). An existing def returns
-    // as-is; a new lod mints a NEW index. prim_data keeps whatever def it holds until
-    // {@link primDataFor} swaps it — which reports `changed`, and the caller runs the prim dirty
-    // cascade. Nothing ever rewrites a def, so def changes ride the prim-update path for free.
-    const key = `${prim.textureName}|${prim.cell ?? 0}|${lod}`;
+    // as-is; a new lod mints a NEW index. billboard_data keeps whatever def it holds until
+    // {@link billboardDataFor} swaps it — which reports `changed`, and the caller runs the billboard dirty
+    // cascade. Nothing ever rewrites a def, so def changes ride the billboard-update path for free.
+    const key = `${billboard.textureName}|${billboard.cell ?? 0}|${lod}`;
     const hit = this.defIndex.get(key);
     if (hit !== undefined) return hit;
     const idx = this.defNext++;
@@ -324,85 +324,85 @@ export class ColdShadowData {
       fx16 = Math.round(surf.x / 16);
       fy16 = Math.round(surf.y / 16);
       // COHERENCE (2026-07-24): sample the WHOLE square frame as received — the SAME coordinate system the
-      // composite draws EVERY map in (unit quad → the prim's world rect, full-frame UV). We do NOT re-derive a
+      // composite draws EVERY map in (unit quad → the billboard's world rect, full-frame UV). We do NOT re-derive a
       // per-map opaque MINIMUM bbox here anymore: that gave the shadow + normal a DIFFERENT rectangle (even-unit
       // rounded + nudged) than the albedo, which is the whole misalignment (and what RECV_ALIGN/uLightAlign were
       // band-aiding). Transparent area casts no shadow, so the silhouette is identical — only the sampling
       // WINDOW is now the full frame. wu/hu = spanU, ux0/uy0/nx/ny = 0 (the loose defaults, kept).
     }
-    // Bucketing box (world px, rel. prim top-left) — 1 frame unit ≡ 1 world unit by the span model.
+    // Bucketing box (world px, rel. billboard top-left) — 1 frame unit ≡ 1 world unit by the span model.
     this.defTight.set(idx, { dx: ux0 * UNIT, dy: uy0 * UNIT, w: wu * UNIT, h: hu * UNIT });
 
-    const base = (DEF_BASE + idx) * 4;
+    const base = (BILLBOARD_DEF_BASE + idx) * 4;
     const page = 0;        // ONE bound surface page today — C5 (texture-array pages) assigns real indices
-    const ax = 1, ay = 2;  // shadow casters hang the bbox at the prim's BOTTOM-CENTER anchor
+    const ax = 1, ay = 2;  // shadow casters hang the bbox at the billboard's BOTTOM-CENTER anchor
     const nax = 1, nay = 2; // nudge alignment: x centered, y bottom — the default nudging operation
     // v2.1 self-addressing: R = u16 id | u10 offset_x | u6 reserved; G = u9 W | u9 H | u4 span | u10 offset_y.
     this.dataMirror[base] = (((idx & 0xffff) << 16) | ((ux0 & 0x3ff) << 6)) >>> 0;
     this.dataMirror[base + 1] = ((((wu >> 1) & 0x1ff) << 23) | (((hu >> 1) & 0x1ff) << 14) | (((st - 1) & 0xf) << 10) | (uy0 & 0x3ff)) >>> 0;
     this.dataMirror[base + 2] = (((fx16 & 0x3ff) << 22) | ((fy16 & 0x3ff) << 12) | ((page & 0xf) << 8) | ((lod & 0xf) << 4) | ((ax & 3) << 2) | (ay & 3)) >>> 0;
     this.dataMirror[base + 3] = ((((nx + 2048) & 0xfff) << 20) | (((ny + 2048) & 0xfff) << 8) | ((nax & 3) << 6) | ((nay & 3) << 4)) >>> 0;
-    this.mark(DEF_BASE + idx);
+    this.mark(BILLBOARD_DEF_BASE + idx);
     return idx;
   }
 
-  /** The tight bbox (WORLD px, relative to the prim's top-left) for a placed caster's def, or null. */
+  /** The tight bbox (WORLD px, relative to the billboard's top-left) for a placed caster's def, or null. */
   tightBoxOf(defIndex: number): { dx: number; dy: number; w: number; h: number } | null {
     return this.defTight.get(defIndex) ?? null;
   }
 
 
-  /** The `prim_data_index` (≥1) for a PLACED caster (position + orientation + its `def_index`),
-   *  allocated on first sight + cached by `prim.id`. Defs are immutable, so a texture/lod change
+  /** The `billboard_data_index` (≥1) for a PLACED caster (position + orientation + its `def_index`),
+   *  allocated on first sight + cached by `billboard.id`. Defs are immutable, so a texture/lod change
    *  arrives HERE as a `def_index` swap: the orient word rewrites in place and `changed` reports it —
-   *  the caller runs the prim dirty cascade (prim tiles → reaching lights → their cast regions).
+   *  the caller runs the billboard dirty cascade (billboard tiles → reaching lights → their cast regions).
    *  First sight is `changed` too (the same cascade seeds the new caster's region — no force-all). */
-  primDataFor(prim: Primitive, defIndex: number): { idx: number; changed: boolean } {
-    const rotation = prim.flipX ? 3 : 1; // W : E (both E/W regime for now)
+  billboardDataFor(billboard: Primitive, defIndex: number): { idx: number; changed: boolean } {
+    const rotation = billboard.flipX ? 3 : 1; // W : E (both E/W regime for now)
     const z = 0;
     const orient = ((((z & 0xff) << 24) | ((rotation & 0x3) << 22) | ((defIndex & 0xffff) << 6)) >>> 0);
-    const hit = this.primIndex.get(prim.id);
+    const hit = this.billboardIndex.get(billboard.id);
     if (hit !== undefined) {
-      const base = (PRIM_BASE + hit) * 4; // v2.1: R = id|reserved, G = position, B = orient, A reserved
+      const base = (BILLBOARD_BASE + hit) * 4; // v2.1: R = id|reserved, G = position, B = orient, A reserved
       if (this.dataMirror[base + 2] === orient) return { idx: hit, changed: false };
       // RETENTION: "retain whatever the lod was until we get a NEW one" — a new one means a new
-      // USABLE one. Never swap a standing prim DOWN to the loose (lod-0) def: if the freshly
-      // resolved frame is unusable (off-page — e.g. a pool spill) the prim keeps casting its
+      // USABLE one. Never swap a standing billboard DOWN to the loose (lod-0) def: if the freshly
+      // resolved frame is unusable (off-page — e.g. a pool spill) the billboard keeps casting its
       // current silhouette instead of degrading to a solid quad.
       const curDef = (this.dataMirror[base + 2] >>> 6) & 0xffff;
-      const newLod = (this.dataMirror[(DEF_BASE + defIndex) * 4 + 2] >>> 4) & 0xf;
-      const curLod = (this.dataMirror[(DEF_BASE + curDef) * 4 + 2] >>> 4) & 0xf;
+      const newLod = (this.dataMirror[(BILLBOARD_DEF_BASE + defIndex) * 4 + 2] >>> 4) & 0xf;
+      const curLod = (this.dataMirror[(BILLBOARD_DEF_BASE + curDef) * 4 + 2] >>> 4) & 0xf;
       if (newLod < 4 && curLod >= 4) return { idx: hit, changed: false };
       this.dataMirror[base + 2] = orient; // def swap (new lod) / orientation change — position untouched
-      this.mark(PRIM_BASE + hit);
+      this.mark(BILLBOARD_BASE + hit);
       return { idx: hit, changed: true };
     }
-    const idx = this.primFreeList.pop() ?? this.primNext++; // reuse a freed slot before bumping (P2)
-    const ax = prim.x + prim.width * 0.5; // the TRUE game anchor (full-box base-centre) — unchanged
-    const ay = prim.y + prim.height;
-    const base = (PRIM_BASE + idx) * 4; // v2.1: R = u16 id | u16 reserved, G = position, B = orient
+    const idx = this.billboardFreeList.pop() ?? this.billboardNext++; // reuse a freed slot before bumping (P2)
+    const ax = billboard.x + billboard.width * 0.5; // the TRUE game anchor (full-box base-centre) — unchanged
+    const ay = billboard.y + billboard.height;
+    const base = (BILLBOARD_BASE + idx) * 4; // v2.1: R = u16 id | u16 reserved, G = position, B = orient
     this.dataMirror[base] = ((idx & 0xffff) << 16) >>> 0;
     this.dataMirror[base + 1] = encodePosition(ax, ay); // position_anchor_reference
     // orient: z(24–31) | rotation(22–23) | definition_index(6–21) | reserved(0–5)
     this.dataMirror[base + 2] = orient;
-    this.primIndex.set(prim.id, idx);
-    this.mark(PRIM_BASE + idx);
+    this.billboardIndex.set(billboard.id, idx);
+    this.mark(BILLBOARD_BASE + idx);
     return { idx, changed: true };
   }
 
-  /** Free every allocated prim whose `prim.id` is NOT in `seen` (it left the resident/standing set —
+  /** Free every allocated billboard whose `billboard.id` is NOT in `seen` (it left the resident/standing set —
    *  zone evicted or destroyed). Returns its slot to the free-list. No slot clear + no bucket cascade
    *  needed: `buildCasters` rebuilds every in-window bucket from the current `standing` (so a freed id
    *  can't be referenced), and caster REMOVAL force-alls the shadow recompute. Reach gap makes it
-   *  safe: `standing` bounds who can cast, so a freed prim is beyond reach of every in-window tile.
+   *  safe: `standing` bounds who can cast, so a freed billboard is beyond reach of every in-window tile.
    *  Returns the number freed. */
-  freePrimsExcept(seen: Set<number>): number {
+  freeBillboardsExcept(seen: Set<number>): number {
     let dead: number[] | null = null;
-    for (const pid of this.primIndex.keys()) if (!seen.has(pid)) (dead ??= []).push(pid);
+    for (const pid of this.billboardIndex.keys()) if (!seen.has(pid)) (dead ??= []).push(pid);
     if (!dead) return 0;
     for (const pid of dead) {
-      this.primFreeList.push(this.primIndex.get(pid)!);
-      this.primIndex.delete(pid);
+      this.billboardFreeList.push(this.billboardIndex.get(pid)!);
+      this.billboardIndex.delete(pid);
     }
     return dead.length;
   }
@@ -413,7 +413,7 @@ export class ColdShadowData {
 
   /** Build `light_data` (the record row) from the lights, and upload it. **Records only** — casters
    *  are found by the per-tile buckets + corridor sweep now, so there's no LUT to build here (`standing`
-   *  is bucketed by `ShadowGather.buildCasters`, which also allocates defs/prims). Call on change. */
+   *  is bucketed by `ShadowGather.buildCasters`, which also allocates defs/billboards). Call on change. */
   buildLights(lights: ColdLight[]): void {
     const n = Math.min(lights.length, N_LIGHTS);
     const m = this.dataMirror;
@@ -441,7 +441,7 @@ export class ColdShadowData {
   }
 
   /** Upload any changed textures (call once per frame after populating). Cheap — no-op unless a slot landed. */
-  /** Returns true if anything was uploaded (def/prim changed) — the caller re-dirties the shadow. */
+  /** Returns true if anything was uploaded (def/billboard changed) — the caller re-dirties the shadow. */
   /** DEBUG: commands scattered by the last flush (per-set breakdown). */
   debugLastFlush: Record<number, number> = {};
   flush(): boolean {
@@ -512,15 +512,15 @@ export class ColdShadowData {
 
   // ── DEBUG decoders (verify against the CPU mirrors) ─────────────────────────────────
   debugDef(index: number): {
-    prim_width: number; prim_height: number; frame_span: number; offset: [number, number];
+    billboard_width: number; billboard_height: number; frame_span: number; offset: [number, number];
     frame_xy: [number, number]; frame_page: number; frame_lod: number; anchor: [number, number];
     nudge: [number, number]; nudge_anchor: [number, number];
   } {
-    const b = (DEF_BASE + index) * 4;
+    const b = (BILLBOARD_DEF_BASE + index) * 4;
     const R = this.dataMirror[b], G = this.dataMirror[b + 1], B = this.dataMirror[b + 2], A = this.dataMirror[b + 3];
     return {
-      prim_width: ((G >>> 23) & 0x1ff) * 2,  // units (stored /2 — even bbox)
-      prim_height: ((G >>> 14) & 0x1ff) * 2,
+      billboard_width: ((G >>> 23) & 0x1ff) * 2,  // units (stored /2 — even bbox)
+      billboard_height: ((G >>> 14) & 0x1ff) * 2,
       frame_span: ((G >>> 10) & 0xf) + 1,    // tiles
       offset: [(R >>> 6) & 0x3ff, G & 0x3ff], // units, frame-relative (unsigned)
       frame_xy: [((B >>> 22) & 0x3ff) * 16, ((B >>> 12) & 0x3ff) * 16], // frame origin (px)
@@ -534,19 +534,19 @@ export class ColdShadowData {
   get debugDefCount(): number {
     return this.defNext;
   }
-  /** DEBUG: decode a prim_data slot — position back to px + z + rotation + def_index. */
-  debugPrim(index: number): { pos: [number, number]; z: number; rotation: number; def: number } {
-    const base = (PRIM_BASE + index) * 4;
+  /** DEBUG: decode a billboard_data slot — position back to px + z + rotation + def_index. */
+  debugBillboard(index: number): { pos: [number, number]; z: number; rotation: number; def: number } {
+    const base = (BILLBOARD_BASE + index) * 4;
     const pos = this.dataMirror[base + 1], orient = this.dataMirror[base + 2]; // v2.1: G/B
     return { pos: decodePosition(pos), z: (orient >>> 24) & 0xff, rotation: (orient >>> 22) & 0x3, def: (orient >>> 6) & 0xffff };
   }
 
-  get debugPrimCount(): number {
-    return this.primNext - 1; // index 0 is the sentinel
+  get debugBillboardCount(): number {
+    return this.billboardNext - 1; // index 0 is the sentinel
   }
   /** DEBUG (P2): free-list health — `next` high-water, `freed` reusable slots, `live` allocated. */
-  get debugPrimStats(): { next: number; freed: number; live: number } {
-    return { next: this.primNext - 1, freed: this.primFreeList.length, live: this.primIndex.size };
+  get debugBillboardStats(): { next: number; freed: number; live: number } {
+    return { next: this.billboardNext - 1, freed: this.billboardFreeList.length, live: this.billboardIndex.size };
   }
   /** DEBUG: decode a light record (the record row). */
   debugLight(k: number): { pos: [number, number]; rgb: [number, number, number]; intensity: number; z: number; reach: number; emitterRadius: number; castShadows: boolean } {

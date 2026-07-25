@@ -27,7 +27,7 @@ from [`todo.md`](todo.md). Append-only history; authoritative for what's done._
 
 ## P2 · Eviction + prim free-list — 2026-07-23 ✓
 
-- **Prim free-list** (`coldData`): freed prim_data indices → a stack, popped before bumping
+- **Prim free-list** (`coldData`): freed billboard_data indices → a stack, popped before bumping
   `primNext`. `freePrimsExcept(seen)` frees every allocated prim absent from this frame's `standing`
   (zone evicted / destroyed); `buildCasters` builds the resident `seen` set and calls it. Safe with
   no slot-clear + no removal cascade: `buildCasters` rebuilds every in-window bucket from `standing`

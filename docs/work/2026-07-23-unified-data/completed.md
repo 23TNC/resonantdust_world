@@ -17,7 +17,7 @@ _Done **and** verified (identity diff + zoom round-trip). Items move here from
 
 ## P1 · Merge (CPU transport) — 2026-07-23 ✓
 
-- Three textures + mirrors → ONE texture + ONE 16 MB mirror + one dirty row span. prim_data
+- Three textures + mirrors → ONE texture + ONE 16 MB mirror + one dirty row span. billboard_data
   1 px/record (R position, G orient, B/A reserved) — half-texel select + scatter pair-wrinkle die.
   Gather binds `uData` (7 → 5 samplers); GLSL `fetchLin(t, i)` with band-base consts.
 - Verified: identity 0 mismatches; zoom round-trip mints {lod0, lod5, lod6}; nonzero exactly 9,949;

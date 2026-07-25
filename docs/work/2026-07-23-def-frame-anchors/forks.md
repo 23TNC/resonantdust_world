@@ -27,7 +27,7 @@ _Decision points + options + which we chose + why. Chronological._
 
 Originally: nudges in the resolved lod's px, recomputed by the compare-write on lod swap. With ONE
 IMMUTABLE DEF PER ATLAS FRAME (user, P6) every lod's def owns its nudges forever — nothing is ever
-recomputed; a lod swap is a `prim_data` def-index swap riding the prim dirty cascade.
+recomputed; a lod swap is a `billboard_data` def-index swap riding the prim dirty cascade.
 
 ## F4 · nudges signed — RATIFIED as u12 ±2048 + nudge anchors {#f4}
 
@@ -65,8 +65,8 @@ CPU mirror), so same-frame passes read the updated data cleanly.
   ceiling); whole-texel commands (the prim-pair wrinkle).
 - **Deferred because** scattered-sparse is RARE today (zoom threshold crossings); it becomes the
   common pattern when the hot tier / moving casters land — build it then, ordered before the gather.
-- **Consolidation rider (user):** under scatter, the three index tables (`light_data`, `prim_data`,
-  `prim_definition_data` — all RGBA32UI, all scatter-fed) merge into ONE stacked texture (row
+- **Consolidation rider (user):** under scatter, the three index tables (`light_data`, `billboard_data`,
+  `billboard_definition_data` — all RGBA32UI, all scatter-fed) merge into ONE stacked texture (row
   regions: defs 0–255, prims 256–383, lights 384; shader adds a base-row constant) — gather
   bindings 7 → 5. Safe because the merged texture takes NO CPU uploads (draw-writes only → no
   ghost-copy coupling; per-texel granularity). Scope limits: the CPU-rebuilt tile-grid maps stay
@@ -75,12 +75,12 @@ CPU mirror), so same-frame passes read the updated data cleanly.
   feedback-loop rule makes the merged table one shared read-XOR-write domain per draw. Size
   256×512 (2 MB) — NOT 1024² (16 MB for 1.5 MB of tables).
 
-## F3 · prim_data position semantics under anchors {#f3}
+## F3 · billboard_data position semantics under anchors {#f3}
 
 **2026-07-23 — OPEN (P3).**
 
 Today `primDataFor` precomputes the base-centre (x + w/2, y + h) into `position_anchor_reference`.
-With `frame_anchor` in the def, the natural model is: `prim_data` holds the prim's **reported x/y**
-verbatim and the def's anchor places the bbox. Decide at P3 whether to (a) switch prim_data to
+With `frame_anchor` in the def, the natural model is: `billboard_data` holds the prim's **reported x/y**
+verbatim and the def's anchor places the bbox. Decide at P3 whether to (a) switch billboard_data to
 reported-x/y (cleaner, one meaning), or (b) keep base-centre and treat anchor as display-only.
 Leaning (a); touches `primDataFor` + the gather's `A` usage + bucketing.

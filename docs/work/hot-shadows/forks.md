@@ -7,10 +7,10 @@ _Decision points + options + which we chose + why. F1–F4 set the layouts / mec
 ## F1 · Where hot-prim associations live (the hot LUT) — 2026-07-21 (open, user)
 
 A work item's `lut_index/lut_count` names a run of prims to shadow. For `prim_temp=cold` it indexes the static
-cold LUT texture (`cold_light_prim_data`) — fine. But **hot** prims move every frame, so their light→prim
+cold LUT texture (`cold_light_billboard_data`) — fine. But **hot** prims move every frame, so their light→prim
 associations change every frame and **can't sit in a static texture**. Options:
 
-- **(a) A parallel hot-LUT uniform** — a uniform array of `(definition_index, prim_data_index)` (same entry
+- **(a) A parallel hot-LUT uniform** — a uniform array of `(definition_index, billboard_data_index)` (same entry
   shape as the cold LUT); `prim_temp=hot` runs index it, `prim_temp=cold` runs index the cold LUT texture.
   Rebuilt each frame (small — few hot prims). Symmetric with the light/prim uniform split.
 - **(b) Work items ARE the granular association** — drop the LUT indirection for hot; each hot work item lists
@@ -18,12 +18,12 @@ associations change every frame and **can't sit in a static texture**. Options:
 
 **Decided (user, 2026-07-21):** the work item is *(light temp+index, prim_temp, prim_index, prim_count)* — a run
 of PRIMS, whose **source follows `prim_temp`**: the **hot prim uniform** (hot) or the **cold LUT**
-(`cold_light_prim_data`, since cold light × cold prim are both static). **No separate hot-LUT texture** — the
+(`cold_light_billboard_data`, since cold light × cold prim are both static). **No separate hot-LUT texture** — the
 hot prim uniform is the list, indexed directly by the run. Hot prim **defs** reuse the cold
-`prim_definition_data` (geometry is temp-agnostic). (Rejected: writing the cold textures every frame for movers
+`billboard_definition_data` (geometry is temp-agnostic). (Rejected: writing the cold textures every frame for movers
 — too slow; uniforms carry the hot tier.) Work-item bits are unchanged; only the run's source is
 `prim_temp`-selected. _Open detail:_ a hot prim uniform entry likely carries its own `definition_index` (no LUT
-to pair it) — i.e. `cold_prim_data` shape + `def_index`.
+to pair it) — i.e. `cold_billboard_data` shape + `def_index`.
 
 ## F2 · The bitfield write mechanism (OR bits) — 2026-07-21 (open; biggest new piece)
 

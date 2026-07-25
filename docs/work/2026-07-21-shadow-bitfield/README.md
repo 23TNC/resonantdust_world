@@ -14,8 +14,8 @@ represents one cold light** in `cold_light_data`. Maintain it by **dirty tiles**
 **fixed-layout redesign (2026-07-21, F5/F6)** settled the culling + update model:
 
 1. **Fixed slots.** `N = 128` lights, `≤ 256` shadow casters/light, `u16` def/prim indexes. Four cold
-   textures consolidate to `light_data` (128×33 — row 0 lights, rows 1–32 the LUT), `prim_data`
-   (256×128, 2/px), `prim_definition_data` (256×256) — deleting the old `cold_light_prim_data`. See
+   textures consolidate to `light_data` (128×33 — row 0 lights, rows 1–32 the LUT), `billboard_data`
+   (256×128, 2/px), `billboard_definition_data` (256×256) — deleting the old `cold_light_billboard_data`. See
    [F6](forks.md#f6).
 2. **`light_presence_cold`** (128×64, window+overscan) — one tile/px, **each bit = a light reaching
    that tile** (distance cull, CPU-set on light change). The gather reads its tile's presence px and
@@ -68,7 +68,7 @@ uniform → P4 the gather cast (single `discard`-gated window pass) → P5 the `
 
 ## Scope
 
-**In:** consolidating the cold textures to the fixed layout (F6, deleting `cold_light_prim_data`);
+**In:** consolidating the cold textures to the fixed layout (F6, deleting `cold_light_billboard_data`);
 the `shadow-cold` `RGBA32UI` world-space toroidal buffer; `light_presence_cold` (per-tile light cull);
 dirty-tile tracking + the dirty-bit uniform; the single-pass `discard`-gated fragment **gather**
 (present lights → `caster_count` casters → point-in-silhouette → OR bits); the `usampler2D` per-bit

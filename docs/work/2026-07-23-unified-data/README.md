@@ -12,8 +12,8 @@ applied by ONE **point-scatter draw** per frame. CPU never uploads the data text
 
 ```
 data texture — 1024×1024 RGBA32UI (16 MB, provisioned once; linear index i → (i & 1023, i >> 10))
-  rows   0–63    prim_definition_data   65,536 defs, 1 px each (band base 0)
-  rows  64–127   prim_data              65,536 prims, 1 px each (band base 65,536) — F1: retire 2/px
+  rows   0–63    billboard_definition_data   65,536 defs, 1 px each (band base 0)
+  rows  64–127   billboard_data              65,536 prims, 1 px each (band base 65,536) — F1: retire 2/px
   rows 128–191   light_data             65,536 light slots (band base 131,072; N_LIGHTS bitfield
                                         stays the shadow-cold cap — the band is address headroom)
   rows 192–1022  reserved               future tables (materials era)

@@ -12,7 +12,7 @@ delivered [`cold-data-textures`](../cold-data-textures/README.md) cold tier. Pac
 - [ ] In `VARIABLES.md`: (a) **`hot-light-work`** uniform = 2 `u32` (`light_temp|prim_temp|reserved|index` +
       `lut_index|lut_count`); (b) **`cold_light_data`** — remove `lut_index/lut_count` (A channel), add
       `u8 shadow_bit_index` there; (c) **hot light / hot prim** uniform layouts = the cold packed layouts
-      (`cold_light_data` / `cold_prim_data` shapes); (d) the **hot LUT** uniform ([F1](forks.md#f1)); (e) the
+      (`cold_light_data` / `cold_billboard_data` shapes); (d) the **hot LUT** uniform ([F1](forks.md#f1)); (e) the
       **`*-hot`/`*-cold` shadow map** format (bitfield, [F4](forks.md#f4)) + space ([F3](forks.md#f3)).
 
 ## P1 · Work-item-driven cast (refactor, cold×cold, behaviour-preserving) — 2026-07-21

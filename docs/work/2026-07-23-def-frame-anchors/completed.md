@@ -24,7 +24,7 @@ Append-only history; authoritative for what's done._
   window clamped in-frame), anchors written bottom-center (1,2). ±512 bias + dilated-rect scheme
   deleted; `defTight` = the unit bbox × UNIT (1 frame unit ≡ 1 world unit by the span model).
 - `casterCover`: `ppu = 2^lod / spanU` (whole pow2 by construction); anchor shift = bbox anchored
-  point − full-box anchored point (prim_data's base-centre keeps working — F3 option (b) for now,
+  point − full-box anchored point (billboard_data's base-centre keeps working — F3 option (b) for now,
   (a) lands with P5); `lod < 4` = solid-quad fallback; sample = frame origin + offset·ppu − nudge +
   normalized (s, 1−t)·bbox·ppu. Mirror (rot=W) flips the shift and s.
 

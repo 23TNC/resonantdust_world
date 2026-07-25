@@ -20,7 +20,7 @@ global ambient, a **no-cull flag** beats a max radius.
 
 ## F2 · The atlas frame page identifier — 2026-07-21 (resolved)
 
-**Decided:** grow `prim_definition_data` to a **full `RGBA32UI` px** (was 2 prims/px) and spend the new space
+**Decided:** grow `billboard_definition_data` to a **full `RGBA32UI` px** (was 2 prims/px) and spend the new space
 on `frame_page` (`u10`) + reserved (`u22` + `u32`, for materials later). Defs are **shared per sprite variant**
 (~16 px for a conifer's variants, referenced by hundreds of instances), so the extra 64 bits/def is nearly
 free. Resolves the multi-page atlas gap — the shader knows which page to sample. No cap on distinct caster
@@ -40,9 +40,9 @@ LUT names the caster. No `light_index` in the LUT.
 
 ## F5 · LUT churn on caster movement — 2026-07-21 (resolved by the normalization)
 
-**Decided:** the four-table split solves it. A caster's position lives ONLY in `cold_prim_data` (indexed by
-`prim_data_index`); the LUT holds indices, not position. So a prim **moving stays in range** = update **one**
-`cold_prim_data` texel, and every light referencing it sees the new position — **no LUT edit**. Only a prim
+**Decided:** the four-table split solves it. A caster's position lives ONLY in `cold_billboard_data` (indexed by
+`billboard_data_index`); the LUT holds indices, not position. So a prim **moving stays in range** = update **one**
+`cold_billboard_data` texel, and every light referencing it sees the new position — **no LUT edit**. Only a prim
 crossing a light's **radius** patches that light's run (add/remove). Plus a **shader radius safety check**
 (rectangle / Chebyshev distance where Euclidean isn't needed) tolerates a slightly-stale LUT — a prim that left
 range before its run was patched still culls in the shader. Full LUT rebuild only on bulk change (zone stream
@@ -51,11 +51,11 @@ in); incremental patching later if needed.
 ## F6 · Where the shadow base-spread depth (dA/dB) lives — 2026-07-21 (open, user; blocks P4)
 
 The `shadow-projection` fan uses a per-caster **base spread** `dA/dB` (the 5-triangle ±depth) derived from the
-sprite silhouette (its presence bake). The **cold-data layout has no field for it** — `prim_definition_data`
-carries geometry + frame, `cold_prim_data` carries position + rotation, neither has depth. For P4 (the shader
+sprite silhouette (its presence bake). The **cold-data layout has no field for it** — `billboard_definition_data`
+carries geometry + frame, `cold_billboard_data` carries position + rotation, neither has depth. For P4 (the shader
 building the fan from the textures) the depth must come from somewhere. Options:
 
-- **(a) Store `dA/dB` in `prim_definition_data`** — it's **per-def, generic** (all conifers share a base
+- **(a) Store `dA/dB` in `billboard_definition_data`** — it's **per-def, generic** (all conifers share a base
   spread), exactly like `prim_width/height`. Spend the spare `A` channel: e.g. `u10 dA | u10 dB | u12
   reserved` (units). Compute from the presence bake (the existing `depthFor`) at atlas-add. Natural home;
   a small layout addition to the currently-reserved `A`.
@@ -64,6 +64,6 @@ building the fan from the textures) the depth must come from somewhere. Options:
 - **(c) Drop the ±depth in the cold-data version** — render only the body triangle (T1); a narrower shadow, no
   base spread. Simplest, a visible regression from `shadow-projection` P3.
 
-**Decided (a), 2026-07-21:** `dA`/`dB` go in `prim_definition_data`'s **B** channel (which had the `u22`
+**Decided (a), 2026-07-21:** `dA`/`dB` go in `billboard_definition_data`'s **B** channel (which had the `u22`
 reserved) as **two `u8`s in units** — `u10 frame_page | u8 dA | u8 dB | u6 reserved`. (`u8` is overkill for a
 sub-tile spread vs `u4`, but the space is free.) Computed from the presence bake at atlas-add. B-1 resolved.

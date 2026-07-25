@@ -36,7 +36,7 @@ Append-only history; authoritative for what's done._
 ## P3 · Tight opaque-bbox quads + P1.5 sweep fix — 2026-07-23 ✓
 
 - Shadow quad = the sprite's **opaque bbox**. Size (W/H) + **offset** (opaque-bbox base-centre −
-  game anchor) live in the **def** (per-sprite, shared); `prim_data` keeps the **true game anchor**;
+  game anchor) live in the **def** (per-sprite, shared); `billboard_data` keeps the **true game anchor**;
   the gather applies the offset. Bbox pre-computed on the CPU at decode (surface B-channel fractions,
   LOD-safe) — no mid-render GPU readback. Removed the per-prim version/upgrade machinery.
 - **THE all-day bug — sweep loop miscompile** ([`issues.md#reach-walk`](issues.md)): a body-modified

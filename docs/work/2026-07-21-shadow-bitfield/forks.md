@@ -98,20 +98,20 @@ whole reach, not just the caster's actual shadow footprint) — acceptable short
 
 Fix everything to constant slots (the user: simplifies alloc + pre-shapes warm/hot as bit-partitions,
 not reallocations). **N = 128 lights**, **≤ 256 shadow casters/light**, `u16` def/prim indexes ⇒
-65 536 ceilings. The four cold textures consolidate (deletes the old `cold_light_prim_data` LUT):
+65 536 ceilings. The four cold textures consolidate (deletes the old `cold_light_billboard_data` LUT):
 
 | texture | size (`RGBA32UI`) | contents |
 |---|---|---|
 | `light_data` | **128×33** | col = light. **row 0** = light record; **rows 1–32** = 256× `u16` prim indexes (the LUT, `lut_index` now **implicit** = column x) |
-| `prim_data` | **256×128** | all cold prims, **2/px** (`u64` each): `u32` position; `u8 z \| u2 rot \| u16 def_index \| u6 rsvd` |
-| `prim_definition_data` | **256×256** | one def/px (4 `u32`), keyed by `u16 def_index` |
+| `billboard_data` | **256×128** | all cold prims, **2/px** (`u64` each): `u32` position; `u8 z \| u2 rot \| u16 def_index \| u6 rsvd` |
+| `billboard_definition_data` | **256×256** | one def/px (4 `u32`), keyed by `u16 def_index` |
 | `light_presence_cold` | **128×64** (window+overscan) | one tile/px; bit = a light reaching it (F5) |
 | dirty-tile bits | **64 `uvec4`** uniform (or a tiny texture) | one bit/tile; gates the single pass |
 
 **Update model: single full-window pass, `discard`-gated.** One pass over `shadow-cold`; each fragment
 reads its tile's dirty flag (from `shadow_dirty`, an **`R8UI` texture** — decided over a uniform, to
 keep the fragment-uniform budget free for warm/hot) and `discard`s if clean (persistent RT untouched →
-**no ping-pong on `shadow-cold`**). CPU maintains `light_data`/`prim_data`/`prim_definition_data`/
+**no ping-pong on `shadow-cold`**). CPU maintains `light_data`/`billboard_data`/`billboard_definition_data`/
 `light_presence_cold`/`shadow_dirty` and uploads changed regions (cold changes rarely; **no GPU
 ping-pong** for the data — CPU is the writer). Budget = mark only a subset of tiles dirty per frame
 (optional).
@@ -125,11 +125,11 @@ reserved. Cost: prim index 0 is unusable → **65 535** usable prim slots (1..65
 unblocked the authoritative `VARIABLES.md` layout (written 2026-07-21). `shadow_dirty` = an `R8UI`
 texture (nonzero = dirty), not the uniform.
 
-**Nit resolved:** `prim_data` is **256×128** (256×126×2 = 64 512 would under-address `u16`).
+**Nit resolved:** `billboard_data` is **256×128** (256×126×2 = 64 512 would under-address `u16`).
 
 ## F7 · Def-index width (u16) overrun — 2026-07-21 (RESOLVED, watch)
 
 `u16 def_index` ⇒ 65 536 distinct `(type,subtype,kind,variant)` definitions; the game's `u32` id space
 could theoretically exceed it. **In practice we won't** (65 k distinct object variants is implausible
 before other limits bite). If ever hit: bump `def_index` `u16→u20` (the prim's `u6 reserved` covers
-it) + grow `prim_definition_data`, or add eviction. Not now.
+it) + grow `billboard_definition_data`, or add eviction. Not now.

@@ -22,15 +22,14 @@ nearest-14/tile, and a light that "does nothing" in a dense cluster may simply h
 **Status.** Document, don't change here. If dense clusters need more, that's a separate widen-the-cap
 stream (costs bits + gather time), not this one.
 
-## I3 — Position duplicated across `prim_data` + `light_data` under F1-(a) (2026-07-24)
-**Problem.** If a light is a real prim (F1-a), its position lives in `prim_data.G` (the placed anchor,
-the free-list + cascade key) AND in `light_data.G` (what the gather reads). A move would touch two
-records.
-**Candidate solutions.** (1) **Derive** `light_data.G` from the light-prim's `prim_data` each build (one
-source of truth; the derive is a compare-write so a static light still emits no command). (2) Have the
-gather read a light's position from its `prim_data` via a prim reference (retires `light_data.G`, adds an
-indirection hop in the hot loop). **Lean: (1)** — keep the gather's direct `light_data` read (no hot-loop
-indirection); the CPU derive is cheap and compare-written. Tied to [F1](forks.md#f1).
+## I3 — Position duplicated for a primitive that presents as BOTH (2026-07-24)
+**Problem.** A **pure light** has no duplication — its position lives only in `light_data.G` ([F1](forks.md#f1)).
+But a primitive presenting as **both** (an emissive sprite: torch + glow) has its position in
+`billboard_data.G` (the caster anchor) AND `light_data.G` (the emitter). A move must update both.
+**Candidate solutions.** (1) **Write both from the one placement** — each presentation record is
+authoritative for its own read path; a compare-write means a static primitive still emits no command
+(lean, per [F1](forks.md#f1)). (2) Single source in `billboard_data`, **derive** `light_data.G` each build.
+Both are cheap CPU-side; (1) avoids any read-time indirection. **Lean: (1).**
 
 ## I4 — Two kinds of "force-all" are conflated (2026-07-24)
 **Problem.** `forceColdDirty`/`forceHotDirty` (`shadowGather.ts:925-926`) are set both by **placement-ish

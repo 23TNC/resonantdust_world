@@ -62,7 +62,7 @@ The open items are details to pin, not flaws (see [`forks.md`](forks.md)):
 - **F1 — hot prims need a hot LUT.** The work item's `lut_index/lut_count` for `prim_temp=cold` indexes the
   static cold LUT texture — fine. But a **hot** prim's associations change every frame, so they can't live in
   that static texture; they need a **hot-LUT uniform** (parallel to the cold LUT), selected by `prim_temp`.
-  Same for a hot prim's *definition* (generic geometry): reuse the cold `prim_definition_data` (geometry is
+  Same for a hot prim's *definition* (generic geometry): reuse the cold `billboard_definition_data` (geometry is
   temp-agnostic) rather than a hot def.
 - **F2 — the bitfield WRITE mechanism.** Setting each light's bit in an integer `RGBA32UI` target can't use GL
   blend (there's no bitwise-OR blend), and overlapping casters of one light must **OR**, not add. This needs

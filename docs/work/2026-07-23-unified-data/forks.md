@@ -4,7 +4,7 @@ _Decision points + options + which we chose + why. Chronological._
 
 ---
 
-## F1 · prim_data: retire 2-prims-per-px → 1 px per record {#f1}
+## F1 · billboard_data: retire 2-prims-per-px → 1 px per record {#f1}
 
 **2026-07-23 — proposed with the layout, resolve at P0.**
 

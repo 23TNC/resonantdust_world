@@ -13,7 +13,7 @@ _Where the code departs from the plan. Row: date · plan · code · why · statu
   the center-anchor triangles); the 4-corner quad removes them. Browser-verified: diagonals gone, clean
   tree-shaped shadows. (New: a thin horizontal ground-contact line where flat bottom edges align across a
   tree row — inherent to the quad, flagged to the user.)
-- **Status:** open. If the quad sticks: the `prim_definition_data` `dA`/`dB` fields (VARIABLES.md) become
+- **Status:** open. If the quad sticks: the `billboard_definition_data` `dA`/`dB` fields (VARIABLES.md) become
   vestigial → reclaim or note; the `shadow-projection` design's 5-triangle model needs updating. Kept the
   `dA`/`dB` data + params so a return to the fan is a one-function revert.
 

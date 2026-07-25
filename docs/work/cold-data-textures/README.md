@@ -16,24 +16,24 @@ definition / instance indirection. Exact bit layouts are authoritative in
 - **`cold_light_data`** — one px/light: position (`position_anchor_reference`), colour+intensity, `radius`+`z`,
   a **`cast_shadows`** flag (0 → lights without casting: no LUT run, skipped in the cast), and a **run**
   `(lut_index, lut_count)` into the LUT = this light's shadow casters.
-- **`cold_light_prim_data`** (the LUT) — the light → caster association, **indices only**: each entry =
-  `(definition_index, prim_data_index)`. A light's casters are the contiguous run `[lut_index, +lut_count)`.
-- **`prim_definition_data`** — one px per sprite **variant**: **generic** geometry (billboard `width/height` +
+- **`cold_light_billboard_data`** (the LUT) — the light → caster association, **indices only**: each entry =
+  `(definition_index, billboard_data_index)`. A light's casters are the contiguous run `[lut_index, +lut_count)`.
+- **`billboard_definition_data`** — one px per sprite **variant**: **generic** geometry (billboard `width/height` +
   atlas `frame x/y/w/h` + `frame_page`), shared by every instance of that sprite. Written on **atlas add**;
   evicted only if the atlas evicts (it doesn't yet). ~16 px for a conifer's variants; a spare `u32` for
   materials later.
-- **`cold_prim_data`** — one entry per **placed** caster instance: its position + `z` + `rotation` (n/e/s/w).
+- **`cold_billboard_data`** — one entry per **placed** caster instance: its position + `z` + `rotation` (n/e/s/w).
 
 **Position** = `position_anchor_reference` (`region | zone | tile | anchor`, each `u8 = x:4|y:4`) — a full
 spatial address at `SQUARE/16` sub-tile resolution; no world-size cap.
 
 **Why this shape is right — the normalization is the key move.** Cold lights don't move and casters are static,
 so the data is written **once** and read every frame for free (no per-frame CPU→GPU upload). Splitting the
-per-instance position (`cold_prim_data`) from the light→caster association (the LUT) and the generic geometry
-(`prim_definition_data`) means a caster's position lives in **one** place: **moving it updates one texel**, and
+per-instance position (`cold_billboard_data`) from the light→caster association (the LUT) and the generic geometry
+(`billboard_definition_data`) means a caster's position lives in **one** place: **moving it updates one texel**, and
 every light referencing it (via the index) sees the new position — instead of editing every light's run. This
 is `caster-lut`'s light → LUT → prim model, normalized, as GPU textures. It also **unblocks
-[`shadow-projection` P5](../shadow-projection/blockers.md#b-1)** — `cold_prim_data.rotation` picks the E/W vs
+[`shadow-projection` P5](../shadow-projection/blockers.md#b-1)** — `cold_billboard_data.rotation` picks the E/W vs
 N/S regime.
 
 ## Relationship to what exists
@@ -50,7 +50,7 @@ unchanged.
 to the shader so we don't pass cold data every frame") is exactly how scalable GPU-driven rendering works:
 `texelFetch` on an integer texture is an exact by-index read; the texture lives in GPU memory and is updated
 (`texSubImage2D`) only on change, so per-frame there's zero transfer. The 128-bit `RGBA32UI` packing is clean —
-every layout fits its pixel exactly — and the four-table **normalization** (position in `cold_prim_data`, not
+every layout fits its pixel exactly — and the four-table **normalization** (position in `cold_billboard_data`, not
 repeated in the LUT) is the right move: one texel to move a caster, not every light's run. The open items are
 all **resolved** ([`forks.md`](forks.md)): F1 the `region|zone|tile|anchor` address (no world cap), F2
 `frame_page` in the full-px prim def, F3 per-light draw (the association is inherent), F4 debug lights now /
