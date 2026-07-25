@@ -437,8 +437,8 @@ float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, bool isThing, 
                 vec2 ref, highp usampler2D data, sampler2D surf, out float row) {
   row = 0.0;
   if (billboardIdx == 0u) return 0.0;
-  vec2 Cb = resolvedTilePos((fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).x >> 8) & 255u,
-                            fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).x & 255u, ref); // caster base
+  uint cRB = fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).x;   // ONE fetch — this is the corridor's
+  vec2 Cb = resolvedTilePos((cRB >> 8) & 255u, cRB & 255u, ref);      // hot loop, per caster per light
   if (isThing) {
     if (billboardIdx == rbillboard) return 0.0;                       // (0) self — exact same billboard → no self-cast
     if (Cb.y <= Rbase.y + ${SELF_BANDF}) return 0.0;        // (1) seen-face + near-band (units): caster must be >SELF_BAND south
@@ -1167,7 +1167,11 @@ export class ShadowGather {
       const tx = p.x + tdx, ty = p.y + t.dy;
       // A changed billboard (new immutable def — lod landed/zoom — or first sight) cascades its region.
       if (inst.changed) this.markBillboardDirty(tx, ty, t.w, t.h);
-      this.lastBox.set(p.id, [tx, ty, t.w, t.h]); // P4: remembered so REMOVAL can dirty scopedly
+      // P4: remembered so REMOVAL can dirty scopedly. MUTATE in place — allocating a fresh array per
+      // prim per frame is ~1700 short-lived arrays a frame, i.e. GC pressure for no reason.
+      const lb = this.lastBox.get(p.id);
+      if (lb === undefined) this.lastBox.set(p.id, [tx, ty, t.w, t.h]);
+      else { lb[0] = tx; lb[1] = ty; lb[2] = t.w; lb[3] = t.h; }
       const baseY = ty + t.h, topY = baseY - TILT * t.h; // card ground y-extent (px)
       const r0 = Math.floor(topY / SQUARE), r1 = Math.floor(baseY / SQUARE);
       const c0 = Math.floor(tx / SQUARE), c1 = Math.floor((tx + t.w) / SQUARE);

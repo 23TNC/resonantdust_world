@@ -243,3 +243,32 @@ that already exist, whoever placed them.
 **Lesson for the plan shape.** Both items *read* as executable ("delete X", "swap Y") while silently
 depending on a later phase. An item is only executable if its inputs exist; phase order should be
 checked against that, not against narrative flow.
+
+## I24 — Perf regressions introduced by the graph work (2026-07-25) — three fixed, headline NOT reproduced
+User reports the build at **30 fps**, previously 120 locked. Profiling found three genuine regressions
+I introduced, all now fixed:
+1. **`casterOne` fetched the same texel TWICE** (`fetchLin(...).x` written out twice instead of held in
+   a local) — inside the **corridor walk**, i.e. per caster per light per texel, the hottest loop in the
+   renderer. Now one fetch.
+2. **The graph work ran ~971×/frame to conclude nothing changed.** `buildCasters` calls
+   `billboardDataFor` for every standing prim every frame; P2e made it always `encodePosition` +
+   `resolveCarried` (walk + decode + encode) + two 4-way compare-writes, where it used to early-out on
+   an unchanged orient word. Measured **0.66 ms/frame** in `billboardDataFor` + 0.20 in `resolveCarried`.
+   Added a three-read fast path (position / rotation / definition): resolve calls **971 → 133 per frame**.
+3. **~1700 short-lived arrays per frame** — `lastBox.set(id, [x,y,w,h])` allocated a fresh array per prim
+   per frame. Now mutated in place.
+
+**But the headline is NOT reproduced.** Measured after the fixes, fresh loads, steady state:
+| scene | billboards | window | fps |
+|---|---|---|---|
+| zoom 2, focus 34,25 | 525 | 240 tiles | 120.8 |
+| zoom 1, focus 100,50 | 455 | 720 tiles | 120.5 |
+| zoom 0.25, focus 100,50 | 3144 | 7440 tiles | 120.2 |
+| zoom 0.25 + **16 dynamic lights** | 1709 | 7440 tiles | 119.7 |
+
+Hypotheses tested and **eliminated**: light count (16 dynamic ⇒ 119.7); billboard count (3144 ⇒ 120.2);
+window size; HMR loop accumulation — `Ticker` has an undisposed `requestAnimationFrame` and there are no
+`import.meta.hot` handlers anywhere, but Vite therefore does a **full page reload** on update (proved: a
+`window` global set before the update was gone after it), so nothing accumulates.
+**Still unknown** — what differs in the reporting session. Needs: the view (zoom/focus), whether it is
+steady state or during zone streaming, and whether other lights were injected.

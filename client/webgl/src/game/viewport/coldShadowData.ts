@@ -430,6 +430,16 @@ export class ColdShadowData {
       this.billboardIndex.set(billboard.id, idx);
     }
     this.primOfBillboard.set(billboard.id, prim);
+    // FAST PATH: `buildCasters` calls this for EVERY standing prim EVERY frame, and almost none of them
+    // change. Three mirror reads decide it — position, rotation, definition — and an unchanged prim skips
+    // the resolve walk and both compare-writes. Without this the graph work runs ~1000×/frame to
+    // conclude nothing happened (measured ~0.9 ms/frame of pure waste at 1709 prims).
+    const pb = (PRIM_BASE + prim) * 4, lb = (BILLBOARD_DATA_BASE + idx) * 4;
+    if (hit !== undefined && this.dataMirror[pb] === pos
+        && ((this.dataMirror[pb + 1] >>> 26) & 3) === rotation
+        && ((this.dataMirror[lb + 2] >>> 16) & 0xffff) === defIndex) {
+      return { idx, changed: false };
+    }
     // prim_data (set 1): a ROOT (child = 0) at the absolute position, carrying the billboard in slot a.
     // `cast_shadows` MUST be set here: it inherits by AND down the chain, so a carrier that leaves it
     // clear silences everything it carries (caught by mirror readback — the leaf came back cast = 0).
