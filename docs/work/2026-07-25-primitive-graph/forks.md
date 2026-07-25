@@ -11,9 +11,10 @@ longer architectural — it's per-consumer:
 - **GPU can resolve** where needed (user: "with parent ids allocated, the GPU should also be able to if
   required") — bounded walk, constant loop + `break`.
 
-**Remaining sub-decision** ([I11](issues.md#i11)): the gather's per-texel-per-light loop should NOT walk
-chains. Either the CPU stamps a resolved absolute position into the leaf (lean — it already computes it)
-or the walk is accepted with a `MAX_DEPTH` cap. Bit-home for the stamped position → [B2](blockers.md#b2).
+**Sub-decision RESOLVED (2026-07-25):** the gather never walks. The **CPU stamps** the resolved position
+into the leaf's RED lane (`u16 parent_id | u8 resolved_tile | u8 resolved_unit`), walking root → child
+offsets → leaf. `parent_id` remains for CPU cascade/free/reconciliation. (Plus `resolved_zone` —
+[I13](issues.md#i13)/[B3](blockers.md#b3).)
 
 ## F2 — What do the tile buckets hold? ✅ RESOLVED — LEAVES (2026-07-25)
 `light_presence` holds **`light_data` ids**; **`billboard_presence`** (renamed from the caster buckets)
@@ -38,8 +39,7 @@ routing generalised. **New wrinkle from inheritance:** a carrier's `hot_cold` fl
 swaps definitions) re-classes its whole subtree, so the cascade must walk **down** the children — which
 the CPU resolve pass already does. `parent_id` additionally lets a leaf's dirty find its carrier.
 
-## F7 — Partial-command indexing (2026-07-25, OPEN, mechanical)
-A command writes ≤7 records to one set; the trivial map (record `p` → command `p/7`, slot `p%7`) assumes
-full commands. **(a)** pad by repeating an id+payload (safe — the scatter is absolute + replay-idempotent);
-**(b)** upload the `(command, slot)` pair per point via the existing `aIndex` attribute.
-**Lean: (b)** — no wasted writes, and `scatterGeo` already carries a per-point integer attribute.
+## F7 — Partial-command indexing ✅ RESOLVED — `id = 0` SENTINEL (2026-07-25)
+A partial command **pads unused id slots with 0**; the scatter discards zero-id points (degenerate
+`gl_Position` → clipped). Keeps the trivial `p/7`, `p%7` map with no per-point bookkeeping. Costs one
+burned entry per set ([I14](issues.md#i14)).

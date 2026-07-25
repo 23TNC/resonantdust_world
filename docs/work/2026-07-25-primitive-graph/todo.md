@@ -9,11 +9,14 @@ then the readers** — the data texture must never be half-migrated across a fra
   8-px command format into [`VARIABLES.md`](../../VARIABLES.md) — authoritative, code conforms after.
 - **Settled 2026-07-25** (record, don't re-litigate): bias-8 signed offsets; `parent_id` on leaves +
   `child` bit on `prim_data`; presence carries **leaves** (`light_presence` / `billboard_presence`);
-  rotation is a **CPU reconciliation signal**, the shader uses the **definition's** rotation, with
-  `parent_rotation` for inheritance; one object per layer, no layer on `prim_data`.
-- **Still open** ([blockers.md#b2](blockers.md#b2)): restore `emitter_radius` to `light_data`
-  ([I10](issues.md#i10)) and pick the bit-home for a leaf's **resolved position**
-  ([I11](issues.md#i11)).
+  rotation is a **CPU reconciliation signal**, the shader uses the **definition's** rotation;
+  one object per layer, no layer on `prim_data`.
+- **Also settled 2026-07-25:** `emitter_radius` restored; the **CPU stamps the resolved position** into
+  the leaf's RED lane (authored offsets stay in GREEN); **`id = 0` is the global sentinel** (partial
+  commands pad with zeros); `inherit_rotation` lives on `definition_data` + `prim_data`, **one-step**.
+- **Still open** ([blockers.md#b3](blockers.md#b3)): ⚠ add **`u8 resolved_zone`** — tile+unit alone has a
+  16-tile period, ambiguous past 8 tiles of reach, and `LIGHT_REACH` is 12 ([I13](issues.md#i13)).
+  Plus the mechanical `id = 0` fallout ([I14](issues.md#i14): `defNext` 1-based, presence sentinels).
 - Update the presence spec to 8 slots (16 lights / 8 billboards per tile) + rename the caster buckets to
   `billboard_presence`; state the single resolve authority per consumer ([I12](issues.md#i12)).
 
@@ -22,8 +25,8 @@ then the readers** — the data texture must never be half-migrated across a fra
   `B=id3|id4`, `A=id5|id6`), `px1..7` = the 7 payload records. 8 commands/row → **56 writes/row**.
 - `SCATTER_VERT`: **delete the 16-iteration count scan** — record `p` → command `p/7`, slot `p%7`,
   target `(set << 16) | id[slot]`; payload px = `cmd*8 + 1 + slot`. Strictly cheaper than today.
-- Writer: group by set, ≤7 records per command; handle partial commands per [F7](forks.md#f7)
-  (lean: encode `(command, slot)` in the existing `aIndex` attribute — no padding waste).
+- Writer: group by set, ≤7 records per command; **pad partial commands with `id = 0`**, and have the
+  scatter discard zero-id points via a degenerate `gl_Position` ([F7](forks.md#f7)).
 - Retire the self-address write (`R`'s high half) from every record writer.
 - **Verify in isolation before any record layout changes**: keep today's layouts, flip only the
   transport, confirm the scene is pixel-identical. This phase is independently provable — do not bundle
@@ -43,8 +46,9 @@ then the readers** — the data texture must never be half-migrated across a fra
   ([F1](forks.md#f1)/[F2](forks.md#f2)).
 - Inheritance rules: topmost `hot` forces hot; topmost `!cast_shadows` forces no-cast.
 - **Rotation reconciliation** (the CPU's job, per the user's model): when a piece's desired `rotation`
-  disagrees with its active definition's rotation, swap the definition (honouring `parent_rotation` for
-  inherited facing). Until the swap lands the old sprite renders — by design.
+  disagrees with its active definition's rotation, swap the definition — honouring `inherit_rotation`
+  (on the **definition**, with a `prim_data` override) as a **one-step** parent inherit. Until the swap
+  lands the old sprite renders — by design.
 - Subtree lifetime: free by **reachability from placed roots** ([I9](issues.md#i9)), replacing the flat
   "seen this frame" sweep.
 - Retire the bespoke light array — a light is now *carried*, never placed

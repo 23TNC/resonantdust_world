@@ -26,7 +26,7 @@ absolutely, a child points at its carrier and carries only offsets.
 ```
 R  u32   ROOT  (child=0):  u8 region_position | u8 zone_position | u8 tile_position | u8 unit_position
          CHILD (child=1):  u16 parent_id                        | u8 tile_offset    | u8 unit_offset
-G  u32   u3 reserved | u1 child | u2 rotation | u1 hot_cold | u1 cast_shadows | u8 z
+G  u32   u2 reserved | u1 inherit_rotation | u1 child | u2 rotation | u1 hot_cold | u1 cast_shadows | u8 z
          | u4 set_a | u4 set_b | u4 set_c | u4 set_d      (set 0 = constants = SENTINEL "no data")
 B  u32   u16 id_a | u16 id_b
 A  u32   u16 id_c | u16 id_d
@@ -34,27 +34,32 @@ A  u32   u16 id_c | u16 id_d
 No `layer` on a prim — **one object per layer**, so a prim cannot carry two pieces on the same layer;
 the layer lives on the carried record. (Positions/offsets are **bias-8 signed** per nibble, −8..+7.)
 
-**`billboard_data`** — the sprite presentation.
+**`billboard_data`** — the sprite presentation. RED is entirely **parent + CPU-resolved position**.
 ```
-R  u32   u16 parent_id | u1 parent_rotation | u15 reserved
+R  u32   u16 parent_id | u8 resolved_tile | u8 resolved_unit
 G  u32   u4 layer | u2 rotation | u1 hot_cold | u1 cast_shadows | u8 z_offset
-         | u8 tile_offset | u8 unit_offset
+         | u8 tile_offset | u8 unit_offset                      (the AUTHORED offsets)
 B  u32   u16 definition_id | u16 reserved
-A  u32   u32 reserved
+A  u32   u8 resolved_zone | u24 reserved            ⚠ zone needed — see issues.md#i13
 ```
 
 **`light_data`** — the emitter presentation. Props inline; no light-def band.
 ```
-R  u32   u16 parent_id | u1 parent_rotation | u15 reserved
+R  u32   u16 parent_id | u8 resolved_tile | u8 resolved_unit
 G  u32   u4 layer | u2 rotation | u1 hot_cold | u1 cast_shadows | u8 z_offset
-         | u8 tile_offset | u8 unit_offset
+         | u8 tile_offset | u8 unit_offset                      (the AUTHORED offsets)
 B  u32   u8 r | u8 g | u8 b | u8 i
-A  u32   u12 reach | u8 radius | u12 reserved      ⚠ `radius` RESTORED — see issues.md#i10
+A  u32   u12 reach | u8 radius | u8 resolved_zone | u4 reserved   (`radius` restored ✅)
 ```
+**Authored vs resolved.** `tile_offset`/`unit_offset` (GREEN) are the **authored** placement relative to
+the carrier — the durable truth you edit. `resolved_*` (RED/ALPHA) is the **CPU-computed absolute
+position**: start at the root's tile/unit, apply each child prim's offsets down the chain, land at the
+leaf. The GPU reads only the resolved fields, so it never walks the graph in the hot loop.
 
-**`definition_data`** — plus a `u4 type`, minus the self-address.
+**`definition_data`** — plus a `u4 type`, an `inherit_rotation` bit, minus the self-address.
 ```
-R  u32   u4 layer | u2 rotation | u2 reserved | u10 offset_x | u10 offset_y | u4 type
+R  u32   u4 layer | u2 rotation | u1 inherit_rotation | u1 reserved
+         | u10 offset_x | u10 offset_y | u4 type
 G  u32   u9 prim_width | u9 prim_height | u4 frame_span | u10 reserved
 B  u32   u10 frame_x | u10 frame_y | u4 frame_page | u4 frame_lod | u2 frame_anchor_x | u2 frame_anchor_y
 A  u32   u12 nudge_x | u12 nudge_y | u2 nudge_anchor_x | u2 nudge_anchor_y | u4 reserved
@@ -76,9 +81,13 @@ active definition's rotation, the **CPU detects the mismatch and swaps the defin
 to face E while its definition is still S **renders S** until the swap lands — the stored rotation is a
 *dirty signal*, not a transform.
 
-`parent_rotation` (1 bit) makes a carried piece **inherit the carrier's desired facing** — so re-facing a
-pawn re-faces its head, body, hands, and tools in one write — while clearing it keeps rotation
-**independent** (a tool aimed south while the pawn faces east keeps the south sprite).
+**`inherit_rotation` lives on the DEFINITION, not the instance** (user, revised): all objects of a kind
+behave the same, so there's no reason to store the choice per object — `definition_data` RED carries the
+bit, telling the CPU that pieces using this definition should take their **parent's** rotation.
+`prim_data` GREEN carries its own `inherit_rotation` for the case where a particular prim should act
+independently. **Inheritance is ONE STEP** — a child takes its parent's rotation, not a chain walk. The
+leaves (`billboard_data`/`light_data`) carry no inherit bit at all; **as far as the GPU is concerned the
+rotation is the bottom-most rotation**, already reconciled by the CPU.
 
 ⇒ There is **no render-time rotation precedence to define** — that concern dissolves
 ([issues.md#i4](issues.md#i4)).
@@ -107,8 +116,10 @@ Concretely: `R = opcode | set | id0`, `G = id1|id2`, `B = id3|id4`, `A = id5|id6
 - The leading opcode byte is a real **extension point** — future 8-px operations (presence writes, bulk
   clears) get their own opcodes, which is what the old reserved-opcode field was for
   ([issues.md#i6](issues.md#i6) dissolves).
-- One command writes to **one set**; a partial command simply issues fewer points
-  ([issues.md#i7](issues.md#i7)).
+- One command writes to **one set**, and **`id = 0` is a global sentinel** (user) — a partial command
+  **pads its unused id slots with 0** and the scatter discards those points (degenerate position → the
+  point is clipped, no write). Keeps the trivial `p/7`, `p%7` index map with no per-point bookkeeping.
+  Costs **one burned entry per set** ([issues.md#i14](issues.md#i14) — `defNext` must start at 1).
 
 ## What this dissolves
 - **[light-prims](../2026-07-24-light-prims/README.md)** is subsumed — lights are never *placed*, they're
