@@ -11,6 +11,16 @@
             "statusMessage": "GLSL backtick guard"
           }
         ]
+      },
+      {
+        "matcher": "Read|Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/bin/hooks/work-bind.sh",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [

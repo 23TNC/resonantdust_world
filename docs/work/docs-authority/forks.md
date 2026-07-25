@@ -73,3 +73,12 @@ _Decision points: options · choice · why. Chronological append. Executes:
   guard + recency window + `.stop-reason`/blocker escapes bound it (never loops, never mis-fires on a
   fresh/idle session). Not turned up (no push through phase boundaries) and not left advisory. Retune
   by editing `bin/hooks/stop-check.sh` or setting `WORK_CHECK_WINDOW_MIN` / `SKIP_WORK_CHECK`.
+
+- **2026-07-25 · F6 retune (dial unchanged, bounds loosened).** P6's audit showed the *default* was
+  effectively "one nudge, then free" — the guard keyed on `completed.md` alone, which a multi-turn
+  phase doesn't touch. The dial stays at **default (blocking-but-bounded)**, but the bound is now
+  `WORK_CHECK_MAX_NUDGES` (default **3**) consecutive *no-progress* stops, where progress counts any
+  stream-state edit, commit, or working-tree change. This is the turn-up option ("push through phase
+  boundaries") in practice, without changing the dial's semantics: the escapes (blocker row,
+  `.stop-reason`, `SKIP_WORK_CHECK=1`) are untouched, so it still never loops unsupervised. Turn it
+  down again by setting `WORK_CHECK_MAX_NUDGES=1`.

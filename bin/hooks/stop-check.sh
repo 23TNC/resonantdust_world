@@ -5,13 +5,15 @@
 #   failures. Progress-aware loop guard: an identical failure set twice in a row
 #   (agent tried, no change) releases, so a non-convergent case can't trap the turn.
 # Stage 2 · work-check — if docs are clean, a *silent premature pause* (open,
-#   unblocked, executable work in the active stream + no recorded stop-reason)
-#   blocks too, pushing the agent to continue. Bounded by a progress guard: if the
-#   block recurs with no new completed.md entry, release — two no-progress stops
-#   mean stuck, which is the cue to record a blocker, not to spin.
+#   unblocked, executable work in THIS SESSION's stream + no recorded stop-reason)
+#   blocks too, pushing the session to continue the documented plan. All of the
+#   decision — session→stream binding, open-work scan, blocker/stop-reason escapes,
+#   and the progress guard — lives in work_check.py's `--nudge` mode, which is
+#   handed the raw hook payload on stdin (it needs session_id).
 #
 # Escapes: SKIP_DOCS_CHECK=1 (stage 1), SKIP_WORK_CHECK=1 (stage 2). work-check's
-# reach is tunable via WORK_CHECK_WINDOW_MIN (recency window, default 180).
+# reach is tunable via WORK_CHECK_WINDOW_MIN (recency window, default 180) and
+# WORK_CHECK_MAX_NUDGES (no-progress stops before release, default 3).
 set -uo pipefail
 
 REPO="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
@@ -39,19 +41,8 @@ if [[ "${SKIP_DOCS_CHECK:-}" != "1" ]]; then
 fi
 
 # ── stage 2 · work-check (blocking, bounded) ─────────────────────────────────
+# The payload is replayed on stdin so the detector can key on session_id — that is
+# what answers "was the session that paused the one driving this stream?".
 [[ "${SKIP_WORK_CHECK:-}" == "1" ]] && exit 0
-wout="$("$REPO/bin/rd" work-check --enforce --quiet 2>&1)"; wrc=$?
-[[ $wrc -ne 2 ]] && exit 0   # not premature (or no recently-active stream) → ok to stop
-
-active="$("$REPO/bin/rd" work-check --active 2>/dev/null)"
-wstate="/tmp/rd-work-check.${sid}.last"
-prog="$(cksum "$REPO/docs/work/${active}/completed.md" 2>/dev/null | awk '{print $1}')"; prog="${prog:-none}"
-if [[ -f "$wstate" && "$(cat "$wstate" 2>/dev/null)" == "$prog" ]]; then
-  rm -f "$wstate"
-  { echo "[work-check] '$active' still has open work but no progress since the last nudge — letting the turn end."
-    echo "  If stuck: record a blocker (docs/work/$active/blockers.md) or write docs/work/$active/.stop-reason."; } >&2
-  exit 0
-fi
-printf '%s' "$prog" > "$wstate"
-{ echo "$wout"; echo "  (docs-authority continuation hook; SKIP_WORK_CHECK=1 to bypass)"; } >&2
-exit 2
+printf '%s' "$input" | python3 "$REPO/bin/lib/work_check.py" --nudge
+exit $?

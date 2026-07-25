@@ -40,3 +40,11 @@ Stop hook** (stage 2, `--enforce`, blocking-but-bounded — F6 dial resolved to 
 [`forks.md`](forks.md) / [`blockers.md`](blockers.md)). Firing condition, as-built: active stream
 (most-recently-modified `open` stream, within the recency window) has open executable todo items AND
 no open blocker AND no `.stop-reason` → premature. Fork check dropped (D5).
+
+## P6 — Make the continuation hook actually fire · ✅ DONE (see [`completed.md`](completed.md))
+
+Audited on the user's report that turns still end after every task. The hook was silently dead
+(status-filtered stream selection → stale fallback → "nothing to check"). Fixed: session→stream
+binding via a PostToolUse hook (answers "was it *this* session's stream?"), status-agnostic
+selection, header-based blocker detection, a widened progress guard (`WORK_CHECK_MAX_NUDGES`,
+default 3), and an actionable nudge naming the next items + the four legitimate exits.

@@ -71,3 +71,38 @@ _Executes: [`docs/CONVENTIONS.md`](../../CONVENTIONS.md). Done + verified, chron
   blocker escapes. **Full matrix tested:** green→exit 0; docs-broken→stage-1 block; premature→stage-2
   block; no-progress repeat→release; fresh nudge→block again (bounded, never infinite). F6 resolved
   (dial=default) in [`forks.md`](forks.md); blocker closed in [`blockers.md`](blockers.md).
+
+- **2026-07-25** · **P6 — the continuation hook actually fires (session-bound + unstuck).** The user
+  reported the symptom the hook exists to prevent — "stops after each and every task" — so we
+  audited it. It was **silently dead**: `_active_stream()` picked the most-recently-modified stream
+  *filtered to index status `open`*, but the stream actually being driven
+  (`2026-07-25-primitive-graph`) is indexed **`blocked`**, so selection fell through to an 8-hour-stale
+  `open` stream, missed the recency window, and reported "no recently-active work stream — nothing to
+  check." Four fixes, all verified against the real corpus:
+  - **Session→stream binding (the missing question 3).** New PostToolUse hook
+    [`bin/hooks/work-bind.sh`](../../../bin/hooks/work-bind.sh) → `work_check.py --bind` records
+    session→stream from real file touches into `.git/rd-work/sessions/` (write = strong claim, read =
+    weak). The Stop hook now checks *this session's* stream; mtime survives only as a fallback for the
+    first turn after a fresh start. Verified: two sessions bound to different streams resolve
+    independently.
+  - **Selection no longer filters on index status** (only `done`/`closed` are skipped). A stream marked
+    `blocked` is very often the one being worked — the index lags, and a stream can be blocked on one
+    item while others execute.
+  - **Blocker detection reads the section HEADER, not bullets.** Bullet-scanning missed the live B3 in
+    primitive-graph (prose + bold, no `-` bullet) → the hook would have nudged straight past a genuine
+    blocker. Markers are matched **case-sensitively** (`✅`/`RESOLVED`/`CONFIRMED`), because lowercase
+    "resolved" is ordinary prose — B3's own title is "`resolved_zone` … alongside resolved tile/unit
+    **(OPEN)**", which a case-insensitive match closed. An explicit `OPEN` overrides. All 15 blocker
+    sections across the tree now classify correctly.
+  - **Progress guard widened + deepened.** Was: cksum of `completed.md`, released after **one** nudge —
+    so a phase spanning several turns before an entry lands read as "no progress" and the session was
+    free to stop. Now progress = the stream's state files + `HEAD` + working tree, and the release is
+    at `WORK_CHECK_MAX_NUDGES` (default **3**) *consecutive no-progress* stops. Also: `remaining.md`
+    counts as open work (it's the in-flight tier), and DONE-marked sections are skipped.
+  - **The nudge now says what to do** — it names the stream, lists the actual next items, and spells
+    out the four legitimate exits (complete → `completed.md` · blocked → `blockers.md` · plan-error →
+    `issues.md` · other → `.stop-reason`), which is the behaviour the dial was always meant to drive.
+  Matrix re-verified: blocked stream→exit 0; unblocked open work→exit 2; nudge 1/2/3→block, 4th→release,
+  progress→counter resets and re-arms; `.stop-reason`, `SKIP_WORK_CHECK=1`, and stale-window→exit 0.
+  `docs-check` green throughout. Stage 2 of the Stop hook now delegates the whole decision to
+  `work_check.py --nudge` (the payload is replayed on stdin so it can key on `session_id`).

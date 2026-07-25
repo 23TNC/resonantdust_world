@@ -43,12 +43,21 @@ Scope, in order of value: (1) bring the tree into compliance with the convention
   - **Stage 1 · docs-check** — docs/ must be compliant. Broken → **exit 2**, failures to stderr, turn
     can't end. Loop guard: an identical failure set twice → release (a non-convergent case can't trap
     the turn). Escape: `SKIP_DOCS_CHECK=1`.
-  - **Stage 2 · work-check** (`--enforce`) — if docs are clean, a *silent premature pause* (open,
-    unblocked, executable work in the active stream + no `.stop-reason`) also blocks, pushing me to
-    continue. Bounded: progress guard (no new `completed.md` entry since the last nudge → release),
-    recency window (`WORK_CHECK_WINDOW_MIN`, default 180, so a fresh/idle session doesn't nag), and
-    escapes (a `blockers.md` row, a `.stop-reason` file, or `SKIP_WORK_CHECK=1`). Dial = default
+  - **Stage 2 · work-check** (`--nudge`) — if docs are clean, a *silent premature pause* also blocks,
+    pushing me to continue. It answers four questions in order: **(1)** did a session pause (the hook
+    fired); **(2)** is a work stream in flight; **(3)** was it *this* session's stream — the
+    session→stream binding below, **not** a directory-mtime guess; **(4)** is there open, executable
+    work with no open blocker and no `.stop-reason`. All four → **exit 2** with the actual next items
+    and the four legitimate exits (complete · blocked · plan-error · other). Bounded: progress guard
+    (`WORK_CHECK_MAX_NUDGES`, default 3 consecutive *no-progress* stops → release; progress = any edit
+    to the stream's state files, a commit, or a working-tree change), recency window
+    (`WORK_CHECK_WINDOW_MIN`, default 180, so a fresh/idle session doesn't nag), and escapes (a
+    `blockers.md` row, a `.stop-reason` file, or `SKIP_WORK_CHECK=1`). Dial = default
     (blocking-but-bounded); see [`forks.md`](forks.md) F6.
+- **PostToolUse hook · work-bind** — [`bin/hooks/work-bind.sh`](../../../bin/hooks/work-bind.sh) runs on
+  every `Read|Write|Edit|NotebookEdit`; when the path is under `docs/work/<stream>/` it records
+  **session → stream** in `.git/rd-work/sessions/` (an edit is a strong claim, a read a weak one).
+  This is what makes question 3 answerable. It never blocks and never fails a tool call.
 - **git pre-commit** — [`bin/hooks/pre-commit`](../../../bin/hooks/pre-commit), symlinked to
   `.git/hooks/pre-commit`, runs the full `docs-check` and **refuses the commit** if docs/ is broken
   (work-check does *not* gate commits — WIP is fine to commit). Escape: `SKIP_DOCS_CHECK=1 git commit …`.
