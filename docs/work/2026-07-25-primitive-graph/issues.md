@@ -133,3 +133,16 @@ cache-busted URL rendered correctly and the data confirmed flowing (525 billboar
 → set 2).
 **Rule for this stream:** any command-format or record-layout change must be verified on a **fresh page
 load**, never on an HMR update. A silent flat/garbled frame with a clean console is the signature.
+
+## I16 — ⚠ 16 lights/tile does NOT fit `shadow-cold` alongside the on-billboard flags (2026-07-25) — OPEN
+**Problem.** Freeing the self-address takes presence from 14 → **16 lights/tile**, but the gather's
+OUTPUT RT (`shadow-cold`, one `RGBA32UI` per texel) currently packs **per-slot u8 coverage + a per-slot
+on-billboard flag**: today 14 slots = 14·8 = 112 coverage bits + 14 flag bits = **126 ≤ 128** — it just
+fits. At 16 slots the coverages alone are 16·8 = **128 bits**, consuming the whole texel, and the 16 flag
+bits have **nowhere to go** (144 > 128).
+**Candidate solutions.** (1) **Move the 16 on-billboard flags into the second attachment** (`oCasterD`,
+which today carries only a 7-bit caster row and is nearly empty) — cheap, no coverage loss, and the
+attachment is already bound. (2) Drop coverage to **u7** (16·7 = 112 + 16 flags = 128 exactly) — costs
+half the penumbra resolution the [penumbra](../2026-07-23-penumbra/README.md) stream deliberately bought
+(u8→u9 then u8). (3) Cap the gather at 14 slots even though presence carries 16 — wastes the gain.
+**Lean: (1).** Decide before the presence rebuild lands (P2), since the two are one change.

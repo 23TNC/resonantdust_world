@@ -235,7 +235,7 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, highp usampl
   float W = float(((D.y >> 23) & 511u) * 2u);
   float H = float(((D.y >> 14) & 511u) * 2u);
   float spanU = float((((D.y >> 10) & 15u) + 1u) * 16u);    // frame world span (units)
-  float ox = float((D.x >> 6) & 1023u), oy = float(D.y & 1023u);
+  float ox = float((D.x >> 14) & 1023u), oy = float((D.x >> 4) & 1023u); // v3: both offsets in R
   uint lod = (D.z >> 4) & 15u;
   float axf = float((D.z >> 2) & 3u), ayf = float(D.z & 3u); // anchors: 0 none | 1 half | 2 full
   // Anchor shift (units): the bbox's anchored point minus the FULL footprint box's same-anchored
@@ -303,7 +303,7 @@ float receiverCover(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D 
   float H = float(((D.y >> 14) & 511u) * 2u);
   if (W <= 0.0 || H <= 0.0) return -1.0;
   float spanU = float((((D.y >> 10) & 15u) + 1u) * 16u);
-  float ox = float((D.x >> 6) & 1023u), oy = float(D.y & 1023u);
+  float ox = float((D.x >> 14) & 1023u), oy = float((D.x >> 4) & 1023u); // v3: both offsets in R
   uint lod = (D.z >> 4) & 15u;
   float axf = float((D.z >> 2) & 3u), ayf = float(D.z & 3u);
   vec2 sh = vec2(ox + 0.5 * axf * W - 0.5 * axf * spanU, oy + 0.5 * ayf * H - 0.5 * ayf * spanU);
@@ -370,7 +370,7 @@ vec3 billboardNormal(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D
   uint lod = (D.z >> 4) & 15u;
   if (lod < 4u) return vec3(0.0);                            // no silhouette lod → no usable frame
   float spanU = float((((D.y >> 10) & 15u) + 1u) * 16u);
-  float ox = float((D.x >> 6) & 1023u), oy = float(D.y & 1023u);
+  float ox = float((D.x >> 14) & 1023u), oy = float((D.x >> 4) & 1023u); // v3: both offsets in R
   float axf = float((D.z >> 2) & 3u), ayf = float(D.z & 3u);
   vec2 shf = vec2(ox + 0.5 * axf * W - 0.5 * axf * spanU, oy + 0.5 * ayf * H - 0.5 * ayf * spanU);
   uint rot = (orient >> 22) & 3u;

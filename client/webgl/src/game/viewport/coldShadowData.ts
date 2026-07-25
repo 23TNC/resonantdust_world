@@ -351,9 +351,13 @@ export class ColdShadowData {
     const page = 0;        // ONE bound surface page today — C5 (texture-array pages) assigns real indices
     const ax = 1, ay = 2;  // shadow casters hang the bbox at the billboard's BOTTOM-CENTER anchor
     const nax = 1, nay = 2; // nudge alignment: x centered, y bottom — the default nudging operation
-    // v2.1 self-addressing: R = u16 id | u10 offset_x | u6 reserved; G = u9 W | u9 H | u4 span | u10 offset_y.
-    this.dataMirror[base] = (((idx & 0xffff) << 16) | ((ux0 & 0x3ff) << 6)) >>> 0;
-    this.dataMirror[base + 1] = ((((wu >> 1) & 0x1ff) << 23) | (((hu >> 1) & 0x1ff) << 14) | (((st - 1) & 0xf) << 10) | (uy0 & 0x3ff)) >>> 0;
+    // v3 (primitive-graph): NO self-address — the command carries the id. Both offsets move into R.
+    // R = u4 layer (28-31) | u2 rotation (26-27) | u1 inherit_rotation (25) | u1 reserved (24)
+    //   | u10 offset_x (14-23) | u10 offset_y (4-13) | u4 type (0-3);  G = u9 W | u9 H | u4 span | u10 reserved.
+    // layer/rotation/inherit_rotation/type are AUTHORED fields the resolver has no source for yet — 0
+    // until the DSL supplies them (P5); the geometry fields below are what the gather reads today.
+    this.dataMirror[base] = ((((ux0 & 0x3ff) << 14) | ((uy0 & 0x3ff) << 4)) >>> 0);
+    this.dataMirror[base + 1] = ((((wu >> 1) & 0x1ff) << 23) | (((hu >> 1) & 0x1ff) << 14) | (((st - 1) & 0xf) << 10)) >>> 0;
     this.dataMirror[base + 2] = (((fx16 & 0x3ff) << 22) | ((fy16 & 0x3ff) << 12) | ((page & 0xf) << 8) | ((lod & 0xf) << 4) | ((ax & 3) << 2) | (ay & 3)) >>> 0;
     this.dataMirror[base + 3] = ((((nx + 2048) & 0xfff) << 20) | (((ny + 2048) & 0xfff) << 8) | ((nax & 3) << 6) | ((nay & 3) << 4)) >>> 0;
     this.mark(BILLBOARD_DEF_BASE + idx);
