@@ -108,3 +108,33 @@ re-derived from cost.
 **Ordering.** The cross-pad DDA ([I30](issues.md#i30)) stays first regardless: ~59% fewer fetches, no
 restructuring, verifiable against the existing corridor↔brute identity check, and it makes the cold gather
 cheaper whatever happens to hot.
+
+### F11a — can scatter update ONE light incrementally? No — and that is not a regression (2026-07-26)
+User challenge: with MAX accumulation you cannot subtract a contributor, so moving 1 of 64 lights seems
+to force re-casting all 64 over the tiles it dirtied.
+
+**Storage is not the problem.** `shadow-cold` is 16 SLOTS, slot `i` = presence slot `i` = one light; MAX
+accumulates across **casters within one light's slot**, never across lights.
+
+**The problem is that slot→light is PER TILE.** Presence is built per tile, so light L sits in slot 3 on
+one tile and slot 11 on the next. Therefore:
+- **Writing is isolated and fine.** A fan reads its DESTINATION tile's presence, finds L's slot, and emits
+  a 16-wide one-hot × coverage across the 4 `RGBA8` targets. MAX-blending 0 into the other 15 channels is
+  a no-op, so only L's channel changes.
+- **Clearing is NOT expressible.** Zeroing only L's channel needs a per-FRAGMENT channel mask; `colorMask`
+  is per-draw. And it cannot go through the blend either — MAX-with-0 is exactly the no-op that made the
+  write safe.
+
+**So the user is right:** a moved light ⇒ clear + re-cast **all** lights present over the affected region.
+The cause is the per-tile slot indirection, not MAX itself.
+
+**But it is the SAME granularity we already run.** `buildDirty` marks tiles and `GATHER_FRAG` re-walks all
+16 slots on every dirty tile — nothing today re-gathers a single light either. Per dirty region, all lights:
+gather = 256 texels/tile × 16 lights × ~660 fetches; rasterise = 16 × 8 = **128 fans**. Same unit, far
+cheaper. Same for a moved CASTER: clear each affected light's channel over its shadow region and re-cast the
+others there — bounded by the shadow region, and identical to today's cascade.
+
+**Escape hatch, deliberately declined:** a GLOBAL light→channel assignment would make `colorMask` per-light
+clears trivial, but converts the per-tile 16-light cap into a GLOBAL 16-light cap. The per-tile slot
+indirection is precisely what buys 64+ lights, so it is also precisely what forbids per-light clearing.
+The trade is intentional, not accidental.
