@@ -1,6 +1,7 @@
 # Primitive graph — blockers
 
-_Needs your input before P1 writes code. Open → resolved (archive resolved with a date)._
+_Things needing human input. Open → resolved (archive resolved with a date). B1–B3 were the pre-P1 layout
+questions and are all settled; nothing here blocks execution today._
 
 ## B1 — Four layout semantics ✅ RESOLVED by the user (2026-07-25)
 1. **Child offset signedness** → **bias-8** per nibble (−8..+7).
@@ -56,5 +57,16 @@ encoding, which seems like the wrong trade.
 
 _No open blockers. The stream is executable._
 
-**Suggested path:** confirm `resolved_zone`, and I'll write the full layouts into VARIABLES at P0 and
-build P1 — the command transport alone, provable pixel-identical before any record layout moves.
+## P10's memory gate CLEARED — 2026-07-26 (not a blocker; recorded so the state is visible)
+[P10](todo.md) (the additive `RGBA32F` lightmap, [F11b](forks.md#f11b)/[F11b.1](forks.md#f11b1)) was gated
+on the lightmap's memory: at the old world-fixed density `RGBA32F` cost **465 MB**, which was not viable.
+
+**[2026-07-26-textile-slot](../2026-07-26-textile-slot/README.md) delivered that gate.** Measured on the
+fixed slot grid, the single collapsed accumulator is **96 MiB, constant at every zoom** — less than the
+2 × 24 MiB of `RGBA8` lightmap it replaces plus the 48 MiB of tiers it retires. P10 is now executable on
+memory grounds.
+
+**Still open before P10 can start** (work, not input): P9 was retired in favour of that stream, and
+[P4 there](../2026-07-26-textile-slot/todo.md) — per-light `coarsest_lod` — is the reverse dependency,
+since it has no consumer until this accumulator exists. Land the accumulator first, then P4 immediately
+after; neither needs a decision from you.
