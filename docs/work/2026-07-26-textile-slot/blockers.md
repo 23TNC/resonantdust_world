@@ -4,7 +4,16 @@ _Things needing human input: what blocks, why it needs you, and a suggested path
 resolved rows keep their date. The goal is fewer of these over time — a well-understood blocker becomes a
 [fork](forks.md) or [issue](issues.md) I resolve myself._
 
-## B-1 — deep zoom-out streams ~225 full zones; is that the intended cost? (open, 2026-07-26)
+## B-1 — deep zoom-out streams ~225 full zones — RESOLVED 2026-07-26 by the user: option (2) + (1)
+**Taken:** raise `ZOOM_MIN` 0.125 → **0.25**, dropping lod 3, AND accept that zooming out loads. Lod 3 is
+not designed out — the `u2` lod field still has room and no layout changes are needed, so restoring it is a
+one-constant change once a **loading-priority system** exists ([I10](issues.md#i10), the user's own next
+ask). Landed with the 32×16 grid ([F5](forks.md#f5)), which also widened the window, so lod 2 now covers
+112×48 tiles rather than 80×48.
+
+Original analysis retained below for when lod 3 comes back.
+
+<details><summary>B-1 as originally raised</summary>
 **What.** At lod 3 the window is **192×128 tiles ≈ 225 zones**. The subscription now correctly requests all
 of them ([I8](issues.md#i8)), so the world does fill to the edges — but it takes **a second or two**, during
 which the view is a small square that grows outward. Verified live, not theoretical.
@@ -26,6 +35,10 @@ arrived with correct behaviour.
 **Suggested path:** take (1) for now and revisit if deep zoom-out becomes a common gesture rather than an
 occasional one. If it does, (3) is the real answer and deserves its own stream; (2) is a stopgap that
 spends a feature to buy latency.
+
+</details>
+
+_No open blockers._
 
 ---
 

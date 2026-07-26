@@ -49,18 +49,21 @@ export const OVERSCAN = 2;
 // grows 4× per step. That is what stops the lightmap tracking zoom (it was 176 MB at zoom 0.25) and what
 // makes gameplay identical on every monitor.
 /** Visible slots — the world every player sees at a given lod, regardless of monitor. */
-export const VISIBLE_X = 20;
+export const VISIBLE_X = 28;
 export const VISIBLE_Y = 12;
-/** Total slots including {@link OVERSCAN} on each side. EVEN by construction, so a 2×2 tile block at the
- *  next lod never straddles a slot boundary. */
-export const SLOTS_X = VISIBLE_X + 2 * OVERSCAN; // 24
+/** Total slots including {@link OVERSCAN} on each side. Chosen so BOTH are POWERS OF TWO: the toroidal
+ *  wrap modulus is `SLOTS << lod`, which stays pow2 at every lod, so `mod(wc, cols)` compiles to a
+ *  bitmask instead of an integer division. Purely a performance property — the grid is correct at any
+ *  size, since a slot subdivides into `2^lod` tiles regardless. */
+export const SLOTS_X = VISIBLE_X + 2 * OVERSCAN; // 32
 export const SLOTS_Y = VISIBLE_Y + 2 * OVERSCAN; // 16
-/** Lod levels 0..3 — `SQUARE` down to the 16-px floor. Fits `u2` (`definition_data.frame_lod`). */
-export const LOD_LEVELS = 4;
+/** Lod levels 0..2 — `SQUARE` (128) down to 32 px, matching `ZOOM_MIN` 0.25. Fits `u2`
+ *  (`definition_data.frame_lod`), which leaves room to restore lod 3 without a layout change. */
+export const LOD_LEVELS = 3;
 export const LOD_MAX = LOD_LEVELS - 1;
 /** The reference render target: the visible slots at lod 0. Standardising on this (rather than the
  *  player's panel) is what equalises gameplay across monitors — 4K magnifies ~1.5×, 1080p minifies. */
-export const REFERENCE_W = VISIBLE_X * SQUARE; // 2560
+export const REFERENCE_W = VISIBLE_X * SQUARE; // 3584
 export const REFERENCE_H = VISIBLE_Y * SQUARE; // 1536
 
 /** Tiles per slot edge at `lod` — 1, 2, 4, 8. */

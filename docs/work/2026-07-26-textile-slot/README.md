@@ -6,7 +6,7 @@ Phases in [`todo.md`](todo.md); decisions in [`forks.md`](forks.md); findings in
 
 ## The decision (user, 2026-07-26)
 **Every textile map is sized in TILES, not in screen resolution, and never changes size.** A fixed grid of
-**24×16 SLOTS** (20×12 visible + 2 slots of overscan per side). A slot holds **1 tile at lod 0** and
+**32×16 SLOTS** (28×12 visible + 2 slots of overscan per side). A slot holds **1 tile at lod 0** and
 **2^k × 2^k tiles at lod k**, so the texture is constant while the world it covers grows by 4× per lod step.
 
 **`SQUARE` becomes 128** (was 64). Max art size is 128px — there is never a reason to author 256px when the
@@ -25,11 +25,11 @@ slot can't show it.
 ## The grid
 | | |
 |---|---|
-| slots | **24 × 16** (20×12 visible, 2 overscan per side) |
+| slots | **32 × 16** (28×12 visible, 2 overscan per side); both axes pow2 so the wrap is a bitmask ([F5](forks.md#f5)) |
 | texels per slot (square family) | **128** |
-| slot texture (square family) | **3072 × 2048** |
-| reference render target | **2560 × 1536** (the 20×12 visible slots at lod 0) |
-| lod levels | **4** → `frame_lod` fits in **u2** |
+| slot texture (square family) | **4352 × 2304** (34×18 slots incl. wrap-apron; modulus stays 32×16) |
+| reference render target | **3584 × 1536** (the 28×12 visible slots at lod 0) |
+| lod levels | **3** (`ZOOM_MIN` 0.25) → `frame_lod` fits **u2**, with room to restore lod 3 |
 
 **The same slot grid serves every map; only texels-per-slot differs.** That is what lets `lod`,
 `slot_width`, `slot_height` live once in the data-texture constants and be read by every shader — which
@@ -39,28 +39,26 @@ discouraged.
 
 | family | texels/slot | dims | example maps |
 |---|---|---|---|
-| square (per px at lod 0) | 128 | 3072×2048 | albedo, normal, surface, zdepth, lightmap |
-| unit (per unit) | 16 | 384×256 | shadow |
-| tile (per tile) | 1 | 24×16 | presence, caster buckets, dirty |
-
-**Alignment worth leaning on:** at lod 3 a tile occupies 128/8 = **16×16 texels**, exactly the unit
-resolution (16 units/tile). At maximum zoom-out the square-family map and the unit-family map are in 1:1
-correspondence.
+| square (per px at lod 0) | 128 | 4352×2304 (apron) · 4096×2048 (lightmap) | albedo, normal, surface, zdepth, lightmap |
+| unit (per unit) | 16 | 512×256 | shadow |
+| tile (per tile) | 1 | 32×16 | presence, caster buckets, dirty |
 
 ## Scale, zoom and lod
 **Fit is COVER, not contain** — the viewport must land entirely inside the visible slots:
 ```
-s = max(W / 2560, H / 1536)
+s = max(W / 3584, H / 1536)
 ```
 `max` (not `min`) is what guarantees no overscan or empty region is ever on screen. Taking `σ ≥ s` as the
 live scale and `zoom ≡ σ / 2^k`, each lod covers a 2× band:
 
 | lod | tiles/slot | tile texels | visible tiles | zoom band (at s=1) |
 |---|---|---|---|---|
-| 0 | 1×1 | 128 | 20×12 | [1, 2) |
-| 1 | 2×2 | 64 | 40×24 | [0.5, 1) |
-| 2 | 4×4 | 32 | 80×48 | [0.25, 0.5) |
-| 3 | 8×8 | 16 | 160×96 | [0.125, 0.25) |
+| 0 | 1×1 | 128 | 28×12 | [1, 2) |
+| 1 | 2×2 | 64 | 56×24 | [0.5, 1) |
+| 2 | 4×4 | 32 | 112×48 | [0.25, 0.5) |
+
+`ZOOM_MIN = 0.25` stops the ladder at lod 2. Lod 3 stays expressible (the `u2` field has room, no layout
+change) but its ~450-zone window wants a loading-priority system first ([I10](issues.md#i10)).
 
 **Two sampling stages, and they behave differently** ([I1](issues.md#i1)):
 - **Bake (art → slot)** is always exactly 1:1 — the art mip at lod k is `128/2^k` px and the slot footprint
@@ -68,30 +66,29 @@ live scale and `zoom ≡ σ / 2^k`, each lod covers a 2× band:
 - **Display (slot → screen)** has ratio **`1/σ`**, which is *independent of lod* — the `2^k` cancels. So lod
   selects world coverage only; it does not affect sharpness.
 
-Consequently a downsample-only display would need 4× the texels (40×24 visible slots, ~77 MiB per RGBA8
-surface). **Rejected** — [F2](forks.md#f2) takes continuous zoom with up to 2× magnification within a band,
+Consequently a downsample-only display would need 4× the texels (~56×24 visible slots). **Rejected** — [F2](forks.md#f2) takes continuous zoom with up to 2× magnification within a band,
 snapping back to 1:1 at each lod boundary.
 
-## Memory — MEASURED 2026-07-26, constant at every zoom
+## Memory — MEASURED 2026-07-26 on the final 32×16 grid, constant at every zoom
 | surface | dims | format | size |
 |---|---|---|---|
-| albedo, normal, surface, zdepth × cold+warm (8) | 3328×2304 | RGBA8 | **234 MiB** |
-| lightmap, cold + hot tiers | 3072×2048 | RGBA8 | 48 MiB |
-| shadow, cold + hot (2 attachments each) | 384×256 | RGBA32UI | 6 MiB |
+| albedo, normal, surface, zdepth × cold+warm (8) | 4352×2304 (incl. apron) | RGBA8 | **306 MiB** |
+| lightmap, cold + hot tiers | 4096×2048 | RGBA8 | 64 MiB |
+| shadow, cold + hot (2 attachments each) | 512×256 | RGBA32UI | 8 MiB |
 | unified data texture | 1024×1024 | RGBA32UI | 16 MiB |
-| **total** | | | **304 MiB** |
+| **total** | | | **394 MiB** |
 
-Verified byte-identical across a full 1 → 0.125 → 1 sweep (`allConstant: true`). Against the old numbers,
-the lightmap and shadow **alone** were 264 MiB at zoom 0.25 and still growing; they are now 54 MiB and fixed.
+Verified byte-identical across a full zoom sweep (`allConstant: true`). Against the old numbers, the
+lightmap and shadow **alone** were 264 MiB at zoom 0.25 and still growing; they are now 72 MiB and fixed.
 
-The G-buffer figure is above the pre-measurement estimate for two reasons, both correct: the **wrap-apron**
-([I7](issues.md#i7)) makes each channel 3328×2304 rather than 3072×2048, and the reference target is now
-2560×1536 rather than this machine's 1862×853 panel. **That is a bought quality/uniformity standard, not
-waste** — do not "optimize" it back down.
+Three reasons the G-buffer is above the first estimate, all deliberate: the **wrap-apron**
+([I7](issues.md#i7), open question [I9](issues.md#i9)); the reference target being 3584×1536 rather than this
+machine's 1862×853 panel; and the 24×16 → **32×16** widening ([F5](forks.md#f5)) which took the total
+304 → 394 MiB. **All three are bought standards, not waste** — do not "optimize" them back down.
 
 When [F11b](../2026-07-25-primitive-graph/forks.md#f11b) collapses the two lightmap tiers into one
-`RGBA32F` accumulator, that line becomes **96 MiB** (total ~352 MiB) — still fixed, and still far under the
-old growth curve.
+`RGBA32F` accumulator, that line becomes **128 MiB** (total ~458 MiB) — still fixed, and still far under the
+old growth curve, which had the lightmap alone past 176 MB and climbing with every zoom step.
 
 ## Reproject instead of clear
 On a lod change, **rescale; do not re-bake**. Zoom in → retained tiles are already present, upscale and clip.
@@ -112,7 +109,7 @@ available as an optional quality choice for albedo/normal/surface only.
 
 Per-light (not per-tile) lod state is what makes zoom cheap: a tile may hold contributions deposited at four
 different lods simultaneously, because each light independently knows the grid it must be undone on. No
-forced conversion of 16 lights per tile on a zoom.
+forced conversion of every light in a tile on a zoom.
 
 ## Refinement, prioritised
 A lod change makes content stale, not wrong. Refinement is a queue, and **empty beats stale** so a player

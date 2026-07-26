@@ -436,11 +436,21 @@ export class SquareCache {
   /** The channel buffers are FIXED — sized in TILES, not screen px, so they never resize and never track
    *  the player's monitor.
    *
-   *  `+2` slots per axis is the WRAP-APRON, not slack: `bakeSquare` writes the interior at
-   *  `(sx + 1) · slotPx` and mirrors edge slots to the opposite border at `(cols + 1) · slotPx`, so the
-   *  composite is `cols + 2` slots wide. (This is what the retired `fixedCW / (cols + 2)` divisor was
-   *  computing.) Sized for the LARGEST apron, which is lod 0 — the apron is `2 · (SQUARE >> lod)`, so
-   *  higher lods simply leave a margin unused rather than needing a resize. */
+   *  **MODULUS vs STRIDE — these are different numbers and only one of them is pow2 by design.**
+   *  The toroidal wrap is `sx = mod(wc, cols)` with `cols = SLOTS_X << lod`, i.e. **32 · 2^lod** — a
+   *  power of two at every lod, so the wrap is a bitmask, not an integer division. That is the whole
+   *  reason `SLOTS` is 32×16 ([F5](../../../../docs/work/2026-07-26-textile-slot/forks.md#f5)).
+   *
+   *  The TEXTURE is `SLOTS + 2` slots per axis (34×18). The extra ring is the **WRAP-APRON**, applied
+   *  as a `(sx + 1)` offset AFTER the modulus, so it never touches the wrap arithmetic. It exists
+   *  because the toroidal window straddles the texture edge: `bakeSquare` mirrors an edge slot to the
+   *  opposite border so a square adjacent across the wrap has physically adjacent texels. Sized for the
+   *  LARGEST apron (lod 0) — the apron is `2 · (SQUARE >> lod)`, so higher lods leave margin unused
+   *  rather than resizing.
+   *
+   *  So: a non-pow2 4352×2304 texture costs nothing (WebGL2 handles NPOT fine at NEAREST/CLAMP) while
+   *  the address math stays pow2. Do NOT "simplify" the +2 away to make the texture pow2 — that trades
+   *  a free physical stride for the wrap correctness the apron buys. */
   private ensureBuffers(): void {
     const cw = (SLOTS_X + 2) * SQUARE;
     const ch = (SLOTS_Y + 2) * SQUARE;

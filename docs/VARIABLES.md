@@ -274,15 +274,26 @@ is the separate fact that the value reached `state`.
 **Every textile map is sized in TILES, never in screen resolution, and never changes size.** Work stream:
 [`work/2026-07-26-textile-slot`](work/2026-07-26-textile-slot/README.md).
 
-A fixed grid of **24 × 16 SLOTS** (20×12 visible + **2 slots of overscan per side**). A slot holds **1 tile
+A fixed grid of **32 × 16 SLOTS** (28×12 visible + **2 slots of overscan per side**). A slot holds **1 tile
 at lod 0** and **`2^k × 2^k` tiles at lod k**, so the texture is constant while the world it covers grows 4×
 per step. `SQUARE = 128`; **maximum art size is 128 px** — a slot cannot show more.
 
 ```
-SLOTS_X = 24   SLOTS_Y = 16      VISIBLE_X = 20   VISIBLE_Y = 12   OVERSCAN = 2
-LOD_LEVELS = 4                   (lod 0..3 — fits u2)
-REFERENCE = 2560 × 1536          (the visible slots at lod 0)
+SLOTS_X = 32   SLOTS_Y = 16      VISIBLE_X = 28   VISIBLE_Y = 12   OVERSCAN = 2
+LOD_LEVELS = 3                   (lod 0..2 — fits u2, with room to restore lod 3)
+REFERENCE = 3584 × 1536          (the visible slots at lod 0)
 ```
+
+**`SLOTS` is a POWER OF TWO on both axes, deliberately.** The toroidal wrap is `mod(wc, SLOTS << lod)`,
+which stays pow2 at every lod, so it compiles to a bitmask rather than an integer division. Correctness does
+not depend on it — a slot subdivides into `2^lod` tiles at any grid size — this is purely a cost property.
+
+**MODULUS vs STRIDE.** The `textile_square` TEXTURE is `SLOTS + 2` slots per axis (34×18 = 4352×2304). The
+extra ring is the **wrap-apron**, applied as a `(sx + 1)` offset AFTER the modulus, so it never enters the
+wrap arithmetic: the toroidal window straddles the texture edge, and `bakeSquare` mirrors an edge slot to
+the opposite border so a square adjacent across the wrap has physically adjacent texels. A non-pow2 texture
+costs nothing (WebGL2 handles NPOT at NEAREST/CLAMP); the address math stays pow2 regardless. The
+`textile_unit` and `textile_tile` maps carry no apron.
 
 **One grid serves every map; only texels-per-slot differs** — which is why `lod` can be published once in
 the constants px and read by every shader, instead of each deriving a slot address from a world coord (the
@@ -291,22 +302,27 @@ to police).
 
 | family | texels/slot | texture | maps |
 |---|---|---|---|
-| `TEXTILE_SQUARE` (per px at lod 0) | `SQUARE` = 128 | 3072 × 2048 | albedo, normal, surface, zdepth, lightmap |
-| `TEXTILE_UNIT` (per unit) | 16 | 384 × 256 | shadow |
-| `TEXTILE_TILE` (per tile) | 1 | 24 × 16 | presence, caster buckets, dirty |
+| `TEXTILE_SQUARE` (per px at lod 0) | `SQUARE` = 128 | 4352 × 2304 (incl. apron) | albedo, normal, surface, zdepth |
+| `TEXTILE_SQUARE`, no apron | 128 | 4096 × 2048 | lightmap |
+| `TEXTILE_UNIT` (per unit) | 16 | 512 × 256 | shadow |
+| `TEXTILE_TILE` (per tile) | 1 | 32 × 16 | presence, caster buckets, dirty |
 
-At **lod 3** a tile occupies `128/8 = 16×16` texels — exactly the unit resolution. At maximum zoom-out the
-square-family and unit-family maps are in 1:1 correspondence.
-
-**Fit is COVER, not contain:** `s = max(W / 2560, H / 1536)`. `max` (not `min`) is what keeps the viewport
+**Fit is COVER, not contain:** `s = max(W / 3584, H / 1536)`. `max` (not `min`) is what keeps the viewport
 entirely inside the visible slots; `min` would fit the whole grid and expose overscan at the edges.
 
 | lod | tiles/slot | tile texels | visible tiles | zoom band (s=1) |
 |---|---|---|---|---|
-| 0 | 1×1 | 128 | 20×12 | [1, 2) |
-| 1 | 2×2 | 64 | 40×24 | [0.5, 1) |
-| 2 | 4×4 | 32 | 80×48 | [0.25, 0.5) |
-| 3 | 8×8 | 16 | 160×96 | [0.125, 0.25) |
+| 0 | 1×1 | 128 | 28×12 | [1, 2) |
+| 1 | 2×2 | 64 | 56×24 | [0.5, 1) |
+| 2 | 4×4 | 32 | 112×48 | [0.25, 0.5) |
+
+`ZOOM_MIN = 0.25` stops the ladder at lod 2. Lod 3 (8×8 tiles/slot, 224×96 visible) is expressible — the
+`u2` field has room and no layout changes — but its window is ~450 zones, which needs a **loading-priority
+system** before it is pleasant. Deliberately deferred, not designed out.
+
+At a 16:9 display the VERTICAL axis binds (`1440/1536 > 2560/3584`), so a 2560×1440 player sees 120-px tiles
+and 21.3×12 of the 28×12 visible slots — the horizontal slack is cached-but-offscreen, which is the correct
+axis to spend it on since the vertical budget is the scarcer one.
 
 **Lod does not affect display sharpness.** Texels per screen pixel is `(128/2^k) / (σ · 128/2^k) = 1/σ` —
 the `2^k` cancels. Lod selects *world coverage* only; sharpness is governed by the viewport against the

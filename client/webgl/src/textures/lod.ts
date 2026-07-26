@@ -26,11 +26,15 @@ export function texturesRoot(serverBase: string): string {
 export type TexMap = "albedo" | "normal" | "depth" | "emissive" | "layers" | "surface";
 
 /** Zoom bounds (screen px per world px). 1 = tiles at their native `SQUARE` (128) px, i.e. 1:1 with
- *  the art. The range spans the four-level lod ladder — lod 0 covers `[1, 2)`, lod 3 bottoms out at
- *  0.125 where a tile is 16 px (the 1-px-per-unit floor). Zoom-in past 1 MAGNIFIES: 128 px is the
- *  maximum art size by design (a slot cannot show more), so the top of each lod band upscales by up
- *  to 2× rather than fetching art that does not exist (work `2026-07-26-textile-slot` F2). */
-export const ZOOM_MIN = 0.125;
+ *  the art. The range spans the three-level lod ladder — lod 0 covers `[1, 2)`, lod 2 bottoms out at
+ *  0.25. Zoom-in past 1 MAGNIFIES: 128 px is the maximum art size by design (a slot cannot show more),
+ *  so the top of each lod band upscales by up to 2× rather than fetching art that does not exist
+ *  (work `2026-07-26-textile-slot` F2).
+ *
+ *  0.25, not 0.125: lod 3 would put 192×128 tiles ≈ 225 zones in the window, which streams in over a
+ *  second or two ([B-1](../../../docs/work/2026-07-26-textile-slot/blockers.md)). The `u2` lod field
+ *  still has room for lod 3, so restoring it needs no layout change — only a loading-priority system. */
+export const ZOOM_MIN = 0.25;
 export const ZOOM_MAX = 2;
 
 /** The power-of-two LOD tier a zoom sits in — the master LOD the resolver targets

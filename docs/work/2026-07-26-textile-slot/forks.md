@@ -74,7 +74,21 @@ So the reference aspect is the most advantageous and everything else trades area
 **Decide and record**: is that the intended fairness property, and what is the widest aspect the grid is
 sized for? It sets the slot count, so it must land before P1.
 
-### F5 — 24 is not a power of two (OPEN, low stakes)
-The wrap modulus is the slot count: 16 masks, 24 does not. A 32×16 grid would make both axes bitmasks at
-3072→4096 wide (24 → 32 MiB per RGBA8 surface, ~+90 MiB total). Not worth it — integer modulo is cheap on
-modern hardware — but it should be a recorded decision rather than an accident.
+### F5 — slot grid → 32×16, both axes pow2 — RESOLVED 2026-07-26 by the user
+The wrap modulus is the slot count (`SLOTS << lod`): 16 masks, 24 does not. **Taken: 32×16**, so both axes
+are bitmasks at every lod.
+
+**It is a COST property, not a correctness one** — the user asked exactly this, and the answer is that a
+3×3 grid would work fine, because a slot subdivides into `2^lod` tiles regardless of grid size. Only the
+`mod(wc, cols)` in the hot addressing path cares.
+
+**What it buys and costs.** Visible goes 20×12 → **28×12**, reference 2560×1536 → **3584×1536**, and total
+resident memory **304 → 394 MiB**. The extra width is largely cached-but-offscreen at 16:9, where the
+vertical axis binds the cover fit (`1440/1536 > 2560/3584`) — a 2560×1440 player sees 120-px tiles and
+21.3×12 slots. Spending the slack horizontally is right: the vertical budget is the scarcer one.
+
+**The texture is still 34×18 slots (4352×2304), and that is correct.** The `+2` wrap-apron is applied as a
+`(sx + 1)` offset AFTER the modulus, so it never enters the wrap arithmetic — the pow2 win is fully retained
+while the apron keeps the toroidal edge sound. Do not "simplify" the texture to 4096×2048 to make its dims
+pow2; that trades a free physical stride for wrap correctness, and WebGL2 has no NPOT penalty at
+NEAREST/CLAMP anyway. See [I9](issues.md#i9) for the one genuinely open question here.
