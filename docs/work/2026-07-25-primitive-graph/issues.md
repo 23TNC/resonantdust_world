@@ -374,3 +374,41 @@ and it hides the darkness that makes point lights worth having. It was chosen on
 already places flora, i.e. a *test* requirement leaking into world design. Reverted: no kind emits light
 by default. The capability, the regression test, and `__torch(id?)` (light any placed billboard on
 demand) all remain, so demonstrating the path costs no content change.
+
+## I29 — Light cost model, measured (2026-07-25): static is FREE, moving cliffs at ~8–16
+User asked for 32 moving + 32 static, expecting 64 to be comfortable. Measured at
+`?focus=100,50&zoom=0.25` (7440-tile window, 1915 billboards), lights `reach 6`, spread so presence
+never saturates. "Moving" is simulated by re-dirtying each light's cast region every frame — exactly
+what a moving carrier does via `markLightDirty`.
+
+| moving | dirty tiles/frame | fps |
+|---|---|---|
+| 0 (+32 static) | 0 | 120.4 |
+| 4 | 616 (8%) | 120.7 |
+| 8 | 1111 (15%) | 120.3 |
+| **16** | 1479 (20%) | **55.4** |
+| **32** | 3005 (40%) | **33.8** |
+
+**Static lights are free, exactly as designed** — 32 of them cost 0.6 fps and dirty ZERO tiles/frame.
+They bake once and never again; the cold/hot split does what it promised.
+
+**`hot` alone is NOT a cost.** It routes a light to the hot RT; it does not by itself cause per-frame
+work. A stationary hot light re-bakes never (32 of them: 120.2 fps, 0 dirty). **Motion** is the cost.
+
+**The cliff is not the light count.** 8 → 16 moving grows dirty area only 33% while fps more than
+halves, so cost ≈ **dirty area × lights-per-texel**: as moving lights overlap, every dirty texel loops
+more lights through the corridor walk. The per-tile 16-light cap bounds the second term and does
+nothing about the first. Dominant absolute term: the fine lightmap is **64×64 texels per tile**, so 16
+moving lights re-bake ~**6M texels/frame**.
+
+**Levers, cheapest first.**
+1. **A moving light dirties its ENTIRE reach box even if it moved one pixel** (`markLightMove` unions
+   old ∪ new). For sub-tile motion that is a ~169-tile re-bake for a few px of change. Dirtying only
+   the swept delta would cut the common case hugely.
+2. **Hot could skip the fine lightmap.** The tiered design always said hot should be *always-fresh*
+   rather than baked; baking hot lights into the same 64/tile lightmap as cold is what makes motion
+   cost area × 4096 texels.
+3. Reach is quadratic in area — a moving light with reach 6 costs 4× one with reach 3.
+
+**This is very likely the earlier unexplained "30 fps"** ([I24](#i24)): I could not reproduce it with
+static lights or billboard count, and 32 moving lights lands on 33.8 fps.
