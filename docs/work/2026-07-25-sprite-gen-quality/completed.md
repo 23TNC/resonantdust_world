@@ -129,3 +129,31 @@ geometrically unsatisfiable without distorting animals.
 nothing for the whole corpus because of two stacked alpha traps — `getbbox()` on RGBA counts any
 non-zero channel, and the corpus's transparent background is alpha ≈ 3 rather than 0. The output
 looked plausible throughout; only checking the *achieved* fraction exposed it.
+
+## 2026-07-26 — P2 complete (dataset rebuilt and measured)
+
+`.staging/quad-lora-train2/` rebuilt through `build_quad.py` → `prep_train.normalise()`:
+**459 images / 459 captions** across the three repeat-weighted folders (153 each), 765 effective
+images per epoch, family counts unchanged.
+
+**Before/after over a 120-image random sample of each set:**
+
+| | longer-side fraction | | outline sharpness | |
+|---|---|---|---|---|
+| | mean | sd | mean | sd |
+| OLD (v1, LANCZOS, unnormalised) | 0.755 | 0.1478 | 43.1 | 9.6 |
+| **NEW (v2, ESRGAN + normalised)** | **0.848** | **0.0032** | **90.1** | 14.3 |
+
+**Scale consistency improved 46×** (sd 0.148 → 0.003) and **outline sharpness 2.1×** (43.1 → 90.1).
+The sharpness gain is smaller than the 4–5× measured on a single 64px source, which is expected: most
+of the corpus is 256px, so the average upscale factor — and therefore the damage LANCZOS was doing —
+is milder than the worst case.
+
+The plan's stated criterion was "`fill` standard deviation below 0.02". That criterion was replaced
+([I10](issues.md#i10)) because bbox *area* cannot be equalised without distorting aspect; the
+longer-side equivalent is **sd 0.0032**, comfortably inside the spirit of it.
+
+**Spot-check, 6 species old vs new** (`.staging/p2-spot/before_after.png`): Cat (64px worst case),
+Bear, Wolf_Timber, Tiger, Elephant, Giraffe. Every new sprite is visibly crisper and consistently
+framed; **no halo, no clipping, no aspect distortion** found. The most visible change is that
+subjects now fill the frame consistently — the old Tiger and Giraffe were noticeably small.
