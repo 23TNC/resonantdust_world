@@ -169,3 +169,15 @@ wrong too. Two separate traps:
 Only thresholding the alpha (`> ALPHA_MIN = 16`) before taking the bbox fixed it. Worth noting the
 failure mode: the crop silently did nothing, the images looked plausible, and only measuring the
 achieved fraction exposed it. A visual check would have passed this bug.
+
+## I12 — The quadruped dataset was built by a script that lived only in scratchpad
+
+`prep_train.py` builds the *full* 200-species animal set, but the LoRA under test (`rd_quadruped_e07`)
+was trained on the 132-species **quadruped subset**, built by `build_quad.py` — which existed only in
+the session scratchpad and did its own `LANCZOS` resize with **no scale normalisation**. So P2's fixes
+initially landed on a dataset P3 does not use, and I started rebuilding the wrong one before catching
+it.
+
+`build_quad.py` is now in `bin/lib/` and delegates image prep to `prep_train.normalise()`, so both
+sets share one prep path and cannot drift again. General lesson: a script that produces a training
+input is *tooling*, not a scratch file — if it is not versioned, its defects are invisible to review.
