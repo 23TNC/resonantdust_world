@@ -56,6 +56,17 @@ export class WorldScene extends Scene {
 
     // The client zone stream → viewport tiles, and the camera anchor → client subscription.
     this.bridge = new WorldBridge(ctx.client, ctx.content, this.panel.view, this.panel.view.white, ctx.textureResolver);
+    // DEBUG: `__zoom(z)` is the ONLY correct way to zoom from a console. Zooming is TWO calls that must
+    // both happen — `view().setZoom` moves the camera and returns the new anchor; `bridge.zoomTo` records
+    // the zoom so `radii()` sizes the zone subscription for the right lod. Driving either one alone looks
+    // like a client bug: camera-only leaves the subscription sized for the previous lod (empty window
+    // edges), bridge-only leaves the camera — and hence the lod — unchanged. Both mistakes cost real time
+    // (work `2026-07-26-textile-slot` I11). This mirrors the `/zoom` command exactly.
+    (globalThis as unknown as { __zoom: (z: number) => number }).__zoom = (z: number) => {
+      const anchor = this.panel.view.setZoom(z);
+      if (anchor) this.bridge.zoomTo(anchor.x, anchor.y, this.panel.view.zoom);
+      return this.panel.view.zoom;
+    };
     // Pawns (the wolves): synced from the tick pipeline's mobile entities into the viewport's WARM cache.
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.panel.view);
 

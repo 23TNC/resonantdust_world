@@ -81,37 +81,34 @@ the space, which is a weaker claim.
 **Rule this implies:** when replacing a derived size with a fixed one, re-derive what every term in the old
 expression was for. A divisor is not necessarily a safety margin.
 
-### I11 — the reach fix is correct but INERT: the client honours only the FIRST anchor push (2026-07-26)
-[I8](#i8) fixed `radii()` to size the subscription from the tile window, and that computation is right. It
-does not currently help, because of a **pre-existing** client-side limitation.
+### I11 — WITHDRAWN: "the reach fix is inert" was a TEST-HARNESS ARTIFACT (2026-07-26)
+I filed this claiming content was bounded to 9 zones regardless of requested reach, and wrongly cited
+[webgl-engine](../webgl-engine/README.md) W4g ("only the initial anchor's reach is handled") as the cause.
+**Both were wrong.** Re-measured through the real path: **128 of 128 columns carry data at lod 2, 100%.**
 
-**Measured at lod 2** (window 128×64 tiles = 8×4 zones): exactly **48 of 128 columns** carry zone data, and
-it is stable, not still streaming. 48 tiles = **3 zones**. Content is bounded to a **3×3 = 9-zone** square
-regardless of what reach is requested.
+**What actually happened.** I was zooming with `__viewport.setZoom()`, a debug hook that drives the CAMERA
+directly and **bypasses `WorldBridge.zoomTo`**. So the bridge's own `this.zoom` never left 1, and
+`radii()` computed `windowTiles = SLOTS_X << lodForZoom(1) = 32` → `active = 32/2 + 2 = 18` tiles ≈ 1.1
+zones radius ⇒ **exactly 3×3 = 9 zones**. The number matched a real known symptom precisely enough to be
+convincing, which is what made it dangerous.
 
-**Why 9.** At load the camera is at zoom 1 → lod 0 → `windowTiles = 32` → `active = 32/2 + 2 = 18` tiles
-≈ 1.1 zones radius ⇒ 3×3 zones. Every later push (zooming out raises `active` to 66) is sent — `setAnchor`
-re-pushes whenever the radii change — but the subscription never grows.
+**The Rust was fine all along**, and reading it said so before the measurement did: `set_anchor` compares
+the whole `Anchor` including `radii`, so a reach change *does* recompute; `anchor_coverage` expands a tile
+radius to a zone rect correctly; and the capacity ceiling is `DEFAULT_MAX_OPEN_SUBS = 512`, not 9. I should
+have weighted that over a measurement taken through a path the product never uses.
 
-**This is already a known open item**, independently observed before this stream:
-[webgl-engine](../webgl-engine/README.md) W4g — *"with the grid on, a GOOD load shows content bounded to ~9
-zones and panning doesn't seem to acquire more — confirm world-bounds vs under-subscription (**only the
-initial anchor's reach is handled**)"*. This stream did not cause it; it made it **visible**, because the
-window at lod 2 is 8×4 zones and finally exceeds the 9-zone ceiling that lod 0 never did.
+**Rule:** a debug hook that shortcuts a layer will silently disable everything that layer does. Measure
+through the real entry point, or verify the hook is equivalent to it before trusting a result. Here the
+honest tell was available for free — the URL-reload tests (which DO go through the bridge) had already
+shown full coverage at lod 3, and I failed to reconcile that against the `setZoom` result.
 
-**Consequence for [B-1](blockers.md).** Raising `ZOOM_MIN` to 0.25 does not by itself give a full world at
-maximum zoom-out — the ceiling is the anchor handling, not the zone count or bandwidth. The loading-priority
-system ([I10](#i10)) is also downstream of this: there is no point prioritising a fetch order for zones the
-client will not request.
-
-**Next step** (not attempted here — it is Rust in `client/core`, outside this stream's component): confirm
-whether `Client::set_anchor` ignores a reach change for an existing anchor id, and make a reach increase
-re-evaluate the zone set. Cheap to verify by pushing a second anchor with a larger radius and counting
-subscriptions.
+**Consequences reverted:** [B-1](blockers.md) and [I10](#i10) are NOT downstream of any anchor bug.
+`ZOOM_MIN = 0.25` does give a full world at maximum zoom-out — verified 100% coverage, world filling the
+viewport edge to edge.
 
 ### I10 — a LOADING-PRIORITY system is the real unlock for deep zoom-out (open, user 2026-07-26)
-`ZOOM_MIN` moved to 0.25 to sidestep lod 3's ~450-zone window ([B-1](blockers.md)), but the user named the
-actual fix: **"in all cases we will likely want a priority system so the system can prioritize what it
+`ZOOM_MIN` moved to 0.25 to sidestep lod 3's ~450-zone window ([B-1](blockers.md)); the user named the
+longer-term fix: **"in all cases we will likely want a priority system so the system can prioritize what it
 updates."**
 
 Note the client already has HALF of this. Bake priority is solved — `prio()` is `band + ring`, so empty

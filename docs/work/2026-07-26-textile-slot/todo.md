@@ -66,5 +66,8 @@ def-swap is already covered by `definitionFor` → `billboardDataFor().changed` 
       **304 MiB, constant.** Lightmap+shadow alone were 264 MiB and growing before.
 - [x] Confirm 128px masters exist for every kind that renders at lod 0.
       16 stems, `maxSize` ≥ 128 for all, zero under ([I6](issues.md#i6)).
-- [ ] Extend the identity check to lods 1–3 (it only ran at lod 0).
+- [ ] Extend the identity check to lods 1–2 (it only ran at lod 0).
       Acceptance: 0 mismatches with a non-zero population at each lod.
+- [x] Re-run the zoom sweep through the REAL path after [I11](issues.md#i11).
+      1→0.5→0.25→0.5→1 via `__zoom`: ladder 0→1→2→1→0, coverage full at every lod once settled,
+      G-buffer + lightmap byte-constant, zoom-IN `fresh: 0`.

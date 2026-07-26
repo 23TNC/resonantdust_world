@@ -283,7 +283,12 @@ export class Viewport {
     return this.map.window;
   }
   /** Set an absolute zoom, holding the viewport centre; returns the anchor to push
-   *  through the bridge (so zone subscriptions follow), or null if it clamped to a no-op. */
+   *  through the bridge (so zone subscriptions follow), or null if it clamped to a no-op.
+   *
+   *  **Callers MUST push the returned anchor through `WorldBridge.zoomTo`.** This moves the CAMERA only —
+   *  it does not update the bridge's own zoom, so the zone subscription would stay sized for the previous
+   *  lod and the window edges would have no tile data. From a console use **`__zoom(z)`**, which does both
+   *  (work `2026-07-26-textile-slot` I11 — this exact shortcut cost real debugging time). */
   setZoom(z: number): { x: number; y: number } | null {
     return this.camera.setZoom(z);
   }
