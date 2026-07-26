@@ -72,17 +72,26 @@ Consequently a downsample-only display would need 4× the texels (40×24 visible
 surface). **Rejected** — [F2](forks.md#f2) takes continuous zoom with up to 2× magnification within a band,
 snapping back to 1:1 at each lod boundary.
 
-## Memory (fixed, at every zoom, on every monitor)
+## Memory — MEASURED 2026-07-26, constant at every zoom
 | surface | dims | format | size |
 |---|---|---|---|
-| albedo, normal, surface, zdepth × cold+warm (8) | 3072×2048 | RGBA8 | 192 MiB |
-| lightmap (single accumulator, hot/cold collapsed) | 3072×2048 | RGBA32F | 96 MiB |
-| shadow (2 attachments) | 384×256 | RGBA32UI | 3 MiB |
-| **total** | | | **~291 MiB** |
+| albedo, normal, surface, zdepth × cold+warm (8) | 3328×2304 | RGBA8 | **234 MiB** |
+| lightmap, cold + hot tiers | 3072×2048 | RGBA8 | 48 MiB |
+| shadow, cold + hot (2 attachments each) | 384×256 | RGBA32UI | 6 MiB |
+| unified data texture | 1024×1024 | RGBA32UI | 16 MiB |
+| **total** | | | **304 MiB** |
 
-Against ~374 MiB today at zoom 0.25 — a reduction that also stops moving. The per-channel figure rises
-(14 → 24 MiB) only because the reference target is now 2560×1536 rather than this machine's 1862×853 panel:
-**that is a bought quality/uniformity standard, not waste.** Do not "optimize" it back down.
+Verified byte-identical across a full 1 → 0.125 → 1 sweep (`allConstant: true`). Against the old numbers,
+the lightmap and shadow **alone** were 264 MiB at zoom 0.25 and still growing; they are now 54 MiB and fixed.
+
+The G-buffer figure is above the pre-measurement estimate for two reasons, both correct: the **wrap-apron**
+([I7](issues.md#i7)) makes each channel 3328×2304 rather than 3072×2048, and the reference target is now
+2560×1536 rather than this machine's 1862×853 panel. **That is a bought quality/uniformity standard, not
+waste** — do not "optimize" it back down.
+
+When [F11b](../2026-07-25-primitive-graph/forks.md#f11b) collapses the two lightmap tiers into one
+`RGBA32F` accumulator, that line becomes **96 MiB** (total ~352 MiB) — still fixed, and still far under the
+old growth curve.
 
 ## Reproject instead of clear
 On a lod change, **rescale; do not re-bake**. Zoom in → retained tiles are already present, upscale and clip.

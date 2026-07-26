@@ -79,7 +79,8 @@ resizing. Cost: 29.3 MiB per RGBA8 channel instead of 24.
 **Rule this implies:** when replacing a derived size with a fixed one, re-derive what every term in the old
 expression was for. A divisor is not necessarily a safety margin.
 
-### I6 — verify 128px masters exist before relying on lod 0 (2026-07-26, open)
-`SQUARE` 64 → 128 means lod 0 wants natively 128px art. The LOD pools suggest it exists (64px→1024²,
-128px→2048² pages), but any kind lacking a 128px master will be upscaled at maximum zoom. Confirm rather
-than assume — it is cheap to check and expensive to discover late.
+### I6 — verify 128px masters exist before relying on lod 0 — RESOLVED 2026-07-26, none missing
+`SQUARE` 64 → 128 means lod 0 wants natively 128px art, and any kind lacking it would upscale at maximum
+zoom. Checked against the live texture manifest rather than assumed: **16 stems, `maxSize` histogram
+`{128: 8, 256: 4, 320: 1, 512: 3}`, zero under 128.** Every stem can serve lod 0 natively, and the server
+derives the smaller LODs on demand, so the whole ladder is covered.

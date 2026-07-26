@@ -26,8 +26,8 @@ must assert a **non-zero population on both sides** — "0 mismatches" is satisf
       Acceptance: lightmap 3072×2048, shadow 384×256, both zoom-invariant.
 
 ## P2 — Publish the mapping as constants
-- [ ] Write `lod`, `slot_width`, `slot_height` into the data-texture constants via a command.
-      Acceptance: a lod change is one command write, like a light update.
+- [x] Write `lod` into the data-texture constants via a command (G bits 14–15).
+      Slot dims stay per-family compile-time constants; only `lod` varies. Landed with P1b.
 - [ ] Convert every shader to read the slot mapping from constants rather than deriving it.
       Acceptance: no shader computes a slot address from a world coord ([map-compatibility](../2026-07-24-map-compatibility/README.md)).
 
@@ -41,9 +41,11 @@ must assert a **non-zero population on both sides** — "0 mismatches" is satisf
 - [ ] Apply the per-family filter rule: NEAREST everywhere, linear only for albedo/normal/surface.
       Acceptance: z-order stable across a zoom step; no bitfield corruption.
 
-## P4 — Per-piece lod state
-- [ ] Maintain `billboard_data.last_lod` and swap the def when it differs from current.
-      Acceptance: a zoom settles to correct-lod art with no blanket re-bake.
+## P4 — Per-piece lod state — BLOCKED on the additive lightmap, deliberately
+_The layouts are ratified (P0) but the CONSUMER does not exist: `coarsest_lod` only earns its keep once the
+invertible `RGBA32F` accumulator lands ([primitive-graph P10](../2026-07-25-primitive-graph/todo.md)). There
+is nothing to subtract from today, so implementing it now would be untestable bookkeeping. `last_lod`'s
+def-swap is already covered by `definitionFor` → `billboardDataFor().changed` → `markBillboardDirty`._
 - [ ] Maintain `light_data.coarsest_lod` as a monotone max, reset on re-cast.
       Acceptance: down-then-up round trip leaves no residue ([I2](issues.md#i2)).
 - [ ] Evaluate a light's subtraction on its `coarsest_lod` grid, not the current one.
@@ -56,11 +58,13 @@ must assert a **non-zero population on both sides** — "0 mismatches" is satisf
       `bakeDirty` already sorts ascending and `prio` is `band + ring`, so the bands separate the classes.
 
 ## P6 — Verify
-- [ ] Sweep zoom across all four lods, both directions, and confirm no flash and no drift.
-      Acceptance: screenshot-free — assert dirty counts and map dims per step.
-- [ ] Re-run corridor↔brute identity at each lod.
-      Acceptance: 0 mismatches with a non-zero population on both sides.
-- [ ] Measure resident texture bytes across the zoom sweep.
-      Acceptance: constant, and ≈291 MiB total.
-- [ ] Confirm 128px masters exist for every kind that renders at lod 0.
-      Acceptance: a list of kinds lacking one, or none.
+- [x] Sweep zoom across all four lods, both directions, and confirm no flash and no drift.
+      7 steps, `allConstant: true`; every zoom-IN step reported `fresh: 0`.
+- [x] Re-run corridor↔brute identity at lod 0 with a non-zero population both sides.
+      31,645 non-zero texels each side, **0 mismatches**. Per-lod sweep still open below.
+- [x] Measure resident texture bytes across the zoom sweep.
+      **304 MiB, constant.** Lightmap+shadow alone were 264 MiB and growing before.
+- [x] Confirm 128px masters exist for every kind that renders at lod 0.
+      16 stems, `maxSize` ≥ 128 for all, zero under ([I6](issues.md#i6)).
+- [ ] Extend the identity check to lods 1–3 (it only ran at lod 0).
+      Acceptance: 0 mismatches with a non-zero population at each lod.
