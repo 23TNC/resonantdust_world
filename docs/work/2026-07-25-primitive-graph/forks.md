@@ -138,3 +138,68 @@ others there — bounded by the shadow region, and identical to today's cascade.
 clears trivial, but converts the per-tile 16-light cap into a GLOBAL 16-light cap. The per-tile slot
 indirection is precisely what buys 64+ lights, so it is also precisely what forbids per-light clearing.
 The trade is intentional, not accidental.
+
+### F11b — WIDE ADDITIVE LIGHTMAP: drop per-light slots entirely (2026-07-26) — user proposal, ADOPTED
+User proposal: hold the lightmap **wider than u8** so every light's contribution can simply be **added**,
+making an update **invertible** (subtract the old, add the new) instead of clear-and-recast. This dissolves
+[F11a](#f11a-can-scatter-update-one-light-incrementally-no--and-that-is-not-a-regression-2026-07-26) at the
+root: there are no per-light slots to clear, so the per-tile slot indirection stops being a constraint.
+
+**Three corrections, all measured on the live context (RTX 2080 Ti / ANGLE D3D11).**
+
+1. **The format must be `RGBA32F`, NOT `RGBA32UI`.** ES 3.0 §15.1.4 skips blending for integer formats, and
+   it does so **silently** — the FBO reports complete and `getError()` stays 0. Measured: constant
+   `(10,20,30,40)` drawn 5× with `blendFunc(ONE,ONE)` →
+   - `RGBA32UI` → `[10,20,30,40]` (last write; no accumulation, **no error raised**)
+   - `RGBA32F`  → `[50,100,150,200]` (exact)
+   `EXT_color_buffer_float` + `EXT_float_blend` are both present; the second is required and is the one
+   that is easy to forget, since without it float blending is silently dropped too.
+2. **Contributions MUST be quantised**, and this is exactly the hedge the user asked for. FP32 represents
+   every integer below 2^24 exactly, so adding and subtracting integer-valued contributions is bit-exact
+   **in any order**. Measured add-all-then-subtract-in-reverse-order residuals:
+   - quantised (each light casts an integer 0..255, 64 lights) → peak 7,776, residual **exactly 0**
+   - quantised, 4096 contributions → peak 522,240, residual **exactly 0**
+   - raw float (`colour × falloff × N·L`, unquantised) → peak 32.08, residual **1.8e-7** (drifts)
+   So the user's own "each light casts RGBA8" framing is what makes it exact. Headroom is 2^24/255 ≈
+   **65,800 lights** at full brightness before exactness breaks — not the 16M guessed from u32 range, but
+   from the FP32 mantissa instead, and still far past any plausible budget.
+3. **Additivity holds across LIGHTS, not across CASTERS.** Occlusion is a **union**, not a sum: two casters
+   shadowing the same texel must MAX, or they over-subtract past black. So each light still needs its own
+   shadow resolve before its contribution is added — which is precisely what the existing per-light N·L
+   bake already does. The wide accumulator replaces the per-light **storage**, not the per-light **resolve**.
+
+**Subtraction mechanism.** One blend mode does both directions: `FUNC_ADD` + `blendFunc(ONE,ONE)`, and a
+**negative fragment output** subtracts. No second pipeline state, no `FUNC_REVERSE_SUBTRACT`. Measured:
+8 quantised lights added → `[136,264,520,2040]`; one negated → `[119,231,455,1785]`; all 8 subtracted →
+`[0,0,0,0]`, `err 0`.
+
+**The real risk is reproducing the OLD contribution, not arithmetic.** To subtract light L exactly you must
+re-cast it with L's old parameters **and the old caster state**. If a caster moved in the same frame, the
+old contribution is no longer reproducible and light leaks behind — the failure the user predicted.
+
+**Resolution — the GPU data texture IS the old-state snapshot until `coldData.flush()`.** So the frame
+order already in place (`buildCasters` → `buildPresence` → `coldData.flush` → `buildDirty`) grows one pass:
+1. **subtract** — for each dirty light (moved, removed, or reached by a moved caster) re-cast it negated
+   over its OLD reach region, **before** `flush()`, so it reads the pre-change data and inverts bit-exactly.
+2. **`coldData.flush()`** — prims, lights and casters become current.
+3. **add** — re-cast each dirty light positively over its NEW reach region.
+
+Cost = 2 × (dirty lights × their own region), **independent of total light count**. 64 static lights cost
+nothing when one mover moves, which is the behaviour the user expected and is not getting today. A moved
+CASTER cascades to every light whose reach covers it — bounded and local, same as now.
+
+**What it dissolves.** The [F11a](#f11a-can-scatter-update-one-light-incrementally-no--and-that-is-not-a-regression-2026-07-26)
+clear problem; the **16-lights-per-tile cap** (no slots at all — presence degrades from a hard cap to a pure
+culling optimisation); and arguably the **cold/hot split**, which exists mainly so a hot light cannot
+pollute the cold bake — with an invertible accumulator one buffer suffices.
+
+**Costs.** The lightmap RT is a fixed 24×16-tile window at 64 texels/tile = 1536×1024, so `RGBA32F` is
+**24 MB** per tier (vs 6 MB at `RGBA8`), ~48 MB total. Cheap. The final blit gains a divide by the
+quantisation scale plus a clamp/tonemap.
+
+**Self-heal, required.** Bookkeeping leaks are the residual risk, so: a full rebuild on the window
+scroll/zoom paths that already re-bake, plus a debug **rebuild-and-diff** assertion that re-accumulates from
+scratch and reports any texel that disagrees. That converts a silent leak into a caught one.
+
+**Ordering.** The cross-pad DDA ([I30](issues.md#i30)) still goes first — it is independent of this, shrinks
+the per-light resolve that survives, and is verifiable against the existing corridor↔brute identity check.
