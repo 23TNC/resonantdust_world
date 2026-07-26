@@ -109,3 +109,35 @@ case template-free generation exists to serve. Closing it needs a metric with a 
 anteater looks like" (a learned/semantic scorer, deliberately rejected in [F2](forks.md#f2) as an
 unexplainable black box). Until then the human remains the filter for unseen species, which the
 README already commits to.
+
+## I8 — Coarse occupancy matching cannot tell species apart (`auto` picked a hedgehog for a wolf)
+
+`--control auto` probes with txt2img, then matches the probe against the bank on a 32×32 occupancy
+grid + aspect. For a **wolf** it selected **`AEXP_Hedgehog`** (0.79), ahead of every canine.
+
+At that resolution a lying wolf and a hedgehog are both "a roundish mass, wider than tall" — the
+metric sees where mass sits, not what the animal is. It is doing exactly what it was built to do;
+body-plan occupancy simply does not encode species.
+
+The damage is smaller than feared: at `cn 0.20` the control supplies only rough mass, so the LoRA
+still drew a proper grey wolf — just hunched and compressed versus the template-controlled version.
+But "less bad than feared" is not "correct", and a hand-written `canine -> Wolf_Timber` is right
+where the measurement is wrong. This is why [F4](forks.md#f4) keeps the family table.
+
+## I9 — The proxy-reference problem, in its sharpest form
+
+Anteater, three control modes, `d_aspect` scored against the **Elephant** proxy:
+
+| control | east | south | north | visual verdict |
+|---|---|---|---|---|
+| `family:pachyderm` | **0.4%** | 13.2% | 4.1% | **worst** — snout survives only in east, s/n are cape blobs |
+| `auto -> Gorilla` | 52.2% | 1.7% | 29.8% | worse still — snout gone entirely, hunched blobs |
+| `none` | 52.7% | 21.4% | 7.8% | **best** — recognisable anteater in all three views |
+
+**The metric is anti-correlated with quality here.** The visually best output scores worst; the
+visually worst scores best. Not a threshold problem — the reference is an *elephant*, so "looks like
+an elephant" is what `d_aspect` rewards, and an anteater that looks like an anteater is penalised for
+it. Restates [I7](#i7) with the numbers reversed as starkly as they can be.
+
+Practical rule: **for a species with no corpus twin, do not trust `d_aspect`** — neither for gating
+nor for choosing a control. The human is the filter there, as the README commits.

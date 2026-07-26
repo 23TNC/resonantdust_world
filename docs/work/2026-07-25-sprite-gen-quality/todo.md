@@ -14,10 +14,10 @@ every later comparison is scored by it.
 
 ## P1 — Choose the control silhouette by measurement, not by a hand table
 
-- [ ] Add a shape-similarity search over the 396 bank silhouettes. Acceptance: a function returns the top-k nearest bank entries for a target profile, and `Bear` is nearer `Bear` than any non-bear.
-- [ ] Add `--control auto` selecting the nearest bank silhouette per direction. Acceptance: `--control auto` generates a full e/s/n set with no family argument.
-- [ ] Re-run the anteater with `--control auto`. Acceptance: south/north `iou_control` and gate verdict both beat the `family:pachyderm` run, recorded in `completed.md`.
-- [ ] Decide the fate of `FAMILY_REP` once `auto` is measured. Acceptance: `forks.md` records keep/demote/retire with the numbers that decided it.
+- [x] Add a shape-similarity search over the 396 bank silhouettes. Acceptance: a function returns the top-k nearest bank entries for a target profile, and `Bear` is nearer `Bear` than any non-bear.
+- [x] Add `--control auto` selecting the nearest bank silhouette per direction. Acceptance: `--control auto` generates a full e/s/n set with no family argument.
+- [x] Re-run the anteater with `--control auto`. Acceptance: south/north `iou_control` and gate verdict both beat the `family:pachyderm` run, recorded in `completed.md`.
+- [x] Decide the fate of `FAMILY_REP` once `auto` is measured. Acceptance: `forks.md` records keep/demote/retire with the numbers that decided it.
 
 ## P2 — Fix the training data (the biggest single lever)
 

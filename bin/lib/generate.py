@@ -42,6 +42,7 @@ STEPS, CFG, SAMPLER, SCHED = 26, 6.0, "dpmpp_2m", "karras"
 # too loose — pass --dn/--cn/--cn-end to restore the tighter legacy recipe.
 DN, CN, CN_END = 1.00, 0.20, 0.30
 IP_WEIGHT = 0.6
+AUTO_MIN_MATCH = 0.65        # --control auto declines below this (see resolve_auto)
 DIRS = ["e", "s", "n"]                       # e generated first = the IP hero
 FACE = {
   "e": "lying down facing right, side profile",
@@ -235,6 +236,35 @@ def resolve_control(mode, from_path, d, part, tvar):
         import silhouette_bank
         return silhouette_bank.resolve(mode, d)
     return load_template(from_path, d, part, tvar, required=True)
+
+def resolve_auto(pos_base, neg, seed, probe_dir="e"):
+    """`--control auto` — pick the control species by MEASUREMENT instead of a family table.
+
+    Two passes: generate one template-free PROBE (no ControlNet), then find the bank silhouette
+    whose body plan is nearest that probe, and use that species for every direction.
+
+    Probing on EAST is deliberate: it is the only direction that passed 10/10 in both control modes
+    (predecessor I4), so it is the most trustworthy read of what the species actually looks like.
+    Resolving ONE species for all three directions — rather than a nearest-match per direction —
+    costs one extra generation instead of three AND keeps the e/s/n set coherent, since a set built
+    from three different reference animals would inherit three different body plans."""
+    import silhouette_bank
+    full = f"{pos_base}, {STYLE.format(face=FACE[probe_dir])}"
+    raw = _run(graph_hero(full, neg, None, None, seed))          # txt2img, no control
+    probe = Image.open(io.BytesIO(raw)).convert("RGB")
+    hits = silhouette_bank.nearest(probe, probe_dir, k=5)
+    if not hits:
+        return None, []
+    # DECLINE when nothing in the bank really fits. Measured: species that genuinely have a
+    # body-plan twin in the corpus score 0.705-0.967 against it (Elephant/Gorilla are the floor),
+    # while a giant anteater — whose body plan exists nowhere in a quadruped corpus — tops out at
+    # 0.532. Forcing its best match (Gorilla) was measurably WORSE than using no control at all:
+    # the snout vanished entirely. So below the threshold, no control beats a bad one.
+    if hits[0][1] < AUTO_MIN_MATCH:
+        print(f"  control -> auto DECLINED (best match {hits[0][0]} {hits[0][1]:.2f} < "
+              f"{AUTO_MIN_MATCH:.2f}); no bank body plan fits, using no control")
+        return None, hits
+    return hits[0][0], hits
 
 # ---------------------------------------------------------------- candidate screening (P3)
 # The generalized generator fails often; that is fine as long as failure is DETECTED. The gate
@@ -453,7 +483,7 @@ def main():
     ap.add_argument("--ref", default=None,
                     help="corpus sprite defining correct proportions for the gate, e.g. Bear or AEXP_Jaguar:Jaguar")
     ap.add_argument("--control", default="template",
-                    help="control-image source: template (default, hand-authored art) | none (txt2img+LoRA, no ControlNet) | corpus:<Species> | family:<f> (P2, not yet wired)")
+                    help="control-image source: template (default) | auto (probe, then nearest bank body plan) | corpus:<Species> | family:<f> | none (txt2img+LoRA, no ControlNet)")
     ap.add_argument("--template-variant", default="0", help="legacy fallback: variant folder to read the template from when none sits at the kind level (default 0)")
     ap.add_argument("--dirs", default="e,s,n", help="directions to generate (default e,s,n; e is the hero)")
     ap.add_argument("--dir", default=None, help="generate a single direction (overrides --dirs), e.g. --dir s")
@@ -523,6 +553,25 @@ def main():
     print(f"  positive -> {pos}")
     print(f"  negative -> {neg}")
     print(f"  wrote {os.path.relpath(prompt_out, REPO)}")
+
+    if args.control == "auto":
+        sp, hits = resolve_auto(pos, neg, seed)
+        if sp:
+            args.control = f"corpus:{sp}"
+            print(f"  control -> auto picked {sp} "
+                  f"(next: {', '.join(f'{h[0]} {h[1]:.2f}' for h in hits[1:4])})")
+            # The gate reference must AGREE with the control: scoring d_aspect against a species
+            # whose silhouette we did not use measures the wrong thing (it rejected a good auto
+            # east purely for not resembling the Elephant it was never shaped by). Explicit --ref
+            # still wins, but say so when it disagrees.
+            if not args.ref:
+                args.ref = sp
+                print(f"  gate ref -> {sp} (follows the auto-picked control)")
+            elif args.ref.split(":")[0] != sp:
+                print(f"generate: --ref {args.ref} differs from the auto-picked control {sp}; "
+                      f"the gate will score against {args.ref}", file=sys.stderr)
+        else:
+            args.control = "none"
 
     rows = []                                   # one per generated sprite, for scores.csv
     for k in range(max(1, args.candidates)):

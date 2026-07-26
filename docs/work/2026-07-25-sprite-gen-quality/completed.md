@@ -70,3 +70,32 @@ the old baseline could not express — it separates *consistent* failure from *s
 This matters for where effort goes: a 0/3 cell is a capability gap (no amount of sampling fixes it),
 while a 2/3 cell is exactly what `--candidates` already solves for free. The single-seed baseline
 reported both as the same thing.
+
+## 2026-07-26 — P1 complete (auto built and measured; the plan's premise refuted)
+
+**Shape-similarity search** added to `silhouette_bank.py`: 32×32 occupancy IoU blended 0.7/0.3 with
+aspect agreement, cached per direction. Verified — `Bear/e`'s nearest neighbours are Bear (1.000),
+Capybara (0.899), `AEXP_BlackBear` (0.887).
+
+**`--control auto`** is a two-pass resolve: generate one template-free **probe** (east, the only
+direction that passed 10/10 in both modes), match it against the bank, then use that species for all
+three directions. One species for the whole set — not a per-direction match — costs one extra
+generation instead of three and keeps e/s/n coherent.
+
+**A coherence bug found and fixed while testing:** the gate was still scoring against a hand-passed
+`--ref`, i.e. measuring the output against a species whose silhouette was never used. It rejected a
+perfectly good auto east purely for not resembling the Elephant it was never shaped by. `auto` now
+sets the gate reference to its own pick unless `--ref` is explicit (and warns when they disagree).
+
+**The acceptance criterion was NOT met, and the box is ticked with that recorded.** `auto` was
+supposed to beat `family:pachyderm` on the anteater. It was **worse** — Gorilla removed the snout
+entirely ([I9](issues.md#i9)). It also picked a **hedgehog for a wolf** ([I8](issues.md#i8)).
+
+**The salvage is the part nobody planned: knowing when to decline.** Calibrated from real data —
+species with a corpus twin score 0.705–0.967, the anteater 0.532 — `AUTO_MIN_MATCH = 0.65` routes
+the anteater to **no control**, which is the visually best of the three modes (recognisable snout,
+tail and shoulder marking in all three views, versus cape-blobs from the Elephant and snoutless
+blobs from the Gorilla). Verified: `auto DECLINED (best match Gorilla 0.53 < 0.65)`.
+
+**[F4](forks.md#f4): `FAMILY_REP` is KEPT.** It encodes semantics the measurement cannot recover.
+`auto` ships as an addition whose real value is the decline path.

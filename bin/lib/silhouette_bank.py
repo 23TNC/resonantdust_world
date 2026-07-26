@@ -112,3 +112,59 @@ if __name__ == "__main__":
     a = ap.parse_args()
     if a.verify: sys.exit(0 if verify() else 1)
     build()
+
+# ---------------------------------------------------------------- shape similarity (auto control)
+# FAMILY_REP above is a human's guess about taxonomy; what actually governs whether a control
+# silhouette works is SHAPE. With 396 silhouettes in the bank, the right control can be measured
+# instead of guessed — see docs/work/2026-07-25-sprite-gen-quality/ I2 (the anteater got Elephant
+# because someone typed pachyderm->Elephant).
+_PROFILE_CACHE = {}
+
+def _profile(img, grid=32):
+    """Coarse occupancy grid + aspect for one silhouette. Deliberately low-res: we are matching
+    BODY PLAN (where the mass sits), not texture, and a fine grid would chase irrelevant detail."""
+    import numpy as np
+    sys.path.insert(0, HERE)
+    import lora_eval as L
+    m = L._filled(L._mask(img), grid)
+    ys, xs = np.where(m)
+    if len(xs) < 3: return None
+    asp = (xs.max()-xs.min()+1) / float(ys.max()-ys.min()+1)
+    return np.asarray(m, dtype=float).ravel(), asp
+
+def _bank_profiles(d):
+    """{species: (occupancy, aspect)} for one direction, cached per process."""
+    if d in _PROFILE_CACHE: return _PROFILE_CACHE[d]
+    out = {}
+    for sp in sorted(os.listdir(BANK)):
+        p = os.path.join(BANK, sp, f"{d}.png")
+        if not os.path.isdir(os.path.join(BANK, sp)) or not os.path.exists(p): continue
+        pr = _profile(Image.open(p).convert("RGB"))
+        if pr: out[sp] = pr
+    _PROFILE_CACHE[d] = out
+    return out
+
+def nearest(target_img, d, k=5, exclude=()):
+    """Top-k bank species whose silhouette for direction `d` is nearest `target_img`.
+
+    Distance = occupancy IoU (where the mass sits) blended with aspect agreement. Returns
+    [(species, score)] best first, score in 0..1."""
+    import numpy as np
+    tp = _profile(target_img)
+    if tp is None: return []
+    tocc, tasp = tp
+    scored = []
+    for sp, (occ, asp) in _bank_profiles(d).items():
+        if sp in exclude: continue
+        inter = float(np.minimum(tocc, occ).sum()); union = float(np.maximum(tocc, occ).sum())
+        iou = inter / union if union else 0.0
+        agree = 1.0 - min(1.0, abs(asp - tasp) / max(tasp, 1e-3))
+        scored.append((sp, 0.7 * iou + 0.3 * agree))
+    scored.sort(key=lambda t: -t[1])
+    return scored[:k]
+
+def nearest_to_species(species, d, k=5):
+    """Top-k bank entries nearest a bank species' own silhouette (self excluded)."""
+    p = os.path.join(BANK, species, f"{d}.png")
+    if not os.path.exists(p): raise SystemExit(f"silhouette_bank: no bank entry {species}/{d}")
+    return nearest(Image.open(p).convert("RGB"), d, k=k, exclude=(species,))

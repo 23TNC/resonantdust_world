@@ -62,3 +62,28 @@ have since eliminated. It costs nothing and is the regression alarm if that fail
 is visually fine — the reference fox is unusually narrow) and 2 FP (the anteater south/north, which
 are structurally unreachable — see [I7](issues.md#i7)). Tightening `d_aspect` to catch the anteater
 would reject far more good art, as the table shows.
+
+## F4 — Keep `FAMILY_REP`; `auto` is an addition, not a replacement · RESOLVED 2026-07-26
+
+The plan's premise was that a shape-similarity search would beat the hand-written table and retire
+it. **Measured, it does not.**
+
+| | family table | `--control auto` |
+|---|---|---|
+| wolf | `canine -> Wolf_Timber` — correct | picked **`AEXP_Hedgehog`** ([I8](issues.md#i8)) |
+| anteater | Elephant — bad, s/n collapse | Gorilla — **worse**, snout gone ([I9](issues.md#i9)) |
+
+`auto` lost both cases it was built to win. The table encodes *semantic* knowledge (a wolf is a
+canine) that a 32×32 occupancy grid cannot recover, and no threshold fixes that — the hedgehog was a
+*confident* wrong answer at 0.79.
+
+**What `auto` is genuinely worth keeping for is the part that was not planned: the DECLINE.**
+Species with a real body-plan twin in the corpus score **0.705–0.967** against it; the anteater, whose
+body plan exists nowhere in a quadruped corpus, tops out at **0.532**. So a confidence floor
+(`AUTO_MIN_MATCH = 0.65`, below the 0.705 real-match floor with margin) detects "nothing here fits"
+and falls back to **no control** — which for the anteater is the visually best of all three modes.
+
+Shipping shape: **`template` stays the default**, `family:` remains the recommended explicit choice,
+`auto` is available and is the right call when you do not know the body plan — chiefly because it
+knows when to give up. Rejected: retiring the table (measurably worse), and raising the threshold to
+force better picks (the hedgehog scored 0.79 — high confidence, wrong answer, so no threshold helps).
