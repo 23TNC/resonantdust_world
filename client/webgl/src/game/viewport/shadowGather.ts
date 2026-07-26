@@ -433,24 +433,49 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
   cdepth = 0.0;
   float cov = 0.0;
   if (corr == 1) {
+    // SUPERCOVER DDA (I30). The old walk SAMPLED the light→Q segment at ≤1-tile spacing and padded every
+    // sample with a 5-tile cross, because a sample POINT can miss a tile the segment actually crosses near a
+    // corner. That pad was ~59% of the walk's fetches, and it covered SAMPLING misses only — NOT caster
+    // extent: buildCasters buckets each caster into EVERY tile its ground footprint spans (rows
+    // topY..baseY, tight-bbox cols — see I-7), so any caster able to shadow Q is registered in some tile the
+    // segment crosses. Walking the EXACT crossed set therefore needs no pad at all.
+    // Amanatides-Woo: advance whichever axis boundary comes first in the segment parameter t ∈ [0,1].
     vec2 a = L.xy / UPT;                                     // light in tile coords
     vec2 b = Q / UPT;                                        // sample point in tile coords (ground = P, thing = G)
     vec2 d = b - a;
-    int nsteps = int(ceil(abs(d.x)) + ceil(abs(d.y))) + 1;   // ≥ max-axis span → ≤1 tile between samples
-    for (int m = 0; m <= 48; m++) {                          // constant bound
-      if (m > nsteps) break;
-      vec2 q = a + d * (float(m) / float(max(nsteps, 1)));
-      ivec2 qt = ivec2(floor(q));
-      for (int n = 0; n < 5; n++) {                          // cross pad: centre, ±x, ±y
-        ivec2 o = qt + ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0));
+    ivec2 ct = ivec2(floor(a));                              // current tile — starts at the light's
+    ivec2 te = ivec2(floor(b));                              // end tile — the receiver's
+    ivec2 stp = ivec2(d.x > 0.0 ? 1 : (d.x < 0.0 ? -1 : 0),
+                      d.y > 0.0 ? 1 : (d.y < 0.0 ? -1 : 0));
+    // t advanced per whole tile on each axis, and the t of the FIRST boundary crossing. BIG stands in for
+    // "this axis never crosses", so an axis with no motion always loses the comparison below.
+    const float BIG = 1e30;
+    vec2 adv = vec2(d.x != 0.0 ? abs(1.0 / d.x) : BIG, d.y != 0.0 ? abs(1.0 / d.y) : BIG);
+    float fx = d.x > 0.0 ? (float(ct.x + 1) - a.x) : (a.x - float(ct.x)); // tiles to the first x boundary
+    float fy = d.y > 0.0 ? (float(ct.y + 1) - a.y) : (a.y - float(ct.y));
+    vec2 tnext = vec2(d.x != 0.0 ? fx * adv.x : BIG, d.y != 0.0 ? fy * adv.y : BIG);
+    int nvisit = abs(te.x - ct.x) + abs(te.y - ct.y) + 1;    // exact size of the 4-connected cover
+    // PERPENDICULAR-ONLY dilation. The old 5-tile cross was measured to be load-bearing, NOT redundant: an
+    // exact DDA under-covers (1792 texels of shadow found by brute and missed), because a caster is bucketed
+    // by its TIGHT-BBOX ground cover while casterCover tests a wider projected extent, so a caster in tile T
+    // can occlude a ray through T±1. But the cross is only needed ACROSS the ray: consecutive walk tiles
+    // already supply each other's ±1 along the direction of travel. Dilating perpendicular to the dominant
+    // axis keeps the conservative cover at 3 fetches/tile instead of 5.
+    ivec2 perp = abs(d.x) >= abs(d.y) ? ivec2(0, 1) : ivec2(1, 0);
+    for (int m = 0; m < 64; m++) {                           // CONSTANT bound — a body-modified var in a
+      if (m >= nvisit) break;                                // loop CONDITION can miscompile (known trap).
+      for (int n = 0; n < 3; n++) {                          // centre, +perp, -perp
+        ivec2 o = ct + (n == 1 ? perp : (n == 2 ? -perp : ivec2(0)));
         uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(o.x, o.y));
-        vec2 bref = (vec2(o) + 0.5) * UPT;                  // resolve casters against THEIR bucket tile
+        vec2 bref = (vec2(o) + 0.5) * UPT;                   // resolve casters against THEIR bucket tile
         for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
           uint billboardIdx = tileSlot(cb, c);
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
+      if (tnext.x < tnext.y) { ct.x += stp.x; tnext.x += adv.x; }
+      else                   { ct.y += stp.y; tnext.y += adv.y; }
     }
   } else {
     ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
