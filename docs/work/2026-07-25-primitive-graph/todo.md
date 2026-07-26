@@ -23,14 +23,27 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
 - [x] Replace the two force-all fallbacks at `tick:1396` with scoped cascades.
 - [x] Delete `coldDirty` / `forceColdDirty` / `lightsVer`; keep one explicit `rebakeAll()` for shader constants.
 
-## P5 — Compose the real objects
-- [ ] Build a torch = prim{ billboard, light }; verify both leaves resolve to the one carrier.
-- [ ] Build a pawn = prim{ head, body, hand-prim, hand-prim }; verify the 4-child fan-out.
-- [ ] Hang a torch off a hand prim; verify 3-level nesting resolves and moves with the pawn.
-- [ ] Author a light kind in `content/data/things.rd` so worldgen can place one.
-- [ ] Supply `layer` / `rotation` / `type` / `inherit_rotation` from the DSL (all written 0 today).
-- [ ] Record each def's own rotation, then swap a piece's def when its desired rotation differs ([I23](issues.md#i23)).
-- [ ] Delete `this.lights` + `seed()` + `__manylights` once worldgen places lights ([I23](issues.md#i23)).
+## P5 — Compose the real objects (authoring)
+- [ ] Add an optional `light` aspect (colour/reach/radius/height/hot/cast) to `Primitive`.
+      Acceptance: `tsc` clean; a prim without it writes byte-identical records.
+- [ ] Allocate a light leaf under the SAME carrier when a standing prim has `.light`.
+      Acceptance: mirror shows one prim with `set_a=6, set_b=2`, both leaves' `parent_id` equal to it.
+- [ ] Include carried lights when building `light_presence`.
+      Acceptance: the torch's tile lists its light id; the scene is visibly lit by it.
+- [ ] Add a per-kind light table to the content manifest, beside `thingLayout`/`thingPacked`.
+      Acceptance: `bin/dsl` emits it and the client reads a row by `kindId`.
+- [ ] Declare a torch kind in `content/data/things.rd` + `content/visual/things.rd`.
+      Acceptance: `rd dsl` publishes; the manifest contains the torch's light row.
+- [ ] Attach the kind's light aspect to the prim in `WorldBridge.onColdThings`.
+      Acceptance: a worldgen-placed torch renders its sprite and lights its surroundings.
+- [ ] Place the debug lights through the content path instead of `seed()`.
+      Acceptance: the scene is lit with `__gather.lights.length === 0`.
+- [ ] Delete `this.lights`, `Light`, `seed()`, `__manylights`, `EXTRA_LIGHT_TILES`.
+      Acceptance: grep clean; scene still lit; fps unchanged at zoom 0.25.
+- [ ] Write each def's own rotation into `definition_data` RED (currently 0).
+      Acceptance: mirror shows `rotation=3` for a W-facing def.
+- [ ] Swap a piece's def when its desired rotation differs from the active def's.
+      Acceptance: flipping a facing swaps `definition_id` within one frame.
 
 ## P6 — Verify
 - [ ] Sweep zoom 0.25→2 and confirm shadow shape is stable (the recurring drift class).

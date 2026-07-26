@@ -43,3 +43,25 @@ the CPU resolve pass already does. `parent_id` additionally lets a leaf's dirty 
 A partial command **pads unused id slots with 0**; the scatter discards zero-id points (degenerate
 `gl_Position` → clipped). Keeps the trivial `p/7`, `p%7` map with no per-point bookkeeping. Costs one
 burned entry per set ([I14](issues.md#i14)).
+
+## F8 — Where do a kind's light properties live? (2026-07-25, RESOLVED — the per-kind table)
+A thing row is stride-7 `[tileX, tileY, tint, geoColor, kindId, data, variant]` — no room for colour/
+reach/radius, and per-*instance* light props would be wasteful anyway (every torch is the same torch).
+**Chosen: a per-kind light table in the content manifest**, beside the `thingLayout` / `thingPacked` /
+`thingStems` tables the client already indexes by `kindId`. **No wire change at all.** Rejected: widening
+the row (costs bytes per instance for data that is per-kind); a separate fetch (another round trip for
+something the manifest already carries).
+
+## F9 — How does a light reach the gather from content? (2026-07-25, RESOLVED — an aspect on `Primitive`)
+Reverses the [F3](#f3) lean. F3 chose a parallel `lightPrims()` list because no carrier existed yet;
+P3a built one, so the cheap path is now real: `billboardDataFor` already allocates a carrier per standing
+prim, so a prim carrying `.light` allocates a light leaf **under that same carrier**. That is
+"one placed object, two presentations" for free, with no second delivery list and no second traversal.
+A pure light (no sprite) stays expressible — a prim whose only carried piece is a light.
+
+## F10 — Multi-part pawns: this stream or a new one? (2026-07-25, RESOLVED — a new stream)
+Pawns are **movers** (warm tier / `MoverLayer`), not cold things, so `prim{head, body, hand, hand}`
+arrives by a different delivery path than a torch. Bundling them makes P5 unexecutable — the phase would
+straddle two pipelines. **Chosen: torch (cold path) proves the two-presentation case here; pawn assembly
+opens its own stream against the warm tier.** Rejected: a P7 in this stream (same straddle, later); doing
+pawns first (the cold path is simpler and already carries the graph).
