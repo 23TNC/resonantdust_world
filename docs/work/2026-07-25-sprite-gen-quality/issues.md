@@ -66,3 +66,46 @@ Bhattacharyya distance between per-direction RGB histograms (opaque pixels only)
 Identity clearly transfers — 0.169 is far nearer same-animal than different-animal — but a set is
 visibly less consistent than drawn art. Untested lever: the IP-adapter weight (`IP_WEIGHT = 0.6`),
 never swept.
+
+## I5 — `iou_control` does NOT catch the anteater: [F2](forks.md#f2)'s premise is refuted
+
+Implemented and measured immediately. Anteater on the Elephant control:
+
+| view | verdict | `iou_control` |
+|---|---|---|
+| east | **good** | 0.703 |
+| south | **bad** (blob) | **0.789** |
+| north | **bad** (blob) | **0.732** |
+
+The bad views score **higher** than the good one — the opposite of the acceptance criterion.
+
+The reasoning error is now obvious: `iou_control` asks *"did the output follow the shape it was
+handed?"*. The anteater's failure is that the shape it was handed was **wrong** ([I2](#i2), Elephant
+for an anteater), and the blob followed it faithfully. A bad control obeyed produces a high IoU.
+
+`iou_control` is kept as a **reported metric** — it genuinely measures drift off the control, which
+is a real failure mode — but it is **not in the gate**, and its value there is unproven on this set.
+
+## I6 — `hull_solidity` does not discriminate either
+
+Hypothesis: a blob is convex (high mask/hull ratio) while an animal with legs, snout and horns is
+concave (low ratio). Measured on the 67-sprite calibration set: **good 0.905 vs bad 0.878**,
+separation **0.30 sd** — no useful signal. The anteater specifically: 0.927 (good east) vs 0.906 /
+0.920 (bad south/north), i.e. backwards again. Implemented and reported, not gated.
+
+## I7 — For an unseen species the reference is a PROXY, so `d_aspect` cannot judge it
+
+This is the structural limit behind the two residual false positives, and it is not fixable by
+tuning thresholds.
+
+The gate scores `d_aspect` against a **real corpus sprite**. For a species in the corpus that sprite
+*is* the ground truth. For an **unseen** species there is none, so `--ref` names a stand-in from
+another species — the anteater was scored against **Elephant**. Its blobby south then scored
+`d_aspect` **13.2%** (north: 4.1%) and passed, because it genuinely does resemble an elephant's
+proportions. The gate answered the question it was asked; the question was wrong.
+
+Consequence: **geometry gating is sound for corpus species and weak for unseen ones** — exactly the
+case template-free generation exists to serve. Closing it needs a metric with a notion of "what an
+anteater looks like" (a learned/semantic scorer, deliberately rejected in [F2](forks.md#f2) as an
+unexplainable black box). Until then the human remains the filter for unseen species, which the
+README already commits to.

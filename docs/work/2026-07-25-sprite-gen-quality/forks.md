@@ -31,3 +31,34 @@ cheap, explainable, and uses information the pipeline already holds.
 **The gate never becomes the arbiter of taste** (README design stance): its job is to cut the pile
 down to something worth a human glance. The anteater passing on proportions is the standing proof
 that a number cannot replace the eye.
+
+## F3 — Gate composition, calibrated · RESOLVED 2026-07-26
+
+Measured on `.staging/gate-cal/labels.csv` (67 hand-labelled sprites). Errors = false positives
+(bad passed) + false negatives (good rejected):
+
+| gate | FP | FN | total |
+|---|---|---|---|
+| OLD — `blobs + bg_uni + d_aspect + solidity` | 2 | 2 | **4** |
+| **CHOSEN — `blobs + bg_uni + d_aspect`** | 2 | 1 | **3** |
+| + `d_fill <= 60` | 2 | 6 | 8 |
+| + `d_fill <= 50` | 2 | 7 | 9 |
+| + `d_aspect <= 40` + `d_fill <= 50` | 2 | 9 | 11 |
+
+**`solidity` removed.** Marginal separation on the calibration set is **0.19 sd** — nearly no signal
+— yet it cost a false negative (the horned oryx, rejected by 0.001). Verified fixed: that sprite now
+passes at `d_aspect 9.1%`.
+
+**`d_fill` rejected**, and this is the useful surprise: `fill` has the *second-best* marginal
+separation (0.83 sd, better than `bg_uni`), so it looks like an obvious addition — but as a **hard
+gate** it rejects good sprites faster than bad ones and doubles-to-triples total error. Marginal
+separation does not imply gate value; only the FP/FN count decides.
+
+**`blobs` retained despite 0.00 separation** on this set (every sprite scored 1). It is not measuring
+nothing — it is measuring a failure mode (multi-subject sprite sheets) that the LoRA and negatives
+have since eliminated. It costs nothing and is the regression alarm if that failure returns.
+
+**Residual errors accepted, not tuned away:** 1 FN (a templated fox-south at `d_aspect` 61.4% that
+is visually fine — the reference fox is unusually narrow) and 2 FP (the anteater south/north, which
+are structurally unreachable — see [I7](issues.md#i7)). Tightening `d_aspect` to catch the anteater
+would reject far more good art, as the table shows.

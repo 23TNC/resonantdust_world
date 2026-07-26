@@ -240,7 +240,13 @@ def resolve_control(mode, from_path, d, part, tvar):
 # The generalized generator fails often; that is fine as long as failure is DETECTED. The gate
 # is forks.md F4, calibrated against hand-judged sprites — blobs==1, keyable plate, aspect
 # within 50% of the real corpus sprite, solidity>=0.35.
-GATE = dict(bg_uni=0.75, d_aspect=50.0, solidity=0.35)
+# Calibrated against .staging/gate-cal/labels.csv (67 hand-labelled sprites), not chosen.
+# solidity was REMOVED: on the calibration set it separated good from bad at only 0.19 sd
+# while causing a false negative (a good horned oryx rejected at 0.349 vs 0.35) — it charges
+# real cost for almost no signal. d_fill was TRIED and rejected: `fill` looks like a strong
+# discriminator in isolation (0.83 sd) but as a hard gate it rejects many good sprites, taking
+# total errors from 3 to 8-11. Errors on the calibration set: 3 (was 4).
+GATE = dict(bg_uni=0.75, d_aspect=50.0)
 
 def score_sprite(sprite, ref_spec, d):
     """(metrics, passed) for one RGBA sprite. `ref_spec` is 'Folder[:stem]' naming the real
@@ -254,7 +260,7 @@ def score_sprite(sprite, ref_spec, d):
         folder, _, stem = ref_spec.partition(":")
         r = L.reference(folder, stem or folder, {"e": "east", "s": "south", "n": "north"}[d])
         if r: d_aspect = 100.0 * abs(m["aspect"] - r["aspect"]) / max(r["aspect"], 1e-3)
-    ok = (m["blobs"] == 1 and m["bg_uni"] >= GATE["bg_uni"] and m["solidity"] >= GATE["solidity"]
+    ok = (m["blobs"] == 1 and m["bg_uni"] >= GATE["bg_uni"]
           and (d_aspect is None or d_aspect <= GATE["d_aspect"]))
     m["d_aspect"] = round(d_aspect, 1) if d_aspect is not None else ""
     return m, ok

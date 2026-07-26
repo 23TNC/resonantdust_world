@@ -133,10 +133,51 @@ def _components(small, min_frac=0.004):
                 if sz / total >= min_frac: n += 1
     return n
 
-def measure(img):
+def _hull_area(small):
+    """Convex-hull area of a boolean mask (monotone chain; no scipy).
+
+    Why this and not bbox `solidity`: the bounding box is a poor stand-in for "is this a shape or a
+    blob". A featureless blob nearly fills its box AND its hull; an animal with legs, a snout or
+    horns is deeply CONCAVE, so it fills its hull far less. Measuring against the hull therefore
+    separates structure from mass, where bbox area conflates them — the defect that let a blobby
+    anteater pass and rejected a horned oryx (issues.md I3)."""
+    ys, xs = np.where(small)
+    if len(xs) < 3: return 0.0
+    pts = sorted(set(zip(xs.tolist(), ys.tolist())))
+    if len(pts) < 3: return 0.0
+    def half(ps):
+        out = []
+        for p in ps:
+            while len(out) >= 2:
+                (ax, ay), (bx, by) = out[-2], out[-1]
+                if (bx-ax)*(p[1]-ay) - (by-ay)*(p[0]-ax) > 0: break
+                out.pop()
+            out.append(p)
+        return out
+    hull = half(pts)[:-1] + half(pts[::-1])[:-1]
+    if len(hull) < 3: return 0.0
+    a = 0.0
+    for i in range(len(hull)):
+        x1, y1 = hull[i]; x2, y2 = hull[(i+1) % len(hull)]
+        a += x1*y2 - x2*y1
+    return abs(a) / 2.0
+
+def iou_control(img, control):
+    """IoU between the output silhouette and the CONTROL silhouette it was given.
+
+    Answers "did the output follow the shape it was handed?" — it does NOT answer "is the output a
+    good animal", because a faithfully-followed BAD control still scores high. Use it to detect
+    drift off the control, not as a quality verdict (issues.md I5)."""
+    a = _filled(_mask(img), 128)
+    b = _filled(_mask(control), 128)
+    inter = float((a & b).sum()); union = float((a | b).sum())
+    return inter / union if union else 0.0
+
+def measure(img, control=None):
     m = _mask(img); H, W = m.shape
     if m.sum() < 50:
-        return dict(blobs=0, bg=1.0, bg_uni=1.0, white=1.0, fill=0.0, aspect=0.0, solidity=0.0)
+        return dict(blobs=0, bg=1.0, bg_uni=1.0, white=1.0, fill=0.0, aspect=0.0, solidity=0.0,
+                    hull_solidity=1.0, iou_control="")
     ys, xs = np.where(m)
     y0, y1, x0, x1 = ys.min(), ys.max(), xs.min(), xs.max()
     bw, bh = (x1-x0+1), (y1-y0+1)
@@ -163,6 +204,8 @@ def measure(img):
         fill=float(bw*bh) / float(W*H),
         aspect=float(bw)/float(bh),
         solidity=sol,
+        hull_solidity=round(float(small.sum()) / ha, 3) if (ha := _hull_area(small)) > 0 else 1.0,
+        iou_control=round(iou_control(img, control), 3) if control is not None else "",
     )
 
 def reference(folder, stem, direction):
