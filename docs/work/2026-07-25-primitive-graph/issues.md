@@ -477,10 +477,17 @@ showed up. The shadow RT is unaffected (16/tile/axis = 1984×960).
 **Two consequences:**
 1. **Memory** — it is what makes `RGBA32F` cost 465 MB instead of ~30 MB, so it is a **prerequisite for
    F11b**, not an optimisation ([forks.md](forks.md)).
-2. **Fill rate, and this is the suspected mover cliff.** The bake shades dirty AREA, so at zoom 0.25 it shades
-   ~10 texels per visible pixel. That is the leading candidate for the 16 lights → 55 fps / 32 → 34 fps curve,
-   and it is a far bigger lever than the DDA's 2.09x. NOT yet confirmed as the dominant term — measure before
-   claiming it.
+2. **Fill rate — and the mechanism matters, because the obvious reading of it is wrong.** The lightmap density
+   is **world-fixed**: measured `texelsPerWorldPx = 1` (64 texels/tile/axis ÷ 64 world px/tile). So a light's
+   dirty region is a FIXED texel count at every zoom — reach 512 px → π·512² ≈ **823k texels** whether you are
+   zoomed in or out. Per-light bake cost is therefore zoom-INDEPENDENT, and "the window got bigger" is NOT why
+   movers are expensive.
+
+   What IS true: the screen area that region fills shrinks with zoom. At zoom 0.25 those 823k texels cover
+   π·(512·0.25)² ≈ **51k screen px** — a **16x** oversample per light region. At zoom 1 it is 1:1 and correct.
+   Since the mover measurements (16 lights → 55 fps, 32 → 34 fps) were all taken at `zoom=0.25`, screen-tracking
+   density is a ~16x lever on **exactly** the numbers that motivated F11b — much bigger than the DDA's 2.09x.
+   Still worth a direct before/after measurement rather than trusting the arithmetic.
 
 **Fix direction:** make texels-per-tile track SCREEN density rather than world px (≈ `64 × zoom`, clamped),
 so the lightmap stays ~1:1 with the canvas at every zoom. Consistent with the existing invalidation model —
