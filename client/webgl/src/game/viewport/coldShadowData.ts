@@ -212,6 +212,12 @@ export class ColdShadowData {
    *  index). When `seed()`/`this.lights` finally go, this becomes the only light id space. */
   private readonly lightOfBillboard = new Map<number, number>();
   private carriedLightNext = N_LIGHTS;
+  /** Freed carried-light ids, reused before bumping the counter — without this a torch toggled on and
+   *  off in a loop walks the id space to the u16 presence ceiling ([I26](../../../../docs/work/2026-07-25-primitive-graph/issues.md) H1). */
+  private readonly carriedLightFree: number[] = [];
+  /** Reused scratch for the resolve walk's cycle guard (avoids allocating a Set per call). */
+  private readonly resolveChainScratch = new Set<number>();
+  private resolveWarned = false;
   /** What `buildPresence` needs about each carried light: resolved world px + reach. */
   readonly carriedLights = new Map<number, { x: number; y: number; reach: number }>();
   private lightCount = 0;
@@ -553,17 +559,30 @@ export class ColdShadowData {
                          zOff = 0): { pos: number; hot: boolean; cast: boolean; z: number } {
     let dtx = ((tileOff >>> 4) & 0xf) - 8, dty = (tileOff & 0xf) - 8;
     let dux = ((unitOff >>> 4) & 0xf) - 8, duy = (unitOff & 0xf) - 8;
-    let p = prim, outHot = hot, outCast = cast, rootPos = 0, z = zOff;
+    let p = prim, outHot = hot, outCast = cast, rootPos = 0, z = zOff, rooted = false;
+    const chain = this.resolveChainScratch; chain.clear();
     for (let depth = 0; depth < MAX_PRIM_DEPTH; depth++) {
+      if (chain.has(p)) break;                               // CYCLE — `rooted` stays false
+      chain.add(p);
       const b = (PRIM_BASE + p) * 4;
       const R = this.dataMirror[b], G = this.dataMirror[b + 1];
       outHot = outHot || ((G >>> 25) & 1) === 1;
       outCast = outCast && ((G >>> 24) & 1) === 1;
       z += (G >>> 16) & 0xff;                                // heights ADD down the chain
-      if (((G >>> 28) & 1) === 0) { rootPos = R; break; }   // ROOT: R is the absolute address
+      if (((G >>> 28) & 1) === 0) { rootPos = R; rooted = true; break; } // ROOT: R is absolute
       dtx += ((R >>> 12) & 0xf) - 8; dty += ((R >>> 8) & 0xf) - 8;  // CHILD: accumulate + climb
       dux += ((R >>> 4) & 0xf) - 8;  duy += (R & 0xf) - 8;
       p = (R >>> 16) & 0xffff;
+    }
+    // P7/H2 — NEVER fail silently to the world origin. `rootPos` is 0 when the walk never reached a
+    // root (a cycle, or a chain deeper than MAX_PRIM_DEPTH), and `decodePosition(0)` is tile (0,0) —
+    // so the piece would teleport to the corner of the world with nothing logged. That is the same
+    // shape as the zoom regressions: wrong position, no error. Warn once, naming the cause.
+    if (!rooted && !this.resolveWarned) {
+      this.resolveWarned = true;
+      console.warn(`[prim-graph] resolve walk from prim ${prim} never reached a root `
+        + `(${chain.size >= MAX_PRIM_DEPTH ? "deeper than MAX_PRIM_DEPTH=" + MAX_PRIM_DEPTH : "cycle"}). `
+        + "Its position falls back to the world origin — the graph is malformed.");
     }
     const [rx, ry] = decodePosition(rootPos);
     return {
@@ -602,13 +621,31 @@ export class ColdShadowData {
   }
 
   private writeCarriedLight(billboardId: number, prim: number, L: PrimitiveLight): { id: number; changed: boolean } {
-    const idx = this.lightOfBillboard.get(billboardId)
-      ?? (this.lightOfBillboard.set(billboardId, this.carriedLightNext++), this.carriedLightNext - 1);
-    // Point the carrier's slot b at this light (slot a is the billboard, written by billboardDataFor).
+    let idx = this.lightOfBillboard.get(billboardId);
+    if (idx === undefined) {
+      idx = this.carriedLightFree.pop() ?? this.carriedLightNext++;   // reuse before growing
+      this.lightOfBillboard.set(billboardId, idx);
+    }
+    // P7/H3 — claim a FREE carrier slot (or the one already naming this light), never slot b blindly:
+    // a carrier may already carry something there, and clobbering it loses a piece silently.
     const pb = (PRIM_BASE + prim) * 4, m = this.dataMirror;
-    const G = ((m[pb + 1] & ~(0xf << 8)) | ((SET_LIGHT_DATA & 0xf) << 8)) >>> 0;
-    const B = ((m[pb + 2] & 0xffff0000) | (idx & 0xffff)) >>> 0;   // id_b, keeping id_a
-    this.writeRecord(PRIM_BASE + prim, m[pb], G, B, m[pb + 3]);
+    let slot = -1;
+    for (let s = 0; s < 4; s++) {
+      const set = (m[pb + 1] >>> (12 - s * 4)) & 0xf;
+      const lane = s < 2 ? m[pb + 2] : m[pb + 3];
+      const cur = (s & 1) === 0 ? (lane >>> 16) & 0xffff : lane & 0xffff;
+      if (set === 0 || (set === SET_LIGHT_DATA && cur === idx)) { slot = s; break; }
+    }
+    if (slot < 0) {
+      console.warn(`[prim-graph] prim ${prim} carries 4 pieces already — light ${idx} not attached.`);
+      return { id: idx, changed: false };
+    }
+    const G = ((m[pb + 1] & ~(0xf << (12 - slot * 4))) | ((SET_LIGHT_DATA & 0xf) << (12 - slot * 4))) >>> 0;
+    const hi = (slot & 1) === 0, laneIdx = slot < 2 ? pb + 2 : pb + 3;
+    const lane = (hi ? ((m[laneIdx] & 0xffff) | ((idx & 0xffff) << 16))
+                     : ((m[laneIdx] & 0xffff0000) | (idx & 0xffff))) >>> 0;
+    this.writeRecord(PRIM_BASE + prim, m[pb], G,
+                     slot < 2 ? lane : m[pb + 2], slot < 2 ? m[pb + 3] : lane);
     const r = this.resolveCarried(prim, OFFSET_ZERO, OFFSET_ZERO, L.hot, L.castShadows,
                                   clamp(L.height / UNIT, 255));
     const c = (v: number): number => clamp(v * 255, 255);
@@ -626,6 +663,43 @@ export class ColdShadowData {
     // The CALLER routes a change through `markLightDirty` — the same front door a debug light uses.
     // No parallel version counter here: that is exactly the hand-rolled bookkeeping P4 retired.
     return { id: idx, changed: moved };
+  }
+
+  /** P7/H1 — release every carried light whose owner no longer presents one (turned off, evicted,
+   *  destroyed). `dirty` is called with its LAST cast region *before* the record goes, so the tiles it
+   *  was lighting get repainted; without that a removed light leaves its contribution baked in with no
+   *  owner to cascade from. Also clears the carrier's slot so nothing points at a dead record, and
+   *  returns the id to the free list. Returns how many were released. */
+  freeCarriedLightsExcept(seen: Set<number>,
+                          dirty: (b: { x: number; y: number; reach: number; dynamic: boolean }) => void): number {
+    let dead: number[] | null = null;
+    for (const bid of this.lightOfBillboard.keys()) if (!seen.has(bid)) (dead ??= []).push(bid);
+    if (!dead) return 0;
+    for (const bid of dead) {
+      const id = this.lightOfBillboard.get(bid)!;
+      const w = this.carriedLights.get(id);
+      if (w) dirty({ x: w.x, y: w.y, reach: w.reach, dynamic: false }); // repaint what it lit
+      this.writeRecord(LIGHT_BASE + id, 0, 0, 0, 0);
+      // Unhook it from its carrier: find the slot naming this light and blank that slot only.
+      const prim = this.primOfBillboard.get(bid);
+      if (prim !== undefined) {
+        const b = (PRIM_BASE + prim) * 4, m = this.dataMirror;
+        for (let slot = 0; slot < 4; slot++) {
+          const set = (m[b + 1] >>> (12 - slot * 4)) & 0xf;
+          const lane = slot < 2 ? b + 2 : b + 3, hi = (slot & 1) === 0;
+          const cur = hi ? (m[lane] >>> 16) & 0xffff : m[lane] & 0xffff;
+          if (set !== SET_LIGHT_DATA || cur !== id) continue;
+          const G = (m[b + 1] & ~(0xf << (12 - slot * 4))) >>> 0;                  // set → 0 = "no data"
+          const L = (hi ? (m[lane] & 0xffff) : (m[lane] & 0xffff0000)) >>> 0;      // clear just this id
+          this.writeRecord(PRIM_BASE + prim, m[b], G, slot < 2 ? L : m[b + 2], slot < 2 ? m[b + 3] : L);
+          break;
+        }
+      }
+      this.carriedLightFree.push(id);
+      this.carriedLights.delete(id);
+      this.lightOfBillboard.delete(bid);
+    }
+    return dead.length;
   }
 
   /** Compare-write one whole record; marks it dirty (→ one scatter command) only if it changed. */

@@ -52,3 +52,15 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
 - [ ] Measure a caster-heavy scene against the bucket fan-out decision ([I3](issues.md#i3)).
 - [ ] Free a nested pawn; confirm no leaked records and no orphaned subtree.
 - [ ] Replace screenshot-only checks with a mirror/readback assertion for at least one invariant.
+
+## P7 — Harden ([I26](issues.md#i26))
+- [x] Release a carried light when its owner stops presenting one; dirty its last cast region first.
+      Acceptance: `p.light = undefined` ⇒ 0 tiles list it and the record reads 0.
+- [x] Reclaim carried-light ids through a free list.
+      Acceptance: turning a torch off then on reuses the id instead of incrementing.
+- [x] Detect cycles + depth-exhaustion in `resolveCarried`; warn once instead of resolving to (0,0).
+      Acceptance: a hand-built cycle logs a named warning and does not teleport the leaf.
+- [x] Claim a FREE carrier slot for a carried light rather than always slot b.
+      Acceptance: a carrier already using slot b keeps it; the light takes the next free slot.
+- [ ] Give each presentation its own guard in the standing loop ([H4](issues.md#i26)).
+      Acceptance: a prim with no resolvable def still gets its light processed.

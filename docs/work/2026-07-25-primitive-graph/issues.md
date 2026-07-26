@@ -299,3 +299,32 @@ worked — each invisible until the debug array was emptied:
 **Verified**: `__torch()` turns a placed billboard into a torch; with `this.lights` emptied, 131 of 240
 in-window tiles list the carried light and the scene renders lit by it, shadows cast away from it.
 Carrier reads `set_b = 2`, `id_b = 128` (the carried-light id space starts at `N_LIGHTS`).
+
+## I26 — Hardening audit of the graph implementation (2026-07-25)
+Reviewed everything P2–P5 landed, looking for silent failure rather than obvious breakage. Five real
+weaknesses; the first two are demonstrated bugs, not theoretical.
+
+**H1 — a carried light is never released (DEMONSTRATED).** Nothing removes one when its owner stops
+presenting a light — turned off, evicted, or destroyed. Measured: setting `p.light = undefined` leaves
+**131 of 240 tiles still listing it**, the record still holding its colour, and the map entry still
+present. Consequences compound: a **ghost light burns forever**, `carriedLights`/`lightOfBillboard`
+grow without bound, ids are never reclaimed (`carriedLightNext` only increments), and the tiles it lit
+are never dirtied so nothing repaints them.
+
+**H2 — the resolve walk fails to the WORLD ORIGIN, silently.** `rootPos` starts at `0` and is only
+assigned when a root is found. Exhaust `MAX_PRIM_DEPTH` — a chain deeper than 8, or a **cycle** — and
+the loop simply ends: `decodePosition(0)` is tile (0,0), so the leaf teleports to the corner of the
+world with no warning. `freeSubtree` has cycle detection; the resolve walk does not. This is the same
+class as the two zoom regressions: wrong position, no error.
+
+**H3 — `carriedLightFor` claims the carrier's slot b unconditionally**, overwriting whatever was there.
+Harmless while a carrier holds at most a billboard and a light; silently destructive the moment a prim
+carries more.
+
+**H4 — billboard-safety logic gates other presentations** (user). `if (def < 0) continue` sits in a loop
+that now handles lights too, so a billboard-specific guard decides whether a *light* is processed. Worked
+around by hoisting the light attach above it; the structural fix is per-presentation guards.
+
+**H5 — non-issue, checked:** `coldData.lights` excludes carried lights and feeds `setConstants`'
+`light_count`, but **no shader reads that field**, so nothing is undercounted today. Recorded so the next
+person doesn't re-derive it — and so it is caught if a shader ever starts reading it.

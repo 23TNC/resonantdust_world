@@ -268,3 +268,26 @@ single carried light is listed by **131 of 240** in-window tiles and the scene r
 casting shadows away from it; dirty goes 0 → **168** (scoped) on the frames it lands. Three blockers
 found and fixed on the way ([I25](issues.md#i25)) — the tick guard that made deleting `this.lights`
 impossible, the missing carrier for non-caster prims, and a carried light bypassing the dirty door.
+
+## P7 — Hardening ([I26](issues.md#i26)) (2026-07-25)
+An audit of what P2–P5 landed, looking for **silent** failure rather than obvious breakage. Two of the
+five findings were demonstrated bugs.
+
+- **H1 — carried lights are released.** `freeCarriedLightsExcept` sweeps every carried light whose owner
+  stopped presenting one (turned off / evicted / destroyed): it dirties the light's **last cast region
+  first** so the tiles it lit get repainted, zeroes the record, unhooks the carrier's slot, and returns
+  the id to a free list. Before this a torch turned off kept **131 of 240 tiles listing it** and burned
+  forever, while the maps and the id space grew without bound.
+- **H2 — the resolve walk can no longer fail silently to the world origin.** `rootPos` starts at 0, so a
+  cycle or a chain deeper than `MAX_PRIM_DEPTH` used to end the loop with `decodePosition(0)` = tile
+  (0,0) — a piece teleporting to the corner of the world with nothing logged, the same shape as the two
+  zoom regressions. Now cycle-guarded (reused scratch `Set`, no per-call allocation) and it **warns once,
+  naming whether it was a cycle or over-depth**.
+- **H3 — a carried light claims a FREE carrier slot**, or the one already naming it, instead of
+  overwriting slot b unconditionally; a full carrier warns rather than silently dropping a piece.
+- **H5 — checked, not a bug:** `coldData.lights` excludes carried lights and feeds `setConstants`'
+  `light_count`, but no shader reads that field. Recorded so it is caught if one ever does.
+
+**Verified**: torch ON ⇒ 131 tiles, id 128; OFF ⇒ **0 tiles, record 0**; ON again ⇒ **id 128 reused**,
+131 tiles. A hand-built cycle logs *"resolve walk from prim 2 never reached a root (cycle)"* instead of
+teleporting. Scene renders unchanged; `tsc` + GLSL guard clean.

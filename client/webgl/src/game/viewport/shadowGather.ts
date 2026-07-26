@@ -1173,6 +1173,7 @@ export class ShadowGather {
     // only the base row missed casters whose top sits in the row above (I-7).
     const TILT = 0.5 * Math.cos(this.worldTiltDeg * Math.PI / 180); // 0.5·cos(tilt) of the height, leaned back (live tilt)
     this.litSeen.clear();
+    this.carriedSeen.clear();
     this.lastStanding = standing;
     const seen = this.billboardSeen;
     seen.clear();
@@ -1181,6 +1182,7 @@ export class ShadowGather {
       // without being a caster (a bare source, or a sprite with no resolved silhouette), and those
       // `continue` out below. `carriedLightFor` allocates the carrier if the billboard path has not.
       if (p.light) {
+        this.carriedSeen.add(p.id);            // resident this frame — the rest get released below
         const cl = this.coldData.carriedLightFor(p, p.light);
         // The front door: scoped cast region + record/presence invalidation, exactly as a debug light
         // gets. Routing here (rather than a private version counter) is why presence picks the torch
@@ -1233,6 +1235,9 @@ export class ShadowGather {
       this.markPrimDirty(box[0], box[1], box[2], box[3]);
       this.lastBox.delete(pid);
     }
+    // P7/H1: release carried lights whose owner stopped presenting one — dirtying what each lit
+    // BEFORE its record goes, so nothing stays baked in with no owner to cascade from.
+    this.coldData.freeCarriedLightsExcept(this.carriedSeen, (b) => this.markLightDirty(b));
     this.coldData.freeBillboardsExcept(seen);
     // Write EVERY in-window tile (compare-write diffs). The region-torus fold is the GPU slot.
     for (let wr = winRow; wr < winRow + rows; wr++)
@@ -1276,6 +1281,8 @@ export class ShadowGather {
   private readonly litSeen = new Set<number>();
   /** Billboard ids resident this frame (P2) — anything allocated but absent gets freed via the free-list. */
   private readonly billboardSeen = new Set<number>();
+  /** P7/H1: billboard ids presenting a LIGHT this frame; anything else gets its light released. */
+  private readonly carriedSeen = new Set<number>();
   /** P4: each resident billboard's last known tight box, so REMOVAL can queue a scoped rect. Without
    *  it a departed caster's box is unrecoverable (it has left `standing`) — which is exactly why
    *  removal used to force-all every tile. */
