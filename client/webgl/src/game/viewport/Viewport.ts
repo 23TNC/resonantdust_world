@@ -17,7 +17,7 @@ import { OverlayShader, overlayModeFor } from "./overlayShader";
 import { ShadowGather, AMBIENT_LEVEL } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
-import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_SQUARE } from "./squareMath";
+import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 
 const BAKE_BUDGET = 128;
@@ -272,9 +272,15 @@ export class Viewport {
   toggleShadows(): boolean {
     return this.shadows.toggle();
   }
-  /** Current zoom (screen px per world px). */
+  /** Current LOGICAL zoom (the lod dial, not screen px per world px — that is `camera.renderScale`). */
   get zoom(): number {
     return this.camera.zoom;
+  }
+  /** The cold cache's tile window (`SLOTS << lod` tiles + its origin). The authoritative answer to
+   *  "how much world will we draw", so the zone subscription sizes itself from this rather than
+   *  re-deriving a screen estimate that can disagree with what the renderer actually bakes. */
+  get window(): { winCol: number; winRow: number; cols: number; rows: number; slotPx: number; lod: number } {
+    return this.map.window;
   }
   /** Set an absolute zoom, holding the viewport centre; returns the anchor to push
    *  through the bridge (so zone subscriptions follow), or null if it clamped to a no-op. */
@@ -402,7 +408,10 @@ export class Viewport {
             p.uInt("uLRows", win.rows);
             p.uInt("uLWinCol", win.winCol);
             p.uInt("uLWinRow", win.winRow);
-            p.uInt("uLSlot", TEXTILE_SQUARE); // lightmap P1: the lightmap is FINE (TEXTILE_SQUARE/tile)
+            // The lightmap rides the fixed slot grid, so its per-TILE texel size is `TEXTILE_SQUARE >> lod`
+            // — which is exactly `win.slotPx` (both are `SQUARE >> lod`). Hardcoding `TEXTILE_SQUARE` was
+            // right only at lod 0 and sampled ~2^lod off everywhere else (textile-slot).
+            p.uInt("uLSlot", win.slotPx);
           },
         });
 

@@ -20,7 +20,7 @@ import type { WasmClient, AnchorRadii, ColdStateOverride } from "../../client/Wa
 import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
 import type { TextureResolver } from "../../textures";
-import { SQUARE } from "../viewport/squareMath";
+import { lodForZoom, SLOTS_X, SLOTS_Y, SQUARE } from "../viewport/squareMath";
 import type { PrimitiveLight } from "../viewport/SquareCache";
 import { MaterialRegistry, type PackedChannel } from "../viewport/material";
 import { makeNoiseAtlas } from "../viewport/noiseAtlas";
@@ -339,8 +339,19 @@ export class WorldBridge {
    *  (held as warm candidates — the client's warmth + capacity-LRU bound them) instead
    *  of dropping + re-fetching. Called every anchor move; mutates the sticky state. */
   private radii(): AnchorRadii {
-    const screenTiles = Math.max(window.innerWidth, window.innerHeight) / (SQUARE * this.zoom);
-    const active = Math.ceil(screenTiles / 2) + 2;
+    // Reach follows the CACHE'S TILE WINDOW, not a screen estimate. On the fixed slot grid the window
+    // is `SLOTS << lod` tiles and is the authoritative answer to "how much world will we draw" — the
+    // renderer bakes exactly those tiles, so subscribing to anything less guarantees empty edges.
+    //
+    // The old `screenPx / (SQUARE · zoom)` estimate silently HALVED when `SQUARE` went 64 → 128, which
+    // is what left the outer zones unsubscribed: the window still spanned zones 4–7 while the reach
+    // only fetched 5–6, so the window edges baked to nothing (textile-slot [I8]).
+    // Derived from the zoom rather than read off the viewport: `zoomTo` sets the zoom and calls us in
+    // the SAME turn, but the cache only re-partitions on the next tick, so reading `viewport.window`
+    // here would size the subscription from the OUTGOING lod and lag a frame behind every zoom.
+    // `SLOTS << lodForZoom(zoom)` is exactly the window the cache is about to adopt.
+    const windowTiles = Math.max(SLOTS_X, SLOTS_Y) << lodForZoom(this.zoom);
+    const active = Math.ceil(windowTiles / 2) + 2;
     const now = Date.now();
     if (active >= this.stickyActive) {
       this.stickyActive = active; // zoom-out (or first aim): grow to cover instantly

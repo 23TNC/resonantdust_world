@@ -1542,7 +1542,7 @@ export class ShadowGather {
         p.uInt("uRows", win.rows);
         p.uInt("uWinCol", win.winCol);
         p.uInt("uWinRow", win.winRow);
-        p.uInt("uSlot", TEXTILE_UNIT);
+        p.uInt("uSlot", TEXTILE_UNIT >> win.lod); // per-TILE texels on the fixed grid, not the per-SLOT constant
       },
     });
 

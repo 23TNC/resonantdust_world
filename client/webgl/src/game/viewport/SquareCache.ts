@@ -217,8 +217,6 @@ export class SquareCache {
 
   private cols = 0;
   private rows = 0;
-  private viewW = 0;
-  private viewH = 0;
   private slotPx = SQUARE;
   /** Current lod (0..3). `-1` = unpartitioned. `cols`/`rows`/`slotPx` all derive from it. */
   private lod = -1;
@@ -339,8 +337,6 @@ export class SquareCache {
     const cols = SLOTS_X << lod;
     const rows = SLOTS_Y << lod;
     const slotPx = SQUARE >> lod;
-    this.viewW = cols * SQUARE;
-    this.viewH = rows * SQUARE;
     if (lod === this.lod && this.aimed) return;
 
     // P3: REPROJECT, don't clear. The old content is still valid world data — it just needs rescaling

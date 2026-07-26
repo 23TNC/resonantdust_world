@@ -79,6 +79,34 @@ resizing. Cost: 29.3 MiB per RGBA8 channel instead of 24.
 **Rule this implies:** when replacing a derived size with a fixed one, re-derive what every term in the old
 expression was for. A divisor is not necessarily a safety margin.
 
+### I8 — the ZONE SUBSCRIPTION reach was a screen estimate, and `SQUARE` 64→128 halved it (2026-07-26)
+Reported as "zooming doesn't work correctly": at lod ≥ 1 the window edges rendered black.
+
+**Not a map-read bug.** The window edges baked to *nothing* because there was no tile data there:
+`WorldBridge.radii()` sized the zone subscription from a **screen estimate**
+```
+screenTiles = max(innerWidth, innerHeight) / (SQUARE · zoom)
+```
+which **halves** when `SQUARE` goes 64 → 128. The renderer's window still spanned zones 4–7 while the
+reach only fetched 5–6, so the outer zones were never subscribed and their tiles baked empty.
+
+**Diagnosis worth keeping — the measurement contradicted the obvious suspect.** The empty columns were the
+window's two EDGES (world tiles 76–79 and 112–123) with the carried middle intact, which looks exactly like
+a reproject failure. It is not: a **clean load** at the same lod, with no reproject in play, showed the same
+emptiness. That one control ruled out the entire reproject path.
+
+**Fix:** derive the reach from `SLOTS << lodForZoom(zoom)` — the window the cache is about to adopt.
+Deliberately computed from the ZOOM rather than read off `viewport.window`, because `zoomTo` sets the zoom
+and calls `radii()` in the same turn while the cache only re-partitions next tick — reading the live window
+would size the subscription from the OUTGOING lod and lag a frame behind every zoom.
+
+**Verified:** 0 empty columns at lod 0, 2 and 3 including transitions (was 4 at lod 1 on a clean load, 16
+after a lod 0→1 step). Note lod 3 needs ~225 zones, so it streams in over a second or two — the world is
+briefly a small square before filling.
+
+**Rule:** anything sized to "how much world will we draw" must derive from the tile window, not from screen
+px. `SQUARE` is now a rendering constant that no longer implies a screen extent.
+
 ### I6 — verify 128px masters exist before relying on lod 0 — RESOLVED 2026-07-26, none missing
 `SQUARE` 64 → 128 means lod 0 wants natively 128px art, and any kind lacking it would upscale at maximum
 zoom. Checked against the live texture manifest rather than assumed: **16 stems, `maxSize` histogram
