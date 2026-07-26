@@ -412,3 +412,30 @@ moving lights re-bake ~**6M texels/frame**.
 
 **This is very likely the earlier unexplained "30 fps"** ([I24](#i24)): I could not reproduce it with
 static lights or billboard count, and 32 moving lights lands on 33.8 fps.
+
+## I30 — Corridor-walk redundancy, measured (2026-07-26)
+Ported `walkShadow`'s corridor branch to JS exactly (line march, 5-tile cross pad) and ran it over the
+**8 densest tiles** in the 64-light scene (7 lights each — 7 was the real max, not 8), sample point =
+tile centre. **Yes: 16 lights ⇒ 16 independent corridor walks per texel**, because each corridor is the
+line from *that* light to the sample point.
+
+| lights | tiles searched | unique | inter-light overlap | bucket fetches | vs union-walk |
+|---|---|---|---|---|---|
+| 1 | 159 | 159 | 0% | 390 | −59% |
+| 2 | 293 | 234 | 20.1% | 690 | −66% |
+| 4 | 544 | 313 | 42.5% | 1260 | −75% |
+| 7 | 1002 | 518 | **48.3%** | 2260 | **−77%** |
+
+**Two independent redundancies:**
+1. **The 5-tile cross pad wastes ~59% — with ONE light.** 159 unique tiles cost 390 fetches: consecutive
+   steps along the line re-fetch the same neighbours. Pure loss, independent of light count. A supercover
+   DDA visits each crossed tile exactly once. **Cheapest available win, no trade-off.**
+2. **Inter-light overlap plateaus at ~48%.** It rises steeply to 4 lights then flattens, because all
+   corridors converge on the SAME sample point — they share the tiles near the receiver and diverge only
+   out toward their own lights.
+
+Combined, walking the union once instead of per-light is **~77%** fewer bucket fetches (2260 → 518).
+**Caveat on the union walk:** `casterOne`'s per-light culls (self-exclusion, seen-face, light-side)
+currently reject candidates *inside* the per-light walk, i.e. for free. Union-gathering pulls in casters
+irrelevant to most lights and rejects them later — fetches down, cull evaluations up. Net effect depends
+on the cull hit-rate, unmeasured. The DDA carries no such uncertainty.

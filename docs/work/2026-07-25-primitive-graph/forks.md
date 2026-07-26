@@ -65,3 +65,46 @@ arrives by a different delivery path than a torch. Bundling them makes P5 unexec
 straddle two pipelines. **Chosen: torch (cold path) proves the two-presentation case here; pawn assembly
 opens its own stream against the warm tier.** Rejected: a P7 in this stream (same straddle, later); doing
 pawns first (the cold path is simpler and already carries the graph).
+
+## F11 — Eliminating the corridor walk: cast map vs projected-fan rasterisation (2026-07-26)
+User asked to explore replacing the per-texel corridor walk with a **push** model — each dirty tile casts
+its shadows forward into a "cast map" holding caster ids per destination tile — and to rule it out if it
+fails. **Conclusion: the cast-map form is ruled out; the push INSTINCT is right and is already specified
+as [`shadow-projection`](../shadow-projection/README.md).**
+
+**Measured baseline (16 moving lights, [I29](issues.md#i29)):** 1479 dirty tiles × 256 shadow texels ×
+~660 bucket fetches/texel ≈ **250M fetches/frame** (55 fps). Overlap analysis
+([I30](issues.md#i30)): 48% of walked tiles are shared between lights, and the 5-tile cross pad wastes a
+further 59% *within a single* walk.
+
+**Why the CAST MAP is ruled out** (worst problem first — note the user's suspected breaker, storage, is
+the least of them):
+1. **Variable fan-out.** A fragment writes ONE texel. Pushing from tile A into tiles B…N needs scatter with
+   an unknown per-source count, and WebGL2 has no geometry shader. Over-provisioning points (say 64 per
+   caster-light) gives `8 × 16 × 64 = 8192` points per dirty tile ≈ **12M points/frame**, mostly discarded
+   — worse than the walk it replaces.
+2. **Caster ids are the wrong payload.** The receiver needs *coverage*, not identity. Store coverage and
+   the "128 casters per tile" problem disappears — `shadow-cold` already is 16 slots × u8. Storing ids only
+   helps if the silhouette test is deferred to the receiver, which reinstates the per-texel work.
+3. **Priority eviction is unimplementable cheaply.** "The 8 highest priority per light" is a per-texel sort
+   with no cheap GPU form, and it is lossy: a dropped caster is a missing shadow.
+
+**Why PROJECTED-FAN RASTERISATION works instead.** A shadow IS a projected quad, so rasterising it *is* the
+scatter: the GPU derives which destination texels are covered, with no fan-out to express. Same scene:
+**189k instanced 5-triangle fans** (1479 × 8 casters × 16 lights) covering ~1M texels — three orders of
+magnitude under the gather. This is exactly `design/shadows.md`'s model, proven in
+`bin/shadow-projection-sandbox.html`.
+
+**Two constraints to design around:**
+- **Accumulation** — multiple casters per light per texel need MAX. Integer RTs cannot blend, so this wants
+  4× `RGBA8` MRT (16 channels, one per light slot) with `gl.blendEquation(gl.MAX)`, not the packed `RGBA32UI`.
+- **Clearing** — scatter cannot un-shadow incrementally; a moved light must clear its region and re-cast it.
+
+**Which resolves the tier question from the other direction:** **gather suits COLD** (baked once, the pull
+cost is paid a single time, no clear problem) and **rasterise suits HOT** (always-fresh, where clear+recast
+per frame is precisely the intended behaviour and is cheap). Not either/or — the tiered design's split,
+re-derived from cost.
+
+**Ordering.** The cross-pad DDA ([I30](issues.md#i30)) stays first regardless: ~59% fewer fetches, no
+restructuring, verifiable against the existing corridor↔brute identity check, and it makes the cold gather
+cheaper whatever happens to hot.

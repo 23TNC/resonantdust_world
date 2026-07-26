@@ -64,3 +64,13 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
       Acceptance: a carrier already using slot b keeps it; the light takes the next free slot.
 - [x] Give each presentation its own guard in the standing loop ([H4](issues.md#i26)).
       Acceptance: a prim with no resolvable def still gets its light processed.
+
+## P8 — Cut the corridor walk ([I30](issues.md#i30), [F11](forks.md#f11))
+- [ ] Replace the 5-tile cross pad with a supercover DDA visiting each crossed tile once.
+      Acceptance: corridor↔brute identity still 0 mismatches; bucket fetches down ~59%.
+- [ ] Re-measure the moving-light curve after the DDA.
+      Acceptance: the 16-mover case beats 55.4 fps at the same dirty-tile count.
+- [ ] Measure `casterOne`'s per-light cull hit-rate before attempting a union walk.
+      Acceptance: a number for what fraction of candidates each cull rejects.
+- [ ] Decide gather-vs-rasterise per tier from that data ([F11](forks.md#f11)).
+      Acceptance: a fork row naming which tier uses which, with the cost basis.
