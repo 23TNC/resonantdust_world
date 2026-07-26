@@ -323,12 +323,15 @@ export class Viewport {
     const h = Math.floor(this.renderer.canvas.clientHeight);
     if (w <= 0 || h <= 0) return;
     this.camera.setBounds(w, h);
+    // LOGICAL zoom drives the lod ladder (monitor-independent — every player is on the same lod at the
+    // same zoom); RENDER scale drives anything measured in actual screen px.
     const z = this.camera.zoom;
+    const rs = this.camera.renderScale;
     const ax = this.camera.anchorX;
     const ay = this.camera.anchorY;
-    // Aim texture loads at the on-screen tile size (a tile is SQUARE world px) so the resolver
-    // upgrades toward the zoom's target LOD.
-    this.resolver?.setTargetLod(SQUARE * z);
+    // Aim texture loads at the ACTUAL on-screen tile size (a tile is SQUARE world px), so a large
+    // display still asks for the sharpest art it can use. Clamped to SQUARE inside the resolver.
+    this.resolver?.setTargetLod(SQUARE * rs);
 
     // Both caches share the window/slot geometry (identical inputs), so their composites stay
     // slot-aligned for the warm-over-cold display blit.
@@ -373,11 +376,13 @@ export class Viewport {
         this.blitShader.coldLight = coldLight;
         this.blitShader.hotLight = this.shadows.hotLightmap;
         const win = this.map.window;
-        // world px → clip: x = (wx-ax)*2z/w, y = -(wy-ay)*2z/h  (screen y-down → clip y-up)
+        // world px → clip: x = (wx-ax)*2rs/w, y = -(wy-ay)*2rs/h  (screen y-down → clip y-up).
+        // RENDER scale, not logical zoom — this is the transform that puts world px on the display, so
+        // it carries the cover fit that makes the visible world identical on every monitor.
         const proj = new Float32Array([
-          (2 * z) / w, 0, 0,
-          0, -(2 * z) / h, 0,
-          -ax * (2 * z) / w, ay * (2 * z) / h, 1,
+          (2 * rs) / w, 0, 0,
+          0, -(2 * rs) / h, 0,
+          -ax * (2 * rs) / w, ay * (2 * rs) / h, 1,
         ]);
         this.renderer.draw({
           program: this.blitShader.program,
@@ -430,7 +435,7 @@ export class Viewport {
         uniforms: (p) => {
           p.uVec2("uViewport", w, h);
           p.uVec2("uAnchor", ax, ay);
-          p.uFloat("uZoom", z);
+          p.uFloat("uZoom", rs); // the grid overlays SCREEN px, so it wants the render scale
           p.uVec3("uPitch", SQUARE, SQUARE * ZONE_DIM, SQUARE * ZONE_DIM * REGION_DIM);
           p.uFloat("uLevel", this.gridLevel);
         },

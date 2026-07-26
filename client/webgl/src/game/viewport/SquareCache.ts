@@ -303,11 +303,17 @@ export class SquareCache {
     this.markStale();
   }
 
-  /** The channel buffers are a FIXED `SLOTS_X·SQUARE × SLOTS_Y·SQUARE` (3072×2048) — sized in TILES, not
-   *  in screen px, so they never resize and never track the player's monitor. */
+  /** The channel buffers are FIXED — sized in TILES, not screen px, so they never resize and never track
+   *  the player's monitor.
+   *
+   *  `+2` slots per axis is the WRAP-APRON, not slack: `bakeSquare` writes the interior at
+   *  `(sx + 1) · slotPx` and mirrors edge slots to the opposite border at `(cols + 1) · slotPx`, so the
+   *  composite is `cols + 2` slots wide. (This is what the retired `fixedCW / (cols + 2)` divisor was
+   *  computing.) Sized for the LARGEST apron, which is lod 0 — the apron is `2 · (SQUARE >> lod)`, so
+   *  higher lods simply leave a margin unused rather than needing a resize. */
   private ensureBuffers(): void {
-    const cw = SLOTS_X * SQUARE;
-    const ch = SLOTS_Y * SQUARE;
+    const cw = (SLOTS_X + 2) * SQUARE;
+    const ch = (SLOTS_Y + 2) * SQUARE;
     if (this.channels[0]?.buf && cw === this.fixedCW && ch === this.fixedCH) return;
     this.fixedCW = cw;
     this.fixedCH = ch;

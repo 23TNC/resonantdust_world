@@ -62,6 +62,23 @@ A documented shortcut, not an oversight — [webgl-engine](../webgl-engine/READM
 buffer per channel as the floor and W4h carries the restore as an open item. Note `SIZE_STEP = 4` quantises
 the window, so the flash is stepped rather than continuous.
 
+### I7 — the composite is `cols + 2` slots wide: the WRAP-APRON is not slack (2026-07-26)
+Sizing the channel buffers at `SLOTS · SQUARE` truncated every tall sprite: conifers rendered their top
+and then smeared a solid vertical band downward, with stray horizontal streaks. No console errors — writes
+simply fell outside the texture and reads came back clamped.
+
+`bakeSquare` writes the interior at `(sx + 1) · slotPx` and mirrors edge slots to the **opposite border**
+at `(cols + 1) · slotPx`, so the composite carries a **one-slot apron on every side** and is `cols + 2`
+slots wide. That is precisely what the retired `slotPx = fixedCW / (cols + 2)` divisor was expressing —
+the `+2` looked like padding slack and was load-bearing.
+
+**Fix:** `(SLOTS_X + 2) × SQUARE` = 3328×2304. Note the apron is `2 · (SQUARE >> lod)`, so it SHRINKS with
+lod; the buffer is sized for the largest case (lod 0) and higher lods leave a margin unused rather than
+resizing. Cost: 29.3 MiB per RGBA8 channel instead of 24.
+
+**Rule this implies:** when replacing a derived size with a fixed one, re-derive what every term in the old
+expression was for. A divisor is not necessarily a safety margin.
+
 ### I6 — verify 128px masters exist before relying on lod 0 (2026-07-26, open)
 `SQUARE` 64 → 128 means lod 0 wants natively 128px art. The LOD pools suggest it exists (64px→1024²,
 128px→2048² pages), but any kind lacking a 128px master will be upscaled at maximum zoom. Confirm rather
