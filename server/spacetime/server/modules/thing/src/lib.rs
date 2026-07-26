@@ -86,6 +86,55 @@ pub fn set_thing(
     kind_reference: u16,
     data: u8,
 ) -> Result<(), String> {
+    overlay_cell(ctx, macro_position, subtype_id, layer_id, tile_reference, kind_reference, data);
+    Ok(())
+}
+
+/// **Place one KIND at many cells** through the overlay — the batched sibling of [`set_thing`], and the
+/// primitive for trusted placement of objects into an already-generated zone (torches at world init today;
+/// a build action or world editor later).
+///
+/// Deliberately **kind-agnostic**: it takes a `kind_reference`, never a name. The module links only
+/// `spacetimedb` + `resonantdust-codec` — it has no DSL, so it *cannot* resolve `"torch"`, and hardcoding an
+/// id here would create a second authority for name→id beside the corpus (kind ids are append-ordered
+/// precisely so nothing renumbers). The **caller** resolves the name where the DSL lives: the edge, at the
+/// point of use, from its live hot-reloadable bundle. See `docs/work/2026-07-26-torch-thing/` F2.
+///
+/// Idempotent per cell, exactly as [`set_thing`] is: re-running with the same arguments leaves identical
+/// rows, so it is safe to call on every zone seed.
+///
+/// Overlay rather than [`seed`], which would REPLACE a whole `(zone, subtype, layer)` baseline row and
+/// erase the zone's worldgen things. The overlay composites over the baseline, so terrain survives (F1).
+#[reducer]
+pub fn place_things(
+    ctx: &ReducerContext,
+    macro_position: u16,
+    subtype_id: u16,
+    layer_id: u8,
+    tile_references: Vec<u8>,
+    kind_reference: u16,
+    data: u8,
+) -> Result<(), String> {
+    // Per cell, not per batch: cells in one call may sit in different biomes, and the cell's own biome is
+    // what the overlay row is keyed by. Sharing one lookup across the batch would file a torch under a
+    // neighbour's subtype and split it from the row the client composites.
+    for tile_reference in tile_references {
+        overlay_cell(ctx, macro_position, subtype_id, layer_id, tile_reference, kind_reference, data);
+    }
+    Ok(())
+}
+
+/// The shared per-cell overlay merge behind [`set_thing`] and [`place_things`] — one definition so the
+/// batched path cannot drift from the single-cell one.
+fn overlay_cell(
+    ctx: &ReducerContext,
+    macro_position: u16,
+    subtype_id: u16,
+    layer_id: u8,
+    tile_reference: u8,
+    kind_reference: u16,
+    data: u8,
+) {
     // Keep the cell's biome — find the baseline row holding a thing at this cell (if any); else the
     // passed `subtype_id` (a placement onto an empty cell must be told the biome).
     let subtype_id = ctx
@@ -125,7 +174,6 @@ pub fn set_thing(
     } else {
         ctx.db.overlay().insert(row);
     }
-    Ok(())
 }
 
 /// **GC fold (`PACK`)** — fold every settled overlay cell back into the sparse baseline `entity_state`,

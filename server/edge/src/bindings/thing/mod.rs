@@ -26,6 +26,7 @@ pub mod claim_overlay_reducer;
 pub mod fold_reducer;
 pub mod gc_reducer;
 pub mod gc_overlay_reducer;
+pub mod place_things_reducer;
 pub mod seed_reducer;
 pub mod set_thing_reducer;
 pub mod write_reducer;
@@ -56,6 +57,7 @@ pub use claim_overlay_reducer::claim_overlay;
 pub use fold_reducer::fold;
 pub use gc_reducer::gc;
 pub use gc_overlay_reducer::gc_overlay;
+pub use place_things_reducer::place_things;
 pub use seed_reducer::seed;
 pub use set_thing_reducer::set_thing;
 pub use write_reducer::write;
@@ -88,6 +90,14 @@ pub enum Reducer {
 }    ,
     GcOverlay {
         horizon: u16,
+}    ,
+    PlaceThings {
+        macro_position: u16,
+        subtype_id: u16,
+        layer_id: u8,
+        tile_references: Vec::<u8>,
+        kind_reference: u16,
+        data: u8,
 }    ,
     Seed {
         macro_position: u16,
@@ -129,6 +139,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::Fold => "fold",
             Reducer::Gc { .. } => "gc",
             Reducer::GcOverlay { .. } => "gc_overlay",
+            Reducer::PlaceThings { .. } => "place_things",
             Reducer::Seed { .. } => "seed",
             Reducer::SetThing { .. } => "set_thing",
             Reducer::Write { .. } => "write",
@@ -173,6 +184,21 @@ Reducer::Gc{
                 horizon,
 }             => __sats::bsatn::to_vec(&gc_overlay_reducer::GcOverlayArgs {
                 horizon: horizon.clone(),
+}),
+            Reducer::PlaceThings{
+                macro_position,
+                subtype_id,
+                layer_id,
+                tile_references,
+                kind_reference,
+                data,
+}             => __sats::bsatn::to_vec(&place_things_reducer::PlaceThingsArgs {
+                macro_position: macro_position.clone(),
+                subtype_id: subtype_id.clone(),
+                layer_id: layer_id.clone(),
+                tile_references: tile_references.clone(),
+                kind_reference: kind_reference.clone(),
+                data: data.clone(),
 }),
             Reducer::Seed{
                 macro_position,
