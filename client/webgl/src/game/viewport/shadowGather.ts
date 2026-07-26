@@ -1182,10 +1182,8 @@ export class ShadowGather {
         const ti = (wr - winRow) * cols + (wc - winCol);
         this.coldData.writeBillboardPresence(wc, wr, this.castSlots.subarray(ti * BILLBOARD_SLOTS, ti * BILLBOARD_SLOTS + BILLBOARD_SLOTS));
       }
-    // Flush all queued writes (def/billboard/light/presence/caster) as ONE scatter batch. NO force-all:
-    // def swaps, new billboards and new carried lights each queued their scoped rects through a
-    // `markDirty` door, so the next frame's presence + gather pick them up.
-    this.coldData.flush();
+    // The flush lives in `tick`, AFTER `buildPresence` — presence now runs last and its writes must
+    // land in the SAME scatter batch, or the GPU reads a presence map one frame behind the bake.
   }
 
   /** P4 — **the one legitimate force-all.** Placement is always scoped (a prim/light/removal queues
@@ -1418,8 +1416,18 @@ export class ShadowGather {
     // P3: the window mapping rides the data texture's constants row (compare-written — an
     // unchanged window costs nothing), through the same scatter path as every other write.
     this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, TEXTILE_UNIT, this.coldData.lights, Math.round(this.worldTiltDeg * 100));
-    this.buildPresence(win);                    // F5 per-tile light cull (rebuilt on light/window change)
-    this.buildCasters(standing, resolver, win); // P1 per-tile caster buckets + carried-light discovery
+    // ORDER IS LOAD-BEARING: casters BEFORE presence. `buildCasters` DISCOVERS content-carried lights
+    // and queues their dirty rects; `buildDirty` (below) consumes those rects and `classPass` bakes the
+    // tiles. If presence ran first it would still hold the OLD light set, so those tiles bake WITHOUT
+    // the new light — and next frame presence is correct but the rects are already spent, so nothing
+    // re-bakes. The light sits in presence, permanently unlit.
+    // This was masked for a long time by the debug light array: an orbiting light re-dirtied tiles every
+    // frame, so a later frame happened to bake with correct presence. Deleting the scaffold exposed it.
+    this.buildCasters(standing, resolver, win); // P1 caster buckets + carried-light discovery
+    this.buildPresence(win);                    // F5 per-tile light cull — must see what casters found
+    // ONE scatter batch for everything both passes queued (defs, billboards, lights, buckets, presence).
+    // NO force-all: each change queued its own scoped rects through a `markDirty` door.
+    this.coldData.flush();
     this.buildDirty(win);    // #4: owner-change (pan) + per-class rebuild → cold/hot dirty; clean tiles persist
     // #4 COLD then HOT pass. Each is: gather (shadow-cold for that class) → lighting (its lightmap), gated
     // by that class's dirty texture (clean tiles `discard` → persist). A frame where only the green (hot)

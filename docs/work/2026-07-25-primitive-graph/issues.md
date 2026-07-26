@@ -351,3 +351,26 @@ evidence a route exists.** What finally settled each question was asking the run
 (`/content` as JSON, `import()` of the actual module, the parsed table read out of the client) and a
 bisect against a known-good value (`&thing.size`) to separate "my fixture is wrong" from "the feature
 is broken" — which is exactly what it turned out to be.
+
+## I28 — The scaffold was MASKING a frame-ordering bug; and glowing flora was an ambient hack (2026-07-25)
+Two things surfaced the moment the debug light array was deleted.
+
+**1. Presence must be built AFTER casters — and the earlier "verification" was worthless.**
+`buildCasters` is what DISCOVERS a content-carried light and queues its dirty rects; `buildDirty` then
+consumes those rects and `classPass` bakes the tiles. With presence built *first*, those tiles bake
+against the OLD light set, and by the next frame — when presence is finally correct — the rects are
+already spent, so nothing re-bakes. The light sits in presence, **permanently unlit**.
+I had this fix, then reverted it on the (reasonable) argument that the dirty system should carry the
+change. The dirty system does queue it; the problem is *when* it is consumed relative to presence.
+**The revert appeared to work only because the orbiting debug light re-dirtied tiles every frame**, so
+some later frame happened to bake with correct presence. Deleting the scaffold removed the cover and the
+bug was immediate and total. **Lesson: a always-dirty debug object can hide an entire class of
+invalidation bug — verify with the scaffold OFF.**
+
+**2. Glowing flora was an ambient term in disguise** (user). The design is *dense point lights, NOT
+sun/ambient*. flora scatters at ~16% of forest cells, so authoring a light on it produced **230 lights in
+one view** whose pools overlap into a uniform wash — functionally the ambient model the design rejects,
+and it hides the darkness that makes point lights worth having. It was chosen only because worldgen
+already places flora, i.e. a *test* requirement leaking into world design. Reverted: no kind emits light
+by default. The capability, the regression test, and `__torch(id?)` (light any placed billboard on
+demand) all remain, so demonstrating the path costs no content change.

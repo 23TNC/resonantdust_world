@@ -304,8 +304,9 @@ data texture → gather — is live.
 - **`WorldBridge.lightFor(kindId)`** converts tiles → world px and attaches the aspect in
   `onColdThings`, so a placed thing carries its kind's light with **no wire change** — the row is
   per-kind, never per instance.
-- **Content**: `flora` now emits a soft bioluminescent glow (`reach 4`, `cast 0` — it lights without
-  occluding, so it costs the shadow walk nothing).
+- **Content**: no kind emits light by default — see [I28](issues.md#i28). `flora` briefly did, to have a
+  worldgen-placed carrier, but at ~16% scatter that is 230 lights per view and reads as ambient, which
+  is the model the design rejects. `__torch(id?)` demonstrates the path without touching content.
 - **H4 closed**: the standing loop is now one block per presentation, each behind its own guard, and
   nothing may `continue` past another. The billboard's `def < 0` gate is deliberately LAST.
 
@@ -328,3 +329,15 @@ path's business (`markLightDirty` from `buildCasters`).
 **Verified** on a fresh load: **120.8 fps**, **230** content-carried lights, `'lights' in gather` false,
 `seed`/`__manylights` undefined, **0 dirty tiles at rest** (a world of static lights bakes once and
 never re-bakes — the whole point of the cold/hot split), resolve self-test still exact.
+
+## P5d — Dark world by default; the frame order that makes a carried light bake (2026-07-25)
+- **No kind emits light by default.** Reverted flora's glow ([I28](issues.md#i28)): the world has no sun,
+  and a light on a kind scattered across 16% of cells is an ambient term wearing a point light's clothes.
+- **`buildCasters` now runs BEFORE `buildPresence`**, and the single `flush()` after both. Casters
+  discover carried lights and queue their rects; presence must reflect that discovery before `buildDirty`
+  spends the rects and `classPass` bakes. The previous order left a new light in presence but never baked
+  — and the bug was invisible while an orbiting debug light kept every tile dirty.
+
+**Verified** with the scaffold gone and no `rebakeAll` in the path: the world renders **dark** (correct —
+no sun), and `__torch()` on one placed billboard produces a single warm pool with trees lit on the facing
+side and shadows thrown away from it.
