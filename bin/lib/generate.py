@@ -20,7 +20,7 @@ ANTHROPIC_API_KEY or bin/keys/anthropic.env). Generic negatives are always added
 
 Env: COMFYUI_URL (default http://172.16.10.10:8188), ANTHROPIC_API_KEY.
 """
-import argparse, json, os, sys, time, uuid, random, io, urllib.request, urllib.parse
+import argparse, json, os, sys, time, uuid, random, io, shutil, urllib.request, urllib.parse
 from PIL import Image, ImageFilter
 import numpy as np
 
@@ -236,6 +236,60 @@ def resolve_control(mode, from_path, d, part, tvar):
         return silhouette_bank.resolve(mode, d)
     return load_template(from_path, d, part, tvar, required=True)
 
+# ---------------------------------------------------------------- candidate screening (P3)
+# The generalized generator fails often; that is fine as long as failure is DETECTED. The gate
+# is forks.md F4, calibrated against hand-judged sprites — blobs==1, keyable plate, aspect
+# within 50% of the real corpus sprite, solidity>=0.35.
+GATE = dict(bg_uni=0.75, d_aspect=50.0, solidity=0.35)
+
+def score_sprite(sprite, ref_spec, d):
+    """(metrics, passed) for one RGBA sprite. `ref_spec` is 'Folder[:stem]' naming the real
+    corpus sprite that defines correct proportions; without it the aspect check is skipped
+    (structure-only screening) rather than silently inventing a reference."""
+    import lora_eval as L
+    w = Image.new("RGBA", sprite.size, (255, 255, 255, 255)); w.alpha_composite(sprite.convert("RGBA"))
+    m = L.measure(w.convert("RGB"))
+    d_aspect = None
+    if ref_spec:
+        folder, _, stem = ref_spec.partition(":")
+        r = L.reference(folder, stem or folder, {"e": "east", "s": "south", "n": "north"}[d])
+        if r: d_aspect = 100.0 * abs(m["aspect"] - r["aspect"]) / max(r["aspect"], 1e-3)
+    ok = (m["blobs"] == 1 and m["bg_uni"] >= GATE["bg_uni"] and m["solidity"] >= GATE["solidity"]
+          and (d_aspect is None or d_aspect <= GATE["d_aspect"]))
+    m["d_aspect"] = round(d_aspect, 1) if d_aspect is not None else ""
+    return m, ok
+
+def report_candidates(rows, out_dir, out_path, dirs, args):
+    """Write scores.csv, quarantine rejected variant leaves, and name the best seed per direction.
+
+    A candidate is a SEED = one variant leaf holding e/s/n. Rejection is per LEAF, not per sprite
+    (forks.md F5): a variant with a good east and a broken south is not usable as a set, and the
+    renderer expects a leaf's directions to belong together."""
+    if not rows: return
+    import csv as _csv
+    if args.ref or args.candidates > 1:
+        with open(os.path.join(out_dir, "scores.csv"), "w", newline="") as f:
+            w = _csv.DictWriter(f, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
+    seeds = sorted({r["seed"] for r in rows})
+    bad = [s for s in seeds if not all(r["valid"] for r in rows if r["seed"] == s)]
+    for s in bad:                                   # quarantine the whole leaf
+        leaf = os.path.join(out_dir, texpath.variant_leaf(s))
+        rej = os.path.join(out_dir, "_rejected", texpath.variant_leaf(s))
+        if os.path.isdir(leaf):
+            os.makedirs(os.path.dirname(rej), exist_ok=True)
+            if os.path.isdir(rej): shutil.rmtree(rej)
+            shutil.move(leaf, rej)
+    kept = [s for s in seeds if s not in bad]
+    if args.candidates > 1 or args.ref:
+        print(f"generate: {len(kept)}/{len(seeds)} candidate(s) passed the gate"
+              + (f"; quarantined {sorted(bad)} -> _rejected/" if bad else ""))
+        for d in dirs:                              # best surviving seed per direction
+            cand = [r for r in rows if r["dir"] == d and r["seed"] in kept and r["d_aspect"] != ""]
+            if cand:
+                b = min(cand, key=lambda r: r["d_aspect"])
+                print(f"  best {d}: seed {b['seed']}  d_aspect={b['d_aspect']}%")
+    print(f"generate: done (kind {out_path}, variants {kept if kept else 'none kept'})")
+
 def load_hero_from_disk(out_dir, part, seed):
     """An already-generated east sprite (<seed>/sprite.e.<part>.png), flattened onto
     white, for use as the IP anchor when east isn't regenerated this run."""
@@ -388,6 +442,10 @@ def main():
     ap.add_argument("--llm", action="store_true", help="expand --positive/--negative via Claude (spends API tokens; off by default)")
     ap.add_argument("--seed", type=int, default=None, help="seed; also the output variant folder. random if omitted")
     ap.add_argument("--part", default="0", help="sprite <part> field — body=0, head=1, … (default 0)")
+    ap.add_argument("--candidates", type=int, default=1,
+                    help="generate N seeded candidates (seed, seed+1, ...); each is one variant leaf, auto-screened")
+    ap.add_argument("--ref", default=None,
+                    help="corpus sprite defining correct proportions for the gate, e.g. Bear or AEXP_Jaguar:Jaguar")
     ap.add_argument("--control", default="template",
                     help="control-image source: template (default, hand-authored art) | none (txt2img+LoRA, no ControlNet) | corpus:<Species> | family:<f> (P2, not yet wired)")
     ap.add_argument("--template-variant", default="0", help="legacy fallback: variant folder to read the template from when none sits at the kind level (default 0)")
@@ -460,40 +518,47 @@ def main():
     print(f"  negative -> {neg}")
     print(f"  wrote {os.path.relpath(prompt_out, REPO)}")
 
-    hero_name = None
-    if "e" not in dirs:   # regenerating only s/n — anchor to the existing east sprite if present
-        hero_img = load_hero_from_disk(out_dir, part, seed)
-        if hero_img is not None:
-            hero_name = _upload(hero_img, f"artgen_{seed}_hero.png")
-            print(f"  IP anchor: existing {sprite_name('e', part, seed)}")
-        else:
-            print(f"generate: no existing east sprite ({sprite_name('e', part, seed)}); {dirs} generate without IP anchor", file=sys.stderr)
-    for d in dirs:
-        if d not in FACE:
-            print(f"generate: skipping unknown direction '{d}'", file=sys.stderr); continue
-        tpl = resolve_control(args.control, from_path, d, part, tvar)
-        if tpl is not None:
-            ref_name = _upload(tpl, f"artgen_{seed}_{d}_ref.png")
-            edge_name = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{seed}_{d}_edge.png")
-        else:
-            ref_name = edge_name = None      # template-free: no i2i latent, no ControlNet
-        full_pos = f"{pos}, {STYLE.format(face=FACE[d])}"
-        if d == "e" or hero_name is None:
-            raw = _run(graph_hero(full_pos, neg, ref_name, edge_name, seed))
-        else:
-            raw = _run(graph_ip(full_pos, neg, ref_name, edge_name, hero_name, seed))
-        img = Image.open(io.BytesIO(raw)).convert("RGB")
-        if d == "e":
-            hero_name = _upload(img, f"artgen_{seed}_hero.png")   # east (on white) becomes the IP anchor
-        sprite = img if args.keep_bg else remove_bg_floodfill(img, thresh=args.bg_thresh, choke=args.choke)
-        if d in hsym: sprite = make_symmetric(sprite, "h")             # force symmetry after the cut
-        if d in vsym: sprite = make_symmetric(sprite, "v")
-        sprite = resize_sprite(sprite, args.size)                       # scale AFTER the cut (premultiplied)
-        out = os.path.join(out_dir, sprite_name(d, part, seed))         # SEED = variant leaf
-        os.makedirs(os.path.dirname(out), exist_ok=True)                # ensure the variant leaf
-        sprite.save(out)
-        print(f"  wrote {os.path.relpath(out, REPO)}")
-    print(f"generate: done (kind {out_path} variant {seed})")
+    rows = []                                   # one per generated sprite, for scores.csv
+    for k in range(max(1, args.candidates)):
+        cseed = seed + k
+        if args.candidates > 1: print(f"  -- candidate {k+1}/{args.candidates} (seed {cseed})")
+        hero_name = None
+        if "e" not in dirs:   # regenerating only s/n — anchor to the existing east sprite if present
+            hero_img = load_hero_from_disk(out_dir, part, cseed)
+            if hero_img is not None:
+                hero_name = _upload(hero_img, f"artgen_{cseed}_hero.png")
+                print(f"  IP anchor: existing {sprite_name('e', part, cseed)}")
+            else:
+                print(f"generate: no existing east sprite ({sprite_name('e', part, cseed)}); {dirs} generate without IP anchor", file=sys.stderr)
+        for d in dirs:
+            if d not in FACE:
+                print(f"generate: skipping unknown direction '{d}'", file=sys.stderr); continue
+            tpl = resolve_control(args.control, from_path, d, part, tvar)
+            if tpl is not None:
+                ref_name = _upload(tpl, f"artgen_{cseed}_{d}_ref.png")
+                edge_name = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{cseed}_{d}_edge.png")
+            else:
+                ref_name = edge_name = None      # template-free: no i2i latent, no ControlNet
+            full_pos = f"{pos}, {STYLE.format(face=FACE[d])}"
+            if d == "e" or hero_name is None:
+                raw = _run(graph_hero(full_pos, neg, ref_name, edge_name, cseed))
+            else:
+                raw = _run(graph_ip(full_pos, neg, ref_name, edge_name, hero_name, cseed))
+            img = Image.open(io.BytesIO(raw)).convert("RGB")
+            if d == "e":
+                hero_name = _upload(img, f"artgen_{cseed}_hero.png")   # east (on white) becomes the IP anchor
+            sprite = img if args.keep_bg else remove_bg_floodfill(img, thresh=args.bg_thresh, choke=args.choke)
+            if d in hsym: sprite = make_symmetric(sprite, "h")             # force symmetry after the cut
+            if d in vsym: sprite = make_symmetric(sprite, "v")
+            sprite = resize_sprite(sprite, args.size)                       # scale AFTER the cut (premultiplied)
+            out = os.path.join(out_dir, sprite_name(d, part, cseed))        # SEED = variant leaf
+            os.makedirs(os.path.dirname(out), exist_ok=True)                # ensure the variant leaf
+            sprite.save(out)
+            m, ok = score_sprite(sprite, args.ref, d)
+            rows.append(dict(seed=cseed, dir=d, path=os.path.relpath(out, REPO), valid=int(ok),
+                             **{k2: round(v, 3) if isinstance(v, float) else v for k2, v in m.items()}))
+            print(f"  wrote {os.path.relpath(out, REPO)}" + (f"   [{'ok' if ok else 'REJECT'}]" if args.ref or args.candidates > 1 else ""))
+    report_candidates(rows, out_dir, out_path, dirs, args)
 
 if __name__ == "__main__":
     main()

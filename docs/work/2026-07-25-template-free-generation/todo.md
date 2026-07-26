@@ -30,10 +30,10 @@ because "template-free is worse" is currently an assumption, not a measurement.
 
 ## P3 — Generate-many + auto-screen (make failure cheap)
 
-- [ ] Add `--candidates N` to `generate.py` producing N seeds per direction. Acceptance: one invocation writes N×3 sprites into per-seed variant leaves.
-- [ ] Score every candidate with `lora_eval.measure` at write time. Acceptance: a `scores.csv` beside the batch with one row per generated sprite.
-- [ ] Route candidates failing the P0 gate to a `_rejected/` leaf. Acceptance: a deliberately bad run leaves the good leaves clean and the rejects quarantined.
-- [ ] Print the best seed per species+direction. Acceptance: the summary names one winning seed per direction with its score.
+- [x] Add `--candidates N` to `generate.py` producing N seeds per direction. Acceptance: one invocation writes N×3 sprites into per-seed variant leaves.
+- [x] Score every candidate with `lora_eval.measure` at write time. Acceptance: a `scores.csv` beside the batch with one row per generated sprite.
+- [x] Route candidates failing the P0 gate to a `_rejected/` leaf. Acceptance: a deliberately bad run leaves the good leaves clean and the rejects quarantined.
+- [x] Print the best seed per species+direction. Acceptance: the summary names one winning seed per direction with its score.
 
 ## P4 — e/s/n coherence without a template set
 

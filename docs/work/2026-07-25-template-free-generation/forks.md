@@ -55,3 +55,14 @@ start rejecting acceptable art (the good tiger sits at 40%). Rejected: a tighter
 approved tiger) and using the 0–100 `score` composite as the gate (it blends fill drift into the
 verdict, so a correctly-shaped-but-differently-scaled sprite fails for the wrong reason — scale is a
 P3 concern, not a validity one).
+
+## F5 — Rejection granularity: per sprite or per variant leaf? · RESOLVED 2026-07-25
+
+**Per LEAF.** If any direction of a seed fails the gate, the whole variant leaf is quarantined to
+`_rejected/<seed>/`.
+
+Rejecting per *sprite* was considered and dropped: it would leave a variant holding a good east and
+no south, which is not usable as a set — the renderer expects a leaf's directions to belong to the
+same animal, and a half-populated leaf is worse than none (it looks complete to the manifest walk).
+Keeping the leaf whole also means a rejected candidate stays inspectable as a set, which is what the
+curation step in the self-training flywheel needs.

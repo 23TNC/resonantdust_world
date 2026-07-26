@@ -96,3 +96,30 @@ near-white (238,238,238) control image. Prompting "black bear, jet black fur" pr
 RGB (49,57,59); "brown bear" gave (193,190,177). So the control image supplies **shape only**, as
 intended at `dn=1.0` where its latent is destroyed. The cream result was prompt/seed variance, not
 bleed.
+
+## 2026-07-25 — P3 complete (generate-many + auto-screen)
+
+**`--candidates N`** wraps the direction loop, so seeds `seed..seed+N-1` each produce their own
+variant leaf with its own IP-anchor chain (the east hero is re-derived per candidate, not shared —
+sharing it would couple the candidates and suppress exactly the variety we are sampling for).
+
+**`--ref <Folder>[:<stem>]`** names the real corpus sprite that defines correct proportions.
+`score_sprite()` runs the [F4](forks.md#f4) gate at write time. Without `--ref` the aspect check is
+*skipped* rather than defaulted — inventing a reference silently would be worse than screening on
+structure alone.
+
+**Verified on a 4-candidate bear batch** (`--control family:bear --ref Bear --candidates 4`):
+4/4 passed, `scores.csv` written with one row per sprite (12 columns incl. blobs / bg / bg_uni /
+fill / aspect / solidity / d_aspect), and the summary named the winner —
+`best e: seed 8901 d_aspect=0.1%`, `best s: seed 8901 d_aspect=4.5%`.
+
+**Quarantine verified deterministically.** A live batch happened to pass 3/3, which does not
+exercise the reject path, so `report_candidates()` was driven directly with a synthetic failing
+leaf: the passing leaf stayed at `100/`, the failing one moved whole to `_rejected/101/`, and the
+summary reported `1/2 candidate(s) passed the gate; quarantined [101]`. Rejection is per leaf, not
+per sprite ([F5](forks.md#f5)).
+
+**Finding while testing ([I6](issues.md#i6)):** the south-view failure is *seed-dependent*. The same
+template-free bear-south that scored 136.6% (FAIL) at the P0 seed scored 43.5 / 46.3 / 14.9% (all
+PASS) at three others. P0's single-seed matrix measures a failure *rate*, not a species verdict —
+and that stochasticity is precisely what makes P3's sample-and-screen the right answer.

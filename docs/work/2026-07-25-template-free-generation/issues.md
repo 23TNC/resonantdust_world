@@ -74,3 +74,22 @@ uniformity (mean per-channel std) of the **non-subject** border pixels, which is
 
 Verified: bear-north now `bg=0.84 / bg_uni=0.96` → PASS, while both known failures still fail on
 aspect, and a scenery-bleed case would still fail on `bg_uni`.
+
+## I6 — The south-view failure is seed-dependent, not deterministic
+
+The [I4](#i4) baseline was **one seed per cell**, and reported template-free bear-south at 136.6%
+aspect error (FAIL). Re-running the same species template-free across three seeds gave 43.5%, 46.3%
+and 14.9% — **all passing**.
+
+So "5/10 south failures" is a per-seed failure *rate*, not a per-species verdict: the model can draw
+a correct front view for these species, it just often doesn't. Two consequences:
+
+1. **I4's numbers understate template-free's ceiling** and overstate its floor. Treat them as
+   "probability a single roll succeeds", not "this species cannot be generated".
+2. **This is the argument for P3.** If failure is stochastic, sampling several candidates and
+   screening converts an unreliable generator into a reliable one at the cost of GPU time — which
+   is exactly the "quantity + screening replaces precision" stance in the README.
+
+A stronger baseline would use several seeds per cell and report a rate with an interval. Not re-run
+here (it is ~10× the GPU time for a number whose decision — build P3 — is already made), but any
+future comparison of control modes should be multi-seed to be sound.
