@@ -6,13 +6,13 @@ must assert a **non-zero population on both sides** — "0 mismatches" is satisf
 ([primitive-graph D-2](../2026-07-25-primitive-graph/deviations.md#d-2))._
 
 ## P0 — Ratify the constants
-- [ ] Write the slot grid + lod ladder into `docs/VARIABLES.md` as the authoritative layout.
+- [x] Write the slot grid + lod ladder into `docs/VARIABLES.md` as the authoritative layout.
       Acceptance: slots, texels-per-slot per family, and the zoom bands all live in one table.
-- [ ] Reduce `definition_data.frame_lod` u4 → u2 and record the freed bits.
+- [x] Reduce `definition_data.frame_lod` u4 → u2 and record the freed bits.
       Acceptance: 4 lod levels cover the whole ladder; the layout still sums to 32.
-- [ ] Add `billboard_data.last_lod` (u2) and `light_data.coarsest_lod` (u2).
+- [x] Add `billboard_data.last_lod` (u2) and `light_data.coarsest_lod` (u2).
       Acceptance: VARIABLES states why one is "last" and the other "coarsest" ([I2](issues.md#i2)).
-- [ ] Decide + record the max supported aspect the slot grid is sized for ([F4](forks.md#f4)).
+- [x] Decide + record the max supported aspect the slot grid is sized for ([F4](forks.md#f4)).
       Acceptance: a named aspect, with the visible-slot count at that aspect.
 
 ## P1 — Fix the slot grid

@@ -51,7 +51,15 @@ levels) and forfeits the single shared rescale path. Revisit if decimation alias
 **Linear stays available** for albedo/normal/surface as an optional quality choice — they are sampled, not
 accumulated or bit-packed.
 
-### F4 — how aspect ratio is handled (OPEN — needed by P0)
+### F4 — how aspect ratio is handled — RESOLVED 2026-07-26: size for the 5:3 reference, cover trades area
+**Decision:** the grid is sized for the **5:3 reference (2560×1536)** and cover fit handles everything else.
+No per-aspect grid, no letterboxing, no widest-aspect padding. Taken as the executable default so P1 is not
+blocked; it is cheap to revisit because it changes only the slot count, not the model.
+
+The fairness property this commits to: **nobody exceeds 20×12 visible slots, and off-aspect viewports see
+LESS area, never more** — the inverse of the usual ultrawide advantage. A 21:9 player sees 20×8.37 slots
+against the reference player's 20×12. That is a deliberate property, not a bug to fix later by letting
+ultrawide see wider.
 Cover fit already guarantees nobody exceeds 20×12 visible slots, and off-aspect viewports see *less* area,
 not more — the inverse of the usual ultrawide advantage:
 

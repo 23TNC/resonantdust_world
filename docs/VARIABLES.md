@@ -269,6 +269,56 @@ is the separate fact that the value reached `state`.
 
 ---
 
+## Textile slot grid (`client/webgl`)
+
+**Every textile map is sized in TILES, never in screen resolution, and never changes size.** Work stream:
+[`work/2026-07-26-textile-slot`](work/2026-07-26-textile-slot/README.md).
+
+A fixed grid of **24 × 16 SLOTS** (20×12 visible + **2 slots of overscan per side**). A slot holds **1 tile
+at lod 0** and **`2^k × 2^k` tiles at lod k**, so the texture is constant while the world it covers grows 4×
+per step. `SQUARE = 128`; **maximum art size is 128 px** — a slot cannot show more.
+
+```
+SLOTS_X = 24   SLOTS_Y = 16      VISIBLE_X = 20   VISIBLE_Y = 12   OVERSCAN = 2
+LOD_LEVELS = 4                   (lod 0..3 — fits u2)
+REFERENCE = 2560 × 1536          (the visible slots at lod 0)
+```
+
+**One grid serves every map; only texels-per-slot differs** — which is why `lod` can be published once in
+the constants px and read by every shader, instead of each deriving a slot address from a world coord (the
+recurring failure [`work/2026-07-24-map-compatibility`](work/2026-07-24-map-compatibility/README.md) exists
+to police).
+
+| family | texels/slot | texture | maps |
+|---|---|---|---|
+| `TEXTILE_SQUARE` (per px at lod 0) | `SQUARE` = 128 | 3072 × 2048 | albedo, normal, surface, zdepth, lightmap |
+| `TEXTILE_UNIT` (per unit) | 16 | 384 × 256 | shadow |
+| `TEXTILE_TILE` (per tile) | 1 | 24 × 16 | presence, caster buckets, dirty |
+
+At **lod 3** a tile occupies `128/8 = 16×16` texels — exactly the unit resolution. At maximum zoom-out the
+square-family and unit-family maps are in 1:1 correspondence.
+
+**Fit is COVER, not contain:** `s = max(W / 2560, H / 1536)`. `max` (not `min`) is what keeps the viewport
+entirely inside the visible slots; `min` would fit the whole grid and expose overscan at the edges.
+
+| lod | tiles/slot | tile texels | visible tiles | zoom band (s=1) |
+|---|---|---|---|---|
+| 0 | 1×1 | 128 | 20×12 | [1, 2) |
+| 1 | 2×2 | 64 | 40×24 | [0.5, 1) |
+| 2 | 4×4 | 32 | 80×48 | [0.25, 0.5) |
+| 3 | 8×8 | 16 | 160×96 | [0.125, 0.25) |
+
+**Lod does not affect display sharpness.** Texels per screen pixel is `(128/2^k) / (σ · 128/2^k) = 1/σ` —
+the `2^k` cancels. Lod selects *world coverage* only; sharpness is governed by the viewport against the
+2560×1536 reference. The **bake** stage is separate and always exactly 1:1 (art mip `128/2^k` px into a
+`128/2^k` texel footprint).
+
+**Rescaling on a lod change is NEAREST** — replication up, decimation down, never averaging. Independently
+mandatory for three maps, which is what permits one shared reproject path: the shadow bitfield cannot be
+filtered at all, `zdepth` encodes a discrete `0x80 | baseRow` that averaging silently corrupts, and the
+lightmap must stay exactly-representable to remain invertible. Linear is permitted for albedo/normal/surface
+only.
+
 ## Cold shadow data textures (`client/webgl`)
 
 The GPU shadow **gather** reads its **static** (cold) light + caster data from **ONE unified** `RGBA32UI`
@@ -298,10 +348,14 @@ sets 7–14              reserved               (materials-era tables)
         (set 0 is the SENTINEL in a prim's set_a..d — "no data carried"; and in-set
          id 0 is the GLOBAL SENTINEL so commands can pad with zeros)
 set 15  row  1023 tail constants px (in-set id 64 512):
-        R  u16 id | u16 cols        G  u16 rows | u16 slot (TEXTILE_UNIT)
+        R  u16 id | u16 cols        G  u16 rows | u2 lod (14–15) | u14 slot (TEXTILE_UNIT)
         B  i16 winCol | i16 winRow  A  u16 light_count | u16 tilt_centideg
           (tilt_centideg = world ground tilt × 100, e.g. 65.00° → 6500; every lighting shader reads
            the live angle from here instead of a compile-time literal or a dedicated uniform)
+          (cols/rows are SLOT counts — 24×16 — not tile counts, since the slot grid is fixed and the
+           tiles it covers vary with lod: tiles = cols · 2^lod. `lod` is published HERE so every shader
+           reads ONE authoritative mapping; texels-per-slot stays a per-family compile-time constant
+           (SQUARE / TEXTILE_UNIT / 1). `slot` narrowed u16→u14 to make room — it holds 16.)
 ```
 
 **Naming — a PRIMITIVE presents as a BILLBOARD or a LIGHT.** A *primitive* is a DSL-declared world
@@ -436,9 +490,14 @@ position**; GREEN keeps the **authored** offsets (the durable relative placement
 R  u32   u16 parent_id (16–31) | u8 resolved_tile (8–15) | u8 resolved_unit (0–7)
 G  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 hot_cold (25) | u1 cast_shadows (24)
          | u8 z_offset (16–23) | u8 tile_offset (8–15) | u8 unit_offset (0–7)
-B  u32   u16 definition_id (16–31) | u16 reserved (0–15)
+B  u32   u16 definition_id (16–31) | u2 last_lod (14–15) | u14 reserved (0–13)
 A  u32   u32 reserved
 ```
+`last_lod` — the lod this billboard was **last baked at**. A mismatch against the live lod means the def is
+stale and wants swapping; the swap rides the existing billboard dirty cascade. "Last" is correct here
+because billboards are **re-baked, not accumulated** — there is nothing to invert, so no history is needed.
+Contrast `light_data.coarsest_lod`, which is a different question with a different answer.
+
 No `resolved_zone`: `billboard_presence` is a **containment** relation (a billboard is bucketed into the
 tiles its footprint covers), so the fragment's own tile pins it — nearest-congruent is exact for any
 footprint under 8 tiles.
@@ -451,8 +510,20 @@ G  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 hot_cold (25) | u1 cast
          | u8 z_offset (16–23) | u8 tile_offset (8–15) | u8 unit_offset (0–7)
 B  u32   u8 r (24–31) | u8 g (16–23) | u8 b (8–15) | u8 intensity (0–7)
 A  u32   u12 reach (20–31, units) | u8 emitter_radius (12–19, units)
-         | u8 resolved_zone (4–11) | u4 reserved (0–3)
+         | u8 resolved_zone (4–11) | u2 coarsest_lod (2–3) | u2 reserved (0–1)
 ```
+**`coarsest_lod` is the COARSEST lod since this light was last cast — not the last lod.** The distinction is
+load-bearing for the invertible lightmap: a **down-then-up round trip is lossy**. Decimating 32→16 destroys
+three of every four texels; replicating back to 32 leaves texel `(a,b)` holding `v(2·(a>>1), 2·(b>>1))`, not
+`v(a,b)`. With `last_lod` the subtract would evaluate at `(a,b)` and the difference **leaks light
+permanently**. Information is only ever destroyed by decimation and never returns, so the stored contribution
+always lives on the coarsest grid the light has passed through — evaluate there and it cancels exactly.
+
+Maintained as a **monotone max** (`coarsest = max(coarsest, new_lod)` on every lod change), reset to the live
+lod whenever the light is genuinely re-cast. Because it is **per light, not per tile**, a tile may hold
+contributions deposited at all four lods at once and a zoom costs nothing at update time — each light
+independently knows the grid it must be undone on. Monotonicity also means nothing restores resolution on its
+own: a light zoomed out and back in stays coarse until the refinement queue re-casts it.
 **`resolved_zone` is required here** (unlike a billboard): `light_presence` is a **reach** relation, so a
 light sits up to `reach` tiles from the fragment reading it. `resolved_tile` pins the light only modulo
 **16 tiles**, which is ambiguous past **±8** — and `LIGHT_REACH` is **12 tiles** (the `u12` field allows
@@ -491,14 +562,26 @@ G  u32   u9 billboard_width (23–31, 2-unit steps) | u9 billboard_height (14–
          | u4 frame_span (10–13, tiles − 1; width = log2(ZONE_DIM)) | u10 reserved (0–9)
          (offsets UNSIGNED, frame-relative: the bbox top-left indexed into the frame — no bias)
 B  u32   u10 frame_x (22–31, 16-px grid) | u10 frame_y (12–21, 16-px grid) | u4 frame_page (8–11)
-         | u4 frame_lod (4–7, side = 2^lod) | u2 frame_anchor_x (2–3) | u2 frame_anchor_y (0–1)   (FULL)
+         | u2 frame_lod (6–7, DISPLAY lod 0–3) | u2 reserved (4–5)
+         | u2 frame_anchor_x (2–3) | u2 frame_anchor_y (0–1)
 A  u32   u12 nudge_x (20–31, px, signed +2048) | u12 nudge_y (8–19, px, signed +2048)
          | u2 nudge_anchor_x (6–7) | u2 nudge_anchor_y (4–5) | u4 reserved (0–3)   (FULL)
 ```
 
-**The whole-px-per-unit invariant.** Minimum texture size is **1 px/unit** → smallest frame 16×16 (lod 4);
-`ppu = 2^frame_lod / (16 · frame_span_tiles)` **doubles** per lod and is a whole pow2 ≥ 1 by construction
-(pow2 frame over a pow2-tile span) — never fractional. `frame_lod < 4` ⇒ no silhouette resolved → solid quad.
+**`frame_lod` is the DISPLAY lod (0–3), and the frame side is DERIVED.** It was a u4 *side exponent* (4..14);
+on the fixed slot grid that is redundant, because a frame spanning `S` tiles at lod `k` is exactly
+`S · SQUARE / 2^k` px. Side falls out of `(frame_span, frame_lod)`, so the exponent collapses to the 2-bit
+ladder and frees 2 bits.
+
+**The whole-px-per-unit invariant, now trivial.** Substituting the derived side into
+`ppu = side / (16 · frame_span_tiles)` cancels the span entirely:
+```
+ppu = SQUARE / (16 · 2^lod)      →  lod 0: 8   lod 1: 4   lod 2: 2   lod 3: 1
+```
+So ppu depends on **lod alone**, is a whole pow2 ≥ 1 by construction, and the lod-3 floor is exactly the
+1 px/unit minimum (a 16-px tile). The old caveat that lod alone could not determine ppu — "a 32px frame is
+1-tile@2ppu OR 2-tile@1ppu" — no longer applies, because the frame side is no longer free to disagree with
+the grid. `frame_span` is still needed to size the frame, but no longer to compute ppu.
 
 **Field sizing.**
 - `billboard_width/height` — **u9 in 2-unit steps** (even bbox ⟹ integral half-anchors): ≤1022 units ≈ 4-zone
@@ -509,7 +592,9 @@ A  u32   u12 nudge_x (20–31, px, signed +2048) | u12 nudge_y (8–19, px, sign
   2-tile@1ppu).
 - `frame_x/y` — **u10 in 16-px grid**: the pow2 frame's ORIGIN on the page; 16384 GL max / 16 min frame =
   1024 grid. 16-aligned by construction (per-LOD-size pools pack uniform pow2 ≥16 squares, zero padding).
-- `frame_lod` — **u4** side exponent (4..14): replaces a w/h pair — frames are square pow2, one exponent.
+- `frame_lod` — **u2** DISPLAY lod (0..3). Side is derived (`frame_span · SQUARE / 2^lod`), so the frame is
+  still one square pow2 but the record no longer stores its size. Max side = 16 tiles × 128 = 2048 (lod 0),
+  min = 16 (span 1, lod 3) — the whole range a 2048² page can hold.
 - `frame_anchor_x/y` — **u2**: 0 none | 1 half | 2 full shift of the bbox against the prim position
   (3×3 = TL..BR). Shadow casters use bottom-center (1, 2); rotation=W mirrors anchor_x. The gather applies
   `bbox_anchored − fullbox_anchored` so `billboard_data`'s base-centre position keeps working (F3: reported-x/y
