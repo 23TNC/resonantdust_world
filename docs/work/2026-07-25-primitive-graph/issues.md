@@ -497,3 +497,34 @@ Note for the record that `TEXTILE_SQUARE` was a **deliberate** choice by
 [lightmap-resolution](../2026-07-24-lightmap-resolution/README.md) (spend memory to buy sharpness), not an
 oversight — the slot grid keeps that sharpness where it is visible and stops paying for it where it is not.
 **P9 in [`todo.md`](todo.md) is retired in favour of that stream; P10 (F11b) is gated on it.**
+
+### I32 — P10's remaining items are ONE atomic change; landing them separately REGRESSES (2026-07-26)
+P10 reads as five independent rows. Two are done (extension assert, `RGBA32F` + quantised deposits). The
+remaining three are **mutually dependent**, and shipping any one alone makes the renderer worse.
+
+**Where it stands.** `classPass` draws the light pass with `blend: "none"` — each dirty texel is REPLACED by
+the full sum of its tile's present lights, recomputed from current state. That is *correct* (verified: warm
+pools render, accumulator holds exact integers 308–321) but **not incremental**: a tile is re-summed over all
+its lights whenever anything in it changes.
+
+**Why the three cannot be separated:**
+- **"Collapse hot/cold" alone is a REGRESSION.** The split exists so a per-frame hot light never forces
+  static lights to re-bake. With one buffer and replace-semantics, every hot-dirty tile re-sums all 16 of
+  its lights every frame — including the static ones the cold tier was keeping untouched. The collapse is
+  only affordable once a light can be updated *without* re-summing its neighbours.
+- **"Differential pass" needs the ping-pong.** Emitting `new − old` requires the OLD light parameters to
+  still be readable. The data texture is written by sparse scatter (only changed texels), so a plain
+  double-buffer swap would leave the previous buffer missing every unchanged record — it needs an explicit
+  copy of `dataTex` → `dataTexPrev` before each flush, not a swap.
+- **"Rebuild-and-diff self-heal" is VACUOUS today.** With replace-semantics there is nothing to leak, so the
+  check would pass for the wrong reason — the [D-2](deviations.md#d-2) trap exactly. It only becomes a real
+  assertion once contributions accumulate and can be left behind.
+
+**So the ordering is fixed:** copy-based ping-pong → refactor `LIGHT_FRAG`'s accumulation into a function
+parameterised by the data sampler (so it can run against old and new) → emit the difference under
+`blendFunc(ONE, ONE)` → collapse the tiers → then the self-heal becomes meaningful.
+
+**Risk note.** The failure mode of a bug here is *light that will not turn off* — residue that survives
+because the subtract did not exactly match the add. That is the specific hazard F11b was designed around, so
+this wants a focused pass with the exactness assertion in place, not a hurried one.
+
