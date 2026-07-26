@@ -15,10 +15,10 @@ because "template-free is worse" is currently an assumption, not a measurement.
 
 ## P1 — Retire the hard template requirement
 
-- [ ] Add `--control {template,corpus,family,none}` to `generate.py`, defaulting to `template`. Acceptance: `--help` lists it; every existing invocation behaves identically.
-- [ ] Make `load_template()` return `None` instead of `SystemExit` when the mode does not need art. Acceptance: a kind with no template file generates under `--control none`.
-- [ ] Skip the ControlNet nodes (30/31/32) when there is no control image. Acceptance: the submitted graph omits those keys; a run succeeds and the log states "no control".
-- [ ] Use `EmptyLatentImage` when there is no control image, and log that `--dn` is inert. Acceptance: `--control none --dn 0.5` warns and still produces a full-strength sprite.
+- [x] Add `--control {template,corpus,family,none}` to `generate.py`, defaulting to `template`. Acceptance: `--help` lists it; every existing invocation behaves identically.
+- [x] Make `load_template()` return `None` instead of `SystemExit` when the mode does not need art. Acceptance: a kind with no template file generates under `--control none`.
+- [x] Skip the ControlNet nodes (30/31/32) when there is no control image. Acceptance: the submitted graph omits those keys; a run succeeds and the log states "no control".
+- [x] Use `EmptyLatentImage` when there is no control image, and log that `--dn` is inert. Acceptance: `--control none --dn 0.5` warns and still produces a full-strength sprite.
 
 ## P2 — Corpus-derived control (the silhouette bank)
 

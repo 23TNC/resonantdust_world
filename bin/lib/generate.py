@@ -193,7 +193,19 @@ def template_name(d, part):              # the pose reference (map=template), he
 def sprite_name(d, part, seed):          # generated sprite: SEED is the variant leaf (map=sprite)
     return os.path.join(texpath.variant_leaf(seed), texpath.map_name("sprite", d, part))
 
-def load_template(from_path, d, part, tvar):
+def _on_white(im, size=512):
+    """Flatten RGBA onto the white plate the pipeline (and the LoRA's training data) expects."""
+    t = im.convert("RGBA").resize((size, size), Image.LANCZOS)
+    f = Image.new("RGBA", (size, size), (255, 255, 255, 255)); f.alpha_composite(t)
+    return f.convert("RGB")
+
+def load_template(from_path, d, part, tvar, required=True):
+    """The hand-authored control image, or None.
+
+    `required=False` is the template-free path: a missing template stops being fatal, so a kind
+    with no art can still generate (the LoRA carries both the style and the body plan — see
+    docs/work/2026-07-25-template-free-generation/). Callers that get None must build a graph
+    with no ControlNet."""
     # Canonical: template held at the kind level (textures/<kind>/template.<dir>.<part>.png).
     # Fallback: an old set still inside a <variant>/ leaf (textures/<kind>/<tvar>/template...).
     kind_dir = os.path.join(REPO, "textures", from_path)
@@ -201,11 +213,28 @@ def load_template(from_path, d, part, tvar):
     if not os.path.exists(p):
         alt = os.path.join(kind_dir, texpath.variant_leaf(tvar), template_name(d, part))
         if not os.path.exists(alt):
+            if not required:
+                return None
             raise SystemExit(f"generate: template not found: {p}")
         p = alt
-    t = Image.open(p).convert("RGBA").resize((512, 512), Image.LANCZOS)
-    f = Image.new("RGBA", (512, 512), (255, 255, 255, 255)); f.alpha_composite(t)
-    return f.convert("RGB")
+    return _on_white(Image.open(p))
+
+def resolve_control(mode, from_path, d, part, tvar):
+    """The control image for this direction, per --control. Returns a 512 RGB-on-white image,
+    or None for the template-free path.
+
+      template  hand-authored art (the default; explicit art always outranks an inferred
+                silhouette, forks.md F2). Missing art is still fatal here — asking for a
+                template and silently getting none would hide a typo'd --from.
+      none      no control at all: txt2img + LoRA.
+      corpus:<Species> / family:<f>   corpus-derived silhouettes — P2, not yet wired.
+    """
+    if mode == "none":
+        return None
+    if mode.startswith(("corpus:", "family:")):
+        raise SystemExit(f"generate: --control {mode} is not wired yet (P2 of the "
+                         "template-free-generation stream); use 'template' or 'none'")
+    return load_template(from_path, d, part, tvar, required=True)
 
 def load_hero_from_disk(out_dir, part, seed):
     """An already-generated east sprite (<seed>/sprite.e.<part>.png), flattened onto
@@ -306,19 +335,32 @@ def _base(g):
                "lora_name":LORA,"strength_model":LORA_STRENGTH,"strength_clip":LORA_STRENGTH}}
     return ["50",0], ["50",1]
 
-def _tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref=("4",1)):
+def _tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref=("4",1), size=512):
+    """The shared graph tail. `ref_name`/`edge_name` may be None (template-free): the i2i
+    latent falls back to an EmptyLatentImage and the ControlNet nodes (30/31/32) are omitted
+    entirely, so the sampler reads the raw text conditioning."""
     clip_ref = list(clip_ref)
-    return {
+    g = {
      "6":{"class_type":"CLIPTextEncode","inputs":{"text":pos,"clip":clip_ref}},
      "7":{"class_type":"CLIPTextEncode","inputs":{"text":neg,"clip":clip_ref}},
-     "20":{"class_type":"LoadImage","inputs":{"image":ref_name}},
-     "21":{"class_type":"VAEEncode","inputs":{"pixels":["20",0],"vae":["4",2]}},
-     "30":{"class_type":"LoadImage","inputs":{"image":edge_name}},
-     "31":{"class_type":"ControlNetLoader","inputs":{"control_net_name":CN_MODEL}},
-     "32":{"class_type":"ControlNetApplyAdvanced","inputs":{"positive":["6",0],"negative":["7",0],"control_net":["31",0],"image":["30",0],"strength":CN,"start_percent":0.0,"end_percent":CN_END}},
-     "3":{"class_type":"KSampler","inputs":{"seed":seed,"steps":STEPS,"cfg":CFG,"sampler_name":SAMPLER,"scheduler":SCHED,"denoise":DN,"model":model_ref,"positive":["32",0],"negative":["32",1],"latent_image":["21",0]}},
      "8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},
      "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"artgen","images":["8",0]}}}
+    if ref_name is not None:                       # i2i from the control art
+        g["20"] = {"class_type":"LoadImage","inputs":{"image":ref_name}}
+        g["21"] = {"class_type":"VAEEncode","inputs":{"pixels":["20",0],"vae":["4",2]}}
+        latent, denoise = ["21",0], DN
+    else:                                          # template-free: nothing to denoise FROM
+        g["21"] = {"class_type":"EmptyLatentImage","inputs":{"width":size,"height":size,"batch_size":1}}
+        latent, denoise = ["21",0], 1.0
+    if edge_name is not None:
+        g["30"] = {"class_type":"LoadImage","inputs":{"image":edge_name}}
+        g["31"] = {"class_type":"ControlNetLoader","inputs":{"control_net_name":CN_MODEL}}
+        g["32"] = {"class_type":"ControlNetApplyAdvanced","inputs":{"positive":["6",0],"negative":["7",0],"control_net":["31",0],"image":["30",0],"strength":CN,"start_percent":0.0,"end_percent":CN_END}}
+        pos_ref, neg_ref = ["32",0], ["32",1]
+    else:
+        pos_ref, neg_ref = ["6",0], ["7",0]
+    g["3"] = {"class_type":"KSampler","inputs":{"seed":seed,"steps":STEPS,"cfg":CFG,"sampler_name":SAMPLER,"scheduler":SCHED,"denoise":denoise,"model":model_ref,"positive":pos_ref,"negative":neg_ref,"latent_image":latent}}
+    return g
 
 def graph_hero(pos, neg, ref_name, edge_name, seed):
     g = {}
@@ -346,6 +388,8 @@ def main():
     ap.add_argument("--llm", action="store_true", help="expand --positive/--negative via Claude (spends API tokens; off by default)")
     ap.add_argument("--seed", type=int, default=None, help="seed; also the output variant folder. random if omitted")
     ap.add_argument("--part", default="0", help="sprite <part> field — body=0, head=1, … (default 0)")
+    ap.add_argument("--control", default="template",
+                    help="control-image source: template (default, hand-authored art) | none (txt2img+LoRA, no ControlNet) | corpus:<Species> | family:<f> (P2, not yet wired)")
     ap.add_argument("--template-variant", default="0", help="legacy fallback: variant folder to read the template from when none sits at the kind level (default 0)")
     ap.add_argument("--dirs", default="e,s,n", help="directions to generate (default e,s,n; e is the hero)")
     ap.add_argument("--dir", default=None, help="generate a single direction (overrides --dirs), e.g. --dir s")
@@ -365,6 +409,7 @@ def main():
     ap.add_argument("--style", default=None, help="override the style boilerplate appended to --positive (use the LoRA's trained tags, e.g. 'rd_style, rd_animal, rd_quadruped, {face}')")
     args = ap.parse_args()
 
+    d0 = {"dn": DN, "cn": CN, "cn-end": CN_END}   # module defaults, for the --control none notice
     DN, CN, CN_END, CFG = args.dn, args.cn, args.cn_end, args.cfg
     LORA, LORA_STRENGTH = args.lora, args.lora_strength
     if args.style: STYLE = args.style
@@ -396,7 +441,18 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     print(f"generate: from={from_path} to={out_path} seed={seed} dirs={dirs} size={args.size}"
           + ("" if args.keep_bg else f" bg-key(thresh {args.bg_thresh:g})"))
-    print(f"  recipe -> dn={DN:g} cn={CN:g} cn_end={CN_END:g} edge_thresh={args.edge_thresh} steps={STEPS} cfg={CFG:g}")
+    if args.control == "none":
+        # No control image => no i2i latent and no ControlNet, so all three dials are inert.
+        # Say so rather than printing a recipe the run does not actually honour.
+        noted = [f"--{k}" for k, v in (("dn", args.dn), ("cn", args.cn), ("cn-end", args.cn_end))
+                 if v != d0[k]]
+        print("  control -> none (txt2img + LoRA; no ControlNet, no i2i latent)")
+        if noted:
+            print(f"  NOTE: {', '.join(noted)} ignored under --control none "
+                  f"(nothing to denoise from, nothing to constrain); sampling at full strength",
+                  file=sys.stderr)
+    else:
+        print(f"  recipe -> dn={DN:g} cn={CN:g} cn_end={CN_END:g} edge_thresh={args.edge_thresh} steps={STEPS} cfg={CFG:g}")
     print(f"  bg-key -> " + ("keep-bg (no removal)" if args.keep_bg else f"bg_thresh={args.bg_thresh:g} choke={args.choke}"))
     if hsym: print(f"  hsym (left-right) -> {''.join(sorted(hsym))}")
     if vsym: print(f"  vsym (top-bottom) -> {''.join(sorted(vsym))}")
@@ -415,9 +471,12 @@ def main():
     for d in dirs:
         if d not in FACE:
             print(f"generate: skipping unknown direction '{d}'", file=sys.stderr); continue
-        tpl = load_template(from_path, d, part, tvar)
-        ref_name = _upload(tpl, f"artgen_{seed}_{d}_ref.png")
-        edge_name = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{seed}_{d}_edge.png")
+        tpl = resolve_control(args.control, from_path, d, part, tvar)
+        if tpl is not None:
+            ref_name = _upload(tpl, f"artgen_{seed}_{d}_ref.png")
+            edge_name = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{seed}_{d}_edge.png")
+        else:
+            ref_name = edge_name = None      # template-free: no i2i latent, no ControlNet
         full_pos = f"{pos}, {STYLE.format(face=FACE[d])}"
         if d == "e" or hero_name is None:
             raw = _run(graph_hero(full_pos, neg, ref_name, edge_name, seed))

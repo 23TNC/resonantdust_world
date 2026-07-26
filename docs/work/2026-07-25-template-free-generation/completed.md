@@ -35,3 +35,31 @@ at 56.3%; accepts the good tiger, the approved bear-north, and both wolf sprites
 **Harness defect found and fixed ([I5](issues.md#i5)):** the `bg` metric rejected a hand-approved
 sprite for filling the frame. Added `bg_uni` (uniformity of non-subject border pixels) as the real
 keyability test; `bg` retained for reporting.
+
+## 2026-07-25 — P1 complete (the hard template requirement is gone)
+
+**`--control` on `generate.py`**, defaulting to `template`. `load_template()` grew
+`required=False` and returns `None` rather than `SystemExit`ing; `resolve_control()` dispatches the
+mode. `corpus:`/`family:` deliberately raise a "not wired yet (P2)" error rather than silently
+falling back — a silent fallback would hide a typo'd `--from`.
+
+**`_tail()` builds two shapes now.** Verified by inspecting the submitted graph directly:
+
+| | templated | `--control none` |
+|---|---|---|
+| nodes | `20,21,3,30,31,32,6,7,8,9` | `21,3,6,7,8,9` |
+| latent | `VAEEncode` of the art | `EmptyLatentImage` |
+| sampler positive | `["32",0]` (through ControlNet) | `["6",0]` (raw conditioning) |
+| denoise | `DN` | forced `1.0` |
+
+ControlNet nodes 30/31/32 are **absent**, not zero-strength — nothing is loaded or evaluated.
+
+**End-to-end, on a kind with no template file on disk** (`textures/pawn/animal/_test-bear`,
+`ls template.*` → nothing): `--control none --dn 0.5` printed
+`control -> none (txt2img + LoRA; no ControlNet, no i2i latent)`, warned
+`NOTE: --dn ignored under --control none … sampling at full strength`, and wrote
+`7777/sprite.e.0.png`. Scored `blobs=1 bg_uni=1.00 aspect=1.51 (ref 2.30) d=34.4%` → **PASS** on the
+[F4](forks.md#f4) gate. The pipeline can now generate a species it has no art for.
+
+**Regression:** the default templated path is unchanged after the `_tail` refactor — wolf east at
+the standard defaults scored `aspect=2.11 (ref 2.08) d=1.5%` → PASS.
