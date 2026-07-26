@@ -267,11 +267,12 @@ is **124×60 tiles** and the lightmap is **64 texels per tile PER AXIS** (one te
 | both tiers | 233 MB | — |
 | single accumulator (hot/cold collapsed) | — | **465 MB** |
 
-465 MB is not viable as a baseline. **But it is only unviable because the lightmap is ~10x oversampled at
-zoom 0.25** — see [I31](issues.md#i31). Fixing that makes the accumulator ~30 MB, i.e. CHEAPER than today's
-233 MB of `RGBA8`. So **I31 is a prerequisite for F11b, not an optimisation**: land it first, then `RGBA32F`
-costs less memory than the scheme it replaces. Plus 16 MB for the ping-pong data texture. The final blit gains
-a divide by the quantisation scale and a clamp/tonemap.
+465 MB is not viable as a baseline, and the fix now has its own stream:
+**[2026-07-26-textile-slot](../2026-07-26-textile-slot/README.md)** sizes every map in TILES on a fixed 24×16
+slot grid, which puts the single collapsed `RGBA32F` accumulator at **96 MiB, constant at every zoom** — less
+than the 176 MB of `RGBA8` lightmap it replaces. **That stream is a prerequisite for F11b, not an
+optimisation**: land it first and `RGBA32F` costs less memory than the scheme it replaces. Plus 16 MB for the
+ping-pong data texture. The final blit gains a divide by the quantisation scale and a clamp/tonemap.
 
 **Self-heal, required.** Bookkeeping leaks are the residual risk: a full rebuild on the scroll/zoom paths that
 already re-bake, plus a debug **rebuild-and-diff** assertion that re-accumulates from scratch and reports any

@@ -75,16 +75,11 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
 - [ ] Decide gather-vs-rasterise per tier from that data ([F11](forks.md#f11)).
       Acceptance: a fork row naming which tier uses which, with the cost basis.
 
-## P9 — Track screen density in the lightmap ([I31](issues.md#i31))
-_Gates P10: at world-fixed density `RGBA32F` costs 465 MB; at screen density it costs ~30 MB._
-- [ ] Measure the mover curve at zoom 0.25 vs zoom 1 at equal light count, before changing anything.
-      Acceptance: a number confirming (or refuting) that per-light bake cost is zoom-independent.
-- [ ] Make lightmap texels-per-tile follow screen density (≈`64 × zoom`, clamped) instead of world px.
-      Acceptance: lightmap texels ≈ canvas pixels at zoom 0.25, 0.5 and 1.
-- [ ] Re-run the corridor↔brute identity and the zoom sweep at the new density.
-      Acceptance: 0 mismatches WITH a non-zero population both sides ([D-2](deviations.md#d-2)); no drift 0.25→2.
-- [ ] Re-measure the mover curve.
-      Acceptance: the 32-mover case beats 34 fps at `?focus=100,50&zoom=0.25`.
+## P9 — RETIRED, superseded by [2026-07-26-textile-slot](../2026-07-26-textile-slot/README.md)
+_Screen-density tracking was the right direction but the wrong ceiling; the slot grid fixes the map size in
+TILES instead. That stream now gates P10. See [I31](issues.md#i31)._
+- [x] Retired in favour of the slot grid — no work lands here.
+      Acceptance: P10's memory basis reads from the slot grid (96 MiB), not screen density.
 
 ## P10 — Additive RGBA32F lightmap ([F11b](forks.md#f11b), [F11b.1](forks.md#f11b1)) — needs P9
 - [ ] Assert `EXT_color_buffer_float` + `EXT_float_blend` at startup and fail loudly if absent.

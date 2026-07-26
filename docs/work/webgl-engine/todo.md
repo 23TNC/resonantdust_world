@@ -52,8 +52,8 @@ DONE: the real `TextureResolver` + atlas (`TextureAtlas`/`LodPool`/`TexFrame`/`B
 render as real textured sprites** (master→preview→geo); the W3 stub is retired ([D-1](deviations.md#d-1)).
 Remaining:
 
-- [ ] Restore the `Channel` **ping-pong / reproject** so zoom-LOD shifts don't flash a re-bake (W4c shipped a
-      single buffer per channel as the floor).
+- [ ] MOVED to [2026-07-26-textile-slot](../2026-07-26-textile-slot/README.md) — the `Channel` reproject
+      generalised from these buffers to every textile map. W4c's single-buffer floor is [I5](../2026-07-26-textile-slot/issues.md#i5) there.
 - [ ] Live-verify the **mover visual** (W4e is wired but pawns render as geo boxes only; there are no pawns in
       the world until the npc driver runs server-side).
 - [ ] A few **flora variants flash geo** until their LOD streams in — confirm it's just load latency (a re-bake

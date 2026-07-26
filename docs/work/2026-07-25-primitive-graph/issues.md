@@ -489,6 +489,11 @@ showed up. The shadow RT is unaffected (16/tile/axis = 1984×960).
    density is a ~16x lever on **exactly** the numbers that motivated F11b — much bigger than the DDA's 2.09x.
    Still worth a direct before/after measurement rather than trusting the arithmetic.
 
-**Fix direction:** make texels-per-tile track SCREEN density rather than world px (≈ `64 × zoom`, clamped),
-so the lightmap stays ~1:1 with the canvas at every zoom. Consistent with the existing invalidation model —
-a zoom change already forces a full rebuild.
+**Fix direction — SUPERSEDED, now owned by [2026-07-26-textile-slot](../2026-07-26-textile-slot/README.md).**
+The fix recorded here (track screen density, ≈ `64 × zoom`) was right in direction but the user's design goes
+further and better: size every map in **TILES** on a fixed 24×16 slot grid, so the texture is constant rather
+than merely screen-proportional. That also equalises gameplay across monitors and caps the art pipeline.
+Note for the record that `TEXTILE_SQUARE` was a **deliberate** choice by
+[lightmap-resolution](../2026-07-24-lightmap-resolution/README.md) (spend memory to buy sharpness), not an
+oversight — the slot grid keeps that sharpness where it is visible and stops paying for it where it is not.
+**P9 in [`todo.md`](todo.md) is retired in favour of that stream; P10 (F11b) is gated on it.**
