@@ -99,3 +99,33 @@ blobs from the Gorilla). Verified: `auto DECLINED (best match Gorilla 0.53 < 0.6
 
 **[F4](forks.md#f4): `FAMILY_REP` is KEPT.** It encodes semantics the measurement cannot recover.
 `auto` ships as an addition whose real value is the decline path.
+
+## 2026-07-26 — P2 (part 1): upscale + scale normalisation
+
+**Upscaler chosen by measurement, not assumption.** Compared LANCZOS / BICUBIC / NEAREST /
+two-stage NEAREST→LANCZOS / LANCZOS+unsharp / ESRGAN on the worst case (64px Cat) and a typical one
+(128px Bear), scoring mean outline gradient and inspecting each:
+
+| method | 64px Cat | 128px Bear | verdict |
+|---|---|---|---|
+| LANCZOS (old default) | 21.7 | 31.5 | **zero** strong-edge pixels — outline erased |
+| BICUBIC | 21.9 | — | same class |
+| NEAREST | 107.4 | — | sharp but visibly **staircased** curves |
+| 2/4/8×-then-LANCZOS | 30–54 | — | progressively blockier, no sweet spot |
+| **ESRGAN (Remacri, on the box)** | **109.8** | **120.7** | **crisp AND smooth — chosen** |
+
+The box only has a general-purpose Remacri, not an anime/line-art model, and it is still decisively
+better. `--upscale lanczos` is retained for A/B, and the prep **falls back to LANCZOS automatically**
+if ComfyUI is unreachable so it never hard-fails on a box outage.
+
+**Scale normalised on the longer side** to 0.85 of the frame, aspect preserved — achieved
+**0.848 ± 0.0009** (min 0.846, max 0.849) on the smoke set.
+
+**Two plan errors in my own acceptance criteria, corrected in place ([I10](issues.md#i10)):** the
+gradient criterion would have selected staircased NEAREST, and the "bbox area = 0.80" criterion is
+geometrically unsatisfiable without distorting animals.
+
+**A silent no-op bug, found only by measuring ([I11](issues.md#i11)):** scale normalisation did
+nothing for the whole corpus because of two stacked alpha traps — `getbbox()` on RGBA counts any
+non-zero channel, and the corpus's transparent background is alpha ≈ 3 rather than 0. The output
+looked plausible throughout; only checking the *achieved* fraction exposed it.

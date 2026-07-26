@@ -141,3 +141,31 @@ it. Restates [I7](#i7) with the numbers reversed as starkly as they can be.
 
 Practical rule: **for a species with no corpus twin, do not trust `d_aspect`** — neither for gating
 nor for choosing a control. The human is the filter there, as the README commits.
+
+## I10 — Two of my own acceptance criteria were wrong (plan errors, corrected in place)
+
+**"higher outline gradient magnitude" is a bad proxy for a better upscale.** It is maximised by
+`NEAREST` (107.4 vs LANCZOS 21.7) — which produces visibly *staircased* curves, worse art than a
+soft edge. The metric rewards hard pixel steps, not crisp smooth boundaries. Kept as *one* input
+and paired with a visual check; ESRGAN won on both (109.8 **and** smooth curves), so the decision
+stands, but the criterion alone would have chosen NEAREST.
+
+**"alpha-bbox area / frame area = 0.80 ± 0.03" is unsatisfiable while preserving aspect.** Area is
+`w·h`; a long low wolf (aspect ~2.1) and a tall front view (aspect ~0.4) cannot both hit a fixed
+area fraction unless one is *distorted*. Replaced with **longer-side normalisation** — every subject's
+longer dimension is 0.85 of the frame — which gives consistent on-screen presence with aspect intact.
+Achieved: **0.848 ± 0.0009**.
+
+## I11 — Scale normalisation was silently a no-op: two stacked alpha traps
+
+The first implementation measured **0.70 ± 0.084** instead of a flat 0.85, and my first diagnosis was
+wrong too. Two separate traps:
+
+1. `Image.getbbox()` on **RGBA** treats a pixel as non-zero if *any* channel is — so a sprite storing
+   colour in its transparent margin reports the whole frame and never crops.
+2. Switching to the alpha channel's own `getbbox()` **still** returned the whole frame, because the
+   corpus's "transparent" background is not alpha 0 but **alpha ≈ 3**.
+
+Only thresholding the alpha (`> ALPHA_MIN = 16`) before taking the bbox fixed it. Worth noting the
+failure mode: the crop silently did nothing, the images looked plausible, and only measuring the
+achieved fraction exposed it. A visual check would have passed this bug.

@@ -21,8 +21,8 @@ every later comparison is scored by it.
 
 ## P2 — Fix the training data (the biggest single lever)
 
-- [ ] Replace LANCZOS in `prep_train.py` with an edge-preserving upscale. Acceptance: a 64px `Cat` at 768 shows higher mean outline gradient magnitude than the LANCZOS version; both images saved for comparison.
-- [ ] Normalise subject scale so every sprite fills a fixed fraction of the frame. Acceptance: alpha-bbox area / frame area is 0.80 ±0.03 for every prepped image.
+- [x] Replace LANCZOS in `prep_train.py` with an edge-preserving upscale. Acceptance: a 64px `Cat` at 768 shows higher mean outline gradient magnitude than the LANCZOS version; both images saved for comparison.
+- [x] Normalise subject scale so every sprite fills a fixed fraction of the frame. Acceptance: alpha-bbox area / frame area is 0.80 ±0.03 for every prepped image.
 - [ ] Rebuild the training set and report the before/after distribution. Acceptance: `fill` standard deviation across the corpus drops below 0.02, stated in `completed.md`.
 - [ ] Spot-check 6 rebuilt sprites against their sources for artefacts. Acceptance: 6 side-by-side pairs saved; no halo, clipping, or aspect distortion found, or the defect is logged in `issues.md`.
 
