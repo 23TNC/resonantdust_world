@@ -67,8 +67,7 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
 
 ## P8 — Cut the corridor walk ([I30](issues.md#i30), [F11](forks.md#f11))
 - [x] Replace the 5-tile cross pad with a supercover DDA visiting each crossed tile once.
-      Acceptance: corridor↔brute identity still 0 mismatches; bucket fetches down ~59%.
-      Met identity (0 over 102,442 non-zero texels); fetches down 52.3% not 59% — see [D-1](deviations.md#d-1).
+      Acceptance: 0 mismatches (met, over 102,442 texels); fetches −52.3% not 59% ([D-1](deviations.md#d-1)).
 - [ ] Re-measure the moving-light curve after the DDA.
       Acceptance: the 16-mover case beats 55.4 fps at the same dirty-tile count.
 - [ ] Measure `casterOne`'s per-light cull hit-rate before attempting a union walk.
