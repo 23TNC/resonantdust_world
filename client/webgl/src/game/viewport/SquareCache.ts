@@ -23,16 +23,17 @@ import { Renderer, RenderTarget, Program, Geometry, Texture, TexFrame } from "..
 import { MrtBakeShader } from "./mrtBakeShader";
 import type { PackedChannel } from "./material";
 import {
+  lodForZoom,
   mod,
-  OVERSCAN,
   sameRange,
+  SLOTS_X,
+  SLOTS_Y,
   SQUARE,
   squaresForAABB,
   squareWorldX,
   squareWorldY,
   type SquareRange,
 } from "./squareMath";
-import { ZOOM_MAX } from "../../textures/lod";
 
 /** A renderable occupant of the map. Baked into every square its AABB overlaps. */
 export interface Primitive {
@@ -105,8 +106,9 @@ interface PrimEntry {
 
 const sqKey = (c: number, r: number): string => `${c},${r}`;
 
-const SIZE_STEP = 4;
-const RESERVE_CSS = 2 * (OVERSCAN + 1) * SQUARE * ZOOM_MAX;
+// SIZE_STEP + RESERVE_CSS are RETIRED: the buffers no longer derive from the screen, so there is
+// nothing to quantise and nothing to reserve. The grid is SLOTS_X × SLOTS_Y tiles-worth of texels at
+// every zoom (work 2026-07-26-textile-slot).
 const PRIO_HIGH = 0;
 const PRIO_STD = 256;
 const RING_MAX = 255;
@@ -171,6 +173,8 @@ export class SquareCache {
   private viewW = 0;
   private viewH = 0;
   private slotPx = SQUARE;
+  /** Current lod (0..3). `-1` = unpartitioned. `cols`/`rows`/`slotPx` all derive from it. */
+  private lod = -1;
 
   private winCol = 0;
   private winRow = 0;
@@ -249,30 +253,35 @@ export class SquareCache {
   }
 
   /** The toroidal tile window geometry — for a sibling world-space toroidal map (shadow-cold) that must
-   *  align tile-for-tile with this cache: `cols`/`rows` tiles (incl. `OVERSCAN`), the window origin
-   *  (`winCol`/`winRow`, in world tiles), and the atlas slot px. */
-  get window(): { winCol: number; winRow: number; cols: number; rows: number; slotPx: number } {
-    return { winCol: this.winCol, winRow: this.winRow, cols: this.cols, rows: this.rows, slotPx: this.slotPx };
+   *  align tile-for-tile with this cache: `cols`/`rows` tiles (`SLOTS << lod`, incl. overscan), the window
+   *  origin (`winCol`/`winRow`, in world tiles), the per-tile texel size (`SQUARE >> lod`) and the `lod`
+   *  itself — siblings need the lod to derive THEIR own per-tile size from their own texels-per-slot. */
+  get window(): { winCol: number; winRow: number; cols: number; rows: number; slotPx: number; lod: number } {
+    return { winCol: this.winCol, winRow: this.winRow, cols: this.cols, rows: this.rows, slotPx: this.slotPx, lod: Math.max(0, this.lod) };
   }
 
   // ── sizing ───────────────────────────────────────────────────────────────────
   resize(screenW: number, screenH: number, zoom: number, anchorX: number, anchorY: number): void {
     if (screenW <= 0 || screenH <= 0) return;
-    this.ensureBuffers(screenW, screenH);
+    this.ensureBuffers();
 
-    const worldW = screenW / zoom;
-    const worldH = screenH / zoom;
-    this.viewW = worldW;
-    this.viewH = worldH;
-    const units = (extent: number): number =>
-      Math.ceil(Math.ceil(extent / SQUARE) / SIZE_STEP) * SIZE_STEP + 2 * OVERSCAN;
-    const cols = units(worldW);
-    const rows = units(worldH);
-    const slotPx = Math.max(1, Math.min(Math.floor(this.fixedCW / (cols + 2)), Math.floor(this.fixedCH / (rows + 2))));
-    if (cols === this.cols && rows === this.rows && slotPx === this.slotPx && this.aimed) return;
+    // FIXED SLOT GRID (work 2026-07-26-textile-slot). The texture never changes size; what varies with
+    // zoom is TILES PER SLOT. A slot is SQUARE texels and holds `2^lod` tiles per axis, so the tile grid
+    // is `SLOTS << lod` tiles at `SQUARE >> lod` texels each — and those multiply back to the SAME
+    // `SLOTS · SQUARE` texels at every lod. That identity is why the rest of this class is unchanged:
+    // it is still "a uniform grid of `cols × rows` tiles at `slotPx` texels", just with both derived
+    // from the lod ladder instead of from the screen.
+    const lod = lodForZoom(zoom);
+    const cols = SLOTS_X << lod;
+    const rows = SLOTS_Y << lod;
+    const slotPx = SQUARE >> lod;
+    this.viewW = cols * SQUARE;
+    this.viewH = rows * SQUARE;
+    if (lod === this.lod && this.aimed) return;
 
-    // Re-partition: clear buffers + re-bake the whole window (no reproject — simplified W4c).
+    // Re-partition. TODO(P3): reproject instead of clearing — this is the zoom flash ([I5]).
     for (const ch of this.channels) ch.buf!.clear(0, 0, 0, 1);
+    this.lod = lod;
     this.cols = cols;
     this.rows = rows;
     this.slotPx = slotPx;
@@ -285,20 +294,25 @@ export class SquareCache {
     this.slotOwnerRow = new Int32Array(cols * rows);
     this.slotBaked = new Uint8Array(cols * rows);
     this.dirty.clear();
-    // Aim the window on the anchor + dirty the whole grid (recenter will no-op).
-    this.winCol = Math.floor((anchorX - worldW / 2) / SQUARE) - OVERSCAN;
-    this.winRow = Math.floor((anchorY - worldH / 2) / SQUARE) - OVERSCAN;
+    // Aim the window on the anchor + dirty the whole grid (recenter will no-op). The window ALREADY
+    // carries its overscan (SLOTS = VISIBLE + 2·OVERSCAN), so centring the whole grid on the anchor is
+    // what puts the slack on every edge — no separate OVERSCAN term.
+    this.winCol = Math.floor(anchorX / SQUARE) - (cols >> 1);
+    this.winRow = Math.floor(anchorY / SQUARE) - (rows >> 1);
     this.aimed = true;
     this.markStale();
   }
 
-  private ensureBuffers(screenW: number, screenH: number): void {
-    const cw = Math.ceil(screenW + RESERVE_CSS);
-    const ch = Math.ceil(screenH + RESERVE_CSS);
+  /** The channel buffers are a FIXED `SLOTS_X·SQUARE × SLOTS_Y·SQUARE` (3072×2048) — sized in TILES, not
+   *  in screen px, so they never resize and never track the player's monitor. */
+  private ensureBuffers(): void {
+    const cw = SLOTS_X * SQUARE;
+    const ch = SLOTS_Y * SQUARE;
     if (this.channels[0]?.buf && cw === this.fixedCW && ch === this.fixedCH) return;
     this.fixedCW = cw;
     this.fixedCH = ch;
     for (const channel of this.channels) channel.ensureBuffer(cw, ch, this.gl);
+    this.lod = -1;
     this.cols = 0;
     this.rows = 0;
     this.slotPx = 0;
@@ -309,8 +323,9 @@ export class SquareCache {
   // ── window ────────────────────────────────────────────────────────────────────
   recenter(anchorWorldX: number, anchorWorldY: number): void {
     if (!this.mrtScratch) return;
-    const newCol = Math.floor((anchorWorldX - this.viewW / 2) / SQUARE) - OVERSCAN;
-    const newRow = Math.floor((anchorWorldY - this.viewH / 2) / SQUARE) - OVERSCAN;
+    // Centre the whole tile grid on the anchor — the grid already carries its overscan.
+    const newCol = Math.floor(anchorWorldX / SQUARE) - (this.cols >> 1);
+    const newRow = Math.floor(anchorWorldY / SQUARE) - (this.rows >> 1);
     if (this.aimed && newCol === this.winCol && newRow === this.winRow) return;
     this.winCol = newCol;
     this.winRow = newRow;

@@ -17,7 +17,7 @@ import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
 import { ColdShadowData, N_LIGHTS } from "./coldShadowData";
-import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_SQUARE } from "./squareMath";
+import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_SQUARE, SLOTS_X, SLOTS_Y } from "./squareMath";
 
 /** lightmap P1 Step B: the fine lightmap is TEXTILE_SQUARE/tile; the shadow map stays TEXTILE_UNIT/tile.
  *  This ratio maps a fine light texel to its coarse shadow texel (`fc / FINE_RATIO`) — the per-light shadow
@@ -103,8 +103,11 @@ const BILLBOARD_SLOTS = TILE_SLOTS;
 export interface TileWindow {
   winCol: number;
   winRow: number;
+  /** Tiles across/down = `SLOTS << lod`. Grows with zoom-out; the TEXTURES do not. */
   cols: number;
   rows: number;
+  /** Current lod 0–3. Siblings derive their own per-tile texel size as `texelsPerSlot >> lod`. */
+  lod: number;
 }
 
 /** Shared GLSL: packed-position decode + ground projection + the fan region predicate (roles → tris). */
@@ -546,7 +549,9 @@ const int FINE = ${FINE_RATIO};        // fine light texels per coarse shadow te
 void main() {
   // Same window mapping as the shadow gather (constants row): fc → toroidal slot → world tile → P.
   uvec4 C0 = fetchLin(uData, CONST_BASE);
-  int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0xFFFFu);
+  // G = u16 rows | u2 lod (14–15) | u14 slot (0–13) — mask the lod OFF the slot (textile-slot P2).
+  int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0x3FFFu);
+  int uLod = int((C0.y >> 14) & 3u);
   int uWinCol = int(C0.z) >> 16, uWinRow = (int(C0.z) << 16) >> 16;
   int uSlotF = uSlot * FINE;                                   // this map is FINE (TEXTILE_SQUARE/tile); shadow stays coarse
   ivec2 fc = ivec2(gl_FragCoord.xy);                           // FINE light texel
@@ -662,7 +667,9 @@ void main() {
   // P3/v2.1: window mapping from the CONSTANTS px (R = id|cols, G = rows|slot,
   // B = i16 winCol | i16 winRow — sign-extended halves). Updated through the command path.
   uvec4 C0 = fetchLin(uData, CONST_BASE);
-  int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0xFFFFu);
+  // G = u16 rows | u2 lod (14–15) | u14 slot (0–13) — mask the lod OFF the slot (textile-slot P2).
+  int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0x3FFFu);
+  int uLod = int((C0.y >> 14) & 3u);
   int uWinCol = int(C0.z) >> 16, uWinRow = (int(C0.z) << 16) >> 16;
   ivec2 fc = ivec2(gl_FragCoord.xy);
   int sx = fc.x / uSlot, sy = fc.y / uSlot;                 // toroidal slot
@@ -1389,7 +1396,11 @@ export class ShadowGather {
     this.coldShadowRT?.destroy(); this.hotShadowRT?.destroy();
     this.coldLightRT?.destroy(); this.hotLightRT?.destroy();
     const gl = this.renderer.gl;
-    const w = Math.max(1, cols * TEXTILE_UNIT), h = Math.max(1, rows * TEXTILE_UNIT);
+    // FIXED SLOT GRID (work 2026-07-26-textile-slot): these ride the SAME 24×16 slot grid as the
+    // G-buffer, each at its own texels-per-slot. Size is `SLOTS · texelsPerSlot` and is CONSTANT at every
+    // zoom — it does NOT scale with `cols`, which is now `SLOTS << lod`. Per-TILE resolution degrades
+    // with lod instead (`texelsPerSlot >> lod`), which is what stops the lightmap tracking zoom.
+    const w = SLOTS_X * TEXTILE_UNIT, h = SLOTS_Y * TEXTILE_UNIT;
     // Shadow — MRT [0] per-light u9 coverage, [1] frontmost caster row (#3). One RT per class; clear both
     // attachments to 0 (known-zero persistence baseline, P3).
     this.coldShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
@@ -1402,8 +1413,9 @@ export class ShadowGather {
     // Lightmap — lightmap P1 Step B: a FINE (TEXTILE_SQUARE/tile) single-attachment map holding the fully
     // accumulated per-light irradiance (Σ colour·falloff·(1−shadow)·N·L). 4× per axis of the coarse shadow;
     // att1 (aggregate dir) + att2 (unshadowed) are gone — subsumed by baking N·L (F5). NO ambient baked (the
-    // blit adds it once over cold+hot). fw/fh = cols/rows · TEXTILE_SQUARE.
-    const fw = Math.max(1, cols * TEXTILE_SQUARE), fh = Math.max(1, rows * TEXTILE_SQUARE);
+    // blit adds it once over cold+hot). On the fixed grid this is `SLOTS · TEXTILE_SQUARE` = 3072×2048,
+    // constant — it was `cols · TEXTILE_SQUARE` (world-sized), which is what made it 176 MB at zoom 0.25.
+    const fw = SLOTS_X * TEXTILE_SQUARE, fh = SLOTS_Y * TEXTILE_SQUARE;
     this.coldLightRT = new RenderTarget(gl, { width: fw, height: fh, formats: ["rgba8unorm"] });
     this.hotLightRT = new RenderTarget(gl, { width: fw, height: fh, formats: ["rgba8unorm"] });
     for (const rt of [this.coldLightRT, this.hotLightRT]) {
@@ -1440,7 +1452,11 @@ export class ShadowGather {
     this.ensureRT(win.cols, win.rows);
     // P3: the window mapping rides the data texture's constants row (compare-written — an
     // unchanged window costs nothing), through the same scatter path as every other write.
-    this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, TEXTILE_UNIT, this.coldData.lights, Math.round(this.worldTiltDeg * 100));
+    // `slot` is the unit family's per-TILE texel size at this lod. The RT is a fixed SLOTS·TEXTILE_UNIT,
+    // and `cols` is SLOTS << lod, so texels-per-tile must shrink by the same factor for `fc / uSlot` to
+    // keep addressing tiles: TEXTILE_UNIT >> lod. `win.lod` rides along so shaders read one mapping.
+    this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, TEXTILE_UNIT >> win.lod,
+                               this.coldData.lights, Math.round(this.worldTiltDeg * 100), win.lod);
     // ORDER IS LOAD-BEARING: casters BEFORE presence. `buildCasters` DISCOVERS content-carried lights
     // and queues their dirty rects; `buildDirty` (below) consumes those rects and `classPass` bakes the
     // tiles. If presence ran first it would still hold the OLD light set, so those tiles bake WITHOUT

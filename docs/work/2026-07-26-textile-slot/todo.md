@@ -16,13 +16,13 @@ must assert a **non-zero population on both sides** — "0 mismatches" is satisf
       Acceptance: a named aspect, with the visible-slot count at that aspect.
 
 ## P1 — Fix the slot grid
-- [ ] Raise `SQUARE` 64 → 128 and fix the grid at 24×16 slots (20×12 visible).
+- [x] Raise `SQUARE` 64 → 128 and fix the grid at 24×16 slots (20×12 visible).
       Acceptance: every map's dims are constant across a full zoom sweep.
-- [ ] Replace the screen-derived channel sizing with the fixed 3072×2048 square-family texture.
+- [x] Replace the screen-derived channel sizing with the fixed 3072×2048 square-family texture.
       Acceptance: `ensureBuffers` no longer reads `screenW`/`screenH`.
 - [ ] Implement the cover fit `s = max(W/2560, H/1536)` and centre the result.
       Acceptance: 2560×1536→s=1; 2560×768→s=1 showing 20×6 slots; 4K→s=1.5.
-- [ ] Move the light + shadow RTs onto the shared grid at their own densities.
+- [x] Move the light + shadow RTs onto the shared grid at their own densities.
       Acceptance: lightmap 3072×2048, shadow 384×256, both zoom-invariant.
 
 ## P2 — Publish the mapping as constants
