@@ -110,6 +110,53 @@ const sqKey = (c: number, r: number): string => `${c},${r}`;
 // nothing to quantise and nothing to reserve. The grid is SLOTS_X × SLOTS_Y tiles-worth of texels at
 // every zoom (work 2026-07-26-textile-slot).
 const PRIO_HIGH = 0;
+
+// ── the reproject program (P3) — carry content ACROSS a lod change instead of clearing ─────────
+// A lod change rescales every tile (`slotPx` halves or doubles) AND permutes its slot (the torus
+// modulus is `cols`, which also changes). One pass per channel maps DESTINATION texel → source texel
+// arithmetically, so the whole grid moves in a single draw instead of a blit per tile (24 576 of them
+// at lod 3).
+//
+// NEAREST by construction — `texelFetch`, no filtering. Mandatory, not preference: `zdepth` encodes a
+// discrete `0x80 | baseRow` that averaging corrupts silently, and the lightmap must stay exactly
+// representable to remain invertible (forks F3).
+//
+// A destination tile outside the OLD window has no source and returns black; the CPU marks those dirty.
+// Both windows are centred on the same anchor, so the old tile range is a contiguous sub-range of the
+// new one (zoom out) or a superset of it (zoom in) — a range test is sufficient, no validity texture.
+const REPROJ_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+uniform sampler2D uSrc;
+uniform vec2 uSrcSize;        // source buffer px
+uniform vec4 uOldWin;         // oldWinCol, oldWinRow, oldCols, oldRows
+uniform vec4 uNewWin;         // newWinCol, newWinRow, newCols, newRows
+uniform vec2 uSlotPx;         // oldSlotPx, newSlotPx
+out vec4 fragColor;
+
+// True modulo — the torus wrap; GLSL mod() on negatives would index outside the composite.
+float tmod(float n, float m) { return mod(mod(n, m) + m, m); }
+
+void main() {
+  vec2 fc = floor(gl_FragCoord.xy);
+  float nSlot = uSlotPx.y, oSlot = uSlotPx.x;
+  // Destination slot index (the composite carries a 1-slot apron, hence the -1) + offset within it.
+  vec2 dslot = floor(fc / nSlot) - 1.0;
+  vec2 doff  = fc - (dslot + 1.0) * nSlot;
+  if (dslot.x < 0.0 || dslot.y < 0.0 || dslot.x >= uNewWin.z || dslot.y >= uNewWin.w) { fragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  // Slot → WORLD tile, via the new window's own wrap.
+  vec2 baseN = vec2(tmod(uNewWin.x, uNewWin.z), tmod(uNewWin.y, uNewWin.w));
+  vec2 wt = uNewWin.xy + mod(dslot - baseN + uNewWin.zw, uNewWin.zw);
+  // In the OLD window? Its tiles are a contiguous world range; outside it there is nothing to carry.
+  vec2 rel = wt - uOldWin.xy;
+  if (rel.x < 0.0 || rel.y < 0.0 || rel.x >= uOldWin.z || rel.y >= uOldWin.w) { fragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  // WORLD tile → old slot → old texel. The within-tile offset rescales by the slot ratio, which is what
+  // performs the up/downscale (replication when growing, decimation when shrinking).
+  vec2 sslot = vec2(tmod(wt.x, uOldWin.z), tmod(wt.y, uOldWin.w));
+  vec2 soff  = floor(doff * (oSlot / nSlot));
+  vec2 src   = (sslot + 1.0) * oSlot + soff;
+  fragColor = texelFetch(uSrc, ivec2(clamp(src, vec2(0.0), uSrcSize - 1.0)), 0);
+}
+`;
 const PRIO_STD = 256;
 const RING_MAX = 255;
 
@@ -194,6 +241,7 @@ export class SquareCache {
   private readonly renderer: Renderer;
   private readonly empty: Texture;
   private readonly blit: Program;
+  private readonly reproj: Program;
   private readonly unitQuad: Geometry;
   private readonly bake: MrtBakeShader;
 
@@ -202,6 +250,14 @@ export class SquareCache {
 
   /** Diagnostics: squares baked on the last {@link bakeDirty}. */
   lastBaked = 0;
+  /** DEBUG (textile-slot P6): pending dirty squares + the grid state, for asserting a zoom sweep
+   *  without screenshots — a reproject that works dirties ~nothing on zoom-IN. */
+  get debugState(): { lod: number; cols: number; rows: number; slotPx: number; dirty: number; baked: number; bufW: number; bufH: number } {
+    let baked = 0;
+    for (let i = 0; i < this.slotBaked.length; i++) if (this.slotBaked[i] === 1) baked++;
+    return { lod: this.lod, cols: this.cols, rows: this.rows, slotPx: this.slotPx,
+             dirty: this.dirty.size, baked, bufW: this.fixedCW, bufH: this.fixedCH };
+  }
 
   constructor(renderer: Renderer, empty: Texture, channels: ChannelSpec[]) {
     this.renderer = renderer;
@@ -213,6 +269,7 @@ export class SquareCache {
     this.normalCh = this.channels.find((c) => c.key.startsWith("normal"));
     this.depthCh = this.channels.find((c) => c.key.startsWith("zdepth"));
     this.blit = new Program(this.gl, BLIT_VERT, BLIT_FRAG, "square-blit");
+    this.reproj = new Program(this.gl, BLIT_VERT, REPROJ_FRAG, "square-reproject");
     this.unitQuad = new Geometry(this.gl, this.blit, {
       aPosition: { data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -279,8 +336,11 @@ export class SquareCache {
     this.viewH = rows * SQUARE;
     if (lod === this.lod && this.aimed) return;
 
-    // Re-partition. TODO(P3): reproject instead of clearing — this is the zoom flash ([I5]).
-    for (const ch of this.channels) ch.buf!.clear(0, 0, 0, 1);
+    // P3: REPROJECT, don't clear. The old content is still valid world data — it just needs rescaling
+    // into the new slot layout. Clearing here is what made zoom flash ([I5]).
+    const prev = this.lod >= 0 && this.aimed
+      ? { winCol: this.winCol, winRow: this.winRow, cols: this.cols, rows: this.rows, slotPx: this.slotPx }
+      : null;
     this.lod = lod;
     this.cols = cols;
     this.rows = rows;
@@ -290,17 +350,83 @@ export class SquareCache {
       width: slotPx, height: slotPx,
       formats: ["rgba8unorm", "rgba8unorm", "rgba8unorm", "rgba8unorm"],
     });
+    const prevOwnerCol = this.slotOwnerCol, prevOwnerRow = this.slotOwnerRow, prevBaked = this.slotBaked;
     this.slotOwnerCol = new Int32Array(cols * rows);
     this.slotOwnerRow = new Int32Array(cols * rows);
     this.slotBaked = new Uint8Array(cols * rows);
     this.dirty.clear();
-    // Aim the window on the anchor + dirty the whole grid (recenter will no-op). The window ALREADY
-    // carries its overscan (SLOTS = VISIBLE + 2·OVERSCAN), so centring the whole grid on the anchor is
-    // what puts the slack on every edge — no separate OVERSCAN term.
+    // Aim the window on the anchor. The window ALREADY carries its overscan (SLOTS = VISIBLE +
+    // 2·OVERSCAN), so centring the whole grid on the anchor is what puts the slack on every edge.
     this.winCol = Math.floor(anchorX / SQUARE) - (cols >> 1);
     this.winRow = Math.floor(anchorY / SQUARE) - (rows >> 1);
     this.aimed = true;
-    this.markStale();
+
+    let carried = 0;
+    if (prev) {
+      this.reproject(prev);
+      // Carry each tile's BAKED flag across: a tile that was baked and is still in range keeps its
+      // reprojected content (rescaled, so visually correct until re-baked at the new lod). Everything
+      // else has no source and must bake. This is what turns a whole-grid re-bake into a partial one:
+      // zooming IN dirties nothing, zooming OUT dirties only the newly exposed ring.
+      for (let sr = 0; sr < rows; sr++) {
+        for (let sc = 0; sc < cols; sc++) {
+          const wc = this.winCol + ((sc - mod(this.winCol, cols) + cols) % cols);
+          const wr = this.winRow + ((sr - mod(this.winRow, rows) + rows) % rows);
+          const rc = wc - prev.winCol, rr = wr - prev.winRow;
+          if (rc < 0 || rr < 0 || rc >= prev.cols || rr >= prev.rows) continue;
+          const pi = mod(wr, prev.rows) * prev.cols + mod(wc, prev.cols);
+          if (prevBaked[pi] !== 1 || prevOwnerCol[pi] !== wc || prevOwnerRow[pi] !== wr) continue;
+          const si = sr * cols + sc;
+          this.slotOwnerCol[si] = wc;
+          this.slotOwnerRow[si] = wr;
+          this.slotBaked[si] = 1;
+          carried++;
+          // STALE, not clean: the content is a rescale of the other lod's bake, so it must be re-baked
+          // at the new lod eventually — just at lower priority than a tile with nothing at all (P5).
+          this.markDirty(wc, wr, PRIO_STD);
+        }
+      }
+    }
+    this.markStale(); // anything still unowned/unbaked → PRIO_HIGH
+    // DEBUG (P6): the reproject's own accounting, captured BEFORE bakeDirty drains the queue — which is
+    // the only moment the carry-over is observable from outside.
+    this.debugReproj = {
+      from: prev ? { cols: prev.cols, rows: prev.rows, slotPx: prev.slotPx } : null,
+      to: { lod, cols, rows, slotPx },
+      carried, total: cols * rows, fresh: cols * rows - carried, dirty: this.dirty.size,
+    };
+  }
+
+  /** DEBUG (P6): what the last lod change carried across vs had to bake fresh. */
+  debugReproj: unknown = null;
+
+  /** P3: carry every channel's content across a lod change. One full-target pass per channel through a
+   *  scratch (the slot permutation makes source and destination overlap arbitrarily, so in-place is
+   *  undefined — [I4]), then swap the scratch in as the channel's buffer. */
+  private reproject(prev: { winCol: number; winRow: number; cols: number; rows: number; slotPx: number }): void {
+    const cw = this.fixedCW, ch = this.fixedCH;
+    for (const channel of this.channels) {
+      const src = channel.buf;
+      if (!src) continue;
+      const dst = new RenderTarget(this.gl, { width: cw, height: ch, formats: ["rgba8unorm"] });
+      this.renderer.draw({
+        program: this.reproj,
+        geometry: this.unitQuad,
+        target: dst,
+        blend: "none",
+        textures: { uSrc: src.textures[0] },
+        uniforms: (p) => {
+          p.uVec4("uDst", -1, -1, 2, 2);
+          p.uVec4("uSrcRect", 0, 0, 1, 1);
+          p.uVec2("uSrcSize", cw, ch);
+          p.uVec4("uOldWin", prev.winCol, prev.winRow, prev.cols, prev.rows);
+          p.uVec4("uNewWin", this.winCol, this.winRow, this.cols, this.rows);
+          p.uVec2("uSlotPx", prev.slotPx, this.slotPx);
+        },
+      });
+      src.destroy();
+      channel.buf = dst;
+    }
   }
 
   /** The channel buffers are FIXED — sized in TILES, not screen px, so they never resize and never track

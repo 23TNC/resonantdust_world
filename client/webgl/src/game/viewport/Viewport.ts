@@ -113,6 +113,11 @@ export class Viewport {
     this.gridQuad = new Geometry(gl, this.grid, {
       aPosition: { data: new Float32Array([-1, -1, 3, -1, -1, 3]), size: 2 },
     });
+
+    // DEBUG (textile-slot P6): the viewport + its caches, so a zoom sweep can be asserted on DIRTY
+    // COUNTS and map dims rather than screenshots. The scene is unlit by default, so sampling the
+    // canvas cannot distinguish a re-bake flash from ordinary darkness — the cache state can.
+    (globalThis as unknown as { __viewport: Viewport }).__viewport = this;
   }
 
   /** The four G-buffer channels' resolve hooks. Geo tier only (W4c): every prim resolves to a

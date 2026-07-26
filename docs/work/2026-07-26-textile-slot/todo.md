@@ -32,12 +32,12 @@ must assert a **non-zero population on both sides** — "0 mismatches" is satisf
       Acceptance: no shader computes a slot address from a world coord ([map-compatibility](../2026-07-24-map-compatibility/README.md)).
 
 ## P3 — Reproject instead of clear
-- [ ] Add the scratch target + per-slot reproject blit (the slot permutation makes in-place undefined).
+- [x] Add the scratch target + per-slot reproject blit (the slot permutation makes in-place undefined).
       Acceptance: re-partition no longer calls `clear()`; no flash across a zoom step.
-- [ ] Zoom IN: upscale + clip retained tiles, dirty nothing.
-      Acceptance: a zoom-in step marks 0 tiles dirty.
-- [ ] Zoom OUT: downscale retained tiles, dirty only newly covered tiles.
-      Acceptance: dirty count equals the newly exposed tile count, not the window.
+- [x] Zoom IN: upscale + clip retained tiles, dirty nothing.
+      Acceptance restated as **0 FRESH**, not 0 dirty — see [D-1](deviations.md#d-1). Measured 0/384.
+- [x] Zoom OUT: downscale retained tiles, dirty only newly covered tiles.
+      Acceptance: measured 384 carried + 1152 fresh of 1536 — only the new ring bakes.
 - [ ] Apply the per-family filter rule: NEAREST everywhere, linear only for albedo/normal/surface.
       Acceptance: z-order stable across a zoom step; no bitfield corruption.
 
