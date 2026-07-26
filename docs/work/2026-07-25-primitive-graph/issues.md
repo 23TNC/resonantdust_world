@@ -439,3 +439,49 @@ Combined, walking the union once instead of per-light is **~77%** fewer bucket f
 currently reject candidates *inside* the per-light walk, i.e. for free. Union-gathering pulls in casters
 irrelevant to most lights and rejects them later — fetches down, cull evaluations up. Net effect depends
 on the cull hit-rate, unmeasured. The DDA carries no such uncertainty.
+
+### I30 — the cross pad is LOAD-BEARING; exact DDA under-covers. RESOLVED 2026-07-26 (52.3%, identity holds)
+The claim above — "the pad is pure loss, a supercover DDA visits each crossed tile exactly once" — was
+**half wrong**, and the identity check caught it. Reasoning was: `buildCasters` already buckets a caster into
+EVERY tile its ground footprint spans (rows topY..baseY, tight-bbox cols — I-7), so the pad can only be
+covering SAMPLING misses, which an exact DDA has none of. Measured, an exact pad-free DDA **under-covers**:
+
+| | mismatches | corridor-only | brute-only | both non-zero, differ |
+|---|---|---|---|---|
+| exact DDA, no pad | 1984 | **0** | **1792** | 192 |
+| DDA + perpendicular dilation | **0** | 0 | 0 | 0 |
+
+The direction is diagnostic: **zero** texels where the corridor finds shadow brute misses, 1792 the other way.
+So the pad is not sampling slack — a caster is bucketed by its **tight-bbox** ground cover while `casterCover`
+tests a **wider projected extent**, so a caster registered in tile T can occlude a ray through T±1.
+
+**What IS redundant is dilating ALONG the ray:** consecutive walk tiles already supply each other's ±1 on the
+dominant axis. Dilating only PERPENDICULAR to the dominant axis (3 fetches/tile, not 5) keeps the cover
+conservative and holds identity at **0 mismatches over 102,442 non-zero texels**. Measured saving over the 12
+live lights: 115,680 → 55,224 fetches = **52.3% fewer (2.09x)**, vs the ~59% the pad-free ideal promised.
+
+**Method note — the first identity run was VACUOUS and reported a false pass.** It read 0 mismatches while
+BOTH buffers were entirely zero: no kind emits light since the flora revert, so `carriedLights` was 0 and
+there was nothing to cast. A shadow identity check MUST assert a non-zero population on both sides. Re-ran
+through `__torch()` with 12 lights spread across the standing set.
+
+### I31 — the fine lightmap is ~10x OVERSAMPLED at zoom 0.25 (open, and it gates F11b)
+Measured at `zoom=0.25`: window 124×60 tiles, lightmap **64 texels per tile per axis** (one texel per world
+px) → RT **7936×3840 = 30.5M texels**, against a **2560×1172** canvas. That is **3.10x** and **3.28x** per
+axis, **10.2x** the texels the screen can show.
+
+The excess is entirely a zoom-out artifact: the tile window grows as zoom shrinks while texels-per-tile stays
+pinned at 64. At zoom 1 the window is ~40×19 tiles and the lightmap lands at ~1:1, which is why this never
+showed up. The shadow RT is unaffected (16/tile/axis = 1984×960).
+
+**Two consequences:**
+1. **Memory** — it is what makes `RGBA32F` cost 465 MB instead of ~30 MB, so it is a **prerequisite for
+   F11b**, not an optimisation ([forks.md](forks.md)).
+2. **Fill rate, and this is the suspected mover cliff.** The bake shades dirty AREA, so at zoom 0.25 it shades
+   ~10 texels per visible pixel. That is the leading candidate for the 16 lights → 55 fps / 32 → 34 fps curve,
+   and it is a far bigger lever than the DDA's 2.09x. NOT yet confirmed as the dominant term — measure before
+   claiming it.
+
+**Fix direction:** make texels-per-tile track SCREEN density rather than world px (≈ `64 × zoom`, clamped),
+so the lightmap stays ~1:1 with the canvas at every zoom. Consistent with the existing invalidation model —
+a zoom change already forces a full rebuild.
