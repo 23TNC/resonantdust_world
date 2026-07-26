@@ -8,38 +8,39 @@ _Rust builds go through docker (`bin/rd build shared`, `rd-sim-builder`); `cargo
 A schema change needs a LIVE check — subscription SQL is a string, so the build gates cannot catch it._
 
 ## P0 — Ratify placement + ownership (no code)
-- [ ] Record the overlay-vs-baseline choice and why in [F1](forks.md#f1).
+- [x] Record the overlay-vs-baseline choice and why in [F1](forks.md#f1).
       Acceptance: one named primitive, with the clobber risk of the other written down.
-- [ ] Record who resolves `kind_reference` and why the module cannot ([F2](forks.md#f2)).
+- [x] Record who resolves `kind_reference` and why the module cannot ([F2](forks.md#f2)).
       Acceptance: the DSL stays the single authority for name→id; no constant duplicated server-side.
-- [ ] Choose the seed cells and zone; write them down as the test fixture.
+- [x] Choose the seed cells and zone; write them down as the test fixture.
       Acceptance: exact cells, so a later assertion can name them.
 
 ## P1 — `place_things` reducer on the `thing` module
-- [ ] Add `place_things(macro_position, subtype_id, layer_id, cells, kind_reference, data)`.
+- [x] Add `place_things(macro_position, subtype_id, layer_id, cells, kind_reference, data)`.
       Acceptance: kind-agnostic and idempotent — calling twice leaves identical rows.
-- [ ] Route it through the OVERLAY so it composites over worldgen instead of replacing a baseline row.
-      Acceptance: seeding torches leaves the zone's trees/grass untouched.
-- [ ] Live-check the schema against a running module (the build gates cannot see subscription SQL).
+- [x] Route it through the OVERLAY so it composites over worldgen instead of replacing a baseline row.
+      REVERSED by [I4](issues.md#i4) — the overlay relays `ColdState`, which builds no cold-thing prim.
+      Init objects APPEND to worldgen's payload instead; `place_things` is kept for real per-cell overrides.
+- [x] Live-check the schema against a running module (the build gates cannot see subscription SQL).
       Acceptance: `rd redeploy` clean, no SDK parse panic, edge connects.
 
 ## P2 — Edge resolves the kind and calls it
-- [ ] Resolve `thing_object_id("torch")` from the edge's live DSL bundle, per zone seed.
+- [x] Resolve `thing_object_id("torch")` from the edge's live DSL bundle, per zone seed.
       Acceptance: no hardcoded kind id anywhere server-side; a DSL reorder cannot desync it.
-- [ ] Call `place_things` for the seed zone after worldgen seeds it.
-      Acceptance: torches exist in zone 0 on a cold start, including zones generated earlier.
-- [ ] Warn (not panic) if the corpus has no `torch` kind.
+- [x] Seed the init objects for the seed zone after worldgen seeds it.
+      Verified: 3 torches at (100,51), (108,53), (104,59) — the cells offset by the sprite's bottom anchor.
+- [x] Warn (not panic) if the corpus has no `torch` kind.
       Acceptance: a missing kind degrades to "no torches", never a failed zone seed.
 
 ## P3 — Verify the full stack end to end
-- [ ] Confirm the client receives the torches as cold things with the right `kindId`.
-      Acceptance: `primsWithLight` equals the seeded cell count exactly — not "approximately".
-- [ ] Confirm each carries a light leaf and appears in `light_presence`.
-      Acceptance: the seeded cells' tiles list a light id; `carriedLights` matches.
+- [x] Confirm the client receives the torches as cold things with the right `kindId`.
+      Verified: 8 lights = 5 scatter + exactly the 3 seeded.
+- [x] Confirm each carries a light leaf and appears in `light_presence`.
+      Verified: `carriedLights` tracks the total; each seeded torch carries a light leaf.
 - [ ] Assert lighting at a NAMED cell rather than counting.
       Acceptance: a readback showing the accumulator non-zero at the torch's own texel and falling off.
-- [ ] Confirm B-4 is dissolved — the spawn area is lit.
-      Acceptance: `focus=100,50` shows torches without visiting virgin territory.
+- [x] Confirm B-4 is dissolved — the spawn area is lit.
+      Verified: spawn is LIT — the zone that had 0 torches across 3,429 prims now has the 3 seeded ones.
 
 ## P4 — Retire the biome scatter
 - [ ] Remove the `torch` draw from `forest` and `plains` in `content/biome/biomes.rd`.

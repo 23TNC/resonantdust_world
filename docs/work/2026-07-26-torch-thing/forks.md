@@ -2,7 +2,15 @@
 
 _Decisions, with the option not taken and why. Chronological append._
 
-### F1 — OVERLAY (`set_thing`-style), not BASELINE (`seed`) — proposed
+### F1 — OVERLAY, not BASELINE — REVERSED 2026-07-26: append to the baseline payload instead
+**Reversed by [I4](issues.md#i4).** The overlay relays `ColdState` (the per-entity frame) while the scatter
+relays `ColdThing` (the frame that builds a cold-thing prim and attaches its light) — so an overlay write
+cannot produce a lit thing today. Init objects now **append** a `(subtype 0, entries)` bucket into worldgen's
+`layers.things` before the seed loop. Appending rather than replacing addresses this fork's original concern
+(not clobbering the zone's trees) without leaving the proven read path. `place_things` is kept: it is the
+correct primitive for a genuine per-cell override, and a world editor will want it.
+
+<details><summary>F1 as originally decided</summary>
 The `thing` module has two write primitives and only one is safe here.
 
 **`seed(macro_position, subtype_id, layer_id, things)` replaces a whole baseline row.** It builds one
@@ -16,6 +24,8 @@ exactly "put a torch on this cell, leave the terrain alone". `set_thing` already
 (and uses `kind_reference == 0` as a removal override, which a future "extinguish/remove torch" wants).
 
 **Taken: overlay.** `place_things` is a batched sibling of `set_thing` rather than a variant of `seed`.
+
+</details>
 
 **Cost, accepted:** the overlay is described as the path for *player mutations* while this is trusted
 server-side placement, so it slightly blurs that distinction. The alternative — teaching `seed` to merge

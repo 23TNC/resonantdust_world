@@ -48,3 +48,37 @@ runtime with an SDK parse panic. Also, a stale DEPLOYED module produces the same
 So [P1](todo.md) carries an explicit live-check item: `rd redeploy`, confirm the edge connects, no parse
 panic. Related standing trap: in-docker/WSL2 builds sometimes skip recompiling an edited file (reports
 `Finished` with no `Compiling` and leaves a stale binary) — `touch` a source file to force it.
+
+### I4 — the OVERLAY relays `ColdState`, not `ColdThing`, so it cannot make a lit thing (2026-07-26)
+[F1](forks.md#f1) chose the overlay because `seed` replaces a whole baseline row and would erase the zone's
+trees. That reasoning was right; the conclusion was wrong, for a reason I did not check: **the two storage
+paths relay different message types.**
+
+- baseline → `ColdThing { zone, subtype_id, layer_id, tic, things }` — the batched scatter frame that
+  `onColdThings` consumes, where `.light` is attached via `lightFor(kindId)`.
+- overlay → `ColdState { entity_reference, position_reference, definition_reference, … }` — the per-ENTITY
+  frame, handled by the entity/mover path, which never builds a cold-thing prim.
+
+Symptom: the write succeeded at every server layer — `place_things` ran, the overlay row existed with the
+right cells and kind, the subscription covered the zone — and the client showed nothing. I chased a
+subscribe-timing race and an `on_applied` replay gap (real, and worth keeping: the subscription asks for
+`overlay` but `on_applied` only replayed `entity_state`, so pre-existing overrides were never sent) before
+noticing the frames were a different type entirely.
+
+**Resolved by APPENDING to worldgen's payload instead.** `append_init_objects` pushes a `(subtype 0, entries)`
+bucket into `layers.things` before the seed loop, so init objects ride the proven `ColdThing` path. Appending
+rather than replacing is what addresses F1's original concern, so nothing is lost.
+
+**Rule:** verifying a write reached the database proves nothing about whether the client can consume it. Trace
+the READ path for the specific frame type before choosing a storage primitive.
+
+### I5 — `kind_reference` is PACKED, not the raw object id (2026-07-26)
+After the append fix the torches still did not appear. The tell was in the data: every worldgen
+`kind_reference` in the table was large — 16, 36, 72, 98 — while mine was `8`.
+
+`kind_reference = pack_kind_reference(kind_id, variant_id)` = `kind_id << 4 | variant`. Decoding the
+neighbours confirms it: tree (id 1) → 16–31, shrub (2) → 32–47, flora (6) → 96–111. Passing the bare object
+id `8` decodes as **kind_id 0, variant 8** — an invalid kind, which the client silently drops.
+
+Fixed by using the existing `pack_kind_reference` helper. **The helper existed and I hand-rolled around it**;
+reading the neighbouring values in the table is what caught it, not reading the code.

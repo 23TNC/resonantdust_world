@@ -30,6 +30,7 @@ use crate::bindings;
 use crate::bindings::data_shard::entity_state_table::EntityStateTableAccess as _;
 use crate::bindings::event_shard::event_table::EventTableAccess as _;
 use crate::bindings::thing::seed as _; // reducer trait → thing.reducers().seed
+use crate::bindings::thing::place_things as _; // reducer trait → thing.reducers().place_things
 use crate::bindings::thing::entity_state_table::EntityStateTableAccess as _; // cold baseline
 use crate::bindings::thing::overlay_table::OverlayTableAccess as _; // cold override
 use crate::bindings::tile::seed as _; // reducer trait → tile.reducers().seed
@@ -42,6 +43,7 @@ use crate::connections::{
     connect_tile, Pool,
 };
 use crate::protocol::{ClientMsg, ServerMsg};
+use crate::worldgen::Worldgen;
 
 /// The per-client world upstreams: the two sim shards. `event_shard` takes the client's `queue`
 /// intents and streams settled `event` rows; `data_shard` streams composed `state` rows. Each client
@@ -505,6 +507,12 @@ fn handle_subscribe(
                 for row in ctx.db.entity_state().iter().filter(|r| r.macro_position_reference == zone) {
                     send(&o, cold_tile_frame(&row));
                 }
+                // …and the OVERLAY. The subscription asks for both tables, but replaying only the
+                // baseline means any override that PRE-DATES this subscription is silently never sent —
+                // it is subscribed, so no later callback fires for it either. See torch-thing I4.
+                for row in ctx.db.overlay().iter().filter(|r| r.macro_position_reference == zone) {
+                    relay_tile_overlay(&o, &row, false);
+                }
             })
             .subscribe([
                 format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}"),
@@ -518,6 +526,9 @@ fn handle_subscribe(
             .on_applied(move |ctx| {
                 for row in ctx.db.entity_state().iter().filter(|r| r.macro_position_reference == zone) {
                     send(&o, cold_thing_frame(&row));
+                }
+                for row in ctx.db.overlay().iter().filter(|r| r.macro_position_reference == zone) {
+                    relay_thing_overlay(&o, &row, false);
                 }
             })
             .subscribe([
@@ -549,13 +560,67 @@ fn seed_zone(pool: &Arc<Pool>, world: &World, zone: u16) {
             tracing::warn!(%err, zone, subtype_id, "tile seed failed");
         }
     }
-    for (subtype_id, things) in layers.things {
+    let mut things = layers.things;
+    append_init_objects(&worldgen, zone, &mut things);
+    for (subtype_id, things) in things {
         if let Err(err) = thing.reducers().seed(zone, subtype_id, 0, things) {
             tracing::warn!(%err, zone, subtype_id, "thing seed failed");
         }
     }
     tracing::debug!(zone, "seeded zone cold layers");
 }
+
+/// World **initial conditions** — deliberate object placements, applied when their own zone is seeded.
+///
+/// Distinct from worldgen: these are not scattered by biome or probability, they are specific objects at
+/// specific cells. That is the whole point — a torch at a known cell can be asserted about ("this tile is lit
+/// by exactly one source"), where a `0.006` scatter can only be counted and eyeballed.
+///
+/// **Provisional home.** The user's call was "wherever we seed the initial conditions, we will move them
+/// later", so this is deliberately a flat table plus a thin application: the fixture is one const and the
+/// only logic is "resolve the kind, call the reducer". Moving it to a real initial-conditions pass should be
+/// a cut-and-paste. See `docs/work/2026-07-26-torch-thing/` B-2.
+fn append_init_objects(worldgen: &Worldgen, zone: u16, things: &mut Vec<(u16, Vec<u32>)>) {
+    use resonantdust_codec::object::{pack_kind_pos_reference, pack_kind_reference};
+    for (init_zone, kind_name, cells) in INIT_OBJECTS {
+        if zone != *init_zone {
+            continue;
+        }
+        // The DSL is the ONLY authority for name→kind id. Resolved here, at the point of use, from the
+        // live (hot-reloadable) bundle — never cached and never duplicated as a server-side constant,
+        // because kind ids are append-ordered and a stale copy would silently place the wrong kind.
+        let Some(kind_id) = worldgen.bundle().thing_object_id(kind_name) else {
+            tracing::warn!(zone, kind_name, "init object kind not in corpus — skipping");
+            continue;
+        };
+        // APPENDED to worldgen's payload rather than written through the overlay ([I4]). The overlay
+        // relays as `ColdState` (the per-ENTITY frame) while the scatter relays as `ColdThing` (the
+        // batched frame `onColdThings` consumes) — and only the latter builds a cold-thing prim and
+        // attaches the kind's light. Appending keeps init objects on the proven path, and appending
+        // (rather than replacing) is what stops them clobbering the zone's trees, which was F1's actual
+        // concern about `seed`.
+        //
+        // `subtype_id = 0` is the reserved biome-agnostic subtype: an init object is not biome-derived,
+        // so it gets its own row instead of claiming a biome's.
+        // `kind_reference` is NOT the raw object id — it is `pack_kind_reference(kind_id, variant)`,
+        // i.e. `kind_id << 4 | variant`, exactly as worldgen builds it. Passing the bare object id
+        // decodes as kind_id 0 (an invalid kind) and the client silently drops the thing ([I5]).
+        let entries: Vec<u32> = cells
+            .iter()
+            .map(|&t| pack_kind_pos_reference(pack_kind_reference(kind_id, 0), t, 0))
+            .collect();
+        tracing::info!(zone, kind_name, count = entries.len(), "seeding init objects");
+        things.push((0, entries));
+    }
+}
+
+/// `(macro_position, kind name, in-zone tile_references)`.
+///
+/// The three torches sit around global tile (100, 50) — the default camera focus — which lands in zone
+/// (6, 3), so all three share `macro_position 0x0063` and seed in one call. In-zone cells (4,2), (12,4),
+/// (8,10) as `x:4|y:4` bytes. Pair distances 8.2 / 8.9 / 7.2 tiles against a 6-tile reach, so each torch
+/// keeps an isolated pool AND there is an overlap band to exercise light accumulation.
+const INIT_OBJECTS: &[(u16, &str, &[u8])] = &[(0x0063, "torch", &[0x42, 0xC4, 0x8A])];
 
 /// Build the per-client players upstream and subscribe to the auth table so the
 /// post-login row read is served from cache. `None` (with an error frame already
