@@ -66,11 +66,39 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
       Acceptance: a prim with no resolvable def still gets its light processed.
 
 ## P8 — Cut the corridor walk ([I30](issues.md#i30), [F11](forks.md#f11))
-- [ ] Replace the 5-tile cross pad with a supercover DDA visiting each crossed tile once.
+- [x] Replace the 5-tile cross pad with a supercover DDA visiting each crossed tile once.
       Acceptance: corridor↔brute identity still 0 mismatches; bucket fetches down ~59%.
+      Met identity (0 over 102,442 non-zero texels); fetches down 52.3% not 59% — see [D-1](deviations.md#d-1).
 - [ ] Re-measure the moving-light curve after the DDA.
       Acceptance: the 16-mover case beats 55.4 fps at the same dirty-tile count.
 - [ ] Measure `casterOne`'s per-light cull hit-rate before attempting a union walk.
       Acceptance: a number for what fraction of candidates each cull rejects.
 - [ ] Decide gather-vs-rasterise per tier from that data ([F11](forks.md#f11)).
       Acceptance: a fork row naming which tier uses which, with the cost basis.
+
+## P9 — Track screen density in the lightmap ([I31](issues.md#i31))
+_Gates P10: at world-fixed density `RGBA32F` costs 465 MB; at screen density it costs ~30 MB._
+- [ ] Measure the mover curve at zoom 0.25 vs zoom 1 at equal light count, before changing anything.
+      Acceptance: a number confirming (or refuting) that per-light bake cost is zoom-independent.
+- [ ] Make lightmap texels-per-tile follow screen density (≈`64 × zoom`, clamped) instead of world px.
+      Acceptance: lightmap texels ≈ canvas pixels at zoom 0.25, 0.5 and 1.
+- [ ] Re-run the corridor↔brute identity and the zoom sweep at the new density.
+      Acceptance: 0 mismatches WITH a non-zero population both sides ([D-2](deviations.md#d-2)); no drift 0.25→2.
+- [ ] Re-measure the mover curve.
+      Acceptance: the 32-mover case beats 34 fps at `?focus=100,50&zoom=0.25`.
+
+## P10 — Additive RGBA32F lightmap ([F11b](forks.md#f11b), [F11b.1](forks.md#f11b1)) — needs P9
+- [ ] Assert `EXT_color_buffer_float` + `EXT_float_blend` at startup and fail loudly if absent.
+      Acceptance: a named error. `RGBA32UI` blending is a silent no-op, so absence must never pass quietly.
+- [ ] Move the lightmap to `RGBA32F` with quantised integer per-light contributions.
+      Acceptance: 64 add/subtract pairs return a texel to exactly 0.
+- [ ] Ping-pong the data texture AND the presence bands.
+      Acceptance: last frame's and this frame's state are both readable in one pass.
+- [ ] Emit `new − old` in ONE differential pass, each term gated on that tile's presence.
+      Acceptance: a texel whose lights and casters all held still emits exactly 0.
+- [ ] Collapse hot/cold into the single accumulator.
+      Acceptance: no tier plumbing remains; 64 static lights cost nothing when one mover moves.
+- [ ] Build the dirty-light union from presence over old∪new tiles, including presence churn.
+      Acceptance: a light pushed out of a tile's top-16 loses its contribution to that tile.
+- [ ] Add the rebuild-and-diff self-heal assertion.
+      Acceptance: a deliberately leaked contribution is reported, not silent.
