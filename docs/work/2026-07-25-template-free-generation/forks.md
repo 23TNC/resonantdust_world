@@ -19,13 +19,33 @@ inferred silhouette: the wolf case is the best-controlled result we have, and th
 template precisely to pin a pose the corpus cannot express. Removing it would regress a working path
 for no gain. The generalized modes are additive.
 
-## F3 — Where does s/n control come from? · OPEN (P4)
+## F3 — Where does s/n control come from? · RESOLVED 2026-07-25 (P4)
 
 East's silhouette cannot drive south/north — a quadruped's front and rear views are different shapes,
 not transforms of the side view. The IP-adapter carries *appearance* consistency, not *shape*.
 Candidates: per-direction corpus silhouettes from the same reference species (leans consistent, since
 the bank already has all three); or `--control none` for s/n with IP-anchoring alone; or a hybrid
 (corpus for shape, IP for identity). Resolve in P4 before implementing.
+
+**CHOSEN: per-direction corpus silhouettes from the same reference species** — i.e. exactly what
+`--control family:<f>` / `corpus:<Species>` already does, since the bank holds all three directions.
+Measured on a red fox generated both ways at the same seed:
+
+| | e↔s | e↔n | s↔n | geometry |
+|---|---|---|---|---|
+| `none` (IP anchor alone) | 0.124 | 0.273 | 0.183 | **south + north collapse to head-only busts** |
+| `family:canine` | 0.144 | 0.286 | **0.078** | full body, correct tail-up convention in both |
+
+It wins on *both* axes: tighter s↔n colour coherence and — decisively — correct geometry, which the
+IP anchor cannot supply because it carries appearance, not shape.
+
+**Rejected: `--control none` for s/n with IP-anchoring alone.** The fox proves the failure directly
+(`.staging/p4/fox.png`, row 1): east is a good standing fox, but south and north render a head and
+white chest with no body. Identity transferred fine; structure did not.
+
+**Rejected: hybrid (corpus for shape + IP for identity as separate sources).** Not needed — the
+chosen path already runs both: the bank supplies the per-direction silhouette *and* the east hero
+still anchors s/n through the IP-adapter. There was no third mechanism to add.
 
 ## F4 — The geometry pass-gate · RESOLVED 2026-07-25
 

@@ -123,3 +123,65 @@ per sprite ([F5](forks.md#f5)).
 template-free bear-south that scored 136.6% (FAIL) at the P0 seed scored 43.5 / 46.3 / 14.9% (all
 PASS) at three others. P0's single-seed matrix measures a failure *rate*, not a species verdict —
 and that stochasticity is precisely what makes P3's sample-and-screen the right answer.
+
+## 2026-07-25 — P4 complete (e/s/n coherence without any authored art)
+
+**Coherence measured** as Bhattacharyya distance between per-direction RGB histograms over *opaque
+pixels only*, on a red fox generated at one seed in both modes. The scale comes from the real
+corpus, so "coherent" means "as coherent as our own art":
+
+| | mean cross-direction distance |
+|---|---|
+| REAL corpus, same animal (Wolf/Bear/Fox e vs s) | **0.028** |
+| our generated set, `family:canine` | 0.169 |
+| our generated set, `control none` | 0.193 |
+| REAL corpus, *different* animals (Wolf vs Tiger, Bear vs Fox) | **0.565** |
+
+**Call: PASS on identity, but honestly loose.** Both modes land far closer to same-animal (0.028)
+than to different-animal (0.565), so the IP anchor *is* carrying identity across directions even
+when east was generated rather than drawn — the sets read as one fox. But at ~6× the real-art
+distance they are measurably less consistent than hand-authored sets, so this is not parity.
+
+**A measurement error caught mid-way:** the first reference scale was computed against
+`.staging/silhouette-bank/` images, which are RGB-on-white with **no alpha** — so the "opaque only"
+mask selected the whole frame and the white plate dominated every histogram, deflating
+different-animal distance to a meaningless 0.078. Recomputed against `.staging/animal-lora/` sprites,
+which carry real alpha. The corrected different-animal mean is 0.565.
+
+**[F3](forks.md#f3) resolved to per-direction corpus silhouettes**, which is what `--control
+family:` already does. Geometry is the deciding factor, not colour: template-free south and north
+collapsed to **head-only busts** on the fox (`.staging/p4/fox.png` row 1) while `family:canine` gave
+full-body front and rear views with the correct tail-up convention (row 2). The IP-adapter carries
+appearance, not shape — so it cannot fix a missing body.
+
+**Acceptance met:** `--from pawn/animal/_p4 --to _p4-fam --control family:canine --dirs e,s,n`
+produced a coherent three-direction fox with **no hand-authored art at any step** — the kind has no
+template, and the control silhouettes came from the corpus bank.
+
+## 2026-07-25 — P5 complete (validated on species the LoRA has never seen)
+
+Five species confirmed **absent from `.staging/quad-lora-train`** (0 corpus files each) generated at
+e/s/n through `--control family:<f>` + `--ref`, borrowing a body-plan relative's silhouette:
+
+| species | family rep | gate | notes |
+|---|---|---|---|
+| meerkat | rodent (Capybara) | 3/3 | tan, dark eye patches — but lying, not upright |
+| armadillo | rodent (Capybara) | 3/3 | banded armour plates clearly rendered |
+| okapi | deer (Deer) | 3/3 | white-striped legs on the rear view |
+| wombat | bear (Bear) | 3/3 | weakest identity — reads as a generic stocky mammal |
+| aardvark | pig (Pig) | 3/3 | long snout, large ears |
+
+**15/15 valid (100%)**, best-east d_aspect 2.6–14.6%. `.staging/p5/unseen.png`.
+
+**Limits recorded in [I7](issues.md#i7):** the constraint is *pose*, not species — the generator can
+only produce a stance some corpus silhouette already holds. The meerkat's upright sentry stance has
+no representative in a quadruped corpus, so it cannot be asked for. Species the LoRA never trained on
+are otherwise handled well.
+
+---
+
+### Stream complete — 22/22
+
+The pipeline that could only reproduce species it already had art for now generates arbitrary
+quadrupeds with **no hand-authored control art**, screens its own output, and was validated on
+species outside its training data.

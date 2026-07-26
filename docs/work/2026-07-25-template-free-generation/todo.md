@@ -40,11 +40,11 @@ because "template-free is worse" is currently an assumption, not a measurement.
 The east hero + IP-adapter anchor already exist; what is unproven is whether they hold when east
 itself was generated rather than drawn.
 
-- [ ] Measure colour/marking consistency of s/n against a template-free east. Acceptance: a histogram distance per direction pair, recorded in `completed.md` with a pass/fail call.
-- [ ] Resolve where s/n control comes from, given east's silhouette cannot drive them. Acceptance: `forks.md` F3 records the choice and the rejected options.
-- [ ] Implement the F3 choice. Acceptance: a species generates a coherent e/s/n set with no hand-authored art at any step.
+- [x] Measure colour/marking consistency of s/n against a template-free east. Acceptance: a histogram distance per direction pair, recorded in `completed.md` with a pass/fail call.
+- [x] Resolve where s/n control comes from, given east's silhouette cannot drive them. Acceptance: `forks.md` F3 records the choice and the rejected options.
+- [x] Implement the F3 choice. Acceptance: a species generates a coherent e/s/n set with no hand-authored art at any step.
 
 ## P5 — Validate on species absent from the training corpus
 
-- [ ] Generate 5 species not present in `.staging/quad-lora-train`. Acceptance: 5 × e/s/n at the chosen settings, scored, valid-rate in `completed.md`.
-- [ ] Record which body plans the method cannot serve. Acceptance: `issues.md` names the failing plans and what each would need (new family silhouette, or a new LoRA).
+- [x] Generate 5 species not present in `.staging/quad-lora-train`. Acceptance: 5 × e/s/n at the chosen settings, scored, valid-rate in `completed.md`.
+- [x] Record which body plans the method cannot serve. Acceptance: `issues.md` names the failing plans and what each would need (new family silhouette, or a new LoRA).

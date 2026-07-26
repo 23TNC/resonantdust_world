@@ -93,3 +93,33 @@ a correct front view for these species, it just often doesn't. Two consequences:
 A stronger baseline would use several seeds per cell and report a rate with an interval. Not re-run
 here (it is ~10× the GPU time for a number whose decision — build P3 — is already made), but any
 future comparison of control modes should be multi-seed to be sound.
+
+## I7 — What the method cannot serve: poses the corpus does not contain
+
+P5 generated five species **absent from the training corpus** (meerkat, armadillo, okapi, wombat,
+aardvark) via `--control family:<f>`, borrowing a body-plan relative's silhouette. **15/15 sprites
+passed** the [F4](forks.md#f4) gate, and species identity came through on the defining features:
+the armadillo has banded armour plates, the okapi has white-striped legs on the rear view, the
+aardvark has the long snout and large ears. `.staging/p5/unseen.png`.
+
+**The limit is POSE, not species.** The generator can only produce a stance some corpus sprite
+already holds, because that silhouette is what ControlNet is given:
+
+- **Meerkat** came out *lying on all fours*. Its characteristic upright sentry stance does not exist
+  anywhere in a quadruped corpus, so no silhouette can ask for it.
+- **Wombat** is the weakest identity — a generic pale stocky mammal. Nothing in the bank is
+  wombat-shaped, and `family:bear` only says "stocky quadruped".
+
+So the failure mode is not "unknown species" (handled well) but **"unknown body plan or stance"**.
+What each would need:
+
+| gap | what it needs |
+|---|---|
+| upright-stance mammals (meerkat, prairie dog) | a corpus sprite in that stance, or the planned **biped** LoRA + its own bank |
+| serpentine / legless | the `rd_legless` class was cut from the quadruped LoRA — needs its own LoRA + bank |
+| arthropods (many-legged) | same — own LoRA + bank |
+| humanoids | the **humanoid** LoRA, trained from `pawn/human/` rather than these mod constructs |
+
+This is the expected shape of the answer and does not undermine the stream: the control interface is
+body-plan agnostic, so each future LoRA plugs into the same `--control family:` path with its own
+silhouette bank.
