@@ -37,3 +37,40 @@ catch:
 
 All four already have metrics in [`lora_eval.py`](../../../bin/lib/lora_eval.py); P0 only has to set
 the thresholds.
+
+## I4 — Template-free fails on **south only**; east and north are already production-grade
+
+P0 baseline, 10 species × e/s/n, one seed, `rd_quadruped_e07` @ 0.85
+(`.staging/tf-baseline/scores-{none,template}.csv`). Valid = the [F4](forks.md#f4) gate.
+
+| mode | valid | east | south | north | mean score |
+|---|---|---|---|---|---|
+| `none` (txt2img + LoRA) | **25/30 (83%)** | 10/10 | **5/10** | 10/10 | 71.6 |
+| `template` (wolf art) | 29/30 (97%) | 10/10 | 9/10 | 10/10 | 78.8 |
+
+Mean aspect error by direction, template-free: **east 18.4% · south 153.7% · north 17.9%**. The
+entire template-free deficit is one direction. East/north are statistically indistinguishable from
+templated (18.4 vs 15.0; 17.9 vs 15.5) — control art buys ~nothing there.
+
+**What south actually fails at is FACING, not quality.** The five failures (bear, cat, fox, pig,
+horse) generate a *side profile* when asked for a front view — aspect 1.36–2.02 against references of
+0.28–0.84. The LoRA's `rd_south` binding is too weak to beat the base model's preference for drawing
+an animal side-on, and with no control image nothing corrects it.
+
+**Consequence for the plan:** P2's silhouette bank does not have to serve all three directions. A
+south-only control source would recover ~all of the gap, which makes the corpus approach cheaper than
+budgeted. Do not over-build east/north control.
+
+## I5 — The `bg` metric conflated scenery bleed with a sprite touching the frame edge
+
+Found while validating the F4 gate: `bg = 1 − (fraction of border pixels that are subject)` rejected
+a **hand-approved** bear-north (user: "perfect") at `bg=0.84`, purely because the bear fills the frame
+vertically so 16% of the border is bear — on a pristine white plate.
+
+Two unrelated properties were being measured as one: *is the plate keyable* (fatal if not) and *does
+the subject touch the edge* (normal, often desirable). Fixed by adding **`bg_uni`** — the colour
+uniformity (mean per-channel std) of the **non-subject** border pixels, which is what
+`remove_bg_floodfill()` actually depends on. `bg` is retained for reporting.
+
+Verified: bear-north now `bg=0.84 / bg_uni=0.96` → PASS, while both known failures still fail on
+aspect, and a scenery-bleed case would still fail on `bg_uni`.

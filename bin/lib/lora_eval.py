@@ -136,20 +136,29 @@ def _components(small, min_frac=0.004):
 def measure(img):
     m = _mask(img); H, W = m.shape
     if m.sum() < 50:
-        return dict(blobs=0, bg=1.0, white=1.0, fill=0.0, aspect=0.0, solidity=0.0)
+        return dict(blobs=0, bg=1.0, bg_uni=1.0, white=1.0, fill=0.0, aspect=0.0, solidity=0.0)
     ys, xs = np.where(m)
     y0, y1, x0, x1 = ys.min(), ys.max(), xs.min(), xs.max()
     bw, bh = (x1-x0+1), (y1-y0+1)
     border = np.concatenate([m[0,:], m[-1,:], m[:,0], m[:,-1]])
     a = np.asarray(img.convert("RGB")).astype(np.float32)
     white = float(max(0.0, 1.0 - np.sqrt(((_bg_color(a) - 255.0)**2).sum()) / 120.0))
+    # bg_uni: is the PLATE keyable, independent of how much of the border the subject occupies.
+    # `bg` alone conflates two unrelated things — scenery bleed (fatal) and a large sprite simply
+    # touching the frame edge (fine, and normal for a well-filled sprite). It rejected a
+    # hand-approved bear-north purely for filling the frame. Uniformity of the NON-subject border
+    # pixels is the thing that actually decides whether remove_bg_floodfill() can key it out.
+    bpx = np.concatenate([a[0,:,:], a[-1,:,:], a[:,0,:], a[:,-1,:]])
+    free = bpx[~border]
+    bg_uni = 1.0 if free.shape[0] < 16 else float(max(0.0, 1.0 - float(free.std(axis=0).mean()) / 24.0))
     small = _filled(m)                                  # holes filled -> solid silhouette
     g = small.shape[0]
     sy, sx = np.where(small)
     sol = float(small.sum()) / max(1.0, float((sx.max()-sx.min()+1) * (sy.max()-sy.min()+1))) if small.any() else 0.0
     return dict(
         blobs=_components(small),
-        bg=float(1.0 - border.mean()),                 # 1.0 = uniform keyable plate
+        bg=float(1.0 - border.mean()),                 # 1.0 = subject does not touch the frame edge
+        bg_uni=round(bg_uni, 3),                       # 1.0 = the plate is uniform -> keyable (the real gate)
         white=round(white,3),                          # how close that plate is to pure white
         fill=float(bw*bh) / float(W*H),
         aspect=float(bw)/float(bh),
@@ -199,10 +208,24 @@ def sweep_pipeline(args):
     if args.style: G.STYLE = args.style
 
     kind, d = args.kind.strip("/"), args.dir
-    tpl = G.load_template(kind, d, args.part, "0")
-    ref_name  = G._upload(tpl, f"sweep_{d}_ref.png")
-    edge_name = G._upload(G.edge_map(tpl, args.edge_thresh), f"sweep_{d}_edge.png")
-    tm = measure(tpl); tpl_arr = np.asarray(tpl, dtype=float)
+    # --control none is the TEMPLATE-FREE path: no template art is read at all, no ControlNet
+    # nodes are built, and the geometry gate is judged against the REAL corpus sprite (--ref)
+    # instead of a template. dn/cn/cn_end are inert here — txt2img has no i2i latent and no
+    # control image — so the sweep degenerates to one config, which the caller should expect.
+    tpl = None if args.control == "none" else G.load_template(kind, d, args.part, "0")
+    if tpl is not None:
+        ref_name  = G._upload(tpl, f"sweep_{d}_ref.png")
+        edge_name = G._upload(G.edge_map(tpl, args.edge_thresh), f"sweep_{d}_edge.png")
+        gate = measure(tpl); gate_src = "template"
+        base_arr, base_size = np.asarray(tpl, dtype=float), tpl.size
+    else:
+        ref_name = edge_name = None
+        gate, gate_src = None, "none"
+        if args.ref:
+            folder, _, stem = args.ref.partition(":")
+            gate = reference(folder, stem or folder, DIRS[d][2])
+            gate_src = f"corpus:{folder}"
+        base_arr, base_size = None, (args.size, args.size)
     pos = f"{args.positive}, {G.STYLE.format(face=G.FACE[d])}"
     neg = G.GENERIC_NEG
     # --combos gives an explicit config list "dn:cn:cn_end,..." (cn_end optional, defaults to
@@ -215,8 +238,10 @@ def sweep_pipeline(args):
     else:
         combos = [(dn, cn, G.CN_END) for dn in [float(x) for x in args.dns.split(",")]
                                      for cn in [float(x) for x in args.cns.split(",")]]
+    if tpl is None: combos = combos[:1]          # dn/cn are inert with no control image
     out = os.path.join(REPO, args.out); os.makedirs(out, exist_ok=True)
-    print(f"template aspect={tm['aspect']:.2f}  ({len(combos)} configs x {args.seeds} seeds)")
+    ga = f"{gate['aspect']:.2f}" if gate else "n/a"
+    print(f"control={args.control} gate={gate_src} aspect={ga}  ({len(combos)} configs x {args.seeds} seeds)")
 
     rows = []
     if True:
@@ -224,16 +249,20 @@ def sweep_pipeline(args):
             G.DN, G.CN, G.CN_END = dn, cn, cn_end
             imgs = []
             for i in range(args.seeds):
-                raw = G._run(G.graph_hero(pos, neg, ref_name, edge_name, 9000 + i))
+                if tpl is None:                   # template-free: plain txt2img + LoRA
+                    raw = _run(graph(pos, args.lora, args.lora_strength, args.cfg_tf, 9000 + i, size=args.size))
+                else:
+                    raw = G._run(G.graph_hero(pos, neg, ref_name, edge_name, 9000 + i))
                 im = Image.open(io.BytesIO(raw)).convert("RGB")
                 im.save(os.path.join(out, f"dn{dn:g}_cn{cn:g}_e{cn_end:g}_s{9000+i}.png")); imgs.append(im)
             ms = [measure(i) for i in imgs]
-            arrs = [np.asarray(i.resize(tpl.size), dtype=float) for i in imgs]
+            arrs = [np.asarray(i.resize(base_size), dtype=float) for i in imgs]
             var = float(np.mean([np.abs(arrs[a]-arrs[b]).mean()
                         for a in range(len(arrs)) for b in range(a+1, len(arrs))])) if len(arrs) > 1 else 0.0
-            div = float(np.mean([np.abs(a - tpl_arr).mean() for a in arrs]))
+            div = float(np.mean([np.abs(a - base_arr).mean() for a in arrs])) if base_arr is not None else 0.0
             ok = sum(1 for m in ms if m["blobs"] == 1 and m["bg"] >= 0.97
-                     and abs(m["aspect"]-tm["aspect"])/max(tm["aspect"], 1e-3) <= 0.25)
+                     and (gate is None or
+                          abs(m["aspect"]-gate["aspect"])/max(gate["aspect"], 1e-3) <= 0.25))
             rows.append(dict(dn=dn, cn=cn, cn_end=cn_end, valid=ok, n=len(ms), variety=round(var,1),
                              divergence=round(div,1),
                              aspect=round(float(np.mean([m["aspect"] for m in ms])), 2)))
@@ -269,6 +298,10 @@ def main():
     ap.add_argument("--dns", default="0.70,0.80,0.90,1.00", help="denoise values (--pipeline)")
     ap.add_argument("--cns", default="0.20,0.35,0.50,0.65", help="ControlNet strengths (--pipeline)")
     ap.add_argument("--seeds", type=int, default=3, help="seeds per config; >=2 needed to measure variety")
+    ap.add_argument("--control", default="template", choices=["template","none"],
+                    help="silhouette source: template art (default) or none = txt2img+LoRA, no ControlNet")
+    ap.add_argument("--ref", default=None, help="corpus reference for the geometry gate under --control none, e.g. Wolf_Timber[:stem]")
+    ap.add_argument("--cfg-tf", dest="cfg_tf", type=float, default=6.0, help="cfg for the template-free txt2img path")
     ap.add_argument("--combos", default=None, help="explicit configs 'dn:cn:cn_end,...' (cn_end optional) — overrides --dns/--cns")
     ap.add_argument("--edge-thresh", type=int, default=30)
     ap.add_argument("--lora", default=None, help="single LoRA for --pipeline mode")

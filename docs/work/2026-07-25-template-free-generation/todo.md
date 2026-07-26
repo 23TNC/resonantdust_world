@@ -8,10 +8,10 @@ Design stance in [`README.md`](README.md); open decisions in [`forks.md`](forks.
 Nothing here changes the pipeline. It establishes the number every later phase is judged against,
 because "template-free is worse" is currently an assumption, not a measurement.
 
-- [ ] Add `--control none` to `lora_eval.py --pipeline` so a sweep can run txt2img+LoRA with no template. Acceptance: the flag runs a species without reading `textures/<kind>/template.*`.
-- [ ] Score 10 species × e/s/n template-free, writing per-candidate metrics. Acceptance: `.staging/tf-baseline/scores.csv` has 30 rows with blobs/bg/fill/aspect/solidity.
-- [ ] Score the same 10 species × e/s/n templated (wolf template, `--control template`). Acceptance: a second CSV; both valid-rates stated in `issues.md`.
-- [ ] Set the geometry pass-gate from those two runs. Acceptance: a threshold that fails the known wolf-east bust and bear-east blob, recorded in `forks.md`.
+- [x] Add `--control none` to `lora_eval.py --pipeline` so a sweep can run txt2img+LoRA with no template. Acceptance: the flag runs a species without reading `textures/<kind>/template.*`.
+- [x] Score 10 species × e/s/n template-free, writing per-candidate metrics. Acceptance: `.staging/tf-baseline/scores.csv` has 30 rows with blobs/bg/fill/aspect/solidity.
+- [x] Score the same 10 species × e/s/n templated (wolf template, `--control template`). Acceptance: a second CSV; both valid-rates stated in `issues.md`.
+- [x] Set the geometry pass-gate from those two runs. Acceptance: a threshold that fails the known wolf-east bust and bear-east blob, recorded in `forks.md`.
 
 ## P1 — Retire the hard template requirement
 

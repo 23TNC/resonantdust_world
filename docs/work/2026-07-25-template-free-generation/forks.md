@@ -26,3 +26,32 @@ not transforms of the side view. The IP-adapter carries *appearance* consistency
 Candidates: per-direction corpus silhouettes from the same reference species (leans consistent, since
 the bank already has all three); or `--control none` for s/n with IP-anchoring alone; or a hybrid
 (corpus for shape, IP for identity). Resolve in P4 before implementing.
+
+## F4 — The geometry pass-gate · RESOLVED 2026-07-25
+
+A candidate is **valid** when all four hold:
+
+| check | threshold | catches |
+|---|---|---|
+| `blobs` | `== 1` | sprite sheets / multi-subject |
+| `bg_uni` | `>= 0.75` | scenery bleed, non-keyable plate ([I5](issues.md#i5)) |
+| `d_aspect` vs corpus reference | `<= 50%` | bust-instead-of-body, wrong facing, blobs |
+| `solidity` | `>= 0.35` | wispy / fragmented output |
+
+Calibrated against hand-judged sprites rather than picked a priori — it must reject the two known
+failures and accept the four known-good, which it does:
+
+| sprite | d_aspect | verdict |
+|---|---|---|
+| wolf east (the bust) | 58.5% | FAIL ✓ |
+| bear east (the blob) | 56.3% | FAIL ✓ |
+| tiger east (good) | 40.1% | PASS ✓ |
+| bear north (user: "perfect") | 0.4% | PASS ✓ |
+| wolf east @ new defaults | 0.4% | PASS ✓ |
+| wolf south @ new defaults | 10.1% | PASS ✓ |
+
+**50% aspect is deliberately loose** — the two real failures land at 56–58%, so a tighter gate would
+start rejecting acceptable art (the good tiger sits at 40%). Rejected: a tighter 30% gate (fails the
+approved tiger) and using the 0–100 `score` composite as the gate (it blends fill drift into the
+verdict, so a correctly-shaped-but-differently-scaled sprite fails for the wrong reason — scale is a
+P3 concern, not a validity one).
