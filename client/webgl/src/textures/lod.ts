@@ -25,11 +25,12 @@ export function texturesRoot(serverBase: string): string {
  *  albedo unchanged. Mirrors the server's `textures::MAPS` allowlist. */
 export type TexMap = "albedo" | "normal" | "depth" | "emissive" | "layers" | "surface";
 
-/** Zoom bounds (screen px per world px). 1 = tiles at their native 64px; the range
- *  spans two power-of-two steps out (0.25×) and one step in (2×). Capping zoom-in at
- *  2× (was 4×) halves `RESERVE_CSS`, shrinking every G-buffer channel ~45% — 2× is
- *  plenty of magnification and a deeper zoom just reserved texture we never used. */
-export const ZOOM_MIN = 0.25;
+/** Zoom bounds (screen px per world px). 1 = tiles at their native `SQUARE` (128) px, i.e. 1:1 with
+ *  the art. The range spans the four-level lod ladder — lod 0 covers `[1, 2)`, lod 3 bottoms out at
+ *  0.125 where a tile is 16 px (the 1-px-per-unit floor). Zoom-in past 1 MAGNIFIES: 128 px is the
+ *  maximum art size by design (a slot cannot show more), so the top of each lod band upscales by up
+ *  to 2× rather than fetching art that does not exist (work `2026-07-26-textile-slot` F2). */
+export const ZOOM_MIN = 0.125;
 export const ZOOM_MAX = 2;
 
 /** The power-of-two LOD tier a zoom sits in — the master LOD the resolver targets
@@ -39,13 +40,12 @@ export function lodTier(zoom: number): number {
   return Math.min(Math.max(t, ZOOM_MIN), ZOOM_MAX);
 }
 
-/** The composite slot's interior size in CSS px at `zoom` — the LOD dictates the
- *  RECT SIZE we draw a world square into (64 → 64px slots, 128 → 128px slots, …), so
- *  crossing a LOD boundary changes the slot size + count while the RT stays ≈ a fixed
- *  viewport size. A tile is `SQUARE × zoom` px on screen; the slot is the pow2 bucket
- *  at/above that (never upscaled), clamped to the LOD buckets. */
-export function lodSlotPx(zoom: number, square: number): number {
-  return pickLodForSize(square * zoom);
+/** The ART size to fetch for a tile at `zoom` — the pow2 bucket at/above its on-screen size, capped
+ *  at `square` (= `SQUARE`, the maximum art size). NOTE this no longer sizes a composite slot: on the
+ *  fixed grid the slot is CONSTANT at `SQUARE` texels and what varies is TILES PER SLOT. Kept as the
+ *  art-ladder query only. */
+export function lodArtPx(zoom: number, square: number): number {
+  return Math.min(square, pickLodForSize(square * zoom));
 }
 
 /** The full-res master URL for a stem under a texture `root` ({@link texturesRoot}) —

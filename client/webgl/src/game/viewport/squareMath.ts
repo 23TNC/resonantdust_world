@@ -9,10 +9,14 @@
 //! wrap onto physical slots via {@link mod} (a torus), and only the freshly-exposed
 //! strip re-bakes. See `SquareCache`.
 
-/** Square edge in world px. The grid unit — all map squares are this size. */
-export const SQUARE = 64;
+/** Square edge in world px. The grid unit — all map squares are this size, and the MAXIMUM art size:
+ *  a slot cannot show more than {@link SQUARE} px of a tile, so there is never a reason to author
+ *  larger (work `2026-07-26-textile-slot`). Raised 64 → 128 with the fixed slot grid. */
+export const SQUARE = 128;
 
-/** World UNIT in px — `UNIT = SQUARE/16`; 16 units per tile edge. Shadow math is in units. */
+/** World UNIT in px — `UNIT = SQUARE/16`; 16 units per tile edge. Shadow math is in units.
+ *  Units-per-tile is FIXED at 16, so this tracks `SQUARE` and every tile+unit position — which is
+ *  what the wire and the data records store — is unaffected by the `SQUARE` change. */
 export const UNIT = SQUARE / 16;
 
 // ── Textile resolutions — the shared toroidal TILE grid (map-model.md, lighting rebuild) ──
@@ -35,10 +39,48 @@ export const ZONE_DIM = 16;
  *  `REGION_DIM × REGION_DIM` zones, i.e. `REGION_DIM · ZONE_DIM` tiles per edge. */
 export const REGION_DIM = 16;
 
-/** Slack squares kept baked OFF each edge of the viewport, so a pan reaches
- *  finished content before the screen edge does (and a small jiggle never
- *  re-bakes). "A number of these squares off each edge." */
+/** Slack SLOTS kept baked off each edge of the visible area, so a pan reaches finished content
+ *  before the screen edge does (and a small jiggle never re-bakes). */
 export const OVERSCAN = 2;
+
+// ── The fixed slot grid (work `2026-07-26-textile-slot`; VARIABLES is authoritative) ──
+// Every textile map is sized in TILES, never in screen resolution, and NEVER CHANGES SIZE. A slot holds
+// 1 tile at lod 0 and `2^lod × 2^lod` tiles at lod k, so the texture is constant while the world it covers
+// grows 4× per step. That is what stops the lightmap tracking zoom (it was 176 MB at zoom 0.25) and what
+// makes gameplay identical on every monitor.
+/** Visible slots — the world every player sees at a given lod, regardless of monitor. */
+export const VISIBLE_X = 20;
+export const VISIBLE_Y = 12;
+/** Total slots including {@link OVERSCAN} on each side. EVEN by construction, so a 2×2 tile block at the
+ *  next lod never straddles a slot boundary. */
+export const SLOTS_X = VISIBLE_X + 2 * OVERSCAN; // 24
+export const SLOTS_Y = VISIBLE_Y + 2 * OVERSCAN; // 16
+/** Lod levels 0..3 — `SQUARE` down to the 16-px floor. Fits `u2` (`definition_data.frame_lod`). */
+export const LOD_LEVELS = 4;
+export const LOD_MAX = LOD_LEVELS - 1;
+/** The reference render target: the visible slots at lod 0. Standardising on this (rather than the
+ *  player's panel) is what equalises gameplay across monitors — 4K magnifies ~1.5×, 1080p minifies. */
+export const REFERENCE_W = VISIBLE_X * SQUARE; // 2560
+export const REFERENCE_H = VISIBLE_Y * SQUARE; // 1536
+
+/** Tiles per slot edge at `lod` — 1, 2, 4, 8. */
+export function tilesPerSlot(lod: number): number {
+  return 1 << lod;
+}
+/** Texels per TILE edge at `lod` for a map with `texelsPerSlot` (SQUARE / TEXTILE_UNIT / 1). */
+export function tileTexels(texelsPerSlot: number, lod: number): number {
+  return texelsPerSlot >> lod;
+}
+/** The COVER fit — the scale that keeps the viewport entirely inside the visible slots.
+ *  `max`, not `min`: `min` would fit the whole grid and expose overscan at the edges. */
+export function coverScale(screenW: number, screenH: number): number {
+  return Math.max(screenW / REFERENCE_W, screenH / REFERENCE_H);
+}
+/** The lod a zoom sits in: lod 0 covers `[1, 2)`, lod 1 `[0.5, 1)`, … Clamped to the ladder. */
+export function lodForZoom(zoom: number): number {
+  if (!(zoom > 0)) return 0;
+  return Math.min(LOD_MAX, Math.max(0, Math.ceil(-Math.log2(zoom))));
+}
 
 /** Gutter (px) baked around every slot's interior. The bake over-renders neighbour
  *  content into it; the display samples only the gutter-protected interior, so

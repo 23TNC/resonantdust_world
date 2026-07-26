@@ -20,6 +20,7 @@ import { LodPool } from "./LodPool";
 import { type AtlasDraw } from "./TextureAtlas";
 import { getLod, putLod } from "./previewCache";
 import { LOD_SIZES, lodUrl, pickLodForSize, type TexMap } from "./lod";
+import { SQUARE } from "../game/viewport/squareMath";
 import { TextureManifest } from "./textureManifest";
 
 /** A resolve result: the atlas sub-frame to bake (null for the GEO tier — the caller uses its own
@@ -37,8 +38,10 @@ export interface LodStats {
   previewCount: number;
 }
 
-/** One tile at native scale — the target LOD floor (zoom 1 → 64px). */
-const BASE_LOD_PX = 64;
+/** One tile at native scale — the target LOD floor AND ceiling (zoom 1 → `SQUARE` px). `SQUARE` is the
+ *  maximum art size on the fixed slot grid: a slot holds one tile in `SQUARE` texels at lod 0, so a
+ *  larger master could never be shown. Zoom past 1 magnifies instead of fetching bigger art. */
+const BASE_LOD_PX = SQUARE;
 /** A cheap low LOD fetched alongside the target while a stem has nothing on hand. */
 const FLOOR_LOD = 32;
 /** LODs at or below this pack into a 1024² page; larger into 2048². */
@@ -102,9 +105,11 @@ export class TextureResolver {
     return this.root;
   }
 
-  /** Set the target LOD from the viewport's on-screen tile size (`64 × zoom`). */
+  /** Set the target LOD from the viewport's on-screen tile size (`SQUARE × zoom`), CLAMPED to
+   *  `BASE_LOD_PX`. Zooming past 1 magnifies rather than fetching art above the maximum size — the
+   *  slot holds a tile in `SQUARE` texels, so a bigger master could not be displayed anyway. */
   setTargetLod(px: number): void {
-    this.targetPx = Math.max(LOD_SIZES[0], px);
+    this.targetPx = Math.min(BASE_LOD_PX, Math.max(LOD_SIZES[0], px));
   }
 
   /** Subscribe to "a LOD landed" — the viewport re-bakes to pick up the upgrade. */
