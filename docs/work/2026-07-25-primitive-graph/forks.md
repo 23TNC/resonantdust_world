@@ -160,9 +160,21 @@ root: there are no per-light slots to clear, so the per-tile slot indirection st
    - quantised (each light casts an integer 0..255, 64 lights) → peak 7,776, residual **exactly 0**
    - quantised, 4096 contributions → peak 522,240, residual **exactly 0**
    - raw float (`colour × falloff × N·L`, unquantised) → peak 32.08, residual **1.8e-7** (drifts)
-   So the user's own "each light casts RGBA8" framing is what makes it exact. Headroom is 2^24/255 ≈
-   **65,800 lights** at full brightness before exactness breaks — not the 16M guessed from u32 range, but
-   from the FP32 mantissa instead, and still far past any plausible budget.
+   So the user's own "each light casts RGBA8" framing is what makes it exact.
+
+   **The bound is PER-TEXEL OVERLAP DEPTH, not a light count** — the accumulator is per texel, so what
+   counts against 2^24 is how many lights illuminate the SAME texel at once. The world may hold as many
+   lights as the u16 id allows; only co-illumination is charged. Presence admits 16/tile today, ~4,000x
+   under. Verified boundaries (add-all then subtract-all, residual):
+   - 65,793 x 255 → peak 16,777,215 = 2^24-1, residual **0** (the user's figure, exactly on the boundary)
+   - 80,000 x 255 → peak 20,414,204, residual **-2** (breaks; past 2^24 float spacing is 2, so odd
+     increments round — the failure is a small bias, not a collapse)
+
+   The axis that actually shrinks the ceiling is **per-light peak magnitude, not count**: the bound is
+   2^24 / (max quantised contribution). u8 → 65,793; HDR intensity 4x (1020) → 16,448 (verified exact);
+   quantised to 1/4096 for smoother falloff → 4,096 (verified exact). So the real design choice is dynamic
+   range and quantisation precision per light, and even the most expensive combination leaves thousands of
+   overlapping lights. u16 light ids bind first regardless.
 3. **Additivity holds across LIGHTS, not across CASTERS.** Occlusion is a **union**, not a sum: two casters
    shadowing the same texel must MAX, or they over-subtract past black. So each light still needs its own
    shadow resolve before its contribution is added — which is precisely what the existing per-light N·L
@@ -173,33 +185,87 @@ root: there are no per-light slots to clear, so the per-tile slot indirection st
 8 quantised lights added → `[136,264,520,2040]`; one negated → `[119,231,455,1785]`; all 8 subtracted →
 `[0,0,0,0]`, `err 0`.
 
-**The real risk is reproducing the OLD contribution, not arithmetic.** To subtract light L exactly you must
-re-cast it with L's old parameters **and the old caster state**. If a caster moved in the same frame, the
-old contribution is no longer reproducible and light leaks behind — the failure the user predicted.
+**The real risk is reproducing the OLD contribution, not arithmetic** — to subtract light L exactly you must
+re-cast it with L's old parameters AND the old caster state. If a caster moved in the same frame, the old
+contribution is no longer reproducible and light leaks behind. Resolved by the ping-pong below.
 
-**Resolution — the GPU data texture IS the old-state snapshot until `coldData.flush()`.** So the frame
-order already in place (`buildCasters` → `buildPresence` → `coldData.flush` → `buildDirty`) grows one pass:
-1. **subtract** — for each dirty light (moved, removed, or reached by a moved caster) re-cast it negated
-   over its OLD reach region, **before** `flush()`, so it reads the pre-change data and inverts bit-exactly.
-2. **`coldData.flush()`** — prims, lights and casters become current.
-3. **add** — re-cast each dirty light positively over its NEW reach region.
+### F11b.1 — PING-PONG STATE + ONE DIFFERENTIAL PASS (2026-07-26) — user design, ADOPTED
+The user's refinement, and it is a strict upgrade. F11b originally leaned on an ORDERING trick: subtract
+before `coldData.flush()` so the data texture still held last frame's state. That works but is fragile — the
+correctness of the subtract depends on pass order, and getting it wrong fails silently. **Ping-pong the state
+instead:** keep last frame's and this frame's data textures both live, so both contributions are addressable
+at any point in the frame and no ordering can be wrong. Cost: a second 1024² RGBA32UI, **16 MB**.
 
-Cost = 2 × (dirty lights × their own region), **independent of total light count**. 64 static lights cost
-nothing when one mover moves, which is the behaviour the user expected and is not getting today. A moved
-CASTER cascades to every light whose reach covers it — bounded and local, same as now.
+**That collapses the two passes into one.** With both states bound, a single fragment computes the old and
+new contribution and emits **`new − old`** under one `blendFunc(ONE,ONE)`. Better three ways:
+- **Unchanged texels emit exactly 0** — both terms are quantised integers, so the difference is an exact
+  integer and "nothing moved here" is a hard zero, not an epsilon. A correctness check for free.
+- **The region is the union, not the sum.** A light that moved one tile has ~90% overlap between old and new
+  reach; two passes pay both rects, the differential pass pays their union once.
+- **The lightmap is never transiently wrong** — no window where light is subtracted but not yet re-added.
 
-**What it dissolves.** The [F11a](#f11a-can-scatter-update-one-light-incrementally-no--and-that-is-not-a-regression-2026-07-26)
-clear problem; the **16-lights-per-tile cap** (no slots at all — presence degrades from a hard cap to a pure
-culling optimisation); and arguably the **cold/hot split**, which exists mainly so a hot light cannot
-pollute the cold bake — with an invertible accumulator one buffer suffices.
+**Frame loop.** Build the dirty-light union → one differential pass per dirty light over its old∪new region.
+Nothing else touches the accumulator.
 
-**Costs.** The lightmap RT is a fixed 24×16-tile window at 64 texels/tile = 1536×1024, so `RGBA32F` is
-**24 MB** per tier (vs 6 MB at `RGBA8`), ~48 MB total. Cheap. The final blit gains a divide by the
-quantisation scale plus a clamp/tonemap.
+**HOT/COLD DISSOLVES.** Whatever is written settles immediately and is never recalculated, so the split (which
+existed so a hot light could not pollute the cold bake) has nothing left to do. One accumulator.
 
-**Self-heal, required.** Bookkeeping leaks are the residual risk, so: a full rebuild on the window
-scroll/zoom paths that already re-bake, plus a debug **rebuild-and-diff** assertion that re-accumulates from
-scratch and reports any texel that disagrees. That converts a silent leak into a caught one.
+**Dirty-light union.** A moved prim dirties lights at **both ends** — it stops casting where it left and
+starts casting where it arrived, and if it moved far those are disjoint light sets:
+`dirtyLights = ⋃ presence(t) for t in (oldTiles ∪ newTiles)`.
 
-**Ordering.** The cross-pad DDA ([I30](issues.md#i30)) still goes first — it is independent of this, shrinks
-the per-light resolve that survives, and is verifiable against the existing corridor↔brute identity check.
+**PRESENCE MUST PING-PONG TOO** — the trap in this design. A light's old contribution to a tile depends on
+whether it was in that tile's **top-16**. If L was slot 9 on tile T last frame and got pushed out this frame
+by a nearer light, L's contribution to T must be subtracted — knowable only from T's OLD presence. So
+`light_presence_lo/hi` + `billboard_presence` ping-pong with the rest, and presence churn is itself a dirty
+event over `oldPresence(T) ∪ newPresence(T)`.
+
+**The recast must GATE ON per-tile presence.** Rasterising L over its full reach crosses tiles where L is not
+in the top-16; those texels must contribute nothing or the cap does not actually hold. The differential shader
+reads the destination tile's presence (old for the old term, new for the new term) and gates each term on
+membership. Cheap — presence is already being read — but load-bearing, not an optimisation.
+
+**The 16/tile cap is RETAINED, and its justification changes.** It was forced by storage (16 slots × 8 bits =
+128 bits = one RGBA32UI). Nothing stores per-light anything now, so 16 is purely a **work bound**: how much
+recasting one dirty tile may cost. Same number, different reason — and it becomes a **tunable knob** (raise to
+24/32 by deciding the recast is affordable) with no format change and no repacking. It also keeps a user from
+stacking torches into an unbounded recast. This CORRECTS F11b's original claim that presence demotes to a pure
+culling optimisation.
+
+**The big win — dirty lights and dirty prims SHARE recalculation.** Today cost scales as
+*dirty tiles × lights per tile*: eight wolves under one torch is eight times the work. Here the unit of work is
+"light L, once", so **any number of movers inside L's reach collapses into a single recast of L**. Crowd density
+stops costing anything — a superlinear→linear collapse in exactly the scenes that fall over now, which is why
+the 32-mover measurement (34 fps) is not predictive of this scheme.
+
+**Steady-state only — two exceptions, both pre-existing costs.** (a) **Scroll/pan**: the lightmap is
+world-ordered, so a newly-exposed band of texels now represents different world tiles and must be zeroed and
+re-accumulated from scratch (all lights, not a differential) — the same work the cold bake pays on scroll
+today. (b) **Zoom**: whole buffer invalid, full rebuild. Also as today.
+
+**The one genuine cost of dissolving hot/cold.** `shadow-cold` persistently stores per-slot coverage today, so
+the corridor walk is paid **once at bake**. With on-demand recasts and no persistent shadow store, every recast
+pays the walk fresh — it moves from one-time to recurring. Bounded by the dirty-light union, so not fatal, but
+it makes **the DDA ([I30](issues.md#i30)) more important, not less**: cutting ~59% of the walk's fetches was a
+nice-to-have when the walk ran once; it is on the critical path when the walk runs per recast. Ordering
+unchanged — DDA first.
+
+**Deferred optimisation, deliberately (user: "they get complex so for our first pass lets just mark the lights
+dirty").** A *moved light* genuinely changed everywhere in its reach → full region. A *static light with a
+moved caster* only changed where that caster's shadow moved → the pass could scissor to that caster's
+old∪new shadow region, far smaller than the light's reach. Cheap to add later: it is a scissor rect on the
+same single pass, no structural change. That is where the second-pass win lives.
+
+**Costs.** Lightmap `RGBA32F` at the fixed 24×16-tile window, 64 texels/tile = 1536×1024 → **24 MB** for the
+single surviving accumulator (vs 2 × 6 MB `RGBA8` today). Plus 16 MB for the ping-pong data texture. Net
+~+28 MB. The final blit gains a divide by the quantisation scale and a clamp/tonemap.
+
+**Self-heal, required.** Bookkeeping leaks are the residual risk: a full rebuild on the scroll/zoom paths that
+already re-bake, plus a debug **rebuild-and-diff** assertion that re-accumulates from scratch and reports any
+disagreeing texel — trivially expressible now there is one buffer. Converts a silent leak into a caught one.
+
+### F11c — keep a persistent shadow cache for static-light × static-caster pairs? DEFERRED
+F11b.1 makes every recast re-walk the corridor. A persistent cache of resolved coverage for pairs where
+neither light nor caster moved would restore the one-time cost — but that is a cold tier under another name,
+and it reintroduces exactly the invalidation bookkeeping this fork deleted. Not for the first pass. Revisit
+only if the DDA leaves the recast walk measurably hot.
