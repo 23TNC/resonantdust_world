@@ -43,10 +43,12 @@ A schema change needs a LIVE check — subscription SQL is a string, so the buil
       Verified: spawn is LIT — the zone that had 0 torches across 3,429 prims now has the 3 seeded ones.
 
 ## P4 — Retire the biome scatter
-- [ ] Remove the `torch` draw from `forest` and `plains` in `content/biome/biomes.rd`.
-      Acceptance: torch count is exactly the seeded count, with no probabilistic contribution.
-- [ ] Keep the `torch` KIND in `content/{data,visual}/things.rd` — only the scatter goes.
-      Acceptance: `thing_object_id("torch")` still resolves; the light attrs are untouched.
+- [x] Remove the `torch` draw from `forest` and `plains` in `content/biome/biomes.rd`.
+      Verified: 0 torches in freshly-generated territory (3,564 prims) where ~50 would have scattered.
+- [x] Keep the `torch` KIND in `content/{data,visual}/things.rd` — only the scatter goes.
+      Verified: the seeded torches still resolve their kind and light, so the contract is intact.
+- [ ] Already-seeded zones keep their scatter torches — regenerating them is [B-4](../2026-07-25-primitive-graph/blockers.md).
+      Blocked on the user: I will not wipe stored world data unprompted.
 
 ## P5 — Verify + close
 - [ ] Re-run the identity + zoom checks with seeded torches as the light source.

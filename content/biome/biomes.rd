@@ -98,16 +98,11 @@
             8 ^rand call 0.16 lt if flora &thing.1 set
             5 ^rand call 0.14 lt if shrub &thing.1 set
             6 ^rand call 0.22 lt if tree &thing.1 set
-            ; Torches — the world's only light sources. LAST, so this draw dominates the
-            ; scatter above (a later `&thing.1 set` overwrites an earlier one) and a torch
-            ; is never silently replaced by a tree. Salt 10 is fresh — 9 is already taken by
-            ; `plains` flora below, and a distinct salt per feature is what keeps the draws
-            ; independent instead of correlated.
-            ;
-            ; 0.006 ≈ 3 per 512-tile screen at zoom 1 (the 28×12 visible slots). Deliberately
-            ; sparse: the lighting model is dense AUTHORED points, and `flora` at 0.16 was
-            ; reverted for reading as an ambient wash. Raise this only with that in mind.
-            10 ^rand call 0.006 lt if torch &thing.1 set
+            ; NO torch draw here. Torches are DELIBERATE objects seeded at world init, not scatter
+            ; — see docs/work/2026-07-26-torch-thing/. A probabilistic torch cannot be asserted about
+            ; ("this tile is lit by exactly one source"), only counted, and it is absent from zones
+            ; generated before the rule existed. The `torch` KIND stays in content/{data,visual}/
+            ; things.rd; only its placement moved.
             0 return
     ::plains>
         @subtype>
@@ -118,8 +113,4 @@
             grass &tile set
             9 ^rand call 0.20 lt if flora &thing.1 set
             7 ^rand call 0.06 lt if shrub &thing.1 set
-            ; Torches here too — `plains` is the catch-all `@define 1`, so it is most of the
-            ; walkable world and where a player is most likely to be. Same salt + density as
-            ; the forest draw, and likewise LAST so it is never overwritten.
-            10 ^rand call 0.006 lt if torch &thing.1 set
             0 return
