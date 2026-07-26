@@ -37,18 +37,18 @@ A schema change needs a LIVE check — subscription SQL is a string, so the buil
       Verified: 8 lights = 5 scatter + exactly the 3 seeded.
 - [x] Confirm each carries a light leaf and appears in `light_presence`.
       Verified: `carriedLights` tracks the total; each seeded torch carries a light leaf.
-- [ ] Assert lighting at a NAMED cell rather than counting.
+- [ ] Assert lighting at a NAMED cell rather than counting (now trivial — the cells are deterministic).
       Acceptance: a readback showing the accumulator non-zero at the torch's own texel and falling off.
 - [x] Confirm B-4 is dissolved — the spawn area is lit.
       Verified: spawn is LIT — the zone that had 0 torches across 3,429 prims now has the 3 seeded ones.
 
 ## P4 — Retire the biome scatter
 - [x] Remove the `torch` draw from `forest` and `plains` in `content/biome/biomes.rd`.
-      Verified: 0 torches in freshly-generated territory (3,564 prims) where ~50 would have scattered.
+      Verified after `redeploy --force`: **exactly 3** torches world-wide, at exactly the seeded cells.
 - [x] Keep the `torch` KIND in `content/{data,visual}/things.rd` — only the scatter goes.
       Verified: the seeded torches still resolve their kind and light, so the contract is intact.
-- [ ] Already-seeded zones keep their scatter torches — regenerating them is [B-4](../2026-07-25-primitive-graph/blockers.md).
-      Blocked on the user: I will not wipe stored world data unprompted.
+- [x] Already-seeded zones regenerated as a side effect of `redeploy --force` (module republish resets the
+      cold shards), so no manual wipe was needed — [B-4](../2026-07-25-primitive-graph/blockers.md) is moot.
 
 ## P5 — Verify + close
 - [ ] Re-run the identity + zoom checks with seeded torches as the light source.

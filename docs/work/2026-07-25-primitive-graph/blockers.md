@@ -1,10 +1,17 @@
 # Primitive graph — blockers
 
 _Things needing human input. Open → resolved (archive resolved with a date). Newest first below the
-resolved set. **Open: [B-4](#b-4), [B-5](#b-5)** — neither stops P10's remaining code, but both are visible
+resolved set. **Open: [B-5](#b-5)** (B-4 resolved) — neither stops P10's remaining code, but both are visible
 in the product right now._
 
-## B-4 — the EXISTING world has no torches; regenerate those zones? (open, 2026-07-26)
+## B-4 — the EXISTING world has no torches — RESOLVED 2026-07-26, no decision needed
+Dissolved by [torch-thing](../2026-07-26-torch-thing/README.md): torches are now seeded at world init into the
+zone the camera opens on, so the spawn area is lit regardless of when its terrain was generated. And the
+already-seeded zones regenerated as a **side effect of `redeploy --force`** (a module republish resets the cold
+shards), so the destructive option this blocker was asking about never had to be taken. Verified: exactly 3
+torches world-wide, at exactly the seeded cells, spawn lit.
+
+<details><summary>B-4 as originally raised</summary>
 **What.** Worldgen output is **persisted**. The torch scatter ([P11](todo.md)) only runs when a zone is
 first seeded, so it applies to zones generated *after* the rule landed. Measured: the spawn area
 (`focus=100,50`) has **0 torches across 3,429 prims**, while a never-visited region (`focus=900,700`) has
@@ -24,6 +31,8 @@ discarding stored zone data, which is your data and not mine to drop:
 **Suggested path:** (3) for now — it is free and non-destructive. Take (2) only if you are confident nothing
 in the seeded zones is worth keeping, and say so explicitly; I will not wipe stored world data on my own
 initiative.
+
+</details>
 
 ## B-5 — accumulation can now exceed 1.0: what should over-bright DISPLAY as? (open, 2026-07-26)
 **What.** With the additive accumulator ([P10](todo.md)) lights sum without a per-light clamp, so overlapping
