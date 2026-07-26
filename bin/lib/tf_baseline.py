@@ -45,6 +45,10 @@ def main():
     ap.add_argument("--lora-strength", type=float, default=0.85)
     ap.add_argument("--template-kind", default="pawn/animal/wolf", help="--mode template: whose art drives ControlNet")
     ap.add_argument("--seed", type=int, default=9100)
+    ap.add_argument("--seeds", type=int, default=1,
+                    help="rolls per cell; >1 turns each species+direction into a RATE rather than a "
+                         "single roll (the predecessor's single-seed baseline reported a failure rate "
+                         "as if it were a species verdict)")
     ap.add_argument("--size", type=int, default=768)
     ap.add_argument("--cfg", type=float, default=6.0)
     ap.add_argument("--out", default=".staging/tf-baseline")
@@ -58,22 +62,26 @@ def main():
     rows = []
     for name, fam, folder, stem, prompt in SPECIES:
         for d in ("e", "s", "n"):
+          for k in range(max(1, args.seeds)):
+            seed = args.seed + k
             pos = f"{prompt}, {STYLE.format(face=G.FACE[d])}"
             if args.mode == "none":
-                raw = L._run(L.graph(pos, args.lora, args.lora_strength, args.cfg, args.seed, size=args.size))
+                raw = L._run(L.graph(pos, args.lora, args.lora_strength, args.cfg, seed, size=args.size))
             else:
                 if d not in tpl_cache:                       # upload the template art once per dir
                     t = G.load_template(args.template_kind.strip("/"), d, "0", "0")
                     tpl_cache[d] = (G._upload(t, f"base_{d}_ref.png"),
                                     G._upload(G.edge_map(t, 30), f"base_{d}_edge.png"))
                 ref_name, edge_name = tpl_cache[d]
-                raw = G._run(G.graph_hero(pos, G.GENERIC_NEG, ref_name, edge_name, args.seed))
+                raw = G._run(G.graph_hero(pos, G.GENERIC_NEG, ref_name, edge_name, seed))
             im = Image.open(io.BytesIO(raw)).convert("RGB")
-            im.save(os.path.join(out, f"{name}_{d}.png"))
+            im.save(os.path.join(out, f"{name}_{d}" + (f"_s{seed}" if args.seeds > 1 else "") + ".png"))
 
             m = L.measure(im)
             r = L.reference(folder, stem, L.DIRS[d][2])
-            row = dict(species=name, family=fam, dir=d, mode=args.mode,
+            gate_ok = (m["blobs"] == 1 and m["bg_uni"] >= 0.75 and
+                       (not r or 100*abs(m["aspect"]-r["aspect"])/max(r["aspect"],1e-3) <= 50.0))
+            row = dict(species=name, family=fam, dir=d, mode=args.mode, seed=seed, gate=int(gate_ok),
                        blobs=m["blobs"], bg=round(m["bg"], 3), fill=round(m["fill"], 4),
                        aspect=round(m["aspect"], 3), solidity=round(m["solidity"], 3),
                        ref_fill=round(r["fill"], 4) if r else "",
@@ -90,6 +98,16 @@ def main():
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
     sc = [r["score"] for r in rows]
     print(f"\nmode={args.mode}  rows={len(rows)}  mean score={np.mean(sc):.1f}  median={np.median(sc):.1f}")
+    if args.seeds > 1:                      # per-cell PASS RATE, the point of multi-seed
+        print("per-cell gate pass rate:")
+        for name, _f, _fo, _st, _p in SPECIES:
+            cells = []
+            for d in ("e", "s", "n"):
+                sub = [r for r in rows if r["species"] == name and r["dir"] == d]
+                cells.append(f"{d} {sum(x['gate'] for x in sub)}/{len(sub)}")
+            print(f"   {name:<8} " + "  ".join(cells))
+        print(f"overall gate pass rate: {sum(r['gate'] for r in rows)}/{len(rows)}"
+              f" = {100*sum(r['gate'] for r in rows)/len(rows):.0f}%")
     print(f"wrote {os.path.relpath(csv_path, REPO)}")
 
 if __name__ == "__main__":

@@ -33,3 +33,40 @@ gate. `blobs` retained as a zero-cost regression alarm.
 against an Elephant and its blob legitimately resembles elephant proportions. Geometry gating is
 sound for corpus species and weak for exactly the unseen case template-free generation exists to
 serve. Recorded rather than tuned away.
+
+### Two caveats on the P0 boxes
+
+**The `iou_control` item's acceptance FAILED, and the box is ticked anyway.** Its criterion was
+"the blobby anteater south scores lower `iou_control` than its own good east" — the measurement came
+back the opposite way (0.789 vs 0.703). The *work* is done and the metric ships as a reported value;
+what is retired is the plan's **premise** that it would catch this case. That is a plan error, logged
+as [I5](issues.md#i5). Ticking the box without this note would have misrepresented a refutation as a
+success.
+
+**Removing `solidity` has a real cost, accepted knowingly.** The item asked to *replace* it with a
+horn-tolerant variant; the calibration data said the honest move was to **delete** it, since both it
+(0.19 sd) and the hull-based replacement (0.30 sd) carry almost no signal. The consequence: a
+single-component but genuinely *wispy* sprite is no longer caught — `blobs` only catches a shape
+that fragments into separate pieces. No such sprite exists in the 67-sprite calibration set, so the
+risk is untested rather than disproven. If wispy output shows up later, the fix is a targeted check,
+not restoring a threshold that rejected good art.
+
+## 2026-07-26 — P0 item 5: multi-seed baselines
+
+`tf_baseline.py --seeds N` now rolls each species+direction N times, records the seed and the gate
+verdict per row, and prints a **per-cell pass rate**. Verified with `--mode none --seeds 3`: **90
+rows** (30 cells × 3), overall gate pass rate **74/90 = 82%**.
+
+The aggregate barely moved from the single-seed run (83%), but the per-cell view is new information
+the old baseline could not express — it separates *consistent* failure from *stochastic* failure:
+
+| pattern | cells |
+|---|---|
+| consistently fails | **cat south 0/3** |
+| mostly fails | bear south 1/3, pig south 1/3 |
+| coin-flip | fox south 2/3, horse south 2/3, zebra south 2/3, several norths 2/3 |
+| always passes | every east except cat (2/3); wolf, tiger all three |
+
+This matters for where effort goes: a 0/3 cell is a capability gap (no amount of sampling fixes it),
+while a 2/3 cell is exactly what `--candidates` already solves for free. The single-seed baseline
+reported both as the same thing.

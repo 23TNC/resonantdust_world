@@ -10,7 +10,7 @@ every later comparison is scored by it.
 - [x] Add `iou_control` to `lora_eval.measure()` — IoU of the output silhouette against the control image it was given. Acceptance: the blobby anteater south scores lower `iou_control` than its own good east.
 - [x] Replace the flat `solidity` check with one that tolerates horns/antlers. Acceptance: the oryx candidate at `solidity=0.349` passes; a genuinely fragmented sprite still fails.
 - [x] Re-tune the gate thresholds against the calibration set. Acceptance: false-positive and false-negative counts are both printed, and both are lower than the current gate's on the same set.
-- [ ] Add `--seeds N` to `tf_baseline.py` so every cell is a rate, not a single roll. Acceptance: `--seeds 3` writes 3 rows per species+direction and prints a per-cell pass rate.
+- [x] Add `--seeds N` to `tf_baseline.py` so every cell is a rate, not a single roll. Acceptance: `--seeds 3` writes 3 rows per species+direction and prints a per-cell pass rate.
 
 ## P1 — Choose the control silhouette by measurement, not by a hand table
 
