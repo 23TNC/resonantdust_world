@@ -63,3 +63,36 @@ ControlNet nodes 30/31/32 are **absent**, not zero-strength — nothing is loade
 
 **Regression:** the default templated path is unchanged after the `_tail` refactor — wolf east at
 the standard defaults scored `aspect=2.11 (ref 2.08) d=1.5%` → PASS.
+
+## 2026-07-25 — P2 complete (the corpus IS the template library)
+
+**`bin/lib/silhouette_bank.py`** builds `.staging/silhouette-bank/<Species>/<dir>.png` from the
+training corpus: **132 species × 3 directions = 396 control images**, zero art authored. No species
+came out incomplete. It stores the *sprite on white*, not a pre-baked edge map, so
+`generate.edge_map()` stays the single place edges are derived — verified byte-identical for
+Wolf_Timber / Bear / Tiger (`--verify` → PARITY OK), which also keeps `--edge-thresh` live.
+
+**Family table**: all **11** families from `build_quad.py` resolve to a representative chosen for a
+clean, characteristic silhouette. An unknown family errors with the valid list
+(`unknown family 'sasquatch'. valid: bear, camel, canine, cattle, deer, equine, feline, pachyderm,
+pig, primate, rodent`).
+
+**The acceptance test — [I2](issues.md#i2)'s bear, three control modes, same species:**
+
+| control | east | south | north |
+|---|---|---|---|
+| `template` (wolf art) | 8.1% PASS | 46.3% PASS | 47.8% PASS |
+| `none` (txt2img) | 5.7% PASS | **136.6% FAIL** | 36.0% PASS |
+| **`family:bear`** | **1.3% PASS** | **4.1% PASS** | **1.2% PASS** |
+
+(d_aspect vs the real Bear sprite.) The corpus silhouette fixes **both** prior failures at once: the
+cross-family homogenisation of the templated path *and* the facing collapse of the template-free
+path. Visually (`.staging/p2-bear/compare.png`) the `family:bear` row matches the real corpus row —
+proper bear side profile, a front view with the bear's own body shape instead of a wolf tail with a
+face inside it, and a rear view with round ears.
+
+**Colour is not constrained by the bank** — checked because the first bear came out cream from a
+near-white (238,238,238) control image. Prompting "black bear, jet black fur" produced mean subject
+RGB (49,57,59); "brown bear" gave (193,190,177). So the control image supplies **shape only**, as
+intended at `dn=1.0` where its latent is destroyed. The cream result was prompt/seed variance, not
+bleed.

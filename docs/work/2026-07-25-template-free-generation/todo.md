@@ -22,11 +22,11 @@ because "template-free is worse" is currently an assumption, not a measurement.
 
 ## P2 — Corpus-derived control (the silhouette bank)
 
-- [ ] Write `bin/lib/silhouette_bank.py` extracting a control silhouette per species+dir from `.staging/quad-lora-train`. Acceptance: `.staging/silhouette-bank/<Species>/<dir>.png` exists for all 132 species.
-- [ ] Emit the bank's edge maps with the same `edge_map()` used by the pipeline. Acceptance: a bank edge map is byte-identical to `edge_map()` run on the same source sprite.
-- [ ] Add a family → representative-species table covering the corpus families. Acceptance: every family in `build_quad.py` resolves to one representative; an unknown family errors listing valid names.
-- [ ] Wire `--control corpus:<Species>` and `--control family:<f>` to source from the bank. Acceptance: `--control family:bear` on a bear prompt yields a bear-shaped sprite, not a wolf-shaped one.
-- [ ] Re-run the P0 bear failure with `--control family:bear`. Acceptance: the bear-east blob and bear-face-in-torso are gone; scores beat the P0 templated run, recorded in `completed.md`.
+- [x] Write `bin/lib/silhouette_bank.py` extracting a control silhouette per species+dir from `.staging/quad-lora-train`. Acceptance: `.staging/silhouette-bank/<Species>/<dir>.png` exists for all 132 species.
+- [x] Emit the bank's edge maps with the same `edge_map()` used by the pipeline. Acceptance: a bank edge map is byte-identical to `edge_map()` run on the same source sprite.
+- [x] Add a family → representative-species table covering the corpus families. Acceptance: every family in `build_quad.py` resolves to one representative; an unknown family errors listing valid names.
+- [x] Wire `--control corpus:<Species>` and `--control family:<f>` to source from the bank. Acceptance: `--control family:bear` on a bear prompt yields a bear-shaped sprite, not a wolf-shaped one.
+- [x] Re-run the P0 bear failure with `--control family:bear`. Acceptance: the bear-east blob and bear-face-in-torso are gone; scores beat the P0 templated run, recorded in `completed.md`.
 
 ## P3 — Generate-many + auto-screen (make failure cheap)
 

@@ -232,8 +232,8 @@ def resolve_control(mode, from_path, d, part, tvar):
     if mode == "none":
         return None
     if mode.startswith(("corpus:", "family:")):
-        raise SystemExit(f"generate: --control {mode} is not wired yet (P2 of the "
-                         "template-free-generation stream); use 'template' or 'none'")
+        import silhouette_bank
+        return silhouette_bank.resolve(mode, d)
     return load_template(from_path, d, part, tvar, required=True)
 
 def load_hero_from_disk(out_dir, part, seed):
