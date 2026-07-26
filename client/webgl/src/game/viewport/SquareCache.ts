@@ -50,6 +50,23 @@ export interface Primitive {
   packed?: readonly PackedChannel[];
   seed?: number;
   zIndex: number;
+  /** P5 — the LIGHT presentation of this primitive, if it has one. A primitive presents as a
+   *  billboard (the fields above), a light (this), or **both**: a torch is one placed object with a
+   *  sprite and a glow. Carried under the SAME carrier prim as the billboard ([F9](../../../../docs/work/2026-07-25-primitive-graph/forks.md)),
+   *  so it needs no second delivery list. Absent ⇒ nothing about the records changes. */
+  light?: PrimitiveLight;
+}
+
+/** The light a primitive carries. Per-KIND in content ([F8](../../../../docs/work/2026-07-25-primitive-graph/forks.md)),
+ *  so every torch shares these values; world px / 0..1 colour, converted to units at the record. */
+export interface PrimitiveLight {
+  color: readonly [number, number, number];
+  intensity: number;
+  reach: number;          // world px — how far it throws
+  emitterRadius: number;  // world px — penumbra softness (0 ⇒ hard shadows)
+  height: number;         // world px above the ground plane
+  castShadows: boolean;
+  hot: boolean;           // animates per frame (flicker/motion) ⇒ the HOT class
 }
 
 /** What a channel's resolve returns — the merged bake gathers albedo material + normal + depth. */

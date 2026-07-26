@@ -24,11 +24,11 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
 - [x] Delete `coldDirty` / `forceColdDirty` / `lightsVer`; keep one explicit `rebakeAll()` for shader constants.
 
 ## P5 — Compose the real objects (authoring)
-- [ ] Add an optional `light` aspect (colour/reach/radius/height/hot/cast) to `Primitive`.
+- [x] Add an optional `light` aspect (colour/reach/radius/height/hot/cast) to `Primitive`.
       Acceptance: `tsc` clean; a prim without it writes byte-identical records.
-- [ ] Allocate a light leaf under the SAME carrier when a standing prim has `.light`.
+- [x] Allocate a light leaf under the SAME carrier when a standing prim has `.light`.
       Acceptance: mirror shows one prim with `set_a=6, set_b=2`, both leaves' `parent_id` equal to it.
-- [ ] Include carried lights when building `light_presence`.
+- [x] Include carried lights when building `light_presence`.
       Acceptance: the torch's tile lists its light id; the scene is visibly lit by it.
 - [ ] Add a per-kind light table to the content manifest, beside `thingLayout`/`thingPacked`.
       Acceptance: `bin/dsl` emits it and the client reads a row by `kindId`.

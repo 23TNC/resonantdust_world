@@ -1046,6 +1046,19 @@ export class ShadowGather {
     // DEBUG (lightmap P3): scatter n STATIC lights in a grid around the seed to stress the dirty-gated bake —
     // static lights bake ONCE then never re-bake, so fps should hold (the many-lights caching payoff). Returns
     // the new total light count (capped at the N_LIGHTS bitfield ceiling).
+    // P5 DEBUG: turn an already-placed billboard into a TORCH — the same object now presents as both
+    // a sprite and a light, carried by one prim. This is the two-presentation case running through the
+    // real placement path (no `this.lights` involved), and the stand-in for content until the DSL
+    // supplies a torch kind. `__torch()` with no id lights the first standing billboard it finds.
+    (globalThis as unknown as { __torch: (id?: number) => unknown }).__torch = (id?: number) => {
+      const standing = this.lastStanding;
+      const p = id !== undefined ? standing.find((q) => q.id === id) : standing[0];
+      if (!p) return { error: "no standing billboard", candidates: standing.length };
+      p.light = { color: [1, 0.72, 0.35], intensity: 1, reach: 8 * SQUARE, emitterRadius: 16,
+                  height: 24 * UNIT, castShadows: true, hot: false };
+      this.rebakeAll();
+      return { lit: p.id, tile: [Math.floor(p.x / SQUARE), Math.floor(p.y / SQUARE)] };
+    };
     (globalThis as unknown as { __manylights: (n?: number) => number }).__manylights = (n = 24) => {
       const room = N_LIGHTS - this.lights.length;
       const add = Math.max(0, Math.min(n, room));
@@ -1093,7 +1106,7 @@ export class ShadowGather {
    *  Nearest-N eviction via `slotDist`. This bounds the gather to O(8) lights/texel. */
   private buildPresence(win: TileWindow): void {
     const { cols, rows, winCol, winRow } = win;
-    const sig = `${winCol},${winRow},${cols},${rows},${this.lightsVer}`;
+    const sig = `${winCol},${winRow},${cols},${rows},${this.lightsVer},${this.coldData.carriedVer}`;
     if (sig === this.presSig && this.presSlots.length === cols * rows * PRES_SLOTS) return;
     this.presSig = sig;
     if (this.presSlots.length !== cols * rows * PRES_SLOTS) {
@@ -1102,10 +1115,16 @@ export class ShadowGather {
     }
     this.presSlots.fill(0xffff); // every slot empty
     this.slotDist.fill(Infinity);
-    // Nearest-14 per in-window tile (dense window-local scratch; the GPU slot is the region-torus fold).
+    // Nearest-N per in-window tile (dense window-local scratch; the GPU slot is the region-torus fold).
+    // P5: the candidate set is the debug array PLUS every content-carried light, keyed by its own
+    // `light_data` id — a torch must light the world exactly as a seeded light does. When `this.lights`
+    // goes, the first list simply becomes empty and the second is all of them.
     const n = Math.min(this.lights.length, MAX_LIGHTS);
-    for (let k = 0; k < n; k++) {
-      const L = this.lights[k], r = L.reach;
+    const cands: Array<{ id: number; x: number; y: number; reach: number }> = [];
+    for (let k = 0; k < n; k++) cands.push({ id: k, x: this.lights[k].x, y: this.lights[k].y, reach: this.lights[k].reach });
+    for (const [id, L] of this.coldData.carriedLights) cands.push({ id, x: L.x, y: L.y, reach: L.reach });
+    for (const L of cands) {
+      const k = L.id, r = L.reach;
       if (r <= 0) continue;
       const r2 = r * r;
       const t0x = Math.max(winCol, Math.floor((L.x - r) / SQUARE)), t1x = Math.min(winCol + cols - 1, Math.floor((L.x + r) / SQUARE));
@@ -1153,9 +1172,14 @@ export class ShadowGather {
     // only the base row missed casters whose top sits in the row above (I-7).
     const TILT = 0.5 * Math.cos(this.worldTiltDeg * Math.PI / 180); // 0.5·cos(tilt) of the height, leaned back (live tilt)
     this.litSeen.clear();
+    this.lastStanding = standing;
     const seen = this.billboardSeen;
     seen.clear();
     for (const p of standing) {
+      // P5: attach a carried light BEFORE the caster gate — a primitive can present as a light
+      // without being a caster (a bare source, or a sprite with no resolved silhouette), and those
+      // `continue` out below. `carriedLightFor` allocates the carrier if the billboard path has not.
+      if (p.light) this.coldData.carriedLightFor(p, p.light);
       const def = this.coldData.definitionFor(p, resolver);
       if (def < 0) continue; // no textureName → not a caster
       const inst = this.coldData.billboardDataFor(p, def);
@@ -1167,6 +1191,9 @@ export class ShadowGather {
       const tx = p.x + tdx, ty = p.y + t.dy;
       // A changed billboard (new immutable def — lod landed/zoom — or first sight) cascades its region.
       if (inst.changed) this.markBillboardDirty(tx, ty, t.w, t.h);
+      // P5: a primitive that ALSO presents as a light (a torch) hangs its light leaf off the SAME
+      // carrier — one placed object, two presentations, no second delivery list ([F9]).
+
       // P4: remembered so REMOVAL can dirty scopedly. MUTATE in place — allocating a fresh array per
       // prim per frame is ~1700 short-lived arrays a frame, i.e. GC pressure for no reason.
       const lb = this.lastBox.get(p.id);
@@ -1203,9 +1230,8 @@ export class ShadowGather {
         const ti = (wr - winRow) * cols + (wc - winCol);
         this.coldData.writeBillboardPresence(wc, wr, this.castSlots.subarray(ti * BILLBOARD_SLOTS, ti * BILLBOARD_SLOTS + BILLBOARD_SLOTS));
       }
-    // Flush all queued writes (def/billboard/presence/caster) as ONE scatter batch. NO force-all: def
-    // swaps + new billboards queued their scoped rects via the billboard dirty cascade (markBillboardDirty).
-    this.coldData.flush();
+    // The flush moved to `tick`, AFTER `buildPresence` — presence now runs last (it needs the carried
+    // lights this pass discovers), and both must land in the SAME scatter batch or presence lags a frame.
   }
 
   /** P4 — **the one legitimate force-all.** Placement is always scoped (a prim/light/removal queues
@@ -1245,6 +1271,8 @@ export class ShadowGather {
   /** P4: the same trick for LIGHTS — a removed light's reach box is unrecoverable once it is gone
    *  from `this.lights`, so remember it and queue it on shrink. */
   private readonly lastLightBox: Array<{ x: number; y: number; reach: number; dynamic: boolean }> = [];
+  /** P5 debug: the last `standing` list, so `__torch()` can pick a real placed billboard. */
+  private lastStanding: Primitive[] = [];
   /** DEBUG: shadow tiles marked dirty (recomputed) on the last frame. */
   debugDirtyTiles = 0;
   /** P4 — **the PRIM dirty front door.** A carrier changed (placed / moved / re-carried / freed) →
@@ -1426,7 +1454,12 @@ export class ShadowGather {
 
   /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield. */
   tick(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
-    if (!this.enabled || this.lights.length === 0) return;
+    // P5: do NOT gate on the debug array. Content-carried lights are registered *by* `buildCasters`,
+    // which runs below — so bailing when `this.lights` is empty makes a content-lit world unreachable
+    // (the array empties, the tick stops, and nothing ever discovers the torches). This guard was the
+    // concrete blocker behind "delete `this.lights`". Bail only when there is genuinely nothing to do.
+    if (!this.enabled) return;
+    if (this.lights.length === 0 && this.coldData.carriedLights.size === 0 && standing.length === 0) return;
 
     // Motion. Default: only `dynamic` lights move (each orbits its own home) — the moving-light case
     // in a scene with static reference lights. `__orbit` (DEBUG) instead rings EVERY light around the
@@ -1484,14 +1517,22 @@ export class ShadowGather {
       // nothing to scope from; that is the `rebakeAll` case and the last force-all standing.
       if (lightsChanged && this.pendingRects.length === 0) this.rebakeAll();
     }
-    if (this.coldData.lights === 0 || win.cols === 0) return;
+    // Same reasoning: `coldData.lights` counts only the debug array's records, so a world lit purely
+    // by carried lights must not be turned away here either.
+    if (win.cols === 0) return;
+    if (this.coldData.lights === 0 && this.coldData.carriedLights.size === 0 && standing.length === 0) return;
 
     this.ensureRT(win.cols, win.rows);
     // P3: the window mapping rides the data texture's constants row (compare-written — an
     // unchanged window costs nothing), through the same scatter path as every other write.
     this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, TEXTILE_UNIT, this.coldData.lights, Math.round(this.worldTiltDeg * 100));
-    this.buildPresence(win);                    // F5 per-tile light cull (rebuilt on light/window change)
-    this.buildCasters(standing, resolver, win); // P1 per-tile caster buckets (the corridor reads these)
+    // ORDER MATTERS (P5): casters BEFORE presence. `buildCasters` is what discovers content-carried
+    // lights (a torch's light is registered as its billboard is walked), so building presence first
+    // culls against a light set that does not yet include them — and the signature gate then stops it
+    // ever retrying, leaving a carried light permanently invisible.
+    this.buildCasters(standing, resolver, win); // P1 per-tile caster buckets + carried-light discovery
+    this.buildPresence(win);                    // F5 per-tile light cull (now sees carried lights)
+    this.coldData.flush();                      // ONE scatter batch, after both have queued their writes
     this.buildDirty(win);    // #4: owner-change (pan) + per-class rebuild → cold/hot dirty; clean tiles persist
     // #4 COLD then HOT pass. Each is: gather (shadow-cold for that class) → lighting (its lightmap), gated
     // by that class's dirty texture (clean tiles `discard` → persist). A frame where only the green (hot)

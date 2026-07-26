@@ -13,7 +13,7 @@
 //! atlas `frame_*` are texture px. Positions pack as `position_anchor_reference` (region|zone|tile|anchor).
 
 import { Renderer, Texture, Program, Geometry, RenderTarget } from "../../gl";
-import type { Primitive } from "./SquareCache";
+import type { Primitive, PrimitiveLight } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
 import { SQUARE, UNIT, ZONE_DIM, REGION_DIM } from "./squareMath";
 
@@ -207,6 +207,17 @@ export class ColdShadowData {
   private readonly primOfBillboard = new Map<number, number>();
   /** light slot k → the prim carrying it (P3: lights are CARRIED, never placed directly). */
   private readonly primOfLight: number[] = [];
+  /** P5 — CONTENT-carried lights: `billboard.id` → its `light_data` id. Their id space starts above
+   *  `N_LIGHTS` so it can never collide with the debug array's slots (which `buildLights` zeroes by
+   *  index). When `seed()`/`this.lights` finally go, this becomes the only light id space. */
+  private readonly lightOfBillboard = new Map<number, number>();
+  private carriedLightNext = N_LIGHTS;
+  /** What `buildPresence` needs about each carried light: resolved world px + reach. */
+  readonly carriedLights = new Map<number, { x: number; y: number; reach: number }>();
+  /** Bumped whenever a carried light is added or actually moves — `buildPresence` folds this into its
+   *  rebuild signature, so a torch appearing invalidates the per-tile light lists exactly as a debug
+   *  light moving does. Without it the gate would hold a stale cull forever. */
+  carriedVer = 0;
   private lightCount = 0;
 
   /** P3: take a `prim_data` id (free-list first, so the space survives churn). */
@@ -566,6 +577,59 @@ export class ColdShadowData {
       // wrapping — a clamped light sits too low, a wrapped one teleports to the ground (I9).
       z: Math.min(255, z),
     };
+  }
+
+  /** The carrier prim allocated for a placed billboard (P5 hangs its light off the same one). */
+  primOf(billboardId: number): number {
+    return this.primOfBillboard.get(billboardId) ?? 0;
+  }
+
+  /** P5 — write the LIGHT leaf a placed primitive carries, under the **same carrier prim** as its
+   *  billboard ([F9]). One placed object, two presentations: `set_a` already names the billboard, so
+   *  the light takes `set_b`. Returns the light's in-set id. The carrier is written by
+   *  {@link billboardDataFor} first, so the resolve walk below reads a populated node. */
+  carriedLightFor(billboard: Primitive, L: PrimitiveLight): number {
+    const billboardId = billboard.id;
+    // ENSURE a carrier. `billboardDataFor` allocates one for a *caster*, but a primitive can carry a
+    // light without being one (a bare light source, or a sprite with no resolved silhouette — those
+    // `continue` out of the caster loop before ever getting a carrier). So allocate + place one here
+    // when it is missing, rather than assuming the billboard path ran.
+    let prim = this.primOfBillboard.get(billboardId);
+    if (prim === undefined) {
+      prim = this.allocPrim();
+      this.primOfBillboard.set(billboardId, prim);
+      this.writeRecord(PRIM_BASE + prim,
+        encodePosition(billboard.x + billboard.width * 0.5, billboard.y + billboard.height),
+        (((1 << 24) | ((SET_LIGHT_DATA & 0xf) << 8)) >>> 0), 0, 0);
+    }
+    return this.writeCarriedLight(billboardId, prim, L);
+  }
+
+  private writeCarriedLight(billboardId: number, prim: number, L: PrimitiveLight): number {
+    const idx = this.lightOfBillboard.get(billboardId)
+      ?? (this.lightOfBillboard.set(billboardId, this.carriedLightNext++), this.carriedLightNext - 1);
+    // Point the carrier's slot b at this light (slot a is the billboard, written by billboardDataFor).
+    const pb = (PRIM_BASE + prim) * 4, m = this.dataMirror;
+    const G = ((m[pb + 1] & ~(0xf << 8)) | ((SET_LIGHT_DATA & 0xf) << 8)) >>> 0;
+    const B = ((m[pb + 2] & 0xffff0000) | (idx & 0xffff)) >>> 0;   // id_b, keeping id_a
+    this.writeRecord(PRIM_BASE + prim, m[pb], G, B, m[pb + 3]);
+    const r = this.resolveCarried(prim, OFFSET_ZERO, OFFSET_ZERO, L.hot, L.castShadows,
+                                  clamp(L.height / UNIT, 255));
+    const c = (v: number): number => clamp(v * 255, 255);
+    this.writeRecord(LIGHT_BASE + idx,
+      ((((prim & 0xffff) << 16) | (((r.pos >>> 8) & 0xff) << 8) | (r.pos & 0xff)) >>> 0),
+      ((((r.hot ? 1 : 0) << 25) | ((r.cast ? 1 : 0) << 24) | ((r.z & 0xff) << 16)
+        | (OFFSET_ZERO << 8) | OFFSET_ZERO) >>> 0),
+      (((c(L.color[0]) << 24) | (c(L.color[1]) << 16) | (c(L.color[2]) << 8) | c(L.intensity)) >>> 0),
+      (((clamp(L.reach / UNIT, 0xfff) << 20) | (clamp(L.emitterRadius / UNIT, 255) << 12)
+        | (((r.pos >>> 16) & 0xff) << 4)) >>> 0));
+    const [wx, wy] = decodePosition(r.pos);
+    const prev = this.carriedLights.get(idx);
+    if (!prev || prev.x !== wx || prev.y !== wy || prev.reach !== L.reach) {
+      this.carriedLights.set(idx, { x: wx, y: wy, reach: L.reach });
+      this.carriedVer++;                       // the per-tile cull is now stale
+    }
+    return idx;
   }
 
   /** Compare-write one whole record; marks it dirty (→ one scatter command) only if it changed. */

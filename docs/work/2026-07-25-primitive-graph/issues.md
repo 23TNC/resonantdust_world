@@ -272,3 +272,24 @@ window size; HMR loop accumulation — `Ticker` has an undisposed `requestAnimat
 `window` global set before the update was gone after it), so nothing accumulates.
 **Still unknown** — what differs in the reporting session. Needs: the view (zoom/focus), whether it is
 steady state or during zone streaming, and whether other lights were injected.
+
+## I25 — Three blockers to content-lit worlds, found by actually lighting one (2026-07-25)
+Wiring the first carried light surfaced three separate reasons a content-lit world could not have
+worked — each invisible until the debug array was emptied:
+1. **`tick` bailed on `this.lights.length === 0`.** Content lights are discovered *by* `buildCasters`,
+   which runs inside `tick` — so an empty debug array stopped the tick, which stopped the discovery,
+   permanently. This is the concrete thing behind "delete `this.lights`": the deletion could never have
+   worked without fixing the guard first. Now bails only when there is genuinely nothing (no debug
+   lights, no carried lights, no standing prims). Same for the `coldData.lights === 0` guard below it.
+2. **`buildPresence` ran BEFORE `buildCasters`.** Presence culled against a light set that did not yet
+   include the carried ones, and its signature gate then stopped it ever retrying — a torch stayed
+   invisible forever. Fixed by ordering casters → presence, folding a `carriedVer` into the signature,
+   and moving the single `flush()` to after both so they still land in ONE scatter batch.
+3. **A light-carrying prim that is not a caster got no carrier.** The attach sat after
+   `if (def < 0) continue`, so a bare light source — or a sprite with no resolved silhouette — was
+   skipped before `billboardDataFor` could allocate its carrier. `carriedLightFor` now ensures its own
+   carrier, and the attach moved above the caster gate.
+
+**Verified**: `__torch()` turns a placed billboard into a torch; with `this.lights` emptied, 131 of 240
+in-window tiles list the carried light and the scene renders lit by it, shadows cast away from it.
+Carrier reads `set_b = 2`, `id_b = 128` (the carried-light id space starts at `N_LIGHTS`).

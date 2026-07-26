@@ -245,3 +245,22 @@ pass) before returning to scoped. The resolve-chain self-test still passes.
 **Verification note:** the first attempt sampled a single frame after `setEmitter` and read `2838`,
 which looked like the rebake had failed. It had already happened. A one-frame sample of a
 multi-frame effect is not evidence — sample a window and take the peak.
+
+## P5a — A placed object carries a light: the world lit with `lights.length === 0` (2026-07-25)
+The two-presentation case now runs end to end through the real placement path.
+
+- **`Primitive.light`** (`PrimitiveLight`: colour/intensity/reach/emitterRadius/height/cast/hot) — the
+  light presentation of a placed object. Absent ⇒ every record byte-identical to before.
+- **`carriedLightFor(billboard, light)`** writes the light leaf under the **same carrier prim** as the
+  billboard (`set_a` = billboard, `set_b` = light), ensuring the carrier itself if the billboard path
+  did not create one. Carried-light ids start at `N_LIGHTS` so they can never collide with the debug
+  array's slots.
+- **`buildPresence` now culls the debug array PLUS every carried light**, so a torch lights the world
+  exactly as a seeded light does. When `this.lights` goes, the first list simply becomes empty.
+- **`__torch(id?)`** turns an already-placed billboard into a torch — the stand-in for content until
+  the DSL supplies a torch kind.
+
+**Verified**: with `__gather.lights.length === 0`, a single carried light is listed by **131 of 240**
+in-window tiles and the scene renders lit by it, trees casting shadows away from it. Three blockers
+found and fixed on the way ([I25](issues.md#i25)) — the tick guard that made deleting `this.lights`
+impossible, the presence/caster ordering, and the missing carrier for non-caster prims.
