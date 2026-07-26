@@ -29,23 +29,8 @@ const FINE_RATIO = TEXTILE_SQUARE / TEXTILE_UNIT;
 const MAX_LIGHTS: number = 3;
 /** Physical source RADIUS (world px); `/UNIT` → units in the light record. The AREA-LIGHT disk radius the
  *  penumbra samples over (bigger = softer). Per-light (see the config below); `__emit(px)` tunes live. */
-const LIGHT_EMITTER = 20;            // 5 units — a modest area light for the emitter-sampled penumbra
-/** Debug lights placed at fixed world TILES beyond the one at the seed tile:
- *  `[tileX, tileY, dynamic, emitterPx]`. A `dynamic` light orbits its home every frame (the moving-light
- *  case); static ones never move. `emitterPx` is that light's own area-light radius (world px; per-light,
- *  not a global) — bigger = softer penumbra. Seed = red static (few trees, clean debug); green = dynamic
- *  (in the forest, surfaces motion bugs); blue = static, placed to overlap BOTH so interactions show. */
-const EXTRA_LIGHT_TILES: ReadonlyArray<[number, number, boolean, number]> = [
-  [34, 25, true, LIGHT_EMITTER],   // green — dynamic, dense forest
-  [45, 40, false, LIGHT_EMITTER],  // blue  — static, interacts with red + green
-];
-/** World-px radius a dynamic light orbits its home. */
-const MOTION_RADIUS = 3 * SQUARE;
 /** Light height: 40 units = 160 world px = 2.5 tiles — above the tree billboard (2 tiles / 32 units).
  *  Lower = longer shadows. */
-const LIGHT_Z = 40 * UNIT;
-const LIGHT_REACH = 12 * SQUARE;     // illumination range (world px) — how far the light throws (12 tiles)
-const RING_RADIUS = 2 * SQUARE;
 // The shadow map is the TEXTILE_UNIT map (map-model.md): 16 textiles/tile, 1 textile = 1 unit
 // (= UNIT px). Sized `cols·TEXTILE_UNIT × rows·TEXTILE_UNIT`, toroidal like the cold cache window.
 /** GLSL literals for the world constants (a tile is `SQUARE` world px; `1 unit = SQUARE/16` px). */
@@ -113,16 +98,6 @@ const PRES_SLOTS = TILE_SLOTS * 2;
  *  desynced (7 vs 8) and the buckets were built from misaligned memory. Derive, never re-type it. */
 const BILLBOARD_SLOTS = TILE_SLOTS;
 
-interface Light {
-  x: number;
-  y: number;
-  z: number;
-  reach: number;         // illumination range (world px)
-  emitterRadius: number; // physical source size (world px) — penumbra softness
-  hx: number;            // home (world px) — a dynamic light orbits this
-  hy: number;
-  dynamic: boolean;      // moves every frame (around its home); static lights never move
-}
 
 /** The cold cache's toroidal tile window (from `SquareCache.window`) — shadow-cold aligns to it. */
 export interface TileWindow {
@@ -866,13 +841,9 @@ export class ShadowGather {
   private readonly gizmoQuad: Geometry;
   private overlayGeo: Geometry | null = null;
   private readonly overlayPos = new Float32Array(8);
-  private readonly lights: Light[] = [];
   /** DEBUG: orbit the lights every frame so the shadow recompute runs each frame — turns the FPS
    *  panel into a live gather-cost readout (the "hot lights" perf case). Toggle with {@link setOrbit}. */
   private orbit = false;            // orbit disabled — lights are static
-  private orbitPhase = 0;
-  private seedX = 0;
-  private seedY = 0;
   private readonly empty: Texture;
   private enabled = true;
   /** shadows-onto-billboards: receiver-elevation gain (sin65 by the world-geometry model). `__elevk` tunes the
@@ -978,8 +949,6 @@ export class ShadowGather {
     // DEBUG (P6): corridor↔brute toggle + the gather itself (for `debugReadShadow` diffing).
     (globalThis as unknown as { __corridor: (on?: boolean) => boolean }).__corridor = (on?: boolean) => this.setCorridor(on);
     (globalThis as unknown as { __gather: ShadowGather }).__gather = this;
-    // DEBUG: tune the emitter (area-light) RADIUS in world px live — bigger = softer penumbra.
-    (globalThis as unknown as { __emit: (px?: number) => number }).__emit = (px?: number) => this.setEmitter(px);
     // DEBUG (shadows-onto-billboards): tune the receiver-elevation gain live — bigger = the billboard shadow climbs
     // faster/higher up a billboard; 0 = flat ground shadow (the A/B baseline).
     (globalThis as unknown as { __elevk: (k?: number) => number }).__elevk = (k?: number) => this.setElevK(k);
@@ -1048,7 +1017,7 @@ export class ShadowGather {
     // the new total light count (capped at the N_LIGHTS bitfield ceiling).
     // P5 DEBUG: turn an already-placed billboard into a TORCH — the same object now presents as both
     // a sprite and a light, carried by one prim. This is the two-presentation case running through the
-    // real placement path (no `this.lights` involved), and the stand-in for content until the DSL
+    // real placement path, and the stand-in for content until the DSL supplies a torch kind.
     // supplies a torch kind. `__torch()` with no id lights the first standing billboard it finds.
     (globalThis as unknown as { __torch: (id?: number) => unknown }).__torch = (id?: number) => {
       const standing = this.lastStanding;
@@ -1060,22 +1029,6 @@ export class ShadowGather {
       // if this needs a force-all to show up, the front-door wiring is wrong, not the test.
       return { lit: p.id, tile: [Math.floor(p.x / SQUARE), Math.floor(p.y / SQUARE)] };
     };
-    (globalThis as unknown as { __manylights: (n?: number) => number }).__manylights = (n = 24) => {
-      const room = N_LIGHTS - this.lights.length;
-      const add = Math.max(0, Math.min(n, room));
-      const side = Math.max(1, Math.ceil(Math.sqrt(add)));
-      const step = 4 * SQUARE;                       // 4 tiles apart
-      const ox = this.seedX - (side - 1) * step / 2, oy = this.seedY - (side - 1) * step / 2;
-      let done = 0;
-      for (let i = 0; i < side && done < add; i++) {
-        for (let j = 0; j < side && done < add; j++, done++) {
-          const lx = ox + j * step, ly = oy + i * step;
-          this.lights.push({ x: lx, y: ly, hx: lx, hy: ly, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER, dynamic: false });
-        }
-      }
-      this.rebakeAll();   // bulk placement: no region to scope from (it also flags records + presence)
-      return this.lights.length;
-    };
     this.fsQuad = new Geometry(gl, this.gather, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
@@ -1085,22 +1038,8 @@ export class ShadowGather {
     this.gizmoQuad = new Geometry(gl, this.gizmo, {
       aUnit: { data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
-    this.seed(54, 21);
   }
 
-  /** Seed the debug lights: one at the seed tile + the {@link EXTRA_LIGHT_TILES} fixed set (world px). */
-  seed(tileX: number, tileY: number): void {
-    const cx = (tileX + 0.5) * SQUARE, cy = (tileY + 0.5) * SQUARE;
-    this.seedX = cx; this.seedY = cy;
-    this.lights.length = 0;
-    this.lights.push({ x: cx, y: cy, hx: cx, hy: cy, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: LIGHT_EMITTER, dynamic: false });
-    for (const [tx, ty, dynamic, emitter] of EXTRA_LIGHT_TILES) {
-      const lx = (tx + 0.5) * SQUARE, ly = (ty + 0.5) * SQUARE;
-      this.lights.push({ x: lx, y: ly, hx: lx, hy: ly, z: LIGHT_Z, reach: LIGHT_REACH, emitterRadius: emitter, dynamic });
-    }
-    this.enabled = true;
-    this.rebakeAll(); // a re-seed replaces the whole light set — nothing to scope from
-  }
 
   /** Rebuild the per-tile **presence** (P5) when the lights or window change: each tile gets the
    *  **nearest 8** lights whose (reach−1, F10) circle covers it, as `u16` indices (`0xFFFF` = empty).
@@ -1117,15 +1056,10 @@ export class ShadowGather {
     this.presSlots.fill(0xffff); // every slot empty
     this.slotDist.fill(Infinity);
     // Nearest-N per in-window tile (dense window-local scratch; the GPU slot is the region-torus fold).
-    // P5: the candidate set is the debug array PLUS every content-carried light, keyed by its own
-    // `light_data` id — a torch must light the world exactly as a seeded light does. When `this.lights`
-    // goes, the first list simply becomes empty and the second is all of them.
-    const n = Math.min(this.lights.length, MAX_LIGHTS);
-    const cands: Array<{ id: number; x: number; y: number; reach: number }> = [];
-    for (let k = 0; k < n; k++) cands.push({ id: k, x: this.lights[k].x, y: this.lights[k].y, reach: this.lights[k].reach });
-    for (const [id, L] of this.coldData.carriedLights) cands.push({ id, x: L.x, y: L.y, reach: L.reach });
-    for (const L of cands) {
-      const k = L.id, r = L.reach;
+    // Every light in the world is CARRIED by a placed primitive (P5 — the debug array is gone), keyed
+    // by its own `light_data` id.
+    for (const [id, L] of this.coldData.carriedLights) {
+      const k = id, r = L.reach;
       if (r <= 0) continue;
       const r2 = r * r;
       const t0x = Math.max(winCol, Math.floor((L.x - r) / SQUARE)), t1x = Math.min(winCol + cols - 1, Math.floor((L.x + r) / SQUARE));
@@ -1290,9 +1224,6 @@ export class ShadowGather {
    *  it a departed caster's box is unrecoverable (it has left `standing`) — which is exactly why
    *  removal used to force-all every tile. */
   private readonly lastBox = new Map<number, [number, number, number, number]>();
-  /** P4: the same trick for LIGHTS — a removed light's reach box is unrecoverable once it is gone
-   *  from `this.lights`, so remember it and queue it on shrink. */
-  private readonly lastLightBox: Array<{ x: number; y: number; reach: number; dynamic: boolean }> = [];
   /** P5 debug: the last `standing` list, so `__torch()` can pick a real placed billboard. */
   private lastStanding: Primitive[] = [];
   /** DEBUG: shadow tiles marked dirty (recomputed) on the last frame. */
@@ -1306,13 +1237,12 @@ export class ShadowGather {
     const x0 = Math.floor(x / SQUARE) - 1, y0 = Math.floor(y / SQUARE) - 1;
     const x1 = Math.floor((x + w) / SQUARE) + 1, y1 = Math.floor((y + h) / SQUARE) + 1;
     this.pendingRects.push([x0, y0, x1, y1, 2]); // a caster affects BOTH classes at its own tiles
-    for (let k = 0; k < this.lights.length; k++) {
-      if (this.litSeen.has(k)) continue;
-      const L = this.lights[k];
+    for (const [id, L] of this.coldData.carriedLights) {
+      if (this.litSeen.has(id)) continue;
       const cx = Math.min(Math.max(L.x, x), x + w), cy = Math.min(Math.max(L.y, y), y + h);
       if (Math.hypot(cx - L.x, cy - L.y) > L.reach + SQUARE) continue; // light can't see the prim
-      this.litSeen.add(k);
-      this.markLightDirty(L);                       // that light's cast region, in its own class
+      this.litSeen.add(id);
+      this.markLightDirty({ x: L.x, y: L.y, reach: L.reach, dynamic: false });
     }
   }
 
@@ -1407,14 +1337,6 @@ export class ShadowGather {
     this.rebakeAll();
     return this.corridor;
   }
-  /** DEBUG: set the emitter (area-light) radius on every light, world px (no arg = read). Rebuilds the
-   *  light records + recomputes every tile so the softer/harder penumbra takes immediately. */
-  setEmitter(px?: number): number {
-    if (px === undefined) return this.lights[0]?.emitterRadius ?? 0;
-    for (const L of this.lights) L.emitterRadius = px;
-    this.rebakeAll();  // a property on EVERY light — no region to scope from
-    return px;
-  }
   /** DEBUG (shadows-onto-billboards): the receiver-elevation gain (no arg = read). Recomputes every tile. */
   setElevK(k?: number): number {
     if (k === undefined) return this.elevK;
@@ -1478,72 +1400,19 @@ export class ShadowGather {
   /** Rebuild the cold data (on change) + recompute the DIRTY tiles of the shadow-cold bitfield. */
   tick(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
     // P5: do NOT gate on the debug array. Content-carried lights are registered *by* `buildCasters`,
-    // which runs below — so bailing when `this.lights` is empty makes a content-lit world unreachable
-    // (the array empties, the tick stops, and nothing ever discovers the torches). This guard was the
-    // concrete blocker behind "delete `this.lights`". Bail only when there is genuinely nothing to do.
+    // which runs below — so bailing before it runs would make a content-lit world unreachable
+    // (nothing would ever discover the torches). Bail only when there is genuinely nothing to do.
     if (!this.enabled) return;
-    if (this.lights.length === 0 && this.coldData.carriedLights.size === 0 && standing.length === 0) return;
+    if (this.coldData.carriedLights.size === 0 && standing.length === 0) return;
 
-    // Motion. Default: only `dynamic` lights move (each orbits its own home) — the moving-light case
-    // in a scene with static reference lights. `__orbit` (DEBUG) instead rings EVERY light around the
-    // seed so the whole field recomputes each frame, reading the max per-frame gather cost.
-    let moved = false;
-    if (this.orbit) {
-      this.orbitPhase += 0.01;
-      const n = this.lights.length;
-      for (let k = 0; k < n; k++) {
-        const a = (k / n) * Math.PI * 2 + this.orbitPhase;
-        const L = this.lights[k], ox = L.x, oy = L.y;
-        L.x = this.seedX + Math.cos(a) * RING_RADIUS;
-        L.y = this.seedY + Math.sin(a) * RING_RADIUS;
-        this.markLightDirty(L, { x: ox, y: oy });  // class derived at the door
-      }
-      moved = true;
-    } else {
-      this.orbitPhase += 0.02;
-      for (const L of this.lights) {
-        if (!L.dynamic) continue;
-        const ox = L.x, oy = L.y;
-        L.x = L.hx + Math.cos(this.orbitPhase) * MOTION_RADIUS;
-        L.y = L.hy + Math.sin(this.orbitPhase) * MOTION_RADIUS;
-        this.markLightDirty(L, { x: ox, y: oy });  // dynamic ⇒ HOT, decided by the light not the call site
-        moved = true;
-      }
-    }
-    // (no bookkeeping here any more — every mover above went through `markLightDirty`, which flags
-    //  the record + presence itself. That is the point of having one door.)
-    if (this.coldDirty || standing.length !== this.lastCasterCount) {
-      const coldLights = this.lights.slice(0, MAX_LIGHTS).map((L, k) => ({
-        x: L.x, y: L.y, z: L.z, reach: L.reach, emitterRadius: L.emitterRadius,
-        color: LIGHT_COLORS[k % LIGHT_COLORS.length], intensity: 1, castShadows: true,
-        hot: L.dynamic, // #4: dynamic lights are HOT (per-frame), static are COLD (baked once)
-      }));
-      // P4: a REMOVED light queues its last known cast region before the record goes — the light-side
-      // twin of `lastBox`. Without it a deleted light leaves its shadows baked in with no owner to
-      // cascade from, which is the other half of what used to force-all.
-      for (let k = this.lights.length; k < this.lastLightBox.length; k++) {
-        const B = this.lastLightBox[k];
-        this.markLightMove(B.x, B.y, B.x, B.y, B.reach, B.dynamic ? 1 : 0);
-      }
-      this.lastLightBox.length = this.lights.length;
-      for (let k = 0; k < this.lights.length; k++) {
-        const L = this.lights[k];
-        this.lastLightBox[k] = { x: L.x, y: L.y, reach: L.reach, dynamic: L.dynamic };
-      }
-      this.coldData.buildLights(coldLights);
-      const lightsChanged = this.coldDirty;
-      this.lastCasterCount = standing.length;
-      this.coldDirty = false;
-      // P4: caster REMOVAL no longer force-alls — each departing billboard queues its last known box
-      // in `buildCasters` (see `lastBox`), so the stale region is scoped. What remains is a light
-      // change that produced NO rects at all (a re-seed / bulk prop change), where there is genuinely
-      // nothing to scope from; that is the `rebakeAll` case and the last force-all standing.
-      if (lightsChanged && this.pendingRects.length === 0) this.rebakeAll();
-    }
+    // No light MOTION here: a light moves only because the primitive carrying it moved, and that is
+    // the placement path's business (`markLightDirty`, from `buildCasters`). The debug orbit and the
+    // bespoke light array it drove are GONE (P5) — every light in the world is now carried by a
+    // placed primitive, authored per kind in content.
     // Same reasoning: `coldData.lights` counts only the debug array's records, so a world lit purely
     // by carried lights must not be turned away here either.
     if (win.cols === 0) return;
-    if (this.coldData.lights === 0 && this.coldData.carriedLights.size === 0 && standing.length === 0) return;
+    if (this.coldData.carriedLights.size === 0 && standing.length === 0) return;
 
     this.ensureRT(win.cols, win.rows);
     // P3: the window mapping rides the data texture's constants row (compare-written — an
@@ -1630,8 +1499,9 @@ export class ShadowGather {
 
     // Gizmos: a dot at each light + a ring at its radius (screen-constant thickness).
     const pxWorld = 1 / z;
-    for (let k = 0; k < this.lights.length; k++) {
-      const L = this.lights[k], col = LIGHT_COLORS[k % LIGHT_COLORS.length];
+    let gi = 0;
+    for (const L of this.coldData.carriedLights.values()) {
+      const col = LIGHT_COLORS[gi++ % LIGHT_COLORS.length];
       this.renderer.draw({
         program: this.gizmo,
         geometry: this.gizmoQuad,

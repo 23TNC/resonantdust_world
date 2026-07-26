@@ -312,3 +312,19 @@ data texture → gather — is live.
 **Verified**: `__gather.lights.length === 0` and **230 content-carried lights** light the scene —
 green pools around every flora cluster. `cargo test --lib` 44/44 green, including a new
 `thing_light_is_authored_per_kind` regression test.
+
+## P5c — THE SCAFFOLD IS GONE (2026-07-25)
+`ShadowGather` no longer owns any lights. Deleted: `this.lights`, the `Light` interface,
+`EXTRA_LIGHT_TILES`, `seed()`, `__manylights`, `__emit`/`setEmitter`, the per-frame orbit, the
+`LIGHT_Z`/`LIGHT_REACH`/`LIGHT_EMITTER`/`RING_RADIUS`/`MAX_LIGHTS` constants, `lastLightBox`,
+`Viewport.seedLights`, and the `/coldlights` chat command. **Every light in the world is now carried by
+a placed primitive and authored per kind in content** — the thing this stream set out to make true.
+
+Everything that used to read the array now reads `coldData.carriedLights`: the `markPrimDirty` cascade,
+`buildPresence`'s candidate set, the tick guard, and the debug gizmos. Light **motion** is gone as a
+concept here — a light moves only because the primitive carrying it moved, which is the placement
+path's business (`markLightDirty` from `buildCasters`).
+
+**Verified** on a fresh load: **120.8 fps**, **230** content-carried lights, `'lights' in gather` false,
+`seed`/`__manylights` undefined, **0 dirty tiles at rest** (a world of static lights bakes once and
+never re-bakes — the whole point of the cold/hot split), resolve self-test still exact.

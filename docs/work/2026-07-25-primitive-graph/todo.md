@@ -36,9 +36,9 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
       Acceptance: `rd dsl` publishes; the manifest contains the torch's light row.
 - [x] Attach the kind's light aspect to the prim in `WorldBridge.onColdThings`.
       Acceptance: a worldgen-placed torch renders its sprite and lights its surroundings.
-- [ ] Place the debug lights through the content path instead of `seed()`.
+- [x] Place the debug lights through the content path instead of `seed()`.
       Acceptance: the scene is lit with `__gather.lights.length === 0`.
-- [ ] Delete `this.lights`, `Light`, `seed()`, `__manylights`, `EXTRA_LIGHT_TILES`.
+- [x] Delete `this.lights`, `Light`, `seed()`, `__manylights`, `EXTRA_LIGHT_TILES`.
       Acceptance: grep clean; scene still lit; fps unchanged at zoom 0.25.
 - [ ] Write each def's own rotation into `definition_data` RED (currently 0).
       Acceptance: mirror shows `rotation=3` for a W-facing def.

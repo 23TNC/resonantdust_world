@@ -263,10 +263,6 @@ export class Viewport {
   }
 
   // ── lights + shadows (`/coldlights`) ──────────────────────────────────────────────
-  /** Re-seed the shadow lights in a ring around a tile (defaults to the zone the design uses, 100,50). */
-  seedLights(tileX: number, tileY: number): void {
-    this.shadows.seed(tileX, tileY);
-  }
   /** Toggle the shadow pass; returns whether it's now on. */
   toggleShadows(): boolean {
     return this.shadows.toggle();
