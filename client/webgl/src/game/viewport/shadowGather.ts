@@ -31,10 +31,22 @@ const FINE_RATIO = TEXTILE_SQUARE / TEXTILE_UNIT;
  *  regardless of order; unquantised floats do not (measured drift 1.8e-7 over 64 pairs). The quantisation
  *  IS the correctness mechanism, not a compression choice.
  *
- *  The ceiling is per-TEXEL accumulation depth, not a light count: `2^24 / LIGHT_QUANT` lights may
- *  illuminate the SAME texel at full brightness. At 255 that is 65,793 — far past the u16 light-id space,
- *  and ~4,000x the 16-per-tile presence cap. Raising this for finer gradients lowers that ceiling
- *  proportionally. */
+ *  **255 is load-bearing, not a default — do not raise it.** It is the largest step for which exactness is
+ *  UNCONDITIONAL. Worst case is every light that can exist landing on one texel:
+ *      65,535 (max u16 ids) x 255 = 16,711,425  <  2^24 = 16,777,216
+ *  so overflow is impossible by construction — no presence cap, no bookkeeping discipline, no distribution
+ *  assumption required. At 512 that breaks (65,535 x 512 = 33.5M) and correctness would depend on a policy
+ *  we cannot currently guarantee. The failure mode is silent: light that will not fully turn off.
+ *
+ *  And raising it buys nothing observable, because QUANT is PRECISION, not RANGE:
+ *   - HDR does not need it. A 4x brazier just deposits 1020; the accumulator is float and holds that at
+ *     any step size. Brightness comes from the value, not the granularity.
+ *   - Smoothness cannot use it. Output is `albedo x light` and the display quantises to 1/255, so with
+ *     `albedo <= 1` one lightmap step maps to AT MOST one display step. Finer steps land below what the
+ *     screen can show.
+ *
+ *  Revisit only if the output pipeline goes deeper than 8-bit (a 10-bit swapchain, or a tonemap working in
+ *  float before quantising). Banding at 255 indicates a different bug, not too coarse a step. */
 export const LIGHT_QUANT = 255;
 
 /** Lights this iteration — a ring of debug lights around the seed tile. `number`-typed so the

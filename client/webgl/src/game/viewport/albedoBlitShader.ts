@@ -71,8 +71,12 @@ void main() {
       // Sampled NEAREST — the detail lives in the lighting at TEXTILE_SQUARE/tile, so NO bilinear smear (that
       // was the coarse-map blob fix). Ambient is directionless, added once here over cold+hot.
       // The lightmap is an RGBA32F ADDITIVE ACCUMULATOR holding QUANTISED integer deposits (F11b), so
-      // de-quantise here — this is the one place the scale is undone. Values may exceed 1 legitimately
-      // (many lights on one texel), hence the clamp AFTER the divide rather than an LDR clamp at bake.
+      // de-quantise here — this is the one place the scale is undone.
+      //
+      // The clamp below is a DISPLAY clamp and must stay here (B-5). Clamping the ACCUMULATOR instead
+      // would break light removal outright: if two lights each deposit 255 and their sum is clipped to
+      // 255, subtracting one leaves 0 where the answer is 255, and that light can never be fully turned
+      // off. Over-bright is resolved at read time; the stored sum stays exact.
       vec3 irr = (texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb) / uLightQuant;
       light = uAmbient + min(irr, vec3(4.0));
     }

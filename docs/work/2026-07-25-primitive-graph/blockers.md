@@ -1,7 +1,7 @@
 # Primitive graph — blockers
 
 _Things needing human input. Open → resolved (archive resolved with a date). Newest first below the
-resolved set. **Open: [B-5](#b-5)** (B-4 resolved) — neither stops P10's remaining code, but both are visible
+resolved set. **No open blockers** — B-1…B-5 all resolved. — neither stops P10's remaining code, but both are visible
 in the product right now._
 
 ## B-4 — the EXISTING world has no torches — RESOLVED 2026-07-26, no decision needed
@@ -34,7 +34,21 @@ initiative.
 
 </details>
 
-## B-5 — accumulation can now exceed 1.0: what should over-bright DISPLAY as? (open, 2026-07-26)
+## B-5 — over-bright display — RESOLVED 2026-07-26 by the user: hard clamp, at the BLIT only
+**Taken: option 1, the hard clamp — which is already the live behaviour**, so no code change. The blit's
+`min(irr, 4.0)` plus the framebuffer's own 0..1 clip is a display-side clamp. Revisit only if overlapping
+pools visibly flatten; nothing does today (measured peak **0.97×** across the three seeded torches).
+
+**The distinction that makes this safe.** Clamping at DISPLAY is free. Clamping the ACCUMULATOR would break
+the whole scheme: if A and B each deposit 255 and their sum is clipped to 255, removing B by subtracting 255
+leaves 0 where the answer is 255 — the light becomes un-removable. **The clamp lives in the blit and must
+never move into the accumulator.**
+
+(Clamping each individual light's DEPOSIT to 255 is also safe and preserves the worst-case bound even with
+`intensity > 1` — at the cost of capping any light at 1× brightness, so no brighter braziers. Not taken;
+noted in case it is ever wanted.)
+
+<details><summary>B-5 as originally raised</summary>
 **What.** With the additive accumulator ([P10](todo.md)) lights sum without a per-light clamp, so overlapping
 torches genuinely exceed full brightness — measured 308–321 where 255 is one light at full. Previously the
 `rgba8unorm` map clamped every texel at 1.0 and the question could not arise.
@@ -54,6 +68,10 @@ sees. The options read very differently:
 **Suggested path:** (2), because the accumulator's whole point is that many lights overlap and a hard clamp
 throws that information away at precisely the interesting texels. But the curve is yours — tell me the look
 and I will fit it.
+
+</details>
+
+_No open blockers._
 
 ---
 
