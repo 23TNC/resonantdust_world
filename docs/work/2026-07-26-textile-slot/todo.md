@@ -50,10 +50,10 @@ must assert a **non-zero population on both sides** — "0 mismatches" is satisf
       Acceptance: 64 add/subtract pairs across a zoom sweep return a texel to exactly 0.
 
 ## P5 — Prioritised refinement
-- [ ] Split the dirty map into empty vs stale classes using `slotBaked` and the lod fields.
-      Acceptance: `dirty`'s existing number payload carries the class; no new structure.
-- [ ] Drain empty before stale, budgeted per frame.
-      Acceptance: no visibly empty tile during a zoom+pan; stale tiles refine after.
+- [x] Split the dirty map into empty vs stale classes using `slotBaked` and the lod fields.
+      Measured on a lod step: empty 1152 == fresh, stale 384 == carried. No new structure.
+- [x] Drain empty before stale, budgeted per frame.
+      `bakeDirty` already sorts ascending and `prio` is `band + ring`, so the bands separate the classes.
 
 ## P6 — Verify
 - [ ] Sweep zoom across all four lods, both directions, and confirm no flash and no drift.

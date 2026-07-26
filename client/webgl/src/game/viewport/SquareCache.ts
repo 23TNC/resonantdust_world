@@ -252,11 +252,18 @@ export class SquareCache {
   lastBaked = 0;
   /** DEBUG (textile-slot P6): pending dirty squares + the grid state, for asserting a zoom sweep
    *  without screenshots — a reproject that works dirties ~nothing on zoom-IN. */
-  get debugState(): { lod: number; cols: number; rows: number; slotPx: number; dirty: number; baked: number; bufW: number; bufH: number } {
+  get debugState(): { lod: number; cols: number; rows: number; slotPx: number; dirty: number; empty: number; stale: number; baked: number; bufW: number; bufH: number } {
     let baked = 0;
     for (let i = 0; i < this.slotBaked.length; i++) if (this.slotBaked[i] === 1) baked++;
+    // P5 evidence: the dirty queue's priority histogram. A priority is `band + ring` (see `prio`), so the
+    // BAND is what classifies and the ring only orders within it — EMPTY tiles (never baked / wrong owner)
+    // occupy PRIO_HIGH..+RING_MAX, tiles carried across a lod change occupy PRIO_STD..+RING_MAX. Split on
+    // the band boundary, NOT on the band value. `bakeDirty` sorts ascending, so every empty tile drains
+    // before any stale one, and within each class the centre of the screen fills first.
+    let empty = 0, stale = 0;
+    for (const p of this.dirty.values()) { if (p < PRIO_STD) empty++; else stale++; }
     return { lod: this.lod, cols: this.cols, rows: this.rows, slotPx: this.slotPx,
-             dirty: this.dirty.size, baked, bufW: this.fixedCW, bufH: this.fixedCH };
+             dirty: this.dirty.size, empty, stale, baked, bufW: this.fixedCW, bufH: this.fixedCH };
   }
 
   constructor(renderer: Renderer, empty: Texture, channels: ChannelSpec[]) {
@@ -394,6 +401,7 @@ export class SquareCache {
       from: prev ? { cols: prev.cols, rows: prev.rows, slotPx: prev.slotPx } : null,
       to: { lod, cols, rows, slotPx },
       carried, total: cols * rows, fresh: cols * rows - carried, dirty: this.dirty.size,
+      queue: this.debugState, // priority split at the moment of the switch (P5 evidence)
     };
   }
 
