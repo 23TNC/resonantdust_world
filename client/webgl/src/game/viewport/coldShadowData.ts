@@ -214,10 +214,6 @@ export class ColdShadowData {
   private carriedLightNext = N_LIGHTS;
   /** What `buildPresence` needs about each carried light: resolved world px + reach. */
   readonly carriedLights = new Map<number, { x: number; y: number; reach: number }>();
-  /** Bumped whenever a carried light is added or actually moves — `buildPresence` folds this into its
-   *  rebuild signature, so a torch appearing invalidates the per-tile light lists exactly as a debug
-   *  light moving does. Without it the gate would hold a stale cull forever. */
-  carriedVer = 0;
   private lightCount = 0;
 
   /** P3: take a `prim_data` id (free-list first, so the space survives churn). */
@@ -588,7 +584,7 @@ export class ColdShadowData {
    *  billboard ([F9]). One placed object, two presentations: `set_a` already names the billboard, so
    *  the light takes `set_b`. Returns the light's in-set id. The carrier is written by
    *  {@link billboardDataFor} first, so the resolve walk below reads a populated node. */
-  carriedLightFor(billboard: Primitive, L: PrimitiveLight): number {
+  carriedLightFor(billboard: Primitive, L: PrimitiveLight): { id: number; changed: boolean } {
     const billboardId = billboard.id;
     // ENSURE a carrier. `billboardDataFor` allocates one for a *caster*, but a primitive can carry a
     // light without being one (a bare light source, or a sprite with no resolved silhouette — those
@@ -605,7 +601,7 @@ export class ColdShadowData {
     return this.writeCarriedLight(billboardId, prim, L);
   }
 
-  private writeCarriedLight(billboardId: number, prim: number, L: PrimitiveLight): number {
+  private writeCarriedLight(billboardId: number, prim: number, L: PrimitiveLight): { id: number; changed: boolean } {
     const idx = this.lightOfBillboard.get(billboardId)
       ?? (this.lightOfBillboard.set(billboardId, this.carriedLightNext++), this.carriedLightNext - 1);
     // Point the carrier's slot b at this light (slot a is the billboard, written by billboardDataFor).
@@ -625,11 +621,11 @@ export class ColdShadowData {
         | (((r.pos >>> 16) & 0xff) << 4)) >>> 0));
     const [wx, wy] = decodePosition(r.pos);
     const prev = this.carriedLights.get(idx);
-    if (!prev || prev.x !== wx || prev.y !== wy || prev.reach !== L.reach) {
-      this.carriedLights.set(idx, { x: wx, y: wy, reach: L.reach });
-      this.carriedVer++;                       // the per-tile cull is now stale
-    }
-    return idx;
+    const moved = !prev || prev.x !== wx || prev.y !== wy || prev.reach !== L.reach;
+    if (moved) this.carriedLights.set(idx, { x: wx, y: wy, reach: L.reach });
+    // The CALLER routes a change through `markLightDirty` — the same front door a debug light uses.
+    // No parallel version counter here: that is exactly the hand-rolled bookkeeping P4 retired.
+    return { id: idx, changed: moved };
   }
 
   /** Compare-write one whole record; marks it dirty (→ one scatter command) only if it changed. */

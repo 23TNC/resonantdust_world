@@ -281,10 +281,16 @@ worked — each invisible until the debug array was emptied:
    permanently. This is the concrete thing behind "delete `this.lights`": the deletion could never have
    worked without fixing the guard first. Now bails only when there is genuinely nothing (no debug
    lights, no carried lights, no standing prims). Same for the `coldData.lights === 0` guard below it.
-2. **`buildPresence` ran BEFORE `buildCasters`.** Presence culled against a light set that did not yet
-   include the carried ones, and its signature gate then stopped it ever retrying — a torch stayed
-   invisible forever. Fixed by ordering casters → presence, folding a `carriedVer` into the signature,
-   and moving the single `flush()` to after both so they still land in ONE scatter batch.
+2. **A carried light never went through the dirty front door.** My first fix — reordering casters →
+   presence and adding a `carriedVer` to the presence signature — treated the symptom (user caught it):
+   the ordering only mattered because nothing invalidated presence, and `carriedVer` was a *parallel
+   bookkeeping channel* duplicating `lightsVer` — exactly the hand-rolled flag-flipping P4 had just
+   deleted. Worse, the torch only appeared at all because the test called `rebakeAll()`; the scoped
+   path carried nothing. **Real fix:** a new/moved carried light calls **`markLightDirty`**, the same
+   door a debug light uses — which queues its scoped cast region *and* bumps `lightsVer`/`coldDirty`,
+   so presence rebuilds on its own. `carriedVer` deleted and the ordering reverted; neither was needed.
+   **Lesson:** when a change needs a new version counter to be seen, the change is bypassing the
+   invalidation path, not lacking one.
 3. **A light-carrying prim that is not a caster got no carrier.** The attach sat after
    `if (def < 0) continue`, so a bare light source — or a sprite with no resolved silhouette — was
    skipped before `billboardDataFor` could allocate its carrier. `carriedLightFor` now ensures its own

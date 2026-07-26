@@ -1056,7 +1056,8 @@ export class ShadowGather {
       if (!p) return { error: "no standing billboard", candidates: standing.length };
       p.light = { color: [1, 0.72, 0.35], intensity: 1, reach: 8 * SQUARE, emitterRadius: 16,
                   height: 24 * UNIT, castShadows: true, hot: false };
-      this.rebakeAll();
+      // DELIBERATELY no `rebakeAll()`. The scoped dirty path must carry a new light on its own —
+      // if this needs a force-all to show up, the front-door wiring is wrong, not the test.
       return { lit: p.id, tile: [Math.floor(p.x / SQUARE), Math.floor(p.y / SQUARE)] };
     };
     (globalThis as unknown as { __manylights: (n?: number) => number }).__manylights = (n = 24) => {
@@ -1106,7 +1107,7 @@ export class ShadowGather {
    *  Nearest-N eviction via `slotDist`. This bounds the gather to O(8) lights/texel. */
   private buildPresence(win: TileWindow): void {
     const { cols, rows, winCol, winRow } = win;
-    const sig = `${winCol},${winRow},${cols},${rows},${this.lightsVer},${this.coldData.carriedVer}`;
+    const sig = `${winCol},${winRow},${cols},${rows},${this.lightsVer}`;
     if (sig === this.presSig && this.presSlots.length === cols * rows * PRES_SLOTS) return;
     this.presSig = sig;
     if (this.presSlots.length !== cols * rows * PRES_SLOTS) {
@@ -1179,7 +1180,16 @@ export class ShadowGather {
       // P5: attach a carried light BEFORE the caster gate — a primitive can present as a light
       // without being a caster (a bare source, or a sprite with no resolved silhouette), and those
       // `continue` out below. `carriedLightFor` allocates the carrier if the billboard path has not.
-      if (p.light) this.coldData.carriedLightFor(p, p.light);
+      if (p.light) {
+        const cl = this.coldData.carriedLightFor(p, p.light);
+        // The front door: scoped cast region + record/presence invalidation, exactly as a debug light
+        // gets. Routing here (rather than a private version counter) is why presence picks the torch
+        // up at all — and why it does so WITHOUT a force-all.
+        if (cl.changed) {
+          const w = this.coldData.carriedLights.get(cl.id)!;
+          this.markLightDirty({ x: w.x, y: w.y, reach: w.reach, dynamic: p.light.hot });
+        }
+      }
       const def = this.coldData.definitionFor(p, resolver);
       if (def < 0) continue; // no textureName → not a caster
       const inst = this.coldData.billboardDataFor(p, def);
@@ -1230,8 +1240,10 @@ export class ShadowGather {
         const ti = (wr - winRow) * cols + (wc - winCol);
         this.coldData.writeBillboardPresence(wc, wr, this.castSlots.subarray(ti * BILLBOARD_SLOTS, ti * BILLBOARD_SLOTS + BILLBOARD_SLOTS));
       }
-    // The flush moved to `tick`, AFTER `buildPresence` — presence now runs last (it needs the carried
-    // lights this pass discovers), and both must land in the SAME scatter batch or presence lags a frame.
+    // Flush all queued writes (def/billboard/light/presence/caster) as ONE scatter batch. NO force-all:
+    // def swaps, new billboards and new carried lights each queued their scoped rects through a
+    // `markDirty` door, so the next frame's presence + gather pick them up.
+    this.coldData.flush();
   }
 
   /** P4 — **the one legitimate force-all.** Placement is always scoped (a prim/light/removal queues
@@ -1304,7 +1316,8 @@ export class ShadowGather {
    *  here; pass `from` when the light moved so the union of old ∪ new reach is queued. The cold/hot
    *  **class is derived from the light itself** — callers no longer thread a `cls` argument, which is
    *  what let the routing drift out of step with `L.dynamic` in three separate places. */
-  private markLightDirty(L: Light, from?: { x: number; y: number }): void {
+  private markLightDirty(L: { x: number; y: number; reach: number; dynamic: boolean },
+                         from?: { x: number; y: number }): void {
     this.markLightMove(from?.x ?? L.x, from?.y ?? L.y, L.x, L.y, L.reach, L.dynamic ? 1 : 0);
     // The bookkeeping a light change implies, DERIVED here rather than hand-set at each call site —
     // its record may differ (`coldDirty`) and the per-tile light lists may differ (`lightsVer`).
@@ -1526,13 +1539,8 @@ export class ShadowGather {
     // P3: the window mapping rides the data texture's constants row (compare-written — an
     // unchanged window costs nothing), through the same scatter path as every other write.
     this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, TEXTILE_UNIT, this.coldData.lights, Math.round(this.worldTiltDeg * 100));
-    // ORDER MATTERS (P5): casters BEFORE presence. `buildCasters` is what discovers content-carried
-    // lights (a torch's light is registered as its billboard is walked), so building presence first
-    // culls against a light set that does not yet include them — and the signature gate then stops it
-    // ever retrying, leaving a carried light permanently invisible.
+    this.buildPresence(win);                    // F5 per-tile light cull (rebuilt on light/window change)
     this.buildCasters(standing, resolver, win); // P1 per-tile caster buckets + carried-light discovery
-    this.buildPresence(win);                    // F5 per-tile light cull (now sees carried lights)
-    this.coldData.flush();                      // ONE scatter batch, after both have queued their writes
     this.buildDirty(win);    // #4: owner-change (pan) + per-class rebuild → cold/hot dirty; clean tiles persist
     // #4 COLD then HOT pass. Each is: gather (shadow-cold for that class) → lighting (its lightmap), gated
     // by that class's dirty texture (clean tiles `discard` → persist). A frame where only the green (hot)

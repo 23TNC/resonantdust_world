@@ -260,7 +260,11 @@ The two-presentation case now runs end to end through the real placement path.
 - **`__torch(id?)`** turns an already-placed billboard into a torch — the stand-in for content until
   the DSL supplies a torch kind.
 
-**Verified**: with `__gather.lights.length === 0`, a single carried light is listed by **131 of 240**
-in-window tiles and the scene renders lit by it, trees casting shadows away from it. Three blockers
+- **A carried light routes through `markLightDirty`** — the same front door a debug light uses — so it
+  queues its own scoped cast region and invalidates presence with no bespoke counter and no reordering.
+
+**Verified**: with `__gather.lights.length === 0` and **no `rebakeAll()` anywhere in the path**, a
+single carried light is listed by **131 of 240** in-window tiles and the scene renders lit by it, trees
+casting shadows away from it; dirty goes 0 → **168** (scoped) on the frames it lands. Three blockers
 found and fixed on the way ([I25](issues.md#i25)) — the tick guard that made deleting `this.lights`
-impossible, the presence/caster ordering, and the missing carrier for non-caster prims.
+impossible, the missing carrier for non-caster prims, and a carried light bypassing the dirty door.
