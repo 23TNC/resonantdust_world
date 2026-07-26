@@ -21,6 +21,7 @@ import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
 import type { TextureResolver } from "../../textures";
 import { SQUARE } from "../viewport/squareMath";
+import type { PrimitiveLight } from "../viewport/SquareCache";
 import { MaterialRegistry, type PackedChannel } from "../viewport/material";
 import { makeNoiseAtlas } from "../viewport/noiseAtlas";
 import { placeThing, readLayout } from "./thingPlacement";
@@ -158,6 +159,11 @@ export class WorldBridge {
    *  reads. Refreshed on hot-swap alongside the stem tables. */
   private tilePacked: Float64Array = new Float64Array();
   private thingPacked: Float64Array = new Float64Array();
+  /** Per-KIND emitted light, stride-8 `[r, g, b, intensity, reach, radius, height, flags]`
+   *  (flags bit 0 = cast_shadows, bit 1 = hot), indexed by `kindId - 1` like the other kind
+   *  tables. `reach === 0` ⇒ the kind emits nothing. Authored per kind, so a torch's light
+   *  costs nothing per placed instance and never rides the wire. */
+  private thingLight: Float64Array = new Float64Array();
 
   /** Anchor centre, in world px. */
   private anchorX = 0;
@@ -211,6 +217,7 @@ export class WorldBridge {
     this.thingLayout = this.content.thingLayout();
     this.tilePacked = this.content.tilePackedChannels();
     this.thingPacked = this.content.thingPackedChannels();
+    this.thingLight = this.content.thingLight();
     // def-frame-anchors P5: register each real stem's pre-atlas sprite_scale with the resolver
     // (applied at INGEST — scaled, clipped to the pow2 frame, re-centred on surface presence).
     for (let kind = 1; kind <= this.thingStems.length; kind++) {
@@ -394,6 +401,25 @@ export class WorldBridge {
 
   /** A zone's cold **scatter** arrived — sparse `kind_pos_reference`s. Paints a bottom-centred
    *  sprite per thing, above the ground. Keyed per `(zone, biome subtype, layer)`. */
+  /** The LIGHT presentation of a kind, or `undefined` when it emits none. Tiles → world px
+   *  here (the DSL authors in tiles; the records want px), so content stays resolution-free. */
+  private lightFor(kindId: number): PrimitiveLight | undefined {
+    const i = (kindId - 1) * 8;
+    if (i < 0 || i + 7 >= this.thingLight.length) return undefined;
+    const reach = this.thingLight[i + 4];
+    if (!(reach > 0)) return undefined;                       // `reach` IS the "no light" test
+    const flags = this.thingLight[i + 7];
+    return {
+      color: [this.thingLight[i], this.thingLight[i + 1], this.thingLight[i + 2]],
+      intensity: this.thingLight[i + 3],
+      reach: reach * SQUARE,
+      emitterRadius: this.thingLight[i + 5] * SQUARE,
+      height: this.thingLight[i + 6] * SQUARE,
+      castShadows: (flags & 1) !== 0,
+      hot: (flags & 2) !== 0,
+    };
+  }
+
   private onColdThings(macroPosition: number, subtypeId: number, layerId: number, tic: number, things: Uint32Array): void {
     const typeId = this.content.typeBiomeThing();
     // Type-qualified key — see onColdTiles: without the type, a thing row clears the tile row that
@@ -421,6 +447,7 @@ export class WorldBridge {
       // a west facing mirrors the pivot with the art (see placeThing).
       const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX, !tex.name);
       const primId = this.viewport.addPrim({
+        light: this.lightFor(kindId),   // P5: the kind's LIGHT presentation, if it has one
         texture: this.white,
         textureName: tex.name,
         flipX: tex.flipX,

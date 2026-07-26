@@ -352,6 +352,7 @@ export class SquareCache {
       packed: spec.packed,
       seed: spec.seed,
       zIndex: spec.zIndex ?? 0,
+      light: spec.light,   // P5: the LIGHT presentation — dropped here, a torch never lights
     };
     const range = squaresForAABB(prim.x, prim.y, prim.x + prim.width, prim.y + prim.height);
     this.prims.set(id, { prim, range });

@@ -291,3 +291,24 @@ five findings were demonstrated bugs.
 **Verified**: torch ON ⇒ 131 tiles, id 128; OFF ⇒ **0 tiles, record 0**; ON again ⇒ **id 128 reused**,
 131 tiles. A hand-built cycle logs *"resolve walk from prim 2 never reached a root (cycle)"* instead of
 teleporting. Scene renders unchanged; `tsc` + GLSL guard clean.
+
+## P5b — CONTENT authors light: 230 lights placed by worldgen, zero seeded (2026-07-25)
+A kind declares its light in the DSL and worldgen places it. The full chain — Rust → wasm → client →
+data texture → gather — is live.
+
+- **`VisualParts.light` + `LightParts`** (`shared/dsl`): `&thing.light.{r,g,b,intensity,reach,radius,
+  height,cast,hot}`. **`reach` is the discriminator** — a kind that never sets it emits nothing and
+  every pre-existing def is untouched.
+- **`Bundle::thing_light()`** — stride-8 per kind `[r, g, b, intensity, reach, radius, height, flags]`
+  (flags bit 0 cast, bit 1 hot), the sibling of `thing_layout`. Exposed as `Content.thingLight()`.
+- **`WorldBridge.lightFor(kindId)`** converts tiles → world px and attaches the aspect in
+  `onColdThings`, so a placed thing carries its kind's light with **no wire change** — the row is
+  per-kind, never per instance.
+- **Content**: `flora` now emits a soft bioluminescent glow (`reach 4`, `cast 0` — it lights without
+  occluding, so it costs the shadow walk nothing).
+- **H4 closed**: the standing loop is now one block per presentation, each behind its own guard, and
+  nothing may `continue` past another. The billboard's `def < 0` gate is deliberately LAST.
+
+**Verified**: `__gather.lights.length === 0` and **230 content-carried lights** light the scene —
+green pools around every flora cluster. `cargo test --lib` 44/44 green, including a new
+`thing_light_is_authored_per_kind` regression test.

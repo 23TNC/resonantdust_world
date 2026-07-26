@@ -128,6 +128,30 @@ pub struct VisualParts {
   /// indexed by packed RGBA channel. Default (all zero) = no material system in
   /// play, so the renderer paints the flat albedo exactly as before.
   pub packed: [PackedChannel; 4],
+  /// The LIGHT this kind emits (`&thing.light.*`), or `None` when it emits nothing.
+  /// A primitive presents as a billboard, a light, or **both** — a torch is one placed
+  /// object with a sprite and a glow (work `2026-07-25-primitive-graph`). Authored
+  /// per KIND, not per instance: every torch shines identically, so the client reads
+  /// one row by `kind_id` and never pays for it on the wire.
+  pub light: Option<LightParts>,
+}
+
+/// A kind's emitted light, authored under `&thing.light.*`. Colour is `0..1`; `reach`
+/// and `height` are TILES; `radius` (the area-light emitter, driving penumbra softness)
+/// is tiles too. `reach <= 0` means "no light" and the whole struct stays `None`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightParts {
+  pub color: (f64, f64, f64),
+  pub intensity: f64,
+  pub reach: f64,
+  pub radius: f64,
+  pub height: f64,
+  /// Casts shadows (default true). A fill light that lights without occluding costs
+  /// the gather nothing — it is skipped in the shadow walk entirely.
+  pub cast: bool,
+  /// Animates per frame (flicker, motion) ⇒ the HOT class, re-baked every frame.
+  /// Default false: a static torch bakes once, which is what makes many of them cheap.
+  pub hot: bool,
 }
 
 /// Everything the runtime needs to resolve and render tiles, built once at load.
@@ -261,6 +285,25 @@ impl Bundle {
     let span = read_f("prims.0.span", 1.0);
     let sprite_scale = (read_f("prims.0.sprite_scale.w", 1.0), read_f("prims.0.sprite_scale.h", 1.0));
     let sprite_anchor = (read_f("prims.0.sprite_anchor.x", 0.5), read_f("prims.0.sprite_anchor.y", 0.5));
+    // The kind's emitted light (`&thing.light.*`). `reach` is the discriminator: a def that
+    // never sets it emits nothing and the whole struct stays `None`, so every existing kind is
+    // untouched and the client sees exactly what it saw before.
+    let light = match read_f("prims.0.light.reach", 0.0) {
+      r if r > 0.0 => Some(LightParts {
+        color: (
+          read_f("prims.0.light.r", 1.0),
+          read_f("prims.0.light.g", 1.0),
+          read_f("prims.0.light.b", 1.0),
+        ),
+        intensity: read_f("prims.0.light.intensity", 1.0),
+        reach: r,
+        radius: read_f("prims.0.light.radius", 0.25),
+        height: read_f("prims.0.light.height", 0.5),
+        cast: read_f("prims.0.light.cast", 1.0) != 0.0,
+        hot: read_f("prims.0.light.hot", 0.0) != 0.0,
+      }),
+      _ => None,
+    };
     // Up to 4 packed-map channels: `&prim.packed.<i>.tint` is the channel's base colour
     // (what `split_layers` subtracted into the residual — the canonical reconstruction
     // `residual + Σ packedᵢ·jitter(tintᵢ)` re-adds it, so EVERY produced channel must set
@@ -278,7 +321,7 @@ impl Bundle {
         *ch = PackedChannel { material_id, tint };
       }
     }
-    Some(VisualParts { tint, geo_color, texture, footprint, anchor, size, span, sprite_scale, sprite_anchor, packed })
+    Some(VisualParts { tint, geo_color, texture, footprint, anchor, size, span, sprite_scale, sprite_anchor, packed, light })
   }
 
   /// A tile's background colour as a packed `0xRRGGBB` (see [`node_color_bg`]).
@@ -378,6 +421,27 @@ impl Bundle {
           v.span, v.sprite_scale.0, v.sprite_scale.1,
         ]),
         None => out.extend_from_slice(&[1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 1.0, 1.0]),
+      }
+    }
+    out
+  }
+
+  /// Every thing's emitted LIGHT in `object_id` order, flattened **stride-8** per def
+  /// (index 0 → object_id 1): `[r, g, b, intensity, reach, radius, height, flags]`, where
+  /// `flags` is bit 0 = `cast_shadows`, bit 1 = `hot`. Colour is `0..1`; `reach`, `radius`
+  /// and `height` are TILES. A kind that emits nothing gets an all-zero row, and
+  /// **`reach == 0` IS the "no light" test** the host uses — so a caller never has to know
+  /// which kinds were authored with a light. Sibling of [`thing_layout`]; per KIND, so a
+  /// torch's light costs nothing per placed instance (work `2026-07-25-primitive-graph`).
+  pub fn thing_light(&self) -> Vec<f64> {
+    let mut out = Vec::with_capacity(self.thing_ids.len() * 8);
+    for name in &self.thing_ids {
+      match self.thing(name).and_then(|n| self.node_visual(n)).and_then(|v| v.light) {
+        Some(l) => out.extend_from_slice(&[
+          l.color.0, l.color.1, l.color.2, l.intensity, l.reach, l.radius, l.height,
+          f64::from(u8::from(l.cast) | (u8::from(l.hot) << 1)),
+        ]),
+        None => out.extend_from_slice(&[0.0; 8]),
       }
     }
     out
@@ -1032,4 +1096,65 @@ mod tests {
     let errs = load(&[src("bad.rd", "<tile>\n  ::x>\n  10 &data.cost set\n")]).unwrap_err();
     assert!(errs.iter().any(|e| e.file == "bad.rd" && e.message.starts_with("parse:")), "{errs:?}");
   }
+
+  #[test]
+  fn thing_light_is_authored_per_kind() {
+    // A kind that emits light (`&thing.light.*`) vs one that does not. `reach` is the
+    // discriminator: omit it and the kind stays dark, so every pre-existing def is untouched.
+    // NOTE: a visual hook MUST set `tint` — `node_visual` bails (`?`) without it and the whole
+    // VisualParts comes back None, so every attr silently reads its default. And the embedded DSL
+    // is INDENTATION-SENSITIVE, must start at column 0 — indenting
+    // it to match the Rust around it silently pushes the hook body to a structural level and
+    // the instructions never run (they parse, they just attribute nothing).
+    let data = "\
+<thing>
+  ::lamp>
+    :data>
+      @define>
+        0 return
+  ::rock>
+    :data>
+      @define>
+        0 return
+";
+    let visual = "\
+<thing>
+  ::lamp>
+    :visual>
+      @on_create>
+        \"thing ^prim call &thing export
+        #ffffff &thing.tint set
+        2 &thing.size set
+        0.45 &thing.light.r set
+        0.95 &thing.light.g set
+        0.70 &thing.light.b set
+        0.8 &thing.light.intensity set
+        4 &thing.light.reach set
+        0.3 &thing.light.radius set
+        0.4 &thing.light.height set
+        0 &thing.light.cast set
+        0 return
+  ::rock>
+    :visual>
+      @on_create>
+        \"thing ^prim call &thing export
+        #ffffff &thing.tint set
+        0 return
+";
+    let b = load(&[src("data/things.rd", data), src("visual/things.rd", visual)]).expect("clean load");
+    // A known-good attr through the same harness first, so a failure below is the light path
+    // and not the fixture.
+    assert_eq!(
+      (b.thing_texture_stems().len(), b.thing_layout().len()),
+      (2, 20), "fixture: 2 kinds registered"
+    );
+    assert_eq!(b.thing_layout()[4], 2.0, "`size` must parse (stride-10, index 4)");
+    let t = b.thing_light();
+    assert_eq!(t.len(), 16, "stride-8 per kind, 2 kinds");
+    assert_eq!(&t[0..7], &[0.45, 0.95, 0.70, 0.8, 4.0, 0.3, 0.4]);
+    assert_eq!(t[7], 0.0, "cast 0 + hot unset => flags 0");
+    // rock emits nothing → an all-zero row; `reach == 0` is the host's "no light" test.
+    assert_eq!(&t[8..16], &[0.0; 8]);
+  }
+
 }

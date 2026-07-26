@@ -163,6 +163,13 @@ impl Content {
         self.bundle.thing_layout()
     }
 
+    /// Per-kind emitted light, stride-8 (`[r, g, b, intensity, reach, radius, height, flags]`;
+    /// flags bit 0 = cast_shadows, bit 1 = hot). `reach == 0` ⇒ the kind emits no light.
+    #[wasm_bindgen(js_name = thingLight)]
+    pub fn thing_light(&self) -> Vec<f64> {
+        self.bundle.thing_light()
+    }
+
     /// Every tile's 4 packed-map channel material bindings, in `def_id` order — a
     /// per-def table the host fetches once and indexes by the `defId` a tile prim
     /// carries (like [`tileTextureStems`]). Flat **stride-8** per def:

@@ -1178,9 +1178,12 @@ export class ShadowGather {
     const seen = this.billboardSeen;
     seen.clear();
     for (const p of standing) {
-      // P5: attach a carried light BEFORE the caster gate — a primitive can present as a light
-      // without being a caster (a bare source, or a sprite with no resolved silhouette), and those
-      // `continue` out below. `carriedLightFor` allocates the carrier if the billboard path has not.
+      // ONE PRESENTATION PER BLOCK, each behind its OWN guard (P7/H4, user). This loop used to be
+      // billboard code with everything else downstream of `if (def < 0) continue` — so a guard that
+      // only means "not a caster" silently decided whether a LIGHT was processed too. Nothing here may
+      // `continue`: a primitive presents as any combination, and one absent presentation must never
+      // skip another.
+      // ── LIGHT presentation ────────────────────────────────────────────────────────────────────
       if (p.light) {
         this.carriedSeen.add(p.id);            // resident this frame — the rest get released below
         const cl = this.coldData.carriedLightFor(p, p.light);
@@ -1192,8 +1195,11 @@ export class ShadowGather {
           this.markLightDirty({ x: w.x, y: w.y, reach: w.reach, dynamic: p.light.hot });
         }
       }
+      // ── BILLBOARD presentation ────────────────────────────────────────────────────────────────
       const def = this.coldData.definitionFor(p, resolver);
-      if (def < 0) continue; // no textureName → not a caster
+      if (def < 0) continue;  // not a caster — and this is now the LAST thing in the loop body, so
+                              // skipping it cannot skip another presentation. Add new presentations
+                              // ABOVE this line, never below it.
       const inst = this.coldData.billboardDataFor(p, def);
       seen.add(p.id); // resident this frame — everything else gets freed (P2)
       // Bucket by the TIGHT opaque bbox (P3), not the full billboard box — matches the quad we actually cast.
@@ -1203,9 +1209,6 @@ export class ShadowGather {
       const tx = p.x + tdx, ty = p.y + t.dy;
       // A changed billboard (new immutable def — lod landed/zoom — or first sight) cascades its region.
       if (inst.changed) this.markBillboardDirty(tx, ty, t.w, t.h);
-      // P5: a primitive that ALSO presents as a light (a torch) hangs its light leaf off the SAME
-      // carrier — one placed object, two presentations, no second delivery list ([F9]).
-
       // P4: remembered so REMOVAL can dirty scopedly. MUTATE in place — allocating a fresh array per
       // prim per frame is ~1700 short-lived arrays a frame, i.e. GC pressure for no reason.
       const lb = this.lastBox.get(p.id);

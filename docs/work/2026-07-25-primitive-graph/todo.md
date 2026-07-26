@@ -30,11 +30,11 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
       Acceptance: mirror shows one prim with `set_a=6, set_b=2`, both leaves' `parent_id` equal to it.
 - [x] Include carried lights when building `light_presence`.
       Acceptance: the torch's tile lists its light id; the scene is visibly lit by it.
-- [ ] Add a per-kind light table to the content manifest, beside `thingLayout`/`thingPacked`.
+- [x] Add a per-kind light table to the content manifest, beside `thingLayout`/`thingPacked`.
       Acceptance: `bin/dsl` emits it and the client reads a row by `kindId`.
 - [ ] Declare a torch kind in `content/data/things.rd` + `content/visual/things.rd`.
       Acceptance: `rd dsl` publishes; the manifest contains the torch's light row.
-- [ ] Attach the kind's light aspect to the prim in `WorldBridge.onColdThings`.
+- [x] Attach the kind's light aspect to the prim in `WorldBridge.onColdThings`.
       Acceptance: a worldgen-placed torch renders its sprite and lights its surroundings.
 - [ ] Place the debug lights through the content path instead of `seed()`.
       Acceptance: the scene is lit with `__gather.lights.length === 0`.
@@ -62,5 +62,5 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
       Acceptance: a hand-built cycle logs a named warning and does not teleport the leaf.
 - [x] Claim a FREE carrier slot for a carried light rather than always slot b.
       Acceptance: a carrier already using slot b keeps it; the light takes the next free slot.
-- [ ] Give each presentation its own guard in the standing loop ([H4](issues.md#i26)).
+- [x] Give each presentation its own guard in the standing loop ([H4](issues.md#i26)).
       Acceptance: a prim with no resolvable def still gets its light processed.

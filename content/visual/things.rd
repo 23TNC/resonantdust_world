@@ -121,6 +121,22 @@
                 0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
+                ; LIGHT presentation (work 2026-07-25-primitive-graph). A primitive presents
+                ; as a billboard, a light, or BOTH — flora is both: a sprite AND a soft
+                ; bioluminescent glow, one placed object. Authored per KIND, so every flora
+                ; shines identically and a placed instance costs nothing extra on the wire.
+                ; `reach` is the discriminator: omit it and the kind emits nothing.
+                ; Colour 0..1; reach / radius / height in TILES.
+                0.45 &thing.light.r set
+                0.95 &thing.light.g set
+                0.70 &thing.light.b set
+                0.8 &thing.light.intensity set
+                4 &thing.light.reach set
+                0.3 &thing.light.radius set
+                0.4 &thing.light.height set
+                ; A glow, not a lamp: it lights without occluding, so it costs the shadow
+                ; walk nothing (`cast_shadows` 0 skips it in the gather entirely).
+                0 &thing.light.cast set
                 0 return
             @on_destroy>
                 0 return

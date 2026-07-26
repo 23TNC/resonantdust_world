@@ -328,3 +328,26 @@ around by hoisting the light attach above it; the structural fix is per-presenta
 **H5 — non-issue, checked:** `coldData.lights` excludes carried lights and feeds `setConstants`'
 `light_count`, but **no shader reads that field**, so nothing is undercounted today. Recorded so the next
 person doesn't re-derive it — and so it is caught if a shader ever starts reading it.
+
+## I27 — Three silent droppers on the content→light chain (2026-07-25)
+Wiring content-authored light took far longer than the code warranted, because **three separate layers
+dropped the value without erroring**. Recording them because each is a trap for the next field added.
+
+1. **`SquareCache.addPrim` rebuilds `Primitive` field-by-field.** It does not spread `spec`, so a new
+   field on `PrimitiveSpec` type-checks at every call site and is then **silently discarded**. This is
+   what actually broke the chain: `lightFor()` was returning a correct light and `addPrim` threw it
+   away. Any field added to `Primitive` must ALSO be copied here.
+2. **`node_visual` bails on a missing `tint`** (`store.read("prims.0.tint")?`), returning `None` for the
+   whole `VisualParts` — so *every* attribute silently reads its default. A test fixture without a tint
+   looks like "the new attribute doesn't parse" when nothing parses.
+3. **The embedded DSL in Rust tests is indentation-sensitive** and must start at column 0. Re-indenting
+   a test to match the surrounding Rust pushes hook bodies to a structural level; the file still loads
+   "clean" and every value comes back default.
+
+**Method note, the real lesson.** I burned several cycles probing URLs that return `index.html` on a
+SPA — `/content/visual/things.rd`, `/shared/resonantdust_shared.js` — and read `200` + "no match" as
+evidence the server was serving stale content. It was not; both were the SPA fallback. **A 200 is not
+evidence a route exists.** What finally settled each question was asking the running system directly
+(`/content` as JSON, `import()` of the actual module, the parsed table read out of the client) and a
+bisect against a known-good value (`&thing.size`) to separate "my fixture is wrong" from "the feature
+is broken" — which is exactly what it turned out to be.
