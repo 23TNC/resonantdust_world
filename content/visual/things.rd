@@ -152,3 +152,45 @@
                 0 return
             @on_destroy>
                 0 return
+    ; Torch — the world's FIRST light-emitting kind. The lighting model is dense
+    ; AUTHORED point lights, not a sun: `flora` briefly carried a light and was reverted
+    ; because ~230 of them read as an ambient wash. So this is scattered sparsely and
+    ; each one is meant to be individually visible.
+    ;
+    ; `&thing.light.reach` is the DISCRIMINATOR — a kind that never sets it emits nothing
+    ; and its whole light struct stays None, which is why every other kind is untouched.
+    ; The client turns this into a light LEAF carried by the billboard's own carrier prim
+    ; (`WorldBridge.lightFor` → `Primitive.light`), so the sprite and its emission share
+    ; one resolved position and move together.
+    ::torch>
+        :visual>
+            @on_create>
+                "thing ^prim call &thing export
+                ; No dedicated torch art yet — borrow the gray placeholder square so the
+                ; emitter has a visible body. Swap to real art when it exists.
+                "white &thing.texture set
+                #ffd9a0 &thing.tint set
+                #ffd9a0 &thing.geoColor set
+                0.5 &thing.size set
+                0.5 &thing.sprite_scale.w set
+                0.5 &thing.sprite_scale.h set
+                1.0 &thing.anchor.y set
+                1.0 &thing.sprite_anchor.y set
+                ; Warm flame colour. `reach` is in TILES; 6 lights a generous room-sized
+                ; pool without reaching so far that every torch overlaps every other.
+                ; `cast 1` = occludes (it participates in the shadow walk); `hot 0` = STATIC,
+                ; so it bakes once and costs nothing per frame — the property that makes
+                ; many torches affordable.
+                1.0 &thing.light.r set
+                0.85 &thing.light.g set
+                0.55 &thing.light.b set
+                1.0 &thing.light.intensity set
+                6.0 &thing.light.reach set
+                0.35 &thing.light.radius set
+                0.6 &thing.light.height set
+                1 &thing.light.cast set
+                0 &thing.light.hot set
+                0 return
+            @on_destroy>
+                &thing.destroy call drop
+                0 return

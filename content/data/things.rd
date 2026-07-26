@@ -51,3 +51,13 @@
                 0 return
             @on_create>
                 0 return
+    ; The torch — the world's first LIGHT-EMITTING kind. Appended after `wolf` so no
+    ; existing object_id renumbers (`wolf`'s must not move — the npc pins KIND_WOLF).
+    ; Scattered sparsely by worldgen; the light itself is authored on the VISUAL side
+    ; (`&thing.light.*`), because emission is a presentation, not simulation state.
+    ::torch>
+        :data>
+            @define>
+                0 return
+            @on_create>
+                0 return

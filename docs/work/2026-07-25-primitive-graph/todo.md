@@ -32,8 +32,8 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
       Acceptance: the torch's tile lists its light id; the scene is visibly lit by it.
 - [x] Add a per-kind light table to the content manifest, beside `thingLayout`/`thingPacked`.
       Acceptance: `bin/dsl` emits it and the client reads a row by `kindId`.
-- [ ] Declare a torch kind in `content/data/things.rd` + `content/visual/things.rd`.
-      Acceptance: `rd dsl` publishes; the manifest contains the torch's light row.
+- [x] Declare a torch kind in `content/data/things.rd` + `content/visual/things.rd`.
+      Done in [P11](#p11--author-real-lights-a-torch-kind-placed-in-the-world-user-2026-07-26).
 - [x] Attach the kind's light aspect to the prim in `WorldBridge.onColdThings`.
       Acceptance: a worldgen-placed torch renders its sprite and lights its surroundings.
 - [x] Place the debug lights through the content path instead of `seed()`.
@@ -81,7 +81,23 @@ TILES instead. That stream now gates P10. See [I31](issues.md#i31)._
 - [x] Retired in favour of the slot grid — no work lands here.
       Acceptance: P10's memory basis reads from the slot grid (96 MiB), not screen density.
 
-## P10 — Additive RGBA32F lightmap ([F11b](forks.md#f11b), [F11b.1](forks.md#f11b1)) — needs P9
+## P11 — Author real lights: a `torch` kind placed in the world (user, 2026-07-26)
+_The world has **zero** content-authored lights — 3,429 prims, none carrying one. `flora` briefly glowed and
+was reverted ("our world doesn't have a sun") because ~230 lights read as an ambient wash, the model the
+lighting design rejects. Sparse authored point lights are the intended shape. This lands FIRST because
+[P10](#p10--additive-rgba32f-lightmap) cannot be verified without lights — a lighting check with no lights
+passes vacuously ([D-2](deviations.md#d-2))._
+- [x] Author the torch kind's `&thing.light.*` (kind added to data + visual `things.rd`, after `wolf`).
+      Verified: reach 768px (6 tiles), radius 44.8, height 76.8, warm (1, 0.85, 0.55), cast, static.
+- [x] Scatter it sparsely in `forest` AND `plains` (the catch-all) at 0.006, salt 10.
+      Verified: 74 torches / 74 carried lights in an 8192-tile window.
+- [x] Verify the whole content→light chain end to end.
+      Verified: world lit by discrete warm pools, no `__torch` involved. 44/44 DSL tests green.
+
+## P10 — Additive RGBA32F lightmap ([F11b](forks.md#f11b), [F11b.1](forks.md#f11b1))
+_Memory gate CLEARED by [textile-slot](../2026-07-26-textile-slot/README.md): 128 MiB fixed on the slot
+grid vs 465 MB world-sized. Verify every step against P11's lights — a lighting check with no lights passes
+vacuously ([D-2](deviations.md#d-2))._
 - [ ] Assert `EXT_color_buffer_float` + `EXT_float_blend` at startup and fail loudly if absent.
       Acceptance: a named error. `RGBA32UI` blending is a silent no-op, so absence must never pass quietly.
 - [ ] Move the lightmap to `RGBA32F` with quantised integer per-light contributions.
