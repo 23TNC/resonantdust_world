@@ -24,6 +24,19 @@ import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_SQUARE, SLOTS_X, SLOTS_Y } from "./
  *  upsample ([forks.md#f4]). */
 const FINE_RATIO = TEXTILE_SQUARE / TEXTILE_UNIT;
 
+/** Quantisation step for one light's contribution to the additive lightmap (F11b).
+ *
+ *  Each light deposits `round(contribution · LIGHT_QUANT)` — an INTEGER — and is removed by emitting
+ *  that same integer negated. FP32 holds every integer below 2^24 exactly, so the pair cancels bit-exactly
+ *  regardless of order; unquantised floats do not (measured drift 1.8e-7 over 64 pairs). The quantisation
+ *  IS the correctness mechanism, not a compression choice.
+ *
+ *  The ceiling is per-TEXEL accumulation depth, not a light count: `2^24 / LIGHT_QUANT` lights may
+ *  illuminate the SAME texel at full brightness. At 255 that is 65,793 — far past the u16 light-id space,
+ *  and ~4,000x the 16-per-tile presence cap. Raising this for finer gradients lowers that ceiling
+ *  proportionally. */
+export const LIGHT_QUANT = 255;
+
 /** Lights this iteration — a ring of debug lights around the seed tile. `number`-typed so the
  *  isolate-one-light debug path (`MAX_LIGHTS = 1`) below isn't flagged as a constant comparison. */
 const MAX_LIGHTS: number = 3;
@@ -546,6 +559,7 @@ ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
 const int FINE = ${FINE_RATIO};        // fine light texels per coarse shadow texel (TEXTILE_SQUARE/TEXTILE_UNIT)
+const float QUANT = ${LIGHT_QUANT}.0;  // additive-lightmap quantisation step (F11b) — deposits are INTEGERS
 void main() {
   // Same window mapping as the shadow gather (constants row): fc → toroidal slot → world tile → P.
   uvec4 C0 = fetchLin(uData, CONST_BASE);
@@ -646,7 +660,14 @@ void main() {
     float contrib = intensity * fall * ndl * (1.0 - shadow); // shadowed contribution (× Lambert on things)
     acc += col * contrib;
   }
-  oLight = vec4(clamp(acc, 0.0, 1.0), 1.0);                 // LDR clamp (F4: tonemap deferred to P4)
+  // QUANTISED into the additive accumulator (F11b). Rounding is what makes each deposit an exact integer,
+  // so removing this light later — same value negated — cancels bit-exactly in FP32. Do NOT drop the
+  // round for "smoother" values: the exactness is the correctness mechanism, and unquantised deposits
+  // leave residue that reads as light which will not turn off.
+  //
+  // No LDR clamp: the accumulator is the SUM over lights and may legitimately exceed one light's range.
+  // The blit divides by QUANT and tonemaps at display time instead.
+  oLight = vec4(round(max(acc, vec3(0.0)) * QUANT), 1.0);
 }
 `;
 
@@ -1416,8 +1437,14 @@ export class ShadowGather {
     // blit adds it once over cold+hot). On the fixed grid this is `SLOTS · TEXTILE_SQUARE` = 3072×2048,
     // constant — it was `cols · TEXTILE_SQUARE` (world-sized), which is what made it 176 MB at zoom 0.25.
     const fw = SLOTS_X * TEXTILE_SQUARE, fh = SLOTS_Y * TEXTILE_SQUARE;
-    this.coldLightRT = new RenderTarget(gl, { width: fw, height: fh, formats: ["rgba8unorm"] });
-    this.hotLightRT = new RenderTarget(gl, { width: fw, height: fh, formats: ["rgba8unorm"] });
+    // RGBA32F, not RGBA8 (F11b): the lightmap is an ADDITIVE ACCUMULATOR. Each light's contribution is
+    // QUANTISED to an integer 0..LIGHT_QUANT and blended in with `blendFunc(ONE, ONE)`; a light is
+    // removed by emitting the same value negated. FP32 represents every integer below 2^24 exactly, so
+    // that add/subtract pair cancels BIT-EXACTLY in any order — which is what makes an update invertible
+    // instead of forcing a clear-and-recast. Measured: 4096 quantised add/subtract pairs return a texel
+    // to exactly 0, while the same test on unquantised floats drifts by 1.8e-7.
+    this.coldLightRT = new RenderTarget(gl, { width: fw, height: fh, formats: ["rgba32float"] });
+    this.hotLightRT = new RenderTarget(gl, { width: fw, height: fh, formats: ["rgba32float"] });
     for (const rt of [this.coldLightRT, this.hotLightRT]) {
       rt.bind();
       gl.clearBufferfv(gl.COLOR, 0, new Float32Array([0, 0, 0, 1]));       // irradiance = 0

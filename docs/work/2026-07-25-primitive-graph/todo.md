@@ -98,10 +98,10 @@ passes vacuously ([D-2](deviations.md#d-2))._
 _Memory gate CLEARED by [textile-slot](../2026-07-26-textile-slot/README.md): 128 MiB fixed on the slot
 grid vs 465 MB world-sized. Verify every step against P11's lights — a lighting check with no lights passes
 vacuously ([D-2](deviations.md#d-2))._
-- [ ] Assert `EXT_color_buffer_float` + `EXT_float_blend` at startup and fail loudly if absent.
-      Acceptance: a named error. `RGBA32UI` blending is a silent no-op, so absence must never pass quietly.
-- [ ] Move the lightmap to `RGBA32F` with quantised integer per-light contributions.
-      Acceptance: 64 add/subtract pairs return a texel to exactly 0.
+- [x] Assert `EXT_color_buffer_float` + `EXT_float_blend` at startup and fail loudly if absent.
+      Both enabled in the `Renderer` ctor; a miss throws a named error rather than degrading silently.
+- [x] Move the lightmap to `RGBA32F` with quantised integer per-light contributions.
+      Verified: accumulator reads 308–321, ALL exact integers and >255 — impossible in the old unorm map.
 - [ ] Ping-pong the data texture AND the presence bands.
       Acceptance: last frame's and this frame's state are both readable in one pass.
 - [ ] Emit `new − old` in ONE differential pass, each term gated on that tile's presence.

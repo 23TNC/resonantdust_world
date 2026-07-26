@@ -38,6 +38,27 @@ export class Renderer {
     const gl = this.canvas.getContext("webgl2", { alpha: false, antialias: false, premultipliedAlpha: true, powerPreference: "high-performance" });
     if (!gl) throw new Error("[gl] WebGL2 not available");
     this.gl = gl;
+
+    // FLOAT RENDER TARGETS — enabled here, once, and asserted LOUDLY.
+    //
+    // `EXT_color_buffer_float` makes `rgba32float` renderable at all. `EXT_float_blend` additionally
+    // permits BLENDING into it, which the additive lightmap depends on entirely (work
+    // `2026-07-25-primitive-graph` F11b): every light's contribution is accumulated with
+    // `blendFunc(ONE, ONE)`, and a light is REMOVED by emitting a negative fragment.
+    //
+    // Both are asserted rather than feature-detected because the failure is SILENT. Measured on this
+    // machine: an `RGBA32UI` target with blending enabled reports a complete FBO, raises no GL error,
+    // and simply keeps the LAST write instead of summing — ES 3.0 §15.1.4 skips blending for integer
+    // formats. Without `EXT_float_blend` a float target degrades the same quiet way. A lightmap that
+    // silently stops accumulating looks like a lighting bug anywhere but here, so refuse to start.
+    for (const ext of ["EXT_color_buffer_float", "EXT_float_blend"]) {
+      if (!gl.getExtension(ext)) {
+        throw new Error(
+          `[gl] ${ext} unavailable — the additive lightmap cannot accumulate without it. ` +
+          "Refusing to start rather than rendering silently-wrong lighting.",
+        );
+      }
+    }
   }
 
   /** Match the drawing buffer to the CSS size × DPR. Returns true if it changed. */

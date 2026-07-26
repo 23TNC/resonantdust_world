@@ -18,6 +18,7 @@ import { ShadowGather, AMBIENT_LEVEL } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
+import { LIGHT_QUANT } from "./shadowGather";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 
 const BAKE_BUDGET = 128;
@@ -417,6 +418,7 @@ export class Viewport {
             // — which is exactly `win.slotPx` (both are `SQUARE >> lod`). Hardcoding `TEXTILE_SQUARE` was
             // right only at lod 0 and sampled ~2^lod off everywhere else (textile-slot).
             p.uInt("uLSlot", win.slotPx);
+            p.uFloat("uLightQuant", LIGHT_QUANT); // de-quantise the additive accumulator (F11b)
           },
         });
 

@@ -36,6 +36,7 @@ uniform sampler2D uAlbedo;       // COLD albedo composite (the mesh's main textu
 uniform sampler2D uSurface;      // COLD surface: B = alpha (visual coverage)
 uniform sampler2D uAlbedoWarm;   // WARM tier: mover albedo (over cold by warm coverage)
 uniform sampler2D uSurfaceWarm;  // WARM tier: mover surface (its B = composite coverage)
+uniform float uLightQuant;      // additive-lightmap quantisation step (F11b) — de-quantise on read
 uniform sampler2D uColdLight;    // #4 COLD lightmap irradiance (static lights, baked once) — per-light N·L baked in
 uniform sampler2D uHotLight;     // #4 HOT lightmap irradiance (dynamic lights, per frame)
 uniform int uLightEnable;        // 0 = UNLIT (albedo only) — the fallback when the lightmap isn't ready
@@ -69,8 +70,11 @@ void main() {
       // lightmap P1: the FINE lightmap already holds Σ per-light colour·falloff·(1−shadow)·N·L (cold + hot).
       // Sampled NEAREST — the detail lives in the lighting at TEXTILE_SQUARE/tile, so NO bilinear smear (that
       // was the coarse-map blob fix). Ambient is directionless, added once here over cold+hot.
-      vec3 irr = texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb;
-      light = uAmbient + irr;
+      // The lightmap is an RGBA32F ADDITIVE ACCUMULATOR holding QUANTISED integer deposits (F11b), so
+      // de-quantise here — this is the one place the scale is undone. Values may exceed 1 legitimately
+      // (many lights on one texel), hence the clamp AFTER the divide rather than an LDR clamp at bake.
+      vec3 irr = (texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb) / uLightQuant;
+      light = uAmbient + min(irr, vec3(4.0));
     }
   }
   // Coverage applied at OUTPUT only (premultiplied) so it composites over the canvas background: empty cells
