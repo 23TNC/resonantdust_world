@@ -155,6 +155,38 @@ Two caveats that are the reason P2 exists: the plateau assumes lights are dense 
 everywhere, and **the culled lights contribute no illumination at all** — so past ~24 lights this is not
 "4096 lights rendered cheaply", it is 16 lights rendered and the rest discarded.
 
+## 2026-07-27 — GPU-timed: ONE moving large-reach light costs 9.9 ms. A static one costs zero.
+
+Wall-clock had been reading 8.33 ms / 120 fps for a single orbiting light, which says nothing — that is the
+vsync floor. Measured properly with `EXT_disjoint_timer_query_webgl2` wrapped around `Viewport.tick`
+(one light, reach 16, 6-tile orbit driven through `movePrim`, zoom 0.5, 88–90 samples each):
+
+| condition | GPU ms (median) | min | max | dirty tiles |
+|---|---|---|---|---|
+| light **orbiting** | **10.49** | 8.74 | 13.97 | 1 120 / 2 048 |
+| light **static** | **0.58** | 0.54 | 0.63 | **0** |
+| **no light at all** | **0.58** | 0.54 | 1.33 | 0 |
+
+**Two results, both important.**
+
+**1. A cold static light is free — exactly, not approximately.** 0.58 ms with the light and 0.58 ms with no
+light are the same number. This is the direct confirmation of the "write it once and you're good" question,
+by GPU timer rather than by reasoning about `discard`. (Still unmeasured, and the caveat that matters: a
+*caster* moving inside a cold light's reach re-dirties it via `markPrimDirty`. Cold lights are free in a
+static world; nobody has measured them in one with pawns walking through it.)
+
+**2. A single moving reach-16 light costs 9.9 ms of GPU — 59 % of a 16.67 ms frame.** The 120 fps reading was
+pure vsync masking: the GPU was already ~63 % loaded by **one** light. This is the honest scale of the
+problem, and it is far worse than the wall-clock sweep suggested.
+
+Consistent with the plateau: marginal cost per light *falls* as lights are added (9.9 ms for one, ~6.7 ms/light
+at eight, ~0 beyond ~24) because discs overlap, dirty tiles are shared, and presence culls the rest.
+
+**What this implies for [`plan-4096.md`](plan-4096.md).** The ~9× the walk budget targets would take the
+plateau (~156 ms at 64+) to ~17 ms — right at the 60 fps edge, and comfortable once P3 restricts casting to
+the dominant few. The plan's sizing survives contact with a real GPU measurement. But it also means **there is
+no headroom to spend elsewhere**: at 9.9 ms for one light, every other lever in this stream is noise.
+
 ## Baseline carried in from the prior session (2026-07-26, pre-P0)
 
 Recorded here so P0's instrumented numbers have something to sit next to. Measured at **zoom 0.25, reach 16
