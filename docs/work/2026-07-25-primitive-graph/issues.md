@@ -761,3 +761,36 @@ the current content correct but does not lift the constraint.
 **Next:** clamp the top-corner projection to the reach circle when `k <= 0` rather than returning 0, then
 re-run the corridor↔brute identity check — the corridor pad is proven only for the forward-projection
 case, so a reach-clamped quad may visit occluders the walk does not currently reach.
+
+### I39 — the moving-light perf harness is DEAD; 120-light measurement could not be run (open, 2026-07-26)
+
+Asked for a 120-moving-light measurement. 120 lights register correctly (data texture shows 123 total,
+120 hot class) but **nothing moves them**, so the numbers below measure a static bake and are NOT a
+moving-light result:
+
+| condition | GPU ms/frame | fps | dirty tiles/frame |
+|---|---|---|---|
+| orbit ON  | 0.261 | 121 | **0** |
+| orbit OFF | 0.255 | 120 | **0** |
+
+Zero dirty tiles in both states is the tell — a moving light MUST dirty tiles every frame to re-bake.
+On/off differing by 0.006 ms (noise) confirms the orbit is not displacing anything.
+
+**Cause:** `__orbit` drove the DEBUG LIGHT ARRAY, which P0–P5c deleted when lights became content-authored
+carriers on prims. The toggle survived; the thing it moved did not. Lights attached by assigning `p.light`
+on a standing billboard are never touched by it.
+
+This is the same shape as [I37](#i37) — a stream deleted a mechanism and left its accessor behind, so the
+accessor now reports success while doing nothing. An orbit toggle that returns `true` reads as "lights are
+moving".
+
+**Nearly reported 0.26 ms as the answer.** It was cheap and plausible, and 120 lights at 16-tile reach
+costing less than 3 lights should have been obviously wrong — prior data has 128 lights at reach 6 costing
+6.029 ms. The dirty-tile counter is what caught it, and only because it was sampled INSIDE the measurement
+window rather than after. Instrument the work, not just the clock: a timing harness needs a liveness signal
+proving the work happened, or a fast result is indistinguishable from no result.
+
+**Next:** rebuild the mover as a displacement of the carrier PRIMS (the path movers actually take now) —
+per frame, offset each lit billboard's position and push it through the prim dirty front door, then assert
+dirty-tiles-per-frame > 0 before trusting any timing. Until then there is no moving-light number at all,
+and the 64/128-light figures from 2026-07-25 are the last valid ones (at reach 6, not 16).
