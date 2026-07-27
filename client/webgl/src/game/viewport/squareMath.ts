@@ -11,8 +11,14 @@
 
 /** Square edge in world px. The grid unit — all map squares are this size, and the MAXIMUM art size:
  *  a slot cannot show more than {@link SQUARE} px of a tile, so there is never a reason to author
- *  larger (work `2026-07-26-textile-slot`). Raised 64 → 128 with the fixed slot grid. */
-export const SQUARE = 128;
+ *  larger (work `2026-07-26-textile-slot`). Raised 64 → 128 with the fixed slot grid.
+ *
+ *  A/B 2026-07-27 (`moving-lights`): this is the single dial on the FINE lightmap's size, because
+ *  `TEXTILE_SQUARE = SQUARE` and the lightmap is `SLOTS · TEXTILE_SQUARE`. Halving it to 64 makes the
+ *  lightmap 2048×1024 instead of 4096×2048 — **4× fewer texels and 4× less VRAM** — while `shadow-cold`
+ *  is unaffected (`TEXTILE_UNIT` is fixed at 16/tile). The price is half the linear world resolution and
+ *  a 64 px cap on authored art. */
+export const SQUARE = 64;
 
 /** World UNIT in px — `UNIT = SQUARE/16`; 16 units per tile edge. Shadow math is in units.
  *  Units-per-tile is FIXED at 16, so this tracks `SQUARE` and every tile+unit position — which is

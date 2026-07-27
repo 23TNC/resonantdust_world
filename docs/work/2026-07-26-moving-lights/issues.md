@@ -1,5 +1,48 @@
 # Issues — problems hit, candidates, what we chose
 
+## I12 — `SQUARE` 128 → 64: lighting 3.3× cheaper, 192 MiB freed, art visibly softer {#i12}
+_2026-07-27 · A/B, same fixture (one moving reach-16 light, 6-tile orbit)_
+
+`SQUARE` is the only dial on the fine lightmap's size — `TEXTILE_SQUARE = SQUARE`, and the lightmap is
+`SLOTS · TEXTILE_SQUARE`. `TEXTILE_UNIT` is fixed at 16/tile, so **`shadow-cold` is unaffected**.
+
+| | SQUARE 128 | **SQUARE 64** |
+|---|---|---|
+| lightmap RT | 4096 × 2048 · **128 MiB** ea | 2048 × 1024 · **32 MiB** ea |
+| shadow RT | 512 × 256 · 2 MiB ea | *unchanged* |
+| **lighting stack VRAM** | **272 MiB** | **80 MiB** (−192) |
+| **lighting pass** | 1.462 ms | **0.444 ms** (3.3×) |
+| gather | 2.378 ms | 2.644 ms (unchanged code; orbit-phase noise) |
+| **GPU total** | 3.84 ms | **3.09 ms** |
+
+### The oversample flips sign
+This is the [I4](#i4) oversample resolved from the other end:
+
+| | lightmap texels | vs 3.00 M canvas px |
+|---|---|---|
+| SQUARE 128 | 8.39 M | **2.79× over** |
+| SQUARE 64 | 2.10 M | **0.70× — slightly UNDER** |
+
+So 128 was ~2.8× more lighting resolution than the display can show, and 64 is a little less. The ideal sits
+between, but there is no pow2 in between, and lighting is low-frequency enough that under-sampling it costs
+less than under-sampling art.
+
+### The real cost is ART, not lighting
+On-screen framing is **identical** — `coverScale` compensates (`REFERENCE` halves, scale doubles), so the same
+28 × 12 tiles fill the screen and a tile still displays at ~97.6 px. What changes is where that tile's pixels
+come from:
+
+- SQUARE 128: art authored at ≤128 px shown at 97.6 px → **0.76× downscale (crisp)**
+- SQUARE 64: art authored at ≤64 px shown at 97.6 px → **1.53× upscale (visibly soft)**
+
+Confirmed at zoom 1: sprites are noticeably softer than the SQUARE-128 shots. **Shadow blockiness is
+unchanged** — the shadow map is 16 texels/tile either way and a tile occupies the same screen size, so it is
+6.1 screen px per shadow texel in both.
+
+**So this is not a lighting-quality trade, it is an ART-resolution trade** — and the art cap drops from 128 px
+to 64 px, which is a content decision, not a renderer one. Left at 64 pending that call; reverting is the one
+constant in `squareMath.ts`.
+
 ## I11 — Inside `walkShadow`: it is NOT fetch-bound. `casterOne` is 77 %. {#i11}
 _2026-07-27 · `uWProfile` staircase, one moving reach-16 light, zoom 0.5_
 
