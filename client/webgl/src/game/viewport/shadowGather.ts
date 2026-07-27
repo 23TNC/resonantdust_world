@@ -971,6 +971,12 @@ export class ShadowGather {
    *  [irradiance rgba8, aggregate-dir rgba8]. The display blit sums cold+hot (+ ambient once). */
   private coldShadowRT: RenderTarget | null = null;
   private hotShadowRT: RenderTarget | null = null;
+  /** PREVIOUS-frame shadow, per class (F11b.1 / [I36]). The differential's OLD term must pair old light
+   *  records with the OLD shadow — `shadow` lives in this RT, not in the data texture, and the gather
+   *  regenerates it every frame. Without this, any frame where a caster moved would subtract a value that
+   *  was never deposited and leave residue. ~3 MB each, against the data texture's 16 MB. */
+  private coldShadowPrevRT: RenderTarget | null = null;
+  private hotShadowPrevRT: RenderTarget | null = null;
   private coldLightRT: RenderTarget | null = null;
   private hotLightRT: RenderTarget | null = null;
 
@@ -1443,6 +1449,7 @@ export class ShadowGather {
   private ensureRT(cols: number, rows: number): void {
     if (this.coldShadowRT && cols === this.rtCols && rows === this.rtRows) return;
     this.coldShadowRT?.destroy(); this.hotShadowRT?.destroy();
+    this.coldShadowPrevRT?.destroy(); this.hotShadowPrevRT?.destroy();
     this.coldLightRT?.destroy(); this.hotLightRT?.destroy();
     const gl = this.renderer.gl;
     // FIXED SLOT GRID (work 2026-07-26-textile-slot): these ride the SAME 24×16 slot grid as the
@@ -1454,7 +1461,10 @@ export class ShadowGather {
     // attachments to 0 (known-zero persistence baseline, P3).
     this.coldShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
     this.hotShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
-    for (const rt of [this.coldShadowRT, this.hotShadowRT]) {
+    this.coldShadowPrevRT?.destroy(); this.hotShadowPrevRT?.destroy();
+    this.coldShadowPrevRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
+    this.hotShadowPrevRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
+    for (const rt of [this.coldShadowRT, this.hotShadowRT, this.coldShadowPrevRT, this.hotShadowPrevRT]) {
       rt.bind();
       gl.clearBufferuiv(gl.COLOR, 0, new Uint32Array([0, 0, 0, 0]));
       gl.clearBufferuiv(gl.COLOR, 1, new Uint32Array([0, 0, 0, 0]));
@@ -1529,13 +1539,26 @@ export class ShadowGather {
     // by that class's dirty texture (clean tiles `discard` → persist). A frame where only the green (hot)
     // light moves leaves cold-dirty EMPTY → both cold draws no-op (every fragment discards), so the static
     // lights + their shadows are never recomputed. Each gather is corridor↔brute identical within its class.
-    this.classPass(0, this.coldDirtyTex, this.coldShadowRT!, this.coldLightRT!);
-    this.classPass(1, this.hotDirtyTex, this.hotShadowRT!, this.hotLightRT!);
+    this.classPass(0, this.coldDirtyTex, this.coldShadowRT!, this.coldLightRT!, this.coldShadowPrevRT);
+    this.classPass(1, this.hotDirtyTex, this.hotShadowRT!, this.hotLightRT!, this.hotShadowPrevRT);
   }
 
   /** One class's shadow + lighting bake (#4). `cls` 0 = cold / 1 = hot; `dirty` gates it (clean → persist);
    *  the gather writes `shadowRT` (this class's per-light u9), the lighting reads it into `lightRT`. */
-  private classPass(cls: number, dirty: Texture, shadowRT: RenderTarget, lightRT: RenderTarget): void {
+  private classPass(cls: number, dirty: Texture, shadowRT: RenderTarget, lightRT: RenderTarget,
+                    shadowPrevRT: RenderTarget | null): void {
+    // SNAPSHOT the shadow BEFORE the gather overwrites it ([I36]). Pairs with the data texture's pre-flush
+    // copy: together they let a pass reproduce a light's OLD contribution exactly — old light records
+    // against old shadow — which is what makes removal exact instead of approximate.
+    if (shadowPrevRT) {
+      const gl = this.renderer.gl;
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, shadowRT.fbo);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, shadowPrevRT.fbo);
+      gl.blitFramebuffer(0, 0, shadowRT.width, shadowRT.height, 0, 0, shadowRT.width, shadowRT.height,
+                         gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    }
     this.renderer.draw({
       program: this.gather,
       geometry: this.fsQuad,
