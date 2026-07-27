@@ -1,5 +1,40 @@
 # Forks — decision points
 
+## F5 — Split the lightmap bake into a GROUND pass and a PRIM pass {#f5}
+_2026-07-27 · user proposal · open, unmeasured — but the arithmetic already favours it_
+
+**The proposal.** Bake ground light (with its ground shadow) for every texel, then draw the prims and their
+lighting **over** it. A prim texel is simply overwritten, so **the ground shadow never needs cutting**.
+
+**Why it is right in principle.** Today `LIGHT_FRAG` runs `receiverAt` at every fine texel to ask *"am I a
+billboard or ground?"* — a per-texel **gather** answering a question the geometry already knows. Drawing the
+prims is the **scatter** form of the same query, and the same inversion as [F4](#f4)/[I8](issues.md#i8). It
+also deletes a known hack: the `shadow = 0.0` cut, plus the soft `rcovN` blend added on top of it to stop a
+coarse fringe spilling one texel past the silhouette.
+
+**What it buys, from the [I9](issues.md#i9) substep numbers:**
+- **`receiverAt` — 1.11 ms, the second-largest substep (10 % of the pass)** — disappears from the ground pass.
+- The ground-shadow cut and its fringe-blend workaround disappear as *code*, not just as cost.
+- `N·L` becomes unconditional per pass (prims always, ground never) instead of a per-texel branch.
+- On-prim shadows get a natural home — the receiver is the fragment being drawn, which is what the three
+  failed shadows-onto-prims attempts were trying to synthesise per-texel.
+
+**The ordering subtlety that decides whether it wins or loses.** The expensive edge refine is currently gated
+to ground texels (`rbillboardN == 0u`). In a naive ground-pass-first split, **every** texel is ground, so the
+refine runs everywhere — including under prims that are about to be overwritten. That is *more* refine work,
+and the refine is 85 % of the pass. **So prims must be drawn FIRST**, writing depth or stencil, with the
+ground pass masked to the unoccluded region. Then the refine is skipped under prim coverage — a saving
+proportional to how much of the screen prims cover (a forest scene: plausibly 20–30 %, so ~2–3 ms), on top of
+the 1.11 ms.
+
+**What it does not do.** It does not touch the 85 %. The refine still re-walks at 64× resolution wherever
+ground is visible. This is a real ~3–4 ms of ~10.9 ms plus a genuine simplification — not the main fix.
+
+**Risks to settle when building it:** prim quads must be rasterised into the **world-space toroidal** lightmap
+with wrap handling and bottom-row z-order (`SquareCache` already solves both for albedo, so the machinery
+exists); the prim pass must respect the same dirty gating; and prims must be drawn first, which inverts the
+natural reading order of the code.
+
 ## F4 — How does a texel learn which casters shadow it? {#f4}
 _2026-07-26 · open — the question underneath "why is it walking" ([I7](issues.md#i7))_
 
