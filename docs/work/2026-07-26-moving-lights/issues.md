@@ -1,5 +1,63 @@
 # Issues — problems hit, candidates, what we chose
 
+## I8 — The cost is the FINE LIGHTMAP BAKE, not the shadow gather. Everything above mis-attributed it. {#i8}
+_2026-07-27 · per-pass GPU profile. **This supersedes the attribution in [I4](#i4), [I6](#i6) and
+[`plan-4096.md`](plan-4096.md), all of which aimed at the wrong pass.**_
+
+### Per-pass profile — one moving reach-16 light, zoom 0.5
+
+| stage | where | ms |
+|---|---|---|
+| **lighting** (fine lightmap bake, 4096 × 2048) | GPU | **9.72** |
+| gather (shadow-cold, 512 × 256) | GPU | 1.63 |
+| `buildCasters` | CPU | 2.1 |
+| `buildPresence` / `buildDirty` / `flush` | CPU | 0.2 / 0.1 / 0.1 |
+
+**The shadow gather is 1.6 ms. The lightmap bake is 9.7 ms — 86 % of GPU time.**
+
+### The hot spot inside it is the edge refine, and it is a toggle
+
+`LIGHT_FRAG` re-runs `walkShadow` **per fine texel** to sharpen the shadow edge
+([2026-07-24-shadow-edge-refine](../2026-07-24-shadow-edge-refine/README.md), fused into the lighting pass).
+The fine lightmap has **8.39 M texels against the shadow map's 131 k — 64×**. Measured with `uEdgeRefine`:
+
+| | lighting | gather | total GPU |
+|---|---|---|---|
+| edgeRefine **ON** | 9.72 | 1.63 | **11.36** |
+| edgeRefine **OFF** | **1.42** | 1.86 | **3.28** |
+
+**The refine costs 8.3 ms of 11.4 — 73 % of the whole GPU frame, for one light. Disabling it is 3.5×.**
+
+### This also explains the zoom inversion, exactly as the user predicted
+
+| zoom | map tiles | dirty | dirty % | lighting | gather | GPU total |
+|---|---|---|---|---|---|---|
+| 1 | 512 | 496 | **97 %** | **15.69** | 1.82 | **17.51** |
+| 0.5 | 2 048 | 1 050 | 51 % | 10.82 | 1.82 | 12.64 |
+| 0.25 | 8 192 | 3 340 | 41 % | 5.77 | 1.18 | **6.95** |
+
+Zooming **in** costs **2.5×** more while covering 16× less world and dirtying 6.7× fewer tiles. **The gather is
+flat (~1.8 ms) at every zoom** — it never varied. All of the zoom dependence lives in the lightmap bake, whose
+cost is `dirty fraction × 8.39 M fixed texels`, and the dirty fraction is worst zoomed in because a reach-16
+light covers ~97 % of a 512-tile map and only 41 % of an 8 192-tile one.
+
+### What this invalidates
+
+- **"≥81 % of the frame is the walk" ([I6](#i6)) was right about *shadows* and wrong about *where*.** Turning
+  off `castShadows` disables the walk in *both* passes; I attributed the saving to the gather's corridor. It is
+  overwhelmingly the fine re-walk in the lighting pass, at 64× the resolution.
+- **[`plan-4096.md`](plan-4096.md) P1 — the per-texel walk budget — targets the gather, which is 1.6 ms.**
+  Making the gather free saves ~14 % of the frame. The plan's central lever was aimed at the wrong pass.
+- **The 2.79× oversample ([I4](#i4)) is not noise; it is now the single biggest structural lever.** I dismissed
+  it twice — first promoting it wrongly, then demoting it wrongly. It multiplies the 8.39 M-texel bake that
+  dominates everything, so sizing the lightmap to the canvas cuts the dominant pass directly.
+- **`buildCasters` at 2.1 ms CPU is real** and would bind well before 4096 lights.
+
+**Method note:** every earlier conclusion in this stream rested on wall-clock frame time, which is pinned at
+the 8.33 ms vsync floor and therefore measures nothing until the frame is already blown. A per-pass GPU timer
+found in one pass what four rounds of wall-clock A/B could not, and reversed the ranking of every lever. The
+instrument was the bottleneck, not the analysis.
+
 ## I7 — Why the current version walks: the caster data lost its light association {#i7}
 _2026-07-26 · traced through the design record_
 
