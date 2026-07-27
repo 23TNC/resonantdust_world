@@ -578,7 +578,31 @@ and a NEGATIVE lighting cost** — the tell was `minMs: 0` in the baseline. Span
 fixes it: whatever the ordering, sixty frames of GPU work fall inside, and `GPU_DISJOINT_EXT` confirms the
 timing was not invalidated.
 
-**Conclusion for [I32](#i32).** The differential pass is not needed for performance at any plausible light
-count in this scene. It remains the correct design — it makes cost independent of light count, and it is what
-makes a light removable rather than recomputed — but on these numbers it is a correctness/elegance change,
-not a performance one. Schedule accordingly.
+**Conclusion for [I32](#i32) — SUPERSEDED by [I35](#i35).** I concluded here that the differential pass was
+not needed for performance. That held at 64 lights and is false at 128; see below.
+
+### I35 — the cost is LIGHTS PER TILE, not light count: 2x lights = 42x cost (2026-07-26)
+Doubling the user's benchmark broke the linear reading in [I34](#i34):
+
+| lights | GPU ms/frame | lighting cost | per light |
+|---|---|---|---|
+| 0 | 1.388 | — | — |
+| 64 (32 moving) | 1.497 | 0.109 ms | 1.7 µs |
+| **128 (64 moving)** | **6.029** | **4.641 ms** | **36.3 µs** |
+
+**42.6× the cost for 2× the lights**, and the frame goes from 18% to **72.4%** used.
+
+**It is not more dirty tiles.** The dirty count barely moved (3,221 → 3,552). It is dramatically more work
+*per* tile: with the same area holding twice the lights, tiles approach the **16-light presence cap**, and
+under replace-semantics **every dirty tile re-sums every light present on it**. Cost is
+`dirty_tiles × lights_per_tile`, and only the second term moved.
+
+**This is exactly what the differential pass fixes**, and it reinstates the performance case for
+[I32](#i32) that [I34](#i34) had (prematurely) retired. Under `new − old`, a moved light touches only its
+own contribution — a dirty tile costs **1** light-evaluation instead of up to 16, so cost becomes
+`dirty_tiles × lights_MOVED` and stops scaling with local density altogether.
+
+**Lesson about the earlier measurement.** 64 lights was below the knee, so the curve looked linear and
+extrapolated to "~4,000 lights". That extrapolation was worthless — I even flagged it as an order of
+magnitude rather than a figure, but still drew a scheduling conclusion from it. **Two points either side of
+an unknown knee do not define a curve.** Measure at the density that matters, not the one that is convenient.
