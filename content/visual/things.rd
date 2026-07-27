@@ -176,8 +176,11 @@
                 0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
-                ; Warm flame colour. `reach` is in TILES; 6 lights a generous room-sized
-                ; pool without reaching so far that every torch overlaps every other.
+                ; Warm flame colour. `reach` is in TILES. 16 throws a broad pool that carries
+                ; well past the immediate clearing; note this is the COST dial — a light's
+                ; expense scales with the tiles it covers (~(2·reach)²), and measured cost
+                ; tracks lights-per-tile, not light count. Raising reach is far more
+                ; expensive than adding torches.
                 ; `cast 1` = occludes (it participates in the shadow walk); `hot 0` = STATIC,
                 ; so it bakes once and costs nothing per frame — the property that makes
                 ; many torches affordable.
@@ -185,7 +188,7 @@
                 0.85 &thing.light.g set
                 0.55 &thing.light.b set
                 1.0 &thing.light.intensity set
-                6.0 &thing.light.reach set
+                16.0 &thing.light.reach set
                 0.35 &thing.light.radius set
                 ; HEIGHT IS SHADOW-CRITICAL, not just a look. `shadowCover` projects the caster's card
                 ; top (elevation Zt = H·sin(WORLD_TILT)) from the light onto the ground; when the light
@@ -194,6 +197,41 @@
                 ; that to cast against anything. 2.5 tiles = 40 units is the documented contract
                 ; (shadowGather.ts:61) chosen precisely to sit above the tree billboard. An authored
                 ; flame height (0.6) zeroed EVERY shadow in the world — see I37.
+                2.5 &thing.light.height set
+                1 &thing.light.cast set
+                0 &thing.light.hot set
+                0 return
+            @on_destroy>
+                &thing.destroy call drop
+                0 return
+    ; Blue torch — identical geometry to `torch`, cold colour. A SEPARATE KIND rather than a
+    ; variant because `&thing.light.*` is authored per kind: the light struct is resolved once
+    ; from the kind's visual script, so two colours cannot come from one kind without
+    ; per-instance light data, which the prim leaf does not carry today. Appended AFTER
+    ; `torch` so no existing object_id renumbers (the same rule that put `torch` after `wolf`).
+    ; If per-instance tinting is ever wanted, the `variant` nibble of `kind_reference`
+    ; (kind_id << 4 | variant) is the field to grow into — this kind is the cheap route, not
+    ; the principled one.
+    ::torch_blue>
+        :visual>
+            @on_create>
+                "thing ^prim call &thing export
+                "white &thing.texture set
+                #a0c8ff &thing.tint set
+                #a0c8ff &thing.geoColor set
+                0.5 &thing.size set
+                0.5 &thing.sprite_scale.w set
+                0.5 &thing.sprite_scale.h set
+                1.0 &thing.anchor.y set
+                1.0 &thing.sprite_anchor.y set
+                ; Cold flame. Same reach/height/cast/hot as `torch` — only the colour differs,
+                ; so any difference seen in-world is attributable to colour alone.
+                0.55 &thing.light.r set
+                0.75 &thing.light.g set
+                1.0 &thing.light.b set
+                1.0 &thing.light.intensity set
+                16.0 &thing.light.reach set
+                0.35 &thing.light.radius set
                 2.5 &thing.light.height set
                 1 &thing.light.cast set
                 0 &thing.light.hot set

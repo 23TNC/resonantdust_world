@@ -582,6 +582,7 @@ fn seed_zone(pool: &Arc<Pool>, world: &World, zone: u16) {
 /// a cut-and-paste. See `docs/work/2026-07-26-torch-thing/` B-2.
 fn append_init_objects(worldgen: &Worldgen, zone: u16, things: &mut Vec<(u16, Vec<u32>)>) {
     use resonantdust_codec::object::{pack_kind_pos_reference, pack_kind_reference};
+    let mut seeded: Vec<u32> = Vec::new();
     for (init_zone, kind_name, cells) in INIT_OBJECTS {
         if zone != *init_zone {
             continue;
@@ -605,22 +606,39 @@ fn append_init_objects(worldgen: &Worldgen, zone: u16, things: &mut Vec<(u16, Ve
         // `kind_reference` is NOT the raw object id — it is `pack_kind_reference(kind_id, variant)`,
         // i.e. `kind_id << 4 | variant`, exactly as worldgen builds it. Passing the bare object id
         // decodes as kind_id 0 (an invalid kind) and the client silently drops the thing ([I5]).
-        let entries: Vec<u32> = cells
-            .iter()
-            .map(|&t| pack_kind_pos_reference(pack_kind_reference(kind_id, 0), t, 0))
-            .collect();
-        tracing::info!(zone, kind_name, count = entries.len(), "seeding init objects");
-        things.push((0, entries));
+        tracing::info!(zone, kind_name, count = cells.len(), "seeding init objects");
+        seeded.extend(
+            cells
+                .iter()
+                .map(|&t| pack_kind_pos_reference(pack_kind_reference(kind_id, 0), t, 0)),
+        );
+    }
+    // ONE push for ALL init kinds. `seed` is REPLACE-by-(zone, subtype, layer), so pushing once per
+    // INIT_OBJECTS row made the last row silently clobber the earlier ones — two warm torches vanished
+    // the moment a blue one was added under the same subtype 0. The kind rides per CELL inside
+    // `pack_kind_pos_reference`, so many kinds share one subtype-0 entry with no ambiguity; the subtype
+    // is the STORAGE key, not the kind. Anything appending here must extend this vec, never push again.
+    if !seeded.is_empty() {
+        things.push((0, seeded));
     }
 }
 
 /// `(macro_position, kind name, in-zone tile_references)`.
 ///
 /// The three torches sit around global tile (100, 50) — the default camera focus — which lands in zone
-/// (6, 3), so all three share `macro_position 0x0063` and seed in one call. In-zone cells (4,2), (12,4),
-/// (8,10) as `x:4|y:4` bytes. Pair distances 8.2 / 8.9 / 7.2 tiles against a 6-tile reach, so each torch
-/// keeps an isolated pool AND there is an overlap band to exercise light accumulation.
-const INIT_OBJECTS: &[(u16, &str, &[u8])] = &[(0x0063, "torch", &[0x42, 0xC4, 0x8A])];
+/// (6, 3), so all three share `macro_position 0x0063`. In-zone cells (4,2), (12,4), (8,10) as `x:4|y:4`
+/// bytes. Pair distances 8.2 / 8.9 / 7.2 tiles.
+///
+/// Reach is now 16 tiles, so those distances are all WELL inside a single pool — the three overlap
+/// heavily rather than reading as isolated sources. That is deliberate: overlapping pools are what
+/// exercise additive accumulation and multi-caster shadowing, which is the harder case. If isolated
+/// pools are wanted back, move the cells apart rather than shrinking reach.
+///
+/// One is `torch_blue` — a distinct KIND, because `&thing.light.*` is authored per kind and the prim
+/// light leaf carries no per-instance colour. Two warm plus one cold also makes overlap legible: where
+/// the pools cross, the sum is visibly neither colour, which is the additive accumulator being correct.
+const INIT_OBJECTS: &[(u16, &str, &[u8])] =
+    &[(0x0063, "torch", &[0x42, 0xC4]), (0x0063, "torch_blue", &[0x8A])];
 
 /// Build the per-client players upstream and subscribe to the auth table so the
 /// post-login row read is served from cache. `None` (with an error frame already

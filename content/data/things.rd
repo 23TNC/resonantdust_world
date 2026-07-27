@@ -61,3 +61,11 @@
                 0 return
             @on_create>
                 0 return
+    ; The blue torch. Data-identical to `torch` — the colour lives entirely on the visual
+    ; side, so simulation sees no difference between them. Appended last so no object_id moves.
+    ::torch_blue>
+        :data>
+            @define>
+                0 return
+            @on_create>
+                0 return

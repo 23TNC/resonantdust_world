@@ -58,8 +58,12 @@ export const LIGHT_QUANT = 255;
 const MAX_LIGHTS: number = 3;
 /** Physical source RADIUS (world px); `/UNIT` → units in the light record. The AREA-LIGHT disk radius the
  *  penumbra samples over (bigger = softer). Per-light (see the config below); `__emit(px)` tunes live. */
-/** Light height: 40 units = 160 world px = 2.5 tiles — above the tree billboard (2 tiles / 32 units).
- *  Lower = longer shadows. */
+/** Light height: 40 units = 2.5 tiles — above the tree billboard (2 tiles / 32 units). Lower = longer
+ *  shadows, but ONLY down to the caster's card top: `shadowCover` returns 0 outright when the light sits
+ *  below it (`k = Lz/(Lz−Zt) <= 0`), so a light under ~26 units casts NOTHING, silently. Lights are
+ *  content-authored per kind now (`&thing.light.height`, in TILES) — this figure is the constraint that
+ *  authored value must clear, not a default anything reads. Authoring 0.6 zeroed every shadow in the
+ *  world; see I37 / I38 in work/2026-07-25-primitive-graph/issues.md. */
 // The shadow map is the TEXTILE_UNIT map (map-model.md): 16 textiles/tile, 1 textile = 1 unit
 // (= UNIT px). Sized `cols·TEXTILE_UNIT × rows·TEXTILE_UNIT`, toroidal like the cold cache window.
 /** GLSL literals for the world constants (a tile is `SQUARE` world px; `1 unit = SQUARE/16` px). */
@@ -76,9 +80,16 @@ const WORLD_TILT_DEG = 55;                    // DEFAULT ground tilt — 55° fe
  *  a cast shadow climb the sprite. `__elevk(k)` tunes the climb by eye; 0 collapses it to the flat ground
  *  shadow. Empirical because the caster card runs its own internal ratio (the documented 0.5 north offset). */
 const ELEV_K_DEFAULT = Math.sin(WORLD_TILT_DEG * Math.PI / 180);
+/** Exponent applied to the smoothstep falloff. **1 = the raw S-curve; below 1 flattens the drop-off** —
+ *  the mid-range lifts (0.25 → 0.5 at 0.5) so a pool reads bright most of the way out instead of dying
+ *  just outside the source. It cannot leak light past a light's reach: 0 and 1 are fixed points of
+ *  `pow`, so the endpoints are untouched and the corridor/brute reach box stays exactly valid.
+ *  This is a LOOK dial, not a physical one — inverse-square it is not, and deliberately so. */
+const FALLOFF_EXP = 0.75;
+const FALLOFF_EXPF = FALLOFF_EXP.toFixed(3);
 /** world-space-lighting (P1): the N–S un-foreshorten factor = 1/cos(WORLD_TILT). Screen N–S is compressed
- *  by cos65 (the ground is a 65° plane), so true world N–S = screen·(1/cos65). Derived in
- *  work/2026-07-24-world-space-lighting/model.md; sin65-vs-cos65 is the flagged risk, so it's live-tunable. */
+ *  by cos(tilt), so true world N–S = screen·(1/cos(tilt)). Derived in
+ *  work/2026-07-24-world-space-lighting/model.md; sin-vs-cos is the flagged risk, so it's live-tunable. */
 const INV_COS_TILT_DEFAULT = 1 / Math.cos(WORLD_TILT_DEG * Math.PI / 180);
 /** Lift the rendered shadow up (toward smaller world-y) by this many world units — a fragment shows
  *  shadow if the point this far BELOW it is shadowed, so the whole silhouette slides up. Closes the ~1
@@ -208,22 +219,43 @@ float worldTiltRad(highp usampler2D data) {
 //   card corners: base (A.x±W/2, Yb, 0)  ·  top (A.x±W/2, Yt, Zt)
 //   ground(C) = L.xy + (L.z/(L.z - C.z)) * (C.xy - L.xy)   → base stays put, top scales by k
 float cross2(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }
-float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, highp usampler2D data) {
+// Project ONE card-top corner onto the ground, RADIALLY CAPPED at the light's reach.
+//
+// The naive projection L.xy + k*(C−L.xy) only exists when the corner is below the light (k > 0). When the
+// light sits at or BELOW the card top the ray never returns to the ground and k goes <= 0 — the shadow is
+// semi-infinite. That is a legitimate configuration (a torch at flame height beside a tree), not an error,
+// and the wedge model's answer is that an infinite shadow TERMINATES AT REACH: past reach the light
+// deposits nothing, so the shadow has nothing to subtract from and the cap is invisible. Returning 0 here
+// instead — as this did until I38 — silently deleted every shadow whenever a light was authored low.
+//
+// Capping the k > 0 case at reach too keeps the quad bounded for ALL inputs, including the near-parallel
+// k→+∞ blowup as Zt approaches L.z. Bounded by reach is also what preserves the corridor identity: the
+// walk already covers the reach box, so a shadow that cannot escape it cannot reach a tile the walk skips.
+vec2 projectTop(vec2 C, vec3 L, float k, float reachU) {
+  vec2 d = C - L.xy;
+  float len = length(d);
+  if (len < 1e-4) return C;                        // degenerate: light directly under the corner
+  if (k > 0.0) {
+    vec2 p = L.xy + k * d;
+    if (length(p - L.xy) <= reachU) return p;      // finite projection, inside reach → exact
+  }
+  return L.xy + reachU * (d / len);                // at/above the light, or past reach → run out to reach
+}
+float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float reachU, highp usampler2D data) {
   float th = worldTiltRad(data), ct = cos(th), st = sin(th); // WORLD_TILT — from the data map (F4)
-  // KNOWN DEVIATION (kept deliberately — user, 2026-07-23): the north offset uses 0.5·H·cos65, HALF the
-  // strict parallel-to-view billboard (H·cos65). Likely the shadow-design "wedge" ±depth half; the
-  // elevation (Zt = H·sin65) already matches the canonical model. Left as-is because shadows read right.
+  // KNOWN DEVIATION (kept deliberately — user, 2026-07-23): the north offset uses 0.5·H·cos(tilt), HALF the
+  // strict parallel-to-view billboard (H·cos(tilt)). Likely the shadow-design "wedge" ±depth half; the
+  // elevation (Zt = H·sin(tilt)) already matches the canonical model. Left as-is because shadows read right.
   // If the shadow GEOMETRY ever looks wrong, this 0.5 is a prime suspect — see
   // docs/work/2026-07-23-world-geometry forks.md#f2 + issues.md#i1.
-  float Yt = A.y - 0.5 * H * ct, Zt = H * st;    // card top: tilted north (0.5·H·cos65) + elevated (H·sin65)
+  float Yt = A.y - 0.5 * H * ct, Zt = H * st; // card top: tilted north (0.5·H·cos t) + elevated (H·sin t)
   float Yb = A.y + ${SHADOW_BASE_PUSHF};          // card base — pushed SOUTH into the caster footprint (seam close)
   float k = L.z / (L.z - Zt);                     // ground-projection factor for the top corners
-  if (k <= 0.0) return 0.0;                        // top at/above the light — no forward shadow
   float hw = 0.5 * W;
   vec2 bl = vec2(A.x - hw, Yb);                    // base corners project to themselves (z = 0)
   vec2 br = vec2(A.x + hw, Yb);
-  vec2 tl = L.xy + k * (vec2(A.x - hw, Yt) - L.xy);   // top corners projected from the light
-  vec2 tr = L.xy + k * (vec2(A.x + hw, Yt) - L.xy);
+  vec2 tl = projectTop(vec2(A.x - hw, Yt), L, k, reachU);  // top corners projected from the light
+  vec2 tr = projectTop(vec2(A.x + hw, Yt), L, k, reachU);
   // point in convex quad (bl → br → tr → tl): inside iff all four edge cross products share a sign.
   float d0 = cross2(br - bl, P - bl);
   float d1 = cross2(tr - br, P - br);
@@ -256,7 +288,7 @@ vec2 emitterOffset(int i) {
 // base), a high edge moves a lot (soft tip, detail dissolving), and points just outside the true edge
 // are covered by only SOME sub-lights (soft outer perimeter, no hard card boundary). lod<4 (no
 // silhouette resolved) or a point light (emitter≈0) falls back to the solid/hard quad.
-float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, vec2 ref, highp usampler2D data, sampler2D surf) {
+float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU, vec2 ref, highp usampler2D data, sampler2D surf) {
   if (billboardIdx == 0u) return 0.0;
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));      // v2.1: R = id|reserved, G = position, B = orient
   vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref);   // v3 leaf: resolved tile|unit
@@ -285,8 +317,8 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, vec2 ref, hi
   // hard (z≈0 edges don't move with the sub-light), and detail dissolves at the tip (high edges do). The
   // outward feather beyond the silhouette extremes would need the corridor pad widened + re-proven — a
   // follow-up, not worth breaking bit-identity for. Outside the quad → lit; skip the sub-light loop.
-  if (shadowCover(P, Ac, L, W, H, data) <= 0.0) return 0.0;
-  if (lod < 4u || emitter < 0.5) return shadowCover(P, Ac, L, W, H, data); // no silhouette / point light → hard quad
+  if (shadowCover(P, Ac, L, W, H, reachU, data) <= 0.0) return 0.0;
+  if (lod < 4u || emitter < 0.5) return shadowCover(P, Ac, L, W, H, reachU, data); // no silhouette / point light → hard quad
   // Frame sampling constants (whole-px-per-unit; ppu = 2^lod / spanU is a pow2 ≥ 1 by construction).
   // Window top-left = frame origin + offset·ppu − nudge. Atlas rows are image-top-down; card t=0 is the
   // sprite's BOTTOM row → v = 1−t.
@@ -440,7 +472,7 @@ vec3 billboardNormal(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D
 //   (2) LIGHT-SIDE — the caster must sit between the light and the receiver: dot(Cb−Rbase, Rbase−L) < 0.
 //       (A north light + a caster south of the receiver would otherwise false-positive.)
 // Returns coverage + the caster row.
-float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, bool isThing, uint rbillboard, vec2 Rbase,
+float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, float reachU, bool isThing, uint rbillboard, vec2 Rbase,
                 vec2 ref, highp usampler2D data, sampler2D surf, out float row) {
   row = 0.0;
   if (billboardIdx == 0u) return 0.0;
@@ -451,7 +483,7 @@ float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, bool isThing, 
     if (Cb.y <= Rbase.y + ${SELF_BANDF}) return 0.0;        // (1) seen-face + near-band (units): caster must be >SELF_BAND south
     if (dot(Cb - Rbase, Rbase - L.xy) >= 0.0) return 0.0;   // (2) caster must block the light reaching it
   }
-  float cc = casterCover(billboardIdx, Q, L, emitter, ref, data, surf);
+  float cc = casterCover(billboardIdx, Q, L, emitter, reachU, ref, data, surf);
   if (cc > 0.0) row = floor(Cb.y / UPT);
   return cc;
 }
@@ -464,6 +496,9 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
                  int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
   cdepth = 0.0;
   float cov = 0.0;
+  // Reach in UNITS, the radial cap for a shadow whose light sits at/below the caster top (I38). Derived
+  // from the walk's own tile reach so the cap can never exceed the region the walk visits.
+  float reachU = float(reachT) * UPT;
   if (corr == 1) {
     // SUPERCOVER DDA (I30). The old walk SAMPLED the light→Q segment at ≤1-tile spacing and padded every
     // sample with a 5-tile cross, because a sample POINT can miss a tile the segment actually crosses near a
@@ -502,7 +537,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
         vec2 bref = (vec2(o) + 0.5) * UPT;                   // resolve casters against THEIR bucket tile
         for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
           uint billboardIdx = tileSlot(cb, c);
-          float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, bref, data, surf, r);
+          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -519,7 +554,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
         vec2 bref = (vec2(float(lc.x + dx), float(lc.y + dy)) + 0.5) * UPT;
         for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
           uint billboardIdx = tileSlot(cb, c);
-          float r; float cc = casterOne(billboardIdx, Q, L, emitter, isThing, rbillboard, Rbase, bref, data, surf, r);
+          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -615,7 +650,11 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
         d3 = vec3(toL, 0.0);
         dist = length(toL);                                   // in-plane screen distance (units)
       }
-      float fall = smoothstep(reach, 0.0, dist);              // 1 at the light → 0 at reach (F2 smoothstep)
+      // 1 at the light → 0 at reach (F2 smoothstep), then FLATTENED by a <1 exponent so the mid-range
+      // lifts (0.25 → 0.5 at exp 0.5) and the pool reads bright most of the way out instead of falling off
+      // right outside the source. Endpoints are fixed points of pow(), so this brightens the interior
+      // WITHOUT extending the light past its reach — the corridor/brute reach box stays exactly valid.
+      float fall = pow(smoothstep(reach, 0.0, dist), ${FALLOFF_EXPF});
       // lightmap P1: per-light Lambert on THINGS — fold max(0, N·L̂) into the contribution so the lightmap stores
       // Σ colour·falloff·(1−shadow)·N·L per light (no lossy aggregate-direction relief). CLIP-TO-PRESENCE: the
       // fine lightmap (64/tile) is still coarser than the sprite edge, so a hard thing/ground classification spills
