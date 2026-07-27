@@ -681,7 +681,23 @@ If either the gather's write resolution or the light pass's read resolution did 
 the light pass samples the wrong shadow texel — plausibly always an unwritten one, which would read as
 coverage 0 exactly as observed.
 
-**Cheapest next step:** run `__corridor(false)` (brute) and re-read the RT max. Brute ignores the corridor
-walk entirely, so if brute ALSO yields 0 coverage the fault is in `casterCover` / the caster records; if
-brute yields non-zero, it is the DDA or the corridor's tile addressing. That one bit splits the search in
-half. Then check `fcC` addressing against the shadow RT's actual per-tile texel count at the live lod.
+**Split test RUN — brute is also zero.** `__corridor(false)` + rebake gives `max 0x010101`, **0 texels with
+coverage**, identical to the corridor path. So:
+- **The walk is EXONERATED** — DDA, corridor addressing and the perpendicular dilation are all innocent.
+- **`FINE` doubling is exonerated too**, and my reasoning above was wrong: `FINE` governs how the LIGHT pass
+  READS the shadow, but the zero is measured in the shadow RT itself, which is the gather's WRITE. The fault
+  is upstream of anything `FINE` touches.
+- The fault is in **`casterCover` or the caster records** — the gather has caster ids and lights and still
+  computes no coverage.
+
+**New prime suspect: the silhouette lookup moved when `BASE_LOD_PX` became `SQUARE`.** `casterCover` samples
+the caster's silhouette from the co-packed surface page to decide coverage. The resolver's target LOD is now
+128 rather than 64, so a def resolves to a **different-sized frame at a different page origin**. If the
+sampled region no longer matches where the silhouette actually is, every sample misses and coverage is 0
+everywhere — exactly the symptom. Note `definition_data.frame_lod` was redefined u4-side-exponent → u2
+display-lod in VARIABLES at P0 but the CODE was never changed to match, so writer and readers may now
+disagree about that field's width and meaning.
+
+**Next:** dump one caster's `definition_data` record and compare its `frame_lod` / `frame_x` / `frame_y`
+against what the resolver actually packed for that stem at the live LOD. If they disagree, that is the bug
+and the fix is to reconcile the code with P0's layout change.
