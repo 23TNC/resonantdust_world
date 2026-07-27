@@ -1,5 +1,49 @@
 # Forks — decision points
 
+## F7 — The overwrite IS the fine cut. A6 and `receiverAt` both die. {#f7}
+_2026-07-27 · **the user's refinement of [F6](#f6)** — and the one that removes both dominant costs_
+
+### The goal, stated correctly
+**The concern is not edge pixelation — it is bright ground leaking out from under a billboard.** That leak
+happens at exactly one place: the **billboard's own silhouette edge**. And that edge is produced *for free* by
+rasterising the billboard's light at fine resolution, masked by the sprite's own coverage.
+
+So:
+1. The **ground pass draws its shadow conservatively** — it does not care that shadow spills onto billboard
+   texels, because those texels are about to be overwritten.
+2. Therefore the ground pass needs **no presence lookup and no cut**. It never asks "am I on a billboard".
+3. The **prim pass reclaims exactly the sprite footprint at fine resolution, and that overwrite IS the fine
+   cut.**
+
+**A6 (the edge refine) was doing job 3 the expensive way** — 419 k fine texels each re-deriving, by corridor
+walk, a boundary the rasteriser hands over as a side effect of drawing. With the user's separate ruling that
+the blocky edge on open ground is acceptable, A6 has no remaining justification and is **deleted, not
+optimised**.
+
+### The resulting cost
+
+| pass | steps | cost |
+|---|---|---|
+| **ground** | dirty gate → window map → light loop w/ coarse ground shadow → write | **~0.45 ms** |
+| **prim** | draw quads → own coverage → own normal → light loop → overwrite | ~1–2 ms |
+
+From the [I9](issues.md#i9) staircase: L1 `0.161` + shadow fetch `0.018` + light loop `0.273` ≈ **0.45 ms**,
+against today's **10.875 ms**. Both dominant items die for the same reason — `receiverAt` (1.11 ms) because
+the ground pass stops asking, and the refine (9.29 ms) because the rasteriser answers it.
+
+### The one visual consequence to expect
+Ground **immediately adjacent** to a trunk keeps shadow the conservative draw put there and the prim pass does
+not reclaim, because it falls outside the sprite silhouette. It reads as a slightly heavy **contact shadow**
+at the base — usually flattering in this art style, but it is the one place the overdraw shows, and it should
+be checked rather than discovered.
+
+### What this does to F6's open questions
+- **The order conflict dissolves.** There is no longer a refine to mask, so ground-first / prim-overwrites —
+  the simple version — is also the fast one. No stencil, no prims-first inversion.
+- **The on-billboard shadow map is no longer on the critical path.** Start the prim pass at `shadow = 0`.
+- Still to verify: [F6 ③](#f6) — whether any live additive-accumulator/removal path objects to a
+  mid-sequence overwrite.
+
 ## F6 — Split shadow into ON-GROUND and ON-BILLBOARD maps; two lighting passes {#f6}
 _2026-07-27 · **the user's design.** Refines [F5](#f5) — same two-pass split, but it removes the CAUSE
 (one shadow value serving two receivers) rather than working around it._
