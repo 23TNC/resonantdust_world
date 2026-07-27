@@ -1,5 +1,54 @@
 # Forks — decision points
 
+## F6 — Split shadow into ON-GROUND and ON-BILLBOARD maps; two lighting passes {#f6}
+_2026-07-27 · **the user's design.** Refines [F5](#f5) — same two-pass split, but it removes the CAUSE
+(one shadow value serving two receivers) rather than working around it._
+
+### The design
+1. **Split the shadow map in two** — an on-ground coverage map and an on-billboard coverage map, each its own
+   attachment (~4 MiB per class).
+2. **Ground pass** — take the light, remove the **on-ground** shadow, write the tile.
+3. **Prim pass** — take the light, remove the **on-billboard** shadow, mask to the prim, apply the normal,
+   write. It **overwrites** what the ground pass put there.
+
+### Why it is right
+The observation that drives it: **we already apply light + normal to a billboard from presence and it works**
+(`applyNL` from `receiverAt`, step (i)). Presence-based masking is not the problem. The problem is that one
+`shadow` scalar has to serve both receivers, so it needs a flag bit and a reconciliation — **step (k)'s cut**.
+Give each receiver its own map and both the flag and the cut simply cease to exist.
+
+Concretely, today `shadow-cold` attachment 0 packs **16 slots × (u7 coverage | u1 on-billboard)** into 128
+bits. A coarse texel therefore stores **one** shadow — ground *or* billboard, never both — and step (k) exists
+to repair the resulting mismatch against the fine receiver mask. Two maps store both, and:
+
+- **step (k) (the cut) is deleted**, with the `rcovN` fringe-blend that props it up
+- **`receiverAt` leaves the ground pass entirely** — measured **1.11 ms**, the second-largest substep
+- the prim pass knows its own frame, so coverage is **one fetch at a known offset** instead of a search over
+  the tile's ≤8 billboards
+- the freed flag bit gives **u8 coverage (255 levels) instead of u7 (127)** — a quality gain, not just a saving
+- the coarse-vs-fine classification mismatch is gone by construction, not patched
+- shadows-**onto**-prims finally get a natural home: the receiver *is* the fragment being drawn, which is what
+  three failed attempts tried to synthesise per-texel from a `zdepth` composite
+
+### What it costs
+- **+4 MiB per class** for the second attachment (16 → 24 MiB). Nothing against the lightmaps' 256 MiB.
+- **The gather must compute both** shadows where a billboard exists, not pick one. Gather is **1.6 ms**, so
+  call it ~+1.6 ms worst case — and only where billboards actually stand.
+- The prim pass must rasterise prim quads into the **world-space toroidal** lightmap with wrap handling and
+  bottom-row z-order. `SquareCache` already does exactly this for albedo, twice a frame.
+
+### Three things to settle when building it
+1. **Draw order.** If ground runs first, its **9.29 ms edge refine** runs under prims that are about to be
+   overwritten — wasted work on the dominant item. Prims should go **first**, writing depth/stencil, with the
+   ground pass masked to what remains; that also skips the refine under prim coverage.
+2. **The prim pass's shadow term is the risky half.** On-billboard shadows are the thing that failed three
+   times, and are currently never cut because *"cutting them causes more problems than it solves"* (user).
+   **Start the prim pass at `shadow = 0`** — it is then strictly today's behaviour with the cut deleted — and
+   add the on-billboard map afterwards. The architecture supports it; the correctness of that map is a
+   separate problem and should not gate this one.
+3. **This does not fix the 85 %.** The refine still re-walks at 64× wherever ground is visible. Worth ~1.1 ms
+   directly, plus whatever fraction of the refine prim coverage masks out.
+
 ## F5 — Split the lightmap bake into a GROUND pass and a PRIM pass {#f5}
 _2026-07-27 · user proposal · open, unmeasured — but the arithmetic already favours it_
 
