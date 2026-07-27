@@ -1,5 +1,39 @@
 # Issues — problems hit, candidates, what we chose
 
+## I9 — Lighting-pass substep profile: the edge refine is 85 % of it {#i9}
+_2026-07-27 · one moving reach-16 light, zoom 0.5, `uProfile` staircase + GPU timer_
+
+The lighting bake is a **single draw**, so substeps cannot be timed directly. Added a `uProfile` uniform that
+cuts `LIGHT_FRAG` short at named boundaries; each level includes every level below it, so the **difference**
+prices one substep.
+
+| level | includes | ms | **substep cost** |
+|---|---|---|---|
+| 1 | dirty gate + window mapping + `P` | 0.161 | 0.161 |
+| 2 | + `receiverAt` | 1.270 | **+1.109** |
+| 3 | + `billboardNormal` + `worldNormal` | 1.298 | +0.028 |
+| 4 | + `accumulateLights`, **no** shadow fetch | 1.571 | +0.273 |
+| 5 | + coarse shadow lookup | 1.589 | +0.018 |
+| **0** | **+ edge refine** | **10.875** | **+9.286** |
+
+**The edge refine is 9.29 ms of a 10.88 ms pass — 85 %.** Everything else in the entire lighting bake,
+including the light loop, the normal sampling and the shadow lookup, costs **1.59 ms combined**.
+
+Second place is `receiverAt` at **1.11 ms** (10 %) — the per-fine-texel receiver mask. Third is the light
+accumulation loop itself at 0.27 ms. The coarse shadow fetch is **0.018 ms**, i.e. free.
+
+**Why the refine is so expensive:** it re-runs the full `walkShadow` corridor at the **fine lightmap
+resolution** — 8.39 M texels versus the shadow map's 131 k, a **64×** resolution multiplier — for every texel
+whose coarse coverage is a partial `(0,1)` edge value. The gate works (interior 0/1 texels skip it), but shadow
+edges are numerous enough that 64× resolution swamps the saving.
+
+**Consequence.** The whole optimisation target for moving lights is one feature: the fine shadow-edge refine.
+The shadow *gather* (1.6 ms), the light loop (0.27 ms) and the coarse shadow lookup (0.02 ms) are all noise
+beside it. Options, in the order they should be tried: tighten the gate (only refine where the edge is
+actually visible at display resolution), refine at a lower multiplier than 64×, cache the refined edge instead
+of recomputing it per frame, or drop the refine and accept the coarse edge — it is a toggle, so its visual
+value can be judged directly against 3.5× frame time.
+
 ## I8 — The cost is the FINE LIGHTMAP BAKE, not the shadow gather. Everything above mis-attributed it. {#i8}
 _2026-07-27 · per-pass GPU profile. **This supersedes the attribution in [I4](#i4), [I6](#i6) and
 [`plan-4096.md`](plan-4096.md), all of which aimed at the wrong pass.**_

@@ -600,6 +600,12 @@ uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = pain
 uniform float uNormalPitch;        // lightmap (__pitchnormal): standing-billboard normal pitch (rad, 90°−tilt; live, F7-reconsidered)
 uniform vec2 uLightAlign;          // lightmap (__lightalign): the LIGHTING receiver-mask seat (units, NW), decoupled from the shadow's RECV_ALIGN
 uniform int uEdgeRefine;           // shadow-edge-refine (__edgerefine): 1 = re-test the caster silhouette at fine res on (0,1) edge texels
+// PROFILING STAIRCASE (2026-07-27, moving-lights I9). 0 = full shader. 1..5 cut the fragment short at a named
+// boundary so a GPU timer can price each substep by difference — this pass is ONE draw, so it cannot be
+// timed any other way. Each level includes every level below it:
+//   1 dirty gate + window mapping + P   2 + receiverAt   3 + billboard/world normal
+//   4 + accumulateLights with NO shadow fetch   5 + coarse shadow lookup, no refine   0 + edge refine
+uniform int uProfile;
 uniform int uHideRight;            // DEBUG (__hideright): 1 = blank the right half of each billboard's normal in __shownormal
 // lightmap P1: sprite-tangent normal to the WORLD frame. Rotate the flat/ground basis (image-up = north, out
 // = up) up by phi about the EAST axis: phi 0 = ground (lies in the plane), phi = 90deg minus tilt = a standing
@@ -631,7 +637,8 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
                       vec2 P, int fold, vec3 N, bool applyNL, uint rbillboardN) {
     uvec4 presLo = fetchLin(data, PRESENCE_BASE + fold);     // lights 0–6
     uvec4 presHi = fetchLin(data, PRESENCE_HI_BASE + fold);  // lights 7–13
-    uvec4 sh = texelFetch(shadowTex, fcC, 0);                   // P3: per-slot u9 shadow coverage — COARSE, upsampled (fcC)
+    uvec4 sh = uProfile == 4 ? uvec4(0u)                        // profile L4: price the loop WITHOUT the shadow fetch
+                           : texelFetch(shadowTex, fcC, 0);   // P3: per-slot u9 shadow coverage — COARSE, upsampled (fcC)
     vec3 acc = vec3(0.0);                                     // #4: NO ambient here — the blit adds it once over cold+hot
     for (int slot = 0; slot < 16; slot++) {
       uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
@@ -679,7 +686,7 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
       // (0,1) edge value, re-run the caster-silhouette walk at THIS fine texel to SELECT the sharp coverage (only
       // edge texels pay; interior 0/1 is kept free). Ground cast shadow only for now (rbillboardN 0) — thing texels
       // keep the coarse blended value. Same GROUND-path args as the gather (Pground = P + SHADOW_LIFT, corridor).
-      if (uEdgeRefine == 1 && !onBillboard && rbillboardN == 0u && shadow > 0.0 && shadow < 1.0) {
+      if (uEdgeRefine == 1 && uProfile == 0 && !onBillboard && rbillboardN == 0u && shadow > 0.0 && shadow < 1.0) {
         vec3 L3 = vec3(Lxy, Lz);
         float emitter = float((Ld.w >> 12) & 255u);          // v3: emitter_radius moved to A[12:19]
         int reachT = int(reach) / int(UPT) + 1;
@@ -722,6 +729,7 @@ void main() {
   float ly = (float(fc.y) - float(sy * uSlotF)) / float(uSlotF);
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
   ivec2 fcC = fc / FINE;                                       // the coarse SHADOW texel this fine texel upsamples
+  if (uProfile == 1) { oLight = vec4(0.0); return; }           // L1: dirty gate + window mapping + P only
 
   // lightmap P0 (__shownormal): verify the atlas-frame normal read — paint the billboard's sampled normal (enc
   // 0.5+0.5) where a billboard is drawn, black on ground. Frame-indexed → must be rock-stable across zoom.
@@ -742,10 +750,12 @@ void main() {
   // worldNormal pitches it to the world frame IN-SHADER (uNormalPitch = 90°−tilt, kept live — F7 reconsidered).
   uint rbillboardN; float rcovN;
   receiverAt(P, uData, uSurface, uLightAlign, rbillboardN, rcovN);
+  if (uProfile == 2) { oLight = vec4(rcovN); return; }              // L2: + receiverAt
   float sDbg;
   vec3 pn = rbillboardN != 0u ? billboardNormal(rbillboardN, P, uData, uSurface, uLightAlign, sDbg) : vec3(0.0);
   bool applyNL = rbillboardN != 0u && dot(pn, pn) > 0.0;            // thing with a loaded normal → real N·L
   vec3 N = applyNL ? worldNormal(pn, uNormalPitch) : vec3(0.0, 0.0, 1.0);
+  if (uProfile == 3) { oLight = vec4(N, 1.0); return; }             // L3: + billboard/world normal
 
   int fold = foldTile(wc, wr);
   vec3 acc = accumulateLights(uData, uShadow, fcC, P, fold, N, applyNL, rbillboardN);
@@ -1011,6 +1021,10 @@ export class ShadowGather {
   private lightAlignY = 0;
   /** shadow-edge-refine (`__edgerefine`): re-test the caster silhouette at fine res on `(0,1)` edge texels so
    *  the cast shadow's edge is near-pixel-perfect instead of the coarse 16/tile blocks. Default ON; A/B off. */
+  /** PROFILING staircase level for `LIGHT_FRAG` (0 = full shader; 1–5 cut it short at a named boundary).
+   *  The lighting bake is ONE draw, so per-substep GPU timing is only obtainable by differencing these.
+   *  `__profile(n)`; always leave it at 0. See `moving-lights` I9. */
+  profile = 0;
   private edgeRefine = true;
   /** DEBUG (`__hideright`): blank the right half of each billboard's normal in `__shownormal` (alignment probe). */
   private hideRight = false;
@@ -1691,6 +1705,7 @@ export class ShadowGather {
         p.uFloat("uNormalPitch", this.normalPitchDeg * Math.PI / 180);
         p.uVec2("uLightAlign", this.lightAlignX, this.lightAlignY);
         p.uInt("uEdgeRefine", this.edgeRefine ? 1 : 0);
+        p.uInt("uProfile", this.profile);
         p.uInt("uHideRight", this.hideRight ? 1 : 0);
       },
     });
