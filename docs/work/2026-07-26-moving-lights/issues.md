@@ -1,6 +1,6 @@
 # Issues — problems hit, candidates, what we chose
 
-## I14 — Dense-bucket early out: only 13 %, and that is the informative part {#i14}
+## I14 — Dense-bucket early out: ~6 % gather + ~17.5 % lighting, and a harness bug found {#i14}
 _2026-07-27 · gather optimisation attempt_
 
 `buildCasters` packs a tile's caster slots densely from 0 after a `fill(0)`, but the walk called `casterOne`
