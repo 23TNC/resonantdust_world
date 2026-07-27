@@ -112,8 +112,9 @@ self-heal check is vacuous until contributions can actually leak._
       Acceptance: last frame's and this frame's state are both readable in one pass.
 - [x] Ping-pong the SHADOW RT per class ([I36](issues.md#i36)) — the old term needs old shadow, not just
       old light records. Verified with 27 movers: 633 of 4,428 non-zero words differ from the snapshot.
-- [ ] Refactor `LIGHT_FRAG`'s accumulation into a function parameterised by the data + shadow samplers.
-      Acceptance: identical output when both args are the CURRENT textures (pure refactor, no behaviour change).
+- [x] Refactor `LIGHT_FRAG`'s accumulation into a function parameterised by the data + shadow samplers.
+      Verified byte-identical: per-torch peaks [247, 247, 0], the same as pre-refactor. `walkShadow` takes
+      the data param too, so an old-state call walks OLD casters.
 - [ ] Emit `new − old` in ONE differential pass, each term gated on that tile's presence.
       Acceptance: a texel whose lights and casters all held still emits exactly 0.
 - [ ] Collapse hot/cold into the single accumulator.

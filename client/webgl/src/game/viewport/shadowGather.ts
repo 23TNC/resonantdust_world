@@ -576,6 +576,90 @@ int pmod(int a, int m) { return ((a % m) + m) % m; }
 uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
 const int FINE = ${FINE_RATIO};        // fine light texels per coarse shadow texel (TEXTILE_SQUARE/TEXTILE_UNIT)
 const float QUANT = ${LIGHT_QUANT}.0;  // additive-lightmap quantisation step (F11b) — deposits are INTEGERS
+
+// The per-texel light accumulation, with its DATA and SHADOW sources as PARAMETERS (F11b.1 / [I36]).
+//
+// Parameterised so ONE definition can be evaluated against the CURRENT state and against last frame's
+// snapshot (uDataPrev / uShadowPrev) in the same pass — which is what lets the differential emit
+// new-minus-old and have the old term be exactly what was originally deposited. Note walkShadow also
+// takes the data parameter: the old term must walk the OLD casters, or a moved caster desyncs the subtract.
+//
+// While the differential is not yet wired this is called once with the current textures, so it is a
+// pure refactor — identical output, no behaviour change.
+vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 fcC,
+                      vec2 P, int fold, vec3 N, bool applyNL, uint rbillboardN) {
+    uvec4 presLo = fetchLin(data, PRESENCE_BASE + fold);     // lights 0–6
+    uvec4 presHi = fetchLin(data, PRESENCE_HI_BASE + fold);  // lights 7–13
+    uvec4 sh = texelFetch(shadowTex, fcC, 0);                   // P3: per-slot u9 shadow coverage — COARSE, upsampled (fcC)
+    vec3 acc = vec3(0.0);                                     // #4: NO ambient here — the blit adds it once over cold+hot
+    for (int slot = 0; slot < 16; slot++) {
+      uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
+      if (li == 0xffffu) continue;                            // empty slot
+      uvec4 Ld = fetchLin(data, LIGHT_BASE + int(li));       // G = position, B = colour|intensity, A = z|reach|hot|…
+      if (int((Ld.y >> 25) & 1u) != uLightClass) continue;    // #4: this pass accumulates only its class
+      vec2 Lxy = resolvedPos((Ld.w >> 4) & 255u, (Ld.x >> 8) & 255u, Ld.x & 255u, P); // v3 resolved pos
+      vec3 col = vec3(float((Ld.z >> 24) & 255u), float((Ld.z >> 16) & 255u), float((Ld.z >> 8) & 255u)) / 255.0;
+      float intensity = float(Ld.z & 255u) / 255.0;
+      float reach = float((Ld.w >> 20) & 0xfffu);             // reach (units)
+      vec2 toL = Lxy - P;
+      // world-space-lighting P1: TRUE 3D distance instead of the screen radius — the world is a 65° plane, so
+      // the N–S screen axis is foreshortened (un-shorten by uNsInv = 1/cos65) and the light sits Lz above the
+      // ground. ⟹ the reach is an OVAL (flattened N–S) + a height term (a point under the light isn't at 0).
+      // Ground assumption (Pz=0); billboard elevation folds in at P2. Toggle off = the old screen circle.
+      float Lz = float((Ld.y >> 16) & 255u);                  // v3: z_offset (units) moved to G
+      float dist; vec3 d3;                                     // world-space delta P→light (for dist + N·L dir)
+      if (uWorldLight == 1) {
+        d3 = vec3(toL.x, toL.y * uNsInv, Lz);                 // un-foreshorten N–S + light height
+        dist = length(d3);                                    // true 3D distance (ground point)
+      } else {
+        d3 = vec3(toL, 0.0);
+        dist = length(toL);                                   // in-plane screen distance (units)
+      }
+      float fall = smoothstep(reach, 0.0, dist);              // 1 at the light → 0 at reach (F2 smoothstep)
+      // lightmap P1: per-light Lambert on THINGS — fold max(0, N·L̂) into the contribution so the lightmap stores
+      // Σ colour·falloff·(1−shadow)·N·L per light (no lossy aggregate-direction relief). CLIP-TO-PRESENCE: the
+      // fine lightmap (64/tile) is still coarser than the sprite edge, so a hard thing/ground classification spills
+      // one texel past the silhouette. Blend N·L → ground (ndl 1) by the sprite's soft coverage (rcovN) so the lit
+      // region fades exactly to presence — no coarse fringe, and the edge reveals ground not black. ndl = 1 on ground.
+      float ndl = applyNL ? max(dot(N, d3 / max(dist, 1e-3)), 0.0) : 1.0;
+      // P3 SHADOW: slot i's u8 coverage (low8 in channel i>>2) + the ON-BILLBOARD flag (A[16+i]). CUT the on-GROUND
+      // shadow where THIS fine texel is a billboard (rbillboardN != 0) — the tight, fine-presence cut (like the normal),
+      // so a billboard standing in a shadow isn't ground-darkened. On-billboard shadows are LEFT UNCUT (they share tiles
+      // with ground shadows; cutting them causes more problems than it solves — user).
+      uint b8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;  // u7 coverage | u1 on-billboard
+      bool onBillboard = (b8 & 1u) == 1u;
+      float shadow = float(b8 >> 1) / 127.0;   // the u7 re-expanded (the stored <<1 IS the x2 restore)
+      if (!onBillboard && rbillboardN != 0u) shadow = 0.0;              // cut ground shadow off billboards (fine presence)
+      // shadow-edge-refine: the coarse shadow (16/tile) is nearest-upsampled → blocky edges. Where it's a PARTIAL
+      // (0,1) edge value, re-run the caster-silhouette walk at THIS fine texel to SELECT the sharp coverage (only
+      // edge texels pay; interior 0/1 is kept free). Ground cast shadow only for now (rbillboardN 0) — thing texels
+      // keep the coarse blended value. Same GROUND-path args as the gather (Pground = P + SHADOW_LIFT, corridor).
+      if (uEdgeRefine == 1 && !onBillboard && rbillboardN == 0u && shadow > 0.0 && shadow < 1.0) {
+        vec3 L3 = vec3(Lxy, Lz);
+        float emitter = float((Ld.w >> 12) & 255u);          // v3: emitter_radius moved to A[12:19]
+        int reachT = int(reach) / int(UPT) + 1;
+        vec2 Pg = P; Pg.y += ${SHADOW_LIFTF};
+        float cd;
+        shadow = walkShadow(L3, emitter, Pg, false, 0u, P, 1, reachT, data, uSurface, cd);
+      }
+      float contrib = intensity * fall * ndl * (1.0 - shadow); // shadowed contribution (× Lambert on things)
+      // CLAMP PER LIGHT, before it joins the sum. This is what makes the accumulator's exactness bound
+      // UNCONDITIONAL rather than merely likely: with every light capped at 1.0 (255 after quantisation),
+      // the worst case is 65,535 (the whole u16 id space) x 255 = 16,711,425, under the 2^24 = 16,777,216
+      // that FP32 represents exactly. No presence cap, no distribution assumption, no bookkeeping
+      // discipline needed — overflow becomes impossible by construction.
+      //
+      // It costs no brightness. Clamping caps a light's PEAK, not its profile: at intensity 4 every
+      // distance is still 4x, so the core saturates over a WIDER radius and the falloff stays brighter
+      // further out — which is what a brighter light looks like. So intensity is free to exceed 1.
+      //
+      // The clamp belongs HERE and nowhere downstream. Clamping the accumulated SUM would break light
+      // removal: two lights at 255 clipped to 255 means subtracting one leaves 0 where 255 is correct.
+      acc += min(col * contrib, vec3(1.0));
+    }
+  return acc;
+}
+
 void main() {
   // Same window mapping as the shadow gather (constants row): fc → toroidal slot → world tile → P.
   uvec4 C0 = fetchLin(uData, CONST_BASE);
@@ -619,75 +703,7 @@ void main() {
   vec3 N = applyNL ? worldNormal(pn, uNormalPitch) : vec3(0.0, 0.0, 1.0);
 
   int fold = foldTile(wc, wr);
-  uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
-  uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
-  uvec4 sh = texelFetch(uShadow, fcC, 0);                   // P3: per-slot u9 shadow coverage — COARSE, upsampled (fcC)
-  vec3 acc = vec3(0.0);                                     // #4: NO ambient here — the blit adds it once over cold+hot
-  for (int slot = 0; slot < 16; slot++) {
-    uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
-    if (li == 0xffffu) continue;                            // empty slot
-    uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // G = position, B = colour|intensity, A = z|reach|hot|…
-    if (int((Ld.y >> 25) & 1u) != uLightClass) continue;    // #4: this pass accumulates only its class
-    vec2 Lxy = resolvedPos((Ld.w >> 4) & 255u, (Ld.x >> 8) & 255u, Ld.x & 255u, P); // v3 resolved pos
-    vec3 col = vec3(float((Ld.z >> 24) & 255u), float((Ld.z >> 16) & 255u), float((Ld.z >> 8) & 255u)) / 255.0;
-    float intensity = float(Ld.z & 255u) / 255.0;
-    float reach = float((Ld.w >> 20) & 0xfffu);             // reach (units)
-    vec2 toL = Lxy - P;
-    // world-space-lighting P1: TRUE 3D distance instead of the screen radius — the world is a 65° plane, so
-    // the N–S screen axis is foreshortened (un-shorten by uNsInv = 1/cos65) and the light sits Lz above the
-    // ground. ⟹ the reach is an OVAL (flattened N–S) + a height term (a point under the light isn't at 0).
-    // Ground assumption (Pz=0); billboard elevation folds in at P2. Toggle off = the old screen circle.
-    float Lz = float((Ld.y >> 16) & 255u);                  // v3: z_offset (units) moved to G
-    float dist; vec3 d3;                                     // world-space delta P→light (for dist + N·L dir)
-    if (uWorldLight == 1) {
-      d3 = vec3(toL.x, toL.y * uNsInv, Lz);                 // un-foreshorten N–S + light height
-      dist = length(d3);                                    // true 3D distance (ground point)
-    } else {
-      d3 = vec3(toL, 0.0);
-      dist = length(toL);                                   // in-plane screen distance (units)
-    }
-    float fall = smoothstep(reach, 0.0, dist);              // 1 at the light → 0 at reach (F2 smoothstep)
-    // lightmap P1: per-light Lambert on THINGS — fold max(0, N·L̂) into the contribution so the lightmap stores
-    // Σ colour·falloff·(1−shadow)·N·L per light (no lossy aggregate-direction relief). CLIP-TO-PRESENCE: the
-    // fine lightmap (64/tile) is still coarser than the sprite edge, so a hard thing/ground classification spills
-    // one texel past the silhouette. Blend N·L → ground (ndl 1) by the sprite's soft coverage (rcovN) so the lit
-    // region fades exactly to presence — no coarse fringe, and the edge reveals ground not black. ndl = 1 on ground.
-    float ndl = applyNL ? max(dot(N, d3 / max(dist, 1e-3)), 0.0) : 1.0;
-    // P3 SHADOW: slot i's u8 coverage (low8 in channel i>>2) + the ON-BILLBOARD flag (A[16+i]). CUT the on-GROUND
-    // shadow where THIS fine texel is a billboard (rbillboardN != 0) — the tight, fine-presence cut (like the normal),
-    // so a billboard standing in a shadow isn't ground-darkened. On-billboard shadows are LEFT UNCUT (they share tiles
-    // with ground shadows; cutting them causes more problems than it solves — user).
-    uint b8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;  // u7 coverage | u1 on-billboard
-    bool onBillboard = (b8 & 1u) == 1u;
-    float shadow = float(b8 >> 1) / 127.0;   // the u7 re-expanded (the stored <<1 IS the x2 restore)
-    if (!onBillboard && rbillboardN != 0u) shadow = 0.0;              // cut ground shadow off billboards (fine presence)
-    // shadow-edge-refine: the coarse shadow (16/tile) is nearest-upsampled → blocky edges. Where it's a PARTIAL
-    // (0,1) edge value, re-run the caster-silhouette walk at THIS fine texel to SELECT the sharp coverage (only
-    // edge texels pay; interior 0/1 is kept free). Ground cast shadow only for now (rbillboardN 0) — thing texels
-    // keep the coarse blended value. Same GROUND-path args as the gather (Pground = P + SHADOW_LIFT, corridor).
-    if (uEdgeRefine == 1 && !onBillboard && rbillboardN == 0u && shadow > 0.0 && shadow < 1.0) {
-      vec3 L3 = vec3(Lxy, Lz);
-      float emitter = float((Ld.w >> 12) & 255u);          // v3: emitter_radius moved to A[12:19]
-      int reachT = int(reach) / int(UPT) + 1;
-      vec2 Pg = P; Pg.y += ${SHADOW_LIFTF};
-      float cd;
-      shadow = walkShadow(L3, emitter, Pg, false, 0u, P, 1, reachT, uData, uSurface, cd);
-    }
-    float contrib = intensity * fall * ndl * (1.0 - shadow); // shadowed contribution (× Lambert on things)
-    // CLAMP PER LIGHT, before it joins the sum. This is what makes the accumulator's exactness bound
-    // UNCONDITIONAL rather than merely likely: with every light capped at 1.0 (255 after quantisation),
-    // the worst case is 65,535 (the whole u16 id space) x 255 = 16,711,425, under the 2^24 = 16,777,216
-    // that FP32 represents exactly. No presence cap, no distribution assumption, no bookkeeping
-    // discipline needed — overflow becomes impossible by construction.
-    //
-    // It costs no brightness. Clamping caps a light's PEAK, not its profile: at intensity 4 every
-    // distance is still 4x, so the core saturates over a WIDER radius and the falloff stays brighter
-    // further out — which is what a brighter light looks like. So intensity is free to exceed 1.
-    //
-    // The clamp belongs HERE and nowhere downstream. Clamping the accumulated SUM would break light
-    // removal: two lights at 255 clipped to 255 means subtracting one leaves 0 where 255 is correct.
-    acc += min(col * contrib, vec3(1.0));
-  }
+  vec3 acc = accumulateLights(uData, uShadow, fcC, P, fold, N, applyNL, rbillboardN);
   // QUANTISED into the additive accumulator (F11b). Rounding is what makes each deposit an exact integer,
   // so removing this light later — same value negated — cancels bit-exactly in FP32. Do NOT drop the
   // round for "smoother" values: the exactness is the correctness mechanism, and unquantised deposits
