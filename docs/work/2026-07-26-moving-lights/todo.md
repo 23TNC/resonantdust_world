@@ -56,6 +56,18 @@ not that the plan was wrong._
 - [x] Re-measure the P0 table with the fix in. Acceptance: a like-for-like row next to the baseline, same
       reach and same light count, so the delta is attributable. — table in [`completed.md`](completed.md).
 
+## P4 — Stop computing 2.8 lighting texels per displayed pixel ([I4](issues.md#i4))
+- [ ] Confirm the oversample is real end to end: compare lightmap texels integrated per frame against canvas
+      px, on two different canvas sizes. Acceptance: the ratio tracks `reference/canvas × slots/visible`,
+      so the cause is confirmed as resolution welding and not something canvas-independent.
+- [ ] Decouple integration resolution from the world reference — size the lightmap to the CANVAS while the
+      3584 × 1536 reference keeps governing what world is visible. Acceptance: identical framing and world
+      extent at every zoom, fewer texels integrated.
+- [ ] Re-measure the [I4](issues.md#i4) three-row table. Acceptance: row 1 (zoom 1, reach 8, 100 % dirty) falls
+      from 19.66 ms toward the predicted ~7 ms; no row regresses.
+- [ ] Check the overscan term separately — 32 × 16 slots vs 28 × 12 visible is 1.52× and buys pan-without-rebake.
+      Acceptance: a stated keep-or-shrink decision with the pan cost measured, not assumed.
+
 ## P3 — Verify + close
 - [x] Corridor↔brute identity with a MOVING light, at zoom 1 / 0.5 / 0.25. Acceptance: 0 mismatches on a
       **non-zero population on both sides** — an empty-vs-empty pass is vacuous (the D-2 trap that hid a total

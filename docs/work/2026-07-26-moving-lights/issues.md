@@ -1,5 +1,65 @@
 # Issues — problems hit, candidates, what we chose
 
+## I4 — The real cost model, and the 2.8× lightmap oversample {#i4}
+_2026-07-26 · **the third and (finally) evidence-supported model.** Supersedes the cost claims in
+[I2](issues.md#i2), which are wrong._
+
+**User challenge:** _"Zooming in should reduce the work the shader needs to do. 8192 tiles is more difficult to
+compute than 512. So we are doing something we are not supposed to be doing, and it scales with px not tiles."_
+
+### The controlled experiment
+Every buffer is **constant** across zoom — shadow RT 512 × 256, lightmap RT 4096 × 2048, measured. So holding
+the dirty set at 100 % isolates zoom itself:
+
+| zoom | reach (tiles) | world tiles under the map | dirty | ms |
+|---|---|---|---|---|
+| 1.0 | 8 | 512 | all | 19.66 |
+| 0.25 | 8 | **8 192** | all | **8.25** |
+| 0.25 | 32 | 8 192 | all | **63.25** |
+
+Row 2 has **16× more world tiles than row 1 and is the cheapest**. Row 3 has the *same* tiles as row 2 and
+costs **7.7×** more. **The map's tile count does not enter the cost.**
+
+### The model the evidence supports
+> **`cost ∝ (texels a light covers) × (tiles the corridor walks per texel)`**
+> — and a light covers `π·R²ₜᵢₗₑₛ × texels_per_tile`, where `texels_per_tile = 16 384 / 4^lod`.
+
+Checks against all three rows: row 1 saturates the 8.4 M-texel map at walk ≈ 2R = 16 tiles. Row 2 covers
+`3 × π·64 × 1 024 ≈ 618 k` texels — 13.6× less — at the same walk, so it lands under the 8.33 ms vsync floor.
+Row 3 saturates the map again *and* quadruples the walk (R 8 → 32), predicting ~4× row 1: 19.66 × 4 = 78 vs
+**63.25 measured**.
+
+**Both earlier models were wrong.** The first said cost tracks the dirty fraction — but row 2 has 8 192 dirty
+tiles and is the cheapest run of the whole session, because **a dirty texel with no light in range is nearly
+free**. "Dirty" means *recompute*, not *expensive*. The second said reach dominates — true, but as a symptom:
+reach enters through both terms of the real model, which is why it looked like the cause.
+
+### So is zoom-in doing something it shouldn't?
+**Not in the way the tile count suggests — but yes, there is real waste, and it is exactly per-px.**
+
+Zoom-in is expensive because a world-space light covers **4× more of the fixed-size lightmap per lod step**.
+An 8-tile torch is 8 tiles wide at every zoom; at lod 0 those tiles are 128 texels each, at lod 2 they are 32.
+That part is inherent: a light that fills your screen costs a screen of lighting, and no addressing scheme
+changes it.
+
+**The waste is that "a screen of lighting" is 2.8× larger than the screen:**
+
+| | px | vs canvas |
+|---|---|---|
+| lightmap RT | 4096 × 2048 = **8.39 M** | **2.79×** |
+| canvas | 2560 × 1172 = 3.00 M | 1.0 |
+
+Two deliberate decisions multiply: the lightmap is 1:1 with the **fixed 3584 × 1536 reference** (5.5 M) rather
+than the actual canvas — 1.83× on this display — and it spans **32 × 16 slots against 28 × 12 visible** for
+pan overscan — 1.52×. Each is defensible alone ([textile-slot](../2026-07-26-textile-slot/README.md) chose the
+reference so every player sees the same world; overscan is what lets a pan avoid a re-bake). Together they
+mean **we compute 2.79 lighting texels for every pixel we display**, at every zoom.
+
+That is the "something we are not supposed to be doing, and it scales with px". The reference resolution
+should govern **what world is visible**, not **how many texels we integrate** — those are welded together
+today and need not be. Sizing the lightmap to the canvas would cut lighting cost by up to 2.79× on this
+display, with no change to what the player sees. Deferred to [P4](todo.md); not attempted here.
+
 ## I1 — A moving light dirties only its NEW reach box, leaving the old one baked {#i1}
 _2026-07-26 · open (fixed in [P1](todo.md))_
 
@@ -29,8 +89,22 @@ dangerous part — it would read as "shadows are a bit laggy" rather than as a c
 
 Fix: pass `from` (the light's previous position, which `carriedLights` already holds before the update).
 
-## I2 — The zoom-in cliff is a dirty-FRACTION effect, not a per-px shader bug {#i2}
-_2026-07-26 · **CONFIRMED** — measured, and the corrected model fits to 1.3%_
+## I2 — The zoom-in cliff (two superseded cost models — kept for the record) {#i2}
+_2026-07-26 · **the CONCLUSIONS below are WRONG. See [I4](#i4) for the model the evidence actually supports.**_
+
+The observations here are sound and the fix that came out of them is real (reach 16 → 8 took zoom 1 from 23 to
+120 fps). The *explanations* are not. Two successive models both failed, and the way each failed is the useful
+part:
+
+1. **"cost ∝ dirty fraction"** — fitted the zoom sweep to 1.3 %, because that sweep held reach constant, making
+   the fraction the only variable. Refuted by reach 16 vs 12 dirtying the identical 512 tiles at 1.65× apart.
+2. **"reach dominates"** — true but a symptom, not a cause. Refuted as an explanation by zoom 0.25/reach 8
+   being the *cheapest* run of the session with 8 192 dirty tiles: **a dirty texel with no light in range is
+   nearly free**, so the dirty count was never the work.
+
+Both were fitted to a sweep that varied one input and then stated as laws. Left here unedited because the
+sequence — plausible model, confirming sweep, refutation by an input the sweep never varied — is the same
+shape as [I3](#i3)'s invented mechanism, twice more.
 
 ### Measured (P0, 2026-07-26 · 3 orbiting torches, reach 16, `focus=104,55`)
 
