@@ -48,3 +48,45 @@ curled rather than the low lying profile. Four candidate causes, none yet isolat
 
 Run-4 changed all four at once, so its result cannot attribute the drift. P3 isolates before P4
 spends another five hours.
+
+## I5 — Pose drift diagnosis: NOT the prep; resolution-dependent; run-4 loses anyway
+
+Three measurements, in order:
+
+**1. The prep is exonerated.** Training-image aspect tracks the raw corpus almost exactly —
+wolf 2.08→2.11, bear 2.30→2.28, tiger 1.92→1.92, cat 1.42→1.42, fox 2.42→2.43, pig 1.95→1.95. The
+crop-to-bbox + normalisation did **not** alter pose, and the contact sheet confirms every training
+image is the correct low lying profile. Candidate 4 of [I4](#i4) is ruled out: the model was trained
+on correct poses and produced sitting ones anyway.
+
+**2. The drift is inference-resolution-dependent.** Same LoRA, same seeds (7700–7702), 6 species,
+east signed aspect error:
+
+| | signed error |
+|---|---|
+| run-4 @ **768** | **+10.6%** (slightly long — like e07) |
+| run-4 @ **1024** | **−29.7%** (compact — the sitting pose) |
+
+The drift appears at 1024 and largely vanishes at 768 — **even though run-4 was trained at 1024**.
+That inverts the resolution-matching rule the predecessor measured
+([its resolution study](../2026-07-25-sprite-gen-quality/completed.md)), and it means the original
+A/B judged run-4 at its *worst* resolution.
+
+**3. It does not rescue run-4.** Re-run with both models at 768, scored with `iou_ref`:
+
+| config | gate | `iou_ref` | east iou | south iou |
+|---|---|---|---|---|
+| **e07 @768** | **26/36** | **0.753** | **0.694** | **0.811** |
+| run-4 @768 | 19/32 | 0.654 | 0.599 | 0.717 |
+
+Run-4 loses at **both** resolutions and in **both** directions on the metric we validated against
+the eye. The shipping verdict is unchanged and now rests on a trustworthy measurement rather than
+`d_aspect`.
+
+**Most likely cause, stated with its uncertainty:** the learned margin from the pinned fill
+([I3](#i3)). It is the only candidate that also explains the resolution dependence — at 1024 the
+model has more pixels to render the frame with, and the frame is what pushes composition inward. The
+sheet shows a white frame on run-4's tiger at **east**, so the artefact is not confined to south as
+first assumed. **Not proven**: rank 48 and 1024-training are not individually excluded, because run-4
+changed all three at once. The jittered rebuild (P2) is the direct test — it holds rank and
+resolution and changes only the margin.

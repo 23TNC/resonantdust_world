@@ -54,3 +54,25 @@ The sheet immediately earned itself — the e07-vs-run4 east grid makes the pose
 glance (e07 lying low, run-4 sitting up with a raised head, curled cat, upright fox) and also shows a
 **white frame around run-4's tiger on EAST**, i.e. the [I3](issues.md#i3) frame artefact is not
 confined to south as the earlier analysis assumed.
+
+## 2026-07-26 — P2 (jitter) + P3 (diagnosis)
+
+**Deterministic fill jitter.** `prep_train.jittered_fill(fill, jitter, key)` derives the per-image
+fraction from a SHA-256 of the source filename — reproducible by construction, because an
+irreproducible dataset makes every later A/B unfalsifiable. Verified: same file twice gives an
+identical value; three different files give three different values; over 400 keys, mean 0.847,
+**sd 0.029** (the item asked for 0.02–0.05, against the pinned build's 0.003). `build_quad.py`
+routes through it, so both datasets share one prep path.
+
+**Pose drift diagnosed ([I5](issues.md#i5))** — three findings:
+1. **The prep is exonerated** — training-image aspect matches the raw corpus to within 0.03 on all
+   six species, and the sheet shows every training image in the correct lying profile.
+2. **The drift is inference-resolution-dependent** — run-4 east signed error is **+10.6% at 768** but
+   **−29.7% at 1024**, matched seeds. The original A/B therefore judged run-4 at its *worst*
+   resolution, and this inverts the resolution-matching rule the predecessor measured.
+3. **It does not rescue run-4** — re-scored with both at 768, e07 still wins on gate (26/36 vs
+   19/32), `iou_ref` (0.753 vs 0.654), east iou (0.694 vs 0.599) and south iou (0.811 vs 0.717).
+
+**A defect in the new contact sheet, found by using it:** RGBA sprites were converted straight to RGB,
+rendering transparency **black** — the corpus column looked broken when the data was fine. Now
+composited on white first. A review tool that misrepresents correct art is worse than none.

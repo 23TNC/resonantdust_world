@@ -19,15 +19,15 @@ Ordering in [`README.md`](README.md): **fix the ruler first**, then diagnose, th
 
 ## P2 — Fix the frame artefact
 
-- [ ] Jitter the fill fraction per image in `prep_train.normalise()`. Acceptance: over a 60-image sample, longer-side fraction has mean ≈0.85 and sd between 0.02 and 0.05 (not the current 0.003).
-- [ ] Make the jitter deterministic per source file. Acceptance: prepping the same file twice yields byte-identical output; two different files get different fills.
+- [x] Jitter the fill fraction per image in `prep_train.normalise()`. Acceptance: over a 60-image sample, longer-side fraction has mean ≈0.85 and sd between 0.02 and 0.05 (not the current 0.003).
+- [x] Make the jitter deterministic per source file. Acceptance: prepping the same file twice yields byte-identical output; two different files get different fills.
 - [ ] Rebuild the 1024 dataset with jitter. Acceptance: 459 images, sd in range, outline sharpness still ≥85 (the P2 gain is not lost).
 
 ## P3 — Diagnose the pose drift before spending another 5 hours
 
-- [ ] Compare run-4 east sprites against their own training images for the same species. Acceptance: a sheet showing whether the corpus east sprites are lying or sitting, recorded in `issues.md`.
-- [ ] Test whether the drift is inference-side by generating run-4 east at 768 and 1024. Acceptance: signed aspect error at both resolutions, stated in `completed.md`.
-- [ ] Name the most likely cause from the evidence. Acceptance: `issues.md` states the cause, the evidence for it, and the candidates ruled out.
+- [x] Compare run-4 east sprites against their own training images for the same species. Acceptance: a sheet showing whether the corpus east sprites are lying or sitting, recorded in `issues.md`.
+- [x] Test whether the drift is inference-side by generating run-4 east at 768 and 1024. Acceptance: signed aspect error at both resolutions, stated in `completed.md`.
+- [x] Name the most likely cause from the evidence. Acceptance: `issues.md` states the cause, the evidence for it, and the candidates ruled out.
 
 ## P4 — Retrain with the fixes and prove it
 
