@@ -100,3 +100,21 @@ run-4 exactly, as expected from an identical config), 54 °C.
   1024-training, which would then need isolating individually.
 
 Either outcome is informative, which is the point of changing one thing.
+
+## 2026-07-27 — early read on run-5: INCONCLUSIVE at epoch 1 (recorded, not spun)
+
+Pulled run-5's first sample set (~20 min in) hoping for an early verdict on the frame hypothesis,
+since run-4's artefact was visible in its own early samples. Compared side by side at matched epoch
+(`.staging/run5-samples/ep1_compare.png`).
+
+**It does not settle anything, and the honest call is to say so.** At epoch 1 both runs are barely
+trained — neither produces the flat RimWorld convention, both render generic standing animals, and a
+white halo appears around subjects in **both**. At this stage that halo is as plausibly undertrained
+output as a learned margin, so it cannot discriminate. Run-4's frame artefact only became
+unambiguous around epochs 7–14.
+
+The fair comparison point is **epoch 7+**, where run-4 samples already exist for the same five
+prompts and seeds. That is ~2.3 h into the run.
+
+Recording this rather than reading a hypothesis into five rough images — the whole stream exists
+because measurements got trusted past what they could support.
