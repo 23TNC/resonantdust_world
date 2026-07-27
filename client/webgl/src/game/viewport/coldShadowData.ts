@@ -406,15 +406,31 @@ export class ColdShadowData {
     // px nudges align the sampled window (x centered, y bottom — shadows anchor at the base).
     let wu = spanU, hu = spanU, ux0 = 0, uy0 = 0; // LOOSE (lod 0): full-footprint bbox, solid quad
     let fx16 = 0, fy16 = 0, nx = 0, ny = 0;
-    if (lod >= 4 && surf) {
+    if (lod >= 4 && surf && bbox) {
       fx16 = Math.round(surf.x / 16);
       fy16 = Math.round(surf.y / 16);
-      // COHERENCE (2026-07-24): sample the WHOLE square frame as received — the SAME coordinate system the
-      // composite draws EVERY map in (unit quad → the billboard's world rect, full-frame UV). We do NOT re-derive a
-      // per-map opaque MINIMUM bbox here anymore: that gave the shadow + normal a DIFFERENT rectangle (even-unit
-      // rounded + nudged) than the albedo, which is the whole misalignment (and what RECV_ALIGN/uLightAlign were
-      // band-aiding). Transparent area casts no shadow, so the silhouette is identical — only the sampling
-      // WINDOW is now the full frame. wu/hu = spanU, ux0/uy0/nx/ny = 0 (the loose defaults, kept).
+      // MINIMUM BBOX — RESTORED 2026-07-27 (user). It was dropped on 2026-07-24 for "coherence": deriving a
+      // bbox here gave the shadow + normal a DIFFERENT rectangle than the albedo, so the maps misaligned
+      // (RECV_ALIGN / uLightAlign were band-aids for it). **That cause is gone.** The CO-PACK puts all four
+      // maps in ONE square frame at fixed quadrant offsets, so they share a single coordinate system by
+      // construction — one bbox is correct for every map, which is what the earlier code could not assume.
+      //
+      // Why it is worth restoring: W/H is the occluder extent shadowCover projects, so a full-frame box makes
+      // every texel of a 2x2-tile quad enter the 16-tap silhouette loop even where the sprite is transparent.
+      // Measured on the conifer: opaque bbox is 0.531 x 0.938 of its frame = **49.8 % of the area**, so half
+      // the quad was walking transparent px. The 16-tap loop is 55 % of the GPU frame (I15).
+      //
+      // CONSERVATIVE by construction: floor the origin, ceil the far edge, round the size UP to even (the
+      // layout stores W/2, H/2 in u9). The box is therefore a superset of the opaque pixels, so no silhouette
+      // can be clipped — and since transparent px contribute 0 coverage anyway, the baked shadow must come
+      // out BIT-IDENTICAL. That is the acceptance test, not a visual check.
+      const even = (v: number): number => (v + 1) & ~1;
+      const x1 = Math.min(spanU, Math.ceil((bbox.fx + bbox.fw) * spanU));
+      const y1 = Math.min(spanU, Math.ceil((bbox.fy + bbox.fh) * spanU));
+      ux0 = Math.max(0, Math.floor(bbox.fx * spanU));
+      uy0 = Math.max(0, Math.floor(bbox.fy * spanU));
+      wu = Math.min(spanU - ux0, Math.max(2, even(x1 - ux0)));
+      hu = Math.min(spanU - uy0, Math.max(2, even(y1 - uy0)));
     }
     // Bucketing box (world px, rel. billboard top-left) — 1 frame unit ≡ 1 world unit by the span model.
     this.defTight.set(idx, { dx: ux0 * UNIT, dy: uy0 * UNIT, w: wu * UNIT, h: hu * UNIT });

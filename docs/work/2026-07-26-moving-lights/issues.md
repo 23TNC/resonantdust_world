@@ -1,5 +1,52 @@
 # Issues — problems hit, candidates, what we chose
 
+## I16 — Minimum bbox restored: 1.94× on the whole GPU frame {#i16}
+_2026-07-27 · **the user's call** — the biggest single win of the stream after deleting the refine_
+
+### What was wrong
+`definitionFor` stored `W = H = spanU` and `offset_x = offset_y = 0` for **every** def. The opaque bbox was
+still computed (as a gate) and then **discarded**. So the occluder extent `shadowCover` projects was always
+the full square frame.
+
+Measured on the conifer: `opaqueBBox` = `{fx 0.234, fy 0.031, fw 0.531, fh 0.938}` — a **1 × 2-tile tree in a
+2 × 2-tile frame, filling 49.8 % of its area**. Half of every projected quad was transparent, and every texel
+in it still entered the 16-tap silhouette loop ([I15](#i15): 55 % of the GPU frame) to fetch texels that
+return zero.
+
+### Why it had been dropped, and why that no longer applies
+Removed 2026-07-24 for "coherence": deriving a bbox gave shadow and normal a *different rectangle* than
+albedo, so the maps misaligned (`RECV_ALIGN` / `uLightAlign` were band-aids). **That cause is gone.** The
+CO-PACK puts all four maps in one square frame at fixed quadrant offsets, so they share a single coordinate
+system by construction — one bbox is correct for every map, which the earlier code could not assume.
+
+The shader machinery was never removed, only starved: `uv = frame + (ox,oy)·ppu + (s·W, (1−t)·H)·ppu` and
+`sh = (ox + ½·axf·W − ½·axf·spanU, …)` both already express "a bbox at offset (ox,oy) of size W×H inside the
+frame". Restoring the values was the whole change.
+
+### Result — matched A/B, light pinned to world (6672, 3552)
+
+| | full frame | **min bbox** | delta |
+|---|---|---|---|
+| gather | 2.618 ms | **1.229 ms** | **−53 %** |
+| lighting | 0.534 ms | **0.393 ms** | −26 % |
+| **GPU total** | **3.15 ms** | **1.62 ms** | **1.94×** |
+
+Def values now: conifer **W 18, H 30, ox 7, oy 1** (was 32/32/0/0); flora **W 16, H 14, oy 1**.
+
+### The output is NOT bit-identical, and my prediction that it would be was wrong
+24 757 → 23 103 non-zero texels (−6.7 %). I claimed bit-identity on the reasoning that the box is a superset
+of the opaque pixels so nothing can be clipped. The box *is* a superset — but I forgot the **anchor shift**:
+`sh.y = oy + ayf·H − ayf·spanU = 1 + 30 − 32 = −1`, so the shadow now anchors at the sprite's **true base**
+rather than the frame's bottom edge. Shadows seat one unit higher, which is a real change and a more correct
+one. The `(s,t)` parameterisation also now spans the bbox rather than the frame — same silhouette, different
+sampling window.
+
+Verified visually at zoom 1: shadows radiate correctly, taper with distance, and are **tighter and more
+tree-shaped** than the previous near-rectangular blobs. Better, not just faster.
+
+### Frame after this change (~1.62 ms, from 11.36 ms at session start)
+The 16-tap emitter loop is still the largest item but is now working on roughly half the texels.
+
 ## I15 — Inside `casterOne`: the 16-tap emitter loop is 78 % of it, 55 % of the frame {#i15}
 _2026-07-27 · `uCProfile` staircase, deterministic workload (light frozen, 100 % dirty)_
 
