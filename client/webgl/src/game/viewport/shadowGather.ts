@@ -71,7 +71,7 @@ const MAX_LIGHTS: number = 3;
 /** Physical source RADIUS (world px); `/UNIT` → units in the light record. The AREA-LIGHT disk radius the
  *  penumbra samples over (bigger = softer). Per-light (see the config below); `__emit(px)` tunes live. */
 /** Light height: 40 units = 2.5 tiles — above the tree billboard (2 tiles / 32 units). Lower = longer
- *  shadows, but ONLY down to the caster's card top: `cardHit` takes its semi-infinite branch when the light sits
+ *  shadows, but ONLY down to the caster's card top: `solveCentre` returns its semi-infinite status when the light sits
  *  below it (`k = Lz/(Lz−Zt) <= 0`), so a light under ~26 units casts NOTHING, silently. Lights are
  *  content-authored per kind now (`&thing.light.height`, in TILES) — this figure is the constraint that
  *  authored value must clear, not a default anything reads. Authoring 0.6 zeroed every shadow in the
@@ -173,7 +173,7 @@ export interface TileWindow {
 const GATHER_COMMON = /* glsl */ `
 // PROFILING STAIRCASE inside casterCover (2026-07-27, moving-lights I15) — casterOne is 85 % of the walk,
 // so this is where the frame actually goes. 0 = full; 1..3 cut short:
-//   1 the two record fetches (billboard + definition) + decode   2 + the cardHit gate
+//   1 the two record fetches (billboard + definition) + decode   2 + the geometry, no silhouette
 //   3 + hard-quad return (skips the 16-tap emitter loop)         0 + the 16-tap silhouette loop
 uniform int uCProfile;
 // CARD LEAN — the caster card's north offset as a fraction of H·cos(tilt). 1.0 = a RIGID parallel-to-view
@@ -247,65 +247,34 @@ vec2 resolvedTilePos(uint tile, uint unit, vec2 ref) {
 // map's centidegrees, so __tilt(deg) still re-tilts everything together and there is one source of
 // truth. The data map keeps carrying the angle for any other shader that reads it.
 uniform vec2 uTilt;               // x = sin(tilt), y = cos(tilt)
-// BACKWARD SOLVE — the shadow predicate (plane-intersection P1, 2026-07-27).
+// ONE backward solve at the emitter CENTRE. Returns false if the ray never meets the card's plane at
+// all; otherwise hands back u (across the card), t (up it) and invk = 1/k, which the caller needs to
+// build the analytic interval.
 //
-// The forward version this replaces projected the caster's two top corners onto the ground, built four
-// corner positions and ran four cross-product sign tests asking whether P fell between them. There was
-// never a quad OBJECT (user: "We don't have a projection quad. We ran math to figure out where we are")
-// -- just arithmetic in four short-lived locals. This asks the same question from the other end, which
-// is cheaper AND returns more: invert P through the light back onto the tilted card and range-check.
-//
-//   card(t):  y = Ac.y - lean*t*H*cos0,   z = t*H*sin0        (t = 0 base, t = 1 top)
-//   ray L->P crosses the card at   t = L.z*(P.y - Ac.y) / (H*(sin0*(P.y - L.y) - lean*L.z*cos0))
-//   then s across the width via that row's projection factor  k = L.z/(L.z - t*H*sin0)
-//
-// tOut is how far UP the card (the v), sOut how far ACROSS (the u) -- ONE solve yields both the occlusion
-// answer and the silhouette lookup coordinate. The forward version computed neither and discarded its
-// geometry, which is why it shared no work with the sampling that followed it.
-float cardHit(vec2 P, vec2 Ac, vec3 L, float W, float H, float reachU, float st, float ct,
-              out float sOut, out float tOut) {
-  sOut = 0.0; tOut = 0.0;
-  float dn = H * (st * (P.y - L.y) - uCardLean * L.z * ct);
-  if (abs(dn) < 1e-4) return 0.0;                    // ray parallel to the card plane
-  float t = L.z * (P.y - Ac.y) / dn;
+// invk instead of k is not a micro-tweak: u needs 1/k, so computing k and then dividing by it spends
+// TWO divides where one multiply will do. The k <= 0 test survives unchanged as invk <= 0, since
+// invk = (Lz - t*H*sin0)/Lz and Lz > 0, so the two share a sign.
+// Returns 0 = the ray never meets the card (lit), 1 = solved, u/t/invk valid,
+//         2 = SEMI-INFINITE: the light sits at or below this card height so the shadow runs to infinity.
+// That last case is the one I38 fixed -- returning "lit" there silently deleted every shadow whenever a
+// light was authored low. The caller caps it at reach, which is the only place the reach bound is
+// load-bearing (forks F2).
+int solveCentre(vec2 Lxy, float Lz, float invLz, vec2 P, vec2 Ac, float invW,
+                float Hst, float leanC, float tMin,
+                out float uOut, out float tOut, out float invkOut) {
+  uOut = 0.0; tOut = 0.0; invkOut = 0.0;
+  float dn = Hst * (P.y - Lxy.y) - leanC;             // leanC = H*uCardLean*Lz*cos0, per-caster constant
+  if (abs(dn) < 1e-4) return 0;                       // ray parallel to the card plane
+  float t = Lz * (P.y - Ac.y) / dn;                   // the ONE unavoidable divide
   // SHADOW_BASE_PUSH, translated. The forward path put the card BASE at Ac.y + push (SOUTH, into the
   // caster footprint) to close a sprite/shadow seam. y(t) moves NORTH as t rises, so south of the base is
   // t slightly NEGATIVE -- the same fudge expressed in the card parameterisation instead of in a corner.
-  float lean = uCardLean * H * ct;                   // total north offset of the card top
-  float tMin = -${SHADOW_BASE_PUSHF} / max(1e-4, lean);
-  if (t < tMin || t > 1.0) return 0.0;               // misses the card vertically -> lit
-  float k = L.z / (L.z - t * H * st);
-  // SEMI-INFINITE CASE (k <= 0): the light sits at or BELOW this card height, so the ray never returns to
-  // the ground and the shadow runs to infinity. A legitimate configuration -- a torch at flame height
-  // beside a tree -- and returning 0 here is exactly the bug I38 fixed, which silently deleted EVERY
-  // shadow whenever a light was authored low. The wedge model terminates it at REACH: past reach the
-  // light deposits nothing, so the cap is invisible. Solid coverage, no silhouette (there is no finite s
-  // to sample). This is the ONE place the reach bound is load-bearing -- see forks F2.
-  if (k <= 0.0) { vec2 d = P - L.xy; return dot(d, d) <= reachU * reachU ? 1.0 : 0.0; }
-  float s = ((P.x - L.x) / k + L.x - Ac.x) / W + 0.5;
-  if (s < 0.0 || s > 1.0) return 0.0;                // misses the card horizontally -> lit
-  sOut = s; tOut = t;
-  return 1.0;
-}
-// ONE SUB-LIGHT's silhouette sample (plane-intersection P3). Solves the backward intersection for a
-// sub-light at Lxy and samples the silhouette where it lands. The side output reports HOW it missed so
-// the caller can detect a STRADDLE: 0 = hit the card, -1 = passed LEFT, +1 = passed RIGHT, 2 = missed
-// vertically. That side information is the whole reason two rays can classify a penumbra: a pair that
-// passed on OPPOSITE sides has the caster between them, which means P is behind it.
-int solveRay(vec2 Lxy, float Lz, vec2 P, vec2 Ac, float W, float H, float st, float ct,
-             out float uOut, out float tOut) {
-  uOut = 0.0; tOut = 0.0;
-  float dn = H * (st * (P.y - Lxy.y) - uCardLean * Lz * ct);
-  if (abs(dn) < 1e-4) return 2;                       // ray parallel to the card plane
-  float t = Lz * (P.y - Ac.y) / dn;
-  if (t < 0.0 || t > 1.0) return 2;                   // missed the card vertically
-  float k = Lz / (Lz - t * H * st);
-  if (k <= 0.0) return 2;
-  float u = ((P.x - Lxy.x) / k + Lxy.x - Ac.x) / W + 0.5;
-  uOut = u; tOut = t;
-  if (u < 0.0) return -1;                             // passed LEFT of the card
-  if (u > 1.0) return  1;                             // passed RIGHT of it
-  return 0;                                            // hit the card
+  if (t < tMin || t > 1.0) return 0;                  // outside the card's height -> no shadow from it
+  float invk = (Lz - t * Hst) * invLz;
+  if (invk <= 0.0) return 2;                          // semi-infinite -- see above
+  uOut = ((P.x - Lxy.x) * invk + Lxy.x - Ac.x) * invW + 0.5;
+  tOut = t; invkOut = invk;
+  return 1;
 }
 // Sample the silhouette at card coords (u,t). Split from the solve because the WEDGE RULE needs BOTH
 // rays' u before either is fetched -- see casterCover.
@@ -358,16 +327,24 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   // HARD-QUAD gate (NOT dilated) — a caster occludes P only where P is inside its projected quad, which
   // is exactly the occluder set the corridor walk is proven to visit (P6 identity). The emitter penumbra
   // lives INSIDE this quad: the silhouette edge softens as sub-lights partially cover it, the base stays
-  // hard (z≈0 edges don't move with the sub-light), and detail dissolves at the tip (high edges do). The
-  // outward feather beyond the silhouette extremes would need the corridor pad widened + re-proven — a
-  // NO GATE. P1 used a centre-ray gate and it was explicitly transitional: the centre ray is narrower
-  // than the caster's extremes, so it rejected exactly the texels where the centre misses but an offset
-  // sub-light hits -- the penumbra. With two rays the classification IS the test; there is nothing left
-  // to gate on, and the penumbra comes back wider than the forward projection ever allowed.
+  // NO GATE. The analytic interval below IS the test -- there is nothing cheaper to reject with, and the
+  // centre-ray gate P1 used was narrower than the caster's extremes, so it clipped the very penumbra
+  // this is meant to produce.
+  //
+  // Everything from here needs the per-caster reciprocals and the tilt products, so hoist them once.
+  float invLz = 1.0 / L.z, invW = 1.0 / W;
+  float Hst = H * st, leanC = H * uCardLean * L.z * ct;
+  float tMin = -${SHADOW_BASE_PUSHF} / max(1e-4, uCardLean * H * ct);
+  float u0, t0, invk;
+  int hit = solveCentre(L.xy, L.z, invLz, P, Ac, invW, Hst, leanC, tMin, u0, t0, invk);
+  if (hit == 0) return 0.0;                            // ray never meets the card -> lit
+  if (hit == 2) {                                      // SEMI-INFINITE (I38): cap it at the light's reach
+    vec2 dR = P - L.xy;
+    return dot(dR, dR) <= reachU * reachU ? 1.0 : 0.0; // solid; there is no finite u to sample
+  }
   if (uCProfile == 2 || uCProfile == 3 || lod < 4u) {
-    // No silhouette resolved (or a profile cut): the centre solve alone, solid coverage.
-    float gs, gt;
-    float solid = cardHit(P, Ac, L, W, H, reachU, st, ct, gs, gt);
+    // No silhouette resolved (or a profile cut): the geometry alone, solid inside the card.
+    float solid = (u0 >= 0.0 && u0 <= 1.0) ? 1.0 : 0.0;
     return uCProfile == 2 ? solid * 1e-6 : solid;
   }
   // Frame sampling constants (whole-px-per-unit; ppu = 2^lod / spanU is a pow2 >= 1 by construction).
@@ -379,55 +356,47 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   float ny = float(int((D.w >> 8) & 4095u) - 2048);
   float fside = float(1u << lod);
   vec2 fo = vec2(fx, fy), fmin = fo, fmax = fo + vec2(fside);
-  // THE CROSS-AXIS. The pair straddles the shadow's WIDTH, not its length: shadows radiate from the
-  // light, so a pair strung along the shadow would see nearly the same silhouette twice and buy nothing.
-  // Per caster, so it is a uniform basis over the whole shadow and costs one normalize per caster.
+  // THE CROSS-AXIS -- the direction the emitter is spread across, perpendicular to light->caster. The
+  // penumbra lives across the shadow's WIDTH, not along its length, so this is the axis that matters.
   vec2 sdir = Ac - L.xy;
   float slen = length(sdir);
   vec2 along = slen > 1e-4 ? sdir / slen : vec2(1.0, 0.0);
   vec2 perp = vec2(-along.y, along.x) * emitter;
-  // TWO RAYS at light +/- emitter radius (user's design). The N-tap disk is gone: averaging N hard
-  // shadows quantised the penumbra into N copies of the silhouette -- the "N tree tips" artefact -- and
-  // cost scaled with softness. Two solves classify instead:
-  //   both hit          -> umbra, average their coverage
-  //   exactly one hits  -> penumbra; 0.5 for now, P4 fills the wedge analytically from the two s values
-  //   neither, STRADDLE -> the extremes passed on opposite sides, so P is behind the caster between
-  //                        them: take the CENTRE ray. Without this, points close behind a trunk read lit
-  //                        because neither extreme hits, leaving a bright notch at every trunk.
-  //   neither, same side-> genuinely lit
-  // A point light (emitter 0) makes perp zero, so both rays ARE the centre and this degenerates to the
-  // exact hard shadow with no special case.
-  // BINARY-SEARCH TAPS (user, 2026-07-27). This is what the backward solve buys that the forward quad
-  // test never could: u comes back as a CONTINUOUS SIGNED coordinate, so u < 0 does not merely mean
-  // "missed" -- it means "passed LEFT of the card, by this much". A signed miss tells you WHICH WAY to
-  // move the sub-light to reach the card, which makes the emitter searchable instead of samplable.
+  // ANALYTIC INTERVAL (user, 2026-07-27). The sampling schemes before this -- 16 taps, then 2, then a
+  // 4-tap binary search -- were all hunting for the same thing: WHERE on the emitter the shadow boundary
+  // falls. That boundary can just be solved for.
   //
-  //   tap 1  the centre. If u lands in [0,1] we are shadowed here; either way its value picks the search
-  //          direction -- u < 0.5 means push the sub-light +x to raise u, u > 0.5 means -x to lower it.
-  //   tap 2  the FULL radius that way. If u was already outside the card and is still outside on the
-  //          SAME side after the extreme, nothing in between can reach it: fully lit, early out.
-  //   tap 3  half radius. tap 4 quarter radius. Each step halves the bracket, so four evaluations place
-  //          samples against a 9-position grid across the emitter rather than sampling it uniformly.
-  float uC, tC;
-  int sC = solveRay(L.xy, L.z, P, Ac, W, H, st, ct, uC, tC);
-  if (sC == 2) return 0.0;                             // degenerate / vertical miss -- no card to hit
-  float dir = uC < 0.5 ? 1.0 : -1.0;                   // toward the card, since u grows with sub-light x
-  float uF, tF;
-  int sF = solveRay(L.xy + dir * perp, L.z, P, Ac, W, H, st, ct, uF, tF);
-  // EARLY OUT. Outside on the same side at both the centre AND the extreme means every sub-light between
-  // them is outside too (u is monotonic along the emitter), so this texel is lit by the whole source.
-  if (sC == -1 && sF == -1) return 0.0;
-  if (sC ==  1 && sF ==  1) return 0.0;
-  float cov = 0.0;
-  if (sC == 0) cov += sampleCard(uC, tC, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
-  if (sF == 0) cov += sampleCard(uF, tF, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
-  float uH, tH;                                        // tap 3 -- half radius
-  if (solveRay(L.xy + dir * 0.5 * perp, L.z, P, Ac, W, H, st, ct, uH, tH) == 0)
-    cov += sampleCard(uH, tH, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
-  float uQ, tQ;                                        // tap 4 -- quarter radius
-  if (solveRay(L.xy + dir * 0.25 * perp, L.z, P, Ac, W, H, st, ct, uQ, tQ) == 0)
-    cov += sampleCard(uQ, tQ, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
-  return cov * 0.25;                                   // four taps, equal weight
+  // Parameterise a sub-light as L + lambda*perp, lambda in [-1,1]. Then u is LINEAR in lambda:
+  //     u(lambda) = u0 + lambda*D,      D = perp.x * (1 - 1/k) * (1/W)
+  // so inverting it gives the two lambdas whose rays graze the card's edges -- u = 0 and u = 1. That is
+  // the same plane intersection we already do, solved for the OTHER unknown (user: "Are we going to
+  // intersect the light from the point using the edges of the billboard instead?" -- yes, exactly).
+  // The card's own coordinate already encodes the edges as 0 and 1, so no edge geometry is needed.
+  //
+  // Clamping that interval to the emitter's extent IS the penumbra: fully inside -> 1.0, half hanging
+  // off the end -> 0.5, entirely outside -> 0. A continuous gradient, from arithmetic, with no taps.
+  float Dslope = perp.x * (1.0 - invk) * invW;         // du/dlambda along the emitter
+  float frac, uMid;
+  if (abs(Dslope) < 1e-6) {
+    // Degenerate: the emitter has no extent along u (a point light, or a caster due east/west of it, so
+    // perp is purely y). No penumbra is resolvable -- fall back to the hard shadow at the centre ray.
+    frac = (u0 >= 0.0 && u0 <= 1.0) ? 1.0 : 0.0;
+    uMid = u0;
+  } else {
+    float iD = 1.0 / Dslope;
+    float l0 = (0.0 - u0) * iD;                        // lambda whose ray grazes the card's LEFT edge
+    float l1 = (1.0 - u0) * iD;                        // ...and its RIGHT edge
+    float lo = clamp(min(l0, l1), -1.0, 1.0);
+    float hi = clamp(max(l0, l1), -1.0, 1.0);
+    frac = (hi - lo) * 0.5;                            // fraction of the emitter this caster blocks
+    uMid = u0 + 0.5 * (lo + hi) * Dslope;              // card coord at the middle of the blocked span
+  }
+  if (frac <= 0.0) return 0.0;                         // no part of the emitter is occluded -> lit
+  // ONE silhouette fetch, at the middle of the blocked span. The interval is the CARD's geometry; the
+  // caster's actual outline still comes from the atlas. Approximating the silhouette as constant across
+  // the span is exact in the umbra and on clean edges, and softens fine structure (a branch comb inside
+  // one penumbra width gets one sample) -- the same limit the distance-field option in F5 addresses.
+  return frac * sampleCard(clamp(uMid, 0.0, 1.0), t0, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
 }
 // shadows-onto-billboards (attempt #3, IN-FAMILY): is world point P inside billboard's UPRIGHT drawn billboard, and
 // opaque there? Returns the billboard's base tile ROW if so (drives the receiver elevation), else -1. Mirrors
