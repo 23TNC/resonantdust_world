@@ -556,3 +556,29 @@ work per light**, independent of how many lights there are.
 **Consequence for [I32](#i32).** The differential pass was justified by a cliff that no longer exists at this
 scale. It is still correct and still the right design — it makes cost independent of light count rather than
 merely smaller — but it is now an OPTIMISATION rather than a rescue, and should be scheduled as one.
+
+### I34 — GPU-timed: 64 lights cost 0.109 ms/frame, 1.3% of a 120 Hz budget (2026-07-26)
+[I33](#i33) could only report "120 fps, vsync-capped". Measured properly with
+`EXT_disjoint_timer_query_webgl2` at `focus=100,50&zoom=0.25`:
+
+| scene | GPU ms/frame |
+|---|---|
+| 0 lights | 1.388 |
+| **64 lights (32 moving ±2 tiles/frame)** | **1.497** |
+| **lighting cost** | **0.109 ms — 1.7 µs per light** |
+
+That is **18% of the 8.33 ms frame** in total, of which lighting is **1.3%**. Linear extrapolation puts
+saturation past 4,000 lights; treat that as an order of magnitude, not a figure — the presence cap (16/tile)
+and dirty-area effects will bend the curve long before then.
+
+**A measurement method that does NOT work, recorded so it is not retried.** Bracketing a single frame with
+`beginQuery` / `endQuery` from the console is unreliable: the app renders in its OWN `requestAnimationFrame`,
+so depending on callback ordering the query can span an empty window. It reported **0.003 ms for 64 lights
+and a NEGATIVE lighting cost** — the tell was `minMs: 0` in the baseline. Spanning **60 frames in one query**
+fixes it: whatever the ordering, sixty frames of GPU work fall inside, and `GPU_DISJOINT_EXT` confirms the
+timing was not invalidated.
+
+**Conclusion for [I32](#i32).** The differential pass is not needed for performance at any plausible light
+count in this scene. It remains the correct design — it makes cost independent of light count, and it is what
+makes a light removable rather than recomputed — but on these numbers it is a correctness/elegance change,
+not a performance one. Schedule accordingly.
