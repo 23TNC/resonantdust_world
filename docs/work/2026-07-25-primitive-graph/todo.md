@@ -68,8 +68,9 @@ _(Two former P3 items moved to P5 — they depend on the authoring path: [I23](i
 ## P8 — Cut the corridor walk ([I30](issues.md#i30), [F11](forks.md#f11))
 - [x] Replace the 5-tile cross pad with a supercover DDA visiting each crossed tile once.
       Acceptance: 0 mismatches (met, over 102,442 texels); fetches −52.3% not 59% ([D-1](deviations.md#d-1)).
-- [ ] Re-measure the moving-light curve after the DDA.
-      Acceptance: the 16-mover case beats 55.4 fps at the same dirty-tile count.
+- [x] Re-measure the moving-light curve after the DDA.
+      **120 fps (vsync cap) at 64 lights / 32 moving ±2 tiles per frame**, zoom 0.25. Was 34 fps at 32
+      movers. Still capped at 259 lights / 224 movers, so the true ceiling is unmeasured — see [I33](issues.md#i33).
 - [ ] Measure `casterOne`'s per-light cull hit-rate before attempting a union walk.
       Acceptance: a number for what fraction of candidates each cull rejects.
 - [ ] Decide gather-vs-rasterise per tier from that data ([F11](forks.md#f11)).

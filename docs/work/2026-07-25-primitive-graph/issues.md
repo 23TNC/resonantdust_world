@@ -528,3 +528,31 @@ parameterised by the data sampler (so it can run against old and new) → emit t
 because the subtract did not exactly match the add. That is the specific hazard F11b was designed around, so
 this wants a focused pass with the exactness assertion in place, not a hurried one.
 
+
+### I33 — the mover cliff is GONE, and the slot grid (not the accumulator) is why (2026-07-26)
+Measured at `focus=100,50&zoom=0.25` with the user's 32 static + 32 dynamic:
+
+| scene | fps | dirty tiles |
+|---|---|---|
+| 3 seeded torches | 120.2 | 2,507 |
+| +32 static | 120.0 | — |
+| **+32 dynamic, moving ±2 tiles/frame** | **120.1** | 3,221 |
+| 259 lights / 224 movers | 120.0 | 4,093 |
+
+Against the pre-change baseline of **16 movers → 55 fps, 32 → 34 fps**. Every run is pinned to the 120 Hz
+vsync cap, so the true headroom is UNMEASURED — all that is established is that the ceiling is somewhere
+past 259 lights with 224 of them moving.
+
+**Method note.** The first attempt jittered movers ±2 px, which at `SQUARE = 128` cannot change a light's
+resolved unit (8 px) — so nothing dirtied and the "moving" lights were static. Re-run at ±2 TILES, and the
+dirty count rising 2,507 → 3,221 is what confirms the movers actually force re-bakes.
+
+**Credit where it is due: this is the slot grid, not the additive accumulator.** The differential pass is
+not built ([I32](#i32)) — the bake still replaces each dirty texel with the full sum of its lights. What
+changed is the dirty AREA. At zoom 0.25 the old world-fixed lightmap gave a 6-tile-reach light ~823k texels
+to shade; on the fixed grid at lod 2 a tile is 32 texels, so the same light covers ~147k — **5.6× less
+work per light**, independent of how many lights there are.
+
+**Consequence for [I32](#i32).** The differential pass was justified by a cliff that no longer exists at this
+scale. It is still correct and still the right design — it makes cost independent of light count rather than
+merely smaller — but it is now an OPTIMISATION rather than a rescue, and should be scheduled as one.
