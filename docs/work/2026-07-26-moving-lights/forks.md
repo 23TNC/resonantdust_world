@@ -32,8 +32,17 @@ to repair the resulting mismatch against the fine receiver mask. Two maps store 
 
 ### What it costs
 - **+4 MiB per class** for the second attachment (16 → 24 MiB). Nothing against the lightmaps' 256 MiB.
-- **The gather must compute both** shadows where a billboard exists, not pick one. Gather is **1.6 ms**, so
-  call it ~+1.6 ms worst case — and only where billboards actually stand.
+- **The gather's extra work is ~0.3–0.5 ms, not 2×** (corrected 2026-07-27, user). It does **not** need to
+  compute both everywhere, and it must **not** pick per texel. The rule:
+  **ground map computed unconditionally for every coarse texel** — which is exactly what the gather costs
+  today, one value per texel everywhere — and **billboard map computed only where a billboard exists**
+  (~prim coverage, 20–30 %). So the extra is 20–30 % of the gather's 1.6 ms.
+  *Why picking fails:* a coarse texel is an **8×8 block of fine texels**, so where a silhouette edge crosses
+  it some of those fine texels belong to the ground pass and some to the prim pass. Picking "billboard
+  because one exists here" leaves the ground pass reading a billboard shadow for its ground fine-texels —
+  step (k)'s mismatch reintroduced in a new place, and precisely **along every silhouette**, where shadow
+  edges are most visible. Computing the ground map unconditionally removes the decision entirely: each map
+  has one unambiguous meaning and each pass reads its own.
 - The prim pass must rasterise prim quads into the **world-space toroidal** lightmap with wrap handling and
   bottom-row z-order. `SquareCache` already does exactly this for albedo, twice a frame.
 
