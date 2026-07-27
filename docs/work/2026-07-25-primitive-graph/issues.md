@@ -606,3 +606,32 @@ own contribution — a dirty tile costs **1** light-evaluation instead of up to 
 extrapolated to "~4,000 lights". That extrapolation was worthless — I even flagged it as an order of
 magnitude rather than a figure, but still drew a scheduling conclusion from it. **Two points either side of
 an unknown knee do not define a curve.** Measure at the density that matters, not the one that is convenient.
+
+### I36 — the differential needs the previous SHADOW too, not just the previous light state (2026-07-26)
+Found while refactoring `LIGHT_FRAG`'s accumulation. [F11b.1](forks.md#f11b1) and [I32](#i32) both frame the
+ping-pong as "old vs new **light** records", but a light's contribution is
+
+    colour x intensity x falloff x (1 - shadow) x N.L
+
+and `shadow` does not come from the data texture. It is `texelFetch(uShadow, fcC, 0)` — a per-slot coverage
+value read from the shadow RT, which the gather pass **regenerates every frame**. So evaluating the old term
+against `uDataPrev` alone reproduces the old light *parameters* against the NEW *shadow*. Whenever a caster
+moved, that is not what was originally deposited, and the subtract leaves residue — the exact failure mode
+(light that will not turn off) the design exists to prevent.
+
+**Resolved: ping-pong the shadow RT as well.** It is far cheaper than the data texture — 384×256 with two
+RGBA32UI attachments is ~3 MB against the data texture's 16 MB — and it makes the old term exactly
+reproducible: old light records against old shadow. Same discipline, same pre-flush moment.
+
+Two alternatives, both rejected:
+- **Re-derive the old shadow in-shader.** `walkShadow` IS callable from `LIGHT_FRAG` (the shadow-edge-refine
+  work moved it into `GATHER_COMMON`), so the old coverage could be recomputed from `uDataPrev`'s caster
+  records. But that is the corridor walk — the most expensive thing in the renderer — run a second time per
+  texel per light, to save a 3 MB copy. Backwards.
+- **Constrain instead: a caster move forces a full re-cast** of every light reaching it, and only
+  light-moves use the differential. Correct, and it needs no extra memory, but it reintroduces exactly the
+  `lights_per_tile` cost ([I35](#i35)) for the caster-moves case — which is the common one, since every
+  walking pawn is a caster.
+
+**Consequence:** [I32](#i32)'s ordering gains a step. Ping-pong the DATA texture (done), then the SHADOW RT,
+then the parameterised accumulation, then the differential emit, then the tier collapse.
