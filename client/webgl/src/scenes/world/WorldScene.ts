@@ -223,9 +223,12 @@ export class WorldScene extends Scene {
 
   private readonly onPointerMove = (e: PointerEvent): void => {
     if (this.dragId !== e.pointerId) return;
-    const z = this.panel.view.camera.zoom;
-    // Drag right → world slides right under the cursor → anchor moves left. A screen-px drag
-    // is 1/zoom world px.
+    // RENDER SCALE, not logical zoom. A screen-px drag is `1 / renderScale` world px — that is the
+    // actual world→screen factor the projection uses. Dividing by `camera.zoom` here made the ground
+    // slide at the wrong rate under the cursor by exactly the cover-fit factor (0.5553 on a 1862-px
+    // panel, so ~1.8× too far per pixel) once the cover fit landed.
+    const z = this.panel.view.camera.renderScale;
+    // Drag right → world slides right under the cursor → anchor moves left.
     this.bridge.moveBy((this.lastClientX - e.clientX) / z, (this.lastClientY - e.clientY) / z);
     this.lastClientX = e.clientX;
     this.lastClientY = e.clientY;
