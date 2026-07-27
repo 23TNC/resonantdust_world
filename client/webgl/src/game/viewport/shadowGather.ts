@@ -237,12 +237,16 @@ vec2 resolvedTilePos(uint tile, uint unit, vec2 ref) {
   d -= period * floor(d / period + 0.5);
   return ref + d;
 }
-// The WORLD ground tilt (radians), read from the data map's constants A reserve (centidegrees). Lives in the
-// DATA MAP (not a dedicated uniform) so every lighting shader gets the angle for free; __tilt(deg) sets it
-// live and the whole geometry (shadow projection, elevation, falloff, caster lean) re-tilts together.
-float worldTiltRad(highp usampler2D data) {
-  return float(fetchLin(data, CONST_BASE).w & 0xffffu) * (0.01 * 3.14159265 / 180.0);
-}
+// The WORLD ground tilt as (sin, cos) -- NOT the angle. Nothing downstream ever wants the angle itself:
+// it appears only as st and ct in the card maths (dn, lean, k), so carrying radians just means every
+// consumer pays a sin and a cos to recover what we could have stored directly.
+//
+// It used to be fetched-and-trigged INSIDE casterCover, i.e. once per caster PER TEXEL -- a dependent
+// texel fetch plus two transcendentals, redone dozens of times per texel for a value that is constant
+// for the whole pass. Now a uniform, computed CPU-side from the same worldTiltDeg that writes the data
+// map's centidegrees, so __tilt(deg) still re-tilts everything together and there is one source of
+// truth. The data map keeps carrying the angle for any other shader that reads it.
+uniform vec2 uTilt;               // x = sin(tilt), y = cos(tilt)
 // BACKWARD SOLVE — the shadow predicate (plane-intersection P1, 2026-07-27).
 //
 // The forward version this replaces projected the caster's two top corners onto the ground, built four
@@ -350,7 +354,7 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   uint rot = (Pd.y >> 26) & 3u;                           // 1 = E, 3 = W (mirrored E)
   if (rot == 3u) sh.x = -sh.x;                              // flipped sprite → mirrored bbox placement
   vec2 Ac = A + sh;
-  float th = worldTiltRad(data), ct = cos(th), st = sin(th); // WORLD_TILT — from the data map (F4)
+  float st = uTilt.x, ct = uTilt.y;                  // WORLD_TILT, precomputed CPU-side (no fetch, no trig)
   // HARD-QUAD gate (NOT dilated) — a caster occludes P only where P is inside its projected quad, which
   // is exactly the occluder set the corridor walk is proven to visit (P6 identity). The emitter penumbra
   // lives INSIDE this quad: the silhouette edge softens as sub-lights partially cover it, the base stays
@@ -1824,6 +1828,7 @@ export class ShadowGather {
         p.uInt("uWProfile", this.walkProfile);
         p.uInt("uCProfile", this.casterProfile);
         p.uFloat("uCardLean", this.cardLean);
+        { const r = this.worldTiltDeg * Math.PI / 180; p.uVec2("uTilt", Math.sin(r), Math.cos(r)); }
         p.uFloat("uElevK", this.elevK);
       },
     });
