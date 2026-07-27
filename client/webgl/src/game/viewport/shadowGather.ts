@@ -424,7 +424,7 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out 
     uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(wc, r0 + dy));
     for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
       uint billboardIdx = tileSlot(cb, c);
-      if (billboardIdx == 0u) continue;
+      if (billboardIdx == 0u) break;                        // dense bucket — first empty ends this ROW's slots
       float brOut; float cov = receiverCover(billboardIdx, P, (vec2(float(wc), float(r0 + dy)) + 0.5) * UPT, data, surf, align, brOut);
       if (cov > 0.0 && brOut > best) { best = brOut; rbillboard = billboardIdx; rcov = cov; } // frontmost cover wins row+billboard+cov
     }

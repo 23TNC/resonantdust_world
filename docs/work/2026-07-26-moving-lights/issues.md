@@ -7,16 +7,39 @@ _2026-07-27 · gather optimisation attempt_
 on **all 8 slots regardless**. At this world's ~0.65 casters/tile that is ~8 calls where ~1.65 suffice, so
 `if (billboardIdx == 0u) break;` should have cut the call count ~4.8×.
 
-| | before | after |
-|---|---|---|
-| gather | 2.644 ms | **2.303 ms** |
-| lighting | 0.444 ms | 0.481 ms |
-| GPU total | 3.09 ms | **2.78 ms** |
+### ⚠️ First measurement was invalid — a HARNESS bug, disclosed below
+The initial claim was "13 %", from a single orbiting run. It is **not** reproducible, for two reasons that
+took a controlled re-run to find:
 
-**A 4.8× cut in `casterOne` calls bought 13 %.** Correctness verified: corridor↔brute **0 mismatches** on
-24 329 non-zero texels, max coverage 255.
+**1. My GPU-timer wrapper was sampling the wrong pass, at random.** The gather and lighting programs are each
+drawn **twice per frame** — `classPass(0, cold)` then `classPass(1, hot)` — and the wrapper timed whichever
+draw it caught with no query in flight. **Hot has no lights and costs ~0.07 ms**, so the sample stream was
+**bimodal** and the median depended on which pass happened to win. One run reported the gather at
+**0.073 ms**, which is the empty hot pass, not the gather. Fixed by counting draws per program and timing only
+the even (cold) one.
 
-### What that tells us, which is worth more than the 13 %
+**2. The orbiting fixture varies its own workload.** Dirty-tile count changes with orbit phase. Replaced with
+a deterministic workload: **light frozen, `rebakeAll()` every frame (100 % dirty)**, which brought the spread
+from ±17 % down to ±8 %.
+
+### The validated A/B (deterministic workload, cold-pass only, 75–131 samples each)
+
+| | `continue` (before) | **`break`** | delta |
+|---|---|---|---|
+| gather | 2.771 (2.487–3.105) | **2.599** (2.41–2.859) | **−6.2 %** |
+| lighting | 0.647 (0.63–1.421) | **0.534** | **−17.5 %** |
+| **GPU total** | **3.418** | **3.133** | **−8.3 %** |
+
+So the walk's early-out is worth **~6 %**, not 13 %. The larger win is the *same* change in `receiverAt`
+(**−17.5 %**), which scans 6 rows × 8 slots per call and is 66 % of the lighting pass.
+
+Correctness verified: corridor↔brute **0 mismatches** on 24 329 non-zero texels, max coverage 255.
+
+**Every gather figure recorded earlier today came from the buggy harness** and should be treated as ±10–15 %
+until re-measured. Their medians landed in the cold range so the conclusions hold, but the "orbit-phase
+variance" I attributed drift to was partly this.
+
+### What that tells us, which is worth more than the 6 %
 `casterOne`'s 2.06 ms is **not** the empty-slot calls — those were already nearly free, since the function
 early-outs on a zero index and the GPU predicts that branch perfectly across a warp. The cost is the
 **real caster tests**: record fetches, quad projection, point-in-quad, silhouette sample.
@@ -26,7 +49,7 @@ almost nothing. **This is a direct, cheap confirmation that [F4](forks.md#f4) is
 by where the shadow lands removes *real* tests (~31 → ~4), not empty ones. Had this experiment produced its
 predicted 4.8×, F4's premise would have been wrong.
 
-Kept because it is free, correct, and 13 %. But it is not the lever.
+Kept: free, correct, and ~6 % + ~17.5 %. But it is not the lever.
 
 ## I13 — Shadow map raised to the lightmap's resolution: 3.2× GPU, 4× VRAM, no more upsample {#i13}
 _2026-07-27 · behind tag `checkpoint-lighting-2026-07-27`_
