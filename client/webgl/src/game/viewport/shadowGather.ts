@@ -38,6 +38,10 @@ const FINE_RATIO = TEXTILE_SQUARE / TEXTILE_UNIT;
  *  assumption required. At 512 that breaks (65,535 x 512 = 33.5M) and correctness would depend on a policy
  *  we cannot currently guarantee. The failure mode is silent: light that will not fully turn off.
  *
+ *  This bound is ENFORCED by the per-light clamp in LIGHT_FRAG, not merely hoped for. That clamp is also why
+ *  a light may exceed 255 before write with no consequence: a raw 512 clamps to 255 and the light still
+ *  reads brighter, because clamping caps the PEAK and not the falloff profile.
+ *
  *  And raising it buys nothing observable, because QUANT is PRECISION, not RANGE:
  *   - HDR does not need it. A 4x brazier just deposits 1020; the accumulator is float and holds that at
  *     any step size. Brightness comes from the value, not the granularity.
@@ -670,7 +674,19 @@ void main() {
       shadow = walkShadow(L3, emitter, Pg, false, 0u, P, 1, reachT, uData, uSurface, cd);
     }
     float contrib = intensity * fall * ndl * (1.0 - shadow); // shadowed contribution (× Lambert on things)
-    acc += col * contrib;
+    // CLAMP PER LIGHT, before it joins the sum. This is what makes the accumulator's exactness bound
+    // UNCONDITIONAL rather than merely likely: with every light capped at 1.0 (255 after quantisation),
+    // the worst case is 65,535 (the whole u16 id space) x 255 = 16,711,425, under the 2^24 = 16,777,216
+    // that FP32 represents exactly. No presence cap, no distribution assumption, no bookkeeping
+    // discipline needed — overflow becomes impossible by construction.
+    //
+    // It costs no brightness. Clamping caps a light's PEAK, not its profile: at intensity 4 every
+    // distance is still 4x, so the core saturates over a WIDER radius and the falloff stays brighter
+    // further out — which is what a brighter light looks like. So intensity is free to exceed 1.
+    //
+    // The clamp belongs HERE and nowhere downstream. Clamping the accumulated SUM would break light
+    // removal: two lights at 255 clipped to 255 means subtracting one leaves 0 where 255 is correct.
+    acc += min(col * contrib, vec3(1.0));
   }
   // QUANTISED into the additive accumulator (F11b). Rounding is what makes each deposit an exact integer,
   // so removing this light later — same value negated — cancels bit-exactly in FP32. Do NOT drop the

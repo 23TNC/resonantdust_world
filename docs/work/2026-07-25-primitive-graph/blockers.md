@@ -34,19 +34,25 @@ initiative.
 
 </details>
 
-## B-5 — over-bright display — RESOLVED 2026-07-26 by the user: hard clamp, at the BLIT only
-**Taken: option 1, the hard clamp — which is already the live behaviour**, so no code change. The blit's
-`min(irr, 4.0)` plus the framebuffer's own 0..1 clip is a display-side clamp. Revisit only if overlapping
-pools visibly flatten; nothing does today (measured peak **0.97×** across the three seeded torches).
+## B-5 — over-bright light — DISSOLVED 2026-07-26 by the user: clamp PER LIGHT, pre-write
+Not a decision after all. The user's chain, which is correct and which I had muddled:
 
-**The distinction that makes this safe.** Clamping at DISPLAY is free. Clamping the ACCUMULATOR would break
-the whole scheme: if A and B each deposit 255 and their sum is clipped to 255, removing B by subtracting 255
-leaves 0 where the answer is 255 — the light becomes un-removable. **The clamp lives in the blit and must
-never move into the accumulator.**
+1. The lightmap is `RGBA32F`; FP32 is exact for integers below **2^24**.
+2. **2^24 > 255 × 65,535.**
+3. So if each of the at-most-65,535 lights (the u16 id space) deposits at most 255 per channel, every
+   possible sum is lossless.
+4. The ACCUMULATOR cannot be clamped — clipping A+B at 255 makes subtracting B leave 0 where 255 is right,
+   so the light becomes un-removable.
+5. But each LIGHT can be clamped, pre-write. A raw 512 simply clamps to 255 before it joins the sum.
+6. Since the id space caps the count anyway, **no texel can ever exceed 2^24. By construction.**
 
-(Clamping each individual light's DEPOSIT to 255 is also safe and preserves the worst-case bound even with
-`intensity > 1` — at the cost of capping any light at 1× brightness, so no brighter braziers. Not taken;
-noted in case it is ever wanted.)
+**My error, corrected.** I claimed a per-light clamp meant "no brighter braziers". False: clamping caps a
+light's PEAK, not its profile. At `intensity 4` every distance is still 4×, so the core saturates over a
+WIDER radius and the falloff stays brighter further out — which is what a brighter light looks like. So
+intensity above 1 is free, and there is no tradeoff to weigh.
+
+**Implemented:** `acc += min(col * contrib, vec3(1.0))` in `LIGHT_FRAG`. Verified a no-op at `intensity 1`
+(peak unchanged at 247), so the guarantee is now enforced rather than aspirational, with no visual change.
 
 <details><summary>B-5 as originally raised</summary>
 **What.** With the additive accumulator ([P10](todo.md)) lights sum without a per-light clamp, so overlapping
