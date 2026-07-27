@@ -118,3 +118,27 @@ prompts and seeds. That is ~2.3 h into the run.
 
 Recording this rather than reading a hypothesis into five rough images — the whole stream exists
 because measurements got trusted past what they could support.
+
+## 2026-07-27 — P4 complete (run-5 A/B; e07 retained)
+
+Run-5 finished: 15 epochs, **4 h 35 m**, loss 0.016. Installed as `rd_quad3_e15`, A/B'd against `e07`
+and run-4 over 6 species × e/s × 3 seeds with the frozen P0 gate plus `iou_ref` and signed aspect.
+
+**Verdict: `e07` ships** ([F4](forks.md#f4)) — 26/36 gate, `iou_ref` 0.753, winner on all six species.
+
+**The images were reviewed before the verdict was accepted, as the plan requires.** The auto-emitted
+sheet shows run-5 still producing framed portraits on south and sitting poses on east — visually
+identical to run-4. The numbers and the images agree, which is the first time in this project they
+have on a retrain verdict, and is the point of P0/P1.
+
+**The hypothesis is refuted, cleanly.** Jitter changed the data measurably (fill sd 0.003 → 0.027)
+and changed the output not at all. Because run-5 varied exactly one thing, that is attributable —
+unlike run-4, which varied three.
+
+---
+
+### Stream complete — 18/18
+
+The evaluation now agrees with the eye (`iou_ref` called both run-4 failures 6/6 where `d_aspect`
+scored a tie), the visual check is part of the harness, and a wrong hypothesis was killed by a
+controlled experiment rather than argued about.

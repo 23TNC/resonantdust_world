@@ -69,3 +69,29 @@ So: **gate stays as-is; `iou_ref` and `d_aspect_signed` become the A/B ranking m
 reported by every comparison. This mirrors [F3 in the predecessor](../2026-07-25-sprite-gen-quality/forks.md#f3),
 where `d_fill` had the second-best marginal separation yet tripled gate error — good discrimination
 does not imply gate value.
+
+## F4 — Run-5 verdict: `e07` still ships; the frame hypothesis is REFUTED · RESOLVED 2026-07-27
+
+Run-5 (identical to run-4 except jittered fill) completed in 4 h 35 m, loss 0.016.
+
+| config | gate | `iou_ref` | east iou | south iou | east signed |
+|---|---|---|---|---|---|
+| **e07 @768 (ships)** | **26/36** | **0.753** | **0.694** | **0.811** | +27.9% |
+| run-4 @1024 (pinned) | 25/36 | 0.683 | 0.619 | 0.746 | −29.7% |
+| run-5 @1024 (jittered) | 26/36 | 0.681 | 0.622 | 0.740 | −28.0% |
+
+**Run-5 is statistically indistinguishable from run-4** — `iou_ref` 0.681 vs 0.683, east signed −28.0
+vs −29.7. `e07` wins **6/6 species**. The contact sheet confirms it visually: the white rectangles are
+still present in run-5's south views, and the sitting/curled east poses are unchanged.
+
+**So the pinned margin was NOT the cause** ([I3](issues.md#i3) refuted). Jitter was a real change
+(sd 0.003 → 0.027) and moved nothing. The single-variable design is what makes this attributable —
+run-4 alone could not have told us.
+
+Remaining unfalsified suspects: **rank 48** and **1024 training**, which run-4 and run-5 share. Both
+failing runs also used **scale-normalised** data while `e07` used raw sprites — normalisation itself
+has never been isolated and is now the most interesting untested variable.
+
+**Cost recorded honestly:** two 4.5-hour runs (~9 GPU-hours) produced no better model. What they
+produced is a correct negative result and a trustworthy metric — `iou_ref` reached this verdict in
+minutes where run-4's took hours of confusion.

@@ -32,6 +32,6 @@ Ordering in [`README.md`](README.md): **fix the ruler first**, then diagnose, th
 ## P4 — Retrain with the fixes and prove it
 
 - [x] Retrain on the jittered 1024 dataset, holding run-4's other settings. Acceptance: the run completes with per-epoch checkpoints under `output_quad3/`.
-- [ ] A/B the result against `e07` and run-4 with the P0 gate. Acceptance: gate pass, `iou_ref` and signed aspect for all three, 6 species × e/s × 3 seeds, tabulated.
-- [ ] Review the auto-emitted contact sheet before accepting any verdict. Acceptance: `completed.md` states what the images show and whether it agrees with the numbers.
-- [ ] Choose the shipping checkpoint. Acceptance: `forks.md` names the winner and margin; if nothing beats `e07`, that is recorded and `e07` stays.
+- [x] A/B the result against `e07` and run-4 with the P0 gate. Acceptance: gate pass, `iou_ref` and signed aspect for all three, 6 species × e/s × 3 seeds, tabulated.
+- [x] Review the auto-emitted contact sheet before accepting any verdict. Acceptance: `completed.md` states what the images show and whether it agrees with the numbers.
+- [x] Choose the shipping checkpoint. Acceptance: `forks.md` names the winner and margin; if nothing beats `e07`, that is recorded and `e07` stays.
