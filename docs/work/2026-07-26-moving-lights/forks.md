@@ -1,5 +1,41 @@
 # Forks — decision points
 
+## F4 — How does a texel learn which casters shadow it? {#f4}
+_2026-07-26 · open — the question underneath "why is it walking" ([I7](issues.md#i7))_
+
+Three ways to store the caster↔light↔tile relationship. Today's choice is (b); the design that preceded it
+was (a); (c) is untested and is the only one that changes the exponent.
+
+**(a) Per-LIGHT caster LUT** — the 2026-07-21 design. `light_data` rows 1–32, ≤256 casters/light. Fragment
+loops its tile's lights, then that light's caster list.
+_Against:_ **no spatial pruning.** A reach-16 light covers ~1 024 tiles; at this world's ~0.5 casters/tile its
+list is ~500 entries, every one tested at every texel in the disc behind only a box cull. Worse than the walk,
+and almost certainly why it was replaced.
+
+**(b) Per-TILE body buckets + reach-walk** — today, and what `VARIABLES.md` specifies. ≤8 casters per tile,
+bucketed by the caster's own tilted-card ground extent, shared across all lights; the texel marches a
+supercover DDA toward its light reading each crossed tile.
+_For:_ cheap to maintain — O(casters) total, light-agnostic, so a light moving costs nothing to rebuild. Prunes
+spatially; most slots are empty and exit at once.
+_Against:_ the bucket **has no light association**, so the march is the only way to recover it — and the march
+is `≥81 %` of frame time ([I6](issues.md#i6)). Cost per texel is `walk × 3 × 8`, up to 1 536 caster tests.
+
+**(c) Per-LIGHT SHADOW buckets** — bucket a caster into the tiles **its shadow lands on**, per light.
+_For:_ keeps (b)'s spatial pruning *and* restores (a)'s light association. A texel reads **only its own tile's
+list**, and every entry is a caster that genuinely shadows it from that light. The march disappears. This is
+the only candidate that changes `O(lit-texels × walk × casters)` into `O(lit-texels × casters-that-hit-me)`.
+_Against:_ **state grows from O(casters) to O(lights × shadow area)** — the bucket is per light, so it must be
+rebuilt when a light moves, not just when a caster does. That is precisely the moving-light case this stream
+cares about, so the maintenance cost lands exactly where the win is and could eat it. Also needs a bucket
+capacity decision, and overflow is a *correctness* issue (a dropped caster is a missing shadow), where today's
+overflow merely drops a rarely-consulted slot.
+
+**Not decided — (c) needs costing before it is chosen.** The measurement that would settle it: for a moving
+reach-16 light, how many (tile, caster) pairs does its shadow set contain per frame, and what does rebuilding
+them cost on the CPU relative to the ≥81 % of GPU frame time the walk currently spends? If maintenance is a
+few hundred µs against 35 ms of walk, (c) wins outright; if it is comparable, the walk stays and the lever
+goes back to reach and light count.
+
 ## F1 — Where does "move a prim" live? {#f1}
 _2026-07-26 · **RESOLVED → (a). The entry point already existed; nothing needed re-homing.**_
 

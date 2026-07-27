@@ -1,5 +1,54 @@
 # Issues — problems hit, candidates, what we chose
 
+## I7 — Why the current version walks: the caster data lost its light association {#i7}
+_2026-07-26 · traced through the design record_
+
+**The 2026-07-21 design does not walk.** From
+[`shadow-bitfield/README.md`](../2026-07-21-shadow-bitfield/README.md), the user's own design, point 4:
+
+> _"For a dirty pixel, loop the tile's present lights; **per light walk its `caster_count`-bounded casters**,
+> box-cull, test point-in-silhouette, OR its bit into a register, write the `u128` once."_
+
+"Walk its casters" there means **iterate that light's own caster list** — a per-**light** LUT, `≤ 256 casters/
+light`, living in `light_data` (128 × 33: row 0 lights, rows 1–32 the LUT). No spatial marching anywhere.
+[F2](../2026-07-21-shadow-bitfield/forks.md) confirms the intended bound: _"per-fragment × per-reaching-light
+× per-caster — bounded by the box cull, LUT-bounded casters."_
+
+**The current design does walk, and says so.** [`VARIABLES.md`](../../VARIABLES.md) — authoritative — now
+specifies `billboard_presence` as a per-**tile** bucket: _"A caster is bucketed into every tile its tilted
+card's ground extent spans… **The gather's reach-walk reads these**"_, with the per-texel bound stated as
+_"≤ 8 lights (presence) × **reach-walk of bucketed tiles** × ≤ 8 casters/tile."_
+
+**So this is not code deviating from design.** The design changed — the per-light caster LUT was replaced by
+per-tile caster buckets, around `presence-in-data` (2026-07-23), which folded "light-presence + caster-buckets"
+into the unified data texture. VARIABLES records the result as current truth and the code matches it.
+
+### Why the walk is there, mechanically
+A per-tile bucket keyed by the caster's **own body** is cheap to maintain (one entry per caster per tile it
+covers, shared by every light) — but it **throws away the light↔caster association** the per-light LUT had.
+Once that association is gone, a texel cannot know which casters shadow it. The only way back is to search the
+space between the texel and its light. **The walk is the price of not storing the association.**
+
+### Why going back to the 2026-07-21 LUT would be worse, not better
+Worth stating, because "restore the original design" is the obvious move and the numbers say don't. A
+reach-16 light covers ~1 024 tiles; at the ~0.5 casters/tile this world runs, its LUT would hold **~500
+casters**, and every texel in its disc would test all 500 with only a box cull to prune. The walk visits ~16–32
+corridor tiles × ≤ 8 slots and, crucially, **prunes spatially** — most slots are empty and exit immediately.
+**The walk is not a mistake; it is the acceleration structure that replaced an unbounded per-light list.** That
+is very likely why the design changed in the first place.
+
+### What actually beats both
+Bucket casters by **the tiles their SHADOW lands on, per light** — not by the tiles their body occupies. That
+keeps the spatial pruning (a texel reads only its own tile) *and* restores the light association (the bucket is
+per light, so entries are exactly the casters that shadow this tile from that light). Per texel the cost
+collapses to "the casters that actually shadow me", with no march. Maintenance is `Σ over lights of (casters in
+reach × tiles their shadow covers)` — rebuilt on the same `markLightDirty` / `markPrimDirty` events that
+already exist.
+
+It is strictly more state than today's shared body buckets, and that is the real trade to weigh: today's
+buckets are shared across all lights and cost O(casters); shadow buckets are per light and cost
+O(lights × shadow area). Not yet costed — see [F4](forks.md#f4).
+
 ## I6 — Today's walk vs this morning's: 1.54×, bit-identical output, same complexity class {#i6}
 _2026-07-26 · measured A/B_
 
