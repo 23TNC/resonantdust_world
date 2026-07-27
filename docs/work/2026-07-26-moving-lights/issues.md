@@ -1,5 +1,44 @@
 # Issues — problems hit, candidates, what we chose
 
+## I11 — Inside `walkShadow`: it is NOT fetch-bound. `casterOne` is 77 %. {#i11}
+_2026-07-27 · `uWProfile` staircase, one moving reach-16 light, zoom 0.5_
+
+| level | includes | ms | **substep** | share |
+|---|---|---|---|---|
+| 1 | DDA setup only | 0.065 | 0.065 | 2 % |
+| 2 | + tile traversal (no bucket fetch) | 0.078 | +0.013 | 1 % |
+| 3 | + **bucket fetches** (3 per tile) | 0.251 | **+0.173** | **6 %** |
+| 4 | + slot unpack (`tileSlot` × 8) | 0.620 | **+0.369** | **14 %** |
+| **0** | **+ `casterOne`** | **2.679** | **+2.059** | **77 %** |
+
+### The walk is not fetch-bound, and I had asserted that it was
+**Texture fetches are 0.173 ms — 6 % of the walk.** The cost is `casterOne`: the per-caster projection,
+point-in-quad test and silhouette sample. Even the *slot unpack* (0.369 ms) costs **2× more than the fetches**.
+
+**This refutes a claim I made while costing [F6](forks.md#f6).** I argued that evaluating both receivers per
+caster would be "much closer to free than to 2×" because *"the walk is fetch-dominated (3 fetches/step × 8
+slots), so sharing the fetches and doubling only the per-caster arithmetic"* is cheap. **The arithmetic IS the
+cost.** Doubling the per-caster work doubles 77 % of the walk. F6's split-shadow gather is therefore
+**substantially more expensive than I estimated** — closer to +1.5 ms than to the "well under 0.3–0.5 ms" I
+wrote. That estimate was reasoning from an assumed bottleneck instead of a measured one, which is the same
+error as the three cost models before it.
+
+### What it means for [F4](forks.md#f4)
+F4 (bucket casters by where their **shadow** lands) still wins, but for a different reason than the one I gave.
+It is not about fetching less — it is about **testing fewer casters**. At this world's ~0.65 casters/tile, a
+16-tile corridor with 3-wide dilation visits ~48 tiles and tests **~31 real casters per texel**; F4 reduces
+that to the ~4 whose shadow actually reaches the texel. That is an **~8× cut on the term that is 77 % of the
+walk**, which is 2.06 of the 3.8 ms GPU frame.
+
+### Current full attribution, one moving reach-16 light, zoom 0.5
+
+| item | ms | share of ~3.8 ms GPU |
+|---|---|---|
+| `casterOne` inside the walk | **2.06** | **54 %** |
+| `receiverAt` (lighting pass) | 0.98 | 26 % |
+| slot unpack + bucket fetches + DDA | 0.62 | 16 % |
+| everything else | ~0.15 | 4 % |
+
 ## I10 — Gather substep profile: `walkShadow` is 97 % of it {#i10}
 _2026-07-27 · same `uGProfile` staircase device as [I9](#i9), one moving reach-16 light, zoom 0.5_
 

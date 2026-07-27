@@ -496,6 +496,13 @@ float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, float reachU, 
 // point and blend them at the silhouette edge. corr selects the path; the two must stay bit-identical (P6).
 // reachT bounds the brute box (unused by the corridor). In GATHER_COMMON so the lightmap bake can re-run it at
 // fine res to sharpen the shadow edge (shadow-edge-refine).
+// PROFILING STAIRCASE for the WALK itself (2026-07-27, moving-lights I11). 0 = full; 1..4 cut it short so a
+// GPU timer prices each substep by difference. Each level includes every level below it:
+//   1 DDA setup only   2 + tile traversal (no bucket fetch)   3 + bucket fetches (no slot unpack)
+//   4 + slot unpack (no casterOne)   0 + casterOne
+// Levels 3 and 4 fold their fetched value into cov with a tiny weight ONLY to defeat dead-code elimination —
+// without that the compiler removes the very fetch we are trying to price. Output is meaningless below 0.
+uniform int uWProfile;
 float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, vec2 Rbase,
                  int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
   cdepth = 0.0;
@@ -533,16 +540,20 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
     // already supply each other's ±1 along the direction of travel. Dilating perpendicular to the dominant
     // axis keeps the conservative cover at 3 fetches/tile instead of 5.
     ivec2 perp = abs(d.x) >= abs(d.y) ? ivec2(0, 1) : ivec2(1, 0);
+    if (uWProfile == 1) return 0.0;                          // W1: DDA setup only
     for (int m = 0; m < 64; m++) {                           // CONSTANT bound — a body-modified var in a
       if (m >= nvisit) break;                                // loop CONDITION can miscompile (known trap).
+      if (uWProfile != 2)                                    // W2: traverse the tiles, fetch nothing
       for (int n = 0; n < ${DILATE}; n++) {                  // centre, +perp, -perp (DILATE 5 = the pre-I30
         ivec2 o = ct + (${DILATE} == 5                       // 5-tile CROSS, kept switchable for A/B)
           ? ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0))
           : (n == 1 ? perp : (n == 2 ? -perp : ivec2(0))));
         uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(o.x, o.y));
         vec2 bref = (vec2(o) + 0.5) * UPT;                   // resolve casters against THEIR bucket tile
+        if (uWProfile == 3) { cov = max(cov, float(cb.x & 1u) * 1e-6); continue; } // W3: fetched, no unpack
         for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
           uint billboardIdx = tileSlot(cb, c);
+          if (uWProfile == 4) { cov = max(cov, float(billboardIdx & 1u) * 1e-6); continue; } // W4: no casterOne
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
@@ -1030,6 +1041,8 @@ export class ShadowGather {
   private lightAlignY = 0;
   /** PROFILING staircase level for `GATHER_FRAG` (0 = full; 1–4 cut short). `__gprofile(n)`; leave at 0. */
   gatherProfile = 0;
+  /** PROFILING staircase level INSIDE `walkShadow` (0 = full; 1–4 cut short). `__wprofile(n)`; leave at 0. */
+  walkProfile = 0;
   /** PROFILING staircase level for `LIGHT_FRAG` (0 = full shader; 1–4 cut it short at a named boundary).
    *  The lighting bake is ONE draw, so per-substep GPU timing is only obtainable by differencing these.
    *  `__profile(n)`; always leave it at 0. See `moving-lights` I9. */
@@ -1182,6 +1195,12 @@ export class ShadowGather {
       if (n !== undefined) this.gatherProfile = n;
       this.rebakeAll();
       return this.gatherProfile;
+    };
+    // DEBUG (moving-lights I11): the staircase INSIDE walkShadow — setup / traversal / fetch / unpack / test.
+    (globalThis as unknown as { __wprofile: (n?: number) => number }).__wprofile = (n?: number) => {
+      if (n !== undefined) this.walkProfile = n;
+      this.rebakeAll();
+      return this.walkProfile;
     };
     // DEBUG (__hideright): blank the right half of each billboard's normal in __shownormal (alignment probe).
     (globalThis as unknown as { __hideright: (on?: boolean) => boolean }).__hideright = (on?: boolean) => {
@@ -1699,6 +1718,7 @@ export class ShadowGather {
         p.uInt("uCorridor", this.corridor ? 1 : 0);
         p.uInt("uLightClass", cls);
         p.uInt("uGProfile", this.gatherProfile);
+        p.uInt("uWProfile", this.walkProfile);
         p.uFloat("uElevK", this.elevK);
       },
     });

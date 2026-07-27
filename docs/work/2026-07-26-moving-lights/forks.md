@@ -96,9 +96,12 @@ to repair the resulting mismatch against the fine receiver mask. Two maps store 
   shadow landing on the ground versus one landing partway up a trunk are different intersection problems:
   different receiver point → different corridor → different point-in-quad result per caster.
   **Implementation note: do NOT run two gather passes.** Run one pass that evaluates **both receivers per
-  caster it fetches**. The two walks share the light, the corridor tiles and the caster buckets, and the walk
-  is **fetch-dominated** (3 fetches/step × 8 slots), so sharing the fetches and doubling only the per-caster
-  arithmetic lands well under the 0.3–0.5 ms above — that figure assumed two independent walks.
+  caster it fetches** — the two walks share the light, the corridor tiles and the caster buckets.
+  ⚠️ **COST ESTIMATE RETRACTED (2026-07-27, [I11](issues.md#i11)).** I argued this lands "well under
+  0.3–0.5 ms" because the walk is *fetch-dominated*. **It is not.** Measured: texture fetches are **6 %** of
+  the walk and `casterOne` is **77 %**. Sharing the fetches saves almost nothing, and doubling the per-caster
+  arithmetic doubles the dominant term — so the split gather is closer to **+1.5 ms**, not +0.3. That
+  estimate reasoned from an assumed bottleneck instead of a measured one.
 - The prim pass must rasterise prim quads into the **world-space toroidal** lightmap with wrap handling and
   bottom-row z-order. `SquareCache` already does exactly this for albedo, twice a frame.
 
