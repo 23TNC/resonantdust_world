@@ -4,6 +4,9 @@ _Decision points, options, which we chose and why._
 
 ## F1 — Delete `shadowCover`, or keep it as a cheap reject?
 
+**SUPERSEDED by [F6](#f6) on the "keep it around" half — the quad is deleted outright, not retained
+behind a switch. The cheap-reject question below still stands as a P2 measurement.**
+
 - **(a) Delete it.** The inversion is the same predicate and already early-outs on `t` then `s`.
 - **(b) Keep a cheapened version** — e.g. a bounding-circle or AABB reject before the inversion.
 
@@ -74,3 +77,37 @@ Filling the wedge needs a continuous quantity.
 and the only option whose cost does not grow with softness, but it is the only one that touches the art
 pipeline — prototype it on ONE sprite and A/B against 16 taps before committing to a re-bake, because
 the branch-comb case is where it is most likely to disappoint. (c) is the fallback if (b) disappoints.
+
+## F6 — Replace-and-delete, not A/B behind switches {#f6}
+
+**2026-07-27 — RESOLVED by the user, and it supersedes F1 and the stream's original acceptance rule.**
+
+> _"We are not going to tack a ton of extra stuff to try and enable/disable it. We are going to replace
+> and delete the current shadow implementation as we go."_
+
+- **(a) Replace and delete in the same change.** Each phase writes the new predicate and removes what it
+  replaced, in one commit. **CHOSEN.**
+- **(b) Keep both behind a uniform** (`uRayTest`) and A/B them, deleting the loser later.
+
+(b) is what the first attempt did and it earned its reversal. Three costs, all paid on 2026-07-27:
+
+1. **It doubled the surface without doubling the confidence.** `uRayTest`, `uPredDiff` (four modes),
+   `__raytest`, `__preddiff`, `__shadowfp` — every one needed wiring, a uniform, a dial, and a reload to
+   exercise, and none of it shipped. Two of the instrument's own modes were silently dead for a full
+   measurement round because they sat inside the wrong guard.
+2. **A switch defaults one way, so the other path is never really exercised.** `rayTest = 0` meant the new
+   code compiled and never ran outside a deliberate probe. Scaffolding that is off by default is
+   scaffolding that rots.
+3. **It invites keeping the old thing "just in case",** which is exactly how a codebase ends up with two
+   implementations of one predicate — the very thing this stream exists to remove. Deleting as we go is
+   the property that makes the change real rather than additive.
+
+**Consequence — the bit-identity gate is withdrawn.** The old plan required P0–P2 to change no pixels.
+That only makes sense when the old path survives as a reference. Replacing outright means P0's measured
+~26 % divergence is the intended outcome, and the gate becomes: corridor↔brute identity holds, it looks
+right at three zooms, and it is faster. `git` is the reference; `checkpoint/pre-plane-intersection` is the
+tag to diff against.
+
+**What this does NOT license.** The reach bound is not scaffolding — the corridor identity proof depends
+on a shadow being unable to escape the reach box, so P1 must reproduce it rather than drop it as "old
+quad behaviour". Deleting the quad is the goal; deleting an invariant it happened to enforce is a bug.

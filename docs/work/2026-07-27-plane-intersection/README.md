@@ -45,13 +45,18 @@ cheaper, and it is exactly where the measured ALU-boundness sits ([moving-lights
 
 ## Shape of the work
 
-**P0–P2 is a pure refactor with no visual change**, and is the whole point of the stream: prove the two
-predicates agree, delete `shadowCover`, verify bit-identity and measure. It is separable and low-risk, and
-it lands the performance win on its own.
+**Replace and delete as we go** (user, 2026-07-27 — [F6](forks.md#f6)). No switches, no dual paths, no
+dials: each phase writes the new predicate and removes what it replaced in the same commit. The original
+plan kept both behind a uniform and gated on bit-identity; that was tried, cost a day, and is withdrawn.
 
-**P3–P5 build the ± radius scheme on top of the simplified function.** Two rays (light ± radius) classify
-each texel as umbra / penumbra / lit, with the straddle rule filling the wedge behind the caster. That is
-a behaviour change and must not be mixed into the deletion.
+**P1–P2 replace the quad with the ray solve** and delete `shadowCover`/`projectTop`. **P3 replaces the
+tap ladder** with two rays at light ± radius and deletes `emitterOffset` and the tier machinery. **P4–P5**
+fill the wedge and pad the caster bucketing.
+
+Because the old path does not survive as a reference, **bit-identity is not the gate** — P0 already
+measured the two predicates diverging ~26 %, and that is the intended outcome. The gate is corridor↔brute
+identity, three-zoom eyeball, and a faster cold gather. `checkpoint/pre-plane-intersection` is the tag to
+diff against.
 
 ## What this does and does not solve
 
@@ -64,6 +69,10 @@ a behaviour change and must not be mixed into the deletion.
 | Smooth penumbra across silhouette detail | **no.** Two rays return near-binary silhouette opacity, so "one hits" gives 1/2, not a ramp. Analytic fill works for the card's own edge; interior detail still wants more samples or a distance field. See [F5](forks.md#f5). |
 
 ## Guard rails
+
+**Verify at torch reach 8.** Reach 20 put the client past its own measured fps table (16 → 18 fps with
+3 torches), which reads as a hang and trips the GPU watchdog — that is what cost 2026-07-27
+([I6](issues.md#i6)). To inspect long shadows, move the camera, do not raise reach.
 
 The corridor↔brute identity check is the only thing standing between this class of change and a silent
 regression. It is **green as of 2026-07-27 at lean 1.0** (67 437 nonzero texels, 0 differing) and every phase here

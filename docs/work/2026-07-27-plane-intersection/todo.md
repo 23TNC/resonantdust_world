@@ -3,59 +3,69 @@
 _The plan for the life of the stream. Items never move; `[x]` IS the move. Context in
 [`README.md`](README.md)._
 
-**Acceptance rule for the whole stream.** P0–P2 must produce **bit-identical** shadow output — this is a
-refactor, and any pixel that changes is a bug, not a tuning result. Only from P3 does output legitimately
-differ. Every phase re-runs corridor↔brute identity before being ticked.
+## How this stream works (user, 2026-07-27)
 
-## P0 — Prove the two predicates agree, before deleting anything
+> _"We are not going to tack a ton of extra stuff to try and enable/disable it. We are going to replace
+> and delete the current shadow implementation as we go."_
 
-- [x] Capture a REFERENCE `debugReadShadow(0)` from the current build at 16 forced taps and save it, so P2's bit-identity claim has something to diff against. Without a stored baseline "bit-identical" is unfalsifiable once the code is gone.
-- [x] Add `__preddiff` to `GATHER_FRAG`: run BOTH `shadowCover` and the `(s,t)` inversion for the centre sub-light per caster and write 1.0 where they disagree, so disagreement is visible on screen rather than assumed.
-- [ ] Sweep `__preddiff` over the 3-torch scene at zoom 0.25/0.5/1/2 and record the disagreeing-texel count per zoom in `completed.md`. Expect near-zero; a non-zero count means the two differ and P1 must reconcile, not delete.
-- [ ] Characterise every disagreement found: for each, name which of `reachU` clamping, `SHADOW_BASE_PUSH`, or the `t`/`s` range bounds causes it. No deletion until each has a named cause.
+**REPLACE AND DELETE, in the same change.** No `uRayTest`/`uPredDiff`-style switches, no keeping the old
+path alive behind a uniform, no A/B dials. Each phase writes the new thing and deletes what it replaced,
+in one commit. If a phase is right, the old code is gone by the end of it. See [F6](forks.md#f6).
 
-## P1 — Make the ray inversion the sole test
+**Acceptance is NOT bit-identity.** That was the previous gate and it is WITHDRAWN — we are deliberately
+changing behaviour, so P0's measured ~26 % divergence is the expected outcome, not a blocker
+([completed.md](completed.md)). What must hold instead, every phase:
 
-**REVISED after P0 (2026-07-27).** P0 measured the two predicates disagreeing on ~26 % of shadowed slots,
-bidirectionally, with the `reachU` clamp confirmed as one cause and a ~12 % reach-independent floor still
-unexplained. So P1 is no longer "delete the redundant copy" — the inversion must be made to REPRODUCE the
-quad's behaviour first, and only then can the quad go. The performance argument is unaffected: the quad
-build is still redundant work on the miss path.
+- **corridor↔brute identity = 0 differing texels.** The corridor is what ships and the brute walk is the
+  only oracle we have; if they diverge the shadow map is wrong in a way no screenshot will reveal.
+- **Shadows look right** at zoom 0.5 / 1 / 2 — attached at the base, silhouette intact, no notches.
+- **The frame is faster**, on the cold gather draw vs `checkpoint/pre-plane-intersection`.
 
-- [ ] Find cause 2 of the P0 disagreement — the ~12 % that survives large reach. Prime suspects: the `pos || neg` both-windings test degenerating on a self-intersecting quad, and the `t`/`s` half-open bounds vs the sign test. Name it before writing any replacement.
-- [ ] Give the inversion a reach bound that matches `projectTop` — including its `k <= 0` behaviour of running the corner OUT to reach, which the inversion currently treats as simply unshadowed.
-- [ ] Re-run `__preddiff` after the reach bound and cause-2 fix; require the disagreement to reach 0 before deleting anything. That is now P1's gate, not P2's.
+**Scene budget for all verification: torch reach 8.** Reach 20 put the client past its own measured fps
+table, which reads as a hang and trips the GPU watchdog — that is what cost 2026-07-27
+([I6](issues.md#i6), and the reach comment in `content/visual/things.rd`). Do not raise it to inspect
+long shadows; move the camera instead.
 
-- [ ] Hoist `worldTiltRad` out of `shadowCover`/`casterCover` to a per-pass value passed down the walk — it is a texel fetch returning a pass-constant, currently re-fetched per caster per texel.
-- [ ] HOIST the `(s,t)` inversion out of the tap loop into a single centre-ray gate before it, returning 0 on `t` or `s` out of range. Deleting the quad without hoisting makes a MISS cost N inversions instead of one — see the note below.
-- [ ] Feed the gate's `s`/`t` straight into the centre tap's `uv` rather than re-solving them, since the gate's solve already produced the lookup coordinate — `uv` is built from `s` and `(1−t)` directly.
-- [ ] Re-apply the reach bound explicitly: `projectTop` clamped the projection to `reachU`, and that bound is what makes a shadow unable to escape the corridor's reach box. Add the equivalent distance test or the identity proof breaks.
-- [ ] Carry the card lean across as `uCardLean` (now SETTLED at 1.0, world-geometry F2 closed 2026-07-27) and keep the shader factor and `buildCasters`' TILT reading ONE field, so the quad's removal cannot desync them.
-- [ ] Re-apply `SHADOW_BASE_PUSH`: it nudged the base south to close a caster/shadow seam and lived in the quad corners. Fold it into the `t` range or the anchor, and confirm the seam does not return.
-- [ ] Delete `shadowCover` and `projectTop` once nothing calls them, and delete the `cross2` helper if it has no other caller.
+## P0 — Measure the two predicates before replacing (DONE, and it changed the plan)
 
-## P2 — Verify and measure the refactor
+- [x] Capture a REFERENCE `debugReadShadow(0)` from the current build at 16 forced taps, so the comparison has something to diff against.
+- [x] Add a predicate-disagreement mode: run BOTH the quad and the ray solve per caster and paint where they differ.
+- [x] Measure the disagreement. RESULT: ~26.5 % of shadowed slots, bidirectional, reproduced on two independent loads. The premise "these are the same predicate computed twice" is refuted.
+- [x] Isolate a cause: the `reachU` clamp is confirmed — disagreement falls 21.6 % → 11.9 % as reach goes 8 → 48 tiles. A ~12 % reach-independent remainder is still unexplained.
+- [x] Revert the P0 instruments. They were scaffolding, and this stream does not keep scaffolding.
 
-- [ ] Diff shadow-cold against the pre-change build at 16 forced taps, on the 3-torch scene at zoom 0.5. Requires 0 differing texels; anything else means P1 changed behaviour and must be fixed before proceeding.
-- [ ] Re-run corridor↔brute identity (`__corridor` toggle, `debugReadShadow(0)` for the COLD class) and require 0 differing texels.
-- [ ] Profile the cold gather draw against the pre-change baseline (1 moving reach-16 light, 6-tile orbit, zoom 0.5, `EXT_disjoint_timer_query_webgl2`, cold draws only) and record the delta in `completed.md`.
-- [ ] Profile a MISS-heavy configuration specifically — dense casters, small reach — since the predicted win is on misses and the standard fixture may under-report it.
+## P1 — Replace the quad predicate with the ray intersection, and delete the quad
 
-## P3 — Two-ray classification (light ± radius)
+- [ ] Write the ray-vs-card intersection as a function in `GATHER_COMMON` and call it from `casterCover` as THE predicate — not alongside `shadowCover`, in place of it. One implementation, no switch.
+- [ ] Hoist the solve to a SINGLE gate ahead of the tap loop and feed its `s`/`t` into the centre tap's `uv` rather than re-solving. Without the hoist a miss costs N solves where it used to cost one quad test.
+- [ ] Give the ray gate a reach bound: reject when `P` is beyond `reachU` of the light. `projectTop` provided this and the corridor identity proof depends on it — a shadow that escapes the reach box is found by brute and missed by the corridor.
+- [ ] Decide `projectTop`'s `k <= 0` case: it ran the corner OUT to reach when the light sat below the card top, where the ray test reports unshadowed. Reproduce it or drop it deliberately, and record which in `forks.md`.
+- [ ] Carry `SHADOW_BASE_PUSH` across — it closed a caster/shadow seam from the quad's base corners. Fold it into the `t` range or the anchor, and confirm the seam has not returned.
+- [ ] Hoist `worldTiltRad` out of `casterCover` to a per-pass value: it is a texel fetch returning a pass-constant, currently re-fetched per caster per texel.
+- [ ] DELETE `shadowCover`, `projectTop`, and `cross2` if it has no other caller. The phase is not done while the quad is still compiled.
 
-- [ ] Replace the N-tap loop with two rays at light ± emitter radius along the caster's cross-axis, classifying each texel umbra / penumbra / lit from the two `(s,t)` results.
+## P2 — Verify and measure the replacement
+
+- [ ] Run corridor↔brute identity (`__corridor` toggle, `debugReadShadow(0)` for a COLD light) and require 0 differing texels. The argument defaults to 1 (hot), which returns all zeros for a cold light and reads exactly like perfect identity.
+- [ ] Eyeball zoom 0.5 / 1 / 2 against the checkpoint build: shadows attached at the trunk, silhouette intact, no bright notch behind casters, no new hard clip at tile boundaries.
+- [ ] Profile the cold gather draw against `checkpoint/pre-plane-intersection` (one moving light, 6-tile orbit, zoom 0.5, `EXT_disjoint_timer_query_webgl2`, cold draws only) and record the delta.
+- [ ] Profile a MISS-heavy case — dense casters, small reach — since the predicted win is on the miss path and the standard fixture may under-report it.
+
+## P3 — Two rays at light ± radius, and delete the tap ladder
+
+- [ ] Replace the N-tap emitter loop with two rays at light ± emitter radius on the caster's cross-axis, classifying each texel umbra / penumbra / lit from the two solves.
 - [ ] Implement the straddle rule: when the two samples land on opposite sides of the card, take the CENTRE ray's presence. Without it, points close behind a caster read lit — neither extreme ray hits — leaving a bright notch at every trunk.
-- [ ] Verify the notch is absent at the trunk of every torch-lit conifer at zoom 2, with and without the straddle rule, and record both screenshots.
-- [ ] Confirm the gate now admits penumbra outside the old hard quad: compare the lit/shadowed boundary against the 16-tap build and show the outward feather is present rather than clipped.
+- [ ] DELETE the adaptive tap ladder and everything serving it: `emitterOffset`, the tier selection, `uTapForce`, `uLadder`, and the `__taps`/`__ladder` dials.
+- [ ] Verify the notch is absent at the trunk of every torch-lit conifer at zoom 2, and that penumbra now appears OUTSIDE the old hard-quad boundary rather than clipped to it.
 
 ## P4 — Fill the wedge
 
 - [ ] Derive coverage analytically from the two `s` values where the caster's own card edge is the boundary, instead of returning a flat 1/2 for the penumbra class.
-- [ ] Decide and record in [`forks.md`](forks.md#f5) how interior silhouette detail gets its gradient — more samples, or a distance field in the atlas — since two near-binary opacity samples cannot produce a ramp there.
-- [ ] A/B the filled wedge against 16 taps for mean and max absolute error over the shadow map, and against 2 taps for cost, recording both in `completed.md`.
+- [ ] Decide and record in [`forks.md`](forks.md#f5) how interior silhouette detail gets its gradient — more samples or a distance field — since two near-binary opacity samples cannot produce a ramp there.
+- [ ] Compare the filled wedge against the checkpoint's 16-tap output for mean and max absolute error, and against 2 rays for cost.
 
 ## P5 — Close the other half of the tile clip
 
-- [ ] Pad the caster BUCKETING box in `buildCasters` by the penumbra reach so a caster is registered in every tile its feather can touch, not just the tiles its body covers.
-- [ ] Size the pad from `pw` per caster rather than a constant — the ground feather is the emitter scaled by the projection factor, so a tall caster under a low light needs a much wider pad than a short one.
-- [ ] Verify the hard tile-aligned clip is gone at zoom 2 on the case in [moving-lights I17](../2026-07-26-moving-lights/issues.md), and re-run corridor↔brute identity afterwards.
+- [ ] Pad the caster BUCKETING box in `buildCasters` by the penumbra reach so a caster is registered in every tile its feather can touch, not only the tiles its body covers.
+- [ ] Size the pad from the penumbra width per caster rather than a constant — the ground feather is the emitter scaled by the projection factor, so a tall caster under a low light needs a much wider pad.
+- [ ] Verify the hard tile-aligned clip is gone at zoom 2 on the case in [moving-lights I17](../2026-07-26-moving-lights/issues.md), and re-run corridor↔brute identity.
