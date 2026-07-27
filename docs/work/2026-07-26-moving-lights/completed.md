@@ -211,6 +211,21 @@ pixilation"*).
 Nothing replaces it. The coarse shadow nearest-upsampled across its 8×8 block already overdraws, which is the
 conservative behaviour the prim pass will finely cut.
 
+### The moving-light ceiling, re-measured (same sweep as 2026-07-26)
+
+| moving lights | before | **after** | |
+|---|---|---|---|
+| 8 | 53.59 ms · 19 fps | **8.30 ms · 120 fps** | **6.5×** |
+| 16 | 91.95 ms · 11 fps | **8.25 ms · 121 fps** | **11.1×** |
+| 24 | 135.64 ms · 7 fps | **18.58 ms · 54 fps** | 7.3× |
+| 32 | 146.22 ms · 7 fps | **22.19 ms · 45 fps** | 6.6× |
+| 48 | 152.51 ms · 7 fps | **22.64 ms · 44 fps** | 6.7× |
+| 64 | 156.26 ms · 6 fps | **22.90 ms · 44 fps** | 6.8× |
+
+**16 moving reach-16 lights now hold 120 fps**, where 8 previously managed 19. The 60 fps ceiling moved from
+**~13 lights to ~20**. The plateau is still there (32/48/64 all ~22.5 ms — presence culling past 16/tile) but
+it now sits at **44 fps instead of 6**.
+
 **Still open from F7** — the prim pass, which is what lets `receiverAt` (1.11 ms) and the cut go too:
 draw prim quads into the toroidal lightmap, sample own coverage + own normal from own frame, overwrite.
 
