@@ -202,3 +202,32 @@ plausible bbox aspect. Reported as "slightly worse overall" by the numbers, whil
 [I3](#i3)/[I7](../2026-07-25-template-free-generation/issues.md#i7): geometry metrics cannot see
 *portrait instead of body*. **The visual check is what found this**, and no threshold change would
 have.
+
+## I14 — `d_aspect` is unsigned, so it cannot tell "too long" from "wrong pose"
+
+Correcting my own P3 write-up. I reported run-4 as **winning east**; the user looked at the sprites
+and said e07 held the proper geometry. Measuring the *signed* error shows they were right:
+
+| species | ref | e07 | run4 |
+|---|---|---|---|
+| wolf | 2.08 | 2.41 | **1.23** |
+| bear | 2.30 | 2.68 | **1.52** |
+| fox | 2.42 | 2.29 | **1.22** |
+| pig | 1.95 | 2.62 | **1.43** |
+
+Mean **absolute** error is a dead heat — e07 34.8%, run4 34.1%. But e07 errs **long** (5 of 6 above
+reference) while run4 errs **compact** (6 of 6 below, several by 30–50%). A wolf at 1.23 against a
+2.08 reference is not a lying wolf with slightly-off proportions; it is a **sitting** wolf. Run-4
+rendered east more richly while abandoning the low oblique top-down pose the art style depends on.
+
+`d_aspect` takes `abs(...)`, so "too long" and "too upright" are scored identically — the metric was
+blind to the distinction by construction, and reported a tie where a human saw one model keeping the
+convention and the other dropping it.
+
+**Implication for the gate:** undershooting aspect (too compact) should be penalised harder than
+overshooting, because compact is the direction that means *wrong pose* rather than *slightly wrong
+proportion*. Not yet implemented — it needs calibrating against the labelled set like [F3](forks.md#f3).
+
+**Correction to [F5](forks.md#f5):** "run-4 wins east" should read "run-4 renders east more richly but
+loses the pose convention". Run-4 has **two** failures, not one — a broken convention on east and
+framed portraits on south. The verdict (e07 ships) is unchanged and now better supported.
