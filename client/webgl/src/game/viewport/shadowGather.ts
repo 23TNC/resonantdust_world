@@ -1293,17 +1293,6 @@ export class ShadowGather {
   private dirtyCols = 0;
   private dirtyRows = 0;
   /** Sticky "recompute every tile next build", per class — set on a rebuild; survives a not-ready frame. */
-  /** I5 BUDGET: slots still owing a bake, carried ACROSS frames. A resize/force-all used to mark every
-   *  slot dirty in ONE frame, and the gather is a single draw — so the draw grew with window area ×
-   *  lights × reach and tripped the GPU watchdog (context lost, renderer killed; five times on
-   *  2026-07-27). These hold the outstanding work so it can be drained a bounded slice at a time. */
-  private pendingCold: Uint8Array = new Uint8Array(0);
-  private pendingHot: Uint8Array = new Uint8Array(0);
-  /** True while {@link pendingCold}/{@link pendingHot} still hold work — the bake must keep being called. */
-  pendingWork = false;
-  /** Max slots re-baked per frame. Sized so one draw stays far under the watchdog even at large reach;
-   *  a full 32×16 window drains in ~3 frames. `__bakebudget(n)`; 0 = unlimited (the old behaviour). */
-  bakeBudget = 192;
   private forceColdDirty = true;
   private forceHotDirty = true;
   /** P6: walk the segment corridor (true) or the brute-force reach box (false). Brute is the
@@ -1412,11 +1401,6 @@ export class ShadowGather {
       if (n !== undefined) this.tapForce = n;
       this.rebakeAll();
       return this.tapForce;
-    };
-    // I5: per-frame rebake budget in slots (0 = unlimited, the pre-fix behaviour that crashed the GPU).
-    (globalThis as unknown as { __bakebudget: (n?: number) => number }).__bakebudget = (n?: number) => {
-      if (n !== undefined) { this.bakeBudget = n; this.rebakeAll(); }
-      return this.bakeBudget;
     };
     // P1 (plane-intersection): switch the live predicate to the ray-vs-card plane intersection.
     (globalThis as unknown as { __raytest: (n?: number) => number }).__raytest = (n?: number) => {
@@ -1740,8 +1724,6 @@ export class ShadowGather {
       this.ownerCol = new Int32Array(cols * rows);
       this.ownerRow = new Int32Array(cols * rows);
       this.slotValid = new Uint8Array(cols * rows);
-      this.pendingCold = new Uint8Array(cols * rows);
-      this.pendingHot = new Uint8Array(cols * rows);
       this.dirtyCols = cols;
       this.dirtyRows = rows;
       forceCold = forceHot = true;
@@ -1773,30 +1755,6 @@ export class ShadowGather {
         }
     }
     this.pendingRects.length = 0;
-    // I5: fold this frame's freshly-dirtied slots into the outstanding set, then take a BOUNDED slice.
-    // Everything not taken stays pending and drains on later frames, so no single draw is unbounded.
-    if (this.bakeBudget > 0) {
-      if (this.pendingCold.length !== this.coldMirror.length) {
-        this.pendingCold = new Uint8Array(this.coldMirror.length);
-        this.pendingHot = new Uint8Array(this.hotMirror.length);
-      }
-      for (let i = 0; i < this.coldMirror.length; i++) {
-        if (this.coldMirror[i]) this.pendingCold[i] = 1;
-        if (this.hotMirror[i]) this.pendingHot[i] = 1;
-      }
-      this.coldMirror.fill(0); this.hotMirror.fill(0);
-      let budget = this.bakeBudget, left = 0;
-      for (let i = 0; i < this.pendingCold.length; i++) {
-        const want = this.pendingCold[i] || this.pendingHot[i];
-        if (!want) continue;
-        if (budget > 0) {
-          if (this.pendingCold[i]) { this.coldMirror[i] = 1; this.pendingCold[i] = 0; }
-          if (this.pendingHot[i]) { this.hotMirror[i] = 1; this.pendingHot[i] = 0; }
-          budget--;
-        } else left++;
-      }
-      this.pendingWork = left > 0;
-    }
     let dc = 0; for (let i = 0; i < this.coldMirror.length; i++) if (this.coldMirror[i] || this.hotMirror[i]) dc++;
     this.debugDirtyTiles = dc; // DEBUG: tiles recomputed this frame (cold ∪ hot)
     this.coldDirtyTex.upload(this.coldMirror);
