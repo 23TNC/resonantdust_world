@@ -177,6 +177,10 @@ uniform int uCProfile;
 // 2/4/8/16 = force that count for every caster. Set via __taps(n); leave at 0. Declared HERE, above every use —
 // a uniform declared after the function that reads it fails to compile (moving-lights, I15).
 uniform int uTapForce;
+// Which tap ladder casterCover uses: 1 = GRADUATED (16/8/4/2/0 — the default), 0 = BINARY (8 taps at
+// pw >= 8, hard quad below). Set via __ladder(n). Binary was tried and rejected: capping at 8 taps bands
+// any penumbra wider than 8 texels, which is the common case at content's authored emitter size.
+uniform int uLadder;
 const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
@@ -375,7 +379,12 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   // same caster branches the same way, so the loop stays wave-coherent.
   float zTop = H * st;
   float pw = L.z > zTop + 1e-3 ? 2.0 * emitter * zTop / (L.z - zTop) : 1e9; // degenerate → widest
-  int taps = pw >= 16.0 ? 16 : (pw >= 8.0 ? 8 : (pw >= 4.0 ? 4 : (pw >= 2.0 ? 2 : 0)));
+  // BINARY vs GRADUATED (uLadder, 2026-07-27). The graduated ladder assumes each octave of penumbra
+  // width earns its own tap count; the binary one asks whether the stages carry their weight at all —
+  // soft above 8 texels, hard below, nothing in between. See the A/B in completed.md.
+  int taps = uLadder == 1
+    ? (pw >= 16.0 ? 16 : (pw >= 8.0 ? 8 : (pw >= 4.0 ? 4 : (pw >= 2.0 ? 2 : 0))))
+    : (pw >= 8.0 ? 8 : 0);
   if (uTapForce > 0) taps = uTapForce;                      // __taps(n) A/B override
   if (taps == 0) return sc;                                 // sub-2-texel penumbra → hard quad
   // Frame sampling constants (whole-px-per-unit; ppu = 2^lod / spanU is a pow2 ≥ 1 by construction).
@@ -1115,6 +1124,16 @@ export class ShadowGather {
    *  pre-2026-07-27 fixed-tap behaviour exactly, which is how the ladder's cost and its visual delta are
    *  measured against the same frame. */
   tapForce = 0;
+  /** Which tap ladder `casterCover` uses — 0 = BINARY (8 taps at pw >= 8, hard quad below), 1 = GRADUATED
+   *  (16/8/4/2/0). `__ladder(n)`.
+   *
+   *  GRADUATED is the default because the binary A/B **failed** (2026-07-27, see completed.md). Capping at
+   *  8 taps violates the ladder's own premise — one tap per texel of penumbra — the moment `pw` exceeds 8,
+   *  so a 25-texel gradient gets 8 coverage levels and BANDS visibly. At the emitter size content actually
+   *  authors (0.35 tiles ⇒ pw ≈ 18) that is the normal case, not an edge case. Binary is cheaper only
+   *  where it is also visibly wrong; at the one emitter size where the two cost the same it is 3× the
+   *  error. Keep the dial — it is how that claim gets re-tested if the tap positions change. */
+  ladder = 1;
   /** PROFILING staircase level for `LIGHT_FRAG` (0 = full shader; 1–4 cut it short at a named boundary).
    *  The lighting bake is ONE draw, so per-substep GPU timing is only obtainable by differencing these.
    *  `__profile(n)`; always leave it at 0. See `moving-lights` I9. */
@@ -1285,6 +1304,12 @@ export class ShadowGather {
       if (n !== undefined) this.tapForce = n;
       this.rebakeAll();
       return this.tapForce;
+    };
+    // DEBUG: swap the tap ladder — 0 = binary (8 or hard quad), 1 = graduated (16/8/4/2/0).
+    (globalThis as unknown as { __ladder: (n?: number) => number }).__ladder = (n?: number) => {
+      if (n !== undefined) this.ladder = n;
+      this.rebakeAll();
+      return this.ladder;
     };
     // DEBUG (__hideright): blank the right half of each billboard's normal in __shownormal (alignment probe).
     (globalThis as unknown as { __hideright: (on?: boolean) => boolean }).__hideright = (on?: boolean) => {
@@ -1805,6 +1830,7 @@ export class ShadowGather {
         p.uInt("uWProfile", this.walkProfile);
         p.uInt("uCProfile", this.casterProfile);
         p.uInt("uTapForce", this.tapForce);
+        p.uInt("uLadder", this.ladder);
         p.uFloat("uElevK", this.elevK);
       },
     });

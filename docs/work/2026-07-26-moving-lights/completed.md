@@ -412,3 +412,36 @@ also closes the identity re-run owed since the I16 bbox restoration — and it c
 function of the caster, since both walks independently choose the same one.
 
 `__taps(n)` forces a tier for A/B; `__taps(16)` reproduces the old behaviour exactly.
+
+### Experiment: are the tap STAGES needed? (binary 8/0 vs graduated) — REJECTED
+
+Tried collapsing the ladder to two states: 8 taps at `pw >= 8`, hard quad below. Same fixture, emitter
+radius swept to move `pw` across both boundaries; error is vs a forced-16 ground truth, cost is the cold
+gather draw.
+
+| emitter (px) | pw (units) | graduated err / ms | binary err / ms |
+|---|---|---|---|
+| 8 | 6.4 | 18.65 / **0.704** | 81.79 / **0.553** |
+| 16 | 12.7 | 5.37 / 0.876 | 15.23 / 0.896 |
+| 32 | 25.5 | 1.01 / 1.247 | 17.14 / 0.879 |
+| 48 | 38.2 | 0.81 / 1.274 | 8.65 / 0.900 |
+
+**There is no operating point where binary wins on both axes.** At `pw` 12.7 the two cost the SAME
+(0.876 vs 0.896 — binary marginally slower) and binary carries 3× the error. Everywhere binary is
+cheaper, it is cheaper *because* it is doing visibly less work.
+
+**Why, and it is the ladder's own premise.** N taps resolve N+1 coverage levels. Capping at 8 means a
+25-texel gradient gets 8 levels, so it BANDS — the em=32 screenshots show hard stair-stepped conifer
+shadows and bushes reduced to rectangular blobs, against smooth gradients on the graduated ladder. The
+"one tap per texel" rule that justifies cutting taps *down* is the same rule that forbids capping them.
+
+**This is the normal case, not an edge case.** Content authors `&thing.light.radius 0.35` tiles = 5.6
+units; with a ~30-unit conifer at 55° under a 40-unit light that is `pw` ≈ 18 — above the cap.
+
+**What the sweep also shows (the ladder working as intended):** graduated cost tracks emitter size —
+0.704 ms at pw 6.4 rising to 1.27 ms at pw 38. Cost scales with how soft the lighting actually is.
+A fixed count cannot do that in either direction, which is the argument for the ladder restated from
+the other end.
+
+Kept as `__ladder(n)` (1 = graduated, default; 0 = binary) so the claim is re-testable if the tap
+positions ever change.
