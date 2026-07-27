@@ -173,6 +173,10 @@ const GATHER_COMMON = /* glsl */ `
 //   1 the two record fetches (billboard + definition) + decode   2 + the shadowCover quad gate
 //   3 + hard-quad return (skips the 16-tap emitter loop)         0 + the 16-tap silhouette loop
 uniform int uCProfile;
+// A/B override for the ADAPTIVE tap ladder in casterCover: 0 = auto (choose from the penumbra width),
+// 2/4/8/16 = force that count for every caster. Set via __taps(n); leave at 0. Declared HERE, above every use —
+// a uniform declared after the function that reads it fails to compile (moving-lights, I15).
+uniform int uTapForce;
 const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
@@ -291,13 +295,25 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float reachU, highp 
 // (P4) — invert P back to the card's (s,t) (in-range BY CONSTRUCTION: P is inside the projected
 // quad, so no u/v-out-of-range class of reject exists) and sample the surface silhouette (coverage,
 // B channel) at the def's opaque frame. frame_w = 0 (not resolved / off-page) → solid quad.
-// A disk sample position (unit radius) for area-light emitter sampling — 16 taps: centre + a 6-ring +
-// a 9-ring. Deterministic (a pure function of the index) so the corridor and brute paths stay
-// bit-identical. Scaled by the emitter radius (world units) at the call site.
-vec2 emitterOffset(int i) {
-  if (i == 0) return vec2(0.0);
-  if (i <= 6) { float a = (float(i) - 1.0) / 6.0 * 6.2831853; return 0.55 * vec2(cos(a), sin(a)); }
-  float a = (float(i) - 7.0) / 9.0 * 6.2831853 + 0.4; return vec2(cos(a), sin(a));
+// A disk sample position (unit radius) for area-light emitter sampling. ADAPTIVE since 2026-07-27: the
+// tap count n is chosen per caster from the penumbra width, so the set must be BALANCED AT EVERY n — a
+// prefix of the 16-tap set is not. The first 8 of it are the centre, the whole 6-ring and exactly ONE
+// sample of the 9-ring, i.e. a disk with a lump on one side, which would swing the shadow toward that
+// lump. Deterministic (a pure function of i and n) so the corridor and brute paths stay bit-identical.
+// Scaled by the emitter radius (world units) at the call site.
+vec2 emitterOffset(int i, int n) {
+  if (n >= 16) {                       // WIDE: centre + 6-ring + 9-ring — the original set, unchanged
+    if (i == 0) return vec2(0.0);
+    if (i <= 6) { float a = (float(i) - 1.0) / 6.0 * 6.2831853; return 0.55 * vec2(cos(a), sin(a)); }
+    float a = (float(i) - 7.0) / 9.0 * 6.2831853 + 0.4; return vec2(cos(a), sin(a));
+  }
+  // NARROW: ONE ring of n, no centre. A regular n-gon has zero first moment for every n >= 2, so no
+  // tier can introduce a directional bias — including n = 2, where the pair is antipodal. Radius
+  // 1/sqrt(2) is a uniform disk's RMS radius, so a single ring matches the disk's SECOND moment: the
+  // correct one-ring quadrature, and it keeps the penumbra the same WIDTH across a tier change (only
+  // the number of steps resolved inside it drops) instead of visibly narrowing.
+  float a = float(i) / float(n) * 6.2831853 + 0.4;
+  return 0.70710678 * vec2(cos(a), sin(a));
 }
 // Coverage of one caster (billboard index into billboard_data) at P from light L. Reads the billboard record + its
 // definition (position + geo W/H + frame), places the tilted card, then computes a GROUND-PROJECTED
@@ -345,7 +361,23 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   float sc = shadowCover(P, Ac, L, W, H, reachU, data);
   if (uCProfile == 2) return sc * 1e-6;                     // C2: + the quad gate, no silhouette
   if (sc <= 0.0) return 0.0;
-  if (uCProfile == 3 || lod < 4u || emitter < 0.5) return sc; // C3 / no silhouette / point light → hard quad
+  if (uCProfile == 3 || lod < 4u) return sc;                // C3 / no silhouette resolved → hard quad
+  // ADAPTIVE TAP COUNT (2026-07-27). A sub-light displaced by d moves the ground shadow of a card point
+  // at world height z by d·z/(Lz−z), so the caster's WIDEST penumbra — at the card top, z = H·sinθ — is
+  //     pw = 2·emitter·zTop / (Lz − zTop)     [units]
+  // and one unit IS one shadow texel (TEXTILE_UNIT = 16/tile), so pw is the gradient's width in texels.
+  // N taps resolve N+1 coverage levels, so more than ~one tap per texel buys detail the map cannot store:
+  // 16 taps at pw >= 16, halve per octave down, and under 2 texels take the hard quad outright. This
+  // subsumes the old emitter < 0.5 point-light test — pw = 0 lands in the same branch — and is strictly
+  // tighter: a 1-unit emitter under a tall caster used to pay all 16 taps to resolve ~4 texels.
+  // Chosen per CASTER, not per texel. Two reasons: it is uniform over a whole shadow, so a tier change
+  // shows up as a light drifting rather than a BAND across one shadow; and every texel covered by the
+  // same caster branches the same way, so the loop stays wave-coherent.
+  float zTop = H * st;
+  float pw = L.z > zTop + 1e-3 ? 2.0 * emitter * zTop / (L.z - zTop) : 1e9; // degenerate → widest
+  int taps = pw >= 16.0 ? 16 : (pw >= 8.0 ? 8 : (pw >= 4.0 ? 4 : (pw >= 2.0 ? 2 : 0)));
+  if (uTapForce > 0) taps = uTapForce;                      // __taps(n) A/B override
+  if (taps == 0) return sc;                                 // sub-2-texel penumbra → hard quad
   // Frame sampling constants (whole-px-per-unit; ppu = 2^lod / spanU is a pow2 ≥ 1 by construction).
   // Window top-left = frame origin + offset·ppu − nudge. Atlas rows are image-top-down; card t=0 is the
   // sprite's BOTTOM row → v = 1−t.
@@ -362,7 +394,10 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   // out-of-range sub-lights are "lit" (0) → the average is the projection-correct soft coverage.
   float cov = 0.0;
   for (int i = 0; i < 16; i++) {
-    vec3 Lp = vec3(L.xy + emitterOffset(i) * emitter, L.z); // a sub-light on the emitter disk
+    if (i >= taps) break;                                   // CONSTANT bound + break, never i < taps in the
+    // for-condition: a loop whose condition reads a non-constant can miscompile into skipped iterations
+    // (the "correct data, no output" class — see the GLSL loop-condition foot-gun in the memory index).
+    vec3 Lp = vec3(L.xy + emitterOffset(i, taps) * emitter, L.z); // a sub-light on the emitter disk
     float denom = H * (st * (P.y - Lp.y) - 0.5 * Lp.z * ct);
     if (abs(denom) < 1e-4) continue;
     float t = Lp.z * (P.y - Ac.y) / denom;                  // card height where P's shadow ray grazes
@@ -376,7 +411,7 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
     if (uv.x < fmin.x || uv.x >= fmax.x || uv.y < fmin.y || uv.y >= fmax.y) continue; // outside frame → lit
     cov += texelFetch(surf, ivec2(uv), 0).b;                // hard silhouette coverage (B carries its own edge AA)
   }
-  return cov / 16.0;
+  return cov / float(taps);
 }
 // shadows-onto-billboards (attempt #3, IN-FAMILY): is world point P inside billboard's UPRIGHT drawn billboard, and
 // opaque there? Returns the billboard's base tile ROW if so (drives the receiver elevation), else -1. Mirrors
@@ -1075,6 +1110,11 @@ export class ShadowGather {
   walkProfile = 0;
   /** PROFILING staircase level INSIDE `casterCover` (0 = full; 1–3 cut short). `__cprofile(n)`; leave at 0. */
   casterProfile = 0;
+  /** A/B override for the adaptive emitter tap ladder — 0 = auto (per-caster, from the penumbra width),
+   *  else force 2/4/8/16 taps for EVERY caster. `__taps(n)`; leave at 0. Forcing 16 reproduces the
+   *  pre-2026-07-27 fixed-tap behaviour exactly, which is how the ladder's cost and its visual delta are
+   *  measured against the same frame. */
+  tapForce = 0;
   /** PROFILING staircase level for `LIGHT_FRAG` (0 = full shader; 1–4 cut it short at a named boundary).
    *  The lighting bake is ONE draw, so per-substep GPU timing is only obtainable by differencing these.
    *  `__profile(n)`; always leave it at 0. See `moving-lights` I9. */
@@ -1239,6 +1279,12 @@ export class ShadowGather {
       if (n !== undefined) this.casterProfile = n;
       this.rebakeAll();
       return this.casterProfile;
+    };
+    // DEBUG: force the emitter tap count (0 = the adaptive ladder). __taps(16) is the old fixed behaviour.
+    (globalThis as unknown as { __taps: (n?: number) => number }).__taps = (n?: number) => {
+      if (n !== undefined) this.tapForce = n;
+      this.rebakeAll();
+      return this.tapForce;
     };
     // DEBUG (__hideright): blank the right half of each billboard's normal in __shownormal (alignment probe).
     (globalThis as unknown as { __hideright: (on?: boolean) => boolean }).__hideright = (on?: boolean) => {
@@ -1758,6 +1804,7 @@ export class ShadowGather {
         p.uInt("uGProfile", this.gatherProfile);
         p.uInt("uWProfile", this.walkProfile);
         p.uInt("uCProfile", this.casterProfile);
+        p.uInt("uTapForce", this.tapForce);
         p.uFloat("uElevK", this.elevK);
       },
     });

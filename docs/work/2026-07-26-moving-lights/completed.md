@@ -350,3 +350,65 @@ Caveats that P0 must resolve rather than inherit:
 - The "moving" row predates [I3](issues.md#i3) — those lights moved via the debug array that
   [primitive-graph](../2026-07-25-primitive-graph/README.md) has since deleted, so the number stands as an
   order-of-magnitude signal, not a measurement to diff against.
+
+## Adaptive emitter tap ladder (2026-07-27)
+
+`casterCover` ran a fixed 16-tap area-light loop for every caster regardless of how wide that caster's
+penumbra actually was. The tap count is now chosen per caster from the penumbra width.
+
+**The width.** A sub-light displaced by `d` moves the ground shadow of a card point at world height `z`
+by `d·z/(Lz−z)`, so the widest penumbra — at the card top, `z = H·sinθ` — is
+
+    pw = 2·emitter·zTop / (Lz − zTop)      [units]
+
+One unit IS one shadow texel (`TEXTILE_UNIT` = 16/tile), so `pw` is the gradient's width in texels, and
+N taps resolve N+1 coverage levels. Spending more than ~one tap per texel buys detail the map cannot
+store. Ladder: `pw >= 16` → 16, `>= 8` → 8, `>= 4` → 4, `>= 2` → 2, else the hard quad.
+
+**Balanced at every tier.** A *prefix* of the 16-tap set is not a disk — its first 8 are the centre, the
+whole 6-ring and exactly ONE of the 9-ring, which would swing the shadow toward that lump. Narrow tiers
+use one ring of `n` at radius `1/sqrt(2)` (a uniform disk's RMS radius, matching its second moment); a
+regular n-gon has zero first moment for every n >= 2, so no tier is directionally biased.
+
+**Per caster, not per texel** — uniform over a whole shadow, so a tier change reads as a light drifting
+rather than a BAND across one shadow, and every texel of a caster branches the same way.
+
+### Measured — one moving light, reach 16 tiles, 6-tile orbit, zoom 0.5, SQUARE 64
+
+GPU timer queries (`EXT_disjoint_timer_query_webgl2`) on the COLD gather draw only, 240 samples each.
+
+| taps | gather (ms) | note |
+|---|---|---|
+| 16 forced | 1.299 / 1.295 | the previous fixed behaviour |
+| 8 forced | 0.924 | |
+| 4 forced | 0.730 | |
+| 2 forced | 0.634 | |
+| **0 (adaptive)** | **0.887 / 0.888** | **1.46× vs 16, −0.41 ms** |
+
+The lighting pass is untouched (~0.3 ms, unchanged) — the ladder only exists in the gather.
+
+**The model predicts the measurement.** For this fixture (emitter 4 units, `Lz` 40, `H` ~30, tilt 55°)
+`pw` = 12.7 units → tier 8; the adaptive cost (0.887) lands on the forced-8 cost (0.924), i.e. essentially
+every conifer picks 8. That agreement is the evidence the ladder is driven by the intended quantity and
+not by some incidental branch.
+
+### Accuracy
+
+Shadow-cold readback (class 0 — `debugReadShadow` defaults to cls 1 = HOT, which is empty for a cold
+light; reading the default returns all zeros and looks like perfect identity):
+
+| vs 16 taps | texels differing | mean abs delta | max |
+|---|---|---|---|
+| adaptive | 36.9 % | 4.87 / 255 (1.9 %) | 138 |
+| 4 forced | 38.0 % | 5.62 / 255 | 106 |
+| 2 forced | 39.1 % | 10.84 / 255 | 214 |
+
+Not bit-identical, and it cannot be — a different quadrature rule gives a different average. Mean
+deviation is 1.9 % and the two screenshots are indistinguishable; the ladder is monotone in quality
+(adaptive < forced-4 < forced-2 in error), which is the property that matters.
+
+**Corridor↔brute: BIT-IDENTICAL** under the adaptive ladder (24 508 nonzero texels, 0 differing). This
+also closes the identity re-run owed since the I16 bbox restoration — and it confirms the tier is a pure
+function of the caster, since both walks independently choose the same one.
+
+`__taps(n)` forces a tier for A/B; `__taps(16)` reproduces the old behaviour exactly.
