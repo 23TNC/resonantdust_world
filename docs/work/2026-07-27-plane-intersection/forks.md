@@ -17,19 +17,43 @@ then it should be a *cheap* reject (squared distance to the caster anchor vs rea
 
 ## F2 — How to restore the reach bound `projectTop` was providing
 
+**2026-07-27 — the justification below is RETRACTED (user challenge). Reach is already enforced
+elsewhere, and the identity argument does not hold.**
+
+- `buildPresence` gives each tile only the lights whose reach circle covers it, so a texel never
+  considers a light that cannot reach it. Reach IS clamped, one level up.
+- The corridor walks from the texel TOWARD the light, so any caster able to shadow that texel lies on
+  the walked segment and is visited regardless of clamping.
+- Corridor and brute both call the same `casterCover`, so a change to the projected quad's SHAPE applies
+  to both equally. It cannot make them disagree.
+
+I took the claim from `projectTop`'s own comment ("bounded by reach is also what preserves the corridor
+identity") and repeated it into this fork without testing it — the same unverified-mechanism pattern as
+[I6](issues.md#i6).
+
+**What may actually depend on the clamp** is dirty bookkeeping, not identity: a moving light dirties its
+REACH BOX, so a shadow extending past reach would leave a stale smear in tiles outside that box. That is
+concrete and testable — move a light and look for a trail beyond its reach circle.
+
+**And the divergence may be an improvement.** Truncating a shadow at an arbitrary circle is a fudge; a
+shadow that ends where the light stops mattering is the physical behaviour. Part of P0's measured 26 %
+may be the ray test being MORE correct, not less.
+
+_Original framing, kept because the option analysis is still the right menu:_
+
 `projectTop` clamps a projected corner to `reachU`, so a caster's shadow can never leave the light's
-reach box. That is not cosmetic: the corridor walk only visits tiles inside the reach box, so a shadow
-that escaped it would be found by the brute path and missed by the corridor — the identity proof would
-break, and the corridor is what we ship.
+reach box.
 
 - **(a) Distance test on P**: reject when `length(P − L.xy) > reachU`. One `dot` and a compare.
 - **(b) Clamp `t`** so the intersection cannot occur beyond reach.
 - **(c) Rely on the walk's reach box** and drop the per-caster bound.
 
-**Chosen: (a).** It is the direct statement of the invariant the proof needs ("no shadow outside reach"),
-it is a squared-distance compare with no `sqrt`, and it does not perturb the `(s,t)` maths. (c) is
-tempting and wrong: the walk bounds which TILES are visited, not how far a given caster's shadow reaches
-inside them, so a long caster shadow could still be found at one end of the box and not the other.
+**REOPENED.** (c) — rely on presence and drop the per-caster bound — is now the leading option, not the
+wrong one: presence already bounds which lights a texel sees, and the corridor already walks the segment
+that contains any relevant caster. Decide it in P1 by TESTING, not arguing: build the ray gate with no
+reach bound, run corridor↔brute identity, then move a light and check for a stale trail outside its reach
+circle. If identity holds and there is no smear, (c) is correct and the bound is dead weight. If a smear
+appears, (a) — a squared-distance reject on `P`, no `sqrt` — is the cheap fix.
 
 ## F3 — Where `SHADOW_BASE_PUSH` goes
 
@@ -108,6 +132,7 @@ That only makes sense when the old path survives as a reference. Replacing outri
 right at three zooms, and it is faster. `git` is the reference; `checkpoint/pre-plane-intersection` is the
 tag to diff against.
 
-**What this does NOT license.** The reach bound is not scaffolding — the corridor identity proof depends
-on a shadow being unable to escape the reach box, so P1 must reproduce it rather than drop it as "old
-quad behaviour". Deleting the quad is the goal; deleting an invariant it happened to enforce is a bug.
+**What this does NOT license.** Dropping a behaviour because it is inconvenient, without checking what
+depended on it. That cuts both ways — see [F2](#f2), where I asserted the reach clamp was a load-bearing
+invariant and it turned out presence already enforced reach. Test what an old fudge was doing before
+either keeping or deleting it.

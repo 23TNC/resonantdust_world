@@ -38,7 +38,7 @@ long shadows; move the camera instead.
 
 - [ ] Write the ray-vs-card intersection as a function in `GATHER_COMMON` and call it from `casterCover` as THE predicate — not alongside `shadowCover`, in place of it. One implementation, no switch.
 - [ ] Hoist the solve to a SINGLE gate ahead of the tap loop and feed its `s`/`t` into the centre tap's `uv` rather than re-solving. Without the hoist a miss costs N solves where it used to cost one quad test.
-- [ ] Give the ray gate a reach bound: reject when `P` is beyond `reachU` of the light. `projectTop` provided this and the corridor identity proof depends on it — a shadow that escapes the reach box is found by brute and missed by the corridor.
+- [ ] Build the ray gate with NO reach bound first, then test whether one is needed: run corridor↔brute identity, and move a light looking for a stale shadow trail outside its reach circle. Presence may already bound it ([F2](forks.md#f2)).
 - [ ] Decide `projectTop`'s `k <= 0` case: it ran the corner OUT to reach when the light sat below the card top, where the ray test reports unshadowed. Reproduce it or drop it deliberately, and record which in `forks.md`.
 - [ ] Carry `SHADOW_BASE_PUSH` across — it closed a caster/shadow seam from the quad's base corners. Fold it into the `t` range or the anchor, and confirm the seam has not returned.
 - [ ] Hoist `worldTiltRad` out of `casterCover` to a per-pass value: it is a texel fetch returning a pass-constant, currently re-fetched per caster per texel.
