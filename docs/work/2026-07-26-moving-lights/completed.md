@@ -187,6 +187,33 @@ plateau (~156 ms at 64+) to ~17 ms — right at the 60 fps edge, and comfortable
 the dominant few. The plan's sizing survives contact with a real GPU measurement. But it also means **there is
 no headroom to spend elsewhere**: at 9.9 ms for one light, every other lever in this stream is noise.
 
+## 2026-07-27 — F7 step 1: the shadow-edge refine is DELETED. 11.36 → 3.68 ms.
+
+Removed the per-fine-texel `walkShadow` re-run from `LIGHT_FRAG`, plus its whole `uEdgeRefine` /
+`edgeRefine` / `__edgerefine` plumbing — deleted, not left behind a toggle ([F7](forks.md#f7)).
+
+Same fixture as the profile (one light, reach 16, 6-tile orbit through `movePrim`, zoom 0.5), GPU-timed:
+
+| pass | before | after |
+|---|---|---|
+| lighting | 9.724 ms | **1.485 ms** |
+| gather | 1.633 ms | 2.193 ms (unchanged code; orbit-phase variance) |
+| **GPU total** | **11.36 ms** | **3.68 ms** |
+
+**3.1× on a single moving light**, from deleting one feature. It matches [I9](issues.md#i9)'s prediction: the
+refine was 9.29 ms of a 10.88 ms pass, and the pass now sits at 1.485 — i.e. what the staircase said the rest
+of the shader costs.
+
+Verified: scene renders, shadows radiate correctly from the light and fall off with distance, light pool
+intact. Shadow edges are coarser — the accepted trade ([F7](forks.md#f7): *"I don't care about the
+pixilation"*).
+
+Nothing replaces it. The coarse shadow nearest-upsampled across its 8×8 block already overdraws, which is the
+conservative behaviour the prim pass will finely cut.
+
+**Still open from F7** — the prim pass, which is what lets `receiverAt` (1.11 ms) and the cut go too:
+draw prim quads into the toroidal lightmap, sample own coverage + own normal from own frame, overwrite.
+
 ## Baseline carried in from the prior session (2026-07-26, pre-P0)
 
 Recorded here so P0's instrumented numbers have something to sit next to. Measured at **zoom 0.25, reach 16

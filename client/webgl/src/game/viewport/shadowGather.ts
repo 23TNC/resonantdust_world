@@ -599,12 +599,12 @@ uniform sampler2D uSurface;        // lightmap (CO-PACK): the shared sprite atla
 uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = paint the sampled billboard normal into oLight
 uniform float uNormalPitch;        // lightmap (__pitchnormal): standing-billboard normal pitch (rad, 90°−tilt; live, F7-reconsidered)
 uniform vec2 uLightAlign;          // lightmap (__lightalign): the LIGHTING receiver-mask seat (units, NW), decoupled from the shadow's RECV_ALIGN
-uniform int uEdgeRefine;           // shadow-edge-refine (__edgerefine): 1 = re-test the caster silhouette at fine res on (0,1) edge texels
-// PROFILING STAIRCASE (2026-07-27, moving-lights I9). 0 = full shader. 1..5 cut the fragment short at a named
+// PROFILING STAIRCASE (2026-07-27, moving-lights I9). 0 = full shader. 1..4 cut the fragment short at a named
 // boundary so a GPU timer can price each substep by difference — this pass is ONE draw, so it cannot be
 // timed any other way. Each level includes every level below it:
 //   1 dirty gate + window mapping + P   2 + receiverAt   3 + billboard/world normal
-//   4 + accumulateLights with NO shadow fetch   5 + coarse shadow lookup, no refine   0 + edge refine
+//   4 + accumulateLights with NO shadow fetch   0 + coarse shadow lookup
+// (level 5 was "no edge refine"; the refine is deleted, so 5 and 0 are the same shader.)
 uniform int uProfile;
 uniform int uHideRight;            // DEBUG (__hideright): 1 = blank the right half of each billboard's normal in __shownormal
 // lightmap P1: sprite-tangent normal to the WORLD frame. Rotate the flat/ground basis (image-up = north, out
@@ -682,18 +682,16 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
       bool onBillboard = (b8 & 1u) == 1u;
       float shadow = float(b8 >> 1) / 127.0;   // the u7 re-expanded (the stored <<1 IS the x2 restore)
       if (!onBillboard && rbillboardN != 0u) shadow = 0.0;              // cut ground shadow off billboards (fine presence)
-      // shadow-edge-refine: the coarse shadow (16/tile) is nearest-upsampled → blocky edges. Where it's a PARTIAL
-      // (0,1) edge value, re-run the caster-silhouette walk at THIS fine texel to SELECT the sharp coverage (only
-      // edge texels pay; interior 0/1 is kept free). Ground cast shadow only for now (rbillboardN 0) — thing texels
-      // keep the coarse blended value. Same GROUND-path args as the gather (Pground = P + SHADOW_LIFT, corridor).
-      if (uEdgeRefine == 1 && uProfile == 0 && !onBillboard && rbillboardN == 0u && shadow > 0.0 && shadow < 1.0) {
-        vec3 L3 = vec3(Lxy, Lz);
-        float emitter = float((Ld.w >> 12) & 255u);          // v3: emitter_radius moved to A[12:19]
-        int reachT = int(reach) / int(UPT) + 1;
-        vec2 Pg = P; Pg.y += ${SHADOW_LIFTF};
-        float cd;
-        shadow = walkShadow(L3, emitter, Pg, false, 0u, P, 1, reachT, data, uSurface, cd);
-      }
+      // The shadow-edge REFINE lived here and is DELETED (2026-07-27, moving-lights F7). It re-ran the full
+      // walkShadow corridor **per fine texel** on every (0,1) edge value to sharpen the upsampled edge —
+      // 8.39 M fine texels against the shadow map's 131 k, a 64× resolution multiplier, INSIDE the per-light
+      // loop. Measured at **9.29 ms of a 10.88 ms pass — 85 %** (I9), for ONE light.
+      //
+      // It is not optimised, it is gone, because the boundary it recomputed is one the rasteriser gives away.
+      // The only fine edge that matters is the BILLBOARD SILHOUETTE (where bright ground would leak out from
+      // under a trunk), and the prim pass draws that at fine resolution masked by the sprite's own coverage —
+      // so **the overwrite IS the fine cut**. The blocky edge that remains on open ground is accepted (user).
+      // Nothing replaces this: the coarse shadow nearest-upsampled across its 8×8 block already overdraws.
       float contrib = intensity * fall * ndl * (1.0 - shadow); // shadowed contribution (× Lambert on things)
       // CLAMP PER LIGHT, before it joins the sum. This is what makes the accumulator's exactness bound
       // UNCONDITIONAL rather than merely likely: with every light capped at 1.0 (255 after quantisation),
@@ -1019,13 +1017,10 @@ export class ShadowGather {
    *  aligns to the RAW def anchor (the albedo draw), so this is 0. `__lightalign(x, y)` re-tunes by eye. */
   private lightAlignX = 0;
   private lightAlignY = 0;
-  /** shadow-edge-refine (`__edgerefine`): re-test the caster silhouette at fine res on `(0,1)` edge texels so
-   *  the cast shadow's edge is near-pixel-perfect instead of the coarse 16/tile blocks. Default ON; A/B off. */
-  /** PROFILING staircase level for `LIGHT_FRAG` (0 = full shader; 1–5 cut it short at a named boundary).
+  /** PROFILING staircase level for `LIGHT_FRAG` (0 = full shader; 1–4 cut it short at a named boundary).
    *  The lighting bake is ONE draw, so per-substep GPU timing is only obtainable by differencing these.
    *  `__profile(n)`; always leave it at 0. See `moving-lights` I9. */
   profile = 0;
-  private edgeRefine = true;
   /** DEBUG (`__hideright`): blank the right half of each billboard's normal in `__shownormal` (alignment probe). */
   private hideRight = false;
   /** The LIVE world ground tilt (degrees) — written into the data map constants each frame so the shadow
@@ -1162,11 +1157,12 @@ export class ShadowGather {
       this.rebakeAll();
       return [this.lightAlignX, this.lightAlignY];
     };
-    // DEBUG (shadow-edge-refine): A/B the fine caster-silhouette re-test (on) vs the coarse nearest shadow (off).
-    (globalThis as unknown as { __edgerefine: (on?: boolean) => boolean }).__edgerefine = (on?: boolean) => {
-      this.edgeRefine = on ?? !this.edgeRefine;
+    // DEBUG (moving-lights I9): the LIGHT_FRAG profiling staircase — cut the fragment short at a named
+    // boundary so a GPU timer can price each substep by difference. Always leave it at 0.
+    (globalThis as unknown as { __profile: (n?: number) => number }).__profile = (n?: number) => {
+      if (n !== undefined) this.profile = n;
       this.rebakeAll();
-      return this.edgeRefine;
+      return this.profile;
     };
     // DEBUG (__hideright): blank the right half of each billboard's normal in __shownormal (alignment probe).
     (globalThis as unknown as { __hideright: (on?: boolean) => boolean }).__hideright = (on?: boolean) => {
@@ -1704,7 +1700,6 @@ export class ShadowGather {
         p.uInt("uShowNormal", this.showNormal ? 1 : 0);
         p.uFloat("uNormalPitch", this.normalPitchDeg * Math.PI / 180);
         p.uVec2("uLightAlign", this.lightAlignX, this.lightAlignY);
-        p.uInt("uEdgeRefine", this.edgeRefine ? 1 : 0);
         p.uInt("uProfile", this.profile);
         p.uInt("uHideRight", this.hideRight ? 1 : 0);
       },
