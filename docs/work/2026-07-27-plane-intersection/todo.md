@@ -66,9 +66,9 @@ _This phase DISSOLVES P1's gate rather than optimising it. Once the predicate is
 "does any ray hit" IS the answer — there is nothing left to gate on, and the penumbra P1 clipped to the
 centre ray comes back wider than the original forward projection ever allowed._
 
-- [ ] Replace the N-tap emitter loop with two rays at light ± emitter radius on the caster's cross-axis, classifying each texel umbra / penumbra / lit from the two solves.
-- [ ] Implement the straddle rule: when the two samples land on opposite sides of the card, take the CENTRE ray's presence. Without it, points close behind a caster read lit — neither extreme ray hits — leaving a bright notch at every trunk.
-- [ ] DELETE the adaptive tap ladder and everything serving it: `emitterOffset`, the tier selection, `uTapForce`, `uLadder`, and the `__taps`/`__ladder` dials.
+- [x] Replace the N-tap emitter loop with two rays at light ± emitter radius on the caster's cross-axis, classifying each texel umbra / penumbra / lit from the two solves.
+- [x] Implement the straddle rule: when the two samples land on opposite sides of the card, take the CENTRE ray's presence. Without it, points close behind a caster read lit — neither extreme ray hits — leaving a bright notch at every trunk.
+- [x] DELETE the adaptive tap ladder and everything serving it: `emitterOffset`, the tier selection, `uTapForce`, `uLadder`, and the `__taps`/`__ladder` dials.
 - [ ] Verify the notch is absent at the trunk of every torch-lit conifer at zoom 2, and that penumbra now appears OUTSIDE the old hard-quad boundary rather than clipped to it.
 
 ## P5 — Close the other half of the tile clip

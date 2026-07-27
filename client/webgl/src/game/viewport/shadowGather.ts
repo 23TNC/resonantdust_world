@@ -176,15 +176,6 @@ const GATHER_COMMON = /* glsl */ `
 //   1 the two record fetches (billboard + definition) + decode   2 + the cardHit gate
 //   3 + hard-quad return (skips the 16-tap emitter loop)         0 + the 16-tap silhouette loop
 uniform int uCProfile;
-// A/B override for the ADAPTIVE tap ladder in casterCover: 0 = auto (choose from the penumbra width),
-// 2/4/8/16 = force that count, NEGATIVE = force the hard quad (no penumbra at all) for every caster.
-// Set via __taps(n); leave at 0. Declared HERE, above every use —
-// a uniform declared after the function that reads it fails to compile (moving-lights, I15).
-uniform int uTapForce;
-// Which tap ladder casterCover uses: 1 = GRADUATED (16/8/4/2/0 — the default), 0 = BINARY (8 taps at
-// pw >= 8, hard quad below). Set via __ladder(n). Binary was tried and rejected: capping at 8 taps bands
-// any penumbra wider than 8 texels, which is the common case at content's authored emitter size.
-uniform int uLadder;
 // CARD LEAN — the caster card's north offset as a fraction of H·cos(tilt). 1.0 = a RIGID parallel-to-view
 // billboard (top at north H·cos0, up H·sin0, card length exactly H). 0.5 was the shipped value and is
 // NOT a rigid rotation: it leans half as far north while keeping full elevation, so the card measures
@@ -292,56 +283,35 @@ float cardHit(vec2 P, vec2 Ac, vec3 L, float W, float H, float reachU, float st,
   sOut = s; tOut = t;
   return 1.0;
 }
+// ONE SUB-LIGHT's silhouette sample (plane-intersection P3). Solves the backward intersection for a
+// sub-light at Lxy and samples the silhouette where it lands. The side output reports HOW it missed so
+// the caller can detect a STRADDLE: 0 = hit the card, -1 = passed LEFT, +1 = passed RIGHT, 2 = missed
+// vertically. That side information is the whole reason two rays can classify a penumbra: a pair that
+// passed on OPPOSITE sides has the caster between them, which means P is behind it.
+float subLight(vec2 Lxy, float Lz, vec2 P, vec2 Ac, float W, float H, float st, float ct, uint rot,
+               float ppu, float ox, float oy, float nx, float ny, vec2 fo, vec2 fmin, vec2 fmax,
+               sampler2D surf, out int side) {
+  side = 2;
+  float dn = H * (st * (P.y - Lxy.y) - uCardLean * Lz * ct);
+  if (abs(dn) < 1e-4) return 0.0;
+  float t = Lz * (P.y - Ac.y) / dn;
+  if (t < 0.0 || t > 1.0) return 0.0;                 // missed the card vertically
+  float k = Lz / (Lz - t * H * st);
+  if (k <= 0.0) return 0.0;
+  float sc = ((P.x - Lxy.x) / k + Lxy.x - Ac.x) / W + 0.5;
+  if (sc < 0.0) { side = -1; return 0.0; }            // passed LEFT of the card
+  if (sc > 1.0) { side =  1; return 0.0; }            // passed RIGHT of it
+  side = 0;
+  float sm = rot == 3u ? 1.0 - sc : sc;               // W-facing = mirrored E frame
+  vec2 uv = fo + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(sm * W, (1.0 - t) * H) * ppu;
+  if (uv.x < fmin.x || uv.x >= fmax.x || uv.y < fmin.y || uv.y >= fmax.y) return 0.0;
+  return texelFetch(surf, ivec2(uv), 0).b;            // silhouette coverage (B carries its own edge AA)
+}
 // Coverage of one caster (billboard index into billboard_data) at P from light L: read the billboard record + its
 // definition (position + geo W/H), then the pure-quad test; if occluded, apply the sprite's SHAPE
 // (P4) — invert P back to the card's (s,t) (in-range BY CONSTRUCTION: P is inside the projected
 // quad, so no u/v-out-of-range class of reject exists) and sample the surface silhouette (coverage,
 // B channel) at the def's opaque frame. frame_w = 0 (not resolved / off-page) → solid quad.
-// A disk sample position (unit radius) for area-light emitter sampling. ADAPTIVE since 2026-07-27: the
-// tap count n is chosen per caster from the penumbra width, so the set must be BALANCED AT EVERY n — a
-// prefix of the 16-tap set is not. The first 8 of it are the centre, the whole 6-ring and exactly ONE
-// sample of the 9-ring, i.e. a disk with a lump on one side, which would swing the shadow toward that
-// lump. Deterministic (a pure function of i and n) so the corridor and brute paths stay bit-identical.
-// Scaled by the emitter radius (world units) at the call site.
-vec2 emitterOffset(int i, int n, vec2 along) {
-  if (n >= 16) {                       // WIDE: centre + 6-ring + 9-ring — the original set, unchanged
-    if (i == 0) return vec2(0.0);
-    if (i <= 6) { float a = (float(i) - 1.0) / 6.0 * 6.2831853; return 0.55 * vec2(cos(a), sin(a)); }
-    float a = (float(i) - 7.0) / 9.0 * 6.2831853 + 0.4; return vec2(cos(a), sin(a));
-  }
-  if (n <= 1) return vec2(0.0);        // HARD: the single tap is the disk CENTRE, not a point on the ring
-  // ORIENTED to the shadow (2026-07-27). The ring used a FIXED world angle, which made low-tier quality
-  // depend on WHICH WAY the caster sat from the light: shadows radiate outward, so a caster whose shadow
-  // happened to run along that fixed angle got both of its 2 taps strung out down the shadow's LENGTH —
-  // where they see nearly the same silhouette and buy almost nothing — while a caster at 90° got them
-  // straddling the shadow's WIDTH, which is where the penumbra actually lives. Building the ring in the
-  // (perp, along) basis instead puts tap 0 on the cross-axis for every caster, so n = 2 is always the
-  // useful pair and the tier means the same thing in every direction.
-  vec2 perp = vec2(-along.y, along.x);
-  // NARROW: a ring of n, plus a CENTRE tap when n is ODD. The centre is worth a slot because a pure ring
-  // never samples the light's ACTUAL position — the result is an average of offset shadows, so the umbra
-  // core is only ever inferred, and thin features can hollow out. An odd tier spends one tap on the true
-  // hard shadow and softens symmetrically around it, which is also the better quadrature (a centre+ring
-  // rule beats a pure ring at equal count for a function peaked at the centre). It buys a level too:
-  // 3 taps resolve 0, 1/3, 2/3, 1 where 2 taps resolve only 0, 1/2, 1.
-  bool odd = (n & 1) == 1;
-  if (odd && i == 0) return vec2(0.0);        // the centre tap
-  int ring = odd ? n - 1 : n;                 // taps actually on the ring
-  int k = odd ? i - 1 : i;                    // index within the ring
-  // A regular ring has zero first moment for every count >= 2, so no tier is directionally biased, and
-  // the centre contributes zero to it — adding it keeps that property exactly.
-  //
-  // RADIUS. 1/sqrt(2) is a uniform disk's RMS radius, which matches the disk's SECOND moment for a pure
-  // ring. A centre tap contributes 0 to that moment, so an odd tier must push its ring OUT by
-  // sqrt(n/ring) to compensate — otherwise odd tiers would render a visibly tighter penumbra than their
-  // even neighbours and the ladder would wobble in width as well as smoothness. Even n: sqrt(1) = 1, so
-  // the one expression covers both. (Tier 16 still samples to 1.0r and remains slightly wider than all
-  // of these — a known inconsistency, not yet unified.)
-  float rr = 0.70710678 * sqrt(float(n) / float(ring));
-  // No phase offset — ring tap 0 lands on +perp deliberately, so an n = 2 or 3 pair straddles the shadow.
-  float a = float(k) / float(ring) * 6.2831853;
-  return rr * (cos(a) * perp + sin(a) * along);
-}
 // Coverage of one caster (billboard index into billboard_data) at P from light L. Reads the billboard record + its
 // definition (position + geo W/H + frame), places the tilted card, then computes a GROUND-PROJECTED
 // penumbra by AREA-LIGHT sampling: the light is a disk of radius emitter (units) at height Lz; for
@@ -381,84 +351,54 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   // lives INSIDE this quad: the silhouette edge softens as sub-lights partially cover it, the base stays
   // hard (z≈0 edges don't move with the sub-light), and detail dissolves at the tip (high edges do). The
   // outward feather beyond the silhouette extremes would need the corridor pad widened + re-proven — a
-  // THE GATE — one backward solve, and it is TRANSITIONAL (plane-intersection P1). The forward projection
-  // it replaces covered the caster's full extremes, so gating on the CENTRE ray is deliberately tighter:
-  // texels where the centre misses but an offset sub-light hits — the penumbra — are now rejected here.
-  // That is a known, recorded narrowing, not a regression to chase; P3 DISSOLVES this gate entirely, and
-  // with two solves at ± radius "does any ray hit" becomes the answer with nothing left to gate on.
-  float gs, gt;
-  float sc = cardHit(P, Ac, L, W, H, reachU, st, ct, gs, gt);
-  if (uCProfile == 2) return sc * 1e-6;                     // C2: + the gate, no silhouette
-  if (sc <= 0.0) return 0.0;
-  if (uCProfile == 3 || lod < 4u) return sc;                // C3 / no silhouette resolved → solid
-  // ADAPTIVE TAP COUNT (2026-07-27). A sub-light displaced by d moves the ground shadow of a card point
-  // at world height z by d·z/(Lz−z), so the caster's WIDEST penumbra — at the card top, z = H·sinθ — is
-  //     pw = 2·emitter·zTop / (Lz − zTop)     [units]
-  // and one unit IS one shadow texel (TEXTILE_UNIT = 16/tile), so pw is the gradient's width in texels.
-  // N taps resolve N+1 coverage levels, so more than ~one tap per texel buys detail the map cannot store:
-  // 16 taps at pw >= 16, halve per octave down, and under 2 texels take the hard quad outright. This
-  // subsumes the old emitter < 0.5 point-light test — pw = 0 lands in the same branch — and is strictly
-  // tighter: a 1-unit emitter under a tall caster used to pay all 16 taps to resolve ~4 texels.
-  // Chosen per CASTER, not per texel. Two reasons: it is uniform over a whole shadow, so a tier change
-  // shows up as a light drifting rather than a BAND across one shadow; and every texel covered by the
-  // same caster branches the same way, so the loop stays wave-coherent.
-  float zTop = H * st;
-  float pw = L.z > zTop + 1e-3 ? 2.0 * emitter * zTop / (L.z - zTop) : 1e9; // degenerate → widest
-  // BINARY vs GRADUATED (uLadder, 2026-07-27). The graduated ladder assumes each octave of penumbra
-  // width earns its own tap count; the binary one asks whether the stages carry their weight at all —
-  // soft above 8 texels, hard below, nothing in between. See the A/B in completed.md.
-  // The bottom rung is 1, NOT 0. Taps look like a pure penumbra dial, but the silhouette lookup lives
-  // INSIDE the loop — 0 taps returns sc, the projected QUAD, so it loses the caster's SHAPE, not just
-  // its soft edge (bushes become rectangles). One tap at the disk CENTRE is the hard-shadow case done
-  // right: correct silhouette, hard edge, one texel fetch. Only a caster with no resolved silhouette
-  // (lod under 4, handled above) has any business returning the quad.
-  int taps = uLadder == 1
-    ? (pw >= 16.0 ? 16 : (pw >= 8.0 ? 8 : (pw >= 4.0 ? 4 : (pw >= 2.0 ? 2 : 1))))
-    : (pw >= 8.0 ? 8 : 1);
-  if (uTapForce > 0) taps = uTapForce;                      // __taps(n) A/B override
-  else if (uTapForce < 0) taps = 0;                         // __taps(-1) = force the HARD QUAD everywhere.
-  // 0 cannot mean this: it already means "auto" (use the ladder), so forcing no-penumbra needs its own
-  // sentinel rather than the falsy value the auto path uses.
-  if (taps == 0) return sc;                                 // sub-2-texel penumbra → hard quad
-  // The SHADOW AXIS this caster's ring is built around — light → caster, on the ground. Per caster (not
-  // per texel), so it stays a uniform basis over the whole shadow and costs one normalize per caster.
-  vec2 sdir = Ac - L.xy;
-  float slen = length(sdir);
-  vec2 along = slen > 1e-4 ? sdir / slen : vec2(1.0, 0.0);  // caster under the light → any basis will do
-  // Frame sampling constants (whole-px-per-unit; ppu = 2^lod / spanU is a pow2 ≥ 1 by construction).
-  // Window top-left = frame origin + offset·ppu − nudge. Atlas rows are image-top-down; card t=0 is the
-  // sprite's BOTTOM row → v = 1−t.
+  // NO GATE. P1 used a centre-ray gate and it was explicitly transitional: the centre ray is narrower
+  // than the caster's extremes, so it rejected exactly the texels where the centre misses but an offset
+  // sub-light hits -- the penumbra. With two rays the classification IS the test; there is nothing left
+  // to gate on, and the penumbra comes back wider than the forward projection ever allowed.
+  if (uCProfile == 2 || uCProfile == 3 || lod < 4u) {
+    // No silhouette resolved (or a profile cut): the centre solve alone, solid coverage.
+    float gs, gt;
+    float solid = cardHit(P, Ac, L, W, H, reachU, st, ct, gs, gt);
+    return uCProfile == 2 ? solid * 1e-6 : solid;
+  }
+  // Frame sampling constants (whole-px-per-unit; ppu = 2^lod / spanU is a pow2 >= 1 by construction).
+  // Window top-left = frame origin + offset*ppu - nudge. Atlas rows are image-top-down; card t=0 is the
+  // sprite's BOTTOM row, so v = 1-t.
   float ppu = float(1u << lod) / spanU;
   float fx = float((D.z >> 22) & 1023u) * 16.0, fy = float((D.z >> 12) & 1023u) * 16.0;
-  float nx = float(int((D.w >> 20) & 4095u) - 2048);   // u12, +2048 bias — full either-direction range
+  float nx = float(int((D.w >> 20) & 4095u) - 2048);   // u12, +2048 bias -- full either-direction range
   float ny = float(int((D.w >> 8) & 4095u) - 2048);
-  float side = float(1u << lod);
-  vec2 fmin = vec2(fx, fy), fmax = vec2(fx + side, fy + side);
-  // Area-light emitter sampling — 16 sub-lights over the disk, HARD silhouette per sub-light, averaged.
-  //   invert P → card (s,t):  y(t) = Ac.y − lean·t·H·cosθ, z(t) = t·H·sinθ
-  //   ⇒ t = Lp.z·(P.y − Ac.y) / (H·(sinθ·(P.y − Lp.y) − 0.5·Lp.z·cosθ));  s from the row's k factor.
-  // A sub-light contributes only if its (s,t) lands inside the card AND the silhouette is opaque there;
-  // out-of-range sub-lights are "lit" (0) → the average is the projection-correct soft coverage.
-  float cov = 0.0;
-  for (int i = 0; i < 16; i++) {
-    if (i >= taps) break;                                   // CONSTANT bound + break, never i < taps in the
-    // for-condition: a loop whose condition reads a non-constant can miscompile into skipped iterations
-    // (the "correct data, no output" class — see the GLSL loop-condition foot-gun in the memory index).
-    vec3 Lp = vec3(L.xy + emitterOffset(i, taps, along) * emitter, L.z); // a sub-light on the emitter disk
-    float denom = H * (st * (P.y - Lp.y) - uCardLean * Lp.z * ct);
-    if (abs(denom) < 1e-4) continue;
-    float t = Lp.z * (P.y - Ac.y) / denom;                  // card height where P's shadow ray grazes
-    if (t < 0.0 || t > 1.0) continue;                       // P not under this sub-light's card span → lit
-    float k = Lp.z / (Lp.z - t * H * st);
-    if (k <= 0.0) continue;
-    float s = ((P.x - Lp.x) / k + Lp.x - Ac.x) / W + 0.5;
-    if (s < 0.0 || s > 1.0) continue;
-    if (rot == 3u) s = 1.0 - s;                             // W-facing = mirrored E frame
-    vec2 uv = vec2(fx, fy) + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(s * W, (1.0 - t) * H) * ppu;
-    if (uv.x < fmin.x || uv.x >= fmax.x || uv.y < fmin.y || uv.y >= fmax.y) continue; // outside frame → lit
-    cov += texelFetch(surf, ivec2(uv), 0).b;                // hard silhouette coverage (B carries its own edge AA)
+  float fside = float(1u << lod);
+  vec2 fo = vec2(fx, fy), fmin = fo, fmax = fo + vec2(fside);
+  // THE CROSS-AXIS. The pair straddles the shadow's WIDTH, not its length: shadows radiate from the
+  // light, so a pair strung along the shadow would see nearly the same silhouette twice and buy nothing.
+  // Per caster, so it is a uniform basis over the whole shadow and costs one normalize per caster.
+  vec2 sdir = Ac - L.xy;
+  float slen = length(sdir);
+  vec2 along = slen > 1e-4 ? sdir / slen : vec2(1.0, 0.0);
+  vec2 perp = vec2(-along.y, along.x) * emitter;
+  // TWO RAYS at light +/- emitter radius (user's design). The N-tap disk is gone: averaging N hard
+  // shadows quantised the penumbra into N copies of the silhouette -- the "N tree tips" artefact -- and
+  // cost scaled with softness. Two solves classify instead:
+  //   both hit          -> umbra, average their coverage
+  //   exactly one hits  -> penumbra; 0.5 for now, P4 fills the wedge analytically from the two s values
+  //   neither, STRADDLE -> the extremes passed on opposite sides, so P is behind the caster between
+  //                        them: take the CENTRE ray. Without this, points close behind a trunk read lit
+  //                        because neither extreme hits, leaving a bright notch at every trunk.
+  //   neither, same side-> genuinely lit
+  // A point light (emitter 0) makes perp zero, so both rays ARE the centre and this degenerates to the
+  // exact hard shadow with no special case.
+  int sA, sB;
+  float cA = subLight(L.xy + perp, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf, sA);
+  float cB = subLight(L.xy - perp, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf, sB);
+  if (sA == 0 && sB == 0) return 0.5 * (cA + cB);
+  if (sA == 0) return 0.5 * cA;
+  if (sB == 0) return 0.5 * cB;
+  if (sA * sB < 0) {                                   // straddle -> the third solve, only in this case
+    int sC;
+    return subLight(L.xy, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf, sC);
   }
-  return cov / float(taps);
+  return 0.0;
 }
 // shadows-onto-billboards (attempt #3, IN-FAMILY): is world point P inside billboard's UPRIGHT drawn billboard, and
 // opaque there? Returns the billboard's base tile ROW if so (drives the receiver elevation), else -1. Mirrors
@@ -1159,21 +1099,6 @@ export class ShadowGather {
   walkProfile = 0;
   /** PROFILING staircase level INSIDE `casterCover` (0 = full; 1–3 cut short). `__cprofile(n)`; leave at 0. */
   casterProfile = 0;
-  /** A/B override for the adaptive emitter tap ladder — 0 = auto (per-caster, from the penumbra width),
-   *  else force 2/4/8/16 taps for EVERY caster. `__taps(n)`; leave at 0. Forcing 16 reproduces the
-   *  pre-2026-07-27 fixed-tap behaviour exactly, which is how the ladder's cost and its visual delta are
-   *  measured against the same frame. */
-  tapForce = 0;
-  /** Which tap ladder `casterCover` uses — 0 = BINARY (8 taps at pw >= 8, hard quad below), 1 = GRADUATED
-   *  (16/8/4/2/0). `__ladder(n)`.
-   *
-   *  GRADUATED is the default because the binary A/B **failed** (2026-07-27, see completed.md). Capping at
-   *  8 taps violates the ladder's own premise — one tap per texel of penumbra — the moment `pw` exceeds 8,
-   *  so a 25-texel gradient gets 8 coverage levels and BANDS visibly. At the emitter size content actually
-   *  authors (0.35 tiles ⇒ pw ≈ 18) that is the normal case, not an edge case. Binary is cheaper only
-   *  where it is also visibly wrong; at the one emitter size where the two cost the same it is 3× the
-   *  error. Keep the dial — it is how that claim gets re-tested if the tap positions change. */
-  ladder = 1;
   /** Caster card lean — north offset as a fraction of `H·cos(tilt)`. **1.0 = the rigid parallel-to-view
    *  billboard** (card length exactly `H`); 0.5 was the shipped value, which is not a rigid rotation and
    *  makes the card ~0.87·H at 55°. `__lean(x)`. Feeds BOTH `uCardLean` and `buildCasters`' TILT — they
@@ -1347,12 +1272,6 @@ export class ShadowGather {
       this.rebakeAll();
       return this.casterProfile;
     };
-    // DEBUG: force the emitter tap count (0 = the adaptive ladder). __taps(16) is the old fixed behaviour.
-    (globalThis as unknown as { __taps: (n?: number) => number }).__taps = (n?: number) => {
-      if (n !== undefined) this.tapForce = n;
-      this.rebakeAll();
-      return this.tapForce;
-    };
     // DEBUG: caster card lean (world-geometry F2). 1.0 = rigid parallel-to-view, 0.5 = the old shipped
     // value. Sets the shader uniform AND the CPU bucketing factor together — they must never diverge.
     (globalThis as unknown as { __lean: (x?: number) => number }).__lean = (x?: number) => {
@@ -1363,12 +1282,6 @@ export class ShadowGather {
     (globalThis as unknown as { __falloff: (e?: number) => number }).__falloff = (e?: number) => {
       if (e !== undefined) { this.falloff = e; this.rebakeAll(); }
       return this.falloff;
-    };
-    // DEBUG: swap the tap ladder — 0 = binary (8 or hard quad), 1 = graduated (16/8/4/2/0).
-    (globalThis as unknown as { __ladder: (n?: number) => number }).__ladder = (n?: number) => {
-      if (n !== undefined) this.ladder = n;
-      this.rebakeAll();
-      return this.ladder;
     };
     // DEBUG (__hideright): blank the right half of each billboard's normal in __shownormal (alignment probe).
     (globalThis as unknown as { __hideright: (on?: boolean) => boolean }).__hideright = (on?: boolean) => {
@@ -1888,8 +1801,6 @@ export class ShadowGather {
         p.uInt("uGProfile", this.gatherProfile);
         p.uInt("uWProfile", this.walkProfile);
         p.uInt("uCProfile", this.casterProfile);
-        p.uInt("uTapForce", this.tapForce);
-        p.uInt("uLadder", this.ladder);
         p.uFloat("uCardLean", this.cardLean);
         p.uFloat("uElevK", this.elevK);
       },
