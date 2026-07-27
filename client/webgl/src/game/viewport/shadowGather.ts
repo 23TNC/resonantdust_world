@@ -196,6 +196,9 @@ uniform float uCardLean;
 // centre-ray (s,t) inversion DISAGREE, 0.0 where they agree -- so the shadow map becomes a disagreement
 // map. The two are meant to be the same predicate; this is what proves it before the quad is deleted.
 uniform int uPredDiff;
+// P1 (plane-intersection): 1 = the RAY-vs-card plane intersection REPLACES shadowCover's projected-quad
+// containment test as the live shadow predicate. 0 = the shipped quad. __raytest(n).
+uniform int uRayTest;
 const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
@@ -309,6 +312,21 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float reachU, highp 
   bool neg = d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0 && d3 <= 0.0;
   return (pos || neg) ? 1.0 : 0.0;               // solid quad: 1 occluded, 0 lit
 }
+// RAY-vs-CARD plane intersection (plane-intersection P1). Solve where the light->P ray crosses the tilted
+// card, then range-check both axes. tt = how far UP the card (the v), ss = how far ACROSS (the u) -- one
+// solve yields the containment answer AND the lookup coordinate, which is why the quad shares no work
+// with it. NOTE: no reach bound yet -- projectTop clamps the quad's corners to reachU and runs them OUT
+// to reach when k <= 0, and that difference is a confirmed cause of the P0 disagreement (completed.md).
+float rayCover(vec2 P, vec2 Ac, vec3 L, float W, float H, float st, float ct) {
+  float dn = H * (st * (P.y - L.y) - uCardLean * L.z * ct);
+  if (abs(dn) < 1e-4) return 0.0;
+  float tt = L.z * (P.y - Ac.y) / dn;                 // where up the card the ray grazes
+  if (tt < 0.0 || tt > 1.0) return 0.0;               // misses vertically -> lit
+  float kk = L.z / (L.z - tt * H * st);
+  if (kk <= 0.0) return 0.0;
+  float ss = ((P.x - L.x) / kk + L.x - Ac.x) / W + 0.5;
+  return (ss >= 0.0 && ss <= 1.0) ? 1.0 : 0.0;        // misses horizontally -> lit
+}
 // Coverage of one caster (billboard index into billboard_data) at P from light L: read the billboard record + its
 // definition (position + geo W/H), then the pure-quad test; if occluded, apply the sprite's SHAPE
 // (P4) — invert P back to the card's (s,t) (in-range BY CONSTRUCTION: P is inside the projected
@@ -402,27 +420,16 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   // ONE shadowCover, reused. It used to be called TWICE with identical arguments — once as the gate and
   // again as the hard-quad return value — so every hard-quad caster projected its billboard, built the
   // quad and ran four cross2 sign tests twice over (moving-lights I15).
-  float sc = shadowCover(P, Ac, L, W, H, reachU, data);
+  // THE PREDICATE. uRayTest 1 = the ray-vs-card plane intersection; 0 = the shipped projected quad.
+  float sc = uRayTest == 1 ? rayCover(P, Ac, L, W, H, st, ct)
+                           : shadowCover(P, Ac, L, W, H, reachU, data);
   if (uPredDiff != 0) {
-    // The centre-ray inversion, exactly as the tap loop runs it with Lp = L. Returns 1 where the two
-    // predicates disagree. Any disagreement must be given a named cause (reach clamp / base push /
-    // range-bound conventions) before shadowCover is deleted -- see todo.md P0.
-    float dn = H * (st * (P.y - L.y) - uCardLean * L.z * ct);
-    float inv = 0.0;
-    if (abs(dn) >= 1e-4) {
-      float tt = L.z * (P.y - Ac.y) / dn;
-      if (tt >= 0.0 && tt <= 1.0) {
-        float kk = L.z / (L.z - tt * H * st);
-        if (kk > 0.0) {
-          float ss = ((P.x - L.x) / kk + L.x - Ac.x) / W + 0.5;
-          if (ss >= 0.0 && ss <= 1.0) inv = 1.0;
-        }
-      }
-    }
-    // 1 = any disagreement · 2 = quad says SHADOW, ray says LIT · 3 = quad says LIT, ray says SHADOW
-    if (uPredDiff == 2) return (sc > 0.5 && inv < 0.5) ? 1.0 : 0.0;
-    if (uPredDiff == 3) return (sc < 0.5 && inv > 0.5) ? 1.0 : 0.0;
-    return inv != sc ? 1.0 : 0.0;
+    // Both predicates, compared. 1 = any disagreement, 2 = quad SHADOW / ray LIT, 3 = the reverse.
+    float q = shadowCover(P, Ac, L, W, H, reachU, data);
+    float inv = rayCover(P, Ac, L, W, H, st, ct);
+    if (uPredDiff == 2) return (q > 0.5 && inv < 0.5) ? 1.0 : 0.0;
+    if (uPredDiff == 3) return (q < 0.5 && inv > 0.5) ? 1.0 : 0.0;
+    return inv != q ? 1.0 : 0.0;
   }
   if (uCProfile == 2) return sc * 1e-6;                     // C2: + the quad gate, no silhouette
   if (sc <= 0.0) return 0.0;
@@ -1217,6 +1224,10 @@ export class ShadowGather {
   cardLean = 1.0;
   /** P0 INSTRUMENT: 1 = paint predicate DISAGREEMENT (quad vs ray inversion) into shadow-cold. `__preddiff(n)`. */
   predDiff = 0;
+  /** P1: 1 = the RAY-vs-card plane intersection is the live shadow predicate, 0 = the shipped quad.
+   *  `__raytest(n)`. Known to differ from the quad (P0: ~26 % of shadowed slots) — the reach bound is
+   *  not implemented yet, so this is an A/B switch, not a replacement. */
+  rayTest = 0;
   /** Falloff exponent — see {@link FALLOFF_EXP}. `__falloff(e)`; <1 lifts the mid-range, 1 = linear
    *  smoothstep, >1 darkens the outer pool. Cannot extend a light past its reach at any value. */
   falloff = FALLOFF_EXP;
@@ -1282,6 +1293,17 @@ export class ShadowGather {
   private dirtyCols = 0;
   private dirtyRows = 0;
   /** Sticky "recompute every tile next build", per class — set on a rebuild; survives a not-ready frame. */
+  /** I5 BUDGET: slots still owing a bake, carried ACROSS frames. A resize/force-all used to mark every
+   *  slot dirty in ONE frame, and the gather is a single draw — so the draw grew with window area ×
+   *  lights × reach and tripped the GPU watchdog (context lost, renderer killed; five times on
+   *  2026-07-27). These hold the outstanding work so it can be drained a bounded slice at a time. */
+  private pendingCold: Uint8Array = new Uint8Array(0);
+  private pendingHot: Uint8Array = new Uint8Array(0);
+  /** True while {@link pendingCold}/{@link pendingHot} still hold work — the bake must keep being called. */
+  pendingWork = false;
+  /** Max slots re-baked per frame. Sized so one draw stays far under the watchdog even at large reach;
+   *  a full 32×16 window drains in ~3 frames. `__bakebudget(n)`; 0 = unlimited (the old behaviour). */
+  bakeBudget = 192;
   private forceColdDirty = true;
   private forceHotDirty = true;
   /** P6: walk the segment corridor (true) or the brute-force reach box (false). Brute is the
@@ -1390,6 +1412,16 @@ export class ShadowGather {
       if (n !== undefined) this.tapForce = n;
       this.rebakeAll();
       return this.tapForce;
+    };
+    // I5: per-frame rebake budget in slots (0 = unlimited, the pre-fix behaviour that crashed the GPU).
+    (globalThis as unknown as { __bakebudget: (n?: number) => number }).__bakebudget = (n?: number) => {
+      if (n !== undefined) { this.bakeBudget = n; this.rebakeAll(); }
+      return this.bakeBudget;
+    };
+    // P1 (plane-intersection): switch the live predicate to the ray-vs-card plane intersection.
+    (globalThis as unknown as { __raytest: (n?: number) => number }).__raytest = (n?: number) => {
+      if (n !== undefined) { this.rayTest = n; this.rebakeAll(); }
+      return this.rayTest;
     };
     // P0 (plane-intersection): paint predicate disagreement instead of coverage.
     (globalThis as unknown as { __preddiff: (n?: number) => number }).__preddiff = (n?: number) => {
@@ -1708,6 +1740,8 @@ export class ShadowGather {
       this.ownerCol = new Int32Array(cols * rows);
       this.ownerRow = new Int32Array(cols * rows);
       this.slotValid = new Uint8Array(cols * rows);
+      this.pendingCold = new Uint8Array(cols * rows);
+      this.pendingHot = new Uint8Array(cols * rows);
       this.dirtyCols = cols;
       this.dirtyRows = rows;
       forceCold = forceHot = true;
@@ -1739,6 +1773,30 @@ export class ShadowGather {
         }
     }
     this.pendingRects.length = 0;
+    // I5: fold this frame's freshly-dirtied slots into the outstanding set, then take a BOUNDED slice.
+    // Everything not taken stays pending and drains on later frames, so no single draw is unbounded.
+    if (this.bakeBudget > 0) {
+      if (this.pendingCold.length !== this.coldMirror.length) {
+        this.pendingCold = new Uint8Array(this.coldMirror.length);
+        this.pendingHot = new Uint8Array(this.hotMirror.length);
+      }
+      for (let i = 0; i < this.coldMirror.length; i++) {
+        if (this.coldMirror[i]) this.pendingCold[i] = 1;
+        if (this.hotMirror[i]) this.pendingHot[i] = 1;
+      }
+      this.coldMirror.fill(0); this.hotMirror.fill(0);
+      let budget = this.bakeBudget, left = 0;
+      for (let i = 0; i < this.pendingCold.length; i++) {
+        const want = this.pendingCold[i] || this.pendingHot[i];
+        if (!want) continue;
+        if (budget > 0) {
+          if (this.pendingCold[i]) { this.coldMirror[i] = 1; this.pendingCold[i] = 0; }
+          if (this.pendingHot[i]) { this.hotMirror[i] = 1; this.pendingHot[i] = 0; }
+          budget--;
+        } else left++;
+      }
+      this.pendingWork = left > 0;
+    }
     let dc = 0; for (let i = 0; i < this.coldMirror.length; i++) if (this.coldMirror[i] || this.hotMirror[i]) dc++;
     this.debugDirtyTiles = dc; // DEBUG: tiles recomputed this frame (cold ∪ hot)
     this.coldDirtyTex.upload(this.coldMirror);
@@ -1949,6 +2007,7 @@ export class ShadowGather {
         p.uInt("uLadder", this.ladder);
         p.uFloat("uCardLean", this.cardLean);
         p.uInt("uPredDiff", this.predDiff);
+        p.uInt("uRayTest", this.rayTest);
         p.uFloat("uElevK", this.elevK);
       },
     });
