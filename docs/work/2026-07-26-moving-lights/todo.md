@@ -34,8 +34,9 @@ not that the plan was wrong._
 - [x] Rewrite a carrier prim's POSITION record every frame its prim moved, not only at allocation
       ([I3](issues.md#i3) — `carriedLightFor` guards the write behind `prim === undefined`).
       Acceptance: `carriedLights.get(id)` reports a changed `x/y` after a move.
-- [ ] Add the move entry point that mutates the prim graph AND notifies lighting, per [F1](forks.md#f1).
-      Acceptance: one call moves sprite, light and shadow together.
+- [x] Add the move entry point that mutates the prim graph AND notifies lighting, per [F1](forks.md#f1).
+      Acceptance: one call moves sprite, light and shadow together. — **`Viewport.movePrim` already was it**;
+      it needed no change once I3 was fixed. Round trip returns the shadow map bit-identical.
 - [x] Fix the stale-trail bug: `buildCasters` calls `markLightDirty` without `from`, so a moving light dirties
       only its NEW reach box and leaves the old one baked ([I1](issues.md#i1)).
       Acceptance: the union old ∪ new is queued; no residue behind a moved light.
@@ -56,11 +57,11 @@ not that the plan was wrong._
       reach and same light count, so the delta is attributable. — table in [`completed.md`](completed.md).
 
 ## P3 — Verify + close
-- [ ] Corridor↔brute identity with a MOVING light, at zoom 1 / 0.5 / 0.25. Acceptance: 0 mismatches on a
+- [x] Corridor↔brute identity with a MOVING light, at zoom 1 / 0.5 / 0.25. Acceptance: 0 mismatches on a
       **non-zero population on both sides** — an empty-vs-empty pass is vacuous (the D-2 trap that hid a total
-      shadow outage behind a passing test all through P5 of torch-thing).
-- [ ] Confirm no stale residue: orbit a light through a full circle, stop, and compare the settled shadow
+      shadow outage behind a passing test all through P5 of torch-thing). — 0/0/0 on 39 102 / 11 836 / 2 975.
+- [x] Confirm no stale residue: orbit a light through a full circle, stop, and compare the settled shadow
       against a cold bake at the same position. Acceptance: bit-identical, proving the move path leaves the
-      map in the same state placement would.
+      map in the same state placement would. — **0 mismatches at all three zooms.**
 - [ ] Record the final numbers + the retired options in [`completed.md`](completed.md).
       Acceptance: a future session can tell which levers were used and which were measured and rejected.

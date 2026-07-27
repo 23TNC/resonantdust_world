@@ -469,6 +469,10 @@ def contact_sheet(cells, out_path, cols=None, cell=200, header=22, pad=3):
     for c, r, src in cells:
         try:
             im = src if isinstance(src, Image.Image) else Image.open(src)
+            if im.mode in ("RGBA", "LA", "P"):     # composite on WHITE, never convert straight to
+                im = im.convert("RGBA")           # RGB — that renders transparency BLACK and makes
+                w = Image.new("RGBA", im.size, (255, 255, 255, 255))   # a correct sprite look broken
+                w.alpha_composite(im); im = w
             im = im.convert("RGB").resize((cell, cell), Image.LANCZOS)
         except Exception:
             continue

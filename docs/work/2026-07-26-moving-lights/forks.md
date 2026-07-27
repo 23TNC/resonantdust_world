@@ -1,7 +1,24 @@
 # Forks — decision points
 
 ## F1 — Where does "move a prim" live? {#f1}
-_2026-07-26 · open (lean: (b))_
+_2026-07-26 · **RESOLVED → (a). The entry point already existed; nothing needed re-homing.**_
+
+**`Viewport.movePrim(id, x, y)` is the move**, and once [I3](issues.md#i3) was fixed it does the whole job —
+verified with a single public call: sprite moved, light record moved, shadow map changed, and moving the prim
+**back** returned the shadow map **bit-identical** (hash 336412233 → 3373222425 → 336412233). A reversible,
+residue-free round trip is a stronger statement than the acceptance asked for.
+
+**So (b)'s plumbing is not needed and would have been wasted work.** The lean was wrong for an instructive
+reason: I reasoned that because the shadow side reads a per-frame snapshot it must therefore need an explicit
+notification, and proposed a subscriber mechanism to carry one. But the per-frame scan *is* the notification —
+`buildCasters` re-derives every carrier's position from `prim.x/y` each frame, and it always worked for
+billboards. The single missing piece was that the light path skipped that re-derivation. **A design fork
+argued from an unverified mechanism proposes machinery to route around a bug.**
+
+Objection (a) raised — that `Viewport` would gain shadow policy — never materialised: the fix landed in
+`coldShadowData`, where the record write already lived, and `Viewport.movePrim` is unchanged.
+
+_Original analysis, kept for the record:_
 
 A move must do two things that today live in different places: change the position the graph resolves from,
 and tell the lighting what region went stale. Four candidates:

@@ -102,6 +102,28 @@ met with ~2× headroom over the target and no change to the shared-accumulator d
 
 Reach remains a live aesthetic dial with a known price: 16 → 18 fps, 12 → 30 fps, 8 and below → 120 fps.
 
+## 2026-07-26 — P3 verification, and the move entry point closed
+
+**Corridor↔brute identity + no-residue, at three zooms**, lights frozen at a *displaced* position after
+orbiting (so the state under test is one the move path produced, not a placement):
+
+| zoom | residue mismatches | identity mismatches | non-zero texels (both sides) |
+|---|---|---|---|
+| 1.0 | **0** | **0** | 39 102 |
+| 0.5 | **0** | **0** | 11 836 |
+| 0.25 | **0** | **0** | 2 975 |
+
+- **Residue** compares what the incremental move path left against a `rebakeAll()` from scratch at the same
+  positions. 0 mismatches ⇒ the move path leaves the map in exactly the state placement would, which is the
+  direct evidence that [I1](issues.md#i1)'s stale trail is closed.
+- **Identity** is corridor vs brute. Populations are large and identical on both sides, so this is **not** the
+  vacuous agreement-by-emptiness that hid a total shadow outage in torch-thing P5.
+
+**The move entry point: `Viewport.movePrim(id, x, y)` already was it.** One public call moved sprite, light
+record and shadow map together; moving the prim back returned the shadow map **bit-identical** (hash
+336412233 → 3373222425 → 336412233). [F1](forks.md#f1) resolves to (a) — the (b) subscriber plumbing was
+proposed to route around a bug and is not needed.
+
 ## Baseline carried in from the prior session (2026-07-26, pre-P0)
 
 Recorded here so P0's instrumented numbers have something to sit next to. Measured at **zoom 0.25, reach 16
