@@ -184,13 +184,11 @@
                 ; walks per texel. Static lights are unaffected — they bake once — so this is a budget
                 ; on MOTION, not on light count.
                 ;
-                ; RAISED 8 → 20 (2026-07-27) to make long-range shadows inspectable: penumbra WIDTH is
-                ; independent of horizontal distance (it is D·h/(Lz−h), no distance term) while shadow
-                ; LENGTH grows linearly with it, so judging the soft edge needs shadows that run a long way.
-                ; Affordable because `hot 0` below makes these STATIC: they bake once, and the reach→fps
-                ; figures above are a budget on MOTION. Revisit if a torch is ever authored `hot 1`.
-                ; The wash concern the 8 was chosen for still stands for looks: 20 claims 40 × 40 tiles
-                ; against a 28 × 12 visible area, so this is a LEGIBILITY setting, not a final art call.
+                ; REVERTED 20 → 8 (2026-07-27). Raising it to 20 to make long shadows inspectable put
+                ; the scene past the fps table above (16 → 18 fps with 3 torches) and made the client
+                ; effectively unresponsive — seconds per frame, which also trips the GPU watchdog and
+                ; loses the WebGL context. "Static lights bake once" does not rescue it: the FIRST bake,
+                ; and every full rebake, pays the whole cost in one frame. 8 is the measured-good value.
                 ; `cast 1` = occludes (it participates in the shadow walk); `hot 0` = STATIC,
                 ; so it bakes once and costs nothing per frame — the property that makes
                 ; many torches affordable.
@@ -198,7 +196,7 @@
                 0.85 &thing.light.g set
                 0.55 &thing.light.b set
                 1.0 &thing.light.intensity set
-                20.0 &thing.light.reach set
+                8.0 &thing.light.reach set
                 0.35 &thing.light.radius set
                 ; HEIGHT IS SHADOW-CRITICAL, not just a look. `shadowCover` projects the caster's card
                 ; top (elevation Zt = H·sin(WORLD_TILT)) from the light onto the ground; when the light
@@ -240,7 +238,7 @@
                 0.75 &thing.light.g set
                 1.0 &thing.light.b set
                 1.0 &thing.light.intensity set
-                20.0 &thing.light.reach set
+                8.0 &thing.light.reach set
                 0.35 &thing.light.radius set
                 2.5 &thing.light.height set
                 1 &thing.light.cast set
