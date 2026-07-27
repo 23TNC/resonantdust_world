@@ -43,6 +43,14 @@ to repair the resulting mismatch against the fine receiver mask. Two maps store 
   step (k)'s mismatch reintroduced in a new place, and precisely **along every silhouette**, where shadow
   edges are most visible. Computing the ground map unconditionally removes the decision entirely: each map
   has one unambiguous meaning and each pass reads its own.
+  *What the extra work actually is:* **a second computation, not a second lookup** — nothing moved, so nothing
+  is fetched from further away. `walkShadow` takes the receiver as an argument (`isThing`, `Rbase`), and a
+  shadow landing on the ground versus one landing partway up a trunk are different intersection problems:
+  different receiver point → different corridor → different point-in-quad result per caster.
+  **Implementation note: do NOT run two gather passes.** Run one pass that evaluates **both receivers per
+  caster it fetches**. The two walks share the light, the corridor tiles and the caster buckets, and the walk
+  is **fetch-dominated** (3 fetches/step × 8 slots), so sharing the fetches and doubling only the per-caster
+  arithmetic lands well under the 0.3–0.5 ms above — that figure assumed two independent walks.
 - The prim pass must rasterise prim quads into the **world-space toroidal** lightmap with wrap handling and
   bottom-row z-order. `SquareCache` already does exactly this for albedo, twice a frame.
 
