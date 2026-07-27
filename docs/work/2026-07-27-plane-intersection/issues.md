@@ -139,3 +139,42 @@ work is already tile-granular and the prioritised refinement queue already exist
 across frames rather than issue one draw whose length scales with window area × lights × reach. Until it
 does, reach is bounded by watchdog latency and not by the fps budget, which is a much lower ceiling and an
 invisible one.
+
+## I6 — I5's diagnosis was WRONG, and the budget "fix" is unvalidated
+
+Retracting most of [I5](#i5) the same day it was written.
+
+**What I5 claimed:** a resize marks every slot dirty in one frame, the gather is a single draw, so the
+draw grows without bound and trips the GPU watchdog. **Fix:** budget the slots per frame.
+
+**Why that is wrong:**
+
+- `SquareCache.bakeDirty(budget: number)` **already takes a budget** — the G-buffer path was never
+  unbounded. I asserted it was without reading the signature.
+- After implementing the shadow-side budget (`bakeBudget`, 192 slots/frame), the context was **still
+  lost** on the very next panel switch. The fix did not fix it.
+- `camera` was **already** `1862×853` before the click that killed it, so that instance was not a resize
+  at all. The panel switch alone did it.
+- I told the user a Chrome restart was needed because the GPU process had degraded across context
+  losses. Immediately after a fresh Chrome, the first panel click killed the context again. That
+  explanation is also unsupported.
+
+**What is actually known** — and this is a decent bug report even without a cause:
+
+- Trigger: clicking the **Game View** tab reliably loses the WebGL context (`isContextLost() === true`,
+  `getError()` `37442`). Reproduced ~6 times across two Chrome sessions.
+- Loading with Game View already active is fine; the page is healthy and renders.
+- Both bake paths are budgeted, so "one enormous draw" is not the mechanism.
+- Not yet ruled out: RT churn on panel switch (destroy/recreate), VRAM exhaustion, or a driver fault
+  unrelated to draw length.
+
+**Risk I introduced and have NOT verified.** `bakeBudget` carries work across frames via `pendingWork`.
+If the render loop is change-gated rather than continuous, pending slots may never drain and shadows
+would stay permanently incomplete — the change-gated-render-loop gotcha that has bitten this codebase
+before. The budget is bounded-work-per-frame, which is defensible on its own merits, but it was built on
+a wrong diagnosis and its drain path is unproven. `__bakebudget(0)` restores the old behaviour, and
+reverting it entirely is reasonable.
+
+**Lesson, and it is the same one as I1/I40:** I had a confirmed observation (context dies) and invented a
+mechanism (unbounded draw) that fit it, then built a fix on the mechanism without testing the mechanism.
+One `grep` for `bakeDirty`'s signature would have killed the theory before any code was written.
