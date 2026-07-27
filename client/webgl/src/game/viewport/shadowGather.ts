@@ -19,17 +19,18 @@ import type { TextureResolver } from "../../textures";
 import { ColdShadowData, N_LIGHTS } from "./coldShadowData";
 import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_SQUARE, SLOTS_X, SLOTS_Y } from "./squareMath";
 
-/** Texels per TILE edge in the SHADOW map. **Raised from `TEXTILE_UNIT` (16) to `TEXTILE_SQUARE` (= `SQUARE`)
- *  on 2026-07-27** so shadow and lighting share one resolution — see `moving-lights` I13.
+/** Texels per TILE edge in the SHADOW map — **`TEXTILE_UNIT` (16), i.e. one texel per world unit.**
  *
- *  Consequences, all of which follow mechanically from this one constant:
- *  - `FINE_RATIO` becomes **1**, so the fine→coarse upsample disappears: a light texel and its shadow texel
- *    are the same texel. That is what removes the blocky shadow edge the (now-deleted) refine existed to hide.
- *  - The shadow RT grows `(TEXTILE_SQUARE/TEXTILE_UNIT)²` in texels — at `SQUARE` 64 that is **16×**, and the
- *    gather runs one fragment per texel, so it is 16× more `casterOne` work. The gather was already 86 % of
- *    the GPU frame, so this is the expensive direction; it is behind the `checkpoint-lighting-2026-07-27` tag.
- *  - VRAM: four shadow RTs × 2 attachments each scale with it too. */
-const SHADOW_TEXELS = TEXTILE_SQUARE;
+ *  Kept as a named dial because it was A/B'd against `TEXTILE_SQUARE` on 2026-07-27 and the answer is worth
+ *  not re-deriving (`moving-lights` I13). Matching the lightmap's 64/tile removes the fine→coarse upsample —
+ *  `FINE_RATIO` becomes 1 and the blocky shadow edge disappears by construction — but the **gather runs one
+ *  fragment per shadow texel**, so it rasterises across the whole shadow map:
+ *
+ *    shadow RT 512×256 → 2048×1024 · VRAM 16 → 256 MiB · gather 2.64 → 9.44 ms · GPU total 3.09 → 9.84 ms
+ *
+ *  Reverted: a sharp edge is not worth 3.2× GPU and 4× VRAM when the coarse edge is acceptable.
+ *  (Cost is sublinear in texels — 16× the fragments cost 3.6× the time, cache locality — but still 3.2×.) */
+const SHADOW_TEXELS = TEXTILE_UNIT;
 
 /** Fine light texels per shadow texel (`fc / FINE_RATIO`). **1** now that the two maps share a resolution;
  *  the per-light upsample it used to express is gone. */
