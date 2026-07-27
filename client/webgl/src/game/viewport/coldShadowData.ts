@@ -170,6 +170,10 @@ export function decodePosition(pos: number): [number, number] {
 export class ColdShadowData {
   /** THE unified data texture + its CPU mirror (16 MB — the source of truth for every band). */
   private readonly dataTex: Texture;
+  /** Last frame's snapshot of {@link dataTex} — see {@link dataTexturePrev}. */
+  private readonly dataPrevTex: Texture;
+  /** FBO wrapping {@link dataPrevTex}, purely as a blit destination for the pre-flush copy. */
+  private readonly dataPrevRT: RenderTarget;
   private readonly dataMirror = new Uint32Array(DATA_W * DATA_H * 4);
   /** Changed texels since the last flush (linear indices) — become scatter commands. */
   private readonly dirtySet = new Set<number>();
@@ -236,11 +240,37 @@ export class ColdShadowData {
     for (let i = 0; i < slots.length; i++) slots[i] = i;
     this.scatterGeo = new Geometry(gl, this.scatter, { aIndex: { data: slots, size: 1, integer: true } });
     this.dataRT = new RenderTarget(gl, { width: DATA_W, height: DATA_H, wrap: [this.dataTex] });
+    this.dataPrevTex = new Texture(gl, { width: DATA_W, height: DATA_H, format: "rgba32uint" });
+    this.dataPrevRT = new RenderTarget(gl, { width: DATA_W, height: DATA_H, wrap: [this.dataPrevTex] });
   }
 
   /** THE unified data texture (bound once as `uData` in the shadow shader). */
   get dataTexture(): Texture {
     return this.dataTex;
+  }
+
+  /** LAST FRAME'S data texture (F11b.1) — bound as `uDataPrev` so a pass can evaluate both the old and
+   *  the new state and emit their difference. Identical to {@link dataTexture} until the first flush.
+   *
+   *  A COPY, not a swap. The scatter writes only CHANGED texels, so swapping two buffers would leave the
+   *  "previous" one missing every record that did not change this frame — the vast majority. The copy is
+   *  a GPU blit of one 1024² RGBA32UI (16 MB) and only runs on frames that actually flush. */
+  get dataTexturePrev(): Texture {
+    return this.dataPrevTex;
+  }
+
+  /** Copy the whole data texture into {@link dataPrevTex}. Called immediately BEFORE a flush mutates
+   *  `dataTex`, so `dataPrevTex` always holds the state the previous frame's lighting was baked from.
+   *
+   *  `blitFramebuffer` with NEAREST — an RGBA32UI target cannot be linearly filtered, and source and
+   *  destination are the same size anyway so there is nothing to filter. */
+  private blitDataToPrev(): void {
+    const gl = this.renderer.gl;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.dataRT.fbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.dataPrevRT.fbo);
+    gl.blitFramebuffer(0, 0, DATA_W, DATA_H, 0, 0, DATA_W, DATA_H, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
   }
 
   /** Record a changed texel (linear index) — becomes one scatter command at flush. */
@@ -835,6 +865,10 @@ export class ColdShadowData {
     this.debugLastFlush = {};
     for (const t of this.dirtySet) { const s = t >> SET_SHIFT; this.debugLastFlush[s] = (this.debugLastFlush[s] ?? 0) + 1; }
     if (this.dirtySet.size === 0) return false;
+    // SNAPSHOT before mutating: everything downstream that wants "what did this light look like last
+    // frame" reads `dataTexturePrev`, and after this line `dataTex` is the NEW state. A framebuffer blit
+    // rather than a swap, for the reason on `dataTexturePrev`.
+    this.blitDataToPrev();
     // v3 commands: bucket the changed texels by SET (linear >> 16), then cut each set's ids into
     // chunks of <= IDS_PER_CMD. One command = header px (operation | set | count | 7× u16 ids) +
     // IDS_PER_CMD payload px, fixed stride. The header's `count` marks the live ids, so a partial
@@ -945,9 +979,11 @@ export class ColdShadowData {
 
   destroy(): void {
     this.dataRT.destroy(); // wrapped — does not destroy dataTex
+    this.dataPrevRT.destroy();
     this.scatterGeo.destroy();
     this.scatter.destroy();
     this.cmdTex.destroy();
     this.dataTex.destroy();
+    this.dataPrevTex.destroy();
   }
 }

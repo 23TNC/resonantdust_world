@@ -106,8 +106,9 @@ vacuously ([D-2](deviations.md#d-2))._
 _The three rows below are ONE atomic change — see [I32](issues.md#i32). Landing any alone regresses:
 collapsing the tiers without the differential makes every hot-dirty tile re-sum its static lights, and the
 self-heal check is vacuous until contributions can actually leak._
-- [ ] Ping-pong the data texture AND the presence bands (COPY before flush, not a swap — the scatter only
-      writes changed texels, so a swapped buffer would be missing every unchanged record).
+- [x] Ping-pong the data texture (COPY before flush, not a swap — the scatter only writes changed texels,
+      so a swapped buffer would be missing every unchanged record). Verified: with 24 movers, prev differs
+      from current in 3 words of 108 populated, i.e. it genuinely lags one frame.
       Acceptance: last frame's and this frame's state are both readable in one pass.
 - [ ] Emit `new − old` in ONE differential pass, each term gated on that tile's presence.
       Acceptance: a texel whose lights and casters all held still emits exactly 0.
