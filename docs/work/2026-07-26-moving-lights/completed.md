@@ -124,6 +124,37 @@ record and shadow map together; moving the prim back returned the shadow map **b
 336412233 → 3373222425 → 336412233). [F1](forks.md#f1) resolves to (a) — the (b) subscriber plumbing was
 proposed to route around a bug and is not needed.
 
+## 2026-07-26 — Moving-light sweep: cost PLATEAUS at ~24 lights (the presence cap works)
+
+Reach 16, zoom 0.5, every light orbiting, lights spread across the on-screen prims (striding the 600 nearest,
+so they neither cluster nor fall off-screen), count asserted against `carriedLights.size`:
+
+| moving lights | ms | fps |
+|---|---|---|
+| 8 | 53.59 | 19 |
+| 16 | 91.95 | 11 |
+| 24 | 135.64 | 7 |
+| 32 | 146.22 | 7 |
+| 40 | 162.14 | 6 |
+| 48 | 152.51 | 7 |
+| 56 | 164.93 | 6 |
+| 64 | 156.26 | 6 |
+
+Repeatability: 24 re-measured at **132.53 ms** vs 135.64 (2.3 %). Idle, no movers: **8.33 ms / 120 fps**.
+
+**The headline is the plateau.** Cost climbs steeply to ~24 lights (53.6 → 92 → 135.6) and then **stops**:
+32 through 64 all sit at 146–165 ms, flat within noise. That is `light_presence`'s **≤16 lights/tile cap**
+doing exactly its job — once every tile is saturated, further lights are culled and cost the GPU nothing.
+
+**This confirms the central premise of [`plan-4096.md`](plan-4096.md) by measurement rather than by reading
+the code:** GPU cost is already decoupled from light count. **4096 moving lights would also land at ~150 ms**,
+not at 64× that. So the target does not need a 4096× improvement — it needs **one ~9× win**, which is exactly
+the gap the per-texel walk budget was sized to close (~400 M fetches → ~25 M).
+
+Two caveats that are the reason P2 exists: the plateau assumes lights are dense enough to saturate presence
+everywhere, and **the culled lights contribute no illumination at all** — so past ~24 lights this is not
+"4096 lights rendered cheaply", it is 16 lights rendered and the rest discarded.
+
 ## Baseline carried in from the prior session (2026-07-26, pre-P0)
 
 Recorded here so P0's instrumented numbers have something to sit next to. Measured at **zoom 0.25, reach 16
