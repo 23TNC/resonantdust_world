@@ -1,5 +1,56 @@
 # Issues — problems hit, candidates, what we chose
 
+## I5 — Cold and hot are not two lighting methods. They are two accumulators on one path. {#i5}
+_2026-07-26 · measured_
+
+**Question:** which of the two implemented lighting methods carries the most large-reach moving lights at the
+lowest cost?
+
+**Answer: neither — they are the same method, and the difference is noise.** The only two lighting paths live
+in the code today are the **cold** and **hot** classes, and `tick` drives them through *the same function*:
+
+```ts
+this.classPass(0, this.coldDirtyTex, this.coldShadowRT!, this.coldLightRT!, this.coldShadowPrevRT);
+this.classPass(1, this.hotDirtyTex,  this.hotShadowRT!,  this.hotLightRT!,  this.hotShadowPrevRT);
+```
+
+Same shaders, same walk, same RT dimensions (both 512 × 256 shadow / 4096 × 2048 lightmap, read off the GL
+objects). They differ only in **which dirty texture gates them** and which accumulator they sum into.
+
+Measured at zoom 0.5, reach 16 tiles, every light orbiting, light count asserted against
+`carriedLights.size` (= asked + the 3 content torches):
+
+| moving lights | cold | hot | Δ |
+|---|---|---|---|
+| 11 | **13.57 ms** (74 fps) | 13.91 ms (72 fps) | +2.5 % |
+| 35 | **41.22 ms** (24 fps) | 44.30 ms (23 fps) | +7.5 % |
+| 67 | **75.15 ms** (13 fps) | 79.40 ms (13 fps) | +5.7 % |
+
+Cold is consistently a few percent *faster*. Cost is **linear in moving-light count** (~1.1–1.2 ms per
+moving reach-16 light at this zoom), so the 60 fps ceiling here is **≈13 moving lights at reach 16**.
+
+**What the split actually buys is isolation, not throughput:** a hot mover invalidates only the hot
+accumulator, leaving the cold bake of the static lights untouched. That matters for a scene of *many static +
+few moving* lights — but it does not make an individual mover cheaper, and the numbers above say a mover costs
+the same either way.
+
+**So the ceiling is not set by picking a class.** By [I4](#i4) it is set by `lit-texels × walk-tiles`:
+- **light count** — linear. Static lights are ~free (123 static held 120 fps at 0.72 ms), so the entire bill
+  is motion.
+- **reach** — superlinear (≈R² coverage × R walk), which is why it dominates and why 16 → 8 was worth 6.7×.
+- **the 2.79× oversample** — a flat multiplier on everything, and the one lever that costs no light quality
+  ([P4](todo.md)).
+
+_Caveat on scope:_ this compares the two classes that exist **now**. Earlier lighting rebuilds (the coarse
+aggregate-direction lightmap that [lightmap-fine-per-light](../2026-07-24-lightmap-resolution/README.md)
+replaced) were deleted rather than kept behind a flag, so they cannot be re-measured — only re-implemented.
+
+_Harness note:_ a first attempt at this comparison reported both classes at the 122 fps floor with
+`moversReallyMoving: false` — the lights had never attached, because the trial reused a prim array captured
+before a zoom change. It measured an idle renderer twice. The assertion caught it; without
+`registered` and the movement check it would have read as "the two methods are identical", which is the right
+conclusion reached from no evidence at all.
+
 ## I4 — The real cost model, and the 2.8× lightmap oversample {#i4}
 _2026-07-26 · **the third and (finally) evidence-supported model.** Supersedes the cost claims in
 [I2](issues.md#i2), which are wrong._
