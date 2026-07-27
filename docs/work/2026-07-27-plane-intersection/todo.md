@@ -71,14 +71,19 @@ centre ray comes back wider than the original forward projection ever allowed._
 - [ ] DELETE the adaptive tap ladder and everything serving it: `emitterOffset`, the tier selection, `uTapForce`, `uLadder`, and the `__taps`/`__ladder` dials.
 - [ ] Verify the notch is absent at the trunk of every torch-lit conifer at zoom 2, and that penumbra now appears OUTSIDE the old hard-quad boundary rather than clipped to it.
 
-## P4 — Fill the wedge
-
-- [ ] Derive coverage analytically from the two `s` values where the caster's own card edge is the boundary, instead of returning a flat 1/2 for the penumbra class.
-- [ ] Decide and record in [`forks.md`](forks.md#f5) how interior silhouette detail gets its gradient — more samples or a distance field — since two near-binary opacity samples cannot produce a ramp there.
-- [ ] Compare the filled wedge against the checkpoint's 16-tap output for mean and max absolute error, and against 2 rays for cost.
-
 ## P5 — Close the other half of the tile clip
 
 - [ ] Pad the caster BUCKETING box in `buildCasters` by the penumbra reach so a caster is registered in every tile its feather can touch, not only the tiles its body covers.
 - [ ] Size the pad from the penumbra width per caster rather than a constant — the ground feather is the emitter scaled by the projection factor, so a tall caster under a low light needs a much wider pad.
 - [ ] Verify the hard tile-aligned clip is gone at zoom 2 on the case in [moving-lights I17](../2026-07-26-moving-lights/issues.md), and re-run corridor↔brute identity.
+
+## P4 — Fill the wedge — LAST (user, 2026-07-27)
+
+_"We can handle the wedge coloring last. We can work through how we texture the shadows then."_ So this
+runs after P5, and the shadow-texturing question ([F5](forks.md#f5)) is worked through as its own piece
+rather than gating earlier phases.
+
+- [ ] Derive coverage analytically from the two `s` values where the caster's own card edge is the boundary, instead of returning a flat 1/2 for the penumbra class.
+- [ ] Decide and record in [`forks.md`](forks.md#f5) how interior silhouette detail gets its gradient — more samples or a distance field — since two near-binary opacity samples cannot produce a ramp there.
+- [ ] Compare the filled wedge against the checkpoint's 16-tap output for mean and max absolute error, and against 2 rays for cost.
+

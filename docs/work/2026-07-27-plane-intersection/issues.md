@@ -181,3 +181,30 @@ reverting it entirely is reasonable.
 **Lesson, and it is the same one as I1/I40:** I had a confirmed observation (context dies) and invented a
 mechanism (unbounded draw) that fit it, then built a fix on the mechanism without testing the mechanism.
 One `grep` for `bakeDirty`'s signature would have killed the theory before any code was written.
+
+## I7 — blockers reclassified (user, 2026-07-27): nothing is actually blocking
+
+I filed three rows in `blockers.md`. The user reclassified all three, and the file is deleted — a blocker
+is something that needs human input to proceed, and none of these do.
+
+**B1 — the SDF corpus re-bake.** Not a blocker, a SEQUENCING decision: _"We can handle the wedge coloring
+last. We can work through how we texture the shadows then."_ So P4 moves to the END of the stream, after
+P5, and the shadow-texturing question gets worked through as its own thing rather than gating earlier
+phases. [F5](forks.md#f5) already holds the option analysis.
+
+**B2 — torch reach 8 is a safety value, not an art call.** User: _"This doesn't sound like a blocker this
+sounds like a note or issue."_ Correct. Recorded here: reach 8 is the measured-good value (120 fps with
+3 torches; 16 → 18 fps) and it is authored for what the renderer can afford, not for how the world reads.
+If P3 raises the affordable ceiling, the art question reopens — but nothing is waiting on it.
+
+**B3 — the Game View click loses the WebGL context.** User: _"We will certainly need to debug if this
+keeps happening."_ So: a WATCH item, not a blocker. Workaround is reliable (load with Game View already
+active).
+
+One correction, because the two symptoms are getting merged. The user wrote _"You believe it is coming
+from streaming data"_ — that was my read of the **slow load** (things trickling in behind tiles, which
+the user then attributed to a docker container hiccup, and which fits better). It is NOT my read of the
+context loss. Those are separate: the slow load is the app running fine while data arrives late; the
+context loss is the GPU dying on a panel switch. I have no working theory for the second, and both bake
+paths being budgeted rules out the obvious one. If it recurs, the bisect is to instrument render-target
+create/destroy across the panel switch.
