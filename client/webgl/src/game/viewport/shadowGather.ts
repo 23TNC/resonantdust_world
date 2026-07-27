@@ -71,7 +71,7 @@ const MAX_LIGHTS: number = 3;
 /** Physical source RADIUS (world px); `/UNIT` → units in the light record. The AREA-LIGHT disk radius the
  *  penumbra samples over (bigger = softer). Per-light (see the config below); `__emit(px)` tunes live. */
 /** Light height: 40 units = 2.5 tiles — above the tree billboard (2 tiles / 32 units). Lower = longer
- *  shadows, but ONLY down to the caster's card top: `shadowCover` returns 0 outright when the light sits
+ *  shadows, but ONLY down to the caster's card top: `cardHit` takes its semi-infinite branch when the light sits
  *  below it (`k = Lz/(Lz−Zt) <= 0`), so a light under ~26 units casts NOTHING, silently. Lights are
  *  content-authored per kind now (`&thing.light.height`, in TILES) — this figure is the constraint that
  *  authored value must clear, not a default anything reads. Authoring 0.6 zeroed every shadow in the
@@ -173,7 +173,7 @@ export interface TileWindow {
 const GATHER_COMMON = /* glsl */ `
 // PROFILING STAIRCASE inside casterCover (2026-07-27, moving-lights I15) — casterOne is 85 % of the walk,
 // so this is where the frame actually goes. 0 = full; 1..3 cut short:
-//   1 the two record fetches (billboard + definition) + decode   2 + the shadowCover quad gate
+//   1 the two record fetches (billboard + definition) + decode   2 + the cardHit gate
 //   3 + hard-quad return (skips the 16-tap emitter loop)         0 + the 16-tap silhouette loop
 uniform int uCProfile;
 // A/B override for the ADAPTIVE tap ladder in casterCover: 0 = auto (choose from the penumbra width),
@@ -252,58 +252,45 @@ vec2 resolvedTilePos(uint tile, uint unit, vec2 ref) {
 float worldTiltRad(highp usampler2D data) {
   return float(fetchLin(data, CONST_BASE).w & 0xffffu) * (0.01 * 3.14159265 / 180.0);
 }
-// PURE QUAD placement (no texture sample, no u/v inversion). The caster is a flat 3D card: base on the
-// ground (y = Yb, z = 0), top tilted north + elevated (y = Yt, z = Zt). Project its 4 corners from the
-// light onto the ground → a convex ground quad; P is shadowed iff it lies inside that quad. The only
-// division is the single top-corner projection factor k — no per-pixel /denom or /s to blow up.
-//   card corners: base (A.x±W/2, Yb, 0)  ·  top (A.x±W/2, Yt, Zt)
-//   ground(C) = L.xy + (L.z/(L.z - C.z)) * (C.xy - L.xy)   → base stays put, top scales by k
-float cross2(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }
-// Project ONE card-top corner onto the ground, RADIALLY CAPPED at the light's reach.
+// BACKWARD SOLVE — the shadow predicate (plane-intersection P1, 2026-07-27).
 //
-// The naive projection L.xy + k*(C−L.xy) only exists when the corner is below the light (k > 0). When the
-// light sits at or BELOW the card top the ray never returns to the ground and k goes <= 0 — the shadow is
-// semi-infinite. That is a legitimate configuration (a torch at flame height beside a tree), not an error,
-// and the wedge model's answer is that an infinite shadow TERMINATES AT REACH: past reach the light
-// deposits nothing, so the shadow has nothing to subtract from and the cap is invisible. Returning 0 here
-// instead — as this did until I38 — silently deleted every shadow whenever a light was authored low.
+// The forward version this replaces projected the caster's two top corners onto the ground, built four
+// corner positions and ran four cross-product sign tests asking whether P fell between them. There was
+// never a quad OBJECT (user: "We don't have a projection quad. We ran math to figure out where we are")
+// -- just arithmetic in four short-lived locals. This asks the same question from the other end, which
+// is cheaper AND returns more: invert P through the light back onto the tilted card and range-check.
 //
-// Capping the k > 0 case at reach too keeps the quad bounded for ALL inputs, including the near-parallel
-// k→+∞ blowup as Zt approaches L.z. Bounded by reach is also what preserves the corridor identity: the
-// walk already covers the reach box, so a shadow that cannot escape it cannot reach a tile the walk skips.
-vec2 projectTop(vec2 C, vec3 L, float k, float reachU) {
-  vec2 d = C - L.xy;
-  float len = length(d);
-  if (len < 1e-4) return C;                        // degenerate: light directly under the corner
-  if (k > 0.0) {
-    vec2 p = L.xy + k * d;
-    if (length(p - L.xy) <= reachU) return p;      // finite projection, inside reach → exact
-  }
-  return L.xy + reachU * (d / len);                // at/above the light, or past reach → run out to reach
-}
-float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float reachU, highp usampler2D data) {
-  float th = worldTiltRad(data), ct = cos(th), st = sin(th); // WORLD_TILT — from the data map (F4)
-  // KNOWN DEVIATION (kept deliberately — user, 2026-07-23): the north offset uses 0.5·H·cos(tilt), HALF the
-  // strict parallel-to-view billboard (H·cos(tilt)). Likely the shadow-design "wedge" ±depth half; the
-  // elevation (Zt = H·sin(tilt)) already matches the canonical model. Left as-is because shadows read right.
-  // If the shadow GEOMETRY ever looks wrong, this 0.5 is a prime suspect — see
-  // docs/work/2026-07-23-world-geometry forks.md#f2 + issues.md#i1.
-  float Yt = A.y - uCardLean * H * ct, Zt = H * st; // card top: tilted north (lean·H·cos t) + elevated (H·sin t)
-  float Yb = A.y + ${SHADOW_BASE_PUSHF};          // card base — pushed SOUTH into the caster footprint (seam close)
-  float k = L.z / (L.z - Zt);                     // ground-projection factor for the top corners
-  float hw = 0.5 * W;
-  vec2 bl = vec2(A.x - hw, Yb);                    // base corners project to themselves (z = 0)
-  vec2 br = vec2(A.x + hw, Yb);
-  vec2 tl = projectTop(vec2(A.x - hw, Yt), L, k, reachU);  // top corners projected from the light
-  vec2 tr = projectTop(vec2(A.x + hw, Yt), L, k, reachU);
-  // point in convex quad (bl → br → tr → tl): inside iff all four edge cross products share a sign.
-  float d0 = cross2(br - bl, P - bl);
-  float d1 = cross2(tr - br, P - br);
-  float d2 = cross2(tl - tr, P - tr);
-  float d3 = cross2(bl - tl, P - tl);
-  bool pos = d0 >= 0.0 && d1 >= 0.0 && d2 >= 0.0 && d3 >= 0.0;
-  bool neg = d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0 && d3 <= 0.0;
-  return (pos || neg) ? 1.0 : 0.0;               // solid quad: 1 occluded, 0 lit
+//   card(t):  y = Ac.y - lean*t*H*cos0,   z = t*H*sin0        (t = 0 base, t = 1 top)
+//   ray L->P crosses the card at   t = L.z*(P.y - Ac.y) / (H*(sin0*(P.y - L.y) - lean*L.z*cos0))
+//   then s across the width via that row's projection factor  k = L.z/(L.z - t*H*sin0)
+//
+// tOut is how far UP the card (the v), sOut how far ACROSS (the u) -- ONE solve yields both the occlusion
+// answer and the silhouette lookup coordinate. The forward version computed neither and discarded its
+// geometry, which is why it shared no work with the sampling that followed it.
+float cardHit(vec2 P, vec2 Ac, vec3 L, float W, float H, float reachU, float st, float ct,
+              out float sOut, out float tOut) {
+  sOut = 0.0; tOut = 0.0;
+  float dn = H * (st * (P.y - L.y) - uCardLean * L.z * ct);
+  if (abs(dn) < 1e-4) return 0.0;                    // ray parallel to the card plane
+  float t = L.z * (P.y - Ac.y) / dn;
+  // SHADOW_BASE_PUSH, translated. The forward path put the card BASE at Ac.y + push (SOUTH, into the
+  // caster footprint) to close a sprite/shadow seam. y(t) moves NORTH as t rises, so south of the base is
+  // t slightly NEGATIVE -- the same fudge expressed in the card parameterisation instead of in a corner.
+  float lean = uCardLean * H * ct;                   // total north offset of the card top
+  float tMin = -${SHADOW_BASE_PUSHF} / max(1e-4, lean);
+  if (t < tMin || t > 1.0) return 0.0;               // misses the card vertically -> lit
+  float k = L.z / (L.z - t * H * st);
+  // SEMI-INFINITE CASE (k <= 0): the light sits at or BELOW this card height, so the ray never returns to
+  // the ground and the shadow runs to infinity. A legitimate configuration -- a torch at flame height
+  // beside a tree -- and returning 0 here is exactly the bug I38 fixed, which silently deleted EVERY
+  // shadow whenever a light was authored low. The wedge model terminates it at REACH: past reach the
+  // light deposits nothing, so the cap is invisible. Solid coverage, no silhouette (there is no finite s
+  // to sample). This is the ONE place the reach bound is load-bearing -- see forks F2.
+  if (k <= 0.0) { vec2 d = P - L.xy; return dot(d, d) <= reachU * reachU ? 1.0 : 0.0; }
+  float s = ((P.x - L.x) / k + L.x - Ac.x) / W + 0.5;
+  if (s < 0.0 || s > 1.0) return 0.0;                // misses the card horizontally -> lit
+  sOut = s; tOut = t;
+  return 1.0;
 }
 // Coverage of one caster (billboard index into billboard_data) at P from light L: read the billboard record + its
 // definition (position + geo W/H), then the pure-quad test; if occluded, apply the sprite's SHAPE
@@ -394,14 +381,16 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   // lives INSIDE this quad: the silhouette edge softens as sub-lights partially cover it, the base stays
   // hard (z≈0 edges don't move with the sub-light), and detail dissolves at the tip (high edges do). The
   // outward feather beyond the silhouette extremes would need the corridor pad widened + re-proven — a
-  // follow-up, not worth breaking bit-identity for. Outside the quad → lit; skip the sub-light loop.
-  // ONE shadowCover, reused. It used to be called TWICE with identical arguments — once as the gate and
-  // again as the hard-quad return value — so every hard-quad caster projected its billboard, built the
-  // quad and ran four cross2 sign tests twice over (moving-lights I15).
-  float sc = shadowCover(P, Ac, L, W, H, reachU, data);
-  if (uCProfile == 2) return sc * 1e-6;                     // C2: + the quad gate, no silhouette
+  // THE GATE — one backward solve, and it is TRANSITIONAL (plane-intersection P1). The forward projection
+  // it replaces covered the caster's full extremes, so gating on the CENTRE ray is deliberately tighter:
+  // texels where the centre misses but an offset sub-light hits — the penumbra — are now rejected here.
+  // That is a known, recorded narrowing, not a regression to chase; P3 DISSOLVES this gate entirely, and
+  // with two solves at ± radius "does any ray hit" becomes the answer with nothing left to gate on.
+  float gs, gt;
+  float sc = cardHit(P, Ac, L, W, H, reachU, st, ct, gs, gt);
+  if (uCProfile == 2) return sc * 1e-6;                     // C2: + the gate, no silhouette
   if (sc <= 0.0) return 0.0;
-  if (uCProfile == 3 || lod < 4u) return sc;                // C3 / no silhouette resolved → hard quad
+  if (uCProfile == 3 || lod < 4u) return sc;                // C3 / no silhouette resolved → solid
   // ADAPTIVE TAP COUNT (2026-07-27). A sub-light displaced by d moves the ground shadow of a card point
   // at world height z by d·z/(Lz−z), so the caster's WIDEST penumbra — at the card top, z = H·sinθ — is
   //     pw = 2·emitter·zTop / (Lz − zTop)     [units]
