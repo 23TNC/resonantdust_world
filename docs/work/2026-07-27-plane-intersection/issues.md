@@ -9,7 +9,10 @@ checking if they're in that quad. That… is ridiculous."_).
 
 `casterCover` decides "is P shadowed by this caster" with **two independent implementations, in series**.
 
-**First, `shadowCover` builds the whole projected quad** and point-tests it. Per caster, per texel:
+**First, `shadowCover` works FORWARD** — projects the caster's extremes to the ground and tests whether
+`P` falls between them. No quad object exists; `bl`/`br`/`tl`/`tr` are four `vec2` locals alive for four
+lines (user, 2026-07-27: _"We don't have a projection quad. We ran math to figure out where we are."_).
+Per caster, per texel:
 
 | work | varies with P? |
 |---|---|

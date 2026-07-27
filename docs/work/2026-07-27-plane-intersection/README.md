@@ -27,14 +27,17 @@ the tilted-card projection with flat 2D maths. It replaces *how we ask the quest
 
 `casterCover` answers "is P shadowed by this caster" **twice**, with two different implementations:
 
-1. `shadowCover` builds the caster's whole projected quad — tilt `sin`/`cos`, `Yt`/`Zt`/`Yb`, the `k`
-   factor, two `projectTop` calls (a `sqrt` each), four corner positions — then runs four `cross2` sign
-   tests to decide containment. Returns 1.0 / 0.0.
-2. If that passed, the tap loop **re-derives the same fact** by inverting the light→P ray back to the
-   card's `(s,t)` and range-checking `t` then `s`. That inversion IS the plane intersection the user is
-   describing, already written, already handling the tilt correctly.
+1. `shadowCover` works FORWARD: project the caster's extremes down onto the ground — tilt `sin`/`cos`,
+   `Yt`/`Zt`/`Yb`, the `k` factor, two `projectTop` calls (a `sqrt` each), four corner POSITIONS — then
+   four `cross2` sign tests asking whether `P` falls between them. Returns 1.0 / 0.0. There is no quad
+   object anywhere: `bl`/`br`/`tl`/`tr` are four `vec2` locals alive for four lines. It is arithmetic,
+   not geometry (user, 2026-07-27).
+2. The tap loop then works BACKWARD: invert `P` through the light onto the card and range-check `t`
+   then `s`. That inversion IS the plane intersection, already written, already tilt-correct — and it
+   yields the texture coordinate as a by-product, which the forward pass discards.
 
-So the quad is a redundant pre-filter in front of the real test. Full trace in [I1](issues.md#i1).
+So the forward projection is a redundant pre-filter in front of the backward solve. Both are "math to
+figure out where we are"; the difference is DIRECTION, and the backward one is cheaper and returns more. Full trace in [I1](issues.md#i1).
 
 **Why deleting it should win big rather than a little:** the quad build is paid on MISSES, and misses
 dominate. The corridor visits up to 8 casters per tile across ~20 tiles; only a handful shadow any given

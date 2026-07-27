@@ -34,9 +34,15 @@ long shadows; move the camera instead.
 - [x] Isolate a cause: the `reachU` clamp is confirmed — disagreement falls 21.6 % → 11.9 % as reach goes 8 → 48 tiles. A ~12 % reach-independent remainder is still unexplained.
 - [x] Revert the P0 instruments. They were scaffolding, and this stream does not keep scaffolding.
 
-## P1 — Replace the quad predicate with the ray intersection, and delete the quad
+## P1 — Replace the FORWARD projection with the BACKWARD solve, and delete the forward path
 
-- [ ] Write the ray-vs-card intersection as a function in `GATHER_COMMON` and call it from `casterCover` as THE predicate — not alongside `shadowCover`, in place of it. One implementation, no switch.
+_Framing correction (user, 2026-07-27): there is no quad object. `shadowCover` computes four `vec2`
+locals and four cross products — arithmetic, not geometry. Both approaches are "math to figure out where
+we are"; today's runs FORWARD (project the caster's extremes, test if `P` is between them) and the
+replacement runs BACKWARD (invert `P` onto the card, range-check). The backward solve is cheaper and
+returns `(s,t)` — the texture coordinate — which the forward one discards._
+
+- [ ] Write the backward solve as a function in `GATHER_COMMON` and call it from `casterCover` as THE predicate — not alongside `shadowCover`, in place of it. One implementation, no switch.
 - [ ] Hoist the solve to a SINGLE gate ahead of the tap loop and feed its `s`/`t` into the centre tap's `uv` rather than re-solving. Without the hoist a miss costs N solves where it used to cost one quad test.
 - [ ] Build the ray gate with NO reach bound first, then test whether one is needed: run corridor↔brute identity, and move a light looking for a stale shadow trail outside its reach circle. Presence may already bound it ([F2](forks.md#f2)).
 - [ ] Decide `projectTop`'s `k <= 0` case: it ran the corner OUT to reach when the light sat below the card top, where the ray test reports unshadowed. Reproduce it or drop it deliberately, and record which in `forks.md`.
