@@ -1,5 +1,37 @@
 # Issues — problems hit, candidates, what we chose
 
+## I10 — Gather substep profile: `walkShadow` is 97 % of it {#i10}
+_2026-07-27 · same `uGProfile` staircase device as [I9](#i9), one moving reach-16 light, zoom 0.5_
+
+| level | includes | ms | **substep** |
+|---|---|---|---|
+| 1 | dirty gate + window mapping + `P` | 0.015 | 0.015 |
+| 2 | + `receiverAt` | 0.053 | +0.038 |
+| 3 | + the `allBillboard` corner test (3× `receiverCover`) | 0.057 | +0.004 |
+| 4 | + presence fetch and the light loop, **no** `walkShadow` | 0.069 | +0.012 |
+| **0** | **+ `walkShadow`** | **2.341** | **+2.272** |
+
+**The gather is essentially pure corridor walk: 2.272 of 2.341 ms — 97 %.** Everything else in it — the
+window mapping, the receiver mask, the corner test, the presence fetch, the whole 16-slot light loop and the
+MRT pack — costs **0.069 ms combined**.
+
+Worth noting the contrast with [I9](#i9): `receiverAt` costs **0.038 ms here and 0.978 ms in the lighting
+pass**, the same function called at 131 k texels versus 8.39 M — the 64× resolution gap showing up exactly
+where it should.
+
+### Where the remaining frame goes
+For one moving reach-16 light at zoom 0.5, GPU ≈ **3.8 ms**:
+
+| item | ms | owner |
+|---|---|---|
+| `walkShadow` (gather) | **2.27** | [F4](forks.md#f4) — bucket casters by where their SHADOW lands |
+| `receiverAt` (lighting) | **0.98** | [F7](forks.md#f7) — the prim pass |
+| everything else | 0.55 | — |
+
+**Those two items are 86 % of what is left.** Both are the same shape — a per-texel search for something the
+geometry already knows — and both were identified before this profile rather than after, which is the first
+time in this stream that the measurement has confirmed the plan instead of overturning it.
+
 ## I9 — Lighting-pass substep profile: the edge refine is 85 % of it {#i9}
 _2026-07-27 · one moving reach-16 light, zoom 0.5, `uProfile` staircase + GPU timer_
 

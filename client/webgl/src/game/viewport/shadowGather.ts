@@ -777,6 +777,12 @@ uniform sampler2D uSurface;           // the shared surface atlas page (F2) — 
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 uniform int uLightClass;              // #4: process only this class of light — 0 = COLD (static), 1 = HOT (dynamic)
 uniform float uElevK;                 // shadows-onto-billboards: receiver-elevation gain (sin65 default; 0 = flat, __elevk)
+// PROFILING STAIRCASE for the GATHER (2026-07-27, moving-lights I10) — same device as LIGHT_FRAG's uProfile.
+// 0 = full shader; 1..4 cut the fragment short at a named boundary so a GPU timer prices each substep by
+// difference. Each level includes every level below it:
+//   1 dirty gate + window mapping + P   2 + receiverAt   3 + the allBillboard corner test
+//   4 + presence fetch and the light loop WITHOUT walkShadow   0 + walkShadow
+uniform int uGProfile;
 layout(location = 0) out uvec4 fragColor; // per-light u9 shadow coverage
 layout(location = 1) out uvec4 oCasterD;  // #3: frontmost caster row (R, 7-bit) shadowing this texel
 ${GATHER_COMMON}
@@ -799,8 +805,10 @@ void main() {
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS (true texel position)
   // shadows-onto-billboards: is a standing billboard DRAWN at this texel, and its base row? IN-FAMILY (caster buckets
   // + surface atlas by index) — zoom-safe by construction, NOT the reverted zdepth-composite world read.
+  if (uGProfile == 1) { fragColor = uvec4(0u); oCasterD = uvec4(0u); return; } // G1: prologue only
   uint rbillboard; float rcov;
   float baseY = receiverAt(P, uData, uSurface, vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF}), rbillboard, rcov); // shadow mask offset; rbillboard 0 = ground
+  if (uGProfile == 2) { fragColor = uvec4(uint(rcov)); oCasterD = uvec4(0u); return; } // G2: + receiverAt
   bool isThing = rbillboard != 0u;
   float maskCov = clamp(rcov, 0.0, 1.0);                     // SOFT mask coverage → blends ground↔thing at the silhouette edge
   // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
@@ -820,6 +828,8 @@ void main() {
            && receiverCover(rbillboard, P + vec2(0.0, 1.0), P, uData, uSurface, al, b1) > 0.0
            && receiverCover(rbillboard, P + vec2(1.0, 1.0), P, uData, uSurface, al, b2) > 0.0;
   }
+
+  if (uGProfile == 3) { fragColor = uvec4(allBillboard ? 1u : 0u); oCasterD = uvec4(0u); return; } // G3: + corner test
 
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
@@ -844,7 +854,8 @@ void main() {
     // the interior). Ground texels store shG alone, which the LIGHT bake cuts by FINE presence (tight edge).
     // Value = u8 (0..255), 9th bit = on-billboard flag.
     float cd = 0.0, cov = 0.0; bool onBillboard = maskCov > 0.0;
-    if (onBillboard) {
+    if (uGProfile == 4) {                                   // G4: loop + record fetches, NO walkShadow
+    } else if (onBillboard) {
       float ze = min(zElev, 0.9 * L.z);                     // keep the projection s bounded
       float sProj = L.z / (L.z - ze);
       vec2 Qt = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
@@ -1017,6 +1028,8 @@ export class ShadowGather {
    *  aligns to the RAW def anchor (the albedo draw), so this is 0. `__lightalign(x, y)` re-tunes by eye. */
   private lightAlignX = 0;
   private lightAlignY = 0;
+  /** PROFILING staircase level for `GATHER_FRAG` (0 = full; 1–4 cut short). `__gprofile(n)`; leave at 0. */
+  gatherProfile = 0;
   /** PROFILING staircase level for `LIGHT_FRAG` (0 = full shader; 1–4 cut it short at a named boundary).
    *  The lighting bake is ONE draw, so per-substep GPU timing is only obtainable by differencing these.
    *  `__profile(n)`; always leave it at 0. See `moving-lights` I9. */
@@ -1163,6 +1176,12 @@ export class ShadowGather {
       if (n !== undefined) this.profile = n;
       this.rebakeAll();
       return this.profile;
+    };
+    // DEBUG (moving-lights I10): the same staircase for the GATHER pass.
+    (globalThis as unknown as { __gprofile: (n?: number) => number }).__gprofile = (n?: number) => {
+      if (n !== undefined) this.gatherProfile = n;
+      this.rebakeAll();
+      return this.gatherProfile;
     };
     // DEBUG (__hideright): blank the right half of each billboard's normal in __shownormal (alignment probe).
     (globalThis as unknown as { __hideright: (on?: boolean) => boolean }).__hideright = (on?: boolean) => {
@@ -1679,6 +1698,7 @@ export class ShadowGather {
       uniforms: (p) => {
         p.uInt("uCorridor", this.corridor ? 1 : 0);
         p.uInt("uLightClass", cls);
+        p.uInt("uGProfile", this.gatherProfile);
         p.uFloat("uElevK", this.elevK);
       },
     });
