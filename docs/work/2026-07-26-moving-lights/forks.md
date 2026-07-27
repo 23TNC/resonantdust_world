@@ -11,6 +11,10 @@ rasterising the billboard's light at fine resolution, masked by the sprite's own
 So:
 1. The **ground pass draws its shadow conservatively** — it does not care that shadow spills onto billboard
    texels, because those texels are about to be overwritten.
+   **No mechanism needs designing for this: we already overdraw** (user). The coarse shadow nearest-upsampled
+   onto the fine lightmap already spreads its value across the whole 8×8 block — that *is* the overdraw, and
+   it is exactly what `edgeRefine = false` shows on screen. **The ground side of this work is purely
+   subtractive.**
 2. Therefore the ground pass needs **no presence lookup and no cut**. It never asks "am I on a billboard".
 3. The **prim pass reclaims exactly the sprite footprint at fine resolution, and that overwrite IS the fine
    cut.**
