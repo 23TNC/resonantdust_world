@@ -635,3 +635,22 @@ Two alternatives, both rejected:
 
 **Consequence:** [I32](#i32)'s ordering gains a step. Ping-pong the DATA texture (done), then the SHADOW RT,
 then the parameterised accumulation, then the differential emit, then the tier collapse.
+
+**The general principle (user, 2026-07-26).** This is the THIRD instance of one shape, and naming it should
+stop a fourth:
+
+| where | the trap |
+|---|---|
+| [F11b](forks.md#f11b)'s original "subtract before flush" | correctness depended on read-before-overwrite ORDER |
+| [textile-slot I4](../2026-07-26-textile-slot/issues.md#i4) reproject | the slot permutation makes src/dst overlap |
+| I36, the shadow | the old value is gone by the time the reader runs |
+
+**If a pass needs the previous value of something another pass overwrites, keep two copies.** Do not sequence
+around it. Ordering constraints are invisible in the code that depends on them and fail silently when
+someone later reorders passes for an unrelated reason.
+
+Strictly the shadow case is *lost state* rather than a same-pass read-modify-write — the gather and the
+light pass are separate draws today. But the user's framing anticipates where this goes: `walkShadow` is
+already callable from `LIGHT_FRAG` (shadow-edge-refine moved it into `GATHER_COMMON`), so if those passes
+ever fuse, it becomes a LITERAL read-and-write of one resource. The ping-pong is what makes that fusion
+safe to attempt later.
