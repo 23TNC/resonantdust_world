@@ -187,7 +187,14 @@
                 1.0 &thing.light.intensity set
                 6.0 &thing.light.reach set
                 0.35 &thing.light.radius set
-                0.6 &thing.light.height set
+                ; HEIGHT IS SHADOW-CRITICAL, not just a look. `shadowCover` projects the caster's card
+                ; top (elevation Zt = H·sin(WORLD_TILT)) from the light onto the ground; when the light
+                ; sits BELOW that top, k = Lz/(Lz−Zt) goes negative and the caster returns 0 — no shadow
+                ; at all, silently. A 2-tile tree tops out at 32·sin55° ≈ 26 units, so a light must clear
+                ; that to cast against anything. 2.5 tiles = 40 units is the documented contract
+                ; (shadowGather.ts:61) chosen precisely to sit above the tree billboard. An authored
+                ; flame height (0.6) zeroed EVERY shadow in the world — see I37.
+                2.5 &thing.light.height set
                 1 &thing.light.cast set
                 0 &thing.light.hot set
                 0 return

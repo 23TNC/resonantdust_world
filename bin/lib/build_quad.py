@@ -26,7 +26,7 @@ import prep_train
 
 SRC = os.path.join(prep_train.REPO, ".staging", "animal-lora")
 DST = os.path.join(prep_train.REPO, ".staging", "quad-lora-train")
-SIZE = 768
+SIZE = int(os.environ.get('RD_PREP_SIZE', 768))   # train-res; 1024 for SDXL-native runs
 
 # ---- everything NOT a mammalian quadruped ----
 BIPED = {"AEXP_WildGoose","Cassowary","Chicken","Crane","Duck","Emu","Goose","Megachicken",

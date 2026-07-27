@@ -655,7 +655,7 @@ already callable from `LIGHT_FRAG` (shadow-edge-refine moved it into `GATHER_COM
 ever fuse, it becomes a LITERAL read-and-write of one resource. The ping-pong is what makes that fusion
 safe to attempt later.
 
-### I37 — REGRESSION: shadow coverage is uniformly ZERO (open, 2026-07-26)
+### I37 — REGRESSION: shadow coverage is uniformly ZERO (RESOLVED, 2026-07-26)
 User: "we still don't have shadows yet." Confirmed — the world is lit but nothing casts.
 
 **Evidence gathered, so the next session does not re-derive it:**
@@ -701,3 +701,63 @@ disagree about that field's width and meaning.
 **Next:** dump one caster's `definition_data` record and compare its `frame_lod` / `frame_x` / `frame_y`
 against what the resolver actually packed for that stem at the live LOD. If they disagree, that is the bug
 and the fix is to reconcile the code with P0's layout change.
+
+**RESOLVED 2026-07-26 — the light sat BELOW the casters, so every caster early-returned.**
+
+Not the frame layout. Four suspects died in a row, each cheaply and each by measurement rather than by
+reading code:
+
+1. `definition_data.frame_lod` — decoded to **7** (2⁷ = 128 px, correctly tracking `SQUARE`), anchors 1/2 =
+   bottom-centre. The P0 u4→u2 worry was unfounded; the code and the record agree.
+2. `uSurface` unbound — the page is bound, 2048² rgba8unorm.
+3. Co-pack quadrant offset missing in `casterCover` — no. `shadowGather.ts:386-388` is explicit that
+   `D.z`'s `fx|fy` **is** the surface quadrant origin, and the normal quadrant is derived from it by
+   `+(side,−side)`. `casterCover` sampling `vec2(fx,fy)` is correct.
+4. The frame-window gate rejecting every sub-light — no. `uvSpan` decoded to exactly `frameBox`
+   ((0,448)–(128,576)); the gate passes 83%, failing only the half-open `t=0` edge, which is correct.
+   The surface B channel there holds a real silhouette (10,548 non-zero texels).
+
+The fault was upstream of all of it, in `shadowCover`:
+
+```glsl
+float k = L.z / (L.z - Zt);   // Zt = H * sin(WORLD_TILT)
+if (k <= 0.0) return 0.0;     // top at/above the light — no forward shadow
+```
+
+Every live light carried `Lz = 10` units — the authored `&thing.light.height 0.6` (tiles) × 16. A 1-tile
+caster's card top is at 16·sin55° ≈ **13.1** units; a 2-tile tree at ≈ **26.2**. So `k = 10/(10−13.1) =
+−3.22 < 0` for every caster against every light, and `casterCover` returned 0 before ever touching the
+silhouette. Uniform zero coverage, with casters present, lights present, and the walk correctly exonerated
+by the brute-force split test — every observation consistent, because the early-out is upstream of all of them.
+
+**Cause:** `shadowGather.ts:61` documents the contract — *"Light height: 40 units … above the tree
+billboard (2 tiles / 32 units)"*. That 40 lived in the debug light array. When P0–P5c made lights
+CONTENT-AUTHORED per kind and **deleted** the debug array, the authored `0.6` replaced it and nothing
+reconciled the new value against the geometry it has to satisfy. Fixed by authoring `2.5` tiles = 40 units,
+with the constraint written next to the value in `content/visual/things.rd` so the next author sees it.
+
+**Lesson — a plausible value is not a valid one.** `0.6` reads perfectly as a torch flame height and
+survives every type and range check; it is wrong only against a geometric invariant stated in a comment in
+a different language in a different directory. When a stream deletes a hardcoded constant in favour of
+authored content, the constant's *reason* has to move with it, not just its value.
+
+**Lesson — an early-out upstream of a subsystem makes that whole subsystem look broken.** I spent four
+suspects inside `casterCover` because the symptom (zero coverage) pointed there. The brute/corridor split
+test had already proven the walk innocent; what it could not show was that the caller never reached the
+walk with a live caster. Bisect the *call chain* as well as the data.
+
+### I38 — `k <= 0` silently drops the shadow instead of projecting to reach R (open, 2026-07-26)
+
+Exposed by [I37](#i37). `shadowCover` returns 0 when the light is below the caster's card top. That is a
+real configuration, not an error: a torch at flame height beside a 2-tile tree *should* throw a very long
+shadow away from itself. The converged wedge design (`docs/work/shadows/`, and the shadow-design note)
+specifies the silhouette is *"projected radially to the light's reach R (not infinity)"* — which is exactly
+the case `k <= 0` is meant to cover, and currently discards.
+
+Consequence: light height is not a free authoring parameter. Any authored light below ~26 units casts
+nothing at all, silently, and the only symptom is absence. The I37 fix (raise the torch to 40 units) makes
+the current content correct but does not lift the constraint.
+
+**Next:** clamp the top-corner projection to the reach circle when `k <= 0` rather than returning 0, then
+re-run the corridor↔brute identity check — the corridor pad is proven only for the forward-projection
+case, so a reach-clamped quad may visit occluders the walk does not currently reach.
