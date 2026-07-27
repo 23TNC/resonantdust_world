@@ -87,3 +87,25 @@ Shipping shape: **`template` stays the default**, `family:` remains the recommen
 `auto` is available and is the right call when you do not know the body plan — chiefly because it
 knows when to give up. Rejected: retiring the table (measurably worse), and raising the threshold to
 force better picks (the hedgehog scored 0.79 — high confidence, wrong answer, so no threshold helps).
+
+## F5 — Shipping checkpoint after run-4 · RESOLVED 2026-07-26
+
+**`rd_quadruped_e07` stays.** A/B at each LoRA's own training resolution, 6 species × e/s × 3 seeds:
+
+| config | gate | mean d_aspect | east | south |
+|---|---|---|---|---|
+| **e07 @768 (current)** | **26/36** | **32.5%** | 12/18 | **14/18** |
+| run4 e10 @1024 | 24/36 | 45.6% | 14/18 | 10/18 |
+| run4 e15 @1024 | 25/36 | 42.8% | **15/18** | 10/18 |
+
+Run-4 loses overall, but the loss is **entirely** the south regression from
+[I13](issues.md#i13) — it **beats e07 on east**, where the P2 data fixes show up as visibly richer
+art. So this is not a refutation of sharper data / 1024 / dim 48; it is one prep bug that happens to
+hurt one direction badly.
+
+Rejected: shipping run-4 anyway for its better east (a broken direction is worse than a flatter one,
+and the pipeline needs all three). Rejected: shipping a run-4/e07 blend per direction (real, but it
+doubles inference complexity to work around a bug we can just fix).
+
+**Next attempt** should re-prep with jittered fill and retrain; the east result says the payoff is
+there once the frame artefact is gone.

@@ -157,3 +157,26 @@ longer-side equivalent is **sd 0.0032**, comfortably inside the spirit of it.
 Bear, Wolf_Timber, Tiger, Elephant, Giraffe. Every new sprite is visibly crisper and consistently
 framed; **no halo, no clipping, no aspect distortion** found. The most visible change is that
 subjects now fill the frame consistently — the old Tiger and Giraffe were noticeably small.
+
+## 2026-07-26 — P3 complete (run-4 trained, A/B'd, and NOT shipped)
+
+Run-4: fresh, 1024², dim 48 / alpha 24, grad-accum 4, LR 3e-5 cosine, 15 epochs on the P2-rebuilt
+1024 dataset. **4 h 39 m**, final loss 0.0169 (identical to run-3's). VRAM held at 10,379 MiB of
+11,264 — within 26 MiB of the probe's prediction.
+
+**A/B verdict: `e07` stays** ([F5](forks.md#f5)). 26/36 vs 25/36, and 32.5% vs 42.8% mean d_aspect.
+
+**But the aggregate hid the real story.** By direction, run-4 **wins east** (15/18 vs 12/18) and
+**loses south** (10/18 vs 14/18) — the entire deficit is one direction. Visually
+(`.staging/ab4/visual.png`) run-4's east sprites are richer and better drawn than the shipping
+model's; its south sprites are head-only portraits inside a drawn white rectangle
+([I13](issues.md#i13)).
+
+**Root cause is mine:** pinning `fill = 0.85` gave all 459 training images an identical ~7.5% white
+margin, which the model learned as a feature and now draws. The P2 fix that removed arbitrary scale
+introduced a learnable constant.
+
+**Method note worth keeping:** the numbers alone would have been reported as "run-4 is slightly
+worse". Only looking at the images revealed "better on east, broken on south" — a completely
+different conclusion with a completely different next step. The gate passed 10/18 of the broken
+south sprites because a framed bust can have a plausible bbox aspect.

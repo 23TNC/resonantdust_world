@@ -181,3 +181,24 @@ it.
 `build_quad.py` is now in `bin/lib/` and delegates image prep to `prep_train.normalise()`, so both
 sets share one prep path and cannot drift again. General lesson: a script that produces a training
 input is *tooling*, not a scratch file — if it is not versioned, its defects are invisible to review.
+
+## I13 — Pinned scale taught the model to draw a FRAME, and it broke south views
+
+Run-4's south sprites are **head-only portraits sitting inside a visible white rectangle**
+(`.staging/ab4/visual.png`, column 4) — wolf, bear, tiger, cat, fox and pig all render a face, no
+body, framed. East views from the same checkpoint are *better* than the shipping model.
+
+**Cause: the P2 scale normalisation was too strict.** Fixing subject size to exactly `fill = 0.85`
+gave every one of the 459 training images an identical ~7.5% white margin. A constant that uniform is
+learnable, and the model learned it — reproducing the margin as a drawn rectangle and composing a
+portrait inside it. The fix that removed one defect (arbitrary scale) introduced another.
+
+**Remedy:** jitter the fill per image (≈0.78–0.90) so subject scale is *consistent* without the
+margin being a fixed value. Keeps the benefit that scale-drift is bounded; removes the constant.
+
+**The gate did not catch it.** Run-4's south still passed 10/18 — a bust inside a frame can land on a
+plausible bbox aspect. Reported as "slightly worse overall" by the numbers, while the images show
+"better on east, catastrophically broken on south". Another instance of
+[I3](#i3)/[I7](../2026-07-25-template-free-generation/issues.md#i7): geometry metrics cannot see
+*portrait instead of body*. **The visual check is what found this**, and no threshold change would
+have.

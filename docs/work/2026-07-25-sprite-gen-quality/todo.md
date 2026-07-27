@@ -28,9 +28,9 @@ every later comparison is scored by it.
 
 ## P3 — Retrain and prove it is better
 
-- [ ] Retrain the quadruped LoRA on the rebuilt data at the run-3 recipe. Acceptance: the run completes with per-epoch checkpoints under `output_quad2/`.
-- [ ] A/B the new LoRA against `rd_quadruped_e07` multi-seed. Acceptance: pass-rate and mean `d_aspect` for both over 10 species × e/s/n × 3 seeds, tabulated in `completed.md`.
-- [ ] Choose the shipping checkpoint. Acceptance: `forks.md` names the winner and the margin; if the new LoRA loses, that is recorded and `e07` stays.
+- [x] Retrain the quadruped LoRA on the rebuilt data at the run-3 recipe. Acceptance: the run completes with per-epoch checkpoints under `output_quad2/`.
+- [x] A/B the new LoRA against `rd_quadruped_e07` multi-seed. Acceptance: pass-rate and mean `d_aspect` for both over 10 species × e/s/n × 3 seeds, tabulated in `completed.md`.
+- [x] Choose the shipping checkpoint. Acceptance: `forks.md` names the winner and the margin; if the new LoRA loses, that is recorded and `e07` stays.
 
 ## P4 — Run one full flywheel cycle
 
