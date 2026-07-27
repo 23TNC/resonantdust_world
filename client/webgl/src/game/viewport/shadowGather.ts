@@ -192,6 +192,10 @@ uniform int uLadder;
 // it is world-geometry F2, left open as a look call. Live via __lean(x) so it can be A/B'd in one frame.
 // MUST match the CPU-side TILT in buildCasters, or casters get bucketed for a card they do not cast.
 uniform float uCardLean;
+// P0 INSTRUMENT (plane-intersection). 1 = casterCover returns 1.0 where shadowCover's QUAD test and the
+// centre-ray (s,t) inversion DISAGREE, 0.0 where they agree -- so the shadow map becomes a disagreement
+// map. The two are meant to be the same predicate; this is what proves it before the quad is deleted.
+uniform int uPredDiff;
 const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
@@ -399,6 +403,27 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   // again as the hard-quad return value — so every hard-quad caster projected its billboard, built the
   // quad and ran four cross2 sign tests twice over (moving-lights I15).
   float sc = shadowCover(P, Ac, L, W, H, reachU, data);
+  if (uPredDiff != 0) {
+    // The centre-ray inversion, exactly as the tap loop runs it with Lp = L. Returns 1 where the two
+    // predicates disagree. Any disagreement must be given a named cause (reach clamp / base push /
+    // range-bound conventions) before shadowCover is deleted -- see todo.md P0.
+    float dn = H * (st * (P.y - L.y) - uCardLean * L.z * ct);
+    float inv = 0.0;
+    if (abs(dn) >= 1e-4) {
+      float tt = L.z * (P.y - Ac.y) / dn;
+      if (tt >= 0.0 && tt <= 1.0) {
+        float kk = L.z / (L.z - tt * H * st);
+        if (kk > 0.0) {
+          float ss = ((P.x - L.x) / kk + L.x - Ac.x) / W + 0.5;
+          if (ss >= 0.0 && ss <= 1.0) inv = 1.0;
+        }
+      }
+    }
+    // 1 = any disagreement · 2 = quad says SHADOW, ray says LIT · 3 = quad says LIT, ray says SHADOW
+    if (uPredDiff == 2) return (sc > 0.5 && inv < 0.5) ? 1.0 : 0.0;
+    if (uPredDiff == 3) return (sc < 0.5 && inv > 0.5) ? 1.0 : 0.0;
+    return inv != sc ? 1.0 : 0.0;
+  }
   if (uCProfile == 2) return sc * 1e-6;                     // C2: + the quad gate, no silhouette
   if (sc <= 0.0) return 0.0;
   if (uCProfile == 3 || lod < 4u) return sc;                // C3 / no silhouette resolved → hard quad
@@ -1190,6 +1215,8 @@ export class ShadowGather {
    *  makes the card ~0.87·H at 55°. `__lean(x)`. Feeds BOTH `uCardLean` and `buildCasters`' TILT — they
    *  must agree or casters are bucketed for a card they don't cast. See world-geometry F2. */
   cardLean = 1.0;
+  /** P0 INSTRUMENT: 1 = paint predicate DISAGREEMENT (quad vs ray inversion) into shadow-cold. `__preddiff(n)`. */
+  predDiff = 0;
   /** Falloff exponent — see {@link FALLOFF_EXP}. `__falloff(e)`; <1 lifts the mid-range, 1 = linear
    *  smoothstep, >1 darkens the outer pool. Cannot extend a light past its reach at any value. */
   falloff = FALLOFF_EXP;
@@ -1363,6 +1390,25 @@ export class ShadowGather {
       if (n !== undefined) this.tapForce = n;
       this.rebakeAll();
       return this.tapForce;
+    };
+    // P0 (plane-intersection): paint predicate disagreement instead of coverage.
+    (globalThis as unknown as { __preddiff: (n?: number) => number }).__preddiff = (n?: number) => {
+      if (n !== undefined) { this.predDiff = n; this.rebakeAll(); }
+      return this.predDiff;
+    };
+    // P0/P2 (plane-intersection): a REPRODUCIBLE fingerprint of shadow-cold, so "bit-identical" survives a
+    // reload and stays falsifiable after the code it describes is deleted. FNV-1a over the raw u32s plus
+    // summary stats, so a mismatch is diagnosable rather than merely different.
+    (globalThis as unknown as { __shadowfp: (cls?: number) => unknown }).__shadowfp = (cls = 0) => {
+      const a = this.debugReadShadow(cls);
+      if (!a) return { error: "no shadow RT" };
+      let h = 2166136261 >>> 0, nz = 0, sum = 0, onbb = 0;
+      for (let i = 0; i < a.length; i++) {
+        const v = a[i] >>> 0;
+        if (v !== 0) { nz++; sum += v & 0xff; if ((v & 1) !== 0) onbb++; }
+        h = (Math.imul(h ^ v, 16777619) >>> 0);
+      }
+      return { hash: h, nonzero: nz, sum, onBillboard: onbb, len: a.length, lean: this.cardLean };
     };
     // DEBUG: caster card lean (world-geometry F2). 1.0 = rigid parallel-to-view, 0.5 = the old shipped
     // value. Sets the shader uniform AND the CPU bucketing factor together — they must never diverge.
@@ -1902,6 +1948,7 @@ export class ShadowGather {
         p.uInt("uTapForce", this.tapForce);
         p.uInt("uLadder", this.ladder);
         p.uFloat("uCardLean", this.cardLean);
+        p.uInt("uPredDiff", this.predDiff);
         p.uFloat("uElevK", this.elevK);
       },
     });

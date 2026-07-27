@@ -9,12 +9,22 @@ differ. Every phase re-runs corridor↔brute identity before being ticked.
 
 ## P0 — Prove the two predicates agree, before deleting anything
 
-- [ ] Capture a REFERENCE `debugReadShadow(0)` from the current build at 16 forced taps and save it, so P2's bit-identity claim has something to diff against. Without a stored baseline "bit-identical" is unfalsifiable once the code is gone.
-- [ ] Add `__preddiff` to `GATHER_FRAG`: run BOTH `shadowCover` and the `(s,t)` inversion for the centre sub-light per caster and write 1.0 where they disagree, so disagreement is visible on screen rather than assumed.
+- [x] Capture a REFERENCE `debugReadShadow(0)` from the current build at 16 forced taps and save it, so P2's bit-identity claim has something to diff against. Without a stored baseline "bit-identical" is unfalsifiable once the code is gone.
+- [x] Add `__preddiff` to `GATHER_FRAG`: run BOTH `shadowCover` and the `(s,t)` inversion for the centre sub-light per caster and write 1.0 where they disagree, so disagreement is visible on screen rather than assumed.
 - [ ] Sweep `__preddiff` over the 3-torch scene at zoom 0.25/0.5/1/2 and record the disagreeing-texel count per zoom in `completed.md`. Expect near-zero; a non-zero count means the two differ and P1 must reconcile, not delete.
 - [ ] Characterise every disagreement found: for each, name which of `reachU` clamping, `SHADOW_BASE_PUSH`, or the `t`/`s` range bounds causes it. No deletion until each has a named cause.
 
 ## P1 — Make the ray inversion the sole test
+
+**REVISED after P0 (2026-07-27).** P0 measured the two predicates disagreeing on ~26 % of shadowed slots,
+bidirectionally, with the `reachU` clamp confirmed as one cause and a ~12 % reach-independent floor still
+unexplained. So P1 is no longer "delete the redundant copy" — the inversion must be made to REPRODUCE the
+quad's behaviour first, and only then can the quad go. The performance argument is unaffected: the quad
+build is still redundant work on the miss path.
+
+- [ ] Find cause 2 of the P0 disagreement — the ~12 % that survives large reach. Prime suspects: the `pos || neg` both-windings test degenerating on a self-intersecting quad, and the `t`/`s` half-open bounds vs the sign test. Name it before writing any replacement.
+- [ ] Give the inversion a reach bound that matches `projectTop` — including its `k <= 0` behaviour of running the corner OUT to reach, which the inversion currently treats as simply unshadowed.
+- [ ] Re-run `__preddiff` after the reach bound and cause-2 fix; require the disagreement to reach 0 before deleting anything. That is now P1's gate, not P2's.
 
 - [ ] Hoist `worldTiltRad` out of `shadowCover`/`casterCover` to a per-pass value passed down the walk — it is a texel fetch returning a pass-constant, currently re-fetched per caster per texel.
 - [ ] HOIST the `(s,t)` inversion out of the tap loop into a single centre-ray gate before it, returning 0 on `t` or `s` out of range. Deleting the quad without hoisting makes a MISS cost N inversions instead of one — see the note below.
