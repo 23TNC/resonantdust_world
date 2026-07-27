@@ -16,7 +16,8 @@ differ. Every phase re-runs corridor↔brute identity before being ticked.
 ## P1 — Make the ray inversion the sole test
 
 - [ ] Hoist `worldTiltRad` out of `shadowCover`/`casterCover` to a per-pass value passed down the walk — it is a texel fetch returning a pass-constant, currently re-fetched per caster per texel.
-- [ ] Replace `shadowCover`'s quad build with an early `(s,t)` inversion for the centre sub-light, returning 0 on `t` or `s` out of range, so a MISS costs a subtract, a divide, a multiply-add and two compares.
+- [ ] HOIST the `(s,t)` inversion out of the tap loop into a single centre-ray gate before it, returning 0 on `t` or `s` out of range. Deleting the quad without hoisting makes a MISS cost N inversions instead of one — see the note below.
+- [ ] Feed the gate's `s`/`t` straight into the centre tap's `uv` rather than re-solving them, since the gate's solve already produced the lookup coordinate — `uv` is built from `s` and `(1−t)` directly.
 - [ ] Re-apply the reach bound explicitly: `projectTop` clamped the projection to `reachU`, and that bound is what makes a shadow unable to escape the corridor's reach box. Add the equivalent distance test or the identity proof breaks.
 - [ ] Re-apply `SHADOW_BASE_PUSH`: it nudged the base south to close a caster/shadow seam and lived in the quad corners. Fold it into the `t` range or the anchor, and confirm the seam does not return.
 - [ ] Delete `shadowCover` and `projectTop` once nothing calls them, and delete the `cross2` helper if it has no other caller.

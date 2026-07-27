@@ -62,3 +62,48 @@ centre to the left and right of centre to the right. The quads and triangles rem
 The consequence for this stream: **keep the existing tilted-card inversion verbatim.** The change is
 which question we ask, not the geometry we ask it about. Any patch here that introduces a fresh 2D
 intersection instead of reusing the `denom`/`t`/`k`/`s` block is wrong.
+
+## I3 — the inversion yields the UV, not just the hit test
+
+User, 2026-07-27, sharpening [I1](#i1):
+
+> _"Because you're calculating 'where up the card' the point hit, I believe this becomes our v in our uv
+> lookup. I believe we have the u as well from the x intersection. So I believe this alleviates the second
+> pass we were doing."_
+
+Confirmed in the code — the very next line after the range checks builds the lookup from them:
+
+    vec2 uv = vec2(fx, fy) + vec2(ox, oy) * ppu - vec2(nx, ny)
+            + vec2(s * W, (1.0 - t) * H) * ppu;
+
+`s` is the u; `(1 - t)` is the v, flipped only because atlas rows run image-top-down while card `t = 0` is
+the sprite's bottom row.
+
+**Why this strengthens the case for deleting the quad.** I1 framed it as the same predicate computed
+twice. It is worse than that: the surviving computation is one we must perform ANYWAY to sample the
+silhouette. One solve yields two results — the containment answer AND the texture coordinate. The quad
+test yields only the boolean and discards the geometry, so it shares NO work with what follows. It is not
+a cheaper pre-filter; it is pure overhead.
+
+Counted properly there are **four** containment tests for one question: the quad's four `cross2` signs,
+then `t` in range, then `s` in range, then the `uv` frame-bounds check.
+
+## I4 — deleting the quad without HOISTING makes misses worse
+
+A trap in the first draft of P1, caught before implementation.
+
+The `(s,t)` inversion currently lives INSIDE the tap loop, and each tap `continue`s independently on a
+miss. So simply removing `shadowCover` would make a total miss cost **N inversions** — one per tap — where
+today it costs one quad test and then N inversions. The deletion only pays if the centre-ray inversion is
+hoisted to a single gate ahead of the loop:
+
+| | today | deleted only | deleted + hoisted |
+|---|---|---|---|
+| miss | quad build + N inversions | N inversions | **1 inversion (~6 ALU)** |
+| hit | quad build + N inversions | N inversions | 1 gate + N inversions |
+
+Misses dominate, so the hoist is the entire win, not an optimisation on top of it. P1 is worded to hoist
+first and delete second for this reason.
+
+Note this concern evaporates at P3, where the whole loop collapses to two rays — but P1 must stand on its
+own as a bit-identical refactor, so it cannot lean on a later phase to rescue its cost.
