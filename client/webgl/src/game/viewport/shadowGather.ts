@@ -1251,6 +1251,7 @@ export class ShadowGather {
     this.litSeen.clear();
     this.carriedSeen.clear();
     this.lastStanding = standing;
+    this.stepOrbit(standing);
     const seen = this.billboardSeen;
     seen.clear();
     for (const p of standing) {
@@ -1464,6 +1465,36 @@ export class ShadowGather {
   get on(): boolean {
     return this.enabled;
   }
+  /** Each orbiting carrier's ORIGIN, so the orbit is a bounded circle around where the prim actually
+   *  stands rather than an unbounded drift that walks lights out of the world. */
+  private readonly orbitHome = new Map<number, [number, number]>();
+  private orbitPhase = 0;
+  /** DEBUG: step the orbit one frame — displace every light-carrying prim around its origin and push
+   *  BOTH the old and new boxes through the dirty front door.
+   *
+   *  This replaces the deleted debug light array ([I39](../../../../docs/work/2026-07-25-primitive-graph/issues.md)).
+   *  Lights are carried by placed prims now, so making a light move means moving its CARRIER — there is
+   *  no light to displace on its own. Marking the old box as well as the new one is not optional: skip it
+   *  and the vacated tiles keep a stale shadow, because nothing else knows the caster left.
+   *
+   *  The toggle survived P5 while the thing it moved did not, so `__orbit(true)` returned `true` and moved
+   *  nothing — a dead perf harness that read as a working one. Anything measuring motion cost through this
+   *  should assert the frame is doing work (GPU time, not the dirty counter, which latches). */
+  private stepOrbit(standing: Primitive[]): void {
+    if (!this.orbit) return;
+    this.orbitPhase += 0.05;
+    const R = 0.75 * SQUARE;                       // orbit radius (world px) — under a tile, so a light
+    for (const p of standing) {                    // stays in the room it lights
+      if (!p.light) continue;
+      let home = this.orbitHome.get(p.id);
+      if (!home) { home = [p.x, p.y]; this.orbitHome.set(p.id, home); }
+      this.markPrimDirty(p.x, p.y, SQUARE, SQUARE);          // vacated tiles — else a stale shadow persists
+      const ph = this.orbitPhase + p.id;                     // per-prim phase so they don't move in lockstep
+      p.x = home[0] + Math.cos(ph) * R;
+      p.y = home[1] + Math.sin(ph) * R;
+      this.markPrimDirty(p.x, p.y, SQUARE, SQUARE);          // newly occupied tiles
+    }
+  }
   /** DEBUG: turn the light orbit on/off (no arg = toggle). Off freezes the lights so the scene is
    *  static again (gather goes idle via dirty-gating); on drives a full recompute every frame. */
   setOrbit(on?: boolean): boolean {
@@ -1561,9 +1592,10 @@ export class ShadowGather {
     if (this.coldData.carriedLights.size === 0 && standing.length === 0) return;
 
     // No light MOTION here: a light moves only because the primitive carrying it moved, and that is
-    // the placement path's business (`markLightDirty`, from `buildCasters`). The debug orbit and the
-    // bespoke light array it drove are GONE (P5) — every light in the world is now carried by a
-    // placed primitive, authored per kind in content.
+    // the placement path's business (`markLightDirty`, from `buildCasters`). The bespoke debug light
+    // array is GONE (P5) — every light in the world is now carried by a placed primitive, authored per
+    // kind in content. The debug orbit is BACK (I39) but obeys that same rule: `stepOrbit` moves the
+    // CARRIERS through the dirty front door, it does not move lights behind the placement path's back.
     // Same reasoning: `coldData.lights` counts only the debug array's records, so a world lit purely
     // by carried lights must not be turned away here either.
     if (win.cols === 0) return;
