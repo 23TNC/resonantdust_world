@@ -794,3 +794,25 @@ proving the work happened, or a fast result is indistinguishable from no result.
 per frame, offset each lit billboard's position and push it through the prim dirty front door, then assert
 dirty-tiles-per-frame > 0 before trusting any timing. Until then there is no moving-light number at all,
 and the 64/128-light figures from 2026-07-25 are the last valid ones (at reach 6, not 16).
+
+**I39 UPDATE 2026-07-26 — harness fixed in-console; first valid moving-light numbers.**
+
+Driving the carrier prims directly (per frame: `markPrimDirty` at the old box → displace → `markPrimDirty`
+at the new box) makes lights genuinely move, which is what `__orbit` no longer does. At **zoom 0.25, 123
+lights (120 moving), reach 16 tiles**:
+
+| condition | GPU ms/frame | fps | dirty tiles/frame |
+|---|---|---|---|
+| static bake | 0.72 | 120 | 696 |
+| **moving** | **72.44** | **15.2** | 5,384 |
+
+**4.3× over the 16.67 ms 60 fps budget.** The 100× static→moving jump is the liveness proof, NOT the dirty
+counter — that reads a constant 696 in the static case and appears to be a latch of the last non-zero
+value rather than a per-frame count. Worth confirming before anyone leans on it as a signal (it was the
+signal that caught the dead harness, so its semantics matter).
+
+NOT comparable to the 6.03 ms / 128-light figure from 2026-07-25: that was reach 6, this is reach 16,
+roughly 7× the area per light, and cost tracks lights-per-tile.
+
+**Next:** land the displace-and-mark loop as a real debug hook replacing `__orbit`, then re-measure at
+reach 6 for a like-for-like against the old figure before optimising anything.
