@@ -190,3 +190,43 @@ broke the build (`TS1005` at the function signature). The repo has a PostToolUse
 this — but it matches `Write|Edit`, and I was editing via a python heredoc, so it never fired. Same reason
 recorded in the memory index under "edit via Edit/Write, not bash". The hook cannot protect edits that
 route around it.
+
+## 2026-07-27 · P4 — analytic interval, and the first trustworthy measurement
+
+The sampling schemes (16 taps → 2 rays → wedge → 4-tap binary search) were all hunting for the same
+thing: WHERE on the emitter the shadow boundary falls. `u` is linear in the sub-light offset λ, so
+inverting `u(λ) = u0 + λ·D` at `u = 0` and `u = 1` gives that boundary directly. Same plane intersection,
+solved for the other unknown — the card coordinate already encodes its own edges as 0 and 1, so no edge
+geometry and no trigonometry are involved. Clamping the resulting λ interval to the emitter's extent IS
+the penumbra: fully inside → 1.0, half overhanging → 0.5, outside → 0.
+
+    4 plane solves → 1     up to 4 texture fetches → 1     4 divides → 2
+
+### MEASURED — one orbiting light, zoom 1, 240 frames, cold gather draw only
+
+| reach (tiles) | checkpoint (forward + 16-tap) | analytic interval | speedup |
+|---|---|---|---|
+| 4 | 0.5589 ms | **0.1457 ms** | **3.84×** |
+| 8 | 1.1189 ms | **0.3398 ms** | **3.29×** |
+| 12 | 1.8960 ms | **0.5844 ms** | **3.24×** |
+
+Dirty-tile counts matched across builds (110/263/404 vs 108/261/403), so the two were doing equivalent
+work. Corridor↔brute BIT-IDENTICAL throughout (0 differing of 39 083).
+
+### The harness — three bugs, and what actually fixed it
+
+Every earlier attempt this session was untrustworthy, and the failures are worth keeping:
+
+1. **Draw parity cannot identify the class.** Timing "every other gather draw" times cold or hot at
+   random; the hot pass is near-empty for a `hot 0` light, which is how the SAME build measured 1.108 ms
+   and 0.083 ms an hour apart. Fixed by discriminating on `o.target === coldShadowRT`.
+2. **Accumulated orbit phase leaks across runs.** Each sample started with the light somewhere different,
+   giving a 0.606–1.138 ms spread on one build. Fixed by deriving phase from the FRAME INDEX.
+3. **Fixed duration ≠ fixed work.** Runs walked different arc lengths. Fixed by running a fixed frame
+   count.
+
+**And a calibration is mandatory before believing any figure.** The frozen-light harness looked
+beautifully stable (±0.001) while being wrong — it did not move when zoom 1 → 0.5 quadrupled the tiles.
+The orbit harness passes: cost tracks reach (0.146 → 0.340 → 0.584) and per-dirty-tile cost stays flat
+(~0.0013 ms), and a repeat run lands within **0.2 %**. A harness that does not respond to a workload
+change you control is measuring something else.
