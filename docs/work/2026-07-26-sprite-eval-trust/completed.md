@@ -76,3 +76,27 @@ routes through it, so both datasets share one prep path.
 **A defect in the new contact sheet, found by using it:** RGBA sprites were converted straight to RGB,
 rendering transparency **black** — the corpus column looked broken when the data was fine. Now
 composited on white first. A review tool that misrepresents correct art is worse than none.
+
+## 2026-07-27 — P2 complete + run-5 launched (the single-variable test)
+
+**Jittered 1024 dataset built and verified.** 459 images / 459 captions, uniform 1024², longer-side
+fraction **0.847 ± 0.0268** (range 0.798–0.896) and outline sharpness **88.8**. Acceptance asked for
+sd in 0.02–0.05 with sharpness ≥85: **PASS**. The pinned build's sd was 0.003 — the learnable
+constant is gone, and the P2 sharpness gain is retained.
+
+**Run-5 launched as a true single-variable test.** Identical to run-4 in *every* setting — fresh,
+1024², dim 48 / alpha 24, grad-accum 4, LR 3e-5 cosine, 15 epochs, same prompts, same seed — with
+**only the dataset changed** (jittered fill instead of pinned). Run-4 changed data + rank +
+resolution simultaneously and therefore could not attribute its own failure; this run can.
+
+Confirmed started: 765 effective images, 15 epochs, 2,880 optimizer steps, VRAM 10,379 MiB (matching
+run-4 exactly, as expected from an identical config), 54 °C.
+
+**What the result will mean either way:**
+- **If the frame artefact and sitting poses disappear** → [I5](issues.md#i5)'s leading hypothesis is
+  confirmed: a pinned fill taught the model to draw its margin, and that margin pushed composition
+  inward. Rank 48 and 1024 are exonerated.
+- **If they persist** → the margin is *not* the cause, and the remaining suspects are rank 48 and
+  1024-training, which would then need isolating individually.
+
+Either outcome is informative, which is the point of changing one thing.

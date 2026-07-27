@@ -21,7 +21,7 @@ Ordering in [`README.md`](README.md): **fix the ruler first**, then diagnose, th
 
 - [x] Jitter the fill fraction per image in `prep_train.normalise()`. Acceptance: over a 60-image sample, longer-side fraction has mean ≈0.85 and sd between 0.02 and 0.05 (not the current 0.003).
 - [x] Make the jitter deterministic per source file. Acceptance: prepping the same file twice yields byte-identical output; two different files get different fills.
-- [ ] Rebuild the 1024 dataset with jitter. Acceptance: 459 images, sd in range, outline sharpness still ≥85 (the P2 gain is not lost).
+- [x] Rebuild the 1024 dataset with jitter. Acceptance: 459 images, sd in range, outline sharpness still ≥85 (the P2 gain is not lost).
 
 ## P3 — Diagnose the pose drift before spending another 5 hours
 
@@ -31,7 +31,7 @@ Ordering in [`README.md`](README.md): **fix the ruler first**, then diagnose, th
 
 ## P4 — Retrain with the fixes and prove it
 
-- [ ] Retrain on the jittered 1024 dataset, holding run-4's other settings. Acceptance: the run completes with per-epoch checkpoints under `output_quad3/`.
+- [x] Retrain on the jittered 1024 dataset, holding run-4's other settings. Acceptance: the run completes with per-epoch checkpoints under `output_quad3/`.
 - [ ] A/B the result against `e07` and run-4 with the P0 gate. Acceptance: gate pass, `iou_ref` and signed aspect for all three, 6 species × e/s × 3 seeds, tabulated.
 - [ ] Review the auto-emitted contact sheet before accepting any verdict. Acceptance: `completed.md` states what the images show and whether it agrees with the numbers.
 - [ ] Choose the shipping checkpoint. Acceptance: `forks.md` names the winner and margin; if nothing beats `e07`, that is recorded and `e07` stays.
