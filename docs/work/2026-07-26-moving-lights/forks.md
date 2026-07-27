@@ -30,11 +30,37 @@ cares about, so the maintenance cost lands exactly where the win is and could ea
 capacity decision, and overflow is a *correctness* issue (a dropped caster is a missing shadow), where today's
 overflow merely drops a rarely-consulted slot.
 
-**Not decided — (c) needs costing before it is chosen.** The measurement that would settle it: for a moving
-reach-16 light, how many (tile, caster) pairs does its shadow set contain per frame, and what does rebuilding
-them cost on the CPU relative to the ≥81 % of GPU frame time the walk currently spends? If maintenance is a
-few hundred µs against 35 ms of walk, (c) wins outright; if it is comparable, the walk stays and the lever
-goes back to reach and light count.
+### RANKED BY REACH (2026-07-26) — this is the question that decides it
+
+I first costed (c) at **4096 lights** and rejected it on 9.8 M CPU writes/frame. That was the wrong regime for
+the question actually being asked. **Ranking the options by how cost scales with reach `R`:**
+
+| plan | GPU cost | dirty-area cost of motion | total vs `R` | long shadows |
+|---|---|---|---|---|
+| **(c) per-light SHADOW buckets** | **constant** (~4 tests/light-texel) | ∝ R² | **∝ R²** | **full** |
+| walk budget ([plan-4096 P1](plan-4096.md)) | constant (capped steps) | ∝ R² | ∝ R² | **truncated** |
+| **(b) body buckets + walk — today** | ∝ R (walk length) | ∝ R² | **∝ R³** | full |
+| (a) per-light caster LUT | ∝ R² (all casters in reach) | ∝ R² | ∝ R⁴ | full |
+
+**For lights in motion with LARGE reach, (c) is the best plan we have.** It is the only one whose per-texel
+cost does not grow with reach *and* does not sacrifice the long shadows that large reach exists to produce.
+
+The estimate, from measured densities (1 326 standing prims over a 2 048-tile map ≈ 0.65 casters/tile):
+- A reach-16 light has **~520 casters** in reach; each caster's shadow spans ~6 tiles → **~3 000 (tile, caster)
+  entries** per light, spread over that light's ~804 tiles.
+- So a texel finds **~4 casters** in its own tile's bucket for that light — against today's `32-tile walk × 3
+  dilation × 8 slots = 768` tests. **~190× less GPU work per light-texel.**
+- Maintenance at the counts where large reach is actually used: **32 lights → ~77 k writes/frame**, 128 lights
+  → ~307 k. Both fine in JS. It only breaks at thousands (4096 → 9.8 M), which is a different regime.
+
+**So (c) and the walk budget are complementary, not competing:** (c) is the right answer for tens-to-hundreds
+of large-reach movers at full quality; the walk budget is the fallback that holds the frame at thousands, where
+per-light shadows are imperceptible anyway.
+
+**Open risks on (c)** — real, and to be settled by building it behind a toggle rather than by more analysis:
+bucket capacity (~4 average but hot spots exceed 8, and overflow is a *missing shadow*, not a dropped nicety);
+the buckets are per light, so they rebuild when a **light** moves, not just a caster; and the estimate above is
+arithmetic from measured densities, not a measurement of (c) itself.
 
 ## F1 — Where does "move a prim" live? {#f1}
 _2026-07-26 · **RESOLVED → (a). The entry point already existed; nothing needed re-homing.**_
