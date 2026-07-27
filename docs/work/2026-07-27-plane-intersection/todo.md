@@ -56,7 +56,8 @@ returns `(s,t)` — the texture coordinate — which the forward one discards._
 
 - [ ] Run corridor↔brute identity (`__corridor` toggle, `debugReadShadow(0)` for a COLD light) and require 0 differing texels. The argument defaults to 1 (hot), which returns all zeros for a cold light and reads exactly like perfect identity.
 - [ ] Eyeball zoom 0.5 / 1 / 2 against the checkpoint build: shadows attached at the trunk, silhouette intact, no bright notch behind casters, no new hard clip at tile boundaries.
-- [ ] Profile the cold gather draw against `checkpoint/pre-plane-intersection` (one moving light, 6-tile orbit, zoom 0.5, `EXT_disjoint_timer_query_webgl2`, cold draws only) and record the delta.
+- [ ] BUILD A TRUSTWORTHY HARNESS FIRST: assert the COLD draw by render target rather than draw parity, and calibrate it against a workload whose answer is known (zoom 1 → 0.5 quadruples tiles). Two attempts gave 1.108 ms and 0.083 ms for the same build.
+- [ ] Then profile the cold gather against `checkpoint/pre-plane-intersection` on a frozen-light fixture and record the delta.
 - [ ] Profile a MISS-heavy case — dense casters, small reach — since the predicted win is on the miss path and the standard fixture may under-report it.
 
 ## P3 — Two rays at light ± radius, and delete the tap ladder

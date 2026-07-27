@@ -110,3 +110,40 @@ gate toward a forward projection.
   only conditionally valid.
 - P2's profile against `checkpoint/pre-plane-intersection` — frame time is measured but not A/B'd against
   the old build, so the miss-path win is still unquantified.
+
+## 2026-07-27 · P2 profiling — INCONCLUSIVE, and the harness is the reason
+
+**No performance claim is being made for P1.** Three attempts produced numbers that cannot all be right,
+so the honest result is "not measured", not a figure.
+
+| fixture | checkpoint | P1 |
+|---|---|---|
+| orbiting light, 5 s | 1.138 / 1.033 / **0.606** | 1.108 |
+| frozen light + `rebakeAll()` each frame | 0.082 / 0.083 / 0.083 | — |
+
+**Attempt 1 — orbiting light.** Gave checkpoint 1.138 vs P1 1.108 and I nearly reported a 2.6 % win.
+Repeating the checkpoint gave 1.033 then 0.606 — a near-2× spread. The orbit phase carries ACROSS runs,
+so each sample starts with the light somewhere different and a different caster set in range. The
+variance swamps the effect by an order of magnitude; the comparison was meaningless.
+
+**Attempt 2 — frozen light.** Tight (±0.001) but implausible: 0.083 ms for a full-window cold gather,
+against ~1 ms measured on the same build minutes earlier. That is the signature of the bimodal harness
+bug already recorded in [moving-lights](../2026-07-26-moving-lights/completed.md) — the wrapper times the
+HOT pass, which is near-empty for a `hot 0` light, instead of the cold one. Draw-parity alone does not
+pin which class you are timing.
+
+### What a trustworthy P2 harness needs
+
+- **Deterministic workload** — frozen light, fixed offset, forced rebake. Attempt 2 got this right.
+- **Provably the COLD draw.** Not "every other draw": assert the class, e.g. by keying off the render
+  target rather than a draw counter, and sanity-check that the figure MOVES when the workload obviously
+  changes (zoom 1 → 0.5 quadruples the tiles; if the number does not move, the harness is lying).
+- **A calibration case with a known answer** before trusting any A/B.
+
+### Why the win may be small anyway
+
+[moving-lights I11](../2026-07-26-moving-lights/issues.md) attributed `casterOne` at 70 % of frame with
+the 16-tap emitter loop at 78 % OF THAT. The predicate is a thin slice of the cost; the tap loop is the
+mass. So replacing the predicate was never going to move the frame much — **P3 is where the real win is**,
+because it collapses 16 taps to 2. P1's justification stands on deleting a duplicated predicate and
+halving a redundant texel fetch, not on a frame-time claim.
