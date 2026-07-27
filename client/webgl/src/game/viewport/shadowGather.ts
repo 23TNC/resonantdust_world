@@ -1269,7 +1269,11 @@ export class ShadowGather {
         // up at all — and why it does so WITHOUT a force-all.
         if (cl.changed) {
           const w = this.coldData.carriedLights.get(cl.id)!;
-          this.markLightDirty({ x: w.x, y: w.y, reach: w.reach, dynamic: p.light.hot });
+          // `cl.from` = where the light was, so the queued rect is the union old ∪ new. Omitting it
+          // dirties only the NEW reach box and leaves a stale smear behind every mover (I1) — the
+          // `from` parameter has existed for this since P5 and no call site ever passed it, because
+          // until I3 was fixed nothing could move.
+          this.markLightDirty({ x: w.x, y: w.y, reach: w.reach, dynamic: p.light.hot }, cl.from);
         }
       }
       // ── BILLBOARD presentation ────────────────────────────────────────────────────────────────

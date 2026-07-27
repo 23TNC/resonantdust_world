@@ -637,8 +637,10 @@ export class ColdShadowData {
    *  billboard ([F9]). One placed object, two presentations: `set_a` already names the billboard, so
    *  the light takes `set_b`. Returns the light's in-set id. The carrier is written by
    *  {@link billboardDataFor} first, so the resolve walk below reads a populated node. */
-  carriedLightFor(billboard: Primitive, L: PrimitiveLight): { id: number; changed: boolean } {
+  carriedLightFor(billboard: Primitive, L: PrimitiveLight):
+      { id: number; changed: boolean; from?: { x: number; y: number } } {
     const billboardId = billboard.id;
+    const pos = encodePosition(billboard.x + billboard.width * 0.5, billboard.y + billboard.height);
     // ENSURE a carrier. `billboardDataFor` allocates one for a *caster*, but a primitive can carry a
     // light without being one (a bare light source, or a sprite with no resolved silhouette — those
     // `continue` out of the caster loop before ever getting a carrier). So allocate + place one here
@@ -647,14 +649,28 @@ export class ColdShadowData {
     if (prim === undefined) {
       prim = this.allocPrim();
       this.primOfBillboard.set(billboardId, prim);
-      this.writeRecord(PRIM_BASE + prim,
-        encodePosition(billboard.x + billboard.width * 0.5, billboard.y + billboard.height),
-        (((1 << 24) | ((SET_LIGHT_DATA & 0xf) << 8)) >>> 0), 0, 0);
+      this.writeRecord(PRIM_BASE + prim, pos, (((1 << 24) | ((SET_LIGHT_DATA & 0xf) << 8)) >>> 0), 0, 0);
+    } else {
+      // **THE MOVE** ([I3](../../../../docs/work/2026-07-26-moving-lights/issues.md#i3)). This write used to
+      // live inside the branch above, so a carrier's position was set once — at allocation — and never again.
+      // For a light WITH a billboard that was survivable, because `billboardDataFor` re-writes the same
+      // record from `billboard.x/y` every frame. For a light WITHOUT one it was fatal: `definitionFor`
+      // returns −1 and `buildCasters` `continue`s before the billboard path, so nothing else ever touched
+      // the record. Measured 2026-07-26: all three content torches resolve `def = −1` (they carry no
+      // sprite), so orbiting them moved `prim.x/y` while `carriedLights` stayed pinned to the allocation
+      // position — the prims moved and the shadow map came back bit-identical.
+      //
+      // Only the POSITION lane is rewritten; G and both id lanes are carried through from the mirror.
+      // Re-emitting the record wholesale here would clobber the carried-piece slots that
+      // `writeCarriedLight` is about to read.
+      const pb = (PRIM_BASE + prim) * 4, m = this.dataMirror;
+      if (m[pb] !== pos) this.writeRecord(PRIM_BASE + prim, pos, m[pb + 1], m[pb + 2], m[pb + 3]);
     }
     return this.writeCarriedLight(billboardId, prim, L);
   }
 
-  private writeCarriedLight(billboardId: number, prim: number, L: PrimitiveLight): { id: number; changed: boolean } {
+  private writeCarriedLight(billboardId: number, prim: number, L: PrimitiveLight):
+      { id: number; changed: boolean; from?: { x: number; y: number } } {
     let idx = this.lightOfBillboard.get(billboardId);
     if (idx === undefined) {
       idx = this.carriedLightFree.pop() ?? this.carriedLightNext++;   // reuse before growing
@@ -696,7 +712,12 @@ export class ColdShadowData {
     if (moved) this.carriedLights.set(idx, { x: wx, y: wy, reach: L.reach });
     // The CALLER routes a change through `markLightDirty` — the same front door a debug light uses.
     // No parallel version counter here: that is exactly the hand-rolled bookkeeping P4 retired.
-    return { id: idx, changed: moved };
+    //
+    // `from` is the position the light is LEAVING, returned because the caller cannot recover it: the
+    // line above has already overwritten the map entry. Without it the caller dirties only the light's
+    // NEW reach box and everything it used to illuminate keeps its baked value — a smear trailing every
+    // mover ([I1](../../../../docs/work/2026-07-26-moving-lights/issues.md#i1)).
+    return { id: idx, changed: moved, from: prev ? { x: prev.x, y: prev.y } : undefined };
   }
 
   /** P7/H1 — release every carried light whose owner no longer presents one (turned off, evicted,

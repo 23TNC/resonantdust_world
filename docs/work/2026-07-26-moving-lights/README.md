@@ -18,22 +18,27 @@ And a second observation that turns out to be the sharpest diagnostic we have:
 > _"We cannot handle zooming all the way IN. Which doesn't make sense as we should be calculating LESS as we
 > zoom in. So there is something in a per-px shader that's incorrect."_
 
-## Why there is no move, and why the orbit lied
-`Viewport.movePrim()` exists ([`Viewport.ts:310`](../../../client/webgl/src/game/viewport/Viewport.ts)) and
-does exactly one thing: mutate `prim.x/y` and `SquareCache.refreshPrim`, which dirties the **albedo** square
-range. It says nothing to `ShadowGather`. The shadow/lightmap side learns about prims by scanning
-`standingPrims()` into a **per-frame snapshot** (`lastStanding`) inside `buildCasters`.
+## Why there is no move — root cause, confirmed
+**A carrier prim's position record has exactly one writer: allocation.** `carriedLightFor` writes
+`PRIM_BASE + prim`'s position *only* on the frame the carrier is created; every later frame finds the carrier
+already mapped, skips the write, and `writeCarriedLight` then re-emits the record passing `m[pb]` — the
+**existing** position word — so the stale value is explicitly preserved. `resolveCarried` reads that frozen
+carrier, so the light's decoded world position never changes, `moved` stays false, and `markLightDirty` never
+fires. Full trace in [I3](issues.md#i3).
 
-That is why the debug orbit was a hoax
-([primitive-graph I40](../2026-07-25-primitive-graph/issues.md)): `stepOrbit` wrote `p.x/p.y` on the objects
-in `lastStanding` — a read model that is rebuilt and discarded every frame — so the JS fields changed, the
-positions the CPU stamps into the records did not, and the shadow map came back **bit-identical (hash
-3750264193, 49 747 non-zero) with the orbit on and off**. I reported it as verified on the strength of the
-fields changing. It was the third time this session I trusted a proxy near the *start* of a pipeline as
-evidence about its *end* (the others: [I37](../2026-07-25-primitive-graph/issues.md#i37),
-[I39](../2026-07-25-primitive-graph/issues.md#i39)). **Every acceptance in this stream reads the output.**
+That is what "there is no method to move a prim" means concretely: not a missing *notification*, a missing
+*write*. A moved prim's sprite follows, because the albedo cache reads `prim.x/y` directly — which is exactly
+why movement has always looked half-real. The torch slides; its light stays nailed to where it was first seen,
+and so does every shadow it casts.
 
-So "move a prim" is genuinely missing: there is no entry point that moves a prim *and* tells the lighting.
+**This corrects the diagnosis I recorded in [primitive-graph I40](../2026-07-25-primitive-graph/issues.md)**,
+which blamed `stepOrbit` for writing a discarded per-frame read model. `standingPrims()` returns *references*
+to the stored prims, so those writes land fine. The observation was real — the shadow map came back
+bit-identical (hash 3750264193, 49 747 non-zero) with the orbit on and off — but the mechanism I attached to it
+was invented, and I wrote it into three documents before checking the four-line method that disproves it. The
+lesson from [I37](../2026-07-25-primitive-graph/issues.md#i37)/[I39](../2026-07-25-primitive-graph/issues.md#i39)
+still holds and is what found the real cause: **a proxy near the START of a pipeline is not evidence about its
+END.** Every acceptance in this stream reads the output.
 
 ## The lighting cost model — what "sharing" actually bought
 The design is right about static lights and the measurements say so. Lights bake into a **shared world-space

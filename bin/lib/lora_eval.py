@@ -173,6 +173,43 @@ def iou_control(img, control):
     inter = float((a & b).sum()); union = float((a | b).sum())
     return inter / union if union else 0.0
 
+def _norm_silhouette(img, grid=128):
+    """Filled silhouette, cropped to its own bbox and rescaled into a fixed grid.
+
+    Normalising position AND size before overlap is the whole point: we are asking "is this the same
+    SHAPE" — is a lying wolf lying — not "is it in the same place at the same scale". Without the
+    crop-and-fit, every sprite would score low for offsets and scale differences that the pipeline
+    already handles elsewhere (bbox fill is a separate metric)."""
+    m = _filled(_mask(img), grid)
+    if not m.any(): return m
+    ys, xs = np.where(m)
+    sub = m[ys.min():ys.max()+1, xs.min():xs.max()+1]
+    return np.asarray(Image.fromarray((sub*255).astype(np.uint8)).resize((grid, grid), Image.BILINEAR)) > 96
+
+def iou_ref(img, ref_img):
+    """IoU of the generated silhouette against the REAL corpus sprite for that species+direction.
+
+    Distinct from iou_control (forks F2): that compared against the CONTROL image the generator was
+    handed, so a wrong control faithfully obeyed scored HIGH. This compares against ground truth, so
+    it can see what no bounding-box statistic can — a sitting wolf overlaps a lying wolf poorly, and
+    a framed bust overlaps a full body poorly. Only defined for corpus species."""
+    a = _norm_silhouette(img); b = _norm_silhouette(ref_img)
+    u = float((a | b).sum())
+    return float((a & b).sum()) / u if u else 0.0
+
+def reference_image(folder, stem, direction):
+    """The real corpus sprite composited on white, for iou_ref. None if absent."""
+    p = os.path.join(SRC, folder, f"{stem}_{direction}.png")
+    if not os.path.exists(p):
+        d = os.path.join(SRC, folder)
+        cands = sorted(os.listdir(d)) if os.path.isdir(d) else []
+        for c in cands:
+            if c.lower().endswith(f"_{direction}.png"): p = os.path.join(d, c); break
+    if not os.path.exists(p): return None
+    im = Image.open(p).convert("RGBA")
+    bg = Image.new("RGBA", im.size, (255,255,255,255)); bg.alpha_composite(im)
+    return bg.convert("RGB")
+
 def measure(img, control=None):
     m = _mask(img); H, W = m.shape
     if m.sum() < 50:
@@ -218,6 +255,14 @@ def reference(folder, stem, direction):
     im = Image.open(p).convert("RGBA")
     bg = Image.new("RGBA", im.size, (255,255,255,255)); bg.alpha_composite(im)
     return measure(bg.convert("RGB"))
+
+def d_aspect_signed(g, r):
+    """Signed proportion error, in percent: NEGATIVE means the sprite is more COMPACT than the real
+    one (upright/sitting — a broken pose convention), POSITIVE means longer (a proportion wobble).
+    The unsigned version scored those identically and called run-4's east pose drift a tie
+    (issues I1)."""
+    if not r: return None
+    return 100.0 * (g["aspect"] - r["aspect"]) / max(r["aspect"], 1e-3)
 
 def score(g, r):
     """0-100 composite. Blobs and background are hard requirements; fill/aspect are

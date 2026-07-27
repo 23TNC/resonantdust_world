@@ -29,8 +29,52 @@ dangerous part — it would read as "shadows are a bit laggy" rather than as a c
 
 Fix: pass `from` (the light's previous position, which `carriedLights` already holds before the update).
 
-## I2 — The zoom-in cliff is a dirty-FRACTION effect, not a per-px shader bug (HYPOTHESIS) {#i2}
-_2026-07-26 · open — P0 confirms or kills it_
+## I2 — The zoom-in cliff is a dirty-FRACTION effect, not a per-px shader bug {#i2}
+_2026-07-26 · **CONFIRMED** — measured, and the corrected model fits to 1.3%_
+
+### Measured (P0, 2026-07-26 · 3 orbiting torches, reach 16, `focus=104,55`)
+
+| zoom | lod | map (tiles) | dirty/frame | **dirty fraction** | ms static | ms moving | fps moving |
+|---|---|---|---|---|---|---|---|
+| 1.0 | 0 | 32 × 16 = 512 | 512 | **100.0 %** | 8.33 | **43.06** | 23 |
+| 0.5 | 1 | 64 × 32 = 2 048 | 1 363 | 66.6 % | 8.33 | 28.34 | 35 |
+| 0.25 | 2 | 128 × 64 = 8 192 | 1 811 | 22.1 % | 8.33 | 8.33 | **120** |
+
+**The hypothesis is confirmed and the mechanism is exactly as predicted at zoom 1: the dirty fraction
+saturates at 100 %.** Three reach-16 lights each claim a 32 × 32 = 1 024-tile box against a 512-tile map, so
+the union is the entire map and there is no zoom further in where it improves.
+
+**Correction to the cost model I wrote before measuring.** I said per-tile cost was constant and the tile
+count was what moved. Both halves were wrong, and they were wrong in *opposite* directions, which is why the
+conclusion survived: zooming out bakes **3.5× MORE tiles** (512 → 1 811) in **5.2× LESS time**. A tile at lod
+0 fills a whole slot; at lod 2 it fills 1/16 of one, so per-tile texels fall 16× while the tile count rises
+3.5×. The right statement collapses both:
+
+> `work ∝ dirty_tiles × texels_per_tile = (fraction × slots × 4^lod) × (slot_texels / 4^lod)`
+> **`= fraction × (slots × slot_texels)`** — a **constant texel budget**, of which the dirty fraction is
+> re-baked each frame.
+
+Checked against the measurements, taking zoom 1 as the reference: 43.06 × 0.666 = **28.7** predicted vs
+**28.34** measured (**1.3 %**); 43.06 × 0.221 = 9.5 predicted vs 8.33 measured, which is the 120 fps vsync
+floor, so the true value is at or under it. The static row is 8.33 ms at every zoom — the same floor —
+confirming the bake is genuinely idle when nothing moves.
+
+**So the user's "something per-px is incorrect" is right about the effect and wrong about the location.** No
+shader does more work per texel as you zoom in. The texel budget is constant by construction (that is what
+[textile-slot](../2026-07-26-textile-slot/README.md) bought); zooming in shrinks the world under that fixed
+budget until one torch's reach covers all of it.
+
+**Also settled: the dirty counter is per-frame, not latched.** It reads **0** in every static row. The
+"constant 696" recorded in [`completed.md`](completed.md) as a suspected latch was a stale reading — that
+caveat is closed.
+
+**Corollary, now with numbers.** At zoom 0.25 three moving lights are *free* (120 fps, identical to static).
+At zoom 1 they cost 43 ms. Nothing about the lights changed — only how much of the visible world each one
+claims. A reach of 16 tiles against a 28 × 12-tile screen is not a torch, it is ambient light
+([F3](forks.md#f3)).
+
+### The original prediction, kept for the record
+_2026-07-26 · written before measuring_
 
 **Observation (user):** zooming all the way in tanks performance, which is backwards — less world on screen
 should mean less work.
@@ -65,17 +109,46 @@ of a nice-sounding table.
 ambient light. The reach was chosen for how it looked while zoomed out and nothing tied it back to the screen
 — see [F3](forks.md#f3).
 
-## I3 — Movement had no entry point, so the orbit "worked" without moving anything {#i3}
-_2026-07-26 · open (fixed in [P1](todo.md)) — carried forward from
-[primitive-graph I40](../2026-07-25-primitive-graph/issues.md)_
+## I3 — A carrier prim's POSITION record is written once, at allocation, and never again {#i3}
+_2026-07-26 · **ROOT CAUSE CONFIRMED** (fixed in [P1](todo.md)) — supersedes the diagnosis carried in from
+[primitive-graph I40](../2026-07-25-primitive-graph/issues.md), which was wrong; see the correction below_
 
-`ShadowGather.lastStanding` is a **per-frame snapshot** rebuilt at the top of `buildCasters` and discarded.
-`stepOrbit` mutated `p.x/p.y` on that snapshot. The CPU stamps resolved positions from the **prim graph**, so
-the writes went nowhere: the shadow map came back bit-identical (hash 3750264193, 49 747 non-zero) with the
-orbit both on and off, and I had already committed a claim that all three torches were "displacing frame to
-frame" on the strength of the JS fields changing.
+**The bug.** [`coldShadowData.ts:646`](../../../client/webgl/src/game/viewport/coldShadowData.ts) writes a
+carried light's carrier prim position **only on the frame the carrier is allocated**:
 
-The generalisation, third instance this session: **a proxy near the START of a pipeline is not evidence about
-its END.** I37 (authored height looked fine → every shadow zero), I39 (120 lights registered → 0 dirty tiles),
-I40 (fields changed → map unchanged). In all three the sound check was one call at the output, and in all
-three I did the cheap check instead. Hence the acceptance rule at the top of [`todo.md`](todo.md).
+```ts
+let prim = this.primOfBillboard.get(billboardId);
+if (prim === undefined) {                                   // ← ONLY here
+  prim = this.allocPrim();
+  this.primOfBillboard.set(billboardId, prim);
+  this.writeRecord(PRIM_BASE + prim, encodePosition(...), ...);   // ← the only position write
+}
+return this.writeCarriedLight(billboardId, prim, L);
+```
+
+Every later frame finds `prim` in the map and skips the branch. `writeCarriedLight` then rewrites the record
+as `writeRecord(PRIM_BASE + prim, m[pb], G, …)` — passing `m[pb]`, the **existing** R word — so it explicitly
+preserves the stale position. Downstream, `resolveCarried` resolves the light against that frozen carrier, so
+`decodePosition(r.pos)` returns the same `wx, wy` forever, `moved` is false, `changed` is false, and
+`markLightDirty` never fires.
+
+**So the prim graph's position record has exactly one writer: allocation.** That is what "there is no method
+to move a prim" means concretely — not a missing notification, a missing *write*. A moved prim's sprite
+follows (the albedo cache re-reads `prim.x/y` directly), which is why movement has always *looked* half-real:
+the torch slides, its light stays nailed to where it was first seen.
+
+**Correction — the diagnosis I recorded earlier was wrong.** I40 concluded that `stepOrbit` "writes a read
+model that is discarded", on the theory that `lastStanding` is a per-frame snapshot. The list is, but
+[`SquareCache.standingPrims()`](../../../client/webgl/src/game/viewport/SquareCache.ts) does
+`for (const { prim } of this.prims.values()) out.push(prim)` — it pushes **references to the stored prims**.
+So `stepOrbit`'s writes land on the authoritative objects after all, and the whole "discarded read model"
+story was false. The observation it was invented to explain (map bit-identical, orbit on and off) was real;
+the mechanism was not.
+
+Two things to keep from that:
+- **A confirmed observation plus an unverified mechanism is still an unverified mechanism**, and it is more
+  dangerous than an open question because it reads as settled. I wrote this diagnosis into `README.md`,
+  `issues.md` and the work index before checking one 4-line method.
+- The generalisation from I37/I39/I40 survives intact and is why the real cause turned up: **a proxy near the
+  START of a pipeline is not evidence about its END.** The output — a bit-identical shadow map — was right
+  all along; only my explanation of it was wrong. Hence the acceptance rule at the top of [`todo.md`](todo.md).
