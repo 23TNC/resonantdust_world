@@ -168,6 +168,11 @@ export interface TileWindow {
 
 /** Shared GLSL: packed-position decode + ground projection + the fan region predicate (roles → tris). */
 const GATHER_COMMON = /* glsl */ `
+// PROFILING STAIRCASE inside casterCover (2026-07-27, moving-lights I15) — casterOne is 85 % of the walk,
+// so this is where the frame actually goes. 0 = full; 1..3 cut short:
+//   1 the two record fetches (billboard + definition) + decode   2 + the shadowCover quad gate
+//   3 + hard-quad return (skips the 16-tap emitter loop)         0 + the 16-tap silhouette loop
+uniform int uCProfile;
 const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
@@ -323,6 +328,7 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   // base-centre on it; general anchors go live when billboard_data carries reported x/y (F3/P5).
   vec2 sh = vec2(ox + 0.5 * axf * W - 0.5 * axf * spanU,
                  oy + 0.5 * ayf * H - 0.5 * ayf * spanU);
+  if (uCProfile == 1) return float(defIdx & 1) * 1e-6;      // C1: the two record fetches + decode only
   uint rot = (Pd.y >> 26) & 3u;                           // 1 = E, 3 = W (mirrored E)
   if (rot == 3u) sh.x = -sh.x;                              // flipped sprite → mirrored bbox placement
   vec2 Ac = A + sh;
@@ -333,8 +339,13 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   // hard (z≈0 edges don't move with the sub-light), and detail dissolves at the tip (high edges do). The
   // outward feather beyond the silhouette extremes would need the corridor pad widened + re-proven — a
   // follow-up, not worth breaking bit-identity for. Outside the quad → lit; skip the sub-light loop.
-  if (shadowCover(P, Ac, L, W, H, reachU, data) <= 0.0) return 0.0;
-  if (lod < 4u || emitter < 0.5) return shadowCover(P, Ac, L, W, H, reachU, data); // no silhouette / point light → hard quad
+  // ONE shadowCover, reused. It used to be called TWICE with identical arguments — once as the gate and
+  // again as the hard-quad return value — so every hard-quad caster projected its billboard, built the
+  // quad and ran four cross2 sign tests twice over (moving-lights I15).
+  float sc = shadowCover(P, Ac, L, W, H, reachU, data);
+  if (uCProfile == 2) return sc * 1e-6;                     // C2: + the quad gate, no silhouette
+  if (sc <= 0.0) return 0.0;
+  if (uCProfile == 3 || lod < 4u || emitter < 0.5) return sc; // C3 / no silhouette / point light → hard quad
   // Frame sampling constants (whole-px-per-unit; ppu = 2^lod / spanU is a pow2 ≥ 1 by construction).
   // Window top-left = frame origin + offset·ppu − nudge. Atlas rows are image-top-down; card t=0 is the
   // sprite's BOTTOM row → v = 1−t.
@@ -1062,6 +1073,8 @@ export class ShadowGather {
   gatherProfile = 0;
   /** PROFILING staircase level INSIDE `walkShadow` (0 = full; 1–4 cut short). `__wprofile(n)`; leave at 0. */
   walkProfile = 0;
+  /** PROFILING staircase level INSIDE `casterCover` (0 = full; 1–3 cut short). `__cprofile(n)`; leave at 0. */
+  casterProfile = 0;
   /** PROFILING staircase level for `LIGHT_FRAG` (0 = full shader; 1–4 cut it short at a named boundary).
    *  The lighting bake is ONE draw, so per-substep GPU timing is only obtainable by differencing these.
    *  `__profile(n)`; always leave it at 0. See `moving-lights` I9. */
@@ -1220,6 +1233,12 @@ export class ShadowGather {
       if (n !== undefined) this.walkProfile = n;
       this.rebakeAll();
       return this.walkProfile;
+    };
+    // DEBUG (moving-lights I15): the staircase inside casterCover — record fetches / quad gate / 16-tap loop.
+    (globalThis as unknown as { __cprofile: (n?: number) => number }).__cprofile = (n?: number) => {
+      if (n !== undefined) this.casterProfile = n;
+      this.rebakeAll();
+      return this.casterProfile;
     };
     // DEBUG (__hideright): blank the right half of each billboard's normal in __shownormal (alignment probe).
     (globalThis as unknown as { __hideright: (on?: boolean) => boolean }).__hideright = (on?: boolean) => {
@@ -1738,6 +1757,7 @@ export class ShadowGather {
         p.uInt("uLightClass", cls);
         p.uInt("uGProfile", this.gatherProfile);
         p.uInt("uWProfile", this.walkProfile);
+        p.uInt("uCProfile", this.casterProfile);
         p.uFloat("uElevK", this.elevK);
       },
     });

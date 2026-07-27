@@ -1,5 +1,55 @@
 # Issues — problems hit, candidates, what we chose
 
+## I15 — Inside `casterOne`: the 16-tap emitter loop is 78 % of it, 55 % of the frame {#i15}
+_2026-07-27 · `uCProfile` staircase, deterministic workload (light frozen, 100 % dirty)_
+
+| level | includes | ms | **substep** |
+|---|---|---|---|
+| — | everything before `casterOne` (W4) | 0.398 | — |
+| 1 | + the 2 record fetches (billboard + definition) + decode | 0.639 | +0.241 |
+| 2 | + the `shadowCover` quad gate | 0.862 | **+0.223** |
+| 3 | + hard-quad return | 0.895 | +0.033 |
+| **0** | **+ the 16-tap emitter loop** | **2.616** | **+1.721** |
+
+**`casterOne` = 2.218 ms, and the 16-tap emitter loop is 1.721 of it — 78 %.** That is **66 % of the gather**
+and **55 % of the entire GPU frame**.
+
+### What the loop is
+Soft-shadow penumbra. For each caster, at each texel, it walks **16 sub-lights on the emitter disk**, inverts
+`P` to the card's `(s,t)` per sub-light, and — for taps that land inside the card and inside the frame —
+does a **`texelFetch` on the surface atlas** for the silhouette. The average is the soft coverage.
+
+So the hot loop of the whole renderer is: *16 sub-light inversions plus up to 16 texture fetches, per caster,
+per light, per shadow texel.*
+
+### Levers, in order of bluntness
+1. **Fewer taps.** 16 → 4 is ~4× on this term, i.e. ~1.3 ms off a 3.13 ms frame. Cost is a coarser penumbra
+   gradient. Straight dial, no structural change.
+2. **Tap count by penumbra width.** Penumbra scales with emitter radius and caster→receiver distance; a
+   contact shadow needs 1 tap and a long thrown shadow needs many. Distance-driven LOD keeps the wide soft
+   edges that matter and stops paying 16 taps for hard ones.
+3. **Skip to the hard quad when the penumbra is sub-texel.** Already the shape of the existing
+   `emitter < 0.5` early-out, just with a computed threshold instead of a constant.
+4. `emitter_radius = 0` in content makes it a point light and the loop never runs — free, and worth knowing
+   as the fallback if soft shadows are not earning their 55 %.
+
+### Also fixed here, though it does not help this fixture
+`shadowCover` was called **twice with identical arguments** — once as the gate, once as the hard-quad return
+value. Now computed once and reused. But the second call only ever happened on the **hard-quad path**
+(`lod < 4` or `emitter < 0.5`), and this fixture takes the soft path, so **it saves nothing here**. It helps
+point lights and casters with no resolved silhouette. Recorded rather than claimed as a win.
+
+### Frame attribution now
+
+| item | ms | share of 3.13 |
+|---|---|---|
+| **16-tap emitter loop** | **1.72** | **55 %** |
+| bucket fetches + slot unpack + DDA | 0.40 | 13 % |
+| `receiverAt` (lighting) | 0.32 | 10 % |
+| caster record fetches + decode | 0.24 | 8 % |
+| `shadowCover` quad gate | 0.22 | 7 % |
+| everything else | 0.23 | 7 % |
+
 ## I14 — Dense-bucket early out: ~6 % gather + ~17.5 % lighting, and a harness bug found {#i14}
 _2026-07-27 · gather optimisation attempt_
 
