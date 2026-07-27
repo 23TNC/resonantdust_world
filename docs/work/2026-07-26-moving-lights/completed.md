@@ -211,6 +211,40 @@ pixilation"*).
 Nothing replaces it. The coarse shadow nearest-upsampled across its 8×8 block already overdraws, which is the
 conservative behaviour the prim pass will finely cut.
 
+### Clean re-profile after the deletion (2026-07-27, fresh load, same fixture)
+
+One light, reach 16, 6-tile orbit through `movePrim`, zoom 0.5, fresh page load:
+
+| stage | where | before | **after** |
+|---|---|---|---|
+| **lighting** | GPU | 9.724 | **1.462** |
+| **gather** | GPU | 1.633 | 2.378 |
+| **GPU total** | | **11.36** | **3.84** |
+| `buildCasters` | CPU | 2.1 | **0.6** |
+| `buildPresence` | CPU | 0.2 | 0.2 |
+| `buildDirty` / `flush` | CPU | 0.1 / 0.1 | ~0 / ~0 |
+
+Lighting substep staircase, re-run:
+
+| level | includes | ms | substep |
+|---|---|---|---|
+| 1 | dirty gate + window mapping + `P` | 0.203 | 0.203 |
+| 2 | + `receiverAt` | 1.181 | **+0.978** |
+| 3 | + billboard/world normal | 1.207 | +0.026 |
+| 4 | + `accumulateLights`, no shadow fetch | 1.386 | +0.179 |
+| **0** | + coarse shadow lookup | **1.484** | +0.098 |
+
+**`receiverAt` is now 66 % of the lighting pass** (0.978 of 1.484) — it was 10 % when the refine dwarfed it.
+The prim pass, which deletes it, is therefore the correct next target and is worth **~1 ms of the remaining
+3.84 ms GPU**.
+
+**The gather is now the largest single GPU item at 2.378 ms**, having been 1.633 in the original profile —
+that is orbit-phase/dirty-tile variance on unchanged code, not a regression, but it means the shadow walk is
+now the thing to beat after the prim pass lands.
+
+**`buildCasters` fell 2.1 → 0.6 ms** with no change to it, which is suspicious enough to note rather than
+celebrate: likely a different orbit phase / dirty-rect count, not a real improvement.
+
 ### The moving-light ceiling, re-measured (same sweep as 2026-07-26)
 
 | moving lights | before | **after** | |
