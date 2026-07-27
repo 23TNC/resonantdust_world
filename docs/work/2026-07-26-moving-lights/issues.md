@@ -1,5 +1,45 @@
 # Issues — problems hit, candidates, what we chose
 
+## I13 — Shadow map raised to the lightmap's resolution: 3.2× GPU, 4× VRAM, no more upsample {#i13}
+_2026-07-27 · behind tag `checkpoint-lighting-2026-07-27`_
+
+`SHADOW_TEXELS` changed from `TEXTILE_UNIT` (16/tile) to `TEXTILE_SQUARE` (= `SQUARE`, 64/tile), so
+**`FINE_RATIO` becomes 1** — a light texel and its shadow texel are now the same texel and the fine→coarse
+upsample disappears entirely.
+
+| | before | **after** |
+|---|---|---|
+| shadow RT | 512 × 256 (2 MiB/att) | **2048 × 1024** (32 MiB/att) |
+| lightmap RT | 2048 × 1024 | *unchanged* |
+| **shadow VRAM** (4 RTs × 2 att) | 16 MiB | **256 MiB** |
+| **lighting stack VRAM** | **80 MiB** | **320 MiB** |
+| lighting pass | 0.444 ms | **0.399 ms** |
+| **gather** | 2.644 ms | **9.444 ms** |
+| **GPU total** | **3.09 ms** | **9.84 ms** |
+
+### The gather did NOT scale with fragment count, and that is the interesting part
+16× more fragments produced only **3.6× more time** — a **4.4× better per-fragment rate**. The most likely
+cause is cache locality: at 16× density, adjacent fragments walk nearly identical corridors, so their bucket
+fetches and caster-record loads land in cache that the coarse map missed. It is consistent with
+[I11](#i11) finding the walk ALU-bound rather than fetch-bound — the extra fragments mostly re-run arithmetic
+over data already resident.
+
+**So the per-texel walk is much cheaper than the coarse map's cost-per-texel implied.** That is worth keeping
+in mind for [F4](forks.md#f4): its ~8× reduction in caster *tests* may not translate to an ~8× time saving,
+because the tests it removes are the cheap cached ones, not the expensive cold ones.
+
+### What it buys
+The blocky shadow edge is gone by construction — there is no upsample left to be blocky. This is the
+alternative to the deleted refine: rather than re-walking per fine texel to sharpen a coarse edge, the shadow
+is simply computed at the fine resolution in the first place. **3.2× GPU and 4× VRAM for that**, versus the
+refine's 7.7× GPU for the same visual outcome — so it is strictly the better of the two ways to get a sharp
+edge, and still much more expensive than accepting the coarse one.
+
+Lighting also got marginally cheaper (0.444 → 0.399 ms) since `FINE = 1` removes the upsample divide.
+
+**Not a recommendation either way — this is the measured cost of the option.** Revert is the one constant
+`SHADOW_TEXELS`, or `git checkout checkpoint-lighting-2026-07-27`.
+
 ## I12 — `SQUARE` 128 → 64: lighting 3.3× cheaper, 192 MiB freed, art visibly softer {#i12}
 _2026-07-27 · A/B, same fixture (one moving reach-16 light, 6-tile orbit)_
 

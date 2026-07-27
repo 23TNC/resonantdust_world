@@ -19,10 +19,21 @@ import type { TextureResolver } from "../../textures";
 import { ColdShadowData, N_LIGHTS } from "./coldShadowData";
 import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_SQUARE, SLOTS_X, SLOTS_Y } from "./squareMath";
 
-/** lightmap P1 Step B: the fine lightmap is TEXTILE_SQUARE/tile; the shadow map stays TEXTILE_UNIT/tile.
- *  This ratio maps a fine light texel to its coarse shadow texel (`fc / FINE_RATIO`) — the per-light shadow
- *  upsample ([forks.md#f4]). */
-const FINE_RATIO = TEXTILE_SQUARE / TEXTILE_UNIT;
+/** Texels per TILE edge in the SHADOW map. **Raised from `TEXTILE_UNIT` (16) to `TEXTILE_SQUARE` (= `SQUARE`)
+ *  on 2026-07-27** so shadow and lighting share one resolution — see `moving-lights` I13.
+ *
+ *  Consequences, all of which follow mechanically from this one constant:
+ *  - `FINE_RATIO` becomes **1**, so the fine→coarse upsample disappears: a light texel and its shadow texel
+ *    are the same texel. That is what removes the blocky shadow edge the (now-deleted) refine existed to hide.
+ *  - The shadow RT grows `(TEXTILE_SQUARE/TEXTILE_UNIT)²` in texels — at `SQUARE` 64 that is **16×**, and the
+ *    gather runs one fragment per texel, so it is 16× more `casterOne` work. The gather was already 86 % of
+ *    the GPU frame, so this is the expensive direction; it is behind the `checkpoint-lighting-2026-07-27` tag.
+ *  - VRAM: four shadow RTs × 2 attachments each scale with it too. */
+const SHADOW_TEXELS = TEXTILE_SQUARE;
+
+/** Fine light texels per shadow texel (`fc / FINE_RATIO`). **1** now that the two maps share a resolution;
+ *  the per-light upsample it used to express is gone. */
+const FINE_RATIO = TEXTILE_SQUARE / SHADOW_TEXELS;
 
 /** Quantisation step for one light's contribution to the additive lightmap (F11b).
  *
@@ -1600,7 +1611,7 @@ export class ShadowGather {
     // G-buffer, each at its own texels-per-slot. Size is `SLOTS · texelsPerSlot` and is CONSTANT at every
     // zoom — it does NOT scale with `cols`, which is now `SLOTS << lod`. Per-TILE resolution degrades
     // with lod instead (`texelsPerSlot >> lod`), which is what stops the lightmap tracking zoom.
-    const w = SLOTS_X * TEXTILE_UNIT, h = SLOTS_Y * TEXTILE_UNIT;
+    const w = SLOTS_X * SHADOW_TEXELS, h = SLOTS_Y * SHADOW_TEXELS;
     // Shadow — MRT [0] per-light u9 coverage, [1] frontmost caster row (#3). One RT per class; clear both
     // attachments to 0 (known-zero persistence baseline, P3).
     this.coldShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
@@ -1662,10 +1673,10 @@ export class ShadowGather {
     this.ensureRT(win.cols, win.rows);
     // P3: the window mapping rides the data texture's constants row (compare-written — an
     // unchanged window costs nothing), through the same scatter path as every other write.
-    // `slot` is the unit family's per-TILE texel size at this lod. The RT is a fixed SLOTS·TEXTILE_UNIT,
+    // `slot` is the SHADOW map's per-TILE texel size at this lod. The RT is a fixed SLOTS·SHADOW_TEXELS,
     // and `cols` is SLOTS << lod, so texels-per-tile must shrink by the same factor for `fc / uSlot` to
-    // keep addressing tiles: TEXTILE_UNIT >> lod. `win.lod` rides along so shaders read one mapping.
-    this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, TEXTILE_UNIT >> win.lod,
+    // keep addressing tiles: SHADOW_TEXELS >> lod. `win.lod` rides along so shaders read one mapping.
+    this.coldData.setConstants(win.cols, win.rows, win.winCol, win.winRow, SHADOW_TEXELS >> win.lod,
                                this.coldData.lights, Math.round(this.worldTiltDeg * 100), win.lod);
     // ORDER IS LOAD-BEARING: casters BEFORE presence. `buildCasters` DISCOVERS content-carried lights
     // and queues their dirty rects; `buildDirty` (below) consumes those rects and `classPass` bakes the
@@ -1767,7 +1778,7 @@ export class ShadowGather {
         p.uInt("uRows", win.rows);
         p.uInt("uWinCol", win.winCol);
         p.uInt("uWinRow", win.winRow);
-        p.uInt("uSlot", TEXTILE_UNIT >> win.lod); // per-TILE texels on the fixed grid, not the per-SLOT constant
+        p.uInt("uSlot", SHADOW_TEXELS >> win.lod); // per-TILE texels on the fixed grid, not the per-SLOT constant
       },
     });
 
