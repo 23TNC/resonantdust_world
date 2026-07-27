@@ -290,7 +290,7 @@ float cardHit(vec2 P, vec2 Ac, vec3 L, float W, float H, float reachU, float st,
 // passed on OPPOSITE sides has the caster between them, which means P is behind it.
 float subLight(vec2 Lxy, float Lz, vec2 P, vec2 Ac, float W, float H, float st, float ct, uint rot,
                float ppu, float ox, float oy, float nx, float ny, vec2 fo, vec2 fmin, vec2 fmax,
-               sampler2D surf, out int side) {
+               float halfOwn, sampler2D surf, out int side) {
   side = 2;
   float dn = H * (st * (P.y - Lxy.y) - uCardLean * Lz * ct);
   if (abs(dn) < 1e-4) return 0.0;
@@ -301,7 +301,25 @@ float subLight(vec2 Lxy, float Lz, vec2 P, vec2 Ac, float W, float H, float st, 
   float sc = ((P.x - Lxy.x) / k + Lxy.x - Ac.x) / W + 0.5;
   if (sc < 0.0) { side = -1; return 0.0; }            // passed LEFT of the card
   if (sc > 1.0) { side =  1; return 0.0; }            // passed RIGHT of it
-  side = 0;
+  side = 0;                                            // hit the card -- geometry says shadowed
+  // HALF-OWNERSHIP, by CLAMPING to the midline rather than discarding past it. Each ray renders its own
+  // half of the silhouette, so the two do not stamp two complete overlapping shadows (the doubling the
+  // user spotted) -- and clamping is what makes the halves MEET rather than merely abut.
+  //
+  // Discarding the far half leaves a HOLE. A ground point can have ray A landing at s > 0.5 AND ray B at
+  // s < 0.5 -- both genuinely hitting the card, each on the half it does not own -- so both would drop it
+  // and the middle of the umbra opens up. Clamping to 0.5 keeps each ray sampling (the card's centre
+  // column) all the way to the midline, so the two halves close against each other wherever they meet.
+  //
+  // It cannot over-shadow the penumbra: a ray that misses the card entirely has already returned above
+  // with side = -1/+1 and zero coverage, so the clamp only ever applies where that ray truly is occluded.
+  //
+  // Which ray owns which half is DERIVED, not chosen: s grows with the sub-light's x
+  // (ds/dLp.x = (1-1/k)/W > 0) while the shadow moves the other way (dP.x/dLp.x = -(k-1) < 0), so the
+  // sub-light displaced +x throws its shadow -x and therefore owns the shadow's LEFT edge, s <= 0.5.
+  // Keying off the offset's sign keeps that true whichever way the caster sits from the light.
+  if (halfOwn > 0.0) sc = min(sc, 0.5);
+  if (halfOwn < 0.0) sc = max(sc, 0.5);
   float sm = rot == 3u ? 1.0 - sc : sc;               // W-facing = mirrored E frame
   vec2 uv = fo + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(sm * W, (1.0 - t) * H) * ppu;
   if (uv.x < fmin.x || uv.x >= fmax.x || uv.y < fmin.y || uv.y >= fmax.y) return 0.0;
@@ -388,15 +406,19 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   //   neither, same side-> genuinely lit
   // A point light (emitter 0) makes perp zero, so both rays ARE the centre and this degenerates to the
   // exact hard shadow with no special case.
+  // Each ray owns the half of the silhouette its own displacement is responsible for, so together they
+  // render ONE complete shape whose outer edges sit at the penumbra's extremes -- rather than two whole
+  // shadows averaged at half opacity, which read as two shadows per caster.
+  float hA = perp.x >= 0.0 ? 1.0 : -1.0;               // +x displaced -> owns the LEFT half (s <= 0.5)
   int sA, sB;
-  float cA = subLight(L.xy + perp, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf, sA);
-  float cB = subLight(L.xy - perp, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf, sB);
-  if (sA == 0 && sB == 0) return 0.5 * (cA + cB);
-  if (sA == 0) return 0.5 * cA;
-  if (sB == 0) return 0.5 * cB;
+  float cA = subLight(L.xy + perp, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax,  hA, surf, sA);
+  float cB = subLight(L.xy - perp, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, -hA, surf, sB);
+  // MAX, not sum: the halves meet at s = 0.5 where both rays land on nearly the same texel, so adding
+  // would double-count a seam down the middle of every shadow. They agree there, so max is seamless.
+  if (sA == 0 || sB == 0) return max(cA, cB);
   if (sA * sB < 0) {                                   // straddle -> the third solve, only in this case
     int sC;
-    return subLight(L.xy, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf, sC);
+    return subLight(L.xy, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, 0.0, surf, sC);
   }
   return 0.0;
 }
