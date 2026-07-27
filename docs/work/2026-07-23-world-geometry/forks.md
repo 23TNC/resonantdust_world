@@ -12,7 +12,28 @@ spans everything that draws or casts. Lean **(a)** — it's a client-rendering m
 with this stream's README linking to it, not restating it (a layout/model must live in exactly one place).
 
 ## F2 · The north-offset `0.5` — wedge half-depth, or conform to parallel-to-view? {#f2}
-**2026-07-23 — OPEN, user's call (the only real decision left; scope corrected — see [issues I-1](issues.md#i1)).**
+**2026-07-27 — RESOLVED: conform to `H·cos(tilt)` (option b). Shipped as `cardLean = 1.0`.**
+Settled by arithmetic, not taste. In an oblique view at θ a world displacement (`north = n`, `up = z`)
+projects to a screen-vertical extent of `n·cosθ + z·sinθ`. For a sprite DRAWN `H` tall:
+
+| lean | north | up | screen height |
+|---|---|---|---|
+| **1.0** | `H·cos55 = 0.574H` | `H·sin55 = 0.819H` | `0.574·0.574 + 0.819·0.819` = **`1.000·H`** ✓ |
+| 0.5 | `0.287H` | `0.819H` | `0.287·0.574 + 0.819·0.819` = **`0.836·H`** ✗ |
+
+Only 1.0 is self-consistent: the caster card occupies exactly the screen height of the sprite the player
+actually sees. The `0.5` cast shadows from a card ~16 % SHORT on screen — it did not compensate for a
+draw/maths mismatch, it *created* one (user hypothesised the reverse; the arithmetic inverts it).
+
+**The wedge-half-depth hypothesis below is refuted.** The design's ½ is half an average *opaque extent*
+measured on the depth axis and derived per sprite from a presence map; this `0.5` multiplied the *lean*
+(`H·cosθ`) and was a hardcoded constant. Both are halves; they are not the same half.
+
+Verified: corridor↔brute BIT-IDENTICAL at lean 1.0 (67 437 nonzero texels, 0 differing) — the shader's
+`uCardLean` and `buildCasters`' TILT are routed through one `cardLean` field so they cannot drift, and
+that is what the identity run proves. Live dial `__lean(x)` retained for re-testing.
+
+_Original 2026-07-23 framing, kept for the reasoning:_
 The caster elevation already matches (`H·sin65`). The ONLY difference is the north offset: `shadowCover`
 uses `0.5·H·cos65`; strict parallel-to-view is `H·cos65`. Options: (a) **keep `0.5`** — plausibly the
 shadow-design "wedge" `±depth` half, i.e. deliberate; the shadows are tuned and read correctly; zero churn;

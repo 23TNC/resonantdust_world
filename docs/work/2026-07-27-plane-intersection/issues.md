@@ -107,3 +107,35 @@ first and delete second for this reason.
 
 Note this concern evaporates at P3, where the whole loop collapses to two rays — but P1 must stand on its
 own as a bit-identical refactor, so it cannot lean on a later phase to rescue its cost.
+
+## I5 — a resize schedules an unbounded single-frame rebake, and it kills the GPU
+
+Found while A/B-ing the card lean, 2026-07-27. Not caused by this stream, but it will bite anyone running
+P0–P2's verification, so it is recorded here.
+
+**Symptom.** The page renders white with a broken-image glyph; `gl.isContextLost()` is `true` and
+`gl.getError()` is `37442` (`CONTEXT_LOST_WEBGL`). Chrome has killed the renderer process.
+
+**Mechanism.** The client loads with the **Chat** panel selected, so the game canvas is hidden and sized
+`1×1` (`camera` reports `0×0`). Selecting **Game View** resizes it to the real viewport, and the resize
+path issues a full rebake of every tile *in one frame*. With three reach-20 torches — and longer shadows
+once the lean went to 1.0 — that single draw runs long enough to trip the GPU watchdog.
+
+**Why it kept getting misdiagnosed.** A hidden canvas produces the SAME blank screen as a lost context,
+and neither logs an error. Twice I attributed the blank to the wrong cause — once to reach 20 (and edited
+content on that guess, since reverted), once to a shader change. The distinguishing check is one line, and
+it should be the FIRST thing run on any blank frame, before forming a hypothesis:
+
+    gl.isContextLost() + ' ' + camera.width + 'x' + camera.height + ' ' + gl.canvas.width
+
+`0×0` / `1×1` means the panel is hidden — not a crash. `isContextLost() === true` means the GPU died.
+
+**Workaround for testing.** Load with Game View already the active tab so the canvas is sized before the
+first bake; the same scene that crashes on resize is stable when it never resizes.
+
+**The real bug, for a separate stream.** A resize must not be able to schedule an unbounded rebake. The
+work is already tile-granular and the prioritised refinement queue already exists
+([textile-slot P5](../2026-07-26-textile-slot/todo.md)) — a resize should enqueue tiles and drain them
+across frames rather than issue one draw whose length scales with window area × lights × reach. Until it
+does, reach is bounded by watchdog latency and not by the fps budget, which is a much lower ceiling and an
+invisible one.

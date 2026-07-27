@@ -66,7 +66,9 @@ a behaviour change and must not be mixed into the deletion.
 ## Guard rails
 
 The corridor↔brute identity check is the only thing standing between this class of change and a silent
-regression. It is **green as of 2026-07-27** (24 508 nonzero texels, 0 differing) and every phase here
-re-runs it. `__corridor(false)` = brute, `__corridor(true)` = corridor, `__gather.debugReadShadow(0)` for
+regression. It is **green as of 2026-07-27 at lean 1.0** (67 437 nonzero texels, 0 differing) and every phase here
+re-runs it. Note the baseline moved that day: world-geometry F2 closed and the caster card lean went
+`0.5` → `1.0`, so any bit-identity comparison must be against a **lean-1.0** capture, never the older
+shipped build. `__corridor(false)` = brute, `__corridor(true)` = corridor, `__gather.debugReadShadow(0)` for
 a COLD light — note the argument defaults to `1` (hot), which returns an all-zero buffer for a cold light
 and reads exactly like perfect identity.

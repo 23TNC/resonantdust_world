@@ -185,6 +185,13 @@ uniform int uTapForce;
 // pw >= 8, hard quad below). Set via __ladder(n). Binary was tried and rejected: capping at 8 taps bands
 // any penumbra wider than 8 texels, which is the common case at content's authored emitter size.
 uniform int uLadder;
+// CARD LEAN — the caster card's north offset as a fraction of H·cos(tilt). 1.0 = a RIGID parallel-to-view
+// billboard (top at north H·cos0, up H·sin0, card length exactly H). 0.5 was the shipped value and is
+// NOT a rigid rotation: it leans half as far north while keeping full elevation, so the card measures
+// ~0.87·H at 55 degrees and shadows come out short in the north-south direction. Nobody derived the 0.5;
+// it is world-geometry F2, left open as a look call. Live via __lean(x) so it can be A/B'd in one frame.
+// MUST match the CPU-side TILT in buildCasters, or casters get bucketed for a card they do not cast.
+uniform float uCardLean;
 const float UNIT = ${UNITF};      // SQUARE/16 (compile-time; px per unit)
 const float SQ = ${SQF};          // SQUARE world px per tile
 const float UPT = SQ / UNIT;      // world UNITS per tile (= TEXTILE_UNIT = 16)
@@ -281,7 +288,7 @@ float shadowCover(vec2 P, vec2 A, vec3 L, float W, float H, float reachU, highp 
   // elevation (Zt = H·sin(tilt)) already matches the canonical model. Left as-is because shadows read right.
   // If the shadow GEOMETRY ever looks wrong, this 0.5 is a prime suspect — see
   // docs/work/2026-07-23-world-geometry forks.md#f2 + issues.md#i1.
-  float Yt = A.y - 0.5 * H * ct, Zt = H * st; // card top: tilted north (0.5·H·cos t) + elevated (H·sin t)
+  float Yt = A.y - uCardLean * H * ct, Zt = H * st; // card top: tilted north (lean·H·cos t) + elevated (H·sin t)
   float Yb = A.y + ${SHADOW_BASE_PUSHF};          // card base — pushed SOUTH into the caster footprint (seam close)
   float k = L.z / (L.z - Zt);                     // ground-projection factor for the top corners
   float hw = 0.5 * W;
@@ -439,7 +446,7 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   float side = float(1u << lod);
   vec2 fmin = vec2(fx, fy), fmax = vec2(fx + side, fy + side);
   // Area-light emitter sampling — 16 sub-lights over the disk, HARD silhouette per sub-light, averaged.
-  //   invert P → card (s,t):  y(t) = Ac.y − 0.5·t·H·cosθ, z(t) = t·H·sinθ
+  //   invert P → card (s,t):  y(t) = Ac.y − lean·t·H·cosθ, z(t) = t·H·sinθ
   //   ⇒ t = Lp.z·(P.y − Ac.y) / (H·(sinθ·(P.y − Lp.y) − 0.5·Lp.z·cosθ));  s from the row's k factor.
   // A sub-light contributes only if its (s,t) lands inside the card AND the silhouette is opaque there;
   // out-of-range sub-lights are "lit" (0) → the average is the projection-correct soft coverage.
@@ -449,7 +456,7 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
     // for-condition: a loop whose condition reads a non-constant can miscompile into skipped iterations
     // (the "correct data, no output" class — see the GLSL loop-condition foot-gun in the memory index).
     vec3 Lp = vec3(L.xy + emitterOffset(i, taps, along) * emitter, L.z); // a sub-light on the emitter disk
-    float denom = H * (st * (P.y - Lp.y) - 0.5 * Lp.z * ct);
+    float denom = H * (st * (P.y - Lp.y) - uCardLean * Lp.z * ct);
     if (abs(denom) < 1e-4) continue;
     float t = Lp.z * (P.y - Ac.y) / denom;                  // card height where P's shadow ray grazes
     if (t < 0.0 || t > 1.0) continue;                       // P not under this sub-light's card span → lit
@@ -1178,6 +1185,11 @@ export class ShadowGather {
    *  where it is also visibly wrong; at the one emitter size where the two cost the same it is 3× the
    *  error. Keep the dial — it is how that claim gets re-tested if the tap positions change. */
   ladder = 1;
+  /** Caster card lean — north offset as a fraction of `H·cos(tilt)`. **1.0 = the rigid parallel-to-view
+   *  billboard** (card length exactly `H`); 0.5 was the shipped value, which is not a rigid rotation and
+   *  makes the card ~0.87·H at 55°. `__lean(x)`. Feeds BOTH `uCardLean` and `buildCasters`' TILT — they
+   *  must agree or casters are bucketed for a card they don't cast. See world-geometry F2. */
+  cardLean = 1.0;
   /** Falloff exponent — see {@link FALLOFF_EXP}. `__falloff(e)`; <1 lifts the mid-range, 1 = linear
    *  smoothstep, >1 darkens the outer pool. Cannot extend a light past its reach at any value. */
   falloff = FALLOFF_EXP;
@@ -1352,6 +1364,12 @@ export class ShadowGather {
       this.rebakeAll();
       return this.tapForce;
     };
+    // DEBUG: caster card lean (world-geometry F2). 1.0 = rigid parallel-to-view, 0.5 = the old shipped
+    // value. Sets the shader uniform AND the CPU bucketing factor together — they must never diverge.
+    (globalThis as unknown as { __lean: (x?: number) => number }).__lean = (x?: number) => {
+      if (x !== undefined) { this.cardLean = x; this.rebakeAll(); }
+      return this.cardLean;
+    };
     // DEBUG: falloff exponent, live. <1 lifts the mid-range so a big-reach pool stays legible far out.
     (globalThis as unknown as { __falloff: (e?: number) => number }).__falloff = (e?: number) => {
       if (e !== undefined) { this.falloff = e; this.rebakeAll(); }
@@ -1462,7 +1480,7 @@ export class ShadowGather {
     // (anchor y) UP to the top (anchor y − 0.5·H·cos65). The corridor crosses the caster anywhere in
     // that y-range (far shadow ↔ top, near ↔ base), so we must bucket every row it spans — bucketing
     // only the base row missed casters whose top sits in the row above (I-7).
-    const TILT = 0.5 * Math.cos(this.worldTiltDeg * Math.PI / 180); // 0.5·cos(tilt) of the height, leaned back (live tilt)
+    const TILT = this.cardLean * Math.cos(this.worldTiltDeg * Math.PI / 180); // lean·cos(tilt) of the height (must match uCardLean)
     this.litSeen.clear();
     this.carriedSeen.clear();
     this.lastStanding = standing;
@@ -1883,6 +1901,7 @@ export class ShadowGather {
         p.uInt("uCProfile", this.casterProfile);
         p.uInt("uTapForce", this.tapForce);
         p.uInt("uLadder", this.ladder);
+        p.uFloat("uCardLean", this.cardLean);
         p.uFloat("uElevK", this.elevK);
       },
     });

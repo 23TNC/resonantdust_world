@@ -9,6 +9,7 @@ differ. Every phase re-runs corridor↔brute identity before being ticked.
 
 ## P0 — Prove the two predicates agree, before deleting anything
 
+- [ ] Capture a REFERENCE `debugReadShadow(0)` from the current build at 16 forced taps and save it, so P2's bit-identity claim has something to diff against. Without a stored baseline "bit-identical" is unfalsifiable once the code is gone.
 - [ ] Add `__preddiff` to `GATHER_FRAG`: run BOTH `shadowCover` and the `(s,t)` inversion for the centre sub-light per caster and write 1.0 where they disagree, so disagreement is visible on screen rather than assumed.
 - [ ] Sweep `__preddiff` over the 3-torch scene at zoom 0.25/0.5/1/2 and record the disagreeing-texel count per zoom in `completed.md`. Expect near-zero; a non-zero count means the two differ and P1 must reconcile, not delete.
 - [ ] Characterise every disagreement found: for each, name which of `reachU` clamping, `SHADOW_BASE_PUSH`, or the `t`/`s` range bounds causes it. No deletion until each has a named cause.
@@ -19,6 +20,7 @@ differ. Every phase re-runs corridor↔brute identity before being ticked.
 - [ ] HOIST the `(s,t)` inversion out of the tap loop into a single centre-ray gate before it, returning 0 on `t` or `s` out of range. Deleting the quad without hoisting makes a MISS cost N inversions instead of one — see the note below.
 - [ ] Feed the gate's `s`/`t` straight into the centre tap's `uv` rather than re-solving them, since the gate's solve already produced the lookup coordinate — `uv` is built from `s` and `(1−t)` directly.
 - [ ] Re-apply the reach bound explicitly: `projectTop` clamped the projection to `reachU`, and that bound is what makes a shadow unable to escape the corridor's reach box. Add the equivalent distance test or the identity proof breaks.
+- [ ] Carry the card lean across as `uCardLean` (now SETTLED at 1.0, world-geometry F2 closed 2026-07-27) and keep the shader factor and `buildCasters`' TILT reading ONE field, so the quad's removal cannot desync them.
 - [ ] Re-apply `SHADOW_BASE_PUSH`: it nudged the base south to close a caster/shadow seam and lived in the quad corners. Fold it into the `t` range or the anchor, and confirm the seam does not return.
 - [ ] Delete `shadowCover` and `projectTop` once nothing calls them, and delete the `cross2` helper if it has no other caller.
 
