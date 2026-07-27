@@ -811,3 +811,38 @@ Two things to keep from that:
 - The generalisation from I37/I39/I40 survives intact and is why the real cause turned up: **a proxy near the
   START of a pipeline is not evidence about its END.** The output — a bit-identical shadow map — was right
   all along; only my explanation of it was wrong. Hence the acceptance rule at the top of [`todo.md`](todo.md).
+
+## I18 — penumbra width is in UNITS; `debugLight` was decoding the v2.1 record
+
+Asked "what do we calculate penumbra width in — px or units?". The answer is **units**, everywhere it
+matters. px appears only above the pack:
+
+| stage | space |
+|---|---|
+| `content/visual/things.rd` — `&thing.light.radius 0.35` | tiles |
+| `WorldBridge.emitterRadius = thingLight[i+5] * SQUARE` | world px |
+| `coldShadowData` pack — `clamp(L.emitterRadius / UNIT, 255)` | **units**, u8 |
+| `LIGHT_FRAG` — `float emitter = float((Ld.w >> 12) & 255u)` | **units** |
+
+`casterCover` is unit-space throughout (`P`, `L.xy`, `W`, `H`, `spanU`), so the sub-light disk
+`L.xy + emitterOffset(i) * emitter` needs no conversion. Two properties fall out:
+
+- **Quantisation is 1 unit**, and `emitter < 0.5` short-circuits to the hard quad. Authoring below
+  ~0.06 tiles silently yields a point light. Independent of `SQUARE` (both sides scale).
+- **Emitter radius is not the ground feather width.** The ground spread is the emitter scaled by
+  `k = Lz/(Lz − t·H·sinθ)` — ~0 at the contact edge, largest at the tip. A 32-unit caster under a
+  40-unit light spreads several × 5.6 units, i.e. **more than a tile**. So the bucketing pad that would
+  fix the I17 tile-clip is a function of caster and light height, not a constant, and it is comfortably
+  wider than the corridor's current 1-tile perpendicular dilation.
+
+**Bug found while tracing it.** `ColdShadowData.debugLight` still decoded the **v2.1** A-word against a
+**v3** record: it read `z` from `A>>>24` (part of `reach`), `reach` from `A>>>12` (the emitter), the
+emitter from `A>>>4` (the resolved zone), `cast_shadows` from `A&1` (it lives in G bit 24), and the
+position via `decodePosition(G)` (G is the flags word; v3 stores a resolved zone|tile|unit triple split
+across R and A). Every field wrong — including the one field this question was about. Fixed against the
+layout comment on the write. Debug-only, so no rendering was ever affected; the hazard was purely that a
+readout consulted to check penumbra width reported garbage confidently.
+
+Keeps the I17 lesson company: **a debug decoder is a second implementation of a layout, and it rots
+silently** — nothing fails when it drifts, it just lies. Worth a sweep of the other `debug*` decoders
+against the v3 layout before the next measurement leans on one.

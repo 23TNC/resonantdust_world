@@ -1788,13 +1788,21 @@ export class ShadowGather {
   /** Decode shadow-cold over the world (debug `/overlayRT shadow-cold`). */
   drawOverlay(camera: Camera, win: TileWindow): void {
     if (!this.coldShadowRT || !this.hotShadowRT || win.cols === 0) return;
-    const w = camera.width, h = camera.height, z = camera.zoom, ax = camera.anchorX, ay = camera.anchorY;
+    // RENDER SCALE, not logical zoom (fixed 2026-07-27, `moving-lights` I17). `renderScale = zoom × cover`
+    // and is what EVERY world↔screen transform uses — the display blit included. The overlay was building
+    // its projection from `camera.zoom`, so it drew the world at 1/cover of the right size (≈0.66× on a
+    // 2560-wide canvas) AND mis-scaled the anchor term, which is why it drifted further off the more you
+    // panned from the origin and jumped whenever the cover fit changed. The fragment's world→texel mapping
+    // was always correct; only this matrix was wrong.
+    const w = camera.width, h = camera.height, rs = camera.renderScale;
+    const ax = camera.anchorX, ay = camera.anchorY;
     // Cover the window's world rect.
     const x0 = win.winCol * SQUARE, y0 = win.winRow * SQUARE;
     const x1 = (win.winCol + win.cols) * SQUARE, y1 = (win.winRow + win.rows) * SQUARE;
     this.overlayPos.set([x0, y0, x1, y0, x1, y1, x0, y1]);
     this.overlayGeo!.update("aWorld", this.overlayPos);
-    const proj = new Float32Array([(2 * z) / w, 0, 0, 0, -(2 * z) / h, 0, (-ax * 2 * z) / w, (ay * 2 * z) / h, 1]);
+    const proj = new Float32Array([(2 * rs) / w, 0, 0, 0, -(2 * rs) / h, 0,
+                                   (-ax * 2 * rs) / w, (ay * 2 * rs) / h, 1]);
     this.renderer.draw({
       program: this.overlay,
       geometry: this.overlayGeo!,
@@ -1811,7 +1819,9 @@ export class ShadowGather {
     });
 
     // Gizmos: a dot at each light + a ring at its radius (screen-constant thickness).
-    const pxWorld = 1 / z;
+    // Also renderScale: this is "how many world px is one SCREEN px", so it must carry the cover fit or
+    // the rings thicken/thin with the viewport instead of staying screen-constant.
+    const pxWorld = 1 / rs;
     let gi = 0;
     for (const L of this.coldData.carriedLights.values()) {
       const col = LIGHT_COLORS[gi++ % LIGHT_COLORS.length];

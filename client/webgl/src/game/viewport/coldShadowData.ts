@@ -1002,15 +1002,26 @@ export class ColdShadowData {
   /** DEBUG: decode a light record (the record row). */
   debugLight(k: number): { pos: [number, number]; rgb: [number, number, number]; intensity: number; z: number; reach: number; emitterRadius: number; castShadows: boolean } {
     const b = (LIGHT_BASE + k) * 4;
-    const G = this.dataMirror[b + 1], B = this.dataMirror[b + 2], A = this.dataMirror[b + 3]; // v2.1
+    // v3 (primitive-graph) — see the layout comment on the write above:
+    //   R = u16 parent_prim | u8 resolved_tile | u8 resolved_unit    G = …|hot 25|cast 24|u8 z 16–23|…
+    //   B = u8 r | u8 g | u8 b | u8 intensity
+    //   A = u12 reach (20–31) | u8 emitter_radius (12–19) | u8 resolved_zone (4–11) | u4 reserved
+    // This decoded the v2.1 word until 2026-07-27 (z/reach/emitter/cast ALL wrong) — debug-only, but it
+    // is the readout used to check penumbra width, so it misreported the very field it was consulted for.
+    const R = this.dataMirror[b], G = this.dataMirror[b + 1];
+    const B = this.dataMirror[b + 2], A = this.dataMirror[b + 3];
+    // Position is the v3 RESOLVED zone|tile|unit triple (no region — period 256 tiles), so feed
+    // `decodePosition` region 0: it is the congruent representative the GPU's `resolvedPos` also picks,
+    // up to the 256-tile wrap the record cannot carry.
+    const zone = (A >>> 4) & 0xff, tile = (R >>> 8) & 0xff, unit = R & 0xff;
     return {
-      pos: decodePosition(G),
+      pos: decodePosition((((zone << 16) | (tile << 8) | unit) >>> 0)),
       rgb: [(B >>> 24) & 0xff, (B >>> 16) & 0xff, (B >>> 8) & 0xff],
       intensity: B & 0xff,
-      z: (A >>> 24) & 0xff,
-      reach: (A >>> 12) & 0xfff,
-      emitterRadius: (A >>> 4) & 0xff,
-      castShadows: (A & 1) === 1,
+      z: (G >>> 16) & 0xff,
+      reach: (A >>> 20) & 0xfff,
+      emitterRadius: (A >>> 12) & 0xff,
+      castShadows: ((G >>> 24) & 1) === 1,
     };
   }
 
