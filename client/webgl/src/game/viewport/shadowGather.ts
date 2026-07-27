@@ -565,6 +565,12 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
         if (uWProfile == 3) { cov = max(cov, float(cb.x & 1u) * 1e-6); continue; } // W3: fetched, no unpack
         for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
           uint billboardIdx = tileSlot(cb, c);
+          // DENSE-BUCKET EARLY OUT. buildCasters fills a tile's slots from 0 upward after a fill(0), so the
+          // occupied slots are contiguous and the first zero means the tile is done. This loop used to run
+          // all 8 slots and call casterOne on every empty one; at this world's ~0.65 casters/tile that is
+          // ~8 calls where ~1.65 suffice. Valid ONLY because the bucket is packed dense — if a writer ever
+          // leaves holes, this silently drops casters (missing shadows), so keep the two in step.
+          if (billboardIdx == 0u) break;
           if (uWProfile == 4) { cov = max(cov, float(billboardIdx & 1u) * 1e-6); continue; } // W4: no casterOne
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
@@ -583,6 +589,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
         vec2 bref = (vec2(float(lc.x + dx), float(lc.y + dy)) + 0.5) * UPT;
         for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
           uint billboardIdx = tileSlot(cb, c);
+          if (billboardIdx == 0u) break;                     // dense bucket — first empty ends the tile
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }

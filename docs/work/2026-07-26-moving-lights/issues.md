@@ -1,5 +1,33 @@
 # Issues — problems hit, candidates, what we chose
 
+## I14 — Dense-bucket early out: only 13 %, and that is the informative part {#i14}
+_2026-07-27 · gather optimisation attempt_
+
+`buildCasters` packs a tile's caster slots densely from 0 after a `fill(0)`, but the walk called `casterOne`
+on **all 8 slots regardless**. At this world's ~0.65 casters/tile that is ~8 calls where ~1.65 suffice, so
+`if (billboardIdx == 0u) break;` should have cut the call count ~4.8×.
+
+| | before | after |
+|---|---|---|
+| gather | 2.644 ms | **2.303 ms** |
+| lighting | 0.444 ms | 0.481 ms |
+| GPU total | 3.09 ms | **2.78 ms** |
+
+**A 4.8× cut in `casterOne` calls bought 13 %.** Correctness verified: corridor↔brute **0 mismatches** on
+24 329 non-zero texels, max coverage 255.
+
+### What that tells us, which is worth more than the 13 %
+`casterOne`'s 2.06 ms is **not** the empty-slot calls — those were already nearly free, since the function
+early-outs on a zero index and the GPU predicts that branch perfectly across a warp. The cost is the
+**real caster tests**: record fetches, quad projection, point-in-quad, silhouette sample.
+
+So the ~31 real casters tested per texel are the whole bill, and shaving loop iterations around them does
+almost nothing. **This is a direct, cheap confirmation that [F4](forks.md#f4) is aimed correctly** — bucketing
+by where the shadow lands removes *real* tests (~31 → ~4), not empty ones. Had this experiment produced its
+predicted 4.8×, F4's premise would have been wrong.
+
+Kept because it is free, correct, and 13 %. But it is not the lever.
+
 ## I13 — Shadow map raised to the lightmap's resolution: 3.2× GPU, 4× VRAM, no more upsample {#i13}
 _2026-07-27 · behind tag `checkpoint-lighting-2026-07-27`_
 
