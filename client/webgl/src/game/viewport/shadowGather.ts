@@ -397,34 +397,37 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   //   neither, same side-> genuinely lit
   // A point light (emitter 0) makes perp zero, so both rays ARE the centre and this degenerates to the
   // exact hard shadow with no special case.
-  // Solve BOTH rays first, then decide the clamp, then sample. The wedge rule is a comparison between
-  // the two u values, so neither can be fetched until both are known.
-  float uA, tA, uB, tB;
-  int sA = solveRay(L.xy + perp, L.z, P, Ac, W, H, st, ct, uA, tA);
-  int sB = solveRay(L.xy - perp, L.z, P, Ac, W, H, st, ct, uB, tB);
-  // THE WEDGE RULE (user, 2026-07-27). u grows with the sub-light's x (du/dLp.x = (1-1/k)/W > 0), so the
-  // -radius ray ALWAYS lands at the smaller u. The three cases are therefore just where the card's
-  // midline falls relative to the pair:
-  //   both u < 0.5   -> left of the wedge, both rays draw normally
-  //   both u > 0.5   -> right of the wedge, both rays draw normally
-  //   one either side-> we are IN the wedge: clamp both to 0.5 so they bridge across the centre line
-  // Written as min/max so it needs no bookkeeping about which ray is which -- the midline simply falls
-  // between them. Gated on BOTH rays hitting, because the wedge is by definition where the two shadows
-  // OVERLAP; if one ray missed the card there is no overlap to bridge.
-  if (sA == 0 && sB == 0 && min(uA, uB) < 0.5 && max(uA, uB) > 0.5) { uA = 0.5; uB = 0.5; }
-  float cA = sA == 0 ? sampleCard(uA, tA, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf) : 0.0;
-  float cB = sB == 0 ? sampleCard(uB, tB, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf) : 0.0;
-  // AVERAGE, not max. Outside the wedge the two rays sample slightly different u, and it is exactly that
-  // disagreement that IS the penumbra: opaque at both -> full, at one -> half, at neither -> lit. Inside
-  // the wedge both were clamped to the same texel, so the average returns it unchanged and the core comes
-  // out solid. The wedge double-counts by definition; what the wings double-count is up to the texture.
-  if (sA == 0 || sB == 0) return 0.5 * (cA + cB);
-  if (sA * sB < 0) {                                   // straddle -> the third solve, only in this case
-    float uC, tC;
-    if (solveRay(L.xy, L.z, P, Ac, W, H, st, ct, uC, tC) == 0)
-      return sampleCard(uC, tC, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
-  }
-  return 0.0;
+  // BINARY-SEARCH TAPS (user, 2026-07-27). This is what the backward solve buys that the forward quad
+  // test never could: u comes back as a CONTINUOUS SIGNED coordinate, so u < 0 does not merely mean
+  // "missed" -- it means "passed LEFT of the card, by this much". A signed miss tells you WHICH WAY to
+  // move the sub-light to reach the card, which makes the emitter searchable instead of samplable.
+  //
+  //   tap 1  the centre. If u lands in [0,1] we are shadowed here; either way its value picks the search
+  //          direction -- u < 0.5 means push the sub-light +x to raise u, u > 0.5 means -x to lower it.
+  //   tap 2  the FULL radius that way. If u was already outside the card and is still outside on the
+  //          SAME side after the extreme, nothing in between can reach it: fully lit, early out.
+  //   tap 3  half radius. tap 4 quarter radius. Each step halves the bracket, so four evaluations place
+  //          samples against a 9-position grid across the emitter rather than sampling it uniformly.
+  float uC, tC;
+  int sC = solveRay(L.xy, L.z, P, Ac, W, H, st, ct, uC, tC);
+  if (sC == 2) return 0.0;                             // degenerate / vertical miss -- no card to hit
+  float dir = uC < 0.5 ? 1.0 : -1.0;                   // toward the card, since u grows with sub-light x
+  float uF, tF;
+  int sF = solveRay(L.xy + dir * perp, L.z, P, Ac, W, H, st, ct, uF, tF);
+  // EARLY OUT. Outside on the same side at both the centre AND the extreme means every sub-light between
+  // them is outside too (u is monotonic along the emitter), so this texel is lit by the whole source.
+  if (sC == -1 && sF == -1) return 0.0;
+  if (sC ==  1 && sF ==  1) return 0.0;
+  float cov = 0.0;
+  if (sC == 0) cov += sampleCard(uC, tC, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
+  if (sF == 0) cov += sampleCard(uF, tF, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
+  float uH, tH;                                        // tap 3 -- half radius
+  if (solveRay(L.xy + dir * 0.5 * perp, L.z, P, Ac, W, H, st, ct, uH, tH) == 0)
+    cov += sampleCard(uH, tH, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
+  float uQ, tQ;                                        // tap 4 -- quarter radius
+  if (solveRay(L.xy + dir * 0.25 * perp, L.z, P, Ac, W, H, st, ct, uQ, tQ) == 0)
+    cov += sampleCard(uQ, tQ, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
+  return cov * 0.25;                                   // four taps, equal weight
 }
 // shadows-onto-billboards (attempt #3, IN-FAMILY): is world point P inside billboard's UPRIGHT drawn billboard, and
 // opaque there? Returns the billboard's base tile ROW if so (drives the receiver elevation), else -1. Mirrors
