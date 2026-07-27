@@ -56,6 +56,24 @@ not that the plan was wrong._
 - [x] Re-measure the P0 table with the fix in. Acceptance: a like-for-like row next to the baseline, same
       reach and same light count, so the delta is attributable. — table in [`completed.md`](completed.md).
 
+## P5 — 4096 moving lights at 60 fps on integrated ([`plan-4096.md`](plan-4096.md))
+- [ ] Thread a per-TEXEL walk-step budget (~64 steps total across all its lights, nearest-first) through
+      `walkShadow` and its caller. Acceptance: fetches fall from ~400 M to ~25 M/frame; 32 moving reach-16
+      lights drop from 149 ms to under 20 ms.
+- [ ] Show the budget is STABLE, not just fast: hash the shadow map across frames with lights static.
+      Acceptance: identical hashes frame to frame — no flicker as the budget reallocates.
+- [ ] Confirm sparse scenes are unharmed: 3 torches at reach 16 must still walk their full corridors.
+      Acceptance: shadow map bit-identical to the unbudgeted walk at 3 lights.
+- [ ] Bake ALL lights unshadowed into a 1-texel-per-tile coarse map and add it under the exact tier
+      ([P2](plan-4096.md)). Acceptance: total illumination stops depending on the ≤16 presence cap — no
+      darkening or popping as the top-16 set changes.
+- [ ] Restrict shadow casting to the top ~4 lights per tile ([P3](plan-4096.md)). Acceptance: no visible
+      shadow change at high light counts, measured cost down proportionally.
+- [ ] Measure the CPU share of `buildPresence`/`buildCasters` at 512 and 4096 moving lights BEFORE building
+      the incremental index. Acceptance: a number that says whether [P4](plan-4096.md) is needed at all.
+- [ ] Run the acceptance: 4096 moving lights, reach 16, zoom 1 and 0.5, ≥60 fps, light count asserted.
+      Acceptance: the target, or a written statement of which term blocks it and by how much.
+
 ## P4 — Stop computing 2.8 lighting texels per displayed pixel ([I4](issues.md#i4))
 - [ ] Confirm the oversample is real end to end: compare lightmap texels integrated per frame against canvas
       px, on two different canvas sizes. Acceptance: the ratio tracks `reference/canvas × slots/visible`,
