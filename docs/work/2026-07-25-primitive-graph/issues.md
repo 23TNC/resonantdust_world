@@ -654,3 +654,34 @@ light pass are separate draws today. But the user's framing anticipates where th
 already callable from `LIGHT_FRAG` (shadow-edge-refine moved it into `GATHER_COMMON`), so if those passes
 ever fuse, it becomes a LITERAL read-and-write of one resource. The ping-pong is what makes that fusion
 safe to attempt later.
+
+### I37 — REGRESSION: shadow coverage is uniformly ZERO (open, 2026-07-26)
+User: "we still don't have shadows yet." Confirmed — the world is lit but nothing casts.
+
+**Evidence gathered, so the next session does not re-derive it:**
+- The shadow RT **is** being written: 9,179 non-zero words. But its **max is `0x010101`** — that is the
+  on-billboard flag set in three slots with **coverage 0**. Packing is `u7 coverage | u1 on_billboard`, so
+  `0x01` means "on a billboard, zero shadow". **No texel anywhere has coverage above 0.**
+- **Casters are present**: 1,359 tiles hold caster ids, 2,286 slots filled, `billboardSeen` 1,031 of 1,683
+  standing. So `buildCasters` is doing its job.
+- **Lights are present and casting is enabled**: 3 carried lights, `castShadows: true` on each.
+- So the inputs are all there and `walkShadow` is returning 0.
+
+**It regressed during this session.** The corridor↔brute identity check passed earlier with **31,645
+non-zero texels on both sides**, which is only possible with real coverage. That was before `SQUARE` 64→128
+and the slot grid.
+
+**Ruled out:** `SELF_BAND` (4.0) and `SHADOW_LIFT` (3.0) are in UNITS, and units-per-tile is fixed at 16
+regardless of `SQUARE`, so they did not silently rescale.
+
+**Prime suspect — `FINE` doubled.** `FINE_RATIO = TEXTILE_SQUARE / TEXTILE_UNIT` went from `64/16 = 4` to
+`128/16 = 8` when `SQUARE` changed. It is used two ways that must stay consistent: `uSlotF = uSlot * FINE`
+(the light map's per-tile texels) and `fcC = fc / FINE` (the coarse shadow texel a fine light texel reads).
+If either the gather's write resolution or the light pass's read resolution did not follow that doubling,
+the light pass samples the wrong shadow texel — plausibly always an unwritten one, which would read as
+coverage 0 exactly as observed.
+
+**Cheapest next step:** run `__corridor(false)` (brute) and re-read the RT max. Brute ignores the corridor
+walk entirely, so if brute ALSO yields 0 coverage the fault is in `casterCover` / the caster records; if
+brute yields non-zero, it is the DDA or the corridor's tile addressing. That one bit splits the search in
+half. Then check `fcC` addressing against the shadow RT's actual per-tile texel count at the live lod.
