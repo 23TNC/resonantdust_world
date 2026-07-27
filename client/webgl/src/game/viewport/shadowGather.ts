@@ -288,39 +288,26 @@ float cardHit(vec2 P, vec2 Ac, vec3 L, float W, float H, float reachU, float st,
 // the caller can detect a STRADDLE: 0 = hit the card, -1 = passed LEFT, +1 = passed RIGHT, 2 = missed
 // vertically. That side information is the whole reason two rays can classify a penumbra: a pair that
 // passed on OPPOSITE sides has the caster between them, which means P is behind it.
-float subLight(vec2 Lxy, float Lz, vec2 P, vec2 Ac, float W, float H, float st, float ct, uint rot,
-               float ppu, float ox, float oy, float nx, float ny, vec2 fo, vec2 fmin, vec2 fmax,
-               float halfOwn, sampler2D surf, out int side) {
-  side = 2;
+int solveRay(vec2 Lxy, float Lz, vec2 P, vec2 Ac, float W, float H, float st, float ct,
+             out float uOut, out float tOut) {
+  uOut = 0.0; tOut = 0.0;
   float dn = H * (st * (P.y - Lxy.y) - uCardLean * Lz * ct);
-  if (abs(dn) < 1e-4) return 0.0;
+  if (abs(dn) < 1e-4) return 2;                       // ray parallel to the card plane
   float t = Lz * (P.y - Ac.y) / dn;
-  if (t < 0.0 || t > 1.0) return 0.0;                 // missed the card vertically
+  if (t < 0.0 || t > 1.0) return 2;                   // missed the card vertically
   float k = Lz / (Lz - t * H * st);
-  if (k <= 0.0) return 0.0;
-  float sc = ((P.x - Lxy.x) / k + Lxy.x - Ac.x) / W + 0.5;
-  if (sc < 0.0) { side = -1; return 0.0; }            // passed LEFT of the card
-  if (sc > 1.0) { side =  1; return 0.0; }            // passed RIGHT of it
-  side = 0;                                            // hit the card -- geometry says shadowed
-  // HALF-OWNERSHIP, by CLAMPING to the midline rather than discarding past it. Each ray renders its own
-  // half of the silhouette, so the two do not stamp two complete overlapping shadows (the doubling the
-  // user spotted) -- and clamping is what makes the halves MEET rather than merely abut.
-  //
-  // Discarding the far half leaves a HOLE. A ground point can have ray A landing at s > 0.5 AND ray B at
-  // s < 0.5 -- both genuinely hitting the card, each on the half it does not own -- so both would drop it
-  // and the middle of the umbra opens up. Clamping to 0.5 keeps each ray sampling (the card's centre
-  // column) all the way to the midline, so the two halves close against each other wherever they meet.
-  //
-  // It cannot over-shadow the penumbra: a ray that misses the card entirely has already returned above
-  // with side = -1/+1 and zero coverage, so the clamp only ever applies where that ray truly is occluded.
-  //
-  // Which ray owns which half is DERIVED, not chosen: s grows with the sub-light's x
-  // (ds/dLp.x = (1-1/k)/W > 0) while the shadow moves the other way (dP.x/dLp.x = -(k-1) < 0), so the
-  // sub-light displaced +x throws its shadow -x and therefore owns the shadow's LEFT edge, s <= 0.5.
-  // Keying off the offset's sign keeps that true whichever way the caster sits from the light.
-  if (halfOwn > 0.0) sc = min(sc, 0.5);
-  if (halfOwn < 0.0) sc = max(sc, 0.5);
-  float sm = rot == 3u ? 1.0 - sc : sc;               // W-facing = mirrored E frame
+  if (k <= 0.0) return 2;
+  float u = ((P.x - Lxy.x) / k + Lxy.x - Ac.x) / W + 0.5;
+  uOut = u; tOut = t;
+  if (u < 0.0) return -1;                             // passed LEFT of the card
+  if (u > 1.0) return  1;                             // passed RIGHT of it
+  return 0;                                            // hit the card
+}
+// Sample the silhouette at card coords (u,t). Split from the solve because the WEDGE RULE needs BOTH
+// rays' u before either is fetched -- see casterCover.
+float sampleCard(float u, float t, float W, float H, uint rot, float ppu, float ox, float oy,
+                 float nx, float ny, vec2 fo, vec2 fmin, vec2 fmax, sampler2D surf) {
+  float sm = rot == 3u ? 1.0 - u : u;                 // W-facing = mirrored E frame
   vec2 uv = fo + vec2(ox, oy) * ppu - vec2(nx, ny) + vec2(sm * W, (1.0 - t) * H) * ppu;
   if (uv.x < fmin.x || uv.x >= fmax.x || uv.y < fmin.y || uv.y >= fmax.y) return 0.0;
   return texelFetch(surf, ivec2(uv), 0).b;            // silhouette coverage (B carries its own edge AA)
@@ -406,19 +393,32 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   //   neither, same side-> genuinely lit
   // A point light (emitter 0) makes perp zero, so both rays ARE the centre and this degenerates to the
   // exact hard shadow with no special case.
-  // Each ray owns the half of the silhouette its own displacement is responsible for, so together they
-  // render ONE complete shape whose outer edges sit at the penumbra's extremes -- rather than two whole
-  // shadows averaged at half opacity, which read as two shadows per caster.
-  float hA = perp.x >= 0.0 ? 1.0 : -1.0;               // +x displaced -> owns the LEFT half (s <= 0.5)
-  int sA, sB;
-  float cA = subLight(L.xy + perp, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax,  hA, surf, sA);
-  float cB = subLight(L.xy - perp, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, -hA, surf, sB);
-  // MAX, not sum: the halves meet at s = 0.5 where both rays land on nearly the same texel, so adding
-  // would double-count a seam down the middle of every shadow. They agree there, so max is seamless.
-  if (sA == 0 || sB == 0) return max(cA, cB);
+  // Solve BOTH rays first, then decide the clamp, then sample. The wedge rule is a comparison between
+  // the two u values, so neither can be fetched until both are known.
+  float uA, tA, uB, tB;
+  int sA = solveRay(L.xy + perp, L.z, P, Ac, W, H, st, ct, uA, tA);
+  int sB = solveRay(L.xy - perp, L.z, P, Ac, W, H, st, ct, uB, tB);
+  // THE WEDGE RULE (user, 2026-07-27). u grows with the sub-light's x (du/dLp.x = (1-1/k)/W > 0), so the
+  // -radius ray ALWAYS lands at the smaller u. The three cases are therefore just where the card's
+  // midline falls relative to the pair:
+  //   both u < 0.5   -> left of the wedge, both rays draw normally
+  //   both u > 0.5   -> right of the wedge, both rays draw normally
+  //   one either side-> we are IN the wedge: clamp both to 0.5 so they bridge across the centre line
+  // Written as min/max so it needs no bookkeeping about which ray is which -- the midline simply falls
+  // between them. Gated on BOTH rays hitting, because the wedge is by definition where the two shadows
+  // OVERLAP; if one ray missed the card there is no overlap to bridge.
+  if (sA == 0 && sB == 0 && min(uA, uB) < 0.5 && max(uA, uB) > 0.5) { uA = 0.5; uB = 0.5; }
+  float cA = sA == 0 ? sampleCard(uA, tA, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf) : 0.0;
+  float cB = sB == 0 ? sampleCard(uB, tB, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf) : 0.0;
+  // AVERAGE, not max. Outside the wedge the two rays sample slightly different u, and it is exactly that
+  // disagreement that IS the penumbra: opaque at both -> full, at one -> half, at neither -> lit. Inside
+  // the wedge both were clamped to the same texel, so the average returns it unchanged and the core comes
+  // out solid. The wedge double-counts by definition; what the wings double-count is up to the texture.
+  if (sA == 0 || sB == 0) return 0.5 * (cA + cB);
   if (sA * sB < 0) {                                   // straddle -> the third solve, only in this case
-    int sC;
-    return subLight(L.xy, L.z, P, Ac, W, H, st, ct, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, 0.0, surf, sC);
+    float uC, tC;
+    if (solveRay(L.xy, L.z, P, Ac, W, H, st, ct, uC, tC) == 0)
+      return sampleCard(uC, tC, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
   }
   return 0.0;
 }
