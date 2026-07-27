@@ -816,3 +816,35 @@ roughly 7× the area per light, and cost tracks lights-per-tile.
 
 **Next:** land the displace-and-mark loop as a real debug hook replacing `__orbit`, then re-measure at
 reach 6 for a like-for-like against the old figure before optimising anything.
+
+### I40 — restored orbit moves the prims but NOT the render (open, 2026-07-26)
+
+`stepOrbit` ([I39](#i39)) displaces every light-carrying prim and marks both boxes dirty, and the prim
+`x`/`y` fields do change frame to frame. The RENDER does not. Shadow map sampled 5×:
+
+| orbit | samples | hash | non-zero |
+|---|---|---|---|
+| ON  | 3 over 2.4 s | 3750264193 (identical) | 49,747 |
+| OFF | 2 over 1.2 s | 3750264193 (identical) | 49,747 |
+
+Bit-identical across on AND off — nothing re-baked at all.
+
+**I claimed this worked and committed it.** The evidence I accepted was "the prim x/y changed", which
+proves a JS object mutated and nothing else. It is the third time today the same error shape landed:
+[I37](#i37) (read the wrong RT class and called shadows dead), [I39](#i39) (a toggle that returned `true`
+while moving nothing), and now this. The through-line is trusting a proxy near the START of a pipeline as
+evidence about its END. The only sound check is at the output — here, the shadow map, which took one call
+and immediately said no.
+
+**Suspects, in order:**
+1. **Change-gated render loop** (the known gotcha) — a higher-level "nothing changed" gate short-circuits
+   before the queued rects are consumed, so `markPrimDirty` fills `pendingRects` that nobody drains.
+2. **`standing` is not the source of the baked position.** The CPU stamps RESOLVED positions into the data
+   texture from the prim graph; if that stamp runs from the graph rather than from these objects, mutating
+   `standing[i].x` is writing to a copy that the bake never reads. The identical non-zero count points here.
+3. `stepOrbit` is called after the frame already consumed positions for this frame.
+
+**Next:** read back the light record's packed position from the data texture across two frames with the
+orbit on. If it is unchanged, the mutation never reaches the stamp (suspect 2) and `stepOrbit` must drive
+whatever the stamp reads. If it DOES change while the shadow map does not, the bake is being gated
+(suspect 1). That single readback separates the two.
