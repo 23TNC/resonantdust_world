@@ -303,6 +303,14 @@ def report_candidates(rows, out_dir, out_path, dirs, args):
     renderer expects a leaf's directions to belong together."""
     if not rows: return
     import csv as _csv
+    try:
+        sys.path.insert(0, HERE); import lora_eval as _L
+        cells = [(f"{r['dir']} {'ok' if r['valid'] else 'REJECT'}", f"seed {r['seed']}",
+                  os.path.join(REPO, r["path"])) for r in rows]
+        sp = _L.contact_sheet(cells, os.path.join(out_dir, "sheet.png"))
+        print(f"  sheet -> {os.path.relpath(sp, REPO)}   (review before trusting the scores)")
+    except Exception as e:
+        print(f"generate: contact sheet skipped ({e})", file=sys.stderr)
     if args.ref or args.candidates > 1:
         with open(os.path.join(out_dir, "scores.csv"), "w", newline="") as f:
             w = _csv.DictWriter(f, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)

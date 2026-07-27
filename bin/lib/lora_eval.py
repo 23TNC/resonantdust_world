@@ -331,7 +331,7 @@ def sweep_pipeline(args):
     ga = f"{gate['aspect']:.2f}" if gate else "n/a"
     print(f"control={args.control} gate={gate_src} aspect={ga}  ({len(combos)} configs x {args.seeds} seeds)")
 
-    rows = []
+    rows = []; sheet_cells = []
     if True:
         for (dn, cn, cn_end) in combos:
             G.DN, G.CN, G.CN_END = dn, cn, cn_end
@@ -342,7 +342,9 @@ def sweep_pipeline(args):
                 else:
                     raw = G._run(G.graph_hero(pos, neg, ref_name, edge_name, 9000 + i))
                 im = Image.open(io.BytesIO(raw)).convert("RGB")
-                im.save(os.path.join(out, f"dn{dn:g}_cn{cn:g}_e{cn_end:g}_s{9000+i}.png")); imgs.append(im)
+                fp = os.path.join(out, f"dn{dn:g}_cn{cn:g}_e{cn_end:g}_s{9000+i}.png")
+                im.save(fp); imgs.append(im)
+                sheet_cells.append((f"dn{dn:g}/cn{cn:g}/e{cn_end:g}", f"seed{9000+i}", fp))
             ms = [measure(i) for i in imgs]
             arrs = [np.asarray(i.resize(base_size), dtype=float) for i in imgs]
             var = float(np.mean([np.abs(arrs[a]-arrs[b]).mean()
@@ -367,7 +369,10 @@ def sweep_pipeline(args):
     if bad:
         print("\n  configs that FAILED geometry (silhouette lost):")
         for r in bad: print(f"    dn={r['dn']:.2f} cn={r['cn']:.2f}  valid={r['valid']}/{r['n']}  aspect={r['aspect']:.2f}")
-    print(f"\nwrote {os.path.join(args.out,'sweep.csv')}")
+    if sheet_cells:
+        sp = contact_sheet(sheet_cells, os.path.join(out, "sheet.png"))
+        print(f"wrote {os.path.relpath(sp, REPO)}   <- LOOK AT THIS before trusting the table")
+    print(f"wrote {os.path.join(args.out,'sweep.csv')}")
 
 # ---------------------------------------------------------------- main
 def main():
@@ -439,3 +444,36 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# ---------------------------------------------------------------- contact sheets
+def contact_sheet(cells, out_path, cols=None, cell=200, header=22, pad=3):
+    """Tile labelled images into one reviewable PNG.
+
+    Exists because the numbers have now been overturned by a hand-made montage four times
+    (framed busts passing 10/18, the east pose drift scored a tie, the anteater rated best-as-worst).
+    The visual check kept being the thing that found the truth, so it stops depending on someone
+    remembering to write a montage script and becomes part of every eval run.
+
+    `cells` is [(col_label, row_label, path_or_image), ...]; column order follows first appearance.
+    Missing/unreadable entries leave a blank cell rather than aborting a long run."""
+    from PIL import ImageDraw
+    order, rows = [], []
+    for c, r, _ in cells:
+        if c not in order: order.append(c)
+        if r not in rows: rows.append(r)
+    if cols: order = [c for c in cols if c in order] + [c for c in order if c not in cols]
+    W = Image.new("RGB", (len(order)*(cell+pad)+pad, len(rows)*(cell+pad)+pad+header), (70, 70, 70))
+    d = ImageDraw.Draw(W)
+    for i, c in enumerate(order):
+        d.text((pad + i*(cell+pad) + 4, 6), str(c)[:28], fill=(255, 255, 255))
+    for c, r, src in cells:
+        try:
+            im = src if isinstance(src, Image.Image) else Image.open(src)
+            im = im.convert("RGB").resize((cell, cell), Image.LANCZOS)
+        except Exception:
+            continue
+        x = pad + order.index(c)*(cell+pad); y = header + pad + rows.index(r)*(cell+pad)
+        W.paste(im, (x, y))
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    W.save(out_path)
+    return out_path

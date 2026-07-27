@@ -33,3 +33,24 @@ ranking metric**, not a pass/fail check.
 
 This is the second time a metric with real discriminative power turned out to be wrong as a hard
 gate; the first was `d_fill` in the predecessor.
+
+## 2026-07-26 — P1 complete (the visual check is part of the harness now)
+
+`lora_eval.contact_sheet(cells, out)` tiles labelled images into one reviewable PNG — column headers
+from the config, rows from the subject, blank cells for anything missing so a long run never aborts
+on one bad file.
+
+**Wired in with no extra flag:**
+- `lora_eval --pipeline` writes `sheet.png` beside `sweep.csv`, one column per dn/cn/cn_end config
+- `generate.py --candidates` writes `sheet.png` into the output kind, **with the gate verdict in the
+  column header** (`e ok`, `s REJECT`)
+
+Both print the sheet path with a line telling the reader to look at it *before* trusting the table.
+
+**Verified:** a 2-config × 6-species call produced a readable 409×1243 grid; a live 3-candidate
+`generate` run wrote a 115 KB sheet showing all 6 sprites with their verdicts.
+
+The sheet immediately earned itself — the e07-vs-run4 east grid makes the pose drift obvious at a
+glance (e07 lying low, run-4 sitting up with a raised head, curled cat, upright fox) and also shows a
+**white frame around run-4's tiger on EAST**, i.e. the [I3](issues.md#i3) frame artefact is not
+confined to south as the earlier analysis assumed.

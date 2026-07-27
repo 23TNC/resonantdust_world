@@ -13,9 +13,9 @@ Ordering in [`README.md`](README.md): **fix the ruler first**, then diagnose, th
 
 ## P1 — Make the visual check automatic
 
-- [ ] Add a `contact_sheet()` helper to `lora_eval` that tiles labelled images into one PNG. Acceptance: called with 2 configs × 6 species, it writes a grid with readable column headers.
-- [ ] Emit a contact sheet from every `--pipeline` sweep and A/B run. Acceptance: a sweep writes `sheet.png` beside `sweep.csv` without any extra flag.
-- [ ] Emit a sheet from `generate.py --candidates`. Acceptance: a 4-candidate batch writes one sheet showing all candidates with their gate verdict in the label.
+- [x] Add a `contact_sheet()` helper to `lora_eval` that tiles labelled images into one PNG. Acceptance: called with 2 configs × 6 species, it writes a grid with readable column headers.
+- [x] Emit a contact sheet from every `--pipeline` sweep and A/B run. Acceptance: a sweep writes `sheet.png` beside `sweep.csv` without any extra flag.
+- [x] Emit a sheet from `generate.py --candidates`. Acceptance: a 4-candidate batch writes one sheet showing all candidates with their gate verdict in the label.
 
 ## P2 — Fix the frame artefact
 
