@@ -18,13 +18,16 @@ not that the plan was wrong._
 - [ ] Instrument the bake to report, per frame: dirty tiles, shadow texels baked, lightmap texels baked, and
       ms split cold/hot. Acceptance: numbers appear for a static frame and a moving frame, and the moving
       total accounts for the wall-clock delta within ~20%.
-- [ ] Measure the empty-corridor fast path: what fraction of walks terminate with no caster, and what they
+      **NOT DONE — and deliberately left open rather than ticked.** The phase's *goal* (attribute the cost) was
+      met by the zoom and reach sweeps, which needed only `debugDirtyTiles` + wall-clock. The per-texel
+      breakdown would still be worth having before options 1/3 are ever built; it was not needed to choose.
+- [x] Measure the empty-corridor fast path: what fraction of walks terminate with no caster, and what they
       cost vs a walk that hits one ([F2 option 4](forks.md#f2)). Acceptance: a ratio, so option 4 is either
-      promoted to the fix or struck.
+      promoted to the fix or struck. — corridor 57.49 ms vs brute 87.74 ms → skip already earns ~35 %, **struck**.
 - [x] Confirm or kill [I2](issues.md#i2) — sweep zoom 1 / 0.5 / 0.25 with ONE moving light and record dirty
       tiles as a fraction of the map. Acceptance: measured fractions compared against the predicted
       100/50/12.5%; a mismatch means the model is wrong and P2 is re-planned.
-- [ ] Record all P0 numbers in [`completed.md`](completed.md) as the baseline every later phase is judged
+- [x] Record all P0 numbers in [`completed.md`](completed.md) as the baseline every later phase is judged
       against. Acceptance: a table a future session can re-run and diff.
 
 ## P1 — A real method to move a prim
@@ -44,13 +47,13 @@ not that the plan was wrong._
       this item exists to catch).
 
 ## P2 — Make a moving light affordable
-- [ ] Apply the P0 winner from [F2](forks.md#f2) — default lean is hot-lights-bake-coarser, since the lod
-      machinery already exists. Acceptance: 3 moving lights hold ≥60 fps at zoom 1, measured with the P0
-      instrumentation, not by feel.
-- [ ] Bound reach against the visible world so a torch stops being ambient at zoom 1 ([F3](forks.md#f3)).
+- [x] Apply the P0 winner from [F2](forks.md#f2) — measurement chose **bound reach**, not the coarser-lod lean.
+      Acceptance: 3 moving lights hold ≥60 fps at zoom 1. **120 fps** (8.32 ms), was 23.
+- [x] Bound reach against the visible world so a torch stops being ambient at zoom 1 ([F3](forks.md#f3)).
       Acceptance: a light's dirty box is a stated fraction of the map at EVERY lod, not 100% at lod 0.
-- [ ] Re-measure the P0 table with the fix in. Acceptance: a like-for-like row next to the baseline, same
-      reach and same light count, so the delta is attributable.
+      **80 % / 34 % / 12 %** at zoom 1 / 0.5 / 0.25 — no longer saturating.
+- [x] Re-measure the P0 table with the fix in. Acceptance: a like-for-like row next to the baseline, same
+      reach and same light count, so the delta is attributable. — table in [`completed.md`](completed.md).
 
 ## P3 — Verify + close
 - [ ] Corridor↔brute identity with a MOVING light, at zoom 1 / 0.5 / 0.25. Acceptance: 0 mismatches on a

@@ -85,17 +85,19 @@ def subject(stem):
 _ap = argparse.ArgumentParser(prog="build_quad")
 _ap.add_argument("--upscale", choices=["esrgan", "lanczos"], default="esrgan")
 _ap.add_argument("--fill", type=float, default=0.85)
+_ap.add_argument("--jitter", type=float, default=0.05)
 _ap.add_argument("--dst", default=None)
 _A = _ap.parse_args()
 if _A.dst: DST = _A.dst if os.path.isabs(_A.dst) else os.path.join(prep_train.REPO, _A.dst)
 FILL = _A.fill
+JITTER = _A.jitter
 USE_ESRGAN = _A.upscale == "esrgan"
 if USE_ESRGAN:
     import urllib.request
     try: urllib.request.urlopen(prep_train.COMFY + "/system_stats", timeout=8)
     except Exception as e:
         print(f"build_quad: ComfyUI unreachable ({e}); LANCZOS"); USE_ESRGAN = False
-print(f"build_quad: upscale={'esrgan' if USE_ESRGAN else 'lanczos'} fill={FILL} -> {DST}")
+print(f"build_quad: upscale={'esrgan' if USE_ESRGAN else 'lanczos'} fill={FILL}+/-{JITTER} -> {DST}")
 if os.path.isdir(DST): shutil.rmtree(DST)
 kept, dropped = set(), set()
 counts = collections.Counter(); famcount = collections.Counter()
@@ -110,7 +112,10 @@ for png in sorted(glob.glob(os.path.join(SRC, "*", "*.png"))):
     rd_dir, phrase, sub = DIR[m.group(1).lower()]
     out_dir = os.path.join(DST, sub); os.makedirs(out_dir, exist_ok=True)
     name = f"{folder}__{stem}"
-    prep_train.normalise(Image.open(png), SIZE, FILL, "esrgan", USE_ESRGAN).save(
+    # jittered per source file — a pinned fill taught run-4 to draw the margin (I3 of
+    # docs/work/2026-07-26-sprite-eval-trust/)
+    _f = prep_train.jittered_fill(FILL, JITTER, os.path.basename(png))
+    prep_train.normalise(Image.open(png), SIZE, _f, "esrgan", USE_ESRGAN).save(
         os.path.join(out_dir, name + ".png"))
     fam = FAM_OF.get(folder)
     toks = ["rd_style","rd_animal","rd_quadruped", rd_dir, phrase]

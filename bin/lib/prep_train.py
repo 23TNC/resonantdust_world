@@ -24,7 +24,7 @@ Two quality fixes over the first version (docs/work/2026-07-25-sprite-gen-qualit
   python3 bin/lib/prep_train.py                      # esrgan + normalise (default)
   python3 bin/lib/prep_train.py --upscale lanczos    # the old behaviour, for A/B
 """
-import argparse, io, json, os, glob, shutil, time, uuid
+import argparse, hashlib, io, json, os, glob, shutil, time, uuid
 import urllib.request, urllib.parse
 from PIL import Image
 
@@ -69,6 +69,20 @@ def esrgan(pil, timeout=180):
     raise RuntimeError("esrgan timeout")
 
 # ---------------------------------------------------------------- prep
+def jittered_fill(fill, jitter, key):
+    """Per-image fill fraction, deterministic in `key` (the source path).
+
+    Pinning fill to one value gave all 459 training images an identical ~7.5% white margin, and the
+    model LEARNED that constant — run-4 drew the margin as a rectangle and composed a portrait inside
+    it (issues I3). Jitter keeps scale BOUNDED (the P2 benefit: drift was sd 0.148 before
+    normalisation) while removing the constant there is to learn.
+
+    Deterministic rather than random so a rebuild is reproducible — an irreproducible dataset makes
+    every A/B afterwards unfalsifiable."""
+    if jitter <= 0: return fill
+    h = int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF   # [0,1)
+    return fill + (h * 2.0 - 1.0) * jitter
+
 def normalise(im, size, fill, mode, use_esrgan):
     """Crop to the subject, upscale it, and centre it at a consistent scale on a white plate.
 
@@ -110,6 +124,9 @@ def main():
     ap = argparse.ArgumentParser(prog="prep_train")
     ap.add_argument("--upscale", choices=["esrgan", "lanczos"], default="esrgan")
     ap.add_argument("--fill", type=float, default=0.85, help="subject's longer side as a fraction of the frame")
+    ap.add_argument("--jitter", type=float, default=0.05,
+                    help="+/- range around --fill, deterministic per source file; 0 pins it (which "
+                         "taught run-4 to draw a margin, issues I3)")
     ap.add_argument("--size", type=int, default=SIZE)
     ap.add_argument("--dst", default=DST)
     ap.add_argument("--limit", type=int, default=0, help="stop after N images (smoke test)")
@@ -131,7 +148,8 @@ def main():
         folder = os.path.basename(os.path.dirname(png))
         stem = os.path.basename(png)[:-4]
         name = f"{folder}__{stem}"
-        normalise(Image.open(png), args.size, args.fill, args.upscale, use_esrgan).save(
+        f = jittered_fill(args.fill, args.jitter, os.path.basename(png))
+        normalise(Image.open(png), args.size, f, args.upscale, use_esrgan).save(
             os.path.join(cls, name + ".png"))
         n_img += 1
         txt = png[:-4] + ".txt"

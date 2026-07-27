@@ -54,6 +54,54 @@ because per-tile texels fall 16× from lod 0 to lod 2.
 **Closes the latched-counter caveat below:** `debugDirtyTiles` reads **0** in every static row, so it is a
 genuine per-frame count. The "constant 696" was a stale reading.
 
+## 2026-07-26 — P0 cost attribution: reach dominates; the empty-corridor lever is struck
+
+**Corridor vs brute**, 3 orbiting torches, zoom 1: **57.49 ms vs 87.74 ms**. The corridor's empty-space skip
+already earns ~35 %, so [F2](forks.md#f2) option 4 is **struck** — there is no large win hiding in walks that
+terminate on nothing.
+
+**Reach sweep** at zoom 1 (map 512 tiles), varying reach only:
+
+| reach (tiles) | dirty | fraction | ms | fps |
+|---|---|---|---|---|
+| 16 | 512 | 100 % | 55.63 | 18 |
+| 12 | 512 | **100 %** | 33.71 | 30 |
+| 8 | 423 | 82.6 % | **8.32** | **120** |
+| 4 | 263 | 51.4 % | 8.33 | 120 |
+| 2 | 141 | 27.5 % | 8.33 | 120 |
+
+**This refutes the `work ∝ fraction × budget` model recorded above.** Reach 16 and reach 12 dirty the
+*identical* 512 tiles and differ by 1.65×, so the fraction cannot be the whole story. That model fitted the
+zoom sweep to 1.3 % because reach was held constant there, making the fraction the only variable — **a model
+validated against a sweep that varied one input is a model about that input, not a law.** Recording the
+mis-step rather than quietly replacing it: it is the same shape as I40 (a real observation, an over-general
+mechanism), caught this time by testing the model against an input it had not seen.
+
+Reach compounds three ways — walk length ∝ reach, claimed texels ∝ reach², lights overlapping each texel ∝
+reach — which is why it dominates the linear levers. **[F2](forks.md#f2) resolves to option 2 (bound reach);
+options 1 and 3 are deferred, not rejected.**
+
+## 2026-07-26 — P2: reach 16 → 8 in content. The zoom cliff is gone.
+
+Changed `&thing.light.reach` from 16 to 8 tiles on `torch` and `torch_blue`
+([`content/visual/things.rd`](../../../content/visual/things.rd)), per [F3](forks.md#f3) — content stays
+authoritative, the authored value was simply wrong. No renderer change, no new machinery.
+
+Verified in-browser (content hot-update picked it up; `authoredReachTiles: 8` read back from the live prims),
+3 orbiting torches:
+
+| zoom | map (tiles) | dirty/frame | ms | fps | **was** |
+|---|---|---|---|---|---|
+| 1.0 | 512 | 412 | 8.32 | **120** | 43.06 ms / 23 fps |
+| 0.5 | 2 048 | 693 | 8.33 | **120** | 28.34 ms / 35 fps |
+| 0.25 | 8 192 | 969 | 8.33 | **120** | 8.33 ms / 120 fps |
+
+**Every zoom now sits on the 120 fps vsync floor, moving lights included, and the dirty fraction no longer
+saturates at zoom 1** (412/512 = 80 %, down from 100 %). P2's target — 3 moving lights ≥60 fps at zoom 1 — is
+met with ~2× headroom over the target and no change to the shared-accumulator design.
+
+Reach remains a live aesthetic dial with a known price: 16 → 18 fps, 12 → 30 fps, 8 and below → 120 fps.
+
 ## Baseline carried in from the prior session (2026-07-26, pre-P0)
 
 Recorded here so P0's instrumented numbers have something to sit next to. Measured at **zoom 0.25, reach 16

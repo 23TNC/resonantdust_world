@@ -59,6 +59,35 @@ Checked against the measurements, taking zoom 1 as the reference: 43.06 × 0.666
 floor, so the true value is at or under it. The static row is 8.33 ms at every zoom — the same floor —
 confirming the bake is genuinely idle when nothing moves.
 
+### The model is incomplete: REACH is the dominant term, not the fraction
+
+A second sweep, varying **reach only** at zoom 1, breaks the fraction-only model:
+
+| reach (tiles) | dirty | fraction | ms | fps |
+|---|---|---|---|---|
+| 16 | 512 | 100 % | **55.63** | 18 |
+| 12 | 512 | **100 %** | **33.71** | 30 |
+| 8 | 423 | 82.6 % | **8.32** | **120** |
+| 4 | 263 | 51.4 % | 8.33 | 120 |
+| 2 | 141 | 27.5 % | 8.33 | 120 |
+
+**Reach 16 and reach 12 dirty the identical 512 tiles and differ by 1.65×.** So cost is not a function of the
+dirty fraction alone, and the clean `work ∝ fraction × budget` statement above is wrong as a general law. It
+was only valid *within the zoom sweep*, where reach was held at 16 and the fraction was therefore the sole
+variable — which is exactly why it fitted to 1.3% and exactly why that fit did not generalise. **A model
+validated against a sweep that varied one input is a model about that input, not a law.**
+
+Reach enters the cost **three times over**, which is why it dominates:
+1. the corridor walk runs from a texel toward its light, so **walk length ∝ reach**;
+2. the texels a light claims go as **reach²** (until they saturate the map, as at reach ≥ 12 here);
+3. more reach means **more lights overlap each texel** — at reach 16 all three torches reach every texel of
+   this map, so `accumulateLights` runs 3 walks per texel instead of 1.
+
+The measured curve is steeper than any of these alone, consistent with all three compounding.
+
+**The practical headline: at zoom 1, reach 16 → 8 takes three moving lights from 55.6 ms (18 fps) to the
+120 fps vsync floor.** That is ≥6.7× and it clears P2's ≥60 fps target on its own.
+
 **So the user's "something per-px is incorrect" is right about the effect and wrong about the location.** No
 shader does more work per texel as you zoom in. The texel budget is constant by construction (that is what
 [textile-slot](../2026-07-26-textile-slot/README.md) bought); zooming in shrinks the world under that fixed

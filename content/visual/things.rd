@@ -176,11 +176,16 @@
                 0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
-                ; Warm flame colour. `reach` is in TILES. 16 throws a broad pool that carries
-                ; well past the immediate clearing; note this is the COST dial — a light's
-                ; expense scales with the tiles it covers (~(2·reach)²), and measured cost
-                ; tracks lights-per-tile, not light count. Raising reach is far more
-                ; expensive than adding torches.
+                ; Warm flame colour. `reach` is in TILES, and it is THE cost dial for a MOVING light —
+                ; measured 2026-07-26 at zoom 1 with 3 orbiting torches: reach 16 → 18 fps, 12 → 30 fps,
+                ; 8 → 120 fps (work `2026-07-26-moving-lights` I2). It compounds three ways: the shadow
+                ; walk runs from a texel to its light so walk length ∝ reach; the texels a light claims
+                ; go as reach²; and more reach means more lights overlap each texel, multiplying the
+                ; walks per texel. Static lights are unaffected — they bake once — so this is a budget
+                ; on MOTION, not on light count.
+                ;
+                ; 8 also looks right. The visible area is 28 × 12 tiles, so the old 16 claimed 32 × 32 —
+                ; more than the whole screen. That is not a torch lighting a place, it is a wash.
                 ; `cast 1` = occludes (it participates in the shadow walk); `hot 0` = STATIC,
                 ; so it bakes once and costs nothing per frame — the property that makes
                 ; many torches affordable.
@@ -188,7 +193,7 @@
                 0.85 &thing.light.g set
                 0.55 &thing.light.b set
                 1.0 &thing.light.intensity set
-                16.0 &thing.light.reach set
+                8.0 &thing.light.reach set
                 0.35 &thing.light.radius set
                 ; HEIGHT IS SHADOW-CRITICAL, not just a look. `shadowCover` projects the caster's card
                 ; top (elevation Zt = H·sin(WORLD_TILT)) from the light onto the ground; when the light
@@ -230,7 +235,7 @@
                 0.75 &thing.light.g set
                 1.0 &thing.light.b set
                 1.0 &thing.light.intensity set
-                16.0 &thing.light.reach set
+                8.0 &thing.light.reach set
                 0.35 &thing.light.radius set
                 2.5 &thing.light.height set
                 1 &thing.light.cast set

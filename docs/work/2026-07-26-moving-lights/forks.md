@@ -38,7 +38,26 @@ argument is ownership — every other consumer of position already reads the gra
 position anywhere else is a second authority, and this stream exists because of one of those.
 
 ## F2 — How do we make a moving light affordable? {#f2}
-_2026-07-26 · open — **deliberately not decided until P0 measures**_
+_2026-07-26 · **RESOLVED by P0's measurements → option 2 (bound reach). Option 4 struck.**_
+
+### The decision
+**Reach is the dominant cost term and bounding it is the fix.** At zoom 1, taking three moving torches from
+reach 16 → 8 tiles moves them from **55.6 ms (18 fps) to the 120 fps vsync floor** — ≥6.7×, clearing P2's
+target with no architectural change at all. Reach enters the cost three times over (walk length ∝ reach;
+claimed texels ∝ reach²; lights overlapping each texel ∝ reach), so it compounds where the other levers are
+linear. Full table in [I2](issues.md#i2).
+
+**Option 4 (cheap-out the empty corridor) is STRUCK.** Measured corridor vs brute with lights orbiting at
+zoom 1: **57.49 ms vs 87.74 ms**. The corridor already earns ~35 %, so the empty-space skip exists and works —
+there is no large win hiding in it, and the precondition it was gating (*"if most of a disc is empty and still
+pays full price, the architecture was never the problem"*) is answered: it does not pay full price.
+
+**Options 1 and 3 are deferred, not rejected.** They stay available if bounding reach proves insufficient once
+lights are numerous *and* moving, but neither is needed to hit the target now, and both cost real complexity
+(option 1 must respect the coarsest-since-cast rule or leak light; option 3 trades correctness-in-time for
+throughput). Preferring the measured 6.7× that adds no state is the whole point of measuring first.
+
+_Original analysis, kept for the record:_
 
 Options as analysed in the [README](README.md). Recording them now so P0 has a scorecard rather than a blank
 page, and so a rejected option stays rejected with its reason:
@@ -67,7 +86,30 @@ _Rejected without measurement:_
   the right primitive for light REMOVAL, not for movement.
 
 ## F3 — Is reach content's call or the renderer's? {#f3}
-_2026-07-26 · open_
+_2026-07-26 · **RESOLVED → (a) content stays absolute. The authored value was simply wrong.**_
+
+The measurements settled this differently from the pre-measurement lean:
+
+**(c) is dead.** Clamping the dirty box while leaving reach absolute barely helps, because reach also sets the
+**walk length per texel** — reach 16 with the box clamped to an 8-tile radius still walks 16 tiles from every
+texel it does bake. The reach sweep shows the box shrinking from 512 → 423 tiles (−17 %) between reach 16 and
+8 while the cost falls ≥6.7×, so the box was never where the money was.
+
+**(b) is rejected on a principle this repo already committed to.** A renderer clamp that varies with lod makes
+a light's extent depend on zoom, and [textile-slot](../2026-07-26-textile-slot/README.md) chose a fixed
+reference precisely so **every player sees the same world** regardless of monitor or zoom. Trading that away to
+paper over a content value would be the worse bargain, and a silent zoom-dependent clamp is the
+"worked, then went away" bug shape flagged above.
+
+**So (a): content is authoritative, and reach 16 was the wrong number.** At zoom 1 the visible area is 28 × 12
+tiles and a reach-16 light claims 32 × 32 — it does not light a place, it floods the screen. Reach 8 is both
+free (120 fps) and *reads as a light* at zoom 1. This is a one-constant change with no new machinery, which is
+the outcome measuring first was supposed to produce.
+
+**It is an aesthetic call as much as a performance one**, and the cost of each choice is now known
+([I2](issues.md#i2)), so it can be re-picked at will: 16 → 18 fps, 12 → 30 fps, 8 and below → 120 fps.
+
+_Original analysis, kept for the record:_
 
 `&thing.light.reach` is authored per kind in `content/visual/things.rd`, in TILES. The renderer currently
 honours it absolutely, which is how a torch came to light the entire screen at zoom 1.
