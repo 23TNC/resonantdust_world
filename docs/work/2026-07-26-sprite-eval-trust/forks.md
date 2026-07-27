@@ -34,3 +34,38 @@ the measurement. Revisit once `iou_ref` is calibrated and understood.
 
 **Known limit, accepted:** `iou_ref` is undefined for species absent from the corpus. That is where
 the human filter stays, permanently, per the README stance.
+
+## F3 — `iou_ref` is a COMPARISON metric, not a gate check · RESOLVED 2026-07-26
+
+Calibrated on `.staging/gate-cal/labels.csv` (67 sprites), errors = false-pos + false-neg:
+
+| gate | FP | FN | total |
+|---|---|---|---|
+| **CURRENT — `blobs + bg_uni + d_aspect<=50`** | 2 | 1 | **3** ✅ |
+| + `iou_ref >= 0.55` | 2 | 3 | 5 |
+| + `iou_ref >= 0.60` | 2 | 3 | 5 |
+| asymmetric signed `-35 / +60` | 2 | 4 | 6 |
+| asym + `iou_ref >= 0.55` | 2 | 5 | 7 |
+| asym `-30/+70` + `iou_ref` | 2 | 5 | 7 |
+
+**The gate is unchanged.** Every variant scored worse, all of it in false negatives — `iou_ref`
+rejects good sprites whose shape legitimately differs from the one reference sprite for their
+species (pose and build vary between individuals of the same animal).
+
+**But `iou_ref` is not useless — it is answering a different question.** Two distinct jobs were
+being conflated:
+
+| question | right tool | evidence |
+|---|---|---|
+| *is this one sprite usable?* | the existing gate | 3 errors on 67 labelled sprites |
+| *is model A better than model B?* | **`iou_ref`** | **6/6 species** on both run-4 failures |
+
+`iou_ref` called run-4 worse on **every** species in **both** directions — including east, where
+`d_aspect` reported a dead tie (34.8% vs 34.1%). That is exactly the judgement the numbers failed to
+make yesterday. It just cannot be a per-sprite pass/fail, because a single reference cannot define
+the acceptable range of an individual animal.
+
+So: **gate stays as-is; `iou_ref` and `d_aspect_signed` become the A/B ranking metrics** and are
+reported by every comparison. This mirrors [F3 in the predecessor](../2026-07-25-sprite-gen-quality/forks.md#f3),
+where `d_fill` had the second-best marginal separation yet tripled gate error — good discrimination
+does not imply gate value.

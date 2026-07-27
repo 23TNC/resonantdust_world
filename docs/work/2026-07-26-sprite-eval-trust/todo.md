@@ -5,11 +5,11 @@ Ordering in [`README.md`](README.md): **fix the ruler first**, then diagnose, th
 
 ## P0 — Make the measurement see what the eye sees
 
-- [ ] Add `iou_ref` to `lora_eval`: IoU of the generated silhouette against the real corpus sprite for that species+direction. Acceptance: a run-4 framed-bust south scores lower `iou_ref` than the matching e07 full-body sprite.
-- [ ] Check `iou_ref` separates the east pose drift. Acceptance: run-4 east `iou_ref` is lower than e07 east on ≥4 of the 6 A/B species, or the result is recorded as a refutation.
-- [ ] Add signed aspect error `d_aspect_signed` alongside the unsigned one. Acceptance: e07 east reports mostly positive, run-4 east mostly negative, on the existing `.staging/ab4/` images.
-- [ ] Score every gate variant against `.staging/gate-cal/labels.csv` and report false-pos/false-neg. Acceptance: a table of ≥4 variants incl. the current gate, with error counts, in `completed.md`.
-- [ ] Adopt the lowest-error variant as the gate. Acceptance: `forks.md` records the choice, its error count vs the current 3, and what was rejected.
+- [x] Add `iou_ref` to `lora_eval`: IoU of the generated silhouette against the real corpus sprite for that species+direction. Acceptance: a run-4 framed-bust south scores lower `iou_ref` than the matching e07 full-body sprite.
+- [x] Check `iou_ref` separates the east pose drift. Acceptance: run-4 east `iou_ref` is lower than e07 east on ≥4 of the 6 A/B species, or the result is recorded as a refutation.
+- [x] Add signed aspect error `d_aspect_signed` alongside the unsigned one. Acceptance: e07 east reports mostly positive, run-4 east mostly negative, on the existing `.staging/ab4/` images.
+- [x] Score every gate variant against `.staging/gate-cal/labels.csv` and report false-pos/false-neg. Acceptance: a table of ≥4 variants incl. the current gate, with error counts, in `completed.md`.
+- [x] Adopt the lowest-error variant as the gate. Acceptance: `forks.md` records the choice, its error count vs the current 3, and what was rejected.
 
 ## P1 — Make the visual check automatic
 
