@@ -1,5 +1,67 @@
 # Issues — problems hit, candidates, what we chose
 
+## I6 — Today's walk vs this morning's: 1.54×, bit-identical output, same complexity class {#i6}
+_2026-07-26 · measured A/B_
+
+### The two methods, from git (not from memory)
+Both are the **same algorithm class** — a *gather*: relight dirty tiles → per texel → per light present in
+that tile (≤ **16**, `PRES_SLOTS`) → walk toward the light → test the casters bucketed in each visited tile
+(≤ **8**, `BILLBOARD_SLOTS`).
+
+| | this morning (pre-`5bd274f`) | now |
+|---|---|---|
+| walk | **point-sample** the light→Q segment at ≤1-tile spacing, ≤48 samples | **exact supercover DDA** (Amanatides-Woo), ≤64 tiles |
+| pad | **5-tile cross** per sample (centre ±x ±y) | **3-tile perpendicular-only** dilation |
+| fetches/step | 5 | 3 |
+| casters/fetch | 8 | 8 |
+
+The pad exists because a caster is bucketed by its *tight-bbox ground cover* while `casterCover` tests a wider
+projected extent, so a caster in tile T can occlude a ray through T±1. I30's insight was that consecutive walk
+tiles already supply each other's ±1 *along* the direction of travel, so only the **perpendicular** neighbours
+are load-bearing.
+
+### The measurement
+A `DILATE` constant now switches the shader between the two, so this is an A/B and not a commit message.
+Identical scene (1 326 standing prims both runs), identical lights (32, chosen deterministically as the
+nearest prims to a fixed world point — fingerprint `8332, 8340, 8341, 8342, 8347` in both), reach 16, zoom 0.5,
+all orbiting:
+
+| dilation | ms | fps | static shadow hash |
+|---|---|---|---|
+| **5** — this morning's cross | 229.18 | 4 | `276261732` / 172 019 nz |
+| **3** — today's perpendicular | **149.01** | 7 | `276261732` / 172 019 nz |
+
+**1.54× faster for a bit-identical shadow map.** Same hash, same non-zero population — the narrower dilation
+loses nothing. Today's version is a strict improvement and I30's claim holds up.
+
+### But it did not change what matters
+Both are `O(lit-texels × walk-length × casters-per-tile)`. The constant fell by a third; the exponent did not
+move. Ceiling for 60 fps at reach 16 went from **~8 moving lights to ~13**. That is the entire difference.
+
+And the cost is *all* shadow — 35 moving reach-16 lights measured **43.23 ms with casting on vs 8.33 ms (the
+vsync floor) with casting off**, i.e. **≥81 % of the frame is the walk**, with the full 4096 × 2048 lightmap
+bake, falloff, N·L and accumulation being effectively free. So:
+
+- Further constant-factor work inside the gather (fewer fetches, better culling) buys tens of percent.
+- The **2.79× oversample** ([I4](#i4)) is a flat win but applies to the cheap half — I previously called it
+  "the one worth taking next", which was **wrong**: shadows outweigh it ~5:1.
+- Reaching hundreds of moving lights needs a **different complexity class**, not a faster walk.
+
+### The complexity-class candidate
+The walk exists to answer *"which casters lie between this texel and its light"* — and it re-answers it from
+scratch for every texel. The alternative is to **bucket casters by the tiles their SHADOW lands on** rather
+than by the tiles their body occupies. Then a fragment loops **only its own tile's list** and the walk
+disappears entirely: cost per texel drops from `walk × 3 × 8` (up to 1 536 caster tests) to one list of ≤64.
+That is a CPU/geometry-side scatter feeding the same per-tile bucket the gather already reads, so the shading
+math, the max-accumulate invariant and the bitfield output are all unchanged.
+
+Not attempted, not costed. Recorded as the candidate because it is the only option identified so far that
+changes the exponent rather than the constant, and because it reuses the existing bucket structure instead of
+replacing the renderer. The gather was chosen deliberately on 2026-07-21 over a scatter — but for a reason
+specific to **OR-ing bits into a bitfield** (GL cannot bitwise-blend, forcing ping-pong), which does not apply
+to filling a per-tile caster list on the CPU. That same document also predicted this exact cliff:
+*"the inner caster loop is the one perf cliff (a tile under many lights, each with a long list)"*.
+
 ## I5 — Cold and hot are not two lighting methods. They are two accumulators on one path. {#i5}
 _2026-07-26 · measured_
 

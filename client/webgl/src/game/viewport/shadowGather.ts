@@ -85,6 +85,10 @@ const ELEV_K_DEFAULT = Math.sin(WORLD_TILT_DEG * Math.PI / 180);
  *  just outside the source. It cannot leak light past a light's reach: 0 and 1 are fixed points of
  *  `pow`, so the endpoints are untouched and the corridor/brute reach box stays exactly valid.
  *  This is a LOOK dial, not a physical one — inverse-square it is not, and deliberately so. */
+/** A/B DIAL (2026-07-26, `moving-lights` I6): tiles fetched per corridor step. **3** = the current
+ *  perpendicular-only dilation (I30); **5** = the pre-I30 cross this replaced, kept switchable so
+ *  "is today's walk actually better than this morning's" is a measurement and not a commit message. */
+const DILATE = 3;
 const FALLOFF_EXP = 0.75;
 const FALLOFF_EXPF = FALLOFF_EXP.toFixed(3);
 /** world-space-lighting (P1): the N–S un-foreshorten factor = 1/cos(WORLD_TILT). Screen N–S is compressed
@@ -531,8 +535,10 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
     ivec2 perp = abs(d.x) >= abs(d.y) ? ivec2(0, 1) : ivec2(1, 0);
     for (int m = 0; m < 64; m++) {                           // CONSTANT bound — a body-modified var in a
       if (m >= nvisit) break;                                // loop CONDITION can miscompile (known trap).
-      for (int n = 0; n < 3; n++) {                          // centre, +perp, -perp
-        ivec2 o = ct + (n == 1 ? perp : (n == 2 ? -perp : ivec2(0)));
+      for (int n = 0; n < ${DILATE}; n++) {                  // centre, +perp, -perp (DILATE 5 = the pre-I30
+        ivec2 o = ct + (${DILATE} == 5                       // 5-tile CROSS, kept switchable for A/B)
+          ? ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0))
+          : (n == 1 ? perp : (n == 2 ? -perp : ivec2(0))));
         uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(o.x, o.y));
         vec2 bref = (vec2(o) + 0.5) * UPT;                   // resolve casters against THEIR bucket tile
         for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
