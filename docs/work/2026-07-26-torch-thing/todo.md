@@ -51,7 +51,18 @@ A schema change needs a LIVE check — subscription SQL is a string, so the buil
       cold shards), so no manual wipe was needed — [B-4](../2026-07-25-primitive-graph/blockers.md) is moot.
 
 ## P5 — Verify + close
-- [ ] Re-run the identity + zoom checks with seeded torches as the light source.
-      Acceptance: 0 mismatches with a non-zero population on both sides (the D-2 rule).
-- [ ] Record the torch's kind id and cells in the stream so a future test can reuse them.
-      Acceptance: a fixture another stream can cite.
+- [x] Re-run the identity + zoom checks with seeded torches as the light source.
+      Verified 2026-07-26 across zoom 0.25 / 0.5 / 1 / 2: **0 mismatches at every zoom**, on a genuinely
+      non-zero population (coverage texels 723 / 2,736 / 10,946 / 10,946; max byte 255 = full occlusion).
+      Coverage scales ~4× per lod step, and zoom 1 ≡ zoom 2 because both clamp to lod 0 — the expected shape.
+      NOTE: every prior run of this check was **vacuous** — [I37](../2026-07-25-primitive-graph/issues.md#i37)
+      had coverage pinned at zero, so corridor and brute agreed by both being empty. That is the D-2 trap
+      exactly, and it hid a total shadow outage behind a passing test. A population assertion is not
+      optional garnish on an identity check; it is the half that makes the other half mean anything.
+- [x] Record the torch's kind id and cells in the stream so a future test can reuse them.
+      Fixture: kind `torch`, `kind_reference` = `kind_id << 4 | variant`; 3 seeded at **(100,51), (108,53),
+      (104,59)** in the seed zone (cells offset by the sprite's bottom anchor). Light leaf: reach 6 tiles
+      (96 units), emitter radius 6, intensity 255, `cast` 1, class **0 (cold)** — read the cold RT with
+      `__gather.debugReadShadow(0)`; the parameter defaults to **1 (hot)** and silently returns all zeros
+      for these torches, which cost real time during I37.
+      Height is **2.5 tiles = 40 units** and is shadow-critical — see [I38](../2026-07-25-primitive-graph/issues.md#i38).
