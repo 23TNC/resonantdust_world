@@ -848,3 +848,30 @@ and immediately said no.
 orbit on. If it is unchanged, the mutation never reaches the stamp (suspect 2) and `stepOrbit` must drive
 whatever the stamp reads. If it DOES change while the shadow map does not, the bake is being gated
 (suspect 1). That single readback separates the two.
+
+**I40 DIAGNOSED 2026-07-26 — suspect 2 confirmed: `standing` is a per-frame SNAPSHOT.**
+
+| | sample 0 | sample 1 |
+|---|---|---|
+| prim x/y | (12854, 6557) | (12772, 6389) — **changed** |
+| light record (tile\|unit) | 67\|128 | 67\|128 — **identical** |
+| `pendingRects` | — | 0 |
+
+The prims move; the packed light position on the GPU never does. `standing` is rebuilt from the prim graph
+every frame and the CPU stamps resolved positions FROM THE GRAPH, so `stepOrbit` writes to objects that are
+re-derived and thrown away before the stamp runs. `pendingRects` at 0 fits: the rects were queued and
+drained, the bake re-ran, and it re-baked the SAME positions — which is also why the shadow hash is stable
+rather than merely stale.
+
+This is [[thing-spatial-model]]'s ownership boundary showing up as a bug: the graph owns position, and a
+render-side snapshot is a read model. Writing to a read model is silent by construction — no error, no
+warning, the value simply does not survive the next rebuild.
+
+**Next:** move the displacement upstream to whatever the stamp reads — the carrier prim in the graph
+(WorldBridge / the mover path), not `ShadowGather.lastStanding`. `stepOrbit` should either be deleted from
+ShadowGather entirely and re-homed there, or call into the graph's own move entry point so the orbit takes
+exactly the path a real mover takes. The latter is worth more: a debug mover that does NOT use the mover
+path can pass while the real one is broken, which is the failure this whole issue chain keeps producing.
+
+**Do not re-verify by reading prim fields.** The check is the light record in the data texture, or the
+shadow-map hash. Both are one call and both answered immediately.
