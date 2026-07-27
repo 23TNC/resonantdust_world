@@ -67,3 +67,46 @@ The first disagreement sweep read each shadow-cold `u32` as a single value and r
 wrong: the word packs **16 light slots as bytes across 4 lanes** (`b8 = (lane >> ((slot&3)*8)) & 0xFF`,
 coverage in bits 1–7). All figures above use the byte-wise decode. The zoom 0.25/0.5/2 sweep was run only
 under the bad decode and has NOT been redone — that item stays open.
+
+## 2026-07-27 · P1 — the backward solve replaces the forward projection
+
+`cardHit()` is now the sole occlusion predicate. **`shadowCover`, `projectTop` and `cross2` are deleted**
+— no switch, no dual path, per [F6](forks.md#f6). Net **−59 / +48 lines** (`513b383`).
+
+Nothing computes a forward projection anymore: every shadow decision in the renderer is a ray-vs-card
+plane intersection.
+
+### Verified
+
+| check | result |
+|---|---|
+| corridor↔brute identity | **BIT-IDENTICAL** — 0 differing of 43 435 nonzero texels |
+| renders | yes, at torch reach 8 — lights, shadows, silhouettes intact |
+| frame time | 8.4 ms median / 119 fps (rAF), 60 fps in the debug panel (vsync) |
+| forward-path references left | 0 |
+
+### Behaviours carried across deliberately
+
+- **`SHADOW_BASE_PUSH`** → a slightly negative `tMin`. `y` moves north as `t` rises, so south of the base
+  is `t < 0`; the same seam-closing fudge, expressed in card coords instead of a corner position.
+- **The `k <= 0` semi-infinite case** keeps its reach cap. Returning 0 there is exactly the bug I38 fixed,
+  which silently deleted every shadow whenever a light was authored low. **This branch is the only place
+  the reach bound is load-bearing** — [F2](forks.md#f2)'s general clamp is NOT reproduced, and identity
+  held without it, which settles F2 in favour of option (c): presence already bounds which lights a texel
+  sees.
+
+### Known, recorded narrowing
+
+The centre-ray gate is tighter than the forward projection it replaced — texels where the centre ray
+misses but an offset sub-light hits (the penumbra) are now rejected. Shadows read slightly narrower than
+the checkpoint. **P3 dissolves the gate rather than widening it**; do not "fix" this by re-broadening the
+gate toward a forward projection.
+
+### Not done in P1
+
+- `worldTiltRad` is still fetched per caster per texel in `casterCover` despite being a pass-constant.
+  Deleting `shadowCover` removed its duplicate fetch, which is half the win.
+- Feeding the gate's `s`/`t` into the centre tap. Even tiers (2/4/8) have no centre sample, so the feed is
+  only conditionally valid.
+- P2's profile against `checkpoint/pre-plane-intersection` — frame time is measured but not A/B'd against
+  the old build, so the miss-path win is still unquantified.

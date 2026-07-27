@@ -42,14 +42,15 @@ we are"; today's runs FORWARD (project the caster's extremes, test if `P` is bet
 replacement runs BACKWARD (invert `P` onto the card, range-check). The backward solve is cheaper and
 returns `(s,t)` — the texture coordinate — which the forward one discards._
 
-- [ ] Write the backward solve as a function in `GATHER_COMMON` and call it from `casterCover` as THE predicate — not alongside `shadowCover`, in place of it. One implementation, no switch.
-- [ ] Hoist the solve to a SINGLE gate ahead of the tap loop and feed its `s`/`t` into the centre tap's `uv` rather than re-solving. Without the hoist a miss costs N solves where it used to cost one forward test.
-- [ ] Expect and record the penumbra tightening this causes: the forward projection covered the caster's full extremes, so a CENTRE-ray gate rejects texels where the centre misses but an offset ray hits. That is the penumbra, and P3 removes the gate rather than widening it.
-- [ ] Build the ray gate with NO reach bound first, then test whether one is needed: run corridor↔brute identity, and move a light looking for a stale shadow trail outside its reach circle. Presence may already bound it ([F2](forks.md#f2)).
-- [ ] Decide `projectTop`'s `k <= 0` case: it ran the corner OUT to reach when the light sat below the card top, where the ray test reports unshadowed. Reproduce it or drop it deliberately, and record which in `forks.md`.
-- [ ] Carry `SHADOW_BASE_PUSH` across — it closed a caster/shadow seam from the quad's base corners. Fold it into the `t` range or the anchor, and confirm the seam has not returned.
+- [x] Write the backward solve as a function in `GATHER_COMMON` and call it from `casterCover` as THE predicate — not alongside `shadowCover`, in place of it. One implementation, no switch.
+- [x] Hoist the solve to a SINGLE gate ahead of the tap loop, so a miss costs one solve rather than N.
+- [ ] Feed the gate's `s`/`t` into the centre tap's `uv` instead of re-solving. NOT done in P1: even tiers (2/4/8) have no centre sample, so the feed is only conditionally valid and wants doing properly, not as a special case.
+- [x] Expect and record the penumbra tightening this causes: the forward projection covered the caster's full extremes, so a CENTRE-ray gate rejects texels where the centre misses but an offset ray hits. That is the penumbra, and P3 removes the gate rather than widening it.
+- [x] Build the ray gate with NO reach bound first, then test whether one is needed: run corridor↔brute identity, and move a light looking for a stale shadow trail outside its reach circle. Presence may already bound it ([F2](forks.md#f2)).
+- [x] Decide `projectTop`'s `k <= 0` case: it ran the corner OUT to reach when the light sat below the card top, where the ray test reports unshadowed. Reproduce it or drop it deliberately, and record which in `forks.md`.
+- [x] Carry `SHADOW_BASE_PUSH` across — it closed a caster/shadow seam from the quad's base corners. Fold it into the `t` range or the anchor, and confirm the seam has not returned.
 - [ ] Hoist `worldTiltRad` out of `casterCover` to a per-pass value: it is a texel fetch returning a pass-constant, currently re-fetched per caster per texel.
-- [ ] DELETE `shadowCover`, `projectTop`, and `cross2` if it has no other caller. The phase is not done while the quad is still compiled.
+- [x] DELETE `shadowCover`, `projectTop`, and `cross2` if it has no other caller. The phase is not done while the quad is still compiled.
 
 ## P2 — Verify and measure the replacement
 
