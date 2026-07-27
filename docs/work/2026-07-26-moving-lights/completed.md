@@ -1,5 +1,75 @@
 # Completed — verification log
 
+## 2026-07-27 — FULL RE-PROFILE, clean scene, fixed harness
+
+One light, reach 16, 6-tile orbit through `movePrim`, zoom 0.5, `SQUARE` 64, fresh load. **Cold-pass-only
+GPU timer** (each program is drawn twice per frame — cold then hot) and, for the substeps, a **deterministic
+workload**: light frozen, `rebakeAll()` every frame, 100 % dirty.
+
+### Top level
+
+| stage | where | ms |
+|---|---|---|
+| **gather** | GPU | **2.59** (2.42–2.89) |
+| **lighting** | GPU | **0.53** (0.52–1.31) |
+| **GPU total** | | **3.13** |
+| `buildCasters` | CPU | 0.6 |
+| `buildPresence` | CPU | 0.2 |
+| `buildDirty` / `flush` | CPU | ~0 |
+
+Orbiting (non-deterministic) reads 2.68 / 0.36 / **3.04** — same place, wider spread (1.75–3.39 on the
+gather), which is why the substeps below use the frozen workload.
+
+### Gather substeps
+
+| level | includes | ms | substep |
+|---|---|---|---|
+| 1 | dirty gate + window mapping + `P` | 0.038 | 0.038 |
+| 2 | + `receiverAt` | 0.072 | +0.034 |
+| 3 | + `allBillboard` corner test | 0.074 | +0.002 |
+| 4 | + presence + light loop, no walk | 0.088 | +0.014 |
+| **0** | **+ `walkShadow`** | **2.585** | **+2.497 (96.6 %)** |
+
+### Inside `walkShadow`
+
+| level | includes | ms | substep | share |
+|---|---|---|---|---|
+| 1 | DDA setup | 0.088 | 0.088 | 3 % |
+| 2 | + traversal | 0.102 | +0.014 | 1 % |
+| 3 | + bucket fetches | 0.279 | +0.177 | 7 % |
+| 4 | + slot unpack | 0.398 | +0.119 | 5 % |
+| **0** | **+ `casterOne`** | **2.576** | **+2.178** | **85 %** |
+
+Slot unpack fell **0.369 → 0.119 ms** — that is the dense-bucket `break` doing exactly what it should.
+
+### Lighting substeps
+
+| level | includes | ms | substep |
+|---|---|---|---|
+| 1 | dirty gate + window mapping + `P` | 0.088 | 0.088 |
+| 2 | + `receiverAt` | 0.406 | **+0.318** |
+| 3 | + normal | 0.428 | +0.022 |
+| 4 | + light loop, no shadow fetch | 0.515 | +0.087 |
+| **0** | + coarse shadow lookup | **0.535** | +0.020 |
+
+`receiverAt` fell **0.978 → 0.318 ms** (−67 %) from its own `break`, and is now 59 % of a much smaller pass.
+
+### Where the frame stands
+
+| item | ms | share of 3.13 |
+|---|---|---|
+| **`casterOne`** | **2.18** | **70 %** |
+| `receiverAt` (lighting) | 0.32 | 10 % |
+| bucket fetches + unpack + DDA | 0.40 | 13 % |
+| everything else | 0.23 | 7 % |
+
+**`casterOne` is now 70 % of the GPU frame on its own** — up from 54 % this morning, because everything
+around it got cheaper. [F4](forks.md#f4) is the only remaining lever that touches it.
+
+### Session total on this fixture
+**11.36 ms → 3.13 ms (3.6×)**, and VRAM **272 → 80 MiB**, from: deleting the shadow-edge refine,
+`SQUARE` 128 → 64, and the dense-bucket early outs.
+
 _Dated entries: what landed and **how it was checked**. Append-only; authoritative for what's done and why we
 believe it. Items live in [`todo.md`](todo.md) with their boxes ticked — this file records the evidence._
 
