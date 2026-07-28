@@ -33,10 +33,10 @@ discriminated by RENDER TARGET, fixed frame count, phase from the frame index.
 
 ## P2 — Raise SQUARE to 128
 
-- [ ] Set `SQUARE = 128` and delete the A/B paragraph in its doc comment, replacing it with why the two dials are now separate. Acceptance: `UNIT` = 8, `TEXTILE_UNIT` = 16, `TEXTILE_LIGHT` = 64, asserted in a console readback.
-- [ ] Verify the shadow map is byte-for-byte the same size and the presence/bucket/dirty maps are untouched. Acceptance: shadow RT still 512×256, tile maps still 32×16.
-- [ ] Verify `REFERENCE_W/H` now read 3584×1536 and the cover fit still keeps the viewport inside the visible slots at both 1080p and 4K. Acceptance: no overscan visible at either resolution.
-- [ ] Run the stream acceptance at `SQUARE = 128`. Acceptance: 0 differing texels, clean zoom sweep, and the lighting ms still within noise of the P0 baseline — the split held under the raise.
+- [x] Set `SQUARE = 128` and delete the A/B paragraph in its doc comment, replacing it with why the two dials are now separate. Acceptance: `UNIT` = 8, `TEXTILE_UNIT` = 16, `TEXTILE_LIGHT` = 64, asserted in a console readback.
+- [x] Verify the shadow map is byte-for-byte the same size and the presence/bucket/dirty maps are untouched. Acceptance: shadow RT still 512×256, tile maps still 32×16.
+- [x] Verify `REFERENCE_W/H` now read 3584×1536 and the cover fit still keeps the viewport inside the visible slots at both 1080p and 4K. Acceptance: no overscan visible at either resolution.
+- [x] Run the stream acceptance at `SQUARE = 128`. Acceptance: 0 differing texels, clean zoom sweep, and the lighting ms still within noise of the P0 baseline — the split held under the raise.
 
 ## P3 — Give the art the resolution back
 

@@ -13,12 +13,23 @@
  *  a slot cannot show more than {@link SQUARE} px of a tile, so there is never a reason to author
  *  larger (work `2026-07-26-textile-slot`). Raised 64 → 128 with the fixed slot grid.
  *
- *  A/B 2026-07-27 (`moving-lights`): this is the single dial on the FINE lightmap's size, because
- *  `TEXTILE_SQUARE = SQUARE` and the lightmap is `SLOTS · TEXTILE_SQUARE`. Halving it to 64 makes the
- *  lightmap 2048×1024 instead of 4096×2048 — **4× fewer texels and 4× less VRAM** — while `shadow-cold`
- *  is unaffected (`TEXTILE_UNIT` is fixed at 16/tile). The price is half the linear world resolution and
- *  a 64 px cap on authored art. */
-export const SQUARE = 64;
+ *  **This is the ART dial and ONLY the art dial** (work `2026-07-28-square-128`). It used to be the
+ *  lighting dial too, via `TEXTILE_SQUARE = SQUARE`, and that identity is what forced the 2026-07-27 A/B
+ *  to buy a cheaper lighting pass by paying with art resolution. The lighting now sits on its own pinned
+ *  {@link TEXTILE_LIGHT}, so moving this changes how sharp the world looks and nothing else:
+ *
+ *    SQUARE  ->  UNIT = SQUARE/16 (px per world unit; units-per-tile is FIXED at 16, so every tile+unit
+ *                position on the wire and in the data records is untouched)
+ *            ->  TEXTILE_SQUARE   (albedo/normal/surface/zdepth, cold AND warm — 8 maps)
+ *            ->  BASE_LOD_PX in TextureResolver — the cap on how much art a sprite may fetch
+ *            ->  REFERENCE_W/H, SLOT_PW/PH, the lod ladder
+ *        NOT ->  the lightmap, the receiver map, the shadow map, or any tile map
+ *
+ *  At 128 the art maps cost ~321 MiB against ~76 at 64 (measured P0). That is the real price, and it
+ *  buys back the resolution: `BASE_LOD_PX` goes 64 -> 128, so every sprite steps up one LOD. The corpus
+ *  already carries it — 0 of 27 manifest entries are short of 128 and the wolf's master is 512, which is
+ *  why it read as mush at 64. */
+export const SQUARE = 128;
 
 /** World UNIT in px — `UNIT = SQUARE/16`; 16 units per tile edge. Shadow math is in units.
  *  Units-per-tile is FIXED at 16, so this tracks `SQUARE` and every tile+unit position — which is

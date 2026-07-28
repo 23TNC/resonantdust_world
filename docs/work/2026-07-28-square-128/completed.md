@@ -191,3 +191,70 @@ same step, none of these numbers could have distinguished a correct split from a
 the first sweep proved nothing. Real frames (forced via screenshot capture) were needed to reach lod 2.
 The tick-driven harness is right for timing a draw and wrong for anything that depends on the Viewport
 recomputing the window.
+
+## 2026-07-28 · P2 — `SQUARE = 128`, and the split holds
+
+### Every constant lands where the design says
+
+| constant | value | |
+|---|---|---|
+| `SQUARE` | **128** | matches `VARIABLES.md` |
+| `UNIT` | 8 | `SQUARE/16` |
+| `TEXTILE_UNIT` | **16** | unchanged — the world invariant |
+| `TEXTILE_SQUARE` | 128 | the art dial, followed `SQUARE` |
+| `TEXTILE_LIGHT` | **64** | pinned, did NOT follow |
+| `FINE_RATIO` | **4** | unchanged |
+| `REFERENCE_W/H` | **3584 × 1536** | matches `VARIABLES.md` |
+| `SLOT_PW` | 132 | `SQUARE + 2·PAD` |
+
+| map family | before | after |
+|---|---|---|
+| art (cold + warm) | 2176 × 1152 | **4352 × 2304** — exactly the size `VARIABLES.md` specifies |
+| lighting (3 maps) | 2048 × 1024 | **2048 × 1024** — unchanged |
+| shadow (6 maps) | 512 × 256 | **512 × 256** — unchanged |
+
+### The result the stream exists for
+
+Same harness, 3 repeats, dirty counts **byte-identical** to the baseline at 217/392/465:
+
+| reach | light ms @ 64 | light ms @ 128 | Δ |
+|---|---|---|---|
+| 4 | 0.124 | 0.148 | +0.024 (spread 0.079) |
+| 8 | 0.286 | **0.290** | **+0.004** (spread 0.015) |
+| 12 | 0.253 | **0.263** | **+0.010** (spread 0.017) |
+
+**Art resolution doubled on both axes; the lighting pass did not move.** At reach 8 the difference is
+0.4 %, well inside the spread. Gather likewise: 0.668 → 0.691 and 0.845 → 0.902. Compare the P0 probe,
+where letting the lighting follow `SQUARE` cost **2.2–3.1×** — that entire cost is what the pin avoids.
+
+### Acceptance
+
+| check | result |
+|---|---|
+| corridor↔brute, zoom 1 | **0 differing** of 37 315, and again 0 of 71 809 after the sweep |
+| corridor↔brute, zoom 0.25 (lod 2) | **0 differing** of 6 644 |
+| zoom sweep 1 → 0.25 → 1 | `glGetError` 0, no misregistration, correct render at both ends |
+| cover fit | `max(W/3584, H/1536)` — 1080p → 0.703, 4K → 1.406, both cover by construction (`max`, not `min`) |
+| art LOD | `targetPx` 64 → **71.1**, which `pickLodForSize` snaps to the **128** LOD |
+
+### The zoom sweep is where the P1 fix earns itself
+
+At zoom 0.25, lod 2:
+
+```
+win.slotPx        = 32     (SQUARE 128 >> 2)  — the ART texel size
+uLSlot            = 16     (TEXTILE_LIGHT 64 >> 2) — the LIGHTING texel size
+```
+
+**They now differ by 2×.** The old code fed `win.slotPx` to the lightmap, so on this build it would have
+sampled the lightmap at double scale at every lod below 0 — silently, since lod 0 still agreed. Splitting
+first ([F3](forks.md#f3)) meant this was fixed while the two values were still equal and the oracle was
+exact; had both changes landed together, the misregistration would have been indistinguishable from an
+ordinary raise bug.
+
+### On `targetPx`
+
+It reads 71.1, not 128 — because it is the *requested* size (on-screen tile px at the current cover
+scale), not the cap. `BASE_LOD_PX = SQUARE` was clamping it to 64 before; with the clamp at 128 the true
+71.1 shows through and `pickLodForSize` snaps up to the 128 LOD. The art genuinely steps up a level; the
+number to watch is the LOD chosen, not `targetPx` itself.
