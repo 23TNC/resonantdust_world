@@ -42,9 +42,32 @@ uniform sampler2D uHotLight;     // #4 HOT lightmap irradiance (dynamic lights, 
 uniform int uLightEnable;        // 0 = UNLIT (albedo only) — the fallback when the lightmap isn't ready
 uniform float uAmbient;          // #4 ambient floor — added ONCE over cold+hot (not baked into either map)
 uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mapping (uLSlot = TEXTILE_SQUARE, fine)
+uniform sampler2D uDecay;        // lighting-feel P2: the COARSE decay lightmap (RGBA16F, un-quantised)
+uniform int uDSlot;              // decay texels per tile (SHADOW_TEXELS >> lod)
 out vec4 fragColor;
 const float SQ = ${SQF};
 int pmod(int a, int m) { return ((a % m) + m) % m; }
+// lighting-feel P2: sample the decay map with MANUAL bilinear whose four taps each fold through the
+// toroidal window independently — hardware LINEAR would blend across the wrap seam (opposite world
+// edges). Glow is soft, so bilinear at coarse res is the whole upsample.
+vec3 decaySample(vec2 world) {
+  vec2 u = world / SQ * float(uDSlot) - 0.5;          // continuous decay-texel coords (world-aligned)
+  vec2 f = fract(u);
+  vec2 base = floor(u);
+  vec3 acc = vec3(0.0);
+  for (int dy = 0; dy < 2; dy++)
+    for (int dx = 0; dx < 2; dx++) {
+      vec2 tex = base + vec2(float(dx), float(dy));   // world-space texel index
+      float wgt = (dx == 0 ? 1.0 - f.x : f.x) * (dy == 0 ? 1.0 - f.y : f.y);
+      int tx = int(floor((tex.x + 0.5) / float(uDSlot)));
+      int ty = int(floor((tex.y + 0.5) / float(uDSlot)));
+      if (tx < uLWinCol || tx >= uLWinCol + uLCols || ty < uLWinRow || ty >= uLWinRow + uLRows) continue;
+      ivec2 fold = ivec2(pmod(tx, uLCols) * uDSlot, pmod(ty, uLRows) * uDSlot)
+                 + ivec2(int(tex.x) - tx * uDSlot, int(tex.y) - ty * uDSlot);
+      acc += texelFetch(uDecay, fold, 0).rgb * wgt;
+    }
+  return acc;
+}
 // World → the toroidal FINE lightmap texel (matches the bake's fc→world), or (-1,-1) if outside the window.
 ivec2 lightTexel(vec2 world) {
   int tx = int(floor(world.x / SQ)), ty = int(floor(world.y / SQ));
@@ -78,7 +101,9 @@ void main() {
       // 255, subtracting one leaves 0 where the answer is 255, and that light can never be fully turned
       // off. Over-bright is resolved at read time; the stored sum stays exact.
       vec3 irr = (texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb) / uLightQuant;
-      light = uAmbient + min(irr, vec3(4.0));
+      // lighting-feel P2: + the decay lightmap — ephemeral particle glow (flicker), un-quantised,
+      // bilinear (soft by nature). Inside the same display clamp.
+      light = uAmbient + min(irr + decaySample(vWorld), vec3(4.0));
     }
   }
   // Coverage applied at OUTPUT only (premultiplied) so it composites over the canvas background: empty cells
@@ -101,6 +126,8 @@ export class AlbedoBlitShader {
    *  is baked in, so these are the whole illumination — no separate dir/unshadowed maps. */
   coldLight: Texture | null = null;
   hotLight: Texture | null = null;
+  /** lighting-feel P2: the coarse decay (particle glow) map; null → empty (no glow). */
+  decay: Texture | null = null;
 
   constructor(gl: WebGL2RenderingContext) {
     this.program = new Program(gl, BLIT_VERT, BLIT_FRAG, "viewport-albedo-blit");
@@ -115,6 +142,7 @@ export class AlbedoBlitShader {
       uSurfaceWarm: this.surfaceWarm ?? empty,
       uColdLight: this.coldLight ?? empty,
       uHotLight: this.hotLight ?? empty,
+      uDecay: this.decay ?? empty,
     };
   }
 

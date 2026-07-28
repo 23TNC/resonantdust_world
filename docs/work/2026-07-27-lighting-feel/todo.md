@@ -17,11 +17,11 @@ GPU timing = the EXT_disjoint_timer_query harness from
 
 ## P2 — the decay lightmap
 
-- [ ] Add the coarse decay RT ([F1](forks.md#f1)) + the in-place decay draw ([F2](forks.md#f2), dt-derived k). Acceptance: a debug splat fades smoothly to zero; decay pass ≤ 0.05 ms (GPU-timed).
-- [ ] Blit adds the decay map, bilinearly upsampled, AFTER the accumulator sum. Acceptance: pixel-identical output when the map is empty; soft glow when not.
-- [ ] Splat path: additive particle quads (world pos, radius, colour, intensity), shadow-STAMPED by the parent light's coarse-shadow slot at emit ([F4](forks.md#f4)). Acceptance: a splat emitted over a tree shadow shows the shadow cut into its glow.
-- [ ] Flicker emitter v1 ([F5](forks.md#f5)): lights with a flicker flag emit jittered splats; the base light stays STATIC in the hot accumulator. Acceptance: torches at area1 visibly flicker with `debugClassDraws 0` on static frames; frame rate unchanged.
-- [ ] Toroidal correctness: splats + decay survive pan/zoom (window remap) without smears or wrap ghosts. Acceptance: pan across a flickering torch + zoom sweep 1→0.25→1, no artifacts, no GL errors.
+- [x] Add the coarse decay RT ([F1](forks.md#f1)) + the in-place decay draw ([F2](forks.md#f2), dt-derived k). Acceptance: a debug splat fades smoothly to zero; decay pass ≤ 0.05 ms (GPU-timed).
+- [x] Blit adds the decay map, bilinearly upsampled, AFTER the accumulator sum. Acceptance: pixel-identical output when the map is empty; soft glow when not.
+- [x] Splat path: additive particle quads (world pos, radius, colour, intensity), shadow-STAMPED by the parent light's coarse-shadow slot at emit ([F4](forks.md#f4)). Acceptance: a splat emitted over a tree shadow shows the shadow cut into its glow.
+- [x] Flicker emitter v1 ([F5](forks.md#f5)): lights with a flicker flag emit jittered splats; the base light stays STATIC in the hot accumulator. Acceptance: torches at area1 visibly flicker with `debugClassDraws 0` on static frames; frame rate unchanged.
+- [x] Toroidal correctness: splats + decay survive pan/zoom (window remap) without smears or wrap ghosts. Acceptance: pan across a flickering torch + zoom sweep 1→0.25→1, no artifacts, no GL errors.
 
 ## P3 — AO + emissive (sized by P0)
 

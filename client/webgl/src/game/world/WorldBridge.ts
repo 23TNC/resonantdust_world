@@ -428,6 +428,7 @@ export class WorldBridge {
       height: this.thingLight[i + 6] * SQUARE,
       castShadows: (flags & 1) !== 0,
       hot: (flags & 2) !== 0,
+      flicker: (flags & 4) !== 0, // lighting-feel P2: decay-lightmap particles
     };
   }
 

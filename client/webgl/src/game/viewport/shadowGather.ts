@@ -1113,6 +1113,87 @@ void main() {
 }
 `;
 
+// ── DECAY LIGHTMAP (lighting-feel P2) ─────────────────────────────────────────────────────────────
+// A third, COARSE, EPHEMERAL lightmap: it decays toward zero every frame (one in-place mulConstant
+// draw — F2) and light PARTICLES are splatted into it additively, fire-and-forget (F1/F4/F5). It is
+// EXEMPT from the accumulators' exactness machinery BY DESIGN: it forgets, so nothing is ever
+// subtracted or dirty-tracked. Anything persistent belongs in cold/hot instead — keep it that way.
+/** The decay fade "shader" — output is irrelevant (`blendFunc(ZERO, CONSTANT_COLOR)` multiplies dst
+ *  by the blend colour); the draw exists to touch every texel. */
+const DECAY_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+out vec4 oC;
+void main() { oC = vec4(0.0); }
+`;
+const SPLAT_VERT = /* glsl */ `#version 300 es
+in vec2 aUnit;                    // 0..1 quad
+uniform vec2 uCenterUV;           // splat centre in decay-RT UV (CPU maps world → toroidal slot)
+uniform vec2 uRadUV;              // radius in UV per axis
+out vec2 vLocal;                  // -1..1 across the splat
+void main() {
+  vLocal = aUnit * 2.0 - 1.0;
+  vec2 uv = uCenterUV + vLocal * uRadUV;
+  gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+`;
+// Additive radial glow, SHADOW-STAMPED at emit (F4): the decay RT shares the coarse shadow RT's
+// exact texel geometry, so gl_FragCoord addresses both; the parent light's slot is found in the
+// tile's presence and its u7 coverage multiplies the splat — particles inherit their light's
+// shadows once, at write time, and flicker can never bleed into shadow.
+const SPLAT_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+in vec2 vLocal;
+uniform vec3 uColor;
+uniform float uIntensity;
+uniform int uLightId;              // parent light id (presence slot search); < 0 = unstamped
+uniform highp usampler2D uShadowStamp; // the parent's CLASS shadow RT (same texel geometry)
+uniform highp usampler2D uData;    // presence (window mapping via the constants row)
+out vec4 oGlow;
+// Minimal helpers (the OVERLAY_FRAG pattern — do NOT pull in GATHER_COMMON for a splat).
+const int PRESENCE_BASE = 196608, PRESENCE_HI_BASE = 327680, CONST_BASE = 1047552;
+uvec4 fetchLin(highp usampler2D t, int i) { return texelFetch(t, ivec2(i & 1023, i >> 10), 0); }
+int pmod(int a, int m) { return ((a % m) + m) % m; }
+int fmod16(int v) { return ((v % 16) + 16) % 16; }
+int foldTile(int wc, int wr) {
+  int zx = fmod16(wc >> 4), zy = fmod16(wr >> 4), tx = fmod16(wc), ty = fmod16(wr);
+  return ((zx >> 2) + zy * 4) * 1024 + (zx & 3) * 256 + ty * 16 + tx;
+}
+uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
+uint tileSlot(uvec4 t, int i) {
+  int c = i >> 1;
+  uint w = c == 0 ? t.x : (c == 1 ? t.y : (c == 2 ? t.z : t.w));
+  return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
+}
+void main() {
+  float r2 = dot(vLocal, vLocal);
+  if (r2 >= 1.0) discard;
+  float glow = (1.0 - r2) * (1.0 - r2);              // smooth radial falloff, C1 at the rim
+  float stamp = 1.0;
+  if (uLightId >= 0) {
+    uvec4 C0 = fetchLin(uData, CONST_BASE);
+    int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0x3FFFu);
+    int uWinCol = int(C0.z) >> 16, uWinRow = (int(C0.z) << 16) >> 16;
+    ivec2 fc = ivec2(gl_FragCoord.xy);
+    int sx = fc.x / uSlot, sy = fc.y / uSlot;
+    int wc = uWinCol + pmod(sx - pmod(uWinCol, uCols), uCols);
+    int wr = uWinRow + pmod(sy - pmod(uWinRow, uRows), uRows);
+    int fold = foldTile(wc, wr);
+    uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);
+    uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);
+    uvec4 sh = texelFetch(uShadowStamp, fc, 0);
+    for (int slot = 0; slot < 16; slot++) {
+      uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
+      if (li != uint(uLightId)) continue;
+      uint b8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
+      stamp = 1.0 - float(b8 >> 1) / 127.0;          // (1 − the parent light's shadow coverage)
+      break;
+    }
+  }
+  oGlow = vec4(uColor * (uIntensity * glow * stamp), 0.0);
+}
+`;
+
 /** Light gizmo: a filled dot at the light + a ring at its radius (screen-constant thickness). */
 const GIZMO_VERT = /* glsl */ `#version 300 es
 in vec2 aUnit;                   // 0..1 quad
@@ -1311,6 +1392,21 @@ export class ShadowGather {
   debugReceiverDraws = 0;
   private receiverCoarseRT: RenderTarget | null = null;
   private receiverFineRT: RenderTarget | null = null;
+  /** lighting-feel P2 — the DECAY lightmap (coarse RGBA16F, F1) + its per-frame fade constant.
+   *  Ephemeral by design: no dirty tracking, no exactness — it forgets. */
+  private decayRT: RenderTarget | null = null;
+  /** Decay time constant τ (seconds) — a splat falls to 1/e in τ. `__flicker(_, tau)`. Short τ is
+   *  what makes flicker READ: equilibrium mean ≈ rate·E[intensity]·τ, and the visible fluctuation
+   *  around it scales ~1/√(rate·τ) — long τ = steady bloom, short τ = breathing fire. */
+  decayTau = 0.22;
+  private lastDecayMs = 0;
+  /** Master switch + strength for the v1 CPU flicker emitter (F5). `__flicker(on?, tau?, str?)`. */
+  flickerOn = true;
+  flickerStr = 0.05;
+  /** DEBUG: emit from EVERY carried light regardless of its content flag (A/B aid). */
+  flickerAll = false;
+  /** DEBUG (P2 acceptance): splats emitted last frame. */
+  debugSplats = 0;
   /** P6: walk the segment corridor (true) or the brute-force reach box (false). Brute is the
    *  validation baseline — `__corridor(false)` + `__shadowDiff()` must report 0 mismatches. */
   private corridor = true;
@@ -1322,6 +1418,9 @@ export class ShadowGather {
 
   private readonly recvCoarse: Program;
   private readonly recvFine: Program;
+  private readonly decayProg: Program;
+  private readonly splatProg: Program;
+  private splatQuad: Geometry | null = null;
 
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
@@ -1329,6 +1428,11 @@ export class ShadowGather {
     this.lighting = new Program(gl, FULLSCREEN_VERT, LIGHT_FRAG, "world-lighting");
     this.recvCoarse = new Program(gl, FULLSCREEN_VERT, RECEIVER_COARSE_FRAG, "receiver-coarse");
     this.recvFine = new Program(gl, FULLSCREEN_VERT, RECEIVER_FINE_FRAG, "receiver-fine");
+    this.decayProg = new Program(gl, FULLSCREEN_VERT, DECAY_FRAG, "decay-fade");
+    this.splatProg = new Program(gl, SPLAT_VERT, SPLAT_FRAG, "decay-splat");
+    this.splatQuad = new Geometry(gl, this.splatProg, {
+      aUnit: { data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), size: 2 },
+    }, new Uint32Array([0, 1, 2, 0, 2, 3]));
     this.overlay = new Program(gl, OVERLAY_VERT, OVERLAY_FRAG, "shadow-overlay");
     this.gizmo = new Program(gl, GIZMO_VERT, GIZMO_FRAG, "shadow-gizmo");
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
@@ -1389,6 +1493,19 @@ export class ShadowGather {
       if (y !== undefined) this.lightAlignY = y;
       this.rebakeAll();
       return [this.lightAlignX, this.lightAlignY];
+    };
+    // DEBUG (lighting-feel P2): the flicker emitter — on/off, decay τ (s), strength; `__flickerall`
+    // force-emits from every carried light regardless of its content flag (A/B aid).
+    (globalThis as unknown as { __flicker: (on?: boolean, tau?: number, str?: number) => unknown }).__flicker =
+      (on?: boolean, tau?: number, str?: number) => {
+        if (on !== undefined) this.flickerOn = on;
+        if (tau !== undefined) this.decayTau = tau;
+        if (str !== undefined) this.flickerStr = str;
+        return { on: this.flickerOn, tau: this.decayTau, str: this.flickerStr };
+      };
+    (globalThis as unknown as { __flickerall: (on?: boolean) => boolean }).__flickerall = (on?: boolean) => {
+      this.flickerAll = on ?? !this.flickerAll;
+      return this.flickerAll;
     };
     // DEBUG (lighting-feel P1): colour temperature — warm shift at the core + rim saturation.
     // Identity (A/B off) = __lighttemp(0, 1). Bake-affecting → rebake.
@@ -1920,6 +2037,11 @@ export class ShadowGather {
     // blit adds it once over cold+hot). On the fixed grid this is `SLOTS · TEXTILE_SQUARE` = 3072×2048,
     // constant — it was `cols · TEXTILE_SQUARE` (world-sized), which is what made it 176 MB at zoom 0.25.
     const fw = SLOTS_X * TEXTILE_SQUARE, fh = SLOTS_Y * TEXTILE_SQUARE;
+    // lighting-feel P2: the decay lightmap — coarse (shadow-RT geometry), RGBA16F, cleared to zero.
+    this.decayRT?.destroy();
+    this.decayRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba16float"] });
+    this.decayRT.bind();
+    gl.clearBufferfv(gl.COLOR, 0, new Float32Array([0, 0, 0, 0]));
     // P3 receiver maps — persistent, baked under the receiver-dirty channel. Coarse (gather res):
     // baseY/id/allB/rcov as raw f32 bits; fine (lightmap res): id|presence only (R32UI, 33 MB).
     this.receiverCoarseRT?.destroy(); this.receiverFineRT?.destroy();
@@ -2039,7 +2161,73 @@ export class ShadowGather {
       this.classPass(1, this.hotShadowRT!, this.hotLightRT!, this.hotShadowPrevRT);
       this.debugClassDraws++;
     }
+    // lighting-feel P2: fade the decay map + splat this frame's particles. Runs every frame — the
+    // fade is one blend-state draw over 131 k texels and the splats are a handful of tiny quads;
+    // neither touches the accumulators or the dirty machinery.
+    this.decayAndSplat(win);
   }
+
+  /** The DECAY LIGHTMAP frame stage (lighting-feel P2): one in-place `dst *= k` fade (F2), then the
+   *  v1 flicker emitter (F5) splats a jittered particle per flickering carried light, each
+   *  shadow-stamped by its parent's class shadow RT (F4). Ephemeral by design — see the field docs. */
+  private decayAndSplat(win: TileWindow): void {
+    if (!this.decayRT || !this.splatQuad) return;
+    const now = performance.now();
+    const dt = this.lastDecayMs > 0 ? Math.min((now - this.lastDecayMs) / 1000, 0.25) : 1 / 60;
+    this.lastDecayMs = now;
+    const k = Math.exp(-dt / this.decayTau);
+    this.renderer.draw({
+      program: this.decayProg,
+      geometry: this.fsQuad,
+      target: this.decayRT,
+      blend: "mulConstant",
+      blendColor: [k, k, k, k],
+    });
+    this.debugSplats = 0;
+    if (!this.flickerOn) return;
+    const { cols, rows, winCol, winRow } = win;
+    const pm = (a: number, m: number): number => ((a % m) + m) % m;
+    for (const [id, L] of this.coldData.carriedLights) {
+      if (!(L.flicker || this.flickerAll)) continue;
+      // One splat per frame per light: jittered off the source, intensity noise. Radius rides the
+      // light's reach a little so big lights breathe wider.
+      const jr = 0.45 * SQUARE;
+      const wx = L.x + (Math.random() * 2 - 1) * jr;
+      const wy = L.y + (Math.random() * 2 - 1) * jr;
+      const radiusPx = Math.min(L.reach * 0.45, 2.2 * SQUARE) * (0.8 + 0.4 * Math.random());
+      // Deposit scaled by dt (nominal 60 fps = 1×) so the map's EQUILIBRIUM brightness is
+      // frame-rate independent — one splat per frame deposits energy ∝ elapsed time, and the
+      // time-based decay drains it symmetrically. Without this, 120 fps glows twice as bright.
+      const intensity = this.flickerStr * L.intensity * (0.4 + 0.6 * Math.random()) * Math.min(dt * 60, 3);
+      const tx = Math.floor(wx / SQUARE), ty = Math.floor(wy / SQUARE);
+      if (tx < winCol || tx >= winCol + cols || ty < winRow || ty >= winRow + rows) continue;
+      // World → toroidal-slot UV (the same `pm(tile, cols)` slot the dirty mirror uses). A splat
+      // straddling the wrap seam clips at the seam — the seam lives in overscan, off-visible.
+      const cu = (pm(tx, cols) + (wx / SQUARE - tx)) / cols;
+      const cv = (pm(ty, rows) + (wy / SQUARE - ty)) / rows;
+      this.renderer.draw({
+        program: this.splatProg,
+        geometry: this.splatQuad,
+        target: this.decayRT,
+        blend: "add",
+        textures: {
+          uShadowStamp: (L.hot ? this.hotShadowRT! : this.coldShadowRT!).textures[0],
+          uData: this.coldData.dataTexture,
+        },
+        uniforms: (p) => {
+          p.uVec2("uCenterUV", cu, cv);
+          p.uVec2("uRadUV", radiusPx / (SQUARE * cols), radiusPx / (SQUARE * rows));
+          p.uVec3("uColor", L.color[0], L.color[1], L.color[2]);
+          p.uFloat("uIntensity", intensity);
+          p.uInt("uLightId", id);
+        },
+      });
+      this.debugSplats++;
+    }
+  }
+
+  /** The decay lightmap texture for the display blit (coarse, RGBA16F, un-quantised irradiance). */
+  get decayMap(): Texture | null { return this.decayRT?.textures[0] ?? null; }
 
   /** One class's shadow + lighting bake (#4). `cls` 0 = cold / 1 = hot; `dirty` gates it (clean → persist);
    *  the gather writes `shadowRT` (this class's per-light u9), the lighting reads it into `lightRT`. */
@@ -2189,6 +2377,8 @@ export class ShadowGather {
     this.coldLightRT?.destroy(); this.hotLightRT?.destroy();
     this.receiverCoarseRT?.destroy(); this.receiverFineRT?.destroy();
     this.recvCoarse.destroy(); this.recvFine.destroy();
+    this.decayRT?.destroy();
+    this.decayProg.destroy(); this.splatProg.destroy(); this.splatQuad?.destroy();
     this.coldData.destroy();
   }
 }

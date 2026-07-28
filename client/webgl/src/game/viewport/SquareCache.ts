@@ -68,6 +68,8 @@ export interface PrimitiveLight {
   height: number;         // world px above the ground plane
   castShadows: boolean;
   hot: boolean;           // animates per frame (flicker/motion) ⇒ the HOT class
+  /** lighting-feel P2: emits decay-lightmap flicker particles (`&thing.light.flicker`). */
+  flicker?: boolean;
 }
 
 /** What a channel's resolve returns — the merged bake gathers albedo material + normal + depth. */

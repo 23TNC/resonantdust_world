@@ -223,7 +223,10 @@ export class ColdShadowData {
   private readonly resolveChainScratch = new Set<number>();
   private resolveWarned = false;
   /** What `buildPresence` needs about each carried light: resolved world px + reach. */
-  readonly carriedLights = new Map<number, { x: number; y: number; reach: number }>();
+  /** Every carried light's CPU mirror. `color`/`intensity`/`hot`/`flicker` ride along for the
+   *  decay-lightmap emitter (lighting-feel P2) — refreshed on every write, single source. */
+  readonly carriedLights = new Map<number, { x: number; y: number; reach: number;
+    color: readonly [number, number, number]; intensity: number; hot: boolean; flicker: boolean }>();
   private lightCount = 0;
 
   /** P3: take a `prim_data` id (free-list first, so the space survives churn). */
@@ -725,7 +728,9 @@ export class ColdShadowData {
     const [wx, wy] = decodePosition(r.pos);
     const prev = this.carriedLights.get(idx);
     const moved = !prev || prev.x !== wx || prev.y !== wy || prev.reach !== L.reach;
-    if (moved) this.carriedLights.set(idx, { x: wx, y: wy, reach: L.reach });
+    if (moved || prev.intensity !== L.intensity || prev.flicker !== (L.flicker ?? false))
+      this.carriedLights.set(idx, { x: wx, y: wy, reach: L.reach, color: L.color,
+        intensity: L.intensity, hot: L.hot, flicker: L.flicker ?? false });
     // The CALLER routes a change through `markLightDirty` — the same front door a debug light uses.
     // No parallel version counter here: that is exactly the hand-rolled bookkeeping P4 retired.
     //

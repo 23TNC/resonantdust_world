@@ -152,6 +152,9 @@ pub struct LightParts {
   /// Animates per frame (flicker, motion) ⇒ the HOT class, re-baked every frame.
   /// Default false: a static torch bakes once, which is what makes many of them cheap.
   pub hot: bool,
+  /// Emits DECAY-LIGHTMAP flicker particles (lighting-feel P2). Orthogonal to `hot`:
+  /// the base light stays static (cold) while particles carry the motion for ~free.
+  pub flicker: bool,
 }
 
 /// Everything the runtime needs to resolve and render tiles, built once at load.
@@ -301,6 +304,7 @@ impl Bundle {
         height: read_f("prims.0.light.height", 0.5),
         cast: read_f("prims.0.light.cast", 1.0) != 0.0,
         hot: read_f("prims.0.light.hot", 0.0) != 0.0,
+        flicker: read_f("prims.0.light.flicker", 0.0) != 0.0,
       }),
       _ => None,
     };
@@ -428,7 +432,7 @@ impl Bundle {
 
   /// Every thing's emitted LIGHT in `object_id` order, flattened **stride-8** per def
   /// (index 0 → object_id 1): `[r, g, b, intensity, reach, radius, height, flags]`, where
-  /// `flags` is bit 0 = `cast_shadows`, bit 1 = `hot`. Colour is `0..1`; `reach`, `radius`
+  /// `flags` is bit 0 = `cast_shadows`, bit 1 = `hot`, bit 2 = `flicker`. Colour is `0..1`; `reach`, `radius`
   /// and `height` are TILES. A kind that emits nothing gets an all-zero row, and
   /// **`reach == 0` IS the "no light" test** the host uses — so a caller never has to know
   /// which kinds were authored with a light. Sibling of [`thing_layout`]; per KIND, so a
@@ -439,7 +443,7 @@ impl Bundle {
       match self.thing(name).and_then(|n| self.node_visual(n)).and_then(|v| v.light) {
         Some(l) => out.extend_from_slice(&[
           l.color.0, l.color.1, l.color.2, l.intensity, l.reach, l.radius, l.height,
-          f64::from(u8::from(l.cast) | (u8::from(l.hot) << 1)),
+          f64::from(u8::from(l.cast) | (u8::from(l.hot) << 1) | (u8::from(l.flicker) << 2)),
         ]),
         None => out.extend_from_slice(&[0.0; 8]),
       }

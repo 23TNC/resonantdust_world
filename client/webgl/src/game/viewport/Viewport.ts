@@ -17,7 +17,7 @@ import { OverlayShader, overlayModeFor } from "./overlayShader";
 import { ShadowGather, AMBIENT_LEVEL } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
-import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
+import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_UNIT } from "./squareMath";
 import { LIGHT_QUANT } from "./shadowGather";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 
@@ -392,6 +392,7 @@ export class Viewport {
         const coldLight = this.shadows.coldLightmap;
         this.blitShader.coldLight = coldLight;
         this.blitShader.hotLight = this.shadows.hotLightmap;
+        this.blitShader.decay = this.shadows.decayMap; // lighting-feel P2: ephemeral particle glow
         const win = this.map.window;
         // world px → clip: x = (wx-ax)*2rs/w, y = -(wy-ay)*2rs/h  (screen y-down → clip y-up).
         // RENDER scale, not logical zoom — this is the transform that puts world px on the display, so
@@ -418,6 +419,9 @@ export class Viewport {
             // — which is exactly `win.slotPx` (both are `SQUARE >> lod`). Hardcoding `TEXTILE_SQUARE` was
             // right only at lod 0 and sampled ~2^lod off everywhere else (textile-slot).
             p.uInt("uLSlot", win.slotPx);
+            // lighting-feel P2: the decay map is COARSE — TEXTILE_UNIT texels/tile at lod 0,
+            // halving with lod exactly like the shadow map (SHADOW_TEXELS >> lod).
+            p.uInt("uDSlot", Math.max(1, TEXTILE_UNIT >> win.lod));
             p.uFloat("uLightQuant", LIGHT_QUANT); // de-quantise the additive accumulator (F11b)
           },
         });

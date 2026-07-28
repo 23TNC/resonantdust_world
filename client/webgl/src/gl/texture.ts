@@ -4,7 +4,7 @@
 //! NEAREST filtering (LINEAR is invalid on them). Atlas frame UVs are the caller's job (we keep the whole
 //! page here); the resolver already computes frames.
 
-export type TexFormat = "rgba8unorm" | "rgba32float" | "rgba8uint" | "rgba32uint" | "r8uint" | "r32uint";
+export type TexFormat = "rgba8unorm" | "rgba32float" | "rgba16float" | "rgba8uint" | "rgba32uint" | "r8uint" | "r32uint";
 
 interface Fmt {
   internal: number;
@@ -19,6 +19,9 @@ function glFmt(gl: WebGL2RenderingContext, f: TexFormat): Fmt {
       return { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE, integer: false };
     case "rgba32float":
       return { internal: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT, integer: false };
+    case "rgba16float":
+      // Renderable via EXT_color_buffer_float (already required); blends via EXT_float_blend.
+      return { internal: gl.RGBA16F, format: gl.RGBA, type: gl.HALF_FLOAT, integer: false };
     case "rgba8uint":
       return { internal: gl.RGBA8UI, format: gl.RGBA_INTEGER, type: gl.UNSIGNED_BYTE, integer: true };
     case "rgba32uint":

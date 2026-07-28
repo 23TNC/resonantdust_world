@@ -9,7 +9,7 @@ import { Geometry } from "./geometry";
 import { Texture } from "./texture";
 import { RenderTarget } from "./renderTarget";
 
-export type BlendMode = "none" | "normal" | "add";
+export type BlendMode = "none" | "normal" | "add" | "mulConstant";
 
 export interface DrawOptions {
   program: Program;
@@ -21,6 +21,9 @@ export interface DrawOptions {
   /** Set uniforms just before the draw (program is already `use()`d). */
   uniforms?: (p: Program) => void;
   blend?: BlendMode;
+  /** The constant for `mulConstant` blending (`dst *= blendColor`, fragment output ignored) —
+   *  the decay lightmap's in-place fade (lighting-feel F2). */
+  blendColor?: [number, number, number, number];
   /** Float clear before drawing (`[r,g,b,a]`), or an integer clear for a uint target. */
   clear?: [number, number, number, number];
   clearInt?: [number, number, number, number];
@@ -82,6 +85,9 @@ export class Renderer {
     }
     gl.enable(gl.BLEND);
     if (mode === "add") gl.blendFunc(gl.ONE, gl.ONE);
+    // `dst *= CONSTANT_COLOR` — the fragment's output is multiplied by ZERO, so ANY draw over the
+    // target scales it in place (no read, no ping-pong). The constant arrives via blendColor.
+    else if (mode === "mulConstant") gl.blendFunc(gl.ZERO, gl.CONSTANT_COLOR);
     else gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); // "normal" (straight alpha)
   }
 
@@ -102,6 +108,10 @@ export class Renderer {
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
     this.setBlend(opts.blend ?? "none");
+    if (opts.blend === "mulConstant") {
+      const c = opts.blendColor ?? [1, 1, 1, 1];
+      gl.blendColor(c[0], c[1], c[2], c[3]);
+    }
     opts.program.use();
     // Textures → units.
     if (opts.textures) {

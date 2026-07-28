@@ -208,6 +208,7 @@
                 2.5 &thing.light.height set
                 1 &thing.light.cast set
                 0 &thing.light.hot set
+                1 &thing.light.flicker set
                 0 return
             @on_destroy>
                 &thing.destroy call drop
@@ -243,6 +244,7 @@
                 2.5 &thing.light.height set
                 1 &thing.light.cast set
                 0 &thing.light.hot set
+                1 &thing.light.flicker set
                 0 return
             @on_destroy>
                 &thing.destroy call drop
