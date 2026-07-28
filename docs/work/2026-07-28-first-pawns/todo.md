@@ -8,18 +8,18 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P0 · Stack standup + the `pawn` shard (server spine)
 
-- [ ] Stand the sim stack up: `rd up`/`redeploy`, then `bin/sim run` master + orchestrator +
+- [x] Stand the sim stack up: `rd up`/`redeploy`, then `bin/sim run` master + orchestrator +
       worker. Acceptance: `index.master_clock` tic advancing (spacetime sql), edge + gateway
       logs clean, browser still renders terrain.
-- [ ] TABLES.md FIRST: add the `…-pawn-0` DB row + a `pawn` row in the shard-class table
+- [x] TABLES.md FIRST: add the `…-pawn-0` DB row + a `pawn` row in the shard-class table
       (`entity_tables!{data:u8}`), noting `data_shard` stays the catch-all (F1). Acceptance:
       `bin/rd docs-check` green.
-- [ ] Stamp `server/spacetime/server/modules/pawn/` (mirror `data_shard`'s 12-line
+- [x] Stamp `server/spacetime/server/modules/pawn/` (mirror `data_shard`'s 12-line
       `entity_tables!(data: u8)` lib.rs) and publish. Acceptance: `resonantdust-dev-pawn-0`
       live; `entity_state`/`entity_state_log`/`clock` present via spacetime sql.
-- [ ] Generate bindings: `server/st-bindings/src/pawn/` + `pub mod pawn;`, and edge bindings via
+- [x] Generate bindings: `server/st-bindings/src/pawn/` + `pub mod pawn;`, and edge bindings via
       `generate-bindings.sh pawn`. Acceptance: `st-bindings` + `edge` build green.
-- [ ] master: `PAWN_DB` env + connection + tic `bump` fan-out + periodic `gc`. Acceptance: the
+- [x] master: `PAWN_DB` env + connection + tic `bump` fan-out + periodic `gc`. Acceptance: the
       pawn shard's `clock.master_tic` advances while `rd-master` runs (spacetime sql).
 - [ ] orchestrator: split hot routing — `TYPE_PAWN` targets claim on the pawn shard
       (`pawn.claim`), everything else keeps `data.claim`. Acceptance: a queued

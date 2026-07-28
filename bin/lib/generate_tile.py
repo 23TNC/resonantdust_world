@@ -168,6 +168,23 @@ def make_toroidal(a, ov):
     a = _toroidal_axis(a, ov)
     return _toroidal_axis(a.swapaxes(0, 1), ov).swapaxes(0, 1)
 
+def feature_size(t):
+    """Dominant feature width in px: first zero-crossing of the horizontal autocorrelation.
+
+    This is the number that decides whether a material still READS after the cut. SDXL paints a
+    roughly fixed number of features per frame whatever the canvas, so the same "grass turf"
+    prompt gives ~10px blades at 512 and ~2px blades at 1024 — and 2px blades average into grey
+    mush. Bigger canvas therefore means LESS surviving texture, not more, which is the opposite
+    of the intuition. Coarse materials (flagstone) are unaffected; fine ones (grass, gravel,
+    sand) need the smaller canvas."""
+    a = np.asarray(t, np.float64)
+    if a.ndim == 3: a = a.mean(2)
+    r = a - a.mean()
+    if not r.any(): return float(a.shape[1])
+    ac = [float((r[:, :-k] * r[:, k:]).mean()) for k in range(1, 13)]
+    v0 = float((r * r).mean())
+    return float(next((k for k, c in enumerate(ac, 1) if c <= 0), 13)) if v0 else 0.0
+
 def seam_energy(t):
     """Mean |delta| across the wrap boundary / mean |delta| inside. ~1.0 means the seam is
     statistically indistinguishable from ordinary texture, i.e. invisible."""
@@ -298,8 +315,15 @@ def main():
     down = args.grid * (args.tile + ov) if args.seamless == "cell" else \
            args.grid * args.tile + (ov if args.seamless == "sheet" else 0)
 
+    if down > args.size:
+        raise SystemExit(
+            f"generate-tile: grid {args.grid} needs a {down}px plane but --size is {args.size}, so "
+            f"every tile would be UPSCALED from too little source and come out soft.\n"
+            f"  either drop to --grid {args.size // (args.tile + ov)} (max at this size), "
+            f"or raise --size to {down} or more.")
+
     print(f"generate-tile: kind={kind} seed={seed0} candidates={args.candidates}")
-    print(f"  {args.size}px -> {down}px -> {args.grid}x{args.grid} tiles of "
+    print(f"  {args.size}px -> {down}px ({args.size/down:.2f}x shrink) -> {args.grid}x{args.grid} tiles of "
           f"{args.tile}px +{args.pad}px pad = {cell}px cells -> {args.grid*cell}px sheet")
     print(f"  seamless: {args.seamless}"
           + (f" (min-error cut, {ov}px overlap, wrap padding)" if args.seamless != "none" else ""))
@@ -321,6 +345,7 @@ def main():
                  for c in cells]
         se = [seam_energy(c) for c in inner]
         mu = [float(np.asarray(c, float).mean()) for c in inner]
+        fs = sum(feature_size(c) for c in inner) / len(inner)
 
         variant = args.variant if (args.variant and args.candidates == 1) else str(seed)
         leaf = os.path.join(out_root, texpath.variant_leaf(variant))
@@ -333,7 +358,7 @@ def main():
                        "greyscale": not args.colour, "seed": seed,
                        "seamless": args.seamless, "overlap": ov, "flatten": args.flatten,
                        "match_cells": args.match_cells,
-                       "seam_energy": round(sum(se)/len(se), 3),
+                       "seam_energy": round(sum(se)/len(se), 3), "feature_size": round(fs, 1),
                        "cell_brightness_spread": round(max(mu)-min(mu), 1)}, f, indent=2)
         if args.keep_full:
             full.save(os.path.join(leaf, f"source.{args.dirn}.{args.part}.png"))
@@ -341,6 +366,11 @@ def main():
               f"{args.grid*args.grid} tiles) + atlas.json")
         print(f"    seam energy {sum(se)/len(se):.2f} (worst {max(se):.2f}) — 1.0 = seam "
               f"indistinguishable from ordinary texture; cell brightness spread {max(mu)-min(mu):.0f}/255")
+        print(f"    feature size {fs:.1f}px" + ("" if fs >= 3.0 else
+              f"  ** too fine to read at {args.tile}px — this material's detail is averaging into "
+              f"mush. SDXL paints a fixed number of features per frame, so try --size "
+              f"{max(512, args.size // 2)} --grid {max(2, (args.size // 2) // (args.tile + ov))} "
+              f"to make each feature bigger (a LARGER canvas makes this worse, not better)."))
     print(f"generate-tile: done ({kind})")
 
 if __name__ == "__main__":

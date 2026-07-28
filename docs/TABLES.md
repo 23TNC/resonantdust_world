@@ -21,7 +21,8 @@ bottom. Column layouts are cited from [`VARIABLES.md`](VARIABLES.md), never rede
 | `…-index-0` | `index` | the routing directory + the durable tic |
 | `…-chat-0` | `chat` | the message feed |
 | `…-event-shard-0` | `event_shard` | the event queue + settled client-visible `event`s |
-| `…-data-shard-0` | `data_shard` | entity composition slots + client-visible `state` |
+| `…-data-shard-0` | `data_shard` | entity composition slots + client-visible `state` (the hot catch-all) |
+| `…-pawn-0` | `pawn` | hot movers — pawns (`TYPE_PAWN`), same `entity_tables!` shape as `data_shard` |
 | `…-tile-0` | `tile` | cold ground — dense per-zone tiles |
 | `…-thing-0` | `thing` | cold scatter — sparse per-zone things |
 
@@ -343,7 +344,8 @@ the baseline (`overlay_tables!`), never the entity-addressed hot pair. Shards co
 
 | shard | macros | `TYPE` |
 |---|---|---|
-| **`data_shard`** (→ `pawn`) | `entity_tables!{data:u8}` — movers, id-addressed, **no overlay** | — |
+| **`pawn`** | `entity_tables!{data:u8}` — movers, id-addressed, **no overlay**; + `spawn_log` when `CREATE` lands | `TYPE_PAWN` |
+| **`data_shard`** | `entity_tables!{data:u8}` — the hot **catch-all** (the worker's `_ =>` route; retirement a follow-on once nothing lands here — first-pawns F1) | — |
 | **`tile`** | `dense_entity_tables!()` + `overlay_tables!()` | `TYPE_BIOME_TILE` |
 | **`thing`** | `sparse_entity_tables!{data:u8}` + `overlay_tables!{data:u8}` | `TYPE_BIOME_THING` |
 

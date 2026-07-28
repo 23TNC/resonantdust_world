@@ -21,11 +21,12 @@ use std::time::Duration;
 
 use spacetimedb_sdk::DbContext;
 
-use resonantdust_st_bindings::{data_shard, event_shard, index, thing, tile};
+use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
 // Reducer + table-access traits (method resolution keys off the connection type).
 use data_shard::{bump as _, gc as _};
 use event_shard::{bump as _, set_orchestrator as _, settle as _};
 use index::{bump_tic as _, MasterClockTableAccess as _};
+use pawn::{bump as _, gc as _};
 use thing::bump as _;
 use tile::bump as _;
 
@@ -62,11 +63,12 @@ async fn main() {
     let index_db = env_or("INDEX_DB", "resonantdust-dev-index-0");
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");
     let data_db = env_or("DATA_DB", "resonantdust-dev-data-shard-0");
+    let pawn_db = env_or("PAWN_DB", "resonantdust-dev-pawn-0");
     // Cold shards ride the same clock — their `state_log`/`state` overlay + the `tic` on cold rows
     // need the tic to advance, so the master fans out to them too.
     let tile_db = env_or("TILE_DB", "resonantdust-dev-tile-0");
     let thing_db = env_or("THING_DB", "resonantdust-dev-thing-0");
-    tracing::info!(%uri, realm, tic_hz, %index_db, %event_db, %data_db, %tile_db, %thing_db, "master starting");
+    tracing::info!(%uri, realm, tic_hz, %index_db, %event_db, %data_db, %pawn_db, %tile_db, %thing_db, "master starting");
 
     // ── index: the tic authority. Subscribe our realm's row and wait for it before ticking. ──────
     let (tx_i, rx_i) = std::sync::mpsc::channel::<()>();
@@ -103,6 +105,15 @@ async fn main() {
         .build()
         .expect("build data_shard connection");
     data.run_threaded();
+
+    let pawn = pawn::DbConnection::builder()
+        .with_uri(&uri)
+        .with_database_name(&pawn_db)
+        .on_connect(|_c, id, _t| tracing::info!(%id, "pawn shard connected"))
+        .on_connect_error(|_c, err| tracing::error!(%err, "pawn shard connect error"))
+        .build()
+        .expect("build pawn shard connection");
+    pawn.run_threaded();
 
     let tile = tile::DbConnection::builder()
         .with_uri(&uri)
@@ -169,6 +180,9 @@ async fn main() {
         if let Err(err) = data.reducers().bump(tic16) {
             tracing::warn!(%err, tic = tic16, "data_shard bump failed");
         }
+        if let Err(err) = pawn.reducers().bump(tic16) {
+            tracing::warn!(%err, tic = tic16, "pawn shard bump failed");
+        }
         if let Err(err) = tile.reducers().bump(tic16) {
             tracing::warn!(%err, tic = tic16, "tile shard bump failed");
         }
@@ -188,6 +202,9 @@ async fn main() {
             let horizon = tic16.wrapping_sub(gc_behind);
             if let Err(err) = data.reducers().gc(horizon) {
                 tracing::warn!(%err, "gc failed");
+            }
+            if let Err(err) = pawn.reducers().gc(horizon) {
+                tracing::warn!(%err, "pawn gc failed");
             }
         }
 
