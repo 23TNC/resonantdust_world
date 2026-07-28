@@ -29,13 +29,14 @@ use resonantdust_codec::action::{self, Route, INIT_ZONE, MOVE_TO, PLACE, PROMOTE
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, kind_pos_ref_data,
     kind_pos_ref_kind_reference, kind_pos_ref_tile, pack_position_reference, position_macro, position_micro,
-    TYPE_BIOME_THING, TYPE_BIOME_TILE,
+    TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
 };
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED};
 use resonantdust_codec::tic::{tic_after, tic_before};
-use resonantdust_st_bindings::{data_shard, event_shard, index, thing, tile};
+use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
 use data_shard::{write as _, EntityStateLogTableAccess as _};
+use pawn::{write as _, EntityStateLogTableAccess as _};
 use event_shard::{complete as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
 // P4: the worker also composes cold rows — the **baseline** (`INIT_ZONE` → `write`) and the **overlay**
@@ -50,11 +51,12 @@ use thing::{write as _, write_overlay as _, OverlayLogTableAccess as _};
 // future cold-row slots) but neither reads a cold base nor writes a cold target this phase.
 
 /// Which composing shard an entity lives on — routed by its `server_reference`'s `type_id` (the top
-/// nibble). A cold cell's `SET` target carries `TYPE_BIOME_TILE`/`TYPE_BIOME_THING`; everything else
-/// (a pawn's `0x30`, …) is the hot `data_shard`, unchanged.
+/// nibble). A cold cell's `SET` target carries `TYPE_BIOME_TILE`/`TYPE_BIOME_THING`; a pawn's `0x30`
+/// is the `pawn` shard (first-pawns); anything else is the hot `data_shard` catch-all.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Shard {
     Data,
+    Pawn,
     Tile,
     Thing,
 }
@@ -63,6 +65,7 @@ fn shard_of(entity: u32) -> Shard {
     match entity_ref_type_id(entity) {
         TYPE_BIOME_TILE => Shard::Tile,
         TYPE_BIOME_THING => Shard::Thing,
+        TYPE_PAWN => Shard::Pawn,
         _ => Shard::Data,
     }
 }
@@ -103,10 +106,11 @@ async fn main() {
     let index_db = env_or("INDEX_DB", "resonantdust-dev-index-0");
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");
     let data_db = env_or("DATA_DB", "resonantdust-dev-data-shard-0");
+    let pawn_db = env_or("PAWN_DB", "resonantdust-dev-pawn-0");
     // Cold shards compose on the same machinery — the worker writes a cold-cell mutation to its shard.
     let tile_db = env_or("TILE_DB", "resonantdust-dev-tile-0");
     let thing_db = env_or("THING_DB", "resonantdust-dev-thing-0");
-    tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, %index_db, %event_db, %data_db, %tile_db, %thing_db, "worker starting");
+    tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, %index_db, %event_db, %data_db, %pawn_db, %tile_db, %thing_db, "worker starting");
 
     // ── index: the canonical tic ────────────────────────────────────────────────────
     let (tx_i, rx_i) = std::sync::mpsc::channel::<()>();
@@ -163,6 +167,25 @@ async fn main() {
             "SELECT * FROM entity_state_log WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"
         )]);
 
+    // ── pawn shard: same hot window as data_shard (first-pawns) ──────────────────────
+    let (tx_p, rx_p) = std::sync::mpsc::channel::<()>();
+    let pawn = pawn::DbConnection::builder()
+        .with_uri(&uri)
+        .with_database_name(&pawn_db)
+        .on_connect(|_c, id, _t| tracing::info!(%id, "pawn shard connected"))
+        .on_connect_error(|_c, err| tracing::error!(%err, "pawn shard connect error"))
+        .build()
+        .expect("build pawn shard connection");
+    pawn.run_threaded();
+    pawn
+        .subscription_builder()
+        .on_applied(move |_| {
+            let _ = tx_p.send(());
+        })
+        .subscribe([format!(
+            "SELECT * FROM entity_state_log WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"
+        )]);
+
     // ── cold shards: my cold slots to write + the bases I read. P4: the baseline
     // (`entity_state_log`, `init_zone`/`PACK`) *and* the override (`overlay_log`, `SET`) tiers — the
     // worker composes cold ROWS on both (routed by `codec::target_routes`). ──────
@@ -196,6 +219,7 @@ async fn main() {
         (&rx_i, "index"),
         (&rx_e, "event_log"),
         (&rx_d, "state_log"),
+        (&rx_p, "pawn state_log"),
         (&rx_t, "tile state_log"),
         (&rx_h, "thing state_log"),
     ] {
@@ -277,7 +301,7 @@ async fn main() {
             // live in `data_shard.entity_state_log`; a cold overlay base in the shard's `overlay_log`.
             let mut blocked_on = None;
             for &e in &hot_targets {
-                if base_row(&data, e, t).map(|b| b.dirty).unwrap_or(false) {
+                if base_row(&data, &pawn, e, t).map(|b| b.dirty).unwrap_or(false) {
                     blocked_on = Some(e);
                     break;
                 }
@@ -308,7 +332,7 @@ async fn main() {
             // `apply` skips `SET` (a cold verb) — the overlay is composed below.
             let mut scratch: HashMap<u32, Payload> = HashMap::new();
             for &e in &hot_targets {
-                let base = base_row(&data, e, t)
+                let base = base_row(&data, &pawn, e, t)
                     .map(|r| Payload {
                         definition_reference: r.definition_reference,
                         position_reference: r.position_reference,
@@ -322,9 +346,10 @@ async fn main() {
                 apply(actions, &mut scratch, &mut promote);
             }
 
-            // ── WRITE (hot) ── absolute finals to `data_shard`.
+            // ── WRITE (hot) ── absolute finals, each to its OWN shard (pawn vs the data catch-all).
             let data_w: Vec<data_shard::TargetState> = scratch
                 .iter()
+                .filter(|(&e, _)| shard_of(e) == Shard::Data)
                 .map(|(&e, p)| data_shard::TargetState {
                     entity_reference: e,
                     definition_reference: p.definition_reference,
@@ -337,6 +362,24 @@ async fn main() {
             if !data_w.is_empty() {
                 if let Err(err) = data.reducers().write(self_ref, t, data_w) {
                     tracing::warn!(%err, tic = t, shard = "data", "write failed — will retry next pass");
+                    continue;
+                }
+            }
+            let pawn_w: Vec<pawn::TargetState> = scratch
+                .iter()
+                .filter(|(&e, _)| shard_of(e) == Shard::Pawn)
+                .map(|(&e, p)| pawn::TargetState {
+                    entity_reference: e,
+                    definition_reference: p.definition_reference,
+                    macro_position_reference: position_macro(p.position_reference),
+                    micro_position_reference: position_micro(p.position_reference),
+                    data: p.data,
+                    promote: promote.contains(&e),
+                })
+                .collect();
+            if !pawn_w.is_empty() {
+                if let Err(err) = pawn.reducers().write(self_ref, t, pawn_w) {
+                    tracing::warn!(%err, tic = t, shard = "pawn", "write failed — will retry next pass");
                     continue;
                 }
             }
@@ -617,23 +660,30 @@ struct Base {
 /// from **its own shard** (routed by `server_reference`). Visible because `claim` stamped
 /// `observer_reference = self` on it (or the worker wrote it). `None` for a never-mutated entity —
 /// a cold cell whose truth is still the baseline — whose base is the default (empty) payload; a `SET`
-/// overwrites it absolutely, so the empty base is correct.
-fn base_row(data: &data_shard::DbConnection, entity: u32, tic: u16) -> Option<Base> {
-    // P3: only the hot `data_shard` has a per-entity `entity_state_log` base. Cold cells (tile/thing)
-    // are cold-row-addressed with no per-entity slot — their base is the baseline, read/written by the
-    // shards' own reducers. Worker cold-row composition is P4.
-    if shard_of(entity) != Shard::Data {
-        return None;
+/// overwrites it absolutely, so the empty base is correct. The two hot shards' `EntityStateLog` rows
+/// are the same macro shape but distinct Rust types, hence the per-arm body.
+fn base_row(data: &data_shard::DbConnection, pawn: &pawn::DbConnection, entity: u32, tic: u16) -> Option<Base> {
+    macro_rules! latest_base {
+        ($conn:expr) => {
+            $conn
+                .db()
+                .entity_state_log()
+                .iter()
+                .filter(|r| r.entity_reference == entity && tic_before(r.tic, tic))
+                .reduce(|a, b| if tic_after(b.tic, a.tic) { b } else { a })
+                .map(|r| Base {
+                    definition_reference: r.definition_reference,
+                    position_reference: pack_position_reference(r.macro_position_reference, r.micro_position_reference),
+                    data: r.data,
+                    dirty: r.dirty,
+                })
+        };
     }
-    data.db()
-        .entity_state_log()
-        .iter()
-        .filter(|r| r.entity_reference == entity && tic_before(r.tic, tic))
-        .reduce(|a, b| if tic_after(b.tic, a.tic) { b } else { a })
-        .map(|r| Base {
-            definition_reference: r.definition_reference,
-            position_reference: pack_position_reference(r.macro_position_reference, r.micro_position_reference),
-            data: r.data,
-            dirty: r.dirty,
-        })
+    match shard_of(entity) {
+        Shard::Data => latest_base!(data),
+        Shard::Pawn => latest_base!(pawn),
+        // Cold cells (tile/thing) are cold-row-addressed with no per-entity slot — their base is the
+        // baseline, read/written by the shards' own reducers.
+        _ => None,
+    }
 }

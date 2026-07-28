@@ -21,10 +21,10 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
       `generate-bindings.sh pawn`. Acceptance: `st-bindings` + `edge` build green.
 - [x] master: `PAWN_DB` env + connection + tic `bump` fan-out + periodic `gc`. Acceptance: the
       pawn shard's `clock.master_tic` advances while `rd-master` runs (spacetime sql).
-- [ ] orchestrator: split hot routing — `TYPE_PAWN` targets claim on the pawn shard
+- [x] orchestrator: split hot routing — `TYPE_PAWN` targets claim on the pawn shard
       (`pawn.claim`), everything else keeps `data.claim`. Acceptance: a queued
       `[PROMOTE, PLACE, 0x30…, pos]` gets its claim stamped in pawn `entity_state_log`.
-- [ ] worker: `Shard::Pawn` in `shard_of()` + pawn `base_row` + pawn `write`. Acceptance: that
+- [x] worker: `Shard::Pawn` in `shard_of()` + pawn `base_row` + pawn `write`. Acceptance: that
       queued PLACE composes — pawn `entity_state` row at the position, log `dirty=false`,
       status PROMOTED.
 - [ ] edge: `pawn_db()` config + `connector!(connect_pawn, pawn)` + `World` slot + `entity_state`

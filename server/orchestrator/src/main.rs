@@ -24,11 +24,13 @@ use std::time::Duration;
 use spacetimedb_sdk::{DbContext, Table as _};
 
 use resonantdust_codec::action::{self, Route};
-use resonantdust_codec::object::{TYPE_BIOME_THING, TYPE_BIOME_TILE};
+use resonantdust_codec::object::{TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN};
+use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_QUEUED};
 use resonantdust_codec::tic::{tic_add, tic_after};
-use resonantdust_st_bindings::{data_shard, event_shard, index, thing, tile};
+use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
 use data_shard::claim as _;
+use pawn::claim as _;
 use event_shard::{assign as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
 // A cold slot is claimed on its shard + tier (F11): the baseline via `claim`, the `overlay` via
@@ -48,6 +50,13 @@ fn shard_key_of_type(type_id: u8) -> u8 {
         TYPE_BIOME_THING => 2,
         _ => 0,
     }
+}
+
+/// A HOT target's claim key from its own type nibble (first-pawns): `TYPE_PAWN` → the `pawn`
+/// shard (`3`), anything else → the `data_shard` catch-all (`0`). Hot routing IS read off the
+/// target — an `entity_reference` carries its type, unlike a cold row.
+fn hot_shard_key(entity: u32) -> u8 {
+    if entity_ref_type_id(entity) == TYPE_PAWN { 3 } else { 0 }
 }
 
 fn env_or(key: &str, default: &str) -> String {
@@ -83,10 +92,11 @@ async fn main() {
     let index_db = env_or("INDEX_DB", "resonantdust-dev-index-0");
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");
     let data_db = env_or("DATA_DB", "resonantdust-dev-data-shard-0");
+    let pawn_db = env_or("PAWN_DB", "resonantdust-dev-pawn-0");
     // Cold shards get their slots claimed here too when a cold-cell mutation is grouped.
     let tile_db = env_or("TILE_DB", "resonantdust-dev-tile-0");
     let thing_db = env_or("THING_DB", "resonantdust-dev-thing-0");
-    tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, ?workers, %index_db, %event_db, %data_db, %tile_db, %thing_db, "orchestrator starting");
+    tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, ?workers, %index_db, %event_db, %data_db, %pawn_db, %tile_db, %thing_db, "orchestrator starting");
 
     // ── index: the canonical tic. Every SDK-client server reads it here, not off a shard clock. ──
     let (tx_i, rx_i) = std::sync::mpsc::channel::<()>();
@@ -133,6 +143,15 @@ async fn main() {
         .build()
         .expect("build data_shard connection");
     data.run_threaded();
+
+    let pawn = pawn::DbConnection::builder()
+        .with_uri(&uri)
+        .with_database_name(&pawn_db)
+        .on_connect(|_c, id, _t| tracing::info!(%id, "pawn shard connected"))
+        .on_connect_error(|_c, err| tracing::error!(%err, "pawn shard connect error"))
+        .build()
+        .expect("build pawn shard connection");
+    pawn.run_threaded();
     let tile = tile::DbConnection::builder()
         .with_uri(&uri)
         .with_database_name(&tile_db)
@@ -243,7 +262,7 @@ async fn main() {
                         let key = match route_of.get(&e) {
                             Some(Route::ColdOverlay { type_id }) => (shard_key_of_type(*type_id), true),
                             Some(Route::ColdBaseline { type_id }) => (shard_key_of_type(*type_id), false),
-                            _ => (0, false), // hot → data_shard baseline
+                            _ => (hot_shard_key(e), false), // hot → pawn shard or the data_shard catch-all
                         };
                         by_route.entry(key).or_default().push(e);
                     }
@@ -254,6 +273,7 @@ async fn main() {
                             (1, true) => tile.reducers().claim_overlay(ents, t, worker),
                             (2, false) => thing.reducers().claim(ents, t, worker),
                             (2, true) => thing.reducers().claim_overlay(ents, t, worker),
+                            (3, _) => pawn.reducers().claim(ents, t, worker),
                             _ => data.reducers().claim(ents, t, worker),
                         };
                         if let Err(err) = res {

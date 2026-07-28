@@ -38,3 +38,16 @@ with the new module) and `rd build edge` both green (edge's 1 warning is pre-exi
 `PAWN_DB` env (+ startup log), a fifth shard connection, `bump(tic16)` in the fan-out, `gc` on
 the same cadence as `data_shard`. Verified live: rebuilt + restarted `rd-master`; pawn
 `clock.master_tic` advanced 1782→1795 over ~2 s (≈6.5 Hz observed).
+
+## 2026-07-28 · P0 — orchestrator + worker route TYPE_PAWN to the pawn shard
+
+Orchestrator: `hot_shard_key(entity)` (type nibble → pawn key 3 vs data 0), pawn connection +
+`pawn.claim` arm; hot routing is read OFF the target (an `entity_reference` carries its type,
+unlike a cold row — doc'd at the fn). Worker: `Shard::Pawn` in `shard_of`, pawn connection +
+same-window `entity_state_log` subscription (+ standup wait), `base_row` dispatches per hot
+shard (macro over the two identical-shape distinct-type bindings), hot WRITE split into per-shard
+`TargetState` batches. Verified live: queued `[PROMOTE, PLACE, 0x30000001, 13568]` via the
+event shard → orchestrator "assigned work-group tic=3006 entities=1" → worker "composed
+component tic=3006 hot=1" → pawn `entity_state_log` row `{805306369, macro 0, micro 13568,
+tic 3006, dirty=false, worker 0x62, status 17=PROMOTE|PROMOTED}` + promoted `entity_state`
+row; data_shard has ZERO rows for that entity (the split is real).
