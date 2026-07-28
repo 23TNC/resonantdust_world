@@ -44,3 +44,19 @@ tile**, since every figure above is single-light and the whole budget rests on t
 
 Ceiling for context: 32 x 16 = 512 slots in the window, up to 16 lights per tile, so ~8 200 pairs is the
 theoretical worst frame — around 14 ms in ONE draw.
+
+## I3 — the pair constant is mildly reach-dependent {#i3}
+
+(2026-07-27, from the [lighting-standing-costs](../2026-07-27-lighting-standing-costs/README.md)
+code-read.) The I2 sweep's last column is not flat: 0.00155 (reach 4) → 0.00150 (reach 8) →
+**0.00171 (reach 12, +14 %)**. That is expected, not noise — `walkShadow`'s DDA length grows with
+the texel→light distance, so a pair's cost carries a term linear in reach.
+
+Consequence for P0's "confirm the constant" item: sweep REACH as well as light count, or the fixed
+pairs allowance quietly over-admits for long-reach lights (a 512-pair frame of reach-12 pairs is
+~14 % more ms than the same frame of reach-8 pairs). Pairs remain the right unit; the allowance
+just needs sizing against the worst reach in content, not the average.
+
+Also from the same read: the budget's ms numbers will shift once
+[lighting-standing-costs](../2026-07-27-lighting-standing-costs/README.md) lands (its P1 removes a
+standing tax that the I2 table's totals include) — its P4 re-runs this sweep and updates I2.
