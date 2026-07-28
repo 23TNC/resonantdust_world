@@ -50,4 +50,4 @@ discriminated by RENDER TARGET, fixed frame count, phase from the frame index.
 - [x] Fix `VARIABLES.md` line 461, which says `1 unit = SQUARE/16 = 4px` while the same document says `SQUARE = 128` ([I1](issues.md)). Acceptance: 8 px, consistent with every other row.
 - [x] Change the lightmap row (305–306) to name `TEXTILE_LIGHT` = 64 / 2048×1024, since it no longer shares `TEXTILE_SQUARE`'s value. Acceptance: the texel-family table lists four distinct families with their real sizes.
 - [x] Re-read every `SQUARE`-derived figure in `VARIABLES.md` against the built code and correct whichever is wrong. Acceptance: `ppu` at lod 0 = 8, max frame side 2048, REFERENCE 3584×1536 all confirmed live.
-- [ ] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, `completed.md` records the measured before/after.
+- [x] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, `completed.md` records the measured before/after.
