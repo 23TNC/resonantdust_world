@@ -85,6 +85,19 @@ void main() {
   // WARM-over-COLD: warm is slot-aligned with cold, sampled at the SAME vUV. Where no mover sits, warm
   // coverage is 0 -> pure cold.
   float wcov = texture(uSurfaceWarm, vUV).b;
+  // DEPTH (pawn-render P1/F1): both tiers' zdepth B lanes carry the painter's key
+  // "0x80 OR (baseRow AND 0x7f)" for things (0 for ground). A COLD thing whose base row sits
+  // serially SOUTH of the mover's base row is IN FRONT — it wins the pixel OUTRIGHT and the
+  // mover is occluded. Wrap-aware mod-128 compare (the viewport spans far under 64 rows);
+  // equal rows keep warm-over-cold (F6). Ground (no high bit) never occludes.
+  if (wcov > 0.0) {
+    int cdb = int(texture(uDepth, vUV).b * 255.0 + 0.5);
+    int wdb = int(texture(uDepthWarm, vUV).b * 255.0 + 0.5);
+    if (cdb >= 128 && wdb >= 128) {
+      int south = (cdb - wdb) & 0x7f;
+      if (south > 0 && south < 64) wcov = 0.0;
+    }
+  }
   vec4 alb = mix(outColor, texture(uAlbedoWarm, vUV), wcov);
   vec4 surf = mix(texture(uSurface, vUV), texture(uSurfaceWarm, vUV), wcov);
   float alpha = surf.b;          // visual coverage -> output alpha

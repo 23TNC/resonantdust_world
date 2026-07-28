@@ -20,3 +20,20 @@ tic ring loses its base to serial wraparound and teleports to position 0 on next
 FIXED at the root: the shard gc now re-stamps each kept latest-clean base row to the horizon
 once it lags a quarter window, so parked pawns' bases stay serially near forever; all
 modules republished).
+
+## 2026-07-28 · P1 — depth-correct composite (2/2)
+
+The blit now decodes both zdepth B lanes and lets a cold THING whose base row sits serially
+south (mod-128, wrap-aware, window ≪ 64 rows) of the mover's win the pixel outright (wcov →
+0 before every downstream mix, so albedo/surface/emissive/light all follow the winner);
+ground never occludes; equal rows keep warm-over-cold (F6). The GLSL-backtick guard hook
+caught a comment backtick on the first edit (the memory foot-gun, live). **Verified in the
+browser with CREATE-posed wolves**: one row behind the torch trees → crowns occlude the
+wolves with only heads above (before-shot showed them painting over the same trees); a
+commanded lap south showed the flip both ways — a bush south of the mid-walk wolf occluded
+it, and the tall wolf simultaneously drew OVER the tree north of it while the tree south
+occluded its feet (one frame, both directions). Zooms 1 / 0.5 / 0.25 + two transitions:
+consistent, no drift artifacts. Row-key audit: both tiers' depth resolves are the SAME
+function (`Viewport.channels(suffix)` instantiated per tier), so the row convention agrees
+by construction; the observed flips landed at the visually-correct rows with no premature
+pop.

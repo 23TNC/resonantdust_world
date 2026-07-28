@@ -17,14 +17,14 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P1 · Depth-correct composite (front/behind vs trees)
 
-- [ ] Blit: read BOTH zdepth B lanes (already bound as `uDepth`/`uDepthWarm`,
+- [x] Blit: read BOTH zdepth B lanes (already bound as `uDepth`/`uDepthWarm`,
       `albedoBlitShader.ts`) and pick the winner per pixel: warm beats cold UNLESS the cold
       pixel is a thing (`0x80` bit) whose base row is serially SOUTH of (greater than, mod
       128, wrap-aware) the warm base row — then the cold pixel wins outright (albedo,
       surface, emissive lane). Ground (`depth 0`) never occludes. Acceptance: wolf walking
       a lap around a conifer is occluded by the trunk when behind, occludes it when in
       front, at 3 zooms + mid-transition; no regression on mover-free scenes.
-- [ ] Row-key audit: confirm the baked warm base row tracks the CHASED fractional position
+- [x] Row-key audit: confirm the baked warm base row tracks the CHASED fractional position
       consistently with cold things' rows (`prim.y + prim.height` convention,
       `Viewport.ts:202-204`) so the flip line sits at the visually-correct row; fix either
       side if they disagree. Acceptance: the front/behind flip happens as the wolf's anchor
