@@ -1693,7 +1693,11 @@ _grid_slice_id() {  # src_dir id out_cat out_kind
   local pu pv
   read -r pu pv < <(awk -v f="$GRID_INSET_FRAC" -v c="$cols" -v r="$rows" \
     'BEGIN{ printf "%.6f %.6f", f/c, f/r }')
-  printf '{"cols":%d,"rows":%d,"padU":%s,"padV":%s}\n' "$cols" "$rows" "$pu" "$pv" > "$outdir/atlas.json"
+  # `tiles` is the sheet's size in TILES — what the quadtree packer needs to place it and what
+  # `art leaf-span` reads to derive the square. The pixel size is `tiles * TILE_PX`, derived, so
+  # the tile count is stated once and the resolution follows it.
+  printf '{"cols":%d,"rows":%d,"tiles":[%d,%d],"padU":%s,"padV":%s}\n' \
+    "$cols" "$rows" "$cols" "$rows" "$pu" "$pv" > "$outdir/atlas.json"
 
   echo "    id $id: atlas ${w}x${h} → $id/<map>.l.0.png (${cols}x${rows} cells, inset ${GRID_INSET_FRAC}) × ${#matlases[@]} map(s) [${mtypes[*]}]"
   LAST_TOTAL=1

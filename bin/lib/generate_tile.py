@@ -490,6 +490,9 @@ def main():
             # produced was silently flat (stream I8). The extra provenance keys below are safe:
             # the parser ignores what it does not ask for.
             json.dump({"cols": args.grid, "rows": args.grid,
+                       # the sheet's size in TILES — what the packer needs and what leaf_span
+                       # reads; the pixel size is `tiles * tile`, derived, never authored twice
+                       "tiles": [args.grid, args.grid],
                        "padU": round(inset / args.grid, 6), "padV": round(inset / args.grid, 6),
                        "grid": [args.grid, args.grid], "tile": args.tile,
                        "pad": args.pad, "cell": cell, "source_size": args.size,

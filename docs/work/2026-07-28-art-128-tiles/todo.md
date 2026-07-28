@@ -27,7 +27,7 @@ edge a value, then teach the pipeline the footprint, then fix the atlas guard, t
 - [x] Size the emitted square from `span` instead of blob extent in `_emit_crops`. Acceptance: conifer emits 256² because span says so — verified by shrinking the blob and getting 256² still.
 - [x] Surface `tiles`/`span` through `tex_manifest.rs` beside `grid`/`pad`. Acceptance: the manifest entry for conifer carries the footprint.
 - [x] Emit the manifest's required `cols`/`rows`/`padU`/`padV` from `generate_tile.py`, per [I8](issues.md#i8). Acceptance: `read_atlas_meta`'s logic accepts a freshly generated ground sheet, which it rejects today.
-- [ ] Write `tiles` into `atlas.json` for ground and linked sheets. Acceptance: ground reads `[8, 8]`, a linked form reads `[4, 4]`.
+- [x] Write `tiles` into `atlas.json` for ground and linked sheets. Acceptance: ground reads `[8, 8]`, a linked form reads `[4, 4]`.
 
 ## P3 — Stop `--pad` corrupting atlases; use the guard that already exists
 

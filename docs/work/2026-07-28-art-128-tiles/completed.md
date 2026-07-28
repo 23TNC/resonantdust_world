@@ -136,3 +136,9 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   ([I11](issues.md#i11)) — the helper wrote a superseded leaf shape so the manifest was empty and
   every assertion was vacuous. Repaired it; suite went **12 passed/3 failed → 14 passed/2 failed**,
   the two remaining being pre-existing `textures.rs` failures confirmed by stashing and re-running.
+- **2026-07-28 · P2.7 · `tiles` in both `atlas.json` writers.** Ground verified live —
+  `textures/biome-tile/default/grass/atlas.json` reads `tiles [8,8]`. Linked verified by exercising
+  the writer's `printf` directly (`tiles [4,4]`) because the path is currently **unreachable**:
+  `GRID_CATS` is still `"linked"` while the linked forms live under `biome-tile` per the design's
+  decision 5, so `_grid_slice_id` never fires for them ([I12](issues.md#i12)). Moving `GRID_CATS`
+  is [F4](forks.md#f4)'s call. **P2 complete: 7/7.**

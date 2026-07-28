@@ -49,6 +49,24 @@ for the tile size — which is exactly what this stream and
 [`square-128`](../2026-07-28-square-128/README.md) both make people do. Fixed in [P5](todo.md)
 whichever value wins.
 
+## I12 — the linked grid path is unreachable for `biome-tile`, where linked kinds now live {#i12}
+_2026-07-28 · P2.7 · measured_
+
+`GRID_CATS="linked"` (`bin/art:148`), so `_is_grid_cat` is true only for a top-level `linked/`
+category — and there is no `linked/` in the tree. The linked forms live at
+`biome-tile/default/smooth/wall` etc., exactly where the
+[design](../../components/dev/textures/design/texture-layout/README.md) decision 5 says they should
+("`linked/` folds into `biome-tile`"). But `GRID_CATS` was never moved with them.
+
+Consequence: `_grid_slice_id` — the only writer of the linked `atlas.json` — cannot run for any
+kind in the tree. `smooth/wall`'s sidecar exists because it was written before the fold, and
+re-running `art split biome-tile/default/smooth` does not refresh it.
+
+So `tiles` is verified on the ground path live, and on the linked path only by exercising the
+writer's `printf` directly (emits `tiles [4,4]`). Whether to move `GRID_CATS` to `biome-tile` is
+[F4](forks.md#f4)'s territory — it decides how far this stream goes into the held-whole migration —
+so it is recorded rather than done here.
+
 ## I11 — the edge's texture tests write a SUPERSEDED leaf shape, so they assert on nothing {#i11}
 _2026-07-28 · P2.6 · measured — three dead tests, one fixed here_
 
