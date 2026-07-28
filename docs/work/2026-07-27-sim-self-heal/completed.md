@@ -110,3 +110,15 @@ cargo error and warns when sources were stale yet cargo compiled nothing (the mt
 signature). The warn's NEGATIVE path is live-verified (touch → build → "Compiling worker" → no
 warn); the POSITIVE arm is verified by construction only — every simulation attempt (backdated
 binary etc.) made cargo correctly recompile, which is cargo working, not the guard failing.
+
+## 2026-07-28 · P6 — wrap; STREAM COMPLETE (21/21)
+
+Final health check after a session of deliberate chaos (daemon restart, shard delete +
+republish, edge process kill, module republishes): all four `rd-*` containers up with
+unbroken uptimes, the wolf tripping continuously (6 trip lines in a 15 s window), tic
+advancing 37681→37694. Evidence for every drill is in the phase entries above with the
+observed log lines. **Out-of-scope follow-up:** migrate `server/gateway/src/directory.rs`
+onto `resonantdust-uplink` (it still runs its own copy of the pattern, minus the
+sub-`on_error` leg and backoff); also the edge's per-client shard connections could ride
+uplinks one day (today a dead per-client upstream surfaces as an error frame and the client
+reconnects — the engine heal covers it end-to-end).

@@ -43,4 +43,4 @@ Opened 2026-07-27._
 
 ## P6 — wrap
 
-- [ ] Record evidence in this stream's `completed.md` (commands + observed log lines for the P2/P3 chaos checks + the P5 redeploy drills) and note the gateway→`uplink` migration as an out-of-scope follow-up. Acceptance: `bin/rd docs-check` green.
+- [x] Record evidence in this stream's `completed.md` (commands + observed log lines for the P2/P3 chaos checks + the P5 redeploy drills) and note the gateway→`uplink` migration as an out-of-scope follow-up. Acceptance: `bin/rd docs-check` green.
