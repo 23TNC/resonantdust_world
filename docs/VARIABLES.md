@@ -302,10 +302,21 @@ to police).
 
 | family | texels/slot | texture | maps |
 |---|---|---|---|
-| `TEXTILE_SQUARE` (per px at lod 0) | `SQUARE` = 128 | 4352 × 2304 (incl. apron) | albedo, normal, surface, zdepth |
-| `TEXTILE_SQUARE`, no apron | 128 | 4096 × 2048 | lightmap |
-| `TEXTILE_UNIT` (per unit) | 16 | 512 × 256 | shadow |
+| `TEXTILE_SQUARE` (per px at lod 0) | `SQUARE` = 128 | 4352 × 2304 (incl. apron) | albedo, normal, surface, zdepth — **× 2, cold AND warm** |
+| `TEXTILE_LIGHT`, no apron | **64, PINNED** | 2048 × 1024 | lightmap (cold + hot), fine receiver |
+| `TEXTILE_UNIT` (per unit) | 16 | 512 × 256 | shadow (cold/hot + both prev), coarse receiver, decay |
 | `TEXTILE_TILE` (per tile) | 1 | 32 × 16 | presence, caster buckets, dirty |
+
+**`TEXTILE_LIGHT` is PINNED and does NOT track `SQUARE`** (work
+[`2026-07-28-square-128`](work/2026-07-28-square-128/README.md)). `SQUARE` is the **art** dial and only
+the art dial. The two were one constant until 2026-07-28, which meant a cheaper lighting pass could only
+be bought by paying with art resolution — the trade the 2026-07-27 A/B was forced into. Measured, holding
+`SQUARE` fixed and moving only the lighting resolution 64 → 128: the lighting draw costs **2.2–3.1×**
+and the display cannot show the difference (the blit samples it NEAREST; the detail the eye reads is in
+the albedo). Three maps ride `TEXTILE_LIGHT`, so the pin is worth **216 MiB** at `SQUARE = 128`.
+
+Measured resident bytes at `SQUARE = 128`: art **306 MiB** (8 × 38.25), lighting **72**, shadow **11**,
+atlas **16** — **405 MiB** total, against **621 MiB** if the two dials were still joined.
 
 **Fit is COVER, not contain:** `s = max(W / 3584, H / 1536)`. `max` (not `min`) is what keeps the viewport
 entirely inside the visible slots; `min` would fit the whole grid and expose overscan at the edges.
@@ -458,7 +469,7 @@ The scatter issues **7 points per command** and a point with `slot ≥ count` em
 `(p/7)·8 + 1 + p%7` — and the scatter vertex **drops its per-set count scan** entirely.
 
 **Unit.** Every world-space quantity here (the sub-tile `anchor`, `z`, `reach`, opaque `billboard_width/height`, the
-anchor `offset`) is in **units**, a compile-time constant `1 unit = SQUARE/16 = 4px` (`TILE = 16 units`,
+anchor `offset`) is in **units**, a compile-time constant `1 unit = SQUARE/16 = 8px` (`TILE = 16 units`,
 derivable — not stored). The shader works in units; no per-frame scale uniform. The **only** exception is the
 silhouette `frame_*` fields, which are **texture pixels** (they index the atlas page, a different space).
 

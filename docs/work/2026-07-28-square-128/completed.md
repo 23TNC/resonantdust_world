@@ -258,3 +258,65 @@ It reads 71.1, not 128 — because it is the *requested* size (on-screen tile px
 scale), not the cap. `BASE_LOD_PX = SQUARE` was clamping it to 64 before; with the clamp at 128 the true
 71.1 shows through and `pickLodForSize` snaps up to the 128 LOD. The art genuinely steps up a level; the
 number to watch is the LOD chosen, not `targetPx` itself.
+
+## 2026-07-28 · P3 — the art has its resolution back
+
+**No re-mastering was needed** ([F6](forks.md#f6)) — P0's audit found 0 of 27 manifest entries short of
+128. Raising `SQUARE` was sufficient on its own, and the loaded LODs prove it:
+
+```
+biome-thing/default/conifer/e   loaded [32, 128]      <- was capped at 64
+biome-thing/default/flora/e     loaded [32, 128]
+```
+
+`pickLodForSize` now selects the **128** co-pack. The conifers are visibly crisper at zoom 1 (needle
+structure and trunk shading that the 64 build could not carry). The wolf is not verifiable this session —
+no pawn was in area1 because the npc container was not running — but it takes the same path as every
+other sprite and its master is 512, so it gains the same step. Flagged as the one visual claim in this
+stream that is **inferred rather than seen**.
+
+### Resident bytes re-measured
+
+| family | before (`SQUARE` 64) | after (`SQUARE` 128) | |
+|---|---|---|---|
+| art (8 channels) | 76.5 MiB | **306 MiB** | 4.0× — the price |
+| fine / lighting (3 maps) | 72 MiB | **72 MiB** | **unchanged** |
+| shadow (6 maps) | 11 MiB | **11 MiB** | unchanged |
+| atlas | 16 MiB | **16 MiB** | still **one page** |
+| **total** | 175.5 MiB | **405 MiB** | |
+
+Against the joined-constant alternative (`TEXTILE_SQUARE` following `SQUARE`), the fine maps would be
+288 MiB and the total **621 MiB**. **The pin saves 216 MiB and 2.2–3.1× of lighting time.**
+
+Two corrections to earlier figures in this stream, both mine:
+
+- The README projected art at 321 MiB; it is **306**. I divided by 10^6 in one place and 2^20 in
+  another. 4352 × 2304 × 4 B = 38.25 MiB per channel, × 8 = 306.
+- [I3](issues.md) projected a ~420 MiB total; measured **405**, same cause.
+
+**The predicted atlas-page risk did not materialise.** 4× frame area on one 2048² page still fits at the
+LODs area1 loads. It is not disproven in general — a fuller scene could still spill — so it stays a live
+concern for [`2026-07-28-art-128-tiles`](../2026-07-28-art-128-tiles/README.md) rather than a closed one.
+
+## 2026-07-28 · P4 — the docs reconciled
+
+`VARIABLES.md` had been describing the 128 world since `2b1025a` shipped 64 without amending it
+([I1](issues.md)), so most rows needed no change — the code came to them. Three did:
+
+| line | was | now |
+|---|---|---|
+| 472 | `1 unit = SQUARE/16 = 4px` | **8px** — it was the one row still describing `SQUARE = 64`, contradicting every other row in the same document |
+| 306 | `TEXTILE_SQUARE`, no apron / 128 / 4096 × 2048 / lightmap | **`TEXTILE_LIGHT` / 64 PINNED / 2048 × 1024** / lightmap (cold + hot) + fine receiver |
+| 305, 307 | 4 art maps; shadow listed alone | art **× 2 (cold AND warm)**; shadow row names all six maps that ride it |
+
+Plus a new paragraph stating the pin, the 2.2–3.1× measurement behind it, and the measured resident
+bytes (405 MiB split vs 621 MiB joined), so the next reader inherits the reason rather than just the
+number.
+
+Confirmed live against the running build: `ppu` at lod 0 = **8** (`SQUARE/(16·2^lod)` = 128/16),
+`REFERENCE` **3584 × 1536**, max frame side `16 × 128` = **2048**, art texture **4352 × 2304**.
+
+**The rule this stream is evidence for:** a constant ratified in `VARIABLES.md` must not be changed by a
+`test(` commit without either reverting it or amending the document. `2b1025a` did neither, and for a day
+the authority file described a world the client did not build — including `ppu`, which is live shader
+input, so anyone hand-checking against the doc would have "found" a bug that was not there.

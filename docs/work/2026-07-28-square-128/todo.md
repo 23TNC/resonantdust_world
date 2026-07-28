@@ -42,12 +42,12 @@ discriminated by RENDER TARGET, fixed frame count, phase from the frame index.
 
 - [x] Audit whether the mastered sprites actually carry ≥128 px per tile, or whether the corpus was authored against the 64 cap. Acceptance: a count of defs whose master side is below their `size · 128`.
 - [x] Re-master whatever P0/P3 found short, wolf first. Acceptance: 0 entries were short (14 of 27 carry 512), so nothing to re-master — recorded in [F6](forks.md#f6); art-pipeline work belongs to `2026-07-28-art-128-tiles`.
-- [ ] Re-publish the corpus and re-bake, then capture the same zoom-1 crop as P0. Acceptance: side-by-side against the before-image shows the wolf resolving detail the 64 build could not carry.
-- [ ] Re-measure resident bytes and confirm the art maps grew ~4× while the lightmap did not move. Acceptance: matches the README's table, or the table is corrected to the measurement.
+- [x] Re-publish the corpus and re-bake, then capture the same zoom-1 crop as P0. Acceptance: side-by-side against the before-image shows the wolf resolving detail the 64 build could not carry.
+- [x] Re-measure resident bytes and confirm the art maps grew ~4× while the lightmap did not move. Acceptance: matches the README's table, or the table is corrected to the measurement.
 
 ## P4 — Reconcile the docs
 
-- [ ] Fix `VARIABLES.md` line 461, which says `1 unit = SQUARE/16 = 4px` while the same document says `SQUARE = 128` ([I1](issues.md)). Acceptance: 8 px, consistent with every other row.
-- [ ] Change the lightmap row (305–306) to name `TEXTILE_LIGHT` = 64 / 2048×1024, since it no longer shares `TEXTILE_SQUARE`'s value. Acceptance: the texel-family table lists four distinct families with their real sizes.
-- [ ] Re-read every `SQUARE`-derived figure in `VARIABLES.md` against the built code and correct whichever is wrong. Acceptance: `ppu` at lod 0 = 8, max frame side 2048, REFERENCE 3584×1536 all confirmed live.
+- [x] Fix `VARIABLES.md` line 461, which says `1 unit = SQUARE/16 = 4px` while the same document says `SQUARE = 128` ([I1](issues.md)). Acceptance: 8 px, consistent with every other row.
+- [x] Change the lightmap row (305–306) to name `TEXTILE_LIGHT` = 64 / 2048×1024, since it no longer shares `TEXTILE_SQUARE`'s value. Acceptance: the texel-family table lists four distinct families with their real sizes.
+- [x] Re-read every `SQUARE`-derived figure in `VARIABLES.md` against the built code and correct whichever is wrong. Acceptance: `ppu` at lod 0 = 8, max frame side 2048, REFERENCE 3584×1536 all confirmed live.
 - [ ] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, `completed.md` records the measured before/after.
