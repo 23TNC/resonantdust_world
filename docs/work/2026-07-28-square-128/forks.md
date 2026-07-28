@@ -59,3 +59,25 @@ P0 measures the wolf's atlas frame side before P3 re-masters anything, precisely
 constant that the code currently contradicts, so conforming to it stands on its own. If the wolf turns
 out to be soft because it was authored soft or loses detail in the channel-pack, that becomes an issue
 and a separate stream against `dev/art` — it does not block or redirect this one.
+
+## F6 — Overlap with the `2026-07-28-art-128-tiles` stream {#f6}
+
+Another session opened [`2026-07-28-art-128-tiles`](../2026-07-28-art-128-tiles/README.md) while this
+stream was in P0. It owns `bin/art`, `frame_span`, per-cell `pad`, and sizing crops by declared tile
+footprint. Its README says it "depends on but does not own `SQUARE = 128` — that is square-128".
+
+- (a) Keep P3 as written and re-master here.
+- **(b) Narrow P3 to a client-side verification and leave every art-pipeline change to that stream.**
+- (c) Merge the two.
+
+**Chosen: (b)** — and P0's audit makes it nearly free. All 27 manifest entries already carry ≥128
+(14 at 512), so **there is nothing to re-master**: raising `SQUARE` doubles `BASE_LOD_PX`, every sprite
+steps up one LOD, and the corpus is untouched. P3 therefore reduces to proving `targetPx` went 64 → 128
+and that the frames resolve bigger.
+
+(a) would duplicate their work and risk two sessions writing `bin/art` at once. (c) is wrong on
+ownership — the two streams cut at exactly the right seam already (they parameterise the tile edge,
+this one sets it), and merging would make either unable to land alone.
+
+**Boundary:** if raising `SQUARE` exposes an art-pipeline defect (atlas page pressure from 4× frame
+areas is the likely one), it is filed as an issue HERE and fixed THERE.

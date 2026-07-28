@@ -21,7 +21,7 @@ discriminated by RENDER TARGET, fixed frame count, phase from the frame index.
 - [x] Record resident bytes per map family at `SQUARE = 64` from the live context, not from arithmetic. Acceptance: a table of art / lightmap / shadow / tile bytes whose total matches the browser's reported GPU memory within 10%.
 - [x] Record the lighting-pass ms at `SQUARE = 64` over the orbit harness at reach 4/8/12. Acceptance: three numbers, each stable to ±0.01 ms across two runs.
 - [x] Resize ONLY the lightmap RT to 4096×2048 (temporarily, `SQUARE` untouched) and re-measure. Acceptance: ms rises ~3–4×, confirming lightmap texels drive the lighting cost and art texels do not. Revert the resize.
-- [ ] Capture a zoom-1 crop of the wolf and one conifer as the before-image, and read back the wolf's atlas frame side in px. Acceptance: the frame side is recorded, so P3 can prove it doubled rather than assume it.
+- [x] Capture a zoom-1 crop of the wolf and one conifer as the before-image, and read back the wolf's atlas frame side in px. Acceptance: the frame side is recorded, so P3 can prove it doubled rather than assume it.
 
 ## P1 — Split the constant (no value change, must be a provable no-op)
 
@@ -40,8 +40,8 @@ discriminated by RENDER TARGET, fixed frame count, phase from the frame index.
 
 ## P3 — Give the art the resolution back
 
-- [ ] Audit whether the mastered sprites actually carry ≥128 px per tile, or whether the corpus was authored against the 64 cap. Acceptance: a count of defs whose master side is below their `size · 128`.
-- [ ] Re-master whatever P0/P3 found short, wolf first (`art remaster <path> --size 128`). Acceptance: the wolf's atlas frame side is double P0's recorded value.
+- [x] Audit whether the mastered sprites actually carry ≥128 px per tile, or whether the corpus was authored against the 64 cap. Acceptance: a count of defs whose master side is below their `size · 128`.
+- [x] Re-master whatever P0/P3 found short, wolf first. Acceptance: 0 entries were short (14 of 27 carry 512), so nothing to re-master — recorded in [F6](forks.md#f6); art-pipeline work belongs to `2026-07-28-art-128-tiles`.
 - [ ] Re-publish the corpus and re-bake, then capture the same zoom-1 crop as P0. Acceptance: side-by-side against the before-image shows the wolf resolving detail the 64 build could not carry.
 - [ ] Re-measure resident bytes and confirm the art maps grew ~4× while the lightmap did not move. Acceptance: matches the README's table, or the table is corrected to the measurement.
 

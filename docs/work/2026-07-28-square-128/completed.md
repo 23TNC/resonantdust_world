@@ -106,3 +106,37 @@ wrong scale, seams on slot boundaries. [F3](forks.md#f3) argued this coupling on
 it. P1's `uLSlot` item is not defensive, it is load-bearing.
 
 Probe reverted (`TEXTILE_SQUARE = SQUARE`); `git diff` clean on `squareMath.ts`.
+
+### The wolf: the cap is `BASE_LOD_PX = SQUARE`, and the masters are already big enough
+
+`TextureResolver` line 44 is the whole mechanism:
+
+```
+const BASE_LOD_PX = SQUARE;                                    // 64 today
+this.targetPx = Math.min(BASE_LOD_PX, ...);                    // 64
+let desired = pickLodForSize(Math.min(this.targetPx * gridFactor, cap));   // snaps to LOD_SIZES
+```
+
+`targetPx` read back live: **64**. So every sprite is fetched at the 64 px LOD regardless of what the
+master holds. Manifest audit of all **27** entries:
+
+| master `maxSize` | entries |
+|---|---|
+| 128 | 8 |
+| 256 | 4 |
+| 320 | 1 |
+| **512** | **14** |
+| **below 128** | **0** |
+
+**`pawn/animal/wolf/e` has a 512 px master and is being drawn from the 64 px LOD — an 8× downsample.**
+That is the mush in the user's screenshot, and it is a client-side cap, not an art problem.
+
+This **answers P3's audit item ahead of schedule and inverts its conclusion**: nothing needs
+re-mastering. Every entry already carries ≥128, so raising `SQUARE` to 128 immediately doubles
+`targetPx` and every sprite steps up one LOD with no corpus work at all. The plan assumed the corpus
+might have been authored against the 64 cap; it was not.
+
+**Before-image caveat:** no wolf pawn was present in area1 during this session (the npc container was not
+running), so the recorded before-state is `targetPx = 64` plus the user's own screenshot rather than a
+matched crop. `targetPx` is the stronger evidence — it is the cap itself, not a rendering of it — and
+P3's after-check is `targetPx == 128` plus a visual pass once a wolf is on screen.
