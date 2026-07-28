@@ -605,9 +605,28 @@ _laigter_preset() {  # preset
 # the caller counts successes.
 _laigter_one() {  # flag lsuffix map_type label src
   local flag=$1 lsuffix=$2 map_type=$3 label=$4 src=$5
-  local dir base out
+  local dir base out feed="" fbase="" w h
   dir=$(dirname "$src"); base=$(basename "$src" .png); out=$(_map_path "$src" "$map_type")
-  "$SCRIPT_DIR/laigter" -d "/work/${src#$REPO_ROOT/}" "$flag" "${_PRESET_ARG[@]}" >/dev/null
+  feed=$src; fbase=$base
+  # NO-BEVEL: Laigter reads the image border as a silhouette edge and bevels it, which on a
+  # tile reads as a raised rim all the way round — and its bevel reaches further inward than a
+  # small tile is wide, so it can swallow the cell entirely. There is no way to switch it off:
+  # the engine has the setting (normal_bisel_depth, tileable) but only the GUI reaches it, and
+  # `-r <preset>` is inert in the headless build (verified — a complete preset with an extreme
+  # value produced byte-identical output). So we deny it a border instead: tile the source 3x3,
+  # let Laigter see continuous texture in every direction, and keep only the centre copy.
+  if (( ${_LAIGTER_NO_BEVEL:-0} )); then
+    read -r w h < <(identify -format '%w %h' "$src")
+    fbase=".nobevel_$base"; feed="$dir/$fbase.png"
+    convert "$src" -duplicate 2 +append -duplicate 2 -append "$feed" || return 1
+  fi
+  "$SCRIPT_DIR/laigter" -d "/work/${feed#$REPO_ROOT/}" "$flag" "${_PRESET_ARG[@]}" >/dev/null
+  if (( ${_LAIGTER_NO_BEVEL:-0} )) && [[ -f "$dir/${fbase}_${lsuffix}.png" ]]; then
+    convert "$dir/${fbase}_${lsuffix}.png" -crop "${w}x${h}+${w}+${h}" +repage -strip \
+            "$dir/${base}_${lsuffix}.png" || return 1
+    rm -f "$feed" "$dir/${fbase}_${lsuffix}.png"
+  fi
+  (( ${_LAIGTER_NO_BEVEL:-0} )) && rm -f "$feed"
   if [[ -f "$dir/${base}_${lsuffix}.png" ]]; then
     mv -f "$dir/${base}_${lsuffix}.png" "$out"
     local s
@@ -889,6 +908,7 @@ cmd_normal() {
   # and starved on flat art — reach for it via --marigold). detail/detail_radius/
   # strength are Laigter-only tangent-space knobs, ignored by the marigold engine.
   local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt="" pitch_normal=0
+  local no_bevel=0
   local -a pos=(kind preset detail detail_radius strength engine pitch_normal)
   local pi=0
   while (( $# )); do
@@ -899,6 +919,7 @@ cmd_normal() {
       --marigold)  engine=marigold; continue ;;  # boolean shorthand for --engine marigold
       --tilt)      tilt=1; continue ;;           # force object tilt on (default: auto by category)
       --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
+      --no-bevel)  no_bevel=1; continue ;;       # tile 3x3, keep the centre (no raised border)
       --*=*)  name=${arg%%=*}; name=${name#--}; val=${arg#*=} ;;
       --*)    name=${arg#--}; val=${1:-}; shift || true ;;
       *)      if (( pi < ${#pos[@]} )); then printf -v "${pos[pi]}" '%s' "$arg"; pi=$((pi+1)); continue;
@@ -930,7 +951,7 @@ cmd_normal() {
     echo "art: unknown normal engine '$engine' (valid: marigold, laigter)" >&2; return 1
   fi
 
-  _laigter_batch "$kind" "$preset" -n n normal normal || return 1
+  _LAIGTER_NO_BEVEL=$no_bevel _laigter_batch "$kind" "$preset" -n n normal normal || return 1
 
   local src nrm
   # Optional high-frequency detail blend (Laigter's base blurs out fine relief).
@@ -2292,6 +2313,7 @@ cmd_remaster() {
   # Positional slots, filled in order by every non-flag argument. layers/size are
   # appended at the end so publish keeps its position; both are normally passed as flags.
   # (split_normalize/black_threshold are flag-only — dashed names, handled in the case below.)
+  local no_bevel=0
   local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish layers size sharpen_normal ao_strength sharpen_ao pitch_normal)
   local pi=0
   while (( $# )); do
@@ -2302,6 +2324,7 @@ cmd_remaster() {
       --marigold)  engine=marigold; continue ;;  # boolean shorthand for --engine marigold (normal map only)
       --tilt)      tilt=1; continue ;;           # force object normal tilt on (default: auto by category)
       --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
+      --no-bevel)  no_bevel=1; continue ;;       # tile 3x3, keep the centre (no raised border)
       --ao)        ao=1; continue ;;             # pack depth-derived AO into normal.a (default)
       --no-ao)     ao=0; continue ;;             # skip the AO step
       --split-normalize|--split_normalize)   # normalize the channel-pack (DEFAULT on): pull all colour into layers, leave only the black outline in albedo. Optional 0/1 value disables/enables (bare = on).
@@ -2351,6 +2374,7 @@ cmd_remaster() {
   [[ "$ao" == 0 ]] && tilt_args+=(--no-ao)
   tilt_args+=(--sharpen_normal "$sharpen_normal" --ao_strength "$ao_strength" --sharpen_ao "$sharpen_ao")
   tilt_args+=(--pitch_normal "$pitch_normal")
+  (( no_bevel )) && tilt_args+=(--no-bevel)
   cmd_maps "$SPLIT_TARGET" "$preset" "$detail" "$detail_radius" "$strength" "$engine" "${tilt_args[@]}" || return 1
 
   # Channel-pack the just-made albedo(s) into up to `--layers` tintable materials:
@@ -2432,6 +2456,7 @@ cmd_remaster() {
 cmd_maps() {
   # Defaults; overridable positionally OR by --flag (--name value / --name=value).
   local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt="" ao=0 \
+  local no_bevel=0; local -a nobevel_args=()
         sharpen_normal=0 ao_strength=1.0 sharpen_ao=0 pitch_normal=0
   local -a pos=(kind preset detail detail_radius strength engine sharpen_normal ao_strength sharpen_ao pitch_normal)
   local pi=0
@@ -2443,6 +2468,7 @@ cmd_maps() {
       --marigold)  engine=marigold; continue ;;  # boolean shorthand for --engine marigold
       --tilt)      tilt=1; continue ;;           # force object tilt on (default: auto by category)
       --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
+      --no-bevel)  no_bevel=1; continue ;;       # tile 3x3, keep the centre (no raised border)
       --ao)        ao=1; continue ;;             # pack depth-derived AO into normal.a (default)
       --no-ao)     ao=0; continue ;;             # skip the AO step entirely
       --*=*)  name=${arg%%=*}; name=${name#--}; val=${arg#*=} ;;
@@ -2474,10 +2500,11 @@ cmd_maps() {
   # NOT the emissive map. Deriving the shipped emissive from it (`art emissive`) is
   # deferred, so the maps pipeline no longer generates emissive — run `art emissive <kind>`
   # standalone if/when we want it.
+  (( no_bevel )) && nobevel_args=(--no-bevel)
   echo "art: maps [$kind] 1/2 normal (N.normal.png, engine=$engine) ..."
   # --no-tilt here: the tilt is baked LAST (after the strength exaggeration below),
   # since strength reshapes tangent XY relative to flat-up +Z — meaningless once tilted.
-  cmd_normal "$kind" "$preset" "$detail" "$detail_radius" 1.0 "$engine" --no-tilt || return 1
+  cmd_normal "$kind" "$preset" "$detail" "$detail_radius" 1.0 "$engine" --no-tilt "${nobevel_args[@]}" || return 1
   echo "art: maps [$kind] 2/2 albedo + albedo_residual (Marigold-IID de-light) ..."
   cmd_delight "$kind" --emit albedo,albedo_residual || return 1
   # Strength exaggeration is a Laigter-only tangent-space knob (marigold normals

@@ -37,6 +37,7 @@ dist/
 /server/orchestrator/target/
 /server/worker/target/
 /server/st-bindings/target/
+/server/uplink/target/
 
 # spacetimedb data
 /spacetime-data/*

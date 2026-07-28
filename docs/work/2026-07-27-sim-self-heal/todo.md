@@ -5,10 +5,10 @@ Opened 2026-07-27._
 
 ## P1 — the shared `uplink` helper
 
-- [ ] Create `server/uplink` (`resonantdust-uplink`): `Uplink<C>` = build closure + `alive: Arc<AtomicBool>` + optional async subscribe closure; `get()` returns the live conn or rebuilds ([F1](forks.md#f1)/[F3](forks.md#f3)). Acceptance: `bin/rd check` green.
-- [ ] Clear `alive` from `on_disconnect`, `on_connect_error`, AND the subscription `on_error` (the gateway pattern misses the third). Acceptance: unit test — while the build closure fails, `get()` errs; once it succeeds, the next `get()` recovers.
-- [ ] Gate every rebuild on subscription re-applied (subscribe-and-wait, 5s timeout) so `get()` never returns a conn with an un-applied cache. Acceptance: unit test — `get()` resolves only after the fake subscribe closure completes.
-- [ ] Add capped backoff between failed rebuilds (0.5s → 8s) with attempt-count warn logs so a down shard doesn't hot-loop. Acceptance: unit test — N rapid `get()`s during failure invoke the build closure only per the backoff schedule.
+- [x] Create `server/uplink` (`resonantdust-uplink`): `Uplink<C>` = build closure + `alive: Arc<AtomicBool>` + optional async subscribe closure; `get()` returns the live conn or rebuilds ([F1](forks.md#f1)/[F3](forks.md#f3)). Acceptance: `bin/rd check` green.
+- [x] Clear `alive` from `on_disconnect`, `on_connect_error`, AND the subscription `on_error` (the gateway pattern misses the third). Acceptance: unit test — while the build closure fails, `get()` errs; once it succeeds, the next `get()` recovers.
+- [x] Gate every rebuild on subscription re-applied (subscribe-and-wait, 5s timeout) so `get()` never returns a conn with an un-applied cache. Acceptance: unit test — `get()` resolves only after the fake subscribe closure completes.
+- [x] Add capped backoff between failed rebuilds (0.5s → 8s) with attempt-count warn logs so a down shard doesn't hot-loop. Acceptance: unit test — N rapid `get()`s during failure invoke the build closure only per the backoff schedule.
 
 ## P2 — master
 

@@ -1,0 +1,16 @@
+[package]
+name = "resonantdust-uplink"
+version = "0.1.0"
+edition = "2021"
+
+# The self-healing upstream-connection helper (sim-self-heal F1/F3): one implementation of the
+# gateway's rebuild-on-next-use pattern for every SDK-client server (master / orchestrator /
+# worker; the gateway itself migrates later). Closure-based — each module's generated
+# `DbConnection` is a distinct type with no shared builder trait.
+
+[dependencies]
+tokio = { version = "1", features = ["sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "time", "sync", "test-util"] }
