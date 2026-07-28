@@ -42,13 +42,17 @@ const MIN_RATE_SPAN_MS: f64 = 5_000.0;
 /// real drift (0.9× observed), tight enough that garbage can't run the clock backwards.
 const RATE_BAND: (f64, f64) = (0.5, 1.5);
 
-/// A candidate further than this (tics) from the estimate — ahead, or behind — is implausible:
-/// ahead ⇒ rejected outright (stale-replay wrap); behind ⇒ counted toward [`POISON_STREAK`].
-/// 900 tics ≈ 2.5 min at 6 Hz, far beyond any real delivery lead.
+/// A candidate further than this (tics) from the estimate — ahead, or behind — is implausible
+/// and rejected; either direction feeds its own [`POISON_STREAK`] counter. 900 tics ≈ 2.5 min
+/// at 6 Hz, far beyond any real delivery lead.
 const POISON_BAND: f64 = 900.0;
 
-/// This many consecutive implausibly-behind arrivals mean the ANCHOR is the garbage (it got
-/// observed first) — hard-reset to the live stream.
+/// This many consecutive implausible arrivals IN ONE DIRECTION mean the ANCHOR is the odd one
+/// out — hard-reset to the live stream. Behind-streaks catch a garbage first anchor (an
+/// old-epoch replay observed first); ahead-streaks catch anchoring on a STALE RESTING ROW at
+/// page load (a resting pawn's `state` keeps its last-write tic forever, so a fresh subscribe
+/// can legitimately observe a very old tic first — measured: d stuck at −4600 while every
+/// live arrival was rejected as "implausibly ahead").
 const POISON_STREAK: u32 = 8;
 
 /// The best-known wall↔tic anchor + learned rate. See the module docs for the rules.
@@ -61,11 +65,13 @@ pub struct TicEstimate {
     rate: f64,
     /// Consecutive implausibly-behind arrivals (poisoned-anchor detector).
     behind_streak: u32,
+    /// Consecutive implausibly-ahead arrivals (stale-resting-row-anchor detector).
+    ahead_streak: u32,
 }
 
 impl Default for TicEstimate {
     fn default() -> Self {
-        Self { anchor: None, prev: None, rate: TIC_HZ as f64 / 1000.0, behind_streak: 0 }
+        Self { anchor: None, prev: None, rate: TIC_HZ as f64 / 1000.0, behind_streak: 0, ahead_streak: 0 }
     }
 }
 
@@ -82,11 +88,20 @@ impl TicEstimate {
         let ahead = (tic.wrapping_sub(est.floor() as u16) as i16) as f64 - est.fract();
 
         if ahead > POISON_BAND {
-            return false; // an old-epoch replay wrapping serially ahead — never anchor it
+            // Implausibly ahead. Either an old-epoch replay wrapping serially ahead
+            // (transient — never anchor it) or OUR anchor is an ancient resting row and
+            // this is the live stream — a sustained streak means the latter.
+            self.ahead_streak += 1;
+            if self.ahead_streak >= POISON_STREAK {
+                *self = Self::default();
+                self.anchor = Some((tic, wall_ms));
+                return true;
+            }
+            return false;
         }
         if ahead < -POISON_BAND {
-            // Implausibly behind. Either a stale replay (harmless) or OUR anchor is the
-            // garbage and this is the live stream — a sustained streak means the latter.
+            // Implausibly behind — the mirror case: a stale replay (harmless), or the
+            // anchor is the garbage and this is the live stream.
             self.behind_streak += 1;
             if self.behind_streak >= POISON_STREAK {
                 *self = Self::default();
@@ -96,6 +111,7 @@ impl TicEstimate {
             return false;
         }
         self.behind_streak = 0;
+        self.ahead_streak = 0;
 
         if wall_ms - awall > REANCHOR_MS {
             // The anchor aged out: retire it as the rate baseline and take the fresh arrival
@@ -204,6 +220,22 @@ mod tests {
         assert!(!e.observe(39_682, 100.0));
         // The estimate is untouched — a fresh arrival still reads as "now".
         let d = e.delta_since(9_041, 200.0).unwrap();
+        assert!(d.abs() < 2.0, "d {d}");
+    }
+
+    #[test]
+    fn an_ancient_resting_row_anchor_self_heals_off_the_live_stream() {
+        // The measured failure: a fresh subscribe replays a resting pawn's state row whose
+        // tic is ~4600 old; it anchors FIRST, and every live arrival then reads as
+        // implausibly AHEAD. The streak must hand the anchor to the live stream.
+        let mut e = TicEstimate::default();
+        assert!(e.observe(10_700, 0.0));
+        let mut reanchored = false;
+        for i in 0..POISON_STREAK as u16 {
+            reanchored = e.observe(15_400 + i, 100.0 + f64::from(i) * 300.0);
+        }
+        assert!(reanchored, "ahead streak should hard-reset the anchor");
+        let d = e.delta_since(15_400 + POISON_STREAK as u16 - 1, 2_300.0).unwrap();
         assert!(d.abs() < 2.0, "d {d}");
     }
 

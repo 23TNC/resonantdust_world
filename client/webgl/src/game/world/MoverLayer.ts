@@ -109,6 +109,12 @@ interface Mover {
    *  read as too-fast — and snaps only past {@link CHASE_SNAP_TILES}. */
   rx: number;
   ry: number;
+  /** Last rx/ry actually BAKED into the warm prim — the eps gate compares against these, so
+   *  sub-eps per-frame chase steps ACCUMULATE instead of being discarded (gating the chase
+   *  state itself on eps froze the render until the snap threshold — the bug this split
+   *  fixes). */
+  arx: number;
+  ary: number;
   /** Facing last applied to the prim (the TARGET's facing applies immediately — the pawn
    *  turns toward its path at the seed, then walks into it). */
   facing: number;
@@ -227,18 +233,17 @@ export class MoverLayer {
         const step = gap > CHASE_SNAP_TILES
           ? gap // hopeless — snap
           : tilesPerSec * Math.min(CHASE_CAP, 1 + gap * CHASE_GAIN) * dtSec;
-        const rx = m.rx + Math.sign(gx) * Math.min(step, Math.abs(gx));
-        const ry = m.ry + Math.sign(gy) * Math.min(step, Math.abs(gy));
-        if (
-          Math.abs(rx - m.rx) >= SPEC_APPLY_EPS || Math.abs(ry - m.ry) >= SPEC_APPLY_EPS ||
-          facing !== m.facing
-        ) {
-          m.rx = rx;
-          m.ry = ry;
-          m.facing = facing;
-          this.applyVisual(m, key, m.kind, rx, ry, facing, m.macroPosition);
-        }
-      } else if (facing !== m.facing) {
+        // The chase STATE always advances (sub-eps steps accumulate); only the warm
+        // re-bake is eps-gated, against the last APPLIED position.
+        m.rx += Math.sign(gx) * Math.min(step, Math.abs(gx));
+        m.ry += Math.sign(gy) * Math.min(step, Math.abs(gy));
+      }
+      if (
+        Math.abs(m.rx - m.arx) >= SPEC_APPLY_EPS || Math.abs(m.ry - m.ary) >= SPEC_APPLY_EPS ||
+        facing !== m.facing
+      ) {
+        m.arx = m.rx;
+        m.ary = m.ry;
         m.facing = facing;
         this.applyVisual(m, key, m.kind, m.rx, m.ry, facing, m.macroPosition);
       }
@@ -414,7 +419,7 @@ export class MoverLayer {
         id, macroPosition, kind, authX: tileX, authY: tileY,
         x, y, texName: tex.name, cell: tex.cell, flipX: tex.flipX, tint, geoColor, zIndex,
         spec: null,
-        rx: tileX, ry: tileY, facing, // the chase starts AT the first authoritative tile
+        rx: tileX, ry: tileY, arx: tileX, ary: tileY, facing, // the chase starts AT the first authoritative tile
         lastIntentTic: null,
       });
       return;
