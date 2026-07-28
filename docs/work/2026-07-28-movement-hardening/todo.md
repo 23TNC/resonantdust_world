@@ -24,16 +24,16 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
       chain ends (one `debug!` line, no step, no re-queue). `MOVE_TO` keeps ONLY its seed
       role. Acceptance: soak shows trips unchanged (intent + seed + landing, hops at
       `tics_per_tile` spacing) with `MOVE_STEP` continuations in the queue.
-- [ ] edge: client-program verb ALLOWLIST at the queue door (reject `MOVE_STEP` and any
+- [x] edge: client-program verb ALLOWLIST at the queue door (reject `MOVE_STEP` and any
       server-only verb with a clear error; `PROMOTE`/`PROMOTE_EVENT`/`CREATE`/`PLACE`/
       `MOVE_TO`/`SET` stay). Acceptance: a hand-queued `MOVE_STEP` from a client session is
       rejected; the npc soak is unaffected.
-- [ ] npc: deadline re-issue is now SAFE (new seed = new serial = old chain dies at its next
+- [x] npc: deadline re-issue is now SAFE (new seed = new serial = old chain dies at its next
       hop) — re-issue picks a FRESH dest from the current position instead of repeating the
       lost one; comment updated to the supersession contract. Acceptance: forced-deadline
       drill (temporarily slash the slack) shows re-issues with NO tug-of-war: single winner,
       no per-hop promotes, landing error small.
-- [ ] Supersession drill: mid-trip, queue a SECOND move for the same wolf to a different dest
+- [x] Supersession drill: mid-trip, queue a SECOND move for the same wolf to a different dest
       (second bot session or a temporary npc hook). Acceptance: worker logs exactly one
       superseded-chain line; the wolf walks only the new path; browser sees 1 intent + seed +
       landing per WINNING chain and no per-hop promotes; `event_log` holds no orphaned
