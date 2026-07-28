@@ -56,7 +56,7 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P2.5 · Render-chase (USER DESIGN, added during execution — the tween knob un-held)
 
-- [ ] MoverLayer: the RENDERED position chases the SPECULATED position in path-progress
+- [x] MoverLayer: the RENDERED position chases the SPECULATED position in path-progress
       space — catch-up capped at +20% of the pawn's speed (non-linear: larger gap → harder
       chase within the cap), snap only past a hopeless threshold; authoritative rows keep
       steering the target; the contract is agreement at the destination + broad agreement
@@ -67,14 +67,14 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P3 · Master pacing — keep the 6 Hz promise (pawn-movement I5)
 
-- [ ] Instrument, don't guess: per-stage timing in the master loop (interval overshoot,
+- [x] Instrument, don't guess: per-stage timing in the master loop (interval overshoot,
       `bump_tic` call latency, dedup-skip counts) logged as a 1/min drift summary.
       Acceptance: the lagging stage is IDENTIFIED with numbers in `completed.md`.
-- [ ] Fix the measured stage under F4's constraint (no burst catch-up — hold the PERIOD; a
+- [x] Fix the measured stage under F4's constraint (no burst catch-up — hold the PERIOD; a
       tic is a wall-time promise). Acceptance: durable tic ≥ 5.95 Hz over a ≥ 5-min sql
       sample in the dev container; the browser's learned rate reads ≈ 6.0; a wolf tile takes
       ≈ 2 s wall.
-- [ ] Re-measure the estimator against the fixed clock (it must stay correct when rate ≈
+- [x] Re-measure the estimator against the fixed clock (it must stay correct when rate ≈
       authored): arms `d` single-digit, landings e ≤ 0.3 from a fresh page. Acceptance:
       soak numbers in `completed.md`.
 

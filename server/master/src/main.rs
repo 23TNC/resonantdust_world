@@ -113,17 +113,98 @@ async fn main() {
     // Transition trackers so a dead upstream logs once, not once per tic.
     let (mut up_i, mut up_e, mut up_d, mut up_p, mut up_t, mut up_h) = (true, true, true, true, true, true);
 
-    let mut ticker = tokio::time::interval(period);
+    // ── REALTIME-paced metronome (movement-hardening P3, closing I5). The tic is a WALL-TIME
+    // promise, but tokio sleeps ride CLOCK_MONOTONIC — measured running at 0.900× realtime in
+    // this WSL2 VM (a sleep(60) takes 66.7 real seconds), which is exactly the 5.4-vs-6 Hz
+    // deficit. So the grid lives in `SystemTime` (realtime) and each sleep is FEEDBACK-paced:
+    // an overshooting sleep shortens the next one, converging on the realtime grid under any
+    // monotonic skew. F4: no burst catch-up — falling behind by > 2 periods (suspend, hitch)
+    // SNAPS the grid forward; the world never fast-forwards. A backwards realtime step (NTP)
+    // re-bases the grid rather than stalling.
+    let mut next_tick = std::time::SystemTime::now();
+    // Integral controller on the MEASURED rate (the per-tick feedback alone measurably did
+    // not converge in this VM stack — steady 5.44 Hz with the grid in realtime; wherever the
+    // dilation hides, the achieved-Hz signal sees it): each report window scales the
+    // effective period by achieved/target, clamped to [0.5×, 1.2×] authored. Converges on
+    // ANY monotone dilation, adjusts smoothly (no bursts — F4).
+    let mut period_eff = period;
+    // Pacing report: achieved Hz in REALTIME over ~1-minute windows + server-confirmed bump
+    // executions (the fire-and-forget diagnosis path that found the skew).
+    let mut pace_n: u32 = 0;
+    let mut pace_started = std::time::SystemTime::now();
+    let bump_ok = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let bump_err = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
     loop {
-        ticker.tick().await;
+        next_tick += period_eff;
+        let now = std::time::SystemTime::now();
+        match next_tick.duration_since(now) {
+            Ok(wait) => {
+                if wait > period * 2 {
+                    next_tick = now + period_eff; // realtime stepped BACKWARDS — re-base
+                }
+                tokio::time::sleep(next_tick.duration_since(std::time::SystemTime::now()).unwrap_or_default()).await;
+            }
+            Err(behind) => {
+                if behind.duration() > period * 2 {
+                    next_tick = now; // far behind — snap forward, never burst
+                } else {
+                    // Mildly behind: catch up at ≤ 1.2× rate (tick spacing ≥ ⅚ period) —
+                    // instant no-sleep iterations were measured micro-bursting to 6.3 Hz
+                    // windows, the F4 violation in miniature.
+                    tokio::time::sleep(period_eff * 5 / 6).await;
+                }
+            }
+        }
+
+        pace_n += 1;
+        if pace_n >= 360 {
+            let span = std::time::SystemTime::now()
+                .duration_since(pace_started)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(f64::NAN);
+            let hz = pace_n as f64 / span;
+            if hz.is_finite() && hz > 0.5 {
+                let lo = 1.0 / (tic_hz * 1.2);
+                let hi = 1.0 / (tic_hz * 0.5);
+                // Half-gain (sqrt) — a single noisy window (a hitch, a snap) nudges rather
+                // than yanks; converges in 2–3 windows either way.
+                period_eff = std::time::Duration::from_secs_f64(
+                    (period_eff.as_secs_f64() * (hz / tic_hz).sqrt()).clamp(lo, hi),
+                );
+            }
+            tracing::info!(
+                achieved_hz = format!("{:.3}", hz),
+                period_eff_ms = format!("{:.1}", period_eff.as_secs_f64() * 1000.0),
+                bump_confirmed = bump_ok.swap(0, std::sync::atomic::Ordering::Relaxed),
+                bump_failed = bump_err.swap(0, std::sync::atomic::Ordering::Relaxed),
+                "pacing report (realtime; target 6.000 Hz)"
+            );
+            pace_n = 0;
+            pace_started = std::time::SystemTime::now();
+        }
 
         // No index ⇒ no authority to advance or fan — skip the whole pass.
         let Some(index) = acquire(&index_up, &mut up_i, "index").await else { continue };
 
         // Advance the authority. The increment lands asynchronously; we fan out whatever the durable
         // row currently shows (≤ 1 tic behind), which keeps the shards a faithful mirror.
-        if let Err(err) = index.reducers().bump_tic(realm) {
-            tracing::warn!(%err, "bump_tic failed");
+        // `_then`: count SERVER-CONFIRMED executions (P3/I5 — the loop provably calls at 6 Hz
+        // but the durable counter advances ~5.4/s; fire-and-forget hides where calls die).
+        {
+            let ok = bump_ok.clone();
+            let err_c = bump_err.clone();
+            let sent = index.reducers().bump_tic_then(realm, move |_ctx, res| match res {
+                Ok(Ok(())) => {
+                    ok.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                other => {
+                    err_c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tracing::warn!(err = %format!("{other:?}"), "bump_tic did not confirm");
+                }
+            });
+            if let Err(err) = sent {
+                tracing::warn!(%err, "bump_tic failed");
+            }
         }
 
         let tic = match index.db().master_clock().realm().find(&realm) {
