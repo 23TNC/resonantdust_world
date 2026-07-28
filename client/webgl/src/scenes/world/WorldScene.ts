@@ -105,6 +105,8 @@ export class WorldScene extends Scene {
 
   update(): void {
     this.panel?.tick();
+    // Advance pawn movement speculation (first-pawns P3) — fractional glide per frame.
+    this.moverLayer?.tick();
     // Push the live viewport zoom to the debug HUD (textures tab). The scene-
     // independent `setStats` ticker in main.ts has no viewport handle, so drive it
     // from here — covers wheel, `/zoom`, and the initial value in one place.

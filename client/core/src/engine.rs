@@ -169,6 +169,9 @@ struct Engine {
     /// Rolling clock-offset estimate, fed by ping/pong round-trips and the login
     /// seed. Reset (to a fresh, unsynced estimate) on every disconnect.
     clock: Clock,
+    /// The wall↔tic estimate (first-pawns P3) — anchored by every `state`/`event` arrival;
+    /// re-anchors surface as [`Event::TicAnchor`].
+    tics: crate::ticclock::TicEstimate,
 }
 
 impl Engine {
@@ -183,6 +186,7 @@ impl Engine {
             player_id: None,
             zones: ZoneManager::default(),
             clock: Clock::new(),
+            tics: crate::ticclock::TicEstimate::default(),
         }
     }
 
@@ -449,6 +453,10 @@ impl Engine {
             ServerMsg::State(row) => {
                 // Age the zone's subscription warmth (the anchor manager keys on the wire macro),
                 // then emit — the render event carries that same macro straight through.
+                if self.tics.observe(row.tic, now_ms() as f64) {
+                    let (tic, wall_ms) = self.tics.anchor().unwrap();
+                    self.emit(Event::TicAnchor { tic, wall_ms });
+                }
                 self.emit(world::state_event(&row, /*removed=*/ false));
                 self.zones.note_update(row.zone, text.len() as u64, now_ms());
                 self.flush_zone_intents().await;
@@ -466,8 +474,17 @@ impl Engine {
                     removed: true,
                 });
             }
-            // Settled, promoted events aren't rendered as movers yet — a later feature. Ignore.
-            ServerMsg::Event { .. } => {}
+            // A settled, promoted event — the INTENT channel. Anchor the tic estimate and
+            // surface any movement intents for the host to speculate from.
+            ServerMsg::Event { zone, tic, actions, .. } => {
+                if self.tics.observe(tic, now_ms() as f64) {
+                    let (atic, wall_ms) = self.tics.anchor().unwrap();
+                    self.emit(Event::TicAnchor { tic: atic, wall_ms });
+                }
+                for ev in world::move_intents(zone, tic, &actions) {
+                    self.emit(ev);
+                }
+            }
             // A zone's cold ground / scatter — the terrain. Age the zone's cost, then emit.
             ServerMsg::ColdTile { zone, subtype_id, layer_id, tic, tiles } => {
                 self.zones.note_update(zone, text.len() as u64, now_ms());

@@ -30,6 +30,22 @@ pub fn greeting_js(name: &str) -> String {
     greeting(name)
 }
 
+/// The simulation rate (tics/second) — the codec authority (`codec::tic::TIC_HZ`). The client's
+/// wall↔tic speculation extrapolates with this.
+#[cfg(feature = "js")]
+#[wasm_bindgen(js_name = ticHz)]
+pub fn tic_hz_js() -> u16 {
+    resonantdust_codec::tic::TIC_HZ
+}
+
+/// Tics one tile-hop takes for a definition (`codec::speed::tics_per_tile`) — the SAME seam the
+/// worker steps on, so speculation walks at exactly the server's rate (first-pawns F7).
+#[cfg(feature = "js")]
+#[wasm_bindgen(js_name = ticsPerTile)]
+pub fn tics_per_tile_js(definition_reference: u32) -> u16 {
+    resonantdust_codec::speed::tics_per_tile(definition_reference)
+}
+
 // ---------- content runtime (js feature) ----------
 //
 // The client's view of the DSL: load the fetched `.rd` corpus once, then answer
@@ -616,6 +632,19 @@ fn event_to_js(event: &client::Event) -> JsValue {
         Event::Paused { paused } => {
             set("kind", &JsValue::from_str("paused"));
             set("paused", &JsValue::from_bool(*paused));
+        }
+        Event::TicAnchor { tic, wall_ms } => {
+            set("kind", &JsValue::from_str("ticAnchor"));
+            set("tic", &JsValue::from_f64(*tic as f64));
+            set("wallMs", &JsValue::from_f64(*wall_ms));
+        }
+        Event::MoveIntent { macro_position, entity_reference, tile_x, tile_y, event_tic } => {
+            set("kind", &JsValue::from_str("moveIntent"));
+            set("macroPosition", &JsValue::from_f64(*macro_position as f64));
+            set("entityReference", &JsValue::from_f64(*entity_reference as f64));
+            set("tileX", &JsValue::from_f64(*tile_x as f64));
+            set("tileY", &JsValue::from_f64(*tile_y as f64));
+            set("eventTic", &JsValue::from_f64(*event_tic as f64));
         }
         Event::CallStats(stats) => {
             set("kind", &JsValue::from_str("callStats"));

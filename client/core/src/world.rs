@@ -37,6 +37,30 @@ pub fn place_program(entity: u32, tile_x: i32, tile_y: i32) -> Vec<u32> {
     vec![PROMOTE, PLACE, entity, tile_to_position(tile_x, tile_y)]
 }
 
+/// Decode a settled, promoted `event` row's program into [`Event::MoveIntent`]s — one per
+/// `MOVE_TO` instruction (`ACTIONS.md` §Movement: the intent channel clients speculate from).
+/// Non-movement actions in the program are simply skipped.
+pub fn move_intents(zone: u16, event_tic: u16, actions: &[u32]) -> Vec<Event> {
+    let mut out = Vec::new();
+    for inst in resonantdust_codec::action::program(actions) {
+        let Ok(inst) = inst else { break };
+        if inst.action != MOVE_TO {
+            continue;
+        }
+        if let [obj, dest] = inst.operands {
+            let (tile_x, tile_y) = position_to_tile(*dest);
+            out.push(Event::MoveIntent {
+                macro_position: zone,
+                entity_reference: *obj,
+                tile_x,
+                tile_y,
+                event_tic,
+            });
+        }
+    }
+    out
+}
+
 /// Decode a composed `state` row into the host-facing [`Event::StateObject`]. The row's `zone`
 /// (`macro_position_reference`) is carried through as-is — the render addresses zones by macro.
 /// `removed` marks a delete (a `StateGone`).

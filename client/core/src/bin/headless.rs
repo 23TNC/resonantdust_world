@@ -155,6 +155,10 @@ fn log_event(event: &Event) {
             info!(macro_position = format!("{macro_position:#06x}"), "zone closed")
         }
         Event::Paused { paused } => info!(paused, "simulation freeze changed"),
+        Event::TicAnchor { tic, wall_ms } => info!(tic, wall_ms, "tic estimate re-anchored"),
+        Event::MoveIntent { macro_position, entity_reference, tile_x, tile_y, event_tic } => {
+            info!(macro_position, entity_reference, tile_x, tile_y, event_tic, "move intent")
+        }
         // The web engine emits these for the webgl debug HUD; the headless driver
         // has no HUD, so there's nothing to log. `ClockSync` fires every couple of
         // seconds — logging it would drown the smoke test.

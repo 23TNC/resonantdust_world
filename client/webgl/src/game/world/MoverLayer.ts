@@ -10,14 +10,17 @@
 //! streaming, material reconstruction, coverage keying, and lighting + shadow all handled by the
 //! shared pipeline. This layer just SYNCS pawn state into warm prims; it owns no rendering.
 //!
-//! Unlike the old bespoke overlay-sprite path (a plain unlit sprite that couldn't key its own
-//! background or take light), the pawn now lives in world-space warm RTs: added on first sight,
-//! moved/turned in place as the pawn walks (a warm re-bake at higher-than-cold priority), and
-//! dropped on `removed` or its zone closing. The viewport composites warm OVER cold and lights
-//! the merged G-buffer, so the wolf lights + shadows like the world.
+//! **Movement is SPECULATED** (first-pawns P3, `ACTIONS.md` §Movement): a promoted
+//! {@link MoveIntent} announces `entity → dest` once; per-hop state never fans out. Each frame
+//! ({@link tick}) the layer walks the pawn fractionally along the server's OWN stepping rule
+//! (greedy straight line, e/w-first facing) at {@link ticsPerTile}, driven by the client's
+//! wall↔tic estimate — so the wolf GLIDES between tiles with zero per-hop bandwidth.
+//! Authoritative `State` rows snap/reseed the speculation and log the observed error (F8 —
+//! the data the re-anchor cadence will be tuned on); `ZoneClosed` drops it.
 
 import type { Texture } from "../../gl";
-import type { WasmClient, StateObject } from "../../client/WasmClient";
+import type { WasmClient, StateObject, MoveIntent } from "../../client/WasmClient";
+import { ticsPerTile } from "../../client/WasmClient";
 import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
 import type { PackedChannel } from "../viewport/material";
@@ -29,6 +32,10 @@ import { placeThing, readLayout } from "./thingPlacement";
  *  pawns/things paint front-over-back. */
 const PAWN_Z_BASE = 1;
 
+/** Speculation applies a new position only past this tile delta — keeps the warm re-bake
+ *  cadence proportional to actual motion, not the frame rate. */
+const SPEC_APPLY_EPS = 1 / 32;
+
 /** A well-distributed 32-bit hash → `[0, 1)` — a stable per-instance material seed from the
  *  pawn's `entityReference`, so instances differ without the noise pattern swimming as it walks. */
 function hash01(a: number): number {
@@ -37,11 +44,53 @@ function hash01(a: number): number {
   return ((a ^ (a >>> 16)) >>> 0) / 4294967296;
 }
 
-/** One live pawn: its warm prim id + zone (so a zone close drops it) and the last-synced spec
- *  (so an unchanged state update skips the warm re-bake). */
+/** A live movement speculation: walk from the last authoritative tile toward the intent's dest,
+ *  `progress = ticDelta(eventTic) / ticsPerTile` steps along the greedy line. */
+interface Spec {
+  fromX: number;
+  fromY: number;
+  destX: number;
+  destY: number;
+  /** The tic `fromX/fromY` was authoritative at — progress measures from here. */
+  eventTic: number;
+  ticsPerTile: number;
+  /** Last applied fractional tile, to skip sub-epsilon re-bakes. */
+  appliedX: number;
+  appliedY: number;
+}
+
+/** The server's stepping rule, mirrored EXACTLY (worker `apply` MOVE_TO): `p` fractional greedy
+ *  steps from `(fx,fy)` toward `(dx,dy)`; facing from the active step, e/w winning diagonals. */
+function walkGreedy(
+  fx: number, fy: number, dx: number, dy: number, p: number,
+): { x: number; y: number; facing: number; done: boolean } {
+  let cx = fx;
+  let cy = fy;
+  let facing = dx > cx ? 1 : dx < cx ? 3 : dy > cy ? 0 : 2;
+  let remaining = p;
+  for (;;) {
+    const sx = Math.sign(dx - cx);
+    const sy = Math.sign(dy - cy);
+    if (sx === 0 && sy === 0) return { x: cx, y: cy, facing, done: true };
+    facing = sx > 0 ? 1 : sx < 0 ? 3 : sy > 0 ? 0 : 2;
+    if (remaining < 1) {
+      return { x: cx + sx * remaining, y: cy + sy * remaining, facing, done: false };
+    }
+    cx += sx;
+    cy += sy;
+    remaining -= 1;
+  }
+}
+
+/** One live pawn: its warm prim id + zone (so a zone close drops it), the last-synced spec
+ *  (so an unchanged update skips the warm re-bake), the last AUTHORITATIVE tile (speculation's
+ *  seed), and the live speculation, if any. */
 interface Mover {
   id: number;
   macroPosition: number;
+  kind: number;
+  authX: number;
+  authY: number;
   x: number;
   y: number;
   texName: string | undefined;
@@ -50,6 +99,10 @@ interface Mover {
   tint: number;
   geoColor: number;
   zIndex: number;
+  spec: Spec | null;
+  /** The freshest intent tic ever armed — dedups replayed/duplicate `event` deliveries even
+   *  after the spec cleared (zone re-subscribes replay history — first-pawns I2). */
+  lastIntentTic: number | null;
 }
 
 export class MoverLayer {
@@ -69,6 +122,7 @@ export class MoverLayer {
   ) {
     this.refreshTables();
     this.unsubs.push(client.onStateObject((obj) => this.onStateObject(obj)));
+    this.unsubs.push(client.onMoveIntent((intent) => this.onMoveIntent(intent)));
     // A zone leaving the subscription sends no per-entity delete, so drop its movers.
     this.unsubs.push(client.onZoneClosed((macroPosition) => this.onZoneClosed(macroPosition)));
   }
@@ -84,6 +138,24 @@ export class MoverLayer {
     this.unsubs.length = 0;
     for (const m of this.movers.values()) this.viewport.warmRemovePrim(m.id);
     this.movers.clear();
+  }
+
+  /** Per-frame: advance every live speculation along its greedy line at the tic estimate. */
+  tick(): void {
+    for (const [key, m] of this.movers) {
+      const s = m.spec;
+      if (!s) continue;
+      const d = this.client.ticDelta(s.eventTic);
+      if (d === null || d < 0) continue; // the move is still in the estimated future
+      const p = walkGreedy(s.fromX, s.fromY, s.destX, s.destY, d / s.ticsPerTile);
+      if (Math.abs(p.x - s.appliedX) < SPEC_APPLY_EPS && Math.abs(p.y - s.appliedY) < SPEC_APPLY_EPS) {
+        continue;
+      }
+      s.appliedX = p.x;
+      s.appliedY = p.y;
+      this.applyVisual(m, key, m.kind, p.x, p.y, p.facing, m.macroPosition);
+      // Arrived speculatively — hold at dest; the authoritative final State clears the spec.
+    }
   }
 
   // ── internals ───────────────────────────────────────────────────────
@@ -112,37 +184,110 @@ export class MoverLayer {
     return bound ? channels : undefined;
   }
 
+  /** A promoted move intent: start (or retarget) the entity's speculation from its last
+   *  authoritative tile. An intent for a pawn we haven't seen yet is dropped — its seed `State`
+   *  arrives on the same settle and reseeds everything. */
+  private onMoveIntent(intent: MoveIntent): void {
+    const m = this.movers.get(intent.entityReference);
+    if (!m) return;
+    const tpt = ticsPerTile(m.kind);
+    // The `event` table replays HISTORY on subscribe (no retention yet — first-pawns I2), and
+    // deliveries can arrive out of order — so guard: no clock ⇒ can't speculate; an intent whose
+    // move must already be over ⇒ the authoritative rows carry the outcome; an intent serially
+    // older than the live spec ⇒ superseded. Only a fresh, live intent arms speculation.
+    const d = this.client.ticDelta(intent.eventTic);
+    if (d === null) return;
+    const span = Math.max(Math.abs(intent.tileX - m.authX), Math.abs(intent.tileY - m.authY));
+    if (d > (span + 2) * tpt) return; // finished long ago — stale replay
+    if (m.lastIntentTic !== null && ((((intent.eventTic - m.lastIntentTic) & 0xffff) << 16) >> 16) <= 0) {
+      return; // a duplicate delivery or a serially older intent — superseded
+    }
+    m.lastIntentTic = intent.eventTic;
+    console.debug(
+      `[mover] intent armed entity=${intent.entityReference.toString(16)} dest=(${intent.tileX},${intent.tileY}) tic=${intent.eventTic} d=${d.toFixed(1)}`,
+    );
+    m.spec = {
+      fromX: m.authX,
+      fromY: m.authY,
+      destX: intent.tileX,
+      destY: intent.tileY,
+      eventTic: intent.eventTic,
+      ticsPerTile: tpt,
+      appliedX: m.authX,
+      appliedY: m.authY,
+    };
+  }
+
   private onStateObject(obj: StateObject): void {
     const key = obj.entityReference;
     if (obj.removed) {
       this.remove(key);
       return;
     }
-    // Content kind → sprite. A placed pawn carries `definitionReference` 0 (no definition verb
-    // yet), so fall back to the first thing kind so a mover still renders + moves; real per-pawn
-    // sprites arrive when `CREATE` (or a definition verb) plumbs the kind through.
+    // Content kind → sprite. A legacy-placed pawn carries `definitionReference` 0 (`PLACE` has
+    // no def operand), so fall back to the first thing kind; `CREATE`-minted pawns carry the
+    // real kind and render their own sprite.
     const kind =
       obj.definitionReference >= 1 && obj.definitionReference <= this.thingStems.length
         ? obj.definitionReference
         : 1;
 
-    // Position comes straight from the event's GLOBAL tile now (no zone/location decode). tint +
-    // geoColor still come from the kind's visual (moverPrim, whose tile output we ignore).
-    const tileX = obj.tileX;
-    const tileY = obj.tileY;
-    const prim = this.content.moverPrim(obj.macroPosition, 0, kind);
+    const m = this.movers.get(key);
+
+    // F8 — the authoritative row corrects speculation: log the observed error (the data the
+    // re-anchor cadence is tuned on), then snap. The final tile clears the spec; an interim
+    // authoritative resolve (another event touched the pawn) reseeds it.
+    if (m?.spec) {
+      const s = m.spec;
+      const err = Math.max(Math.abs(s.appliedX - obj.tileX), Math.abs(s.appliedY - obj.tileY));
+      if (obj.tileX === s.destX && obj.tileY === s.destY) {
+        console.debug(
+          `[mover] spec landed e=${err.toFixed(2)} tiles entity=${key.toString(16)} tic=${obj.tic}`,
+        );
+        m.spec = null;
+      } else {
+        console.debug(
+          `[mover] spec reseed e=${err.toFixed(2)} tiles entity=${key.toString(16)} tic=${obj.tic}`,
+        );
+        s.fromX = obj.tileX;
+        s.fromY = obj.tileY;
+        s.eventTic = obj.tic;
+        s.appliedX = obj.tileX;
+        s.appliedY = obj.tileY;
+      }
+    }
+
+    if (m) {
+      m.authX = obj.tileX;
+      m.authY = obj.tileY;
+      m.kind = kind;
+    }
+    this.applyVisual(m ?? null, key, kind, obj.tileX, obj.tileY, obj.facing, obj.macroPosition);
+  }
+
+  /** Create or mutate the pawn's warm prim at (possibly fractional) global tile `(tileX, tileY)`
+   *  with `facing`. The shared path for authoritative rows AND per-frame speculation. */
+  private applyVisual(
+    m: Mover | null,
+    key: number,
+    kind: number,
+    tileX: number,
+    tileY: number,
+    facing: number,
+    macroPosition: number,
+  ): void {
+    const prim = this.content.moverPrim(macroPosition, 0, kind);
     const tint = prim[2];
     const geoColor = prim[3];
 
     // Facing (+ west flip) from the entity's facing; variant is a stable per-entity pick.
     const stem = this.thingStems[kind - 1];
-    const tex = thingTexture(stem, obj.facing, obj.entityReference, /* mover */ true);
+    const tex = thingTexture(stem, facing, key, /* mover */ true);
     const box = placeThing(tileX, tileY, readLayout(this.thingLayout, kind), tex.flipX, !tex.name);
     const { x, y } = box;
     const size = box.width; // square box; used for warm prim width/height
     const zIndex = PAWN_Z_BASE + box.zRow;
 
-    let m = this.movers.get(key);
     if (!m) {
       const id = this.viewport.warmAddPrim({
         texture: this.viewport.white, // fallback texture is unused for a textureName-d prim (channels resolve by name)
@@ -156,11 +301,14 @@ export class MoverLayer {
         tint,
         geoColor,
         packed: this.packedFor(kind),
-        seed: hash01(obj.entityReference),
+        seed: hash01(key),
         zIndex,
       });
       this.movers.set(key, {
-        id, macroPosition: obj.macroPosition, x, y, texName: tex.name, cell: tex.cell, flipX: tex.flipX, tint, geoColor, zIndex,
+        id, macroPosition, kind, authX: tileX, authY: tileY,
+        x, y, texName: tex.name, cell: tex.cell, flipX: tex.flipX, tint, geoColor, zIndex,
+        spec: null,
+        lastIntentTic: null,
       });
       return;
     }
@@ -168,7 +316,7 @@ export class MoverLayer {
     // Existing pawn: skip the warm re-bake when nothing that affects the bake changed.
     if (
       m.x === x && m.y === y && m.texName === tex.name && m.cell === tex.cell &&
-      m.flipX === tex.flipX && m.tint === tint && m.geoColor === geoColor && m.macroPosition === obj.macroPosition
+      m.flipX === tex.flipX && m.tint === tint && m.geoColor === geoColor && m.macroPosition === macroPosition
     ) {
       return;
     }
@@ -184,7 +332,7 @@ export class MoverLayer {
       p.zIndex = zIndex;
       this.viewport.warmRefreshPrim(m.id);
     }
-    m.macroPosition = obj.macroPosition;
+    m.macroPosition = macroPosition;
     m.x = x; m.y = y; m.texName = tex.name; m.cell = tex.cell; m.flipX = tex.flipX;
     m.tint = tint; m.geoColor = geoColor; m.zIndex = zIndex;
   }

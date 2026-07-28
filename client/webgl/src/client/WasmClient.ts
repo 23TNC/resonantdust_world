@@ -11,7 +11,9 @@
 //! The chat / call-stat / sub-stat hooks are still inert stubs the ported UI
 //! reaches for; they return no-op unsubscribes until those subsystems return.
 
-import { WorldClient } from "./wasm";
+import { WorldClient, ticHz, ticsPerTile } from "./wasm";
+
+export { ticHz, ticsPerTile };
 import { assetBaseFromServerUrl } from "./environments";
 
 /** Shared render delay `D`, in ms. Every client renders the world as of
@@ -159,6 +161,19 @@ export interface StateObject {
 /** A state object changed — upsert or drop it. */
 export type StateObjectHandler = (obj: StateObject) => void;
 
+/** A promoted movement INTENT (`ACTIONS.md` §Movement): `entityReference` is heading to global
+ *  tile `(tileX, tileY)`, its first hop composed at `eventTic`. Clients SPECULATE position from
+ *  this — per-hop state never fans out. */
+export interface MoveIntent {
+  macroPosition: number;
+  entityReference: number;
+  tileX: number;
+  tileY: number;
+  eventTic: number;
+}
+
+export type MoveIntentHandler = (intent: MoveIntent) => void;
+
 const NOOP_UNSUB = (): void => { /* nothing subscribed */ };
 
 /** How long to wait for login to complete (gateway resolve + connect + auth)
@@ -199,6 +214,15 @@ type WorldEvent =
     }
   | { kind: "zoneClosed"; macroPosition: number }
   | { kind: "paused"; paused: boolean }
+  | { kind: "ticAnchor"; tic: number; wallMs: number }
+  | {
+      kind: "moveIntent";
+      macroPosition: number;
+      entityReference: number;
+      tileX: number;
+      tileY: number;
+      eventTic: number;
+    }
   | { kind: "callStats"; stats: CallStat[] }
   | { kind: "subStats"; open: number; total: number; tables: SubStat[] }
   | {
@@ -269,8 +293,15 @@ export class WasmClient {
   private readonly pausedCbs = new Set<(paused: boolean) => void>();
   private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
   private readonly subStatCbs = new Set<(snap: SubStatsSnapshot) => void>();
+  private readonly moveIntentCbs = new Set<MoveIntentHandler>();
+  /** The wall↔tic anchor (first-pawns P3) — the freshest wire tic and the wall time it arrived.
+   *  Fractional deltas extrapolate by {@link ticHz}; null until any state/event arrives. */
+  private ticAnchor: { tic: number; wallMs: number } | null = null;
 
-  constructor(private gatewayUrl: string) {}
+  constructor(private gatewayUrl: string) {
+    // Debug hook, same convention as `__viewport` — lets the console probe ticDelta/anchors.
+    (globalThis as unknown as { __client: WasmClient }).__client = this;
+  }
 
   /** Repoint the client at a different gateway HTTP base (the login screen's
    *  Server dropdown does this before each attempt). The live wasm client is
@@ -514,6 +545,23 @@ export class WasmClient {
     return () => this.stateObjectCbs.delete(cb);
   }
 
+  /** Subscribe to promoted movement INTENTS (`ACTIONS.md` §Movement — the channel speculation
+   *  walks on; per-hop state never fans out). Returns an unsubscribe. */
+  onMoveIntent(cb: MoveIntentHandler): () => void {
+    this.moveIntentCbs.add(cb);
+    return () => this.moveIntentCbs.delete(cb);
+  }
+
+  /** Fractional tics elapsed NOW since wire tic `t` (serial — correct across the u16 wrap;
+   *  negative = `t` is still in the estimated future). `null` until any state/event has
+   *  anchored the estimate. The speculation clock (first-pawns P3). */
+  ticDelta(t: number): number | null {
+    if (!this.ticAnchor) return null;
+    const serial = (((this.ticAnchor.tic - t) & 0xffff) << 16) >> 16; // sign-extend i16
+    // Same timebase as the engine's anchor stamp (`js_sys::Date::now`), NOT performance.now().
+    return serial + ((Date.now() - this.ticAnchor.wallMs) / 1000) * ticHz();
+  }
+
   /** ChatPanel feed subscription. The protocol carries no chat frames yet, so
    *  this never fires — wired for when the feed returns. */
   onChat(_cb: (messages: ChatMessage[]) => void): () => void {
@@ -667,6 +715,20 @@ export class WasmClient {
         break;
       case "paused":
         for (const cb of this.pausedCbs) cb(ev.paused);
+        break;
+      case "ticAnchor":
+        this.ticAnchor = { tic: ev.tic, wallMs: ev.wallMs };
+        break;
+      case "moveIntent":
+        for (const cb of this.moveIntentCbs) {
+          cb({
+            macroPosition: ev.macroPosition,
+            entityReference: ev.entityReference,
+            tileX: ev.tileX,
+            tileY: ev.tileY,
+            eventTic: ev.eventTic,
+          });
+        }
         break;
       case "callStats":
         for (const cb of this.callStatCbs) cb(ev.stats);

@@ -308,6 +308,10 @@ fn log_event(event: &Event) {
         Event::ColdThings { macro_position: zone_id, .. } => tracing::debug!(zone_id, "cold things"),
         Event::ZoneClosed { macro_position: zone_id } => tracing::debug!(zone_id, "zone closed"),
         Event::Paused { paused } => tracing::debug!(paused, "paused"),
+        Event::TicAnchor { tic, wall_ms } => tracing::debug!(tic, wall_ms, "tic re-anchor"),
+        Event::MoveIntent { macro_position: zone, entity_reference, tile_x, tile_y, event_tic } => {
+            tracing::info!(zone, entity_reference, tile_x, tile_y, event_tic, "move intent")
+        }
         Event::ColdState { .. } | Event::CallStats(_) | Event::SubStats { .. } | Event::ClockSync(_) => {}
     }
 }
