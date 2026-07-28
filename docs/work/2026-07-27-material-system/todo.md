@@ -17,8 +17,8 @@ no-material bake bit-identical (readback hash of the albedo + normal composites)
 
 ## P2 — the seed lane
 
-- [ ] Ratify `u8 seed` in `billboard_data` B bits 0–7 (of the u14 reserved) in `docs/VARIABLES.md` FIRST ([F3](forks.md#f3)). Acceptance: VARIABLES row updated; `bin/rd docs-check` green.
-- [ ] Stamp the lane in `coldShadowData`'s billboard record write from `cellSeed(tx, ty)` quantised to u8; the bake's `uSeed` reads the SAME value (one source). Acceptance: two adjacent same-kind trees show different variation; identical across reloads.
+- [x] Ratify `u8 seed` in `billboard_data` B bits 0–7 (of the u14 reserved) in `docs/VARIABLES.md` FIRST ([F3](forks.md#f3)). Acceptance: VARIABLES row updated; `bin/rd docs-check` green.
+- [x] Stamp the lane in `coldShadowData`'s billboard record write from `cellSeed(tx, ty)` quantised to u8; the bake's `uSeed` reads the SAME value (one source). Acceptance: two adjacent same-kind trees show different variation; identical across reloads.
 
 ## P3 — normal detail in the bake
 

@@ -666,7 +666,9 @@ export class SquareCache {
       const [nrows, uvTile, worldTile] = this.noiseGlobals;
       this.bake.setNoiseGlobals(nrows, uvTile, worldTile);
       this.bake.setWorldRect(prim.x, prim.y, prim.width, prim.height);
-      this.bake.setSeed(prim.seed ?? 0);
+      // material-system P2: the bake consumes the SAME u8-quantised seed the billboard_data record
+      // stamps (VARIABLES B bits 0–7) — one source, bit-agreeing on both sides.
+      this.bake.setSeed(Math.floor((prim.seed ?? 0) * 255) / 255);
       this.bake.setNormal(normalR.normal?.rgb?.source ?? null, normalR.normal?.rgb?.uvRect());
       this.bake.setTileDepth(depthR.depth ?? -1);
       const model = this.primModel(prim, wcOrigin, wrOrigin);

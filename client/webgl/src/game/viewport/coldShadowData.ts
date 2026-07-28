@@ -517,11 +517,15 @@ export class ColdShadowData {
     // billboard's authored offsets up its carrier chain — a no-op while carriers are roots and the
     // offsets are the bias-8 zero, and correct the moment either stops being true.
     const r = this.resolveCarried(prim, OFFSET_ZERO, OFFSET_ZERO, false, true, 0);
+    // material-system P2: the u8 SEED lane (VARIABLES `billboard_data.B` bits 0–7) — the object's
+    // material-variance seed, quantised from the deterministic cellSeed the placement supplied.
+    // Stamped here AND consumed by the bake at the same quantisation, so record and bake agree.
+    const seed8 = Math.floor((billboard.seed ?? 0) * 255) & 0xff;
     const leafChanged = this.writeRecord(BILLBOARD_DATA_BASE + idx,
       ((((prim & 0xffff) << 16) | (((r.pos >>> 8) & 0xff) << 8) | (r.pos & 0xff)) >>> 0),
       ((((rotation & 3) << 26) | ((r.hot ? 1 : 0) << 25) | ((r.cast ? 1 : 0) << 24)
         | ((r.z & 0xff) << 16) | (OFFSET_ZERO << 8) | OFFSET_ZERO) >>> 0),
-      (((defIndex & 0xffff) << 16) >>> 0), 0);
+      ((((defIndex & 0xffff) << 16) | seed8) >>> 0), 0);
     return { idx, changed: primChanged || leafChanged };
   }
 

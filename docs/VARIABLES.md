@@ -506,13 +506,19 @@ position**; GREEN keeps the **authored** offsets (the durable relative placement
 R  u32   u16 parent_id (16–31) | u8 resolved_tile (8–15) | u8 resolved_unit (0–7)
 G  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 hot_cold (25) | u1 cast_shadows (24)
          | u8 z_offset (16–23) | u8 tile_offset (8–15) | u8 unit_offset (0–7)
-B  u32   u16 definition_id (16–31) | u2 last_lod (14–15) | u14 reserved (0–13)
+B  u32   u16 definition_id (16–31) | u2 last_lod (14–15) | u6 reserved (8–13) | u8 seed (0–7)
 A  u32   u32 reserved
 ```
 `last_lod` — the lod this billboard was **last baked at**. A mismatch against the live lod means the def is
 stale and wants swapping; the swap rides the existing billboard dirty cascade. "Last" is correct here
 because billboards are **re-baked, not accumulated** — there is nothing to invert, so no history is needed.
 Contrast `light_data.coarsest_lod`, which is a different question with a different answer.
+
+`seed` (2026-07-27, [material-system](work/2026-07-27-material-system/README.md) P2) — the object's
+material-variance seed, `cellSeed(tx, ty)` quantised to u8: DETERMINISTIC from the world cell, so two
+adjacent same-kind objects differ while each is pinned to where it stands across reloads. The CPU
+stamps it at record write and the bake consumes the same value (one source); it lives in the record
+so any future GPU consumer reads the identical seed.
 
 No `resolved_zone`: `billboard_presence` is a **containment** relation (a billboard is bucketed into the
 tiles its footprint covers), so the fragment's own tile pins it — nearest-congruent is exact for any
