@@ -53,6 +53,38 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+/// Resolve a thing's def id from the world server's `/content` corpus — the SAME corpus the
+/// browser renders with (first-pawns F5: content is the authority; a pinned `KIND_*` constant
+/// drifts the moment `things.rd` reorders). The payload is `{ "rd": [[name, source], …] }`,
+/// loaded with the shared DSL and answered by `thing_object_id`.
+async fn resolve_thing_def(server_url: &str, name: &str) -> Result<u16, String> {
+    // The login hands back the WS endpoint (`ws://host:port/ws`); the corpus lives on the same
+    // server's HTTP side. Swap the scheme and drop the `/ws` path.
+    let base = server_url
+        .replacen("ws://", "http://", 1)
+        .replacen("wss://", "https://", 1);
+    let base = base.trim_end_matches('/').trim_end_matches("/ws").trim_end_matches('/');
+    let url = format!("{base}/content");
+    let body: serde_json::Value = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("GET {url}: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("{url}: bad JSON: {e}"))?;
+    let rd = body["rd"].as_array().ok_or_else(|| format!("{url}: no `rd` array"))?;
+    let sources: Vec<(String, String)> = rd
+        .iter()
+        .filter_map(|pair| {
+            Some((pair.get(0)?.as_str()?.to_string(), pair.get(1)?.as_str()?.to_string()))
+        })
+        .collect();
+    let bundle = resonantdust_dsl::loader::load(&sources)
+        .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))?;
+    bundle
+        .thing_object_id(name)
+        .ok_or_else(|| format!("thing `{name}` not in the corpus"))
+}
+
 /// The stable `entity_reference` an npc addresses a wolf by. Client-minted (no shard round-trip):
 /// the server byte is `TYPE_PAWN` (server id 0), the object reference is `index + 1`. The npc keeps
 /// these so it can move each wolf later. (Client-chosen ids work until `CREATE`'s minted-id claim
@@ -71,6 +103,9 @@ struct Bot {
     /// set, the driver stops issuing commands — the sim isn't advancing, so there's nothing to
     /// react to and its moves would just queue behind the freeze.
     paused: bool,
+    /// The world server this session logged into (from [`Event::LoggedIn`]) — the base URL its
+    /// `/content` corpus is fetched from (the def-id authority, first-pawns F5).
+    server_url: Option<String>,
 }
 
 impl Bot {
@@ -81,7 +116,7 @@ impl Bot {
         let client = Client::spawn(config, move |event: Event| {
             let _ = ev_tx.send(event);
         });
-        let mut bot = Bot { client, events, paused: false };
+        let mut bot = Bot { client, events, paused: false, server_url: None };
         if bot.client.login(name).is_err() {
             tracing::error!("client engine failed to start");
             return None;
@@ -90,7 +125,8 @@ impl Bot {
         while let Some(event) = bot.events.recv().await {
             log_event(&event);
             match event {
-                Event::LoggedIn { player_id, .. } => {
+                Event::LoggedIn { player_id, ref server_url, .. } => {
+                    bot.server_url = Some(server_url.clone());
                     tracing::info!(player_id, %name, "npc logged in");
                     return Some(bot);
                 }
@@ -203,6 +239,17 @@ async fn main() {
 /// logged into the same world sees the pack place and move — the phase-4 end-to-end check.
 async fn wildlife(mut bot: Bot, rng: &mut Rng) {
     let move_ms: u64 = env_or("MOVE_MS", "1000").parse().unwrap_or(1000);
+
+    // Resolve the wolf's def id from the server's corpus (F5 — content is the authority).
+    // Best-effort here: the legacy place/move path below doesn't carry a def yet (CREATE does,
+    // in the wolves-brain); resolving + logging it proves npc and content agree on one value.
+    match &bot.server_url {
+        Some(url) => match resolve_thing_def(url, "wolf").await {
+            Ok(def) => tracing::info!(def, "wolf def resolved from the content corpus"),
+            Err(err) => tracing::warn!(%err, "wolf def resolution failed"),
+        },
+        None => tracing::warn!("no server url captured at login; skipping def resolution"),
+    }
 
     // Anchor at the zone's origin corner so its shard connects and streams before we spawn.
     bot.anchor_and_wait(0, 0, ZONE, Duration::from_secs(5)).await;

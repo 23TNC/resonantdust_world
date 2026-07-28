@@ -9,7 +9,7 @@ deterministic cut.
 Pipeline (defaults in brackets):
 
     generate SIZE [1024] --> optional greyscale --> downscale to GRID*(TILE+OVERLAP) [4*93]
-      --> cut GRID x GRID [4x4] blocks --> wrap each into a TILE [63] px toroidal tile
+      --> cut GRID x GRID [4x4] blocks --> wrap each into a TILE [62] px toroidal tile
       --> pad each by PAD [1] px of WRAPPED edge  (cell = TILE + 2*PAD = 64)
       --> assemble one sprite map --> textures/<kind path>/<variant>/<map>.<dir>.<part>.png
 
@@ -142,31 +142,43 @@ def _mincut(cost):
         path[y-1] = path[y] + back[y, path[y]]
     return path
 
-def _join(a, b, feather=2.0):
-    """Merge two overlapping strips (H, o[, C]): starts as `a`, ends as `b`, cut where they agree."""
-    d = np.abs(a.astype(np.float64) - b.astype(np.float64))
-    if d.ndim == 3: d = d.mean(2)
-    path = _mincut(d)
-    xs = np.arange(d.shape[1], dtype=np.float64)[None, :]
+def _blend(a, b, path, feather=2.0):
+    """Merge two overlapping strips along a GIVEN cut path: starts as `a`, ends as `b`."""
+    xs = np.arange(a.shape[1], dtype=np.float64)[None, :]
     m = np.clip((xs - path[:, None] + 0.5) / feather + 0.5, 0.0, 1.0)   # 0 -> a, 1 -> b
     if a.ndim == 3: m = m[..., None]
     return (a * (1.0 - m) + b * m).round().astype(a.dtype)
 
-def _toroidal_axis(a, ov):
-    """(H, W[,C]) -> (H, W-ov[,C]) whose first column continues from its last.
+def _toroidal_axis(maps, ov):
+    """Each (H, W[,C]) -> (H, W-ov[,C]) whose first column continues from its last.
 
     The output is [ join(right_strip, left_strip) | interior ]. Its last column is the source
     column just before `right_strip`, and its first column IS the first column of `right_strip` —
     so the wrap point is a join the source already made. The join then walks back to the left
-    strip, which meets the interior at the source's own column `ov`. Both ends continuous."""
-    W = a.shape[1]
-    band = _join(a[:, W-ov:], a[:, :ov])
-    return np.concatenate([band, a[:, ov:W-ov]], axis=1)
+    strip, which meets the interior at the source's own column `ov`. Both ends continuous.
+
+    `maps` travel together and are cut along ONE path, derived from maps[0]. Companion maps must
+    never choose their own: a layers map cut on its own error surface would take a different route
+    through the band than the albedo did, and every pixel between the two routes would carry one
+    material's tint over the other material's colour."""
+    W = maps[0].shape[1]
+    d = np.abs(maps[0][:, W-ov:].astype(np.float64) - maps[0][:, :ov].astype(np.float64))
+    if d.ndim == 3: d = d.mean(2)
+    path = _mincut(d)
+    return [np.concatenate([_blend(m[:, W-ov:], m[:, :ov], path), m[:, ov:W-ov]], axis=1)
+            for m in maps]
 
 def make_toroidal(a, ov):
-    """(n+ov, n+ov[,C]) -> (n, n[,C]) tiling cleanly against itself on both axes."""
-    a = _toroidal_axis(a, ov)
-    return _toroidal_axis(a.swapaxes(0, 1), ov).swapaxes(0, 1)
+    """(n+ov, n+ov[,C]) -> (n, n[,C]) tiling cleanly against itself on both axes.
+
+    Pass a LIST to carry companion maps (layers, normal, ...) through the identical cut; the
+    geometry is decided by the first and every map is sliced the same way. Returns whatever kind
+    it was given."""
+    one = not isinstance(a, (list, tuple))
+    maps = [a] if one else list(a)
+    maps = _toroidal_axis(maps, ov)
+    maps = [m.swapaxes(0, 1) for m in _toroidal_axis([m.swapaxes(0, 1) for m in maps], ov)]
+    return maps[0] if one else maps
 
 def feature_size(t):
     """Dominant feature width in px: first zero-crossing of the horizontal autocorrelation.
@@ -214,8 +226,33 @@ def flatten_field(a, radius, amount=1.0):
     gain = 1.0 + (gain - 1.0) * amount
     return np.clip(f * (gain[..., None] if f.ndim == 3 else gain), 0, 255).astype(a.dtype)
 
+def split_plane(rgb, dirn, part):
+    """Run `art split_layers` on the WHOLE plane; returns (residual_rgb, layers_rgb, tints).
+
+    On the whole plane, never per tile. The split clusters colours in the chroma plane to decide
+    which material owns which channel, so splitting each 62px tile on its own would let tile A put
+    grass in R and tile B put grass in G — the sheet would tint into confetti. One split for the
+    sheet fixes the assignment once, and the cut then carries both maps through together."""
+    import subprocess, tempfile, shutil
+    with tempfile.TemporaryDirectory() as d:
+        Image.fromarray(rgb, "RGB").save(os.path.join(d, f"albedo.{dirn}.{part}.png"))
+        r = subprocess.run([sys.executable, os.path.join(HERE, "split_layers.py"), "--normalize", d],
+                           capture_output=True, text=True)
+        lp = os.path.join(d, f"layers.{dirn}.{part}.png")
+        if r.returncode != 0 or not os.path.exists(lp):
+            tail = (r.stderr.strip().splitlines() or ["no layers produced"])[-1]
+            raise SystemExit(f"generate-tile: split_layers failed — {tail[:200]}")
+        res = np.asarray(Image.open(os.path.join(d, f"albedo.{dirn}.{part}.png")).convert("RGB"))
+        lay = np.asarray(Image.open(lp).convert("RGB"))
+        tints = []
+        mp = os.path.join(d, "meta.json")
+        if os.path.exists(mp):
+            tints = json.load(open(mp)).get("channel_tints", [])
+        return res, lay, tints
+
 # ---------------------------------------------------------------- cutting
-def cut_tiles(img, grid, tile, pad, seamless="cell", ov=16, flatten=1.0, match_cells=False):
+def cut_tiles(img, grid, tile, pad, seamless="cell", ov=16, flatten=1.0, match_cells=False,
+              companion=None):
     """Downscale, cut into grid*grid tiles, pad each for atlas bleed.
 
     `seamless` picks what wraps:
@@ -229,19 +266,26 @@ def cut_tiles(img, grid, tile, pad, seamless="cell", ov=16, flatten=1.0, match_c
     the bleed guard must wrap too. Replicating there would contradict the continuity we just built,
     at exactly the boundary the sampler reaches for."""
     mode = "wrap" if seamless in ("cell", "sheet") else "edge"
+    # `companion` rides along untouched by flatten (a layers map holds material weights, not
+    # light) but is resized and cut in exact lockstep with the albedo.
+    def prep(px):
+        a = flatten_field(np.asarray(img.resize((px, px), Image.LANCZOS)), tile, flatten)
+        if companion is None: return [a]
+        return [a, np.asarray(Image.fromarray(companion, "RGB").resize((px, px), Image.LANCZOS))]
+
     if seamless == "cell":
         blk = tile + ov
-        a = flatten_field(np.asarray(img.resize((grid*blk, grid*blk), Image.LANCZOS)), tile, flatten)
-        raw = [make_toroidal(a[gy*blk:(gy+1)*blk, gx*blk:(gx+1)*blk], ov)
+        ms = prep(grid*blk)
+        raw = [make_toroidal([m[gy*blk:(gy+1)*blk, gx*blk:(gx+1)*blk] for m in ms], ov)
                for gy in range(grid) for gx in range(grid)]
     else:
         n = grid * tile
-        m = n + (ov if seamless == "sheet" else 0)
-        a = flatten_field(np.asarray(img.resize((m, m), Image.LANCZOS)), tile, flatten)
+        ms = prep(n + (ov if seamless == "sheet" else 0))
         if seamless == "sheet":
-            a = make_toroidal(a, ov)
-        raw = [a[gy*tile:(gy+1)*tile, gx*tile:(gx+1)*tile]
+            ms = make_toroidal(ms, ov)
+        raw = [[m[gy*tile:(gy+1)*tile, gx*tile:(gx+1)*tile] for m in ms]
                for gy in range(grid) for gx in range(grid)]
+    raw, comp = [r[0] for r in raw], [r[1] for r in raw] if companion is not None else None
     if match_cells:
         # A uniform offset shifts both edges of a tile equally, so self-tiling is untouched
         # (measured: seam energy 0.94 before and after). What it costs is real material variety —
@@ -250,9 +294,10 @@ def cut_tiles(img, grid, tile, pad, seamless="cell", ov=16, flatten=1.0, match_c
         tgt = float(np.mean([np.asarray(t, np.float64).mean() for t in raw]))
         raw = [np.clip(np.asarray(t, np.float64) + (tgt - np.asarray(t, np.float64).mean()),
                        0, 255).astype(t.dtype) for t in raw]
-    if pad <= 0:
-        return raw
-    return [np.pad(t, ((pad, pad), (pad, pad)) + ((0, 0),) * (t.ndim - 2), mode=mode) for t in raw]
+    def guard(ts):
+        if pad <= 0: return ts
+        return [np.pad(t, ((pad, pad), (pad, pad)) + ((0, 0),) * (t.ndim - 2), mode=mode) for t in ts]
+    return guard(raw) if comp is None else (guard(raw), guard(comp))
 
 def sheet_from(cells, grid, cell_px):
     """Assemble cells into one grid x grid sprite map."""
@@ -280,6 +325,9 @@ def main():
     ap.add_argument("--tile", type=int, default=62, help="tile content px (default 62 -> 64 with pad, the quadtree packer's cell)")
     ap.add_argument("--pad", type=int, default=1, help="bleed-guard border px per side, wrapped (default 1 -> 64px cells)")
     ap.add_argument("--colour", action="store_true", help="keep RGB (default: greyscale for tinting)")
+    ap.add_argument("--layers", action="store_true",
+                    help="also split the plane into a channel-packed layers map (implies --colour), "
+                         "so each material can be tinted per biome instead of the whole tile at once")
     ap.add_argument("--lora", default=None)
     ap.add_argument("--lora-strength", type=float, default=0.85)
     ap.add_argument("--cfg", type=float, default=6.0)
@@ -301,6 +349,7 @@ def main():
     args = ap.parse_args()
 
     import random
+    if args.layers: args.colour = True
     seed0 = args.seed if args.seed is not None else random.randint(1, 2**31 - 1)
     kind = args.kind.strip("/")
     out_root = os.path.join(REPO, "textures", kind)
@@ -337,8 +386,16 @@ def main():
                          seed, args.size))
         full = Image.open(io.BytesIO(raw)).convert("RGB")
         src = full if args.colour else to_grey(full)
-        cells = cut_tiles(src, args.grid, args.tile, args.pad, args.seamless, ov,
-                          args.flatten, args.match_cells)
+        companion, tints = None, []
+        if args.layers:
+            plane = np.asarray(src.convert("RGB"))
+            resid, companion, tints = split_plane(
+                flatten_field(plane, max(8, int(args.tile * args.size / down)), args.flatten),
+                args.dirn, args.part)
+            src = Image.fromarray(resid, "RGB")      # the residual becomes the render base
+        out = cut_tiles(src, args.grid, args.tile, args.pad, args.seamless, ov,
+                        0.0 if args.layers else args.flatten, args.match_cells, companion)
+        cells, lay_cells = out if args.layers else (out, None)
         sheet = sheet_from(cells, args.grid, cell)
         # unpadded content is what repeats; measure the seam on that, not on the bleed guard
         inner = [c[args.pad:c.shape[0]-args.pad, args.pad:c.shape[1]-args.pad] if args.pad else c
@@ -360,6 +417,12 @@ def main():
                        "match_cells": args.match_cells,
                        "seam_energy": round(sum(se)/len(se), 3), "feature_size": round(fs, 1),
                        "cell_brightness_spread": round(max(mu)-min(mu), 1)}, f, indent=2)
+        if lay_cells is not None:
+            sheet_from(lay_cells, args.grid, cell).save(
+                os.path.join(leaf, texpath.map_name("layers", args.dirn, args.part)))
+            with open(os.path.join(leaf, "meta.json"), "w") as f:
+                json.dump({"channel_tints": tints}, f)
+            print(f"    layers: {len(tints)} material(s) {tints} -> layers map beside the albedo")
         if args.keep_full:
             full.save(os.path.join(leaf, f"source.{args.dirn}.{args.part}.png"))
         print(f"  wrote {os.path.relpath(outp, REPO)}  ({sheet.size[0]}x{sheet.size[1]}, "

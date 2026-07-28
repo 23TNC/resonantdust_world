@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use spacetimedb_sdk::{DbContext, Table as _};
 
-use resonantdust_codec::action::{self, Route, INIT_ZONE, MOVE_TO, PLACE, PROMOTE, SET};
+use resonantdust_codec::action::{self, Route, CREATE, INIT_ZONE, MOVE_TO, PLACE, PROMOTE, SET};
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, kind_pos_ref_data,
     kind_pos_ref_kind_reference, kind_pos_ref_tile, pack_position_reference, position_macro, position_micro,
@@ -36,7 +36,7 @@ use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED};
 use resonantdust_codec::tic::{tic_after, tic_before};
 use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
 use data_shard::{write as _, EntityStateLogTableAccess as _};
-use pawn::{write as _, EntityStateLogTableAccess as _};
+use pawn::{spawn as _, write as _, EntityStateLogTableAccess as _};
 use event_shard::{complete as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
 // P4: the worker also composes cold rows — the **baseline** (`INIT_ZONE` → `write`) and the **overlay**
@@ -493,8 +493,46 @@ async fn main() {
                 }
             }
 
+            // ── SPAWN (CREATE) ── each `CREATE` mints server-side via the pawn shard's idempotent
+            // `spawn` (`ACTIONS.md` §CREATE): `(event, index)` keys the replay ledger, so a re-pass
+            // re-calls harmlessly. The minted id is not an operand — nothing claimed it and nothing
+            // else this tic can reference it. A failed call defers the whole tic (like a write).
+            let mut create_zones: HashMap<u32, Vec<u16>> = HashMap::new();
+            let mut spawn_failed = false;
+            for (event_reference, actions) in &events {
+                let mut pending_promote = false;
+                let mut index: u16 = 0;
+                for inst in action::program(actions) {
+                    let Ok(inst) = inst else { break };
+                    match inst.action {
+                        PROMOTE => {
+                            pending_promote = true;
+                            continue;
+                        }
+                        CREATE => {
+                            if let [def, pos] = inst.operands {
+                                if let Err(err) = pawn
+                                    .reducers()
+                                    .spawn(self_ref, t, *event_reference, index, *def, *pos, pending_promote)
+                                {
+                                    tracing::warn!(%err, tic = t, "spawn failed — will retry next pass");
+                                    spawn_failed = true;
+                                }
+                                create_zones.entry(*event_reference).or_default().push(position_macro(*pos));
+                                index += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    pending_promote = false;
+                }
+            }
+            if spawn_failed {
+                continue;
+            }
+
             // ── COMPLETE ── each event, with the zones its targets ended up in (a hot target's zone from
-            // its composed position; a cold_row's from its address).
+            // its composed position; a cold_row's from its address; a CREATE's from its spawn position).
             for (event_reference, actions) in &events {
                 let mut zones: Vec<u16> = Vec::new();
                 if let Ok(w) = action::write_targets(actions) {
@@ -506,6 +544,11 @@ async fn main() {
                         if !zones.contains(&z) {
                             zones.push(z);
                         }
+                    }
+                }
+                for z in create_zones.get(event_reference).into_iter().flatten() {
+                    if !zones.contains(z) {
+                        zones.push(*z);
                     }
                 }
                 if let Err(err) = event.reducers().complete(*event_reference, zones) {
@@ -561,7 +604,8 @@ fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut Has
             }
             // SET is a **cold overlay** verb (targets a cold_row, not a hot entity) — composed as a
             // whole overlay row in the tic loop (`collect_cold_overlay` + `write_overlay`), not here.
-            // CREATE (deferred — no claimed slot), PROMOTE_EVENT (latched at queue), NONE: no scratch effect.
+            // CREATE mints via the pawn shard's `spawn` in the tic loop (no scratch — the minted id
+            // is not an operand). PROMOTE_EVENT (latched at queue), NONE: no scratch effect.
             _ => {}
         }
         pending_promote = false; // any non-PROMOTE action consumes the prefix

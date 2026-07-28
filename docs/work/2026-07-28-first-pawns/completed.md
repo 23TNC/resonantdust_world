@@ -67,3 +67,37 @@ shows it rendered (green def-0 fallback box, casting a shadow) beside the torch 
 Also recorded [I1](issues.md): a shard republish silently orphans connected SDK clients —
 restart the sim trio after any republish (the first compose after the redeploy wrote into the
 void; sim-self-heal territory).
+
+## 2026-07-28 · P1 — CREATE: server-minted pawns, event-driven
+
+TABLES.md first (`## pawn` section: `spawn_log` PK `reserved:16|event:32|index:16`,
+`spawn_counter` module-internal; docs-check green). The pawn module gained the spawn machinery:
+`spawn(worker, tic, event, index, def, position, promote)` — replay-ledger check → mint
+(counter starts at `SPAWN_BASE = 0x800000`, the TOP half of the object space, so server ids
+never meet the legacy client-minted band) → first `entity_state_log` row (absolute,
+`dirty=false`) → promote upsert, one transaction, reusing the macro's own `TargetState` +
+`entity_tables_upsert_state` (the macro expands into module scope). Verified: two identical
+`spawn` calls → ONE `spawn_log` row + ONE pawn (id `0x30800000`).
+
+codec `CREATE` framing already existed (`&[Imm, Imm]`, write set excludes the minted id, test
+`create_target_is_not_in_the_write_set`) — acceptance run: 51/51 codec tests green in docker.
+
+Worker: a SPAWN pass in the tic loop (apply's arm stays no-scratch — the minted id is not an
+operand): scans each event's program with the PROMOTE-prefix state machine, calls `spawn` per
+`(event, index)`, defers the tic on failure (write pattern), and merges each CREATE's spawn
+zone into `complete`'s zones (a CREATE-only event previously completed with NO zones — found
+at build). Bindings regenerated (st-bindings + edge). Verified live: queued
+`[PROMOTE, CREATE, 458759, 6513408]` → spawn_log row keyed by the real event_reference
+(`0x50000005`) → minted `0x30800001`, `entity_state` promoted with the def + position.
+
+## 2026-07-28 · P1 — the wolf def id has ONE authority: the corpus
+
+F5 resolved as the lean: npc fetches the world server's `/content` (the WS login URL
+scheme-swapped to HTTP, `/ws` dropped — found live: reqwest rejects `ws://…/content`) and
+resolves `thing_object_id("wolf")` with the shared DSL — the SAME corpus the browser renders
+with. New npc deps: `resonantdust-dsl`, `reqwest` (core's no-TLS config), `serde_json`.
+`things.rd`'s two phantom `KIND_WOLF` comments rewritten (the constant never existed — the
+append rule + by-name resolution is the contract). Verified live: `rd build npc` green; a
+20 s run against the real gateway logs "wolf def resolved from the content corpus def=7"
+(wolf is 7th in `things.rd` — agreement BY CONSTRUCTION, nothing pinned). Runbook note: the
+npc container needs `--network host` (the gateway resolves the edge as `localhost:8473`).

@@ -25,3 +25,9 @@ client = { path = "../core" }
 # spawns with the same keys the client/edge/worker decode. Container path `../shared/codec` →
 # /shared/codec (matches `client`'s own transitive `../../shared/codec`).
 resonantdust-codec = { path = "../shared/codec" }
+# The content authority (first-pawns F5): the npc resolves the wolf's def id from the SAME
+# corpus the clients render with (fetched from the edge's `/content`), never a hardcoded
+# constant — `KIND_WOLF`-style pinned numbers drift the moment content reorders.
+resonantdust-dsl = { path = "../shared/dsl" }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde_json = "1"

@@ -138,6 +138,7 @@ writes `send_chat_message` · reads pixijs (via wasm core) — **not wired**, se
 | `chat` | `chat_retention` | scheduled retention sweep |
 | `index` | `gc_schedule` | scheduled stale server/pin reaping |
 | `event_shard` | `event_counter` | single row: the `++counter:24` for minting `event_reference` (private) |
+| `pawn` | `spawn_counter` | single row: the `++counter:24` for minting a pawn's `object_reference` (private) |
 
 ## `clock` — every shard's tic (mirror)
 
@@ -307,6 +308,32 @@ every target it touches — write targets and the read targets' rows both. The b
 invariant of the worker (our own code), the one place the store cannot cover. (The alternative is
 two-phase: write all tentative, verify all settled, then clear dirty — more round trips, enforceable
 without trusting the worker. We take "block correctly" while workers are our code.)
+
+## `pawn`
+
+`pawn` is **`entity_tables!{data:u8}`** — the hot mover pair for `TYPE_PAWN`, identical shape to
+[`data_shard`](#data_shard) (distinct database, same table names) — plus the spawn machinery for
+[`CREATE`](ACTIONS.md):
+
+### `spawn_log` — replay-idempotent minted ids (public)
+
+| column | type | key | notes |
+|---|---|---|---|
+| `spawn_uid` | `u64` | PK | `reserved:16 \| event_reference:32 \| index:16` |
+| `event_reference` | `u32` | idx | the `CREATE`-carrying event |
+| `index` | `u16` | | which `CREATE` within that event's program (composition order) |
+| `entity_reference` | `u32` | | the minted pawn id (`TYPE_PAWN` server byte · `spawn_counter`) |
+
+writes `spawn` · reads `spawn` (replay) — the worker's `CREATE` arm calls `spawn`, nothing else.
+
+**`spawn` is the one-transaction spawn** (first-pawns F4): keyed by `(event_reference, index)` —
+if the `spawn_log` row exists the call is a replay and returns without minting; else it mints
+from `spawn_counter`, records the `spawn_log` row, writes the pawn's first `entity_state_log`
+row (absolute, `dirty=false`), and — given the `PROMOTE` bit — upserts `entity_state`, all in
+one reducer transaction. A 32-bit `event_reference` can't derive a 24-bit `object_reference`,
+which is why the id is recorded, not computed (`ACTIONS.md` §`CREATE`).
+
+`spawn_counter` is module-internal (see [Module-internal](#module-internal)).
 
 ### Not shaped yet
 

@@ -33,19 +33,19 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P1 · `CREATE` — server-minted pawns
 
-- [ ] TABLES.md FIRST: `spawn_log` on the pawn shard — `(event_reference, index) → minted
+- [x] TABLES.md FIRST: `spawn_log` on the pawn shard — `(event_reference, index) → minted
       entity_reference` — plus the mint counter (`ACTIONS.md` §CREATE). Acceptance:
       `bin/rd docs-check` green.
-- [ ] pawn module: an idempotent `spawn` reducer — mint + `entity_state_log` write + `spawn_log`
+- [x] pawn module: an idempotent `spawn` reducer — mint + `entity_state_log` write + `spawn_log`
       record in ONE transaction; a replay returns the recorded id, no re-mint (F4). Acceptance:
       calling twice with one `(event, index)` leaves exactly one pawn.
-- [ ] codec: `CREATE` framing — arity 2, the minted target is NOT an operand (conflict-free
+- [x] codec: `CREATE` framing — arity 2, the minted target is NOT an operand (conflict-free
       singleton at grouping); write/read-set tests. Acceptance: codec tests green (in-docker
       cargo test).
-- [ ] worker: the `CREATE` arm calls `spawn` with def + position + the pending PROMOTE bit.
+- [x] worker: the `CREATE` arm calls `spawn` with def + position + the pending PROMOTE bit.
       Acceptance: queue `[PROMOTE, CREATE, def_wolf, pos]` → new pawn `entity_state` with
       `definition_reference` = wolf, plus its `spawn_log` row.
-- [ ] Resolve the wolf def id for npc (F5) and fix `content/data/things.rd`'s phantom
+- [x] Resolve the wolf def id for npc (F5) and fix `content/data/things.rd`'s phantom
       `KIND_WOLF` comment. Acceptance: npc + content agree on one authoritative value;
       docs-check green.
 

@@ -44,7 +44,8 @@
     ; scattered cold thing: it's a mobile shard entity spawned + wandered by the
     ; npc bot. This def exists only to give the client its visual by kind
     ; (object_id); worldgen never references `wolf`, so it's never seeded as terrain.
-    ; Kept last so its object_id stays a stable append (see KIND_WOLF in the npc).
+    ; Appended so its object_id stays stable; consumers resolve it from THIS corpus
+    ; by name (`thing_object_id("wolf")` — the npc fetches `/content`), never a pinned constant.
     ::wolf>
         :data>
             @define>
@@ -52,7 +53,7 @@
             @on_create>
                 0 return
     ; The torch — the world's first LIGHT-EMITTING kind. Appended after `wolf` so no
-    ; existing object_id renumbers (`wolf`'s must not move — the npc pins KIND_WOLF).
+    ; existing object_id renumbers (ids are positional; stability is the append rule).
     ; Scattered sparsely by worldgen; the light itself is authored on the VISUAL side
     ; (`&thing.light.*`), because emission is a presentation, not simulation state.
     ::torch>
