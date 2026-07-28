@@ -39,6 +39,15 @@ const HISTORY_SAMPLE_INTERVAL_FRAMES = 30;
  *  doesn't jitter on every frame-time hiccup. */
 const FPS_SMOOTHING = 0.05;
 
+/** Frame deltas kept for the Frame tab's distribution — 240 samples is ~4 s at
+ *  60 fps: long enough that p99 means something, short enough to still read as
+ *  "now" when the scene changes. */
+const FRAME_WINDOW = 240;
+/** A frame counts as a HITCH past this multiple of the window median. 2× is one
+ *  whole dropped frame at a steady rate — the point where motion visibly jumps
+ *  rather than merely varying. */
+const HITCH_FACTOR = 2;
+
 /** Format a unix-ms timestamp as `mm:ss.sss` within the current hour.
  *  Drops the high-order date/hour digits that would overflow the
  *  panel's column width and aren't useful for visual comparison
@@ -343,6 +352,34 @@ export class DebugPanel {
   // where tiles actually load/render.
   private readonly mainCoords:     HTMLSpanElement;
 
+  // ── Frame tab values ────────────────────────────────────────────
+  // Frame PACING, not throughput. Average fps hides the thing that makes motion
+  // look wrong: a steady 60 fps and a 60 fps that alternates 8 ms / 25 ms read
+  // identically on the fps row, but the second makes every mover stutter, because
+  // a speculating entity advances by `dt` and an uneven `dt` is uneven motion.
+  // So these rows report the DISTRIBUTION of the frame delta.
+  private readonly frmFps:         HTMLSpanElement;
+  private readonly frmLast:        HTMLSpanElement;
+  /** Mean and median of the window. A mean well above the median means a few long
+   *  frames are dragging it — the signature of hitching rather than slowness. */
+  private readonly frmMean:        HTMLSpanElement;
+  /** Standard deviation of the frame delta: THE jitter number. Under vsync a
+   *  healthy frame loop sits near 1 ms; several ms means the pacing is uneven
+   *  regardless of what the fps row says. */
+  private readonly frmJitter:      { value: HTMLSpanElement; canvas: HTMLCanvasElement };
+  /** p95 / p99 — the tail an average cannot show. */
+  private readonly frmTail:        HTMLSpanElement;
+  private readonly frmRange:       HTMLSpanElement;
+  /** Frames longer than {@link HITCH_FACTOR}× the window median: count and share.
+   *  A hitch is what a mover's position jumps across, so this is the row to watch
+   *  when something visibly stutters. */
+  private readonly frmHitch:       HTMLSpanElement;
+  private readonly frmDelta:       { value: HTMLSpanElement; canvas: HTMLCanvasElement };
+  /** Rolling window of frame deltas (ms), newest last, capped at
+   *  {@link FRAME_WINDOW}. Filled on every `setStats` whether the panel is open or
+   *  not, so opening it shows real history instead of starting blank. */
+  private readonly frameSamples: number[] = [];
+
   // ── Textures tab values ─────────────────────────────────────────
   private readonly texFps:         HTMLSpanElement;
   private readonly texDrawCalls:   HTMLSpanElement;
@@ -417,6 +454,7 @@ export class DebugPanel {
     });
 
     const mainContent     = document.createElement("div");
+    const frameContent    = document.createElement("div");
     const texturesContent = document.createElement("div");
     const syncContent     = document.createElement("div");
     const versionsContent = document.createElement("div");
@@ -436,6 +474,21 @@ export class DebugPanel {
     this.mainDrawCalls = this.addRow(mainContent, panelText("debugPanel", "drawCalls"));
     this.mainBandwidth = this.addRow(mainContent, "net (↓ · ↑)");
     this.mainCoords    = this.addRow(mainContent, "xy · reg · zone · tile");
+
+    // ── Frame tab — PACING, not throughput ────────────────────────
+    // Ordered so the eye falls through it: how fast (fps, last), how typical
+    // (mean/median), how EVEN (jitter, tail, range), how bad at worst (hitches).
+    // The two sparklines put a shape next to the numbers — a flat line with
+    // occasional spikes is hitching; a fuzzy band is chronic jitter, and those
+    // two have completely different causes.
+    this.frmFps    = this.addRow(frameContent, panelText("debugPanel", "fps"));
+    this.frmLast   = this.addRow(frameContent, panelText("debugPanel", "frameLast"));
+    this.frmMean   = this.addRow(frameContent, panelText("debugPanel", "frameMean"));
+    this.frmJitter = this.addGraphRow(frameContent, panelText("debugPanel", "frameJitter"));
+    this.frmTail   = this.addRow(frameContent, panelText("debugPanel", "frameTail"));
+    this.frmRange  = this.addRow(frameContent, panelText("debugPanel", "frameRange"));
+    this.frmHitch  = this.addRow(frameContent, panelText("debugPanel", "frameHitches"));
+    this.frmDelta  = this.addGraphRow(frameContent, panelText("debugPanel", "frameDelta"));
 
     // ── Textures tab — atlas / slot counts ────────────────────────
     // Atlas-page total, then a packed-texture count per power-of-two bucket, then

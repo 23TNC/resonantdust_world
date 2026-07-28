@@ -94,3 +94,12 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   ran outside its `if` guard, and `span_inferred` persisted stale because `meta.update` merges and
   cannot delete a key — the flag is now always written, so a leaf that stops being inferred loses
   the marker.
+- **2026-07-28 · P2.4 · The square now comes from `span`, not blob extent** — [I1](issues.md#i1)
+  closed. `_span_side <kind>` returns `span · TILE_PX` (conifer 256, empty for the wolf), and both
+  emit paths use it as `EMIT_SIDE` when the corpus authors one, keeping the measured pow2 box
+  otherwise. **Acceptance verified with a real counterfactual:** the conifer sheet was shrunk to
+  627² so its blob max fell to 160 px — `nearest_pow2(160) = 128`, so extent-driven sizing would
+  have emitted **128²** — and it still emitted **256²**, logging `canvas 256□ from the declared span
+  (blob max 160px)`. Art restored from backup afterwards (1254² sheet, 256² leaf, all 9 maps).
+  Note both paths needed it: the leaf path (`_remaster_leaf_sprites`) and the kind-level sheet path
+  (`_split_variant_sheet`), and conifer actually travels the latter.

@@ -24,7 +24,7 @@ edge a value, then teach the pipeline the footprint, then fix the atlas guard, t
 - [x] Decide and record where the footprint lives and who authors it. Acceptance: [F1](forks.md#f1) names the field, the file, and the rejected alternatives.
 - [x] Write `span` + the derived square into each leaf `meta.json` during remaster, per [I6](issues.md#i6). Acceptance: conifer variant 0 shows span 2 and square 256.
 - [x] Read the footprint from the corpus rather than re-authoring it, falling back when absent. Acceptance: deleting a def's `span` makes remaster warn and fall back to `_pow2_box`, not fail.
-- [ ] Size the emitted square from `span` instead of blob extent in `_emit_crops`. Acceptance: conifer emits 256² because span says so — verified by shrinking the blob and getting 256² still.
+- [x] Size the emitted square from `span` instead of blob extent in `_emit_crops`. Acceptance: conifer emits 256² because span says so — verified by shrinking the blob and getting 256² still.
 - [ ] Surface `tiles`/`span` through `tex_manifest.rs` beside `grid`/`pad`. Acceptance: the manifest entry for conifer carries the footprint.
 - [ ] Emit the manifest's required `cols`/`rows`/`padU`/`padV` from `generate_tile.py`, per [I8](issues.md#i8). Acceptance: `read_atlas_meta`'s logic accepts a freshly generated ground sheet, which it rejects today.
 - [ ] Write `tiles` into `atlas.json` for ground and linked sheets. Acceptance: ground reads `[8, 8]`, a linked form reads `[4, 4]`.
