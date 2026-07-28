@@ -46,6 +46,7 @@ uniform vec4 uNormalRect;
 uniform vec4 uChA[${PACKED_CHANNELS}];     // per channel: tint.rgb, hueSwing
 uniform vec4 uChB[${PACKED_CHANNELS}];     // per channel: chromaSwing, warmCoolBias, noiseRow, sampleSpace
 uniform vec4 uChC[${PACKED_CHANNELS}];     // material-system P1: detailRow, detailAmp, detailScale, placementMode
+uniform int uPlaceMode;                    // material-system P4: -1 = per-material; 0..3 = global A/B override
 uniform vec4 uNoiseParams;                 // x=atlas rows, y=uv tiling, z=world px per noise tile
 uniform vec4 uWorldRect;                   // xy = prim world origin px, zw = prim world size px
 uniform vec3 uTint;                        // albedo OUTPUT multiply (white real, geoColor solid)
@@ -68,43 +69,13 @@ void main() {
   float cov = texture(uSurface, uSurfaceRect.xy + vUV * uSurfaceRect.zw).b;
   if (cov < 0.5) discard;
 
-  // attachment 0: albedo (material reconstruction × tint)
-  vec3 base = texture(uResidual, uResidualRect.xy + vUV * uResidualRect.zw).rgb;
-  vec3 outc = base;
   // Per-instance noise offset — shared by the colour jitter AND the normal detail (one seed).
   vec2 instanceOffset = fract(vec2(sin(uSeed * 127.1 + 311.7), sin(uSeed * 269.5 + 183.3)) * 43758.5453);
-  vec3 layerWeights = vec3(0.0);
-  if (uHasLayers > 0.5) {
-    layerWeights = texture(uLayers, uLayersRect.xy + vUV * uLayersRect.zw).rgb;
-    vec3 weights = layerWeights;
-    for (int i = 0; i < ${PACKED_CHANNELS}; i++) {
-      vec4 A = uChA[i];
-      vec4 B = uChB[i];
-      vec3 tint = A.rgb;
-      float noiseRow = B.z;
-      vec2 nuv = B.w < 0.5
-        ? vUV * uNoiseParams.y + instanceOffset
-        : (uWorldRect.xy + vUV * uWorldRect.zw) / max(uNoiseParams.z, 1.0);
-      vec2 n = vec2(0.5);
-      if (noiseRow >= 0.0) {
-        float row = (noiseRow + fract(nuv.y)) / max(uNoiseParams.x, 1.0);
-        n = texture(uNoise, vec2(fract(nuv.x), row)).rg;
-      }
-      vec3 jit = jitterHueChroma(tint, n.r, n.g, A.a, B.x, B.y);
-      outc += weights[i] * jit;
-    }
-  }
-  oAlbedo = vec4(outc * uTint, 1.0);
+  vec3 layerWeights = uHasLayers > 0.5
+    ? texture(uLayers, uLayersRect.xy + vUV * uLayersRect.zw).rgb
+    : vec3(0.0);
 
-  // attachment 1: surface (R=presence, G=ao, B=coverage). Presence = tileDepth>=0.
-  // A MUST stay 1.0: bakes ALPHA-BLEND (prims composite over their tile's ground in the same
-  // composite), so an attachment's alpha is its BLEND FACTOR — writing data here multiplies the
-  // whole write by it. Learned the hard way (lighting-feel P3: A=0 collapsed world coverage to
-  // nothing). Spare DATA lanes live in attachments whose alpha stays 1 — the emissive relay rides
-  // oDepth.r below.
-  vec3 ssurf = texture(uSurface, uSurfaceRect.xy + vUV * uSurfaceRect.zw).rgb;
-  oSurface = vec4(uTileDepth >= 0.0 ? 1.0 : 0.0, ssurf.g, ssurf.b, 1.0);
-
+  // NORMAL first (material-system P4: colour placement mode 3 keys off the DETAILED normal).
   // attachment 2: normal (real, or flat-up) + per-channel MATERIAL DETAIL (material-system P3).
   // Generated normals are smooth ("plastic"); each layer channel may carry a tiling detail field
   // (uChC: row, amp, scale) RNM-blended on, weighted by the channel's layer weight so needle
@@ -132,6 +103,51 @@ void main() {
   }
   oNormal = vec4(nrm * 0.5 + 0.5, 1.0);
 
+  // attachment 0: albedo (material reconstruction × tint). COLOUR PLACEMENT (material-system P4,
+  // stream F1 — the user's open "where does the colour go?"): per channel, uChC.w picks the mode
+  // (uPlaceMode >= 0 overrides globally for the by-eye A/B):
+  //   0 = UV noise (rides the sprite)         1 = world noise (pinned to the ground)
+  //   2 = DETAIL-FIELD-KEYED (colour sampled from the SAME field/scale that carves the relief —
+  //       clumps cohere; the F1 lean)         3 = NORMAL-KEYED (hue varies with facet direction)
+  vec3 base = texture(uResidual, uResidualRect.xy + vUV * uResidualRect.zw).rgb;
+  vec3 outc = base;
+  if (uHasLayers > 0.5) {
+    for (int i = 0; i < ${PACKED_CHANNELS}; i++) {
+      vec4 A = uChA[i];
+      vec4 B = uChB[i];
+      vec4 C = uChC[i];
+      vec3 tint = A.rgb;
+      float noiseRow = B.z;
+      float mode = uPlaceMode >= 0 ? float(uPlaceMode) : C.w;
+      vec2 n = vec2(0.5);
+      if (mode >= 2.5) {
+        n = nrm.xy * 0.5 + 0.5;                          // 3: the detailed normal IS the field
+      } else if (mode >= 1.5 && C.x >= 0.0) {
+        vec2 duv = vUV * uNoiseParams.y * max(C.z, 1e-3) + instanceOffset;
+        float row = (C.x + fract(duv.y)) / max(uNoiseParams.x, 1.0);
+        n = texture(uNoise, vec2(fract(duv.x), row)).rg; // 2: the detail field, at its scale
+      } else if (noiseRow >= 0.0) {
+        vec2 nuv = mode >= 0.5
+          ? (uWorldRect.xy + vUV * uWorldRect.zw) / max(uNoiseParams.z, 1.0)
+          : vUV * uNoiseParams.y + instanceOffset;
+        float row = (noiseRow + fract(nuv.y)) / max(uNoiseParams.x, 1.0);
+        n = texture(uNoise, vec2(fract(nuv.x), row)).rg; // 0/1: the material's own field
+      }
+      vec3 jit = jitterHueChroma(tint, n.r, n.g, A.a, B.x, B.y);
+      outc += layerWeights[i] * jit;
+    }
+  }
+  oAlbedo = vec4(outc * uTint, 1.0);
+
+  // attachment 1: surface (R=presence, G=ao, B=coverage). Presence = tileDepth>=0.
+  // A MUST stay 1.0: bakes ALPHA-BLEND (prims composite over their tile's ground in the same
+  // composite), so an attachment's alpha is its BLEND FACTOR — writing data here multiplies the
+  // whole write by it. Learned the hard way (lighting-feel P3: A=0 collapsed world coverage to
+  // nothing). Spare DATA lanes live in attachments whose alpha stays 1 — the emissive relay rides
+  // oDepth.r below.
+  vec3 ssurf = texture(uSurface, uSurfaceRect.xy + vUV * uSurfaceRect.zw).rgb;
+  oSurface = vec4(uTileDepth >= 0.0 ? 1.0 : 0.0, ssurf.g, ssurf.b, 1.0);
+
   // attachment 3: zdepth_world (tile depth in B; ground = black). R relays the EMISSIVE mask
   // (lighting-feel P3): the leaf surface's reserved R channel, gated to REAL surface maps
   // (solid/geo materials bind fills whose R = 255 and must not glow). R was unused; alpha stays 1.
@@ -156,6 +172,9 @@ export class MrtBakeShader {
   private chA = new Float32Array(PACKED_CHANNELS * 4);
   private chB = new Float32Array(PACKED_CHANNELS * 4);
   private chC = new Float32Array(PACKED_CHANNELS * 4);
+  /** material-system P4: global colour-placement override for the by-eye A/B (`__material`);
+   *  -1 = per-material (the shipped default). */
+  placeMode = -1;
   private noiseParams = new Float32Array([1, 1, 128, 0]);
   private worldRect = new Float32Array([0, 0, 64, 64]);
   private tint = new Float32Array([1, 1, 1]);
@@ -242,7 +261,8 @@ export class MrtBakeShader {
     p.uVec4("uNormalRect", this.normalRect[0], this.normalRect[1], this.normalRect[2], this.normalRect[3]);
     p.uVec4Array("uChA", this.chA);
     p.uVec4Array("uChB", this.chB);
-    p.uVec4Array("uChC", this.chC); // silently no-op until the shader consumes it (P3)
+    p.uVec4Array("uChC", this.chC);
+    p.uInt("uPlaceMode", this.placeMode);
     p.uVec4("uNoiseParams", this.noiseParams[0], this.noiseParams[1], this.noiseParams[2], this.noiseParams[3]);
     p.uVec4("uWorldRect", this.worldRect[0], this.worldRect[1], this.worldRect[2], this.worldRect[3]);
     p.uVec3("uTint", this.tint[0], this.tint[1], this.tint[2]);

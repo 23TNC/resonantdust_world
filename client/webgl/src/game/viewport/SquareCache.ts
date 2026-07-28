@@ -290,6 +290,11 @@ export class SquareCache {
     this.noiseGlobals = [rows, uvTile, worldTile];
   }
 
+  /** material-system P4: the global colour-placement override (-1 = per-material). */
+  setPlaceMode(m: number): void {
+    this.bake.placeMode = m;
+  }
+
   displayComposite(key: string): Texture | null {
     const ch = this.channels.find((c) => c.key === key);
     return ch?.buf?.textures[0] ?? null;

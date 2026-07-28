@@ -130,6 +130,16 @@ export class Viewport {
       if (s !== undefined) this.aoStrength = s;
       return this.aoStrength;
     };
+    // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
+    // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
+    (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {
+      const m = mode ?? -1;
+      this.map.setPlaceMode(m);
+      this.warm.setPlaceMode(m);
+      this.map.invalidateAll();
+      this.warm.invalidateAll();
+      return m;
+    };
     // DEBUG (lighting-feel P3): emissive strength — __emissive(0) = off (the A/B).
     (globalThis as unknown as { __emissive: (b?: number) => number }).__emissive = (b?: number) => {
       if (b !== undefined) this.emissiveBoost = b;

@@ -115,12 +115,14 @@ export class MaterialRegistry {
       chB[base + 1] = d?.warmCoolBias ?? 0;
       chB[base + 2] = d?.noiseFieldIndex ?? NO_NOISE_FIELD;
       chB[base + 3] = d?.sampleSpace ?? 0;
-      // chC (material-system P1): (detail field row, detail amp, detail scale, placement mode).
-      // Mode 0 = UV until F1's by-eye pick lands (P4).
+      // chC (material-system P1/P4): (detail field row, detail amp, detail scale, placement mode).
+      // Mode default (F1 lean): DETAIL-FIELD-KEYED (2) when the material carries a detail field —
+      // colour and relief share one cause; else the material's authored sampleSpace (0 uv / 1 world).
+      const hasDetail = (d?.detailFieldIndex ?? NO_NOISE_FIELD) >= 0 && (d?.detailAmp ?? 0) > 0;
       chC[base] = d?.detailFieldIndex ?? NO_NOISE_FIELD;
       chC[base + 1] = d?.detailAmp ?? 0;
       chC[base + 2] = d?.detailScale ?? 1;
-      chC[base + 3] = 0;
+      chC[base + 3] = hasDetail ? 2 : (d?.sampleSpace ?? 0);
     }
     return { chA, chB, chC };
   }

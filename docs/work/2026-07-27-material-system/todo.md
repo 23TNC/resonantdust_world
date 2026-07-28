@@ -28,8 +28,8 @@ no-material bake bit-identical (readback hash of the albedo + normal composites)
 
 ## P4 — colour placement (the user's open question)
 
-- [ ] Implement placement modes (a) UV / (b) world (exist) / (c) detail-field-keyed / (d) normal-keyed behind the per-channel mode uniform + a live `__material(mode)` override. Acceptance: switching modes re-bakes visibly differently at area1.
-- [ ] Produce the A/B set: one screenshot per mode on the conifer, same seed, presented for the user's pick; ship default (c) meanwhile. Acceptance: 4 screenshots in completed.md; [F1](forks.md#f1) records the verdict when given.
+- [x] Implement placement modes (a) UV / (b) world (exist) / (c) detail-field-keyed / (d) normal-keyed behind the per-channel mode uniform + a live `__material(mode)` override. Acceptance: switching modes re-bakes visibly differently at area1.
+- [x] Produce the A/B set: one screenshot per mode on the conifer, same seed, presented for the user's pick; ship default (c) meanwhile. Acceptance: 4 screenshots in completed.md; [F1](forks.md#f1) records the verdict when given.
 
 ## P5 — the conifer pine-needle material
 
