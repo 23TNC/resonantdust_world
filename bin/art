@@ -132,6 +132,17 @@ nearest_pow2() {
 # The normalized master canvas for a w×h content blob (content + its padding
 # border): echoes "SIDE SIDE". The box is a SQUARE whose side is the nearest power
 # of 2 to the LARGER of w/h — driving off the long axis so the content always fits.
+# The pow2 square a kind's DECLARED span demands, in px — `span * TILE_PX`, or empty when the
+# corpus does not author one. This is the fix for the pipeline sizing textures by blob extent: a
+# conifer landing in 256 was its blob happening to agree with its span, not the span being read.
+# Empty output means "fall back" — the caller keeps its measured pow2 box (stream F5).
+_span_side() {  # kind_rel  (e.g. biome-thing/default/conifer)
+  command -v python3 >/dev/null || return 1
+  local sp
+  sp=$(RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/def_span.py" "$1" 2>/dev/null) || return 1
+  [[ -n "$sp" ]] && echo $(( sp * ${RD_TILE_PX:-128} ))
+}
+
 _pow2_box() {
   local w=$1 h=$2 side s
   side=$(( w > h ? w : h ))
@@ -1765,8 +1776,20 @@ _remaster_leaf_sprites() {  # src_kind
     (( h > maxdim )) && maxdim=$h
   done < <(find "$src_kind" -type f -name 'sprite.*.png' -print0 | sort -z)
   if (( maxdim < 1 )); then LAST_TOTAL=0; return; fi
-  # Pass 2: shared canvas + common scale for the whole kind.
-  local side; side=$(nearest_pow2 "$maxdim")
+  # Pass 2: shared canvas + common scale for the whole kind. The canvas is the kind's DECLARED
+  # span when the corpus authors one — the square is a content decision, not a property of how
+  # big this particular blob happened to be drawn — and the measured pow2 box only when it does
+  # not. The common scale (EMIT_MAXDIM) is unchanged either way, so the kind's directions keep
+  # their relative sizes inside whichever canvas is chosen.
+  local side declared kind_rel
+  kind_rel=${src_kind#"$MASTER_DIR/"}
+  declared=$(_span_side "$kind_rel" || true)
+  if [[ -n "$declared" ]]; then
+    side=$declared
+    echo "    $kind_rel: canvas ${side}□ from the declared span (measured would be $(nearest_pow2 "$maxdim")□)"
+  else
+    side=$(nearest_pow2 "$maxdim")
+  fi
   EMIT_SIDE=$side; EMIT_MAXDIM=$maxdim
   local i
   for i in "${!sps[@]}"; do
@@ -1929,8 +1952,25 @@ _split_variant_sheet() {  # sheet_png gap
       rm -f "$d/diffuse.$dir.$layer.png"; echo "    pruned stale variant $n/diffuse.$dir.$layer.png"
     fi
   done
+  # Size every variant's canvas from the kind's DECLARED span when the corpus authors one. Without
+  # this the canvas is each blob's own nearest pow2 box, i.e. the square is decided by how large the
+  # art happened to be drawn — which is how a conifer reached 256 by luck (stream I1). The common
+  # scale is the kind's max blob dim, so the variants keep their relative sizes inside the canvas.
+  local _decl _kr _mx=0 _g _bw _bh
+  _kr=${kind_dir#"$MASTER_DIR/"}
+  _decl=$(_span_side "$_kr" || true)
+  if [[ -n "$_decl" ]]; then
+    for _g in "${CROP_GEOMS[@]}"; do
+      _bw=${_g%%x*}; _bh=${_g#*x}; _bh=${_bh%%+*}
+      (( _bw > _mx )) && _mx=$_bw
+      (( _bh > _mx )) && _mx=$_bh
+    done
+    EMIT_SIDE=$_decl; EMIT_MAXDIM=$_mx
+    echo "    $_kr: canvas ${_decl}□ from the declared span (blob max ${_mx}px)"
+  fi
   _key_stack "$sheet"; EMIT_BLEED=1            # magenta despill + edge-bleed, like any diffuse
   _emit_crops "$sheet" "${KEY_STACK[@]}"
+  EMIT_SIDE=0; EMIT_MAXDIM=0                   # back to per-blob for any later caller
   echo "    sprite.$dir.$layer -> $ncount variant(s) [$dir l$layer] into $(basename "$kind_dir")/{0..$((ncount-1))}/"
   LAST_TOTAL=$LAST_COUNT
 }
