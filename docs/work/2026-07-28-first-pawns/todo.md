@@ -63,23 +63,23 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 - [x] Cadence: `move_to_program` emits `[PROMOTE_EVENT, PROMOTE, MOVE_TO, obj, dest]`;
       continuations are BARE; the final hop carries `PROMOTE`. Acceptance: a 10-tile move fans
       exactly 1 `event` row + 2 `State` frames to a subscribed client — never 10.
-- [ ] Verify the intent path: `PROMOTE_EVENT` latch → `settle` → `event` rows (zones from
+- [x] Verify the intent path: `PROMOTE_EVENT` latch → `settle` → `event` rows (zones from
       `complete`) → edge `ServerMsg::Event` relay. Acceptance: the ws frame carrying the
       MOVE_TO program observed at a subscribed session.
 
 ## P3 · Clients speculate — the first time tic matters
 
-- [ ] client/core: a wall↔tic estimate — anchor `(tic, wall)` on every State/Event arrival,
+- [x] client/core: a wall↔tic estimate — anchor `(tic, wall)` on every State/Event arrival,
       extrapolate by `TIC_HZ`, refine continuously; exposed to hosts (native + wasm).
       Acceptance: estimate within ±1 tic of a fresh state arrival after 30 s running.
-- [ ] client/core: decode a relayed `event` MOVE_TO program into
+- [x] client/core: decode a relayed `event` MOVE_TO program into
       `Event::MoveIntent{entity, dest, event_tic}` (the engine currently DROPS
       `ServerMsg::Event`). Acceptance: webgl + npc both log the intent for a wolf move.
-- [ ] webgl `MoverLayer`: SPECULATE — walk the pawn fractionally from its last authoritative
+- [x] webgl `MoverLayer`: SPECULATE — walk the pawn fractionally from its last authoritative
       position toward dest at `tics_per_tile`, driven by the tic estimate per frame; facing from
       the hop direction. Acceptance: the wolf GLIDES between tiles; landing tile matches the
       final `State`.
-- [ ] Correction (F8): authoritative `State` snaps/reseeds the speculation; `ZoneClosed` drops
+- [x] Correction (F8): authoritative `State` snaps/reseeds the speculation; `ZoneClosed` drops
       it; record the observed error at each correction. Acceptance: logged error ≤1 tile in the
       quiet case, no oscillation at the destination.
 

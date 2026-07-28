@@ -139,3 +139,27 @@ tics 12060/63/66/69/72 — EXACT 3-tic spacing — walking micro 0x73→0x83→0
 eastward line), `data=64` (facing east) on every hop, **seed + final status 17
 (PROMOTE|PROMOTED), all middle hops status 0** — and exactly ONE intent row in `event`
 (zone 99). Per-hop state fan-out: none, by construction.
+
+## 2026-07-28 · P2+P3 — intent path, tic estimate, speculation: LIVE (one flaky link recorded)
+
+**Intent path:** `PROMOTE_EVENT` latch → settle → ONE `event` row per move (zone 99) → edge
+`ServerMsg::Event` → client `Event::MoveIntent` — observed end-to-end in the browser
+("[mover] intent armed dest=(107,51) tic=17724 d=4.7"). Delivery is FLAKY (absent/doubled at
+times — [I3](issues.md); server side proven clean; the npc soak is the reproduction tool).
+
+**Tic estimate:** `core::ticclock::TicEstimate` — max-implied-current-tic anchor rule, serial
+across the wrap, unit-tested; both engines observe every `state`/`event` arrival and emit
+sparse `Event::TicAnchor`; hosts extrapolate by `ticHz()` (wasm export of the codec
+authority). Verified live BEYOND the acceptance: a 90-second-old anchor predicted a fresh
+seed's tic dead-on (declined to re-anchor — already within jitter; the bar was ±1 tic
+after 30 s).
+
+**Speculation:** `MoveIntent` decode in both engines (they had DROPPED `ServerMsg::Event`);
+`MoverLayer.tick()` (from `WorldScene.update`) walks the pawn fractionally along `walkGreedy`
+— the server's stepping rule mirrored exactly, e/w-first facing — at `ticsPerTile` on the tic
+estimate; `placeThing` is linear so fractional tiles glide. Verified live: the wolf GLIDED
+(107,51)→(100,54) at exactly 2 tiles/s (51 px per 400 ms, diagonal-then-straight greedy
+shape, fractional coordinates), landing e=0.01 tiles, no snap-jump. F8: corrections snap +
+log error; stale-intent guards added ([I2](issues.md)): no-clock/finished/serially-older
+intents ignored, `lastIntentTic` dedups. When no intent arrives (I3) the pawn falls back to
+seed→final snapping — correctness rides state, exactly as designed.
