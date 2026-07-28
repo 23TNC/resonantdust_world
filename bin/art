@@ -3196,6 +3196,9 @@ cmd_generate_tile() {
   # tile DSL colours terrain by TINT ("white" texture + per-material tint), so one neutral sheet
   # serves grass/dirt/sand. Emits a sprite map on purpose — `art remaster` splits sheets into
   # per-variant leaves, so generated terrain enters the same re-mastering path as authored art.
+  # Tiles are made to wrap at CUT time (min-error boundary cut), not by asking the model for a
+  # seamless generation: the model can only wrap the whole 1024px plane, whereas the game repeats
+  # individual 63px cells, so the cut edges are the ones that have to join.
   # Delegates to lib/generate_tile.py. Needs a reachable ComfyUI (COMFYUI_URL).
   command -v python3 >/dev/null || { echo "art generate-tile: python3 not found" >&2; exit 1; }
   RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/generate_tile.py" "$@"
