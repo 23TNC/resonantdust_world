@@ -18,9 +18,9 @@ discriminated by RENDER TARGET, fixed frame count, phase from the frame index.
 
 ## P0 — Measure both costs separately, before changing anything
 
-- [ ] Record resident bytes per map family at `SQUARE = 64` from the live context, not from arithmetic. Acceptance: a table of art / lightmap / shadow / tile bytes whose total matches the browser's reported GPU memory within 10%.
-- [ ] Record the lighting-pass ms at `SQUARE = 64` over the orbit harness at reach 4/8/12. Acceptance: three numbers, each stable to ±0.01 ms across two runs.
-- [ ] Resize ONLY the lightmap RT to 4096×2048 (temporarily, `SQUARE` untouched) and re-measure. Acceptance: ms rises ~3–4×, confirming lightmap texels drive the lighting cost and art texels do not. Revert the resize.
+- [x] Record resident bytes per map family at `SQUARE = 64` from the live context, not from arithmetic. Acceptance: a table of art / lightmap / shadow / tile bytes whose total matches the browser's reported GPU memory within 10%.
+- [x] Record the lighting-pass ms at `SQUARE = 64` over the orbit harness at reach 4/8/12. Acceptance: three numbers, each stable to ±0.01 ms across two runs.
+- [x] Resize ONLY the lightmap RT to 4096×2048 (temporarily, `SQUARE` untouched) and re-measure. Acceptance: ms rises ~3–4×, confirming lightmap texels drive the lighting cost and art texels do not. Revert the resize.
 - [ ] Capture a zoom-1 crop of the wolf and one conifer as the before-image, and read back the wolf's atlas frame side in px. Acceptance: the frame side is recorded, so P3 can prove it doubled rather than assume it.
 
 ## P1 — Split the constant (no value change, must be a provable no-op)

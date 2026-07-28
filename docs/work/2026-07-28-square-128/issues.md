@@ -50,3 +50,36 @@ only possible because the effects were never actually coupled — just co-locate
 **Unverified until [P0](todo.md).** The MiB figures above are derived from texel counts and format
 sizes, not measured. P0 measures them, and [P3](todo.md) requires the README's table to be corrected to
 the measurement if it disagrees.
+
+## I3 — P0 measurement corrects the stream's own arithmetic, in both directions
+
+The README's cost table was derived from texel counts before anything was measured. Both halves were
+wrong, and interestingly not in the same direction.
+
+**`SLOTS × TEXTILE_SQUARE` sizes three maps, not one.** The A/B commit, the README and the plan all say
+"the lightmap". `fw/fh` actually allocates `coldLightRT` (rgba32float, 32 MiB), `hotLightRT` (32 MiB)
+**and** `receiverFineRT` (r32uint, 8 MiB) — 72 MiB at 64/tile, 288 MiB at 128/tile. Pinning
+`TEXTILE_LIGHT` therefore saves **216 MiB**, not ~48 MiB. The fine maps, not the art maps, were the
+dominant term in the A/B's "192 MiB freed".
+
+**The art family is 8 channels, not 4.** `VARIABLES.md` lists albedo/normal/surface/zdepth for
+`TEXTILE_SQUARE`; there is a complete **warm** duplicate of all four for movers (`__viewport.warm`), so
+the real footprint is 8 × 9.56 MiB. Raising `SQUARE` costs **+245 MiB**, not ~120 MiB.
+
+| | README claimed | measured / projected |
+|---|---|---|
+| saved by pinning the light dial | ~48 MiB | **216 MiB** |
+| paid by raising the art dial | ~120 MiB | **245 MiB** |
+| total at `SQUARE = 128`, pinned | not stated | **~420 MiB** |
+| total at `SQUARE = 128`, joined | not stated | **~636 MiB** |
+
+**This strengthens the stream's thesis and raises its price at the same time.** The split is worth 4.5×
+what was claimed, which is the whole argument for doing it — but ~420 MiB of resident maps is a real
+number and the honest one to hold P3 against. `VARIABLES.md` under-documents the art family by 2×
+([I1](issues.md) already covers the doc reckoning; this adds the warm row to P4's work).
+
+**A third consequence, unplanned:** `receiverFineRT` rides `TEXTILE_SQUARE` but is consumed by the
+*lighting* pass, not the display. It is receiver geometry sampled per lighting texel, so it belongs on
+`TEXTILE_LIGHT` with the lightmap — P1 must move all three, and the plan's wording ("the fine lightmap
+RT") names only one. Treated as a plan-wording defect, not a design change: moving it is required for the
+split to be a no-op.
