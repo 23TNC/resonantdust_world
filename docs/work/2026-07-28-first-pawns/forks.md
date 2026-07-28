@@ -11,15 +11,18 @@ wolves to a `pawn` table — OFF `data_shard`" — a new stamp, not a rename. Th
 would couple this stream to a routing audit it doesn't need. Retirement (delete, don't
 deprecate) is a recorded follow-on once nothing routes there.
 
-## F2 · Who steps the tiles — npc hops vs worker `MOVE_TO` chain
+## F2 · Who steps the tiles — RESOLVED BY THE USER (2026-07-28): the worker chains
 
-**Resolved: the npc issues adjacent-tile hops; the self-queueing chain stays tabled.** The
-user's brief is explicit: "the npc container will drive its movement between tiles … in
-anticipation of more advanced commands coming from npc." The worker's current one-step `MOVE_TO`
-is *correct* for an adjacent hop (one step toward dest = dest), so no worker change is needed
-for movement. The documented multi-tile chain + queue-at-future-tic + sparse promote cadence
-(`ACTIONS.md` §Movement) is future intent we build TOWARD — it arrives with advanced commands,
-and nothing in this stream forecloses it.
+**The npc asks A→B; the worker works out how.** First plan draft had the npc issuing
+adjacent-tile hops with the chain left tabled; the user corrected it: the npc issues one
+`MOVE_TO obj dest`, the worker steps a tile per hop and self-queues the continuation
+(queue-at-future-tic), the **intent** is broadcast to clients once (`PROMOTE_EVENT`), individual
+steps are NOT fanned out, clients **speculate** position from the intent on their tic estimate,
+and authoritative `state` corrects them at the destination — plus whenever the object's position
+is resolved as part of working out other events. This un-tables `ACTIONS.md` §Movement (rewritten
+in prefix vocabulary as part of P2). The end goal is a pathfinding move command; v1's step fn is
+a greedy straight line behind an explicit seam so pathfinding replaces one function, not the
+chain.
 
 ## F3 · How the npc learns the minted id
 
@@ -57,3 +60,22 @@ runbook; `bin/sim` already owns build-image, cargo cache, detached-run, logs, ps
 from `client/` rather than `server/`, so the crate list needs a path map — if that turns
 `bin/sim` inside out, fall back to a `run`-service in `client/npc/compose.yml` plus an `rd npc`
 wrapper.
+
+## F7 · Where `tics_per_tile` (speed) comes from
+
+**Leaning (resolve at build): a constant behind a per-def seam.** `ACTIONS.md` says speed is
+per-kind content — but the worker links no DSL and holds no content corpus (the same gap
+torch-thing I2 recorded for the `thing` module), and the CLIENT needs the identical value to
+speculate at the right rate. v1: one `tics_per_tile(definition_reference) -> u16` in
+`shared/codec` returning a constant, called by worker AND client — one authority, trivially
+replaced by a content lookup when the corpus-plumbing follow-on lands. Rejected: hardcoding at
+each call site (drifts — the speculation would walk at a different speed than the server).
+
+## F8 · Speculation correction policy
+
+**Resolved for v1: snap, and record the error.** When authoritative `state` disagrees with the
+speculated position, the client snaps to truth (and reseeds speculation if an intent is still
+live); `ZoneClosed` drops the speculation outright. Smooth error-blending and the
+re-anchor-every-N promote cadence are knobs that need DATA first — every correction logs its
+error magnitude so the follow-on tunes against measurements, not guesses. Rejected for v1:
+blending toward truth (hides real drift while we still need to see it).
