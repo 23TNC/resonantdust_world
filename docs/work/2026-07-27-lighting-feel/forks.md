@@ -34,9 +34,15 @@ exist per kind); (b) a separate emissive atlas page (own texture, resolver retur
 frame); (c) fold emissive INTO albedo at bake (pre-lit pixels) — rejected outright: emissive must
 survive the light multiply, that is its entire point.
 
-**Unresolved — resolve at execution** when the P0 audit shows how many kinds need it. Lean: (a)
-if a layers lane is genuinely spare (zero new memory), else (b) sized to emissive-carrying kinds
-only (flames are few).
+**RESOLVED at execution — none of the above: (d) the surface pipeline's reserved lane.** The
+surface LEAF's R channel ("height", always 0) carries the mask from `bin/art` to the client; the
+BAKE relays it into the DEPTH composite's unused R (`oDepth.r`); the blit reads it there. Zero new
+textures, zero new bakes. Two constraints discovered the hard way dictated the shape: the leaf's
+ALPHA is off-limits (the co-pack page uploads premultiplied for albedo — data in alpha corrupts
+RGB), and a composite attachment's ALPHA is its BLEND FACTOR, not storage (bakes alpha-blend prims
+over ground; writing a mask into surface-A collapsed world coverage to nothing — a full black-screen
+regression, caught and reverted the same session). The relay is GATED to real surface maps
+(`t.width > 1` at bind — solid/geo materials bind fills whose R = 255).
 
 ## F4 — particle shadowing {#f4}
 

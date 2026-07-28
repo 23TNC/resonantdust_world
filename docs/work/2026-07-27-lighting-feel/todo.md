@@ -25,11 +25,11 @@ GPU timing = the EXT_disjoint_timer_query harness from
 
 ## P3 — AO + emissive (sized by P0)
 
-- [ ] If the AO audit shows structure: multiply the blit's AMBIENT term by surface-G. Acceptance: A/B grounding under trees; if G is flat, record that and reroute to the next item.
-- [ ] bin/art: strengthen/bake AO into surface-G (Laigter param or a dedicated bake step), re-publish the corpus sample. Acceptance: the P0 audit re-run shows structure; A/B shows grounding.
-- [ ] bin/art: emit emissive leaves for lit kinds (torch flame first); resolver + co-pack carry them ([F3](forks.md#f3) resolves here); blit adds emissive AFTER the light multiply. Acceptance: the flame glows inside a shadowed area.
+- [x] If the AO audit shows structure: multiply the blit's AMBIENT term by surface-G. Acceptance: A/B grounding under trees; if G is flat, record that and reroute to the next item.
+- [x] bin/art: strengthen/bake AO into surface-G (Laigter param or a dedicated bake step), re-publish the corpus sample. Acceptance: the P0 audit re-run shows structure; A/B shows grounding.
+- [x] bin/art: emit emissive leaves for lit kinds (torch flame first); resolver + co-pack carry them ([F3](forks.md#f3) resolves here); blit adds emissive AFTER the light multiply. Acceptance: the flame glows inside a shadowed area.
 
 ## P4 — intent capture + wrap
 
-- [ ] Review [`docs/intent/lighting-feel/`](../../intent/lighting-feel/README.md) (written at planning) against what P1–P3 actually shipped; amend where execution taught better. Acceptance: `bin/rd docs-check` green; the doc reflects the built reality.
-- [ ] Record final A/Bs + timings in completed.md; update the work index row. Acceptance: docs-check green; every P1/P2 change has its screenshot pair.
+- [x] Review [`docs/intent/lighting-feel/`](../../intent/lighting-feel/README.md) (written at planning) against what P1–P3 actually shipped; amend where execution taught better. Acceptance: `bin/rd docs-check` green; the doc reflects the built reality.
+- [x] Record final A/Bs + timings in completed.md; update the work index row. Acceptance: docs-check green; every P1/P2 change has its screenshot pair.

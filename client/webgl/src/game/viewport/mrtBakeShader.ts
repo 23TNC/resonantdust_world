@@ -52,6 +52,7 @@ uniform float uSeed;                       // stable per-instance seed
 uniform float uHasLayers;                  // 1 = add layer contributions
 uniform float uHasNormal;                  // 1 = sample uNormalTex, 0 = flat-up
 uniform float uTileDepth;                  // >=0 = thing depth; < 0 = ground (write black)
+uniform int uEmissiveOn;                   // lighting-feel P3: 1 = relay the leaf's R (emissive mask) into A
 
 layout(location = 0) out vec4 oAlbedo;
 layout(location = 1) out vec4 oSurface;
@@ -92,6 +93,11 @@ void main() {
   oAlbedo = vec4(outc * uTint, 1.0);
 
   // attachment 1: surface (R=presence, G=ao, B=coverage). Presence = tileDepth>=0.
+  // A MUST stay 1.0: bakes ALPHA-BLEND (prims composite over their tile's ground in the same
+  // composite), so an attachment's alpha is its BLEND FACTOR — writing data here multiplies the
+  // whole write by it. Learned the hard way (lighting-feel P3: A=0 collapsed world coverage to
+  // nothing). Spare DATA lanes live in attachments whose alpha stays 1 — the emissive relay rides
+  // oDepth.r below.
   vec3 ssurf = texture(uSurface, uSurfaceRect.xy + vUV * uSurfaceRect.zw).rgb;
   oSurface = vec4(uTileDepth >= 0.0 ? 1.0 : 0.0, ssurf.g, ssurf.b, 1.0);
 
@@ -100,8 +106,10 @@ void main() {
     ? vec4(texture(uNormalTex, uNormalRect.xy + vUV * uNormalRect.zw).rgb, 1.0)
     : vec4(0.5, 0.5, 1.0, 1.0);
 
-  // attachment 3: zdepth_world (tile depth in B; ground = black)
-  oDepth = vec4(0.0, 0.0, uTileDepth < 0.0 ? 0.0 : uTileDepth, 1.0);
+  // attachment 3: zdepth_world (tile depth in B; ground = black). R relays the EMISSIVE mask
+  // (lighting-feel P3): the leaf surface's reserved R channel, gated to REAL surface maps
+  // (solid/geo materials bind fills whose R = 255 and must not glow). R was unused; alpha stays 1.
+  oDepth = vec4(uEmissiveOn == 1 ? ssurf.r : 0.0, 0.0, uTileDepth < 0.0 ? 0.0 : uTileDepth, 1.0);
 }
 `;
 
@@ -145,7 +153,12 @@ export class MrtBakeShader {
   setSurface(t: Texture, rect = IDENTITY_RECT()): void {
     this.surface = t;
     this.surfaceRect = rect;
+    // lighting-feel P3: the emissive relay (surface leaf R → composite A) is gated to REAL surface
+    // maps. Solid/geo materials bind the 1×1 white fill, whose R = 255 would otherwise mark the
+    // whole ground self-lit. Width > 1 IS the "real map" discriminator.
+    this.emissiveOn = t.width > 1 ? 1 : 0;
   }
+  private emissiveOn = 0;
   setNoise(t: Texture | null): void {
     this.noise = t;
   }
@@ -204,6 +217,7 @@ export class MrtBakeShader {
     p.uVec4("uNoiseParams", this.noiseParams[0], this.noiseParams[1], this.noiseParams[2], this.noiseParams[3]);
     p.uVec4("uWorldRect", this.worldRect[0], this.worldRect[1], this.worldRect[2], this.worldRect[3]);
     p.uVec3("uTint", this.tint[0], this.tint[1], this.tint[2]);
+    p.uInt("uEmissiveOn", this.emissiveOn);
     p.uFloat("uSeed", this.seed);
     p.uFloat("uHasLayers", this.hasLayers);
     p.uFloat("uHasNormal", this.hasNormal);

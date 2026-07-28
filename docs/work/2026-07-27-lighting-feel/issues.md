@@ -25,3 +25,16 @@ feature).
 Consequence for P3: the `bin/art` emissive PATH already exists (leaf naming, per-variant); the
 work is authoring/generating the flame leaf + resolver/co-pack carriage ([F3](forks.md#f3)) +
 blit consumption — not pipeline-from-scratch.
+
+## I3 — the torch has no flame art {#i3}
+
+The `torch`/`torch_blue` kinds render the `"white` placeholder square (tinted). Emissive "flame
+first" therefore has nothing to mask — the carriage was proven on flora (test) and ships on the
+wolf's eyes. Follow-up: author/generate a flame sprite for the torch kinds (bin/art generate or
+hand art), then `art emissive` + `art surface` — the lane picks it up with zero code.
+
+## I4 — `art clean <kind> emissive` removed 0 files {#i4}
+
+The clean pattern misses the current per-variant leaf layout (`<variant>/emissive.<dir>.0.png`).
+Worked around with `find -name 'emissive*' -delete`. Papercut; fix the glob in `cmd_clean` when
+next in `bin/art`.

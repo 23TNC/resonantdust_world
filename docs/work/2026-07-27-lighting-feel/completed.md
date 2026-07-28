@@ -60,3 +60,37 @@ whole stack):
 One probe lesson recorded for future sessions: `win.slotPx` says SQUARE is **64** in the live
 build — a probe hardcoding 128 chased a phantom coordinate bug; the code itself imports the
 constant and was right throughout.
+
+## 2026-07-27 · P3 — AO baked + consumed; the emissive lane, proven end to end
+
+**AO:** the pipeline existed unrun — `bin/art occlusion` (Laigter −o) was never executed, which is
+why P0 found G flat. Ran it over all 3 kinds (43 maps), added the standalone `art surface <kind>`
+subcommand (the cmd_maps tail, for occlusion-only changes), re-assembled: G now carries 239
+distinct values (mean ~0.62, crevice minima 0.06). Blit multiplies AMBIENT by it (`__ao`, default
+1). The composite probe confirmed ground tiles ride at G≈255 (no-op) and sprites carry the values.
+HONESTLY: at ambient 0.12 the visual effect is subtle — it will matter when the tone-grading
+intent lands a brighter/coloured ambient; the wiring and art are real either way.
+
+**Emissive:** carriage built and PROVEN — leaf surface R (mask, from co-located `emissive.png`,
+resized to the diffuse geometry) → bake relay → depth-composite R → blit adds
+`albedo × mask × uEmissiveBoost` after the light multiply (`__emissive`, default 1.4). Verified
+with a reversible flora lane test: every flora bush glowed self-lit in pitch dark with the flag
+on, world pixel-normal with it off; test emissive then removed and flora rebaked to R = 0. The
+wolf's regenerated eye-glow leaves (old ones were misaligned strip-scale art — `--force` re-gate
+fixed alignment to 0 texels over empty canvas) ship in surface R, awaiting wolves on screen (npc
+driver + sim stack are down). The TORCH has no flame art at all (`"white` placeholder sprite) —
+flame authoring recorded as the follow-up in [I3](issues.md#i3).
+
+**The regression worth remembering** ([F3](forks.md#f3) has the full story): parking the mask in
+the surface composite's "constant 1.0" alpha black-screened the world — bakes ALPHA-BLEND, so an
+attachment's alpha is its blend factor, and the constant was load-bearing. Isolated by stash A/B
+in minutes because every prior state was committed; re-homed to the depth composite's R.
+
+## 2026-07-27 · P4 — wrap; stream complete (14/14)
+
+[F3](forks.md#f3) updated with the real resolution (reserved-lane relay, not the three planned
+options). Intent doc reviewed — still accurate (halo/shafts/grading/ground-relief/SDF unchanged by
+execution). Follow-ups recorded: torch flame art ([I3](issues.md#i3)), `art clean` pattern miss
+([I4](issues.md#i4)). Final state on screen at area1: warm colour-graded torch pools, specular
+glints, breathing particle flicker (gather at 0 draws on static frames), AO in the data path,
+emissive proven. `bin/rd docs-check` green.

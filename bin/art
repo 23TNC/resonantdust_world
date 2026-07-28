@@ -823,12 +823,22 @@ _tilt_kind_normals() {  # kind pitch_deg
 # presence = A. Every bake (albedo/normal/depth/shadow) keys its coverage off this B — the one
 # silhouette source of truth. See pixijs surfaceBakeShader.ts / lightingShader.ts.
 _surface_kind() {  # kind
-  local kind=$1 src surf occ r g b
+  local kind=$1 src surf occ emi r g b
   while IFS= read -r -d '' src; do
     surf=$(_map_path "$src" surface)
     occ=$(_map_path "$src" occlusion)
+    emi=$(_map_path "$src" emissive)
     r=$(mktemp --suffix=.png); g=$(mktemp --suffix=.png); b=$(mktemp --suffix=.png)
-    convert "$src" -alpha off -fill black -colorize 100 -colorspace Gray "$r"   # R = 0 (height)
+    # R = EMISSIVE mask (lighting-feel P3): luminance of the co-located emissive.png, else black.
+    # The lane was reserved-for-height (always 0); the client's bake now carries it into the
+    # surface composite's spare A, and the blit adds albedo x mask x boost as self-lit light.
+    if [[ -f "$emi" ]]; then
+      # Force the mask to the DIFFUSE's geometry — emissive leaves may predate a remaster.
+      convert "$emi" \( "$emi" -alpha extract \) -alpha off -compose multiply -composite \
+        -colorspace Gray -resize "$(identify -format '%wx%h!' "$src")" "$r"
+    else
+      convert "$src" -alpha off -fill black -colorize 100 -colorspace Gray "$r"
+    fi
     if [[ -f "$occ" ]]; then
       convert "$occ" -alpha off -colorspace Gray "$g"                           # G = occlusion
     else
@@ -984,6 +994,15 @@ cmd_normal() {
 # it onto the diffuse for baked depth with no dynamic-lighting shader needed.
 # Drives Laigter via _laigter_batch (same preset handling as `normal`).
 #   preset  path to a .laigter preset (optional)
+# Re-assemble surface.png alone (R=height / G=occlusion / B=coverage) for KIND — the standalone
+# tail of cmd_maps, for when only the occlusion inputs changed (lighting-feel P3: the AO bake).
+cmd_surface() {  # kind
+  local kind=$1
+  [[ -z "$kind" ]] && { echo "usage: art surface <kind>" >&2; return 1; }
+  echo "art: surface [$kind] (R=height, G=ao, B=coverage) ..."
+  _surface_kind "$kind"
+}
+
 cmd_occlusion() {
   local kind=${1:-} preset=${2:-}
   if [[ -z "$kind" ]]; then
@@ -3209,6 +3228,7 @@ main() {
     border) cmd_border "$@" ;;
     normal) cmd_normal "$@" ;;
     occlusion) cmd_occlusion "$@" ;;
+    surface) cmd_surface "$@" ;;
     ao) cmd_ao "$@" ;;
     specular) cmd_specular "$@" ;;
     emissive) cmd_emissive "$@" ;;

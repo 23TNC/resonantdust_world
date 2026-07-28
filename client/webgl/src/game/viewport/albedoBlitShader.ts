@@ -44,6 +44,10 @@ uniform float uAmbient;          // #4 ambient floor — added ONCE over cold+ho
 uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mapping (uLSlot = TEXTILE_SQUARE, fine)
 uniform sampler2D uDecay;        // lighting-feel P2: the COARSE decay lightmap (RGBA16F, un-quantised)
 uniform int uDSlot;              // decay texels per tile (SHADOW_TEXELS >> lod)
+uniform float uAoStr;            // lighting-feel P3: AO strength on the AMBIENT term (0 = off, the A/B)
+uniform float uEmissiveBoost;    // lighting-feel P3: self-lit strength (0 = off, the A/B)
+uniform sampler2D uDepth;        // COLD zdepth composite — R relays the emissive mask (B = depth)
+uniform sampler2D uDepthWarm;    // WARM zdepth composite — same lane for movers
 out vec4 fragColor;
 const float SQ = ${SQF};
 int pmod(int a, int m) { return ((a % m) + m) % m; }
@@ -101,14 +105,26 @@ void main() {
       // 255, subtracting one leaves 0 where the answer is 255, and that light can never be fully turned
       // off. Over-bright is resolved at read time; the stored sum stays exact.
       vec3 irr = (texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb) / uLightQuant;
+      // lighting-feel P3: AMBIENT × AO. The surface composite is premultiplied by presence
+      // (A = presence, so ao = G/A — the bake's own encoding); tiles without occlusion art carry
+      // G = 1 and are untouched. AO attenuates the OMNIDIRECTIONAL term only — direct light keeps
+      // its N·L + shadows (physically, occlusion of a point light IS its shadow).
+      float ao = clamp(surf.g, 0.0, 1.0);          // composite G is straight (bakes are opaque)
+      float amb = uAmbient * mix(1.0, ao, uAoStr);
       // lighting-feel P2: + the decay lightmap — ephemeral particle glow (flicker), un-quantised,
       // bilinear (soft by nature). Inside the same display clamp.
-      light = uAmbient + min(irr + decaySample(vWorld), vec3(4.0));
+      light = amb + min(irr + decaySample(vWorld), vec3(4.0));
     }
   }
+  // lighting-feel P3: EMISSIVE — self-lit pixels. The mask rides the DEPTH composite's R (the one
+  // spare lane whose alpha stays 1 through the blended bakes — surface A is a BLEND FACTOR, not
+  // storage). Added AFTER the light multiply: emission is light the material MAKES, not light it
+  // receives — a wolf's eyes glow in pitch dark. uEmissiveBoost 0 = off (the A/B).
+  float emask = mix(texture(uDepth, vUV).r, texture(uDepthWarm, vUV).r, wcov);
+  vec3 emissive = alb.rgb * emask * uEmissiveBoost;
   // Coverage applied at OUTPUT only (premultiplied) so it composites over the canvas background: empty cells
   // (alpha 0) show through, ground/things (alpha 1) draw opaque.
-  fragColor = vec4(alb.rgb * light * alpha, alpha);
+  fragColor = vec4((alb.rgb * light + emissive) * alpha, alpha);
 }
 `;
 
@@ -128,6 +144,9 @@ export class AlbedoBlitShader {
   hotLight: Texture | null = null;
   /** lighting-feel P2: the coarse decay (particle glow) map; null → empty (no glow). */
   decay: Texture | null = null;
+  /** lighting-feel P3: the cold/warm zdepth composites — R carries the emissive mask. */
+  depth: Texture | null = null;
+  depthWarm: Texture | null = null;
 
   constructor(gl: WebGL2RenderingContext) {
     this.program = new Program(gl, BLIT_VERT, BLIT_FRAG, "viewport-albedo-blit");
@@ -143,6 +162,8 @@ export class AlbedoBlitShader {
       uColdLight: this.coldLight ?? empty,
       uHotLight: this.hotLight ?? empty,
       uDecay: this.decay ?? empty,
+      uDepth: this.depth ?? empty,
+      uDepthWarm: this.depthWarm ?? empty,
     };
   }
 

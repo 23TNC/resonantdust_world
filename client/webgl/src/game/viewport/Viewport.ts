@@ -82,6 +82,10 @@ export class Viewport {
    *  and the display blit composites warm OVER cold by warm coverage. */
   private readonly warm: SquareCache;
   private readonly blitShader: AlbedoBlitShader;
+  /** lighting-feel P3: AO strength on the blit's ambient term (`__ao`; 0 = off). */
+  aoStrength = 1;
+  /** lighting-feel P3: emissive (self-lit) strength (`__emissive`; 0 = off). */
+  emissiveBoost = 1.4;
   /** The `/overlayRT` debug material — draws one G-buffer composite over the display. */
   private readonly overlayShader: OverlayShader;
   /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
@@ -119,6 +123,16 @@ export class Viewport {
     // COUNTS and map dims rather than screenshots. The scene is unlit by default, so sampling the
     // canvas cannot distinguish a re-bake flash from ordinary darkness — the cache state can.
     (globalThis as unknown as { __viewport: Viewport }).__viewport = this;
+    // DEBUG (lighting-feel P3): AO strength on the ambient term — __ao(0) = off (the A/B), 1 = full.
+    (globalThis as unknown as { __ao: (s?: number) => number }).__ao = (s?: number) => {
+      if (s !== undefined) this.aoStrength = s;
+      return this.aoStrength;
+    };
+    // DEBUG (lighting-feel P3): emissive strength — __emissive(0) = off (the A/B).
+    (globalThis as unknown as { __emissive: (b?: number) => number }).__emissive = (b?: number) => {
+      if (b !== undefined) this.emissiveBoost = b;
+      return this.emissiveBoost;
+    };
   }
 
   /** The four G-buffer channels' resolve hooks. Geo tier only (W4c): every prim resolves to a
@@ -393,6 +407,9 @@ export class Viewport {
         this.blitShader.coldLight = coldLight;
         this.blitShader.hotLight = this.shadows.hotLightmap;
         this.blitShader.decay = this.shadows.decayMap; // lighting-feel P2: ephemeral particle glow
+        // lighting-feel P3: the emissive mask rides the zdepth composites' R lane.
+        this.blitShader.depth = this.map.displayComposite("zdepth-world-cold");
+        this.blitShader.depthWarm = this.warm.displayComposite("zdepth-world-warm");
         const win = this.map.window;
         // world px → clip: x = (wx-ax)*2rs/w, y = -(wy-ay)*2rs/h  (screen y-down → clip y-up).
         // RENDER scale, not logical zoom — this is the transform that puts world px on the display, so
@@ -422,6 +439,8 @@ export class Viewport {
             // lighting-feel P2: the decay map is COARSE — TEXTILE_UNIT texels/tile at lod 0,
             // halving with lod exactly like the shadow map (SHADOW_TEXELS >> lod).
             p.uInt("uDSlot", Math.max(1, TEXTILE_UNIT >> win.lod));
+            p.uFloat("uAoStr", this.aoStrength);
+            p.uFloat("uEmissiveBoost", this.emissiveBoost);
             p.uFloat("uLightQuant", LIGHT_QUANT); // de-quantise the additive accumulator (F11b)
           },
         });
