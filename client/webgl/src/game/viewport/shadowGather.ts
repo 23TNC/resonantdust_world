@@ -658,6 +658,10 @@ uniform int uWorldLight;           // world-space-lighting: 1 = TRUE-3D falloff 
 uniform float uNsInv;              // world-space-lighting: N–S un-foreshorten factor (1/cos65 ≈ 2.366; live-tunable)
 uniform float uFalloff;            // falloff exponent (<1 lifts the mid-range). Live via __falloff(e); 0/1 stay fixed
                                    // points of pow(), so no exponent can leak light past a light's reach.
+uniform float uWarmShift;          // lighting-feel P1 (__lighttemp): core warm shift (R up / B down). 0 = identity.
+uniform float uRimSat;             // lighting-feel P1 (__lighttemp): rim saturation (1 = identity, <1 desaturates).
+uniform float uGlintStr;           // lighting-feel P1 (__glint): specular strength on things. 0 = off.
+uniform float uGlintPow;           // lighting-feel P1 (__glint): Blinn exponent.
 uniform sampler2D uSurface;        // lightmap (CO-PACK): the shared sprite atlas — silhouette (surface quadrant) AND normal (normal quadrant)
 uniform int uShowNormal;           // lightmap P0 debug (__shownormal): 1 = paint the sampled billboard normal into oLight
 uniform float uNormalPitch;        // lightmap (__pitchnormal): standing-billboard normal pitch (rad, 90°−tilt; live, F7-reconsidered)
@@ -703,6 +707,9 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
     uvec4 sh = uProfile == 4 ? uvec4(0u)                        // profile L4: price the loop WITHOUT the shadow fetch
                            : texelFetch(shadowTex, fcC, 0);   // P3: per-slot u9 shadow coverage — COARSE, upsampled (fcC)
     vec3 acc = vec3(0.0);                                     // #4: NO ambient here — the blit adds it once over cold+hot
+    // lighting-feel P1: the world-frame VIEW direction for the glint — per-fragment constant, hoisted
+    // out of the light loop (cos/sin once, not per light).
+    vec3 V = vec3(0.0, cos(uNormalPitch), sin(uNormalPitch));
     for (int slot = 0; slot < 16; slot++) {
       uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
       if (li == 0xffffu) continue;                            // empty slot
@@ -755,7 +762,25 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
       // under a trunk), and the prim pass draws that at fine resolution masked by the sprite's own coverage —
       // so **the overwrite IS the fine cut**. The blocky edge that remains on open ground is accepted (user).
       // Nothing replaces this: the coarse shadow nearest-upsampled across its 8×8 block already overdraws.
-      float contrib = intensity * fall * ndl * (1.0 - shadow); // shadowed contribution (× Lambert on things)
+      // lighting-feel P1: COLOUR TEMPERATURE over falloff. The falloff already dims toward the rim;
+      // this shifts HUE with it — warm (R up, B down) at the core, desaturated toward grey at the
+      // rim — so a fire pool reads as fire instead of a uniform orange disk. Identity at
+      // (uWarmShift 0, uRimSat 1), which is the A/B toggle. The per-light clamp below still bounds
+      // every channel at 1, so the exactness budget is untouched.
+      float lum = dot(col, vec3(0.299, 0.587, 0.114));
+      vec3 colT = mix(mix(vec3(lum), col, uRimSat),                      // rim: desaturated
+                      col * vec3(1.0 + uWarmShift, 1.0, 1.0 - uWarmShift), // core: warmed
+                      fall);
+      // lighting-feel P1: SPECULAR GLINT — Blinn N·H on THINGS only (ground has no normal yet).
+      // V is the world-frame view direction (the card's out-axis pitched by uNormalPitch); H the
+      // half-vector to this light. Rides the same falloff + shadow as the diffuse term and joins
+      // it INSIDE the per-light clamp. Off at uGlintStr 0 (the A/B toggle).
+      float spec = 0.0;
+      if (applyNL && uGlintStr > 0.0) {
+        vec3 H = normalize(d3 / max(dist, 1e-3) + V);
+        spec = pow(max(dot(N, H), 0.0), uGlintPow) * uGlintStr;
+      }
+      float contrib = intensity * fall * (ndl + spec) * (1.0 - shadow); // shadowed contribution (× Lambert on things)
       // CLAMP PER LIGHT, before it joins the sum. This is what makes the accumulator's exactness bound
       // UNCONDITIONAL rather than merely likely: with every light capped at 1.0 (255 after quantisation),
       // the worst case is 65,535 (the whole u16 id space) x 255 = 16,711,425, under the 2^24 = 16,777,216
@@ -768,7 +793,7 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
       //
       // The clamp belongs HERE and nowhere downstream. Clamping the accumulated SUM would break light
       // removal: two lights at 255 clipped to 255 means subtracting one leaves 0 where 255 is correct.
-      acc += min(col * contrib, vec3(1.0));
+      acc += min(colT * contrib, vec3(1.0));
     }
   return acc;
 }
@@ -1180,6 +1205,12 @@ export class ShadowGather {
   /** Falloff exponent — see {@link FALLOFF_EXP}. `__falloff(e)`; <1 lifts the mid-range, 1 = linear
    *  smoothstep, >1 darkens the outer pool. Cannot extend a light past its reach at any value. */
   falloff = FALLOFF_EXP;
+  /** lighting-feel P1 — colour temperature over falloff. `__lighttemp(warm, sat)`; identity at (0, 1). */
+  warmShift = 0.12;
+  rimSat = 0.65;
+  /** lighting-feel P1 — specular glints on things. `__glint(str, pow)`; off at str 0. */
+  glintStr = 0.25;
+  glintPow = 16;
   /** PROFILING staircase level for `LIGHT_FRAG` (0 = full shader; 1–4 cut it short at a named boundary).
    *  The lighting bake is ONE draw, so per-substep GPU timing is only obtainable by differencing these.
    *  `__profile(n)`; always leave it at 0. See `moving-lights` I9. */
@@ -1359,6 +1390,23 @@ export class ShadowGather {
       this.rebakeAll();
       return [this.lightAlignX, this.lightAlignY];
     };
+    // DEBUG (lighting-feel P1): colour temperature — warm shift at the core + rim saturation.
+    // Identity (A/B off) = __lighttemp(0, 1). Bake-affecting → rebake.
+    (globalThis as unknown as { __lighttemp: (warm?: number, sat?: number) => number[] }).__lighttemp =
+      (warm?: number, sat?: number) => {
+        if (warm !== undefined) this.warmShift = warm;
+        if (sat !== undefined) this.rimSat = sat;
+        this.rebakeAll();
+        return [this.warmShift, this.rimSat];
+      };
+    // DEBUG (lighting-feel P1): specular glints on things. Off (A/B) = __glint(0). Bake-affecting → rebake.
+    (globalThis as unknown as { __glint: (str?: number, pow?: number) => number[] }).__glint =
+      (str?: number, pow?: number) => {
+        if (str !== undefined) this.glintStr = str;
+        if (pow !== undefined) this.glintPow = pow;
+        this.rebakeAll();
+        return [this.glintStr, this.glintPow];
+      };
     // DEBUG (moving-lights I9): the LIGHT_FRAG profiling staircase — cut the fragment short at a named
     // boundary so a GPU timer can price each substep by difference. Always leave it at 0.
     (globalThis as unknown as { __profile: (n?: number) => number }).__profile = (n?: number) => {
@@ -2058,6 +2106,10 @@ export class ShadowGather {
         p.uInt("uWorldLight", this.worldLight ? 1 : 0);
         p.uFloat("uNsInv", this.nsInv);
         p.uFloat("uFalloff", this.falloff);
+        p.uFloat("uWarmShift", this.warmShift);
+        p.uFloat("uRimSat", this.rimSat);
+        p.uFloat("uGlintStr", this.glintStr);
+        p.uFloat("uGlintPow", this.glintPow);
         p.uInt("uShowNormal", this.showNormal ? 1 : 0);
         p.uFloat("uNormalPitch", this.normalPitchDeg * Math.PI / 180);
         p.uVec2("uLightAlign", this.lightAlignX, this.lightAlignY);

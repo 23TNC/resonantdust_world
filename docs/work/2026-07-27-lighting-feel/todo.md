@@ -7,13 +7,13 @@ GPU timing = the EXT_disjoint_timer_query harness from
 
 ## P0 — audits (settle the art-gated questions first)
 
-- [ ] Audit corpus AO: decode surface-G over a sample of co-packed frames (browser readback or bin/art) and report the per-kind value distribution. Acceptance: a table in issues.md saying whether G carries structure or is ~flat.
-- [ ] Audit emissive: count stems with emissive leaves on disk/manifest (expected ~0). Acceptance: counts in issues.md; P3's art items are sized from this.
+- [x] Audit corpus AO: decode surface-G over a sample of co-packed frames (browser readback or bin/art) and report the per-kind value distribution. Acceptance: a table in issues.md saying whether G carries structure or is ~flat.
+- [x] Audit emissive: count stems with emissive leaves on disk/manifest (expected ~0). Acceptance: counts in issues.md; P3's art items are sized from this.
 
 ## P1 — accumulateLights knobs
 
-- [ ] Colour temperature: per light, warm the colour at the core and dim+desaturate toward reach as a function of the existing falloff value; live-tunable via a debug hook. Acceptance: A/B at area1; GPU timing within noise of baseline.
-- [ ] Specular glints: Blinn N·H per light on things (reuse the live `billboardNormal`), small intensity, off on ground. Acceptance: visible glint on foliage near a torch in A/B; timing within noise.
+- [x] Colour temperature: per light, warm the colour at the core and dim+desaturate toward reach as a function of the existing falloff value; live-tunable via a debug hook. Acceptance: A/B at area1; GPU timing within noise of baseline.
+- [x] Specular glints: Blinn N·H per light on things (reuse the live `billboardNormal`), small intensity, off on ground. Acceptance: visible glint on foliage near a torch in A/B; timing within noise.
 
 ## P2 — the decay lightmap
 
