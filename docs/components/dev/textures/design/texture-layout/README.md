@@ -135,3 +135,52 @@ numeric parts) — the `map.dir.part` **order** is what produces the grouping.
    linked leaf has **no per-cell `<variant>` folders** — it is
    `biome-tile/<biome>/<material>/<form>/{albedo,normal,…}.l.0.<ext>` **+ a sibling `atlas.json`**. The
    old per-cell `1.l.0/<1..16>/` split is superseded (`texture-paths.md`).
+
+---
+
+## How big is a texture — the derived square ✅
+
+A texture's pixel size is **derived, never authored**. Two facts decide it:
+
+```
+square_px = span_tiles × TILE_PX          TILE_PX = the game tile edge (128), = the renderer's SQUARE
+```
+
+- **`span`** is the sprite frame's world extent in **pow2 tiles** — `thing.span` in the DSL corpus,
+  `frame_span` on the wire ([VARIABLES.md](../../../../../VARIABLES.md)). Conifer `span 2` → **256²**.
+- **A held-whole atlas** states its own tile count instead: a linked form is `cols × rows` cells and
+  a ground sheet is `grid × grid`, recorded as `tiles` in `atlas.json`. Linked 4×4 → **512²**;
+  ground 8×8 → **1024²**.
+
+### `span` is NOT `footprint`, and NOT `size`
+
+All three are "in tiles" and mixing them up mis-sizes textures. They are independent:
+
+| field | means | conifer | wolf |
+|---|---|---|---|
+| `footprint (w,h)` | tiles the prim **OCCUPIES** — movement, hit-testing, z-row | 1 × 1 | 1 × 1 |
+| `span` | the sprite **FRAME's** extent, pow2 tiles → **the square** | 2 | *(none authored)* |
+| `size` | the sprite's **DRAW scale** in tiles; may be fractional | 2 | 1.125 |
+
+Deriving the square from `footprint` would size the conifer **128², half of correct** — it occupies
+one tile and draws over two. Deriving it from `size` is impossible for the wolf, whose 1.125 is not
+a power of two. Only `span` sizes a texture.
+
+### Where it is cached
+
+`bin/art leaf-span` stamps each variant leaf's `meta.json` with `span`, `square`, `tile_px` and
+`span_from` (`corpus` | `atlas` | `art`), and `span_inferred` when it had to measure the art because
+the corpus declared nothing. The corpus stays the **only** place a span is authored — `textures/` is
+gitignored, so a copy there would be the unversioned one. The edge folds `span`/`square` into the
+texture manifest beside `grid`/`pad`, and folds `meta.json` into the leaf hash so a re-stamp
+invalidates a cached stem.
+
+### The guard ring differs by shape ✅
+
+- **A sprite leaf** gets `--pad N` (default 1): its content shrinks by N px per side and the edge
+  pixels replicate outward. The canvas — and therefore the pow2 — is unchanged.
+- **An atlas leaf** gets **no baked ring**. Its guard is the per-cell *sampling* inset
+  (`GRID_INSET_FRAC` → `padU`/`padV` in `atlas.json` → the client trims each cell's UV rect). Baking
+  a canvas ring into an atlas guards the wrong edges — the interior cell boundaries are the ones a
+  sampler crosses — and pulls the sheet off its own grid (1024 with a 1 px ring is 1022, which is
+  not 8 × 128). `art remaster --pad` skips any leaf carrying an `atlas.json`.

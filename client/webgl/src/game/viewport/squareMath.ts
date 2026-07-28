@@ -39,8 +39,10 @@ export const UNIT = SQUARE / 16;
 // ── Textile resolutions — the shared toroidal TILE grid (map-model.md, lighting rebuild) ──
 // A TEXTILE is one texel of a map. EVERY map — data textures and full-res — shares the ONE
 // `cols × rows` TILE window and wraps by TILES (`mod(worldTile, cols/rows)`); each map picks one
-// of these per-tile-edge resolutions R and is sized `cols·R × rows·R`. `SQUARE` is the only dial:
-// raising it sharpens the textile_square maps while textile_unit stays 16 textiles/tile.
+// of these per-tile-edge resolutions R and is sized `cols·R × rows·R`. `SQUARE` was once the ONLY
+// dial — that identity is what made the 2b1025a A/B pay for a lighting win with art resolution —
+// but the light map now has its own pinned {@link TEXTILE_LIGHT}. So raising `SQUARE` sharpens the
+// textile_square (art) maps ALONE: textile_unit stays 16 textiles/tile and the lightmap does not move.
 /** 1 textile / tile — lights, caster buckets, presence, dirty. Positions in TILES (+ anchor). */
 export const TEXTILE_TILE = 1;
 /** `SQUARE/UNIT` = 16 textiles / tile (one per unit) — the shadow map. Positions in UNITS. */

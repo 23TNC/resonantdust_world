@@ -47,6 +47,6 @@ _Revised at P0.5 — see [F3](forks.md#f3). The per-cell guard is `GRID_INSET_FR
 
 ## P5 — Reconcile the docs
 
-- [ ] Update the texture-layout design with the footprint field and the derived-square rule. Acceptance: the doc states `next_pow2(max(w,h) × TILE_PX)` and names where the footprint is authored.
-- [ ] Fix the stale `squareMath.ts` comment claiming `SQUARE (128)` while it reads 64. Acceptance: the comment matches the constant, whichever value it holds when this lands.
+- [x] Update the texture-layout design with the span field and the derived-square rule. Acceptance: the doc states `span × TILE_PX` (corrected per [I6](issues.md#i6)) and names where span is authored.
+- [x] Fix the stale `squareMath.ts` comment claiming `SQUARE (128)` while it reads 64. Acceptance: the comment matches the constant, whichever value it holds when this lands.
 - [ ] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, `completed.md` records the before/after squares per kind.

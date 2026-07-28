@@ -153,3 +153,21 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
 - **2026-07-28 · P4.3 · Ground sheets on the 8×8 grid.** `biome-tile/default/grass` reads
   `grid [8,8]`, `tile 128`, `tiles [8,8]`, 1024 px, **wrap seam 0.99**. It is the only ground sheet
   in the tree (the stale 64 px `stone` leaves were removed). Acceptance met.
+
+## P5 — Reconcile the docs
+
+- **2026-07-28 · P5.1 · Derived-square rule documented** in
+  [`texture-layout`](../../components/dev/textures/design/texture-layout/README.md). States
+  `square_px = span_tiles × TILE_PX`, the atlas variant (`tiles` in `atlas.json`), a table
+  separating `footprint` / `span` / `size` with the conifer and wolf as the worked cases, where the
+  value is authored vs cached, and that the guard ring differs by shape (baked for a sprite, a
+  per-cell sampling inset for an atlas). **The item's own acceptance was wrong** — it asked for
+  `next_pow2(max(w,h) × TILE_PX)`, the footprint rule [I6](issues.md#i6) disproved — so the
+  corrected rule was written and the item amended.
+- **2026-07-28 · P5.2 · `squareMath.ts` reconciled.** The contradiction I3 recorded is gone, fixed
+  by [`square-128`](../2026-07-28-square-128/README.md) landing its P1+P2 (`bee4e55`, `acaa1ad`)
+  while this stream ran: `SQUARE` now genuinely reads **128** with `TEXTILE_LIGHT = 64` split off.
+  **Not my work** — but it left one residual: a comment still called `SQUARE` "the only dial", which
+  is precisely the identity that split removed. Rewritten to say raising `SQUARE` now sharpens the
+  art maps alone. Convenient consequence: this stream's `TILE_PX = 128` and the renderer's `SQUARE`
+  now agree, which was the assumption the whole plan was parameterised against.
