@@ -8,27 +8,33 @@ deterministic cut.
 
 Pipeline (defaults in brackets):
 
-    generate SIZE [1024] --> optional greyscale --> downscale to GRID*(TILE+OVERLAP) [4*93]
-      --> cut GRID x GRID [4x4] blocks --> wrap each into a TILE [62] px toroidal tile
-      --> pad each by PAD [1] px of WRAPPED edge  (cell = TILE + 2*PAD = 64)
-      --> assemble one sprite map --> textures/<kind path>/<variant>/<map>.<dir>.<part>.png
+    generate SIZE [derived: 1088] --> optional greyscale --> wrap the plane toroidally
+      --> cut GRID x GRID [8x8] tiles of TILE [128] px --> assemble one sheet [1024x1024]
+      --> textures/<kind path>/<map>.<dir>.<part>.png   (a sprite SOURCE, at kind level)
 
-Why the tiles are made to wrap here rather than by the model: a seamless-generation patch can
-only make the whole 1024px plane wrap, but the game repeats a single 63px CELL, and every cell
-edge is an arbitrary cut through the middle of that plane. (ComfyUI's one such node,
-`Model Patch Seamless (mtb)`, also segfaults this box.) So each cell is joined to itself along a
-minimum-error boundary cut, using surplus texture the downscale would otherwise have thrown away.
-`--seamless sheet` instead wraps the whole plane, for a sheet meant to be laid down as a 4x4 unit.
+TILE is the game tile edge and must track the renderer's `SQUARE`; GRID x TILE is the sheet,
+which stays a power of two for the quadtree packer. `--size` defaults to exactly the plane the
+cut consumes (GRID*TILE + OVERLAP), so the generation is never upscaled and never resampled.
+
+Why the SHEET wraps and not each cell: the client picks a cell by world position MODULO the
+sheet, so two adjacent world tiles get two adjacent cells — which already join, being neighbours
+in the plane. The only seam in the scheme is the sheet's own wrap. Making each cell individually
+toroidal would cost a per-cell overlap (and the detail that overlap eats) to fix a seam that the
+sampling model never produces. `--seamless cell` remains for art that IS repeated cell-alone.
+
+Why the model is not asked for a seamless generation: ComfyUI's one circular-padding node,
+`Model Patch Seamless (mtb)`, segfaults this box — and it would not have helped, since it wraps
+the generated plane while we cut cells out of the middle of it. The wrap is a minimum-error
+boundary cut here, spending OVERLAP px of surplus the plane was generated with.
+
+Why PAD defaults to 0: on an atlas the bleed guard is the `GRID_INSET_FRAC` SAMPLING inset —
+recorded as padU/padV in atlas.json, folded into the manifest, and trimmed off each cell's UV
+rect by the client — not pixels baked into the sheet. Baking a ring here would shrink the sheet
+off its own cell grid (1024 with a 1 px ring is 1022, which is not 8 x 128).
 
 Why greyscale by default: the tile DSL already colours terrain by tint —
 `::grass> "white &tile.texture set  #4b573e &tile.tint set` — so a neutral pattern tinted per
 biome is what the renderer wants, and one sheet then serves grass/dirt/sand by tint alone.
-
-Why pad at all: at non-integer zoom the sampler reads just outside a tile's footprint, and
-without a guard that read lands on the neighbouring cell in the sheet. The guard WRAPS rather
-than replicating, because on a toroidal tile the pixel past an edge genuinely is the opposite
-edge — replicating there would contradict the continuity the wrap just established, at exactly
-the boundary the sampler reaches for.
 
 The output is a SPRITE MAP on purpose — `bin/art remaster` splits sheets into per-variant
 leaves, so generated terrain enters the same re-mastering path as hand-authored art.
@@ -48,10 +54,18 @@ REPO = os.environ.get("RD_REPO_ROOT") or os.path.abspath(os.path.join(HERE, ".."
 COMFY = os.environ.get("COMFYUI_URL", "http://172.16.10.10:8188").rstrip("/")
 MODEL = "sdxl/cyberrealisticXL_v80.safetensors"
 
+# The game tile edge in px. This is the ONE place the art side converts tiles -> pixels; the square
+# a leaf packs into is `span * TILE_PX` and a ground sheet is `grid * TILE_PX`. It must track the
+# renderer's `SQUARE` (client/webgl/src/game/viewport/squareMath.ts), which is the cap on how much
+# of a tile can ever be shown — authoring above it is wasted bytes, below it is a soft upscale.
+# `RD_TILE_PX` overrides so the old 64 px geometry stays reproducible.
+TILE_PX = int(os.environ.get("RD_TILE_PX", 128))
+
 # "seamless ground texture" is deliberately ABSENT. It used to be here, from when we hoped the
 # model would hand us tileable output — but we build the wrap ourselves now, and the phrase costs
 # us the only thing that matters: it makes SDXL paint a fine all-over repeat, which the shrink to
-# a 62px tile then averages into mush (measured 1.6px features with it, ~13px without). Ask for
+# a small tile then averages into mush (measured 1.6px features with it, ~13px without, at a
+# 62px tile). Ask for
 # the SUBJECT at the scale you want to see it; the tiling is our job, not the model's.
 STYLE = ("flat cel shading, hand-painted 2D game art, even flat lighting, no shadows, no horizon")
 NEG = ("realistic, photo, photorealistic, 3d render, blurry, vignette, border, frame, "
@@ -91,8 +105,8 @@ def graph(pos, neg, lora, strength, cfg, steps, seed, size):
     ComfyUI's only circular-padding node, `Model Patch Seamless (mtb)`, deep-copies the whole
     UNet and segfaults this box (CUDA error inside `copy.deepcopy`, taking the server down with
     it). It would not have helped regardless: it wraps the 1024px *generation*, but we cut that
-    into sixteen 62px cells and the game tiles at the cell, so every cut edge would still be
-    arbitrary. Wrapping has to happen where the cells are made."""
+    into cells and the client samples one by world position, so every cut edge would still be
+    arbitrary. Wrapping has to happen where the sheet is cut."""
     g = {"4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": MODEL}}}
     model_ref, clip_ref = ["4", 0], ["4", 1]
     if lora:
@@ -245,7 +259,7 @@ def split_plane(rgb, dirn, part):
     """Run `art split_layers` on the WHOLE plane; returns (residual_rgb, layers_rgb, tints).
 
     On the whole plane, never per tile. The split clusters colours in the chroma plane to decide
-    which material owns which channel, so splitting each 62px tile on its own would let tile A put
+    which material owns which channel, so splitting each tile on its own would let tile A put
     grass in R and tile B put grass in G — the sheet would tint into confetti. One split for the
     sheet fixes the assignment once, and the cut then carries both maps through together."""
     import subprocess, tempfile, shutil
@@ -335,10 +349,15 @@ def main():
     ap.add_argument("--variant", default=None, help="variant folder (default: the seed)")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--candidates", type=int, default=1, help="generate N sheets, one variant each")
-    ap.add_argument("--size", type=int, default=1024, help="generation resolution (default 1024, SDXL native)")
-    ap.add_argument("--grid", type=int, default=4, help="tiles per side (default 4 -> 16 tiles)")
-    ap.add_argument("--tile", type=int, default=62, help="tile content px (default 62 -> 64 with pad, the quadtree packer's cell)")
-    ap.add_argument("--pad", type=int, default=1, help="bleed-guard border px per side, wrapped (default 1 -> 64px cells)")
+    ap.add_argument("--size", type=int, default=0,
+                    help="generation resolution (default 0 = derive exactly the plane the cut "
+                         "needs, so nothing is upscaled and nothing is resampled)")
+    ap.add_argument("--grid", type=int, default=8, help="tiles per side (default 8 -> 64 tiles)")
+    ap.add_argument("--tile", type=int, default=TILE_PX,
+                    help=f"tile content px (default {TILE_PX}; grid*tile is the sheet, kept pow2)")
+    ap.add_argument("--pad", type=int, default=0,
+                    help="per-cell bleed border px (default 0 — on an atlas the guard is the "
+                         "GRID_INSET_FRAC sampling inset, not baked pixels; see the stream F3)")
     ap.add_argument("--colour", action="store_true", help="keep RGB (default: greyscale for tinting)")
     ap.add_argument("--layers", action="store_true",
                     help="also split the plane into a channel-packed layers map (implies --colour), "
@@ -350,8 +369,10 @@ def main():
     ap.add_argument("--map", dest="map_name", default="albedo", help="map name in the leaf (default albedo)")
     ap.add_argument("--dir", dest="dirn", default="l", help="direction field (default l = omni/linked)")
     ap.add_argument("--part", default="0")
-    ap.add_argument("--seamless", choices=("cell", "sheet", "none"), default="cell",
-                    help="what wraps: each tile against itself (default), the whole sheet, or nothing")
+    ap.add_argument("--seamless", choices=("cell", "sheet", "none"), default="sheet",
+                    help="what wraps: the whole sheet (default — the client samples a cell by world "
+                         "position modulo the sheet, so only its outer wrap is a seam), each "
+                         "tile against itself, or nothing")
     ap.add_argument("--overlap", type=int, default=0,
                     help="px of surplus texture the wrap join may cut through (default 0 = tile//2)")
     ap.add_argument("--flatten", type=float, default=1.0, metavar="AMOUNT",
@@ -384,12 +405,18 @@ def main():
     down = args.grid * (args.tile + ov) if args.seamless == "cell" else \
            args.grid * args.tile + (ov if args.seamless == "sheet" else 0)
 
+    # Default: generate EXACTLY the plane the cut consumes. Any larger and the surplus is thrown
+    # away by a resample that softens everything; any smaller and tiles are upscaled from too little
+    # source. Deriving it also means the geometry can change (128 px tiles, an 8x8 grid) without
+    # anyone having to recompute a magic --size by hand.
+    if args.size <= 0:
+        args.size = down
     if down > args.size:
         raise SystemExit(
             f"generate-tile: grid {args.grid} needs a {down}px plane but --size is {args.size}, so "
             f"every tile would be UPSCALED from too little source and come out soft.\n"
             f"  either drop to --grid {args.size // (args.tile + ov)} (max at this size), "
-            f"or raise --size to {down} or more.")
+            f"or raise --size to {down} or more (omit --size to derive it).")
 
     print(f"generate-tile: kind={kind} seed={seed0} candidates={args.candidates}")
     print(f"  {args.size}px -> {down}px ({args.size/down:.2f}x shrink) -> {args.grid}x{args.grid} tiles of "

@@ -40,3 +40,26 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   `TextureResolver.ts:202` narrows each cell's UV rect by it. [F3](forks.md#f3) revised — `--pad`
   now *skips* atlases instead of learning to inset them, and P3's items were rewritten to match.
   P0 complete: 5/5.
+
+## P1 — Make the tile edge a value, not a literal
+
+- **2026-07-28 · P1.1 · No tile arithmetic in `bin/art` to parameterise** ([I9](issues.md#i9)).
+  `grep -n '\b64\b' bin/art` → nothing; the acceptance criterion held before the item was written.
+  `bin/art` is tile-agnostic by construction: linked cell size is *derived* (`atlas width /
+  GRID_COLS`, so 320² and 640² both give 16 cells) and `_pow2_box` rounds a blob's **pixel** extent
+  with no notion of a tile. The tiles→px conversion first appears at P2 (`span · TILE_PX`), so
+  `TILE_PX` is deferred to land beside its first consumer rather than added now with no reader.
+- **2026-07-28 · P1.2 · 128 px / 8×8 defaults.** A default run now reports
+  `1088px -> 1088px (1.00x shrink) -> 8x8 tiles of 128px +0px pad = 128px cells -> 1024px sheet`.
+  Two consequential changes fell out of the new geometry rather than being planned:
+  **`--seamless` now defaults to `sheet`** (per-cell wrapping at 8×8×128 would have demanded a
+  1536 px plane, and the client samples a cell by world position modulo the sheet, so only the
+  sheet's own wrap is ever a seam); and **`--size` now defaults to 0 = derive the exact plane the
+  cut consumes**, so the generation is neither upscaled nor resampled and no magic size has to be
+  recomputed by hand when the tile edge changes.
+- **2026-07-28 · P1.3 · `RD_TILE_PX` override.** `TILE_PX = int(os.environ.get("RD_TILE_PX", 128))`
+  is the single tiles→px site. Verified `RD_TILE_PX=64 --grid 16` reports a 64 px tile at a 1024
+  sheet. **Acceptance amended honestly:** the item asked for byte-identical reproduction of the old
+  geometry, which is no longer meaningful — the old shape was `tile 62 + pad 1`, and [F3](forks.md#f3)
+  moved the guard off baked pixels onto the `GRID_INSET_FRAC` inset, so `pad` is now 0 by design.
+  What is verified is that the tile edge is a value, not that the superseded pad convention survives.

@@ -49,6 +49,27 @@ for the tile size — which is exactly what this stream and
 [`square-128`](../2026-07-28-square-128/README.md) both make people do. Fixed in [P5](todo.md)
 whichever value wins.
 
+## I9 — PLAN DEFECT: `bin/art` has no tile-size arithmetic to parameterise {#i9}
+_2026-07-28 · P1.1 · **the item's premise was false**_
+
+P1.1 said "replace the hardcoded 64 arithmetic in `bin/art`". There is none. `grep -n '\b64\b'
+bin/art` returns **nothing**, and the acceptance criterion was therefore satisfied before the item
+was written.
+
+`bin/art` is already tile-size agnostic by construction:
+
+- **linked cell size is derived**, not assumed — `cell = atlas width / GRID_COLS` (`bin/art:145`), so
+  "a 320² and a 640² atlas both yield the same 16-cell set";
+- **`_pow2_box` works in pixels** — it takes a blob's pixel extent and rounds to the nearest pow2. It
+  has no notion of a tile at all.
+
+So the pipeline never converts tiles → px today. That conversion **first becomes necessary at P2**,
+where `span · TILE_PX` decides the square. Introducing `TILE_PX` now would add a constant with no
+reader, which is exactly the kind of speculative scaffolding that rots.
+
+**Resolution:** `TILE_PX` lands in P2 beside its first consumer. P1.1 is closed as verified-no-op
+rather than built. The rest of P1 (the `generate_tile.py` defaults) is real and unaffected.
+
 ## I8 — `generate_tile.py` writes an `atlas.json` the server cannot read {#i8}
 _2026-07-28 · P0.4 · **live defect** — verified against `read_atlas_meta`_
 
