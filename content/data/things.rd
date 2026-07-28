@@ -49,6 +49,8 @@
     ::wolf>
         :data>
             @define>
+                ; speed: TICS PER TILE (pawn-movement F1) — 12 → 2 s/tile at 6 Hz.
+                12 &thing.speed set
                 0 return
             @on_create>
                 0 return

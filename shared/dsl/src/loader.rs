@@ -460,6 +460,26 @@ impl Bundle {
     out
   }
 
+  /// A thing's movement speed in **tics per tile**, authored in its `:data @define` hook
+  /// (`12 &thing.speed set` — pawn-movement F1: speed is content, measured in tics; the
+  /// wall-time unit is retired). `None` when the kind authors none — the caller resolves
+  /// the default (`codec::speed`); the corpus never invents one.
+  pub fn thing_speed(&self, object_id: u16) -> Option<u16> {
+    let node = self.thing(self.thing_name(object_id)?)?;
+    let store = self.run_node_hook(node, "data", "define")?;
+    Some(store.read("thing.speed")?.as_int() as u16)
+  }
+
+  /// Every thing's speed in `object_id` order (index 0 → object_id 1), `0` = unauthored
+  /// (the client resolves the default — `0` is never a real speed, a hop can't take no
+  /// tics). Sibling of [`thing_layout`] / [`thing_light`]: the bundle table the wasm
+  /// boundary ships so speculation walks at the kind's authored rate.
+  pub fn thing_speeds(&self) -> Vec<f64> {
+    (1..=self.thing_ids.len() as u16)
+      .map(|id| f64::from(self.thing_speed(id).unwrap_or(0)))
+      .collect()
+  }
+
   // ---------- biomes ----------
 
   /// Every biome name in evaluation order (first match wins; see [`generate`]).
@@ -843,6 +863,17 @@ mod tests {
         1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 1.0, 1.0, // shrub (defaults)
       ],
     );
+  }
+
+  #[test]
+  fn thing_speed_from_data_define() {
+    // wolf authors 12 tics/tile in its `:data @define`; tree authors none → `None`
+    // (the CALLER resolves the default — the corpus never invents a speed).
+    let data = "<thing>\n  ::tree>\n    :data>\n      @define>\n        0 return\n  ::wolf>\n    :data>\n      @define>\n        12 &thing.speed set\n        0 return\n";
+    let b = load(&[src("data/things.rd", data)]).expect("load");
+    assert_eq!(b.thing_speed(2), Some(12));
+    assert_eq!(b.thing_speed(1), None);
+    assert_eq!(b.thing_speeds(), vec![0.0, 12.0]); // bundle table: 0 = unauthored
   }
 
   #[test]

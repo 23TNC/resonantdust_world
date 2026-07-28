@@ -7,12 +7,12 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P1 · Speed is content (docs first)
 
-- [ ] Docs FIRST: rewrite the speed rule in `ACTIONS.md` §Movement + `shared/codec/src/speed.rs`
+- [x] Docs FIRST: rewrite the speed rule in `ACTIONS.md` §Movement + `shared/codec/src/speed.rs`
       module docs — speed is authored in **tics per tile** in the DSL corpus per kind
       (user decision, supersedes wall-time authoring — F1); state the accepted consequence
       (a `TIC_HZ` change now changes wall-clock speed; time is measured in tics). Acceptance:
       `bin/rd docs-check` green; no doc still claims wall-time authoring.
-- [ ] DSL: a thing's `:data` facet authors `speed` (u16 tics/tile) via the existing hook/param
+- [x] DSL: a thing's `:data` facet authors `speed` (u16 tics/tile) via the existing hook/param
       mechanism (pick the idiom the loader already uses — see F1 note); loader exposes
       `thing_speed(object_id) -> Option<u16>`; author the wolf at **12** in
       `content/data/things.rd`. Acceptance: loader unit test — wolf resolves 12, an unauthored

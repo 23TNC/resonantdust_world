@@ -130,11 +130,16 @@ pathfinding when it lands). Two capabilities the chain uses:
 
 - **A verb that queues an event.** A non-final `MOVE_TO` hop makes the worker queue the
   continuation `MOVE_TO obj dest` — baked into the verb, not a general `QUEUE` action (yet).
-- **Queue-at-a-future-tic.** The next hop lands `k` tics out (`k` = `tics_per_tile` — ONE seam in
-  `shared/codec`, shared by the worker and the speculating client, authored in wall-time so a
-  `TIC_HZ` change never rescales the world; per-kind content plumbs in later). So `queue` accepts
-  `event_tic ≥ master + 3`, not exactly `+3`. The completeness barrier is unaffected — a tic's set
-  is frozen at `T-2` regardless of *when* its events were born.
+- **Queue-at-a-future-tic.** The next hop lands `k` tics out, `k` = the kind's `tics_per_tile`.
+  **Speed is CONTENT, authored in TICS PER TILE** (user, 2026-07-28 — supersedes the wall-time
+  authoring rule): each kind's `:data` facet authors its speed in the DSL corpus (wolf = 12 →
+  2 s/tile at 6 Hz); `shared/codec::speed` holds only the DEFAULT for unauthored kinds and the
+  resolution rule. Every consumer — the worker's continuation spacing, the client's speculation
+  rate, the npc's trip deadline — resolves the SAME per-kind value through the corpus/bundle, or
+  speculation drifts by design. The accepted consequence: a `TIC_HZ` change changes wall-clock
+  movement speed, because the game's time unit IS the tic — content reads in tics, not seconds.
+  So `queue` accepts `event_tic ≥ master + 3`, not exactly `+3`. The completeness barrier is
+  unaffected — a tic's set is frozen at `T-2` regardless of *when* its events were born.
 
 **Don't promote every hop.** Promoting `state` on each tile is exactly the per-tile fan-out we're
 avoiding. The cadence:
@@ -156,9 +161,9 @@ are bare `MOVE_TO obj dest`; the hop that reaches `dest` is `PROMOTE MOVE_TO obj
 The client anchors "a row for tic `V` arrived at wall-time `W`" on every `state`/`event` arrival
 and extrapolates elapsed tics by `TIC_HZ` — a loose wall↔tic mapping refined by the stream itself
 (implicit sync, not the ping/pong that never worked). It walks the pawn fractionally along the
-line at `tics_per_tile`, and authoritative `state` snaps/reseeds it (corrections log their error —
-the data the re-anchor knob will be tuned on). Best-effort by construction — the server dictates
-truth, the client makes it smooth.
+line at the kind's authored `tics_per_tile`, and authoritative `state` snaps/reseeds it
+(corrections log their error — the data the re-anchor knob will be tuned on). Best-effort by
+construction — the server dictates truth, the client makes it smooth.
 
 ---
 

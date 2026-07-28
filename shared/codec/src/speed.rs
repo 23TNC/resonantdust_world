@@ -1,9 +1,11 @@
-//! Movement speed — the ONE seam the worker AND the speculating clients read (first-pawns F7),
-//! so the server steps and the client walks at exactly the same rate. Authored in **wall-time**
-//! (tiles/second) and converted through [`crate::tic::TIC_HZ`], so a tic-rate change never
-//! rescales the world's movement. Per-kind speeds are CONTENT and plumb in behind
-//! [`tics_per_tile`] when the corpus reaches the worker (the same gap torch-thing I2 recorded);
-//! until then every pawn walks at the default.
+//! Movement speed — the DEFAULT + resolution rule, nothing more. **Speed is CONTENT, authored
+//! in TICS PER TILE** (user, 2026-07-28 — supersedes first-pawns F7's wall-time authoring):
+//! each kind's `:data` facet authors `speed` in the DSL corpus (wolf = 12 → 2 s/tile at 6 Hz),
+//! and every consumer — the worker's continuation spacing, the client's speculation rate, the
+//! npc's trip deadline — resolves the SAME per-kind value through the corpus/bundle. This
+//! module holds only what codec may own (codec is wire/math, never content): the default for
+//! unauthored kinds and [`resolve`]. Accepted consequence: a [`crate::tic::TIC_HZ`] change
+//! changes wall-clock movement speed — the game's time unit IS the tic.
 
 use crate::tic::TIC_HZ;
 

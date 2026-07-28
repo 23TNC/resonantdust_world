@@ -186,6 +186,15 @@ impl Content {
         self.bundle.thing_light()
     }
 
+    /// Per-kind movement speed in **tics per tile**, `object_id` order (index 0 →
+    /// object_id 1); `0` = unauthored → the host resolves the default
+    /// (`defaultTicsPerTile`). The ONE value speculation must share with the worker's
+    /// continuation spacing (pawn-movement F1/F5 — speed is content, measured in tics).
+    #[wasm_bindgen(js_name = thingSpeed)]
+    pub fn thing_speed(&self) -> Vec<f64> {
+        self.bundle.thing_speeds()
+    }
+
     /// Every tile's 4 packed-map channel material bindings, in `def_id` order — a
     /// per-def table the host fetches once and indexes by the `defId` a tile prim
     /// carries (like [`tileTextureStems`]). Flat **stride-8** per def:
