@@ -625,6 +625,13 @@ export class WasmClient {
       this.world?.shutdown();
       this.world = new WorldClient(this.gatewayUrl, (ev: WorldEvent) => this.onEvent(ev));
       this.worldGateway = this.gatewayUrl;
+      // Seed the estimator's rate from the last session's learned value (movement-hardening
+      // F5 — kills the ~60 s cold-page warmup where first-trip landings correct by ~1 tile).
+      // A clamped HINT: the engine ignores it once the stream anchors.
+      try {
+        const hint = Number(localStorage.getItem(`rd-tic-rate:${this.gatewayUrl}`));
+        if (hint > 0) this.world.seedTicRate(hint);
+      } catch { /* storage unavailable (private mode) — the warmup just runs */ }
     }
     return this.world;
   }
@@ -726,6 +733,10 @@ export class WasmClient {
         break;
       case "ticAnchor":
         this.ticAnchor = { tic: ev.tic, wallMs: ev.wallMs, ticsPerSec: ev.ticsPerSec };
+        // Persist the learned rate for the next page load's seed (F5).
+        try {
+          localStorage.setItem(`rd-tic-rate:${this.gatewayUrl}`, String(ev.ticsPerSec));
+        } catch { /* storage unavailable — fine */ }
         break;
       case "moveIntent":
         for (const cb of this.moveIntentCbs) {

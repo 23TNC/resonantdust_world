@@ -42,3 +42,9 @@ brain keeps its adoption through `StateGone` (nothing despawns pawns yet); the M
 re-adds on the next row. The real fix is edge-side: suppress the `StateGone` when the same
 entity is still visible under another subscribed zone (the edge holds both subs and can dedup)
 — or a tombstone delay. Design-adjacent: ACTIONS.md §PLACE's cross-zone invariant.
+
+CLOSED by movement-hardening P2 (2026-07-28): the edge tracks `entity → (zone, seq)` per
+connection, swallows migration deletes, and holds real deletes one beat before relaying —
+drilled both ways (11 cross-zone trips with ZERO phantom removals; a hand-deleted row still
+relayed). `StateGone` being trustworthy, the wolves brain now HONORS removals (drop adoption
+→ adopt-or-CREATE) — the shard-wipe ghost died with it.

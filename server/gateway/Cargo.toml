@@ -8,6 +8,7 @@ name = "gateway"
 path = "src/main.rs"
 
 [dependencies]
+resonantdust-uplink = { path = "../uplink" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net"] }
 axum = "0.8"
 # CORS for the directory API: the browser client (pixijs dev server / deployed

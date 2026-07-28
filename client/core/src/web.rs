@@ -116,6 +116,12 @@ impl Client {
         self.send(Command::Queue { actions })
     }
 
+    /// Convenience: seed the tic estimator's rate from a persisted hint (see
+    /// [`Command::SeedTicRate`]).
+    pub fn seed_tic_rate(&self, tics_per_sec: f64) -> Result<(), SendError> {
+        self.send(Command::SeedTicRate { tics_per_sec })
+    }
+
     /// Convenience: move `entity` toward global tile `(tile_x, tile_y)` (see [`Command::Move`]).
     pub fn move_entity(&self, entity: u32, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
         self.send(Command::Move { entity, tile_x, tile_y })
@@ -314,6 +320,7 @@ impl Engine {
             }
             Command::RemoveAnchor { name } => self.handle_remove_anchor(name).await,
             Command::Queue { actions } => self.handle_queue(actions).await,
+            Command::SeedTicRate { tics_per_sec } => self.tics.seed_rate(tics_per_sec),
             Command::Move { entity, tile_x, tile_y } => {
                 self.handle_queue(world::move_to_program(entity, tile_x, tile_y)).await;
             }

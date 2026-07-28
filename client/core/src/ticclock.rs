@@ -143,6 +143,19 @@ impl TicEstimate {
         self.anchor
     }
 
+    /// Seed the RATE from a persisted hint (movement-hardening F5) — ignored once the stream
+    /// has anchored (the hint only skips the cold-page warmup; the stream stays
+    /// authoritative). Clamped TIGHTER than the learner's band (±20% of authored): a hint is
+    /// worth little and a polluted one (a learning window spanning a server stall measurably
+    /// stored 8.48 against a true 6.0) must not start the page 40% fast.
+    pub fn seed_rate(&mut self, tics_per_sec: f64) {
+        if self.anchor.is_some() || !tics_per_sec.is_finite() {
+            return;
+        }
+        let base = TIC_HZ as f64 / 1000.0;
+        self.rate = (tics_per_sec / 1000.0).clamp(0.8 * base, 1.2 * base);
+    }
+
     /// The learned rate in tics per SECOND (starts at `TIC_HZ`; refined from the stream).
     pub fn tics_per_sec(&self) -> f64 {
         self.rate * 1000.0

@@ -18,6 +18,9 @@ services:
       dockerfile: Dockerfile
     volumes:
       - .:/workspace
+      # The self-heal crate: the path dep `../uplink` resolves from /workspace to /uplink
+      # (movement-hardening P4 — directory.rs rides `resonantdust-uplink` now).
+      - ../uplink:/uplink
     working_dir: /workspace
     # spacetimedb-lib's build script shells out to `git rev-parse HEAD` to stamp
     # a commit hash, panicking when git is absent (it is, in rust:slim). This env

@@ -16,30 +16,21 @@
 //!      [`crate::resolve::pick_server`] (the pluggable policy) and, for a known
 //!      player, pin it for next time.
 //!
-//! The connection self-heals: each build shares an `alive` flag the SDK clears on
-//! disconnect/connect-error, and [`Directory::conn`] rebuilds a dead connection
-//! on the next request (the SDK does not auto-reconnect).
+//! Self-healing rides [`resonantdust_uplink`] (movement-hardening P4 — this file
+//! is where the pattern was BORN; the crate lifted it, grew sub-`on_error`
+//! awareness + capped backoff, and now the original consumes it back): the
+//! connection is built best-effort, gated on the directory subscription applying,
+//! and rebuilt on the next request after any death.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use spacetimedb_sdk::{DbContext, Table};
-use tracing::{error, info, warn};
+use tracing::warn;
 
-use crate::bindings::index::{
-    assign_player, touch_player, DbConnection, PlayerServersTableAccess, ServersTableAccess,
-    SubscriptionHandle,
-};
+use crate::bindings::index;
+use crate::bindings::index::{assign_player, touch_player, PlayerServersTableAccess, ServersTableAccess};
 use crate::config::GatewayConfig;
 use crate::resolve::pick_server;
-
-/// How long to wait for the directory subscription to apply before giving up on a
-/// (re)connect attempt.
-const SUB_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// The rows the gateway needs mirrored to resolve requests.
-const SUBSCRIPTION_QUERIES: [&str; 2] = ["SELECT * FROM servers", "SELECT * FROM player_servers"];
 
 /// A resolved world server to hand back to the client.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -69,39 +60,28 @@ pub enum ResolveError {
     NoServers,
 }
 
-/// A live upstream connection to the `index` DB plus its liveness flag and the
-/// kept-alive directory subscription.
-struct Conn {
-    conn: Arc<DbConnection>,
-    /// Cleared by the SDK on disconnect/connect-error; checked on every request.
-    alive: Arc<AtomicBool>,
-    /// Held so the directory subscription isn't torn down (dropping the handle
-    /// unsubscribes, which would stop the cache from being maintained).
-    _sub: SubscriptionHandle,
-}
-
 /// The gateway's handle to the routing directory.
 pub struct Directory {
-    cfg: GatewayConfig,
-    /// `tokio` mutex so the (re)connect path — which awaits the subscription —
-    /// can be serialized without blocking the runtime, and concurrent requests
-    /// share one connection.
-    inner: tokio::sync::Mutex<Option<Conn>>,
+    up: resonantdust_uplink::Uplink<index::DbConnection, index::SubscriptionHandle>,
 }
 
 impl Directory {
     pub fn new(cfg: GatewayConfig) -> Self {
-        Self {
-            cfg,
-            inner: tokio::sync::Mutex::new(None),
-        }
+        let up = resonantdust_uplink::subbed_uplink!(
+            index,
+            "index directory",
+            cfg.index_uri,
+            cfg.index_db,
+            vec!["SELECT * FROM servers".to_string(), "SELECT * FROM player_servers".to_string()]
+        );
+        Self { up }
     }
 
     /// Eagerly establish the connection at startup. Best-effort: a failure is
     /// logged and left for the first request to retry (so the gateway still binds
     /// its HTTP port and serves `/health` even if `index` is briefly down).
     pub async fn warm_up(&self) {
-        if let Err(err) = self.conn().await {
+        if let Err(err) = self.up.get().await {
             warn!(%err, "index directory not reachable at startup; will retry on first request");
         }
     }
@@ -111,7 +91,7 @@ impl Directory {
     /// (first ever connect): it's allocated a server but not pinned — the pin is
     /// created once the player logs in at that server and a real id exists.
     pub async fn resolve(&self, player_id: Option<u32>) -> Result<Resolved, ResolveError> {
-        let conn = self.conn().await.map_err(ResolveError::Unavailable)?;
+        let conn = self.up.get().await.map_err(ResolveError::Unavailable)?;
         let now = now_ms();
         let player_id = player_id.filter(|&p| p != 0);
 
@@ -153,87 +133,6 @@ impl Directory {
             server,
             reused: false,
         })
-    }
-
-    /// Return the live connection, rebuilding it if absent or dead.
-    async fn conn(&self) -> Result<Arc<DbConnection>, String> {
-        let mut guard = self.inner.lock().await;
-        if let Some(c) = guard.as_ref() {
-            if c.alive.load(Ordering::Acquire) {
-                return Ok(c.conn.clone());
-            }
-            info!("index connection dead; reconnecting");
-        }
-
-        let (conn, alive) = build_conn(&self.cfg)?;
-        let sub = subscribe_and_wait(&conn).await?;
-        *guard = Some(Conn {
-            conn: conn.clone(),
-            alive,
-            _sub: sub,
-        });
-        info!(db = %self.cfg.index_db, "index directory connected + subscribed");
-        Ok(conn)
-    }
-}
-
-/// Build (and start the message loop for) a connection to the `index` DB.
-fn build_conn(cfg: &GatewayConfig) -> Result<(Arc<DbConnection>, Arc<AtomicBool>), String> {
-    let alive = Arc::new(AtomicBool::new(true));
-    let built = DbConnection::builder()
-        .with_uri(&cfg.index_uri)
-        .with_database_name(&cfg.index_db)
-        .on_connect(|_ctx, identity, _token| info!(%identity, "index upstream connected"))
-        .on_connect_error({
-            let alive = alive.clone();
-            move |_ctx, err| {
-                alive.store(false, Ordering::SeqCst);
-                error!(%err, "index upstream connect error");
-            }
-        })
-        .on_disconnect({
-            let alive = alive.clone();
-            move |_ctx, err| {
-                alive.store(false, Ordering::SeqCst);
-                match err {
-                    Some(err) => warn!(%err, "index upstream disconnected"),
-                    None => info!("index upstream disconnected"),
-                }
-            }
-        })
-        .build()
-        .map_err(|err| format!("build index connection: {err}"))?;
-    built.run_threaded();
-    Ok((Arc::new(built), alive))
-}
-
-/// Subscribe to the directory tables and await the first applied snapshot (so the
-/// first request reads a populated cache), bounded by [`SUB_TIMEOUT`].
-async fn subscribe_and_wait(conn: &DbConnection) -> Result<SubscriptionHandle, String> {
-    let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
-    // Either on_applied or on_error fires once; whichever wins sends.
-    let tx = Arc::new(Mutex::new(Some(tx)));
-    let tx_ok = tx.clone();
-    let tx_err = tx.clone();
-    let handle = conn
-        .subscription_builder()
-        .on_applied(move |_ctx| {
-            if let Some(t) = tx_ok.lock().unwrap().take() {
-                let _ = t.send(Ok(()));
-            }
-        })
-        .on_error(move |_ctx, err| {
-            if let Some(t) = tx_err.lock().unwrap().take() {
-                let _ = t.send(Err(err.to_string()));
-            }
-        })
-        .subscribe(SUBSCRIPTION_QUERIES.map(String::from).to_vec());
-
-    match tokio::time::timeout(SUB_TIMEOUT, rx).await {
-        Ok(Ok(Ok(()))) => Ok(handle),
-        Ok(Ok(Err(err))) => Err(format!("directory subscription error: {err}")),
-        Ok(Err(_)) => Err("directory subscription channel dropped".to_string()),
-        Err(_) => Err("directory subscription timed out".to_string()),
     }
 }
 

@@ -1,6 +1,6 @@
 # Issues — pawn-movement
 
-## I7 · npc deadline re-issue DUPLICATES a live chain (OPEN — observed in the flesh)
+## I7 · npc deadline re-issue DUPLICATES a live chain (observed in the flesh)
 
 `MOVE_TO` chains have no identity: a chain only ends when its object reaches ITS dest (or a
 queue fails). The npc's deadline re-issue assumes the old chain is dead — re-issuing while it
@@ -17,6 +17,12 @@ whose serial no longer matches dies silently — at most one live chain per pawn
 intent cancels the old chain by construction. Until then: npc deadlines carry generous slack
 (re-issue only when the chain is near-certainly dead), and re-issues keep the SAME dest
 (same-dest duplicates converge and both die).
+
+CLOSED by movement-hardening P1 (2026-07-28): the sketch built verbatim — trip-serial in the
+pawn's `data` low bits, worker-only `MOVE_STEP obj dest serial` dying on serial mismatch, an
+edge client-verb allowlist. Drilled live: a second-session hijack killed the npc's chain at
+its next hop (exactly one superseded line), the npc's deadline superseded BACK with a fresh
+dest, and the queue stayed bounded throughout.
 
 ## Observation · hidden browser tabs freeze speculation (expected, recorded)
 
@@ -73,7 +79,10 @@ extrapolates at exactly `TIC_HZ` (I4). Suspects: WSL2 timer overshoot per `inter
 (but tokio's default Burst behavior should catch up), or the bump→subscription→read round trip
 dropping increments. Not diagnosed further this stream — the CLIENT must track the observed
 rate regardless (F6), because no fix pins the true rate exactly. Recorded for a master-side
-pacing pass later.
+pacing pass later. CLOSED by movement-hardening P3 (2026-07-28): root cause = WSL2
+`CLOCK_MONOTONIC` running at 0.900× realtime (measured — every monotonic sleep in the VM is
+11% long); the master now paces a realtime grid with a half-gain integral controller on its
+measured rate — durable 5.9986 Hz over 157 s.
 
 ## I4 · The wall↔tic estimate LEADS the server by ~25 tics (found in P2 verification)
 

@@ -85,6 +85,10 @@ pub enum Command {
     /// The typed helpers ([`Move`](Command::Move) / [`Place`](Command::Place)) compile to this. An
     /// `npc` driving pawns can send programs directly. Requires a live session; ignored otherwise.
     Queue { actions: Vec<u32> },
+    /// Seed the tic estimator's RATE with a persisted hint (movement-hardening F5): a host that
+    /// remembered the last learned `tics_per_sec` skips the ~60 s cold-page warmup. A HINT only —
+    /// clamped to the estimator's band, ignored once the stream has anchored.
+    SeedTicRate { tics_per_sec: f64 },
     /// Move `entity` toward global tile `(tile_x, tile_y)` — compiles to a `MOVE_TO` program. Any
     /// live session may move any entity (no ownership model yet). `entity` is the
     /// `entity_reference`. Requires a live session; ignored otherwise.

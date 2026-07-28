@@ -511,6 +511,13 @@ impl WorldClient {
         let _ = self.inner.move_entity(entity, tile_x, tile_y);
     }
 
+    /// Seed the tic estimator's rate from a persisted hint (movement-hardening F5 — kills the
+    /// cold-page warmup). Clamped; ignored once the stream has anchored.
+    #[wasm_bindgen(js_name = seedTicRate)]
+    pub fn seed_tic_rate(&self, tics_per_sec: f64) {
+        let _ = self.inner.seed_tic_rate(tics_per_sec);
+    }
+
     /// Place + promote `entity` at global tile `(tile_x, tile_y)` — compiles to a `PROMOTE_STATE` +
     /// `PLACE` program (the spawn path until `CREATE`'s minted-id claim lands). No-op before login.
     #[wasm_bindgen(js_name = place)]

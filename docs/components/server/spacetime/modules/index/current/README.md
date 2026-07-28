@@ -1,8 +1,16 @@
 # Current — `index`
 
-_Last updated: 2026-07-15._
+_Last updated: 2026-07-28 (re-verified against the module after the 07-17 additions)._
 
-**Live.** The server tier works: the edge registers + heartbeats, the gateway routes on it.
+**Live.** The server tier works: the edge registers + heartbeats, the gateway routes on it
+(directory now consumed through `resonantdust-uplink` — movement-hardening P4). Since the
+07-15 stamp the module also grew, both live:
+
+- **`master_clock` + `bump_tic`** — the durable per-realm tic (spacetime-again W6): the ONE
+  home of the simulation clock; the master calls `bump_tic` each metronome interval and
+  every other process reads the row by subscription. `tic` is a `u32` absolute counter.
+- **`cold_shards` + `set_cold_shard`/`remove_cold_shard`** — the cold-shard region router
+  (cold-rework P2): `type_id` + `region_reference` → database name, resolved by the edge.
 
 The **shard tier is vestigial** — `region_shards` / `shards` have no consumer since the shard was
 deleted, but the edge **still subscribes** to them at startup and logs the row counts. That

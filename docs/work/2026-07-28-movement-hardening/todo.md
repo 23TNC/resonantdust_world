@@ -80,17 +80,17 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P4 · Client clock polish + robustness follow-ups
 
-- [ ] Rate seed: persist the last learned `tics_per_sec` in the webgl host (localStorage,
+- [x] Rate seed: persist the last learned `tics_per_sec` in the webgl host (localStorage,
       keyed by gateway URL, written on each `ticAnchor`) and seed the engine estimator at
       boot via a small wasm export — a clamped HINT (F5), stream stays authoritative.
       Acceptance: fresh reload's FIRST trip lands e < 0.3 (today ≈ 1 during warmup).
-- [ ] gateway: migrate `directory.rs` onto `resonantdust-uplink` (the pattern's birthplace —
+- [x] gateway: migrate `directory.rs` onto `resonantdust-uplink` (the pattern's birthplace —
       last unconverted surface, 4 panic sites). Acceptance: login works; kill/restart
       SpacetimeDB mid-run → gateway heals without a process restart (the sim-self-heal drill,
       run against the gateway).
-- [ ] Docs hygiene: re-verify `docs/components/server/spacetime/modules/index/current/`
+- [x] Docs hygiene: re-verify `docs/components/server/spacetime/modules/index/current/`
       against the module (stale-stamp warning since 07-17) and re-stamp. Acceptance:
       docs-check no longer warns about it.
-- [ ] Wrap: memory updated (supersession contract, 6 Hz restored, StateGone clean),
+- [x] Wrap: memory updated (supersession contract, 6 Hz restored, StateGone clean),
       pawn-movement I5/I7 + first-pawns I4 stamped closed with pointers here, work-index row
       → done.

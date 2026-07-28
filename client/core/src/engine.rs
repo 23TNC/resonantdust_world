@@ -263,6 +263,7 @@ impl Engine {
             }
             Command::RemoveAnchor { name } => self.handle_remove_anchor(name).await,
             Command::Queue { actions } => self.handle_queue(actions).await,
+            Command::SeedTicRate { tics_per_sec } => self.tics.seed_rate(tics_per_sec),
             Command::Move { entity, tile_x, tile_y } => {
                 self.handle_queue(world::move_to_program(entity, tile_x, tile_y)).await;
             }

@@ -93,6 +93,24 @@ breathes slightly around 2 s/tile; the amplitude shrinks as windows accumulate.
 flat 4.0–5.3 (single-digit, no climb), landings e ≤ 0.26 except the first trip's e = 1.1 —
 the rate-learning warmup, which P4's rate seed exists to kill.
 
+## 2026-07-28 · P4 — polish + robustness (4/4) · STREAM DONE 16/16
+
+**Rate seed (F5)**: `Command::SeedTicRate` → `TicEstimate::seed_rate` (pre-anchor only,
+clamped ±20% of authored — TIGHTER than the learner's band, because a polluted learning
+window measurably persisted 8.48 against a true 6.0 and a hint must not start a page 40%
+fast); webgl persists each `ticAnchor`'s rate in localStorage keyed by gateway and seeds at
+world construction. **Verified**: reload → first trip lands e = 0.00 (was ≈ 1 during
+warmup), all landings ≤ 0.07, rate settles 5.99. **Gateway**: `directory.rs` rewritten onto
+`resonantdust-uplink` (the pattern's birthplace consumes the crate back — bespoke
+Conn/build_conn/subscribe_and_wait deleted, ~90 lines and 4 panic sites gone; compose gains
+the `../uplink` mount; the gateway unit's redeploy hash now includes `uplink/src`).
+**Drilled**: full daemon restart under a live gateway — resolves 200 through and after the
+outage, container uptime unbroken (9 h). **Docs hygiene**: the `index` module `current/`
+re-verified + re-stamped (master_clock/bump_tic + cold_shards documented) — the standing
+docs-check warning is GONE. Residual noted honestly: the estimator's two-point learner can
+store a polluted rate across server stalls (seed clamp contains it; a future pass could
+reject windows spanning a re-anchor reset).
+
 *Commit note*: a concurrently-active session (art-128-tiles) ran `git add -A` mid-P1, so this
 phase's CODE landed inside its commits `ca98cf0` + `6684ab5` (art-titled messages). Nothing
 lost — verified file-by-file — but attribution interleaves; this session stages selectively
