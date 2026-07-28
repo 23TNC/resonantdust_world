@@ -17,7 +17,7 @@ GPU timing = the EXT_disjoint_timer_query harness from
 
 ## P2 — the decay lightmap
 
-- [ ] Add the coarse decay RT (`TEXTILE_UNIT` res, RGBA16F, [F1](forks.md#f1)) + the in-place decay draw (`blendFunc(ZERO, CONSTANT_COLOR)`, dt-derived k — [F2](forks.md#f2)). Acceptance: a debug splat fades smoothly to zero; decay pass ≤ 0.05 ms (GPU-timed).
+- [ ] Add the coarse decay RT ([F1](forks.md#f1)) + the in-place decay draw ([F2](forks.md#f2), dt-derived k). Acceptance: a debug splat fades smoothly to zero; decay pass ≤ 0.05 ms (GPU-timed).
 - [ ] Blit adds the decay map, bilinearly upsampled, AFTER the accumulator sum. Acceptance: pixel-identical output when the map is empty; soft glow when not.
 - [ ] Splat path: additive particle quads (world pos, radius, colour, intensity), shadow-STAMPED by the parent light's coarse-shadow slot at emit ([F4](forks.md#f4)). Acceptance: a splat emitted over a tree shadow shows the shadow cut into its glow.
 - [ ] Flicker emitter v1 ([F5](forks.md#f5)): lights with a flicker flag emit jittered splats; the base light stays STATIC in the hot accumulator. Acceptance: torches at area1 visibly flicker with `debugClassDraws 0` on static frames; frame rate unchanged.
@@ -31,5 +31,5 @@ GPU timing = the EXT_disjoint_timer_query harness from
 
 ## P4 — intent capture + wrap
 
-- [ ] Write `docs/intent/lighting-feel/README.md`: source halo, light shafts, tone curve + ambient grading, ground-relief-rides-tile-prims, SDF-silhouette penumbra (parked), particle-emitter prim leaf (F5a). Acceptance: `bin/rd docs-check` green; stream README links it.
+- [ ] Review [`docs/intent/lighting-feel/`](../../intent/lighting-feel/README.md) (written at planning) against what P1–P3 actually shipped; amend where execution taught better. Acceptance: `bin/rd docs-check` green; the doc reflects the built reality.
 - [ ] Record final A/Bs + timings in completed.md; update the work index row. Acceptance: docs-check green; every P1/P2 change has its screenshot pair.
