@@ -6,11 +6,11 @@ edge a value, then teach the pipeline the footprint, then fix the atlas guard, t
 
 ## P0 — Verify the model before building on it
 
-- [ ] Grep the corpus for every `&thing.span set` and record the value per def. Acceptance: a table in `issues.md` of def → span → implied square at 128, incl. conifer = 2 → 256.
-- [ ] Confirm `frame_span` is written and read as pow2 tiles end to end. Acceptance: name the writer and the reader by file:line, or record that one side is missing.
-- [ ] Check whether any leaf `meta.json` already carries a footprint or span today. Acceptance: a yes/no with the field name, so P2 extends rather than duplicates.
-- [ ] Read back what `tex_manifest.rs` serves for one linked leaf and one thing leaf. Acceptance: the two JSON entries, showing which already carry `grid`/`pad` and which carry nothing.
-- [ ] Confirm `GRID_COLS`/`GRID_ROWS` = 4 is the only place the linked 4×4 is fixed. Acceptance: every site that assumes 4 is listed, or the assumption is found duplicated elsewhere.
+- [x] Grep the corpus for every `&thing.span set` and record the value per def. Acceptance: a table in `issues.md` of def → span → implied square at 128, incl. conifer = 2 → 256.
+- [x] Confirm `frame_span` is written and read as pow2 tiles end to end. Acceptance: name the writer and the reader by file:line, or record that one side is missing.
+- [x] Check whether any leaf `meta.json` already carries a footprint or span today. Acceptance: a yes/no with the field name, so P2 extends rather than duplicates.
+- [x] Read back what `tex_manifest.rs` serves for one linked leaf and one thing leaf. Acceptance: the two JSON entries, showing which already carry `grid`/`pad` and which carry nothing.
+- [x] Confirm `GRID_COLS`/`GRID_ROWS` = 4 is the only place the linked 4×4 is fixed. Acceptance: every site that assumes 4 is listed, or the assumption is found duplicated elsewhere.
 
 ## P1 — Make the tile edge a value, not a literal
 
@@ -22,18 +22,21 @@ edge a value, then teach the pipeline the footprint, then fix the atlas guard, t
 ## P2 — Carry the tile footprint in the leaf metadata
 
 - [ ] Decide and record where the footprint lives and who authors it. Acceptance: [F1](forks.md#f1) names the field, the file, and the rejected alternatives.
-- [ ] Write `tiles: [w, h]` and derived `span` into each leaf `meta.json` during remaster. Acceptance: conifer variant 0 shows `[1, 2]` and span 2.
+- [ ] Write `span` + the derived square into each leaf `meta.json` during remaster, per [I6](issues.md#i6). Acceptance: conifer variant 0 shows span 2 and square 256.
 - [ ] Read the footprint from the corpus rather than re-authoring it, falling back when absent. Acceptance: deleting a def's `span` makes remaster warn and fall back to `_pow2_box`, not fail.
-- [ ] Size the emitted square from the footprint instead of blob extent in `_emit_crops`. Acceptance: conifer emits 256² because span says so — verified by shrinking the blob and getting 256² still.
+- [ ] Size the emitted square from `span` instead of blob extent in `_emit_crops`. Acceptance: conifer emits 256² because span says so — verified by shrinking the blob and getting 256² still.
 - [ ] Surface `tiles`/`span` through `tex_manifest.rs` beside `grid`/`pad`. Acceptance: the manifest entry for conifer carries the footprint.
+- [ ] Emit the manifest's required `cols`/`rows`/`padU`/`padV` from `generate_tile.py`, per [I8](issues.md#i8). Acceptance: `read_atlas_meta`'s logic accepts a freshly generated ground sheet, which it rejects today.
 - [ ] Write `tiles` into `atlas.json` for ground and linked sheets. Acceptance: ground reads `[8, 8]`, a linked form reads `[4, 4]`.
 
-## P3 — Make the guard ring per-cell on an atlas
+## P3 — Stop `--pad` corrupting atlases; use the guard that already exists
+
+_Revised at P0.5 — see [F3](forks.md#f3). The per-cell guard is `GRID_INSET_FRAC`, already shipping._
 
 - [ ] Reproduce the bug: run `--pad 1` on an 8×8 atlas and measure an interior cell boundary. Acceptance: `issues.md` records that interior boundaries are unguarded while the canvas edge is.
-- [ ] Teach `pad_maps.py` to read `atlas.json` and inset every cell, not the canvas. Acceptance: on an 8×8 sheet all 64 cells have a replicated ring and the sheet is still 1024².
+- [ ] Make `pad_maps.py` skip any leaf carrying `atlas.json`. Acceptance: a `--pad 1` run over a ground leaf leaves every map byte-identical and says why it skipped.
 - [ ] Leave non-atlas leaves on canvas-edge padding. Acceptance: a conifer leaf still pads exactly as it does today, byte-identical to a pre-change run.
-- [ ] Confirm the emitted `pad` matches what the client already trims. Acceptance: `atlas.json`'s `pad` is the normalized per-cell inset `tex_manifest.rs` expects, checked against its parser.
+- [ ] Emit `padU`/`padV` from `generate_tile.py` off `GRID_INSET_FRAC`'s formula. Acceptance: a generated sheet's `atlas.json` carries `padU = f/cols`, matching what `bin/art:1683` computes.
 
 ## P4 — Migrate what is already generated
 

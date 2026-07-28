@@ -589,6 +589,9 @@ async fn main() {
 /// action, whose write targets then join `promote` (they project to the client-visible table on write).
 fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut HashSet<u32>) {
     let mut pending_promote = false; // set by a `PROMOTE` prefix; consumed by the next action
+    // The INTENT event (`PROMOTE_EVENT`-carrying initial program) — its `MOVE_TO` seeds, it
+    // doesn't step (ACTIONS.md §Movement, pawn-movement I6).
+    let intent_event = action::asks_promote_event(actions);
     for inst in action::program(actions) {
         let inst = match inst {
             Ok(i) => i,
@@ -611,17 +614,24 @@ fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut Has
             }
             MOVE_TO => {
                 // MOVE_TO obj dest — step ONE tile toward dest (greedy straight line — the
-                // pathfinding seam, ACTIONS.md §Movement) and face the step. The continuation
-                // queueing lives in the tic loop (it needs the event conn + the hop tic).
+                // pathfinding seam, ACTIONS.md §Movement) and face the step. On the INTENT
+                // event the hop does NOT step: the seed promotes the CURRENT position — the
+                // anchor that aligns every client to the server BEFORE speculation walks
+                // (pawn-movement I6; the old step-then-seed fanned start+1 and every trip
+                // opened with a one-tile snap). The first step lands on the first
+                // continuation, one tics_per_tile later.
                 if let [obj, dest] = inst.operands {
                     let p = scratch.entry(*obj).or_default();
                     let (cx, cy) = position_to_tile(p.position_reference);
                     let (tx, ty) = position_to_tile(*dest);
                     let (sx, sy) = ((tx - cx).signum(), (ty - cy).signum());
                     if sx != 0 || sy != 0 {
-                        p.position_reference = tile_to_position(cx + sx, cy + sy);
-                        // Facing from the step (`data` rotation bits): 0=s 1=e 2=n 3=w,
-                        // east/west winning a diagonal (side profiles read best).
+                        if !intent_event {
+                            p.position_reference = tile_to_position(cx + sx, cy + sy);
+                        }
+                        // Facing turns toward the path either way (the wolf faces its trip
+                        // from the seed). `data` rotation bits: 0=s 1=e 2=n 3=w, east/west
+                        // winning a diagonal (side profiles read best).
                         let facing: u8 = if sx > 0 { 1 } else if sx < 0 { 3 } else if sy > 0 { 0 } else { 2 };
                         p.data = (facing << 6) | (p.data & 0x3F);
                     }

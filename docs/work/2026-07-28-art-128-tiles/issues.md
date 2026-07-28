@@ -49,6 +49,102 @@ for the tile size — which is exactly what this stream and
 [`square-128`](../2026-07-28-square-128/README.md) both make people do. Fixed in [P5](todo.md)
 whichever value wins.
 
+## I8 — `generate_tile.py` writes an `atlas.json` the server cannot read {#i8}
+_2026-07-28 · P0.4 · **live defect** — verified against `read_atlas_meta`_
+
+There are **two incompatible `atlas.json` schemas** in the tree:
+
+| written by | schema | manifest verdict |
+|---|---|---|
+| `bin/art` linked path | `{"cols":4,"rows":4,"padU":0.0,"padV":0.0}` | ✅ **served as an atlas** |
+| `bin/lib/generate_tile.py` | `{"grid":[16,16],"tile":64,"pad":0,"cell":64,…}` | ❌ **ignored → single image** |
+
+[`read_atlas_meta`](../../../server/edge/src/tex_manifest.rs) requires `cols`/`rows`/`padU`/`padV`
+and every lookup is a `?`, so one missing key returns `None` and the leaf is "treated as an ordinary
+single-image stem" (its own comment). `generate_tile.py` shares **not one key** with it.
+
+Verified by running the parser's logic over every `atlas.json` in the tree:
+
+```
+SERVED as atlas            textures/biome-tile/default/smooth/wall/atlas.json
+IGNORED -> single image    textures/biome-tile/default/stone/5200/atlas.json
+```
+
+**So every ground sheet `generate_tile.py` has ever produced is served as one flat image, not a cell
+grid.** The client never learns the grid and cannot sample a cell by UV. This predates the stream and
+would have gone unnoticed — the sheets *look* right on disk, and nothing errors.
+
+Fixed by a new P2 item: emit the manifest's schema. The generator's extra provenance fields
+(`seam_energy`, `feature_size`, `seed`, …) are worth keeping, and can be — the parser ignores unknown
+keys. It is only the *required four* that must be present.
+
+Note `padU`/`padV` are `0.0` on `smooth/wall` today, i.e. no cell guard at all, which is consistent
+with [I2](#i2) and is what [P3](todo.md) exists to fix.
+
+## I6 — PLAN DEFECT: the texture square derives from `span`, NOT from `footprint` {#i6}
+_2026-07-28 · P0.2 · read from `shared/dsl/src/loader.rs` — **[F2](forks.md#f2) was wrong**_
+
+`footprint` already exists and is **not** the field that sizes a texture. Both are in
+[`VisualParts`](../../../shared/dsl/src/loader.rs) and they are independent:
+
+| field | is | conifer | default |
+|---|---|---|---|
+| `footprint (w,h)` | the tiles the prim **OCCUPIES** — movement, hit-testing, z-row | **1 × 1** | `(1,1)` (`loader.rs:292`) |
+| `span` | the sprite FRAME's world span, pow2 tiles; drawn box is `span × span` | **2** | `1.0` (`loader.rs:297`) |
+
+The conifer is `footprint 1×1` with `span 2` — it *occupies* one tile and *draws over* two. So the
+user's "a conifer is 1×2 tiles" is its **visual extent**, whose pow2 envelope is `span = 2` → 256².
+
+[F2](forks.md#f2) as written said: record the footprint `[w,h]` and derive
+`span = next_pow2(max(w,h))`. For the conifer that is `next_pow2(max(1,1)) = 1` → **128², wrong by a
+factor of two.** Occupancy and frame extent are simply different quantities and one cannot be
+derived from the other — a 3×2 warehouse could occupy six tiles and draw within a 4-tile frame, or a
+1×1 lamp-post could draw over 4.
+
+**Corrected:** the texture square is `span · TILE_PX`, full stop. `footprint` is a gameplay fact this
+stream must not touch, and must not fold into the square. F2 rewritten accordingly.
+
+## I7 — `span` is documented as pow2 but never validated {#i7}
+_2026-07-28 · P0.2 · `loader.rs:295-297` vs [`VARIABLES.md`](../../VARIABLES.md)_
+
+`VARIABLES.md` says of `frame_span`: *"Valid values are pow2 tiles (1/2/4/8/16) — required for
+integer ppu; the writer rounds up + warns."* The loader does `read_f("prims.0.span", 1.0)` and
+neither rounds nor warns — any float passes straight through to `thing_layout[7]` and into
+`thingPlacement.ts`, where the drawn box becomes `span × span` tiles.
+
+So a def authoring `span 1.5` silently gets a non-pow2 frame and breaks the integer px-per-unit the
+whole def-frame-anchors model rests on. Nothing in the corpus does this today (only conifer authors
+`span`, and it is 2), so this is latent rather than live — but this stream is about to make `span`
+the thing that decides every texture's size, which turns a latent authoring hazard into a live one.
+
+Not in scope to fix here; recorded so P2 can round-and-warn **on the art side** at minimum, and so
+the loader gap is on the record.
+
+## I5 — `span` is declared ONCE in the whole corpus; the fallback is the common case {#i5}
+_2026-07-28 · P0.1 · measured — `grep -rn "thing.span set" content/`_
+
+The plan assumed the corpus authors footprints. It authors exactly one:
+
+| def | texture | `size` | `span` | square @128 |
+|---|---|---|---|---|
+| `tree` | `biome-thing/default/conifer` | 2 | **2** | **256** |
+| `flora` | `biome-thing/default/flora` | 0.5 | — | — |
+| `wolf` | `pawn/animal/wolf` | 1.125 | — | — |
+| `shrub` `cactus` `reed` `rock` `torch` `torch_blue` | `white` (placeholder) | 0.5 | — | — |
+
+**9 defs carry `size`, 1 carries `span`.** Six of the nine are on the `white` placeholder, so only
+three name real art, and two of those three declare no span.
+
+**What this changes.** [F1](forks.md#f1) (corpus authors, leaf caches) still holds as the *shape* —
+there must not be a second authored copy. But P2's "fall back to `_pow2_box` when absent" is not an
+edge case, it is what will run for almost everything on day one. So:
+
+- the fallback must be **good**, not a token branch, and must warn loudly enough to drive authoring;
+- P2 should emit the *inferred* span into the leaf so there is a worklist of defs to go author;
+- the wolf is the sharp case — `size 1.125` needs a 2-tile span, and it declares none, so whatever
+  `frame_span` defaults to when absent decides whether the wolf currently clips. P0.2 must pin that
+  default down.
+
 ## I4 — `thing.size` and `thing.span` are different numbers {#i4}
 _2026-07-28 · read at plan time from `content/visual/things.rd`_
 

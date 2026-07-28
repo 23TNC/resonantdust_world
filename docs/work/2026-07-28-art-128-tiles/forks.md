@@ -27,35 +27,71 @@ kind, so it is the wrong granularity.
 **Rejected — have `tex_manifest.rs` read the corpus.** Makes the edge server depend on the DSL
 corpus purely for a number the art pipeline already has in hand.
 
-## F2 — Non-square footprints vs a square frame {#f2}
-_2026-07-28 · resolved at plan time · **record `[w, h]`, derive the span**_
+## F2 — What the texture square derives from {#f2}
+_2026-07-28 · **REWRITTEN at P0.2** — the original was wrong, see [I6](issues.md#i6)_
 
-**Chosen.** Record the true footprint `[w, h]` (conifer `[1, 2]`) and derive
-`span = next_pow2(max(w, h))`, giving the square `span · TILE_PX` (conifer → 256²).
+**Chosen.** The square is **`span · TILE_PX`**. Nothing else. `footprint` is not an input.
 
-**Why.** `frame_span` is a single pow2 value, so the *frame* is square and 1×2 and 2×2 both land in
-256². But the footprint is not a rendering detail — occupancy and the thing spatial model care that a
-conifer is 1×2, and collapsing to `2` on the way in destroys that permanently. Deriving is free;
-un-collapsing is impossible.
+**Why.** `footprint (w,h)` and `span` already exist as separate fields and mean different things:
+footprint is the tiles a prim *occupies* (movement, hit-testing, z-row), span is the sprite frame's
+*world extent* in pow2 tiles. The conifer is `footprint 1×1`, `span 2` — it occupies one tile and
+draws over two. They are independent quantities; a wide building could occupy 3×2 and draw within a
+4-tile frame.
+
+**What the original said, and why it was wrong.** It proposed recording `[w,h]` and deriving
+`span = next_pow2(max(w,h))`. Applied to the conifer's real footprint of 1×1 that yields span 1 →
+**128², half the correct size.** It read the user's "conifer is 1×2 tiles" as a footprint when it is
+a visual extent. Caught at P0.2 by reading `loader.rs` rather than assuming.
+
+**Consequence for P2.** The leaf caches `span` (and the resulting square). It may *also* carry
+`footprint` for the manifest's convenience, but as a passenger — the art pipeline must never size
+anything from it.
+
+## F5 — What the art pipeline does when a def declares no span {#f5}
+_2026-07-28 · resolved at P0.2 · **infer, warn, and emit a worklist**_
+
+**Chosen.** Absent `span`, infer one from the art's opaque bbox
+(`span = next_pow2(ceil(max(w,h) / TILE_PX))`), emit it into the leaf marked `"span_inferred": true`,
+and warn naming the def. Do **not** fall back silently, and do **not** fail.
+
+**Why.** [I5](issues.md#i5) measured that exactly one def in the corpus authors `span`, so a
+"fallback" is what runs for almost everything — a token branch would mean almost every texture is
+sized by guesswork with no record of it. Marking the inference makes the leaves self-describing and
+gives P4 a worklist of defs to go author. Failing instead would make the DSL corpus a hard build
+dependency of the art tools, which [F1](#f1) explicitly avoids.
+
+**Note.** `span` defaults to `1.0` in the loader (`loader.rs:297`), so a def that declares none draws
+in a 1-tile frame today. The wolf (`size 1.125`, no span) therefore draws 1.125 tiles of sprite into
+a 1-tile frame. Whether that currently clips is worth a look, but it is `square-128`'s territory, not
+this stream's.
 
 ## F3 — `--pad` on an atlas {#f3}
-_2026-07-28 · resolved at plan time · **per-cell inset, driven by `atlas.json`**_
+_2026-07-28 · **REVISED at P0.5** — the per-cell guard already exists; use it, don't rebuild it_
 
-**Chosen.** When a leaf carries `atlas.json`, `pad_maps.py` insets **every cell** rather than the
-canvas. Leaves without one keep today's canvas-edge behaviour.
+**Chosen.** `--pad` **skips** any leaf carrying an `atlas.json`. The per-cell guard on an atlas is
+the existing `GRID_INSET_FRAC` path, and `generate_tile.py` is taught to emit its `padU`/`padV`
+(which it does not emit at all today — [I8](issues.md#i8)).
 
-**Why.** `--pad` shipped 2026-07-28 guarding the canvas edge, which is right for a sprite and wrong
-for an atlas twice over: interior cell boundaries — the ones the sampler actually crosses — get no
-guard at all, and shrinking the content ring pulls the whole sheet off its cell grid (a 1024 sheet
-with a 1 px canvas ring is 1022 of content, which is not 8 × 128). The data model already agrees:
-`atlas.json`'s `pad` is documented in [`tex_manifest.rs`](../../../server/edge/src/tex_manifest.rs)
-as a **normalized per-cell inset** that the client trims from each cell's UV rect. So the client is
-already expecting per-cell; only the writer is wrong.
+**Why the original was wrong.** It proposed teaching `pad_maps.py` to inset every cell. That would
+have been a second implementation of a mechanism `bin/art` already ships: `GRID_INSET_FRAC`
+(`bin/art:161`) records `padU = f/cols`, `padV = f/rows` into `atlas.json`, the server folds it into
+the manifest, and `TextureResolver.ts:202` narrows each cell's UV rect by it. The existing comment is
+explicit that this path is *sampling* inset and that **"ADDING padding — growing the atlas with
+gutters — is a separate slice/resize/pack tool, not this inset path."**
 
-**Rejected — skip padding on atlases.** Leaves the AA spill the flag exists to fix.
+**And the two are not equivalent — the existing one is better here.** `--pad` shrinks content and
+replicates edges, which on an atlas resamples every cell and pulls the sheet off its grid (1024 with
+a 1 px canvas ring is 1022, not 8 × 128). The inset changes no pixels at all: it spends a margin of
+already-authored art as the guard. For a full-bleed ground sheet that margin is free.
 
-**Rejected — bake the guard into `generate_tile.py` only.** Ground sheets would be guarded and
-hand-authored linked atlases would not.
+**What stays true from the original.** `--pad` as it currently behaves on an atlas is a live bug
+([I2](issues.md#i2)) — guarding the canvas edge only, leaving every interior boundary unguarded. The
+fix is to skip, not to extend.
+
+**Rejected — leave `--pad` applying to atlases.** It is actively wrong there, per I2.
+
+**Rejected — inset in `pad_maps.py` anyway.** Two mechanisms writing the same `atlas.json` field,
+with the shipped one already wired to the client.
 
 ## F4 — The old per-cell linked folders {#f4}
 _2026-07-28 · **open — decide in [P4](todo.md), do not entrench meanwhile**_

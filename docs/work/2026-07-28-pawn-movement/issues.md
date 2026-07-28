@@ -1,5 +1,20 @@
 # Issues — pawn-movement
 
+## I6 · The seed promoted `start+1`, opening every trip with a one-tile snap (user, post-delivery)
+
+Observed by the user watching the browser: land, pause (npc think time — random wander is by
+design), SNAP one tile, then glide. Cause: the intent event's `MOVE_TO` STEPPED before its
+seed `PROMOTE`, so the anchor fanned the post-step position while every client still held the
+previous landing — also the source of the soak's persistent mid-trip `spec reseed e≈1` lines
+(the seed row correcting the armed spec by one tile). The user's proposed fix, implemented
+(worker `apply`): a `MOVE_TO` on a `PROMOTE_EVENT`-carrying program promotes the CURRENT
+position unchanged (facing still turns toward the path); the first step lands on the first
+continuation. The client mirror needs NO change — the fractional glide crosses tile `k` at
+exactly `k · tics_per_tile`, which is when the server now writes it. The npc deadline gains
+the extra hop-slot (`hops + 1`). Stepping rules were AUDITED while diagnosing: worker and
+`walkGreedy` both step diagonally (both axes per hop) — no divergence there. FIXED
+(2026-07-28): verified live — seed rows arrive at e=0.00 and trips open snap-free.
+
 ## I1 · MoverLayer drops live intents on two paths (the snap-tween-snap's likely core)
 
 Inherited defect, found at plan time (`client/webgl/src/game/world/MoverLayer.ts::onMoveIntent`):

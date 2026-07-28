@@ -86,7 +86,9 @@ impl Wolves {
             return;
         }
         let hops = (dest.0 - self.at.0).abs().max((dest.1 - self.at.1).abs()).max(1) as u64;
-        let trip_ms = hops * self.speed as u64 * 1000 / TIC_HZ as u64;
+        // `hops + 1`: the seed hop promotes the start WITHOUT stepping (ACTIONS.md §Movement),
+        // so the first step lands one tics_per_tile after the intent.
+        let trip_ms = (hops + 1) * self.speed as u64 * 1000 / TIC_HZ as u64;
         self.deadline = std::time::Instant::now() + Duration::from_millis(trip_ms + 5000);
         self.dest = Some(dest);
         tracing::info!(wolf = format!("{wolf:#010x}"), from = ?self.at, to = ?dest, hops, "trip issued");

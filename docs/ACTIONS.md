@@ -89,7 +89,7 @@ slot is grouped/claimed) or **read** (in the read set → the worker blocks on i
 |---|---|---|---|
 | `CREATE` | 3 | 2 | `def:definition_reference` (imm) · `position:position_reference` (imm) → **mints** a new entity. The written target is the *minted* id, not an operand. |
 | `PLACE` | 4 | 2 | `obj:entity_reference` (**write**) · `position:position_reference` (imm) — set `obj`'s position absolutely. |
-| `MOVE_TO` | 5 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — step `obj` one tile toward `dest`, then queue the next hop. |
+| `MOVE_TO` | 5 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — step `obj` one tile toward `dest`, then queue the next hop. On the intent event (`PROMOTE_EVENT`-carrying program) it seeds instead of stepping — §Movement. |
 | `SET` | 6 | 5 | `cold_row:cold_row_reference` (**write**) · `type_id` (imm) · `tile_reference` (imm) · `kind_reference` (imm, `0`=clear) · `data` (imm) — **override one cold cell** through the `overlay` tier. The `cold_row` is spelled (so concurrent `SET`s to one row **group** — see routing below) and `type_id` names the shard (a `cold_row_reference` carries no type nibble). Replaces the old per-cell `cold_entity_reference` SET. |
 | `init_zone` | *tbd* | *tbd* | build a zone's **whole baseline row** in scratch (worldgen) and write it to `entity_state_log` (`ColdBaseline` tier). `promote init_zone` projects it visible. The event-driven replacement for the direct `seed`. Payload is a whole row (F12 — event-carried `Vec` vs worker-side worldgen, decided at build). |
 | `PACK` | *tbd* | *tbd* | fold a zone's settled `overlay` cells into its `entity_state_log` row (the GC write-back). Operands settle when built — likely the target `cold_row_reference` (**write**); the worker reads the row's settled `overlay` cells and composes the new baseline. GC queues `promote pack …` — the smart, atomic `PROMOTE` projects the folded `entity_state` **and** cleared `overlay` in one commit. |
@@ -147,7 +147,12 @@ avoiding. The cadence:
 - **`PROMOTE_EVENT` once**, on the initial program, announces the **intent**: the client now knows
   `obj` is heading to `dest`, at which tic.
 - **`PROMOTE` at the seed and the final hop** — the start position anchors speculation; the landing
-  corrects it. Bare continuations fan **nothing**.
+  corrects it. Bare continuations fan **nothing**. **The seed does NOT step** (user, 2026-07-28):
+  the intent event's `MOVE_TO` promotes the object's **current** position unchanged (facing turns
+  toward the path), so the anchor aligns every client to the server BEFORE speculation walks — a
+  seed that stepped first fanned `start+1` and opened every trip with a one-tile snap. The first
+  step lands on the first continuation, one `tics_per_tile` after the intent; a trip is
+  `hops + 1` hop-slots end to end.
 - **Resolve-on-touch is free**: any other event touching `obj` composes (and, promoting, publishes)
   its resolved position — no extra machinery.
 - A re-anchor **every N tiles** is a held knob — added when the recorded speculation error

@@ -2,3 +2,41 @@
 
 _Nothing delivered yet. Items land here with their measured result when ticked in
 [`todo.md`](todo.md)._
+
+## P0 — Verify the model before building on it
+
+- **2026-07-28 · P0.1 · Corpus span audit.** `grep -rn "thing.span set" content/` → **one** hit
+  (`things.rd:24`, conifer `2` → 256² at 128) against **nine** `thing.size` declarations. Table of
+  all 9 defs recorded in [`issues.md` I5](issues.md#i5). Six are on the `white` placeholder; only
+  `tree`/`flora`/`wolf` name real art, and two of those declare no span. Verified by the acceptance
+  criterion (table incl. conifer = 2 → 256) — and it **falsified a plan assumption**: the
+  `_pow2_box` fallback is the common path, not the exception, so P2 must treat it as first-class.
+- **2026-07-28 · P0.2 · `span` traced end to end.** Writer `shared/dsl/src/loader.rs:297`
+  (`read_f("prims.0.span", 1.0)`), exported into `thing_layout` at `loader.rs:434`; reader
+  `client/webgl/src/game/world/thingPlacement.ts:56` (`span: table[base + 7]`), default 1 at `:42`,
+  drawn box `span × span` at `:91`. Both sides present. **Two findings, one of them a plan defect:**
+  [I6](issues.md#i6) — the square derives from `span`, NOT `footprint`; `footprint (w,h)` already
+  exists and means occupancy (conifer is `footprint 1×1, span 2`), so [F2](forks.md#f2)'s
+  `next_pow2(max(w,h))` rule would have sized the conifer 128² instead of 256². F2 rewritten, P2
+  items corrected. [I7](issues.md#i7) — `span` is documented pow2 but never validated; `read_f`
+  passes any float through.
+- **2026-07-28 · P0.3 · Leaf `meta.json` survey.** **No** — across 42 leaf `meta.json` files the only
+  keys are `channel_tints` (42) and `outline` (31). Neither footprint nor span is present anywhere,
+  so P2 adds a new field rather than extending one. Incidental: `smooth/wall` already uses the
+  held-whole linked leaf shape (`biome-tile/default/smooth/wall/`, no per-cell folders) and its
+  outline bbox reads **320²**, where 4×4 tiles at 128 wants **512²** — P4 input.
+- **2026-07-28 · P0.4 · Manifest read-back.** `smooth/wall` serves `{"cols":4,"rows":4,"padU":0,"padV":0}`
+  and IS treated as an atlas; a `generate_tile.py` leaf serves `{"grid","tile","pad","cell",…}` and is
+  **not** — `read_atlas_meta` requires four keys the generator never writes, so it returns `None` and
+  the sheet is served as a single flat image ([I8](issues.md#i8), live defect predating this stream).
+  Verified by running the parser's own logic over every `atlas.json` in the tree. Added a P2 item to
+  emit the required schema. Also confirms `padU/padV = 0` on the shipping linked atlas — no cell
+  guard today, which is what P3 addresses.
+- **2026-07-28 · P0.5 · The linked 4×4 is single-sourced.** `GRID_COLS`/`GRID_ROWS` appear only in
+  `bin/art` (defined 149–150, used 1640); the client reads `[cols, rows]` from the manifest
+  (`textureManifest.ts:21`, `TextureResolver.ts:209`) with no literal 4. **But P0.5 also found a
+  shipped per-cell guard I was about to duplicate:** `GRID_INSET_FRAC` (`bin/art:161`) writes
+  `padU=f/cols, padV=f/rows` into `atlas.json`, the server folds it into the manifest, and
+  `TextureResolver.ts:202` narrows each cell's UV rect by it. [F3](forks.md#f3) revised — `--pad`
+  now *skips* atlases instead of learning to inset them, and P3's items were rewritten to match.
+  P0 complete: 5/5.
