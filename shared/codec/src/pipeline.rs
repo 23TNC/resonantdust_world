@@ -231,14 +231,21 @@ macro_rules! entity_tables {
             }
         }
 
-        // ── gc — the master drops old settled rows (never the latest per entity) ────────
-        /// Delete `!dirty` rows that are **not** the latest for their entity and older than `horizon`.
-        /// The latest per entity is never reaped — it is every future tic's base.
+        // ── gc — the master drops old settled rows (never the latest CLEAN per entity) ──
+        /// Delete rows older than `horizon` — clean rows that are not their entity's latest
+        /// clean (that one is every future tic's base), and DIRTY rows that a NEWER clean row
+        /// has superseded (an abandoned claim — movement-hardening I3: its event vanished, so
+        /// no write will ever clear it; the worker's abandon rule composes past it, and the
+        /// clean row that compose writes makes it reapable here). A dirty row with NO newer
+        /// clean row is never reaped — it may be legitimately pending behind a slow worker.
         #[spacetimedb::reducer]
         pub fn gc(ctx: &spacetimedb::ReducerContext, horizon: u16) -> Result<(), String> {
-            let mut latest: std::collections::HashMap<u32, u16> = std::collections::HashMap::new();
+            let mut latest_clean: std::collections::HashMap<u32, u16> = std::collections::HashMap::new();
             for row in ctx.db.entity_state_log().iter() {
-                latest
+                if row.dirty {
+                    continue;
+                }
+                latest_clean
                     .entry(row.entity_reference)
                     .and_modify(|t| {
                         if $crate::tic::tic_after(row.tic, *t) {
@@ -252,9 +259,16 @@ macro_rules! entity_tables {
                 .entity_state_log()
                 .iter()
                 .filter(|r| {
-                    !r.dirty
-                        && latest.get(&r.entity_reference) != Some(&r.tic)
-                        && $crate::tic::tic_before(r.tic, horizon)
+                    if !$crate::tic::tic_before(r.tic, horizon) {
+                        return false;
+                    }
+                    match (r.dirty, latest_clean.get(&r.entity_reference)) {
+                        // A clean row: reap unless it IS the entity's latest clean (the base).
+                        (false, newest) => newest != Some(&r.tic),
+                        // A dirty row: reap only once a NEWER clean row supersedes it.
+                        (true, Some(&newest)) => $crate::tic::tic_after(newest, r.tic),
+                        (true, None) => false,
+                    }
                 })
                 .map(|r| r.uid)
                 .collect();

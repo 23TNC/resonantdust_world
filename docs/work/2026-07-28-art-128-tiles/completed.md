@@ -171,3 +171,19 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   is precisely the identity that split removed. Rewritten to say raising `SQUARE` now sharpens the
   art maps alone. Convenient consequence: this stream's `TILE_PX = 128` and the renderer's `SQUARE`
   now agree, which was the assumption the whole plan was parameterised against.
+- **2026-07-28 · P4.4 / [F4](forks.md#f4) · Linked forms converted to the go-forward shape.** All
+  **10** (not the 5 first surveyed — `blueprint/{wall,fence}`, `brick/wall`, `default/rock`,
+  `flecked/rock`, `metal/fence`, `plank/wall`, `smooth/{wall,fence,rock}`): `1.l.0.diffuse.png` →
+  `sprite.l.0.png`, per-cell numeric folders deleted, a 4×4 `atlas.json` authored beside each.
+  Full `textures/biome-tile` backed up first. This lands design decision 7 (a linked form is ONE
+  held-whole atlas, no per-cell variant folders).
+- **2026-07-28 · P4.2 / [F6](forks.md#f6) · Every map normalised to its target square.**
+  `art normalize-square` (a remaster stage between `leaf-span` and `--pad`) scales derived maps to
+  `span · TILE_PX` in both directions, warning on upscale. **Re-audit: 71 leaves match target,
+  0 undersized, 0 oversized** — P4.2's acceptance met. Masters untouched as the archive:
+  `blueprint/wall` sprite 640 → albedo 512 (downscale), `smooth/wall` sprite **320** → albedo
+  **512** (upscaled, warned). Also fixed the detection that caused all of this:
+  `_is_variant_leaf` now tests PATH DEPTH (4 segments = `<type>/<subtype>/<kind>/<variant>`) instead
+  of a numeric folder name, so NAMED forms (`wall`/`fence`/`rock`) are recognised — the numeric-only
+  test is why `smooth/wall` fell through to the legacy id-walk and grew junk directories.
+- **2026-07-28 · P5.3 · Stream closed.** `bin/rd docs-check` green.

@@ -2,8 +2,12 @@
 
 _Only what genuinely needs the user. A decision I can make is a [fork](forks.md), not a blocker._
 
-## B1 — The 17 undersized leaves are two different problems, and both need your call {#b1}
-_2026-07-28 · P4.2 / P4.4 · blocks the rest of P4_
+## B1 — RESOLVED 2026-07-28 by the user {#b1}
+_was: the 17 undersized leaves are two problems and both need your call_
+
+**(a)** convert the linked forms to `sprite.l.0.png` + delete the per-cell folders → [F4](forks.md#f4).
+**(b)** sprite is an ARCHIVE; remaster scales every derived map to the target square in all cases, warning on upscale → [F6](forks.md#f6). Both landed; the original text is kept below.
+
 
 The [P4.1 audit](completed.md) found **78 stamped leaves: 61 already right, 17 undersized, 0
 oversized.** But "re-master the undersized" is the wrong action for either group.

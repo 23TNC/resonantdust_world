@@ -94,7 +94,34 @@ fix is to skip, not to extend.
 with the shipped one already wired to the client.
 
 ## F4 — The old per-cell linked folders {#f4}
-_2026-07-28 · **open — decide in [P4](todo.md), do not entrench meanwhile**_
+_2026-07-28 · **RESOLVED by the user** — convert to the go-forward shape, delete the folders_
+
+**Decided.** `1.l.0.diffuse.png` becomes `sprite.l.0.png` (the same kind/leaf-level source every
+other kind uses) and the per-cell `1..16/` folders are deleted. This lands the design's decision 7
+(a linked form is ONE held-whole atlas, no per-cell variant folders) rather than preserving the
+shape it supersedes.
+
+Applies to all five linked kinds, not just blueprint: `blueprint/wall`, `brick/wall`,
+`default/rock`, `flecked/rock`, `smooth/wall` all carry the same `1.l.0.diffuse.png` source.
+
+## F6 — Sprite is an ARCHIVE; remaster normalises every map to the target square {#f6}
+_2026-07-28 · **decided by the user**, and it dissolves B1(b)_
+
+**Decided.** `sprite.*.png` is held at whatever resolution it was authored at and is **not a
+deliverable**. On remaster, every derived map is scaled to the span-derived square — in **all** cases
+where the resolution does not already match, up or down — with a console **warning on upscale** so
+undersized sources are visible as a worklist.
+
+**Why this is better than what I proposed.** I framed B1(b) as a choice between upscaling
+`smooth/wall` (fake resolution) and re-authoring it (content work). Both were wrong framings: the
+master stays at its authored resolution either way, so nothing is lost and the decision is not
+irreversible. Re-authoring later re-runs the same normalisation and the deliverable improves with no
+pipeline change. And the art is coarse, stylised and flat-shaded, which upscales far better than
+photographic detail would — plus there is room to sharpen on the way up later.
+
+**What it changes here.** The target square must be enforced on the paths that currently pass a
+sheet through verbatim (`_split_variant_leaf`, and the held-whole branch of `_split_variant_sheet`),
+not only on the blob paths where `EMIT_SIDE` already does it.
 
 `textures/biome-tile/default/blueprint/wall/1..16/` is the superseded per-cell split; the
 [design](../../components/dev/textures/design/texture-layout/README.md) marks held-whole atlases ✅

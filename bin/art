@@ -143,6 +143,18 @@ _span_side() {  # kind_rel  (e.g. biome-thing/default/conifer)
   [[ -n "$sp" ]] && echo $(( sp * ${RD_TILE_PX:-128} ))
 }
 
+# True if DIR is a VARIANT LEAF — `<type>/<subtype>/<kind>/<variant>`, i.e. exactly four segments
+# under textures/. That is the documented path shape, and it is the only test that works for BOTH
+# variant kinds: numeric folders (a thing's art variations, `0..15`) and NAMED forms (a linked
+# object's `wall`/`fence`/`rock`). The earlier numeric-only test silently missed every linked form,
+# so `smooth/wall` matched no branch and fell through to the legacy id-walk.
+_is_variant_leaf() {  # abs_dir
+  local rel=${1#"$TEX/"}
+  [[ "$rel" != "$1" ]] || return 1                      # not under the texture tree
+  local IFS=/; local -a seg=($rel)
+  (( ${#seg[@]} == 4 ))
+}
+
 _pow2_box() {
   local w=$1 h=$2 side s
   side=$(( w > h ? w : h ))
@@ -2208,16 +2220,16 @@ cmd_split() {
   # itself, the leaf, or a kind whose leaves hold their own sheets.
   local -a _lsheets=(); local _lkind="" _f
   if [[ -f "$_tgt" && $(basename "$_tgt") == sprite.*.png ]] \
-     && [[ $(basename "$(dirname "$_tgt")") =~ ^[0-9]+$ ]]; then
+     && _is_variant_leaf "$(dirname "$_tgt")"; then
     _lsheets=( "$_tgt" )
-  elif [[ -d "$_tgt" && $(basename "$_tgt") =~ ^[0-9]+$ ]] \
+  elif [[ -d "$_tgt" ]] && _is_variant_leaf "$_tgt" \
      && compgen -G "$_tgt/sprite.*.png" >/dev/null; then
     while IFS= read -r -d '' _f; do _lsheets+=( "$_f" ); done \
       < <(find "$_tgt" -maxdepth 1 -type f -name 'sprite.*.png' -print0 | sort -z)
   elif [[ -d "$_tgt" ]] && ! compgen -G "$_tgt/sprite.*.png" >/dev/null; then
     # kind dir with no sheet of its own — its numbered leaves may each carry one
     while IFS= read -r -d '' _f; do
-      [[ $(basename "$(dirname "$_f")") =~ ^[0-9]+$ ]] && _lsheets+=( "$_f" )
+      _is_variant_leaf "$(dirname "$_f")" && _lsheets+=( "$_f" )
     done < <(find "$_tgt" -mindepth 2 -maxdepth 2 -type f -name 'sprite.*.png' -print0 | sort -z)
   fi
   if (( ${#_lsheets[@]} > 0 )); then
@@ -2506,6 +2518,11 @@ cmd_remaster() {
   # Stamp span/square into each leaf's meta.json now that every map exists (the inference
   # fallback measures a real map). Non-fatal: a missing span must not fail a remaster.
   cmd_leaf_span "$MASTER_DIR/$SPLIT_TARGET" || echo "art: leaf-span skipped" >&2
+
+  # Then bring every derived map to that square. Sprite stays at its authored size (it is the
+  # archive); an undersized master is upscaled and warned about rather than left short, so the
+  # deliverable is always the size the packer expects.
+  cmd_normalize_square "$MASTER_DIR/$SPLIT_TARGET" || echo "art: normalize-square skipped" >&2
 
   # AFTER --size: the guard ring is measured against the FINAL canvas, so padding first and
   # resizing second would rescale the ring itself and leave a fractional guard.
@@ -3377,6 +3394,15 @@ cmd_leaf_span() {
   RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/leaf_span.py" "$@"
 }
 
+# Scale every derived map in a leaf to `span * TILE_PX`. The `sprite` master is an ARCHIVE held at
+# its authored resolution and never resized; what ships is the derived set, which must be the size
+# the packer expects. Normalises in BOTH directions and WARNS on an upscale, so an undersized master
+# is a visible worklist rather than a silent softening. Delegates to lib/normalize_square.py.
+cmd_normalize_square() {
+  command -v python3 >/dev/null || { echo "art normalize-square: python3 not found" >&2; return 1; }
+  RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/normalize_square.py" "$@"
+}
+
 cmd_generate_tile() {
   # Ground/terrain tile sheets: plain txt2img (no silhouette, no direction, no alpha), downscaled
   # and cut into a padded sprite map placed in the texture tree. Greyscale by default because the
@@ -3420,6 +3446,7 @@ main() {
     generate) cmd_generate "$@" ;;
     generate-tile) cmd_generate_tile "$@" ;;
     leaf-span)     cmd_leaf_span "$@" ;;
+    normalize-square) cmd_normalize_square "$@" ;;
     split_layers) cmd_split_layers "$@" ;;
     outline) cmd_outline "$@" ;;
     remaster) cmd_remaster "$@" ;;

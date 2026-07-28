@@ -21,6 +21,13 @@ pub const TIC_WINDOW: u16 = i16::MAX as u16; // 32767
 /// change never rescales the world.
 pub const TIC_HZ: u16 = 6;
 
+/// A DIRTY claim slot older than this many tics is ABANDONED (movement-hardening I3): its
+/// worker died mid-write or its event vanished (settle/wipe), because live pipeline latency
+/// is 2–3 tics. Composes stop BLOCKING on it (the worker bases on the latest CLEAN row
+/// past it), and the shard `gc` may reap it once a newer clean row lands — without this, one
+/// orphaned claim wedges its entity's composition forever, silently.
+pub const ABANDON_TICS: u16 = 64;
+
 /// Order two tics on the ring. `a` is *after* `b` when the forward distance `a - b` lands in the
 /// near half; *before* when it lands in the far half.
 ///

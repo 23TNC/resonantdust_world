@@ -775,20 +775,37 @@ struct Base {
 /// are the same macro shape but distinct Rust types, hence the per-arm body.
 fn base_row(data: &data_shard::DbConnection, pawn: &pawn::DbConnection, entity: u32, tic: u16) -> Option<Base> {
     macro_rules! latest_base {
-        ($conn:expr) => {
-            $conn
+        ($conn:expr) => {{
+            let newest = $conn
                 .db()
                 .entity_state_log()
                 .iter()
                 .filter(|r| r.entity_reference == entity && tic_before(r.tic, tic))
-                .reduce(|a, b| if tic_after(b.tic, a.tic) { b } else { a })
-                .map(|r| Base {
-                    definition_reference: r.definition_reference,
-                    position_reference: pack_position_reference(r.macro_position_reference, r.micro_position_reference),
-                    data: r.data,
-                    dirty: r.dirty,
-                })
-        };
+                .reduce(|a, b| if tic_after(b.tic, a.tic) { b } else { a });
+            // ABANDON rule (movement-hardening I3): a dirty slot older than ABANDON_TICS will
+            // never be written (its worker died or its event vanished — live latency is 2–3
+            // tics), so blocking on it wedges the entity FOREVER. Base on the latest CLEAN
+            // row past it instead; the clean row the next compose writes lets `gc` reap the
+            // orphan. A dirty slot YOUNGER than the window still blocks (legitimate pending).
+            let newest = match newest {
+                Some(r) if r.dirty && tic_before(r.tic, tic.wrapping_sub(resonantdust_codec::tic::ABANDON_TICS)) => {
+                    tracing::debug!(entity = format!("{entity:#010x}"), slot_tic = r.tic, tic, "dirty base abandoned — using latest clean row");
+                    $conn
+                        .db()
+                        .entity_state_log()
+                        .iter()
+                        .filter(|r| r.entity_reference == entity && tic_before(r.tic, tic) && !r.dirty)
+                        .reduce(|a, b| if tic_after(b.tic, a.tic) { b } else { a })
+                }
+                other => other,
+            };
+            newest.map(|r| Base {
+                definition_reference: r.definition_reference,
+                position_reference: pack_position_reference(r.macro_position_reference, r.micro_position_reference),
+                data: r.data,
+                dirty: r.dirty,
+            })
+        }};
     }
     match shard_of(entity) {
         Shard::Data => latest_base!(data),

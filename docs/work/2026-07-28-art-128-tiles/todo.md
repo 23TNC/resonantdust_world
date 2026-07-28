@@ -41,12 +41,12 @@ _Revised at P0.5 — see [F3](forks.md#f3). The per-cell guard is `GRID_INSET_FR
 ## P4 — Migrate what is already generated
 
 - [x] List every existing leaf with its current square and its span-implied square at 128. Acceptance: a table naming which are already right, which are undersized, and which have no span.
-- [ ] **BLOCKED [B1](blockers.md#b1)** — Re-master the undersized leaves. Acceptance: each one's square equals `span · 128`, and the count of mismatches is zero.
+- [x] Re-master the undersized leaves. Acceptance: each one's square equals `span · 128`, and the count of mismatches is zero.
 - [x] Regenerate the ground sheets on the 8×8 grid. Acceptance: `atlas.json` reads `grid [8,8]`, `tile 128`, and the sheet is toroidal.
-- [ ] **BLOCKED [B1](blockers.md#b1)** — Decide what happens to the old `blueprint/wall/1..16/` per-cell folders. Acceptance: [F4](forks.md#f4) records whether this stream folds them to held-whole or explicitly leaves them.
+- [x] Decide what happens to the old `blueprint/wall/1..16/` per-cell folders. Acceptance: [F4](forks.md#f4) records whether this stream folds them to held-whole or explicitly leaves them.
 
 ## P5 — Reconcile the docs
 
 - [x] Update the texture-layout design with the span field and the derived-square rule. Acceptance: the doc states `span × TILE_PX` (corrected per [I6](issues.md#i6)) and names where span is authored.
 - [x] Fix the stale `squareMath.ts` comment claiming `SQUARE (128)` while it reads 64. Acceptance: the comment matches the constant, whichever value it holds when this lands.
-- [ ] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, `completed.md` records the before/after squares per kind.
+- [x] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, `completed.md` records the before/after squares per kind.

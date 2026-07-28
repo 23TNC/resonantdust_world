@@ -187,8 +187,13 @@ impl Brain for Wolves {
                 self.issue_move(bot, dest);
             }
             Some(dest) if std::time::Instant::now() > self.deadline => {
-                tracing::warn!(?dest, "trip deadline passed (lost chain?) — re-issuing");
-                self.issue_move(bot, dest);
+                // SAFE under chain supersession (movement-hardening F1): the new intent's
+                // seed re-stamps the trip-serial, so a still-alive old chain dies at its
+                // next hop — a re-issue can no longer duplicate chains. Pick a FRESH dest
+                // (the old one may be exactly why the trip stalled).
+                tracing::warn!(?dest, "trip deadline passed — superseding with a fresh trip");
+                let fresh = self.pick_dest();
+                self.issue_move(bot, fresh);
             }
             Some(_) => {}
         }

@@ -18,7 +18,7 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
       `MOVE_TO`), plus `data` pack/unpack helpers (`facing`, `trip_serial`, compose) so the
       worker and any future reader share one layout. Unit tests: framing, sets, routing,
       pack round-trip. Acceptance: codec tests green (native + wasm32 build).
-- [ ] worker: the intent seed stamps `data = facing<<6 | (event_tic & 0x3F)` and queues
+- [x] worker: the intent seed stamps `data = facing<<6 | (event_tic & 0x3F)` and queues
       `MOVE_STEP obj dest serial`; the `MOVE_STEP` arm checks the pawn's stored serial —
       match ⇒ step+face+re-queue (PROMOTE on the landing hop, exactly as today), mismatch ⇒
       chain ends (one `debug!` line, no step, no re-queue). `MOVE_TO` keeps ONLY its seed

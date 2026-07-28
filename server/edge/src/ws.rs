@@ -470,9 +470,24 @@ fn pawn_state_frame(row: &bindings::pawn::EntityState) -> ServerMsg {
     }
 }
 
-/// Validate + relay a client intent to `event_shard.queue`. The door enforces "logged in" and "the
-/// program frames" here; ownership + rate limiting are future (no ownership model yet). The reducer's
-/// own validation (parses, has an orchestrator) is reported back via `queue_then`.
+/// The verbs a CLIENT may queue (movement-hardening F2 — the first, deliberately tiny,
+/// authorization seam: a verb-set check, NOT an ownership model). Everything else is
+/// server-only: `MOVE_STEP` carries a trip-serial that clients could stomp to steer pawns
+/// past validation, and `INIT_ZONE` is worldgen (the edge's own path calls the reducer
+/// directly, not through this door).
+const CLIENT_VERBS: &[u32] = &[
+    resonantdust_codec::action::PROMOTE,
+    resonantdust_codec::action::PROMOTE_EVENT,
+    resonantdust_codec::action::CREATE,
+    resonantdust_codec::action::PLACE,
+    resonantdust_codec::action::MOVE_TO,
+    resonantdust_codec::action::SET,
+];
+
+/// Validate + relay a client intent to `event_shard.queue`. The door enforces "logged in",
+/// "the program frames", and "client verbs only" here; ownership + rate limiting are future
+/// (no ownership model yet). The reducer's own validation (parses, has an orchestrator) is
+/// reported back via `queue_then`.
 fn handle_queue(
     event: Option<&Arc<bindings::event_shard::DbConnection>>,
     out_tx: &mpsc::UnboundedSender<String>,
@@ -485,9 +500,16 @@ fn handle_queue(
         return;
     }
     for inst in resonantdust_codec::action::program(&actions) {
-        if let Err(e) = inst {
-            send(out_tx, ServerMsg::QueueErr { cid, error: format!("malformed program: {e:?}") });
-            return;
+        match inst {
+            Err(e) => {
+                send(out_tx, ServerMsg::QueueErr { cid, error: format!("malformed program: {e:?}") });
+                return;
+            }
+            Ok(i) if !CLIENT_VERBS.contains(&i.action) => {
+                send(out_tx, ServerMsg::QueueErr { cid, error: format!("server-only verb: {}", i.action) });
+                return;
+            }
+            Ok(_) => {}
         }
     }
     let Some(conn) = event else {
