@@ -42,37 +42,37 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P3 · Kill the snap-tween-snap (intent reliability)
 
-- [ ] Baseline measurement BEFORE fixing: soak `rd-npc` ≥ 10 trips with the browser open;
+- [x] Baseline measurement BEFORE fixing: soak `rd-npc` ≥ 10 trips with the browser open;
       count from `[mover]` console lines — trips vs armed specs vs two-snap trips vs stale
       arms. Acceptance: numbers recorded in `completed.md` (this is the evidence the fixes are
       judged against).
-- [ ] (added during execution — I4/I5, F6) `TicEstimate` tracks the OBSERVED wall↔tic rate:
+- [x] (added during execution — I4/I5, F6) `TicEstimate` tracks the OBSERVED wall↔tic rate:
       windowed re-anchor on fresh arrivals + learned rate (clamped around `TIC_HZ`) + a
       poison guard against serially-ahead stale-replay tics; `TicAnchor` carries the rate and
       hosts extrapolate with it. Acceptance: unit tests for drift/poison; live arms show `d`
       near the true elapsed (single digits, NOT climbing with page age).
-- [ ] MoverLayer: never DROP a live intent — buffer intents for unseen movers and arm on the
+- [x] MoverLayer: never DROP a live intent — buffer intents for unseen movers and arm on the
       pawn's first `State`; hold intents that arrive before the tic clock anchors and
       re-evaluate on `tick()` instead of returning on `d === null`. Stale/dedup guards
       unchanged. Acceptance: page-load-then-immediate-trip and spawn-then-move both glide.
-- [ ] event retention (first-pawns I2, server fix): sweep settled `event` rows older than the
+- [x] event retention (first-pawns I2, server fix): sweep settled `event` rows older than the
       GC horizon on the event shard (ride the master's existing `gc`/`settle` cadence — same
       pattern as chat retention). Acceptance: a fresh zone subscribe delivers no ancient
       intents (spacetime sql shows the table bounded; browser console shows no stale-replay
       guards firing on re-subscribe).
-- [ ] I3 re-measure under soak (≥ 10 trips, with the edge's `on_applied` event replay from
+- [x] I3 re-measure under soak (≥ 10 trips, with the edge's `on_applied` event replay from
       sim-self-heal + retention in place): every trip arms EXACTLY one spec — no absent, no
       doubled. If flakiness persists, root-cause at the edge (per-zone sub callback semantics)
       and fix there; record findings in `issues.md` either way.
 
 ## P4 · Authoritative snap + wrap
 
-- [ ] Confirm the authoritative-override story end-to-end: every `State` row snaps (landing
+- [x] Confirm the authoritative-override story end-to-end: every `State` row snaps (landing
       clears the spec, interim resolve reseeds it, errors logged — first-pawns F8 path kept);
       record the tween-blend as a held knob in `ACTIONS.md` §Movement next to the
       re-anchor-every-N knob (F4 — future intent preserved, not built). Acceptance: docs-check
       green; console shows snap + error log on landing.
-- [ ] End-to-end acceptance in the browser (`:5174/?user=Claude&focus=100,50&zoom=1&cb=area1`):
+- [x] End-to-end acceptance in the browser (`:5174/?user=Claude&focus=100,50&zoom=1&cb=area1`):
       ≥ 10 consecutive trips ALL glide at 2 s/tile with no teleports other than authoritative
       snaps; screenshot + console evidence in `completed.md`.
-- [ ] Wrap: memory updated (speed model + snap fix), work-index row → done.
+- [x] Wrap: memory updated (speed model + snap fix), work-index row → done.

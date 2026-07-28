@@ -152,6 +152,11 @@ avoiding. The cadence:
   its resolved position — no extra machinery.
 - A re-anchor **every N tiles** is a held knob — added when the recorded speculation error
   (first-pawns F8) says what N buys.
+- **Authoritative state SNAPS speculation** (user, 2026-07-28 — first pass): a `state` row for a
+  speculating object snaps it to the server's tile (the landing clears the speculation; an interim
+  resolve reseeds it), and every correction logs its observed error. A **tween-blend** from the
+  speculated position to the authoritative one is the second held knob — future intent, tuned on
+  that same error data when snapping reads as visible jerk; not built.
 
 So the initial program is `PROMOTE_EVENT PROMOTE MOVE_TO obj dest`; the self-queued continuations
 are bare `MOVE_TO obj dest`; the hop that reaches `dest` is `PROMOTE MOVE_TO obj dest`.
@@ -159,8 +164,10 @@ are bare `MOVE_TO obj dest`; the hop that reaches `dest` is `PROMOTE MOVE_TO obj
 **The client speculates without a synced tic.** `state` is simply the latest authoritative truth.
 `PROMOTE_EVENT` on a move gives the client the one thing `state` can't: *intent* (`obj → dest`).
 The client anchors "a row for tic `V` arrived at wall-time `W`" on every `state`/`event` arrival
-and extrapolates elapsed tics by `TIC_HZ` — a loose wall↔tic mapping refined by the stream itself
-(implicit sync, not the ping/pong that never worked). It walks the pawn fractionally along the
+and extrapolates elapsed tics at a rate LEARNED from the stream (pawn-movement F6 — seeded at
+`TIC_HZ`, refined from the anchor history, because the true rate measurably drifts from the
+authored one; anchors age out so a wrong estimate can always correct) — a loose wall↔tic mapping
+refined by the stream itself (implicit sync, not the ping/pong that never worked). It walks the pawn fractionally along the
 line at the kind's authored `tics_per_tile`, and authoritative `state` snaps/reseeds it
 (corrections log their error — the data the re-anchor knob will be tuned on). Best-effort by
 construction — the server dictates truth, the client makes it smooth.

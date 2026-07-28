@@ -8,13 +8,15 @@ claims the seed `State` "reseeds everything" but the seed only PLACES the pawn; 
 intent never arms a spec, so the trip renders as two snaps. Likewise an intent arriving before
 the tic clock anchors (`d === null`) is dropped. A later stale replay (I2 below) can then arm
 a WRONG spec — old dest, old tic — producing "snap somewhere, tween, snap somewhere else".
-Fixed by P3's pending-intent buffer.
+FIXED (P3, 2026-07-28): the `pendingIntents` buffer holds both cases and `tick()` re-evaluates;
+verified by the 14/14-arm soak.
 
 ## I2 · `event` table retention (inherited: first-pawns I2)
 
-Still no retention sweep — every (re-)subscribe replays all settled intents; client guards are
-the only defense. P3 builds the server sweep on the master's gc cadence. Tracked here so THIS
-stream closes it; first-pawns stays done.
+FIXED (P3, 2026-07-28): `event_shard::gc` reaps settled `event` rows past the same serial
+horizon the hot shards use; the master calls it on its gc cadence (`tic − 64`, every 20 tics).
+Verified: table bounded at 2 rows under continuous trips; zero stale arms on a fresh
+subscribe. Client guards stay as defense-in-depth. Closes first-pawns I2.
 
 ## I5 · The master's durable tic runs at 5.41 Hz, not `TIC_HZ` = 6 (measured)
 
@@ -44,10 +46,15 @@ the estimate RATCHETS ahead unboundedly (measured climbing d=5.5 → 16.1 over o
 27.7 → 35.0 in the next). Knock-on: once the lead exceeds `(span+2)·tics_per_tile`, the
 finished-long-ago guard starts dropping LIVE intents — the snap-tween-snap worsens with page
 age, which is part of inherited I3's "flakiness". Fix = F6 (rate-tracking estimator).
+FIXED (P3, 2026-07-28): arm `d` flat at 3.8–5.0 tics across a 3-min soak; landings converge
+to e ≤ 0.22 tiles once the rate learns (~60 s from a cold page).
 
 ## I3 · Intent delivery flakiness (inherited: first-pawns I3)
 
-Measured absent/doubled per trip during first-pawns; the edge event-sub `on_applied` replay
-added during sim-self-heal was a mitigation, never re-measured. P3 re-measures under a ≥10-trip
-soak after retention lands; if still flaky, root-cause at the edge's per-zone sub callback
-semantics. Findings land here.
+RESOLVED BY MEASUREMENT (P3, 2026-07-28): with the edge event-sub `on_applied` replay
+(sim-self-heal), retention (I2), and the client fixes (I1/I4) in place, a 2.9-min soak
+delivered **14 intents for 14 trips — every trip armed exactly one spec, none absent, none
+doubled**. The historical "flakiness" decomposes into the now-fixed causes: dropped arms
+(I1), estimate-lead guard kills (I4), replayed duplicates (I2 — the serial dedup already
+caught most), and the missing snapshot replay (edge, fixed in sim-self-heal). Closes
+first-pawns I3.
