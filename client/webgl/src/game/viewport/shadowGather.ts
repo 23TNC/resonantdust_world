@@ -846,8 +846,10 @@ uniform float uElevK;                 // shadows-onto-billboards: receiver-eleva
 //   1 dirty gate + window mapping + P   2 + receiverAt   3 + the allBillboard corner test
 //   4 + presence fetch and the light loop WITHOUT walkShadow   0 + walkShadow
 uniform int uGProfile;
+// Attachment 1 (oCasterD, the frontmost caster row) is DELETED (standing-costs P1): nothing ever read
+// textures[1], and the dead MRT doubled the gather's write bandwidth + the RT memory of all four
+// shadow RTs. walkShadow still reports cdepth; re-add the attachment when something consumes it.
 layout(location = 0) out uvec4 fragColor; // per-light u9 shadow coverage
-layout(location = 1) out uvec4 oCasterD;  // #3: frontmost caster row (R, 7-bit) shadowing this texel
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 void main() {
@@ -868,10 +870,10 @@ void main() {
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS (true texel position)
   // shadows-onto-billboards: is a standing billboard DRAWN at this texel, and its base row? IN-FAMILY (caster buckets
   // + surface atlas by index) — zoom-safe by construction, NOT the reverted zdepth-composite world read.
-  if (uGProfile == 1) { fragColor = uvec4(0u); oCasterD = uvec4(0u); return; } // G1: prologue only
+  if (uGProfile == 1) { fragColor = uvec4(0u); return; } // G1: prologue only
   uint rbillboard; float rcov;
   float baseY = receiverAt(P, uData, uSurface, vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF}), rbillboard, rcov); // shadow mask offset; rbillboard 0 = ground
-  if (uGProfile == 2) { fragColor = uvec4(uint(rcov)); oCasterD = uvec4(0u); return; } // G2: + receiverAt
+  if (uGProfile == 2) { fragColor = uvec4(uint(rcov)); return; } // G2: + receiverAt
   bool isThing = rbillboard != 0u;
   float maskCov = clamp(rcov, 0.0, 1.0);                     // SOFT mask coverage → blends ground↔thing at the silhouette edge
   // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
@@ -892,13 +894,12 @@ void main() {
            && receiverCover(rbillboard, P + vec2(1.0, 1.0), P, uData, uSurface, al, b2) > 0.0;
   }
 
-  if (uGProfile == 3) { fragColor = uvec4(allBillboard ? 1u : 0u); oCasterD = uvec4(0u); return; } // G3: + corner test
+  if (uGProfile == 3) { fragColor = uvec4(allBillboard ? 1u : 0u); return; } // G3: + corner test
 
   int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
   uint o0 = 0u, o1 = 0u, o2 = 0u, o3 = 0u;                   // per-SLOT u8 coverage: slot i at ch i>>2, bit (i&3)*8
-  float casterDepth = 0.0;                                   // #3: frontmost (max-row) covering caster (all lights)
   for (int slot = 0; slot < 16; slot++) {
     uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
     if (li == 0xffffu) continue;                            // empty slot
@@ -932,7 +933,6 @@ void main() {
     } else {                                                // ground texel → GROUND shadow (fine bake cuts it by fine presence)
       cov = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, uCorridor, reachT, uData, uSurface, cd);
     }
-    casterDepth = max(casterDepth, cd);                     // #3 (vestigial att1)
     // v3 (16 lights/tile): each slot is ONE byte = u7 coverage | u1 on-billboard. 16 x 8 = 128 bits
     // exactly, so the flag rides its own slot's byte instead of a separate A-lane bit field.
     uint v7 = uint(clamp(cov, 0.0, 1.0) * 127.0 + 0.5);
@@ -941,7 +941,6 @@ void main() {
     if (ch == 0) o0 |= low8; else if (ch == 1) o1 |= low8; else if (ch == 2) o2 |= low8; else o3 |= low8;
   }
   fragColor = uvec4(o0, o1, o2, o3);
-  oCasterD = uvec4(uint(casterDepth) & 0x7Fu, 0u, 0u, 0u);  // #3: frontmost caster row (7-bit local key)
 }
 `;
 
@@ -1045,6 +1044,10 @@ void main() {
   discard;
 }
 `;
+
+/** The lightmap DIFFERENTIAL (F11b.1) is designed but not wired — `uShadowPrev`/`uDataPrev` have no
+ *  consumer. Until they do, the prev-shadow snapshot blit is pure overhead and is gated behind this. */
+const DIFFERENTIAL_WIRED = false;
 
 const LIGHT_COLORS: ReadonlyArray<[number, number, number]> = [
   [1.0, 0.25, 0.25], [0.25, 1.0, 0.3], [0.3, 0.55, 1.0], [1.0, 0.95, 0.25], [1.0, 0.35, 1.0], [0.3, 1.0, 1.0],
@@ -1169,6 +1172,14 @@ export class ShadowGather {
   /** Sticky "recompute every tile next build", per class — set on a rebuild; survives a not-ready frame. */
   private forceColdDirty = true;
   private forceHotDirty = true;
+  /** Per-class dirty-tile counts from the last {@link buildDirty} — a class with 0 skips its ENTIRE
+   *  {@link classPass} (blit + gather + lighting draw). Before this gate a fully static frame still
+   *  submitted 2 blits + 2 gathers + 2 × 8.4 M-fragment fine draws whose every fragment discarded
+   *  (standing-costs P1). */
+  private coldDirtyCount = 0;
+  private hotDirtyCount = 0;
+  /** DEBUG (standing-costs P1 acceptance): class passes actually SUBMITTED last frame (0–2). */
+  debugClassDraws = 0;
   /** P6: walk the segment corridor (true) or the brute-force reach box (false). Brute is the
    *  validation baseline — `__corridor(false)` + `__shadowDiff()` must report 0 mismatches. */
   private corridor = true;
@@ -1593,7 +1604,14 @@ export class ShadowGather {
         }
     }
     this.pendingRects.length = 0;
-    let dc = 0; for (let i = 0; i < this.coldMirror.length; i++) if (this.coldMirror[i] || this.hotMirror[i]) dc++;
+    let dc = 0, cc = 0, hc = 0;
+    for (let i = 0; i < this.coldMirror.length; i++) {
+      if (this.coldMirror[i]) cc++;
+      if (this.hotMirror[i]) hc++;
+      if (this.coldMirror[i] || this.hotMirror[i]) dc++;
+    }
+    this.coldDirtyCount = cc;
+    this.hotDirtyCount = hc;
     this.debugDirtyTiles = dc; // DEBUG: tiles recomputed this frame (cold ∪ hot)
     this.coldDirtyTex.upload(this.coldMirror);
     this.hotDirtyTex.upload(this.hotMirror);
@@ -1680,17 +1698,16 @@ export class ShadowGather {
     // zoom — it does NOT scale with `cols`, which is now `SLOTS << lod`. Per-TILE resolution degrades
     // with lod instead (`texelsPerSlot >> lod`), which is what stops the lightmap tracking zoom.
     const w = SLOTS_X * SHADOW_TEXELS, h = SLOTS_Y * SHADOW_TEXELS;
-    // Shadow — MRT [0] per-light u9 coverage, [1] frontmost caster row (#3). One RT per class; clear both
-    // attachments to 0 (known-zero persistence baseline, P3).
-    this.coldShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
-    this.hotShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
+    // Shadow — SINGLE attachment: per-light u9 coverage. One RT per class; cleared to 0 (known-zero
+    // persistence baseline, P3). The caster-row MRT attachment is deleted (standing-costs P1 — no reader).
+    this.coldShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint"] });
+    this.hotShadowRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint"] });
     this.coldShadowPrevRT?.destroy(); this.hotShadowPrevRT?.destroy();
-    this.coldShadowPrevRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
-    this.hotShadowPrevRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint", "rgba32uint"] });
+    this.coldShadowPrevRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint"] });
+    this.hotShadowPrevRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint"] });
     for (const rt of [this.coldShadowRT, this.hotShadowRT, this.coldShadowPrevRT, this.hotShadowPrevRT]) {
       rt.bind();
       gl.clearBufferuiv(gl.COLOR, 0, new Uint32Array([0, 0, 0, 0]));
-      gl.clearBufferuiv(gl.COLOR, 1, new Uint32Array([0, 0, 0, 0]));
     }
     // Lightmap — lightmap P1 Step B: a FINE (TEXTILE_SQUARE/tile) single-attachment map holding the fully
     // accumulated per-light irradiance (Σ colour·falloff·(1−shadow)·N·L). 4× per axis of the coarse shadow;
@@ -1763,8 +1780,20 @@ export class ShadowGather {
     // by that class's dirty texture (clean tiles `discard` → persist). A frame where only the green (hot)
     // light moves leaves cold-dirty EMPTY → both cold draws no-op (every fragment discards), so the static
     // lights + their shadows are never recomputed. Each gather is corridor↔brute identical within its class.
-    this.classPass(0, this.coldDirtyTex, this.coldShadowRT!, this.coldLightRT!, this.coldShadowPrevRT);
-    this.classPass(1, this.hotDirtyTex, this.hotShadowRT!, this.hotLightRT!, this.hotShadowPrevRT);
+    // Standing-costs P1: a class with ZERO dirty tiles skips its whole pass. Correct because the pass
+    // is dirty-gated end to end — with nothing dirty the gather leaves the shadow RT untouched and the
+    // lighting draw discards every fragment, so submitting them only rasterizes prologues (~8.4 M fine
+    // fragments/class) to change nothing. The prev snapshot stays valid for the same reason: an
+    // untouched shadow RT means prev == current already.
+    this.debugClassDraws = 0;
+    if (this.coldDirtyCount > 0) {
+      this.classPass(0, this.coldDirtyTex, this.coldShadowRT!, this.coldLightRT!, this.coldShadowPrevRT);
+      this.debugClassDraws++;
+    }
+    if (this.hotDirtyCount > 0) {
+      this.classPass(1, this.hotDirtyTex, this.hotShadowRT!, this.hotLightRT!, this.hotShadowPrevRT);
+      this.debugClassDraws++;
+    }
   }
 
   /** One class's shadow + lighting bake (#4). `cls` 0 = cold / 1 = hot; `dirty` gates it (clean → persist);
@@ -1774,7 +1803,10 @@ export class ShadowGather {
     // SNAPSHOT the shadow BEFORE the gather overwrites it ([I36]). Pairs with the data texture's pre-flush
     // copy: together they let a pass reproduce a light's OLD contribution exactly — old light records
     // against old shadow — which is what makes removal exact instead of approximate.
-    if (shadowPrevRT) {
+    // GATED OFF until the differential lands (standing-costs P1): `uShadowPrev` has NO consumer today —
+    // nothing binds the prev RT — so this blit copied ~2 MB/class/frame to feed nothing. Whoever wires
+    // the differential (accumulateLights' uDataPrev/uShadowPrev parameters) flips DIFFERENTIAL_WIRED.
+    if (DIFFERENTIAL_WIRED && shadowPrevRT) {
       const gl = this.renderer.gl;
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, shadowRT.fbo);
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, shadowPrevRT.fbo);

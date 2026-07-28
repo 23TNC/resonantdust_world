@@ -7,14 +7,14 @@ _Plan for the stream (see [README.md](README.md)). Fixture throughout: the calib
 
 ## P0 — baseline
 
-- [ ] Measure the static-frame standing tax with the GPU timer, orbit OFF: total ms of the 6 unconditional submissions (2 prev-blits + 2 gathers + 2 fine draws) on a frame with zero dirty tiles. Acceptance: the figure recorded in completed.md.
+- [x] Measure the static-frame standing tax with the GPU timer, orbit OFF: total ms of the 6 unconditional submissions (2 prev-blits + 2 gathers + 2 fine draws) on a frame with zero dirty tiles. Acceptance: the figure recorded in completed.md.
 
 ## P1 — delete the dead cost
 
-- [ ] Track per-class dirty counts in `buildDirty` and skip a class's ENTIRE `classPass` (blit + gather + lighting draw) when its count is 0. Acceptance: static scene submits no lighting draws (instrumented); orbiting scene unchanged; identity 0.
-- [ ] Gate the prev-shadow blit OFF until the differential is wired (`uShadowPrev` has no consumer today). Acceptance: no blit in a frame trace; identity 0; the flag's comment names the differential as the re-enabler.
-- [ ] Delete the vestigial `oCasterD` attachment (nothing reads `textures[1]`) from `GATHER_FRAG` and all four shadow RTs. Acceptance: `bin/rd check` green; `/overlayRT shadow-cold` unchanged; identity 0.
-- [ ] Re-run the reach sweep (4/8/12) and record the delta against the [light-budget I2](../2026-07-27-light-budget/issues.md#i2) table. Acceptance: table in completed.md.
+- [x] Track per-class dirty counts in `buildDirty` and skip a class's ENTIRE `classPass` (blit + gather + lighting draw) when its count is 0. Acceptance: static scene submits no lighting draws (instrumented); orbiting scene unchanged; identity 0.
+- [x] Gate the prev-shadow blit OFF until the differential is wired (`uShadowPrev` has no consumer today). Acceptance: no blit in a frame trace; identity 0; the flag's comment names the differential as the re-enabler.
+- [x] Delete the vestigial `oCasterD` attachment (nothing reads `textures[1]`) from `GATHER_FRAG` and all four shadow RTs. Acceptance: `bin/rd check` green; `/overlayRT shadow-cold` unchanged; identity 0.
+- [x] Re-run the reach sweep (4/8/12) and record the delta against the [light-budget I2](../2026-07-27-light-budget/issues.md#i2) table. Acceptance: table in completed.md.
 
 ## P2 — draw dirty rects, not the window
 
