@@ -25,9 +25,9 @@ Opened 2026-07-27._
 
 ## P4 — client-side heal (npc)
 
-- [ ] `client/core` native engine: reconnect on WS death — surface `Disconnected`, then re-run the login flow (gateway → connect → login → re-anchor) with capped backoff; zone subs re-issue from the anchor manager. Acceptance: kill + restart the edge under a running npc → the npc re-logs-in and trips resume, no container restart.
-- [ ] Until (or besides) reconnect: `run_brain` EXITS on `Event::Disconnected` so the container stops visibly instead of zombie-issuing into a dead socket (observed live 2026-07-28). Acceptance: kill the edge → `rd-npc` exits within seconds; `bin/sim ps` shows it gone.
-- [ ] `bin/sim run npc` gains `--restart=on-failure` (or a `sim run --keep` flag using docker's restart policy) so an exited npc comes back by itself once the edge is up. Acceptance: bounce the edge → the npc container restarts and the wolf resumes without any manual step.
+- [x] `client/core` native engine: reconnect on WS death — surface `Disconnected`, then re-run the login flow (gateway → connect → login → re-anchor) with capped backoff; zone subs re-issue from the anchor manager. Acceptance: kill + restart the edge under a running npc → the npc re-logs-in and trips resume, no container restart.
+- [x] Until (or besides) reconnect: `run_brain` EXITS on `Event::Disconnected` so the container stops visibly instead of zombie-issuing into a dead socket (observed live 2026-07-28). Acceptance: kill the edge → `rd-npc` exits within seconds; `bin/sim ps` shows it gone.
+- [x] `bin/sim run npc` gains `--restart=on-failure` (or a `sim run --keep` flag using docker's restart policy) so an exited npc comes back by itself once the edge is up. Acceptance: bounce the edge → the npc container restarts and the wolf resumes without any manual step.
 
 ## P4b — edge lock poison
 

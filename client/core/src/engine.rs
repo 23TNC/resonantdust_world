@@ -172,6 +172,20 @@ struct Engine {
     /// The wall↔tic estimate (first-pawns P3) — anchored by every `state`/`event` arrival;
     /// re-anchors surface as [`Event::TicAnchor`].
     tics: crate::ticclock::TicEstimate,
+    /// AUTO-RECONNECT (sim-self-heal P4). The last successfully-logged-in name — an unplanned
+    /// disconnect schedules a re-login as them. `None` until a login succeeds; cleared by
+    /// `Command::Logout` (a planned exit must not resurrect the session).
+    session_name: Option<String>,
+    /// Anchors snapshotted at the unplanned disconnect, replayed after the re-login (the
+    /// subscriptions they derive are per-session; the anchors are the durable intent).
+    saved_anchors: Vec<(String, i32, i32, AnchorRadii, u32)>,
+    /// When the next reconnect attempt may run (`None` = no reconnect pending) + how many have
+    /// failed in a row (0.5 s → 8 s doubling backoff).
+    reconnect_at: Option<tokio::time::Instant>,
+    reconnect_attempts: u32,
+    /// Set while an auto-reconnect login is in flight, so its failure schedules the next
+    /// attempt instead of stopping at the emitted `LoginFailed`.
+    reconnecting: bool,
 }
 
 impl Engine {
@@ -187,6 +201,11 @@ impl Engine {
             zones: ZoneManager::default(),
             clock: Clock::new(),
             tics: crate::ticclock::TicEstimate::default(),
+            session_name: None,
+            saved_anchors: Vec::new(),
+            reconnect_at: None,
+            reconnect_attempts: 0,
+            reconnecting: false,
         }
     }
 
@@ -201,6 +220,8 @@ impl Engine {
         let mut ping = tokio::time::interval(PING_INTERVAL);
 
         loop {
+            // Computed per iteration so the branch future doesn't borrow `self`.
+            let reconnect_due = sleep_until_opt(self.reconnect_at);
             tokio::select! {
                 cmd = cmd_rx.recv() => match cmd {
                     Some(cmd) => {
@@ -212,6 +233,9 @@ impl Engine {
                 },
                 frame = next_frame(&mut read) => {
                     self.handle_frame(frame, &mut read).await;
+                }
+                _ = reconnect_due => {
+                    self.attempt_reconnect(&mut read).await;
                 }
                 _ = ping.tick() => {
                     self.send_ping().await;
@@ -246,6 +270,10 @@ impl Engine {
                 self.handle_queue(world::place_program(entity, tile_x, tile_y)).await;
             }
             Command::Logout => {
+                // A PLANNED exit: forget the session so no auto-reconnect resurrects it.
+                self.session_name = None;
+                self.reconnect_at = None;
+                self.reconnecting = false;
                 self.disconnect(read, Some("logout".to_string()), /*emit=*/ true)
                     .await;
             }
@@ -380,10 +408,12 @@ impl Engine {
             FrameOutcome::Closed => {
                 self.disconnect(read, Some("server closed connection".to_string()), true)
                     .await;
+                self.schedule_reconnect("server closed connection");
             }
             FrameOutcome::Err(err) => {
                 self.disconnect(read, Some(format!("connection error: {err}")), true)
                     .await;
+                self.schedule_reconnect("connection error");
             }
         }
     }
@@ -408,7 +438,10 @@ impl Engine {
                 if !self.matches_pending(cid) {
                     return;
                 }
-                self.pending = None;
+                if let Some(p) = self.pending.take() {
+                    // The session to auto-resurrect on an unplanned disconnect (P4).
+                    self.session_name = Some(p.name);
+                }
                 self.player_id = Some(player_id);
                 // Coarse offset seed so the clock is usable before the first pong;
                 // a real round-trip refines it within `PING_INTERVAL`.
@@ -420,6 +453,21 @@ impl Engine {
                     player_shard_reference,
                     server_url,
                 });
+                // Auto-reconnect bookkeeping: this session is now the one to resurrect; a
+                // successful (re)login resets the backoff and replays the saved anchors.
+                self.reconnect_at = None;
+                self.reconnect_attempts = 0;
+                if self.reconnecting {
+                    self.reconnecting = false;
+                    let saved = std::mem::take(&mut self.saved_anchors);
+                    if !saved.is_empty() {
+                        tracing::info!(anchors = saved.len(), "reconnected — replaying anchors");
+                        for (name, tile_x, tile_y, radii, soul) in saved {
+                            self.zones.set_anchor(&name, tile_x, tile_y, radii, soul, now_ms());
+                        }
+                        self.flush_zone_intents().await;
+                    }
+                }
                 // Prime the estimator with a real round-trip immediately, rather
                 // than waiting a full ping interval — the windowed best-RTT filter
                 // then has a genuine sample to adopt over the coarse login seed.
@@ -438,6 +486,9 @@ impl Engine {
                 }
                 self.pending = None;
                 self.emit(Event::LoginFailed { reason: error });
+                if self.reconnecting {
+                    self.schedule_reconnect("re-login rejected");
+                }
             }
             ServerMsg::Error { error } => {
                 self.emit(Event::Status(format!("server error: {error}")));
@@ -564,8 +615,13 @@ impl Engine {
         }
         *read = None;
         self.server_url = None;
-        // Subscriptions die with the socket: drop anchors so a reconnecting host starts from an
-        // empty anchor list (no stale subs against a fresh server session).
+        // Subscriptions die with the socket: snapshot the anchors (the durable intent — the
+        // auto-reconnect replays them into the fresh session), then drop them so a reconnecting
+        // host starts from an empty anchor list (no stale subs against a fresh server session).
+        let anchors = self.zones.anchors();
+        if !anchors.is_empty() {
+            self.saved_anchors = anchors;
+        }
         self.zones.clear();
         // The clock offset is per-session (a new server, a new clock to sync to).
         self.clock = Clock::new();
@@ -579,6 +635,36 @@ impl Engine {
         }
         if emit && was_connected {
             self.emit(Event::Disconnected { reason });
+        }
+    }
+
+    /// Schedule an auto-reconnect attempt (unplanned disconnect / failed re-login), with
+    /// doubling backoff 0.5 s → 8 s. A session that never logged in (or logged out) has no
+    /// `session_name` and schedules nothing.
+    fn schedule_reconnect(&mut self, why: &str) {
+        if self.session_name.is_none() {
+            return;
+        }
+        self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
+        let delay = Duration::from_millis(500)
+            .saturating_mul(1u32 << (self.reconnect_attempts - 1).min(4))
+            .min(Duration::from_secs(8));
+        self.reconnect_at = Some(tokio::time::Instant::now() + delay);
+        tracing::warn!(%why, attempt = self.reconnect_attempts, ?delay, "session lost — auto-reconnect scheduled");
+    }
+
+    /// Run one auto-reconnect attempt: re-drive the full login flow (gateway resolve → connect
+    /// → login) as the remembered session. Failure schedules the next attempt.
+    async fn attempt_reconnect(&mut self, read: &mut Option<WsRead>) {
+        self.reconnect_at = None;
+        let Some(name) = self.session_name.clone() else { return };
+        self.reconnecting = true;
+        tracing::info!(%name, attempt = self.reconnect_attempts, "auto-reconnect: re-running login");
+        self.handle_login(name, read).await;
+        // An in-flight login awaits its LoginOk/LoginErr (handled there). A setup failure
+        // (gateway down, WS refused) left neither a pending login nor a socket — try again.
+        if self.pending.is_none() && self.write.is_none() {
+            self.schedule_reconnect("reconnect setup failed");
         }
     }
 
@@ -623,6 +709,14 @@ async fn next_frame(read: &mut Option<WsRead>) -> FrameOutcome {
             Some(Err(e)) => FrameOutcome::Err(e.to_string()),
             None => FrameOutcome::Closed,
         },
+        None => std::future::pending().await,
+    }
+}
+
+/// Sleep until `at`, or forever when `None` — the auto-reconnect `select!` branch.
+async fn sleep_until_opt(at: Option<tokio::time::Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
         None => std::future::pending().await,
     }
 }

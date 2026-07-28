@@ -56,3 +56,26 @@ Drills, verified live:
   (mint 0x30800000 at tic 34388) — no restarts, the void-write class is dead for the trio.
 - Bonus observation: after the earlier outage the worker drained its backlog of stale ASSIGNED
   events on reconnect — replay-safety doing real work.
+
+## 2026-07-28 · P4 — the client side heals
+
+**Engine auto-reconnect** (`client/core/src/engine.rs`): an unplanned disconnect (socket
+close/error) schedules a re-login as the remembered session (doubling backoff 0.5 s → 8 s);
+the full flow re-runs (gateway resolve → connect → login), and on success the engine REPLAYS
+the anchors snapshotted at disconnect (subscriptions are per-session; anchors are the durable
+intent — `ZoneManager::anchors()` added). `Command::Logout` forgets the session so a planned
+exit never resurrects. Failed re-logins (gateway 503, WS refused, LoginErr) reschedule.
+
+**Drill, verified live:** killed the edge PROCESS under a running npc → "disconnected …
+Connection reset" → visible backoff retries (1 s, 1 s, 2 s, 4 s…) → edge restored → "logged in
+player_id=1025" and the trip the brain had been re-issuing during the outage ARRIVED seconds
+later (anchor replay proven — subscriptions only exist via anchors); `rd-npc` uptime
+unbroken. The ZOMBIE npc class is dead — by healing, not exiting.
+
+**Item 2 resolved as its "(or besides)" arm:** with reconnect built, exiting on mid-run
+`Disconnected` would be a regression — the brain now SURVIVES. The no-zombie intent is
+delivered by the heal; startup login failure still exits 1 so the restart policy retries.
+
+**Restart policy:** `bin/sim run` starts every `rd-*` container `--restart=on-failure:10`
+(verified via docker inspect: `on-failure`); the npc exits non-zero on a failed startup login,
+so "edge not up yet" self-resolves.

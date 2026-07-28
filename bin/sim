@@ -84,7 +84,9 @@ cmd_run() {
   done
   docker rm -f "rd-$crate" >/dev/null 2>&1 || true
   log "run $crate (detached, container rd-$crate)"
-  docker run -d --name "rd-$crate" --network host \
+  # --restart=on-failure: a crashed/failed-at-startup binary retries (paced by docker) — e.g.
+  # the npc exiting 1 while the edge is still coming up. A clean exit stays down.
+  docker run -d --name "rd-$crate" --network host --restart=on-failure:10 \
     -v "$REPO":/workspace -w /workspace \
     "${envs[@]}" \
     "$IMAGE" "/workspace/$bin" >/dev/null

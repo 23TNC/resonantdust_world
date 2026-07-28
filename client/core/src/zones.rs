@@ -194,6 +194,16 @@ impl ZoneManager {
 
     /// Add or move the anchor named `name`. Idempotent: an unchanged anchor is a
     /// no-op (no recompute, no intents) — cheap to call every pan frame.
+    /// Snapshot every anchor (name, centre, radii, soul) — the engine replays these into a
+    /// fresh session on auto-reconnect (subscriptions die with the socket; the anchors are the
+    /// durable intent they were derived from).
+    pub fn anchors(&self) -> Vec<(String, i32, i32, AnchorRadii, u32)> {
+        self.anchors
+            .iter()
+            .map(|(n, a)| (n.clone(), a.tile_x, a.tile_y, a.radii, a.soul))
+            .collect()
+    }
+
     pub fn set_anchor(
         &mut self,
         name: &str,

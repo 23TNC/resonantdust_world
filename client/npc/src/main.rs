@@ -29,8 +29,11 @@ async fn main() {
     tracing::info!(%brain, %name, tick_ms, gateway = %config.gateway_url, "npc starting");
 
     let Some(bot) = Bot::login(config, &name).await else {
-        tracing::error!("npc login failed; exiting");
-        return;
+        // Exit NON-ZERO so the container's restart policy retries us (the edge may simply not
+        // be up yet — sim-self-heal P4). Mid-run disconnects need no exit: the engine
+        // auto-reconnects and replays the anchors.
+        tracing::error!("npc login failed; exiting for the restart policy to retry");
+        std::process::exit(1);
     };
 
     let rng = Rng(SystemTime::now()
