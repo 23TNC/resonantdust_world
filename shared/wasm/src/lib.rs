@@ -38,12 +38,13 @@ pub fn tic_hz_js() -> u16 {
     resonantdust_codec::tic::TIC_HZ
 }
 
-/// Tics one tile-hop takes for a definition (`codec::speed::tics_per_tile`) — the SAME seam the
-/// worker steps on, so speculation walks at exactly the server's rate (first-pawns F7).
+/// Tics one tile-hop takes for a kind that authors no `speed` (`codec::speed`). Per-kind
+/// speeds come from the bundle's `thingSpeed` table (pawn-movement F1/F5 — speed is content,
+/// authored in tics per tile); this is only the fallback for a `0`/out-of-range entry.
 #[cfg(feature = "js")]
-#[wasm_bindgen(js_name = ticsPerTile)]
-pub fn tics_per_tile_js(definition_reference: u32) -> u16 {
-    resonantdust_codec::speed::tics_per_tile(definition_reference)
+#[wasm_bindgen(js_name = defaultTicsPerTile)]
+pub fn default_tics_per_tile_js() -> u16 {
+    resonantdust_codec::speed::DEFAULT_TICS_PER_TILE
 }
 
 // ---------- content runtime (js feature) ----------

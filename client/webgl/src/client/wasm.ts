@@ -8,7 +8,7 @@
 //! instantiated first, so callers must `await` {@link initWasm} before
 //! constructing either — `main.ts` does this once at boot.
 
-import init, { WorldClient, Content, ticHz, ticsPerTile } from "@shared/resonantdust_shared.js";
+import init, { WorldClient, Content, ticHz, defaultTicsPerTile } from "@shared/resonantdust_shared.js";
 
 let ready: Promise<void> | null = null;
 
@@ -22,4 +22,4 @@ export function initWasm(): Promise<void> {
   return ready;
 }
 
-export { WorldClient, Content, ticHz, ticsPerTile };
+export { WorldClient, Content, ticHz, defaultTicsPerTile };

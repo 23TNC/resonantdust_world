@@ -74,6 +74,8 @@ function swapTo(payload: ContentPayload): void {
   content?.free();
   content = next;
   contentVersion = payload.version;
+  // Debug affordance (mirrors `__client`): the live corpus, reachable from the console.
+  (globalThis as unknown as { __content: Content }).__content = next;
 }
 
 /** Fetch + parse the gate's `/content`. Throws on a non-OK response. */

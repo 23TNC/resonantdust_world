@@ -13,14 +13,16 @@
 //! **Movement is SPECULATED** (first-pawns P3, `ACTIONS.md` §Movement): a promoted
 //! {@link MoveIntent} announces `entity → dest` once; per-hop state never fans out. Each frame
 //! ({@link tick}) the layer walks the pawn fractionally along the server's OWN stepping rule
-//! (greedy straight line, e/w-first facing) at {@link ticsPerTile}, driven by the client's
-//! wall↔tic estimate — so the wolf GLIDES between tiles with zero per-hop bandwidth.
+//! (greedy straight line, e/w-first facing) at the kind's authored tics-per-tile (the bundle's
+//! `thingSpeed` table — pawn-movement F1/F5: the SAME value the worker spaces hops with),
+//! driven by the client's wall↔tic estimate — so the wolf GLIDES between tiles with zero
+//! per-hop bandwidth.
 //! Authoritative `State` rows snap/reseed the speculation and log the observed error (F8 —
 //! the data the re-anchor cadence will be tuned on); `ZoneClosed` drops it.
 
 import type { Texture } from "../../gl";
 import type { WasmClient, StateObject, MoveIntent } from "../../client/WasmClient";
-import { ticsPerTile } from "../../client/WasmClient";
+import { defaultTicsPerTile } from "../../client/WasmClient";
 import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
 import type { PackedChannel } from "../viewport/material";
@@ -114,6 +116,8 @@ export class MoverLayer {
   private thingStems: string[] = [];
   private thingLayout: Float64Array = new Float64Array();
   private thingPacked: Float64Array = new Float64Array();
+  /** Per-kind authored tics-per-tile (`0` = unauthored → {@link defaultTicsPerTile}). */
+  private thingSpeed: Float64Array = new Float64Array();
 
   constructor(
     private readonly client: WasmClient,
@@ -164,6 +168,14 @@ export class MoverLayer {
     this.thingStems = this.content.thingTextureStems();
     this.thingLayout = this.content.thingLayout();
     this.thingPacked = this.content.thingPackedChannels();
+    this.thingSpeed = this.content.thingSpeed();
+  }
+
+  /** The kind's tics-per-tile — the speculation rate, from the content bundle so it matches
+   *  the worker's continuation spacing exactly (one speed authority, keyed by kind). */
+  private speedFor(kind: number): number {
+    const s = this.thingSpeed[kind - 1];
+    return s > 0 ? s : defaultTicsPerTile();
   }
 
   /** Slice a pawn's up-to-4 packed-channel material bindings out of the stride-8 per-def table
@@ -190,7 +202,7 @@ export class MoverLayer {
   private onMoveIntent(intent: MoveIntent): void {
     const m = this.movers.get(intent.entityReference);
     if (!m) return;
-    const tpt = ticsPerTile(m.kind);
+    const tpt = this.speedFor(m.kind);
     // The `event` table replays HISTORY on subscribe (no retention yet — first-pawns I2), and
     // deliveries can arrive out of order — so guard: no clock ⇒ can't speculate; an intent whose
     // move must already be over ⇒ the authoritative rows carry the outcome; an intent serially

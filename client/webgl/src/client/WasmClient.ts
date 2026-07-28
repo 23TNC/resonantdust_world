@@ -11,9 +11,9 @@
 //! The chat / call-stat / sub-stat hooks are still inert stubs the ported UI
 //! reaches for; they return no-op unsubscribes until those subsystems return.
 
-import { WorldClient, ticHz, ticsPerTile } from "./wasm";
+import { WorldClient, ticHz, defaultTicsPerTile } from "./wasm";
 
-export { ticHz, ticsPerTile };
+export { ticHz, defaultTicsPerTile };
 import { assetBaseFromServerUrl } from "./environments";
 
 /** Shared render delay `D`, in ms. Every client renders the world as of

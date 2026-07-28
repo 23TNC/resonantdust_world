@@ -31,7 +31,7 @@ use resonantdust_codec::object::{
     kind_pos_ref_kind_reference, kind_pos_ref_tile, pack_position_reference, position_macro, position_micro,
     position_to_tile, tile_to_position, TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
 };
-use resonantdust_codec::speed::tics_per_tile;
+use resonantdust_codec::speed;
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED};
 use resonantdust_codec::tic::{tic_add, tic_after, tic_before};
@@ -61,6 +61,47 @@ enum Shard {
     Pawn,
     Tile,
     Thing,
+}
+
+/// Per-kind tics-per-tile, `speeds[object_id - 1]`, pre-resolved through
+/// [`speed::resolve`] at load (so no zero entries). Reads `data/*.rd`, `visual/*.rd`,
+/// `material/*.rd` sorted — the edge's `load_disk` order — so `object_id`s agree.
+fn load_speeds(root: &str) -> Result<Vec<u16>, String> {
+    let mut sources: Vec<(String, String)> = Vec::new();
+    for facet in ["data", "visual", "material"] {
+        let dir = std::path::Path::new(root).join(facet);
+        if !dir.is_dir() {
+            continue;
+        }
+        let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "rd"))
+            .collect();
+        entries.sort();
+        for path in entries {
+            let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+            sources.push((format!("{facet}/{file}"), text));
+        }
+    }
+    if sources.is_empty() {
+        return Err(format!("no .rd sources under {root}"));
+    }
+    let bundle = resonantdust_dsl::loader::load(&sources)
+        .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))?;
+    Ok((1..=bundle.thing_names().len() as u16)
+        .map(|id| speed::resolve(bundle.thing_speed(id)))
+        .collect())
+}
+
+/// A pawn's hop cost by its `definition_reference` (= content `object_id` for CREATE-minted
+/// pawns; `0` for legacy PLACE-only rows → the default).
+fn tics_for(speeds: &[u16], def: u32) -> u16 {
+    def.checked_sub(1)
+        .and_then(|i| speeds.get(i as usize).copied())
+        .unwrap_or(speed::DEFAULT_TICS_PER_TILE)
 }
 
 fn shard_of(entity: u32) -> Shard {
@@ -113,6 +154,23 @@ async fn main() {
     let tile_db = env_or("TILE_DB", "resonantdust-dev-tile-0");
     let thing_db = env_or("THING_DB", "resonantdust-dev-thing-0");
     tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, %index_db, %event_db, %data_db, %pawn_db, %tile_db, %thing_db, "worker starting");
+
+    // Speed is CONTENT (pawn-movement F1/F5): resolve each kind's authored tics-per-tile from
+    // the disk corpus once at startup (the sim container mounts the repo; def-ids agree with
+    // the edge because the file order mirrors its `load_disk`). A missing/broken corpus is a
+    // MISCONFIG, not an outage — running anyway would step every pawn at the default while
+    // clients speculate authored speeds, so exit for the restart policy instead of drifting.
+    let content_dir = env_or("CONTENT_DIR", "/workspace/content");
+    let speeds = match load_speeds(&content_dir) {
+        Ok(s) => {
+            tracing::info!(%content_dir, kinds = s.len(), "corpus speeds loaded");
+            s
+        }
+        Err(err) => {
+            tracing::error!(%err, %content_dir, "content corpus load failed; exiting for the restart policy to retry");
+            std::process::exit(1);
+        }
+    };
 
     // ── uplinks (sim-self-heal P3): every upstream is lazy + self-healing. The subscribed
     // ones gate `get()` on their cache applying, so the pass never reads an un-applied mirror;
@@ -478,7 +536,7 @@ async fn main() {
                     if d == 0 {
                         continue; // arrived — the chain ends
                     }
-                    let next_tic = tic_add(t, tics_per_tile(p.definition_reference));
+                    let next_tic = tic_add(t, tics_for(&speeds, p.definition_reference));
                     let program = if d == 1 {
                         vec![PROMOTE, MOVE_TO, *obj, *dest]
                     } else {

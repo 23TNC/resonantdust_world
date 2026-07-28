@@ -16,6 +16,17 @@ Still no retention sweep — every (re-)subscribe replays all settled intents; c
 the only defense. P3 builds the server sweep on the master's gc cadence. Tracked here so THIS
 stream closes it; first-pawns stays done.
 
+## I4 · The wall↔tic estimate LEADS the server by ~25 tics (found in P2 verification)
+
+Live measurement (2026-07-28, fresh page load): intents arm with `d ≈ 28` tics when true
+elapsed-since-event is ~3–5 tics, so speculation starts ~2 tiles along its line — a visible
+forward JUMP at arm, then a correct-rate glide that arrives early and holds. Authoritative
+tics are exact (landing 9102 − intent 9042 = 60 = 5 hops × 12), so the lead is in the CLIENT
+estimate, not the server. Suspect: the estimator's max-implied-current-tic anchor observing a
+row whose tic is not "now" (a replayed event off the retention-less table whose serial
+wraps ahead, or a queued-at-future-tic row observed as if current). Diagnose in P3 alongside
+the baseline measurement; the pending-intent buffer must not mask it.
+
 ## I3 · Intent delivery flakiness (inherited: first-pawns I3)
 
 Measured absent/doubled per trip during first-pawns; the edge event-sub `on_applied` replay

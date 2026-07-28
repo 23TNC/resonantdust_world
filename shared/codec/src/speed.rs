@@ -7,15 +7,19 @@
 //! unauthored kinds and [`resolve`]. Accepted consequence: a [`crate::tic::TIC_HZ`] change
 //! changes wall-clock movement speed — the game's time unit IS the tic.
 
-use crate::tic::TIC_HZ;
+/// Tics one tile-hop takes for a kind that authors no `speed` — pinned in TICS (not derived
+/// from `TIC_HZ`: deriving would smuggle the retired wall-time authoring back in through the
+/// default). 3 tics = 0.5 s/tile at 6 Hz.
+pub const DEFAULT_TICS_PER_TILE: u16 = 3;
 
-/// The default walk speed, tiles per second (wall-time — the authored unit).
-pub const WALK_TILES_PER_SEC: f64 = 2.0;
-
-/// Tics one tile-hop takes for `definition_reference` — `MOVE_TO`'s continuation spacing and
-/// the client's speculation rate. Currently the default for every kind (see module docs).
-pub fn tics_per_tile(_definition_reference: u32) -> u16 {
-    ((TIC_HZ as f64 / WALK_TILES_PER_SEC).ceil() as u16).max(1)
+/// Resolve a kind's authored speed (`corpus.thing_speed(kind)` / the bundle's `thingSpeed`
+/// table, where `0`/absent = unauthored) to the tics one hop takes. Clamps to ≥ 1 — a hop can
+/// never take zero tics (the continuation would land on its own tic).
+pub fn resolve(authored: Option<u16>) -> u16 {
+    match authored {
+        Some(t) if t > 0 => t,
+        _ => DEFAULT_TICS_PER_TILE,
+    }
 }
 
 #[cfg(test)]
@@ -23,9 +27,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_hop_is_never_zero_tics() {
-        assert!(tics_per_tile(0) >= 1);
-        // 2 tiles/sec at 6 Hz = 3 tics/tile = 0.5 s per tile.
-        assert_eq!(tics_per_tile(7), 3);
+    fn resolve_authored_default_and_zero() {
+        assert_eq!(resolve(Some(12)), 12); // the wolf
+        assert_eq!(resolve(None), DEFAULT_TICS_PER_TILE);
+        assert_eq!(resolve(Some(0)), DEFAULT_TICS_PER_TILE); // 0 = unauthored in the bundle table
+        assert!(DEFAULT_TICS_PER_TILE >= 1);
     }
 }

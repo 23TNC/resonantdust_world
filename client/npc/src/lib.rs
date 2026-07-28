@@ -172,11 +172,13 @@ impl Bot {
     }
 }
 
-/// Resolve a thing's def id from the world server's `/content` corpus — the SAME corpus the
-/// browser renders with (first-pawns F5: content is the authority; a pinned `KIND_*` constant
-/// drifts the moment `things.rd` reorders). The payload is `{ "rd": [[name, source], …] }`,
-/// loaded with the shared DSL and answered by `thing_object_id`.
-pub async fn resolve_thing_def(server_url: &str, name: &str) -> Result<u16, String> {
+/// Resolve a thing's `(def id, tics-per-tile)` from the world server's `/content` corpus — the
+/// SAME corpus the browser renders with (first-pawns F5: content is the authority; a pinned
+/// `KIND_*` constant drifts the moment `things.rd` reorders). Speed is content too
+/// (pawn-movement F1/F5): the authored tics-per-tile, already resolved through
+/// `codec::speed::resolve` (unauthored → default). The payload is
+/// `{ "rd": [[name, source], …] }`, loaded with the shared DSL.
+pub async fn resolve_thing(server_url: &str, name: &str) -> Result<(u16, u16), String> {
     // The login hands back the WS endpoint (`ws://host:port/ws`); the corpus lives on the same
     // server's HTTP side. Swap the scheme and drop the `/ws` path.
     let base = server_url
@@ -199,9 +201,10 @@ pub async fn resolve_thing_def(server_url: &str, name: &str) -> Result<u16, Stri
         .collect();
     let bundle = resonantdust_dsl::loader::load(&sources)
         .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))?;
-    bundle
+    let def = bundle
         .thing_object_id(name)
-        .ok_or_else(|| format!("thing `{name}` not in the corpus"))
+        .ok_or_else(|| format!("thing `{name}` not in the corpus"))?;
+    Ok((def, resonantdust_codec::speed::resolve(bundle.thing_speed(def))))
 }
 
 /// Log one client event at an appropriate level (concise — an npc mostly cares about the

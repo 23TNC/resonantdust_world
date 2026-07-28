@@ -10,10 +10,10 @@ use client::Event;
 use resonantdust_codec::action::{CREATE, PROMOTE};
 use resonantdust_codec::object::{position_macro, TYPE_PAWN};
 use resonantdust_codec::refs::entity_ref_type_id;
-use resonantdust_codec::speed::tics_per_tile;
+use resonantdust_codec::speed::DEFAULT_TICS_PER_TILE;
 use resonantdust_codec::tic::TIC_HZ;
 
-use crate::{resolve_thing_def, Bot, Brain, Rng};
+use crate::{resolve_thing, Bot, Brain, Rng};
 
 /// Server-minted pawn ids live in the TOP half of the object space (`pawn::SPAWN_BASE`) —
 /// the adoption filter, so a legacy client-minted wolf is never adopted.
@@ -27,6 +27,9 @@ pub struct Wolves {
     radius: i32,
     /// The wolf's def (resolved from the corpus at start; `0` until then).
     def: u32,
+    /// The wolf's authored tics-per-tile (corpus, pawn-movement F1 — same value the worker
+    /// spaces hops with), for deadline arithmetic.
+    speed: u16,
     /// The adopted minted wolf, once its first `StateObject` lands.
     wolf: Option<u32>,
     /// The current trip's destination, if one is in flight.
@@ -57,6 +60,7 @@ impl Wolves {
             home,
             radius,
             def: 0,
+            speed: DEFAULT_TICS_PER_TILE,
             wolf: None,
             dest: None,
             deadline: std::time::Instant::now(),
@@ -82,7 +86,7 @@ impl Wolves {
             return;
         }
         let hops = (dest.0 - self.at.0).abs().max((dest.1 - self.at.1).abs()).max(1) as u64;
-        let trip_ms = hops * tics_per_tile(self.def) as u64 * 1000 / TIC_HZ as u64;
+        let trip_ms = hops * self.speed as u64 * 1000 / TIC_HZ as u64;
         self.deadline = std::time::Instant::now() + Duration::from_millis(trip_ms + 5000);
         self.dest = Some(dest);
         tracing::info!(wolf = format!("{wolf:#010x}"), from = ?self.at, to = ?dest, hops, "trip issued");
@@ -98,10 +102,11 @@ impl Brain for Wolves {
 
         // F5: the corpus is the def authority — no pinned constants.
         match &bot.server_url {
-            Some(url) => match resolve_thing_def(url, "wolf").await {
-                Ok(def) => {
+            Some(url) => match resolve_thing(url, "wolf").await {
+                Ok((def, speed)) => {
                     self.def = def as u32;
-                    tracing::info!(def, "wolf def resolved from the content corpus");
+                    self.speed = speed;
+                    tracing::info!(def, speed, "wolf def + speed resolved from the content corpus");
                 }
                 Err(err) => {
                     tracing::error!(%err, "wolf def resolution failed — cannot spawn");

@@ -17,25 +17,25 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
       `thing_speed(object_id) -> Option<u16>`; author the wolf at **12** in
       `content/data/things.rd`. Acceptance: loader unit test — wolf resolves 12, an unauthored
       kind resolves `None`.
-- [ ] Client bundle: a `thing_speed()` per-kind table beside `thing_layout()` (loader → wasm
+- [x] Client bundle: a `thing_speed()` per-kind table beside `thing_layout()` (loader → wasm
       export → `Content`), refreshed on content hot-swap. Acceptance: browser console reads the
       wolf's speed 12 from the bundle.
 
 ## P2 · Every consumer reads the SAME speed
 
-- [ ] `codec::speed` becomes the DEFAULT + resolution rule only: `DEFAULT_TICS_PER_TILE`
+- [x] `codec::speed` becomes the DEFAULT + resolution rule only: `DEFAULT_TICS_PER_TILE`
       (compute from `TIC_HZ` once, or pin it — state which in the code docs) and
       `resolve(authored: Option<u16>) -> u16`; delete the def-ignoring stub signature so no
       caller can silently keep the old path. Acceptance: `cargo test` in codec; grep shows no
       caller passing a def id to codec.
-- [ ] worker: load the corpus at startup from disk (`CONTENT_DIR`, default `/workspace/content`,
+- [x] worker: load the corpus at startup from disk (`CONTENT_DIR`, default `/workspace/content`,
       same file order as the edge's `read_content_dir` — F3); continuation spacing =
       `resolve(corpus.thing_speed(def))`. Acceptance: soak logs show wolf hops at exact 12-tic
       spacing.
-- [ ] npc: the wolves brain's trip deadline uses the corpus speed it already fetches (extend the
+- [x] npc: the wolves brain's trip deadline uses the corpus speed it already fetches (extend the
       `/content` resolve to carry speed alongside the def id). Acceptance: deadline ≈
       `hops × 12 / TIC_HZ` + slack; no premature "trip deadline passed" during a normal trip.
-- [ ] webgl: MoverLayer speculation rate from the bundle's `thing_speed()` by kind (replacing
+- [x] webgl: MoverLayer speculation rate from the bundle's `thing_speed()` by kind (replacing
       the codec `ticsPerTile(kind)` import — that call feeds a KIND into a DEF-shaped stub and
       dies with it). Acceptance: wolf glides at 0.5 tiles/s in the browser; `[mover] spec
       landed` errors stay small.
