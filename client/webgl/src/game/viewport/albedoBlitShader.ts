@@ -130,7 +130,10 @@ void main() {
       float amb = uAmbient * mix(1.0, ao, uAoStr);
       // lighting-feel P2: + the decay lightmap — ephemeral particle glow (flicker), un-quantised,
       // bilinear (soft by nature). Inside the same display clamp.
-      light = amb + min(irr + decaySample(vWorld), vec3(4.0));
+      // pawn-render P3: floor at 0 — the hot map may hold NEGATIVE cold-light deltas (a
+      // mover's shadow carved out of a cold-baked pool); the correction can never exceed
+      // what cold deposited, but jitter/quantisation must not read as negative light.
+      light = amb + min(max(irr + decaySample(vWorld), vec3(0.0)), vec3(4.0));
     }
   }
   // lighting-feel P3: EMISSIVE — self-lit pixels. The mask rides the DEPTH composite's R (the one

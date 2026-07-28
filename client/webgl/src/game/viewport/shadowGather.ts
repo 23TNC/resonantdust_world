@@ -526,13 +526,16 @@ bool billboardHot(uint billboardIdx, highp usampler2D data) {
   return ((fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).y >> 25) & 1u) == 1u;
 }
 float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, float reachU, bool isThing, uint rbillboard, vec2 Rbase,
-                bool skipHotCasters, vec2 ref, highp usampler2D data, sampler2D surf, out float row) {
+                int casterMode, vec2 ref, highp usampler2D data, sampler2D surf, out float row) {
   row = 0.0;
   if (billboardIdx == 0u) return 0.0;
   uvec4 cPd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));   // ONE fetch — this is the corridor's
-  // pawn-render P2: the COLD pass never walks a HOT caster — a mover's shadow belongs to the
-  // hot map only (any hot participant -> hot; the ratified tier matrix).
-  if (skipHotCasters && ((cPd.y >> 25) & 1u) == 1u) return 0.0;
+  // pawn-render P2/P3 caster filter: mode 1 (the COLD pass) skips HOT casters — a mover's
+  // shadow never bakes cold; mode 2 (the hot pass's cold-light DELTA) walks HOT casters ONLY —
+  // the correction subtracts exactly the mover's added occlusion. Mode 0 walks all.
+  uint cHot = (cPd.y >> 25) & 1u;
+  if (casterMode == 1 && cHot == 1u) return 0.0;
+  if (casterMode == 2 && cHot == 0u) return 0.0;
   uint cRB = cPd.x;
   vec2 Cb = resolvedTilePos((cRB >> 8) & 255u, cRB & 255u, ref);      // hot loop, per caster per light
   if (isThing) {
@@ -557,7 +560,7 @@ float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, float reachU, 
 // without that the compiler removes the very fetch we are trying to price. Output is meaningless below 0.
 uniform int uWProfile;
 float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, vec2 Rbase,
-                 bool skipHotCasters, int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
+                 int casterMode, int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
   cdepth = 0.0;
   float cov = 0.0;
   // Reach in UNITS, the radial cap for a shadow whose light sits at/below the caster top (I38). Derived
@@ -613,7 +616,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
           // leaves holes, this silently drops casters (missing shadows), so keep the two in step.
           if (billboardIdx == 0u) break;
           if (uWProfile == 4) { cov = max(cov, float(billboardIdx & 1u) * 1e-6); continue; } // W4: no casterOne
-          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, skipHotCasters, bref, data, surf, r);
+          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, casterMode, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -631,7 +634,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
         for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
           uint billboardIdx = tileSlot(cb, c);
           if (billboardIdx == 0u) break;                     // dense bucket — first empty ends the tile
-          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, skipHotCasters, bref, data, surf, r);
+          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, casterMode, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -663,6 +666,7 @@ precision highp int;
 uniform highp usampler2D uData;    // presence (sets 3/5) + light records (set 2)
 uniform highp usampler2D uRecvFine; // baked FINE receiver map (P3): id(16)|presence(1) — replaces the scan
 uniform highp usampler2D uShadow;  // this class's shadow RT (COARSE — upsampled per fine texel) — per-slot u9 coverage
+uniform highp usampler2D uShadowCold; // the COLD class's shadow RT — the P3 delta's reference (cold-caster coverage)
 uniform int uLightClass;           // #4: accumulate only this class of light — 0 = COLD, 1 = HOT
 uniform int uWorldLight;           // world-space-lighting: 1 = TRUE-3D falloff distance (oval + light height), 0 = screen circle
 uniform float uNsInv;              // world-space-lighting: N–S un-foreshorten factor (1/cos65 ≈ 2.366; live-tunable)
@@ -710,12 +714,15 @@ const float QUANT = ${LIGHT_QUANT}.0;  // additive-lightmap quantisation step (F
 //
 // While the differential is not yet wired this is called once with the current textures, so it is a
 // pure refactor — identical output, no behaviour change.
-vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 fcC,
+vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp usampler2D shadowColdTex, ivec2 fcC,
                       vec2 P, int fold, vec3 N, bool applyNL, uint rbillboardN, bool recvHot) {
     uvec4 presLo = fetchLin(data, PRESENCE_BASE + fold);     // lights 0–6
     uvec4 presHi = fetchLin(data, PRESENCE_HI_BASE + fold);  // lights 7–13
     uvec4 sh = uProfile == 4 ? uvec4(0u)                        // profile L4: price the loop WITHOUT the shadow fetch
                            : texelFetch(shadowTex, fcC, 0);   // P3: per-slot u9 shadow coverage — COARSE, upsampled (fcC)
+    // pawn-render P3 (the delta): the COLD class's shadow map, for cold-light corrections in
+    // the hot pass — correction = -light * max(0, shadowHotOnly - shadowCold).
+    uvec4 shC = uProfile == 4 ? uvec4(0u) : texelFetch(shadowColdTex, fcC, 0);
     vec3 acc = vec3(0.0);                                     // #4: NO ambient here — the blit adds it once over cold+hot
     // lighting-feel P1: the world-frame VIEW direction for the glint — per-fragment constant, hoisted
     // out of the light loop (cos/sin once, not per light).
@@ -728,8 +735,11 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
       // everywhere + cold lights on HOT-RECEIVER texels (a cold torch LIGHTS the wolf via the
       // hot map — the blit zeroes the cold map on mover pixels, so no double-count).
       uint lcls = (Ld.y >> 25) & 1u;
-      if (uLightClass == 0) { if (lcls != 0u) continue; }
-      else if (lcls != 1u && !recvHot) continue;
+      if (uLightClass == 0 && lcls != 0u) continue;   // cold pass: cold lights only (as ever)
+      // hot pass: hot lights everywhere; a cold light contributes FULLY on hot-receiver texels
+      // and as a NEGATIVE delta elsewhere (P3 — the mover's added occlusion of a cold-baked
+      // light; the blit's cold+hot sum then carves the mover's shadow out of the cold pool).
+      bool deltaMode = uLightClass == 1 && lcls == 0u && !recvHot;
       vec2 Lxy = resolvedPos((Ld.w >> 4) & 255u, (Ld.x >> 8) & 255u, Ld.x & 255u, P); // v3 resolved pos
       vec3 col = vec3(float((Ld.z >> 24) & 255u), float((Ld.z >> 16) & 255u), float((Ld.z >> 8) & 255u)) / 255.0;
       float intensity = float(Ld.z & 255u) / 255.0;
@@ -795,7 +805,18 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
         vec3 H = normalize(d3 / max(dist, 1e-3) + V);
         spec = pow(max(dot(N, H), 0.0), uGlintPow) * uGlintStr;
       }
-      float contrib = intensity * fall * (ndl + spec) * (1.0 - shadow); // shadowed contribution (× Lambert on things)
+      float contrib;
+      if (deltaMode) {
+        // The cold map baked X·(1−shC); truth is X·(1−max(shC, shHotOnly)). The correction is
+        // −X·max(0, shHotOnly − shC) — exact where the mover adds occlusion, zero where the
+        // cold casters already shadowed. The shadow var here IS the hot-only coverage (mode 2).
+        uint c8 = (lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
+        float shadowCold = float(c8 >> 1) / 127.0;
+        if (!onBillboard && rbillboardN != 0u) shadowCold = 0.0; // mirror the cold pass's ground cut
+        contrib = -intensity * fall * (ndl + spec) * max(0.0, shadow - shadowCold);
+      } else {
+        contrib = intensity * fall * (ndl + spec) * (1.0 - shadow); // shadowed contribution (× Lambert on things)
+      }
       // CLAMP PER LIGHT, before it joins the sum. This is what makes the accumulator's exactness bound
       // UNCONDITIONAL rather than merely likely: with every light capped at 1.0 (255 after quantisation),
       // the worst case is 65,535 (the whole u16 id space) x 255 = 16,711,425, under the 2^24 = 16,777,216
@@ -808,7 +829,7 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
       //
       // The clamp belongs HERE and nowhere downstream. Clamping the accumulated SUM would break light
       // removal: two lights at 255 clipped to 255 means subtracting one leaves 0 where 255 is correct.
-      acc += min(colT * contrib, vec3(1.0));
+      acc += clamp(colT * contrib, vec3(-1.0), vec3(1.0));
     }
   return acc;
 }
@@ -865,7 +886,7 @@ void main() {
   if (uProfile == 3) { oLight = vec4(N, 1.0); return; }             // L3: + billboard/world normal
 
   int fold = foldTile(wc, wr);
-  vec3 acc = accumulateLights(uData, uShadow, fcC, P, fold, N, applyNL, rbillboardN, recvHotN);
+  vec3 acc = accumulateLights(uData, uShadow, uShadowCold, fcC, P, fold, N, applyNL, rbillboardN, recvHotN);
   // QUANTISED into the additive accumulator (F11b). Rounding is what makes each deposit an exact integer,
   // so removing this light later — same value negated — cancels bit-exactly in FP32. Do NOT drop the
   // round for "smoother" values: the exactness is the correctness mechanism, and unquantised deposits
@@ -873,7 +894,9 @@ void main() {
   //
   // No LDR clamp: the accumulator is the SUM over lights and may legitimately exceed one light's range.
   // The blit divides by QUANT and tonemaps at display time instead.
-  oLight = vec4(round(max(acc, vec3(0.0)) * QUANT), 1.0);
+  // P3: the HOT class may hold NEGATIVE deposits (the cold-light delta) — clamp only the
+  // cold class (whose sums are non-negative by construction); the blit floors the total.
+  oLight = vec4(round((uLightClass == 1 ? acc : max(acc, vec3(0.0))) * QUANT), 1.0);
 }
 `;
 
@@ -1030,8 +1053,11 @@ void main() {
     // HOT pass handles hot lights everywhere PLUS cold lights on HOT-RECEIVER texels — a cold
     // torch's shadow climbing a wolf lands in the hot map, never re-baking cold.
     uint lcls = (Ld.y >> 25) & 1u;
-    if (uLightClass == 0) { if (lcls != 0u) continue; }
-    else if (lcls != 1u && !recvHot) continue;
+    if (uLightClass == 0 && lcls != 0u) continue;      // cold pass: cold lights only (as ever)
+    // hot pass: hot lights everywhere; cold lights FULLY on hot-receiver texels, and in DELTA
+    // mode elsewhere (P3): walk HOT casters only — the coverage this writes is the mover's
+    // ADDED occlusion of the cold light, which the light pass turns into a negative deposit.
+    int casterMode = uLightClass == 0 ? 1 : ((lcls == 0u && !recvHot) ? 2 : 0);
     vec3 L = vec3(resolvedPos((Ld.w >> 4) & 255u, (Ld.x >> 8) & 255u, Ld.x & 255u, P),
                   float((Ld.y >> 16) & 255u));              // v3 resolved pos + z_offset
     float emitter = float((Ld.w >> 12) & 255u);             // emitter_radius (units) → penumbra width
@@ -1049,15 +1075,15 @@ void main() {
       float ze = min(zElev, 0.9 * L.z);                     // keep the projection s bounded
       float sProj = L.z / (L.z - ze);
       vec2 Qt = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
-      cov = walkShadow(L, emitter, Qt, true, rbillboard, Rbase, uLightClass == 0, uCorridor, reachT, uData, uSurface, cd); // on-billboard (climbing) shT
+      cov = walkShadow(L, emitter, Qt, true, rbillboard, Rbase, casterMode, uCorridor, reachT, uData, uSurface, cd); // on-billboard (climbing) shT
       if (!allBillboard) {                                       // straddles ground → add ground shadow (darkens the ground px within)
         float cdG;
-        float shG = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, uLightClass == 0, uCorridor, reachT, uData, uSurface, cdG);
+        float shG = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, casterMode, uCorridor, reachT, uData, uSurface, cdG);
         cov = max(cov, shG);                                // MAX not sum: identical where shT=0 (the bright px), no false over-dark where both overlap
         cd = max(cd, cdG);
       }
     } else {                                                // ground texel → GROUND shadow (fine bake cuts it by fine presence)
-      cov = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, uLightClass == 0, uCorridor, reachT, uData, uSurface, cd);
+      cov = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, casterMode, uCorridor, reachT, uData, uSurface, cd);
     }
     // v3 (16 lights/tile): each slot is ONE byte = u7 coverage | u1 on-billboard. 16 x 8 = 128 bits
     // exactly, so the flag rides its own slot's byte instead of a separate A-lane bit field.
@@ -2341,6 +2367,9 @@ export class ShadowGather {
         uData: this.coldData.dataTexture, // presence (sets 3/5) + light records (set 2)
         uRecvFine: this.receiverFineRT!.textures[0], // P3: baked receiver id (fine)
         uShadow: shadowRT.textures[0], // this class's shadow-cold (COARSE — the fine bake upsamples it)
+        // pawn-render P3: the COLD class's shadow map — the hot pass's delta reference
+        // (unused by the cold pass, which binds its own map twice).
+        uShadowCold: this.coldShadowRT!.textures[0],
         uSurface: this.coldData.surfacePage ?? this.empty, // lightmap (CO-PACK): silhouette + normal quadrants share this page
       },
       uniforms: (p) => {

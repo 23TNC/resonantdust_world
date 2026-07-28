@@ -57,3 +57,27 @@ the npc stopped, 10 s = 0 cold / 0 hot bakes; wolf walking = **0 cold** / ~25k h
 scene's light with Lambert-consistent shading (the P0 pale-flat look is gone; a wolf in a
 dark corner is dark); no GLSL errors; **120 fps at zoom 1 AND 120.3 at zoom 0.25 while
 walking** (the 63-light/120 baseline held).
+
+## 2026-07-28 · P3 — wolves cast + receive shadows, hot maps only (3/3)
+
+**Receive** landed with P2's machinery (the hot pass's cold-lights-on-hot-receivers cell walks
+ALL casters, climbing shadows included) — proven at the BIT level: 239 non-zero hot-shadow
+words, every one flagged on-billboard (climbing values on mover receivers), plus visible
+dark-lower-body shading as a wolf crossed the twins' shadow band. **Cast** exposed the one
+cell P2's filter deferred — cold light × hot CASTER onto cold ground (the scene's torches
+are COLD lights, so the wolf cast nothing) — and it is now built as a DIFFERENTIAL: the hot
+pass evaluates cold lights everywhere in class 1, in DELTA mode on non-hot-receiver texels
+(caster walk restricted to HOT casters — mode 2 of the new three-mode caster filter), and
+the light pass deposits the NEGATIVE correction −light·max(0, shadowHotOnly − shadowCold)
+against the cold class's own shadow map (bound as a second sampler); the hot accumulator
+admits negative values (class 1 only) and the blit floors the summed irradiance at 0. The
+correction is exact by construction — same falloff/N·L/colour formulas, the cold map's own
+coverage as the reference — so the mover's shadow is carved out of the cold-baked pool
+without ever re-baking it. **Verified**: a posed wolf beside the torch drags a distinct
+silhouette shadow stretching away from the light (screenshots, both sides of the torch);
+cold bakes stayed **0** through a delta-casting walk (hot ~20k/5 s); 120.2 fps. The
+GLSL-backtick guard caught a second comment backtick. **Matrix ledger**: cold×cold baked
+once + never re-baked (measured at rest AND during walks); cold×hot-receiver → hot (lit
+wolf); cold×hot-caster → hot delta (this shadow); hot-light cells ride the pre-existing
+class-1 path — no live hot-class light in the scene, so those two cells are
+machinery-verified only (honest gap; the path is untouched from the moving-lights work).

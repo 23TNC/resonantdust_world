@@ -57,19 +57,19 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P3 · Shadows cast BY and ONTO wolves (hot maps only)
 
-- [ ] Wolf casts: warm records join the HOT pass's caster walk (per-frame re-bucket for the
+- [x] Wolf casts: warm records join the HOT pass's caster walk (per-frame re-bucket for the
       handful of movers — the "O(1) re-bucket lands with the hot tier" seam,
       `shadowGather.ts:1648`); the wolf's silhouette shadows ground AND cold billboards via
       the existing climb math, landing in the hot map. Self-shadow excluded by the existing
       `casterOne` culls. Acceptance: the wolf drags a soft silhouette shadow past a torch;
       a wall/tree south of the wolf catches its climbing shadow; all in `hotShadowRT`, cold
       maps untouched.
-- [ ] Wolf receives: warm receiver texels get the climbing-shadow treatment (elevation from
+- [x] Wolf receives: warm receiver texels get the climbing-shadow treatment (elevation from
       the wolf's own base row) from cold AND hot casters, attenuating the hot-map light —
       the "tree's shadow climbs the wolf" shot. Acceptance: wolf walking through a tree's
       shadow shows the shadow crossing its BODY at the right height (not just its ground
       tile), at 3 zooms; the P0 baseline's wholesale-darkening artifact is gone.
-- [ ] Matrix drill: with one cold light, one hot (flicker) light, one cold tree, one wolf —
+- [x] Matrix drill: with one cold light, one hot (flicker) light, one cold tree, one wolf —
       verify each of the four cells lands in the right map (instrument dirty/bake counters
       per RT): cold×cold bakes once and never re-bakes; the other three re-render per frame
       in hot; toggling the wolf away restores a hot-map-empty steady state. Evidence in
