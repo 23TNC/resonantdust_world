@@ -65,3 +65,31 @@ Reach 4/12 deltas are environmental, not P1: this fixture differs from I2's (tor
 carrier adds prim rects — 143 dirty vs I2's 110 at reach 4 — different world location/density, and
 pumped rather than paced frames). The per-frame win while MOVING is the hot-class side: gatherHot
 fell to 0.006–0.010 ms (was a fullscreen discard draw) and both blits are gone.
+
+## 2026-07-27 · P2 — dirty-rect draws; the per-texel gate and the dirty textures are gone
+
+`buildDirty` now greedy-row-merges each class's mirror into tile-aligned rects emitted as raw NDC
+triangles (6 verts/rect, non-indexed, one shared vertex list for both RT resolutions — tile
+fractions are resolution-independent and cols/rows are pow2, so every rect edge is an exact dyadic
+NDC coordinate on a texel boundary). `classPass` draws that geometry instead of the fullscreen
+quad. The `uDirty` textures, their uploads, and both shaders' per-texel discard gates are DELETED —
+clean texels persist by never being rasterized.
+
+**Verified (pumped-frame environment as P0/P1):**
+
+- **Rect exactness:** across a 60-frame orbit, `debugRectTiles == [coldDirtyCount, hotDirtyCount]`
+  on every frame (`rectOk: true`); 144–160 dirty tiles merged into ~16 rects.
+- **Bit-identity, twice:** the exact P1 fixture (fresh load → `__torch()` → corridor/brute
+  readback hashes) reproduces **brute 2575314166 / corridor 2077624216** on the rect build WITH the
+  gate still in, and AGAIN after the gate + dirty textures were deleted. Rasterized set == dirty
+  set, proven at the output.
+- **Static silence intact:** `debugClassDraws 0`, `getError() 0`.
+- **Zoom sweep (the recurring drift class):** 1 → 0.5 → 0.25 → 1 with the torch lit — dims-change
+  reallocation (rect arrays + geometry) exercised, no GL errors, dirty settles to 0, screenshot
+  identical to pre-P2 (torch pool + tree shadows).
+- **Sweep on the final build** (cold totals): reach 4 **0.382**, 8 **0.398**, 12 **0.486** ms.
+  vs P1 fullscreen: the FINE draw (`lightCold`) improved at every reach (0.176→0.161, 0.195→0.182,
+  0.256→0.214 — −9 %/−7 %/−16 %); the coarse gather is within this harness's ±8 % noise (its RT is
+  512×256, so its discard tax was small). `rectTilesPerFrame` tracks `dirtyPerFrame` + ~8 (hot
+  overlap double-count, expected). **Discard-tax share is now 0 by construction** — before, a
+  reach-4 frame rasterized 512 tiles of fine fragments for 143 dirty (72 % discard-only).

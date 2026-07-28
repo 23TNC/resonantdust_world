@@ -642,8 +642,8 @@ export const AMBIENT_LEVEL = 0.12;  // #4: added once in the blit (uAmbient), no
 
 // ── LIGHTING (`2026-07-23-lighting`) ──────────────────────────────────────────────────────────────
 // The baked LIGHTMAP (F1): a world-space toroidal RT aligned TEXEL-FOR-TEXEL with shadow-cold (same
-// cols·TEXTILE_UNIT × rows·TEXTILE_UNIT, same fc→world→slot mapping, same uDirty gating → clean tiles
-// persist). Each texel: ambient + Σ over its presence lights of colour·intensity·falloff. The display
+// cols·TEXTILE_UNIT × rows·TEXTILE_UNIT, same fc→world→slot mapping, same dirty-rect draw list → clean
+// tiles persist by never being rasterized). Each texel: ambient + Σ over its presence lights of colour·intensity·falloff. The display
 // blit multiplies albedo × lightmap. P1 = emission only (no normal, no shadow); P2 folds Lambert
 // N·L; P3 masks each light by its shadow-cold u9 coverage. Reuses GATHER_COMMON (fetchLin / foldTile /
 // decodePos / tileSlot / SQ·UNIT·UPT + the data-texture BASE consts).
@@ -651,7 +651,6 @@ const LIGHT_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 uniform highp usampler2D uData;    // presence (sets 3/5) + light records (set 2)
-uniform highp usampler2D uDirty;   // shadow_dirty — same gate as the shadow gather (clean → persist)
 uniform highp usampler2D uShadow;  // this class's shadow RT (COARSE — upsampled per fine texel) — per-slot u9 coverage
 uniform int uLightClass;           // #4: accumulate only this class of light — 0 = COLD, 1 = HOT
 uniform int uWorldLight;           // world-space-lighting: 1 = TRUE-3D falloff distance (oval + light height), 0 = screen circle
@@ -783,7 +782,7 @@ void main() {
   int uSlotF = uSlot * FINE;                                   // this map is FINE (TEXTILE_SQUARE/tile); shadow stays coarse
   ivec2 fc = ivec2(gl_FragCoord.xy);                           // FINE light texel
   int sx = fc.x / uSlotF, sy = fc.y / uSlotF;                  // owning tile (fine slot)
-  if (texelFetch(uDirty, ivec2(sx, sy), 0).r == 0u) discard;   // clean tile → keep the persistent texel
+  // Dirty gate RETIRED (standing-costs P2) — the dirty-rect geometry IS the gate (see GATHER_FRAG).
   int wc = uWinCol + pmod(sx - pmod(uWinCol, uCols), uCols);
   int wr = uWinRow + pmod(sy - pmod(uWinRow, uRows), uRows);
   float lx = (float(fc.x) - float(sx * uSlotF)) / float(uSlotF);
@@ -835,7 +834,6 @@ const GATHER_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 uniform highp usampler2D uData;       // THE unified data texture (defs|billboards|lights|presence|buckets)
-uniform highp usampler2D uDirty;      // shadow_dirty — textile_tile map (R8UI): .r nonzero = recompute
 uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 uniform int uLightClass;              // #4: process only this class of light — 0 = COLD (static), 1 = HOT (dynamic)
@@ -862,7 +860,9 @@ void main() {
   int uWinCol = int(C0.z) >> 16, uWinRow = (int(C0.z) << 16) >> 16;
   ivec2 fc = ivec2(gl_FragCoord.xy);
   int sx = fc.x / uSlot, sy = fc.y / uSlot;                 // toroidal slot
-  if (texelFetch(uDirty, ivec2(sx, sy), 0).r == 0u) discard; // clean tile → keep the persistent texel
+  // The per-texel dirty gate is RETIRED (standing-costs P2): the draw rasterizes ONLY dirty-rect
+  // geometry, whose tile-aligned edges make coverage exactly the dirty set — clean texels are never
+  // rasterized, so they persist by never being drawn rather than by discard.
   int wc = uWinCol + pmod(sx - pmod(uWinCol, uCols), uCols); // → world tile
   int wr = uWinRow + pmod(sy - pmod(uWinRow, uRows), uRows);
   float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot); // 0..1 within the tile
@@ -1156,12 +1156,12 @@ export class ShadowGather {
   private castSlots = new Uint16Array(0);
   private castCount = new Uint8Array(0);
 
-  /** #4 shadow_dirty — TWO **textile_tile maps** (`R8UI`, nonzero = recompute), one per class (cold/hot).
-   *  Owner tracking is SHARED (pan exposes tiles for both). A COLD tile recomputes on a static-light or
-   *  caster change or pan; a HOT tile on a dynamic-light move, caster change, or pan. The common frame
-   *  (only the green light moves) dirties HOT only → the cold shadow + lightmap are never re-baked. */
-  private coldDirtyTex: Texture;
-  private hotDirtyTex: Texture;
+  /** #4 shadow_dirty — TWO per-class CPU mirrors (nonzero = recompute). Owner tracking is SHARED
+   *  (pan exposes tiles for both). A COLD tile recomputes on a static-light or caster change or pan;
+   *  a HOT tile on a dynamic-light move, caster change, or pan. The common frame (only one hot light
+   *  moves) dirties HOT only → the cold shadow + lightmap are never re-baked. The GPU-side dirty
+   *  TEXTURES are gone (standing-costs P2) — the mirrors now drive the dirty-rect draw geometry,
+   *  which rasterizes exactly the dirty tiles, so no per-texel gate exists to feed. */
   private coldMirror = new Uint8Array(0);
   private hotMirror = new Uint8Array(0);
   private ownerCol = new Int32Array(0);
@@ -1180,6 +1180,20 @@ export class ShadowGather {
   private hotDirtyCount = 0;
   /** DEBUG (standing-costs P1 acceptance): class passes actually SUBMITTED last frame (0–2). */
   debugClassDraws = 0;
+  /** P2 dirty-rect draw lists (standing-costs, [F1](../../../../docs/work/2026-07-27-lighting-standing-costs/forks.md#f1)):
+   *  per class, the dirty mirror greedily row-merged into tile-aligned rects and emitted as raw NDC
+   *  triangles (6 verts/rect, non-indexed). The gather + fine lighting draws rasterize ONLY these
+   *  rects instead of a fullscreen quad discarding clean texels. NDC is exact: cols/rows are pow2,
+   *  so every rect edge is a dyadic fraction landing on a texel boundary in both RT resolutions. */
+  private coldRectPos = new Float32Array(0);
+  private hotRectPos = new Float32Array(0);
+  private coldRectVerts = 0;
+  private hotRectVerts = 0;
+  private dirtyGeo: Geometry | null = null;
+  /** DEBUG (P2 acceptance): Σ rect areas in TILES per class last build — must equal the dirty counts. */
+  debugRectTiles: [number, number] = [0, 0];
+  /** DEBUG (P2 acceptance): rects emitted per class last build. */
+  debugRectCount: [number, number] = [0, 0];
   /** P6: walk the segment corridor (true) or the brute-force reach box (false). Brute is the
    *  validation baseline — `__corridor(false)` + `__shadowDiff()` must report 0 mismatches. */
   private corridor = true;
@@ -1196,8 +1210,6 @@ export class ShadowGather {
     this.overlay = new Program(gl, OVERLAY_VERT, OVERLAY_FRAG, "shadow-overlay");
     this.gizmo = new Program(gl, GIZMO_VERT, GIZMO_FRAG, "shadow-gizmo");
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
-    this.coldDirtyTex = new Texture(gl, { width: 1, height: 1, format: "r8uint" });
-    this.hotDirtyTex = new Texture(gl, { width: 1, height: 1, format: "r8uint" });
     this.coldData = new ColdShadowData(renderer);
     (globalThis as unknown as { __cold: unknown }).__cold = this.coldData; // DEBUG
     // DEBUG: console toggle for the orbit (perf measurement) — `__orbit(false)` to freeze the lights.
@@ -1565,9 +1577,6 @@ export class ShadowGather {
     let forceCold = this.forceColdDirty, forceHot = this.forceHotDirty;
     this.forceColdDirty = false; this.forceHotDirty = false;
     if (this.dirtyCols !== cols || this.dirtyRows !== rows) {
-      this.coldDirtyTex.destroy(); this.hotDirtyTex.destroy();
-      this.coldDirtyTex = new Texture(this.renderer.gl, { width: cols, height: rows, format: "r8uint" });
-      this.hotDirtyTex = new Texture(this.renderer.gl, { width: cols, height: rows, format: "r8uint" });
       this.coldMirror = new Uint8Array(cols * rows);
       this.hotMirror = new Uint8Array(cols * rows);
       this.ownerCol = new Int32Array(cols * rows);
@@ -1576,6 +1585,14 @@ export class ShadowGather {
       this.dirtyCols = cols;
       this.dirtyRows = rows;
       forceCold = forceHot = true;
+      // P2 rect lists: worst case is alternating dirty/clean along a row — ceil(cols/2) runs/row.
+      const maxRects = rows * Math.ceil(cols / 2);
+      this.coldRectPos = new Float32Array(maxRects * 12);
+      this.hotRectPos = new Float32Array(maxRects * 12);
+      this.dirtyGeo?.destroy();
+      this.dirtyGeo = new Geometry(this.renderer.gl, this.gather, {
+        aPos: { data: this.coldRectPos, size: 2 },
+      });
     }
     const pm = (a: number, m: number): number => ((a % m) + m) % m;
     const baseC = pm(winCol, cols), baseR = pm(winRow, rows);
@@ -1613,8 +1630,39 @@ export class ShadowGather {
     this.coldDirtyCount = cc;
     this.hotDirtyCount = hc;
     this.debugDirtyTiles = dc; // DEBUG: tiles recomputed this frame (cold ∪ hot)
-    this.coldDirtyTex.upload(this.coldMirror);
-    this.hotDirtyTex.upload(this.hotMirror);
+    // P2: greedy row-merge each class's mirror into tile-aligned rects, emitted as raw NDC triangles.
+    // Tile (sx, sy) spans the SAME fraction [sx/cols, (sx+1)/cols] × [sy/rows, (sy+1)/rows] of BOTH
+    // the coarse shadow RT and the fine lightmap RT, so one vertex list serves both draws. cols/rows
+    // are pow2 (SLOTS << lod), so every edge is dyadic → exact NDC → rect edges land on texel
+    // boundaries and rasterization covers exactly the dirty tiles' texels.
+    this.coldRectVerts = this.buildRects(this.coldMirror, cols, rows, this.coldRectPos, 0);
+    this.hotRectVerts = this.buildRects(this.hotMirror, cols, rows, this.hotRectPos, 1);
+  }
+
+  /** P2 — row-merge `mirror`'s set tiles into rects and write NDC triangles into `out`.
+   *  Returns the vertex count (6 per rect). `dbg` = index into the debug tallies. */
+  private buildRects(mirror: Uint8Array, cols: number, rows: number, out: Float32Array, dbg: number): number {
+    let v = 0, rects = 0, tiles = 0;
+    for (let sy = 0; sy < rows; sy++) {
+      const y0 = (sy / rows) * 2 - 1, y1 = ((sy + 1) / rows) * 2 - 1;
+      for (let sx = 0; sx < cols; ) {
+        if (!mirror[sy * cols + sx]) { sx++; continue; }
+        let sx1 = sx;
+        while (sx1 + 1 < cols && mirror[sy * cols + sx1 + 1]) sx1++;
+        const x0 = (sx / cols) * 2 - 1, x1 = ((sx1 + 1) / cols) * 2 - 1;
+        out[v * 2] = x0; out[v * 2 + 1] = y0;
+        out[v * 2 + 2] = x1; out[v * 2 + 3] = y0;
+        out[v * 2 + 4] = x1; out[v * 2 + 5] = y1;
+        out[v * 2 + 6] = x0; out[v * 2 + 7] = y0;
+        out[v * 2 + 8] = x1; out[v * 2 + 9] = y1;
+        out[v * 2 + 10] = x0; out[v * 2 + 11] = y1;
+        v += 6; rects++; tiles += sx1 - sx + 1;
+        sx = sx1 + 1;
+      }
+    }
+    this.debugRectCount[dbg] = rects;
+    this.debugRectTiles[dbg] = tiles;
+    return v;
   }
 
   get on(): boolean {
@@ -1787,18 +1835,18 @@ export class ShadowGather {
     // untouched shadow RT means prev == current already.
     this.debugClassDraws = 0;
     if (this.coldDirtyCount > 0) {
-      this.classPass(0, this.coldDirtyTex, this.coldShadowRT!, this.coldLightRT!, this.coldShadowPrevRT);
+      this.classPass(0, this.coldShadowRT!, this.coldLightRT!, this.coldShadowPrevRT);
       this.debugClassDraws++;
     }
     if (this.hotDirtyCount > 0) {
-      this.classPass(1, this.hotDirtyTex, this.hotShadowRT!, this.hotLightRT!, this.hotShadowPrevRT);
+      this.classPass(1, this.hotShadowRT!, this.hotLightRT!, this.hotShadowPrevRT);
       this.debugClassDraws++;
     }
   }
 
   /** One class's shadow + lighting bake (#4). `cls` 0 = cold / 1 = hot; `dirty` gates it (clean → persist);
    *  the gather writes `shadowRT` (this class's per-light u9), the lighting reads it into `lightRT`. */
-  private classPass(cls: number, dirty: Texture, shadowRT: RenderTarget, lightRT: RenderTarget,
+  private classPass(cls: number, shadowRT: RenderTarget, lightRT: RenderTarget,
                     shadowPrevRT: RenderTarget | null): void {
     // SNAPSHOT the shadow BEFORE the gather overwrites it ([I36]). Pairs with the data texture's pre-flush
     // copy: together they let a pass reproduce a light's OLD contribution exactly — old light records
@@ -1815,14 +1863,21 @@ export class ShadowGather {
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
     }
+    // P2 (standing-costs): rasterize ONLY the dirty rects. One NDC vertex list serves both draws
+    // (tile fractions are resolution-independent). The per-texel dirty gate is retired — rect
+    // coverage was proven bit-identical to the gated fullscreen build before the gate came out.
+    const rectPos = cls === 0 ? this.coldRectPos : this.hotRectPos;
+    const verts = cls === 0 ? this.coldRectVerts : this.hotRectVerts;
+    if (verts === 0 || !this.dirtyGeo) return;
+    this.dirtyGeo.update("aPos", rectPos.subarray(0, verts * 2));
     this.renderer.draw({
       program: this.gather,
-      geometry: this.fsQuad,
+      geometry: this.dirtyGeo,
+      count: verts,
       target: shadowRT,
       blend: "none",
       textures: {
         uData: this.coldData.dataTexture, // defs | billboards | lights | presence | buckets
-        uDirty: dirty,
         uSurface: this.coldData.surfacePage ?? this.empty, // no page yet → defs have no frame → solid quads
       },
       uniforms: (p) => {
@@ -1838,12 +1893,12 @@ export class ShadowGather {
     });
     this.renderer.draw({
       program: this.lighting,
-      geometry: this.fsQuad,
+      geometry: this.dirtyGeo,
+      count: verts,
       target: lightRT,
       blend: "none",
       textures: {
         uData: this.coldData.dataTexture, // presence (sets 3/5) + light records (set 2)
-        uDirty: dirty,
         uShadow: shadowRT.textures[0], // this class's shadow-cold (COARSE — the fine bake upsamples it)
         uSurface: this.coldData.surfacePage ?? this.empty, // lightmap (CO-PACK): silhouette + normal quadrants share this page
       },
@@ -1926,7 +1981,7 @@ export class ShadowGather {
     this.overlay.destroy();
     this.gizmo.destroy();
     this.empty.destroy();
-    this.coldDirtyTex.destroy(); this.hotDirtyTex.destroy();
+    this.dirtyGeo?.destroy();
     this.coldShadowRT?.destroy(); this.hotShadowRT?.destroy();
     this.coldLightRT?.destroy(); this.hotLightRT?.destroy();
     this.coldData.destroy();

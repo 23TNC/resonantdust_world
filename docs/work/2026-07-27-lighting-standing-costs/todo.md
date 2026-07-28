@@ -18,10 +18,10 @@ _Plan for the stream (see [README.md](README.md)). Fixture throughout: the calib
 
 ## P2 — draw dirty rects, not the window
 
-- [ ] Merge each class's dirty mirror into tile-aligned rects CPU-side (greedy row-merge suffices). Acceptance: unit-of-work log shows rect count ≤ dirty tiles and rect area = dirty area exactly.
-- [ ] Draw the merged rects as instanced quads in ONE draw for BOTH the gather and the fine pass, replacing the fullscreen quad ([F1](forks.md#f1)). Acceptance: identity 0; output bit-identical to the fullscreen build.
-- [ ] Retire the `uDirty` texel gate from both shaders once the rect path has held identity (belt-and-braces during transition only). Acceptance: no `uDirty` fetch remains in `GATHER_FRAG`/`LIGHT_FRAG`; identity 0.
-- [ ] Instrument fine fragments rasterized per frame and confirm ≈ dirty texels (not window texels); re-measure the reach-4 row. Acceptance: fragment count + ms recorded; the discard-tax share is now quantified.
+- [x] Merge each class's dirty mirror into tile-aligned rects CPU-side (greedy row-merge suffices). Acceptance: unit-of-work log shows rect count ≤ dirty tiles and rect area = dirty area exactly.
+- [x] Draw the merged rects as instanced quads in ONE draw for BOTH the gather and the fine pass, replacing the fullscreen quad ([F1](forks.md#f1)). Acceptance: identity 0; output bit-identical to the fullscreen build.
+- [x] Retire the `uDirty` texel gate from both shaders once the rect path has held identity (belt-and-braces during transition only). Acceptance: no `uDirty` fetch remains in `GATHER_FRAG`/`LIGHT_FRAG`; identity 0.
+- [x] Instrument fine fragments rasterized per frame and confirm ≈ dirty texels (not window texels); re-measure the reach-4 row. Acceptance: fragment count + ms recorded; the discard-tax share is now quantified.
 
 ## P3 — the persistent receiver map
 
