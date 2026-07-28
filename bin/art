@@ -3190,6 +3190,17 @@ cmd_generate() {
   RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/generate.py" "$@"
 }
 
+cmd_generate_tile() {
+  # Ground/terrain tile sheets: plain txt2img (no silhouette, no direction, no alpha), downscaled
+  # and cut into a padded sprite map placed in the texture tree. Greyscale by default because the
+  # tile DSL colours terrain by TINT ("white" texture + per-material tint), so one neutral sheet
+  # serves grass/dirt/sand. Emits a sprite map on purpose — `art remaster` splits sheets into
+  # per-variant leaves, so generated terrain enters the same re-mastering path as authored art.
+  # Delegates to lib/generate_tile.py. Needs a reachable ComfyUI (COMFYUI_URL).
+  command -v python3 >/dev/null || { echo "art generate-tile: python3 not found" >&2; exit 1; }
+  RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/generate_tile.py" "$@"
+}
+
 cmd_split_layers() {
   # Decompose a flat (de-lit) albedo into a channel-packed RGB tint map (<base>.layers.png)
   # plus the residual, which BECOMES <base>.albedo.png (the render base); the de-lit source
@@ -3217,6 +3228,7 @@ main() {
   shift || true
   case "$cmd" in
     generate) cmd_generate "$@" ;;
+    generate-tile) cmd_generate_tile "$@" ;;
     split_layers) cmd_split_layers "$@" ;;
     outline) cmd_outline "$@" ;;
     remaster) cmd_remaster "$@" ;;
