@@ -10,9 +10,12 @@ and on the 5-second subscription-applied wait, and they never rebuild a connecti
 mid-run — one briefly-unavailable shard kills the whole process, and a mid-run disconnect leaves a
 zombie loop calling reducers on a dead connection:
 
-- `server/master/src/main.rs` — 4 `.expect("build … connection")` + `rx_i.recv_timeout(…).expect`.
-- `server/worker/src/main.rs` — 5 connections + a recv/panic ladder over all five subscriptions.
-- `server/orchestrator/src/main.rs` — 4 connections + 2 recv `.expect`s.
+- `server/master/src/main.rs` — 5 `.expect("build … connection")` + `rx_i.recv_timeout(…).expect`
+  (the pawn shard added one everywhere, first-pawns 2026-07-28).
+- `server/worker/src/main.rs` — 6 connections + a recv/panic ladder over all six subscriptions.
+- `server/orchestrator/src/main.rs` — 5 connections + 2 recv `.expect`s.
+- `client/npc` — the same disease on the CLIENT side: the engine never reconnects, and the brain
+  keeps issuing commands into a dead socket forever (observed live, below).
 
 The gateway already solved this exact problem: `server/gateway/src/directory.rs` shares an
 `alive: AtomicBool` the SDK clears on disconnect/connect-error, and `conn()` rebuilds a dead
@@ -22,6 +25,22 @@ Adjacent hazard, same theme (a transient fault becoming permanent): `server/edge
 paths (`content.rs`, `connections.rs`, `tex_manifest.rs`, …) call `.read().unwrap()` /
 `.write().unwrap()` on `RwLock`s — one panic while a lock is held poisons it and every subsequent
 content/texture request panics until the edge is restarted.
+
+## Live evidence (first-pawns, 2026-07-28 — every failure mode observed in one session)
+
+- **The void-writing worker** (first-pawns [I1](../2026-07-28-first-pawns/issues.md)):
+  `rd redeploy` republished the `pawn` module while the trio was connected; the worker then
+  logged "composed component" CLEANLY while writing into the wiped DB's dead session — nothing
+  errored, the data simply never landed. Restarting the trio fixed it. An uplink that clears
+  `alive` on the republish disconnect is exactly the cure.
+- **The zombied npc**: an edge redeploy killed the npc's WS session; the brain kept logging
+  "trip issued" into the dead socket indefinitely (deadline re-issues going nowhere). No error,
+  no exit, no progress — the perfect zombie.
+- **A mere BUILD triggered a data-wiping republish**: the module input-hash includes the
+  in-tree `target/` dir, so building `pawn` re-triggered "deploy module pawn — publish, wipe
+  data" on the next redeploy. Dev-redeploy hardening is P5 below.
+- **`bin/sim run` happily runs a stale binary** after a failed build — twice in one session the
+  "fix" that ran was the previous binary (compounded by the docker mtime miss).
 
 ## Design stance
 
