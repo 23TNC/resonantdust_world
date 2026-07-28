@@ -28,7 +28,7 @@ const BACKOFF_CAP: Duration = Duration::from_secs(8);
 
 type BuildFn<C> = dyn Fn() -> Result<(Arc<C>, Arc<AtomicBool>), String> + Send + Sync;
 type SubscribeFuture<S> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<S, String>> + Send>>;
-type SubscribeFn<C, S> = dyn Fn(Arc<C>) -> SubscribeFuture<S> + Send + Sync;
+type SubscribeFn<C, S> = dyn Fn(Arc<C>, Arc<AtomicBool>) -> SubscribeFuture<S> + Send + Sync;
 
 /// A live connection: the conn, its liveness flag, and the held subscription handle(s).
 struct Live<C, S> {
@@ -54,6 +54,10 @@ pub struct Uplink<C, S = ()> {
     /// Async mutex: the rebuild path awaits the subscribe closure, and concurrent `get()`s
     /// must share one rebuild rather than race.
     inner: tokio::sync::Mutex<(Option<Live<C, S>>, Backoff)>,
+    /// Bumped on every successful rebuild — lets a caller detect a reconnect and re-run
+    /// once-per-connection standup work (e.g. the master re-stamping `set_orchestrator` on a
+    /// republished event shard).
+    generation: std::sync::atomic::AtomicU64,
 }
 
 impl<C, S> Uplink<C, S> {
@@ -67,6 +71,7 @@ impl<C, S> Uplink<C, S> {
             build: Box::new(build),
             subscribe: None,
             inner: tokio::sync::Mutex::new((None, Backoff { attempts: 0, next_attempt_at: Instant::now() })),
+            generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -75,13 +80,14 @@ impl<C, S> Uplink<C, S> {
     pub fn with_subscription(
         name: impl Into<String>,
         build: impl Fn() -> Result<(Arc<C>, Arc<AtomicBool>), String> + Send + Sync + 'static,
-        subscribe: impl Fn(Arc<C>) -> SubscribeFuture<S> + Send + Sync + 'static,
+        subscribe: impl Fn(Arc<C>, Arc<AtomicBool>) -> SubscribeFuture<S> + Send + Sync + 'static,
     ) -> Self {
         Self {
             name: name.into(),
             build: Box::new(build),
             subscribe: Some(Box::new(subscribe)),
             inner: tokio::sync::Mutex::new((None, Backoff { attempts: 0, next_attempt_at: Instant::now() })),
+            generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -119,6 +125,7 @@ impl<C, S> Uplink<C, S> {
                 *live = Some(l);
                 backoff.attempts = 0;
                 backoff.next_attempt_at = now;
+                self.generation.fetch_add(1, Ordering::AcqRel);
                 Ok(conn)
             }
             Err(err) => {
@@ -133,10 +140,16 @@ impl<C, S> Uplink<C, S> {
         }
     }
 
+    /// The current connection generation — bumped on every successful rebuild. Compare across
+    /// `get()` calls to detect a reconnect (and re-run per-connection standup work).
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
     async fn rebuild(&self) -> Result<Live<C, S>, String> {
         let (conn, alive) = (self.build)()?;
         let sub = match &self.subscribe {
-            Some(subscribe) => Some(subscribe(conn.clone()).await?),
+            Some(subscribe) => Some(subscribe(conn.clone(), alive.clone()).await?),
             None => None,
         };
         // A connection that died DURING subscribe must not be handed out as live.
@@ -220,7 +233,7 @@ mod tests {
                 let alive = Arc::new(AtomicBool::new(true));
                 Ok((Arc::new(1u32), alive))
             },
-            move |_conn| {
+            move |_conn, _alive| {
                 let s = s2.clone();
                 Box::pin(async move {
                     tokio::task::yield_now().await;

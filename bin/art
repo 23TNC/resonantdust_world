@@ -1955,6 +1955,26 @@ _split_variant_leaf() {  # sprite_png
   echo "    $(basename "$leaf")/$(basename "$sheet") -> $(basename "$out")  ($(identify -format '%wx%h' "$out"))"
 }
 
+# Shrink each derived map's content by PAD px per side and REPLICATE the edge (and corner)
+# pixels outward into the freed ring. The map's dimensions are unchanged, so a power-of-two
+# stays a power of two for the quadtree packer — the content gets smaller, the canvas does not.
+#
+# The ring exists for AA spill: at non-integer zoom the sampler reads just past a sprite's
+# footprint, and without a guard that read lands on whatever the packer put next door. Filling
+# it with the sprite's own edge colour makes the spill invisible instead of a neighbour's
+# fringe. `-virtual-pixel Edge` with an offset viewport does the whole ring, corners included,
+# in one pass — a corner samples diagonally past the image and gets the nearest real pixel.
+#
+# Authoring sources (sprite/template) are skipped: they are inputs, re-read by a later
+# re-remaster, so shrinking them would compound every run.
+_pad_maps() {  # kind_dir pad
+  local root=$1 pad=$2
+  (( pad > 0 )) || return 0
+  command -v python3 >/dev/null || { echo "art: --pad needs python3" >&2; return 1; }
+  RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/pad_maps.py" "$root" --pad "$pad"
+}
+
+
 LAST_TOTAL=0
 _remaster_id() {
   local src_dir=$1 id=$2 out_cat=$3 gap=$4 mode=$5 arg6=$6
@@ -2313,8 +2333,8 @@ cmd_remaster() {
   # Positional slots, filled in order by every non-flag argument. layers/size are
   # appended at the end so publish keeps its position; both are normally passed as flags.
   # (split_normalize/black_threshold are flag-only — dashed names, handled in the case below.)
-  local no_bevel=0
-  local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish layers size sharpen_normal ao_strength sharpen_ao pitch_normal)
+  local no_bevel=0 pad=1
+  local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish layers size sharpen_normal ao_strength sharpen_ao pitch_normal pad)
   local pi=0
   while (( $# )); do
     local arg=$1; shift
@@ -2348,6 +2368,8 @@ cmd_remaster() {
   if [[ -z "$path" ]]; then
     echo "usage: art remaster <path> [gap] [radius] [choke] [aa] [outline_width] [outline_color] [outline_blur] [preset] [detail] [detail_radius] [strength] [engine] [publish] [--layers N] [--split-normalize 0|1] [--black-threshold T] [--size PX]" >&2
     echo "       or pass any as a flag, e.g.: art remaster <path> --size 128   (= split [+ outline] + maps + channel-pack [+ scale])" >&2
+    echo "       --pad N (default 1) shrinks each derived map's content by N px per side and replicates the edge/corner pixels into the freed ring (AA-spill guard). Canvas size is unchanged, so pow2 stays pow2. --pad 0 disables." >&2
+    echo "       --no-bevel tiles the source 3x3 for the normal pass and keeps the centre, suppressing Laigter's raised border bevel." >&2
     echo "       --layers N (default 3, max 3) channel-packs N tintable materials into layers.png R/G/B; the residual becomes albedo.png, de-lit preserved as albedo_marigold.png (0 = off; skipped for grid tiles)." >&2
     echo "       --split-normalize (DEFAULT on) pulls ALL colour into the layers, leaving only the black outline in albedo.png; disable with --split-normalize 0 (or --no-split-normalize). --black-threshold T (default 0.05) is its black cutoff." >&2
     echo "       --size PX scales masters to PX on the short axis (default: native); maps derive at FULL res, then downscale (sources kept full-res)." >&2
@@ -2413,6 +2435,10 @@ cmd_remaster() {
                ! -name 'template.png' ! -name 'template.*.png' ! -name '*.template.png' -print0 | sort -z)
     echo "art: --size $size -> scaled $nsz master map(s) to ${size}px short-axis (sources kept full-res)"
   fi
+
+  # AFTER --size: the guard ring is measured against the FINAL canvas, so padding first and
+  # resizing second would rescale the ring itself and leave a fractional guard.
+  _pad_maps "$MASTER_DIR/$SPLIT_TARGET" "$pad" || return 1
 
   if [[ "$publish" == 0 ]]; then
     echo "art: remaster [$SPLIT_TARGET] done (local masters under $MASTER_DIR/$SPLIT_TARGET/)"

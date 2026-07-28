@@ -12,9 +12,9 @@ Opened 2026-07-27._
 
 ## P2 — master
 
-- [ ] Replace master's 5 `.expect("build … connection")` + `rx_i.recv_timeout(…).expect` with `Uplink`s (index carries the `master_clock` sub; the 5 shard conns — event/data/pawn/tile/thing — are sub-less). Acceptance: `bin/rd check` green; all-shards-up behavior unchanged (the wolf moves).
-- [ ] Per pass: a dead shard uplink skips only ITS bump/sweep (warn once per transition, not per tic); a dead index skips the pass. Acceptance: stop one shard DB → master keeps ticking the rest, no panic; restart it → its bumps resume.
-- [ ] Cold-start check: start master with SpacetimeDB down, bring SpacetimeDB up after. Acceptance: retry warns, then "metronome starting", and `index.master_clock.tic` advances — with no restart of master.
+- [x] Replace master's 5 `.expect("build … connection")` + `rx_i.recv_timeout(…).expect` with `Uplink`s (index carries the `master_clock` sub; the 5 shard conns — event/data/pawn/tile/thing — are sub-less). Acceptance: `bin/rd check` green; all-shards-up behavior unchanged (the wolf moves).
+- [x] Per pass: a dead shard uplink skips only ITS bump/sweep (warn once per transition, not per tic); a dead index skips the pass. Acceptance: stop one shard DB → master keeps ticking the rest, no panic; restart it → its bumps resume.
+- [x] Cold-start check: start master with SpacetimeDB down, bring SpacetimeDB up after. Acceptance: retry warns, then "metronome starting", and `index.master_clock.tic` advances — with no restart of master.
 
 ## P3 — worker + orchestrator
 
