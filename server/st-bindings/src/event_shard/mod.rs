@@ -20,6 +20,7 @@ pub mod assign_reducer;
 pub mod bump_reducer;
 pub mod complete_reducer;
 pub mod fail_reducer;
+pub mod gc_reducer;
 pub mod queue_reducer;
 pub mod queue_at_reducer;
 pub mod running_reducer;
@@ -43,6 +44,7 @@ pub use assign_reducer::assign;
 pub use bump_reducer::bump;
 pub use complete_reducer::complete;
 pub use fail_reducer::fail;
+pub use gc_reducer::gc;
 pub use queue_reducer::queue;
 pub use queue_at_reducer::queue_at;
 pub use running_reducer::running;
@@ -70,6 +72,9 @@ pub enum Reducer {
 }    ,
     Fail {
         event_reference: u32,
+}    ,
+    Gc {
+        before_tic: u16,
 }    ,
     Queue {
         actions: Vec::<u32>,
@@ -101,6 +106,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::Bump { .. } => "bump",
             Reducer::Complete { .. } => "complete",
             Reducer::Fail { .. } => "fail",
+            Reducer::Gc { .. } => "gc",
             Reducer::Queue { .. } => "queue",
             Reducer::QueueAt { .. } => "queue_at",
             Reducer::Running { .. } => "running",
@@ -135,6 +141,11 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 event_reference,
 }             => __sats::bsatn::to_vec(&fail_reducer::FailArgs {
                 event_reference: event_reference.clone(),
+}),
+            Reducer::Gc{
+                before_tic,
+}             => __sats::bsatn::to_vec(&gc_reducer::GcArgs {
+                before_tic: before_tic.clone(),
 }),
             Reducer::Queue{
                 actions,

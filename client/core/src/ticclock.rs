@@ -1,40 +1,125 @@
 //! The wall↔tic estimate — the client's ONLY notion of the simulation clock (`ACTIONS.md`
-//! §Movement; first-pawns P3). Never synced: every `state`/`event` arrival carries a wire tic,
-//! and "a row for tic `V` arrived at wall `W`" anchors a mapping the stream itself refines —
-//! extrapolation is `TIC_HZ` (the codec authority). Arrival DELAY only makes an anchor LAG the
-//! true clock, never lead it, so the best anchor is whichever arrival implies the FURTHEST
-//! current tic — `observe` keeps exactly that one (serial comparison; the ring wraps).
+//! §Movement; first-pawns P3, rate-tracking pawn-movement F6). Never synced: every
+//! `state`/`event` arrival carries a wire tic, and "a row for tic `V` arrived at wall `W`"
+//! anchors a mapping the stream itself refines.
 //!
-//! The engines emit a re-anchor to the host ([`crate::api::Event::TicAnchor`]); a host computes
-//! fractional deltas locally (`serial(anchor.tic − t) + (now − anchor.wall) · TIC_HZ / 1000`),
-//! which is what speculation walks on.
+//! Two facts shape the rules (pawn-movement I4/I5):
+//!
+//! - **The true rate is NOT exactly `TIC_HZ`** — the durable tic was measured at 5.41 Hz
+//!   against an authored 6. So the estimator LEARNS the rate from its own anchor history
+//!   (two-point over the retirement window, clamped to a sane band) instead of assuming the
+//!   constant; extrapolating at a wrong rate with a max-only anchor rule ratchets the estimate
+//!   ahead without bound.
+//! - **Delay only makes an arrival LAG the true clock** — so within an anchor's lifetime the
+//!   best candidate is still whichever arrival implies the FURTHEST current tic (serial
+//!   comparison; the ring wraps). But beyond [`REANCHOR_MS`] freshness wins: the old anchor
+//!   retires (becoming the rate baseline) and the newest arrival re-anchors, bounding the
+//!   accumulated rate error to one window.
+//!
+//! Stale-replay poison: the `event` table replays history on subscribe, and an old-epoch tic
+//! can wrap serially AHEAD of now (observed: 39682 against a true ~9040). A candidate implying
+//! an implausible forward jump is rejected ([`POISON_BAND`]); if EVERY arrival sustains
+//! "implausibly behind" (the poisoned-cold-anchor case — the garbage got in first), a streak
+//! counter hard-resets to the live stream ([`POISON_STREAK`]).
+//!
+//! The engines emit re-anchors to the host ([`crate::api::Event::TicAnchor`]) carrying the
+//! learned rate; a host computes fractional deltas locally
+//! (`serial(anchor.tic − t) + (now − anchor.wall) · tics_per_sec / 1000`).
 
 use resonantdust_codec::tic::TIC_HZ;
 
-/// The best-known wall↔tic anchor. See the module docs for the max-estimate rule.
-#[derive(Default)]
+/// Anchor lifetime: past this, the next arrival re-anchors unconditionally (and the retired
+/// anchor becomes the rate baseline). Delivery delay bounds the error a re-anchor can
+/// introduce (~a few tics); rate drift over one window stays under a tic at the observed
+/// deficit — both far below the unbounded ratchet this replaces.
+const REANCHOR_MS: f64 = 10_000.0;
+
+/// Rate learning needs at least this span between the retired anchor and the live one —
+/// below it, delivery jitter dominates the slope.
+const MIN_RATE_SPAN_MS: f64 = 5_000.0;
+
+/// Learned-rate clamp band around the authored rate (fraction of `TIC_HZ`). Wide enough for
+/// real drift (0.9× observed), tight enough that garbage can't run the clock backwards.
+const RATE_BAND: (f64, f64) = (0.5, 1.5);
+
+/// A candidate further than this (tics) from the estimate — ahead, or behind — is implausible:
+/// ahead ⇒ rejected outright (stale-replay wrap); behind ⇒ counted toward [`POISON_STREAK`].
+/// 900 tics ≈ 2.5 min at 6 Hz, far beyond any real delivery lead.
+const POISON_BAND: f64 = 900.0;
+
+/// This many consecutive implausibly-behind arrivals mean the ANCHOR is the garbage (it got
+/// observed first) — hard-reset to the live stream.
+const POISON_STREAK: u32 = 8;
+
+/// The best-known wall↔tic anchor + learned rate. See the module docs for the rules.
 pub struct TicEstimate {
+    /// The live anchor `(tic, wall_ms)`.
     anchor: Option<(u16, f64)>,
+    /// The last RETIRED anchor — the rate estimate's other point.
+    prev: Option<(u16, f64)>,
+    /// Learned rate, tics per millisecond.
+    rate: f64,
+    /// Consecutive implausibly-behind arrivals (poisoned-anchor detector).
+    behind_streak: u32,
+}
+
+impl Default for TicEstimate {
+    fn default() -> Self {
+        Self { anchor: None, prev: None, rate: TIC_HZ as f64 / 1000.0, behind_streak: 0 }
+    }
 }
 
 impl TicEstimate {
-    /// Feed one arrival (`tic` at wall `wall_ms`). Returns `true` if this became the new
-    /// anchor — the host should be told (re-anchors are sparse; a lagging arrival is ignored).
+    /// Feed one arrival (`tic` at wall `wall_ms`). Returns `true` if the anchor moved — the
+    /// host should be told (re-anchors are sparse: max-rule improvements plus one per
+    /// [`REANCHOR_MS`] window).
     pub fn observe(&mut self, tic: u16, wall_ms: f64) -> bool {
-        let better = match self.anchor {
-            None => true,
-            // The candidate's estimate NOW vs the current one's: both extrapolate to `wall_ms`,
-            // so comparing at the candidate's own wall time needs only the current estimate.
-            Some(_) => {
-                let est = self.estimate_at(wall_ms).unwrap();
-                let ahead = (tic.wrapping_sub(est.floor() as u16) as i16) as f64 - est.fract();
-                ahead > 0.0
-            }
-        };
-        if better {
+        let Some((atic, awall)) = self.anchor else {
             self.anchor = Some((tic, wall_ms));
+            return true;
+        };
+        let est = self.estimate_at(wall_ms).unwrap();
+        let ahead = (tic.wrapping_sub(est.floor() as u16) as i16) as f64 - est.fract();
+
+        if ahead > POISON_BAND {
+            return false; // an old-epoch replay wrapping serially ahead — never anchor it
         }
-        better
+        if ahead < -POISON_BAND {
+            // Implausibly behind. Either a stale replay (harmless) or OUR anchor is the
+            // garbage and this is the live stream — a sustained streak means the latter.
+            self.behind_streak += 1;
+            if self.behind_streak >= POISON_STREAK {
+                *self = Self::default();
+                self.anchor = Some((tic, wall_ms));
+                return true;
+            }
+            return false;
+        }
+        self.behind_streak = 0;
+
+        if wall_ms - awall > REANCHOR_MS {
+            // The anchor aged out: retire it as the rate baseline and take the fresh arrival
+            // (freshness beats the max rule beyond the delivery-delay bound), then re-learn
+            // the rate over the retired→live span.
+            self.prev = Some((atic, awall));
+            self.anchor = Some((tic, wall_ms));
+            if let Some((ptic, pwall)) = self.prev {
+                let span = wall_ms - pwall;
+                if span >= MIN_RATE_SPAN_MS {
+                    let dt = (tic.wrapping_sub(ptic) as i16) as f64;
+                    let (lo, hi) = RATE_BAND;
+                    let base = TIC_HZ as f64 / 1000.0;
+                    self.rate = (dt / span).clamp(lo * base, hi * base);
+                }
+            }
+            return true;
+        }
+
+        if ahead > 0.0 {
+            self.anchor = Some((tic, wall_ms));
+            return true;
+        }
+        false
     }
 
     /// The current anchor, if any arrival has been observed.
@@ -42,11 +127,16 @@ impl TicEstimate {
         self.anchor
     }
 
+    /// The learned rate in tics per SECOND (starts at `TIC_HZ`; refined from the stream).
+    pub fn tics_per_sec(&self) -> f64 {
+        self.rate * 1000.0
+    }
+
     /// The estimated (fractional, WRAPPING — integer part is a `u16` ring value) tic at
     /// `now_ms`. Use [`Self::delta_since`] for arithmetic; never compare these with `<`.
     pub fn estimate_at(&self, now_ms: f64) -> Option<f64> {
         let (tic, wall) = self.anchor?;
-        Some(tic as f64 + (now_ms - wall) / 1000.0 * TIC_HZ as f64)
+        Some(tic as f64 + (now_ms - wall) * self.rate)
     }
 
     /// Fractional tics elapsed at `now_ms` since wire tic `t` (serial — correct across the
@@ -54,7 +144,7 @@ impl TicEstimate {
     pub fn delta_since(&self, t: u16, now_ms: f64) -> Option<f64> {
         let (tic, wall) = self.anchor?;
         let serial = (tic.wrapping_sub(t) as i16) as f64;
-        Some(serial + (now_ms - wall) / 1000.0 * TIC_HZ as f64)
+        Some(serial + (now_ms - wall) * self.rate)
     }
 }
 
@@ -70,7 +160,7 @@ mod tests {
         assert!(!e.observe(100 + TIC_HZ, 1000.0));
         // A fresher promote (2 tics ahead of the estimate) re-anchors.
         assert!(e.observe(100 + TIC_HZ + 2, 1000.0));
-        // A stale replay far behind is ignored.
+        // A stale replay a little behind is ignored (and is NOT poison — within the band).
         assert!(!e.observe(90, 1100.0));
     }
 
@@ -83,5 +173,52 @@ mod tests {
         assert!((d - (4.0 + 0.5 * TIC_HZ as f64)).abs() < 1e-9);
         // A future tic (across the wrap) is negative.
         assert!(e.delta_since(4, 0.0).unwrap() < 0.0);
+    }
+
+    #[test]
+    fn a_slow_server_rate_is_learned_and_the_lead_stays_bounded() {
+        // The I5 scenario: the true clock runs 5.4 Hz against an authored 6. Feed an arrival
+        // every 2 s for 2 min; without rate learning the estimate would lead by ~70 tics by
+        // the end — with it, the delta of a JUST-ARRIVED tic must stay near zero.
+        let mut e = TicEstimate::default();
+        let true_rate = 5.4 / 1000.0; // tics per ms
+        let mut worst: f64 = 0.0;
+        let mut t_ms = 0.0;
+        while t_ms <= 120_000.0 {
+            let tic = (t_ms * true_rate) as u16;
+            e.observe(tic, t_ms);
+            worst = worst.max(e.delta_since(tic, t_ms).unwrap());
+            t_ms += 2_000.0;
+        }
+        // Ratcheting would grow this past 60; learning + windowed re-anchor keeps it small.
+        assert!(worst < 10.0, "worst lead {worst}");
+        let learned = e.tics_per_sec();
+        assert!((learned - 5.4).abs() < 0.4, "learned {learned}");
+    }
+
+    #[test]
+    fn a_serially_ahead_stale_replay_is_rejected() {
+        let mut e = TicEstimate::default();
+        assert!(e.observe(9_040, 0.0));
+        // The observed poison: an old-epoch event tic that wraps serially AHEAD by ~30k.
+        assert!(!e.observe(39_682, 100.0));
+        // The estimate is untouched — a fresh arrival still reads as "now".
+        let d = e.delta_since(9_041, 200.0).unwrap();
+        assert!(d.abs() < 2.0, "d {d}");
+    }
+
+    #[test]
+    fn a_poisoned_cold_anchor_self_heals_off_the_live_stream() {
+        let mut e = TicEstimate::default();
+        // The garbage got in FIRST (cold page, replay delivered before any state row).
+        assert!(e.observe(39_682, 0.0));
+        // The live stream (~9040s) reads implausibly behind — a sustained streak resets.
+        let mut reanchored = false;
+        for i in 0..POISON_STREAK as u16 {
+            reanchored = e.observe(9_040 + i, 100.0 + i as f64 * 300.0);
+        }
+        assert!(reanchored, "streak should hard-reset the anchor");
+        let d = e.delta_since(9_040 + POISON_STREAK as u16 - 1, 2_300.0).unwrap();
+        assert!(d.abs() < 2.0, "d {d}");
     }
 }

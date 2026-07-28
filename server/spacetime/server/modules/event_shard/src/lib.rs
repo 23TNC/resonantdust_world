@@ -308,3 +308,22 @@ pub fn settle(ctx: &ReducerContext, through_tic: u16) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The master, on its GC cadence: reap settled `event` rows whose tic fell at-or-behind the
+/// horizon (pawn-movement I2 / first-pawns I2 — without retention every zone subscribe replays
+/// ALL history: stale intents re-armed dead speculation and old-epoch tics poisoned client
+/// clock estimates). Same serial-horizon contract as the hot shards' `gc`.
+#[reducer]
+pub fn gc(ctx: &ReducerContext, before_tic: u16) -> Result<(), String> {
+    let old: Vec<u64> = ctx
+        .db
+        .event()
+        .iter()
+        .filter(|e| tic::tic_at_or_before(e.event_tic, before_tic))
+        .map(|e| e.uid)
+        .collect();
+    for uid in old {
+        ctx.db.event().uid().delete(uid);
+    }
+    Ok(())
+}

@@ -553,7 +553,7 @@ impl Engine {
                 self.record_row("state", text.len());
                 if self.tics.observe(row.tic, now_ms() as f64) {
                     let (tic, wall_ms) = self.tics.anchor().unwrap();
-                    self.emit(Event::TicAnchor { tic, wall_ms });
+                    self.emit(Event::TicAnchor { tic, wall_ms, tics_per_sec: self.tics.tics_per_sec() });
                 }
                 // Age the zone by its wire macro (the anchor manager keys on it); the render event
                 // carries that same macro straight through.
@@ -580,7 +580,7 @@ impl Engine {
                 self.record_row("event", text.len());
                 if self.tics.observe(tic, now_ms() as f64) {
                     let (atic, wall_ms) = self.tics.anchor().unwrap();
-                    self.emit(Event::TicAnchor { tic: atic, wall_ms });
+                    self.emit(Event::TicAnchor { tic: atic, wall_ms, tics_per_sec: self.tics.tics_per_sec() });
                 }
                 for ev in world::move_intents(zone, tic, &actions) {
                     self.emit(ev);

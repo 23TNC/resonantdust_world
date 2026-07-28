@@ -506,7 +506,7 @@ impl Engine {
                 // then emit — the render event carries that same macro straight through.
                 if self.tics.observe(row.tic, now_ms() as f64) {
                     let (tic, wall_ms) = self.tics.anchor().unwrap();
-                    self.emit(Event::TicAnchor { tic, wall_ms });
+                    self.emit(Event::TicAnchor { tic, wall_ms, tics_per_sec: self.tics.tics_per_sec() });
                 }
                 self.emit(world::state_event(&row, /*removed=*/ false));
                 self.zones.note_update(row.zone, text.len() as u64, now_ms());
@@ -530,7 +530,7 @@ impl Engine {
             ServerMsg::Event { zone, tic, actions, .. } => {
                 if self.tics.observe(tic, now_ms() as f64) {
                     let (atic, wall_ms) = self.tics.anchor().unwrap();
-                    self.emit(Event::TicAnchor { tic: atic, wall_ms });
+                    self.emit(Event::TicAnchor { tic: atic, wall_ms, tics_per_sec: self.tics.tics_per_sec() });
                 }
                 for ev in world::move_intents(zone, tic, &actions) {
                     self.emit(ev);

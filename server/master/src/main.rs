@@ -28,7 +28,7 @@ use spacetimedb_sdk::DbContext;
 use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
 // Reducer + table-access traits (method resolution keys off the connection type).
 use data_shard::{bump as _, gc as _};
-use event_shard::{bump as _, set_orchestrator as _, settle as _};
+use event_shard::{bump as _, gc as _, set_orchestrator as _, settle as _};
 use index::{bump_tic as _, MasterClockTableAccess as _};
 use pawn::{bump as _, gc as _};
 use thing::bump as _;
@@ -156,6 +156,13 @@ async fn main() {
             // A tic seals once no append can reach it: appends land at master + 3, so `tic16 - 3`.
             if let Err(err) = event.reducers().settle(tic16.wrapping_sub(3)) {
                 tracing::warn!(%err, "settle failed");
+            }
+            // Retention (pawn-movement I2): reap settled `event` rows past the same horizon the
+            // hot shards gc on — a subscribe then replays only the recent window, never history.
+            if since_gc + 1 >= gc_every {
+                if let Err(err) = event.reducers().gc(tic16.wrapping_sub(gc_behind)) {
+                    tracing::warn!(%err, "event gc failed");
+                }
             }
         }
         if let Some(data) = acquire(&data_up, &mut up_d, "data_shard").await {

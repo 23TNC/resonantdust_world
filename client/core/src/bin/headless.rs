@@ -155,7 +155,7 @@ fn log_event(event: &Event) {
             info!(macro_position = format!("{macro_position:#06x}"), "zone closed")
         }
         Event::Paused { paused } => info!(paused, "simulation freeze changed"),
-        Event::TicAnchor { tic, wall_ms } => info!(tic, wall_ms, "tic estimate re-anchored"),
+        Event::TicAnchor { tic, wall_ms, tics_per_sec } => info!(tic, wall_ms, tics_per_sec, "tic estimate re-anchored"),
         Event::MoveIntent { macro_position, entity_reference, tile_x, tile_y, event_tic } => {
             info!(macro_position, entity_reference, tile_x, tile_y, event_tic, "move intent")
         }

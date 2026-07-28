@@ -46,6 +46,11 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
       count from `[mover]` console lines — trips vs armed specs vs two-snap trips vs stale
       arms. Acceptance: numbers recorded in `completed.md` (this is the evidence the fixes are
       judged against).
+- [ ] (added during execution — I4/I5, F6) `TicEstimate` tracks the OBSERVED wall↔tic rate:
+      windowed re-anchor on fresh arrivals + learned rate (clamped around `TIC_HZ`) + a
+      poison guard against serially-ahead stale-replay tics; `TicAnchor` carries the rate and
+      hosts extrapolate with it. Acceptance: unit tests for drift/poison; live arms show `d`
+      near the true elapsed (single digits, NOT climbing with page age).
 - [ ] MoverLayer: never DROP a live intent — buffer intents for unseen movers and arm on the
       pawn's first `State`; hold intents that arrive before the tic clock anchors and
       re-evaluate on `tick()` instead of returning on `d === null`. Stale/dedup guards

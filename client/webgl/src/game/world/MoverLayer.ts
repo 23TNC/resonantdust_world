@@ -107,8 +107,18 @@ interface Mover {
   lastIntentTic: number | null;
 }
 
+/** Serial u16 comparison: is `a` strictly newer than `b` on the wrapping tic ring? */
+function ticNewer(a: number, b: number): boolean {
+  return ((((a - b) & 0xffff) << 16) >> 16) > 0;
+}
+
 export class MoverLayer {
   private readonly movers = new Map<number, Mover>();
+  /** Intents that arrived before their pawn's first `State` or before the tic clock anchored
+   *  — HELD, never dropped (pawn-movement I1: a dropped live intent degrades the whole trip
+   *  to its two authoritative snaps). {@link tick} re-evaluates them once both preconditions
+   *  hold; the stale/dedup guards then arm or discard. Freshest per entity wins. */
+  private readonly pendingIntents = new Map<number, MoveIntent>();
   private readonly unsubs: Array<() => void> = [];
   /** Per-kind texture-stem / size / packed-channel tables from the content bundle, indexed by
    *  `objKind - 1` (same tables + indexing WorldBridge uses for cold things). Refreshed on
@@ -144,8 +154,17 @@ export class MoverLayer {
     this.movers.clear();
   }
 
-  /** Per-frame: advance every live speculation along its greedy line at the tic estimate. */
+  /** Per-frame: re-evaluate held intents whose preconditions now hold, then advance every
+   *  live speculation along its greedy line at the tic estimate. */
   tick(): void {
+    if (this.pendingIntents.size) {
+      for (const [key, intent] of this.pendingIntents) {
+        if (this.movers.has(key) && this.client.ticDelta(intent.eventTic) !== null) {
+          this.pendingIntents.delete(key);
+          this.onMoveIntent(intent); // ONE evaluation — the guards arm or discard it
+        }
+      }
+    }
     for (const [key, m] of this.movers) {
       const s = m.spec;
       if (!s) continue;
@@ -197,18 +216,24 @@ export class MoverLayer {
   }
 
   /** A promoted move intent: start (or retarget) the entity's speculation from its last
-   *  authoritative tile. An intent for a pawn we haven't seen yet is dropped — its seed `State`
-   *  arrives on the same settle and reseeds everything. */
+   *  authoritative tile. An intent for a pawn we haven't seen yet, or one arriving before the
+   *  tic clock anchors, is HELD in {@link pendingIntents} (never dropped — I1) and
+   *  re-evaluated by {@link tick} once its preconditions hold. */
   private onMoveIntent(intent: MoveIntent): void {
     const m = this.movers.get(intent.entityReference);
-    if (!m) return;
+    const d = this.client.ticDelta(intent.eventTic);
+    if (!m || d === null) {
+      const held = this.pendingIntents.get(intent.entityReference);
+      if (!held || ticNewer(intent.eventTic, held.eventTic)) {
+        this.pendingIntents.set(intent.entityReference, intent);
+      }
+      return;
+    }
     const tpt = this.speedFor(m.kind);
     // The `event` table replays HISTORY on subscribe (no retention yet — first-pawns I2), and
-    // deliveries can arrive out of order — so guard: no clock ⇒ can't speculate; an intent whose
-    // move must already be over ⇒ the authoritative rows carry the outcome; an intent serially
-    // older than the live spec ⇒ superseded. Only a fresh, live intent arms speculation.
-    const d = this.client.ticDelta(intent.eventTic);
-    if (d === null) return;
+    // deliveries can arrive out of order — so guard: an intent whose move must already be over
+    // ⇒ the authoritative rows carry the outcome; an intent serially older than the live spec
+    // ⇒ superseded. Only a fresh, live intent arms speculation.
     const span = Math.max(Math.abs(intent.tileX - m.authX), Math.abs(intent.tileY - m.authY));
     if (d > (span + 2) * tpt) return; // finished long ago — stale replay
     if (m.lastIntentTic !== null && ((((intent.eventTic - m.lastIntentTic) & 0xffff) << 16) >> 16) <= 0) {
@@ -355,6 +380,7 @@ export class MoverLayer {
       this.viewport.warmRemovePrim(m.id);
       this.movers.delete(key);
     }
+    this.pendingIntents.delete(key);
   }
 
   private onZoneClosed(macroPosition: number): void {
@@ -362,6 +388,7 @@ export class MoverLayer {
       if (m.macroPosition === macroPosition) {
         this.viewport.warmRemovePrim(m.id);
         this.movers.delete(key);
+        this.pendingIntents.delete(key);
       }
     }
   }

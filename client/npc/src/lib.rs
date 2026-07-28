@@ -224,7 +224,9 @@ pub fn log_event(event: &Event) {
         Event::ColdThings { macro_position: zone, .. } => tracing::debug!(zone, "cold things"),
         Event::ZoneClosed { macro_position: zone } => tracing::debug!(zone, "zone closed"),
         Event::Paused { paused } => tracing::debug!(paused, "paused"),
-        Event::TicAnchor { tic, wall_ms } => tracing::debug!(tic, wall_ms, "tic re-anchor"),
+        Event::TicAnchor { tic, wall_ms, tics_per_sec } => {
+            tracing::debug!(tic, wall_ms, tics_per_sec, "tic re-anchor");
+        }
         Event::MoveIntent { macro_position: zone, entity_reference, tile_x, tile_y, event_tic } => {
             tracing::info!(zone, entity_reference, tile_x, tile_y, event_tic, "move intent")
         }

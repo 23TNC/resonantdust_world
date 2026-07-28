@@ -643,10 +643,11 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("kind", &JsValue::from_str("paused"));
             set("paused", &JsValue::from_bool(*paused));
         }
-        Event::TicAnchor { tic, wall_ms } => {
+        Event::TicAnchor { tic, wall_ms, tics_per_sec } => {
             set("kind", &JsValue::from_str("ticAnchor"));
             set("tic", &JsValue::from_f64(*tic as f64));
             set("wallMs", &JsValue::from_f64(*wall_ms));
+            set("ticsPerSec", &JsValue::from_f64(*tics_per_sec));
         }
         Event::MoveIntent { macro_position, entity_reference, tile_x, tile_y, event_tic } => {
             set("kind", &JsValue::from_str("moveIntent"));

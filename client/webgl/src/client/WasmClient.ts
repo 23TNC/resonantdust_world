@@ -214,7 +214,7 @@ type WorldEvent =
     }
   | { kind: "zoneClosed"; macroPosition: number }
   | { kind: "paused"; paused: boolean }
-  | { kind: "ticAnchor"; tic: number; wallMs: number }
+  | { kind: "ticAnchor"; tic: number; wallMs: number; ticsPerSec: number }
   | {
       kind: "moveIntent";
       macroPosition: number;
@@ -296,7 +296,7 @@ export class WasmClient {
   private readonly moveIntentCbs = new Set<MoveIntentHandler>();
   /** The wall↔tic anchor (first-pawns P3) — the freshest wire tic and the wall time it arrived.
    *  Fractional deltas extrapolate by {@link ticHz}; null until any state/event arrives. */
-  private ticAnchor: { tic: number; wallMs: number } | null = null;
+  private ticAnchor: { tic: number; wallMs: number; ticsPerSec: number } | null = null;
 
   constructor(private gatewayUrl: string) {
     // Debug hook, same convention as `__viewport` — lets the console probe ticDelta/anchors.
@@ -559,7 +559,9 @@ export class WasmClient {
     if (!this.ticAnchor) return null;
     const serial = (((this.ticAnchor.tic - t) & 0xffff) << 16) >> 16; // sign-extend i16
     // Same timebase as the engine's anchor stamp (`js_sys::Date::now`), NOT performance.now().
-    return serial + ((Date.now() - this.ticAnchor.wallMs) / 1000) * ticHz();
+    // Extrapolate at the LEARNED rate the anchor carries (pawn-movement F6) — the true tic
+    // rate measurably drifts from the authored `ticHz`.
+    return serial + ((Date.now() - this.ticAnchor.wallMs) / 1000) * this.ticAnchor.ticsPerSec;
   }
 
   /** ChatPanel feed subscription. The protocol carries no chat frames yet, so
@@ -717,7 +719,7 @@ export class WasmClient {
         for (const cb of this.pausedCbs) cb(ev.paused);
         break;
       case "ticAnchor":
-        this.ticAnchor = { tic: ev.tic, wallMs: ev.wallMs };
+        this.ticAnchor = { tic: ev.tic, wallMs: ev.wallMs, ticsPerSec: ev.ticsPerSec };
         break;
       case "moveIntent":
         for (const cb of this.moveIntentCbs) {

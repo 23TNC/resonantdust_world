@@ -202,10 +202,13 @@ pub enum Event {
         total: u32,
         tables: Vec<SubStat>,
     },
-    /// The wall↔tic estimate RE-ANCHORED (`ticclock` — a fresher wire tic arrived). The host
-    /// computes fractional deltas locally: `serial(tic − t) + (now − wall_ms) · TIC_HZ / 1000`.
-    /// Sparse by construction; the first place clients care about tic at all (first-pawns P3).
-    TicAnchor { tic: u16, wall_ms: f64 },
+    /// The wall↔tic estimate RE-ANCHORED (`ticclock` — a fresher wire tic arrived, or the old
+    /// anchor aged out). The host computes fractional deltas locally:
+    /// `serial(tic − t) + (now − wall_ms) · tics_per_sec / 1000`. `tics_per_sec` is the
+    /// LEARNED rate (pawn-movement F6 — starts at `TIC_HZ`, refined from the stream; the true
+    /// rate measurably drifts from the authored one). Sparse by construction; the first place
+    /// clients care about tic at all (first-pawns P3).
+    TicAnchor { tic: u16, wall_ms: f64, tics_per_sec: f64 },
     /// A promoted move INTENT reached a subscribed zone (`ACTIONS.md` §Movement):
     /// `entity_reference` is heading to global tile `(tile_x, tile_y)`, its first hop composed
     /// at `event_tic`. Clients SPECULATE position from this — per-hop state never fans out.

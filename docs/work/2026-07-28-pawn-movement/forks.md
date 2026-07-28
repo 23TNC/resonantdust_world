@@ -48,6 +48,22 @@ its error). The speculation↔authoritative tween-blend is FUTURE INTENT — rec
 `ACTIONS.md` §Movement as a held knob beside re-anchor-every-N, tuned later on the logged
 error data. Not built this stream.
 
+## F6 · The tic estimator tracks the OBSERVED rate (resolved during execution, 2026-07-28)
+
+I4/I5 (see `issues.md`): the durable tic measurably runs at 5.41 Hz against `TIC_HZ` = 6, and
+`TicEstimate`'s max-anchor rule assumes the rate is exact — its "delay only makes an anchor
+LAG" invariant breaks under rate drift, so the estimate ratchets ahead unboundedly. Resolution:
+the estimator LEARNS the wall↔tic rate from its own anchor history (windowed two-point rate,
+clamped to a sane band around `TIC_HZ`) and re-anchors on FRESH arrivals once the current
+anchor ages out (freshness beats the max rule beyond the delivery-delay bound); the emitted
+`TicAnchor` carries the learned rate so hosts extrapolate with it. Also a poison guard: a
+candidate implying an implausible forward jump (a stale replay whose old-epoch tic wraps
+serially AHEAD, e.g. the observed 39682-vs-9040) is rejected rather than anchored. Rejected:
+fixing only the master's pacing (the client must survive ANY server rate — load spikes, a
+future master change; and no fix pins the rate exactly); rejected: syncing via ping/pong (the
+lockstep failure this design replaced). The master-side 5.41 Hz itself stays recorded as I5
+for a later pacing pass.
+
 ## F5 · One speed authority, keyed by `object_id`
 
 All three consumers key speed by the content `object_id` (= the pawn's `definition_reference`

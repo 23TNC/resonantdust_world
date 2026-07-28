@@ -16,6 +16,17 @@ Still no retention sweep — every (re-)subscribe replays all settled intents; c
 the only defense. P3 builds the server sweep on the master's gc cadence. Tracked here so THIS
 stream closes it; first-pawns stays done.
 
+## I5 · The master's durable tic runs at 5.41 Hz, not `TIC_HZ` = 6 (measured)
+
+`index.master_clock` advanced 541 tics in 100.04 s (2026-07-28, healthy stack, WSL2 docker) —
+a ~35 tics/min deficit against the authored rate. Everything server-side keys on tics so the
+sim is CONSISTENT, just ~10% slower than authored wall speed; the casualty is any client that
+extrapolates at exactly `TIC_HZ` (I4). Suspects: WSL2 timer overshoot per `interval` tick
+(but tokio's default Burst behavior should catch up), or the bump→subscription→read round trip
+dropping increments. Not diagnosed further this stream — the CLIENT must track the observed
+rate regardless (F6), because no fix pins the true rate exactly. Recorded for a master-side
+pacing pass later.
+
 ## I4 · The wall↔tic estimate LEADS the server by ~25 tics (found in P2 verification)
 
 Live measurement (2026-07-28, fresh page load): intents arm with `d ≈ 28` tics when true
@@ -26,6 +37,13 @@ estimate, not the server. Suspect: the estimator's max-implied-current-tic ancho
 row whose tic is not "now" (a replayed event off the retention-less table whose serial
 wraps ahead, or a queued-at-future-tic row observed as if current). Diagnose in P3 alongside
 the baseline measurement; the pending-intent buffer must not mask it.
+
+DIAGNOSED (same day): the true tic rate is 5.41 Hz (I5). `TicEstimate` extrapolates at exactly
+`TIC_HZ` = 6 and its max-anchor rule ignores every "lagging" arrival — with a slow server rate
+the estimate RATCHETS ahead unboundedly (measured climbing d=5.5 → 16.1 over one session,
+27.7 → 35.0 in the next). Knock-on: once the lead exceeds `(span+2)·tics_per_tile`, the
+finished-long-ago guard starts dropping LIVE intents — the snap-tween-snap worsens with page
+age, which is part of inherited I3's "flakiness". Fix = F6 (rate-tracking estimator).
 
 ## I3 · Intent delivery flakiness (inherited: first-pawns I3)
 
