@@ -3,7 +3,7 @@
 _Opened 2026-07-20. Builds directly on the archived **shadow-cast** experiment (cast 5 lights' shadows
 into a ping-pong bitfield + incremental updates — proven). This one moves the bitfield to **world space**
 and swaps the built-in colour display for a **`/overlayRT`** debug view. Component:
-[`client/pixijs`](../../components/client/pixijs/). This is essentially building the real
+[`client/pixijs`](../../components/client/webgl/). This is essentially building the real
 [`shadows`](../shadows/README.md) `shadow-cold` storage — a world-space, toroidal, ping-ponged bitfield._
 
 ## Why — the two changes from shadow-cast
@@ -60,7 +60,7 @@ verification aid).
 
 Casters = the cold cache's `standingPrims` (things) in radius (as shadow-cast). Shadow shape = the
 billboard quad (no silhouette yet — [shadows D-3](../shadows/deviations.md#d-3)). Bits = RED byte, 5
-lights; **A never used for data** ([`rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md)).
+lights; **A never used for data** ([`rendering-platform.md`](../../components/client/webgl/design/rendering-platform.md)).
 Reuse the shadow-cast code (`shadowCast.ts` / `shadowCastShaders.ts`) — this is an edit of it, not a
 rewrite.
 

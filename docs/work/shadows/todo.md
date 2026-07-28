@@ -21,7 +21,7 @@ architecture and [`forks.md`](forks.md) for the decisions._
 
 - [ ] WebGL2 is already pinned (`preferWebGLVersion: 2`, done in `bitfield-rt`). Shaders are **GLSL
       ES 1.00** — Pixi's high-shader compiles ES 1.00 even on WebGL2 ([F14](forks.md#f14),
-      [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md)); use
+      [`design/rendering-platform.md`](../../components/client/webgl/design/rendering-platform.md)); use
       **float-mod** for bits, not `uint`.
 - [ ] **`shadow-hot`** — a **screen-space** float RGBA8 RT, viewport-sized (body px), `nearest`. RGB = 3
       lanes, A unused (float+blend → A avoided). Cleared + regenerated every frame; never persisted, never
@@ -39,7 +39,7 @@ architecture and [`forks.md`](forks.md) for the decisions._
 
 - [ ] For each of the **frame's 3 lights** and each in-range caster, project the caster's **billboard
       quad** (W×H, tilted by ground angle θ) radially to the ground per
-      [`design/shadows.md` §Projection](../../components/client/pixijs/design/shadows.md), then map to
+      [`design/shadows.md` §Projection](../../components/client/webgl/design/shadows.md), then map to
       **screen** px (world→screen via the current pan+zoom). Corners only — **no** 5-triangle fan, **no**
       per-corner depth, **no** UV ([D-3](deviations.md#d-3)).
 - [ ] Draw each projected quad as **2 solid triangles** into `shadow-hot`, masked to its light's channel

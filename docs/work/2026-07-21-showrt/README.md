@@ -28,7 +28,7 @@ G-buffer debug surface.
   _"The render-texture preview (/showRT) isn't ported yet — lands with the RT debug panel (W4f)."_
   This stream **removes `showRT` from that map** and registers the real handler.
 - **The reference implementation is complete** in `client/pixijs`: the panel
-  [`RtPanel.ts`](../../../client/pixijs/src/game/panels/rt/RtPanel.ts), the command wiring
+  `RtPanel.ts` (pixijs — DELETED 2026-07-28, recover from git history), the command wiring
   `WorldScene.showRenderTextures()` → `panels.ensure("showRT", …)`, and the source shape
   `RtChannel`/`RtView`. The **layout math is portable** (2-up tiles, aspect-matched height, byte
   labels, memory total). What is **not** portable is the shell + the preview transport (below).
@@ -82,6 +82,6 @@ Executes the deferred `/showRT` on the [`webgl-engine`](../webgl-engine/README.m
 (W4f descoped it — [webgl-engine todo W4f](../webgl-engine/todo.md), [completed W4f](../webgl-engine/completed.md)).
 Reuses the already-ported `Viewport.renderTextures()` / `aspect()` data source and the engine's
 `Blitter` / `RenderTarget` / `Texture`. Ports layout logic from
-[`client/pixijs` `RtPanel.ts`](../../../client/pixijs/src/game/panels/rt/RtPanel.ts) but rebuilds the
+the pixijs `RtPanel.ts` (git history) but rebuilds the
 shell on `DomPanel`. No cross-component variable/table shapes change (no `VARIABLES.md`/`TABLES.md`
 touch).

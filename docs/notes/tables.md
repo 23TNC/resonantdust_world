@@ -36,7 +36,7 @@ validate against, so it trusts the caller. The eventual fix is a sidecar or a ch
 session table.
 
 **`chat_messages` is not wired.** The client core's chat subscription is a stub that never fires, so
-the feed is empty ([`WorldScene.ts:191`](../../client/pixijs/src/scenes/world/WorldScene.ts)). The
+the feed is empty ([`WorldScene.ts:191`](../../client/webgl/src/scenes/world/WorldScene.ts)). The
 table and reducer are live; only the client link is missing. Locally-parsed slash commands still
 work.
 

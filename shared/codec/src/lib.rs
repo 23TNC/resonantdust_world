@@ -4,7 +4,7 @@
 //! so the server and the client encode and decode them with literally the same
 //! code. Pure integer math, no wasm dependency: the spacetime modules and the
 //! native server link it as an rlib (reachable via the shared bind-mount —
-//! `../../../shared/codec`), and the pixijs client reaches it through the
+//! `../../../shared/codec`), and the webgl client reaches it through the
 //! `resonantdust-shared` wasm bundle, which re-exports this surface.
 //!
 //! It replaces the per-module `packed.rs` copies the foundation rebuild inlined

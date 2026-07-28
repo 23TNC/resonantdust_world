@@ -3,7 +3,7 @@
 //!
 //! Pure Rust, no wasm dependency, so the same code builds and tests on every
 //! consumer: the server links it directly as an rlib (the `:data` side — mapping
-//! tile names to the `def_id`s it packs into a zone), and the pixijs client
+//! tile names to the `def_id`s it packs into a zone), and the webgl client
 //! reaches it through the `resonantdust-shared` wasm bundle (the `:visual` side —
 //! mapping `def_id`s back to colours to paint).
 //!

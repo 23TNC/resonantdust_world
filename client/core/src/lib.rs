@@ -3,7 +3,7 @@
 //! There is no rendering here. This crate owns the *client logic* — talking to
 //! the gateway and a world server, holding the session — and exposes it through a
 //! host-agnostic command/event API ([`api`]). A *host* drives it:
-//!   * `pixijs` will (via a wasm/FFI shim) become a dumb display over this client;
+//!   * `webgl` will (via a wasm/FFI shim) become a dumb display over this client;
 //!   * another Rust program (or the bundled [`headless` binary]) can drive it too.
 //!
 //! The shape is the same for every host: build a [`Client`], hand it an

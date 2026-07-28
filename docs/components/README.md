@@ -17,9 +17,9 @@ dead. It's the antidote to "I forget… which is why we need this."
 
 ## `client/` — deployable
 - **client/core** (`resonantdust-client`) — headless session core: `Command` in / `Event` out,
-  the tokio engine (`engine.rs`) + its wasm mirror (`web.rs`). Shared by npc + pixijs(wasm).
+  the tokio engine (`engine.rs`) + its wasm mirror (`web.rs`). Shared by npc + webgl(wasm).
 - **client/npc** — automated player over client/core (wildlife/wolf pack). A bot process.
-- **client/pixijs** — browser renderer (TS + pixi.js). The web client bundle.
+- **client/webgl** — browser renderer (TS + bespoke WebGL2 engine). The web client bundle (superseded the deleted client/pixijs, 2026-07-28).
 
 ## `server/` — deployable
 - **server/edge** — the world server clients log into. Today: login + clock sync, and it serves
@@ -90,7 +90,7 @@ Held as components because scripts are the foundation of how we develop.
 - Per lazy-create, per-component `{design,intent,current,plan}` folders come as we work each — so a
   component **listed above with no folder is normal**, not a gap; this map is its home until it
   earns one. **Folders so far:** the five `server/spacetime` modules (intent + current/plan);
-  partial, as work touched them — `client/core`, `client/pixijs`, `server/gateway`,
+  partial, as work touched them — `client/core`, `client/webgl`, `server/gateway`,
   `dev/{scripts,textures}`, `shared/codec` (a pointer only; its shapes live in `VARIABLES.md`).
 - **Cross-component shapes do not get component folders.** Variables live in
   [`../VARIABLES.md`](../VARIABLES.md), tables in [`../TABLES.md`](../TABLES.md), the reasoning in

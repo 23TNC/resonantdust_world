@@ -36,7 +36,7 @@ work if it moves the toroidal window enough to expose un-cast rects — then tho
 
 RED byte, bits 0–4; A held at 1. Pixi high-shader is ES 1.00 (no `uint`), so set/test/clear bits with
 float math (proven by the archived bitfield-rt). Alpha carries no data
-([`rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md)).
+([`rendering-platform.md`](../../components/client/webgl/design/rendering-platform.md)).
 
 ## I-6 · Overlay must sample the CURRENT ping-pong buffer — open
 

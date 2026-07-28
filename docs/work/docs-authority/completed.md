@@ -9,7 +9,7 @@ _Executes: [`docs/CONVENTIONS.md`](../../CONVENTIONS.md). Done + verified, chron
     server framing dropped, header points the authoritative side at the shard rebuild. Inbound live
     link (`client/core/README.md`) repointed; `intent/README.md` sync entry replaced with a
     distributed-out pointer.
-  - Strict-decay markers removed from authoritative files: `components/client/pixijs/design/lighting.md`
+  - Strict-decay markers removed from authoritative files: `components/client/webgl/design/lighting.md`
     (wedge "superseded" → "current approximation of the target"), `components/dev/textures/design/art-style.md`
     ("being superseded" → "is replacing"), `TABLES.md` (`faction … (deprecated)` → `bits 0–1 reserved`).
   - `work/docs-migration/todo.md` strikethrough/"void" mess cleared — kept only the two

@@ -3,7 +3,7 @@
 _Opened 2026-07-20. Reworks the shadow system after `shadow-world` was found to **alias off-window
 lights** (it cast shadows directly into the toroidal buffer via a raw `mod`, with no window-bounds check
 — so a light outside the resident window stamped its shadow onto whatever square currently occupied its
-mod-slot). Component: [`client/pixijs`](../../components/client/pixijs/). This is the design's
+mod-slot). Component: [`client/pixijs`](../../components/client/webgl/). This is the design's
 `shadow-hot → shadow-cold` split, done with correct ping-pong discipline — and it's window-correct for
 the same reason the per-square composite bake is._
 
@@ -79,7 +79,7 @@ not the current frame's ([I-8](issues.md#i-8)).
 
 ## Alignment with the durable design
 
-This *is* [`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md)'s
+This *is* [`intent/tiered-lighting.md`](../../components/client/webgl/intent/tiered-lighting.md)'s
 `shadow-hot` (screen, fresh) → `shadow-cold` (world, bitfield) with the round-robin being the `l-a`/`l-b`
 rotation — re-derived from first principles with the correct read≠write ping-pong. If it proves out, it
 graduates straight into the real [`shadows`](../shadows/README.md) engine.

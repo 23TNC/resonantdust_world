@@ -78,7 +78,7 @@ reads gateway · sub `SELECT * FROM servers`, `SELECT * FROM player_servers` (ga
 | column | type | key | notes |
 |---|---|---|---|
 | `realm` | `u8` | PK | one row per realm |
-| `tic` | `u32` | | absolute counter; won't wrap for ~68y at 2 Hz |
+| `tic` | `u32` | | absolute counter; won't wrap for ~22y at 6 Hz |
 
 The **one** durable tic for a realm. The **master** advances it (`bump_tic`) and holds no counter of
 its own, so a restart resumes from here — the tic survives any shard reset. Every SDK-client server

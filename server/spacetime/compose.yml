@@ -55,7 +55,7 @@ services:
   # spacetime modules workspace already owns /workspace/server inside the
   # container, so the game server (host `../edge`) mounts at /workspace/game-
   # server to avoid the clash.
-  # (TS bindings were dropped — the pixijs client carries its own minimal row
+  # (TS bindings were dropped — the webgl client carries its own minimal row
   # types; only the legacy client consumed generated TS.)
   bindings:
     image: clockworklabs/spacetime:v2.3.0

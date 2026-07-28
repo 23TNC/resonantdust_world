@@ -8,7 +8,7 @@ non-standard projection, and where it should go. Sibling to `docs/art-style.md` 
 
 A **screen-space deferred** model. `SquareCache` bakes the visible world into one fixed-size
 toroidal composite **per channel** — `albedo`, `normal`, `surface`, `zdepth_world` — from a
-shared prim index (plus the screen-space `zdepth_screen` for dynamic shadows). The display mesh draws those composites through `LightingShader` (`pixijs/src/game/
+shared prim index (plus the screen-space `zdepth_screen` for dynamic shadows). The display mesh draws those composites through `LightingShader` (`webgl/src/game/
 viewport/lightingShader.ts`), which lights every fragment in one pass. The composites *are* the
 G-buffer; there are no per-object light passes.
 

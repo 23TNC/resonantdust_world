@@ -52,7 +52,7 @@ services:
     entrypoint: ["cargo"]
     command: ["build", "--workspace", "--release"]
 
-  # Builds the JS/wasm bundle the pixijs client imports.
+  # Builds the JS/wasm bundle the webgl client imports.
   #
   # We bypass wasm-pack and call `cargo build` + `wasm-bindgen` directly —
   # wasm-pack 0.14 still passes `cargo build --out-dir`, which cargo 1.92+

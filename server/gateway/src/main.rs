@@ -60,7 +60,7 @@ async fn main() {
         .route("/server", get(get_server))
         .with_state(directory)
         // The gateway is a public directory consumed by browser clients on other
-        // origins (the pixijs dev server, the deployed site). Allow any origin so
+        // origins (the webgl dev server, the deployed site). Allow any origin so
         // a cross-origin `GET /server` can be read back — without this the browser
         // blocks the response and the client's fetch fails with "Failed to fetch".
         .layer(CorsLayer::permissive());

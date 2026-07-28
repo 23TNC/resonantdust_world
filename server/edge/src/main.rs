@@ -129,7 +129,7 @@ async fn main() {
         .route("/textures-manifest", get(serve_texture_manifest))
         .route("/textures-manifest-version", get(serve_texture_manifest_version))
         .with_state(AppState { pool, content, textures, tex_manifest })
-        // Assets are consumed by the browser client on another origin (the pixijs
+        // Assets are consumed by the browser client on another origin (the webgl
         // dev server / deployed site), so `/content` + `/textures` must be
         // cross-origin readable. `expose_headers(ETag)` lets the texture client
         // read the ETag off a cross-origin response for its IndexedDB revalidation.

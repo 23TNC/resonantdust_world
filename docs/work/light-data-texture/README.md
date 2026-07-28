@@ -1,14 +1,14 @@
 # Work — light-data-texture (feed light data to the shader through a texture)
 
 _Opened 2026-07-20. Builds directly on the verified [`shadow-tiered`](../shadow-tiered/README.md) 4-RT
-pipeline. Component: [`client/pixijs`](../../components/client/pixijs/). De-risks the mechanism the
+pipeline. Component: [`client/pixijs`](../../components/client/webgl/). De-risks the mechanism the
 **dense many-lights** design needs — you can't pass hundreds of lights as uniforms, so light data must
 live in a **texture** the shader samples._
 
 ## Why — uniforms don't scale, textures do
 
 `shadow-tiered` holds its 5 lights in a JS array and hardcodes their colours in the display shader. That
-never scales: the durable design ([`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md))
+never scales: the durable design ([`intent/tiered-lighting.md`](../../components/client/webgl/intent/tiered-lighting.md))
 is **many** point lights. The standard answer is a **data texture** — one texel-column per light, sampled
 in the shader by light index. This experiment proves that path end-to-end on our stack (Pixi high-shader,
 GLSL ES 1.00), with the shadow **coloured from the texture** and the colours **re-rolled once per second** so

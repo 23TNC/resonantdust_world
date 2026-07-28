@@ -1,7 +1,7 @@
 # Work — mrt-bakes (collapse the 4 G-buffer bake passes into 1 via MRT)
 
 _Opened 2026-07-20. Follows [`es300-migration`](../es300-migration/README.md) (which is the prerequisite —
-multi-output fragments need ES 3.00). Component: [`client/pixijs`](../../components/client/pixijs/). Bakes
+multi-output fragments need ES 3.00). Component: [`client/pixijs`](../../components/client/webgl/). Bakes
 the four G-buffer channels (`albedo`/`surface`/`normal`/`zdepth_world`) in **one** render pass per square
 instead of four, using **multiple render targets**._
 
@@ -40,7 +40,7 @@ four attachments, so the four channel buffers stay in lockstep — which they al
 ## The real work — one universal material, one fragment
 
 The cost isn't the plumbing, it's consolidating the four per-prim materials
-(material/surface/normal/depth — now the single [mrtBakeShader](../../../client/pixijs/src/game/viewport/mrtBakeShader.ts)) into one
+(material/surface/normal/depth — now the single [mrtBakeShader](../../../client/webgl/src/game/viewport/mrtBakeShader.ts)) into one
 fragment that computes all four outputs from one prim draw. The approach ([F2](forks.md#f2)):
 
 - **No tier branch — a "solid material".** Rather than the MRT shader choosing between a material path and a

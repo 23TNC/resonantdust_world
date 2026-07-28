@@ -3,10 +3,10 @@
 _Opened 2026-07-19. The clean restart after the tiered-lighting port was nuked (the reverted
 `lighting` stream, archived out-of-repo). This stream builds the **shadow RT + bit-packing pipeline**
 from scratch, at the smallest scale that exercises every moving part, so the full design can grow on top
-of a working, understood core. Component: [`client/pixijs`](../../components/client/pixijs/). Builds
-toward [`intent/tiered-lighting.md`](../../components/client/pixijs/intent/tiered-lighting.md) (the
+of a working, understood core. Component: [`client/pixijs`](../../components/client/webgl/). Builds
+toward [`intent/tiered-lighting.md`](../../components/client/webgl/intent/tiered-lighting.md) (the
 shared bitfield shadow engine) and
-[`design/shadows.md`](../../components/client/pixijs/design/shadows.md) (the billboard-quad projection)._
+[`design/shadows.md`](../../components/client/webgl/design/shadows.md) (the billboard-quad projection)._
 
 ## Why — stop fighting the rects and world-space
 
@@ -79,7 +79,7 @@ over the next few frames; see [I-1](issues.md#i-1).)
 
 A caster is the standing prim's **billboard quad** (W×H box, tilted by the ground angle), projected
 radially from the light to the ground per
-[`design/shadows.md` §Projection](../../components/client/pixijs/design/shadows.md) — drawn as a **solid
+[`design/shadows.md` §Projection](../../components/client/webgl/design/shadows.md) — drawn as a **solid
 2-triangle quad** in screen space. **No texture sampling, no alpha mask, no `outline` silhouette** — those
 are the next layer, deliberately out of scope ([D-3](deviations.md#d-3)).
 
@@ -118,7 +118,7 @@ scalable without the rect-fighting that sank the last attempt. The rest are coun
 - **Reused, not rebuilt:** the toroidal window→buffer wrap math is exactly the 4-copy this stream needs —
   lift it from the cache's existing apron/reproject rather than reinventing it.
 - **Platform:** the shadow shaders are **GLSL ES 1.00** (Pixi's high-shader compiles ES 1.00 even on the
-  WebGL2 context — [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md),
+  WebGL2 context — [`design/rendering-platform.md`](../../components/client/webgl/design/rendering-platform.md),
   [F14](forks.md#f14), proven by `bitfield-rt` (archived)): **float-mod** bit
   pack/decode on a **unorm RGBA8** `shadow-cold`. ES 3.00 (integer textures, MRT) is deferred behind
   hand-written raw shaders.

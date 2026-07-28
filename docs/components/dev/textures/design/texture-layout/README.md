@@ -131,7 +131,7 @@ numeric parts) — the `map.dir.part` **order** is what produces the grouping.
 7. ✅ **Linked kinds are held-whole autotile atlases** (not per-cell folders). A linked form is ONE
    master texture holding a `cols×rows` cell grid + an **`atlas.json`** (`grid`,`pad`) sidecar; the
    client samples a cell by UV from neighbour connectivity ([`tex_manifest.rs`](../../../../../../server/edge/src/tex_manifest.rs)
-   `grid`/`pad`, [`SquareCache.ts`](../../../../../../client/pixijs/src/game/viewport/SquareCache.ts)). So a
+   `grid`/`pad`, [`SquareCache.ts`](../../../../../../client/webgl/src/game/viewport/SquareCache.ts)). So a
    linked leaf has **no per-cell `<variant>` folders** — it is
    `biome-tile/<biome>/<material>/<form>/{albedo,normal,…}.l.0.<ext>` **+ a sibling `atlas.json`**. The
    old per-cell `1.l.0/<1..16>/` split is superseded (`texture-paths.md`).

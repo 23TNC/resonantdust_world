@@ -98,7 +98,7 @@ async fn main() {
     let uri = env_or("ST_URI", "http://127.0.0.1:3000");
     let self_ref = parse_u8(&env_or("WORKER", "0x62"), 0x62);
     let realm = parse_u8(&env_or("REALM", "0"), 0);
-    let tic_hz: f64 = env_or("TIC_HZ", "2").parse().unwrap_or(2.0);
+    let tic_hz: f64 = env_or("TIC_HZ", "6").parse().unwrap_or(6.0);
     let period = Duration::from_secs_f64(1.0 / tic_hz);
     let index_db = env_or("INDEX_DB", "resonantdust-dev-index-0");
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");

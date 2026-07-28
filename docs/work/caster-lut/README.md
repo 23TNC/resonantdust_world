@@ -2,7 +2,7 @@
 
 _Opened 2026-07-20. Builds on the verified [`light-data-texture`](../light-data-texture/README.md) (lights
 in a texture) and the [`shadow-tiered`](../shadow-tiered/README.md) cast. Component:
-[`client/pixijs`](../../components/client/pixijs/). Moves the **shadow casters** and the **which-prims-does-
+[`client/pixijs`](../../components/client/webgl/). Moves the **shadow casters** and the **which-prims-does-
 each-light-see** cull into textures, so the whole cast can eventually run on the GPU (light → LUT → prim)
 instead of the JS `Math.hypot` cull + `Graphics` billboard cast in `castScreen`._
 
@@ -30,7 +30,7 @@ start**. Each is 12,288 px = 49,152 f32 = **192 KB**. A "definition" (light or c
 | 1 | width | height | depth1 | depth2 |
 | 2 | frame_x | frame_y | frame_width | frame_height |
 
-Maintained with the most recent caster definitions (the resolved standing prims — [`standingPrims()`](../../../client/pixijs/src/game/viewport/SquareCache.ts)).
+Maintained with the most recent caster definitions (the resolved standing prims — [`standingPrims()`](../../../client/webgl/src/game/viewport/SquareCache.ts)).
 `facing` selects the billboard orientation; `depth1/depth2` feed the wedge projection; `frame_*` is the
 silhouette sub-frame in the atlas.
 
@@ -68,7 +68,7 @@ LUT ≤ 49,152) are far under, so `floor(texel + 0.5)` recovers them ([I-1](issu
 ## Capacity notes
 
 - **4,096 caster slots** is fewer than the RT's **7,440 tiles at full zoom-out** (see [the tile-count
-  measurement](../../components/client/pixijs/)), so a dense scene can exceed it. Expand by adding 3-row
+  measurement](../../components/client/webgl/)), so a dense scene can exceed it. Expand by adding 3-row
   bands (height 24 → 8,192), width stays 1024 ([F1](forks.md#f1)).
 - **LUT overflow** (`Σ count > 49,152`) is the scaling limit under many overlapping large-radius lights;
   `log()` any truncated run so silent drop-off doesn't read as "no shadow" ([I-4](issues.md#i-4)).

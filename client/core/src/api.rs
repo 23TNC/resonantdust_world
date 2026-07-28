@@ -4,7 +4,7 @@
 //!
 //! This is the seam that lets "stuff call into" the client — it's deliberately
 //! pure data and host-agnostic (no tokio, no transport), so the same types serve
-//! a native Rust driver today and the pixijs wasm bridge later. A host:
+//! a native Rust driver today and the webgl wasm bridge later. A host:
 //!   1. constructs a [`Command`] and sends it in (via [`crate::Client`]), and
 //!   2. supplies an [`EventSink`] (a closure, a channel, a JS callback shim …)
 //!      that the client calls for every [`Event`].
@@ -15,7 +15,7 @@ use crate::clock::ClockSnapshot;
 use crate::zones::AnchorRadii;
 
 /// One command type's gateway-call tally, surfaced via [`Event::CallStats`] for
-/// the pixijs debug HUD's "calls" tab. `command` is the wire tag (`login`,
+/// the webgl debug HUD's "calls" tab. `command` is the wire tag (`login`,
 /// `sub_zone`, `unsub`, `release`); `requests` / `tx` count outbound frames of
 /// that type and their serialized bytes; `ok` / `err` / `rx` count the correlated
 /// replies and their bytes (only `login` yields `login_ok` / `login_err`, only
@@ -31,7 +31,7 @@ pub struct CallStat {
 }
 
 /// One relayed-row table's data tally, surfaced via [`Event::SubStats`] for the
-/// pixijs debug HUD's "subs" tab. `table` is the wire tag (`state`); `rows` counts
+/// webgl debug HUD's "subs" tab. `table` is the wire tag (`state`); `rows` counts
 /// the `Row` frames of that table streamed down a subscription and `rx` sums their
 /// serialized bytes — the bulk of what a subscription pulls back (the calls tab
 /// covers the outbound `sub_zone` / `unsub` control frames).
@@ -64,7 +64,7 @@ pub enum Command {
     /// [`Event::LoggedIn`]/[`Event::LoginFailed`] sequence.
     Login { name: String },
     /// Add or move an [`anchor`](crate::zones) named `name`, recomputing which
-    /// zones the client subscribes to. The pixijs host calls this once per
+    /// zones the client subscribes to. The webgl host calls this once per
     /// viewport and again as the view pans (idempotent when nothing moved).
     ///
     /// `tile_x` / `tile_y` are global tile coordinates of the anchor centre;
@@ -110,7 +110,7 @@ pub enum Command {
 }
 
 /// An event the client emits to its host. Hosts react to these to render state
-/// (pixijs), advance a script (a Rust driver), or log (the headless CLI).
+/// (webgl), advance a script (a Rust driver), or log (the headless CLI).
 #[derive(Debug, Clone)]
 pub enum Event {
     /// A [`Command::Login`] was accepted and the gateway round-trip has begun.
@@ -179,11 +179,11 @@ pub enum Event {
     /// The simulation's freeze state changed (debug `/pause`). `true` = frozen (the tic
     /// stopped, movement halts); `false` = running. Emitted to every subscriber when the
     /// shard's flag flips (and once on subscribe). Tic-driven hosts (npc) gate on this to
-    /// stop/resume issuing commands; pixijs surfaces it as a chat system line.
+    /// stop/resume issuing commands; webgl surfaces it as a chat system line.
     Paused { paused: bool },
     /// The running per-command gateway-call tally changed. Carries the full
     /// snapshot (one [`CallStat`] per command type seen so far), re-emitted after
-    /// each outbound frame and each correlated reply. Diagnostic-only — the pixijs
+    /// each outbound frame and each correlated reply. Diagnostic-only — the webgl
     /// debug HUD's "calls" tab renders it; other hosts ignore it.
     CallStats(Vec<CallStat>),
     /// The clock estimate advanced — a fresh [`ClockSnapshot`] from a login seed
@@ -196,7 +196,7 @@ pub enum Event {
     /// subscriptions currently on the wire; `total` is every `sub_zone` ever sent
     /// (cumulative); `tables` is the per-table row/byte breakdown. Re-emitted when
     /// a subscription opens/closes or a `Row` frame lands. Diagnostic-only — the
-    /// pixijs debug HUD's "subs" tab renders it.
+    /// webgl debug HUD's "subs" tab renders it.
     SubStats {
         open: u32,
         total: u32,

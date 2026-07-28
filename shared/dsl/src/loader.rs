@@ -46,7 +46,7 @@ pub struct GenTile {
 /// that weight paints — a `tint` (base `0xRRGGBB` colour) and, optionally, a
 /// `material_id` (1-based into the material registry; `0` = none) whose noise-driven
 /// hue/chroma jitter the bake pass applies. All-zero = an unbound channel (identity:
-/// the residual reconstructs the flat albedo, no variation). See `docs/components/client/pixijs/design/lighting.md`.
+/// the residual reconstructs the flat albedo, no variation). See `docs/components/client/webgl/design/lighting.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PackedChannel {
   /// 1-based material-registry id (`material_id`); `0` = no material (flat tint).

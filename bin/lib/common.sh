@@ -18,7 +18,7 @@ CORE_DIR="$REPO/client/core"
 NPC_DIR="$REPO/client/npc"
 SPACETIME_DIR="$REPO/server/spacetime"
 MODULES_DIR="$SPACETIME_DIR/server/modules"
-PIXIJS_DIR="$REPO/client/pixijs"
+WEBGL_DIR="$REPO/client/webgl"
 CONTENT_DIR="$REPO/content"
 
 # Persisted active profile (written by `rd config set`), and per-env build state

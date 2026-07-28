@@ -2,7 +2,7 @@
 //!
 //! It's the smallest possible driver: build a [`Client`], send one
 //! [`Command::Login`], and print every [`Event`] the client emits. Handy for
-//! smoke-testing the gateway + world-server round-trip without pixijs, and as a
+//! smoke-testing the gateway + world-server round-trip without webgl, and as a
 //! worked example of how an external program drives the headless client.
 //!
 //! ```text
@@ -155,7 +155,7 @@ fn log_event(event: &Event) {
             info!(macro_position = format!("{macro_position:#06x}"), "zone closed")
         }
         Event::Paused { paused } => info!(paused, "simulation freeze changed"),
-        // The web engine emits these for the pixijs debug HUD; the headless driver
+        // The web engine emits these for the webgl debug HUD; the headless driver
         // has no HUD, so there's nothing to log. `ClockSync` fires every couple of
         // seconds — logging it would drown the smoke test.
         Event::CallStats(_) | Event::SubStats { .. } | Event::ClockSync(_) => {}

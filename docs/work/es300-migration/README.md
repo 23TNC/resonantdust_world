@@ -1,7 +1,7 @@
 # Work — es300-migration (unify every client shader to GLSL ES 3.00)
 
 _Opened 2026-07-20. Follows [`es300-hello`](../es300-hello/README.md), which proved a raw `#version 300 es`
-program compiles + renders here. Component: [`client/pixijs`](../../components/client/pixijs/). Migrates
+program compiles + renders here. Component: [`client/pixijs`](../../components/client/webgl/). Migrates
 **all** existing shaders off Pixi's high-shader (ES 1.00) onto raw ES 3.00, so the client has **one shader
 standard** — no ES1-vs-ES3 split, and the ES 3.00 feature set (`uint`/bitwise, `texelFetch`, integer
 textures, MRT) is uniformly on the table for every shader._

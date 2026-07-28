@@ -71,6 +71,14 @@ speculate at the right rate. v1: one `tics_per_tile(definition_reference) -> u16
 replaced by a content lookup when the corpus-plumbing follow-on lands. Rejected: hardcoding at
 each call site (drifts — the speculation would walk at a different speed than the server).
 
+**Author speeds in WALL-TIME units, convert at the seam.** The user set `TIC_HZ` to **6**
+(2026-07-28; was 2 — 0.5 s command-to-visible floor at the +3 barrier, still ~10× per-tic
+headroom vs typical logic loops; "if it bites us we can drop down"). So the seam's inner truth
+is tiles/second, converted via `TIC_HZ` — a future rate change must never rescale the world's
+movement. Corollary: `TIC_HZ` needs ONE authority reachable by master/orchestrator/worker AND
+the speculating client (today it's three independent env defaults + the client's estimate) —
+home it in `shared/codec` alongside `tics_per_tile` when this fork is built.
+
 ## F8 · Speculation correction policy
 
 **Resolved for v1: snap, and record the error.** When authoritative `state` disagrees with the

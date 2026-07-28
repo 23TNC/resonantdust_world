@@ -3,10 +3,10 @@
 _Opened 2026-07-21. Bring the webgl `ShadowCaster` from its basic-cut **analytic trapezoid** onto the
 **projected-silhouette 5-triangle** model that converged in the sandbox — the actual triangle geometry the
 game needs. Component: `client/webgl` (docs in [`webgl-engine`](../webgl-engine/README.md)). Authoritative
-spec: [`design/shadows.md`](../../components/client/pixijs/design/shadows.md); interactive proof:
+spec: [`design/shadows.md`](../../components/client/webgl/design/shadows.md); interactive proof:
 [`bin/shadow-projection-sandbox.html`](../../../bin/shadow-projection-sandbox.html) (live artifact
 `claude.ai/code/artifact/89cfbfe2-2922-4c3d-ac91-123f3e2506ee`). Intent:
-[`intent/shadows.md`](../../components/client/pixijs/intent/shadows.md)._
+[`intent/shadows.md`](../../components/client/webgl/intent/shadows.md)._
 
 ## Why — the current cast is a placeholder shape
 

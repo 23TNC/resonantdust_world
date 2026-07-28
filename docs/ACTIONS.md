@@ -76,6 +76,14 @@ the forms differ. See [`VARIABLES.md § Cold storage`](VARIABLES.md).
 Append below. Each entry must state, per operand, whether it is **written** (in the write set → its
 slot is grouped/claimed) or **read** (in the read set → the worker blocks on it settling).
 
+> **Designing a verb IS distributed-systems design.** The write set determines grouping: events
+> sharing a written target merge — transitively — into one conflict-component, and a component runs
+> on ONE worker. A verb with a broad write set welds unrelated events together and serializes them;
+> a crowded plaza full of such events becomes one giant component on one core. So: keep write sets
+> **minimal**, mark an operand **read** unless the verb truly mutates it, and never write what you
+> only inspect. This rule is the system's real scalability lever — sharding cannot undo a verb that
+> over-claims. (User-ratified 2026-07-28.)
+
 | action | value | arity | signature |
 |---|---|---|---|
 | `CREATE` | 3 | 2 | `def:definition_reference` (imm) · `position:position_reference` (imm) → **mints** a new entity. The written target is the *minted* id, not an operand. |

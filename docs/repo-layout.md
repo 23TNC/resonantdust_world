@@ -20,7 +20,7 @@ server/                     everything server-side
   spacetime/  (unchanged name)        SpacetimeDB modules (shard/players/index/chat) + daemon
 client/                     everything client-side
   core/       (was client)            headless client library + `headless` bin (login + zone sub)
-  pixijs/     (unchanged name)         the browser renderer
+  webgl/      (superseded pixijs)       the browser renderer (bespoke WebGL2 engine)
   npc/        (unchanged name)         headless bot driver
 shared/                     host-agnostic crates, bind-mounted into builds (NOT moved)
   codec/ tick/ dsl/ core/ wasm/
@@ -37,7 +37,7 @@ bin/  content/  textures/  docs/  laigter/  marigold/  vscode-rd-dsl/   (unchang
 | `gateway` | `server/gateway` | `gateway` | `gateway` |
 | `spacetime` | `server/spacetime` | *(modules keep names)* | — |
 | `client` | `client/core` | **`client`** (see caveat) | `headless` |
-| `pixijs` | `client/pixijs` | `resonantdust-world-pixijs` | — |
+| `pixijs` | *(deleted 2026-07-28 — superseded by `client/webgl`, TS/npm, no crate)* | — | — |
 | `npc` | `client/npc` | `npc` | `npc` |
 
 **Caveat — the `client/core` crate keeps package name `client`.** A Cargo package
@@ -71,7 +71,7 @@ build container, so a crate's `path = "../shared/codec"` resolves against the
 ## `bin/rd` component names
 
 `rd build|up|down|deploy|logs` speak the new names: `edge`, `gateway`, `spacetime`,
-`core`, `npc`, `pixijs`, `shared`. Compose services and container names for the edge are
+`core`, `npc`, `webgl`, `shared`. Compose services and container names for the edge are
 `edge` / `edge-claude` / `edge-test` (were `server*`); log files are `edge-<env>.log`.
 
 ## Deferred (intentionally not renamed)

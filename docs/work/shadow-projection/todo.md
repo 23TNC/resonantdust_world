@@ -1,7 +1,7 @@
 # Todo — shadow-projection (execution order)
 
 _Planned, not started. Items move to [`completed.md`](completed.md) when done + verified. Each phase is
-verifiable in-browser against the sandbox. Spec: [`design/shadows.md`](../../components/client/pixijs/design/shadows.md);
+verifiable in-browser against the sandbox. Spec: [`design/shadows.md`](../../components/client/webgl/design/shadows.md);
 proof: [`bin/shadow-projection-sandbox.html`](../../../bin/shadow-projection-sandbox.html). The fan is built
 **on the GPU** — an instanced vertex shader, NOT CPU vertex buffers (delivers `caster-lut` C5 /
 [webgl-engine W7](../webgl-engine/todo.md)). Geo tier / no lit render — the shadow stays a default-on debug

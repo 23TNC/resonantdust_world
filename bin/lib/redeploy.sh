@@ -21,7 +21,7 @@
 #   • spacetime modules — discovered dynamically from spacetime/server/modules/
 #     (so a module rename/add/remove needs no edit here). Each module's closure
 #     is its own dir; its deploy DB target defaults to its name.
-#   • the rest (edge, gateway, shared, pixijs) — explicit, hand-written
+#   • the rest (edge, gateway, shared, webgl) — explicit, hand-written
 #     closures. edge + gateway are local-only standups (build the binary, run
 #     it detached in the env's long-lived container); both are skipped on remote
 #     envs, which have no in-repo standup wired.
@@ -32,7 +32,7 @@
 #
 # The headless client-core crate is NOT a redeploy unit: it produces a dev-side
 # binary nothing deployed consumes yet, so it has no deploy step. Build it on
-# demand with `rd build core`. Fold it in here once pixijs links it.
+# demand with `rd build core`. Fold it in here once webgl links it.
 declare -A RD_INPUTS=()
 RD_MODULE_UNITS=()
 rd_init_units() {
@@ -44,13 +44,13 @@ rd_init_units() {
   RD_INPUTS[edge]="$EDGE_DIR/src $EDGE_DIR/Cargo.toml"
   RD_INPUTS[gateway]="$GATEWAY_DIR/src $GATEWAY_DIR/Cargo.toml"
   RD_INPUTS[shared]="$SHARED_DIR"
-  RD_INPUTS[pixijs]="$PIXIJS_DIR/src $PIXIJS_DIR/index.html $PIXIJS_DIR/package.json $PIXIJS_DIR/vite.config.ts $PIXIJS_DIR/tsconfig.json"
+  RD_INPUTS[webgl]="$WEBGL_DIR/src $WEBGL_DIR/index.html $WEBGL_DIR/package.json $WEBGL_DIR/vite.config.ts $WEBGL_DIR/tsconfig.json"
   # The index routing seed — not a build, but tracked so editing the env's
   # servers manifest re-seeds the index DB. Its action also runs whenever the
   # `index` module is (re)published below, since a --reset publish wipes the rows.
   RD_INPUTS[index-seed]="$(rd_servers_manifest)"
   # Stable iteration order (modules first, then the seed, then the rest).
-  RD_ORDER=("${RD_MODULE_UNITS[@]}" index-seed edge gateway shared pixijs)
+  RD_ORDER=("${RD_MODULE_UNITS[@]}" index-seed edge gateway shared webgl)
 }
 
 # A module's deploy DB target(s) default to its own name. A module that backs
@@ -224,7 +224,7 @@ rd_redeploy() {
     else                                printf '  %-26s # skipped — no remote gateway standup\n' "(gateway)"; fi
   fi
   [[ -n "${CHANGED[shared]:-}" ]] && printf '  %-26s # rebuild wasm bundle\n' "build shared"
-  [[ -n "${CHANGED[pixijs]:-}" ]] && printf '  %-26s # rebuild pixijs bundle\n' "build pixijs"
+  [[ -n "${CHANGED[webgl]:-}" ]] && printf '  %-26s # rebuild webgl bundle\n' "build webgl"
 
   if [[ "$RUN" == 0 ]]; then echo "--- dry run (pass --run to execute) ---"; return 0; fi
 
@@ -259,6 +259,6 @@ rd_redeploy() {
     fi
   fi
   if [[ -n "${CHANGED[shared]:-}" ]]; then rd_build_shared; stamp shared; fi
-  if [[ -n "${CHANGED[pixijs]:-}" ]]; then rd_build_pixijs; stamp pixijs; fi
+  if [[ -n "${CHANGED[webgl]:-}" ]]; then rd_build_webgl; stamp webgl; fi
   echo "done."
 }

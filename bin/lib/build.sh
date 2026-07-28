@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # rd build — compile a component. Sourced by `bin/rd` (and reused by redeploy).
-# Components: shared, edge, gateway, spacetime, core, pixijs. Everything Rust
-# builds in docker (no host cargo); pixijs builds with the host's node/npm.
+# Components: shared, edge, gateway, spacetime, core, npc, webgl. Everything Rust
+# builds in docker (no host cargo); webgl builds with the host's node/npm.
 #
 # Assumes common.sh is already sourced and rd_resolve_env has run.
 
-# shared → the browser wasm bundle (shared/pkg/*) the pixijs client imports.
+# shared → the browser wasm bundle (shared/pkg/*) the webgl client imports.
 # Builds in docker via shared/compose.yml's `wasm` service.
 rd_build_shared() {
   rd_log "build shared → wasm bundle (shared/pkg)"
@@ -67,13 +67,13 @@ rd_build_core() {
   rd_core_dcl run --rm build
 }
 
-# pixijs → the production web bundle (pixijs/dist). Uses the host npm; installs
-# deps first if node_modules is missing. (This is the dumb display over the
-# headless client core; built on the host, not in docker.)
-rd_build_pixijs() {
-  rd_log "build pixijs → pixijs/dist"
-  [[ -d "$PIXIJS_DIR/node_modules" ]] || ( cd "$PIXIJS_DIR" && npm install )
-  ( cd "$PIXIJS_DIR" && npm run build )
+# webgl → the production web bundle (webgl/dist). Uses the host npm; installs
+# deps first if node_modules is missing. (This is the display over the headless
+# client core; built on the host, not in docker.)
+rd_build_webgl() {
+  rd_log "build webgl → webgl/dist"
+  [[ -d "$WEBGL_DIR/node_modules" ]] || ( cd "$WEBGL_DIR" && npm install )
+  ( cd "$WEBGL_DIR" && npm run build )
 }
 
 # npc → the NPC driver binary, in docker (rust:slim). Path-deps shared codec +
@@ -103,7 +103,7 @@ components:
   core [--check]      the headless client core binary (in docker); --check type-
                       checks only (cargo check --all-targets)
   npc [--check]       the NPC driver binary (in docker); --check type-checks only
-  pixijs              the pixijs production web bundle (pixijs/dist)
+  webgl               the webgl production web bundle (webgl/dist)
 EOF
 }
 
@@ -118,7 +118,7 @@ rd_build() {
     spacetime) rd_build_spacetime "$@" ;;
     core)      rd_build_core "$@" ;;
     npc)       rd_build_npc "$@" ;;
-    pixijs)    rd_build_pixijs "$@" ;;
+    webgl)     rd_build_webgl "$@" ;;
     -h|--help|help) rd_build_usage ;;
     *) rd_warn "unknown component '$comp'"; rd_build_usage; exit 1 ;;
   esac

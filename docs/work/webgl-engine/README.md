@@ -2,7 +2,7 @@
 
 _Opened 2026-07-20. Stand up a **new adjacent client** (`client/webgl`) that re-implements the browser
 client on a **bespoke WebGL2 renderer** — no PixiJS. Component: a new `client/webgl` (parallel to
-[`client/pixijs`](../../components/client/pixijs/)). This is essentially building the rest of the game
+[`client/pixijs`](../../components/client/webgl/)). This is essentially building the rest of the game
 engine ourselves; it won't be easy, but it buys the clean GPU control the shadow/lighting work needs._
 
 ## Why — we use a thin slice of Pixi, and it's exactly the slice that blocks us

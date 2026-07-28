@@ -2,7 +2,7 @@
 
 _Opened 2026-07-20. De-risks the raw-shader capability that [`caster-lut` C5](../caster-lut/todo.md) (and
 future integer-texture / `texelFetch` / MRT work) depends on. Component:
-[`client/pixijs`](../../components/client/pixijs/). Nothing in the client renders through an ES 3.00 shader
+[`client/pixijs`](../../components/client/webgl/). Nothing in the client renders through an ES 3.00 shader
 today — every shader is Pixi's **high-shader (GLSL ES 1.00)**, which is why `uint` fails to compile (the
 recurring finding). This proves we can hand-write a raw `#version 300 es` program, render it into the
 viewport, and that ES-3.00-only syntax actually runs._

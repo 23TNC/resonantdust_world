@@ -2,7 +2,7 @@
 //!
 //! Pure Rust with no wasm dependency, so it builds and tests natively on every
 //! consumer: the gateway and the spacetime modules link it directly as an rlib,
-//! and the pixijs client reaches the same code through the `resonantdust-shared`
+//! and the webgl client reaches the same code through the `resonantdust-shared`
 //! wasm bundle. Real responsibilities (codec / dsl / state / protocol / rules …)
 //! get carved into sibling crates as they appear.
 

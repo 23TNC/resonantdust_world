@@ -1,7 +1,7 @@
 //! Resonant Dust (world) client-side wasm crate — hello-world scaffold.
 //!
 //! Compiled to a browser wasm bundle (see the `wasm` service in `compose.yml`)
-//! and imported by the pixijs client. The server does NOT consume this crate —
+//! and imported by the webgl client. The server does NOT consume this crate —
 //! it links the shared logic crates (`resonantdust-core`, …) directly as rlibs.
 //! The bindings live only here, where they're needed.
 //!
@@ -403,13 +403,13 @@ fn flatten_packed(table: Vec<[dsl::loader::PackedChannel; 4]>) -> Vec<f64> {
 // ---------- world client (js feature) ----------
 //
 // The browser's handle to the world: login + the anchor-driven zone
-// subscription engine, wrapping the `client` crate's `web` transport. pixijs
+// subscription engine, wrapping the `client` crate's `web` transport. webgl
 // constructs one with the gateway base + an event callback, then drives it with
 // `login` / `setAnchor` — the same `Command` verbs the native headless driver
 // sends. Every `Event` the engine emits is marshaled to a small tagged JS object
 // and handed to the callback.
 
-/// The pixijs-facing world client. Owns the session; events arrive on the
+/// The webgl-facing world client. Owns the session; events arrive on the
 /// callback passed to [`new`](WorldClient::new).
 #[cfg(feature = "js")]
 #[wasm_bindgen]
@@ -636,7 +636,7 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("stats", &arr);
         }
         Event::ClockSync(s) => {
-            // Fields line up with pixijs's `ClockStats` so the sync HUD renders
+            // Fields line up with webgl's `ClockStats` so the sync HUD renders
             // them directly. Optionals become `null` until a real pong lands.
             let num = |v: f64| JsValue::from_f64(v);
             let opt_u = |v: Option<u64>| v.map_or(JsValue::NULL, |x| JsValue::from_f64(x as f64));
@@ -684,7 +684,7 @@ mod tests {
 
     #[test]
     fn delegates_to_core() {
-        assert_eq!(greeting("pixijs"), "hello world from resonantdust shared, pixijs");
+        assert_eq!(greeting("webgl"), "hello world from resonantdust shared, webgl");
     }
 
     #[test]

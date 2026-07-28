@@ -49,7 +49,7 @@ const SEED_RTT: u64 = u64::MAX;
 
 /// The clock's current estimate plus diagnostics, emitted to the host on every
 /// pong (and the initial login seed) as `Event::ClockSync`. Field names line up
-/// with the pixijs debug HUD's `ClockStats` so the sync tab renders them without
+/// with the webgl debug HUD's `ClockStats` so the sync tab renders them without
 /// translation.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ClockSnapshot {

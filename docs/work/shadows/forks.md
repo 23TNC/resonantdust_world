@@ -24,7 +24,7 @@ the data path. This is *why* the goal is 24 (3×8), not 32.
 ## F3 · Casters: pure billboards, no textures/outlines — 2026-07-19
 
 **Options:** (a) the textured earcut silhouette (`outline`) with UV alpha, per
-[`design/shadows.md`](../../components/client/pixijs/design/shadows.md); (b) the **solid billboard quad**
+[`design/shadows.md`](../../components/client/webgl/design/shadows.md); (b) the **solid billboard quad**
 projected to the ground. **Chose (b)** for the foundation — the projection + RT plumbing + pack are what's
 being proven; the silhouette/UV layer drops on top later without changing the pipeline
 ([D-3](deviations.md#d-3)).
@@ -84,7 +84,7 @@ data.** Premultiply mangles A, and the verbatim-write workaround to reclaim it i
 **A held at 1** (premultiply is a no-op — proven by `bitfield-rt`, archived).
 `shadow-hot` stays a float RGBA8, RGB = 3 lanes (A avoided). Throughput unchanged: **≥3 hot/frame ⇒ ≥24
 cold cyclable in ~8 frames**. Beyond 24 separable lights → **more render targets** (24 each), but MRT is
-gated behind raw ES 3.00 shaders ([F14](#f14)), deferred. See [`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md).
+gated behind raw ES 3.00 shaders ([F14](#f14)), deferred. See [`design/rendering-platform.md`](../../components/client/webgl/design/rendering-platform.md).
 
 ## F13 · Shadow geometry: CPU place + cull, GPU rasterise — 2026-07-19
 
@@ -102,7 +102,7 @@ placement.)
 
 **Decision (corrected):** the shadow shaders are **GLSL ES 1.00** and bits use **float-mod**; **WebGL2 is
 kept as a context baseline** but not for ES 3.00. Durable stance:
-[`design/rendering-platform.md`](../../components/client/pixijs/design/rendering-platform.md).
+[`design/rendering-platform.md`](../../components/client/webgl/design/rendering-platform.md).
 
 **The reversal:** this fork first said "author `#version 300 es`, ES 3.00 is free because the app already
 runs WebGL2." **That premise was wrong**, proven by executing

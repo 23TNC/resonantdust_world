@@ -2,7 +2,7 @@
 //!
 //! The client holds a list of **anchors** — points of interest in the world —
 //! and from them decides which zones to keep a live [`SubZone`] open on. The list
-//! is empty by default; a host adds anchors and moves them. The pixijs client
+//! is empty by default; a host adds anchors and moves them. The webgl client
 //! will add one anchor per viewport and slide it as the view pans; later, pawns
 //! (souls) will carry their own anchors (the `soul` field reserves that path,
 //! ported from the old game — pawn→anchor derivation is not built here yet).
