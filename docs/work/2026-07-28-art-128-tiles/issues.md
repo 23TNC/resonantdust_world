@@ -49,6 +49,25 @@ for the tile size — which is exactly what this stream and
 [`square-128`](../2026-07-28-square-128/README.md) both make people do. Fixed in [P5](todo.md)
 whichever value wins.
 
+## I11 — the edge's texture tests write a SUPERSEDED leaf shape, so they assert on nothing {#i11}
+_2026-07-28 · P2.6 · measured — three dead tests, one fixed here_
+
+`tex_manifest.rs`'s `write_master` helper wrote `<cat>/<kind>/1.s.0/1/albedo.png` — the shape
+[texpath](../../components/dev/textures/design/texture-layout/README.md) dropped (no `<id>`, no
+bare `albedo.png`; the scanner needs `albedo.<facing>.<part>.png` in a `<variant>/` leaf). Nothing
+matched, so `payload_json()` was `{"textures":{}}` and **every assertion below ran against an empty
+manifest**. The test could not fail on a real regression.
+
+Baseline on `cargo test --release` before this stream touched anything: **12 passed, 3 failed.**
+After repairing the helper and adding the span test: **14 passed, 2 failed.**
+
+The two that remain — `textures::tests::disk_serves_master_derives_and_caches_preview` and
+`textures::tests::stem_resolves_to_canonical_master` — are the same class in `textures.rs` and
+**pre-date this stream** (verified by stashing the change and re-running). Not fixed here: they
+belong to the texture-resolver, not the art pipeline, and repairing them properly means deciding
+what the canonical stem is for each case rather than making assertions match whatever the code
+currently does. Recorded so the next person knows they are dead rather than trustworthy.
+
 ## I10 — a held-whole atlas is RESAMPLED and framed on its way to the leaf {#i10}
 _2026-07-28 · P3 · measured — worse than the `--pad` bug it was found behind_
 

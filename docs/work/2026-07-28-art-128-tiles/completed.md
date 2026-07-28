@@ -127,3 +127,12 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   **127 px/cell, and resampled** (`max |diff| sprite vs diffuse = 230`, `row0` a single colour).
   Held-whole atlases now pass to leaf 0 verbatim, as `_split_variant_leaf` already did. Verified:
   **max |diff| 0, cell pitch 1024/8 = 128 px.**
+- **2026-07-28 · P2.6 · `span`/`square` surface through the manifest.** `Entry` carries both, read
+  from the leaf's `meta.json` by `read_span_meta`, emitted beside `grid`/`pad`. Absent keys stay
+  absent rather than defaulting — an unstamped leaf must not claim span 0 or 1. Also folded
+  `meta.json` into the leaf hash (only `atlas.json` was), or a re-stamped span would never reach a
+  client holding the stem cached. Verified by a new test asserting: no `span` key before stamping,
+  `"span":2` and `"square":256` after, and a changed leaf hash. **Found three dead tests on the way**
+  ([I11](issues.md#i11)) — the helper wrote a superseded leaf shape so the manifest was empty and
+  every assertion was vacuous. Repaired it; suite went **12 passed/3 failed → 14 passed/2 failed**,
+  the two remaining being pre-existing `textures.rs` failures confirmed by stashing and re-running.

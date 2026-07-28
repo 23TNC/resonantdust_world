@@ -34,6 +34,14 @@ struct Entry {
     /// downscale can't bleed a neighbour cell across a cell edge.
     grid: Option<[u32; 2]>,
     pad: Option<[f32; 2]>,
+    /// The stem's frame SPAN in tiles, and the pow2 square it therefore packs into
+    /// (`span * tile_px`). Read from the leaf's `meta.json`, where `bin/art leaf-span` caches it
+    /// — the value is AUTHORED in the DSL corpus (`thing.span`) and only mirrored here, so this
+    /// is a convenience for the packer, never a second place to change it. `None` when the leaf
+    /// predates the stamp. Note this is the frame's extent, NOT the prim's `footprint`: a conifer
+    /// occupies 1x1 tiles and spans 2, so sizing from the footprint would halve its square.
+    span: Option<u32>,
+    square: Option<u32>,
 }
 
 struct State {
@@ -70,10 +78,18 @@ impl TextureManifest {
                     "lods": e.lods.iter().copied().collect::<Vec<u32>>(),
                     "maps": e.maps.iter().cloned().collect::<Vec<String>>(),
                 });
+                let obj = row.as_object_mut().unwrap();
+                // The frame span in tiles + the pow2 square it packs into. Absent on a leaf that
+                // has not been stamped, so the client keeps its dimension-based fallback.
+                if let Some(span) = e.span {
+                    obj.insert("span".into(), serde_json::json!(span));
+                }
+                if let Some(square) = e.square {
+                    obj.insert("square".into(), serde_json::json!(square));
+                }
                 // A linked-atlas stem carries its cell grid + per-cell inset so the client
                 // can sample a cell by UV; an ordinary stem omits both.
                 if let (Some(grid), Some(pad)) = (e.grid, e.pad) {
-                    let obj = row.as_object_mut().unwrap();
                     obj.insert("grid".into(), serde_json::json!(grid));
                     obj.insert("pad".into(), serde_json::json!(pad));
                 }
@@ -242,13 +258,14 @@ fn register_variant(leaf: &Path, stem_prefix: &str, entries: &mut BTreeMap<Strin
         // moves the cache-buster hash.
         let Some(hash) = leaf_hash(leaf, &maps, facing) else { continue };
         // A `bin/art` linked atlas drops an `atlas.json` beside its maps: the cell grid + inset.
+        let (span, square) = read_span_meta(leaf);
         let (grid, pad) = match read_atlas_meta(leaf) {
             Some((g, p)) => (Some(g), Some(p)),
             None => (None, None),
         };
         entries.insert(
             format!("{stem_prefix}/{facing}"),
-            Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps, grid, pad },
+            Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps, grid, pad, span, square },
         );
         found = true;
     }
@@ -273,17 +290,36 @@ fn leaf_hash(leaf: &Path, maps: &BTreeSet<String>, facing: &str) -> Option<Strin
             h = h.wrapping_mul(0x0000_0100_0000_01b3);
         }
     }
-    // Fold the linked-atlas sidecar too (if any), so re-authoring the grid/inset busts the
-    // hash even though it isn't one of the served `<map>.png` files.
-    if let Ok(meta) = std::fs::metadata(leaf.join("atlas.json")) {
+    // Fold the SIDECARS too, so re-authoring metadata busts the hash even though neither is one of
+    // the served `<map>.png` files. `atlas.json` carries the cell grid + inset; `meta.json` carries
+    // the span/square the packer sizes from (and the tints and outline). Without meta.json here, a
+    // re-stamped span would never reach a client that already has the stem cached.
+    for sidecar in ["atlas.json", "meta.json"] {
+        let Ok(meta) = std::fs::metadata(leaf.join(sidecar)) else { continue };
         if let Some(mtime) = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()) {
-            for b in format!("atlas:{:x}-{:x};", mtime.as_secs(), meta.len()).bytes() {
+            for b in format!("{sidecar}:{:x}-{:x};", mtime.as_secs(), meta.len()).bytes() {
                 h ^= b as u64;
                 h = h.wrapping_mul(0x0000_0100_0000_01b3);
             }
         }
     }
     Some(format!("{h:x}"))
+}
+
+/// Read `span` + `square` from a leaf's `meta.json` (stamped by `bin/art leaf-span`). Both absent
+/// is normal for a leaf that has not been re-mastered since the stamp landed, so this returns
+/// `(None, None)` rather than failing — the client falls back to the texture's own dimensions.
+fn read_span_meta(leaf: &Path) -> (Option<u32>, Option<u32>) {
+    let Ok(text) = std::fs::read_to_string(leaf.join("meta.json")) else {
+        return (None, None);
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return (None, None);
+    };
+    (
+        v.get("span").and_then(|x| x.as_u64()).map(|x| x as u32),
+        v.get("square").and_then(|x| x.as_u64()).map(|x| x as u32),
+    )
 }
 
 /// Parse a leaf's `atlas.json` (a `bin/art` linked-atlas sidecar) into `([cols, rows],
@@ -337,21 +373,59 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    fn write_master(root: &Path, cat: &str, kind: &str, w: u32, h: u32) {
-        // Group-less canonical instance leaf: <cat>/<kind>/1.s.0/1/albedo.png.
-        let dir = root.join(cat).join(kind).join("1.s.0").join("1");
+    /// Write a canonical variant leaf: `<cat>/<kind>/<variant>/albedo.<dir>.<part>.png`.
+    ///
+    /// This helper used to write the SUPERSEDED `<cat>/<kind>/1.s.0/1/albedo.png` shape — no
+    /// facing/part in the filename, an `<id>` segment that no longer exists. The scanner needs
+    /// `albedo.<facing>.<part>.png`, so it matched nothing and every assertion below ran against
+    /// an EMPTY manifest; the test had been passing no signal at all (stream I11). Returns the
+    /// leaf so callers can drop siblings into it.
+    fn write_master(root: &Path, cat: &str, kind: &str, w: u32, h: u32) -> std::path::PathBuf {
+        let dir = root.join(cat).join(kind).join("1");
         std::fs::create_dir_all(&dir).unwrap();
         let img = image::RgbaImage::from_pixel(w, h, image::Rgba([1, 2, 3, 255]));
         let mut buf = Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(img).write_to(&mut buf, image::ImageFormat::Png).unwrap();
-        std::fs::write(dir.join("albedo.png"), buf.into_inner()).unwrap();
+        std::fs::write(dir.join("albedo.s.0.png"), buf.into_inner()).unwrap();
+        dir
+    }
+
+    #[test]
+    fn surfaces_span_and_square_from_the_leaf_meta_json() {
+        let base = std::env::temp_dir().join(format!("gw-span-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let leaf = write_master(&base, "biome-thing", "conifer", 256, 256);
+
+        // Unstamped: the keys must be ABSENT, not defaulted — a leaf that predates the stamp
+        // must not claim a span of 0 or 1, which would size it wrong rather than fall back.
+        let m = TextureManifest::build(&TextureSource::Disk { root: base.clone(), cache: base.join("cache") });
+        let before = m.payload_json();
+        assert!(!before.contains("\"span\""), "unstamped leaf must not carry a span");
+
+        // Stamped, as `bin/art leaf-span` writes it: span 2 tiles -> a 256 square at 128px tiles.
+        // The conifer is the real case — footprint 1x1 but span 2, so a footprint-derived square
+        // would be 128 and wrong.
+        std::fs::write(leaf.join("meta.json"),
+            r#"{"channel_tints":[[1,2,3]],"span":2,"square":256,"tile_px":128}"#).unwrap();
+        let m2 = TextureManifest::build(&TextureSource::Disk { root: base.clone(), cache: base.join("cache") });
+        let after = m2.payload_json();
+        assert!(after.contains("\"span\":2"), "span surfaces: {after}");
+        assert!(after.contains("\"square\":256"), "square surfaces: {after}");
+
+        // meta.json is folded into the leaf hash, so a re-stamp reaches a client that already
+        // has the stem cached.
+        let (h1, _) = m.lookup("biome-thing/conifer/s").expect("stem");
+        let (h2, _) = m2.lookup("biome-thing/conifer/s").expect("stem");
+        assert_ne!(h1, h2, "stamping meta.json must bust the leaf hash");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
     fn scans_stems_records_max_short_axis_and_notes_generated() {
         let base = std::env::temp_dir().join(format!("gw-manifest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        write_master(&base, "linked", "wall.smooth", 64, 128); // short axis = 64; named subkind
+        let leaf = write_master(&base, "linked", "wall.smooth", 64, 128); // short axis = 64
 
         let src = TextureSource::Disk { root: base.clone(), cache: base.join("cache") };
         let m = TextureManifest::build(&src);
@@ -368,11 +442,10 @@ mod tests {
         // covers every present map file).
         assert!(m.payload_json().contains("\"maps\":[\"albedo\"]"));
         let v_maps = m.version_hex();
-        let leaf = base.join("linked").join("wall.smooth").join("1.s.0").join("1");
         let img = image::RgbaImage::from_pixel(64, 128, image::Rgba([128, 128, 255, 255]));
         let mut buf = Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(img).write_to(&mut buf, image::ImageFormat::Png).unwrap();
-        std::fs::write(leaf.join("normal.png"), buf.into_inner()).unwrap();
+        std::fs::write(leaf.join("normal.s.0.png"), buf.into_inner()).unwrap();
         assert!(m.refresh(&src), "a new map beside an unchanged albedo is a change");
         assert_ne!(m.version_hex(), v_maps, "version bumps when a map is added");
         assert!(m.payload_json().contains("\"maps\":[\"albedo\",\"normal\"]"));
