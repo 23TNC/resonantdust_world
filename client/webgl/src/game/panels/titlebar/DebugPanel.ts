@@ -47,6 +47,15 @@ const FRAME_WINDOW = 240;
  *  whole dropped frame at a steady rate — the point where motion visibly jumps
  *  rather than merely varying. */
 const HITCH_FACTOR = 2;
+/** Deltas past this are a SUSPENSION, not a slow frame, and are dropped from the
+ *  window rather than recorded as hitches. Chrome halts `requestAnimationFrame`
+ *  entirely for a backgrounded tab, so the first frame after an alt-tab carries
+ *  the whole time away — measured at **19.7 s** here, which on its own dragged the
+ *  mean to 2987 ms and σ to 6052 ms while every real frame was 8 ms. One such
+ *  sample makes the other 239 unreadable, and it describes the tab switch rather
+ *  than the renderer. 1 s is far above any genuine stall (a full cold bake is tens
+ *  of ms) and far below a plausible background gap. */
+const FRAME_SUSPEND_MS = 1000;
 
 /** Format a unix-ms timestamp as `mm:ss.sss` within the current hour.
  *  Drops the high-order date/hour digits that would overflow the
@@ -379,6 +388,9 @@ export class DebugPanel {
    *  {@link FRAME_WINDOW}. Filled on every `setStats` whether the panel is open or
    *  not, so opening it shows real history instead of starting blank. */
   private readonly frameSamples: number[] = [];
+  /** Suspensions dropped from the window (see {@link FRAME_SUSPEND_MS}) — surfaced
+   *  on the hitch row so a discarded sample is never silently discarded. */
+  private frameSuspends = 0;
 
   // ── Textures tab values ─────────────────────────────────────────
   private readonly texFps:         HTMLSpanElement;
@@ -547,6 +559,7 @@ export class DebugPanel {
     this.renderSubs();
 
     this.panel.addTab("main",     "🛈", mainContent);
+    this.panel.addTab("frame",    "⏱", frameContent);
     this.panel.addTab("textures", "🖌", texturesContent);
     this.panel.addTab("sync",     "🛰", syncContent);
     this.panel.addTab("versions", "🏷", versionsContent);
@@ -627,6 +640,16 @@ export class DebugPanel {
     if (deltaMS > 0) {
       const instant = 1000 / deltaMS;
       this.fps = this.fps * (1 - FPS_SMOOTHING) + instant * FPS_SMOOTHING;
+      // Sampled UNCONDITIONALLY — like fps and bandwidth. Jitter is most often
+      // reported after it is seen, so the window has to already hold the frames
+      // that caused it by the time the tab is opened. Suspensions are counted but
+      // NOT sampled: they are not frames, and one of them swamps the window.
+      if (deltaMS > FRAME_SUSPEND_MS) {
+        this.frameSuspends++;
+      } else {
+        this.frameSamples.push(deltaMS);
+        if (this.frameSamples.length > FRAME_WINDOW) this.frameSamples.shift();
+      }
     }
     // History sampling runs unconditionally so the trail reflects
     // activity from before the panel was opened — the source owns the
@@ -683,6 +706,8 @@ export class DebugPanel {
     this.mainBandwidth.textContent = `${fmtRate(this.bwDownRate)} · ${fmtRate(this.bwUpRate)}`;
     this.texFps.textContent        = fpsText;
     this.texDrawCalls.textContent  = dcText;
+    this.frmFps.textContent        = fpsText;
+    this.renderFrameStats(deltaMS);
 
     if (atlasStats) {
       this.texAtlases.textContent = String(atlasStats.atlases);
@@ -778,6 +803,54 @@ export class DebugPanel {
     row.appendChild(labelEl);
     row.appendChild(btn);
     parent.appendChild(row);
+  }
+
+  /** Fill the Frame tab from {@link frameSamples}.
+   *
+   *  Everything here is a DISTRIBUTION statistic, because that is what "it looks
+   *  jittery" means. A mover speculating its own position advances by the frame
+   *  delta, so uneven deltas ARE uneven motion even when the average is perfect —
+   *  60 fps held exactly and 60 fps alternating 8/25 ms produce the same fps row
+   *  and completely different-looking movement.
+   *
+   *  Reading it: σ near 1 ms with a flat delta line is a healthy vsynced loop, and
+   *  a stutter seen on screen is then NOT the frame loop — look at the movement
+   *  speculation instead. σ of several ms, or a non-zero hitch count, is the frame
+   *  loop, and the delta sparkline says which: isolated spikes = hitching (a bake,
+   *  a GC, a stream landing), a fuzzy band = chronic pacing. */
+  private renderFrameStats(deltaMS: number): void {
+    const s = this.frameSamples;
+    if (s.length < 2) return;
+    const sorted = [...s].sort((a, b) => a - b);
+    const q = (p: number): number => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+    const median = q(0.5);
+    let sum = 0;
+    for (const v of s) sum += v;
+    const mean = sum / s.length;
+    // Population σ about the MEAN. Deliberately not σ about the median: the metric
+    // wanted here is total spread including the tail, and the tail is the part that
+    // shows on screen.
+    let varSum = 0;
+    for (const v of s) varSum += (v - mean) * (v - mean);
+    const sigma = Math.sqrt(varSum / s.length);
+    const hitchLimit = median * HITCH_FACTOR;
+    let hitches = 0;
+    for (const v of s) if (v > hitchLimit) hitches++;
+
+    const ms = (v: number): string => v.toFixed(1);
+    this.frmLast.textContent   = `${ms(deltaMS)} ms`;
+    this.frmMean.textContent   = `${ms(mean)} · ${ms(median)} ms`;
+    this.frmJitter.value.textContent = `σ ${ms(sigma)} ms`;
+    this.frmTail.textContent   = `${ms(q(0.95))} · ${ms(q(0.99))} ms`;
+    this.frmRange.textContent  = `${ms(sorted[0])}–${ms(sorted[sorted.length - 1])} ms`;
+    const susp = this.frameSuspends > 0 ? `  (+${this.frameSuspends} susp)` : "";
+    this.frmHitch.textContent  = `${hitches} · ${((hitches / s.length) * 100).toFixed(1)}%${susp}`;
+    this.frmDelta.value.textContent = `${s.length}f`;
+    // Two views of the same window: the raw delta (absolute, so a spike's SIZE is
+    // legible) and the deviation from median (so chronic wobble is visible even
+    // when no frame is long enough to register as a hitch).
+    drawSparkline(this.frmDelta.canvas, s);
+    drawSparkline(this.frmJitter.canvas, s.map((v) => Math.abs(v - median)));
   }
 
   private addRow(parent: HTMLDivElement, label: string): HTMLSpanElement {

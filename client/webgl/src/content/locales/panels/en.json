@@ -1,6 +1,5 @@
 {
   "_comment": "Panel UI strings — titles, buttons, labels, placeholders for the client's DOM/PIXI panels. Top-level keys are PANEL KEYS matching `content/panels/defaults.json` (`settingsMenu`, `debugPanel`, `chatPanel`, `gameViewPanel`, …) so a panel's layout defaults and its strings share one identifier. Schema reuses the generic locale-loader leaf rule (see `locales_core.rs`): each panel entry's `label` is its TITLE-BAR text, and EVERY other key is a flat string variant (button captions, row labels, placeholders). Consume from TS via the `localeLabel` / `localeVariant` wasm wrappers (see `webgl/src/game/panels/panelStrings.ts`). Pure glyphs (▲ ▼ ✕ − + ▣ ▢) and numeric placeholders stay hard-coded in the panel code — they are not translatable text.",
-
   "settingsMenu": {
     "label": "Settings",
     "resetPanels": "Reset All Panels",
@@ -12,7 +11,6 @@
     "exitEditMode": "Exit UI Edit Mode",
     "editModeUnavailable": "UI Edit Mode (unavailable)"
   },
-
   "videoPanel": {
     "label": "Video",
     "frameRate": "Frame rate",
@@ -20,12 +18,10 @@
     "native": "Native",
     "fullscreen": "Fullscreen"
   },
-
   "chatPanel": {
     "label": "Chat",
     "inputPlaceholder": "Type a message…"
   },
-
   "chatSettings": {
     "label": "Chat Settings",
     "fontSize": "Font size",
@@ -34,20 +30,16 @@
     "on": "On",
     "off": "Off"
   },
-
   "gameDetailsPanel": {
     "label": "Details",
     "descriptionHeader": "Description"
   },
-
   "gameViewPanel": {
     "label": "Game View"
   },
-
   "gameInventoryPanel": {
     "label": "Inventory"
   },
-
   "panelSettingsPopup": {
     "label": "Panel Settings",
     "settingsHeadingSuffix": "Settings",
@@ -88,7 +80,6 @@
     "player": "Player",
     "soul": "Soul"
   },
-
   "debugPanel": {
     "label": "Debug",
     "debugInfo": "Debug info",
@@ -102,6 +93,13 @@
     "offset": "Offset",
     "fps": "FPS",
     "drawCalls": "Draw Calls",
+    "frameLast": "Frame",
+    "frameMean": "Mean · median",
+    "frameJitter": "Jitter",
+    "frameTail": "p95 · p99",
+    "frameRange": "Range",
+    "frameHitches": "Hitches",
+    "frameDelta": "Frame delta",
     "zoom": "Zoom",
     "atlases": "Atlases",
     "previewSize": "Preview size",

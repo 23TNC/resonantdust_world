@@ -1970,6 +1970,16 @@ _split_variant_sheet() {  # sheet_png gap
   fi
   _key_stack "$sheet"; EMIT_BLEED=1            # magenta despill + edge-bleed, like any diffuse
   _emit_crops "$sheet" "${KEY_STACK[@]}"
+  # The atlas sidecar describes the SHEET, but the manifest walks LEAVES — read_atlas_meta takes a
+  # leaf path — so a sidecar left beside the source is never read and the sheet is served flat.
+  # Carry it into every leaf this sheet produced.
+  if [[ -f "$kind_dir/atlas.json" ]]; then
+    local _k
+    for (( _k = 0; _k < ncount; _k++ )); do
+      [[ -d "$kind_dir/$_k" ]] && cp -f "$kind_dir/atlas.json" "$kind_dir/$_k/atlas.json"
+    done
+    echo "    atlas.json -> $ncount leaf/leaves (the manifest reads it per leaf, not per kind)"
+  fi
   EMIT_SIDE=0; EMIT_MAXDIM=0                   # back to per-blob for any later caller
   echo "    sprite.$dir.$layer -> $ncount variant(s) [$dir l$layer] into $(basename "$kind_dir")/{0..$((ncount-1))}/"
   LAST_TOTAL=$LAST_COUNT

@@ -375,6 +375,9 @@ def main():
                          "tile against itself, or nothing")
     ap.add_argument("--overlap", type=int, default=0,
                     help="px of surplus texture the wrap join may cut through (default 0 = tile//2)")
+    ap.add_argument("--inset", type=float, default=0.0, metavar="F",
+                    help="per-cell sampling inset as a fraction of a cell (default 0); recorded as "
+                         "padU/padV for the client to trim, never baked into pixels")
     ap.add_argument("--flatten", type=float, default=1.0, metavar="AMOUNT",
                     help="divide out lighting broader than a tile so cells match in brightness "
                          "(default 1.0 = full; 0 keeps the model's baked lighting)")
@@ -402,6 +405,11 @@ def main():
     # to an off-by-one size that then has to be resampled.
     cap = (args.tile if args.seamless == "cell" else args.grid * args.tile) - 1
     ov = min(cap, args.overlap if args.overlap > 0 else max(4, args.tile // 2))
+    # Per-cell SAMPLING inset, the same contract as bin/art's GRID_INSET_FRAC: the client samples
+    # only the inner (1-2f) of each cell, so the outer margin absorbs a downscale that would
+    # otherwise pull a neighbour cell across. Normalized per the manifest as f/cols. 0 by default —
+    # a full-bleed ground sheet has no gutter to spare and its neighbours are its own content.
+    inset = args.inset
     down = args.grid * (args.tile + ov) if args.seamless == "cell" else \
            args.grid * args.tile + (ov if args.seamless == "sheet" else 0)
 
@@ -474,7 +482,16 @@ def main():
         outp = os.path.join(leaf, texpath.map_name(args.map_name, args.dirn, args.part))
         sheet.save(outp)
         with open(os.path.join(leaf, "atlas.json"), "w") as f:
-            json.dump({"grid": [args.grid, args.grid], "tile": args.tile,
+            # cols/rows/padU/padV are REQUIRED: server/edge/src/tex_manifest.rs::read_atlas_meta
+            # reads exactly those four and every lookup is a `?`, so one missing key makes it
+            # return None and the sheet is served as an ordinary single image — the client never
+            # learns the grid and cannot sample a cell. The generator used to write only
+            # `grid`/`tile`/`pad`, sharing not one key with the parser, so every ground sheet it
+            # produced was silently flat (stream I8). The extra provenance keys below are safe:
+            # the parser ignores what it does not ask for.
+            json.dump({"cols": args.grid, "rows": args.grid,
+                       "padU": round(inset / args.grid, 6), "padV": round(inset / args.grid, 6),
+                       "grid": [args.grid, args.grid], "tile": args.tile,
                        "pad": args.pad, "cell": cell, "source_size": args.size,
                        "greyscale": not args.colour, "seed": seed,
                        "seamless": args.seamless, "overlap": ov, "flatten": args.flatten,
