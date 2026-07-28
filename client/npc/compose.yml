@@ -8,42 +8,34 @@ services:
   # `rust:slim` is enough (plain ws:// everywhere → no TLS backend), same as the
   # headless client core.
   #
-  # The npc crate path-deps `client` at ../core and `resonantdust-codec` at ../shared/codec.
-  # Mount the sibling client/core at /core and the shared workspace at /shared so those
-  # container-relative paths resolve: /workspace/../core = /core and /workspace/../shared =
-  # /shared. `client`'s own transitive `../../shared/codec` resolves from /core to /shared/codec
-  # too — the same codec crate, so cargo unifies it. Sources are ../core and ../../shared: npc
-  # lives at client/npc/.
+  # The npc crate's path deps are REPO-relative (first-pawns F6) — the whole repo mounts at
+  # /workspace with the workdir at client/npc, the same shape bin/sim uses, so one layout
+  # serves both runners.
   build:
     image: rust:slim
     volumes:
-      - .:/workspace
-      - ../core:/core
-      - ../../shared:/shared
-    working_dir: /workspace
+      - ../..:/workspace
+    working_dir: /workspace/client/npc
     command: ["cargo", "build", "--release"]
 
   # Type-check without producing a binary — the quick inner-loop check.
   check:
     image: rust:slim
     volumes:
-      - .:/workspace
-      - ../core:/core
-      - ../../shared:/shared
-    working_dir: /workspace
+      - ../..:/workspace
+    working_dir: /workspace/client/npc
     command: ["cargo", "check", "--all-targets"]
 
   # Run the NPC driver against a gateway on the resonantdust network. Pass the
-  # NPC-owner name + env at invocation:
-  #   docker compose -f npc/compose.yml run --rm \
-  #     -e RD_ENV=dev -e CLIENT_GATEWAY_URL=http://gateway-gateway-1:9473 \
-  #     run wolves
-  # (Or run the built binary straight on the host against the gateway's exposed
-  # port: CLIENT_GATEWAY_URL=http://127.0.0.1:9473 npc/target/release/npc wolves)
+  # NPC-owner name + env at invocation. NOTE: the supervised runner is `bin/sim run npc`
+  # (host network, container rd-npc — first-pawns F6); this service remains for one-off runs.
+  # The gateway resolves the edge as ws://localhost:8473, so host networking is required:
+  #   docker compose -f client/npc/compose.yml run --rm run wolves   # (compose net — legacy)
+  #   bin/sim run npc NPC_BRAIN=wolves                               # (the supervised way)
   run:
     image: rust:slim
-    networks: [resonantdust]
+    network_mode: host
     volumes:
-      - .:/workspace
-    working_dir: /workspace
-    entrypoint: ["/workspace/target/release/npc"]
+      - ../..:/workspace
+    working_dir: /workspace/client/npc
+    entrypoint: ["/workspace/client/npc/target/release/npc"]

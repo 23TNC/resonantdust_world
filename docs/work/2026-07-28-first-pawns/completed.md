@@ -163,3 +163,30 @@ shape, fractional coordinates), landing e=0.01 tiles, no snap-jump. F8: correcti
 log error; stale-intent guards added ([I2](issues.md)): no-clock/finished/serially-older
 intents ignored, `lastIntentTic` dedups. When no intent arrives (I3) the pawn falls back to
 seed→final snapping — correctness rides state, exactly as designed.
+
+## 2026-07-28 · P4 — the Brain seam + the wolves brain, supervised
+
+**The split:** `client/npc` is now a lib (`Bot` harness — login, parameterized-radius
+anchor+wait, event pump, pause tracking — plus the `Brain` trait `{async on_start, on_event,
+tick}`, the `run_brain` runner, and `resolve_thing_def`) + `brains/{wildlife,wolves}` + a thin
+bin dispatching by argv/`NPC_BRAIN`. `wildlife` is the legacy 4-wolf zone-0 behavior ported
+verbatim (compile-verified; logic identical). Cargo paths normalized to REPO-relative and the
+compose mounts collapsed to one whole-repo mount — the same shape `bin/sim` uses (F6).
+
+**The wolves brain (v1):** anchor at `NPC_HOME` (default the dev vantage 100,50) with an
+active radius covering the wander disc (+found: the original 2-tile radii would have spawned
+into an unsubscribed zone); resolve the wolf def from the corpus (F5); ADOPT-FIRST (a restart
+re-uses an existing minted wolf from the zone snapshot — no pack accumulation), CREATE one
+otherwise; then endless single A→B `MOVE_TO`s, waiting on the authoritative arrival (or a
+deadline sized from `tics_per_tile` + 5 s — a lost chain re-issues). Adoption filters on the
+minted band (`>= 0x800000`) + the wolf def, and SURVIVES the cross-zone `StateGone` artifact
+(recorded as [I4](issues.md) — a zone-subscription migration is not a despawn; the first build
+unadopted and deadlocked on it).
+
+**Supervised:** `bin/sim` generalized with `crate_dir()` (npc → `client/npc`) — `bin/sim run
+npc NPC_BRAIN=wolves` starts container `rd-npc` on the host network, zero manual steps.
+Verified live (soak left RUNNING): "minted wolf adopted 0x30800003" → 8 consecutive trips,
+each arriving at EXACTLY hops×0.5 s (4 hops→2.0 s, 6→3.0 s, 2→1.0 s; the one cross-zone trip
+ran +3 s — the I4 churn). Two build snags eaten en route: the docker mtime miss struck again
+(stale binary ran twice — the recorded `touch` rule fixed it) and `bin/sim run` happily runs a
+stale binary after a failed build (worth a guard someday).

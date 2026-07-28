@@ -85,14 +85,14 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P4 · npc — harness + the wolves brain, in a container
 
-- [ ] Split `client/npc` into a lib (`Bot` harness + `Brain` trait: on_start / on_event / tick)
+- [x] Split `client/npc` into a lib (`Bot` harness + `Brain` trait: on_start / on_event / tick)
       and a thin bin dispatching brains by name; port `wildlife` onto it unchanged. Acceptance:
       `rd build npc` green; existing behavior preserved.
-- [ ] Wolves brain v1: spawn ONE wolf via `CREATE`, adopt the minted id from the first wolf
+- [x] Wolves brain v1: spawn ONE wolf via `CREATE`, adopt the minted id from the first wolf
       `StateObject` in the anchored zone (F3), then repeatedly pick a dest tile and issue ONE
       A→B `MOVE_TO`, waiting on the destination `State` (or timeout) before the next.
       Acceptance: the wolf walks multi-tile paths from single commands.
-- [ ] Run the npc as a supervised container `rd-npc-<brain>` (F6 — lean: extend `bin/sim`) with
+- [x] Run the npc as a supervised container `rd-npc-<brain>` (F6 — lean: extend `bin/sim`) with
       brain + gateway env. Acceptance: one command starts it; the wolf spawns and wanders with
       zero manual steps.
 

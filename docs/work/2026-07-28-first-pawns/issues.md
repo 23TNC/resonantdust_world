@@ -31,3 +31,14 @@ sub already solve with an `on_applied` replay; the event sub has NO such replay 
 dedup). Fix candidates: an `on_applied` replay + edge-side seen-set, or client-side only (the
 `lastIntentTic` guard already dedups). Reproduce + fix with the npc soak (P4) — it issues
 moves continuously.
+
+## I4 · A cross-zone hop fires `StateGone` (a subscription-migration artifact, not a despawn)
+
+When a pawn's `entity_state` row's `macro_position_reference` changes zones, the OLD zone's
+subscription delivers a delete → the edge relays `StateGone` → clients see a phantom despawn
+(the npc lost its adoption and deadlocked; the browser drops + re-adds the warm prim). The
+insert for the new zone arrives too, but ordering is not guaranteed. v1 handling: the wolves
+brain keeps its adoption through `StateGone` (nothing despawns pawns yet); the MoverLayer
+re-adds on the next row. The real fix is edge-side: suppress the `StateGone` when the same
+entity is still visible under another subscribed zone (the edge holds both subs and can dedup)
+— or a tombstone delay. Design-adjacent: ACTIONS.md §PLACE's cross-zone invariant.

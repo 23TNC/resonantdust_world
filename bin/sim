@@ -25,9 +25,18 @@ SIM_CRATES=(master orchestrator worker)
 die() { echo "sim: $*" >&2; exit 1; }
 log() { echo "── $*"; }
 
+# A sim crate's repo-relative dir — the server trio under server/, the npc driver under
+# client/ (first-pawns F6: one supervisor for every headless sim process).
+crate_dir() {
+  case "$1" in
+    npc) echo "client/npc" ;;
+    *)   echo "server/$1" ;;
+  esac
+}
+
 require_crate() {
   local c="$1"
-  [[ -f "$REPO/server/$c/Cargo.toml" ]] || die "no crate at server/$c (have: ${SIM_CRATES[*]})"
+  [[ -f "$REPO/$(crate_dir "$c")/Cargo.toml" ]] || die "no crate at $(crate_dir "$c") (have: ${SIM_CRATES[*]} npc)"
 }
 
 # Build the cached builder image if missing (or FORCE_IMAGE=1). rust:slim + the TLS/build deps the
@@ -53,7 +62,7 @@ cargo_in() {
   docker run --rm --network host \
     -v "$REPO":/workspace \
     -v "$CARGO_VOL":/usr/local/cargo/registry \
-    -w "/workspace/server/$crate" \
+    -w "/workspace/$(crate_dir "$crate")" \
     "$IMAGE" "$@"
 }
 
@@ -64,7 +73,7 @@ cmd_run() {
   local crate="$1"; shift || true
   require_crate "$crate"
   ensure_image
-  local bin="server/$crate/target/release/$crate"
+  local bin="$(crate_dir "$crate")/target/release/$crate"
   [[ -x "$REPO/$bin" ]] || die "not built — run 'sim build $crate' first ($bin missing)"
   # Pass K=V args through as -e; default RUST_LOG if unset.
   local envs=(-e "RUST_LOG=${RUST_LOG:-$crate=info}")
