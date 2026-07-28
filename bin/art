@@ -2436,6 +2436,10 @@ cmd_remaster() {
     echo "art: --size $size -> scaled $nsz master map(s) to ${size}px short-axis (sources kept full-res)"
   fi
 
+  # Stamp span/square into each leaf's meta.json now that every map exists (the inference
+  # fallback measures a real map). Non-fatal: a missing span must not fail a remaster.
+  cmd_leaf_span "$MASTER_DIR/$SPLIT_TARGET" || echo "art: leaf-span skipped" >&2
+
   # AFTER --size: the guard ring is measured against the FINAL canvas, so padding first and
   # resizing second would rescale the ring itself and leave a fractional guard.
   _pad_maps "$MASTER_DIR/$SPLIT_TARGET" "$pad" || return 1
@@ -3296,6 +3300,16 @@ cmd_generate() {
   RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/generate.py" "$@"
 }
 
+# Stamp each variant leaf's frame SPAN (tiles) + packing square into its meta.json. The span is
+# AUTHORED in the DSL corpus (`thing.span`) and only cached here — the texture tree must never
+# become a second place to change it (textures/ is gitignored, so that copy would be the
+# unversioned one). Resolution: corpus -> the leaf's own atlas.json (an atlas STATES its tile
+# count) -> inferred from the art and marked `span_inferred`. Delegates to lib/leaf_span.py.
+cmd_leaf_span() {
+  command -v python3 >/dev/null || { echo "art leaf-span: python3 not found" >&2; return 1; }
+  RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/leaf_span.py" "$@"
+}
+
 cmd_generate_tile() {
   # Ground/terrain tile sheets: plain txt2img (no silhouette, no direction, no alpha), downscaled
   # and cut into a padded sprite map placed in the texture tree. Greyscale by default because the
@@ -3338,6 +3352,7 @@ main() {
   case "$cmd" in
     generate) cmd_generate "$@" ;;
     generate-tile) cmd_generate_tile "$@" ;;
+    leaf-span)     cmd_leaf_span "$@" ;;
     split_layers) cmd_split_layers "$@" ;;
     outline) cmd_outline "$@" ;;
     remaster) cmd_remaster "$@" ;;

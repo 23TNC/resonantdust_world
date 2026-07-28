@@ -71,3 +71,26 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   wrap measured 0.99. The tool now measures whatever `--seamless` actually selected and labels it
   (`sheet wrap` vs `worst of N cells`), recording which in `atlas.json` as `seam_measured_on`. Left
   unfixed, every healthy sheet would have reported itself broken. **P1 complete: 4/4.**
+
+## P2 — Carry the tile footprint in the leaf metadata
+
+- **2026-07-28 · P2.1 · Footprint ownership decided.** [F1](forks.md#f1): the corpus authors
+  (`thing.span` in `content/visual/things.rd`), the leaf caches. Three alternatives rejected with
+  reasons. [F2](forks.md#f2) was rewritten at P0.2 once `footprint` turned out to already exist and
+  mean occupancy — the square derives from `span` alone ([I6](issues.md#i6)).
+- **2026-07-28 · P2.3 · Corpus span reader** (`bin/lib/def_span.py`). Maps a texture stem to its
+  authored `thing.span` by pairing `&thing.texture set` with `&thing.span set` inside each def.
+  Verified: `biome-thing/default/conifer` → 2 (square 256 at 128 px, 128 at `RD_TILE_PX=64`);
+  `pawn/animal/wolf`, `biome-thing/default/flora` and any unknown stem → **exit 1**, so the caller
+  falls back rather than silently assuming span 1. Skips the `white` placeholder (6 defs use it and
+  it names no leaf). Rounds up to pow2 since the loader never validates ([I7](issues.md#i7)).
+  Re-confirms [I5](issues.md#i5) live: 1 of 3 real-art defs authors a span.
+- **2026-07-28 · P2.2 · Span stamped into every leaf** (`bin/lib/leaf_span.py`, `art leaf-span`,
+  and a remaster stage). Acceptance met: `conifer/0` → `span 2, square 256, span_from corpus`.
+  Resolution is three-tier — corpus, then the leaf's own `atlas.json` (an atlas *states* its tile
+  count, so `smooth/wall` resolves `span 4, square 512` as fact rather than measurement), then
+  inference from the art marked `span_inferred`. Whole tree: **80 leaves — 9 corpus, 3 atlas,
+  68 inferred**, which is [I5](issues.md#i5) quantified. Two bugs caught in test: the source tally
+  ran outside its `if` guard, and `span_inferred` persisted stale because `meta.update` merges and
+  cannot delete a key — the flag is now always written, so a leaf that stops being inferred loses
+  the marker.
