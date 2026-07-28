@@ -33,10 +33,10 @@ no-material bake bit-identical (readback hash of the albedo + normal composites)
 
 ## P5 — the conifer pine-needle material
 
-- [ ] Append the `needle` field to `bin/lib/noise_fields.py` + regenerate the atlas ([F4](forks.md#f4)). Acceptance: atlas row 2 = needle; `mottle`/`strand` rows byte-unchanged (append-only).
-- [ ] Author the conifer material in content: layer 0 (R, foliage) = needle detail + green hue variation; layer 1 (trunk) = mild bark mottle, no hue swing. Acceptance: content loads; trunk visually unchanged in the A/B.
-- [ ] The stream-level A/B: conifers at area1 vs the pre-stream build — needles read, adjacent trees differ, silhouette unchanged, user verdict on "less plastic" solicited. Acceptance: screenshot pair + verdict recorded.
+- [x] Append the `needle` field to `bin/lib/noise_fields.py` + regenerate the atlas ([F4](forks.md#f4)). Acceptance: atlas row 2 = needle; `mottle`/`strand` rows byte-unchanged (append-only).
+- [x] Author the conifer material in content: layer 0 (R, foliage) = needle detail + green hue variation; layer 1 (trunk) = mild bark mottle, no hue swing. Acceptance: content loads; trunk visually unchanged in the A/B.
+- [x] The stream-level A/B: conifers at area1 vs the pre-stream build — needles read, adjacent trees differ, silhouette unchanged, user verdict on "less plastic" solicited. Acceptance: screenshot pair + verdict recorded.
 
 ## P6 — wrap
 
-- [ ] Record final evidence (identity hashes, bake timings, the F1 verdict or its pending state) in completed.md; update the work index row. Acceptance: `bin/rd docs-check` green.
+- [x] Record final evidence (identity hashes, bake timings, the F1 verdict or its pending state) in completed.md; update the work index row. Acceptance: `bin/rd docs-check` green.

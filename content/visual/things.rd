@@ -32,10 +32,11 @@
                 ; colour, subtracted into the residual, is lost). ch0 (foliage) also binds
                 ; the `strand` material so the needles gain fine hue/chroma variation —
                 ; colour, not light; ch1 (trunk) is tint-only (no jitter).
-                "strand &thing.packed.0.material set
+                "pineneedle &thing.packed.0.material set
                 #46d64f &thing.packed.0.tint set
-                ; ch1 (trunk): NO material, just its natural base colour so the residual
-                ; reconstructs the original brown trunk faithfully (un-restyled).
+                ; ch1 (trunk): the bark material (material-system P5) — mild mottled relief,
+                ; no hue swing; the natural base colour reconstructs the brown faithfully.
+                "bark &thing.packed.1.material set
                 #b0754f &thing.packed.1.tint set
                 0 return
             @on_destroy>

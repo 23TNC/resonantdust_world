@@ -65,10 +65,26 @@ function latticeFor(field: NoiseFieldName): [number, number] {
   switch (field) {
     case "strand":
       return [4, 24]; // fine + vertically stretched → streaks
+    case "needle":
+      return [9, 48]; // high-frequency, strongly stretched — the dash raw material
     case "mottle":
     default:
       return [6, 6]; // mid-frequency isotropic blobs
   }
+}
+
+/** Per-field value transform (material-system F4): `needle` SHARPENS the stretched field into
+ *  short light/dark dashes — pine-needle clumping — instead of smooth streaks. Identity for the
+ *  smooth fields. */
+function shapeFor(field: NoiseFieldName): (v: number) => number {
+  if (field === "needle") {
+    const sharp = (v: number): number => {
+      const t = Math.min(Math.max((v - 0.38) / 0.24, 0), 1);
+      return t * t * (3 - 2 * t);
+    };
+    return sharp;
+  }
+  return (v) => v;
 }
 
 /** Build the noise atlas: one `FIELD_PX`-tall row per `NOISE_FIELDS` entry, R/G = two
@@ -79,6 +95,7 @@ export function makeNoiseAtlas(gl: WebGL2RenderingContext): Texture {
   const data = new Uint8Array(FIELD_PX * FIELD_PX * rows * 4);
   NOISE_FIELDS.forEach((field, row) => {
     const [fx, fy] = latticeFor(field);
+    const shape = shapeFor(field);
     // Distinct seeds per channel per field → R and G are independent.
     const nHue = fbm(mulberry32(0x9e37 + row * 131), fx, fy);
     const nChroma = fbm(mulberry32(0x1b56 + row * 977), fx, fy);
@@ -87,8 +104,8 @@ export function makeNoiseAtlas(gl: WebGL2RenderingContext): Texture {
         const u = x / FIELD_PX;
         const v = y / FIELD_PX;
         const p = ((row * FIELD_PX + y) * FIELD_PX + x) * 4;
-        data[p] = Math.round(nHue(u, v) * 255); // R → hue field
-        data[p + 1] = Math.round(nChroma(u, v) * 255); // G → chroma field
+        data[p] = Math.round(shape(nHue(u, v)) * 255); // R → hue field
+        data[p + 1] = Math.round(shape(nChroma(u, v)) * 255); // G → chroma field
         data[p + 2] = 0;
         data[p + 3] = 255;
       }

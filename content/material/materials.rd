@@ -40,10 +40,36 @@
             0.12 &chromaSwing set
             -0.4 &warmCoolBias set
             uv &sampleSpace set
-            ; material-system P3: NORMAL DETAIL — a tiling field RNM-blended onto the base
-            ; normal at bake (amplitude x the channel's layer weight), restoring the
-            ; high-frequency structure generated normals lack. 0 amp = off.
-            strand &detailField set
-            0.55 &detailAmp set
-            2.5 &detailScale set
+            0 return
+
+    ; Pine needles (material-system P5) — the conifer's FOLIAGE channel (layer 0/R).
+    ; The `needle` field (short sharpened dashes, strongly stretched) carries BOTH the
+    ; normal detail (RNM at bake — de-plastics the generated normal) and, via the
+    ; detail-keyed colour placement (F1 lean), the green variation: colour clumps ARE
+    ; needle clumps. Swings calmer than `strand` — variation should read as foliage,
+    ; not paint.
+    ::pineneedle>
+        @on_create>
+            needle &noiseField set
+            14 &hueSwing set
+            0.05 &chromaSwing set
+            -0.2 &warmCoolBias set
+            uv &sampleSpace set
+            needle &detailField set
+            0.6 &detailAmp set
+            3 &detailScale set
+            0 return
+
+    ; Bark (material-system P5) — the conifer's TRUNK channel (layer 1/G). Mild mottled
+    ; relief, NO hue swing (bark keeps its colour; only its surface roughens).
+    ::bark>
+        @on_create>
+            mottle &noiseField set
+            0 &hueSwing set
+            0.03 &chromaSwing set
+            0 &warmCoolBias set
+            uv &sampleSpace set
+            mottle &detailField set
+            0.25 &detailAmp set
+            1.5 &detailScale set
             0 return

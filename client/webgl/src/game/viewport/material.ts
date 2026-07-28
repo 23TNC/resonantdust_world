@@ -16,7 +16,7 @@
  *  index here; an unknown/absent name resolves to {@link NO_NOISE_FIELD} (→ the shader
  *  samples a neutral 0.5 = no perturbation). Extend by APPENDING (atlas rows are
  *  positional) as `bin/lib/noise_fields.py` grows the set. */
-export const NOISE_FIELDS = ["mottle", "strand"] as const;
+export const NOISE_FIELDS = ["mottle", "strand", "needle"] as const;
 export type NoiseFieldName = (typeof NOISE_FIELDS)[number];
 
 /** Sentinel for "no noise field" — the shader treats it as a constant 0.5 (identity). */
