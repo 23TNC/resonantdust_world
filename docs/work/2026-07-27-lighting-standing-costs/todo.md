@@ -25,11 +25,11 @@ _Plan for the stream (see [README.md](README.md)). Fixture throughout: the calib
 
 ## P3 — the persistent receiver map
 
-- [ ] Add a receiver-dirty mirror (R8UI, per tile) fed ONLY by `markPrimDirty`/`markBillboardDirty` — never by light moves ([F2](forks.md#f2)). Acceptance: orbiting a light leaves it empty; moving/adding/removing a billboard marks its rect.
-- [ ] Bake the receiver map: a FINE RT of (billboard id, coverage, baseY, world normal), written by a pass running `receiverAt` + `billboardNormal` under the receiver-dirty gate. Acceptance: `/overlayRT` decode shows ids + normals; zoom-sweep stable.
-- [ ] Convert `LIGHT_FRAG` to read the receiver map — one fetch replaces the 6-row bucket scan + record decodes + normal derivation. Acceptance: lightmap bit-identical to the live-scan build on a static scene; identity 0.
-- [ ] Convert `GATHER_FRAG` likewise, including the `allBillboard` corner test (bake the flag or read the 3 neighbour texels). Acceptance: shadow RT bit-identical to the live-scan build; identity 0.
-- [ ] Re-measure ms per tile-light pair on the reach sweep and record the new constant. Acceptance: table in completed.md, beside the old 0.0015.
+- [x] Add a receiver-dirty mirror (R8UI, per tile) fed ONLY by `markPrimDirty`/`markBillboardDirty` — never by light moves ([F2](forks.md#f2)). Acceptance: orbiting a light leaves it empty; moving/adding/removing a billboard marks its rect.
+- [x] Bake the receiver map: a FINE RT of (billboard id, coverage, baseY, world normal), written by a pass running `receiverAt` + `billboardNormal` under the receiver-dirty gate. Acceptance: `/overlayRT` decode shows ids + normals; zoom-sweep stable.
+- [x] Convert `LIGHT_FRAG` to read the receiver map — one fetch replaces the 6-row bucket scan + record decodes + normal derivation. Acceptance: lightmap bit-identical to the live-scan build on a static scene; identity 0.
+- [x] Convert `GATHER_FRAG` likewise, including the `allBillboard` corner test (bake the flag or read the 3 neighbour texels). Acceptance: shadow RT bit-identical to the live-scan build; identity 0.
+- [x] Re-measure ms per tile-light pair on the reach sweep and record the new constant. Acceptance: table in completed.md, beside the old 0.0015.
 
 ## P4 — wrap + re-sync the budget
 

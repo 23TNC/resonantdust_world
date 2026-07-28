@@ -651,6 +651,7 @@ const LIGHT_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 uniform highp usampler2D uData;    // presence (sets 3/5) + light records (set 2)
+uniform highp usampler2D uRecvFine; // baked FINE receiver map (P3): id(16)|presence(1) — replaces the scan
 uniform highp usampler2D uShadow;  // this class's shadow RT (COARSE — upsampled per fine texel) — per-slot u9 coverage
 uniform int uLightClass;           // #4: accumulate only this class of light — 0 = COLD, 1 = HOT
 uniform int uWorldLight;           // world-space-lighting: 1 = TRUE-3D falloff distance (oval + light height), 0 = screen circle
@@ -794,8 +795,7 @@ void main() {
   // lightmap P0 (__shownormal): verify the atlas-frame normal read — paint the billboard's sampled normal (enc
   // 0.5+0.5) where a billboard is drawn, black on ground. Frame-indexed → must be rock-stable across zoom.
   if (uShowNormal == 1) {
-    uint rp; float rc;
-    receiverAt(P, uData, uSurface, uLightAlign, rp, rc);
+    uint rp = texelFetch(uRecvFine, fc, 0).x & 0xffffu;   // P3: baked receiver id
     float sD;
     vec3 n = rp != 0u ? billboardNormal(rp, P, uData, uSurface, uLightAlign, sD) : vec3(0.0);
     // DEBUG (__hideright): blank the RIGHT half of each billboard's normal (sprite-relative s > 0.5) so the LEFT
@@ -808,9 +808,12 @@ void main() {
   // lightmap P1: the WORLD-frame normal for per-light N·L. Only THINGS get N·L for now (ground keeps falloff,
   // ndl = 1 — the old behaviour; ground-as-billboards N·L is a later step). The corpus normal is RAW (camera-facing);
   // worldNormal pitches it to the world frame IN-SHADER (uNormalPitch = 90°−tilt, kept live — F7 reconsidered).
-  uint rbillboardN; float rcovN;
-  receiverAt(P, uData, uSurface, uLightAlign, rbillboardN, rcovN);
-  if (uProfile == 2) { oLight = vec4(rcovN); return; }              // L2: + receiverAt
+  // P3: one baked-map fetch replaces the receiverAt scan. The normal is still fetched LIVE below —
+  // on a KNOWN billboard that's 2 record fetches + 1 atlas fetch, and it keeps uNormalPitch live.
+  uint RF = texelFetch(uRecvFine, fc, 0).x;
+  uint rbillboardN = RF & 0xffffu;
+  float rcovN = (RF & 0x10000u) != 0u ? 1.0 : 0.0;                  // presence bit (debug L2 only)
+  if (uProfile == 2) { oLight = vec4(rcovN); return; }              // L2: + receiver fetch
   float sDbg;
   vec3 pn = rbillboardN != 0u ? billboardNormal(rbillboardN, P, uData, uSurface, uLightAlign, sDbg) : vec3(0.0);
   bool applyNL = rbillboardN != 0u && dot(pn, pn) > 0.0;            // thing with a loaded normal → real N·L
@@ -830,10 +833,82 @@ void main() {
 }
 `;
 
+// ── RECEIVER MAP bakes (standing-costs P3) ────────────────────────────────────────────────────────
+// receiverAt + the corner test are LIGHT-INDEPENDENT: they change only when a BILLBOARD changes, yet
+// the gather + lighting passes re-derived them per texel on every light-motion re-bake (a 6-row
+// bucket scan with full record decodes, per texel, per frame). These two passes bake them ONCE into
+// persistent maps under their own receiver-dirty channel ([F2] in the stream's forks): light moves
+// can NOT dirty them. Values are the EXACT outputs of the same functions at the same P, stored as
+// raw f32 bits — the consumers reconstruct coverage with the identical expression, so the pipeline
+// stays bit-identical to the live-scan build (verified by fixture hash).
+// COARSE (shadow-RT res) — everything GATHER_FRAG needs: baseY, rcov, id, allBillboard.
+const RECEIVER_COARSE_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+uniform highp usampler2D uData;
+uniform sampler2D uSurface;
+layout(location = 0) out uvec4 oRecv; // R = f32 bits baseY | G = id(16)|allB(1) | B = f32 bits rcov
+${GATHER_COMMON}
+int pmod(int a, int m) { return ((a % m) + m) % m; }
+void main() {
+  uvec4 C0 = fetchLin(uData, CONST_BASE);
+  int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0x3FFFu);
+  int uWinCol = int(C0.z) >> 16, uWinRow = (int(C0.z) << 16) >> 16;
+  ivec2 fc = ivec2(gl_FragCoord.xy);
+  int sx = fc.x / uSlot, sy = fc.y / uSlot;
+  int wc = uWinCol + pmod(sx - pmod(uWinCol, uCols), uCols);
+  int wr = uWinRow + pmod(sy - pmod(uWinRow, uRows), uRows);
+  float lx = (float(fc.x) - float(sx * uSlot)) / float(uSlot);
+  float ly = (float(fc.y) - float(sy * uSlot)) / float(uSlot);
+  vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // IDENTICAL to GATHER_FRAG's P
+  uint rbillboard; float rcov;
+  float baseY = receiverAt(P, uData, uSurface, vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF}), rbillboard, rcov);
+  bool allB = false;
+  if (clamp(rcov, 0.0, 1.0) > 0.0) {
+    float b0, b1, b2;
+    vec2 al = vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF});
+    allB = receiverCover(rbillboard, P + vec2(1.0, 0.0), P, uData, uSurface, al, b0) > 0.0
+        && receiverCover(rbillboard, P + vec2(0.0, 1.0), P, uData, uSurface, al, b1) > 0.0
+        && receiverCover(rbillboard, P + vec2(1.0, 1.0), P, uData, uSurface, al, b2) > 0.0;
+  }
+  oRecv = uvec4(floatBitsToUint(baseY), (rbillboard & 0xffffu) | (allB ? 0x10000u : 0u), floatBitsToUint(rcov), 0u);
+}
+`;
+// FINE (lightmap res) — LIGHT_FRAG needs only the winning receiver ID (its normal fetch is cheap on
+// a KNOWN billboard; the scan was the cost). R32UI: id(16) | presence(1).
+const RECEIVER_FINE_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+uniform highp usampler2D uData;
+uniform sampler2D uSurface;
+uniform vec2 uLightAlign;             // the LIGHTING seat (decoupled from the shadow's RECV_ALIGN)
+layout(location = 0) out uvec4 oRecv;
+${GATHER_COMMON}
+int pmod(int a, int m) { return ((a % m) + m) % m; }
+const int FINE = ${FINE_RATIO};
+void main() {
+  uvec4 C0 = fetchLin(uData, CONST_BASE);
+  int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0x3FFFu);
+  int uWinCol = int(C0.z) >> 16, uWinRow = (int(C0.z) << 16) >> 16;
+  int uSlotF = uSlot * FINE;
+  ivec2 fc = ivec2(gl_FragCoord.xy);
+  int sx = fc.x / uSlotF, sy = fc.y / uSlotF;
+  int wc = uWinCol + pmod(sx - pmod(uWinCol, uCols), uCols);
+  int wr = uWinRow + pmod(sy - pmod(uWinRow, uRows), uRows);
+  float lx = (float(fc.x) - float(sx * uSlotF)) / float(uSlotF);
+  float ly = (float(fc.y) - float(sy * uSlotF)) / float(uSlotF);
+  vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // IDENTICAL to LIGHT_FRAG's P
+  uint rp; float rc;
+  receiverAt(P, uData, uSurface, uLightAlign, rp, rc);
+  oRecv = uvec4((rp & 0xffffu) | (rc > 0.0 ? 0x10000u : 0u), 0u, 0u, 0u);
+}
+`;
+
 const GATHER_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 uniform highp usampler2D uData;       // THE unified data texture (defs|billboards|lights|presence|buckets)
+uniform highp usampler2D uRecvCoarse; // baked receiver map (P3) — baseY | id|allB | rcov, this shader's res
 uniform sampler2D uSurface;           // the shared surface atlas page (F2) — silhouette coverage in B
 uniform int uCorridor;                // P6: 1 = segment-DDA corridor walk, 0 = brute-force reach box
 uniform int uLightClass;              // #4: process only this class of light — 0 = COLD (static), 1 = HOT (dynamic)
@@ -871,9 +946,13 @@ void main() {
   // shadows-onto-billboards: is a standing billboard DRAWN at this texel, and its base row? IN-FAMILY (caster buckets
   // + surface atlas by index) — zoom-safe by construction, NOT the reverted zdepth-composite world read.
   if (uGProfile == 1) { fragColor = uvec4(0u); return; } // G1: prologue only
-  uint rbillboard; float rcov;
-  float baseY = receiverAt(P, uData, uSurface, vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF}), rbillboard, rcov); // shadow mask offset; rbillboard 0 = ground
-  if (uGProfile == 2) { fragColor = uvec4(uint(rcov)); return; } // G2: + receiverAt
+  // P3: the receiver scan is BAKED — one fetch replaces receiverAt (6-row bucket scan + record
+  // decodes) and the 3-corner test. Values are the same functions' exact outputs at this P.
+  uvec4 R0 = texelFetch(uRecvCoarse, fc, 0);
+  uint rbillboard = R0.y & 0xffffu;
+  float rcov = uintBitsToFloat(R0.z);
+  float baseY = uintBitsToFloat(R0.x);
+  if (uGProfile == 2) { fragColor = uvec4(uint(rcov)); return; } // G2: + receiver fetch
   bool isThing = rbillboard != 0u;
   float maskCov = clamp(rcov, 0.0, 1.0);                     // SOFT mask coverage → blends ground↔thing at the silhouette edge
   // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
@@ -885,14 +964,7 @@ void main() {
   // corners against rbillboard's silhouette (P is already on rbillboard since maskCov>0). If a corner falls OFF the billboard
   // the texel STRADDLES ground → we add the ground shadow below so its ground px darken; if all-on-billboard we cull
   // the ground (no ground visible there). Light-INDEPENDENT (geometry only) → computed ONCE, out of the loop.
-  bool allBillboard = false;
-  if (maskCov > 0.0) {
-    float b0, b1, b2;
-    vec2 al = vec2(${RECV_ALIGN_XF}, ${RECV_ALIGN_YF});
-    allBillboard = receiverCover(rbillboard, P + vec2(1.0, 0.0), P, uData, uSurface, al, b0) > 0.0
-           && receiverCover(rbillboard, P + vec2(0.0, 1.0), P, uData, uSurface, al, b1) > 0.0
-           && receiverCover(rbillboard, P + vec2(1.0, 1.0), P, uData, uSurface, al, b2) > 0.0;
-  }
+  bool allBillboard = (R0.y & 0x10000u) != 0u; // P3: corner test baked with the receiver map
 
   if (uGProfile == 3) { fragColor = uvec4(allBillboard ? 1u : 0u); return; } // G3: + corner test
 
@@ -1190,10 +1262,24 @@ export class ShadowGather {
   private coldRectVerts = 0;
   private hotRectVerts = 0;
   private dirtyGeo: Geometry | null = null;
-  /** DEBUG (P2 acceptance): Σ rect areas in TILES per class last build — must equal the dirty counts. */
-  debugRectTiles: [number, number] = [0, 0];
-  /** DEBUG (P2 acceptance): rects emitted per class last build. */
-  debugRectCount: [number, number] = [0, 0];
+  /** DEBUG (P2 acceptance): Σ rect areas in TILES per channel last build — must equal the dirty
+   *  counts. Index 0 = cold, 1 = hot, 2 = receiver (P3). */
+  debugRectTiles: [number, number, number] = [0, 0, 0];
+  /** DEBUG (P2 acceptance): rects emitted per channel last build. */
+  debugRectCount: [number, number, number] = [0, 0, 0];
+  /** P3 receiver-dirty channel ([F2] in the stream's forks): fed ONLY by billboard/prim changes,
+   *  owner change (pan/zoom), and force-all — NEVER by a light move. That separation is the whole
+   *  win: light motion re-bakes lighting without re-deriving light-independent receiver geometry. */
+  private receiverMirror = new Uint8Array(0);
+  private receiverPending: [number, number, number, number][] = [];
+  private forceReceiverDirty = true;
+  private receiverRectPos = new Float32Array(0);
+  private receiverRectVerts = 0;
+  private receiverDirtyCount = 0;
+  /** DEBUG (P3 acceptance): receiver-bake passes submitted last frame (0/1). */
+  debugReceiverDraws = 0;
+  private receiverCoarseRT: RenderTarget | null = null;
+  private receiverFineRT: RenderTarget | null = null;
   /** P6: walk the segment corridor (true) or the brute-force reach box (false). Brute is the
    *  validation baseline — `__corridor(false)` + `__shadowDiff()` must report 0 mismatches. */
   private corridor = true;
@@ -1203,10 +1289,15 @@ export class ShadowGather {
    *  {@link buildDirty}, then cleared. A moved light only changes shadow inside its old ∪ new reach. */
   private pendingRects: [number, number, number, number, number][] = [];
 
+  private readonly recvCoarse: Program;
+  private readonly recvFine: Program;
+
   constructor(private readonly renderer: Renderer) {
     const gl = renderer.gl;
     this.gather = new Program(gl, FULLSCREEN_VERT, GATHER_FRAG, "shadow-gather");
     this.lighting = new Program(gl, FULLSCREEN_VERT, LIGHT_FRAG, "world-lighting");
+    this.recvCoarse = new Program(gl, FULLSCREEN_VERT, RECEIVER_COARSE_FRAG, "receiver-coarse");
+    this.recvFine = new Program(gl, FULLSCREEN_VERT, RECEIVER_FINE_FRAG, "receiver-fine");
     this.overlay = new Program(gl, OVERLAY_VERT, OVERLAY_FRAG, "shadow-overlay");
     this.gizmo = new Program(gl, GIZMO_VERT, GIZMO_FRAG, "shadow-gizmo");
     this.empty = new Texture(gl, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
@@ -1496,6 +1587,7 @@ export class ShadowGather {
    *  shrug whenever the scoped path is inconvenient ([issues.md#i4]). */
   rebakeAll(): void {
     this.forceColdDirty = this.forceHotDirty = true;
+    this.forceReceiverDirty = true; // P3: global constants (__tilt, __lightalign, …) shift receiver values too
     this.coldDirty = true;   // records may have changed with it
     this.lightsVer++;        // and so may per-tile presence
   }
@@ -1538,6 +1630,7 @@ export class ShadowGather {
     const x0 = Math.floor(x / SQUARE) - 1, y0 = Math.floor(y / SQUARE) - 1;
     const x1 = Math.floor((x + w) / SQUARE) + 1, y1 = Math.floor((y + h) / SQUARE) + 1;
     this.pendingRects.push([x0, y0, x1, y1, 2]); // a caster affects BOTH classes at its own tiles
+    this.receiverPending.push([x0, y0, x1, y1]); // P3: a billboard change re-bakes ITS receiver tiles
     for (const [id, L] of this.coldData.carriedLights) {
       if (this.litSeen.has(id)) continue;
       const cx = Math.min(Math.max(L.x, x), x + w), cy = Math.min(Math.max(L.y, y), y + h);
@@ -1579,6 +1672,7 @@ export class ShadowGather {
     if (this.dirtyCols !== cols || this.dirtyRows !== rows) {
       this.coldMirror = new Uint8Array(cols * rows);
       this.hotMirror = new Uint8Array(cols * rows);
+      this.receiverMirror = new Uint8Array(cols * rows);
       this.ownerCol = new Int32Array(cols * rows);
       this.ownerRow = new Int32Array(cols * rows);
       this.slotValid = new Uint8Array(cols * rows);
@@ -1589,14 +1683,17 @@ export class ShadowGather {
       const maxRects = rows * Math.ceil(cols / 2);
       this.coldRectPos = new Float32Array(maxRects * 12);
       this.hotRectPos = new Float32Array(maxRects * 12);
+      this.receiverRectPos = new Float32Array(maxRects * 12);
       this.dirtyGeo?.destroy();
       this.dirtyGeo = new Geometry(this.renderer.gl, this.gather, {
         aPos: { data: this.coldRectPos, size: 2 },
       });
     }
+    const forceRecv = this.forceReceiverDirty;
+    this.forceReceiverDirty = false;
     const pm = (a: number, m: number): number => ((a % m) + m) % m;
     const baseC = pm(winCol, cols), baseR = pm(winRow, rows);
-    this.coldMirror.fill(0); this.hotMirror.fill(0);
+    this.coldMirror.fill(0); this.hotMirror.fill(0); this.receiverMirror.fill(0);
     for (let sy = 0; sy < rows; sy++) {
       const wr = winRow + pm(sy - baseR, rows);
       for (let sx = 0; sx < cols; sx++) {
@@ -1607,8 +1704,17 @@ export class ShadowGather {
         if (ownerChanged) { this.ownerCol[si] = wc; this.ownerRow[si] = wr; this.slotValid[si] = 1; }
         if (forceCold || ownerChanged) this.coldMirror[si] = 1;
         if (forceHot || ownerChanged) this.hotMirror[si] = 1;
+        if (forceRecv || ownerChanged) this.receiverMirror[si] = 1; // P3: new tiles need receiver values
       }
     }
+    // P3: billboard/prim rects queued for the receiver channel (never light rects — F2).
+    for (const [x0, y0, x1, y1] of this.receiverPending) {
+      const c0 = Math.max(x0, winCol), c1 = Math.min(x1, winCol + cols - 1);
+      const r0 = Math.max(y0, winRow), r1 = Math.min(y1, winRow + rows - 1);
+      for (let wr = r0; wr <= r1; wr++)
+        for (let wc = c0; wc <= c1; wc++) this.receiverMirror[pm(wr, rows) * cols + pm(wc, cols)] = 1;
+    }
+    this.receiverPending.length = 0;
     // P5 scoped dirty: mark every window tile inside a queued rect, into its class(es) (cls 0/1/2).
     for (const [x0, y0, x1, y1, cls] of this.pendingRects) {
       const c0 = Math.max(x0, winCol), c1 = Math.min(x1, winCol + cols - 1);
@@ -1637,6 +1743,9 @@ export class ShadowGather {
     // boundaries and rasterization covers exactly the dirty tiles' texels.
     this.coldRectVerts = this.buildRects(this.coldMirror, cols, rows, this.coldRectPos, 0);
     this.hotRectVerts = this.buildRects(this.hotMirror, cols, rows, this.hotRectPos, 1);
+    this.receiverRectVerts = this.buildRects(this.receiverMirror, cols, rows, this.receiverRectPos, 2);
+    let rc = 0; for (let i = 0; i < this.receiverMirror.length; i++) if (this.receiverMirror[i]) rc++;
+    this.receiverDirtyCount = rc;
   }
 
   /** P2 — row-merge `mirror`'s set tiles into rects and write NDC triangles into `out`.
@@ -1763,6 +1872,16 @@ export class ShadowGather {
     // blit adds it once over cold+hot). On the fixed grid this is `SLOTS · TEXTILE_SQUARE` = 3072×2048,
     // constant — it was `cols · TEXTILE_SQUARE` (world-sized), which is what made it 176 MB at zoom 0.25.
     const fw = SLOTS_X * TEXTILE_SQUARE, fh = SLOTS_Y * TEXTILE_SQUARE;
+    // P3 receiver maps — persistent, baked under the receiver-dirty channel. Coarse (gather res):
+    // baseY/id/allB/rcov as raw f32 bits; fine (lightmap res): id|presence only (R32UI, 33 MB).
+    this.receiverCoarseRT?.destroy(); this.receiverFineRT?.destroy();
+    this.receiverCoarseRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba32uint"] });
+    this.receiverFineRT = new RenderTarget(gl, { width: fw, height: fh, formats: ["r32uint"] });
+    this.receiverCoarseRT.bind();
+    // Ground defaults (baseY −1, id 0, rcov 0) — every texel is force-baked before first read anyway.
+    gl.clearBufferuiv(gl.COLOR, 0, new Uint32Array([0xbf800000, 0, 0, 0]));
+    this.receiverFineRT.bind();
+    gl.clearBufferuiv(gl.COLOR, 0, new Uint32Array([0, 0, 0, 0]));
     // RGBA32F, not RGBA8 (F11b): the lightmap is an ADDITIVE ACCUMULATOR. Each light's contribution is
     // QUANTISED to an integer 0..LIGHT_QUANT and blended in with `blendFunc(ONE, ONE)`; a light is
     // removed by emitting the same value negated. FP32 represents every integer below 2^24 exactly, so
@@ -1834,6 +1953,36 @@ export class ShadowGather {
     // fragments/class) to change nothing. The prev snapshot stays valid for the same reason: an
     // untouched shadow RT means prev == current already.
     this.debugClassDraws = 0;
+    this.debugReceiverDraws = 0;
+    // P3: bake the receiver maps FIRST — the class passes read them this same frame. Runs only when
+    // a billboard/prim changed, the window moved, or a force-all fired; a pure light move skips it.
+    if (this.receiverRectVerts > 0 && this.dirtyGeo) {
+      this.debugReceiverDraws = 1;
+      this.dirtyGeo.update("aPos", this.receiverRectPos.subarray(0, this.receiverRectVerts * 2));
+      this.renderer.draw({
+        program: this.recvFine,
+        geometry: this.dirtyGeo,
+        count: this.receiverRectVerts,
+        target: this.receiverFineRT!,
+        blend: "none",
+        textures: {
+          uData: this.coldData.dataTexture,
+          uSurface: this.coldData.surfacePage ?? this.empty,
+        },
+        uniforms: (p) => p.uVec2("uLightAlign", this.lightAlignX, this.lightAlignY),
+      });
+      this.renderer.draw({
+        program: this.recvCoarse,
+        geometry: this.dirtyGeo,
+        count: this.receiverRectVerts,
+        target: this.receiverCoarseRT!,
+        blend: "none",
+        textures: {
+          uData: this.coldData.dataTexture,
+          uSurface: this.coldData.surfacePage ?? this.empty,
+        },
+      });
+    }
     if (this.coldDirtyCount > 0) {
       this.classPass(0, this.coldShadowRT!, this.coldLightRT!, this.coldShadowPrevRT);
       this.debugClassDraws++;
@@ -1878,6 +2027,7 @@ export class ShadowGather {
       blend: "none",
       textures: {
         uData: this.coldData.dataTexture, // defs | billboards | lights | presence | buckets
+        uRecvCoarse: this.receiverCoarseRT!.textures[0], // P3: baked receiver (baseY | id|allB | rcov)
         uSurface: this.coldData.surfacePage ?? this.empty, // no page yet → defs have no frame → solid quads
       },
       uniforms: (p) => {
@@ -1899,6 +2049,7 @@ export class ShadowGather {
       blend: "none",
       textures: {
         uData: this.coldData.dataTexture, // presence (sets 3/5) + light records (set 2)
+        uRecvFine: this.receiverFineRT!.textures[0], // P3: baked receiver id (fine)
         uShadow: shadowRT.textures[0], // this class's shadow-cold (COARSE — the fine bake upsamples it)
         uSurface: this.coldData.surfacePage ?? this.empty, // lightmap (CO-PACK): silhouette + normal quadrants share this page
       },
@@ -1984,6 +2135,8 @@ export class ShadowGather {
     this.dirtyGeo?.destroy();
     this.coldShadowRT?.destroy(); this.hotShadowRT?.destroy();
     this.coldLightRT?.destroy(); this.hotLightRT?.destroy();
+    this.receiverCoarseRT?.destroy(); this.receiverFineRT?.destroy();
+    this.recvCoarse.destroy(); this.recvFine.destroy();
     this.coldData.destroy();
   }
 }

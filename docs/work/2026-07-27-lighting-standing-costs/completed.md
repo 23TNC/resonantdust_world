@@ -93,3 +93,44 @@ clean texels persist by never being rasterized.
   512×256, so its discard tax was small). `rectTilesPerFrame` tracks `dirtyPerFrame` + ~8 (hot
   overlap double-count, expected). **Discard-tax share is now 0 by construction** — before, a
   reach-4 frame rasterized 512 tiles of fine fragments for 143 dirty (72 % discard-only).
+
+## 2026-07-27 · P3 — the receiver maps: light motion no longer re-derives receiver geometry
+
+Shape refined from the plan during build ([F2] held; the "one fine RT of everything" split in two
+once the consumers' actual needs were read): a **coarse** RGBA32UI map (shadow-RT res, 2 MB) holds
+everything `GATHER_FRAG` needs — `baseY` + `rcov` as raw f32 bits, id, and the baked `allBillboard`
+corner test — and a **fine** R32UI map (lightmap res, 33 MB) holds only the winning receiver ID for
+`LIGHT_FRAG`, whose normal fetch stays LIVE (2 record fetches + 1 atlas fetch on a KNOWN billboard;
+the 6-row scan was the cost, and keeping `billboardNormal` live also keeps `uNormalPitch` live).
+Two bake passes (`RECEIVER_COARSE_FRAG` / `RECEIVER_FINE_FRAG`) run the SAME `receiverAt`/
+`receiverCover` GLSL at the SAME per-texel P under the receiver-dirty rect list, before the class
+passes. `r32uint` added to `TexFormat`.
+
+**Deviation from the item wording, with cause:** "orbiting a light leaves the receiver mirror
+empty" assumed a light-only mover, which doesn't exist — every light is CARRIED, and the orbit
+moves the carrier, so its billboard genuinely moves and the receiver bake correctly fires on the
+prim's own ~3×3-tile box (NOT the light's 144–400-tile reach box). The channel separation was
+verified with the change that IS light-only: a light-record change (reach 8→6) baked 208 class
+tiles with **0 receiver draws**.
+
+**Verified:**
+
+- **Shadow bit-identity:** fixture hashes reproduce exactly with the baked maps in the loop
+  (brute 2575314166 / corridor 2077624216).
+- **Lightmap bit-identity:** same deterministic fixture, 2048×1024 f32 readback of the cold
+  lightmap: P3 hash **3999585750** (2 602 729 nonzero words) == the P2 live-scan reference build's
+  hash, measured by stash/reload A/B. Both outputs of the pipeline are bit-exact.
+- **Static silence:** 0 class draws AND 0 receiver draws on a settled scene; zoom sweep
+  1→0.5→0.25→1 clean (no GL errors); screenshot identical.
+- **Sweep (P3 build, cold totals INCLUDING the receiver bakes, two runs averaged):**
+
+| reach | dirty/frame | gatherCold | lightCold | recv bakes | cold total | P1 build | original I2 |
+|---|---|---|---|---|---|---|---|
+| 4 | 143.5 | ~0.21 | **0.094** | 0.038 | ~0.35 | 0.358 | 0.170 |
+| 8 | 271.5 | ~0.23 | **0.134** | 0.027 | ~0.39 | 0.398 | 0.394 |
+| 12 | 399.5 | ~0.27 | **0.157** | 0.017 | ~0.45 | 0.545 | 0.692 |
+
+  The FINE pass — where the scan lived — dropped 25–50 % (reach-4 lightCold 0.161 → 0.079/0.109
+  across runs). The gather barely moved: its cost is the walk, not the scan (its receiverAt ran at
+  16× fewer texels). **ms per tile-light pair at reach 12: 0.00171 → ~0.00112 (−35 %)**; the
+  remaining cost is walk + accumulate, which are the coarser-lod / F4 / budget levers' territory.
