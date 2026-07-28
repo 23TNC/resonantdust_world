@@ -31,15 +31,15 @@ Opened 2026-07-27._
 
 ## P4b — edge lock poison
 
-- [ ] Replace every RwLock `.read().unwrap()` / `.write().unwrap()` in `server/edge` (`content.rs`, `connections.rs`, `tex_manifest.rs`, …) with poison-recovering access via one helper (`unwrap_or_else(|e| e.into_inner())`). Acceptance: grep finds 0 sites; `bin/rd check` green.
+- [x] Replace every RwLock `.read().unwrap()` / `.write().unwrap()` in `server/edge` (`content.rs`, `connections.rs`, `tex_manifest.rs`, …) with poison-recovering access via one helper (`unwrap_or_else(|e| e.into_inner())`). Acceptance: grep finds 0 sites; `bin/rd check` green.
 
 ## P5 — hardening development redeploys (user, 2026-07-28)
 
-- [ ] `bin/lib/redeploy.sh`: EXCLUDE `target/` (and other build artifacts) from module input-hashes — a mere in-tree build must never re-trigger a data-wiping republish (bit the pawn shard twice, first-pawns I1). Acceptance: `rd redeploy` after `rd build spacetime <mod>` reports "changed: (none)".
-- [ ] `rd redeploy`: after ANY module publish, bounce the running sim consumers — `rd-master`/`rd-orchestrator`/`rd-worker`/`rd-npc` restarted via `bin/sim run` if their containers exist (idempotent; replay-safe by design), with a log line naming what was bounced and why. Acceptance: republish a shard mid-run → the next compose lands in the fresh DB with zero manual steps.
-- [ ] `rd redeploy` edge: also bounce `rd-npc` if running (its session strands until P4 reconnect lands) + print a reminder that browser sessions need a reload. Acceptance: edge redeploy under a running npc → the wolf resumes within ~10 s.
-- [ ] `bin/sim`: `cmd_build` failure must FAIL LOUDLY and `cmd_run` must refuse a binary older than the crate's newest source file (override with `FORCE=1`) — a failed build silently running yesterday's binary cost two debugging loops (2026-07-28). Acceptance: touch a src file, skip the build, `sim run` refuses; after `sim build` it runs.
-- [ ] `bin/sim build` guards the docker mtime miss: if cargo reports `Finished` with no `Compiling <crate>` line after a source change, warn loudly (suggest `touch`). Acceptance: reproduce the miss (or simulate) → the warning fires.
+- [x] `bin/lib/redeploy.sh`: EXCLUDE `target/` (and other build artifacts) from module input-hashes — a mere in-tree build must never re-trigger a data-wiping republish (bit the pawn shard twice, first-pawns I1). Acceptance: `rd redeploy` after `rd build spacetime <mod>` reports "changed: (none)".
+- [x] `rd redeploy`: after ANY module publish, bounce the running sim consumers — `rd-master`/`rd-orchestrator`/`rd-worker`/`rd-npc` restarted via `bin/sim run` if their containers exist (idempotent; replay-safe by design), with a log line naming what was bounced and why. Acceptance: republish a shard mid-run → the next compose lands in the fresh DB with zero manual steps.
+- [x] `rd redeploy` edge: also bounce `rd-npc` if running (its session strands until P4 reconnect lands) + print a reminder that browser sessions need a reload. Acceptance: edge redeploy under a running npc → the wolf resumes within ~10 s.
+- [x] `bin/sim`: `cmd_build` failure must FAIL LOUDLY and `cmd_run` must refuse a binary older than the crate's newest source file (override with `FORCE=1`) — a failed build silently running yesterday's binary cost two debugging loops (2026-07-28). Acceptance: touch a src file, skip the build, `sim run` refuses; after `sim build` it runs.
+- [x] `bin/sim build` guards the docker mtime miss: if cargo reports `Finished` with no `Compiling <crate>` line after a source change, warn loudly (suggest `touch`). Acceptance: reproduce the miss (or simulate) → the warning fires.
 
 ## P6 — wrap
 

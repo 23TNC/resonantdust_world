@@ -18,6 +18,7 @@
 //! (`run_threaded`); row/applied callbacks fire there and hand frames to the
 //! per-client async writer over a channel.
 
+use crate::lock::RwRecover;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -213,7 +214,7 @@ impl Pool {
     /// loaded. Read this **per zone seed** so a content hot-reload applies to
     /// zones generated after the swap.
     pub fn current_worldgen(&self) -> Option<Arc<Worldgen>> {
-        self.content.read().unwrap().worldgen.clone()
+        self.content.read_r().worldgen.clone()
     }
 
     /// The cold shard endpoint `(url, db_name)` serving `(type_id, region_reference)`, from the
@@ -237,7 +238,7 @@ impl Pool {
 
     /// The loaded corpus fingerprint (`0` if content failed to load).
     pub fn content_version(&self) -> u64 {
-        self.content.read().unwrap().version
+        self.content.read_r().version
     }
 
     /// Re-read the content tree and, on a fingerprint change, rebuild + swap in
@@ -249,7 +250,7 @@ impl Pool {
     /// readers. Returns whether it swapped.
     pub fn reload_content(&self) -> Result<bool, String> {
         let loaded = Worldgen::load_versioned(std::path::Path::new(&self.cfg.content_dir))?;
-        let mut state = self.content.write().unwrap();
+        let mut state = self.content.write_r();
         if loaded.version == state.version {
             return Ok(false);
         }

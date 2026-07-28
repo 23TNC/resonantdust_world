@@ -19,6 +19,7 @@ mod bindings;
 mod config;
 mod connections;
 mod content;
+mod lock;
 mod protocol;
 mod tex_manifest;
 mod textures;

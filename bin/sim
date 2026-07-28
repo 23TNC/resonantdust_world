@@ -66,8 +66,44 @@ cargo_in() {
     "$IMAGE" "$@"
 }
 
-cmd_build() { require_crate "$1"; log "build $1 → release binary"; cargo_in "$1" cargo build --release; }
+# Build, and guard the docker/WSL2 MTIME MISS: cargo sometimes reports `Finished` with no
+# `Compiling <crate>` after a real source change → the old binary silently survives (cost two
+# debugging loops on 2026-07-28). Detect stale-source-before + no-compile-line and warn loudly.
+cmd_build() {
+  require_crate "$1"
+  log "build $1 → release binary"
+  local bin="$REPO/$(crate_dir "$1")/target/release/$1"
+  local stale=""
+  [[ -x "$bin" ]] && stale="$(newer_sources "$1" "$bin")"
+  local out
+  out="$(cargo_in "$1" cargo build --release 2>&1)" || { echo "$out"; die "build failed for $1"; }
+  echo "$out" | tail -2
+  if [[ -n "$stale" ]] && ! grep -q "Compiling $1 " <<<"$out"; then
+    echo "── WARNING: sources changed ($stale) but cargo recompiled nothing — the docker mtime"
+    echo "   miss. Run: touch $(crate_dir "$1")/src/*.rs && bin/sim build $1"
+  fi
+}
 cmd_check() { require_crate "$1"; log "check $1"; cargo_in "$1" cargo check --all-targets; }
+
+# The path-dep source roots a crate's binary is built from — the stale-binary guard sweeps
+# these for files newer than the binary.
+dep_roots() {
+  case "$1" in
+    npc) echo "client/npc/src client/core/src shared/codec/src shared/dsl/src" ;;
+    *)   echo "$(crate_dir "$1")/src server/st-bindings/src server/uplink/src shared/codec/src" ;;
+  esac
+}
+
+newer_sources() { # <crate> <binary> → first newer source path, if any
+  local crate="$1" bin="$2" root
+  for root in $(dep_roots "$crate"); do
+    [[ -d "$REPO/$root" ]] || continue
+    local hit
+    hit="$(find "$REPO/$root" -name '*.rs' -newer "$bin" -print -quit 2>/dev/null)"
+    [[ -n "$hit" ]] && { echo "${hit#"$REPO"/}"; return 0; }
+  done
+  return 0
+}
 
 cmd_run() {
   local crate="$1"; shift || true
@@ -75,6 +111,13 @@ cmd_run() {
   ensure_image
   local bin="$(crate_dir "$crate")/target/release/$crate"
   [[ -x "$REPO/$bin" ]] || die "not built — run 'sim build $crate' first ($bin missing)"
+  # Refuse a binary older than its sources: a failed build must not silently run yesterday's
+  # code (it did, twice, on 2026-07-28). FORCE=1 overrides.
+  local stale
+  stale="$(newer_sources "$crate" "$REPO/$bin")"
+  if [[ -n "$stale" && "${FORCE:-0}" != 1 ]]; then
+    die "$bin is OLDER than $stale — run 'sim build $crate' first (or FORCE=1 to run it anyway)"
+  fi
   # Pass K=V args through as -e; default RUST_LOG if unset.
   local envs=(-e "RUST_LOG=${RUST_LOG:-$crate=info}")
   local kv

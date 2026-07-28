@@ -230,12 +230,26 @@ rd_redeploy() {
 
   # Execute. Stamp each unit only after its action succeeds.
   echo "--- running ---"
-  stamp() { echo "${NEWHASH[$1]}" > "$RD_STATE_DIR/$1"; }
+  # Stamp with a hash RECOMPUTED after the action: a deploy can generate files inside its own
+  # inputs (a module build writes Cargo.lock), and stamping the pre-action hash made the very
+  # next redeploy see a change — which for a module is a DATA-WIPING republish (first-pawns I1,
+  # self-heal P5). target/ etc. are excluded by rd_hash_unit; Cargo.lock is a legit input.
+  stamp() { rd_hash_unit ${RD_INPUTS[$1]} > "$RD_STATE_DIR/$1"; }
+  local deployed_modules=0
   for u in "${RD_MODULE_UNITS[@]}"; do
     [[ -n "${CHANGED[$u]:-}" ]] || continue
     for t in $(rd_re_targets "$u"); do rd_deploy_module "$t" "$RESET"; done
     stamp "$u"
+    deployed_modules=1
   done
+  # A module publish wipes its DB and drops every connected SDK session. The sim processes +
+  # npc SELF-HEAL (server/uplink + the client engine reconnect — sim-self-heal P2-P4), so no
+  # bounce is needed; say who noticed, so a dev knows the blip is expected.
+  if [[ "$deployed_modules" == 1 ]]; then
+    local healers
+    healers="$(docker ps --filter name=rd- --format '{{.Names}}' 2>/dev/null | tr '\n' ' ')"
+    [[ -n "$healers" ]] && rd_log "module republished — live sim processes self-heal in place: $healers"
+  fi
   # Re-seed the index routing directory once the (possibly just-republished) index
   # module is in place. Skips cleanly when this env has no manifest yet.
   if [[ "$SEED_INDEX" == 1 ]]; then
@@ -247,6 +261,7 @@ rd_redeploy() {
   if [[ -n "${CHANGED[edge]:-}" ]]; then
     if [[ "$EDGE_LOCAL" == 1 ]]; then
       rd_build_edge; rd_deploy_edge; stamp edge
+      rd_log "edge restarted — the npc auto-reconnects (engine heal); BROWSER tabs need a reload"
     else
       rd_log "note: '$RD_ENV' edge is remote — deploy it separately."; stamp edge
     fi

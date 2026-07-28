@@ -79,3 +79,34 @@ delivered by the heal; startup login failure still exits 1 so the restart policy
 **Restart policy:** `bin/sim run` starts every `rd-*` container `--restart=on-failure:10`
 (verified via docker inspect: `on-failure`); the npc exits non-zero on a failed startup login,
 so "edge not up yet" self-resolves.
+
+## 2026-07-28 · P4b — edge lock poison
+
+`server/edge/src/lock.rs`: one `RwRecover` trait (`read_r`/`write_r` =
+`unwrap_or_else(|e| e.into_inner())` + a warn) — sound here because every locked value is
+swapped/updated whole (snapshot Arcs, version stamps), so a poisoned guard still holds the
+last consistent value. All 12 sites across `content.rs`/`connections.rs`/`tex_manifest.rs`
+converted; grep finds 0 `.read().unwrap()`/`.write().unwrap()` in the edge; build green.
+Deployed live with the P5 verification redeploys.
+
+## 2026-07-28 · P5 — dev-redeploy hardening (with two plan corrections)
+
+**Correction 1:** `target/` was ALREADY excluded from module hashes — the real data-wiping
+trigger was the in-container build writing `Cargo.lock` AFTER the pre-action hash was stamped.
+Fixed by RECOMPUTING the stamp after the action (build-generated files join the clean
+baseline; a hand-edited Cargo.lock still redeploys). Verified: force-republish `pawn` → the
+very next `rd redeploy --run` says "nothing changed — up to date".
+
+**Correction 2 (F4):** the "bounce consumers" items are superseded by the self-heal the earlier
+phases built — the P3 drill already proved a mid-run republish lands the next compose with
+zero manual steps. Implemented as status lines instead: module publish → "live sim processes
+self-heal in place: rd-npc rd-worker rd-orchestrator rd-master" (observed live); edge deploy →
+a browser-reload reminder.
+
+**`bin/sim` guards:** `cmd_run` refuses a binary older than any source under the crate's
+path-dep roots (per-crate `dep_roots`; `FORCE=1` overrides) — verified: touch worker's main.rs
+→ run refuses with the exact file named; build → run proceeds. `cmd_build` fails loudly on a
+cargo error and warns when sources were stale yet cargo compiled nothing (the mtime-miss
+signature). The warn's NEGATIVE path is live-verified (touch → build → "Compiling worker" → no
+warn); the POSITIVE arm is verified by construction only — every simulation attempt (backdated
+binary etc.) made cargo correctly recompile, which is cargo working, not the guard failing.

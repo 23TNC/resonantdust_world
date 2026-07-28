@@ -11,6 +11,7 @@
 //! re-scanned by a poll. An R2 source yields an empty manifest — its manifest is
 //! future work, generated offline by `bin/art` alongside the master upload.
 
+use crate::lock::RwRecover;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -58,7 +59,7 @@ impl TextureManifest {
     /// The `/textures-manifest` JSON body: `{ version, textures: { stem: { hash,
     /// maxSize, lods } } }`.
     pub fn payload_json(&self) -> String {
-        let st = self.state.read().unwrap();
+        let st = self.state.read_r();
         let textures: serde_json::Map<String, serde_json::Value> = st
             .entries
             .iter()
@@ -84,18 +85,18 @@ impl TextureManifest {
 
     /// The `/textures-manifest-version` fingerprint (16 hex).
     pub fn version_hex(&self) -> String {
-        format!("{:016x}", self.state.read().unwrap().version)
+        format!("{:016x}", self.state.read_r().version)
     }
 
     /// The current hash + master short-axis for `stem`, if it has a master.
     pub fn lookup(&self, stem: &str) -> Option<(String, u32)> {
-        let st = self.state.read().unwrap();
+        let st = self.state.read_r();
         st.entries.get(stem).map(|e| (e.hash.clone(), e.max_size))
     }
 
     /// Record that `size` was generated for `stem`; bumps the version if it's new.
     pub fn note_generated(&self, stem: &str, size: u32) {
-        let mut st = self.state.write().unwrap();
+        let mut st = self.state.write_r();
         let inserted = st.entries.get_mut(stem).map(|e| e.lods.insert(size)).unwrap_or(false);
         if inserted {
             st.version = version_of(&st.entries);
@@ -111,7 +112,7 @@ impl TextureManifest {
         let mut fresh = BTreeMap::new();
         scan_masters(root, &mut fresh);
 
-        let mut st = self.state.write().unwrap();
+        let mut st = self.state.write_r();
         let mut changed = fresh.len() != st.entries.len();
         for (stem, e) in fresh.iter_mut() {
             match st.entries.get(stem) {

@@ -375,7 +375,12 @@ def main():
     # an unstructured one (grass 1.01 -> 0.99), and both got worse either side of it: too narrow a
     # band leaves the cut no route around a hard feature like a mortar line, while too wide a one
     # pushes the downscale target up so the strips being joined carry finer detail to disagree on.
-    ov = min(args.tile - 1, args.overlap if args.overlap > 0 else max(4, args.tile // 2))
+    # The join consumes `ov` from whatever plane it wraps, and that plane differs by mode: a cell
+    # is tile+ov wide, the sheet is grid*tile+ov. Capping both at tile-1 (the cell limit) would
+    # throttle sheet mode to a 63px join on a 1024px plane for no reason, and force the generation
+    # to an off-by-one size that then has to be resampled.
+    cap = (args.tile if args.seamless == "cell" else args.grid * args.tile) - 1
+    ov = min(cap, args.overlap if args.overlap > 0 else max(4, args.tile // 2))
     down = args.grid * (args.tile + ov) if args.seamless == "cell" else \
            args.grid * args.tile + (ov if args.seamless == "sheet" else 0)
 

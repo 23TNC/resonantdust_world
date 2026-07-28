@@ -18,6 +18,7 @@
 //! `read_content_dir`, so tile / thing def-ids agree on both sides by
 //! construction.
 
+use crate::lock::RwRecover;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -206,12 +207,12 @@ impl ContentStore {
 
     /// The `/content` JSON body (a clone of the cached string).
     pub fn payload_json(&self) -> String {
-        self.current.read().unwrap().payload_json.clone()
+        self.current.read_r().payload_json.clone()
     }
 
     /// The `/content-version` fingerprint as 16 hex chars.
     pub fn version_hex(&self) -> String {
-        format!("{:016x}", self.current.read().unwrap().version)
+        format!("{:016x}", self.current.read_r().version)
     }
 
     /// Re-read the source and, if the fingerprint moved, swap the snapshot in.
@@ -220,10 +221,10 @@ impl ContentStore {
     pub async fn refresh(&self) -> Result<bool, String> {
         let sources = self.source.load().await?;
         let snap = build_snapshot(&sources);
-        if snap.version == self.current.read().unwrap().version {
+        if snap.version == self.current.read_r().version {
             return Ok(false);
         }
-        *self.current.write().unwrap() = Arc::new(snap);
+        *self.current.write_r() = Arc::new(snap);
         Ok(true)
     }
 }

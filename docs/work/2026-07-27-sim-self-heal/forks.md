@@ -30,3 +30,14 @@ async subscribe closure; `Uplink<C>` is otherwise type-agnostic.
 **Chose (b).** Each module's `DbConnection` is a distinct generated type with no shared trait
 covering builders + subscription builders; closures avoid trait gymnastics entirely and make the
 helper unit-testable with a fake `C` (e.g. `C = ()`), which P1's acceptance relies on.
+
+
+## F4 — bounce consumers after a republish, or let them self-heal (2026-07-28)
+
+The P5 plan items said "bounce the running sim consumers" after a module/edge publish. By the
+time P5 ran, P2-P4 had made every consumer SELF-HEAL (uplinks server-side, engine reconnect
+client-side) — and the P3 republish drill proved the next compose lands with zero manual
+steps. **Chose self-heal + a status line** over bouncing: a bounce would discard warm state
+(the master's fan dedup, the npc's adoption) to solve a problem that no longer exists. The
+redeploy now prints who will heal ("live sim processes self-heal in place: …") and, for the
+edge, reminds that BROWSER tabs still need a reload.
