@@ -18,6 +18,8 @@ import { ShadowGather, AMBIENT_LEVEL } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_UNIT } from "./squareMath";
+import { makeNoiseAtlas } from "./noiseAtlas";
+import { NOISE_FIELDS } from "./material";
 import { LIGHT_QUANT } from "./shadowGather";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 
@@ -224,10 +226,15 @@ export class Viewport {
     this.materialRegistry = registry;
     this.map.invalidateAll();
   }
-  /** Bind the tiling noise atlas the material bake samples (null = flat). Re-bakes. */
-  setNoiseAtlas(texture: Texture | null, rows = 1): void {
-    this.map.setNoise(texture, rows, 1, SQUARE * 2);
+  /** Build + bind the tiling noise atlas the material bake samples (material-system P0 — the
+   *  stub previously bound null, which zeroed every material's variation). Owns the GL context,
+   *  so construction lives here; both tiers get it (movers may bind materials later). Re-bakes. */
+  buildNoiseAtlas(): void {
+    const atlas = makeNoiseAtlas(this.renderer.gl);
+    this.map.setNoise(atlas, NOISE_FIELDS.length, 1, SQUARE * 2);
+    this.warm.setNoise(atlas, NOISE_FIELDS.length, 1, SQUARE * 2);
     this.map.invalidateAll();
+    this.warm.invalidateAll();
   }
   setDebugGrid(level: number): void {
     this.gridLevel = level;

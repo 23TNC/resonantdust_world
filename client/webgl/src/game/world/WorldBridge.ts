@@ -23,7 +23,6 @@ import type { TextureResolver } from "../../textures";
 import { lodForZoom, SLOTS_X, SLOTS_Y, SQUARE } from "../viewport/squareMath";
 import type { PrimitiveLight } from "../viewport/SquareCache";
 import { MaterialRegistry, type PackedChannel } from "../viewport/material";
-import { makeNoiseAtlas } from "../viewport/noiseAtlas";
 import { placeThing, readLayout } from "./thingPlacement";
 
 /** The viewport anchor's name in the client's anchor list. */
@@ -202,8 +201,8 @@ export class WorldBridge {
     // A thing's box is fixed by its def layout (see placeThing), so a texture tier landing
     // doesn't change geometry — the SquareCache re-bakes the geo→master swap itself.
     // The tiling noise atlas the material bake samples — a static, content-independent
-    // asset, generated once for the session.
-    this.viewport.setNoiseAtlas(makeNoiseAtlas());
+    // asset, generated once for the session (built by the viewport, which owns the GL context).
+    this.viewport.buildNoiseAtlas();
     this.refreshStems();
   }
 

@@ -7,8 +7,8 @@ no-material bake bit-identical (readback hash of the albedo + normal composites)
 
 ## P0 — wake the machinery (the noise atlas stub)
 
-- [ ] Port `noiseAtlas.ts` from pixijs (104 lines; fields `mottle`, `strand` from `bin/lib/noise_fields.py`) to an engine `Texture`, replacing the null stub. Acceptance: `makeNoiseAtlas()` returns a non-null tiling atlas; tsc green.
-- [ ] Verify the EXISTING conifer strand jitter comes alive: A/B at area1 — foliage hue/chroma variation visible with the atlas in, absent with the stub. Acceptance: screenshot pair; no-material stems bit-identical (delta-form identity).
+- [x] Port `noiseAtlas.ts` from pixijs (104 lines; fields `mottle`, `strand` from `bin/lib/noise_fields.py`) to an engine `Texture`, replacing the null stub. Acceptance: `makeNoiseAtlas()` returns a non-null tiling atlas; tsc green.
+- [x] Verify the EXISTING conifer strand jitter comes alive: A/B at area1 — foliage hue/chroma variation visible with the atlas in, absent with the stub. Acceptance: screenshot pair; no-material stems bit-identical (delta-form identity).
 
 ## P1 — registry v2 (normal detail params)
 
