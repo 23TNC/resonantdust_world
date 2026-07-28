@@ -17,6 +17,14 @@ construction, and gets the corners right for any pad width in one call.
 Authoring sources (sprite/template) are skipped — they are inputs to a later re-remaster, so
 shrinking them would compound on every run.
 
+ATLAS leaves are skipped entirely. A canvas-edge ring is the wrong guard for a cell grid twice
+over: the boundaries a sampler actually crosses are the INTERIOR ones, which a canvas ring never
+touches, and shrinking the content pulls every cell off its pitch (measured on an 8x8 sheet: 1024
+canvas preserved, but 1022 px of content across 8 cells = 127.75 px/cell instead of 128). The
+per-cell guard for an atlas is the GRID_INSET_FRAC *sampling* inset — recorded as padU/padV in
+atlas.json, folded into the manifest, and trimmed off each cell's UV rect by the client — which
+costs no pixels and no resampling. See the stream's F3.
+
   python3 bin/lib/pad_maps.py <root> --pad 1
 """
 import argparse, os, sys
@@ -35,6 +43,11 @@ def is_source(name):
     stem = name[:-4] if name.lower().endswith(".png") else name
     parts = stem.split(".")
     return any(s in (parts[0], parts[-1]) for s in SKIP)
+
+
+def is_atlas_leaf(dirpath):
+    """True if this leaf is a held-whole cell grid — it carries an `atlas.json` sidecar."""
+    return os.path.exists(os.path.join(dirpath, "atlas.json"))
 
 
 def pad_one(path, pad):
@@ -61,8 +74,11 @@ def main():
     if args.pad <= 0:
         return
 
-    done, warned = 0, False
+    done, warned, skipped_atlas = 0, False, 0
     for dirpath, _d, files in os.walk(args.root):
+        if is_atlas_leaf(dirpath):
+            skipped_atlas += 1
+            continue
         for f in sorted(files):
             if not f.lower().endswith(".png") or is_source(f):
                 continue
@@ -78,8 +94,12 @@ def main():
                       file=sys.stderr)
                 warned = True
             done += 1
+    note = ""
+    if skipped_atlas:
+        note = (f"; skipped {skipped_atlas} atlas leaf/leaves — a cell grid is guarded by the "
+                f"per-cell padU/padV inset, not a canvas ring")
     print(f"art: --pad {args.pad} -> {done} map(s) shrunk to fit, "
-          f"edges replicated into the {args.pad}px guard")
+          f"edges replicated into the {args.pad}px guard{note}")
 
 
 if __name__ == "__main__":

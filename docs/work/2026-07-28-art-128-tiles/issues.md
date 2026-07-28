@@ -49,6 +49,35 @@ for the tile size — which is exactly what this stream and
 [`square-128`](../2026-07-28-square-128/README.md) both make people do. Fixed in [P5](todo.md)
 whichever value wins.
 
+## I10 — a held-whole atlas is RESAMPLED and framed on its way to the leaf {#i10}
+_2026-07-28 · P3 · measured — worse than the `--pad` bug it was found behind_
+
+`_split_variant_sheet` treats every kind-level sheet as a sprite sheet: detect blobs, fit each to
+its own pow2 box, resize the content into that box's interior, centre it. For a ground atlas that is
+wrong end to end. Measured on the 8×8 grass sheet:
+
+```
+sprite 1024x1024   diffuse 1024x1024
+max |diff| sprite vs diffuse : 230        (0 would be verbatim)
+diffuse row0 == row1         : True
+row0 unique colours          : 1          <- a flat border, not texture
+```
+
+The canvas is preserved at 1024, but `SPLIT_PADDING=4` means the content was resized to
+`1024 − 2·4 = 1016` and centred inside a 4 px frame. **The cell pitch becomes 1016/8 = 127 px, not
+128** — every cell boundary lands off the grid, and the whole sheet has been resampled once for no
+reason.
+
+This is the same class as [I2](#i2) but larger: I2 shifted the pitch to 127.75 via `--pad`, this
+shifts it to 127 before `--pad` even runs, and unlike I2 it also *resamples* the art. It was hidden
+behind I2 — with `--pad` also corrupting the sheet, the 4 px frame looked like part of the same
+damage.
+
+**Fix:** a leaf that is a held-whole atlas must receive its sheet **verbatim**, exactly as
+`_split_variant_leaf` already does for a variant-level sprite (verified there at 0 px difference).
+Blob detection, the pow2 refit and `SPLIT_PADDING` are all sprite-sheet concerns and none of them
+apply to a cell grid whose geometry is already final.
+
 ## I9 — PLAN DEFECT: `bin/art` has no tile-size arithmetic to parameterise {#i9}
 _2026-07-28 · P1.1 · **the item's premise was false**_
 

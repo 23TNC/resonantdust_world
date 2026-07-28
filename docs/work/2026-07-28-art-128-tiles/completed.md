@@ -103,3 +103,27 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   (blob max 160px)`. Art restored from backup afterwards (1254² sheet, 256² leaf, all 9 maps).
   Note both paths needed it: the leaf path (`_remaster_leaf_sprites`) and the kind-level sheet path
   (`_split_variant_sheet`), and conifer actually travels the latter.
+- **2026-07-28 · P2.5 · `atlas.json` now speaks the manifest's schema** — [I8](issues.md#i8) closed.
+  `generate_tile.py` emits `cols`/`rows`/`padU`/`padV` (the four `read_atlas_meta` requires) beside
+  its provenance keys, which the parser ignores. Added `--inset F` mirroring `GRID_INSET_FRAC`'s
+  contract (`padU = f/cols`). Also found the sidecar was written at KIND level beside the sprite
+  source while the manifest walks LEAVES, so it would never have been read — remaster now carries
+  it into every leaf the sheet produces.
+
+## P3 — Stop `--pad` corrupting atlases; use the guard that already exists
+
+- **2026-07-28 · P3.1 · Bug reproduced and measured.** `--pad 1` on the 8×8 grass sheet: canvas edge
+  guarded (`row0 == row1`), **interior cell boundary at x=511|512 unguarded** (mean |Δ| 2.75, not
+  equal), and content 1022 px across 8 cells = **127.75 px/cell**. Exactly what [F3](forks.md#f3)
+  predicted.
+- **2026-07-28 · P3.2 · `pad_maps.py` skips atlas leaves.** A leaf carrying `atlas.json` is left
+  untouched and the reason is printed. Re-remaster: `0 map(s) shrunk … skipped 2 atlas leaf/leaves`.
+- **2026-07-28 · P3.3 · Non-atlas leaves unchanged.** Conifer still pads — 72 maps, guard ring
+  present (`row0 == row1` on a 256² albedo).
+- **2026-07-28 · P3.4 · `padU`/`padV` emitted** on `f/cols`, matching `bin/art`'s awk formula.
+- **2026-07-28 · [I10](issues.md#i10) · Found a LARGER bug behind P3.1.** With `--pad` fixed the
+  sheet was still wrong: `_split_variant_sheet` blob-detects every kind-level sheet and refits it to
+  a pow2 box, so `SPLIT_PADDING=4` resized the 1024 atlas to 1016 inside a flat 4 px frame —
+  **127 px/cell, and resampled** (`max |diff| sprite vs diffuse = 230`, `row0` a single colour).
+  Held-whole atlases now pass to leaf 0 verbatim, as `_split_variant_leaf` already did. Verified:
+  **max |diff| 0, cell pitch 1024/8 = 128 px.**

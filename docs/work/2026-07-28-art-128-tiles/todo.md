@@ -26,17 +26,17 @@ edge a value, then teach the pipeline the footprint, then fix the atlas guard, t
 - [x] Read the footprint from the corpus rather than re-authoring it, falling back when absent. Acceptance: deleting a def's `span` makes remaster warn and fall back to `_pow2_box`, not fail.
 - [x] Size the emitted square from `span` instead of blob extent in `_emit_crops`. Acceptance: conifer emits 256² because span says so — verified by shrinking the blob and getting 256² still.
 - [ ] Surface `tiles`/`span` through `tex_manifest.rs` beside `grid`/`pad`. Acceptance: the manifest entry for conifer carries the footprint.
-- [ ] Emit the manifest's required `cols`/`rows`/`padU`/`padV` from `generate_tile.py`, per [I8](issues.md#i8). Acceptance: `read_atlas_meta`'s logic accepts a freshly generated ground sheet, which it rejects today.
+- [x] Emit the manifest's required `cols`/`rows`/`padU`/`padV` from `generate_tile.py`, per [I8](issues.md#i8). Acceptance: `read_atlas_meta`'s logic accepts a freshly generated ground sheet, which it rejects today.
 - [ ] Write `tiles` into `atlas.json` for ground and linked sheets. Acceptance: ground reads `[8, 8]`, a linked form reads `[4, 4]`.
 
 ## P3 — Stop `--pad` corrupting atlases; use the guard that already exists
 
 _Revised at P0.5 — see [F3](forks.md#f3). The per-cell guard is `GRID_INSET_FRAC`, already shipping._
 
-- [ ] Reproduce the bug: run `--pad 1` on an 8×8 atlas and measure an interior cell boundary. Acceptance: `issues.md` records that interior boundaries are unguarded while the canvas edge is.
-- [ ] Make `pad_maps.py` skip any leaf carrying `atlas.json`. Acceptance: a `--pad 1` run over a ground leaf leaves every map byte-identical and says why it skipped.
-- [ ] Leave non-atlas leaves on canvas-edge padding. Acceptance: a conifer leaf still pads exactly as it does today, byte-identical to a pre-change run.
-- [ ] Emit `padU`/`padV` from `generate_tile.py` off `GRID_INSET_FRAC`'s formula. Acceptance: a generated sheet's `atlas.json` carries `padU = f/cols`, matching what `bin/art:1683` computes.
+- [x] Reproduce the bug: run `--pad 1` on an 8×8 atlas and measure an interior cell boundary. Acceptance: `issues.md` records that interior boundaries are unguarded while the canvas edge is.
+- [x] Make `pad_maps.py` skip any leaf carrying `atlas.json`. Acceptance: a `--pad 1` run over a ground leaf leaves every map byte-identical and says why it skipped.
+- [x] Leave non-atlas leaves on canvas-edge padding. Acceptance: a conifer leaf still pads exactly as it does today, byte-identical to a pre-change run.
+- [x] Emit `padU`/`padV` from `generate_tile.py` off `GRID_INSET_FRAC`'s formula. Acceptance: a generated sheet's `atlas.json` carries `padU = f/cols`, matching what `bin/art:1683` computes.
 
 ## P4 — Migrate what is already generated
 

@@ -8,13 +8,13 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P1 · Chain supersession — at most one live chain per pawn (pawn-movement I7)
 
-- [ ] Docs FIRST: `ACTIONS.md` — `MOVE_STEP` §World palette row (value 8, arity 3:
+- [x] Docs FIRST: `ACTIONS.md` — `MOVE_STEP` §World palette row (value 8, arity 3:
       `obj` **write**+**read** · `dest` imm · `serial` imm; WORKER-ONLY — never valid from a
       client) and §Movement rewritten for chain identity (seed stamps the serial, hops carry
       it, mismatch dies silently, new intent supersedes by construction, re-issue is safe).
       `TABLES.md` § pawn — the `data` u8 bit layout (bits 6–7 facing, bits 0–5 trip-serial).
       Acceptance: `bin/rd docs-check` green.
-- [ ] codec: `MOVE_STEP = 8` (signature, write/read sets, `target_routes` Hot — mirror
+- [x] codec: `MOVE_STEP = 8` (signature, write/read sets, `target_routes` Hot — mirror
       `MOVE_TO`), plus `data` pack/unpack helpers (`facing`, `trip_serial`, compose) so the
       worker and any future reader share one layout. Unit tests: framing, sets, routing,
       pack round-trip. Acceptance: codec tests green (native + wasm32 build).

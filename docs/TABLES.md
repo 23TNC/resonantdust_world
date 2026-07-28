@@ -315,6 +315,13 @@ without trusting the worker. We take "block correctly" while workers are our cod
 [`data_shard`](#data_shard) (distinct database, same table names) — plus the spawn machinery for
 [`CREATE`](ACTIONS.md):
 
+**The `data` u8 layout** (movement-hardening — `codec::object` owns the pack/unpack):
+
+| bits | field | meaning |
+|---|---|---|
+| 7–6 | `facing` | `0`=s `1`=e `2`=n `3`=w — stamped per step, e/w winning diagonals; clients read `data >> 6` |
+| 5–0 | `trip_serial` | the live movement chain's identity (seed event's `event_reference & 0x3F`) — a `MOVE_STEP` hop whose serial mismatches is superseded and dies (`ACTIONS.md` §Movement) |
+
 ### `spawn_log` — replay-idempotent minted ids (public)
 
 | column | type | key | notes |

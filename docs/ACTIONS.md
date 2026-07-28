@@ -89,9 +89,10 @@ slot is grouped/claimed) or **read** (in the read set → the worker blocks on i
 |---|---|---|---|
 | `CREATE` | 3 | 2 | `def:definition_reference` (imm) · `position:position_reference` (imm) → **mints** a new entity. The written target is the *minted* id, not an operand. |
 | `PLACE` | 4 | 2 | `obj:entity_reference` (**write**) · `position:position_reference` (imm) — set `obj`'s position absolutely. |
-| `MOVE_TO` | 5 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — step `obj` one tile toward `dest`, then queue the next hop. On the intent event (`PROMOTE_EVENT`-carrying program) it seeds instead of stepping — §Movement. |
+| `MOVE_TO` | 5 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — the CLIENT-issued move verb, always the SEED: stamps the trip-serial, turns facing toward the path, promotes the current position when `PROMOTE`-prefixed, steps NOTHING. The worker chains `MOVE_STEP` hops from it — §Movement. |
 | `SET` | 6 | 5 | `cold_row:cold_row_reference` (**write**) · `type_id` (imm) · `tile_reference` (imm) · `kind_reference` (imm, `0`=clear) · `data` (imm) — **override one cold cell** through the `overlay` tier. The `cold_row` is spelled (so concurrent `SET`s to one row **group** — see routing below) and `type_id` names the shard (a `cold_row_reference` carries no type nibble). Replaces the old per-cell `cold_entity_reference` SET. |
-| `init_zone` | *tbd* | *tbd* | build a zone's **whole baseline row** in scratch (worldgen) and write it to `entity_state_log` (`ColdBaseline` tier). `promote init_zone` projects it visible. The event-driven replacement for the direct `seed`. Payload is a whole row (F12 — event-carried `Vec` vs worker-side worldgen, decided at build). |
+| `INIT_ZONE` | 7 | variable | `cold_row:cold_row_reference` (**write**) · `type_id` (imm) · `count` (imm) · `item×count` (imm) — build a zone's **whole baseline row** and write it to `entity_state_log` (`ColdBaseline` tier); `PROMOTE INIT_ZONE …` projects it visible. The ONE variable-arity verb (F12). Built. |
+| `MOVE_STEP` | 8 | 3 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) · `serial` (imm) — one chain hop, **WORKER-ONLY** (the edge rejects it from clients — movement-hardening F2): step `obj` one tile toward `dest` and re-queue, but ONLY while `serial` still matches the trip-serial in `obj`'s `data` — a mismatch means the chain was superseded, and the hop dies silently. §Movement. |
 | `PACK` | *tbd* | *tbd* | fold a zone's settled `overlay` cells into its `entity_state_log` row (the GC write-back). Operands settle when built — likely the target `cold_row_reference` (**write**); the worker reads the row's settled `overlay` cells and composes the new baseline. GC queues `promote pack …` — the smart, atomic `PROMOTE` projects the folded `entity_state` **and** cleared `overlay` in one commit. |
 
 **Cold routing (F11).** Hot targets (pawns) route to their shard by their own `server_reference`
@@ -149,7 +150,8 @@ avoiding. The cadence:
 - **`PROMOTE` at the seed and the final hop** — the start position anchors speculation; the landing
   corrects it. Bare continuations fan **nothing**. **The seed does NOT step** (user, 2026-07-28):
   the intent event's `MOVE_TO` promotes the object's **current** position unchanged (facing turns
-  toward the path), so the anchor aligns every client to the server BEFORE speculation walks — a
+  toward the path, and the trip-serial is stamped — see chain identity below), so the anchor
+  aligns every client to the server BEFORE speculation walks — a
   seed that stepped first fanned `start+1` and opened every trip with a one-tile snap. The first
   step lands on the first continuation, one `tics_per_tile` after the intent; a trip is
   `hops + 1` hop-slots end to end.
@@ -164,7 +166,20 @@ avoiding. The cadence:
   that same error data when snapping reads as visible jerk; not built.
 
 So the initial program is `PROMOTE_EVENT PROMOTE MOVE_TO obj dest`; the self-queued continuations
-are bare `MOVE_TO obj dest`; the hop that reaches `dest` is `PROMOTE MOVE_TO obj dest`.
+are bare `MOVE_STEP obj dest serial`; the hop that reaches `dest` is
+`PROMOTE MOVE_STEP obj dest serial`.
+
+**Chains have identity — at most ONE lives per pawn** (movement-hardening F1, closing
+pawn-movement I7). The seed stamps a 6-bit **trip-serial** (the seed event's
+`event_reference & 0x3F` — unique even for two same-tic intents, where a tic-derived serial
+would let both chains live) into the pawn's `data` low bits (`TABLES.md` § pawn); every
+continuation carries that serial and checks
+it against the pawn before stepping — a mismatch means a NEWER intent re-stamped the pawn, and
+the stale hop dies silently (no step, no re-queue). So a new `MOVE_TO` intent CANCELS the old
+chain by construction: no cancel machinery, no queue scans, and a driver's deadline re-issue is
+safe (the measured alternative was two live chains fighting over the pawn — per-hop promotes
+and 10-tile landing errors). Serial collisions don't matter: a superseded chain dies at its
+FIRST subsequent hop, long before the 64-tic ring re-aligns.
 
 **The client speculates without a synced tic.** `state` is simply the latest authoritative truth.
 `PROMOTE_EVENT` on a move gives the client the one thing `state` can't: *intent* (`obj → dest`).

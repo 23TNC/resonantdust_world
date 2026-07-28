@@ -431,6 +431,19 @@ const DATA_COUNT_MASK: u8 = 0x3F; // 6 bits
 pub fn pack_data(rotation: u8, count: u8) -> u8 {
     ((rotation & DATA_ROT_MASK) << DATA_ROT_SHIFT) | (count & DATA_COUNT_MASK)
 }
+/// A PAWN's `data`: `facing:2 | trip_serial:6` — the same bit split as the cold
+/// `rotation | count` (`data` is decoded by `type_id`). Facing rides the rotation bits;
+/// the live movement chain's identity rides the low six (`ACTIONS.md` §Movement chain
+/// identity, `TABLES.md` § pawn). One layout, one owner: the worker stamps it, hops check it.
+pub fn pack_pawn_data(facing: u8, trip_serial: u8) -> u8 {
+    pack_data(facing, trip_serial)
+}
+
+/// The trip-serial in a pawn's `data` (see [`pack_pawn_data`]).
+pub fn pawn_trip_serial(d: u8) -> u8 {
+    data_count(d)
+}
+
 /// The `rotation` (0..4 facings; west mirrors east).
 pub fn data_rotation(d: u8) -> u8 {
     (d >> DATA_ROT_SHIFT) & DATA_ROT_MASK
@@ -475,6 +488,20 @@ fn split_global_axis(t: i32) -> (u8, u8, u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pawn_data_packs_facing_and_trip_serial() {
+        // facing 3 (w) + serial 13: facing in the top 2 bits, serial in the low 6 — same
+        // split as rotation|count, so both decoders agree on one byte.
+        let d = pack_pawn_data(3, 13);
+        assert_eq!(d, (3 << 6) | 13);
+        assert_eq!(data_rotation(d), 3);
+        assert_eq!(pawn_trip_serial(d), 13);
+        // A serial re-stamp preserves facing; a facing re-stamp preserves the serial.
+        let restamped = pack_pawn_data(data_rotation(d), 62);
+        assert_eq!(data_rotation(restamped), 3);
+        assert_eq!(pawn_trip_serial(restamped), 62);
+    }
 
     #[test]
     fn type_id_palette_fits_u4_and_is_contiguous() {

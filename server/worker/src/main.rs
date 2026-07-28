@@ -25,11 +25,12 @@ use std::time::Duration;
 
 use spacetimedb_sdk::{DbContext, Table as _};
 
-use resonantdust_codec::action::{self, Route, CREATE, INIT_ZONE, MOVE_TO, PLACE, PROMOTE, SET};
+use resonantdust_codec::action::{self, Route, CREATE, INIT_ZONE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, SET};
 use resonantdust_codec::object::{
-    cold_row_layer_id, cold_row_macro_position, cold_row_subtype, kind_pos_ref_data,
-    kind_pos_ref_kind_reference, kind_pos_ref_tile, pack_position_reference, position_macro, position_micro,
-    position_to_tile, tile_to_position, TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
+    cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, kind_pos_ref_data,
+    kind_pos_ref_kind_reference, kind_pos_ref_tile, pack_pawn_data, pack_position_reference,
+    pawn_trip_serial, position_macro, position_micro, position_to_tile, tile_to_position,
+    TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
 };
 use resonantdust_codec::speed;
 use resonantdust_codec::refs::entity_ref_type_id;
@@ -327,8 +328,8 @@ async fn main() {
                 scratch.insert(e, base);
             }
             let mut promote: HashSet<u32> = HashSet::new();
-            for (_, actions) in &events {
-                apply(actions, &mut scratch, &mut promote);
+            for (event_reference, actions) in &events {
+                apply(actions, &mut scratch, &mut promote, *event_reference);
             }
 
             // ── WRITE (hot) ── absolute finals, each to its OWN shard (pawn vs the data catch-all).
@@ -516,31 +517,38 @@ async fn main() {
                 continue;
             }
 
-            // ── CONTINUE (MOVE_TO) ── each hop that hasn't arrived queues its next hop at
-            // `tic + tics_per_tile` (ACTIONS.md §Movement): BARE while distance > 1, `PROMOTE`-
-            // prefixed when the next hop lands (the final-tile state anchor). Best-effort BY
-            // CHOICE: a failed queue kills the chain (the driver re-issues on timeout), which is
-            // benign — deferring the tic would re-queue on the re-pass and DUPLICATE the chain,
-            // which multiplies. Never defer here.
-            for (_, actions) in &events {
+            // ── CONTINUE (MOVE_TO seed / MOVE_STEP hop) ── each un-arrived move queues its next
+            // `MOVE_STEP` hop at `tic + tics_per_tile` (ACTIONS.md §Movement): BARE while distance
+            // > 1, `PROMOTE`-prefixed when the next hop lands (the final-tile state anchor). The
+            // hop carries the chain's trip-serial — a seed chains its OWN (`event_reference` low
+            // bits, just stamped by apply), a hop chains its operand — and a chain whose serial no
+            // longer owns the pawn is superseded: it queues NOTHING and dies here. Best-effort BY
+            // CHOICE: a failed queue kills the chain (the driver re-issues on timeout — SAFE now,
+            // supersession makes the re-issue cancel any survivor); deferring the tic would
+            // re-queue on the re-pass and DUPLICATE the chain, which multiplies. Never defer here.
+            for (event_reference, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
-                    if inst.action != MOVE_TO {
-                        continue;
+                    let (obj, dest, serial) = match (inst.action, inst.operands) {
+                        (MOVE_TO, [obj, dest]) => (*obj, *dest, event_reference & 0x3F),
+                        (MOVE_STEP, [obj, dest, serial]) => (*obj, *dest, *serial & 0x3F),
+                        _ => continue,
+                    };
+                    let Some(p) = scratch.get(&obj) else { continue };
+                    if u32::from(pawn_trip_serial(p.data)) != serial {
+                        continue; // superseded — the chain ends (apply logged the death)
                     }
-                    let [obj, dest] = inst.operands else { continue };
-                    let Some(p) = scratch.get(obj) else { continue };
                     let (cx, cy) = position_to_tile(p.position_reference);
-                    let (tx, ty) = position_to_tile(*dest);
+                    let (tx, ty) = position_to_tile(dest);
                     let d = (tx - cx).abs().max((ty - cy).abs());
                     if d == 0 {
                         continue; // arrived — the chain ends
                     }
                     let next_tic = tic_add(t, tics_for(&speeds, p.definition_reference));
                     let program = if d == 1 {
-                        vec![PROMOTE, MOVE_TO, *obj, *dest]
+                        vec![PROMOTE, MOVE_STEP, obj, dest, serial]
                     } else {
-                        vec![MOVE_TO, *obj, *dest]
+                        vec![MOVE_STEP, obj, dest, serial]
                     };
                     if let Err(err) = event.reducers().queue_at(program, next_tic) {
                         tracing::warn!(%err, tic = t, obj = format!("{obj:#010x}"), "continuation queue failed — chain ends");
@@ -587,11 +595,10 @@ async fn main() {
 
 /// Apply one event's program to the scratch, in place. `PROMOTE` is a **prefix**: it flags the *next*
 /// action, whose write targets then join `promote` (they project to the client-visible table on write).
-fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut HashSet<u32>) {
+/// `event_reference` mints the trip-serial a `MOVE_TO` seed stamps (chain identity — ACTIONS.md
+/// §Movement; unique even for two same-tic intents, where a tic-derived serial would collide).
+fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut HashSet<u32>, event_reference: u32) {
     let mut pending_promote = false; // set by a `PROMOTE` prefix; consumed by the next action
-    // The INTENT event (`PROMOTE_EVENT`-carrying initial program) — its `MOVE_TO` seeds, it
-    // doesn't step (ACTIONS.md §Movement, pawn-movement I6).
-    let intent_event = action::asks_promote_event(actions);
     for inst in action::program(actions) {
         let inst = match inst {
             Ok(i) => i,
@@ -613,27 +620,49 @@ fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut Has
                 }
             }
             MOVE_TO => {
-                // MOVE_TO obj dest — step ONE tile toward dest (greedy straight line — the
-                // pathfinding seam, ACTIONS.md §Movement) and face the step. On the INTENT
-                // event the hop does NOT step: the seed promotes the CURRENT position — the
-                // anchor that aligns every client to the server BEFORE speculation walks
-                // (pawn-movement I6; the old step-then-seed fanned start+1 and every trip
-                // opened with a one-tile snap). The first step lands on the first
-                // continuation, one tics_per_tile later.
+                // MOVE_TO obj dest — ALWAYS the seed (ACTIONS.md §Movement): stamp the
+                // trip-serial (this event's low 6 bits — the chain's identity, killing any
+                // OLDER chain at its next hop), turn facing toward the path (e/w winning
+                // diagonals — side profiles read best), step NOTHING. The promoted write is
+                // the anchor that aligns every client to the server BEFORE speculation walks
+                // (pawn-movement I6: a stepping seed fanned start+1 — a snap opening every
+                // trip). The worker chains `MOVE_STEP` hops from the CONTINUE pass.
                 if let [obj, dest] = inst.operands {
                     let p = scratch.entry(*obj).or_default();
                     let (cx, cy) = position_to_tile(p.position_reference);
                     let (tx, ty) = position_to_tile(*dest);
                     let (sx, sy) = ((tx - cx).signum(), (ty - cy).signum());
-                    if sx != 0 || sy != 0 {
-                        if !intent_event {
+                    let facing: u8 = if sx > 0 { 1 } else if sx < 0 { 3 } else if sy > 0 { 0 }
+                        else if sy < 0 { 2 } else { data_rotation(p.data) };
+                    p.data = pack_pawn_data(facing, (event_reference & 0x3F) as u8);
+                    if pending_promote {
+                        promote.insert(*obj);
+                    }
+                }
+            }
+            MOVE_STEP => {
+                // MOVE_STEP obj dest serial — one chain hop: step ONE tile toward dest
+                // (greedy straight line — the pathfinding seam) ONLY while `serial` still
+                // matches the pawn's stamp. A mismatch means a newer intent superseded this
+                // chain — die silently (the CONTINUE pass re-checks the same predicate, so
+                // no re-queue happens either).
+                if let [obj, dest, serial] = inst.operands {
+                    let p = scratch.entry(*obj).or_default();
+                    if u32::from(pawn_trip_serial(p.data)) != (serial & 0x3F) {
+                        tracing::debug!(
+                            obj = format!("{obj:#010x}"), serial,
+                            stamped = pawn_trip_serial(p.data),
+                            "chain superseded — hop dies"
+                        );
+                    } else {
+                        let (cx, cy) = position_to_tile(p.position_reference);
+                        let (tx, ty) = position_to_tile(*dest);
+                        let (sx, sy) = ((tx - cx).signum(), (ty - cy).signum());
+                        if sx != 0 || sy != 0 {
                             p.position_reference = tile_to_position(cx + sx, cy + sy);
+                            let facing: u8 = if sx > 0 { 1 } else if sx < 0 { 3 } else if sy > 0 { 0 } else { 2 };
+                            p.data = pack_pawn_data(facing, pawn_trip_serial(p.data));
                         }
-                        // Facing turns toward the path either way (the wolf faces its trip
-                        // from the seed). `data` rotation bits: 0=s 1=e 2=n 3=w, east/west
-                        // winning a diagonal (side profiles read best).
-                        let facing: u8 = if sx > 0 { 1 } else if sx < 0 { 3 } else if sy > 0 { 0 } else { 2 };
-                        p.data = (facing << 6) | (p.data & 0x3F);
                     }
                     if pending_promote {
                         promote.insert(*obj);

@@ -39,9 +39,12 @@ rd_init_units() {
   local mod
   for mod in $(rd_list_modules); do
     RD_MODULE_UNITS+=("$mod")
-    RD_INPUTS[$mod]="$MODULES_DIR/$mod"
+    # shared/codec is compiled INTO every module (path dep) — without it in the hash a
+    # codec change (new action, layout) deploys NOTHING and the live validators reject
+    # the new wire (movement-hardening: MOVE_STEP was silently unpublishable).
+    RD_INPUTS[$mod]="$MODULES_DIR/$mod $SHARED_DIR/codec"
   done
-  RD_INPUTS[edge]="$EDGE_DIR/src $EDGE_DIR/Cargo.toml"
+  RD_INPUTS[edge]="$EDGE_DIR/src $EDGE_DIR/Cargo.toml $SHARED_DIR/codec $SHARED_DIR/dsl"
   RD_INPUTS[gateway]="$GATEWAY_DIR/src $GATEWAY_DIR/Cargo.toml"
   RD_INPUTS[shared]="$SHARED_DIR"
   RD_INPUTS[webgl]="$WEBGL_DIR/src $WEBGL_DIR/index.html $WEBGL_DIR/package.json $WEBGL_DIR/vite.config.ts $WEBGL_DIR/tsconfig.json"

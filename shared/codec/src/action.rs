@@ -19,7 +19,9 @@ pub const ACTION_NONE: u32 = 0;
 /// left-to-right — the next action writes the bit as part of its own result, so there's no post-pass
 /// (see `docs/ACTIONS.md`). Replaces the old `PROMOTE_STATE` (which named a target explicitly).
 pub const PROMOTE: u32 = 1;
-/// Latch: project this event to `event` on settle. No operand. **Tabled** — revisited with movement.
+/// Latch: project this event to `event` on settle. No operand. The movement INTENT channel —
+/// its presence also marks a program as the intent event (the `MOVE_TO` seed that stamps the
+/// trip-serial and steps nothing; `ACTIONS.md` §Movement).
 pub const PROMOTE_EVENT: u32 = 2;
 /// Mint a new entity at a position. Operands: `def` (imm), `position` (imm). Written target is the
 /// minted id, not an operand.
@@ -45,6 +47,12 @@ pub const INIT_ZONE: u32 = 7;
 /// ignore). Concurrent `SET`s to one row **group** (shared `cold_row` target) so one worker composes
 /// the whole overlay row — they can't race. Replaces the old per-cell `cold_entity_reference` SET.
 pub const SET: u32 = 6;
+/// One movement-chain hop, **WORKER-ONLY** (the edge's client-verb allowlist rejects it —
+/// movement-hardening F2). Operands: `obj` (read+write), `dest` (imm), `serial` (imm — the
+/// trip-serial the chain's seed stamped into `obj`'s `data` low bits). Steps one tile and
+/// re-queues ONLY while the serial still matches; a mismatch means a newer intent superseded
+/// this chain, and the hop dies silently (`ACTIONS.md` §Movement chain identity).
+pub const MOVE_STEP: u32 = 8;
 
 /// What an operand is, for deriving the write/read sets. Only `entity_reference` operands matter to
 /// the sets; `Imm` operands (numbers, positions, definitions) are neither.
@@ -81,6 +89,7 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         CREATE => &[Imm, Imm],       // def, position — the write is the minted id, not an operand
         PLACE => &[Write, Imm],      // obj, position
         MOVE_TO => &[ReadWrite, Imm], // obj (reads its own position, writes the next), dest
+        MOVE_STEP => &[ReadWrite, Imm, Imm], // obj, dest, trip-serial (worker-only chain hop)
         SET => &[Write, Imm, Imm, Imm, Imm], // cold_row, type_id, tile_reference, kind_reference, data
         _ => return None,
     })
@@ -271,6 +280,24 @@ mod tests {
     // PROMOTE  PLACE obj pos  MOVE_TO obj dest  PROMOTE_EVENT
     fn sample(obj: u32, pos: u32, dest: u32) -> Vec<u32> {
         vec![PROMOTE, PLACE, obj, pos, MOVE_TO, obj, dest, PROMOTE_EVENT]
+    }
+
+    #[test]
+    fn move_step_frames_routes_hot_and_carries_its_serial() {
+        // A continuation: bare MOVE_STEP obj dest serial (and a landing hop, PROMOTE-prefixed).
+        let obj = 0x3080_0001;
+        let words = vec![PROMOTE, MOVE_STEP, obj, 77, 13];
+        let insts: Vec<_> = program(&words).collect::<Result<_, _>>().unwrap();
+        assert_eq!(insts.len(), 2);
+        assert_eq!(insts[1].action, MOVE_STEP);
+        assert_eq!(insts[1].operands, &[obj, 77, 13]);
+        // obj is in BOTH sets (reads its position, writes the next); serial/dest are imm.
+        assert_eq!(write_targets(&words).unwrap(), vec![obj]);
+        assert_eq!(read_targets(&words).unwrap(), vec![obj]);
+        // Hot routing by the target's own nibble, exactly like MOVE_TO.
+        assert_eq!(target_routes(&words).unwrap(), vec![(obj, Route::Hot)]);
+        // Continuations never carry the intent latch.
+        assert!(!asks_promote_event(&words));
     }
 
     #[test]

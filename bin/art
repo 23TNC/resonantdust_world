@@ -1929,6 +1929,19 @@ _split_variant_sheet() {  # sheet_png gap
   bn=$(basename "$sheet" .png)                 # sprite.<dir>.<layer>
   rest=${bn#*.}                                # <dir>.<layer>  (drop the `sprite` map)
   dir=${rest%%.*}; layer=${rest#*.}; layer=${layer%%.*}
+  # A HELD-WHOLE atlas (its kind carries an atlas.json) is not a sprite sheet: its geometry is
+  # already final, so it goes to leaf 0 VERBATIM. Blob detection, the pow2 refit and SPLIT_PADDING
+  # are all sprite-sheet concerns, and applying them resamples the sheet into a 4 px frame that
+  # moves the cell pitch off the grid — measured 1016/8 = 127 px per cell instead of 128 (I10).
+  if [[ -f "$kind_dir/atlas.json" ]]; then
+    mkdir -p "$kind_dir/0"
+    _key "$sheet" -strip "$kind_dir/0/diffuse.$dir.$layer.png" || return 1
+    _edge_bleed "$kind_dir/0/diffuse.$dir.$layer.png"
+    cp -f "$kind_dir/atlas.json" "$kind_dir/0/atlas.json"
+    echo "    $(basename "$sheet") -> 0/diffuse.$dir.$layer.png verbatim (held-whole atlas, $(identify -format '%wx%h' "$kind_dir/0/diffuse.$dir.$layer.png"))"
+    LAST_TOTAL=1
+    return 0
+  fi
   # Variant blobs in reading order — index K is variant K.
   _kept_geoms "$(_geoms_from_source "$sheet" "$gap")"
   local ncount=${#KEPT_GEOMS[@]}
