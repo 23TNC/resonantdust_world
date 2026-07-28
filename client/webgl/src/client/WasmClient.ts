@@ -555,6 +555,12 @@ export class WasmClient {
   /** Fractional tics elapsed NOW since wire tic `t` (serial — correct across the u16 wrap;
    *  negative = `t` is still in the estimated future). `null` until any state/event has
    *  anchored the estimate. The speculation clock (first-pawns P3). */
+  /** The LEARNED tic rate (tics/second) — the authored `ticHz` until an anchor refines it.
+   *  The render-chase cap derives from this so "+20%" means 20% over TRUE speed. */
+  ticsPerSec(): number {
+    return this.ticAnchor?.ticsPerSec ?? ticHz();
+  }
+
   ticDelta(t: number): number | null {
     if (!this.ticAnchor) return null;
     const serial = (((this.ticAnchor.tic - t) & 0xffff) << 16) >> 16; // sign-extend i16

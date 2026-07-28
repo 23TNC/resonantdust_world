@@ -86,7 +86,7 @@ function walkGreedy(
 
 /** One live pawn: its warm prim id + zone (so a zone close drops it), the last-synced spec
  *  (so an unchanged update skips the warm re-bake), the last AUTHORITATIVE tile (speculation's
- *  seed), and the live speculation, if any. */
+ *  seed), the live speculation, if any, and the RENDER-CHASE track (movement-hardening F6). */
 interface Mover {
   id: number;
   macroPosition: number;
@@ -102,10 +102,31 @@ interface Mover {
   geoColor: number;
   zIndex: number;
   spec: Spec | null;
+  /** The RENDERED fractional tile — a separate track that CHASES the speculation target
+   *  (user design, movement-hardening F6): the intent arrives ~4–5 tics late, so rendering
+   *  the mathematically-correct spec directly SNAPS the pawn into the future. The chase
+   *  closes the gap at ≤ {@link CHASE_CAP}× the pawn's true speed — subtle enough not to
+   *  read as too-fast — and snaps only past {@link CHASE_SNAP_TILES}. */
+  rx: number;
+  ry: number;
+  /** Facing last applied to the prim (the TARGET's facing applies immediately — the pawn
+   *  turns toward its path at the seed, then walks into it). */
+  facing: number;
   /** The freshest intent tic ever armed — dedups replayed/duplicate `event` deliveries even
    *  after the spec cleared (zone re-subscribes replay history — first-pawns I2). */
   lastIntentTic: number | null;
 }
+
+/** Render-chase cap: the render may move at most this multiple of the pawn's true speed
+ *  (learned tic rate / tics-per-tile). +20% — the user's "hard for the human eye" bound. */
+const CHASE_CAP = 1.2;
+/** Non-linearity: catch-up factor is `1 + gap · this`, clamped to {@link CHASE_CAP} — a
+ *  trailing render leans harder the further it lags, without ever breaking the cap. */
+const CHASE_GAIN = 0.5;
+/** Past this gap (tiles) the chase is hopeless — snap (tab was hidden, a teleport, …). */
+const CHASE_SNAP_TILES = 3;
+/** Per-frame dt clamp (ms) so a stalled rAF can't manufacture a huge chase step. */
+const CHASE_DT_MAX_MS = 250;
 
 /** Serial u16 comparison: is `a` strictly newer than `b` on the wrapping tic ring? */
 function ticNewer(a: number, b: number): boolean {
@@ -134,6 +155,11 @@ export class MoverLayer {
     private content: Content,
     private readonly viewport: Viewport,
   ) {
+    // Debug affordance (mirrors `__client`/`__content`): the layer + its mover map, so the
+    // console can probe render-chase state (rx/ry vs spec target) and even drive `tick()`
+    // in a hidden tab (no rAF) without a build.
+    (globalThis as unknown as { __movers: Map<number, Mover> }).__movers = this.movers;
+    (globalThis as unknown as { __moverLayer: MoverLayer }).__moverLayer = this;
     this.refreshTables();
     this.unsubs.push(client.onStateObject((obj) => this.onStateObject(obj)));
     this.unsubs.push(client.onMoveIntent((intent) => this.onMoveIntent(intent)));
@@ -154,8 +180,12 @@ export class MoverLayer {
     this.movers.clear();
   }
 
+  /** Wall-clock of the previous {@link tick} — the chase integrates real dt. */
+  private lastTickMs = 0;
+
   /** Per-frame: re-evaluate held intents whose preconditions now hold, then advance every
-   *  live speculation along its greedy line at the tic estimate. */
+   *  live speculation along its greedy line at the tic estimate, and CHASE it with the
+   *  rendered position (F6 — the spec is truth-tracking, the chase is presentation). */
   tick(): void {
     if (this.pendingIntents.size) {
       for (const [key, intent] of this.pendingIntents) {
@@ -165,19 +195,53 @@ export class MoverLayer {
         }
       }
     }
+    const now = Date.now();
+    const dtSec = Math.min(CHASE_DT_MAX_MS, this.lastTickMs ? now - this.lastTickMs : 16) / 1000;
+    this.lastTickMs = now;
     for (const [key, m] of this.movers) {
+      // The TARGET: the speculated position while a spec lives, the resting authoritative
+      // tile otherwise (post-landing the chase closes the last fraction of a tile).
+      let tx = m.authX;
+      let ty = m.authY;
+      let facing = m.facing;
       const s = m.spec;
-      if (!s) continue;
-      const d = this.client.ticDelta(s.eventTic);
-      if (d === null || d < 0) continue; // the move is still in the estimated future
-      const p = walkGreedy(s.fromX, s.fromY, s.destX, s.destY, d / s.ticsPerTile);
-      if (Math.abs(p.x - s.appliedX) < SPEC_APPLY_EPS && Math.abs(p.y - s.appliedY) < SPEC_APPLY_EPS) {
-        continue;
+      if (s) {
+        const d = this.client.ticDelta(s.eventTic);
+        if (d !== null && d > 0) {
+          const p = walkGreedy(s.fromX, s.fromY, s.destX, s.destY, d / s.ticsPerTile);
+          tx = p.x;
+          ty = p.y;
+          facing = p.facing;
+          s.appliedX = p.x; // spec-space bookkeeping — landing error still measures the SPEC
+          s.appliedY = p.y;
+        }
       }
-      s.appliedX = p.x;
-      s.appliedY = p.y;
-      this.applyVisual(m, key, m.kind, p.x, p.y, p.facing, m.macroPosition);
-      // Arrived speculatively — hold at dest; the authoritative final State clears the spec.
+      // Chase: close the render→target gap at ≤ CHASE_CAP × true speed, leaning harder the
+      // further behind (CHASE_GAIN), snapping past CHASE_SNAP_TILES. Chebyshev metric and
+      // per-axis stepping match the greedy path's diagonal geometry.
+      const gx = tx - m.rx;
+      const gy = ty - m.ry;
+      const gap = Math.max(Math.abs(gx), Math.abs(gy));
+      if (gap > 0) {
+        const tilesPerSec = this.client.ticsPerSec() / this.speedFor(m.kind);
+        const step = gap > CHASE_SNAP_TILES
+          ? gap // hopeless — snap
+          : tilesPerSec * Math.min(CHASE_CAP, 1 + gap * CHASE_GAIN) * dtSec;
+        const rx = m.rx + Math.sign(gx) * Math.min(step, Math.abs(gx));
+        const ry = m.ry + Math.sign(gy) * Math.min(step, Math.abs(gy));
+        if (
+          Math.abs(rx - m.rx) >= SPEC_APPLY_EPS || Math.abs(ry - m.ry) >= SPEC_APPLY_EPS ||
+          facing !== m.facing
+        ) {
+          m.rx = rx;
+          m.ry = ry;
+          m.facing = facing;
+          this.applyVisual(m, key, m.kind, rx, ry, facing, m.macroPosition);
+        }
+      } else if (facing !== m.facing) {
+        m.facing = facing;
+        this.applyVisual(m, key, m.kind, m.rx, m.ry, facing, m.macroPosition);
+      }
     }
   }
 
@@ -295,11 +359,16 @@ export class MoverLayer {
     }
 
     if (m) {
+      // Existing mover: the authoritative row STEERS (auth tile, zone, kind); the render
+      // keeps chasing from wherever it is (F6 — no direct snap; `tick` closes the gap at
+      // the capped rate, or snaps itself past the hopeless threshold).
       m.authX = obj.tileX;
       m.authY = obj.tileY;
       m.kind = kind;
+      m.macroPosition = obj.macroPosition;
+      return;
     }
-    this.applyVisual(m ?? null, key, kind, obj.tileX, obj.tileY, obj.facing, obj.macroPosition);
+    this.applyVisual(null, key, kind, obj.tileX, obj.tileY, obj.facing, obj.macroPosition);
   }
 
   /** Create or mutate the pawn's warm prim at (possibly fractional) global tile `(tileX, tileY)`
@@ -345,6 +414,7 @@ export class MoverLayer {
         id, macroPosition, kind, authX: tileX, authY: tileY,
         x, y, texName: tex.name, cell: tex.cell, flipX: tex.flipX, tint, geoColor, zIndex,
         spec: null,
+        rx: tileX, ry: tileY, facing, // the chase starts AT the first authoritative tile
         lastIntentTic: null,
       });
       return;

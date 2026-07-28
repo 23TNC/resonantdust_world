@@ -16,7 +16,7 @@
 //! through one unbounded channel to a single writer task that owns the WS sink.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -231,6 +231,60 @@ async fn session_worker(
     tracing::debug!(player = ?session, "client session worker ended");
 }
 
+/// Per-connection entity→zone tracker (movement-hardening P2, closing first-pawns I4). A hot
+/// row migrating between zone subscriptions fires a DELETE in the old zone (and an insert in
+/// the new — order not guaranteed); relaying that delete as `StateGone` made every zone
+/// crossing a phantom despawn (the browser dropped + re-added the pawn; the npc once
+/// deadlocked). The tracker remembers where each entity was last relayed: a delete for an
+/// entity now live in a DIFFERENT zone is swallowed outright, and a delete matching the
+/// entity's known zone HOLDS for [`GONE_HOLD_MS`] and relays only if no reappearance lands —
+/// a real removal still relays, one beat late.
+/// `entity → (zone, seq)` — `seq` bumps on every relayed insert/update, so ANY reappearance
+/// (even same-zone delete+reinsert churn) is distinguishable from silence during the hold.
+type ZoneMap = Arc<Mutex<HashMap<u32, (u16, u64)>>>;
+
+/// The reappearance window — ~2 tics; subscription migration settles well inside it.
+const GONE_HOLD_MS: u64 = 400;
+
+/// Note a relayed insert/update in the tracker.
+fn note_state(zones: &ZoneMap, entity_reference: u32, zone: u16) {
+    let mut map = zones.lock().unwrap_or_else(|e| e.into_inner());
+    let e = map.entry(entity_reference).or_insert((zone, 0));
+    e.0 = zone;
+    e.1 = e.1.wrapping_add(1);
+}
+
+/// Relay-or-swallow a hot-shard delete through the tracker (shared by data + pawn relays).
+/// `rt` is the server runtime — the SDK fires callbacks on its own thread, where a bare
+/// `tokio::spawn` would panic.
+fn relay_gone(
+    zones: &ZoneMap,
+    out: &mpsc::UnboundedSender<String>,
+    rt: &tokio::runtime::Handle,
+    entity_reference: u32,
+    zone: u16,
+) {
+    let seen = zones.lock().unwrap_or_else(|e| e.into_inner()).get(&entity_reference).copied();
+    if let Some((z, _)) = seen {
+        if z != zone {
+            return; // already relayed from another zone — a migration artifact, not a despawn
+        }
+    }
+    let zones = zones.clone();
+    let out = out.clone();
+    rt.spawn(async move {
+        tokio::time::sleep(Duration::from_millis(GONE_HOLD_MS)).await;
+        {
+            let mut map = zones.lock().unwrap_or_else(|e| e.into_inner());
+            if map.get(&entity_reference).copied() != seen {
+                return; // reappeared during the hold (any zone, or same-zone churn) — swallow
+            }
+            map.remove(&entity_reference);
+        }
+        send(&out, ServerMsg::StateGone { entity_reference, zone });
+    });
+}
+
 /// Build the per-client world upstreams and register the row callbacks that relay `state`/`event`
 /// rows into this connection's outbound funnel. The callbacks fire for whatever the zone
 /// subscriptions (added later) put in the cache — the row carries its own `macro_position_reference`,
@@ -251,20 +305,29 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         send(out_tx, err_frame("data shard upstream unavailable"));
     }
 
+    // One tracker per client connection, shared by BOTH hot shards (an entity lives on one
+    // shard, so the keyspace never collides) — deletes route through `relay_gone` (P2/I4).
+    let zone_map: ZoneMap = Arc::new(Mutex::new(HashMap::new()));
+    let rt = tokio::runtime::Handle::current();
+
     if let Some(d) = &data {
         let o = out_tx.clone();
-        d.db().entity_state().on_insert(move |_ctx, row| send(&o, state_frame(row)));
+        let zm = zone_map.clone();
+        d.db().entity_state().on_insert(move |_ctx, row| {
+            note_state(&zm, row.entity_reference, row.macro_position_reference);
+            send(&o, state_frame(row))
+        });
         let o = out_tx.clone();
-        d.db().entity_state().on_update(move |_ctx, _old, row| send(&o, state_frame(row)));
+        let zm = zone_map.clone();
+        d.db().entity_state().on_update(move |_ctx, _old, row| {
+            note_state(&zm, row.entity_reference, row.macro_position_reference);
+            send(&o, state_frame(row))
+        });
         let o = out_tx.clone();
+        let zm = zone_map.clone();
+        let h = rt.clone();
         d.db().entity_state().on_delete(move |_ctx, row| {
-            send(
-                &o,
-                ServerMsg::StateGone {
-                    entity_reference: row.entity_reference,
-                    zone: row.macro_position_reference,
-                },
-            )
+            relay_gone(&zm, &o, &h, row.entity_reference, row.macro_position_reference)
         });
     }
     // The pawn shard — the hot movers (first-pawns). Same relay shape as `data_shard`.
@@ -277,18 +340,22 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
     }
     if let Some(p) = &pawn {
         let o = out_tx.clone();
-        p.db().entity_state().on_insert(move |_ctx, row| send(&o, pawn_state_frame(row)));
+        let zm = zone_map.clone();
+        p.db().entity_state().on_insert(move |_ctx, row| {
+            note_state(&zm, row.entity_reference, row.macro_position_reference);
+            send(&o, pawn_state_frame(row))
+        });
         let o = out_tx.clone();
-        p.db().entity_state().on_update(move |_ctx, _old, row| send(&o, pawn_state_frame(row)));
+        let zm = zone_map.clone();
+        p.db().entity_state().on_update(move |_ctx, _old, row| {
+            note_state(&zm, row.entity_reference, row.macro_position_reference);
+            send(&o, pawn_state_frame(row))
+        });
         let o = out_tx.clone();
+        let zm = zone_map.clone();
+        let h = rt.clone();
         p.db().entity_state().on_delete(move |_ctx, row| {
-            send(
-                &o,
-                ServerMsg::StateGone {
-                    entity_reference: row.entity_reference,
-                    zone: row.macro_position_reference,
-                },
-            )
+            relay_gone(&zm, &o, &h, row.entity_reference, row.macro_position_reference)
         });
     }
 

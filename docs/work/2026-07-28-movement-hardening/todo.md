@@ -41,17 +41,29 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P2 · Phantom StateGone on zone migration (first-pawns I4)
 
-- [ ] edge: per-connection entity→zone tracker in the relay — a delete for an entity live in
+- [x] edge: per-connection entity→zone tracker in the relay — a delete for an entity live in
       a DIFFERENT subscribed zone is swallowed (migration); a delete matching the entity's
       current zone holds one beat (~2 tics) and relays `StateGone` only if no insert lands.
       Component doc updated (`docs/components/server/edge/`). Acceptance: cross-zone drill —
       wolf wanders across a zone boundary with the browser watching: NO `StateGone` relay,
       no warm-prim drop/re-add; the npc's "StateGone (zone-migration artifact)" debug line
       stops appearing.
-- [ ] Real-removal path still works: delete the pawn's row by hand (spacetime sql / a gc
+- [x] Real-removal path still works: delete the pawn's row by hand (spacetime sql / a gc
       pass) and confirm `StateGone` relays after the hold; downgrade the wolves-brain comment
       from "workaround" to "defense" (adoption-keep stays). Acceptance: drill evidence in
-      `completed.md`.
+      `completed.md`. (Went further than planned — I2: with `StateGone` now trustworthy the
+      npc HONORS removals: drop adoption → adopt-or-CREATE window → fresh mint.)
+
+## P2.5 · Render-chase (USER DESIGN, added during execution — the tween knob un-held)
+
+- [ ] MoverLayer: the RENDERED position chases the SPECULATED position in path-progress
+      space — catch-up capped at +20% of the pawn's speed (non-linear: larger gap → harder
+      chase within the cap), snap only past a hopeless threshold; authoritative rows keep
+      steering the target; the contract is agreement at the destination + broad agreement
+      along the path. Kills the arm-time forward snap (~0.4 tiles of settle+fan latency) and
+      every small correction snap. `ACTIONS.md` §Movement knob text updated to BUILT.
+      Acceptance: browser soak — trips open with NO visible snap (chase from the start tile),
+      landings still e ≈ 0 in SPEC space, and the render never exceeds 1.2× authored speed.
 
 ## P3 · Master pacing — keep the 6 Hz promise (pawn-movement I5)
 

@@ -133,11 +133,17 @@ impl Brain for Wolves {
             return;
         };
         if *removed {
-            // A cross-zone hop fires a StateGone as the row migrates between zone
-            // subscriptions (first-pawns I4) — NOT a despawn. Keep the adoption; a true
-            // despawn would surface as endless trip deadlines, and nothing despawns pawns yet.
+            // `StateGone` is TRUSTWORTHY now — the edge swallows zone-migration deletes
+            // (movement-hardening P2, closing first-pawns I4), so a removal that reaches us
+            // is a real despawn (or a shard wipe — movement-hardening I2's ghost: driving a
+            // deleted id re-materializes it at position 0). Honor it: drop the adoption and
+            // fall back to the adopt-first-then-CREATE window, exactly like a fresh start.
             if self.wolf == Some(*entity_reference) {
-                tracing::debug!("wolf StateGone (zone-migration artifact) — adoption kept");
+                tracing::warn!(wolf = format!("{entity_reference:#010x}"), "wolf removed — dropping adoption, re-entering adopt-or-CREATE");
+                self.wolf = None;
+                self.dest = None;
+                self.created = false;
+                self.spawn_after = std::time::Instant::now() + Duration::from_secs(3);
             }
             return;
         }

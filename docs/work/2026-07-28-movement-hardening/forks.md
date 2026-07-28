@@ -53,6 +53,23 @@ first: interval overshoot vs SDK call latency vs the dedup-skip), holding cadenc
 The learned-rate estimator STAYS regardless — it is the defense against any future drift
 (load spikes, other hosts); F6 of pawn-movement is not un-done by fixing the clock.
 
+## F6 · Render-chase — RESOLVED BY THE USER (2026-07-28, mid-stream): the tween knob, specified
+
+The user watched trips open with a facing flip then a forward snap and diagnosed it exactly:
+the intent arrives ~4–5 tics after its event tic (settle + fan — matches the measured arm
+`d`), so the mathematically-correct speculation is already ~0.4 tiles along when it arms, and
+rendering it directly snaps the pawn into the future. Their design, implemented verbatim: the
+RENDERED position is its own track that CHASES the speculated position — in path-progress
+space so the render stays ON the greedy path — at a catch-up speed capped at **+20%** of the
+pawn's authored speed (subtle enough that players shouldn't clock it), non-linear within the
+cap (the further behind, the harder the chase), and SNAPPING only past a hopeless-lag
+threshold. Authoritative rows keep steering the target (the source-of-truth contract:
+exact agreement at the destination, broad agreement along the path — mid-route events carry
+their own resolved positions anyway). Speculation itself stays untouched — the chase is
+presentation. Rejected: rendering the spec directly (the snap being fixed); slowing
+speculation to hide latency (drifts the destination-agreement contract); an uncapped chase
+(visibly-toofast movement is exactly what the user wants to avoid).
+
 ## F5 · The persisted rate is a HINT, not state
 
 localStorage seeds the estimator's starting rate (clamped to the same band the estimator

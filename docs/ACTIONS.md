@@ -159,11 +159,14 @@ avoiding. The cadence:
   its resolved position — no extra machinery.
 - A re-anchor **every N tiles** is a held knob — added when the recorded speculation error
   (first-pawns F8) says what N buys.
-- **Authoritative state SNAPS speculation** (user, 2026-07-28 — first pass): a `state` row for a
-  speculating object snaps it to the server's tile (the landing clears the speculation; an interim
-  resolve reseeds it), and every correction logs its observed error. A **tween-blend** from the
-  speculated position to the authoritative one is the second held knob — future intent, tuned on
-  that same error data when snapping reads as visible jerk; not built.
+- **Authoritative state steers the SPECULATION; the RENDER chases** (user, 2026-07-28 —
+  movement-hardening F6, the former tween knob, built): a `state` row snaps the *speculation*
+  to the server's tile (the landing clears it; an interim resolve reseeds it; every correction
+  logs its spec-space error), but the RENDERED position is its own track that chases the
+  speculated one at ≤ **+20%** of the pawn's true speed (non-linear — the further behind, the
+  harder the lean), snapping only past a hopeless gap. The contract: exact agreement at the
+  destination, broad agreement along the path — mid-route events publish their own resolved
+  positions, so the chase always has fresh truth to converge on.
 
 So the initial program is `PROMOTE_EVENT PROMOTE MOVE_TO obj dest`; the self-queued continuations
 are bare `MOVE_STEP obj dest serial`; the hop that reaches `dest` is
