@@ -520,11 +520,20 @@ vec3 billboardNormal(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D
 //   (2) LIGHT-SIDE — the caster must sit between the light and the receiver: dot(Cb−Rbase, Rbase−L) < 0.
 //       (A north light + a caster south of the receiver would otherwise false-positive.)
 // Returns coverage + the caster row.
+// pawn-render P2: a billboard record's HOT class bit (leaf G lane, bit 25 — the same bit hot
+// lights carry). Hot prims participate in the HOT pass only.
+bool billboardHot(uint billboardIdx, highp usampler2D data) {
+  return ((fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).y >> 25) & 1u) == 1u;
+}
 float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, float reachU, bool isThing, uint rbillboard, vec2 Rbase,
-                vec2 ref, highp usampler2D data, sampler2D surf, out float row) {
+                bool skipHotCasters, vec2 ref, highp usampler2D data, sampler2D surf, out float row) {
   row = 0.0;
   if (billboardIdx == 0u) return 0.0;
-  uint cRB = fetchLin(data, BILLBOARD_BASE + int(billboardIdx)).x;   // ONE fetch — this is the corridor's
+  uvec4 cPd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));   // ONE fetch — this is the corridor's
+  // pawn-render P2: the COLD pass never walks a HOT caster — a mover's shadow belongs to the
+  // hot map only (any hot participant -> hot; the ratified tier matrix).
+  if (skipHotCasters && ((cPd.y >> 25) & 1u) == 1u) return 0.0;
+  uint cRB = cPd.x;
   vec2 Cb = resolvedTilePos((cRB >> 8) & 255u, cRB & 255u, ref);      // hot loop, per caster per light
   if (isThing) {
     if (billboardIdx == rbillboard) return 0.0;                       // (0) self — exact same billboard → no self-cast
@@ -548,7 +557,7 @@ float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, float reachU, 
 // without that the compiler removes the very fetch we are trying to price. Output is meaningless below 0.
 uniform int uWProfile;
 float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, vec2 Rbase,
-                 int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
+                 bool skipHotCasters, int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
   cdepth = 0.0;
   float cov = 0.0;
   // Reach in UNITS, the radial cap for a shadow whose light sits at/below the caster top (I38). Derived
@@ -604,7 +613,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
           // leaves holes, this silently drops casters (missing shadows), so keep the two in step.
           if (billboardIdx == 0u) break;
           if (uWProfile == 4) { cov = max(cov, float(billboardIdx & 1u) * 1e-6); continue; } // W4: no casterOne
-          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, bref, data, surf, r);
+          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, skipHotCasters, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -622,7 +631,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
         for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
           uint billboardIdx = tileSlot(cb, c);
           if (billboardIdx == 0u) break;                     // dense bucket — first empty ends the tile
-          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, bref, data, surf, r);
+          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, skipHotCasters, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
       }
@@ -702,7 +711,7 @@ const float QUANT = ${LIGHT_QUANT}.0;  // additive-lightmap quantisation step (F
 // While the differential is not yet wired this is called once with the current textures, so it is a
 // pure refactor — identical output, no behaviour change.
 vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 fcC,
-                      vec2 P, int fold, vec3 N, bool applyNL, uint rbillboardN) {
+                      vec2 P, int fold, vec3 N, bool applyNL, uint rbillboardN, bool recvHot) {
     uvec4 presLo = fetchLin(data, PRESENCE_BASE + fold);     // lights 0–6
     uvec4 presHi = fetchLin(data, PRESENCE_HI_BASE + fold);  // lights 7–13
     uvec4 sh = uProfile == 4 ? uvec4(0u)                        // profile L4: price the loop WITHOUT the shadow fetch
@@ -715,7 +724,12 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, ivec2 f
       uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
       if (li == 0xffffu) continue;                            // empty slot
       uvec4 Ld = fetchLin(data, LIGHT_BASE + int(li));       // G = position, B = colour|intensity, A = z|reach|hot|…
-      if (int((Ld.y >> 25) & 1u) != uLightClass) continue;    // #4: this pass accumulates only its class
+      // pawn-render P2 (the tier matrix): cold pass = cold lights only; hot pass = hot lights
+      // everywhere + cold lights on HOT-RECEIVER texels (a cold torch LIGHTS the wolf via the
+      // hot map — the blit zeroes the cold map on mover pixels, so no double-count).
+      uint lcls = (Ld.y >> 25) & 1u;
+      if (uLightClass == 0) { if (lcls != 0u) continue; }
+      else if (lcls != 1u && !recvHot) continue;
       vec2 Lxy = resolvedPos((Ld.w >> 4) & 255u, (Ld.x >> 8) & 255u, Ld.x & 255u, P); // v3 resolved pos
       vec3 col = vec3(float((Ld.z >> 24) & 255u), float((Ld.z >> 16) & 255u), float((Ld.z >> 8) & 255u)) / 255.0;
       float intensity = float(Ld.z & 255u) / 255.0;
@@ -838,6 +852,10 @@ void main() {
   // on a KNOWN billboard that's 2 record fetches + 1 atlas fetch, and it keeps uNormalPitch live.
   uint RF = texelFetch(uRecvFine, fc, 0).x;
   uint rbillboardN = RF & 0xffffu;
+  // pawn-render P2: the COLD pass sees a HOT receiver (a mover) as GROUND — its texels bake the
+  // terrain beneath; the HOT pass owns the mover's own lighting (normal, N·L, shadows).
+  bool recvHotN = rbillboardN != 0u && billboardHot(rbillboardN, uData);
+  if (uLightClass == 0 && recvHotN) rbillboardN = 0u;
   float rcovN = (RF & 0x10000u) != 0u ? 1.0 : 0.0;                  // presence bit (debug L2 only)
   if (uProfile == 2) { oLight = vec4(rcovN); return; }              // L2: + receiver fetch
   float sDbg;
@@ -847,7 +865,7 @@ void main() {
   if (uProfile == 3) { oLight = vec4(N, 1.0); return; }             // L3: + billboard/world normal
 
   int fold = foldTile(wc, wr);
-  vec3 acc = accumulateLights(uData, uShadow, fcC, P, fold, N, applyNL, rbillboardN);
+  vec3 acc = accumulateLights(uData, uShadow, fcC, P, fold, N, applyNL, rbillboardN, recvHotN);
   // QUANTISED into the additive accumulator (F11b). Rounding is what makes each deposit an exact integer,
   // so removing this light later — same value negated — cancels bit-exactly in FP32. Do NOT drop the
   // round for "smoother" values: the exactness is the correctness mechanism, and unquantised deposits
@@ -979,6 +997,11 @@ void main() {
   float rcov = uintBitsToFloat(R0.z);
   float baseY = uintBitsToFloat(R0.x);
   if (uGProfile == 2) { fragColor = uvec4(uint(rcov)); return; } // G2: + receiver fetch
+  // pawn-render P2: a HOT receiver (a mover) exists only for the HOT pass. The COLD pass treats
+  // its texels as GROUND — the cold map bakes the terrain under the wolf (correct the moment it
+  // walks away, and never re-baked by its motion); the blit picks the hot map on mover pixels.
+  bool recvHot = rbillboard != 0u && billboardHot(rbillboard, uData);
+  if (uLightClass == 0 && recvHot) { rbillboard = 0u; rcov = 0.0; R0.y = 0u; }
   bool isThing = rbillboard != 0u;
   float maskCov = clamp(rcov, 0.0, 1.0);                     // SOFT mask coverage → blends ground↔thing at the silhouette edge
   // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
@@ -1003,7 +1026,12 @@ void main() {
     if (li == 0xffffu) continue;                            // empty slot
     uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // v2.1: G = position, A = z|reach|emitter|hot|cast
     if (((Ld.y >> 24) & 1u) == 0u) continue;                // cast_shadows
-    if (int((Ld.y >> 25) & 1u) != uLightClass) continue;    // #4: this pass handles only its class (cold/hot)
+    // pawn-render P2 (the tier matrix): the COLD pass handles cold lights only (as before); the
+    // HOT pass handles hot lights everywhere PLUS cold lights on HOT-RECEIVER texels — a cold
+    // torch's shadow climbing a wolf lands in the hot map, never re-baking cold.
+    uint lcls = (Ld.y >> 25) & 1u;
+    if (uLightClass == 0) { if (lcls != 0u) continue; }
+    else if (lcls != 1u && !recvHot) continue;
     vec3 L = vec3(resolvedPos((Ld.w >> 4) & 255u, (Ld.x >> 8) & 255u, Ld.x & 255u, P),
                   float((Ld.y >> 16) & 255u));              // v3 resolved pos + z_offset
     float emitter = float((Ld.w >> 12) & 255u);             // emitter_radius (units) → penumbra width
@@ -1021,15 +1049,15 @@ void main() {
       float ze = min(zElev, 0.9 * L.z);                     // keep the projection s bounded
       float sProj = L.z / (L.z - ze);
       vec2 Qt = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
-      cov = walkShadow(L, emitter, Qt, true, rbillboard, Rbase, uCorridor, reachT, uData, uSurface, cd); // on-billboard (climbing) shT
+      cov = walkShadow(L, emitter, Qt, true, rbillboard, Rbase, uLightClass == 0, uCorridor, reachT, uData, uSurface, cd); // on-billboard (climbing) shT
       if (!allBillboard) {                                       // straddles ground → add ground shadow (darkens the ground px within)
         float cdG;
-        float shG = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, uCorridor, reachT, uData, uSurface, cdG);
+        float shG = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, uLightClass == 0, uCorridor, reachT, uData, uSurface, cdG);
         cov = max(cov, shG);                                // MAX not sum: identical where shT=0 (the bright px), no false over-dark where both overlap
         cd = max(cd, cdG);
       }
     } else {                                                // ground texel → GROUND shadow (fine bake cuts it by fine presence)
-      cov = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, uCorridor, reachT, uData, uSurface, cd);
+      cov = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, uLightClass == 0, uCorridor, reachT, uData, uSurface, cd);
     }
     // v3 (16 lights/tile): each slot is ONE byte = u7 coverage | u1 on-billboard. 16 x 8 = 128 bits
     // exactly, so the flag rides its own slot's byte instead of a separate A-lane bit field.
@@ -1708,12 +1736,20 @@ export class ShadowGather {
       const tdx = p.flipX ? p.width - (t.dx + t.w) : t.dx;
       const tx = p.x + tdx, ty = p.y + t.dy;
       // A changed billboard (new immutable def — lod landed/zoom — or first sight) cascades its region.
-      if (inst.changed) this.markBillboardDirty(tx, ty, t.w, t.h);
+      // pawn-render P2: HOT prims (movers) dirty class 1 only, and a MOVED prim's OLD box is
+      // cascaded too (old ∪ new — else the wolf leaves a stale silhouette behind each step).
+      const pcls = p.hot ? 1 : 2;
+      const lb = this.lastBox.get(p.id);
+      if (inst.changed) {
+        if (lb !== undefined && (lb[0] !== tx || lb[1] !== ty)) {
+          this.markBillboardDirty(lb[0], lb[1], lb[2], lb[3], pcls);
+        }
+        this.markBillboardDirty(tx, ty, t.w, t.h, pcls);
+      }
       // P4: remembered so REMOVAL can dirty scopedly. MUTATE in place — allocating a fresh array per
       // prim per frame is ~1700 short-lived arrays a frame, i.e. GC pressure for no reason.
-      const lb = this.lastBox.get(p.id);
-      if (lb === undefined) this.lastBox.set(p.id, [tx, ty, t.w, t.h]);
-      else { lb[0] = tx; lb[1] = ty; lb[2] = t.w; lb[3] = t.h; }
+      if (lb === undefined) this.lastBox.set(p.id, [tx, ty, t.w, t.h, pcls]);
+      else { lb[0] = tx; lb[1] = ty; lb[2] = t.w; lb[3] = t.h; lb[4] = pcls; }
       const baseY = ty + t.h, topY = baseY - TILT * t.h; // card ground y-extent (px)
       const r0 = Math.floor(topY / SQUARE), r1 = Math.floor(baseY / SQUARE);
       const c0 = Math.floor(tx / SQUARE), c1 = Math.floor((tx + t.w) / SQUARE);
@@ -1735,7 +1771,7 @@ export class ShadowGather {
     // fact; that is precisely why removal used to fall back to recomputing every tile.
     for (const [pid, box] of this.lastBox) {
       if (seen.has(pid)) continue;
-      this.markPrimDirty(box[0], box[1], box[2], box[3]);
+      this.markPrimDirty(box[0], box[1], box[2], box[3], box[4] ?? 2);
       this.lastBox.delete(pid);
     }
     // P7/H1: release carried lights whose owner stopped presenting one — dirtying what each lit
@@ -1788,7 +1824,7 @@ export class ShadowGather {
   /** P4: each resident billboard's last known tight box, so REMOVAL can queue a scoped rect. Without
    *  it a departed caster's box is unrecoverable (it has left `standing`) — which is exactly why
    *  removal used to force-all every tile. */
-  private readonly lastBox = new Map<number, [number, number, number, number]>();
+  private readonly lastBox = new Map<number, [number, number, number, number, number]>();
   /** P5 debug: the last `standing` list, so `__torch()` can pick a real placed billboard. */
   private lastStanding: Primitive[] = [];
   /** DEBUG: shadow tiles marked dirty (recomputed) on the last frame. */
@@ -1798,24 +1834,29 @@ export class ShadowGather {
    *  `x/y/w/h` is the extent of the prim **and everything it carries**: moving a carrier moves its whole
    *  subtree, so a carrier's box must cover its children or their old tiles keep a stale shadow.
    *  Billboard and light changes both funnel here ([F6](forks.md#f6)). */
-  private markPrimDirty(x: number, y: number, w: number, h: number): void {
+  private markPrimDirty(x: number, y: number, w: number, h: number, cls = 2): void {
     const x0 = Math.floor(x / SQUARE) - 1, y0 = Math.floor(y / SQUARE) - 1;
     const x1 = Math.floor((x + w) / SQUARE) + 1, y1 = Math.floor((y + h) / SQUARE) + 1;
-    this.pendingRects.push([x0, y0, x1, y1, 2]); // a caster affects BOTH classes at its own tiles
+    // pawn-render P2: a HOT prim's change dirties the HOT class ONLY (cls 1) — a wandering
+    // wolf must never re-bake a cold map. Cold prims keep cls 2 (both classes at their tiles).
+    this.pendingRects.push([x0, y0, x1, y1, cls]);
     this.receiverPending.push([x0, y0, x1, y1]); // P3: a billboard change re-bakes ITS receiver tiles
     for (const [id, L] of this.coldData.carriedLights) {
       if (this.litSeen.has(id)) continue;
       const cx = Math.min(Math.max(L.x, x), x + w), cy = Math.min(Math.max(L.y, y), y + h);
       if (Math.hypot(cx - L.x, cy - L.y) > L.reach + SQUARE) continue; // light can't see the prim
       this.litSeen.add(id);
-      this.markLightDirty({ x: L.x, y: L.y, reach: L.reach, dynamic: false });
+      // A hot prim under ANY light routes the interaction to the HOT map — the cascaded
+      // light rect follows the PRIM's class, not the light's.
+      this.markLightDirty({ x: L.x, y: L.y, reach: L.reach, dynamic: false }, undefined,
+        cls === 1 ? 1 : undefined);
     }
   }
 
   /** P4 — the BILLBOARD presentation changed (new def / lod / first sight). Its carrier's extent is
    *  what actually needs redoing, so this is the prim cascade under a name that says what moved. */
-  private markBillboardDirty(x: number, y: number, w: number, h: number): void {
-    this.markPrimDirty(x, y, w, h);
+  private markBillboardDirty(x: number, y: number, w: number, h: number, cls = 2): void {
+    this.markPrimDirty(x, y, w, h, cls);
   }
 
   /** P4 — **the LIGHT dirty front door.** Placement, movement, a prop change and removal all route
@@ -1823,8 +1864,8 @@ export class ShadowGather {
    *  **class is derived from the light itself** — callers no longer thread a `cls` argument, which is
    *  what let the routing drift out of step with `L.dynamic` in three separate places. */
   private markLightDirty(L: { x: number; y: number; reach: number; dynamic: boolean },
-                         from?: { x: number; y: number }): void {
-    this.markLightMove(from?.x ?? L.x, from?.y ?? L.y, L.x, L.y, L.reach, L.dynamic ? 1 : 0);
+                         from?: { x: number; y: number }, clsOverride?: number): void {
+    this.markLightMove(from?.x ?? L.x, from?.y ?? L.y, L.x, L.y, L.reach, clsOverride ?? (L.dynamic ? 1 : 0));
     // The bookkeeping a light change implies, DERIVED here rather than hand-set at each call site —
     // its record may differ (`coldDirty`) and the per-tile light lists may differ (`lightsVer`).
     // Those two used to be set by hand wherever someone remembered to; forgetting either is a silent

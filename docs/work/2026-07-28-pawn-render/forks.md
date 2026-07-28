@@ -15,7 +15,20 @@ is the composite); rejected: CPU-side splitting of mover sprites (the whole poin
 per-pixel key is not doing that). Guard: the zdepth reproject is NEAREST for exactly this
 reason (`SquareCache.ts:124-127`) — keep it that way.
 
-## F2 · Warm shadow/light data rides UNIFORMS in the cold record format
+## F2-AMENDED (at P2 build, 2026-07-28) · Movers ride the EXISTING record texture, hot-bit classed
+
+Implementation found the cold data system already anticipating hot prims: billboard records
+carry a HOT bit (bit 25 of the leaf's G lane — the SAME class bit lights are filtered by),
+`writeRecord`/`mark` uploads are incremental (a handful of moving records = bytes/frame), and
+`billboardDataFor` accepts any `Primitive` — the warm cache's prims are the same shape. So
+movers join through the EXISTING machinery: warm standing prims flow into
+`ShadowGather.tick` tagged hot, their records/buckets/receiver entries reuse every cold path,
+and the CLASS SPLIT happens in the shaders (a class-0 pass skips hot casters and demotes
+hot-receiver texels to ground; class-1 evaluates ALL lights on hot-receiver texels — the
+matrix's cold-light×hot-prim cell). ONE decode path, near-zero new formats. The original
+uniform plan below stays as hot-shadows' scope (its budget system genuinely wants uniforms).
+
+## F2 (original, superseded for this stream) · Warm shadow/light data rides UNIFORMS in the cold record format
 
 The hot-shadows stream's ratified design: hot data is passed by uniform in the SAME packed
 layout as the cold data textures, so the shader decodes a record identically from either

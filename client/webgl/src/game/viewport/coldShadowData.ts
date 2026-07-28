@@ -509,8 +509,11 @@ export class ColdShadowData {
     // prim_data (set 1): a ROOT (child = 0) at the absolute position, carrying the billboard in slot a.
     // `cast_shadows` MUST be set here: it inherits by AND down the chain, so a carrier that leaves it
     // clear silences everything it carries (caught by mirror readback — the leaf came back cast = 0).
+    // pawn-render P2: a MOVER's root prim carries the HOT class bit (25) — resolveCarried folds
+    // it down (topmost hot wins), so the leaf record the shaders read is hot-classed and every
+    // light/shadow interaction involving this prim routes to the HOT maps only.
     const primChanged = this.writeRecord(PRIM_BASE + prim, pos,
-      ((((rotation & 3) << 26) | (1 << 24) | ((z & 0xff) << 16)
+      ((((rotation & 3) << 26) | ((billboard.hot ? 1 : 0) << 25) | (1 << 24) | ((z & 0xff) << 16)
         | ((SET_BILLBOARD_DATA & 0xf) << 12)) >>> 0),
       (((idx & 0xffff) << 16) >>> 0), 0);
     // billboard_data (set 6): parent + the RESOLVED position + definition. The resolve walks this

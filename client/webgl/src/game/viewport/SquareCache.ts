@@ -51,6 +51,10 @@ export interface Primitive {
   packed?: readonly PackedChannel[];
   seed?: number;
   zIndex: number;
+  /** pawn-render P2: the prim's TEMPERATURE — true for movers (warm-cache prims). A hot prim's
+   *  light/shadow participation lands ONLY in the HOT maps (the ratified tier matrix: any hot
+   *  participant → hot); its record carries the same class bit hot lights use. */
+  hot?: boolean;
   /** P5 — the LIGHT presentation of this primitive, if it has one. A primitive presents as a
    *  billboard (the fields above), a light (this), or **both**: a torch is one placed object with a
    *  sprite and a glow. Carried under the SAME carrier prim as the billboard ([F9](../../../../docs/work/2026-07-25-primitive-graph/forks.md)),
@@ -523,6 +527,7 @@ export class SquareCache {
       seed: spec.seed,
       zIndex: spec.zIndex ?? 0,
       light: spec.light,   // P5: the LIGHT presentation — dropped here, a torch never lights
+      hot: spec.hot,       // pawn-render P2: the temperature — dropped here, a mover dirties COLD
     };
     const range = squaresForAABB(prim.x, prim.y, prim.x + prim.width, prim.y + prim.height);
     this.prims.set(id, { prim, range });

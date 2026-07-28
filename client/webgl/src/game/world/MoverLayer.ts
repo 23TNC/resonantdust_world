@@ -414,6 +414,7 @@ export class MoverLayer {
         packed: this.packedFor(kind),
         seed: hash01(key),
         zIndex,
+        hot: true, // a mover — its light/shadow participation is HOT-class only (pawn-render P2)
       });
       this.movers.set(key, {
         id, macroPosition, kind, authX: tileX, authY: tileY,

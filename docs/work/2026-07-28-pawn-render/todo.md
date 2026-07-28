@@ -32,13 +32,13 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P2 · Movers into the HOT lighting pass (lit + normal-mapped wolves)
 
-- [ ] Warm billboard records: pack the wolf's live state (position box, facing/rotation,
+- [x] Warm billboard records: pack the wolf's live state (position box, facing/rotation,
       atlas frame for the CURRENT facing, flipX) into the SAME record format as
       `coldShadowData`'s billboard records, delivered per frame by UNIFORM (F2 — movers are
       few); a shared decode serves texture (cold) and uniform (warm) sources. Acceptance:
       unit-level — a warm record round-trips through the decode identically to an
       equivalent cold record.
-- [ ] Hot pass takes warm receivers: warm prims join the HOT class pass's receiver maps
+- [x] Hot pass takes warm receivers: warm prims join the HOT class pass's receiver maps
       (own dirty channel — the mover's rect re-marks per move, which MoverLayer's eps-gated
       re-bake already bounds); the hot pass evaluates ALL lights (cold + hot) on
       warm-receiver texels, wolf N·L from the wolf's atlas normal frame through
@@ -46,12 +46,12 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
       `hotLightRT` ONLY. The cold pass is untouched. Acceptance: wolf shows sprite relief
       under a nearby cold torch (normals working); `__shownormal` sane on the wolf; cold
       dirty count stays 0 while the wolf wanders.
-- [ ] Blit light-select (F3): warm-winning pixels take `ambient + hotLight`; cold pixels
+- [x] Blit light-select (F3): warm-winning pixels take `ambient + hotLight`; cold pixels
       unchanged (`ambient + coldLight + hotLight`). Acceptance: no double-bright seam where
       the wolf overlaps lit ground; a wolf in a dark corner is dark; the tier matrix holds —
       cold light lights the wolf via the HOT map (verify by watching `hotLightRT` dirty
       rects follow the wolf while `coldLightRT` stays untouched).
-- [ ] Perf guard: the per-frame hot cost with a wandering wolf + the standing light rig
+- [x] Perf guard: the per-frame hot cost with a wandering wolf + the standing light rig
       holds the frame budget (measure against the 63-light/120 fps baseline). Acceptance:
       fps numbers in `completed.md` at zoom 1 and zoom 0.25.
 

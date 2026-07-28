@@ -117,7 +117,11 @@ void main() {
       // would break light removal outright: if two lights each deposit 255 and their sum is clipped to
       // 255, subtracting one leaves 0 where the answer is 255, and that light can never be fully turned
       // off. Over-bright is resolved at read time; the stored sum stays exact.
-      vec3 irr = (texelFetch(uColdLight, lt, 0).rgb + texelFetch(uHotLight, lt, 0).rgb) / uLightQuant;
+      // pawn-render P2 (F3 — the tier-matrix select): on MOVER pixels the HOT map already holds
+      // the mover's COMPLETE lighting (all lights, its own normal + shadows — the hot pass
+      // evaluates cold lights on hot-receiver texels), while the cold map holds the TERRAIN
+      // beneath. Blend the cold map OUT by mover coverage; the hot map applies everywhere.
+      vec3 irr = (texelFetch(uColdLight, lt, 0).rgb * (1.0 - wcov) + texelFetch(uHotLight, lt, 0).rgb) / uLightQuant;
       // lighting-feel P3: AMBIENT × AO. The surface composite is premultiplied by presence
       // (A = presence, so ao = G/A — the bake's own encoding); tiles without occlusion art carry
       // G = 1 and are untouched. AO attenuates the OMNIDIRECTIONAL term only — direct light keeps

@@ -394,8 +394,11 @@ export class Viewport {
 
     // Recompute the shadow bitfield + bake the LIGHTMAP (gather → RTs) BEFORE the display, so the blit
     // multiplies this frame's lighting. Renders into the shadow/light RTs; the blit below draws to screen.
+    // pawn-render P2: WARM (mover) prims join the pass tagged hot — their records carry the class bit,
+    // the shaders route every hot participant to the HOT maps only (the ratified tier matrix), so a
+    // moving wolf never dirties a cold bake.
     if (this.map.ready) {
-      this.shadows.tick(this.map.standingPrims(), this.resolver, this.map.window);
+      this.shadows.tick([...this.map.standingPrims(), ...this.warm.standingPrims()], this.resolver, this.map.window);
     }
 
     this.renderer.clearScreen(0.05, 0.06, 0.08, 1.0);

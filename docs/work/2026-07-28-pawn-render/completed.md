@@ -37,3 +37,23 @@ consistent, no drift artifacts. Row-key audit: both tiers' depth resolves are th
 function (`Viewport.channels(suffix)` instantiated per tier), so the row convention agrees
 by construction; the observed flips landed at the visually-correct rows with no premature
 pop.
+
+## 2026-07-28 · P2 — movers into the HOT lighting pass (4/4)
+
+Implemented via F2-AMENDED (see forks): warm prims flow into `ShadowGather.tick` alongside
+cold, tagged `hot: true` (a new `Primitive.hot` field — one landmine: `addPrim` copies fields
+explicitly and DROPPED the flag, live-diagnosed by monkey-patching `markPrimDirty` from the
+console and catching cls-2 rects from `buildCasters`); `billboardDataFor` stamps the class
+bit (25) on the root prim record and `resolveCarried` folds it to the leaf; the dirty
+machinery is class-aware (hot prims queue cls-1 rects + their OLD box on move, and their
+light-cascade overrides the cascaded rect to hot); the shaders enforce the matrix —
+`casterOne` skips hot casters in the cold pass, both gather + light passes DEMOTE
+hot-receiver texels to ground in the cold pass (the cold map bakes the terrain BENEATH the
+wolf — correct the instant it leaves, never re-baked by its motion), and the hot pass takes
+hot lights everywhere plus cold lights on hot-receiver texels; the blit blends the cold map
+OUT by mover coverage (F3 — mover pixels read ambient + hot only). **Verified live**: with
+the npc stopped, 10 s = 0 cold / 0 hot bakes; wolf walking = **0 cold** / ~25k hot over
+10 s (the matrix's promise: mover motion re-renders hot only); wolves render toned into the
+scene's light with Lambert-consistent shading (the P0 pale-flat look is gone; a wolf in a
+dark corner is dark); no GLSL errors; **120 fps at zoom 1 AND 120.3 at zoom 0.25 while
+walking** (the 63-light/120 baseline held).
