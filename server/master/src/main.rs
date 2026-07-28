@@ -21,8 +21,6 @@
 //! `master_clock.tic` is a `u32` absolute counter; the shards take its low 16 bits as their wrapping
 //! `master_tic`. The truncation happens only here, at the fan-out boundary.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use spacetimedb_sdk::DbContext;
@@ -36,7 +34,7 @@ use pawn::{bump as _, gc as _};
 use thing::bump as _;
 use tile::bump as _;
 
-use resonantdust_uplink::Uplink;
+use resonantdust_uplink::{acquire, Uplink};
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -48,57 +46,6 @@ fn parse_u8(s: &str, default: u8) -> u8 {
         .and_then(|h| u8::from_str_radix(h, 16).ok())
         .or_else(|| s.parse().ok())
         .unwrap_or(default)
-}
-
-/// Stamp a per-module `Uplink` build closure: connection + `alive` flag wired into
-/// `on_connect_error` AND `on_disconnect` (the SDK never auto-reconnects; the flag is how a
-/// dead conn is noticed). One macro because each module's `DbConnection` is a distinct type.
-macro_rules! shard_uplink {
-    ($module:ident, $name:literal, $uri:expr, $db:expr) => {{
-        let uri = $uri.to_string();
-        let db = $db.to_string();
-        Uplink::new($name, move || {
-            let alive = Arc::new(AtomicBool::new(true));
-            let (a1, a2) = (alive.clone(), alive.clone());
-            let conn = $module::DbConnection::builder()
-                .with_uri(&uri)
-                .with_database_name(&db)
-                .on_connect(|_c, id, _t| tracing::info!(%id, concat!($name, " connected")))
-                .on_connect_error(move |_c, err| {
-                    tracing::warn!(%err, concat!($name, " connect error"));
-                    a1.store(false, Ordering::Release);
-                })
-                .on_disconnect(move |_c, err| {
-                    tracing::warn!(?err, concat!($name, " disconnected"));
-                    a2.store(false, Ordering::Release);
-                })
-                .build()
-                .map_err(|e| e.to_string())?;
-            conn.run_threaded();
-            Ok((Arc::new(conn), alive))
-        })
-    }};
-}
-
-/// `get()` an uplink, logging only on up/down TRANSITIONS (the uplink's own backoff already
-/// paces its warn lines; a 6 Hz loop must not add one per tic).
-async fn acquire<C, S>(up: &Uplink<C, S>, was_up: &mut bool, name: &str) -> Option<Arc<C>> {
-    match up.get().await {
-        Ok(conn) => {
-            if !*was_up {
-                tracing::info!(%name, "uplink up — resuming its work");
-            }
-            *was_up = true;
-            Some(conn)
-        }
-        Err(err) => {
-            if *was_up {
-                tracing::warn!(%name, %err, "uplink down — skipping its work until it heals");
-            }
-            *was_up = false;
-            None
-        }
-    }
 }
 
 #[tokio::main]
@@ -129,61 +76,15 @@ async fn main() {
 
     // ── the index: the tic authority. Its uplink carries the `master_clock` subscription
     // (subscribe-and-wait), so a `get()`ed connection always has the row mirrored. ────────────
-    let index_up: Uplink<index::DbConnection, index::SubscriptionHandle> = {
-        let uri = uri.clone();
-        let db = index_db.clone();
-        Uplink::with_subscription(
-            "index",
-            move || {
-                let alive = Arc::new(AtomicBool::new(true));
-                let (a1, a2) = (alive.clone(), alive.clone());
-                let conn = index::DbConnection::builder()
-                    .with_uri(&uri)
-                    .with_database_name(&db)
-                    .on_connect(|_c, id, _t| tracing::info!(%id, "index connected"))
-                    .on_connect_error(move |_c, err| {
-                        tracing::warn!(%err, "index connect error");
-                        a1.store(false, Ordering::Release);
-                    })
-                    .on_disconnect(move |_c, err| {
-                        tracing::warn!(?err, "index disconnected");
-                        a2.store(false, Ordering::Release);
-                    })
-                    .build()
-                    .map_err(|e| e.to_string())?;
-                conn.run_threaded();
-                Ok((Arc::new(conn), alive))
-            },
-            move |conn, alive| {
-                Box::pin(async move {
-                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-                    let a3 = alive.clone();
-                    let handle = conn
-                        .subscription_builder()
-                        .on_applied(move |_| {
-                            let _ = tx.send(());
-                        })
-                        .on_error(move |_ctx, err| {
-                            tracing::warn!(%err, "index subscription error");
-                            a3.store(false, Ordering::Release);
-                        })
-                        .subscribe([format!("SELECT * FROM master_clock WHERE realm = {realm}")]);
-                    tokio::time::timeout(Duration::from_secs(5), rx.recv())
-                        .await
-                        .map_err(|_| "master_clock subscription apply timed out".to_string())?
-                        .ok_or_else(|| "subscription channel closed".to_string())?;
-                    Ok(handle)
-                })
-            },
-        )
-    };
+    let index_up = resonantdust_uplink::subbed_uplink!(index, "index", uri, index_db,
+        vec![format!("SELECT * FROM master_clock WHERE realm = {realm}")]);
 
     // ── the shard call surfaces (sub-less). ──────────────────────────────────────────────────
-    let event_up: Uplink<event_shard::DbConnection> = shard_uplink!(event_shard, "event_shard", uri, event_db);
-    let data_up: Uplink<data_shard::DbConnection> = shard_uplink!(data_shard, "data_shard", uri, data_db);
-    let pawn_up: Uplink<pawn::DbConnection> = shard_uplink!(pawn, "pawn", uri, pawn_db);
-    let tile_up: Uplink<tile::DbConnection> = shard_uplink!(tile, "tile", uri, tile_db);
-    let thing_up: Uplink<thing::DbConnection> = shard_uplink!(thing, "thing", uri, thing_db);
+    let event_up: Uplink<event_shard::DbConnection> = resonantdust_uplink::uplink!(event_shard, "event_shard", uri, event_db);
+    let data_up: Uplink<data_shard::DbConnection> = resonantdust_uplink::uplink!(data_shard, "data_shard", uri, data_db);
+    let pawn_up: Uplink<pawn::DbConnection> = resonantdust_uplink::uplink!(pawn, "pawn", uri, pawn_db);
+    let tile_up: Uplink<tile::DbConnection> = resonantdust_uplink::uplink!(tile, "tile", uri, tile_db);
+    let thing_up: Uplink<thing::DbConnection> = resonantdust_uplink::uplink!(thing, "thing", uri, thing_db);
 
     // Best-effort warm-up: a down upstream logs and is retried in the loop (F2 — startup and
     // mid-run recovery are the same code path; no panic, no special phase).

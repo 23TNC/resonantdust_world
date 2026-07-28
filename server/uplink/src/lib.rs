@@ -288,3 +288,114 @@ mod tests {
         assert_eq!(*up.get().await.expect("recovered"), 7);
     }
 }
+
+/// Stamp a sub-less [`Uplink`] for a bindings module: connection + `alive` wired into
+/// `on_connect_error` AND `on_disconnect`. One macro because each module's `DbConnection` is a
+/// distinct generated type. Caller must have `tracing` as a dependency.
+#[macro_export]
+macro_rules! uplink {
+    ($module:ident, $name:literal, $uri:expr, $db:expr) => {{
+        let uri = $uri.to_string();
+        let db = $db.to_string();
+        $crate::Uplink::<$module::DbConnection>::new($name, move || {
+            let alive = ::std::sync::Arc::new(::std::sync::atomic::AtomicBool::new(true));
+            let (a1, a2) = (alive.clone(), alive.clone());
+            let conn = $module::DbConnection::builder()
+                .with_uri(&uri)
+                .with_database_name(&db)
+                .on_connect(|_c, id, _t| ::tracing::info!(%id, concat!($name, " connected")))
+                .on_connect_error(move |_c, err| {
+                    ::tracing::warn!(%err, concat!($name, " connect error"));
+                    a1.store(false, ::std::sync::atomic::Ordering::Release);
+                })
+                .on_disconnect(move |_c, err| {
+                    ::tracing::warn!(?err, concat!($name, " disconnected"));
+                    a2.store(false, ::std::sync::atomic::Ordering::Release);
+                })
+                .build()
+                .map_err(|e| e.to_string())?;
+            conn.run_threaded();
+            Ok((::std::sync::Arc::new(conn), alive))
+        })
+    }};
+}
+
+/// Stamp a SUBSCRIBED [`Uplink`]: like [`uplink!`] plus a subscribe-and-wait closure over
+/// `$queries` (a `Vec<String>`), with the subscription's `on_error` clearing the SAME `alive`
+/// flag — the leg the plain gateway pattern missed. `get()` never returns before the cache
+/// applied (5 s timeout per attempt).
+#[macro_export]
+macro_rules! subbed_uplink {
+    ($module:ident, $name:literal, $uri:expr, $db:expr, $queries:expr) => {{
+        let uri = $uri.to_string();
+        let db = $db.to_string();
+        let queries: ::std::vec::Vec<::std::string::String> = $queries;
+        $crate::Uplink::<$module::DbConnection, $module::SubscriptionHandle>::with_subscription(
+            $name,
+            move || {
+                let alive = ::std::sync::Arc::new(::std::sync::atomic::AtomicBool::new(true));
+                let (a1, a2) = (alive.clone(), alive.clone());
+                let conn = $module::DbConnection::builder()
+                    .with_uri(&uri)
+                    .with_database_name(&db)
+                    .on_connect(|_c, id, _t| ::tracing::info!(%id, concat!($name, " connected")))
+                    .on_connect_error(move |_c, err| {
+                        ::tracing::warn!(%err, concat!($name, " connect error"));
+                        a1.store(false, ::std::sync::atomic::Ordering::Release);
+                    })
+                    .on_disconnect(move |_c, err| {
+                        ::tracing::warn!(?err, concat!($name, " disconnected"));
+                        a2.store(false, ::std::sync::atomic::Ordering::Release);
+                    })
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                conn.run_threaded();
+                Ok((::std::sync::Arc::new(conn), alive))
+            },
+            move |conn, alive| {
+                let queries = queries.clone();
+                ::std::boxed::Box::pin(async move {
+                    let (tx, mut rx) = ::tokio::sync::mpsc::unbounded_channel::<()>();
+                    let a3 = alive.clone();
+                    let handle = conn
+                        .subscription_builder()
+                        .on_applied(move |_| {
+                            let _ = tx.send(());
+                        })
+                        .on_error(move |_ctx, err| {
+                            ::tracing::warn!(%err, concat!($name, " subscription error"));
+                            a3.store(false, ::std::sync::atomic::Ordering::Release);
+                        })
+                        .subscribe(queries);
+                    ::tokio::time::timeout(::std::time::Duration::from_secs(5), rx.recv())
+                        .await
+                        .map_err(|_| ::std::format!(concat!($name, " subscription apply timed out")))?
+                        .ok_or_else(|| ::std::format!(concat!($name, " subscription channel closed")))?;
+                    Ok(handle)
+                })
+            },
+        )
+    }};
+}
+
+/// `get()` an uplink, logging only on up/down TRANSITIONS (the uplink's backoff already paces
+/// its own warns; a per-tic loop must not add one per pass). The caller keeps one `bool` per
+/// uplink.
+pub async fn acquire<C, S>(up: &Uplink<C, S>, was_up: &mut bool, name: &str) -> Option<Arc<C>> {
+    match up.get().await {
+        Ok(conn) => {
+            if !*was_up {
+                tracing::info!(%name, "uplink up — resuming its work");
+            }
+            *was_up = true;
+            Some(conn)
+        }
+        Err(err) => {
+            if *was_up {
+                tracing::warn!(%name, %err, "uplink down — skipping its work until it heals");
+            }
+            *was_up = false;
+            None
+        }
+    }
+}
