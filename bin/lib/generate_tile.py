@@ -421,8 +421,14 @@ def main():
         mu = [float(np.asarray(c, float).mean()) for c in inner]
         fs = sum(feature_size(c) for c in inner) / len(inner)
 
+        # `sprite` is an AUTHORING SOURCE, not a derived map, so it sits at the KIND level —
+        # mirroring textures/biome-thing/default/conifer/sprite.e.0.png. `art remaster` reads a
+        # kind-level sprite sheet and writes the numbered variant leaves beside it; writing it
+        # INTO a leaf instead makes remaster treat that leaf as the kind and nest a variant
+        # inside a variant. Derived maps keep the `<kind>/<variant>/` leaf.
+        source_sheet = args.map_name in ("sprite", "template")
         variant = args.variant if (args.variant and args.candidates == 1) else str(seed)
-        leaf = os.path.join(out_root, texpath.variant_leaf(variant))
+        leaf = out_root if source_sheet else os.path.join(out_root, texpath.variant_leaf(variant))
         os.makedirs(leaf, exist_ok=True)
         outp = os.path.join(leaf, texpath.map_name(args.map_name, args.dirn, args.part))
         sheet.save(outp)

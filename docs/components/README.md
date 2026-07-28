@@ -44,9 +44,12 @@ _Map + conventions: [`server/spacetime/`](server/spacetime/README.md)._
   `player_servers`); the gateway routes on it, the edge heartbeats into it. Its region→shard tier
   is vestigial. Live.
 - **[chat](server/spacetime/modules/chat/)** — the message feed. Live; client link missing.
-- **[event_shard](server/spacetime/modules/event_shard/)** — the event queue + log. **Not built.**
-- **[data_shard](server/spacetime/modules/data_shard/)** — composition slots + client-visible
-  state. **Not built.**
+- **[event_shard](server/spacetime/modules/event_shard/)** — the event queue + settled
+  `event`s (`queue`/`queue_at`). Live.
+- **[data_shard](server/spacetime/modules/data_shard/)** — hot composition slots, the
+  catch-all (first-pawns F1). Live.
+- **[pawn](server/spacetime/modules/pawn/)** — hot movers (`TYPE_PAWN`) + the `CREATE` spawn
+  machinery. Live (first-pawns).
 - **shard, pipeline — ☠ GONE (2026-07-15).** The unified tick pipeline, deleted for a ground-up
   rebuild; nothing legacy kept. Replaced by `event_shard` + `data_shard` above, whose flow is
   [`intent/spacetime-again/`](../intent/spacetime-again/README.md).

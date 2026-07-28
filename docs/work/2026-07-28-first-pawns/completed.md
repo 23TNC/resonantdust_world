@@ -190,3 +190,24 @@ each arriving at EXACTLY hops×0.5 s (4 hops→2.0 s, 6→3.0 s, 2→1.0 s; the 
 ran +3 s — the I4 churn). Two build snags eaten en route: the docker mtime miss struck again
 (stale binary ran twice — the recorded `touch` rule fixed it) and `bin/sim run` happily runs a
 stale binary after a failed build (worth a guard someday).
+
+## 2026-07-28 · P5 — seen end-to-end; STREAM COMPLETE (29/29)
+
+**Browser:** wolves render with REAL wolf art in multiple facings (n/s fronts, e/w side
+profiles with west-as-flipped-east; screenshots ss_3052qlhja + ss_9253aaimc) and the npc-driven
+wolf visibly wanders the forest at the vantage, direction reversals matching its trips (the
+legacy def-0 pawn stays a green fallback box — the CREATE motivation made visible). Glide
+quality was proven earlier at bit precision (fractional samples, 2 tiles/s, e=0.01 landing);
+when an intent is missed (I3) the wolf moves by seed→final snaps.
+
+**Bandwidth proof (npc debug trace):** a 5-hop trip = exactly 1 `move intent` + 2 `state
+object` frames (seed + final) — NEVER per-hop. Queue→seed ≈ 1.0 s (~6 tics: the +3 barrier +
+compose + settle), hop spacing exactly 3 tics, arrival notification same-tic as the final
+promote. The edge also gained the event-sub `on_applied` replay (the I3 mitigation, mirroring
+the cold/pawn delivery-guarantee pattern; client dedup absorbs the replays).
+
+**Docs:** `client/core/intent/sync.md` REWRITTEN in tic/speculation vocabulary (the README's
+sync philosophy verbatim in spirit; remaining `valid_at` mentions across docs are historical
+retirement notes only). New component docs: `server/spacetime/modules/pawn/` + `client/npc/`
+(the Brain seam + runbook); the stale spacetime module index fixed (event/data "not built" →
+live, + pawn/tile/thing rows); the component map updated. The rd-npc soak is LEFT RUNNING.

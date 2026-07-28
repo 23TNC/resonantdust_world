@@ -1914,6 +1914,26 @@ _split_variant_sheet() {  # sheet_png gap
   LAST_TOTAL=$LAST_COUNT
 }
 
+# A `sprite.<dir>.<part>.png` sitting INSIDE a numbered variant leaf is that variant's OWN
+# source, so it is written straight out as the leaf's `diffuse.<dir>.<part>.png`. Deliberately
+# NOT _split_variant_sheet: there is nothing to slice (the leaf is already the destination) and
+# nothing to fit (no blob detect, no pow2 box, no centring). A ground sheet is sampled by cell
+# and a wall/rock/fence piece is authored at its final size — any crop or rescale here would
+# move the grid out from under the client. Keying still runs, so a magenta-keyed source behaves
+# like every other diffuse. Each (dir,part) present generates independently, so one leaf can
+# carry l.0 alone or e.0/s.0/n.0 together.
+_split_variant_leaf() {  # sprite_png
+  local sheet=$1 leaf bn rest dir part out
+  leaf=$(dirname "$sheet")
+  bn=$(basename "$sheet" .png)                 # sprite.<dir>.<part>
+  rest=${bn#*.}                                # <dir>.<part>
+  dir=${rest%%.*}; part=${rest#*.}; part=${part%%.*}
+  out="$leaf/diffuse.$dir.$part.png"
+  _key "$sheet" -strip "$out" || return 1
+  _edge_bleed "$out"
+  echo "    $(basename "$leaf")/$(basename "$sheet") -> $(basename "$out")  ($(identify -format '%wx%h' "$out"))"
+}
+
 LAST_TOTAL=0
 _remaster_id() {
   local src_dir=$1 id=$2 out_cat=$3 gap=$4 mode=$5 arg6=$6
@@ -2071,6 +2091,39 @@ cmd_split() {
   # holding one/more such sheets (e.g. `remaster <kind>`). SPLIT_TARGET is the kind path
   # (raw = the physical dir) so a combined `remaster`'s downstream `maps`/pack hit it.
   local _tgt="$SPRITE_DIR/$path" _kindrel=""; local -a _vsheets=()
+
+  # ── Variant-level source sheets ──────────────────────────────────────────────────────
+  # A sprite inside a NUMBERED leaf generates FOR that variant; a sprite at the kind level
+  # (below) slices INTO variants. The numeric folder name is what separates them, and this
+  # branch runs FIRST so that `remaster <kind>/<v>` targets the leaf rather than being read
+  # as a kind — which is what made a variant appear inside a variant. Accepts the sheet
+  # itself, the leaf, or a kind whose leaves hold their own sheets.
+  local -a _lsheets=(); local _lkind="" _f
+  if [[ -f "$_tgt" && $(basename "$_tgt") == sprite.*.png ]] \
+     && [[ $(basename "$(dirname "$_tgt")") =~ ^[0-9]+$ ]]; then
+    _lsheets=( "$_tgt" )
+  elif [[ -d "$_tgt" && $(basename "$_tgt") =~ ^[0-9]+$ ]] \
+     && compgen -G "$_tgt/sprite.*.png" >/dev/null; then
+    while IFS= read -r -d '' _f; do _lsheets+=( "$_f" ); done \
+      < <(find "$_tgt" -maxdepth 1 -type f -name 'sprite.*.png' -print0 | sort -z)
+  elif [[ -d "$_tgt" ]] && ! compgen -G "$_tgt/sprite.*.png" >/dev/null; then
+    # kind dir with no sheet of its own — its numbered leaves may each carry one
+    while IFS= read -r -d '' _f; do
+      [[ $(basename "$(dirname "$_f")") =~ ^[0-9]+$ ]] && _lsheets+=( "$_f" )
+    done < <(find "$_tgt" -mindepth 2 -maxdepth 2 -type f -name 'sprite.*.png' -print0 | sort -z)
+  fi
+  if (( ${#_lsheets[@]} > 0 )); then
+    _lkind=$(dirname "$(dirname "${_lsheets[0]}")"); _lkind=${_lkind#"$SPRITE_DIR/"}
+    SPLIT_TARGET=$_lkind
+    local _s _ln=0
+    for _s in "${_lsheets[@]}"; do
+      echo "${_s#"$SPRITE_DIR/"}  (variant leaf)"
+      _split_variant_leaf "$_s" && _ln=$(( _ln + 1 ))
+    done
+    echo "art: split wrote $_ln variant-leaf diffuse(s) under $MASTER_DIR/$SPLIT_TARGET/"
+    return 0
+  fi
+
   if [[ "${seg[$((nseg-1))]}" == sprite.*.png && -f "$_tgt" ]]; then
     _vsheets=( "$_tgt" ); _kindrel=${path%/*}
   elif [[ -d "$_tgt" ]] && compgen -G "$_tgt/sprite.*.png" >/dev/null; then

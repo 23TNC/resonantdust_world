@@ -538,9 +538,28 @@ fn handle_subscribe(
             })
             .subscribe([format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}")])
     });
+    // Settled events (the movement INTENT channel). Same delivery guarantee as the cold
+    // baselines + the pawn sub: a row landing via this subscription's snapshot fires no
+    // `on_insert`, and viewport-driven re-subscribes churn the per-zone handles — so replay the
+    // zone's rows on apply (first-pawns I3). Clients dedup (`lastIntentTic`), so a replay of
+    // history is harmless.
+    let o = out_tx.clone();
     let event = event
         .subscription_builder()
         .on_error(|_ctx, err| tracing::warn!(%err, "event subscription error"))
+        .on_applied(move |ctx| {
+            for row in ctx.db.event().iter().filter(|r| r.macro_position_reference == zone) {
+                send(
+                    &o,
+                    ServerMsg::Event {
+                        event_reference: row.event_reference,
+                        zone: row.macro_position_reference,
+                        tic: row.event_tic,
+                        actions: row.actions.clone(),
+                    },
+                );
+            }
+        })
         .subscribe([format!("SELECT * FROM event WHERE macro_position_reference = {zone}")]);
     // Cold ground + scatter + overlay for the zone (best-effort — a missing cold shard doesn't fail
     // the zone). One subscription per shard covers the baseline (dense/sparse `entity_state`) and its

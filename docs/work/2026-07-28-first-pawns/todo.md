@@ -98,15 +98,15 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P5 · Seen end-to-end + wrap
 
-- [ ] Browser at the wolf's zone: wolf renders with WOLF art (def real at last — today it falls
+- [x] Browser at the wolf's zone: wolf renders with WOLF art (def real at last — today it falls
       back to the tree def), glides A→B, e/s/n facing follows direction. Acceptance: screenshot
       recorded; console clean.
-- [ ] Bandwidth proof: count ws frames at a subscribed client across one multi-tile move —
+- [x] Bandwidth proof: count ws frames at a subscribed client across one multi-tile move —
       1 intent + seed/final `State` only; npc log shows the queue→intent→final echo with the
       tic delta recorded. Acceptance: counts + delta in completed.md.
-- [ ] Rewrite `client/core/intent/sync.md` in tic/speculation vocabulary (the README's sync
+- [x] Rewrite `client/core/intent/sync.md` in tic/speculation vocabulary (the README's sync
       philosophy; `valid_at` remnants deleted). Acceptance: docs-check green; no `valid_at` in
       live docs.
-- [ ] Wrap: component doc for the pawn module + the npc brain seam; fix the stale
+- [x] Wrap: component doc for the pawn module + the npc brain seam; fix the stale
       `components/server/spacetime/README.md` module index; completed.md entries; work-index
       row → done; memory updated. Acceptance: docs-check green; `rd work brief` clean.
