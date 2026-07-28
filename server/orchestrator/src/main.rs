@@ -29,6 +29,7 @@ use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_QUEUED};
 use resonantdust_codec::tic::{tic_add, tic_after};
 use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
+use resonantdust_uplink::acquire;
 use data_shard::claim as _;
 use pawn::claim as _;
 use event_shard::{assign as _, EventLogTableAccess as _};
@@ -98,85 +99,32 @@ async fn main() {
     let thing_db = env_or("THING_DB", "resonantdust-dev-thing-0");
     tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, ?workers, %index_db, %event_db, %data_db, %pawn_db, %tile_db, %thing_db, "orchestrator starting");
 
-    // ── index: the canonical tic. Every SDK-client server reads it here, not off a shard clock. ──
-    let (tx_i, rx_i) = std::sync::mpsc::channel::<()>();
-    let index = index::DbConnection::builder()
-        .with_uri(&uri)
-        .with_database_name(&index_db)
-        .on_connect(|_c, id, _t| tracing::info!(%id, "index connected"))
-        .on_connect_error(|_c, err| tracing::error!(%err, "index connect error"))
-        .build()
-        .expect("build index connection");
-    index.run_threaded();
-    index
-        .subscription_builder()
-        .on_applied(move |_| {
-            let _ = tx_i.send(());
-        })
-        .subscribe([format!("SELECT * FROM master_clock WHERE realm = {realm}")]);
+    // ── uplinks (sim-self-heal P3): lazy + self-healing; subscribed ones gate `get()` on the
+    // cache applying. A pass needing a dead upstream defers (grouping is stateless; assign +
+    // claim are idempotent). ─────────────────────────────────────────────────────────────────
+    let index_up = resonantdust_uplink::subbed_uplink!(index, "index", uri, index_db,
+        vec![format!("SELECT * FROM master_clock WHERE realm = {realm}")]);
+    let event_up = resonantdust_uplink::subbed_uplink!(event_shard, "event_shard", uri, event_db,
+        vec![format!("SELECT * FROM event_log WHERE orchestrator_reference = {self_ref}")]);
+    let data_up = resonantdust_uplink::uplink!(data_shard, "data_shard", uri, data_db);
+    let pawn_up = resonantdust_uplink::uplink!(pawn, "pawn", uri, pawn_db);
+    let tile_up = resonantdust_uplink::uplink!(tile, "tile", uri, tile_db);
+    let thing_up = resonantdust_uplink::uplink!(thing, "thing", uri, thing_db);
 
-    // ── event shard: subscribe our own queue slice (tic comes from index, above) ─────
-    let (tx_e, rx_e) = std::sync::mpsc::channel::<()>();
-    let event = event_shard::DbConnection::builder()
-        .with_uri(&uri)
-        .with_database_name(&event_db)
-        .on_connect(|_c, id, _t| tracing::info!(%id, "event_shard connected"))
-        .on_connect_error(|_c, err| tracing::error!(%err, "event_shard connect error"))
-        .build()
-        .expect("build event_shard connection");
-    event.run_threaded();
-    event
-        .subscription_builder()
-        .on_applied(move |_| {
-            let _ = tx_e.send(());
-        })
-        .subscribe([format!(
-            "SELECT * FROM event_log WHERE orchestrator_reference = {self_ref}"
-        )]);
-
-    // ── data + cold shards: no subscription, just a call surface for `claim` ────────
-    let data = data_shard::DbConnection::builder()
-        .with_uri(&uri)
-        .with_database_name(&data_db)
-        .on_connect(|_c, id, _t| tracing::info!(%id, "data_shard connected"))
-        .on_connect_error(|_c, err| tracing::error!(%err, "data_shard connect error"))
-        .build()
-        .expect("build data_shard connection");
-    data.run_threaded();
-
-    let pawn = pawn::DbConnection::builder()
-        .with_uri(&uri)
-        .with_database_name(&pawn_db)
-        .on_connect(|_c, id, _t| tracing::info!(%id, "pawn shard connected"))
-        .on_connect_error(|_c, err| tracing::error!(%err, "pawn shard connect error"))
-        .build()
-        .expect("build pawn shard connection");
-    pawn.run_threaded();
-    let tile = tile::DbConnection::builder()
-        .with_uri(&uri)
-        .with_database_name(&tile_db)
-        .on_connect(|_c, id, _t| tracing::info!(%id, "tile shard connected"))
-        .on_connect_error(|_c, err| tracing::error!(%err, "tile shard connect error"))
-        .build()
-        .expect("build tile shard connection");
-    tile.run_threaded();
-    let thing = thing::DbConnection::builder()
-        .with_uri(&uri)
-        .with_database_name(&thing_db)
-        .on_connect(|_c, id, _t| tracing::info!(%id, "thing shard connected"))
-        .on_connect_error(|_c, err| tracing::error!(%err, "thing shard connect error"))
-        .build()
-        .expect("build thing shard connection");
-    thing.run_threaded();
-
-    rx_e
-        .recv_timeout(Duration::from_secs(5))
-        .expect("event_shard subscription applied");
-    rx_i
-        .recv_timeout(Duration::from_secs(5))
-        .expect("index master_clock subscription applied");
-    let m0 = index.db().master_clock().realm().find(&realm).map(|c| c.tic as u16).unwrap_or(0);
-    tracing::info!(master = m0, "subscriptions applied; grouping");
+    for (name, ok) in [
+        ("index", index_up.get().await.is_ok()),
+        ("event_shard", event_up.get().await.is_ok()),
+        ("data_shard", data_up.get().await.is_ok()),
+        ("pawn", pawn_up.get().await.is_ok()),
+        ("tile", tile_up.get().await.is_ok()),
+        ("thing", thing_up.get().await.is_ok()),
+    ] {
+        if !ok {
+            tracing::warn!(%name, "not reachable at startup; will keep retrying");
+        }
+    }
+    tracing::info!("grouping (uplinks lazy — a pass needing a dead upstream defers)");
+    let (mut up_i, mut up_e, mut up_d, mut up_p, mut up_t, mut up_h) = (true, true, true, true, true, true);
 
     // Refs we've already assigned this run — skips redundant (idempotent) reducer calls between the
     // assign and the cache reflecting ASSIGNED. Pruned each pass to what's still in the queue, so it
@@ -186,6 +134,14 @@ async fn main() {
     let mut ticker = tokio::time::interval(period);
     loop {
         ticker.tick().await;
+
+        // Acquire everything a pass may touch; a dead upstream defers the pass.
+        let Some(index) = acquire(&index_up, &mut up_i, "index").await else { continue };
+        let Some(event) = acquire(&event_up, &mut up_e, "event_shard").await else { continue };
+        let Some(data) = acquire(&data_up, &mut up_d, "data_shard").await else { continue };
+        let Some(pawn) = acquire(&pawn_up, &mut up_p, "pawn").await else { continue };
+        let Some(tile) = acquire(&tile_up, &mut up_t, "tile").await else { continue };
+        let Some(thing) = acquire(&thing_up, &mut up_h, "thing").await else { continue };
 
         let master = index.db().master_clock().realm().find(&realm).map(|c| c.tic as u16).unwrap_or(0);
         let frozen_through = tic_add(master, 2); // T is frozen once master ≥ T-2, i.e. T ≤ master+2

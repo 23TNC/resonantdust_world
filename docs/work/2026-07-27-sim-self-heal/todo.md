@@ -18,10 +18,10 @@ Opened 2026-07-27._
 
 ## P3 — worker + orchestrator
 
-- [ ] Convert worker's 6 connections (incl. pawn) + its recv/panic ladder to `Uplink`s; a pass needing a dead uplink defers the tic (writes are absolute + replay-safe, so re-composition after a resub is correct — and a MOVE_TO continuation lost to a dead event uplink is re-issued by the npc's trip deadline). Acceptance: `bin/rd check` green; the wolf moves.
-- [ ] Convert orchestrator's 5 connections (incl. pawn) + 2 recv `.expect`s likewise; keep `assigned` as-is (assign/claim are idempotent; the prune already tolerates an empty cache). Acceptance: check green; grouping resumes after an event-shard restart.
-- [ ] Chaos check: restart the SpacetimeDB container mid-run. Acceptance: master, worker, and orchestrator all reconnect WITHOUT process restarts and the wolf resumes moving in the browser.
-- [ ] Republish check (the first-pawns I1 void-write): `rd redeploy` a module while the trio runs. Acceptance: the trio's uplinks drop + rebuild against the fresh DB and the next compose LANDS (row visible via spacetime sql) — no trio restart.
+- [x] Convert worker's 6 connections (incl. pawn) + its recv/panic ladder to `Uplink`s; a pass needing a dead uplink defers the tic (writes are absolute + replay-safe, so re-composition after a resub is correct — and a MOVE_TO continuation lost to a dead event uplink is re-issued by the npc's trip deadline). Acceptance: `bin/rd check` green; the wolf moves.
+- [x] Convert orchestrator's 5 connections (incl. pawn) + 2 recv `.expect`s likewise; keep `assigned` as-is (assign/claim are idempotent; the prune already tolerates an empty cache). Acceptance: check green; grouping resumes after an event-shard restart.
+- [x] Chaos check: restart the SpacetimeDB container mid-run. Acceptance: master, worker, and orchestrator all reconnect WITHOUT process restarts and the wolf resumes moving in the browser.
+- [x] Republish check (the first-pawns I1 void-write): `rd redeploy` a module while the trio runs. Acceptance: the trio's uplinks drop + rebuild against the fresh DB and the next compose LANDS (row visible via spacetime sql) — no trio restart.
 
 ## P4 — client-side heal (npc)
 

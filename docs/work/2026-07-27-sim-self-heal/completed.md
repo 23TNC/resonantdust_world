@@ -33,3 +33,26 @@ Drills, all verified live with zero master restarts:
 3. **Cold start:** master started with the DAEMON stopped → 6 paced retry warns, no panic;
    daemon started → all uplinks up within seconds, tic resumed from the durable row
    (31906→31919), container "Up 21 seconds" — never restarted.
+
+## 2026-07-28 · P3 — worker + orchestrator converted; chaos + republish drills pass
+
+The wiring macros moved INTO the uplink crate (`uplink!` sub-less, `subbed_uplink!` with
+subscribe-and-wait + sub-`on_error` clearing the same flag, `acquire()` transition-logger) —
+one implementation for all three binaries; the master refactored onto them. Worker: all 6
+connections are subscribed/plain uplinks; the pass acquires everything up front and DEFERS on
+any dead upstream (events stay ASSIGNED; writes absolute + replay-safe). Orchestrator: same
+shape (its per-component claim failures were already tolerant). Both re-checked with in-
+container `touch` + `cargo check` (the host-side touch did NOT defeat the docker mtime miss —
+the P5 guard item just earned its keep).
+
+Drills, verified live:
+- **Chaos (daemon restart mid-run):** all three logged the 6 disconnects at 14:54:36 and
+  reconnected by 14:54:37 — so fast the "uplink down" transition never printed — with zero
+  container restarts (uptimes unchanged); tic advancing (34066→34079). The un-converted EDGE
+  died with the daemon both times (its `.expect` disease — the wolf stalls until the edge is
+  redeployed), which is exactly the P4/P5 territory.
+- **Republish (the first-pawns I1 void-write):** `pawn` republished mid-run → the worker's
+  pawn uplink dropped + rebuilt in 24 ms and the FRESH DB immediately received composed rows
+  (mint 0x30800000 at tic 34388) — no restarts, the void-write class is dead for the trio.
+- Bonus observation: after the earlier outage the worker drained its backlog of stale ASSIGNED
+  events on reconnect — replay-safety doing real work.
