@@ -22,9 +22,9 @@ no-material bake bit-identical (readback hash of the albedo + normal composites)
 
 ## P3 — normal detail in the bake
 
-- [ ] Blend the per-channel detail normal in `MRT_FRAG` via RNM ([F2](forks.md#f2)): amplitude × layer weight, sample offset by seed, `oNormal.a` stays 1 (alpha is a BLEND FACTOR — lighting-feel F3). Acceptance: tsc green.
-- [ ] Verify identity + shape: amp 0 ⇒ normal composite bit-identical; with amp up, `/overlayRT normal-cold` shows high-frequency structure ONLY where layer-0 weight is high (trunk untouched). Acceptance: overlay screenshots + hash.
-- [ ] GPU-time the bake with detail on vs off (the standing-costs timer harness, bake draws). Acceptance: within the existing bake budget; numbers recorded.
+- [x] Blend the per-channel detail normal in `MRT_FRAG` via RNM ([F2](forks.md#f2)): amplitude × layer weight, sample offset by seed, `oNormal.a` stays 1 (alpha is a BLEND FACTOR — lighting-feel F3). Acceptance: tsc green.
+- [x] Verify identity + shape: amp 0 ⇒ normal composite bit-identical; with amp up, `/overlayRT normal-cold` shows high-frequency structure ONLY where layer-0 weight is high (trunk untouched). Acceptance: overlay screenshots + hash.
+- [x] GPU-time the bake with detail on vs off (the standing-costs timer harness, bake draws). Acceptance: within the existing bake budget; numbers recorded.
 
 ## P4 — colour placement (the user's open question)
 

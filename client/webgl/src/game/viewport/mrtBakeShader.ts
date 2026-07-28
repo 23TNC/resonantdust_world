@@ -71,9 +71,12 @@ void main() {
   // attachment 0: albedo (material reconstruction × tint)
   vec3 base = texture(uResidual, uResidualRect.xy + vUV * uResidualRect.zw).rgb;
   vec3 outc = base;
+  // Per-instance noise offset — shared by the colour jitter AND the normal detail (one seed).
+  vec2 instanceOffset = fract(vec2(sin(uSeed * 127.1 + 311.7), sin(uSeed * 269.5 + 183.3)) * 43758.5453);
+  vec3 layerWeights = vec3(0.0);
   if (uHasLayers > 0.5) {
-    vec3 weights = texture(uLayers, uLayersRect.xy + vUV * uLayersRect.zw).rgb;
-    vec2 instanceOffset = fract(vec2(sin(uSeed * 127.1 + 311.7), sin(uSeed * 269.5 + 183.3)) * 43758.5453);
+    layerWeights = texture(uLayers, uLayersRect.xy + vUV * uLayersRect.zw).rgb;
+    vec3 weights = layerWeights;
     for (int i = 0; i < ${PACKED_CHANNELS}; i++) {
       vec4 A = uChA[i];
       vec4 B = uChB[i];
@@ -102,10 +105,32 @@ void main() {
   vec3 ssurf = texture(uSurface, uSurfaceRect.xy + vUV * uSurfaceRect.zw).rgb;
   oSurface = vec4(uTileDepth >= 0.0 ? 1.0 : 0.0, ssurf.g, ssurf.b, 1.0);
 
-  // attachment 2: normal (real, or flat-up)
-  oNormal = uHasNormal > 0.5
-    ? vec4(texture(uNormalTex, uNormalRect.xy + vUV * uNormalRect.zw).rgb, 1.0)
-    : vec4(0.5, 0.5, 1.0, 1.0);
+  // attachment 2: normal (real, or flat-up) + per-channel MATERIAL DETAIL (material-system P3).
+  // Generated normals are smooth ("plastic"); each layer channel may carry a tiling detail field
+  // (uChC: row, amp, scale) RNM-blended on, weighted by the channel's layer weight so needle
+  // detail perturbs foliage and never trunk. Amp 0 (or no layers) = the base normal untouched —
+  // the identity contract. A stays 1 (attachment alpha is a BLEND FACTOR — lighting-feel F3).
+  vec3 nrm = uHasNormal > 0.5
+    ? texture(uNormalTex, uNormalRect.xy + vUV * uNormalRect.zw).rgb * 2.0 - 1.0
+    : vec3(0.0, 0.0, 1.0);
+  if (uHasLayers > 0.5) {
+    for (int i = 0; i < ${PACKED_CHANNELS}; i++) {
+      vec4 C = uChC[i];
+      float w = layerWeights[i];
+      if (C.x < 0.0 || C.y <= 0.0 || w <= 0.0) continue;
+      // The field's two decorrelated channels give an (x, y) tilt — the standard 2-channel bump.
+      vec2 duv = vUV * uNoiseParams.y * max(C.z, 1e-3) + instanceOffset;
+      float drow = (C.x + fract(duv.y)) / max(uNoiseParams.x, 1.0);
+      vec2 dn2 = texture(uNoise, vec2(fract(duv.x), drow)).rg * 2.0 - 1.0;
+      float a = C.y * w;
+      vec3 det = normalize(vec3(dn2 * a, 1.0));
+      // RNM (reoriented normal mapping): rotate the detail into the base normal's frame.
+      vec3 t = nrm + vec3(0.0, 0.0, 1.0);
+      vec3 u2 = det * vec3(-1.0, -1.0, 1.0);
+      nrm = normalize(t * dot(t, u2) - u2 * t.z);
+    }
+  }
+  oNormal = vec4(nrm * 0.5 + 0.5, 1.0);
 
   // attachment 3: zdepth_world (tile depth in B; ground = black). R relays the EMISSIVE mask
   // (lighting-feel P3): the leaf surface's reserved R channel, gated to REAL surface maps

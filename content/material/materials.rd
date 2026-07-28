@@ -40,4 +40,10 @@
             0.12 &chromaSwing set
             -0.4 &warmCoolBias set
             uv &sampleSpace set
+            ; material-system P3: NORMAL DETAIL — a tiling field RNM-blended onto the base
+            ; normal at bake (amplitude x the channel's layer weight), restoring the
+            ; high-frequency structure generated normals lack. 0 amp = off.
+            strand &detailField set
+            0.55 &detailAmp set
+            2.5 &detailScale set
             0 return
