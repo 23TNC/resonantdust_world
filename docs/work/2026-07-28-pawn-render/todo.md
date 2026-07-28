@@ -9,7 +9,7 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P0 · Baseline
 
-- [ ] Capture the current wrongness while the wolf soaks: (a) wolf painting over a tree it
+- [x] Capture the current wrongness while the wolf soaks: (a) wolf painting over a tree it
       stands behind, (b) flat/unlit wolf vs lit terrain, (c) ground-shadow darkening the
       wolf wholesale, (d) an n/s-facing cold prim or wolf casting an e/w silhouette, (e)
       emissive working (the regression control). Acceptance: screenshots + one console dump

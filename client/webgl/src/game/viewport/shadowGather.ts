@@ -1363,6 +1363,9 @@ export class ShadowGather {
    *  (standing-costs P1). */
   private coldDirtyCount = 0;
   private hotDirtyCount = 0;
+  /** Cumulative dirty-slot bakes per class since load (pawn-render P0 — the
+   *  cold-never-rebakes acceptance counter; read via `__bakes()`). [cold, hot]. */
+  readonly bakeCounts: [number, number] = [0, 0];
   /** DEBUG (standing-costs P1 acceptance): class passes actually SUBMITTED last frame (0–2). */
   debugClassDraws = 0;
   /** P2 dirty-rect draw lists (standing-costs, [F1](../../../../docs/work/2026-07-27-lighting-standing-costs/forks.md#f1)):
@@ -1444,6 +1447,9 @@ export class ShadowGather {
     // DEBUG (P6): corridor↔brute toggle + the gather itself (for `debugReadShadow` diffing).
     (globalThis as unknown as { __corridor: (on?: boolean) => boolean }).__corridor = (on?: boolean) => this.setCorridor(on);
     (globalThis as unknown as { __gather: ShadowGather }).__gather = this;
+    // DEBUG (pawn-render P0): cumulative [cold, hot] dirty-slot bakes — the
+    // cold-never-rebakes-while-the-wolf-moves acceptance counter.
+    (globalThis as unknown as { __bakes: () => [number, number] }).__bakes = () => [...this.bakeCounts] as [number, number];
     // DEBUG (shadows-onto-billboards): tune the receiver-elevation gain live — bigger = the billboard shadow climbs
     // faster/higher up a billboard; 0 = flat ground shadow (the A/B baseline).
     (globalThis as unknown as { __elevk: (k?: number) => number }).__elevk = (k?: number) => this.setElevK(k);
@@ -2161,10 +2167,12 @@ export class ShadowGather {
     if (this.coldDirtyCount > 0) {
       this.classPass(0, this.coldShadowRT!, this.coldLightRT!, this.coldShadowPrevRT);
       this.debugClassDraws++;
+      this.bakeCounts[0] += this.coldDirtyCount;
     }
     if (this.hotDirtyCount > 0) {
       this.classPass(1, this.hotShadowRT!, this.hotLightRT!, this.hotShadowPrevRT);
       this.debugClassDraws++;
+      this.bakeCounts[1] += this.hotDirtyCount;
     }
     // lighting-feel P2: fade the decay map + splat this frame's particles. Runs every frame — the
     // fade is one blend-state draw over 131 k texels and the splats are a handful of tiny quads;

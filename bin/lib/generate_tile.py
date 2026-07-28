@@ -513,8 +513,13 @@ def main():
               f"{args.grid*args.grid} tiles) + atlas.json")
         print(f"    seam energy {sum(se)/len(se):.2f} ({se_of}) — 1.0 = seam indistinguishable "
               f"from ordinary texture; cell brightness spread {max(mu)-min(mu):.0f}/255")
-        print(f"    feature size {fs:.1f}px" + ("" if fs >= 3.0 else
-              f"  ** too fine to read at {args.tile}px — this material's detail is averaging into "
+        # Only a real DOWNSCALE averages detail away. At 1.00x shrink fine features are preserved
+        # exactly as painted, and fine is often what a big tile wants — an 8-tile sheet at 128px
+        # covers a quarter of a zone, where grass blades SHOULD be a couple of px. Warning there
+        # would be telling the author to fix something that is not happening.
+        shrink = args.size / down
+        print(f"    feature size {fs:.1f}px" + ("" if fs >= 3.0 or shrink < 1.15 else
+              f"  ** too fine to survive the {shrink:.2f}x shrink to {args.tile}px — detail is averaging into "
               f"mush. SDXL paints a fixed number of features per frame, so try --size "
               f"{max(512, args.size // 2)} --grid {max(2, (args.size // 2) // (args.tile + ov))} "
               f"to make each feature bigger (a LARGER canvas makes this worse, not better)."))

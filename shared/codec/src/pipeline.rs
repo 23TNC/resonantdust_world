@@ -275,6 +275,30 @@ macro_rules! entity_tables {
             for uid in doomed {
                 ctx.db.entity_state_log().uid().delete(uid);
             }
+            // RE-STAMP kept bases (pawn-render I2): the latest-clean row survives forever, but
+            // its TIC must stay serially NEAR — a pawn resting past TIC_WINDOW (~90 min at
+            // 6 Hz) otherwise reads as serially FUTURE and `base_row` finds no base (the next
+            // touch composes the entity from DEFAULT — measured: a parked wolf teleported to
+            // position 0). Touch the kept row's tic up to the horizon once it lags a quarter
+            // window (~22 min) — one delete + re-insert per resting entity per interval, not
+            // per gc pass (the uid encodes the tic, hence the re-insert).
+            let refresh_lag = horizon.wrapping_sub($crate::tic::TIC_WINDOW / 4);
+            let stale_bases: Vec<EntityStateLog> = ctx
+                .db
+                .entity_state_log()
+                .iter()
+                .filter(|r| {
+                    !r.dirty
+                        && latest_clean.get(&r.entity_reference) == Some(&r.tic)
+                        && $crate::tic::tic_before(r.tic, refresh_lag)
+                })
+                .collect();
+            for mut row in stale_bases {
+                ctx.db.entity_state_log().uid().delete(row.uid);
+                row.uid = $crate::uid::pack_state_uid(row.entity_reference, horizon);
+                row.tic = horizon;
+                ctx.db.entity_state_log().insert(row);
+            }
             Ok(())
         }
     };

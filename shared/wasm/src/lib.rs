@@ -47,6 +47,14 @@ pub fn default_tics_per_tile_js() -> u16 {
     resonantdust_codec::speed::DEFAULT_TICS_PER_TILE
 }
 
+/// Pack a global tile into a `position_reference` (`codec::object`) — a console/debug
+/// affordance for hand-queueing programs (e.g. minting a posed test pawn with `CREATE`).
+#[cfg(feature = "js")]
+#[wasm_bindgen(js_name = tileToPosition)]
+pub fn tile_to_position_js(tile_x: i32, tile_y: i32) -> u32 {
+    resonantdust_codec::object::tile_to_position(tile_x, tile_y)
+}
+
 // ---------- content runtime (js feature) ----------
 //
 // The client's view of the DSL: load the fetched `.rd` corpus once, then answer
