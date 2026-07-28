@@ -415,6 +415,7 @@ export class MoverLayer {
         seed: hash01(key),
         zIndex,
         hot: true, // a mover — its light/shadow participation is HOT-class only (pawn-render P2)
+        rotation: facing, // P4: the record carries the TRUE cardinal (the frame follows it anyway)
       });
       this.movers.set(key, {
         id, macroPosition, kind, authX: tileX, authY: tileY,
@@ -443,6 +444,7 @@ export class MoverLayer {
       p.tint = tint;
       p.geoColor = geoColor;
       p.zIndex = zIndex;
+      p.rotation = facing; // P4: keep the record's cardinal in step with the drawn facing
       this.viewport.warmRefreshPrim(m.id);
     }
     m.macroPosition = macroPosition;

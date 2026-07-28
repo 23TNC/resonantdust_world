@@ -63,7 +63,22 @@ folder rather than leaving two competing plans. Guard rails inherited wholesale:
 world-coord reads of `textile_slot` composites from light/shadow passes (the attempt-#2
 revert); receiver identity from in-family maps; zoom stability as an acceptance test.
 
-## F5 · N/S casting: the FRAME changes, the card doesn't (yet)
+## F5-AMENDED (at P4 build, 2026-07-28) · N/S was already carried by the frame-follows-facing mechanism
+
+Implementation found the heavy half of the plan unnecessary: `definitionFor` resolves the
+prim's CURRENT stem, and a mover's stem follows its facing — so the caster silhouette,
+receiver mask, and normal quadrant are the facing's OWN art the moment the facing changes
+(the def-index swap marks the record changed and cascades the dirty). S/N frames need no
+mirror; the rot==3 mirror (W = flipped E) is the only orientation transform and it was
+already correct. What was actually missing: the record's rotation CODE was hard-coded to the
+e/w pair — now wired end to end (a new optional Primitive.rotation, stamped by MoverLayer
+per facing; cold single-facing things keep the legacy derivation) so future consumers
+(perpendicular cards, facing-aware culls) read truth. The user's observed "n/s casts e/w"
+predates P3 — movers cast NOTHING then; with the delta live, an n/s wolf casts its own
+front/back silhouette by construction. Cold n/s prims don't exist yet (cold things are
+single-facing — `DEFAULT_FACING`), so nothing else needed fixing.
+
+## F5 (original, superseded) · N/S casting: the FRAME changes, the card doesn't (yet)
 
 An n/s-facing wolf is the same physical wolf; what the caster must project is the n/s ART's
 silhouette. So: records carry the true rotation (0=s 1=e 2=n 3=w — the two free values of

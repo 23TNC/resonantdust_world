@@ -77,17 +77,17 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P4 · N/S billboards (cast + receive + normal)
 
-- [ ] Records carry true rotation (0=s 1=e 2=n 3=w) end to end: `coldShadowData` stops
+- [x] Records carry true rotation (0=s 1=e 2=n 3=w) end to end: `coldShadowData` stops
       hard-coding the e/w regime; the frame referenced is the FACING'S OWN atlas frame
       (n/s art silhouette) — cold prims with n/s rotations fix for free alongside the wolf.
       Acceptance: record decode round-trips all four rotations.
-- [ ] Shader arms for n/s: `sampleCard` (u-mapping per rotation), `casterCover` (silhouette
+- [x] Shader arms for n/s: `sampleCard` (u-mapping per rotation), `casterCover` (silhouette
       of the n/s frame on the standard card plane — F5: geometry unchanged, art changes),
       `billboardNormal` (n/s normal frames; no x-mirror for s, mirror rules stated per
       rotation). Acceptance: a wolf walking NORTH casts its front/back silhouette (not the
       side profile) — the user's reported artifact gone; e/w behavior bit-unchanged
       (corridor↔brute identity still holds on a cold-only scene).
-- [ ] Receiving parity n/s: shadows climb n/s-facing wolf sprites at the same heights as
+- [x] Receiving parity n/s: shadows climb n/s-facing wolf sprites at the same heights as
       e/w (the receiver plane math is facing-independent; verify rather than assume).
       Acceptance: lap around a shadowing tree shows consistent shadow behavior through all
       four facings.

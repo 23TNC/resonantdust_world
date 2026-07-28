@@ -55,6 +55,10 @@ export interface Primitive {
    *  light/shadow participation lands ONLY in the HOT maps (the ratified tier matrix: any hot
    *  participant → hot); its record carries the same class bit hot lights use. */
   hot?: boolean;
+  /** pawn-render P4: the TRUE cardinal rotation (0=s 1=e 2=n 3=w) for the shadow/light record.
+   *  Absent ⇒ the legacy e/w derivation (flipX ? 3 : 1). The FRAME already follows the facing
+   *  (the def swaps per stem); this code feeds the record's mirror/orientation field. */
+  rotation?: number;
   /** P5 — the LIGHT presentation of this primitive, if it has one. A primitive presents as a
    *  billboard (the fields above), a light (this), or **both**: a torch is one placed object with a
    *  sprite and a glow. Carried under the SAME carrier prim as the billboard ([F9](../../../../docs/work/2026-07-25-primitive-graph/forks.md)),

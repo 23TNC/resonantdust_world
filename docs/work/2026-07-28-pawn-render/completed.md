@@ -81,3 +81,19 @@ once + never re-baked (measured at rest AND during walks); cold×hot-receiver �
 wolf); cold×hot-caster → hot delta (this shadow); hot-light cells ride the pre-existing
 class-1 path — no live hot-class light in the scene, so those two cells are
 machinery-verified only (honest gap; the path is untouched from the moving-lights work).
+
+## 2026-07-28 · P4 — n/s billboards (3/3, mostly by discovering it already worked)
+
+F5-AMENDED: the heavy planned shader work (per-rotation u-mapping, n/s caster arms) was
+UNNECESSARY — `definitionFor` resolves the prim's current stem and a mover's stem follows its
+facing, so caster silhouette / receiver mask / normal quadrant are the facing's own art by
+construction; s/n need no mirror and the W-mirror was already right. What was wired: the
+record's TRUE rotation code (optional `Primitive.rotation`, stamped by MoverLayer per facing;
+`billboardDataFor` prefers it over the legacy flipX derivation) — no format change, the 2-bit
+field always had room. Cold things are single-facing today, so no cold prim needed fixing;
+the user's observed "n/s casts e/w" predates P3 (movers cast nothing at all then). Verified:
+walks through all four facings with cold bakes at 0 and hot flowing, no shader errors;
+receive parity rode the facing-agnostic receiver path (the mixed-facing bit-proof + the
+s-facing band crossing). HONEST GAP: a posed glamour shot of an n-facing wolf's cast shadow
+kept eluding my tile→screen aim (three wolves + an unresolved screen mapping) — the geometry
+is by-construction and the user watches the live tab; flagged for the P5 acceptance lap.

@@ -472,7 +472,10 @@ export class ColdShadowData {
    *  apart when a prim can carry several pieces / nest. Both records compare-write, so an unchanged
    *  billboard still emits no command. */
   billboardDataFor(billboard: Primitive, defIndex: number): { idx: number; changed: boolean } {
-    const rotation = billboard.flipX ? 3 : 1; // W : E (both E/W regime for now)
+    // pawn-render P4: the TRUE cardinal when the prim carries one (movers — 0=s 1=e 2=n 3=w);
+    // the legacy e/w derivation otherwise (single-facing cold things). The FRAME already
+    // follows the facing (the def swaps per stem); this code drives the shaders' mirror (3=w).
+    const rotation = billboard.rotation ?? (billboard.flipX ? 3 : 1);
     const z = 0;
     const ax = billboard.x + billboard.width * 0.5; // the TRUE game anchor (full-box base-centre)
     const ay = billboard.y + billboard.height;
