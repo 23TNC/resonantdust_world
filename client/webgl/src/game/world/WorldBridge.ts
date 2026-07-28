@@ -230,6 +230,8 @@ export class WorldBridge {
         this.content.materialNoiseFields(),
         this.content.materialSampleSpaces(),
         this.content.materialSwings(),
+        this.content.materialDetailFields(), // material-system P1: normal-detail params
+        this.content.materialDetail(),
       ),
     );
   }

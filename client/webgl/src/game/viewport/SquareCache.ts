@@ -91,6 +91,8 @@ export interface MaterialResolve {
   surface: TexFrame;
   chA: Float32Array;
   chB: Float32Array;
+  /** material-system P1: per-channel normal-detail (field row, amp, scale, placement mode). */
+  chC: Float32Array;
 }
 
 export type PrimitiveSpec = Omit<Primitive, "id" | "tint" | "zIndex"> &
@@ -660,7 +662,7 @@ export class SquareCache {
       this.bake.setLayers(mat.layers?.source ?? null, mat.layers?.uvRect());
       this.bake.setSurface(mat.surface.source, mat.surface.uvRect());
       this.bake.setNoise(this.noiseTex);
-      this.bake.setChannels(mat.chA, mat.chB);
+      this.bake.setChannels(mat.chA, mat.chB, mat.chC);
       const [nrows, uvTile, worldTile] = this.noiseGlobals;
       this.bake.setNoiseGlobals(nrows, uvTile, worldTile);
       this.bake.setWorldRect(prim.x, prim.y, prim.width, prim.height);

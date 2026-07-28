@@ -152,7 +152,7 @@ export class Viewport {
           // defaults to the white fill; a partially-loaded stem (albedo up, surface not yet) uses the real
           // albedo so it doesn't flash white (matching pixijs).
           const wf = this.whiteFrame;
-          const solid = (residual: TexFrame) => ({ texture: white, tint: prim.geoColor ?? prim.tint, material: { residual, layers: null, surface: wf, chA: ZERO_CH, chB: ZERO_CH } });
+          const solid = (residual: TexFrame) => ({ texture: white, tint: prim.geoColor ?? prim.tint, material: { residual, layers: null, surface: wf, chA: ZERO_CH, chB: ZERO_CH, chC: ZERO_CH } });
           const r = this.resolver;
           if (!prim.textureName || !r) return solid(wf);
           // The albedo map is the residual base; the visual alpha lives in surface.B — need BOTH real.
@@ -164,15 +164,16 @@ export class Viewport {
           let layers: TexFrame | null = null;
           let chA = ZERO_CH;
           let chB = ZERO_CH;
+          let chC = ZERO_CH;
           const reg = this.materialRegistry;
           if (reg) {
             const lyr = r.resolve(prim.textureName, "layers", prim.cell);
             if (!lyr.geo && lyr.frame) {
               layers = lyr.frame;
-              ({ chA, chB } = reg.packChannels(prim.packed));
+              ({ chA, chB, chC } = reg.packChannels(prim.packed));
             }
           }
-          return { texture: white, tint: 0xffffff, material: { residual: alb.frame, layers, surface: surf.frame, chA, chB } };
+          return { texture: white, tint: 0xffffff, material: { residual: alb.frame, layers, surface: surf.frame, chA, chB, chC } };
         },
       },
       {

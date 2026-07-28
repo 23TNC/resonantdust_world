@@ -52,6 +52,11 @@ export interface MaterialDef {
   chromaSwing: number;
   warmCoolBias: number;
   sampleSpace: 0 | 1;
+  /** NORMAL-DETAIL (material-system P1): the detail field's atlas row ({@link NO_NOISE_FIELD} =
+   *  none), its amplitude (0 = identity), and its UV-tiling scale multiplier. */
+  detailFieldIndex: number;
+  detailAmp: number;
+  detailScale: number;
 }
 
 /** The material registry: `params[materialId - 1]` → its {@link MaterialDef}. Built once
@@ -91,9 +96,10 @@ export class MaterialRegistry {
    *  channel's {@link DEFAULT_LAYER_GRAY}, so an unauthored split sprite reconstructs its
    *  materials as distinct grays rather than the bare residual. The per-pixel layer weight
    *  scales each contribution in the shader, so a gray only shows where its material is. */
-  packChannels(channels: readonly PackedChannel[] | undefined): { chA: Float32Array; chB: Float32Array } {
+  packChannels(channels: readonly PackedChannel[] | undefined): { chA: Float32Array; chB: Float32Array; chC: Float32Array } {
     const chA = new Float32Array(PACKED_UNIFORM_LEN);
     const chB = new Float32Array(PACKED_UNIFORM_LEN);
+    const chC = new Float32Array(PACKED_UNIFORM_LEN);
     // 3 layer channels (RGB); any 4th binding on a prim is ignored (the `layers` map is RGB).
     for (let i = 0; i < 3; i++) {
       const c = channels?.[i];
@@ -109,21 +115,32 @@ export class MaterialRegistry {
       chB[base + 1] = d?.warmCoolBias ?? 0;
       chB[base + 2] = d?.noiseFieldIndex ?? NO_NOISE_FIELD;
       chB[base + 3] = d?.sampleSpace ?? 0;
+      // chC (material-system P1): (detail field row, detail amp, detail scale, placement mode).
+      // Mode 0 = UV until F1's by-eye pick lands (P4).
+      chC[base] = d?.detailFieldIndex ?? NO_NOISE_FIELD;
+      chC[base + 1] = d?.detailAmp ?? 0;
+      chC[base + 2] = d?.detailScale ?? 1;
+      chC[base + 3] = 0;
     }
-    return { chA, chB };
+    return { chA, chB, chC };
   }
 
   /** Build from the wasm registry's parallel arrays: noise-field NAMES + sample spaces
    *  (`materialSampleSpaces`) + flat stride-3 swings (`materialSwings`:
    *  `[hueDeg, chroma, warmCool, …]`). Degrees → radians here so the shader stays in
    *  radians. */
-  static fromWasm(noiseFields: string[], sampleSpaces: string[], swings: Float64Array): MaterialRegistry {
+  static fromWasm(noiseFields: string[], sampleSpaces: string[], swings: Float64Array,
+                  detailFields?: string[], detail?: Float64Array): MaterialRegistry {
     const defs: MaterialDef[] = noiseFields.map((field, i) => ({
       noiseFieldIndex: noiseFieldIndex(field),
       hueSwing: ((swings[i * 3] ?? 0) * Math.PI) / 180,
       chromaSwing: swings[i * 3 + 1] ?? 0,
       warmCoolBias: swings[i * 3 + 2] ?? 0,
       sampleSpace: sampleSpaces[i] === "world" ? 1 : 0,
+      // material-system P1: the stride-2 `materialDetail` parallel array ([amp, scale]).
+      detailFieldIndex: noiseFieldIndex(detailFields?.[i] ?? ""),
+      detailAmp: detail?.[i * 2] ?? 0,
+      detailScale: detail?.[i * 2 + 1] ?? 1,
     }));
     return new MaterialRegistry(defs);
   }

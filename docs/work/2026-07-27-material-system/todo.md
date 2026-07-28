@@ -12,8 +12,8 @@ no-material bake bit-identical (readback hash of the albedo + normal composites)
 
 ## P1 — registry v2 (normal detail params)
 
-- [ ] Extend the `<material>` DSL def + wasm mirror + `material.ts` registry with normal-detail params: `detailField` (noise-field name), `detailAmp` (0 = off), `detailScale`. Acceptance: wasm rebuilt; a material without them parses unchanged.
-- [ ] Thread the params to the bake as a third per-channel uniform vec4 (field row, amp, scale, placement mode — [F1](forks.md#f1)). Acceptance: tsc green; all-zero params ⇒ bake bit-identical (readback hash).
+- [x] Extend the `<material>` DSL def + wasm mirror + `material.ts` registry with normal-detail params: `detailField` (noise-field name), `detailAmp` (0 = off), `detailScale`. Acceptance: wasm rebuilt; a material without them parses unchanged.
+- [x] Thread the params to the bake as a third per-channel uniform vec4 (field row, amp, scale, placement mode — [F1](forks.md#f1)). Acceptance: tsc green; all-zero params ⇒ bake bit-identical (readback hash).
 
 ## P2 — the seed lane
 

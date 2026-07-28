@@ -45,6 +45,7 @@ uniform vec4 uSurfaceRect;
 uniform vec4 uNormalRect;
 uniform vec4 uChA[${PACKED_CHANNELS}];     // per channel: tint.rgb, hueSwing
 uniform vec4 uChB[${PACKED_CHANNELS}];     // per channel: chromaSwing, warmCoolBias, noiseRow, sampleSpace
+uniform vec4 uChC[${PACKED_CHANNELS}];     // material-system P1: detailRow, detailAmp, detailScale, placementMode
 uniform vec4 uNoiseParams;                 // x=atlas rows, y=uv tiling, z=world px per noise tile
 uniform vec4 uWorldRect;                   // xy = prim world origin px, zw = prim world size px
 uniform vec3 uTint;                        // albedo OUTPUT multiply (white real, geoColor solid)
@@ -129,6 +130,7 @@ export class MrtBakeShader {
   private normalRect = IDENTITY_RECT();
   private chA = new Float32Array(PACKED_CHANNELS * 4);
   private chB = new Float32Array(PACKED_CHANNELS * 4);
+  private chC = new Float32Array(PACKED_CHANNELS * 4);
   private noiseParams = new Float32Array([1, 1, 128, 0]);
   private worldRect = new Float32Array([0, 0, 64, 64]);
   private tint = new Float32Array([1, 1, 1]);
@@ -173,9 +175,10 @@ export class MrtBakeShader {
     this.tint[1] = ((rgb >> 8) & 0xff) / 255;
     this.tint[2] = (rgb & 0xff) / 255;
   }
-  setChannels(chA: Float32Array, chB: Float32Array): void {
+  setChannels(chA: Float32Array, chB: Float32Array, chC?: Float32Array): void {
     this.chA = chA;
     this.chB = chB;
+    if (chC) this.chC = chC;
   }
   setNoiseGlobals(rows: number, uvTile: number, worldTile: number): void {
     this.noiseParams[0] = rows;
@@ -214,6 +217,7 @@ export class MrtBakeShader {
     p.uVec4("uNormalRect", this.normalRect[0], this.normalRect[1], this.normalRect[2], this.normalRect[3]);
     p.uVec4Array("uChA", this.chA);
     p.uVec4Array("uChB", this.chB);
+    p.uVec4Array("uChC", this.chC); // silently no-op until the shader consumes it (P3)
     p.uVec4("uNoiseParams", this.noiseParams[0], this.noiseParams[1], this.noiseParams[2], this.noiseParams[3]);
     p.uVec4("uWorldRect", this.worldRect[0], this.worldRect[1], this.worldRect[2], this.worldRect[3]);
     p.uVec3("uTint", this.tint[0], this.tint[1], this.tint[2]);

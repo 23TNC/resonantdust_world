@@ -216,6 +216,25 @@ impl Content {
         out
     }
 
+    /// NORMAL-DETAIL field names in `material_id` order (material-system P1) — the
+    /// parallel-array sibling of [`materialNoiseFields`]; `""` = no detail.
+    #[wasm_bindgen(js_name = materialDetailFields)]
+    pub fn material_detail_fields(&self) -> Vec<String> {
+        self.bundle.material_params_all().into_iter().map(|m| m.detail_field).collect()
+    }
+
+    /// NORMAL-DETAIL numerics, flat **stride-2** in `material_id` order:
+    /// `[detailAmp, detailScale, …]`. Amp 0 = identity (no detail).
+    #[wasm_bindgen(js_name = materialDetail)]
+    pub fn material_detail(&self) -> Vec<f64> {
+        let mut out = Vec::new();
+        for m in self.bundle.material_params_all() {
+            out.push(m.detail_amp);
+            out.push(m.detail_scale);
+        }
+        out
+    }
+
     /// Expand a zone's cold-object row (a module's `cold` table — the OBJECT MODEL) into
     /// renderable prims. `type_reference` is the row's shared `object_type_reference`
     /// (type / subtype = biome / layer); each `kinds` entry is a `u32`

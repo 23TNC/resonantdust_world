@@ -72,11 +72,20 @@ pub struct MaterialParams {
   pub warm_cool_bias: f64,
   /// `"uv"` (default) or `"world"` — where the noise is sampled.
   pub sample_space: String,
+  /// NORMAL-DETAIL field name (material-system P1) — a tiling field RNM-blended onto the
+  /// base normal at bake, restoring the high-frequency structure generated normals lack.
+  /// `""` = none.
+  pub detail_field: String,
+  /// Normal-detail amplitude; `0` = off (identity — the base normal is untouched).
+  pub detail_amp: f64,
+  /// Normal-detail spatial scale (UV tiling multiplier); `1` = the field's native tile.
+  pub detail_scale: f64,
 }
 
 impl Default for MaterialParams {
   fn default() -> Self {
-    Self { noise_field: String::new(), hue_swing: 0.0, chroma_swing: 0.0, warm_cool_bias: 0.0, sample_space: "uv".into() }
+    Self { noise_field: String::new(), hue_swing: 0.0, chroma_swing: 0.0, warm_cool_bias: 0.0,
+           sample_space: "uv".into(), detail_field: String::new(), detail_amp: 0.0, detail_scale: 1.0 }
   }
 }
 
@@ -575,6 +584,9 @@ impl Bundle {
       chroma_swing: store.read("chromaSwing").map(|c| c.as_f64()).unwrap_or(def.chroma_swing),
       warm_cool_bias: store.read("warmCoolBias").map(|c| c.as_f64()).unwrap_or(def.warm_cool_bias),
       sample_space: read_sym(&store, "sampleSpace").unwrap_or(def.sample_space),
+      detail_field: read_sym(&store, "detailField").unwrap_or(def.detail_field),
+      detail_amp: store.read("detailAmp").map(|c| c.as_f64()).unwrap_or(def.detail_amp),
+      detail_scale: store.read("detailScale").map(|c| c.as_f64()).unwrap_or(def.detail_scale),
     })
   }
 
