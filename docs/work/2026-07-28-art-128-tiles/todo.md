@@ -17,7 +17,7 @@ edge a value, then teach the pipeline the footprint, then fix the atlas guard, t
 - [x] Verify whether `bin/art` has tile-size arithmetic to parameterise, and site `TILE_PX` where it is first needed. Acceptance: [I9](issues.md#i9) records the finding; a constant is only added beside a real consumer.
 - [x] Change `generate_tile.py` defaults to `--tile 128 --grid 8 --pad 0`. Acceptance: a default run reports `8x8 tiles of 128px -> 1024px sheet`.
 - [x] Make `generate_tile.py` take the tile edge from `RD_TILE_PX` when set. Acceptance: `RD_TILE_PX=64 --grid 16` reports a 64px-tile 1024 sheet, i.e. the tile edge is a value not a literal.
-- [ ] Regenerate the grass sheet at 8×8×128 toroidal and confirm the wrap survives the larger cell. Acceptance: `seam_energy` ≤ 1.1 on the 1024 sheet, matching the 64 px result.
+- [x] Regenerate the grass sheet at 8×8×128 toroidal and confirm the wrap survives the larger cell. Acceptance: `seam_energy` ≤ 1.1 on the 1024 sheet, matching the 64 px result.
 
 ## P2 — Carry the tile footprint in the leaf metadata
 

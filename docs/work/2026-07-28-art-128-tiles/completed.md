@@ -63,3 +63,11 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   geometry, which is no longer meaningful — the old shape was `tile 62 + pad 1`, and [F3](forks.md#f3)
   moved the guard off baked pixels onto the `GRID_INSET_FRAC` inset, so `pad` is now 0 by design.
   What is verified is that the tile edge is a value, not that the superseded pad convention survives.
+- **2026-07-28 · P1.4 · Grass regenerated at 8×8×128.** `sprite.l.0.png` 1024², 64 cells,
+  **seam energy 0.99 (sheet wrap)** — acceptance ≤1.1 met, matching the 0.95–0.99 the 64 px
+  geometry gave. Feature size 6.5 px, cell brightness spread 6/255. **Found and fixed a metric bug
+  on the way:** the run first reported 4.83 because `seam_energy` was scored PER CELL, and in sheet
+  mode cells are deliberately not individually toroidal — only the plane is. The same sheet's true
+  wrap measured 0.99. The tool now measures whatever `--seamless` actually selected and labels it
+  (`sheet wrap` vs `worst of N cells`), recording which in `atlas.json` as `seam_measured_on`. Left
+  unfixed, every healthy sheet would have reported itself broken. **P1 complete: 4/4.**

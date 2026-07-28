@@ -64,9 +64,9 @@ TILE_PX = int(os.environ.get("RD_TILE_PX", 128))
 # "seamless ground texture" is deliberately ABSENT. It used to be here, from when we hoped the
 # model would hand us tileable output — but we build the wrap ourselves now, and the phrase costs
 # us the only thing that matters: it makes SDXL paint a fine all-over repeat, which the shrink to
-# a small tile then averages into mush (measured 1.6px features with it, ~13px without, at a
-# 62px tile). Ask for
-# the SUBJECT at the scale you want to see it; the tiling is our job, not the model's.
+# a small tile then averages into mush (measured at a 62px tile: 1.6px features with the phrase,
+# ~13px without). Ask for the SUBJECT at the scale you want to see it; tiling is our job, not the
+# model's.
 STYLE = ("flat cel shading, hand-painted 2D game art, even flat lighting, no shadows, no horizon")
 NEG = ("realistic, photo, photorealistic, 3d render, blurry, vignette, border, frame, "
        "object, creature, plant stems, horizon, perspective, depth of field, text, watermark, "
@@ -449,7 +449,16 @@ def main():
                                                 for a, l in zip(cells, lay_cells)]
         inner = [c[args.pad:c.shape[0]-args.pad, args.pad:c.shape[1]-args.pad] if args.pad else c
                  for c in shown]
-        se = [seam_energy(c) for c in inner]
+        # Measure the seam on WHATEVER WRAPS, which is what `--seamless` selected. In sheet mode the
+        # cells are deliberately not individually toroidal — only the assembled plane is — so scoring
+        # them per cell measures a property nothing was trying to have and reports a healthy sheet as
+        # broken (measured 4.83 per-cell against the same sheet's true 0.99 wrap).
+        if args.seamless == "sheet":
+            plane = np.concatenate([np.concatenate(
+                [inner[gy*args.grid + gx] for gx in range(args.grid)], 1) for gy in range(args.grid)], 0)
+            se, se_of = [seam_energy(plane)], "sheet wrap"
+        else:
+            se, se_of = [seam_energy(c) for c in inner], f"worst of {len(inner)} cells"
         mu = [float(np.asarray(c, float).mean()) for c in inner]
         fs = sum(feature_size(c) for c in inner) / len(inner)
 
@@ -470,7 +479,7 @@ def main():
                        "greyscale": not args.colour, "seed": seed,
                        "seamless": args.seamless, "overlap": ov, "flatten": args.flatten,
                        "match_cells": args.match_cells,
-                       "seam_energy": round(sum(se)/len(se), 3), "feature_size": round(fs, 1),
+                       "seam_energy": round(sum(se)/len(se), 3), "seam_measured_on": se_of, "feature_size": round(fs, 1),
                        "cell_brightness_spread": round(max(mu)-min(mu), 1)}, f, indent=2)
         if lay_cells is not None:
             sheet_from(lay_cells, args.grid, cell).save(
@@ -482,8 +491,8 @@ def main():
             full.save(os.path.join(leaf, f"source.{args.dirn}.{args.part}.png"))
         print(f"  wrote {os.path.relpath(outp, REPO)}  ({sheet.size[0]}x{sheet.size[1]}, "
               f"{args.grid*args.grid} tiles) + atlas.json")
-        print(f"    seam energy {sum(se)/len(se):.2f} (worst {max(se):.2f}) — 1.0 = seam "
-              f"indistinguishable from ordinary texture; cell brightness spread {max(mu)-min(mu):.0f}/255")
+        print(f"    seam energy {sum(se)/len(se):.2f} ({se_of}) — 1.0 = seam indistinguishable "
+              f"from ordinary texture; cell brightness spread {max(mu)-min(mu):.0f}/255")
         print(f"    feature size {fs:.1f}px" + ("" if fs >= 3.0 else
               f"  ** too fine to read at {args.tile}px — this material's detail is averaging into "
               f"mush. SDXL paints a fixed number of features per frame, so try --size "
