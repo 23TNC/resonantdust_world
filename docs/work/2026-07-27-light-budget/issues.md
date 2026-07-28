@@ -60,3 +60,24 @@ just needs sizing against the worst reach in content, not the average.
 Also from the same read: the budget's ms numbers will shift once
 [lighting-standing-costs](../2026-07-27-lighting-standing-costs/README.md) lands (its P1 removes a
 standing tax that the I2 table's totals include) — its P4 re-runs this sweep and updates I2.
+
+## I4 — the pair-cost constants after lighting-standing-costs P1–P3 {#i4}
+
+(2026-07-27.) [lighting-standing-costs](../2026-07-27-lighting-standing-costs/README.md) landed:
+standing tax 0.23 → 0.000 ms, dirty-rect draws (discard tax 0), and baked receiver maps. The I2
+table's constants are superseded for budget sizing — measured on that stream's P3 build (one
+orbiting carried torch, 240 pumped frames, cold gather+light+receiver bakes summed, two runs
+averaged; NOTE the fixture differs from I2's: a torch on a billboard CARRIER, different world
+location, pumped not paced frames — compare trends, not rows):
+
+| reach | dirty tiles/frame | cold total ms | ms per tile-light pair |
+|---|---|---|---|
+| 4 | 143.5 | ~0.35 | 0.0024 |
+| 8 | 271.5 | ~0.39 | 0.0014 |
+| 12 | 399.5 | ~0.45 | 0.0011 |
+
+Two consequences for P0/P2 here: **(1)** the per-pair "constant" now falls with reach (fixed
+per-draw costs amortize over more tiles) — the I3 caution holds in the opposite direction at small
+reach, so size the allowance from a reach-swept measurement, not one point; **(2)** the fine pass
+no longer re-derives receiver geometry per pair, so the budget's admission cost model should count
+walk + accumulate only. Re-derive on the calibrated paced harness before fixing the 512 number.

@@ -33,5 +33,5 @@ _Plan for the stream (see [README.md](README.md)). Fixture throughout: the calib
 
 ## P4 — wrap + re-sync the budget
 
-- [ ] Re-run the [light-budget P0](../2026-07-27-light-budget/todo.md) pair-cost sweep on top of P2+P3, sweeping REACH too ([I3](../2026-07-27-light-budget/issues.md#i3)). Acceptance: light-budget's I2 table updated or superseded there.
-- [ ] Record final numbers + any retired options in completed.md. Acceptance: `bin/rd docs-check` green.
+- [x] Re-run the [light-budget P0](../2026-07-27-light-budget/todo.md) pair-cost sweep on top of P2+P3, sweeping REACH too ([I3](../2026-07-27-light-budget/issues.md#i3)). Acceptance: light-budget's I2 table updated or superseded there.
+- [x] Record final numbers + any retired options in completed.md. Acceptance: `bin/rd docs-check` green.

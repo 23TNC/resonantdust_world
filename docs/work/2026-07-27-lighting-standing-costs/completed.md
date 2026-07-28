@@ -134,3 +134,15 @@ tiles with **0 receiver draws**.
   across runs). The gather barely moved: its cost is the walk, not the scan (its receiverAt ran at
   16× fewer texels). **ms per tile-light pair at reach 12: 0.00171 → ~0.00112 (−35 %)**; the
   remaining cost is walk + accumulate, which are the coarser-lod / F4 / budget levers' territory.
+
+## 2026-07-27 · P4 — wrap; stream complete (16/16)
+
+Budget re-sync: the post-stream, reach-swept pair costs are recorded as
+[light-budget I4](../2026-07-27-light-budget/issues.md#i4) (supersedes I2 for allowance sizing;
+notes the fixture difference and that the constant now FALLS with reach — fixed per-draw costs
+amortize). Final state of the three deliverables: static standing tax 0.23 → **0.000 ms**; draws
+rasterize exactly the dirty area (discard tax 0); light motion re-bakes lighting without
+re-deriving receiver geometry (fine pass −25…50 %, pair cost at reach 12 −35 %). Every change held
+bit-identity on both pipeline outputs (shadow RT + lightmap), verified by stash/reload A/B hashes.
+Pre-existing corridor↔brute divergence found and recorded as [I1](issues.md#i1) (spawned as its own
+task). `bin/rd docs-check` green.
