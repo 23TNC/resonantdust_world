@@ -51,3 +51,19 @@ event shard → orchestrator "assigned work-group tic=3006 entities=1" → worke
 component tic=3006 hot=1" → pawn `entity_state_log` row `{805306369, macro 0, micro 13568,
 tic 3006, dirty=false, worker 0x62, status 17=PROMOTE|PROMOTED}` + promoted `entity_state`
 row; data_shard has ZERO rows for that entity (the split is real).
+
+## 2026-07-28 · P0 COMPLETE — the edge relays the pawn shard; a placed pawn reaches the browser
+
+Edge: `pawn_db()` + `connector!(connect_pawn, pawn)` + `World.pawn` + insert/update/delete →
+`pawn_state_frame` (same wire `State` frame, distinct bindings type) + per-zone subscription in
+`ZoneSub`. One addition beyond the plan wording: the pawn zone-subscription replays the zone's
+rows **on apply** — a RESTING pawn arrives in the initial snapshot and never updates, so
+`on_insert` alone would miss it (the documented cold-baseline delivery guarantee applies to
+resting movers too; the data_shard sub predates this and only ever carried always-moving wolves).
+Verified live at the user's vantage: pawn `0x30000001` PLACEd at world tile (102,51) (macro 99,
+via the event pipeline), browser at `?focus=100,50&cb=area1` → `__viewport.warm.prims` holds
+exactly one prim at world px (6496,3200) = tile (102,51), and the screenshot (ss_90667kvwo)
+shows it rendered (green def-0 fallback box, casting a shadow) beside the torch clearing.
+Also recorded [I1](issues.md): a shard republish silently orphans connected SDK clients —
+restart the sim trio after any republish (the first compose after the redeploy wrote into the
+void; sim-self-heal territory).

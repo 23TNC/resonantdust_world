@@ -190,6 +190,12 @@ impl ServerConfig {
         format!("resonantdust-{}-data-shard-0", self.env)
     }
 
+    /// The `pawn` DB — the hot mover shard (first-pawns). The edge subscribes to its
+    /// `entity_state` per zone, exactly like `data_shard` (the hot catch-all).
+    pub fn pawn_db(&self) -> String {
+        format!("resonantdust-{}-pawn-0", self.env)
+    }
+
     /// The `tile` cold DB — a zone's dense ground (`cold_tile`), subscribed per zone.
     pub fn tile_db(&self) -> String {
         format!("resonantdust-{}-tile-0", self.env)

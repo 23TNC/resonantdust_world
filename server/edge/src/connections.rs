@@ -104,6 +104,7 @@ connector!(connect_players, players);
 // subscriptions, avoiding the set-semantics hazard).
 connector!(connect_event_shard, event_shard);
 connector!(connect_data_shard, data_shard);
+connector!(connect_pawn, pawn);
 // The cold shards (`docs/intent/world-storage/`): a zone's ground + scatter, relayed per zone.
 connector!(connect_tile, tile);
 connector!(connect_thing, thing);

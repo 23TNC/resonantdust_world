@@ -27,7 +27,7 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 - [x] worker: `Shard::Pawn` in `shard_of()` + pawn `base_row` + pawn `write`. Acceptance: that
       queued PLACE composes — pawn `entity_state` row at the position, log `dirty=false`,
       status PROMOTED.
-- [ ] edge: `pawn_db()` config + `connector!(connect_pawn, pawn)` + `World` slot + `entity_state`
+- [x] edge: `pawn_db()` config + `connector!(connect_pawn, pawn)` + `World` slot + `entity_state`
       insert/update/delete → `state_frame` relay + zone-subscribe SQL on pawn `entity_state`.
       Acceptance: a browser session at the zone receives the placed pawn's `State` frame.
 

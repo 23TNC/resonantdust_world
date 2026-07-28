@@ -28,6 +28,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::bindings;
 use crate::bindings::data_shard::entity_state_table::EntityStateTableAccess as _;
+use crate::bindings::pawn::entity_state_table::EntityStateTableAccess as _;
 use crate::bindings::event_shard::event_table::EventTableAccess as _;
 use crate::bindings::thing::seed as _; // reducer trait → thing.reducers().seed
 use crate::bindings::thing::place_things as _; // reducer trait → thing.reducers().place_things
@@ -39,8 +40,8 @@ use crate::bindings::tile::overlay_table::OverlayTableAccess as _; // cold overr
 use crate::bindings::event_shard::queue as _; // reducer trait → `reducers().queue_then`
 use crate::bindings::players::claim_or_login as _; // reducer trait → `reducers.claim_or_login_then`
 use crate::connections::{
-    await_ready, connect_data_shard, connect_event_shard, connect_players, connect_thing,
-    connect_tile, Pool,
+    await_ready, connect_data_shard, connect_event_shard, connect_pawn, connect_players,
+    connect_thing, connect_tile, Pool,
 };
 use crate::protocol::{ClientMsg, ServerMsg};
 use crate::worldgen::Worldgen;
@@ -51,6 +52,7 @@ use crate::worldgen::Worldgen;
 struct World {
     event: Option<Arc<bindings::event_shard::DbConnection>>,
     data: Option<Arc<bindings::data_shard::DbConnection>>,
+    pawn: Option<Arc<bindings::pawn::DbConnection>>,
     tile: Option<Arc<bindings::tile::DbConnection>>,
     thing: Option<Arc<bindings::thing::DbConnection>>,
 }
@@ -169,6 +171,7 @@ async fn client_session(socket: WebSocket, pool: Arc<Pool>) {
 /// them unsubscribes, so removing a zone from the map is the unsubscribe.
 struct ZoneSub {
     _state: bindings::data_shard::SubscriptionHandle,
+    _pawn: Option<bindings::pawn::SubscriptionHandle>,
     _event: bindings::event_shard::SubscriptionHandle,
     _tile: Option<bindings::tile::SubscriptionHandle>,
     _thing: Option<bindings::thing::SubscriptionHandle>,
@@ -264,6 +267,31 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
             )
         });
     }
+    // The pawn shard — the hot movers (first-pawns). Same relay shape as `data_shard`.
+    let pawn = match connect_pawn(&pool.cfg.uri, &pool.cfg.pawn_db()) {
+        Some((conn, ready)) => await_ready(ready).await.then_some(conn),
+        None => None,
+    };
+    if pawn.is_none() {
+        send(out_tx, err_frame("pawn shard upstream unavailable"));
+    }
+    if let Some(p) = &pawn {
+        let o = out_tx.clone();
+        p.db().entity_state().on_insert(move |_ctx, row| send(&o, pawn_state_frame(row)));
+        let o = out_tx.clone();
+        p.db().entity_state().on_update(move |_ctx, _old, row| send(&o, pawn_state_frame(row)));
+        let o = out_tx.clone();
+        p.db().entity_state().on_delete(move |_ctx, row| {
+            send(
+                &o,
+                ServerMsg::StateGone {
+                    entity_reference: row.entity_reference,
+                    zone: row.macro_position_reference,
+                },
+            )
+        });
+    }
+
     if let Some(e) = &event {
         let o = out_tx.clone();
         e.db().event().on_insert(move |_ctx, row| {
@@ -325,7 +353,7 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         t.db().overlay().on_delete(move |_ctx, row| relay_thing_overlay(&o, row, true));
     }
 
-    World { event, data, tile, thing }
+    World { event, data, pawn, tile, thing }
 }
 
 /// A `ColdTile` baseline frame — a cold `tile` shard's dense `entity_state` row, re-packed to the wire
@@ -429,6 +457,19 @@ fn state_frame(row: &bindings::data_shard::EntityState) -> ServerMsg {
     }
 }
 
+/// The pawn shard's `entity_state` → the same `State` wire frame (identical macro shape,
+/// distinct bindings type).
+fn pawn_state_frame(row: &bindings::pawn::EntityState) -> ServerMsg {
+    ServerMsg::State {
+        entity_reference: row.entity_reference,
+        zone: row.macro_position_reference,
+        tic: row.tic,
+        definition_reference: row.definition_reference,
+        position_reference: resonantdust_codec::object::pack_position_reference(row.macro_position_reference, row.micro_position_reference),
+        data: row.data,
+    }
+}
+
 /// Validate + relay a client intent to `event_shard.queue`. The door enforces "logged in" and "the
 /// program frames" here; ownership + rate limiting are future (no ownership model yet). The reducer's
 /// own validation (parses, has an orchestrator) is reported back via `queue_then`.
@@ -483,6 +524,20 @@ fn handle_subscribe(
         .subscription_builder()
         .on_error(|_ctx, err| tracing::warn!(%err, "state subscription error"))
         .subscribe([format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}")]);
+    // The pawn shard's movers for the zone. A RESTING pawn's row arrives in this subscription's
+    // initial snapshot and never updates again, so `on_insert` alone would miss it (the same
+    // delivery guarantee as the cold baselines below) — replay the zone's rows on apply.
+    let o = out_tx.clone();
+    let pawn = world.pawn.as_ref().map(|p| {
+        p.subscription_builder()
+            .on_error(|_ctx, err| tracing::warn!(%err, "pawn subscription error"))
+            .on_applied(move |ctx| {
+                for row in ctx.db.entity_state().iter().filter(|r| r.macro_position_reference == zone) {
+                    send(&o, pawn_state_frame(&row));
+                }
+            })
+            .subscribe([format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}")])
+    });
     let event = event
         .subscription_builder()
         .on_error(|_ctx, err| tracing::warn!(%err, "event subscription error"))
@@ -536,7 +591,7 @@ fn handle_subscribe(
                 format!("SELECT * FROM overlay WHERE macro_position_reference = {zone}"),
             ])
     });
-    zones.insert(zone, ZoneSub { _state: state, _event: event, _tile: tile, _thing: thing });
+    zones.insert(zone, ZoneSub { _state: state, _pawn: pawn, _event: event, _tile: tile, _thing: thing });
     tracing::debug!(zone, "subscribed zone");
 }
 

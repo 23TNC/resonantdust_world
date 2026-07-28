@@ -8,9 +8,9 @@ deterministic cut.
 
 Pipeline (defaults in brackets):
 
-    generate SIZE [1024] --> optional greyscale --> downscale to GRID*(TILE+OVERLAP) [4*94]
+    generate SIZE [1024] --> optional greyscale --> downscale to GRID*(TILE+OVERLAP) [4*93]
       --> cut GRID x GRID [4x4] blocks --> wrap each into a TILE [63] px toroidal tile
-      --> pad each by PAD [1] px of WRAPPED edge  (cell = TILE + 2*PAD = 65)
+      --> pad each by PAD [1] px of WRAPPED edge  (cell = TILE + 2*PAD = 64)
       --> assemble one sprite map --> textures/<kind path>/<variant>/<map>.<dir>.<part>.png
 
 Why the tiles are made to wrap here rather than by the model: a seamless-generation patch can
@@ -87,7 +87,7 @@ def graph(pos, neg, lora, strength, cfg, steps, seed, size):
     ComfyUI's only circular-padding node, `Model Patch Seamless (mtb)`, deep-copies the whole
     UNet and segfaults this box (CUDA error inside `copy.deepcopy`, taking the server down with
     it). It would not have helped regardless: it wraps the 1024px *generation*, but we cut that
-    into sixteen 63px cells and the game tiles at the cell, so every cut edge would still be
+    into sixteen 62px cells and the game tiles at the cell, so every cut edge would still be
     arbitrary. Wrapping has to happen where the cells are made."""
     g = {"4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": MODEL}}}
     model_ref, clip_ref = ["4", 0], ["4", 1]
@@ -277,8 +277,8 @@ def main():
     ap.add_argument("--candidates", type=int, default=1, help="generate N sheets, one variant each")
     ap.add_argument("--size", type=int, default=1024, help="generation resolution (default 1024, SDXL native)")
     ap.add_argument("--grid", type=int, default=4, help="tiles per side (default 4 -> 16 tiles)")
-    ap.add_argument("--tile", type=int, default=63, help="tile content px (default 63; grid*tile is the downscale target)")
-    ap.add_argument("--pad", type=int, default=1, help="bleed-guard border px per side, wrapped (default 1 -> 65px cells)")
+    ap.add_argument("--tile", type=int, default=62, help="tile content px (default 62 -> 64 with pad, the quadtree packer's cell)")
+    ap.add_argument("--pad", type=int, default=1, help="bleed-guard border px per side, wrapped (default 1 -> 64px cells)")
     ap.add_argument("--colour", action="store_true", help="keep RGB (default: greyscale for tinting)")
     ap.add_argument("--lora", default=None)
     ap.add_argument("--lora-strength", type=float, default=0.85)
