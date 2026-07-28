@@ -142,3 +142,14 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   `GRID_CATS` is still `"linked"` while the linked forms live under `biome-tile` per the design's
   decision 5, so `_grid_slice_id` never fires for them ([I12](issues.md#i12)). Moving `GRID_CATS`
   is [F4](forks.md#f4)'s call. **P2 complete: 7/7.**
+
+## P4 — Migrate what is already generated
+
+- **2026-07-28 · P4.1 · Migration audit.** 78 stamped leaves at 128 px tiles: **61 already right,
+  17 undersized, 0 oversized.** Span source: 68 art / 9 corpus / 1 atlas. The 17 split cleanly into
+  two unrelated problems — 16 are `blueprint/wall/1..16` (the superseded per-cell split, 160→256)
+  and 1 is `smooth/wall` (the real linked atlas, 320→512). Raised as [B1](blockers.md#b1): neither
+  should simply be re-mastered.
+- **2026-07-28 · P4.3 · Ground sheets on the 8×8 grid.** `biome-tile/default/grass` reads
+  `grid [8,8]`, `tile 128`, `tiles [8,8]`, 1024 px, **wrap seam 0.99**. It is the only ground sheet
+  in the tree (the stale 64 px `stone` leaves were removed). Acceptance met.
