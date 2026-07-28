@@ -48,8 +48,12 @@ REPO = os.environ.get("RD_REPO_ROOT") or os.path.abspath(os.path.join(HERE, ".."
 COMFY = os.environ.get("COMFYUI_URL", "http://172.16.10.10:8188").rstrip("/")
 MODEL = "sdxl/cyberrealisticXL_v80.safetensors"
 
-STYLE = ("top-down seamless ground texture, flat cel shading, hand-painted 2D game art, "
-         "even flat lighting, no shadows, no objects, no horizon")
+# "seamless ground texture" is deliberately ABSENT. It used to be here, from when we hoped the
+# model would hand us tileable output — but we build the wrap ourselves now, and the phrase costs
+# us the only thing that matters: it makes SDXL paint a fine all-over repeat, which the shrink to
+# a 62px tile then averages into mush (measured 1.6px features with it, ~13px without). Ask for
+# the SUBJECT at the scale you want to see it; the tiling is our job, not the model's.
+STYLE = ("flat cel shading, hand-painted 2D game art, even flat lighting, no shadows, no horizon")
 NEG = ("realistic, photo, photorealistic, 3d render, blurry, vignette, border, frame, "
        "object, creature, plant stems, horizon, perspective, depth of field, text, watermark, "
        "drop shadow, signature")
@@ -226,6 +230,17 @@ def flatten_field(a, radius, amount=1.0):
     gain = 1.0 + (gain - 1.0) * amount
     return np.clip(f * (gain[..., None] if f.ndim == 3 else gain), 0, 255).astype(a.dtype)
 
+def reconstruct(res, lay, tints):
+    """What the renderer will actually show: residual + sum(layer_weight * material_tint).
+
+    Every quality number must be measured on THIS, never on the residual alone. For a
+    single-material texture split_layers moves the entire image into one layer channel and leaves
+    a residual of pure black — measuring that reports a flawless seam on a blank tile."""
+    out = np.asarray(res, np.float64)
+    for i, t in enumerate(tints[:3]):
+        out = out + (np.asarray(lay, np.float64)[..., i:i+1] / 255.0) * np.array(t, np.float64)
+    return np.clip(out, 0, 255).astype(np.uint8)
+
 def split_plane(rgb, dirn, part):
     """Run `art split_layers` on the WHOLE plane; returns (residual_rgb, layers_rgb, tints).
 
@@ -398,8 +413,10 @@ def main():
         cells, lay_cells = out if args.layers else (out, None)
         sheet = sheet_from(cells, args.grid, cell)
         # unpadded content is what repeats; measure the seam on that, not on the bleed guard
+        shown = cells if lay_cells is None else [reconstruct(a, l, tints)
+                                                for a, l in zip(cells, lay_cells)]
         inner = [c[args.pad:c.shape[0]-args.pad, args.pad:c.shape[1]-args.pad] if args.pad else c
-                 for c in cells]
+                 for c in shown]
         se = [seam_energy(c) for c in inner]
         mu = [float(np.asarray(c, float).mean()) for c in inner]
         fs = sum(feature_size(c) for c in inner) / len(inner)

@@ -101,3 +101,41 @@ append rule + by-name resolution is the contract). Verified live: `rd build npc`
 20 s run against the real gateway logs "wolf def resolved from the content corpus def=7"
 (wolf is 7th in `things.rd` — agreement BY CONSTRUCTION, nothing pinned). Runbook note: the
 npc container needs `--network host` (the gateway resolves the edge as `localhost:8473`).
+
+## 2026-07-28 · P2 — ACTIONS.md §Movement un-tabled
+
+Rewritten in the PROMOTE-prefix vocabulary: chain semantics (greedy-line step behind the
+pathfinding seam), queue-at-future-tic (`≥ master+3`, barrier unaffected), the cadence
+(`PROMOTE_EVENT PROMOTE MOVE_TO` initial · bare continuations · `PROMOTE` final ·
+resolve-on-touch free · every-N held for F8 data), the wall↔tic speculation model, and the
+`tics_per_tile`-in-wall-time seam (F7). `PROMOTE_EVENT`'s palette row un-tabled. Verified:
+docs-check green; no stale postfix (`PROMOTE_STATE`) examples remain.
+
+## 2026-07-28 · P2 — `queue_at`: the continuation door
+
+`queue` refactored to `queue_common`; new `queue_at(actions, event_tic)` rejects
+`tic_before(event_tic, master+3)` (serial arithmetic) and otherwise queues at the caller's tic.
+Verified live: `queue_at` at master+20 accepted, sat QUEUED (worker 0) until its tic froze, then
+assigned + "composed component tic=10205"; the same call at `master` rejected with "inside the
+barrier (min …)". Bindings regenerated both consumers. Side-observation recorded: the legacy
+npc place/move path now lands on the PAWN shard purely via routing (its 4 wolves' rows are in
+pawn `entity_state` with zero npc changes).
+
+## 2026-07-28 · P2 — the worker chains MOVE_TO; the cadence is live
+
+Codec seams first: `position_to_tile`/`tile_to_position` LIFTED from client/core into
+`codec::object` (the worker steps on the exact math the clients decode with; core re-exports),
+`tic::TIC_HZ = 6` (the one authority — all three sim binaries now DEFAULT their env from it),
+and `speed::tics_per_tile(def)` authored in wall-time (2 tiles/s ÷ TIC_HZ → 3 tics/tile, unit
+test). Worker `apply` MOVE_TO: greedy straight-line ONE-tile step (the pathfinding seam) +
+FACING from the step stamped into `data`'s rotation bits (e/w win diagonals). A CONTINUE pass
+in the tic loop queues the next hop via `queue_at(t + tics_per_tile)`: bare while distance > 1,
+`PROMOTE`-prefixed when the next hop lands; a failed queue KILLS the chain by choice (deferring
+would re-queue on the re-pass and DUPLICATE the chain — reasoning in the code). Client
+`move_to_program` = `[PROMOTE_EVENT, PROMOTE, MOVE_TO, obj, dest]`.
+
+Verified live (minted wolf `0x30800001`, move (102,51)→(107,51)): 5 `entity_state_log` hops at
+tics 12060/63/66/69/72 — EXACT 3-tic spacing — walking micro 0x73→0x83→0x93→0xA3→0xB3 (a clean
+eastward line), `data=64` (facing east) on every hop, **seed + final status 17
+(PROMOTE|PROMOTED), all middle hops status 0** — and exactly ONE intent row in `event`
+(zone 99). Per-hop state fan-out: none, by construction.

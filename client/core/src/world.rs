@@ -8,44 +8,14 @@
 //! (`region:8 | zone:8`) throughout — the anchor manager, the render events, and the subscription
 //! frames all speak macro, so there is no `zone_id` to convert.
 
-use resonantdust_codec::action::{MOVE_TO, PLACE, PROMOTE};
-use resonantdust_codec::object::{
-    micro_position_tile, pack_position_from_parts, pack_tile_reference, position_micro,
-    position_region, position_zone, ref_hi, ref_lo,
-};
+use resonantdust_codec::action::{MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT};
 
 use crate::api::Event;
 use crate::protocol::StateRow;
 
-const NIBBLE: i32 = 16; // tiles per zone axis / zones per region axis (a 4-bit grid coordinate)
-
-/// Decode a `position_reference` to global tile `(x, y)`.
-pub fn position_to_tile(position_reference: u32) -> (i32, i32) {
-    let region = position_region(position_reference);
-    let zone = position_zone(position_reference);
-    let tile = micro_position_tile(position_micro(position_reference));
-    let x = ref_hi(region) as i32 * (NIBBLE * NIBBLE) + ref_hi(zone) as i32 * NIBBLE + ref_hi(tile) as i32;
-    let y = ref_lo(region) as i32 * (NIBBLE * NIBBLE) + ref_lo(zone) as i32 * NIBBLE + ref_lo(tile) as i32;
-    (x, y)
-}
-
-/// Compose a `position_reference` for global tile `(x, y)` on layer `0`. The inverse of
-/// [`position_to_tile`] (dropping the layer, which world verbs default). Out-of-range axes are
-/// masked into the 12-bit tile space.
-pub fn tile_to_position(tile_x: i32, tile_y: i32) -> u32 {
-    let (rx, zx, tx) = split_axis(tile_x);
-    let (ry, zy, ty) = split_axis(tile_y);
-    let region = pack_tile_reference(rx, ry);
-    let zone = pack_tile_reference(zx, zy);
-    let tile = pack_tile_reference(tx, ty);
-    pack_position_from_parts(region, zone, tile, 0)
-}
-
-/// Split a global tile axis into its (region, zone, tile) nibbles.
-fn split_axis(t: i32) -> (u8, u8, u8) {
-    let t = t.rem_euclid(NIBBLE * NIBBLE * NIBBLE) as u32; // 0..4096
-    (((t >> 8) & 0xF) as u8, ((t >> 4) & 0xF) as u8, (t & 0xF) as u8)
-}
+/// The global-tile ⇄ `position_reference` conversions live in the codec (first-pawns lifted
+/// them so the WORKER steps on the exact same math) — re-exported here for the hosts.
+pub use resonantdust_codec::object::{position_to_tile, tile_to_position};
 
 /// The facing (`0`=south, `1`=east, `2`=north, `3`=west) packed in the top two bits of the `data`
 /// byte (`rotation:2 | count:6`).
@@ -53,12 +23,12 @@ pub fn facing(data: u8) -> u8 {
     data >> 6
 }
 
-/// The action program for [`crate::api::Command::Move`]: `PROMOTE` (prefix) then `MOVE_TO entity dest`
-/// — move *and* promote, so each step reaches the client-visible `entity_state` (promotion is opt-in;
-/// a bare `MOVE_TO` composes in `entity_state_log` but the client never sees it). A cadenced promote
-/// (first + every N tiles) is a later tuning; per-step is correct and simplest.
+/// The action program for [`crate::api::Command::Move`] — the movement cadence's INITIAL program
+/// (`ACTIONS.md` §Movement): `PROMOTE_EVENT` announces the intent once (clients speculate from
+/// it), `PROMOTE` seeds the start position, `MOVE_TO` steps the first tile. The worker self-queues
+/// the continuations (bare; the final hop `PROMOTE`d) — per-hop state never fans out.
 pub fn move_to_program(entity: u32, tile_x: i32, tile_y: i32) -> Vec<u32> {
-    vec![PROMOTE, MOVE_TO, entity, tile_to_position(tile_x, tile_y)]
+    vec![PROMOTE_EVENT, PROMOTE, MOVE_TO, entity, tile_to_position(tile_x, tile_y)]
 }
 
 /// The action program for [`crate::api::Command::Place`]: `PROMOTE` (prefix) then `PLACE entity dest`

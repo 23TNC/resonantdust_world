@@ -29,15 +29,16 @@ use resonantdust_codec::action::{self, Route, CREATE, INIT_ZONE, MOVE_TO, PLACE,
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, kind_pos_ref_data,
     kind_pos_ref_kind_reference, kind_pos_ref_tile, pack_position_reference, position_macro, position_micro,
-    TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
+    position_to_tile, tile_to_position, TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
 };
+use resonantdust_codec::speed::tics_per_tile;
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED};
-use resonantdust_codec::tic::{tic_after, tic_before};
+use resonantdust_codec::tic::{tic_add, tic_after, tic_before};
 use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
 use data_shard::{write as _, EntityStateLogTableAccess as _};
 use pawn::{spawn as _, write as _, EntityStateLogTableAccess as _};
-use event_shard::{complete as _, EventLogTableAccess as _};
+use event_shard::{complete as _, queue_at as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
 // P4: the worker also composes cold rows — the **baseline** (`INIT_ZONE` → `write`) and the **overlay**
 // (`SET` → `write_overlay`, reading the `overlay_log` base).
@@ -101,7 +102,7 @@ async fn main() {
     let uri = env_or("ST_URI", "http://127.0.0.1:3000");
     let self_ref = parse_u8(&env_or("WORKER", "0x62"), 0x62);
     let realm = parse_u8(&env_or("REALM", "0"), 0);
-    let tic_hz: f64 = env_or("TIC_HZ", "6").parse().unwrap_or(6.0);
+    let tic_hz: f64 = env_or("TIC_HZ", &resonantdust_codec::tic::TIC_HZ.to_string()).parse().unwrap_or(resonantdust_codec::tic::TIC_HZ as f64);
     let period = Duration::from_secs_f64(1.0 / tic_hz);
     let index_db = env_or("INDEX_DB", "resonantdust-dev-index-0");
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");
@@ -531,6 +532,38 @@ async fn main() {
                 continue;
             }
 
+            // ── CONTINUE (MOVE_TO) ── each hop that hasn't arrived queues its next hop at
+            // `tic + tics_per_tile` (ACTIONS.md §Movement): BARE while distance > 1, `PROMOTE`-
+            // prefixed when the next hop lands (the final-tile state anchor). Best-effort BY
+            // CHOICE: a failed queue kills the chain (the driver re-issues on timeout), which is
+            // benign — deferring the tic would re-queue on the re-pass and DUPLICATE the chain,
+            // which multiplies. Never defer here.
+            for (_, actions) in &events {
+                for inst in action::program(actions) {
+                    let Ok(inst) = inst else { break };
+                    if inst.action != MOVE_TO {
+                        continue;
+                    }
+                    let [obj, dest] = inst.operands else { continue };
+                    let Some(p) = scratch.get(obj) else { continue };
+                    let (cx, cy) = position_to_tile(p.position_reference);
+                    let (tx, ty) = position_to_tile(*dest);
+                    let d = (tx - cx).abs().max((ty - cy).abs());
+                    if d == 0 {
+                        continue; // arrived — the chain ends
+                    }
+                    let next_tic = tic_add(t, tics_per_tile(p.definition_reference));
+                    let program = if d == 1 {
+                        vec![PROMOTE, MOVE_TO, *obj, *dest]
+                    } else {
+                        vec![MOVE_TO, *obj, *dest]
+                    };
+                    if let Err(err) = event.reducers().queue_at(program, next_tic) {
+                        tracing::warn!(%err, tic = t, obj = format!("{obj:#010x}"), "continuation queue failed — chain ends");
+                    }
+                }
+            }
+
             // ── COMPLETE ── each event, with the zones its targets ended up in (a hot target's zone from
             // its composed position; a cold_row's from its address; a CREATE's from its spawn position).
             for (event_reference, actions) in &events {
@@ -593,10 +626,21 @@ fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut Has
                 }
             }
             MOVE_TO => {
-                // MOVE_TO obj dest — arrive in one step for now. Multi-tile stepping + self-requeue
-                // is the movement-content follow-up (ACTIONS.md §Movement).
+                // MOVE_TO obj dest — step ONE tile toward dest (greedy straight line — the
+                // pathfinding seam, ACTIONS.md §Movement) and face the step. The continuation
+                // queueing lives in the tic loop (it needs the event conn + the hop tic).
                 if let [obj, dest] = inst.operands {
-                    scratch.entry(*obj).or_default().position_reference = *dest;
+                    let p = scratch.entry(*obj).or_default();
+                    let (cx, cy) = position_to_tile(p.position_reference);
+                    let (tx, ty) = position_to_tile(*dest);
+                    let (sx, sy) = ((tx - cx).signum(), (ty - cy).signum());
+                    if sx != 0 || sy != 0 {
+                        p.position_reference = tile_to_position(cx + sx, cy + sy);
+                        // Facing from the step (`data` rotation bits): 0=s 1=e 2=n 3=w,
+                        // east/west winning a diagonal (side profiles read best).
+                        let facing: u8 = if sx > 0 { 1 } else if sx < 0 { 3 } else if sy > 0 { 0 } else { 2 };
+                        p.data = (facing << 6) | (p.data & 0x3F);
+                    }
                     if pending_promote {
                         promote.insert(*obj);
                     }

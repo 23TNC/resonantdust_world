@@ -53,7 +53,7 @@ async fn main() {
 
     let uri = env_or("ST_URI", "http://127.0.0.1:3000");
     let realm = parse_u8(&env_or("REALM", "0"), 0);
-    let tic_hz: f64 = env_or("TIC_HZ", "6").parse().unwrap_or(6.0);
+    let tic_hz: f64 = env_or("TIC_HZ", &resonantdust_codec::tic::TIC_HZ.to_string()).parse().unwrap_or(resonantdust_codec::tic::TIC_HZ as f64);
     let period = Duration::from_secs_f64(1.0 / tic_hz);
     let gc_every: u32 = env_or("GC_EVERY", "20").parse().unwrap_or(20);
     // How far behind `master_tic` the GC horizon sits — old settled rows past it are reaped. Must

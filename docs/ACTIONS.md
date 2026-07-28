@@ -46,7 +46,7 @@ the numbers are free to renumber. Aliases are for reading; the wire is the numbe
 |---|---|---|---|
 | `NONE` | 0 | 0 | reserved null |
 | `PROMOTE` | 1 | 0 | **prefix modifier** — set the promote bit for the **next** action's writes |
-| `PROMOTE_EVENT` | 2 | 0 | project this event to `event` on settle — **tabled** until movement |
+| `PROMOTE_EVENT` | 2 | 0 | **prefix-style flag** — latch `event_status.flags.PROMOTE` at `queue`; the event projects to `event` on settle (the movement INTENT channel, §Movement) |
 
 **`PROMOTE` is a prefix, not a target-latch.** The stream runs left-to-right; `PROMOTE` (arity 0) sets
 a promote bit in scratch, and the **next** action consumes it — writing the promote flag as part of
@@ -62,8 +62,9 @@ transaction**, a fold's baseline update + overlay clear land on the client **ato
 **no flash and no promote-ordering to get wrong** (atomicity replaces the old `PROMOTE_COLD`-before-
 `PROMOTE_STATE` rule). A hot shard has no `overlay`, so its promote copies `entity_state` only.
 
-`PROMOTE_EVENT` is unchanged in spirit (latch `event_status.flags.PROMOTE` at `queue`) but **tabled**
-— revisited with movement. A program carrying no `PROMOTE` runs entirely server-side.
+`PROMOTE_EVENT` (arity 0, latched at `queue` into `event_status.flags.PROMOTE`) marks the event
+for projection to the client-visible `event` table at settle — the **intent** channel movement
+broadcasts on (§Movement). A program carrying neither promote runs entirely server-side.
 
 **Cell addressing — `tile_reference` resolves per row form.** An action's cell operand resolves against
 the target's baseline form: on a **`dense`** row `tile_reference` is a **direct index** into `items`
@@ -119,42 +120,45 @@ continuation** `MOVE_TO obj dest` for the tic the object reaches the next tile. 
 
 ## Movement, and the client's tic estimate
 
-> **Tabled.** This section predates the `PROMOTE`-prefix change and still writes `PROMOTE_STATE` /
-> `PROMOTE_EVENT` postfix in its example programs. Movement (and `PROMOTE_EVENT`) is revisited as its
-> own pass; read the promotes here as "promote this" pending that rework.
+**Built** (first-pawns, 2026-07-28). The sync philosophy this implements: the server fans out
+authoritative state, clients issue commands against whatever they think state is, and the edge +
+workers validate/execute against authoritative state — never lockstep.
 
 `MOVE_TO` is a self-perpetuating chain: each hop writes one tile and queues the next, until `dest`.
-Two capabilities it uses:
+The step is a **greedy straight line** behind an explicit seam (`one function`, replaced by
+pathfinding when it lands). Two capabilities the chain uses:
 
-- **A verb that queues an event.** `MOVE_TO`'s effect appends a future `MOVE_TO` to `event_log` —
-  baked into the verb, not a general `QUEUE` action (yet).
-- **Queue-at-a-future-tic.** The next hop lands `k` tics out (`k` = tics-per-tile from the object's
-  speed). So `queue` accepts `event_tic ≥ master + 3`, not exactly `+3`. The completeness barrier is
-  unaffected — a tic's set is frozen at `T-2` regardless of *when* its events were born, and the shard
-  accepts an event for `V` while `master ≤ V-3`. Speed is per-kind (from `definition_reference`); the
-  tics-per-tile values are content, settled when `MOVE_TO` is built.
+- **A verb that queues an event.** A non-final `MOVE_TO` hop makes the worker queue the
+  continuation `MOVE_TO obj dest` — baked into the verb, not a general `QUEUE` action (yet).
+- **Queue-at-a-future-tic.** The next hop lands `k` tics out (`k` = `tics_per_tile` — ONE seam in
+  `shared/codec`, shared by the worker and the speculating client, authored in wall-time so a
+  `TIC_HZ` change never rescales the world; per-kind content plumbs in later). So `queue` accepts
+  `event_tic ≥ master + 3`, not exactly `+3`. The completeness barrier is unaffected — a tic's set
+  is frozen at `T-2` regardless of *when* its events were born.
 
 **Don't promote every hop.** Promoting `state` on each tile is exactly the per-tile fan-out we're
-avoiding — one `state` upsert per tile, streamed to every subscriber. Instead:
+avoiding. The cadence:
 
-- **`PROMOTE_EVENT` once**, on the initial `MOVE_TO`, announces the move: the client now knows `obj`
-  is heading to `dest`.
-- **`PROMOTE_STATE` sparingly** — seed the start, then re-anchor periodically to correct drift, and
-  land the final tile. Not every continuation.
+- **`PROMOTE_EVENT` once**, on the initial program, announces the **intent**: the client now knows
+  `obj` is heading to `dest`, at which tic.
+- **`PROMOTE` at the seed and the final hop** — the start position anchors speculation; the landing
+  corrects it. Bare continuations fan **nothing**.
+- **Resolve-on-touch is free**: any other event touching `obj` composes (and, promoting, publishes)
+  its resolved position — no extra machinery.
+- A re-anchor **every N tiles** is a held knob — added when the recorded speculation error
+  (first-pawns F8) says what N buys.
 
-So the initial program is `MOVE_TO obj dest PROMOTE_STATE PROMOTE_EVENT`; the self-queued
-continuations are bare `MOVE_TO obj dest`, promoting only on the re-anchor cadence. Default: first +
-final + every N tiles; the `N` is a bandwidth-vs-smoothness knob, tuned against a running client when
-`MOVE_TO` is built.
+So the initial program is `PROMOTE_EVENT PROMOTE MOVE_TO obj dest`; the self-queued continuations
+are bare `MOVE_TO obj dest`; the hop that reaches `dest` is `PROMOTE MOVE_TO obj dest`.
 
-**The client speculates without a synced tic.** We never synced a tic/clock with the server — `state`
-is simply the latest authoritative truth. `PROMOTE_EVENT` on a move gives the client the one thing
-`state` can't: *intent* (`obj → dest`). The client anchors "event for tic `V` arrived at wall-time
-`W`", and with the known `TIC_HZ` extrapolates elapsed tics from `W` — no absolute tic needed, just
-*elapsed*, which its own clock gives. Each `state`/`event` arrival refines a loose wall↔tic mapping
-(implicit sync from the data stream, not the ping/pong that never worked). The estimate drifts; the
-sparse `PROMOTE_STATE` re-anchors it. Best-effort by construction — the server dictates truth, the
-client makes it smooth.
+**The client speculates without a synced tic.** `state` is simply the latest authoritative truth.
+`PROMOTE_EVENT` on a move gives the client the one thing `state` can't: *intent* (`obj → dest`).
+The client anchors "a row for tic `V` arrived at wall-time `W`" on every `state`/`event` arrival
+and extrapolates elapsed tics by `TIC_HZ` — a loose wall↔tic mapping refined by the stream itself
+(implicit sync, not the ping/pong that never worked). It walks the pawn fractionally along the
+line at `tics_per_tile`, and authoritative `state` snaps/reseeds it (corrections log their error —
+the data the re-anchor knob will be tuned on). Best-effort by construction — the server dictates
+truth, the client makes it smooth.
 
 ---
 

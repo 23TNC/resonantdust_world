@@ -51,16 +51,16 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P2 · `MOVE_TO` — the worker chains the hops
 
-- [ ] ACTIONS.md FIRST: un-table §Movement — rewrite in `PROMOTE`-prefix vocabulary: hop chain,
+- [x] ACTIONS.md FIRST: un-table §Movement — rewrite in `PROMOTE`-prefix vocabulary: hop chain,
       queue-at-future-tic (`≥ master+3`), cadence = intent once + state seed/final,
       resolve-on-touch. Acceptance: docs-check green; no stale postfix examples remain.
-- [ ] event_shard: `queue` accepts a caller-supplied FUTURE `event_tic ≥ master+3` (the
+- [x] event_shard: `queue` accepts a caller-supplied FUTURE `event_tic ≥ master+3` (the
       continuation door), rejecting anything nearer. Acceptance: an event queued at `master+6`
       sits unassigned until its tic freezes, then assigns + composes.
-- [ ] worker: `MOVE_TO` steps ONE tile toward dest (greedy straight line — the pathfinding seam,
+- [x] worker: `MOVE_TO` steps ONE tile toward dest (greedy straight line — the pathfinding seam,
       a follow-on) and, when not at dest, queues `MOVE_TO obj dest` at `tic + tics_per_tile`
       (F7). Acceptance: a 5-tile move lands 5 hop rows in pawn `entity_state_log` over ~5·k tics.
-- [ ] Cadence: `move_to_program` emits `[PROMOTE_EVENT, PROMOTE, MOVE_TO, obj, dest]`;
+- [x] Cadence: `move_to_program` emits `[PROMOTE_EVENT, PROMOTE, MOVE_TO, obj, dest]`;
       continuations are BARE; the final hop carries `PROMOTE`. Acceptance: a 10-tile move fans
       exactly 1 `event` row + 2 `State` frames to a subscribed client — never 10.
 - [ ] Verify the intent path: `PROMOTE_EVENT` latch → `settle` → `event` rows (zones from

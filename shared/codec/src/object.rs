@@ -440,6 +440,38 @@ pub fn data_count(d: u8) -> u8 {
     d & DATA_COUNT_MASK
 }
 
+// ── global tile ⇄ position (first-pawns: lifted from client/core so the WORKER shares the
+// exact conversion the clients use — movement steps on global tiles) ──────────────────────
+//
+// A global tile axis is `region_nibble * 256 + zone_nibble * 16 + tile_nibble` (0..4096).
+
+/// Decode a `position_reference` to global tile `(x, y)` (layer dropped).
+pub fn position_to_tile(position_reference: u32) -> (i32, i32) {
+    let region = position_region(position_reference);
+    let zone = position_zone(position_reference);
+    let tile = micro_position_tile(position_micro(position_reference));
+    let x = ref_hi(region) as i32 * 256 + ref_hi(zone) as i32 * 16 + ref_hi(tile) as i32;
+    let y = ref_lo(region) as i32 * 256 + ref_lo(zone) as i32 * 16 + ref_lo(tile) as i32;
+    (x, y)
+}
+
+/// Compose a `position_reference` for global tile `(x, y)` on layer `0` — the inverse of
+/// [`position_to_tile`]. Out-of-range axes are masked into the 12-bit tile space.
+pub fn tile_to_position(tile_x: i32, tile_y: i32) -> u32 {
+    let (rx, zx, tx) = split_global_axis(tile_x);
+    let (ry, zy, ty) = split_global_axis(tile_y);
+    let region = pack_tile_reference(rx, ry);
+    let zone = pack_tile_reference(zx, zy);
+    let tile = pack_tile_reference(tx, ty);
+    pack_position_from_parts(region, zone, tile, 0)
+}
+
+/// Split a global tile axis into its (region, zone, tile) nibbles.
+fn split_global_axis(t: i32) -> (u8, u8, u8) {
+    let t = t.rem_euclid(4096) as u32;
+    (((t >> 8) & 0xF) as u8, ((t >> 4) & 0xF) as u8, (t & 0xF) as u8)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

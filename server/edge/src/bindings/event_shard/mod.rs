@@ -21,6 +21,7 @@ pub mod bump_reducer;
 pub mod complete_reducer;
 pub mod fail_reducer;
 pub mod queue_reducer;
+pub mod queue_at_reducer;
 pub mod running_reducer;
 pub mod set_orchestrator_reducer;
 pub mod settle_reducer;
@@ -43,6 +44,7 @@ pub use bump_reducer::bump;
 pub use complete_reducer::complete;
 pub use fail_reducer::fail;
 pub use queue_reducer::queue;
+pub use queue_at_reducer::queue_at;
 pub use running_reducer::running;
 pub use set_orchestrator_reducer::set_orchestrator;
 pub use settle_reducer::settle;
@@ -72,6 +74,10 @@ pub enum Reducer {
     Queue {
         actions: Vec::<u32>,
 }    ,
+    QueueAt {
+        actions: Vec::<u32>,
+        event_tic: u16,
+}    ,
     Running {
         event_reference: u32,
 }    ,
@@ -96,6 +102,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::Complete { .. } => "complete",
             Reducer::Fail { .. } => "fail",
             Reducer::Queue { .. } => "queue",
+            Reducer::QueueAt { .. } => "queue_at",
             Reducer::Running { .. } => "running",
             Reducer::SetOrchestrator { .. } => "set_orchestrator",
             Reducer::Settle { .. } => "settle",
@@ -133,6 +140,13 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 actions,
 }             => __sats::bsatn::to_vec(&queue_reducer::QueueArgs {
                 actions: actions.clone(),
+}),
+            Reducer::QueueAt{
+                actions,
+                event_tic,
+}             => __sats::bsatn::to_vec(&queue_at_reducer::QueueAtArgs {
+                actions: actions.clone(),
+                event_tic: event_tic.clone(),
 }),
             Reducer::Running{
                 event_reference,

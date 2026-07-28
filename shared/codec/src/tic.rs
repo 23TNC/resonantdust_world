@@ -14,6 +14,13 @@ use core::cmp::Ordering;
 /// ordered — `tic_cmp` will answer, and be wrong.
 pub const TIC_WINDOW: u16 = i16::MAX as u16; // 32767
 
+/// The simulation rate, tics per second — the ONE authority (user-set 6, 2026-07-28: one logic
+/// frame per 10 draw frames at 60 fps). The master's metronome, the sim loops, AND the client's
+/// wall↔tic speculation all read this; env `TIC_HZ` may override a binary for experiments, but
+/// content-derived timing ([`crate::speed`]) always converts through this constant so a rate
+/// change never rescales the world.
+pub const TIC_HZ: u16 = 6;
+
 /// Order two tics on the ring. `a` is *after* `b` when the forward distance `a - b` lands in the
 /// near half; *before* when it lands in the far half.
 ///

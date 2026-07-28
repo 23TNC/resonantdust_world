@@ -17,3 +17,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signa
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 resonantdust-st-bindings = { path = "../st-bindings" }
+resonantdust-codec = { path = "../../shared/codec" }
