@@ -17,7 +17,7 @@ import { OverlayShader, overlayModeFor } from "./overlayShader";
 import { ShadowGather, AMBIENT_LEVEL } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
-import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_UNIT } from "./squareMath";
+import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_UNIT, TEXTILE_LIGHT } from "./squareMath";
 import { makeNoiseAtlas } from "./noiseAtlas";
 import { NOISE_FIELDS } from "./material";
 import { LIGHT_QUANT } from "./shadowGather";
@@ -450,10 +450,16 @@ export class Viewport {
             p.uInt("uLRows", win.rows);
             p.uInt("uLWinCol", win.winCol);
             p.uInt("uLWinRow", win.winRow);
-            // The lightmap rides the fixed slot grid, so its per-TILE texel size is `TEXTILE_SQUARE >> lod`
-            // — which is exactly `win.slotPx` (both are `SQUARE >> lod`). Hardcoding `TEXTILE_SQUARE` was
-            // right only at lod 0 and sampled ~2^lod off everywhere else (textile-slot).
-            p.uInt("uLSlot", win.slotPx);
+            // The lightmap rides the fixed slot grid, so its per-TILE texel size is `TEXTILE_LIGHT >> lod`.
+            // This USED to be `win.slotPx`, and that was correct only while `TEXTILE_SQUARE === SQUARE` made
+            // the lightmap and the art maps the same resolution. They are now separate dials
+            // (`2026-07-28-square-128`), so `win.slotPx` is the ART texel size and feeding it here samples
+            // the lightmap at the wrong scale the moment the two differ — demonstrated in P0, which raised
+            // only the lighting resolution and rendered visible per-slot misregistration.
+            //
+            // The general rule, twice re-learned (see `2026-07-24-map-compatibility`): a map's slot stride
+            // comes from THAT MAP's own texels-per-tile constant, never from another map's.
+            p.uInt("uLSlot", Math.max(1, TEXTILE_LIGHT >> win.lod));
             // lighting-feel P2: the decay map is COARSE — TEXTILE_UNIT texels/tile at lod 0,
             // halving with lod exactly like the shadow map (SHADOW_TEXELS >> lod).
             p.uInt("uDSlot", Math.max(1, TEXTILE_UNIT >> win.lod));

@@ -17,7 +17,7 @@ import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
 import { ColdShadowData, N_LIGHTS } from "./coldShadowData";
-import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_SQUARE, SLOTS_X, SLOTS_Y } from "./squareMath";
+import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_LIGHT, SLOTS_X, SLOTS_Y } from "./squareMath";
 
 /** Texels per TILE edge in the SHADOW map — **`TEXTILE_UNIT` (16), i.e. one texel per world unit.**
  *
@@ -32,9 +32,10 @@ import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_SQUARE, SLOTS_X, SLOTS_Y } from "./
  *  (Cost is sublinear in texels — 16× the fragments cost 3.6× the time, cache locality — but still 3.2×.) */
 const SHADOW_TEXELS = TEXTILE_UNIT;
 
-/** Fine light texels per shadow texel (`fc / FINE_RATIO`). **1** now that the two maps share a resolution;
- *  the per-light upsample it used to express is gone. */
-const FINE_RATIO = TEXTILE_SQUARE / SHADOW_TEXELS;
+/** Fine light texels per shadow texel — `TEXTILE_LIGHT / SHADOW_TEXELS` = 64/16 = **4**. Both operands are
+ *  now pinned constants that `SQUARE` cannot move, so this ratio is fixed by construction: the fine-refine
+ *  loop in `LIGHT_FRAG` is immune to the art resolution. If this stops reading 4, the split is broken. */
+const FINE_RATIO = TEXTILE_LIGHT / SHADOW_TEXELS;
 
 /** Quantisation step for one light's contribution to the additive lightmap (F11b).
  *
@@ -688,7 +689,7 @@ layout(location = 0) out vec4 oLight;  // lightmap P1: SINGLE attachment — Σ 
 ${GATHER_COMMON}
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
-const int FINE = ${FINE_RATIO};        // fine light texels per coarse shadow texel (TEXTILE_SQUARE/TEXTILE_UNIT)
+const int FINE = ${FINE_RATIO};        // fine light texels per coarse shadow texel (TEXTILE_LIGHT/TEXTILE_UNIT)
 const float QUANT = ${LIGHT_QUANT}.0;  // additive-lightmap quantisation step (F11b) — deposits are INTEGERS
 
 // The per-texel light accumulation, with its DATA and SHADOW sources as PARAMETERS (F11b.1 / [I36]).
@@ -805,7 +806,7 @@ void main() {
   int uCols = int(C0.x & 0xFFFFu), uRows = int(C0.y >> 16), uSlot = int(C0.y & 0x3FFFu);
   int uLod = int((C0.y >> 14) & 3u);
   int uWinCol = int(C0.z) >> 16, uWinRow = (int(C0.z) << 16) >> 16;
-  int uSlotF = uSlot * FINE;                                   // this map is FINE (TEXTILE_SQUARE/tile); shadow stays coarse
+  int uSlotF = uSlot * FINE;                                   // this map is FINE (TEXTILE_LIGHT/tile); shadow stays coarse
   ivec2 fc = ivec2(gl_FragCoord.xy);                           // FINE light texel
   int sx = fc.x / uSlotF, sy = fc.y / uSlotF;                  // owning tile (fine slot)
   // Dirty gate RETIRED (standing-costs P2) — the dirty-rect geometry IS the gate (see GATHER_FRAG).
@@ -2031,12 +2032,16 @@ export class ShadowGather {
       rt.bind();
       gl.clearBufferuiv(gl.COLOR, 0, new Uint32Array([0, 0, 0, 0]));
     }
-    // Lightmap — lightmap P1 Step B: a FINE (TEXTILE_SQUARE/tile) single-attachment map holding the fully
+    // Lightmap — lightmap P1 Step B: a FINE (TEXTILE_LIGHT/tile) single-attachment map holding the fully
     // accumulated per-light irradiance (Σ colour·falloff·(1−shadow)·N·L). 4× per axis of the coarse shadow;
     // att1 (aggregate dir) + att2 (unshadowed) are gone — subsumed by baking N·L (F5). NO ambient baked (the
-    // blit adds it once over cold+hot). On the fixed grid this is `SLOTS · TEXTILE_SQUARE` = 3072×2048,
+    // blit adds it once over cold+hot). On the fixed grid this is `SLOTS · TEXTILE_LIGHT` = 2048×1024,
     // constant — it was `cols · TEXTILE_SQUARE` (world-sized), which is what made it 176 MB at zoom 0.25.
-    const fw = SLOTS_X * TEXTILE_SQUARE, fh = SLOTS_Y * TEXTILE_SQUARE;
+    // `TEXTILE_LIGHT`, NOT `TEXTILE_SQUARE`: all three fine maps are consumed by the LIGHTING pass, not by
+    // the display, so they follow the pinned lighting resolution and do not grow with the art (work
+    // `2026-07-28-square-128`). `receiverFineRT` belongs here too — it is receiver geometry sampled once
+    // per lighting texel, so it has to match the lightmap it is read alongside.
+    const fw = SLOTS_X * TEXTILE_LIGHT, fh = SLOTS_Y * TEXTILE_LIGHT;
     // lighting-feel P2: the decay lightmap — coarse (shadow-RT geometry), RGBA16F, cleared to zero.
     this.decayRT?.destroy();
     this.decayRT = new RenderTarget(gl, { width: w, height: h, formats: ["rgba16float"] });

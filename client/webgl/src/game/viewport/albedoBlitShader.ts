@@ -41,7 +41,7 @@ uniform sampler2D uColdLight;    // #4 COLD lightmap irradiance (static lights, 
 uniform sampler2D uHotLight;     // #4 HOT lightmap irradiance (dynamic lights, per frame)
 uniform int uLightEnable;        // 0 = UNLIT (albedo only) — the fallback when the lightmap isn't ready
 uniform float uAmbient;          // #4 ambient floor — added ONCE over cold+hot (not baked into either map)
-uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mapping (uLSlot = TEXTILE_SQUARE, fine)
+uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot; // lightmap window mapping (uLSlot = TEXTILE_LIGHT >> lod)
 uniform sampler2D uDecay;        // lighting-feel P2: the COARSE decay lightmap (RGBA16F, un-quantised)
 uniform int uDSlot;              // decay texels per tile (SHADOW_TEXELS >> lod)
 uniform float uAoStr;            // lighting-feel P3: AO strength on the AMBIENT term (0 = off, the A/B)
@@ -95,7 +95,7 @@ void main() {
     if (lt.x < 0) { light = vec3(1.0); }        // outside window — shouldn't happen (resident squares only)
     else {
       // lightmap P1: the FINE lightmap already holds Σ per-light colour·falloff·(1−shadow)·N·L (cold + hot).
-      // Sampled NEAREST — the detail lives in the lighting at TEXTILE_SQUARE/tile, so NO bilinear smear (that
+      // Sampled NEAREST — the detail lives in the lighting at TEXTILE_LIGHT/tile, so NO bilinear smear (that
       // was the coarse-map blob fix). Ambient is directionless, added once here over cold+hot.
       // The lightmap is an RGBA32F ADDITIVE ACCUMULATOR holding QUANTISED integer deposits (F11b), so
       // de-quantise here — this is the one place the scale is undone.

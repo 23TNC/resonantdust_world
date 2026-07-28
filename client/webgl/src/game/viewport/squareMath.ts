@@ -37,6 +37,29 @@ export const TEXTILE_UNIT = SQUARE / UNIT;
 /** `SQUARE` textiles / tile (one per px) — albedo, normal, surface, zdepth. Positions in PX. */
 export const TEXTILE_SQUARE = SQUARE;
 
+/** LIGHTING textiles / tile — the fine lightmap pair and the fine receiver map. **PINNED at 64; it does
+ *  NOT track {@link SQUARE}.**
+ *
+ *  It used to, because these maps were sized from `TEXTILE_SQUARE`, and that identity made ONE constant
+ *  steer two unrelated things: how sharp the ART is, and how many texels the LIGHTING pass shades. That
+ *  is why the 2026-07-27 A/B could only buy a cheaper lighting pass by paying with art resolution
+ *  (`2b1025a`) — the two effects were never coupled, just co-located behind one name.
+ *
+ *  Split, both are free to sit where they belong. MEASURED before splitting (work `2026-07-28-square-128`
+ *  P0), at 64 vs 128 with `SQUARE` held at 64 so only the lighting resolution moved:
+ *
+ *    lighting draw   reach 4: 0.124 -> 0.344 ms   reach 8: 0.286 -> 0.620   reach 12: 0.253 -> 0.790
+ *    gather draw     unchanged within the harness's spread; art maps not resized at all
+ *
+ *  So 4x the lighting texels costs 2.2-3.1x the time and buys nothing the display can show: the blit
+ *  samples this NEAREST and the detail the eye reads comes from the albedo. Three maps ride it —
+ *  `coldLightRT` + `hotLightRT` (rgba32float) and `receiverFineRT` (r32uint) — so the pin is worth
+ *  **216 MiB** at `SQUARE = 128`, which is most of what that A/B actually freed.
+ *
+ *  Raising it is a deliberate quality/cost decision, never a side effect of moving `SQUARE`. Keep it a
+ *  power-of-two multiple of {@link TEXTILE_UNIT} so `FINE_RATIO` stays an integer. */
+export const TEXTILE_LIGHT = 64;
+
 /** Tiles per zone edge — mirrors `resonantdust_codec::packed::ZONE_DIM`. A zone is
  *  `ZONE_DIM × ZONE_DIM` tiles. */
 export const ZONE_DIM = 16;

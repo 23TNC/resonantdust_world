@@ -25,11 +25,11 @@ discriminated by RENDER TARGET, fixed frame count, phase from the frame index.
 
 ## P1 — Split the constant (no value change, must be a provable no-op)
 
-- [ ] Add `TEXTILE_LIGHT = 64` to `squareMath.ts` with a doc saying it is pinned and does NOT track `SQUARE`. Acceptance: exported, typechecks, no consumer yet.
-- [ ] Point the fine lightmap RT allocation at `TEXTILE_LIGHT` instead of `TEXTILE_SQUARE` (`shadowGather.ts:2039`). Acceptance: the RT is still 2048×1024 — the value is identical, only the source moved.
-- [ ] Point `FINE_RATIO` at `TEXTILE_LIGHT / SHADOW_TEXELS` (`shadowGather.ts:37`). Acceptance: `FINE` still prints 4 in the generated `LIGHT_FRAG` source.
-- [ ] Feed the lightmap's `uLSlot` from `TEXTILE_LIGHT >> lod` rather than `win.slotPx` (`Viewport.ts:456`), and rewrite the comment that asserts the two are the same. Acceptance: identical value at every lod while `SQUARE` is still 64.
-- [ ] Run the stream acceptance at `SQUARE = 64` with the split in place. Acceptance: 0 differing texels, clean zoom sweep, lighting ms within ±0.01 ms of the P0 baseline — a true no-op.
+- [x] Add `TEXTILE_LIGHT = 64` to `squareMath.ts` with a doc saying it is pinned and does NOT track `SQUARE`. Acceptance: exported, typechecks, no consumer yet.
+- [x] Point the fine lightmap RT allocation at `TEXTILE_LIGHT` instead of `TEXTILE_SQUARE` (`shadowGather.ts:2039`). Acceptance: the RT is still 2048×1024 — the value is identical, only the source moved.
+- [x] Point `FINE_RATIO` at `TEXTILE_LIGHT / SHADOW_TEXELS` (`shadowGather.ts:37`). Acceptance: `FINE` still prints 4 in the generated `LIGHT_FRAG` source.
+- [x] Feed the lightmap's `uLSlot` from `TEXTILE_LIGHT >> lod` rather than `win.slotPx` (`Viewport.ts:456`), and rewrite the comment that asserts the two are the same. Acceptance: identical value at every lod while `SQUARE` is still 64.
+- [x] Run the stream acceptance at `SQUARE = 64` with the split in place. Acceptance: 0 differing texels, clean zoom sweep, lighting ms within ±0.01 ms of the P0 baseline — a true no-op.
 
 ## P2 — Raise SQUARE to 128
 

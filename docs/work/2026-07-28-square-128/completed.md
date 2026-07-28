@@ -140,3 +140,54 @@ might have been authored against the 64 cap; it was not.
 running), so the recorded before-state is `targetPx = 64` plus the user's own screenshot rather than a
 matched crop. `targetPx` is the stronger evidence — it is the cap itself, not a rendering of it — and
 P3's after-check is `targetPx == 128` plus a visual pass once a wolf is on screen.
+
+## 2026-07-28 · P1 — the split, proven as a no-op
+
+`TEXTILE_LIGHT = 64` added to `squareMath.ts`, **pinned and explicitly not tracking `SQUARE`**. Three
+consumers moved off `TEXTILE_SQUARE`:
+
+| site | was | now |
+|---|---|---|
+| `shadowGather.ts:2039` — the three fine RTs | `SLOTS × TEXTILE_SQUARE` | `SLOTS × TEXTILE_LIGHT` |
+| `shadowGather.ts:37` — `FINE_RATIO` | `TEXTILE_SQUARE / SHADOW_TEXELS` | `TEXTILE_LIGHT / SHADOW_TEXELS` |
+| `Viewport.ts:456` — the lightmap's `uLSlot` | `win.slotPx` (= `SQUARE >> lod`) | `TEXTILE_LIGHT >> lod` |
+
+The third is the load-bearing one. `win.slotPx` is the **art** texel size; it was a correct value for the
+lightmap only while the two constants were equal. P0's probe rendered the consequence — visible per-slot
+misregistration the moment they differ — so this is a fix, not a precaution. Comment rewritten to state
+the general rule: **a map's slot stride comes from that map's own texels-per-tile constant, never from
+another map's.**
+
+### The no-op holds on every axis
+
+| check | result |
+|---|---|
+| `FINE_RATIO` | **4** (`TEXTILE_LIGHT/TEXTILE_UNIT` = 64/16), read live from the module |
+| `coldLightRT` / `hotLightRT` / `receiverFineRT` | 2048×1024 — identical to baseline |
+| `coldShadowRT` / `receiverCoarseRT` / `decayRT` | 512×256 — untouched |
+| art maps (cold + warm) | 2176×1152 — untouched |
+| corridor↔brute identity, zoom 1 | **0 differing** of 36 792 non-zero |
+| corridor↔brute identity, after sweep | **0 differing** of 73 099 non-zero |
+| zoom sweep 1 → 0.5 → 0.25 → 1 | lod 0 → 2 → 0, `uLSlot` tracks `64 >> lod` = 64/16, `glGetError` 0 |
+| render | correct — art, shadows and lighting all in register |
+
+Perf, same harness, 3 repeats (baseline → split), dirty counts **byte-identical** at 217/392/465:
+
+| reach | gather ms | light ms |
+|---|---|---|
+| 4 | 0.134 → 0.164 | 0.124 → 0.173 |
+| 8 | 0.668 → 0.595 | 0.286 → 0.246 |
+| 12 | 0.845 → 0.868 | 0.253 → 0.262 |
+
+Every difference sits inside the measured spread (light spread alone reached 0.183 ms at reach 4 this
+run), so the split is a no-op to the limit this harness can resolve. Per [D3](deviations.md#d3) the
+planned ±0.01 ms gate is void — that tolerance was never achievable.
+
+**Why the sequencing paid off:** with `SQUARE` still 64, `TEXTILE_LIGHT` and `slotPx` are *equal*, so
+every readback above had a hard oracle — identical, not merely plausible. Had the raise landed in the
+same step, none of these numbers could have distinguished a correct split from a broken one.
+
+**Caveat on the zoom sweep:** driving `tick` synthetically does NOT refresh `win`, so lod stayed 0 and
+the first sweep proved nothing. Real frames (forced via screenshot capture) were needed to reach lod 2.
+The tick-driven harness is right for timing a draw and wrong for anything that depends on the Viewport
+recomputing the window.
