@@ -72,3 +72,20 @@ rate. Browser acceptance: 12 consecutive trips gliding at 2 s/tile with no telep
 authoritative snaps (trip walls match hops: 5 hops ≈ 8 s = seed + 4×12 tics); screenshot
 ss_8728f2o1t — the wolf mid-glide at the focus tile among lit conifers. Memory + index
 updated; stream closed.
+
+## 2026-07-28 · Post-delivery: I6 seed-doesn't-step (user-reported, user-proposed fix)
+
+The user watched trips open with a one-tile SNAP (land → pause → snap one tile → glide) and
+proposed seeding with the CURRENT position instead of the greedy first step. Implemented
+exactly that: worker `apply` recognizes the intent event (`action::asks_promote_event`) and
+its `MOVE_TO` promotes the current position UNCHANGED (facing still turns toward the path);
+the first step lands on the first continuation, so a trip is `hops + 1` slots and the npc
+deadline gained the slot. No client change — the fractional glide crosses tile `k` at
+`k · tics_per_tile`, exactly when the server now writes it. ACTIONS.md §Movement + the
+`MOVE_TO` palette row updated. Verified at the wire (landing row and next seed row at the
+identical position, facing turned) and at the npc cadence (3 hops = 7.0 s, 10 hops = 24.3 s,
+zero deadline re-issues at steady state). Two findings recorded on the way: I7 (deadline
+re-issue duplicates a live chain — observed during the deploy transition, self-drained,
+supersession sketch recorded) and the hidden-tab observation (rAF pause freezes speculation —
+never read landing-error stats from an unfocused soak; also answered the user's question:
+wolves WANDER RANDOMLY with think-time pauses by design).

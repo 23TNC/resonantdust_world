@@ -1,5 +1,31 @@
 # Issues — pawn-movement
 
+## I7 · npc deadline re-issue DUPLICATES a live chain (OPEN — observed in the flesh)
+
+`MOVE_TO` chains have no identity: a chain only ends when its object reaches ITS dest (or a
+queue fails). The npc's deadline re-issue assumes the old chain is dead — re-issuing while it
+is ALIVE spawns a second chain, and two chains with DIFFERENT dests fight over the pawn
+(tug-of-war: the trailing chain's `d` hovers at 1 so its "final" hops promote EVERY slot —
+per-hop fan-out is back — and neither dest is reached on time, so more deadlines fire and
+chains ACCUMULATE). Observed live 2026-07-28 during the I6-deploy restart transition
+(19:27–19:30: five re-issues, landing errors up to 10 tiles, 12-tic-spaced promotes); it
+self-drained once dests were reached and the steady state is clean — but the hazard fires
+whenever a deadline underestimates a slow server. Recommended fix (sketch): chain
+SUPERSESSION — the seed stamps a trip-serial into the pawn's `data` low bits (facing owns the
+top 2), continuations become a worker-only arity-3 step verb carrying the serial, and a hop
+whose serial no longer matches dies silently — at most one live chain per pawn, and a NEW
+intent cancels the old chain by construction. Until then: npc deadlines carry generous slack
+(re-issue only when the chain is near-certainly dead), and re-issues keep the SAME dest
+(same-dest duplicates converge and both die).
+
+## Observation · hidden browser tabs freeze speculation (expected, recorded)
+
+`MoverLayer.tick` rides the render loop; a hidden tab fires no rAF, so specs never advance
+and every landing logs `e ≈ trip length` (measured 12/12 trips at integer errors with
+`visibilityState: "hidden"`). Not a defect — nobody sees a hidden tab, authoritative rows
+keep the position truthful, and specs resume on visibility. Do NOT read landing-error stats
+from an unfocused-tab soak.
+
 ## I6 · The seed promoted `start+1`, opening every trip with a one-tile snap (user, post-delivery)
 
 Observed by the user watching the browser: land, pause (npc think time — random wander is by
@@ -13,7 +39,12 @@ continuation. The client mirror needs NO change — the fractional glide crosses
 exactly `k · tics_per_tile`, which is when the server now writes it. The npc deadline gains
 the extra hop-slot (`hops + 1`). Stepping rules were AUDITED while diagnosing: worker and
 `walkGreedy` both step diagonally (both axes per hop) — no divergence there. FIXED
-(2026-07-28): verified live — seed rows arrive at e=0.00 and trips open snap-free.
+(2026-07-28), verified AT THE WIRE: sampling pawn `entity_state` across a live trip boundary
+shows the landing row and the next trip's seed row at the IDENTICAL position (macro 98 /
+micro 16128), the seed advancing only `tic` + facing (128→192, turned toward the new dest);
+npc trip walls match the `hops + 1` cadence exactly (3 hops = 7.0 s, 10 hops = 24.3 s).
+Deploy note: the restart transition itself briefly produced duplicate chains — that hazard is
+recorded as I7.
 
 ## I1 · MoverLayer drops live intents on two paths (the snap-tween-snap's likely core)
 
