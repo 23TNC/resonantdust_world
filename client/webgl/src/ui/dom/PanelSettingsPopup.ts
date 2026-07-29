@@ -170,6 +170,8 @@ export class PanelSettingsPopup {
   private readonly heightSelect:   CyclingSelect<HeightMode>;
   private readonly pinSelect:      CyclingSelect<PinMode>;
   private readonly pinnedBtn:      HTMLButtonElement;
+  /** ui-select P2 (D6): the REMAIN-ON-TOP toggle's button (glyph syncs in refreshControls). */
+  private readonly onTopBtn:       HTMLButtonElement;
   private readonly taskbarIconInput: HTMLInputElement;
   /** Title suffix cycler — rebuilt on every `bind` because the
    *  available option set is per-panel (a panel without resolvers
@@ -215,6 +217,7 @@ export class PanelSettingsPopup {
    *  (and a future hotkey), so we listen so the cycler stays in
    *  sync. */
   private unsubPin: (() => void) | null = null;
+  private unsubOnTop: (() => void) | null = null;
   /** Cleanup for the bound panel's `onPinnedChange` subscription.
    *  Pinned can mutate from outside the popup via `resetToDefaults`,
    *  so we listen to keep the Pin toggle glyph in sync. */
@@ -297,6 +300,11 @@ export class PanelSettingsPopup {
     const pinnedRow = this.addToggleRow(body, pp("pin"), "▣", () => this.boundPanel?.togglePinned());
     this.pinnedBtn = pinnedRow.btn;
     this.rowsByKey.set("pinned", pinnedRow.row);
+    // ui-select P2 (D6): REMAIN ON TOP — promote the panel above every normal z band so it
+    // floats over viewport-like panels (chat/options/debug want this; the viewport doesn't).
+    const onTopRow = this.addToggleRow(body, pp("onTop"), "▣", () => this.boundPanel?.toggleOnTop());
+    this.onTopBtn = onTopRow.btn;
+    this.rowsByKey.set("onTop", onTopRow.row);
     const iconRow = this.addTaskbarIconRow(body);
     this.taskbarIconInput = iconRow.input;
     this.rowsByKey.set("taskbarIcon", iconRow.row);
@@ -476,6 +484,7 @@ export class PanelSettingsPopup {
     this.unsubHeight    = panel.onHeightModeChange(() => this.refreshControls());
     this.unsubPin       = panel.onPinChange(() => this.refreshControls());
     this.unsubPinned    = panel.onPinnedChange(() => this.refreshControls());
+    this.unsubOnTop     = panel.onOnTopChange(() => this.refreshControls());
     this.unsubSnap      = panel.onSnapChange(() => this.refreshControls());
     this.unsubDraggable = panel.onDraggableChange(() => this.refreshControls());
     this.unsubTaskbarIcon = panel.onTaskbarIconChange(() => this.refreshControls());
@@ -497,6 +506,8 @@ export class PanelSettingsPopup {
     this.unsubPin = null;
     this.unsubPinned?.();
     this.unsubPinned = null;
+    this.unsubOnTop?.();
+    this.unsubOnTop = null;
     this.unsubSnap?.();
     this.unsubSnap = null;
     this.unsubDraggable?.();
@@ -539,6 +550,7 @@ export class PanelSettingsPopup {
     this.resizableYBtn.textContent = resizeYForced ? "▢" : (p.isResizableY ? "▣" : "▢");
     this.resizableYBtn.style.color = resizeYForced ? FORCED_BUTTON_COLOR : NORMAL_BUTTON_COLOR;
     this.pinnedBtn.textContent = p.pinned ? "▣" : "▢";
+    this.onTopBtn.textContent = p.onTop ? "▣" : "▢";
     this.anchorSelect.setValue(p.anchor);
     this.snapSelect.setValue(p.snap);
     this.heightSelect.setValue(p.heightMode);

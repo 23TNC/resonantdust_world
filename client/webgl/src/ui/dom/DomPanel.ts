@@ -30,7 +30,7 @@ const HOST_ID = "app";
  *  mirrors the Pixi-side layer order in `MainLayout` —
  *  PixiPanels derive their band from their parent layer
  *  (see `PixiPanel`); pure DomPanels default to `"dom"`. */
-export type DomZBand = "gameview" | "inventory" | "overlay" | "dom";
+export type DomZBand = "gameview" | "inventory" | "overlay" | "dom" | "ontop";
 
 /** Lowest z-index inside each band. Each band reserves
  *  `Z_BAND_SIZE` z-indices above its base — pick a stride
@@ -42,6 +42,9 @@ const Z_BAND_BASE: Record<DomZBand, number> = {
   inventory: 20000,
   overlay:   30000,
   dom:       40000,
+  // ui-select P2 (D6): the REMAIN-ON-TOP band — panels flagged on-top float above every
+  // normal band regardless of focus order; within the band, focus order still applies.
+  ontop:     50000,
 };
 const Z_BAND_SIZE = 10000;
 
@@ -55,6 +58,7 @@ const nextZByBand: Record<DomZBand, number> = {
   inventory: Z_BAND_BASE.inventory,
   overlay:   Z_BAND_BASE.overlay,
   dom:       Z_BAND_BASE.dom,
+  ontop:     Z_BAND_BASE.ontop,
 };
 
 /** Module-level registry of every live `DomPanel` instance. Used by
@@ -364,6 +368,7 @@ export type PanelSettingKey =
   | "height"
   | "pin"
   | "pinned"
+  | "onTop"
   | "taskbarIcon"
   | "titleSuffix"
   | "minimize"
@@ -616,6 +621,13 @@ export class DomPanel {
    *  *location*). */
   private _pinned: boolean;
   get pinned(): boolean { return this._pinned; }
+  /** ui-select P2 (D6): REMAIN ON TOP — promotes the panel's EFFECTIVE z band to `"ontop"`
+   *  (above every normal band) so flagged panels (chat/options/debug/details) always float
+   *  over viewport-like panels; within the band, focus order still applies. Persisted under
+   *  `<storageKey>.onTop`; toggled by the settings popup's On Top row. */
+  private _onTop = false;
+  get onTop(): boolean { return this._onTop; }
+  private readonly onTopChangeListeners = new Set<(v: boolean) => void>();
   /** Constructor-seed icon — the value first written into
    *  `_taskbarIcon`. Stashed so `resetToDefaults` can revert the
    *  user's runtime override (set via the Taskbar Icon row in the
@@ -900,6 +912,7 @@ export class DomPanel {
     this._pin            = readPin(this.storageGet("pin"))
       ?? (contentDefaults.pin ?? this.initialPin);
     this._pinned         = this.defaultedBool("pinned", contentDefaults.pinned ?? this.initialPinned);
+    this._onTop          = this.defaultedBool("onTop", false);
     this._heightMode     = readHeight(
       this.storageGet("heightMode"),
       contentDefaults.heightMode ?? opts.heightMode ?? "off",
@@ -1785,8 +1798,10 @@ export class DomPanel {
   }
 
   private bringToFront(): void {
-    nextZByBand[this._zBand] += 1;
-    this.panel.style.zIndex = String(nextZByBand[this._zBand]);
+    // ui-select P2 (D6): an on-top panel focuses within the "ontop" band instead of its own.
+    const band = this._onTop ? "ontop" : this._zBand;
+    nextZByBand[band] += 1;
+    this.panel.style.zIndex = String(nextZByBand[band]);
     if (this._editTarget) lastEditTarget = this;
     for (const cb of this.focusListeners) cb();
   }
@@ -2457,6 +2472,24 @@ export class DomPanel {
 
   /** Flip the pinned flag. Convenience for the popup's Pin toggle row. */
   togglePinned(): void { this.setPinned(!this._pinned); }
+
+  /** ui-select P2 (D6): set REMAIN ON TOP. Persists under `<storageKey>.onTop`, re-seats the
+   *  panel's z in the new effective band immediately, and fires `onOnTopChange` (the popup's
+   *  toggle glyph syncs through it). */
+  setOnTop(v: boolean): void {
+    if (this._onTop === v) return;
+    this._onTop = v;
+    this.storageSet("onTop", v ? "1" : "0");
+    this.bringToFront();
+    for (const cb of this.onTopChangeListeners) cb(v);
+  }
+
+  toggleOnTop(): void { this.setOnTop(!this._onTop); }
+
+  onOnTopChange(cb: (v: boolean) => void): () => void {
+    this.onTopChangeListeners.add(cb);
+    return () => this.onTopChangeListeners.delete(cb);
+  }
 
   /** Set the taskbar icon. `null` (or empty string) flips the
    *  entry to text mode (uses the panel title). Persists under

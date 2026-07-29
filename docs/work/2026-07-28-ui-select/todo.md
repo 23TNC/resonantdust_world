@@ -36,17 +36,17 @@ verify at ≥2 zooms, tab VISIBLE._
 
 ## P2 · Panels
 
-- [ ] Details panel (`game/panels/details/`): a `DomPanel` rendering the selected
+- [x] Details panel (`game/panels/details/`): a `DomPanel` rendering the selected
       object's details (kind/name, entity ref, tile, facing, speed, zone/macro) from
       the SelectionModel + content tables; empty state when nothing is selected.
       Acceptance: selecting the wolf populates it live; tile selection shows tile info.
-- [ ] Remain-on-top: per-panel persisted boolean + toggle row in `PanelSettingsPopup`
+- [x] Remain-on-top: per-panel persisted boolean + toggle row in `PanelSettingsPopup`
       that promotes the panel's z band (D6). Acceptance: flag chat on-top → it renders
       above the viewport panel after reload (persistence proven); unflag → back.
 
 ## P3 · Verify
 
-- [ ] Interaction drill: select wolf → right-click walk → outline tracks → details
+- [x] Interaction drill: select wolf → right-click walk → outline tracks → details
       live-update → middle-pan + wheel-zoom during the walk; cursor light in tow;
       120 fps guard at zoom 1. Acceptance: numbers + captures in `completed.md`;
       the user's hands on the live tab are the final oracle.

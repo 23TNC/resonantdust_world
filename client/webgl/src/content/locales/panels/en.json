@@ -32,7 +32,8 @@
   },
   "gameDetailsPanel": {
     "label": "Details",
-    "descriptionHeader": "Description"
+    "descriptionHeader": "Description",
+    "empty": "Nothing selected"
   },
   "gameViewPanel": {
     "label": "Game View"
@@ -78,7 +79,8 @@
     "half": "Half",
     "quarter": "Quarter",
     "player": "Player",
-    "soul": "Soul"
+    "soul": "Soul",
+    "onTop": "On Top"
   },
   "debugPanel": {
     "label": "Debug",

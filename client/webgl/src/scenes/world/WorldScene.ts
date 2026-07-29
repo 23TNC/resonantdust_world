@@ -12,6 +12,7 @@ import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
 import { MoverLayer } from "../../game/world/MoverLayer";
 import { ChatPanel } from "../../game/panels/chat/ChatPanel";
+import { DetailsPanel } from "../../game/panels/details/DetailsPanel";
 import { LogManager } from "../../game/panels/chat/LogManager";
 import { PanelManager } from "../../ui/panels/PanelManager";
 import { SQUARE } from "../../game/viewport/squareMath";
@@ -41,6 +42,7 @@ export class WorldScene extends Scene {
   private bridge!: WorldBridge;
   private moverLayer!: MoverLayer;
   private chat!: ChatPanel;
+  private details: DetailsPanel | null = null;
   private contentUnsub: (() => void) | null = null;
   private urlCommands: UrlCommand[] = [];
   private dragId: number | null = null;
@@ -92,6 +94,15 @@ export class WorldScene extends Scene {
       return p?.kind === "tile" ? `tile ${p.x}, ${p.y}` : null;
     });
     this.selection.subscribe(() => this.panel.refreshTitleSuffix());
+    // ui-select P2: the details panel — reads the SelectionModel + live world providers.
+    this.details = new DetailsPanel(ctx, this.selection, {
+      pawn: (e) => this.moverLayer.pawnInfo(e),
+      thing: (id) => {
+        const t = this.panel.view.coldGetPrim(id);
+        return t ? { textureName: t.textureName, x: t.x, y: t.y, width: t.width, height: t.height, zIndex: t.zIndex } : null;
+      },
+    });
+    this.details.open();
 
     // The corpus hot-swaps on login (`onLoggedIn` → `reloadContent` in main.ts pulls the server's
     // corpus, replacing the boot embed). Push the new corpus into the bridge + mover layer so they
@@ -162,6 +173,8 @@ export class WorldScene extends Scene {
       this.cursorLightId = null;
     }
     this.chat?.destroy();
+    this.details?.destroy();
+    this.details = null;
     this.moverLayer?.dispose();
     this.bridge?.dispose();
     this.panel?.destroy();

@@ -255,6 +255,21 @@ export class MoverLayer {
     return this.movers.get(entity)?.id ?? null;
   }
 
+  /** ui-select P2: a pawn's live details for the details panel — authoritative tile, facing,
+   *  content speed, zone address, and whether a speculation is in flight. */
+  pawnInfo(entity: number): {
+    kind: number; stem: string; tileX: number; tileY: number; facing: number;
+    macroPosition: number; moving: boolean; ticsPerTile: number;
+  } | null {
+    const m = this.movers.get(entity);
+    if (!m) return null;
+    return {
+      kind: m.kind, stem: this.thingStems[m.kind - 1] ?? "?",
+      tileX: m.authX, tileY: m.authY, facing: m.facing,
+      macroPosition: m.macroPosition, moving: !!m.spec, ticsPerTile: this.speedFor(m.kind),
+    };
+  }
+
   /** ui-select P0 (D2): the topmost MOVER whose drawn box contains the world point (px) —
    *  painter order (zIndex, then southernmost) among overlaps. Returns the stable ENTITY
    *  reference (warm prim ids churn on despawn); null → no pawn there. */

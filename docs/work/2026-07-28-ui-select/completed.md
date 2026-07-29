@@ -40,3 +40,28 @@ cursor sweep left a warm pool with **cold bakes 0** (304 hot) — the hot-light 
 ART-BLOCKED (B1): the WOLF's outline is invisible for the same reason the wolf is — its
 surface silhouette is empty under art-128's in-flight masters; the tracking mechanism
 verified via the live prim reads (positions moving while selected) + the tree case.
+
+## 2026-07-29 · P2 — panels (2/2)
+
+`DetailsPanel` (new, `game/panels/details/`): a DomPanel over injected PROVIDERS (pawn info
+from MoverLayer — kind/stem, auth tile, facing, content speed, zone, in-flight; thing info
+from the cold cache; tile coords + world px), re-rendering on the SelectionModel's change
+event + a 500 ms tick while a pawn is selected (motion isn't a selection change); empty
+state from the locale strings (reused the legacy `gameDetailsPanel` entry — "re-implement"
+honoured). REMAIN-ON-TOP (D6): a new `"ontop"` z band (50000, above every normal band) +
+persisted `_onTop` on DomPanel (`<key>.onTop`) with set/toggle/change-event, an On Top
+toggle row in `PanelSettingsPopup` mirroring Pin (bound refresh + glyph sync + locale
+label), and `bringToFront` seating in the EFFECTIVE band. **Verified live**: selecting the
+npc wolf populated the panel (0x30800000, wolf #7, tile/facing/12 tics-per-tile/zone 83,
+moving) and a tile selection swapped it to coords; `chatPanel.onTop=1` SURVIVED a reload
+with chat at z 50001 while the focused viewport bumped only to 40007 — flagged panels stay
+above viewport-like panels regardless of focus. The popup row itself is wired identically
+to Pin (not UI-click-drilled — recorded honestly).
+
+## 2026-07-29 · P3 — interaction drill (1/1) · STREAM DONE 10/10
+
+Wolf selected + walking, details panel open and live-updating (auth tile advancing), cursor
+light sweeping 40 synthetic moves, **120.2 fps** over 6 s; middle-pan + wheel-zoom during
+motion verified at P0; cold bakes untouched by the cursor light (P1). ART-BLOCKED remnants
+for the user's eyes once wolf masters land (ns-shadows B1): the wolf's outline + its sprite.
+The user's hands on the live tab remain the final oracle for feel.
