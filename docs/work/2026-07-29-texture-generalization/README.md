@@ -60,27 +60,53 @@ WorldBridge), `shared/dsl` (+ wasm bundle), `content`, `docs/VARIABLES.md`._
   `cast_shadows` (wall shadows later = author one bool), and cross-type reuse of the mode
   pattern.
 
-## Known risks (planned, not discovered later)
+## Design deltas (user, 2026-07-29 — second pass, answering R1–R5)
 
-- **R1 · The presence slot-0 contract change.** The dense-bucket EARLY-OUT currently
-  assumes slots fill from 0 ("empty slot 0 ⇒ empty tile") — it must flip to slot 1, and
-  caster capacity per tile drops 8 → 7. EVERY presence reader special-cases slot 0: the
-  corridor/brute walks, `receiverAt`, the receiver bakes, presence build. Enumerating and
-  converting those sites is the bulk of the work.
-- **R2 · Two id namespaces in one table**: slot 0 = a DEFINITION id; slots 1..7 =
-  `billboard_data` ids. The special-case must be airtight or a def id dereferences as a
-  billboard.
-- **R3 · Receiver semantics must not flip the ground-shadow cut.** If every tile texel
-  classifies "on-billboard", the existing cut (`rbillboardN != 0 → ground shadow = 0`)
-  erases ALL ground shadows. Tile receivers are "ground WITH a normal": N·L from the
-  tile's def, ground shadows KEPT; the cut keys on standing receivers (slots ≥ 1) only.
-- **R4 · The connect rule.** Rotation-1 matching connects ACROSS kinds (a smooth wall
-  joins a brick wall — structurally right, art mismatches at the junction). The user's
-  stated rule is rotation-match; def-id match (same kind only) is the alternative if
-  junctions read wrong. Fork to confirm at the first two-material drill.
-- **R5 · `internal_padding` vs the current masters**: the served manifest reports
-  `pad [0,0]` for today's wall masters. The DSL value must match the actual art — author
-  what the master truly has (verify at execution; re-master if padding is wanted).
+- **D7 · The presence table reshapes to 4 × u32 slots**: `u4 flags | u4 set | u16 index`
+  per slot (same uvec4 texel footprint as today's 8 × u16 — zero storage change). The
+  `set` field makes a slot SELF-DESCRIBING: it can point at `definition_data` directly
+  (the tile case — no per-tile `prim_data`, because prim_data is a CONTAINER of prims and
+  a bare tile needs no container) or at `billboard_data` directly — the common
+  biome-tile/biome-thing cases skip indirections entirely. Flags: **bit 3 =
+  `cast_shadows`** (skip every fetch in the common non-caster case — all tiles v1),
+  **bits 1–2 = `receives_shadows`** (mirrored from the def for the same early-out),
+  bit 0 spare. 4 slots suffice BECAUSE prim_data contains prims; the fill/walk contract
+  (slots from 0, early-out) re-specs against the new shape. (The table gets renamed from
+  `billboard_presence` to `prim_presence` — it no longer holds only billboards.)
+- **D8 · The ground-shadow special case is REMOVED — everything is a receiver.**
+  `definition_data` gains a 2-bit **`receives_shadows`**: 0 = doesn't receive, 1 =
+  receives LIKE A BILLBOARD (the elevated/climbing walk), 2 = receives LIKE GROUND (the
+  flat walk), 3 reserved. Receivers draw IN ORDER; the on-billboard cut logic retires
+  with the special case. Ground tiles author mode 2 — which is exactly what buys tile
+  NORMAL MAPS for free, since tiles then walk the same draw paths billboards do.
+  Performance impact is UNKNOWN and suspected heavy (user) — re-work is expected;
+  the flags early-out is the first lever.
+  Bit placement note: def R has ONE free bit (24 → `cast_shadows`); `receives_shadows`
+  (2 bits) lives in G's reserved lane alongside `internal_padding` (VARIABLES first).
+- **R4 resolved for now**: cross-material junctions (smooth↔brick) are accepted; the
+  FUTURE brings up-to-16 VARIANTS per kind (used everywhere), where connection gates by
+  a variant/kind check (a wall must not connect to a fence or rock) — deferred, needs
+  its own planning.
+- **R5 resolved**: two DIFFERENT paddings. The manifest's `pad` is the atlas-EXTERNAL
+  padding (correctly 0); `internal_padding` is BETWEEN cells inside the linked atlas —
+  and because it exists, no external pad is needed to stop neighbor bleed.
+
+## Known risks (planned, not discovered later; R1–R3 restated under D7/D8)
+
+- **R1′ · The 4-slot caster capacity.** 8 (≤7 effective) caster slots per tile become 3–4
+  under D7 (the tile takes one). Dense clusters (forest tiles where several tight-bbox +
+  corridor rows overlap) may exceed it — dropped casters = silently missing shadows.
+  MEASURE FIRST: a P1 occupancy probe records the live high-water mark per tile before
+  the reshape ships; the escape hatch is 8 × u32 (two texels/tile — presence doubles).
+- **R2′ · One table, self-describing slots.** The `set` field replaces the id-namespace
+  special case — but every reader (corridor/brute walks, `receiverAt`, receiver bakes,
+  the bucket fill + dense early-out) converts to the new slot encoding in ONE cut.
+  Bit-identical shadows on a billboards-only scene is the conversion's oracle (the
+  re-encode changes no geometry).
+- **R3′ · The receiver unification has NO bit-identity oracle.** Removing the ground
+  special case + the cut changes every shadow edge BY DESIGN. Acceptance is comparative
+  captures (before/after on a wall-free scene must read equivalent, not identical) +
+  the perf drill the user pre-authorized re-work for.
 - **R6 · The DRAW side stays CPU-selected for now.** The albedo bake picks the drawn cell
   via the CPU D1 helper (build-walls P1); lighting picks it in-shader. Two selectors, ONE
   shared formula, same inputs — acceptable v1, with def-driven drawing as the documented
