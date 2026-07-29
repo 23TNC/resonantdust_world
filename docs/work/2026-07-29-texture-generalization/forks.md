@@ -26,3 +26,12 @@ maxCardHeight)` rows SOUTH of each visited tile instead: the only tiles whose oc
 lean over it. maxCardHeight is content-derived (conifer span 2 → +1 row). The trade prices
 in D7's favor (cheap flagged u32 reads vs record fetches; incremental fill). The occupancy
 probe is retired — capacity is bounded by construction.
+
+## D9 refined · Base-LINE registration, not single-tile (user, 2026-07-29)
+
+A caster registers in its anchor row × EVERY column its base occupies (a 2×3 tree in both
+base tiles). Single-tile registration would silently drop casts from the wide half: the
+walk's ±1 dilation is perpendicular to the RAY's dominant axis — a horizontal ray dilates
+vertically and never looks a column sideways — so width coverage cannot ride the walk.
+Width stays FILL-time (base line); only the vertical tilt overhang moves to WALK-time
+(southern dilation). Capacity unaffected: base occupancy is exclusive per tile.
