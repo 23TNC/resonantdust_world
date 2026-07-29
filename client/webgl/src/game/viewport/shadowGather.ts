@@ -16,7 +16,7 @@ import { Renderer, Program, Geometry, RenderTarget, Texture } from "../../gl";
 import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
-import { ColdShadowData, N_LIGHTS } from "./coldShadowData";
+import { ColdShadowData, N_LIGHTS, SET_BILLBOARD_DATA } from "./coldShadowData";
 import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_LIGHT, SLOTS_X, SLOTS_Y } from "./squareMath";
 
 /** Texels per TILE edge in the SHADOW map — **`TEXTILE_UNIT` (16), i.e. one texel per world unit.**
@@ -157,6 +157,11 @@ const PRES_SLOTS = TILE_SLOTS * 2;
  *  fill, the allocation AND the write must all agree on; when they were separate literals they
  *  desynced (7 vs 8) and the buckets were built from misaligned memory. Derive, never re-type it. */
 const BILLBOARD_SLOTS = TILE_SLOTS;
+/** texture-generalization P1 (D7): `prim_presence` slots per tile — 4 full u32s. */
+const PRIM_SLOTS = 4;
+/** Slot flag bits (top nibble): cast_shadows + the receives_shadows mode (D8). */
+const SLOT_CAST = 0x8000_0000;
+const SLOT_RECV_SHIFT = 29;
 
 
 /** The cold cache's toroidal tile window (from `SquareCache.window`) — shadow-cold aligns to it. */
@@ -208,6 +213,14 @@ uint tileSlot(uvec4 t, int i) {   // v3: 8 slots/px — the self-address is gone
   uint w = c == 0 ? t.x : (c == 1 ? t.y : (c == 2 ? t.z : t.w));
   return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
 }
+// texture-generalization P1 (D7): a prim_presence slot — ONE FULL u32 per channel:
+// flags 31-28 (bit 31 cast_shadows | bits 30-29 receives_shadows) | set 27-24 | index 15-0.
+// 0 = empty. The flags let a walk reject a non-caster at this one read, no record fetch.
+uint primSlot(uvec4 t, int i) { return i == 0 ? t.x : (i == 1 ? t.y : (i == 2 ? t.z : t.w)); }
+// D9: how many rows SOUTH of a visited tile the walks also check — under BASE-LINE occupancy
+// registration those are the only tiles whose occupants' cards can lean over the visited one.
+// CPU-derived from content (ceil(TILT x maxCardTiles)).
+uniform int uDilateS;
 vec2 decodePos(uint p) {          // position_anchor_reference → world UNITS
   uint region = (p >> 24) & 255u, zone = (p >> 16) & 255u, tile = (p >> 8) & 255u, anchor = p & 255u;
   uint wtx = (((region >> 4u) * RD + (zone >> 4u)) * ZD + (tile >> 4u));
@@ -518,9 +531,10 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out 
   rcov = 0.0;                                                // its soft silhouette coverage at P (the edge blend)
   for (int dy = 0; dy <= 5; dy++) {                         // constant bound; covers billboards up to ~5 tiles
     uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(wc, r0 + dy));
-    for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
-      uint billboardIdx = tileSlot(cb, c);
-      if (billboardIdx == 0u) break;                        // dense bucket — first empty ends this ROW's slots
+    for (int c = 0; c < 4; c++) {
+      uint slot = primSlot(cb, c);                          // D7 slots — the receiver scan reads the
+      if (slot == 0u) break;                                // same base-line occupancy the walks do
+      uint billboardIdx = slot & 0xffffu;
       float brOut; float cov = receiverCover(billboardIdx, P, (vec2(float(wc), float(r0 + dy)) + 0.5) * UPT, data, surf, align, brOut);
       if (cov > 0.0 && brOut > best) { best = brOut; rbillboard = billboardIdx; rcov = cov; } // frontmost cover wins row+billboard+cov
     }
@@ -676,20 +690,26 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
         ivec2 o = ct + (${DILATE} == 5                       // 5-tile CROSS, kept switchable for A/B)
           ? ivec2(n == 1 ? 1 : (n == 2 ? -1 : 0), n == 3 ? 1 : (n == 4 ? -1 : 0))
           : (n == 1 ? perp : (n == 2 ? -perp : ivec2(0))));
-        uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(o.x, o.y));
-        vec2 bref = (vec2(o) + 0.5) * UPT;                   // resolve casters against THEIR bucket tile
-        if (uWProfile == 3) { cov = max(cov, float(cb.x & 1u) * 1e-6); continue; } // W3: fetched, no unpack
-        for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
-          uint billboardIdx = tileSlot(cb, c);
-          // DENSE-BUCKET EARLY OUT. buildCasters fills a tile's slots from 0 upward after a fill(0), so the
-          // occupied slots are contiguous and the first zero means the tile is done. This loop used to run
-          // all 8 slots and call casterOne on every empty one; at this world's ~0.65 casters/tile that is
-          // ~8 calls where ~1.65 suffice. Valid ONLY because the bucket is packed dense — if a writer ever
-          // leaves holes, this silently drops casters (missing shadows), so keep the two in step.
-          if (billboardIdx == 0u) break;
-          if (uWProfile == 4) { cov = max(cov, float(billboardIdx & 1u) * 1e-6); continue; } // W4: no casterOne
-          float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, casterMode, bref, data, surf, r);
-          if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
+        // D9: the visited tile + uDilateS rows SOUTH — occupancy registers a caster on its BASE
+        // LINE only, so the tall-card overhang the old extent bucketing pre-registered is found
+        // by looking at the southern tiles whose occupants can lean over this one.
+        for (int sr = 0; sr < 4; sr++) {                     // constant bound (loop-condition trap)
+          if (sr > uDilateS) break;
+          ivec2 os = ivec2(o.x, o.y + sr);
+          uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(os.x, os.y));
+          vec2 bref = (vec2(os) + 0.5) * UPT;                // resolve casters against THEIR tile
+          if (uWProfile == 3) { cov = max(cov, float(cb.x & 1u) * 1e-6); continue; } // W3: fetched, no unpack
+          for (int c = 0; c < 4; c++) {
+            uint slot = primSlot(cb, c);
+            // DENSE EARLY OUT (P1 contract: billboards fill from slot 0; P2 re-specs to slot 1
+            // when the tile claims slot 0).
+            if (slot == 0u) break;
+            if ((slot & 0x80000000u) == 0u) continue;        // cast_shadows flag — zero-fetch cull
+            uint billboardIdx = slot & 0xffffu;
+            if (uWProfile == 4) { cov = max(cov, float(billboardIdx & 1u) * 1e-6); continue; } // W4: no casterOne
+            float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, casterMode, bref, data, surf, r);
+            if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
+          }
         }
       }
       if (tnext.x < tnext.y) { ct.x += stp.x; tnext.x += adv.x; }
@@ -697,15 +717,19 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
     }
   } else {
     ivec2 lc = ivec2(floor(L.xy / UPT));                     // light's tile
-    for (int dy = -16; dy <= 16; dy++) {
-      if (dy < -reachT || dy > reachT) continue;
+    for (int dy = -16; dy <= 20; dy++) {
+      // D9: the brute box extends uDilateS rows FURTHER SOUTH — a base just past reach can
+      // still lean its card north INTO reach (the extent rows the old bucketing pre-spanned).
+      if (dy < -reachT || dy > reachT + uDilateS) continue;
       for (int dx = -16; dx <= 16; dx++) {
         if (dx < -reachT || dx > reachT) continue;
         uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(lc.x + dx, lc.y + dy));
         vec2 bref = (vec2(float(lc.x + dx), float(lc.y + dy)) + 0.5) * UPT;
-        for (int c = 0; c < ${BILLBOARD_SLOTS}; c++) {
-          uint billboardIdx = tileSlot(cb, c);
-          if (billboardIdx == 0u) break;                     // dense bucket — first empty ends the tile
+        for (int c = 0; c < 4; c++) {
+          uint slot = primSlot(cb, c);
+          if (slot == 0u) break;                             // dense fill — first empty ends the tile
+          if ((slot & 0x80000000u) == 0u) continue;          // cast_shadows flag
+          uint billboardIdx = slot & 0xffffu;
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, casterMode, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
         }
@@ -1512,7 +1536,9 @@ export class ShadowGather {
   /** caster buckets — folded into the data texture (set 4, region-torus). CPU scratch: per in-window
    *  tile ≤7 `u16` billboard indices (`0` = empty); `castCount` the per-tile fill. `buildCasters` writes each
    *  tile via `coldData.writeBillboardPresence`. */
-  private castSlots = new Uint16Array(0);
+  /** texture-generalization P1 (D7): 4 FULL u32 occupant slots per window tile
+   *  (`flags|set|index`), filled by BASE-LINE occupancy (D9). */
+  private castSlots = new Uint32Array(0);
   private castCount = new Uint8Array(0);
 
   /** #4 shadow_dirty — TWO per-class CPU mirrors (nonzero = recompute). Owner tracking is SHARED
@@ -1830,7 +1856,7 @@ export class ShadowGather {
   private buildCasters(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
     const { cols, rows, winCol, winRow } = win;
     if (this.castSlots.length !== cols * rows * BILLBOARD_SLOTS) {
-      this.castSlots = new Uint16Array(cols * rows * BILLBOARD_SLOTS);
+      this.castSlots = new Uint32Array(cols * rows * PRIM_SLOTS);
       this.castCount = new Uint8Array(cols * rows);
     }
     this.castSlots.fill(0); // 0 = empty (billboard sentinel)
@@ -1902,10 +1928,12 @@ export class ShadowGather {
       // prim per frame is ~1700 short-lived arrays a frame, i.e. GC pressure for no reason.
       if (lb === undefined) this.lastBox.set(p.id, [tx, ty, t.w, t.h, pcls]);
       else { lb[0] = tx; lb[1] = ty; lb[2] = t.w; lb[3] = t.h; lb[4] = pcls; }
-      // ns-shadows P1: a rot-0/2 caster with a resolved side def is a VERTICAL card on the
-      // centerline — its ground trace is the n-s segment through the anchor, spanning the SIDE
-      // frame's tight width centered on the anchor row (D2); columns = centerline ±1 pad (the
-      // walk's perpendicular dilation expects casters registered near the crossed tiles).
+      // D9 (texture-generalization P1): BASE-LINE occupancy — a caster registers on its anchor
+      // row × every base COLUMN (width stays fill-time: a horizontal ray's walk dilation is
+      // vertical and can never look a column sideways). The old TILT rows (the I-7 extent) are
+      // NOT registered — the walks find tall southern casters via uDilateS instead.
+      // ns-shadows: a rot-0/2 caster's VERTICAL card stands on its n-s ground trace — that IS
+      // its base line (rows = the side frame's width centered on the anchor; single column).
       const side = (p.rotation === 0 || p.rotation === 2) ? this.coldData.casterDefOf(inst.idx) : null;
       let r0: number, r1: number, c0: number, c1: number;
       if (side) {
@@ -1913,21 +1941,23 @@ export class ShadowGather {
         const ws = st ? st.w : p.width;
         const cx = p.x + p.width * 0.5, ay = p.y + p.height;
         r0 = Math.floor((ay - ws * 0.5) / SQUARE); r1 = Math.floor((ay + ws * 0.5) / SQUARE);
-        const cc = Math.floor(cx / SQUARE);
-        c0 = cc - 1; c1 = cc + 1;
+        c0 = c1 = Math.floor(cx / SQUARE);
       } else {
-        const baseY = ty + t.h, topY = baseY - TILT * t.h; // card ground y-extent (px)
-        r0 = Math.floor(topY / SQUARE); r1 = Math.floor(baseY / SQUARE);
+        const baseY = ty + t.h; // the base line — the SAME row the old extent's r1 used
+        r0 = r1 = Math.floor(baseY / SQUARE); // (bit-identity: keep the old row convention exactly)
         c0 = Math.floor(tx / SQUARE); c1 = Math.floor((tx + t.w) / SQUARE);
       }
+      // P1: every standing billboard casts + receives like a billboard (the def-authored
+      // lanes flow into these flags at P2).
+      const slotWord = (SLOT_CAST | (1 << SLOT_RECV_SHIFT) | (SET_BILLBOARD_DATA << 24) | (inst.idx & 0xffff)) >>> 0;
       for (let wr = r0; wr <= r1; wr++) {
         if (wr < winRow || wr >= winRow + rows) continue;
         for (let wc = c0; wc <= c1; wc++) {
           if (wc < winCol || wc >= winCol + cols) continue;
           const ti = (wr - winRow) * cols + (wc - winCol); // dense window-local tile
           const n = count[ti];
-          if (n >= BILLBOARD_SLOTS) continue; // tile full — drop the rest (rare)
-          this.castSlots[ti * BILLBOARD_SLOTS + n] = inst.idx & 0xffff;
+          if (n >= PRIM_SLOTS) continue; // tile full — drop the rest (rare)
+          this.castSlots[ti * PRIM_SLOTS + n] = slotWord;
           count[ti] = n + 1;
         }
       }
@@ -1949,7 +1979,7 @@ export class ShadowGather {
     for (let wr = winRow; wr < winRow + rows; wr++)
       for (let wc = winCol; wc < winCol + cols; wc++) {
         const ti = (wr - winRow) * cols + (wc - winCol);
-        this.coldData.writeBillboardPresence(wc, wr, this.castSlots.subarray(ti * BILLBOARD_SLOTS, ti * BILLBOARD_SLOTS + BILLBOARD_SLOTS));
+        this.coldData.writePrimPresence(wc, wr, this.castSlots.subarray(ti * PRIM_SLOTS, ti * PRIM_SLOTS + PRIM_SLOTS));
       }
     // The flush lives in `tick`, AFTER `buildPresence` — presence now runs last and its writes must
     // land in the SAME scatter batch, or the GPU reads a presence map one frame behind the bake.
@@ -2544,6 +2574,7 @@ export class ShadowGather {
         p.uFloat("uCardLean", this.cardLean);
         { const r = this.worldTiltDeg * Math.PI / 180; p.uVec2("uTilt", Math.sin(r), Math.cos(r)); }
         p.uFloat("uElevK", this.elevK);
+        p.uInt("uDilateS", this.dilationRows()); // D9: the walks' southern occupancy dilation
       },
     });
     this.renderer.draw({

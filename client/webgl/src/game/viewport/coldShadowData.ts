@@ -27,7 +27,7 @@ export const DEF_BASE = 0;
 export const PRIM_BASE = 65536;            // set 1 — prim_data, the composition node
 export const BILLBOARD_DATA_BASE = 6 * 65536; // set 6 — billboard_data, the sprite leaf
 /** A prim's `set_a..d` nibble naming the band a carried piece lives in (0 = "no data"). */
-const SET_BILLBOARD_DATA = 6;
+export const SET_BILLBOARD_DATA = 6;
 const SET_LIGHT_DATA = 2;
 const SET_PRIM_DATA = 1;   // a prim carrying another prim — what makes the graph a graph
 /** How deep the carrier chain may go before the resolve walk gives up (I12). A pawn → hand → tool →
@@ -330,18 +330,28 @@ export class ColdShadowData {
     this.writeTileSet(PRESENCE_BASE, wc, wr, slots, 0xffff, 0);
     this.writeTileSet(PRESENCE_HI_BASE, wc, wr, slots, 0xffff, 8);
   }
-  /** Caster-bucket tile: 7 u16 billboard indices (0 empty — the billboard sentinel). */
-  writeBillboardPresence(wc: number, wr: number, slots: ArrayLike<number>): void {
-    this.writeTileSet(BILLBOARD_PRESENCE_BASE, wc, wr, slots, 0x0000);
+  /** texture-generalization P1 (D7): a `prim_presence` tile — 4 FULL u32 slots, one per
+   *  channel (`flags 31–28 | set 27–24 | reserved 23–16 | index 15–0`; `0` = empty).
+   *  Compare-written like every tile set. */
+  writePrimPresence(wc: number, wr: number, slots: ArrayLike<number>): void {
+    const id = foldTile(wc, wr);
+    const b = (BILLBOARD_PRESENCE_BASE + id) * 4;
+    const g = (i: number): number => (i < slots.length ? slots[i] >>> 0 : 0);
+    const R = g(0), G = g(1), B = g(2), A = g(3);
+    const m = this.dataMirror;
+    if (m[b] !== R || m[b + 1] !== G || m[b + 2] !== B || m[b + 3] !== A) {
+      m[b] = R; m[b + 1] = G; m[b + 2] = B; m[b + 3] = A;
+      this.mark(BILLBOARD_PRESENCE_BASE + id);
+    }
   }
   /** Clear a tile's presence (both sets, all-empty) — eviction. */
   clearPresence(wc: number, wr: number): void {
     this.writeTileSet(PRESENCE_BASE, wc, wr, EMPTY_SLOTS, 0xffff);
     this.writeTileSet(PRESENCE_HI_BASE, wc, wr, EMPTY_SLOTS, 0xffff);
   }
-  /** Clear a tile's buckets (all-empty) — eviction. */
+  /** Clear a tile's occupant slots (all-empty) — eviction. */
   clearCasters(wc: number, wr: number): void {
-    this.writeTileSet(BILLBOARD_PRESENCE_BASE, wc, wr, EMPTY_SLOTS, 0x0000);
+    this.writePrimPresence(wc, wr, [0, 0, 0, 0]);
   }
 
   /** The shared surface atlas page (or null before any sprite resolved). */
