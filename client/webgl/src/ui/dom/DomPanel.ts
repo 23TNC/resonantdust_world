@@ -138,10 +138,10 @@ function readSnap(raw: string | null): SnapMode {
  *  panel can omit a resolver for any mode it doesn't support
  *  — see `availableTitleSuffixes`; the popup hides the row
  *  entirely when no resolvers are registered. */
-export type TitleSuffix = "none" | "player" | "soul";
+export type TitleSuffix = "none" | "player" | "soul" | "selection";
 
 const VALID_TITLE_SUFFIXES = new Set<TitleSuffix>([
-  "none", "player", "soul",
+  "none", "player", "soul", "selection",
 ]);
 
 function readTitleSuffix(raw: string | null): TitleSuffix | null {
@@ -1368,6 +1368,20 @@ export class DomPanel {
     this._titleText = text;
     this.titleEl.textContent = text;
     for (const cb of this.titleChangeListeners) cb(text);
+  }
+
+  /** ui-select P1: register (or swap) a suffix resolver AFTER construction — for suffixes whose
+   *  data source outlives the panel's constructor (the world scene's SelectionModel). Recomposes
+   *  immediately so an already-active mode picks the resolver up. */
+  setTitleSuffixResolver(mode: TitleSuffix, resolver: TitleSuffixResolver): void {
+    this._titleSuffixResolvers.set(mode, resolver);
+    this.setTitle(this.composeTitle());
+  }
+
+  /** ui-select P1: recompose the title because the ACTIVE resolver's VALUE changed (the
+   *  selection moved) — the mode itself is unchanged, so `setTitleSuffix` won't fire. */
+  refreshTitleSuffix(): void {
+    this.setTitle(this.composeTitle());
   }
 
   /** Change the title suffix mode. Recomposes the displayed

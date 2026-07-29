@@ -24,13 +24,13 @@ verify at ≥2 zooms, tab VISIBLE._
 
 ## P1 · Selection feedback
 
-- [ ] Selection outline: viewport overlay pass outlining each selected prim (D5 —
+- [x] Selection outline: viewport overlay pass outlining each selected prim (D5 —
       silhouette preferred, tight box fallback; log the fork). Acceptance: selected
       wolf/tree visibly outlined at zooms 1 + 0.5; outline tracks a walking wolf.
-- [ ] Cursor light: a small-radius hot light carried by a cursor prim through the
+- [x] Cursor light: a small-radius hot light carried by a cursor prim through the
       placement path (D4). Acceptance: a light pool follows the cursor; cold bakes
       stay 0 while it moves (hot-class isolation — counter probe).
-- [ ] Title bar shows the selected TILE's world coordinates (clears when a non-tile
+- [x] Title bar shows the selected TILE's world coordinates (clears when a non-tile
       selection replaces it). Acceptance: click ground → coords appear; click the
       wolf → coords replaced/cleared.
 

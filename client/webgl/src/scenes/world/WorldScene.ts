@@ -16,6 +16,7 @@ import { LogManager } from "../../game/panels/chat/LogManager";
 import { PanelManager } from "../../ui/panels/PanelManager";
 import { SQUARE } from "../../game/viewport/squareMath";
 import { SelectionModel, type Selection } from "../../game/world/SelectionModel";
+import type { OutlineItem } from "../../game/viewport/outlineOverlay";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
 import { parseUrl, type UrlCommand } from "../../debug/urlParams";
 
@@ -52,6 +53,8 @@ export class WorldScene extends Scene {
   private clickId: number | null = null;
   private clickX = 0;
   private clickY = 0;
+  /** ui-select P1 (D4): the cursor light's carrier prim (warm, hot; created on first move). */
+  private cursorLightId: number | null = null;
 
   onEnter(ctx: GameContext): void {
     this.ctx = ctx;
@@ -82,6 +85,13 @@ export class WorldScene extends Scene {
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.panel.view);
     // DEBUG: `__sel` — the live SelectionModel (ui-select P0 acceptance probes read/drive it).
     (globalThis as unknown as { __sel: SelectionModel }).__sel = this.selection;
+    // ui-select P1: a selected TILE shows its world coordinates in the panel's title bar
+    // (the "selection" suffix — also visible on the taskbar entry while the bar is hidden).
+    this.panel.setTitleSuffixResolver("selection", () => {
+      const p = this.selection.primary;
+      return p?.kind === "tile" ? `tile ${p.x}, ${p.y}` : null;
+    });
+    this.selection.subscribe(() => this.panel.refreshTitleSuffix());
 
     // The corpus hot-swaps on login (`onLoggedIn` → `reloadContent` in main.ts pulls the server's
     // corpus, replacing the boot embed). Push the new corpus into the bridge + mover layer so they
@@ -125,6 +135,9 @@ export class WorldScene extends Scene {
     // order rendered yesterday's mover state and let each hot consumer pick the change up
     // on its own schedule (a full frame of baseline lag, plus divergent cadences).
     this.moverLayer?.tick();
+    // ui-select P1: outlines rebuild per frame BETWEEN movers and the draw — a selected
+    // pawn's outline follows the prim the chase just moved, same-frame.
+    this.syncOutlines();
     this.panel?.tick();
     // Push the live viewport zoom to the debug HUD (textures tab). The scene-
     // independent `setStats` ticker in main.ts has no viewport handle, so drive it
@@ -144,6 +157,10 @@ export class WorldScene extends Scene {
     }
     this.contentUnsub?.();
     this.contentUnsub = null;
+    if (this.cursorLightId !== null) {
+      this.panel?.view.warmRemovePrim(this.cursorLightId);
+      this.cursorLightId = null;
+    }
     this.chat?.destroy();
     this.moverLayer?.dispose();
     this.bridge?.dispose();
@@ -258,6 +275,7 @@ export class WorldScene extends Scene {
   };
 
   private readonly onPointerMove = (e: PointerEvent): void => {
+    this.updateCursorLight(e.clientX, e.clientY); // ui-select P1 (D4) — every move, drag or not
     if (this.dragId !== e.pointerId) return;
     // RENDER SCALE, not logical zoom. A screen-px drag is `1 / renderScale` world px — that is the
     // actual world→screen factor the projection uses. Dividing by `camera.zoom` here made the ground
@@ -295,6 +313,62 @@ export class WorldScene extends Scene {
   private clientToWorld(cx: number, cy: number): { x: number; y: number } {
     const r = this.panel.canvas.getBoundingClientRect();
     return this.panel.view.screenToWorld(cx - r.left, cy - r.top);
+  }
+
+  /** ui-select P1: rebuild the outline set from the selection — per frame, because a selected
+   *  pawn's prim moves. Sprite mode with the surface frame (silhouette outline); box mode for
+   *  tiles and anything whose surface hasn't resolved. */
+  private syncOutlines(): void {
+    const items: OutlineItem[] = [];
+    for (const s of this.selection.all) {
+      if (s.kind === "tile") {
+        items.push({ x: s.x * SQUARE, y: s.y * SQUARE, w: SQUARE, h: SQUARE, mode: "box" });
+        continue;
+      }
+      let prim = null;
+      if (s.kind === "pawn") {
+        const id = this.moverLayer.primIdOf(s.entity);
+        prim = id !== null ? this.panel.view.warmGetPrim(id) : null;
+      } else {
+        prim = this.panel.view.coldGetPrim(s.primId);
+      }
+      if (!prim) continue; // despawned/streamed out — outline simply absent until it returns
+      let frame;
+      if (prim.textureName) {
+        const surf = this.ctx.textureResolver.resolve(prim.textureName, "surface", prim.cell)?.frame;
+        if (surf) frame = { source: surf.source, x: surf.x, y: surf.y, w: surf.w, h: surf.h };
+      }
+      items.push({ x: prim.x, y: prim.y, w: prim.width, h: prim.height, mode: "sprite", frame, flip: prim.flipX });
+    }
+    this.panel.view.setOutlines(items);
+  }
+
+  /** ui-select P1 (D4): the cursor's small-radius HOT light — carried by a 1 px warm prim
+   *  through the REAL placement path (`buildCasters` detects the carried light's move and
+   *  routes the scoped dirty; hot class ⇒ cold maps never re-bake). No textureName ⇒ the
+   *  prim never becomes a caster record — the light is its only presentation. */
+  private updateCursorLight(cx: number, cy: number): void {
+    const w = this.clientToWorld(cx, cy);
+    const view = this.panel.view;
+    if (this.cursorLightId === null) {
+      this.cursorLightId = view.warmAddPrim({
+        texture: view.white,
+        x: w.x, y: w.y, width: 1, height: 1,
+        tint: 0x000000, geoColor: 0x000000, zIndex: -1000, flipX: false,
+        hot: true,
+        light: {
+          color: [1.0, 0.9, 0.7], intensity: 0.45, reach: 2 * SQUARE,
+          emitterRadius: 8, height: 20 * (SQUARE / 16), castShadows: false, hot: true,
+        },
+      });
+      return;
+    }
+    const p = view.warmGetPrim(this.cursorLightId);
+    if (p) {
+      p.x = w.x;
+      p.y = w.y;
+      view.warmRefreshPrim(this.cursorLightId); // re-bake the 1 px carrier (no stale dot)
+    }
   }
 
   /** ui-select P0 (D2): the left-click hit test — topmost PAWN, else cold THING by tight

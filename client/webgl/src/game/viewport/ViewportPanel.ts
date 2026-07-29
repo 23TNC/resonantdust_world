@@ -26,6 +26,9 @@ export class ViewportPanel extends DomPanel {
       taskbar: ctx.taskbar,
       pinned: true,
       uiEditMode: ctx.uiEditMode,
+      // ui-select P1: default the title suffix to the live selection (a selected TILE's world
+      // coordinates); the resolver arrives from the world scene via setTitleSuffixResolver.
+      titleSuffix: "selection",
     });
     this.ctx = ctx;
     const holder = document.createElement("div");

@@ -135,9 +135,10 @@ const HEIGHT_OPTIONS: readonly { value: HeightMode; labelKey: string }[] = [
  *  this down to the subset the bound panel actually supports (via
  *  `availableTitleSuffixes`). Resolved through `pp` at bind time. */
 const TITLE_SUFFIX_KEYS: Record<TitleSuffix, string> = {
-  none:   "none",
-  player: "player",
-  soul:   "soul",
+  none:      "none",
+  player:    "player",
+  soul:      "soul",
+  selection: "selection",
 };
 
 const PIN_OPTIONS: readonly { value: PinMode; labelKey: string }[] = [

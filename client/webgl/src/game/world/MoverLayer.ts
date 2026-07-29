@@ -250,6 +250,11 @@ export class MoverLayer {
     }
   }
 
+  /** ui-select P1: the warm prim id for a pawn entity (outline/details follow the live prim). */
+  primIdOf(entity: number): number | null {
+    return this.movers.get(entity)?.id ?? null;
+  }
+
   /** ui-select P0 (D2): the topmost MOVER whose drawn box contains the world point (px) —
    *  painter order (zIndex, then southernmost) among overlaps. Returns the stable ENTITY
    *  reference (warm prim ids churn on despawn); null → no pawn there. */

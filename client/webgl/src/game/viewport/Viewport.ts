@@ -19,6 +19,7 @@ import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_UNIT, TEXTILE_LIGHT } from "./squareMath";
 import { makeNoiseAtlas } from "./noiseAtlas";
+import { OutlineOverlay, type OutlineItem } from "./outlineOverlay";
 import { NOISE_FIELDS } from "./material";
 import { LIGHT_QUANT } from "./shadowGather";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
@@ -94,6 +95,8 @@ export class Viewport {
   private overlayChannelName: string | null = null;
   /** Lights + the per-light shadow **bitfield** (gathered off the cold cache's standing prims). */
   private readonly shadows: ShadowGather;
+  /** ui-select P1: the selection outline overlay (drawn topmost in {@link tick}). */
+  private readonly outline: OutlineOverlay;
   private displayGeo: Geometry | null = null;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -115,6 +118,7 @@ export class Viewport {
     this.map = new SquareCache(this.renderer, this.empty, this.channels("cold"));
     this.warm = new SquareCache(this.renderer, this.empty, this.channels("warm"));
     this.shadows = new ShadowGather(this.renderer);
+    this.outline = new OutlineOverlay(this.renderer, this.empty);
 
     this.grid = new Program(gl, GRID_VERT, GRID_FRAG, "viewport-grid");
     this.gridQuad = new Geometry(gl, this.grid, {
@@ -329,6 +333,16 @@ export class Viewport {
     return this.camera.screenToWorld(sx, sy);
   }
 
+  /** ui-select P1: replace the outlined selection set (the scene rebuilds per frame). */
+  setOutlines(items: OutlineItem[]): void {
+    this.outline.set(items);
+  }
+
+  /** ui-select P1: a COLD standing prim by id (the warm sibling is {@link warmGetPrim}). */
+  coldGetPrim(id: number): Primitive | null {
+    return this.map.getPrim(id);
+  }
+
   /** ui-select P0 (D2): the topmost COLD standing prim whose TIGHT silhouette box contains the
    *  world point — painter order (zIndex, then southernmost) picks among overlaps. Movers are
    *  the MoverLayer's to hit-test (they carry entity identity this cache doesn't know). */
@@ -538,6 +552,9 @@ export class Viewport {
         },
       });
     }
+
+    // ui-select P1: selection outlines, topmost (over grid/overlays — a selection must never hide).
+    this.outline.draw(this.camera);
   }
 
   private ensureGeometry(quads: number): void {
