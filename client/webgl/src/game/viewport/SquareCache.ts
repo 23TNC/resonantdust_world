@@ -554,10 +554,11 @@ export class SquareCache {
 
   standingPrims(): Primitive[] {
     const out: Primitive[] = [];
-    // The zIndex ≥ 1 threshold IS the standing/ground split (tile-lighting P0) — ground
-    // tiles stay out of the lighting pipeline UNLESS they carry the F2 participation flag
-    // (a wall: receiver + caster records despite being drawn as ground).
-    for (const { prim } of this.prims.values()) if (prim.zIndex >= 1 || prim.litTile) out.push(prim);
+    // The zIndex ≥ 1 threshold IS the standing/ground split (tile-lighting P0). The litTile
+    // participation gate is PARKED (stream paused 2026-07-29): tiles will enter lighting via
+    // `prim_presence` slot 0 carrying their DEFINITION id directly — the texture-
+    // generalization redesign — not by joining the standing list as pseudo-billboards.
+    for (const { prim } of this.prims.values()) if (prim.zIndex >= 1) out.push(prim);
     return out;
   }
 

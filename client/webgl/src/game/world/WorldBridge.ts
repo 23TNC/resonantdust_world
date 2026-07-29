@@ -136,8 +136,17 @@ export class WorldBridge {
    *  orders the override against the baseline row (most recent wins). */
   private readonly coldOverrides = new Map<
     number,
-    { id: number | null; macroPosition: number; cellKey: string; rowKey: string; tic: number }
+    {
+      id: number | null; macroPosition: number; cellKey: string; rowKey: string; tic: number;
+      /** tile-lighting I1: a GROUND override's repaint fields — kept so a late-arriving
+       *  manifest (linked-ness unknown at paint time) can rebuild the prim in place. */
+      ground?: { tileX: number; tileY: number; kindId: number; tint: number; geoColor: number };
+    }
   >();
+  /** tile-lighting I1: textured stems whose LINKED-ness was unknown at paint time (the
+   *  manifest hadn't arrived) — when a texture load reveals a grid for one, every tile row
+   *  re-expands and ground overrides repaint, once. */
+  private readonly linkedUnknown = new Set<string>();
   /** Reverse index `cellKey → entityReference` of the override currently winning (suppressing) that
    *  cell — so a baseline (re-)expand knows which cells to skip. */
   private readonly coldCellWinner = new Map<string, number>();
@@ -209,6 +218,9 @@ export class WorldBridge {
     );
     this.unsubs.push(client.onColdState((o) => this.onColdState(o)));
     this.unsubs.push(client.onZoneClosed((macroPosition) => this.onZoneClosed(macroPosition)));
+    // tile-lighting I1: when texture loads reveal a stem's LINKED grid (the manifest raced
+    // the first paint), re-route every tile row + ground override through the linked path.
+    this.unsubs.push(this.resolver.onLoad(() => this.onTexturesChanged()));
     // A thing's box is fixed by its def layout (see placeThing), so a texture tier landing
     // doesn't change geometry — the SquareCache re-bakes the geo→master swap itself.
     // The tiling noise atlas the material bake samples — a static, content-independent
@@ -442,6 +454,10 @@ export class WorldBridge {
   private tilePrimSpec(tileX: number, tileY: number, defId: number, tint: number, geoColor: number): PrimitiveSpec {
     const stem = this.tileStems[defId - 1];
     const linked = stem && stem !== "white" ? this.resolver.linkedGridFor(stem) : null;
+    // tile-lighting I1: linked-ness UNKNOWN until the manifest lands — remember the stem so
+    // the texture-load listener can re-route this tile once the grid shows up (else walls
+    // paint bare-stem/no-cell forever after a fresh reload — the race this fixes).
+    if (!linked && stem && stem !== "white") this.linkedUnknown.add(stem);
     return {
       texture: this.white,
       textureName: linked ? `${stem}/l` : textureNameFor(stem),
@@ -454,9 +470,10 @@ export class WorldBridge {
       geoColor,
       packed: this.packedFor(this.tilePacked, defId),
       seed: cellSeed(tileX, tileY),
-      // tile-lighting F2: an authored height opts the tile into the cold lighting class
-      // (receiver N-L + a caster card); flat ground authors nothing and stays out.
-      litTile: (this.tileHeights[defId - 1] ?? 0) > 0,
+      // tile-lighting: the litTile record path is PARKED (stream paused 2026-07-29 —
+      // superseded by the texture-generalization redesign: tiles enter lighting via
+      // prim_presence slot 0 + definition_data, not per-prim records). The `tile.height`
+      // lane + table stay authored for the successor stream.
     };
   }
 
@@ -603,6 +620,34 @@ export class WorldBridge {
     return false;
   }
 
+  /** tile-lighting I1: a stem's linked-ness just RESOLVED (its grid landed with the
+   *  manifest) — re-expand every tile row and repaint ground overrides so tiles painted
+   *  bare-stem during the race re-route through `<stem>/l` + the neighbor cell. Runs once
+   *  per resolved stem; a no-op while nothing is pending. */
+  private onTexturesChanged(): void {
+    if (this.linkedUnknown.size === 0) return;
+    let resolved = false;
+    for (const stem of [...this.linkedUnknown]) {
+      if (this.resolver.linkedGridFor(stem)) {
+        this.linkedUnknown.delete(stem);
+        resolved = true;
+      }
+    }
+    if (!resolved) return;
+    for (const [key, row] of [...this.coldRowsRaw]) {
+      if ("tiles" in row) this.reExpandRow(key);
+    }
+    for (const [ent, ov] of [...this.coldOverrides]) {
+      if (!ov.ground || ov.id === null) continue;
+      this.viewport.removePrim(ov.id);
+      const g = ov.ground;
+      this.recordTileKind(g.tileX, g.tileY, g.kindId);
+      const id = this.viewport.addPrim(this.tilePrimSpec(g.tileX, g.tileY, g.kindId, g.tint, g.geoColor));
+      this.coldOverrides.set(ent, { ...ov, id });
+    }
+    this.processReCells();
+  }
+
   /** Redraw one cold ROW from its cached raw (the "dirty rect" redraw) — used to restore a baseline
    *  cell once its override clears or goes stale. */
   private reExpandRow(rowKey: string): void {
@@ -666,6 +711,7 @@ export class WorldBridge {
 
     const flat = this.content.coldStatePrim(o.macroPosition, o.positionReference, o.definitionReference, o.data);
     let id: number | null = null;
+    let ground: { tileX: number; tileY: number; kindId: number; tint: number; geoColor: number } | undefined;
     if (flat.length >= 8) {
       const tint = flat[2];
       const geoColor = flat[3];
@@ -678,6 +724,7 @@ export class WorldBridge {
         // the neighbor ring (a new wall reshapes the walls beside it).
         this.recordTileKind(tileX, tileY, kindId);
         id = this.viewport.addPrim(this.tilePrimSpec(tileX, tileY, kindId, tint, geoColor));
+        ground = { tileX, tileY, kindId, tint, geoColor }; // tile-lighting I1: repaintable
       } else {
         // Thing override — the thing sprite, bottom-anchored like the scatter.
         const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
@@ -701,7 +748,7 @@ export class WorldBridge {
     }
     // Register the winner even when it draws nothing (kind-0 removal / tombstone) — it still suppresses
     // the baseline cell.
-    this.coldOverrides.set(o.entityReference, { id, macroPosition: o.macroPosition, cellKey: ck, rowKey, tic: o.tic });
+    this.coldOverrides.set(o.entityReference, { id, macroPosition: o.macroPosition, cellKey: ck, rowKey, tic: o.tic, ground });
     this.coldCellWinner.set(ck, o.entityReference);
     // build-walls P1: a winning tombstone removes the ground kind; either way the neighbor
     // ring re-picks its linked cells now.
