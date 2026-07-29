@@ -250,6 +250,14 @@ export class WorldBridge {
     }
     for (const h of this.tileHeights) maxCard = Math.max(maxCard, h);
     this.viewport.setMaxCardTiles(maxCard);
+    // texture-generalization P2 (D7): tiles enter presence — the gather reads the LIVE kind
+    // map (shared by reference; `recordTileKind` keeps it current) + these authored lanes.
+    this.viewport.setTileKinds(
+      this.tileKindAt,
+      new Float64Array(this.content.tileLightingLanes()),
+      this.tileStems,
+      this.content.typeBiomeTile(),
+    );
     // def-frame-anchors P5: register each real stem's pre-atlas sprite_scale with the resolver
     // (applied at INGEST — scaled, clipped to the pow2 frame, re-centred on surface presence).
     for (let kind = 1; kind <= this.thingStems.length; kind++) {

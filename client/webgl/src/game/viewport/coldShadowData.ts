@@ -28,6 +28,21 @@ export const PRIM_BASE = 65536;            // set 1 — prim_data, the compositi
 export const BILLBOARD_DATA_BASE = 6 * 65536; // set 6 — billboard_data, the sprite leaf
 /** A prim's `set_a..d` nibble naming the band a carried piece lives in (0 = "no data"). */
 export const SET_BILLBOARD_DATA = 6;
+/** texture-generalization P2 (D7): a tile slot's `set` — the index addresses `definition_data`
+ *  directly (tiles are self-describing; no per-tile record). */
+export const SET_DEFINITION_DATA = 0;
+
+/** The authored DSL lighting lanes of one tile kind (loader `tile_lighting_lanes`, stride 6)
+ *  plus the object `type` — everything {@link ColdShadowData.tileDefinitionFor} rides. */
+export interface TileDefLanes {
+  linkedW: number;
+  linkedH: number;
+  pad: number;
+  rotation: number;
+  cast: number;
+  receives: number;
+  type: number;
+}
 const SET_LIGHT_DATA = 2;
 const SET_PRIM_DATA = 1;   // a prim carrying another prim — what makes the graph a graph
 /** How deep the carrier chain may go before the resolve walk gives up (I12). A pawn → hand → tool →
@@ -466,9 +481,84 @@ export class ColdShadowData {
     return idx;
   }
 
+  /** texture-generalization P2 (D7): the definition for a TILE KIND — ONE def per (stem, lod)
+   *  for the WHOLE atlas, cell-free (the cell is a draw/walk-time choice via the rotation
+   *  MODE, never a def). Geometry per VARIABLES §definition_data LINKED: frame = the whole
+   *  atlas, `frame_span` = the grid's world tiles, W/H = one cell's window
+   *  (16 − 2·internal_padding units), offset = the padding inset, TOP-LEFT anchor. A plain
+   *  (non-linked) stem is the degenerate 1×1 grid with pad 0 — same formula. The authored
+   *  lanes ride R/G: type, rotation-as-mode, cast_shadows (bit 24), internal_padding,
+   *  receives_shadows. No tight box / no `maxTightHpx` bump — tiles author cast=0 today;
+   *  when wall shadows land, the caster path revisits both. */
+  tileDefinitionFor(kind: number, stem: string, lanes: TileDefLanes, resolver: TextureResolver | null): number {
+    const linked = lanes.linkedW > 0 && lanes.linkedH > 0;
+    const name = linked ? `${stem}/l` : stem;
+    // A textureless kind (`white` — flat-coloured ground) resolves nothing and mints the
+    // lod-0 LOOSE def: pure geometry + lanes, which is all a flat receiver needs (P3).
+    const surf = resolver && stem !== "white" ? resolver.resolve(name, "surface").frame : null;
+
+    let stRaw = linked ? Math.max(1, Math.round(Math.max(lanes.linkedW, lanes.linkedH))) : 1;
+    let st = 1;
+    while (st < stRaw) st <<= 1;
+    st = Math.min(st, ZONE_DIM);
+    const spanU = st * 16;
+
+    let lod = 0;
+    if (surf) {
+      if (!this.surfacePageTex) this.surfacePageTex = surf.source;
+      const p = surf.w / spanU;
+      const lodF = Math.log2(surf.w);
+      if (surf.source === this.surfacePageTex && Number.isInteger(p) && p >= 1 && Number.isInteger(lodF)) lod = lodF;
+    }
+
+    // Keyed by KIND (not stem): "its kind's def" — two kinds may share a stem yet author
+    // different lanes, and the lanes live IN the def words.
+    const key = `tile:${kind}|${lod}`;
+    const hit = this.defIndex.get(key);
+    if (hit !== undefined) return hit;
+    const idx = this.defNext++;
+    this.defIndex.set(key, idx);
+
+    const pad = Math.max(0, Math.min(7, Math.round(lanes.pad)));
+    const wu = 16 - 2 * pad, hu = 16 - 2 * pad; // one cell's window (even by construction)
+    let fx16 = 0, fy16 = 0;
+    if (lod >= 4 && surf) {
+      fx16 = Math.round(surf.x / 16);
+      fy16 = Math.round(surf.y / 16);
+    }
+
+    const base = (DEF_BASE + idx) * 4;
+    const rot = lanes.rotation & 3, cast = lanes.cast ? 1 : 0, recv = lanes.receives & 3;
+    const typ = lanes.type & 0xf;
+    // R: layer 0 | rotation = MODE | inherit 0 | cast_shadows | offset = the padding inset | type.
+    this.dataMirror[base] = (((rot & 3) << 26) | ((cast & 1) << 24)
+      | ((pad & 0x3ff) << 14) | ((pad & 0x3ff) << 4) | typ) >>> 0;
+    this.dataMirror[base + 1] = ((((wu >> 1) & 0x1ff) << 23) | (((hu >> 1) & 0x1ff) << 14)
+      | (((st - 1) & 0xf) << 10) | ((pad & 0xf) << 6) | ((recv & 3) << 4)) >>> 0;
+    // B: whole-atlas frame, page 0, side-exponent lod, TOP-LEFT anchor (0,0).
+    this.dataMirror[base + 2] = (((fx16 & 0x3ff) << 22) | ((fy16 & 0x3ff) << 12) | ((lod & 0xf) << 4)) >>> 0;
+    this.dataMirror[base + 3] = (((2048 & 0xfff) << 20) | ((2048 & 0xfff) << 8)) >>> 0; // zero nudge
+    this.mark(DEF_BASE + idx);
+    return idx;
+  }
+
   /** The tight bbox (WORLD px, relative to the billboard's top-left) for a placed caster's def, or null. */
   tightBoxOf(defIndex: number): { dx: number; dy: number; w: number; h: number } | null {
     return this.defTight.get(defIndex) ?? null;
+  }
+
+  /** DEBUG (P2 acceptance probe): a minted def's four mirror words, decoded per VARIABLES. */
+  debugDefWords(idx: number): Record<string, number> {
+    const b = (DEF_BASE + idx) * 4;
+    const R = this.dataMirror[b], G = this.dataMirror[b + 1], B = this.dataMirror[b + 2], A = this.dataMirror[b + 3];
+    return {
+      rotation: (R >>> 26) & 3, cast: (R >>> 24) & 1, offsetX: (R >>> 14) & 0x3ff, offsetY: (R >>> 4) & 0x3ff, type: R & 0xf,
+      W: ((G >>> 23) & 0x1ff) * 2, H: ((G >>> 14) & 0x1ff) * 2, spanTiles: ((G >>> 10) & 0xf) + 1,
+      pad: (G >>> 6) & 0xf, receives: (G >>> 4) & 3,
+      frameX16: (B >>> 22) & 0x3ff, frameY16: (B >>> 12) & 0x3ff, lod: (B >>> 4) & 0xf,
+      anchorX: (B >>> 2) & 3, anchorY: B & 3,
+      nudgeX: ((A >>> 20) & 0xfff) - 2048, nudgeY: ((A >>> 8) & 0xfff) - 2048,
+    };
   }
 
   /** texture-generalization P1 (D9): the tallest TIGHT box any minted def carries (world px) —

@@ -37,3 +37,32 @@ brute↔corridor 0; hot (npc stopped, wolf frozen; 9,980 nz words) — settle 0,
 overflow (2 full tiles; 1,908 fine receiver words) where base-line stays ≤3 — the new
 model is a strict improvement, not just an equivalent. `__fillmode` kept as the A/B
 re-verification lever for P2.
+
+## 2026-07-29 · P2 — tiles enter presence (2/2)
+
+**Linked defs from content**: `tileDefinitionFor(kind, stem, lanes)` in coldShadowData —
+ONE def per (KIND, lod), cell-free (keyed by kind, not stem: two kinds may share a stem
+with different lanes, and the lanes live in the def words). Linked stems: frame = the
+WHOLE atlas (`resolve(stem/l, surface)` no-cell = the whole-atlas quadrant), span = the
+grid's world tiles, W/H = one cell's window (16 − 2·pad), offset = the pad inset,
+TOP-LEFT anchor; plain stems are the degenerate 1×1/pad-0 case; `white` (flat-coloured
+ground) mints the lod-0 LOOSE def — pure geometry + lanes, all a flat receiver needs at
+P3. Authored lanes ride R/G (type, rotation-as-MODE, cast bit 24, pad, receives). NO
+tight box / maxTightHpx bump (tiles author cast=0; wall shadows revisit). **Verified
+live** (`__tiledef` probe): wall (102,44) reads span 4 / W·H 14 / pad 1 / offset (1,1) /
+rotation 1 / cast 0 / receives 1 / type 1 / lod 9 whole-atlas frame; ground reads loose
+lod-0 / receives 2; def keys `tile:6|0` + `tile:6|9` = one def per lod, not 16 per-cell.
+
+**Slot-0 writer**: the bridge SHARES its live tile-kind map by reference
+(`setTileKinds` — kind map + stride-6 lane table + stems + type id); `buildCasters`'
+window write fills slot 0 per tile via a per-kind per-pass memo (zero allocation).
+Billboards re-spec to slots 1..3; all THREE GLSL readers (both walks + receiverAt) get
+the new contract — slot 0 may be empty (`c==0 continue`), dense break from slot 1, and a
+`set == billboard_data` filter so tile slots are skipped BEFORE any fetch (the cast-flag
+cull already precedes record fetches). Also fixed en route: `castSlots` was length-checked
+against BILLBOARD_SLOTS but sized by PRIM_SLOTS — reallocating every frame. **Verified
+live**: probes over ground/wall/empty read the right words (`40000022` / `20000047` / 0);
+the `__tileslots` A/B from a clean post-rebake baseline is BIT-IDENTICAL in both classes
+(cold on↔off 0, on↔on 0; hot 0/0; wolf frozen via npc stop). NOTE (observation): a hot
+mover freezing leaves ~23 cold words stale until the next rebake touches them — pre-
+existing behavior, surfaced by the oracle's settle discipline, not introduced here.

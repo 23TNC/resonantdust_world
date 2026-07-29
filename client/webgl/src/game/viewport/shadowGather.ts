@@ -16,7 +16,7 @@ import { Renderer, Program, Geometry, RenderTarget, Texture } from "../../gl";
 import type { Camera } from "./Camera";
 import type { Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
-import { ColdShadowData, N_LIGHTS, SET_BILLBOARD_DATA } from "./coldShadowData";
+import { ColdShadowData, N_LIGHTS, SET_BILLBOARD_DATA, SET_DEFINITION_DATA, type TileDefLanes } from "./coldShadowData";
 import { SQUARE, UNIT, TEXTILE_UNIT, TEXTILE_LIGHT, SLOTS_X, SLOTS_Y } from "./squareMath";
 
 /** Texels per TILE edge in the SHADOW map — **`TEXTILE_UNIT` (16), i.e. one texel per world unit.**
@@ -533,7 +533,9 @@ float receiverAt(vec2 P, highp usampler2D data, sampler2D surf, vec2 align, out 
     uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(wc, r0 + dy));
     for (int c = 0; c < 4; c++) {
       uint slot = primSlot(cb, c);                          // D7 slots — the receiver scan reads the
-      if (slot == 0u) break;                                // same base-line occupancy the walks do
+      // P2 contract: slot 0 is the TILE's (may be empty); billboards fill DENSELY from slot 1.
+      if (slot == 0u) { if (c == 0) continue; break; }
+      if (((slot >> 24) & 15u) != ${SET_BILLBOARD_DATA}u) continue; // tile slot — not a standing billboard
       uint billboardIdx = slot & 0xffffu;
       float brOut; float cov = receiverCover(billboardIdx, P, (vec2(float(wc), float(r0 + dy)) + 0.5) * UPT, data, surf, align, brOut);
       if (cov > 0.0 && brOut > best) { best = brOut; rbillboard = billboardIdx; rcov = cov; } // frontmost cover wins row+billboard+cov
@@ -701,10 +703,11 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
           if (uWProfile == 3) { cov = max(cov, float(cb.x & 1u) * 1e-6); continue; } // W3: fetched, no unpack
           for (int c = 0; c < 4; c++) {
             uint slot = primSlot(cb, c);
-            // DENSE EARLY OUT (P1 contract: billboards fill from slot 0; P2 re-specs to slot 1
-            // when the tile claims slot 0).
-            if (slot == 0u) break;
+            // DENSE EARLY OUT (P2 contract: slot 0 = the tile's — may be empty; billboards
+            // fill densely from slot 1).
+            if (slot == 0u) { if (c == 0) continue; break; }
             if ((slot & 0x80000000u) == 0u) continue;        // cast_shadows flag — zero-fetch cull
+            if (((slot >> 24) & 15u) != ${SET_BILLBOARD_DATA}u) continue; // only billboard casters walk (tiles-cast is future wall-shadow work)
             uint billboardIdx = slot & 0xffffu;
             if (uWProfile == 4) { cov = max(cov, float(billboardIdx & 1u) * 1e-6); continue; } // W4: no casterOne
             float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, casterMode, bref, data, surf, r);
@@ -727,8 +730,9 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
         vec2 bref = (vec2(float(lc.x + dx), float(lc.y + dy)) + 0.5) * UPT;
         for (int c = 0; c < 4; c++) {
           uint slot = primSlot(cb, c);
-          if (slot == 0u) break;                             // dense fill — first empty ends the tile
+          if (slot == 0u) { if (c == 0) continue; break; }   // slot 0 = tile; billboards dense from 1
           if ((slot & 0x80000000u) == 0u) continue;          // cast_shadows flag
+          if (((slot >> 24) & 15u) != ${SET_BILLBOARD_DATA}u) continue; // only billboard casters walk
           uint billboardIdx = slot & 0xffffu;
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, casterMode, bref, data, surf, r);
           if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
@@ -1478,6 +1482,51 @@ export class ShadowGather {
   setMaxCardTiles(tiles: number): void {
     this.maxCardTiles = Math.max(1, tiles);
   }
+  /** texture-generalization P2 (D7): TILE KINDS enter presence. The bridge SHARES its live
+   *  world-tile → kind map (by reference — no sync) plus the per-kind lane table (stride 6:
+   *  linked_w, linked_h, padding, rotation, cast_shadow, receives_shadows), stems, and the
+   *  biome-tile object type. `tileSlotAt` turns those into each window tile's SLOT-0 word:
+   *  `flags | set = definition_data | tileDefinitionFor(stem, lod)` — one def per (kind, lod),
+   *  memoised per kind per pass. */
+  private tileKindMap: Map<number, number> | null = null;
+  private tileLanes: Float64Array | null = null;
+  private tileStems: string[] = [];
+  private tileTypeId = 0;
+  /** DEBUG A/B (`__tileslots`): false = slot 0 stays empty (pre-P2 presence) — the acceptance
+   *  oracle (tiles cast nothing + receivers filter on `set`, so shadows must be bit-identical). */
+  tileSlotsOn = true;
+  private readonly tileSlotWords = new Map<number, number>();
+  private lastResolver: TextureResolver | null = null;
+  private readonly tileLaneScratch: TileDefLanes = { linkedW: 0, linkedH: 0, pad: 0, rotation: 0, cast: 0, receives: 0, type: 0 };
+  setTileKinds(kindAt: Map<number, number>, lanes: Float64Array, stems: string[], typeId: number): void {
+    this.tileKindMap = kindAt;
+    this.tileLanes = lanes;
+    this.tileStems = stems;
+    this.tileTypeId = typeId;
+    this.rebakeAll(); // kinds/lanes changed (content hot-swap) — every slot-0 word may differ
+  }
+  /** The slot-0 word for world tile (wc, wr): the drawn kind's def + its authored flags, or 0. */
+  private tileSlotAt(wc: number, wr: number, resolver: TextureResolver | null): number {
+    if (!this.tileSlotsOn || !this.tileKindMap || !this.tileLanes) return 0;
+    const kind = this.tileKindMap.get(((wc & 0xffff) << 16) | (wr & 0xffff));
+    if (kind === undefined || kind === 0) return 0;
+    const hit = this.tileSlotWords.get(kind);
+    if (hit !== undefined) return hit;
+    let word = 0;
+    const stem = this.tileStems[kind - 1];
+    const b = (kind - 1) * 6;
+    if (stem && b + 6 <= this.tileLanes.length) {
+      const s = this.tileLaneScratch;
+      s.linkedW = this.tileLanes[b]; s.linkedH = this.tileLanes[b + 1]; s.pad = this.tileLanes[b + 2];
+      s.rotation = this.tileLanes[b + 3]; s.cast = this.tileLanes[b + 4]; s.receives = this.tileLanes[b + 5];
+      s.type = this.tileTypeId;
+      const idx = this.coldData.tileDefinitionFor(kind, stem, s, resolver);
+      word = (((s.cast ? SLOT_CAST : 0) | ((s.receives & 3) << SLOT_RECV_SHIFT)
+        | (SET_DEFINITION_DATA << 24) | (idx & 0xffff)) >>> 0);
+    }
+    this.tileSlotWords.set(kind, word);
+    return word;
+  }
   /** The southern-dilation row count the D9 walks use — bounded by the LARGER of the
    *  content-authored tallest card and the tallest tight box any def actually minted
    *  (art can exceed the nominal card; a short dilation silently drops shadows). */
@@ -1692,6 +1741,21 @@ export class ShadowGather {
       }
       return this.worldTiltDeg;
     };
+    // DEBUG A/B (texture-generalization P2): tile slot-0 presence on/off — off restores the
+    // pre-P2 presence exactly (the shadow-identity acceptance oracle).
+    (globalThis as unknown as { __tileslots: (on?: boolean) => boolean }).__tileslots = (on?: boolean) => {
+      this.tileSlotsOn = on ?? !this.tileSlotsOn;
+      this.rebakeAll();
+      return this.tileSlotsOn;
+    };
+    // DEBUG probe (P2 acceptance): a tile KIND's minted def words + slot word at a world tile.
+    (globalThis as unknown as { __tiledef: (wc: number, wr: number) => unknown }).__tiledef = (wc: number, wr: number) => {
+      const word = this.tileSlotAt(wc, wr, this.lastResolver);
+      if (word === 0) return { word: 0 };
+      const idx = word & 0xffff;
+      const m = this.coldData.debugDefWords(idx);
+      return { word: word.toString(16), idx, cast: word >>> 31, receives: (word >>> 29) & 3, set: (word >>> 24) & 15, def: m };
+    };
     // DEBUG (lightmap P0): paint the atlas-frame billboard normal into the lightmap — verify the read is per-billboard
     // and rock-stable across zoom (frame-indexed, not a world-coord composite read).
     (globalThis as unknown as { __shownormal: (on?: boolean) => boolean }).__shownormal = (on?: boolean) => {
@@ -1867,12 +1931,13 @@ export class ShadowGather {
    *  for now; the O(1) re-bucket on move lands with the hot tier. */
   private buildCasters(standing: Primitive[], resolver: TextureResolver | null, win: TileWindow): void {
     const { cols, rows, winCol, winRow } = win;
-    if (this.castSlots.length !== cols * rows * BILLBOARD_SLOTS) {
+    if (this.castSlots.length !== cols * rows * PRIM_SLOTS) { // (was BILLBOARD_SLOTS — realloc'd every frame)
       this.castSlots = new Uint32Array(cols * rows * PRIM_SLOTS);
       this.castCount = new Uint8Array(cols * rows);
     }
     this.castSlots.fill(0); // 0 = empty (billboard sentinel)
     this.castCount.fill(0);
+    this.lastResolver = resolver; // P2: the `__tiledef` probe mints with the live resolver
     const count = this.castCount;
     // The card is TILTED back 65° (see the shader), so its ground footprint spans from the base
     // (anchor y) UP to the top (anchor y − 0.5·H·cos65). The corridor crosses the caster anywhere in
@@ -1976,8 +2041,8 @@ export class ShadowGather {
           if (wc < winCol || wc >= winCol + cols) continue;
           const ti = (wr - winRow) * cols + (wc - winCol); // dense window-local tile
           const n = count[ti];
-          if (n >= PRIM_SLOTS) continue; // tile full — drop the rest (rare)
-          this.castSlots[ti * PRIM_SLOTS + n] = slotWord;
+          if (n >= PRIM_SLOTS - 1) continue; // slots 1..3 — slot 0 is the TILE's (P2); full → drop (rare)
+          this.castSlots[ti * PRIM_SLOTS + 1 + n] = slotWord;
           count[ti] = n + 1;
         }
       }
@@ -1996,9 +2061,13 @@ export class ShadowGather {
     this.coldData.freeCarriedLightsExcept(this.carriedSeen, (b) => this.markLightDirty(b));
     this.coldData.freeBillboardsExcept(seen);
     // Write EVERY in-window tile (compare-write diffs). The region-torus fold is the GPU slot.
+    // P2: slot 0 carries the TILE's self-describing def (set = definition_data) — minted once
+    // per KIND per pass (the per-kind memo), zero allocation per tile.
+    this.tileSlotWords.clear();
     for (let wr = winRow; wr < winRow + rows; wr++)
       for (let wc = winCol; wc < winCol + cols; wc++) {
         const ti = (wr - winRow) * cols + (wc - winCol);
+        this.castSlots[ti * PRIM_SLOTS] = this.tileSlotAt(wc, wr, resolver);
         this.coldData.writePrimPresence(wc, wr, this.castSlots.subarray(ti * PRIM_SLOTS, ti * PRIM_SLOTS + PRIM_SLOTS));
       }
     // The flush lives in `tick`, AFTER `buildPresence` — presence now runs last and its writes must

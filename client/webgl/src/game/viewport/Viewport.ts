@@ -348,6 +348,12 @@ export class Viewport {
     this.shadows.setMaxCardTiles(tiles);
   }
 
+  /** texture-generalization P2 (D7): share the bridge's LIVE tile-kind map + the per-kind
+   *  lighting lanes with the gather — tiles claim `prim_presence` slot 0. */
+  setTileKinds(kindAt: Map<number, number>, lanes: Float64Array, stems: string[], typeId: number): void {
+    this.shadows.setTileKinds(kindAt, lanes, stems, typeId);
+  }
+
   /** build-walls P2: replace the blueprint preview tiles (empty = clear). */
   setBlueprint(tiles: BlueprintTile[]): void {
     this.blueprint.set(tiles);

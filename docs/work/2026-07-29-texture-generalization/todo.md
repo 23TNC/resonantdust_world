@@ -38,12 +38,12 @@ STAGED oracles: P1 must be bit-identical (pure re-encode); P3 is comparative BY 
 
 ## P2 · Tiles enter presence
 
-- [ ] Linked defs from CONTENT (one per stem: frame = whole atlas, span = grid, W/H =
+- [x] Linked defs from CONTENT (one per stem: frame = whole atlas, span = grid, W/H =
       the cell window minus internal_padding, offset = the padding inset, top-left
       anchor, type = biome-tile, rotation = mode, cast/receives from the lanes); the
       per-(cell,lod) tile-def path retires. Acceptance: a wall def probe shows the
       authored geometry; one def per lod for the whole atlas.
-- [ ] Slot 0 writer: every window tile's slot 0 = `set definition_data + index` its
+- [x] Slot 0 writer: every window tile's slot 0 = `set definition_data + index` its
       kind's def, flags mirrored (all tiles !cast v1); ground rows + overrides feed it.
       Acceptance: probes over ground/wall/edge read the right def + flags; walks skip
       tile slots at zero fetches (flag early-out — counter probe).
