@@ -166,6 +166,9 @@ export class WorldBridge {
    *  reads. Refreshed on hot-swap alongside the stem tables. */
   private tilePacked: Float64Array = new Float64Array();
   private thingPacked: Float64Array = new Float64Array();
+  /** tile-lighting F2: per-tile authored HEIGHT (`&tile.height`, 0 = flat) indexed by
+   *  `defId - 1` — the cold-lighting participation gate. Refreshed on hot-swap. */
+  private tileHeights: Float64Array = new Float64Array();
   /** Per-KIND emitted light, stride-8 `[r, g, b, intensity, reach, radius, height, flags]`
    *  (flags bit 0 = cast_shadows, bit 1 = hot), indexed by `kindId - 1` like the other kind
    *  tables. `reach === 0` ⇒ the kind emits nothing. Authored per kind, so a torch's light
@@ -225,6 +228,7 @@ export class WorldBridge {
     this.tilePacked = this.content.tilePackedChannels();
     this.thingPacked = this.content.thingPackedChannels();
     this.thingLight = this.content.thingLight();
+    this.tileHeights = new Float64Array(this.content.tileHeights());
     // def-frame-anchors P5: register each real stem's pre-atlas sprite_scale with the resolver
     // (applied at INGEST — scaled, clipped to the pow2 frame, re-centred on surface presence).
     for (let kind = 1; kind <= this.thingStems.length; kind++) {
@@ -450,6 +454,9 @@ export class WorldBridge {
       geoColor,
       packed: this.packedFor(this.tilePacked, defId),
       seed: cellSeed(tileX, tileY),
+      // tile-lighting F2: an authored height opts the tile into the cold lighting class
+      // (receiver N-L + a caster card); flat ground authors nothing and stays out.
+      litTile: (this.tileHeights[defId - 1] ?? 0) > 0,
     };
   }
 

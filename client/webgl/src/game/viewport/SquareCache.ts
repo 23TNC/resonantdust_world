@@ -59,6 +59,10 @@ export interface Primitive {
    *  Absent ⇒ the legacy e/w derivation (flipX ? 3 : 1). The FRAME already follows the facing
    *  (the def swaps per stem); this code feeds the record's mirror/orientation field. */
   rotation?: number;
+  /** tile-lighting F2: a GROUND tile (zIndex 0) that PARTICIPATES in the lighting class —
+   *  authored via the `&tile.height` lane. `standingPrims` includes it despite the standing
+   *  (zIndex ≥ 1) threshold, so it mints receiver + caster records like a thing. */
+  litTile?: boolean;
   /** P5 — the LIGHT presentation of this primitive, if it has one. A primitive presents as a
    *  billboard (the fields above), a light (this), or **both**: a torch is one placed object with a
    *  sprite and a glow. Carried under the SAME carrier prim as the billboard ([F9](../../../../docs/work/2026-07-25-primitive-graph/forks.md)),
@@ -534,6 +538,8 @@ export class SquareCache {
       hot: spec.hot,       // pawn-render P2: the temperature — dropped here, a mover dirties COLD
       rotation: spec.rotation, // pawn-render P4: the true cardinal — dropped here, a RESTING n/s
                                // mover falls back to the e/w derivation (ns-shadows I1)
+      litTile: spec.litTile,   // tile-lighting F2: the participation flag — dropped here, a
+                               // wall never joins the lighting class (the addPrim gotcha)
     };
     const range = squaresForAABB(prim.x, prim.y, prim.x + prim.width, prim.y + prim.height);
     this.prims.set(id, { prim, range });
@@ -548,7 +554,10 @@ export class SquareCache {
 
   standingPrims(): Primitive[] {
     const out: Primitive[] = [];
-    for (const { prim } of this.prims.values()) if (prim.zIndex >= 1) out.push(prim);
+    // The zIndex ≥ 1 threshold IS the standing/ground split (tile-lighting P0) — ground
+    // tiles stay out of the lighting pipeline UNLESS they carry the F2 participation flag
+    // (a wall: receiver + caster records despite being drawn as ground).
+    for (const { prim } of this.prims.values()) if (prim.zIndex >= 1 || prim.litTile) out.push(prim);
     return out;
   }
 

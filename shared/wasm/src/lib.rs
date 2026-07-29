@@ -176,6 +176,13 @@ impl Content {
         self.bundle.tile_builds()
     }
 
+    /// Every tile's HEIGHT in `def_id` order (0 = flat) — the cold-lighting participation
+    /// gate (tile-lighting F2: > 0 ⇒ receiver + caster records).
+    #[wasm_bindgen(js_name = tileHeights)]
+    pub fn tile_heights(&self) -> Vec<f64> {
+        self.bundle.tile_heights()
+    }
+
     /// Every thing's texture stem in `object_id` order — the thing-layer sibling
     /// of [`tileTextureStems`], indexed by the `defId` a thing / free-thing prim
     /// carries.

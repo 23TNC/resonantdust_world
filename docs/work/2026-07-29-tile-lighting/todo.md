@@ -7,12 +7,12 @@ items verify at ≥2 zooms, tab VISIBLE; cold-cost claims verify via `__bakes()`
 
 ## P0 · The audit (find, don't assume)
 
-- [ ] Pin WHERE tile prims fall out of the caster/receiver pipeline today (`buildCasters`
+- [x] Pin WHERE tile prims fall out of the caster/receiver pipeline today (`buildCasters`
       walks every standing cold prim; the wall def resolves yet no record mints), and what
       a naive record WOULD do (leaning-card shadow from a floor tile?). Acceptance: the
       mechanism named in `completed.md` with file:line; D1's caster-geometry call resolved
       as a fork.
-- [ ] The participation gate (D2): decide + record how a tile opts in (resolved normal
+- [x] The participation gate (D2): decide + record how a tile opts in (resolved normal
       map? a content lane like `&tile.height`? both), keeping `white` ground bit-identical.
       Acceptance: the gate written in `forks.md`; grass provably unaffected (counter probe
       unchanged on a fresh zone).

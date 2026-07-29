@@ -387,6 +387,22 @@ impl Bundle {
       .collect()
   }
 
+  /// A tile's HEIGHT in tiles (`1 &tile.height set` — tile-lighting F2: > 0 opts the tile
+  /// into the cold lighting class as receiver + caster). `None`/0 = flat ground.
+  pub fn tile_height(&self, def_id: u16) -> Option<f64> {
+    let node = self.tile(self.tile_name(def_id)?)?;
+    let store = self.run_node_hook(node, "data", "define")?;
+    Some(store.read("tile.height")?.as_f64())
+  }
+
+  /// Every tile's height in `def_id` order (0 = flat/unauthored) — the lighting
+  /// participation gate's bundle table (tile-lighting F2).
+  pub fn tile_heights(&self) -> Vec<f64> {
+    (1..=self.tile_ids.len() as u16)
+      .map(|id| self.tile_height(id).unwrap_or(0.0))
+      .collect()
+  }
+
   // ---------- things ----------
 
   /// The thing def `name` (its merged facets), or `None`.

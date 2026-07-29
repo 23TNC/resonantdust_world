@@ -37,6 +37,10 @@
         :data>
             @define>
                 "wall &tile.build set
+                ; tile-lighting F2: a tile with height > 0 PARTICIPATES in the cold
+                ; lighting class (receiver N-L via its atlas normal + a caster card of
+                ; the art's box). Floors author nothing and stay pure ground.
+                1 &tile.height set
                 0 return
             @on_create>
                 0 return
