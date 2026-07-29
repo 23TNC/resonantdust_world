@@ -446,6 +446,9 @@ export class MoverLayer {
       p.zIndex = zIndex;
       p.rotation = facing; // P4: keep the record's cardinal in step with the drawn facing
       this.viewport.warmRefreshPrim(m.id);
+      // hot-sync P1: the ONE hot dirty — the same eps crossing that re-bakes the sprite
+      // raises the light/shadow/receiver dirt from the same snapshot.
+      this.viewport.moverDirty(m.id);
     }
     m.macroPosition = macroPosition;
     m.x = x; m.y = y; m.texName = tex.name; m.cell = tex.cell; m.flipX = tex.flipX;

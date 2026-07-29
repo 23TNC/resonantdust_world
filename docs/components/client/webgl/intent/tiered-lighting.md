@@ -6,9 +6,12 @@ caster (its own atlas normal, climbing shadows, per-frame dirty rects), and cold
 it through the hot map — including a NEGATIVE-delta correction that carves a mover's shadow
 out of the cold-baked pool without re-baking it (the tier matrix: any hot participant → hot;
 cold×cold is the only baked cell). The blit selects per pixel by the zdepth painter's key
-(mover pixels read ambient + hot only). What remains of this intent: the warm/rt LIGHT
-tiers' round-robin budget machinery (the hot-shadows stream's scope) — today's hot class
-re-renders its dirty rects per frame without a budget.
+(mover pixels read ambient + hot only). **HOT has ONE dirty** (hot-sync, user design): a
+mover's sprite bake, shadow-record rewrite, light/shadow rects, and receiver rects all fan
+from one call at the mover's own re-bake crossing — cold keeps its independent channels (its
+decoupling is the cold cost model). What remains of this intent: the warm/rt LIGHT tiers'
+round-robin budget machinery (the hot-shadows stream's scope) — today's hot class re-renders
+its dirty rects per frame without a budget.
 
 **Status (2026-07-19).** The target lighting architecture. This is the old game's proven design
 (`../resonantdust/view/src/game/lighting` + `viewport/rects`) plus **two upgrades**: a 32-bit cold-shadow

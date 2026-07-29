@@ -1,5 +1,10 @@
 # Issues — pawn-render
 
+> Follow-on: the user observed lighting not tracking the mover 1:1 — root-caused and FIXED by
+> [2026-07-28-hot-sync](../2026-07-28-hot-sync/README.md) (this stream's per-move dirty
+> originated in `buildCasters`' change-detection at the record's own cadence; hot-sync
+> unified it into ONE mover dirty).
+
 ## I1 · The edge's index REGISTRATION doesn't self-heal (found at P0 standup)
 
 The P0 browser baseline hit gateway 503 "no server available": the edge's index

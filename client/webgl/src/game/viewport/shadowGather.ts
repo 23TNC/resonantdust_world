@@ -1721,7 +1721,9 @@ export class ShadowGather {
     // that y-range (far shadow ↔ top, near ↔ base), so we must bucket every row it spans — bucketing
     // only the base row missed casters whose top sits in the row above (I-7).
     const TILT = this.cardLean * Math.cos(this.worldTiltDeg * Math.PI / 180); // lean·cos(tilt) of the height (must match uCardLean)
-    this.litSeen.clear();
+    // litSeen is NOT cleared here (hot-sync P1): `moverDirty` runs BEFORE tick each frame and
+    // shares the same per-frame light-cascade dedup — the clear lives at the END of tick, so
+    // the set spans exactly one frame across both entry points.
     this.carriedSeen.clear();
     this.lastStanding = standing;
     this.stepOrbit(standing);
@@ -1766,6 +1768,10 @@ export class ShadowGather {
       // cascaded too (old ∪ new — else the wolf leaves a stale silhouette behind each step).
       const pcls = p.hot ? 1 : 2;
       const lb = this.lastBox.get(p.id);
+      // hot-sync P1: a HOT prim's change reaching HERE means the unified moverDirty missed it
+      // (should be first-sight/def-swap only, never a plain move — the P2 drill asserts 0
+      // during walks via this counter).
+      if (inst.changed && p.hot) this.debugBackstopMoves++;
       if (inst.changed) {
         if (lb !== undefined && (lb[0] !== tx || lb[1] !== ty)) {
           this.markBillboardDirty(lb[0], lb[1], lb[2], lb[3], pcls);
@@ -2245,7 +2251,42 @@ export class ShadowGather {
     // fade is one blend-state draw over 131 k texels and the splats are a handful of tiny quads;
     // neither touches the accumulators or the dirty machinery.
     this.decayAndSplat(win);
+    // hot-sync P1: the light-cascade dedup spans ONE frame across moverDirty (pre-tick) and
+    // buildCasters (in-tick) — reset here so next frame's pre-tick calls start fresh.
+    this.litSeen.clear();
   }
+
+  /** hot-sync P1 (F1 — ONE hot dirty): a MOVER changed visually this frame. Called by the
+   *  Viewport from the mover's OWN eps crossing — the same event that re-bakes its sprite —
+   *  so the record rewrite, the hot light/shadow rects, and the receiver rects all step from
+   *  ONE position snapshot. `buildCasters` keeps its change-detection as a BACKSTOP (first
+   *  sight, def swaps on zoom); with the record already rewritten here it sees changed=false
+   *  on plain moves and originates nothing. Sub-unit glide (the record's tile|unit encode
+   *  can't express < 1/16 tile) returns without dirt — lighting steps at its own resolution,
+   *  IN LOCKSTEP with the sprite bake that crossed the unit. */
+  moverDirty(prim: Primitive, resolver: TextureResolver | null): void {
+    const def = this.coldData.definitionFor(prim, resolver);
+    if (def < 0) return;
+    const inst = this.coldData.billboardDataFor(prim, def);
+    this.debugMoverDirtyCalls++;
+    if (!inst.changed) return; // sub-unit glide — nothing the lighting can express
+    this.debugMoverDirtyChanges++;
+    const t = this.coldData.tightBoxOf(def) ?? { dx: 0, dy: 0, w: prim.width, h: prim.height };
+    const tdx = prim.flipX ? prim.width - (t.dx + t.w) : t.dx;
+    const tx = prim.x + tdx, ty = prim.y + t.dy;
+    const lb = this.lastBox.get(prim.id);
+    if (lb !== undefined && (lb[0] !== tx || lb[1] !== ty)) {
+      this.markBillboardDirty(lb[0], lb[1], lb[2], lb[3], 1); // the OLD box — no stale silhouette
+    }
+    this.markBillboardDirty(tx, ty, t.w, t.h, 1);
+    if (lb === undefined) this.lastBox.set(prim.id, [tx, ty, t.w, t.h, 1]);
+    else { lb[0] = tx; lb[1] = ty; lb[2] = t.w; lb[3] = t.h; lb[4] = 1; }
+  }
+  /** DEBUG (hot-sync): moverDirty call/changed counters — the P2 lockstep drill reads these. */
+  debugMoverDirtyCalls = 0;
+  debugMoverDirtyChanges = 0;
+  /** DEBUG (hot-sync): hot-prim changes the BACKSTOP (buildCasters) originated — 0 during walks. */
+  debugBackstopMoves = 0;
 
   /** The DECAY LIGHTMAP frame stage (lighting-feel P2): one in-place `dst *= k` fade (F2), then the
    *  v1 flicker emitter (F5) splats a jittered particle per flickering carried light, each

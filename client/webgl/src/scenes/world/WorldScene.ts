@@ -104,9 +104,12 @@ export class WorldScene extends Scene {
   }
 
   update(): void {
-    this.panel?.tick();
-    // Advance pawn movement speculation (first-pawns P3) — fractional glide per frame.
+    // Movers FIRST (hot-sync F2): the chase advances, mutates the warm prims, and raises
+    // the hot dirty — THEN the viewport bakes + lights + blits the SAME snapshot. The old
+    // order rendered yesterday's mover state and let each hot consumer pick the change up
+    // on its own schedule (a full frame of baseline lag, plus divergent cadences).
     this.moverLayer?.tick();
+    this.panel?.tick();
     // Push the live viewport zoom to the debug HUD (textures tab). The scene-
     // independent `setStats` ticker in main.ts has no viewport handle, so drive it
     // from here — covers wheel, `/zoom`, and the initial value in one place.

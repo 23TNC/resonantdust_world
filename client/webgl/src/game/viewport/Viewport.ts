@@ -360,6 +360,14 @@ export class Viewport {
   warmRefreshPrim(id: number): void {
     this.warm.refreshPrim(id);
   }
+  /** hot-sync P1 (F1): the ONE hot dirty — a mover's visual change fans atomically into the
+   *  warm-cache dirty (refreshPrim, called by the MoverLayer just before this) AND the hot
+   *  light/shadow/receiver rects + record rewrite (ShadowGather.moverDirty), from the same
+   *  position snapshot at the same eps crossing. */
+  moverDirty(id: number): void {
+    const prim = this.warm.getPrim(id);
+    if (prim) this.shadows.moverDirty(prim, this.resolver);
+  }
   warmRemovePrim(id: number): void {
     this.warm.removePrim(id);
   }
@@ -388,8 +396,10 @@ export class Viewport {
     this.map.resize(w, h, z, ax, ay);
     this.warm.recenter(ax, ay);
     this.map.recenter(ax, ay);
-    // Warm has priority (movers — few — update first); cold gets the remaining budget, floored.
-    this.warm.bakeDirty(BAKE_BUDGET);
+    // Warm bakes UNBUDGETED (hot-sync F4): movers are a handful and their sprite bake must
+    // land the SAME frame as the lighting their dirty raised — a deferred sprite under fresh
+    // lighting is exactly the desync hot-sync kills. The budget still governs cold streaming.
+    this.warm.bakeDirty(Number.MAX_SAFE_INTEGER);
     this.map.bakeDirty(Math.max(BAKE_BUDGET - this.warm.lastBaked, COLD_BAKE_FLOOR));
 
     // Recompute the shadow bitfield + bake the LIGHTMAP (gather → RTs) BEFORE the display, so the blit
