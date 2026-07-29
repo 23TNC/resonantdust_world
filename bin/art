@@ -155,6 +155,18 @@ _is_variant_leaf() {  # abs_dir
   (( ${#seg[@]} == 4 ))
 }
 
+# Read / stamp the recorded normal engine for a kind (lib/leaf_engine.py). "none" when no leaf
+# records one, "mixed" when they disagree — a kind that disagrees must be told explicitly rather
+# than have one leaf's choice imposed on its siblings.
+_recorded_engine() {  # root
+  command -v python3 >/dev/null || { echo none; return; }
+  RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/leaf_engine.py" get "$1" 2>/dev/null || echo none
+}
+_stamp_engine() {  # root engine
+  command -v python3 >/dev/null || return 0
+  RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/leaf_engine.py" set "$1" "$2" 2>/dev/null
+}
+
 _pow2_box() {
   local w=$1 h=$2 side s
   side=$(( w > h ? w : h ))
@@ -931,15 +943,15 @@ cmd_normal() {
   # and starved on flat art — reach for it via --marigold). detail/detail_radius/
   # strength are Laigter-only tangent-space knobs, ignored by the marigold engine.
   local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt="" pitch_normal=0
-  local no_bevel=0
+  local no_bevel=0 engine_set=0
   local -a pos=(kind preset detail detail_radius strength engine pitch_normal)
   local pi=0
   while (( $# )); do
     local arg=$1; shift
     local name="" val=""
     case "$arg" in
-      --laigter)   engine=laigter; continue ;;   # boolean shorthand for --engine laigter
-      --marigold)  engine=marigold; continue ;;  # boolean shorthand for --engine marigold
+      --laigter)   engine=laigter; engine_set=1; continue ;;   # boolean shorthand for --engine laigter
+      --marigold)  engine=marigold; engine_set=1; continue ;;  # boolean shorthand for --engine marigold
       --tilt)      tilt=1; continue ;;           # force object tilt on (default: auto by category)
       --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
       --no-bevel)  no_bevel=1; continue ;;       # tile 3x3, keep the centre (no raised border)
@@ -962,11 +974,25 @@ cmd_normal() {
   fi
   kind=$(_resolve_master "$kind")   # `world/conifer` → master/world/conifer (verbatim)
 
+  # No engine named on the command line? Honour what the leaves RECORD, so a re-remaster does not
+  # silently revert a deliberate choice back to the default. Unanimous only — a kind whose leaves
+  # disagree is reported and left on the default, because imposing one leaf's choice on its
+  # siblings is a worse failure than asking.
+  if (( engine_set == 0 )); then
+    local _rec; _rec=$(_recorded_engine "$MASTER_DIR/$kind")
+    case "$_rec" in
+      laigter|marigold) engine=$_rec
+        echo "art: normal engine '$engine' (recorded in the leaf; pass --laigter/--marigold to change)" ;;
+      mixed) echo "art: leaves under $kind record DIFFERENT normal engines — using the default '$engine'; name one explicitly" >&2 ;;
+    esac
+  fi
+
   # Marigold engine: learned view-space normals. normals.py writes N.normal.png
   # co-located with a flat opaque #8080FF background already, so we skip the Laigter
   # detail-blend / strength exaggeration / flatten (those are tangent-space knobs).
   if [[ "$engine" == marigold ]]; then
     "$SCRIPT_DIR/marigold" normals "$MASTER_DIR/$kind" || return 1
+    _stamp_engine "$MASTER_DIR/$kind" marigold
     echo "art: normals via Marigold (view-space) — flat opaque #8080FF background"
     return 0
   fi
@@ -975,6 +1001,7 @@ cmd_normal() {
   fi
 
   _LAIGTER_NO_BEVEL=$no_bevel _laigter_batch "$kind" "$preset" -n n normal normal || return 1
+  _stamp_engine "$MASTER_DIR/$kind" laigter
 
   local src nrm
   # Optional high-frequency detail blend (Laigter's base blurs out fine relief).
@@ -2412,18 +2439,20 @@ cmd_remaster() {
   # Positional slots, filled in order by every non-flag argument. layers/size are
   # appended at the end so publish keeps its position; both are normally passed as flags.
   # (split_normalize/black_threshold are flag-only — dashed names, handled in the case below.)
-  local no_bevel=0 pad=1
+  local no_bevel=0 pad=1 engine_set=0
   local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish layers size sharpen_normal ao_strength sharpen_ao pitch_normal pad)
   local pi=0
   while (( $# )); do
     local arg=$1; shift
     local name="" val=""
     case "$arg" in
-      --laigter)   engine=laigter; continue ;;   # boolean shorthand for --engine laigter (normal map only)
-      --marigold)  engine=marigold; continue ;;  # boolean shorthand for --engine marigold (normal map only)
+      --laigter)   engine=laigter; engine_set=1; continue ;;   # boolean shorthand for --engine laigter (normal map only)
+      --marigold)  engine=marigold; engine_set=1; continue ;;  # boolean shorthand for --engine marigold (normal map only)
       --tilt)      tilt=1; continue ;;           # force object normal tilt on (default: auto by category)
       --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
       --no-bevel)  no_bevel=1; continue ;;       # tile 3x3, keep the centre (no raised border)
+      --laigter)   engine=laigter; engine_set=1; continue ;;
+      --marigold)  engine=marigold; engine_set=1; continue ;;
       --ao)        ao=1; continue ;;             # pack depth-derived AO into normal.a (default)
       --no-ao)     ao=0; continue ;;             # skip the AO step
       --split-normalize|--split_normalize)   # normalize the channel-pack (DEFAULT on): pull all colour into layers, leave only the black outline in albedo. Optional 0/1 value disables/enables (bare = on).
@@ -2476,6 +2505,7 @@ cmd_remaster() {
   tilt_args+=(--sharpen_normal "$sharpen_normal" --ao_strength "$ao_strength" --sharpen_ao "$sharpen_ao")
   tilt_args+=(--pitch_normal "$pitch_normal")
   (( no_bevel )) && tilt_args+=(--no-bevel)
+  (( engine_set )) && tilt_args+=("--$engine")
   cmd_maps "$SPLIT_TARGET" "$preset" "$detail" "$detail_radius" "$strength" "$engine" "${tilt_args[@]}" || return 1
 
   # Channel-pack the just-made albedo(s) into up to `--layers` tintable materials:
@@ -2570,7 +2600,8 @@ cmd_remaster() {
 cmd_maps() {
   # Defaults; overridable positionally OR by --flag (--name value / --name=value).
   local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt="" ao=0 \
-  local no_bevel=0; local -a nobevel_args=()
+  local no_bevel=0; local -a nobevel_args=() engine_args=()
+  local engine_set=0
         sharpen_normal=0 ao_strength=1.0 sharpen_ao=0 pitch_normal=0
   local -a pos=(kind preset detail detail_radius strength engine sharpen_normal ao_strength sharpen_ao pitch_normal)
   local pi=0
@@ -2615,10 +2646,14 @@ cmd_maps() {
   # deferred, so the maps pipeline no longer generates emissive — run `art emissive <kind>`
   # standalone if/when we want it.
   (( no_bevel )) && nobevel_args=(--no-bevel)
+  # Forward the engine as a FLAG only when it was CHOSEN. Passed positionally it is
+  # indistinguishable from the default, and cmd_normal must be able to tell the
+  # difference to know whether the leaf recording may speak.
+  (( engine_set )) && engine_args=("--$engine")
   echo "art: maps [$kind] 1/2 normal (N.normal.png, engine=$engine) ..."
   # --no-tilt here: the tilt is baked LAST (after the strength exaggeration below),
   # since strength reshapes tangent XY relative to flat-up +Z — meaningless once tilted.
-  cmd_normal "$kind" "$preset" "$detail" "$detail_radius" 1.0 "$engine" --no-tilt "${nobevel_args[@]}" || return 1
+  cmd_normal "$kind" "$preset" "$detail" "$detail_radius" 1.0 "$engine" --no-tilt "${nobevel_args[@]}" "${engine_args[@]}" || return 1
   echo "art: maps [$kind] 2/2 albedo + albedo_residual (Marigold-IID de-light) ..."
   cmd_delight "$kind" --emit albedo,albedo_residual || return 1
   # Strength exaggeration is a Laigter-only tangent-space knob (marigold normals

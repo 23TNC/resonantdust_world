@@ -99,7 +99,7 @@ def _run(graph, timeout=300):
         time.sleep(2)
     raise SystemExit("generate-tile: timed out waiting for ComfyUI")
 
-def graph(pos, neg, lora, strength, cfg, steps, seed, size):
+def graph(pos, neg, lora, strength, cfg, steps, seed, size, ckpt=None):
     """A plain txt2img. Seamlessness is NOT requested from the model — see `make_toroidal`.
 
     ComfyUI's only circular-padding node, `Model Patch Seamless (mtb)`, deep-copies the whole
@@ -107,7 +107,7 @@ def graph(pos, neg, lora, strength, cfg, steps, seed, size):
     it). It would not have helped regardless: it wraps the 1024px *generation*, but we cut that
     into cells and the client samples one by world position, so every cut edge would still be
     arbitrary. Wrapping has to happen where the sheet is cut."""
-    g = {"4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": MODEL}}}
+    g = {"4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt or MODEL}}}
     model_ref, clip_ref = ["4", 0], ["4", 1]
     if lora:
         g["10"] = {"class_type": "LoraLoader", "inputs": {"model": ["4", 0], "clip": ["4", 1],
@@ -362,6 +362,10 @@ def main():
     ap.add_argument("--layers", action="store_true",
                     help="also split the plane into a channel-packed layers map (implies --colour), "
                          "so each material can be tinted per biome instead of the whole tile at once")
+    ap.add_argument("--checkpoint", default=None,
+                    help="base checkpoint as ComfyUI sees it (default %(default)s -> the module's "
+                         "MODEL). A PHOTOREAL base makes a flat-cel style fight its own prior, so "
+                         "a stylised base is worth comparing: sdxl/Illustrious-XL-v1.0.safetensors")
     ap.add_argument("--lora", default=None)
     ap.add_argument("--lora-strength", type=float, default=0.85)
     ap.add_argument("--cfg", type=float, default=6.0)
@@ -431,6 +435,7 @@ def main():
           f"{args.tile}px +{args.pad}px pad = {cell}px cells -> {args.grid*cell}px sheet")
     print(f"  seamless: {args.seamless}"
           + (f" (min-error cut, {ov}px overlap, wrap padding)" if args.seamless != "none" else ""))
+    print(f"  base: {args.checkpoint or MODEL}")
     print(f"  mode: {'RGB' if args.colour else 'greyscale (tintable)'}"
           + (f"  lora={args.lora}@{args.lora_strength}" if args.lora else "  no lora"))
     print(f"  positive -> {pos}")
@@ -438,7 +443,7 @@ def main():
     for k in range(max(1, args.candidates)):
         seed = seed0 + k
         raw = _run(graph(pos, neg, args.lora, args.lora_strength, args.cfg, args.steps,
-                         seed, args.size))
+                         seed, args.size, args.checkpoint))
         full = Image.open(io.BytesIO(raw)).convert("RGB")
         src = full if args.colour else to_grey(full)
         companion, tints = None, []
