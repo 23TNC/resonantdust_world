@@ -25,6 +25,7 @@ import type { PrimitiveLight, PrimitiveSpec } from "../viewport/SquareCache";
 import { MaterialRegistry, type PackedChannel } from "../viewport/material";
 import { placeThing, readLayout } from "./thingPlacement";
 import { linkedCell, N as MASK_N, E as MASK_E, S as MASK_S, W as MASK_W } from "./linkedCell";
+import { blueprintStemFor } from "./buildMenu";
 
 /** The viewport anchor's name in the client's anchor list. */
 const ANCHOR = "viewport:0";
@@ -252,12 +253,20 @@ export class WorldBridge {
     this.viewport.setMaxCardTiles(maxCard);
     // texture-generalization P2 (D7): tiles enter presence — the gather reads the LIVE kind
     // map (shared by reference; `recordTileKind` keeps it current) + these authored lanes.
-    this.viewport.setTileKinds(
-      this.tileKindAt,
-      new Float64Array(this.content.tileLightingLanes()),
-      this.tileStems,
-      this.content.typeBiomeTile(),
-    );
+    const tileLanes = new Float64Array(this.content.tileLightingLanes());
+    this.viewport.setTileKinds(this.tileKindAt, tileLanes, this.tileStems, this.content.typeBiomeTile());
+    // The DSL internal_padding must ALSO reach the DRAW path: the resolver trims each linked
+    // cell by it (the manifest's external pad stays 0, R5). The derived blueprint sibling
+    // shares the wall's atlas layout, so it inherits the same inset.
+    for (let kind = 1; kind <= this.tileStems.length; kind++) {
+      const b = (kind - 1) * 6;
+      if (b + 6 > tileLanes.length) break;
+      const stem = this.tileStems[kind - 1];
+      if (!stem || stem === "white" || tileLanes[b] <= 0) continue; // not linked
+      const pad = tileLanes[b + 2];
+      this.resolver.setLinkedPad(`${stem}/l`, pad);
+      this.resolver.setLinkedPad(`${blueprintStemFor(stem)}/l`, pad);
+    }
     // def-frame-anchors P5: register each real stem's pre-atlas sprite_scale with the resolver
     // (applied at INGEST — scaled, clipped to the pow2 frame, re-centred on surface presence).
     for (let kind = 1; kind <= this.thingStems.length; kind++) {

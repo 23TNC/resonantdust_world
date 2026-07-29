@@ -36,3 +36,22 @@ registrations (1,908 fine + 320 coarse receiver words where base-line correctly 
 billboard and extent finds none) — base-line occupancy is strictly cleaner, never fuller
 than 3 slots on this page. The `__fillmode` A/B toggle stays in tree (same precedent as the
 DILATE-5 switch) for re-running the oracle after P2's slot re-spec.
+
+## I2 · Post-delivery pair (user-reported, FIXED 2026-07-29)
+
+**(a) internal_padding missed the DRAW path.** The defs/lighting applied it (offset + cell
+window + `tileNormal`), but the resolver's `cellFrame` trimmed only by the MANIFEST pad
+(0 by design, R5) — drawn wall cells included the 1-unit padding ring. FIX:
+`resolver.setLinkedPad(name, units)` (evicts packed frames on change, the setSpriteScale
+discipline); `resolve` folds it into the cell inset as whole-atlas fractions
+(`units/(16·cols)`); the bridge pushes it from the DSL lanes at refreshStems for every
+linked kind AND its derived blueprint sibling. VERIFIED: cell frame reads 112 px of the
+128-px cell (14-unit window) — exact.
+
+**(b) walls baked FLAT until a window move re-baked them.** A kind's def upgrade (the atlas
+lod landing → a NEW slot-0 word) changed presence but dirtied NO baked lighting — billboards
+have the def-swap cascade, tiles had nothing. FIX: the presence write loop compares each
+tile's new slot-0 word against the mirror and coalesces changes into ONE union dirty rect
+per pass (+1 ring, both classes) — a def upgrade sweeps its kind, pan-time false positives
+land on already-dirty tiles. VERIFIED: a fresh reload shades the walls correctly with no
+panning.

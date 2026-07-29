@@ -2134,13 +2134,28 @@ export class ShadowGather {
     // Write EVERY in-window tile (compare-write diffs). The region-torus fold is the GPU slot.
     // P2: slot 0 carries the TILE's self-describing def (set = definition_data) — minted once
     // per KIND per pass (the per-kind memo), zero allocation per tile.
+    // P4 (I2): a slot-0 CHANGE (a kind's def upgraded when its atlas lod landed, or the tile's
+    // kind changed) must dirty the BAKED lighting too — without this the tile keeps its flat
+    // lod-0 shading until a window move happens to re-bake it. Changed tiles coalesce into ONE
+    // union rect per pass (a def upgrade sweeps a whole kind; pan-time false positives land on
+    // tiles the pan already dirtied).
     this.tileSlotWords.clear();
+    let chX0 = 0, chY0 = 0, chX1 = -1, chY1 = -1;
     for (let wr = winRow; wr < winRow + rows; wr++)
       for (let wc = winCol; wc < winCol + cols; wc++) {
         const ti = (wr - winRow) * cols + (wc - winCol);
-        this.castSlots[ti * PRIM_SLOTS] = this.tileSlotAt(wc, wr, resolver);
+        const word = this.tileSlotAt(wc, wr, resolver);
+        this.castSlots[ti * PRIM_SLOTS] = word;
+        if (this.coldData.primSlot0(wc, wr) !== word) {
+          if (chX1 < chX0) { chX0 = chX1 = wc; chY0 = chY1 = wr; }
+          else {
+            if (wc < chX0) chX0 = wc; if (wc > chX1) chX1 = wc;
+            if (wr < chY0) chY0 = wr; if (wr > chY1) chY1 = wr;
+          }
+        }
         this.coldData.writePrimPresence(wc, wr, this.castSlots.subarray(ti * PRIM_SLOTS, ti * PRIM_SLOTS + PRIM_SLOTS));
       }
+    if (chX1 >= chX0) this.pendingRects.push([chX0 - 1, chY0 - 1, chX1 + 1, chY1 + 1, 2]);
     // The flush lives in `tick`, AFTER `buildPresence` — presence now runs last and its writes must
     // land in the SAME scatter batch, or the GPU reads a presence map one frame behind the bake.
   }

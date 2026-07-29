@@ -77,6 +77,10 @@ export class TextureResolver {
   /** stem → pre-atlas sprite scale (def-frame-anchors P5): applied at pack — scaled, clipped
    *  to the same pow2 frame, transparent-filled, re-centred on the surface presence. */
   private readonly spriteScale = new Map<string, [number, number]>();
+  /** texture-generalization: linked stem (the `<stem>/l` name) → its DSL `internal_padding`
+   *  (UNITS, of a 16-unit cell) — the BETWEEN-CELL inset inside the atlas. Distinct from the
+   *  manifest's external `pad` (fractions), which stays 0 per R5. Applied by `cellFrame`. */
+  private readonly linkedPad = new Map<string, number>();
   private scaleWarned = false;
 
   private targetPx = BASE_LOD_PX;
@@ -101,6 +105,18 @@ export class TextureResolver {
    *  tile through the linked-atlas path (`<stem>/l` + a neighbor-context cell). */
   linkedGridFor(stem: string): [number, number] | null {
     return this.manifest.entry(`${stem}/l`)?.grid ?? null;
+  }
+
+  /** texture-generalization: register a linked stem's DSL `internal_padding` (units of the
+   *  16-unit cell). A CHANGE evicts the stem's packed frames so the cell sub-frame cache
+   *  (keyed by frame object) rebuilds under the new inset — same eviction discipline as
+   *  {@link setSpriteScale}. `name` is the `<stem>/l` form the draw path resolves. */
+  setLinkedPad(name: string, padUnits: number): void {
+    const cur = this.linkedPad.get(name) ?? 0;
+    if (cur === padUnits) return;
+    this.linkedPad.set(name, padUnits);
+    this.packed.delete(name);
+    this.packedHash.delete(name);
   }
 
   /** Repoint the texture root at login + fetch/poll the manifest. */
@@ -186,7 +202,17 @@ export class TextureResolver {
       const best = this.bestLoaded(loaded, desired); // the 2N co-packed frame at the best-loaded size
       if (best) {
         const quad = this.quadrant(best, map); // this map's N×N quadrant of the co-packed frame
-        if (entry.grid && cell != null) return { frame: this.cellFrame(quad, cell, entry.grid, entry.pad), geo: false };
+        if (entry.grid && cell != null) {
+          // texture-generalization: the DSL internal_padding (units of the 16-unit cell) joins
+          // the manifest's external pad — converted to whole-atlas UV fractions (1 unit of a
+          // cols-cell atlas = 1/(16·cols) of its width).
+          const ip = this.linkedPad.get(stem) ?? 0;
+          const pad: [number, number] = [
+            (entry.pad?.[0] ?? 0) + ip / (16 * entry.grid[0]),
+            (entry.pad?.[1] ?? 0) + ip / (16 * entry.grid[1]),
+          ];
+          return { frame: this.cellFrame(quad, cell, entry.grid, pad), geo: false };
+        }
         return { frame: quad, geo: false };
       }
     }

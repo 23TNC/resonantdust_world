@@ -369,6 +369,14 @@ export class ColdShadowData {
     this.writePrimPresence(wc, wr, [0, 0, 0, 0]);
   }
 
+  /** texture-generalization P4 (I2): the CURRENT slot-0 word at a tile, from the mirror —
+   *  the gather compares before writing so a def upgrade (atlas lod landing → new slot
+   *  word) can dirty the tile's baked lighting, which otherwise stays stale until a
+   *  window move happens to re-bake it. */
+  primSlot0(wc: number, wr: number): number {
+    return this.dataMirror[(BILLBOARD_PRESENCE_BASE + foldTile(wc, wr)) * 4];
+  }
+
   /** texture-generalization P3 (D1): CPU mirror of the GLSL `tileConnects` — reads the SAME
    *  mirror bytes the GPU sees (slot-0 word → def rotation MODE 1). Probe-only consumer;
    *  the shader's copy is the render-path one, and the two must stay in lockstep. */
