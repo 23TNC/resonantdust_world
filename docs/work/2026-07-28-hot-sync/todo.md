@@ -67,6 +67,16 @@ chase and fake every measurement — pawn-render's recorded observation)._
       sites), so the lit body tracks the drawn anchor at 1 px. Acceptance: user's live eyes
       on motion (the artifact never shows in stills); static checks — scene lighting intact,
       resting wolf lit with shadow beneath, typecheck + shader compile clean, fps unchanged.
+- [x] Conservative FINE receiver classification for HOT billboards (user: squares of our
+      shadow still land on top of the billboard): the fine bake's min-corner receiverAt test
+      left sprite-covered edge texels classified GROUND — the fine cut never fired there and
+      the mover's own carved shadow deposited under sprite pixels. Now a texel counts as
+      on-a-hot-billboard if ANY corner (or the centre) touches the silhouette — the
+      billboard treatment covers the sprite's whole footprint, ground shadow underneath
+      (drawn first, overwritten — the tree order). Cold receivers keep the tight
+      single-sample test (their edge look is shipped). Receiver rects already carry a ±1
+      tile margin, covering the ring. Acceptance: user's eyes on motion; 120.2 fps measured
+      with the wolf walking post-change.
 
 ## P3 · One position authority (follow-on — the user's live check caught a trailing ghost)
 

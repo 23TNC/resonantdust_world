@@ -989,6 +989,22 @@ void main() {
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // IDENTICAL to LIGHT_FRAG's P
   uint rp; float rc;
   receiverAt(P, uData, uSurface, uLightAlign, rp, rc);
+  // hot-sync P4 (squares of self-shadow on the mover): CONSERVATIVE classification for HOT
+  // receivers. The min-corner test leaves fine texels the sprite partially covers classified
+  // as GROUND, so the fine cut never fires there and the mover's own carved shadow shows as
+  // dark squares ON its sprite. A texel counts as on-a-hot-billboard if ANY corner (or the
+  // centre) touches the silhouette -- the billboard treatment then covers the sprite's whole
+  // footprint, the ground shadow stays underneath it (drawn first, overwritten -- the tree
+  // order). COLD receivers keep the tight single-sample test: their edge look is shipped.
+  if (rp == 0u || !billboardHot(rp, uData)) {
+    float ts = 16.0 / float(uSlotF);                 // this texel's span in UNITS (tile = 16 units)
+    for (int k = 0; k < 4; k++) {
+      vec2 o = k == 0 ? vec2(ts, 0.0) : (k == 1 ? vec2(0.0, ts) : (k == 2 ? vec2(ts, ts) : vec2(0.5 * ts, 0.5 * ts)));
+      uint rp2; float rc2;
+      receiverAt(P + o, uData, uSurface, uLightAlign, rp2, rc2);
+      if (rp2 != 0u && billboardHot(rp2, uData)) { rp = rp2; rc = max(rc, rc2); break; }
+    }
+  }
   oRecv = uvec4((rp & 0xffffu) | (rc > 0.0 ? 0x10000u : 0u), 0u, 0u, 0u);
 }
 `;

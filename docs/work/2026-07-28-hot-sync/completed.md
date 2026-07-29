@@ -32,6 +32,20 @@ landed on sprite-bake frames** (perfect same-frame coupling; P0 had them on inde
 schedules ~4.9:1), **backstop originated 0** per-move dirt, record cadence ~1.7× denser
 than P0 (stepping at every unit crossing immediately).
 
+## 2026-07-28 · P4 cut 3 — conservative fine receiver classification (STREAM 10/10)
+
+User: a few SQUARES of the wolf's shadow still land on top of the billboard, and named the
+tree mechanism (ground shadow drawn, billboard drawn over it). Root: the fine receiver bake
+sampled `receiverAt` at the texel's min corner only, so edge texels the sprite partially
+covers classified as GROUND — the fine-presence cut (which IS the "billboard drawn over"
+mechanism, per the deleted-refine comment) never fired there, and P4's delta carved the
+wolf's own shadow under its sprite pixels, one 1-unit square at a time. Fix: in
+RECEIVER_FINE, a texel classifies as on-a-hot-billboard if ANY corner or the centre touches
+a hot billboard's silhouette (adopt id, max coverage); cold receivers keep the tight
+single-sample test (shipped edge look). Receiver rects already carry ±1 tile margin — the
+adopted ring re-bakes on motion. Verified: typecheck + shader compile clean, 120.2 fps with
+the wolf walking, scene shadows intact; the squares-in-motion check is the user's.
+
 ## 2026-07-28 · P4 — ground shadow before the billboard (1/1) · STREAM DONE 9/9
 
 User (after P3): motion still off; then the directive — the light calculations must take the
