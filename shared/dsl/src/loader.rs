@@ -367,6 +367,26 @@ impl Bundle {
       .collect()
   }
 
+  /// A tile's BUILD CATEGORY (`"wall"`), authored in its `:data @define` hook
+  /// (`"wall &tile.build set` — build-walls D3: the build menu populates from content,
+  /// so adding a kind here is the whole registration). `None` = not buildable.
+  pub fn tile_build(&self, def_id: u16) -> Option<String> {
+    let node = self.tile(self.tile_name(def_id)?)?;
+    let store = self.run_node_hook(node, "data", "define")?;
+    match store.read("tile.build") {
+      Some(crate::vm::Cell::Sym(s)) => Some(s.clone()),
+      _ => None,
+    }
+  }
+
+  /// Every tile's build category in `def_id` order (index 0 → def_id 1); the empty
+  /// string = not buildable. The bundle table the build menu scans (build-walls D3).
+  pub fn tile_builds(&self) -> Vec<String> {
+    (1..=self.tile_ids.len() as u16)
+      .map(|id| self.tile_build(id).unwrap_or_default())
+      .collect()
+  }
+
   // ---------- things ----------
 
   /// The thing def `name` (its merged facets), or `None`.

@@ -24,6 +24,11 @@
 //!   - `getContentVersion()` — the debug HUD's live content row.
 
 import { Content } from "../../client/wasm";
+import { assertLinkedCellTable } from "../world/linkedCell";
+
+// build-walls P0 (D1): pin the neighbor→cell formula against the authored 16-row table at
+// boot — 16 comparisons, throws on drift, so a wrong formula can never ship silently.
+assertLinkedCellTable();
 // The DSL corpus embedded as raw strings — the OFFLINE FALLBACK only (the gate is
 // the source of truth). Data facets first (they own the `def_id` numbering), then
 // visual (the colours fold on), mirroring the gate's `data` then `visual` order.

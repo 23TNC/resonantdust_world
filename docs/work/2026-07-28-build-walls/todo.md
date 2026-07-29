@@ -7,14 +7,14 @@ the FUTURE-INTENT note). Visual items verify at ≥2 zooms, tab VISIBLE._
 
 ## P0 · Content + the linked-cell formula
 
-- [ ] DSL: a smooth-wall TILE kind in content — build-wall tag (lane per DSL conventions),
+- [x] DSL: a smooth-wall TILE kind in content — build-wall tag (lane per DSL conventions),
       linked visual → `biome-tile/default/smooth/wall`, blueprint visual →
       `biome-tile/default/blueprint/wall`; corpus republishes + hot-swaps. Acceptance: the
       client content bundle exposes the kind + both stems; manifest carries the 4×4 grid.
-- [ ] The neighbor→cell helper (shared client util): mask N|E|S|W → atlas (x, y) via D1,
+- [x] The neighbor→cell helper (shared client util): mask N|E|S|W → atlas (x, y) via D1,
       packed to the resolver's cell index. Acceptance: a 16-row table test reproduces the
       user's mapping exactly.
-- [ ] Build-menu query: a content-bundle scan returning build-tagged kinds grouped by
+- [x] Build-menu query: a content-bundle scan returning build-tagged kinds grouped by
       category (wall first). Acceptance: console probe lists the smooth wall from content
       alone; a second tagged kind (temp fixture) appears without client code changes.
 

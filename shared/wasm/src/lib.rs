@@ -169,6 +169,13 @@ impl Content {
         self.bundle.tile_texture_stems()
     }
 
+    /// Every tile's BUILD CATEGORY in `def_id` order (empty = not buildable) — the
+    /// table the build menu scans (build-walls D3: content alone lights the icons).
+    #[wasm_bindgen(js_name = tileBuilds)]
+    pub fn tile_builds(&self) -> Vec<String> {
+        self.bundle.tile_builds()
+    }
+
     /// Every thing's texture stem in `object_id` order — the thing-layer sibling
     /// of [`tileTextureStems`], indexed by the `defId` a thing / free-thing prim
     /// carries.
