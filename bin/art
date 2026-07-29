@@ -990,8 +990,23 @@ cmd_normal() {
   # Marigold engine: learned view-space normals. normals.py writes N.normal.png
   # co-located with a flat opaque #8080FF background already, so we skip the Laigter
   # detail-blend / strength exaggeration / flatten (those are tangent-space knobs).
+  # marigold-linked-normals P1: LINKED (`.l.`) atlas leaves route through the PER-CELL
+  # runner instead — whole-atlas inference puts each autotile cell in its own normal
+  # frame (measured: shared tilt + E/W piece drift + seam jumps; marigold/atlas_check.py).
+  # Non-linked diffuses in the same kind keep the whole-sprite path.
   if [[ "$engine" == marigold ]]; then
-    "$SCRIPT_DIR/marigold" normals "$MASTER_DIR/$kind" || return 1
+    local -a _sprites=()
+    local _src
+    while IFS= read -r -d '' _src; do
+      if [[ "$(basename "$_src")" == diffuse.l.* ]]; then
+        "$SCRIPT_DIR/marigold" atlas-normals "$(dirname "$_src")" --align --symmetrize || return 1
+      else
+        _sprites+=("$_src")
+      fi
+    done < <(_find_diffuse "$MASTER_DIR/$kind")
+    if ((${#_sprites[@]})); then
+      "$SCRIPT_DIR/marigold" normals "${_sprites[@]}" || return 1
+    fi
     _stamp_engine "$MASTER_DIR/$kind" marigold
     echo "art: normals via Marigold (view-space) — flat opaque #8080FF background"
     return 0

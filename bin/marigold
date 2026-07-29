@@ -101,6 +101,18 @@ EOF
     [[ -x "$PY" ]] || { echo "marigold: venv missing — run 'bin/marigold build'" >&2; exit 1; }
     exec "$PY" "$MARIGOLD_DIR/normals.py" "$@"
     ;;
+  atlas-normals)
+    # marigold-linked-normals P1: per-cell inference for LINKED (grid) atlases —
+    # replicated-edge context, pinned seed; --align/--symmetrize post passes.
+    shift
+    [[ -x "$PY" ]] || { echo "marigold: venv missing — run 'bin/marigold build'" >&2; exit 1; }
+    exec "$PY" "$MARIGOLD_DIR/atlas_normals.py" "$@"
+    ;;
+  atlas-check)
+    # The consistency oracle (flat frame / same piece / seams). Plain python3 — no venv.
+    shift
+    exec python3 "$MARIGOLD_DIR/atlas_check.py" "$@"
+    ;;
   depth)
     shift
     [[ -x "$PY" ]] || { echo "marigold: venv missing — run 'bin/marigold build'" >&2; exit 1; }
