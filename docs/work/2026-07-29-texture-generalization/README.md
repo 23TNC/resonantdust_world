@@ -125,3 +125,28 @@ WorldBridge), `shared/dsl` (+ wasm bundle), `content`, `docs/VARIABLES.md`._
 The BLUEPRINT placement preview lights via the hot path — resolved there as F3 (the
 overlay samples the live cold+hot lightmaps + ambient with the blit's formula; ephemeral
 by construction). Lands here as its own phase.
+
+## Performance evaluation (pre-execution, 2026-07-29)
+
+Baselines to judge against: gather walk ~0.67 ms + light pass ~0.29 ms per bake at reach 8
+(square-128's GPU timings), hot steady-state ~30k texels/8 s at 120.2 fps; history says
+caster EVALUATION dominates when the walk goes bad (moving-lights I15 — 55 % of the frame).
+
+- **Walk (D7+D9): flat-to-better.** Extent bucketing evaluates a caster once per crossed
+  tile it spans (a hidden multiplier, worst in dense forests); occupancy evaluates each
+  caster ONCE per neighborhood — a structural dedup. Against it: southern dilation ≈ 2×
+  tile visits today, each visit cheaper (4 slots not 8; flags reject at one u32 read, no
+  record fetch). KNOB: dilation scales with the tallest authored card (+1 row at conifer
+  span 2; a 4-tile building buys +2–3 rows).
+- **Light pass (D8): pay-per-use.** THE load-bearing guard: a mode-2 receiver whose def
+  authors NO normal must short-circuit to today's flat path with zero atlas fetches — miss
+  that and 8M fine texels regress. Authored normals cost ~3 fetches/texel where opted in
+  (the feature). The cut/straddle/allBillboard retirement removes up-to-two walks per edge
+  texel → one, and simplifies the shader.
+- **Receiver bakes + CPU fill: similar-to-better**, PROVIDED the presence fill goes
+  change-driven (D9 makes it natural); a per-frame slot-0 sweep over ~16k window tiles is
+  the lazy-path regression (~64 KB/frame writes). Autotile lookups: noise (8 fetches per
+  WALL texel, cold cadence).
+- **Falsifiers, in order**: (1) the mode-2 no-normal short-circuit missed, (2) branch
+  divergence in the unified gather — both measured at P3's drill vs the baselines above,
+  re-work pre-authorized.
