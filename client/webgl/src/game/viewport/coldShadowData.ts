@@ -369,6 +369,24 @@ export class ColdShadowData {
     this.writePrimPresence(wc, wr, [0, 0, 0, 0]);
   }
 
+  /** texture-generalization P3 (D1): CPU mirror of the GLSL `tileConnects` — reads the SAME
+   *  mirror bytes the GPU sees (slot-0 word → def rotation MODE 1). Probe-only consumer;
+   *  the shader's copy is the render-path one, and the two must stay in lockstep. */
+  tileConnectsMirror(wc: number, wr: number): boolean {
+    const s0 = this.dataMirror[(BILLBOARD_PRESENCE_BASE + foldTile(wc, wr)) * 4];
+    if (s0 === 0 || ((s0 >>> 24) & 15) !== 0) return false;
+    const R = this.dataMirror[(DEF_BASE + (s0 & 0xffff)) * 4];
+    return ((R >>> 26) & 3) === 1;
+  }
+  /** CPU mirror of the GLSL `tileAutoCell` — THE D1 formula over the mirror's slot-0 defs. */
+  tileAutoCellMirror(wc: number, wr: number): number {
+    const n = this.tileConnectsMirror(wc, wr - 1) ? 1 : 0;
+    const e = this.tileConnectsMirror(wc + 1, wr) ? 1 : 0;
+    const s = this.tileConnectsMirror(wc, wr + 1) ? 1 : 0;
+    const w = this.tileConnectsMirror(wc - 1, wr) ? 1 : 0;
+    return (3 - (s + 2 * w)) * 4 + (n + 2 * e);
+  }
+
   /** The shared surface atlas page (or null before any sprite resolved). */
   get surfacePage(): Texture | null {
     return this.surfacePageTex;

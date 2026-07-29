@@ -50,13 +50,13 @@ STAGED oracles: P1 must be bit-identical (pure re-encode); P3 is comparative BY 
 
 ## P3 · The receiver unification (D8) + autotile
 
-- [ ] `receives_shadows` modes replace the ground special case: mode-1 receivers walk
+- [x] `receives_shadows` modes replace the ground special case: mode-1 receivers walk
       elevated (the climbing path), mode-2 walk flat (ground), mode-0 early-out at the
       presence flag; receivers draw in order; the on-billboard CUT retires with the
       special case. Acceptance (R3′ — comparative, not identical): a wall-free scene's
       captures read equivalent to pre-stream; tree-shadow-climbs-trunk still works;
       the perf drill numbers recorded (re-work pre-authorized if heavy).
-- [ ] Autotile in-shader (rotation 1): the cell from the 4 neighbors' slot-0 defs
+- [x] Autotile in-shader (rotation 1): the cell from the 4 neighbors' slot-0 defs
       (rotation-1 match = connected — the variant/kind gate is FUTURE per R4), through
       the D1 formula; a tile change dirties the adjacent ring and neighbors self-heal.
       Acceptance: lighting-side cells match the drawn art's cells (one formula, two

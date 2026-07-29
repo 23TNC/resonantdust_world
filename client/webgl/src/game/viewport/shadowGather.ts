@@ -217,6 +217,26 @@ uint tileSlot(uvec4 t, int i) {   // v3: 8 slots/px — the self-address is gone
 // flags 31-28 (bit 31 cast_shadows | bits 30-29 receives_shadows) | set 27-24 | index 15-0.
 // 0 = empty. The flags let a walk reject a non-caster at this one read, no record fetch.
 uint primSlot(uvec4 t, int i) { return i == 0 ? t.x : (i == 1 ? t.y : (i == 2 ? t.z : t.w)); }
+// texture-generalization P3 (D1): is the tile at (wc, wr) a CONNECTING autotile — its slot-0
+// def in rotation MODE 1? The variant/kind gate is FUTURE content work (README R4); today
+// mode-1 match IS the adjacency rule, and walls are the only mode-1 kind.
+bool tileConnects(int wc, int wr, highp usampler2D data) {
+  uint s0 = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(wc, wr)).x;
+  if (s0 == 0u || ((s0 >> 24) & 15u) != 0u) return false;    // empty, or not a definition_data slot
+  uvec4 D = fetchLin(data, DEF_BASE + int(s0 & 0xffffu));
+  return ((D.x >> 26) & 3u) == 1u;                           // rotation lane = the per-type tile MODE
+}
+// The 4×4 autotile CELL for the rotation-1 tile at (wc, wr), from its cardinal neighbors —
+// THE D1 formula (x = N + 2E, y = 3 − (S + 2W), cell = y·4 + x). ONE formula, two consumers:
+// this must match linkedCell.ts exactly (the CPU draws the art with it; the boot assertion
+// pins the 16-row table). North is −y.
+int tileAutoCell(int wc, int wr, highp usampler2D data) {
+  int n = tileConnects(wc, wr - 1, data) ? 1 : 0;
+  int e = tileConnects(wc + 1, wr, data) ? 1 : 0;
+  int s = tileConnects(wc, wr + 1, data) ? 1 : 0;
+  int w = tileConnects(wc - 1, wr, data) ? 1 : 0;
+  return (3 - (s + 2 * w)) * 4 + (n + 2 * e);
+}
 // D9: how many rows SOUTH of a visited tile the walks also check — under BASE-LINE occupancy
 // registration those are the only tiles whose occupants' cards can lean over the visited one.
 // CPU-derived from content (ceil(TILT x maxCardTiles)).
@@ -869,14 +889,13 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
       // one texel past the silhouette. Blend N·L → ground (ndl 1) by the sprite's soft coverage (rcovN) so the lit
       // region fades exactly to presence — no coarse fringe, and the edge reveals ground not black. ndl = 1 on ground.
       float ndl = applyNL ? max(dot(N, d3 / max(dist, 1e-3)), 0.0) : 1.0;
-      // P3 SHADOW: slot i's u8 coverage (low8 in channel i>>2) + the ON-BILLBOARD flag (A[16+i]). CUT the on-GROUND
-      // shadow where THIS fine texel is a billboard (rbillboardN != 0) — the tight, fine-presence cut (like the normal),
-      // so a billboard standing in a shadow isn't ground-darkened. On-billboard shadows are LEFT UNCUT (they share tiles
-      // with ground shadows; cutting them causes more problems than it solves — user).
-      uint b8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;  // u7 coverage | u1 on-billboard
-      bool onBillboard = (b8 & 1u) == 1u;
+      // P3 SHADOW: slot i's u8 coverage (low8 in channel i>>2) + the elevated-path flag in bit 0.
+      // The ON-BILLBOARD CUT is RETIRED (texture-generalization D8): a receiver texel's coverage is
+      // computed FOR its receive mode (billboard texels bake the CLIMBING shadow, never the ground
+      // pool), so cutting ground coverage off billboard pixels no longer has a job — the prim pass's
+      // fine overwrite handles the silhouette edge, as it already did for the deleted edge-refine.
+      uint b8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;  // u7 coverage | u1 elevated-path
       float shadow = float(b8 >> 1) / 127.0;   // the u7 re-expanded (the stored <<1 IS the x2 restore)
-      if (!onBillboard && rbillboardN != 0u) shadow = 0.0;              // cut ground shadow off billboards (fine presence)
       // The shadow-edge REFINE lived here and is DELETED (2026-07-27, moving-lights F7). It re-ran the full
       // walkShadow corridor **per fine texel** on every (0,1) edge value to sharpen the upsampled edge —
       // 8.39 M fine texels against the shadow map's 131 k, a 64× resolution multiplier, INSIDE the per-light
@@ -926,7 +945,7 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
           // The cold map baked X·(1−shC); truth is X·(1−max(shC, shHotOnly)). The correction is
           // −X·max(0, shHotOnly − shC) — exact where the mover adds occlusion, zero where the
           // cold casters already shadowed. The shadow var here IS the hot-only coverage (mode 2).
-          if (!onBillboard && rbillboardN != 0u) shadowCold = 0.0; // mirror the cold pass's ground cut
+          // (The ground-cut mirror is gone with the cut itself — D8.)
           float contrib = -intensity * fall * (ndl + spec) * max(0.0, shadow - shadowCold);
           dep = clamp(colT * contrib, vec3(-1.0), vec3(1.0));
         }
@@ -1160,21 +1179,37 @@ void main() {
   bool recvHot = rbillboard != 0u && billboardHot(rbillboard, uData);
   if (uLightClass == 0 && recvHot) { rbillboard = 0u; rcov = 0.0; R0.y = 0u; }
   bool isThing = rbillboard != 0u;
+  int fold = foldTile(wc, wr);
+  // D8 (texture-generalization P3): the texel's RECEIVE MODE — the drawn billboard's where
+  // one is drawn (standing billboards author like-billboard today; their def lanes land with
+  // the DSL size rework), else the TILE's authored mode from its slot-0 presence FLAGS.
+  // 0 = receives nothing (zero walks — the flag early-out), 1 = like a billboard (the
+  // climbing walk), 2 = like ground (the flat walk). The old model — ground receives
+  // UNCONDITIONALLY — is this same fork with every tile hardwired to mode 2.
+  uint rmode = isThing ? 1u : (fetchLin(uData, BILLBOARD_PRESENCE_BASE + fold).x >> 29) & 3u;
+  if (rmode == 0u) { fragColor = uvec4(0u); return; }        // mode 0: nothing to receive
   float maskCov = clamp(rcov, 0.0, 1.0);                     // SOFT mask coverage → blends ground↔thing at the silhouette edge
-  // Fictional height of this billboard pixel above its OWN base (units); 0 for ground → the per-light ground
-  // projection below makes the shadow CLIMB the billboard. Rbase = the receiver base (the front/behind axis).
-  float zElev = isThing ? uElevK * max(0.0, baseY - P.y) : 0.0;
-  vec2 Rbase = vec2(P.x, baseY);
-  vec2 Pground = P; Pground.y += ${SHADOW_LIFTF}; // #2 lift — GROUND path only (thing path projects instead)
   // Is this shadow texel ENTIRELY on the billboard? A texel = 1/16 tile = 1 UNIT (= 4px @ 64px/tile); test its 4
   // corners against rbillboard's silhouette (P is already on rbillboard since maskCov>0). If a corner falls OFF the billboard
   // the texel STRADDLES ground → we add the ground shadow below so its ground px darken; if all-on-billboard we cull
   // the ground (no ground visible there). Light-INDEPENDENT (geometry only) → computed ONCE, out of the loop.
   bool allBillboard = (R0.y & 0x10000u) != 0u; // P3: corner test baked with the receiver map
+  // A mode-1 TILE (a wall): the tile ITSELF is the standing receiver — base at its south
+  // edge, the shadow climbs its own height, and the whole texel is receiver (no silhouette,
+  // no ground straddle).
+  if (rmode == 1u && !isThing) {
+    baseY = float(wr + 1) * 16.0;
+    maskCov = 1.0;
+    allBillboard = true;
+  }
+  // Fictional height of this receiver pixel above its OWN base (units); 0 for ground → the per-light ground
+  // projection below makes the shadow CLIMB the receiver. Rbase = the receiver base (the front/behind axis).
+  float zElev = rmode == 1u ? uElevK * max(0.0, baseY - P.y) : 0.0;
+  vec2 Rbase = vec2(P.x, baseY);
+  vec2 Pground = P; Pground.y += ${SHADOW_LIFTF}; // #2 lift — GROUND path only (thing path projects instead)
 
   if (uGProfile == 3) { fragColor = uvec4(allBillboard ? 1u : 0u); return; } // G3: + corner test
 
-  int fold = foldTile(wc, wr);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
   uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
   uint o0 = 0u, o1 = 0u, o2 = 0u, o3 = 0u;                   // per-SLOT u8 coverage: slot i at ch i>>2, bit (i&3)*8
@@ -1748,6 +1783,10 @@ export class ShadowGather {
       this.rebakeAll();
       return this.tileSlotsOn;
     };
+    // DEBUG probe (P3 acceptance): the D1 autotile cell over the MIRROR's slot-0 defs — must
+    // equal the drawn prim's cell (one formula, two consumers).
+    (globalThis as unknown as { __autocell: (wc: number, wr: number) => number }).__autocell =
+      (wc: number, wr: number) => this.coldData.tileAutoCellMirror(wc, wr);
     // DEBUG probe (P2 acceptance): a tile KIND's minted def words + slot word at a world tile.
     (globalThis as unknown as { __tiledef: (wc: number, wr: number) => unknown }).__tiledef = (wc: number, wr: number) => {
       const word = this.tileSlotAt(wc, wr, this.lastResolver);
@@ -2084,6 +2123,13 @@ export class ShadowGather {
     this.forceReceiverDirty = true; // P3: global constants (__tilt, __lightalign, …) shift receiver values too
     this.coldDirty = true;   // records may have changed with it
     this.lightsVer++;        // and so may per-tile presence
+  }
+
+  /** texture-generalization P3 (D1): a tile KIND changed — the 3×3 ring's autotile cells and
+   *  receive modes may all have changed with it; dirty the ring for BOTH classes so the
+   *  neighbors self-heal on the next bake (the slot-0 words themselves ride the compare-write). */
+  tileKindDirty(tileX: number, tileY: number): void {
+    this.pendingRects.push([tileX - 1, tileY - 1, tileX + 1, tileY + 1, 2]);
   }
 
   /** Queue the scoped dirty rect for a light move (P5): the union box of the old + new reach,

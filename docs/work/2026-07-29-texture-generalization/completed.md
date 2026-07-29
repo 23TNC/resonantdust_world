@@ -66,3 +66,30 @@ the `__tileslots` A/B from a clean post-rebake baseline is BIT-IDENTICAL in both
 (cold on↔off 0, on↔on 0; hot 0/0; wolf frozen via npc stop). NOTE (observation): a hot
 mover freezing leaves ~23 cold words stale until the next rebake touches them — pre-
 existing behavior, surfaced by the oracle's settle discipline, not introduced here.
+
+## 2026-07-29 · P3 — the receiver unification (D8) + autotile (2/2)
+
+**receives_shadows modes**: the class pass now forks on the texel's RECEIVE MODE — the drawn
+billboard's where one is drawn (billboards remain like-billboard until thing lanes are
+authored), else the TILE's mode from its slot-0 presence flags. Mode 0 writes zero and
+returns BEFORE the light loop (the flag early-out — unpainted tiles stop computing shadows
+entirely); mode 2 is the old flat walk; mode 1 without a billboard (a WALL tile) treats the
+TILE as the standing receiver — base at its south edge, climbing its own height, whole-texel
+receiver (no silhouette/straddle), and the isThing walk gates (seen-face, light-side) apply
+to it. The old unconditional-ground model is exactly this fork with every tile hardwired to
+mode 2. The ON-BILLBOARD CUT is RETIRED (both the cold cut and its delta-mode mirror):
+billboard texels bake the climbing shadow — never the ground pool — so the cut has no job
+left; the prim pass's fine overwrite owns the silhouette edge (same argument that deleted
+the edge-refine). **Verified live** (R3′ comparative): world renders correctly, tree
+shadows still climb trunks/canopies (capture), no shader errors; PERF — idle 8.33 ms avg /
+8.4 p95, full-rebake-EVERY-FRAME 8.33 avg / 8.5 p95 over 240 frames: both vsync-capped at
+120 Hz, zero measurable cost from the mode fork + per-texel presence fetch.
+
+**Autotile in-shader**: `tileConnects` + `tileAutoCell` in GATHER_COMMON — the D1 formula
+(x = N+2E, y = 3−(S+2W), cell = y·4+x) over the 4 neighbors' slot-0 defs; connected =
+rotation-MODE-1 match (the variant/kind gate is future per R4). CPU mirrors
+(`tileConnectsMirror`/`tileAutoCellMirror`) read the SAME dataMirror bytes the GPU sees.
+Dirty ring: `recordTileKind` → `viewport.tileKindDirty` → a 3×3 both-class rect, riding the
+same queue light moves use — neighbors self-heal on the next bake. **Verified live**
+(`__autocell` probe): all 11 wall tiles' mirror-computed cells EQUAL the drawn prims' cells
+(corners 10/13/0, runs 6/9). The GLSL copy is consumed at P4 (tile lighting samples).

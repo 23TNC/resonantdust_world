@@ -509,6 +509,9 @@ export class WorldBridge {
     if (defId === 0) this.tileKindAt.delete(k);
     else this.tileKindAt.set(k, defId);
     this.reCellQueue.add(k);
+    // texture-generalization P3 (D1): the lighting side self-heals the same ring the drawn
+    // art re-picks — autotile cells + receive modes of the 3×3 ring may all have changed.
+    this.viewport.tileKindDirty(tileX, tileY);
   }
 
   /** Re-pick the linked cell of every DRAWN neighbor of the queued (changed) cells — mutate

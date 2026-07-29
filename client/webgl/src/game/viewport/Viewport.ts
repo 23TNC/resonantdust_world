@@ -354,6 +354,11 @@ export class Viewport {
     this.shadows.setTileKinds(kindAt, lanes, stems, typeId);
   }
 
+  /** texture-generalization P3 (D1): a tile KIND changed — dirty its 3×3 lighting ring. */
+  tileKindDirty(tileX: number, tileY: number): void {
+    this.shadows.tileKindDirty(tileX, tileY);
+  }
+
   /** build-walls P2: replace the blueprint preview tiles (empty = clear). */
   setBlueprint(tiles: BlueprintTile[]): void {
     this.blueprint.set(tiles);
