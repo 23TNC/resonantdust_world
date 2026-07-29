@@ -32,6 +32,22 @@ landed on sprite-bake frames** (perfect same-frame coupling; P0 had them on inde
 schedules ~4.9:1), **backstop originated 0** per-move dirt, record cadence ~1.7× denser
 than P0 (stepping at every unit crossing immediately).
 
+## 2026-07-28 · P3 — one position authority (1/1) · STREAM DONE 8/8
+
+The user's live check caught a residual: a dark wolf-shaped ghost trailing the moving wolf
+(~0.5 tiles) — see I1 (first diagnosis wrong; corrected). Root cause: sprite baked from the
+prim's CPU float x/y while lighting read the record's unit-quantised position — two
+authorities. Landed: `billboard_data.B` sub-unit anchor lanes (bits 11–13/8–10, eighths of a
+unit = 1 world px; VARIABLES.md updated) stamped by `billboardDataFor`, which now also SNAPS
+the hot prim's x/y to the record-decoded anchor — the record is the authority; sprite bake,
+zdepth, receiver rects, and lighting all derive from the one stamped datum. Fast-path
+compare extended with the sub lanes so sub-only steps rewrite (and dirty) correctly.
+**Verified live** (tracked multi-trip soak, camera-follow, n + e/w facings over lit ground):
+no ghost in any frame, shadows attached; anchor whole-px mid-walk; 8 s counter drill —
+moverDirty 100 calls / **100 changes (1:1 with the sprite step now, by construction)**,
+backstop 0, cold bakes 110 (camera window slide, not mover churn), hot 30.4k/8 s (~40% up
+from the finer cadence), **120.1 fps**.
+
 ## 2026-07-28 · P2 — lockstep verified (2/2) · STREAM DONE 7/7
 
 The drill: anchor-corrected residual between the rendered position and the record —

@@ -517,13 +517,21 @@ position**; GREEN keeps the **authored** offsets (the durable relative placement
 R  u32   u16 parent_id (16–31) | u8 resolved_tile (8–15) | u8 resolved_unit (0–7)
 G  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 hot_cold (25) | u1 cast_shadows (24)
          | u8 z_offset (16–23) | u8 tile_offset (8–15) | u8 unit_offset (0–7)
-B  u32   u16 definition_id (16–31) | u2 last_lod (14–15) | u6 reserved (8–13) | u8 seed (0–7)
+B  u32   u16 definition_id (16–31) | u2 last_lod (14–15) | u3 sub_x (11–13) | u3 sub_y (8–10) | u8 seed (0–7)
 A  u32   u32 reserved
 ```
 `last_lod` — the lod this billboard was **last baked at**. A mismatch against the live lod means the def is
 stale and wants swapping; the swap rides the existing billboard dirty cascade. "Last" is correct here
 because billboards are **re-baked, not accumulated** — there is nothing to invert, so no history is needed.
 Contrast `light_data.coarsest_lod`, which is a different question with a different answer.
+
+`sub_x`/`sub_y` (2026-07-28, [hot-sync](work/2026-07-28-hot-sync/README.md) P3) — the anchor's
+**sub-unit fraction in eighths of a unit** (whole world px at `SQUARE` 128), extending
+`resolved_tile|resolved_unit` to the DRAWN precision. The record is the position **authority** for
+movers: the CPU snaps a hot prim's x/y to the record-decoded anchor at record write, so the sprite
+bake, zdepth, and lighting all consume one datum — none can draw from a position the record doesn't
+hold. The lighting shaders keep reading the coarser unit lane (a FINE texel is 2 units wide; sub-unit
+is below its resolution) and ignore these bits.
 
 `seed` (2026-07-27, [material-system](work/2026-07-27-material-system/README.md) P2) — the object's
 material-variance seed, `cellSeed(tx, ty)` quantised to u8: DETERMINISTIC from the world cell, so two

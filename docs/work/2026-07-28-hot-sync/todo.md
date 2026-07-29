@@ -51,3 +51,14 @@ chase and fake every measurement — pawn-render's recorded observation)._
 - [x] Wrap: docs touched where behavior changed (`intent/tiered-lighting.md` status line:
       hot = ONE dirty; a note in the pawn-render folder linking here), memory updated,
       work-index row → done.
+
+## P3 · One position authority (follow-on — the user's live check caught a trailing ghost)
+
+- [x] The record IS the mover's position: `billboard_data.B` gains sub-unit anchor lanes
+      (bits 11–13/8–10, eighths of a unit = whole world px), and `billboardDataFor` SNAPS a
+      hot prim's x/y to the record-decoded anchor at record write — sprite bake, zdepth, and
+      lighting all consume the one stamped datum ("draw the sprite from the same billboard
+      data the light pass holds" — the user's directive). Lighting shaders keep reading the
+      coarser unit lane (FINE texel = 2 units; sub is below its resolution). Acceptance:
+      live tracked soak shows no trailing ghost; anchor lands whole-px mid-walk; dirty
+      cadence 1:1 (every sprite step = a record change); backstop 0; fps holds 120.

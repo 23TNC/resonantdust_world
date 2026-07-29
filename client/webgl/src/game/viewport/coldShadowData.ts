@@ -481,6 +481,20 @@ export class ColdShadowData {
     const ay = billboard.y + billboard.height;
     const pos = encodePosition(ax, ay);             // region|zone|tile|unit
     const tile = (pos >>> 8) & 0xff, unit = pos & 0xff;
+    // hot-sync P3: sub-unit anchor (`billboard_data.B` bits 8–13) — eighths of a unit (whole
+    // world px at SQUARE 128), so the record expresses the DRAWN position, not just the lit one.
+    const subQ = UNIT / 8;
+    const subX = Math.floor((ax % UNIT) / subQ) & 7;
+    const subY = Math.floor((ay % UNIT) / subQ) & 7;
+    const sub6 = (subX << 3) | subY;
+    // The record is the position AUTHORITY for movers: snap the prim to the record-decoded
+    // anchor so the sprite bake, zdepth, and lighting all draw from the ONE stamped datum —
+    // a draw can never use a position the record doesn't hold. Cold prims keep their float
+    // placement (they bake once, before any record exists; a late ≤1px shift would desync them).
+    if (billboard.hot) {
+      billboard.x = Math.floor(ax / subQ) * subQ - billboard.width * 0.5;
+      billboard.y = Math.floor(ay / subQ) * subQ - billboard.height;
+    }
 
     const hit = this.billboardIndex.get(billboard.id);
     let idx: number, prim: number;
@@ -506,7 +520,8 @@ export class ColdShadowData {
     const pb = (PRIM_BASE + prim) * 4, lb = (BILLBOARD_DATA_BASE + idx) * 4;
     if (hit !== undefined && this.dataMirror[pb] === pos
         && ((this.dataMirror[pb + 1] >>> 26) & 3) === rotation
-        && ((this.dataMirror[lb + 2] >>> 16) & 0xffff) === defIndex) {
+        && ((this.dataMirror[lb + 2] >>> 16) & 0xffff) === defIndex
+        && ((this.dataMirror[lb + 2] >>> 8) & 0x3f) === sub6) {
       return { idx, changed: false };
     }
     // prim_data (set 1): a ROOT (child = 0) at the absolute position, carrying the billboard in slot a.
@@ -531,7 +546,7 @@ export class ColdShadowData {
       ((((prim & 0xffff) << 16) | (((r.pos >>> 8) & 0xff) << 8) | (r.pos & 0xff)) >>> 0),
       ((((rotation & 3) << 26) | ((r.hot ? 1 : 0) << 25) | ((r.cast ? 1 : 0) << 24)
         | ((r.z & 0xff) << 16) | (OFFSET_ZERO << 8) | OFFSET_ZERO) >>> 0),
-      ((((defIndex & 0xffff) << 16) | seed8) >>> 0), 0);
+      ((((defIndex & 0xffff) << 16) | (sub6 << 8) | seed8) >>> 0), 0);
     return { idx, changed: primChanged || leafChanged };
   }
 

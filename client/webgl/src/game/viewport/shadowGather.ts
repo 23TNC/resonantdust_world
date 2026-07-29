@@ -2261,9 +2261,10 @@ export class ShadowGather {
    *  so the record rewrite, the hot light/shadow rects, and the receiver rects all step from
    *  ONE position snapshot. `buildCasters` keeps its change-detection as a BACKSTOP (first
    *  sight, def swaps on zoom); with the record already rewritten here it sees changed=false
-   *  on plain moves and originates nothing. Sub-unit glide (the record's tile|unit encode
-   *  can't express < 1/16 tile) returns without dirt — lighting steps at its own resolution,
-   *  IN LOCKSTEP with the sprite bake that crossed the unit. */
+   *  on plain moves and originates nothing. hot-sync P3: `billboardDataFor` stamps the anchor's
+   *  sub-unit fraction (1 px grain) AND snaps the hot prim's x/y to the record-decoded anchor
+   *  before this method reads them — the record is the position authority; the rects below and
+   *  the sprite bake both derive from what it stamped. */
   moverDirty(prim: Primitive, resolver: TextureResolver | null): void {
     const def = this.coldData.definitionFor(prim, resolver);
     if (def < 0) return;
