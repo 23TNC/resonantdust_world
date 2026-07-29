@@ -1,5 +1,15 @@
 # Tiered lighting — cold/warm/rt with a shared bitfield shadow engine (durable intent)
 
+**Status (2026-07-28, pawn-render).** PRIMS carry temperature now, not just lights: a mover
+(warm-cache prim) is HOT-classed via the record class bit, joins the HOT pass as receiver AND
+caster (its own atlas normal, climbing shadows, per-frame dirty rects), and cold lights reach
+it through the hot map — including a NEGATIVE-delta correction that carves a mover's shadow
+out of the cold-baked pool without re-baking it (the tier matrix: any hot participant → hot;
+cold×cold is the only baked cell). The blit selects per pixel by the zdepth painter's key
+(mover pixels read ambient + hot only). What remains of this intent: the warm/rt LIGHT
+tiers' round-robin budget machinery (the hot-shadows stream's scope) — today's hot class
+re-renders its dirty rects per frame without a budget.
+
 **Status (2026-07-19).** The target lighting architecture. This is the old game's proven design
 (`../resonantdust/view/src/game/lighting` + `viewport/rects`) plus **two upgrades**: a 32-bit cold-shadow
 bitfield (lifts the cold shadow-caster cap 3→32) and a dedicated always-fresh priority map. The current

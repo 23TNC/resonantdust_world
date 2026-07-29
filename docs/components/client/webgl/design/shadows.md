@@ -1,5 +1,12 @@
 # Billboard-quad shadows — the projected-silhouette model (design / shape)
 
+> **Movers (2026-07-28, pawn-render):** billboards RECEIVE cast shadows (the climbing model —
+> receiver elevation off the base row, baked receiver maps) and MOVER billboards both cast
+> and receive, hot-class only: a mover's caster/receiver participation renders into the HOT
+> maps per frame, and its shadow under a COLD light is a negative hot-map delta against the
+> cold bake. The silhouette a caster projects is its CURRENT facing's frame (the def follows
+> the stem), so an n/s-facing mover casts its front/back art.
+
 The **shape** of a caster's ground shadow: a small fan of textured triangles, the caster's
 billboard silhouette projected radially from a point light onto the ground. Converged in the
 interactive sandbox [`bin/shadow-projection-sandbox.html`](../../../../../bin/shadow-projection-sandbox.html)

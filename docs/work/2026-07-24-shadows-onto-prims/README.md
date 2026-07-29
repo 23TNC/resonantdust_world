@@ -1,5 +1,14 @@
 # Cast shadows onto prims — attempt #3, in-family receiver input — 2026-07-24
 
+> **RECONCILED 2026-07-28 (pawn-render P5): this plan's substance got BUILT — by other
+> streams.** The in-family receiver input this folder proposed exists as the baked
+> RECEIVER MAPS (coarse + fine, own dirty channel) in `shadowGather.ts`; the climb
+> (`zElev = k·(baseY − y)`), ground projection, seen-face + light-side cone culls, and the
+> corridor↔brute-shared `casterOne` are all LIVE (lightmap-resolution → standing-costs →
+> lighting-feel line), and pawn-render extended receiving/casting to MOVER billboards
+> (hot-class). The 0/8 todo below predates all of that — do not execute it. Kept for the
+> design record; status: closed (delivered via successors).
+
 _Component: [`client/webgl`](../../components/client/) · `game/viewport/`. Phases in [`todo.md`](todo.md);
 decisions in [`forks.md`](forks.md); findings in [`issues.md`](issues.md). Supersedes the reverted
 [`2026-07-23-shadows-on-prims`](../2026-07-23-shadows-on-prims/README.md)._

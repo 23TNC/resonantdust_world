@@ -97,3 +97,18 @@ receive parity rode the facing-agnostic receiver path (the mixed-facing bit-proo
 s-facing band crossing). HONEST GAP: a posed glamour shot of an n-facing wolf's cast shadow
 kept eluding my tile→screen aim (three wolves + an unresolved screen mapping) — the geometry
 is by-construction and the user watches the live tab; flagged for the P5 acceptance lap.
+
+## 2026-07-28 · P5 — wrap (2/2) · STREAM DONE 15/15
+
+Docs: `intent/tiered-lighting.md` gained the 2026-07-28 status (prims carry temperature; the
+matrix + delta + blit select; the warm/rt LIGHT budget stays hot-shadows' scope);
+`design/shadows.md` gained the mover note; the STALE
+`2026-07-24-shadows-onto-prims` folder is RECONCILED (banner: its substance was built by the
+lightmap-resolution → standing-costs → lighting-feel line and extended to movers here; 0/8
+todo marked do-not-execute; index row → closed). **Closing lap** (npc wandering, 30 s at
+zoom 1): cold bakes **0**, hot ~91k, **120.0 fps**, three wolves live — the torch-side wolf
+dragging its cast shadow, the dim-corner wolf dark, depth flips clean (screenshot
+ss_6223k2kfq; zoom checks rode P1/P2's sweeps). Residuals, honest: the hot-light matrix
+cells are machinery-verified only (no live hot-class light in the scene); the n-facing cast
+glamour shot awaits the user's eyes; per-frame hot re-render has no budget yet
+(hot-shadows). Memory updated; index → done.

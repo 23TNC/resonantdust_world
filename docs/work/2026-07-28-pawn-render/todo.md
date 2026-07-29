@@ -94,14 +94,14 @@ _Items tick in place; the box is the move. Design: [`README`](README.md) ·
 
 ## P5 · Wrap
 
-- [ ] Docs: update `intent/tiered-lighting.md` status (mover tier now participates: what of
+- [x] Docs: update `intent/tiered-lighting.md` status (mover tier now participates: what of
       the warm/rt tiers this stream realized vs left) + a §mover note in
       `design/shadows.md`; reconcile the STALE
       [2026-07-24-shadows-onto-prims](../2026-07-24-shadows-onto-prims/README.md) folder
       against the now-live receiver machinery (verify what its 0/8 items still mean; close
       or re-scope with the user's model preserved). Acceptance: `bin/rd docs-check` green;
       no doc claims billboards receive no shadows.
-- [ ] Full acceptance lap: wolf circles a lit, shadowed grove — depth flips correct,
+- [x] Full acceptance lap: wolf circles a lit, shadowed grove — depth flips correct,
       lit + normal-mapped through all four facings, casts and receives shadows, emissive
       intact, cold maps never re-bake, fps holds. Screenshots (≥3 zooms) + counters in
       `completed.md`; memory updated; work-index row → done.
