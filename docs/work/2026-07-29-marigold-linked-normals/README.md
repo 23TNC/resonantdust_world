@@ -40,17 +40,20 @@ per-cell detail (recorded as fork F1).
 The pipeline this stream builds, all inside the `marigold/` toolset so `bin/art normal
 --marigold` stays the one entry point:
 
-1. **Measure first** — `marigold/atlas_check.py`: per-cell flat-region mean normal (vs the
-   canonical up), same-piece cross-cell deviation, and in-world seam continuity from the
-   D1 adjacency table. These numbers are the acceptance oracle for every later stage.
-2. **Inference hygiene** — per-cell crops with replicated-edge padding (a cell must never
-   see its atlas neighbour — atlas order is NOT world adjacency), pinned seed, ensembling,
-   one pipeline load for the batch; reassemble.
+1. **Measure first** — `marigold/atlas_check.py`: RELIEF (share of pixels >15° from the
+   cell's OWN flat frame — detail, tilt-immune; I1's lesson), per-cell flat-frame error,
+   same-piece cross-cell deviation, and in-world seam continuity from the D1 adjacency
+   table. Consistency AND detail both gate every later stage.
+2. **Inference** — ONE whole-atlas inference (`atlas_normals.py --engine whole`, the
+   default), pinned seed + ensembling. Per-cell crops are KEPT as `--engine cell` but
+   measured to starve Marigold on near-flat art (relief 23 % → 2 % — I1); the frame drift
+   whole-atlas inference costs is exactly what the post passes repair.
 3. **Global frame alignment** — per cell: find the flat-top region (dominant normal
-   cluster), compute the rotation taking its mean to +Z, apply to the whole cell;
-   then per-channel gain alignment of bevel slopes against the reference cell.
-4. **Symmetry + seam enforcement** — average equivalent pieces across cells under their
-   mirror/rotation transforms (transforming the VECTORS, not just the pixels), then blend
+   cluster), compute the rotation taking its mean to +Z, apply to the whole cell; then a
+   BOOST-ONLY bevel gain toward the atlas median (shrinking strong cells discards relief).
+4. **Symmetry + seam enforcement** — STAMP each arm from its pure-run donor cell (full
+   donor detail, zero spread by construction; E/W share one donor under the vector-aware
+   mirror; hubs untouched — each connectivity class is different art), then blend
    in-world-adjacent edge strips to exact agreement.
 5. **Regenerate + drill** — the wall atlas re-exported, served, and eyeballed lit in-game
    at ≥2 zooms beside a torch. The user's eyes are the final oracle.
