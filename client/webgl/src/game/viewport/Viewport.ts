@@ -586,7 +586,24 @@ export class Viewport {
 
     // build-walls P2: the blueprint drag preview, then ui-select P1's selection outlines
     // topmost (over grid/overlays — a selection must never hide).
-    this.blueprint.draw(this.camera);
+    // texture-generalization P4 (tile-lighting F3): the preview samples the LIVE lightmaps
+    // (read-only — the ephemeral path; the accumulators are untouched) with the blit's own
+    // window mapping, so a blueprint dragged beside a torch glows with it.
+    {
+      const cl = this.shadows.coldLightmap, hl = this.shadows.hotLightmap;
+      const win = this.map.window;
+      this.blueprint.draw(this.camera, cl && hl ? {
+        coldLight: cl,
+        hotLight: hl,
+        quant: LIGHT_QUANT,
+        ambient: AMBIENT_LEVEL,
+        cols: win.cols,
+        rows: win.rows,
+        winCol: win.winCol,
+        winRow: win.winRow,
+        lslot: Math.max(1, TEXTILE_LIGHT >> win.lod),
+      } : null);
+    }
     this.outline.draw(this.camera);
   }
 

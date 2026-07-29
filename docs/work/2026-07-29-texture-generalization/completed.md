@@ -93,3 +93,33 @@ Dirty ring: `recordTileKind` → `viewport.tileKindDirty` → a 3×3 both-class 
 same queue light moves use — neighbors self-heal on the next bake. **Verified live**
 (`__autocell` probe): all 11 wall tiles' mirror-computed cells EQUAL the drawn prims' cells
 (corners 10/13/0, runs 6/9). The GLSL copy is consumed at P4 (tile lighting samples).
+
+## 2026-07-29 · P4 — tiles lit + the blueprint + the drill (3/3) — STREAM COMPLETE
+
+**Tiles lit with their def's normal**: `tileNormal` in GATHER_COMMON — slot-0 def → the
+atlas CELL (in-shader D1 autotile for mode-1 defs, the frame as-is otherwise) → the
+pad-inset window stretched across the tile square → the NORMAL quadrant (+side E, −side N,
+billboardNormal's own layout). LIGHT_FRAG's normal path: billboard's where drawn, else the
+TILE's; `applyNL = dot(pn,pn) > 0` — loose/plain tiles return vec3(0) and keep flat ground
+exactly. **Verified**: torch-lit walls at zoom 1 + zoom 2 — the wall run beside the north
+torch reads warm cream while the same kind mid-frame sits cool grey and ambient-only walls
+darkest (lit-by-proximity demonstrated); wall bevel normals carry the direction (the
+normal master has real content: R/G σ 52/57), flat tops read dim under horizontal torch
+light — physically consistent; THE USER'S EYES ARE THE FINAL ORACLE on the feel. Ground +
+tree shadows unchanged (captures). **Cold bakes only on tile change: 0 cold bakes over 5 s
+idle** (hot churns with the wolf as designed).
+
+**Blueprint lit**: the preview FRAG samples the LIVE cold+hot lightmaps + ambient with the
+blit's own window mapping (read-only — accumulators untouched by construction); unstreamed
+fallback lit too. **Verified mid-drag**: the perimeter preview beside the torch shows the
+pool's gradient across it (warm on the torch side, ambient-dark away).
+
+**End-to-end drill**: through the REAL UI — build panel icon → placement mode →
+synthesized drag (106,57)→(109,60) with mid-drag captures → release → BUILD_WALL → worker
+perimeter SETs → walls painted, autotiled, LIT on the new rails. The zone re-fan also
+resurfaced ~66 older server-side drill walls the client had never painted this session —
+all 65 in-window walls pass the `__autocell` probe (13 "mismatches" were out-of-window
+probe artifacts — the torus slot belongs to another row there). Reload-stable across
+multiple navigations (walls persist + relight). **fps: 8.33 ms avg (vsync 120 Hz)** idle
+AND under full-rebake-every-frame — no regression budget consumed. Aborting a drag
+(right-click) leaves no build; the first mis-calibrated drag was aborted cleanly.

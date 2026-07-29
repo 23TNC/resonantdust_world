@@ -237,6 +237,34 @@ int tileAutoCell(int wc, int wr, highp usampler2D data) {
   int w = tileConnects(wc - 1, wr, data) ? 1 : 0;
   return (3 - (s + 2 * w)) * 4 + (n + 2 * e);
 }
+// texture-generalization P4: the TILE's normal at world point P, from its slot-0 def — the
+// atlas CELL (the D1 in-shader autotile for rotation-mode-1 defs; the frame as-is otherwise),
+// the pad-inset window stretched across the tile square, sampled from the NORMAL quadrant of
+// the co-pack (+side E, −side N of the surface quadrant — same layout billboardNormal uses).
+// vec3(0) when unresolved (loose def / empty tile / outside the frame) → caller keeps flat.
+vec3 tileNormal(int wc, int wr, vec2 P, highp usampler2D data, sampler2D surf) {
+  uint s0 = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(wc, wr)).x;
+  if (s0 == 0u || ((s0 >> 24) & 15u) != 0u) return vec3(0.0);
+  uvec4 D = fetchLin(data, DEF_BASE + int(s0 & 0xffffu));
+  uint lod = (D.z >> 4) & 15u;
+  if (lod < 4u) return vec3(0.0);                            // loose def — no frame resolved
+  uint mode = (D.x >> 26) & 3u;
+  int cols = int(((D.y >> 10) & 15u) + 1u);                  // grid = frame span (1 tile per cell)
+  float spanU = float(cols) * 16.0;
+  float ppu = float(1u << lod) / spanU;
+  float pad = float((D.x >> 14) & 0x3ffu);                   // the between-cell inset (units)
+  float W = float(((D.y >> 23) & 511u) * 2u);                // one cell's window (units)
+  int cell = (mode == 1u && cols > 1) ? tileAutoCell(wc, wr, data) : 0;
+  vec2 co = vec2(float(cell % cols), float(cell / cols)) * 16.0 * ppu; // cell origin (row-major, top)
+  vec2 l = fract(P / 16.0);                                  // position across the tile square [0,1)
+  float side = float(1u << lod);
+  float sfx = float((D.z >> 22) & 1023u) * 16.0, sfy = float((D.z >> 12) & 1023u) * 16.0;
+  float nfx = sfx + side, nfy = sfy - side;                  // NORMAL quadrant origin
+  vec2 uv = vec2(nfx, nfy) + co + (vec2(pad) + l * W) * ppu;
+  if (uv.x < nfx || uv.x >= nfx + side || uv.y < nfy || uv.y >= nfy + side) return vec3(0.0);
+  vec3 n = texelFetch(surf, ivec2(uv), 0).xyz * 2.0 - 1.0;
+  return normalize(n);
+}
 // D9: how many rows SOUTH of a visited tile the walks also check — under BASE-LINE occupancy
 // registration those are the only tiles whose occupants' cards can lean over the visited one.
 // CPU-derived from content (ceil(TILT x maxCardTiles)).
@@ -1017,8 +1045,12 @@ void main() {
   float rcovN = (RF & 0x10000u) != 0u ? 1.0 : 0.0;                  // presence bit (debug L2 only)
   if (uProfile == 2) { oLight = vec4(rcovN); return; }              // L2: + receiver fetch
   float sDbg;
-  vec3 pn = rbillboardN != 0u ? billboardNormal(rbillboardN, P, uData, uSurface, uLightAlign, sDbg) : vec3(0.0);
-  bool applyNL = rbillboardN != 0u && dot(pn, pn) > 0.0;            // thing with a loaded normal → real N·L
+  // texture-generalization P4: where no billboard is drawn, the TILE's def supplies the
+  // normal (walls shade directionally under a torch) — vec3(0) on plain/loose tiles keeps
+  // the old flat-ground behaviour (ndl = 1).
+  vec3 pn = rbillboardN != 0u ? billboardNormal(rbillboardN, P, uData, uSurface, uLightAlign, sDbg)
+                              : tileNormal(wc, wr, P, uData, uSurface);
+  bool applyNL = dot(pn, pn) > 0.0;                                 // a loaded normal → real N·L
   vec3 N = applyNL ? worldNormal(pn, uNormalPitch) : vec3(0.0, 0.0, 1.0);
   if (uProfile == 3) { oLight = vec4(N, 1.0); return; }             // L3: + billboard/world normal
 

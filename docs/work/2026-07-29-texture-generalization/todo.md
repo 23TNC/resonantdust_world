@@ -64,14 +64,14 @@ STAGED oracles: P1 must be bit-identical (pure re-encode); P3 is comparative BY 
 
 ## P4 · Tiles lit + the blueprint + the drill
 
-- [ ] Tiles receive with their def's NORMAL through the unified path (the original
+- [x] Tiles receive with their def's NORMAL through the unified path (the original
       goal). Acceptance: a torch-lit wall shades directionally at ≥2 zooms; plain
       ground + tree shadows read equivalent to pre-stream; cold bakes only on tile
       change (counter drill, foreground tab).
-- [ ] `BlueprintOverlay` lights via the live cold+hot lightmaps + ambient (tile-lighting
+- [x] `BlueprintOverlay` lights via the live cold+hot lightmaps + ambient (tile-lighting
       F3). Acceptance: a drag near a torch shows a lit blueprint; release leaves the
       accumulators untouched.
-- [ ] End-to-end drill: build beside a torch — lit blueprint, walls lit on the new
+- [x] End-to-end drill: build beside a torch — lit blueprint, walls lit on the new
       rails, shadows intact everywhere else, reload-stable, fps recorded (a regression
       budget is EXPECTED here — the user pre-authorized re-work). Acceptance: numbers +
       captures in `completed.md`; the user's eyes are the final oracle.
