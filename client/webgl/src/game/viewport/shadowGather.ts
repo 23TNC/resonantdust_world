@@ -286,6 +286,63 @@ float sampleCard(float u, float t, float W, float H, uint rot, float ppu, float 
   if (uv.x < fmin.x || uv.x >= fmax.x || uv.y < fmin.y || uv.y >= fmax.y) return 0.0;
   return texelFetch(surf, ivec2(uv), 0).b;            // silhouette coverage (B carries its own edge AA)
 }
+// ns-shadows P1: coverage of a PERPENDICULAR (n/s-rotated) caster. The card is a VERTICAL plane
+// on the sprite's centerline -- it contains the north-south axis + height, no lean (user-ratified
+// geometry, mockup 2026-07-28). Its silhouette is the SIDE (east) frame carried in the record's
+// A lane (caster_definition_id), spanning the side frame's tight width CENTERED on the anchor row
+// (D2). The centre ray L->Q intersects x = A.x once; card coords are s = n-s offset across the
+// span (caster_flip mirrors, reusing sampleCard's rot==3 arm) and t = height at the intersection.
+// Penumbra: the same interval arithmetic as the main card, with du/dlambda LINEARIZED at the
+// centre ray (u(lambda) is rational here, not linear -- same approximation class as holding t
+// fixed across the span, which the main card also does). East-vs-west needs no special casing:
+// a light east of the plane projects west and vice versa, straight from the ray-plane solve.
+float casterCoverNS(uvec4 Pd, vec2 A, vec2 Q, vec3 L, float emitter, highp usampler2D data, sampler2D surf) {
+  int defIdx = int((Pd.w >> 16) & 0xffffu);
+  uvec4 D = fetchLin(data, DEF_BASE + defIdx);
+  float W = float(((D.y >> 23) & 511u) * 2u);         // side frame tight width = the card's n-s span
+  float H = float(((D.y >> 14) & 511u) * 2u);         // side frame tight height = the card's height
+  if (W <= 0.0 || H <= 0.0) return 0.0;
+  float b = Q.x - L.x;
+  if (abs(b) < 1e-4) return 0.0;                      // ray parallel to the plane -> no intersection
+  float tx = (A.x - L.x) / b;
+  if (tx <= 0.0 || tx >= 1.0) return 0.0;             // caster not between light and receiver
+  float t0 = L.z * (1.0 - tx) / H;                    // intersection height in card coords
+  if (t0 < 0.0 || t0 > 1.0) return 0.0;               // ray passes over the card top -> lit
+  float u0 = (L.y + tx * (Q.y - L.y) - (A.y - 0.5 * W)) / W;
+  uint mrot = ((Pd.w >> 15) & 1u) == 1u ? 3u : 1u;    // caster_flip: head end follows facing (D3)
+  // Penumbra interval on the rotated axis: sub-light L + lambda*perp, du/dlambda at lambda 0.
+  vec2 sdir = A - L.xy;
+  float slen = length(sdir);
+  vec2 along = slen > 1e-4 ? sdir / slen : vec2(1.0, 0.0);
+  vec2 perp = vec2(-along.y, along.x) * emitter;
+  float dtx = perp.x * ((A.x - L.x) - b) / (b * b);   // d(tx)/dlambda at the centre ray
+  float Dslope = (perp.y * (1.0 - tx) + dtx * (Q.y - L.y)) / W;
+  float frac, uMid;
+  if (abs(Dslope) < 1e-6) {
+    frac = (u0 >= 0.0 && u0 <= 1.0) ? 1.0 : 0.0;      // point light / degenerate axis: hard edge
+    uMid = u0;
+  } else {
+    float iD = 1.0 / Dslope;
+    float l0 = (0.0 - u0) * iD;
+    float l1 = (1.0 - u0) * iD;
+    float lo = clamp(min(l0, l1), -1.0, 1.0);
+    float hi = clamp(max(l0, l1), -1.0, 1.0);
+    frac = (hi - lo) * 0.5;
+    uMid = u0 + 0.5 * (lo + hi) * Dslope;
+  }
+  if (frac <= 0.0) return 0.0;
+  uint lod = (D.z >> 4) & 15u;
+  if (lod < 4u) return frac;                          // no silhouette resolved -> solid rotated quad
+  float spanU = float((((D.y >> 10) & 15u) + 1u) * 16u);
+  float ox = float((D.x >> 14) & 1023u), oy = float((D.x >> 4) & 1023u);
+  float ppu = float(1u << lod) / spanU;
+  float fx = float((D.z >> 22) & 1023u) * 16.0, fy = float((D.z >> 12) & 1023u) * 16.0;
+  float nx = float(int((D.w >> 20) & 4095u) - 2048);
+  float ny = float(int((D.w >> 8) & 4095u) - 2048);
+  float fside = float(1u << lod);
+  vec2 fo = vec2(fx, fy), fmin = fo, fmax = fo + vec2(fside);
+  return frac * sampleCard(clamp(uMid, 0.0, 1.0), t0, W, H, mrot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
+}
 // Coverage of one caster (billboard index into billboard_data) at P from light L: read the billboard record + its
 // definition (position + geo W/H), then the pure-quad test; if occluded, apply the sprite's SHAPE
 // (P4) — invert P back to the card's (s,t) (in-range BY CONSTRUCTION: P is inside the projected
@@ -306,6 +363,11 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));      // v2.1: R = id|reserved, G = position, B = orient
   vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref)   // v3 leaf: resolved tile|unit
          + vec2(float((Pd.z >> 11) & 7u), float((Pd.z >> 8) & 7u)) * 0.125; // hot-sync P3: + sub-unit lanes (eighths of a unit) so lighting tracks the DRAWN anchor, not the unit grid
+  // ns-shadows P1: an n/s-rotated caster with a resolved side def casts from the perpendicular card.
+  uint rotc = (Pd.y >> 26) & 3u;
+  if ((rotc == 0u || rotc == 2u) && ((Pd.w >> 14) & 1u) == 1u) {
+    return casterCoverNS(Pd, A, P, L, emitter, data, surf);
+  }
   int defIdx = int((Pd.z >> 16) & 0xffffu);
   uvec4 D = fetchLin(data, DEF_BASE + defIdx);
   // v2.1: R = u16 id | u10 offset_x | u6 reserved; G = u9 W | u9 H | u4 span (tiles−1) | u10 offset_y.
@@ -544,7 +606,13 @@ float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, float reachU, 
           + vec2(float((cPd.z >> 11) & 7u), float((cPd.z >> 8) & 7u)) * 0.125; // hot-sync P3: sub-unit lanes
   if (isThing) {
     if (billboardIdx == rbillboard) return 0.0;                       // (0) self — exact same billboard → no self-cast
-    if (Cb.y <= Rbase.y + ${SELF_BANDF}) return 0.0;        // (1) seen-face + near-band (units): caster must be >SELF_BAND south
+    // ns-shadows P1 (fork F1): gate (1) is the E/W card's seen-face asymmetry (a caster NORTH of a
+    // receiver sits behind its seen face). A perpendicular (n/s) caster throws E/W — there is no
+    // north/south asymmetry to protect, and the band would kill its climb onto e/w neighbours whose
+    // bases share its row. Gates (0) and (2) still apply.
+    uint cRot = (cPd.y >> 26) & 3u;
+    bool nsCaster = (cRot == 0u || cRot == 2u) && ((cPd.w >> 14) & 1u) == 1u;
+    if (!nsCaster && Cb.y <= Rbase.y + ${SELF_BANDF}) return 0.0;   // (1) seen-face + near-band (units): caster must be >SELF_BAND south
     if (dot(Cb - Rbase, Rbase - L.xy) >= 0.0) return 0.0;   // (2) caster must block the light reaching it
   }
   float cc = casterCover(billboardIdx, Q, L, emitter, reachU, ref, data, surf);
@@ -1820,9 +1888,24 @@ export class ShadowGather {
       // prim per frame is ~1700 short-lived arrays a frame, i.e. GC pressure for no reason.
       if (lb === undefined) this.lastBox.set(p.id, [tx, ty, t.w, t.h, pcls]);
       else { lb[0] = tx; lb[1] = ty; lb[2] = t.w; lb[3] = t.h; lb[4] = pcls; }
-      const baseY = ty + t.h, topY = baseY - TILT * t.h; // card ground y-extent (px)
-      const r0 = Math.floor(topY / SQUARE), r1 = Math.floor(baseY / SQUARE);
-      const c0 = Math.floor(tx / SQUARE), c1 = Math.floor((tx + t.w) / SQUARE);
+      // ns-shadows P1: a rot-0/2 caster with a resolved side def is a VERTICAL card on the
+      // centerline — its ground trace is the n-s segment through the anchor, spanning the SIDE
+      // frame's tight width centered on the anchor row (D2); columns = centerline ±1 pad (the
+      // walk's perpendicular dilation expects casters registered near the crossed tiles).
+      const side = (p.rotation === 0 || p.rotation === 2) ? this.coldData.casterDefOf(inst.idx) : null;
+      let r0: number, r1: number, c0: number, c1: number;
+      if (side) {
+        const st = this.coldData.tightBoxOf(side.def);
+        const ws = st ? st.w : p.width;
+        const cx = p.x + p.width * 0.5, ay = p.y + p.height;
+        r0 = Math.floor((ay - ws * 0.5) / SQUARE); r1 = Math.floor((ay + ws * 0.5) / SQUARE);
+        const cc = Math.floor(cx / SQUARE);
+        c0 = cc - 1; c1 = cc + 1;
+      } else {
+        const baseY = ty + t.h, topY = baseY - TILT * t.h; // card ground y-extent (px)
+        r0 = Math.floor(topY / SQUARE); r1 = Math.floor(baseY / SQUARE);
+        c0 = Math.floor(tx / SQUARE); c1 = Math.floor((tx + t.w) / SQUARE);
+      }
       for (let wr = r0; wr <= r1; wr++) {
         if (wr < winRow || wr >= winRow + rows) continue;
         for (let wc = c0; wc <= c1; wc++) {

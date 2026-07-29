@@ -460,6 +460,13 @@ export class ColdShadowData {
     return this.defTight.get(defIndex) ?? null;
   }
 
+  /** ns-shadows P1: the record's caster-def lane (`billboard_data.A`) — the SIDE frame's def when
+   *  the billboard is n/s-rotated with a resolved side (caster_valid), else null. */
+  casterDefOf(idx: number): { def: number; flip: boolean } | null {
+    const A = this.dataMirror[(BILLBOARD_DATA_BASE + idx) * 4 + 3];
+    return ((A >>> 14) & 1) === 1 ? { def: (A >>> 16) & 0xffff, flip: ((A >>> 15) & 1) === 1 } : null;
+  }
+
 
   /** The `billboard_data_index` (≥1) for a PLACED caster (position + orientation + its `def_index`),
    *  allocated on first sight + cached by `billboard.id`. Defs are immutable, so a texture/lod change

@@ -21,20 +21,20 @@ observation)._
 
 ## P1 · The perpendicular card in the shadow walk
 
-- [ ] `buildCasters`: bucket rot-0/2 casters by the ROTATED footprint — centerline column
+- [x] `buildCasters`: bucket rot-0/2 casters by the ROTATED footprint — centerline column
       (±1 pad), rows spanning the side frame's width centered on the anchor row (D2).
       Acceptance: corridor finds every texel brute finds on a rotated caster
       (`debugReadShadow` identity).
-- [ ] `casterCover` rot-0/2 arm: card plane x = centerline, no lean; s = n–s offset across
+- [x] `casterCover` rot-0/2 arm: card plane x = centerline, no lean; s = n–s offset across
       the side width (flip per D3), t = height; ray–plane solve + the analytic penumbra
       interval on the rotated axis; silhouette sampled from caster_definition_id.
       Acceptance: point light east of a n-facing wolf → westward side-profile shadow;
       mirrored from the west.
-- [ ] `casterOne` gates for rotated casters: self-exclusion by id unchanged; the seen-face /
+- [x] `casterOne` gates for rotated casters: self-exclusion by id unchanged; the seen-face /
       near-band test gets a rotated-geometry equivalent (centerline vs receiver base);
       painter row stays the anchor row. Acceptance: no self-cast on the n/s wolf; its shadow
       climbs a tree standing east/west of it.
-- [ ] Fallback: caster_valid 0 or lod<4 → solid rotated quad (centerline × side width ×
+- [x] Fallback: caster_valid 0 or lod<4 → solid rotated quad (centerline × side width ×
       height). Acceptance: shadow present (blocky) before textures resolve.
 
 ## P2 · Verify
@@ -43,6 +43,6 @@ observation)._
       line, flips side as the wolf crosses the light's column, and tracks at the hot-sync
       lockstep cadence. Acceptance: user's eyes in motion; captures at rest in
       `completed.md`.
-- [ ] Guards: zoom stability at ≥3 zooms + a transition; 120 fps at zoom 1 while walking;
+- [x] Guards: zoom stability at ≥3 zooms + a transition; 120 fps at zoom 1 while walking;
       brute↔corridor bit-identity for rotations 0 AND 2. Acceptance: numbers logged in
       `completed.md`.
