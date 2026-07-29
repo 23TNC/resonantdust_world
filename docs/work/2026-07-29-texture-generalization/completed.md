@@ -23,3 +23,17 @@ restart policy did NOT retry after its exit; recovered with `rd up spacetime` + 
 gateway` + **`rd deploy gateway`** (the gateway container is a dev shell like the edge —
 `docker start` alone runs nothing) + `rd deploy edge` + `FORCE=1 sim run npc`; shard data
 survived (the wolf resumed trips at tic 53k). The vite dev server also died — restarted.
+
+## 2026-07-29 · P1 — the presence reshape (2/2)
+
+The 4×u32 slot reshape + base-line occupancy + southern dilation is VERIFIED bit-identical.
+The long-running I1 residual (~250 words) turned out to be an artifact of measuring on a
+page whose texture pipeline was silently wedged (previewCache IndexedDB hang — fixed en
+route, `76e4bdb9`, along with the wolf's all-zero surface maps regenerated and the false
+B1 art blocker retracted). On a healthy settled page the full oracle battery reads ZERO
+diffs: cold — settle 0, round-trip 0, extent(+uDilateS 0, old-exact)↔base-line 0,
+brute↔corridor 0; hot (npc stopped, wolf frozen; 9,980 nz words) — settle 0, extent↔base
+0. The receiver-map diff also showed extent mode DROPPING registrations via 4-slot
+overflow (2 full tiles; 1,908 fine receiver words) where base-line stays ≤3 — the new
+model is a strict improvement, not just an equivalent. `__fillmode` kept as the A/B
+re-verification lever for P2.

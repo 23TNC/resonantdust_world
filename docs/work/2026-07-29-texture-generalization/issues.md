@@ -5,7 +5,7 @@ suspect (an out-of-range `__torch` intensity vs the u8 [0,1] lane — clamp dril
 consider clamping `carriedLightFor`'s store/compare for robustness); background tabs freeze
 rAF and void counter drills; art-128's texture migration remains in flight._
 
-## I1 · P1 oracle residual — ~250 words differ (OPEN; white-box instrumentation needed)
+## I1 · P1 oracle residual — ~250 words differ (RESOLVED 2026-07-29: artifact of the wedged-cache page)
 
 The reload oracle is INVALID (lod retention makes def settling arrival-order-dependent —
 same build varies 1,639 words across reloads); the VALID oracle is the in-page `__fillmode`
@@ -25,6 +25,14 @@ through an input I haven't identified — next step is white-box: instrument `ca
 (cc, frac, uMid, A, bref) under each mode and diff. KEPT IN TREE: the `__fillmode` oracle
 toggle (extent + uDilateS-0 = old-exact) and the live `maxTightHpx` dilation bound (a real
 robustness fix regardless — art-inflated tight boxes exceeded the content-nominal card).
-NOTE: the former B1 "broken art" was a misdiagnosis (see blockers.md) — the world renders
-correctly and visual acceptances are unblocked; none of that changes this residual, which
-was measured on settled defs with clean controls.
+RESOLUTION: every earlier measurement ran on a page whose texture pipeline was WEDGED (the
+previewCache IndexedDB hang, fixed in `76e4bdb9` — zero stems packed, defs stuck on lod-0
+solid fallbacks with art-inflated tight boxes). On a healthy, fully-settled page the oracle
+reads CLEAN: cold class settle 0 / round-trip 0 / extent-vs-base 0 / brute-vs-corridor 0;
+hot class (npc stopped, wolf frozen, 9,980 nz words) settle 0 / extent-vs-base 0. The
+reshape is bit-identical to pre-reshape behavior in both classes. BONUS finding from the
+receiver-map diff: EXTENT mode overflows the 4-slot cap on 2 tiles and silently DROPS
+registrations (1,908 fine + 320 coarse receiver words where base-line correctly finds a
+billboard and extent finds none) — base-line occupancy is strictly cleaner, never fuller
+than 3 slots on this page. The `__fillmode` A/B toggle stays in tree (same precedent as the
+DILATE-5 switch) for re-running the oracle after P2's slot re-spec.

@@ -26,7 +26,7 @@ STAGED oracles: P1 must be bit-identical (pure re-encode); P3 is comparative BY 
       conifer span 2 today), pushed through the constants row; the southern-dilation row
       count `ceil(TILT · maxCardHeight)` computed once. Acceptance: the constant probes
       correctly and changes when a taller kind is authored (temp fixture).
-- [ ] The reshape: 4 × u32 `flags|set|index` slots filled by BASE-LINE occupancy (a
+- [x] The reshape: 4 × u32 `flags|set|index` slots filled by BASE-LINE occupancy (a
       caster registers in its anchor row × every base COLUMN — D9 refined: width stays
       fill-time, only the vertical tilt overhang moves to the walk); both walks +
       `receiverAt` + both receiver bakes gain the southern dilation (visited tile +
