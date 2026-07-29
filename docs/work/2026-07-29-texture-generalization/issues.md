@@ -25,5 +25,6 @@ through an input I haven't identified — next step is white-box: instrument `ca
 (cc, frac, uMid, A, bref) under each mode and diff. KEPT IN TREE: the `__fillmode` oracle
 toggle (extent + uDilateS-0 = old-exact) and the live `maxTightHpx` dilation bound (a real
 robustness fix regardless — art-inflated tight boxes exceeded the content-nominal card).
-NOTE: the world's ART is garbage during all of this (blockers B1) — the oracle is valid on
-garbage (deterministic silhouettes), but any VISUAL judgment stays blocked.
+NOTE: the former B1 "broken art" was a misdiagnosis (see blockers.md) — the world renders
+correctly and visual acceptances are unblocked; none of that changes this residual, which
+was measured on settled defs with clean controls.

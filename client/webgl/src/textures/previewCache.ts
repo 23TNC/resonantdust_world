@@ -34,17 +34,46 @@ const lodKey = (stem: string, size: number, map: TexMap): string => `${stem}@${s
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+/** An open can HANG indefinitely — e.g. queued behind a pending `deleteDatabase` issued
+ *  from devtools or another tab whose connection hasn't closed. Best-effort means that
+ *  must degrade to "no persistence" (network still runs), not stall every texture load. */
+const OPEN_TIMEOUT_MS = 1500;
+
 function db(): Promise<IDBDatabase> {
   return (dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const fail = (why: string) => {
+      dbPromise = null; // retry on a later op — the wedge may have cleared by then
+      // A post-timeout success would leak a connection that blocks future deletes/upgrades.
+      req.onsuccess = () => req.result.close();
+      reject(new Error(`previewCache: ${why}`));
+    };
+    const timer = setTimeout(() => fail("open timed out"), OPEN_TIMEOUT_MS);
     // Fires on first create AND on the 1→2 version bump — the store already exists on the
     // latter, so guard (a bare createObjectStore would throw ConstraintError). Old v1 rows
     // (keyed `stem@size`) are simply never read under the new `stem@size@map` keys.
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      clearTimeout(timer);
+      const d = req.result;
+      // Another tab deleting/upgrading the DB must not wedge on OUR connection: close and
+      // reopen lazily (a completed delete then just means a cold cache).
+      d.onversionchange = () => {
+        d.close();
+        if (dbPromise) dbPromise = null;
+      };
+      resolve(d);
+    };
+    req.onerror = () => {
+      clearTimeout(timer);
+      fail(String(req.error));
+    };
+    req.onblocked = () => {
+      clearTimeout(timer);
+      fail("open blocked");
+    };
   }));
 }
 
