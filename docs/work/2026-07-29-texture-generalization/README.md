@@ -93,11 +93,19 @@ WorldBridge), `shared/dsl` (+ wasm bundle), `content`, `docs/VARIABLES.md`._
 
 ## Known risks (planned, not discovered later; R1–R3 restated under D7/D8)
 
-- **R1′ · The 4-slot caster capacity.** 8 (≤7 effective) caster slots per tile become 3–4
-  under D7 (the tile takes one). Dense clusters (forest tiles where several tight-bbox +
-  corridor rows overlap) may exceed it — dropped casters = silently missing shadows.
-  MEASURE FIRST: a P1 occupancy probe records the live high-water mark per tile before
-  the reshape ships; the escape hatch is 8 × u32 (two texels/tile — presence doubles).
+- **R1′ RESOLVED → D9 · Presence becomes OCCUPANCY; the overhang moves to the walk.**
+  Today's table is occlusion-EXTENT bucketing (`buildCasters` registers a caster in every
+  tile its tilted card's ground footprint spans — the I-7 fix), which is where a dense
+  forest exceeds 3. Under D7 the semantics flip to the user's model: a slot per OCCUPANT
+  (1 tile + 1 thing + 1 pawn — ≤ 3 by construction, no probe needed), and the walk
+  compensates by ALSO checking the tiles SOUTH of each visited tile within
+  `ceil(TILT · maxCardHeight)` rows — the only tiles whose occupants' cards can lean over
+  it. `maxCardHeight` is CONTENT-derived (the tallest authored card — the 2-tile conifer
+  today → +1 row), served as a constant. The receiver scan uses the SAME southern
+  dilation (the sprite covering P is based south of P). Priced in D7's favor: ~2× tiles
+  visited, but each visit is a u32 slot read with a flag early-out instead of a record
+  fetch — and the fill becomes truly incremental (one tile per occupant, the cold
+  change-rarely model).
 - **R2′ · One table, self-describing slots.** The `set` field replaces the id-namespace
   special case — but every reader (corridor/brute walks, `receiverAt`, receiver bakes,
   the bucket fill + dense early-out) converts to the new slot encoding in ONE cut.

@@ -20,17 +20,19 @@ STAGED oracles: P1 must be bit-identical (pure re-encode); P3 is comparative BY 
       `receives_shadows` (ground tiles = 2/like-ground; walls = 1/like-billboard).
       Acceptance: corpus republishes; the bundle exposes the lanes (console probe).
 
-## P1 · The presence reshape (billboards only — the pure re-encode)
+## P1 · The presence reshape (billboards only — occupancy semantics, D9)
 
-- [ ] Occupancy probe FIRST (R1′): instrument the CURRENT bucket fill and record the
-      live high-water casters-per-tile over a forest pan + the wall ring. Acceptance:
-      the number in `completed.md`; if > 3, raise the 8×u32 escape hatch as a fork
-      BEFORE converting.
-- [ ] The reshape: 4 × u32 `flags|set|index` slots — fill (buildCasters), the dense
-      early-out re-spec, both walks, `receiverAt`, both receiver bakes, presence build —
-      billboards ride `set = billboard_data` with their def's cast/receives flags
-      mirrored. Acceptance: brute↔corridor identity AND bit-identical shadow output vs
-      pre-reshape on a billboards-only scene (`debugReadShadow` compare).
+- [ ] The `maxCardHeight` constant: derived from content (the tallest authored card —
+      conifer span 2 today), pushed through the constants row; the southern-dilation row
+      count `ceil(TILT · maxCardHeight)` computed once. Acceptance: the constant probes
+      correctly and changes when a taller kind is authored (temp fixture).
+- [ ] The reshape: 4 × u32 `flags|set|index` slots filled by OCCUPANCY (a caster
+      registers in its BASE tile only — D9); both walks + `receiverAt` + both receiver
+      bakes gain the southern dilation (visited tile + `dilationRows` south); the dense
+      early-out re-specs; billboards ride `set = billboard_data` with cast/receives
+      flags mirrored. Acceptance: brute↔corridor identity AND bit-identical shadow
+      output vs pre-reshape on a billboards-only scene (`debugReadShadow` compare — the
+      re-encode + dilation must cover exactly the old extent set).
 
 ## P2 · Tiles enter presence
 

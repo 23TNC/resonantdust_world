@@ -15,3 +15,14 @@ neighbor bleed. R1/R2/R3 → superseded by D7 (presence 4×u32 `flags|set|index`
 describing slots, flag early-outs) and D8 (receives_shadows modes; the ground special case
 and the cut RETIRE). Open measurement gate: R1′ — the 4-slot caster capacity, probed before
 the reshape ships.
+
+## D9 · Presence = OCCUPANCY; the overhang moves into the walk (user challenge, 2026-07-29)
+
+The R1′ capacity worry came from TODAY's semantics: extent bucketing (a caster registered in
+every tile its tilted card spans — the I-7 fix), where overlapping extents exceed 3 in a
+forest. The user's model — one slot per OCCUPANT (tile/thing/pawn, ≤3 by construction) — is
+the better fit for D7, with the walk (and the receiver scan) checking `ceil(TILT ·
+maxCardHeight)` rows SOUTH of each visited tile instead: the only tiles whose occupants can
+lean over it. maxCardHeight is content-derived (conifer span 2 → +1 row). The trade prices
+in D7's favor (cheap flagged u32 reads vs record fetches; incremental fill). The occupancy
+probe is retired — capacity is bounded by construction.
