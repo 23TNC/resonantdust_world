@@ -1337,6 +1337,16 @@ export class DomPanel {
     // restored state, and persist the cleared minimize flag.
     this.refreshChrome();
     this.persistMinimized();
+    // ESCALATE IF STILL BURIED — and this has to come last, after the snap/anchor/clamp above have
+    // put the panel at its final coordinates. Checked any earlier it reads the pre-restore
+    // position, finds nothing covering it there, and skips: measured exactly that, with build
+    // landing at z 40003 (its own band) still underneath details at 50001.
+    //
+    // `ensureVisible` is only reached by an explicit surface request, so this is the user asking
+    // for THIS panel — which is what makes the taskbar's promise ("a click can never leave a panel
+    // hidden") true rather than aspirational. The ordinary raise above handles the common case, so
+    // the ontop band is touched only when a band-locked peer genuinely covers us.
+    if (!this.titleBarIsHittable()) this.bringToFront(true);
     // Notify subscribers (PixiPanel visibility, taskbar entry styling,
     // external observers) — but only on the edges that actually
     // changed so we don't double-fire on an already-visible panel.
@@ -1358,10 +1368,36 @@ export class DomPanel {
     const r = this.panel.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return false;
     const MARGIN = 8; // require a sliver actually on-screen
-    return r.right  > MARGIN
-        && r.bottom > MARGIN
-        && r.left   < window.innerWidth  - MARGIN
-        && r.top    < window.innerHeight - MARGIN;
+    if (r.right  <= MARGIN
+     || r.bottom <= MARGIN
+     || r.left   >= window.innerWidth  - MARGIN
+     || r.top    >= window.innerHeight - MARGIN) return false;
+    // OCCLUSION. Every check above passed for the build panel while it was completely
+    // invisible: open, mounted, display flex, 201x128 at (0,32) — entirely underneath the
+    // details panel at (0,32) 371x237, which sits in the "ontop" band and therefore cannot be
+    // covered no matter how often build is focused. Geometry alone cannot see that, so the
+    // taskbar read "visible" and its next click MINIMIZED the panel instead of surfacing it.
+    //
+    // Hit-test the title bar rather than the body: the body may legitimately be covered by a
+    // popup or a dropdown the panel itself owns, whereas a title bar that belongs to someone
+    // else means this panel is genuinely buried.
+    return this.titleBarIsHittable();
+  }
+
+  /** True when the panel's own title bar is the topmost thing at its own coordinates — i.e. the
+   *  panel is not buried under a peer. Samples three points across the bar so a narrow overlap
+   *  (a peer's edge, a resize handle) does not read as full occlusion. */
+  private titleBarIsHittable(): boolean {
+    const t = this.titlebar.getBoundingClientRect();
+    if (t.width < 1 || t.height < 1) return false;
+    const y = t.top + t.height / 2;
+    for (const f of [0.15, 0.5, 0.85]) {
+      const x = t.left + t.width * f;
+      if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) continue;
+      const hit = document.elementFromPoint(x, y);
+      if (hit && this.panel.contains(hit)) return true;
+    }
+    return false;
   }
 
   /** Update the panel's displayed title. Writes the chrome's
@@ -1797,9 +1833,18 @@ export class DomPanel {
     this.fireRectChange();
   }
 
-  private bringToFront(): void {
+  /** Raise within this panel's band (D6). `escalate` lifts it into the HIGHEST band instead —
+   *  reserved for an explicit user surface action (a taskbar click), never for incidental focus.
+   *
+   *  The band rule exists so *focus order* can't let a viewport-like panel bury chrome. It was
+   *  never meant to make a panel unreachable: build (band `dom`, z 40004) sits under details
+   *  (band `ontop`, z 50001) at the same origin, so no amount of clicking its taskbar entry could
+   *  ever show it. Deliberately asking for a specific panel is not incidental focus, so honouring
+   *  it here does not weaken D6 — within `ontop`, focus order still applies, and clicking details
+   *  afterwards puts details back on top. */
+  private bringToFront(escalate = false): void {
     // ui-select P2 (D6): an on-top panel focuses within the "ontop" band instead of its own.
-    const band = this._onTop ? "ontop" : this._zBand;
+    const band = escalate || this._onTop ? "ontop" : this._zBand;
     nextZByBand[band] += 1;
     this.panel.style.zIndex = String(nextZByBand[band]);
     if (this._editTarget) lastEditTarget = this;
