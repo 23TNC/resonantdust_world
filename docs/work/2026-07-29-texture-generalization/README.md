@@ -154,3 +154,22 @@ caster EVALUATION dominates when the walk goes bad (moving-lights I15 — 55 % o
 - **Falsifiers, in order**: (1) the mode-2 no-normal short-circuit missed, (2) branch
   divergence in the unified gather — both measured at P3's drill vs the baselines above,
   re-work pre-authorized.
+
+## D10 · Pawn composition (user, 2026-07-29 — future-facing; this stream must not preclude it)
+
+Pawns are the ANTICIPATED expensive indirect: the presence pawn slot points at `prim_data`
+allocating 4 definitions — `[body, head, hands+held[], body_equipment[]]`, each `[]` itself
+a prim_data of ≤4 (hand, hand, left equipment, right equipment; helmet, armor, backpack,
+reserved). Depth-2 nesting of the EXISTING carried-piece machinery. Common cases (tile +
+primary + secondary object) stay DIRECT lookups — the indirect is bounded to actual actors.
+Design notes pinned at ratification: (a) the presence slot's cast/receives flags are the
+AGGREGATE (OR) of the tree, maintained at write time, so non-interacting texels reject the
+whole actor at one u32 read; (b) simple pawns (the wolf) may keep `set = billboard_data`
+directly — D7's set field makes both encodings legal in the same slot, no flag day; (c) the
+PAWN CACHE ATLAS is the cost-model keystone, not an optimization: composite the tree (draw
+order = slot order, offsets, per facing) into ONE co-packed frame + a synthetic def, so the
+pawn lights as ONE billboard — the tree walks at COMPOSITE time (equipment/facing/anim
+cadence), never at light time; bake-time compositing also gives px-precise piece placement
+where the graph's bias-8 unit offsets are 8 px-quantized; (d) sized later: cache residency
+(~one 2048² page per ~50 equipped pawns × 4 facings; LRU eventually) and held LIGHTS, which
+stay records through the carried-light path rather than compositing.
