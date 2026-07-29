@@ -291,6 +291,13 @@ export class WorldBridge {
     this.setAnchor(this.anchorX + dx, this.anchorY + dy);
   }
 
+  /** ui-select P0 (D3): the right-click MOVE ORDER — straight through to the wasm client's
+   *  `MOVE_TO` (edge-allowlisted; the same verb the npc drives wolves with). No ownership
+   *  model yet — any selected pawn obeys. */
+  moveEntity(entity: number, tileX: number, tileY: number): void {
+    this.client.moveEntity(entity, tileX, tileY);
+  }
+
   /** Apply a zoom: record it (widens {@link radii} as we zoom out to see more world) and
    *  move to the cursor-anchored point. {@link setAnchor} re-pushes on its own iff the
    *  reach actually changed, so a zoom that stays within a tier boundary is free. */

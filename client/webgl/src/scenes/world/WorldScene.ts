@@ -15,11 +15,15 @@ import { ChatPanel } from "../../game/panels/chat/ChatPanel";
 import { LogManager } from "../../game/panels/chat/LogManager";
 import { PanelManager } from "../../ui/panels/PanelManager";
 import { SQUARE } from "../../game/viewport/squareMath";
+import { SelectionModel, type Selection } from "../../game/world/SelectionModel";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
 import { parseUrl, type UrlCommand } from "../../debug/urlParams";
 
 /** Wheel deltaY per zoom octave: factor = 2^(-deltaY/this), applied per event (continuous). */
 const WHEEL_OCTAVE = 500;
+/** ui-select P0: a left press that travels further than this before release is a drag (today:
+ *  discarded; the drag-box pass turns it into box-select), not a click. */
+const CLICK_SLOP_PX = 4;
 /** Commands whose infra (RT preview, shadow cast, ES 3.00 spikes) lands in W4f — registered so
  *  they're discoverable + don't error, reporting their pending status. */
 const PENDING_W4F: Record<string, string> = {
@@ -41,6 +45,13 @@ export class WorldScene extends Scene {
   private dragId: number | null = null;
   private lastClientX = 0;
   private lastClientY = 0;
+  /** ui-select P0 (D1): THE selection — outline/details/title-bar/move-order all read this. */
+  readonly selection = new SelectionModel();
+  /** A pending left CLICK (down seen, up not yet) — up within {@link CLICK_SLOP_PX} selects.
+   *  The future drag-box replaces "discard on move" with "start the box" right here. */
+  private clickId: number | null = null;
+  private clickX = 0;
+  private clickY = 0;
 
   onEnter(ctx: GameContext): void {
     this.ctx = ctx;
@@ -69,6 +80,8 @@ export class WorldScene extends Scene {
     };
     // Pawns (the wolves): synced from the tick pipeline's mobile entities into the viewport's WARM cache.
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.panel.view);
+    // DEBUG: `__sel` — the live SelectionModel (ui-select P0 acceptance probes read/drive it).
+    (globalThis as unknown as { __sel: SelectionModel }).__sel = this.selection;
 
     // The corpus hot-swaps on login (`onLoggedIn` → `reloadContent` in main.ts pulls the server's
     // corpus, replacing the boot embed). Push the new corpus into the bridge + mover layer so they
@@ -101,6 +114,9 @@ export class WorldScene extends Scene {
     canvas.addEventListener("pointerup", this.onPointerUp);
     canvas.addEventListener("pointercancel", this.onPointerUp);
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    // ui-select P0: the RIGHT button is the move order — the browser menu never belongs on
+    // the world canvas.
+    canvas.addEventListener("contextmenu", this.onContextMenu);
   }
 
   update(): void {
@@ -124,6 +140,7 @@ export class WorldScene extends Scene {
       canvas.removeEventListener("pointerup", this.onPointerUp);
       canvas.removeEventListener("pointercancel", this.onPointerUp);
       canvas.removeEventListener("wheel", this.onWheel);
+      canvas.removeEventListener("contextmenu", this.onContextMenu);
     }
     this.contentUnsub?.();
     this.contentUnsub = null;
@@ -219,7 +236,21 @@ export class WorldScene extends Scene {
   }
 
   // ── drag-to-pan (through the bridge, so zone subscriptions follow) ────────────────
+  // ui-select P0: pan rides the MIDDLE button (1) only — left (0) is selection's, right (2)
+  // is the move order's. preventDefault on middle stops the browser's autoscroll widget.
   private readonly onPointerDown = (e: PointerEvent): void => {
+    if (e.button === 0) {
+      this.clickId = e.pointerId;
+      this.clickX = e.clientX;
+      this.clickY = e.clientY;
+      return;
+    }
+    if (e.button === 2) {
+      this.issueMoveOrder(e.clientX, e.clientY);
+      return;
+    }
+    if (e.button !== 1) return;
+    e.preventDefault();
     this.dragId = e.pointerId;
     this.lastClientX = e.clientX;
     this.lastClientY = e.clientY;
@@ -240,6 +271,15 @@ export class WorldScene extends Scene {
   };
 
   private readonly onPointerUp = (e: PointerEvent): void => {
+    // A pending left click resolves on UP: within the slop it SELECTS; past it, it was a drag
+    // (the future drag-box claims exactly this branch).
+    if (this.clickId === e.pointerId) {
+      this.clickId = null;
+      if (Math.abs(e.clientX - this.clickX) <= CLICK_SLOP_PX && Math.abs(e.clientY - this.clickY) <= CLICK_SLOP_PX) {
+        this.selectAt(e.clientX, e.clientY);
+      }
+      return;
+    }
     if (this.dragId !== e.pointerId) return;
     this.dragId = null;
     try {
@@ -248,6 +288,41 @@ export class WorldScene extends Scene {
       /* capture may already be gone */
     }
   };
+
+  private readonly onContextMenu = (e: Event): void => e.preventDefault();
+
+  /** Client (css) coords → world px, via the canonical camera mapping. */
+  private clientToWorld(cx: number, cy: number): { x: number; y: number } {
+    const r = this.panel.canvas.getBoundingClientRect();
+    return this.panel.view.screenToWorld(cx - r.left, cy - r.top);
+  }
+
+  /** ui-select P0 (D2): the left-click hit test — topmost PAWN, else cold THING by tight
+   *  silhouette box, else the TILE under the cursor. Single-click = replace; the drag-box
+   *  pass calls the same model with many refs. */
+  private selectAt(cx: number, cy: number): void {
+    const w = this.clientToWorld(cx, cy);
+    const pawn = this.moverLayer.pawnAt(w.x, w.y);
+    let sel: Selection;
+    if (pawn) {
+      sel = { kind: "pawn", entity: pawn.entity };
+    } else {
+      const thing = this.panel.view.thingAt(w.x, w.y);
+      sel = thing
+        ? { kind: "thing", primId: thing.primId }
+        : { kind: "tile", x: Math.floor(w.x / SQUARE), y: Math.floor(w.y / SQUARE) };
+    }
+    this.selection.replace(sel);
+  }
+
+  /** ui-select P0 (D3): right click + a selected PAWN → a MOVE_TO from the pawn's location to
+   *  the clicked tile, through core → edge (the npc's own verb). No selection → no-op. */
+  private issueMoveOrder(cx: number, cy: number): void {
+    const primary = this.selection.primary;
+    if (!primary || primary.kind !== "pawn") return;
+    const w = this.clientToWorld(cx, cy);
+    this.bridge.moveEntity(primary.entity, Math.floor(w.x / SQUARE), Math.floor(w.y / SQUARE));
+  }
 
   // ── scroll-to-zoom (about the cursor, through the bridge) ─────────────────────────
   // Continuous, per-event zoom (matching pixijs): every wheel tick applies a smooth

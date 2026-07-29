@@ -2404,6 +2404,18 @@ export class ShadowGather {
     if (lb === undefined) this.lastBox.set(prim.id, [tx, ty, t.w, t.h, 1]);
     else { lb[0] = tx; lb[1] = ty; lb[2] = t.w; lb[3] = t.h; lb[4] = 1; }
   }
+  /** ui-select P0 (D2): the TIGHT box (world px, ABSOLUTE) of a standing prim's silhouette,
+   *  for hit tests — def-resolved, mirrored for west-facing; full box when no tight data;
+   *  null → not a billboard (no def). */
+  tightBoxFor(prim: Primitive, resolver: TextureResolver | null): { x: number; y: number; w: number; h: number } | null {
+    const def = this.coldData.definitionFor(prim, resolver);
+    if (def < 0) return null;
+    const t = this.coldData.tightBoxOf(def);
+    if (!t) return { x: prim.x, y: prim.y, w: prim.width, h: prim.height };
+    const dx = prim.flipX ? prim.width - (t.dx + t.w) : t.dx;
+    return { x: prim.x + dx, y: prim.y + t.dy, w: t.w, h: t.h };
+  }
+
   /** DEBUG (hot-sync): moverDirty call/changed counters — the P2 lockstep drill reads these. */
   debugMoverDirtyCalls = 0;
   debugMoverDirtyChanges = 0;

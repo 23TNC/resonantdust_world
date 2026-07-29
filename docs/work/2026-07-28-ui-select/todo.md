@@ -7,18 +7,18 @@ verify at ≥2 zooms, tab VISIBLE._
 
 ## P0 · Input remap + the selection model
 
-- [ ] Middle-click pan: `WorldScene` pointer handlers pan on button 1 (drag), leaving
+- [x] Middle-click pan: `WorldScene` pointer handlers pan on button 1 (drag), leaving
       button 0 free; wheel zoom unchanged; context menu suppressed on the canvas.
       Acceptance: middle-drag pans, left-drag does NOT, wheel still zooms.
-- [ ] `SelectionModel` (new, `game/world/`): Set of refs + primary + tile selection,
+- [x] `SelectionModel` (new, `game/world/`): Set of refs + primary + tile selection,
       replace/add/toggle/clear + change event — the API the future drag-box will call
       with many refs (D1). Acceptance: unit-shaped console drill; consumers below
       react to the change event only.
-- [ ] Left-click hit test: `screenToWorld` → topmost warm mover by painter order, else
+- [x] Left-click hit test: `screenToWorld` → topmost warm mover by painter order, else
       cold thing by tight box, else the TILE (D2). Click selects (replace).
       Acceptance: clicking a wolf selects it; clicking a tree selects it; clicking
       ground selects the tile — probed via the model's state.
-- [ ] Right-click move order: selected PAWN + right click → `WasmClient.moveEntity`
+- [x] Right-click move order: selected PAWN + right click → `WasmClient.moveEntity`
       (pawn ref, clicked tile) (D3). Acceptance: select the wolf, right-click a tile —
       the wolf walks there (edge MOVE_TO round trip live).
 

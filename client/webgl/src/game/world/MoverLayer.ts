@@ -250,6 +250,22 @@ export class MoverLayer {
     }
   }
 
+  /** ui-select P0 (D2): the topmost MOVER whose drawn box contains the world point (px) —
+   *  painter order (zIndex, then southernmost) among overlaps. Returns the stable ENTITY
+   *  reference (warm prim ids churn on despawn); null → no pawn there. */
+  pawnAt(wx: number, wy: number): { entity: number; primId: number } | null {
+    let best: { entity: number; primId: number; zIndex: number; y: number } | null = null;
+    for (const [key, m] of this.movers) {
+      const p = this.viewport.warmGetPrim(m.id);
+      if (!p) continue;
+      if (wx < p.x || wx >= p.x + p.width || wy < p.y || wy >= p.y + p.height) continue;
+      if (!best || p.zIndex > best.zIndex || (p.zIndex === best.zIndex && p.y > best.y)) {
+        best = { entity: key, primId: m.id, zIndex: p.zIndex, y: p.y };
+      }
+    }
+    return best ? { entity: best.entity, primId: best.primId } : null;
+  }
+
   // ── internals ───────────────────────────────────────────────────────
 
   private refreshTables(): void {

@@ -328,6 +328,22 @@ export class Viewport {
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
     return this.camera.screenToWorld(sx, sy);
   }
+
+  /** ui-select P0 (D2): the topmost COLD standing prim whose TIGHT silhouette box contains the
+   *  world point — painter order (zIndex, then southernmost) picks among overlaps. Movers are
+   *  the MoverLayer's to hit-test (they carry entity identity this cache doesn't know). */
+  thingAt(wx: number, wy: number): { primId: number } | null {
+    let best: { id: number; zIndex: number; y: number } | null = null;
+    for (const p of this.map.standingPrims()) {
+      const b = this.shadows.tightBoxFor(p, this.resolver);
+      if (!b) continue;
+      if (wx < b.x || wx >= b.x + b.w || wy < b.y || wy >= b.y + b.h) continue;
+      if (!best || p.zIndex > best.zIndex || (p.zIndex === best.zIndex && p.y > best.y)) {
+        best = { id: p.id, zIndex: p.zIndex, y: p.y };
+      }
+    }
+    return best ? { primId: best.id } : null;
+  }
   worldToScreen(wx: number, wy: number): { x: number; y: number } {
     return this.camera.worldToScreen(wx, wy);
   }
