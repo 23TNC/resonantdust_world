@@ -376,6 +376,11 @@ export class Viewport {
     prim.y = y;
     this.map.refreshPrim(id);
   }
+  /** build-walls P1: re-bake a COLD prim after an in-place field mutation (a linked tile's
+   *  `cell` re-pick) — the cold sibling of {@link warmRefreshPrim}. */
+  refreshPrim(id: number): void {
+    this.map.refreshPrim(id);
+  }
   getPrim(id: number): Primitive | null {
     return this.map.getPrim(id);
   }

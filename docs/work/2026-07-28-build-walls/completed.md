@@ -17,3 +17,19 @@ shared wasm + webgl): `tileBuilds()` = [,,,,,"wall"], names[5] = wall_smooth (de
 bound, and the CLIENT manifest entry for `…smooth/wall/l` carries grid [4,4] + all four
 maps; the boot assertion passed (page loads). The "second kind without client code"
 sub-check is structural (the scan reads the table) — not fixture-drilled.
+
+## 2026-07-28 · P1 — linked-tile rendering (1/1)
+
+The Phase-2 the pathway documented: `tilePrimSpec` (ONE spec builder shared by the baseline
+row paint and the ground override) routes a linked stem (manifest grid for `<stem>/l`, via
+the new `TextureResolver.linkedGridFor`) through `<stem>/l` + the D1 neighbor cell. The
+neighbor context is a global `tileKindAt` map (drawn kind per tile, fed by both paint sites
++ tombstones); a kind CHANGE queues the cell and `processReCells` re-picks the 4-neighbor
+ring's cells in place (`prim.cell` mutate + the new cold `Viewport.refreshPrim`) — global
+map, so row and zone seams need no special casing client-side. **Verified live** (`__bridge`
+debug global driving the same primitives the override path uses): a hand-painted L of
+wall_smooth (94..98,48)+(94,44..48) crossing the x=96 zone seam — every probed cell EXACT
+(corner N+E→15, ends W→4 / S→8, mids W+E→6 / N+S→9), texture `…smooth/wall/l`, and the
+capture shows end caps, straight runs, and the corner joined correctly; intact at zoom 0.5.
+The SERVER-row seam case (two zones' rows arriving separately) rides the same global map —
+exercised for real by P3's event drill.

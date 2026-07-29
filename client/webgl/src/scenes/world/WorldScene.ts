@@ -87,6 +87,8 @@ export class WorldScene extends Scene {
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.panel.view);
     // DEBUG: `__sel` — the live SelectionModel (ui-select P0 acceptance probes read/drive it).
     (globalThis as unknown as { __sel: SelectionModel }).__sel = this.selection;
+    // DEBUG: `__bridge` — the WorldBridge (build-walls drills drive the tile paths directly).
+    (globalThis as unknown as { __bridge: WorldBridge }).__bridge = this.bridge;
     // ui-select P1: a selected TILE shows its world coordinates in the panel's title bar
     // (the "selection" suffix — also visible on the taskbar entry while the bar is hidden).
     this.panel.setTitleSuffixResolver("selection", () => {

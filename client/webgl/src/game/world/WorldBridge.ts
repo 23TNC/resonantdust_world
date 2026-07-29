@@ -21,9 +21,10 @@ import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
 import type { TextureResolver } from "../../textures";
 import { lodForZoom, SLOTS_X, SLOTS_Y, SQUARE } from "../viewport/squareMath";
-import type { PrimitiveLight } from "../viewport/SquareCache";
+import type { PrimitiveLight, PrimitiveSpec } from "../viewport/SquareCache";
 import { MaterialRegistry, type PackedChannel } from "../viewport/material";
 import { placeThing, readLayout } from "./thingPlacement";
+import { linkedCell, N as MASK_N, E as MASK_E, S as MASK_S, W as MASK_W } from "./linkedCell";
 
 /** The viewport anchor's name in the client's anchor list. */
 const ANCHOR = "viewport:0";
@@ -141,6 +142,13 @@ export class WorldBridge {
    *  cell — so a baseline (re-)expand knows which cells to skip. */
   private readonly coldCellWinner = new Map<string, number>();
   private readonly unsubs: Array<() => void> = [];
+  /** build-walls P1 (D2): the DRAWN ground kind at each tile (`(tileX<<16)|tileY` → defId) —
+   *  the neighbor context linked tiles pick their atlas cell from. Updated by both paint
+   *  sites (baseline rows + overrides); a change queues the 4-neighbor ring for re-cell.
+   *  A closed zone's entries go stale harmlessly (its neighbors' walls are off-screen with it). */
+  private readonly tileKindAt = new Map<number, number>();
+  /** Tiles whose neighbors must re-pick their linked cell after the current paint. */
+  private readonly reCellQueue = new Set<number>();
 
   /** Texture-stem tables from the content bundle, indexed by `defId - 1` (the
    *  `defId` each prim carries). Cached so the per-cell expansion loop doesn't
@@ -391,6 +399,14 @@ export class WorldBridge {
 
     // [tileX, tileY, tint, geoColor, defId, …] — stride 5.
     const flat = this.content.zoneTilePrims(macroPosition, tiles);
+    // build-walls P1 (D2): PASS 1 — record every cell's kind (override-suppressed cells keep
+    // the override's kind; the override path recorded it). A CHANGED kind queues the cell so
+    // its neighbor ring re-picks linked cells after the paint.
+    for (let i = 0; i + 4 < flat.length; i += 5) {
+      const ck = cellKey(typeId, flat[i], flat[i + 1]);
+      if (this.coldCellWinner.has(ck)) continue;
+      this.recordTileKind(flat[i], flat[i + 1], flat[i + 4]);
+    }
     const ids: number[] = [];
     for (let i = 0; i + 4 < flat.length; i += 5) {
       const tileX = flat[i];
@@ -400,22 +416,84 @@ export class WorldBridge {
       const defId = flat[i + 4];
       const ck = cellKey(typeId, tileX, tileY);
       if (this.baselineSuppressed(ck, key, tic)) continue; // a newer override wins this cell — skip baseline
-      const primId = this.viewport.addPrim({
-        texture: this.white,
-        textureName: textureNameFor(this.tileStems[defId - 1]),
-        x: tileX * SQUARE,
-        y: tileY * SQUARE,
-        width: SQUARE,
-        height: SQUARE,
-        tint,
-        geoColor,
-        packed: this.packedFor(this.tilePacked, defId),
-        seed: cellSeed(tileX, tileY),
-      });
+      const primId = this.viewport.addPrim(this.tilePrimSpec(tileX, tileY, defId, tint, geoColor));
       ids.push(primId);
       this.coldCellPrims.set(ck, { primId, tic, rowKey: key });
     }
     if (ids.length) this.coldPrims.set(key, ids);
+    this.processReCells();
+  }
+
+  // ── build-walls P1 (D2): linked-tile cells from same-kind neighbors ─────────────────
+
+  /** The prim spec for one ground cell — SHARED by the baseline row paint and the ground
+   *  override. A LINKED stem (the manifest carries a grid for `<stem>/l`) routes through the
+   *  autotile path: textureName `<stem>/l` + the neighbor-context cell (D1). */
+  private tilePrimSpec(tileX: number, tileY: number, defId: number, tint: number, geoColor: number): PrimitiveSpec {
+    const stem = this.tileStems[defId - 1];
+    const linked = stem && stem !== "white" ? this.resolver.linkedGridFor(stem) : null;
+    return {
+      texture: this.white,
+      textureName: linked ? `${stem}/l` : textureNameFor(stem),
+      cell: linked ? linkedCell(this.neighborMask(tileX, tileY, defId)) : undefined,
+      x: tileX * SQUARE,
+      y: tileY * SQUARE,
+      width: SQUARE,
+      height: SQUARE,
+      tint,
+      geoColor,
+      packed: this.packedFor(this.tilePacked, defId),
+      seed: cellSeed(tileX, tileY),
+    };
+  }
+
+  /** The 4-neighbor same-kind mask for a tile (N/E/S/W bits — north is −y). */
+  private neighborMask(tileX: number, tileY: number, defId: number): number {
+    const at = (x: number, y: number): boolean => this.tileKindAt.get(((x & 0xffff) << 16) | (y & 0xffff)) === defId;
+    return (at(tileX, tileY - 1) ? MASK_N : 0) | (at(tileX + 1, tileY) ? MASK_E : 0)
+         | (at(tileX, tileY + 1) ? MASK_S : 0) | (at(tileX - 1, tileY) ? MASK_W : 0);
+  }
+
+  /** Record a cell's drawn kind; a CHANGE queues it so {@link processReCells} re-picks its
+   *  neighbors' linked cells (the ring — across rows and zone seams, since the map is global). */
+  private recordTileKind(tileX: number, tileY: number, defId: number): void {
+    const k = ((tileX & 0xffff) << 16) | (tileY & 0xffff);
+    if (this.tileKindAt.get(k) === defId) return;
+    if (defId === 0) this.tileKindAt.delete(k);
+    else this.tileKindAt.set(k, defId);
+    this.reCellQueue.add(k);
+  }
+
+  /** Re-pick the linked cell of every DRAWN neighbor of the queued (changed) cells — mutate
+   *  the prim's `cell` in place + refresh its squares. Cheap: a handful of cells per change. */
+  private processReCells(): void {
+    if (this.reCellQueue.size === 0) return;
+    const typeId = this.content.typeBiomeTile();
+    const seen = new Set<number>();
+    for (const k of this.reCellQueue) {
+      const cx = (k >> 16) & 0xffff, cy = k & 0xffff;
+      for (const [nx, ny] of [[cx, cy - 1], [cx + 1, cy], [cx, cy + 1], [cx - 1, cy], [cx, cy]] as const) {
+        const nk = ((nx & 0xffff) << 16) | (ny & 0xffff);
+        if (seen.has(nk)) continue;
+        seen.add(nk);
+        const defId = this.tileKindAt.get(nk);
+        if (defId === undefined) continue;
+        const stem = this.tileStems[defId - 1];
+        if (!stem || stem === "white" || !this.resolver.linkedGridFor(stem)) continue;
+        const ck = cellKey(typeId, nx, ny);
+        const winner = this.coldCellWinner.get(ck);
+        const primId = winner !== undefined ? this.coldOverrides.get(winner)?.id : this.coldCellPrims.get(ck)?.primId;
+        if (primId === undefined || primId === null) continue;
+        const prim = this.viewport.coldGetPrim(primId);
+        if (!prim) continue;
+        const cell = linkedCell(this.neighborMask(nx, ny, defId));
+        if (prim.cell !== cell) {
+          prim.cell = cell;
+          this.viewport.refreshPrim(primId);
+        }
+      }
+    }
+    this.reCellQueue.clear();
   }
 
   /** A zone's cold **scatter** arrived — sparse `kind_pos_reference`s. Paints a bottom-centred
@@ -582,19 +660,11 @@ export class WorldBridge {
       const data = flat[6];
       const variant = flat[7];
       if (typeId === this.content.typeBiomeTile()) {
-        // Ground override — a full cell in place of the baseline.
-        id = this.viewport.addPrim({
-          texture: this.white,
-          textureName: textureNameFor(this.tileStems[kindId - 1]),
-          x: tileX * SQUARE,
-          y: tileY * SQUARE,
-          width: SQUARE,
-          height: SQUARE,
-          tint,
-          geoColor,
-          packed: this.packedFor(this.tilePacked, kindId),
-          seed: cellSeed(tileX, tileY),
-        });
+        // Ground override — a full cell in place of the baseline. build-walls P1: the shared
+        // spec routes linked kinds (walls) through the autotile cell; the kind change re-cells
+        // the neighbor ring (a new wall reshapes the walls beside it).
+        this.recordTileKind(tileX, tileY, kindId);
+        id = this.viewport.addPrim(this.tilePrimSpec(tileX, tileY, kindId, tint, geoColor));
       } else {
         // Thing override — the thing sprite, bottom-anchored like the scatter.
         const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
@@ -620,6 +690,10 @@ export class WorldBridge {
     // the baseline cell.
     this.coldOverrides.set(o.entityReference, { id, macroPosition: o.macroPosition, cellKey: ck, rowKey, tic: o.tic });
     this.coldCellWinner.set(ck, o.entityReference);
+    // build-walls P1: a winning tombstone removes the ground kind; either way the neighbor
+    // ring re-picks its linked cells now.
+    if (typeId === this.content.typeBiomeTile() && flat.length < 8) this.recordTileKind(tileX, tileY, 0);
+    this.processReCells();
   }
 
   /** A zone's subscription closed: drop all of its cold-object sprites (every row) + overlay prims. */

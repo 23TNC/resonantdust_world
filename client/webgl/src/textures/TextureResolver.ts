@@ -96,6 +96,13 @@ export class TextureResolver {
     this.blitter = new Blitter(renderer);
   }
 
+  /** build-walls P1: a LINKED tile stem's grid (`[cols, rows]`) — the manifest entry for
+   *  `<stem>/l` — or null for an ordinary stem. The tile expansion uses this to route a
+   *  tile through the linked-atlas path (`<stem>/l` + a neighbor-context cell). */
+  linkedGridFor(stem: string): [number, number] | null {
+    return this.manifest.entry(`${stem}/l`)?.grid ?? null;
+  }
+
   /** Repoint the texture root at login + fetch/poll the manifest. */
   setRoot(texturesRoot: string): void {
     this.root = texturesRoot;

@@ -20,7 +20,7 @@ the FUTURE-INTENT note). Visual items verify at ≥2 zooms, tab VISIBLE._
 
 ## P1 · Linked-tile rendering (the pathway's documented Phase 2)
 
-- [ ] `WorldBridge` tile expansion: a linked tile's `cell` comes from same-kind cardinal
+- [x] `WorldBridge` tile expansion: a linked tile's `cell` comes from same-kind cardinal
       neighbors (D1 helper), not canonical 0; a tile change re-expands its 4-neighbor ring,
       across row AND zone boundaries. Acceptance: a hand-painted L of wall tiles renders
       ends/corners/tees correctly, including across a zone seam; zoom-stable at 2 zooms.
