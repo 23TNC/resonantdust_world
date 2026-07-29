@@ -37,6 +37,18 @@ pub fn place_program(entity: u32, tile_x: i32, tile_y: i32) -> Vec<u32> {
     vec![PROMOTE, PLACE, entity, tile_to_position(tile_x, tile_y)]
 }
 
+/// The action program for [`crate::api::Command::BuildWall`] (build-walls D5): bare
+/// `BUILD_WALL start end object` — no PROMOTE (the verb writes nothing; the worker expands
+/// the rect's perimeter and queues a `PROMOTE SET` per tile, each routing to its own zone).
+pub fn build_wall_program(start_x: i32, start_y: i32, end_x: i32, end_y: i32, object: u32) -> Vec<u32> {
+    vec![
+        resonantdust_codec::action::BUILD_WALL,
+        tile_to_position(start_x, start_y),
+        tile_to_position(end_x, end_y),
+        object,
+    ]
+}
+
 /// Decode a settled, promoted `event` row's program into [`Event::MoveIntent`]s — one per
 /// `MOVE_TO` instruction (`ACTIONS.md` §Movement: the intent channel clients speculate from).
 /// Non-movement actions in the program are simply skipped.

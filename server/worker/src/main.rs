@@ -25,12 +25,14 @@ use std::time::Duration;
 
 use spacetimedb_sdk::{DbContext, Table as _};
 
-use resonantdust_codec::action::{self, Route, CREATE, INIT_ZONE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, SET};
+use resonantdust_codec::action::{
+    self, Route, BUILD_WALL, CREATE, INIT_ZONE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, SET,
+};
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, kind_pos_ref_data,
-    kind_pos_ref_kind_reference, kind_pos_ref_tile, pack_pawn_data, pack_position_reference,
-    pawn_trip_serial, position_macro, position_micro, position_to_tile, tile_to_position,
-    TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
+    kind_pos_ref_kind_reference, kind_pos_ref_tile, pack_cold_row_reference, pack_kind_reference,
+    pack_pawn_data, pack_position_reference, pawn_trip_serial, position_macro, position_micro,
+    position_to_tile, tile_to_position, TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
 };
 use resonantdust_codec::speed;
 use resonantdust_codec::refs::entity_ref_type_id;
@@ -553,6 +555,48 @@ async fn main() {
                     if let Err(err) = event.reducers().queue_at(program, next_tic) {
                         tracing::warn!(%err, tic = t, obj = format!("{obj:#010x}"), "continuation queue failed — chain ends");
                     }
+                }
+            }
+
+            // ── BUILD (BUILD_WALL start end object) ── expand the rect's PERIMETER and queue one
+            // `PROMOTE SET` per tile at the next tic (ACTIONS.md §Building): each SET routes to
+            // ITS OWN zone through the normal queue, so a multi-zone rect is safe by construction.
+            // IMMEDIATE building is THIS pass's policy, not the verb's contract — the documented
+            // future queues blueprint-entity creates here instead. Best-effort like the movement
+            // continuations: a failed queue drops that tile's wall (the client can re-issue).
+            for (_event_reference, actions) in &events {
+                for inst in action::program(actions) {
+                    let Ok(inst) = inst else { break };
+                    let (start, end, object) = match (inst.action, inst.operands) {
+                        (BUILD_WALL, [s, e, o]) => (*s, *e, *o),
+                        _ => continue,
+                    };
+                    let (sx, sy) = position_to_tile(start);
+                    let (ex, ey) = position_to_tile(end);
+                    let (x0, x1) = (sx.min(ex), sx.max(ex));
+                    let (y0, y1) = (sy.min(ey), sy.max(ey));
+                    let next_tic = tic_add(t, 1);
+                    let kind = u32::from(pack_kind_reference(object as u16, 0));
+                    let mut queued = 0u32;
+                    for x in x0..=x1 {
+                        for y in y0..=y1 {
+                            if x != x0 && x != x1 && y != y0 && y != y1 {
+                                continue; // interior — walls stand on the perimeter only
+                            }
+                            let pos = tile_to_position(x, y);
+                            let cold_row = pack_cold_row_reference(position_macro(pos), 0, 0);
+                            let tile_reference = u32::from((position_micro(pos) >> 8) as u8);
+                            let program = vec![
+                                PROMOTE, SET, cold_row, u32::from(TYPE_BIOME_TILE), tile_reference, kind, 0,
+                            ];
+                            if let Err(err) = event.reducers().queue_at(program, next_tic) {
+                                tracing::warn!(%err, tic = t, x, y, "build_wall SET queue failed — tile dropped");
+                            } else {
+                                queued += 1;
+                            }
+                        }
+                    }
+                    tracing::info!(tic = t, x0, y0, x1, y1, object, queued, "build_wall expanded");
                 }
             }
 

@@ -112,6 +112,11 @@ export class TextureResolver {
     return this.root;
   }
 
+  /** build-walls P2: a stem's manifest hash (DOM icon URLs are hash-addressed), or null. */
+  manifestHashFor(stem: string): string | null {
+    return this.manifest.entry(stem)?.hash ?? null;
+  }
+
   /** Set the target LOD from the viewport's on-screen tile size (`SQUARE × zoom`), CLAMPED to
    *  `BASE_LOD_PX`. Zooming past 1 magnifies rather than fetching art above the maximum size — the
    *  slot holds a tile in `SQUARE` texels, so a bigger master could not be displayed anyway. */

@@ -526,6 +526,13 @@ impl WorldClient {
         let _ = self.inner.move_entity(entity, tile_x, tile_y);
     }
 
+    /// Order walls on the `(start..end)` tile rect's PERIMETER (build-walls D5) — compiles to a
+    /// `BUILD_WALL` program; the worker expands + queues the per-tile SETs. No-op offline.
+    #[wasm_bindgen(js_name = buildWall)]
+    pub fn build_wall(&self, start_x: i32, start_y: i32, end_x: i32, end_y: i32, object: u32) {
+        let _ = self.inner.build_wall(start_x, start_y, end_x, end_y, object);
+    }
+
     /// Seed the tic estimator's rate from a persisted hint (movement-hardening F5 — kills the
     /// cold-page warmup). Clamped; ignored once the stream has anchored.
     #[wasm_bindgen(js_name = seedTicRate)]

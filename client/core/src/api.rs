@@ -97,6 +97,16 @@ pub enum Command {
         tile_x: i32,
         tile_y: i32,
     },
+    /// Order walls built on the PERIMETER of the `(start..end)` tile rect (build-walls D5) —
+    /// compiles to a `BUILD_WALL` program; the worker expands + queues the per-tile SETs.
+    /// `object` is the wall kind's definition reference. Requires a live session.
+    BuildWall {
+        start_x: i32,
+        start_y: i32,
+        end_x: i32,
+        end_y: i32,
+        object: u32,
+    },
     /// Place `entity` at global tile `(tile_x, tile_y)` and promote it into `state` — compiles to a
     /// `PROMOTE_STATE` + `PLACE` program. Bootstraps an entity the client addresses by `entity` (the
     /// spawn path until `CREATE`'s minted-id claim lands). Requires a live session; ignored otherwise.

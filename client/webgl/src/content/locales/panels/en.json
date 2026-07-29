@@ -121,5 +121,8 @@
     "build": "Build",
     "contentLive": "Content (live)",
     "notConnected": "not connected"
+  },
+  "buildPanel": {
+    "label": "Build"
   }
 }

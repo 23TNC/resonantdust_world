@@ -13,6 +13,10 @@ import { WorldBridge } from "../../game/world/WorldBridge";
 import { MoverLayer } from "../../game/world/MoverLayer";
 import { ChatPanel } from "../../game/panels/chat/ChatPanel";
 import { DetailsPanel } from "../../game/panels/details/DetailsPanel";
+import { BuildPanel } from "../../game/panels/build/BuildPanel";
+import { buildMenuEntries, blueprintStemFor, type BuildEntry } from "../../game/world/buildMenu";
+import { linkedCell, N as MASK_N, E as MASK_E, S as MASK_S, W as MASK_W } from "../../game/world/linkedCell";
+import type { BlueprintTile } from "../../game/viewport/blueprintOverlay";
 import { LogManager } from "../../game/panels/chat/LogManager";
 import { PanelManager } from "../../ui/panels/PanelManager";
 import { SQUARE } from "../../game/viewport/squareMath";
@@ -57,6 +61,12 @@ export class WorldScene extends Scene {
   private clickY = 0;
   /** ui-select P1 (D4): the cursor light's carrier prim (warm, hot; created on first move). */
   private cursorLightId: number | null = null;
+  /** build-walls P2 (D4): the active placement mode's kind, or null. While set, left-drag
+   *  forms the wall rect (selection clicks suspended) and right-click exits the mode. */
+  private buildMode: BuildEntry | null = null;
+  /** The drag's start tile once the left button is down in build mode. */
+  private buildDragStart: { x: number; y: number } | null = null;
+  private buildPanel: BuildPanel | null = null;
 
   onEnter(ctx: GameContext): void {
     this.ctx = ctx;
@@ -105,6 +115,11 @@ export class WorldScene extends Scene {
       },
     });
     this.details.open();
+    // build-walls P2: the build panel — categories/icons entirely from content (D3).
+    this.buildPanel = new BuildPanel(ctx, ctx.textureResolver,
+      () => buildMenuEntries(getContent()),
+      (entry) => this.enterBuildMode(entry));
+    this.buildPanel.open();
 
     // The corpus hot-swaps on login (`onLoggedIn` → `reloadContent` in main.ts pulls the server's
     // corpus, replacing the boot embed). Push the new corpus into the bridge + mover layer so they
@@ -177,6 +192,8 @@ export class WorldScene extends Scene {
     this.chat?.destroy();
     this.details?.destroy();
     this.details = null;
+    this.buildPanel?.destroy();
+    this.buildPanel = null;
     this.moverLayer?.dispose();
     this.bridge?.dispose();
     this.panel?.destroy();
@@ -267,10 +284,75 @@ export class WorldScene extends Scene {
     }
   }
 
+  // ── build placement mode (build-walls P2, D4) ─────────────────────────────────────
+
+  /** Enter wall placement for `entry` (the panel's icon click). Selection clicks suspend;
+   *  left-drag forms the rect; right-click exits. */
+  private enterBuildMode(entry: BuildEntry): void {
+    this.buildMode = entry;
+    this.buildDragStart = null;
+    this.panel.canvas.style.cursor = "crosshair";
+  }
+
+  private exitBuildMode(): void {
+    this.buildMode = null;
+    this.buildDragStart = null;
+    this.panel.view.setBlueprint([]);
+    this.panel.canvas.style.cursor = "";
+    this.buildPanel?.setActive(null);
+  }
+
+  private tileAt(cx: number, cy: number): { x: number; y: number } {
+    const w = this.clientToWorld(cx, cy);
+    return { x: Math.floor(w.x / SQUARE), y: Math.floor(w.y / SQUARE) };
+  }
+
+  /** The drag rect's PERIMETER tiles (the walls a release will order). */
+  private buildPerimeter(ax: number, ay: number, bx: number, by: number): Array<{ x: number; y: number }> {
+    const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx);
+    const y0 = Math.min(ay, by), y1 = Math.max(ay, by);
+    const out: Array<{ x: number; y: number }> = [];
+    for (let x = x0; x <= x1; x++) {
+      for (let y = y0; y <= y1; y++) {
+        if (x === x0 || x === x1 || y === y0 || y === y1) out.push({ x, y });
+      }
+    }
+    return out;
+  }
+
+  /** Rebuild the blueprint preview for the current drag — the blueprint linked atlas,
+   *  variant-aware against the PREVIEW SHAPE itself (D1 CPU-side; client-only). */
+  private syncBuildPreview(cx: number, cy: number): void {
+    if (!this.buildMode || !this.buildDragStart) return;
+    const cur = this.tileAt(cx, cy);
+    const per = this.buildPerimeter(this.buildDragStart.x, this.buildDragStart.y, cur.x, cur.y);
+    const shape = new Set<number>(per.map((t) => ((t.x & 0xffff) << 16) | (t.y & 0xffff)));
+    const inShape = (x: number, y: number): boolean => shape.has(((x & 0xffff) << 16) | (y & 0xffff));
+    const stem = `${blueprintStemFor(this.buildMode.stem)}/l`;
+    const tiles: BlueprintTile[] = per.map((t) => {
+      const mask = (inShape(t.x, t.y - 1) ? MASK_N : 0) | (inShape(t.x + 1, t.y) ? MASK_E : 0)
+                 | (inShape(t.x, t.y + 1) ? MASK_S : 0) | (inShape(t.x - 1, t.y) ? MASK_W : 0);
+      const f = this.ctx.textureResolver.resolve(stem, "albedo", linkedCell(mask)).frame;
+      return { tileX: t.x, tileY: t.y, frame: f ? { source: f.source, x: f.x, y: f.y, w: f.w, h: f.h } : null };
+    });
+    this.panel.view.setBlueprint(tiles);
+  }
+
   // ── drag-to-pan (through the bridge, so zone subscriptions follow) ────────────────
   // ui-select P0: pan rides the MIDDLE button (1) only — left (0) is selection's, right (2)
   // is the move order's. preventDefault on middle stops the browser's autoscroll widget.
+  // build-walls P2 (D4): an active placement mode reroutes left (start the rect) and right
+  // (exit the mode); middle-pan stays live.
   private readonly onPointerDown = (e: PointerEvent): void => {
+    if (this.buildMode && e.button === 0) {
+      this.buildDragStart = this.tileAt(e.clientX, e.clientY);
+      this.syncBuildPreview(e.clientX, e.clientY);
+      return;
+    }
+    if (this.buildMode && e.button === 2) {
+      this.exitBuildMode();
+      return;
+    }
     if (e.button === 0) {
       this.clickId = e.pointerId;
       this.clickX = e.clientX;
@@ -291,6 +373,7 @@ export class WorldScene extends Scene {
 
   private readonly onPointerMove = (e: PointerEvent): void => {
     this.updateCursorLight(e.clientX, e.clientY); // ui-select P1 (D4) — every move, drag or not
+    if (this.buildMode && this.buildDragStart) this.syncBuildPreview(e.clientX, e.clientY);
     if (this.dragId !== e.pointerId) return;
     // RENDER SCALE, not logical zoom. A screen-px drag is `1 / renderScale` world px — that is the
     // actual world→screen factor the projection uses. Dividing by `camera.zoom` here made the ground
@@ -304,6 +387,17 @@ export class WorldScene extends Scene {
   };
 
   private readonly onPointerUp = (e: PointerEvent): void => {
+    // build-walls P2/P3: releasing the left button in a build drag ISSUES the wall order
+    // (start tile, end tile, the kind's def id) and clears the client-only preview. The
+    // mode STAYS active for the next rect; right-click exits.
+    if (this.buildMode && this.buildDragStart && e.button === 0) {
+      const start = this.buildDragStart;
+      const end = this.tileAt(e.clientX, e.clientY);
+      this.buildDragStart = null;
+      this.panel.view.setBlueprint([]);
+      this.bridge.buildWall(start.x, start.y, end.x, end.y, this.buildMode.defId);
+      return;
+    }
     // A pending left click resolves on UP: within the slop it SELECTS; past it, it was a drag
     // (the future drag-box claims exactly this branch).
     if (this.clickId === e.pointerId) {

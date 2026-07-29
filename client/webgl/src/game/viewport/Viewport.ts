@@ -20,6 +20,7 @@ import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_UNIT, TEXTILE_LIGHT } from "./squareMath";
 import { makeNoiseAtlas } from "./noiseAtlas";
 import { OutlineOverlay, type OutlineItem } from "./outlineOverlay";
+import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
 import { LIGHT_QUANT } from "./shadowGather";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
@@ -97,6 +98,8 @@ export class Viewport {
   private readonly shadows: ShadowGather;
   /** ui-select P1: the selection outline overlay (drawn topmost in {@link tick}). */
   private readonly outline: OutlineOverlay;
+  /** build-walls P2: the blueprint drag-preview overlay (under the outline, over the world). */
+  private readonly blueprint: BlueprintOverlay;
   private displayGeo: Geometry | null = null;
   private pos = new Float32Array(0);
   private uv = new Float32Array(0);
@@ -119,6 +122,7 @@ export class Viewport {
     this.warm = new SquareCache(this.renderer, this.empty, this.channels("warm"));
     this.shadows = new ShadowGather(this.renderer);
     this.outline = new OutlineOverlay(this.renderer, this.empty);
+    this.blueprint = new BlueprintOverlay(this.renderer, this.empty);
 
     this.grid = new Program(gl, GRID_VERT, GRID_FRAG, "viewport-grid");
     this.gridQuad = new Geometry(gl, this.grid, {
@@ -336,6 +340,11 @@ export class Viewport {
   /** ui-select P1: replace the outlined selection set (the scene rebuilds per frame). */
   setOutlines(items: OutlineItem[]): void {
     this.outline.set(items);
+  }
+
+  /** build-walls P2: replace the blueprint preview tiles (empty = clear). */
+  setBlueprint(tiles: BlueprintTile[]): void {
+    this.blueprint.set(tiles);
   }
 
   /** ui-select P1: a COLD standing prim by id (the warm sibling is {@link warmGetPrim}). */
@@ -558,7 +567,9 @@ export class Viewport {
       });
     }
 
-    // ui-select P1: selection outlines, topmost (over grid/overlays — a selection must never hide).
+    // build-walls P2: the blueprint drag preview, then ui-select P1's selection outlines
+    // topmost (over grid/overlays — a selection must never hide).
+    this.blueprint.draw(this.camera);
     this.outline.draw(this.camera);
   }
 

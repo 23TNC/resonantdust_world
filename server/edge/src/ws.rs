@@ -549,6 +549,7 @@ const CLIENT_VERBS: &[u32] = &[
     resonantdust_codec::action::PLACE,
     resonantdust_codec::action::MOVE_TO,
     resonantdust_codec::action::SET,
+    resonantdust_codec::action::BUILD_WALL, // build-walls D5: the client-issued build order
 ];
 
 /// Validate + relay a client intent to `event_shard.queue`. The door enforces "logged in",

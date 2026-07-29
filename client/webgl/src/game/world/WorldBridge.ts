@@ -306,6 +306,12 @@ export class WorldBridge {
     this.client.moveEntity(entity, tileX, tileY);
   }
 
+  /** build-walls D5: the release-issued BUILD ORDER — walls on the `(start..end)` rect's
+   *  perimeter, `object` = the wall kind's def. The worker expands + queues per-tile SETs. */
+  buildWall(startX: number, startY: number, endX: number, endY: number, object: number): void {
+    this.client.buildWall(startX, startY, endX, endY, object);
+  }
+
   /** Apply a zoom: record it (widens {@link radii} as we zoom out to see more world) and
    *  move to the cursor-anchored point. {@link setAnchor} re-pushes on its own iff the
    *  reach actually changed, so a zoom that stays within a tier boundary is free. */

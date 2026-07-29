@@ -53,6 +53,14 @@ pub const SET: u32 = 6;
 /// re-queues ONLY while the serial still matches; a mismatch means a newer intent superseded
 /// this chain, and the hop dies silently (`ACTIONS.md` §Movement chain identity).
 pub const MOVE_STEP: u32 = 8;
+/// The CLIENT-issued build order (build-walls D5). Operands: `start` (imm,
+/// `position_reference`), `end` (imm, `position_reference`), `object` (imm — the kind's
+/// definition reference, a full u32 slot). Writes NOTHING itself: the worker expands the
+/// rect's PERIMETER and queues a `PROMOTE SET` per tile (the verb-that-queues-events
+/// pattern), so each cell routes to ITS zone — a multi-zone rect is safe by construction.
+/// Immediate building is the worker's CURRENT policy, not this verb's contract: the
+/// documented future swaps the queued events for blueprint-entity creates (`ACTIONS.md`).
+pub const BUILD_WALL: u32 = 9;
 
 /// What an operand is, for deriving the write/read sets. Only `entity_reference` operands matter to
 /// the sets; `Imm` operands (numbers, positions, definitions) are neither.
@@ -91,6 +99,7 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         MOVE_TO => &[ReadWrite, Imm], // obj (reads its own position, writes the next), dest
         MOVE_STEP => &[ReadWrite, Imm, Imm], // obj, dest, trip-serial (worker-only chain hop)
         SET => &[Write, Imm, Imm, Imm, Imm], // cold_row, type_id, tile_reference, kind_reference, data
+        BUILD_WALL => &[Imm, Imm, Imm], // start, end, object — writes nothing; the worker queues SETs
         _ => return None,
     })
 }

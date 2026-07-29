@@ -127,6 +127,12 @@ impl Client {
         self.send(Command::Move { entity, tile_x, tile_y })
     }
 
+    /// Convenience: order walls on the `(start..end)` rect's perimeter (see
+    /// [`Command::BuildWall`]).
+    pub fn build_wall(&self, start_x: i32, start_y: i32, end_x: i32, end_y: i32, object: u32) -> Result<(), SendError> {
+        self.send(Command::BuildWall { start_x, start_y, end_x, end_y, object })
+    }
+
     /// Convenience: place + promote `entity` at global tile `(tile_x, tile_y)` (see
     /// [`Command::Place`]).
     pub fn place(&self, entity: u32, tile_x: i32, tile_y: i32) -> Result<(), SendError> {
@@ -323,6 +329,9 @@ impl Engine {
             Command::SeedTicRate { tics_per_sec } => self.tics.seed_rate(tics_per_sec),
             Command::Move { entity, tile_x, tile_y } => {
                 self.handle_queue(world::move_to_program(entity, tile_x, tile_y)).await;
+            }
+            Command::BuildWall { start_x, start_y, end_x, end_y, object } => {
+                self.handle_queue(world::build_wall_program(start_x, start_y, end_x, end_y, object)).await;
             }
             Command::Place { entity, tile_x, tile_y } => {
                 self.handle_queue(world::place_program(entity, tile_x, tile_y)).await;

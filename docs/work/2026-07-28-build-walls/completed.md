@@ -33,3 +33,42 @@ wall_smooth (94..98,48)+(94,44..48) crossing the x=96 zone seam — every probed
 capture shows end caps, straight runs, and the corner joined correctly; intact at zoom 0.5.
 The SERVER-row seam case (two zones' rows arriving separately) rides the same global map —
 exercised for real by P3's event drill.
+
+## 2026-07-29 · P2 — panel + mode + preview (3/3)
+
+`BuildPanel` (`game/panels/build/`): one sub-tab per category from `buildMenuEntries`, icons
+= the linked atlas's cell (0,1) as a CSS crop of the hash-addressed master URL (D6 — the
+same art the world uses; a bounded retry applies the art when the async manifest lands).
+Placement mode lives in WorldScene: icon click → crosshair + suspended selection; LEFT drag
+forms the rect with `syncBuildPreview` rebuilding per move; RIGHT click exits (verified:
+crosshair on, cleared on right-click, selection functional after). The preview is the new
+`BlueprintOverlay` (F2 — a dedicated textured-quad pass, NOT cold-cache prims: zero bake
+churn, clearing = dropping the list; unstreamed cells draw flat translucent blue): the
+blueprint linked atlas, variant-aware against the preview shape (D1 CPU-side). **Verified
+live**: the drag showed a correctly-jointed translucent wall ring (capture); nothing hit the
+server until release.
+
+## 2026-07-29 · P3 — the BUILD_WALL event end-to-end (3/3)
+
+Docs FIRST (ACTIONS.md row + §-note; VARIABLES needed no change — operands are generic u32
+slots and positions reuse `position_anchor_reference`; docs-check green). `BUILD_WALL = 9`
+in codec (`[Imm, Imm, Imm]` — writes NOTHING; ACTIONS documents the queue-events shape),
+edge allowlist, core `Command::BuildWall` + `build_wall_program` (bare — no PROMOTE; the
+queued SETs carry it), wasm `buildWall`, WasmClient + WorldBridge passthroughs. The worker's
+BUILD pass mirrors the movement-continuation pattern: expand the rect PERIMETER, queue one
+`PROMOTE SET cold_row(macro,0,0) TYPE_BIOME_TILE tile kind 0` per tile at the next tic —
+each SET routes to ITS zone (multi-zone rects safe by construction); best-effort like the
+continuations. En route: web.rs's SECOND Command match needed the arm (E0004 caught it).
+Redeployed: all modules + edge + shared + webgl (`rd redeploy --run`) + worker/orchestrator
+rebuilt + restarted (shard data wiped — the npc re-created its wolves).
+
+## 2026-07-29 · P4 — the drill (1/1) · STREAM DONE 11/11
+
+Icon click → crosshair → drag (102,44)→(106,48) → translucent blueprint ring → release →
+**worker log `build_wall expanded x0=102 y0=44 x1=106 y1=48 object=6 queued=16`** → 16
+overrides fanned back → every probed perimeter tile kind 6, interior untouched (grass 1) →
+the wall ring RENDERED with correct joins → **survived a full reload** (16 overrides
+re-delivered from the shard) → **120.2 fps**. Honest bounds: tees-at-overlap reuse the P1-
+proven neighbor math but two overlapping rects weren't separately drilled; the multi-zone
+rect is safe by construction (per-tile SET routing) but a rect spanning zones wasn't
+separately drilled; the user's hands are the final oracle.

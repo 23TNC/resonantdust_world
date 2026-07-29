@@ -481,6 +481,11 @@ export class WasmClient {
     this.world?.moveEntity(entity, tileX, tileY);
   }
 
+  /** build-walls D5: order walls on the `(start..end)` tile rect's perimeter. */
+  buildWall(startX: number, startY: number, endX: number, endY: number, object: number): void {
+    this.world?.buildWall(startX, startY, endX, endY, object);
+  }
+
   /** Place + promote `entity` at global tile `(tileX, tileY)`. No-op before login. */
   place(entity: number, tileX: number, tileY: number): void {
     this.world?.place(entity, tileX, tileY);
