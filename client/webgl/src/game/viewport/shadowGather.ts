@@ -304,7 +304,8 @@ float sampleCard(float u, float t, float W, float H, uint rot, float ppu, float 
 float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU, vec2 ref, highp usampler2D data, sampler2D surf) {
   if (billboardIdx == 0u) return 0.0;
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));      // v2.1: R = id|reserved, G = position, B = orient
-  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref);   // v3 leaf: resolved tile|unit
+  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref)   // v3 leaf: resolved tile|unit
+         + vec2(float((Pd.z >> 11) & 7u), float((Pd.z >> 8) & 7u)) * 0.125; // hot-sync P3: + sub-unit lanes (eighths of a unit) so lighting tracks the DRAWN anchor, not the unit grid
   int defIdx = int((Pd.z >> 16) & 0xffffu);
   uvec4 D = fetchLin(data, DEF_BASE + defIdx);
   // v2.1: R = u16 id | u10 offset_x | u6 reserved; G = u9 W | u9 H | u4 span (tiles−1) | u10 offset_y.
@@ -407,7 +408,8 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
 float receiverCover(uint billboardIdx, vec2 P, vec2 ref, highp usampler2D data, sampler2D surf, vec2 align, out float baseYOut) {
   baseYOut = 0.0;
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));
-  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref);   // v3 leaf: resolved tile|unit
+  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref)   // v3 leaf: resolved tile|unit
+         + vec2(float((Pd.z >> 11) & 7u), float((Pd.z >> 8) & 7u)) * 0.125; // hot-sync P3: + sub-unit lanes (eighths of a unit) so lighting tracks the DRAWN anchor, not the unit grid
   int defIdx = int((Pd.z >> 16) & 0xffffu);
   uvec4 D = fetchLin(data, DEF_BASE + defIdx);
   float W = float(((D.y >> 23) & 511u) * 2u);
@@ -472,7 +474,8 @@ vec3 billboardNormal(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D
   vec2 ref = P;   // the billboard is DRAWN at P, so P is within its own footprint (16-tile period is ample)
   sOut = -1.0;
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));
-  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref);   // v3 leaf: resolved tile|unit
+  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref)   // v3 leaf: resolved tile|unit
+         + vec2(float((Pd.z >> 11) & 7u), float((Pd.z >> 8) & 7u)) * 0.125; // hot-sync P3: + sub-unit lanes (eighths of a unit) so lighting tracks the DRAWN anchor, not the unit grid
   int defIdx = int((Pd.z >> 16) & 0xffffu);
   uvec4 D = fetchLin(data, DEF_BASE + defIdx);
   float W = float(((D.y >> 23) & 511u) * 2u);
@@ -537,7 +540,8 @@ float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, float reachU, 
   if (casterMode == 1 && cHot == 1u) return 0.0;
   if (casterMode == 2 && cHot == 0u) return 0.0;
   uint cRB = cPd.x;
-  vec2 Cb = resolvedTilePos((cRB >> 8) & 255u, cRB & 255u, ref);      // hot loop, per caster per light
+  vec2 Cb = resolvedTilePos((cRB >> 8) & 255u, cRB & 255u, ref)      // hot loop, per caster per light
+          + vec2(float((cPd.z >> 11) & 7u), float((cPd.z >> 8) & 7u)) * 0.125; // hot-sync P3: sub-unit lanes
   if (isThing) {
     if (billboardIdx == rbillboard) return 0.0;                       // (0) self — exact same billboard → no self-cast
     if (Cb.y <= Rbase.y + ${SELF_BANDF}) return 0.0;        // (1) seen-face + near-band (units): caster must be >SELF_BAND south
@@ -805,23 +809,41 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
         vec3 H = normalize(d3 / max(dist, 1e-3) + V);
         spec = pow(max(dot(N, H), 0.0), uGlintPow) * uGlintStr;
       }
-      float contrib;
-      if (deltaMode) {
-        // The cold map baked X·(1−shC); truth is X·(1−max(shC, shHotOnly)). The correction is
-        // −X·max(0, shHotOnly − shC) — exact where the mover adds occlusion, zero where the
-        // cold casters already shadowed. The shadow var here IS the hot-only coverage (mode 2).
+      // hot-sync P4 (ground shadow BEFORE the billboard — user): the HOT map is a pure
+      // CORRECTION over the cold-baked ground, at EVERY texel. The blit sums cold+hot
+      // unconditionally (no per-pixel cold zeroing), so the ground pool with its carved
+      // shadow is the base layer and the mover's body lighting rides on top as a delta —
+      // the sprite overlays at pixel precision, wolf over its shadow by construction.
+      vec3 dep;
+      if (uLightClass == 1 && lcls == 0u) {
         uint c8 = (lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
         float shadowCold = float(c8 >> 1) / 127.0;
-        if (!onBillboard && rbillboardN != 0u) shadowCold = 0.0; // mirror the cold pass's ground cut
-        contrib = -intensity * fall * (ndl + spec) * max(0.0, shadow - shadowCold);
+        if (recvHot) {
+          // BODY-over-ground correction: deposit body − ground so cold+hot == the body value.
+          // The ground term mirrors EXACTLY what the cold pass baked at this texel: it ran
+          // with the receiver demoted to ground (rbillboard forced 0) — ndl 1, no glint, NO
+          // billboard shadow cut — so the subtraction leaves precisely the body lighting.
+          float body = intensity * fall * (ndl + spec) * (1.0 - shadow);
+          float ground = intensity * fall * (1.0 - shadowCold);
+          dep = clamp(colT * body, vec3(0.0), vec3(1.0)) - clamp(colT * ground, vec3(0.0), vec3(1.0));
+        } else {
+          // The cold map baked X·(1−shC); truth is X·(1−max(shC, shHotOnly)). The correction is
+          // −X·max(0, shHotOnly − shC) — exact where the mover adds occlusion, zero where the
+          // cold casters already shadowed. The shadow var here IS the hot-only coverage (mode 2).
+          if (!onBillboard && rbillboardN != 0u) shadowCold = 0.0; // mirror the cold pass's ground cut
+          float contrib = -intensity * fall * (ndl + spec) * max(0.0, shadow - shadowCold);
+          dep = clamp(colT * contrib, vec3(-1.0), vec3(1.0));
+        }
       } else {
-        contrib = intensity * fall * (ndl + spec) * (1.0 - shadow); // shadowed contribution (× Lambert on things)
+        float contrib = intensity * fall * (ndl + spec) * (1.0 - shadow); // shadowed contribution (× Lambert on things)
+        dep = clamp(colT * contrib, vec3(-1.0), vec3(1.0));
       }
       // CLAMP PER LIGHT, before it joins the sum. This is what makes the accumulator's exactness bound
       // UNCONDITIONAL rather than merely likely: with every light capped at 1.0 (255 after quantisation),
       // the worst case is 65,535 (the whole u16 id space) x 255 = 16,711,425, under the 2^24 = 16,777,216
       // that FP32 represents exactly. No presence cap, no distribution assumption, no bookkeeping
-      // discipline needed — overflow becomes impossible by construction.
+      // discipline needed — overflow becomes impossible by construction. (The body-over-ground form
+      // clamps each of its two terms to [0,1] before differencing — same bound, same removal exactness.)
       //
       // It costs no brightness. Clamping caps a light's PEAK, not its profile: at intensity 4 every
       // distance is still 4x, so the core saturates over a WIDER radius and the falloff stays brighter
@@ -829,7 +851,7 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
       //
       // The clamp belongs HERE and nowhere downstream. Clamping the accumulated SUM would break light
       // removal: two lights at 255 clipped to 255 means subtracting one leaves 0 where 255 is correct.
-      acc += clamp(colT * contrib, vec3(-1.0), vec3(1.0));
+      acc += dep;
     }
   return acc;
 }

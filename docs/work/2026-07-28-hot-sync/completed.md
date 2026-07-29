@@ -32,6 +32,25 @@ landed on sprite-bake frames** (perfect same-frame coupling; P0 had them on inde
 schedules ~4.9:1), **backstop originated 0** per-move dirt, record cadence ~1.7× denser
 than P0 (stepping at every unit crossing immediately).
 
+## 2026-07-28 · P4 — ground shadow before the billboard (1/1) · STREAM DONE 9/9
+
+User (after P3): motion still off; then the directive — the light calculations must take the
+sub-unit offset into account, and the ground shadow must draw BEFORE the billboard like trees.
+Landed in two cuts: (1) all four gather/receiver record-position decodes now add the
+`billboard_data.B` sub-unit lanes (the P3 lanes were stamped but only the sprite consumed
+them — lighting still snapped to the 8 px unit grid; user's guess, correct). (2) The hot
+lightmap is now a pure CORRECTION over cold: receiver texels deposit body − ground (the
+ground term mirrors the cold pass's exact expression — receiver demoted, ndl 1, no glint,
+uncut cold shadow), mover cast shadows stay negative deltas, and the blit sums cold+hot
+unconditionally — the per-pixel `× (1−wcov)` cold zeroing is DELETED (it mixed pixel-granular
+coverage with texel-granular deposits; the seam showed as the wolf's own shadow drawn over
+its sprite fringe). Verified: typecheck + shader compile clean, scene lighting intact (torch
+pools/tree shadows unchanged), resting wolf lit with its shadow attached beneath; the
+in-motion feel is the user's oracle (the artifact never shows in stills — their observation).
+En route: `docker restart edge-edge-1` KILLS the edge (the container is a dev shell running
+`sleep infinity`; the binary is exec'd) — `bin/rd deploy edge` is the restore, edge relisted
++ login healthy.
+
 ## 2026-07-28 · P3 — one position authority (1/1) · STREAM DONE 8/8
 
 The user's live check caught a residual: a dark wolf-shaped ghost trailing the moving wolf

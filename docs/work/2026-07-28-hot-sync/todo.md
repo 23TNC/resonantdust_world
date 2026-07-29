@@ -52,6 +52,22 @@ chase and fake every measurement — pawn-render's recorded observation)._
       hot = ONE dirty; a note in the pawn-render folder linking here), memory updated,
       work-index row → done.
 
+## P4 · Ground shadow BEFORE the billboard (follow-on — user directive after P3's live check)
+
+- [x] The HOT lightmap becomes a pure CORRECTION over the cold base: on receiver texels a
+      cold light deposits body − ground (mirroring exactly what the cold pass baked there:
+      receiver demoted, ndl 1, no glint, uncut shadow), on ground texels the mover's cast
+      shadow stays the negative delta — and the blit sums cold+hot UNCONDITIONALLY (the
+      per-pixel cold zeroing by mover coverage is DELETED). Why: the old select mixed
+      pixel-granular coverage with texel-granular deposits, so the mover's own carved shadow
+      landed on pixels whose cold pool was zeroed — read as the shadow drawn OVER the wolf's
+      fringe. Now the ground (with its carved shadow) is the base layer everywhere and the
+      sprite overlays at pixel precision — wolf over shadow by construction, same as trees.
+      Sub-unit lanes also decoded by the gather/receiver shaders (all four record-position
+      sites), so the lit body tracks the drawn anchor at 1 px. Acceptance: user's live eyes
+      on motion (the artifact never shows in stills); static checks — scene lighting intact,
+      resting wolf lit with shadow beneath, typecheck + shader compile clean, fps unchanged.
+
 ## P3 · One position authority (follow-on — the user's live check caught a trailing ghost)
 
 - [x] The record IS the mover's position: `billboard_data.B` gains sub-unit anchor lanes

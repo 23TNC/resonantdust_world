@@ -1,15 +1,21 @@
 # Tiered lighting — cold/warm/rt with a shared bitfield shadow engine (durable intent)
 
-**Status (2026-07-28, pawn-render).** PRIMS carry temperature now, not just lights: a mover
-(warm-cache prim) is HOT-classed via the record class bit, joins the HOT pass as receiver AND
-caster (its own atlas normal, climbing shadows, per-frame dirty rects), and cold lights reach
-it through the hot map — including a NEGATIVE-delta correction that carves a mover's shadow
-out of the cold-baked pool without re-baking it (the tier matrix: any hot participant → hot;
-cold×cold is the only baked cell). The blit selects per pixel by the zdepth painter's key
-(mover pixels read ambient + hot only). **HOT has ONE dirty** (hot-sync, user design): a
-mover's sprite bake, shadow-record rewrite, light/shadow rects, and receiver rects all fan
-from one call at the mover's own re-bake crossing — cold keeps its independent channels (its
-decoupling is the cold cost model). What remains of this intent: the warm/rt LIGHT tiers'
+**Status (2026-07-28, pawn-render + hot-sync).** PRIMS carry temperature now, not just lights:
+a mover (warm-cache prim) is HOT-classed via the record class bit, joins the HOT pass as
+receiver AND caster (its own atlas normal, climbing shadows, per-frame dirty rects), and cold
+lights reach it through the hot map (the tier matrix: any hot participant → hot; cold×cold is
+the only baked cell). **The HOT map is a pure CORRECTION over the cold base** (hot-sync P4,
+user design "ground shadow before the billboard"): on receiver texels a cold light deposits
+body − ground (so cold+hot = the body value), on ground texels a mover's cast shadow is a
+negative delta — and the blit sums cold+hot UNCONDITIONALLY (ambient added once, floored at
+0). No per-pixel cold zeroing: the ground pool with its carved shadow is the base layer and
+the sprite overlays it at pixel precision, so a mover sits OVER its ground shadow the same
+way a cold thing does. **HOT has ONE dirty** (hot-sync, user design): a mover's sprite bake,
+shadow-record rewrite, light/shadow rects, and receiver rects all fan from one call at the
+mover's own re-bake crossing — and the RECORD is the mover's position AUTHORITY (hot-sync P3:
+sub-unit anchor lanes, prim snapped to the record-decoded anchor; the lighting shaders read
+the same sub lanes). Cold keeps its independent channels (its decoupling is the cold cost
+model). What remains of this intent: the warm/rt LIGHT tiers'
 round-robin budget machinery (the hot-shadows stream's scope) — today's hot class re-renders
 its dirty rects per frame without a budget.
 
