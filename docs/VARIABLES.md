@@ -518,12 +518,22 @@ R  u32   u16 parent_id (16–31) | u8 resolved_tile (8–15) | u8 resolved_unit 
 G  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 hot_cold (25) | u1 cast_shadows (24)
          | u8 z_offset (16–23) | u8 tile_offset (8–15) | u8 unit_offset (0–7)
 B  u32   u16 definition_id (16–31) | u2 last_lod (14–15) | u3 sub_x (11–13) | u3 sub_y (8–10) | u8 seed (0–7)
-A  u32   u32 reserved
+A  u32   u16 caster_definition_id (16–31) | u1 caster_flip (15) | u1 caster_valid (14) | u14 reserved (0–13)
 ```
 `last_lod` — the lod this billboard was **last baked at**. A mismatch against the live lod means the def is
 stale and wants swapping; the swap rides the existing billboard dirty cascade. "Last" is correct here
 because billboards are **re-baked, not accumulated** — there is nothing to invert, so no history is needed.
 Contrast `light_data.coarsest_lod`, which is a different question with a different answer.
+
+`caster_definition_id`/`caster_flip`/`caster_valid` (2026-07-28,
+[ns-shadows](work/2026-07-28-ns-shadows/README.md) P0) — the **perpendicular-card caster def**
+for n/s-rotated billboards (rotation 0/2). Their caster card is a vertical plane containing
+the n–s axis + height on the sprite's center line, and the silhouette painted on it is the
+**side (east) frame** of the same stem — a different def than the drawn one, so it rides its
+own lane. `caster_flip` maps the side frame's head end to the facing (north-facing = head
+north; the rot-3 mirror's sibling on the card's s axis). `caster_valid` 0 = unresolved (the
+walk falls back to a solid rotated quad). Zero for e/w rotations and cold single-facing
+things — their caster is the drawn def, as ever.
 
 `sub_x`/`sub_y` (2026-07-28, [hot-sync](work/2026-07-28-hot-sync/README.md) P3) — the anchor's
 **sub-unit fraction in eighths of a unit** (whole world px at `SQUARE` 128), extending

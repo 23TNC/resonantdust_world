@@ -471,11 +471,30 @@ export class ColdShadowData {
    *  at. The two are 1:1 in this degenerate form, so ONE index serves as both ids — P3 breaks that
    *  apart when a prim can carry several pieces / nest. Both records compare-write, so an unchanged
    *  billboard still emits no command. */
-  billboardDataFor(billboard: Primitive, defIndex: number): { idx: number; changed: boolean } {
+  billboardDataFor(billboard: Primitive, defIndex: number, resolver: TextureResolver | null = null): { idx: number; changed: boolean } {
     // pawn-render P4: the TRUE cardinal when the prim carries one (movers — 0=s 1=e 2=n 3=w);
     // the legacy e/w derivation otherwise (single-facing cold things). The FRAME already
     // follows the facing (the def swaps per stem); this code drives the shaders' mirror (3=w).
     const rotation = billboard.rotation ?? (billboard.flipX ? 3 : 1);
+    // ns-shadows P0 (VARIABLES `billboard_data.A`): an n/s-rotated billboard casts from a
+    // PERPENDICULAR card whose silhouette is the SIDE (east) frame — a different def than the
+    // drawn one, resolved through the same immutable-def path and carried in its own lane.
+    // caster_flip (bit 15) maps the side frame's head end to the facing (D3: north-facing =
+    // head north = frame +x → world −y; south-facing flips). Zero for e/w and cold things.
+    let casterA = 0;
+    if ((rotation === 0 || rotation === 2) && billboard.textureName) {
+      const cut = billboard.textureName.lastIndexOf("/");
+      const facingSeg = billboard.textureName.slice(cut + 1);
+      if (facingSeg === "n" || facingSeg === "s") {
+        const side = this.definitionFor(
+          { ...billboard, textureName: billboard.textureName.slice(0, cut + 1) + "e", flipX: false } as Primitive,
+          resolver,
+        );
+        if (side >= 0) {
+          casterA = ((((side & 0xffff) << 16) | ((rotation === 0 ? 1 : 0) << 15) | (1 << 14)) >>> 0);
+        }
+      }
+    }
     const z = 0;
     const ax = billboard.x + billboard.width * 0.5; // the TRUE game anchor (full-box base-centre)
     const ay = billboard.y + billboard.height;
@@ -521,7 +540,8 @@ export class ColdShadowData {
     if (hit !== undefined && this.dataMirror[pb] === pos
         && ((this.dataMirror[pb + 1] >>> 26) & 3) === rotation
         && ((this.dataMirror[lb + 2] >>> 16) & 0xffff) === defIndex
-        && ((this.dataMirror[lb + 2] >>> 8) & 0x3f) === sub6) {
+        && ((this.dataMirror[lb + 2] >>> 8) & 0x3f) === sub6
+        && this.dataMirror[lb + 3] === casterA) {
       return { idx, changed: false };
     }
     // prim_data (set 1): a ROOT (child = 0) at the absolute position, carrying the billboard in slot a.
@@ -546,7 +566,7 @@ export class ColdShadowData {
       ((((prim & 0xffff) << 16) | (((r.pos >>> 8) & 0xff) << 8) | (r.pos & 0xff)) >>> 0),
       ((((rotation & 3) << 26) | ((r.hot ? 1 : 0) << 25) | ((r.cast ? 1 : 0) << 24)
         | ((r.z & 0xff) << 16) | (OFFSET_ZERO << 8) | OFFSET_ZERO) >>> 0),
-      ((((defIndex & 0xffff) << 16) | (sub6 << 8) | seed8) >>> 0), 0);
+      ((((defIndex & 0xffff) << 16) | (sub6 << 8) | seed8) >>> 0), casterA);
     return { idx, changed: primChanged || leafChanged };
   }
 

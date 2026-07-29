@@ -8,14 +8,14 @@ observation)._
 
 ## P0 · Record plumbing (the caster def)
 
-- [ ] VARIABLES.md: claim `billboard_data.A` — u16 caster_definition_id (16–31), u1
+- [x] VARIABLES.md: claim `billboard_data.A` — u16 caster_definition_id (16–31), u1
       caster_flip (15), u1 caster_valid (14), rest reserved. Acceptance: layout documented
       before code lands; `rd docs-check` green.
-- [ ] `billboardDataFor`: for rotations 0/2 resolve the EAST frame's def (same stem, drawn
+- [x] `billboardDataFor`: for rotations 0/2 resolve the EAST frame's def (same stem, drawn
       lod) through the existing `definitionFor` path and stamp A (valid=0 if unresolved,
       flip per D3). Acceptance: console probe shows a walking-n wolf's record carrying
       drawn AND caster defs.
-- [ ] Fast-path compare includes the A word, so a caster-def swap (zoom lod change) rewrites
+- [x] Fast-path compare includes the A word, so a caster-def swap (zoom lod change) rewrites
       the record and cascades dirty. Acceptance: a zoom transition swaps the caster def and
       the billboard dirty fires (counter probe).
 

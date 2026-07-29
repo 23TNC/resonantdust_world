@@ -1794,7 +1794,7 @@ export class ShadowGather {
       if (def < 0) continue;  // not a caster — and this is now the LAST thing in the loop body, so
                               // skipping it cannot skip another presentation. Add new presentations
                               // ABOVE this line, never below it.
-      const inst = this.coldData.billboardDataFor(p, def);
+      const inst = this.coldData.billboardDataFor(p, def, resolver);
       seen.add(p.id); // resident this frame — everything else gets freed (P2)
       // Bucket by the TIGHT opaque bbox (P3), not the full billboard box — matches the quad we actually cast.
       // A flipped (W-facing) billboard mirrors the box within the billboard rect, same as the gather mirrors `off.x`.
@@ -2306,7 +2306,7 @@ export class ShadowGather {
   moverDirty(prim: Primitive, resolver: TextureResolver | null): void {
     const def = this.coldData.definitionFor(prim, resolver);
     if (def < 0) return;
-    const inst = this.coldData.billboardDataFor(prim, def);
+    const inst = this.coldData.billboardDataFor(prim, def, resolver);
     this.debugMoverDirtyCalls++;
     if (!inst.changed) return; // sub-unit glide — nothing the lighting can express
     this.debugMoverDirtyChanges++;

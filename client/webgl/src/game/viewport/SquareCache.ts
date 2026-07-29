@@ -532,6 +532,8 @@ export class SquareCache {
       zIndex: spec.zIndex ?? 0,
       light: spec.light,   // P5: the LIGHT presentation — dropped here, a torch never lights
       hot: spec.hot,       // pawn-render P2: the temperature — dropped here, a mover dirties COLD
+      rotation: spec.rotation, // pawn-render P4: the true cardinal — dropped here, a RESTING n/s
+                               // mover falls back to the e/w derivation (ns-shadows I1)
     };
     const range = squaresForAABB(prim.x, prim.y, prim.x + prim.width, prim.y + prim.height);
     this.prims.set(id, { prim, range });
