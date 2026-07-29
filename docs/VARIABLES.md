@@ -368,7 +368,7 @@ set 0   rows   0–63    definition_data        1 px per def
 set 1   rows  64–127   prim_data              1 px per placed PRIM (composition node)
 set 2   rows 128–191   light_data             1 px per light record
 set 3   rows 192–255   light_presence_lo      1 px per TILE (region-torus fold) — light slots 0–7
-set 4   rows 256–319   billboard_presence     1 px per TILE (region-torus fold) — 8 billboard slots
+set 4   rows 256–319   prim_presence          1 px per TILE (region-torus fold) — 4 u32 occupant slots
 set 5   rows 320–383   light_presence_hi      1 px per TILE (region-torus fold) — light slots 8–15
 set 6   rows 384–447   billboard_data         1 px per billboard record
 sets 7–14              reserved               (materials-era tables)
@@ -401,7 +401,7 @@ re-scattering ephemeral state every frame, worse than the `texSubImage` it repla
 **Every record SELF-ADDRESSES: its u16 in-set id lives in R's high half.** That makes scatter
 commands PURE PAYLOADS (v2.1 — the scatter reads the target out of the record itself).
 
-**Region-torus tile addressing** (`light_presence` / `billboard_presence`, work
+**Region-torus tile addressing** (`light_presence` / `prim_presence`, work
 [`2026-07-23-presence-in-data`](work/2026-07-23-presence-in-data/README.md)). A tile-keyed set is
 **one region's tiles** (`REGION_DIM=16` zones × `ZONE_DIM=16` tiles, squared = 65 536 = one set),
 addressed by **in-region** coordinates with NO region bits — valid because the viewport window is
@@ -415,22 +415,42 @@ world tile (wc, wr):
   in_set_id = ((zx>>2) + zy*4) * 1024  +  (zx&3)*256 + ty*16 + tx
 ```
 
-`light_presence_*` / `billboard_presence` px: `R = slot0|slot1`, `G = slot2|slot3`,
-`B = slot4|slot5`, `A = slot6|slot7` — **8 slots/tile**. (Retiring self-addressing freed the u16 the
-in-set id occupied, which is what buys back the 8th slot.) Slots are `u16` record ids with **`0` =
-empty**, the same global sentinel commands pad with. Presence spans **two sets** (`_lo` slots 0–7,
-`_hi` slots 8–15) → **16 lights/tile**; `billboard_presence` gives **8 billboards/tile**. Both carry
-**leaf** ids, never carrier prims — bucketing carriers would make the per-tile billboard count
-unbounded (a carrier fans out to ≤4, recursively).
+`light_presence_*` px: `R = slot0|slot1`, `G = slot2|slot3`, `B = slot4|slot5`,
+`A = slot6|slot7` — **8 u16 slots/tile**, `0` = empty; presence spans **two sets** (`_lo`
+slots 0–7, `_hi` 8–15) → **16 lights/tile**.
 
-**The two maps are NOT the same relation, and that is deliberate.** A **light knows exactly which tiles
-it affects**, so it writes its id into every tile within reach — `light_presence` is a **reach** relation,
-and a light found there may sit up to `reach` tiles away (hence `resolved_zone`, above). A billboard
-cannot do the same for its *shadow*: shadows are **combinatorial** (every billboard × every light that
-reaches it), so their count is indefinite and storing shadow presence is impossible. Instead
-`billboard_presence` is a **containment** relation — a billboard is registered only on the tiles it
-itself occupies, so finding it there means you found **its** tile, and the gather **projects the shadow
-from there** during the corridor walk. That is why a billboard needs no `resolved_zone` and a light does.
+**`prim_presence`** (RENAMED from `billboard_presence`, 2026-07-29,
+[texture-generalization](work/2026-07-29-texture-generalization/README.md) D7 — it no longer
+holds only billboards) px: **4 × u32 slots**, one per channel:
+
+```
+slot u32   u4 flags (31–28: bit 31 cast_shadows | bits 30–29 receives_shadows | bit 28 spare)
+         | u4 set (27–24) | u16 index (15–0) | u8 reserved (23–16)
+```
+
+A slot is SELF-DESCRIBING: `set` names the band the `index` addresses — `definition_data`
+DIRECTLY for the TILE (slot 0: one def per kind, the bucket's own tile coordinate IS the
+position — no per-tile prim_data), `billboard_data` directly for simple standing objects,
+`prim_data` for composite actors (pawns — D10). Def ids are 1-based, so index `0` in slot 0
+keeps meaning "no tile". The FLAGS mirror the def's shadow participation (the AGGREGATE over
+a prim_data tree) so the walks early-out at one u32 read. Slot roster: `0` = the tile,
+`1` = primary object, `2` = secondary object, `3` = pawn. The old dense-bucket early-out
+("slot 0 empty ⇒ empty tile") re-specs against slot 1 (slot 0 is occupied wherever ground
+exists).
+
+**The two maps are NOT the same relation, and that is deliberate.** A **light knows exactly
+which tiles it affects**, so it writes its id into every tile within reach — `light_presence`
+is a **reach** relation, and a light found there may sit up to `reach` tiles away (hence
+`resolved_zone`, above). A billboard cannot do the same for its *shadow*: shadows are
+**combinatorial** (every billboard × every light that reaches it), so their count is
+indefinite and storing shadow presence is impossible. Instead `prim_presence` is an
+**OCCUPANCY** relation (D9): an object registers on its **BASE LINE** — the anchor row ×
+every column its base occupies (a 2×3 tree registers in BOTH base tiles; width can NOT ride
+the walk, whose ±1 dilation is perpendicular to the ray's dominant axis). The VERTICAL card
+overhang (the tilt rows north of the base — the old extent bucketing's I-7 rows) moves into
+the WALK: each visited tile also checks `ceil(TILT · maxCardHeight)` rows SOUTH (content-
+derived — the tallest authored card), and the receiver scan dilates the same way. Finding an
+occupant means you found **its** tile; the gather projects the shadow from there.
 
 **`shadow-cold`** (the gather OUTPUT RT, world-space toroidal `RGBA32UI`, textile_unit) packs **14 ×
 u9 coverage** (512 levels) with NO channel straddle: the **low 8 bits** of slot `i` sit at channel
@@ -460,7 +480,7 @@ command = 8 px, fixed stride (command k begins at px k·8)
 
 **`count` (u3) states how many of the 7 ids are live**, so a partial command needs no sentinel and
 **`id = 0` stays a fully usable record id** — which is required, because the tile-keyed sets
-(`light_presence_*`, `billboard_presence`) address by **`foldTile`**, whose range is
+(`light_presence_*`, `prim_presence`) address by **`foldTile`**, whose range is
 **0..65535 exhaustively**: fold `0` is a real tile (zone 0,0 / tile 0,0) and there is no spare id to
 bias into. `set` is **u5** (32 sets; 16 in use) — widen it out of `operation` later if ever needed.
 
@@ -549,7 +569,7 @@ adjacent same-kind objects differ while each is pinned to where it stands across
 stamps it at record write and the bake consumes the same value (one source); it lives in the record
 so any future GPU consumer reads the identical seed.
 
-No `resolved_zone`: `billboard_presence` is a **containment** relation (a billboard is bucketed into the
+No `resolved_zone`: `prim_presence` is an **occupancy** relation (an object registers on the
 tiles its footprint covers), so the fragment's own tile pins it — nearest-congruent is exact for any
 footprint under 8 tiles.
 
@@ -607,10 +627,11 @@ the opaque pixels (x centered, y bottom-aligned — shadows anchor at the base);
 bbox against the prim's position:
 
 ```
-R  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 inherit_rotation (25) | u1 reserved (24)
+R  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 inherit_rotation (25) | u1 cast_shadows (24)
          | u10 offset_x (14–23, units) | u10 offset_y (4–13, units) | u4 type (0–3)
 G  u32   u9 billboard_width (23–31, 2-unit steps) | u9 billboard_height (14–22, 2-unit steps)
-         | u4 frame_span (10–13, tiles − 1; width = log2(ZONE_DIM)) | u10 reserved (0–9)
+         | u4 frame_span (10–13, tiles − 1; width = log2(ZONE_DIM))
+         | u4 internal_padding (6–9, units) | u2 receives_shadows (4–5) | u4 reserved (0–3)
          (offsets UNSIGNED, frame-relative: the bbox top-left indexed into the frame — no bias)
 B  u32   u10 frame_x (22–31, 16-px grid) | u10 frame_y (12–21, 16-px grid) | u4 frame_page (8–11)
          | u2 frame_lod (6–7, DISPLAY lod 0–3) | u2 reserved (4–5)
@@ -633,6 +654,26 @@ So ppu depends on **lod alone**, is a whole pow2 ≥ 1 by construction, and the 
 1 px/unit minimum (a 16-px tile). The old caveat that lod alone could not determine ppu — "a 32px frame is
 1-tile@2ppu OR 2-tile@1ppu" — no longer applies, because the frame side is no longer free to disagree with
 the grid. `frame_span` is still needed to size the frame, but no longer to compute ppu.
+
+**Shadow participation lives ON the def** (2026-07-29,
+[texture-generalization](work/2026-07-29-texture-generalization/README.md) D8): `cast_shadows`
+(R bit 24 — a non-caster is skipped before any record work; ALL tiles author false today, walls
+included until wall shadows land) and `receives_shadows` (G bits 4–5: `0` = doesn't receive,
+`1` = receives LIKE A BILLBOARD — the elevated/climbing walk, `2` = receives LIKE GROUND — the
+flat walk, `3` reserved). Both mirror into the `prim_presence` slot FLAGS so the walks early-out
+without fetching the def. The ground-shadow special case (and the on-billboard cut) RETIRE:
+everything that shows shadows is a receiver in one of these modes.
+
+**`rotation` is a PER-TYPE mode.** Billboards keep the cardinal meaning (0=s 1=e 2=n 3=w).
+TILES don't rotate — for `type = biome-tile` the lane selects the CELL rule instead: `0` =
+plain (the frame as-is), `1` = AUTOTILE (one of 16 cells from same-rule cardinal neighbors —
+walls), `2` = WORLD (cell from world tile x/y — large ground atlases, later), `3` reserved.
+
+**LINKED atlases** ride this same record (texture-generalization): the frame is the WHOLE
+atlas (`frame_x/y`, `frame_span` = the atlas's tile count — 4 for the 4×4 walls; TOP-LEFT
+anchor), `billboard_width/height` = ONE cell's window (16 − 2·`internal_padding` units), and
+`offset_x/y` = the `internal_padding` inset. `internal_padding` is the BETWEEN-CELL inset
+inside the atlas (units) — distinct from the texture manifest's external `pad`, which stays 0.
 
 **Field sizing.**
 - `billboard_width/height` — **u9 in 2-unit steps** (even bbox ⟹ integral half-anchors): ≤1022 units ≈ 4-zone
@@ -663,10 +704,9 @@ the grid. `frame_span` is still needed to size the frame, but no longer to compu
 window): per tile the **nearest ≤ 8 reaching lights** as `8× u16` light indices (`0xFFFF` = empty; R holds slots
 0–1 high|low, G 2–3, B 4–5, A 6–7). CPU-rebuilt on light/window change. Bounds the gather to O(8) lights/texel.
 
-**`billboard_presence`** (was `caster_buckets`) — a **`cols×rows`** `RGBA32UI` **textile_tile map**: per tile
-**≤ 8 casting billboards** as `8× u16` `billboard_data` ids (same slot packing as presence; `0` = empty). A
-caster is bucketed into every tile its
-tilted card's ground extent spans (base row up to `0.5·cos65°·H` above). The gather's reach-walk reads these.
+**`prim_presence`** — lives IN the data texture (set 4; layout + the D9 occupancy relation are
+defined under §Region-torus tile addressing above — ONE authority, no separate textile map).
+The gather's reach-walk and the receiver scans read it there.
 
 **`shadow_dirty`** — a **`cols×rows`** `R8UI` **textile_tile map**, **nonzero = recompute**; gates the
 single-pass gather (clean tiles `discard`, so `shadow-cold` persists). Per-slot owner tracking dirties a slot

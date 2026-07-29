@@ -1444,6 +1444,20 @@ export class ShadowGather {
    *  makes the card ~0.87·H at 55°. `__lean(x)`. Feeds BOTH `uCardLean` and `buildCasters`' TILT — they
    *  must agree or casters are bucketed for a card they don't cast. See world-geometry F2. */
   cardLean = 1.0;
+  /** texture-generalization P0 (D9): the tallest authored card in TILES — content-derived
+   *  (max over thing sizes + tile heights; conifer 2 today). The walk's SOUTHERN dilation
+   *  is `ceil(TILT · maxCardTiles)` rows: under occupancy registration (base line only),
+   *  those are the only tiles whose occupants' cards can lean over a visited tile. Wired
+   *  into the walks at P1; derived + probeable (`__gather.maxCardTiles` / `dilationRows()`)
+   *  from P0 so the constant's plumbing is verified before consumers exist. */
+  maxCardTiles = 2;
+  setMaxCardTiles(tiles: number): void {
+    this.maxCardTiles = Math.max(1, tiles);
+  }
+  /** The southern-dilation row count the D9 walks will use. */
+  dilationRows(): number {
+    return Math.ceil(this.cardLean * Math.cos(this.worldTiltDeg * Math.PI / 180) * this.maxCardTiles);
+  }
   /** Falloff exponent — see {@link FALLOFF_EXP}. `__falloff(e)`; <1 lifts the mid-range, 1 = linear
    *  smoothstep, >1 darkens the outer pool. Cannot extend a light past its reach at any value. */
   falloff = FALLOFF_EXP;

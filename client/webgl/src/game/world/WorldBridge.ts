@@ -241,6 +241,15 @@ export class WorldBridge {
     this.thingPacked = this.content.thingPackedChannels();
     this.thingLight = this.content.thingLight();
     this.tileHeights = new Float64Array(this.content.tileHeights());
+    // texture-generalization P0 (D9): the tallest authored card, in tiles — max over every
+    // thing's drawn size and every tile's height. Content is the ONE authority; re-derived
+    // on every hot-swap so authoring a taller kind widens the walk dilation automatically.
+    let maxCard = 1;
+    for (let kind = 1; kind * 7 <= this.thingLayout.length; kind++) {
+      maxCard = Math.max(maxCard, readLayout(this.thingLayout, kind).size);
+    }
+    for (const h of this.tileHeights) maxCard = Math.max(maxCard, h);
+    this.viewport.setMaxCardTiles(maxCard);
     // def-frame-anchors P5: register each real stem's pre-atlas sprite_scale with the resolver
     // (applied at INGEST — scaled, clipped to the pow2 frame, re-centred on surface presence).
     for (let kind = 1; kind <= this.thingStems.length; kind++) {

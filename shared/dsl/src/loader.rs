@@ -387,6 +387,24 @@ impl Bundle {
       .collect()
   }
 
+  /// A tile's LIGHTING + LINKED lanes (texture-generalization P0), flat stride-6 per
+  /// def_id: `[linked_w, linked_h, padding, rotation, cast_shadow, receives_shadows]` —
+  /// zeros where unauthored. `linked_w/h` = the autotile atlas's tile count; `padding` =
+  /// the INTERNAL between-cell inset (units); `rotation` = the per-type tile MODE
+  /// (0 plain / 1 autotile / 2 world); the shadow lanes feed the def bits + presence flags.
+  pub fn tile_lighting_lanes(&self) -> Vec<f64> {
+    let mut out = Vec::with_capacity(self.tile_ids.len() * 6);
+    for name in &self.tile_ids {
+      let store = self.tile(name).and_then(|n| self.run_node_hook(n, "data", "define"));
+      let read = |k: &str| store.as_ref().and_then(|s| s.read(k)).map(|c| c.as_f64()).unwrap_or(0.0);
+      out.extend_from_slice(&[
+        read("tile.linked.w"), read("tile.linked.h"), read("tile.padding"),
+        read("tile.rotation"), read("tile.cast_shadow"), read("tile.receives_shadows"),
+      ]);
+    }
+    out
+  }
+
   /// A tile's HEIGHT in tiles (`1 &tile.height set` — tile-lighting F2: > 0 opts the tile
   /// into the cold lighting class as receiver + caster). `None`/0 = flat ground.
   pub fn tile_height(&self, def_id: u16) -> Option<f64> {

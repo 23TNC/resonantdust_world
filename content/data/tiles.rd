@@ -2,30 +2,50 @@
     ::grass>
         :data>
             @define>
+                ; texture-generalization P0: every tile participates in lighting via its
+                ; def — ground receives LIKE GROUND (mode 2), casts nothing.
+                0 &tile.cast_shadow set
+                2 &tile.receives_shadows set
                 0 return
             @on_create>
                 0 return
     ::dirt>
         :data>
             @define>
+                ; texture-generalization P0: every tile participates in lighting via its
+                ; def — ground receives LIKE GROUND (mode 2), casts nothing.
+                0 &tile.cast_shadow set
+                2 &tile.receives_shadows set
                 0 return
             @on_create>
                 0 return
     ::sand>
         :data>
             @define>
+                ; texture-generalization P0: every tile participates in lighting via its
+                ; def — ground receives LIKE GROUND (mode 2), casts nothing.
+                0 &tile.cast_shadow set
+                2 &tile.receives_shadows set
                 0 return
             @on_create>
                 0 return
     ::water>
         :data>
             @define>
+                ; texture-generalization P0: every tile participates in lighting via its
+                ; def — ground receives LIKE GROUND (mode 2), casts nothing.
+                0 &tile.cast_shadow set
+                2 &tile.receives_shadows set
                 0 return
             @on_create>
                 0 return
     ::stone>
         :data>
             @define>
+                ; texture-generalization P0: every tile participates in lighting via its
+                ; def — ground receives LIKE GROUND (mode 2), casts nothing.
+                0 &tile.cast_shadow set
+                2 &tile.receives_shadows set
                 0 return
             @on_create>
                 0 return
@@ -37,10 +57,19 @@
         :data>
             @define>
                 "wall &tile.build set
-                ; tile-lighting F2: a tile with height > 0 PARTICIPATES in the cold
-                ; lighting class (receiver N-L via its atlas normal + a caster card of
-                ; the art's box). Floors author nothing and stay pure ground.
                 1 &tile.height set
+                ; texture-generalization P0: the LINKED atlas geometry lives in content
+                ; (boot-available — never the async texture manifest): a 4x4 autotile
+                ; sheet with 1 unit of INTERNAL between-cell padding (distinct from the
+                ; manifest's external pad, which is 0). rotation is the per-type MODE:
+                ; 1 = AUTOTILE (cell from same-rule cardinal neighbors). Walls receive
+                ; LIKE A BILLBOARD (mode 1) and cast NOTHING yet (wall shadows later).
+                4 &tile.linked.w set
+                4 &tile.linked.h set
+                1 &tile.padding set
+                1 &tile.rotation set
+                0 &tile.cast_shadow set
+                1 &tile.receives_shadows set
                 0 return
             @on_create>
                 0 return

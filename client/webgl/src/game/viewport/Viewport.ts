@@ -342,6 +342,12 @@ export class Viewport {
     this.outline.set(items);
   }
 
+  /** texture-generalization P0 (D9): push the content-derived tallest card (tiles) — the
+   *  bridge recomputes it on every content (re)load; the gather derives the walk dilation. */
+  setMaxCardTiles(tiles: number): void {
+    this.shadows.setMaxCardTiles(tiles);
+  }
+
   /** build-walls P2: replace the blueprint preview tiles (empty = clear). */
   setBlueprint(tiles: BlueprintTile[]): void {
     this.blueprint.set(tiles);

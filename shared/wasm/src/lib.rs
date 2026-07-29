@@ -183,6 +183,14 @@ impl Content {
         self.bundle.tile_heights()
     }
 
+    /// Every tile's lighting/linked lanes, flat stride-6 per def_id:
+    /// `[linked_w, linked_h, padding, rotation, cast_shadow, receives_shadows]`
+    /// (texture-generalization P0 — content is the authority, never the async manifest).
+    #[wasm_bindgen(js_name = tileLightingLanes)]
+    pub fn tile_lighting_lanes(&self) -> Vec<f64> {
+        self.bundle.tile_lighting_lanes()
+    }
+
     /// Every thing's texture stem in `object_id` order — the thing-layer sibling
     /// of [`tileTextureStems`], indexed by the `defId` a thing / free-thing prim
     /// carries.

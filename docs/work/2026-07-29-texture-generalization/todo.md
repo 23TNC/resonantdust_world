@@ -8,13 +8,13 @@ STAGED oracles: P1 must be bit-identical (pure re-encode); P3 is comparative BY 
 
 ## P0 · Docs + DSL lanes (VARIABLES first)
 
-- [ ] VARIABLES.md: `prim_presence` (renamed from `billboard_presence`) = 4 × u32 slots
+- [x] VARIABLES.md: `prim_presence` (renamed from `billboard_presence`) = 4 × u32 slots
       `u4 flags (cast_shadows bit 3, receives_shadows bits 1–2) | u4 set | u16 index`;
       definition R bit 24 = `cast_shadows`; G's reserved lane gains `internal_padding`
       (units) + `receives_shadows` (2 bits); rotation documented as the per-type tile
       MODE (0 plain / 1 autotile / 2 world / 3 reserved). Acceptance: docs-check green
       before code.
-- [ ] DSL lanes on tile kinds: linked grid (4×4), `internal_padding` (1 for walls — the
+- [x] DSL lanes on tile kinds: linked grid (4×4), `internal_padding` (1 for walls — the
       INTERNAL between-cell padding; the manifest's external pad stays 0 and is a
       DIFFERENT value, R5), `cast_shadow` (false on ALL tiles incl. walls),
       `receives_shadows` (ground tiles = 2/like-ground; walls = 1/like-billboard).
@@ -22,7 +22,7 @@ STAGED oracles: P1 must be bit-identical (pure re-encode); P3 is comparative BY 
 
 ## P1 · The presence reshape (billboards only — occupancy semantics, D9)
 
-- [ ] The `maxCardHeight` constant: derived from content (the tallest authored card —
+- [x] The `maxCardHeight` constant: derived from content (the tallest authored card —
       conifer span 2 today), pushed through the constants row; the southern-dilation row
       count `ceil(TILT · maxCardHeight)` computed once. Acceptance: the constant probes
       correctly and changes when a taller kind is authored (temp fixture).
