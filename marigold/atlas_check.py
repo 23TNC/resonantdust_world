@@ -212,8 +212,19 @@ def main() -> int:
         if diffs:
             seam_stats[axis] = (float(np.mean(diffs)), float(np.max(diffs)), len(diffs))
 
+    # ── relief: detail, measured AGAINST EACH CELL'S OWN FLAT FRAME ───────────────────
+    # (vs +Z would count global tilt as detail; the per-cell-inference regression that
+    # flattened the walls read 23%→2% on THIS metric while frame metrics looked great.)
+    relief_shares = []
+    for c in range(cols * rows):
+        mean, _ = flat_cluster_mean(cells[c], masks[c])
+        rel = ang_deg(cells[c], mean[None, None, :])[masks[c]]
+        relief_shares.append(float((rel > 15.0).mean()) if rel.size else 0.0)
+    relief = float(np.mean(relief_shares))
+
     # ── report ────────────────────────────────────────────────────────────────────────
     summary = {
+        "relief_share_gt15": relief,
         "flat_worst_dev_deg": worst_flat[1],
         "flat_mean_dev_deg": float(np.mean([r[1] for r in flat_rows])),
         "flat_frame_spread_deg": float(np.mean(flat_spread)),
@@ -227,6 +238,8 @@ def main() -> int:
         return 0
 
     print(f"atlas_check: {normal_path}  ({side}x{side}, {cols}x{rows} cells, window {win}px, pad {pad_px}px)")
+    print(f"\nRELIEF (share of pixels >15° from the cell's OWN flat frame — detail, tilt-immune)")
+    print(f"  mean {relief:.1%}   (healthy wall art ≈ 20-35%; a starved/flattened run reads <5%)")
     print("\nFLAT (per-cell dominant cluster vs +Z; spread = vs the atlas's own mean frame)")
     print("  cell  bits(NESW)  dev(+Z)°  spread°  share")
     for c, dev, share, _ in flat_rows:

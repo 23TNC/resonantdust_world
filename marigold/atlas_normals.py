@@ -45,8 +45,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("kind_dir", type=Path, help=f"kind dir holding {DIFFUSE} (+ atlas.json)")
     ap.add_argument("--out", type=Path, default=None, help=f"write here instead of <kind>/{NORMAL}")
+    ap.add_argument("--engine", choices=("whole", "cell"), default="whole",
+                    help="whole = ONE inference over the full atlas (keeps relief — per-cell crops "
+                         "starve Marigold on near-flat art: measured 33%%→2%% of pixels >15°); "
+                         "cell = the per-cell experiment (default whole)")
     ap.add_argument("--context-frac", type=float, default=0.5,
-                    help="replicated-edge padding per side, as a fraction of the cell (default 0.5)")
+                    help="cell engine: replicated-edge padding per side, as a fraction of the cell (default 0.5)")
     ap.add_argument("--steps", type=int, default=4)
     ap.add_argument("--ensemble", type=int, default=5)
     ap.add_argument("--resolution", type=int, default=768)
@@ -101,7 +105,26 @@ def main() -> int:
     out_atlas = np.zeros((H, W, 3), dtype=np.uint8)
     out_atlas[:, :] = FLAT_NORMAL_RGB
 
-    for cell in range(cols * rows):
+    if args.engine == "whole":
+        # ONE inference over the full atlas — the model keeps its macro-shape signal (the
+        # relief), and the post passes below fix the frame drift that inference costs.
+        gen = torch.Generator(device=args.device).manual_seed(args.seed)
+        pred = pipe(
+            Image.fromarray(rgba[:, :, :3], "RGB"),
+            num_inference_steps=args.steps,
+            ensemble_size=args.ensemble,
+            processing_resolution=proc_res,
+            generator=gen,
+        )
+        nrm = pipe.image_processor.visualize_normals(pred.prediction)[0].convert("RGB")
+        if nrm.size != (W, H):
+            nrm = nrm.resize((W, H), Image.BILINEAR)
+        n = np.asarray(nrm, dtype=np.uint8)
+        a = rgba[:, :, 3:4] > 16
+        out_atlas = np.where(a, n, np.array(FLAT_NORMAL_RGB, dtype=np.uint8)).astype(np.uint8)
+        print("  whole-atlas inference done", flush=True)
+    else:
+      for cell in range(cols * rows):
         cx, cy = (cell % cols) * cw, (cell // cols) * ch
         crop = rgba[cy : cy + ch, cx : cx + cw]
         # REPLICATED-edge context: the model sees the cell's own content continuing —

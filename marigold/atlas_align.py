@@ -95,7 +95,9 @@ def align_atlas(atlas_u8: np.ndarray, rgba: np.ndarray, cols: int, rows: int) ->
         for c in range(cols * rows):
             if mags[c] <= 0:
                 continue
-            g = float(np.clip(ref / mags[c], 0.8, 1.25))
+            # BOOST-ONLY (user, 2026-07-29): shrinking a strong cell toward the median
+            # discards exactly the relief the walls need — gain only lifts starved cells.
+            g = float(np.clip(ref / mags[c], 1.0, 1.25))
             if abs(g - 1.0) < 1e-3:
                 continue
             cx, cy = (c % cols) * cell, (c // cols) * cell
@@ -140,21 +142,32 @@ def symmetrize_atlas(atlas_u8: np.ndarray, rgba: np.ndarray, cols: int, rows: in
         ln = np.linalg.norm(v, axis=-1, keepdims=True)
         return np.divide(v, ln, out=np.zeros_like(v), where=ln > 1e-9)
 
-    # (a) arm averaging. N and S independently; E and W unified under the mirror
-    # transform (flip columns, negate normal-x).
-    for name in ("N", "S"):
+    # (a) arm STAMPING (user, 2026-07-29 — averaging across cells blurred the relief the
+    # walls need: real per-pixel content variance is detail, not noise). Each arm is
+    # stamped from a DONOR — the pure-run cell, whose arm is the cleanest instance of the
+    # piece (N|S run for vertical arms, E|W run for horizontal) — so every member carries
+    # the donor's FULL detail and the spread is 0 by construction. E and W share one donor
+    # under the mirror transform (flip columns, negate normal-x).
+    def donor(mem: list[int], want_bits: tuple[int, int, int, int]) -> int:
+        for c in mem:
+            if cell_bits(c, cols) == want_bits:
+                return c
+        return mem[0]
+
+    for name, run_bits in (("N", (1, 0, 1, 0)), ("S", (1, 0, 1, 0))):
         rs, cs, bit = regions[name]
         mem = members(bit)
         if len(mem) < 2:
             continue
-        stacks = np.stack([n[region_of(c, rs, cs)] for c in mem])
-        masks = np.stack([alpha[region_of(c, rs, cs)] for c in mem])
-        ok = masks.all(axis=0)
-        mean = unit(stacks.mean(axis=0))
+        d = donor(mem, run_bits)
+        stamp = n[region_of(d, rs, cs)].copy()
+        ok = alpha[region_of(d, rs, cs)] & np.stack([alpha[region_of(c, rs, cs)] for c in mem]).all(axis=0)
         for c in mem:
+            if c == d:
+                continue
             ry, rx = region_of(c, rs, cs)
             blk = n[ry, rx]
-            blk[ok] = mean[ok]
+            blk[ok] = stamp[ok]
             n[ry, rx] = blk
     rsE, csE, bitE = regions["E"]
     rsW, csW, bitW = regions["W"]
@@ -164,22 +177,23 @@ def symmetrize_atlas(atlas_u8: np.ndarray, rgba: np.ndarray, cols: int, rows: in
             out = v[:, ::-1].copy()
             out[..., 0] = -out[..., 0]
             return out
-        stacks = ([n[region_of(c, rsE, csE)] for c in memE]
-                  + [mirror(n[region_of(c, rsW, csW)]) for c in memW])
-        masks = ([alpha[region_of(c, rsE, csE)] for c in memE]
-                 + [alpha[region_of(c, rsW, csW)][:, ::-1] for c in memW])
-        ok = np.stack(masks).all(axis=0)
-        mean = unit(np.stack(stacks).mean(axis=0))
+        d = donor(memE, (0, 1, 0, 1))
+        stamp = n[region_of(d, rsE, csE)].copy()
+        ok = (alpha[region_of(d, rsE, csE)]
+              & np.stack([alpha[region_of(c, rsE, csE)] for c in memE]).all(axis=0)
+              & np.stack([alpha[region_of(c, rsW, csW)][:, ::-1] for c in memW]).all(axis=0))
         for c in memE:
+            if c == d:
+                continue
             ry, rx = region_of(c, rsE, csE)
             blk = n[ry, rx]
-            blk[ok] = mean[ok]
+            blk[ok] = stamp[ok]
             n[ry, rx] = blk
-        meanW, okW = mirror(mean), ok[:, ::-1]
+        stampW, okW = mirror(stamp), ok[:, ::-1]
         for c in memW:
             ry, rx = region_of(c, rsW, csW)
             blk = n[ry, rx]
-            blk[okW] = meanW[okW]
+            blk[okW] = stampW[okW]
             n[ry, rx] = blk
 
     # (b) seam enforcement: one canonical cross-section per axis, feathered inward.
