@@ -7,13 +7,13 @@ Design + fork rationale: [`README`](README.md)._
 
 ## P0 — the consistency oracle (measure before touching generation)
 
-- [ ] `marigold/atlas_check.py`: per-cell FLAT-frame error — cluster each cell's normals,
+- [x] `marigold/atlas_check.py`: per-cell FLAT-frame error — cluster each cell's normals,
       report the dominant (flat-top) cluster's mean angular deviation from +Z, per cell +
       worst. Acceptance: runs on the smooth wall atlas; prints a per-cell table.
-- [ ] Same-piece deviation in `atlas_check.py`: using the D1 cell semantics (N/E/S/W bits
+- [x] Same-piece deviation in `atlas_check.py`: using the D1 cell semantics (N/E/S/W bits
       → which run/corner pieces a cell contains), report cross-cell angular deviation of
       equivalent piece regions. Acceptance: numbers for the smooth wall; worst pair named.
-- [ ] Seam continuity in `atlas_check.py`: for every in-world-valid edge pair (an
+- [x] Seam continuity in `atlas_check.py`: for every in-world-valid edge pair (an
       E-connected cell's east strip vs a W-connected cell's west strip, same for N/S),
       report mean/max edge-strip normal difference. Acceptance: a seam table prints; the
       current atlas's numbers are recorded in `completed.md` as the baseline.
