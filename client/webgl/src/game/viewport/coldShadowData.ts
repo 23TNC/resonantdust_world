@@ -447,6 +447,7 @@ export class ColdShadowData {
     }
     // Bucketing box (world px, rel. billboard top-left) — 1 frame unit ≡ 1 world unit by the span model.
     this.defTight.set(idx, { dx: ux0 * UNIT, dy: uy0 * UNIT, w: wu * UNIT, h: hu * UNIT });
+    if (hu * UNIT > this.maxTightHpx) this.maxTightHpx = hu * UNIT; // D9: the live dilation bound
 
     const base = (DEF_BASE + idx) * 4;
     const page = 0;        // ONE bound surface page today — C5 (texture-array pages) assigns real indices
@@ -469,6 +470,13 @@ export class ColdShadowData {
   tightBoxOf(defIndex: number): { dx: number; dy: number; w: number; h: number } | null {
     return this.defTight.get(defIndex) ?? null;
   }
+
+  /** texture-generalization P1 (D9): the tallest TIGHT box any minted def carries (world px) —
+   *  the LIVE bound the walk dilation must cover. The content-derived `maxCardTiles` is the
+   *  intent; this is the reality (art can inflate opaque boxes past the nominal card size, and
+   *  a dilation short of the real extent silently drops shadows — the oracle caught exactly
+   *  that). Monotonic per session; defs are immutable. */
+  maxTightHpx = 0;
 
   /** ns-shadows P1: the record's caster-def lane (`billboard_data.A`) — the SIDE frame's def when
    *  the billboard is n/s-rotated with a resolved side (caster_valid), else null. */

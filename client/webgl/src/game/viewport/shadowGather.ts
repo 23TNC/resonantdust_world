@@ -693,7 +693,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
         // D9: the visited tile + uDilateS rows SOUTH — occupancy registers a caster on its BASE
         // LINE only, so the tall-card overhang the old extent bucketing pre-registered is found
         // by looking at the southern tiles whose occupants can lean over this one.
-        for (int sr = 0; sr < 4; sr++) {                     // constant bound (loop-condition trap)
+        for (int sr = 0; sr < 8; sr++) {                     // constant bound (loop-condition trap)
           if (sr > uDilateS) break;
           ivec2 os = ivec2(o.x, o.y + sr);
           uvec4 cb = fetchLin(data, BILLBOARD_PRESENCE_BASE + foldTile(os.x, os.y));
@@ -1478,9 +1478,12 @@ export class ShadowGather {
   setMaxCardTiles(tiles: number): void {
     this.maxCardTiles = Math.max(1, tiles);
   }
-  /** The southern-dilation row count the D9 walks will use. */
+  /** The southern-dilation row count the D9 walks use — bounded by the LARGER of the
+   *  content-authored tallest card and the tallest tight box any def actually minted
+   *  (art can exceed the nominal card; a short dilation silently drops shadows). */
   dilationRows(): number {
-    return Math.ceil(this.cardLean * Math.cos(this.worldTiltDeg * Math.PI / 180) * this.maxCardTiles);
+    const tallestPx = Math.max(this.maxCardTiles * SQUARE, this.coldData.maxTightHpx);
+    return Math.ceil(this.cardLean * Math.cos(this.worldTiltDeg * Math.PI / 180) * (tallestPx / SQUARE));
   }
   /** Falloff exponent — see {@link FALLOFF_EXP}. `__falloff(e)`; <1 lifts the mid-range, 1 = linear
    *  smoothstep, >1 darkens the outer pool. Cannot extend a light past its reach at any value. */
@@ -1540,6 +1543,9 @@ export class ShadowGather {
    *  (`flags|set|index`), filled by BASE-LINE occupancy (D9). */
   private castSlots = new Uint32Array(0);
   private castCount = new Uint8Array(0);
+  /** ORACLE toggle (`__fillmode`): true = the OLD extent registration (a coverage superset
+   *  under the dilated walks) — bit-equal output vs base-line proves D9's coverage. */
+  extentFill = false;
 
   /** #4 shadow_dirty — TWO per-class CPU mirrors (nonzero = recompute). Owner tracking is SHARED
    *  (pan exposes tiles for both). A COLD tile recomputes on a static-light or caster change or pan;
@@ -1646,6 +1652,12 @@ export class ShadowGather {
     (globalThis as unknown as { __orbit: (on?: boolean) => boolean }).__orbit = (on?: boolean) => this.setOrbit(on);
     // DEBUG (P6): corridor↔brute toggle + the gather itself (for `debugReadShadow` diffing).
     (globalThis as unknown as { __corridor: (on?: boolean) => boolean }).__corridor = (on?: boolean) => this.setCorridor(on);
+    // ORACLE (texture-generalization P1): toggle extent-vs-base-line registration + full rebake.
+    (globalThis as unknown as { __fillmode: (extent?: boolean) => boolean }).__fillmode = (extent?: boolean) => {
+      this.extentFill = extent ?? !this.extentFill;
+      this.rebakeAll();
+      return this.extentFill;
+    };
     (globalThis as unknown as { __gather: ShadowGather }).__gather = this;
     // DEBUG (pawn-render P0): cumulative [cold, hot] dirty-slot bakes — the
     // cold-never-rebakes-while-the-wolf-moves acceptance counter.
@@ -1934,6 +1946,12 @@ export class ShadowGather {
       // NOT registered — the walks find tall southern casters via uDilateS instead.
       // ns-shadows: a rot-0/2 caster's VERTICAL card stands on its n-s ground trace — that IS
       // its base line (rows = the side frame's width centered on the anchor; single column).
+      // ORACLE (`__fillmode`): `extentFill` re-enables the OLD extent registration (tilt rows +
+      // the ns col pad) with the NEW slot encoding. Because the walk max-accumulates and the
+      // southern dilation makes extent registration a coverage SUPERSET, bit-equal output
+      // between the two modes ON ONE SETTLED PAGE proves base-line + dilation reaches every
+      // caster the extent did — the reload-free bit-identity oracle (reloads are non-
+      // deterministic: lod retention settles defs by arrival order).
       const side = (p.rotation === 0 || p.rotation === 2) ? this.coldData.casterDefOf(inst.idx) : null;
       let r0: number, r1: number, c0: number, c1: number;
       if (side) {
@@ -1941,10 +1959,12 @@ export class ShadowGather {
         const ws = st ? st.w : p.width;
         const cx = p.x + p.width * 0.5, ay = p.y + p.height;
         r0 = Math.floor((ay - ws * 0.5) / SQUARE); r1 = Math.floor((ay + ws * 0.5) / SQUARE);
-        c0 = c1 = Math.floor(cx / SQUARE);
+        const cc = Math.floor(cx / SQUARE);
+        if (this.extentFill) { c0 = cc - 1; c1 = cc + 1; } else { c0 = c1 = cc; }
       } else {
         const baseY = ty + t.h; // the base line — the SAME row the old extent's r1 used
-        r0 = r1 = Math.floor(baseY / SQUARE); // (bit-identity: keep the old row convention exactly)
+        r1 = Math.floor(baseY / SQUARE); // (keep the old row convention exactly)
+        r0 = this.extentFill ? Math.floor((baseY - TILT * t.h) / SQUARE) : r1;
         c0 = Math.floor(tx / SQUARE); c1 = Math.floor((tx + t.w) / SQUARE);
       }
       // P1: every standing billboard casts + receives like a billboard (the def-authored
@@ -2574,7 +2594,10 @@ export class ShadowGather {
         p.uFloat("uCardLean", this.cardLean);
         { const r = this.worldTiltDeg * Math.PI / 180; p.uVec2("uTilt", Math.sin(r), Math.cos(r)); }
         p.uFloat("uElevK", this.elevK);
-        p.uInt("uDilateS", this.dilationRows()); // D9: the walks' southern occupancy dilation
+        // D9: the walks' southern occupancy dilation. In the ORACLE's extent mode the
+        // dilation is ZERO — extent registration + undilated walks IS the pre-reshape
+        // behavior exactly (extent + dilation would over-reach by span+dilation rows).
+        p.uInt("uDilateS", this.extentFill ? 0 : this.dilationRows());
       },
     });
     this.renderer.draw({
