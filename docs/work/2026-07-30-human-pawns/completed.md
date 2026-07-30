@@ -1,5 +1,27 @@
 # Completed — human-pawns
 
+## 2026-07-30 — P2 complete: DSL parts
+
+**The loader reads ALL prims** (`shared/dsl/src/loader.rs`): `VisualParts` gains
+`parts: Vec<VisualPart>` — one entry per `^prim call`, detected by the `prims.{i}.kind`
+stamp `prims_push` writes; per-part fields `part` (default 0), `scale` (default 1,
+multiplier on slot 0's size), `offset.x/y` (tiles), plus the slot's own
+texture/size/span/anchors/tint/geo. Unit test `a_two_prim_visual_yields_a_parts_list`
+(2-prim human shape + the 1-prim wolf shape).
+
+**The corpus**: `human_female`/`human_male` appended to `content/data/things.rd`
+(speed 16 tics/tile) and authored in the new `content/visual/pawns.rd` — body slot
+(size 1.5, span 2, feet-anchored) + head slot (`part 1`, `scale 0.625` per the user's
+spec, `offset.y −1.15` as the first-guess seat, tuned by the P4 drill); the
+fit(0-2)/fat(3-5)/average(6-8) grouping recorded in the file's comments. NEW smoke test
+`the_real_repo_corpus_loads_and_the_humans_declare_their_parts` loads the REAL `content/`
+tree (the check that would have caught the stale manifests): corpus parses, both humans
+resolve 2 parts with head scale 0.625, the wolf stays 1-part. DSL suite 47/47.
+
+**The wasm surface**: `moverParts(kind)` (JS objects, one per slot; unknown kinds yield a
+default slot) REPLACES `moverPrim` — old export deleted, MoverLayer swapped to slot 0's
+tint/geo (multi-slot rendering is P3). Wasm bundle + webgl tsc green.
+
 ## 2026-07-30 — P1 complete: variant + part art served end-to-end
 
 **The stem grammar** (`server/edge/src/textures.rs`): stems are now

@@ -52,16 +52,16 @@ DSL, then render, then the human itself, then graph conformance. Design stances:
 
 ## P2 — DSL parts
 
-- [ ] Loader: read ALL `prims.N` into a parts list (`VisualParts` → parts vec) with new
+- [x] Loader: read ALL `prims.N` into a parts list (`VisualParts` → parts vec) with new
       per-part fields `part` (default 0), `scale` (default 1, multiplier on part 0's
       size), `offset.x/y` (tiles, default 0). Acceptance: loader unit test over a 2-prim
       script reads both parts' fields.
-- [ ] Author the corpus: `human_female` / `human_male` appended to `content/data/things.rd`
+- [x] Author the corpus: `human_female` / `human_male` appended to `content/data/things.rd`
       (speed) and a new `content/visual/pawns.rd` visual with body prim (span/size from the
       art) + head prim (`part 1`, `scale 0.625`, authored offset); fit/fat/average variant
       grouping recorded in comments. Acceptance: `bin/dsl` corpus parses; loader test
       resolves `human_female` to 2 parts with head scale 0.625.
-- [ ] Replace wasm `moverPrim` with `moverParts(kind)` returning the flat per-part array
+- [x] Replace wasm `moverPrim` with `moverParts(kind)` returning the flat per-part array
       (stem, part, scale, offset, tint, geo per part) and update all callers — delete the
       old export. Acceptance: wasm build green; MoverLayer compiles against the new shape.
 

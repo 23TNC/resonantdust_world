@@ -351,26 +351,63 @@ impl Content {
         resonantdust_codec::object::TYPE_BIOME_THING
     }
 
-    /// Render data for one MOBILE entity (a pawn — e.g. a wolf) at `(macro_position,
-    /// location)` of content `kind`: its world-tile position plus the kind's
-    /// `tint`/`geo_color`, as `[tileX, tileY, tint, geoColor]`. The single-entity
-    /// sibling of [`Content::zone_cold_prims`] — the host adds the sprite using this
-    /// position + the kind's stem/layout (from `thing_texture_stems`/`thing_layout`) and a
-    /// facing from the entity's rotation. Position comes straight from the cell, so a
-    /// mover the bot walks cell-by-cell lands on the same grid the cold things use.
-    #[wasm_bindgen(js_name = moverPrim)]
-    pub fn mover_prim(&self, macro_position: u16, location: u8, kind: u16) -> Vec<f64> {
-        use resonantdust_codec::object;
-        let (origin_x, origin_y) = macro_origin(macro_position);
-        // `location` is a `tile_reference` (`tile_x:4 | tile_y:4`) — decode with the
-        // canonical high/low nibble split the cold things + ground use, NOT the
-        // transposing legacy `packed::cell_x/cell_y`.
-        let tile_x = origin_x + object::ref_hi(location) as i64;
-        let tile_y = origin_y + object::ref_lo(location) as i64;
-        let visual = self.bundle.visual_for_object(kind);
-        let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
-        let geo = visual.as_ref().map(|v| v.geo_color).unwrap_or(tint);
-        vec![tile_x as f64, tile_y as f64, tint as f64, geo as f64]
+    /// A pawn KIND's part SLOTS (human-pawns P2) — the DSL skeleton MoverLayer renders,
+    /// one JS object per `^prim call` in the kind's visual: `{stem, part, scale, offsetX,
+    /// offsetY, size, span, anchorX, anchorY, spriteAnchorX, spriteAnchorY, tint, geoColor}`.
+    /// The wolf yields 1 slot, a human 2 (body + head). An unknown kind yields a single
+    /// default slot (white fill), so the caller never branches on emptiness. Replaces the
+    /// old `moverPrim` (position now comes from the state row alone).
+    #[wasm_bindgen(js_name = moverParts)]
+    pub fn mover_parts(&self, kind: u16) -> JsValue {
+        let arr = js_sys::Array::new();
+        let push = |arr: &js_sys::Array, p: &resonantdust_dsl::loader::VisualPart| {
+            let o = js_sys::Object::new();
+            let set = |k: &str, v: &JsValue| {
+                let _ = js_sys::Reflect::set(&o, &JsValue::from_str(k), v);
+            };
+            match &p.texture {
+                Some(s) => set("stem", &JsValue::from_str(s)),
+                None => set("stem", &JsValue::NULL),
+            }
+            set("part", &JsValue::from_f64(p.part as f64));
+            set("scale", &JsValue::from_f64(p.scale));
+            set("offsetX", &JsValue::from_f64(p.offset.0));
+            set("offsetY", &JsValue::from_f64(p.offset.1));
+            set("size", &JsValue::from_f64(p.size));
+            set("span", &JsValue::from_f64(p.span));
+            set("anchorX", &JsValue::from_f64(p.anchor.0));
+            set("anchorY", &JsValue::from_f64(p.anchor.1));
+            set("spriteAnchorX", &JsValue::from_f64(p.sprite_anchor.0));
+            set("spriteAnchorY", &JsValue::from_f64(p.sprite_anchor.1));
+            set("tint", &JsValue::from_f64(p.tint as f64));
+            set("geoColor", &JsValue::from_f64(p.geo_color as f64));
+            arr.push(&o);
+        };
+        match self.bundle.visual_for_object(kind) {
+            Some(v) if !v.parts.is_empty() => {
+                for p in &v.parts {
+                    push(&arr, p);
+                }
+            }
+            v => {
+                // No visual (or a pre-parts one): a single default slot from the flat fields.
+                let d = resonantdust_dsl::loader::VisualPart {
+                    tint: v.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF),
+                    geo_color: v.as_ref().map(|v| v.geo_color).unwrap_or(0x00FF_FFFF),
+                    texture: v.as_ref().and_then(|v| v.texture.clone()),
+                    part: 0,
+                    scale: 1.0,
+                    offset: (0.0, 0.0),
+                    size: v.as_ref().map(|v| v.size).unwrap_or(1.0),
+                    span: v.as_ref().map(|v| v.span).unwrap_or(1.0),
+                    sprite_scale: v.as_ref().map(|v| v.sprite_scale).unwrap_or((1.0, 1.0)),
+                    sprite_anchor: v.as_ref().map(|v| v.sprite_anchor).unwrap_or((0.5, 0.5)),
+                    anchor: v.as_ref().map(|v| v.anchor).unwrap_or((0.5, 0.5)),
+                };
+                push(&arr, &d);
+            }
+        }
+        arr.into()
     }
 
     /// Render data for one **cold overlay** cell (a cold `state` row the host composites over the

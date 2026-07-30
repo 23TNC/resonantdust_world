@@ -34,6 +34,26 @@ import { placeThing, readLayout } from "./thingPlacement";
  *  pawns/things paint front-over-back. */
 const PAWN_Z_BASE = 1;
 
+/** One part SLOT of a pawn kind's visual skeleton — the wasm `moverParts` row (human-pawns
+ *  P2). Slot order = DSL `^prim call` order; slot 0 boxes the carrier; `part` names which
+ *  `<part>` files of the resolved leaf the slot draws; `scale` multiplies slot 0's drawn
+ *  size; `offset*` places the slot in tiles relative to slot 0's anchor. */
+interface MoverPart {
+  stem: string | null;
+  part: number;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  size: number;
+  span: number;
+  anchorX: number;
+  anchorY: number;
+  spriteAnchorX: number;
+  spriteAnchorY: number;
+  tint: number;
+  geoColor: number;
+}
+
 /** Speculation applies a new position only past this tile delta — keeps the warm re-bake
  *  cadence proportional to actual motion, not the frame rate. */
 const SPEC_APPLY_EPS = 1 / 32;
@@ -424,9 +444,11 @@ export class MoverLayer {
     facing: number,
     macroPosition: number,
   ): void {
-    const prim = this.content.moverPrim(macroPosition, 0, kind);
-    const tint = prim[2];
-    const geoColor = prim[3];
+    // The kind's part SLOTS (human-pawns P2) — slot 0 boxes the carrier; the wolf is the
+    // 1-slot degenerate case. (Multi-slot rendering lands in P3.)
+    const parts = this.content.moverParts(kind) as MoverPart[];
+    const tint = parts[0].tint;
+    const geoColor = parts[0].geoColor;
 
     // Facing (+ west flip) from the entity's facing; variant is a stable per-entity pick.
     const stem = this.thingStems[kind - 1];

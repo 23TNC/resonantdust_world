@@ -72,3 +72,23 @@
                 0 return
             @on_create>
                 0 return
+    ; The humans — the first MULTI-PART pawns (human-pawns): body (part 0) + head (part 1),
+    ; declared in content/visual/pawns.rd; which body/head each pawn wears rides its payload
+    ; (`PART(slot, def)` — TABLES.md §payload). Two kinds because the sexes have separate
+    ; sprite sets (pawn/human/female, pawn/human/male). Appended so no object_id renumbers;
+    ; consumers resolve by name from THIS corpus, never a pinned constant.
+    ::human_female>
+        :data>
+            @define>
+                ; speed: TICS PER TILE — 16 → ~2.7 s/tile at 6 Hz (slower than the wolf's 12).
+                16 &thing.speed set
+                0 return
+            @on_create>
+                0 return
+    ::human_male>
+        :data>
+            @define>
+                16 &thing.speed set
+                0 return
+            @on_create>
+                0 return

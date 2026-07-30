@@ -143,6 +143,36 @@ pub struct VisualParts {
   /// per KIND, not per instance: every torch shines identically, so the client reads
   /// one row by `kind_id` and never pays for it on the wire.
   pub light: Option<LightParts>,
+  /// EVERY prim the visual hook built, in `^prim call` order — the pawn PARTS list
+  /// (human-pawns P2). `parts[0]` mirrors the flat prim-0 fields above (the wolf's whole
+  /// visual = one entry); a human's `@on_create` calls `^prim` twice, so `parts[1]` is
+  /// its head. Which STATE feeds each slot's sprite is the payload's business
+  /// (`PART(slot, def)`), not the DSL's — the DSL declares only the skeleton.
+  pub parts: Vec<VisualPart>,
+}
+
+/// One part SLOT of a kind's visual skeleton — the per-prim fields of `prims.N`
+/// (human-pawns P2). Slot index = `^prim call` order; slot 0 boxes the carrier.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisualPart {
+  pub tint: u32,
+  pub geo_color: u32,
+  /// The sprite STEM (`None` = a flat tint rect / the built-in `white`).
+  pub texture: Option<String>,
+  /// Which `<part>` files of the resolved leaf this slot draws (`&prim.part`, default 0
+  /// — the body files; a human head draws part 1).
+  pub part: u32,
+  /// Size multiplier against SLOT 0's drawn size (`&prim.scale`, default 1 — the head
+  /// authors 0.625: head canvases are held about body size).
+  pub scale: f64,
+  /// Placement offset in TILES relative to slot 0's anchor (`&prim.offset.x/y`, default 0).
+  pub offset: (f64, f64),
+  /// The slot's own frame fields, same semantics as the flat prim-0 copies above.
+  pub size: f64,
+  pub span: f64,
+  pub sprite_scale: (f64, f64),
+  pub sprite_anchor: (f64, f64),
+  pub anchor: (f64, f64),
 }
 
 /// A kind's emitted light, authored under `&thing.light.*`. Colour is `0..1`; `reach`
@@ -334,7 +364,37 @@ impl Bundle {
         *ch = PackedChannel { material_id, tint };
       }
     }
-    Some(VisualParts { tint, geo_color, texture, footprint, anchor, size, span, sprite_scale, sprite_anchor, packed, light })
+    // EVERY prim the hook built, in `^prim call` order — the parts list (human-pawns P2).
+    // A prim exists iff `prims.{i}.kind` does (`prims_push` stamps it at creation).
+    let mut parts = Vec::new();
+    let mut i = 0usize;
+    while store.read(&format!("prims.{i}.kind")).is_some() {
+      let rf = |field: &str, dflt: f64| {
+        store.read(&format!("prims.{i}.{field}")).map(|c| c.as_f64()).unwrap_or(dflt)
+      };
+      let p_tint = store.read(&format!("prims.{i}.tint")).map(|c| c.as_int() as u32).unwrap_or(tint);
+      let p_geo =
+        store.read(&format!("prims.{i}.geoColor")).map(|c| c.as_int() as u32).unwrap_or(p_tint);
+      let p_texture = match store.read(&format!("prims.{i}.texture")) {
+        Some(crate::vm::Cell::Sym(s)) => Some(s.clone()),
+        _ => None,
+      };
+      parts.push(VisualPart {
+        tint: p_tint,
+        geo_color: p_geo,
+        texture: p_texture,
+        part: rf("part", 0.0) as u32,
+        scale: rf("scale", 1.0),
+        offset: (rf("offset.x", 0.0), rf("offset.y", 0.0)),
+        size: rf("size", 1.0),
+        span: rf("span", 1.0),
+        sprite_scale: (rf("sprite_scale.w", 1.0), rf("sprite_scale.h", 1.0)),
+        sprite_anchor: (rf("sprite_anchor.x", 0.5), rf("sprite_anchor.y", 0.5)),
+        anchor: (rf("anchor.x", 0.5), rf("anchor.y", 0.5)),
+      });
+      i += 1;
+    }
+    Some(VisualParts { tint, geo_color, texture, footprint, anchor, size, span, sprite_scale, sprite_anchor, packed, light, parts })
   }
 
   /// A tile's background colour as a packed `0xRRGGBB` (see [`node_color_bg`]).
@@ -879,6 +939,79 @@ mod tests {
     assert_eq!(stone.texture.as_deref(), Some("linked/wall_smooth"));
     // the stem table, in def_id order (index 0 → def_id 1)
     assert_eq!(b.tile_texture_stems(), vec!["white".to_string(), "linked/wall_smooth".to_string()]);
+  }
+
+  #[test]
+  fn the_real_repo_corpus_loads_and_the_humans_declare_their_parts() {
+    // A REAL-corpus smoke test (human-pawns P2): loads `content/` from the repo checkout
+    // when present (docker mounts the workspace; a packaged build without it skips). This
+    // is the check that would have caught the stale manifests — the corpus must parse and
+    // the human kinds must resolve their skeletons.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    if !root.exists() {
+      return;
+    }
+    let sources = crate::content::read_content_dir(&root).expect("read content/");
+    let b = load(&sources).expect("the repo corpus loads clean");
+    for name in ["human_female", "human_male"] {
+      let id = b.thing_object_id(name).expect(name);
+      let v = b.visual_for_object(id).expect("visual");
+      assert_eq!(v.parts.len(), 2, "{name}: body + head");
+      assert_eq!(v.parts[1].part, 1, "{name}: head draws part-1 files");
+      assert_eq!(v.parts[1].scale, 0.625, "{name}: head scale (user spec)");
+    }
+    // the wolf stays the 1-part degenerate case
+    let wolf = b.visual_for_object(b.thing_object_id("wolf").unwrap()).unwrap();
+    assert_eq!(wolf.parts.len(), 1);
+  }
+
+  #[test]
+  fn a_two_prim_visual_yields_a_parts_list() {
+    // human-pawns P2: the human shape — slot 0 body + slot 1 head (`part 1`, `scale
+    // 0.625`, an upward tile offset). Mirrors content/visual/pawns.rd.
+    let data = "<thing>\n  ::human_female>\n    :data>\n      @define>\n        16 &thing.speed set\n        0 return\n";
+    let visual = "\
+<thing>
+  ::human_female>
+    :visual>
+      @on_create>
+        \"thing ^prim call &body export
+        \"pawn/human/female &body.texture set
+        #ffffff &body.tint set
+        #7a6a5a &body.geoColor set
+        1.5 &body.size set
+        2 &body.span set
+        1.0 &body.anchor.y set
+        1.0 &body.sprite_anchor.y set
+        \"thing ^prim call &head export
+        \"pawn/human/female &head.texture set
+        1 &head.part set
+        0.625 &head.scale set
+        -1.15 &head.offset.y set
+        2 &head.span set
+        0 return
+";
+    let b = load(&[src("data/things.rd", data), src("visual/pawns.rd", visual)]).expect("load");
+    let v = b.visual_for_object(1).unwrap();
+    assert_eq!(v.parts.len(), 2, "two ^prim calls → two part slots");
+    let body = &v.parts[0];
+    assert_eq!(body.part, 0);
+    assert_eq!(body.scale, 1.0);
+    assert_eq!(body.texture.as_deref(), Some("pawn/human/female"));
+    assert_eq!((body.size, body.span), (1.5, 2.0));
+    assert_eq!(body.anchor.1, 1.0);
+    let head = &v.parts[1];
+    assert_eq!(head.part, 1);
+    assert_eq!(head.scale, 0.625);
+    assert_eq!(head.offset, (0.0, -1.15));
+    assert_eq!(head.texture.as_deref(), Some("pawn/human/female"));
+    // a 1-prim kind (the wolf shape) still yields exactly one slot
+    let one = "<thing>\n  ::wolfish>\n    :data>\n      @define>\n        0 return\n";
+    let onev = "<thing>\n  ::wolfish>\n    :visual>\n      @on_create>\n        \"thing ^prim call &thing export\n        \"pawn/animal/wolf &thing.texture set\n        #ffffff &thing.tint set\n        0 return\n";
+    let b1 = load(&[src("data/things.rd", one), src("visual/things.rd", onev)]).expect("load");
+    let w = b1.visual_for_object(1).unwrap();
+    assert_eq!(w.parts.len(), 1);
+    assert_eq!(w.parts[0].part, 0);
   }
 
   #[test]
