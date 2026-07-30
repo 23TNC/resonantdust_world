@@ -31,3 +31,18 @@ E|W and S|N — so the plan is two inpaints total (`hrun` freezes EW, `vrun` fre
 then the frozen bands STAMP atlas-wide and the remaining ten layouts verify only.
 `--dry` emits layouts+masks to a chosen dir and prints exactly that plan (verified via
 the bin/art entry).
+
+## 2026-07-29 · P2 — the ComfyUI seam-inpaint pass (2/2)
+
+The live pass (`bin/art retile-linked <kind> --dn 0.35`): layouts composite over a neutral
+backdrop, upscale 4× (SDXL wants a canvas), masked inpaint via VAEEncode +
+SetLatentNoiseMask + KSampler (generate.py's checkpoint/client, pinned seed), downscale,
+and composite back THROUGH the mask — then the canonical bands (the mid-run seam of each
+class: hrun's 6|6, vrun's 9|9) STAMP into every same-class window edge with an inner-half
+feather, and the pad rings re-bleed. **Verified**: outside-band pixels changed = 0
+(enforced + checked); ONE round froze both classes (no round 2 — the metric came out
+UNIFORM). **Numbers**: E|W 2.07 mean / 7.29 max → **1.02 / 1.02** (all 64 pairs identical;
+the residual is the joint's own cross-gradient); S|N 0.00 → 0.11 (the canonical band's
+blend, negligible). The post-pass hrun layout renders as ONE continuous wall — top face,
+bevel, and outline intact, no visible joints (`hrun_after` capture, session scratchpad;
+the pre-pass diffuse backed up there as `diffuse_ORIG.png`).

@@ -212,8 +212,140 @@ def main() -> int:
         print(f"  (remaining layouts verify only — every seam class is frozen after the above)")
         return 0
 
-    print("retile-linked: live pass lands with P2 (--dry / --selftest only for now)", file=sys.stderr)
-    return 2
+    return live_pass(g, args)
+
+
+# ── P2: the ComfyUI seam-inpaint pass ─────────────────────────────────────────────────
+
+UPSCALE = 4  # SDXL wants a real canvas; 112px windows upscale 4× for inpaint, then back
+POS_PROMPT = ("stone wall, top-down 2D game tile texture, flat cel shading, hand-painted "
+              "game art, one continuous seamless wall surface, consistent lighting")
+
+
+def _inpaint_layout(g: Geo, name: str, shape: list[str], dn: float, band_units: float, seed: int) -> np.ndarray:
+    """Masked low-denoise img2img of a layout's seam bands on the ComfyUI box. Returns the
+    layout RGBA with ONLY masked pixels replaced (outside-mask identity by composite)."""
+    import generate as G  # the proven client plumbing (COMFYUI_URL, upload/run/fetch)
+    import io
+
+    img, _cells = assemble(g, shape)
+    mask, _classes = seam_masks(g, shape, band_units)
+    h, w = img.shape[:2]
+    # Transparent empties composite over a neutral dark backdrop — the seams sit BETWEEN
+    # wall windows, so the backdrop is context only.
+    rgb = img[:, :, :3].astype(np.float64)
+    a = (img[:, :, 3:4].astype(np.float64)) / 255.0
+    back = np.array([48.0, 48.0, 44.0])
+    flat = (rgb * a + back * (1 - a)).astype(np.uint8)
+
+    big = Image.fromarray(flat, "RGB").resize((w * UPSCALE, h * UPSCALE), Image.LANCZOS)
+    bigmask = Image.fromarray(mask, "L").resize((w * UPSCALE, h * UPSCALE), Image.NEAREST)
+
+    up_img = G._upload(big, f"retile-{name}.png")
+    up_mask = G._upload(bigmask.convert("RGB"), f"retile-{name}-mask.png")
+
+    graph = {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": G.MODEL}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": POS_PROMPT, "clip": ["1", 1]}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": G.GENERIC_NEG, "clip": ["1", 1]}},
+        "4": {"class_type": "LoadImage", "inputs": {"image": up_img}},
+        "5": {"class_type": "LoadImage", "inputs": {"image": up_mask}},
+        "6": {"class_type": "ImageToMask", "inputs": {"image": ["5", 0], "channel": "red"}},
+        "7": {"class_type": "VAEEncode", "inputs": {"pixels": ["4", 0], "vae": ["1", 2]}},
+        "8": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["7", 0], "mask": ["6", 0]}},
+        "10": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": G.STEPS, "cfg": G.CFG,
+                "sampler_name": G.SAMPLER, "scheduler": G.SCHED, "denoise": dn,
+                "model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["8", 0]}},
+        "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["1", 2]}},
+        "9": {"class_type": "SaveImage", "inputs": {"images": ["11", 0], "filename_prefix": f"retile-{name}-out"}},
+    }
+    data = G._run(graph)
+    out_big = Image.open(io.BytesIO(data)).convert("RGB").resize((w, h), Image.LANCZOS)
+    out = np.asarray(out_big, dtype=np.uint8)
+
+    # Composite back THROUGH the mask — outside-mask bit-identity is enforced here.
+    m = (mask > 0)[:, :, None]
+    result = img.copy()
+    result[:, :, :3] = np.where(m, out, img[:, :, :3])
+    return result
+
+
+def _stamp_bands(g: Geo, canon: dict[str, np.ndarray], band: int) -> None:
+    """Stamp the frozen canonical bands into every same-class window edge, feathered over
+    the inner half so the band meets each cell's interior smoothly. RGB only."""
+    fe = max(1, band // 2)
+    for c in range(g.cols * g.rows):
+        x, y = c % g.cols, c // g.cols
+        n_, e_ = x & 1, (x >> 1) & 1
+        sw = 3 - y
+        s_, w_ = sw & 1, (sw >> 1) & 1
+        wy, wx = g.window(c)
+        win = g.atlas[wy : wy + g.win, wx : wx + g.win]
+
+        def blend(region: np.ndarray, stamp: np.ndarray, axis_from_edge: np.ndarray) -> np.ndarray:
+            wgt = np.clip((band - axis_from_edge) / fe, 0.0, 1.0)[..., None]
+            return (stamp * wgt + region * (1 - wgt)).astype(np.uint8)
+
+        if e_ and "E" in canon:
+            d = np.arange(band)[::-1]  # px from the east edge
+            win[:, g.win - band :, :3] = blend(win[:, g.win - band :, :3].astype(np.float64),
+                                               canon["E"].astype(np.float64), d[None, :])
+        if w_ and "W" in canon:
+            d = np.arange(band)
+            win[:, :band, :3] = blend(win[:, :band, :3].astype(np.float64),
+                                      canon["W"].astype(np.float64), d[None, :])
+        if s_ and "S" in canon:
+            d = np.arange(band)[::-1]
+            win[g.win - band :, :, :3] = blend(win[g.win - band :, :, :3].astype(np.float64),
+                                              canon["S"].astype(np.float64), d[:, None])
+        if n_ and "N" in canon:
+            d = np.arange(band)
+            win[:band, :, :3] = blend(win[:band, :, :3].astype(np.float64),
+                                      canon["N"].astype(np.float64), d[:, None])
+
+
+def live_pass(g: Geo, args) -> int:
+    band = max(2, int(round(args.band_units * g.win / 16.0)))
+    before = g.atlas.copy()
+
+    # ONE inpaint per canonical seam class (F1): hrun freezes E|W, vrun freezes S|N.
+    print(f"retile-linked: inpainting hrun (E|W) + vrun (S|N) at dn {args.dn} ...", flush=True)
+    hr = _inpaint_layout(g, "hrun", LAYOUTS["hrun"], args.dn, args.band_units, seed=2024)
+    vr = _inpaint_layout(g, "vrun", LAYOUTS["vrun"], args.dn, args.band_units, seed=2024)
+
+    # The canonical bands come from the MIDDLE seam (mid-run cell on both sides).
+    canon: dict[str, np.ndarray] = {}
+    x = 2 * g.win  # hrun seam between positions 1|2 (cells 6|6)
+    canon["E"] = hr[:g.win, x - band : x, :3].copy()
+    canon["W"] = hr[:g.win, x : x + band, :3].copy()
+    y = 2 * g.win  # vrun seam between positions 1|2 (cells 9|9)
+    canon["S"] = vr[y - band : y, :g.win, :3].copy()
+    canon["N"] = vr[y : y + band, :g.win, :3].copy()
+
+    _stamp_bands(g, canon, band)
+    rebleed(g)
+
+    # Outside-band identity check: the only pixels allowed to differ are the window edge
+    # bands (the stamp) and the pad rings (the bleed guard, refreshed by design).
+    changed = (g.atlas[:, :, :3] != before[:, :, :3]).any(axis=-1)
+    inband = np.zeros_like(changed)
+    for c in range(g.cols * g.rows):
+        wy, wx = g.window(c)
+        inband[wy : wy + g.win, wx : wx + band] = True
+        inband[wy : wy + g.win, wx + g.win - band : wx + g.win] = True
+        inband[wy : wy + band, wx : wx + g.win] = True
+        inband[wy + g.win - band : wy + g.win, wx : wx + g.win] = True
+        inband[wy - g.pad : wy, wx - g.pad : wx + g.win + g.pad] = True  # pad ring (rebleed)
+        inband[wy + g.win : wy + g.win + g.pad, wx - g.pad : wx + g.win + g.pad] = True
+        inband[wy : wy + g.win, wx - g.pad : wx] = True
+        inband[wy : wy + g.win, wx + g.win : wx + g.win + g.pad] = True
+    stray = int((changed & ~inband).sum())
+    print(f"  outside-band pixels changed: {stray} (must be 0)")
+
+    op = g.kind_dir / DIFFUSE
+    Image.fromarray(g.atlas, "RGBA").save(op)
+    print(f"retile-linked: wrote {op}")
+    return 0 if stray == 0 else 1
 
 
 if __name__ == "__main__":

@@ -30,11 +30,11 @@ Design + forks: [`README`](README.md). ComfyUI box required from P2 (`COMFYUI_UR
 
 ## P2 — the ComfyUI seam-inpaint pass
 
-- [ ] The inpaint graph in `retile_linked.py`: upload layout + mask, VAEEncode +
+- [x] The inpaint graph in `retile_linked.py`: upload layout + mask, VAEEncode +
       SetLatentNoiseMask + KSampler at `--dn` (default 0.35), fetch, slice back with the
       frozen-edge discipline. Reuses `generate.py`'s client helpers. Acceptance: a live
       run completes on the smooth wall; pixels OUTSIDE the seam bands are bit-identical.
-- [ ] Gate the pass with the P0 metric: albedo seams drop vs baseline; a second round
+- [x] Gate the pass with the P0 metric: albedo seams drop vs baseline; a second round
       runs only if round 1 didn't stabilise (ledger-frozen edges make it convergent).
       Acceptance: before/after numbers in `completed.md`; outside-mask identity re-checked.
 
