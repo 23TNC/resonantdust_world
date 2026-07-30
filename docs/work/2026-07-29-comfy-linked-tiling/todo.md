@@ -40,11 +40,11 @@ Design + forks: [`README`](README.md). ComfyUI box required from P2 (`COMFYUI_UR
 
 ## P3 — regenerate downstream + re-gate the normals
 
-- [ ] Re-run the map chain on the new diffuse (`bin/art` delight → split_layers →
+- [x] Re-run the map chain on the new diffuse (`bin/art` delight → split_layers →
       `normal --marigold` → surface for the wall kind). Acceptance: all maps regenerate;
       `atlas_check` relief ≥ 20 % and normal seams ≤ the marigold stream's shipped
       numbers.
-- [ ] Decide stamping strength on the NEW source (fork to record): if source consistency
+- [x] Decide stamping strength on the NEW source (fork to record): if source consistency
       alone brings arm spread under ~2°, weaken/disable donor stamping to recover
       per-cell character. Acceptance: the chosen setting + its numbers in `forks.md`.
 

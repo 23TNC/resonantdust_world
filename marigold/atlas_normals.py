@@ -108,21 +108,28 @@ def main() -> int:
     if args.engine == "whole":
         # ONE inference over the full atlas — the model keeps its macro-shape signal (the
         # relief), and the post passes below fix the frame drift that inference costs.
+        # FLOATED like normals.py: an image touching the frame edge reads as an infinite
+        # plane and comes out FLAT (its own docstring; re-measured here — relief 23% → 0%
+        # without the margin). Pad transparent, infer, crop back.
+        margin = round(0.5 * max(W, H))
+        padded = Image.new("RGBA", (W + 2 * margin, H + 2 * margin), (0, 0, 0, 0))
+        padded.paste(src, (margin, margin))
         gen = torch.Generator(device=args.device).manual_seed(args.seed)
         pred = pipe(
-            Image.fromarray(rgba[:, :, :3], "RGB"),
+            padded.convert("RGB"),
             num_inference_steps=args.steps,
             ensemble_size=args.ensemble,
             processing_resolution=proc_res,
             generator=gen,
         )
         nrm = pipe.image_processor.visualize_normals(pred.prediction)[0].convert("RGB")
-        if nrm.size != (W, H):
-            nrm = nrm.resize((W, H), Image.BILINEAR)
+        if nrm.size != padded.size:
+            nrm = nrm.resize(padded.size, Image.BILINEAR)
+        nrm = nrm.crop((margin, margin, margin + W, margin + H))
         n = np.asarray(nrm, dtype=np.uint8)
         a = rgba[:, :, 3:4] > 16
         out_atlas = np.where(a, n, np.array(FLAT_NORMAL_RGB, dtype=np.uint8)).astype(np.uint8)
-        print("  whole-atlas inference done", flush=True)
+        print(f"  whole-atlas inference done (floated {margin}px)", flush=True)
     else:
       for cell in range(cols * rows):
         cx, cy = (cell % cols) * cw, (cell // cols) * ch
