@@ -11,17 +11,19 @@ Resolution order for a kind:
   2. failing that, the leaf's own `atlas.json` — a held-whole atlas STATES its tile count
      (`cols x rows`, or generate_tile's `grid`), which is a fact about the file rather than a
      measurement of it;
-  3. failing that, DEFAULT to 1 — what the loader and the client both use for an undeclared
-     def, so the texture matches the frame the renderer will actually draw. (Previously this
-     INFERRED from the art: `next_pow2(ceil(max(w,h) / TILE_PX))` over the leaf's
-     diffuse, stamped `span_inferred: true` and warned about.
+  3. failing that, DEFAULT to 1 — what `loader.rs` and `thingPlacement.ts` both use for an
+     undeclared def, so the texture matches the frame the renderer will actually draw.
 
-The fallback is not an edge case. Exactly one def in the corpus authors a span today (stream I5),
-so inference is what runs for nearly everything — which is why it is marked in the output rather
-than applied silently: the marked leaves ARE the worklist of defs still to be authored.
+The default is not an edge case. Exactly one def in the corpus authors a span today (stream I5),
+so step 3 is what runs for nearly everything — which is why it is announced rather than applied
+silently: the `span_from: "default"` leaves ARE the worklist of defs still to be authored.
 
-  python3 bin/lib/leaf_span.py textures/biome-thing/default/conifer
-  python3 bin/lib/leaf_span.py --all
+It replaced an INFERENCE from the art (`next_pow2(ceil(max(w,h) / TILE_PX))`). That made the
+texture tree self-consistent while disagreeing with the renderer — measured 20 leaves carrying
+4-16x the texels that would ever be sampled (wolf 512px art drawn into a 128px frame, flora 256
+into 128). A default of 1 keeps both sides honest, and the art is scaled DOWN to fit rather than
+clipped.
+
 """
 import argparse, glob, json, math, os, sys
 

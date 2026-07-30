@@ -2084,9 +2084,15 @@ _split_variant_sheet() {  # sheet_png gap
   # this the canvas is each blob's own nearest pow2 box, i.e. the square is decided by how large the
   # art happened to be drawn — which is how a conifer reached 256 by luck (stream I1). The common
   # scale is the kind's max blob dim, so the variants keep their relative sizes inside the canvas.
-  local _decl _kr _mx=0 _g _bw _bh
+  local _decl _kr _mx=0 _g _bw _bh _dsrc=declared
   _kr=${kind_dir#"$MASTER_DIR/"}
   _decl=$(_span_side "$_kr" || true)
+  # No declared span? Use ONE TILE, matching the loader's `span` default of 1.0 and the client's
+  # layout default. The art is then scaled DOWN to fit that canvas rather than left at its own
+  # nearest pow2 box, which is what produced textures 4-16x larger than the frame the renderer
+  # draws (wolf 512px art into a 128px frame). Scaling is a common factor across the kind's blobs,
+  # so the variants keep their relative sizes; author `&thing.span set` to get a larger frame.
+  if [[ -z "$_decl" ]]; then _decl=${RD_TILE_PX:-128}; _dsrc=default; fi
   if [[ -n "$_decl" ]]; then
     for _g in "${CROP_GEOMS[@]}"; do
       _bw=${_g%%x*}; _bh=${_g#*x}; _bh=${_bh%%+*}
@@ -2094,7 +2100,11 @@ _split_variant_sheet() {  # sheet_png gap
       (( _bh > _mx )) && _mx=$_bh
     done
     EMIT_SIDE=$_decl; EMIT_MAXDIM=$_mx
-    echo "    $_kr: canvas ${_decl}□ from the declared span (blob max ${_mx}px)"
+    if [[ "$_dsrc" == declared ]]; then
+      echo "    $_kr: canvas ${_decl}□ from the declared span (blob max ${_mx}px)"
+    else
+      echo "    $_kr: canvas ${_decl}□ — no declared span, defaulting to 1 tile; art scaled to fit (blob max ${_mx}px)"
+    fi
   fi
   _key_stack "$sheet"; EMIT_BLEED=1            # magenta despill + edge-bleed, like any diffuse
   _emit_crops "$sheet" "${KEY_STACK[@]}"
