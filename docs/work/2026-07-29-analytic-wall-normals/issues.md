@@ -26,3 +26,12 @@ wedge widens to the apron's foot; its side-face normal holds to full depth inste
 fading at `sd`). Gate unchanged (flat 0.318°, seams 0.00, relief 36.0 %); the cross
 side-by-side now matches every red line, and the in-game torch drill shows full-height
 mitered face ends. `corners-final.png` updated.
+
+**I1 second refinement (user recolor annotation):** the footprint rewrite had LOST the
+north back-edge bevel — `band_normals` defined it (40°) but nothing assigned it, so the
+run tops inherited the flat top normal. Restored as a proper band on every exposed north
+boundary (follows the silhouette, hooks around arm junctions — the annotation's red
+path); also fixed a ring-inheritance `np.roll` WRAP leak that let a window's bottom
+outline inherit its top edge's bevel. Gate: relief 39.4 % (the bevel adds real face
+share), flat 0.318°, seams 0.00 unchanged. `corners-final.png` updated — the assembly
+now reads as a coherent beveled prism end to end.

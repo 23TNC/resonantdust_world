@@ -145,6 +145,11 @@ def build_cell(bits: tuple[int, int, int, int], win: int, gm: dict, tops: dict) 
     front = front | gainE | gainW
     east = (bandE & ~gainE) | concave_w
     west = (bandW & ~gainW) | concave_e
+    # The NORTH back-edge bevel (user red-outline 2026-07-29): the exposed north boundary
+    # carries the north-tilted band (the wall's back edge seen from above) — it follows
+    # the silhouette around arm junctions and never crosses a connected edge.
+    d_above = _dist_along(fp, axis=0, reverse=True)      # px above a body's north boundary
+    north = ~fp & (d_above > 0) & (d_above <= o) & ~(front | east | west)
 
     out = np.tile(tops["top"], (win, win, 1))
     wsum = np.ones((win, win))
@@ -159,9 +164,11 @@ def build_cell(bits: tuple[int, int, int, int], win: int, gm: dict, tops: dict) 
             return d, np.full(d.shape, fr)
         if key == "east":
             return np.where(concave_w, d_right, dA_right), np.where(concave_w, fr + t, sd)
-        return np.where(concave_e, d_left, dA_left), np.where(concave_e, fr + t, sd)
+        if key == "west":
+            return np.where(concave_e, d_left, dA_left), np.where(concave_e, fr + t, sd)
+        return d_above, np.full(d_above.shape, o)  # north: the back-edge bevel band
 
-    for mask, key in ((front, "front"), (east, "east"), (west, "west")):
+    for mask, key in ((front, "front"), (east, "east"), (west, "west"), (north, "north")):
         d, reach = face_depth(key)
         ramp = np.where(mask, np.clip((reach + t - d) / max(t, 1), 0.0, 1.0), 0.0)
         # face·ramp + top·(1−ramp) INSIDE the mask — the ramp genuinely fades to the top
@@ -172,7 +179,7 @@ def build_cell(bits: tuple[int, int, int, int], win: int, gm: dict, tops: dict) 
 
     # Outline: rings the silhouette (footprint + faces). Inherits the nearest face's tilt
     # cheaply by ONE more dilation pass carrying the current field outward.
-    covered = fp | front | east | west
+    covered = fp | front | east | west | north
     ring = _dilate(covered, o) & ~covered
     field_src = out.copy()
     w_src = wsum.copy()
@@ -181,6 +188,11 @@ def build_cell(bits: tuple[int, int, int, int], win: int, gm: dict, tops: dict) 
             sy, sx = shift
             src_f = np.roll(field_src, (sy, sx), axis=(0, 1))
             src_w = np.roll(w_src, (sy, sx), axis=(0, 1))
+            # np.roll WRAPS — a window's bottom outline must never inherit its top edge.
+            if sy == 1: src_w[0, :] = 0
+            if sy == -1: src_w[-1, :] = 0
+            if sx == 1: src_w[:, 0] = 0
+            if sx == -1: src_w[:, -1] = 0
             take = ring & (w_src == 0) & (src_w > 0)
             field_src[take] = src_f[take]
             w_src[take] = src_w[take]
