@@ -68,6 +68,14 @@ export interface Primitive {
    *  sprite and a glow. Carried under the SAME carrier prim as the billboard ([F9](../../../../docs/work/2026-07-25-primitive-graph/forks.md)),
    *  so it needs no second delivery list. Absent ⇒ nothing about the records changes. */
   light?: PrimitiveLight;
+  /** human-pawns P5 — this billboard is a CARRIED PIECE of another prim's carrier: the value is
+   *  the OWNER billboard's prim id (a pawn's head names its body). Its `billboard_data` leaf
+   *  parents on that carrier (`prim_data` holds up to 4 pieces — "a pawn = prim{head, body, …}",
+   *  VARIABLES.md) instead of minting a degenerate root of its own. Absent ⇒ a root as ever. */
+  carrierOf?: number;
+  /** human-pawns P5 — the carried piece's LAYER (`billboard_data.G` bits 28–31): the pawn part
+   *  slot (body 0, head 1). One object per layer among a prim's pieces. */
+  layer?: number;
 }
 
 /** The light a primitive carries. Per-KIND in content ([F8](../../../../docs/work/2026-07-25-primitive-graph/forks.md)),
@@ -540,6 +548,8 @@ export class SquareCache {
                                // mover falls back to the e/w derivation (ns-shadows I1)
       litTile: spec.litTile,   // tile-lighting F2: the participation flag — dropped here, a
                                // wall never joins the lighting class (the addPrim gotcha)
+      carrierOf: spec.carrierOf, // human-pawns P5: the piece link — dropped here, a head mints
+      layer: spec.layer,         // its own root + loses its layer (the addPrim gotcha again)
     };
     const range = squaresForAABB(prim.x, prim.y, prim.x + prim.width, prim.y + prim.height);
     this.prims.set(id, { prim, range });

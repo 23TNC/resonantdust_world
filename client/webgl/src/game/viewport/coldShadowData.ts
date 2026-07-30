@@ -224,6 +224,10 @@ export class ColdShadowData {
   private readonly primFreeList: number[] = [];
   /** billboard.id → the prim carrying it (allocated/freed together with its leaf). */
   private readonly primOfBillboard = new Map<number, number>();
+  /** human-pawns P5: billboards that are CARRIED PIECES (a pawn's head) — `billboard.id` →
+   *  the SHARED carrier prim they claimed a piece slot on. Disjoint from
+   *  {@link primOfBillboard} (roots), so the free paths can't subtree a shared carrier. */
+  private readonly childOfBillboard = new Map<number, number>();
   /** light slot k → the prim carrying it (P3: lights are CARRIED, never placed directly). */
   private readonly primOfLight: number[] = [];
   /** P5 — CONTENT-carried lights: `billboard.id` → its `light_data` id. Their id space starts above
@@ -626,9 +630,14 @@ export class ColdShadowData {
     if ((rotation === 0 || rotation === 2) && billboard.textureName) {
       const cut = billboard.textureName.lastIndexOf("/");
       const facingSeg = billboard.textureName.slice(cut + 1);
-      if (facingSeg === "n" || facingSeg === "s") {
+      // human-pawns P5: a part slot's facing segment may carry a `.<part>` suffix
+      // (`s.1` = a head's south frame) — the side frame keeps the SAME part (`e.1`).
+      const [facing, partSuffix] = facingSeg.includes(".")
+        ? [facingSeg.slice(0, facingSeg.indexOf(".")), facingSeg.slice(facingSeg.indexOf("."))]
+        : [facingSeg, ""];
+      if (facing === "n" || facing === "s") {
         const side = this.definitionFor(
-          { ...billboard, textureName: billboard.textureName.slice(0, cut + 1) + "e", flipX: false } as Primitive,
+          { ...billboard, textureName: billboard.textureName.slice(0, cut + 1) + "e" + partSuffix, flipX: false } as Primitive,
           resolver,
         );
         if (side >= 0) {
@@ -657,10 +666,9 @@ export class ColdShadowData {
     }
 
     const hit = this.billboardIndex.get(billboard.id);
-    let idx: number, prim: number;
+    let idx: number;
     if (hit !== undefined) {
       idx = hit;
-      prim = this.primOfBillboard.get(billboard.id) ?? this.allocPrim();
       // RETENTION: never swap a standing billboard DOWN to the loose (lod-0) def — if the freshly
       // resolved frame is unusable (off-page) it keeps casting its current silhouette.
       const curDef = (this.dataMirror[(BILLBOARD_DATA_BASE + idx) * 4 + 2] >>> 16) & 0xffff;
@@ -669,9 +677,46 @@ export class ColdShadowData {
       if (newLod < 4 && curLod >= 4) defIndex = curDef;
     } else {
       idx = this.billboardFreeList.pop() ?? this.billboardNext++; // reuse a freed slot first (P2)
-      prim = this.allocPrim();
       this.billboardIndex.set(billboard.id, idx);
     }
+
+    // ── human-pawns P5: a CARRIED PIECE — no root of its own. The pawn is ONE `prim_data`
+    // record holding up to 4 pieces (user: "prim_data … can hold up to 4 primitives"); the
+    // head's `billboard_data` leaf parents on the BODY's carrier and claims a piece slot
+    // there. The resolved position stays the leaf's OWN drawn anchor (the CPU stamps
+    // resolved fields; the GPU never walks). Falls through to the root path only when the
+    // carrier is not yet registered (at most one frame — the body registers first).
+    if (billboard.carrierOf !== undefined) {
+      const carrier = this.primOfBillboard.get(billboard.carrierOf);
+      if (carrier !== undefined) {
+        this.childOfBillboard.set(billboard.id, carrier);
+        const slot = this.claimPieceSlot(carrier, SET_BILLBOARD_DATA, idx);
+        if (slot < 0) {
+          console.warn(`[prim-graph] carrier ${carrier} full — billboard ${idx} keeps no piece slot.`);
+        }
+        // Authored offsets (`billboard_data.G` tile/unit bytes, bias-8 x:4|y:4 each): the
+        // piece's anchor relative to the carrier's — the durable relative placement.
+        const cb = (PRIM_BASE + carrier) * 4;
+        const [cx, cy] = decodePosition(this.dataMirror[cb]);
+        const b8 = (v: number): number => (Math.max(-8, Math.min(7, Math.round(v))) + 8) & 0xf;
+        const dxPx = ax - cx, dyPx = ay - cy;
+        // Round to the NEAREST tile so the unit remainder stays within the nibble's ±8
+        // (truncating leaves up to 15 units of remainder, which saturates and lies).
+        const dTX = Math.round(dxPx / SQUARE), dTY = Math.round(dyPx / SQUARE);
+        const tileOff = (b8(dTX) << 4) | b8(dTY);
+        const unitOff = (b8((dxPx - dTX * SQUARE) / UNIT) << 4) | b8((dyPx - dTY * SQUARE) / UNIT);
+        const seed8c = Math.floor((billboard.seed ?? 0) * 255) & 0xff;
+        const layer = (billboard.layer ?? 0) & 0xf;
+        const leafChanged = this.writeRecord(BILLBOARD_DATA_BASE + idx,
+          ((((carrier & 0xffff) << 16) | (tile << 8) | unit) >>> 0),
+          (((layer << 28) | ((rotation & 3) << 26) | ((billboard.hot ? 1 : 0) << 25) | (1 << 24)
+            | (tileOff << 8) | unitOff) >>> 0),
+          ((((defIndex & 0xffff) << 16) | (sub6 << 8) | seed8c) >>> 0), casterA);
+        return { idx, changed: leafChanged };
+      }
+    }
+
+    const prim = this.primOfBillboard.get(billboard.id) ?? this.allocPrim();
     this.primOfBillboard.set(billboard.id, prim);
     // FAST PATH: `buildCasters` calls this for EVERY standing prim EVERY frame, and almost none of them
     // change. Three mirror reads decide it — position, rotation, definition — and an unchanged prim skips
@@ -691,10 +736,16 @@ export class ColdShadowData {
     // pawn-render P2: a MOVER's root prim carries the HOT class bit (25) — resolveCarried folds
     // it down (topmost hot wins), so the leaf record the shaders read is hot-classed and every
     // light/shadow interaction involving this prim routes to the HOT maps only.
+    // human-pawns P5: slots b..d are PRESERVED from the mirror — a pawn's carrier holds its head
+    // (and, before this merge, this rewrite silently wiped carried pieces on every re-bake).
+    const pb0 = (PRIM_BASE + prim) * 4;
+    const keepG = this.dataMirror[pb0 + 1] & 0x0fff;
+    const keepBLow = this.dataMirror[pb0 + 2] & 0xffff;
+    const keepA = this.dataMirror[pb0 + 3];
     const primChanged = this.writeRecord(PRIM_BASE + prim, pos,
       ((((rotation & 3) << 26) | ((billboard.hot ? 1 : 0) << 25) | (1 << 24) | ((z & 0xff) << 16)
-        | ((SET_BILLBOARD_DATA & 0xf) << 12)) >>> 0),
-      (((idx & 0xffff) << 16) >>> 0), 0);
+        | ((SET_BILLBOARD_DATA & 0xf) << 12) | keepG) >>> 0),
+      ((((idx & 0xffff) << 16) | keepBLow) >>> 0), keepA);
     // billboard_data (set 6): parent + the RESOLVED position + definition. The resolve walks this
     // billboard's authored offsets up its carrier chain — a no-op while carriers are roots and the
     // offsets are the bias-8 zero, and correct the moment either stops being true.
@@ -833,9 +884,50 @@ export class ColdShadowData {
     };
   }
 
-  /** The carrier prim allocated for a placed billboard (P5 hangs its light off the same one). */
+  /** The carrier prim allocated for a placed billboard (P5 hangs its light off the same one).
+   *  A carried piece (human-pawns P5) answers with the SHARED carrier it claimed a slot on. */
   primOf(billboardId: number): number {
-    return this.primOfBillboard.get(billboardId) ?? 0;
+    return this.primOfBillboard.get(billboardId) ?? this.childOfBillboard.get(billboardId) ?? 0;
+  }
+
+  /** human-pawns P5 — claim a FREE piece slot on `prim` for `(setNib, id)` (or the slot already
+   *  naming exactly that pair). Returns the slot (0..3), or −1 when all four are taken. The
+   *  generalized form of the light path's claim: a carrier may hold billboards, lights, and
+   *  prims in any mix, and clobbering a taken slot loses a piece silently. */
+  private claimPieceSlot(prim: number, setNib: number, id: number): number {
+    const pb = (PRIM_BASE + prim) * 4, m = this.dataMirror;
+    let slot = -1;
+    for (let s = 0; s < 4; s++) {
+      const set = (m[pb + 1] >>> (12 - s * 4)) & 0xf;
+      const lane = s < 2 ? m[pb + 2] : m[pb + 3];
+      const cur = (s & 1) === 0 ? (lane >>> 16) & 0xffff : lane & 0xffff;
+      if (set === 0 || (set === setNib && cur === id)) { slot = s; break; }
+    }
+    if (slot < 0) return -1;
+    const G = ((m[pb + 1] & ~(0xf << (12 - slot * 4))) | ((setNib & 0xf) << (12 - slot * 4))) >>> 0;
+    const hi = (slot & 1) === 0, laneIdx = slot < 2 ? pb + 2 : pb + 3;
+    const lane = (hi ? ((m[laneIdx] & 0xffff) | ((id & 0xffff) << 16))
+                     : ((m[laneIdx] & 0xffff0000) | (id & 0xffff))) >>> 0;
+    this.writeRecord(PRIM_BASE + prim, m[pb], G,
+                     slot < 2 ? lane : m[pb + 2], slot < 2 ? m[pb + 3] : lane);
+    return slot;
+  }
+
+  /** human-pawns P5 — release the piece slot on `prim` naming `(setNib, id)`, if present. */
+  private clearPieceSlot(prim: number, setNib: number, id: number): void {
+    const pb = (PRIM_BASE + prim) * 4, m = this.dataMirror;
+    for (let s = 0; s < 4; s++) {
+      const set = (m[pb + 1] >>> (12 - s * 4)) & 0xf;
+      const lane = s < 2 ? m[pb + 2] : m[pb + 3];
+      const cur = (s & 1) === 0 ? (lane >>> 16) & 0xffff : lane & 0xffff;
+      if (set !== setNib || cur !== id) continue;
+      const G = (m[pb + 1] & ~(0xf << (12 - s * 4))) >>> 0;
+      const hi = (s & 1) === 0, laneIdx = s < 2 ? pb + 2 : pb + 3;
+      const lane2 = (hi ? (m[laneIdx] & 0xffff) : (m[laneIdx] & 0xffff0000)) >>> 0;
+      this.writeRecord(PRIM_BASE + prim, m[pb], G,
+                       s < 2 ? lane2 : m[pb + 2], s < 2 ? m[pb + 3] : lane2);
+      return;
+    }
   }
 
   /** P5 — write the LIGHT leaf a placed primitive carries, under the **same carrier prim** as its
@@ -983,7 +1075,21 @@ export class ColdShadowData {
     let dead: number[] | null = null;
     for (const pid of this.billboardIndex.keys()) if (!seen.has(pid)) (dead ??= []).push(pid);
     if (!dead) return 0;
+    // human-pawns P5 — CARRIED PIECES first: release the piece slot on the (shared) carrier +
+    // the leaf record, WITHOUT subtreeing (the carrier belongs to the body, which may itself be
+    // dying right after — its subtree then sees the slot already cleared, so no double-free).
     for (const pid of dead) {
+      const carrier = this.childOfBillboard.get(pid);
+      if (carrier === undefined) continue;
+      const idx = this.billboardIndex.get(pid)!;
+      this.clearPieceSlot(carrier, SET_BILLBOARD_DATA, idx);
+      this.writeRecord(BILLBOARD_DATA_BASE + idx, 0, 0, 0, 0);
+      this.billboardFreeList.push(idx);
+      this.billboardIndex.delete(pid);
+      this.childOfBillboard.delete(pid);
+    }
+    for (const pid of dead) {
+      if (!this.billboardIndex.has(pid)) continue; // a carried piece — already released above
       this.billboardFreeList.push(this.billboardIndex.get(pid)!);
       this.billboardIndex.delete(pid);
       // P3 subtree lifetime: a carried leaf never outlives its carrier — releasing the billboard

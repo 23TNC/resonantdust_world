@@ -540,8 +540,12 @@ export class MoverLayer {
     }
 
     if (!m || m.parts.length === 0) {
-      const parts: PartPrim[] = specs.map((sp, i) => ({
-        id: this.viewport.warmAddPrim({
+      // Sequential: slot 0 mints the pawn's CARRIER prim; the other slots attach to it as
+      // carried pieces of the SAME `prim_data` record (P5 — "a pawn = prim{head, body, …}").
+      const parts: PartPrim[] = [];
+      for (let i = 0; i < specs.length; i++) {
+        const sp = specs[i];
+        const id = this.viewport.warmAddPrim({
           texture: this.viewport.white, // unused for a textureName-d prim (channels resolve by name)
           textureName: sp.texName,
           flipX: sp.flipX,
@@ -556,10 +560,15 @@ export class MoverLayer {
           zIndex: sp.zIndex,
           hot: true, // a mover — its light/shadow participation is HOT-class only (pawn-render P2)
           rotation: facing, // P4: the record carries the TRUE cardinal (the frame follows it anyway)
-        }),
-        x: sp.x, y: sp.y, w: sp.w, texName: sp.texName, flipX: sp.flipX,
-        tint: sp.tint, geoColor: sp.geoColor, zIndex: sp.zIndex,
-      }));
+          carrierOf: i > 0 ? parts[0].id : undefined, // P5: pieces name the carrier owner
+          layer: i,
+        });
+        parts.push({
+          id,
+          x: sp.x, y: sp.y, w: sp.w, texName: sp.texName, flipX: sp.flipX,
+          tint: sp.tint, geoColor: sp.geoColor, zIndex: sp.zIndex,
+        });
+      }
       if (m) {
         m.parts = parts;
         m.macroPosition = macroPosition;

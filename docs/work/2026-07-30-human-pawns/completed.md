@@ -1,5 +1,33 @@
 # Completed — human-pawns
 
+## 2026-07-30 — P5 complete: graph conformance — the pawn is ONE prim_data. STREAM COMPLETE.
+
+The user's steer mid-phase ("You should have used prim_data to store a pawn, because it
+can hold up to 4 primitives … two billboards one for head one for body") is exactly what
+landed: the pawn is ONE `prim_data` carrier whose piece slots hold BOTH billboards.
+
+**The mechanics** (`coldShadowData.ts` + `Primitive.carrierOf`/`layer`, MoverLayer wiring):
+a slot ≥ 1 warm prim names its owner (`carrierOf` = the body prim's id; explicit-copy
+gotcha honored in `addPrim`); `billboardDataFor` takes the CHILD path — no root minted;
+the leaf parents on the body's carrier (own drawn anchor stays the resolved position; the
+GPU never walks), claims a piece slot via the new generalized `claimPieceSlot` (the light
+path's logic), and stamps `layer` = the part slot + bias-8 authored offsets
+(round-to-nearest-tile so the unit nibble can't saturate). THE BUG THIS FLUSHED OUT: the
+root-prim rewrite used to CLOBBER slots b..d on every re-bake — it now merges the mirror's
+piece slots, which also protects carried lights on movers. Frees partition children first
+(clear the slot + leaf, no subtree — a shared carrier is never subtree'd through a child).
+Bonus fix: the ns perpendicular-card caster's facing parse now handles part-suffixed
+segments (`s.1` → side frame `e.1`), so heads get real n/s caster cards.
+
+**Verified live**: record probe — the human's carrier holds `set_a=6 (body idx)` +
+`set_b=6 (head idx)`, slots c/d FREE (hands-ready), head leaf `parent=carrier, layer=1`;
+corridor↔brute identity **0/0 mismatches over 524,288 words per class** with the
+composition live; the fixture walked to the torches and home — its whole shadow (both
+parts' contribution) TRACKS the body, no stale column at the origin; it parked at
+(104,54) exactly. The wolf soaked on schedule throughout.
+
+**10/10 items done — the stream is COMPLETE.**
+
 ## 2026-07-30 — P4 complete: the first human in-world (PLACED — user F6)
 
 Mid-phase the user redirected: "npc's will control groups of pawns. We don't need a npc

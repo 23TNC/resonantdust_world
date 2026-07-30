@@ -91,7 +91,7 @@ DSL, then render, then the human itself, then graph conformance. Design stances:
 
 ## P5 — graph conformance (single carrier)
 
-- [ ] Attach non-0 part billboards as carried pieces of part 0's carrier prim (free-slot
+- [x] Attach non-0 part billboards as carried pieces of part 0's carrier prim (free-slot
       claim, authored tile/unit offsets, child resolve stamps position; mover dirty
       cascades to child records). Acceptance: a record probe shows the human's carrier
       holding 2 billboard pieces; corridor↔brute shadow identity stays 0/0; the head's
