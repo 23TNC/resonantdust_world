@@ -1,5 +1,30 @@
 # Completed — human-pawns
 
+## 2026-07-30 — P4 complete: the first human in-world (PLACED — user F6)
+
+Mid-phase the user redirected: "npc's will control groups of pawns. We don't need a npc
+for humans right now. We will place the human and the player (or yourself via chrome for
+debug) can move it." The `Humans` brain + `Pair` composite + `world` default I had just
+built and soak-verified were REVERTED (git history holds them; `brains/mod.rs` records
+the group-control future); the npc default stays `wolves`.
+
+**The placed fixture:** human `0x30800005` (`human_female`, payload `PART(0, body 7)` +
+`PART(1, head 11)`) minted once at **(104, 54)** — the standing static drill fixture from
+the shadow-polish request. Verified: stands at its tile with the authored variants (SQL:
+payload row byte-exact, zone 99); SURVIVES npc restarts untouched (the wolves brain's
+adoption is kind-scoped); `__bridge.moveEntity` walked it (104,54)→(106,54)→back, both
+parts gliding together, and it parked home EXACTLY (micro 0x8600 = (104,54)).
+
+**Joint drill** (zoom 1 + 2, captures in the session record): the human renders body+head
+coherent at both zooms — s-facing head with a readable face at zoom 2, head mirroring
+correctly on west walks — beside the user's walled compound; the wolf wanders past
+unaffected. Shadows: the human casts (its span-2 card makes a LONG shadow — size tuning
+territory). THE USER'S EYES are the final oracle — expected feedback: head seat/offset
+(`&head.offset.y` in `content/visual/pawns.rd`), overall size (`&body.size`), and the
+big-card shadow. Housekeeping: the adopt-first-window race minted a replacement wolf on
+one restart (snapshot replay arrived after the 3 s window); the stale wolf was deleted —
+one wolf (`0x30800004`) + one human remain.
+
 ## 2026-07-30 — P3 complete: multi-part movers live
 
 **MoverLayer renders parts** — a `Mover` owns one warm prim PER SLOT (`parts:

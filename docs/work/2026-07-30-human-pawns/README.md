@@ -93,10 +93,13 @@ prim{head, body, hand-prim, hand-prim}"): the head billboard attaches as a carri
 the body's carrier prim with authored offsets, the same slot machinery lights already use.
 P0–P4 deliver the user-visible feature with per-part records; P5 is the graph conformance.
 
-**The first human doubles as the drill fixture.** The npc spawns ONE static human at a
-known location and never moves it — exactly the standing A/B fixture the user asked for
-during shadow-polish ("make another pawn that the npc doesn't move at a static known
-location").
+**The first human doubles as the drill fixture — PLACED, not npc-driven.** (User F6:
+"npc's will control groups of pawns. We don't need a npc for humans right now.") ONE
+static human is minted by a one-off `CREATE` (with its `PART` payload) at a known
+location; the player — or chrome `moveEntity` in a debug session — moves it. This is the
+standing A/B fixture the user asked for during shadow-polish ("make another pawn that
+the npc doesn't move at a static known location"). Brains stay pawn-group controllers of
+the future; no per-pawn human brain exists.
 
 ## Constraints
 

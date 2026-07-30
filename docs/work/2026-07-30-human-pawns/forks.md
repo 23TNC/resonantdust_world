@@ -1,5 +1,17 @@
 # Forks — human-pawns
 
+## F6 — the human is PLACED, not npc-driven (USER, 2026-07-30-e)
+
+**Chosen (user-directed, mid-P4):** "npc's will control groups of pawns. We don't need a
+npc for humans right now. We will place the human and the player (or yourself via chrome
+for debug) can move it." The fixture human is minted ONCE by a one-off `CREATE` (with its
+`PART` payload) and stands at its known tile; movement comes from the player /
+`__bridge.moveEntity`, never a brain. **Reverted:** the `Humans` brain + `Pair` composite
++ `world` default I had just built and soaked — deleted (git history holds them; the
+brains module doc records the group-control future so the next session doesn't rebuild a
+per-pawn brain). The placed fixture: entity `0x30800005` at **(104, 54)**, body 7,
+head 11.
+
 ## F1 — per-pawn state is a growable opcode stream, not packed nibbles (USER, 2026-07-30-b)
 
 **Chosen (user-directed):** pawn rows gain `payload: Vec<u32>` encoded like the command

@@ -80,12 +80,12 @@ DSL, then render, then the human itself, then graph conformance. Design stances:
 
 ## P4 — the first human in-world
 
-- [ ] npc: spawn ONE STATIC human (`human_female`, e.g. body 7 head 11 as
-      `PART(0,…)`/`PART(1,…)` CREATE payload) at a known location near spawn; the brain
-      never issues MOVE — this IS the standing static drill fixture the user asked for.
-      Acceptance: after `bin/sim run npc`, the human stands at the known tiles with the
-      authored variants; restart adopts, never double-spawns.
-- [ ] Joint drill at zoom 1 + 2: the human's body+head coherent (scale, offset, facing
+- [x] PLACE one static human (`human_female`, body 7 head 11 as `PART(0,…)`/`PART(1,…)`
+      CREATE payload) at a known location — a ONE-OFF mint, no npc brain (user F6: npcs
+      will control GROUPS later; the player or chrome-`moveEntity` moves it) — the
+      standing static drill fixture. Acceptance: the human stands at the known tiles with
+      the authored variants and survives npc restarts untouched; `moveEntity` walks it.
+- [x] Joint drill at zoom 1 + 2: the human's body+head coherent (scale, offset, facing
       default s), lighting/shadows sane on both parts, wolf wandering past unaffected.
       Acceptance: captures in `completed.md`; the user's eyes are the final oracle.
 
