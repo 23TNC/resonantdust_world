@@ -27,10 +27,10 @@ _atlas_check gates every phase; the user's eyes ratify P2 and P3. Design + forks
 
 ## P2 — wire, ship, drill
 
-- [ ] `bin/art normal --analytic <kind>` → `atlas_geometry.py`, stamping
+- [x] `bin/art normal --analytic <kind>` → `atlas_geometry.py`, stamping
       `normal_engine=analytic`; non-analytic engines untouched. Acceptance: the command
       regenerates the smooth wall's `normal.l.0.png`; the stamp reads `analytic`.
-- [ ] In-game drill at zoom 1 + zoom 2 beside the torch: walls shade as continuous
+- [x] In-game drill at zoom 1 + zoom 2 beside the torch: walls shade as continuous
       geometry with crisp, art-registered bevels. Acceptance: captures in
       `completed.md`; the user's eyes are the final oracle.
 

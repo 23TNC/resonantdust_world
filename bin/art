@@ -952,6 +952,7 @@ cmd_normal() {
     case "$arg" in
       --laigter)   engine=laigter; engine_set=1; continue ;;   # boolean shorthand for --engine laigter
       --marigold)  engine=marigold; engine_set=1; continue ;;  # boolean shorthand for --engine marigold
+      --analytic)  engine=analytic; engine_set=1; continue ;;  # exact geometry (regular linked walls)
       --tilt)      tilt=1; continue ;;           # force object tilt on (default: auto by category)
       --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
       --no-bevel)  no_bevel=1; continue ;;       # tile 3x3, keep the centre (no raised border)
@@ -981,12 +982,32 @@ cmd_normal() {
   if (( engine_set == 0 )); then
     local _rec; _rec=$(_recorded_engine "$MASTER_DIR/$kind")
     case "$_rec" in
-      laigter|marigold) engine=$_rec
-        echo "art: normal engine '$engine' (recorded in the leaf; pass --laigter/--marigold to change)" ;;
+      laigter|marigold|analytic) engine=$_rec
+        echo "art: normal engine '$engine' (recorded in the leaf; pass --laigter/--marigold/--analytic to change)" ;;
       mixed) echo "art: leaves under $kind record DIFFERENT normal engines — using the default '$engine'; name one explicitly" >&2 ;;
     esac
   fi
 
+  # Analytic engine (analytic-wall-normals): EXACT normals for regular linked walls —
+  # the fitted footprint model (geometry.json, measured off the art with a ≤1px register
+  # check) swept per cell; consistency is zero by construction, no model, no GPU. Only
+  # meaningful for `.l.` leaves carrying a geometry.json.
+  if [[ "$engine" == analytic ]]; then
+    local _found=0 _src
+    while IFS= read -r -d '' _src; do
+      if [[ "$(basename "$_src")" == diffuse.l.* && -f "$(dirname "$_src")/geometry.json" ]]; then
+        python3 "$REPO_ROOT/marigold/atlas_geometry.py" "$(dirname "$_src")" || return 1
+        _found=1
+      fi
+    done < <(_find_diffuse "$MASTER_DIR/$kind")
+    if (( _found == 0 )); then
+      echo "art: --analytic needs a linked leaf with geometry.json under $kind (fit one — see marigold/atlas_geometry.py)" >&2
+      return 1
+    fi
+    _stamp_engine "$MASTER_DIR/$kind" analytic
+    echo "art: normals ANALYTIC (fitted footprint model — exact by construction)"
+    return 0
+  fi
   # Marigold engine: learned view-space normals. normals.py writes N.normal.png
   # co-located with a flat opaque #8080FF background already, so we skip the Laigter
   # detail-blend / strength exaggeration / flatten (those are tangent-space knobs).

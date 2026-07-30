@@ -26,3 +26,16 @@ away from the hub corridor). Relief 34.0 % = the true face share, registered by
 construction. Side-by-side captures (`cross-art-vs-analytic.png`, `hrun-art-vs-analytic`):
 faces land exactly where the art draws them; known v1 simplifications — square face ends
 vs the art's mitered trapezoids, butt joints at face/face corners.
+
+## 2026-07-29 · P2 — wired, shipped, drilled (2/2)
+
+`bin/art normal --analytic <kind>` dispatches `.l.` leaves carrying a `geometry.json` to
+`atlas_geometry.py`, stamps `normal_engine=analytic` (the recorded-engine honour list
+gains `analytic`), errors helpfully when no fitted leaf exists; marigold/laigter paths
+untouched. **Shipped** through the command (stamp verified `analytic`; gate re-confirmed
+on the master: relief 34.0 %, flat 0.318°, seams 0.00). **In-game at zoom 2 + zoom 1**:
+the shading is now GEOMETRIC — the wall run north of the torch lights its south-facing
+front band exactly when the light is south of it, side faces catch flanking light, tops
+stay correctly dim under horizontal torch light; runs continuous, no seams. The face
+pitch params (65/55/40°) are drill-tunable in `geometry.json` if the user wants stronger
+or softer face response.
