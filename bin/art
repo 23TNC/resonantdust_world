@@ -942,7 +942,7 @@ cmd_normal() {
   # `marigold` (learned view-space normals, cleaner macro shape but not integrable
   # and starved on flat art — reach for it via --marigold). detail/detail_radius/
   # strength are Laigter-only tangent-space knobs, ignored by the marigold engine.
-  local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt="" pitch_normal=0
+  local kind="" preset="" detail=0 detail_radius=auto strength=1.0 engine=laigter tilt="" pitch_normal=0
   local no_bevel=0 engine_set=0
   local -a pos=(kind preset detail detail_radius strength engine pitch_normal)
   local pi=0
@@ -2448,7 +2448,7 @@ cmd_remaster() {
   # always Marigold-IID. Depth is NOT generated (client-side from the normal). Pass
   # --marigold (or --laigter) as a boolean shorthand for the engine.
   local path="" gap=4 radius="" choke=1 aa=0.5 outline_width=2 outline_color=0x000000 outline_blur=2 \
-        preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter layers=3 size="" publish=0 \
+        preset="" detail=0 detail_radius=auto strength=1.0 engine=laigter layers=3 size="" publish=0 \
         tilt="" ao=0 sharpen_normal=0 ao_strength=1.0 sharpen_ao=0 pitch_normal=0 \
         split_normalize=1 black_threshold=0.05
   # Positional slots, filled in order by every non-flag argument. layers/size are
@@ -2466,8 +2466,6 @@ cmd_remaster() {
       --tilt)      tilt=1; continue ;;           # force object normal tilt on (default: auto by category)
       --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
       --no-bevel)  no_bevel=1; continue ;;       # tile 3x3, keep the centre (no raised border)
-      --laigter)   engine=laigter; engine_set=1; continue ;;
-      --marigold)  engine=marigold; engine_set=1; continue ;;
       --ao)        ao=1; continue ;;             # pack depth-derived AO into normal.a (default)
       --no-ao)     ao=0; continue ;;             # skip the AO step
       --split-normalize|--split_normalize)   # normalize the channel-pack (DEFAULT on): pull all colour into layers, leave only the black outline in albedo. Optional 0/1 value disables/enables (bare = on).
@@ -2614,7 +2612,7 @@ cmd_remaster() {
 # preset/detail/detail_radius/strength are LAIGTER-only knobs, ignored by --marigold.
 cmd_maps() {
   # Defaults; overridable positionally OR by --flag (--name value / --name=value).
-  local kind="" preset="" detail=0 detail_radius=auto strength=2.0 engine=laigter tilt="" ao=0 \
+  local kind="" preset="" detail=0 detail_radius=auto strength=1.0 engine=laigter tilt="" ao=0 \
   local no_bevel=0; local -a nobevel_args=() engine_args=()
   local engine_set=0
         sharpen_normal=0 ao_strength=1.0 sharpen_ao=0 pitch_normal=0
@@ -2624,8 +2622,8 @@ cmd_maps() {
     local arg=$1; shift
     local name="" val=""
     case "$arg" in
-      --laigter)   engine=laigter; continue ;;   # boolean shorthand for --engine laigter
-      --marigold)  engine=marigold; continue ;;  # boolean shorthand for --engine marigold
+      --laigter)   engine=laigter; engine_set=1; continue ;;   # boolean shorthand for --engine laigter
+      --marigold)  engine=marigold; engine_set=1; continue ;;  # boolean shorthand for --engine marigold
       --tilt)      tilt=1; continue ;;           # force object tilt on (default: auto by category)
       --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
       --no-bevel)  no_bevel=1; continue ;;       # tile 3x3, keep the centre (no raised border)
@@ -2671,8 +2669,16 @@ cmd_maps() {
   cmd_normal "$kind" "$preset" "$detail" "$detail_radius" 1.0 "$engine" --no-tilt "${nobevel_args[@]}" "${engine_args[@]}" || return 1
   echo "art: maps [$kind] 2/2 albedo + albedo_residual (Marigold-IID de-light) ..."
   cmd_delight "$kind" --emit albedo,albedo_residual || return 1
-  # Strength exaggeration is a Laigter-only tangent-space knob (marigold normals
-  # are view-space — scaling their XY would be meaningless).
+  # Strength exaggeration scales XY and renormalises, tilting EVERY normal toward the horizon.
+  # DEFAULT IS NOW 1.0 (off). It existed to rescue weak normals off small, flat masters at the old
+  # 64px art cap. At SQUARE=128 with 512px+ masters laigter already yields real relief, and x2 on
+  # top nearly TRIPLES the steep-normal population while opening a grazing tail that did not exist
+  # (measured on the shipped maps):
+  #     smooth/wall  mean tilt 25.2° -> 37.3°   >60°  8.8% -> 23.4%   >80° 0.0% -> 2.4%
+  #     smooth/rock  mean tilt 13.8° -> 20.6°   >60°  4.8% -> 13.1%   >80° 0.0% -> 0.9%
+  # Pass --strength 2 to restore it per-run for art that genuinely needs the push.
+  # Laigter-only: marigold normals are learned, not a height field, so scaling their XY is not
+  # a relief control.
   if [[ "$engine" == laigter ]] && awk "BEGIN{ exit !($strength != 1.0) }"; then
     echo "art: exaggerating shipped normal strength (x$strength) ..."
     _exaggerate_kind_normals "$kind" "$strength" || return 1
