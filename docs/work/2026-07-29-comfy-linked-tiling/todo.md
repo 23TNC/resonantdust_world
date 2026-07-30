@@ -7,10 +7,10 @@ Design + forks: [`README`](README.md). ComfyUI box required from P2 (`COMFYUI_UR
 
 ## P0 — the albedo seam metric (extend the existing oracle)
 
-- [ ] `atlas_check.py`: an ALBEDO section — the same D1 in-world adjacency strip pairs,
+- [x] `atlas_check.py`: an ALBEDO section — the same D1 in-world adjacency strip pairs,
       measured on `diffuse.l.0.png` RGB (mean/max per-channel distance, E|W + S|N tables,
       worst pair named). Acceptance: runs on the smooth wall; numbers print.
-- [ ] Record the smooth wall's albedo-seam baseline + captures of the two worst seam
+- [x] Record the smooth wall's albedo-seam baseline + captures of the two worst seam
       pairs (assembled as they'd abut) in `completed.md`. Acceptance: the baseline entry
       exists with numbers + the pair images in the stream folder.
 

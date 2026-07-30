@@ -112,8 +112,11 @@ def main() -> int:
     win = cell_px - 2 * pad_px  # the sampled window (what the client stretches over a tile)
 
     alpha = None
+    drgb = None
     if diffuse_path.exists():
-        alpha = np.asarray(Image.open(diffuse_path).convert("RGBA"), dtype=np.uint8)[:, :, 3] > 16
+        _d = np.asarray(Image.open(diffuse_path).convert("RGBA"), dtype=np.uint8)
+        alpha = _d[:, :, 3] > 16
+        drgb = _d[:, :, :3].astype(np.float64)
 
     def window(cell: int, arr: np.ndarray) -> np.ndarray:
         cx, cy = (cell % cols) * cell_px, (cell // cols) * cell_px
@@ -212,6 +215,42 @@ def main() -> int:
         if diffs:
             seam_stats[axis] = (float(np.mean(diffs)), float(np.max(diffs)), len(diffs))
 
+    # ── albedo seam: the SAME in-world adjacencies, measured on the diffuse RGB ───────
+    # (comfy-linked-tiling P0: the normal-side work can't touch source-art seams — this
+    # is the number the ComfyUI seam-inpaint pass gates against. Units: 0–255 RGB.)
+    alb_stats = {}
+    alb_worst = ("", 0.0, -1, -1)
+    if drgb is not None:
+        dcells = [window(c, drgb) for c in range(cols * rows)]
+
+        def dedge(cell: int, side_name: str) -> np.ndarray:
+            w = dcells[cell]
+            if side_name == "E":
+                return w[t0:t1, win - strip : win].mean(axis=1)
+            if side_name == "W":
+                return w[t0:t1, 0:strip].mean(axis=1)
+            if side_name == "S":
+                return w[win - strip : win, t0:t1].mean(axis=0)
+            return w[0:strip, t0:t1].mean(axis=0)
+
+        for axis, (bit_a, side_a, bit_b, side_b) in {
+            "E|W": (1, "E", 3, "W"),
+            "S|N": (2, "S", 0, "N"),
+        }.items():
+            av = [c for c in range(cols * rows) if cell_bits(c, cols)[bit_a] == 1]
+            bv = [c for c in range(cols * rows) if cell_bits(c, cols)[bit_b] == 1]
+            diffs = []
+            for a in av:
+                ea = dedge(a, side_a)
+                for b in bv:
+                    d = np.linalg.norm(ea - dedge(b, side_b), axis=-1)
+                    dm = float(d.mean())
+                    diffs.append(dm)
+                    if dm > alb_worst[1]:
+                        alb_worst = (axis, dm, a, b)
+            if diffs:
+                alb_stats[axis] = (float(np.mean(diffs)), float(np.max(diffs)), len(diffs))
+
     # ── relief: detail, measured AGAINST EACH CELL'S OWN FLAT FRAME ───────────────────
     # (vs +Z would count global tilt as detail; the per-cell-inference regression that
     # flattened the walls read 23%→2% on THIS metric while frame metrics looked great.)
@@ -232,6 +271,9 @@ def main() -> int:
         "piece_worst": {"piece": worst_piece[0], "deg": worst_piece[1],
                         "cells": [worst_piece[2], worst_piece[3]]},
         "seam": {k: {"mean": v[0], "max": v[1], "pairs": v[2]} for k, v in seam_stats.items()},
+        "albedo_seam": {k: {"mean": v[0], "max": v[1], "pairs": v[2]} for k, v in alb_stats.items()},
+        "albedo_seam_worst": {"axis": alb_worst[0], "rgb": alb_worst[1],
+                              "cells": [alb_worst[2], alb_worst[3]]},
     }
     if args.json:
         print(json.dumps(summary, indent=2))
@@ -254,6 +296,11 @@ def main() -> int:
     for k, (m, mx, n_pairs) in seam_stats.items():
         print(f"  {k}: mean {m:6.2f}°  max {mx:6.2f}°   ({n_pairs} pairs)")
     print(f"  worst pair: {worst_seam[0]} cells {worst_seam[2]}|{worst_seam[3]} at {worst_seam[1]:.2f}°")
+    if alb_stats:
+        print("\nALBEDO SEAM (same adjacencies on the diffuse RGB, 0–255)")
+        for k, (m, mx, n_pairs) in alb_stats.items():
+            print(f"  {k}: mean {m:6.2f}  max {mx:6.2f}   ({n_pairs} pairs)")
+        print(f"  worst pair: {alb_worst[0]} cells {alb_worst[2]}|{alb_worst[3]} at {alb_worst[1]:.2f}")
     return 0
 
 
