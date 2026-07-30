@@ -369,7 +369,11 @@ float casterCoverNS(uvec4 Pd, vec2 A, vec2 Q, vec3 L, float emitter, highp usamp
   if (tx <= 0.0 || tx >= 1.0) return 0.0;             // caster not between light and receiver
   float t0 = L.z * (1.0 - tx) / H;                    // intersection height in card coords
   if (t0 < 0.0 || t0 > 1.0) return 0.0;               // ray passes over the card top -> lit
-  float u0 = (L.y + tx * (Q.y - L.y) - (A.y - 0.5 * W)) / W;
+  // shadow-polish P1: the record's anchor is the BASE-CENTRE = the sprite's BOTTOM (south
+  // tip) — for a top-down n/s sprite the drawn body IS the ground trace, so the card spans
+  // [A.y − W, A.y], NOT A.y ± W/2 (which displaced the whole shadow half a body south —
+  // the "flipped n/s" report).
+  float u0 = (L.y + tx * (Q.y - L.y) - (A.y - W)) / W;
   uint mrot = ((Pd.w >> 15) & 1u) == 1u ? 3u : 1u;    // caster_flip: head end follows facing (D3)
   // Penumbra interval on the rotated axis: sub-light L + lambda*perp, du/dlambda at lambda 0.
   vec2 sdir = A - L.xy;
@@ -2094,7 +2098,9 @@ export class ShadowGather {
         const st = this.coldData.tightBoxOf(side.def);
         const ws = st ? st.w : p.width;
         const cx = p.x + p.width * 0.5, ay = p.y + p.height;
-        r0 = Math.floor((ay - ws * 0.5) / SQUARE); r1 = Math.floor((ay + ws * 0.5) / SQUARE);
+        // shadow-polish P1: the ground trace spans [ay − ws, ay] (anchor = the south tip),
+        // matching casterCoverNS's recentered card — NOT centered on the anchor.
+        r0 = Math.floor((ay - ws) / SQUARE); r1 = Math.floor(ay / SQUARE);
         const cc = Math.floor(cx / SQUARE);
         if (this.extentFill) { c0 = cc - 1; c1 = cc + 1; } else { c0 = c1 = cc; }
       } else {
