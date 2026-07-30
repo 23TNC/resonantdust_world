@@ -46,3 +46,21 @@ the residual is the joint's own cross-gradient); S|N 0.00 → 0.11 (the canonica
 blend, negligible). The post-pass hrun layout renders as ONE continuous wall — top face,
 bevel, and outline intact, no visible joints (`hrun_after` capture, session scratchpad;
 the pre-pass diffuse backed up there as `diffuse_ORIG.png`).
+
+## 2026-07-29 · P3–P4 — regenerated, re-gated, drilled (3/3) — STREAM COMPLETE
+
+**P3**: the map chain re-ran on the inpainted diffuse (delight → split_layers →
+`normal --marigold` → surface). EN ROUTE, the whole-atlas engine gained the FLOAT it was
+missing (normals.py's own rule — an edge-to-edge atlas reads as an infinite plane:
+relief 18 % → 0 % without the margin; processing resolution must stay at the model's
+trained 768 — 512 and 1024 both collapse to ~0 %). Shipped normal numbers: relief 18.3 %
+(deviation recorded — ~4 pts run-to-run pipeline variance measured on identical input,
+~1.2 pts the honestly-smoother ex-seams), flat 0.15°, arms 0.00°, normal seams
+E|W 1.04 / S|N 0.24 (BETTER than the prior stream's 1.70/0.70). F4: donor stamping KEPT —
+align-only arms still read 2.8–3.9° on the fixed source.
+
+**P4**: in-game at zoom 2 + zoom 1 — wall compounds read as continuous TEXTURED surfaces:
+no per-tile lighting jumps, no albedo cell seams inside runs, posts/bevels carry visible
+relief, the torch-side rooms glow coherently. THE USER'S EYES ARE THE FINAL ORACLE (watch
+items: overall relief strength — the 18.3 % vs the old 23.4 % is partly honest smoothing —
+and arm sameness from stamping; the dials are inference params and stamping weight).

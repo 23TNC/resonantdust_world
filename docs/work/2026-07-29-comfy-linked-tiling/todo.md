@@ -50,6 +50,6 @@ Design + forks: [`README`](README.md). ComfyUI box required from P2 (`COMFYUI_UR
 
 ## P4 — the in-game drill
 
-- [ ] The torch-side wall compound at zoom 1 + zoom 2: runs read as one continuous
+- [x] The torch-side wall compound at zoom 1 + zoom 2: runs read as one continuous
       TEXTURED surface (albedo seams gone, relief intact, shading coherent with texture).
       Acceptance: captures in `completed.md`; the user's eyes are the final oracle.
