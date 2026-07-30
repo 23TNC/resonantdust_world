@@ -194,6 +194,17 @@ GRID_ROWS=4
 # `GRID_INSET_FRAC=0.03 bin/art remaster linked/<kind>`. (ADDING padding — growing the atlas
 # with gutters — is a separate slice/resize/pack tool, not this inset path.)
 GRID_INSET_FRAC=${GRID_INSET_FRAC:-0}
+# True if the remaster TARGET is a held-whole cell grid — any leaf under it carries an atlas.json.
+# This is the property `_is_grid_cat` was proxying for via a category NAME, and the name went stale
+# when the design folded `linked/` into `biome-tile` (GRID_CATS still reads "linked", so an autotile
+# wall under biome-tile/ tested false and got a per-piece outline drawn across seams that are meant
+# to connect). Keying on the sidecar cannot drift with the taxonomy.
+_is_atlas_target() {  # rel_path
+  local d="$MASTER_DIR/$1"
+  [[ -d "$d" ]] || d=$(dirname "$d")
+  [[ -n "$(find "$d" -name atlas.json -print -quit 2>/dev/null)" ]]
+}
+
 # True if base category CAT (a bare or `.<subcategory>` name) is a fixed-grid category.
 _is_grid_cat() {
   case " $GRID_CATS " in *" $(_strip_int_suffix "$1") "*) return 0 ;; *) return 1 ;; esac
@@ -2003,11 +2014,24 @@ _normalize_grid_category() {  # cat_src_dir
 # Downstream maps (normal/albedo/surface) are (re)generated afterwards by `maps`. LAST_TOTAL set.
 _split_variant_sheet() {  # sheet_png gap
   local sheet=$1 gap=${2:-4}
-  local kind_dir bn rest dir layer
+  local kind_dir bn dir layer skind
   kind_dir=$(dirname "$sheet")
-  bn=$(basename "$sheet" .png)                 # sprite.<dir>.<layer>
-  rest=${bn#*.}                                # <dir>.<layer>  (drop the `sprite` map)
-  dir=${rest%%.*}; layer=${rest#*.}; layer=${layer%%.*}
+  bn=$(basename "$sheet" .png)
+  # TWO source shapes, told apart by the segment count:
+  #   sprite.<dir>.<part>          KIND level   — the sheet sits in the kind folder (conifer)
+  #   sprite.<kind>.<dir>.<part>   SUBTYPE level — the sheet sits one level up and NAMES the kind
+  #                                folder it creates, so one subtype holds many kinds.
+  # The second is what lets each FACING be its own sheet: sprite.female.e.0 and sprite.female.s.0
+  # both resolve to <subtype>/female/, so they fill the SAME variant folders with different
+  # `<map>.<dir>.<part>` files rather than each making its own set.
+  local -a _seg; IFS=. read -r -a _seg <<< "$bn"
+  if (( ${#_seg[@]} == 4 )); then
+    skind=${_seg[1]}; dir=${_seg[2]}; layer=${_seg[3]}
+    kind_dir="$kind_dir/$skind"
+    mkdir -p "$kind_dir"
+  else
+    skind=""; dir=${_seg[1]}; layer=${_seg[2]}
+  fi
   # A HELD-WHOLE atlas (its kind carries an atlas.json) is not a sprite sheet: its geometry is
   # already final, so it goes to leaf 0 VERBATIM. Blob detection, the pow2 refit and SPLIT_PADDING
   # are all sprite-sheet concerns, and applying them resamples the sheet into a 4 px frame that
@@ -2026,6 +2050,18 @@ _split_variant_sheet() {  # sheet_png gap
   local ncount=${#KEPT_GEOMS[@]}
   if (( ncount == 0 )); then
     echo "art: $(basename "$sheet") sliced 0 blobs (skipped)" >&2; LAST_TOTAL=0; return 1
+  fi
+  # Every facing of a kind must slice to the SAME number of variants, or variant 3 in east is a
+  # different subject from variant 3 in south and the leaves are silently mismatched. Compare
+  # against whatever a previous sheet already produced here.
+  local _prev=0 _pd
+  for _pd in "$kind_dir"/*/; do
+    [[ -d "$_pd" ]] || continue
+    [[ "$(basename "$_pd")" =~ ^[0-9]+$ ]] || continue
+    compgen -G "$_pd/diffuse.*.png" >/dev/null && _prev=$(( _prev + 1 ))
+  done
+  if (( _prev > 0 && _prev != ncount )); then
+    echo "art: $(basename "$sheet") slices $ncount variant(s) but $(basename "$kind_dir")/ already has $_prev — facings will MISALIGN (variant K is a different subject per direction)" >&2
   fi
   CROP_GEOMS=(); CROP_OUTS=()
   local k
@@ -2073,7 +2109,7 @@ _split_variant_sheet() {  # sheet_png gap
     echo "    atlas.json -> $ncount leaf/leaves (the manifest reads it per leaf, not per kind)"
   fi
   EMIT_SIDE=0; EMIT_MAXDIM=0                   # back to per-blob for any later caller
-  echo "    sprite.$dir.$layer -> $ncount variant(s) [$dir l$layer] into $(basename "$kind_dir")/{0..$((ncount-1))}/"
+  echo "    $bn -> $ncount variant(s) [$dir p$layer] into $(basename "$kind_dir")/{0..$((ncount-1))}/"
   LAST_TOTAL=$LAST_COUNT
 }
 
@@ -2527,10 +2563,12 @@ cmd_remaster() {
   # DO derive their maps now: normal (Laigter) + albedo (Marigold de-light), same
   # as any kind. `split` copies across any authored map atlases first; `maps`
   # then overwrites them with the generated set (we're moving off hand-authoring).
-  if ! _is_grid_cat "${path%%/*}"; then
+  if ! _is_grid_cat "${path%%/*}" && ! _is_atlas_target "$path"; then
     if awk -v w="$outline_width" 'BEGIN{ exit !(w>0) }'; then
       cmd_border "$SPLIT_TARGET" "$outline_color" "$outline_width" "$outline_blur" || return 1
     fi
+  else
+    echo "art: outline SKIPPED — autotile atlas; a per-piece border would draw across the seams"
   fi
   local -a tilt_args=()
   [[ "$tilt" == 1 ]] && tilt_args+=(--tilt)
