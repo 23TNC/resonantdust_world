@@ -1,5 +1,38 @@
 # Completed — human-pawns
 
+## 2026-07-30 — P1 complete: variant + part art served end-to-end
+
+**The stem grammar** (`server/edge/src/textures.rs`): stems are now
+`<base>[/<variant>][/<facing>[.<part>]]` → leaf `<base>/<variant>/<map>.<facing>.<part>.png`
+(defaults `1`/`s`/`0` — every existing stem resolves unchanged). Along the way the module's
+doc + tests were found describing a SUPERSEDED layout (`1.s.0/1/albedo.png`) the code never
+produced — edge tests are in no build gate, so they'd never run; both were rewritten to the
+real canonical shape and now pass (4/4, incl. the new grammar test: full form, variant-only,
+part-only, wolf sprite-gen folders, a non-numeric `.suffix` staying a directory).
+Verified live after redeploy: curl 200 for female variant 3 body AND part-1 head, a
+head-only variant 9, plus the legacy wolf + conifer stems.
+
+**The serving manifest** (`tex_manifest.rs`): every numeric variant folder now registers
+(canonical `1` keeps the bare stem; others under `<prefix>/<v>/…`), and every PART present
+registers its own stem (`<facing>.<part>` for part ≥ 1), each with its own hash/maps/LOD
+row. New test `scans_numeric_variants_and_parts_into_their_own_stems` (body+head variant,
+head-only variant, canonical bare stem); 18/18 edge tests green. Live:
+`/textures-manifest` carries 75 female stems + legacy rows intact.
+
+**The corpus manifest** (`bin/art manifest`): the stale-empty pawn.rd regenerated with
+real entries — `_is_kind_src_dir` learned that subtype-level `sprite.<kind>.<dir>.<part>`
+sheets do NOT make their dir a kind (their kind FOLDERS are), and that a numeric variant
+subdir holding map leaves does; new `_part_pairs` emits per-part variant counts as
+`&part_id`/`&part_variants`. pawn.rd now lists female + male with parts [0, 1] → variants
+**[9, 16]** (the acceptance numbers exactly) and the wolf's variant folders. Regenerating
+also refreshed the long-stale biome manifests; I2 records the pre-existing
+variant-less-kind gap that leaves e.g. `blueprint/wall` unindexed there (nothing consumes
+these yet).
+
+**The client resolver**: zero changes needed — stems are opaque to it. Probe on the live
+page: `resolve("pawn/human/female/3/e")`, `…/3/e.1`, `…/11/s.1` all return real frames
+(`geo:false`) at three DISTINCT 128×128 atlas positions (y = 0 / 320 / 576).
+
 ## 2026-07-30 — P0 complete: packed defs + the payload sidecar live in spacetime
 
 **Packed pawn defs end-to-end.** `resolve_thing` now returns the packed

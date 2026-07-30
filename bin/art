@@ -1922,11 +1922,29 @@ _remaster_kind() {  # cat_src src_kind out_cat gap out_kind
 # has only plainly-named child dirs and matches neither.
 _is_kind_src_dir() {  # dir
   local d=$1 f b
-  for f in "$d"/*.png; do [[ -f "$f" ]] && return 0; done   # sheet/atlas sources at top
+  for f in "$d"/*.png; do
+    [[ -f "$f" ]] || continue
+    # A SUBTYPE-LEVEL sheet `sprite.<kind>.<dir>.<part>.png` (4 dot-parts) routes into a
+    # kind FOLDER it names (sprite-sheets, 68457b2e) — it does NOT make this dir a kind;
+    # the kind dirs are its children. Any other top png (kind-level `sprite.<dir>.<part>`,
+    # `<id>.diffuse`, atlases) does.
+    b=$(basename "$f" .png)
+    if [[ "$b" =~ ^sprite\.[^.]+\.(n|e|s|l)\.[0-9]+$ ]]; then continue; fi
+    return 0
+  done
   for f in "$d"/*/; do                                       # a pose-leaf subdir (1.<dir>.<layer>)
     [[ -d "$f" ]] || continue
     b=$(basename "$f")
     [[ "$b" == [0-9]*.*.* ]] && return 0
+    # A NUMERIC variant subdir holding mastered map leaves (`<variant>/<map>.<dir>.<part>.png`)
+    # makes this dir a kind too — the sheet-routed kinds (pawn/human/female) have no top-level
+    # sources of their own, only variant folders.
+    if [[ "$b" =~ ^[0-9]+$ ]]; then
+      local m
+      for m in "$f"albedo.*.png "$f"diffuse.*.png; do
+        [[ -f "$m" ]] && return 0
+      done
+    fi
   done
   return 1
 }
@@ -2856,6 +2874,28 @@ _var_pairs() {  # kinddir
   done | sort -n -k2,2 -u
 }
 
+# Per-PART variant counts in KINDDIR (human-pawns P1): `<part> <count>` rows, one per
+# distinct `<part>` across the kind's numeric variant leaves, where `<count>` is how many
+# variants carry that part — e.g. female: part 0 (body) in 9 variants, part 1 (head) in 16.
+_part_pairs() {  # kinddir
+  local d=$1 map=albedo
+  [[ -d "$d" ]] || return
+  if ! find "$d" -type f -name 'albedo.*.png' -print -quit 2>/dev/null | grep -q .; then
+    map=diffuse
+  fi
+  local v vn f p
+  for v in "$d"/*/; do
+    [[ -d "$v" ]] || continue
+    vn=$(basename "${v%/}")
+    [[ "$vn" =~ ^[0-9]+$ ]] || continue
+    for f in "$v"$map.*.png; do
+      [[ -f "$f" ]] || continue
+      p=$(basename "$f" .png); p=${p##*.}
+      [[ "$p" =~ ^[0-9]+$ ]] && printf '%s %s\n' "$p" "$vn"
+    done
+  done | sort -n | uniq | awk '{c[$1]++} END {for (k in c) print k, c[k]}' | sort -n
+}
+
 # Number of LAYERS in KINDDIR = distinct `<layer>` segment across its sprites
 # (contiguous from 0: layer 0 = the base layer, 1.. = overlays). 1 if absent.
 _layer_count() {  # kinddir
@@ -3113,6 +3153,14 @@ cmd_manifest() {
         echo "        $(_kind_maps "$kd") &maps set"
         _emit_int_array var_id "${ids[@]}"
         _emit_int_array var_variant "${cnts[@]}"
+        # Per-PART variant counts (human-pawns P1): parallel &part_id / &part_variants —
+        # e.g. female → parts [0, 1], counts [9, 16] (9 bodies, 16 heads).
+        local pids=() pcnts=()
+        while IFS=' ' read -r pi pc; do [[ -n "$pi" ]] && { pids+=("$pi"); pcnts+=("$pc"); }; done < <(_part_pairs "$kd")
+        if (( ${#pids[@]} > 0 )); then
+          _emit_int_array part_id "${pids[@]}"
+          _emit_int_array part_variants "${pcnts[@]}"
+        fi
         _emit_int_array subkinds $facs
         kinds=$((kinds + 1)); total=$((total + n))
       done

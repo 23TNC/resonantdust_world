@@ -214,14 +214,13 @@ fn scan_dir(tex_root: &Path, dir: &Path, entries: &mut BTreeMap<String, Entry>) 
     }
 }
 
-/// Register a kind dir's per-facing stems (`<stem_prefix>/<facing>`) if it holds the
-/// canonical instance leaf `1.<facing>.0/1/albedo.png`. Returns whether any facing matched.
+/// Register a kind dir's stems if it holds variant leaves. Every variant folder registers
+/// (human-pawns P1 — numeric variants are now stem-addressable): the canonical `1` under the
+/// implicit stem `<prefix>[/<facing>[.<part>]]`, any other numeric variant under
+/// `<prefix>/<v>/…`, and a NAMED (non-numeric) folder under `<prefix>/<form>/…` (a
+/// biome-tile form like `smooth/wall`). Returns whether anything matched.
 fn register_kind(kind_path: &Path, stem_prefix: &str, entries: &mut BTreeMap<String, Entry>) -> bool {
-    // Canonical numeric variant `1/` → the implicit stem `<prefix>/<facing>`.
-    let mut found = register_variant(&kind_path.join("1"), stem_prefix, entries);
-    // NAMED (non-numeric) variant folders → explicit stems `<prefix>/<form>/<facing>` — a
-    // biome-tile form like `smooth/wall`. A numeric variant is the (future) per-instance
-    // variation picker, not addressable by a stem yet, so it's skipped here.
+    let mut found = false;
     if let Ok(kids) = std::fs::read_dir(kind_path) {
         for kid in kids.flatten() {
             let p = kid.path();
@@ -229,47 +228,70 @@ fn register_kind(kind_path: &Path, stem_prefix: &str, entries: &mut BTreeMap<Str
                 continue;
             }
             let Some(name) = dir_name(&kid.file_name()) else { continue };
-            if name.chars().all(|c| c.is_ascii_digit()) {
-                continue;
-            }
-            found |= register_variant(&p, &format!("{stem_prefix}/{name}"), entries);
+            let prefix =
+                if name == "1" { stem_prefix.to_string() } else { format!("{stem_prefix}/{name}") };
+            found |= register_variant(&p, &prefix, entries);
         }
     }
     found
 }
 
-// Register one variant leaf dir (`<kind>/1` or `<kind>/<form>`): a stem per facing whose
-// `albedo.<facing>.0.png` is present, with its sibling maps + optional linked-atlas grid.
+// Register one variant leaf dir (`<kind>/<variant>` or `<kind>/<form>`): a stem per
+// (facing, part) whose `albedo.<facing>.<part>.png` is present, with its sibling maps +
+// optional linked-atlas grid. Part 0 keeps the bare `<prefix>/<facing>` stem; a higher
+// part suffixes it (`<prefix>/<facing>.<part>` — a pawn's head is part 1).
 fn register_variant(leaf: &Path, stem_prefix: &str, entries: &mut BTreeMap<String, Entry>) -> bool {
     let mut found = false;
     for facing in FACINGS {
-        let master = leaf.join(format!("albedo.{facing}.0.png"));
-        if !master.is_file() {
-            continue;
+        for part in leaf_parts(leaf, facing) {
+            let master = leaf.join(format!("albedo.{facing}.{part}.png"));
+            let Ok((w, h)) = image::image_dimensions(&master) else { continue };
+            // Which of the known maps have a leaf here for this facing+part (albedo always does).
+            let maps: BTreeSet<String> = crate::textures::MAPS
+                .iter()
+                .filter(|m| leaf.join(format!("{m}.{facing}.{part}.png")).is_file())
+                .map(|m| m.to_string())
+                .collect();
+            // Hash ALL present map files (+ sidecars) so re-mastering any of them moves the
+            // cache-buster hash.
+            let Some(hash) = leaf_hash(leaf, &maps, facing, part) else { continue };
+            // A `bin/art` linked atlas drops an `atlas.json` beside its maps: cell grid + inset.
+            let (span, square) = read_span_meta(leaf);
+            let (grid, pad) = match read_atlas_meta(leaf) {
+                Some((g, p)) => (Some(g), Some(p)),
+                None => (None, None),
+            };
+            let stem = if part == 0 {
+                format!("{stem_prefix}/{facing}")
+            } else {
+                format!("{stem_prefix}/{facing}.{part}")
+            };
+            entries.insert(
+                stem,
+                Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps, grid, pad, span, square },
+            );
+            found = true;
         }
-        let Ok((w, h)) = image::image_dimensions(&master) else { continue };
-        // Which of the known maps have a leaf here for this facing (albedo always does).
-        let maps: BTreeSet<String> = crate::textures::MAPS
-            .iter()
-            .filter(|m| leaf.join(format!("{m}.{facing}.0.png")).is_file())
-            .map(|m| m.to_string())
-            .collect();
-        // Hash ALL present map files (+ the `atlas.json` sidecar) so re-mastering any of them
-        // moves the cache-buster hash.
-        let Some(hash) = leaf_hash(leaf, &maps, facing) else { continue };
-        // A `bin/art` linked atlas drops an `atlas.json` beside its maps: the cell grid + inset.
-        let (span, square) = read_span_meta(leaf);
-        let (grid, pad) = match read_atlas_meta(leaf) {
-            Some((g, p)) => (Some(g), Some(p)),
-            None => (None, None),
-        };
-        entries.insert(
-            format!("{stem_prefix}/{facing}"),
-            Entry { hash, max_size: w.min(h), lods: BTreeSet::new(), maps, grid, pad, span, square },
-        );
-        found = true;
     }
     found
+}
+
+/// The part numbers present in a leaf for `facing` — parsed off its
+/// `albedo.<facing>.<part>.png` filenames (sorted, deduped).
+fn leaf_parts(leaf: &Path, facing: &str) -> Vec<u32> {
+    let mut parts = BTreeSet::new();
+    if let Ok(kids) = std::fs::read_dir(leaf) {
+        let prefix = format!("albedo.{facing}.");
+        for kid in kids.flatten() {
+            let Some(name) = dir_name(&kid.file_name()) else { continue };
+            if let Some(rest) = name.strip_prefix(&prefix).and_then(|r| r.strip_suffix(".png")) {
+                if let Ok(p) = rest.parse::<u32>() {
+                    parts.insert(p);
+                }
+            }
+        }
+    }
+    parts.into_iter().collect()
 }
 
 fn dir_name(name: &std::ffi::OsStr) -> Option<String> {
@@ -280,10 +302,10 @@ fn dir_name(name: &std::ffi::OsStr) -> Option<String> {
 /// (sorted by map name for determinism). Moves on any map's rewrite — a re-mastered
 /// `albedo` OR `layers` OR `surface` all bust it, so the client's hash-addressed
 /// caches (HTTP + IndexedDB) never serve stale map bytes.
-fn leaf_hash(leaf: &Path, maps: &BTreeSet<String>, facing: &str) -> Option<String> {
+fn leaf_hash(leaf: &Path, maps: &BTreeSet<String>, facing: &str, part: u32) -> Option<String> {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
     for map in maps {
-        let meta = std::fs::metadata(leaf.join(format!("{map}.{facing}.0.png"))).ok()?;
+        let meta = std::fs::metadata(leaf.join(format!("{map}.{facing}.{part}.png"))).ok()?;
         let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
         for b in format!("{map}:{mtime:x}-{:x};", meta.len()).bytes() {
             h ^= b as u64;
@@ -418,6 +440,36 @@ mod tests {
         let (h2, _) = m2.lookup("biome-thing/conifer/s").expect("stem");
         assert_ne!(h1, h2, "stamping meta.json must bust the leaf hash");
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn scans_numeric_variants_and_parts_into_their_own_stems() {
+        // human-pawns P1: `pawn/human/female/{0,3}` leaves with body (part 0) + head (part 1)
+        // files; variant folders and parts each get their own stem row.
+        let base = std::env::temp_dir().join(format!("gw-parts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let img = image::RgbaImage::from_pixel(8, 8, image::Rgba([9, 9, 9, 255]));
+        let mut buf = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img).write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        let png = buf.into_inner();
+        for (variant, files) in [
+            ("0", vec!["albedo.e.0.png", "albedo.e.1.png"]), // body + head
+            ("3", vec!["albedo.e.1.png"]),                   // head-only (the 9..15 shape)
+            ("1", vec!["albedo.e.0.png"]),                   // canonical → bare stem
+        ] {
+            let leaf = base.join("pawn/human/female").join(variant);
+            std::fs::create_dir_all(&leaf).unwrap();
+            for f in files {
+                std::fs::write(leaf.join(f), &png).unwrap();
+            }
+        }
+        let m = TextureManifest::build(&TextureSource::Disk { root: base.clone(), cache: base.join("cache") });
+        assert!(m.lookup("pawn/human/female/0/e").is_some(), "variant 0 body");
+        assert!(m.lookup("pawn/human/female/0/e.1").is_some(), "variant 0 head part");
+        assert!(m.lookup("pawn/human/female/3/e.1").is_some(), "head-only variant");
+        assert!(m.lookup("pawn/human/female/3/e").is_none(), "no body in variant 3");
+        assert!(m.lookup("pawn/human/female/e").is_some(), "canonical variant 1 keeps the bare stem");
         let _ = std::fs::remove_dir_all(&base);
     }
 

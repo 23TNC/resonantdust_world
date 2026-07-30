@@ -13,13 +13,13 @@
 //!
 //! Stem → master path is deterministic. The stem's leading segments ARE the
 //! `<cat>/<kind>` directory names verbatim (a named subcategory/subkind is a dotted
-//! segment kept as-is); an optional TRAILING `n`/`e`/`s` segment names the facing
-//! (absent → south). In the group-less folder-per-variant layout
-//! (docs/components/dev/textures/design/texture-paths.md): `linked/wall.smooth` →
-//! `linked/wall.smooth/1.s.0/1/albedo.png` and `world/conifer/e` →
-//! `world/conifer/1.e.0/1/albedo.png` — the canonical instance
-//! `<id=1>.<dir>.<layer=0>/<variant=1>/albedo.png`. The per-instance variation picker
-//! (the old `^r2`) is future work; one variation per kind for now.
+//! segment kept as-is), then the OPTIONAL trailing addressing (human-pawns P1):
+//! `<base>[/<variant>][/<facing>[.<part>]]` — an all-digits segment names the variant
+//! FOLDER (absent → the canonical `1`), a `n`/`e`/`s`/`l` token the facing (absent →
+//! south), and the token's `.<part>` suffix the leaf part (absent → 0). Leaves are
+//! `<base>/<variant>/<map>.<facing>.<part>.png`: `world/conifer/e` →
+//! `world/conifer/1/albedo.e.0.png`; `pawn/human/female/3/e.1` →
+//! `pawn/human/female/3/albedo.e.1.png` (variant 3's HEAD part).
 //!
 //! Paths are sanitised to relative, `..`-free forms before they touch disk or the
 //! R2 keyspace, so a crafted stem can never escape the texture root.
@@ -74,22 +74,25 @@ impl TextureSource {
     }
 
     /// Resolve a stem+map to the master leaf rel, honouring BOTH the canonical numeric
-    /// variant leaf (`<…>/1/<map>.<facing>.0.png`) and a NAMED-variant leaf
-    /// (`<…>/<form>/<map>.<facing>.0.png`, files directly — a biome-tile form like
+    /// variant leaf (`<…>/<variant>/<map>.<facing>.<part>.png`) and a NAMED-variant leaf
+    /// (`<…>/<form>/<map>.<facing>.<part>.png`, files directly — a biome-tile form like
     /// `smooth/wall`). On disk we probe which exists (named first); R2 uses the canonical.
     fn resolve_rel(&self, stem: &str, map: &str) -> Option<PathBuf> {
         if !MAPS.contains(&map) {
             return None;
         }
-        // Named-variant probe (disk only): <segs>/<map>.<facing>.0.png (the form IS the last seg).
+        // Named-variant probe (disk only): <segs>/<map>.<facing>.<part>.png (the form IS the
+        // last seg). Only sensible without an explicit variant segment (a stem naming both a
+        // form and a numeric variant doesn't exist), so probe with the parsed part only.
         if let TextureSource::Disk { root, .. } = self {
-            let (segs, facing) = stem_segs_facing(stem)?;
-            let named: PathBuf = segs.iter().collect::<PathBuf>().join(format!("{map}.{facing}.0.png"));
+            let p = stem_parts(stem)?;
+            let named: PathBuf =
+                p.segs.iter().collect::<PathBuf>().join(format!("{map}.{}.{}.png", p.facing, p.part));
             if root.join(&named).exists() {
                 return Some(named);
             }
         }
-        master_map_rel(stem, map) // canonical <segs>/1/<map>.<facing>.0.png
+        master_map_rel(stem, map) // canonical <segs>/<variant>/<map>.<facing>.<part>.png
     }
 
     /// The full-res master albedo for `stem`, served verbatim. `Ok(None)` is a
@@ -227,10 +230,25 @@ impl TextureSource {
 /// re-synced to the same group-less layout before an R2 deploy (docs "R2 step").
 const FACINGS: [&str; 4] = ["n", "e", "s", "l"];
 
-// Parse a client stem into (path segments, facing). A trailing facing (`s`/`e`/`n`/`l`)
-// folds out only when a `<cat>/<kind>` prefix precedes it (≥3 segs), so a 2-segment kind
-// whose name happens to be a facing letter is never mistaken for one. Absent → south (`s`).
-fn stem_segs_facing(stem: &str) -> Option<(Vec<String>, &'static str)> {
+/// A parsed client stem (human-pawns P1): `<cat>/<kind>[/<variant>][/<facing>[.<part>]]`.
+struct StemParts {
+    /// The `<cat>/<kind>` directory segments, verbatim.
+    segs: Vec<String>,
+    /// The numeric variant FOLDER (`"1"` = the canonical default).
+    variant: String,
+    /// One of [`FACINGS`] (`"s"` when absent).
+    facing: &'static str,
+    /// The `<part>` field of the leaf filename (`0` = the base part; a pawn's head is `1`).
+    part: u32,
+}
+
+// Parse a client stem. A trailing facing token (`s`/`e`/`n`/`l`, optionally suffixed
+// `.<part>` — `e.1` = east, part 1) folds out only when a `<cat>/<kind>` prefix precedes
+// it (≥3 segs), so a 2-segment kind whose name happens to be a facing letter is never
+// mistaken for one. After the facing folds, a trailing ALL-DIGITS segment (again only
+// past a 2-segment prefix) is the variant folder — `pawn/human/female/3/e.1` →
+// segs `pawn/human/female`, variant 3, facing e, part 1. Defaults: variant 1, south, part 0.
+fn stem_parts(stem: &str) -> Option<StemParts> {
     let safe = sanitize(stem)?;
     let mut segs: Vec<String> = Vec::new();
     for c in safe.components() {
@@ -240,29 +258,54 @@ fn stem_segs_facing(stem: &str) -> Option<(Vec<String>, &'static str)> {
         }
     }
     let mut facing = "s";
+    let mut part = 0u32;
     if segs.len() >= 3 {
-        if let Some(f) = FACINGS.iter().copied().find(|&f| f == segs.last().unwrap().as_str()) {
-            facing = f;
-            segs.pop();
+        let last = segs.last().unwrap().as_str();
+        let (tok, part_suffix) = match last.split_once('.') {
+            Some((t, p)) => (t, Some(p)),
+            None => (last, None),
+        };
+        if let Some(f) = FACINGS.iter().copied().find(|&f| f == tok) {
+            // A `.suffix` must parse as a part number, or the segment is NOT a facing token.
+            match part_suffix {
+                Some(p) => {
+                    if let Ok(n) = p.parse::<u32>() {
+                        facing = f;
+                        part = n;
+                        segs.pop();
+                    }
+                }
+                None => {
+                    facing = f;
+                    segs.pop();
+                }
+            }
+        }
+    }
+    let mut variant = String::from("1");
+    if segs.len() >= 3 {
+        let last = segs.last().unwrap();
+        if !last.is_empty() && last.bytes().all(|b| b.is_ascii_digit()) {
+            variant = segs.pop().unwrap();
         }
     }
     if segs.is_empty() {
         return None;
     }
-    Some((segs, facing))
+    Some(StemParts { segs, variant, facing, part })
 }
 
-// The CANONICAL numeric-variant leaf: `<segs>/1/<map>.<facing>.0.png`. `map` must be in the
-// allowlist so a crafted segment can never name an arbitrary file. Pure (no fs) — the
-// fs-aware named-variant resolution is `TextureSource::resolve_rel`.
+// The CANONICAL numeric-variant leaf: `<segs>/<variant>/<map>.<facing>.<part>.png`. `map`
+// must be in the allowlist so a crafted segment can never name an arbitrary file. Pure
+// (no fs) — the fs-aware named-variant resolution is `TextureSource::resolve_rel`.
 fn master_map_rel(stem: &str, map: &str) -> Option<PathBuf> {
     if !MAPS.contains(&map) {
         return None;
     }
-    let (segs, facing) = stem_segs_facing(stem)?;
-    let mut out: PathBuf = segs.iter().collect();
-    out.push("1");
-    out.push(format!("{map}.{facing}.0.png"));
+    let p = stem_parts(stem)?;
+    let mut out: PathBuf = p.segs.iter().collect();
+    out.push(&p.variant);
+    out.push(format!("{map}.{}.{}.png", p.facing, p.part));
     Some(out)
 }
 
@@ -371,39 +414,31 @@ mod tests {
 
     #[test]
     fn stem_resolves_to_canonical_master() {
-        // no facing → south default, canonical leaf `1.s.0/1/albedo.png`; segments
-        // verbatim (a named subkind like `wall.smooth` is kept as-is), group dropped
+        // no facing → south default, canonical variant folder `1`, part 0; segments
+        // verbatim (a named subkind like `wall.smooth` is kept as-is)
         assert_eq!(
             master_map_rel("linked/wall.smooth", "albedo"),
-            Some(PathBuf::from("linked/wall.smooth/1.s.0/1/albedo.png")),
+            Some(PathBuf::from("linked/wall.smooth/1/albedo.s.0.png")),
         );
         // the `map` names the leaf file — normal/depth resolve beside the albedo
         assert_eq!(
             master_map_rel("linked/wall.smooth", "normal"),
-            Some(PathBuf::from("linked/wall.smooth/1.s.0/1/normal.png")),
+            Some(PathBuf::from("linked/wall.smooth/1/normal.s.0.png")),
         );
-        assert_eq!(
-            master_map_rel("world/conifer/e", "depth"),
-            Some(PathBuf::from("world/conifer/1.e.0/1/depth.png")),
-        );
-        // a trailing facing segment folds into the `<dir>` field
+        // a trailing facing segment folds into the leaf filename's `<dir>` field
         assert_eq!(
             master_map_rel("world/conifer/e", "albedo"),
-            Some(PathBuf::from("world/conifer/1.e.0/1/albedo.png")),
-        );
-        assert_eq!(
-            master_map_rel("world/conifer/n", "albedo"),
-            Some(PathBuf::from("world/conifer/1.n.0/1/albedo.png")),
+            Some(PathBuf::from("world/conifer/1/albedo.e.0.png")),
         );
         // `l` (linked/autotile) is a direction token too
         assert_eq!(
             master_map_rel("linked/wall.smooth/l", "albedo"),
-            Some(PathBuf::from("linked/wall.smooth/1.l.0/1/albedo.png")),
+            Some(PathBuf::from("linked/wall.smooth/1/albedo.l.0.png")),
         );
         // a non-facing 3rd segment stays a directory (facing → south)
         assert_eq!(
             master_map_rel("world/conifer/foo", "albedo"),
-            Some(PathBuf::from("world/conifer/foo/1.s.0/1/albedo.png")),
+            Some(PathBuf::from("world/conifer/foo/1/albedo.s.0.png")),
         );
         // an unknown map is rejected (leaf-filename allowlist)
         assert_eq!(master_map_rel("linked/wall.smooth", "../etc"), None);
@@ -411,6 +446,36 @@ mod tests {
         // escapes are rejected
         assert_eq!(master_map_rel("../secret", "albedo"), None);
         assert_eq!(master_map_rel("linked/../../etc", "albedo"), None);
+    }
+
+    #[test]
+    fn stem_grammar_addresses_variant_and_part() {
+        // human-pawns P1: `<base>/<variant>/<facing>.<part>` — the full form
+        assert_eq!(
+            master_map_rel("pawn/human/female/3/e.1", "albedo"),
+            Some(PathBuf::from("pawn/human/female/3/albedo.e.1.png")),
+        );
+        // variant without a part; part without a variant
+        assert_eq!(
+            master_map_rel("pawn/human/female/3/e", "surface"),
+            Some(PathBuf::from("pawn/human/female/3/surface.e.0.png")),
+        );
+        assert_eq!(
+            master_map_rel("pawn/human/female/n.1", "albedo"),
+            Some(PathBuf::from("pawn/human/female/1/albedo.n.1.png")),
+        );
+        // the wolf's sprite-gen numeric folders address directly
+        assert_eq!(
+            master_map_rel("pawn/animal/wolf/555/e", "albedo"),
+            Some(PathBuf::from("pawn/animal/wolf/555/albedo.e.0.png")),
+        );
+        // a non-numeric part suffix is NOT a facing token — the segment stays a directory
+        assert_eq!(
+            master_map_rel("pawn/human/female/e.x", "albedo"),
+            Some(PathBuf::from("pawn/human/female/e.x/1/albedo.s.0.png")),
+        );
+        // a 2-segment stem never folds (a kind named like a facing stays a kind)
+        assert_eq!(master_map_rel("world/n", "albedo"), Some(PathBuf::from("world/n/1/albedo.s.0.png")));
     }
 
     /// A 4×4 red PNG downscales to 2×2 and re-decodes cleanly at half size.
@@ -431,14 +496,14 @@ mod tests {
         let root = base.join("textures");
         let cache = base.join("cache");
         let _ = std::fs::remove_dir_all(&base);
-        // group-less canonical instance leaf: linked/wall.smooth/1.s.0/1/albedo.png
-        let leaf = root.join("linked/wall.smooth/1.s.0/1");
+        // canonical variant leaf: linked/wall.smooth/1/albedo.s.0.png
+        let leaf = root.join("linked/wall.smooth/1");
         std::fs::create_dir_all(&leaf).unwrap();
         // a 4×4 master albedo
         let master = image::RgbaImage::from_pixel(4, 4, image::Rgba([10, 180, 40, 255]));
         let mut buf = Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(master).write_to(&mut buf, image::ImageFormat::Png).unwrap();
-        std::fs::write(leaf.join("albedo.png"), buf.into_inner()).unwrap();
+        std::fs::write(leaf.join("albedo.s.0.png"), buf.into_inner()).unwrap();
 
         let src = TextureSource::Disk { root: root.clone(), cache: cache.clone() };
 

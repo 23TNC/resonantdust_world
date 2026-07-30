@@ -39,14 +39,14 @@ DSL, then render, then the human itself, then graph conformance. Design stances:
 
 ## P1 — variant + part art served
 
-- [ ] Extend the edge stem grammar to `<base>/<variant>/<facing>.<part>` (variant default
+- [x] Extend the edge stem grammar to `<base>/<variant>/<facing>.<part>` (variant default
       canonical `1`, part default `0`) in `textures.rs`. Acceptance: curl the edge for
       female variant 3 part 1 albedo → 200; existing wolf/conifer stems still 200.
-- [ ] Index variant folders + per-part maps in `tex_manifest` (per-leaf part list with its
+- [x] Index variant folders + per-part maps in `tex_manifest` (per-leaf part list with its
       variant count) and regenerate `bin/art manifest`. Acceptance:
       `content/visual/manifest/pawn.rd` lists female/male with part 0 → 9 variants,
       part 1 → 16.
-- [ ] Accept the extended stems in the client resolver (fetch, preview, geo fallback).
+- [x] Accept the extended stems in the client resolver (fetch, preview, geo fallback).
       Acceptance: the debug page resolves a female body master AND its part-1 head master
       by stem (console `resolve` probe), both drawn from their own frames.
 
