@@ -180,6 +180,13 @@ export class TextureResolver {
 
   /** Best sub-frame for `stem`'s `map` available now (+ tier), kicking the upgrade toward the target
    *  LOD. A falsy stem, no root/renderer, an unlisted stem, or a map the stem lacks → geo (null). */
+  /** Whether the serving manifest lists `stem` (human-pawns P3): the variant-folder
+   *  fallback — a def variant with no mastered folder degrades to the canonical stem
+   *  instead of resolving geo forever (the wolf's variant-0 case). */
+  has(stem: string): boolean {
+    return this.manifest.entry(stem) !== undefined;
+  }
+
   resolve(stem: string | undefined, map: TexMap = "albedo", cell?: number): ResolvedTexture {
     if (!stem || !this.root || !this.renderer) return { frame: null, geo: true };
 

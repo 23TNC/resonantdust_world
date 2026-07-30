@@ -1,5 +1,37 @@
 # Completed — human-pawns
 
+## 2026-07-30 — P3 complete: multi-part movers live
+
+**MoverLayer renders parts** — a `Mover` owns one warm prim PER SLOT (`parts:
+PartPrim[]`; slot 0 = the carrier for selection/hit-testing, `pawnAt` hits ANY part but
+returns the carrier's prim id). Slot 0 boxes via the kind's layout as before; other slots
+place at `offset`·tilePx from the carrier's base-centre anchor at `scale` × its size,
+zIndex a hundredth above per slot, offset.x mirrored on a west facing. Each slot draws its
+payload `PART` def — joined from the new `onPawnParts` (either side may arrive first; a
+live mover re-applies on join) — else the pawn's own def. `moverSlotTexture` (WorldBridge)
+builds `<stem>/<variant>/<facing>[.<part>]`, degrading to the canonical bare stem when the
+manifest lacks the variant folder (`TextureResolver.has` → `Viewport.hasTexture`) — the
+wolf's variant-0 case. `thingTexture` simplified to cold-things-only (the id-derived
+variant pick DELETED).
+
+**Verified live** (redeployed bundles): the wolf renders + walks through the parts path
+unchanged (1 slot, `pawn/animal/wolf/e`, npc soak on schedule); a browser-minted human
+(`human_female`, payload body 7 + head 11) rendered BOTH parts — head
+`pawn/human/female/11/s.1` at 0.625 × the body's size, seated by the authored offset —
+and a west walk showed body+head GLIDING TOGETHER mid-trip (no lag), the head mirrored to
+the correct side, facing flips coherent. `tick` needed no extra work: `applyVisual` IS the
+per-frame move and updates every slot. Drill pawn deleted after the captures (screenshots
+in the session record; the user's eyes are P4's oracle).
+
+**Detours worth recording:** (a) an all-zero-surface scare was a PALETTE misread (PIL
+returns indices unless `.convert("RGB")`) — the human surfaces were healthy; `bin/art
+surface pawn/human/{female,male}` was re-run harmlessly. The WOLF's `surface.e.0.png` IS
+genuinely all-zero yet renders — surface coverage is not the draw gate previously assumed
+(pawn visibility comes off the albedo alpha path); noted, no action. (b) slot offsets
+scale by `size0/slots[0].size` where `size0` is the LAYOUT box (span-derived, 256 px) —
+so authored tile offsets run ~1.33× nominal for the span-2 human; the P4 placement drill
+tunes the authored value against the user's eyes rather than re-deriving the scale.
+
 ## 2026-07-30 — P2 complete: DSL parts
 
 **The loader reads ALL prims** (`shared/dsl/src/loader.rs`): `VisualParts` gains

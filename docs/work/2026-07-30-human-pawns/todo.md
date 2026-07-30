@@ -67,14 +67,14 @@ DSL, then render, then the human itself, then graph conformance. Design stances:
 
 ## P3 — client multi-part movers
 
-- [ ] MoverLayer: a mover owns one warm prim PER PART slot from `moverParts`; part 0 boxes
+- [x] MoverLayer: a mover owns one warm prim PER PART slot from `moverParts`; part 0 boxes
       the carrier, other slots place at offset·tile and `scale`, zIndex just above part 0;
       each slot draws its payload `PART` def (stem + variant from the def), else the
       pawn's own def. Acceptance: the wolf (1 part, no payload) renders + walks
       identically in a soak; a 2-PART state row renders both parts.
-- [ ] Move ALL part prims together in `tick` (speculation glide) and `applyVisual`.
+- [x] Move ALL part prims together in `tick` (speculation glide) and `applyVisual`.
       Acceptance: a drilled move shows no head/body lag (capture in `completed.md`).
-- [ ] Take the wolf's sprite variant from `def.variant_id` (delete the id-derived pick in
+- [x] Take the wolf's sprite variant from `def.variant_id` (delete the id-derived pick in
       `thingTexture` callers). Acceptance: the wolf's variant is stable across reloads and
       equals the def's nibble.
 

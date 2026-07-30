@@ -214,6 +214,12 @@ export class Viewport {
     ];
   }
 
+  /** Whether the serving manifest lists a texture `name` (human-pawns P3) — MoverLayer's
+   *  variant-folder fallback probe. False until the resolver attaches. */
+  hasTexture(name: string): boolean {
+    return this.resolver?.has(name) ?? false;
+  }
+
   /** Attach the texture resolver (master→preview→geo) + our GL context. Called by the world scene once
    *  the viewport exists (F6). A LOD landing re-bakes both caches so prims pick up the upgrade. */
   setResolver(resolver: TextureResolver): void {

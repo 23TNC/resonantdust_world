@@ -3,7 +3,7 @@
 //!
 //! A pawn (a wolf) is a WARM prim: a bottom-anchored sprite whose texture stem comes from the
 //! content bundle (`thing_texture_stems[objKind-1]`, e.g. `pawn/animal/wolf/default`), its facing
-//! picked from the entity's `rotation` via {@link thingTexture} (the SAME rotation→texture+flip
+//! picked from the entity's `rotation` via {@link moverSlotTexture} (the SAME rotation→texture+flip
 //! table cold things use), its box placed from the def layout via {@link placeThing} (the SAME
 //! footprint/anchor/size resolution cold things use). It bakes through the warm
 //! cache's albedo/normal/surface/zdepth-world channels EXACTLY like a cold thing — geo→real
@@ -26,7 +26,7 @@ import { defaultTicsPerTile } from "../../client/WasmClient";
 import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
 import type { PackedChannel } from "../viewport/material";
-import { thingTexture } from "./WorldBridge";
+import { moverSlotTexture } from "./WorldBridge";
 import { placeThing, readLayout } from "./thingPlacement";
 
 /** Base zIndex for warm pawn sprites — above the ground (tiles are `0`), matching cold things
@@ -104,23 +104,31 @@ function walkGreedy(
   }
 }
 
-/** One live pawn: its warm prim id + zone (so a zone close drops it), the last-synced spec
- *  (so an unchanged update skips the warm re-bake), the last AUTHORITATIVE tile (speculation's
- *  seed), the live speculation, if any, and the RENDER-CHASE track (movement-hardening F6). */
-interface Mover {
+/** One drawn part SLOT of a live pawn — its warm prim + the last-baked fields the eps/skip
+ *  compare gates on (human-pawns P3). `parts[0]` is the carrier (selection, hit-testing). */
+interface PartPrim {
   id: number;
-  macroPosition: number;
-  kind: number;
-  authX: number;
-  authY: number;
   x: number;
   y: number;
+  w: number;
   texName: string | undefined;
-  cell: number | undefined;
   flipX: boolean;
   tint: number;
   geoColor: number;
   zIndex: number;
+}
+
+/** One live pawn: its warm PART prims + zone (so a zone close drops it), the last-synced spec
+ *  (so an unchanged update skips the warm re-bake), the last AUTHORITATIVE tile (speculation's
+ *  seed), the live speculation, if any, and the RENDER-CHASE track (movement-hardening F6). */
+interface Mover {
+  parts: PartPrim[];
+  macroPosition: number;
+  kind: number;
+  /** The pawn's own packed def — its variant nibble dresses any slot with no payload entry. */
+  def: number;
+  authX: number;
+  authY: number;
   spec: Spec | null;
   /** The RENDERED fractional tile — a separate track that CHASES the speculation target
    *  (user design, movement-hardening F6): the intent arrives ~4–5 tics late, so rendering
@@ -176,6 +184,10 @@ export class MoverLayer {
   /** Per-kind authored tics-per-tile (`0` = unauthored → {@link defaultTicsPerTile}). */
   private thingSpeed: Float64Array = new Float64Array();
 
+  /** Payload part slots per entity (`slot → def`), joined from `PawnParts` events — either
+   *  side of the join may arrive first (human-pawns P3). */
+  private readonly pawnDefs = new Map<number, Map<number, number>>();
+
   constructor(
     private readonly client: WasmClient,
     private content: Content,
@@ -188,6 +200,7 @@ export class MoverLayer {
     (globalThis as unknown as { __moverLayer: MoverLayer }).__moverLayer = this;
     this.refreshTables();
     this.unsubs.push(client.onStateObject((obj) => this.onStateObject(obj)));
+    this.unsubs.push(client.onPawnParts((p) => this.onPawnParts(p)));
     this.unsubs.push(client.onMoveIntent((intent) => this.onMoveIntent(intent)));
     // A zone leaving the subscription sends no per-entity delete, so drop its movers.
     this.unsubs.push(client.onZoneClosed((macroPosition) => this.onZoneClosed(macroPosition)));
@@ -202,8 +215,11 @@ export class MoverLayer {
   dispose(): void {
     for (const u of this.unsubs) u();
     this.unsubs.length = 0;
-    for (const m of this.movers.values()) this.viewport.warmRemovePrim(m.id);
+    for (const m of this.movers.values()) {
+      for (const p of m.parts) this.viewport.warmRemovePrim(p.id);
+    }
     this.movers.clear();
+    this.pawnDefs.clear();
   }
 
   /** Wall-clock of the previous {@link tick} — the chase integrates real dt. */
@@ -265,14 +281,15 @@ export class MoverLayer {
         m.arx = m.rx;
         m.ary = m.ry;
         m.facing = facing;
-        this.applyVisual(m, key, m.kind, m.rx, m.ry, facing, m.macroPosition);
+        this.applyVisual(m, key, m.kind, m.def, m.rx, m.ry, facing, m.macroPosition);
       }
     }
   }
 
-  /** ui-select P1: the warm prim id for a pawn entity (outline/details follow the live prim). */
+  /** ui-select P1: the warm prim id for a pawn entity — the CARRIER (slot 0) prim; outline/
+   *  details follow it. */
   primIdOf(entity: number): number | null {
-    return this.movers.get(entity)?.id ?? null;
+    return this.movers.get(entity)?.parts[0]?.id ?? null;
   }
 
   /** ui-select P2: a pawn's live details for the details panel — authoritative tile, facing,
@@ -296,14 +313,30 @@ export class MoverLayer {
   pawnAt(wx: number, wy: number): { entity: number; primId: number } | null {
     let best: { entity: number; primId: number; zIndex: number; y: number } | null = null;
     for (const [key, m] of this.movers) {
-      const p = this.viewport.warmGetPrim(m.id);
-      if (!p) continue;
-      if (wx < p.x || wx >= p.x + p.width || wy < p.y || wy >= p.y + p.height) continue;
-      if (!best || p.zIndex > best.zIndex || (p.zIndex === best.zIndex && p.y > best.y)) {
-        best = { entity: key, primId: m.id, zIndex: p.zIndex, y: p.y };
+      // ANY part's drawn box hits (a click on the head selects the pawn); the returned
+      // prim id is always the CARRIER's (the selection outline follows slot 0).
+      const carrier = m.parts[0];
+      if (!carrier) continue;
+      for (const part of m.parts) {
+        const p = this.viewport.warmGetPrim(part.id);
+        if (!p) continue;
+        if (wx < p.x || wx >= p.x + p.width || wy < p.y || wy >= p.y + p.height) continue;
+        if (!best || p.zIndex > best.zIndex || (p.zIndex === best.zIndex && p.y > best.y)) {
+          best = { entity: key, primId: carrier.id, zIndex: p.zIndex, y: p.y };
+        }
       }
     }
     return best ? { entity: best.entity, primId: best.primId } : null;
+  }
+
+  /** The payload's part slots landed/changed for an entity — join them to a live mover
+   *  (either side may arrive first; a pre-mover payload just waits in the map). */
+  private onPawnParts(p: { entityReference: number; parts: { slot: number; def: number }[] }): void {
+    const map = new Map<number, number>();
+    for (const e of p.parts) map.set(e.slot, e.def);
+    this.pawnDefs.set(p.entityReference, map);
+    const m = this.movers.get(p.entityReference);
+    if (m) this.applyVisual(m, p.entityReference, m.kind, m.def, m.rx, m.ry, m.facing, m.macroPosition);
   }
 
   // ── internals ───────────────────────────────────────────────────────
@@ -427,107 +460,170 @@ export class MoverLayer {
       m.authX = obj.tileX;
       m.authY = obj.tileY;
       m.kind = kind;
+      m.def = obj.definitionReference;
       m.macroPosition = obj.macroPosition;
       return;
     }
-    this.applyVisual(null, key, kind, obj.tileX, obj.tileY, obj.facing, obj.macroPosition);
+    this.applyVisual(null, key, kind, obj.definitionReference, obj.tileX, obj.tileY, obj.facing, obj.macroPosition);
   }
 
-  /** Create or mutate the pawn's warm prim at (possibly fractional) global tile `(tileX, tileY)`
-   *  with `facing`. The shared path for authoritative rows AND per-frame speculation. */
+  /** Create or mutate the pawn's warm PART prims at (possibly fractional) global tile
+   *  `(tileX, tileY)` with `facing` — the shared path for authoritative rows, per-frame
+   *  speculation, AND payload-join arrivals (human-pawns P3). Slot 0 boxes the carrier via
+   *  the kind's layout; other slots place at `offset` tiles from its anchor at `scale` ×
+   *  its size, drawing the payload `PART` def for their slot (else the pawn's own def). */
   private applyVisual(
     m: Mover | null,
     key: number,
     kind: number,
+    def: number,
     tileX: number,
     tileY: number,
     facing: number,
     macroPosition: number,
   ): void {
-    // The kind's part SLOTS (human-pawns P2) — slot 0 boxes the carrier; the wolf is the
-    // 1-slot degenerate case. (Multi-slot rendering lands in P3.)
-    const parts = this.content.moverParts(kind) as MoverPart[];
-    const tint = parts[0].tint;
-    const geoColor = parts[0].geoColor;
+    const slots = this.content.moverParts(kind) as MoverPart[];
+    const slotDefs = this.pawnDefs.get(key);
+    const has = (name: string) => this.viewport.hasTexture(name);
+    const defOf = (slot: number): number => slotDefs?.get(slot) ?? def;
+    // A payload def may redirect a slot to ANOTHER kind's stem (the armor future); today
+    // the human's PART defs name its own kind, so this resolves to the slot's DSL stem.
+    const stemOf = (s: MoverPart, d: number): string | undefined => {
+      const kindId = d >>> 16 !== 0 ? (d & 0xffff) >>> 4 : d;
+      const fromDef = kindId >= 1 && kindId <= this.thingStems.length ? this.thingStems[kindId - 1] : undefined;
+      return fromDef ?? s.stem ?? undefined;
+    };
+    const variantOf = (d: number): number => (d >>> 16 !== 0 ? d & 0xf : 0);
 
-    // Facing (+ west flip) from the entity's facing; variant is a stable per-entity pick.
-    const stem = this.thingStems[kind - 1];
-    const tex = thingTexture(stem, facing, key, /* mover */ true);
-    const box = placeThing(tileX, tileY, readLayout(this.thingLayout, kind), tex.flipX, !tex.name);
-    const { x, y } = box;
-    const size = box.width; // square box; used for warm prim width/height
+    // Slot 0 — the carrier box from the kind's layout (the wolf's whole visual).
+    const d0 = defOf(0);
+    const tex0 = moverSlotTexture(stemOf(slots[0], d0), facing, variantOf(d0), slots[0].part, has);
+    const box = placeThing(tileX, tileY, readLayout(this.thingLayout, kind), tex0.flipX, !tex0.name);
+    const size0 = box.width; // square box
     const zIndex = PAWN_Z_BASE + box.zRow;
+    // The carrier's game anchor (base-centre) + the px-per-tile scale for slot offsets.
+    const ax = box.x + size0 * 0.5;
+    const ay = box.y + size0;
+    const tilePx = slots[0].size > 0 ? size0 / slots[0].size : size0;
 
-    if (!m) {
-      const id = this.viewport.warmAddPrim({
-        texture: this.viewport.white, // fallback texture is unused for a textureName-d prim (channels resolve by name)
-        textureName: tex.name,
-        flipX: tex.flipX,
-        cell: tex.cell,
-        x,
-        y,
-        width: size,
-        height: size,
-        tint,
-        geoColor,
-        packed: this.packedFor(kind),
-        seed: hash01(key),
-        zIndex,
-        hot: true, // a mover — its light/shadow participation is HOT-class only (pawn-render P2)
-        rotation: facing, // P4: the record carries the TRUE cardinal (the frame follows it anyway)
+    interface SlotSpec {
+      texName: string | undefined; flipX: boolean; x: number; y: number; w: number;
+      tint: number; geoColor: number; zIndex: number;
+    }
+    const specs: SlotSpec[] = [
+      { texName: tex0.name, flipX: tex0.flipX, x: box.x, y: box.y, w: size0,
+        tint: slots[0].tint, geoColor: slots[0].geoColor, zIndex },
+    ];
+    for (let i = 1; i < slots.length; i++) {
+      const s = slots[i];
+      const di = defOf(i);
+      const tex = moverSlotTexture(stemOf(s, di), facing, variantOf(di), s.part, has);
+      const w = size0 * s.scale;
+      // The slot's authored offset (tiles) from the carrier anchor; x mirrors with a west
+      // facing so the part stays on the sprite's correct side.
+      const ox = (tex.flipX ? -s.offsetX : s.offsetX) * tilePx;
+      const cx = ax + ox;
+      const cy = ay + s.offsetY * tilePx;
+      specs.push({
+        texName: tex.name, flipX: tex.flipX, x: cx - w * 0.5, y: cy - w * 0.5, w,
+        tint: s.tint, geoColor: s.geoColor,
+        // Above the carrier, below the next z-row (rows are integers; slots are hundredths).
+        zIndex: zIndex + i * 0.01,
       });
-      this.movers.set(key, {
-        id, macroPosition, kind, authX: tileX, authY: tileY,
-        x, y, texName: tex.name, cell: tex.cell, flipX: tex.flipX, tint, geoColor, zIndex,
-        spec: null,
-        rx: tileX, ry: tileY, arx: tileX, ary: tileY, facing, // the chase starts AT the first authoritative tile
-        lastIntentTic: null,
-      });
+    }
+
+    // A slot-count change (a late payload join won't change the count — the DSL fixes it —
+    // but a content hot-swap can): rebuild from scratch.
+    if (m && m.parts.length !== specs.length) {
+      for (const p of m.parts) this.viewport.warmRemovePrim(p.id);
+      m.parts = [];
+    }
+
+    if (!m || m.parts.length === 0) {
+      const parts: PartPrim[] = specs.map((sp, i) => ({
+        id: this.viewport.warmAddPrim({
+          texture: this.viewport.white, // unused for a textureName-d prim (channels resolve by name)
+          textureName: sp.texName,
+          flipX: sp.flipX,
+          x: sp.x,
+          y: sp.y,
+          width: sp.w,
+          height: sp.w,
+          tint: sp.tint,
+          geoColor: sp.geoColor,
+          packed: i === 0 ? this.packedFor(kind) : undefined,
+          seed: hash01(key),
+          zIndex: sp.zIndex,
+          hot: true, // a mover — its light/shadow participation is HOT-class only (pawn-render P2)
+          rotation: facing, // P4: the record carries the TRUE cardinal (the frame follows it anyway)
+        }),
+        x: sp.x, y: sp.y, w: sp.w, texName: sp.texName, flipX: sp.flipX,
+        tint: sp.tint, geoColor: sp.geoColor, zIndex: sp.zIndex,
+      }));
+      if (m) {
+        m.parts = parts;
+        m.macroPosition = macroPosition;
+      } else {
+        this.movers.set(key, {
+          parts, macroPosition, kind, def, authX: tileX, authY: tileY,
+          spec: null,
+          rx: tileX, ry: tileY, arx: tileX, ary: tileY, facing, // the chase starts AT the first authoritative tile
+          lastIntentTic: null,
+        });
+      }
       return;
     }
 
-    // Existing pawn: skip the warm re-bake when nothing that affects the bake changed.
-    if (
-      m.x === x && m.y === y && m.texName === tex.name && m.cell === tex.cell &&
-      m.flipX === tex.flipX && m.tint === tint && m.geoColor === geoColor && m.macroPosition === macroPosition
-    ) {
-      return;
-    }
-    const p = this.viewport.warmGetPrim(m.id);
-    if (p) {
-      p.x = x;
-      p.y = y;
-      p.textureName = tex.name;
-      p.cell = tex.cell;
-      p.flipX = tex.flipX;
-      p.tint = tint;
-      p.geoColor = geoColor;
-      p.zIndex = zIndex;
-      p.rotation = facing; // P4: keep the record's cardinal in step with the drawn facing
-      this.viewport.warmRefreshPrim(m.id);
-      // hot-sync P1: the ONE hot dirty — the same eps crossing that re-bakes the sprite
-      // raises the light/shadow/receiver dirt from the same snapshot.
-      this.viewport.moverDirty(m.id);
+    // Existing pawn: per slot, skip the warm re-bake when nothing that affects it changed.
+    for (let i = 0; i < specs.length; i++) {
+      const sp = specs[i];
+      const pp = m.parts[i];
+      if (
+        pp.x === sp.x && pp.y === sp.y && pp.w === sp.w && pp.texName === sp.texName &&
+        pp.flipX === sp.flipX && pp.tint === sp.tint && pp.geoColor === sp.geoColor &&
+        m.macroPosition === macroPosition
+      ) {
+        continue;
+      }
+      const p = this.viewport.warmGetPrim(pp.id);
+      if (p) {
+        p.x = sp.x;
+        p.y = sp.y;
+        p.width = sp.w;
+        p.height = sp.w;
+        p.textureName = sp.texName;
+        p.flipX = sp.flipX;
+        p.tint = sp.tint;
+        p.geoColor = sp.geoColor;
+        p.zIndex = sp.zIndex;
+        p.rotation = facing; // P4: keep the record's cardinal in step with the drawn facing
+        this.viewport.warmRefreshPrim(pp.id);
+        // hot-sync P1: the ONE hot dirty — the same eps crossing that re-bakes the sprite
+        // raises the light/shadow/receiver dirt from the same snapshot.
+        this.viewport.moverDirty(pp.id);
+      }
+      pp.x = sp.x; pp.y = sp.y; pp.w = sp.w; pp.texName = sp.texName; pp.flipX = sp.flipX;
+      pp.tint = sp.tint; pp.geoColor = sp.geoColor; pp.zIndex = sp.zIndex;
     }
     m.macroPosition = macroPosition;
-    m.x = x; m.y = y; m.texName = tex.name; m.cell = tex.cell; m.flipX = tex.flipX;
-    m.tint = tint; m.geoColor = geoColor; m.zIndex = zIndex;
   }
 
   private remove(key: number): void {
     const m = this.movers.get(key);
     if (m) {
-      this.viewport.warmRemovePrim(m.id);
+      for (const p of m.parts) this.viewport.warmRemovePrim(p.id);
       this.movers.delete(key);
     }
+    this.pawnDefs.delete(key);
     this.pendingIntents.delete(key);
   }
 
   private onZoneClosed(macroPosition: number): void {
     for (const [key, m] of this.movers) {
       if (m.macroPosition === macroPosition) {
-        this.viewport.warmRemovePrim(m.id);
+        for (const p of m.parts) this.viewport.warmRemovePrim(p.id);
         this.movers.delete(key);
+        this.pawnDefs.delete(key);
         this.pendingIntents.delete(key);
       }
     }

@@ -94,23 +94,39 @@ const DEFAULT_FACING = "e";
  *  rather than a facing. Mirrors `bin/art`'s `GRID_CATS`. */
 const LINKED_CATEGORY = "linked";
 
-/** A thing's texture name + flip for a given rotation + sprite variant. The def's base
- *  stem gets a trailing DIRECTION segment the resolver treats as its own stem: the
- *  single-facing DEFAULT (`world/conifer` → `world/conifer/e`) for a cold thing, a cardinal
- *  facing from the rotation when `mover` (a pawn's `world/wolf` → `world/wolf/s|e|n`), or `l`
- *  for a linked-category kind (`linked/wall_smooth` → `linked/wall_smooth/l`). `cell` selects
- *  which grid cell of the master atlas to bake: for a facing kind that's the packed
- *  **variant** (which sprite of the kind — the resolver takes it modulo the kind's variant
- *  count); for a linked kind it's the neighbour-context cell (still Phase 2 — canonical cell
- *  0). A white/absent stem stays a flat tint rect. */
-export function thingTexture(stem: string | undefined, rotation: number, variant: number, mover = false): { name: string | undefined; flipX: boolean; cell?: number } {
+/** A COLD thing's texture name + flip for its sprite variant. The def's base stem gets a
+ *  trailing DIRECTION segment the resolver treats as its own stem: the single-facing
+ *  DEFAULT (`world/conifer` → `world/conifer/e`), or `l` for a linked-category kind
+ *  (`linked/wall_smooth` → `linked/wall_smooth/l`). `cell` selects which grid cell of the
+ *  master atlas to bake: for a facing kind the packed **variant** (modulo the kind's
+ *  variant count in the resolver); for a linked kind the neighbour-context cell. A
+ *  white/absent stem stays a flat tint rect. (Movers render via {@link moverSlotTexture} —
+ *  human-pawns P3.) */
+export function thingTexture(stem: string | undefined, _rotation: number, variant: number): { name: string | undefined; flipX: boolean; cell?: number } {
   const base = textureNameFor(stem);
   if (!base) return { name: undefined, flipX: false };
   if (base.startsWith(`${LINKED_CATEGORY}/`)) return { name: `${base}/l`, flipX: false, cell: 0 };
-  // A mover (pawn) picks its cardinal facing from the rotation; a single-facing cold thing
-  // has one master, authored under the DEFAULT_FACING dir.
-  const f = mover ? FACING_BY_ROTATION[rotation & 3] : { facing: DEFAULT_FACING, flipX: false };
-  return { name: `${base}/${f.facing}`, flipX: f.flipX, cell: variant };
+  return { name: `${base}/${DEFAULT_FACING}`, flipX: false, cell: variant };
+}
+
+/** A pawn part SLOT's texture name (human-pawns P3): facing from the mover rotation (west
+ *  mirrors east), the slot's `<part>` file suffix, and the def's variant FOLDER when the
+ *  serving manifest lists it (`has`) — else the canonical bare stem (the wolf's variant-0
+ *  case, and any def variant whose folder isn't mastered yet). */
+export function moverSlotTexture(
+  stem: string | undefined,
+  rotation: number,
+  variant: number,
+  part: number,
+  has: (name: string) => boolean,
+): { name: string | undefined; flipX: boolean } {
+  const base = textureNameFor(stem);
+  if (!base) return { name: undefined, flipX: false };
+  const f = FACING_BY_ROTATION[rotation & 3];
+  const seg = part > 0 ? `${f.facing}.${part}` : f.facing;
+  const withVariant = `${base}/${variant}/${seg}`;
+  if (has(withVariant)) return { name: withVariant, flipX: f.flipX };
+  return { name: `${base}/${seg}`, flipX: f.flipX };
 }
 
 export class WorldBridge {
