@@ -16,15 +16,15 @@ Design + forks: [`README`](README.md). ComfyUI box required from P2 (`COMFYUI_UR
 
 ## P1 — the layout compositor (deterministic, no ComfyUI yet)
 
-- [ ] `bin/lib/retile_linked.py`: assemble in-world LAYOUTS from the atlas via the D1
+- [x] `bin/lib/retile_linked.py`: assemble in-world LAYOUTS from the atlas via the D1
       table (horizontal run, vertical run, 4 corners, 4 Ts, cross — each cell in real
       context), with a slice-back map (every layout px ↔ exactly one atlas px).
       Acceptance: assemble→slice round-trips the atlas bit-identically.
-- [ ] Seam-band masks per layout (the abutting edge bands, ~2 units wide) + the FROZEN
+- [x] Seam-band masks per layout (the abutting edge bands, ~2 units wide) + the FROZEN
       canonical-edge ledger (first finalisation wins; later layouts mask only unfrozen
       sides). Acceptance: mask PNGs emitted per layout; the ledger covers every D1-valid
       edge class exactly once.
-- [ ] `bin/art retile-linked <kind> --dry` wiring: emits layouts + masks into the
+- [x] `bin/art retile-linked <kind> --dry` wiring: emits layouts + masks into the
       session scratchpad for eyeballing, touches nothing. Acceptance: the command runs
       on the smooth wall and lists what a live run WOULD inpaint.
 

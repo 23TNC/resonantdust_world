@@ -3467,6 +3467,19 @@ cmd_generate_tile() {
   RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/generate_tile.py" "$@"
 }
 
+cmd_retile_linked() {
+  # comfy-linked-tiling: seam-inpaint a LINKED atlas's DIFFUSE so its cells truly tile.
+  # Assembles cells into IN-WORLD layouts (D1 — atlas order is not world adjacency), masks
+  # the two canonical seam classes (E|W, S|N), low-denoise inpaints ONE instance of each on
+  # the ComfyUI box, then stamps the frozen canonical bands atlas-wide (deterministic,
+  # convergent in one round). Diffuse ONLY — derived maps regenerate through the normal
+  # chain afterward. `--selftest` / `--dry` need no ComfyUI. Delegates to lib/retile_linked.py.
+  command -v python3 >/dev/null || { echo "art retile-linked: python3 not found" >&2; exit 1; }
+  local kind=${1:-}; shift || true
+  [[ -z "$kind" ]] && { echo "usage: art retile-linked <kind> [--selftest|--dry|--dn F]" >&2; exit 1; }
+  RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/retile_linked.py" "$MASTER_DIR/$kind" "$@"
+}
+
 cmd_split_layers() {
   # Decompose a flat (de-lit) albedo into a channel-packed RGB tint map (<base>.layers.png)
   # plus the residual, which BECOMES <base>.albedo.png (the render base); the de-lit source
@@ -3495,6 +3508,7 @@ main() {
   case "$cmd" in
     generate) cmd_generate "$@" ;;
     generate-tile) cmd_generate_tile "$@" ;;
+    retile-linked) cmd_retile_linked "$@" ;;
     leaf-span)     cmd_leaf_span "$@" ;;
     normalize-square) cmd_normalize_square "$@" ;;
     split_layers) cmd_split_layers "$@" ;;
