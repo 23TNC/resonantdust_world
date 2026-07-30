@@ -29,6 +29,20 @@ and REJECTS other types by name (never silently pawns them), so future arms slot
 without reshaping the verb. `CREATE` mints identity + first row; `SET` stays the
 no-identity cell write.
 
+## F5 — the payload lives in sidecar tables SLAVED to state (USER, 2026-07-30-d)
+
+**Chosen (user-directed):** two more pawn-shard tables, `payload_log` + `payload`
+(log/composed split), leaving the generic entity rows alone — hops cheap, payloads
+complex. The cross-table lock hazard (payload dirty/locked ⇒ can't edit state; state
+locked ⇒ can't edit payload; an action touching one while the other is claimed breaks) is
+resolved by SLAVING: the payload is never claimed independently — the entity's state
+claim IS its lock, every payload write rides a state-write transaction (spawn now, equip
+later), and the existing lock machinery runs unmodified. Zone key: the `payload` row
+carries it for the zone subscription; only a zone-crossing state write re-keys it.
+**Superseded (the -b draft):** `payload` as a column on the entity rows — every movement
+hop would copy the vec forward, ruinous once inventories exist (the README's flagged
+PACK-normalization concern, now resolved structurally instead of deferred).
+
 ## F3 (plan-time) — variant + part are stem segments, not atlas cells
 
 **Chosen:** stem grammar `<base>/<variant>/<facing>.<part>` (defaults `1` / `0`), each

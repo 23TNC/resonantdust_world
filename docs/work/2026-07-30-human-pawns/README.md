@@ -32,7 +32,7 @@ The easy case is served by the def alone — the wolf's sprite variant is `def.v
 
 **The payload — a growable opcode stream, like the command buffer.** (User, 2026-07-30-b.)
 Pawns will accrue inventory, stats, needs, memories… so per-pawn state generalizes NOW
-instead of adding a nibble per feature: pawn rows gain **`payload: Vec<u32>`**, encoded
+instead of adding a nibble per feature: a pawn carries a **`payload: Vec<u32>`**, encoded
 like the event command buffer — a header word `opcode:16 | count:16` followed by `count`
 operand words, entries concatenated, so the payload grows/shrinks per pawn. First opcode:
 **`PART` (count 2: `slot`, `definition_reference`)** — the FULL def the part slot draws.
@@ -40,6 +40,21 @@ The human carries `PART(0, body def)` + `PART(1, head def)` so either swaps when
 equipped (an armor def simply replaces the slot's def — a future equip verb rewrites one
 entry); a wolf carries no entries and draws its own def. A future inventory is just
 another opcode + count. `TABLES.md` owns the encoding.
+
+**The payload lives in SIDECAR tables, SLAVED to state.** (User, 2026-07-30-d.) Putting
+the vec on the entity rows would make every movement hop copy it forward — cheap at two
+`PART` entries, ruinous at a full inventory. Instead the pawn shard holds two more tables,
+**`payload_log`** + **`payload`**, mirroring the log/composed split of the entity pair;
+the generic rows stay untouched, so **hops cost nothing** and payloads can grow complex.
+The cross-table hazard (state locked while payload edits, or vice versa — an action
+touching one while the other is claimed breaks invariants) is resolved by **slaving
+payload to state**: the payload is NEVER claimed independently — the entity's existing
+state claim IS the payload's lock, and every payload write happens inside the same
+transaction as a state write (spawn now; equip later). The existing lock machinery
+continues functioning unmodified. Consequences the slaving implies: the `payload` row
+carries the zone key so the zone subscription fans it — a ZONE-CROSSING state write
+re-keys it (the only movement that touches payload, and only its key); entity removal/gc
+cleans the sidecar rows under the same claim.
 
 **How the payload arrives — and `CREATE` is THE creation verb.** (User, 2026-07-30-c: one
 existing verb creates essentially any object — a new pawn, a stack of logs — no new
@@ -88,8 +103,9 @@ location").
 - Append-only content ids: `human_female` / `human_male` append after `torch_blue`.
 - The pawn schema change is live: docker redeploy + a LIVE subscription-SQL check
   (subscription SQL is a string — the build gates cannot catch it).
-- The worker's row composition must carry `payload` through every movement hop unchanged
-  — verified by a live trip with a non-empty payload.
+- Movement hops must NOT touch the payload sidecar (that is the point) — except a
+  zone-crossing write re-keying the `payload` row's zone under the same claim; verified
+  by a live trip (with a crossing) over a non-empty payload.
 - The def repack touches every consumer of the pawn's `definition_reference` (the
   worker's hop-cost lookup, the npc's resolve, the client's kind decode, the wolves
   brain's adoption filter) — each moves from object_id to `def_kind_id`/full-def compare

@@ -12,24 +12,30 @@ DSL, then render, then the human itself, then graph conformance. Design stances:
       packs it (species from the corpus), worker hop-cost keys on `def_kind_id`, wolves
       brain adoption compares kind not raw def, client decodes kind from the packed def.
       Acceptance: 2-pass build green; the npc soak logs a packed def wolf walking.
-- [ ] Add `payload: Vec<u32>` to the pawn shard's `entity_state_log`/`entity_state`
-      (opcode stream: `opcode:16|count:16` + operands; `PART = 1`, count 2: slot, def);
-      update `TABLES.md`. Acceptance: build green; TABLES.md shows the encoding.
-- [ ] Carry `payload` through the worker's row composition (MOVE_TO/MOVE_STEP/PLACE
-      copy it forward untouched). Acceptance: a worker unit test composes a hop over a
-      2-entry payload byte-identically.
+- [ ] Add the SIDECAR tables `payload_log` + `payload` to the pawn shard (log/composed
+      split; `payload` keyed by entity + zone for the subscription; opcode stream:
+      `opcode:16|count:16` + operands; `PART = 1`, count 2: slot, def), SLAVED to state —
+      no independent claim, writes only inside a state-write transaction; update
+      `TABLES.md`. Acceptance: build green; TABLES.md shows both tables + the slaving
+      rule + the encoding.
+- [ ] Keep movement hops payload-free: MOVE_TO/MOVE_STEP/PLACE never write the sidecar
+      EXCEPT a zone-crossing write re-keying the `payload` row's zone under the same
+      claim. Acceptance: a worker unit test — a same-zone hop leaves the sidecar
+      byte-identical; a crossing hop changes only its zone key.
 - [ ] Grow `CREATE` to variable arity (`def · position · count · payload×count`) routing
       by `def_type_id` (TYPE_PAWN arm only; other types → a named rejection): spawn
-      reducer writes the payload into the first row; worker arm, edge validation, npc
-      emitters updated; update `ACTIONS.md` (CREATE = THE creation verb, per-type arms).
-      Acceptance: build green; ACTIONS.md row updated; a non-pawn def CREATE logs the
-      rejection.
-- [ ] Fan `payload` through edge → protocol → core → `StateObject` as a decoded `parts`
-      list (`{slot, def}` per PART entry; unknown opcodes skipped by count). Acceptance:
-      core `state_event` unit test decodes a 2-PART payload row.
+      writes the first state row AND the payload sidecar in ONE transaction; worker arm,
+      edge validation, npc emitters updated; update `ACTIONS.md` (CREATE = THE creation
+      verb, per-type arms). Acceptance: build green; ACTIONS.md row updated; a non-pawn
+      def CREATE logs the rejection.
+- [ ] Fan the `payload` sidecar through edge → protocol → core, joined to its entity's
+      `StateObject` as a decoded `parts` list (`{slot, def}` per PART entry; unknown
+      opcodes skipped by count; removal/StateGone drops the join). Acceptance: core unit
+      test joins a 2-PART payload row to its state row.
 - [ ] Redeploy the pawn module + edge, then the LIVE check: CREATE a wolf with a marker
-      payload, walk it one trip, read `entity_state` back. Acceptance: the payload
-      survives the trip byte-identically; the wolf still walks at 6 Hz.
+      payload, walk it a trip that CROSSES a zone, read the sidecar back. Acceptance: the
+      payload survives byte-identically (zone key re-keyed); the wolf still walks at
+      6 Hz.
 
 ## P1 — variant + part art served
 
