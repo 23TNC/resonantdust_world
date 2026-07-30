@@ -39,8 +39,20 @@ unconfirmed); the user's eyes ratify P3. Design + the user's steer: [`README`](R
       its ground shadow intact around it, tile lighting intact beside it. Acceptance:
       captures in `completed.md`.
 
-## P3 — the joint drill
+## P3 — bilinear shadow sampling (user, 2026-07-30)
 
-- [ ] Both fixes together at zoom 1 + zoom 2: wolf circling the torch (n/s + e/w legs),
-      walls + trees + wolf shadows all coherent; fps ≥ 100 in the drill view. Acceptance:
-      captures + the fps number in `completed.md`; the user's eyes are the final oracle.
+- [ ] Manual 4-tap bilinear in the BLIT's lightmap read (the accumulators are INTEGER
+      textures — no hardware filtering; decode each tap /QUANT then weight, honoring the
+      hot class's negative deltas). Acceptance: shadow edges render smooth at zoom 1 + 2;
+      a before/after capture pair of the same tree shadow edge in `completed.md`.
+- [ ] Guard the class seam: filtering must not smear ground lighting back ONTO billboard
+      texels across the receiver boundary (the exact seam bug 2 fixes) — clamp or
+      class-gate the taps if the drill shows halos. Acceptance: the bug-2 drill re-run
+      under bilinear stays clean; fps ≥ 100 with the 4-tap blit (number recorded).
+
+## P4 — the joint drill
+
+- [ ] All three together at zoom 1 + zoom 2: wolf circling the torch (n/s + e/w legs),
+      walls + trees + wolf shadows coherent with smooth edges; fps ≥ 100 in the drill
+      view. Acceptance: captures + the fps number in `completed.md`; the user's eyes are
+      the final oracle.

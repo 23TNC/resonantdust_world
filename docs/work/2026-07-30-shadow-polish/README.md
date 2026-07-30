@@ -49,6 +49,18 @@ seam. No new strategy needed unless P0's pin disproves this.
 - The in-page `__fillmode`-era discipline: fixes verified against the LIVE page with the
   npc wolf walking, both zooms.
 
+## Added scope (user, 2026-07-30): bilinear shadow sampling
+
+The lightmap/blit currently samples NEAREST everywhere (the TEXTILE_SLOT universal rule) —
+shadow edges render as hard fine-texel blocks (the same granularity as bug 2's squares).
+The user wants BILINEAR on the shadows. Constraint: the accumulators are INTEGER textures
+(rgba32uint, quantised deposits) — hardware filtering is unavailable, so the blit gains a
+manual 4-tap decode-then-weight (each tap /QUANT first; the hot class's deposits can be
+NEGATIVE). Hazard to guard: filtering across the receiver-class seam would smear ground
+shadow back onto billboard texels — the very artifact bug 2 removes — so the taps get
+clamped/class-gated if the drill shows halos. NEAREST stays the rule for every other map
+(albedo/normal/surface); only the light accumulators soften.
+
 ## Out of scope
 
 Wall cast shadows (all tiles author cast=false — future stream); soul/multi-pawn
