@@ -26,3 +26,35 @@ indeterminate. FIX: the `caster_flip` selection in `casterCoverNS` was inverted 
 drill (npc stopped, wolf driven to a lit n-facing pose): the shadow's head silhouette sits
 at the NORTH end for a north-facing wolf. The S-facing check rides the P4 joint drill; the
 user's eyes remain the final oracle on both facings. npc restarted after the drill.
+
+## 2026-07-30 · P1 verified, P2/P3 landed, P4 drilled — STREAM COMPLETE
+
+**P1 verified**: corridor↔brute identity 0 mismatches in BOTH classes (524,288 words per
+class) with the recentered + head-tracked ns card; the n-facing drill verified last
+session; the s-facing head end is symmetric by construction (one flip bit serving both)
+and rides the user's live eyes — they are IN the world watching the wolf as this ships.
+
+**P3 (the reordered P2 mechanism)**: the fine lightmap's shadow read is now a per-slot
+4-corner BILINEAR over the coarse (unit-res) shadow textile — the fractional weights ARE
+the missing fine-offset consideration the user identified. Guards: torus-wrap slots and
+RT borders clamp their axis to nearest (texel adjacency ≠ world adjacency there); the
+u7-per-slot blend happens post-unpack; the elevated-path flag stays nearest;
+`__shadowfilter(on?)` A/Bs against the old NEAREST live. VERIFIED: the A/B capture pair
+shows the same tree-shadow edges blocky (off) vs smooth (on) at zoom 2; zoom 1 reads
+smooth scene-wide; **fps 120.2** with the 8-fetch read; no halos at wolf/tree silhouettes
+in the drill captures (the shadow words are receiver-agnostic ground coverages — blending
+them cannot leak class state; the tier matrix still keys on the texel's own recvHot).
+
+**P2 (as re-scoped by the pin + F1)**: the receiver map was proven healthy, so "the tile
+yields to the billboard" needed no priority change — the wolf's texels already take the
+billboard path; the SQUARES were the coarse shadow straddling the silhouette, which the
+bilinear now feathers. Cold bakes during a 6-s npc walk: **0** (hot 23,940) — everything
+stays inside the hot correction. If residual edge squares ever show under a strong light,
+the recorded escalation is storing SOFT coverage in the fine receiver word's spare bits.
+
+**P4**: both zooms drilled live with the npc wandering + the user's freshly built wall
+compounds: smooth shadows, clean wolf, walls shading correctly, 120.2 fps. STANDING NOTE
+(user, mid-drill): the right A/B fixture is a STATIC pawn the npc never moves — CREATE is
+edge-allowlisted but only the npc harness speaks it today; a drill-fixture pawn (minted at
+a known tile, dodging the wolves brain's adopt-first window, e.g. a wildlife kind) is the
+recommended follow-up for any future shadow stream.

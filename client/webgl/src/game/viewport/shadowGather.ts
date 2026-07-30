@@ -844,6 +844,7 @@ uniform vec2 uLightAlign;          // lightmap (__lightalign): the LIGHTING rece
 // (level 5 was "no edge refine"; the refine is deleted, so 5 and 0 are the same shader.)
 uniform int uProfile;
 uniform int uHideRight;            // DEBUG (__hideright): 1 = blank the right half of each billboard's normal in __shownormal
+uniform int uShadowFilter;         // shadow-polish P3 (__shadowfilter): 1 = bilinear coarse-shadow upsample, 0 = the old NEAREST
 // lightmap P1: sprite-tangent normal to the WORLD frame. Rotate the flat/ground basis (image-up = north, out
 // = up) up by phi about the EAST axis: phi 0 = ground (lies in the plane), phi = 90deg minus tilt = a standing
 // billboard treated perpendicular to the ground. Image +Y is sprite-north = world -y, so it flips in.
@@ -870,15 +871,30 @@ const float QUANT = ${LIGHT_QUANT}.0;  // additive-lightmap quantisation step (F
 //
 // While the differential is not yet wired this is called once with the current textures, so it is a
 // pure refactor — identical output, no behaviour change.
-vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp usampler2D shadowColdTex, ivec2 fcC,
+vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp usampler2D shadowColdTex,
+                      ivec2 sb, vec2 sf,
                       vec2 P, int fold, vec3 N, bool applyNL, uint rbillboardN, bool recvHot) {
     uvec4 presLo = fetchLin(data, PRESENCE_BASE + fold);     // lights 0–6
     uvec4 presHi = fetchLin(data, PRESENCE_HI_BASE + fold);  // lights 7–13
-    uvec4 sh = uProfile == 4 ? uvec4(0u)                        // profile L4: price the loop WITHOUT the shadow fetch
-                           : texelFetch(shadowTex, fcC, 0);   // P3: per-slot u9 shadow coverage — COARSE, upsampled (fcC)
+    // shadow-polish P3 (user): BILINEAR shadow upsample. The shadow textile is UNIT
+    // resolution while this map is fine — the old single NEAREST fetch (fc/FINE) gave every
+    // fine texel its coarse parent's word with zero fractional consideration, so shadows
+    // moved in unit steps and silhouette-straddling texels wore their neighbour's value
+    // (the pinned squares). Four corner words, per-slot u7 blend below; sb/sf arrive
+    // from the caller with the torus-wrap and RT-edge guards already applied (a clamped
+    // weight degrades to nearest exactly at seams where texel adjacency is not world
+    // adjacency). The integer RT cannot hardware-filter — this IS the filter.
+    bool p4 = uProfile == 4;                                  // L4: price the loop WITHOUT shadow fetches
+    uvec4 sh   = p4 ? uvec4(0u) : texelFetch(shadowTex, sb, 0);
+    uvec4 sh10 = p4 || sf.x <= 0.0 ? sh : texelFetch(shadowTex, sb + ivec2(1, 0), 0);
+    uvec4 sh01 = p4 || sf.y <= 0.0 ? sh : texelFetch(shadowTex, sb + ivec2(0, 1), 0);
+    uvec4 sh11 = p4 || (sf.x <= 0.0 && sf.y <= 0.0) ? sh : texelFetch(shadowTex, sb + ivec2(sf.x > 0.0 ? 1 : 0, sf.y > 0.0 ? 1 : 0), 0);
     // pawn-render P3 (the delta): the COLD class's shadow map, for cold-light corrections in
     // the hot pass — correction = -light * max(0, shadowHotOnly - shadowCold).
-    uvec4 shC = uProfile == 4 ? uvec4(0u) : texelFetch(shadowColdTex, fcC, 0);
+    uvec4 shC   = p4 ? uvec4(0u) : texelFetch(shadowColdTex, sb, 0);
+    uvec4 shC10 = p4 || sf.x <= 0.0 ? shC : texelFetch(shadowColdTex, sb + ivec2(1, 0), 0);
+    uvec4 shC01 = p4 || sf.y <= 0.0 ? shC : texelFetch(shadowColdTex, sb + ivec2(0, 1), 0);
+    uvec4 shC11 = p4 || (sf.x <= 0.0 && sf.y <= 0.0) ? shC : texelFetch(shadowColdTex, sb + ivec2(sf.x > 0.0 ? 1 : 0, sf.y > 0.0 ? 1 : 0), 0);
     vec3 acc = vec3(0.0);                                     // #4: NO ambient here — the blit adds it once over cold+hot
     // lighting-feel P1: the world-frame VIEW direction for the glint — per-fragment constant, hoisted
     // out of the light loop (cos/sin once, not per light).
@@ -930,8 +946,13 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
       // computed FOR its receive mode (billboard texels bake the CLIMBING shadow, never the ground
       // pool), so cutting ground coverage off billboard pixels no longer has a job — the prim pass's
       // fine overwrite handles the silhouette edge, as it already did for the deleted edge-refine.
-      uint b8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;  // u7 coverage | u1 elevated-path
-      float shadow = float(b8 >> 1) / 127.0;   // the u7 re-expanded (the stored <<1 IS the x2 restore)
+      // shadow-polish P3: the per-slot u7 blended across the four corner words (the flag
+      // bit 0 is documentation-only here; nothing consumes it in this loop).
+      int shCh = slot >> 2; uint shK = uint((slot & 3) * 8);
+      float shadow = mix(
+        mix(float(((lane4(sh,   shCh) >> shK) & 0xFFu) >> 1u), float(((lane4(sh10, shCh) >> shK) & 0xFFu) >> 1u), sf.x),
+        mix(float(((lane4(sh01, shCh) >> shK) & 0xFFu) >> 1u), float(((lane4(sh11, shCh) >> shK) & 0xFFu) >> 1u), sf.x),
+        sf.y) / 127.0;
       // The shadow-edge REFINE lived here and is DELETED (2026-07-27, moving-lights F7). It re-ran the full
       // walkShadow corridor **per fine texel** on every (0,1) edge value to sharpen the upsampled edge —
       // 8.39 M fine texels against the shadow map's 131 k, a 64× resolution multiplier, INSIDE the per-light
@@ -967,8 +988,10 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
       // the sprite overlays at pixel precision, wolf over its shadow by construction.
       vec3 dep;
       if (uLightClass == 1 && lcls == 0u) {
-        uint c8 = (lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
-        float shadowCold = float(c8 >> 1) / 127.0;
+        float shadowCold = mix(
+          mix(float(((lane4(shC,   shCh) >> shK) & 0xFFu) >> 1u), float(((lane4(shC10, shCh) >> shK) & 0xFFu) >> 1u), sf.x),
+          mix(float(((lane4(shC01, shCh) >> shK) & 0xFFu) >> 1u), float(((lane4(shC11, shCh) >> shK) & 0xFFu) >> 1u), sf.x),
+          sf.y) / 127.0;
         if (recvHot) {
           // BODY-over-ground correction: deposit body − ground so cold+hot == the body value.
           // The ground term mirrors EXACTLY what the cold pass baked at this texel: it ran
@@ -1023,7 +1046,20 @@ void main() {
   float lx = (float(fc.x) - float(sx * uSlotF)) / float(uSlotF);
   float ly = (float(fc.y) - float(sy * uSlotF)) / float(uSlotF);
   vec2 P = vec2((float(wc) + lx) * SQ, (float(wr) + ly) * SQ) / UNIT; // world UNITS
-  ivec2 fcC = fc / FINE;                                       // the coarse SHADOW texel this fine texel upsamples
+  // shadow-polish P3: bilinear base + fractional weights into the COARSE shadow textile,
+  // guarded where texel adjacency is not world adjacency — the torus wrap slot (the
+  // window's origin column/row: its west/north texel neighbour is the window's FAR edge)
+  // and the RT borders. A zeroed weight degrades that axis to nearest.
+  vec2 sfp = (vec2(fc) + 0.5) / float(FINE) - 0.5;
+  ivec2 sb = ivec2(floor(sfp));
+  vec2 sf = uShadowFilter == 1 ? sfp - vec2(sb) : vec2(0.0);  // A/B: 0 = the old NEAREST read
+  if (sb.x < 0) { sb.x = 0; sf.x = 0.0; }
+  if (sb.y < 0) { sb.y = 0; sf.y = 0.0; }
+  if (sb.x + 1 >= uCols * uSlot) sf.x = 0.0;
+  if (sb.y + 1 >= uRows * uSlot) sf.y = 0.0;
+  int wrapX = pmod(uWinCol, uCols), wrapY = pmod(uWinRow, uRows);
+  if ((sb.x + 1) / uSlot != sb.x / uSlot && (sb.x + 1) / uSlot == wrapX) sf.x = 0.0;
+  if ((sb.y + 1) / uSlot != sb.y / uSlot && (sb.y + 1) / uSlot == wrapY) sf.y = 0.0;
   if (uProfile == 1) { oLight = vec4(0.0); return; }           // L1: dirty gate + window mapping + P only
 
   // lightmap P0 (__shownormal): verify the atlas-frame normal read — paint the billboard's sampled normal (enc
@@ -1063,7 +1099,7 @@ void main() {
   if (uProfile == 3) { oLight = vec4(N, 1.0); return; }             // L3: + billboard/world normal
 
   int fold = foldTile(wc, wr);
-  vec3 acc = accumulateLights(uData, uShadow, uShadowCold, fcC, P, fold, N, applyNL, rbillboardN, recvHotN);
+  vec3 acc = accumulateLights(uData, uShadow, uShadowCold, sb, sf, P, fold, N, applyNL, rbillboardN, recvHotN);
   // QUANTISED into the additive accumulator (F11b). Rounding is what makes each deposit an exact integer,
   // so removing this light later — same value negated — cancels bit-exactly in FP32. Do NOT drop the
   // round for "smoother" values: the exactness is the correctness mechanism, and unquantised deposits
@@ -1523,6 +1559,10 @@ export class ShadowGather {
    *  off to A/B against the screen circle. */
   private worldLight = true;
   private nsInv = INV_COS_TILT_DEFAULT;
+  /** shadow-polish P3: bilinear coarse-shadow upsample in the fine lightmap read (the
+   *  user-requested filter; also the fine-offset consideration the shadow read lacked).
+   *  `__shadowfilter(on?)` toggles for A/B against the old NEAREST look. */
+  private shadowFilter = true;
   /** lightmap P0 debug (`__shownormal`): paint the atlas-frame billboard normal into the lightmap to verify the
    *  read (per-billboard, zoom-stable). Off in normal operation. */
   private showNormal = false;
@@ -1783,6 +1823,12 @@ export class ShadowGather {
       return this.extentFill;
     };
     (globalThis as unknown as { __gather: ShadowGather }).__gather = this;
+    // shadow-polish P3: bilinear coarse-shadow upsample A/B (no rebake needed — a read-side change).
+    (globalThis as unknown as { __shadowfilter: (on?: boolean) => boolean }).__shadowfilter = (on?: boolean) => {
+      this.shadowFilter = on ?? !this.shadowFilter;
+      this.rebakeAll(); // the fine lightmap must redraw under the new read
+      return this.shadowFilter;
+    };
     // DEBUG (pawn-render P0): cumulative [cold, hot] dirty-slot bakes — the
     // cold-never-rebakes-while-the-wolf-moves acceptance counter.
     (globalThis as unknown as { __bakes: () => [number, number] }).__bakes = () => [...this.bakeCounts] as [number, number];
@@ -2801,6 +2847,7 @@ export class ShadowGather {
         p.uVec2("uLightAlign", this.lightAlignX, this.lightAlignY);
         p.uInt("uProfile", this.profile);
         p.uInt("uHideRight", this.hideRight ? 1 : 0);
+        p.uInt("uShadowFilter", this.shadowFilter ? 1 : 0);
       },
     });
   }
