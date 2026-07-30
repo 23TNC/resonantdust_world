@@ -36,11 +36,11 @@ _atlas_check gates every phase; the user's eyes ratify P2 and P3. Design + forks
 
 ## P3 — the ControlNet spike (one kind: brick)
 
-- [ ] Spike the conditioning recipe on the ComfyUI box: `controlnet-union-promax` with
+- [x] Spike the conditioning recipe on the ComfyUI box: `controlnet-union-promax` with
       the ANALYTIC normal (and/or the free height field as depth) conditioning + the
       brick diffuse → a candidate brick normal atlas. Acceptance: ONE candidate lands in
       the scratchpad with the recipe (graph JSON) recorded in the stream folder.
-- [ ] Gate the candidate: `atlas_check` consistency within 2× the smooth analytic's
+- [x] Gate the candidate: `atlas_check` consistency within 2× the smooth analytic's
       numbers AND relief ≥ the smooth baseline; a side-by-side capture vs the brick
       Marigold output. Acceptance: numbers + captures in `completed.md`; GO/NO-GO for
       the productionising follow-on recorded in `forks.md`.

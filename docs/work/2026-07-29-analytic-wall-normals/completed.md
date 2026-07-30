@@ -39,3 +39,15 @@ front band exactly when the light is south of it, side faces catch flanking ligh
 stay correctly dim under horizontal torch light; runs continuous, no seams. The face
 pitch params (65/55/40°) are drill-tunable in `geometry.json` if the user wants stronger
 or softer face response.
+
+## 2026-07-29 · P3 — the ControlNet spike (2/2) — STREAM COMPLETE
+
+Brick's macro band layout MATCHES smooth exactly (same boundaries + course texture), so
+the smooth analytic atlas is a valid macro base. The spike graph (recorded verbatim in
+`cn-brick-recipe.json`): analytic-normal base → VAEEncode; brick diffuse → Canny →
+union-promax (canny mode) → KSampler; post = renormalize + flat outside alpha. GATED:
+v1 relief 34.4 % (≥ the smooth 34.0 % baseline), flat 0.64° (= the 2× bar), seams
+sub-degree; v2 trades drift for visible brick-course relief. The current brick normal
+reads flat 1.88° / seams 34.98°/90.17° — the candidates beat it by 20–100×. Captures:
+`brick-marigold-vs-cn.png` (chaos vs anchored), `brick_cn_v1_vs_v2.png` (the detail
+dial). **GO** recorded in `forks.md`; brick's masters untouched.
