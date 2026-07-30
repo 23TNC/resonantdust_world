@@ -18,3 +18,11 @@ lookup at 45°) + the concave nearest-surface rule; the failed convex-CUT attemp
 history. Shipped: relief 35.4 %, flat 0.318°, seams 0.00 unchanged; the lone/cross
 side-by-sides (`corners-final.png`) match the art's trapezoids in every slant direction,
 and the in-game torch drill shows the mitered face ends catching light correctly.
+
+**I1 refinement (user red-outline annotation):** the concave wedge was CAPPED at the
+side-face width, so only its bottom sliver showed — the annotation showed the 45°
+diagonal running the FULL face height from the junction corner. The cap is removed (the
+wedge widens to the apron's foot; its side-face normal holds to full depth instead of
+fading at `sd`). Gate unchanged (flat 0.318°, seams 0.00, relief 36.0 %); the cross
+side-by-side now matches every red line, and the in-game torch drill shows full-height
+mitered face ends. `corners-final.png` updated.

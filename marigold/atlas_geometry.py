@@ -123,8 +123,11 @@ def build_cell(bits: tuple[int, int, int, int], win: int, gm: dict, tops: dict) 
     dA_left = _dist_along(A, axis=1, reverse=True)       # px left of the silhouette
 
     apron = ~fp & (d_below > 0) & (d_below <= fr + t)
-    concave_e = apron & (d_left > 0) & (d_left <= sd + t) & (d_left < d_below)    # arm to the EAST
-    concave_w = apron & (d_right > 0) & (d_right <= sd + t) & (d_right < d_below)  # arm to the WEST
+    # The concave wedge is UNCAPPED (user, red-outline 2026-07-29): the 45° diagonal runs
+    # from the junction corner the FULL face height — the arm's side face owns everything
+    # nearer the arm than the body above, however wide that gets at the apron's foot.
+    concave_e = apron & (d_left > 0) & (d_left < d_below)     # arm to the EAST → its west face
+    concave_w = apron & (d_right > 0) & (d_right < d_below)   # arm to the WEST → its east face
     front = apron & ~(concave_e | concave_w)
 
     bandE = (~A) & (dA_right > 0) & (dA_right <= sd + t)
@@ -148,14 +151,15 @@ def build_cell(bits: tuple[int, int, int, int], win: int, gm: dict, tops: dict) 
     out[~fp] = 0.0
     wsum[~fp] = 0.0
 
-    def face_depth(key: str) -> np.ndarray:
-        """The ramp driver per face: its own directional distance, capped by its reach."""
+    def face_depth(key: str) -> tuple[np.ndarray, np.ndarray]:
+        """The ramp driver per face: its own directional distance + per-pixel reach —
+        a concave wedge extends to the full apron depth, never fading early."""
         if key == "front":
             d = np.where(gainE, depthE, np.where(gainW, depthW, d_below))
-            return d, fr
+            return d, np.full(d.shape, fr)
         if key == "east":
-            return np.where(concave_w, d_right, dA_right), sd
-        return np.where(concave_e, d_left, dA_left), sd
+            return np.where(concave_w, d_right, dA_right), np.where(concave_w, fr + t, sd)
+        return np.where(concave_e, d_left, dA_left), np.where(concave_e, fr + t, sd)
 
     for mask, key in ((front, "front"), (east, "east"), (west, "west")):
         d, reach = face_depth(key)
