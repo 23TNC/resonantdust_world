@@ -7,21 +7,21 @@ _atlas_check gates every phase; the user's eyes ratify P2 and P3. Design + forks
 
 ## P0 — the profile, fitted to the drawn art
 
-- [ ] Measure the smooth wall's cross-section from the art: extract a run cell's profile
+- [x] Measure the smooth wall's cross-section from the art: extract a run cell's profile
       bands (outline px, front-face extent, bevel band, top-face) from the diffuse along
       the run's cross-section; write them to `geometry.json` in the kind dir. Acceptance:
       the sidecar exists with measured px values + a plot/strip capture in the folder.
-- [ ] A REGISTER check (in `atlas_geometry.py --check`): the profile's band boundaries vs
+- [x] A REGISTER check (in `atlas_geometry.py --check`): the profile's band boundaries vs
       the art's luminance-gradient bands on a run cell — reported as px offset per band.
       Acceptance: runs on the smooth wall; offsets ≤ 1 px after the P0 fit.
 
 ## P1 — the analytic generator
 
-- [ ] `marigold/atlas_geometry.py`: per-cell wall SHAPE from the D1 bits (arms + hub,
+- [x] `marigold/atlas_geometry.py`: per-cell wall SHAPE from the D1 bits (arms + hub,
       profile-parameterised width), distance field, `H = profile(d)`, normals = grad H in
       the corpus encoding (+Y-up, #8080FF outside). All 16 cells → the atlas. Acceptance:
       the atlas renders; a side-by-side vs the art (capture) shows registered bands.
-- [ ] Gate with `atlas_check`: flat/piece/normal-seam metrics ≈ 0 BY CONSTRUCTION
+- [x] Gate with `atlas_check`: flat/piece/normal-seam metrics ≈ 0 BY CONSTRUCTION
       (report them), relief within the healthy band and REGISTERED (the relief pixels sit
       in the art's bevel/face bands). Acceptance: numbers in `completed.md`.
 

@@ -59,16 +59,17 @@ def ang_deg(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def flat_cluster_mean(n: np.ndarray, mask: np.ndarray, radius_deg: float = 12.0) -> tuple[np.ndarray, float]:
-    """The dominant normal cluster's mean (unit vector) + its pixel share.
+    """The FLAT-TOP cluster's mean (unit vector) + its pixel share.
 
-    Iterated trim: start from the masked mean, keep pixels within `radius_deg` of the
-    current mean, re-mean; 8 rounds converges on the dominant (flat) mode for wall art
-    whose majority surface is the top face."""
+    Iterated trim SEEDED AT +Z (v2, analytic-wall-normals): keep pixels within
+    `radius_deg` of the current mean, re-mean, 8 rounds. Seeding from the masked mean
+    could capture a large coherent FACE cluster on crisp fields (measured: a 65° front
+    face rivalling the top); seeding at +Z anchors on the cluster the metric is FOR —
+    the flat top — and still tracks a globally-tilted frame (drift < the radius)."""
     sel = mask.copy()
     if not sel.any():
         return np.array([0.0, 0.0, 1.0]), 0.0
-    mean = n[sel].mean(axis=0)
-    mean /= max(np.linalg.norm(mean), 1e-9)
+    mean = np.array([0.0, 0.0, 1.0])
     for _ in range(8):
         within = ang_deg(n, mean[None, None, :]) <= radius_deg
         keep = mask & within
@@ -281,7 +282,8 @@ def main() -> int:
 
     print(f"atlas_check: {normal_path}  ({side}x{side}, {cols}x{rows} cells, window {win}px, pad {pad_px}px)")
     print(f"\nRELIEF (share of pixels >15° from the cell's OWN flat frame — detail, tilt-immune)")
-    print(f"  mean {relief:.1%}   (healthy wall art ≈ 20-35%; a starved/flattened run reads <5%)")
+    print(f"  mean {relief:.1%}   (a starved/flattened run reads <5%; crisp analytic walls read their"
+          f" face share ~30-50%; soft learned fields can read higher — broad gentle variation)")
     print("\nFLAT (per-cell dominant cluster vs +Z; spread = vs the atlas's own mean frame)")
     print("  cell  bits(NESW)  dev(+Z)°  spread°  share")
     for c, dev, share, _ in flat_rows:
