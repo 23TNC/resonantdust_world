@@ -11,7 +11,9 @@ Resolution order for a kind:
   2. failing that, the leaf's own `atlas.json` — a held-whole atlas STATES its tile count
      (`cols x rows`, or generate_tile's `grid`), which is a fact about the file rather than a
      measurement of it;
-  3. failing that, INFER from the art: `next_pow2(ceil(max(w,h) / TILE_PX))` over the leaf's
+  3. failing that, DEFAULT to 1 — what the loader and the client both use for an undeclared
+     def, so the texture matches the frame the renderer will actually draw. (Previously this
+     INFERRED from the art: `next_pow2(ceil(max(w,h) / TILE_PX))` over the leaf's
      diffuse, stamped `span_inferred: true` and warned about.
 
 The fallback is not an edge case. Exactly one def in the corpus authors a span today (stream I5),
@@ -82,12 +84,18 @@ def stamp(leaf, table, quiet=False):
     if span is None:
         span, source = atlas_span(leaf), "atlas"
     if span is None:
-        span, source, inferred = infer_span(leaf), "art", True
-        if span is None:
-            return None
+        # DEFAULT 1, matching the loader. `shared/dsl/src/loader.rs` reads `prims.0.span` with a
+        # default of 1.0 and `thingPlacement.ts` defaults its layout the same, so a def that
+        # declares nothing IS drawn in a one-tile frame. Inferring a bigger span from the art
+        # instead made the texture tree self-consistent while disagreeing with the renderer:
+        # measured 20 leaves carrying 4-16x the texels that would ever be sampled (wolf 512px art
+        # into a 128px frame, flora 256 into 128). Defaulting to what the renderer actually uses
+        # keeps the two sides honest; the art is scaled DOWN to fit rather than clipped.
+        span, source, inferred = 1, "default", True
         if not quiet:
-            print(f"art: leaf-span: {stem} declares no `thing.span` — inferred {span} "
-                  f"({span * TILE_PX}px) from the art. Author it in the corpus to make it exact.",
+            print(f"art: leaf-span: {stem} declares no `thing.span` — defaulting to 1 "
+                  f"({TILE_PX}px), matching the loader. Art is scaled to fit; author "
+                  f"`&thing.span set` in the corpus if it needs a larger frame.",
                   file=sys.stderr)
     # meta.update keys off a MAP path in the leaf, so hand it any map that exists
     anchor = (sorted(glob.glob(os.path.join(leaf, "diffuse.*.png"))) or
