@@ -110,6 +110,35 @@ pub fn def_kind_id(r: u32) -> u16 {
 pub fn def_variant_id(r: u32) -> u8 {
     kind_ref_variant_id(def_kind_reference(r))
 }
+/// A `definition_reference` with its variant nibble zeroed — the IDENTITY compare for "the
+/// same type/subtype/kind, any variant" (e.g. the npc adoption filter: a wolf is a wolf
+/// whichever coat it wears).
+pub fn def_sans_variant(r: u32) -> u32 {
+    r & !(VARIANT_ID_MASK as u32)
+}
+
+// ── pawn species — `TYPE_PAWN`'s `subtype_id` palette ───────────────────────────────────────────
+//
+// Code-owned like the type palette (few and fixed; APPEND-ONLY), not content-derived: the
+// manifest's subcategories are alphabetical, so a new species inserting mid-list would renumber
+// stored defs — a content registry can own these only once it guarantees append-only numbering.
+// Names match the texture tree's subtype segment (`pawn/<species>/<kind>/…`, VARIABLES.md:
+// the folder taxonomy and the definition fields are 1:1).
+
+/// `pawn/animal/…` — beasts (the wolf).
+pub const PAWN_SPECIES_ANIMAL: u16 = 1;
+/// `pawn/human/…` — humans.
+pub const PAWN_SPECIES_HUMAN: u16 = 2;
+
+/// The `subtype_id` for a pawn species NAME (the texture tree's subtype segment), or `None`
+/// for a species the palette doesn't know (the caller should fail loudly, not guess).
+pub fn pawn_species_subtype_id(name: &str) -> Option<u16> {
+    match name {
+        "animal" => Some(PAWN_SPECIES_ANIMAL),
+        "human" => Some(PAWN_SPECIES_HUMAN),
+        _ => None,
+    }
+}
 
 // ── type_reference : u16 = type_id:4 | subtype_id:12 (the shareable type half) ──────────────────
 //

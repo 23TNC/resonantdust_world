@@ -535,6 +535,16 @@ impl Engine {
                     removed: true,
                 });
             }
+            // A pawn's payload sidecar row (human-pawns P0) — decode the PART entries; the host
+            // joins them to the entity's StateObjects (either may arrive first).
+            ServerMsg::Payload { entity_reference, zone, tic, payload } => {
+                self.emit(Event::PawnParts {
+                    macro_position: zone,
+                    entity_reference,
+                    tic,
+                    parts: resonantdust_codec::payload::payload_parts(&payload),
+                });
+            }
             // A settled, promoted event — the INTENT channel. Anchor the tic estimate and
             // surface any movement intents for the host to speculate from.
             ServerMsg::Event { zone, tic, actions, .. } => {

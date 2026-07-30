@@ -161,6 +161,17 @@ export interface StateObject {
 /** A state object changed — upsert or drop it. */
 export type StateObjectHandler = (obj: StateObject) => void;
 
+/** A pawn's decoded part slots (human-pawns P0) — from the payload sidecar's `PART` entries:
+ *  each `{slot, def}` names the FULL definition the part slot draws (body = slot 0, head =
+ *  slot 1). Joined to the entity's {@link StateObject}s by the host — either may arrive first. */
+export interface PawnParts {
+  macroPosition: number;
+  entityReference: number;
+  tic: number;
+  parts: { slot: number; def: number }[];
+}
+export type PawnPartsHandler = (p: PawnParts) => void;
+
 /** A promoted movement INTENT (`ACTIONS.md` §Movement): `entityReference` is heading to global
  *  tile `(tileX, tileY)`, its first hop composed at `eventTic`. Clients SPECULATE position from
  *  this — per-hop state never fans out. */
@@ -211,6 +222,14 @@ type WorldEvent =
       facing: number;
       tic: number;
       removed: boolean;
+    }
+  | {
+      kind: "pawnParts";
+      macroPosition: number;
+      entityReference: number;
+      tic: number;
+      /** (slot, def) pairs flattened `[slot, def, slot, def, …]`. */
+      parts: Uint32Array;
     }
   | { kind: "zoneClosed"; macroPosition: number }
   | { kind: "paused"; paused: boolean }
@@ -290,6 +309,7 @@ export class WasmClient {
   private readonly coldStateCbs = new Set<ColdStateHandler>();
   private readonly zoneClosedCbs = new Set<ZoneClosedHandler>();
   private readonly stateObjectCbs = new Set<StateObjectHandler>();
+  private readonly pawnPartsCbs = new Set<PawnPartsHandler>();
   private readonly pausedCbs = new Set<(paused: boolean) => void>();
   private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
   private readonly subStatCbs = new Set<(snap: SubStatsSnapshot) => void>();
@@ -550,6 +570,13 @@ export class WasmClient {
     return () => this.stateObjectCbs.delete(cb);
   }
 
+  /** Subscribe to pawn part-slot changes (the payload sidecar's decoded `PART` entries).
+   *  Returns an unsubscribe. */
+  onPawnParts(cb: PawnPartsHandler): () => void {
+    this.pawnPartsCbs.add(cb);
+    return () => this.pawnPartsCbs.delete(cb);
+  }
+
   /** Subscribe to promoted movement INTENTS (`ACTIONS.md` §Movement — the channel speculation
    *  walks on; per-hop state never fans out). Returns an unsubscribe. */
   onMoveIntent(cb: MoveIntentHandler): () => void {
@@ -712,6 +739,22 @@ export class WasmClient {
           });
         }
         break;
+      case "pawnParts": {
+        // Unflatten the (slot, def) pairs the wasm boundary shipped as a Uint32Array.
+        const parts: { slot: number; def: number }[] = [];
+        for (let i = 0; i + 1 < ev.parts.length; i += 2) {
+          parts.push({ slot: ev.parts[i], def: ev.parts[i + 1] });
+        }
+        for (const cb of this.pawnPartsCbs) {
+          cb({
+            macroPosition: ev.macroPosition,
+            entityReference: ev.entityReference,
+            tic: ev.tic,
+            parts,
+          });
+        }
+        break;
+      }
       case "clockSync":
         // Refresh the *raw* offset target (the disciplined clock chases it in
         // `syncedNowMs`), then project the snapshot into the HUD's `ClockStats`.

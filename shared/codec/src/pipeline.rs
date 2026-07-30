@@ -25,9 +25,20 @@
 /// The worker splits `position_reference` → `macro`/`micro` when it builds a `TargetState`, and the
 /// edge reassembles `position_reference` = `macro | micro` for the wire — so the client is untouched.
 /// (First generalization step toward the `*_tables!` family — see `work/shard-tables`.)
+///
+/// **`state_hook` (optional, human-pawns P0).** A module may pass
+/// `entity_tables!(state_hook: my_fn, data: u8)` to have `my_fn(ctx, &target, tic)` called inside
+/// every `entity_state` upsert — the seam a SLAVED sidecar table rides (the pawn shard's `payload`
+/// row follows its entity's zone here, in the SAME transaction as the state write, so the sidecar
+/// can never lag a crossing). Without it a no-op is stamped; no other shard changes.
 #[macro_export]
 macro_rules! entity_tables {
-    ($($pf:ident : $pt:ty),* $(,)?) => {
+    // The literal-prefix arm MUST precede the generic field list — `state_hook: my_fn` also
+    // parses as a field `state_hook` of type `my_fn`, and macro arms match in order.
+    (state_hook: $hook:ident, $($pf:ident : $pt:ty),* $(,)?) => {
+        $crate::entity_tables!(@stamp ($hook) $($pf : $pt),*);
+    };
+    (@stamp ($hook:ident) $($pf:ident : $pt:ty),* $(,)?) => {
         // ── the tic clock (the master bumps it in lockstep across every shard) ──────────
         #[spacetimedb::table(accessor = clock, public)]
         pub struct Clock {
@@ -229,6 +240,8 @@ macro_rules! entity_tables {
             } else {
                 ctx.db.entity_state().insert(row);
             }
+            // The state hook — same transaction as the upsert (a slaved sidecar's seam).
+            $hook(ctx, r, tic);
         }
 
         // ── gc — the master drops old settled rows (never the latest CLEAN per entity) ──
@@ -300,6 +313,19 @@ macro_rules! entity_tables {
                 ctx.db.entity_state_log().insert(row);
             }
             Ok(())
+        }
+    };
+    // The hook-less form — stamps a no-op hook. Kept LAST: it matches any field list, so the
+    // literal-prefix arms above must get first refusal.
+    ($($pf:ident : $pt:ty),* $(,)?) => {
+        $crate::entity_tables!(@stamp (entity_tables_state_hook_none) $($pf : $pt),*);
+        /// The no-op state hook — stamped when the module declares none.
+        #[allow(dead_code)]
+        fn entity_tables_state_hook_none(
+            _ctx: &spacetimedb::ReducerContext,
+            _r: &TargetState,
+            _tic: u16,
+        ) {
         }
     };
 }

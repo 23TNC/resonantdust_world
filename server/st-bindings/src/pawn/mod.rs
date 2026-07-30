@@ -14,6 +14,8 @@ use spacetimedb_sdk::__codegen::{
 pub mod clock_type;
 pub mod entity_state_type;
 pub mod entity_state_log_type;
+pub mod payload_type;
+pub mod payload_log_type;
 pub mod spawn_counter_type;
 pub mod spawn_log_type;
 pub mod target_state_type;
@@ -25,17 +27,23 @@ pub mod write_reducer;
 pub mod clock_table;
 pub mod entity_state_table;
 pub mod entity_state_log_table;
+pub mod payload_table;
+pub mod payload_log_table;
 pub mod spawn_log_table;
 
 pub use clock_type::Clock;
 pub use entity_state_type::EntityState;
 pub use entity_state_log_type::EntityStateLog;
+pub use payload_type::Payload;
+pub use payload_log_type::PayloadLog;
 pub use spawn_counter_type::SpawnCounter;
 pub use spawn_log_type::SpawnLog;
 pub use target_state_type::TargetState;
 pub use clock_table::*;
 pub use entity_state_table::*;
 pub use entity_state_log_table::*;
+pub use payload_table::*;
+pub use payload_log_table::*;
 pub use spawn_log_table::*;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
@@ -69,6 +77,7 @@ pub enum Reducer {
         index: u16,
         definition_reference: u32,
         position_reference: u32,
+        payload: Vec::<u32>,
         promote: bool,
 }    ,
     Write {
@@ -123,6 +132,7 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 index,
                 definition_reference,
                 position_reference,
+                payload,
                 promote,
 }             => __sats::bsatn::to_vec(&spawn_reducer::SpawnArgs {
                 worker: worker.clone(),
@@ -131,6 +141,7 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 index: index.clone(),
                 definition_reference: definition_reference.clone(),
                 position_reference: position_reference.clone(),
+                payload: payload.clone(),
                 promote: promote.clone(),
 }),
             Reducer::Write{
@@ -154,6 +165,8 @@ pub struct DbUpdate {
         clock: __sdk::TableUpdate<Clock>,
     entity_state: __sdk::TableUpdate<EntityState>,
     entity_state_log: __sdk::TableUpdate<EntityStateLog>,
+    payload: __sdk::TableUpdate<Payload>,
+    payload_log: __sdk::TableUpdate<PayloadLog>,
     spawn_log: __sdk::TableUpdate<SpawnLog>,
 }
 
@@ -168,6 +181,8 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
         "clock" => db_update.clock.append(clock_table::parse_table_update(table_update)?),
     "entity_state" => db_update.entity_state.append(entity_state_table::parse_table_update(table_update)?),
     "entity_state_log" => db_update.entity_state_log.append(entity_state_log_table::parse_table_update(table_update)?),
+    "payload" => db_update.payload.append(payload_table::parse_table_update(table_update)?),
+    "payload_log" => db_update.payload_log.append(payload_log_table::parse_table_update(table_update)?),
     "spawn_log" => db_update.spawn_log.append(spawn_log_table::parse_table_update(table_update)?),
 
                 unknown => {
@@ -194,6 +209,8 @@ impl __sdk::DbUpdate for DbUpdate {
                 diff.clock = cache.apply_diff_to_table::<Clock>("clock", &self.clock).with_updates_by_pk(|row| &row.id);
         diff.entity_state = cache.apply_diff_to_table::<EntityState>("entity_state", &self.entity_state).with_updates_by_pk(|row| &row.entity_reference);
         diff.entity_state_log = cache.apply_diff_to_table::<EntityStateLog>("entity_state_log", &self.entity_state_log).with_updates_by_pk(|row| &row.uid);
+        diff.payload = cache.apply_diff_to_table::<Payload>("payload", &self.payload).with_updates_by_pk(|row| &row.entity_reference);
+        diff.payload_log = cache.apply_diff_to_table::<PayloadLog>("payload_log", &self.payload_log).with_updates_by_pk(|row| &row.uid);
         diff.spawn_log = cache.apply_diff_to_table::<SpawnLog>("spawn_log", &self.spawn_log).with_updates_by_pk(|row| &row.spawn_uid);
 
                     diff
@@ -205,6 +222,8 @@ for table_rows in raw.tables {
                                 "clock" => db_update.clock.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "entity_state" => db_update.entity_state.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "entity_state_log" => db_update.entity_state_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "payload" => db_update.payload.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "payload_log" => db_update.payload_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "spawn_log" => db_update.spawn_log.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
@@ -216,6 +235,8 @@ for table_rows in raw.tables {
                                 "clock" => db_update.clock.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "entity_state" => db_update.entity_state.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "entity_state_log" => db_update.entity_state_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "payload" => db_update.payload.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "payload_log" => db_update.payload_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "spawn_log" => db_update.spawn_log.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
@@ -229,6 +250,8 @@ pub struct AppliedDiff<'r> {
         clock: __sdk::TableAppliedDiff<'r, Clock>,
     entity_state: __sdk::TableAppliedDiff<'r, EntityState>,
     entity_state_log: __sdk::TableAppliedDiff<'r, EntityStateLog>,
+    payload: __sdk::TableAppliedDiff<'r, Payload>,
+    payload_log: __sdk::TableAppliedDiff<'r, PayloadLog>,
     spawn_log: __sdk::TableAppliedDiff<'r, SpawnLog>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
@@ -243,6 +266,8 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
                 callbacks.invoke_table_row_callbacks::<Clock>("clock", &self.clock, event);
         callbacks.invoke_table_row_callbacks::<EntityState>("entity_state", &self.entity_state, event);
         callbacks.invoke_table_row_callbacks::<EntityStateLog>("entity_state_log", &self.entity_state_log, event);
+        callbacks.invoke_table_row_callbacks::<Payload>("payload", &self.payload, event);
+        callbacks.invoke_table_row_callbacks::<PayloadLog>("payload_log", &self.payload_log, event);
         callbacks.invoke_table_row_callbacks::<SpawnLog>("spawn_log", &self.spawn_log, event);
 }
 }
@@ -898,12 +923,16 @@ fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
                 clock_table::register_table(client_cache);
         entity_state_table::register_table(client_cache);
         entity_state_log_table::register_table(client_cache);
+        payload_table::register_table(client_cache);
+        payload_log_table::register_table(client_cache);
         spawn_log_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
                 "clock",
         "entity_state",
         "entity_state_log",
+        "payload",
+        "payload_log",
         "spawn_log",
 ];
 }

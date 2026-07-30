@@ -172,13 +172,15 @@ impl Bot {
     }
 }
 
-/// Resolve a thing's `(def id, tics-per-tile)` from the world server's `/content` corpus — the
-/// SAME corpus the browser renders with (first-pawns F5: content is the authority; a pinned
-/// `KIND_*` constant drifts the moment `things.rd` reorders). Speed is content too
-/// (pawn-movement F1/F5): the authored tics-per-tile, already resolved through
-/// `codec::speed::resolve` (unauthored → default). The payload is
-/// `{ "rd": [[name, source], …] }`, loaded with the shared DSL.
-pub async fn resolve_thing(server_url: &str, name: &str) -> Result<(u16, u16), String> {
+/// Resolve a pawn kind's `(packed definition_reference, tics-per-tile)` from the world server's
+/// `/content` corpus — the SAME corpus the browser renders with (first-pawns F5: content is the
+/// authority; a pinned `KIND_*` constant drifts the moment `things.rd` reorders). The def is the
+/// REAL packed form (human-pawns P0): `TYPE_PAWN | species | kind | variant 0`, species read off
+/// the kind's texture stem (`pawn/<species>/…` — the folder taxonomy and the definition fields
+/// are 1:1) through the code-owned palette. Speed is content too (pawn-movement F1/F5): the
+/// authored tics-per-tile, already resolved through `codec::speed::resolve` (unauthored →
+/// default). The payload is `{ "rd": [[name, source], …] }`, loaded with the shared DSL.
+pub async fn resolve_thing(server_url: &str, name: &str) -> Result<(u32, u16), String> {
     // The login hands back the WS endpoint (`ws://host:port/ws`); the corpus lives on the same
     // server's HTTP side. Swap the scheme and drop the `/ws` path.
     let base = server_url
@@ -201,10 +203,30 @@ pub async fn resolve_thing(server_url: &str, name: &str) -> Result<(u16, u16), S
         .collect();
     let bundle = resonantdust_dsl::loader::load(&sources)
         .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))?;
-    let def = bundle
+    let kind = bundle
         .thing_object_id(name)
         .ok_or_else(|| format!("thing `{name}` not in the corpus"))?;
-    Ok((def, resonantdust_codec::speed::resolve(bundle.thing_speed(def))))
+    // Species = the texture stem's subtype segment (`pawn/<species>/<kind>`). No stem or an
+    // unknown species is a HARD error — a mis-subtyped def would be adopted/rendered wrong
+    // forever, so fail at resolve, not at draw.
+    let stem = bundle
+        .visual_for_object(kind)
+        .and_then(|v| v.texture)
+        .ok_or_else(|| format!("pawn `{name}`: no texture stem in the corpus (species unresolvable)"))?;
+    let species_name = stem
+        .split('/')
+        .nth(1)
+        .ok_or_else(|| format!("pawn `{name}`: stem `{stem}` has no subtype segment"))?
+        .to_string();
+    let species = resonantdust_codec::object::pawn_species_subtype_id(&species_name)
+        .ok_or_else(|| format!("pawn `{name}`: species `{species_name}` not in the palette"))?;
+    let def = resonantdust_codec::object::pack_definition_from_ids(
+        resonantdust_codec::object::TYPE_PAWN,
+        species,
+        kind,
+        0, // variant 0 = canonical art; the payload's PART defs carry the dressed variants
+    );
+    Ok((def, resonantdust_codec::speed::resolve(bundle.thing_speed(kind))))
 }
 
 /// Log one client event at an appropriate level (concise — an npc mostly cares about the
@@ -219,6 +241,9 @@ pub fn log_event(event: &Event) {
         Event::Status(msg) => tracing::debug!(%msg, "status"),
         Event::StateObject { macro_position: zone, entity_reference, tile_x, tile_y, tic, .. } => {
             tracing::debug!(zone, entity_reference, tile_x, tile_y, tic, "state object")
+        }
+        Event::PawnParts { macro_position: zone, entity_reference, .. } => {
+            tracing::debug!(zone, entity_reference, "pawn parts")
         }
         Event::ColdTiles { macro_position: zone, .. } => tracing::debug!(zone, "cold tiles"),
         Event::ColdThings { macro_position: zone, .. } => tracing::debug!(zone, "cold things"),

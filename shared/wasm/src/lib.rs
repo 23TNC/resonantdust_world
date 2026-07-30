@@ -647,6 +647,19 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("tic", &JsValue::from_f64(*tic as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
+        Event::PawnParts { macro_position, entity_reference, tic, parts } => {
+            set("kind", &JsValue::from_str("pawnParts"));
+            set("macroPosition", &JsValue::from_f64(*macro_position as f64));
+            set("entityReference", &JsValue::from_f64(*entity_reference as f64));
+            set("tic", &JsValue::from_f64(*tic as f64));
+            // (slot, def) pairs flattened [slot, def, slot, def, …]; defs are u32 — JS-safe.
+            let arr = js_sys::Uint32Array::new_with_length((parts.len() * 2) as u32);
+            for (i, (slot, def)) in parts.iter().enumerate() {
+                arr.set_index((i * 2) as u32, *slot as u32);
+                arr.set_index((i * 2 + 1) as u32, *def);
+            }
+            set("parts", &arr);
+        }
         Event::ColdTiles { macro_position, subtype_id, layer_id, tic, tiles } => {
             set("kind", &JsValue::from_str("coldTiles"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));

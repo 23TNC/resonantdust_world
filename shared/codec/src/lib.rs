@@ -23,6 +23,7 @@ pub mod action;
 pub mod biome;
 pub mod object;
 pub mod packed;
+pub mod payload;
 pub mod refs;
 pub mod speed;
 pub mod status;

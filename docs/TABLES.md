@@ -311,9 +311,10 @@ without trusting the worker. We take "block correctly" while workers are our cod
 
 ## `pawn`
 
-`pawn` is **`entity_tables!{data:u8}`** — the hot mover pair for `TYPE_PAWN`, identical shape to
-[`data_shard`](#data_shard) (distinct database, same table names) — plus the spawn machinery for
-[`CREATE`](ACTIONS.md):
+`pawn` is **`entity_tables!{state_hook: payload_follow_state, data:u8}`** — the hot mover pair
+for `TYPE_PAWN`, identical shape to [`data_shard`](#data_shard) (distinct database, same table
+names) — plus the spawn machinery for [`CREATE`](ACTIONS.md) and the
+[`payload` sidecar](#payload_log--payload--the-growable-per-pawn-opcode-stream-slaved-to-state-public):
 
 **The `data` u8 layout** (movement-hardening — `codec::object` owns the pack/unpack):
 
@@ -341,6 +342,45 @@ one reducer transaction. A 32-bit `event_reference` can't derive a 24-bit `objec
 which is why the id is recorded, not computed (`ACTIONS.md` §`CREATE`).
 
 `spawn_counter` is module-internal (see [Module-internal](#module-internal)).
+
+### `payload_log` + `payload` — the growable per-pawn opcode stream, SLAVED to state (public)
+
+Human-pawns P0 (user F1/F5): a pawn's open-ended state (part defs; later inventory / stats /
+needs / …) lives in a SIDECAR pair, NOT on the entity rows — movement hops never copy it.
+
+**Encoding** — a flat `Vec<u32>` of entries, each a header `opcode:16 | count:16` followed by
+`count` operand words, entries concatenated (the command-buffer shape). A reader skips unknown
+opcodes by `count`. Opcodes (append-only):
+
+| opcode | value | count | operands | meaning |
+|---|---|---|---|---|
+| `PART` | 1 | 2 | `slot`, `definition_reference` | the FULL def part slot `slot` draws (body = slot 0, head = slot 1; an equip verb later swaps a slot's def) |
+
+`payload_log` — the write-history sidecar of `entity_state_log`; one row per payload-carrying
+state write (spawn / future equips — NOT movement):
+
+| column | type | key | notes |
+|---|---|---|---|
+| `uid` | `u64` | PK | `pack_state_uid(entity, tic)` — the state write it rode |
+| `entity_reference` | `u32` | idx | |
+| `tic` | `u16` | | |
+| `payload` | `Vec<u32>` | | the opcode stream |
+
+`payload` — the composed, client-visible sidecar of `entity_state`:
+
+| column | type | key | notes |
+|---|---|---|---|
+| `entity_reference` | `u32` | PK | |
+| `macro_position_reference` | `u16` | idx | the zone-subscription key — SLAVED to the entity's `entity_state` zone |
+| `tic` | `u16` | | last payload CONTENT change (a zone re-key keeps it) |
+| `payload` | `Vec<u32>` | | the opcode stream |
+
+**The slaving rule (F5):** neither table is ever claimed — the entity's state claim IS the
+lock, and every write here rides a state-write transaction: `spawn` inserts both rows (an
+EMPTY payload inserts neither), and the `entity_tables!` `state_hook` drags the `payload`
+row's zone key along inside every `entity_state` upsert, so a zone-crossing can never leave
+the sidecar behind. `payload_log` is currently un-gc'd (volume = spawns + equips, not hops);
+it joins the gc when an equip verb exists to grow it.
 
 ### Not shaped yet
 

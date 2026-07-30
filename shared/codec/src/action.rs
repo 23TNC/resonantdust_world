@@ -23,8 +23,13 @@ pub const PROMOTE: u32 = 1;
 /// its presence also marks a program as the intent event (the `MOVE_TO` seed that stamps the
 /// trip-serial and steps nothing; `ACTIONS.md` §Movement).
 pub const PROMOTE_EVENT: u32 = 2;
-/// Mint a new entity at a position. Operands: `def` (imm), `position` (imm). Written target is the
-/// minted id, not an operand.
+/// Mint a new entity at a position — THE creation verb for any object (human-pawns F2: no
+/// separate spawn action; the packed def's `type_id` routes the mint to its type's shard arm —
+/// `TYPE_PAWN` today, others rejected by name). **Variable arity** (like `INIT_ZONE`):
+/// `CREATE def position count payload×count` — `def` (imm, packed `definition_reference`),
+/// `position` (imm), `count` (imm — how many payload words follow), then the `count`-word
+/// payload opcode stream written to the minted entity's sidecar (`TABLES.md § payload`).
+/// Written target is the minted id, not an operand.
 pub const CREATE: u32 = 3;
 /// Set an object's position absolutely. Operands: `obj` (write), `position` (imm).
 pub const PLACE: u32 = 4;
@@ -32,7 +37,7 @@ pub const PLACE: u32 = 4;
 /// (read+write), `dest` (imm).
 pub const MOVE_TO: u32 = 5;
 /// **Generate a zone's whole baseline row** through the pipeline (the event-driven `seed`, F12).
-/// **Variable arity** (the only such verb): `INIT_ZONE cold_row type_id count item×count` — `cold_row`
+/// **Variable arity** (with [`CREATE`]): `INIT_ZONE cold_row type_id count item×count` — `cold_row`
 /// (write — the target), `type_id` (imm — the cold shard), `count` (imm — how many `item` words
 /// follow), then `count` `item`s (imm — the row's payload: tile = dense `kind_reference` by index,
 /// thing = `kind_pos_reference` per occupied cell). The worker builds the shard's `Vec<DenseItem>` and
@@ -94,7 +99,8 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         ACTION_NONE => &[],
         PROMOTE => &[],              // prefix — no operand; it flags the NEXT action's write targets
         PROMOTE_EVENT => &[],
-        CREATE => &[Imm, Imm],       // def, position — the write is the minted id, not an operand
+        // CREATE is variable-arity (def, position, count, payload×count — all Imm; the write is
+        // the minted id, not an operand) — framed in the reader like INIT_ZONE, no fixed signature.
         PLACE => &[Write, Imm],      // obj, position
         MOVE_TO => &[ReadWrite, Imm], // obj (reads its own position, writes the next), dest
         MOVE_STEP => &[ReadWrite, Imm, Imm], // obj, dest, trip-serial (worker-only chain hop)
@@ -149,9 +155,10 @@ impl<'a> Iterator for Program<'a> {
             return None;
         }
         let action = self.words[self.pos];
-        // `INIT_ZONE` is the one **variable-arity** verb (F12): `cold_row type_id count item×count`, so
-        // its arity is `3 + count` (the `count` word sits at `pos + 3`). Every other verb is fixed.
-        let ar = if action == INIT_ZONE {
+        // The **variable-arity** verbs: `INIT_ZONE cold_row type_id count item×count` (F12) and
+        // `CREATE def position count payload×count` (human-pawns F2). Both carry their `count`
+        // as the third operand (`pos + 3`), so arity is `3 + count`. Every other verb is fixed.
+        let ar = if action == INIT_ZONE || action == CREATE {
             match self.words.get(self.pos + 3) {
                 Some(&count) => 3 + count as usize,
                 None => {
@@ -203,6 +210,11 @@ fn collect_operands(
                     out.push(*cold_row);
                 }
             }
+            continue;
+        }
+        // CREATE is variable-arity with EVERY operand imm (the write is the minted id, which is
+        // not an operand) — it contributes nothing to either set.
+        if inst.action == CREATE {
             continue;
         }
         let sig = signature(inst.action).expect("parsed, so known");
@@ -267,6 +279,9 @@ pub fn target_routes(words: &[u32]) -> Result<Vec<(u32, Route)>, ProgramError> {
                     out.push((*cold_row, Route::ColdBaseline { type_id: *type_id as u8 }));
                 }
             }
+            // CREATE def position count payload×count — no routed target (the minted id is the
+            // write, handled by the worker's spawn arm, not the claim machinery).
+            CREATE => {}
             // Hot verbs: every Write/ReadWrite operand routes by its own nibble.
             _ => {
                 let sig = signature(inst.action).expect("parsed, so known");
@@ -393,10 +408,35 @@ mod tests {
 
     #[test]
     fn create_target_is_not_in_the_write_set() {
-        // CREATE def pos — both operands Imm; the minted id is not an operand.
-        let p = vec![CREATE, 0xAAAA, 0xBBBB];
+        // CREATE def pos count=0 — all operands Imm; the minted id is not an operand.
+        let p = vec![CREATE, 0xAAAA, 0xBBBB, 0];
         assert_eq!(write_targets(&p).unwrap(), Vec::<u32>::new());
         assert_eq!(read_targets(&p).unwrap(), Vec::<u32>::new());
+        assert_eq!(target_routes(&p).unwrap(), Vec::<(u32, Route)>::new());
+    }
+
+    #[test]
+    fn create_frames_variable_arity_with_a_payload() {
+        // PROMOTE  CREATE def pos count=4 [PART slot def, PART slot def packed as 4 words]
+        // then a trailing PROMOTE_EVENT to prove the payload frames the NEXT instruction.
+        let p = vec![PROMOTE, CREATE, 0xAAAA, 0xBBBB, 4, 0x0001_0002, 0, 0x0001_0002, 1, PROMOTE_EVENT];
+        let insts: Vec<_> = program(&p).map(|r| r.unwrap()).collect();
+        assert_eq!(insts.len(), 3);
+        assert_eq!(insts[1], Instruction {
+            action: CREATE,
+            operands: &[0xAAAA, 0xBBBB, 4, 0x0001_0002, 0, 0x0001_0002, 1],
+        });
+        assert_eq!(insts[2].action, PROMOTE_EVENT);
+        // Nothing enters the sets — every word is imm, the minted id is not an operand.
+        assert_eq!(write_targets(&p).unwrap(), Vec::<u32>::new());
+        assert_eq!(read_targets(&p).unwrap(), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn create_truncated_before_its_count_errors() {
+        // CREATE needs at least def, position, count — this stops before count.
+        let p = vec![CREATE, 0xAAAA, 0xBBBB];
+        assert!(write_targets(&p).is_err());
     }
 
     #[test]

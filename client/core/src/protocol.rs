@@ -68,6 +68,10 @@ pub enum ServerMsg {
     State(StateRow),
     /// A composed entity left a subscribed zone (its `state` row was deleted).
     StateGone { entity_reference: u32, zone: u16 },
+    /// A pawn's **payload sidecar** row (human-pawns P0) — the entity's growable opcode stream
+    /// (`opcode:16 | count:16` + operands; `PART = 1`: slot, def). Joined to the entity's `State`
+    /// rows by `entity_reference` (either may arrive first). `tic` = last payload CONTENT change.
+    Payload { entity_reference: u32, zone: u16, tic: u16, payload: Vec<u32> },
     /// A settled, promoted event touching a subscribed zone.
     Event {
         event_reference: u32,
@@ -110,4 +114,30 @@ pub struct StateRow {
     pub position_reference: u32,
     /// `rotation:2 | count:6` — facing in the top two bits.
     pub data: u8,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_payload_frame_decodes_to_part_slots() {
+        // The edge's `Payload` frame for a 2-PART sidecar row (human-pawns P0) — the wire JSON
+        // → `ServerMsg::Payload` → `codec::payload::payload_parts` yields both slots' defs.
+        let body = resonantdust_codec::payload::part_entry(0, 0x3200_1237);
+        let head = resonantdust_codec::payload::part_entry(1, 0x3200_123B);
+        let words: Vec<u32> = body.iter().chain(head.iter()).copied().collect();
+        let json = format!(
+            r#"{{"t":"payload","entity_reference":48,"zone":258,"tic":7,"payload":{words:?}}}"#
+        );
+        let msg: ServerMsg = serde_json::from_str(&json).expect("frame parses");
+        let ServerMsg::Payload { entity_reference, zone, tic, payload } = msg else {
+            panic!("not a Payload frame");
+        };
+        assert_eq!((entity_reference, zone, tic), (48, 258, 7));
+        assert_eq!(
+            resonantdust_codec::payload::payload_parts(&payload),
+            vec![(0, 0x3200_1237), (1, 0x3200_123B)]
+        );
+    }
 }

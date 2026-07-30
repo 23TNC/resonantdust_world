@@ -29,6 +29,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::bindings;
 use crate::bindings::data_shard::entity_state_table::EntityStateTableAccess as _;
 use crate::bindings::pawn::entity_state_table::EntityStateTableAccess as _;
+use crate::bindings::pawn::payload_table::PayloadTableAccess as _;
 use crate::bindings::event_shard::event_table::EventTableAccess as _;
 use crate::bindings::thing::seed as _; // reducer trait → thing.reducers().seed
 use crate::bindings::thing::place_things as _; // reducer trait → thing.reducers().place_things
@@ -357,6 +358,13 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         p.db().entity_state().on_delete(move |_ctx, row| {
             relay_gone(&zm, &o, &h, row.entity_reference, row.macro_position_reference)
         });
+        // The payload sidecar (human-pawns P0): live content changes + the slaved zone re-key
+        // both land as updates. No delete relay — a pawn's departure already fans `StateGone`,
+        // which drops the client-side join.
+        let o = out_tx.clone();
+        p.db().payload().on_insert(move |_ctx, row| send(&o, payload_frame(row)));
+        let o = out_tx.clone();
+        p.db().payload().on_update(move |_ctx, _old, row| send(&o, payload_frame(row)));
     }
 
     if let Some(e) = &event {
@@ -537,6 +545,17 @@ fn pawn_state_frame(row: &bindings::pawn::EntityState) -> ServerMsg {
     }
 }
 
+/// The pawn shard's `payload` sidecar row → the `Payload` wire frame (human-pawns P0) —
+/// the entity's opcode stream, joined client-side to its `State` rows by `entity_reference`.
+fn payload_frame(row: &bindings::pawn::Payload) -> ServerMsg {
+    ServerMsg::Payload {
+        entity_reference: row.entity_reference,
+        zone: row.macro_position_reference,
+        tic: row.tic,
+        payload: row.payload.clone(),
+    }
+}
+
 /// The verbs a CLIENT may queue (movement-hardening F2 — the first, deliberately tiny,
 /// authorization seam: a verb-set check, NOT an ownership model). Everything else is
 /// server-only: `MOVE_STEP` carries a trip-serial that clients could stomp to steer pawns
@@ -625,8 +644,17 @@ fn handle_subscribe(
                 for row in ctx.db.entity_state().iter().filter(|r| r.macro_position_reference == zone) {
                     send(&o, pawn_state_frame(&row));
                 }
+                // …and the payload sidecar — a resting pawn's payload arrives in this
+                // subscription's snapshot and never updates again, the same delivery
+                // guarantee as its state row above.
+                for row in ctx.db.payload().iter().filter(|r| r.macro_position_reference == zone) {
+                    send(&o, payload_frame(&row));
+                }
             })
-            .subscribe([format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}")])
+            .subscribe([
+                format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}"),
+                format!("SELECT * FROM payload WHERE macro_position_reference = {zone}"),
+            ])
     });
     // Settled events (the movement INTENT channel). Same delivery guarantee as the cold
     // baselines + the pawn sub: a row landing via this subscription's snapshot fires no

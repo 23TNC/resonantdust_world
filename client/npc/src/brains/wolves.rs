@@ -8,7 +8,7 @@ use std::time::Duration;
 use client::world::tile_to_position;
 use client::Event;
 use resonantdust_codec::action::{CREATE, PROMOTE};
-use resonantdust_codec::object::{position_macro, TYPE_PAWN};
+use resonantdust_codec::object::{def_sans_variant, position_macro, TYPE_PAWN};
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::speed::DEFAULT_TICS_PER_TILE;
 use resonantdust_codec::tic::TIC_HZ;
@@ -106,9 +106,9 @@ impl Brain for Wolves {
         match &bot.server_url {
             Some(url) => match resolve_thing(url, "wolf").await {
                 Ok((def, speed)) => {
-                    self.def = def as u32;
+                    self.def = def;
                     self.speed = speed;
-                    tracing::info!(def, speed, "wolf def + speed resolved from the content corpus");
+                    tracing::info!(def = format!("{def:#010x}"), speed, "wolf packed def + speed resolved from the content corpus");
                 }
                 Err(err) => {
                     tracing::error!(%err, "wolf def resolution failed — cannot spawn");
@@ -147,10 +147,12 @@ impl Brain for Wolves {
             }
             return;
         }
-        // F3: adopt the first MINTED pawn with our def (server ids live in the top band, so a
-        // legacy client-minted wolf never matches).
+        // F3: adopt the first MINTED pawn with our KIND (variant-agnostic — a wolf is a wolf
+        // whichever coat it wears; server ids live in the top band, so a legacy client-minted
+        // wolf never matches). A legacy raw-object_id def (pre-packed rows) never equals a
+        // packed def, so old rows are simply not adopted — cleaned up at the redeploy step.
         if self.wolf.is_none()
-            && *definition_reference == self.def
+            && def_sans_variant(*definition_reference) == def_sans_variant(self.def)
             && self.def != 0
             && entity_ref_type_id(*entity_reference) == TYPE_PAWN
             && (*entity_reference & 0x00FF_FFFF) >= MINTED_BASE
@@ -177,7 +179,9 @@ impl Brain for Wolves {
             // §CREATE — the minted id comes back through the zone's state fan-out, F3).
             if !self.created && self.def != 0 && std::time::Instant::now() > self.spawn_after {
                 let spawn = self.pick_dest();
-                let program = vec![PROMOTE, CREATE, self.def, tile_to_position(spawn.0, spawn.1)];
+                // CREATE is variable-arity (human-pawns F2): def, position, count, payload×count.
+                // The wolf carries no payload (its variant rides the def) — count 0.
+                let program = vec![PROMOTE, CREATE, self.def, tile_to_position(spawn.0, spawn.1), 0];
                 if bot.client.queue(program).is_err() {
                     tracing::error!("engine gone during spawn");
                     return;

@@ -133,6 +133,15 @@ fn log_event(event: &Event) {
                 "state object"
             )
         }
+        Event::PawnParts { macro_position, entity_reference, tic, parts } => {
+            info!(
+                macro_position = format!("{macro_position:#06x}"),
+                entity_reference = format!("{entity_reference:#010x}"),
+                tic,
+                parts = format!("{parts:?}"),
+                "pawn parts"
+            )
+        }
         Event::ColdTiles { macro_position, subtype_id, layer_id, tic, tiles } => {
             info!(macro_position = format!("{macro_position:#06x}"), subtype_id, layer_id, tic, tiles = tiles.len(), "cold tiles")
         }

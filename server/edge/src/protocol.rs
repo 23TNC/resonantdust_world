@@ -90,6 +90,12 @@ pub enum ServerMsg {
     },
     /// A composed entity left a subscribed zone (its `state` row was deleted, e.g. despawned).
     StateGone { entity_reference: u32, zone: u16 },
+    /// A pawn's **payload sidecar** row (`pawn.payload` — human-pawns P0): the entity's growable
+    /// opcode stream (`opcode:16 | count:16` + operands; `PART = 1`: slot, def). Sent on the
+    /// row's insert/update + replayed per zone subscription; the client joins it to the entity's
+    /// `State` rows by `entity_reference` (either may arrive first). `tic` is the last payload
+    /// CONTENT change.
+    Payload { entity_reference: u32, zone: u16, tic: u16, payload: Vec<u32> },
     /// A settled, promoted event touching a subscribed zone (one per zone the event reached).
     Event { event_reference: u32, zone: u16, tic: u16, actions: Vec<u32> },
     /// A subscribed zone's **cold ground** — the dense 256 `kind_reference`s (index = `tile_reference`)

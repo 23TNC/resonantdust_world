@@ -29,10 +29,11 @@ use resonantdust_codec::action::{
     self, Route, BUILD_WALL, CREATE, INIT_ZONE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, SET,
 };
 use resonantdust_codec::object::{
-    cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, kind_pos_ref_data,
-    kind_pos_ref_kind_reference, kind_pos_ref_tile, pack_cold_row_reference, pack_kind_reference,
-    pack_pawn_data, pack_position_reference, pawn_trip_serial, position_macro, position_micro,
-    position_to_tile, tile_to_position, TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
+    cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, def_kind_id,
+    def_type_id, kind_pos_ref_data, kind_pos_ref_kind_reference, kind_pos_ref_tile,
+    pack_cold_row_reference, pack_kind_reference, pack_pawn_data, pack_position_reference,
+    pawn_trip_serial, position_macro, position_micro, position_to_tile, tile_to_position,
+    TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
 };
 use resonantdust_codec::speed;
 use resonantdust_codec::refs::entity_ref_type_id;
@@ -99,10 +100,12 @@ fn load_speeds(root: &str) -> Result<Vec<u16>, String> {
         .collect())
 }
 
-/// A pawn's hop cost by its `definition_reference` (= content `object_id` for CREATE-minted
-/// pawns; `0` for legacy PLACE-only rows → the default).
+/// A pawn's hop cost by its `definition_reference`. A packed pawn def (human-pawns P0) keys by
+/// its `kind_id` (= the content `object_id`); a legacy raw-object_id def (pre-packed rows, type
+/// nibble 0) keys as-is; `0` (PLACE-only rows) → the default.
 fn tics_for(speeds: &[u16], def: u32) -> u16 {
-    def.checked_sub(1)
+    let kind = if def_type_id(def) == TYPE_PAWN { def_kind_id(def) as u32 } else { def };
+    kind.checked_sub(1)
         .and_then(|i| speeds.get(i as usize).copied())
         .unwrap_or(speed::DEFAULT_TICS_PER_TILE)
 }
@@ -498,15 +501,37 @@ async fn main() {
                             continue;
                         }
                         CREATE => {
-                            if let [def, pos] = inst.operands {
-                                if let Err(err) = pawn
-                                    .reducers()
-                                    .spawn(self_ref, t, *event_reference, index, *def, *pos, pending_promote)
-                                {
-                                    tracing::warn!(%err, tic = t, "spawn failed — will retry next pass");
-                                    spawn_failed = true;
+                            // Variable arity (human-pawns F2): def, position, count, payload×count.
+                            if let [def, pos, _count, payload @ ..] = inst.operands {
+                                // CREATE routes by the packed def's type (F2). Only the TYPE_PAWN
+                                // arm exists; any other type is REJECTED BY NAME, never silently
+                                // pawned — future arms (e.g. TYPE_THING mints) slot in here. The
+                                // index still advances so a mixed program's ledger keys are stable.
+                                if def_type_id(*def) != TYPE_PAWN {
+                                    // No `continue` — the loop tail must still clear the
+                                    // pending PROMOTE latch this instruction consumed.
+                                    tracing::warn!(
+                                        def = format!("{def:#010x}"),
+                                        type_id = def_type_id(*def),
+                                        tic = t,
+                                        "CREATE rejected: no shard arm for this def type (only TYPE_PAWN is implemented)"
+                                    );
+                                } else {
+                                    if let Err(err) = pawn.reducers().spawn(
+                                        self_ref,
+                                        t,
+                                        *event_reference,
+                                        index,
+                                        *def,
+                                        *pos,
+                                        payload.to_vec(),
+                                        pending_promote,
+                                    ) {
+                                        tracing::warn!(%err, tic = t, "spawn failed — will retry next pass");
+                                        spawn_failed = true;
+                                    }
+                                    create_zones.entry(*event_reference).or_default().push(position_macro(*pos));
                                 }
-                                create_zones.entry(*event_reference).or_default().push(position_macro(*pos));
                                 index += 1;
                             }
                         }

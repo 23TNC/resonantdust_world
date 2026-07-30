@@ -163,6 +163,11 @@ pub enum Event {
         tic: u16,
         removed: bool,
     },
+    /// A pawn's decoded **part slots** (human-pawns P0) — from the payload sidecar's `PART`
+    /// entries: `(slot, definition_reference)` pairs, the FULL def each part slot draws. Joined
+    /// to the entity's `StateObject`s by the host (either may arrive first); unknown payload
+    /// opcodes were skipped by their count. An entity with no payload never emits this.
+    PawnParts { macro_position: u16, entity_reference: u32, tic: u16, parts: Vec<(u8, u32)> },
     /// A subscribed zone's cold **ground** — the dense 256 `kind_reference`s of one biome-row,
     /// indexed by `tile_reference` (0..256). The host paints them as the terrain floor.
     /// `macro_position` (`region:8 | zone:8`) is the wire zone address (the host expands prims via

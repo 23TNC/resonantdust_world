@@ -366,13 +366,14 @@ export class MoverLayer {
       this.remove(key);
       return;
     }
-    // Content kind → sprite. A legacy-placed pawn carries `definitionReference` 0 (`PLACE` has
-    // no def operand), so fall back to the first thing kind; `CREATE`-minted pawns carry the
-    // real kind and render their own sprite.
-    const kind =
-      obj.definitionReference >= 1 && obj.definitionReference <= this.thingStems.length
-        ? obj.definitionReference
-        : 1;
+    // Content kind → sprite. A CREATE-minted pawn carries a PACKED def (human-pawns P0:
+    // `TYPE_PAWN | species | kind | variant` — a nonzero high half tells it apart), whose
+    // kind_id is the content object_id; a legacy raw-object_id def is the id itself. A
+    // legacy-placed pawn carries `definitionReference` 0 (`PLACE` has no def operand) — fall
+    // back to the first thing kind.
+    const def = obj.definitionReference;
+    const kindId = def >>> 16 !== 0 ? (def & 0xffff) >>> 4 : def;
+    const kind = kindId >= 1 && kindId <= this.thingStems.length ? kindId : 1;
 
     const m = this.movers.get(key);
 
