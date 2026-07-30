@@ -7,14 +7,14 @@ unconfirmed); the user's eyes ratify P3. Design + the user's steer: [`README`](R
 
 ## P0 — reproduce + pin
 
-- [ ] Reproduce bug 1 live: park the view on the walking wolf near the torch, capture the
+- [x] Reproduce bug 1 live: park the view on the walking wolf near the torch, capture the
       flipped n/s shadow at a moment the wolf faces n or s. Acceptance: a capture in the
       folder showing the head/tail inversion, with the wolf's facing noted.
-- [ ] Pin bug 1's sign: a CPU mirror of `casterCoverNS`'s u0/mrot mapping for the
+- [x] Pin bug 1's sign: a CPU mirror of `casterCoverNS`'s u0/mrot mapping for the
       captured configuration (wolf pos, torch pos, facing) predicting which frame end the
       shadow samples. Acceptance: the mirror reproduces the flip; the sign/flip term is
       named in `issues.md`.
-- [ ] Pin bug 2's path: at a texel where the wolf wears its shadow, read the fine
+- [x] Pin bug 2's path: at a texel where the wolf wears its shadow, read the fine
       receiver map + the hot/cold light words (`debugReadShadow` + a receiver probe) and
       name which path delivered the ground shadow (tile mode-2 claim, hot receiver
       mis-class, or a correction gap). Acceptance: the delivering path named in

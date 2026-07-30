@@ -54,3 +54,26 @@ this scale) — the P1 fix drill re-checks head-tracks-head explicitly. (The e/w
 card anchors correctly — a side-view sprite's base line IS its bottom.) Captures live in
 the session transcript (WebGL canvas readback is blank without preserveDrawingBuffer —
 noted for future drills).
+
+## P0 pin · Bug 2 — three cooperating mechanisms (probed live, wolf = billboard 456)
+
+The fine receiver map is HEALTHY: 855 texels classify the wolf (presence bit set), exactly
+covering its record rect (GL-raw rows, no flip; the record's unit byte decodes high-nibble
+x — two probe-side traps recorded here so the next session doesn't relive them: fine RT
+rows are BOTTOM-UP GL storage read raw, and world-row INCREASES with GL y). Presence slots
+correct (slot 0 tile def 36 recv-2; slot 1 wolf cast+recv-1 set-6); GPU data texture ==
+CPU mirror bit-exact; def 38 W=8 H=16 lod 7; silhouette content present (3,077 px ≥ 0.5).
+receiverAt/receiverCover pass on the record rect. THE DELIVERING MECHANISMS:
+(a) **the tight-box rect is NARROWER than the drawn sprite** — W=8 units vs the ~16-unit
+drawn wolf: flank/top texels are drawn-wolf pixels but ground-classified → they take the
+tile mode-2 path and wear whatever ground shadow lands there (the user's arrowed squares
+sat exactly on the hindquarter flank); the conservative 4-tap helps only ~1 texel deep.
+(b) **the unit-resolution shadow with NEAREST upsample** (the confirmed fine-offset
+asymmetry, recorded above) puts ground-evaluated shadow words onto sprite texels wherever
+a shadow texel straddles the silhouette.
+(c) **bug 1's displaced ns card** magnifies self-shadowing whenever the wolf faces n/s
+(observed: the whole wolf dark beside the torch).
+ALL THREE map onto the planned fixes: P1 recenters the card (c); P2's self-exclusion must
+key on SOFT COVERAGE / the drawn extent rather than the tight-box classification (a);
+P3's per-slot fractional upsample is (b). No new strategy needed — the user's overwrite
+model holds; the leaks are in its coverage, as predicted.
