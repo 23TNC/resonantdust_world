@@ -22,6 +22,13 @@ new pawn-payload verb at spawn time — the client never knows the minted id at 
 the spawn transaction is the one place the full first row is known. (A LATER equip verb
 targeting a known id is expected and out of scope.)
 
+**Extended (USER, 2026-07-30-c):** `CREATE` is THE generic creation verb for essentially
+any object (a pawn, a stack of logs) — no new `spawn` action. The packed def's `type_id`
+becomes the routing key to the type's shard arm; this stream implements `TYPE_PAWN` only
+and REJECTS other types by name (never silently pawns them), so future arms slot in
+without reshaping the verb. `CREATE` mints identity + first row; `SET` stays the
+no-identity cell write.
+
 ## F3 (plan-time) — variant + part are stem segments, not atlas cells
 
 **Chosen:** stem grammar `<base>/<variant>/<facing>.<part>` (defaults `1` / `0`), each

@@ -18,10 +18,12 @@ DSL, then render, then the human itself, then graph conformance. Design stances:
 - [ ] Carry `payload` through the worker's row composition (MOVE_TO/MOVE_STEP/PLACE
       copy it forward untouched). Acceptance: a worker unit test composes a hop over a
       2-entry payload byte-identically.
-- [ ] Grow `CREATE` to variable arity (`def · position · count · payload×count`): spawn
+- [ ] Grow `CREATE` to variable arity (`def · position · count · payload×count`) routing
+      by `def_type_id` (TYPE_PAWN arm only; other types → a named rejection): spawn
       reducer writes the payload into the first row; worker arm, edge validation, npc
-      emitters updated; update `ACTIONS.md`. Acceptance: build green; ACTIONS.md row
-      updated.
+      emitters updated; update `ACTIONS.md` (CREATE = THE creation verb, per-type arms).
+      Acceptance: build green; ACTIONS.md row updated; a non-pawn def CREATE logs the
+      rejection.
 - [ ] Fan `payload` through edge → protocol → core → `StateObject` as a decoded `parts`
       list (`{slot, def}` per PART entry; unknown opcodes skipped by count). Acceptance:
       core `state_event` unit test decodes a 2-PART payload row.

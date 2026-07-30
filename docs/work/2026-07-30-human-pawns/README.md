@@ -41,11 +41,19 @@ equipped (an armor def simply replaces the slot's def — a future equip verb re
 entry); a wolf carries no entries and draws its own def. A future inventory is just
 another opcode + count. `TABLES.md` owns the encoding.
 
-**How the payload arrives.** `CREATE` becomes variable-arity (the `INIT_ZONE` precedent):
+**How the payload arrives — and `CREATE` is THE creation verb.** (User, 2026-07-30-c: one
+existing verb creates essentially any object — a new pawn, a stack of logs — no new
+action.) `CREATE` becomes variable-arity (the `INIT_ZONE` precedent):
 `def · position · count · payload×count` — the spawn transaction is the one place the full
 first row is known (`SET` targets cold rows only; nothing else can address a minted id).
-The worker's row composition (MOVE_TO/MOVE_STEP/PLACE) **carries the payload through
-unchanged** — movement verbs never touch it. `ACTIONS.md` owns the signature.
+With the def now packed, **`def_type_id` is `CREATE`'s routing key**: the worker routes
+the mint to the type's shard. This stream implements the `TYPE_PAWN` arm only; any other
+type is rejected with a named error, NOT silently pawned — so the future arms (e.g.
+`TYPE_THING`: a minted log stack) slot in per type without reshaping the verb. The
+distinction from `SET` stays crisp: `CREATE` mints an IDENTITY + first row; `SET` writes a
+CELL (terrain/walls — no identity). The worker's row composition (MOVE_TO/MOVE_STEP/PLACE)
+**carries the payload through unchanged** — movement verbs never touch it. `ACTIONS.md`
+owns the signature.
 
 **How variant + part art is addressed.** The go-forward texture tree is
 `<type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>` (already the human tree's
