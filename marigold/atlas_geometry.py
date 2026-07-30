@@ -108,16 +108,57 @@ def build_cell(bits: tuple[int, int, int, int], win: int, gm: dict, tops: dict) 
     d_right = _dist_along(fp, axis=1, reverse=False)     # px right of a body's east boundary
     d_left = _dist_along(fp, axis=1, reverse=True)       # px left of a body's west boundary
 
-    front = ~fp & (d_below > 0) & (d_below <= fr + t)
-    east = ~fp & (d_right > 0) & (d_right <= sd + t)
-    west = ~fp & (d_left > 0) & (d_left <= sd + t)
+    # ── the ANGLED corner model (the art's own geometry, measured 2026-07-29) ─────────
+    # The front-face APRON hangs below the body and SPLAYS: its free ends widen at 45°
+    # over the flanking side bands (the prism's south face drawn in oblique — the side
+    # bands' visible width shrinks with depth until the face meets the outline).
+    #  · CONCAVE (a T corner): a perpendicular arm stands at apron rows; the arm's side
+    #    face claims the 45° wedge NEARER the arm than the body above (it widens downward
+    #    alongside the arm), the front face keeps the rest.
+    #  · CONVEX (a lone/end corner): the front face GAINS band pixels within 45° of the
+    #    flanked column's body corner (the splay), the side band keeps what's beyond.
+    # `A` = fp OR anything above it in the column (the silhouette column set).
+    A = np.logical_or.accumulate(fp, axis=0)
+    dA_right = _dist_along(A, axis=1, reverse=False)     # px right of the silhouette
+    dA_left = _dist_along(A, axis=1, reverse=True)       # px left of the silhouette
+
+    apron = ~fp & (d_below > 0) & (d_below <= fr + t)
+    concave_e = apron & (d_left > 0) & (d_left <= sd + t) & (d_left < d_below)    # arm to the EAST
+    concave_w = apron & (d_right > 0) & (d_right <= sd + t) & (d_right < d_below)  # arm to the WEST
+    front = apron & ~(concave_e | concave_w)
+
+    bandE = (~A) & (dA_right > 0) & (dA_right <= sd + t)
+    bandW = (~A) & (dA_left > 0) & (dA_left <= sd + t)
+    # The splay: depth below the FLANKED silhouette column's body end, at 45°.
+    fp_end = np.where(fp.any(axis=0), win - 1 - np.argmax(fp[::-1, :], axis=0), -10_000)
+    xs = np.arange(win)[None, :]
+    ys = np.arange(win)[:, None]
+    srcE = np.clip(xs - dA_right, 0, win - 1)
+    depthE = ys - fp_end[srcE]
+    gainE = bandE & (depthE > 0) & (dA_right <= depthE) & (depthE <= fr + t)
+    srcW = np.clip(xs + dA_left, 0, win - 1)
+    depthW = ys - fp_end[srcW]
+    gainW = bandW & (depthW > 0) & (dA_left <= depthW) & (depthW <= fr + t)
+    front = front | gainE | gainW
+    east = (bandE & ~gainE) | concave_w
+    west = (bandW & ~gainW) | concave_e
 
     out = np.tile(tops["top"], (win, win, 1))
     wsum = np.ones((win, win))
     out[~fp] = 0.0
     wsum[~fp] = 0.0
 
-    for mask, d, reach, key in ((front, d_below, fr, "front"), (east, d_right, sd, "east"), (west, d_left, sd, "west")):
+    def face_depth(key: str) -> np.ndarray:
+        """The ramp driver per face: its own directional distance, capped by its reach."""
+        if key == "front":
+            d = np.where(gainE, depthE, np.where(gainW, depthW, d_below))
+            return d, fr
+        if key == "east":
+            return np.where(concave_w, d_right, dA_right), sd
+        return np.where(concave_e, d_left, dA_left), sd
+
+    for mask, key in ((front, "front"), (east, "east"), (west, "west")):
+        d, reach = face_depth(key)
         ramp = np.where(mask, np.clip((reach + t - d) / max(t, 1), 0.0, 1.0), 0.0)
         # face·ramp + top·(1−ramp) INSIDE the mask — the ramp genuinely fades to the top
         # (weights must sum to 1 there, or normalisation cancels the fade).
