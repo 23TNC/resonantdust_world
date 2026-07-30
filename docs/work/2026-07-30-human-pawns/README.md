@@ -23,20 +23,29 @@ The user's content spec:
 
 ## Design stances
 
-**Where the variants live.** The pawn shard's `data` is a u8 of `facing:2 | serial:6` —
-fully occupied (MOVE_STEP chain supersession reads the serial). And a pawn's stored
-`definition_reference` is today a raw content `object_id`, not a packed
-`definition_reference`, so its variant nibble does not exist on the wire either. The shard
-widens: `entity_tables!(data: u16)` for the pawn module only, layout
-**`body_variant:4 | head_variant:4 | facing:2 | serial:6`** — the low byte stays
-bit-identical to today (every existing decoder keeps working), the high byte is new. When
-the object-model migration packs pawn defs, body_variant may move into `def.variant_id`;
-until then both nibbles ride `data`. `TABLES.md` owns the shape.
+**Pawn defs become real packed defs.** (User, 2026-07-30-b: "hold pawns as
+type/subtype/kind and populate it from there.") A pawn's stored `definition_reference`
+stops being a raw content `object_id` and becomes the packed form:
+`TYPE_PAWN | subtype (species: animal/human) | kind (wolf/female/male) | variant:4`.
+The easy case is served by the def alone — the wolf's sprite variant is `def.variant_id`.
+`data:u8` (`facing:2 | serial:6`) is untouched: movement state stays movement state.
 
-**How variants arrive.** `CREATE` grows a third immediate: `data` (arity 2 → 3) —
-`def · position · data`. The spawn reducer writes it into the first row. `SET` cannot do
-this (it targets cold rows only), and a follow-up verb on the minted id has no client-known
-target. `ACTIONS.md` owns the signature.
+**The payload — a growable opcode stream, like the command buffer.** (User, 2026-07-30-b.)
+Pawns will accrue inventory, stats, needs, memories… so per-pawn state generalizes NOW
+instead of adding a nibble per feature: pawn rows gain **`payload: Vec<u32>`**, encoded
+like the event command buffer — a header word `opcode:16 | count:16` followed by `count`
+operand words, entries concatenated, so the payload grows/shrinks per pawn. First opcode:
+**`PART` (count 2: `slot`, `definition_reference`)** — the FULL def the part slot draws.
+The human carries `PART(0, body def)` + `PART(1, head def)` so either swaps when armor is
+equipped (an armor def simply replaces the slot's def — a future equip verb rewrites one
+entry); a wolf carries no entries and draws its own def. A future inventory is just
+another opcode + count. `TABLES.md` owns the encoding.
+
+**How the payload arrives.** `CREATE` becomes variable-arity (the `INIT_ZONE` precedent):
+`def · position · count · payload×count` — the spawn transaction is the one place the full
+first row is known (`SET` targets cold rows only; nothing else can address a minted id).
+The worker's row composition (MOVE_TO/MOVE_STEP/PLACE) **carries the payload through
+unchanged** — movement verbs never touch it. `ACTIONS.md` owns the signature.
 
 **How variant + part art is addressed.** The go-forward texture tree is
 `<type>/<subtype>/<kind>/<variant>/<map>.<dir>.<part>.<ext>` (already the human tree's
@@ -45,13 +54,15 @@ variant defaulting to canonical `1` and part to `0` — every existing stem keep
 unchanged. Each (variant, facing, part) is its own served master → its own immutable defs;
 stems are fetched on demand, so 16×3×2 potential leaves cost nothing until a pawn wears them.
 
-**The parts model (DSL → client).** The VM already appends one prim per `^prim call`; only
-the loader stops at `prims.0`. The loader learns to read **all** prims as a parts list; a
-part gains `&prim.part` (which `<part>` files it draws, default 0), `&prim.scale`
-(size multiplier against part 0's size, default 1 — the head authors 0.625), and
-`&prim.offset.x/y` (tiles, relative to part 0's anchor). Which STATE nibble feeds a part's
-variant follows the part index: part 0 ⇒ body_variant, part 1 ⇒ head_variant. MoverLayer
-renders every pawn as its parts list — the wolf is the 1-part degenerate case, humans are 2.
+**The parts model (DSL = structure, payload = wardrobe).** The VM already appends one prim
+per `^prim call`; only the loader stops at `prims.0`. The loader learns to read **all**
+prims as a parts list; a part gains `&prim.part` (which `<part>` files it draws, default
+0), `&prim.scale` (size multiplier against part 0's size, default 1 — the head authors
+0.625), and `&prim.offset.x/y` (tiles, relative to part 0's anchor). The DSL kind declares
+the SKELETON — slots, scales, offsets; the payload's `PART(slot, def)` entries supply WHAT
+each slot draws (stem + variant resolved from that def). A slot with no payload entry
+draws the pawn's own def (the wolf's whole model). MoverLayer renders every pawn as its
+parts list — the wolf is the 1-part degenerate case, humans are 2.
 
 **Single object, single carrier.** One entity, one DSL kind, one warm carrier. The final
 phase conforms the records to the documented primitive graph (`VARIABLES.md`: "a pawn =
@@ -69,16 +80,20 @@ location").
 - Append-only content ids: `human_female` / `human_male` append after `torch_blue`.
 - The pawn schema change is live: docker redeploy + a LIVE subscription-SQL check
   (subscription SQL is a string — the build gates cannot catch it).
-- MOVE_TO/MOVE_STEP must compose the serial in the LOW byte only, preserving the variant
-  byte — a masked read-modify-write, verified by a live trip with a nonzero variant byte.
+- The worker's row composition must carry `payload` through every movement hop unchanged
+  — verified by a live trip with a non-empty payload.
+- The def repack touches every consumer of the pawn's `definition_reference` (the
+  worker's hop-cost lookup, the npc's resolve, the client's kind decode, the wolves
+  brain's adoption filter) — each moves from object_id to `def_kind_id`/full-def compare
+  in the same phase, or the wolf stops resolving.
 - Wolf behaviour must not regress: same walk, same look (canonical art), variant now from
-  state instead of hashed from the id.
+  `def.variant_id` instead of hashed from the id.
 
 ## Out of scope
 
-Hand parts (the parts model must not cap below 4 pieces, but no hand work now); wolf
-multi-variant art normalization (its variant folders are sprite-gen outputs, not a clean
-0..N — the wolf keeps minting variant 0 = canonical art); character-generation UI (the
-fit/fat/average grouping is recorded here + in the DSL comments for that future);
-migrating pawn defs to packed `definition_reference`s (recorded above as the eventual home
-for body_variant).
+Hand parts and equip verbs (the payload's `PART` shape is BUILT FOR them — an equip
+rewrites one slot's def — but no verb work now); inventory/stats/needs opcodes (the
+opcode stream is the extension point; only `PART` is defined here); wolf multi-variant
+art normalization (its variant folders are sprite-gen outputs, not a clean 0..N — the
+wolf keeps minting variant 0 = canonical art); character-generation UI (the
+fit/fat/average grouping is recorded here + in the DSL comments for that future).

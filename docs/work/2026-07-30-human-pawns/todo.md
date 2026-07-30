@@ -1,29 +1,33 @@
 # Todo — human-pawns
 
-_Server truth first (variants exist in spacetime), then serving, then DSL, then render,
-then the human itself, then graph conformance. Design stances: [`README`](README.md)._
+_Server truth first (packed defs + the payload exist in spacetime), then serving, then
+DSL, then render, then the human itself, then graph conformance. Design stances:
+[`README`](README.md); the payload/def redesign is user-directed ([F1](forks.md))._
 
 ---
 
-## P0 — variants in spacetime
+## P0 — packed defs + the payload in spacetime
 
-- [ ] Widen the pawn shard to `entity_tables!(data: u16)`, layout
-      `body_variant:4 | head_variant:4 | facing:2 | serial:6` (low byte bit-identical to
-      today); update `TABLES.md`. Acceptance: 2-pass native+wasm build green; TABLES.md
-      shows the layout.
-- [ ] Mask the worker's serial/facing composition (MOVE_TO stamp, MOVE_STEP compare) to
-      the LOW byte, preserving the variant byte. Acceptance: a codec/worker unit test
-      round-trips serial ops over data `0xAB00`-style values unchanged in the high byte.
-- [ ] Grow `CREATE` to arity 3 (`def · position · data` imm): spawn reducer writes `data`
-      into the first row; worker arm, edge validation, npc emitters (wolves + wildlife)
-      pass it; update `ACTIONS.md`. Acceptance: build green both passes; ACTIONS.md row
+- [ ] Repack pawn defs as `TYPE_PAWN | species | kind | variant` end-to-end: npc resolve
+      packs it (species from the corpus), worker hop-cost keys on `def_kind_id`, wolves
+      brain adoption compares kind not raw def, client decodes kind from the packed def.
+      Acceptance: 2-pass build green; the npc soak logs a packed def wolf walking.
+- [ ] Add `payload: Vec<u32>` to the pawn shard's `entity_state_log`/`entity_state`
+      (opcode stream: `opcode:16|count:16` + operands; `PART = 1`, count 2: slot, def);
+      update `TABLES.md`. Acceptance: build green; TABLES.md shows the encoding.
+- [ ] Carry `payload` through the worker's row composition (MOVE_TO/MOVE_STEP/PLACE
+      copy it forward untouched). Acceptance: a worker unit test composes a hop over a
+      2-entry payload byte-identically.
+- [ ] Grow `CREATE` to variable arity (`def · position · count · payload×count`): spawn
+      reducer writes the payload into the first row; worker arm, edge validation, npc
+      emitters updated; update `ACTIONS.md`. Acceptance: build green; ACTIONS.md row
       updated.
-- [ ] Fan `data:u16` through edge → protocol → core → `StateObject` as `bodyVariant` /
-      `headVariant` fields (facing decode unchanged). Acceptance: core `state_event` unit
-      test decodes a u16 row to facing + both nibbles.
-- [ ] Redeploy the pawn module + edge, then the LIVE check: wolf CREATE with a nonzero
-      variant byte, walk it one trip, read `entity_state.data` back. Acceptance: the
-      variant byte survives the trip; the wolf still walks at 6 Hz.
+- [ ] Fan `payload` through edge → protocol → core → `StateObject` as a decoded `parts`
+      list (`{slot, def}` per PART entry; unknown opcodes skipped by count). Acceptance:
+      core `state_event` unit test decodes a 2-PART payload row.
+- [ ] Redeploy the pawn module + edge, then the LIVE check: CREATE a wolf with a marker
+      payload, walk it one trip, read `entity_state` back. Acceptance: the payload
+      survives the trip byte-identically; the wolf still walks at 6 Hz.
 
 ## P1 — variant + part art served
 
@@ -55,24 +59,24 @@ then the human itself, then graph conformance. Design stances: [`README`](README
 
 ## P3 — client multi-part movers
 
-- [ ] MoverLayer: a mover owns one warm prim PER PART from `moverParts`; part 0 boxes the
-      carrier, other parts place at offset·tile and `scale`, zIndex just above part 0;
-      variants from `StateObject` nibbles (part 0 ⇒ body, part 1 ⇒ head). Acceptance: the
-      wolf (1 part) renders + walks identically in a soak; a human state row renders both
-      parts.
+- [ ] MoverLayer: a mover owns one warm prim PER PART slot from `moverParts`; part 0 boxes
+      the carrier, other slots place at offset·tile and `scale`, zIndex just above part 0;
+      each slot draws its payload `PART` def (stem + variant from the def), else the
+      pawn's own def. Acceptance: the wolf (1 part, no payload) renders + walks
+      identically in a soak; a 2-PART state row renders both parts.
 - [ ] Move ALL part prims together in `tick` (speculation glide) and `applyVisual`.
       Acceptance: a drilled move shows no head/body lag (capture in `completed.md`).
-- [ ] Take the wolf's sprite variant from `bodyVariant` (delete the id-derived pick in
+- [ ] Take the wolf's sprite variant from `def.variant_id` (delete the id-derived pick in
       `thingTexture` callers). Acceptance: the wolf's variant is stable across reloads and
-      equals the state value.
+      equals the def's nibble.
 
 ## P4 — the first human in-world
 
-- [ ] npc: spawn ONE STATIC human (`human_female`, e.g. body 7 head 11, CREATE data) at a
-      known location near spawn; the brain never issues MOVE — this IS the standing static
-      drill fixture the user asked for. Acceptance: after `bin/sim run npc`, the human
-      stands at the known tiles with the authored variants; restart adopts, never
-      double-spawns.
+- [ ] npc: spawn ONE STATIC human (`human_female`, e.g. body 7 head 11 as
+      `PART(0,…)`/`PART(1,…)` CREATE payload) at a known location near spawn; the brain
+      never issues MOVE — this IS the standing static drill fixture the user asked for.
+      Acceptance: after `bin/sim run npc`, the human stands at the known tiles with the
+      authored variants; restart adopts, never double-spawns.
 - [ ] Joint drill at zoom 1 + 2: the human's body+head coherent (scale, offset, facing
       default s), lighting/shadows sane on both parts, wolf wandering past unaffected.
       Acceptance: captures in `completed.md`; the user's eyes are the final oracle.

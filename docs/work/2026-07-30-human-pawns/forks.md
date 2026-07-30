@@ -1,23 +1,26 @@
 # Forks — human-pawns
 
-## F1 (plan-time) — variants ride a widened pawn `data:u16`, not the def
+## F1 — per-pawn state is a growable opcode stream, not packed nibbles (USER, 2026-07-30-b)
 
-**Chosen:** `entity_tables!(data: u16)` for the pawn shard only:
-`body:4 | head:4 | facing:2 | serial:6` (low byte unchanged).
-**Rejected:** (a) `definition_reference.variant_id` — a pawn's stored def is today a raw
-content `object_id`, not a packed def; packing it is the object-model migration, a bigger
-stream, and it holds only ONE u4 anyway. (b) squatting in the existing u8 — it is fully
-occupied by `facing:2 | serial:6` (MOVE_STEP supersession reads the serial). (c) a new
-column — a macro-shape change touching every `entity_tables!` consumer for one shard's
-need. The README records that body_variant migrates into `def.variant_id` when pawn defs
-become packed defs.
+**Chosen (user-directed):** pawn rows gain `payload: Vec<u32>` encoded like the command
+buffer — `opcode:16 | count:16` header + `count` operands per entry; first opcode
+`PART (slot, definition_reference)`. Pawn defs repack to real
+`TYPE_PAWN | species | kind | variant` defs; the wolf's variant is `def.variant_id`;
+`data:u8` (`facing:2 | serial:6`) is untouched.
+**Superseded (my plan-time draft):** widening `data` to u16 with fixed
+`body:4 | head:4` nibbles. The user's counter: pawns will accrue inventory, stats, needs,
+memories — a nibble per feature dead-ends immediately, while an opcode stream
+grows/shrinks per pawn (a wolf gaining an inventory is one new entry, no schema change),
+and full defs per part slot are what let armor SWAP a slot's art later. The draft's sole
+advantage (no def repack) was debt, not economy.
 
-## F2 (plan-time) — head variants arrive via `CREATE` arity 3, not a follow-up verb
+## F2 — the payload arrives via variable-arity `CREATE`, not a follow-up verb
 
-**Chosen:** `CREATE def · position · data` (imm). **Rejected:** (a) `SET` on the minted
-id — SET targets cold rows only; (b) a new pawn-data verb — the client never knows the
-minted id at issue time, so nothing can target it; the spawn transaction is the one place
-the full first row is known.
+**Chosen:** `CREATE def · position · count · payload×count` (the `INIT_ZONE` variable-arity
+precedent). **Rejected:** (a) `SET` on the minted id — SET targets cold rows only; (b) a
+new pawn-payload verb at spawn time — the client never knows the minted id at issue time;
+the spawn transaction is the one place the full first row is known. (A LATER equip verb
+targeting a known id is expected and out of scope.)
 
 ## F3 (plan-time) — variant + part are stem segments, not atlas cells
 
@@ -28,10 +31,11 @@ would require an ingest step regenerating atlases whenever variant counts change
 `cell` lane is already claimed by linked-neighbour context; per-variant leaves are what
 the go-forward tree (`texture-layout-folder`) already stores on disk.
 
-## F4 (plan-time) — part index selects the state nibble
+## F4 (plan-time) — the DSL declares slots; the payload dresses them
 
-**Chosen:** part 0 ⇒ `body_variant`, part 1 ⇒ `head_variant` — positional, matching the
-user's "part 0 is body, part 1 is head"; no new DSL selector field. **Rejected:** a
-`&prim.variant_source` enum — more author surface for a mapping that is definitionally
-positional today; revisit only when a part exists whose variant is NOT its own nibble
-(hands may share the body nibble — that decision belongs to the hands stream).
+**Chosen:** the DSL kind's prims are the SKELETON (slot index, `part` files, `scale`,
+`offset`); a payload `PART(slot, def)` entry supplies what the slot draws; a slot with no
+entry draws the pawn's own def (the wolf's whole model — "the easy case of wolf can just
+accept variant"). **Rejected:** variants-by-position in state nibbles (superseded with F1)
+and a `&prim.variant_source` DSL selector — the payload def IS the selector, and it
+already carries its u4 variant.
