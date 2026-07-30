@@ -374,7 +374,11 @@ float casterCoverNS(uvec4 Pd, vec2 A, vec2 Q, vec3 L, float emitter, highp usamp
   // [A.y − W, A.y], NOT A.y ± W/2 (which displaced the whole shadow half a body south —
   // the "flipped n/s" report).
   float u0 = (L.y + tx * (Q.y - L.y) - (A.y - W)) / W;
-  uint mrot = ((Pd.w >> 15) & 1u) == 1u ? 3u : 1u;    // caster_flip: head end follows facing (D3)
+  // caster_flip: head end follows facing (D3). shadow-polish P1 (user drill): the selection
+  // was INVERTED — with the card's u running north→south onto the side frame (head at the
+  // frame's east/right), the unflipped read put the head at the SOUTH end for a north-facing
+  // wolf. Swapped so the shadow's head tracks the sprite's head at both facings.
+  uint mrot = ((Pd.w >> 15) & 1u) == 1u ? 1u : 3u;
   // Penumbra interval on the rotated axis: sub-light L + lambda*perp, du/dlambda at lambda 0.
   vec2 sdir = A - L.xy;
   float slen = length(sdir);
