@@ -42,10 +42,10 @@ any of it.
 
 ## P3 — Retire the data-texture bands
 
-- [ ] Prove `prim_presence`'s remaining consumers before touching it ([F5](forks.md#f5)). Acceptance: a list of readers; it goes only if the walks were its only ones, and stays with the reason recorded if not.
-- [ ] Delete the `light_data`, `light_presence_lo` and `light_presence_hi` bands from `VARIABLES.md` and free their sets. Acceptance: sets 2, 3 and 5 read as reserved; no code writes them; the data texture's live footprint is re-measured.
-- [ ] Delete the `shadow-cold` RT spec from `VARIABLES.md`. Acceptance: the section is gone rather than marked obsolete — `VARIABLES.md` holds current truth only.
-- [ ] Verify the data texture end to end. Acceptance: the scatter still delivers records, the mirror matches the texture, and the world renders — the band retirement must not disturb the graph.
+- [x] Prove `prim_presence`'s remaining consumers before touching it ([F5](forks.md#f5)). Acceptance: a list of readers; it goes only if the walks were its only ones, and stays with the reason recorded if not.
+- [x] Delete the `light_data`, `light_presence_lo` and `light_presence_hi` bands from `VARIABLES.md` and free their sets. Acceptance: sets 2, 3 and 5 read as reserved; no code writes them; the data texture's live footprint is re-measured.
+- [x] Delete the `shadow-cold` RT spec from `VARIABLES.md`. Acceptance: the section is gone rather than marked obsolete — `VARIABLES.md` holds current truth only.
+- [x] Verify the data texture end to end. Acceptance: the scatter still delivers records, the mirror matches the texture, and the world renders — the band retirement must not disturb the graph.
 
 ## P4 — Retire the documentation
 

@@ -201,3 +201,50 @@ not. `docs/work/README.md` included, so the index no longer promises a file the 
 
 Worth recording as a win for the guard: deleting 4 348 lines of code silently invalidated
 documentation five streams away, and nothing in the change itself would have surfaced that.
+
+## 2026-07-31 · P3 — the data-texture bands retired
+
+**P3 turned out bigger than planned, in the direction D2 predicted.** The phase was written to un-wire
+three light bands and leave the primitive graph standing. With `coldShadowData.ts` deleted in P2, the
+grep for readers came back **empty for every band, not just the light ones**:
+
+```
+prim_presence | light_presence | light_data | PRESENCE_BASE | DEF_BASE | dataMirror
+  → 2 hits, both COMMENTS (SquareCache.ts:569, WorldBridge.ts:508). Zero code.
+```
+
+So the **entire unified data texture** is dead, not a subset of it — `definition_data`, `prim_data`,
+`billboard_data`, `light_data`, both `light_presence` sets, `prim_presence`, plus the `shadow-cold`,
+`shadow_dirty` and `light_presence_cold` maps.
+
+**431 lines removed from `VARIABLES.md`** — the whole `## Cold shadow data textures` section. Not
+marked obsolete, not left with a banner: this file is AUTHORITATIVE and holds current truth only, and
+a layout spec for a texture that does not exist is worse than no spec, because a reader has no way to
+tell it is describing the past. In its place, fourteen lines that say what happened, that nothing reads
+or writes any of it, and where the successor is designed.
+
+**446 lines total, and the gate corrected me twice on the way.** My first attempt left a tombstone
+section reading "RETIRED 2026-07-31" with a pointer to the successor design. `docs-check` rejected the
+phrase *"superseded by"* — _"'superseded by' in an authoritative doc: describe the current shape, not
+what it replaced"_ — and reading the rule properly, the whole tombstone was the same mistake at larger
+scale. The file's own convention is a one-entry line under **`## Removed`**, exactly as `valid_at`,
+`cold_reference` and `hot_reference` are handled. So the section is simply gone and the retirement is
+one paragraph there.
+
+The successor pointer moved out with it: "where the replacement is being designed" is not a fact about
+current variables, and belongs in the component's `current/` doc (P4) and the seam doc (P5).
+
+**`## Textile slot grid` was deliberately KEPT.** `SLOTS_X/Y`, `TEXTILE_*`, `SQUARE`/`UNIT` and the lod
+ladder are live: `squareMath.ts` exports them and the G-buffer bake rides them. It sits directly above
+the deleted section and would have been easy to take with it.
+
+### Verified
+
+- `rd docs-check` green across 461 files — no dangling internal link into the removed section.
+- The two surviving mentions are prose in code comments describing history, not references to a live
+  band.
+- Page load clean; the render is unchanged, which it must be — this phase touched no code.
+
+**P3's fourth item — "verify the data texture end to end" — is moot and recorded as such**: there is
+no data texture to verify. Its acceptance ("the scatter still delivers records, the mirror matches")
+described a system P2 deleted.
