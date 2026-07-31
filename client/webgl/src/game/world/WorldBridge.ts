@@ -258,19 +258,10 @@ export class WorldBridge {
     this.thingPacked = this.content.thingPackedChannels();
     this.thingLight = this.content.thingLight();
     this.tileHeights = new Float64Array(this.content.tileHeights());
-    // texture-generalization P0 (D9): the tallest authored card, in tiles — max over every
-    // thing's drawn size and every tile's height. Content is the ONE authority; re-derived
-    // on every hot-swap so authoring a taller kind widens the walk dilation automatically.
-    let maxCard = 1;
-    for (let kind = 1; kind * 7 <= this.thingLayout.length; kind++) {
-      maxCard = Math.max(maxCard, readLayout(this.thingLayout, kind).size);
-    }
-    for (const h of this.tileHeights) maxCard = Math.max(maxCard, h);
-    this.viewport.setMaxCardTiles(maxCard);
-    // texture-generalization P2 (D7): tiles enter presence — the gather reads the LIVE kind
-    // map (shared by reference; `recordTileKind` keeps it current) + these authored lanes.
+    // lighting-strip P2: `setMaxCardTiles` (the walk dilation) and `setTileKinds` (tiles entering
+    // presence) both fed the gather and nothing else, so both are gone with it. `tileLanes` stays —
+    // the DRAW path reads it for the linked-cell inset just below.
     const tileLanes = new Float64Array(this.content.tileLightingLanes());
-    this.viewport.setTileKinds(this.tileKindAt, tileLanes, this.tileStems, this.content.typeBiomeTile());
     // The DSL internal_padding must ALSO reach the DRAW path: the resolver trims each linked
     // cell by it (the manifest's external pad stays 0, R5). The derived blueprint sibling
     // shares the wall's atlas layout, so it inherits the same inset.
@@ -534,9 +525,6 @@ export class WorldBridge {
     if (defId === 0) this.tileKindAt.delete(k);
     else this.tileKindAt.set(k, defId);
     this.reCellQueue.add(k);
-    // texture-generalization P3 (D1): the lighting side self-heals the same ring the drawn
-    // art re-picks — autotile cells + receive modes of the 3×3 ring may all have changed.
-    this.viewport.tileKindDirty(tileX, tileY);
   }
 
   /** Re-pick the linked cell of every DRAWN neighbor of the queued (changed) cells — mutate

@@ -128,3 +128,76 @@ is where `syncOutlines()` and the mover tick live — so the *first* selection t
 draw and that was my harness, not a regression. Both overlays were then populated directly to exercise
 their draw paths. Worth writing down: in this manual-tick rig, "nothing drew" can mean "the scene
 update never ran".
+
+## 2026-07-31 · P2 — the machinery is deleted
+
+**4 348 lines gone**: `shadowGather.ts` (3 000) and `coldShadowData.ts` (1 348), both removed whole
+rather than split — see [D2](deviations.md), which records that [F5](forks.md#f5)'s premise was wrong.
+
+### F5 was wrong, and checking it first is what made this phase small
+
+F5 planned to *keep* the primitive-graph writer because "sprites, z-depth and selection all read it".
+Verified before touching anything:
+
+- **Sprites and z-depth never read it.** No `uData`, no `usampler` anywhere in `mrtBakeShader.ts` or
+  `SquareCache.ts` — the G-buffer bake does not sample the data texture at all.
+- **One non-lighting consumer existed**: `thingAt()` → `tightBoxFor()`, six lines over
+  `definitionFor` + `tightBoxOf`.
+- **And its data had another source**: `TextureResolver.opaqueBBox(stem)` returns the same silhouette
+  as frame fractions, which the record path then *quantised to even units* for the shadow card.
+
+So `tightBoxFor` was reimplemented in `Viewport` straight off the resolver — **finer** than what it
+replaced, since hit-testing has no reason to inherit the shadow card's 2-unit grid.
+
+### Freed
+
+| target | size |
+|---|---|
+| `coldShadowRT`, `hotShadowRT`, + both `Prev` | 2 MiB × 4 = 8 MiB |
+| `decayRT` | 1 MiB |
+| `receiverCoarseRT` | 2 MiB |
+| `receiverFineRT` | 8 MiB |
+| `coldLightRT`, `hotLightRT` | 32 MiB × 2 = **64 MiB** |
+| **the unified data texture** (1024×1024 `RGBA32UI`) | **16 MiB** |
+| | **99 MiB** |
+
+Computed from the allocation sites as they were deleted. The README estimated 83 MiB and was right
+about the render targets — it just did not count the data texture, which went with
+`coldShadowData.ts`. P0's empirical before-measurement was struck by the user ([D1](deviations.md)),
+so this is arithmetic rather than a reading, and is labelled as such.
+
+### Also removed, because their reason to exist went
+
+`setMaxCardTiles` (the walk dilation) and `setTileKinds` (tiles entering presence) fed the gather and
+nothing else; `tileKindDirty`; the `/shadows` chat command; the `shadow-cold` overlay channel (it named
+a render target that no longer exists, so offering it would have been a menu entry that silently shows
+nothing); and **the cursor light** — a 1 px invisible warm prim re-baked on *every pointer move* to
+carry a `light` payload nothing reads.
+
+### Verified
+
+| check | result |
+|---|---|
+| page load, both fixtures | **zero console errors**, `getError() == 0` |
+| render vs P1 | [`after/03-zoom1-deleted.jpg`](after/03-zoom1-deleted.jpg) — identical; deletion is invisible on screen |
+| lighting debug hooks | all **15** probed (`__gather`, `__cold`, `__corridor`, `__orbit`, `__torch`, `__tilt`, …) return `undefined` |
+| selection, mover | click selects the pawn |
+| selection, cold thing | `thingAt` at a conifer's centre → prim 138; **at its corner → `null`** — the box is still silhouette-tight, not the full quad |
+| cursor-light removal | 20 synthesised pointer-moves leave the warm prim count at 3, unchanged |
+| draws/frame | **1** |
+
+**Frame cost fell 0.045 → 0.028 ms** (median of 5, spreads do not overlap). P1 had already stopped
+calling `shadows.tick()`, so the remaining cost was `moverDirty` rewriting records per mover per frame
+plus the cursor light's per-move re-bake — both of which this phase removed.
+
+### The docs-check hook caught what the deletion broke
+
+The commit was **blocked** by the pre-commit gate: 7 links across 5 historical work streams pointed at
+`shadowGather.ts` / `coldShadowData.ts`, which had just stopped existing.
+
+De-linked rather than reworded — the prose is still true *history* (those streams really did work on
+those files), so the filename survives as inline code while the link, which asserted a live file, does
+not. `docs/work/README.md` included, so the index no longer promises a file the tree lacks.
+
+Worth recording as a win for the guard: deleting 4 348 lines of code silently invalidated
+documentation five streams away, and nothing in the change itself would have surfaced that.

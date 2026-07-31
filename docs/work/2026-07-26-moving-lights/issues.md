@@ -620,7 +620,7 @@ display, with no change to what the player sees. Deferred to [P4](todo.md); not 
 _2026-07-26 · open (fixed in [P1](todo.md))_
 
 `markLightDirty(L, from?)` exists precisely so a move can queue the **union of old ∪ new reach**
-([`shadowGather.ts:1400`](../../../client/webgl/src/game/viewport/shadowGather.ts)) — the `from` parameter is
+(`shadowGather.ts:1400`) — the `from` parameter is
 documented as "pass when the light moved". The one call site that fires on a light change does not pass it:
 
 ```ts
@@ -772,7 +772,7 @@ ambient light. The reach was chosen for how it looked while zoomed out and nothi
 _2026-07-26 · **ROOT CAUSE CONFIRMED** (fixed in [P1](todo.md)) — supersedes the diagnosis carried in from
 [primitive-graph I40](../2026-07-25-primitive-graph/issues.md), which was wrong; see the correction below_
 
-**The bug.** [`coldShadowData.ts:646`](../../../client/webgl/src/game/viewport/coldShadowData.ts) writes a
+**The bug.** `coldShadowData.ts:646` writes a
 carried light's carrier prim position **only on the frame the carrier is allocated**:
 
 ```ts

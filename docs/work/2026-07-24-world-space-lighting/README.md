@@ -6,7 +6,7 @@ Fusion360 3D model, 2026-07-24 — 65° was an empirical shadow-look pick from b
 art wants._
 
 _Component: [`client/webgl`](../../components/client/) · `game/viewport/` — the lighting pass (`LIGHT_FRAG`
-in [`shadowGather.ts`](../../../client/webgl/src/game/viewport/shadowGather.ts)) + the display blit relief.
+in `shadowGather.ts`) + the display blit relief.
 Phases in [`todo.md`](todo.md); decisions in [`forks.md`](forks.md); findings in [`issues.md`](issues.md).
 Builds on [`2026-07-23-world-geometry`](../2026-07-23-world-geometry/README.md) (the ratified `z = sin65·Δ`
 model) and meets [`2026-07-24-normal-tilt`](../2026-07-24-normal-tilt/README.md) at the `N·L`._

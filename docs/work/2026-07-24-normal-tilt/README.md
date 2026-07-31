@@ -50,5 +50,5 @@ Marigold view-space normals need a *different* rotation and are not wired yet ([
 
 ## Scope
 Replace the `_normal_tilt` bias with the 25° rotation; drive `θ = 90 − WORLD_TILT_DEG` from one shared
-constant (same source as [`shadowGather.ts:52`](../../../client/webgl/src/game/viewport/shadowGather.ts));
+constant (same source as `shadowGather.ts:52`);
 retire `tilt_amount`/`tilt_z`. Re-bake the object corpus; verify relief direction in-browser.

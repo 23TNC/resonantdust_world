@@ -14,7 +14,6 @@ import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } fro
 import type { TextureResolver } from "../../textures";
 import { AlbedoBlitShader } from "./albedoBlitShader";
 import { OverlayShader, overlayModeFor } from "./overlayShader";
-import { ShadowGather } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
@@ -90,7 +89,6 @@ export class Viewport {
   /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
   private overlayChannelName: string | null = null;
   /** Lights + the per-light shadow **bitfield** (gathered off the cold cache's standing prims). */
-  private readonly shadows: ShadowGather;
   /** ui-select P1: the selection outline overlay (drawn topmost in {@link tick}). */
   private readonly outline: OutlineOverlay;
   /** build-walls P2: the blueprint drag-preview overlay (under the outline, over the world). */
@@ -115,7 +113,6 @@ export class Viewport {
     this.overlayShader = new OverlayShader(gl);
     this.map = new SquareCache(this.renderer, this.empty, this.channels("cold"));
     this.warm = new SquareCache(this.renderer, this.empty, this.channels("warm"));
-    this.shadows = new ShadowGather(this.renderer);
     this.outline = new OutlineOverlay(this.renderer, this.empty);
     this.blueprint = new BlueprintOverlay(this.renderer, this.empty);
 
@@ -280,9 +277,11 @@ export class Viewport {
     ];
   }
 
-  /** The channels `/overlayRT` can show — the composites + the shadow bitfield (its own decode path). */
+  /** The channels `/overlayRT` can show — the G-buffer composites. lighting-strip P2 dropped
+   *  `shadow-cold`: it named a render target that no longer exists, so offering it would have been a
+   *  command that silently shows nothing. */
   overlayChannelNames(): string[] {
-    return [...this.renderTextures().map((c) => c.name), "shadow-cold"];
+    return this.renderTextures().map((c) => c.name);
   }
 
   /** The channel the overlay is currently showing, or null (off). */
@@ -308,11 +307,6 @@ export class Viewport {
     return name.endsWith("-warm") ? this.warm.displayComposite(name) : this.map.displayComposite(name);
   }
 
-  // ── lights + shadows (`/coldlights`) ──────────────────────────────────────────────
-  /** Toggle the shadow pass; returns whether it's now on. */
-  toggleShadows(): boolean {
-    return this.shadows.toggle();
-  }
   /** Current LOGICAL zoom (the lod dial, not screen px per world px — that is `camera.renderScale`). */
   get zoom(): number {
     return this.camera.zoom;
@@ -342,23 +336,6 @@ export class Viewport {
     this.outline.set(items);
   }
 
-  /** texture-generalization P0 (D9): push the content-derived tallest card (tiles) — the
-   *  bridge recomputes it on every content (re)load; the gather derives the walk dilation. */
-  setMaxCardTiles(tiles: number): void {
-    this.shadows.setMaxCardTiles(tiles);
-  }
-
-  /** texture-generalization P2 (D7): share the bridge's LIVE tile-kind map + the per-kind
-   *  lighting lanes with the gather — tiles claim `prim_presence` slot 0. */
-  setTileKinds(kindAt: Map<number, number>, lanes: Float64Array, stems: string[], typeId: number): void {
-    this.shadows.setTileKinds(kindAt, lanes, stems, typeId);
-  }
-
-  /** texture-generalization P3 (D1): a tile KIND changed — dirty its 3×3 lighting ring. */
-  tileKindDirty(tileX: number, tileY: number): void {
-    this.shadows.tileKindDirty(tileX, tileY);
-  }
-
   /** build-walls P2: replace the blueprint preview tiles (empty = clear). */
   setBlueprint(tiles: BlueprintTile[]): void {
     this.blueprint.set(tiles);
@@ -369,13 +346,34 @@ export class Viewport {
     return this.map.getPrim(id);
   }
 
+  /** ui-select P0 (D2): a standing prim's TIGHT silhouette box in world px — the hit-test target,
+   *  so clicking a conifer's transparent corner does not select it.
+   *
+   *  lighting-strip P2 ([D2](../../../../docs/work/2026-07-31-lighting-strip/deviations.md)): this used
+   *  to route through `ShadowGather.tightBoxFor` -> `ColdShadowData.tightBoxOf`, which was the ONLY
+   *  non-lighting reader of the record layer. The resolver has held the same datum all along —
+   *  `opaqueBBox` returns the silhouette as frame fractions, which the record path then quantised to
+   *  EVEN units for the shadow card. Reading the fraction directly is both simpler and *finer*: hit
+   *  testing has no reason to inherit the shadow card's 2-unit grid.
+   *
+   *  No bbox (unresolved art) falls back to the full quad — selectable, just not silhouette-tight. */
+  private tightBoxFor(prim: Primitive): { x: number; y: number; w: number; h: number } | null {
+    const bb = this.resolver?.opaqueBBox(prim.textureName) ?? null;
+    if (!bb) return { x: prim.x, y: prim.y, w: prim.width, h: prim.height };
+    const w = bb.fw * prim.width, h = bb.fh * prim.height;
+    const dx0 = bb.fx * prim.width, dy = bb.fy * prim.height;
+    // flipX mirrors the frame, so the opaque region reflects about the quad's centre line.
+    const dx = prim.flipX ? prim.width - (dx0 + w) : dx0;
+    return { x: prim.x + dx, y: prim.y + dy, w, h };
+  }
+
   /** ui-select P0 (D2): the topmost COLD standing prim whose TIGHT silhouette box contains the
    *  world point — painter order (zIndex, then southernmost) picks among overlaps. Movers are
    *  the MoverLayer's to hit-test (they carry entity identity this cache doesn't know). */
   thingAt(wx: number, wy: number): { primId: number } | null {
     let best: { id: number; zIndex: number; y: number } | null = null;
     for (const p of this.map.standingPrims()) {
-      const b = this.shadows.tightBoxFor(p, this.resolver);
+      const b = this.tightBoxFor(p);
       if (!b) continue;
       if (wx < b.x || wx >= b.x + b.w || wy < b.y || wy >= b.y + b.h) continue;
       if (!best || p.zIndex > best.zIndex || (p.zIndex === best.zIndex && p.y > best.y)) {
@@ -427,7 +425,6 @@ export class Viewport {
    *  position snapshot at the same eps crossing. */
   moverDirty(id: number): void {
     const prim = this.warm.getPrim(id);
-    if (prim) this.shadows.moverDirty(prim, this.resolver);
   }
   warmRemovePrim(id: number): void {
     this.warm.removePrim(id);
@@ -514,9 +511,7 @@ export class Viewport {
         // register (same display geometry + `uProjection`). The fragment drops the channel's "empty"
         // value so the world reads through elsewhere.
         const ov = this.overlayChannelName;
-        if (ov === "shadow-cold") {
-          this.shadows.drawOverlay(this.camera, this.map.window); // its own bitfield decode path
-        } else if (ov) {
+        if (ov) {
           const comp = this.compositeFor(ov);
           if (comp) {
             this.overlayShader.composite = comp;
@@ -590,7 +585,6 @@ export class Viewport {
     this.resolverUnsub?.();
     this.blitShader.destroy();
     this.overlayShader.destroy();
-    this.shadows.destroy();
     this.map.destroy();
     this.warm.destroy();
     this.white.destroy();

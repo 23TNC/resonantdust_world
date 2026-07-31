@@ -59,8 +59,6 @@ export class WorldScene extends Scene {
   private clickId: number | null = null;
   private clickX = 0;
   private clickY = 0;
-  /** ui-select P1 (D4): the cursor light's carrier prim (warm, hot; created on first move). */
-  private cursorLightId: number | null = null;
   /** build-walls P2 (D4): the active placement mode's kind, or null. While set, left-drag
    *  forms the wall rect (selection clicks suspended) and right-click exits the mode. */
   private buildMode: BuildEntry | null = null;
@@ -185,10 +183,6 @@ export class WorldScene extends Scene {
     }
     this.contentUnsub?.();
     this.contentUnsub = null;
-    if (this.cursorLightId !== null) {
-      this.panel?.view.warmRemovePrim(this.cursorLightId);
-      this.cursorLightId = null;
-    }
     this.chat?.destroy();
     this.details?.destroy();
     this.details = null;
@@ -258,12 +252,6 @@ export class WorldScene extends Scene {
       const now = view().setOverlay(name);
       return now ? `Overlaying ${now}.` : `Overlay off (${name}).`;
     });
-
-    // `/coldlights [tileX tileY]` — re-seed the 6 shadow-casting lights in a ring around a tile
-    // (default 100 50, the design's zone). Shadows cast off the standing prims (things) in range.
-
-    // `/shadows` — toggle the shadow pass.
-    this.chat.registerCommand("shadows", () => (view().toggleShadows() ? "Shadows on." : "Shadows off."));
 
     // No server-side pause verb in the rebuild yet.
     this.chat.registerCommand("pause", () => "Pause isn't wired in the rebuild yet.");
@@ -372,7 +360,6 @@ export class WorldScene extends Scene {
   };
 
   private readonly onPointerMove = (e: PointerEvent): void => {
-    this.updateCursorLight(e.clientX, e.clientY); // ui-select P1 (D4) — every move, drag or not
     if (this.buildMode && this.buildDragStart) this.syncBuildPreview(e.clientX, e.clientY);
     if (this.dragId !== e.pointerId) return;
     // RENDER SCALE, not logical zoom. A screen-px drag is `1 / renderScale` world px — that is the
@@ -450,34 +437,6 @@ export class WorldScene extends Scene {
       items.push({ x: prim.x, y: prim.y, w: prim.width, h: prim.height, mode: "sprite", frame, flip: prim.flipX });
     }
     this.panel.view.setOutlines(items);
-  }
-
-  /** ui-select P1 (D4): the cursor's small-radius HOT light — carried by a 1 px warm prim
-   *  through the REAL placement path (`buildCasters` detects the carried light's move and
-   *  routes the scoped dirty; hot class ⇒ cold maps never re-bake). No textureName ⇒ the
-   *  prim never becomes a caster record — the light is its only presentation. */
-  private updateCursorLight(cx: number, cy: number): void {
-    const w = this.clientToWorld(cx, cy);
-    const view = this.panel.view;
-    if (this.cursorLightId === null) {
-      this.cursorLightId = view.warmAddPrim({
-        texture: view.white,
-        x: w.x, y: w.y, width: 1, height: 1,
-        tint: 0x000000, geoColor: 0x000000, zIndex: -1000, flipX: false,
-        hot: true,
-        light: {
-          color: [1.0, 0.9, 0.7], intensity: 0.45, reach: 2 * SQUARE,
-          emitterRadius: 8, height: 20 * (SQUARE / 16), castShadows: false, hot: true,
-        },
-      });
-      return;
-    }
-    const p = view.warmGetPrim(this.cursorLightId);
-    if (p) {
-      p.x = w.x;
-      p.y = w.y;
-      view.warmRefreshPrim(this.cursorLightId); // re-bake the 1 px carrier (no stale dot)
-    }
   }
 
   /** ui-select P0 (D2): the left-click hit test — topmost PAWN, else cold THING by tight

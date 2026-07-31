@@ -70,7 +70,7 @@ Also: `z` (u8) + `z_offset` (u8) can sum past u8 — clamp and document.
 `ALPHA: u12 reach | u20 reserved` — **`radius` is gone**. It is load-bearing: `emitter_radius` drives the
 entire **16-tap area-light penumbra** (the delivered [penumbra](../2026-07-23-penumbra/README.md)
 stream) — `casterCover(...)` takes `emitter` and falls back to a **hard quad** when it's < 0.5
-([`shadowGather.ts:225,257`](../../../client/webgl/src/game/viewport/shadowGather.ts)). Dropping it
+(`shadowGather.ts:225,257`). Dropping it
 silently turns every soft shadow hard.
 **Resolved.** User confirmed the oversight; `u8 radius` is back. Final:
 `ALPHA: u12 reach | u8 radius | u8 resolved_zone | u4 reserved`.
@@ -95,7 +95,7 @@ VARIABLES so nobody adds a second path later. Also cap and document `MAX_DEPTH` 
 ## I13 — ⚠ `resolved_tile` + `resolved_unit` alone are ambiguous beyond 8 tiles of reach (2026-07-25) — OPEN
 **Problem.** The leaf's resolved position is `u8 resolved_tile | u8 resolved_unit` — tile is `x:4|y:4`,
 i.e. the **in-zone** tile (0–15). The gather needs the light's position in the same frame as the sample
-point: it computes `toL = Lxy - P` ([`shadowGather.ts:573`](../../../client/webgl/src/game/viewport/shadowGather.ts))
+point: it computes `toL = Lxy - P` (`shadowGather.ts:573`)
 for falloff/N·L, and marches the corridor from the light. A fragment knows its own absolute world tile,
 so it can reconstruct the light by picking the **congruent tile nearest itself** — but that has a period
 of **16 tiles**, so it is only unambiguous when the light is within **8 tiles**. `LIGHT_REACH` is

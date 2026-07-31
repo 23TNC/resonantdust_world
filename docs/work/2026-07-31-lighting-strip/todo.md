@@ -34,11 +34,11 @@ any of it.
 
 ## P2 — Delete the machinery
 
-- [ ] Delete `shadowGather.ts` entirely, with its ~10 GLSL programs and ~25 debug hooks. Acceptance: the file is gone (git holds it), `tsc --noEmit` is clean, and no `globalThis.__*` lighting hook answers in the console.
-- [ ] Free every lighting render target and its allocation site. Acceptance: shadow, prev-shadow, decay, receiver-coarse, receiver-fine and both lightmaps are gone; measured GPU memory drops by the P0 figure.
-- [ ] Split `coldShadowData.ts`: keep the primitive-graph writer, delete the lighting-only paths ([F5](forks.md#f5)). Acceptance: the `light_data` and `light_presence` writers are gone; the graph writers and the scatter are untouched.
-- [ ] Remove the lighting debug UI — panel rows, gizmos, overlays and URL parameters that no longer resolve. Acceptance: the debug panel has no dead control, and no URL parameter is silently ignored.
-- [ ] Verify the deleted build. Acceptance: a page load at both fixtures, zero console errors, and the P1 render unchanged — deletion must be invisible on screen, since P1 already dimmed the passes.
+- [x] Delete `shadowGather.ts` entirely, with its ~10 GLSL programs and ~25 debug hooks. Acceptance: the file is gone (git holds it), `tsc --noEmit` is clean, and no `globalThis.__*` lighting hook answers in the console.
+- [x] Free every lighting render target and its allocation site. Acceptance: shadow, prev-shadow, decay, receiver-coarse, receiver-fine and both lightmaps are gone; measured GPU memory drops by the P0 figure.
+- [x] Split `coldShadowData.ts`: keep the primitive-graph writer, delete the lighting-only paths ([F5](forks.md#f5)). Acceptance: the `light_data` and `light_presence` writers are gone; the graph writers and the scatter are untouched.
+- [x] Remove the lighting debug UI — panel rows, gizmos, overlays and URL parameters that no longer resolve. Acceptance: the debug panel has no dead control, and no URL parameter is silently ignored.
+- [x] Verify the deleted build. Acceptance: a page load at both fixtures, zero console errors, and the P1 render unchanged — deletion must be invisible on screen, since P1 already dimmed the passes.
 
 ## P3 — Retire the data-texture bands
 
