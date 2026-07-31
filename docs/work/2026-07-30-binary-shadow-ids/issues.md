@@ -188,3 +188,39 @@ gather WITHOUT a second attachment:
 4. **Abandon the id map**; keep P1's binary win and close the stream.
 
 **P2 remains open and unticked.** P0/P1 are unaffected and committed: 8.30 -> 7.11 ms, 15 -> 16 lights.
+
+## I6c — MRT is NOT broken in this engine; it is broken on THIS pass
+
+Checked after I6b, and it sharpens the diagnosis considerably. `SquareCache` line 381 allocates
+`mrtScratch` with **four** colour attachments:
+
+```
+formats: ["rgba8unorm", "rgba8unorm", "rgba8unorm", "rgba8unorm"]
+```
+
+That is the G-buffer bake, and it runs every frame a mover moves — 4 simultaneous attachments, working
+fine, on the same driver that hangs when the gather is given a second one.
+
+So "MRT on ANGLE/D3D11 is unusable" is **wrong**, and I6b overstated it. Three things differ between the
+working case and the failing one:
+
+| | bake (works, 4 attachments) | gather (hangs, 2) |
+|---|---|---|
+| format | `rgba8unorm`, 4 B/texel | **`rgba32uint`, 16 B/texel — INTEGER** |
+| shader | a textured quad blit | **nested loops: up to 64 DDA steps x 3 tiles x 8 caster slots, each running casterCover** |
+| draw cost | sub-millisecond | **the frame's longest draw, 5.5-6.2 ms** |
+
+The likeliest mechanism is the combination rather than any one of them: an integer-format MRT write out
+of a fragment shader with this much dynamic control flow gives ANGLE's D3D11 translation a shape it
+handles badly, the draw's cost explodes, and the GPU watchdog (TDR) resets the driver — which presents
+exactly as a browser hang rather than an error.
+
+**Why this matters for [B1](blockers.md).** It reopens a route I closed too early. The blocker's option
+list assumed no second attachment was possible at all; in fact the untested question is whether a
+**narrower, non-integer** attachment on the same pass behaves differently — e.g. `rgba8unorm` carrying a
+u8 tile-local id, which is 4 B/texel like the bake rather than 16. That is a genuinely different
+experiment from the one that hung, not a retry of it.
+
+Still the user's call ([B1](blockers.md)) because it is another live-fire test on the pass that has hung
+twice — but the option set is wider than B1 states, and B1's "dead end" verdict applies only to the
+integer path.
