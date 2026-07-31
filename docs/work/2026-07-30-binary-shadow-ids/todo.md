@@ -46,9 +46,9 @@ it is what dissolved [B2](blockers.md). Ordered so each item leaves the tree ren
 
 - [x] `VARIABLES.md` — `billboard_data` R gains a ROOT/CHILD split (root = `region|zone|tile|unit`, child = `parent_id|tile|unit`) and A gains `u1 child`. Acceptance: the layout block reads like `prim_data`'s and the "No `resolved_zone`" paragraph is replaced by the reason it is no longer needed.
 - [x] `VARIABLES.md` — re-spec the STALE `shadow-cold` block (it still says 14 × u9 coverage; P1/P2 made it an id map). Acceptance: the doc describes the v6 header+ids layout, and no `u9`/`14 slots` text survives.
-- [ ] `coldShadowData.ts` root path — write the full resolved position into R. Acceptance: `r.pos` goes in whole; the mirror readback shows region/zone bits set for a standing tree.
-- [ ] `coldShadowData.ts` child path — set `child = 1` in A for a CARRIED billboard only. Acceptance: a pawn head reads child 1, a tree reads child 0, verified from the mirror.
-- [ ] `shadowGather.ts` — decode a root caster with `decodePos` (absolute, no `ref`); keep `resolvedTilePos` for children. Acceptance: corridor↔brute 0 differing, and the scene renders unchanged — this item alters no shadow, only how a position is recovered.
+- [x] `coldShadowData.ts` root path — write the full resolved position into R. Acceptance: `r.pos` goes in whole; the mirror readback shows region/zone bits set for a standing tree.
+- [x] `coldShadowData.ts` child path — set `child = 1` in A for a CARRIED billboard only. Acceptance: a pawn head reads child 1, a tree reads child 0, verified from the mirror.
+- [x] `shadowGather.ts` — decode a root caster with `decodePos` (absolute, no `ref`); keep `resolvedTilePos` for children. Acceptance: corridor↔brute 0 differing, and the scene renders unchanged — this item alters no shadow, only how a position is recovered.
 - [ ] Shadow RT to 2 px per texel — single attachment, 2× width, NOT MRT ([I6](issues.md): MRT hung twice). Acceptance: the page loads and renders; no hang, verified in Chrome before anything is written to px 1.
 - [ ] `GATHER_FRAG` writes the v6 pair: header px (4 channels × 2 lights × `u4 set`) + id px (8 × `u16` in-set id). Acceptance: `set == 0` IS the empty sentinel (VARIABLES: set 0 = the global sentinel), so no magic id is needed.
 - [ ] Update every reader to the 2-px stride — `accumulateLights`, the overlay, `debugReadShadow`, the identity diff. Acceptance: `debugReadShadow` returns a decodable `(set, id)` pair and the overlay still matches the gizmo colours.

@@ -390,3 +390,57 @@ implementation, scouted above and unstarted. P3's early-out and P4's fine placem
 own stream. That was reasoning from inside a constraint I had not checked was real — the same pattern the
 user corrected four times before it. P1+P2 remain independently valuable and committed, but they are not
 the stopping point B2 argued they were.
+
+## 2026-07-31 · P2b — a billboard root positions itself (F8, first five items)
+
+**`VARIABLES.md` first**, since it owns the layout. `billboard_data.R` gains the same ROOT/CHILD split
+`prim_data` has had all along, gated by a new `u1 child` at `A` bit 13:
+
+```
+R  ROOT  (child=0)   u8 region | u8 zone | u8 resolved_tile | u8 resolved_unit
+   CHILD (child=1)   u16 parent_id      | u8 resolved_tile | u8 resolved_unit
+```
+
+**The 16 bits were dead.** Every billboard already got a private carrier prim purely so it had somewhere
+to be placed, and no GPU consumer has ever read a billboard's `parent_id` — the resolve happens CPU-side
+and the record is stamped with the answer. Those bits are exactly the width of the two HIGH position
+bytes, so the trade cost nothing.
+
+**The CPU side was a re-slice, not a derivation.** `resolveCarried` already returns
+`encodePosition(...)` — a full `region|zone|tile|unit`. The old writer took that value and *threw the
+top half away*:
+
+```
+- ((prim & 0xffff) << 16) | (((r.pos >>> 8) & 0xff) << 8) | (r.pos & 0xff)
++ r.pos >>> 0
+```
+
+**The shader side collapsed to one helper.** Four call sites repeated the same two-line decode; they now
+all route through `billboardPos(Pd, ref)`, so the ROOT/CHILD split exists in exactly one place. A root
+takes `decodePos(Pd.x)` — **absolute, no reference, no period, exact at any separation**. `decodePos`
+already existed in the shader (it is what `prim_data` roots use), so [I7](issues.md) died on a
+substitution rather than the ~25-bits-per-slot second texel [B2](blockers.md) was asking the user to
+authorise.
+
+### Verified
+
+- **Corridor↔brute identity: 0 differing of 524 288 texels**, on BOTH classes (cold and hot),
+  `__corridor` toggled with the orbit frozen. This item changes only how a position is recovered, so
+  identity is the right check: any decode error would move a caster and change the map.
+- **Both record paths, read back from the live mirror**: 458 live billboards — **457 roots, 1 child**.
+  The one child is billboard 2 with parent 1, i.e. the pawn's head carried on its body, which is the
+  only composite in the scene. Root 1 decodes to world tile **100,50** — the camera's focus tile.
+- **The page loads and renders.** tsc cannot see GLSL, so a page load is the only real gate.
+
+### A false alarm worth recording
+
+The first load after these edits showed `compile shadow-gather.frag: 'win' : undeclared identifier` at
+line 778 — alarming, since `win` sits in `GATHER_FRAG` which this work never touched. It was **stale
+console history**: the reader returns messages captured since the tab opened, and both reads carried the
+identical `9:25:13` timestamp. Clearing the console and reloading at the P2 commit showed no error, and
+reloading again with F8 restored showed no error either.
+
+What settled it before the browser did: reassembling `GATHER_FRAG` offline put `win` at line **800**,
+not 778 — the error came from a source 22 lines shorter, i.e. a mid-edit HMR compile. Worth keeping: a
+console read here is not a fresh observation unless it is cleared first, and shader line numbers are
+precise enough to date the build that produced them.
