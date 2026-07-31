@@ -55,6 +55,6 @@ any of it.
 
 ## P5 — Leave a seam the re-think can build on
 
-- [ ] Write `current/lighting-seam.md`: where a lighting system attaches. Acceptance: it names the draw-sequence position, the G-buffer contents, the surviving record bands, and P1's measured ms budget.
-- [ ] Record the capability checklist from P0 as the acceptance any replacement inherits. Acceptance: the list sits beside the seam doc, so "does the new system do X" is answerable rather than argued.
-- [ ] Record what the strip deliberately KEPT and why ([F4](forks.md#f4), [F5](forks.md#f5)). Acceptance: normal/depth maps, the G-buffer, the primitive graph and F8 each carry their one-sentence reason.
+- [x] Write `current/lighting-seam.md`: where a lighting system attaches. Acceptance: it names the draw-sequence position, the G-buffer contents, the surviving record bands, and P1's measured ms budget.
+- [x] Record the capability checklist from P0 as the acceptance any replacement inherits. Acceptance: the list sits beside the seam doc, so "does the new system do X" is answerable rather than argued.
+- [x] Record what the strip deliberately KEPT and why ([F4](forks.md#f4), [F5](forks.md#f5)). Acceptance: normal/depth maps, the G-buffer, the primitive graph and F8 each carry their one-sentence reason.

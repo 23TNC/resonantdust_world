@@ -21,6 +21,8 @@ light** — about 91 % of the frame.
 
 ## What is available at the lighting seam
 
+_Full detail: [`lighting-seam.md`](lighting-seam.md)._
+
 A replacement attaches between the G-buffer bake and the display blit. Already produced per frame,
 composited on the fixed 32×16 slot grid, cold (static) and warm (movers) tiers:
 

@@ -286,3 +286,43 @@ The last one is the sharpest rule in the tree and I had not met it: a `current/`
 
 **354 files, green.** Down from 461 — and the repo-wide over-long-item warning fell from 244 to 173
 purely as a side effect of the archive.
+
+## 2026-07-31 · P5 — the seam is documented; the stream is complete
+
+[`components/client/webgl/current/lighting-seam.md`](../../components/client/webgl/current/lighting-seam.md)
+— where a lighting system attaches, what it can read, what it must build itself, and the budget it
+inherits. Stamped `verified @ <sha>` so its age is checkable.
+
+It names, concretely rather than by description:
+
+- **The attach point** — between the dirty-gated G-buffer bake and the display blit, which is the
+  frame's only steady-state draw. The removed system hung off a single `shadows.tick(...)` call there.
+- **The budget** — 0.028 ms/frame unlit against 0.508 static / 0.675 moving, so **~0.48–0.65 ms**
+  before a replacement costs more than what came out. With the qualifier that this is the content
+  scene, not the N=16 stress case.
+- **The channels, with a live/unread column** — `albedo` and `zdepth.B` are read; `normal`,
+  `surface.G` and `zdepth.R` are generated and read by nothing. Naming the unread ones matters,
+  because unconsumed maps drift silently.
+- **What is NOT there** — no data texture, no bands, no tier split. A replacement builds its own
+  record layer rather than inheriting one.
+- **How to measure it** — wall clock with `gl.finish()`, and an explicit *do not use timer queries*
+  with the reason ([I7](issues.md#i7)), since they fail by under-reporting rather than erroring.
+- **The 10-item capability checklist**, with 7–9 marked as a decided loss.
+- **The one thing the strip added** — `tightBoxFor` reading the resolver, so a successor knows
+  selection is not its problem.
+
+### The stream, end to end
+
+| | |
+|---|---|
+| code deleted | **4 348 lines** (`shadowGather.ts`, `coldShadowData.ts`) |
+| GPU memory freed | **~99 MiB** |
+| `VARIABLES.md` | **446 lines** — the whole data-texture section |
+| docs archived | 4 design/intent + **19 work streams** |
+| draws/frame | 4 → **1** |
+| ms/frame | 0.508 → **0.028** |
+| repo | 461 → 355 doc files, `docs-check` green |
+
+**Every phase ended at a page load**, which was the stream's own top-line acceptance — and the reason
+the two genuinely surprising findings (D2's wrong premise, and the cursor light re-baking on every
+pointer move) were caught by looking rather than by inference.
