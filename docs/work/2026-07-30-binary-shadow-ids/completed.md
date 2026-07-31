@@ -196,3 +196,19 @@ both of which a careless bulk `str.replace` introduced here. Only loading the pa
 guards followed from that: edit shader text with the Edit tool (the backtick hook fires; a heredoc
 bypasses it — and a backtick in a GLSL comment closed the template literal on the first attempt), and
 **never** treat a green typecheck as evidence a shader is valid.
+
+### Where to resume (P2), and the harness recipe
+
+The tree is clean and P1 is committed, so P2 starts from a verified checkpoint. To rebuild the
+measurement rig in a fresh session:
+
+1. Serve at **`?user=Claude&focus=100,50&zoom=1`** — the P0/P1 fixture. A different focus is a
+   different caster density and the numbers stop being comparable (this was nearly got wrong once).
+2. Wait for the corpus to stream (~15 s); a geo-tier frame measures the wrong thing.
+3. Wrap `tick` to capture `__lastArgs`, then install `__setlights(n, reachTiles)` /`__hzPump(90)` /
+   `__hzDrain()` — full source is in this session's transcript; they place N lights on DISTINCT tiles
+   (clustering silently drops past `PRES_SLOTS`), 12 warm-up frames dropped, timed by render target.
+4. `__orbit(true)`, then 3 repeats at N 12/14/15/16, reach 16.
+
+**Compare against:** N16 = **7.11 ms** (gather 6.19, light 0.92). That is the number P2–P4 have to beat,
+and the budget left is 0.89 ms before 8 ms.
