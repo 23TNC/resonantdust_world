@@ -127,3 +127,40 @@ per-texel information.
 
 **Supersedes:** F2 (16 slots), F3 (spare-bit packing — moot, no spare bits and none needed),
 [B1](blockers.md) (dissolved: the route needing the user's risk tolerance is gone).
+
+## F8 — A caster reference is u20, not u16: header px + N id px {#f8}
+
+**User, 2026-07-31.** Two gaps in F7's layout, both mine, both found by the user:
+
+**1. Billboards without a parent were never handled.** `billboard_data` R is
+`u16 parent_id (16-31) | u8 resolved_tile (8-15) | u8 resolved_unit (0-7)`. For a parentless billboard
+`parent_id` carries nothing, so it is reused: **`u8 region | u8 zone`**, the same addressing `prim_data`
+uses, gated by a new **`u1 child`** bit taken from A's `u14 reserved (0-13)`. Child set -> the field is a
+parent id as today; child clear -> it is region|zone.
+
+That is what kills [I7](issues.md): `resolvedTilePos` needed a `ref` only because the record lacked the
+HIGH bits of position. region|zone supplies exactly those, so a caster record becomes
+**self-positioning** and no reference tile is needed at all. My "store a dx,dy offset" patch is
+unnecessary.
+
+**2. The reference is u20, not u16.** The data texture is *16 u16-addressable SETS*
+(`set = linear >> 16`), so identifying a record takes `u4 set | u16 in-set id` = **20 bits**. 8 casters x
+u20 = 160 bits, which never fitted the 128-bit texel. F7's arithmetic was wrong the moment it assumed
+u16 was a whole reference.
+
+**The layout, per the user:**
+
+```
+px 0  HEADER   4 channels x u32; each channel serves 2 lights
+               => 16 bits per light = 4 x u4 set  => supports N = 1..4 casters/light
+px 1  IDS      8 lights x u16 in-set id                        (N = 1)
+px 2..4        further id px, one per extra caster             (N = 2..4)
+```
+
+So the shadow texel becomes **2 px at N=1**, growing to 5 px at N=4 — and N is now a real dial rather
+than a rewrite, which is what the user asked for from the start ("expand to N prims... increases the px
+count per slot").
+
+**Supersedes** F7's single-px claim and the id-width half of [I7](issues.md)/[B2](blockers.md). The
+storage route is the 2x-wide RT (single attachment, no MRT, never hung) that F7 dismissed as
+unnecessary — it is necessary after all, for a reason F7 did not know.
