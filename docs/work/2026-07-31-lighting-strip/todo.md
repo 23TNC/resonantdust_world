@@ -17,7 +17,7 @@ pair the shadow streams used, so before/after images are comparable.
 
 ## P0 — Record what is about to be destroyed
 
-- [ ] Capture four reference renders: zoom 1, zoomed out, a torch-lit corner, a conifer shadow edge. Acceptance: four images in `completed.md`, each with its URL — the successor SEES what was given up.
+- [x] Capture four reference renders: zoom 1, zoomed out, a torch-lit corner, a conifer shadow edge. Acceptance: four images in `completed.md`, each with its URL — the successor SEES what was given up.
 - [ ] Record the per-frame draw sequence and the ms of each pass at N=1 and N=16 lights. Acceptance: a table — pass name, render target, ms mean and spread — from the existing tick-driven harness before any code moves.
 - [ ] Record resident RT bytes per target, and the total. Acceptance: a table summing to the ~83 MiB the README claims, or a corrected figure; whichever is true is what gets written.
 - [ ] Write the capability inventory: every visual behaviour the system delivers today. Acceptance: a numbered list — cold/hot tiers, mover shadows, n/s cards, shadows onto billboards, decay, per-light N·L, bilinear.
