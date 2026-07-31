@@ -19,6 +19,8 @@ import type { MaterialRegistry } from "./material";
 import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { makeNoiseAtlas } from "./noiseAtlas";
 import { OutlineOverlay, type OutlineItem } from "./outlineOverlay";
+import { installFrameCost } from "./frameCost";
+import { installReachCheck } from "./lightReach";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
@@ -125,6 +127,10 @@ export class Viewport {
     // COUNTS and map dims rather than screenshots. The scene is unlit by default, so sampling the
     // canvas cannot distinguish a re-bake flash from ordinary darkness — the cache state can.
     (globalThis as unknown as { __viewport: Viewport }).__viewport = this;
+    // lighting-rework P0: `__framecost()` — the stream's ONE measurement instrument.
+    installFrameCost(this, this.renderer.gl);
+    // lighting-rework P0 (F6): `__reachcheck()` — proves the TS and GLSL reach agree at all 1024 values.
+    installReachCheck(this.renderer.gl);
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
     // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
     (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {

@@ -32,6 +32,34 @@ export interface DrawOptions {
   count?: number;
 }
 
+/** Prove an internal format can actually back a colour attachment on THIS machine.
+ *
+ *  Allocates a 1x1 texture, attaches it, and asks the driver — rather than trusting the spec's
+ *  renderable-format table, which is what a machine is free to disappoint. Throws with the format
+ *  named, because the alternative is a pass that silently writes nothing. */
+function assertRenderable(gl: WebGL2RenderingContext, internal: number, label: string, why: string): void {
+  const tex = gl.createTexture();
+  const fbo = gl.createFramebuffer();
+  try {
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, internal, 1, 1);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      throw new Error(
+        `[gl] ${label} is not colour-renderable here (framebuffer status 0x${status.toString(16)}) — ` +
+        `${why} cannot be written. Refusing to start rather than rendering into a dead attachment.`,
+      );
+    }
+  } finally {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.deleteFramebuffer(fbo);
+    gl.deleteTexture(tex);
+  }
+}
+
 export class Renderer {
   readonly gl: WebGL2RenderingContext;
   readonly canvas: HTMLCanvasElement;
@@ -62,6 +90,14 @@ export class Renderer {
         );
       }
     }
+
+    // lighting-rework P0 — the per-light slot format (F2). RGB10_A2 is colour-renderable in core
+    // ES 3.0 and, being FIXED-POINT, blends there too. Both are asserted rather than assumed for
+    // the reason the block above gives: this class of failure is silent. An unrenderable
+    // attachment makes the FBO incomplete, and a lighting pass drawing into an incomplete FBO
+    // writes nothing while raising no error — indistinguishable, on screen, from "the lights are
+    // off". Cheaper to find out at boot than from a black world.
+    assertRenderable(gl, gl.RGB10_A2, "RGB10_A2", "the per-light lightmap slots");
   }
 
   /** Match the drawing buffer to the CSS size × DPR. Returns true if it changed. */

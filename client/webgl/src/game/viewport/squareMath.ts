@@ -34,7 +34,10 @@ export const SQUARE = 128;
 /** World UNIT in px — `UNIT = SQUARE/16`; 16 units per tile edge. Shadow math is in units.
  *  Units-per-tile is FIXED at 16, so this tracks `SQUARE` and every tile+unit position — which is
  *  what the wire and the data records store — is unaffected by the `SQUARE` change. */
-export const UNIT = SQUARE / 16;
+/** Units per tile — a WORLD invariant, not a dial. The rework names it explicitly rather than
+ *  leaving 16 as a bare literal in a dozen derivations. */
+export const UNITS_PER_TILE = 16;
+export const UNIT = SQUARE / UNITS_PER_TILE;
 
 // ── Textile resolutions — the shared toroidal TILE grid (map-model.md, lighting rebuild) ──
 // A TEXTILE is one texel of a map. EVERY map — data textures and full-res — shares the ONE

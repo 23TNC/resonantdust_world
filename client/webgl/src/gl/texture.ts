@@ -4,7 +4,7 @@
 //! NEAREST filtering (LINEAR is invalid on them). Atlas frame UVs are the caller's job (we keep the whole
 //! page here); the resolver already computes frames.
 
-export type TexFormat = "rgba8unorm" | "rgba32float" | "rgba16float" | "rgba8uint" | "rgba32uint" | "r8uint" | "r32uint";
+export type TexFormat = "rgba8unorm" | "rgb10a2unorm" | "rgba32float" | "rgba16float" | "rgba8uint" | "rgba32uint" | "r8uint" | "r32uint";
 
 interface Fmt {
   internal: number;
@@ -17,6 +17,12 @@ function glFmt(gl: WebGL2RenderingContext, f: TexFormat): Fmt {
   switch (f) {
     case "rgba8unorm":
       return { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE, integer: false };
+    case "rgb10a2unorm":
+      // lighting-rework F2: a per-light slot. FIXED-POINT, so blending is CORE ES 3.0 — no
+      // `EXT_float_blend` on the write path — and 10 bits over a x4 scale gives 256 levels per
+      // unit interval, i.e. today's effective precision while preserving the 4x overbright the
+      // old blit clamped at. Same 4 bytes as rgba8unorm.
+      return { internal: gl.RGB10_A2, format: gl.RGBA, type: gl.UNSIGNED_INT_2_10_10_10_REV, integer: false };
     case "rgba32float":
       return { internal: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT, integer: false };
     case "rgba16float":

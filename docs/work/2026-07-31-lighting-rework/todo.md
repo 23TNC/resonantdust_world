@@ -22,10 +22,10 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 
 ## P0 — Ground rules, formats, and the harness
 
-- [ ] Confirm the strip has reached the end of its P2 (machinery deleted, RTs freed). Acceptance: `shadowGather.ts` is gone, the page loads unlit, and the frame is 1 draw — the floor this stream builds from.
-- [ ] Validate `RGB10_A2` renderability + blending at boot, alongside the existing extension checks. Acceptance: an unsupported format fails LOUDLY at startup, in the same style as `renderer.ts`'s float checks — never a silent degrade.
-- [ ] Build the frame-cost harness: hand-driven ticks, `gl.finish()` both ends, median of 5. Acceptance: it reproduces the stripped baseline of 0.045 ms/frame within its own spread, so the instrument is trusted before it measures anything new.
-- [ ] Write the shared `reachFromIntensity()` used by BOTH the CPU light-set build and the GPU walk bound ([F6](forks.md#f6)). Acceptance: one implementation; a dev check asserts CPU and GPU agree at every `u10` intensity.
+- [x] Confirm the strip has reached the end of its P2 (machinery deleted, RTs freed). Acceptance: `shadowGather.ts` is gone, the page loads unlit, and the frame is 1 draw — the floor this stream builds from.
+- [x] Validate `RGB10_A2` renderability + blending at boot, alongside the existing extension checks. Acceptance: an unsupported format fails LOUDLY at startup, in the same style as `renderer.ts`'s float checks — never a silent degrade.
+- [x] Build the frame-cost harness: hand-driven ticks, `gl.finish()` both ends, median of 5. Acceptance: it reproduces the stripped baseline of 0.045 ms/frame within its own spread, so the instrument is trusted before it measures anything new.
+- [x] Write the shared `reachFromIntensity()` used by BOTH the CPU light-set build and the GPU walk bound ([F6](forks.md#f6)). Acceptance: one implementation; a dev check asserts CPU and GPU agree at every `u10` intensity.
 
 ## P1 — The record layer: flat prims, definitions, atlas
 
