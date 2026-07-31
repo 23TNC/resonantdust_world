@@ -154,3 +154,30 @@ The old system dropped in silence, and the failure mode is nasty: a light simply
 tile, and it reads as a shader bug rather than as a capacity limit. A counter turns a debugging session
 into a glance. This is the cheapest error handling in the stream and it is the one most likely to be
 skipped, so it is an item with an acceptance criterion rather than a note.
+
+## F11 — Emissive, ambient × AO and decay are NOT in this pass {#f11}
+
+The strip removed three things the rework design does not mention: **emissive** (self-lit pixels — a
+wolf's eyes in pitch dark, masked off the zdepth composite's R lane), **ambient × AO** (an
+omnidirectional floor attenuated by baked occlusion), and **decay/flicker** (ephemeral particle glow in
+its own coarse map).
+
+- (a) Carry all three forward in this pass.
+- (b) Carry ambient × AO only — it is nearly free.
+- **(c) None of them. They are features, and this pass is a lighting-model rework.**
+
+**Chosen: (c),** on the user's steer: _"they're features that are not implemented in this pass."_
+Bundling them would put three independent behaviours inside the one stream whose headline number is
+lights-per-frame, and each would blur what the measurement attributes.
+
+**What it costs to add each later**, so the decision is reversible on purpose rather than by luck:
+
+| | to add later |
+|---|---|
+| **Ambient × AO** | one multiply against `surface.G`, which the blit already samples. Cheapest of the three by a wide margin |
+| **Emissive** | a per-prim or per-definition lane — and both records are **exactly 128 bits with no spare**, so it costs a layout change, not a field |
+| **Decay / flicker** | a whole extra map and pass; genuinely independent of the lighting model |
+
+**The one thing to not design out:** keep the blit sampling the `surface` composite. If it stops, AO
+becomes a re-plumb rather than a multiply, and that is the one of the three most likely to be wanted
+back.

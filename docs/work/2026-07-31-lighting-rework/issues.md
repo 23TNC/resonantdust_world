@@ -111,3 +111,23 @@ strip's reference renders:
 
 Items 7–9 were **cut with the strip and are not in the rework design**. That is a deliberate loss to
 re-decide, not an oversight to fix silently — P7 records it in the A/B.
+
+## I7 — 8 lights per tile is an artefact of the OLD bit budget {#i7}
+
+Eight was never a design ceiling. It was `128 bits / u16` — the number that made caster ids fit the
+shadow texel exactly ([strip I1](../2026-07-31-lighting-strip/issues.md#i1)). The rework keeps 8, and
+should not keep it *for that reason*, because the reason no longer exists.
+
+In the new model the cap is set by the **slot map**, not by a texel: 8 slots is 8 px per texel and
+64 MiB; 16 would be 128 MiB. That is a memory-vs-density trade with a measurable price, which is a
+different question from the packing constraint 8 came from.
+
+Two things pull against each other, and neither is resolvable from the desk:
+
+- The design says _"dense AUTHORED point lights, not a sun"_, which argues for more per tile.
+- The per-tile cap is on **overlap at one tile**, not on how many lights exist — tile A can hold
+  lights 1–8 while tile B holds 9–16 — so 8 overlapping at a single tile may already be generous.
+
+**Revisit at P7, with the cost per light from P3 in hand.** Recorded now so that "8" is a decision
+someone made with numbers rather than a constant that survived three rewrites because it looked
+familiar.
