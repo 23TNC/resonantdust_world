@@ -912,6 +912,17 @@ _surface_kind() {  # kind
     convert "$src" -alpha extract -colorspace Gray "$b"                         # B = diffuse alpha
     convert "$r" "$g" "$b" -combine -colorspace sRGB -alpha off -strip "$surf"
     rm -f "$r" "$g" "$b"
+    # VERIFY. B is the client's ONLY coverage source (the G-buffer is all-opaque, and the blit is
+    # `albedo x light x surface.B`), so an empty B is an invisible sprite — and it ships silently
+    # because every file exists and every step returns 0. Measured 178 of 255 surface maps in the
+    # tree entirely black before this check existed. Compare against the diffuse that made it:
+    # coverage may legitimately be low, but it cannot be ZERO where the diffuse has alpha.
+    local _sb _da
+    _sb=$(convert "$surf" -channel B -separate -format '%[fx:mean]' info: 2>/dev/null)
+    _da=$(convert "$src" -alpha extract -format '%[fx:mean]' info: 2>/dev/null)
+    if awk -v s="${_sb:-0}" -v d="${_da:-0}" 'BEGIN{ exit !(s < 1e-6 && d > 1e-6) }'; then
+      echo "art: surface ${surf#$MASTER_DIR/} has ZERO coverage but its diffuse has alpha (mean $_da) — the sprite would render invisible" >&2
+    fi
   done < <(_find_diffuse "$MASTER_DIR/$kind")
 }
 
