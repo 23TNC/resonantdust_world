@@ -74,9 +74,10 @@ export class TextureResolver {
   private readonly spriteBBox = new Map<string, { fx: number; fy: number; fw: number; fh: number }>();
   /** stem → the RAW (pre-scale) surface bbox fractions — drives the ingest re-centring. */
   private readonly rawBBox = new Map<string, { fx: number; fy: number; fw: number; fh: number }>();
-  /** stem → pre-atlas sprite scale (def-frame-anchors P5): applied at pack — scaled, clipped
-   *  to the same pow2 frame, transparent-filled, re-centred on the surface presence. */
-  private readonly spriteScale = new Map<string, [number, number]>();
+  /** stem → `[sw, sh, pivotX, pivotY]` — the pre-atlas sprite transform (def-frame-anchors P5,
+   *  pivot added by pawn-part-placement F4): applied at pack — scaled about the pivot's point on
+   *  the surface presence, clipped to the same pow2 frame, transparent-filled. */
+  private readonly spriteScale = new Map<string, [number, number, number, number]>();
   /** texture-generalization: linked stem (the `<stem>/l` name) → its DSL `internal_padding`
    *  (UNITS, of a 16-unit cell) — the BETWEEN-CELL inset inside the atlas. Distinct from the
    *  manifest's external `pad` (fractions), which stays 0 per R5. Applied by `cellFrame`. */
@@ -147,14 +148,19 @@ export class TextureResolver {
     return stem ? this.spriteBBox.get(stem) ?? null : null;
   }
 
-  /** Register `stem`'s pre-atlas sprite scale (from the DSL layout, def-frame-anchors P5). A
-   *  CHANGE evicts the stem's packed LODs + bboxes so they repack under the new transform
+  /** Register `stem`'s pre-atlas sprite scale (from the DSL layout, def-frame-anchors P5), with
+   *  the PIVOT it scales about (`sprite_anchor`, fractions of the sprite's opaque bbox —
+   *  pawn-part-placement F4). The pivot is the art point that must not move: bottom-anchored art
+   *  (`sprite_anchor.y = 1`) keeps its feet on the same line instead of being re-centred off them.
+   *  The default (0.5, 0.5) is the bbox centre — the behaviour this generalises.
+   *
+   *  A CHANGE evicts the stem's packed LODs + bboxes so they repack under the new transform
    *  (bytes stay cached — only the pack redoes). */
-  setSpriteScale(stem: string, sw: number, sh: number): void {
+  setSpriteScale(stem: string, sw: number, sh: number, px = 0.5, py = 0.5): void {
     const cur = this.spriteScale.get(stem);
-    if (cur && cur[0] === sw && cur[1] === sh) return;
+    if (cur && cur[0] === sw && cur[1] === sh && cur[2] === px && cur[3] === py) return;
     if (!cur && sw === 1 && sh === 1) return;
-    this.spriteScale.set(stem, [sw, sh]);
+    this.spriteScale.set(stem, [sw, sh, px, py]);
     this.packed.delete(stem); // co-packed by stem → drop the whole stem's frames; bytes stay cached
     this.packedHash.delete(stem);
     this.spriteBBox.delete(stem);
@@ -320,7 +326,7 @@ export class TextureResolver {
       if (surf && !this.spriteBBox.has(stem)) {
         const rawB = computeSpriteBBox(surf);
         this.rawBBox.set(stem, rawB);
-        this.spriteBBox.set(stem, scaled ? transformedBBox(rawB, scale![0], scale![1]) : rawB);
+        this.spriteBBox.set(stem, scaled ? transformedBBox(rawB, scale!) : rawB);
       }
       const quadN = (albedo ?? surf)!.width; // square masters → every map is quadN × quadN at this lod
       const ok = this.packCoPack(stem, size, quadN, bmps, scaled ? scale : undefined, this.rawBBox.get(stem));
@@ -356,7 +362,7 @@ export class TextureResolver {
    *  sprites); otherwise a straight quadrant blit. Stored under `(stem, size)`. */
   private packCoPack(
     stem: string, size: number, quadN: number, bmps: Array<ImageBitmap | null>,
-    scale?: [number, number], rawB?: { fx: number; fy: number; fw: number; fh: number },
+    scale?: [number, number, number, number], rawB?: { fx: number; fy: number; fw: number; fh: number },
   ): boolean {
     if (!this.renderer) return false;
     const gl = this.renderer.gl;
@@ -366,8 +372,12 @@ export class TextureResolver {
       if (scale) {
         const W = quadN, H = quadN;
         const dw = W * scale[0], dh = H * scale[1];
-        const cx = rawB ? rawB.fx + rawB.fw / 2 : 0.5, cy = rawB ? rawB.fy + rawB.fh / 2 : 0.5;
-        const ox = W / 2 - cx * dw, oy = H / 2 - cy * dh;
+        // F4: scale ABOUT THE PIVOT — the pivot's point on the opaque bbox is the one art point
+        // that must land where it already was, so bottom-anchored art keeps its feet. Pivot
+        // (0.5, 0.5) reduces to the bbox-centre re-centring this replaces.
+        const px = rawB ? rawB.fx + rawB.fw * scale[2] : scale[2];
+        const py = rawB ? rawB.fy + rawB.fh * scale[3] : scale[3];
+        const ox = px * (W - dw), oy = py * (H - dh);
         const d0x = Math.max(0, ox), d1x = Math.min(W, ox + dw);
         const d0y = Math.max(0, oy), d1y = Math.min(H, oy + dh);
         const draw: AtlasDraw = {
@@ -395,13 +405,14 @@ export class TextureResolver {
   }
 }
 
-/** The post-ingest-transform bbox fractions: scale the raw bbox about the origin, shift by the
- *  re-centring offset (raw-bbox centre → frame centre), clamp to the frame (clipping may cut it). */
+/** The post-ingest-transform bbox fractions — the SAME transform `packCoPack` draws with (F4):
+ *  scale about the pivot's point on the raw bbox, then clamp to the frame (clipping may cut it). */
 function transformedBBox(
-  b: { fx: number; fy: number; fw: number; fh: number }, sw: number, sh: number,
+  b: { fx: number; fy: number; fw: number; fh: number }, scale: [number, number, number, number],
 ): { fx: number; fy: number; fw: number; fh: number } {
-  const cx = b.fx + b.fw / 2, cy = b.fy + b.fh / 2;
-  const ox = 0.5 - cx * sw, oy = 0.5 - cy * sh; // fraction-space content origin after re-centre
+  const [sw, sh, pvx, pvy] = scale;
+  const px = b.fx + b.fw * pvx, py = b.fy + b.fh * pvy;
+  const ox = px * (1 - sw), oy = py * (1 - sh); // fraction-space content origin after the scale
   const x0 = Math.max(0, ox + b.fx * sw), x1 = Math.min(1, ox + (b.fx + b.fw) * sw);
   const y0 = Math.max(0, oy + b.fy * sh), y1 = Math.min(1, oy + (b.fy + b.fh) * sh);
   return { fx: x0, fy: y0, fw: Math.max(0, x1 - x0), fh: Math.max(0, y1 - y0) };

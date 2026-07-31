@@ -162,8 +162,15 @@ pub struct VisualPart {
   /// Which `<part>` files of the resolved leaf this slot draws (`&prim.part`, default 0
   /// — the body files; a human head draws part 1).
   pub part: u32,
-  /// Size multiplier against SLOT 0's drawn size (`&prim.scale`, default 1 — the head
-  /// authors 0.625: head canvases are held about body size).
+  /// The slot's PRE-ATLAS sprite scale (`&prim.scale`, default 1): the art is scaled inside the
+  /// slot's own `span × span` frame at atlas ingest, about its `sprite_anchor` pivot. ABSOLUTE —
+  /// on a `span 1` slot it reads as tiles of art (the human authors body 0.8, head 0.5).
+  ///
+  /// It was a multiplier against slot 0's DRAWN size until 2026-07-30. That made the drawn box
+  /// disagree with the def's pow2 frame span, and the lighting/shadow card is sized from the
+  /// def — so the silhouette came out `1/scale` too big (pawn-part-placement I6). Keep the scale
+  /// pre-atlas: it is the only stage where the albedo, the normal, the surface and the opaque
+  /// bbox all move together.
   pub scale: f64,
   /// Placement offset in TILES relative to slot 0's anchor (`&prim.offset.x/y`, default 0).
   pub offset: (f64, f64),
@@ -958,7 +965,10 @@ mod tests {
       let v = b.visual_for_object(id).expect("visual");
       assert_eq!(v.parts.len(), 2, "{name}: body + head");
       assert_eq!(v.parts[1].part, 1, "{name}: head draws part-1 files");
-      assert_eq!(v.parts[1].scale, 0.625, "{name}: head scale (user spec)");
+      // pawn-part-placement F4: `scale` is the PRE-ATLAS art scale, so the user's two numbers
+      // are absolute — body 0.8 tiles of art, head 0.5, both in `span 1` frames.
+      assert_eq!(v.parts[0].scale, 0.8, "{name}: body scale (user spec)");
+      assert_eq!(v.parts[1].scale, 0.5, "{name}: head scale (user spec)");
     }
     // the wolf stays the 1-part degenerate case
     let wolf = b.visual_for_object(b.thing_object_id("wolf").unwrap()).unwrap();

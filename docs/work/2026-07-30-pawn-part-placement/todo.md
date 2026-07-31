@@ -14,10 +14,10 @@ the two real gaps (facing z-order, albedo/lighting unification), then re-check t
 
 ## P1 — The DSL tune (body 0.8, head 0.5)
 
-- [ ] Apply slot 0's own `scale` to the carrier box in `MoverLayer`, per the re-resolved [F3](forks.md#f3). Acceptance: authoring `0.8 &body.scale set` makes the body's read-back `w` 102.4, not 128.
-- [ ] Re-seat `head.offset.y` for the new body height, starting from half a body height north. Acceptance: the head sits ON the shoulders, not inside the torso, at zoom 1 in the east facing.
-- [ ] Replace the stale "first-guess placement" comment in `pawns.rd` with the measured value. Acceptance: the comment names the body height it was tuned against, so the next size change knows to re-tune.
-- [ ] Check the head still seats correctly in all four facings. Acceptance: four crops; any facing that needs its own offset is recorded as a finding rather than special-cased.
+- [x] Route each slot's `scale` to its stem's pre-atlas `sprite_scale`, per [F4](forks.md#f4) (was: apply it to the carrier box — see [D1](deviations.md)). Acceptance: every part's read-back `w` stays `span × SQUARE`, and the ART measures the authored tiles.
+- [x] Re-seat `head.offset.y` for the new body height, starting from half a body height north. Acceptance: the head sits ON the shoulders, not inside the torso, at zoom 1 in the east facing.
+- [x] Replace the stale "first-guess placement" comment in `pawns.rd` with the measured value. Acceptance: the comment names the body height it was tuned against, so the next size change knows to re-tune.
+- [x] Check the head still seats correctly in all four facings. Acceptance: four crops; any facing that needs its own offset is recorded as a finding rather than special-cased.
 
 ## P2 — Facing-dependent z-order
 

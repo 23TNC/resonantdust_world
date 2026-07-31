@@ -36,8 +36,14 @@ const PAWN_Z_BASE = 1;
 
 /** One part SLOT of a pawn kind's visual skeleton — the wasm `moverParts` row (human-pawns
  *  P2). Slot order = DSL `^prim call` order; slot 0 boxes the carrier; `part` names which
- *  `<part>` files of the resolved leaf the slot draws; `scale` multiplies slot 0's drawn
- *  size; `offset*` places the slot in tiles relative to slot 0's anchor. */
+ *  `<part>` files of the resolved leaf the slot draws; `offset*` places the slot in tiles
+ *  relative to slot 0's anchor.
+ *
+ *  `scale` is the slot's PRE-ATLAS sprite scale (pawn-part-placement F4), applied to the art
+ *  inside its own `span × span` frame — NOT to the drawn box. It used to multiply slot 0's drawn
+ *  size, which made the drawn box disagree with the def's pow2 frame span and cast a silhouette
+ *  1/scale too big ([I6]). It is therefore ABSOLUTE now: a `span 1` slot at `scale 0.5` is half a
+ *  tile of art, whatever slot 0 does. */
 interface MoverPart {
   stem: string | null;
   part: number;
@@ -495,16 +501,26 @@ export class MoverLayer {
     };
     const variantOf = (d: number): number => (d >>> 16 !== 0 ? d & 0xf : 0);
 
+    // F4: a slot's authored `scale` is its stem's PRE-ATLAS sprite scale, registered under the
+    // EXACT resolved name (I7: the kind-level registration keys a stem that never gets packed).
+    // Registering before the prim is placed means the first pack already carries the transform.
+    const scaleSlot = (s: MoverPart, name: string | undefined): void => {
+      if (name) this.viewport.setSpriteScale(name, s.scale, s.scale, s.spriteAnchorX, s.spriteAnchorY);
+    };
+
     // Slot 0 — the carrier box from the kind's layout (the wolf's whole visual).
     const d0 = defOf(0);
+    const layout = readLayout(this.thingLayout, kind);
     const tex0 = moverSlotTexture(stemOf(slots[0], d0), facing, variantOf(d0), slots[0].part, has);
-    const box = placeThing(tileX, tileY, readLayout(this.thingLayout, kind), tex0.flipX, !tex0.name);
+    scaleSlot(slots[0], tex0.name);
+    const box = placeThing(tileX, tileY, layout, tex0.flipX, !tex0.name);
     const size0 = box.width; // square box
     const zIndex = PAWN_Z_BASE + box.zRow;
-    // The carrier's game anchor (base-centre) + the px-per-tile scale for slot offsets.
+    // The carrier's game anchor (base-centre) + the px-per-tile scale for slot offsets. Every box
+    // is `span × SQUARE` now (F4 — the scale lives in the art), so one tile is `size0 / span`.
     const ax = box.x + size0 * 0.5;
     const ay = box.y + size0;
-    const tilePx = slots[0].size > 0 ? size0 / slots[0].size : size0;
+    const tilePx = layout.span > 0 ? size0 / layout.span : size0;
 
     interface SlotSpec {
       texName: string | undefined; flipX: boolean; x: number; y: number; w: number;
@@ -518,7 +534,10 @@ export class MoverLayer {
       const s = slots[i];
       const di = defOf(i);
       const tex = moverSlotTexture(stemOf(s, di), facing, variantOf(di), s.part, has);
-      const w = size0 * s.scale;
+      scaleSlot(s, tex.name);
+      // The slot's OWN frame span in world px — never slot 0's box times a factor (F4): the drawn
+      // box must equal the def's pow2 frame span or the lighting card mis-sizes by the ratio.
+      const w = (s.span > 0 ? s.span : 1) * tilePx;
       // The slot's authored offset (tiles) from the carrier anchor; x mirrors with a west
       // facing so the part stays on the sprite's correct side.
       const ox = (tex.flipX ? -s.offsetX : s.offsetX) * tilePx;

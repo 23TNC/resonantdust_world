@@ -29,10 +29,68 @@ sub-tile offset; this is a whole duplicate at 1.6x scale and dominates the visua
 why the user saw "normal scaled, albedo did not" — two composited copies at different scales read
 exactly that way, and [I2](#i2) was already refuted as impossible at the bake.
 
-Not yet root-caused. The candidates: the pawn being classed into BOTH cold and warm, or a cold
-invalidation that uses slot 0's 128 px box and so never clears the head's own texels when the
-per-slot scale shrinks it. Note `MoverLayer` derives everything from `size0 = box.width` (slot 0),
-which is the same 128-vs-80 confusion that produces [I4](#i4).
+**ROOT-CAUSED 2026-07-30.** Neither cold-layer candidate was right — there is no cold `pawn/human`
+prim at all (`__viewport.map.prims` holds none), and the warm cache holds exactly the wolf, the
+cursor light and the pawn's two parts. Removing the head prim removed BOTH heads; the
+`albedo-warm` overlay shows only ONE head, at the correct 80 px. So the ghost is not albedo — it is
+the **lighting silhouette**, and it is 1.6× because the shadow/light CARD is sized from the def,
+not from the prim:
+
+```js
+// coldShadowData.definitionFor
+const stRaw = Math.max(1, Math.round(Math.max(billboard.width, billboard.height) / SQUARE));
+let st = 1; while (st < stRaw) st <<= 1;   // pow2 TILES
+const spanU = st * 16;                     // → the tight box, in world px
+```
+
+The head draws at `128 × 0.625 = 80` px. `round(80/128) = 1`, so the card is **one tile = 128 px**
+and every downstream world extent (`defTight`, the silhouette quad, the lightmap deposit) is
+`128/80 = 1.6×` the drawn sprite. Measured against the art: the head's opaque bbox is
+`0.75 × 0.875` of its frame, so the card is 96×112 world px while the drawn head's art is 60 px
+wide — 1.6× exactly, concentric, which is the ghost.
+
+**Proved live**: growing the head prim to 128 px (its def's frame span) collapsed the two heads
+into one correctly-lit head. Nothing else changed.
+
+**Why it cannot be fixed by scaling the def.** `ppu = 2^lod / spanU` must be a whole pow2 — the
+whole-px-per-unit invariant in [`VARIABLES.md`](../../VARIABLES.md) §definition_data. A card of
+`80 px = 10 units` gives `ppu = 12.8`, so the def drops to the loose lod-0 fallback. The def model
+**requires the drawn world span to be a pow2 tile count**; a free-form draw-time multiplier can
+never be expressed in it. Resolved as [F4](forks.md#f4): the per-slot size moves to `sprite_scale`,
+where the art — and with it the bbox, the tight box and all four co-packed maps — scales together.
+
+## I7 — `sprite_scale` never reaches a multi-facing stem {#i7}
+_2026-07-30 · found while root-causing [I6](#i6) · **live**, out of this stream's scope_
+
+`WorldBridge` registers a kind's authored `sprite_scale` under the kind's BASE stem:
+
+```ts
+const stem = textureNameFor(this.thingStems[kind - 1]);   // "pawn/animal/wolf"
+this.resolver.setSpriteScale(stem, l.scw, l.sch);
+```
+
+but the resolver looks the scale up by the RESOLVED texture name at pack time
+(`pawn/animal/wolf/e` — facing appended). Read back live, `spriteScale` holds exactly two entries,
+`biome-thing/default/flora → 0.5` and `pawn/animal/wolf → 1.125`, and neither key is ever a name
+that gets packed. **So every authored `sprite_scale` in the corpus is currently inert.**
+
+Deliberately NOT fixed here. Honouring the two live values would resize the wolf and every flora
+instance — a visible change to two kinds this stream was not asked to touch. [F4](forks.md#f4)
+therefore registers pawn slot scales under their EXACT resolved names, which needs no lookup
+change; making the base-stem registration work is its own piece of work.
+
+## I8 — `maxCardTiles` walks the layout table on a stale stride {#i8}
+_2026-07-30 · noticed while removing `body.size` · **live**, out of scope_
+
+```ts
+for (let kind = 1; kind * 7 <= this.thingLayout.length; kind++)   // WorldBridge.ts:265
+```
+
+`LAYOUT_STRIDE` is **10**, not 7, so the loop runs ~1.4× the real kind count and the tail iterations
+read past the table — `readLayout` returns `DEFAULT_LAYOUT` for them, so the max is unaffected today
+and nothing is corrupted. It reads `size`, which [I4](#i4) showed is inert for the drawn box; the
+live `maxTightHpx` is the real bound anyway. Left alone: touching the shadow-walk dilation bound is
+not this stream's business.
 
 ## I4 — `body.size` never reaches the drawn box; `placeThing` uses `span` {#i4}
 _2026-07-30 · P0.3 · **measured live** — invalidates [F3](forks.md#f3)_

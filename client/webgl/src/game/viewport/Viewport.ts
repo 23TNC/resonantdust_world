@@ -220,6 +220,15 @@ export class Viewport {
     return this.resolver?.has(name) ?? false;
   }
 
+  /** pawn-part-placement F4: register a stem's pre-atlas sprite scale + pivot. A part slot's
+   *  authored `scale` reaches the resolver through here, so the art shrinks INSIDE its pow2 frame
+   *  and every co-packed map (albedo/normal/surface) plus the opaque bbox — and therefore the
+   *  shadow card — scales as one. A no-op before the resolver attaches; the MoverLayer re-registers
+   *  on every visual apply, so the value lands as soon as it does. */
+  setSpriteScale(stem: string, sw: number, sh: number, px: number, py: number): void {
+    this.resolver?.setSpriteScale(stem, sw, sh, px, py);
+  }
+
   /** Attach the texture resolver (master→preview→geo) + our GL context. Called by the world scene once
    *  the viewport exists (F6). A LOD landing re-bakes both caches so prims pick up the upgrade. */
   setResolver(resolver: TextureResolver): void {

@@ -50,7 +50,9 @@ checks it by eye before accepting.
 
 ## F3 — Which field sizes a part {#f3}
 _2026-07-30 · **RE-RESOLVED at P0.3** — the original was built on a field that does nothing
-([I4](issues.md#i4)) · **slot 0 gets its own `scale`, like every other slot**_
+([I4](issues.md#i4)) · **slot 0 gets its own `scale`, like every other slot** · **then SUPERSEDED
+at P1 by [F4](#f4)**: applying `scale` to the carrier BOX would have given the body the same
+1.6×-silhouette defect the head has ([I6](issues.md#i6)) — the scale belongs pre-atlas_
 
 **Chosen.** Apply `MoverPart.scale` to slot 0's carrier box, the same way it already applies to
 slot 1. Then `0.8 &body.scale set` draws the body at `128 × 0.8 = 102.4` px, and the head follows
@@ -77,6 +79,44 @@ uniform removes a special case rather than adding one.
 divides by the very `size` that does not size the box — the likely reason `head.offset.y -1.15`
 resolves to a 10 px separation instead of ~147 px. That divisor has to be re-derived from whatever
 sizes the box once this lands.
+
+## F4 — Where a part's SIZE is applied {#f4}
+_2026-07-30 · resolved at P1 · **supersedes [F3](#f3)** · **`sprite_scale` (pre-atlas), not the
+drawn quad**_
+
+**Chosen.** `MoverPart.scale` stops multiplying the drawn box and becomes the slot stem's
+**`sprite_scale`** — the pre-atlas transform the resolver already implements. Every slot draws at
+its own `span × SQUARE`; the art is scaled INSIDE that pow2 frame at ingest. `0.8 &body.scale set`
+and `0.5 &head.scale set` then mean what the user asked for, measured in tiles of art.
+
+**Why.** [I6](issues.md#i6) proved a draw-time multiplier is unrepresentable downstream: the
+lighting card is sized from the def's pow2 frame span, and the whole-px-per-unit invariant
+(`ppu = 2^lod / spanU`) forbids sizing a def in anything else. Any drawn size other than
+`span × SQUARE` therefore casts a mismatched silhouette. `sprite_scale` moves the scale to the one
+stage where it costs nothing: the resolver scales all four co-packed maps together AND recomputes
+the opaque bbox, so albedo, normal, surface and the shadow card all shrink as one. That IS
+requirement 4 — one positioning system — arrived at from the size axis instead of the sample axis.
+
+**Consequence: `scale` becomes ABSOLUTE, not relative.** It was "multiplies slot 0's drawn size";
+it is now "scales this slot's art within its own frame". Since both pawn slots are `span 1`, the
+user's two numbers land directly (body `0.8`, head `0.5`) instead of needing `0.625 × 0.8`. The
+`MoverPart` doc comment and `pawns.rd` both move with it.
+
+**Scaling pivots on `sprite_anchor`, not the bbox centre.** The resolver re-centred scaled art on
+the frame centre, which would lift a bottom-anchored body off its feet by ~11 px at 0.8. Scaling
+about the authored pivot keeps `sprite_anchor.y = 1.0` art standing on the same line. Identical to
+the old behaviour at the default pivot (0.5, 0.5) — both pawn stems' bboxes are frame-centred, so
+this is a generalisation, not a change of existing results.
+
+**Rejected — teach the def/gather a scale lane.** `billboard_width/height` are the card's world
+extent AND its frame sampling extent; splitting them means a new lane in `definition_data` plus a
+scale factor threaded through `sampleCard` and all four gather call sites, to buy a capability the
+art pipeline already has.
+
+**Rejected — letterbox the art on disk.** Same end state, but it bakes a presentation decision into
+the masters and costs a re-render per size change. `sprite_scale` keeps the corpus authoring it.
+
+**Rejected — express the size in `span`.** `span` is pow2 TILES. Neither 0.8 nor 0.5 exists there.
 
 ## F3-original — superseded, kept for the record
 _2026-07-30 · resolved at plan time · **only `body.size` moves**_
