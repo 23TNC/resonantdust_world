@@ -361,3 +361,32 @@ derivation.
 6. Readers — `accumulateLights`, the overlay, `debugReadShadow`, the identity diff.
 
 **Nothing was changed.** Tree clean at the F8 planning commit.
+
+## 2026-07-31 · B2 dissolved by F8 {#2026-07-31--b2-dissolved-by-f8}
+
+B2 asked the user to choose between reopening the storage question and closing the stream on P1+P2. They
+did neither — they showed that **both premises were wrong**, and [F8](forks.md#f8) records the answer.
+
+**B2's premise.** [I7](issues.md): a caster's position decodes only mod 16 tiles against a caller-supplied
+`ref`, so an incumbent recovered from the id map cannot be positioned, and the failure mode is a false
+positive — a phantom shadow. B2 concluded the fix was ~25 bits per slot and therefore a second texel,
+i.e. the storage decision [F7](forks.md#f7) had just closed.
+
+**Why the premise did not hold.**
+
+| B2 assumed | F8 established |
+|---|---|
+| The record cannot self-position, so a `ref` is unavoidable | **Parentless billboards were never handled.** `parent_id` carries nothing for them, so it is reused as `u8 region \| u8 zone`, gated by a new `u1 child` bit. Those are precisely the HIGH position bits the record lacked — so it self-positions and `ref` falls away. |
+| A caster reference is `u16` | It is **`u20`** (`u4 set \| u16 in-set id`) — the data texture is 16 u16-addressable sets. So F7's 128-bit arithmetic never closed either, for a reason neither F7 nor B2 knew. |
+
+**What replaces the "second texel" trade.** Not more bits per slot, but a **header px**: 4 channels x 2
+lights x `u4 set`, plus one id px per caster. The shadow texel becomes 2 px at N=1, growing to 5 px at
+N=4 — which turns N into a dial rather than a rewrite, the thing the user asked for from the start.
+
+**Status.** Dissolved as a blocker: nothing here needs the user's input any more. The remaining work is
+implementation, scouted above and unstarted. P3's early-out and P4's fine placement rest on it.
+
+**Recommendation withdrawn.** B2 recommended closing the stream on P1+P2 and re-planning storage as its
+own stream. That was reasoning from inside a constraint I had not checked was real — the same pattern the
+user corrected four times before it. P1+P2 remain independently valuable and committed, but they are not
+the stopping point B2 argued they were.
