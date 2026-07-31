@@ -35,9 +35,9 @@ count, 12 warm-up frames dropped, 3 repeats reporting mean and spread.
 ## P2 — The id map ([F7](forks.md#f7): 8 slots, in the existing texel)
 
 - [x] Drop `PRES_SLOTS` to 8 and confirm the gather's light loop, the presence fetch and the CPU mirror all follow the constant. Acceptance: one presence word fetched, not two; loop bound 8; no literal 16 left behind.
-- [ ] Re-encode the shadow texel as 8 x u16 caster ids, `onBillboard << 15 | billboardIdx`, sentinel for none. Acceptance: the coverage bit is GONE — occlusion is `id != sentinel` at every reader.
-- [ ] Record the winning caster's id from the walk into its slot. Acceptance: sampled ids resolve to real casters whose footprint plausibly covers the texel.
-- [ ] Verify and measure. Acceptance: corridor↔brute 0 differing, scene renders correctly, and the headline re-measured — the 8-slot loop should beat P1's 7.11 ms at N16.
+- [x] Re-encode the shadow texel as 8 x u16 caster ids, `onBillboard << 15 | billboardIdx`, sentinel for none. Acceptance: the coverage bit is GONE — occlusion is `id != sentinel` at every reader.
+- [x] Record the winning caster's id from the walk into its slot. Acceptance: sampled ids resolve to real casters whose footprint plausibly covers the texel.
+- [x] Verify and measure. Acceptance: corridor↔brute 0 differing, scene renders correctly, and the headline re-measured — the 8-slot loop should beat P1's 7.11 ms at N16.
 
 ## P3 — Incumbent early-out
 

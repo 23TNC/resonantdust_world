@@ -216,6 +216,25 @@ int foldTile(int wc, int wr) {
 // Slot i (0..6) of a tile-keyed texel: slot0 = R.low, slots 1–6 = G/B/A high|low. Static lane
 // select (no dynamic subscript — the ANGLE/D3D freeze foot-gun).
 uint laneN(uvec4 v, int c) { return c == 1 ? v.y : (c == 2 ? v.z : v.w); }
+// v5 SHADOW TEXEL (F7, 2026-07-31) -- THE encoding, and the only place it is defined.
+//
+//   8 slots x u16 = 128 bits = one uvec4, laid out exactly like tileSlot: slot i in lane i>>1,
+//   high half when (i&1)==0.
+//
+//   bit 15     on-billboard flag (a per-TEXEL fact; every occupied slot carries the same value)
+//   bits 0-14  the occluding caster's billboardIdx, or SHADOW_NONE when nothing occluded
+//
+// Occlusion is no longer STORED, it is IMPLIED: a slot is shadowed iff its id is not SHADOW_NONE.
+// That is what makes 8 x u16 fit where 16 x u16 did not, and it is why there is no coverage bit --
+// the value the map used to hold was measured perfectly bimodal (P0), so the id subsumes it.
+const uint SHADOW_NONE = 0x7fffu;
+uint shadowSlot(uvec4 t, int i) {              // the raw u16 for slot i
+  int c = i >> 1;
+  uint w = c == 0 ? t.x : (c == 1 ? t.y : (c == 2 ? t.z : t.w));
+  return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
+}
+float shadowOcc(uvec4 t, int i) { return (shadowSlot(t, i) & 0x7fffu) != SHADOW_NONE ? 1.0 : 0.0; }
+uint shadowCaster(uvec4 t, int i) { return shadowSlot(t, i) & 0x7fffu; }   // SHADOW_NONE = none
 uint tileSlot(uvec4 t, int i) {   // v3: 8 slots/px — the self-address is gone (R=s0|s1 .. A=s6|s7)
   int c = i >> 1;
   uint w = c == 0 ? t.x : (c == 1 ? t.y : (c == 2 ? t.z : t.w));
@@ -694,9 +713,14 @@ float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, float reachU, 
 // Levels 3 and 4 fold their fetched value into cov with a tiny weight ONLY to defeat dead-code elimination —
 // without that the compiler removes the very fetch we are trying to price. Output is meaningless below 0.
 uniform int uWProfile;
+// The winner out-param reports WHICH caster occluded -- 0xffff when none. Well defined under binary
+// any-semantics: the walk stops at the first occluder, so the winner IS that caster. It is what the
+// texel stores (v5) and what a later refine re-tests instead of searching the corridor again.
 float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, vec2 Rbase,
-                 int casterMode, int corr, int reachT, highp usampler2D data, sampler2D surf, out float cdepth) {
+                 int casterMode, int corr, int reachT, highp usampler2D data, sampler2D surf,
+                 out float cdepth, out uint winner) {
   cdepth = 0.0;
+  winner = 0xffffu;
   float cov = 0.0;
   // Reach in UNITS, the radial cap for a shadow whose light sits at/below the caster top (I38). Derived
   // from the walk's own tile reach so the cap can never exceed the region the walk visits.
@@ -761,7 +785,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
             // ANY, not MAX (2026-07-30). With binary coverage these are the same operator, so this is
             // not a behaviour change -- it is the licence to STOP. One occluder is a complete answer,
             // so the remaining casters cannot change the result and need not be tested.
-            if (cc > 0.0) { cov = 1.0; cdepth = max(cdepth, r); break; }
+            if (cc > 0.0) { cov = 1.0; cdepth = max(cdepth, r); winner = billboardIdx; break; }
           }
           if (cov > 0.0) break;
         }
@@ -789,7 +813,7 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
           if (((slot >> 24) & 15u) != ${SET_BILLBOARD_DATA}u) continue; // only billboard casters walk
           uint billboardIdx = slot & 0xffffu;
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, casterMode, bref, data, surf, r);
-          if (cc > 0.0) { cov = 1.0; cdepth = max(cdepth, r); break; }   // ANY -- see the corridor arm
+          if (cc > 0.0) { cov = 1.0; cdepth = max(cdepth, r); winner = billboardIdx; break; }   // ANY -- see the corridor arm
         }
         if (cov > 0.0) break;
       }
@@ -947,10 +971,9 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
       // fine overwrite handles the silhouette edge, as it already did for the deleted edge-refine.
       // shadow-polish P3: the per-slot u7 blended across the four corner words (the flag
       // bit 0 is documentation-only here; nothing consumes it in this loop).
-      int shCh = slot >> 2; uint shK = uint((slot & 3) * 8);
       float shadow = mix(
-        mix(float((lane4(sh,   shCh) >> (shK + 1u)) & 1u), float((lane4(sh10, shCh) >> (shK + 1u)) & 1u), sf.x),
-        mix(float((lane4(sh01, shCh) >> (shK + 1u)) & 1u), float((lane4(sh11, shCh) >> (shK + 1u)) & 1u), sf.x),
+        mix(shadowOcc(sh,   slot), shadowOcc(sh10, slot), sf.x),
+        mix(shadowOcc(sh01, slot), shadowOcc(sh11, slot), sf.x),
         sf.y);   // v4: OCCLUDED is bit 1 of the slot byte -- shift straight to it, 0/1, no 127 scale
       // The shadow-edge REFINE lived here and is DELETED (2026-07-27, moving-lights F7). It re-ran the full
       // walkShadow corridor **per fine texel** on every (0,1) edge value to sharpen the upsampled edge —
@@ -988,8 +1011,8 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
       vec3 dep;
       if (uLightClass == 1 && lcls == 0u) {
         float shadowCold = mix(
-          mix(float((lane4(shC,   shCh) >> (shK + 1u)) & 1u), float((lane4(shC10, shCh) >> (shK + 1u)) & 1u), sf.x),
-          mix(float((lane4(shC01, shCh) >> (shK + 1u)) & 1u), float((lane4(shC11, shCh) >> (shK + 1u)) & 1u), sf.x),
+          mix(shadowOcc(shC,   slot), shadowOcc(shC10, slot), sf.x),
+          mix(shadowOcc(shC01, slot), shadowOcc(shC11, slot), sf.x),
           sf.y);   // v4: OCCLUDED bit, 0/1
         if (recvHot) {
           // BODY-over-ground correction: deposit body − ground so cold+hot == the body value.
@@ -1286,7 +1309,9 @@ void main() {
   if (uGProfile == 3) { fragColor = uvec4(allBillboard ? 1u : 0u); return; } // G3: + corner test
 
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
-  uint o0 = 0u, o1 = 0u, o2 = 0u, o3 = 0u;                   // per-SLOT u8 coverage: slot i at ch i>>2, bit (i&3)*8
+  // v5: seed every slot to SHADOW_NONE -- zero is a REAL billboardIdx, so an unwritten slot
+  // must not read as 'caster 0 occludes here'.
+  uint o0 = 0x7fff7fffu, o1 = 0x7fff7fffu, o2 = 0x7fff7fffu, o3 = 0x7fff7fffu;                   // per-SLOT u8 coverage: slot i at ch i>>2, bit (i&3)*8
   for (int slot = 0; slot < 8; slot++) {
     uint li = tileSlot(presLo, slot);   // F7: one presence word, 8 slots
     if (li == 0xffffu) continue;                            // empty slot
@@ -1312,21 +1337,22 @@ void main() {
     // this they'd stay bright. Entirely-on-billboard texels cull the ground (no ground visible → no over-darken of
     // the interior). Ground texels store shG alone, which the LIGHT bake cuts by FINE presence (tight edge).
     // Value = u8 (0..255), 9th bit = on-billboard flag.
-    float cd = 0.0, cov = 0.0; bool onBillboard = maskCov > 0.0;
+    float cd = 0.0, cov = 0.0; uint win = 0xffffu; bool onBillboard = maskCov > 0.0;
     if (uGProfile == 4) {                                   // G4: loop + record fetches, NO walkShadow
     } else if (onBillboard) {
       float ze = min(zElev, 0.9 * L.z);                     // keep the projection s bounded
       float sProj = L.z / (L.z - ze);
       vec2 Qt = (sProj > 0.0) ? L.xy + sProj * (P - L.xy) : P;
-      cov = walkShadow(L, emitter, Qt, true, rbillboard, Rbase, casterMode, uCorridor, reachT, uData, uSurface, cd); // on-billboard (climbing) shT
+      cov = walkShadow(L, emitter, Qt, true, rbillboard, Rbase, casterMode, uCorridor, reachT, uData, uSurface, cd, win); // on-billboard (climbing) shT
       if (!allBillboard) {                                       // straddles ground → add ground shadow (darkens the ground px within)
         float cdG;
-        float shG = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, casterMode, uCorridor, reachT, uData, uSurface, cdG);
+        uint winG; float shG = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, casterMode, uCorridor, reachT, uData, uSurface, cdG, winG);
+        if (shG > cov) win = winG;   // ground shadow wins the texel -> its caster is the one stored
         cov = max(cov, shG);                                // MAX not sum: identical where shT=0 (the bright px), no false over-dark where both overlap
         cd = max(cd, cdG);
       }
     } else {                                                // ground texel → GROUND shadow (fine bake cuts it by fine presence)
-      cov = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, casterMode, uCorridor, reachT, uData, uSurface, cd);
+      cov = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, casterMode, uCorridor, reachT, uData, uSurface, cd, win);
     }
     // v4 BINARY (2026-07-30) -- THE slot byte layout, and the only place it is defined:
     //
@@ -1339,9 +1365,18 @@ void main() {
     // ZERO partial values. The 6 reserved bits are the budget a later phase can spend -- on a packed
     // caster id, or on more than 16 slots per tile (I5) -- and they are written zero so that whatever
     // reads them next cannot inherit garbage.
-    uint low8 = ((cov > 0.0 ? 2u : 0u) | (onBillboard ? 1u : 0u)) << uint((slot & 3) * 8);
-    int ch = slot >> 2;                                     // static branch (no dynamic write-subscript)
-    if (ch == 0) o0 |= low8; else if (ch == 1) o1 |= low8; else if (ch == 2) o2 |= low8; else o3 |= low8;
+    // v5: store the CASTER, not a value. SHADOW_NONE when nothing occluded -- which is also how the
+    // reader learns "lit", so no separate coverage bit exists to fall out of sync with the id.
+    uint sid = ((cov > 0.0 && win != 0xffffu) ? (win & 0x7fffu) : SHADOW_NONE)
+             | (onBillboard ? 0x8000u : 0u);
+    // MASKED assignment, not |=. The lanes are seeded to the sentinel (0x7fff7fff), and OR-ing a real id
+    // into 0x7fff leaves 0x7fff for every id <= 0x7fff -- i.e. every slot would read back as "no caster"
+    // and the world would render with no shadows at all. Clear this slot's half first.
+    uint packed = sid << uint((slot & 1) == 0 ? 16 : 0);
+    uint keep = (slot & 1) == 0 ? 0x0000ffffu : 0xffff0000u;   // preserve the OTHER slot in this lane
+    int ch = slot >> 1;                                     // static branch (no dynamic write-subscript)
+    if (ch == 0) o0 = (o0 & keep) | packed; else if (ch == 1) o1 = (o1 & keep) | packed;
+    else if (ch == 2) o2 = (o2 & keep) | packed; else o3 = (o3 & keep) | packed;
   }
   fragColor = uvec4(o0, o1, o2, o3);
 }
@@ -1377,6 +1412,15 @@ int foldTile(int wc, int wr) {
   return ((zx >> 2) + zy * 4) * 1024 + (zx & 3) * 256 + ty * 16 + tx;
 }
 uint laneN(uvec4 v, int c) { return c == 1 ? v.y : (c == 2 ? v.z : v.w); }
+// v5 shadow texel decode — a LOCAL copy; this shader deliberately does not pull in GATHER_COMMON.
+// Layout is defined once beside tileSlot there; keep the two in step.
+const uint SHADOW_NONE = 0x7fffu;
+float shadowOcc(uvec4 t, int i) {
+  int c = i >> 1;
+  uint w = c == 0 ? t.x : (c == 1 ? t.y : (c == 2 ? t.z : t.w));
+  uint v = ((i & 1) == 0 ? (w >> 16) : (w & 0xffffu)) & 0x7fffu;
+  return v != SHADOW_NONE ? 1.0 : 0.0;
+}
 uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
 uint tileSlot(uvec4 t, int i) {   // v3: 8 slots/px — the self-address is gone (R=s0|s1 .. A=s6|s7)
   int c = i >> 1;
@@ -1408,10 +1452,8 @@ void main() {
   for (int slot = 0; slot < 8; slot++) {
     uint li = tileSlot(presLo, slot);   // F7: one presence word, 8 slots
     if (li == 0xffffu) continue;                            // empty slot
-    uint vC = (lane4(shC, slot >> 2) >> (uint((slot & 3) * 8) + 1u)) & 1u;  // v4: OCCLUDED bit
-    uint vH = (lane4(shH, slot >> 2) >> (uint((slot & 3) * 8) + 1u)) & 1u;
-    uint v = max(vC, vH);                                    // combine the two classes' RTs
-    if (v > 0u) { float cvg = float(v); acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
+    float cvg = max(shadowOcc(shC, slot), shadowOcc(shH, slot));   // v5: occluded iff id != SHADOW_NONE
+    if (cvg > 0.0) { acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
   }
   if (any <= 0.0) { fragColor = vec4(0.0); return; }        // lit → transparent
   fragColor = vec4(clamp(acc, 0.0, 1.0), any);              // shadow tint × coverage
@@ -1464,6 +1506,15 @@ int foldTile(int wc, int wr) {
   int zx = fmod16(wc >> 4), zy = fmod16(wr >> 4), tx = fmod16(wc), ty = fmod16(wr);
   return ((zx >> 2) + zy * 4) * 1024 + (zx & 3) * 256 + ty * 16 + tx;
 }
+// v5 shadow texel decode — a LOCAL copy; this shader deliberately does not pull in GATHER_COMMON.
+// Layout is defined once beside tileSlot there; keep the two in step.
+const uint SHADOW_NONE = 0x7fffu;
+float shadowOcc(uvec4 t, int i) {
+  int c = i >> 1;
+  uint w = c == 0 ? t.x : (c == 1 ? t.y : (c == 2 ? t.z : t.w));
+  uint v = ((i & 1) == 0 ? (w >> 16) : (w & 0xffffu)) & 0x7fffu;
+  return v != SHADOW_NONE ? 1.0 : 0.0;
+}
 uint lane4(uvec4 v, int c) { return c == 0 ? v.x : (c == 1 ? v.y : (c == 2 ? v.z : v.w)); }
 uint tileSlot(uvec4 t, int i) {
   int c = i >> 1;
@@ -1489,8 +1540,7 @@ void main() {
     for (int slot = 0; slot < 8; slot++) {
       uint li = tileSlot(presLo, slot);   // F7: one presence word, 8 slots
       if (li != uint(uLightId)) continue;
-      uint b8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
-      stamp = 1.0 - float((b8 >> 1) & 1u);          // (1 − the parent light's shadow coverage)
+      stamp = 1.0 - shadowOcc(sh, slot);            // (1 − the parent light's shadow coverage)
       break;
     }
   }

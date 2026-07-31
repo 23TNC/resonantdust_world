@@ -267,3 +267,62 @@ but it is a *different capability*, and P5 must present it that way rather than 
 The encoding change itself: the texel currently still holds the P1 coverage byte, not `8 × u16` caster
 ids. The slot-count reduction is the prerequisite that makes it fit; the re-encode, the id write and the
 sentinel are the remaining three items.
+
+## 2026-07-31 · P2 COMPLETE — the texel is the id map
+
+### The v5 encoding
+
+The shadow texel stops holding a value and holds the **caster**. 8 slots x u16 = 128 bits = the same
+`uvec4`, laid out exactly like `tileSlot` (slot i in lane `i>>1`, high half when `(i&1)==0`):
+
+```
+bit 15     on-billboard flag
+bits 0-14  the occluding caster's billboardIdx, or SHADOW_NONE (0x7fff)
+```
+
+**Occlusion is no longer stored, it is implied** — a slot is shadowed iff its id is not the sentinel. No
+coverage bit exists to drift out of step with the id. Decoded through one helper (`shadowOcc` /
+`shadowCaster`) defined beside `tileSlot`, with local copies in the two shaders that deliberately do not
+pull in `GATHER_COMMON` (overlay, splat).
+
+`walkShadow` gained an `out uint winner`, set where the walk stops. Under binary any-semantics that is
+exactly the caster that occluded — there is no ambiguity about which of several "won".
+
+### Verified
+
+| check | result |
+|---|---|
+| renders | shadows correct at area1 — trees, wolf, human pawn |
+| occluded samples carrying an id | **24 561** |
+| `no caster` slots | **1 024 015** — and 24 561 + 1 024 015 = 1 048 576 = 512x256x8 **exactly** |
+| **distinct caster ids** | **80** |
+| ids vs allocation | observed range ~200-450 against **459 billboards allocated** — every id is a real caster |
+| on-billboard flag preserved | 21 433 slots flagged |
+| corridor↔brute identity | **0 differing** |
+| `getError` / `isContextLost` | 0 / false |
+
+The slot-count arithmetic closing exactly (1 048 576) is the strongest single check: it proves every
+slot is either a real id or the sentinel, with nothing uninitialised.
+
+### Measured (reach 16) — the id map is free
+
+| | P2a (8 slots, coverage byte) | **P2 (8 slots, id map)** |
+|---|---|---|
+| N8 | 4.19 | **4.07** |
+| N16 | 5.65 | **6.08** |
+
+Within run-to-run noise in both directions. Storing a 15-bit id costs no more than storing a 1-bit
+value, which is the result that matters: **the identity was available for free all along, and the two
+lock-ups came from trying to store it somewhere other than where the value already lived.**
+
+15 bits holds 32 767 casters against 459 allocated — a 70x margin, so the sentinel choice is not tight.
+
+### The bug worth keeping
+
+First working build rendered **no shadows at all**. Cause: I seeded the lanes to the sentinel
+(`0x7fff7fff`) and then wrote with `|=`. `0x7fff | id == 0x7fff` for every id <= 0x7fff, so every slot
+read back as "no caster". Fixed by clearing the slot's half before OR-ing.
+
+Seeding to zero instead would have been worse and quieter: **billboardIdx 0 is a real caster**, so an
+unwritten slot would have read as "caster 0 occludes here" — a plausible-looking wrong shadow rather
+than an obviously missing one.
