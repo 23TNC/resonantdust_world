@@ -131,3 +131,34 @@ Two things pull against each other, and neither is resolvable from the desk:
 **Revisit at P7, with the cost per light from P3 in hand.** Recorded now so that "8" is a decision
 someone made with numbers rather than a constant that survived three rewrites because it looked
 familiar.
+
+## I8 — The atlas packer already exists, and the design's quadrant guess has BL/BR swapped {#i8}
+
+P1 planned to "build the atlas quadtree packer with the 4 maps of a definition in one 2×2 quadrant
+block". **It is already built** — `TextureResolver` co-packs each stem's four maps into one `2N × 2N`
+frame, packed by `MaxRectsPacker` into a shared pool. Nothing to build; the item is an acceptance to
+check, and it checks out.
+
+Sampled on live data (`biome-thing/default/conifer/e`, lod 0):
+
+| map | frame | offset in N |
+|---|---|---|
+| albedo | (0, 832) 128×128 | `[0, 0]` TL |
+| normal | (128, 832) 128×128 | `[1, 0]` TR |
+| **surface** | (0, 960) 128×128 | **`[0, 1]` BL** |
+| **layers** | (128, 960) 128×128 | **`[1, 1]` BR** |
+
+Four equal quadrants of a 256×256 frame, so `fullframe.span == 2 × frame.span` holds exactly as the
+design derives.
+
+**But the design has the bottom two swapped.** `docs/intent/2026-07-31-rework.md` says *layers* at
+`(frame.x, frame.y + span)` and *surface* at `(frame.x + span, frame.y + span)`. The live table
+(`TextureResolver.QUADRANT`) is `surface: [0,1], layers: [1,1]` — the opposite.
+
+**The code wins, and the doc's line should be corrected.** Those are the four lines the user prefixed
+with *"I believe that puts…"* — an explicit invitation to verify, which is what this is. The mapping is
+live: the G-buffer bake reads through it every frame, so a doc that disagrees would send the rework's
+shaders to the wrong quadrant for two of the four maps.
+
+**Raised rather than silently edited**, per the stream's acceptance that the intent doc owns its own
+content.
