@@ -10,38 +10,10 @@
   ::pawn>
     @define>
         0 &subcategories array
-    :animal/_fox-nonorm>
-      @define>
-        1 &layers set
-        2779382683151894 &hash set
-        1 &maps set
-        1 &var_id array
-        1 &var_id.0 set
-        1 &var_variant array
-        1 &var_variant.0 set
-        1 &part_id array
-        0 &part_id.0 set
-        1 &part_variants array
-        1 &part_variants.0 set
-        0 &subkinds array
-    :animal/_layer-test>
-      @define>
-        1 &layers set
-        2834428969208984 &hash set
-        1 &maps set
-        1 &var_id array
-        1 &var_id.0 set
-        1 &var_variant array
-        1 &var_variant.0 set
-        1 &part_id array
-        0 &part_id.0 set
-        1 &part_variants array
-        1 &part_variants.0 set
-        0 &subkinds array
     :animal/wolf>
       @define>
         1 &layers set
-        4156462218074237 &hash set
+        380912235706756 &hash set
         7 &maps set
         15 &var_id array
         1 &var_id.0 set
@@ -83,7 +55,7 @@
     :human/female>
       @define>
         2 &layers set
-        1313487010135120 &hash set
+        2397673015182301 &hash set
         3 &maps set
         16 &var_id array
         1 &var_id.0 set
@@ -129,7 +101,7 @@
     :human/male>
       @define>
         2 &layers set
-        1217345715933835 &hash set
+        1489279559511702 &hash set
         3 &maps set
         16 &var_id array
         1 &var_id.0 set

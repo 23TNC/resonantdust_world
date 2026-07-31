@@ -20,11 +20,22 @@
                 "pawn/human/female &body.texture set
                 #ffffff &body.tint set
                 #7a6a5a &body.geoColor set
-                ; The art masters are square 256 canvases spanning 2 tiles (meta.json
-                ; span_from=art); a standing human draws ~1.5 tiles tall on a 1×1
-                ; footprint, feet pinned to the cell's front edge (the wolf's pattern).
+                ; The art masters are square 128 canvases spanning ONE tile — every
+                ; variant's meta.json reads `square 128, tile_px 128, span 1`. `span`
+                ; sizes the ATLAS FRAME (`frame_span · SQUARE / 2^lod`), so span 2 asked
+                ; for a 256 px frame to hold 128 px of art: 4× the atlas area per part,
+                ; for nothing. A standing human still draws ~1.5 tiles tall via `size` —
+                ; that is magnification off a 1-tile frame, which is what `size` is for —
+                ; on a 1×1 footprint, feet pinned to the cell's front edge (the wolf's
+                ; pattern).
+                ;
+                ; The comment here previously claimed 256 canvases derived from the art
+                ; (`span_from=art`). Both halves were wrong: the corpus was re-mastered to
+                ; 128, and meta.json reads `span_from: "default", span_inferred: true` —
+                ; nothing ever derived it. `loader.rs` reads `prims.0.span` with a default
+                ; of 1.0, so these literals were the only thing making it 2.
                 1.5 &body.size set
-                2 &body.span set
+                1 &body.span set
                 1.0 &body.anchor.y set
                 1.0 &body.sprite_anchor.y set
                 ; ── slot 1: the HEAD — part-1 files, scaled + seated on the body ────
@@ -40,7 +51,7 @@
                 ; centres ~1.15 tiles up. First-guess placement — the P4 drill tunes it
                 ; with the user's eyes.
                 -1.15 &head.offset.y set
-                2 &head.span set
+                1 &head.span set
                 0 return
             @on_destroy>
                 0 return
@@ -52,7 +63,7 @@
                 #ffffff &body.tint set
                 #7a6a5a &body.geoColor set
                 1.5 &body.size set
-                2 &body.span set
+                1 &body.span set
                 1.0 &body.anchor.y set
                 1.0 &body.sprite_anchor.y set
                 "thing ^prim call &head export
@@ -62,7 +73,7 @@
                 1 &head.part set
                 0.625 &head.scale set
                 -1.15 &head.offset.y set
-                2 &head.span set
+                1 &head.span set
                 0 return
             @on_destroy>
                 0 return
