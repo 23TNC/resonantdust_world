@@ -18,12 +18,12 @@ count, 12 warm-up frames dropped, 3 repeats reporting mean and spread.
 
 ## P0 — Checkpoint and baseline
 
-- [ ] Record `b35103a3` as the A/B reference SHA in `completed.md`; the tree is already clean, so no checkpoint commit is needed. Acceptance: the SHA is written down and `git status` is clean at the moment of recording.
-- [ ] Histogram the live `coldShadowRT` u7 coverage values ([F1](forks.md#f1)). Acceptance: a distribution — all-0-or-127 means penumbra is already dead; a spread means it is computed and lost downstream. Recorded either way.
-- [ ] Build the light-scaling harness: N orbiting lights, all reach 16, zoom 1, measuring gather + lighting ms. Acceptance: cost rises with N and with reach, so the harness responds to workloads we control.
-- [ ] Measure the headline BEFORE: the largest N whose gather + lighting fits in **8 ms**. Acceptance: a single number, plus the ms at N and at N+1 so the boundary is visible.
-- [ ] Sweep the supporting matrix: reach 4/8/12/16 × N 1/2/4/8/16, zoom 1. Acceptance: a table with per-cell mean and spread, saved to `completed.md`.
-- [ ] Capture a zoom-1 crop of a conifer shadow edge as the before-image. Acceptance: the stepped edge is identifiable, at a spot reproducible after the change.
+- [x] Record `b35103a3` as the A/B reference SHA in `completed.md`; the tree is already clean, so no checkpoint commit is needed. Acceptance: the SHA is written down and `git status` is clean at the moment of recording.
+- [x] Histogram the live `coldShadowRT` u7 coverage values ([F1](forks.md#f1)). Acceptance: a distribution — all-0-or-127 means penumbra is already dead; a spread means it is computed and lost downstream. Recorded either way.
+- [x] Build the light-scaling harness: N orbiting lights, all reach 16, zoom 1, measuring gather + lighting ms. Acceptance: cost rises with N and with reach, so the harness responds to workloads we control.
+- [x] Measure the headline BEFORE: the largest N whose gather + lighting fits in **8 ms**. Acceptance: a single number, plus the ms at N and at N+1 so the boundary is visible.
+- [x] Sweep the supporting matrix: reach 4/8/12/16 × N 1/2/4/8/16, zoom 1. Acceptance: a table with per-cell mean and spread, saved to `completed.md`.
+- [x] Capture a zoom-1 crop of a conifer shadow edge as the before-image. Acceptance: the stepped edge is identifiable, at a spot reproducible after the change.
 
 ## P1 — Binary occlusion
 

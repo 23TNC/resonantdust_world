@@ -54,3 +54,48 @@ Both I and the user reasoned from the `u9` comments during design. P1 rewrites t
 whatever replaces it must be documented in ONE place, and the stale duplicates deleted rather than left
 to mislead the next reader. The same file also carries `// lights 0–6` / `// lights 7–13` on the presence
 fetches, which describe a v2 layout that `tileSlot`'s own header says v3 retired.
+
+## I4 — Why penumbra collapses to binary at `radius 0.35` (open, not chased)
+
+P0's histogram found **0 partial values in 31 155 cold shadow samples** — the map is perfectly bimodal.
+Yet the same machinery produced **61 % partial** earlier in this session at `radius 2.0`, and the
+geometry predicts a ~21-texel gradient at 0.35 (`11.2 u × 26.2/(40−26.2)`). So the code CAN produce soft
+values; something collapses them at the shipped emitter size.
+
+**Most likely: the λ-interval clamp.** The analytic penumbra solves `u(λ) = u0 + λ·Dslope` at `u=0` and
+`u=1` and clamps the roots to the emitter's extent `[-1,1]`. `Dslope = perp.x · (1 − invk) · invW`, so it
+shrinks with the emitter radius and grows with `1/W`. When `Dslope` is small relative to the card width,
+both roots land far outside `[-1,1]`, the clamp returns either the whole range or nothing, and `frac` is
+exactly 1 or 0 — no intermediate state reachable.
+
+**Not investigated**, because it changes nothing this stream builds: binary is being adopted either way,
+and P1 deletes the arithmetic in question. Recorded because it is the sentence a successor trying to
+RESTORE soft shadows needs — the machinery was not missing or mis-plumbed, it was **clamped**, and the
+lever is the emitter-radius-to-card-width ratio rather than anything in the solver.
+
+Cheap confirmation if anyone wants it: histogram again at `radius 2.0` and at `radius 0.35` on the same
+scene. Two numbers, ten minutes, and I4 is either confirmed or replaced.
+
+## I5 — The 8 ms budget and the per-tile slot cap land in the same place
+
+P0's headline is **15 moving lights at reach 16 inside 8 ms**. `PRES_SLOTS = 16` is the number of lights
+one tile can hold, and at reach 16 **every light covers the whole 512-slot window**, so every tile
+carries all N. A 17th light would have nowhere to go.
+
+So today the perf ceiling (≈15) and the architectural ceiling (16) are **the same number**. That is a
+coincidence of the current operating point, but it changes what success looks like for
+[P5](todo.md):
+
+**The headline metric as posed cannot exceed 16.** If this stream halves the gather, the result will not
+be "30 lights" — it will be N16 sitting at ~4 ms instead of 8.3, i.e. **headroom**, not count. Reporting
+only "lights at 8 ms" would understate a real win as "15 → 16, +1".
+
+**P5 must therefore report both:**
+
+1. **ms at N16, reach 16** — the headroom number, which is unbounded and is where a gather win shows.
+2. lights-at-8ms — kept for continuity with P0, understood to saturate at 16.
+
+Raising `PRES_SLOTS` past 16 is not free and is not in scope: it is exactly the 128-bit shadow texel
+budget ([I3](#i3)), 16 slots × 8 bits. Binary coverage frees 7 of those 8 bits per slot, so *more slots*
+is one of the things the freed bits could buy — noted here rather than planned, because
+[F3](forks.md#f3) already defers the freed-bit question to P5's measurement.
