@@ -3,6 +3,37 @@
 _Problems hit, and what the evidence actually showed. Findings recorded at plan time are marked as
 such — they were read out of the code, not measured under this stream._
 
+## I6 — The head renders TWICE at two scales — cold at 128 px, warm at 80 px {#i6}
+_2026-07-30 · P0.1 · **measured live, and this is the user's "head lighting isn't scaled"**_
+
+At game zoom 2 the pawn shows **two heads**: a large pale one up-left carrying real facial detail
+(ear, profile — so it is TEXTURED, not a geo placeholder), and the correct smaller brown one inside
+the selection outline.
+
+The mover layer holds exactly **two** prims and no duplicate:
+
+```
+id 4  body  x 13312  y 6528  w 128   pawn/human/female/7/e
+id 5  head  x 13336  y 6518  w  80   pawn/human/female/11/e.1
+```
+
+So the oversized head is **not** a second warm prim — it must come from the COLD layer, i.e. the
+head is present in both cold and warm with DIFFERENT geometry (128 vs 80). The blit composes them
+as `alb = mix(cold, warm, wcov)`, so wherever warm coverage is 0 the cold head shows through — a
+head-shaped ring around the correctly-scaled one, lit by the cold path only. That is exactly the
+"lighting not scaled" symptom: the lighting is right for the geometry it was baked against, and
+there are two geometries.
+
+**This reframes the stream.** [I1](#i1) (lightmap sampled at the drawn position) is real but is a
+sub-tile offset; this is a whole duplicate at 1.6x scale and dominates the visual. It also explains
+why the user saw "normal scaled, albedo did not" — two composited copies at different scales read
+exactly that way, and [I2](#i2) was already refuted as impossible at the bake.
+
+Not yet root-caused. The candidates: the pawn being classed into BOTH cold and warm, or a cold
+invalidation that uses slot 0's 128 px box and so never clears the head's own texels when the
+per-slot scale shrinks it. Note `MoverLayer` derives everything from `size0 = box.width` (slot 0),
+which is the same 128-vs-80 confusion that produces [I4](#i4).
+
 ## I4 — `body.size` never reaches the drawn box; `placeThing` uses `span` {#i4}
 _2026-07-30 · P0.3 · **measured live** — invalidates [F3](forks.md#f3)_
 

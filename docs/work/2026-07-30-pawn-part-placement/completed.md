@@ -22,3 +22,11 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   refuted**; its remaining items are struck rather than built.
   Incidental: the head's 128 px frame is drawn at 80 px, confirming per-slot `scale` acts at DRAW
   time, not in the atlas.
+- **2026-07-30 · P0.1 · Before-image captured; it found the dominant defect.** Live client at
+  `:5174`, human female at 104,51 facing east (mover 813694981). Captured at game zoom 1 and 2.
+  The zoom-2 crop shows the head rendering **twice at two scales** — a large pale textured head
+  up-left and the correct 80 px one in the selection outline. Mover layer holds exactly 2 prims
+  (body 128, head 80) and no duplicate, so the oversized copy comes from the COLD layer
+  ([I6](issues.md#i6)). Facings e and n captured; s/w not reached before hand-off.
+  Also confirmed [I5](issues.md#i5) first-hand: after a reload the pawn had 1 part with
+  `tex: null`; a select + right-click move restored both parts and their textures.
