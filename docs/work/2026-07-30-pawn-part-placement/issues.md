@@ -3,6 +3,46 @@
 _Problems hit, and what the evidence actually showed. Findings recorded at plan time are marked as
 such — they were read out of the code, not measured under this stream._
 
+## I4 — `body.size` never reaches the drawn box; `placeThing` uses `span` {#i4}
+_2026-07-30 · P0.3 · **measured live** — invalidates [F3](forks.md#f3)_
+
+Read back from a live human (`__moverLayer`, mover 813694981, facing north):
+
+```
+p0 body:  x 13696  y 6656.12  w 128  zIndex 53.0009  tex pawn/human/female/7/n
+p1 head:  x 13720  y 6645.98  w  80  zIndex 53.0109  tex pawn/human/female/11/n.1
+```
+
+- **Head w = 80 = 128 × 0.625.** `head.scale` IS applied — that half of the skeleton works.
+- **Body w = 128 = exactly one tile**, while `pawns.rd` authors `1.5 &body.size set`. The box
+  comes from `placeThing`, which computes `drawW = l.span * (scaleAtDraw ? l.scw : 1)` — off
+  **`span`**, not `size`. `span` is 1, so the body draws at one tile and `body.size` is inert for
+  the drawn box.
+
+**This breaks [F3](forks.md#f3).** The plan said the 0.8/0.5 request is one edit — `body.size`
+1.5 → 0.8 — with the head following by the 0.625 relative scale. But changing an ignored field
+changes nothing. The body's drawn size is `span × SQUARE`, and `span` is pow2 tiles, so 0.8 is not
+expressible there at all.
+
+So the request needs a real decision about WHICH field sizes a part, not a value edit. F3 must be
+re-resolved before [P1](todo.md) can run.
+
+**Seating, for the same reason:** the head's top sits only 10.1 px above the body's top while
+being 80 px tall, so it is almost entirely inside the 128 px body — which is exactly what the
+before-image shows. `head.offset.y -1.15` tiles should be ~147 px at SQUARE 128; the observed
+separation is 10 px, so the offset is being scaled by something other than SQUARE (MoverLayer
+derives `tilePx = size0 / slots[0].size`, i.e. it divides by the very `size` that does not size
+the box).
+
+## I5 — Pawn textures do not load on reload until the pawn moves {#i5}
+_2026-07-30 · reported by the user during P0 · not yet root-caused_
+
+On a fresh page load a pawn renders without its textures; moving it makes them appear. Recorded
+here because it costs a reload-and-nudge on every visual check in this stream, and because a
+texture that resolves only after a move is a plausible contributor to the misalignment reports
+that opened this stream. Not investigated yet — [P0](todo.md)'s captures work around it by moving
+the pawn first.
+
 ## I1 — The blit samples the lightmap where a sprite is DRAWN, not where it stands {#i1}
 _2026-07-30 · read at plan time from `albedoBlitShader.ts`_
 

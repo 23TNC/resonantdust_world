@@ -8,13 +8,13 @@ the two real gaps (facing z-order, albedo/lighting unification), then re-check t
 
 - [ ] Capture a zoom-1 screenshot of a human pawn in all four facings as the before-image. Acceptance: four crops saved, so every later change has something to diff against.
 - [ ] Confirm the head slot is DSL-placed today by editing `head.offset.y` and reloading. Acceptance: the head visibly moves, proving requirement 6 is already met and no pixel constant overrides it.
-- [ ] Read back the wasm `moverParts` row for a live human. Acceptance: `scale`, `offsetX/Y`, `part` and `span` print the corpus values, or the mismatch is recorded in `issues.md`.
+- [x] Read back the wasm `moverParts` row for a live human. Acceptance: `scale`, `offsetX/Y`, `part` and `span` print the corpus values, or the mismatch is recorded in `issues.md`.
 - [ ] Compare the pawn's normal and albedo atlas frame sides in the console. Acceptance: a number for each; if equal, [I2](issues.md#i2) is refuted and P4 shrinks to a doc fix.
 - [ ] Measure how far a head fragment's lightmap sample sits from its own footprint row. Acceptance: a tile count recorded in `issues.md`, confirming or refuting the ~1-tile estimate in [I1](issues.md#i1).
 
 ## P1 — The DSL tune (body 0.8, head 0.5)
 
-- [ ] Set `body.size` to `0.8` for both `human_female` and `human_male`. Acceptance: the pawn draws 0.8 tiles tall and the head is 0.5 by the existing 0.625 relative scale — no `head.scale` edit.
+- [ ] Apply slot 0's own `scale` to the carrier box in `MoverLayer`, per the re-resolved [F3](forks.md#f3). Acceptance: authoring `0.8 &body.scale set` makes the body's read-back `w` 102.4, not 128.
 - [ ] Re-seat `head.offset.y` for the new body height, starting from half a body height north. Acceptance: the head sits ON the shoulders, not inside the torso, at zoom 1 in the east facing.
 - [ ] Replace the stale "first-guess placement" comment in `pawns.rd` with the measured value. Acceptance: the comment names the body height it was tuned against, so the next size change knows to re-tune.
 - [ ] Check the head still seats correctly in all four facings. Acceptance: four crops; any facing that needs its own offset is recorded as a finding rather than special-cased.

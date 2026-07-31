@@ -48,7 +48,37 @@ That is arguably correct — position from the footprint, DIRECTION from the alr
 (`worldNormal(n, phi)`) — and a 2D ground lightmap cannot represent height anyway. [P3](todo.md)
 checks it by eye before accepting.
 
-## F3 — `head.scale` is NOT edited for the 0.8/0.5 request {#f3}
+## F3 — Which field sizes a part {#f3}
+_2026-07-30 · **RE-RESOLVED at P0.3** — the original was built on a field that does nothing
+([I4](issues.md#i4)) · **slot 0 gets its own `scale`, like every other slot**_
+
+**Chosen.** Apply `MoverPart.scale` to slot 0's carrier box, the same way it already applies to
+slot 1. Then `0.8 &body.scale set` draws the body at `128 × 0.8 = 102.4` px, and the head follows
+at `0.625 × 0.8 = 0.5` tiles — the user's two numbers, from one authored value each.
+
+**Why the original was wrong.** It said to move `body.size` 1.5 → 0.8. Measured live, the body
+draws at exactly 128 px = one tile, because `placeThing` sizes the box off **`span`**, not `size`
+— `body.size 1.5` is inert. Editing an ignored field would have changed nothing, and `span` cannot
+express 0.8 at all (it is pow2 TILES).
+
+**Why not make `size` work again.** `loader.rs` marks `size` *"SUPERSEDED by `span` +
+`sprite_scale` (def-frame-anchors P5) — kept while legacy consumers migrate."* Reviving a field the
+design is retiring would move against it.
+
+**Why not `sprite_scale`.** It is applied PRE-ATLAS at ingest, so it changes the texels baked into
+the frame, not the world size the frame is drawn at. Wrong axis.
+
+**Why slot 0's `scale` is the right home.** It already exists, is already authored per slot, and
+already works — the head's `w 80 = 128 × 0.625` proves the path. Slot 0 is simply the one slot
+whose `scale` is currently ignored, because `size0` is taken straight from `placeThing`. Making it
+uniform removes a special case rather than adding one.
+
+**Knock-on for the head offset:** `MoverLayer` derives `tilePx = size0 / slots[0].size`, which
+divides by the very `size` that does not size the box — the likely reason `head.offset.y -1.15`
+resolves to a 10 px separation instead of ~147 px. That divisor has to be re-derived from whatever
+sizes the box once this lands.
+
+## F3-original — superseded, kept for the record
 _2026-07-30 · resolved at plan time · **only `body.size` moves**_
 
 **Chosen.** Set `body.size` from `1.5` to `0.8` and leave `head.scale` at `0.625`.
