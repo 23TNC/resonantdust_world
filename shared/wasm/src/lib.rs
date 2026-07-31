@@ -353,7 +353,8 @@ impl Content {
 
     /// A pawn KIND's part SLOTS (human-pawns P2) — the DSL skeleton MoverLayer renders,
     /// one JS object per `^prim call` in the kind's visual: `{stem, part, scale, offsetX,
-    /// offsetY, size, span, anchorX, anchorY, spriteAnchorX, spriteAnchorY, tint, geoColor}`.
+    /// offsetY, depth, size, span, anchorX, anchorY, spriteAnchorX, spriteAnchorY, tint,
+    /// geoColor}`.
     /// The wolf yields 1 slot, a human 2 (body + head). An unknown kind yields a single
     /// default slot (white fill), so the caller never branches on emptiness. Replaces the
     /// old `moverPrim` (position now comes from the state row alone).
@@ -373,6 +374,7 @@ impl Content {
             set("scale", &JsValue::from_f64(p.scale));
             set("offsetX", &JsValue::from_f64(p.offset.0));
             set("offsetY", &JsValue::from_f64(p.offset.1));
+            set("depth", &JsValue::from_f64(p.depth));
             set("size", &JsValue::from_f64(p.size));
             set("span", &JsValue::from_f64(p.span));
             set("anchorX", &JsValue::from_f64(p.anchor.0));
@@ -398,6 +400,7 @@ impl Content {
                     part: 0,
                     scale: 1.0,
                     offset: (0.0, 0.0),
+                    depth: 0.0,
                     size: v.as_ref().map(|v| v.size).unwrap_or(1.0),
                     span: v.as_ref().map(|v| v.span).unwrap_or(1.0),
                     sprite_scale: v.as_ref().map(|v| v.sprite_scale).unwrap_or((1.0, 1.0)),

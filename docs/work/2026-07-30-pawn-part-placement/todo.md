@@ -7,7 +7,7 @@ the two real gaps (facing z-order, albedo/lighting unification), then re-check t
 ## P0 — Verify before changing anything
 
 - [x] Capture a zoom-1 screenshot of a human pawn in all four facings as the before-image. Acceptance: four crops saved, so every later change has something to diff against.
-- [ ] Confirm the head slot is DSL-placed today by editing `head.offset.y` and reloading. Acceptance: the head visibly moves, proving requirement 6 is already met and no pixel constant overrides it.
+- [x] Confirm the head slot is DSL-placed today by editing `head.offset.y` and reloading. Acceptance: the head visibly moves, proving requirement 6 is already met and no pixel constant overrides it.
 - [x] Read back the wasm `moverParts` row for a live human. Acceptance: `scale`, `offsetX/Y`, `part` and `span` print the corpus values, or the mismatch is recorded in `issues.md`.
 - [x] Compare the pawn's normal and albedo atlas frame sides in the console. Acceptance: a number for each; if equal, [I2](issues.md#i2) is refuted and P4 shrinks to a doc fix.
 - [ ] Measure how far a head fragment's lightmap sample sits from its own footprint row. Acceptance: a tile count recorded in `issues.md`, confirming or refuting the ~1-tile estimate in [I1](issues.md#i1).
@@ -21,11 +21,11 @@ the two real gaps (facing z-order, albedo/lighting unification), then re-check t
 
 ## P2 — Facing-dependent z-order
 
-- [ ] Add a per-slot depth field to the DSL that flips with facing. Acceptance: [F1](forks.md#f1) names the field, its sign convention, and why it is per-slot rather than "the head".
-- [ ] Carry that field through the wasm `moverParts` row into `MoverPart`. Acceptance: the console read-back from P0 shows the new field carrying its authored value.
-- [ ] Give each slot its own `zIndex` instead of reusing slot 0's. Acceptance: `MoverLayer` no longer computes one `zIndex` for every spec; the head and body can differ.
-- [ ] Order the head over the body for e/w/s and under it for n. Acceptance: four crops — the head occludes the body in three facings and is occluded in north.
-- [ ] Confirm the change respects the blit's warm-over-cold row compare. Acceptance: a pawn walking north past another pawn still sorts correctly, with no flicker at the row boundary.
+- [x] Add a per-slot depth field to the DSL that flips with facing. Acceptance: [F1](forks.md#f1) names the field, its sign convention, and why it is per-slot rather than "the head".
+- [x] Carry that field through the wasm `moverParts` row into `MoverPart`. Acceptance: the console read-back from P0 shows the new field carrying its authored value.
+- [x] Give each slot its own `zIndex` instead of reusing slot 0's. Acceptance: `MoverLayer` no longer computes one `zIndex` for every spec; the head and body can differ.
+- [x] Order the head over the body for e/w/s and under it for n. Acceptance: four crops — the head occludes the body in three facings and is occluded in north.
+- [x] Confirm the change respects the blit's warm-over-cold row compare. Acceptance: a pawn walking north past another pawn still sorts correctly, with no flicker at the row boundary.
 
 ## P3 — One positioning system for albedo and lighting
 

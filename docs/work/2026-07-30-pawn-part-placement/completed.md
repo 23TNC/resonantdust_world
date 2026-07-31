@@ -62,3 +62,28 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   `applyVisual`): one head each, seated on the shoulders, single silhouette, no ghost, no console
   errors. No facing needed its own offset. The head still draws OVER the body in north — that is
   [P2](todo.md)'s job, not a seating fault.
+- **2026-07-30 · P0.2 · Requirement 6 confirmed — the head IS DSL-placed.** Changing
+  `head.offset.y` −1.15 → −0.87 in `content/visual/pawns.rd` moved the head by the corresponding
+  36 px on a content hot-swap, with no client edit. No pixel constant overrides it.
+
+## P2 — Facing-dependent z-order
+
+- **2026-07-30 · P2.1/P2.2 · `&prim.depth` authored, plumbed and read back live.** New
+  `VisualPart.depth` (default 0) in `shared/dsl`, exported through the wasm `moverParts` row, typed
+  into `MoverPart`. `__content.moverParts(kind)` on the live human returns
+  `[{part:0, scale:0.8, depth:0, …}, {part:1, scale:0.5, depth:1, offY:-0.87, span:1}]` — the
+  corpus values, end to end. Sign convention and the backpack case are in [F1](forks.md#f1).
+- **2026-07-30 · P2.3/P2.4 · Slots now sort by facing-resolved depth.** `MoverLayer` replaced the
+  fixed `zIndex + i·0.01` slot ladder with `zRowBase + facingDepth(depth, facing)·0.01 + i·0.0001`.
+  Read back on the live pawn: east/south/west give body `52`, head `52.0101`; north gives body
+  `52`, head `51.9901`. Verified by eye at game zoom 2 in all four facings — the head's jaw draws
+  over the shoulders in e/s/w, and in north the shoulder line crosses in front of the head.
+  (`zIndex` also joined the per-slot skip compare, so a depth flip can never be skipped as
+  "nothing changed".)
+- **2026-07-30 · P2.5 · The warm-over-cold row compare is untouched, by construction and by test.**
+  The blit arbitrates on `zdepth_world.b`, which `Viewport.renderTextures()` writes as
+  `Math.floor((prim.y + prim.height) / SQUARE) & 0x7f` — pure geometry, never `zIndex`. Slot depth
+  moves `zIndex` by ±0.01, entirely inside one row. Walked the pawn south past a conifer and back
+  north across the same row boundary: the tree occludes the pawn while the pawn is north of it and
+  the pawn occludes the tree once south, head and body sorting together, no flicker at the
+  crossing.

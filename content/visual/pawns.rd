@@ -59,6 +59,11 @@
                 ; 0.938 tiles above the anchor, so the head centres just over its top.
                 -0.87 &head.offset.y set
                 1 &head.span set
+                ; Draw-order along the VIEW's depth axis, in the pawn's own frame:
+                ; +1 = toward the viewer when it faces the camera. The client negates
+                ; it when the pawn faces AWAY, so this one number gives "head over the
+                ; body for e/w/s, under it for n". A backpack would author -1.
+                1 &head.depth set
                 0 return
             @on_destroy>
                 0 return
@@ -81,6 +86,11 @@
                 0.5 &head.scale set
                 -0.87 &head.offset.y set
                 1 &head.span set
+                ; Draw-order along the VIEW's depth axis, in the pawn's own frame:
+                ; +1 = toward the viewer when it faces the camera. The client negates
+                ; it when the pawn faces AWAY, so this one number gives "head over the
+                ; body for e/w/s, under it for n". A backpack would author -1.
+                1 &head.depth set
                 0 return
             @on_destroy>
                 0 return

@@ -174,6 +174,13 @@ pub struct VisualPart {
   pub scale: f64,
   /// Placement offset in TILES relative to slot 0's anchor (`&prim.offset.x/y`, default 0).
   pub offset: (f64, f64),
+  /// Draw-order offset along the VIEW's depth axis (`&prim.depth`, default 0), in the pawn's own
+  /// frame: **positive = toward the viewer when the pawn faces the camera** (pawn-part-placement
+  /// F1). The client negates it when the pawn faces AWAY (north), so one authored number covers
+  /// both sides — a head at `+1` draws over the body for e/w/s and under it for n; a backpack at
+  /// `-1` is the same rule with the opposite sign. Per-SLOT on purpose: a slot's content rides the
+  /// pawn's payload, so armour can replace a slot without a code change.
+  pub depth: f64,
   /// The slot's own frame fields, same semantics as the flat prim-0 copies above.
   pub size: f64,
   pub span: f64,
@@ -393,6 +400,7 @@ impl Bundle {
         part: rf("part", 0.0) as u32,
         scale: rf("scale", 1.0),
         offset: (rf("offset.x", 0.0), rf("offset.y", 0.0)),
+        depth: rf("depth", 0.0),
         size: rf("size", 1.0),
         span: rf("span", 1.0),
         sprite_scale: (rf("sprite_scale.w", 1.0), rf("sprite_scale.h", 1.0)),

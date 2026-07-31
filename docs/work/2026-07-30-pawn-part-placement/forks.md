@@ -4,7 +4,18 @@ _A choice I resolved, with what was rejected and why. A fork is mine; a [blocker
 the user's._
 
 ## F1 — How facing-dependent z-order is expressed {#f1}
-_2026-07-30 · resolved at plan time · **a per-SLOT depth offset that flips with facing**_
+_2026-07-30 · resolved at plan time · **a per-SLOT depth offset that flips with facing** · **BUILT
+at P2** — the field is `&prim.depth`_
+
+**As built.** `VisualPart.depth`, a float defaulting to 0, in the pawn's OWN frame: **positive =
+toward the viewer when the pawn faces the camera**. The client negates it for `rotation 2` (north)
+only — e/w put the depth axis across the view, where the authored side is the visible one, so no
+flip there is what keeps the head on top in three facings out of four. `1 &head.depth set` is the
+whole authoring change; a backpack authors `-1` and needs no code.
+
+It resolves to `zIndex = PAWN_Z_BASE + zRow + depth·0.01 + slotIndex·0.0001` — slot order stays a
+stable tiebreak at equal depth, and the whole slot band lives inside one z-row so the ROW keeps
+deciding which pawn is in front.
 
 **Chosen.** Author a per-slot depth offset in the DSL (alongside `offset.x`/`offset.y`), and flip
 its sign — or not — from the facing. "Head over body for e/w/s, under for n" becomes a slot whose

@@ -50,6 +50,10 @@ interface MoverPart {
   scale: number;
   offsetX: number;
   offsetY: number;
+  /** Draw-order offset along the view's depth axis, in the pawn's OWN frame: positive = toward
+   *  the viewer when the pawn faces the camera. {@link facingDepth} negates it when the pawn
+   *  faces away, so `+1` reads as "head over body, except from behind" (F1). */
+  depth: number;
   size: number;
   span: number;
   anchorX: number;
@@ -63,6 +67,21 @@ interface MoverPart {
 /** Speculation applies a new position only past this tile delta — keeps the warm re-bake
  *  cadence proportional to actual motion, not the frame rate. */
 const SPEC_APPLY_EPS = 1 / 32;
+
+/** How much of a z-ROW one unit of authored slot `depth` is worth (F1). Slot ordering must stay
+ *  strictly INSIDE the pawn's row so the row keeps deciding which pawn is in front: with the
+ *  per-slot tiebreak below, `|depth| < 45` is safely within `(-0.5, +0.5)`. */
+const SLOT_DEPTH_Z = 0.01;
+/** A stable within-depth tiebreak so two slots at the same depth keep their authored order. */
+const SLOT_ORDER_Z = 0.0001;
+
+/** The slot's depth in SCREEN terms: authored depth is in the pawn's own frame (positive = toward
+ *  the viewer when it faces the camera), so a pawn facing AWAY (north, `rotation 2`) has its local
+ *  depth axis pointing away and the sign flips. East/west put the axis across the view, where the
+ *  authored side is the visible one — no flip, which is what keeps the head on top there. */
+function facingDepth(depth: number, facing: number): number {
+  return facing === 2 ? -depth : depth;
+}
 
 /** A well-distributed 32-bit hash → `[0, 1)` — a stable per-instance material seed from the
  *  pawn's `entityReference`, so instances differ without the noise pattern swimming as it walks. */
@@ -515,7 +534,12 @@ export class MoverLayer {
     scaleSlot(slots[0], tex0.name);
     const box = placeThing(tileX, tileY, layout, tex0.flipX, !tex0.name);
     const size0 = box.width; // square box
-    const zIndex = PAWN_Z_BASE + box.zRow;
+    // The pawn's ROW band. Slots sort WITHIN it by their own facing-resolved depth (F1) — the
+    // row still decides which pawn is in front, and the blit's warm-over-cold compare reads the
+    // row out of `zdepth_world` (from `prim.y + height`), which no slot z touches.
+    const zRowBase = PAWN_Z_BASE + box.zRow;
+    const slotZ = (s: MoverPart, i: number): number =>
+      zRowBase + facingDepth(s.depth, facing) * SLOT_DEPTH_Z + i * SLOT_ORDER_Z;
     // The carrier's game anchor (base-centre) + the px-per-tile scale for slot offsets. Every box
     // is `span × SQUARE` now (F4 — the scale lives in the art), so one tile is `size0 / span`.
     const ax = box.x + size0 * 0.5;
@@ -528,7 +552,7 @@ export class MoverLayer {
     }
     const specs: SlotSpec[] = [
       { texName: tex0.name, flipX: tex0.flipX, x: box.x, y: box.y, w: size0,
-        tint: slots[0].tint, geoColor: slots[0].geoColor, zIndex },
+        tint: slots[0].tint, geoColor: slots[0].geoColor, zIndex: slotZ(slots[0], 0) },
     ];
     for (let i = 1; i < slots.length; i++) {
       const s = slots[i];
@@ -546,8 +570,7 @@ export class MoverLayer {
       specs.push({
         texName: tex.name, flipX: tex.flipX, x: cx - w * 0.5, y: cy - w * 0.5, w,
         tint: s.tint, geoColor: s.geoColor,
-        // Above the carrier, below the next z-row (rows are integers; slots are hundredths).
-        zIndex: zIndex + i * 0.01,
+        zIndex: slotZ(s, i),
       });
     }
 
@@ -609,7 +632,7 @@ export class MoverLayer {
       if (
         pp.x === sp.x && pp.y === sp.y && pp.w === sp.w && pp.texName === sp.texName &&
         pp.flipX === sp.flipX && pp.tint === sp.tint && pp.geoColor === sp.geoColor &&
-        m.macroPosition === macroPosition
+        pp.zIndex === sp.zIndex && m.macroPosition === macroPosition
       ) {
         continue;
       }
