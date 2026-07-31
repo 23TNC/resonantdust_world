@@ -89,3 +89,27 @@ was tried and rejected or simply overtaken needs to be able to tell.
 Note that the two Marigold/normals streams are **art pipeline**, not renderer: per
 [F4](forks.md#f4) their output survives the strip, so they are candidates to stay open. P4 decides
 per stream rather than sweeping.
+
+## I7 — WebGL timer queries do not retire reliably in a backgrounded tab {#i7}
+
+Recorded 2026-07-31 so nobody rebuilds this rig from scratch. It is a **measurement** problem, not a
+renderer one, and it is what ended P0 ([D1](deviations.md)).
+
+The debug tab runs `document.hidden`, which the shadow streams already knew (their harness is
+tick-driven because rAF is suspended — measured **0 rAF calls in 10 s**). What was not written down is
+that `EXT_disjoint_timer_query_webgl2` results need an **event-loop turn** to become available, and in
+that same backgrounded tab `setTimeout` is throttled to roughly **1 s per call**.
+
+| drain strategy | result |
+|---|---|
+| `setTimeout(4)` polling | **works** — but each poll costs ~1 s, so a 3-repeat run blows the 45 s CDP evaluate budget |
+| driving extra `tick()` frames | **0 of 810** queries retired — GL command submission is not an event-loop turn |
+| `gl.finish()` | **0 of 810** — a GPU sync is not sufficient either |
+| `MessageChannel` yields (unthrottled) | partial — **740 of 810 missing**; the yields return too fast to let the GPU process retire anything |
+
+So the working recipe is the slow one, and it caps a run at roughly one repeat per evaluate call.
+
+**What to do instead, if per-pass GPU time is ever needed again:** measure one repeat per call and
+aggregate across calls, or foreground the tab. Do not spend the session making the fast paths work —
+they fail by returning *plausible partial data*, which is worse than failing loudly. Note the same
+shape as the capture bug in `completed.md`: the wrong method here does not error, it under-reports.

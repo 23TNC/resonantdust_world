@@ -37,3 +37,31 @@ size* is not a capture that shows the world.
 Delivery avoided both base64-through-context and the download path: a localhost-only sink
 (`scratchpad/shot_sink.py`, 127.0.0.1:8899, writes confined to `before/` by basename) receives the
 blob straight from the page.
+
+## 2026-07-31 · P0 — the one measurement that survived the cut
+
+P0's measurement items were struck on the user's instruction ([D1](deviations.md)). One clean run had
+already landed before the harness became the problem, and it is recorded here rather than discarded.
+
+**Fixture:** `:5174/?user=Claude&focus=100,50&zoom=1`, 664 standing prims, 1 light at reach 16 tiles,
+orbit on, 40 timed frames after 12 warm-up, GPU time by `EXT_disjoint_timer_query_webgl2`, draws
+attributed by bound framebuffer.
+
+| pass | render target | ms/frame |
+|---|---|---|
+| shadow-gather cold | `coldShadowRT` | **0.603** |
+| display blit | default | 0.378 |
+| world-lighting cold | `coldLightRT` | 0.119 |
+| g-buffer bake | `SquareCache` | 0.007 |
+| decay fade/splat | `decayRT` | 0.004 |
+| | | **1.111 total** |
+
+`GPU_DISJOINT_EXT` false, so the timings are valid.
+
+**Cross-check:** the binary-shadow-ids P0 harness, written independently in another session, measured
+**0.610 ms** for this same gather at N1 reach 16. Agreement to 1 % says the rig was measuring the
+right thing — which is what makes the number worth keeping even though the phase was cut.
+
+**The shape it confirms:** the gather is the pass, at **54 %** of frame GPU time with a single light —
+and it scales with light count while nothing else here does. Two passes (receiver coarse/fine) did not
+appear at all: they are dirty-gated and had already baked, which is the caching working as designed.

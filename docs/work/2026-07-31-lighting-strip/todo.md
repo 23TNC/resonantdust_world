@@ -17,11 +17,13 @@ pair the shadow streams used, so before/after images are comparable.
 
 ## P0 — Record what is about to be destroyed
 
+**Cut short by the user, 2026-07-31 ([D1](deviations.md)): "Alright lets skip P0."** The four
+measurement items are struck from the plan, not deferred. What survives is the one item whose output
+is genuinely unrecoverable after deletion — the images. The rest was pre-work for a rethink that has
+not started, and P1 produces the number that actually matters (the frame with lighting dark) without
+any of it.
+
 - [x] Capture four reference renders: zoom 1, zoomed out, a torch-lit corner, a conifer shadow edge. Acceptance: four images in `completed.md`, each with its URL — the successor SEES what was given up.
-- [ ] Record the per-frame draw sequence and the ms of each pass at N=1 and N=16 lights. Acceptance: a table — pass name, render target, ms mean and spread — from the existing tick-driven harness before any code moves.
-- [ ] Record resident RT bytes per target, and the total. Acceptance: a table summing to the ~83 MiB the README claims, or a corrected figure; whichever is true is what gets written.
-- [ ] Write the capability inventory: every visual behaviour the system delivers today. Acceptance: a numbered list — cold/hot tiers, mover shadows, n/s cards, shadows onto billboards, decay, per-light N·L, bilinear.
-- [ ] Record the accumulated structural findings in `issues.md` with their evidence. Acceptance: each of the README's five bullets carries its number and its source, so the re-think argues with data instead of memory.
 
 ## P1 — Cut the consumers (the renderer goes unlit, nothing is deleted yet)
 
