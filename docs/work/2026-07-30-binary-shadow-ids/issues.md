@@ -99,3 +99,44 @@ Raising `PRES_SLOTS` past 16 is not free and is not in scope: it is exactly the 
 budget ([I3](#i3)), 16 slots × 8 bits. Binary coverage frees 7 of those 8 bits per slot, so *more slots*
 is one of the things the freed bits could buy — noted here rather than planned, because
 [F3](forks.md#f3) already defers the freed-bit question to P5's measurement.
+
+## I6 — P2 attempt 1 locked up Chrome; reverted. MRT on the gather is not a free change
+
+**What was tried.** Extend `coldShadowRT`/`hotShadowRT` from one attachment to **three** — attachment 0
+the coverage texel as before, 1 and 2 the caster id map (16 slots x u16 = 256 bits = two uvec4s) — and
+have `GATHER_FRAG` write all three, with `walkShadow` reporting the winning caster through a new
+out-param.
+
+**What happened.** The page loaded and then the renderer stopped responding: screenshot capture timed
+out, then CDP itself timed out at 30 s, and the user confirmed **Chrome locked up**. Reverted to the
+P1 commit (`c3ec08f8`); tree clean, no id-map code remains.
+
+**What is NOT the cause.** The tree typechecked, and the four early-return paths were all fixed to write
+all three attachments before loading (an unwritten attachment under `drawBuffers` is undefined, and
+`rmode == 0` is the common path) — so this was not a naive undefined-attachment mistake. It is also not
+memory: three 512x256 rgba32uint attachments is 6 MiB per RT, 12 MiB for cold+hot, against 405 MiB
+already resident.
+
+**Leading hypothesis — the gather's write bandwidth tripled.** The gather runs one fragment per shadow
+texel with a heavy per-fragment loop, and it was already the dominant pass (6.19 ms at N16). Tripling
+the bytes written per fragment on a draw that is already the longest in the frame is a plausible way to
+trip the GPU watchdog / TDR, which presents exactly like this — a hang rather than a black screen or a
+shader-compile error.
+
+**Not confirmed.** A lock-up destroys the evidence, and I did not get a console read or a link-status
+check before it went unresponsive. The next attempt must gather that evidence BEFORE it can hang.
+
+**How to approach P2 again — smaller steps, each independently loadable:**
+
+1. Add **one** extra attachment carrying 8 slots (u16 x 8 = one uvec4), not two. Load. If that alone
+   hangs, the cause is MRT-on-the-gather itself and the id map needs a different home entirely.
+2. Explicitly check `getProgramParameter(LINK_STATUS)` and the info log for the gather program on boot
+   and log it, so a compile/link failure is distinguishable from a hang next time.
+3. Consider writing the id map in a **separate pass** over the shadow RT rather than as extra
+   attachments on the gather — it costs a second draw but leaves the hot pass's bandwidth untouched.
+4. Consider the 6 reserved bits in the slot byte ([F3](forks.md#f3)) for a narrower id after all: no new
+   attachment at all, at the price of capping ids at 64 per class-window. F3 deferred this on
+   correctness grounds; a hang changes that calculus and it deserves re-deciding rather than assuming.
+
+**P2 is left OPEN and unticked.** Nothing about P0/P1 is affected — those are committed, measured and
+independently valuable (8.30 -> 7.11 ms at 16 lights).
