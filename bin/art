@@ -2550,7 +2550,7 @@ cmd_remaster() {
   # Positional slots, filled in order by every non-flag argument. layers/size are
   # appended at the end so publish keeps its position; both are normally passed as flags.
   # (split_normalize/black_threshold are flag-only — dashed names, handled in the case below.)
-  local no_bevel=0 pad=1 engine_set=0
+  local no_bevel=0 pad=1 engine_set=0 force=0
   local -a pos=(path gap radius choke aa outline_width outline_color outline_blur preset detail detail_radius strength engine publish layers size sharpen_normal ao_strength sharpen_ao pitch_normal pad)
   local pi=0
   while (( $# )); do
@@ -2562,6 +2562,7 @@ cmd_remaster() {
       --tilt)      tilt=1; continue ;;           # force object normal tilt on (default: auto by category)
       --no-tilt)   tilt=0; continue ;;           # force off (for ground/tiles)
       --no-bevel)  no_bevel=1; continue ;;       # tile 3x3, keep the centre (no raised border)
+      --force|-f)  force=1; continue ;;          # regenerate even LOCKED leaves (see `art lock`)
       --ao)        ao=1; continue ;;             # pack depth-derived AO into normal.a (default)
       --no-ao)     ao=0; continue ;;             # skip the AO step
       --split-normalize|--split_normalize)   # normalize the channel-pack (DEFAULT on): pull all colour into layers, leave only the black outline in albedo. Optional 0/1 value disables/enables (bare = on).
@@ -2593,8 +2594,28 @@ cmd_remaster() {
     echo "       --pitch_normal DEG pitches object normals DEG° down into the ground plane (default 0 = no change; geometrically-correct = ${NORMAL_PITCH_DEG} = 90 − world tilt of ${WORLD_TILT_DEG}°); grid tiles never pitch." >&2
     echo "       normal engine defaults to laigter; --marigold overrides it. albedo=Marigold-IID." >&2
     echo "       depth is NOT generated (client integrates it from the normal). See 'art help'." >&2
+    echo "       --force regenerates leaves LOCKED by 'art lock' (hand-authored art). Without it, one locked leaf under <path> aborts the whole run." >&2
     echo "       publish defaults to 0 (local masters only); the deploy tail isn't wired up in this repo yet." >&2
     return 1
+  fi
+  # HAND-AUTHORED GUARD. `remaster` overwrites every map under <path>, so it must not be able
+  # to silently destroy art someone made by hand. A leaf opts out by carrying `locked` in its
+  # meta.json (`art lock <path>`); one locked leaf anywhere under the target aborts the WHOLE
+  # run rather than being skipped — a partial remaster that quietly leaves holes is harder to
+  # notice than a refusal, and the fix (unlock, or narrow the path) is the user's call.
+  # Checked BEFORE cmd_split, which is the first destructive step.
+  if (( ! force )) && command -v python3 >/dev/null; then
+    local _locked
+    # A `.png` target resolves to its containing dir (leaf_lock does that), so a sheet is
+    # guarded at the granularity it actually rewrites — kind-level for a variant sheet. A
+    # category-level flat sheet scans its whole category, which over-guards slightly; the
+    # message names the offending leaves, so narrowing or unlocking is obvious.
+    if ! _locked=$(RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/leaf_lock.py" check "$SPRITE_DIR/$path" 2>/dev/null); then
+      echo "art: remaster REFUSED — locked (hand-authored) leaves under '$path':" >&2
+      echo "$_locked" >&2
+      echo "art: pass --force to regenerate them anyway, 'art unlock <path>' to clear the lock, or remaster a narrower path." >&2
+      return 1
+    fi
   fi
   cmd_split "$path" "$gap" "$radius" "$choke" "$aa" || return 1
   # Grid categories (linked) auto-tile, so SKIP the per-piece OUTLINE — an outline
@@ -3364,9 +3385,24 @@ commands:
                            tail (master→R2, visuals corpus push, reindex) isn't wired
                            up in this repo yet; --publish 1 just prints a TODO notice.
                            Run \`art manifest\` to regenerate the existence index.
+                           --force regenerates leaves LOCKED by \`art lock\` (see below).
+                           Without it, ONE locked leaf anywhere under <path> aborts
+                           the whole run — remaster overwrites every map it touches,
+                           so hand-authored art has to be able to say no.
                            Any arg may also be given as a flag (so you can set one
                            without the rest), e.g. `art remaster <path>
                            --choke 2` or `--outline_color=0xFF0000`.
+  lock <path> [--note TEXT]
+  unlock <path>
+  locks <path>             Mark leaves as HAND-AUTHORED so \`remaster\` refuses to
+                           regenerate them (\`--force\` overrides). The lock rides the
+                           leaf's own meta.json, beside normal_engine/span/outline, so
+                           it travels with the art — textures/ is gitignored, so a lock
+                           list kept anywhere else would be the copy that goes stale.
+                           <path> takes remaster's granularity: a variant leaf, a kind,
+                           or a whole type. --note records WHY, and it is printed back
+                           in the refusal. \`locks\` lists what is currently locked.
+                           e.g. art lock pawn/human/female/11 --note "hand-painted face"
   split <path> [gap] [radius] [choke] [aa]
                            Slice sprite sheets into master *.diffuse.png crops.
                            Keys each PNG under sprites/<cat>/… in-memory (no keyed
@@ -3582,6 +3618,37 @@ cmd_leaf_span() {
 # its authored resolution and never resized; what ships is the derived set, which must be the size
 # the packer expects. Normalises in BOTH directions and WARNS on an upscale, so an undersized master
 # is a visible worklist rather than a silent softening. Delegates to lib/normalize_square.py.
+# Mark leaves as HAND-AUTHORED so `art remaster` refuses to overwrite them. The lock rides the
+# leaf's own meta.json (the sidecar that already carries normal_engine/span/outline), so it
+# travels with the art — textures/ is gitignored, so any lock list kept elsewhere would be the
+# copy that goes stale. `lock` and `unlock` take the same path granularity as `remaster`: a
+# variant leaf, a kind, or a whole type. Delegates to lib/leaf_lock.py.
+cmd_lock() {  # <path> [--note TEXT] | (unlock) <path>
+  command -v python3 >/dev/null || { echo "art lock: python3 not found" >&2; return 1; }
+  local sub=$1; shift
+  if [[ -z "${1:-}" ]]; then
+    echo "usage: art $([[ $sub == set ]] && echo lock || echo unlock) <path> [--note TEXT]" >&2
+    echo "       <path> is a texture path under $SPRITE_DIR — a variant leaf, a kind, or a type." >&2
+    echo "       'art locks <path>' lists what is currently locked." >&2
+    return 1
+  fi
+  local -a roots=() rest=()
+  while (( $# )); do
+    case "$1" in
+      --note|--note=*) rest+=("$1"); [[ $1 == --note ]] && { rest+=("${2:-}"); shift; }; shift ;;
+      *) roots+=("$SPRITE_DIR/${1%/}"); shift ;;
+    esac
+  done
+  RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/leaf_lock.py" "$sub" "${roots[@]}" "${rest[@]}"
+}
+
+cmd_locks() {  # <path> — list the locked leaves under a path (never fails)
+  command -v python3 >/dev/null || { echo "art locks: python3 not found" >&2; return 1; }
+  local path=${1:-}
+  [[ -n "$path" ]] || { echo "usage: art locks <path>" >&2; return 1; }
+  RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/leaf_lock.py" list "$SPRITE_DIR/${path%/}"
+}
+
 cmd_normalize_square() {
   command -v python3 >/dev/null || { echo "art normalize-square: python3 not found" >&2; return 1; }
   RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/normalize_square.py" "$@"
@@ -3644,6 +3711,9 @@ main() {
     generate-tile) cmd_generate_tile "$@" ;;
     retile-linked) cmd_retile_linked "$@" ;;
     leaf-span)     cmd_leaf_span "$@" ;;
+    lock)          cmd_lock set "$@" ;;
+    unlock)        cmd_lock clear "$@" ;;
+    locks)         cmd_locks "$@" ;;
     normalize-square) cmd_normalize_square "$@" ;;
     split_layers) cmd_split_layers "$@" ;;
     outline) cmd_outline "$@" ;;
