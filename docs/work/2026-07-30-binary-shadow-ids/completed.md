@@ -326,3 +326,38 @@ read back as "no caster". Fixed by clearing the slot's half before OR-ing.
 Seeding to zero instead would have been worse and quieter: **billboardIdx 0 is a real caster**, so an
 unwritten slot would have read as "caster 0 occludes here" — a plausible-looking wrong shadow rather
 than an obviously missing one.
+
+## 2026-07-31 · F8 implementation — scouted, not started
+
+Located every site F8 touches before running out of room to do it safely. Recorded so the next session
+starts from findings rather than a search.
+
+**The `child` pattern already exists** — `childPrimUnder` (`coldShadowData.ts:765`) documents it for
+`prim_data`: _"`child = 1` makes RED's top half the `parent_id`"_, with bias-8 signed offsets otherwise.
+So F8's parentless-billboard reuse is **extending an established convention, not inventing one**, which
+is the right shape and should read as familiar to anyone who knows `prim_data`.
+
+**`light_data` already carries a resolved zone** — its A word is
+`u12 reach | u8 emitter_radius | u8 resolved_zone (4-11) | u4 reserved`. So "the record carries enough to
+self-position" is precedent in this very band family, not a new idea.
+
+**The absolute address already has an encoder** — `encodePosition(x, y)` builds the carrier prim's R
+word, and per `VARIABLES.md` the full form is `region | zone | tile | anchor`. F8's `u8 region | u8 zone`
+is the top half of exactly that, so the CPU side is a re-slice of a value already computed, not a new
+derivation.
+
+**Sites to change, in dependency order:**
+
+1. `VARIABLES.md` billboard_data R + A — it OWNS this layout, so it changes FIRST (repo convention:
+   `VARIABLES.md` outranks code).
+2. `coldShadowData.ts` — the billboard writer: emit `u8 region | u8 zone` into R's top half when the
+   billboard has no parent, and set the new `u1 child` bit in A's `u14 reserved (0-13)`.
+3. `shadowGather.ts` `resolvedTilePos` — take the high bits from the record when `child == 0` instead of
+   wrapping against a caller-supplied `ref`; `casterOne`'s `ref` parameter then falls away for
+   parentless casters, which is what makes an id alone sufficient.
+4. Shadow RT to 2 px per texel (header + ids) — single attachment, 2x width, NOT MRT.
+5. `GATHER_FRAG` — write the header px (4 channels x 2 lights x 4 x u4 set) and the id px
+   (8 x u16 in-set id).
+6. Readers — `accumulateLights`, the overlay, `debugReadShadow`, the identity diff.
+
+**Nothing was changed.** Tree clean at the F8 planning commit.
