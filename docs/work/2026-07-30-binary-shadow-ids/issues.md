@@ -267,3 +267,32 @@ to the walk" case the design assumed.
 
 **Nothing was shipped.** The P3 edit was reverted before loading — the flaw was found by reading
 `resolvedTilePos` while wiring `casterOne`, not by a failure on screen. Tree clean at the P2 commit.
+
+## I8 — The header px doubles the gather's fragment count, and at N=1 it carries a constant
+
+Found 2026-07-31 while scoping the v6 layout, **before writing any of it**. Recorded because the
+lighting strip will face the same arithmetic.
+
+**A fragment writes 128 bits.** The v6 texel is 256 (header + ids). There are exactly three ways to
+emit 256 bits per texel, and each has a cost the layout did not price:
+
+| route | cost |
+|---|---|
+| MRT (two attachments) | hung Chrome twice ([I6](#i6)); never root-caused |
+| 2× wide RT, gather rasterizes both px | **the walk runs twice per texel** — and the walk is ~87 % of the pass |
+| a second derive pass reading the id RT | legal and cheap, but at N=1 the header is a pure function of the ids, so it carries no information |
+
+**And today the header's payload is constant.** Every caster the walk considers is a billboard — the
+loop skips anything else outright (`(slot >> 24) & 15u != SET_BILLBOARD_DATA`). So `u4 set` is **6 for
+every occupied slot and 0 for every empty one**, which the id lane's sentinel already encodes. The
+header only starts carrying information when a second caster *set* can win a slot — walls casting from
+`definition_data`, say — which is exactly the direction the strip is likely to go.
+
+**This does not invalidate F8.** F8 has two halves and only the second is affected: the parentless-
+billboard reuse (self-positioning roots) is built, verified and independent — it needed no extra px at
+all. It is the u20 half that wants a storage answer, and the answer is not "one more px" for free.
+
+**For the rethink.** The real question the header was answering is *how wide is a caster reference*, and
+u20 does not fit 8-per-texel. Two shapes close it without a second px, and both are the successor's
+call, not mine: **6 slots × u20 = 120 bits** (one px, full reference, two fewer lights per tile), or a
+**narrower reference** — a caster-local index into a per-window table rather than a global record id.
