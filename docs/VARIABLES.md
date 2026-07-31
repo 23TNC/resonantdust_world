@@ -452,13 +452,38 @@ the WALK: each visited tile also checks `ceil(TILT · maxCardHeight)` rows SOUTH
 derived — the tallest authored card), and the receiver scan dilates the same way. Finding an
 occupant means you found **its** tile; the gather projects the shadow from there.
 
-**`shadow-cold`** (the gather OUTPUT RT, world-space toroidal `RGBA32UI`, textile_unit) packs **14 ×
-u9 coverage** (512 levels) with NO channel straddle: the **low 8 bits** of slot `i` sit at channel
-`i>>2`, bits `(i&3)·8` (R = slots 0–3, G = 4–7, B = 8–11, A = slots 12–13 in bits 0–15); the **9th
-(high) bit** of slot `i` sits in **A bit `16+i`** (A bits 16–29 = the 14 high bits; bits 30–31
-reserved). So `value_i = low8_i | (high1_i << 8)`, `0..511` = **126 bits used**. Slot `i` of the
-shadow matches slot `i` of presence (same light). u9 is the coverage resolution emitter-based
-penumbra gradients need (work [`2026-07-23-penumbra`](work/2026-07-23-penumbra/README.md)).
+**`shadow-cold`** (the gather OUTPUT RT, world-space toroidal `RGBA32UI`, textile_unit) is a **caster
+id map**, not a coverage map (v6, 2026-07-31, work
+[`2026-07-30-binary-shadow-ids`](work/2026-07-30-binary-shadow-ids/README.md)). Slot `i` matches slot
+`i` of presence (same light), as it always has — but it stores **which caster occluded**, and occlusion
+is **implied** (`set != 0`), never stored.
+
+Each texel is **2 px**, side by side (the RT is `2 × width`; a single attachment, deliberately not MRT
+— see the work stream's I6):
+
+```
+px 0  HEADER   4 channels x u32; each channel serves 2 lights, 16 bits each
+               u4 set for caster 0 | u4 set for caster 1 | u4 set 2 | u4 set 3   (N = 1..4)
+               set 0 = the global sentinel = NOT OCCLUDED
+px 1  IDS      8 lights x u16 in-set id                                         (caster 0, N = 1)
+px 2..4        one further id px per extra caster                               (N = 2..4)
+```
+
+**Why a header at all.** A record reference is **u20**, not u16: the data texture is 16 u16-addressable
+sets (`set = linear >> 16`), so an id alone does not name a record. The header carries the `u4 set`
+lanes so the id px can stay a clean 8 × u16, and it makes **N a dial** — one more id px per extra
+caster per light — rather than a re-layout.
+
+`set 0` doing double duty as "empty" is not a coincidence: set 0 is already the **global sentinel** for
+a prim's `set_a..d`, so the same test ("no data carried") means the same thing here, and no magic id
+value has to be reserved out of the u16 space.
+
+**What was lost.** Up to v3 this RT held **14 × u9 coverage** for emitter-based penumbra
+(work [`2026-07-23-penumbra`](work/2026-07-23-penumbra/README.md)). A live histogram found the map
+perfectly bimodal — the gradient was computed and discarded downstream — so binary occlusion deleted
+dead arithmetic, not a working feature. Soft shadows return, if they return, as a **fine refine** off
+this id map, which is strictly more capable: the id lets the lighting pass re-place the actual caster
+card at 64/tile instead of interpolating a number.
 
 Updates arrive by **command-buffer scatter**: a **64×64 `RGBA32UI` command buffer** uploaded as one
 contiguous row-span (rotating row cursor — never overwrite just-consumed rows) and applied by one
@@ -530,16 +555,34 @@ B  u32   u16 id_a (16–31) | u16 id_b (0–15)
 A  u32   u16 id_c (16–31) | u16 id_d (0–15)
 ```
 
-**`billboard_data` band** (rows 384–447) — 1 px per billboard. RED is **parent + the CPU-resolved
-position**; GREEN keeps the **authored** offsets (the durable relative placement).
+**`billboard_data` band** (rows 384–447) — 1 px per billboard. RED is the **CPU-resolved position**;
+GREEN keeps the **authored** offsets (the durable relative placement). As in `prim_data`, **`child`
+reinterprets RED**: a **root** billboard is placed absolutely; a **child** (a piece carried by a
+composite — a pawn's head on its body) points at its carrier.
 
 ```
-R  u32   u16 parent_id (16–31) | u8 resolved_tile (8–15) | u8 resolved_unit (0–7)
+R  u32   ROOT  (child=0)   u8 region_reference (24–31) | u8 zone_reference (16–23)
+                         | u8 resolved_tile (8–15)    | u8 resolved_unit (0–7)
+         CHILD (child=1)   u16 parent_id (16–31) | u8 resolved_tile (8–15) | u8 resolved_unit (0–7)
 G  u32   u4 layer (28–31) | u2 rotation (26–27) | u1 hot_cold (25) | u1 cast_shadows (24)
          | u8 z_offset (16–23) | u8 tile_offset (8–15) | u8 unit_offset (0–7)
 B  u32   u16 definition_id (16–31) | u2 last_lod (14–15) | u3 sub_x (11–13) | u3 sub_y (8–10) | u8 seed (0–7)
-A  u32   u16 caster_definition_id (16–31) | u1 caster_flip (15) | u1 caster_valid (14) | u14 reserved (0–13)
+A  u32   u16 caster_definition_id (16–31) | u1 caster_flip (15) | u1 caster_valid (14)
+         | u1 child (13) | u13 reserved (0–12)
 ```
+
+`child` (2026-07-31, [binary-shadow-ids](work/2026-07-30-binary-shadow-ids/README.md) P2b, fork F8) —
+mirrors `prim_data.G` bit 28. **Most billboards are roots**: the CPU allocates each a private carrier
+prim purely so it has somewhere to be placed, and `parent_id` then names a record no GPU consumer ever
+reads. Those 16 bits were dead, and they are exactly the width of the two HIGH position bytes.
+
+**Why this matters beyond tidiness.** A root record is now **self-positioning**: `decodePos` recovers
+its absolute world position from RED alone. Every earlier consumer had to supply a *reference* point
+and take the congruent representative nearest it, which is only exact while the true separation is
+under half a period — and the shadow gather's caster ids broke that bound. Recovering a caster from a
+stored id gives you no reference to pass, so the id was un-positionable and the failure was silent: a
+mis-decoded caster lands somewhere plausible, occludes, and paints a phantom shadow.
+
 `last_lod` — the lod this billboard was **last baked at**. A mismatch against the live lod means the def is
 stale and wants swapping; the swap rides the existing billboard dirty cascade. "Last" is correct here
 because billboards are **re-baked, not accumulated** — there is nothing to invert, so no history is needed.
@@ -569,9 +612,17 @@ adjacent same-kind objects differ while each is pinned to where it stands across
 stamps it at record write and the bake consumes the same value (one source); it lives in the record
 so any future GPU consumer reads the identical seed.
 
-No `resolved_zone`: `prim_presence` is an **occupancy** relation (an object registers on the
-tiles its footprint covers), so the fragment's own tile pins it — nearest-congruent is exact for any
-footprint under 8 tiles.
+**Position recovery, by `child`.** A ROOT decodes **absolutely** — `decodePos(R)`, no reference, no
+period, exact everywhere. A CHILD keeps only `resolved_tile|resolved_unit`, a **16-tile** period, so it
+must be resolved against a reference within ±8 tiles; the reference is the **carrier's** position, which
+is by construction adjacent (a head sits on its body). Consumers that hold a caster id and nothing else
+can therefore position a root but not a child — which is safe, because a child is a *piece* of a
+composite and the composite's own root is what casts.
+
+This supersedes the former "No `resolved_zone`" rule, which argued the fragment's own tile always pins a
+billboard because `prim_presence` is an **occupancy** relation. That is true only while the reader
+*found* the record by walking presence at the caster's own tile. It stops being true the moment a reader
+holds a bare id, and the shadow gather's caster map does exactly that.
 
 **`light_data` band** (rows 128–191) — 1 px per light. Props are **inline** (there is no light-def band).
 

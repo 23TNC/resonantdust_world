@@ -50,6 +50,11 @@ const SET_PRIM_DATA = 1;   // a prim carrying another prim — what makes the gr
 const MAX_PRIM_DEPTH = 8;
 /** The bias-8 signed nibble pair meaning "no offset" — a carried piece sitting exactly on its carrier. */
 const OFFSET_ZERO = 0x88;
+/** `billboard_data.A` bit 13 — **`child` reinterprets RED** (VARIABLES; the same convention as
+ *  `prim_data.G` bit 28). Set ⇒ RED's top half is `parent_id`; clear ⇒ it is `region|zone`, and the
+ *  record decodes its own absolute position with no reference point. Only a CARRIED piece (a pawn's
+ *  head) sets it; a standing object is a root even though the CPU gives it a private carrier prim. */
+const CHILD_BIT = 1 << 13;
 export const LIGHT_BASE = 131072;
 /** Tile-keyed sets — region-torus addressed (presence-in-data). One set = one region's 65 536 tiles. */
 export const PRESENCE_BASE = 3 * 65536;    // light_presence_lo (light slots 0–6)
@@ -707,11 +712,15 @@ export class ColdShadowData {
         const unitOff = (b8((dxPx - dTX * SQUARE) / UNIT) << 4) | b8((dyPx - dTY * SQUARE) / UNIT);
         const seed8c = Math.floor((billboard.seed ?? 0) * 255) & 0xff;
         const layer = (billboard.layer ?? 0) & 0xf;
+        // F8: this is the ONE billboard shape that is a genuine CHILD — a piece carried by a
+        // composite. RED keeps `parent_id`, so `child = 1` (A bit 13) tells the GPU that RED's top
+        // half is a record id and NOT region|zone. Its position resolves against the carrier, which
+        // is by construction within a tile or two, so the 16-tile period is never strained.
         const leafChanged = this.writeRecord(BILLBOARD_DATA_BASE + idx,
           ((((carrier & 0xffff) << 16) | (tile << 8) | unit) >>> 0),
           (((layer << 28) | ((rotation & 3) << 26) | ((billboard.hot ? 1 : 0) << 25) | (1 << 24)
             | (tileOff << 8) | unitOff) >>> 0),
-          ((((defIndex & 0xffff) << 16) | (sub6 << 8) | seed8c) >>> 0), casterA);
+          ((((defIndex & 0xffff) << 16) | (sub6 << 8) | seed8c) >>> 0), (casterA | CHILD_BIT) >>> 0);
         return { idx, changed: leafChanged };
       }
     }
@@ -754,8 +763,13 @@ export class ColdShadowData {
     // material-variance seed, quantised from the deterministic cellSeed the placement supplied.
     // Stamped here AND consumed by the bake at the same quantisation, so record and bake agree.
     const seed8 = Math.floor((billboard.seed ?? 0) * 255) & 0xff;
+    // F8: a ROOT (child = 0) — RED is the WHOLE resolved position, `region|zone|tile|unit`, exactly
+    // as `prim_data`'s root form. The 16 bits that held `prim` were dead weight: the carrier prim is
+    // a CPU placement device, and no GPU consumer has ever read a billboard's parent. Spending them
+    // on the high position bytes makes the record self-positioning, which is what lets a consumer
+    // holding nothing but a caster id place that caster (the whole point of the id map).
     const leafChanged = this.writeRecord(BILLBOARD_DATA_BASE + idx,
-      ((((prim & 0xffff) << 16) | (((r.pos >>> 8) & 0xff) << 8) | (r.pos & 0xff)) >>> 0),
+      r.pos >>> 0,
       ((((rotation & 3) << 26) | ((r.hot ? 1 : 0) << 25) | ((r.cast ? 1 : 0) << 24)
         | ((r.z & 0xff) << 16) | (OFFSET_ZERO << 8) | OFFSET_ZERO) >>> 0),
       ((((defIndex & 0xffff) << 16) | (sub6 << 8) | seed8) >>> 0), casterA);

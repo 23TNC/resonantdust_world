@@ -326,6 +326,28 @@ vec2 resolvedTilePos(uint tile, uint unit, vec2 ref) {
   d -= period * floor(d / period + 0.5);
   return ref + d;
 }
+// F8 (2026-07-31): THE billboard anchor decode — every consumer of a billboard record goes through
+// here, so the ROOT/CHILD split lives in exactly one place.
+//
+//   child = 0 (A bit 13 clear)  RED is the full region|zone|tile|unit address -> decodePos is
+//                               ABSOLUTE. No reference, no period, exact at any separation.
+//   child = 1                   RED's top half is parent_id, so only tile|unit survive (16-tile
+//                               period) and ref must be within +-8 tiles. Safe by construction:
+//                               a child is a piece carried by a composite, and its reference is
+//                               its carrier, a tile or two away.
+//
+// The absolute path is what makes a bare caster id positionable (I7). Recovering a caster from the
+// id map hands you no reference to pass, and substituting the receiver's own tile was NOT safe at
+// reach 16 -- the caster can sit beyond the +-8 the wrap tolerates, and the failure is a false
+// POSITIVE: a mis-decoded caster lands somewhere plausible, occludes, and paints a phantom shadow.
+vec2 billboardPos(uvec4 Pd, vec2 ref) {
+  vec2 b = ((Pd.w >> 13) & 1u) == 1u
+         ? resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref)
+         : decodePos(Pd.x);
+  // hot-sync P3: + the sub-unit lanes (eighths of a unit) so lighting tracks the DRAWN anchor
+  // rather than the unit grid. Carried on B for both forms.
+  return b + vec2(float((Pd.z >> 11) & 7u), float((Pd.z >> 8) & 7u)) * 0.125;
+}
 // The WORLD ground tilt as (sin, cos) -- NOT the angle. Nothing downstream ever wants the angle itself:
 // it appears only as st and ct in the card maths (dn, lean, k), so carrying radians just means every
 // consumer pays a sin and a cos to recover what we could have stored directly.
@@ -443,9 +465,8 @@ float casterCoverNS(uvec4 Pd, vec2 A, vec2 Q, vec3 L, float emitter, highp usamp
 // silhouette resolved) or a point light (emitter≈0) falls back to the solid/hard quad.
 float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU, vec2 ref, highp usampler2D data, sampler2D surf) {
   if (billboardIdx == 0u) return 0.0;
-  uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));      // v2.1: R = id|reserved, G = position, B = orient
-  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref)   // v3 leaf: resolved tile|unit
-         + vec2(float((Pd.z >> 11) & 7u), float((Pd.z >> 8) & 7u)) * 0.125; // hot-sync P3: + sub-unit lanes (eighths of a unit) so lighting tracks the DRAWN anchor, not the unit grid
+  uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));      // R = position (root) or parent|tile|unit (child), G = orient, B = def
+  vec2 A = billboardPos(Pd, ref);                                     // F8: root decodes absolutely
   // ns-shadows P1: an n/s-rotated caster with a resolved side def casts from the perpendicular card.
   uint rotc = (Pd.y >> 26) & 3u;
   if ((rotc == 0u || rotc == 2u) && ((Pd.w >> 14) & 1u) == 1u) {
@@ -549,8 +570,7 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
 float receiverCover(uint billboardIdx, vec2 P, vec2 ref, highp usampler2D data, sampler2D surf, vec2 align, out float baseYOut) {
   baseYOut = 0.0;
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));
-  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref)   // v3 leaf: resolved tile|unit
-         + vec2(float((Pd.z >> 11) & 7u), float((Pd.z >> 8) & 7u)) * 0.125; // hot-sync P3: + sub-unit lanes (eighths of a unit) so lighting tracks the DRAWN anchor, not the unit grid
+  vec2 A = billboardPos(Pd, ref);                                     // F8: root decodes absolutely
   int defIdx = int((Pd.z >> 16) & 0xffffu);
   uvec4 D = fetchLin(data, DEF_BASE + defIdx);
   float W = float(((D.y >> 23) & 511u) * 2u);
@@ -618,8 +638,7 @@ vec3 billboardNormal(uint billboardIdx, vec2 P, highp usampler2D data, sampler2D
   vec2 ref = P;   // the billboard is DRAWN at P, so P is within its own footprint (16-tile period is ample)
   sOut = -1.0;
   uvec4 Pd = fetchLin(data, BILLBOARD_BASE + int(billboardIdx));
-  vec2 A = resolvedTilePos((Pd.x >> 8) & 255u, Pd.x & 255u, ref)   // v3 leaf: resolved tile|unit
-         + vec2(float((Pd.z >> 11) & 7u), float((Pd.z >> 8) & 7u)) * 0.125; // hot-sync P3: + sub-unit lanes (eighths of a unit) so lighting tracks the DRAWN anchor, not the unit grid
+  vec2 A = billboardPos(Pd, ref);                                     // F8: root decodes absolutely
   int defIdx = int((Pd.z >> 16) & 0xffffu);
   uvec4 D = fetchLin(data, DEF_BASE + defIdx);
   float W = float(((D.y >> 23) & 511u) * 2u);
@@ -683,9 +702,7 @@ float casterOne(uint billboardIdx, vec2 Q, vec3 L, float emitter, float reachU, 
   uint cHot = (cPd.y >> 25) & 1u;
   if (casterMode == 1 && cHot == 1u) return 0.0;
   if (casterMode == 2 && cHot == 0u) return 0.0;
-  uint cRB = cPd.x;
-  vec2 Cb = resolvedTilePos((cRB >> 8) & 255u, cRB & 255u, ref)      // hot loop, per caster per light
-          + vec2(float((cPd.z >> 11) & 7u), float((cPd.z >> 8) & 7u)) * 0.125; // hot-sync P3: sub-unit lanes
+  vec2 Cb = billboardPos(cPd, ref);        // F8: hot loop, per caster per light — root is exact
   if (isThing) {
     if (billboardIdx == rbillboard) return 0.0;                       // (0) self — exact same billboard → no self-cast
     // ns-shadows P1 (fork F1): gate (1) is the E/W card's seen-face asymmetry (a caster NORTH of a
