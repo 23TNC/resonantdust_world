@@ -32,11 +32,12 @@ count, 12 warm-up frames dropped, 3 repeats reporting mean and spread.
 - [x] Replace `max(cov, cc)` with an `any`-style early exit out of the caster loop. Acceptance: the walk stops at the first occluder; a shadow diff before/after shows only intended differences.
 - [x] Verify and measure. Acceptance: corridor↔brute 0 differing, the P0 matrix re-run, and the delta attributable to deleted work rather than changed geometry.
 
-## P2 — The id map
+## P2 — The id map ([F7](forks.md#f7): 8 slots, in the existing texel)
 
-- [ ] Allocate the id map at shadow resolution, two px per texel for 16 × `u16` ([F2](forks.md#f2)). Acceptance: ~4 MiB per class, confirmed by the live resident-bytes walk.
-- [ ] Track the winning caster's prim id alongside the occlusion test and write it per slot. Acceptance: sampled ids resolve to real casters whose footprint plausibly covers the texel.
-- [ ] Confirm nothing else changed. Acceptance: the shadow RT itself is bit-identical to P1 — the id map is additive.
+- [ ] Drop `PRES_SLOTS` to 8 and confirm the gather's light loop, the presence fetch and the CPU mirror all follow the constant. Acceptance: one presence word fetched, not two; loop bound 8; no literal 16 left behind.
+- [ ] Re-encode the shadow texel as 8 x u16 caster ids, `onBillboard << 15 | billboardIdx`, sentinel for none. Acceptance: the coverage bit is GONE — occlusion is `id != sentinel` at every reader.
+- [ ] Record the winning caster's id from the walk into its slot. Acceptance: sampled ids resolve to real casters whose footprint plausibly covers the texel.
+- [ ] Verify and measure. Acceptance: corridor↔brute 0 differing, scene renders correctly, and the headline re-measured — the 8-slot loop should beat P1's 7.11 ms at N16.
 
 ## P3 — Incumbent early-out
 

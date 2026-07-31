@@ -95,3 +95,35 @@ attribute cleanly.
 
 It is a real unlock and it should not be lost, which is why P6 writes it down with the flag name and the
 idle buffers named explicitly.
+
+## F7 — REVERSES F2: 8 lights per tile, and the texel becomes the id map {#f7}
+
+**User, 2026-07-31, after three failed approaches from me.** F2 chose to keep 16 lights and find the ids
+a new home. That was the wrong half to hold fixed.
+
+At **8** slots the arithmetic closes with nothing left over:
+
+```
+8 slots x u16 = 128 bits = ONE uvec4 = the shadow texel we already have
+```
+
+No second attachment (which hung twice), no 2x-wide RT (my elaboration, now unnecessary), no packing a
+short id into spare bits (impossible — an 8-bit id cannot index a u16 billboardIdx). The texel stops
+storing a value and stores the **caster id**, with a sentinel for "not occluded" — so occlusion is
+implied, not stored, exactly as the user said before I understood it.
+
+**Why 8 is not the constraint I claimed.** F2 kept 16 partly on the grounds that halving would starve a
+scene of "dense AUTHORED point lights". That reasoning was wrong: `PRES_SLOTS` is **per tile**, and the
+sets are independent — tile A can hold lights 1-8 while tile B holds 9-16. The cap is on *overlap at one
+tile*, not on how many lights exist. Eight lights reaching a single tile is already a lot, and the user's
+position is explicit: start at 8, double back to 16 only if a real scene hits it.
+
+**Bonus, unasked for:** it halves the gather's inner loop from 16 iterations to 8. That is a second
+speed win stacked on P1's, in the pass that is 87% of the frame cost.
+
+**Layout.** `u16` per slot = `onBillboard << 15 | billboardIdx (15 bits)`, sentinel `0x7fff`/`0xffff` for
+no caster — which also rehomes the on-billboard flag that was being stored 16 times for one bit of
+per-texel information.
+
+**Supersedes:** F2 (16 slots), F3 (spare-bit packing — moot, no spare bits and none needed),
+[B1](blockers.md) (dissolved: the route needing the user's risk tolerance is gone).
