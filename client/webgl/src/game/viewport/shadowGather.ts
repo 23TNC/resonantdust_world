@@ -384,24 +384,11 @@ float casterCoverNS(uvec4 Pd, vec2 A, vec2 Q, vec3 L, float emitter, highp usamp
   float slen = length(sdir);
   vec2 along = slen > 1e-4 ? sdir / slen : vec2(1.0, 0.0);
   vec2 perp = vec2(-along.y, along.x) * emitter;
-  float dtx = perp.x * ((A.x - L.x) - b) / (b * b);   // d(tx)/dlambda at the centre ray
-  float Dslope = (perp.y * (1.0 - tx) + dtx * (Q.y - L.y)) / W;
-  float frac, uMid;
-  if (abs(Dslope) < 1e-6) {
-    frac = (u0 >= 0.0 && u0 <= 1.0) ? 1.0 : 0.0;      // point light / degenerate axis: hard edge
-    uMid = u0;
-  } else {
-    float iD = 1.0 / Dslope;
-    float l0 = (0.0 - u0) * iD;
-    float l1 = (1.0 - u0) * iD;
-    float lo = clamp(min(l0, l1), -1.0, 1.0);
-    float hi = clamp(max(l0, l1), -1.0, 1.0);
-    frac = (hi - lo) * 0.5;
-    uMid = u0 + 0.5 * (lo + hi) * Dslope;
-  }
-  if (frac <= 0.0) return 0.0;
+  // BINARY (2026-07-30) -- the n/s card drops its interval for the same reason as the main card above.
+  if (u0 < 0.0 || u0 > 1.0) return 0.0;               // centre ray misses the card -> lit
+  float uMid = u0;
   uint lod = (D.z >> 4) & 15u;
-  if (lod < 4u) return frac;                          // no silhouette resolved -> solid rotated quad
+  if (lod < 4u) return 1.0;                           // no silhouette resolved -> solid rotated quad
   float spanU = float((((D.y >> 10) & 15u) + 1u) * 16u);
   float ox = float((D.x >> 14) & 1023u), oy = float((D.x >> 4) & 1023u);
   float ppu = float(1u << lod) / spanU;
@@ -410,7 +397,7 @@ float casterCoverNS(uvec4 Pd, vec2 A, vec2 Q, vec3 L, float emitter, highp usamp
   float ny = float(int((D.w >> 8) & 4095u) - 2048);
   float fside = float(1u << lod);
   vec2 fo = vec2(fx, fy), fmin = fo, fmax = fo + vec2(fside);
-  return frac * sampleCard(clamp(uMid, 0.0, 1.0), t0, W, H, mrot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
+  return sampleCard(clamp(uMid, 0.0, 1.0), t0, W, H, mrot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
 }
 // Coverage of one caster (billboard index into billboard_data) at P from light L: read the billboard record + its
 // definition (position + geo W/H), then the pure-quad test; if occluded, apply the sprite's SHAPE
@@ -508,28 +495,24 @@ float casterCover(uint billboardIdx, vec2 P, vec3 L, float emitter, float reachU
   //
   // Clamping that interval to the emitter's extent IS the penumbra: fully inside -> 1.0, half hanging
   // off the end -> 0.5, entirely outside -> 0. A continuous gradient, from arithmetic, with no taps.
-  float Dslope = perp.x * (1.0 - invk) * invW;         // du/dlambda along the emitter
-  float frac, uMid;
-  if (abs(Dslope) < 1e-6) {
-    // Degenerate: the emitter has no extent along u (a point light, or a caster due east/west of it, so
-    // perp is purely y). No penumbra is resolvable -- fall back to the hard shadow at the centre ray.
-    frac = (u0 >= 0.0 && u0 <= 1.0) ? 1.0 : 0.0;
-    uMid = u0;
-  } else {
-    float iD = 1.0 / Dslope;
-    float l0 = (0.0 - u0) * iD;                        // lambda whose ray grazes the card's LEFT edge
-    float l1 = (1.0 - u0) * iD;                        // ...and its RIGHT edge
-    float lo = clamp(min(l0, l1), -1.0, 1.0);
-    float hi = clamp(max(l0, l1), -1.0, 1.0);
-    frac = (hi - lo) * 0.5;                            // fraction of the emitter this caster blocks
-    uMid = u0 + 0.5 * (lo + hi) * Dslope;              // card coord at the middle of the blocked span
-  }
-  if (frac <= 0.0) return 0.0;                         // no part of the emitter is occluded -> lit
+  // BINARY (2026-07-30). The emitter-interval penumbra that lived here is DELETED. It solved
+  // u(lambda) = u0 + lambda*Dslope at the card's two edges and clamped to [-1,1], which is a correct
+  // soft-shadow integral -- and which, at the shipped emitter size, produced a value with exactly TWO
+  // states. Measured on the live cold map before deleting it: 31 155 shadowed slot-samples, of which
+  // **0** were partial. Not "few": zero. See P0 in the stream, and I4 for why (the clamp saturates
+  // once the emitter is small against the card width).
+  //
+  // So this is not a quality trade. Binary is what the map already stored; this stops paying to
+  // compute a gradient that never survived to the texture. What it BUYS is the reason for the change:
+  // max() over casters becomes any(), which is order-independent -- so the winning caster's id can be
+  // recorded and trusted, which is what P2-P4 spend on a 4x finer edge.
+  if (u0 < 0.0 || u0 > 1.0) return 0.0;                // centre ray misses the card -> lit
+  float uMid = u0;
   // ONE silhouette fetch, at the middle of the blocked span. The interval is the CARD's geometry; the
   // caster's actual outline still comes from the atlas. Approximating the silhouette as constant across
   // the span is exact in the umbra and on clean edges, and softens fine structure (a branch comb inside
   // one penumbra width gets one sample) -- the same limit the distance-field option in F5 addresses.
-  return frac * sampleCard(clamp(uMid, 0.0, 1.0), t0, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
+  return sampleCard(clamp(uMid, 0.0, 1.0), t0, W, H, rot, ppu, ox, oy, nx, ny, fo, fmin, fmax, surf);
 }
 // shadows-onto-billboards (attempt #3, IN-FAMILY): is world point P inside billboard's UPRIGHT drawn billboard, and
 // opaque there? Returns the billboard's base tile ROW if so (drives the receiver elevation), else -1. Mirrors
@@ -767,10 +750,17 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
             uint billboardIdx = slot & 0xffffu;
             if (uWProfile == 4) { cov = max(cov, float(billboardIdx & 1u) * 1e-6); continue; } // W4: no casterOne
             float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, casterMode, bref, data, surf, r);
-            if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
+            // ANY, not MAX (2026-07-30). With binary coverage these are the same operator, so this is
+            // not a behaviour change -- it is the licence to STOP. One occluder is a complete answer,
+            // so the remaining casters cannot change the result and need not be tested.
+            if (cc > 0.0) { cov = 1.0; cdepth = max(cdepth, r); break; }
           }
+          if (cov > 0.0) break;
         }
+        if (cov > 0.0) break;
       }
+      if (cov > 0.0) break;   // NOTE: a body statement, never a loop CONDITION -- a body-modified var
+                              // in a for-condition is the documented miscompile trap in this file.
       if (tnext.x < tnext.y) { ct.x += stp.x; tnext.x += adv.x; }
       else                   { ct.y += stp.y; tnext.y += adv.y; }
     }
@@ -791,9 +781,11 @@ float walkShadow(vec3 L, float emitter, vec2 Q, bool isThing, uint rbillboard, v
           if (((slot >> 24) & 15u) != ${SET_BILLBOARD_DATA}u) continue; // only billboard casters walk
           uint billboardIdx = slot & 0xffffu;
           float r; float cc = casterOne(billboardIdx, Q, L, emitter, reachU, isThing, rbillboard, Rbase, casterMode, bref, data, surf, r);
-          if (cc > 0.0) { cov = max(cov, cc); cdepth = max(cdepth, r); }
+          if (cc > 0.0) { cov = 1.0; cdepth = max(cdepth, r); break; }   // ANY -- see the corridor arm
         }
+        if (cov > 0.0) break;
       }
+      if (cov > 0.0) break;
     }
   }
   return cov;
@@ -950,9 +942,9 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
       // bit 0 is documentation-only here; nothing consumes it in this loop).
       int shCh = slot >> 2; uint shK = uint((slot & 3) * 8);
       float shadow = mix(
-        mix(float(((lane4(sh,   shCh) >> shK) & 0xFFu) >> 1u), float(((lane4(sh10, shCh) >> shK) & 0xFFu) >> 1u), sf.x),
-        mix(float(((lane4(sh01, shCh) >> shK) & 0xFFu) >> 1u), float(((lane4(sh11, shCh) >> shK) & 0xFFu) >> 1u), sf.x),
-        sf.y) / 127.0;
+        mix(float((lane4(sh,   shCh) >> (shK + 1u)) & 1u), float((lane4(sh10, shCh) >> (shK + 1u)) & 1u), sf.x),
+        mix(float((lane4(sh01, shCh) >> (shK + 1u)) & 1u), float((lane4(sh11, shCh) >> (shK + 1u)) & 1u), sf.x),
+        sf.y);   // v4: OCCLUDED is bit 1 of the slot byte -- shift straight to it, 0/1, no 127 scale
       // The shadow-edge REFINE lived here and is DELETED (2026-07-27, moving-lights F7). It re-ran the full
       // walkShadow corridor **per fine texel** on every (0,1) edge value to sharpen the upsampled edge —
       // 8.39 M fine texels against the shadow map's 131 k, a 64× resolution multiplier, INSIDE the per-light
@@ -989,9 +981,9 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
       vec3 dep;
       if (uLightClass == 1 && lcls == 0u) {
         float shadowCold = mix(
-          mix(float(((lane4(shC,   shCh) >> shK) & 0xFFu) >> 1u), float(((lane4(shC10, shCh) >> shK) & 0xFFu) >> 1u), sf.x),
-          mix(float(((lane4(shC01, shCh) >> shK) & 0xFFu) >> 1u), float(((lane4(shC11, shCh) >> shK) & 0xFFu) >> 1u), sf.x),
-          sf.y) / 127.0;
+          mix(float((lane4(shC,   shCh) >> (shK + 1u)) & 1u), float((lane4(shC10, shCh) >> (shK + 1u)) & 1u), sf.x),
+          mix(float((lane4(shC01, shCh) >> (shK + 1u)) & 1u), float((lane4(shC11, shCh) >> (shK + 1u)) & 1u), sf.x),
+          sf.y);   // v4: OCCLUDED bit, 0/1
         if (recvHot) {
           // BODY-over-ground correction: deposit body − ground so cold+hot == the body value.
           // The ground term mirrors EXACTLY what the cold pass baked at this texel: it ran
@@ -1330,10 +1322,18 @@ void main() {
     } else {                                                // ground texel → GROUND shadow (fine bake cuts it by fine presence)
       cov = walkShadow(L, emitter, Pground, false, rbillboard, Rbase, casterMode, uCorridor, reachT, uData, uSurface, cd);
     }
-    // v3 (16 lights/tile): each slot is ONE byte = u7 coverage | u1 on-billboard. 16 x 8 = 128 bits
-    // exactly, so the flag rides its own slot's byte instead of a separate A-lane bit field.
-    uint v7 = uint(clamp(cov, 0.0, 1.0) * 127.0 + 0.5);
-    uint low8 = (((v7 & 0x7Fu) << 1) | (onBillboard ? 1u : 0u)) << uint((slot & 3) * 8);
+    // v4 BINARY (2026-07-30) -- THE slot byte layout, and the only place it is defined:
+    //
+    //   bit 0      on-billboard flag  (unchanged)
+    //   bit 1      OCCLUDED           (was a u7 coverage in bits 1-7)
+    //   bits 2-7   RESERVED, written zero
+    //
+    // 16 slots x 8 bits = 128 bits exactly, so the shadow texel is still one uvec4. Coverage went from
+    // 128 levels to 2 because the map only ever held 2: P0 measured 31 155 shadowed slot-samples with
+    // ZERO partial values. The 6 reserved bits are the budget a later phase can spend -- on a packed
+    // caster id, or on more than 16 slots per tile (I5) -- and they are written zero so that whatever
+    // reads them next cannot inherit garbage.
+    uint low8 = ((cov > 0.0 ? 2u : 0u) | (onBillboard ? 1u : 0u)) << uint((slot & 3) * 8);
     int ch = slot >> 2;                                     // static branch (no dynamic write-subscript)
     if (ch == 0) o0 |= low8; else if (ch == 1) o1 |= low8; else if (ch == 2) o2 |= low8; else o3 |= low8;
   }
@@ -1403,10 +1403,10 @@ void main() {
   for (int slot = 0; slot < 16; slot++) {
     uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
     if (li == 0xffffu) continue;                            // empty slot
-    uint vC = ((lane4(shC, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) >> 1; // u7 coverage (bit 0 = on-billboard)
-    uint vH = ((lane4(shH, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu) >> 1;
-    uint v = max(vC, vH);                                    // u7 — combine the two classes' RTs
-    if (v > 0u) { float cvg = float(v) / 127.0; acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
+    uint vC = (lane4(shC, slot >> 2) >> (uint((slot & 3) * 8) + 1u)) & 1u;  // v4: OCCLUDED bit
+    uint vH = (lane4(shH, slot >> 2) >> (uint((slot & 3) * 8) + 1u)) & 1u;
+    uint v = max(vC, vH);                                    // combine the two classes' RTs
+    if (v > 0u) { float cvg = float(v); acc += lightColour(int(li)) * cvg; any = max(any, cvg); }
   }
   if (any <= 0.0) { fragColor = vec4(0.0); return; }        // lit → transparent
   fragColor = vec4(clamp(acc, 0.0, 1.0), any);              // shadow tint × coverage
@@ -1486,7 +1486,7 @@ void main() {
       uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
       if (li != uint(uLightId)) continue;
       uint b8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
-      stamp = 1.0 - float(b8 >> 1) / 127.0;          // (1 − the parent light's shadow coverage)
+      stamp = 1.0 - float((b8 >> 1) & 1u);          // (1 − the parent light's shadow coverage)
       break;
     }
   }

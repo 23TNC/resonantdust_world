@@ -27,10 +27,10 @@ count, 12 warm-up frames dropped, 3 repeats reporting mean and spread.
 
 ## P1 — Binary occlusion
 
-- [ ] Make `casterCover` return 0 or 1 and delete the analytic λ interval, the chord→area curve and `frac`. Acceptance: the function has no penumbra arithmetic left; `git diff` shows deletions, not a flag.
-- [ ] Collapse per-slot storage to 1 bit of coverage, leaving the other 7 bits of the byte defined and documented. Acceptance: the lighting pass reads the new encoding; no `>> 1u` / `127.0` remnants.
-- [ ] Replace `max(cov, cc)` with an `any`-style early exit out of the caster loop. Acceptance: the walk stops at the first occluder; a shadow diff before/after shows only intended differences.
-- [ ] Verify and measure. Acceptance: corridor↔brute 0 differing, the P0 matrix re-run, and the delta attributable to deleted work rather than changed geometry.
+- [x] Make `casterCover` return 0 or 1 and delete the analytic λ interval, the chord→area curve and `frac`. Acceptance: the function has no penumbra arithmetic left; `git diff` shows deletions, not a flag.
+- [x] Collapse per-slot storage to 1 bit of coverage, leaving the other 7 bits of the byte defined and documented. Acceptance: the lighting pass reads the new encoding; no `>> 1u` / `127.0` remnants.
+- [x] Replace `max(cov, cc)` with an `any`-style early exit out of the caster loop. Acceptance: the walk stops at the first occluder; a shadow diff before/after shows only intended differences.
+- [x] Verify and measure. Acceptance: corridor↔brute 0 differing, the P0 matrix re-run, and the delta attributable to deleted work rather than changed geometry.
 
 ## P2 — The id map
 

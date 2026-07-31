@@ -133,3 +133,66 @@ Reproducible recipe for the P5 comparison: `?user=Claude&focus=102,57&zoom=2`, c
 `[700, 20, 1100, 300]`, content scene (3 torches), fully streamed. The user's own zoom-2 screenshot of a
 conifer edge earlier in the session is the sharper reference for what the stepped edge looks like; this
 recipe is the one to re-shoot after P4.
+
+## 2026-07-30 · P1 — binary occlusion
+
+### What was deleted
+
+The emitter-interval penumbra, in **both** copies — the main card in `casterCover` and the
+perpendicular card in `casterCoverNS`. Each solved `u(lambda) = u0 + lambda*Dslope` at the card's two
+edges, clamped to `[-1,1]`, took the span as `frac`, and scaled the silhouette by it. Both are now:
+
+```
+if (u0 < 0.0 || u0 > 1.0) return 0.0;   // centre ray misses the card -> lit
+```
+
+`max(cov, cc)` became **`any`** — `cov = 1.0; break;` — with `if (cov > 0.0) break;` unwinding the
+bucket, tile and DDA loops. Those are **body statements, never loop conditions**: a body-modified
+variable in a `for`-condition is the documented miscompile trap in this file.
+
+### The new slot byte (v4), defined in one place
+
+| bit | meaning |
+|---|---|
+| 0 | on-billboard flag (unchanged) |
+| 1 | **OCCLUDED** (was `u7` coverage in bits 1–7) |
+| 2–7 | **reserved, written zero** |
+
+Every reader was moved off `((byte) >> 1u) / 127.0` to `(lane >> (shK + 1u)) & 1u` — the two bilinear
+taps in `accumulateLights`, the cold-delta taps, the overlay, and the flicker splat's shadow stamp.
+
+### Verified
+
+| check | result |
+|---|---|
+| distinct byte values, cold | **3** — `1` (flag only), `2` (occluded), `3` (both) |
+| **reserved bits 2–7 set anywhere** | **0** |
+| corridor↔brute identity | **0 differing** of 22 865 non-zero |
+| shaders compile, scene renders | yes — art, shadows and lighting all correct at area1 |
+
+### Measured — same fixture as P0 (`focus=100,50`, zoom 1, reach 16, 3 repeats)
+
+| N | P0 total | **P1 total** | gather P0 → P1 | delta |
+|---|---|---|---|---|
+| 12 | 7.44 | **6.08** | — | −18 % |
+| 14 | 7.44 | **5.97** | — | −20 % |
+| 15 | 7.83 | **6.22** | — | −21 % |
+| **16** | **8.30** | **7.11** | 7.56 → **6.19** | **−14 %** |
+
+**The headline moves 15 → 16 lights**, and 16 is the `PRES_SLOTS` ceiling — exactly the saturation
+[I5](issues.md) predicted. So from here the number to watch is **headroom at N16**, which is
+**8.30 → 7.11 ms, 1.19 ms freed**, with 0.89 ms of the 8 ms budget still unspent.
+
+**Attribution.** This is deleted arithmetic plus the `any` early exit; no geometry changed, which the
+0-differing identity confirms. The early exit is doing real work — the gather cannot know it is finished
+until an occluder is found, and now it stops there instead of testing every remaining caster in the
+corridor.
+
+### A trap worth recording
+
+`npx tsc --noEmit` **passed on a genuinely broken shader**. GLSL lives inside a template literal, so TS
+type-checks it as a string and cannot see unbalanced parens or a comment that swallowed a statement —
+both of which a careless bulk `str.replace` introduced here. Only loading the page catches it. Two
+guards followed from that: edit shader text with the Edit tool (the backtick hook fires; a heredoc
+bypasses it — and a backtick in a GLSL comment closed the template literal on the first attempt), and
+**never** treat a green typecheck as evidence a shader is valid.
