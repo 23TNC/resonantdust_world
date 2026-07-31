@@ -212,3 +212,23 @@ measurement rig in a fresh session:
 
 **Compare against:** N16 = **7.11 ms** (gather 6.19, light 0.92). That is the number P2–P4 have to beat,
 and the budget left is 0.89 ms before 8 ms.
+
+### Post-revert verification (fresh Chrome, after the I6 lock-up)
+
+Reloaded the reverted P1 build in a new browser instance and re-checked every P1 acceptance:
+
+| check | result |
+|---|---|
+| renders | correct — trees, shadows, lighting, the wolf and the human pawn all present |
+| `isContextLost` / `getError` | **false / 0** |
+| `coldShadowRT` attachments | **1** — the P2 MRT change is fully gone |
+| slot byte values | `1` / `2` / `3` only; **reserved bits 2–7 set: 0** |
+| corridor↔brute identity | **0 differing** of 31 526 non-zero |
+| N16, reach 16 | **6.36 ms** (gather 5.52, light 0.83) |
+
+**6.36 ms against the 7.11 ms recorded pre-lock-up.** Absolute timings shift between browser
+instances — fresh GPU state, no accumulated context — so the two are not directly comparable and 7.11
+stays the recorded P1 figure. What matters is unchanged and if anything stronger: **16 lights at reach
+16 fit inside 8 ms**, where the P0 baseline was 8.30 ms and did not.
+
+The lock-up was entirely the P2 MRT attempt. P1 is unaffected.
