@@ -224,3 +224,46 @@ experiment from the one that hung, not a retry of it.
 Still the user's call ([B1](blockers.md)) because it is another live-fire test on the pass that has hung
 twice — but the option set is wider than B1 states, and B1's "dead end" verdict applies only to the
 integer path.
+
+## I7 — The caster id alone cannot re-find a caster: positions are stored mod-16-tiles
+
+**Blocks P3 and P4 as planned.** Both assume that knowing *which* caster occluded is enough to re-test
+or refine it. It is not, because a caster's position is not absolute:
+
+```glsl
+vec2 resolvedTilePos(uint tile, uint unit, vec2 ref) {
+  vec2 lm = ...;                      // 4+4 bits of tile, 4+4 of unit
+  float period = 16.0 * UPT;          // 16 TILES
+  vec2 d = lm - ref;
+  d -= period * floor(d / period + 0.5);   // nearest wrap to ref
+  return ref + d;
+}
+```
+
+The record holds only the low 4 bits of the caster's tile coords. The walk supplies `ref` — the tile
+whose caster bucket it was reading — and the position resolves to the nearest wrap of that. **`ref` must
+be within ±8 tiles of the true caster or the position decodes to a phantom 16 tiles away.**
+
+`casterOne` takes `ref` for exactly this reason. An incumbent recovered from the id map has no `ref`: the
+bucket tile is what the walk knew and the texel did not store.
+
+**Why substituting the receiver's own tile is not safe.** A caster must lie between the light and the
+texel, so at reach 16 it can be ~16 tiles off — beyond the ±8 the wrap tolerates. And the failure is not
+benign: a mis-decoded caster lands at a plausible position and may *occlude*, so the early-out would
+accept a **false positive** and paint a phantom shadow. It is not the harmless "wasted test, fall through
+to the walk" case the design assumed.
+
+**Options for a successor:**
+
+1. **Store the tile too.** Needs ~10 more bits per slot beyond the 15-bit id. There is no room in the
+   128-bit texel at 8 slots, so this reopens the storage problem [F7](forks.md#f7) just closed — but now
+   with a concrete bit count rather than a guess: 8 slots x ~25 bits = 200 bits, i.e. a second texel.
+2. **Store a receiver-relative offset instead of the bucket tile** — dx,dy in tiles, signed. Same bit
+   pressure, but the reference is free (the texel knows its own tile), and it could be clamped to a
+   range where the wrap is unambiguous, accepting a miss beyond it.
+3. **Widen the caster record's position field** so `resolvedTilePos` needs no `ref`. Touches the data
+   texture layout, which `VARIABLES.md` owns.
+4. **Drop P3/P4** and close the stream on P1+P2's banked wins.
+
+**Nothing was shipped.** The P3 edit was reverted before loading — the flaw was found by reading
+`resolvedTilePos` while wiring `casterOne`, not by a failure on screen. Tree clean at the P2 commit.
