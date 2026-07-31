@@ -22,7 +22,7 @@ preserving* (`texture2D`→`texture`, `gl_FragColor`→`out`, and float-mod → 
 unorm8 textures**). Output must stay **pixel-identical** ([I-5](issues.md#i-5)).
 
 **Out of scope (follow-ons this migration *enables*, not does):** switching the shadow RTs to **integer
-textures** (`RGBA8UI`/`RGBA32UI` → 32/128-bit fields) belongs to [`caster-lut` C5](../caster-lut/todo.md)
+textures** (`RGBA8UI`/`RGBA32UI` → 32/128-bit fields) belongs to `caster-lut` C5
 (it forces the shader cast + drops fixed-function blend); folding the four **bake passes into one via MRT**
 is its own experiment. This folder is the groundwork that makes both uniformly reachable. Texture formats
 stay unorm RGBA8, A held at 1 ([I-7](issues.md#i-7)).

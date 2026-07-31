@@ -138,7 +138,7 @@ tiles with **0 receiver draws**.
 ## 2026-07-27 · P4 — wrap; stream complete (16/16)
 
 Budget re-sync: the post-stream, reach-swept pair costs are recorded as
-[light-budget I4](../2026-07-27-light-budget/issues.md#i4) (supersedes I2 for allowance sizing;
+`light-budget I4` (supersedes I2 for allowance sizing;
 notes the fixture difference and that the constant now FALLS with reach — fixed per-draw costs
 amortize). Final state of the three deliverables: static standing tax 0.23 → **0.000 ms**; draws
 rasterize exactly the dirty area (discard tax 0); light motion re-bakes lighting without

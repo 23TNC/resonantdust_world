@@ -36,7 +36,7 @@ design/contract pass with them). I won't unilaterally spend layout bits.
 branch is straightforward (the sandbox / `design/shadows.md` has the math), but it **can't be verified** —
 there are **no N/S-facing casters in the world**. All current cold things are single-facing (`DEFAULT_FACING`
 → E/W, the regime P1–P4 already ship); the only multi-facing entities are movers (wolves), and none are
-present (the npc driver isn't running). Same gate as [`shadow-projection` B-1](../shadow-projection/blockers.md#b-1).
+present (the npc driver isn't running). Same gate as `shadow-projection` B-1.
 
 **Why it needs a human:** shipping an unverified regime risks a silently-wrong shadow shape. The data path is
 ready — `cold_billboard_data.rotation` is populated (currently E/W from `flipX`); only the shader branch + a live

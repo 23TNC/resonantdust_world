@@ -1,6 +1,6 @@
 # Work — es300-hello (the first hand-crafted GLSL ES 3.00 shader)
 
-_Opened 2026-07-20. De-risks the raw-shader capability that [`caster-lut` C5](../caster-lut/todo.md) (and
+_Opened 2026-07-20. De-risks the raw-shader capability that `caster-lut` C5 (and
 future integer-texture / `texelFetch` / MRT work) depends on. Component:
 [`client/pixijs`](../../components/client/webgl/). Nothing in the client renders through an ES 3.00 shader
 today — every shader is Pixi's **high-shader (GLSL ES 1.00)**, which is why `uint` fails to compile (the
@@ -58,7 +58,7 @@ raw-source path already exists for filters (`GlProgram.from` in `shadowCastShade
 
 ## Alignment
 
-Unlocks [`caster-lut` C5](../caster-lut/todo.md) — the instanced GPU cast that samples the light/LUT/caster
+Unlocks `caster-lut` C5 — the instanced GPU cast that samples the light/LUT/caster
 textures via vertex-texture-fetch — and every later use of `texelFetch`, integer textures, real `uint`
 bitfields, and MRT. This is the foundation those build on.
 

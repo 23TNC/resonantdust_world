@@ -7,7 +7,7 @@
 > [`2026-07-24-map-compatibility`](../2026-07-24-map-compatibility/README.md). Read below for history only.
 
 _Component: [`client/webgl`](../../components/client/) · `game/viewport/` — a second gather pass that
-writes the **same** `shadow-cold`, presence-partitioned (no composite). Builds on [`2026-07-23-lighting`](../2026-07-23-lighting/README.md)
+writes the **same** `shadow-cold`, presence-partitioned (no composite). Builds on `2026-07-23-lighting`
 (the lightmap) + [`2026-07-22-lighting-rebuild`](../2026-07-22-lighting-rebuild/README.md) (the ground
 shadow). Phases in [`todo.md`](todo.md); decisions in [`forks.md`](forks.md)._
 

@@ -2,7 +2,7 @@
 
 _Items move to [`completed.md`](completed.md) when done + verified. Packed layouts are authoritative in
 [`docs/VARIABLES.md` §Cold shadow data textures](../../VARIABLES.md) — never restate. Builds on
-[`shadow-projection`](../shadow-projection/README.md) P0–P4 (the instanced fan) + delivers `caster-lut` C5's
+`shadow-projection` P0–P4 (the instanced fan) + delivers `caster-lut` C5's
 data layer. Verify each phase in-browser at `?focus=100,50`._
 
 **Done:** P0 (layouts, byte-checked; forks F1–F6 resolved) · P1 `billboard_definition_data` + atlas write · P2
@@ -16,5 +16,5 @@ is content-gated:
 ## P5 · Rotation → shadow regime (unblock shadow-projection P5) — 2026-07-21
 
 - [ ] `cold_billboard_data.rotation` drives the E/W vs N/S regime in the vertex shader — the data
-      [`shadow-projection` P5](../shadow-projection/blockers.md#b-1) was blocked on. Wire the N/S branch (from
+      `shadow-projection` P5 was blocked on. Wire the N/S branch (from
       `design/shadows.md`). (Live verification still needs an N/S caster — a mover / multi-facing thing.)

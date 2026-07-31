@@ -49,9 +49,9 @@ any of it.
 
 ## P4 — Retire the documentation
 
-- [ ] Move the four lighting/shadow design + intent docs out of the repo to `../archive/` ([F2](forks.md#f2)). Acceptance: `components/client/webgl/` describes only what exists; `rd docs-check` green.
-- [ ] Update `current/` to state plainly that the client renders unlit. Acceptance: a reader who knows nothing of this stream can tell what the renderer does today without inferring it from a deletion.
-- [ ] Close the eight superseded lighting/shadow work streams to `../archive/`. Acceptance: `docs/work/README.md` lists no open stream whose subject no longer exists, and each closed row says it was superseded by the strip rather than delivered.
+- [x] Move the four lighting/shadow design + intent docs out of the repo to `../archive/` ([F2](forks.md#f2)). Acceptance: `components/client/webgl/` describes only what exists; `rd docs-check` green.
+- [x] Update `current/` to state plainly that the client renders unlit. Acceptance: a reader who knows nothing of this stream can tell what the renderer does today without inferring it from a deletion.
+- [x] Close the eight superseded lighting/shadow work streams to `../archive/`. Acceptance: `docs/work/README.md` lists no open stream whose subject no longer exists, and each closed row says it was superseded by the strip rather than delivered.
 
 ## P5 — Leave a seam the re-think can build on
 

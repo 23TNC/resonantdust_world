@@ -8,9 +8,9 @@ engine ourselves; it won't be easy, but it buys the clean GPU control the shadow
 ## Why — we use a thin slice of Pixi, and it's exactly the slice that blocks us
 
 The `caster-lut` C5 work (GPU cast + integer bitfield) keeps hitting **Pixi-abstraction walls**: raw-program
-vertex-texture-fetch doesn't bind ([caster-lut I-10](../caster-lut/issues.md)), integer render targets error
-through the mesh pipe ([I-11](../caster-lut/issues.md)), and raw-GL interop corrupts Pixi's state
-([D-2](../caster-lut/deviations.md)). Meanwhile an inventory of actual usage shows we use **very little** of
+vertex-texture-fetch doesn't bind (`caster-lut I-10`), integer render targets error
+through the mesh pipe (`I-11`), and raw-GL interop corrupts Pixi's state
+(`D-2`). Meanwhile an inventory of actual usage shows we use **very little** of
 Pixi:
 
 - **Already ours (no Pixi):** the DOM panel framework + DOM input, the SquareCache G-buffer, atlas packing

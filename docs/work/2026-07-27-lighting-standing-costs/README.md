@@ -1,13 +1,13 @@
 # lighting-standing-costs — cut the lighting path's fixed taxes, then make cost proportional
 
 _Work stream, opened 2026-07-27. Component: [`client/webgl`](../../components/client/)
-(`game/viewport/shadowGather.ts`). Sibling of [light-budget](../2026-07-27-light-budget/README.md) —
+(`game/viewport/shadowGather.ts`). Sibling of `light-budget` —
 see "composition" below._
 
 ## What — three sources of waste the per-pair number hides
 
 The analytic-interval build measures a flat ~0.0015 ms per tile-light pair
-([light-budget I2](../2026-07-27-light-budget/issues.md#i2)). That marginal cost is honest, but the
+(`light-budget I2`). That marginal cost is honest, but the
 code-read (2026-07-27) found three costs it does not capture:
 
 1. **The standing tax.** `tick` calls `classPass` for BOTH classes unconditionally
@@ -35,7 +35,7 @@ code-read (2026-07-27) found three costs it does not capture:
 - **The dirty mirror becomes the draw list.** P2 replaces fullscreen-discard with merged dirty-rect
   quads for both the gather and the fine draw. Rects are tile-aligned so coverage is exact; the
   `uDirty` texel gate stays on during the transition as belt-and-braces, then retires. This also
-  makes the [light-budget](../2026-07-27-light-budget/README.md) admission model exact: admitting a
+  makes the `light-budget` admission model exact: admitting a
   tile = drawing its quad, no discard tax smearing the cost model.
 - **Receiver geometry is baked, not rescanned.** P3 adds a persistent FINE receiver map
   (billboard id, coverage, baseY, world normal) with its OWN dirty channel fed only by
@@ -51,15 +51,15 @@ code-read (2026-07-27) found three costs it does not capture:
 Do P1 first — it is near-free and shrinks the baseline the budget will be sized against. The
 reach-dependence of the pair constant (0.00150 → 0.00171 ms across reach 8 → 12, from `walkShadow`'s
 distance-scaled DDA) is logged as
-[light-budget I3](../2026-07-27-light-budget/issues.md#i3); the final phase here re-runs the
+`light-budget I3`; the final phase here re-runs the
 budget's P0 sweep on the improved constants so the allowance isn't sized against stale numbers.
 
 ## Out of scope (already owned elsewhere)
 
-- **F4 delta-threshold** (shrink the dirty set) — [light-budget F4](../2026-07-27-light-budget/forks.md#f4).
-- **Coarser-lod hot bakes** — [moving-lights](../2026-07-26-moving-lights/README.md) lever +
+- **F4 delta-threshold** (shrink the dirty set) — `light-budget F4`.
+- **Coarser-lod hot bakes** — `moving-lights` lever +
   [textile-slot P4](../2026-07-26-textile-slot/todo.md).
 - **Inverting the walk** (per-(light, caster) rasterization, O(shadow area)) — the deferred
-  instanced-cast item in [hot-shadows](../hot-shadows/todo.md)/[caster-lut](../caster-lut/todo.md);
+  instanced-cast item in `hot-shadows`/`caster-lut`;
   reach for it only if this stream + the planned levers fall short.
-- **CPU presence/caster rebuilds** — [incremental-presence](../2026-07-23-incremental-presence/README.md).
+- **CPU presence/caster rebuilds** — `incremental-presence`.

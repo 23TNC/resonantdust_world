@@ -13,5 +13,5 @@ supports ES 3.00 natively — just include `#version 300 es` in the fragment; no
 ## E4 (optional) · `texelFetch` / integer sampler
 
 - [ ] Prove the ES 3.00 sampler read (`texelFetch`, integer texel coords). Deferred to
-      [`caster-lut` C5](../caster-lut/todo.md) where it's needed — the instanced GPU cast reads the
+      `caster-lut` C5 where it's needed — the instanced GPU cast reads the
       light/LUT/caster textures. No reason to prove it in isolation here first.

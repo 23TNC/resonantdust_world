@@ -6,7 +6,7 @@ with data rather than recollection._
 
 ## I1 — The shadow texel is 128 bits, and every extension needs more
 
-**Evidence:** [`2026-07-30-binary-shadow-ids`](../2026-07-30-binary-shadow-ids/issues.md) I6, I6b,
+**Evidence:** `2026-07-30-binary-shadow-ids` I6, I6b,
 I6c, I8.
 
 A shadow texel is one `uvec4`. Eight lights per tile fills it exactly at `u16` per slot — which is
@@ -28,8 +28,8 @@ slot and 0 for every empty one — which the id lane's sentinel already encodes.
 
 ## I2 — `max` keeps HOW MUCH and discards WHICH
 
-**Evidence:** [`2026-07-26-moving-lights`](../2026-07-26-moving-lights/README.md) F7;
-[`2026-07-30-binary-shadow-ids`](../2026-07-30-binary-shadow-ids/issues.md) I1.
+**Evidence:** `2026-07-26-moving-lights` F7;
+`2026-07-30-binary-shadow-ids` I1.
 
 The gather accumulated coverage with `max(cov, casterCover(...))`. That stores a *number*, so the
 identity of the occluder is destroyed at the moment it is computed. When the fine-edge refine needed
@@ -43,7 +43,7 @@ not hold an identity.
 
 ## I3 — Penumbra was computed and discarded, for an unknown number of streams
 
-**Evidence:** [`2026-07-30-binary-shadow-ids`](../2026-07-30-binary-shadow-ids/completed.md) P0
+**Evidence:** `2026-07-30-binary-shadow-ids` P0
 histogram.
 
 The map carried `u7`, later `u9`, coverage for emitter-based soft shadows. A live histogram of the

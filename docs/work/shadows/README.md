@@ -4,9 +4,9 @@ _Opened 2026-07-19. The clean restart after the tiered-lighting port was nuked (
 `lighting` stream, archived out-of-repo). This stream builds the **shadow RT + bit-packing pipeline**
 from scratch, at the smallest scale that exercises every moving part, so the full design can grow on top
 of a working, understood core. Component: [`client/pixijs`](../../components/client/webgl/). Builds
-toward [`intent/tiered-lighting.md`](../../components/client/webgl/intent/tiered-lighting.md) (the
+toward `intent/tiered-lighting.md` (the
 shared bitfield shadow engine) and
-[`design/shadows.md`](../../components/client/webgl/design/shadows.md) (the billboard-quad projection)._
+`design/shadows.md` (the billboard-quad projection)._
 
 ## Why — stop fighting the rects and world-space
 
@@ -79,7 +79,7 @@ over the next few frames; see [I-1](issues.md#i-1).)
 
 A caster is the standing prim's **billboard quad** (W×H box, tilted by the ground angle), projected
 radially from the light to the ground per
-[`design/shadows.md` §Projection](../../components/client/webgl/design/shadows.md) — drawn as a **solid
+`design/shadows.md` §Projection — drawn as a **solid
 2-triangle quad** in screen space. **No texture sampling, no alpha mask, no `outline` silhouette** — those
 are the next layer, deliberately out of scope ([D-3](deviations.md#d-3)).
 

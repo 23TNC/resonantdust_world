@@ -5,16 +5,14 @@ Last updated: 2026-07-28 — this folder moved from `client/pixijs`, which is DE
 superseded it; git holds the pixijs history)._
 
 Renders the world from the shard's `entity_state` + cold tables (relayed by edge, via
-`client/core` over wasm): terrain + things (WorldBridge), pawns (MoverLayer), and the lighting
-model (SquareCache G-buffer channels + baked lightmaps).
+`client/core` over wasm): terrain + things (WorldBridge) and pawns (MoverLayer), composited from
+the SquareCache G-buffer. **The client renders UNLIT** — see [`current/`](current/).
 
 - **[`design/`](design/)** — [`rendering-platform.md`](design/rendering-platform.md) (WebGL2,
-  GLSL ES 3.00, the bespoke `gl/` engine); [`lighting.md`](design/lighting.md),
-  [`shadows.md`](design/shadows.md), [`de-lighting.md`](design/de-lighting.md) (albedo
+  GLSL ES 3.00, the bespoke `gl/` engine); [`de-lighting.md`](design/de-lighting.md) (albedo
   extraction — art-pipeline-facing).
-- **[`intent/`](intent/)** — [`tiered-lighting.md`](intent/tiered-lighting.md),
-  [`shadows.md`](intent/shadows.md) (the target lighting/shadow models the rebuilds steer by).
-- `current/`, `plan/` — lazy.
+- **[`current/`](current/)** — what the renderer does today, and where a lighting system attaches.
+- `intent/`, `plan/` — lazy.
 
 The living execution state for renderer work is under `docs/work/` (lighting/shadow/material
 streams); this folder holds durable design + intent only. NOTE: parts of these docs predate the

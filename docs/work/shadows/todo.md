@@ -39,7 +39,7 @@ architecture and [`forks.md`](forks.md) for the decisions._
 
 - [ ] For each of the **frame's 3 lights** and each in-range caster, project the caster's **billboard
       quad** (W×H, tilted by ground angle θ) radially to the ground per
-      [`design/shadows.md` §Projection](../../components/client/webgl/design/shadows.md), then map to
+      `design/shadows.md` §Projection, then map to
       **screen** px (world→screen via the current pan+zoom). Corners only — **no** 5-triangle fan, **no**
       per-corner depth, **no** UV ([D-3](deviations.md#d-3)).
 - [ ] Draw each projected quad as **2 solid triangles** into `shadow-hot`, masked to its light's channel

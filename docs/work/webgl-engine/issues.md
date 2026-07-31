@@ -11,7 +11,7 @@ Tracking blend / scissor / viewport / bound program / VAO / target / textures �
 when they change — is the non-trivial thing Pixi provides, and getting it subtly wrong is the classic
 custom-renderer bug (a stale bind → wrong draw). BUT: owning the **whole** loop is what makes it tractable —
 there's no foreign framework whose cache we corrupt (the exact failure that sank raw-GL-in-Pixi,
-[caster-lut D-2](../caster-lut/deviations.md)). Start explicit (set state per draw), then add a minimal
+`caster-lut D-2`). Start explicit (set state per draw), then add a minimal
 tracked cache ([F3](forks.md#f3)). Test with a state-torture scene (many targets/programs/blends per frame).
 
 ## I-2 · The texture/atlas seam

@@ -1,8 +1,8 @@
 # Deviations — shadows
 
 _Where this foundation departs from the durable design
-([`intent/tiered-lighting.md`](../../components/client/webgl/intent/tiered-lighting.md),
-[`design/shadows.md`](../../components/client/webgl/design/shadows.md)). Pre-logged because they are
+(`intent/tiered-lighting.md`,
+`design/shadows.md`). Pre-logged because they are
 **deliberate**, not accidents. D-1..D-4 are count-shrinks (each names its un-shrink phase). **D-5 is a
 genuine architecture divergence** — the design bakes cold per-rect in world-space; this stream casts in
 screen-space and copies to world-space, specifically because the per-rect world-space bake is what sank
@@ -12,7 +12,7 @@ the nuked attempt. Format: what the design says → what this stream does → wh
 
 ## D-5 · Screen-space cast + copy-to-world, NOT a per-rect world-space bake — 2026-07-19
 
-**Design** ([tiered-lighting §Cold](../../components/client/webgl/intent/tiered-lighting.md)):
+**Design** (`tiered-lighting §Cold`):
 `shadow-cold` is **baked per-rect in world-space** (on dirty), rect by rect, via the scatter engine.
 
 **This stream:** casts shadows **once, in screen space** (`shadow-hot`, whole viewport, every frame), then
@@ -42,7 +42,7 @@ it, add a separately-baked static-cold tier.
 
 ## D-1 · Bitfield starts as a RED byte (6 bits); ceiling = RGB (24), A never used — updated 2026-07-20
 
-**Design** ([tiered-lighting §Cold](../../components/client/webgl/intent/tiered-lighting.md)):
+**Design** (`tiered-lighting §Cold`):
 `shadow-cold` is a **32-bit** bitfield across the full RGBA texel.
 
 **This stream:** **RED byte** (6 bits) for bring-up → the **RGB texel = 24 bits** as the per-RT ceiling.
@@ -56,7 +56,7 @@ behind raw ES 3.00 shaders for MRT (deferred).
 
 ## D-2 · `shadow-hot` is 3 screen-space RGB lanes, not 8-lane `uChannel` scatter maps — 2026-07-19
 
-**Design** ([tiered-lighting §engine](../../components/client/webgl/intent/tiered-lighting.md)): the
+**Design** (`tiered-lighting §engine`): the
 scatter engine writes **8 lanes** (2 RGBA maps × 4) via the `outColor = uChannel` trick.
 
 **This stream:** one **screen-space** RT, **RGB = 3 lanes**, A free.
@@ -66,7 +66,7 @@ of 3. **Un-shrink:** reclaim more lanes if the throughput target (3/frame) needs
 
 ## D-3 · Casters are solid billboard quads, not textured silhouettes — 2026-07-19
 
-**Design** ([design/shadows.md](../../components/client/webgl/design/shadows.md)): a **5-triangle fan**
+**Design** (`design/shadows.md`): a **5-triangle fan**
 of the billboard silhouette with per-corner depth, sampling sprite **alpha** via per-triangle UVs (+ the
 `outline` earcut).
 

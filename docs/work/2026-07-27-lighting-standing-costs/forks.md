@@ -30,7 +30,7 @@ deletes.
 
 ## F3 — separate stream, not more light-budget phases {#f3}
 
-These items could have been appended to [light-budget](../2026-07-27-light-budget/README.md).
+These items could have been appended to `light-budget`.
 Kept separate because the budget stream is a STABILITY fix (bound the worst draw) and this is a
 THROUGHPUT fix (shrink every draw) — different acceptance, different risk. The one coupling is
 measurement order: the budget's allowance should be sized against THIS stream's improved constants,

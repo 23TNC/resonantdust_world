@@ -3,7 +3,7 @@
 _Opened 2026-07-21. Move the **cold (static) light + caster data off per-frame instance attributes and into
 persistent GPU data textures** read by the shader (VTF / `texelFetch`), so the shadow cast doesn't re-upload
 static data every frame. This is the data layer of **`caster-lut` C5** ([webgl-engine W7](../webgl-engine/README.md))
-and executes [`shadow-projection` F3 sub-choice (b)](../shadow-projection/forks.md#f3) (the data texture over
+and executes `shadow-projection` F3 sub-choice (b) (the data texture over
 instance attributes). Component: `client/webgl`. The packed layouts are authoritative in
 [`docs/VARIABLES.md`](../../VARIABLES.md) (never restated here)._
 
@@ -17,7 +17,7 @@ definition / instance indirection. Exact bit layouts are authoritative in
   a **`cast_shadows`** flag (0 → lights without casting: no LUT run, skipped in the cast), and a **run**
   `(lut_index, lut_count)` into the LUT = this light's shadow casters.
 - **`cold_light_billboard_data`** (the LUT) — the light → caster association, **indices only**: each entry =
-  `(definition_index, billboard_data_index)`. A light's casters are the contiguous run `[lut_index, +lut_count)`.
+  `(definition_index, billboard_data_index)`. A light's casters are the contiguous run ``lut_index, +lut_count)`.
 - **`billboard_definition_data`** — one px per sprite **variant**: **generic** geometry (billboard `width/height` +
   atlas `frame x/y/w/h` + `frame_page`), shared by every instance of that sprite. Written on **atlas add**;
   evicted only if the atlas evicts (it doesn't yet). ~16 px for a conifer's variants; a spare `u32` for
@@ -33,12 +33,12 @@ per-instance position (`cold_billboard_data`) from the light→caster associatio
 (`billboard_definition_data`) means a caster's position lives in **one** place: **moving it updates one texel**, and
 every light referencing it (via the index) sees the new position — instead of editing every light's run. This
 is `caster-lut`'s light → LUT → prim model, normalized, as GPU textures. It also **unblocks
-[`shadow-projection` P5](../shadow-projection/blockers.md#b-1)** — `cold_billboard_data.rotation` picks the E/W vs
+[`shadow-projection` P5`** — `cold_billboard_data.rotation` picks the E/W vs
 N/S regime.
 
 ## Relationship to what exists
 
-[`shadow-projection`](../shadow-projection/README.md) P0–P4 already cast the GPU-instanced silhouette fan, but
+`shadow-projection` P0–P4 already cast the GPU-instanced silhouette fan, but
 rebuilds the per-(light,caster) **instance attributes every frame** on the CPU. This stream replaces that
 upload with the four persistent textures: the same instanced draw, but the vertex shader `texelFetch`es the
 light + LUT + prim data by index instead of reading re-uploaded attributes. The projection/fan math is

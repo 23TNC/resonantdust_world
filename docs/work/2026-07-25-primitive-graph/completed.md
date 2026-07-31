@@ -203,7 +203,7 @@ not see), the carried light, and both prims all come back zeroed, with **2 prims
 reclaimed. Live scene unaffected; renders correctly.
 
 ## P4a — Two named dirty entry points; the force-alls retired (2026-07-25)
-The user's original design ([light-prims](../2026-07-24-light-prims/README.md) P3), now built on the graph.
+The user's original design (`light-prims` P3), now built on the graph.
 
 - **`markPrimDirty(x,y,w,h)`** is the shared cascade — dirty the prim's tiles, then every light reaching
   them, then those lights' cast regions. **Contract:** the extent must cover the prim *and everything it

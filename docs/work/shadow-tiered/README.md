@@ -79,7 +79,7 @@ not the current frame's ([I-8](issues.md#i-8)).
 
 ## Alignment with the durable design
 
-This *is* [`intent/tiered-lighting.md`](../../components/client/webgl/intent/tiered-lighting.md)'s
+This *is* `intent/tiered-lighting.md`'s
 `shadow-hot` (screen, fresh) → `shadow-cold` (world, bitfield) with the round-robin being the `l-a`/`l-b`
 rotation — re-derived from first principles with the correct read≠write ping-pong. If it proves out, it
 graduates straight into the real [`shadows`](../shadows/README.md) engine.

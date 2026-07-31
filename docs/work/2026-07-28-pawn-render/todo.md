@@ -1,7 +1,7 @@
 # Todo — pawn-render
 
 _Items tick in place; the box is the move. Design: [`README`](README.md) ·
-[`intent/tiered-lighting`](../../components/client/webgl/intent/tiered-lighting.md) ·
+`intent/tiered-lighting` ·
 [`forks`](forks.md). Every visual item verifies at ≥3 zoom levels + during a zoom transition
 (the attempt-#2 failure mode) — a fixed-zoom screenshot proves nothing here._
 

@@ -5,7 +5,7 @@ resolved set. **No open blockers** — B-1…B-5 all resolved. — neither stops
 in the product right now._
 
 ## B-4 — the EXISTING world has no torches — RESOLVED 2026-07-26, no decision needed
-Dissolved by [torch-thing](../2026-07-26-torch-thing/README.md): torches are now seeded at world init into the
+Dissolved by `torch-thing`: torches are now seeded at world init into the
 zone the camera opens on, so the spawn area is lit regardless of when its terrain was generated. And the
 already-seeded zones regenerated as a **side effect of `redeploy --force`** (a module republish resets the cold
 shards), so the destructive option this blocker was asking about never had to be taken. Verified: exactly 3

@@ -33,7 +33,7 @@ Every reported symptom has a located mechanism:
   `coldShadowData.ts:475`), and `casterCover`/`sampleCard`/`billboardNormal` know only the
   e/w card + mirror. An n/s-facing wolf casts its side-profile silhouette.
 
-## The tier rule (user, restated 2026-07-28 — ALREADY ratified in [hot-shadows](../hot-shadows/README.md))
+## The tier rule (user, restated 2026-07-28 — ALREADY ratified in `hot-shadows`)
 
 | light | prim | writes to |
 |---|---|---|
@@ -71,7 +71,7 @@ N·L surfaces.
 
 ## Relationship to open lighting streams
 
-- [hot-shadows](../hot-shadows/README.md) (blocked): this stream implements its
+- `hot-shadows` (blocked): this stream implements its
   uniform-hot-data + tier-matrix core for the MOVER subset; the work-item budgeting system
   stays that stream's scope.
 - [2026-07-24-shadows-onto-prims](../2026-07-24-shadows-onto-prims/README.md) (open, 0/8):

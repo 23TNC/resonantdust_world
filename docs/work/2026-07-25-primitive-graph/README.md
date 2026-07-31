@@ -6,7 +6,7 @@ command buffer (`coldShadowData.ts`) and every shader that reads a record (`shad
 Layouts land in [`VARIABLES.md`](../../VARIABLES.md) at P0 (authoritative). Phases in
 [`todo.md`](todo.md); decisions in [`forks.md`](forks.md); gaps in [`issues.md`](issues.md); the calls
 needing you in [`blockers.md`](blockers.md). Supersedes the record model in
-[`2026-07-24-light-prims`](../2026-07-24-light-prims/README.md)._
+`2026-07-24-light-prims`._
 
 ## The idea (user, 2026-07-25)
 A **prim** stops being "a placed sprite" and becomes a **generic composition node**: a positioned thing
@@ -123,7 +123,7 @@ Concretely: `R = operation | set | count | id0`, `G = id1|id2`, `B = id3|id4`, `
   per command and drops those with `slot ≥ count`, keeping the trivial `p/7`, `p%7` map.
 
 ## What this dissolves
-- **[light-prims](../2026-07-24-light-prims/README.md)** is subsumed — lights are never *placed*, they're
+- **`light-prims`** is subsumed — lights are never *placed*, they're
   *carried*; F1/F2 dissolve. Its **dirty design survives** (two `markDirty` entry points →
   `pendingRects` → `buildDirty`, cold/hot generalised) and moves here as P4.
 - Naming reconciles as `prim_data` (node) / `billboard_data` (leaf, NEW) / `light_data` (leaf) /

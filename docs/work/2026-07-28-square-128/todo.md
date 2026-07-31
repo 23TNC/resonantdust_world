@@ -13,7 +13,7 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 
 **Fixture:** area1 at zoom 1 (`?user=Claude&focus=100,50&zoom=1`), 3 content torches. Perf uses the
 calibrated orbit harness from
-[`2026-07-27-plane-intersection/completed.md`](../2026-07-27-plane-intersection/completed.md) — cold draw
+`2026-07-27-plane-intersection/completed.md` — cold draw
 discriminated by RENDER TARGET, fixed frame count, phase from the frame index.
 
 ## P0 — Measure both costs separately, before changing anything

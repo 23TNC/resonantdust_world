@@ -128,6 +128,6 @@ The billboard half is largely wired already: `definitionFor` → `billboardDataF
   one-liner, and generalises it from the G-buffer channels to every map.
 - **Resolves** [map-compatibility](../2026-07-24-map-compatibility/README.md) structurally — publishing the
   slot mapping as constants removes the class of bug that stream exists to police.
-- **Re-anchors** [lightmap-resolution](../2026-07-24-lightmap-resolution/README.md): that stream deliberately
+- **Re-anchors** `lightmap-resolution`: that stream deliberately
   chose `TEXTILE_SQUARE` to spend memory on sharpness. This keeps the sharpness where it is visible (1:1 at
   each lod boundary) and stops paying for it where it is not.

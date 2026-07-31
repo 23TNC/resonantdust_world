@@ -31,6 +31,6 @@ remain — those are ES 1.00 *rejecting* `uint`, the perfect negative control fo
 
 ---
 
-**E4 (`texelFetch` / integer sampler) not run** — deferred to [`caster-lut` C5](../caster-lut/todo.md),
+**E4 (`texelFetch` / integer sampler) not run** — deferred to `caster-lut` C5,
 where the sampler read is actually needed. The arithmetic/compile/render path (the point of this
 experiment) is proven; the sampler path is proved in situ there.

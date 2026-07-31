@@ -70,7 +70,7 @@ pawns first (the cold path is simpler and already carries the graph).
 User asked to explore replacing the per-texel corridor walk with a **push** model — each dirty tile casts
 its shadows forward into a "cast map" holding caster ids per destination tile — and to rule it out if it
 fails. **Conclusion: the cast-map form is ruled out; the push INSTINCT is right and is already specified
-as [`shadow-projection`](../shadow-projection/README.md).**
+as `shadow-projection`.**
 
 **Measured baseline (16 moving lights, [I29](issues.md#i29)):** 1479 dirty tiles × 256 shadow texels ×
 ~660 bucket fetches/texel ≈ **250M fetches/frame** (55 fps). Overlap analysis

@@ -248,3 +248,41 @@ the deleted section and would have been easy to take with it.
 **P3's fourth item — "verify the data texture end to end" — is moot and recorded as such**: there is
 no data texture to verify. Its acceptance ("the scatter still delivers records, the mirror matches")
 described a system P2 deleted.
+
+## 2026-07-31 · P4 — the documentation retired
+
+**Four design/intent docs out of the repo** to `../archive/`: `design/lighting.md`,
+`design/shadows.md`, `intent/shadows.md`, `intent/tiered-lighting.md`. Out of the repo rather than into
+an in-repo `archive/`, per the convention — an in-repo one gets read as current.
+`components/client/webgl/intent/` is now empty and `design/` holds only what still exists
+(`rendering-platform.md`, `de-lighting.md`).
+
+**Nineteen work streams archived**, not eight. The plan's count came from `issues.md` I6, which
+listed only the recent ones; the real set is every open/paused/blocked stream whose subject was the
+deleted system, going back to `2026-07-21-shadow-bitfield`. Moved to
+`../archive/lighting-strip-superseded/` and recorded in `docs/work/README.md` as **superseded, not
+delivered**.
+
+**Two streams kept open deliberately**: `2026-07-29-analytic-wall-normals` and
+`2026-07-29-marigold-linked-normals` are **art pipeline**, not renderer. Their output — the normal and
+depth maps — survives the strip ([F4](forks.md#f4)) and the rework wants it. I6 flagged this and P4
+decided per stream rather than sweeping.
+
+**`current/` now exists** and says plainly what the renderer does: unlit, one draw, 0.028 ms/frame,
+with the G-buffer channels available at the seam and a pointer to where the successor is designed.
+
+### What the gate caught, three times
+
+Archiving is a link-breaking operation and `docs-check` refused the commit at each step:
+
+| | broken | fix |
+|---|---|---|
+| the four component docs | 4 links from `components/client/webgl/README.md`, 6 from work streams | rewrote the README index; de-linked the rest |
+| the 19 streams | **67** cross-references between streams | de-linked to inline code — the prose is true history, the link asserted a live file |
+| `current/README.md` | — | _"missing freshness stamp — a cache with no age is unsafe to plan from"_ |
+
+The last one is the sharpest rule in the tree and I had not met it: a `current/` doc without a
+`Last updated` / `verified @ <sha>` is a claim about the present with no way to check its age. Stamped.
+
+**354 files, green.** Down from 461 — and the repo-wide over-long-item warning fell from 244 to 173
+purely as a side effect of the archive.

@@ -494,7 +494,7 @@ The fix recorded here (track screen density, ≈ `64 × zoom`) was right in dire
 further and better: size every map in **TILES** on a fixed 24×16 slot grid, so the texture is constant rather
 than merely screen-proportional. That also equalises gameplay across monitors and caps the art pipeline.
 Note for the record that `TEXTILE_SQUARE` was a **deliberate** choice by
-[lightmap-resolution](../2026-07-24-lightmap-resolution/README.md) (spend memory to buy sharpness), not an
+`lightmap-resolution` (spend memory to buy sharpness), not an
 oversight — the slot grid keeps that sharpness where it is visible and stops paying for it where it is not.
 **P9 in [`todo.md`](todo.md) is retired in favour of that stream; P10 (F11b) is gated on it.**
 

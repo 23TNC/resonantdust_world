@@ -77,4 +77,4 @@ Remaining:
 
 - [ ] Implement the GPU cast (instanced, VTF reading light/LUT/caster), the integer bitfield (`RGBA8UI`/
       `RGBA32UI`, real `uint`, retire float-mod), MRT where useful — all clean, no Pixi walls. Resume
-      [`caster-lut`](../caster-lut/todo.md) C5 here.
+      `caster-lut` C5 here.

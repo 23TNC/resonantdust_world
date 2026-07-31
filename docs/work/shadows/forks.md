@@ -24,7 +24,7 @@ the data path. This is *why* the goal is 24 (3×8), not 32.
 ## F3 · Casters: pure billboards, no textures/outlines — 2026-07-19
 
 **Options:** (a) the textured earcut silhouette (`outline`) with UV alpha, per
-[`design/shadows.md`](../../components/client/webgl/design/shadows.md); (b) the **solid billboard quad**
+`design/shadows.md`; (b) the **solid billboard quad**
 projected to the ground. **Chose (b)** for the foundation — the projection + RT plumbing + pack are what's
 being proven; the silhouette/UV layer drops on top later without changing the pipeline
 ([D-3](deviations.md#d-3)).

@@ -13,5 +13,5 @@ hand-rolled builder was unnecessary, [D-1](deviations.md#d-1)). One standard; no
 
 - [ ] Convert the shadow/overlay bit math from float-mod to real `uint`/bitwise ([D-2](deviations.md#d-2)).
       Behaviour-identical on unorm8, so purely cosmetic here — it lands naturally with the **integer-texture**
-      switch in [`caster-lut` C5](../caster-lut/todo.md), where `uint` is actually load-bearing. Not worth a
+      switch in `caster-lut` C5, where `uint` is actually load-bearing. Not worth a
       standalone regression pass before then.
