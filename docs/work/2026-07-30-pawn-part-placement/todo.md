@@ -9,7 +9,7 @@ the two real gaps (facing z-order, albedo/lighting unification), then re-check t
 - [ ] Capture a zoom-1 screenshot of a human pawn in all four facings as the before-image. Acceptance: four crops saved, so every later change has something to diff against.
 - [ ] Confirm the head slot is DSL-placed today by editing `head.offset.y` and reloading. Acceptance: the head visibly moves, proving requirement 6 is already met and no pixel constant overrides it.
 - [x] Read back the wasm `moverParts` row for a live human. Acceptance: `scale`, `offsetX/Y`, `part` and `span` print the corpus values, or the mismatch is recorded in `issues.md`.
-- [ ] Compare the pawn's normal and albedo atlas frame sides in the console. Acceptance: a number for each; if equal, [I2](issues.md#i2) is refuted and P4 shrinks to a doc fix.
+- [x] Compare the pawn's normal and albedo atlas frame sides in the console. Acceptance: a number for each; if equal, [I2](issues.md#i2) is refuted and P4 shrinks to a doc fix.
 - [ ] Measure how far a head fragment's lightmap sample sits from its own footprint row. Acceptance: a tile count recorded in `issues.md`, confirming or refuting the ~1-tile estimate in [I1](issues.md#i1).
 
 ## P1 — The DSL tune (body 0.8, head 0.5)
@@ -37,9 +37,9 @@ the two real gaps (facing z-order, albedo/lighting unification), then re-check t
 
 ## P4 — Normal scaling
 
-- [ ] Act on P0's frame-side comparison. Acceptance: if the sides differ, the stage that diverges is named; if they match, this phase closes as refuted with a note in `completed.md`.
-- [ ] Make the normal follow the same DSL scale as the albedo wherever P0 found the divergence. Acceptance: both atlas frames report the same side for a pawn at `body.size 0.8`.
-- [ ] Confirm the shading direction still reads correctly after any scale change. Acceptance: a lit crop shows the pawn lit from the light's side, with `worldNormal`'s pitch untouched.
+- [x] Act on P0's frame-side comparison. Acceptance: if the sides differ, the stage that diverges is named; if they match, this phase closes as refuted with a note in `completed.md`.
+- [x] Make the normal follow the same DSL scale as the albedo wherever P0 found a divergence. Acceptance: P0.4 found none — albedo and normal are quadrants of ONE co-packed frame, so no change is possible or needed.
+- [x] Confirm the shading direction still reads correctly after any scale change. Acceptance: no scale change was made, so `worldNormal`'s pitch is untouched by construction.
 
 ## P5 — Close out
 

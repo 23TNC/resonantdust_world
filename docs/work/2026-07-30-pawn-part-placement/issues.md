@@ -68,7 +68,7 @@ Resolved as [F2](forks.md#f2): recover the footprint row from `zdepth_world.b`, 
 already reads for occlusion.
 
 ## I2 — "The normal does not scale with the albedo" is unconfirmed and may be impossible {#i2}
-_2026-07-30 · read at plan time from `SquareCache.ts` + `mrtBakeShader.ts` · **needs measurement**_
+_2026-07-30 · **REFUTED at P0.4** — measured; see [completed.md](completed.md)_
 
 The user observed the normal scaling correctly while the albedo did not. That cannot happen at BAKE
 time: `SquareCache` bakes *"N sibling CHANNELS (albedo/normal/surface/zdepth) from ONE shared prim
