@@ -65,3 +65,66 @@ right thing — which is what makes the number worth keeping even though the pha
 **The shape it confirms:** the gather is the pass, at **54 %** of frame GPU time with a single light —
 and it scales with light count while nothing else here does. Two passes (receiver coarse/fine) did not
 appear at all: they are dirty-gated and had already baked, which is the caching working as designed.
+
+## 2026-07-31 · P1 — the renderer goes unlit (consumers cut, nothing deleted)
+
+**What landed.** The display blit lost every lighting term — the cold+hot lightmap sum, the
+de-quantisation, `ambient × AO`, the decay glow and the emissive add — leaving `albedo.rgb × alpha`.
+`Viewport` stopped binding the lightmaps/decay and stopped issuing `shadows.tick()`, which is what
+drove the gather, lighting, receiver and decay passes. The blueprint preview, which sampled the live
+lightmaps so a blueprint dragged past a torch glowed, now draws unlit.
+
+Dead-by-consequence and removed with it: `uLightEnable`, `uAmbient`, `uAoStr`, `uEmissiveBoost`,
+`uLightQuant`, `uLCols/uLRows/uLWinCol/uLWinRow/uLSlot/uDSlot`, the `lightTexel` and `decaySample`
+functions, the `vWorld` varying, the `__ao` and `__emissive` debug hooks, `aoStrength`/`emissiveBoost`,
+and four now-unused imports. **`ShadowGather` itself is untouched and still compiles** — that is the
+point of doing this before P2 ([F3](forks.md#f3)).
+
+### The measurement — what the lighting system cost
+
+Same fixture, same method, measured **both ways** by stashing the P1 diff: 60 frames after 15 warm-up,
+`gl.finish()` at both ends so the number prices the whole frame (CPU + GPU), 5 repeats, median.
+
+| build | draws/frame | ms/frame (median) | |
+|---|---|---|---|
+| lit, static scene | **4** | **0.508** | min 0.497, max 0.672 |
+| lit, light orbiting | 4 | **0.675** | min 0.647, max 1.198 |
+| **unlit (P1)** | **1** | **0.045** | min 0.040, max 0.053 |
+
+**The lighting system was ~91 % of a static frame and ~93 % of a moving-light frame.** The replacement
+inherits a budget of roughly **0.46–0.63 ms/frame** at this scene's density before it costs more than
+what was removed.
+
+Two honest qualifiers. This is the **content scene** — one authored torch — not the N=16 stress case;
+the shadow streams' harness numbers (gather alone at 4–7 ms with 16 lights) are the right reference for
+how it scales. And the frame is **dirty-gated**, so "static" is the cheap case by design: the 4 draws
+are the steady state, not the work a change triggers.
+
+### Verified
+
+- **Page load at the fixture, zero console errors.** tsc cannot see GLSL, so this is the only real gate
+  — and the blit was rewritten, so a silent GLSL break was the live risk.
+- **The unlit render is correct**: [`after/01-zoom1-unlit.jpg`](after/01-zoom1-unlit.jpg). Trees,
+  bushes, the human pawn, the wolf, the walled structure and the torch sprites all draw; sprite z-order
+  is intact (the warm-over-cold painter's key is untouched); tile art reads correctly at full albedo.
+  Compare [`before/01-zoom1.jpg`](before/01-zoom1.jpg) — same camera, same content, no light.
+- **Draw count fell 4 → 1**, counted by wrapping `drawElements`/`drawArrays`. The plan predicted 2
+  remaining; the truth is **1**, because the G-buffer bakes are dirty-gated and idle once the scene has
+  settled. The prediction was wrong in the harmless direction and the measured number is what stands.
+
+### Both fixtures, and the overlays
+
+- **Zoom 0.5** — [`after/02-zoom0.5-unlit.jpg`](after/02-zoom0.5-unlit.jpg): biomes (sand, dirt,
+  grass), the forest, the walled structure and the movers all draw. The white block at the pawn is its
+  unresolved-lod geo fallback and appears in the **lit** before-image at the same spot, so it predates
+  the strip.
+- **Selection works**: a synthesised pointerdown/up on the pawn selected `p:813694981`.
+- **The outline overlay draws** — populating it took the frame from 1 draw to 2, `getError() == 0`.
+- **The blueprint overlay draws** — same, 1 → 2, `getError() == 0`. Its lighting argument is now always
+  `null`, which was already the supported branch whenever the lightmaps were absent.
+
+**One honest note on method.** Driving `Viewport.tick()` by hand bypasses `WorldScene.update()`, which
+is where `syncOutlines()` and the mover tick live — so the *first* selection test showed no outline
+draw and that was my harness, not a regression. Both overlays were then populated directly to exercise
+their draw paths. Worth writing down: in this manual-tick rig, "nothing drew" can mean "the scene
+update never ran".

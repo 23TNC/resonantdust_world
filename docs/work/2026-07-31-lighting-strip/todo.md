@@ -27,10 +27,10 @@ any of it.
 
 ## P1 — Cut the consumers (the renderer goes unlit, nothing is deleted yet)
 
-- [ ] Reduce the display blit to `albedo × ambient` with ambient at full ([F1](forks.md#f1)). Acceptance: the world renders at full brightness with correct colour; no lightmap sampler remains bound in the blit.
-- [ ] Stop issuing the gather, lighting, receiver and decay draws from `Viewport`. Acceptance: the frame drops to its 2 remaining steady-state draws, confirmed by the draw counter, and the page still loads.
-- [ ] Re-measure the frame with the lighting passes dark. Acceptance: ms before and after, which prices the whole system in one number — the budget the replacement gets to spend.
-- [ ] Verify the unlit render at both fixtures. Acceptance: sprites, tiles, z-order, selection outlines and the build overlay all still draw correctly — this phase must prove the strip is reversible before anything is deleted.
+- [x] Reduce the display blit to `albedo × ambient` with ambient at full ([F1](forks.md#f1)). Acceptance: the world renders at full brightness with correct colour; no lightmap sampler remains bound in the blit.
+- [x] Stop issuing the gather, lighting, receiver and decay draws from `Viewport`. Acceptance: the frame drops to its 2 remaining steady-state draws, confirmed by the draw counter, and the page still loads.
+- [x] Re-measure the frame with the lighting passes dark. Acceptance: ms before and after, which prices the whole system in one number — the budget the replacement gets to spend.
+- [x] Verify the unlit render at both fixtures. Acceptance: sprites, tiles, z-order, selection outlines and the build overlay all still draw correctly — this phase must prove the strip is reversible before anything is deleted.
 
 ## P2 — Delete the machinery
 

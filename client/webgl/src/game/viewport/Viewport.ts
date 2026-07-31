@@ -14,15 +14,14 @@ import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } fro
 import type { TextureResolver } from "../../textures";
 import { AlbedoBlitShader } from "./albedoBlitShader";
 import { OverlayShader, overlayModeFor } from "./overlayShader";
-import { ShadowGather, AMBIENT_LEVEL } from "./shadowGather";
+import { ShadowGather } from "./shadowGather";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
-import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_UNIT, TEXTILE_LIGHT } from "./squareMath";
+import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { makeNoiseAtlas } from "./noiseAtlas";
 import { OutlineOverlay, type OutlineItem } from "./outlineOverlay";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
-import { LIGHT_QUANT } from "./shadowGather";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
 
 const BAKE_BUDGET = 128;
@@ -86,10 +85,6 @@ export class Viewport {
    *  and the display blit composites warm OVER cold by warm coverage. */
   private readonly warm: SquareCache;
   private readonly blitShader: AlbedoBlitShader;
-  /** lighting-feel P3: AO strength on the blit's ambient term (`__ao`; 0 = off). */
-  aoStrength = 1;
-  /** lighting-feel P3: emissive (self-lit) strength (`__emissive`; 0 = off). */
-  emissiveBoost = 1.4;
   /** The `/overlayRT` debug material — draws one G-buffer composite over the display. */
   private readonly overlayShader: OverlayShader;
   /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
@@ -133,11 +128,6 @@ export class Viewport {
     // COUNTS and map dims rather than screenshots. The scene is unlit by default, so sampling the
     // canvas cannot distinguish a re-bake flash from ordinary darkness — the cache state can.
     (globalThis as unknown as { __viewport: Viewport }).__viewport = this;
-    // DEBUG (lighting-feel P3): AO strength on the ambient term — __ao(0) = off (the A/B), 1 = full.
-    (globalThis as unknown as { __ao: (s?: number) => number }).__ao = (s?: number) => {
-      if (s !== undefined) this.aoStrength = s;
-      return this.aoStrength;
-    };
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
     // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
     (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {
@@ -147,11 +137,6 @@ export class Viewport {
       this.map.invalidateAll();
       this.warm.invalidateAll();
       return m;
-    };
-    // DEBUG (lighting-feel P3): emissive strength — __emissive(0) = off (the A/B).
-    (globalThis as unknown as { __emissive: (b?: number) => number }).__emissive = (b?: number) => {
-      if (b !== undefined) this.emissiveBoost = b;
-      return this.emissiveBoost;
     };
   }
 
@@ -478,14 +463,9 @@ export class Viewport {
     this.warm.bakeDirty(Number.MAX_SAFE_INTEGER);
     this.map.bakeDirty(Math.max(BAKE_BUDGET - this.warm.lastBaked, COLD_BAKE_FLOOR));
 
-    // Recompute the shadow bitfield + bake the LIGHTMAP (gather → RTs) BEFORE the display, so the blit
-    // multiplies this frame's lighting. Renders into the shadow/light RTs; the blit below draws to screen.
-    // pawn-render P2: WARM (mover) prims join the pass tagged hot — their records carry the class bit,
-    // the shaders route every hot participant to the HOT maps only (the ratified tier matrix), so a
-    // moving wolf never dirties a cold bake.
-    if (this.map.ready) {
-      this.shadows.tick([...this.map.standingPrims(), ...this.warm.standingPrims()], this.resolver, this.map.window);
-    }
+    // lighting-strip P1: the gather / lighting / receiver / decay passes are NO LONGER ISSUED. The
+    // ShadowGather instance still exists and still compiles (P2 deletes it) -- this phase only stops
+    // driving it, so the strip stays reversible while the unlit render is verified.
 
     this.renderer.clearScreen(0.05, 0.06, 0.08, 1.0);
 
@@ -507,14 +487,8 @@ export class Viewport {
           this.blitShader.albedoWarm = albedoW;
           this.blitShader.surfaceWarm = surfaceW;
         }
-        // Lighting (#4): sum the COLD (static) + HOT (dynamic) lightmaps + ambient. Sampled by world
-        // position via the cold window mapping (same toroidal tile grid as shadow-cold). Null → UNLIT
-        // fallback. P2 also binds the aggregate light-dir maps + the cold/warm normal composites for relief.
-        const coldLight = this.shadows.coldLightmap;
-        this.blitShader.coldLight = coldLight;
-        this.blitShader.hotLight = this.shadows.hotLightmap;
-        this.blitShader.decay = this.shadows.decayMap; // lighting-feel P2: ephemeral particle glow
-        // lighting-feel P3: the emissive mask rides the zdepth composites' R lane.
+        // lighting-strip P1: no lightmap, decay or emissive bindings — the blit is UNLIT. The zdepth
+        // composites stay: their B lane is the painter's key that resolves warm-over-cold per pixel.
         this.blitShader.depth = this.map.displayComposite("zdepth-world-cold");
         this.blitShader.depthWarm = this.warm.displayComposite("zdepth-world-warm");
         const win = this.map.window;
@@ -533,28 +507,6 @@ export class Viewport {
           textures: this.blitShader.textures(this.empty),
           uniforms: (p) => {
             p.uMat3("uProjection", proj);
-            p.uInt("uLightEnable", coldLight ? 1 : 0);
-            p.uFloat("uAmbient", AMBIENT_LEVEL);
-            p.uInt("uLCols", win.cols);
-            p.uInt("uLRows", win.rows);
-            p.uInt("uLWinCol", win.winCol);
-            p.uInt("uLWinRow", win.winRow);
-            // The lightmap rides the fixed slot grid, so its per-TILE texel size is `TEXTILE_LIGHT >> lod`.
-            // This USED to be `win.slotPx`, and that was correct only while `TEXTILE_SQUARE === SQUARE` made
-            // the lightmap and the art maps the same resolution. They are now separate dials
-            // (`2026-07-28-square-128`), so `win.slotPx` is the ART texel size and feeding it here samples
-            // the lightmap at the wrong scale the moment the two differ — demonstrated in P0, which raised
-            // only the lighting resolution and rendered visible per-slot misregistration.
-            //
-            // The general rule, twice re-learned (see `2026-07-24-map-compatibility`): a map's slot stride
-            // comes from THAT MAP's own texels-per-tile constant, never from another map's.
-            p.uInt("uLSlot", Math.max(1, TEXTILE_LIGHT >> win.lod));
-            // lighting-feel P2: the decay map is COARSE — TEXTILE_UNIT texels/tile at lod 0,
-            // halving with lod exactly like the shadow map (SHADOW_TEXELS >> lod).
-            p.uInt("uDSlot", Math.max(1, TEXTILE_UNIT >> win.lod));
-            p.uFloat("uAoStr", this.aoStrength);
-            p.uFloat("uEmissiveBoost", this.emissiveBoost);
-            p.uFloat("uLightQuant", LIGHT_QUANT); // de-quantise the additive accumulator (F11b)
           },
         });
 
@@ -601,24 +553,9 @@ export class Viewport {
 
     // build-walls P2: the blueprint drag preview, then ui-select P1's selection outlines
     // topmost (over grid/overlays — a selection must never hide).
-    // texture-generalization P4 (tile-lighting F3): the preview samples the LIVE lightmaps
-    // (read-only — the ephemeral path; the accumulators are untouched) with the blit's own
-    // window mapping, so a blueprint dragged beside a torch glows with it.
-    {
-      const cl = this.shadows.coldLightmap, hl = this.shadows.hotLightmap;
-      const win = this.map.window;
-      this.blueprint.draw(this.camera, cl && hl ? {
-        coldLight: cl,
-        hotLight: hl,
-        quant: LIGHT_QUANT,
-        ambient: AMBIENT_LEVEL,
-        cols: win.cols,
-        rows: win.rows,
-        winCol: win.winCol,
-        winRow: win.winRow,
-        lslot: Math.max(1, TEXTILE_LIGHT >> win.lod),
-      } : null);
-    }
+    // lighting-strip P1: the preview used to sample the live lightmaps so a blueprint dragged beside
+    // a torch glowed with it. There are no lightmaps now, so it draws unlit like everything else.
+    this.blueprint.draw(this.camera, null);
     this.outline.draw(this.camera);
   }
 
