@@ -232,3 +232,38 @@ stays the recorded P1 figure. What matters is unchanged and if anything stronger
 16 fit inside 8 ms**, where the P0 baseline was 8.30 ms and did not.
 
 The lock-up was entirely the P2 MRT attempt. P1 is unaffected.
+
+## 2026-07-31 · P2 (part 1) — 8 lights per tile ([F7](forks.md#f7))
+
+`PRES_SLOTS = TILE_SLOTS` (8). The hi presence set is retired: one `fetchLin` instead of two in all four
+shaders that read presence, the light loop is `slot < 8`, and `writePresence` writes one set. Eviction
+still clears the hi band so a stale tile cannot present phantom lights.
+
+### Verified
+
+| check | result |
+|---|---|
+| renders, context alive | yes — `isContextLost` false, `getError` 0 |
+| **slots 8–15 occupied** | **0** (slots 0–7: 43 074) — the upper half is genuinely gone |
+| corridor↔brute identity | **0 differing** of 32 913 |
+
+### Measured (same fixture, reach 16)
+
+| | P1 (16 slots) | **P2a (8 slots)** |
+|---|---|---|
+| N8 | — | **4.19 ms** |
+| N16 | 6.36 ms | **5.65 ms** |
+
+**The N16 comparison is NOT like-for-like and must not be quoted as a pure speedup.** At reach 16 every
+light covers the whole window, so every tile wants all 16 and can now hold only 8 — roughly half the
+light–tile pairs are dropped. Some of that 6.36 → 5.65 is work not done rather than work done faster.
+
+The honest number for the new configuration is **N8 at 4.19 ms**, where every light is fully
+represented on every tile it reaches. Against the P0 baseline's 8 ms budget that is a very large margin —
+but it is a *different capability*, and P5 must present it that way rather than as 16 lights got cheaper.
+
+### Still to do in P2
+
+The encoding change itself: the texel currently still holds the P1 coverage byte, not `8 × u16` caster
+ids. The slot-count reduction is the prerequisite that makes it fit; the re-encode, the id write and the
+sentinel are the remaining three items.

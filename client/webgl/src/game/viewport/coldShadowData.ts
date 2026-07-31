@@ -343,11 +343,11 @@ export class ColdShadowData {
       this.mark(base + id);
     }
   }
-  /** Presence tile: **14** nearest-light u16 indices (0xFFFF empty) across two sets — lo = slots
-   *  0–6, hi = slots 7–13. */
+  /** Presence tile: **8** nearest-light u16 indices (0xFFFF empty) in ONE set (F7). The hi set is
+   *  retired — it is still CLEARED on eviction so a stale tile can never present phantom lights, but
+   *  nothing writes or reads it. */
   writePresence(wc: number, wr: number, slots: ArrayLike<number>): void {
     this.writeTileSet(PRESENCE_BASE, wc, wr, slots, 0xffff, 0);
-    this.writeTileSet(PRESENCE_HI_BASE, wc, wr, slots, 0xffff, 8);
   }
   /** texture-generalization P1 (D7): a `prim_presence` tile — 4 FULL u32 slots, one per
    *  channel (`flags 31–28 | set 27–24 | reserved 23–16 | index 15–0`; `0` = empty).

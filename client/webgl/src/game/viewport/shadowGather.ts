@@ -149,10 +149,18 @@ const MASK_BASE_FADEF = MASK_BASE_FADE.toFixed(1);
 const SHADOW_LIFTF = SHADOW_LIFT.toFixed(1);
 /** Slots in ONE tile-keyed px — v3 retired the u16 self-address, so all four lanes hold pairs. */
 const TILE_SLOTS = 8;
-/** Lights per tile in presence + shadow-cold: {@link TILE_SLOTS} per presence set (lo + hi) = 16, each
- *  a `u7 coverage | u1 on-billboard` byte in the 128-bit shadow-cold texel (slot i at channel i>>2,
- *  bits (i&3)·8 — 16 × 8 = 128 exactly). */
-const PRES_SLOTS = TILE_SLOTS * 2;
+/** Lights per tile — **8** (F7, 2026-07-31). Was 16 across a lo + hi presence pair.
+ *
+ *  8 is what makes the shadow texel hold a caster ID instead of a value: `8 × u16 = 128 bits`, exactly
+ *  one `uvec4`, with a sentinel meaning "not occluded" so occlusion is implied rather than stored. At 16
+ *  the ids needed 256 bits and had to live somewhere else — and every somewhere else failed (a second
+ *  MRT attachment hung the renderer twice; an id short enough to pack in spare bits cannot index a u16
+ *  `billboardIdx`).
+ *
+ *  This caps how many lights may OVERLAP ONE TILE, not how many exist: presence is per tile and the sets
+ *  are independent, so neighbouring tiles hold different eights. Raise back to 16 only if a real scene
+ *  is measured hitting it. Halving it also halves the gather's inner loop. */
+const PRES_SLOTS = TILE_SLOTS;   // F7: 8. The hi presence set is retired -- see the doc above.
 /** Casting billboards bucketed per tile — ONE px, so {@link TILE_SLOTS}. I17: this is the stride the
  *  fill, the allocation AND the write must all agree on; when they were separate literals they
  *  desynced (7 vs 8) and the buckets were built from misaligned memory. Derive, never re-type it. */
@@ -867,7 +875,6 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
                       ivec2 sb, vec2 sf,
                       vec2 P, int fold, vec3 N, bool applyNL, uint rbillboardN, bool recvHot) {
     uvec4 presLo = fetchLin(data, PRESENCE_BASE + fold);     // lights 0–6
-    uvec4 presHi = fetchLin(data, PRESENCE_HI_BASE + fold);  // lights 7–13
     // shadow-polish P3 (user): BILINEAR shadow upsample. The shadow textile is UNIT
     // resolution while this map is fine — the old single NEAREST fetch (fc/FINE) gave every
     // fine texel its coarse parent's word with zero fractional consideration, so shadows
@@ -891,8 +898,8 @@ vec3 accumulateLights(highp usampler2D data, highp usampler2D shadowTex, highp u
     // lighting-feel P1: the world-frame VIEW direction for the glint — per-fragment constant, hoisted
     // out of the light loop (cos/sin once, not per light).
     vec3 V = vec3(0.0, cos(uNormalPitch), sin(uNormalPitch));
-    for (int slot = 0; slot < 16; slot++) {
-      uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
+    for (int slot = 0; slot < 8; slot++) {
+      uint li = tileSlot(presLo, slot);   // F7: one presence word, 8 slots
       if (li == 0xffffu) continue;                            // empty slot
       uvec4 Ld = fetchLin(data, LIGHT_BASE + int(li));       // G = position, B = colour|intensity, A = z|reach|hot|…
       // pawn-render P2 (the tier matrix): cold pass = cold lights only; hot pass = hot lights
@@ -1279,10 +1286,9 @@ void main() {
   if (uGProfile == 3) { fragColor = uvec4(allBillboard ? 1u : 0u); return; } // G3: + corner test
 
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
-  uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
   uint o0 = 0u, o1 = 0u, o2 = 0u, o3 = 0u;                   // per-SLOT u8 coverage: slot i at ch i>>2, bit (i&3)*8
-  for (int slot = 0; slot < 16; slot++) {
-    uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
+  for (int slot = 0; slot < 8; slot++) {
+    uint li = tileSlot(presLo, slot);   // F7: one presence word, 8 slots
     if (li == 0xffffu) continue;                            // empty slot
     uvec4 Ld = fetchLin(uData, LIGHT_BASE + int(li));       // v2.1: G = position, A = z|reach|emitter|hot|cast
     if (((Ld.y >> 24) & 1u) == 0u) continue;                // cast_shadows
@@ -1395,13 +1401,12 @@ void main() {
   ivec2 texel = ivec2(sx * uSlot + int(lx * float(uSlot)), sy * uSlot + int(ly * float(uSlot)));
   int fold = foldTile(tx, ty);
   uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);     // lights 0–6
-  uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);  // lights 7–13
   uvec4 shC = texelFetch(uShadow, texel, 0);                // cold class slots
   uvec4 shH = texelFetch(uShadowHot, texel, 0);             // hot class slots (a slot is nonzero in one only)
   vec3 acc = vec3(0.0);
   float any = 0.0;
-  for (int slot = 0; slot < 16; slot++) {
-    uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
+  for (int slot = 0; slot < 8; slot++) {
+    uint li = tileSlot(presLo, slot);   // F7: one presence word, 8 slots
     if (li == 0xffffu) continue;                            // empty slot
     uint vC = (lane4(shC, slot >> 2) >> (uint((slot & 3) * 8) + 1u)) & 1u;  // v4: OCCLUDED bit
     uint vH = (lane4(shH, slot >> 2) >> (uint((slot & 3) * 8) + 1u)) & 1u;
@@ -1480,10 +1485,9 @@ void main() {
     int wr = uWinRow + pmod(sy - pmod(uWinRow, uRows), uRows);
     int fold = foldTile(wc, wr);
     uvec4 presLo = fetchLin(uData, PRESENCE_BASE + fold);
-    uvec4 presHi = fetchLin(uData, PRESENCE_HI_BASE + fold);
     uvec4 sh = texelFetch(uShadowStamp, fc, 0);
-    for (int slot = 0; slot < 16; slot++) {
-      uint li = slot < 8 ? tileSlot(presLo, slot) : tileSlot(presHi, slot - 8);
+    for (int slot = 0; slot < 8; slot++) {
+      uint li = tileSlot(presLo, slot);   // F7: one presence word, 8 slots
       if (li != uint(uLightId)) continue;
       uint b8 = (lane4(sh, slot >> 2) >> uint((slot & 3) * 8)) & 0xFFu;
       stamp = 1.0 - float((b8 >> 1) & 1u);          // (1 − the parent light's shadow coverage)
