@@ -117,7 +117,7 @@ all three attachments before loading (an unwritten attachment under `drawBuffers
 memory: three 512x256 rgba32uint attachments is 6 MiB per RT, 12 MiB for cold+hot, against 405 MiB
 already resident.
 
-**Leading hypothesis — the gather's write bandwidth tripled.** The gather runs one fragment per shadow
+**Original hypothesis (SUPERSEDED by the I6b bisect below) — the gather's write bandwidth tripled.** The gather runs one fragment per shadow
 texel with a heavy per-fragment loop, and it was already the dominant pass (6.19 ms at N16). Tripling
 the bytes written per fragment on a draw that is already the longest in the frame is a plausible way to
 trip the GPU watchdog / TDR, which presents exactly like this — a hang rather than a black screen or a
@@ -140,3 +140,51 @@ check before it went unresponsive. The next attempt must gather that evidence BE
 
 **P2 is left OPEN and unticked.** Nothing about P0/P1 is affected — those are committed, measured and
 independently valuable (8.30 -> 7.11 ms at 16 lights).
+
+## I6b — BISECT RESULT: any second colour attachment on the gather hangs the renderer
+
+I6 named two candidate causes for the lock-up — extra write bandwidth, and register pressure from the
+eight `uint` accumulators attempt 1 held live across the 16-iteration light loop. The bisect isolates
+them, and the answer is neither of the ones I ranked first.
+
+**The bisect.** ONE extra attachment instead of two. The shader writes a **constant**
+(`uvec4(0xffffffffu)`) to it at every exit — no accumulators, no read-modify-write, no per-slot logic,
+half the added bandwidth. Everything else identical to P1.
+
+**It hung exactly the same way.** Page loaded, then the renderer stopped responding; CDP screenshot
+timed out at 30 s. Reverted; tree clean at the P1 commit.
+
+**Therefore:**
+
+- **NOT register pressure.** The bisect added zero live registers. Ruled out.
+- **NOT the accumulators.** Same. Ruled out.
+- **NOT write bandwidth in any interesting sense.** One extra `rgba32uint` attachment on a 512x256
+  target is ~2 MiB per frame of extra writes on a draw already costing 5.5 ms. That is not a plausible
+  watchdog trigger on its own, and it still hung.
+- **NOT GLSL validity.** `Program` throws on `COMPILE_STATUS`/`LINK_STATUS`, so a bad shader raises a JS
+  exception rather than hanging. It compiled and linked.
+
+**What is left: MRT on the gather pass itself is pathological on this driver.** The renderer reports
+`ANGLE (NVIDIA GeForce RTX 2080 Ti, Direct3D11)`, so every WebGL2 call is translated to D3D11. An
+integer-format multiple-render-target write from a fragment shader with this gather's control flow is a
+plausible place for that translation to fall off a fast path. **Not proven** — a hang leaves no
+evidence, and proving it would need a driver-level trace this stream does not justify.
+
+**Consequence for the plan.** [F2](forks.md#f2) chose "two extra attachments on the shadow RT" as the id
+map's home. That option is now **closed**, and with it the assumption underneath P2-P4: that the winner
+id could ride along with the coverage write for free. Every remaining route has to get the id out of the
+gather WITHOUT a second attachment:
+
+1. **Pack the id into the existing texel.** Binary coverage freed bits 2-7 of each slot byte — 6 bits,
+   64 ids. [F3](forks.md#f3) rejected this on aliasing grounds when a second attachment was available;
+   it is now the only zero-attachment option and must be re-decided on its merits. A tile-LOCAL id
+   (which of the tile's 8 caster slots, plus a small tile offset) may fit 6 bits where a global prim id
+   cannot.
+2. **Widen the existing attachment's format.** One `rgba32uint` is 128 bits; there is no wider integer
+   format in WebGL2. Dead end.
+3. **A second gather pass** writing ids to its own single-attachment RT. Costs a full second walk, which
+   is precisely the search P2 exists to delete. Self-defeating — and this supersedes the "separate pass"
+   suggestion I made verbally, which was wrong for this reason.
+4. **Abandon the id map**; keep P1's binary win and close the stream.
+
+**P2 remains open and unticked.** P0/P1 are unaffected and committed: 8.30 -> 7.11 ms, 15 -> 16 lights.
