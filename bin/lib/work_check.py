@@ -18,6 +18,16 @@ If all four hold, the pause is premature: exit 2 with the actual next items, so 
 continues the documented plan until it is **complete, interrupted, blocked, or the plan itself
 is wrong** (the four legitimate exits, spelled out in the nudge).
 
+  5. …and is COMPLETE really the end?  → `_handoff` (2026-07-31).
+
+Question 4 has a blind spot the first four cannot see: finishing a stream auto-disarms, so a
+session that has just completed A and should roll straight into B gets no push at all — the arming
+that would have pushed it is exactly what completion released. That shows up as "shall I start the
+next one?" at the one moment the hook has gone quiet. So a completed stream is checked for an OPEN
+stream whose own README/todo declares it **depends on** the finished one, and hands it over once.
+One-shot per (session, stream): it cannot loop, and a stream with no declared successor still ends
+the turn cleanly.
+
 Bounding (F6 dial, default = blocking-but-bounded). The nudge is never unsupervised:
   - a **progress guard** — the nudge repeats only while the session keeps making progress
     (completed/todo/remaining edits, commits, or working-tree changes). `WORK_CHECK_MAX_NUDGES`
@@ -517,6 +527,68 @@ def _nudge_text(stream: str, items: list[str], count: int) -> str:
     )
 
 
+# Dependency keywords a successor stream uses to declare it waits on another. Deliberately narrow:
+# a false positive hands the session the wrong stream, which is worse than handing it none.
+_DEP_WORDS = ("depends on", "dependent on", "prerequisite", "gated on", "blocked on",
+              "follows on from", "picks up from")
+
+
+def _successor_of(stream: str) -> str | None:
+    """An OPEN stream that declares it waits on `stream`, or None.
+
+    Closes the one gap the nudge path cannot see: finishing a stream auto-disarms, so a session
+    that has just completed A and should roll into B gets no push at all — the exact shape of
+    "shall I arm the next one?". Matching is on the successor's OWN prose, so the handoff exists
+    only where an author wrote the dependency down.
+    """
+    for cand in _all_streams():
+        if cand == stream or _status(cand) in ("done", "closed", "delivered"):
+            continue
+        if not _item_counts(cand)[0]:          # nothing open to roll into
+            continue
+        for name in ("README.md", "todo.md"):
+            path = os.path.join(WORK, cand, name)
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    flat = " ".join(fh.read().split()).lower()
+            except OSError:
+                continue
+            hit = flat.find(stream.lower())
+            while hit != -1:
+                window = flat[max(0, hit - 160):hit]
+                if any(w in window for w in _DEP_WORDS):
+                    return cand
+                hit = flat.find(stream.lower(), hit + 1)
+    return None
+
+
+def _handoff(sid: str, stream: str) -> int | None:
+    """Block ONCE when a finished stream has a declared successor. Returns 2 to block, else None.
+
+    A finished stream is not a finished session. Without this, completing A auto-disarms and the
+    session drifts into "shall I start B?" — with no hook armed to answer, because the arming is
+    what was just released. One-shot per (session, stream), so it can never loop.
+    """
+    nxt = _successor_of(stream)
+    if not nxt:
+        return None
+    path = _state_path("handoff", sid)
+    if _read_json(path).get("stream") == stream:
+        return None                                  # already handed this one over
+    _write_json(path, {"stream": stream, "next": nxt})
+    n_open = _item_counts(nxt)[0]
+    _log_decision({"session": sid, "stream": stream, "verdict": "handoff", "why": f"successor {nxt}"})
+    print(
+        f"[work-check] '{stream}' is COMPLETE — and that is not a stopping point.\n"
+        f"  '{nxt}' declares it depends on this stream and has {n_open} open item(s).\n"
+        f"  Arm it: `rd work arm {nxt}` — then keep going. Do NOT ask whether to; the dependency\n"
+        f"  is already written down, and that IS the answer.\n"
+        f"  Genuinely stopping? Record why in docs/work/{nxt}/.stop-reason first.",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def _do_nudge(payload: dict) -> int:
     sid = str(payload.get("session_id") or "nosession")
 
@@ -527,6 +599,8 @@ def _do_nudge(payload: dict) -> int:
         _log_decision({"session": sid, "verdict": "allow", "why": "not armed"})
         return 0
     if _status(stream) in ("done", "closed"):
+        if _handoff(sid, stream) == 2:
+            return 2
         _disarm(sid, f"stream status={_status(stream)}")
         return 0
 
@@ -537,6 +611,11 @@ def _do_nudge(payload: dict) -> int:
 
     # The three real exits auto-disarm: finished, blocked, or a declared stop.
     if not open_n:
+        # ...but a finished stream is not necessarily a finished SESSION. If another open stream
+        # declares it waits on this one, hand it over ONCE rather than releasing into "shall I
+        # start the next one?". One-shot per (session, stream) pair, so it can never loop.
+        if _handoff(sid, stream) == 2:
+            return 2
         _disarm(sid, "all items complete")
         _log_decision({**base, "verdict": "allow", "why": "complete"})
         return 0
