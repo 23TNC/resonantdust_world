@@ -217,3 +217,21 @@ crossing point instead of accepting the whole rectangle — and it is the differ
 shadow here" and "this shadow is that tree".
 
 **Both of these were ticked as complete. They are not, and the stream is reopened.**
+
+## I13 — Four shadow defects, user-reported 2026-07-31, OPEN {#i13}
+
+Reported after the silhouette + motion fixes: *"You goofed on the minimum bbox, you have no
+silhouette, the shadows aren't anchored at the base of our billboards… z-ordering is quite wrong."*
+Recorded verbatim rather than paraphrased, because I have twice now called this area fixed when it
+was not, and my summary is not the trustworthy artefact here.
+
+| # | defect | what I know |
+|---|---|---|
+| 1 | minimum bbox is wrong | `buildRecords` writes `subX/Y/W/H` from `opaqueBBox` fractions × `span × 16`. Dimensionally plausible, never verified against the drawn sprite |
+| 2 | no silhouette | `silhouetteHit` samples `surface.b`, but the shadows still read as blocks — so either the texel maths, the quadrant offset, or the lane is wrong |
+| 3 | shadows not anchored at the billboard base | the card is modelled rising from `C.y` with `C` = the prim's base-centre; the on-screen offset says that mapping is off |
+| 4 | z-ordering wrong | the blit samples the lightmap by `vWorld = aPosition`, so a billboard's pixels take the light of the ground they are DRAWN over, not the tile they STAND on — the same defect `2026-07-30-pawn-part-placement` I1 records against the old renderer |
+
+**Defect 4 has a known cause and a known fix** (read the light at the prim's base row, which
+`zdepth.B` already carries). 1–3 need looking at on screen at zoom, not reasoning about from the
+source — which is what I should have done before claiming them.

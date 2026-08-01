@@ -51,6 +51,11 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 - [x] Prove incremental add/remove is exact. Acceptance: add a light, remove it, and the summed map returns bit-identically to its prior state — the property the old quantised accumulator needed `LIGHT_QUANT` to fake.
 - [x] Measure cost per light with no shadows. Acceptance: ms at N = 1, 4, 8, 16 lights — the first real bound on the per-pixel pass, taken BEFORE anything is built on top of it.
 
+## P4c — The four reported shadow defects ([I13](issues.md#i13))
+
+- [ ] Verify each of the four ON SCREEN at zoom before touching code. Acceptance: a zoomed capture per defect showing what is actually wrong, since three of the four are geometry I have already misread from source.
+- [ ] Fix the lightmap read to sample at the prim's BASE ROW, not its drawn position. Acceptance: a billboard is lit by the tile it stands on; `zdepth.B` already carries the base row.
+
 ## P4b — Silhouette + motion ([I11](issues.md#i11), [I12](issues.md#i12))
 
 _Reopened 2026-07-31: two acceptances were ticked on work that did not meet them._
