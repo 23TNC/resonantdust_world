@@ -160,11 +160,46 @@ A CPU-side `unit.y` that silently differs from the shader's `unit.y` is a bug ge
 two systems apart makes the difference impossible to overlook — which matters more here than usual,
 since this stream exists because a drawn offset was being mistaken for a position.
 
-### Still to pin
+### `fine.z` is game-space (user, 2026-08-01)
 
-- **Which space is `fine.z` in?** `fine.x/y` refine the drawn sub-unit position. If `fine.z` refines
-  *elevation* it is game-space; if it refines `screen.z` it is screen-space and the CPU must split
-  `tan(angle)·elevation` into `u8 + u4`. Getting this wrong puts the two out of step by a `tan` factor.
-- **What space is the lighting texel grid in?** The blit samples the lightmap by `vWorld = aPosition`,
-  which is the drawn quad — i.e. screen. If the records are game-space, the receiver coverage test and
-  `occludesAt` are exactly where the two meet, and that is where the conversion belongs.
+In units, like `fine.x/y`. The elevation is therefore **`unit.z + fine.z/16`**, and both terms enter
+the screen conversion together — `fine.z` is not a separate refinement applied afterwards.
+
+## F8 — Solve in GAME space; convert `P` once per texel, not the casters {#f8}
+
+Follows from [F7](#f7). Once records hold game coordinates, *something* has to bridge them to the
+lit point `P`, which comes off the lightmap grid in screen space.
+
+- (a) Convert each caster game→screen where it is read.
+- **(b) Convert `P` screen→game once at the top of the shader; run the whole solve in game space.**
+
+**Chosen: (b).** (a) pays **per caster test, per light, per texel** — the hot loop, and the reason
+the walk exists at all. (b) pays **once per texel**, using the receiver record the shader *already*
+fetches. Same result, one conversion instead of thousands.
+
+### The conversion is smaller than it looks
+
+`P = (vec2(tileX, tileY) + inTile) * UPT` — a **square** grid, `UNITS_PER_TILE = 16` on both axes.
+There is no y-foreshortening in this renderer; tiles are drawn square. So game and screen differ by
+**elevation and nothing else** — no `cos`, no `tan`, no per-axis scale.
+
+And a billboard card is a **vertical plane at one ground y**: every texel on it shares the card's
+game y. So for a card receiver at elevation `E` with screen base `baseY`:
+
+```
+Pgame   = vec2(P.x, receiver.unit.y)      // the card's own ground row
+targetH = E + (baseY - P.y)               // height above the GROUND, not above the card's base
+```
+
+and for the ground receiver, elevation is 0, so `Pgame == P` and nothing changes.
+
+### This is also the `targetH` bug
+
+Today's `targetH = max(0.0, baseY - P.y)` is that expression **with `E` dropped** — correct only while
+every receiver stands on the floor. It is the head case, already wrong, on the receiving side.
+
+### It retires my "isotropy gap"
+
+I flagged `targetH` as mixing a screen-space y-difference with authored-unit heights, needing an
+`nsInv = 1/cos(angle)` correction. **There is no such gap** — the grid is square, so a screen y
+difference already *is* a unit difference. The defect is the missing `E`, not a missing metric.

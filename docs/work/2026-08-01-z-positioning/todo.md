@@ -21,7 +21,7 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 ## P0a — Pin the two unknowns before writing any transform
 
 - [ ] Reintroduce the world tilt as a live parameter at **65°** ([I7](issues.md#i7)) — it does not exist; the strip deleted it with `shadowGather.ts`. Acceptance: one source, read by BOTH the record writer and the shadow transform, with the reference axis named.
-- [ ] Settle the `world.z` coefficient ([I8](issues.md#i8)). Acceptance: the two terms are confirmed equal on purpose or corrected to a sin/cos pair — at 55° that is 0.819 vs 0.574, a 43% swing in the height term.
+- [ ] Settle what `screen.z` FEEDS ([I8](issues.md#i8)). Acceptance: named consumer. The grid is square and elevation shifts screen-north 1:1, so the solve needs only ground x/y + height — `tan(angle)·elevation` has no reader yet.
 
 ## P0 — Make height observable at all
 
@@ -54,8 +54,8 @@ _There is no draw-side constant: the screen-north shift IS the elevation, 1:1. T
 ## P2b — Separate the coordinate systems ([F7](forks.md#f7))
 
 - [ ] Make `RecordSync` write GAME coordinates — the prim's ground tile plus elevation — instead of the drawn position. Acceptance: a head and its body write the SAME `unit.x/y`, differing only in `unit.z`.
-- [ ] Convert to screen where the lighting shaders meet screen-space texels. Acceptance: the receiver coverage test and `occludesAt` are the only conversion sites; the bake still reads no record.
-- [ ] Pin `fine.z`'s space and state it in `VARIABLES.md`. Acceptance: it is unambiguous whether it refines elevation or `screen.z` — the two differ by a `tan` factor.
+- [ ] Convert `P` screen→game ONCE per texel and run the solve in game space ([F8](forks.md#f8)). Acceptance: no caster read converts; the only conversion is at `P`, off the receiver record already fetched.
+- [ ] Fix `targetH` to include the receiver's OWN elevation ([F8](forks.md#f8)). Acceptance: `E + (baseY - P.y)`, height above the ground; an elevated receiver is shadow-tested at its true height, and a floor receiver is bit-identical.
 - [ ] Prove presence keys on game coordinates. Acceptance: head and body appear in the SAME presence tile, read back from the mirror.
 
 ## P3 — The head rides elevation
