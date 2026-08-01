@@ -1,5 +1,16 @@
 # Forks — lighting correctness
 
+## F4 — P0 exposed a missing phase: live integration comes before the named fixes
+
+P0's pin ([I1](issues.md#i1)) showed the rework's lit path is a hand-driven debug
+harness: off by default, records built once (racing frame streaming), movers recordless,
+content lights unread. Verifying bbox/silhouettes/z against hand-minted snapshots would
+verify the harness, not lighting — so the plan gains **P1b (wire to the live scene)**
+between the reach split and the bbox work. Ordering kept: P1's reach-lane split first
+(it changes the writer signatures P1b then feeds), P1b second (everything downstream
+verifies against a LIVE lit world), then the named fixes. Recorded as a fork rather than
+a deviation: the plan is amended before the work, not departed from silently.
+
 ## F1 (plan-time) — the reach/intensity bit split: `u4 + u6`, not `u5 + u5`
 
 **Chosen:** `prim_data.B` bits 0–9 become `u4 reach (bias +1 → 1..16 tiles) | u6 intensity`
