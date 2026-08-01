@@ -14,6 +14,7 @@
 //! only when an emitter's (index, tile, reach) signature changes.
 
 import type { Primitive } from "./SquareCache";
+import type { Texture } from "../../gl";
 import type { TextureResolver } from "../../textures";
 import { Records, INDEX_NONE, INTENSITY_MAX, REACH_MAX_TILES } from "./records";
 import { SQUARE, UNITS_PER_TILE } from "./squareMath";
@@ -36,6 +37,9 @@ export class RecordSync {
   private lightSig = "";
   /** Resolver frames moved (a lod landed / a page repacked) → re-write every definition. */
   private defsStale = true;
+  /** Atlas PAGE registry, first-seen order — a def's page index rides its anchor.x lane
+   *  (P3: silhouettes sample the page they live on; two pages bind, more fall back). */
+  private readonly pages: Texture[] = [];
 
   constructor(private readonly rec: Records) {}
 
@@ -43,44 +47,91 @@ export class RecordSync {
     this.defsStale = true;
   }
 
-  /** Ensure `stem`'s definition block exists and matches the CURRENT resolver frame. Span comes
-   *  from the manifest (DSL-authored tiles — I2: NEVER from atlas px); the frame origin converts
-   *  at the frame's own px-per-unit so a coarser lod still lands in units. Returns 0 (the
-   *  sentinel) while the stem has no streamed frame — the prim simply isn't a caster yet. */
-  private defFor(resolver: TextureResolver, stem: string, cell: number, boxSpanHint: number): number {
-    const key = `${stem}#${cell}`;
-    let block = this.defByKey.get(key);
-    if (block !== undefined && !this.defsStale) return block;
+  /** One rotation px's fields from a resolved stem: span from the MANIFEST (I2 — never atlas
+   *  px), subframe from the sprite's own alpha (post pre-atlas scale), and the frame's atlas
+   *  scale carried in the def's otherwise-meaningless SEED lane as `pxPerUnit × 8` — the
+   *  silhouette sampler needs it, and hardcoding 8 was only ever true at the 128-px lod (P3). */
+  private defFields(resolver: TextureResolver, stem: string, cell: number, boxSpanHint: number):
+      { frameX: number; frameY: number; frameSpan: number; anchorX: number; anchorY: number;
+        subX: number; subY: number; subW: number; subH: number; seed: number;
+        castType: number; receiveType: number } | null {
     const frame = resolver.resolve(stem, "albedo", cell)?.frame;
-    if (!frame) return block ?? 0;
-    if (block === undefined) {
-      block = this.rec.allocDefinition(4);
-      this.defByKey.set(key, block);
-    }
+    if (!frame) return null;
+    let page = this.pages.indexOf(frame.source);
+    if (page < 0) { this.pages.push(frame.source); page = this.pages.length - 1; }
     const spanTiles = Math.max(1, Math.min(16, Math.round(resolver.spanOf(stem) ?? boxSpanHint)));
-    // Atlas px per UNIT at this frame's streamed size: the frame covers span×16 units.
     const pxPerUnit = frame.w / (spanTiles * UNITS_PER_TILE);
-    const bb = resolver.opaqueBBox(stem);       // sprite alpha at decode, POST pre-atlas scale
+    const bb = resolver.opaqueBBox(stem);
     const fu = spanTiles * UNITS_PER_TILE;
     const subX = bb ? Math.round(bb.fx * fu) : 0;
     const subY = bb ? Math.round(bb.fy * fu) : 0;
     const subW = Math.min(fu - subX, Math.max(1, bb ? Math.round(bb.fw * fu) : fu));
     const subH = Math.min(fu - subY, Math.max(1, bb ? Math.round(bb.fh * fu) : fu));
-    const fields = {
+    return {
       frameX: Math.round(frame.x / pxPerUnit),
       frameY: Math.round(frame.y / pxPerUnit),
       frameSpan: spanTiles,
-      anchorX: 1, anchorY: 2, // bottom-centre, as casters anchor
+      anchorX: Math.min(3, page), anchorY: 2, // anchor.x = the ATLAS PAGE (P3); y unused
       subX, subY, subW, subH,
+      seed: Math.max(1, Math.min(255, Math.round(pxPerUnit * 8))),
       castType: 1, receiveType: 2,
     };
-    // Rotations 0-2 share the stem's own frame (each facing IS its own stem today — the
-    // facing-mapped rotation block lands with cast_type 2 in P3). Rotation 3 is the WEST
-    // draw: the east master MIRRORED, so its subframe reflects about the frame's x-centre
-    // (P2 — an asymmetric sprite's caster card otherwise sits offset on west-facing draws).
-    for (let r = 0; r < 3; r++) this.rec.writeDefinition(block, r, fields);
-    this.rec.writeDefinition(block, 3, { ...fields, subX: fu - (subX + subW) });
+  }
+
+  /** A COLD thing's degenerate block: one facing, rotations 0-2 identical, px 3 mirrored
+   *  (P2 — the west draw). Returns 0 while the stem has no streamed frame. */
+  private defFor(resolver: TextureResolver, stem: string, cell: number, boxSpanHint: number): number {
+    const key = `${stem}#${cell}`;
+    let block = this.defByKey.get(key);
+    if (block !== undefined && !this.defsStale) return block;
+    const fields = this.defFields(resolver, stem, cell, boxSpanHint);
+    if (!fields) return block ?? 0;
+    if (block === undefined) {
+      block = this.rec.allocDefinition(4);
+      this.defByKey.set(key, block);
+    }
+    // P3 superseded P2's data-side mirror: rotation 3 keeps the PLAIN east fields — the
+    // occlusion shader mirrors placement AND sample about the frame centre (the atlas art
+    // itself is never flipped, so a mirrored subX pointed the sampler OFF the art).
+    for (let r = 0; r < 4; r++) this.rec.writeDefinition(block, r, fields);
     return block;
+  }
+
+  /** A MOVER's kind-level block (P3 — `base + rotation` made REAL): rotations are FACINGS,
+   *  r0 = the south frame, r1 = east, r2 = north, r3 = east MIRRORED (west). This is what lets
+   *  `cast_type 2` fetch the SIDE frame (r1) for the perpendicular n/s caster card while the
+   *  receiver path reads the prim's own facing — one block, no special case. Falls back to the
+   *  degenerate per-stem block until all three facings have streamed. */
+  private moverDefFor(resolver: TextureResolver, stem: string, cell: number, boxSpanHint: number): { block: number; kind: boolean } {
+    // Split `<base>/<facing>[.<part>]` — the same grammar moverSlotTexture writes.
+    const cut = stem.lastIndexOf("/");
+    const seg = stem.slice(cut + 1);
+    const dot = seg.indexOf(".");
+    const facing = dot >= 0 ? seg.slice(0, dot) : seg;
+    const part = dot >= 0 ? seg.slice(dot) : "";
+    if (facing !== "s" && facing !== "e" && facing !== "n") {
+      return { block: this.defFor(resolver, stem, cell, boxSpanHint), kind: false };
+    }
+    const base = stem.slice(0, cut);
+    const key = `${base}${part}#kind#${cell}`;
+    let block = this.defByKey.get(key);
+    if (block !== undefined && !this.defsStale) return { block, kind: true };
+    const s = this.defFields(resolver, `${base}/s${part}`, cell, boxSpanHint);
+    const e = this.defFields(resolver, `${base}/e${part}`, cell, boxSpanHint);
+    const n = this.defFields(resolver, `${base}/n${part}`, cell, boxSpanHint);
+    if (!s || !e || !n) {
+      // Not all facings streamed — the degenerate single-facing block keeps the mover lit.
+      return { block: this.defFor(resolver, stem, cell, boxSpanHint), kind: false };
+    }
+    if (block === undefined) {
+      block = this.rec.allocDefinition(4);
+      this.defByKey.set(key, block);
+    }
+    this.rec.writeDefinition(block, 0, s);
+    this.rec.writeDefinition(block, 1, e);
+    this.rec.writeDefinition(block, 2, n);
+    this.rec.writeDefinition(block, 3, e);   // west = the east frame; the shader mirrors (P3)
+    return { block, kind: true };
   }
 
   /** One reconcile of the live scene. Call per frame while lit; cheap when nothing changed. */
@@ -103,17 +154,35 @@ export class RecordSync {
           this.primByCache.set(key, idx);
         }
         const boxSpanHint = Math.max(1, Math.round(p.width / SQUARE));
-        const def = p.textureName && resolver ? this.defFor(resolver, p.textureName, p.cell ?? 0, boxSpanHint) : 0;
+        // A MOVER (carries its true cardinal) gets the kind-level rotation block; a cold thing
+        // the degenerate per-stem one. P3: n/s facings cast from the PERPENDICULAR card
+        // (cast_type 2) whose silhouette is the block's r1 (side) frame.
+        const isMover = p.rotation !== undefined;
+        let def = 0, rotation = 0, castType = 0;
+        if (p.textureName && resolver) {
+          if (isMover) {
+            const r = this.moverDefFor(resolver, p.textureName, p.cell ?? 0, boxSpanHint);
+            def = r.block;
+            rotation = r.kind ? (p.rotation ?? 0) & 3 : (p.flipX ? 3 : 0);
+            castType = def === INDEX_NONE ? 0 : r.kind && (rotation === 0 || rotation === 2) ? 2 : 1;
+          } else {
+            def = this.defFor(resolver, p.textureName, p.cell ?? 0, boxSpanHint);
+            rotation = p.flipX ? 3 : 0;
+            castType = def === INDEX_NONE ? 0 : 1;
+          }
+        }
         const ax = p.x + p.width / 2;
         const ay = p.y + p.height;
         rec.writePrim(idx, {
           unitX: Math.round(ax / U) & 0xffff,
           unitY: Math.round(ay / U) & 0xffff,
+          // P3: the LIGHT HEIGHT rides unit.z (the DSL authors tiles; records want units).
+          // Omitting it left every emitter at Lz = 0, which degenerates the occlusion solve —
+          // the giant streak shadows P1b noted.
+          unitZ: L ? Math.min(255, Math.round((L.height / SQUARE) * UNITS_PER_TILE)) : 0,
           definition: def,
-          // P2: a FLIPPED (west) draw reads rotation px 3 — the mirrored subframe. Facing-
-          // mapped rotations (n/s cards) land in P3; unflipped draws stay on px 0.
-          rotation: p.flipX ? 3 : 0,
-          castType: def !== INDEX_NONE ? 1 : 0,   // no streamed frame → no silhouette → no cast yet
+          rotation,
+          castType,
           receiveType: p.textureName ? 2 : 0,
           emitType: L ? 1 : 0,
           intensity: L ? intensityLane(L.intensity) : 0,
@@ -170,6 +239,12 @@ export class RecordSync {
 
     this.defsStale = false;
     rec.upload(gl);
+  }
+
+  /** The atlas pages defs live on, first-seen order — bind [0] and [1]; defs past them fall
+   *  back conservatively in the shaders. */
+  get atlasPages(): Texture[] {
+    return this.pages;
   }
 
   get stats(): Record<string, number> {

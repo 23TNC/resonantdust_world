@@ -77,6 +77,97 @@ uint  intensityFromB(uint B) { return B & 0x3Fu; }
 float reachUnitsFromB(uint B) { return float(((B >> 6u) & 0xFu) + 1u) * ${UNITS_PER_TILE}.0; }
 `;
 
+/** The shared occlusion test (lighting-correctness P3) — ONE definition, injected into the
+ *  gather AND the refine (they drifted as duplicates before; a drift here is a shadow that
+ *  exists at 16/tile and vanishes at 64/tile, or vice versa). Requires `fetchPrim`,
+ *  `fetchDef` and `uSurfaceAtlas` in the including shader.
+ *
+ *  The caster model: a vertical CARD. `cast_type 1` — the card lies along x (the drawn
+ *  frame), placed FRAME-ANCHORED (`subX` off the frame's left edge, the frame centred on the
+ *  prim), so an off-centre sprite's card sits where its art sits; rotation 3 (west) MIRRORS
+ *  the placement and the sample, so the data stays the plain east frame. `cast_type 2` — an
+ *  n/s-facing mover: the card is PERPENDICULAR (along y, `[C.y − W, C.y]`), silhouetted by
+ *  the block's r1 (side/east) frame; a south facing flips the sample so the head end tracks
+ *  the facing (the old D3 contract, now one `base + rotation` fetch). Heights are measured
+ *  from the frame's BOTTOM (the anchor): art occupies `[fu − subY − subH, fu − subY]` — a
+ *  sprite whose art floats above the frame bottom occludes only at its true elevation.
+ *  `targetH` is the LIT POINT's height (0 = ground; a billboard texel's height up its card),
+ *  so shadows land on billboards through the same solve. The def's SEED lane carries the
+ *  frame's atlas scale (`pxPerUnit × 8`) — the old hardcoded ×8 was only true at the 128-px
+ *  lod. */
+export const OCCLUSION_GLSL = /* glsl */ `
+// The def's ATLAS PAGE rides the (otherwise unread) anchor.x lane: frames spread across
+// LodPool pages, and sampling a page-1 frame on page 0 reads another stem's silhouette
+// (P3 — the residual slab). Two pages bind; a def past them takes offPage — the caller's
+// conservative answer (casters: the solid box; receivers: not covered).
+bool silhouetteHit(uvec4 d, float fracX, float fracY, bool offPage) {
+  int fx = int(d.x >> 20), fy = int((d.x >> 8) & 0xfffu);
+  int span = int((d.x >> 4) & 0xfu) + 1;
+  int subX = int(d.y >> 24), subY = int((d.y >> 16) & 0xffu);
+  int subW = int((d.y >> 8) & 0xffu) + 1, subH = int(d.y & 0xffu) + 1;
+  float ppu = float((d.z >> 14) & 0xffu) / 8.0;   // the def SEED lane: atlas px per unit x 8
+  if (ppu <= 0.0) { ppu = 8.0; }
+  int frameUnits = span * 16;
+  int px = int((float(fx + subX) + fracX * float(subW)) * ppu);
+  int py = int((float(fy + frameUnits + subY) + fracY * float(subH)) * ppu);
+  uint page = (d.x >> 2) & 3u;
+  if (page == 0u) return texelFetch(uSurfaceAtlas, ivec2(px, py), 0).b > 0.35;
+  if (page == 1u) return texelFetch(uSurfaceAtlas2, ivec2(px, py), 0).b > 0.35;
+  return offPage;
+}
+bool occludesAt(uint c, vec2 L, float Lz, vec2 P, float targetH) {
+  if (c == 0u) return false;
+  uvec4 rec = fetchPrim(c);
+  uint ct = (rec.z >> 30) & 3u;
+  if (ct == 0u) return false;
+  vec2 C = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
+  uint block = rec.y & 0xffffu;
+  uint prot  = (rec.z >> 10) & 0xfu;
+  if (ct == 2u) {
+    uvec4 d = fetchDef(block, 1u);                 // the SIDE frame silhouettes the ns card
+    int subYi = int((d.y >> 16) & 0xffu);
+    int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
+    int spanI = int((d.x >> 4) & 0xfu) + 1;
+    float fu = float(spanI * 16);
+    float W = float(subWi);
+    float hTop = fu - float(subYi), hBot = hTop - float(subHi);
+    float dx = P.x - L.x;
+    if (abs(dx) < 1e-4) return false;
+    float t = (C.x - L.x) / dx;
+    if (t <= 0.0 || t >= 1.0) return false;
+    float y = L.y + t * (P.y - L.y);
+    if (y > C.y || y < C.y - W) return false;
+    float h = mix(Lz, targetH, t);
+    if (h > hTop || h < hBot) return false;
+    float frac = (C.y - y) / W;
+    if (prot == 0u) { frac = 1.0 - frac; }         // south-facing: the head end flips
+    return silhouetteHit(d, frac, (hTop - h) / float(subHi), true);
+  }
+  uvec4 d = fetchDef(block, prot);
+  int subXi = int(d.y >> 24), subYi = int((d.y >> 16) & 0xffu);
+  int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
+  int spanI = int((d.x >> 4) & 0xfu) + 1;
+  float fu = float(spanI * 16);
+  float hTop = fu - float(subYi), hBot = hTop - float(subHi);
+  float dy = P.y - L.y;
+  if (abs(dy) < 1e-4) return false;
+  float t = (C.y - L.y) / dy;
+  if (t <= 0.0 || t >= 1.0) return false;
+  float x = L.x + t * (P.x - L.x);
+  // FRAME-ANCHORED placement; rotation 3 mirrors placement AND sample about the frame centre.
+  float left = prot == 3u
+    ? C.x + fu * 0.5 - float(subXi + subWi)
+    : C.x - fu * 0.5 + float(subXi);
+  if (x < left || x > left + float(subWi)) return false;
+  float h = mix(Lz, targetH, t);
+  if (h > hTop || h < hBot) return false;
+  float frac = (x - left) / float(subWi);
+  if (prot == 3u) { frac = 1.0 - frac; }
+  return silhouetteHit(d, frac, (hTop - h) / float(subHi), true);
+}
+bool occludes(uint c, vec2 L, float Lz, vec2 P) { return occludesAt(c, L, Lz, P, 0.0); }
+`;
+
 /** Per-light contributions are stored DIVIDED BY 4 ([F2](forks.md#f2)).
  *
  *  `RGB10_A2` is normalised 0..1, but the blit this replaces clamped at `vec3(4.0)` — **4x overbright

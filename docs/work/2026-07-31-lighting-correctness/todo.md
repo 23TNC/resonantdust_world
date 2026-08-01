@@ -63,16 +63,16 @@ Stances + fixtures: [`README`](README.md)._
 
 ## P3 — silhouettes
 
-- [ ] Prove the refine's crossing→caster-frame mapping against a brute-force per-pixel
+- [x] Prove the refine's crossing→caster-frame mapping against a brute-force per-pixel
       reference on one caster (the conifer by the torch). Acceptance: 0 differing pixels
       refine-vs-reference at the lighting resolution.
-- [ ] Implement `cast_type 2` — the n/s perpendicular caster card via `base + rotation`
+- [x] Implement `cast_type 2` — the n/s perpendicular caster card via `base + rotation`
       def addressing (no special case). Acceptance: an n/s-facing wolf and human cast the
       SIDE silhouette with the head end tracking the facing (shadow-polish D3), on screen.
-- [ ] Implement shadows ONTO billboards: receivers past ground, resolved from the stored
+- [x] Implement shadows ONTO billboards: receivers past ground, resolved from the stored
       `(caster, receiver)` pairs + the presence walk. Acceptance: the climbing shadow —
       a tree's shadow lands on a wall/billboard behind it, reproduced at the fixture.
-- [ ] A/B the silhouette edge against the strip's before-images at both zooms.
+- [x] A/B the silhouette edge against the strip's before-images at both zooms.
       Acceptance: captures beside `before/04-shadow-edge-zoom2.jpg` in `completed.md`;
       edges silhouette-exact, no wedges.
 

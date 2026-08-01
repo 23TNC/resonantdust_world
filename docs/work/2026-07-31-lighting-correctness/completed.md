@@ -1,5 +1,52 @@
 # Completed — lighting correctness
 
+## 2026-07-31 · P3 — silhouettes: one solve, every axis
+
+**The shared occlusion** (`records.OCCLUSION_GLSL`): the gather and the refine ran
+DUPLICATED occludes/silhouette code — now one injected block. In building it, four real
+mapping defects were pinned and fixed: (a) the silhouette sampler hardcoded ×8 atlas px
+per unit — only true at the 128-px lod; the def's (unread) SEED lane now carries the
+frame's true scale; (b) cards were centred on the prim regardless of the art — now
+FRAME-ANCHORED (`subX` off the frame's left edge), with rotation 3 mirroring placement
+AND sample (superseding P2's data-side mirror, which pointed the sampler off the art —
+the atlas is never flipped); (c) heights ignored `subY` — art occupies
+`[fu−subY−subH, fu−subY]`, so floating art occludes at its true elevation; (d) frames
+spread across LodPool PAGES while one page bound — a def's page now rides its anchor.x
+lane, two pages bind, conservative fallback past them. Plus: emitters had **no height**
+(`unitZ` was never written — every light at Lz 0 degenerated the solve into the giant
+streak shadows); the DSL `light.height` now lands in unit.z.
+
+**`cast_type 2` — the n/s perpendicular card**: implemented through `base + rotation`
+exactly as designed — movers get KIND-level def blocks (r0 = south frame, r1 = east,
+r2 = north, r3 = east-mirrored; `moverDefFor`, falling back per-stem until all facings
+stream), the card lies along y `[C.y − W, C.y]`, silhouetted by r1, with the south facing
+flipping the sample so the head end tracks the facing (the old D3 contract in one fetch).
+The corridor walk gained the y-dilation ns cards need. Verified in records (the
+north-facing wolf: `rot 2, cast 2`; the west-walking human: `rot 3, cast 1` mirrored) and
+ON SCREEN: the s-facing human casts a FIGURE-shaped shadow east of a staged white drill
+light; conifers cast lobed tree-shaped shadows (captures in the session record).
+
+**Shadows onto billboards**: the receiver map — computed and NEVER consumed by the
+rework — is now bound and used: a billboard-owned texel is lit at its CARD's plan
+position with its height up the card, and occlusion-tested to that ELEVATED point
+(`occludesAt(…, targetH)`); receiver COVERAGE went from the box test (which lit ground
+pixels inside any billboard's rectangle — the slab artifact, root-caused and fixed) to
+the silhouette itself. Billboard sprites now light correctly per-texel.
+
+**Identity**: `__gather()` — corridor-vs-brute **0/0 differing over 131 072 slots** with
+the full solve (silhouettes, heights, pages, ns branch); the type-lane check (clearing
+every cast_type kills every shadow, 456 casters restored) passed. A/B against the
+rework's wedges: edges are silhouette-exact at both zooms on the live fixture.
+
+**Also fixed in passing**: a RESTING mover whose first applyVisual raced the content
+bundle kept a single textureless part forever (the human cold-booted as a gray lump with
+no records) — `MoverLayer` now heals when the kind's slot count disagrees with the built
+parts. **Honest limits**: the isolated climbing-shadow capture (tree shading tree) was
+not cleanly staged at night brightness — the machinery is in and receiver-lit sprites
+verify it structurally; it becomes trivially visible once P5 restores ambient. The
+`__gather` histogram sampled a region whose tier counts read zero — the identity number
+stands on the visible-shadow scene, noted.
+
 ## 2026-07-31 · P2 — the bbox is measured, mirrored, and asserted
 
 **Fixes per I2's causes**: span already flowed from the MANIFEST after P1b (`spanOf` —

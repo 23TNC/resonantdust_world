@@ -534,18 +534,21 @@ export class Viewport {
       // content lights from Primitive.light) — the seam I1 pinned as missing.
       this.recordSync.sync(this.renderer.gl, this.resolver, this.map.standingPrims(), this.warm.standingPrims());
       const w = this.map.window, r = this.records;
-      const atlas = this.surfaceAtlas();
+      // P3: silhouettes sample the page their def lives on — bind the registry's first two.
+      const pages = this.recordSync.atlasPages;
+      const atlas = pages[0] ?? null;
+      const atlas2 = pages[1];
       // No atlas means the silhouette cannot be sampled. Skip the refine rather than run it against
       // a texture that answers 0 everywhere, which reads on screen as "the shadows are broken".
       const canRefine = atlas !== null;
       this.shadows.gather(this.renderer, { prim: r.primTex, def: r.defTex, light: r.lightTex,
-                                           presence: r.presenceTex, atlas: atlas ?? this.white },
+                                           presence: r.presenceTex, atlas: atlas ?? this.white, atlas2 },
                           w.winCol, w.winRow);
       // P5: the receiver map FIRST, once -- it is geometry, so it is the same for every light and
       // the eight light fragments read it instead of each re-deciding (I2).
-      this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, w.winCol, w.winRow);
+      this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, atlas ?? this.white, w.winCol, w.winRow, atlas2);
       this.lights.run(this.renderer, r.primTex, r.lightTex, w.winCol, w.winRow,
-                      { def: r.defTex, shadow: this.shadows.prev, atlas: atlas ?? this.white,
+                      { def: r.defTex, shadow: this.shadows.prev, atlas: atlas ?? this.white, atlas2,
                         unitsX: 512, refine: canRefine });
     }
     // lighting-strip P1: the gather / lighting / receiver / decay passes are NO LONGER ISSUED. The
@@ -1016,11 +1019,12 @@ export class Viewport {
    *  worth testing is that COVERAGE decides and that layer order breaks ties the right way. */
   private receiverCheck(): Record<string, unknown> {
     const gl = this.renderer.gl, r = this.records, w = this.map.window;
+    const atlas = this.surfaceAtlas();
     let draws = 0;
     const de = gl.drawElements, da = gl.drawArrays;
     gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
     gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
-    this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, w.winCol, w.winRow);
+    this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, atlas ?? this.white, w.winCol, w.winRow);
     gl.drawElements = de; gl.drawArrays = da;
 
     // Read the WHOLE map. A corner sample covers only the first 8x4 tiles of the window, which can

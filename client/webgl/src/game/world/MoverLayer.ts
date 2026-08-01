@@ -299,6 +299,14 @@ export class MoverLayer {
         m.rx += Math.sign(gx) * Math.min(step, Math.abs(gx));
         m.ry += Math.sign(gy) * Math.min(step, Math.abs(gy));
       }
+      // BOOT-RACE HEAL (lighting-correctness P3): a mover whose first applyVisual ran before
+      // the content bundle streamed got a single fallback part — and a RESTING mover never
+      // re-applies, so it stayed textureless forever. When the kind's slot count disagrees
+      // with the built parts, re-apply regardless of the eps gate.
+      if (m.parts.length !== this.slotCountFor(m.kind)) {
+        this.applyVisual(m, key, m.kind, m.def, m.rx, m.ry, facing, m.macroPosition);
+        continue;
+      }
       if (
         Math.abs(m.rx - m.arx) >= SPEC_APPLY_EPS || Math.abs(m.ry - m.ary) >= SPEC_APPLY_EPS ||
         facing !== m.facing
@@ -371,6 +379,20 @@ export class MoverLayer {
     this.thingLayout = this.content.thingLayout();
     this.thingPacked = this.content.thingPackedChannels();
     this.thingSpeed = this.content.thingSpeed();
+    this.slotCounts.clear();
+  }
+
+  /** Slot count per kind, cached (cleared on content swap) — the RESTING-mover heal below
+   *  compares against it every tick, and a wasm call per mover per frame would be churn. */
+  private readonly slotCounts = new Map<number, number>();
+
+  private slotCountFor(kind: number): number {
+    let n = this.slotCounts.get(kind);
+    if (n === undefined) {
+      n = (this.content.moverParts(kind) as unknown[]).length;
+      this.slotCounts.set(kind, n);
+    }
+    return n;
   }
 
   /** The kind's tics-per-tile — the speculation rate, from the content bundle so it matches

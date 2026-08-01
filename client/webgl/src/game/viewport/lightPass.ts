@@ -17,7 +17,7 @@
 //! it hung Chrome twice in the previous stream and was never root-caused (strip I1).
 
 import { Program, Geometry, RenderTarget, type Renderer, type Texture } from "../../gl";
-import { LIGHT_SLOTS, LIGHT_SCALE, TILE_SLOTS, LIGHT_LANES_GLSL } from "./records";
+import { LIGHT_SLOTS, LIGHT_SCALE, TILE_SLOTS, LIGHT_LANES_GLSL, OCCLUSION_GLSL } from "./records";
 import { SQUARE, UNITS_PER_TILE, SLOTS_X, SLOTS_Y, TEXTILE_LIGHT } from "./squareMath";
 
 /** Lighting texels per tile — the pinned lighting resolution, independent of the art dial. */
@@ -36,10 +36,12 @@ const SLOT_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 uniform sampler2D uSurfaceAtlas;   // the shared co-packed page — the SILHOUETTE lives here
+uniform sampler2D uSurfaceAtlas2;  // P3: the second page (defs carry their page in anchor.x)
 uniform highp usampler2D uPrim;      // prim_data   — one px per prim
 uniform highp usampler2D uLight;     // light       — 8 u16 prim indices per TILE
 uniform highp usampler2D uDef;       // definition_data — the caster's card
 uniform highp usampler2D uShadow;    // the gather's output: WHICH caster occludes, per unit per light
+uniform highp usampler2D uReceiver;  // P3: which receiver owns each lighting texel (the receiver map)
 uniform int uUnitsX;
 uniform int uRefine;                 // 0 = no shadows, 1 = refine at THIS resolution (F12)
 uniform int uDebugGate;              // 1 = emit the gate's selectivity instead of light
@@ -68,52 +70,11 @@ uint shadowSlot(uvec4 v, int i) {
   uint w = i < 2 ? v.x : (i < 4 ? v.y : (i < 6 ? v.z : v.w));
   return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
 }
-// THE REFINE (F12). The gather stored WHICH caster occludes this unit; re-test that one caster at
-// THIS texel's exact position -- 64/tile instead of the gather's 16/tile, so the edge resolves 4x
-// finer per axis. One occludes() call, no search: that is what storing the identity bought.
-// Sample the caster's SILHOUETTE at the point the ray crosses its card.
-//
-// I12: modelling the caster as a solid rectangle makes every conifer a BLOCK -- the shadow is the
-// right size in the right place and the wrong SHAPE. The design says the refine places "the section
-// of the casting prim's texture that falls into the slot", and the old system sampled sprite alpha
-// as the shadow mask. This is that, at 64/tile.
-//
-// The co-packed frame holds four maps as quadrants of a 2N square; SURFACE is the BOTTOM-LEFT one
-// (verified by sampling, I8), so it starts one frame-height below the albedo origin. Coordinates are
-// texelFetch integers, so the atlas size is never hardcoded (it changes with lod/page).
-bool silhouetteHit(uvec4 d, float fracX, float fracY) {
-  int fx = int(d.x >> 20), fy = int((d.x >> 8) & 0xfffu);      // frame origin, in UNITS
-  int span = int((d.x >> 4) & 0xfu) + 1;                        // tiles, un-biased
-  int subX = int(d.y >> 24), subY = int((d.y >> 16) & 0xffu);
-  int subW = int((d.y >> 8) & 0xffu) + 1, subH = int(d.y & 0xffu) + 1;
-  // units -> atlas px (UNIT = 8 at SQUARE 128); surface quadrant sits one frame down from albedo
-  int frameUnits = span * 16;
-  int px = (fx + subX + int(fracX * float(subW))) * 8;
-  int py = (fy + frameUnits + subY + int(fracY * float(subH))) * 8;
-  // B is the visual coverage lane of the surface map
-  return texelFetch(uSurfaceAtlas, ivec2(px, py), 0).b > 0.35;
-}
-bool refineOccluded(uint c, vec2 L, float Lz, vec2 P) {
-  if (c == 0u) return false;
-  uvec4 rec = fetchPrim(c);
-  if (((rec.z >> 30) & 3u) == 0u) return false;
-  vec2 C = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
-  uvec4 d = fetchDef(rec.y & 0xffffu, (rec.z >> 10) & 0xfu);
-  float halfW = float(((d.y >> 8) & 0xffu) + 1u) * 0.5;
-  float H     = float(((d.y      ) & 0xffu) + 1u);
-  float dy = P.y - L.y;
-  if (abs(dy) < 1e-4) return false;
-  float tt = (C.y - L.y) / dy;
-  if (tt <= 0.0 || tt >= 1.0) return false;
-  float x = L.x + tt * (P.x - L.x);
-  if (abs(x - C.x) > halfW) return false;
-  float h = Lz * (1.0 - tt);
-  if (h > H) return false;
-  // I12: the rectangle only says the ray is INSIDE the card's box. Ask the sprite whether there is
-  // anything actually there -- otherwise a conifer casts its bounding box.
-  return silhouetteHit(d, (x - C.x + halfW) / (2.0 * halfW), 1.0 - h / H);
-}
+${OCCLUSION_GLSL}
 
+// THE REFINE (F12): re-test the STORED caster identity at THIS texel -- 64/tile against the
+// gather's 16/tile -- through the SAME shared occlusion solve the gather runs (P3: one
+// definition, no drift), with the lit point possibly ELEVATED (a billboard receiver).
 void main() {
   ivec2 fc = ivec2(gl_FragCoord.xy);
   // F3: the slot map is LIGHT_SLOTS x wider, so x carries BOTH the texel and which light it is.
@@ -148,7 +109,22 @@ void main() {
   float reach     = reachUnitsFromB(rec.z);
   if (intensity == 0u) { fragColor = vec4(0.0); return; }
 
-  float d = distance(P, Lpos);
+  // P3: the RESOLVED receiver. A billboard texel is lit at its CARD's plan position with its
+  // height up the card, and shadow-tested to that ELEVATED point -- the climbing shadow. The
+  // ground (receiver 0) keeps the texel's own position at height 0.
+  vec2 Puse = P;
+  float targetH = 0.0;
+  uint recvIdx = texelFetch(uReceiver, ivec2(fc.x % uMapW, fc.y), 0).r;
+  if (recvIdx != 0u) {
+    uvec4 rrec = fetchPrim(recvIdx);
+    if (((rrec.z >> 28) & 3u) != 0u) {
+      float baseY = float(rrec.x & 0xffffu);
+      targetH = max(0.0, baseY - P.y);
+      Puse = vec2(P.x, baseY);
+    }
+  }
+
+  float d = distance(Puse, Lpos);
   if (d >= reach) { fragColor = vec4(0.0); return; }
 
   // Falloff within the stored reach: L(d) = I / (1 + (d/d0)^2).
@@ -167,7 +143,7 @@ void main() {
   // and fully-lit texels do no fetch and no test -- the gate is the whole reason this is affordable.
   bool gated = false, occluded = false;
   if (uRefine == 1) {
-    ivec2 u = ivec2(int(P.x), int(P.y));                     // world UNIT of this lighting texel
+    ivec2 u = ivec2(int(Puse.x), int(Puse.y));               // world UNIT of the LIT point
     int ux = u.x - int(uWindowOrigin.x) * int(UPT);
     int uy = u.y - int(uWindowOrigin.y) * int(UPT);
     if (ux >= 0 && uy >= 0 && ux < uUnitsX && uy < uUnitsX) {
@@ -175,8 +151,7 @@ void main() {
       uint caster = shadowSlot(sh, slot);
       if (caster != 0u) {
         gated = true;
-        vec2 Lp = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
-        occluded = refineOccluded(caster, Lp, float(rec.y >> 24), P);
+        occluded = occludesAt(caster, Lpos, float(rec.y >> 24), Puse, targetH);
       }
     }
   }
@@ -306,6 +281,8 @@ void main() {
 const RECEIVER_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
+uniform sampler2D uSurfaceAtlas;   // P3: coverage is the SILHOUETTE, not the box
+uniform sampler2D uSurfaceAtlas2;
 uniform highp usampler2D uPrim;
 uniform highp usampler2D uDef;
 uniform highp usampler2D uPresence;
@@ -325,17 +302,30 @@ uint slotOf(uvec4 v, int i) {
   return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
 }
 
-// Does receiver r's footprint cover world point P? Its card stands at C spanning +-halfW in x and
-// rising H in y from the base -- the same card the caster test uses, read the same way.
+${OCCLUSION_GLSL}
+
+// Does receiver r's SPRITE cover world point P? (P3 — the box alone lit ground pixels inside a
+// billboard's rectangle as if they were the card: the slab artifact.) Frame-anchored placement,
+// west mirrored at sample, then the silhouette decides.
 bool covers(uint r, vec2 P) {
   if (r == 0u) return false;
   uvec4 rec = fetchPrim(r);
   if (((rec.z >> 28) & 3u) == 0u) return false;              // receive_type 0 -- not a receiver
   vec2 C = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
-  uvec4 d = fetchDef(rec.y & 0xffffu, (rec.z >> 10) & 0xfu);
-  float halfW = float(((d.y >> 8) & 0xffu) + 1u) * 0.5;
-  float H     = float(((d.y      ) & 0xffu) + 1u);
-  return abs(P.x - C.x) <= halfW && P.y <= C.y && P.y >= C.y - H;
+  uint prot = (rec.z >> 10) & 0xfu;
+  uvec4 d = fetchDef(rec.y & 0xffffu, prot);
+  int subXi = int(d.y >> 24), subYi = int((d.y >> 16) & 0xffu);
+  int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
+  int spanI = int((d.x >> 4) & 0xfu) + 1;
+  float fu = float(spanI * 16);
+  float hTop = fu - float(subYi), hBot = hTop - float(subHi);
+  float h = C.y - P.y;
+  if (h < hBot || h > hTop) return false;
+  float left = prot == 3u ? C.x + fu * 0.5 - float(subXi + subWi) : C.x - fu * 0.5 + float(subXi);
+  if (P.x < left || P.x > left + float(subWi)) return false;
+  float frac = (P.x - left) / float(subWi);
+  if (prot == 3u) { frac = 1.0 - frac; }
+  return silhouetteHit(d, frac, (hTop - h) / float(subHi), false);
 }
 
 void main() {
@@ -400,11 +390,11 @@ export class LightPass {
   }
 
   /** Compute the receiver map — ONE draw, light-independent, read by all 8 light fragments. */
-  receivers(renderer: Renderer, prim: Texture, def: Texture, presence: Texture,
-            originTileX: number, originTileY: number): void {
+  receivers(renderer: Renderer, prim: Texture, def: Texture, presence: Texture, atlas: Texture,
+            originTileX: number, originTileY: number, atlas2?: Texture): void {
     renderer.draw({
       program: this.recvProg, geometry: this.quad, target: this.receiverRT, blend: "none",
-      textures: { uPrim: prim, uDef: def, uPresence: presence },
+      textures: { uPrim: prim, uDef: def, uPresence: presence, uSurfaceAtlas: atlas, uSurfaceAtlas2: atlas2 ?? atlas },
       uniforms: (p) => {
         p.uInt("uLightW", LIGHT_TEXELS);
         p.uInt("uDilateY", 2);          // tallest authored card, in tiles; content-derived later
@@ -416,13 +406,15 @@ export class LightPass {
   /** Recompute every slot (ONE draw), then re-sum. */
   run(renderer: Renderer, prim: Texture, light: Texture,
       originTileX: number, originTileY: number,
-      opt: { def?: Texture; shadow?: Texture; atlas?: Texture; unitsX?: number; refine?: boolean;
+      opt: { def?: Texture; shadow?: Texture; atlas?: Texture; atlas2?: Texture; unitsX?: number; refine?: boolean;
              debugGate?: boolean } = {}): void {
     renderer.draw({
       program: this.slotProg, geometry: this.quad, target: this.slotRT, blend: "none",
       textures: { uPrim: prim, uLight: light,
                   uDef: opt.def ?? prim, uShadow: opt.shadow ?? prim,
-                  uSurfaceAtlas: opt.atlas ?? prim },
+                  uSurfaceAtlas: opt.atlas ?? prim,
+                  uSurfaceAtlas2: opt.atlas2 ?? opt.atlas ?? prim,
+                  uReceiver: this.receiverRT.textures[0] },
       uniforms: (p) => {
         p.uInt("uLightW", LIGHT_TEXELS);
         p.uInt("uMapW", LIGHT_W);
