@@ -208,7 +208,12 @@ void main() {
   // F5 GATE: only a texel whose UNIT holds a caster for this light does any refine work. Interior
   // and fully-lit texels do no fetch and no test -- the gate is the whole reason this is affordable.
   bool gated = false, occluded = false;
-  if (uRefine == 1) {
+  // P5 (user): a BILLBOARD receiver only takes shadows from a light on its FRONT side (south,
+  // toward the viewer). A light NORTH of the card's plan line throws intermediate shadows onto
+  // the card's BACK face, which is never drawn — painting them on the front put tree-shaped
+  // bands on back-lit sprites. Back-lit fronts already rest at the N·L wrap floor.
+  bool backLit = recvIdx != 0u && Lpos.y < Puse.y;
+  if (uRefine == 1 && !backLit) {
     // P4: the shadow buffer rides the SAME slot torus at uUnitT texels/tile. The lit point can
     // sit south of the fragment's own tile (a billboard's base), so guard the window bounds.
     int utx = int(floor(Puse.x / UPT)), uty = int(floor(Puse.y / UPT));

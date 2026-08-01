@@ -118,3 +118,7 @@ tiles."_
       tree it stood behind): `sceneNormalAt` picks warm only where the warm pixel WINS —
       the blit's zdepth-B rule — not wherever warm coverage exists. Acceptance: no mover
       normal reads through a cold thing drawn in front; live capture.
+- [x] Billboards take NO shadow from a light north of their plan line (user: those
+      shadows land on the card's BACK, never drawn): the refine skips billboard
+      receivers when `Lpos.y < baseY`; back-lit fronts rest at the N·L wrap floor.
+      Acceptance: the human south of the torch shows no tree-shadow bands; capture.

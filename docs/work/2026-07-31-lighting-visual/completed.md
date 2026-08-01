@@ -152,6 +152,14 @@ row is serially south of the mover's wins the texel and its normal). Verified li
 human parked directly behind the torch conifer — the canopy shades clean, no embossed
 figure.
 
+**Billboards take no back-side shadows** (user: a light NORTH of a card throws
+intermediate shadows onto the card's BACK face, which is never drawn — painting them on
+the front put tree-shaped bands on back-lit sprites, the wolf capture). The refine now
+skips billboard receivers when the light sits north of the card's plan line
+(`Lpos.y < baseY`); a back-lit front already rests at the N·L wrap floor. Verified by
+staging the exact case — the human parked in the tree-shadow corridor south of the
+(100,51) torch renders an evenly-lit front while the ground shadows stream past it.
+
 **The boot-race + the silent catch** (found while landing this): fast IndexedDB texture
 packs emit BEFORE the first cache partition, whose `dirty.clear()` discarded the marks —
 the world stayed baked GEO forever (the flat-squares regression). Fixed: the first
