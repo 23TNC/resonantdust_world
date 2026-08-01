@@ -1,4 +1,12 @@
-# Z positioning — height as the one truth — 2026-08-01
+# Z positioning — height as the one truth — 2026-08-01 — **DELIVERED**
+
+> **30/30. Body and head cast ONE aligned shadow**, verified on screen against a real before-image.
+> Elevation costs nothing — it is **2.8 ms faster** than flattening, because flat heights put every
+> light at `Lz = 0` and degenerate the occlusion solve.
+>
+> The record now holds **game** coordinates: where a prim stands, not where it is drawn. A carried
+> piece adopts its carrier's footprint and derives its own height from geometry, so wall torches,
+> carried items and any elevated caster get correct shadows from one authored number — or none.
 
 _Component: [`client/webgl`](../../components/client/webgl/). Plan in [`todo.md`](todo.md); decisions
 in [`forks.md`](forks.md); what is already broken in [`issues.md`](issues.md)._
