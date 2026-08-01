@@ -682,3 +682,19 @@ all running.
 harness on a different scene, and [I10](issues.md#i10) showed this project's `gl.finish()` numbers were
 ~4× low. The defensible statement is the one above: the target is met with room to spare, measured on
 an instrument whose failure mode was found and fixed inside this stream.
+
+## 2026-07-31 · The 16-light test, on screen
+
+[`after/sixteen-lights.jpg`](after/sixteen-lights.jpg) — sixteen point lights across the window, each
+conifer throwing one shadow per light that reaches it, overlapping pools resolving to a single lit
+scene.
+
+**Measured through the ordinary tick path, not an isolated loop: 2.258 ms/frame, 5 draws** (median of
+5 × 120 frames, `readPixels` sync). That independently reproduces the 2.31 ms the isolated
+lighting-update benchmark reported for N=16 — two different measurement routes agreeing to within
+their spread, which is the check worth having on a number this stream exists to produce.
+
+**A trap worth recording**: `__lit(true)` calls `buildRecords()`, which rebuilds the light set to the
+single synthetic torch. Registering 16 lights *before* enabling lit silently loses them — the lights
+must be registered **after**. The first attempt at this capture showed one light and looked like a
+broken pass; nothing was broken, the setup order was.
