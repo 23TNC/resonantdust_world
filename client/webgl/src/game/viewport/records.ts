@@ -98,8 +98,8 @@ float lightFalloff(float d, float reach, float I) {
  *  n/s-facing mover: the card is PERPENDICULAR (along y, `[C.y − W, C.y]`), silhouetted by
  *  the block's r1 (side/east) frame; a south facing flips the sample so the head end tracks
  *  the facing (the old D3 contract, now one `base + rotation` fetch). Heights are measured
- *  from the frame's BOTTOM (the anchor): art occupies `[fu − subY − subH, fu − subY]` — a
- *  sprite whose art floats above the frame bottom occludes only at its true elevation.
+ *  from the ANCHOR (lighting-visual P1): the bbox is BOTTOM-ALIGNED, the caster occupies
+ *  `[0, subH]` from its base — `subY` stays purely the art's atlas address.
  *  `targetH` is the LIT POINT's height (0 = ground; a billboard texel's height up its card),
  *  so shadows land on billboards through the same solve. The def's SEED lane carries the
  *  frame's atlas scale (`pxPerUnit × 8`) — the old hardcoded ×8 was only true at the 128-px
@@ -117,8 +117,13 @@ bool silhouetteHit(uvec4 d, float fracX, float fracY, bool offPage) {
   float ppu = float((d.z >> 14) & 0xffu) / 8.0;   // the def SEED lane: atlas px per unit x 8
   if (ppu <= 0.0) { ppu = 8.0; }
   int frameUnits = span * 16;
-  int px = int((float(fx + subX) + fracX * float(subW)) * ppu);
-  int py = int((float(fy + frameUnits + subY) + fracY * float(subH)) * ppu);
+  // P4: clamp the sampled texel INSIDE the subframe's art rows/cols — frac = 1.0 (the caster's
+  // BASE: fracY is measured top-down) otherwise lands one texel PAST the last art row, reads
+  // transparent, and the shadow detaches from the feet by a texel band.
+  int ox = clamp(int(fracX * float(subW) * ppu), 0, max(0, int(float(subW) * ppu) - 1));
+  int oy = clamp(int(fracY * float(subH) * ppu), 0, max(0, int(float(subH) * ppu) - 1));
+  int px = int(float(fx + subX) * ppu) + ox;
+  int py = int(float(fy + frameUnits + subY) * ppu) + oy;
   uint page = (d.x >> 2) & 3u;
   if (page == 0u) return texelFetch(uSurfaceAtlas, ivec2(px, py), 0).b > 0.35;
   if (page == 1u) return texelFetch(uSurfaceAtlas2, ivec2(px, py), 0).b > 0.35;

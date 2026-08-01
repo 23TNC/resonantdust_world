@@ -418,6 +418,16 @@ levels, not floats**: a deposit and its later withdrawal then cancel bit-exactly
 are exact in FP32), which is what makes removing a light an exact operation rather than an
 approximate one. Slots need no such care — they are overwritten, never accumulated.
 
+**Torus addressing** (lighting-visual P4, user directive): every lighting-chain map — the slot
+map, the summed map, the receiver map and the shadow buffer — rides the SAME slot torus as the
+composites: a tile's texel block sits at `mod(tile, cols/rows) × texelsPerTile`, the texture never
+changes size, and texels-per-tile HALVE per lod (`TEXTILE_LIGHT >> lod` for the lighting maps,
+`TEXTILE_UNIT >> lod` for the shadow buffer). Writers unwrap a fragment's residue to its unique
+window tile (`fillDisplay`'s rule); the blit reads the same residues, and its bilinear taps wrap
+by `pmod`, which lands them on the WORLD-adjacent tile — the torus makes the seam free. Falloff is
+`lightFalloff(d, reach, I)` in `LIGHT_LANES_GLSL` — d₀ = reach/2 with a linear feather to exactly
+0 AT the stored reach, so the registration boundary and the visible pool edge are one line.
+
 ## Removed
 
 `valid_at`, `cold_reference`, `hot_reference`, `reference_id`, `event_word` — see

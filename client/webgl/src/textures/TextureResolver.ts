@@ -435,9 +435,12 @@ function computeSpriteBBox(bmp: ImageBitmap): { fx: number; fy: number; fw: numb
   ctx.drawImage(bmp, 0, 0);
   const d = ctx.getImageData(0, 0, w, h).data;
   let minX = w, minY = h, maxX = -1, maxY = -1;
+  // lighting-visual P4: threshold at the VISUAL edge (~3%), not half-coverage — the blit renders
+  // any nonzero coverage, so a >127 cut left softly-drawn feet BELOW the bbox bottom and every
+  // shadow anchored a few px above where the art visibly ends (the user's remaining gap).
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++)
-      if (d[(y * w + x) * 4 + 2] > 127) { // B = coverage/presence
+      if (d[(y * w + x) * 4 + 2] > 8) { // B = coverage/presence
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;

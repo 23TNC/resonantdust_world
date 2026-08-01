@@ -35,3 +35,21 @@ debug-drill-only (the real draw loop always passes real textures), predates P2, 
 not affect the drill's verdict (`bitIdentical` computed from readPixels diffs, which
 succeed). Fix if it starts mattering: give `LightPass` a 1×1 white placeholder for the
 float samplers instead of `prim`.
+
+## I3 — "tiles have no working normals": terrain is GEO-TIER, by construction {#i3}
+
+Probed live: the ONLY textured ground stem in the window is `biome-tile/default/smooth/wall/l`
+(normal resolves, real per-cell normals confirmed IN `normal-cold` and shading on screen).
+Grass/dirt/sand terrain prims carry NO textureName — they are geoColor solid fills, so their
+baked normal is the flat-up constant (the normal resolve hook's `tint 0x8080ff` path). That is
+the documented state of terrain until [`2026-07-29-texture-generalization`](../2026-07-29-texture-generalization/README.md)
+(open, user-authored) gives tiles linked textures — grass DOES have `normal.l.0.png` mastered
+and manifest-listed, waiting. Not a lighting defect; the sampler consumes whatever the bake
+holds the moment terrain gets real maps.
+
+## I4 — the lod-1 "black wall surface" does not reproduce post-torus {#i4}
+
+The zoom-0.5 `surface-cold` overlay showed wall tiles at (0,0,0) BEFORE the torus rework; after
+it, the same wall tile probes healthy at lod 1 (`surf (255,253,255)`, real normal). Most likely
+the overlay caught unbaked slots (the scratch clears black) during the pre-fix partition churn.
+Watch for it in later sweeps; nothing to fix now.

@@ -80,6 +80,43 @@ exactly as its distance says. No floating shadows, no tile-boundary artifacts, n
 console errors at either zoom. **The visuals now await the user's eyes — the stream's
 declared exit criterion; reopen on their verdict if anything reads wrong.**
 
+## 2026-08-01 · P4 — the user's verdict, executed
+
+**Reach-scaled falloff**: `lightFalloff(d, reach, I)` — d₀ = reach/2, linear feather to
+exactly 0 AT the stored reach — replaced the pinned one-tile d₀ (which put a reach-16
+light at 1/257 of its intensity at its own boundary: the "very dim, doesn't project"
+verdict, quantified). One definition in `LIGHT_LANES_GLSL`, both slot writers consume it;
+`__lightexact` bit-identical after.
+
+**The chain rides the slot torus** (user: "use the same machinery you're using for the
+existing toroidal maps"): slot map, summed map, receiver map and shadow buffer all
+address a tile's texel block at `mod(tile, cols/rows) × texelsPerTile`, texels-per-tile
+= `TEXTILE_LIGHT >> lod` / `TEXTILE_UNIT >> lod`, fixed texture sizes; writers unwrap
+residues (`fillDisplay`'s rule), the gather's tier-2 neighbour taps and the blit's
+bilinear WRAP by `pmod` (a wrapped tap lands on the world-adjacent tile — the torus
+makes the seam free). Pinned first by probe: at lod 1 the cache window is 64×32 tiles
+while the RTs covered 32×16 — two of the three torches addressed OUTSIDE the map
+(px 2336 > 2048), exactly the missing pools. After: all three pools at zoom 0.5, the
+summed-map probe answers in-bounds at every lod, `__lightexact` bit-identical.
+
+**Tile normals** ([I3](issues.md#i3)): probed — authored tile normals DO reach
+`normal-cold` (wall tile (106,51): real normal (236,100,189), healthy surface) and DO
+shade on screen; the flat ground is GEO-TIER terrain (solid colour fills, no textureName)
+until texture-generalization lands. Not a lighting defect.
+
+**The shadow-base gap, closed**: two mechanisms — the bbox threshold (coverage > 127)
+cut softly-drawn feet out of the box while the blit renders ANY nonzero coverage
+(threshold now > 8, the visual edge); and `silhouetteHit` at `frac = 1.0` (the BASE —
+fracY is top-down) sampled one texel PAST the last art row, reading transparent
+(sampled offsets now clamp inside the subframe). Verified at zoom 2: conifer shadows
+spring from the trunks, the wolf walked into the pool on-screen with its shadow attached.
+
+**The zoom sweep** (captures in the session record): cold loads at zoom 2 / 1 / 0.5 /
+0.25 — pools project their full 16 tiles at every lod, silhouette shadows radiate and
+attach, the enclosure lights inside and spills out, dirt/sand/water regions read, no
+window edges, no seams, no console errors. Lod-1 wall surface healthy
+([I4](issues.md#i4) — the pre-fix black reading does not reproduce).
+
 **The successor stream opened**:
 [`2026-07-31-lighting-performance`](../2026-07-31-lighting-performance/README.md) —
 steady-state gating (skip-when-unchanged, per-light scissored deltas, dirty-rect
