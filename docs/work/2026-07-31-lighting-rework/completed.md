@@ -128,3 +128,55 @@ draw from; this proves they are *accurate*, which is what a shader holding a bar
 
 **Verified:** page loads clean, `getError()` 0, frame still **1 draw at 0.032 ms** — the record layer
 costs the render path nothing, because nothing renders from it yet.
+
+## 2026-07-31 · P2 — the per-tile records: `presence` and `light`
+
+Both are one px per tile, 8 × `u16` slots, on a 256×256 toroidal fold (one region — the window is far
+under a region, so two tiles sharing a residue can never be on screen together). 1 MiB each.
+
+Built from the **same walk** that mints the prim records, so the record set and the drawn set cannot
+end up describing different scenes.
+
+### `light` — the reach relation, exact at the boundary
+
+`buildLights` registers each light into every tile inside `reachTilesFromIntensity`, circular rather
+than a square box, with nearest-N eviction. Checked against a full-intensity light at tile (100, 50):
+
+| tile | registered |
+|---|---|
+| centre (100, 50) | **yes** |
+| +16 tiles | **yes** |
+| +17 tiles | **no** |
+
+`reachTilesFromIntensity(1023)` is 16, so the registered set ends exactly where the derived reach says
+it should. That is [F6](forks.md#f6)'s CPU/GPU agreement confirmed on real data rather than on the
+1024-value unit check alone — and it is the direction that matters: a light registering *short* of the
+walk's bound is the silent failure (a shadow that never casts at all).
+
+### `presence` — and the assertion that nearly passed for the wrong reason
+
+First run reported `outOfOrder: 0` — but also **`multiReceiverTilesChecked: 0`**. The live scene puts
+455 prims on 455 distinct tiles, so there was never a tile with two receivers and **the sort assertion
+had nothing to sort**. A green check that tested nothing.
+
+Forced the case instead: 12 receivers onto one tile in **deliberately reversed** layer order, and 10
+lights onto another against an 8-slot cap.
+
+| | |
+|---|---|
+| receivers offered / kept | 12 / **7** (slot 0 is the tile) |
+| kept layers | `[5, 6, 7, 8, 9, 10, 11]` — **ascending** |
+| kept the topmost | **true** (layer 11 survived) |
+| `droppedReceivers` delta | **5** |
+| lights: slots used / `droppedLights` delta | **8** / **298** |
+
+Both caps evict, both count, and the eviction keeps the **topmost** receiver — which is the half that
+matters, because the per-pixel pass walks `presence[7..1]` and takes the first hit. Dropping the top
+of the stack would silently hide whatever the player is actually looking at.
+
+`droppedLights: 298` is large because a 10-light over-subscription at one tile spills across every
+tile in all ten reach circles, not just the target — worth knowing the counter is per *slot eviction*,
+not per light.
+
+**Verified:** page loads clean, `getError()` 0, frame unchanged at 1 draw / 0.030 ms. The record layer
+still costs the render path nothing, because nothing renders from it yet.

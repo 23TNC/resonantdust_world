@@ -638,6 +638,7 @@ export class Viewport {
     const U = SQUARE / 16;
     const byStem = new Map<string, number>();
     let minted = 0, wrote = 0, mismatched = 0;
+    const placed = new Map<number, Primitive>();
     const samples: Record<string, unknown>[] = [];
 
     for (const p of this.map.standingPrims()) {
@@ -674,6 +675,7 @@ export class Viewport {
         definition: block, rotation: 0, castType: 1, receiveType: 2,
         seed: Math.floor((p.seed ?? 0) * 255) & 0xff,
       });
+      placed.set(id, p);
       wrote++;
 
       // CROSS-CHECK: decode the record and confirm it points back at the resolver's own frame.
@@ -683,9 +685,74 @@ export class Viewport {
       else if (samples.length < 3) samples.push({ stem, frameUnits: [d.frameX, d.frameY], span: d.frameSpan });
     }
 
+    // ── P2: the per-tile records ────────────────────────────────────────────────────────────────
+    // presence — receivers ON each tile, layer-sorted. Built from the same walk, so the record set
+    // and the drawn set cannot describe different scenes.
+    const byTile = new Map<number, { index: number; layer: number }[]>();
+    for (const [id, p] of placed) {
+      const tx = Math.floor((p.x + p.width / 2) / SQUARE), ty = Math.floor((p.y + p.height) / SQUARE);
+      const key = ((tx & 0xffff) << 16) | (ty & 0xffff);
+      let list = byTile.get(key);
+      if (!list) byTile.set(key, (list = []));
+      list.push({ index: id, layer: p.zIndex ?? 0 });
+    }
+    for (const [key, list] of byTile) {
+      const tx = (key >> 16) & 0xffff, ty = key & 0xffff;
+      rec.writePresence(tx, ty, INDEX_NONE, list);
+    }
+
+    // light — the reach relation, from reachFromIntensity (F6). No lights are authored in the
+    // stripped scene, so a synthetic one at the focus tile exercises the real path.
+    rec.buildLights([{ index: 1, tileX: 100, tileY: 50, intensity: 1023 }]);
+
     rec.upload(this.renderer.gl);
-    return { definitionsMinted: minted, primsWritten: wrote, frameMismatches: mismatched,
-             samples, stats: rec.stats, glError: this.renderer.gl.getError() };
+
+    // Layer order is what the per-pixel pass depends on, so assert it rather than trust the sort.
+    let unsorted = 0, checked = 0;
+    for (const [key, list] of byTile) {
+      if (list.length < 2) continue;
+      const tx = (key >> 16) & 0xffff, ty = key & 0xffff;
+      const slots = rec.slotsAt("presence", tx, ty).slice(1).filter((s) => s !== INDEX_NONE);
+      const layers = slots.map((s) => rec.debugPrim(s).layer);
+      for (let i = 1; i < layers.length; i++) if (layers[i] < layers[i - 1]) unsorted++;
+      checked++;
+    }
+
+    // The live scene puts one receiver per tile, so the sort and the caps were never exercised above.
+    // Force both: 12 receivers on one tile in DELIBERATELY reversed layer order.
+    const before = { recv: rec.droppedReceivers, lights: rec.droppedLights };
+    const stack = Array.from({ length: 12 }, (_, i) => {
+      const id = rec.allocPrim();
+      rec.writePrim(id, { unitX: 9000, unitY: 9000, definition: 1, layer: 11 - i });
+      return { index: id, layer: 11 - i };
+    });
+    rec.writePresence(200, 200, INDEX_NONE, stack);
+    const kept = rec.slotsAt("presence", 200, 200).slice(1).filter((s) => s !== INDEX_NONE);
+    const keptLayers = kept.map((s) => rec.debugPrim(s).layer);
+    const overSubscribed = {
+      offered: stack.length, keptSlots: kept.length,
+      layers: keptLayers,
+      ascending: keptLayers.every((v, i, a) => i === 0 || v >= a[i - 1]),
+      keptTheTopmost: keptLayers[keptLayers.length - 1] === 11,
+      droppedReceiversDelta: rec.droppedReceivers - before.recv,
+    };
+    // and over-subscribe the light cap: 10 lights on one tile, 8 slots
+    rec.buildLights(Array.from({ length: 10 }, (_, i) => (
+      { index: rec.allocPrim(), tileX: 210, tileY: 210, intensity: 200 })));
+    const overLights = { droppedLightsDelta: rec.droppedLights - before.lights,
+                         slotsUsed: rec.slotsAt("light", 210, 210).filter((s) => s !== INDEX_NONE).length };
+    rec.upload(this.renderer.gl);
+
+    const centre = rec.slotsAt("light", 100, 50).filter((s) => s !== INDEX_NONE).length;
+    const edge = rec.slotsAt("light", 100 + 16, 50).filter((s) => s !== INDEX_NONE).length;
+    const beyond = rec.slotsAt("light", 100 + 17, 50).filter((s) => s !== INDEX_NONE).length;
+
+    return { definitionsMinted: minted, primsWritten: wrote, frameMismatches: mismatched, samples,
+             presence: { tiles: byTile.size, multiReceiverTilesChecked: checked, outOfOrder: unsorted },
+             overSubscribed, overLights,
+             lightReach: { atCentre: centre, at16Tiles: edge, at17Tiles: beyond,
+                           reachTilesForFullIntensity: 16 },
+             stats: rec.stats, glError: this.renderer.gl.getError() };
   }
 
   private ensureGeometry(quads: number): void {

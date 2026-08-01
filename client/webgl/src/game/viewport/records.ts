@@ -32,6 +32,7 @@
 
 import { Texture } from "../../gl";
 import { UNITS_PER_TILE } from "./squareMath";
+import { reachTilesFromIntensity } from "./lightReach";
 
 /** Index 0 is the global sentinel in EVERY index space — "no prim", "no definition", "no caster",
  *  "empty slot". One comparison covers them all, and no magic value is carved out of the `u16`
@@ -47,6 +48,11 @@ export const MAX_TEXTURE_SPAN = 16;
 
 const PRIM_W = 1024, PRIM_H = 64;      // 65 536 prims = the whole u16 space, 1 MiB
 const DEF_W = 1024, DEF_H = 16;        // 16 384 px = 1024 definitions x 16 rotations, 256 KiB
+/** Per-TILE maps. One region (256x256 tiles) folded toroidally — the window is far under a region,
+ *  so two tiles sharing a residue can never be on screen together. 1 MiB each. */
+const TILE_DIM = 256;
+/** Slots per tile in `presence` and `light`: 8 x u16 = 128 bits = exactly one px. */
+export const TILE_SLOTS = 8;
 
 /** Dev-mode lane assertion. A value too wide for its lane would otherwise truncate SILENTLY and
  *  surface as a wrong sprite or a phantom shadow — the failure class that costs a day on the GPU
@@ -97,6 +103,90 @@ export class Records {
   readonly primMirror = new Uint32Array(PRIM_W * PRIM_H * 4);
   readonly defMirror = new Uint32Array(DEF_W * DEF_H * 4);
 
+  readonly presenceTex: Texture;
+  readonly lightTex: Texture;
+  readonly presenceMirror = new Uint32Array(TILE_DIM * TILE_DIM * 4);
+  readonly lightMirror = new Uint32Array(TILE_DIM * TILE_DIM * 4);
+  private tileDirty = false;
+
+  /** [F10](forks.md#f10): caps EVICT, and evictions are COUNTED. The old system dropped in silence,
+   *  and the failure mode is nasty — a light simply is not there, in one tile, reading as a shader
+   *  bug rather than a capacity limit. A counter turns a debugging session into a glance. */
+  droppedReceivers = 0;
+  droppedLights = 0;
+
+  /** Toroidal fold: world tile → its px in a per-tile map. */
+  private static foldTile(tx: number, ty: number): number {
+    const x = ((tx % TILE_DIM) + TILE_DIM) % TILE_DIM;
+    const y = ((ty % TILE_DIM) + TILE_DIM) % TILE_DIM;
+    return y * TILE_DIM + x;
+  }
+
+  /** Pack 8 `u16` slots into one px: slot i in lane i>>1, high half when (i&1)==0. */
+  private static packSlots(slots: Uint16Array, mirror: Uint32Array, base: number): boolean {
+    let changed = false;
+    for (let c = 0; c < 4; c++) {
+      const v = (((slots[c * 2] & 0xffff) << 16) | (slots[c * 2 + 1] & 0xffff)) >>> 0;
+      if (mirror[base + c] !== v) { mirror[base + c] = v; changed = true; }
+    }
+    return changed;
+  }
+
+  /** `presence` — the receivers ON a tile, **layer-sorted, topmost LAST**, slot 0 = the tile itself.
+   *
+   *  The sort is not cosmetic: the per-pixel pass walks `presence[7..1]` and takes the first receiver
+   *  covering the pixel, so "topmost last" IS the resolution order. Nothing else enforces it, which
+   *  is why it is asserted here rather than assumed by the shader. */
+  writePresence(tileX: number, tileY: number, tile: number, receivers: { index: number; layer: number }[]): void {
+    const sorted = [...receivers].sort((a, b) => a.layer - b.layer);
+    if (sorted.length > TILE_SLOTS - 1) {
+      this.droppedReceivers += sorted.length - (TILE_SLOTS - 1);
+      sorted.splice(0, sorted.length - (TILE_SLOTS - 1));   // keep the TOPMOST when over cap
+    }
+    const slots = new Uint16Array(TILE_SLOTS);
+    slots[0] = tile & 0xffff;
+    for (let i = 0; i < sorted.length; i++) slots[i + 1] = sorted[i].index & 0xffff;
+    const base = Records.foldTile(tileX, tileY) * 4;
+    if (Records.packSlots(slots, this.presenceMirror, base)) this.tileDirty = true;
+  }
+
+  /** `light` — the 8 NEAREST light prims reaching a tile. Reach comes from `reachFromIntensity`, the
+   *  one shared definition ([F6](forks.md#f6)), so the set the CPU registers is the set the GPU's
+   *  walk bound agrees with. */
+  buildLights(lights: { index: number; tileX: number; tileY: number; intensity: number }[]): void {
+    const acc = new Map<number, { index: number; d2: number }[]>();
+    for (const L of lights) {
+      const reach = reachTilesFromIntensity(L.intensity);
+      for (let dy = -reach; dy <= reach; dy++) {
+        for (let dx = -reach; dx <= reach; dx++) {
+          const d2 = dx * dx + dy * dy;
+          if (d2 > reach * reach) continue;                 // circular reach, not a square box
+          const key = Records.foldTile(L.tileX + dx, L.tileY + dy);
+          let list = acc.get(key);
+          if (!list) acc.set(key, (list = []));
+          list.push({ index: L.index, d2 });
+        }
+      }
+    }
+    const slots = new Uint16Array(TILE_SLOTS);
+    for (const [key, list] of acc) {
+      list.sort((a, b) => a.d2 - b.d2);                     // nearest-N eviction
+      if (list.length > TILE_SLOTS) this.droppedLights += list.length - TILE_SLOTS;
+      slots.fill(0);
+      for (let i = 0; i < Math.min(TILE_SLOTS, list.length); i++) slots[i] = list[i].index & 0xffff;
+      if (Records.packSlots(slots, this.lightMirror, key * 4)) this.tileDirty = true;
+    }
+  }
+
+  /** DEBUG: the 8 slots of a per-tile map at a world tile. */
+  slotsAt(map: "presence" | "light", tileX: number, tileY: number): number[] {
+    const m = map === "presence" ? this.presenceMirror : this.lightMirror;
+    const b = Records.foldTile(tileX, tileY) * 4;
+    const out: number[] = [];
+    for (let c = 0; c < 4; c++) { out.push(m[b + c] >>> 16, m[b + c] & 0xffff); }
+    return out;
+  }
+
   private primNext = 1;                 // 0 is the sentinel and is never handed out
   private defNext = 1;                  // definition BLOCK index; px base = block * ROTATIONS_PER_DEF
   private readonly primFree: number[] = [];
@@ -108,6 +198,8 @@ export class Records {
   constructor(gl: WebGL2RenderingContext) {
     this.primTex = new Texture(gl, { width: PRIM_W, height: PRIM_H, format: "rgba32uint" });
     this.defTex = new Texture(gl, { width: DEF_W, height: DEF_H, format: "rgba32uint" });
+    this.presenceTex = new Texture(gl, { width: TILE_DIM, height: TILE_DIM, format: "rgba32uint" });
+    this.lightTex = new Texture(gl, { width: TILE_DIM, height: TILE_DIM, format: "rgba32uint" });
   }
 
   /** A fresh prim index. Never 0 ([F8](forks.md#f8)); reuses a freed slot before growing. */
@@ -234,6 +326,13 @@ export class Records {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, DEF_W, DEF_H, gl.RGBA_INTEGER, gl.UNSIGNED_INT, this.defMirror);
       this.defDirty = false;
     }
+    if (this.tileDirty) {
+      for (const [tex, data] of [[this.presenceTex, this.presenceMirror], [this.lightTex, this.lightMirror]] as const) {
+        gl.bindTexture(gl.TEXTURE_2D, tex.handle);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, TILE_DIM, TILE_DIM, gl.RGBA_INTEGER, gl.UNSIGNED_INT, data);
+      }
+      this.tileDirty = false;
+    }
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
@@ -266,6 +365,7 @@ export class Records {
   }
 
   get stats(): Record<string, number> {
-    return { prims: this.primNext - 1, freed: this.primFree.length, definitions: this.defNext - 1 };
+    return { prims: this.primNext - 1, freed: this.primFree.length, definitions: this.defNext - 1,
+             droppedReceivers: this.droppedReceivers, droppedLights: this.droppedLights };
   }
 }

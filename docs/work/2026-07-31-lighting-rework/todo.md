@@ -38,10 +38,10 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 
 ## P2 — Per-tile records: presence and light
 
-- [ ] Write `presence`: 8 receivers per tile, **layer-sorted**, slot 0 = the tile. Acceptance: sorted order is asserted, because the whole per-pixel pass depends on "topmost first" and nothing else enforces it.
-- [ ] Write `light`: the 8 nearest light prims reaching each tile, using `reachFromIntensity`. Acceptance: a light's registered tile set matches the reach its intensity implies — the CPU/GPU agreement from P0, checked on real data.
-- [ ] Count and surface evictions from both caps ([F10](forks.md#f10)). Acceptance: `droppedLights` / `droppedReceivers` appear in the debug panel and go non-zero when a tile is deliberately over-subscribed.
-- [ ] Verify the two records against the live scene. Acceptance: a debug overlay shows per-tile occupancy; the torch registers on the tiles its reach covers and on no others.
+- [x] Write `presence`: 8 receivers per tile, **layer-sorted**, slot 0 = the tile. Acceptance: sorted order is asserted, because the whole per-pixel pass depends on "topmost first" and nothing else enforces it.
+- [x] Write `light`: the 8 nearest light prims reaching each tile, using `reachFromIntensity`. Acceptance: a light's registered tile set matches the reach its intensity implies — the CPU/GPU agreement from P0, checked on real data.
+- [x] Count and surface evictions from both caps ([F10](forks.md#f10)). Acceptance: `droppedLights` / `droppedReceivers` appear in the debug panel and go non-zero when a tile is deliberately over-subscribed.
+- [x] Verify the two records against the live scene. Acceptance: a debug overlay shows per-tile occupancy; the torch registers on the tiles its reach covers and on no others.
 
 ## P3 — Lighting, no shadows yet: slots + summed map
 
