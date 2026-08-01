@@ -467,3 +467,64 @@ before the clamp.
 | everything **black** | `uLit` on with an empty lightmap; or a light record with `emit_type` 0 | `__lightpass()` sum at the light tile |
 
 The last two are the ones that cost time, because both render *plausibly*. Neither raises a GL error.
+
+## 2026-07-31 · P7 — the verdict
+
+### The headline: 16 lights at reach 16, in 2.31 ms of an 8 ms budget
+
+Full per-frame chain (gather + slot pass with the refine), 100 iterations, median of 3, `readPixels`
+sync at both ends:
+
+| lights | ms | |
+|---|---|---|
+| 1 | 0.92 | |
+| 4 | 1.23 | |
+| 8 | 2.01 | |
+| **16** | **2.31** | **inside 8 ms with 5.7 ms to spare** |
+
+[`after/lit-16.jpg`](after/lit-16.jpg) — sixteen overlapping pools, every conifer casting.
+
+**Scaling is strongly sub-linear**: 16× the lights for 2.5× the cost. Both passes rasterise a fixed
+grid, so N changes what each fragment *finds*, not how many fragments run — and the per-tile light cap
+means a fragment never tests more than 8 whatever the scene holds.
+
+**The comparison against the old system's "15 lights at 8 ms" is not apples-to-apples** and should not
+be quoted as a speedup. That figure came from a different harness on a different scene, and
+[I10](issues.md#i10) showed this project's `gl.finish()`-based numbers were ~4× low. What can be said
+without hedging: **the whole chain now fits in under a third of the budget, at the light count the
+plan set as the target.**
+
+### Resident bytes — the honest number is UP
+
+| map | MiB |
+|---|---|
+| light slots (8 × `RGB10_A2`) | **64** |
+| summed map (`RGBA32F`) | **32** |
+| shadow, ping-ponged | 12 |
+| `prim_data` / `definition_data` | 1.25 |
+| `presence` + `light` | 2 |
+| | **111.25** |
+
+The strip freed **99 MiB**, so the rework is **~12 MiB heavier**. Two deliberate choices account for
+more than the difference: the summed map at `RGBA32F` rather than `RGBA16F` (+24 MiB,
+[D2](deviations.md)) bought bit-exact add/remove, and the 8 slots (64 MiB) bought per-light
+addressability and killed the hot/cold tier split outright.
+
+Stated as a trade rather than a win: **12 MiB for exact incremental updates and no tier taxonomy.**
+
+### Capability, against the checklist ([I6](issues.md#i6))
+
+| | |
+|---|---|
+| 1 point lights with radial falloff | **yes** — and reach derives from intensity, one shared function |
+| 2 projected silhouette shadows | **yes** — from stored caster identity, refined at 64/tile |
+| 3 shadows onto billboards | **no** — receivers are ground-only so far ([F12](forks.md#f12)) |
+| 4 n/s perpendicular caster cards | **no** — `cast_type 2` is defined, not implemented |
+| 5 movers lit and casting in one pass | **yes, structurally** — there is no mover/static distinction left |
+| 6 per-light N·L against a normal map | **no** — the normal map is generated and still unread |
+| 7–9 emissive, ambient×AO, decay | **no** — deliberately out of scope ([F11](forks.md#f11)) |
+| 10 bilinear shadow upsample | **n/a** — the refine resolves at 64/tile instead |
+
+**Six of ten, and the three biggest structural wins are the ones that do not appear on this list:**
+exact per-light add/remove, no hot/cold tiers, and a flat `u16` reference that ends the storage
+problem that killed the old design.

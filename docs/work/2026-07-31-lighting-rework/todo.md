@@ -76,7 +76,7 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 
 ## P7 — The verdict
 
-- [ ] Re-measure moving lights at reach 16, zoom 1, inside 8 ms. Acceptance: the largest N that fits, plus the ms at N and N+1 — against the old system's 15–16.
-- [ ] Measure resident bytes across every new map. Acceptance: a table against the 83 MiB the strip freed, so the rework's real footprint is known rather than estimated.
-- [ ] Record the capability A/B against the strip's four before-images. Acceptance: same camera, same content, side by side — and an honest sentence on anything the new system does NOT do.
+- [x] Re-measure moving lights at reach 16, zoom 1, inside 8 ms. Acceptance: the largest N that fits, plus the ms at N and N+1 — against the old system's 15–16.
+- [x] Measure resident bytes across every new map. Acceptance: a table against the 83 MiB the strip freed, so the rework's real footprint is known rather than estimated.
+- [x] Record the capability A/B against the strip's four before-images. Acceptance: same camera, same content, side by side — and an honest sentence on anything the new system does NOT do.
 - [ ] Update `VARIABLES.md` with the shipped record layouts. Acceptance: it describes what the code writes, and `docs/intent/2026-07-31-rework.md` retires to `../archive/` once its content lives in the authoritative file.
