@@ -28,7 +28,7 @@ import { LIGHT_READ_SCALE } from "./lightPass";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
-import { WORLD_TILT_DEG, TILT_TAN, worldHeightForElevation } from "./worldTilt";
+import { WORLD_TILT_DEG, TILT_SIN, worldHeightForDrawn } from "./worldTilt";
 
 /** Height for debug-placed lights, in units — **the corpus's own contract**, not a taste call.
  *  `content/visual/things.rd` authors `2.5 &thing.light.height set` for torches and states in a
@@ -1208,19 +1208,22 @@ export class Viewport {
       }
       return {
         i, unitX: x >>> 16, unitY: x & 0xffff,
-        elevation, worldZ: +worldHeightForElevation(elevation).toFixed(3),
+        elevation,   // a LIGHT's unit.z is already a world height; a drawn extent is not
+
         screenY: (x & 0xffff) - elevation,      // what the draw path should place (F7)
-        cardH, cardTopWorldZ: cardH === null ? null : +(worldHeightForElevation(elevation) + cardH).toFixed(3),
+        // A card's DRAWN height converts by sin(theta); a light's stored height does not.
+        cardH, cardWorldH: cardH === null ? null : +worldHeightForDrawn(cardH).toFixed(3),
+        cardTopWorldZ: cardH === null ? null : +(elevation + worldHeightForDrawn(cardH)).toFixed(3),
         castType, emitType: (z >>> 26) & 3, receiveType: (z >>> 28) & 3, block,
       };
     };
-    if (index !== undefined) return { tiltDeg: WORLD_TILT_DEG, tiltTan: +TILT_TAN.toFixed(6), prim: read(index) };
+    if (index !== undefined) return { tiltDeg: WORLD_TILT_DEG, tiltSin: +TILT_SIN.toFixed(6), prim: read(index) };
     const rows = [];
     for (let i = 1; i < r.primNext; i++) {
       const y = m[i * 4 + 1], z = m[i * 4 + 2];
       if ((y >>> 24) !== 0 || ((y >>> 16) & 0xf) !== 0 || ((z >>> 30) & 3) !== 0) rows.push(read(i));
     }
-    return { tiltDeg: WORLD_TILT_DEG, tiltTan: +TILT_TAN.toFixed(6),
+    return { tiltDeg: WORLD_TILT_DEG, tiltSin: +TILT_SIN.toFixed(6),
              primNext: r.primNext, elevatedOrCasting: rows.length, prims: rows.slice(0, 24) };
   }
 

@@ -264,3 +264,25 @@ and P1's "shadow texels 4253 → 4254 (+1)". Neither number means anything.
 **And I17's original claim is withdrawn entirely.** There is no "small elevations do nothing" effect;
 there was an unreproducible metric. That matters for P3, which I had flagged as at-risk on the
 strength of it — it is not.
+
+
+## 2026-08-01 · Correction — P0a's coefficient was wrong ([I8](issues.md#i8))
+
+`worldTilt.ts` said `world height = elevation × tan(θ)`. Both halves were wrong:
+
+- **The factor is `sin(θ)`.** `content/visual/things.rd` still documents the retired
+  `shadowGather.ts`'s rule — *"the caster's card top (elevation `Zt = H·sin(WORLD_TILT)`)"*, worked
+  through as *"a 2-tile tree tops out at 32·sin55° ≈ 26 units"*.
+- **It applies to DRAWN extents, not to the stored lane.** A light's `unit.z` is *already* a world
+  height (`SquareCache.height` is "world px above the ground plane", stored straight). What needs
+  converting is a card's drawn height and a point part way up it.
+
+I derived `tan(θ)` from a model of what `unit.z` *ought* to be rather than reading what the code and
+the corpus already put there — in the very phase whose first item is "re-read before planning against
+it". `TILT_SIN` is now the height factor; `TILT_TAN` keeps only `screen.z`, the ordering depth, where
+scale-invariance made it harmless.
+
+**This does not disturb P1.** Its change is `hBot/hTop` relative to the caster's own elevation, and
+that is right in whatever unit the terms share. What P1 inherited — and P2 must fix — is that they do
+**not** currently share one: `Lz` is world, `subHi` and `targetH` are drawn. That is [I9](issues.md#i9),
+now with a coefficient and a source.

@@ -35,28 +35,39 @@
 //!
 //! ## Where the tilt DOES enter: height
 //!
-//! Elevation is stored as the **up-screen component** of the elevation ray, not as the ray's length
-//! and not as a true height. That is forced by the user's own placement rule — *"the screen-north
-//! shift IS the elevation, 1:1"* ([F6](../../../../../docs/work/2026-08-01-z-positioning/forks.md#f6)) —
-//! and it is what makes the draw path free: a part at elevation `E` is drawn `E` units north, with
-//! no coefficient at all.
+//! **Two different quantities land in `unit.z`, and only one of them needs converting.**
 //!
-//! The ray rises at {@link WORLD_TILT_DEG} above the ground, so a northing component of `E`
-//! corresponds to a **true vertical height of `E·tan(θ)`**:
+//! 1. **A light's height is ALREADY a world height.** `SquareCache.height` is documented as
+//!    *"world px above the ground plane"*, and `RecordSync` stores it straight:
+//!    `unitZ = L.height / SQUARE * UNITS_PER_TILE`. A torch's authored `2.5` means 2.5 tiles up in
+//!    the world. **No coefficient.**
+//! 2. **A DRAWN extent is a screen quantity** — a card `subH` units tall on screen, or a point part
+//!    way up it. Converting one to a world elevation takes **`sin(θ)`**, not `tan(θ)`.
+//!
+//! The second is not a guess. The retired `shadowGather.ts` used exactly this, and
+//! `content/visual/things.rd` still records the contract in a comment written against it:
+//!
+//! > *"`shadowCover` projects the caster's card top (elevation `Zt = H·sin(WORLD_TILT)`) from the
+//! > light onto the ground … A 2-tile tree tops out at 32·sin55° ≈ 26 units, so a light must clear
+//! > that to cast against anything."*
 //!
 //! ```
 //!         ^ world.z (true height)
-//!         |        ,-'
-//!         |    ,-''  <- the elevation ray, at theta above the ground
-//!         |,-''  )theta
-//!   ------+--------------> world.y (northing)
-//!         |<- E ->|            E = unit.z, the DRAWN up-screen shift
-//!                              height = E * tan(theta)
+//!         |   ,-'|
+//!         | ,-'  | H*sin(theta)     H = the card's DRAWN height, in units
+//!         |,-----+
+//!   ------+--------------> the ground
+//!          )theta
 //! ```
 //!
-//! This is the one coefficient in the file, and it is **metric**: it scales `world.z`, which feeds
-//! the caster card's extent, the falloff distance and `N·L`. Getting it wrong does not merely move
-//! a shadow — it biases how bright things are.
+//! **This corrects what P0a first recorded.** I derived `tan(θ)` from the premise that `unit.z` was
+//! an up-screen shift needing to be lifted into the world. It is not — for lights it is already a
+//! world height, and for drawn extents the factor is `sin(θ)`. The mistake was reasoning from the
+//! coordinate model in the abstract instead of reading what the code and the corpus already stored.
+//!
+//! The coefficient is **metric**: it scales world heights, which feed the caster card's extent, the
+//! falloff distance and `N·L`. A wrong value does not merely move a shadow — it changes how bright
+//! things are.
 
 import { UNITS_PER_TILE } from "./squareMath";
 
@@ -74,20 +85,24 @@ import { UNITS_PER_TILE } from "./squareMath";
  *  exists to prevent. */
 export const WORLD_TILT_DEG = 65;
 
-/** `tan(θ)` — the ONE coefficient. Converts the stored elevation (an up-screen shift, in units)
- *  into a true world height. ≈ 2.1445 at 65°. */
+/** `sin(θ)` — converts a **drawn extent** (units of card, up the screen) into a world elevation.
+ *  ≈ 0.9063 at 65°. This is the factor the retired `shadowGather.ts` used and the one
+ *  `content/visual/things.rd` still documents. */
+export const TILT_SIN = Math.sin((WORLD_TILT_DEG * Math.PI) / 180);
+
+/** `tan(θ)` — **depth perpendicular to the screen**, for z-ordering only (user: *"screen.z is
+ *  perpendicular to the screen … would make a decent z-ordering metric"*). Never a height. */
 export const TILT_TAN = Math.tan((WORLD_TILT_DEG * Math.PI) / 180);
 
-/** True world height, in units, for a stored elevation.
- *  The inverse of {@link elevationForHeight}; the two round-trip. */
-export function worldHeightForElevation(elevation: number): number {
-  return elevation * TILT_TAN;
+/** World elevation, in units, for a DRAWN extent — a card `drawnUnits` tall reaches this high.
+ *  A light's stored height needs no conversion; it is already a world height. */
+export function worldHeightForDrawn(drawnUnits: number): number {
+  return drawnUnits * TILT_SIN;
 }
 
-/** Stored elevation (the up-screen shift the draw path applies) for a true world height.
- *  This is the direction CONTENT authors in — a hat is *"this high"*, and the shift follows. */
-export function elevationForHeight(height: number): number {
-  return height / TILT_TAN;
+/** The inverse — the drawn extent that reaches a given world height. */
+export function drawnForWorldHeight(height: number): number {
+  return height / TILT_SIN;
 }
 
 /** The drawn position for a game position — `screen.y = unit.y − elevation`, no coefficient.
@@ -100,11 +115,8 @@ export function screenYForGame(unitY: number, elevation: number): number {
 /** Depth perpendicular to the screen, for z-ordering
  *  ([F4](../../../../../docs/work/2026-08-01-z-positioning/forks.md#f4)).
  *
- *  **Only ever compared, never measured**, so it is safe against the one uncertainty left in this
- *  file: sorting is invariant under any positive scale, and this and {@link worldHeightForElevation}
- *  currently share a coefficient. If that turns out to be two different coefficients wearing one
- *  hat, the ordering this produces does not change — only `world.z` would
- *  ([I8](../../../../../docs/work/2026-08-01-z-positioning/issues.md#i8)).
+ *  **Only ever compared, never measured** — sorting is invariant under any positive scale, so this
+ *  is the one place the exact coefficient does not have to be right to be useful.
  *
  *  Callers MUST pass a scene-wide reference row, not the prim's own origin: depths measured from
  *  different origins do not compare, which is the condition the user attached to using this as the
@@ -119,19 +131,20 @@ export function screenDepth(unitY: number, elevation: number, referenceY: number
  *  A writer and a reader disagreeing about one rule has cost this project four separate bugs; the
  *  `LIGHT_LANES_GLSL` pattern next door exists for the same reason and has already paid for itself. */
 export const WORLD_TILT_GLSL = /* glsl */ `
+const float TILT_SIN = ${TILT_SIN};
 const float TILT_TAN = ${TILT_TAN};
 const float UPT_TILT = ${UNITS_PER_TILE}.0;
 
-// game -> world. The ground planes COINCIDE (this renderer does not foreshorten -- the 3/4 view is
-// in the art, not the projection), so only the height term carries the tilt. z-positioning P0a.
-vec3 gameToWorld(vec2 unitXY, float elevation) {
-  return vec3(unitXY.x, unitXY.y, elevation * TILT_TAN);
-}
+// A DRAWN extent (units up a card) -> a world elevation. The factor is sin(theta), the same one
+// the retired shadowGather.ts used and content/visual/things.rd still documents:
+//   "the caster's card top (elevation Zt = H*sin(WORLD_TILT))".
+// A LIGHT's stored unit.z needs no conversion -- SquareCache.height is already world px above the
+// ground plane. Two different quantities share the lane; only the drawn one converts.
+float worldHeightForDrawn(float drawnUnits) { return drawnUnits * TILT_SIN; }
 
-// The true world height for a stored elevation -- the ONE coefficient in the system. The stored
-// value is the UP-SCREEN SHIFT, not the ray length and not a height, because the draw path applies
-// it 1:1 (F6: "the screen-north shift IS the elevation").
-float worldHeightForElevation(float elevation) { return elevation * TILT_TAN; }
+// game -> world. The ground planes COINCIDE (this renderer does not foreshorten -- the 3/4 view is
+// in the art, not the projection), so only the height term carries the tilt.
+vec3 gameToWorld(vec2 unitXY, float worldZ) { return vec3(unitXY.x, unitXY.y, worldZ); }
 
 // game -> screen. No coefficient: the shift IS the elevation.
 vec2 gameToScreen(vec2 unitXY, float elevation) {

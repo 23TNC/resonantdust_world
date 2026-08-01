@@ -156,39 +156,51 @@ A note for whoever re-adds it: the old dial also re-derived `elevK = sin`, `nsIn
 normal pitch together, so the whole geometry re-tilted as one. Anything less than that is a partial
 dial that lies when turned.
 
-## I8 — What does `screen.z` feed? — my reading, wants a yes/no {#i8}
+## I8 — RESOLVED: the factor is `sin(θ)`, and only DRAWN extents take it {#i8}
 
-The one term in [F7](forks.md#f7) with no named consumer. `screen.z = tan(angle)·unit.z` — but
-[F8](forks.md#f8) shows the shadow walk needs only ground x/y plus a height, both already in game
-units on a square grid. So what reads it?
+Found in the corpus, not derived. `content/visual/things.rd` still carries the contract from the
+retired `shadowGather.ts`:
 
-**My reading: it is for lighting DIRECTION, not for shadow geometry.** The two want different things
-from the same scene:
+> *"`shadowCover` projects the caster's card top (**elevation `Zt = H·sin(WORLD_TILT)`**) from the
+> light onto the ground; when the light sits BELOW that top, `k = Lz/(Lz−Zt)` goes negative and the
+> caster returns 0 — no shadow at all, silently. **A 2-tile tree tops out at 32·sin55° ≈ 26 units**,
+> so a light must clear that to cast against anything."*
 
-| | works in | why |
+**Two different quantities share the `unit.z` lane, and only one converts:**
+
+| quantity | is | conversion |
 |---|---|---|
-| the shadow walk | game 2D + height | the ground is *drawn* square, and that drawn grid is what the walk marches over |
-| `N·L` | true 3D | a tile viewed at 65° is **deeper than it is wide** in reality, however it is drawn |
+| a **light's** height | already world — `SquareCache.height` is *"world px above the ground plane"*, stored straight by `RecordSync` | **none** |
+| a **drawn extent** — a card `subH` tall, a point up it | screen | **× sin(θ)** |
 
-That is the gap `screen.z` closes, and it is live today:
+### This corrects P0a
 
-```glsl
-vec3 ldir = normalize(vec3(Lpos.x - Puse.x, Lz2 - targetH, Puse.y - Lpos.y));
-```
+P0a recorded `tan(θ)` and I built `worldTilt.ts` on it. Wrong twice over: the factor is `sin(θ)`, and
+it does not apply to the lane I applied it to. I reasoned from the coordinate model in the abstract
+instead of reading what the code and corpus already stored — the same failure this stream's first
+plan item exists to prevent, committed in the phase that item belongs to.
 
-x, height and depth are all fed in **drawn** units, as though the view were straight down. It is not —
-so the north-south term is compressed relative to the other two, and every light's direction is
-biased toward the horizontal by an amount that grows with north-south separation.
+`tan(θ)` keeps one job: **`screen.z`, the z-ordering depth**, which is only ever compared, never
+measured. Sorting is scale-invariant, so that use was never at risk.
 
-**If this reading is right**, the three systems divide cleanly by consumer: **game** is what the CPU
-and the records hold, **screen** is what gets drawn and what the shadow walk marches, **world** is
-what shading directions are computed in — and `world` is the only one the tilt angle enters.
+### What it means for P2 — this IS the metric gap ([I9](#i9))
 
-**If it is wrong**, the thing to correct is which axis carries the tilt, because the rest of the
-model does not depend on it.
+`occludesAt` now compares, in one expression:
 
-**This blocks nothing.** The channel relayout, the caster card's `[z, z+H]` span, the game/screen
-separation and the head's elevation are all independent of it; only the `N·L` refinement waits.
+- `Lz` — a light's **world** height
+- `hTop = cElev + subHi` — where `subHi` is a **drawn** extent (P1)
+- `targetH = max(0.0, baseY - P.y)` — a **drawn** screen difference
+
+So world and drawn quantities are being compared directly, with no `sin(θ)` anywhere. **That is the
+gap P0's sweep pointed at**, now with a coefficient and a source. P2's change is to convert the drawn
+terms: `hTop = cElev + worldHeightForDrawn(subHi)` and likewise for `targetH`.
+
+**One open question for the user**, since it changes a shipped look: the corpus comment computes with
+**sin 55°**, while `WORLD_TILT_DEG` is **65°** per their instruction (*"whatever use 65 then. We
+changed to 55 at one point"*). At 55° a 2-tile tree tops out at 26.2 units; at 65°, 29.0. Every
+shadow length shifts by ~11%. **Recommend 65°** — it is the explicit instruction and the newer of the
+two — with the note that the 40-unit torch contract was chosen against the 55° figure and still
+clears the 65° one.
 
 ## I9 — The real gap: heights are ISOTROPIC with ground distance {#i9}
 
