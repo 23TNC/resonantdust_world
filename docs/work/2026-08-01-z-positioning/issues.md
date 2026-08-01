@@ -156,30 +156,39 @@ A note for whoever re-adds it: the old dial also re-derived `elevK = sin`, `nsIn
 normal pitch together, so the whole geometry re-tilted as one. Anything less than that is a partial
 dial that lies when turned.
 
-## I8 — The screen↔world transform for the shadow is still unwritten {#i8}
+## I8 — What does `screen.z` feed? — my reading, wants a yes/no {#i8}
 
-[F6](forks.md#f6) settles the **record** side: what is stored and how the ground position is
-recovered. It does not settle what the **shadow** does with it.
+The one term in [F7](forks.md#f7) with no named consumer. `screen.z = tan(angle)·unit.z` — but
+[F8](forks.md#f8) shows the shadow walk needs only ground x/y plus a height, both already in game
+units on a square grid. So what reads it?
 
-Today `occludes()` computes `h = Lz * (1 - t)` and compares it against `H`, with `t` derived from
-screen-space y-distances — screen quantities treated as world ones, with no conversion anywhere. That
-is not a tuning error; the transform was never there.
+**My reading: it is for lighting DIRECTION, not for shadow geometry.** The two want different things
+from the same scene:
 
-The user's draft is:
+| | works in | why |
+|---|---|---|
+| the shadow walk | game 2D + height | the ground is *drawn* square, and that drawn grid is what the walk marches over |
+| `N·L` | true 3D | a tile viewed at 65° is **deeper than it is wide** in reality, however it is drawn |
 
+That is the gap `screen.z` closes, and it is live today:
+
+```glsl
+vec3 ldir = normalize(vec3(Lpos.x - Puse.x, Lz2 - targetH, Puse.y - Lpos.y));
 ```
-world.y -= cos(90 - world_angle) * unit.z
-world.z += cos(90 - world_angle) * unit.z
-world.x  = unit.x
-```
 
-**The two coefficients being equal is the open question.** Decomposing one vector onto two axes
-normally gives a `sin`/`cos` pair; at 55° that is 0.819 and 0.574, a 43 % difference in the height
-term — squarely in the range that renders plausibly and lands wrong. Raised, not assumed: the frame
-convention may make them genuinely equal, and that is the user's call.
+x, height and depth are all fed in **drawn** units, as though the view were straight down. It is not —
+so the north-south term is compressed relative to the other two, and every light's direction is
+biased toward the horizontal by an amount that grows with north-south separation.
 
-The same applies to walking up the billboard (`world.z += sin(θ) * height`), which looks like it wants
-a `world.y` term too, or the card leans as it climbs.
+**If this reading is right**, the three systems divide cleanly by consumer: **game** is what the CPU
+and the records hold, **screen** is what gets drawn and what the shadow walk marches, **world** is
+what shading directions are computed in — and `world` is the only one the tilt angle enters.
+
+**If it is wrong**, the thing to correct is which axis carries the tilt, because the rest of the
+model does not depend on it.
+
+**This blocks nothing.** The channel relayout, the caster card's `[z, z+H]` span, the game/screen
+separation and the head's elevation are all independent of it; only the `N·L` refinement waits.
 
 ## I9 — The real gap: heights are ISOTROPIC with ground distance {#i9}
 
