@@ -61,9 +61,9 @@ _There is no draw-side constant: the screen-north shift IS the elevation, 1:1. T
 ## P3 — The head rides elevation
 
 - [ ] Add `offset.z` to the pawn DSL and retire `head.offset.y` ([F5](forks.md#f5)). Acceptance: the corpus authors a height; no y-fudge remains on the head slot.
-- [ ] Carry it through `MoverPart` and `content.moverParts` as `offsetZ`. Acceptance: the loader reads it, and a missing value defaults to 0 rather than to the old y behaviour.
-- [ ] Apply the projection in `MoverLayer` and write `unitZ` into the record. Acceptance: the head draws where it does today (A/B at zoom 3) AND its record carries a non-zero height.
-- [ ] Show the two shadows became one. Acceptance: a zoom-3 capture of body+head casting a single aligned shadow, beside today's two offset ones — the reason the stream exists.
+- [x] Carry it through `MoverPart` and `content.moverParts` as `offsetZ`. Acceptance: the loader reads it, and a missing value defaults to 0 rather than to the old y behaviour.
+- [x] Apply the projection in `MoverLayer` and write `unitZ` into the record. Acceptance: the head draws where it does today (A/B at zoom 3) AND its record carries a non-zero height.
+- [x] Show the two shadows became one. Acceptance: a zoom-3 capture of body+head casting a single aligned shadow, beside today's two offset ones — the reason the stream exists.
 
 ## P4 — Where a thing stands, for lighting as well as shadow
 

@@ -30,3 +30,28 @@ implying the terms were previously inconsistent *there* rather than at `N·L`.
 The transform went where a height actually meets a horizontal distance: the two `ldir` expressions.
 The item's intent — "stop comparing screen quantities to world ones" — is met; the location it named
 was wrong because it was written before [I8](issues.md#i8) was resolved.
+
+
+## 2026-08-01 · P3's corpus change deferred — no cargo toolchain
+
+`offset.z` is plumbed through `shared/dsl/src/loader.rs` (`VisualPart::elevation`) and exported by
+`shared/wasm/src/lib.rs` (`moverParts`), but **neither can be compiled here** — there is no `cargo`
+on this machine, and the client loads a prebuilt `shared/pkg/resonantdust_shared_bg.wasm`.
+
+**So `content/visual/pawns.rd` still authors `-0.87 &head.offset.y`.** Changing it to `offset.z` now
+would break the head's drawing: the shipped wasm does not know the field, so the head would lose its
+shift and draw at the body's feet until a rebuild.
+
+**This costs nothing today.** The carrier link ([P2b](completed.md)) derives a piece's elevation from
+the geometry, so head and body already share one footprint with `offset.y` authored. `offset.z`
+remains the right authoring model — it disambiguates *"further north on the ground"* from *"higher
+up"*, which matters for a part that really is the former — but it is a refinement now, not the
+mechanism.
+
+**Post-rebuild, the change is two lines** in `content/visual/pawns.rd`:
+
+```
+-0.87 &head.offset.y set        ->        0.87 &head.offset.z set
+```
+
+and then re-verify that the head still draws where it does today.

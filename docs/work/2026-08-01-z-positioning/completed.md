@@ -401,3 +401,35 @@ texels were shadow-tested as though the head stood on the floor.
 | presence keys on game coordinates | both in tile **(95, 56)**, both in that tile's presence slots `[525, 526]` |
 | no caster read converts per-test | the conversion is once per texel at `ldir`; `occludesAt` reads records directly |
 | the walk stays exact | `occlusionDiffering` **0** / 131,072 · 524 casters · `glError` 0 |
+
+
+## 2026-08-01 · P3 — the two shadows became one, verified on screen
+
+**The number this stream exists to move.** A/B on the live pawn, same light, same frame, zoomed:
+
+| | head's record | shadow |
+|---|---|---|
+| **before** — head is its own root | `unitY 901`, elevation 0 — **10 units north of the body** | a **broad doubled mass**, far wider and taller than the pawn, sweeping up-right: two silhouettes from two footprints |
+| **after** — head adopts its carrier | `unitY 911`, elevation **9.125** — the body's row | **one narrow shadow** matching the pawn's silhouette, anchored at the feet |
+
+The "before" was produced honestly, not from memory: clearing `carrierOf` on the live head prim and
+re-syncing puts the record back to two footprints, which is exactly the old behaviour. Restoring it
+returns `unitY 911 / elevation 9.125`, `occlusionDiffering` **0**, 524 casters.
+
+It also settles one of [lighting-rework I13](../2026-07-31-lighting-rework/issues.md#i13)'s
+complaints in passing — *"the shadows aren't anchored at the base of our billboards"*. In the after
+capture the shadow starts at the feet.
+
+### What is NOT done: the corpus still authors `offset.y`
+
+[F5](forks.md#f5) says the head should author `offset.z` and lose `offset.y`. **Not made**, and the
+reason is worth stating: **the alignment does not depend on it.** The carrier link derives the
+elevation from geometry, so the head aligns today with its existing `-0.87 &head.offset.y`.
+
+The DSL half is built but cannot be *exercised* here — `offset.z` is read by `loader.rs` and exported
+by `shared/wasm`, both of which need a cargo build, and **there is no cargo toolchain in this
+environment**. Editing `content/visual/pawns.rd` to use `offset.z` now would break the head's drawing
+until someone rebuilds the wasm, because the shipped `shared/pkg/resonantdust_shared_bg.wasm` would
+parse a field it does not know and drop the `offset.y` that currently does the work.
+
+**Recorded as a deviation** with the exact post-rebuild change.
