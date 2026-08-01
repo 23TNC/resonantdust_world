@@ -53,11 +53,11 @@ Stances + fixtures: [`README`](README.md)._
 
 ## P2 — the bbox
 
-- [ ] Fix P0's mismatches per cause: measure each rotation frame's `subframe` from surface
+- [x] Fix P0's mismatches per cause: measure each rotation frame's `subframe` from surface
       presence at ingest (POST pre-atlas scale), mirror for flipped draws, assert
       `subframe ⊆ frame` at write. Acceptance: the P0 truth table re-probed with 0
       mismatches.
-- [ ] Verify live: a debug overlay draws each record's bbox over its sprite for the
+- [x] Verify live: a debug overlay draws each record's bbox over its sprite for the
       conifer, wolf (e + n), human body + head. Acceptance: captures show the box tight on
       the drawn art within 1 unit, all cases.
 

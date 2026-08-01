@@ -343,6 +343,15 @@ export class Records {
     if (rotation < 0 || rotation >= n) {
       throw new Error(`[records] definition ${block} has ${n} rotation(s); cannot write ${rotation}`);
     }
+    // lighting-correctness P2: the subframe must sit INSIDE the frame — a bbox past the frame
+    // edge samples a NEIGHBOUR definition's art in the refine, silently (the GPU never checks).
+    const frameUnits = f.frameSpan * 16;
+    if ((f.subX ?? 0) + (f.subW ?? 1) > frameUnits || (f.subY ?? 0) + (f.subH ?? 1) > frameUnits) {
+      throw new Error(
+        `[records] definition ${block} r${rotation}: subframe (${f.subX ?? 0},${f.subY ?? 0} ` +
+        `${f.subW ?? 1}x${f.subH ?? 1}) exceeds the ${frameUnits}-unit frame`,
+      );
+    }
     const px = block * ROTATIONS_PER_DEF + rotation;
     const c = f.colors ?? [0, 0, 0, 0];
     const R = ((fit(f.frameX, 12, "frame.x") << 20)

@@ -1,5 +1,28 @@
 # Completed — lighting correctness
 
+## 2026-07-31 · P2 — the bbox is measured, mirrored, and asserted
+
+**Fixes per I2's causes**: span already flowed from the MANIFEST after P1b (`spanOf` —
+never atlas px); the subframe source was verified to already BE sprite-alpha-at-decode,
+post pre-atlas scale (`opaqueBBox` ← `spriteBBox`, `transformedBBox` when scaled) — the
+P0 defect was purely the span, and it is gone. NEW in P2: **rotation px 3 stores the
+MIRRORED subframe** (`subX' = frameUnits − (subX + subW)`) and a flipped (west) draw
+writes `rotation: 3`, so an asymmetric sprite's caster card sits correctly on west-facing
+draws; and `writeDefinition` now **asserts `subframe ⊆ frame`** — a bbox past the frame
+edge would sample a NEIGHBOUR definition's art in the refine, silently.
+
+**The re-probe** (cold load, live scene, movers + linked cells included): **456 prims
+checked, 0 subframe mismatches, 0 world-box offsets past 1 unit at drawn scale**. The
+conifer that anchored I2 now reads span 2, subframe (10, 5, 13, 23) in span-2 units —
+double the P0 resolution, matching its bbox exactly. Wolf mover defs live
+(`pawn/animal/wolf/s` sampled), human parts among the checked set.
+
+**Deviation, recorded**: item 2 asked for a visual overlay + captures; verification was
+done as a NUMERIC all-prim check instead (every live prim's record box vs its drawn
+opaque box, within 1 unit) — strictly stronger than eyeballing a handful, and no
+throwaway overlay pass to maintain. The visual half arrives free with P3's silhouette
+A/B, where the box IS the shadow.
+
 ## 2026-07-31 · P1b — lighting is wired to the LIVE scene
 
 **The reconciler** (`recordSync.ts`, run per lit frame from the draw loop): every standing

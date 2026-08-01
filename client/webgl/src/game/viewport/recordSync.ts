@@ -60,19 +60,26 @@ export class RecordSync {
     const spanTiles = Math.max(1, Math.min(16, Math.round(resolver.spanOf(stem) ?? boxSpanHint)));
     // Atlas px per UNIT at this frame's streamed size: the frame covers span×16 units.
     const pxPerUnit = frame.w / (spanTiles * UNITS_PER_TILE);
-    const bb = resolver.opaqueBBox(stem);
+    const bb = resolver.opaqueBBox(stem);       // sprite alpha at decode, POST pre-atlas scale
+    const fu = spanTiles * UNITS_PER_TILE;
+    const subX = bb ? Math.round(bb.fx * fu) : 0;
+    const subY = bb ? Math.round(bb.fy * fu) : 0;
+    const subW = Math.min(fu - subX, Math.max(1, bb ? Math.round(bb.fw * fu) : fu));
+    const subH = Math.min(fu - subY, Math.max(1, bb ? Math.round(bb.fh * fu) : fu));
     const fields = {
       frameX: Math.round(frame.x / pxPerUnit),
       frameY: Math.round(frame.y / pxPerUnit),
       frameSpan: spanTiles,
       anchorX: 1, anchorY: 2, // bottom-centre, as casters anchor
-      subX: bb ? Math.round(bb.fx * spanTiles * UNITS_PER_TILE) : 0,
-      subY: bb ? Math.round(bb.fy * spanTiles * UNITS_PER_TILE) : 0,
-      subW: Math.max(1, bb ? Math.round(bb.fw * spanTiles * UNITS_PER_TILE) : spanTiles * UNITS_PER_TILE),
-      subH: Math.max(1, bb ? Math.round(bb.fh * spanTiles * UNITS_PER_TILE) : spanTiles * UNITS_PER_TILE),
+      subX, subY, subW, subH,
       castType: 1, receiveType: 2,
     };
-    for (let r = 0; r < 4; r++) this.rec.writeDefinition(block, r, fields);
+    // Rotations 0-2 share the stem's own frame (each facing IS its own stem today — the
+    // facing-mapped rotation block lands with cast_type 2 in P3). Rotation 3 is the WEST
+    // draw: the east master MIRRORED, so its subframe reflects about the frame's x-centre
+    // (P2 — an asymmetric sprite's caster card otherwise sits offset on west-facing draws).
+    for (let r = 0; r < 3; r++) this.rec.writeDefinition(block, r, fields);
+    this.rec.writeDefinition(block, 3, { ...fields, subX: fu - (subX + subW) });
     return block;
   }
 
@@ -103,7 +110,9 @@ export class RecordSync {
           unitX: Math.round(ax / U) & 0xffff,
           unitY: Math.round(ay / U) & 0xffff,
           definition: def,
-          rotation: 0,
+          // P2: a FLIPPED (west) draw reads rotation px 3 — the mirrored subframe. Facing-
+          // mapped rotations (n/s cards) land in P3; unflipped draws stay on px 0.
+          rotation: p.flipX ? 3 : 0,
           castType: def !== INDEX_NONE ? 1 : 0,   // no streamed frame → no silhouette → no cast yet
           receiveType: p.textureName ? 2 : 0,
           emitType: L ? 1 : 0,
