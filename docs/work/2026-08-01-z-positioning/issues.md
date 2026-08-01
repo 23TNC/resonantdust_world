@@ -130,19 +130,32 @@ and not the other, on ground that is often already shadowed anyway.
 sampling artefact into an architectural blocker by reasoning about the storage instead of about what a
 unit actually does.
 
-## I7 — Is `world_angle` 55° or 65°? {#i7}
+## I7 — RESOLVED, and worse than a wrong value: the tilt DOES NOT EXIST {#i7}
 
-The diagrams label the angle **55°**, measured between the screen vertical and the ground. The
-codebase carries **`worldTiltDeg = 65`**, and 55 is not its complement (90 − 65 = 25), so these are
-not obviously the same quantity measured two ways.
+I asked whether the angle was the diagrams' **55°** or the code's **`worldTiltDeg = 65`**. The user:
+*"whatever use 65 then. We changed to 55 at one point, apparently you changed back."*
 
-Either the diagrams are illustrative and the real value comes from `worldTiltDeg`, or the two are
-measured from different references and one of them needs converting.
+**Neither. Grepped: `worldTiltDeg`, `__tilt()` and the `uTilt` uniform do not exist.** They lived in
+`shadowGather.ts`, which `2026-07-31-lighting-strip` P2 deleted — I removed the dial with the system
+and then quoted 65 from memory of the old code. My own planning language ("off the live tilt",
+"`__tilt()` keeps re-tilting coherently") describes machinery I had already deleted.
 
-**This is exactly the class of error that survives review** — an off-by-a-complement produces shadows
-that are wrong by a fixed ratio, which reads as "needs tuning" rather than "is wrong". It must be
-pinned before any transform is written, and the answer belongs in the shared function's doc comment
-so the next reader does not have to re-derive which reference the angle uses.
+**This explains the shadow bug more precisely than "the transform is missing".** `occludes()` has no
+angle term *anywhere* — it is not using the wrong tilt, there is nothing for it to use. The transform
+was never written because the parameter it needs went with the strip.
+
+**Resolution: the value is 65°, and it is reintroduced as a live parameter, not a literal.** The
+user's framing is the operative one — *"regardless of world angle our math works"* — so the angle is a
+runtime input to the transform, and 65 is just today's setting. It needs:
+
+- one authoritative source (a constant plus a `__tilt()`-style dial), since it is now consumed by the
+  record writer (`unit.z`'s decomposition) **and** the shadow transform
+- both to read the same source, or the sprite and its shadow disagree about the world — the failure
+  this stream exists to remove
+
+A note for whoever re-adds it: the old dial also re-derived `elevK = sin`, `nsInv = 1/cos` and the
+normal pitch together, so the whole geometry re-tilted as one. Anything less than that is a partial
+dial that lies when turned.
 
 ## I8 — The screen↔world transform for the shadow is still unwritten {#i8}
 

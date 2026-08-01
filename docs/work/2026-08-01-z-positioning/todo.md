@@ -20,7 +20,7 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 
 ## P0a — Pin the two unknowns before writing any transform
 
-- [ ] Settle whether `world_angle` is the diagrams' 55° or the code's `worldTiltDeg = 65` ([I7](issues.md#i7)). Acceptance: one value, its reference axis named, written into the shared function's doc comment — 55 is not 65's complement, so this is not a formatting difference.
+- [ ] Reintroduce the world tilt as a live parameter at **65°** ([I7](issues.md#i7)) — it does not exist; the strip deleted it with `shadowGather.ts`. Acceptance: one source, read by BOTH the record writer and the shadow transform, with the reference axis named.
 - [ ] Settle the `world.z` coefficient ([I8](issues.md#i8)). Acceptance: the two terms are confirmed equal on purpose or corrected to a sin/cos pair — at 55° that is 0.819 vs 0.574, a 43% swing in the height term.
 
 ## P0 — Make height observable at all
