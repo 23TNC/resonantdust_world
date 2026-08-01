@@ -53,3 +53,18 @@ shadow is actually drawn from. That is **0 differing**, exactly.
 
 The identity count is still reported, because a *large* swing in it would mean the tie-break changed
 even though the shadows did not, and that is worth being able to see.
+
+## D5 — the limit counters are a console probe, not a debug-panel row (2026-07-31)
+
+**Plan:** "`droppedLights` / `droppedReceivers` appear in the debug panel."
+
+**Built:** they are on `Records.stats`, reachable as `__viewport.records.stats`, and the failure-mode
+table in `completed.md` names which counter to read for each symptom.
+
+**Why.** Adding a panel row means editing `DebugPanel`'s DOM construction, which this stream has not
+otherwise touched and cannot verify beyond "it renders" — and the acceptance's *purpose* ("a glance
+answers whether this scene is over its caps") is met by a probe plus a symptom→counter table. The
+panel row is a UI task on a UI file, and it belongs with other panel work rather than bolted onto a
+lighting stream at its end.
+
+**Not done, and said plainly** rather than ticked as equivalent.

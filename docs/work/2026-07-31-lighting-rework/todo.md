@@ -64,15 +64,15 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 - [ ] Select the receiver by **coverage first**, then the stored pair. Acceptance: a px covered only by `r6` resolves to `r6` for EVERY light — the design's early `break` picked a different surface per light.
 - [ ] Hoist surface selection out of the light loop, now that it is light-independent. Acceptance: `r.has(px)` is evaluated once per pixel, not up to 8 times, in the pass that dominates cost.
 - [x] Gate the refine on the unit holding a caster ([F5](forks.md#f5)). Acceptance: the gate's selectivity is reported as a measured percentage of pixels, and interior/fully-lit pixels do no texture test.
-- [ ] Measure the refine's own cost. Acceptance: ms attributable to the refine alone at N = 1 and N = 8, against P3's no-shadow baseline.
+- [x] Measure the refine's own cost. Acceptance: ms attributable to the refine alone at N = 1 and N = 8, against P3's no-shadow baseline.
 - [x] Compare the shadow edge against the strip's before-image. Acceptance: `before/04-shadow-edge-zoom2.jpg` beside the new render — the edge should be silhouette-exact where the old one stepped at 16/tile.
 
 ## P6 — Errors, limits, and what a failure looks like
 
-- [ ] Clamp every contribution to the storable range before write, guarding NaN/Inf. Acceptance: a deliberately NaN-producing light writes a bounded value and does not poison the summed map through the blend.
-- [ ] Audit every record fetch for the index-0 guard ([F8](forks.md#f8)). Acceptance: a grep-backed list of fetch sites, each with its guard — an unguarded fetch of prim 0 is the cheapest silent corruption available.
+- [x] Clamp every contribution to the storable range before write, guarding NaN/Inf. Acceptance: a deliberately NaN-producing light writes a bounded value and does not poison the summed map through the blend.
+- [x] Audit every record fetch for the index-0 guard ([F8](forks.md#f8)). Acceptance: a grep-backed list of fetch sites, each with its guard — an unguarded fetch of prim 0 is the cheapest silent corruption available.
 - [ ] Surface the drop counters, the gate selectivity and the walk hit rates in the debug panel. Acceptance: one panel answers "is this scene over its caps, and where is the time going" without a code change.
-- [ ] Write the failure-mode table into `issues.md`: for each cap and guard, what the user SEES when it trips. Acceptance: a reader can go from a visual symptom to the limit that caused it.
+- [x] Write the failure-mode table into `issues.md`: for each cap and guard, what the user SEES when it trips. Acceptance: a reader can go from a visual symptom to the limit that caused it.
 
 ## P7 — The verdict
 

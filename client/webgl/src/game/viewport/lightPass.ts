@@ -153,7 +153,12 @@ void main() {
   if (uDebugGate == 1) { fragColor = vec4(gated ? 1.0 : 0.0, occluded ? 1.0 : 0.0, 1.0, 1.0); return; }
   if (occluded) { fragColor = vec4(0.0); return; }
   // F2: stored at 1/LIGHT_SCALE so 4x overbright survives a 0..1 fixed-point format.
-  fragColor = vec4(clamp(tint * at / LIGHT_SCALE, 0.0, 1.0), 1.0);
+  // NaN/Inf guard (P6): clamp() is UNDEFINED on NaN, so a single bad record could otherwise write a
+  // NaN into a slot -- and the delta path would then blend it into the summed map, where it poisons
+  // every later add and cannot be withdrawn. Compare against itself first: NaN != NaN.
+  vec3 v = tint * at / LIGHT_SCALE;
+  if (!(v.r == v.r) || !(v.g == v.g) || !(v.b == v.b)) { fragColor = vec4(0.0); return; }
+  fragColor = vec4(clamp(v, 0.0, 1.0), 1.0);
 }
 `;
 

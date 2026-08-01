@@ -407,3 +407,63 @@ Worth recording as a class, not an incident: **a writer and a reader must share 
 and this project has now been bitten by that same shape three times (`uLSlot` vs `win.slotPx`,
 `resolvedTilePos`'s reference point, and now this). The shadow bands were the tell — they were in the
 right place because the gather and the shadow read *do* share a rule.
+
+### The refine's own cost: **negative**
+
+Measured by differencing the slot pass with the refine on and off — 200 iterations, median of 3, a
+`readPixels` sync at both ends ([I10](issues.md#i10)):
+
+| | ms per slot pass |
+|---|---|
+| refine **off** | 0.4155 |
+| refine **on** | **0.3295** |
+| difference | **−0.086 ms (−20.7 %)** |
+
+**Turning shadows on made the pass faster**, and the explanation is structural rather than a fluke: an
+occluded texel `return`s immediately with zero, skipping the falloff, the tint and the clamp. The
+shadowed fraction of the map therefore does *less* work than it did unshadowed, and that saving
+exceeds the gate's one buffer fetch plus one `occludes` call.
+
+The gate ([F5](forks.md#f5)) is what makes this hold — an ungated refine would test every texel,
+including the ~97 % with no caster, and the sign would flip. Recorded with the caveat that it is
+scene-dependent: a scene with no shadows at all would show the gate's cost with none of the early-out
+saving, and the number would be small but positive.
+
+## 2026-07-31 · P6 — errors, limits, and what a failure looks like
+
+### The index-0 audit ([F8](forks.md#f8))
+
+Every record fetch in both shaders, with the guard that precedes it:
+
+| site | index-0 guard | type-lane check |
+|---|---|---|
+| `lightPass` `refineOccluded` | `if (c == 0u) return false` | `cast_type != 0` |
+| `lightPass` slot pass | `if (idx == 0u) { … return; }` | `emit_type != 0` |
+| `lightPass` single-slot write | `if (uPrimIndex == 0) { … return; }` | `emit_type != 0` |
+| `shadowPass` `occludes` | `if (c == NONE) return false` | `cast_type != 0` |
+| `shadowPass` light loop | `if (li == NONE) continue` | `emit_type != 0` |
+
+**Five sites, five guards, five type checks.** Both `fetchDef` calls sit downstream of an already-
+guarded `fetchPrim`, so their block index comes from a validated record; block 0 is never allocated
+(`defNext` starts at 1) and reads as zeros, which decode to a 1-unit card — inert rather than wild.
+
+### NaN guard
+
+`clamp()` is **undefined on NaN**, so a single bad record could put a NaN in a slot — and the delta
+path would then blend it into the summed map, where it poisons every subsequent add and **cannot be
+withdrawn**, because the withdrawal reads the same NaN. Guarded by comparing the value against itself
+before the clamp.
+
+### The failure-mode table — what a user SEES when a limit trips
+
+| symptom on screen | cause | where to look |
+|---|---|---|
+| one light missing in **one tile**, fine elsewhere | >8 lights reach that tile; nearest-8 evicted the rest | `droppedLights` non-zero |
+| a **billboard is lit but casts nothing** | its `cast_type` is 0, or its definition never allocated a rotation | `debugPrim(id).castType` |
+| a stacked object **never receives**, the ones under it do | >7 receivers on the tile; the cap keeps the **topmost** | `droppedReceivers` non-zero |
+| a light **stops exactly at a tile boundary** | its intensity puts `reachTilesFromIntensity` right on that ring — a cap, not a bug | `__reachcheck()` |
+| the world is lit but **flat, no shadows** | the gather never ran, or `uRefine` is 0 | `__gather()` tier counts all zero |
+| shadows in the **wrong place**, light in the right place | a writer/reader addressing mismatch — this has bitten three times | compare the writer's rule to the reader's |
+| everything **black** | `uLit` on with an empty lightmap; or a light record with `emit_type` 0 | `__lightpass()` sum at the light tile |
+
+The last two are the ones that cost time, because both render *plausibly*. Neither raises a GL error.
