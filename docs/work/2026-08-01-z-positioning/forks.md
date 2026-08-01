@@ -126,3 +126,45 @@ uses `unit.x/y` as-is.
 [I4](issues.md#i4) hunted for a projection factor to apply when drawing. There isn't one: the
 screen-north shift **is** the elevation, 1:1. The tilt enters only in `unit.z`'s decomposition and in
 the shadow's screen↔world transform.
+
+## F7 — Three coordinate systems, and `prim_data` holds GAME (user, 2026-08-01) {#f7}
+
+**Supersedes [F6](#f6).** F6 had `unit.*` doing double duty — the stored drawn position *and* the
+thing game logic reasons about. The user split them:
+
+| system | is | owned by |
+|---|---|---|
+| **game** `unit.x/y/z` | the tile the billboard is physically in, plus **elevation** along the world_angle ray | the CPU, and `prim_data` |
+| **screen** `screen.x/y/z` | `unit.x`, `unit.y − unit.z`, `tan(angle)·unit.z` | the draw path |
+| **world** `world.x/y/z` | true 3D | derived for shadow maths |
+
+Game is the source; screen and world are both projections of it.
+
+**`presence` and the caster buckets key on GAME coordinates.** That is the decision that makes head and
+body align *by construction*: they occupy the same tile because they are in the same place, and no
+reconstruction is needed at read time.
+
+### Why this is also the cheaper arrangement
+
+The conversion has to live somewhere. On the shadow side it would be paid **per caster test, per
+light, per texel** — the hot loop. On the draw side it is one subtraction **per prim per frame**.
+
+And the draw side barely pays even that: **`prim_data` is read only by the lighting and shadow
+shaders.** `SquareCache` and `mrtBakeShader` contain no `uData` — the bake draws from the `Primitive`
+objects, on a path that never touches the record. So the record can hold game coordinates without the
+renderer noticing.
+
+### What the rename buys
+
+A CPU-side `unit.y` that silently differs from the shader's `unit.y` is a bug generator. Naming the
+two systems apart makes the difference impossible to overlook — which matters more here than usual,
+since this stream exists because a drawn offset was being mistaken for a position.
+
+### Still to pin
+
+- **Which space is `fine.z` in?** `fine.x/y` refine the drawn sub-unit position. If `fine.z` refines
+  *elevation* it is game-space; if it refines `screen.z` it is screen-space and the CPU must split
+  `tan(angle)·elevation` into `u8 + u4`. Getting this wrong puts the two out of step by a `tan` factor.
+- **What space is the lighting texel grid in?** The blit samples the lightmap by `vWorld = aPosition`,
+  which is the drawn quad — i.e. screen. If the records are game-space, the receiver coverage test and
+  `occludesAt` are exactly where the two meet, and that is where the conversion belongs.

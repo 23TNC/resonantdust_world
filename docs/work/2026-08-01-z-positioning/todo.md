@@ -51,6 +51,13 @@ _There is no draw-side constant: the screen-north shift IS the elevation, 1:1. T
 - [ ] Give `occludes()` the screen→world transform it has never had ([I8](issues.md#i8)). Acceptance: shadow length matches the geometry for a known caster height under a known light height — measured, not tuned to look right.
 - [ ] Re-check the ground case. Acceptance: with every elevation 0 the shadow buffer is bit-identical to before — the transform must be a no-op at the floor.
 
+## P2b — Separate the coordinate systems ([F7](forks.md#f7))
+
+- [ ] Make `RecordSync` write GAME coordinates — the prim's ground tile plus elevation — instead of the drawn position. Acceptance: a head and its body write the SAME `unit.x/y`, differing only in `unit.z`.
+- [ ] Convert to screen where the lighting shaders meet screen-space texels. Acceptance: the receiver coverage test and `occludesAt` are the only conversion sites; the bake still reads no record.
+- [ ] Pin `fine.z`'s space and state it in `VARIABLES.md`. Acceptance: it is unambiguous whether it refines elevation or `screen.z` — the two differ by a `tan` factor.
+- [ ] Prove presence keys on game coordinates. Acceptance: head and body appear in the SAME presence tile, read back from the mirror.
+
 ## P3 — The head rides elevation
 
 - [ ] Add `offset.z` to the pawn DSL and retire `head.offset.y` ([F5](forks.md#f5)). Acceptance: the corpus authors a height; no y-fudge remains on the head slot.
