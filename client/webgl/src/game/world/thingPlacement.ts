@@ -66,7 +66,8 @@ export interface ThingPlacement {
   y: number;
   width: number;
   height: number;
-  zRow: number;
+  /** The tile row a thing SORTS by — a painter's key, not a height (z-positioning F1). */
+  orderRow: number;
 }
 
 /** Resolve a thing's world-px box + z-row from its top-left tile, layout, and horizontal
@@ -91,12 +92,12 @@ export function placeThing(tileX: number, tileY: number, l: ThingLayout, flipX: 
   const drawW = l.span * (scaleAtDraw ? l.scw : 1);
   const drawH = l.span * (scaleAtDraw ? l.sch : 1);
   const bottomRow = tileY + Math.max(1, Math.ceil(l.fh)) - 1;
-  const zRow = Math.min(bottomRow, Math.max(tileY, Math.floor(anchorY)));
+  const orderRow = Math.min(bottomRow, Math.max(tileY, Math.floor(anchorY)));
   return {
     x: (anchorX - sx * drawW) * SQUARE,
     y: (anchorY - l.sy * drawH) * SQUARE,
     width: drawW * SQUARE,
     height: drawH * SQUARE,
-    zRow,
+    orderRow,
   };
 }

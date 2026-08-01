@@ -32,7 +32,10 @@ import { placeThing, readLayout } from "./thingPlacement";
 /** Base zIndex for warm pawn sprites — above the ground (tiles are `0`), matching cold things
  *  ({@link WorldBridge}'s `THING_Z_BASE`); the pawn's anchor tile-row is added so overlapping
  *  pawns/things paint front-over-back. */
-const PAWN_Z_BASE = 1;
+/** z-positioning F1: named `*_ORDER`, not `*_Z`. Since `unit.z` means HEIGHT, a second `z` meaning
+ *  DRAW ORDER beside it is how someone later reads a painter's key as an elevation and spends a day
+ *  on it. These are ordering keys and nothing else. */
+const PAWN_ORDER_BASE = 1;
 
 /** One part SLOT of a pawn kind's visual skeleton — the wasm `moverParts` row (human-pawns
  *  P2). Slot order = DSL `^prim call` order; slot 0 boxes the carrier; `part` names which
@@ -77,9 +80,9 @@ const SPEC_APPLY_EPS = 1 / 32;
 /** How much of a z-ROW one unit of authored slot `depth` is worth (F1). Slot ordering must stay
  *  strictly INSIDE the pawn's row so the row keeps deciding which pawn is in front: with the
  *  per-slot tiebreak below, `|depth| < 45` is safely within `(-0.5, +0.5)`. */
-const SLOT_DEPTH_Z = 0.01;
+const SLOT_DEPTH_ORDER = 0.01;
 /** A stable within-depth tiebreak so two slots at the same depth keep their authored order. */
-const SLOT_ORDER_Z = 0.0001;
+const SLOT_INDEX_ORDER = 0.0001;
 
 /** The slot's depth in SCREEN terms: authored depth is in the pawn's own frame (positive = toward
  *  the viewer when it faces the camera), so a pawn facing AWAY (north, `rotation 2`) has its local
@@ -636,7 +639,7 @@ export class MoverLayer {
     // The pawn's ROW band. Slots sort WITHIN it by their own facing-resolved depth (F1) — the
     // row still decides which pawn is in front, and the blit's warm-over-cold compare reads the
     // row out of `zdepth_world` (from `prim.y + height`), which no slot z touches.
-    const zRowBase = PAWN_Z_BASE + box.zRow;
+    const orderRowBase = PAWN_ORDER_BASE + box.orderRow;
     // ── THE PART-ORDERING RULE (z-positioning F4) ───────────────────────────────────────────
     // Parts of one pawn order by the AUTHORED, facing-flipped `depth` — then by slot index as a
     // stable tiebreak. **Not by elevation**, and this is the load-bearing part of the rule:
@@ -645,10 +648,10 @@ export class MoverLayer {
     // height whichever way the pawn is turned.
     //
     // Since z-positioning P2b, head and body share a base row (they stand in the same place), so
-    // `zRowBase` is equal for both and this expression IS what separates them. It was previously
+    // `orderRowBase` is equal for both and this expression IS what separates them. It was previously
     // true by accident of iteration order; it is now the rule, written where someone would change it.
-    const slotZ = (s: MoverPart, i: number): number =>
-      zRowBase + facingDepth(s.depth, facing) * SLOT_DEPTH_Z + i * SLOT_ORDER_Z;
+    const slotOrder = (s: MoverPart, i: number): number =>
+      orderRowBase + facingDepth(s.depth, facing) * SLOT_DEPTH_ORDER + i * SLOT_INDEX_ORDER;
     // The carrier's game anchor (base-centre) + the px-per-tile scale for slot offsets. Every box
     // is `span × SQUARE` now (F4 — the scale lives in the art), so one tile is `size0 / span`.
     const ax = box.x + size0 * 0.5;
@@ -663,7 +666,7 @@ export class MoverLayer {
     }
     const specs: SlotSpec[] = [
       { texName: tex0.name, flipX: tex0.flipX, x: box.x, y: box.y, w: size0,
-        tint: slots[0].tint, geoColor: slots[0].geoColor, zIndex: slotZ(slots[0], 0) },
+        tint: slots[0].tint, geoColor: slots[0].geoColor, zIndex: slotOrder(slots[0], 0) },
     ];
     for (let i = 1; i < slots.length; i++) {
       const s = slots[i];
@@ -686,7 +689,7 @@ export class MoverLayer {
       specs.push({
         texName: tex.name, flipX: tex.flipX, x: cx - w * 0.5, y: cy - w * 0.5, w,
         tint: s.tint, geoColor: s.geoColor,
-        zIndex: slotZ(s, i),
+        zIndex: slotOrder(s, i),
         elevation: elevTiles * tilePx,   // world px above the ground plane
       });
     }

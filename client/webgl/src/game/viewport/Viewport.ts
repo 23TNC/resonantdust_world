@@ -276,7 +276,7 @@ export class Viewport {
       // shadowing a sprite drawn in FRONT of the caster. B byte = 0 for ground (zIndex 0 → no depth test);
       // for a thing the high bit 0x80 flags "is a thing" and the low 7 bits carry the base row (mod 128).
       // MUST use the SAME row convention as the gather's caster depth: the draw-box bottom
-      // `prim.y + prim.height` (= coldShadowData's stored base-centre `ay`), NOT zRow — those differ by a
+      // `prim.y + prim.height` (= coldShadowData's stored base-centre `ay`), NOT orderRow — those differ by a
       // per-sprite anchor offset, which biased the comparison (some trees right, some wrong).
       { key: `zdepth-world-${suffix}`, resolve: (prim) => ({ texture: white, tint: 0xffffff, depth: prim.zIndex >= 1 ? (0x80 | (Math.floor((prim.y + prim.height) / SQUARE) & 0x7f)) / 255 : -1 }) },
     ];

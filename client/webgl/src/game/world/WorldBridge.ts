@@ -314,7 +314,8 @@ export class WorldBridge {
 
   /** A thing's zIndex from its anchor tile row — higher (nearer the camera-bottom)
    *  rows paint later, so overlapping things z-order front-over-back. */
-  private thingZ(anchorRow: number): number {
+  /** The painter's key for a thing at `anchorRow` — an ORDER, not a height (z-positioning F1). */
+  private thingOrder(anchorRow: number): number {
     return THING_Z_BASE + anchorRow;
   }
 
@@ -624,7 +625,7 @@ export class WorldBridge {
         packed: this.packedFor(this.thingPacked, kindId),
         // Cold objects don't move → seed by their world cell (their tile_seed).
         seed: cellSeed(tileX, tileY),
-        zIndex: this.thingZ(p.zRow),
+        zIndex: this.thingOrder(p.orderRow),
       });
       ids.push(primId);
       this.coldCellPrims.set(ck, { primId, tic, rowKey: key });
@@ -777,7 +778,7 @@ export class WorldBridge {
           geoColor,
           packed: this.packedFor(this.thingPacked, kindId),
           seed: cellSeed(tileX, tileY),
-          zIndex: this.thingZ(p.zRow),
+          zIndex: this.thingOrder(p.orderRow),
         });
       }
     }
