@@ -257,13 +257,90 @@ void main() {
 }
 `;
 
+/** The RECEIVER map (lighting-rework P5) — which surface owns each lighting texel, computed ONCE.
+ *
+ *  [I2](issues.md#i2): the design selects the receiver *inside* the light loop and `break`s on the
+ *  stored pair BEFORE testing coverage, so a texel covered only by `r6` can resolve to `r7` for one
+ *  light and `r6` for another — the same texel lit as two different surfaces, which renders as a
+ *  pixel missing one light's contribution.
+ *
+ *  Coverage is **geometry**: it cannot depend on which light is being evaluated. So it is tested
+ *  first, and — being light-independent — it is computed once per texel here rather than up to 8
+ *  times inside the loop. `presence` is layer-sorted, so walking 7..1 and taking the first hit is
+ *  "topmost wins" by construction. */
+const RECEIVER_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+uniform highp usampler2D uPrim;
+uniform highp usampler2D uDef;
+uniform highp usampler2D uPresence;
+uniform vec2 uWindowOrigin;
+uniform int uLightW;
+uniform int uDilateY;
+out uvec4 fragColor;
+
+const float UPT = ${UNITS_PER_TILE}.0;
+const int   TILE_DIM = 256;
+
+int pmod(int a, int m) { return ((a % m) + m) % m; }
+uvec4 fetchPrim(uint i) { return texelFetch(uPrim, ivec2(int(i) & 1023, int(i) >> 10), 0); }
+uvec4 fetchDef(uint b, uint r) { uint px = b * 16u + r; return texelFetch(uDef, ivec2(int(px) & 1023, int(px) >> 10), 0); }
+uint slotOf(uvec4 v, int i) {
+  uint w = i < 2 ? v.x : (i < 4 ? v.y : (i < 6 ? v.z : v.w));
+  return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
+}
+
+// Does receiver r's footprint cover world point P? Its card stands at C spanning +-halfW in x and
+// rising H in y from the base -- the same card the caster test uses, read the same way.
+bool covers(uint r, vec2 P) {
+  if (r == 0u) return false;
+  uvec4 rec = fetchPrim(r);
+  if (((rec.z >> 28) & 3u) == 0u) return false;              // receive_type 0 -- not a receiver
+  vec2 C = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
+  uvec4 d = fetchDef(rec.y & 0xffffu, (rec.z >> 10) & 0xfu);
+  float halfW = float(((d.y >> 8) & 0xffu) + 1u) * 0.5;
+  float H     = float(((d.y      ) & 0xffu) + 1u);
+  return abs(P.x - C.x) <= halfW && P.y <= C.y && P.y >= C.y - H;
+}
+
+void main() {
+  ivec2 fc = ivec2(gl_FragCoord.xy);
+  int tileX = int(uWindowOrigin.x) + fc.x / uLightW;
+  int tileY = int(uWindowOrigin.y) + fc.y / uLightW;
+  vec2 inTile = (vec2(float(fc.x % uLightW), float(fc.y % uLightW)) + 0.5) / float(uLightW);
+  vec2 P = (vec2(float(tileX), float(tileY)) + inTile) * UPT;
+
+  // VERTICAL OVERHANG. A prim registers in the tile of its BASE, but its card rises NORTH from
+  // there -- so a texel standing on the card sits in a tile whose presence does not list it. Measured
+  // directly: prim 15's base is at unit y 672, the top edge of tile row 42, and its 12-unit card
+  // covers rows 41..42; a texel at y 665 reads row 41 and finds nothing.
+  //
+  // So scan the texel's own row and the rows SOUTH of it, far enough to cover the tallest card. Only
+  // south, and only in y: the card rises, so the tiles that can own this texel are at or below it.
+  // Same shape as the caster walk's x-dilation, one axis over.
+  for (int dy = 0; dy <= uDilateY; dy++) {
+    uvec4 pres = texelFetch(uPresence, ivec2(pmod(tileX, TILE_DIM), pmod(tileY + dy, TILE_DIM)), 0);
+    // TOPMOST FIRST -- presence is layer-sorted, so 7..1 is descending. COVERAGE decides; the stored
+    // pair is never consulted here, which is what makes the answer the same for every light.
+    for (int k = 7; k >= 1; k--) {
+      uint cand = slotOf(pres, k);
+      if (covers(cand, P)) { fragColor = uvec4(cand, 0u, 0u, 0u); return; }
+    }
+  }
+  fragColor = uvec4(0u);                                     // the ground (presence slot 0)
+}
+`;
+
 export class LightPass {
   readonly slotRT: RenderTarget;
   readonly sumRT: RenderTarget;
+  /** Which receiver owns each lighting texel — computed once, read by all 8 light fragments. */
+  readonly receiverRT: RenderTarget;
   private readonly slotProg: Program;
   private readonly sumProg: Program;
   private readonly deltaProg: Program;
   private readonly slotOneProg: Program;
+  private readonly recvProg: Program;
   private readonly quad: Geometry;
 
   constructor(private readonly gl: WebGL2RenderingContext) {
@@ -276,13 +353,29 @@ export class LightPass {
     // quantisation levels needs 13 mantissa bits, and FP16 has 11. FP32's 24 covers it with room.
     // Costs 32 MiB against 16F's 8 -- see the stream's D2.
     this.sumRT = new RenderTarget(gl, { width: LIGHT_W, height: LIGHT_H, formats: ["rgba32float"] });
+    this.receiverRT = new RenderTarget(gl, { width: LIGHT_W, height: LIGHT_H, formats: ["r32uint"] });
     this.slotProg = new Program(gl, FULLSCREEN_VERT, SLOT_FRAG, "light-slots");
     this.sumProg = new Program(gl, FULLSCREEN_VERT, SUM_FRAG, "light-sum");
     this.deltaProg = new Program(gl, FULLSCREEN_VERT, DELTA_FRAG, "light-delta");
     this.slotOneProg = new Program(gl, FULLSCREEN_VERT, SLOT_ONE_FRAG, "light-slot-one");
+    this.recvProg = new Program(gl, FULLSCREEN_VERT, RECEIVER_FRAG, "light-receiver");
     this.quad = new Geometry(gl, this.slotProg, {
       aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
     }, new Uint32Array([0, 1, 2, 0, 2, 3]));
+  }
+
+  /** Compute the receiver map — ONE draw, light-independent, read by all 8 light fragments. */
+  receivers(renderer: Renderer, prim: Texture, def: Texture, presence: Texture,
+            originTileX: number, originTileY: number): void {
+    renderer.draw({
+      program: this.recvProg, geometry: this.quad, target: this.receiverRT, blend: "none",
+      textures: { uPrim: prim, uDef: def, uPresence: presence },
+      uniforms: (p) => {
+        p.uInt("uLightW", LIGHT_TEXELS);
+        p.uInt("uDilateY", 2);          // tallest authored card, in tiles; content-derived later
+        p.uVec2("uWindowOrigin", originTileX, originTileY);
+      },
+    });
   }
 
   /** Recompute every slot (ONE draw), then re-sum. */
@@ -363,7 +456,8 @@ export class LightPass {
   destroy(): void {
     this.slotRT.destroy(); this.sumRT.destroy();
     this.slotProg.destroy(); this.sumProg.destroy();
-    this.deltaProg.destroy(); this.slotOneProg.destroy(); this.quad.destroy();
+    this.deltaProg.destroy(); this.slotOneProg.destroy(); this.recvProg.destroy();
+    this.receiverRT.destroy(); this.quad.destroy();
   }
 }
 

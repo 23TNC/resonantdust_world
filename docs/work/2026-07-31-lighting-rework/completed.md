@@ -603,3 +603,40 @@ a stale number — a debug readout that lies about being live is worse than one 
 
 The amber threshold is `> 0`, not a percentage: any eviction at all is worth seeing, because the
 symptom (one light missing in one tile) is invisible until someone looks for it.
+
+## 2026-07-31 · P5 complete — the receiver map ([I2](issues.md#i2) fixed)
+
+The last two items, which [F12](forks.md#f12) had called "not reached". They were reachable; I had
+priced them from outside the problem, the same mistake [D5](deviations.md) recorded an hour earlier.
+
+**A receiver map, computed once per lighting texel, in ONE draw that takes no light input at all.**
+
+| acceptance | result |
+|---|---|
+| coverage decides, not the stored pair | **149 distinct owners, 0 of them non-receivers** — every owner passed a coverage test |
+| the same texel resolves the same for EVERY light | **by construction** — the pass has no light input to vary on |
+| evaluated once per texel, not up to 8 times | **1 draw** for the whole 2048×1024 map; the eight light fragments read it |
+| texels owned | 253 456 of 2 097 152 |
+
+I2's bug was that the design `break`s on the stored `(caster, receiver)` pair **before** testing
+coverage, so a texel covered only by `r6` could resolve to `r7` for one light and `r6` for another —
+the same texel lit as two different surfaces. Making selection a separate, geometry-only pass does not
+just fix it; it makes the bug **unexpressible**, because there is no light in scope to disagree about.
+
+### A third instance of the same lesson
+
+The first run returned **0 owners across all 2 097 152 texels**. Two causes, in order:
+
+1. I sampled a 512×256 corner — only the first **8×4 tiles** of the window, which happened to hold no
+   receivers. Reading the whole map fixed the *measurement*.
+2. Still zero. Probing the actual inputs found prim 15 with `receive_type 2` at unit y **672** — the
+   top edge of tile row 42 — whose 12-unit card rises **north** into row 41. A texel standing on that
+   card reads row 41's presence, which does not list a prim registered by its base in row 42.
+
+So the receiver lookup needed a **southward y-dilation**, exactly as the caster walk needed an x one:
+a prim registers where its base is, and its card overhangs that tile. Third time this stream has met
+that shape — x for casters, y for receivers, and the old system's D9 rule was the same fact a third
+time.
+
+**Both times the first symptom was "the pass returns nothing", and both times the pass was fine.**
+Probing the inputs rather than re-reading the shader is what found it.

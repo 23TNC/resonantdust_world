@@ -168,6 +168,7 @@ export class Viewport {
     // lighting-rework P4: run the gather and histogram which TIER answered each (unit, light).
     (globalThis as unknown as { __gather: () => unknown }).__gather = () => this.runGather();
     // lighting-rework P5: drive the whole chain each frame and show it.
+    (globalThis as unknown as { __receivers: () => unknown }).__receivers = () => this.receiverCheck();
     (globalThis as unknown as { __lit: (on?: boolean) => unknown }).__lit = (on?: boolean) => {
       this.litEnabled = on ?? !this.litEnabled;
       if (this.litEnabled) this.buildRecords();
@@ -514,6 +515,9 @@ export class Viewport {
       const w = this.map.window, r = this.records;
       this.shadows.gather(this.renderer, { prim: r.primTex, def: r.defTex, light: r.lightTex,
                                            presence: r.presenceTex }, w.winCol, w.winRow);
+      // P5: the receiver map FIRST, once -- it is geometry, so it is the same for every light and
+      // the eight light fragments read it instead of each re-deciding (I2).
+      this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, w.winCol, w.winRow);
       this.lights.run(this.renderer, r.primTex, r.lightTex, w.winCol, w.winRow,
                       { def: r.defTex, shadow: this.shadows.prev, unitsX: 512, refine: true });
     }
@@ -1107,6 +1111,45 @@ export class Viewport {
       tierCounts: { none: tally[0], incumbent: tally[1], adjacency: tally[2], corridorWalk: tally[3] },
       tierPercentOfAnswered: { incumbent: pct(tally[1]), adjacency: pct(tally[2]), corridorWalk: pct(tally[3]) },
       gateSelectivityPct: +((answered / (W * H * 8)) * 100).toFixed(2),
+      glError: gl.getError(),
+    };
+  }
+
+  /** lighting-rework P5 — the receiver map's acceptance ([I2](issues.md#i2)).
+   *
+   *  The map is written by ONE draw with no light input at all, so "the same texel resolves to the
+   *  same receiver for every light" is true by construction rather than by testing all eight. What is
+   *  worth testing is that COVERAGE decides and that layer order breaks ties the right way. */
+  private receiverCheck(): Record<string, unknown> {
+    const gl = this.renderer.gl, r = this.records, w = this.map.window;
+    let draws = 0;
+    const de = gl.drawElements, da = gl.drawArrays;
+    gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
+    gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
+    this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, w.winCol, w.winRow);
+    gl.drawElements = de; gl.drawArrays = da;
+
+    // Read the WHOLE map. A corner sample covers only the first 8x4 tiles of the window, which can
+    // easily hold no receivers at all -- and "0 covered" then looks like a broken pass.
+    const W = this.lights.size.w, H = this.lights.size.h;
+    const buf = new Uint32Array(W * H);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, (this.lights.receiverRT as unknown as { fbo: WebGLFramebuffer }).fbo);
+    gl.readPixels(0, 0, W, H, gl.RED_INTEGER, gl.UNSIGNED_INT, buf);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    const owned = new Map<number, number>();
+    let covered = 0;
+    for (const v of buf) { if (v !== 0) { covered++; owned.set(v, (owned.get(v) ?? 0) + 1); } }
+    // every owner must actually BE a receiver — coverage decided, so nothing else can have got in
+    let nonReceivers = 0;
+    for (const id of owned.keys()) if (r.debugPrim(id).receiveType === 0) nonReceivers++;
+
+    return {
+      drawsForWholeMap: draws,
+      lightIndependent: "by construction — the pass takes no light input",
+      texelsSampled: W * H, texelsWithAReceiver: covered,
+      distinctOwners: owned.size,
+      ownersThatAreNotReceivers: nonReceivers,
       glError: gl.getError(),
     };
   }

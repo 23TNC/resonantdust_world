@@ -203,8 +203,9 @@ the shadow edge quantises to 2 px rather than 1. That is a real difference and i
 display staying at one fetch. If it ever matters visually, the honest fix is to raise
 `TEXTILE_LIGHT`, not to move the refine — the same dial, without giving up the summed map.
 
-**Consequence for P5's first two items.** "Select the receiver by coverage first" and "hoist surface
-selection out of the light loop" describe the design's per-pixel receiver loop, which in this
-architecture does not exist in that form: the slot pass lights the ground, and billboard receivers are
-a separate concern the display composites. [I2](issues.md#i2)'s finding still stands and still has to
-be honoured wherever that loop is eventually written — it is not solved, it is **not yet reached**.
+**Consequence for P5's first two items — and a correction.** I first read "select the receiver by
+coverage first" and "hoist surface selection out of the light loop" as describing a per-pixel loop this
+architecture does not have, and recorded them as *not reached*. That was wrong, and priced from outside
+the problem. They are answered better here than in the design: a **receiver map** computed once per
+lighting texel, by a pass with **no light input**, makes [I2](issues.md#i2)'s bug unexpressible rather
+than merely fixed — there is no light in scope for two evaluations to disagree about.
