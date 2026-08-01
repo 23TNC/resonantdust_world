@@ -25,9 +25,9 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 
 ## P0 — Make height observable at all
 
-- [ ] RE-READ the shadow path before planning against it ([I1](issues.md#i1)). Acceptance: the current `occludesAt` is quoted in `completed.md` — heights ARE populated and interpolated, and two diagnoses were already given from stale memory.
-- [ ] Confirm the height test discriminates TODAY. Acceptance: raising one light's height visibly shortens its casters' shadows at zoom 3 — if it does, the gap is the metric ([I9](issues.md#i9)), not the machinery.
-- [ ] Add an elevation probe: a prim's `unitZ`, its card's world extent, and where the projection puts it. Acceptance: one call answers "how high does the code think this is, and where does it draw it".
+- [x] RE-READ the shadow path before planning against it ([I1](issues.md#i1)). Acceptance: the current `occludesAt` is quoted in `completed.md` — heights ARE populated and interpolated, and two diagnoses were already given from stale memory.
+- [x] Confirm the height test discriminates TODAY. Acceptance: raising one light's height visibly shortens its casters' shadows at zoom 3 — if it does, the gap is the metric ([I9](issues.md#i9)), not the machinery.
+- [x] Add an elevation probe: a prim's `unitZ`, its card's world extent, and where the projection puts it. Acceptance: one call answers "how high does the code think this is, and where does it draw it".
 
 ## P0b — The channel relayout ([I5](issues.md#i5))
 

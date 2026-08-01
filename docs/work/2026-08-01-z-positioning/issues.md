@@ -210,3 +210,37 @@ and already coherent. What they lack is the scale factor between the two axes th
 
 Which also means the **drawn** side needs nothing: drawing is flat and screen-aligned, with the
 obliqueness baked into the art.
+
+
+## I14 — The live scene cannot supply a caster on demand — MITIGATED {#i14}
+
+Verifying anything about a shadow needs a caster whose geometry is known. The live scene resists that
+in three separate ways, and each one cost time before it was identified:
+
+- **The standard fixture region is empty.** `?focus=100,50` holds 2965 map prims and **zero** with a
+  texture — bare terrain. Nothing there can cast, so every shadow check run against it was checking
+  nothing. (`?focus=95,56` does have content, including corpus torches at the authored 40 units.)
+- **Records populate asynchronously**, and a dump taken too early reads as a scene with no casters. It
+  is not — 525 casters exist once synced. See the correction in `completed.md`.
+- **Mover part textures resolve after `RecordSync` has stamped `def = INDEX_NONE`**, which forces
+  `castType = 0`. The pawn is the one thing this stream most needs to see, and it is the least
+  reliable caster in the scene.
+
+**Mitigated, not fixed**, by `__caster` — a solid box placed through the real record path
+([`completed.md`](completed.md)). That covers geometric verification for P1–P2. The mover-texture
+timing is a genuine defect but belongs to whatever owns `RecordSync`'s resolve ordering, not here;
+P3 needs the real pawn and will have to confront it.
+
+## I15 — `document.hidden` stops the render loop, and it is silent {#i15}
+
+The tab under automation is backgrounded, so `requestAnimationFrame` never fires and **nothing
+re-renders after a record write**. Screenshots then show a stale framebuffer that looks like a
+correct render of the old state — which is how an early measurement in this session produced a
+pixel-difference of exactly 0 between "caster casting" and "caster disabled" and briefly read as
+"the caster does nothing".
+
+**Workaround:** one synchronous `__viewport.tick()` before capture. **Not more than one** — a loop of
+twelve froze the renderer hard enough to time out CDP.
+
+**Prefer the self-tests to pixels.** `__gather()` runs its own draws and reports counts, so it is
+immune to this entirely; it is what produced P0's discrimination table after pixel-sampling failed.

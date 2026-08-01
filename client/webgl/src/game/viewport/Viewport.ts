@@ -28,6 +28,13 @@ import { LIGHT_READ_SCALE } from "./lightPass";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
+import { WORLD_TILT_DEG, TILT_TAN, worldHeightForElevation } from "./worldTilt";
+
+/** Height for debug-placed lights, in units — **the corpus's own contract**, not a taste call.
+ *  `content/visual/things.rd` authors `2.5 &thing.light.height set` for torches and states in a
+ *  comment that 2.5 tiles = 40 units is what a flame must clear to cast against anything. A debug
+ *  light below that models a lamp buried in the floor (z-positioning P0). */
+const DEBUG_LIGHT_HEIGHT_UNITS = 40;
 
 const BAKE_BUDGET = 128;
 /** Minimum cold squares baked per frame regardless of warm load — so a warm flood can't
@@ -107,7 +114,9 @@ export class Viewport {
    *  MOVING lights, and a static measurement is the best case of the very mechanism it stresses —
    *  with nothing moving, last frame's caster is still the caster and the incumbent tier absorbs
    *  everything. `__orbit(true)` displaces every light each frame through the real record path. */
-  private liveLights: { index: number; homeX: number; homeY: number; tileX: number; tileY: number }[] = [];
+  private liveLights: { index: number; homeX: number; homeY: number; tileX: number; tileY: number;
+                        /** z-positioning P0: carried so `stepOrbit` cannot silently drop it back to 0. */
+                        unitZ: number }[] = [];
   private orbitOn = false;
   private orbitPhase = 0;
   /** lighting-rework P6: the gather's tier split + the refine gate's selectivity, for the debug
@@ -182,7 +191,14 @@ export class Viewport {
     (globalThis as unknown as { __zprobe: (tx: number, ty: number) => unknown }).__zprobe =
       (tx: number, ty: number) => this.zProbe(tx, ty);
     // lighting-rework I11: place N lights, and move them.
-    (globalThis as unknown as { __lights: (n?: number) => unknown }).__lights = (n?: number) => this.placeLights(n ?? 16);
+    (globalThis as unknown as { __lights: (n?: number, h?: number) => unknown }).__lights =
+      (n?: number, h?: number) => this.placeLights(n ?? 16, h ?? DEBUG_LIGHT_HEIGHT_UNITS);
+    // z-positioning P0: a DETERMINISTIC caster, because the live scene cannot supply one (I14).
+    (globalThis as unknown as {
+      __caster: (a?: { tileX?: number; tileY?: number; w?: number; h?: number; elev?: number }) => unknown;
+    }).__caster = (a) => this.placeCaster(a ?? {});
+    // z-positioning P0: what does the code think a prim's height is, and where does it put it?
+    (globalThis as unknown as { __elev: (i?: number) => unknown }).__elev = (i?: number) => this.elevationProbe(i);
     (globalThis as unknown as { __orbit: (on?: boolean) => unknown }).__orbit = (on?: boolean) => {
       this.orbitOn = on ?? !this.orbitOn;
       return { orbiting: this.orbitOn, lights: this.liveLights.length };
@@ -1109,8 +1125,111 @@ export class Viewport {
              receivers: [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6) };
   }
 
-  /** lighting-rework I11 — place N lights across the window and remember their orbit origins. */
-  placeLights(n: number): Record<string, unknown> {
+  /** z-positioning P0 — a caster with KNOWN geometry, placed through the real record path.
+   *
+   *  The live world cannot supply one ([I14](../../../../../docs/work/2026-08-01-z-positioning/issues.md#i14)):
+   *  the standard fixture region holds no things at all, and the only candidates — mover parts —
+   *  resolve their textures after `RecordSync` has already stamped `def = INDEX_NONE`, which makes
+   *  `castType` 0. Nothing in the scene casts, so nothing about a shadow can be checked against it.
+   *
+   *  **The silhouette is skipped on purpose, not for want of atlas content.** `silhouetteHit`
+   *  returns its `offPage` argument for any definition whose page lane is past the two bound atlas
+   *  pages, and `occludesAt` passes `true` there — *"the caller's conservative answer (casters: the
+   *  solid box)"*. Parking this def on page 3 therefore yields an exact `w × h` rectangular
+   *  occluder, which is what a geometric check wants: a disagreement is then the geometry, never the
+   *  art. The same trick is why the real path's off-page degradation is safe.
+   *
+   *  Placed through `allocPrim`/`writePrim`/`writePresence` — the identical calls `RecordSync` makes
+   *  — so the walk, the buckets and the corridor all see an ordinary caster. */
+  private placeCaster(a: { tileX?: number; tileY?: number; w?: number; h?: number; elev?: number }):
+      Record<string, unknown> {
+    const r = this.records, gl = this.renderer.gl, w = this.map.window;
+    const tileX = a.tileX ?? w.winCol + 8, tileY = a.tileY ?? w.winRow + 8;
+    const wid = Math.max(1, Math.min(16, a.w ?? 8));      // units across
+    const hi  = Math.max(1, Math.min(255, a.h ?? 24));    // units tall
+    const elev = Math.max(0, Math.min(255, a.elev ?? 0));
+
+    // The subframe must FIT the frame — a span is 16 units, and the lane assertion rejects a
+    // subframe that overhangs it. Derive the span from the requested box rather than pinning it.
+    const span = Math.max(1, Math.min(16, Math.ceil(Math.max(wid, hi) / 16)));
+    const frameUnits = span * 16;
+    const block = r.allocDefinition(ROTATIONS_PER_DEF);
+    for (let rot = 0; rot < ROTATIONS_PER_DEF; rot++) {
+      r.writeDefinition(block, rot, {
+        frameX: 0, frameY: 0, frameSpan: span,
+        anchorX: 3,                              // ATLAS PAGE 3 -> off-page -> solid box, see above
+        subX: Math.round(frameUnits / 2 - wid / 2),   // centre the card on the prim: occludesAt
+        subY: 0, subW: wid, subH: hi,                 // places at C.x - frameUnits/2 + subX
+        castType: 1, receiveType: 2, seed: 64,
+      });
+    }
+    const index = r.allocPrim();
+    const unitX = tileX * 16 + 8, unitY = tileY * 16 + 8;
+    r.writePrim(index, { unitX, unitY, unitZ: elev, definition: block,
+                         rotation: 0, castType: 1, receiveType: 2 });
+    r.writePresence(tileX, tileY, INDEX_NONE, [{ index, layer: 0 }]);
+    r.upload(gl);
+    return { index, block, tile: [tileX, tileY], unit: [unitX, unitY], frameSpan: span,
+             widthUnits: wid, heightUnits: hi, elevationUnits: elev };
+  }
+
+  /** z-positioning P0 — **how high does the code think this prim is, and where does it put it?**
+   *
+   *  One call, because the three numbers that answer it live in three different places: the stored
+   *  elevation is in the record, the card's extent is in the definition, and the projection is in
+   *  `worldTilt`. Chasing them separately is how this stream's predecessor produced three diagnoses
+   *  from stale memory.
+   *
+   *  With no argument, reports every prim carrying a height or a cast type — the usual question is
+   *  *"is anything elevated at all"*, and the answer has twice been "no" when it was assumed to be
+   *  yes. */
+  private elevationProbe(index?: number): Record<string, unknown> {
+    const r = this.records, m = r.primMirror;
+    const read = (i: number) => {
+      const x = m[i * 4], y = m[i * 4 + 1], z = m[i * 4 + 2];
+      const elevation = (y >>> 24) + ((y >>> 16) & 0xf) / 16;   // u8 unit.z + u4 fine.z
+      const castType = (z >>> 30) & 3, block = y & 0xffff;
+      // The card's extent comes from the definition's subframe height (units), the same lane
+      // `occludesAt` reads as `hTop`. cast_type 2 silhouettes off the SIDE frame (rotation 1).
+      let cardH: number | null = null;
+      if (block !== INDEX_NONE) {
+        // A def BLOCK is ROTATIONS_PER_DEF rotation px wide — `writeDefinition` indexes
+        // (block * ROTATIONS_PER_DEF + rotation), and so must anything reading it back.
+        const d = r.defMirror;
+        const di = (block * ROTATIONS_PER_DEF + (castType === 2 ? 1 : ((z >>> 10) & 0xf))) * 4;
+        cardH = (d[di + 1] & 0xff) + 1;
+      }
+      return {
+        i, unitX: x >>> 16, unitY: x & 0xffff,
+        elevation, worldZ: +worldHeightForElevation(elevation).toFixed(3),
+        screenY: (x & 0xffff) - elevation,      // what the draw path should place (F7)
+        cardH, cardTopWorldZ: cardH === null ? null : +(worldHeightForElevation(elevation) + cardH).toFixed(3),
+        castType, emitType: (z >>> 26) & 3, receiveType: (z >>> 28) & 3, block,
+      };
+    };
+    if (index !== undefined) return { tiltDeg: WORLD_TILT_DEG, tiltTan: +TILT_TAN.toFixed(6), prim: read(index) };
+    const rows = [];
+    for (let i = 1; i < r.primNext; i++) {
+      const y = m[i * 4 + 1], z = m[i * 4 + 2];
+      if ((y >>> 24) !== 0 || ((y >>> 16) & 0xf) !== 0 || ((z >>> 30) & 3) !== 0) rows.push(read(i));
+    }
+    return { tiltDeg: WORLD_TILT_DEG, tiltTan: +TILT_TAN.toFixed(6),
+             primNext: r.primNext, elevatedOrCasting: rows.length, prims: rows.slice(0, 24) };
+  }
+
+  /** lighting-rework I11 — place N lights across the window and remember their orbit origins.
+   *
+   *  **z-positioning P0: `heightUnits` is not decoration.** This hook wrote no `unitZ` at all, so
+   *  every debug light sat at `Lz = 0` — and at `Lz = 0` the occlusion solve DEGENERATES: the ray
+   *  height `h = mix(Lz, targetH, t)` is identically 0 over a ground receiver, so the card test
+   *  `h > hTop || h < hBot` can never reject and **every caster in the corridor occludes at every
+   *  distance**. Infinite streak shadows, from a light that is physically inside the floor.
+   *
+   *  Every visual check in `2026-07-31-lighting-rework` ran through this hook, which is why its
+   *  shadows were *"not remotely correct"* ([I13](../../../../../docs/work/2026-07-31-lighting-rework/issues.md#i13))
+   *  while the corpus's own torches — which DO author 2.5 tiles — were fine. The default matches
+   *  that authored contract so the debug path and the content path agree by construction. */
+  placeLights(n: number, heightUnits: number = DEBUG_LIGHT_HEIGHT_UNITS): Record<string, unknown> {
     const r = this.records, w = this.map.window, gl = this.renderer.gl;
     this.liveLights = [];
     for (let i = 0; i < n; i++) {
@@ -1119,8 +1238,10 @@ export class Viewport {
       const index = r.allocPrim();
       const homeX = tileX * 16 + 8, homeY = tileY * 16 + 8;
       r.writePrim(index, { unitX: homeX, unitY: homeY, definition: 0, emitType: 1,
+                           unitZ: Math.max(0, Math.min(255, Math.round(heightUnits))),
                            intensity: 63, reach: 16, colors: [0, 0, 0, 190] });
-      this.liveLights.push({ index, homeX, homeY, tileX, tileY });
+      this.liveLights.push({ index, homeX, homeY, tileX, tileY,
+                             unitZ: Math.max(0, Math.min(255, Math.round(heightUnits))) });
     }
     this.rebuildLightSet();
     r.upload(gl);
@@ -1139,7 +1260,11 @@ export class Viewport {
       const ph = this.orbitPhase + i * 0.7;         // per-light phase, so they do not move in lockstep
       const ux = Math.round(L.homeX + Math.cos(ph) * R);
       const uy = Math.round(L.homeY + Math.sin(ph) * R);
+      // z-positioning P0: `writePrim` writes a WHOLE record — omitting unitZ here would put every
+      // orbiting light back on the floor, which is exactly how the "moving lights" test ended up
+      // measuring degenerate shadows. The height rides on liveLights so it survives the re-write.
       r.writePrim(L.index, { unitX: ux & 0xffff, unitY: uy & 0xffff, definition: 0, emitType: 1,
+                             unitZ: L.unitZ,
                              intensity: 63, reach: 16, colors: [0, 0, 0, 190] });
       L.tileX = Math.floor(ux / 16); L.tileY = Math.floor(uy / 16);
     }

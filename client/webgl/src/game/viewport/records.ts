@@ -362,7 +362,10 @@ export class Records {
     return out;
   }
 
-  private primNext = 1;                 // 0 is the sentinel and is never handed out
+  /** One past the highest prim index ever handed out. **Readable** so debug probes can walk the
+   *  live set — z-positioning P0 needed exactly this to answer "is anything elevated at all", and
+   *  the answer was twice assumed rather than checked. Allocation stays internal. */
+  primNext = 1;                         // 0 is the sentinel and is never handed out
   private defNext = 1;                  // definition BLOCK index; px base = block * ROTATIONS_PER_DEF
   private readonly primFree: number[] = [];
   /** Rotations actually allocated per definition block — the clamp bound for [F7](forks.md#f7). */
