@@ -358,16 +358,19 @@ is the global sentinel** in every index space, so one comparison covers "empty s
 ```
 prim_data                                          1 px per prim, RGBA32UI
   R  u16 unit.x            | u16 unit.y
-  G  u8  unit.z            | u4 fine.x | u4 fine.y | u16 definition_index
+  G  u8  unit.z (24-31)    | u4 fine.x (20-23) | u4 fine.y (16-19)
+     u4  fine.z (12-15)    | u8 seed (4-11)    | u4 rotation (0-3)
   B  u2  cast_type (30-31) | u2 receive_type (28-29) | u2 emit_type (26-27)
-     u4  layer (22-25)     | u8 seed (14-21) | u4 rotation (10-13)
-     u4  reach (6-9, BIASED +1 = 1..16 tiles) | u6 intensity (0-5)
+     u4  reach (22-25, BIASED +1 = 1..16 tiles) | u6 intensity (16-21)
+     u16 definition_index (0-15)
   A  u8  color.1 | u8 color.2 | u8 color.3 | u8 color.4      (.4 = emitted light colour)
 
 definition_data                     16 sequential px per definition, indexed by ROTATION
   R  u12 frame.x | u12 frame.y | u4 frame.span | u2 anchor.x | u2 anchor.y
   G  u8  subframe.x | u8 subframe.y | u8 subframe.width | u8 subframe.height
-  B  (as prim B — the defaults a prim copies)
+  B  u2  cast_type (30-31) | u2 receive_type (28-29) | u2 emit_type (26-27)
+     u4  layer (22-25)     | u8 seed (14-21) | u4 rotation (10-13)
+     u4  reach (6-9, BIASED +1) | u6 intensity (0-5)
   A  u8  color.1 | u8 color.2 | u8 color.3 | u8 color.4
 ```
 
@@ -375,6 +378,20 @@ definition_data                     16 sequential px per definition, indexed by 
 be no frame, so the natural encoding wastes the one value it cannot use and gets the maximum wrong by
 one. `subframe.x`/`y` are genuine 0-based offsets and take **no** bias — the two conventions sit in
 adjacent lanes of the same channel.
+
+**The two BLUE channels are NO LONGER the same layout** (z-positioning P0b). `definition_index` moved
+from GREEN to BLUE's clean low 16 bits, paid for by moving `seed` and `rotation` to GREEN and retiring
+`layer`; a definition has no `definition_index` to hold and still needs `seed` where it is, because
+`silhouetteHit` reads it as `pxPerUnit × 8`. So the two records diverge here on purpose.
+
+**"A prim copies the definition's BLUE" now means FIELD-WISE, not word-wise** — which is what it
+always was in practice: `RecordSync` passes `cast_type`/`receive_type` from the resolved definition
+into `writePrim`, and each record packs from the field NAMES independently. Nothing ever copied the
+raw word, which is why the split is safe.
+
+**`fine.z` is game-space, in units**, like `fine.x`/`fine.y` and unlike anything projected: the full
+elevation is `unit.z + fine.z/16`, and both terms convert to screen together. It refines the
+ELEVATION, not the already-projected `screen.z` — the two differ by a factor of `tan(world_tilt)`.
 
 `base + rotation` is the whole addressing rule for art. It subsumes the n/s perpendicular caster card,
 the e/w mirror and the 16-cell autotile table: three special cases collapse into one add.
@@ -403,9 +420,12 @@ first and takes the first receiver covering the pixel. Over-cap eviction keeps t
 
 **The ONE z contract** (lighting-correctness P4): the presence sort key IS the draw's `zIndex` — the
 same number the painter orders sprites with — so the surface a pixel is LIT as is the surface it is
-DRAWN as, by construction (`writePresence` rejects non-finite keys). The prim `layer` LANE is a
-different axis: it carries the pawn PART SLOT (piece layering within one object — body 0, head 1),
-never world z.
+DRAWN as, by construction (`writePresence` rejects non-finite keys).
+
+The prim `layer` LANE is **retired** (z-positioning P0b) — it carried the pawn part slot and nothing
+ever read it back, so it was write-only data occupying the nibble `fine.z` now needs. World z-order is
+untouched: it lives in the presence SORT, keyed by the same `zIndex` the painter draws with.
+`definition_data` keeps its own `layer` lane.
 
 ```
 light slots  LIGHT_SLOTS px per lighting texel, RGB10_A2   one light each, value stored /4

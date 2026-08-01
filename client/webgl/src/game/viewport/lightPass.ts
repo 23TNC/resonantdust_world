@@ -182,7 +182,7 @@ void main() {
   // normal composites at the texel's OWN position P -- the composite is screen-space, so the
   // drawn pixel standing there (card or ground) IS the surface being lit. Only the light
   // DIRECTION's frame branches on receiver-ness. A wrap floor keeps backsides readable.
-  float Lz2 = float(rec.y >> 24);
+  float Lz2 = primElevation(rec);
   vec3 nrm = sceneNormalAt(P);
   float ndotl;
   if (recvIdx != 0u) {
@@ -229,7 +229,7 @@ void main() {
       if (caster == recvIdx) { caster = 0u; }
       if (caster != 0u) {
         gated = true;
-        occluded = occludesAt(caster, Lpos, float(rec.y >> 24), Puse, targetH);
+        occluded = occludesAt(caster, Lpos, primElevation(rec), Puse, targetH);
       }
     }
   }
@@ -398,8 +398,8 @@ bool covers(uint r, vec2 P) {
   uvec4 rec = fetchPrim(r);
   if (((rec.z >> 28) & 3u) == 0u) return false;              // receive_type 0 -- not a receiver
   vec2 C = primPos(rec);            // P5: fine-refined — coverage glides with the mover
-  uint prot = (rec.z >> 10) & 0xfu;
-  uvec4 d = fetchDef(rec.y & 0xffffu, prot);
+  uint prot = primRot(rec);
+  uvec4 d = fetchDef(primBlock(rec), prot);
   int subXi = int(d.y >> 24);
   int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
   int spanI = int((d.x >> 4) & 0xfu) + 1;

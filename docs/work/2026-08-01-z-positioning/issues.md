@@ -244,3 +244,37 @@ twelve froze the renderer hard enough to time out CDP.
 
 **Prefer the self-tests to pixels.** `__gather()` runs its own draws and reports counts, so it is
 immune to this entirely; it is what produced P0's discrimination table after pixel-sampling failed.
+
+
+## I16 — P0b's definition-retirement item is a PLAN ERROR {#i16}
+
+> *"Retire `layer`/`seed`/`rotation` from `definition_data` to `u16 reserved`. Acceptance: nothing
+> reads the retired lanes."*
+
+**The acceptance is false as written.** `silhouetteHit` reads the definition's `seed` lane on every
+sampled texel:
+
+```glsl
+float ppu = float((d.z >> 14) & 0xffu) / 8.0;   // the def SEED lane: atlas px per unit x 8
+```
+
+That is not a leftover — `RecordSync.defFields` deliberately stores `pxPerUnit × 8` there
+(*"the silhouette sampler needs it, and hardcoding 8 was only ever true at the 128-px lod"*).
+Retiring it would put every silhouette back on a hardcoded scale and break sampling at any lod but
+one. `rotation` is likewise live in `debugDefinition`.
+
+**I wrote this item myself**, generalising "the prim's BLUE frees up" into "the definition's does
+too". The prim's BLUE frees because `definition_index` moved in and `layer` was write-only; none of
+that reasoning transfers to a record that has no `definition_index` and a live `seed`.
+
+**Not built, and not quietly dropped.** The three lanes it named have different fates:
+
+| lane | in `definition_data` | why |
+|---|---|---|
+| `seed` | **keep** | `silhouetteHit`'s `pxPerUnit × 8` |
+| `rotation` | **keep** | read by `debugDefinition`; harmless |
+| `layer` | could go | but it buys nothing — the def's BLUE has no pressure on it |
+
+The item existed to free bits. The definition record has no bit pressure, so there is nothing to buy.
+**Recommend closing it as unnecessary** rather than re-scoping — but that is a plan change, so it is
+recorded here rather than decided silently.

@@ -31,10 +31,10 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 
 ## P0b — The channel relayout ([I5](issues.md#i5))
 
-- [ ] Move `seed` + `rotation` to GREEN and `definition_index` to BLUE; `u4 layer` becomes `u4 fine.z`. Acceptance: both words still total exactly 32 bits, and every shader lane read is updated with them.
-- [ ] Retire `layer`/`seed`/`rotation` from `definition_data` to `u16 reserved`. Acceptance: nothing reads the retired lanes; `presence`'s sort still uses the caller's value, which is where it always came from.
-- [ ] Update `VARIABLES.md` and the "BLUE and ALPHA are copied" line. Acceptance: the copy rule names the lanes that are actually copied now.
-- [ ] Prove the relayout changed no pixel. Acceptance: with every height 0, the render and the shadow buffer are identical to before — this is a move, not a behaviour change.
+- [x] Move `seed` + `rotation` to GREEN and `definition_index` to BLUE; `u4 layer` becomes `u4 fine.z`. Acceptance: both words still total exactly 32 bits, and every shader lane read is updated with them.
+- [ ] Settle `definition_data`'s retired lanes ([I16](issues.md#i16) — the original item's acceptance is false: `silhouetteHit` reads the def's `seed` as `pxPerUnit × 8`). Acceptance: a decision recorded — the recommendation is to close it as unnecessary, since the definition record has no bit pressure to relieve.
+- [x] Update `VARIABLES.md` and the "BLUE and ALPHA are copied" line. Acceptance: the copy rule names the lanes that are actually copied now.
+- [x] Prove the relayout changed no pixel. Acceptance: with every height 0, the render and the shadow buffer are identical to before — this is a move, not a behaviour change.
 
 ## P1 — The caster card starts at its own height
 

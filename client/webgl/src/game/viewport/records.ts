@@ -72,8 +72,16 @@ export const LIGHT_LANES_GLSL = /* glsl */ `
 const float INTENSITY_MAX = ${INTENSITY_MAX}.0;
 // lighting-correctness P1: reach is STORED (u4 biased +1 = 1..16 tiles, BLUE bits 6-9);
 // intensity is u6 (bits 0-5). Reach bounds registration + walks; falloff shapes within it.
-uint  intensityFromB(uint B) { return B & 0x3Fu; }
-float reachUnitsFromB(uint B) { return float(((B >> 6u) & 0xFu) + 1u) * ${UNITS_PER_TILE}.0; }
+// z-positioning P0b: BLUE was repacked to make room for definition_index in the low 16 bits, so
+// intensity moved 0->16 and reach 6->22. PRIM records only -- a definition's BLUE is unchanged.
+uint  intensityFromB(uint B) { return (B >> 16u) & 0x3Fu; }
+float reachUnitsFromB(uint B) { return float(((B >> 22u) & 0xFu) + 1u) * ${UNITS_PER_TILE}.0; }
+// The prim's definition block, and its rotation (GREEN low nibble since P0b).
+uint  primBlock(uvec4 rec) { return rec.z & 0xffffu; }
+uint  primRot(uvec4 rec)   { return rec.y & 0xfu; }
+// Full ELEVATION in units -- u8 unit.z plus the u4 sixteenths lane (F7: fine.z is game-space,
+// so it refines the elevation itself, and both terms convert to screen together).
+float primElevation(uvec4 rec) { return float(rec.y >> 24) + float((rec.y >> 12) & 0xFu) / 16.0; }
 // lighting-visual P4: the falloff SCALES WITH THE STORED REACH (the old d0 was pinned at one
 // tile, so a reach-16 light died within ~3 tiles: 1/257 of I at its own boundary). d0 = reach/2
 // keeps half intensity at mid-pool; a linear feather over the last 15% lands exactly 0 AT reach,
@@ -142,8 +150,8 @@ bool occludesAt(uint c, vec2 L, float Lz, vec2 P, float targetH) {
   uint ct = (rec.z >> 30) & 3u;
   if (ct == 0u) return false;
   vec2 C = primPos(rec);            // P5: fine-refined — the card glides with the mover
-  uint block = rec.y & 0xffffu;
-  uint prot  = (rec.z >> 10) & 0xfu;
+  uint block = primBlock(rec);
+  uint prot  = primRot(rec);
   if (ct == 2u) {
     uvec4 d = fetchDef(block, 1u);                 // the SIDE frame silhouettes the ns card
     int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
@@ -226,10 +234,18 @@ function biased(value: number, bits: number, lane: string): number {
 export interface PrimFields {
   unitX: number; unitY: number; unitZ?: number;
   fineX?: number; fineY?: number;
+  /** Sub-unit ELEVATION, in sixteenths of a unit — **game space, like `unit.z`**
+   *  ([F7](../../../../../docs/work/2026-08-01-z-positioning/forks.md#f7)). The full elevation is
+   *  `unit.z + fine.z/16`; both terms convert to screen together, so this refines the elevation
+   *  itself and NOT the already-projected `screen.z`. Took over the retired `u4 layer` lane. */
+  fineZ?: number;
   definition: number;
   rotation?: number;
   castType?: number; receiveType?: number; emitType?: number;
-  layer?: number; seed?: number;
+  /** z-positioning P0b: `layer` is GONE from a prim — the lane became `fine.z`. Presence sorting
+   *  never read it; `RecordSync` passes the draw's `zIndex` straight to `writePresence`, which is
+   *  where the z-order has always come from. */
+  seed?: number;
   /** 0..[`INTENSITY_MAX`] (u6). */
   intensity?: number;
   /** Emitter reach in TILES, 1..[`REACH_MAX_TILES`] — stored biased (default 1). */
@@ -436,19 +452,46 @@ export class Records {
     const rot = this.clampRotation(f.definition, f.rotation ?? 0);
     const c = f.colors ?? [0, 0, 0, 0];
     const R = (fit(f.unitX, 16, "unit.x") * 0x10000 + fit(f.unitY, 16, "unit.y")) >>> 0;
+    // z-positioning P0b: GREEN gathers the whole POSITION — the three fine lanes beside unit.z —
+    // plus seed and rotation, which moved out of BLUE to make room for definition_index there.
     const G = ((fit(f.unitZ ?? 0, 8, "unit.z") << 24)
              | (fit(f.fineX ?? 0, 4, "fine.x") << 20)
              | (fit(f.fineY ?? 0, 4, "fine.y") << 16)
-             | fit(f.definition, 16, "definition_index")) >>> 0;
-    const B = this.packTypeLanes(f, rot);
+             | (fit(f.fineZ ?? 0, 4, "fine.z") << 12)
+             | (fit(f.seed ?? 0, 8, "seed") << 4)
+             | fit(rot, 4, "rotation")) >>> 0;
+    const B = this.packPrimTypeLanes(f, rot);
     const A = ((fit(c[0], 8, "color.1") << 24) | (fit(c[1], 8, "color.2") << 16)
              | (fit(c[2], 8, "color.3") << 8) | fit(c[3], 8, "color.4")) >>> 0;
     this.writePrimRaw(idx, R, G, B, A);
   }
 
-  /** BLUE, shared by both records — a prim COPIES the definition's lanes and may override.
-   *  Bits 0–9 (lighting-correctness P1): `u4 reach (6–9, biased +1 = 1..16 tiles) | u6 intensity`. */
-  private packTypeLanes(f: PrimFields | DefinitionFields, rot: number): number {
+  /** A PRIM's BLUE (z-positioning P0b) — **no longer the same layout as a definition's.**
+   *
+   *  `definition_index` moved here from GREEN and takes the clean low 16 bits, paid for by moving
+   *  `seed` and `rotation` to GREEN and retiring `layer`. A definition has no `definition_index` to
+   *  store and still needs its own `seed` in BLUE — `silhouetteHit` reads it as `pxPerUnit × 8` —
+   *  so the two records genuinely diverge here.
+   *
+   *  **The old "BLUE and ALPHA are copied" rule now means FIELD-WISE, not word-wise.** It always did
+   *  in practice: `RecordSync` passes `castType`/`receiveType` from the resolved definition into
+   *  `writePrim`, and each record packs from the field names independently. Nothing ever copied the
+   *  raw word, which is why this split is safe.
+   *
+   *  `u2 cast | u2 receive | u2 emit | u4 reach (biased +1 = 1..16 tiles) | u6 intensity | u16 definition`. */
+  private packPrimTypeLanes(f: PrimFields, rot: number): number {
+    void rot;                       // rotation lives in GREEN now; kept in the signature for symmetry
+    return ((fit(f.castType ?? 0, 2, "cast_type") << 30)
+          | (fit(f.receiveType ?? 0, 2, "receive_type") << 28)
+          | (fit(f.emitType ?? 0, 2, "emit_type") << 26)
+          | (biased(f.reach ?? 1, 4, "reach") << 22)
+          | (fit(f.intensity ?? 0, 6, "intensity") << 16)
+          | fit(f.definition, 16, "definition_index")) >>> 0;
+  }
+
+  /** A DEFINITION's BLUE — unchanged by P0b. Keeps `seed` (the silhouette sampler's `pxPerUnit × 8`)
+   *  and `rotation`; `layer` stays only because nothing costs anything by it sitting here. */
+  private packTypeLanes(f: DefinitionFields, rot: number): number {
     return ((fit(f.castType ?? 0, 2, "cast_type") << 30)
           | (fit(f.receiveType ?? 0, 2, "receive_type") << 28)
           | (fit(f.emitType ?? 0, 2, "emit_type") << 26)
@@ -531,12 +574,12 @@ export class Records {
     return {
       unitX: m[b] >>> 16, unitY: m[b] & 0xffff,
       unitZ: m[b + 1] >>> 24, fineX: (m[b + 1] >>> 20) & 0xf, fineY: (m[b + 1] >>> 16) & 0xf,
-      definition: m[b + 1] & 0xffff,
+      fineZ: (m[b + 1] >>> 12) & 0xf, seed: (m[b + 1] >>> 4) & 0xff, rotation: m[b + 1] & 0xf,
+      definition: m[b + 2] & 0xffff,
       castType: (m[b + 2] >>> 30) & 3, receiveType: (m[b + 2] >>> 28) & 3,
-      emitType: (m[b + 2] >>> 26) & 3, layer: (m[b + 2] >>> 22) & 0xf,
-      seed: (m[b + 2] >>> 14) & 0xff, rotation: (m[b + 2] >>> 10) & 0xf,
-      reach: ((m[b + 2] >>> 6) & 0xf) + 1,                       // un-bias → tiles
-      intensity: m[b + 2] & 0x3f,
+      emitType: (m[b + 2] >>> 26) & 3,
+      reach: ((m[b + 2] >>> 22) & 0xf) + 1,                      // un-bias → tiles
+      intensity: (m[b + 2] >>> 16) & 0x3f,
       tileX: Math.floor((m[b] >>> 16) / UNITS_PER_TILE), tileY: Math.floor((m[b] & 0xffff) / UNITS_PER_TILE),
     };
   }

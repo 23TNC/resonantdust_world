@@ -1015,9 +1015,13 @@ export class Viewport {
       const d = rec.debugPrim(i);
       if (d.castType === 0) continue;
       saved.push([i, d.castType]);
+      // P0b: carry the FINE lanes and rotation through the round-trip — omitting a field zeroes
+      // it, and this self-test writes every caster twice. Dropping fine.x/y here would nudge every
+      // caster onto a whole-unit position for the duration of the check.
       rec.writePrim(i, { unitX: d.unitX, unitY: d.unitY, unitZ: d.unitZ, definition: d.definition,
+                         fineX: d.fineX, fineY: d.fineY, fineZ: d.fineZ, rotation: d.rotation,
                          castType: 0, receiveType: d.receiveType, emitType: d.emitType,
-                         layer: d.layer, seed: d.seed, intensity: d.intensity, reach: d.reach });
+                         seed: d.seed, intensity: d.intensity, reach: d.reach });
     }
     rec.upload(gl);
     this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
@@ -1025,8 +1029,9 @@ export class Viewport {
     for (const [i, ct] of saved) {
       const d = rec.debugPrim(i);
       rec.writePrim(i, { unitX: d.unitX, unitY: d.unitY, unitZ: d.unitZ, definition: d.definition,
+                         fineX: d.fineX, fineY: d.fineY, fineZ: d.fineZ, rotation: d.rotation,
                          castType: ct, receiveType: d.receiveType, emitType: d.emitType,
-                         layer: d.layer, seed: d.seed, intensity: d.intensity, reach: d.reach });
+                         seed: d.seed, intensity: d.intensity, reach: d.reach });
     }
     rec.upload(gl);
     const typeLane = { castersRestored: saved.length, nonZeroBefore: before,
@@ -1187,8 +1192,10 @@ export class Viewport {
     const r = this.records, m = r.primMirror;
     const read = (i: number) => {
       const x = m[i * 4], y = m[i * 4 + 1], z = m[i * 4 + 2];
-      const elevation = (y >>> 24) + ((y >>> 16) & 0xf) / 16;   // u8 unit.z + u4 fine.z
-      const castType = (z >>> 30) & 3, block = y & 0xffff;
+      // P0b lane positions: fine.z is GREEN [15:12] (NOT [19:16], which is fine.y),
+      // and definition_index moved to BLUE's low 16 bits.
+      const elevation = (y >>> 24) + ((y >>> 12) & 0xf) / 16;   // u8 unit.z + u4 fine.z
+      const castType = (z >>> 30) & 3, block = z & 0xffff;
       // The card's extent comes from the definition's subframe height (units), the same lane
       // `occludesAt` reads as `hTop`. cast_type 2 silhouettes off the SIDE frame (rotation 1).
       let cardH: number | null = null;
@@ -1196,7 +1203,7 @@ export class Viewport {
         // A def BLOCK is ROTATIONS_PER_DEF rotation px wide — `writeDefinition` indexes
         // (block * ROTATIONS_PER_DEF + rotation), and so must anything reading it back.
         const d = r.defMirror;
-        const di = (block * ROTATIONS_PER_DEF + (castType === 2 ? 1 : ((z >>> 10) & 0xf))) * 4;
+        const di = (block * ROTATIONS_PER_DEF + (castType === 2 ? 1 : (y & 0xf))) * 4;
         cardH = (d[di + 1] & 0xff) + 1;
       }
       return {

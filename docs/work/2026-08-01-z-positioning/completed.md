@@ -120,3 +120,66 @@ syncing**, and nearly filed it. With the scene loaded there are **525 casters an
 and `firstFrameNonZeroTexels: 0` — which I also nearly read as current state — is a startup statistic.
 The lesson is the stream's own rule: this codebase populates asynchronously, so a count of zero means
 "not yet" until proven otherwise.
+
+
+## 2026-08-01 · P0b — the channel relayout
+
+`definition_index` moved from GREEN to BLUE's clean low 16 bits; `seed` and `rotation` moved to GREEN
+to pay for it; `u4 layer` became **`u4 fine.z`**.
+
+```
+G  u8 unit.z (24-31) | u4 fine.x (20-23) | u4 fine.y (16-19)
+   u4 fine.z (12-15) | u8 seed (4-11)    | u4 rotation (0-3)
+B  u2 cast (30-31) | u2 receive (28-29) | u2 emit (26-27)
+   u4 reach (22-25, biased) | u6 intensity (16-21) | u16 definition_index (0-15)
+```
+
+### The prim and the definition now diverge
+
+They shared one `packTypeLanes`. They cannot any more: a definition has no `definition_index` to
+store, and it still needs `seed` where it is because `silhouetteHit` reads that lane as
+`pxPerUnit × 8`. So `packPrimTypeLanes` is new and `packTypeLanes` stays for definitions.
+
+**"A prim copies the definition's BLUE" now means field-wise** — which it always was in practice.
+`RecordSync` passes `castType`/`receiveType` from the resolved definition into `writePrim`, and each
+record packs from the field NAMES independently; nothing ever copied the raw word. That is exactly
+why the split is safe, and `VARIABLES.md` now says so instead of implying a word copy.
+
+### `layer` was write-only
+
+`recordSync` set it to the pawn part slot and **no shader ever read it back** — confirmed by grepping
+every lane read before removing it. Retiring it is therefore free, and there is a small symmetry in
+it: the lane that recorded *which* part a prim was now records *how high* it is. Removed from
+`PrimFields` rather than left as an ignored field, so the compiler found all three writers.
+
+### Verified — a controlled A/B, same protocol both sides
+
+`git stash` of the source, same page, same fixed protocol (sync via one `tick()`, then `__lights(4)`
+at the corpus's 40 units, then `__gather()`):
+
+| metric | OLD | NEW | Δ |
+|---|---|---|---|
+| **`occlusionDiffering`** | **0** | **0** | **0** |
+| `slotsCompared` | 131072 | 131072 | 0 |
+| `castersRestored` | 521 | **524** | +3 |
+| shadow texels | 4242 | 4253 | +0.26% |
+| `corridorWalk` | 3696 | 3702 | +0.16% |
+| `gateSelectivityPct` | 4.85 | 4.86 | +0.01 |
+
+**Not bit-identical, and the reason is in the table**: `castersRestored` differs by 3, so the two runs
+did not have the same scene — records populate asynchronously ([I14](issues.md#i14)) and a load syncs
+what it has got. Every other figure moves by less than the caster count does. The invariant that
+matters holds on both sides: the walk agrees with an exhaustive brute-force reference on **0 of
+131,072** slot comparisons.
+
+Also checked in-browser under the new layout: `__records().roundTrip.exact` true (every field writes
+and reads back), all six lane assertions pass, and `__elev` decodes a fixture caster's `block: 3` and
+`cardH: 24` from the values it was declared with.
+
+### Two bugs caught by verifying rather than assuming
+
+- **The probe read stale lanes.** It reported `block: 0` for a caster written with `block: 3` — it was
+  still reading `definition_index` from GREEN. Only visible because the fixture had a known answer.
+- **The `__gather` self-test round-trip dropped the fine lanes.** It saves and restores every caster
+  twice, and `writePrim` writes a *whole* record — so the omission was nudging every caster onto a
+  whole-unit position for the duration of the check. Pre-existing; fixed while the file was open.
