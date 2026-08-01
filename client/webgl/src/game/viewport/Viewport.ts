@@ -558,13 +558,18 @@ export class Viewport {
       const nCold = this.map.displayComposite("normal-cold");
       const nWarm = this.warm.displayComposite("normal-warm");
       const sWarm = this.warm.displayComposite("surface-warm");
+      // P5: the zdepth composites carry the painter's key — the normal select resolves
+      // warm-vs-cold exactly the way the blit resolves the drawn pixel.
+      const dCold = this.map.displayComposite("zdepth-world-cold");
+      const dWarm = this.warm.displayComposite("zdepth-world-warm");
       this.lights.run(this.renderer, r.primTex, r.lightTex, w.winCol, w.winRow,
                       { def: r.defTex, shadow: this.shadows.prev, atlas: atlas ?? this.white, atlas2,
                         refine: canRefine, win: lwin,
                         normalCold: nCold ?? undefined, normalWarm: nWarm ?? undefined,
                         surfaceWarm: sWarm ?? undefined,
+                        depthCold: dCold ?? undefined, depthWarm: dWarm ?? undefined,
                         slotCols: w.cols, slotRows: w.rows,
-                        slotPx: nCold && nWarm && sWarm ? w.slotPx : 0 });
+                        slotPx: nCold && nWarm && sWarm && dCold && dWarm ? w.slotPx : 0 });
     }
     // lighting-strip P1: the gather / lighting / receiver / decay passes are NO LONGER ISSUED. The
     // ShadowGather instance still exists and still compiles (P2 deletes it) -- this phase only stops

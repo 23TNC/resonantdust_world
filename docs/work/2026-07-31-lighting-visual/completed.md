@@ -144,6 +144,14 @@ droppedReceivers 0 at the fixture.
 **No self-shadow** (user): the refine skips the stored caster when it equals the texel's
 own receiver — a prim's card is never occluded by its own silhouette.
 
+**The normal select honours the painter's key** (user: the wolf's normal embossed a
+tree it stood behind): `sceneNormalAt` selected warm-over-cold by COVERAGE alone, so a
+mover's normal read through any cold thing drawn in front of it. It now replicates the
+blit's zdepth-B resolve exactly (both zdepth composites bound; a cold thing whose base
+row is serially south of the mover's wins the texel and its normal). Verified live: the
+human parked directly behind the torch conifer — the canopy shades clean, no embossed
+figure.
+
 **The boot-race + the silent catch** (found while landing this): fast IndexedDB texture
 packs emit BEFORE the first cache partition, whose `dirty.clear()` discarded the marks —
 the world stayed baked GEO forever (the flat-squares regression). Fixed: the first

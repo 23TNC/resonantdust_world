@@ -40,6 +40,8 @@ uniform sampler2D uSurfaceAtlas2;  // P3: the second page (defs carry their page
 uniform sampler2D uNormalCold;     // lighting-visual P2: the BAKED normal composites — cold tier
 uniform sampler2D uNormalWarm;     //   warm tier (movers), slot-aligned with cold
 uniform sampler2D uSurfaceWarm;    //   warm surface: B = warm coverage, the warm-over-cold key
+uniform sampler2D uDepthCold;      // P5: the zdepth composites' B = the painter's key — the
+uniform sampler2D uDepthWarm;      //   normal select resolves warm-vs-cold the way the BLIT does
 uniform int uSlotCols;             // the display torus: slots per axis (tiles) ...
 uniform int uSlotRows;
 uniform int uSlotPx;               // ... and texels per slot at the CURRENT partition; 0 = unbound
@@ -97,6 +99,18 @@ vec3 sceneNormalAt(vec2 Pu) {
   // warm is slot-aligned with cold (the blit samples both at ONE uv) -- one uv serves all three
   vec2 uv = texel / vec2(textureSize(uNormalCold, 0));
   float wcov = texture(uSurfaceWarm, uv).b;
+  // P5 (user: the wolf's normal embossed a tree it stood BEHIND): warm wins only where its
+  // pixel actually WINS THE DRAW -- the blit's zdepth-B painter's key, replicated exactly. A
+  // cold thing whose base row is serially south of the mover's is in front; its normal owns
+  // the texel and the mover's coverage there is void.
+  if (wcov > 0.0) {
+    int cdb = int(texture(uDepthCold, uv).b * 255.0 + 0.5);
+    int wdb = int(texture(uDepthWarm, uv).b * 255.0 + 0.5);
+    if (cdb >= 128 && wdb >= 128) {
+      int south = (cdb - wdb) & 0x7f;
+      if (south > 0 && south < 64) { wcov = 0.0; }
+    }
+  }
   vec3 n = wcov > 0.5 ? texture(uNormalWarm, uv).rgb : texture(uNormalCold, uv).rgb;
   return normalize(n * 2.0 - 1.0);
 }
@@ -487,6 +501,7 @@ export class LightPass {
              // them. slotPx is the CACHE'S current partition — never recomputed here; 0 = unbound
              // (the shader falls back to flat-up).
              normalCold?: Texture; normalWarm?: Texture; surfaceWarm?: Texture;
+             depthCold?: Texture; depthWarm?: Texture;
              slotCols?: number; slotRows?: number; slotPx?: number } = {}): void {
     const lod = opt.win?.lod ?? 0;
     renderer.draw({
@@ -498,6 +513,8 @@ export class LightPass {
                   uNormalCold: opt.normalCold ?? opt.atlas ?? prim,
                   uNormalWarm: opt.normalWarm ?? opt.atlas ?? prim,
                   uSurfaceWarm: opt.surfaceWarm ?? opt.atlas ?? prim,
+                  uDepthCold: opt.depthCold ?? opt.atlas ?? prim,
+                  uDepthWarm: opt.depthWarm ?? opt.atlas ?? prim,
                   uReceiver: this.receiverRT.textures[0] },
       uniforms: (p) => {
         p.uInt("uLightW", LIGHT_TEXELS >> lod);

@@ -114,3 +114,7 @@ tiles."_
 - [x] A prim never casts onto ITSELF (user): the refine skips the stored caster when it
       equals the texel's receiver. Acceptance: no self-shadow bands on the wolf/human
       flank under a torch; `__lightexact` bit-identical.
+- [x] The normal select honours the PAINTER'S KEY (user: the wolf's normal embossed a
+      tree it stood behind): `sceneNormalAt` picks warm only where the warm pixel WINS —
+      the blit's zdepth-B rule — not wherever warm coverage exists. Acceptance: no mover
+      normal reads through a cold thing drawn in front; live capture.
