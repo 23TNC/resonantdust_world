@@ -1,7 +1,17 @@
 //! Frame-cost harness (lighting-rework P0) — the one instrument this stream measures with.
 //!
-//! Wall clock around N hand-driven frames, with `gl.finish()` at BOTH ends so the number prices the
-//! whole frame (CPU submission + GPU execution), reported as a median of repeats.
+//! Wall clock around N hand-driven frames, with a **`readPixels` sync** at both ends so the number
+//! prices the whole frame (CPU submission + GPU execution), reported as a median of repeats.
+//!
+//! **`gl.finish()` DOES NOT SYNC HERE** (measured 2026-07-31, see the stream's I10). Chrome runs GL
+//! in a separate process behind a command buffer, and `finish()` returns without the GPU having done
+//! the work: an identical 16.7 M-fragment pass timed **0.002 ms** under `finish()` and **0.30 ms**
+//! under a `readPixels` sync — a **150x** under-report, and 0.002 ms would have been 8 Tfragment/s.
+//! `readPixels` cannot lie about it, because it has to hand back real pixels.
+//!
+//! The readback format must MATCH the attachment (`RGBA16F` wants `FLOAT`, not `UNSIGNED_BYTE`), or
+//! it raises `INVALID_OPERATION`, returns nothing, and silently does not sync either — which is how
+//! the first corrected attempt still under-reported by 20x.
 //!
 //! **Why not `EXT_disjoint_timer_query_webgl2`.** The debug tab runs backgrounded, so `rAF` never
 //! fires and `setTimeout` is throttled to ~1 s. Timer-query results need an event-loop turn to
@@ -37,12 +47,18 @@ export function measureFrameCost(
   gl: WebGL2RenderingContext,
   { frames = 60, warm = 15, reps = 5 } = {},
 ): FrameCost {
+  // A 1x1 read off the DEFAULT framebuffer: always RGBA8, so the format pair is always valid.
+  const scratch = new Uint8Array(4);
+  const sync = (): void => {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, scratch);
+  };
   const run = (): number => {
     for (let i = 0; i < warm; i++) view.tick();
-    gl.finish();
+    sync();
     const t0 = performance.now();
     for (let i = 0; i < frames; i++) view.tick();
-    gl.finish();                                   // the GPU must be DONE, or we time submission
+    sync();                                        // the GPU must be DONE, or we time submission
     return (performance.now() - t0) / frames;
   };
   const out: number[] = [];

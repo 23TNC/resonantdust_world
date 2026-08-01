@@ -193,3 +193,57 @@ art* — against the same resolver the bake draws through, rather than against a
 A re-route would have proven the records are *sufficient to draw from*; this proves they are
 *accurate*, which is the one the shaders need. Recorded as a plan error per the stream's acceptance,
 not silently substituted.
+
+## I10 — `gl.finish()` does not sync in this environment; every earlier ms number is low {#i10}
+
+**Found 2026-07-31 while measuring P3's cost-per-light, by disbelieving the result.** The lighting
+pass reported **0.003 ms** flat across N = 1, 4, 8, 16. Flat is suspicious; 0.003 ms is impossible.
+16 777 216 fragments in 0.003 ms would be **5.6 Tfragment/s**.
+
+Three things were wrong, each hiding the next:
+
+| # | fault | effect |
+|---|---|---|
+| 1 | **`performance.now()` is coarsened to 0.1 ms** in a backgrounded tab | 30-iteration runs totalled ~0.09 ms — *entirely below the clock*. The "0.003" values were quantisation, not measurement |
+| 2 | **`gl.finish()` does not sync** | Chrome runs GL in a separate process behind a command buffer; `finish()` returns before the GPU has done the work |
+| 3 | **`readPixels` with a mismatched format silently does not sync either** | `RGBA16F` read as `UNSIGNED_BYTE` raises `INVALID_OPERATION`, returns nothing, and syncs nothing — still 20× low |
+
+Only `readPixels` with the **matching** format (`RGBA16F` → `FLOAT`) forces a true sync, because it
+has to hand back real pixels and cannot pretend.
+
+### What the numbers actually are
+
+| sync method | ms per lighting update | implied fragment rate |
+|---|---|---|
+| `gl.finish()` | 0.002 | 8 Tfrag/s — impossible |
+| `readPixels`, wrong format (errors) | 0.014 | 1.2 Tfrag/s — impossible |
+| **`readPixels`, correct format** | **~0.30** | **55 Gfrag/s — plausible** |
+
+Confirmed by a scaling test: total time is linear in iteration count (0.7 / 1.5 / 2.7 / 4.6 / 9.2 ms
+for 50 / 100 / 200 / 400 / 800), so it is measuring work rather than overhead.
+
+### What this invalidates
+
+**Every ms figure taken before this**, in both streams, is low by roughly 4×. Re-measured with the
+corrected harness on the identical unlit scene:
+
+| | reported | corrected |
+|---|---|---|
+| unlit frame | 0.028 ms | **0.104–0.116 ms** |
+
+The spread also tightened from ±0.016 to ±0.003 — a noisy instrument getting quiet is itself evidence
+the fix is real.
+
+**Affected, and NOT retro-edited** (`completed.md` is an append-only log; correcting it in place would
+hide that the measurements were ever wrong):
+
+- the strip's P1 lit/unlit comparison (0.508 / 0.675 / 0.045) — the *ratio* is probably close, since
+  both sides shared the fault, but the absolutes are low
+- the strip's P2 "0.045 → 0.028" improvement
+- this stream's P0 harness acceptance, and [D1](deviations.md), which argued about 0.045 vs 0.028
+  when **both** were wrong
+
+**`frameCost.ts` is fixed** and its header now carries the measurement, so the next person does not
+re-derive it. The lesson generalises past this bug and matches [I7](#i7) exactly: in this environment
+the wrong measurement method **does not error, it under-reports** — so a number that looks good is the
+thing to distrust first.

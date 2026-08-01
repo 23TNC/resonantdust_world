@@ -147,6 +147,9 @@ export class Viewport {
     (globalThis as unknown as { __buildrecords: () => unknown }).__buildrecords = () => this.buildRecords();
     // lighting-rework P3: run the light pass and read back what it produced.
     (globalThis as unknown as { __lightpass: () => unknown }).__lightpass = () => this.runLightPass();
+    // lighting-rework P3 item 5: cost per light, measured BEFORE shadows are built on top of it.
+    (globalThis as unknown as { __lightcost: (n?: number) => unknown }).__lightcost =
+      (n?: number) => this.lightCost(n ?? 8);
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
     // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
     (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {
@@ -813,6 +816,42 @@ export class Viewport {
 
   private sumRTBind(gl: WebGL2RenderingContext): void {
     gl.bindFramebuffer(gl.FRAMEBUFFER, (this.lights.sumRT as unknown as { fbo: WebGLFramebuffer }).fbo);
+  }
+
+  /** lighting-rework P3 — the cost of N lights, on the same instrument everything else uses.
+   *
+   *  Taken now, before the shadow gather and the per-pixel refine exist, because this is the pass the
+   *  plan flagged as the one cost nobody had bounded — and the old stream's mistake was building the
+   *  expensive part first and pricing it afterwards. */
+  private lightCost(n: number): Record<string, unknown> {
+    const gl = this.renderer.gl, rec = this.records, win = this.map.window;
+    // N emitters spread across the window so their reach circles genuinely overlap the sampled tiles
+    const lights: { index: number; tileX: number; tileY: number; intensity: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      const tx = win.winCol + 4 + (i % 8) * 3;
+      const ty = win.winRow + 4 + Math.floor(i / 8) * 3;
+      const id = rec.allocPrim();
+      rec.writePrim(id, { unitX: tx * 16 + 8, unitY: ty * 16 + 8, definition: 1,
+                          emitType: 1, intensity: 1023, colors: [0, 0, 0, 180] });
+      lights.push({ index: id, tileX: tx, tileY: ty, intensity: 1023 });
+    }
+    rec.buildLights(lights);
+    rec.upload(gl);
+
+    const run = (): number => {
+      for (let i = 0; i < 8; i++) this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow);
+      gl.finish();
+      const t0 = performance.now();
+      for (let i = 0; i < 30; i++) this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow);
+      gl.finish();
+      return (performance.now() - t0) / 30;
+    };
+    const reps: number[] = [];
+    for (let i = 0; i < 5; i++) reps.push(run());
+    reps.sort((a, b) => a - b);
+    const r = (x: number): number => Math.round(x * 1000) / 1000;
+    return { lights: n, msPerLightingUpdate: r(reps[2]), min: r(reps[0]), max: r(reps[4]),
+             droppedLights: rec.droppedLights, glError: gl.getError() };
   }
 
   private ensureGeometry(quads: number): void {

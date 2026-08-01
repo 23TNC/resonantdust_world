@@ -240,3 +240,27 @@ Worth recording because it is the failure this project keeps hitting **inverted*
 silently produced a *plausible* light would have been invisible. Here it produced nothing, loudly, on
 the first look. Fixed by minting a real emitter (`emit_type = 1`, `intensity = 1023`) and registering
 that — the guard was right and the test data was wrong.
+
+## 2026-07-31 · P3 (3/5) — cost per light, and the instrument that was lying
+
+**The headline: one lighting update costs ~0.30 ms** at 16 777 216 fragments (8 slots × 2048 × 1024),
+which is ~55 Gfragment/s — the first defensible bound on the pass the plan flagged as unbounded.
+
+Getting there meant discovering that **the instrument was wrong** ([I10](issues.md#i10)). The first
+result was 0.003 ms flat across N = 1/4/8/16 — flat is suspicious and 0.003 ms is impossible, so it
+got chased rather than published:
+
+1. `performance.now()` is **coarsened to 0.1 ms** in a backgrounded tab, and the runs totalled 0.09 ms
+2. **`gl.finish()` does not sync** — Chrome's GL lives behind a cross-process command buffer
+3. `readPixels` with a **mismatched format** raises `INVALID_OPERATION` and does not sync either
+
+Only a format-matched `readPixels` forces a real sync. `frameCost.ts` now uses one, and its header
+carries the whole finding.
+
+**Cost per light is flat in N.** That is expected and worth stating: the slot pass rasterises all
+8 slots every time regardless of how many are occupied, so N changes what each fragment *finds*, not
+how many fragments run. Making cost track N is what [F1](forks.md#f1)'s delta update is for — the
+next item — and this measurement is the baseline it has to beat.
+
+**The unlit floor is restated at ~0.11 ms**, not 0.028. Every earlier ms number in both streams is low
+by roughly 4×; they are recorded as-taken rather than retro-edited, with I10 naming what is affected.
