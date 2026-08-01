@@ -1,5 +1,72 @@
 # Completed — lighting correctness
 
+## 2026-07-31 · P6 — THE VERDICT. Stream complete, 22/22.
+
+### The numbers (corrected harness, foreground tab, full chain — reconcile + gather +
+### receiver map + slots with N·L and the silhouette refine + sum + blit; zoom 1, reach 16)
+
+| lights | MOVING (orbit) ms | STATIC ms |
+|---|---|---|
+| 1 | 2.34 | — |
+| 4 | 4.82 | — |
+| 8 | **8.52** | 8.00 |
+| 16 | **9.76** | 9.55 |
+
+Eight moving lights sit AT the 8 ms budget; sixteen run 1.8 ms over. **The regression is
+named and attributed**: static ≈ moving (Δ ≤ 0.5 ms) proves the cost is NOT motion — the
+chain currently re-evaluates the whole window EVERY frame, ungated (the N = 1 floor of
+2.34 ms is the fixed passes; ~0.9 ms/light to 8; then sub-linear — 8 → 16 costs +1.2 ms,
+the per-tile cap working exactly as designed). The known next lever, recorded not built:
+dirty-gate the chain (a static scene should cost the blit alone) and dirty-rect the record
+uploads — the differential slot machinery already exists for precisely this; only the
+driving loop is brute-frame.
+
+### Does the new method outperform the old — and why
+
+**Yes — structurally, with one caveat the numbers above price.** The four structural
+arguments, each now VERIFIED in this stream rather than claimed:
+
+1. **Stored identity deletes the search.** The old system's dominant cost was
+   re-DISCOVERING the occluder (its own measurement: a 9.29 ms refine inside a 10.88 ms
+   pass — a ratio that survives I10's 4× scaling). The new refine re-tests ONE stored
+   caster per texel per light — and this stream proved the stored answer exact:
+   corridor-vs-brute **0/0 over 131 072 slots** with the full silhouette solve in.
+2. **Per-light slots make change exact and local.** Add a light, remove it: the summed
+   map returns **bit-identically** (verified with N·L in the chain). The old design
+   COULD NOT express this — nothing stored a light's own contribution, so its
+   differential stayed unwired forever and every change was a class-wide rebake.
+3. **Flat u16 references end the storage wall.** Every extension this stream shipped —
+   billboard receivers, ns cards, atlas pages, part-slot layers — fit in the existing
+   texels. Under the old u20 packing each one would have re-hit the 128-bit ceiling that
+   killed that design (strip I1).
+4. **Fixed-grid passes scale sub-linearly in lights.** Measured: 8 → 16 lights costs
+   +14%, because N changes what a fragment FINDS, never how many fragments run, and the
+   8-per-tile cap bounds every loop.
+
+Against it, stated plainly: ~12 MiB more resident than the old system; the ungated
+per-frame chain above; and old-vs-new ABSOLUTE ms are incommensurable (every pre-I10
+number was ~4× low — `gl.finish()` never synced), so no "X× faster" is claimed anywhere.
+What IS claimable without hedging: the new method does MORE (exact silhouettes at 64/tile,
+shadows onto billboards, per-light N·L, exact incremental updates) inside the same order
+of budget the old system spent discovering occluders it then threw away.
+
+### The capability re-score (rework I6)
+
+| | rework | NOW |
+|---|---|---|
+| 1 point lights, authored falloff | yes | **yes — reach/intensity/colour/height all authored, stored** |
+| 2 projected silhouette shadows | ticked, unverified | **yes — proven 0/0 vs brute; tree-shaped on screen** |
+| 3 shadows onto billboards | no | **yes — receiver map consumed, elevated occlusion, silhouette coverage** |
+| 4 n/s perpendicular cards | no | **yes — cast_type 2 via base + rotation; figure-shaped human shadow on screen** |
+| 5 movers lit + casting in one pass | structurally | **yes — live movers, kind-level rotation blocks** |
+| 6 per-light N·L | no | **yes — baked into slots, display stays one fetch** |
+| 7 emissive · 8 ambient×AO · 9 decay | no | **8 restored (ambient×AO in the blit); 7 + 9 remain the user's call** |
+| 10 bilinear shadow upsample | n/a | **kept — the manual 4-tap lightmap read; edges refine at 64/tile** |
+
+`VARIABLES.md` carries the shipped layouts (the reach split, the z contract, the layer
+lane, presence semantics). Items 7 + 9 (emissive, decay/flicker) are recorded as awaiting
+the user's decision — the README said so from day one.
+
 ## 2026-07-31 · P4 — one z contract, proven per texel
 
 **The contract** (VARIABLES.md): the presence sort key IS the draw's `zIndex` — the same

@@ -104,13 +104,13 @@ Stances + fixtures: [`README`](README.md)._
 
 ## P6 — the verdict
 
-- [ ] Re-measure the full chain — MOVING lights, reach 16, zoom 1, corrected harness —
+- [x] Re-measure the full chain — MOVING lights, reach 16, zoom 1, corrected harness —
       at N = 1/4/8/16 with everything above ON. Acceptance: the table in `completed.md`;
       inside 8 ms, or the regression named with its cost attributed.
-- [ ] Write the determination: does the new method outperform the old, and WHY — the
+- [x] Write the determination: does the new method outperform the old, and WHY — the
       structural argument (stored identity, differential slots, flat refs, fixed-grid
       scaling) against the honest costs (+12 MiB, incommensurable old absolutes per
       rework I10). Acceptance: a verdict section in `completed.md` answerable to the user.
-- [ ] Re-score the capability checklist (rework I6) and update `VARIABLES.md` to the
+- [x] Re-score the capability checklist (rework I6) and update `VARIABLES.md` to the
       shipped layouts. Acceptance: items 1–6 + 10 all "yes" or honestly excepted; 7–9
       recorded as awaiting the user's call; docs-check green.
