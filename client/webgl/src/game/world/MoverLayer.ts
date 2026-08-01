@@ -637,6 +637,16 @@ export class MoverLayer {
     // row still decides which pawn is in front, and the blit's warm-over-cold compare reads the
     // row out of `zdepth_world` (from `prim.y + height`), which no slot z touches.
     const zRowBase = PAWN_Z_BASE + box.zRow;
+    // ── THE PART-ORDERING RULE (z-positioning F4) ───────────────────────────────────────────
+    // Parts of one pawn order by the AUTHORED, facing-flipped `depth` — then by slot index as a
+    // stable tiebreak. **Not by elevation**, and this is the load-bearing part of the rule:
+    // `facingDepth` negates depth when the pawn faces north, so a head at `+1` draws OVER the body
+    // from the front and UNDER it from behind. Elevation cannot express that — a head is the same
+    // height whichever way the pawn is turned.
+    //
+    // Since z-positioning P2b, head and body share a base row (they stand in the same place), so
+    // `zRowBase` is equal for both and this expression IS what separates them. It was previously
+    // true by accident of iteration order; it is now the rule, written where someone would change it.
     const slotZ = (s: MoverPart, i: number): number =>
       zRowBase + facingDepth(s.depth, facing) * SLOT_DEPTH_Z + i * SLOT_ORDER_Z;
     // The carrier's game anchor (base-centre) + the px-per-tile scale for slot offsets. Every box

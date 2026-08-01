@@ -484,3 +484,35 @@ passes and removes work from the walk.
 
 The general rule: **height is authored once and everything else is derived.** The class of bug this
 removes is the one where a drawn offset was also, silently, a claim about where something stood.
+
+
+## 2026-08-01 · P4 — the part-ordering rule, and a correction to F4
+
+**Correction: `screen.z` cannot be the part-ordering key**, and I recorded earlier that it could.
+
+`facingDepth(depth, facing)` negates the authored depth when a pawn faces north, so a head at `+1`
+draws over the body from the front and **under** it from behind. `screen.z = tan(θ)·elevation` is
+facing-independent — a head is the same height whichever way the pawn is turned — so an ordering key
+derived from height loses the from-behind case.
+
+`screen.z` is still a sound ordering metric for *independent objects* at different heights, which is
+what it was proposed for. It is not a substitute for authored part order **within one object**.
+
+So [F4](forks.md#f4)'s original choice (c) stands, and its condition is now satisfied: the rule is
+written at `slotZ` in `MoverLayer`, where someone would go to change it, together with why elevation
+is not the key. That matters more since P2b — head and body now share a base row, so `zRowBase` is
+equal for both and this expression *is* what separates them. It was true by accident of iteration
+order before; it is stated now.
+
+## 2026-08-01 · P5 — the A/B set
+
+| | before | after |
+|---|---|---|
+| **head aligned** | head's record at `unitY 901`, elevation 0 — 10 units north of the body | `unitY 911`, elevation **9.125** — the body's row |
+| **one shadow** | a broad doubled mass, wider and taller than the pawn, sweeping up-right | one narrow shadow matching the pawn's silhouette, anchored at the feet |
+| **ground prim unchanged** | — | at elevation 0 every expression this stream touched reduces to the code it replaced (`cElev = 0` ⇒ `hBot = 0, hTop = subH`; `worldHeightForDrawn(0) = 0`) |
+
+Both captures are real frames from the same session, same light, same tile — the "before" produced by
+clearing `carrierOf` on the live head prim and re-syncing, not recalled. The ground-prim row is
+argued rather than measured on purpose: it is an algebraic identity, and per [I17](issues.md#i17) a
+texel count would not have been evidence anyway.

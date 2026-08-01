@@ -65,7 +65,29 @@ pieces — but it is currently true *by accident of iteration order*, and an acc
 stated is an accident that gets optimised away. (b) spends bits in a key that is working, to solve a
 problem that has not appeared.
 
-### Superseded — `screen.z` IS the tiebreak (user, 2026-08-01)
+### The supersession below was WRONG — (c) stands (2026-08-01)
+
+`screen.z = tan(θ) · elevation` is **facing-independent**. The authored `depth` is not:
+
+```ts
+function facingDepth(depth: number, facing: number): number {
+  return facing === 2 ? -depth : depth;      // negated when the pawn faces NORTH
+}
+```
+
+A head at `depth +1` must draw **over** the body from the front and **under** it from behind — same
+elevation both ways. An ordering key derived from height cannot produce that, so replacing `depth`
+with `screen.z` would lose the from-behind case entirely.
+
+`screen.z` remains a good ordering metric for *independent objects* at different heights, which is
+what the user proposed it for. It is not a substitute for authored part order **within one object**.
+
+**So (c) is what shipped**, and its condition is now met: the rule is written at `slotZ` in
+`MoverLayer`, where someone would go to change it, and it says why elevation is not the key. Since
+P2b head and body share a base row, that expression *is* what separates them — previously true by
+accident of iteration order, now stated.
+
+### The superseded proposal, kept for the reasoning
 
 > "screen.z is perpendicular to the screen. screen.z would make a decent z-ordering metric, so long
 > as we calculate screen.z against a common reference point."
