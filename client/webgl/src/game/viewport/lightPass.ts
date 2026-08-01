@@ -155,9 +155,13 @@ void main() {
   float I  = float(intensity) / INTENSITY_MAX;
   float at = I / (1.0 + (d / REACH_FALLOFF_UNITS) * (d / REACH_FALLOFF_UNITS));
 
-  // colour.4 is the emitted light colour (ALPHA's low byte); .1-.3 are material tints.
-  float c4 = float(rec.w & 0xffu) / 255.0;
-  vec3 tint = vec3(1.0, 0.85 + 0.15 * c4, 0.6 + 0.4 * c4);
+  // Emitters carry their DSL light RGB in colour.1-3 (lighting-correctness P1b — the torch's
+  // authored colour); an all-zero RGB (the debug lights) falls back to the warmth ramp on .4.
+  vec3 tint = vec3(float(rec.w >> 24), float((rec.w >> 16) & 0xffu), float((rec.w >> 8) & 0xffu)) / 255.0;
+  if (tint == vec3(0.0)) {
+    float c4 = float(rec.w & 0xffu) / 255.0;
+    tint = vec3(1.0, 0.85 + 0.15 * c4, 0.6 + 0.4 * c4);
+  }
 
   // F5 GATE: only a texel whose UNIT holds a caster for this light does any refine work. Interior
   // and fully-lit texels do no fetch and no test -- the gate is the whole reason this is affordable.
@@ -277,8 +281,13 @@ void main() {
   if (intensity == 0u || d >= reach) { fragColor = vec4(0.0); return; }
   float I  = float(intensity) / INTENSITY_MAX;
   float at = I / (1.0 + (d / REACH_FALLOFF_UNITS) * (d / REACH_FALLOFF_UNITS));
-  float c4 = float(rec.w & 0xffu) / 255.0;
-  vec3 tint = vec3(1.0, 0.85 + 0.15 * c4, 0.6 + 0.4 * c4);
+  // Emitters carry their DSL light RGB in colour.1-3 (lighting-correctness P1b — the torch's
+  // authored colour); an all-zero RGB (the debug lights) falls back to the warmth ramp on .4.
+  vec3 tint = vec3(float(rec.w >> 24), float((rec.w >> 16) & 0xffu), float((rec.w >> 8) & 0xffu)) / 255.0;
+  if (tint == vec3(0.0)) {
+    float c4 = float(rec.w & 0xffu) / 255.0;
+    tint = vec3(1.0, 0.85 + 0.15 * c4, 0.6 + 0.4 * c4);
+  }
   fragColor = vec4(clamp(tint * at / LIGHT_SCALE, 0.0, 1.0), 1.0);
 }
 `;

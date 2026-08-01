@@ -193,6 +193,13 @@ export class TextureResolver {
     return this.manifest.entry(stem) !== undefined;
   }
 
+  /** The stem's frame WORLD SPAN in tiles, from the manifest (meta.json → DSL-authored), or
+   *  null when unstamped. Lighting-correctness P1b/I2: the RECORD layer's span source — span
+   *  must never be derived from streamed atlas px, which is lod-dependent and simply wrong. */
+  spanOf(stem: string): number | null {
+    return this.manifest.entry(stem)?.span ?? null;
+  }
+
   resolve(stem: string | undefined, map: TexMap = "albedo", cell?: number): ResolvedTexture {
     if (!stem || !this.root || !this.renderer) return { frame: null, geo: true };
 

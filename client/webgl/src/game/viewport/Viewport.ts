@@ -23,6 +23,7 @@ import { installFrameCost } from "./frameCost";
 import { Records, INDEX_NONE, ROTATIONS_PER_DEF } from "./records";
 import { LightPass } from "./lightPass";
 import { ShadowBuffer, pairSlot, SHADOW_LIGHTS } from "./shadowPass";
+import { RecordSync } from "./recordSync";
 import { LIGHT_READ_SCALE } from "./lightPass";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
@@ -91,6 +92,7 @@ export class Viewport {
   private readonly blitShader: AlbedoBlitShader;
   /** lighting-rework P1: the flat record layer — `prim_data` + `definition_data`. */
   readonly records: Records;
+  private readonly recordSync: RecordSync;
   /** lighting-rework P3: per-light slots + the summed map the display reads. */
   readonly lights: LightPass;
   /** lighting-rework P4: the per-unit shadow buffer, ping-ponged. */
@@ -98,7 +100,9 @@ export class Viewport {
   /** The synthetic emitter P2/P3 exercise the real path with (no lights are authored yet). */
   private debugLightPrim = 0;
   /** lighting-rework P5: is the new lighting driven + displayed? Off until `__lit(true)`. */
-  private litEnabled = false;
+  // lighting-correctness P1b: LIT IS THE DEFAULT — the reconciler keeps records live, so the
+  // chain simply runs once the map is ready. `__lit(false)` remains the unlit A/B.
+  private litEnabled = true;
   /** lighting-rework I11: the live light set, and their orbit origins. The headline acceptance is
    *  MOVING lights, and a static measurement is the best case of the very mechanism it stresses —
    *  with nothing moving, last frame's caster is still the caster and the incumbent tier absorbs
@@ -153,13 +157,14 @@ export class Viewport {
     (globalThis as unknown as { __viewport: Viewport }).__viewport = this;
     // lighting-rework P0: `__framecost()` — the stream's ONE measurement instrument.
     this.records = new Records(this.renderer.gl);
+    this.recordSync = new RecordSync(this.records);
     this.lights = new LightPass(this.renderer.gl);
     this.shadows = new ShadowBuffer(this.renderer.gl);
     installFrameCost(this, this.renderer.gl);
     // lighting-rework P1: `__records()` — the record layer's own acceptance, run against the LIVE
     // scene rather than a fixture, so it proves the writers on real definitions and real positions.
     (globalThis as unknown as { __records: () => unknown }).__records = () => this.recordSelfTest();
-    (globalThis as unknown as { __buildrecords: () => unknown }).__buildrecords = () => this.buildRecords();
+    (globalThis as unknown as { __buildrecords: () => unknown }).__buildrecords = () => this.recordSync.stats;
     // lighting-rework P3: run the light pass and read back what it produced.
     (globalThis as unknown as { __lightpass: () => unknown }).__lightpass = () => this.runLightPass();
     // lighting-rework P3 item 5: cost per light, measured BEFORE shadows are built on top of it.
@@ -181,7 +186,6 @@ export class Viewport {
     };
     (globalThis as unknown as { __lit: (on?: boolean) => unknown }).__lit = (on?: boolean) => {
       this.litEnabled = on ?? !this.litEnabled;
-      if (this.litEnabled) this.buildRecords();
       return { lit: this.litEnabled };
     };
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
@@ -279,6 +283,9 @@ export class Viewport {
     this.resolverUnsub = resolver.onLoad(() => {
       this.map.invalidateAll();
       this.warm.invalidateAll();
+      // P1b: frames moved (a lod landed / a page repacked) — every definition re-writes from
+      // the resolver's CURRENT frames on the next reconcile (I2's staleness half).
+      this.recordSync.markDefsStale();
     });
     this.map.invalidateAll();
     this.warm.invalidateAll();
@@ -523,6 +530,9 @@ export class Viewport {
     // with the gated refine), both bounded by the STORED reach lane (lighting-correctness P1).
     if (this.litEnabled && this.map.ready) {
       this.stepOrbit();
+      // P1b: reconcile the records against the LIVE scene (both caches, movers included,
+      // content lights from Primitive.light) — the seam I1 pinned as missing.
+      this.recordSync.sync(this.renderer.gl, this.resolver, this.map.standingPrims(), this.warm.standingPrims());
       const w = this.map.window, r = this.records;
       const atlas = this.surfaceAtlas();
       // No atlas means the silhouette cannot be sampled. Skip the refine rather than run it against
@@ -701,141 +711,6 @@ export class Viewport {
   }
 
   /** lighting-rework P1 — mint records for every live standing prim, straight from the resolver.
-   *
-   *  This is what "the record layer is proven" actually needs: not that the G-buffer bake draws FROM
-   *  records (it does not, and the design does not ask it to — the bake draws art, the lighting reads
-   *  records), but that a record accurately locates its art in the atlas. A lighting pass holding a
-   *  bare prim index must be able to find the caster's texture, and that is exactly what is checked. */
-  buildRecords(): Record<string, unknown> {
-    const rec = this.records, res = this.resolver;
-    if (!res) return { error: "no resolver" };
-    const U = SQUARE / 16;
-    const byStem = new Map<string, number>();
-    let minted = 0, wrote = 0, mismatched = 0;
-    const placed = new Map<number, Primitive>();
-    const samples: Record<string, unknown>[] = [];
-
-    for (const p of this.map.standingPrims()) {
-      const stem = p.textureName;
-      if (!stem) continue;
-      const frame = res.resolve(stem, "albedo", p.cell ?? 0)?.frame;
-      if (!frame) continue;
-
-      let block = byStem.get(stem);
-      if (block === undefined) {
-        block = rec.allocDefinition(4);                       // billboards: n/e/s/w
-        byStem.set(stem, block);
-        minted++;
-        const spanTiles = Math.max(1, Math.round(frame.w / SQUARE));
-        const bb = res.opaqueBBox(stem);
-        for (let r = 0; r < 4; r++) {
-          rec.writeDefinition(block, r, {
-            frameX: Math.round(frame.x / U), frameY: Math.round(frame.y / U),
-            frameSpan: Math.min(16, spanTiles),
-            anchorX: 1, anchorY: 2,                            // bottom-centre, as casters use
-            subX: bb ? Math.round(bb.fx * spanTiles * 16) : 0,
-            subY: bb ? Math.round(bb.fy * spanTiles * 16) : 0,
-            subW: Math.max(1, bb ? Math.round(bb.fw * spanTiles * 16) : spanTiles * 16),
-            subH: Math.max(1, bb ? Math.round(bb.fh * spanTiles * 16) : spanTiles * 16),
-            castType: 1, receiveType: 2,
-          });
-        }
-      }
-
-      const id = rec.allocPrim();
-      rec.writePrim(id, {
-        unitX: Math.round((p.x + p.width / 2) / U) & 0xffff,
-        unitY: Math.round((p.y + p.height) / U) & 0xffff,
-        definition: block, rotation: 0, castType: 1, receiveType: 2,
-        seed: Math.floor((p.seed ?? 0) * 255) & 0xff,
-      });
-      placed.set(id, p);
-      wrote++;
-
-      // CROSS-CHECK: decode the record and confirm it points back at the resolver's own frame.
-      const d = rec.debugDefinition(block, 0);
-      const wantX = Math.round(frame.x / U), wantY = Math.round(frame.y / U);
-      if (d.frameX !== wantX || d.frameY !== wantY) mismatched++;
-      else if (samples.length < 3) samples.push({ stem, frameUnits: [d.frameX, d.frameY], span: d.frameSpan });
-    }
-
-    // ── P2: the per-tile records ────────────────────────────────────────────────────────────────
-    // presence — receivers ON each tile, layer-sorted. Built from the same walk, so the record set
-    // and the drawn set cannot describe different scenes.
-    const byTile = new Map<number, { index: number; layer: number }[]>();
-    for (const [id, p] of placed) {
-      const tx = Math.floor((p.x + p.width / 2) / SQUARE), ty = Math.floor((p.y + p.height) / SQUARE);
-      const key = ((tx & 0xffff) << 16) | (ty & 0xffff);
-      let list = byTile.get(key);
-      if (!list) byTile.set(key, (list = []));
-      list.push({ index: id, layer: p.zIndex ?? 0 });
-    }
-    for (const [key, list] of byTile) {
-      const tx = (key >> 16) & 0xffff, ty = key & 0xffff;
-      rec.writePresence(tx, ty, INDEX_NONE, list);
-    }
-
-    // light — the reach relation, from the STORED reach lane (lighting-correctness P1). No lights are authored in the
-    // stripped scene, so mint a real EMITTER prim at the focus tile and register that. It must be a
-    // genuine emitter: the slot shader re-checks `emit_type` before trusting a slot (F9), so
-    // pointing the light record at an arbitrary prim index yields nothing — as it should.
-    const lightPrim = rec.allocPrim();
-    rec.writePrim(lightPrim, {
-      unitX: 100 * 16 + 8, unitY: 50 * 16 + 8,
-      definition: 1, emitType: 1, intensity: 63, reach: 16, colors: [0, 0, 0, 180],
-    });
-    this.debugLightPrim = lightPrim;
-    rec.buildLights([{ index: lightPrim, tileX: 100, tileY: 50, reach: 16 }]);
-
-    rec.upload(this.renderer.gl);
-
-    // Layer order is what the per-pixel pass depends on, so assert it rather than trust the sort.
-    let unsorted = 0, checked = 0;
-    for (const [key, list] of byTile) {
-      if (list.length < 2) continue;
-      const tx = (key >> 16) & 0xffff, ty = key & 0xffff;
-      const slots = rec.slotsAt("presence", tx, ty).slice(1).filter((s) => s !== INDEX_NONE);
-      const layers = slots.map((s) => rec.debugPrim(s).layer);
-      for (let i = 1; i < layers.length; i++) if (layers[i] < layers[i - 1]) unsorted++;
-      checked++;
-    }
-
-    // The live scene puts one receiver per tile, so the sort and the caps were never exercised above.
-    // Force both: 12 receivers on one tile in DELIBERATELY reversed layer order.
-    const before = { recv: rec.droppedReceivers, lights: rec.droppedLights };
-    const stack = Array.from({ length: 12 }, (_, i) => {
-      const id = rec.allocPrim();
-      rec.writePrim(id, { unitX: 9000, unitY: 9000, definition: 1, layer: 11 - i });
-      return { index: id, layer: 11 - i };
-    });
-    rec.writePresence(200, 200, INDEX_NONE, stack);
-    const kept = rec.slotsAt("presence", 200, 200).slice(1).filter((s) => s !== INDEX_NONE);
-    const keptLayers = kept.map((s) => rec.debugPrim(s).layer);
-    const overSubscribed = {
-      offered: stack.length, keptSlots: kept.length,
-      layers: keptLayers,
-      ascending: keptLayers.every((v, i, a) => i === 0 || v >= a[i - 1]),
-      keptTheTopmost: keptLayers[keptLayers.length - 1] === 11,
-      droppedReceiversDelta: rec.droppedReceivers - before.recv,
-    };
-    // and over-subscribe the light cap: 10 lights on one tile, 8 slots
-    rec.buildLights(Array.from({ length: 10 }, (_, i) => (
-      { index: rec.allocPrim(), tileX: 210, tileY: 210, reach: 7 })));
-    const overLights = { droppedLightsDelta: rec.droppedLights - before.lights,
-                         slotsUsed: rec.slotsAt("light", 210, 210).filter((s) => s !== INDEX_NONE).length };
-    rec.upload(this.renderer.gl);
-
-    const centre = rec.slotsAt("light", 100, 50).filter((s) => s !== INDEX_NONE).length;
-    const edge = rec.slotsAt("light", 100 + 16, 50).filter((s) => s !== INDEX_NONE).length;
-    const beyond = rec.slotsAt("light", 100 + 17, 50).filter((s) => s !== INDEX_NONE).length;
-
-    return { definitionsMinted: minted, primsWritten: wrote, frameMismatches: mismatched, samples,
-             presence: { tiles: byTile.size, multiReceiverTilesChecked: checked, outOfOrder: unsorted },
-             overSubscribed, overLights,
-             lightReach: { atCentre: centre, at16Tiles: edge, at17Tiles: beyond,
-                           reachTilesForFullIntensity: 16 },
-             stats: rec.stats, glError: this.renderer.gl.getError() };
-  }
 
   /** lighting-rework P3 — run the slot pass + the sum, then read back enough to prove both. */
   private runLightPass(): Record<string, unknown> {
@@ -948,7 +823,7 @@ export class Viewport {
     // ADD a light into slot 7 (unused by the built set) via the delta path
     const id = rec.allocPrim();
     rec.writePrim(id, { unitX: (win.winCol + 16) * 16, unitY: (win.winRow + 8) * 16,
-                        definition: 1, emitType: 1, intensity: 55, reach: 16, colors: [0, 0, 0, 200] });
+                        definition: 0, emitType: 1, intensity: 55, reach: 16, colors: [0, 0, 0, 200] });
     rec.upload(gl);
     let draws = 0;
     const de = gl.drawElements, da = gl.drawArrays;
@@ -1201,7 +1076,7 @@ export class Viewport {
       const tileY = w.winRow + 4 + Math.floor(i / 8) * 7;
       const index = r.allocPrim();
       const homeX = tileX * 16 + 8, homeY = tileY * 16 + 8;
-      r.writePrim(index, { unitX: homeX, unitY: homeY, definition: 1, emitType: 1,
+      r.writePrim(index, { unitX: homeX, unitY: homeY, definition: 0, emitType: 1,
                            intensity: 63, reach: 16, colors: [0, 0, 0, 190] });
       this.liveLights.push({ index, homeX, homeY, tileX, tileY });
     }
@@ -1222,7 +1097,7 @@ export class Viewport {
       const ph = this.orbitPhase + i * 0.7;         // per-light phase, so they do not move in lockstep
       const ux = Math.round(L.homeX + Math.cos(ph) * R);
       const uy = Math.round(L.homeY + Math.sin(ph) * R);
-      r.writePrim(L.index, { unitX: ux & 0xffff, unitY: uy & 0xffff, definition: 1, emitType: 1,
+      r.writePrim(L.index, { unitX: ux & 0xffff, unitY: uy & 0xffff, definition: 0, emitType: 1,
                              intensity: 63, reach: 16, colors: [0, 0, 0, 190] });
       L.tileX = Math.floor(ux / 16); L.tileY = Math.floor(uy / 16);
     }

@@ -1,0 +1,170 @@
+//! The record RECONCILER (lighting-correctness P1b) — the seam I1 pinned as missing.
+//!
+//! The rework proved the record layer on hand-built snapshots (`buildRecords`, one-shot, racing
+//! frame streaming, movers absent, content lights unread). This replaces that with a per-frame
+//! reconcile of the LIVE scene: every standing prim of BOTH caches (cold things + warm movers)
+//! keeps a prim record; every stem keeps a definition (re-written when the resolver's frames
+//! move); every `Primitive.light` (the DSL-authored torch struct) makes its prim an EMITTER with
+//! its AUTHORED reach in the stored lane (P1). Presence and the light map rebuild from the same
+//! walk, so the record set and the drawn set cannot describe different scenes.
+//!
+//! Cost stance: ~700 prims/frame of compare-writes is the same shape the old `buildCasters` ran
+//! per frame; `Records` compare-writes mean an unchanged scene uploads nothing. The presence map
+//! rewrites only occupied tiles (+ clears newly-vacated ones); the light map clears + rebuilds
+//! only when an emitter's (index, tile, reach) signature changes.
+
+import type { Primitive } from "./SquareCache";
+import type { TextureResolver } from "../../textures";
+import { Records, INDEX_NONE, INTENSITY_MAX, REACH_MAX_TILES } from "./records";
+import { SQUARE, UNITS_PER_TILE } from "./squareMath";
+
+const U = SQUARE / UNITS_PER_TILE; // world px per unit
+
+/** DSL light intensity (1.0 = a normal torch, 4.0 = the overbright ceiling) → the u6 lane. */
+function intensityLane(intensity: number): number {
+  return Math.max(0, Math.min(INTENSITY_MAX, Math.round((intensity * INTENSITY_MAX) / 4)));
+}
+
+export class RecordSync {
+  /** `${stem}#${cell}` → definition block. */
+  private readonly defByKey = new Map<string, number>();
+  /** `c${id}` / `w${id}` (cache prim) → record index. */
+  private readonly primByCache = new Map<string, number>();
+  /** World tiles the presence map currently describes (packed `(tx+2048)<<16 | (ty+2048)`). */
+  private occupied = new Set<number>();
+  /** The emitter set the light map currently describes. */
+  private lightSig = "";
+  /** Resolver frames moved (a lod landed / a page repacked) → re-write every definition. */
+  private defsStale = true;
+
+  constructor(private readonly rec: Records) {}
+
+  markDefsStale(): void {
+    this.defsStale = true;
+  }
+
+  /** Ensure `stem`'s definition block exists and matches the CURRENT resolver frame. Span comes
+   *  from the manifest (DSL-authored tiles — I2: NEVER from atlas px); the frame origin converts
+   *  at the frame's own px-per-unit so a coarser lod still lands in units. Returns 0 (the
+   *  sentinel) while the stem has no streamed frame — the prim simply isn't a caster yet. */
+  private defFor(resolver: TextureResolver, stem: string, cell: number, boxSpanHint: number): number {
+    const key = `${stem}#${cell}`;
+    let block = this.defByKey.get(key);
+    if (block !== undefined && !this.defsStale) return block;
+    const frame = resolver.resolve(stem, "albedo", cell)?.frame;
+    if (!frame) return block ?? 0;
+    if (block === undefined) {
+      block = this.rec.allocDefinition(4);
+      this.defByKey.set(key, block);
+    }
+    const spanTiles = Math.max(1, Math.min(16, Math.round(resolver.spanOf(stem) ?? boxSpanHint)));
+    // Atlas px per UNIT at this frame's streamed size: the frame covers span×16 units.
+    const pxPerUnit = frame.w / (spanTiles * UNITS_PER_TILE);
+    const bb = resolver.opaqueBBox(stem);
+    const fields = {
+      frameX: Math.round(frame.x / pxPerUnit),
+      frameY: Math.round(frame.y / pxPerUnit),
+      frameSpan: spanTiles,
+      anchorX: 1, anchorY: 2, // bottom-centre, as casters anchor
+      subX: bb ? Math.round(bb.fx * spanTiles * UNITS_PER_TILE) : 0,
+      subY: bb ? Math.round(bb.fy * spanTiles * UNITS_PER_TILE) : 0,
+      subW: Math.max(1, bb ? Math.round(bb.fw * spanTiles * UNITS_PER_TILE) : spanTiles * UNITS_PER_TILE),
+      subH: Math.max(1, bb ? Math.round(bb.fh * spanTiles * UNITS_PER_TILE) : spanTiles * UNITS_PER_TILE),
+      castType: 1, receiveType: 2,
+    };
+    for (let r = 0; r < 4; r++) this.rec.writeDefinition(block, r, fields);
+    return block;
+  }
+
+  /** One reconcile of the live scene. Call per frame while lit; cheap when nothing changed. */
+  sync(gl: WebGL2RenderingContext, resolver: TextureResolver | null,
+       cold: Iterable<Primitive>, warm: Iterable<Primitive>): void {
+    const rec = this.rec;
+    const live = new Set<string>();
+    const byTile = new Map<number, { index: number; layer: number }[]>();
+    const emitters: { index: number; tileX: number; tileY: number; reach: number }[] = [];
+
+    for (const [prefix, prims] of [["c", cold], ["w", warm]] as const) {
+      for (const p of prims) {
+        const L = p.light;
+        if (!p.textureName && !L) continue;      // a flat tint rect neither casts nor emits
+        const key = prefix + p.id;
+        live.add(key);
+        let idx = this.primByCache.get(key);
+        if (idx === undefined) {
+          idx = rec.allocPrim();
+          this.primByCache.set(key, idx);
+        }
+        const boxSpanHint = Math.max(1, Math.round(p.width / SQUARE));
+        const def = p.textureName && resolver ? this.defFor(resolver, p.textureName, p.cell ?? 0, boxSpanHint) : 0;
+        const ax = p.x + p.width / 2;
+        const ay = p.y + p.height;
+        rec.writePrim(idx, {
+          unitX: Math.round(ax / U) & 0xffff,
+          unitY: Math.round(ay / U) & 0xffff,
+          definition: def,
+          rotation: 0,
+          castType: def !== INDEX_NONE ? 1 : 0,   // no streamed frame → no silhouette → no cast yet
+          receiveType: p.textureName ? 2 : 0,
+          emitType: L ? 1 : 0,
+          intensity: L ? intensityLane(L.intensity) : 0,
+          reach: L ? Math.max(1, Math.min(REACH_MAX_TILES, Math.round(L.reach / SQUARE))) : 1,
+          seed: Math.floor((p.seed ?? 0) * 255) & 0xff,
+          // Emitters carry their DSL light RGB in color.1-3 (the slot pass reads it; all-zero
+          // falls back to the legacy warmth ramp on color.4, which the debug lights use).
+          colors: L
+            ? [Math.round(L.color[0] * 255) & 0xff, Math.round(L.color[1] * 255) & 0xff,
+               Math.round(L.color[2] * 255) & 0xff, 0]
+            : [0, 0, 0, 0],
+        });
+        const tx = Math.floor(ax / SQUARE);
+        const ty = Math.floor(ay / SQUARE);
+        if (p.textureName) {
+          const tkey = (((tx + 2048) & 0xffff) << 16) | ((ty + 2048) & 0xffff);
+          let list = byTile.get(tkey);
+          if (!list) byTile.set(tkey, (list = []));
+          list.push({ index: idx, layer: p.zIndex ?? 0 });
+        }
+        if (L) emitters.push({ index: idx, tileX: tx, tileY: ty,
+                               reach: Math.max(1, Math.min(REACH_MAX_TILES, Math.round(L.reach / SQUARE))) });
+      }
+    }
+
+    // Free records whose cache prim is gone (evicted, despawned, zone closed).
+    for (const [key, idx] of this.primByCache) {
+      if (!live.has(key)) {
+        rec.freePrim(idx);
+        this.primByCache.delete(key);
+      }
+    }
+
+    // Presence: rewrite occupied tiles, clear newly-vacated ones.
+    for (const tkey of this.occupied) {
+      if (!byTile.has(tkey)) {
+        rec.writePresence(((tkey >>> 16) & 0xffff) - 2048, (tkey & 0xffff) - 2048, INDEX_NONE, []);
+      }
+    }
+    for (const [tkey, list] of byTile) {
+      rec.writePresence(((tkey >>> 16) & 0xffff) - 2048, (tkey & 0xffff) - 2048, INDEX_NONE, list);
+    }
+    this.occupied = new Set(byTile.keys());
+
+    // The light map: clear + rebuild whenever the emitter set changes (a mover with a light,
+    // a zone eviction, a torch placed). buildLights only writes covered tiles, so without the
+    // clear a moved light's OLD coverage lingers as a ghost registration (I1).
+    const sig = emitters.map((e) => `${e.index}:${e.tileX}:${e.tileY}:${e.reach}`).join("|");
+    if (sig !== this.lightSig) {
+      rec.clearLights();
+      rec.buildLights(emitters);
+      this.lightSig = sig;
+    }
+
+    this.defsStale = false;
+    rec.upload(gl);
+  }
+
+  get stats(): Record<string, number> {
+    return { defs: this.defByKey.size, prims: this.primByCache.size,
+             presenceTiles: this.occupied.size };
+  }
+}

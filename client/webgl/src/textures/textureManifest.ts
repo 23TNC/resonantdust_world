@@ -25,13 +25,16 @@ export interface ManifestEntry {
    *  each cell's UV rect so a downscale can't bleed a neighbour cell across a cell edge.
    *  Present iff {@link grid} is. */
   pad?: [number, number];
+  /** The frame's WORLD SPAN in tiles (from the leaf's meta.json, authored in the DSL) —
+   *  lighting-correctness P1b: the record layer's span source (never atlas px). */
+  span?: number;
 }
 
 interface ManifestPayload {
   version: string;
   textures: Record<
     string,
-    { hash: string; maxSize: number; lods: number[]; maps?: string[]; grid?: number[]; pad?: number[] }
+    { hash: string; maxSize: number; lods: number[]; maps?: string[]; grid?: number[]; pad?: number[]; span?: number }
   >;
 }
 
@@ -90,7 +93,7 @@ export class TextureManifest {
           Array.isArray(e.grid) && e.grid.length === 2 ? ([e.grid[0], e.grid[1]] as [number, number]) : undefined;
         const pad =
           grid && Array.isArray(e.pad) && e.pad.length === 2 ? ([e.pad[0], e.pad[1]] as [number, number]) : undefined;
-        this.entries.set(stem, { hash: e.hash, maxSize: e.maxSize, maps, grid, pad });
+        this.entries.set(stem, { hash: e.hash, maxSize: e.maxSize, maps, grid, pad, span: e.span });
       }
       for (const fn of this.listeners) fn();
     } catch {

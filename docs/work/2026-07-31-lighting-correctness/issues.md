@@ -57,10 +57,13 @@ on a cold-started fixture the chain produces none. Not yet root-caused (candidat
 gather finding no casters for the un-rebuilt window; `surface` quadrant sampling against
 the wrong span from I2 — a 2× short card can miss every crossing).
 
-Separate artifact, reproduced across rebuilds and captures: **concentric rectangular
-banding** NE of focus (~tiles 105–107 × 52–55), flickering between frames — square hard
-edges where only radial falloff should exist. Unexplained; candidates: refine reading
-def-index garbage, slot-boundary bleed, or the un-cleared first ping-pong frame.
+The rectangular-banding half of this issue was RESOLVED at P1b as not-a-defect: the
+`__lit(false)` A/B showed identical geometry unlit — the rectangles are the USER'S WALL
+BLUEPRINTS (two nested pending build-perimeters at tiles ~105–108 × 52–55), drawn as gray
+autotile ghosts and simply BRIGHT when a torch is near. The earlier "flicker" was texture
+streaming re-bakes; the one blazing-white frame was the corrupted-sum state a manual
+`__lightpass` call left behind (I1's fragility, retired with the harness). The
+no-silhouettes half of this issue remains open for P3.
 
 ## I4 — z-ordering: the prim `layer` lane is never written {#i4}
 

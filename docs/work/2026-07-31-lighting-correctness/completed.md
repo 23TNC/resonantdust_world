@@ -1,5 +1,38 @@
 # Completed — lighting correctness
 
+## 2026-07-31 · P1b — lighting is wired to the LIVE scene
+
+**The reconciler** (`recordSync.ts`, run per lit frame from the draw loop): every standing
+prim of BOTH caches (cold things + warm movers) keeps a prim record; every stem keeps a
+definition, minted on first successful resolve and RE-WRITTEN when the resolver's frames
+move (`resolver.onLoad` → defs stale — I2's staleness half closed); `Primitive.light`
+(the DSL torch struct) makes its prim an emitter with AUTHORED reach in the stored lane,
+authored intensity (DSL 0..4 → u6), and authored RGB in `color.1-3` (the slot shaders now
+read RGB, warmth-ramp fallback for all-zero — the debug lights). Presence rebuilds from
+the same walk with vacated tiles cleared; the light map clears + rebuilds on any emitter
+signature change (I1's ghost-registration fix, `Records.clearLights`). Frees follow cache
+eviction. `buildRecords` (the one-shot debug builder) is DELETED; `__buildrecords` now
+reports reconciler stats; **`litEnabled` defaults TRUE** — `__lit(false)` is the unlit A/B.
+Span now comes from the MANIFEST (`resolver.spanOf`, parsed from the server's `span` field
+— I2's span-source fix at the def writer; the subframe measurement half stays P2).
+
+**Verified on a COLD page load, zero console calls**: 35 definitions / 461 prims / 458
+presence tiles minted as zones streamed; **3 torch emitters with authored reach 8,
+intensity 16, DSL colour**; torch pools lit; trees casting streaks; the WOLF lit while
+walking; the placed human walked into the pool and stood LIT (vs the flat-gray P0
+capture) and casting. Drop counters 0. `__lit(false)` returns to unlit. The scene-tracking
+acceptance holds as records ≡ standingPrims (461 = 461, boot-streamed 0 → 461); a camera
+teleport that changes no zone changes no records — correct, noted.
+
+**The "banding artifact" is CLOSED as not-a-defect** (issues I3 updated): the rectangles
+are the user's pending WALL BLUEPRINTS — nested build-perimeter ghosts, identical in the
+unlit A/B, just lit when a torch is near. The one blazing-white frame earlier was the
+corrupted-sum state a manual `__lightpass` left behind — that harness path is retired.
+
+**Honest limits:** the torch pools are DIM (intensity 1.0 → lane 16/63 — the 0..4 scale
+maps authored content to quarter-brightness); brightness/ambient feel is P5 territory,
+noted not tuned. Shadows are wedge-y streaks pending P2 (bbox) + P3 (silhouette proof).
+
 ## 2026-07-31 · P1 — reach is in the data
 
 **The split** (`records.ts`): `prim_data.B` bits 0–9 are now `u4 reach (6–9, biased +1 =

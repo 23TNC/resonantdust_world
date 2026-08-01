@@ -223,6 +223,18 @@ export class Records {
     }
   }
 
+  /** Clear the WHOLE light map (lighting-correctness P1b) — `buildLights` writes only the
+   *  tiles its lights currently cover, so a mover's OLD coverage would otherwise linger as
+   *  stale registrations (pinned in I1). The reconciler clears + rebuilds on any emitter
+   *  change; 256 KiB of fill is nothing against a silent ghost light. */
+  clearLights(): void {
+    let changed = false;
+    for (let i = 0; i < this.lightMirror.length; i++) {
+      if (this.lightMirror[i] !== 0) { this.lightMirror[i] = 0; changed = true; }
+    }
+    if (changed) this.tileDirty = true;
+  }
+
   /** DEBUG: the 8 slots of a per-tile map at a world tile. */
   slotsAt(map: "presence" | "light", tileX: number, tileY: number): number[] {
     const m = map === "presence" ? this.presenceMirror : this.lightMirror;

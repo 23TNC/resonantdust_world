@@ -32,22 +32,22 @@ Stances + fixtures: [`README`](README.md)._
 
 ## P1b — wire lighting to the LIVE scene ([I1](issues.md#i1) — added at P0, forks F4)
 
-- [ ] Drive record building from the scene lifecycle: defs minted per stem on first
+- [x] Drive record building from the scene lifecycle: defs minted per stem on first
       successful resolve (re-written on lod swap), scene prims minted/updated/freed as
       cold prims bake/evict — no one-shot, no readiness race. Acceptance: a COLD page
       load at the fixture is lit with zero console calls; def/prim counts track window
       moves.
-- [ ] Give MOVERS records: warm prims mint/update/free through the same path (position
+- [x] Give MOVERS records: warm prims mint/update/free through the same path (position
       per re-bake, def per facing stem). Acceptance: the placed human is lit standing in
       a pool and the walking wolf is lit + casting, on a cold load.
-- [ ] Mint CONTENT lights: the DSL `&thing.light.*` struct (torch, torch_blue) becomes an
+- [x] Mint CONTENT lights: the DSL `&thing.light.*` struct (torch, torch_blue) becomes an
       emit prim with authored colour/intensity (+ authored reach once P1 lands).
       Acceptance: torches light their pools on a cold load; `__lights` stays as a drill
       overlay only.
-- [ ] Make lighting the DEFAULT (`uLit` on when the chain is ready) and keep the debug
+- [x] Make lighting the DEFAULT (`uLit` on when the chain is ready) and keep the debug
       toggles as overrides. Acceptance: the fixture page lights without any setup;
       `__lit(false)` still returns to unlit for A/B.
-- [ ] Root-cause and fix the rectangular banding artifact ([I3](issues.md#i3)) — it
+- [x] Root-cause and fix the rectangular banding artifact ([I3](issues.md#i3)) — it
       reproduces on a cold-started lit fixture NE of focus. Acceptance: the cause named
       in `issues.md`; the banding gone at the fixture, both zooms.
 
