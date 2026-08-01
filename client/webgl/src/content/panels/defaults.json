@@ -117,7 +117,7 @@
     "minimized": false
   },
   "details": {
-    "left": "0px",
+    "left": "204.364px",
     "top": "32px",
     "right": "auto",
     "bottom": "auto",
@@ -184,6 +184,6 @@
     "titleBarHidden": false,
     "gridSnap": true,
     "masked": true,
-    "minimized": true
+    "minimized": false
   }
 }
