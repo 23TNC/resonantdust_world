@@ -72,39 +72,48 @@ cannot afford — the whole point is that the drawn position and the shadow posi
 independently. The test that settles it: place a caster at a known height under a light at a known
 height and check the shadow length against the geometry, *not* against the old sprite position.
 
-## I5 — `u8 unit.z` is coarser than the offset it replaces {#i5}
+## I5 — RESOLVED by a channel relayout (user, 2026-08-01) {#i5}
 
-`head.offset.y` is `-0.87` **tiles**, a float. `unit.z` is a `u8` in **units** — 16 per tile. So the
-head's height quantises to 1/16 tile, and there is no `fine.z` to recover the remainder the way
-`fine.x`/`fine.y` do for horizontal placement.
+`u8 unit.z` alone quantises height to 1/16 tile with no sub-unit lane, against today's float
+`offset.y`. The user's fix moves lanes rather than accepting the snap:
 
-`0.87 × 16 = 13.92` → stores as 14 → **0.875 tiles**. That is a 0.5-unit error, **4 px at `SQUARE`
-128**, and it moves the head. Whether 4 px is visible on a pawn's head is a judgement to make *by
-looking at it at zoom*, not by arguing from the number — but it must be looked at, because the change
-is supposed to be visually neutral.
+```
+GREEN  u8 unit.z | u4 fine.x | u4 fine.y | u4 fine.z | u8 seed | u4 rotation   = 32
+BLUE   u2 cast | u2 receive | u2 emit | u10 intensity | u16 definition_index   = 32
 
-If it is visible, the options are a `fine.z` nibble (there are 4 reserved bits in `prim_data.GREEN`),
-or accepting the snap and re-tuning the art. Not a decision to take before P3 shows the picture.
+definition_data BLUE   u2 cast | u2 receive | u2 emit | u10 intensity | u16 reserved = 32
+```
 
-## I6 — Two coincident casters, one stored identity {#i6}
+`u4 layer` pays for `u4 fine.z`. **Verified before agreeing: no shader reads the layer lane.** Its only
+uses are the write itself and `presence`'s sort — and that sort reads a value the *caller* supplies,
+not one fetched back from the record. It is write-only.
 
-**The architectural one.** The gather stores **one** caster per (unit, light). Put the head at the
-body's x/y and they become two casters with the *same plan-view footprint* — collinear cards at
-different heights, competing for one slot.
+`definition_data` loses `layer`/`seed`/`rotation` to `u16 reserved`: seed and rotation are per-prim
+with a definition default, and with layer gone the definition has no use for the lane.
 
-Whichever the walk finds first wins and the other is simply lost. So a pawn would cast either the
-body's shadow (too short) or the head's (a band floating where the body's should be) — not the union,
-which is what a viewer expects.
+**Range.** `u8` units = 255 units = **15.94 tiles ≈ `ZONE_DIM`**, and `frame.span` caps a prim at 16
+tiles — so a prim can be up to **16 tiles cubed**, symmetric in all three axes. `fine.z` is `u4` px
+within a unit, matching `fine.x`/`fine.y`, which covers `UNIT` at `SQUARE` 256 exactly.
 
-This is not caused by elevation; elevation **exposes** it, because before this change the two parts
-had different footprints and never contended.
+**One doc line needs updating with it**: *"BLUE and ALPHA are copied from the definition"* stops being
+literally true — BLUE's low 16 bits become the prim's own definition index, and `seed`/`rotation` move
+to GREEN. The copy rule survives, it just describes different lanes.
 
-Three ways out, and it is a design decision rather than a bug fix:
+## I6 — WITHDRAWN: I was wrong about one caster per slot {#i6}
 
-1. **The carrier casts for the whole graph** — the pawn is one caster whose card spans base to the
-   top of its tallest part. Parts set `cast_type 0`. Cheapest, and matches "a pawn is one object".
-2. **Union at the card level** — keep per-part casters but let the stored identity resolve to the
-   carrier, so the card is the composite's extent.
-3. **More than one caster per slot** — the storage question that killed the previous design. Not this.
+I claimed that body and head sharing a footprint would contend for one stored caster, so a pawn would
+cast one part's shadow and lose the other's. **That is wrong, and the user corrected it.**
 
-**(1) is the recommendation**, and it wants deciding before P3 rather than discovered during it.
+The gather stores one caster **per UNIT per light** — not one per pawn. Each unit independently keeps
+whichever caster occludes *it*, so a unit shadowed by the body stores the body, a unit shadowed only
+by the head stores the head, and **the union is represented naturally** across units. There is no
+contention at the level I claimed.
+
+The real residual is much smaller and sub-unit: within a single unit that is *partially* covered by
+both, the refine tests only the stored caster's silhouette, so a pixel covered by the other one alone
+renders lit. As the user put it — the error is the fraction of a unit partially occluded by one part
+and not the other, on ground that is often already shadowed anyway.
+
+**Left as a thing to look at during P3, not a design change before it.** I escalated a sub-unit
+sampling artefact into an architectural blocker by reasoning about the storage instead of about what a
+unit actually does.

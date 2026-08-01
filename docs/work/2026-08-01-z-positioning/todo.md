@@ -24,6 +24,13 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 - [ ] Show that the height test now discriminates. Acceptance: raising one light's height visibly shortens its casters' shadows on screen at zoom 3; a screenshot per height.
 - [ ] Add an elevation probe: a prim's `unitZ`, its card's world extent, and where the projection puts it. Acceptance: one call answers "how high does the code think this is, and where does it draw it".
 
+## P0b — The channel relayout ([I5](issues.md#i5))
+
+- [ ] Move `seed` + `rotation` to GREEN and `definition_index` to BLUE; `u4 layer` becomes `u4 fine.z`. Acceptance: both words still total exactly 32 bits, and every shader lane read is updated with them.
+- [ ] Retire `layer`/`seed`/`rotation` from `definition_data` to `u16 reserved`. Acceptance: nothing reads the retired lanes; `presence`'s sort still uses the caller's value, which is where it always came from.
+- [ ] Update `VARIABLES.md` and the "BLUE and ALPHA are copied" line. Acceptance: the copy rule names the lanes that are actually copied now.
+- [ ] Prove the relayout changed no pixel. Acceptance: with every height 0, the render and the shadow buffer are identical to before — this is a move, not a behaviour change.
+
 ## P1 — The caster card starts at its own height
 
 - [ ] Make `occludes()` and `refineOccluded()` span `[z, z + H]` instead of `[0, H]` ([F3](forks.md#f3)). Acceptance: a caster at z casts a shadow displaced by the geometry, not one starting at the ground.
