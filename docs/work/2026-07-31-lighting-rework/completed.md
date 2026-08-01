@@ -640,3 +640,45 @@ time.
 
 **Both times the first symptom was "the pass returns nothing", and both times the pass was fine.**
 Probing the inputs rather than re-reading the shader is what found it.
+
+## 2026-07-31 · Final performance — the whole system, everything on
+
+Re-measured with the receiver map in the chain (it added a pass since P7's numbers). Same
+instrument, same fixture, `readPixels` sync at both ends.
+
+### A real lit frame, through the ordinary tick path
+
+| | ms/frame | draws |
+|---|---|---|
+| **lit** (gather + receivers + slots + sum + blit) | **1.26** | 5 |
+| unlit | 0.12 | 1 |
+| **the lighting system costs** | **1.14 ms/frame** | +4 |
+
+**~795 fps equivalent**, and **1.14 ms of a 16.7 ms frame — under 7 % of a 60 fps budget.**
+
+### Lighting update by light count, reach 16
+
+| lights | ms |
+|---|---|
+| 1 | 0.91 |
+| 4 | 1.27 |
+| 8 | 2.03 |
+| **16** | **2.31** |
+
+Adding the receiver map cost nothing measurable (2.308 → 2.306 at N16, inside the spread) — it is one
+pass over the lighting grid with an early exit on the first covering receiver.
+
+**Scaling is strongly sub-linear: 16× the lights for 2.5× the cost.** Both passes rasterise a fixed
+grid, so N changes what a fragment *finds*, not how many fragments run, and the per-tile cap means no
+fragment ever tests more than 8 lights however many the scene holds.
+
+### Against the target
+
+The stream existed to move one number: **moving lights at reach 16, zoom 1, inside 8 ms.** All 16 fit
+in **2.31 ms — under a third of the budget**, with the shadow gather, the receiver map and the refine
+all running.
+
+**Not claimed as a speedup over the old system's "15 lights".** That figure came from a different
+harness on a different scene, and [I10](issues.md#i10) showed this project's `gl.finish()` numbers were
+~4× low. The defensible statement is the one above: the target is met with room to spare, measured on
+an instrument whose failure mode was found and fixed inside this stream.
