@@ -18,6 +18,7 @@ import type { Texture } from "../../gl";
 import type { TextureResolver } from "../../textures";
 import { Records, INDEX_NONE, INTENSITY_MAX, REACH_MAX_TILES } from "./records";
 import { SQUARE, UNITS_PER_TILE } from "./squareMath";
+import { drawnForWorldHeight } from "./worldTilt";
 
 const U = SQUARE / UNITS_PER_TILE; // world px per unit
 
@@ -188,10 +189,17 @@ export class RecordSync {
           unitY: (qy >> 4) & 0xffff,
           fineX: qx & 15,
           fineY: qy & 15,
-          // P3: the LIGHT HEIGHT rides unit.z (the DSL authors tiles; records want units).
-          // Omitting it left every emitter at Lz = 0, which degenerates the occlusion solve —
-          // the giant streak shadows P1b noted.
-          unitZ: L ? Math.min(255, Math.round((L.height / SQUARE) * UNITS_PER_TILE)) : 0,
+          // The LIGHT HEIGHT rides unit.z (the DSL authors tiles; records want units). Omitting it
+          // left every emitter at Lz = 0, which degenerates the occlusion solve — the giant streak
+          // shadows P1b noted.
+          //
+          // z-positioning F9: `unit.z` means ONE thing — a DRAWN up-screen shift, per the user's
+          // `screen.y = unit.y - unit.z`. A light's authored height is a WORLD height
+          // (`SquareCache.height` = "world px above the ground plane"), so it converts HERE, once,
+          // and every downstream reader compares like with like. Without this the lane held a world
+          // height for lights and a drawn shift for elevated parts — quantities differing by
+          // sin(tilt), silently compared against each other in the height test.
+          unitZ: L ? Math.min(255, Math.round(drawnForWorldHeight((L.height / SQUARE) * UNITS_PER_TILE))) : 0,
           definition: def,
           rotation,
           castType,

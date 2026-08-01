@@ -28,13 +28,17 @@ import { LIGHT_READ_SCALE } from "./lightPass";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
-import { WORLD_TILT_DEG, TILT_SIN, worldHeightForDrawn } from "./worldTilt";
+import { WORLD_TILT_DEG, TILT_SIN, worldHeightForDrawn, drawnForWorldHeight } from "./worldTilt";
 
 /** Height for debug-placed lights, in units — **the corpus's own contract**, not a taste call.
  *  `content/visual/things.rd` authors `2.5 &thing.light.height set` for torches and states in a
  *  comment that 2.5 tiles = 40 units is what a flame must clear to cast against anything. A debug
- *  light below that models a lamp buried in the floor (z-positioning P0). */
-const DEBUG_LIGHT_HEIGHT_UNITS = 40;
+ *  light below that models a lamp buried in the floor (z-positioning P0).
+ *
+ *  Converted through {@link drawnForWorldHeight} because 40 is that contract's **world** height and
+ *  the lane stores a **drawn** shift (F9) — 44 drawn units at 65 degrees. Writing 40 raw would
+ *  quietly place debug lights BELOW the contract the corpus tuned. */
+const DEBUG_LIGHT_HEIGHT_UNITS = Math.round(drawnForWorldHeight(40));
 
 const BAKE_BUDGET = 128;
 /** Minimum cold squares baked per frame regardless of warm load — so a warm flood can't

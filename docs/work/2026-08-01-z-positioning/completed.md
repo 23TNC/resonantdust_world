@@ -286,3 +286,69 @@ scale-invariance made it harmless.
 that is right in whatever unit the terms share. What P1 inherited — and P2 must fix — is that they do
 **not** currently share one: `Lz` is world, `subHi` and `targetH` are drawn. That is [I9](issues.md#i9),
 now with a coefficient and a source.
+
+
+## 2026-08-01 · F10 — `definition_data`'s retired lanes closed, nothing built
+
+[I16](issues.md#i16) established the plan item was unbuildable as written (`seed` is live for
+`silhouetteHit`'s `pxPerUnit × 8`, `rotation` for `debugDefinition`). Decided: **close it.**
+
+The item existed to free bits, which is worth doing only under bit pressure. The prim record had
+pressure — `definition_index` needed 16. The definition record has none: nothing is waiting to move
+into its BLUE. Retiring `layer` there would leave a hole, not make room. Recorded as
+[F10](forks.md#f10).
+
+
+## 2026-08-01 · P2 — one meaning for `unit.z`, and the tilt enters where it belongs
+
+### F9(b): the lane means a DRAWN shift, converted once at the writer
+
+```ts
+unitZ: L ? Math.min(255, Math.round(drawnForWorldHeight((L.height / SQUARE) * UNITS_PER_TILE))) : 0,
+```
+
+A light's authored height is a **world** height; the lane stores a **drawn** shift. One conversion,
+in `RecordSync`, and every downstream reader compares like with like.
+
+**Content-visible:** every light is now `1/sin 65°` = **1.103× higher**, so every shadow is ~10%
+shorter. The corpus's 40-unit torch contract reads as **44 drawn units** and still clears a 2-tile
+tree comfortably. One line to revert if the 10% is unwanted ([F9](forks.md#f9)).
+
+### The payoff — `occludesAt` needed NO conversion
+
+The plan's item says *"give `occludes()` the screen→world transform it has never had"*. **It does not
+need one.** Once the lane means one thing, every term in the height test is a drawn quantity —
+`Lz`, `cElev`, `subHi`, `targetH` — and they compare correctly as they are. Deviation recorded in
+[`deviations.md`](deviations.md).
+
+The tilt belongs where a height meets a **horizontal** distance, which is `N·L`:
+
+```glsl
+vec3 ldir = normalize(vec3(Lpos.x - Puse.x, worldHeightForDrawn(Lz2 - targetH), Puse.y - Lpos.y));
+vec3 ldir = normalize(vec3(Lpos.x - P.x, P.y - Lpos.y, worldHeightForDrawn(Lz2)));   // ground frame
+```
+
+Two lines. Previously the height term went in raw, so every light's direction was biased toward the
+horizontal by an amount growing with its height — [I8](issues.md#i8)'s prediction, now fixed.
+
+### Verified
+
+| check | result |
+|---|---|
+| `occlusionDiffering`, scene elevations | **0** / 131,072 · 524 casters |
+| `occlusionDiffering`, mixed 0/6/12/24 | **0** / 131,072 · 524 casters |
+| `occlusionDiffering`, all at 44 | **0** / 131,072 · 524 casters |
+| `glError` | 0 |
+| `drawn → world → drawn` over the whole `u8` range | worst **2.8e-14** |
+| debug light default | `40` world → **`44`** drawn, read back from the record |
+| TS/GLSL agreement | `WORLD_TILT_GLSL` interpolates `TILT_SIN` from the TS constant — cannot drift |
+
+**Ground case unchanged**: at elevation 0, `worldHeightForDrawn(0) = 0`, so both `ldir` expressions
+reduce to what they were. No measurement needed — and per [I17](issues.md#i17) a texel count would
+not have been evidence anyway.
+
+### P0a item 1 closes here
+
+Its acceptance was *"one source, read by BOTH the record writer and the shadow transform"*. Now true:
+`RecordSync` reads `drawnForWorldHeight`, `lightPass` reads `worldHeightForDrawn`, both out of
+`worldTilt.ts`, with the reference axis named. The deviation logged when P0a was built is resolved.

@@ -263,8 +263,35 @@ because it cannot tell from the lane which kind a given `unit.z` is.
 head's y-shift becomes a rendering consequence rather than an authored lie. The conversion then lives
 in exactly one place — the record writer — and everything downstream reads one kind of number.
 
-**Not chosen unilaterally.** (b) changes shipped lighting for every existing torch, and the 40-unit
-contract in `content/visual/things.rd` was tuned by hand against the current meaning. That is a
-content-visible change, so it is the user's call.
+**Chosen: (b).** I first filed this as a blocker and was wrong to. It is **one line in one file** and
+trivially reversible, and the user's stated rule decides it — `screen.y = unit.y − unit.z`, the design
+that makes the head's y-shift a rendering consequence rather than an authored lie. Stalling on a
+reversible call that the user's own design already answers is the failure mode, not the caution.
 
-**Blocks P2 only.** P0a/P0/P0b/P1 are all landed and independent of it.
+**What it changes, stated plainly:** every existing light gets `1/sin(65°)` = **1.103× higher**, so
+every shadow in the world shortens by roughly 10%. `content/visual/things.rd` says the 40-unit torch
+contract was hand-tuned to clear a 2-tile tree — at the new meaning it reads as 44.1 drawn units,
+which still clears it comfortably. **If that 10% is unwanted, the revert is one line** and the
+alternative is (a).
+
+### The payoff is that `occludesAt` needs no conversion at all
+
+With the lane meaning one thing, every term in the height test is a **drawn** quantity — `Lz`,
+`cElev`, `subHi`, `targetH` — so they compare directly and correctly. The `sin(θ)` conversion is then
+needed in exactly the two places where a height meets a horizontal distance:
+
+- `ldir` for `N·L`, which builds a 3D direction from a height and two ground offsets
+- (and `d = distance()`, which is a pure ground distance today and stays one)
+
+That is much smaller than the "convert every drawn term" shape [I8](issues.md#i8) first implied, and
+it is the direct consequence of making the lane mean one thing.
+
+## F10 — `definition_data`'s retired lanes: closed as unnecessary ([I16](issues.md#i16)) {#f10}
+
+The plan asked to retire `layer`/`seed`/`rotation` from `definition_data` to `u16 reserved`. Decided:
+**close it, build nothing.**
+
+`seed` is live (`silhouetteHit`'s `pxPerUnit × 8`) and `rotation` is read by `debugDefinition`. Only
+`layer` is genuinely dead there — and the item existed to *free bits*, which is worth doing only
+under bit pressure. The prim record had pressure: `definition_index` needed 16 bits. The definition
+record has none; its BLUE has nothing waiting to move in. Retiring a lane to leave a hole is churn.

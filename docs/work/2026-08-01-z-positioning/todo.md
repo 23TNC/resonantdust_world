@@ -20,7 +20,7 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 
 ## P0a — Pin the two unknowns before writing any transform
 
-- [ ] Reintroduce the world tilt as a live parameter at **65°** ([I7](issues.md#i7)) — it does not exist; the strip deleted it with `shadowGather.ts`. Acceptance: one source, read by BOTH the record writer and the shadow transform, with the reference axis named.
+- [x] Reintroduce the world tilt as a live parameter at **65°** ([I7](issues.md#i7)) — it does not exist; the strip deleted it with `shadowGather.ts`. Acceptance: one source, read by BOTH the record writer and the shadow transform, with the reference axis named.
 - [x] Pin the game→world transform's coefficients ([I8](issues.md#i8)). Acceptance: `unit.z`'s split into `world.y` and `world.z` is stated once and derived from the live tilt — the solve is metric, so a wrong coefficient biases falloff and `N·L`, not just geometry.
 
 ## P0 — Make height observable at all
@@ -32,7 +32,7 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 ## P0b — The channel relayout ([I5](issues.md#i5))
 
 - [x] Move `seed` + `rotation` to GREEN and `definition_index` to BLUE; `u4 layer` becomes `u4 fine.z`. Acceptance: both words still total exactly 32 bits, and every shader lane read is updated with them.
-- [ ] Settle `definition_data`'s retired lanes ([I16](issues.md#i16) — the original item's acceptance is false: `silhouetteHit` reads the def's `seed` as `pxPerUnit × 8`). Acceptance: a decision recorded — the recommendation is to close it as unnecessary, since the definition record has no bit pressure to relieve.
+- [x] Settle `definition_data`'s retired lanes ([I16](issues.md#i16) — the original item's acceptance is false: `silhouetteHit` reads the def's `seed` as `pxPerUnit × 8`). Acceptance: a decision recorded — the recommendation is to close it as unnecessary, since the definition record has no bit pressure to relieve.
 - [x] Update `VARIABLES.md` and the "BLUE and ALPHA are copied" line. Acceptance: the copy rule names the lanes that are actually copied now.
 - [x] Prove the relayout changed no pixel. Acceptance: with every height 0, the render and the shadow buffer are identical to before — this is a move, not a behaviour change.
 
@@ -47,9 +47,9 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 _There is no draw-side constant: the screen-north shift IS the elevation, 1:1. The tilt lives in
 `unit.z`'s decomposition and in the shadow's transform, and nowhere else._
 
-- [ ] Write the decomposition + its inverse in TS **and** GLSL in one file, off the live tilt. Acceptance: `elevation → unit.z` and `unit.z → elevation, ground_y` round-trip across the `u8` range, CPU and GPU agreeing, like `reachFromIntensity`.
-- [ ] Give `occludes()` the screen→world transform it has never had ([I8](issues.md#i8)). Acceptance: shadow length matches the geometry for a known caster height under a known light height — measured, not tuned to look right.
-- [ ] Re-check the ground case. Acceptance: with every elevation 0 the shadow buffer is bit-identical to before — the transform must be a no-op at the floor.
+- [x] Write the decomposition + its inverse in TS **and** GLSL in one file, off the live tilt. Acceptance: `elevation → unit.z` and `unit.z → elevation, ground_y` round-trip across the `u8` range, CPU and GPU agreeing, like `reachFromIntensity`.
+- [x] Give `occludes()` the screen→world transform it has never had ([I8](issues.md#i8)). Acceptance: shadow length matches the geometry for a known caster height under a known light height — measured, not tuned to look right.
+- [x] Re-check the ground case. Acceptance: with every elevation 0 the shadow buffer is bit-identical to before — the transform must be a no-op at the floor.
 
 ## P2b — Separate the coordinate systems ([F7](forks.md#f7))
 

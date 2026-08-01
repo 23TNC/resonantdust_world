@@ -18,6 +18,7 @@
 
 import { Program, Geometry, RenderTarget, type Renderer, type Texture } from "../../gl";
 import { LIGHT_SLOTS, LIGHT_SCALE, TILE_SLOTS, LIGHT_LANES_GLSL, OCCLUSION_GLSL } from "./records";
+import { WORLD_TILT_GLSL } from "./worldTilt";
 import { SQUARE, UNITS_PER_TILE, SLOTS_X, SLOTS_Y, TEXTILE_LIGHT } from "./squareMath";
 
 /** Lighting texels per tile — the pinned lighting resolution, independent of the art dial. */
@@ -61,6 +62,7 @@ uniform int uMapW;                   // one slot block's width in texels
 out vec4 fragColor;
 
 ${LIGHT_LANES_GLSL}
+${WORLD_TILT_GLSL}
 
 const int   LIGHT_SLOTS = ${LIGHT_SLOTS};
 const float LIGHT_SCALE = ${LIGHT_SCALE}.0;
@@ -186,13 +188,18 @@ void main() {
   vec3 nrm = sceneNormalAt(P);
   float ndotl;
   if (recvIdx != 0u) {
-    // sprite frame: x right, y up the card, z toward the viewer (world south)
-    vec3 ldir = normalize(vec3(Lpos.x - Puse.x, Lz2 - targetH, Puse.y - Lpos.y));
+    // sprite frame: x right, y up the card, z toward the viewer (world south).
+    // z-positioning P2: the HEIGHT term is a drawn extent and the other two are ground distances,
+    // so the height converts to WORLD before they are mixed (F9/I8: sin(tilt), the factor
+    // shadowGather.ts used). Without it the direction is biased toward the horizontal by an amount
+    // that grows with the light's height -- a shading error that reads as a tuning problem.
+    vec3 ldir = normalize(vec3(Lpos.x - Puse.x, worldHeightForDrawn(Lz2 - targetH), Puse.y - Lpos.y));
     ndotl = clamp(dot(nrm, ldir), 0.0, 1.0);
   } else {
     // ground frame: x right, y north (up-screen), z up -- the flat-up fallback decodes to
-    // (0,0,1), reproducing the old overhead/grazing falloff exactly; authored tile normals tilt it
-    vec3 ldir = normalize(vec3(Lpos.x - P.x, P.y - Lpos.y, Lz2));
+    // (0,0,1), reproducing the old overhead/grazing falloff exactly; authored tile normals tilt it.
+    // P2: same conversion -- z is a height, x and y are ground distances.
+    vec3 ldir = normalize(vec3(Lpos.x - P.x, P.y - Lpos.y, worldHeightForDrawn(Lz2)));
     ndotl = clamp(dot(nrm, ldir), 0.0, 1.0);
   }
   at *= mix(0.25, 1.0, ndotl);
