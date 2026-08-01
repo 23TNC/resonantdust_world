@@ -371,3 +371,39 @@ specifically gives 0.
 Worth naming: **two of the three "failures" were the test, not the code** — and the one time I could
 have declared success early (`0 differing` on a run where the records had not been rebuilt) the tier
 counts were all zero, which is what caught it. A pass with nothing in it is not a pass.
+
+## 2026-07-31 · P5 — the refine, and the first lit frame
+
+[`after/lit-02.jpg`](after/lit-02.jpg) — a point light with radial falloff, and **shadows radiating
+from every conifer that occludes it**, cast from stored caster identities and refined at 64/tile. The
+whole chain runs: records → presence/light → gather → slots → sum → one blit fetch.
+
+### Where the refine runs ([F12](forks.md#f12))
+
+The design's second pass is per screen pixel, which would make [F1](forks.md#f1)'s summed map
+pointless — if lighting is recomputed per pixel there is nothing left to save. So the refine runs
+**inside the slot pass at 64/tile**, against a gather that resolved at 16/tile: **4× finer per axis**,
+for one `occludes` call and no search, because the identity is already stored. That is precisely the
+win the old stream paid 9.29 ms of a 10.88 ms pass for and then deleted.
+
+The price, stated: at zoom 1 a lighting texel is 2×2 screen pixels, so the edge quantises to 2 px
+rather than 1. If that ever matters, the fix is to raise `TEXTILE_LIGHT` — the same dial — not to move
+the refine and lose the one-fetch display.
+
+### The gate ([F5](forks.md#f5))
+
+Only a texel whose **unit holds a caster for that light** does any refine work: one shadow-buffer
+fetch, then one `occludes`. Interior and fully-lit texels do neither. `uDebugGate` emits the gate's
+own selectivity so it is a measured percentage rather than an assumption.
+
+### An addressing bug the first lit frame caught immediately
+
+The first render came out at ambient with faint diagonal bands — shadows present, light nearly absent.
+The slot pass writes **linearly** from the window origin (`texel x → winCol + x/64`) while the blit
+read **toroidally** (`pmod(tile, cols)`). Those agree only when `winCol` is a multiple of `cols`; at
+`winCol = 84, cols = 32` they do not, so the light was deposited in one slot and read from another.
+
+Worth recording as a class, not an incident: **a writer and a reader must share one addressing rule,**
+and this project has now been bitten by that same shape three times (`uLSlot` vs `win.slotPx`,
+`resolvedTilePos`'s reference point, and now this). The shadow bands were the tell — they were in the
+right place because the gather and the shadow read *do* share a rule.

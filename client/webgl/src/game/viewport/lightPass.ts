@@ -38,6 +38,11 @@ precision highp float;
 precision highp int;
 uniform highp usampler2D uPrim;      // prim_data   — one px per prim
 uniform highp usampler2D uLight;     // light       — 8 u16 prim indices per TILE
+uniform highp usampler2D uDef;       // definition_data — the caster's card
+uniform highp usampler2D uShadow;    // the gather's output: WHICH caster occludes, per unit per light
+uniform int uUnitsX;
+uniform int uRefine;                 // 0 = no shadows, 1 = refine at THIS resolution (F12)
+uniform int uDebugGate;              // 1 = emit the gate's selectivity instead of light
 uniform int uLightW;                 // lighting texels per axis of ONE tile
 uniform vec2 uWindowOrigin;          // world tile of the map's (0,0)
 uniform int uMapW;                   // one slot block's width in texels
@@ -54,6 +59,33 @@ int pmod(int a, int m) { return ((a % m) + m) % m; }
 
 uvec4 fetchPrim(uint idx) {
   return texelFetch(uPrim, ivec2(int(idx) & 1023, int(idx) >> 10), 0);
+}
+uvec4 fetchDef(uint block, uint rot) {
+  uint px = block * 16u + rot;
+  return texelFetch(uDef, ivec2(int(px) & 1023, int(px) >> 10), 0);
+}
+uint shadowSlot(uvec4 v, int i) {
+  uint w = i < 2 ? v.x : (i < 4 ? v.y : (i < 6 ? v.z : v.w));
+  return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
+}
+// THE REFINE (F12). The gather stored WHICH caster occludes this unit; re-test that one caster at
+// THIS texel's exact position -- 64/tile instead of the gather's 16/tile, so the edge resolves 4x
+// finer per axis. One occludes() call, no search: that is what storing the identity bought.
+bool refineOccluded(uint c, vec2 L, float Lz, vec2 P) {
+  if (c == 0u) return false;
+  uvec4 rec = fetchPrim(c);
+  if (((rec.z >> 30) & 3u) == 0u) return false;
+  vec2 C = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
+  uvec4 d = fetchDef(rec.y & 0xffffu, (rec.z >> 10) & 0xfu);
+  float halfW = float(((d.y >> 8) & 0xffu) + 1u) * 0.5;
+  float H     = float(((d.y      ) & 0xffu) + 1u);
+  float dy = P.y - L.y;
+  if (abs(dy) < 1e-4) return false;
+  float tt = (C.y - L.y) / dy;
+  if (tt <= 0.0 || tt >= 1.0) return false;
+  float x = L.x + tt * (P.x - L.x);
+  if (abs(x - C.x) > halfW) return false;
+  return Lz * (1.0 - tt) <= H;
 }
 
 void main() {
@@ -101,6 +133,25 @@ void main() {
   float c4 = float(rec.w & 0xffu) / 255.0;
   vec3 tint = vec3(1.0, 0.85 + 0.15 * c4, 0.6 + 0.4 * c4);
 
+  // F5 GATE: only a texel whose UNIT holds a caster for this light does any refine work. Interior
+  // and fully-lit texels do no fetch and no test -- the gate is the whole reason this is affordable.
+  bool gated = false, occluded = false;
+  if (uRefine == 1) {
+    ivec2 u = ivec2(int(P.x), int(P.y));                     // world UNIT of this lighting texel
+    int ux = u.x - int(uWindowOrigin.x) * int(UPT);
+    int uy = u.y - int(uWindowOrigin.y) * int(UPT);
+    if (ux >= 0 && uy >= 0 && ux < uUnitsX && uy < uUnitsX) {
+      uvec4 sh = texelFetch(uShadow, ivec2(ux * 3, uy), 0);   // px 0 = ground casters
+      uint caster = shadowSlot(sh, slot);
+      if (caster != 0u) {
+        gated = true;
+        vec2 Lp = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
+        occluded = refineOccluded(caster, Lp, float(rec.y >> 24), P);
+      }
+    }
+  }
+  if (uDebugGate == 1) { fragColor = vec4(gated ? 1.0 : 0.0, occluded ? 1.0 : 0.0, 1.0, 1.0); return; }
+  if (occluded) { fragColor = vec4(0.0); return; }
   // F2: stored at 1/LIGHT_SCALE so 4x overbright survives a 0..1 fixed-point format.
   fragColor = vec4(clamp(tint * at / LIGHT_SCALE, 0.0, 1.0), 1.0);
 }
@@ -231,13 +282,18 @@ export class LightPass {
 
   /** Recompute every slot (ONE draw), then re-sum. */
   run(renderer: Renderer, prim: Texture, light: Texture,
-      originTileX: number, originTileY: number): void {
+      originTileX: number, originTileY: number,
+      opt: { def?: Texture; shadow?: Texture; unitsX?: number; refine?: boolean; debugGate?: boolean } = {}): void {
     renderer.draw({
       program: this.slotProg, geometry: this.quad, target: this.slotRT, blend: "none",
-      textures: { uPrim: prim, uLight: light },
+      textures: { uPrim: prim, uLight: light,
+                  uDef: opt.def ?? prim, uShadow: opt.shadow ?? prim },
       uniforms: (p) => {
         p.uInt("uLightW", LIGHT_TEXELS);
         p.uInt("uMapW", LIGHT_W);
+        p.uInt("uUnitsX", opt.unitsX ?? 512);
+        p.uInt("uRefine", opt.refine ? 1 : 0);
+        p.uInt("uDebugGate", opt.debugGate ? 1 : 0);
         p.uVec2("uWindowOrigin", originTileX, originTileY);
       },
     });

@@ -63,9 +63,9 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 
 - [ ] Select the receiver by **coverage first**, then the stored pair. Acceptance: a px covered only by `r6` resolves to `r6` for EVERY light — the design's early `break` picked a different surface per light.
 - [ ] Hoist surface selection out of the light loop, now that it is light-independent. Acceptance: `r.has(px)` is evaluated once per pixel, not up to 8 times, in the pass that dominates cost.
-- [ ] Gate the refine on the unit holding a caster ([F5](forks.md#f5)). Acceptance: the gate's selectivity is reported as a measured percentage of pixels, and interior/fully-lit pixels do no texture test.
+- [x] Gate the refine on the unit holding a caster ([F5](forks.md#f5)). Acceptance: the gate's selectivity is reported as a measured percentage of pixels, and interior/fully-lit pixels do no texture test.
 - [ ] Measure the refine's own cost. Acceptance: ms attributable to the refine alone at N = 1 and N = 8, against P3's no-shadow baseline.
-- [ ] Compare the shadow edge against the strip's before-image. Acceptance: `before/04-shadow-edge-zoom2.jpg` beside the new render — the edge should be silhouette-exact where the old one stepped at 16/tile.
+- [x] Compare the shadow edge against the strip's before-image. Acceptance: `before/04-shadow-edge-zoom2.jpg` beside the new render — the edge should be silhouette-exact where the old one stepped at 16/tile.
 
 ## P6 — Errors, limits, and what a failure looks like
 

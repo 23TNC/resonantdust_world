@@ -13,8 +13,10 @@ in vec2 aPosition;              // display-quad world px
 in vec2 aUV;                    // composite UV (identity: the bake stores upright)
 uniform mat3 uProjection;       // world px → clip (pan + zoom + screen→clip)
 out vec2 vUV;
+out vec2 vWorld;
 void main() {
   vUV = aUV;
+  vWorld = aPosition;
   vec3 p = uProjection * vec3(aPosition, 1.0);
   gl_Position = vec4(p.xy, 0.0, 1.0);
 }
@@ -23,13 +25,35 @@ const BLIT_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 in vec2 vUV;
+in vec2 vWorld;
 uniform sampler2D uAlbedo;       // COLD albedo composite (the mesh's main texture)
 uniform sampler2D uSurface;      // COLD surface: B = alpha (visual coverage)
 uniform sampler2D uAlbedoWarm;   // WARM tier: mover albedo (over cold by warm coverage)
 uniform sampler2D uSurfaceWarm;  // WARM tier: mover surface (its B = composite coverage)
+uniform sampler2D uLightmap;     // lighting-rework: the SUMMED map — ONE fetch, quantisation levels
+uniform float uLightRead;        // levels -> irradiance
+uniform float uAmbient;          // floor, so unlit ground is not pure black
+uniform int uLit;                // 0 = unlit (the strip's resting state), 1 = lit
+uniform int uLCols, uLRows, uLWinCol, uLWinRow, uLSlot;
 uniform sampler2D uDepth;        // COLD zdepth composite — B = the painter's key (z-order)
 uniform sampler2D uDepthWarm;    // WARM zdepth composite — same lane for movers
 out vec4 fragColor;
+const float SQ = 128.0;
+int pmod(int a, int m) { return ((a % m) + m) % m; }
+// World px -> the toroidal lightmap texel. ONE fetch: the per-light slots were summed for exactly
+// this reason (F1), so the display never adds 8 contributions per pixel.
+vec3 lightAt(vec2 world) {
+  int tx = int(floor(world.x / SQ)), ty = int(floor(world.y / SQ));
+  if (tx < uLWinCol || tx >= uLWinCol + uLCols || ty < uLWinRow || ty >= uLWinRow + uLRows)
+    return vec3(uAmbient);
+  // LINEAR from the window origin, NOT toroidal: the slot pass writes texel x -> winCol + x/uLSlot,
+  // so reading it mod cols lands the light in the wrong slot whenever winCol is not a multiple of
+  // cols. The writer and the reader must share ONE addressing rule; this is the writer's.
+  int sx = tx - uLWinCol, sy = ty - uLWinRow;
+  float lx = fract(world.x / SQ), ly = fract(world.y / SQ);
+  ivec2 t = ivec2(sx * uLSlot + int(lx * float(uLSlot)), sy * uLSlot + int(ly * float(uLSlot)));
+  return vec3(uAmbient) + texelFetch(uLightmap, t, 0).rgb * uLightRead;
+}
 void main() {
   vec4 outColor = texture(uAlbedo, vUV);
   // WARM-over-COLD: warm is slot-aligned with cold, sampled at the SAME vUV. Where no mover sits, warm
@@ -57,7 +81,8 @@ void main() {
   // lighting system small enough to feel free and permanent enough to constrain the re-think.
   // Coverage applied at OUTPUT only (premultiplied) so it composites over the canvas background: empty cells
   // (alpha 0) show through, ground/things (alpha 1) draw opaque.
-  fragColor = vec4(alb.rgb * alpha, alpha);
+  vec3 lightv = uLit == 1 ? lightAt(vWorld) : vec3(1.0);
+  fragColor = vec4(alb.rgb * lightv * alpha, alpha);
 }
 `;
 
@@ -75,6 +100,8 @@ export class AlbedoBlitShader {
   /** The cold/warm zdepth composites — B carries the painter's key that resolves warm-over-cold. */
   depth: Texture | null = null;
   depthWarm: Texture | null = null;
+  /** lighting-rework: the summed lightmap; null keeps the unlit resting state. */
+  lightmap: Texture | null = null;
 
   constructor(gl: WebGL2RenderingContext) {
     this.program = new Program(gl, BLIT_VERT, BLIT_FRAG, "viewport-albedo-blit");
@@ -89,6 +116,7 @@ export class AlbedoBlitShader {
       uSurfaceWarm: this.surfaceWarm ?? empty,
       uDepth: this.depth ?? empty,
       uDepthWarm: this.depthWarm ?? empty,
+      uLightmap: this.lightmap ?? empty,
     };
   }
 

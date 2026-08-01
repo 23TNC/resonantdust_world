@@ -24,6 +24,7 @@ import { installReachCheck } from "./lightReach";
 import { Records, INDEX_NONE, ROTATIONS_PER_DEF } from "./records";
 import { LightPass } from "./lightPass";
 import { ShadowBuffer, pairSlot, SHADOW_LIGHTS } from "./shadowPass";
+import { LIGHT_READ_SCALE } from "./lightPass";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
@@ -97,6 +98,8 @@ export class Viewport {
   readonly shadows: ShadowBuffer;
   /** The synthetic emitter P2/P3 exercise the real path with (no lights are authored yet). */
   private debugLightPrim = 0;
+  /** lighting-rework P5: is the new lighting driven + displayed? Off until `__lit(true)`. */
+  private litEnabled = false;
   /** The `/overlayRT` debug material — draws one G-buffer composite over the display. */
   private readonly overlayShader: OverlayShader;
   /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
@@ -160,6 +163,12 @@ export class Viewport {
     (globalThis as unknown as { __shadowbuf: () => unknown }).__shadowbuf = () => this.shadowBufferCheck();
     // lighting-rework P4: run the gather and histogram which TIER answered each (unit, light).
     (globalThis as unknown as { __gather: () => unknown }).__gather = () => this.runGather();
+    // lighting-rework P5: drive the whole chain each frame and show it.
+    (globalThis as unknown as { __lit: (on?: boolean) => unknown }).__lit = (on?: boolean) => {
+      this.litEnabled = on ?? !this.litEnabled;
+      if (this.litEnabled) this.buildRecords();
+      return { lit: this.litEnabled };
+    };
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
     // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
     (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {
@@ -495,6 +504,15 @@ export class Viewport {
     this.warm.bakeDirty(Number.MAX_SAFE_INTEGER);
     this.map.bakeDirty(Math.max(BAKE_BUDGET - this.warm.lastBaked, COLD_BAKE_FLOOR));
 
+    // lighting-rework P5: the new chain — gather (per unit) then the slot pass (per lighting texel,
+    // with the gated refine), both bounded by reachFromIntensity.
+    if (this.litEnabled && this.map.ready) {
+      const w = this.map.window, r = this.records;
+      this.shadows.gather(this.renderer, { prim: r.primTex, def: r.defTex, light: r.lightTex,
+                                           presence: r.presenceTex }, w.winCol, w.winRow);
+      this.lights.run(this.renderer, r.primTex, r.lightTex, w.winCol, w.winRow,
+                      { def: r.defTex, shadow: this.shadows.prev, unitsX: 512, refine: true });
+    }
     // lighting-strip P1: the gather / lighting / receiver / decay passes are NO LONGER ISSUED. The
     // ShadowGather instance still exists and still compiles (P2 deletes it) -- this phase only stops
     // driving it, so the strip stays reversible while the unlit render is verified.
@@ -521,6 +539,7 @@ export class Viewport {
         }
         // lighting-strip P1: no lightmap, decay or emissive bindings — the blit is UNLIT. The zdepth
         // composites stay: their B lane is the painter's key that resolves warm-over-cold per pixel.
+        this.blitShader.lightmap = this.litEnabled ? this.lights.lightmap : null;
         this.blitShader.depth = this.map.displayComposite("zdepth-world-cold");
         this.blitShader.depthWarm = this.warm.displayComposite("zdepth-world-warm");
         const win = this.map.window;
@@ -539,6 +558,14 @@ export class Viewport {
           textures: this.blitShader.textures(this.empty),
           uniforms: (p) => {
             p.uMat3("uProjection", proj);
+            // lighting-rework P5: ONE lightmap fetch per pixel (F1). `uLit` stays 0 until
+            // `__lit(true)` turns the new system on, so the unlit resting state is still the default.
+            p.uInt("uLit", this.litEnabled ? 1 : 0);
+            p.uFloat("uLightRead", LIGHT_READ_SCALE);
+            p.uFloat("uAmbient", 0.12);
+            p.uInt("uLCols", win.cols); p.uInt("uLRows", win.rows);
+            p.uInt("uLWinCol", win.winCol); p.uInt("uLWinRow", win.winRow);
+            p.uInt("uLSlot", 64);
           },
         });
 

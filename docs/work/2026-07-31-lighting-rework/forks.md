@@ -181,3 +181,30 @@ lights-per-frame, and each would blur what the measurement attributes.
 **The one thing to not design out:** keep the blit sampling the `surface` composite. If it stops, AO
 becomes a re-plumb rather than a multiply, and that is the one of the three most likely to be wanted
 back.
+
+## F12 — The refine runs at LIGHTING resolution, not display resolution {#f12}
+
+The design's second pass is "for each px" — per screen pixel. That conflicts with
+[F1](#f1)'s summed map, which exists so the display does **one fetch**: if lighting is recomputed per
+screen pixel, there is nothing for the sum to save.
+
+- (a) Per screen pixel, as written. The summed map becomes pointless and the 8-slot read returns.
+- **(b) Per LIGHTING texel (64/tile), inside the slot pass.**
+- (c) Per shadow unit (16/tile) — no refine at all.
+
+**Chosen: (b).** The shadow gather resolves at 16/tile; the slot pass runs at **64/tile**, so testing
+the stored caster there gives a **4× finer edge per axis** than the gather — which is the entire
+quality win the old stream was chasing when its refine cost 9.29 ms of a 10.88 ms pass. It gets it
+here for free, because the identity is already stored and the slot pass already runs at that
+resolution: no search, one `occludes` call, and only where a caster exists ([F5](#f5)).
+
+**What (b) gives up** against per-screen-pixel: at zoom 1 a lighting texel is 2×2 screen pixels, so
+the shadow edge quantises to 2 px rather than 1. That is a real difference and it is the price of the
+display staying at one fetch. If it ever matters visually, the honest fix is to raise
+`TEXTILE_LIGHT`, not to move the refine — the same dial, without giving up the summed map.
+
+**Consequence for P5's first two items.** "Select the receiver by coverage first" and "hoist surface
+selection out of the light loop" describe the design's per-pixel receiver loop, which in this
+architecture does not exist in that form: the slot pass lights the ground, and billboard receivers are
+a separate concern the display composites. [I2](issues.md#i2)'s finding still stands and still has to
+be honoured wherever that loop is eventually written — it is not solved, it is **not yet reached**.
