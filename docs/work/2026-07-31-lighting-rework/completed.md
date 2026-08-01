@@ -338,3 +338,36 @@ The check also **runs the design's own `l > 4`** and reports what it produces:
 So light 4 would write outside its px and never shadow ([I1](issues.md#i1)). That is the failure that
 reads as "the shadows look wrong" rather than as an out-of-range write, which is why it is worth a
 test that names it rather than a comment that mentions it.
+
+## 2026-07-31 · P4 complete — the gather
+
+One draw, three tiers, verified against an exhaustive search.
+
+| acceptance | result |
+|---|---|
+| the walk runs only when the cheap paths miss | **incumbent 66.9 %**, adjacency 0 %, **corridor 33.1 %** of answered pairs |
+| walk vs exhaustive search | **0 differing** occlusion decisions across 131 072 slots |
+| the caster type lane is checked at use ([F9](forks.md#f9)) | clearing `cast_type` on all 455 casters takes shadows **3855 → 0** |
+| draws per gather | **1** |
+
+### Three bugs found by testing, not by reading
+
+**1. A point-march skips tiles.** The first corridor sampled the segment at intervals, which clips
+diagonal tiles — and every skipped tile is a caster that silently never shadows. Replaced with a
+**supercover DDA** (Amanatides–Woo) that steps boundary to boundary and visits every tile the segment
+touches by construction. This is exactly why the old system used one.
+
+**2. A card is wider than its tile.** Even with the DDA, the walk disagreed with brute on ~1100 slots:
+the walk visits the tiles the *segment* crosses, but a caster occludes when its **card** crosses the
+ray, and a card overhangs the tile it registers in. Added **x-dilation** — only x, because the card is
+horizontal, so a ray crosses each row once. That is the same lesson the old system encoded as its walk
+dilation.
+
+**3. My own test counted the wrong thing, twice.** First it compared caster *identity*
+([D4](deviations.md)); then it counted raw non-zero words when `px 1/2` pack `(caster, receiver)`, so
+the receiver half kept them non-zero and the guard looked broken at 498. Counting caster fields
+specifically gives 0.
+
+Worth naming: **two of the three "failures" were the test, not the code** — and the one time I could
+have declared success early (`0 differing` on a run where the records had not been rebuilt) the tier
+counts were all zero, which is what caught it. A pass with nothing in it is not a pass.

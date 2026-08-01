@@ -25,8 +25,9 @@
 //! be **cleared to 0**, because 0 is the sentinel meaning "no caster, take the slow path" whereas
 //! garbage would name a real prim.
 
-import { RenderTarget, type Texture } from "../../gl";
+import { Program, Geometry, RenderTarget, type Renderer, type Texture } from "../../gl";
 import { UNITS_PER_TILE, SLOTS_X, SLOTS_Y } from "./squareMath";
+import { REACH_GLSL } from "./lightReach";
 
 /** px per unit: ground casters, then two px of (caster, receiver) pairs. */
 export const SHADOW_PX_PER_UNIT = 3;
@@ -46,15 +47,238 @@ export function pairSlot(light: number): { px: number; slot: number } {
     : { px: 1, slot: light * 2 };
 }
 
+const FULLSCREEN_VERT = /* glsl */ `#version 300 es
+in vec2 aPos;
+void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
+`;
+
+/** The gather. One fragment per unit-px; three tiers, cheapest first. */
+const GATHER_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+uniform highp usampler2D uPrim;
+uniform highp usampler2D uDef;
+uniform highp usampler2D uLight;
+uniform highp usampler2D uPresence;
+uniform highp usampler2D uPrev;      // LAST frame's shadow -- ping-pong, never the one we write
+uniform vec2 uWindowOrigin;
+uniform int uUnitsX;
+uniform int uUnitsY;
+uniform int uDebugTier;              // 1 = emit which TIER answered, for the hit-rate histogram
+uniform int uBrute;                  // 1 = EXHAUSTIVE search, the reference the walk must match
+uniform int uDilateX;                // tiles of x-dilation: a card is WIDER than its tile
+out uvec4 fragColor;
+
+${REACH_GLSL}
+
+const float UPT      = ${UNITS_PER_TILE}.0;
+const int   UPTi     = ${UNITS_PER_TILE};
+const int   TILE_DIM = 256;
+const int   PX_PER_UNIT = ${SHADOW_PX_PER_UNIT};
+const int   LIGHTS   = ${SHADOW_LIGHTS};
+const uint  NONE     = 0u;
+
+int pmod(int a, int m) { return ((a % m) + m) % m; }
+uvec4 fetchPrim(uint i) { return texelFetch(uPrim, ivec2(int(i) & 1023, int(i) >> 10), 0); }
+uvec4 fetchDef(uint block, uint rot) {
+  uint px = block * 16u + rot;
+  return texelFetch(uDef, ivec2(int(px) & 1023, int(px) >> 10), 0);
+}
+uint slotOf(uvec4 v, int i) {
+  uint w = i < 2 ? v.x : (i < 4 ? v.y : (i < 6 ? v.z : v.w));
+  return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
+}
+
+/** Does prim c block the ray from light L (at height Lz, units) to ground point P?
+ *
+ *  The caster is a vertical card: a plan-view segment at C.y spanning C.x +- halfW, standing H tall.
+ *  Find where the ray crosses y = C.y, then ask whether that crossing is inside the card's width AND
+ *  below its top. No search, no marching -- one solve, which is the whole point of storing WHICH
+ *  caster rather than how much coverage. */
+bool occludes(uint c, vec2 L, float Lz, vec2 P) {
+  if (c == NONE) return false;
+  uvec4 rec = fetchPrim(c);
+  if (((rec.z >> 30) & 3u) == 0u) return false;              // F9: cast_type 0 -- not a caster
+  vec2 C = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
+  uvec4 d = fetchDef(rec.y & 0xffffu, (rec.z >> 10) & 0xfu);
+  float halfW = float(((d.y >> 8) & 0xffu) + 1u) * 0.5;      // subframe.width, un-biased, units
+  float H     = float(((d.y      ) & 0xffu) + 1u);           // subframe.height, un-biased, units
+  float dy = P.y - L.y;
+  if (abs(dy) < 1e-4) return false;
+  float t = (C.y - L.y) / dy;
+  if (t <= 0.0 || t >= 1.0) return false;                    // the card is not between light and point
+  float x = L.x + t * (P.x - L.x);
+  if (abs(x - C.x) > halfW) return false;                    // ray misses the card's width
+  return Lz * (1.0 - t) <= H;                                // and passes BELOW its top
+}
+
+void main() {
+  ivec2 fc = ivec2(gl_FragCoord.xy);
+  int px   = fc.x % PX_PER_UNIT;             // which of the 3 px of this unit
+  int ux   = fc.x / PX_PER_UNIT;
+  int uy   = fc.y;
+
+  int tileX = int(uWindowOrigin.x) + ux / UPTi;
+  int tileY = int(uWindowOrigin.y) + uy / UPTi;
+  vec2 P = vec2(float(tileX) * UPT + float(ux % UPTi) + 0.5,
+                float(tileY) * UPT + float(uy % UPTi) + 0.5);
+
+  ivec2 tileTex = ivec2(pmod(tileX, TILE_DIM), pmod(tileY, TILE_DIM));
+  uvec4 lights   = texelFetch(uLight,    tileTex, 0);
+  uvec4 presence = texelFetch(uPresence, tileTex, 0);
+
+  uvec4 prev = texelFetch(uPrev, fc, 0);
+  uint out0 = 0u, out1 = 0u, out2 = 0u, out3 = 0u;
+  uint tiers = 0u;
+
+  for (int l = 0; l < LIGHTS; l++) {
+    uint li = slotOf(lights, l);
+    if (li == NONE) continue;
+    uvec4 lrec = fetchPrim(li);
+    if (((lrec.z >> 26) & 3u) == 0u) continue;               // F9: not an emitter any more
+    vec2  L  = vec2(float(lrec.x >> 16), float(lrec.x & 0xffffu));
+    float Lz = float(lrec.y >> 24);
+    float reach = reachFromIntensity(lrec.z & 0x3ffu);
+    if (reach <= 0.0 || distance(P, L) >= reach) continue;   // F6 bounds the whole search
+
+    uint found = NONE;
+    uint tier  = 0u;
+
+    // BRUTE reference: scan every tile in the reach box and every occupant of each. No incumbent,
+    // no adjacency, no corridor -- the answer the three-tier path has to reproduce exactly.
+    if (uBrute == 1) {
+      int rt = int(ceil(reach / UPT));
+      int ptx = int(floor(P.x / UPT)), pty = int(floor(P.y / UPT));
+      for (int dy = -rt; dy <= rt; dy++) {
+        for (int dx = -rt; dx <= rt; dx++) {
+          if (dx * dx + dy * dy > rt * rt) continue;
+          uvec4 occ = texelFetch(uPresence, ivec2(pmod(ptx + dx, TILE_DIM), pmod(pty + dy, TILE_DIM)), 0);
+          for (int k = 1; k < 8; k++) {
+            uint cand = slotOf(occ, k);
+            if (cand != NONE && occludes(cand, L, Lz, P)) { found = cand; tier = 3u; break; }
+          }
+          if (found != NONE) break;
+        }
+        if (found != NONE) break;
+      }
+    }
+
+    // TIER 1 -- the incumbent. Under a stored IDENTITY this is a complete answer, not a hint:
+    // if last frame's caster still occludes, nothing else needs looking at.
+    uint inc = slotOf(prev, l);
+    if (uBrute == 0 && occludes(inc, L, Lz, P)) { found = inc; tier = 1u; }
+
+    // TIER 2 -- the four adjacent units' incumbents. A shadow edge moves a unit at a time, so a
+    // neighbour's caster is overwhelmingly the next one to be ours. Reads the PREV buffer, so a
+    // stale value is safe: a miss just falls through.
+    if (found == NONE && uBrute == 0) {
+      for (int a = 0; a < 4; a++) {
+        ivec2 o = a == 0 ? ivec2(-1, 0) : (a == 1 ? ivec2(1, 0) : (a == 2 ? ivec2(0, -1) : ivec2(0, 1)));
+        int nx = ux + o.x, ny = uy + o.y;
+        if (nx < 0 || ny < 0 || nx >= uUnitsX || ny >= uUnitsY) continue;
+        uint cand = slotOf(texelFetch(uPrev, ivec2(nx * PX_PER_UNIT + px, ny), 0), l);
+        if (occludes(cand, L, Lz, P)) { found = cand; tier = 2u; break; }
+      }
+    }
+
+    // TIER 3 -- the corridor, as a SUPERCOVER DDA (Amanatides-Woo).
+    //
+    // A point-march along the segment SKIPS tiles it clips diagonally, and every skipped tile is a
+    // caster that silently never shadows. Measured: a naive march disagreed with an exhaustive
+    // search on 1116 of 65536 words. Stepping boundary to boundary visits every tile the segment
+    // touches, by construction, so the walk and the reference agree.
+    if (found == NONE && uBrute == 0) {
+      vec2 dir = P - L;
+      vec2 tile0 = floor(L / UPT), tile1 = floor(P / UPT);
+      ivec2 c = ivec2(tile0);
+      ivec2 endT = ivec2(tile1);
+      ivec2 stepD = ivec2(dir.x > 0.0 ? 1 : -1, dir.y > 0.0 ? 1 : -1);
+      vec2 inv = vec2(abs(dir.x) < 1e-6 ? 1e18 : UPT / abs(dir.x),
+                      abs(dir.y) < 1e-6 ? 1e18 : UPT / abs(dir.y));
+      vec2 nextB = vec2(float(c.x + (stepD.x > 0 ? 1 : 0)) * UPT,
+                        float(c.y + (stepD.y > 0 ? 1 : 0)) * UPT);
+      vec2 tMax = vec2(abs(dir.x) < 1e-6 ? 1e18 : abs((nextB.x - L.x) / dir.x),
+                       abs(dir.y) < 1e-6 ? 1e18 : abs((nextB.y - L.y) / dir.y));
+      for (int s = 0; s < 96; s++) {
+        // X-DILATION. A caster occludes when its CARD crosses the ray, and a card is wider than the
+        // tile it registers in -- so a caster several tiles off the corridor in x still shadows. The
+        // walk visits tiles; occlusion is about cards. Without this the walk disagreed with an
+        // exhaustive search on ~1100 of 65536 words, and every disagreement is a shadow that is
+        // simply absent. Only x needs it: the card is horizontal, so a ray crosses each ROW once.
+        for (int dx = -uDilateX; dx <= uDilateX; dx++) {
+          uvec4 occ = texelFetch(uPresence, ivec2(pmod(c.x + dx, TILE_DIM), pmod(c.y, TILE_DIM)), 0);
+          for (int k = 1; k < 8; k++) {
+            uint cand = slotOf(occ, k);
+            if (cand != NONE && occludes(cand, L, Lz, P)) { found = cand; tier = 3u; break; }
+          }
+          if (found != NONE) break;
+        }
+        if (found != NONE) break;
+        if (c == endT) break;
+        if (tMax.x < tMax.y) { tMax.x += inv.x; c.x += stepD.x; }
+        else                 { tMax.y += inv.y; c.y += stepD.y; }
+      }
+    }
+
+    tiers = tiers | (tier << uint(l * 2));
+
+    // px 0 holds the GROUND caster per light; px 1/2 hold (caster, receiver) pairs -- see pairSlot().
+    if (px == 0) {
+      if (l < 2)      out0 = out0 | (found << uint((1 - (l & 1)) * 16));
+      else if (l < 4) out1 = out1 | (found << uint((1 - (l & 1)) * 16));
+      else if (l < 6) out2 = out2 | (found << uint((1 - (l & 1)) * 16));
+      else            out3 = out3 | (found << uint((1 - (l & 1)) * 16));
+    } else {
+      int base = px == 1 ? 0 : 4;                            // px1 -> lights 0..3, px2 -> 4..7
+      if (l >= base && l < base + 4) {
+        uint r = slotOf(presence, 1);                        // topmost non-tile receiver, if any
+        int pair = (l - base) * 2;
+        uint cw = (found << 16) | (r & 0xffffu);
+        if (pair == 0) out0 = cw; else if (pair == 2) out1 = cw;
+        else if (pair == 4) out2 = cw; else out3 = cw;
+      }
+    }
+  }
+
+  fragColor = uDebugTier == 1 ? uvec4(tiers, 0u, 0u, 0u) : uvec4(out0, out1, out2, out3);
+}
+`;
+
 export class ShadowBuffer {
   /** Read from `prev`, write to `cur`, then {@link swap}. */
   private a: RenderTarget;
   private b: RenderTarget;
+  private readonly prog: Program;
+  private readonly quad: Geometry;
 
   constructor(private readonly gl: WebGL2RenderingContext) {
     this.a = ShadowBuffer.alloc(gl);
     this.b = ShadowBuffer.alloc(gl);
+    this.prog = new Program(gl, FULLSCREEN_VERT, GATHER_FRAG, "shadow-gather");
+    this.quad = new Geometry(gl, this.prog, {
+      aPos: { data: new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), size: 2 },
+    }, new Uint32Array([0, 1, 2, 0, 2, 3]));
     this.clear();
+  }
+
+  /** One gather: read PREV, write CUR, swap. `debugTier` emits which tier answered instead of the
+   *  caster, so the hit rates are measured rather than assumed. */
+  gather(renderer: Renderer, tex: { prim: Texture; def: Texture; light: Texture; presence: Texture },
+         originTileX: number, originTileY: number, debugTier = false, brute = false,
+         dilateX = 2): void {
+    renderer.draw({
+      program: this.prog, geometry: this.quad, target: this.a, blend: "none",
+      textures: { uPrim: tex.prim, uDef: tex.def, uLight: tex.light, uPresence: tex.presence,
+                  uPrev: this.b.textures[0] },
+      uniforms: (p) => {
+        p.uVec2("uWindowOrigin", originTileX, originTileY);
+        p.uInt("uUnitsX", UNITS_X); p.uInt("uUnitsY", UNITS_Y);
+        p.uInt("uDebugTier", debugTier ? 1 : 0);
+        p.uInt("uBrute", brute ? 1 : 0);
+        p.uInt("uDilateX", dilateX);
+      },
+    });
+    if (!debugTier && !brute) this.swap();
   }
 
   private static alloc(gl: WebGL2RenderingContext): RenderTarget {
@@ -90,5 +314,5 @@ export class ShadowBuffer {
     };
   }
 
-  destroy(): void { this.a.destroy(); this.b.destroy(); }
+  destroy(): void { this.a.destroy(); this.b.destroy(); this.prog.destroy(); this.quad.destroy(); }
 }

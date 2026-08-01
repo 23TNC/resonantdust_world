@@ -1,25 +1,12 @@
 # Issues — lighting + shader rework
 
-_Problems hit, candidate solutions, which we chose and why. I1–I3 are **corrections to the design
-document** found while reviewing it; they are recorded here so the fix survives even if the intent doc
-is edited around them._
+_Problems hit, candidate solutions, which we chose and why. **Open issues only** — solved ones are
+removed once their resolution is logged in [`completed.md`](completed.md), because a file that mixes
+live problems with settled ones stops being a list of what needs attention.
 
-## I1 — The light→slot split drops light 4 and overruns px 1
-
-`docs/intent/2026-07-31-rework.md`, both loops:
-
-```
-if l > 4:  i=2; ll=(l-4)*2      // l=5,6,7 -> ll=2,4,6  (px2 slots 0,1 never used)
-else:      i=1; ll=l*2          // l=4     -> ll=8      (px1 has slots 0..7)
-```
-
-A px holds 8 `u16` slots, so `ll` must land in 0..7. At `l=4` the else-branch produces `ll=8`, one past
-the end of px 1, and the if-branch never covers `l=4` at all.
-
-**Fix: `l >= 4`.** Then `l=0..3 → i=1, ll=0,2,4,6` and `l=4..7 → i=2, ll=0,2,4,6`, which fills both px
-exactly. Carried into [`todo.md`](todo.md) P4 as an acceptance criterion rather than a note, because
-the symptom — one light in eight silently never shadowing — is exactly the kind of thing that reads as
-"the shadows look wrong" for a week.
+Removed 2026-07-31 as solved: **I1** (the `l > 4` slot split — fixed by `pairSlot`, P4), **I3** (the
+span/subframe bias — implemented and verified, P1), **I9** (P1's render-from-records plan error —
+built as its intent instead). Numbering is not reused; git holds the text._
 
 ## I2 — Receiver selection breaks before testing coverage, and is per-light
 
@@ -50,19 +37,6 @@ for r in presence[7..1]:
 **And it unlocks a real saving.** Once selection is light-independent it hoists out of the light loop:
 `r.has(px)` is a texture sample, so this goes from up to 56 samples per pixel (8 lights × 7 receivers)
 to 7 — in the pass that dominates the frame. [`todo.md`](todo.md) P5 carries both halves.
-
-## I3 — Off-by-one in the span and subframe encodings
-
-`frame.span` is `u4` (0–15) against `MAX_TEXTURE_SPAN = 16`; `subframe.width`/`height` are `u8` (0–255)
-against a stated max of 256.
-
-**Resolved by the user: stored biased — 0 means a span of 1, 15 means 16**, since a span of 0 would be
-no frame at all. The same convention applies to subframe width/height. Recorded because it is invisible
-in the layout table and a reader who assumes the natural encoding will be exactly one off, in a lane
-that silently produces a wrong-sized sprite rather than an error.
-
-`subframe.x`/`y` are genuine 0-based offsets and take **no** bias — the two conventions sit in adjacent
-lanes of the same channel, which is precisely why this needs writing down.
 
 ## I4 — The design's stale prose lines, after the layout edits
 
@@ -132,67 +106,30 @@ Two things pull against each other, and neither is resolvable from the desk:
 someone made with numbers rather than a constant that survived three rewrites because it looked
 familiar.
 
-## I8 — The atlas packer already exists, and the design's quadrant guess has BL/BR swapped {#i8}
+## I8 — The design's atlas quadrants have BL/BR swapped {#i8}
 
-P1 planned to "build the atlas quadtree packer with the 4 maps of a definition in one 2×2 quadrant
-block". **It is already built** — `TextureResolver` co-packs each stem's four maps into one `2N × 2N`
-frame, packed by `MaxRectsPacker` into a shared pool. Nothing to build; the item is an acceptance to
-check, and it checks out.
+**Still open — it needs an edit to `docs/intent/2026-07-31-rework.md`, which is the user's file.**
+(The other half of this issue, "build the packer", was closed at P1: `TextureResolver` already
+co-packs each stem's four maps into one `2N × 2N` frame, verified by sampling.)
 
-Sampled on live data (`biome-thing/default/conifer/e`, lod 0):
+Sampled on live data (`biome-thing/default/conifer/e`, lod 0) — four equal quadrants of a 256×256
+frame, so `fullframe.span == 2 × frame.span` holds exactly as the design derives:
 
-| map | frame | offset in N |
-|---|---|---|
-| albedo | (0, 832) 128×128 | `[0, 0]` TL |
-| normal | (128, 832) 128×128 | `[1, 0]` TR |
-| **surface** | (0, 960) 128×128 | **`[0, 1]` BL** |
-| **layers** | (128, 960) 128×128 | **`[1, 1]` BR** |
+| map | offset in N |
+|---|---|
+| albedo | `[0, 0]` TL |
+| normal | `[1, 0]` TR |
+| **surface** | **`[0, 1]` BL** |
+| **layers** | **`[1, 1]` BR** |
 
-Four equal quadrants of a 256×256 frame, so `fullframe.span == 2 × frame.span` holds exactly as the
-design derives.
+The design says *layers* at `(frame.x, frame.y + span)` and *surface* at
+`(frame.x + span, frame.y + span)` — the opposite. The live table (`TextureResolver.QUADRANT`) is
+authoritative because the G-buffer bake reads it every frame, so a shader built from the doc would
+sample the wrong quadrant for two of the four maps.
 
-**But the design has the bottom two swapped.** `docs/intent/2026-07-31-rework.md` says *layers* at
-`(frame.x, frame.y + span)` and *surface* at `(frame.x + span, frame.y + span)`. The live table
-(`TextureResolver.QUADRANT`) is `surface: [0,1], layers: [1,1]` — the opposite.
-
-**The code wins, and the doc's line should be corrected.** Those are the four lines the user prefixed
-with *"I believe that puts…"* — an explicit invitation to verify, which is what this is. The mapping is
-live: the G-buffer bake reads through it every frame, so a doc that disagrees would send the rework's
-shaders to the wrong quadrant for two of the four maps.
-
+Those are the four lines prefixed *"I believe that puts…"*, which is an invitation to verify.
 **Raised rather than silently edited**, per the stream's acceptance that the intent doc owns its own
 content.
-
-## I9 — P1's "render sprites from the new records" asks for something the design separates {#i9}
-
-**Plan error, raised rather than built.** P1's last item: _"Render sprites unlit from the new records.
-Acceptance: the zoom-1 fixture matches the strip's `after/01-zoom1-unlit.jpg`."_
-
-That would mean re-routing the G-buffer bake to read `prim_data` / `definition_data` instead of the
-`Primitive` objects it draws from today. **The design does not ask for that, and keeps the two
-apart:** the bake turns art into G-buffer channels; the *lighting* reads records. Nothing in
-`docs/intent/2026-07-31-rework.md` puts records on the bake's path — the records exist so a shader
-holding a bare `u16` can find a caster, a receiver or a light.
-
-So the item's **intent is right and its mechanism is wrong**. "Prove the record layer before lighting
-rides on it" is exactly the correct gate; "make the bake draw from it" is a rewrite of a working
-renderer that buys nothing the lighting needs, and risks the one thing the stream cannot afford to
-break — the thing on screen.
-
-**Built instead:** `__buildrecords()` mints records for every live standing prim straight from the
-resolver, then **cross-checks each record's decoded `frame.x/y` against the resolver's own frame** for
-that stem. That tests the property the lighting actually depends on — *a record accurately locates its
-art* — against the same resolver the bake draws through, rather than against a second guess.
-
-| | |
-|---|---|
-| prims written | **455** |
-| definitions minted | 2 (the scene's distinct stems) |
-| **frame mismatches** | **0** |
-
-A re-route would have proven the records are *sufficient to draw from*; this proves they are
-*accurate*, which is the one the shaders need. Recorded as a plan error per the stream's acceptance,
-not silently substituted.
 
 ## I10 — `gl.finish()` does not sync in this environment; every earlier ms number is low {#i10}
 

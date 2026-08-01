@@ -54,10 +54,10 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 ## P4 — The shadow gather: per unit, ping-ponged
 
 - [x] Allocate the shadow buffer at **3 px per UNIT**, ping-ponged, cleared to 0 ([F4](forks.md#f4)). Acceptance: sized ~6 MB not ~24 KB, and the first frame reads zeros rather than garbage.
-- [ ] Implement the incumbent test, then adjacency, then the reach-bounded corridor walk. Acceptance: the walk runs only when both cheap paths miss; the hit rate of each is logged, so the saving is attributed rather than assumed.
+- [x] Implement the incumbent test, then adjacency, then the reach-bounded corridor walk. Acceptance: the walk runs only when both cheap paths miss; the hit rate of each is logged, so the saving is attributed rather than assumed.
 - [x] Store the ground caster and the 8 `(caster, receiver)` pairs, with the corrected `l >= 4` slot split. Acceptance: all 8 lights address distinct slots; light 4 lands in px 2 slot 0, which the design's `l > 4` dropped.
-- [ ] Verify the caster type lane at use ([F9](forks.md#f9)). Acceptance: forcing a stale/recycled index into a slot cannot produce a shadow — the walk re-checks rather than trusting.
-- [ ] Check the gather against a brute-force reference. Acceptance: 0 differing texels between the corridor walk and an exhaustive search over the same scene.
+- [x] Verify the caster type lane at use ([F9](forks.md#f9)). Acceptance: forcing a stale/recycled index into a slot cannot produce a shadow — the walk re-checks rather than trusting.
+- [x] Check the gather against a brute-force reference. Acceptance: 0 differing texels between the corridor walk and an exhaustive search over the same scene.
 
 ## P5 — The per-pixel refine
 

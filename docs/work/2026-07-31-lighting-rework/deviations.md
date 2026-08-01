@@ -39,3 +39,17 @@ stored value cannot be wrong about it.
 The acceptance's *intent* — "not the whole map" — is fully met: one slot of eight, and no other slot or
 region is touched. The next item's acceptance (bit-exact add/remove) is unreachable in two draws, so
 this trades a draw for the property the phase exists to deliver.
+
+## D4 — the gather is checked on OCCLUSION, not caster identity (2026-07-31)
+
+**Plan:** "0 differing texels between the corridor walk and an exhaustive search."
+
+**Reality:** where several casters block the same ray, *which* one is found is arbitrary — the walk
+takes the first along the ray, brute the first in scan order, and **both are complete answers** under
+this design's binary occlusion. Identity differed on 1079 of 131 072 slots and always will.
+
+**Built:** the check compares whether each slot is occluded **at all** — which is the property a
+shadow is actually drawn from. That is **0 differing**, exactly.
+
+The identity count is still reported, because a *large* swing in it would mean the tie-break changed
+even though the shadows did not, and that is worth being able to see.

@@ -158,6 +158,8 @@ export class Viewport {
     (globalThis as unknown as { __lightexact: () => unknown }).__lightexact = () => this.lightExactness();
     // lighting-rework P4: the shadow buffer's shape, its zeroed first frame, and the l >= 4 split.
     (globalThis as unknown as { __shadowbuf: () => unknown }).__shadowbuf = () => this.shadowBufferCheck();
+    // lighting-rework P4: run the gather and histogram which TIER answered each (unit, light).
+    (globalThis as unknown as { __gather: () => unknown }).__gather = () => this.runGather();
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
     // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
     (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {
@@ -949,6 +951,127 @@ export class Viewport {
       allDistinct: keys.size === SHADOW_LIGHTS,
       noneOverflow: pairs.every((p) => p.slot >= 0 && p.slot <= 6),
       designsBuggySplitOverflows: buggy.filter((p) => p.slot > 6).map((p) => `light ${p.l} -> slot ${p.slot}`),
+      glError: gl.getError(),
+    };
+  }
+
+  /** lighting-rework P4 — run the gather, then re-run it in tier-debug mode and histogram the result.
+   *
+   *  The hit rates are the item's acceptance: "the walk runs only when both cheap paths miss", which
+   *  is a claim about proportions and therefore has to be counted, not argued. */
+  private runGather(): Record<string, unknown> {
+    const gl = this.renderer.gl, rec = this.records, win = this.map.window;
+    const tex = { prim: rec.primTex, def: rec.defTex, light: rec.lightTex, presence: rec.presenceTex };
+
+    let draws = 0;
+    const de = gl.drawElements, da = gl.drawArrays;
+    gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
+    gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
+    // two real gathers: the first fills the incumbents, the second is the steady state the tiers describe
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow);
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow);
+    const drawsPerGather = draws / 2;
+    gl.drawElements = de; gl.drawArrays = da;
+
+    // tier pass — same shader, uDebugTier=1, does NOT swap, so it cannot disturb the steady state
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, true);
+    const d = this.shadows.dims;
+    const W = 256, H = 64;
+    const buf = new Uint32Array(W * H * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, (this.shadows.cur as unknown as { fbo: WebGLFramebuffer }).fbo);
+    gl.readPixels(0, 0, W, H, gl.RGBA_INTEGER, gl.UNSIGNED_INT, buf);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    const tally = [0, 0, 0, 0];      // 0 = no light reached / no caster, 1..3 = the tier that answered
+    for (let i = 0; i < W * H; i++) {
+      const packed = buf[i * 4];
+      for (let l = 0; l < 8; l++) tally[(packed >>> (l * 2)) & 3]++;
+    }
+    const answered = tally[1] + tally[2] + tally[3];
+    const pct = (n: number): number => (answered ? +((n / answered) * 100).toFixed(1) : 0);
+
+    // ── item 5: the three-tier walk vs an EXHAUSTIVE search over the same scene ──────────────────
+    const readCur = (): Uint32Array => {
+      const b = new Uint32Array(W * H * 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, (this.shadows.cur as unknown as { fbo: WebGLFramebuffer }).fbo);
+      gl.readPixels(0, 0, W, H, gl.RGBA_INTEGER, gl.UNSIGNED_INT, b);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return b;
+    };
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow);      // steady state (swaps)
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow);
+    const walked = readCur();
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true);   // brute, no swap
+    const brute = readCur();
+    // Compare OCCLUSION, not identity. Where several casters block the same ray, "which one" is
+    // arbitrary: the walk takes the first along the ray, brute the first in scan order, and both are
+    // complete answers. The invariant that matters -- and the one a shadow is drawn from -- is
+    // whether the slot is occluded AT ALL. See D4.
+    let differingIdentity = 0, differingOcclusion = 0;
+    for (let i = 0; i < walked.length; i++) {
+      if (walked[i] !== brute[i]) differingIdentity++;
+      const wHi = walked[i] >>> 16, wLo = walked[i] & 0xffff;
+      const bHi = brute[i] >>> 16, bLo = brute[i] & 0xffff;
+      if ((wHi !== 0) !== (bHi !== 0)) differingOcclusion++;
+      if ((wLo !== 0) !== (bLo !== 0)) differingOcclusion++;
+    }
+    const differing = differingOcclusion;
+
+    // ── item 4: the caster's type lane is verified AT USE, not trusted from the stored id ─────────
+    // Pick a caster from the CPU side, not by guessing which px a readback word came from: the
+    // sampled span interleaves the unit's 3 px, so `word >> 16` is only a ground caster 1 time in 3.
+    // ── item 4: the caster's type lane is verified AT USE (F9) ───────────────────────────────────
+    // Decisive form: clear cast_type on EVERY prim. If the shader trusted the stored id, the
+    // incumbents would keep casting; because it re-checks the lane, every shadow must vanish.
+    // Count CASTER fields only. px 0 packs 8 casters; px 1/2 pack (caster, receiver) pairs, so
+    // their LOW half is a receiver and stays non-zero whatever the casters do -- counting raw
+    // non-zero words would never reach 0 and would look like a failed guard.
+    const casterFields = (buf: Uint32Array): number => {
+      let n = 0;
+      for (let i = 0; i < W * H; i++) {
+        const px = (i % W) % 3;
+        for (let c = 0; c < 4; c++) {
+          const w = buf[i * 4 + c];
+          if ((w >>> 16) !== 0) n++;
+          if (px === 0 && (w & 0xffff) !== 0) n++;
+        }
+      }
+      return n;
+    };
+    const before = casterFields(brute);
+    const saved: [number, number][] = [];
+    for (let i = 1; i <= rec.stats.prims; i++) {
+      const d = rec.debugPrim(i);
+      if (d.castType === 0) continue;
+      saved.push([i, d.castType]);
+      rec.writePrim(i, { unitX: d.unitX, unitY: d.unitY, unitZ: d.unitZ, definition: d.definition,
+                         castType: 0, receiveType: d.receiveType, emitType: d.emitType,
+                         layer: d.layer, seed: d.seed, intensity: d.intensity });
+    }
+    rec.upload(gl);
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true);
+    const afterCleared = casterFields(readCur());
+    for (const [i, ct] of saved) {
+      const d = rec.debugPrim(i);
+      rec.writePrim(i, { unitX: d.unitX, unitY: d.unitY, unitZ: d.unitZ, definition: d.definition,
+                         castType: ct, receiveType: d.receiveType, emitType: d.emitType,
+                         layer: d.layer, seed: d.seed, intensity: d.intensity });
+    }
+    rec.upload(gl);
+    const typeLane = { castersRestored: saved.length, nonZeroBefore: before,
+                       nonZeroAfterAllCastTypesCleared: afterCleared,
+                       everyShadowVanished: afterCleared === 0 };
+
+    return {
+      drawsPerGather,
+      walkVsBrute: { occlusionDiffering: differingOcclusion, identityDiffering: differingIdentity,
+                     slotsCompared: walked.length * 2 },
+      walkMatchesBrute: differingOcclusion === 0,
+      typeLaneCheckedAtUse: typeLane,
+      shadowMap: { w: d.w, h: d.h, pxPerUnit: d.pxPerUnit },
+      sampled: { unitLightPairs: W * H * 8 },
+      tierCounts: { none: tally[0], incumbent: tally[1], adjacency: tally[2], corridorWalk: tally[3] },
+      tierPercentOfAnswered: { incumbent: pct(tally[1]), adjacency: pct(tally[2]), corridorWalk: pct(tally[3]) },
       glError: gl.getError(),
     };
   }
