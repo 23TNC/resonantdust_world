@@ -21,6 +21,7 @@ import { makeNoiseAtlas } from "./noiseAtlas";
 import { OutlineOverlay, type OutlineItem } from "./outlineOverlay";
 import { installFrameCost } from "./frameCost";
 import { installReachCheck } from "./lightReach";
+import { Records, INDEX_NONE, ROTATIONS_PER_DEF } from "./records";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
@@ -86,6 +87,8 @@ export class Viewport {
    *  and the display blit composites warm OVER cold by warm coverage. */
   private readonly warm: SquareCache;
   private readonly blitShader: AlbedoBlitShader;
+  /** lighting-rework P1: the flat record layer — `prim_data` + `definition_data`. */
+  readonly records: Records;
   /** The `/overlayRT` debug material — draws one G-buffer composite over the display. */
   private readonly overlayShader: OverlayShader;
   /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
@@ -128,9 +131,14 @@ export class Viewport {
     // canvas cannot distinguish a re-bake flash from ordinary darkness — the cache state can.
     (globalThis as unknown as { __viewport: Viewport }).__viewport = this;
     // lighting-rework P0: `__framecost()` — the stream's ONE measurement instrument.
+    this.records = new Records(this.renderer.gl);
     installFrameCost(this, this.renderer.gl);
     // lighting-rework P0 (F6): `__reachcheck()` — proves the TS and GLSL reach agree at all 1024 values.
     installReachCheck(this.renderer.gl);
+    // lighting-rework P1: `__records()` — the record layer's own acceptance, run against the LIVE
+    // scene rather than a fixture, so it proves the writers on real definitions and real positions.
+    (globalThis as unknown as { __records: () => unknown }).__records = () => this.recordSelfTest();
+    (globalThis as unknown as { __buildrecords: () => unknown }).__buildrecords = () => this.buildRecords();
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
     // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
     (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {
@@ -558,6 +566,126 @@ export class Viewport {
     // a torch glowed with it. There are no lightmaps now, so it draws unlit like everything else.
     this.blueprint.draw(this.camera, null);
     this.outline.draw(this.camera);
+  }
+
+  /** lighting-rework P1 — build records from the live scene and check every P1 acceptance.
+   *
+   *  Deliberately reads the SAME resolver the G-buffer bake draws through, so "the record says where
+   *  the art is" is checked against where the art actually is, not against a second guess. */
+  private recordSelfTest(): Record<string, unknown> {
+    const rec = this.records;
+    const out: Record<string, unknown> = {};
+
+    // (1) allocation never yields the sentinel
+    const ids = Array.from({ length: 64 }, () => rec.allocPrim());
+    out.sentinelNeverAllocated = !ids.includes(INDEX_NONE) && ids[0] !== 0;
+
+    // (3) base + rotation, for a 4-rotation billboard AND a 16-cell linked tile — no special case
+    const bb = rec.allocDefinition(4);
+    for (let r = 0; r < 4; r++) rec.writeDefinition(bb, r, { frameX: 10 + r, frameY: 20, frameSpan: 1 });
+    const linked = rec.allocDefinition(ROTATIONS_PER_DEF);
+    for (let r = 0; r < ROTATIONS_PER_DEF; r++) rec.writeDefinition(linked, r, { frameX: 100, frameY: 200 + r, frameSpan: 4 });
+    out.billboardRotations = [0, 1, 2, 3].map((r) => rec.debugDefinition(bb, r).frameX);
+    out.linkedRotations = [0, 7, 15].map((r) => rec.debugDefinition(linked, r).frameY);
+    out.spanUnbiases = rec.debugDefinition(linked, 0).frameSpan === 4;
+
+    // (4) a rotation past the allocation is CLAMPED at the writer, never read off the neighbour
+    out.rotationClamp = { asked: 9, got: rec.clampRotation(bb, 9), allocated: rec.rotationsOf(bb) };
+
+    // (5) lanes assert instead of truncating
+    const threw = (fn: () => void): boolean => { try { fn(); return false; } catch { return true; } };
+    out.laneAssertions = {
+      intensityOver10Bits: threw(() => rec.writePrim(ids[0], { unitX: 0, unitY: 0, definition: bb, intensity: 1024 })),
+      // NOT a throw by design: F7 clamps rotation at the writer, so an out-of-range value is
+      // corrected (and warned about in dev) rather than rejected. Assert the CLAMP instead — the
+      // point of the lane check is that nothing can reach the GPU too wide for its bits.
+      rotationClampedNotThrown: (() => {
+        rec.writePrim(ids[1], { unitX: 0, unitY: 0, definition: bb, rotation: 99 });
+        return rec.debugPrim(ids[1]).rotation === rec.rotationsOf(bb) - 1;
+      })(),
+      unitOver16Bits: threw(() => rec.writePrim(ids[0], { unitX: 70000, unitY: 0, definition: bb })),
+      spanZeroRejected: threw(() => rec.writeDefinition(bb, 0, { frameX: 0, frameY: 0, frameSpan: 0 })),
+      validWriteSucceeds: !threw(() => rec.writePrim(ids[0], { unitX: 1600, unitY: 800, definition: bb, intensity: 1023 })),
+    };
+
+    // round-trip a real standing prim through the record and back
+    const live = [...this.map.standingPrims()][0];
+    if (live) {
+      const id = rec.allocPrim();
+      const ux = Math.round(live.x / (SQUARE / 16)), uy = Math.round(live.y / (SQUARE / 16));
+      rec.writePrim(id, { unitX: ux & 0xffff, unitY: uy & 0xffff, definition: bb, rotation: 2, intensity: 512 });
+      const back = rec.debugPrim(id);
+      out.roundTrip = { wrote: { ux: ux & 0xffff, uy: uy & 0xffff, rotation: 2, intensity: 512 }, read: back,
+                        exact: back.unitX === (ux & 0xffff) && back.unitY === (uy & 0xffff)
+                               && back.rotation === 2 && back.intensity === 512 };
+    }
+
+    rec.upload(this.renderer.gl);
+    out.stats = rec.stats;
+    out.glError = this.renderer.gl.getError();
+    return out;
+  }
+
+  /** lighting-rework P1 — mint records for every live standing prim, straight from the resolver.
+   *
+   *  This is what "the record layer is proven" actually needs: not that the G-buffer bake draws FROM
+   *  records (it does not, and the design does not ask it to — the bake draws art, the lighting reads
+   *  records), but that a record accurately locates its art in the atlas. A lighting pass holding a
+   *  bare prim index must be able to find the caster's texture, and that is exactly what is checked. */
+  buildRecords(): Record<string, unknown> {
+    const rec = this.records, res = this.resolver;
+    if (!res) return { error: "no resolver" };
+    const U = SQUARE / 16;
+    const byStem = new Map<string, number>();
+    let minted = 0, wrote = 0, mismatched = 0;
+    const samples: Record<string, unknown>[] = [];
+
+    for (const p of this.map.standingPrims()) {
+      const stem = p.textureName;
+      if (!stem) continue;
+      const frame = res.resolve(stem, "albedo", p.cell ?? 0)?.frame;
+      if (!frame) continue;
+
+      let block = byStem.get(stem);
+      if (block === undefined) {
+        block = rec.allocDefinition(4);                       // billboards: n/e/s/w
+        byStem.set(stem, block);
+        minted++;
+        const spanTiles = Math.max(1, Math.round(frame.w / SQUARE));
+        const bb = res.opaqueBBox(stem);
+        for (let r = 0; r < 4; r++) {
+          rec.writeDefinition(block, r, {
+            frameX: Math.round(frame.x / U), frameY: Math.round(frame.y / U),
+            frameSpan: Math.min(16, spanTiles),
+            anchorX: 1, anchorY: 2,                            // bottom-centre, as casters use
+            subX: bb ? Math.round(bb.fx * spanTiles * 16) : 0,
+            subY: bb ? Math.round(bb.fy * spanTiles * 16) : 0,
+            subW: Math.max(1, bb ? Math.round(bb.fw * spanTiles * 16) : spanTiles * 16),
+            subH: Math.max(1, bb ? Math.round(bb.fh * spanTiles * 16) : spanTiles * 16),
+            castType: 1, receiveType: 2,
+          });
+        }
+      }
+
+      const id = rec.allocPrim();
+      rec.writePrim(id, {
+        unitX: Math.round((p.x + p.width / 2) / U) & 0xffff,
+        unitY: Math.round((p.y + p.height) / U) & 0xffff,
+        definition: block, rotation: 0, castType: 1, receiveType: 2,
+        seed: Math.floor((p.seed ?? 0) * 255) & 0xff,
+      });
+      wrote++;
+
+      // CROSS-CHECK: decode the record and confirm it points back at the resolver's own frame.
+      const d = rec.debugDefinition(block, 0);
+      const wantX = Math.round(frame.x / U), wantY = Math.round(frame.y / U);
+      if (d.frameX !== wantX || d.frameY !== wantY) mismatched++;
+      else if (samples.length < 3) samples.push({ stem, frameUnits: [d.frameX, d.frameY], span: d.frameSpan });
+    }
+
+    rec.upload(this.renderer.gl);
+    return { definitionsMinted: minted, primsWritten: wrote, frameMismatches: mismatched,
+             samples, stats: rec.stats, glError: this.renderer.gl.getError() };
   }
 
   private ensureGeometry(quads: number): void {

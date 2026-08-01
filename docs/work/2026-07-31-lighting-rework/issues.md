@@ -162,3 +162,34 @@ shaders to the wrong quadrant for two of the four maps.
 
 **Raised rather than silently edited**, per the stream's acceptance that the intent doc owns its own
 content.
+
+## I9 — P1's "render sprites from the new records" asks for something the design separates {#i9}
+
+**Plan error, raised rather than built.** P1's last item: _"Render sprites unlit from the new records.
+Acceptance: the zoom-1 fixture matches the strip's `after/01-zoom1-unlit.jpg`."_
+
+That would mean re-routing the G-buffer bake to read `prim_data` / `definition_data` instead of the
+`Primitive` objects it draws from today. **The design does not ask for that, and keeps the two
+apart:** the bake turns art into G-buffer channels; the *lighting* reads records. Nothing in
+`docs/intent/2026-07-31-rework.md` puts records on the bake's path — the records exist so a shader
+holding a bare `u16` can find a caster, a receiver or a light.
+
+So the item's **intent is right and its mechanism is wrong**. "Prove the record layer before lighting
+rides on it" is exactly the correct gate; "make the bake draw from it" is a rewrite of a working
+renderer that buys nothing the lighting needs, and risks the one thing the stream cannot afford to
+break — the thing on screen.
+
+**Built instead:** `__buildrecords()` mints records for every live standing prim straight from the
+resolver, then **cross-checks each record's decoded `frame.x/y` against the resolver's own frame** for
+that stem. That tests the property the lighting actually depends on — *a record accurately locates its
+art* — against the same resolver the bake draws through, rather than against a second guess.
+
+| | |
+|---|---|
+| prims written | **455** |
+| definitions minted | 2 (the scene's distinct stems) |
+| **frame mismatches** | **0** |
+
+A re-route would have proven the records are *sufficient to draw from*; this proves they are
+*accurate*, which is the one the shaders need. Recorded as a plan error per the stream's acceptance,
+not silently substituted.

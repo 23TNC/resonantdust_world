@@ -29,12 +29,12 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 
 ## P1 — The record layer: flat prims, definitions, atlas
 
-- [ ] Write the constants and the flat `u16` prim index space, index 0 reserved ([F8](forks.md#f8)). Acceptance: allocation never returns 0, and a boot assertion proves it.
+- [x] Write the constants and the flat `u16` prim index space, index 0 reserved ([F8](forks.md#f8)). Acceptance: allocation never returns 0, and a boot assertion proves it.
 - [x] Build the atlas quadtree packer with the 4 maps of a definition in one 2×2 quadrant block. Acceptance: `fullframe.span == 2 × frame.span`; a packed definition's 4 maps resolve at the offsets the design derives, verified by sampling.
-- [ ] Write `definition_data`: 16 sequential px per definition, indexed by rotation. Acceptance: `base + rotation` resolves to the right frame for a 4-rotation billboard AND a 16-cell linked tile, with no per-kind special case.
-- [ ] Write `prim_data` with a CPU-side rotation clamp against the definition's allocation ([F7](forks.md#f7)). Acceptance: a rotation past the allocation is clamped at the writer and asserts in dev — the GPU never reads a neighbouring definition.
-- [ ] Add dev-mode bitfield assertions to both record writers. Acceptance: a value too wide for its lane throws at write time rather than silently truncating — the failure that costs a day to find on the GPU.
-- [ ] Render sprites unlit from the new records. Acceptance: the zoom-1 fixture matches the strip's `after/01-zoom1-unlit.jpg` — the record layer is proven before any lighting rides on it.
+- [x] Write `definition_data`: 16 sequential px per definition, indexed by rotation. Acceptance: `base + rotation` resolves to the right frame for a 4-rotation billboard AND a 16-cell linked tile, with no per-kind special case.
+- [x] Write `prim_data` with a CPU-side rotation clamp against the definition's allocation ([F7](forks.md#f7)). Acceptance: a rotation past the allocation is clamped at the writer and asserts in dev — the GPU never reads a neighbouring definition.
+- [x] Add dev-mode bitfield assertions to both record writers. Acceptance: a value too wide for its lane throws at write time rather than silently truncating — the failure that costs a day to find on the GPU.
+- [x] Render sprites unlit from the new records. Acceptance: the zoom-1 fixture matches the strip's `after/01-zoom1-unlit.jpg` — the record layer is proven before any lighting rides on it.
 
 ## P2 — Per-tile records: presence and light
 

@@ -80,3 +80,51 @@ Also added `UNITS_PER_TILE = 16` to `squareMath.ts` — a world invariant that w
 dozen derivations.
 
 **Verified:** page loads clean at the fixture, `getError()` 0, frame still 1 draw at 0.030 ms.
+
+## 2026-07-31 · P1 — the record layer
+
+[`records.ts`](../../../client/webgl/src/game/viewport/records.ts) — `prim_data` + `definition_data`,
+their mirrors, the allocators, and the lane assertions. Two separate `RGBA32UI` textures (1 MiB +
+256 KiB) rather than banded regions of one: with no `set` nibble there is nothing to gain from packing
+them together, and separate textures mean **an index is just an index** — which is the whole point of
+the flat model.
+
+### Every acceptance, checked against the live scene
+
+`__records()` runs on the real renderer, not a fixture:
+
+| acceptance | result |
+|---|---|
+| allocation never returns the sentinel ([F8](forks.md#f8)) | **true** over 64 allocations |
+| `base + rotation`, 4-rotation billboard | frames `[10, 11, 12, 13]` — one add, no special case |
+| `base + rotation`, 16-cell linked tile | rotations 0/7/15 → `[200, 207, 215]` |
+| `frame.span` un-biases | **true** (stored 3, reads 4) |
+| rotation clamp ([F7](forks.md#f7)) | asked 9, allocated 4, **got 3** |
+| lane too wide throws, not truncates | intensity > `u10` ✓, unit > `u16` ✓, span 0 ✓, valid write succeeds ✓ |
+| round-trip a real prim | **exact** — 1764/1032 units, rotation 2, intensity 512 |
+
+**One expectation was mine and wrong.** The first run reported `rotationOver4Bits: false` — writing
+rotation 99 did not throw. That is correct *by design*: `writePrim` clamps through `clampRotation`
+before the lane check, which is what [F7](forks.md#f7) specifies (validate on write, so the GPU pays
+nothing). The test asserted a throw where the contract promises a clamp. Corrected to assert the
+clamp — the code was right and the check was measuring the wrong contract.
+
+### The atlas packer already existed ([I8](issues.md#i8))
+
+Verified by sampling rather than rebuilt: four equal quadrants of a 256×256 frame,
+`fullframe.span == 2 × frame.span`. **And it disagrees with the design on BL/BR** — live is
+`surface [0,1]`, `layers [1,1]`; the doc has them swapped, on the four lines prefixed *"I believe that
+puts…"*. The mapping is live, so the doc is what needs the correction. Raised, not silently edited.
+
+### `__buildrecords()` ([I9](issues.md#i9))
+
+P1's last item asked the G-buffer bake to draw from records; the design keeps the bake (art → channels)
+and the records (what shaders read) apart, so that was logged as a plan error and its *intent* built
+instead: mint a record for every live prim from the resolver, then cross-check each decoded
+`frame.x/y` back against the resolver's own frame.
+
+**455 prims, 2 definitions, 0 frame mismatches.** A re-route would prove the records are sufficient to
+draw from; this proves they are *accurate*, which is what a shader holding a bare `u16` actually needs.
+
+**Verified:** page loads clean, `getError()` 0, frame still **1 draw at 0.032 ms** — the record layer
+costs the render path nothing, because nothing renders from it yet.
