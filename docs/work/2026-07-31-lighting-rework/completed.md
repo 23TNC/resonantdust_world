@@ -306,3 +306,35 @@ eight.
 
 **The GLSL backtick foot-gun caught me again**, in a shader comment (`` `a + (-x) + x` ``). `tsc`
 reported it as a TS syntax error two lines later, which is the only reason it was cheap.
+
+## 2026-07-31 · P4 (1, 3/5) — the shadow buffer, and the slot split corrected
+
+`shadowPass.ts`. **3 px per UNIT, ping-ponged, cleared to 0.**
+
+| acceptance | result |
+|---|---|
+| per UNIT, not per tile | 512 × 256 units → a **1536 × 256** texture (`unitsX × 3`) |
+| sized ~6 MB, not ~24 KB | **6 MB** per buffer, **12 MB** with the ping-pong |
+| first frame reads zeros | **0 non-zero texels** across the sampled span |
+| `getError()` | 0 |
+
+Cleared to 0 specifically because **0 is the "no caster" sentinel**: an uninitialised buffer would
+name real prims, and the adjacency step would trust them. Zero means "take the slow path", which is
+the safe direction for garbage to fall.
+
+### The `l >= 4` correction, demonstrated rather than asserted
+
+`pairSlot()` is the one place the split lives:
+
+| lights | px | slots |
+|---|---|---|
+| 0–3 | 1 | 0, 2, 4, 6 |
+| 4–7 | 2 | 0, 2, 4, 6 |
+
+All eight distinct, none past slot 6 (the last valid start for a pair in an 8-slot px).
+
+The check also **runs the design's own `l > 4`** and reports what it produces:
+`light 4 -> slot 8` — one past the end of px 1, while px 2's slots 0 and 1 are never used at all.
+So light 4 would write outside its px and never shadow ([I1](issues.md#i1)). That is the failure that
+reads as "the shadows look wrong" rather than as an out-of-range write, which is why it is worth a
+test that names it rather than a comment that mentions it.

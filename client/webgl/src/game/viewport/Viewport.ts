@@ -23,6 +23,7 @@ import { installFrameCost } from "./frameCost";
 import { installReachCheck } from "./lightReach";
 import { Records, INDEX_NONE, ROTATIONS_PER_DEF } from "./records";
 import { LightPass } from "./lightPass";
+import { ShadowBuffer, pairSlot, SHADOW_LIGHTS } from "./shadowPass";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
@@ -92,6 +93,8 @@ export class Viewport {
   readonly records: Records;
   /** lighting-rework P3: per-light slots + the summed map the display reads. */
   readonly lights: LightPass;
+  /** lighting-rework P4: the per-unit shadow buffer, ping-ponged. */
+  readonly shadows: ShadowBuffer;
   /** The synthetic emitter P2/P3 exercise the real path with (no lights are authored yet). */
   private debugLightPrim = 0;
   /** The `/overlayRT` debug material — draws one G-buffer composite over the display. */
@@ -138,6 +141,7 @@ export class Viewport {
     // lighting-rework P0: `__framecost()` — the stream's ONE measurement instrument.
     this.records = new Records(this.renderer.gl);
     this.lights = new LightPass(this.renderer.gl);
+    this.shadows = new ShadowBuffer(this.renderer.gl);
     installFrameCost(this, this.renderer.gl);
     // lighting-rework P0 (F6): `__reachcheck()` — proves the TS and GLSL reach agree at all 1024 values.
     installReachCheck(this.renderer.gl);
@@ -152,6 +156,8 @@ export class Viewport {
       (n?: number) => this.lightCost(n ?? 8);
     // lighting-rework P3 item 4: add a light, remove it, and prove the sum returns bit-identically.
     (globalThis as unknown as { __lightexact: () => unknown }).__lightexact = () => this.lightExactness();
+    // lighting-rework P4: the shadow buffer's shape, its zeroed first frame, and the l >= 4 split.
+    (globalThis as unknown as { __shadowbuf: () => unknown }).__shadowbuf = () => this.shadowBufferCheck();
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
     // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
     (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {
@@ -910,6 +916,39 @@ export class Viewport {
       afterRemoveDifferingFloats: returned.differing,
       afterRemoveWorstDelta: returned.worst,
       bitIdentical: returned.differing === 0,
+      glError: gl.getError(),
+    };
+  }
+
+  /** lighting-rework P4 — the shadow buffer's acceptances: sized per UNIT, zeroed, and the slot
+   *  split that the design's `l > 4` gets wrong. */
+  private shadowBufferCheck(): Record<string, unknown> {
+    const gl = this.renderer.gl;
+    const d = this.shadows.dims;
+
+    // read the CURRENT buffer back: every texel must be the 0 sentinel on a fresh allocation
+    const sample = new Uint32Array(64 * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, (this.shadows.cur as unknown as { fbo: WebGLFramebuffer }).fbo);
+    gl.readPixels(0, 0, 64, 1, gl.RGBA_INTEGER, gl.UNSIGNED_INT, sample);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const nonZero = sample.reduce((n, v) => n + (v !== 0 ? 1 : 0), 0);
+
+    // the l >= 4 split: all 8 lights must land on DISTINCT (px, slot) pairs, none past slot 7
+    const pairs = Array.from({ length: SHADOW_LIGHTS }, (_, l) => ({ l, ...pairSlot(l) }));
+    const keys = new Set(pairs.map((p) => `${p.px}:${p.slot}`));
+    // what the design's `l > 4` would have produced, for the record
+    const buggy = Array.from({ length: SHADOW_LIGHTS }, (_, l) =>
+      l > 4 ? { l, px: 2, slot: (l - 4) * 2 } : { l, px: 1, slot: l * 2 });
+
+    return {
+      dims: d,
+      megabytes: +(this.shadows.bytes / (1024 * 1024)).toFixed(2),
+      perUnitNotPerTile: d.w === d.unitsX * d.pxPerUnit,
+      firstFrameNonZeroTexels: nonZero,
+      slotSplit: pairs,
+      allDistinct: keys.size === SHADOW_LIGHTS,
+      noneOverflow: pairs.every((p) => p.slot >= 0 && p.slot <= 6),
+      designsBuggySplitOverflows: buggy.filter((p) => p.slot > 6).map((p) => `light ${p.l} -> slot ${p.slot}`),
       glError: gl.getError(),
     };
   }
