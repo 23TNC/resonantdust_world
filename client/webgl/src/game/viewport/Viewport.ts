@@ -150,6 +150,8 @@ export class Viewport {
     // lighting-rework P3 item 5: cost per light, measured BEFORE shadows are built on top of it.
     (globalThis as unknown as { __lightcost: (n?: number) => unknown }).__lightcost =
       (n?: number) => this.lightCost(n ?? 8);
+    // lighting-rework P3 item 4: add a light, remove it, and prove the sum returns bit-identically.
+    (globalThis as unknown as { __lightexact: () => unknown }).__lightexact = () => this.lightExactness();
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
     // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
     (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {
@@ -852,6 +854,64 @@ export class Viewport {
     const r = (x: number): number => Math.round(x * 1000) / 1000;
     return { lights: n, msPerLightingUpdate: r(reps[2]), min: r(reps[0]), max: r(reps[4]),
              droppedLights: rec.droppedLights, glError: gl.getError() };
+  }
+
+  /** lighting-rework P3 — the property the old accumulator needed `LIGHT_QUANT` to fake.
+   *
+   *  Add a light through the delta path, then remove it, and the sum must land BIT-IDENTICALLY back
+   *  where it started. With per-light slots this is structural, not arranged: removal emits `-old`
+   *  where `old` is the exact value the slot holds, so the two deltas are exact negatives. */
+  private lightExactness(): Record<string, unknown> {
+    const gl = this.renderer.gl, rec = this.records, win = this.map.window;
+    const W = this.lights.size.w, H = this.lights.size.h;
+    const snap = (): Float32Array => {
+      const buf = new Float32Array(64 * 64 * 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, (this.lights.sumRT as unknown as { fbo: WebGLFramebuffer }).fbo);
+      gl.readPixels((W >> 1) - 32, (H >> 1) - 32, 64, 64, gl.RGBA, gl.FLOAT, buf);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return buf;
+    };
+    const diff = (a: Float32Array, b: Float32Array): { differing: number; worst: number } => {
+      let n = 0, worst = 0;
+      for (let i = 0; i < a.length; i++) {
+        const d = Math.abs(a[i] - b[i]);
+        if (a[i] !== b[i]) { n++; if (d > worst) worst = d; }
+      }
+      return { differing: n, worst };
+    };
+
+    // baseline: a full recompute, then snapshot
+    this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow);
+    const before = snap();
+
+    // ADD a light into slot 7 (unused by the built set) via the delta path
+    const id = rec.allocPrim();
+    rec.writePrim(id, { unitX: (win.winCol + 16) * 16, unitY: (win.winRow + 8) * 16,
+                        definition: 1, emitType: 1, intensity: 900, colors: [0, 0, 0, 200] });
+    rec.upload(gl);
+    let draws = 0;
+    const de = gl.drawElements, da = gl.drawArrays;
+    gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
+    gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
+    this.lights.updateLight(this.renderer, rec.primTex, 7, id, win.winCol, win.winRow);
+    const drawsToAdd = draws;
+    const added = snap();
+
+    // REMOVE it — primIndex 0
+    this.lights.updateLight(this.renderer, rec.primTex, 7, 0, win.winCol, win.winRow);
+    gl.drawElements = de; gl.drawArrays = da;
+    const after = snap();
+
+    const changedByAdd = diff(before, added);
+    const returned = diff(before, after);
+    return {
+      drawsPerLightUpdate: drawsToAdd,
+      addChangedTexels: changedByAdd.differing,
+      afterRemoveDifferingFloats: returned.differing,
+      afterRemoveWorstDelta: returned.worst,
+      bitIdentical: returned.differing === 0,
+      glError: gl.getError(),
+    };
   }
 
   private ensureGeometry(quads: number): void {

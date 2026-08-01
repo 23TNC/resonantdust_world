@@ -47,8 +47,8 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 
 - [x] Allocate the 8 per-light slots as `RGB10_A2` at ¼ scale ([F2](forks.md#f2)). Acceptance: a contribution of 4.0 round-trips as 1.0 stored and 4.0 read — today's overbright ceiling preserved exactly.
 - [x] Draw all 8 lights in ONE draw, light index from fragment x ([F3](forks.md#f3)). Acceptance: one draw call per lighting update, no MRT, and each fragment touches exactly one slot.
-- [ ] Maintain the summed map by a blended delta of `new − old` ([F1](forks.md#f1)). Acceptance: the display samples ONE texture; changing one light rewrites one slot and one blended draw, not the whole map.
-- [ ] Prove incremental add/remove is exact. Acceptance: add a light, remove it, and the summed map returns bit-identically to its prior state — the property the old quantised accumulator needed `LIGHT_QUANT` to fake.
+- [x] Maintain the summed map by a blended delta of `new − old` ([F1](forks.md#f1)). Acceptance: the display samples ONE texture; changing one light rewrites one slot and one blended draw, not the whole map.
+- [x] Prove incremental add/remove is exact. Acceptance: add a light, remove it, and the summed map returns bit-identically to its prior state — the property the old quantised accumulator needed `LIGHT_QUANT` to fake.
 - [x] Measure cost per light with no shadows. Acceptance: ms at N = 1, 4, 8, 16 lights — the first real bound on the per-pixel pass, taken BEFORE anything is built on top of it.
 
 ## P4 — The shadow gather: per unit, ping-ponged

@@ -15,3 +15,27 @@ _None yet._
 each inside the other's spread), which is what the acceptance was actually for. Logged rather than
 quietly re-baselined, because a plan number silently edited to match a measurement is how a harness
 gets trusted for the wrong reason.
+
+## D2 — the summed map is `RGBA32F`, not `RGBA16F` (2026-07-31)
+
+[F1](forks.md#f1) costed the sum at "8 MiB at `RGBA16F`". It has to be `RGBA32F`: the exactness
+acceptance needs every value a slot can produce represented **without rounding**, and 8 slots × 1023
+quantisation levels needs 13 mantissa bits where FP16 has 11. FP32's 24 covers it with room to spare.
+
+**Cost: 32 MiB instead of 8.** Still far under the 99 MiB the strip freed, and it buys the property the
+whole slot/sum split exists for — an update that can be undone exactly.
+
+## D3 — a light update is three draws, not two (2026-07-31)
+
+**Plan:** "changing one light rewrites one slot and **one blended draw**, not the whole map."
+
+**Built:** three draws — withdraw `−slot`, rewrite the slot, deposit `+slot`.
+
+**Why.** The two-draw form (emit `new − old`, then write `new`) predicts what the hardware will store,
+and prediction is not exact: the slot keeps `RGB10_A2` rounding the delta did not apply. Quantising the
+prediction in software still disagreed in the last bit (measured 0.0039, one full quantum). Reading the
+stored value cannot be wrong about it.
+
+The acceptance's *intent* — "not the whole map" — is fully met: one slot of eight, and no other slot or
+region is touched. The next item's acceptance (bit-exact add/remove) is unreachable in two draws, so
+this trades a draw for the property the phase exists to deliver.

@@ -264,3 +264,45 @@ next item — and this measurement is the baseline it has to beat.
 
 **The unlit floor is restated at ~0.11 ms**, not 0.028. Every earlier ms number in both streams is low
 by roughly 4×; they are recorded as-taken rather than retro-edited, with I10 naming what is affected.
+
+## 2026-07-31 · P3 (4–5/5) — the delta path, and add/remove proven EXACT
+
+**`afterRemoveDifferingFloats: 0`, three runs.** Add a light through the delta path, remove it, and
+the summed map returns **bit-identically** — the property the old accumulator needed `LIGHT_QUANT` to
+fake, here structural.
+
+Getting there took four attempts, and each failure taught the design something:
+
+| attempt | worst residual | what it taught |
+|---|---|---|
+| emit `new − old`, then write the slot | **0.88** | the scissored slot write used `gl_FragCoord.x` raw, so the **block offset was being read as the texel coordinate** — the delta was right, the slot landed in the wrong place |
+| same, offset stripped | **0.0022** | the add deposits a freshly-computed float while the slot *stores* it quantised, so the removal subtracts a different number |
+| quantise the prediction in software | **0.0039** | software rounding does not match the hardware's in the last bit. **Predicting what the GPU will store is not a strategy** |
+| **withdraw → write → deposit**, reading the slot both times | **5.96e-8** | one FP32 ULP: `a + (−x) + x` re-rounds |
+| **+ deposit integer LEVELS, not floats** | **0** | integers under 2²⁴ are exact in FP32, so the pair cancels bit-exactly |
+
+### Two design corrections this forced
+
+**1. Never predict the store; read it.** The update is now three draws — subtract what the slot holds,
+rewrite it, add back what it now holds. Every term is read, none is predicted. That is one draw more
+than the plan's acceptance ("one slot and one blended draw"), and worth it: exactness is the *next*
+item's acceptance, and the two-draw form cannot deliver it. Still one slot — the other seven and the
+whole rest of the sum are untouched ([D3](deviations.md)).
+
+**2. [F1](forks.md#f1) was wrong that quantisation had no reason to exist.** It has none for the
+**slots** — those are overwritten, never accumulated. But the **sum is still an accumulator**, and an
+accumulator that must invert still needs an exact alphabet. It now holds integer quantisation levels
+(8 slots × 1023 = 8184, nowhere near 2²⁴), which is exactly the old `LIGHT_QUANT` reasoning arrived at
+from the opposite direction.
+
+The sum is also `RGBA32F` rather than the `RGBA16F` F1 assumed: 13 mantissa bits are needed and FP16
+has 11. 32 MiB against 8 ([D2](deviations.md)).
+
+### Also
+
+The **blocked** slot layout (slot `s` owns `x ∈ [s·W, (s+1)·W)`) replaced the interleaved one — a slot
+has to be a *rectangle* to be scissored, and without that "update one light" would have to touch all
+eight.
+
+**The GLSL backtick foot-gun caught me again**, in a shader comment (`` `a + (-x) + x` ``). `tsc`
+reported it as a TS syntax error two lines later, which is the only reason it was cheap.
