@@ -184,3 +184,36 @@ hide that the measurements were ever wrong):
 re-derive it. The lesson generalises past this bug and matches [I7](#i7) exactly: in this environment
 the wrong measurement method **does not error, it under-reports** — so a number that looks good is the
 thing to distrust first.
+
+## I11 — I measured STATIC lights and reported them as "moving" {#i11}
+
+**The stream's headline acceptance is "moving lights at reach 16, zoom 1, inside 8 ms". I placed 16
+lights once, never moved them, and reported 2.31 ms as if it answered that.** It does not.
+
+Why it matters rather than being a wording slip: **static lights are the cheap case, and they are
+cheap for a reason this design is built around.** With nothing moving, the incumbent tier answers
+66.9 % of pairs — last frame's caster is still the caster, so the corridor walk barely runs. Move the
+lights and incumbents invalidate every frame, pushing work onto the walk, which is the expensive tier.
+The number I reported is therefore **the best case of the exact mechanism the headline was meant to
+stress**.
+
+The honest position: cost-per-light and the frame cost are real measurements of a static scene. The
+**headline number does not exist yet**.
+
+## I12 — The refine tests a solid rectangle, not the sprite silhouette {#i12}
+
+`occludes()` and `refineOccluded()` model a caster as a **solid card**: half-width from
+`subframe.width`, height from `subframe.height`, occluding anywhere the ray crosses it. A conifer is
+therefore a **rectangle** to the shadow system, which is why the shadows on screen are blocky wedges
+rather than tree-shaped.
+
+The design is explicit that this is not the intent — *"the fine detail lighting pass will actually
+place the section of the casting prim's texture that falls into the slot"* — and the old system did
+sample the sprite's alpha (`design/shadows.md`: *"Sample the sprite **alpha** as the shadow mask"*).
+
+So the stored-identity architecture is working: it finds the right caster and re-tests it at 64/tile.
+It is re-testing **the wrong shape**. The fix is local — sample the caster's `surface` quadrant at the
+crossing point instead of accepting the whole rectangle — and it is the difference between "there is a
+shadow here" and "this shadow is that tree".
+
+**Both of these were ticked as complete. They are not, and the stream is reopened.**

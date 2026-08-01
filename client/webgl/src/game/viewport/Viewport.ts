@@ -100,6 +100,13 @@ export class Viewport {
   private debugLightPrim = 0;
   /** lighting-rework P5: is the new lighting driven + displayed? Off until `__lit(true)`. */
   private litEnabled = false;
+  /** lighting-rework I11: the live light set, and their orbit origins. The headline acceptance is
+   *  MOVING lights, and a static measurement is the best case of the very mechanism it stresses —
+   *  with nothing moving, last frame's caster is still the caster and the incumbent tier absorbs
+   *  everything. `__orbit(true)` displaces every light each frame through the real record path. */
+  private liveLights: { index: number; homeX: number; homeY: number; tileX: number; tileY: number }[] = [];
+  private orbitOn = false;
+  private orbitPhase = 0;
   /** lighting-rework P6: the gather's tier split + the refine gate's selectivity, for the debug
    *  panel's Lighting tab. Refreshed by `__gather()`; the panel shows "run __gather()" until then, so
    *  it never displays a stale number as if it were live. */
@@ -169,6 +176,12 @@ export class Viewport {
     (globalThis as unknown as { __gather: () => unknown }).__gather = () => this.runGather();
     // lighting-rework P5: drive the whole chain each frame and show it.
     (globalThis as unknown as { __receivers: () => unknown }).__receivers = () => this.receiverCheck();
+    // lighting-rework I11: place N lights, and move them.
+    (globalThis as unknown as { __lights: (n?: number) => unknown }).__lights = (n?: number) => this.placeLights(n ?? 16);
+    (globalThis as unknown as { __orbit: (on?: boolean) => unknown }).__orbit = (on?: boolean) => {
+      this.orbitOn = on ?? !this.orbitOn;
+      return { orbiting: this.orbitOn, lights: this.liveLights.length };
+    };
     (globalThis as unknown as { __lit: (on?: boolean) => unknown }).__lit = (on?: boolean) => {
       this.litEnabled = on ?? !this.litEnabled;
       if (this.litEnabled) this.buildRecords();
@@ -512,14 +525,21 @@ export class Viewport {
     // lighting-rework P5: the new chain — gather (per unit) then the slot pass (per lighting texel,
     // with the gated refine), both bounded by reachFromIntensity.
     if (this.litEnabled && this.map.ready) {
+      this.stepOrbit();
       const w = this.map.window, r = this.records;
+      const atlas = this.surfaceAtlas();
+      // No atlas means the silhouette cannot be sampled. Skip the refine rather than run it against
+      // a texture that answers 0 everywhere, which reads on screen as "the shadows are broken".
+      const canRefine = atlas !== null;
       this.shadows.gather(this.renderer, { prim: r.primTex, def: r.defTex, light: r.lightTex,
-                                           presence: r.presenceTex }, w.winCol, w.winRow);
+                                           presence: r.presenceTex, atlas: atlas ?? this.white },
+                          w.winCol, w.winRow);
       // P5: the receiver map FIRST, once -- it is geometry, so it is the same for every light and
       // the eight light fragments read it instead of each re-deciding (I2).
       this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, w.winCol, w.winRow);
       this.lights.run(this.renderer, r.primTex, r.lightTex, w.winCol, w.winRow,
-                      { def: r.defTex, shadow: this.shadows.prev, unitsX: 512, refine: true });
+                      { def: r.defTex, shadow: this.shadows.prev, atlas: atlas ?? this.white,
+                        unitsX: 512, refine: canRefine });
     }
     // lighting-strip P1: the gather / lighting / receiver / decay passes are NO LONGER ISSUED. The
     // ShadowGather instance still exists and still compiles (P2 deletes it) -- this phase only stops
@@ -996,7 +1016,8 @@ export class Viewport {
    *  is a claim about proportions and therefore has to be counted, not argued. */
   private runGather(): Record<string, unknown> {
     const gl = this.renderer.gl, rec = this.records, win = this.map.window;
-    const tex = { prim: rec.primTex, def: rec.defTex, light: rec.lightTex, presence: rec.presenceTex };
+    const tex = { prim: rec.primTex, def: rec.defTex, light: rec.lightTex, presence: rec.presenceTex,
+                  atlas: this.surfaceAtlas() ?? this.white };
 
     let draws = 0;
     const de = gl.drawElements, da = gl.drawArrays;
@@ -1152,6 +1173,68 @@ export class Viewport {
       ownersThatAreNotReceivers: nonReceivers,
       glError: gl.getError(),
     };
+  }
+
+  /** The shared co-packed atlas page — where the caster SILHOUETTE lives ([I12](issues.md#i12)).
+   *
+   *  Searches for a prim that actually RESOLVES. The first standing prim may have no `textureName`
+   *  at all, and taking it blindly is what broke the silhouette test on its first run: the resolve
+   *  returned null, the code fell back to the 1x1 white texture, and an out-of-range `texelFetch` on
+   *  that returns **0** — so every silhouette test failed and shadows vanished entirely.
+   *
+   *  That fallback was commented as a "safe degradation to the old rectangle". It was the opposite:
+   *  the safe direction is *more* shadow, and it produced none. Returning null instead lets the
+   *  caller skip the refine rather than silently render a world with no shadows in it. */
+  private surfaceAtlas(): Texture | null {
+    for (const p of this.map.standingPrims()) {
+      if (!p.textureName) continue;
+      const f = this.resolver?.resolve(p.textureName, "surface", p.cell ?? 0)?.frame;
+      if (f?.source) return f.source;
+    }
+    return null;
+  }
+
+  /** lighting-rework I11 — place N lights across the window and remember their orbit origins. */
+  placeLights(n: number): Record<string, unknown> {
+    const r = this.records, w = this.map.window, gl = this.renderer.gl;
+    this.liveLights = [];
+    for (let i = 0; i < n; i++) {
+      const tileX = w.winCol + 3 + (i % 8) * 4;
+      const tileY = w.winRow + 4 + Math.floor(i / 8) * 7;
+      const index = r.allocPrim();
+      const homeX = tileX * 16 + 8, homeY = tileY * 16 + 8;
+      r.writePrim(index, { unitX: homeX, unitY: homeY, definition: 1, emitType: 1,
+                           intensity: 1023, colors: [0, 0, 0, 190] });
+      this.liveLights.push({ index, homeX, homeY, tileX, tileY });
+    }
+    this.rebuildLightSet();
+    r.upload(gl);
+    return { placed: n, orbiting: this.orbitOn };
+  }
+
+  /** Displace every light around its origin and re-register — through the REAL record path, so the
+   *  incumbent tier genuinely invalidates. That is the whole point of measuring motion (I11). */
+  private stepOrbit(): void {
+    if (!this.orbitOn || this.liveLights.length === 0) return;
+    const r = this.records;
+    this.orbitPhase += 0.06;
+    const R = 12;                                   // units — under a tile, so a light stays in its room
+    for (let i = 0; i < this.liveLights.length; i++) {
+      const L = this.liveLights[i];
+      const ph = this.orbitPhase + i * 0.7;         // per-light phase, so they do not move in lockstep
+      const ux = Math.round(L.homeX + Math.cos(ph) * R);
+      const uy = Math.round(L.homeY + Math.sin(ph) * R);
+      r.writePrim(L.index, { unitX: ux & 0xffff, unitY: uy & 0xffff, definition: 1, emitType: 1,
+                             intensity: 1023, colors: [0, 0, 0, 190] });
+      L.tileX = Math.floor(ux / 16); L.tileY = Math.floor(uy / 16);
+    }
+    this.rebuildLightSet();
+    r.upload(this.renderer.gl);
+  }
+
+  private rebuildLightSet(): void {
+    this.records.buildLights(this.liveLights.map((L) => (
+      { index: L.index, tileX: L.tileX, tileY: L.tileY, intensity: 1023 })));
   }
 
   private ensureGeometry(quads: number): void {

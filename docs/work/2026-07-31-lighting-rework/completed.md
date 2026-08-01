@@ -698,3 +698,60 @@ their spread, which is the check worth having on a number this stream exists to 
 single synthetic torch. Registering 16 lights *before* enabling lit silently loses them — the lights
 must be registered **after**. The first attempt at this capture showed one light and looked like a
 broken pass; nothing was broken, the setup order was.
+
+## 2026-07-31 · P4b — silhouettes and motion, after two wrongly-ticked acceptances
+
+The user caught both: *"None of these lights are moving. None of these lights are properly cutting
+tree silhouettes."* Both were correct, and both had been ticked.
+
+### [I12](issues.md#i12) — the silhouette
+
+`occludes()` treated a caster as a **solid rectangle** from `subframe.width/height`, so every conifer
+cast its bounding box. Now it samples the caster's **surface** coverage lane at the exact point the
+ray crosses the card, at 64/tile.
+
+[`after/sil-fixed.jpg`](after/sil-fixed.jpg) — the shadows taper to points and follow the tree, where
+[`after/sixteen-lights.jpg`](after/sixteen-lights.jpg) shows the wedges they were.
+
+**To be exact about which map**: the silhouette comes from **`surface`**, not albedo. Albedo appears
+only as the *frame origin* stored in `definition_data`, which is the design's own rule — `frame.x/y`
+locates the first map, albedo is the top-left quadrant, and the surface quadrant is one frame-height
+below it. The shader derives the surface texel from that anchor.
+
+**The fix landed broken first, and instructively.** `surfaceAtlas()` took `standingPrims()[0]`, which
+has no `textureName`; the resolve returned null; the code fell back to the 1×1 white texture; and an
+out-of-range `texelFetch` on that returns **0**, so every silhouette test failed and **shadows vanished
+entirely**. I had commented that fallback as "a safe degradation to the old rectangle". It was the
+exact opposite — the safe direction is *more* shadow, and it produced none. It now searches for a prim
+that actually resolves and returns null if none does, so the caller **skips the refine** rather than
+rendering a shadowless world.
+
+### [I11](issues.md#i11) — motion, and what it actually costs
+
+Lights now orbit through the **real record path** — `writePrim` + `buildLights` every frame — so the
+incumbent tier genuinely invalidates.
+
+| lights | static | **moving** |
+|---|---|---|
+| 1 | 1.74 ms | **1.77 ms** |
+| 8 | 2.40 ms | **2.68 ms** |
+| **16** | 2.79 ms | **3.11 ms** |
+
+**16 moving lights at reach 16: 3.11 ms/frame** — the headline the stream was actually for, against a
+16.7 ms frame at 60 fps, and inside the 8 ms half-frame the plan set.
+
+**Motion costs ~12 %**, far less than I expected when writing I11 — and the tier split says why:
+
+| | incumbent | adjacency | walk |
+|---|---|---|---|
+| static | 33.8 % | 0.1 % | 66.1 % |
+| moving | 33.6 % | 0 % | 66.4 % |
+
+**Almost unchanged.** My reasoning in I11 — "static lights are the cheap case because incumbents
+absorb everything" — was wrong for this scene. With 16 overlapping lights the walk already dominates
+at 66 % *before* anything moves, so motion has little left to invalidate. The earlier 66.9 % incumbent
+figure came from a **one-light** scene, and I generalised it to sixteen without re-measuring.
+
+The correction stands either way: the number I originally reported was from a static scene and should
+not have been called "moving". It just turned out the honest number is close, for a reason different
+from the one I assumed.

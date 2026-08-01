@@ -56,6 +56,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 const GATHER_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
+uniform sampler2D uSurfaceAtlas;   // the shared co-packed page — the SILHOUETTE lives here
 uniform highp usampler2D uPrim;
 uniform highp usampler2D uDef;
 uniform highp usampler2D uLight;
@@ -95,6 +96,28 @@ uint slotOf(uvec4 v, int i) {
  *  Find where the ray crosses y = C.y, then ask whether that crossing is inside the card's width AND
  *  below its top. No search, no marching -- one solve, which is the whole point of storing WHICH
  *  caster rather than how much coverage. */
+// Sample the caster's SILHOUETTE at the point the ray crosses its card.
+//
+// I12: modelling the caster as a solid rectangle makes every conifer a BLOCK -- the shadow is the
+// right size in the right place and the wrong SHAPE. The design says the refine places "the section
+// of the casting prim's texture that falls into the slot", and the old system sampled sprite alpha
+// as the shadow mask. This is that, at 64/tile.
+//
+// The co-packed frame holds four maps as quadrants of a 2N square; SURFACE is the BOTTOM-LEFT one
+// (verified by sampling, I8), so it starts one frame-height below the albedo origin. Coordinates are
+// texelFetch integers, so the atlas size is never hardcoded (it changes with lod/page).
+bool silhouetteHit(uvec4 d, float fracX, float fracY) {
+  int fx = int(d.x >> 20), fy = int((d.x >> 8) & 0xfffu);      // frame origin, in UNITS
+  int span = int((d.x >> 4) & 0xfu) + 1;                        // tiles, un-biased
+  int subX = int(d.y >> 24), subY = int((d.y >> 16) & 0xffu);
+  int subW = int((d.y >> 8) & 0xffu) + 1, subH = int(d.y & 0xffu) + 1;
+  // units -> atlas px (UNIT = 8 at SQUARE 128); surface quadrant sits one frame down from albedo
+  int frameUnits = span * 16;
+  int px = (fx + subX + int(fracX * float(subW))) * 8;
+  int py = (fy + frameUnits + subY + int(fracY * float(subH))) * 8;
+  // B is the visual coverage lane of the surface map
+  return texelFetch(uSurfaceAtlas, ivec2(px, py), 0).b > 0.35;
+}
 bool occludes(uint c, vec2 L, float Lz, vec2 P) {
   if (c == NONE) return false;
   uvec4 rec = fetchPrim(c);
@@ -109,7 +132,10 @@ bool occludes(uint c, vec2 L, float Lz, vec2 P) {
   if (t <= 0.0 || t >= 1.0) return false;                    // the card is not between light and point
   float x = L.x + t * (P.x - L.x);
   if (abs(x - C.x) > halfW) return false;                    // ray misses the card's width
-  return Lz * (1.0 - t) <= H;                                // and passes BELOW its top
+  float h = Lz * (1.0 - t);
+  if (h > H) return false;                                   // passes over the top
+  // I12: inside the box is not the same as inside the TREE. Sample the silhouette.
+  return silhouetteHit(d, (x - C.x + halfW) / (2.0 * halfW), 1.0 - h / H);
 }
 
 void main() {
@@ -263,13 +289,13 @@ export class ShadowBuffer {
 
   /** One gather: read PREV, write CUR, swap. `debugTier` emits which tier answered instead of the
    *  caster, so the hit rates are measured rather than assumed. */
-  gather(renderer: Renderer, tex: { prim: Texture; def: Texture; light: Texture; presence: Texture },
+  gather(renderer: Renderer, tex: { prim: Texture; def: Texture; light: Texture; presence: Texture; atlas: Texture },
          originTileX: number, originTileY: number, debugTier = false, brute = false,
          dilateX = 2): void {
     renderer.draw({
       program: this.prog, geometry: this.quad, target: this.a, blend: "none",
       textures: { uPrim: tex.prim, uDef: tex.def, uLight: tex.light, uPresence: tex.presence,
-                  uPrev: this.b.textures[0] },
+                  uPrev: this.b.textures[0], uSurfaceAtlas: tex.atlas },
       uniforms: (p) => {
         p.uVec2("uWindowOrigin", originTileX, originTileY);
         p.uInt("uUnitsX", UNITS_X); p.uInt("uUnitsY", UNITS_Y);

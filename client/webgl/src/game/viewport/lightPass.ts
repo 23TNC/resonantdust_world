@@ -36,6 +36,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 const SLOT_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
+uniform sampler2D uSurfaceAtlas;   // the shared co-packed page — the SILHOUETTE lives here
 uniform highp usampler2D uPrim;      // prim_data   — one px per prim
 uniform highp usampler2D uLight;     // light       — 8 u16 prim indices per TILE
 uniform highp usampler2D uDef;       // definition_data — the caster's card
@@ -71,6 +72,28 @@ uint shadowSlot(uvec4 v, int i) {
 // THE REFINE (F12). The gather stored WHICH caster occludes this unit; re-test that one caster at
 // THIS texel's exact position -- 64/tile instead of the gather's 16/tile, so the edge resolves 4x
 // finer per axis. One occludes() call, no search: that is what storing the identity bought.
+// Sample the caster's SILHOUETTE at the point the ray crosses its card.
+//
+// I12: modelling the caster as a solid rectangle makes every conifer a BLOCK -- the shadow is the
+// right size in the right place and the wrong SHAPE. The design says the refine places "the section
+// of the casting prim's texture that falls into the slot", and the old system sampled sprite alpha
+// as the shadow mask. This is that, at 64/tile.
+//
+// The co-packed frame holds four maps as quadrants of a 2N square; SURFACE is the BOTTOM-LEFT one
+// (verified by sampling, I8), so it starts one frame-height below the albedo origin. Coordinates are
+// texelFetch integers, so the atlas size is never hardcoded (it changes with lod/page).
+bool silhouetteHit(uvec4 d, float fracX, float fracY) {
+  int fx = int(d.x >> 20), fy = int((d.x >> 8) & 0xfffu);      // frame origin, in UNITS
+  int span = int((d.x >> 4) & 0xfu) + 1;                        // tiles, un-biased
+  int subX = int(d.y >> 24), subY = int((d.y >> 16) & 0xffu);
+  int subW = int((d.y >> 8) & 0xffu) + 1, subH = int(d.y & 0xffu) + 1;
+  // units -> atlas px (UNIT = 8 at SQUARE 128); surface quadrant sits one frame down from albedo
+  int frameUnits = span * 16;
+  int px = (fx + subX + int(fracX * float(subW))) * 8;
+  int py = (fy + frameUnits + subY + int(fracY * float(subH))) * 8;
+  // B is the visual coverage lane of the surface map
+  return texelFetch(uSurfaceAtlas, ivec2(px, py), 0).b > 0.35;
+}
 bool refineOccluded(uint c, vec2 L, float Lz, vec2 P) {
   if (c == 0u) return false;
   uvec4 rec = fetchPrim(c);
@@ -85,7 +108,11 @@ bool refineOccluded(uint c, vec2 L, float Lz, vec2 P) {
   if (tt <= 0.0 || tt >= 1.0) return false;
   float x = L.x + tt * (P.x - L.x);
   if (abs(x - C.x) > halfW) return false;
-  return Lz * (1.0 - tt) <= H;
+  float h = Lz * (1.0 - tt);
+  if (h > H) return false;
+  // I12: the rectangle only says the ray is INSIDE the card's box. Ask the sprite whether there is
+  // anything actually there -- otherwise a conifer casts its bounding box.
+  return silhouetteHit(d, (x - C.x + halfW) / (2.0 * halfW), 1.0 - h / H);
 }
 
 void main() {
@@ -381,11 +408,13 @@ export class LightPass {
   /** Recompute every slot (ONE draw), then re-sum. */
   run(renderer: Renderer, prim: Texture, light: Texture,
       originTileX: number, originTileY: number,
-      opt: { def?: Texture; shadow?: Texture; unitsX?: number; refine?: boolean; debugGate?: boolean } = {}): void {
+      opt: { def?: Texture; shadow?: Texture; atlas?: Texture; unitsX?: number; refine?: boolean;
+             debugGate?: boolean } = {}): void {
     renderer.draw({
       program: this.slotProg, geometry: this.quad, target: this.slotRT, blend: "none",
       textures: { uPrim: prim, uLight: light,
-                  uDef: opt.def ?? prim, uShadow: opt.shadow ?? prim },
+                  uDef: opt.def ?? prim, uShadow: opt.shadow ?? prim,
+                  uSurfaceAtlas: opt.atlas ?? prim },
       uniforms: (p) => {
         p.uInt("uLightW", LIGHT_TEXELS);
         p.uInt("uMapW", LIGHT_W);

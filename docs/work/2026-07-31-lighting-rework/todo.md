@@ -51,6 +51,13 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 - [x] Prove incremental add/remove is exact. Acceptance: add a light, remove it, and the summed map returns bit-identically to its prior state — the property the old quantised accumulator needed `LIGHT_QUANT` to fake.
 - [x] Measure cost per light with no shadows. Acceptance: ms at N = 1, 4, 8, 16 lights — the first real bound on the per-pixel pass, taken BEFORE anything is built on top of it.
 
+## P4b — Silhouette + motion ([I11](issues.md#i11), [I12](issues.md#i12))
+
+_Reopened 2026-07-31: two acceptances were ticked on work that did not meet them._
+
+- [x] Sample the caster's `surface` alpha at the ray crossing instead of accepting the whole rectangle ([I12](issues.md#i12)). Acceptance: a conifer's shadow is conifer-shaped on screen, not a wedge.
+- [x] Move the lights and re-measure ([I11](issues.md#i11)). Acceptance: the headline is taken with lights actually in motion, and the tier split is reported for the moving case beside the static one.
+
 ## P4 — The shadow gather: per unit, ping-ponged
 
 - [x] Allocate the shadow buffer at **3 px per UNIT**, ping-ponged, cleared to 0 ([F4](forks.md#f4)). Acceptance: sized ~6 MB not ~24 KB, and the first frame reads zeros rather than garbage.
