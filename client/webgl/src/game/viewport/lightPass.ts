@@ -128,7 +128,7 @@ void main() {
   if (d >= reach) { fragColor = vec4(0.0); return; }
 
   // Falloff within the stored reach: L(d) = I / (1 + (d/d0)^2).
-  float I  = float(intensity) / INTENSITY_MAX;
+  float I  = float(intensity) / INTENSITY_MAX * LIGHT_SCALE;   // the lane spans the 0..4 overbright range
   float at = I / (1.0 + (d / REACH_FALLOFF_UNITS) * (d / REACH_FALLOFF_UNITS));
 
   // P5: per-light N x L (the FINE-lightmap model — shading bakes into the slot, the summed map
@@ -271,7 +271,7 @@ void main() {
   float reach     = reachUnitsFromB(rec.z);
   float d = distance(P, Lpos);
   if (intensity == 0u || d >= reach) { fragColor = vec4(0.0); return; }
-  float I  = float(intensity) / INTENSITY_MAX;
+  float I  = float(intensity) / INTENSITY_MAX * LIGHT_SCALE;   // the lane spans the 0..4 overbright range
   float at = I / (1.0 + (d / REACH_FALLOFF_UNITS) * (d / REACH_FALLOFF_UNITS));
   // Emitters carry their DSL light RGB in colour.1-3 (lighting-correctness P1b — the torch's
   // authored colour); an all-zero RGB (the debug lights) falls back to the warmth ramp on .4.

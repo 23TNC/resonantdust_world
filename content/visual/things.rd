@@ -177,27 +177,17 @@
                 0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
-                ; Warm flame colour. `reach` is in TILES, and it is THE cost dial for a MOVING light —
-                ; measured 2026-07-26 at zoom 1 with 3 orbiting torches: reach 16 → 18 fps, 12 → 30 fps,
-                ; 8 → 120 fps (work `2026-07-26-moving-lights` I2). It compounds three ways: the shadow
-                ; walk runs from a texel to its light so walk length ∝ reach; the texels a light claims
-                ; go as reach²; and more reach means more lights overlap each texel, multiplying the
-                ; walks per texel. Static lights are unaffected — they bake once — so this is a budget
-                ; on MOTION, not on light count.
-                ;
-                ; REVERTED 20 → 8 (2026-07-27). Raising it to 20 to make long shadows inspectable put
-                ; the scene past the fps table above (16 → 18 fps with 3 torches) and made the client
-                ; effectively unresponsive — seconds per frame, which also trips the GPU watchdog and
-                ; loses the WebGL context. "Static lights bake once" does not rescue it: the FIRST bake,
-                ; and every full rebake, pays the whole cost in one frame. 8 is the measured-good value.
-                ; `cast 1` = occludes (it participates in the shadow walk); `hot 0` = STATIC,
-                ; so it bakes once and costs nothing per frame — the property that makes
-                ; many torches affordable.
+                ; Warm flame colour. `reach` is in TILES — 16 is the storage lane's max (u4
+                ; biased, lighting-correctness P1) and the user's spec (2026-07-31: "we need
+                ; reach 16 lights"). The old fps-table lore that pinned this at 8 measured the
+                ; DELETED gather; the rework's chain was measured at 16 lights × reach 16 in
+                ; ~10 ms full-chain, so 16 is affordable now. Still the cost dial: registration
+                ; goes as reach², so keep torches sparse.
                 1.0 &thing.light.r set
                 0.85 &thing.light.g set
                 0.55 &thing.light.b set
                 1.0 &thing.light.intensity set
-                8.0 &thing.light.reach set
+                16.0 &thing.light.reach set
                 0.35 &thing.light.radius set
                 ; HEIGHT IS SHADOW-CRITICAL, not just a look. `shadowCover` projects the caster's card
                 ; top (elevation Zt = H·sin(WORLD_TILT)) from the light onto the ground; when the light
@@ -240,7 +230,7 @@
                 0.75 &thing.light.g set
                 1.0 &thing.light.b set
                 1.0 &thing.light.intensity set
-                8.0 &thing.light.reach set
+                16.0 &thing.light.reach set
                 0.35 &thing.light.radius set
                 2.5 &thing.light.height set
                 1 &thing.light.cast set
