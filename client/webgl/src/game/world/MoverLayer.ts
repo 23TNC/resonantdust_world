@@ -107,21 +107,22 @@ interface Spec {
 }
 
 /** The server's stepping rule, mirrored EXACTLY (worker `apply` MOVE_TO): `p` fractional greedy
- *  steps from `(fx,fy)` toward `(dx,dy)`; facing from the active step, e/w winning diagonals. */
+ *  steps from `(fx,fy)` toward `(dx,dy)`. speculative-direction P1: it no longer reports a
+ *  facing — spec-space direction disagreed with the render at reseeds, stair-steps and chase
+ *  corrections (I1); the sprite now faces its RENDERED motion, and the arm-time initial aim
+ *  applies the same e/w-first rule inline. */
 function walkGreedy(
   fx: number, fy: number, dx: number, dy: number, p: number,
-): { x: number; y: number; facing: number; done: boolean } {
+): { x: number; y: number; done: boolean } {
   let cx = fx;
   let cy = fy;
-  let facing = dx > cx ? 1 : dx < cx ? 3 : dy > cy ? 0 : 2;
   let remaining = p;
   for (;;) {
     const sx = Math.sign(dx - cx);
     const sy = Math.sign(dy - cy);
-    if (sx === 0 && sy === 0) return { x: cx, y: cy, facing, done: true };
-    facing = sx > 0 ? 1 : sx < 0 ? 3 : sy > 0 ? 0 : 2;
+    if (sx === 0 && sy === 0) return { x: cx, y: cy, done: true };
     if (remaining < 1) {
-      return { x: cx + sx * remaining, y: cy + sy * remaining, facing, done: false };
+      return { x: cx + sx * remaining, y: cy + sy * remaining, done: false };
     }
     cx += sx;
     cy += sy;
@@ -168,9 +169,12 @@ interface Mover {
    *  fixes). */
   arx: number;
   ary: number;
-  /** Facing last applied to the prim (the TARGET's facing applies immediately — the pawn
-   *  turns toward its path at the seed, then walks into it). */
+  /** Facing last applied to the prim. speculative-direction P1: in motion this derives
+   *  from the RENDERED per-tick delta (never the server, never the spec-space walk — I1);
+   *  at rest the server's facing is adopted from rows that arrive while resting (F1). */
   facing: number;
+  /** When the facing last changed (ms) — the flip-hysteresis hold reads this. */
+  lastFaceMs: number;
   /** The freshest intent tic ever armed — dedups replayed/duplicate `event` deliveries even
    *  after the spec cleared (zone re-subscribes replay history — first-pawns I2). */
   lastIntentTic: number | null;
@@ -186,6 +190,18 @@ const CHASE_GAIN = 0.5;
 const CHASE_SNAP_TILES = 3;
 /** Per-frame dt clamp (ms) so a stalled rAF can't manufacture a huge chase step. */
 const CHASE_DT_MAX_MS = 250;
+
+/** speculative-direction P1: the facing dead-zone — a rendered per-tick step smaller than
+ *  this (tiles) is noise and never turns the sprite (a wolf frame-step is ~0.008 tiles). */
+const FACE_DEADZONE = 0.002;
+/** Flip hysteresis: a facing holds at least this long before it may change again, so the
+ *  greedy path's stair-steps and chase jitter cannot flicker the sprite. */
+const FACE_HOLD_MS = 150;
+/** Axis-dominance margin: an axis takes the facing only when its delta exceeds the other's
+ *  by this factor. A PURE diagonal glide (Chebyshev steps advance both axes equally) is a
+ *  knife-edge under float noise — without the margin the sprite oscillated every hold
+ *  interval; with it, neither axis dominates and the current facing simply persists. */
+const FACE_DOMINANCE = 1.3;
 
 /** Serial u16 comparison: is `a` strictly newer than `b` on the wrapping tic ring? */
 function ticNewer(a: number, b: number): boolean {
@@ -275,10 +291,13 @@ export class MoverLayer {
       if (s) {
         const d = this.client.ticDelta(s.eventTic);
         if (d !== null && d > 0) {
+          // speculative-direction P1: the walk's facing is NOT consumed here — it is
+          // spec-space and disagrees with the render at reseeds, stair-steps and while the
+          // chase corrects (I1). Facing derives from the RENDERED delta below; the walk's
+          // only facing role left is the arm-time initial aim (onMoveIntent).
           const p = walkGreedy(s.fromX, s.fromY, s.destX, s.destY, d / s.ticsPerTile);
           tx = p.x;
           ty = p.y;
-          facing = p.facing;
           s.appliedX = p.x; // spec-space bookkeeping — landing error still measures the SPEC
           s.appliedY = p.y;
         }
@@ -286,6 +305,8 @@ export class MoverLayer {
       // Chase: close the render→target gap at ≤ CHASE_CAP × true speed, leaning harder the
       // further behind (CHASE_GAIN), snapping past CHASE_SNAP_TILES. Chebyshev metric and
       // per-axis stepping match the greedy path's diagonal geometry.
+      const prevRx = m.rx;
+      const prevRy = m.ry;
       const gx = tx - m.rx;
       const gy = ty - m.ry;
       const gap = Math.max(Math.abs(gx), Math.abs(gy));
@@ -299,6 +320,24 @@ export class MoverLayer {
         m.rx += Math.sign(gx) * Math.min(step, Math.abs(gx));
         m.ry += Math.sign(gy) * Math.min(step, Math.abs(gy));
       }
+      // SPECULATIVE DIRECTION (P1, the user's model): the sprite faces the way it is
+      // ACTUALLY RENDERED moving — the per-tick delta of the chase position. Dead-zone
+      // kills noise, the dominant axis wins, a tie keeps the current facing, and a flip
+      // holds FACE_HOLD_MS before the next (the stair-step cannot flicker). At rest the
+      // delta is zero and the facing simply persists (server turns arrive via F1).
+      const mdx = m.rx - prevRx;
+      const mdy = m.ry - prevRy;
+      const adx = Math.abs(mdx);
+      const ady = Math.abs(mdy);
+      if (Math.max(adx, ady) >= FACE_DEADZONE && now - m.lastFaceMs >= FACE_HOLD_MS) {
+        const cand = adx >= ady * FACE_DOMINANCE ? (mdx > 0 ? 1 : 3)
+                   : ady >= adx * FACE_DOMINANCE ? (mdy > 0 ? 0 : 2)
+                   : facing;                       // near-diagonal: neither dominates — keep
+        if (cand !== facing) {
+          facing = cand;
+          m.lastFaceMs = now;
+        }
+      }
       // BOOT-RACE HEAL (lighting-correctness P3): a mover whose first applyVisual ran before
       // the content bundle streamed got a single fallback part — and a RESTING mover never
       // re-applies, so it stayed textureless forever. When the kind's slot count disagrees
@@ -311,6 +350,14 @@ export class MoverLayer {
         Math.abs(m.rx - m.arx) >= SPEC_APPLY_EPS || Math.abs(m.ry - m.ary) >= SPEC_APPLY_EPS ||
         facing !== m.facing
       ) {
+        if (facing !== m.facing) {
+          // speculative-direction P0: name every turn — old→new, source, and where the RENDER
+          // actually moved this frame (the delta the eye follows).
+          console.debug(
+            `[facing] ${m.facing}->${facing} src=motion entity=${key.toString(16)} ` +
+            `d=(${mdx.toFixed(3)},${mdy.toFixed(3)}) r=(${m.rx.toFixed(2)},${m.ry.toFixed(2)})`,
+          );
+        }
         m.arx = m.rx;
         m.ary = m.ry;
         m.facing = facing;
@@ -458,6 +505,17 @@ export class MoverLayer {
       appliedX: m.authX,
       appliedY: m.authY,
     };
+    // speculative-direction P1: the INITIAL AIM — the pawn turns toward its path at the
+    // seed (the greedy walk's e/w-first first leg), before any rendered delta exists. The
+    // only facing the walk still contributes; every later turn is motion-derived.
+    const aim = intent.tileX > m.authX ? 1 : intent.tileX < m.authX ? 3
+              : intent.tileY > m.authY ? 0 : intent.tileY < m.authY ? 2 : m.facing;
+    if (aim !== m.facing) {
+      console.debug(`[facing] ${m.facing}->${aim} src=aim entity=${intent.entityReference.toString(16)}`);
+      m.facing = aim;
+      m.lastFaceMs = Date.now();
+      this.applyVisual(m, intent.entityReference, m.kind, m.def, m.rx, m.ry, aim, m.macroPosition);
+    }
   }
 
   private onStateObject(obj: StateObject): void {
@@ -480,6 +538,7 @@ export class MoverLayer {
     // F8 — the authoritative row corrects speculation: log the observed error (the data the
     // re-anchor cadence is tuned on), then snap. The final tile clears the spec; an interim
     // authoritative resolve (another event touched the pawn) reseeds it.
+    let landedThisRow = false;
     if (m?.spec) {
       const s = m.spec;
       const err = Math.max(Math.abs(s.appliedX - obj.tileX), Math.abs(s.appliedY - obj.tileY));
@@ -488,6 +547,7 @@ export class MoverLayer {
           `[mover] spec landed e=${err.toFixed(2)} tiles entity=${key.toString(16)} tic=${obj.tic}`,
         );
         m.spec = null;
+        landedThisRow = true;
       } else {
         console.debug(
           `[mover] spec reseed e=${err.toFixed(2)} tiles entity=${key.toString(16)} tic=${obj.tic}`,
@@ -509,6 +569,17 @@ export class MoverLayer {
       m.kind = kind;
       m.def = obj.definitionReference;
       m.macroPosition = obj.macroPosition;
+      // speculative-direction F1: the server's facing turns a STANDING pawn — but only from
+      // rows that ARRIVE while resting. The landing row's facing is stale by construction
+      // (it raced the trip), and a mid-motion row steers position but never the sprite.
+      const resting = !m.spec &&
+        Math.max(Math.abs(obj.tileX - m.rx), Math.abs(obj.tileY - m.ry)) < 0.25;
+      if (resting && !landedThisRow && obj.facing !== m.facing) {
+        console.debug(`[facing] ${m.facing}->${obj.facing} src=server-rest entity=${key.toString(16)}`);
+        m.facing = obj.facing;
+        m.lastFaceMs = Date.now();
+        this.applyVisual(m, key, kind, obj.definitionReference, m.rx, m.ry, obj.facing, obj.macroPosition);
+      }
       return;
     }
     this.applyVisual(null, key, kind, obj.definitionReference, obj.tileX, obj.tileY, obj.facing, obj.macroPosition);
@@ -641,6 +712,7 @@ export class MoverLayer {
           parts, macroPosition, kind, def, authX: tileX, authY: tileY,
           spec: null,
           rx: tileX, ry: tileY, arx: tileX, ary: tileY, facing, // the chase starts AT the first authoritative tile
+          lastFaceMs: 0,
           lastIntentTic: null,
         });
       }
