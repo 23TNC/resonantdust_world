@@ -7,10 +7,10 @@ load, both zooms. Stances: [`README`](README.md)._
 
 ## P0 — land the in-tree fixes + pin the base offset
 
-- [ ] Commit + verify the two in-tree fixes: the intensity decode ×4 (authored 1.0 was
+- [x] Commit + verify the two in-tree fixes: the intensity decode ×4 (authored 1.0 was
       displaying 0.25) and torch reach 16 (user spec). Acceptance: on a cold load the
       torch pools are ~4× brighter and register to 16 tiles (occupancy probe); captures.
-- [ ] Pin the shadow-base offset per kind: for the conifer, wolf (e + n), human body +
+- [x] Pin the shadow-base offset per kind: for the conifer, wolf (e + n), human body +
       head, and a flipped (west) draw, probe the record's card base (C, height window)
       vs the DRAWN art's opaque bottom. Acceptance: a per-kind offset table in
       `issues.md` naming each error in units.
