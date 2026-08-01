@@ -70,11 +70,20 @@ export const REACH_MAX_TILES = 16;
  *  `reachFromIntensity` had; STORED reach keeps it by making both read the same lane). */
 export const LIGHT_LANES_GLSL = /* glsl */ `
 const float INTENSITY_MAX = ${INTENSITY_MAX}.0;
-const float REACH_FALLOFF_UNITS = ${UNITS_PER_TILE}.0;
 // lighting-correctness P1: reach is STORED (u4 biased +1 = 1..16 tiles, BLUE bits 6-9);
 // intensity is u6 (bits 0-5). Reach bounds registration + walks; falloff shapes within it.
 uint  intensityFromB(uint B) { return B & 0x3Fu; }
 float reachUnitsFromB(uint B) { return float(((B >> 6u) & 0xFu) + 1u) * ${UNITS_PER_TILE}.0; }
+// lighting-visual P4: the falloff SCALES WITH THE STORED REACH (the old d0 was pinned at one
+// tile, so a reach-16 light died within ~3 tiles: 1/257 of I at its own boundary). d0 = reach/2
+// keeps half intensity at mid-pool; a linear feather over the last 15% lands exactly 0 AT reach,
+// so the registration boundary and the visible pool edge are the same line. ONE definition,
+// consumed by both slot writers — the delta path stays bit-exact by construction.
+float lightFalloff(float d, float reach, float I) {
+  float d0 = reach * 0.5;
+  float at = I / (1.0 + (d / d0) * (d / d0));
+  return at * clamp((reach - d) / (0.15 * reach), 0.0, 1.0);
+}
 `;
 
 /** The shared occlusion test (lighting-correctness P3) — ONE definition, injected into the

@@ -63,11 +63,11 @@ address OUTSIDE the RT); tiles have no working normals (the ground writes nothin
 directives: reach-16 lights must read as such; **"use the same machinery you're using
 for the existing toroidal maps"** for the lighting window._
 
-- [ ] Scale the falloff with STORED reach (today `d0` is pinned at ONE tile, so a
+- [x] Scale the falloff with STORED reach (today `d0` is pinned at ONE tile, so a
       reach-16 light dies in ~3 tiles: at d=16 tiles attenuation = 1/257). One shared
       GLSL falloff in LIGHT_LANES, both slot writers. Acceptance: a torch pool visibly
       spans its 16 tiles; `__lightexact` still bit-identical.
-- [ ] Put the lighting chain on the SLOT TORUS (the composites' machinery): texel block
+- [x] Put the lighting chain on the SLOT TORUS (the composites' machinery): texel block
       = `mod(tile, cols) × (TEXTILE_LIGHT >> lod)`, fixed RT sizes, window-unwrap as in
       `fillDisplay`; same for the shadow buffer (`TEXTILE_UNIT >> lod`) and the blit's
       read. Acceptance: all three pools light at zoom 0.5; probe px < RT bounds at lod 1.

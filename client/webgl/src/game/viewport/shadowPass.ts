@@ -65,8 +65,9 @@ uniform highp usampler2D uLight;
 uniform highp usampler2D uPresence;
 uniform highp usampler2D uPrev;      // LAST frame's shadow -- ping-pong, never the one we write
 uniform vec2 uWindowOrigin;
-uniform int uUnitsX;
-uniform int uUnitsY;
+uniform int uUnitT;                  // P4: shadow texels per TILE (TEXTILE_UNIT >> lod)
+uniform int uCols;                   // P4: the slot torus modulus (window tiles)
+uniform int uRows;
 uniform int uDebugTier;              // 1 = emit which TIER answered, for the hit-rate histogram
 uniform int uBrute;                  // 1 = EXHAUSTIVE search, the reference the walk must match
 uniform int uDilateX;                // tiles of x-dilation: a card is WIDER than its tile
@@ -75,7 +76,6 @@ out uvec4 fragColor;
 ${LIGHT_LANES_GLSL}
 
 const float UPT      = ${UNITS_PER_TILE}.0;
-const int   UPTi     = ${UNITS_PER_TILE};
 const int   TILE_DIM = 256;
 const int   PX_PER_UNIT = ${SHADOW_PX_PER_UNIT};
 const int   LIGHTS   = ${SHADOW_LIGHTS};
@@ -100,10 +100,14 @@ void main() {
   int ux   = fc.x / PX_PER_UNIT;
   int uy   = fc.y;
 
-  int tileX = int(uWindowOrigin.x) + ux / UPTi;
-  int tileY = int(uWindowOrigin.y) + uy / UPTi;
-  vec2 P = vec2(float(tileX) * UPT + float(ux % UPTi) + 0.5,
-                float(tileY) * UPT + float(uy % UPTi) + 0.5);
+  // P4: the buffer rides the SLOT TORUS at uUnitT texels/tile — unwrap the fragment's residue to
+  // its window tile (the composites' rule), then place the tested point at the TEXEL'S CENTRE in
+  // world units (at lod > 0 one texel spans several units; the centre is the representative).
+  int tileX = int(uWindowOrigin.x) + pmod(ux / uUnitT - int(uWindowOrigin.x), uCols);
+  int tileY = int(uWindowOrigin.y) + pmod(uy / uUnitT - int(uWindowOrigin.y), uRows);
+  float upt = UPT / float(uUnitT);   // world units per shadow texel
+  vec2 P = vec2(float(tileX) * UPT + (float(ux % uUnitT) + 0.5) * upt,
+                float(tileY) * UPT + (float(uy % uUnitT) + 0.5) * upt);
 
   ivec2 tileTex = ivec2(pmod(tileX, TILE_DIM), pmod(tileY, TILE_DIM));
   uvec4 lights   = texelFetch(uLight,    tileTex, 0);
@@ -156,8 +160,9 @@ void main() {
     if (found == NONE && uBrute == 0) {
       for (int a = 0; a < 4; a++) {
         ivec2 o = a == 0 ? ivec2(-1, 0) : (a == 1 ? ivec2(1, 0) : (a == 2 ? ivec2(0, -1) : ivec2(0, 1)));
-        int nx = ux + o.x, ny = uy + o.y;
-        if (nx < 0 || ny < 0 || nx >= uUnitsX || ny >= uUnitsY) continue;
+        // P4: toroidal neighbours — an edge texel's wrap lands on the WORLD-adjacent tile's texel
+        // (the slot torus's defining property), so no bounds check exists to fail.
+        int nx = pmod(ux + o.x, uCols * uUnitT), ny = pmod(uy + o.y, uRows * uUnitT);
         uint cand = slotOf(texelFetch(uPrev, ivec2(nx * PX_PER_UNIT + px, ny), 0), l);
         if (occludes(cand, L, Lz, P)) { found = cand; tier = 2u; break; }
       }
@@ -250,14 +255,15 @@ export class ShadowBuffer {
    *  caster, so the hit rates are measured rather than assumed. */
   gather(renderer: Renderer, tex: { prim: Texture; def: Texture; light: Texture; presence: Texture; atlas: Texture; atlas2?: Texture },
          originTileX: number, originTileY: number, debugTier = false, brute = false,
-         dilateX = 2): void {
+         dilateX = 2, win?: { cols: number; rows: number; lod: number }): void {
     renderer.draw({
       program: this.prog, geometry: this.quad, target: this.a, blend: "none",
       textures: { uPrim: tex.prim, uDef: tex.def, uLight: tex.light, uPresence: tex.presence,
                   uPrev: this.b.textures[0], uSurfaceAtlas: tex.atlas, uSurfaceAtlas2: tex.atlas2 ?? tex.atlas },
       uniforms: (p) => {
         p.uVec2("uWindowOrigin", originTileX, originTileY);
-        p.uInt("uUnitsX", UNITS_X); p.uInt("uUnitsY", UNITS_Y);
+        p.uInt("uUnitT", UNITS_PER_TILE >> (win?.lod ?? 0));
+        p.uInt("uCols", win?.cols ?? SLOTS_X); p.uInt("uRows", win?.rows ?? SLOTS_Y);
         p.uInt("uDebugTier", debugTier ? 1 : 0);
         p.uInt("uBrute", brute ? 1 : 0);
         p.uInt("uDilateX", dilateX);

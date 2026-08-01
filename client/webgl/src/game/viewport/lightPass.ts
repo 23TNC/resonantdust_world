@@ -48,11 +48,13 @@ uniform highp usampler2D uLight;     // light       — 8 u16 prim indices per T
 uniform highp usampler2D uDef;       // definition_data — the caster's card
 uniform highp usampler2D uShadow;    // the gather's output: WHICH caster occludes, per unit per light
 uniform highp usampler2D uReceiver;  // P3: which receiver owns each lighting texel (the receiver map)
-uniform int uUnitsX;
 uniform int uRefine;                 // 0 = no shadows, 1 = refine at THIS resolution (F12)
 uniform int uDebugGate;              // 1 = emit the gate's selectivity instead of light
-uniform int uLightW;                 // lighting texels per axis of ONE tile
-uniform vec2 uWindowOrigin;          // world tile of the map's (0,0)
+uniform int uLightW;                 // lighting texels per TILE (TEXTILE_LIGHT >> lod)
+uniform int uUnitT;                  // shadow texels per TILE (TEXTILE_UNIT >> lod)
+uniform int uCols;                   // window extent in TILES — the slot torus modulus
+uniform int uRows;
+uniform vec2 uWindowOrigin;          // world tile of the window's start (for the unwrap)
 uniform int uMapW;                   // one slot block's width in texels
 out vec4 fragColor;
 
@@ -111,9 +113,12 @@ void main() {
   int tx   = fc.x % uMapW;
   int ty   = fc.y;
 
-  // texel -> world position, in units
-  int tileX = int(uWindowOrigin.x) + tx / uLightW;
-  int tileY = int(uWindowOrigin.y) + ty / uLightW;
+  // texel -> world position, in units. lighting-visual P4: the map is on the SLOT TORUS (the
+  // composites' machinery — a tile's texel block sits at mod(tile, cols) · uLightW, texture size
+  // fixed, texels-per-tile halving per lod). The UNWRAP recovers the unique window tile with this
+  // residue, exactly as fillDisplay assigns it.
+  int tileX = int(uWindowOrigin.x) + pmod(tx / uLightW - int(uWindowOrigin.x), uCols);
+  int tileY = int(uWindowOrigin.y) + pmod(ty / uLightW - int(uWindowOrigin.y), uRows);
   vec2 inTile = (vec2(float(tx % uLightW), float(ty % uLightW)) + 0.5) / float(uLightW);
   vec2 P = (vec2(float(tileX), float(tileY)) + inTile) * UPT;   // world UNITS
 
@@ -154,9 +159,9 @@ void main() {
   float d = distance(Puse, Lpos);
   if (d >= reach) { fragColor = vec4(0.0); return; }
 
-  // Falloff within the stored reach: L(d) = I / (1 + (d/d0)^2).
+  // Falloff within the stored reach — reach-scaled, zero AT the boundary (P4, shared).
   float I  = float(intensity) / INTENSITY_MAX * LIGHT_SCALE;   // the lane spans the 0..4 overbright range
-  float at = I / (1.0 + (d / REACH_FALLOFF_UNITS) * (d / REACH_FALLOFF_UNITS));
+  float at = lightFalloff(d, reach, I);
 
   // P5: per-light N x L (the FINE-lightmap model — shading bakes into the slot, the summed map
   // inherits it, the display stays one fetch). lighting-visual P2: N is sampled from the baked
@@ -190,10 +195,13 @@ void main() {
   // and fully-lit texels do no fetch and no test -- the gate is the whole reason this is affordable.
   bool gated = false, occluded = false;
   if (uRefine == 1) {
-    ivec2 u = ivec2(int(Puse.x), int(Puse.y));               // world UNIT of the LIT point
-    int ux = u.x - int(uWindowOrigin.x) * int(UPT);
-    int uy = u.y - int(uWindowOrigin.y) * int(UPT);
-    if (ux >= 0 && uy >= 0 && ux < uUnitsX && uy < uUnitsX) {
+    // P4: the shadow buffer rides the SAME slot torus at uUnitT texels/tile. The lit point can
+    // sit south of the fragment's own tile (a billboard's base), so guard the window bounds.
+    int utx = int(floor(Puse.x / UPT)), uty = int(floor(Puse.y / UPT));
+    if (utx >= int(uWindowOrigin.x) && utx < int(uWindowOrigin.x) + uCols &&
+        uty >= int(uWindowOrigin.y) && uty < int(uWindowOrigin.y) + uRows) {
+      int ux = pmod(utx, uCols) * uUnitT + int((Puse.x - float(utx) * UPT) * float(uUnitT) / UPT);
+      int uy = pmod(uty, uRows) * uUnitT + int((Puse.y - float(uty) * UPT) * float(uUnitT) / UPT);
       uvec4 sh = texelFetch(uShadow, ivec2(ux * 3, uy), 0);   // px 0 = ground casters
       uint caster = shadowSlot(sh, slot);
       if (caster != 0u) {
@@ -272,6 +280,8 @@ precision highp int;
 uniform highp usampler2D uPrim;
 uniform int uLightW;
 uniform int uMapW;
+uniform int uCols;        // P4: the slot torus modulus (window tiles)
+uniform int uRows;
 uniform int uPrimIndex;
 uniform vec2 uWindowOrigin;
 out vec4 fragColor;
@@ -281,6 +291,7 @@ ${LIGHT_LANES_GLSL}
 const float LIGHT_SCALE = ${LIGHT_SCALE}.0;
 const float UPT = ${UNITS_PER_TILE}.0;
 
+int pmod(int a, int m) { return ((a % m) + m) % m; }
 uvec4 fetchPrim(uint idx) { return texelFetch(uPrim, ivec2(int(idx) & 1023, int(idx) >> 10), 0); }
 
 void main() {
@@ -288,8 +299,9 @@ void main() {
   // This draw is SCISSORED to one slot's block, so gl_FragCoord.x carries the block offset
   // (slot*uMapW + tx). Strip it: the world position depends on the texel, not on which slot owns it.
   int tx = fc.x % uMapW;
-  int tileX = int(uWindowOrigin.x) + tx / uLightW;
-  int tileY = int(uWindowOrigin.y) + fc.y / uLightW;
+  // P4: slot-torus unwrap — same rule as the full slot pass.
+  int tileX = int(uWindowOrigin.x) + pmod(tx / uLightW - int(uWindowOrigin.x), uCols);
+  int tileY = int(uWindowOrigin.y) + pmod(fc.y / uLightW - int(uWindowOrigin.y), uRows);
   vec2 inTile = (vec2(float(tx % uLightW), float(fc.y % uLightW)) + 0.5) / float(uLightW);
   vec2 P = (vec2(float(tileX), float(tileY)) + inTile) * UPT;
 
@@ -302,7 +314,7 @@ void main() {
   float d = distance(P, Lpos);
   if (intensity == 0u || d >= reach) { fragColor = vec4(0.0); return; }
   float I  = float(intensity) / INTENSITY_MAX * LIGHT_SCALE;   // the lane spans the 0..4 overbright range
-  float at = I / (1.0 + (d / REACH_FALLOFF_UNITS) * (d / REACH_FALLOFF_UNITS));
+  float at = lightFalloff(d, reach, I);
   // Emitters carry their DSL light RGB in colour.1-3 (lighting-correctness P1b — the torch's
   // authored colour); an all-zero RGB (the debug lights) falls back to the warmth ramp on .4.
   vec3 tint = vec3(float(rec.w >> 24), float((rec.w >> 16) & 0xffu), float((rec.w >> 8) & 0xffu)) / 255.0;
@@ -335,6 +347,8 @@ uniform highp usampler2D uDef;
 uniform highp usampler2D uPresence;
 uniform vec2 uWindowOrigin;
 uniform int uLightW;
+uniform int uCols;        // P4: the slot torus modulus (window tiles)
+uniform int uRows;
 uniform int uDilateY;
 out uvec4 fragColor;
 
@@ -378,8 +392,9 @@ bool covers(uint r, vec2 P) {
 
 void main() {
   ivec2 fc = ivec2(gl_FragCoord.xy);
-  int tileX = int(uWindowOrigin.x) + fc.x / uLightW;
-  int tileY = int(uWindowOrigin.y) + fc.y / uLightW;
+  // P4: slot-torus unwrap — same rule as the slot pass.
+  int tileX = int(uWindowOrigin.x) + pmod(fc.x / uLightW - int(uWindowOrigin.x), uCols);
+  int tileY = int(uWindowOrigin.y) + pmod(fc.y / uLightW - int(uWindowOrigin.y), uRows);
   vec2 inTile = (vec2(float(fc.x % uLightW), float(fc.y % uLightW)) + 0.5) / float(uLightW);
   vec2 P = (vec2(float(tileX), float(tileY)) + inTile) * UPT;
 
@@ -439,12 +454,16 @@ export class LightPass {
 
   /** Compute the receiver map — ONE draw, light-independent, read by all 8 light fragments. */
   receivers(renderer: Renderer, prim: Texture, def: Texture, presence: Texture, atlas: Texture,
-            originTileX: number, originTileY: number, atlas2?: Texture): void {
+            originTileX: number, originTileY: number, atlas2?: Texture,
+            win?: { cols: number; rows: number; lod: number }): void {
+    const lightW = LIGHT_TEXELS >> (win?.lod ?? 0);
     renderer.draw({
       program: this.recvProg, geometry: this.quad, target: this.receiverRT, blend: "none",
       textures: { uPrim: prim, uDef: def, uPresence: presence, uSurfaceAtlas: atlas, uSurfaceAtlas2: atlas2 ?? atlas },
       uniforms: (p) => {
-        p.uInt("uLightW", LIGHT_TEXELS);
+        p.uInt("uLightW", lightW);
+        p.uInt("uCols", win?.cols ?? SLOTS_X);
+        p.uInt("uRows", win?.rows ?? SLOTS_Y);
         p.uInt("uDilateY", 2);          // tallest authored card, in tiles; content-derived later
         p.uVec2("uWindowOrigin", originTileX, originTileY);
       },
@@ -454,13 +473,16 @@ export class LightPass {
   /** Recompute every slot (ONE draw), then re-sum. */
   run(renderer: Renderer, prim: Texture, light: Texture,
       originTileX: number, originTileY: number,
-      opt: { def?: Texture; shadow?: Texture; atlas?: Texture; atlas2?: Texture; unitsX?: number; refine?: boolean;
+      opt: { def?: Texture; shadow?: Texture; atlas?: Texture; atlas2?: Texture; refine?: boolean;
              debugGate?: boolean;
+             // P4: the window's torus extent in TILES + the lod (texels-per-tile halve per step).
+             win?: { cols: number; rows: number; lod: number };
              // lighting-visual P2: the baked normal composites + the display torus that addresses
              // them. slotPx is the CACHE'S current partition — never recomputed here; 0 = unbound
              // (the shader falls back to flat-up).
              normalCold?: Texture; normalWarm?: Texture; surfaceWarm?: Texture;
              slotCols?: number; slotRows?: number; slotPx?: number } = {}): void {
+    const lod = opt.win?.lod ?? 0;
     renderer.draw({
       program: this.slotProg, geometry: this.quad, target: this.slotRT, blend: "none",
       textures: { uPrim: prim, uLight: light,
@@ -472,9 +494,11 @@ export class LightPass {
                   uSurfaceWarm: opt.surfaceWarm ?? opt.atlas ?? prim,
                   uReceiver: this.receiverRT.textures[0] },
       uniforms: (p) => {
-        p.uInt("uLightW", LIGHT_TEXELS);
+        p.uInt("uLightW", LIGHT_TEXELS >> lod);
+        p.uInt("uUnitT", UNITS_PER_TILE >> lod);
         p.uInt("uMapW", LIGHT_W);
-        p.uInt("uUnitsX", opt.unitsX ?? 512);
+        p.uInt("uCols", opt.win?.cols ?? SLOTS_X);
+        p.uInt("uRows", opt.win?.rows ?? SLOTS_Y);
         p.uInt("uRefine", opt.refine ? 1 : 0);
         p.uInt("uDebugGate", opt.debugGate ? 1 : 0);
         p.uInt("uSlotCols", opt.slotCols ?? 0);
@@ -506,7 +530,8 @@ export class LightPass {
    *
    *  Still one slot: the other seven, and the whole rest of the sum, are never touched. */
   updateLight(renderer: Renderer, prim: Texture, slot: number, primIndex: number,
-              originTileX: number, originTileY: number): void {
+              originTileX: number, originTileY: number,
+              win?: { cols: number; rows: number; lod: number }): void {
     const gl = this.gl;
     const deposit = (sign: number): void => {
       renderer.draw({
@@ -524,7 +549,8 @@ export class LightPass {
       program: this.slotOneProg, geometry: this.quad, target: this.slotRT, blend: "none",
       textures: { uPrim: prim },
       uniforms: (p) => {
-        p.uInt("uLightW", LIGHT_TEXELS); p.uInt("uMapW", LIGHT_W);
+        p.uInt("uLightW", LIGHT_TEXELS >> (win?.lod ?? 0)); p.uInt("uMapW", LIGHT_W);
+        p.uInt("uCols", win?.cols ?? SLOTS_X); p.uInt("uRows", win?.rows ?? SLOTS_Y);
         p.uInt("uPrimIndex", primIndex);
         p.uVec2("uWindowOrigin", originTileX, originTileY);
       },

@@ -16,7 +16,7 @@ import { AlbedoBlitShader } from "./albedoBlitShader";
 import { OverlayShader, overlayModeFor } from "./overlayShader";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
-import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
+import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_LIGHT } from "./squareMath";
 import { makeNoiseAtlas } from "./noiseAtlas";
 import { OutlineOverlay, type OutlineItem } from "./outlineOverlay";
 import { installFrameCost } from "./frameCost";
@@ -544,12 +544,15 @@ export class Viewport {
       // No atlas means the silhouette cannot be sampled. Skip the refine rather than run it against
       // a texture that answers 0 everywhere, which reads on screen as "the shadows are broken".
       const canRefine = atlas !== null;
+      // P4: every pass rides the SLOT TORUS — the window's cols/rows/lod steer the wrap and the
+      // texels-per-tile, so the fixed-size maps cover the whole window at every zoom.
+      const lwin = { cols: w.cols, rows: w.rows, lod: w.lod };
       this.shadows.gather(this.renderer, { prim: r.primTex, def: r.defTex, light: r.lightTex,
                                            presence: r.presenceTex, atlas: atlas ?? this.white, atlas2 },
-                          w.winCol, w.winRow);
+                          w.winCol, w.winRow, false, false, 2, lwin);
       // P5: the receiver map FIRST, once -- it is geometry, so it is the same for every light and
       // the eight light fragments read it instead of each re-deciding (I2).
-      this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, atlas ?? this.white, w.winCol, w.winRow, atlas2);
+      this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, atlas ?? this.white, w.winCol, w.winRow, atlas2, lwin);
       // lighting-visual P2: N·L reads the BAKED normal composites (warm-over-cold, the blit's
       // rule), addressed by the cache's own torus — cols/rows/slotPx from the cache, never derived.
       const nCold = this.map.displayComposite("normal-cold");
@@ -557,7 +560,7 @@ export class Viewport {
       const sWarm = this.warm.displayComposite("surface-warm");
       this.lights.run(this.renderer, r.primTex, r.lightTex, w.winCol, w.winRow,
                       { def: r.defTex, shadow: this.shadows.prev, atlas: atlas ?? this.white, atlas2,
-                        unitsX: 512, refine: canRefine,
+                        refine: canRefine, win: lwin,
                         normalCold: nCold ?? undefined, normalWarm: nWarm ?? undefined,
                         surfaceWarm: sWarm ?? undefined,
                         slotCols: w.cols, slotRows: w.rows,
@@ -615,7 +618,7 @@ export class Viewport {
             p.uFloat("uAmbient", 0.12);
             p.uInt("uLCols", win.cols); p.uInt("uLRows", win.rows);
             p.uInt("uLWinCol", win.winCol); p.uInt("uLWinRow", win.winRow);
-            p.uInt("uLSlot", 64);
+            p.uInt("uLSlot", TEXTILE_LIGHT >> win.lod);   // P4: texels/tile at the current lod
           },
         });
 
@@ -737,7 +740,7 @@ export class Viewport {
     const de = gl.drawElements, da = gl.drawArrays;
     gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
     gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
-    this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow);
+    this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, lod: win.lod } });
     gl.drawElements = de; gl.drawArrays = da;
 
     // read the SUM at the light's own tile and at the reach boundary
@@ -792,10 +795,10 @@ export class Viewport {
     rec.upload(gl);
 
     const run = (): number => {
-      for (let i = 0; i < 8; i++) this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow);
+      for (let i = 0; i < 8; i++) this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, lod: win.lod } });
       gl.finish();
       const t0 = performance.now();
-      for (let i = 0; i < 30; i++) this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow);
+      for (let i = 0; i < 30; i++) this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, lod: win.lod } });
       gl.finish();
       return (performance.now() - t0) / 30;
     };
@@ -832,7 +835,7 @@ export class Viewport {
     };
 
     // baseline: a full recompute, then snapshot
-    this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow);
+    this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, lod: win.lod } });
     const before = snap();
 
     // ADD a light into slot 7 (unused by the built set) via the delta path
@@ -844,12 +847,12 @@ export class Viewport {
     const de = gl.drawElements, da = gl.drawArrays;
     gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
     gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
-    this.lights.updateLight(this.renderer, rec.primTex, 7, id, win.winCol, win.winRow);
+    this.lights.updateLight(this.renderer, rec.primTex, 7, id, win.winCol, win.winRow, { cols: win.cols, rows: win.rows, lod: win.lod });
     const drawsToAdd = draws;
     const added = snap();
 
     // REMOVE it — primIndex 0
-    this.lights.updateLight(this.renderer, rec.primTex, 7, 0, win.winCol, win.winRow);
+    this.lights.updateLight(this.renderer, rec.primTex, 7, 0, win.winCol, win.winRow, { cols: win.cols, rows: win.rows, lod: win.lod });
     gl.drawElements = de; gl.drawArrays = da;
     const after = snap();
 
@@ -912,13 +915,13 @@ export class Viewport {
     gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
     gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
     // two real gathers: the first fills the incumbents, the second is the steady state the tiers describe
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow);
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow);
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
     const drawsPerGather = draws / 2;
     gl.drawElements = de; gl.drawArrays = da;
 
     // tier pass — same shader, uDebugTier=1, does NOT swap, so it cannot disturb the steady state
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, true);
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, true, false, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
     const d = this.shadows.dims;
     const W = 256, H = 64;
     const buf = new Uint32Array(W * H * 4);
@@ -945,10 +948,10 @@ export class Viewport {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       return b;
     };
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow);      // steady state (swaps)
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow);
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, lod: win.lod });      // steady state (swaps)
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
     const walked = readCur();
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true);   // brute, no swap
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 2, { cols: win.cols, rows: win.rows, lod: win.lod });   // brute, no swap
     const brute = readCur();
     // Compare OCCLUSION, not identity. Where several casters block the same ray, "which one" is
     // arbitrary: the walk takes the first along the ray, brute the first in scan order, and both are
@@ -996,7 +999,7 @@ export class Viewport {
                          layer: d.layer, seed: d.seed, intensity: d.intensity, reach: d.reach });
     }
     rec.upload(gl);
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true);
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
     const afterCleared = casterFields(readCur());
     for (const [i, ct] of saved) {
       const d = rec.debugPrim(i);
@@ -1087,8 +1090,10 @@ export class Viewport {
    *  surface, as a histogram. The z acceptance compares it against what is DRAWN there. */
   private zProbe(tileX: number, tileY: number): Record<string, unknown> {
     const gl = this.renderer.gl, w = this.map.window;
-    const L = 64;
-    const x0 = (tileX - w.winCol) * L, y0 = (tileY - w.winRow) * L;
+    // P4: the receiver map is on the slot torus — a tile's block sits at mod(tile, cols/rows).
+    const L = TEXTILE_LIGHT >> w.lod;
+    const mod = (a: number, m: number) => ((a % m) + m) % m;
+    const x0 = mod(tileX, w.cols) * L, y0 = mod(tileY, w.rows) * L;
     this.lights.receiverRT.bind();
     const buf = new Uint32Array(L * L);
     gl.readPixels(x0, y0, L, L, gl.RED_INTEGER, gl.UNSIGNED_INT, buf);
