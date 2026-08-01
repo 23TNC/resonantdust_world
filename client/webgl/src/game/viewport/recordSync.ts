@@ -172,7 +172,12 @@ export class RecordSync {
           }
         }
         const ax = p.x + p.width / 2;
-        const ay = p.y + p.height;
+        // lighting-visual P1: the record's world anchor is the DRAWN art's opaque bottom —
+        // the feet — not the frame box's bottom (the letterboxed master's bottom margin put
+        // the plan line ~half a tile south of the feet; I1's table). Emit-only prims (no
+        // texture) keep the box bottom.
+        const bbA = p.textureName && resolver ? resolver.opaqueBBox(p.textureName) : null;
+        const ay = p.y + (bbA ? (bbA.fy + bbA.fh) * p.height : p.height);
         rec.writePrim(idx, {
           unitX: Math.round(ax / U) & 0xffff,
           unitY: Math.round(ay / U) & 0xffff,

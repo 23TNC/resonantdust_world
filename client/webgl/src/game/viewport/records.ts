@@ -125,12 +125,11 @@ bool occludesAt(uint c, vec2 L, float Lz, vec2 P, float targetH) {
   uint prot  = (rec.z >> 10) & 0xfu;
   if (ct == 2u) {
     uvec4 d = fetchDef(block, 1u);                 // the SIDE frame silhouettes the ns card
-    int subYi = int((d.y >> 16) & 0xffu);
     int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
-    int spanI = int((d.x >> 4) & 0xfu) + 1;
-    float fu = float(spanI * 16);
     float W = float(subWi);
-    float hTop = fu - float(subYi), hBot = hTop - float(subHi);
+    // lighting-visual P1: the bbox is BOTTOM-ALIGNED to the anchor — the caster occupies
+    // [0, subH] from its base; subY stays an ATLAS address only.
+    float hTop = float(subHi), hBot = 0.0;
     float dx = P.x - L.x;
     if (abs(dx) < 1e-4) return false;
     float t = (C.x - L.x) / dx;
@@ -144,11 +143,12 @@ bool occludesAt(uint c, vec2 L, float Lz, vec2 P, float targetH) {
     return silhouetteHit(d, frac, (hTop - h) / float(subHi), true);
   }
   uvec4 d = fetchDef(block, prot);
-  int subXi = int(d.y >> 24), subYi = int((d.y >> 16) & 0xffu);
+  int subXi = int(d.y >> 24);
   int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
   int spanI = int((d.x >> 4) & 0xfu) + 1;
   float fu = float(spanI * 16);
-  float hTop = fu - float(subYi), hBot = hTop - float(subHi);
+  // P1: bottom-aligned — the caster occupies [0, subH] from its base (the drawn feet).
+  float hTop = float(subHi), hBot = 0.0;
   float dy = P.y - L.y;
   if (abs(dy) < 1e-4) return false;
   float t = (C.y - L.y) / dy;
@@ -181,7 +181,7 @@ vec3 receiverNormalAt(uint r, vec2 P) {
   float fu = float(spanI * 16);
   float ppu = float((d.z >> 14) & 0xffu) / 8.0;
   if (ppu <= 0.0) { ppu = 8.0; }
-  float hTop = fu - float(subYi);
+  float hTop = float(subHi);                       // P1: bottom-aligned window [0, subH]
   float h = C.y - P.y;
   float left = prot == 3u ? C.x + fu * 0.5 - float(subXi + subWi) : C.x - fu * 0.5 + float(subXi);
   float frac = clamp((P.x - left) / float(subWi), 0.0, 1.0);

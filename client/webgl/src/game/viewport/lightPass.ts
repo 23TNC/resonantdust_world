@@ -331,13 +331,14 @@ bool covers(uint r, vec2 P) {
   vec2 C = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
   uint prot = (rec.z >> 10) & 0xfu;
   uvec4 d = fetchDef(rec.y & 0xffffu, prot);
-  int subXi = int(d.y >> 24), subYi = int((d.y >> 16) & 0xffu);
+  int subXi = int(d.y >> 24);
   int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
   int spanI = int((d.x >> 4) & 0xfu) + 1;
   float fu = float(spanI * 16);
-  float hTop = fu - float(subYi), hBot = hTop - float(subHi);
+  // P1: bottom-aligned — the receiver's card occupies [0, subH] from its base.
+  float hTop = float(subHi);
   float h = C.y - P.y;
-  if (h < hBot || h > hTop) return false;
+  if (h < 0.0 || h > hTop) return false;
   float left = prot == 3u ? C.x + fu * 0.5 - float(subXi + subWi) : C.x - fu * 0.5 + float(subXi);
   if (P.x < left || P.x > left + float(subWi)) return false;
   float frac = (P.x - left) / float(subWi);

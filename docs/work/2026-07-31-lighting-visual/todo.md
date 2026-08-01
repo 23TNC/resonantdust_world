@@ -17,14 +17,14 @@ load, both zooms. Stances: [`README`](README.md)._
 
 ## P1 — shadows begin at the base
 
-- [ ] Re-model the height window to `[0, subH]` measured from the anchor (the bbox is
+- [x] Re-model the height window to `[0, subH]` measured from the anchor (the bbox is
       BOTTOM-ALIGNED to the base; `subY` remains the atlas address only) in the shared
       occlusion block — caster, receiver coverage, and fracY together. Acceptance: the
       height window no longer references `fu − subY`; typecheck + shaders compile live.
-- [ ] Anchor the record's `C` at the DRAWN art's opaque bottom (from the prim box + bbox
+- [x] Anchor the record's `C` at the DRAWN art's opaque bottom (from the prim box + bbox
       fractions, flip-aware) in the reconciler. Acceptance: the P0 offset table re-probed
       → 0 units of error for every kind.
-- [ ] Verify on screen: every shadow ATTACHES at its caster's feet — conifer, wolf both
+- [x] Verify on screen: every shadow ATTACHES at its caster's feet — conifer, wolf both
       facings, the human by a torch. Acceptance: captures at both zooms in
       `completed.md`; no floating or mid-air shadow starts anywhere at the fixture.
 

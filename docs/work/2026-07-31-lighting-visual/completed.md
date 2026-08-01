@@ -14,3 +14,22 @@ letterboxed master's bottom margin puts the record's plan line `C.y` ~0.5 tiles 
 the drawn feet (conifer/wolf 4.5 units) while the height window starts the same margin
 above it. Vertical cancels; plan does not — hence shadows visibly detached from feet.
 The P1 model zeroes both columns by construction.
+
+## 2026-07-31 · P1 — shadows begin at the base
+
+**The model change** (the user's spec, exactly): the height window in EVERY shader site
+(caster ct1 + ct2, receiver coverage, the normal sampler) is now `[0, subH]` measured
+from the anchor — the bbox is BOTTOM-ALIGNED to the base, and `subY` remains purely an
+atlas address; and the reconciler anchors the record's `C` at the DRAWN art's opaque
+bottom (`p.y + (bb.fy + bb.fh) × p.height`), flip-independent.
+
+**The I1 table re-probed**: worst anchor error across every live stem fell from 4.5 units
+to **≤ 0.5** — the integer-unit lane's quantization floor (wolf-e measured exactly 0.0;
+conifer 0.5; human body 0.1). Height-window bottom is the literal 0 in all sites.
+
+**On screen** (captures in the session record): the pool conifers' shadows now SPRING
+FROM THEIR TRUNK BASES (previously ~half a tile south); the human stands lit beside the
+torch with its figure-shadow attached at its feet; shrubs likewise; nothing floats or
+starts mid-air at either zoom. The wolf was wandering outside any pool at capture time —
+its attachment is the same code path and its numeric error is 0.0, noted rather than
+photographed.
