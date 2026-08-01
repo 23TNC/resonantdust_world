@@ -401,6 +401,12 @@ shadow       3 px per UNIT, RGBA32UI   ping-ponged
 `presence` being layer-sorted is load-bearing, not cosmetic: the resolution order walks it topmost-
 first and takes the first receiver covering the pixel. Over-cap eviction keeps the **topmost**.
 
+**The ONE z contract** (lighting-correctness P4): the presence sort key IS the draw's `zIndex` — the
+same number the painter orders sprites with — so the surface a pixel is LIT as is the surface it is
+DRAWN as, by construction (`writePresence` rejects non-finite keys). The prim `layer` LANE is a
+different axis: it carries the pawn PART SLOT (piece layering within one object — body 0, head 1),
+never world z.
+
 ```
 light slots  LIGHT_SLOTS px per lighting texel, RGB10_A2   one light each, value stored /4
 summed map   1 px per lighting texel, RGBA32F              integer QUANTISATION LEVELS

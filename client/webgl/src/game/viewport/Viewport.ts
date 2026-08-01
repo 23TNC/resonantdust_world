@@ -178,6 +178,9 @@ export class Viewport {
     (globalThis as unknown as { __gather: () => unknown }).__gather = () => this.runGather();
     // lighting-rework P5: drive the whole chain each frame and show it.
     (globalThis as unknown as { __receivers: () => unknown }).__receivers = () => this.receiverCheck();
+    // lighting-correctness P4: the lit-surface probe — which receiver owns each texel of a tile.
+    (globalThis as unknown as { __zprobe: (tx: number, ty: number) => unknown }).__zprobe =
+      (tx: number, ty: number) => this.zProbe(tx, ty);
     // lighting-rework I11: place N lights, and move them.
     (globalThis as unknown as { __lights: (n?: number) => unknown }).__lights = (n?: number) => this.placeLights(n ?? 16);
     (globalThis as unknown as { __orbit: (on?: boolean) => unknown }).__orbit = (on?: boolean) => {
@@ -1069,6 +1072,22 @@ export class Viewport {
       if (f?.source) return f.source;
     }
     return null;
+  }
+
+  /** lighting-correctness P4 — read back the receiver map for one tile: the per-texel resolved
+   *  surface, as a histogram. The z acceptance compares it against what is DRAWN there. */
+  private zProbe(tileX: number, tileY: number): Record<string, unknown> {
+    const gl = this.renderer.gl, w = this.map.window;
+    const L = 64;
+    const x0 = (tileX - w.winCol) * L, y0 = (tileY - w.winRow) * L;
+    this.lights.receiverRT.bind();
+    const buf = new Uint32Array(L * L);
+    gl.readPixels(x0, y0, L, L, gl.RED_INTEGER, gl.UNSIGNED_INT, buf);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const counts = new Map<number, number>();
+    for (const v of buf) counts.set(v, (counts.get(v) ?? 0) + 1);
+    return { tile: [tileX, tileY],
+             receivers: [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6) };
   }
 
   /** lighting-rework I11 — place N lights across the window and remember their orbit origins. */

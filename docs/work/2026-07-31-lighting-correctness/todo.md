@@ -78,27 +78,27 @@ Stances + fixtures: [`README`](README.md)._
 
 ## P4 — z-ordering
 
-- [ ] Write the ONE z contract: prim `layer` derivation = the draw's zIndex derivation;
+- [x] Write the ONE z contract: prim `layer` derivation = the draw's zIndex derivation;
       `presence` sorts by it; eviction keeps topmost; assert at write; document in
       `VARIABLES.md`. Acceptance: the contract text + a writer assert that a violating
       layer throws in dev.
-- [ ] Build the lit-surface probe: a debug view colouring each pixel by its RESOLVED
+- [x] Build the lit-surface probe: a debug view colouring each pixel by its RESOLVED
       receiver, diffed against the drawn surface on a stacked scene (tile / tree / human
       body+head). Acceptance: the probe exists and reports a mismatch count.
-- [ ] Fix what the probe shows (resolution order, eviction, layer values) per cause.
+- [x] Fix what the probe shows (resolution order, eviction, layer values) per cause.
       Acceptance: 0 mismatching pixels at zoom 1 + 2 with the wolf walking through the
       stack.
 
 ## P5 — normals + ambient
 
-- [ ] Per-light N·L in the slot pass: sample the RESOLVED receiver's normal quadrant,
+- [x] Per-light N·L in the slot pass: sample the RESOLVED receiver's normal quadrant,
       direction from the light prim to the texel (the FINE-lightmap model — the summed map
       inherits it, display stays one fetch). Acceptance: a side-lit conifer/wall shades
       directionally; A/B captures against flat.
-- [ ] Restore ambient × AO from `surface.G` in the display composite. Acceptance: crevice
+- [x] Restore ambient × AO from `surface.G` in the display composite. Acceptance: crevice
       darkening on the conifer matches the strip's before-image character; unlit areas
       unchanged.
-- [ ] Movers under N·L: the normal frame follows facing (def swap), and slot updates on
+- [x] Movers under N·L: the normal frame follows facing (def swap), and slot updates on
       movement stay differential-exact. Acceptance: the fixture human's shading changes
       across facings; add/remove returns the summed map bit-identically with N·L on.
 

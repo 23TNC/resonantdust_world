@@ -1,5 +1,45 @@
 # Completed — lighting correctness
 
+## 2026-07-31 · P4 — one z contract, proven per texel
+
+**The contract** (VARIABLES.md): the presence sort key IS the draw's `zIndex` — the same
+number the painter orders sprites with, so the surface a pixel is LIT as equals the
+surface it is DRAWN as by construction; `writePresence` rejects non-finite keys. The prim
+`layer` LANE is a different axis — it now carries the pawn PART SLOT (piece layering
+within one object), written from `Primitive.layer`.
+
+**The probe** (`__zprobe(tx, ty)` — the receiver map read back per tile as a histogram),
+run on the human's stack at (104, 54): ground 2 568 texels, BODY 765, HEAD 423, a tree
+340 — the head resolves OVER the body where they overlap; the tile ABOVE shows the head's
+top 108 texels resolving across the tile boundary (the y-dilated presence walk); a bare
+tile shows ground + its own trees. The head's 423 texels vs its 1 024-texel box is the
+silhouette-not-box proof in numbers. Nothing to fix — the resolution was already
+consistent once P3's coverage landed. **Honest note**: the acceptance's "0 mismatching
+pixels vs the drawn surface" was verified through this histogram + the shared-zIndex
+construction, not a strict per-pixel diff against a drawn-surface ID buffer (none
+exists; the zdepth composite carries painter keys, not prim ids) — the strongest
+available measure, recorded as such.
+
+## 2026-07-31 · P5 — normals + ambient are back
+
+**Per-light N·L in the slot pass** (the FINE-lightmap model — shading bakes into each
+light's slot, the summed map inherits it, the display stays ONE fetch): the shared block
+gained `receiverNormalAt` — the receiver's NORMAL quadrant (co-pack top-right) sampled at
+the SAME frame mapping the silhouette uses, west draws flipping the normal's x; the
+ground shades flat-up (`Lz / |L−P|` — overhead lights full, grazing light falls away).
+A 0.25 wrap floor keeps back sides readable. **Ambient × AO restored** in the blit:
+`surface.G` multiplies the ambient in full and the diffuse partially (`mix(0.75, 1, ao)`)
+— the old system's split. Verified live: shaped canopy shading on the pool trees at
+zoom 2; crevice darkening reads on the conifers.
+
+**Differential exactness with N·L on**: `__lightexact()` — add 12 288 changed texels,
+remove → **0 differing floats, bit-identical** (the glError in that readout is the
+harness's known readback quirk, recorded at P1; the comparison itself is real reads).
+Mover facings: the normal frame follows the facing through the SAME `base + rotation`
+def swap (r3 flips x) — construction, plus the earlier on-screen facing drills. Honest
+note: the scene reads DARKER overall — N·L and AO both attenuate; ambient/intensity
+FEEL tuning is content's dial and deliberately not this stream's.
+
 ## 2026-07-31 · P3 — silhouettes: one solve, every axis
 
 **The shared occlusion** (`records.OCCLUSION_GLSL`): the gather and the refine ran

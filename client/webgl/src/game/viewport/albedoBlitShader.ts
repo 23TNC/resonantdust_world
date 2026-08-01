@@ -42,7 +42,7 @@ const float SQ = 128.0;
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 // World px -> the toroidal lightmap texel. ONE fetch: the per-light slots were summed for exactly
 // this reason (F1), so the display never adds 8 contributions per pixel.
-vec3 lightAt(vec2 world) {
+vec3 lightAt(vec2 world, float ao) {
   int tx = int(floor(world.x / SQ)), ty = int(floor(world.y / SQ));
   if (tx < uLWinCol || tx >= uLWinCol + uLCols || ty < uLWinRow || ty >= uLWinRow + uLRows)
     return vec3(uAmbient);   // outside the lit window entirely
@@ -68,7 +68,9 @@ vec3 lightAt(vec2 world) {
       acc += texelFetch(uLightmap, s, 0).rgb * wgt;
     }
   }
-  return vec3(uAmbient) + acc * uLightRead;
+  // P5: ambient x AO (surface.G) in FULL, diffuse partially — crevices darken, open ground
+  // keeps its light (the old system's split, restored).
+  return vec3(uAmbient) * ao + acc * uLightRead * mix(0.75, 1.0, ao);
 }
 void main() {
   vec4 outColor = texture(uAlbedo, vUV);
@@ -97,7 +99,7 @@ void main() {
   // lighting system small enough to feel free and permanent enough to constrain the re-think.
   // Coverage applied at OUTPUT only (premultiplied) so it composites over the canvas background: empty cells
   // (alpha 0) show through, ground/things (alpha 1) draw opaque.
-  vec3 lightv = uLit == 1 ? lightAt(vWorld) : vec3(1.0);
+  vec3 lightv = uLit == 1 ? lightAt(vWorld, surf.g) : vec3(1.0);
   fragColor = vec4(alb.rgb * lightv * alpha, alpha);
 }
 `;

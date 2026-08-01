@@ -183,6 +183,10 @@ export class RecordSync {
           definition: def,
           rotation,
           castType,
+          // P4: the layer LANE carries the pawn PART SLOT (piece layering within one
+          // object); world z-order lives in the presence SORT below, keyed by the SAME
+          // zIndex the painter draws with — one ordering, two consumers.
+          layer: Math.min(15, Math.max(0, Math.round(p.layer ?? 0))),
           receiveType: p.textureName ? 2 : 0,
           emitType: L ? 1 : 0,
           intensity: L ? intensityLane(L.intensity) : 0,
