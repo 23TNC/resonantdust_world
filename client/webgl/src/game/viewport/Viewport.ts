@@ -550,9 +550,18 @@ export class Viewport {
       // P5: the receiver map FIRST, once -- it is geometry, so it is the same for every light and
       // the eight light fragments read it instead of each re-deciding (I2).
       this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, atlas ?? this.white, w.winCol, w.winRow, atlas2);
+      // lighting-visual P2: N·L reads the BAKED normal composites (warm-over-cold, the blit's
+      // rule), addressed by the cache's own torus — cols/rows/slotPx from the cache, never derived.
+      const nCold = this.map.displayComposite("normal-cold");
+      const nWarm = this.warm.displayComposite("normal-warm");
+      const sWarm = this.warm.displayComposite("surface-warm");
       this.lights.run(this.renderer, r.primTex, r.lightTex, w.winCol, w.winRow,
                       { def: r.defTex, shadow: this.shadows.prev, atlas: atlas ?? this.white, atlas2,
-                        unitsX: 512, refine: canRefine });
+                        unitsX: 512, refine: canRefine,
+                        normalCold: nCold ?? undefined, normalWarm: nWarm ?? undefined,
+                        surfaceWarm: sWarm ?? undefined,
+                        slotCols: w.cols, slotRows: w.rows,
+                        slotPx: nCold && nWarm && sWarm ? w.slotPx : 0 });
     }
     // lighting-strip P1: the gather / lighting / receiver / decay passes are NO LONGER ISSUED. The
     // ShadowGather instance still exists and still compiles (P2 deletes it) -- this phase only stops

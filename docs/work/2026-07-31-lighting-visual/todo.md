@@ -30,15 +30,15 @@ load, both zooms. Stances: [`README`](README.md)._
 
 ## P2 — normal maps, properly
 
-- [ ] Sample the baked `normal-cold`/`normal-warm` composites in the slot pass
+- [x] Sample the baked `normal-cold`/`normal-warm` composites in the slot pass
       (warm-over-cold by warm coverage, the blit's rule) for EVERY texel's N·L; retire
       `receiverNormalAt`. Acceptance: grep-clean of the def-quadrant sampler; the pass
       binds both composites; live render.
-- [ ] Verify the consumers inherited: the user's walls shade by their analytic normal
+- [x] Verify the consumers inherited: the user's walls shade by their analytic normal
       pitch under a torch; tile ground normals shade (not flat-up); material normal
       detail reads under raking light; movers shade per facing. Acceptance: captures of
       each case in `completed.md`.
-- [ ] Re-tune the shading interplay against captures: the wrap floor, ambient×AO, and
+- [x] Re-tune the shading interplay against captures: the wrap floor, ambient×AO, and
       the ×4 decode together — pools bright, crevices dark, backsides readable.
       Acceptance: A/B captures beside the strip's before-images; differential exactness
       (`__lightexact`) still bit-identical.

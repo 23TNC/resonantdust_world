@@ -166,38 +166,6 @@ bool occludesAt(uint c, vec2 L, float Lz, vec2 P, float targetH) {
   return silhouetteHit(d, frac, (hTop - h) / float(subHi), true);
 }
 bool occludes(uint c, vec2 L, float Lz, vec2 P) { return occludesAt(c, L, Lz, P, 0.0); }
-// P5: the receiver's NORMAL at world point P — the same frame mapping the silhouette uses,
-// sampled from the co-pack's TOP-RIGHT quadrant. A west (mirrored) draw flips the normal's x.
-// Flat-up when the page is unbound.
-vec3 receiverNormalAt(uint r, vec2 P) {
-  uvec4 rec = fetchPrim(r);
-  vec2 C = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
-  uint prot = (rec.z >> 10) & 0xfu;
-  uvec4 d = fetchDef(rec.y & 0xffffu, prot);
-  int fx = int(d.x >> 20), fy = int((d.x >> 8) & 0xfffu);
-  int subXi = int(d.y >> 24), subYi = int((d.y >> 16) & 0xffu);
-  int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
-  int spanI = int((d.x >> 4) & 0xfu) + 1;
-  float fu = float(spanI * 16);
-  float ppu = float((d.z >> 14) & 0xffu) / 8.0;
-  if (ppu <= 0.0) { ppu = 8.0; }
-  float hTop = float(subHi);                       // P1: bottom-aligned window [0, subH]
-  float h = C.y - P.y;
-  float left = prot == 3u ? C.x + fu * 0.5 - float(subXi + subWi) : C.x - fu * 0.5 + float(subXi);
-  float frac = clamp((P.x - left) / float(subWi), 0.0, 1.0);
-  if (prot == 3u) { frac = 1.0 - frac; }
-  float fracY = clamp((hTop - h) / float(subHi), 0.0, 1.0);
-  int frameUnits = spanI * 16;
-  int px = int((float(frameUnits + fx + subXi) + frac * float(subWi)) * ppu);
-  int py = int((float(fy + subYi) + fracY * float(subHi)) * ppu);
-  uint page = (d.x >> 2) & 3u;
-  vec3 n = vec3(0.5, 0.5, 1.0);
-  if (page == 0u) { n = texelFetch(uSurfaceAtlas, ivec2(px, py), 0).rgb; }
-  else if (page == 1u) { n = texelFetch(uSurfaceAtlas2, ivec2(px, py), 0).rgb; }
-  vec3 v = n * 2.0 - 1.0;
-  if (prot == 3u) { v.x = -v.x; }
-  return normalize(v);
-}
 `;
 
 /** Per-light contributions are stored DIVIDED BY 4 ([F2](forks.md#f2)).

@@ -37,6 +37,12 @@ precision highp float;
 precision highp int;
 uniform sampler2D uSurfaceAtlas;   // the shared co-packed page — the SILHOUETTE lives here
 uniform sampler2D uSurfaceAtlas2;  // P3: the second page (defs carry their page in anchor.x)
+uniform sampler2D uNormalCold;     // lighting-visual P2: the BAKED normal composites — cold tier
+uniform sampler2D uNormalWarm;     //   warm tier (movers), slot-aligned with cold
+uniform sampler2D uSurfaceWarm;    //   warm surface: B = warm coverage, the warm-over-cold key
+uniform int uSlotCols;             // the display torus: slots per axis (tiles) ...
+uniform int uSlotRows;
+uniform int uSlotPx;               // ... and texels per slot at the CURRENT partition; 0 = unbound
 uniform highp usampler2D uPrim;      // prim_data   — one px per prim
 uniform highp usampler2D uLight;     // light       — 8 u16 prim indices per TILE
 uniform highp usampler2D uDef;       // definition_data — the caster's card
@@ -71,6 +77,27 @@ uint shadowSlot(uvec4 v, int i) {
   return (i & 1) == 0 ? (w >> 16) : (w & 0xffffu);
 }
 ${OCCLUSION_GLSL}
+
+// lighting-visual P2: the normal at world point P, from the BAKED normal composites -- the same
+// screen-space image the blit resolves pixels from, warm-over-cold by warm coverage (the blit's
+// rule). The composite is addressed by the display torus (slot = tile mod cols/rows, +1 apron
+// slot, uSlotPx texels per tile at the partition the CACHE chose -- passed in, never recomputed:
+// shadows-on-prims taught that slotPx is zoom-chosen). Sampling at the texel's OWN position means
+// whatever is DRAWN there owns the normal, so tiles with authored maps, the analytic wall
+// normals, per-material detail and mover facings are all inherited from the bake for free.
+vec3 sceneNormalAt(vec2 Pu) {
+  if (uSlotPx <= 0) { return vec3(0.0, 0.0, 1.0); }          // composites unbound (debug paths)
+  vec2 tile = Pu / UPT;
+  int tX = int(floor(tile.x)), tY = int(floor(tile.y));
+  vec2 f = tile - vec2(float(tX), float(tY));
+  vec2 texel = (vec2(float(pmod(tX, uSlotCols) + 1), float(pmod(tY, uSlotRows) + 1)) + f)
+             * float(uSlotPx);
+  // warm is slot-aligned with cold (the blit samples both at ONE uv) -- one uv serves all three
+  vec2 uv = texel / vec2(textureSize(uNormalCold, 0));
+  float wcov = texture(uSurfaceWarm, uv).b;
+  vec3 n = wcov > 0.5 ? texture(uNormalWarm, uv).rgb : texture(uNormalCold, uv).rgb;
+  return normalize(n * 2.0 - 1.0);
+}
 
 // THE REFINE (F12): re-test the STORED caster identity at THIS texel -- 64/tile against the
 // gather's 16/tile -- through the SAME shared occlusion solve the gather runs (P3: one
@@ -132,19 +159,22 @@ void main() {
   float at = I / (1.0 + (d / REACH_FALLOFF_UNITS) * (d / REACH_FALLOFF_UNITS));
 
   // P5: per-light N x L (the FINE-lightmap model — shading bakes into the slot, the summed map
-  // inherits it, the display stays one fetch). The receiver's normal comes from its NORMAL
-  // quadrant at the same frame mapping the silhouette uses; the ground is flat-up. A wrap
-  // floor keeps backsides readable rather than pitch black.
+  // inherits it, the display stays one fetch). lighting-visual P2: N is sampled from the baked
+  // normal composites at the texel's OWN position P -- the composite is screen-space, so the
+  // drawn pixel standing there (card or ground) IS the surface being lit. Only the light
+  // DIRECTION's frame branches on receiver-ness. A wrap floor keeps backsides readable.
   float Lz2 = float(rec.y >> 24);
+  vec3 nrm = sceneNormalAt(P);
   float ndotl;
   if (recvIdx != 0u) {
-    vec3 nrm = receiverNormalAt(recvIdx, Puse);
-    // sprite frame: x right, y up, z toward the viewer (world south)
+    // sprite frame: x right, y up the card, z toward the viewer (world south)
     vec3 ldir = normalize(vec3(Lpos.x - Puse.x, Lz2 - targetH, Puse.y - Lpos.y));
     ndotl = clamp(dot(nrm, ldir), 0.0, 1.0);
   } else {
-    // ground frame: z up — overhead light shades fully, grazing light falls off
-    ndotl = clamp(Lz2 / max(1.0, length(vec3(Lpos - P, Lz2))), 0.0, 1.0);
+    // ground frame: x right, y north (up-screen), z up -- the flat-up fallback decodes to
+    // (0,0,1), reproducing the old overhead/grazing falloff exactly; authored tile normals tilt it
+    vec3 ldir = normalize(vec3(Lpos.x - P.x, P.y - Lpos.y, Lz2));
+    ndotl = clamp(dot(nrm, ldir), 0.0, 1.0);
   }
   at *= mix(0.25, 1.0, ndotl);
 
@@ -425,13 +455,21 @@ export class LightPass {
   run(renderer: Renderer, prim: Texture, light: Texture,
       originTileX: number, originTileY: number,
       opt: { def?: Texture; shadow?: Texture; atlas?: Texture; atlas2?: Texture; unitsX?: number; refine?: boolean;
-             debugGate?: boolean } = {}): void {
+             debugGate?: boolean;
+             // lighting-visual P2: the baked normal composites + the display torus that addresses
+             // them. slotPx is the CACHE'S current partition — never recomputed here; 0 = unbound
+             // (the shader falls back to flat-up).
+             normalCold?: Texture; normalWarm?: Texture; surfaceWarm?: Texture;
+             slotCols?: number; slotRows?: number; slotPx?: number } = {}): void {
     renderer.draw({
       program: this.slotProg, geometry: this.quad, target: this.slotRT, blend: "none",
       textures: { uPrim: prim, uLight: light,
                   uDef: opt.def ?? prim, uShadow: opt.shadow ?? prim,
                   uSurfaceAtlas: opt.atlas ?? prim,
                   uSurfaceAtlas2: opt.atlas2 ?? opt.atlas ?? prim,
+                  uNormalCold: opt.normalCold ?? opt.atlas ?? prim,
+                  uNormalWarm: opt.normalWarm ?? opt.atlas ?? prim,
+                  uSurfaceWarm: opt.surfaceWarm ?? opt.atlas ?? prim,
                   uReceiver: this.receiverRT.textures[0] },
       uniforms: (p) => {
         p.uInt("uLightW", LIGHT_TEXELS);
@@ -439,6 +477,9 @@ export class LightPass {
         p.uInt("uUnitsX", opt.unitsX ?? 512);
         p.uInt("uRefine", opt.refine ? 1 : 0);
         p.uInt("uDebugGate", opt.debugGate ? 1 : 0);
+        p.uInt("uSlotCols", opt.slotCols ?? 0);
+        p.uInt("uSlotRows", opt.slotRows ?? 0);
+        p.uInt("uSlotPx", opt.slotPx ?? 0);
         p.uVec2("uWindowOrigin", originTileX, originTileY);
       },
     });

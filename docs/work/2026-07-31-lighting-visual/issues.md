@@ -24,3 +24,14 @@ both columns by construction — P1's re-probe is exactly this table at 0.
 West-flip and wolf-n rows were not live in the probed window; the mechanism is
 facing-independent (the margin comes from the letterboxed master), and P1's re-probe
 covers whatever faces exist at fix time.
+
+## I2 — `__lightexact` reports glError 1282 (pre-existing, drill-path only) {#i2}
+
+The drill's baseline `lights.run(...)` is called WITHOUT opts, so every optional sampler
+falls back to the uint `prim` texture — including `sampler2D` uniforms (`uSurfaceAtlas`
+before this stream, the P2 normal samplers now). Binding an integer texture where the
+program declares a float sampler raises `INVALID_OPERATION` at draw time. This is
+debug-drill-only (the real draw loop always passes real textures), predates P2, and does
+not affect the drill's verdict (`bitIdentical` computed from readPixels diffs, which
+succeed). Fix if it starts mattering: give `LightPass` a 1×1 white placeholder for the
+float samplers instead of `prim`.
