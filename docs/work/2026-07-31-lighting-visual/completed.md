@@ -65,3 +65,24 @@ the human's dark side clearly legible — no constant changed. Differential exac
 re-run with the new shader: `__lightexact` → `bitIdentical: true`, 0 differing floats
 after remove. (Its `glError 1282` is a PRE-EXISTING drill artifact — the optless
 baseline `run()` binds the uint prim texture to `sampler2D` placeholders, [I2](issues.md#i2).)
+
+## 2026-08-01 · P3 — the world displays correctly; the successor opens
+
+**The joint drill** (captures in the session record): cold page loads at the fixture at
+zoom 1 (focus 103,55) and zoom 2 (focus 106,56) — all three torch pools bright and wide
+(100,51 / 108,53-in-enclosure / 104,59); every conifer shadow springs from its trunk
+base; the user's wall enclosure shades under its interior torch with the inner tree's
+silhouette cast onto floor and wall; the placed human stands by the fire, side-lit with
+its figure-shadow at its feet; and the WOLF walking live (npc soak restarted —
+`bin/sim build npc` then `run npc`; log-verified trips (104,56)→(98,54) etc.), captured
+mid-trip west-facing at the (100,51) pool's edge beside the human, dim-lit by falloff
+exactly as its distance says. No floating shadows, no tile-boundary artifacts, no
+console errors at either zoom. **The visuals now await the user's eyes — the stream's
+declared exit criterion; reopen on their verdict if anything reads wrong.**
+
+**The successor stream opened**:
+[`2026-07-31-lighting-performance`](../2026-07-31-lighting-performance/README.md) —
+steady-state gating (skip-when-unchanged, per-light scissored deltas, dirty-rect
+uploads, pan increments), with this stream's final numbers recorded as its baseline
+(N=16 reach-16: 9.76 ms moving / 9.55 ms static; unlit floor 0.104 ms; static ≈ moving
+= nothing gated). Indexed in `docs/work/README.md`; this stream marked done there.

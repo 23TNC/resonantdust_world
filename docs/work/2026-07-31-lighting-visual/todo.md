@@ -45,10 +45,10 @@ load, both zooms. Stances: [`README`](README.md)._
 
 ## P3 — the world displays correctly
 
-- [ ] The joint drill: cold load at the fixture, both zooms — torch pools, grounded
+- [x] The joint drill: cold load at the fixture, both zooms — torch pools, grounded
       silhouette shadows, shaded walls, the wolf walking, the human by the fire.
       Acceptance: captures in `completed.md`; **the user's eyes are the exit criterion**.
-- [ ] Open the PERFORMANCE successor stream (steady-state gating: skip-when-unchanged,
+- [x] Open the PERFORMANCE successor stream (steady-state gating: skip-when-unchanged,
       per-light scissored updates, dirty-rect uploads) with this stream's final numbers
       as its baseline. Acceptance: the successor folder exists with its baseline
       recorded; this stream marked done.
