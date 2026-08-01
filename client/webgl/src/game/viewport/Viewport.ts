@@ -22,6 +22,7 @@ import { OutlineOverlay, type OutlineItem } from "./outlineOverlay";
 import { installFrameCost } from "./frameCost";
 import { installReachCheck } from "./lightReach";
 import { Records, INDEX_NONE, ROTATIONS_PER_DEF } from "./records";
+import { LightPass } from "./lightPass";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
@@ -89,6 +90,10 @@ export class Viewport {
   private readonly blitShader: AlbedoBlitShader;
   /** lighting-rework P1: the flat record layer — `prim_data` + `definition_data`. */
   readonly records: Records;
+  /** lighting-rework P3: per-light slots + the summed map the display reads. */
+  readonly lights: LightPass;
+  /** The synthetic emitter P2/P3 exercise the real path with (no lights are authored yet). */
+  private debugLightPrim = 0;
   /** The `/overlayRT` debug material — draws one G-buffer composite over the display. */
   private readonly overlayShader: OverlayShader;
   /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
@@ -132,6 +137,7 @@ export class Viewport {
     (globalThis as unknown as { __viewport: Viewport }).__viewport = this;
     // lighting-rework P0: `__framecost()` — the stream's ONE measurement instrument.
     this.records = new Records(this.renderer.gl);
+    this.lights = new LightPass(this.renderer.gl);
     installFrameCost(this, this.renderer.gl);
     // lighting-rework P0 (F6): `__reachcheck()` — proves the TS and GLSL reach agree at all 1024 values.
     installReachCheck(this.renderer.gl);
@@ -139,6 +145,8 @@ export class Viewport {
     // scene rather than a fixture, so it proves the writers on real definitions and real positions.
     (globalThis as unknown as { __records: () => unknown }).__records = () => this.recordSelfTest();
     (globalThis as unknown as { __buildrecords: () => unknown }).__buildrecords = () => this.buildRecords();
+    // lighting-rework P3: run the light pass and read back what it produced.
+    (globalThis as unknown as { __lightpass: () => unknown }).__lightpass = () => this.runLightPass();
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
     // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
     (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {
@@ -702,8 +710,16 @@ export class Viewport {
     }
 
     // light — the reach relation, from reachFromIntensity (F6). No lights are authored in the
-    // stripped scene, so a synthetic one at the focus tile exercises the real path.
-    rec.buildLights([{ index: 1, tileX: 100, tileY: 50, intensity: 1023 }]);
+    // stripped scene, so mint a real EMITTER prim at the focus tile and register that. It must be a
+    // genuine emitter: the slot shader re-checks `emit_type` before trusting a slot (F9), so
+    // pointing the light record at an arbitrary prim index yields nothing — as it should.
+    const lightPrim = rec.allocPrim();
+    rec.writePrim(lightPrim, {
+      unitX: 100 * 16 + 8, unitY: 50 * 16 + 8,
+      definition: 1, emitType: 1, intensity: 1023, colors: [0, 0, 0, 180],
+    });
+    this.debugLightPrim = lightPrim;
+    rec.buildLights([{ index: lightPrim, tileX: 100, tileY: 50, intensity: 1023 }]);
 
     rec.upload(this.renderer.gl);
 
@@ -753,6 +769,50 @@ export class Viewport {
              lightReach: { atCentre: centre, at16Tiles: edge, at17Tiles: beyond,
                            reachTilesForFullIntensity: 16 },
              stats: rec.stats, glError: this.renderer.gl.getError() };
+  }
+
+  /** lighting-rework P3 — run the slot pass + the sum, then read back enough to prove both. */
+  private runLightPass(): Record<string, unknown> {
+    const gl = this.renderer.gl;
+    const win = this.map.window;
+    const rec = this.records;
+
+    let draws = 0;
+    const de = gl.drawElements, da = gl.drawArrays;
+    gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
+    gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
+    this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow);
+    gl.drawElements = de; gl.drawArrays = da;
+
+    // read the SUM at the light's own tile and at the reach boundary
+    const { w, h, slots } = this.lights.size;
+    const texel = (tileX: number, tileY: number): [number, number] => [
+      ((tileX - win.winCol) * 64 + 32), ((tileY - win.winRow) * 64 + 32),
+    ];
+    const readSum = (tx: number, ty: number): number[] => {
+      const [px, py] = texel(tx, ty);
+      if (px < 0 || py < 0 || px >= w || py >= h) return [-1, -1, -1];
+      const out = new Float32Array(4);
+      this.sumRTBind(gl);
+      gl.readPixels(px, py, 1, 1, gl.RGBA, gl.FLOAT, out);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return [+out[0].toFixed(4), +out[1].toFixed(4), +out[2].toFixed(4)];
+    };
+
+    return {
+      drawsForAllLights: draws,
+      lightPrim: this.debugLightPrim,
+      lightRecord: this.debugLightPrim ? rec.debugPrim(this.debugLightPrim) : null,
+      slotMap: { w: w * slots, h, slotsPerTexel: slots },
+      sumAtLightTile: readSum(100, 50),
+      sumAt8Tiles: readSum(108, 50),
+      sumAt20Tiles: readSum(120, 50),
+      glError: gl.getError(),
+    };
+  }
+
+  private sumRTBind(gl: WebGL2RenderingContext): void {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, (this.lights.sumRT as unknown as { fbo: WebGLFramebuffer }).fbo);
   }
 
   private ensureGeometry(quads: number): void {

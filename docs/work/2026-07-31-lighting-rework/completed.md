@@ -202,3 +202,41 @@ than through the TS arithmetic, because the arithmetic was never the risk:
 
 The small drift on the middle rows is the **readback**, not the storage: `readPixels` was taken as
 `RGBA8`, so those numbers are quantised to 8 bits on the way out while the texture holds 10.
+
+## 2026-07-31 · P3 (2/5) — all 8 lights in ONE draw
+
+[`lightPass.ts`](../../../client/webgl/src/game/viewport/lightPass.ts). The slot map is
+`LIGHT_SLOTS`× wider than the lighting grid (16384 × 1024), so a fragment derives its light from
+`x % 8` and touches exactly one slot — **one draw covers all 8 lights, and no MRT**
+([F3](forks.md#f3); MRT hung Chrome twice and is banned stream-wide).
+
+| | |
+|---|---|
+| draws per lighting update | **2** — one slot pass for all 8 lights, one sum |
+| slot map | 16384 × 1024 `RGB10_A2`, 8 slots/texel |
+| `getError()` | 0 |
+
+### The falloff is exact, and it is the SAME function reach inverts
+
+`reachFromIntensity`'s GLSL is injected into the shader, so the attenuation and the reach bound cannot
+be two different curves — the shader evaluates `L(d) = I / (1 + (d/d0)²)` and the CPU's tile
+registration solves the same expression for `L = ε`.
+
+| sample | measured | formula |
+|---|---|---|
+| the light's own tile | `[1.001, 0.954, 0.883]` | `I/(1+0) = 1.0`, tinted by `color.4` |
+| 8 tiles away (128 units) | `0.0156` | `1/(1 + (128/16)²) = 0.0154` |
+
+Agreement to the 10-bit quantum, through the ¼-scale store and the ×4 undo in the sum.
+
+### F9's guard fired on the first run, correctly
+
+The first run read **zero everywhere**. Not a bug: the synthetic light record pointed at prim index 1,
+which is a *tree* — `emit_type == 0`. The slot shader re-checks the type lane before trusting a slot
+([F9](forks.md#f9)), so it contributed nothing, which is exactly the designed behaviour for a recycled
+or mis-pointed index.
+
+Worth recording because it is the failure this project keeps hitting **inverted**: a stale index that
+silently produced a *plausible* light would have been invisible. Here it produced nothing, loudly, on
+the first look. Fixed by minting a real emitter (`emit_type = 1`, `intensity = 1023`) and registering
+that — the guard was right and the test data was wrong.
