@@ -54,7 +54,7 @@ shadow is actually drawn from. That is **0 differing**, exactly.
 The identity count is still reported, because a *large* swing in it would mean the tie-break changed
 even though the shadows did not, and that is worth being able to see.
 
-## D5 — the limit counters are a console probe, not a debug-panel row (2026-07-31)
+## D5 — WITHDRAWN: the counters ARE a debug-panel row (2026-07-31)
 
 **Plan:** "`droppedLights` / `droppedReceivers` appear in the debug panel."
 
@@ -67,4 +67,9 @@ answers whether this scene is over its caps") is met by a probe plus a symptom�
 panel row is a UI task on a UI file, and it belongs with other panel work rather than bolted onto a
 lighting stream at its end.
 
-**Not done, and said plainly** rather than ticked as equivalent.
+**Withdrawn the same day.** The panel turned out to follow a clean `addTab` + `addRow` pattern that
+seven existing tabs already use, so the row was a fraction of the work this deviation assumed. The
+Lighting tab is live and verified on screen; see `completed.md`.
+
+Kept rather than deleted because the *reasoning* was wrong in an instructive way: I priced a UI change
+from outside the file. Reading it first would have been cheaper than writing the deviation.

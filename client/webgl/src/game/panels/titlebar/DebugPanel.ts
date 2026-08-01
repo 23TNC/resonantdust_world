@@ -367,6 +367,11 @@ export class DebugPanel {
   // identically on the fps row, but the second makes every mover stutter, because
   // a speculating entity advances by `dt` and an uneven `dt` is uneven motion.
   // So these rows report the DISTRIBUTION of the frame delta.
+  private readonly litLights!: HTMLSpanElement;
+  private readonly litRecv!: HTMLSpanElement;
+  private readonly litPrims!: HTMLSpanElement;
+  private readonly litTiers!: HTMLSpanElement;
+  private readonly litRefine!: HTMLSpanElement;
   private readonly frmFps:         HTMLSpanElement;
   private readonly frmLast:        HTMLSpanElement;
   /** Mean and median of the window. A mean well above the median means a few long
@@ -502,6 +507,17 @@ export class DebugPanel {
     this.frmHitch  = this.addRow(frameContent, panelText("debugPanel", "frameHitches"));
     this.frmDelta  = this.addGraphRow(frameContent, panelText("debugPanel", "frameDelta"));
 
+    // ── Lighting tab — the caps and where the gather's time goes ──
+    // lighting-rework P6: the caps EVICT, and an eviction is invisible on screen -- a light simply is
+    // not there, in one tile, which reads as a shader bug rather than a capacity limit. One glance
+    // here answers "is this scene over its caps" without a code change.
+    const lightContent = document.createElement("div");
+    this.litLights   = this.addRow(lightContent, "lights / dropped");
+    this.litRecv     = this.addRow(lightContent, "receivers dropped");
+    this.litPrims    = this.addRow(lightContent, "prims / definitions");
+    this.litTiers    = this.addRow(lightContent, "gather: inc / adj / walk");
+    this.litRefine   = this.addRow(lightContent, "refine gate");
+
     // ── Textures tab — atlas / slot counts ────────────────────────
     // Atlas-page total, then a packed-texture count per power-of-two bucket, then
     // the preview (floor) tier's live size + count.
@@ -560,6 +576,7 @@ export class DebugPanel {
 
     this.panel.addTab("main",     "🛈", mainContent);
     this.panel.addTab("frame",    "⏱", frameContent);
+    this.panel.addTab("light",    "💡", lightContent);
     this.panel.addTab("textures", "🖌", texturesContent);
     this.panel.addTab("sync",     "🛰", syncContent);
     this.panel.addTab("versions", "🏷", versionsContent);
@@ -708,6 +725,7 @@ export class DebugPanel {
     this.texDrawCalls.textContent  = dcText;
     this.frmFps.textContent        = fpsText;
     this.renderFrameStats(deltaMS);
+    this.renderLighting();
 
     if (atlasStats) {
       this.texAtlases.textContent = String(atlasStats.atlases);
@@ -818,6 +836,29 @@ export class DebugPanel {
    *  speculation instead. σ of several ms, or a non-zero hitch count, is the frame
    *  loop, and the delta sparkline says which: isolated spikes = hitching (a bake,
    *  a GC, a stream landing), a fuzzy band = chronic pacing. */
+  /** lighting-rework P6: the caps + the gather's tier split, read straight off the live records. */
+  private renderLighting(): void {
+    const vp = (globalThis as unknown as { __viewport?: {
+      records?: { stats: Record<string, number> };
+      lightingTiers?: { incumbent: number; adjacency: number; walk: number; gatePct: number };
+    } }).__viewport;
+    const s = vp?.records?.stats;
+    if (!s) return;
+    const warn = (el: HTMLSpanElement, n: number): void => {
+      el.style.color = n > 0 ? "#e8b24a" : "";      // amber once a cap has actually evicted
+    };
+    this.litLights.textContent = `${s.droppedLights ?? 0} dropped`;
+    warn(this.litLights, s.droppedLights ?? 0);
+    this.litRecv.textContent = `${s.droppedReceivers ?? 0}`;
+    warn(this.litRecv, s.droppedReceivers ?? 0);
+    this.litPrims.textContent = `${s.prims ?? 0} / ${s.definitions ?? 0}`;
+    const t = vp?.lightingTiers;
+    this.litTiers.textContent = t
+      ? `${t.incumbent.toFixed(0)}% · ${t.adjacency.toFixed(0)}% · ${t.walk.toFixed(0)}%`
+      : "run __gather()";
+    this.litRefine.textContent = t ? `${t.gatePct.toFixed(1)}% of texels` : "--";
+  }
+
   private renderFrameStats(deltaMS: number): void {
     const s = this.frameSamples;
     if (s.length < 2) return;

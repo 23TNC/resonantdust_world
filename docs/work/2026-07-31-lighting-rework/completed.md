@@ -579,3 +579,27 @@ they are unticked and named here:
 
 The first two are honest consequences of a design decision recorded at the time. The third is a UI task
 on a UI file, deliberately not bolted onto a lighting stream at its end.
+
+## 2026-07-31 · P6 — the Lighting tab (D5 withdrawn)
+
+Built after all, following `DebugPanel`'s own `addTab` + `addRow` pattern — the same shape as the
+seven tabs already there, so it was a much smaller job than the deviation assumed. **[D5](deviations.md)
+is withdrawn.**
+
+| row | live value |
+|---|---|
+| lights / dropped | **298 dropped** — rendered **amber**, because a cap that has evicted must announce itself |
+| receivers dropped | 5 |
+| prims / definitions | 478 / 2 |
+| gather: inc / adj / walk | **67% · 0% · 33%** |
+| refine gate | **4.4% of texels** |
+
+That last row is [F5](forks.md#f5)'s acceptance as a measured number: **95.6 % of texel-light pairs do
+no refine work at all** — no shadow fetch, no `occludes`. It is why the refine came out *cheaper* than
+no refine.
+
+`lightingTiers` is null until `__gather()` runs, and the panel then shows "run __gather()" rather than
+a stale number — a debug readout that lies about being live is worse than one that admits it is not.
+
+The amber threshold is `> 0`, not a percentage: any eviction at all is worth seeing, because the
+symptom (one light missing in one tile) is invisible until someone looks for it.

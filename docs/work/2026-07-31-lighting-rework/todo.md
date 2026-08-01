@@ -76,7 +76,7 @@ resolution, where the design's per-pixel receiver loop does not exist in that fo
 
 - [x] Clamp every contribution to the storable range before write, guarding NaN/Inf. Acceptance: a deliberately NaN-producing light writes a bounded value and does not poison the summed map through the blend.
 - [x] Audit every record fetch for the index-0 guard ([F8](forks.md#f8)). Acceptance: a grep-backed list of fetch sites, each with its guard — an unguarded fetch of prim 0 is the cheapest silent corruption available.
-- [ ] Surface the drop counters, the gate selectivity and the walk hit rates in the debug panel. Acceptance: one panel answers "is this scene over its caps, and where is the time going" without a code change.
+- [x] Surface the drop counters, the gate selectivity and the walk hit rates in the debug panel. Acceptance: one panel answers "is this scene over its caps, and where is the time going" without a code change.
 - [x] Write the failure-mode table into `issues.md`: for each cap and guard, what the user SEES when it trips. Acceptance: a reader can go from a visual symptom to the limit that caused it.
 
 ## P7 — The verdict

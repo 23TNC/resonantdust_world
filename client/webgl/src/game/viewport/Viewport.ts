@@ -100,6 +100,10 @@ export class Viewport {
   private debugLightPrim = 0;
   /** lighting-rework P5: is the new lighting driven + displayed? Off until `__lit(true)`. */
   private litEnabled = false;
+  /** lighting-rework P6: the gather's tier split + the refine gate's selectivity, for the debug
+   *  panel's Lighting tab. Refreshed by `__gather()`; the panel shows "run __gather()" until then, so
+   *  it never displays a stale number as if it were live. */
+  lightingTiers: { incumbent: number; adjacency: number; walk: number; gatePct: number } | null = null;
   /** The `/overlayRT` debug material — draws one G-buffer composite over the display. */
   private readonly overlayShader: OverlayShader;
   /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
@@ -1016,6 +1020,9 @@ export class Viewport {
     }
     const answered = tally[1] + tally[2] + tally[3];
     const pct = (n: number): number => (answered ? +((n / answered) * 100).toFixed(1) : 0);
+    // F5's gate: the share of (texel, light) pairs that hold a caster and therefore do refine work.
+    this.lightingTiers = { incumbent: pct(tally[1]), adjacency: pct(tally[2]), walk: pct(tally[3]),
+                           gatePct: +((answered / (W * H * 8)) * 100).toFixed(2) };
 
     // ── item 5: the three-tier walk vs an EXHAUSTIVE search over the same scene ──────────────────
     const readCur = (): Uint32Array => {
@@ -1099,6 +1106,7 @@ export class Viewport {
       sampled: { unitLightPairs: W * H * 8 },
       tierCounts: { none: tally[0], incumbent: tally[1], adjacency: tally[2], corridorWalk: tally[3] },
       tierPercentOfAnswered: { incumbent: pct(tally[1]), adjacency: pct(tally[2]), corridorWalk: pct(tally[3]) },
+      gateSelectivityPct: +((answered / (W * H * 8)) * 100).toFixed(2),
       glError: gl.getError(),
     };
   }
