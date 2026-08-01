@@ -516,3 +516,37 @@ Both captures are real frames from the same session, same light, same tile — t
 clearing `carrierOf` on the live head prim and re-syncing, not recalled. The ground-prim row is
 argued rather than measured on purpose: it is an algebraic identity, and per [I17](issues.md#i17) a
 texel count would not have been evidence anyway.
+
+
+## 2026-08-01 · P4 — one word, one meaning ([F1](forks.md#f1))
+
+Now that `unit.z` means **height**, every neighbouring `z` that meant **draw order** was a trap. F1
+predicted the failure exactly: *"how someone later reads `slotZ` as elevation and spends a day on it"*.
+
+| was | is |
+|---|---|
+| `slotZ` | `slotOrder` |
+| `PAWN_Z_BASE` | `PAWN_ORDER_BASE` |
+| `SLOT_DEPTH_Z` | `SLOT_DEPTH_ORDER` |
+| `SLOT_ORDER_Z` | `SLOT_INDEX_ORDER` |
+| `zRow` / `zRowBase` | `orderRow` / `orderRowBase` |
+| `thingZ` | `thingOrder` |
+
+**Scoped deliberately.** `zIndex` (47 uses, 13 files) was left alone: it is standard graphics
+vocabulary for draw order and nobody reads it as a height. `MoverPart.depth` was left alone too, and
+for a better reason than habit — since this stream, `screen.z` **is** a depth perpendicular to the
+screen, so `depth` naming a view-axis quantity is now literally accurate rather than merely
+conventional.
+
+A comment at each renamed definition says *why*, so the next person does not undo it.
+
+### Verified — a rename must change nothing
+
+| check | result |
+|---|---|
+| `occlusionDiffering` | **0** / 131,072 · 524 casters |
+| `everyShadowVanished` when cast types cleared | true |
+| `ownersThatAreNotReceivers` | 0 |
+| `roundTrip.exact` | true |
+| head and body footprint | **same** `unit.x/y`, head elevated |
+| `glError` | 0 |

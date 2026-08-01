@@ -69,7 +69,7 @@ _There is no draw-side constant: the screen-north shift IS the elevation, 1:1. T
 
 - [x] Sample the lightmap at the prim's BASE ROW, not its drawn position ([lighting-rework I13](../2026-07-31-lighting-rework/issues.md#i13) defect 4). Acceptance: a billboard is lit by the tile it stands on; `zdepth.B` already carries the base row.
 - [x] Order by `screen.z` against a COMMON reference ([F4](forks.md#f4)). Acceptance: head sorts before body because it is nearer the viewer, not because of graph walk order; the reference plane is scene-wide, so depths from different prims compare.
-- [ ] Rename the draw-order `z` away from the collision ([F1](forks.md#f1)). Acceptance: `slotZ`/`zIndex`/`depth` no longer read as height; one word means one thing.
+- [x] Rename the draw-order `z` away from the collision ([F1](forks.md#f1)). Acceptance: `slotZ`/`zIndex`/`depth` no longer read as height; one word means one thing.
 
 ## P5 — The verdict
 
