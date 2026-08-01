@@ -80,3 +80,49 @@ with the extra confusion that some parts are correct and others are not.
 
 `offset.y` stays for genuinely horizontal-plane placement (a part that really is further north on the
 ground). It is elevation that must not be expressible as y.
+
+## F6 — The coordinate model, settled by the user (2026-08-01) {#f6}
+
+Worked out across four diagrams. **This supersedes my reading in [F2](#f2) and answers
+[I4](issues.md#i4).**
+
+### What each field means
+
+`unit.x` / `unit.y` are **screen space** and stay the **drawn** position — the meaning every existing
+consumer already assumes (the bake, `zdepth`, presence-by-tile, hit-testing). `unit.z` carries the
+depth component that makes the world position recoverable.
+
+For a head carried on a body:
+
+```
+Head.unit.y = Body.unit.y - Body.height          // screen-north by the elevation
+Head.unit.z = tan(world_angle) * Body.height     // the depth component
+Body.unit.z = 0                                  // standing on the ground
+```
+
+### Why this is right and my proposal was not
+
+I argued for storing the **ground** position and computing the drawn one. That would have redefined
+`unit.x/y` under every existing reader — a far larger change — and it was unnecessary, because **no
+information is lost either way**:
+
+```
+elevation = unit.z / tan(world_angle)
+ground_y  = unit.y + elevation
+```
+
+Body and head reconstruct to the **same ground point** even though their `unit.y` differs. That is the
+alignment this stream exists to produce, and it costs the draw path nothing — the hot per-sprite path
+uses `unit.x/y` as-is.
+
+### The DSL authors `elevation`, not `unit.z`
+
+`unit.z` is a **derived, tilt-dependent** quantity; `elevation` is the authored fact ("this sits
+`Body.height` off the ground"). Content authors elevation, and the writer decomposes it. That keeps
+`__tilt()` coherent: a tilt change re-derives `unit.z` rather than silently invalidating a baked one.
+
+### There is NO draw-side constant
+
+[I4](issues.md#i4) hunted for a projection factor to apply when drawing. There isn't one: the
+screen-north shift **is** the elevation, 1:1. The tilt enters only in `unit.z`'s decomposition and in
+the shadow's screen↔world transform.

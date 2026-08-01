@@ -52,7 +52,15 @@ position, as distinct from where it is drawn* — so the two are fixed together 
 separately. Elevation makes the distinction explicit for the first time: before it, "drawn position"
 and "ground position" were the same field, and there was no way to write the fix.
 
-## I4 — I do not actually know the projection constant {#i4}
+## I4 — RESOLVED: there is no draw-side constant ([F6](forks.md#f6)) {#i4}
+
+_The user settled the coordinate model across four diagrams. The screen-north shift IS the elevation,
+1:1; the tilt lives only in `unit.z`'s decomposition and in the shadow transform. Kept for the
+reasoning, since it records why fitting the constant to the current sprite offset would have been the
+wrong method — it would have reproduced today's drawing exactly and hidden the error in the shadow._
+
+**Original entry:**
+
 
 P2 says "derive the drawn offset from `worldTiltDeg`". **I wrote that without knowing which function
 of the tilt it is**, and the codebase offers two plausible ones already in use:
@@ -121,3 +129,42 @@ and not the other, on ground that is often already shadowed anyway.
 **Left as a thing to look at during P3, not a design change before it.** I escalated a sub-unit
 sampling artefact into an architectural blocker by reasoning about the storage instead of about what a
 unit actually does.
+
+## I7 — Is `world_angle` 55° or 65°? {#i7}
+
+The diagrams label the angle **55°**, measured between the screen vertical and the ground. The
+codebase carries **`worldTiltDeg = 65`**, and 55 is not its complement (90 − 65 = 25), so these are
+not obviously the same quantity measured two ways.
+
+Either the diagrams are illustrative and the real value comes from `worldTiltDeg`, or the two are
+measured from different references and one of them needs converting.
+
+**This is exactly the class of error that survives review** — an off-by-a-complement produces shadows
+that are wrong by a fixed ratio, which reads as "needs tuning" rather than "is wrong". It must be
+pinned before any transform is written, and the answer belongs in the shared function's doc comment
+so the next reader does not have to re-derive which reference the angle uses.
+
+## I8 — The screen↔world transform for the shadow is still unwritten {#i8}
+
+[F6](forks.md#f6) settles the **record** side: what is stored and how the ground position is
+recovered. It does not settle what the **shadow** does with it.
+
+Today `occludes()` computes `h = Lz * (1 - t)` and compares it against `H`, with `t` derived from
+screen-space y-distances — screen quantities treated as world ones, with no conversion anywhere. That
+is not a tuning error; the transform was never there.
+
+The user's draft is:
+
+```
+world.y -= cos(90 - world_angle) * unit.z
+world.z += cos(90 - world_angle) * unit.z
+world.x  = unit.x
+```
+
+**The two coefficients being equal is the open question.** Decomposing one vector onto two axes
+normally gives a `sin`/`cos` pair; at 55° that is 0.819 and 0.574, a 43 % difference in the height
+term — squarely in the range that renders plausibly and lands wrong. Raised, not assumed: the frame
+convention may make them genuinely equal, and that is the user's call.
+
+The same applies to walking up the billboard (`world.z += sin(θ) * height`), which looks like it wants
+a `world.y` term too, or the card leans as it climbs.

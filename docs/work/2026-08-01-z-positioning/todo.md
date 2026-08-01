@@ -18,6 +18,11 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 **Fixture:** `?user=Claude&focus=100,50&zoom=1` for cost, **`&zoom=3`** for geometry — a head-sized
 offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 
+## P0a — Pin the two unknowns before writing any transform
+
+- [ ] Settle whether `world_angle` is the diagrams' 55° or the code's `worldTiltDeg = 65` ([I7](issues.md#i7)). Acceptance: one value, its reference axis named, written into the shared function's doc comment — 55 is not 65's complement, so this is not a formatting difference.
+- [ ] Settle the `world.z` coefficient ([I8](issues.md#i8)). Acceptance: the two terms are confirmed equal on purpose or corrected to a sin/cos pair — at 55° that is 0.819 vs 0.574, a 43% swing in the height term.
+
 ## P0 — Make height observable at all
 
 - [ ] Give lights an authored height and write it to `unitZ` ([I1](issues.md#i1)). Acceptance: the shader's `Lz` is non-zero, read back from a probe — until it is, the caster height test is `0 <= H` and proves nothing.
@@ -37,11 +42,14 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 - [ ] Prove a ground prim is unchanged. Acceptance: with every `unitZ` at 0 the shadow buffer is bit-identical to before the change — elevation must cost the floor case nothing.
 - [ ] Re-check the walk against the exhaustive reference with mixed heights. Acceptance: 0 differing occlusion decisions, the same check P4 used, with casters at several heights.
 
-## P2 — The projection: elevation → drawn offset
+## P2 — The screen↔world transform ([F6](forks.md#f6), [I8](issues.md#i8))
 
-- [ ] Write `elevationOffset()` in TS **and** GLSL in one file, off the live world tilt ([F2](forks.md#f2)). Acceptance: one implementation; a dev check asserts CPU and GPU agree across the `u8` range, like `reachFromIntensity`.
-- [ ] Derive it from `worldTiltDeg`, never a literal. Acceptance: `__tilt()` changes the drawn offset and the shadow together, so the world re-tilts coherently.
-- [ ] Verify the round trip. Acceptance: a prim at elevation E draws where an authored y-offset of `-elevationOffset(E)` used to put it, to within a pixel.
+_There is no draw-side constant: the screen-north shift IS the elevation, 1:1. The tilt lives in
+`unit.z`'s decomposition and in the shadow's transform, and nowhere else._
+
+- [ ] Write the decomposition + its inverse in TS **and** GLSL in one file, off the live tilt. Acceptance: `elevation → unit.z` and `unit.z → elevation, ground_y` round-trip across the `u8` range, CPU and GPU agreeing, like `reachFromIntensity`.
+- [ ] Give `occludes()` the screen→world transform it has never had ([I8](issues.md#i8)). Acceptance: shadow length matches the geometry for a known caster height under a known light height — measured, not tuned to look right.
+- [ ] Re-check the ground case. Acceptance: with every elevation 0 the shadow buffer is bit-identical to before — the transform must be a no-op at the floor.
 
 ## P3 — The head rides elevation
 
