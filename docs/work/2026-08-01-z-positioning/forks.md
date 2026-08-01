@@ -237,3 +237,34 @@ every receiver stands on the floor. It is the head case, already wrong, on the r
 I flagged `targetH` as mixing a screen-space y-difference with authored-unit heights, needing an
 `nsInv = 1/cos(angle)` correction. **There is no such gap** — the grid is square, so a screen y
 difference already *is* a unit difference. The defect is the missing `E`, not a missing metric.
+
+
+## F9 — `unit.z` currently means TWO things, and P2 cannot proceed until it means one {#f9}
+
+[I8](issues.md#i8) resolved the coefficient and immediately exposed a deeper problem: the same lane
+holds two incompatible quantities.
+
+| written by | value | is |
+|---|---|---|
+| `RecordSync`, for a **light** | `L.height / SQUARE * UNITS_PER_TILE` | a **world** height — `SquareCache.height` is *"world px above the ground plane"* |
+| what P3 will write, for a **head** | the part's elevation | a **drawn** up-screen shift, per the user's `screen.y = unit.y − unit.z` |
+
+These differ by `sin(θ)` — about 10% at 65°. P2 has to convert drawn terms to world, and it cannot,
+because it cannot tell from the lane which kind a given `unit.z` is.
+
+- **(a) The lane stores a WORLD height.** Matches what lights already do and how content authors
+  ("2.5 tiles up"). Costs: the draw path becomes `screen.y = unit.y − unit.z/sin(θ)`, contradicting
+  the user's explicit 1:1 rule.
+- **(b) The lane stores a DRAWN shift.** Matches the user's rule exactly and keeps the draw path
+  free. Costs: `RecordSync` must divide light heights by `sin(θ)` on the way in — **every light in
+  the world gets ~10% higher**, so every shadow shortens.
+
+**Recommend (b)**, because the 1:1 draw rule is the user's stated design and the whole reason the
+head's y-shift becomes a rendering consequence rather than an authored lie. The conversion then lives
+in exactly one place — the record writer — and everything downstream reads one kind of number.
+
+**Not chosen unilaterally.** (b) changes shipped lighting for every existing torch, and the 40-unit
+contract in `content/visual/things.rd` was tuned by hand against the current meaning. That is a
+content-visible change, so it is the user's call.
+
+**Blocks P2 only.** P0a/P0/P0b/P1 are all landed and independent of it.
