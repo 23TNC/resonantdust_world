@@ -54,6 +54,28 @@ const TILE_DIM = 256;
 /** Slots per tile in `presence` and `light`: 8 x u16 = 128 bits = exactly one px. */
 export const TILE_SLOTS = 8;
 
+/** Lights per texel in the slot map — 8 px, one per light ([F3](forks.md#f3): the map is 8x wide and
+ *  a fragment derives its light from x, so all 8 draw in ONE pass with no MRT). */
+export const LIGHT_SLOTS = 8;
+
+/** Per-light contributions are stored DIVIDED BY 4 ([F2](forks.md#f2)).
+ *
+ *  `RGB10_A2` is normalised 0..1, but the blit this replaces clamped at `vec3(4.0)` — **4x overbright
+ *  is shipped behaviour**, not an accident. Storing `c/4` keeps that ceiling; ten bits over a 0..4
+ *  range still gives 256 levels per unit interval, which is exactly the precision the old 8-bit-per-
+ *  channel accumulator delivered. Same 4 bytes as RGBA8, and fixed-point so blending is core ES 3.0. */
+export const LIGHT_SCALE = 4;
+
+/** Encode a linear contribution into a `RGB10_A2` channel value (0..1023). */
+export function encodeLightChannel(c: number): number {
+  return Math.round(Math.max(0, Math.min(1, c / LIGHT_SCALE)) * 1023);
+}
+
+/** Decode it back. `encode -> decode` is lossy only by the 10-bit quantum. */
+export function decodeLightChannel(v: number): number {
+  return (v / 1023) * LIGHT_SCALE;
+}
+
 /** Dev-mode lane assertion. A value too wide for its lane would otherwise truncate SILENTLY and
  *  surface as a wrong sprite or a phantom shadow — the failure class that costs a day on the GPU
  *  because nothing on the CPU side ever complained. */

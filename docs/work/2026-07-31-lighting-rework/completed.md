@@ -180,3 +180,25 @@ not per light.
 
 **Verified:** page loads clean, `getError()` 0, frame unchanged at 1 draw / 0.030 ms. The record layer
 still costs the render path nothing, because nothing renders from it yet.
+
+## 2026-07-31 · P3 (1/5) — the ¼-scale slot encoding
+
+`LIGHT_SLOTS = 8`, `LIGHT_SCALE = 4`, and `encodeLightChannel` / `decodeLightChannel` in
+[`records.ts`](../../../client/webgl/src/game/viewport/records.ts).
+
+Tested through the **real texture path** — a shader writing into an `RGB10_A2` attachment — rather
+than through the TS arithmetic, because the arithmetic was never the risk:
+
+| wrote | stored (0..1) | read back |
+|---|---|---|
+| **4.0** | **1.000** | **4.000** |
+| 2.0 | 0.498 | 1.992 |
+| 1.0 | 0.251 | 1.004 |
+| 0.25 | 0.063 | 0.251 |
+
+**The 4× ceiling holds exactly**, which is the acceptance: the blit this replaces clamped at
+`vec3(4.0)`, so overbright is shipped behaviour and `RGBA8` would have clipped each light at 1.0
+*before* the sum, flattening falloff near bright sources ([F2](forks.md#f2)).
+
+The small drift on the middle rows is the **readback**, not the storage: `readPixels` was taken as
+`RGBA8`, so those numbers are quantised to 8 bits on the way out while the texture holds 10.
