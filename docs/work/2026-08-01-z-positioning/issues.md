@@ -92,8 +92,12 @@ not one fetched back from the record. It is write-only.
 with a definition default, and with layer gone the definition has no use for the lane.
 
 **Range.** `u8` units = 255 units = **15.94 tiles ≈ `ZONE_DIM`**, and `frame.span` caps a prim at 16
-tiles — so a prim can be up to **16 tiles cubed**, symmetric in all three axes. `fine.z` is `u4` px
-within a unit, matching `fine.x`/`fine.y`, which covers `UNIT` at `SQUARE` 256 exactly.
+tiles — so a prim can be up to **16 tiles cubed**, symmetric in all three axes.
+
+`fine.z` is `u4` px within a unit, matching `fine.x`/`fine.y`. **SQUARE is 128, so `UNIT` is 8 px and
+the fine lanes only ever use 0–7 — half the nibble.** They are `u4` for headroom, per the design's own
+reasoning: `SQUARE` is documented as *"128px, 64px minimum, 256 maximum"*, and at that maximum a unit
+is 16 px and needs the fourth bit. The extra bit is a `SQUARE` dial, not a current requirement.
 
 **One doc line needs updating with it**: *"BLUE and ALPHA are copied from the definition"* stops being
 literally true — BLUE's low 16 bits become the prim's own definition index, and `seed`/`rotation` move
