@@ -178,9 +178,16 @@ export class RecordSync {
         // texture) keep the box bottom.
         const bbA = p.textureName && resolver ? resolver.opaqueBBox(p.textureName) : null;
         const ay = p.y + (bbA ? (bbA.fy + bbA.fh) * p.height : p.height);
+        // P5: FINE position — quantise to SIXTEENTHS of a unit in one rounding (carry-safe:
+        // the integer unit is the high bits of the same number), so a gliding mover's card
+        // and light move smoothly instead of stepping whole units.
+        const qx = Math.round((ax / U) * 16);
+        const qy = Math.round((ay / U) * 16);
         rec.writePrim(idx, {
-          unitX: Math.round(ax / U) & 0xffff,
-          unitY: Math.round(ay / U) & 0xffff,
+          unitX: (qx >> 4) & 0xffff,
+          unitY: (qy >> 4) & 0xffff,
+          fineX: qx & 15,
+          fineY: qy & 15,
           // P3: the LIGHT HEIGHT rides unit.z (the DSL authors tiles; records want units).
           // Omitting it left every emitter at Lz = 0, which degenerates the occlusion solve —
           // the giant streak shadows P1b noted.
@@ -207,10 +214,18 @@ export class RecordSync {
         const tx = Math.floor(ax / SQUARE);
         const ty = Math.floor(ay / SQUARE);
         if (p.textureName) {
-          const tkey = (((tx + 2048) & 0xffff) << 16) | ((ty + 2048) & 0xffff);
-          let list = byTile.get(tkey);
-          if (!list) byTile.set(tkey, (list = []));
-          list.push({ index: idx, layer: p.zIndex ?? 0 });
+          // P5 (user design): a prim occupies presence in EVERY tile its drawn box
+          // x-overlaps — the wolf's 2-tile card must be FOUND by receiver resolution (and
+          // the caster walk) from either tile, not just its anchor's. y stays the base row:
+          // the card rises north and the consumers already y-scan for the overhang.
+          const tx0 = Math.floor(p.x / SQUARE);
+          const tx1 = Math.floor((p.x + p.width - 1) / SQUARE);
+          for (let t = tx0; t <= tx1; t++) {
+            const tkey = (((t + 2048) & 0xffff) << 16) | ((ty + 2048) & 0xffff);
+            let list = byTile.get(tkey);
+            if (!list) byTile.set(tkey, (list = []));
+            list.push({ index: idx, layer: p.zIndex ?? 0 });
+          }
         }
         if (L) emitters.push({ index: idx, tileX: tx, tileY: ty,
                                reach: Math.max(1, Math.min(REACH_MAX_TILES, Math.round(L.reach / SQUARE))) });

@@ -24,19 +24,15 @@
                 2 &thing.span set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
-                ; MATERIAL variation on the packed map: the conifer's albedo splits into
-                ; ch0 = foliage (#b7cf5d) + ch1 = trunk (#b0754f) (see `art split_layers
-                ; world/conifer`). The canonical reconstruction is
-                ;   out = packed_residual + packed.R*jitter(tint0) + packed.G*jitter(tint1)
+                ; The conifer's albedo splits into ch0 = foliage + ch1 = trunk (see `art
+                ; split_layers world/conifer`). The canonical reconstruction is
+                ;   out = packed_residual + packed.R*tint0 + packed.G*tint1
                 ; so BOTH channels must set their base-colour tint (else that region's
-                ; colour, subtracted into the residual, is lost). ch0 (foliage) also binds
-                ; the `strand` material so the needles gain fine hue/chroma variation —
-                ; colour, not light; ch1 (trunk) is tint-only (no jitter).
-                "pineneedle &thing.packed.0.material set
+                ; colour, subtracted into the residual, is lost). TINT-ONLY by user call
+                ; (lighting-visual P5): no material binding — no hue/chroma jitter on the
+                ; albedo, no RNM detail on the normal; the reconstruction is exact under
+                ; identity tint and the baked normal stays the smooth generated one.
                 #46d64f &thing.packed.0.tint set
-                ; ch1 (trunk): the bark material (material-system P5) — mild mottled relief,
-                ; no hue swing; the natural base colour reconstructs the brown faithfully.
-                "bark &thing.packed.1.material set
                 #b0754f &thing.packed.1.tint set
                 0 return
             @on_destroy>

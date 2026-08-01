@@ -122,7 +122,7 @@ void main() {
     if (li == NONE) continue;
     uvec4 lrec = fetchPrim(li);
     if (((lrec.z >> 26) & 3u) == 0u) continue;               // F9: not an emitter any more
-    vec2  L  = vec2(float(lrec.x >> 16), float(lrec.x & 0xffffu));
+    vec2  L  = primPos(lrec);       // P5: fine-refined emitter position
     float Lz = float(lrec.y >> 24);
     float reach = reachUnitsFromB(lrec.z);
     if (reach <= 0.0 || distance(P, L) >= reach) continue;   // F6 bounds the whole search

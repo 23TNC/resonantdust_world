@@ -305,7 +305,9 @@ export class WorldBridge {
       const materialId = table[base + i * 2];
       const tint = table[base + i * 2 + 1];
       channels.push({ materialId, tint });
-      if (materialId > 0) bound = true;
+      // lighting-visual P5: a TINT-ONLY channel (material 0) is a real binding — the split
+      // reconstruction needs the tint even with no jitter material (the conifer's case).
+      if (materialId > 0 || tint > 0) bound = true;
     }
     return bound ? channels : undefined;
   }

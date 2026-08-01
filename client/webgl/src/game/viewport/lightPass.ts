@@ -136,7 +136,7 @@ void main() {
   uint emitType = (rec.z >> 26) & 3u;
   if (emitType == 0u) { fragColor = vec4(0.0); return; }
 
-  vec2  Lpos      = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));   // unit.x | unit.y
+  vec2  Lpos      = primPos(rec);   // P5: fine-refined emitter position
   uint  intensity = intensityFromB(rec.z);
   float reach     = reachUnitsFromB(rec.z);
   if (intensity == 0u) { fragColor = vec4(0.0); return; }
@@ -150,7 +150,7 @@ void main() {
   if (recvIdx != 0u) {
     uvec4 rrec = fetchPrim(recvIdx);
     if (((rrec.z >> 28) & 3u) != 0u) {
-      float baseY = float(rrec.x & 0xffffu);
+      float baseY = primPos(rrec).y;   // P5: fine-refined receiver base
       targetH = max(0.0, baseY - P.y);
       Puse = vec2(P.x, baseY);
     }
@@ -204,6 +204,10 @@ void main() {
       int uy = pmod(uty, uRows) * uUnitT + int((Puse.y - float(uty) * UPT) * float(uUnitT) / UPT);
       uvec4 sh = texelFetch(uShadow, ivec2(ux * 3, uy), 0);   // px 0 = ground casters
       uint caster = shadowSlot(sh, slot);
+      // P5 (user): a prim NEVER casts onto itself — a texel owned by receiver r skips r as
+      // its own caster (the ray from the light to a point on r's card clips r's silhouette
+      // by construction; testing it painted self-shadow bands on the wolf's flank).
+      if (caster == recvIdx) { caster = 0u; }
       if (caster != 0u) {
         gated = true;
         occluded = occludesAt(caster, Lpos, float(rec.y >> 24), Puse, targetH);
@@ -308,7 +312,7 @@ void main() {
   if (uPrimIndex == 0) { fragColor = vec4(0.0); return; }
   uvec4 rec = fetchPrim(uint(uPrimIndex));
   if (((rec.z >> 26) & 3u) == 0u) { fragColor = vec4(0.0); return; }
-  vec2  Lpos      = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
+  vec2  Lpos      = primPos(rec);   // P5: fine-refined emitter position
   uint  intensity = intensityFromB(rec.z);
   float reach     = reachUnitsFromB(rec.z);
   float d = distance(P, Lpos);
@@ -352,6 +356,8 @@ uniform int uRows;
 uniform int uDilateY;
 out uvec4 fragColor;
 
+${LIGHT_LANES_GLSL}
+
 const float UPT = ${UNITS_PER_TILE}.0;
 const int   TILE_DIM = 256;
 
@@ -372,7 +378,7 @@ bool covers(uint r, vec2 P) {
   if (r == 0u) return false;
   uvec4 rec = fetchPrim(r);
   if (((rec.z >> 28) & 3u) == 0u) return false;              // receive_type 0 -- not a receiver
-  vec2 C = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
+  vec2 C = primPos(rec);            // P5: fine-refined — coverage glides with the mover
   uint prot = (rec.z >> 10) & 0xfu;
   uvec4 d = fetchDef(rec.y & 0xffffu, prot);
   int subXi = int(d.y >> 24);

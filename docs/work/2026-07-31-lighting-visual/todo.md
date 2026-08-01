@@ -90,3 +90,27 @@ for the existing toroidal maps"** for the lighting window._
 - [x] The zoom sweep: cold loads at zoom 2 / 1 / 0.5 / 0.25 at the fixture — pools
       project 16 tiles, shadows grounded, walls lit, no window edges. Acceptance:
       captures in `completed.md`; the user's eyes close the stream.
+
+## P5 — the user's second pass (2026-08-01)
+
+_Directives: strip the material from the tree's albedo + normal; fine position in the
+lighting records so shadows GLIDE instead of stepping by units; shadows must land ON a
+mover that spans multiple tiles — "I'm guessing it will need to occupy presence in both
+tiles."_
+
+- [x] Remove the conifer's material bindings (`packed.0.material` pineneedle,
+      `packed.1.material` bark) keeping both channel TINTS (the colour reconstruction is
+      exact under identity tint). Acceptance: the tree renders clean albedo (no mottle)
+      and smooth normal (no RNM detail) on screen.
+- [x] Write + decode the `fine.x/fine.y` lanes (u4 each, 16ths of a unit): the
+      reconciler packs `round(pos·16)` carry-safe; ONE shared `primPos()` decode feeds
+      every consumer (slot Lpos, occlusion C, receiver covers/baseY, gather L).
+      Acceptance: a moving prim's shadow glides smoothly on screen; `__lightexact` still
+      bit-identical.
+- [x] Register a prim's presence in EVERY tile its drawn box x-overlaps (the wolf's
+      2-tile card), not just its anchor tile. Acceptance: `__zprobe` on the wolf's
+      off-anchor tile resolves texels to the wolf's record; a torch shadow lands on the
+      wolf while it straddles tiles; droppedReceivers stays 0 at the fixture.
+- [x] A prim never casts onto ITSELF (user): the refine skips the stored caster when it
+      equals the texel's receiver. Acceptance: no self-shadow bands on the wolf/human
+      flank under a torch; `__lightexact` bit-identical.

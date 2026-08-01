@@ -84,6 +84,13 @@ float lightFalloff(float d, float reach, float I) {
   float at = I / (1.0 + (d / d0) * (d / d0));
   return at * clamp((reach - d) / (0.15 * reach), 0.0, 1.0);
 }
+// lighting-visual P5: FINE position — the u4 sixteenth lanes (G bits 20-23 / 16-19) refine the
+// u16 integer unit, so a gliding mover's light, card and shadow move SMOOTHLY instead of
+// stepping a whole unit at a time. ONE decode; every consumer of a record position calls it.
+vec2 primPos(uvec4 rec) {
+  return vec2(float(rec.x >> 16)     + float((rec.y >> 20) & 0xFu) / 16.0,
+              float(rec.x & 0xffffu) + float((rec.y >> 16) & 0xFu) / 16.0);
+}
 `;
 
 /** The shared occlusion test (lighting-correctness P3) — ONE definition, injected into the
@@ -134,7 +141,7 @@ bool occludesAt(uint c, vec2 L, float Lz, vec2 P, float targetH) {
   uvec4 rec = fetchPrim(c);
   uint ct = (rec.z >> 30) & 3u;
   if (ct == 0u) return false;
-  vec2 C = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
+  vec2 C = primPos(rec);            // P5: fine-refined — the card glides with the mover
   uint block = rec.y & 0xffffu;
   uint prot  = (rec.z >> 10) & 0xfu;
   if (ct == 2u) {

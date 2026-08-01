@@ -117,6 +117,40 @@ attach, the enclosure lights inside and spills out, dirt/sand/water regions read
 window edges, no seams, no console errors. Lod-1 wall surface healthy
 ([I4](issues.md#i4) — the pre-fix black reading does not reproduce).
 
+## 2026-08-01 · P5 — clean tree, fine-position lighting, multi-tile receivers, no self-shadow
+
+**The conifer's materials removed** (user): both `packed.N.material` bindings dropped,
+both channel TINTS kept — the split reconstruction is exact under identity tint, so the
+tree keeps its colours with NO albedo mottle and NO RNM normal detail. This exposed a
+REAL client bug: `WorldBridge.packedFor` treated a def as "bound" only when a channel
+had a MATERIAL, so tint-only channels were dropped and the tree rendered residual-gray —
+fixed (`materialId > 0 || tint > 0`).
+
+**Fine position** (user): the reconciler quantises anchors to SIXTEENTHS of a unit in
+one carry-safe rounding (`round(pos·16)`, unit = high bits) into the previously-unused
+`fine.x/fine.y` lanes; ONE shared `primPos()` decode in `LIGHT_LANES_GLSL` feeds every
+position consumer — slot Lpos (both writers), occlusion `C`, receiver `covers()` +
+`baseY`, the gather's `L`. Probed live: mover records carry fractional units
+(wolf 1696.375/851.25 mid-glide) — light, card and shadow now track at 1/16 unit
+instead of stepping whole units. `__lightexact` bit-identical.
+
+**Multi-tile presence** (user design): a prim registers in EVERY tile its drawn box
+x-overlaps (base row; consumers already y-scan the overhang), so the wolf's ~2-tile card
+is found by receiver resolution and the caster walk from either tile. Verified
+structurally: the 2-tile conifer registers its span, neighbour-tile texels resolve BY
+SILHOUETTE (edge texels where its art is transparent correctly stay ground);
+droppedReceivers 0 at the fixture.
+
+**No self-shadow** (user): the refine skips the stored caster when it equals the texel's
+own receiver — a prim's card is never occluded by its own silhouette.
+
+**The boot-race + the silent catch** (found while landing this): fast IndexedDB texture
+packs emit BEFORE the first cache partition, whose `dirty.clear()` discarded the marks —
+the world stayed baked GEO forever (the flat-squares regression). Fixed: the first
+partition calls `invalidateAll()`. The co-pack's silent `catch {}` that hid the whole
+hunt now `console.warn`s. Cold-load verified: full textured scene, clean green conifers,
+all pools, grounded shadows.
+
 **The successor stream opened**:
 [`2026-07-31-lighting-performance`](../2026-07-31-lighting-performance/README.md) —
 steady-state gating (skip-when-unchanged, per-light scissored deltas, dirty-rect

@@ -394,6 +394,13 @@ export class SquareCache {
     this.aimed = true;
 
     let carried = 0;
+    if (!prev) {
+      // lighting-visual P5: the FIRST partition re-marks every resident square — any
+      // invalidateAll that fired before the grid existed (fast IndexedDB texture packs
+      // emitting at boot) marked a dirty set this method just cleared. Without this a
+      // boot-race leaves the world baked geo forever.
+      this.invalidateAll();
+    }
     if (prev) {
       this.reproject(prev);
       // Carry each tile's BAKED flag across: a tile that was baked and is still in range keeps its

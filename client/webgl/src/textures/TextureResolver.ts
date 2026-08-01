@@ -342,8 +342,10 @@ export class TextureResolver {
         this.packedHash.set(stem, hash);
         this.emit();
       }
-    } catch {
-      /* LOD unavailable — stay on the current tier */
+    } catch (e) {
+      // LOD unavailable — stay on the current tier. WARN, don't swallow: a silent catch here
+      // once hid a whole-world geo regression (lighting-visual P5) behind zero console output.
+      console.warn(`[resolver] co-pack failed for ${stem}@${size}:`, e);
     } finally {
       this.pending.delete(pkey);
     }
