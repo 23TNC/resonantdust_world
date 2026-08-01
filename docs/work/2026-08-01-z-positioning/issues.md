@@ -280,32 +280,48 @@ The item existed to free bits. The definition record has no bit pressure, so the
 recorded here rather than decided silently.
 
 
-## I17 — Small caster elevations change nothing; large ones change a lot {#i17}
+## I17 — Shadow-TEXEL COUNTS are not reproducible; only `occlusionDiffering` is {#i17}
 
-P1's mixed-height sweep, 131,072 slot comparisons per row:
+**Rewritten — the original filing was wrong**, and wrong in a way worth keeping visible.
 
-| caster elevations | shadow texels | corridorWalk | identityDiffering |
-|---|---|---|---|
-| all 0 | 4254 | 3702 | 41 |
-| **0/4/8/16** | **4254** | **3702** | **41** |
-| 0/8/24/48 | 5854 | 5419 | 76 |
-| all 32 | 2477 | 2043 | 0 |
+I first recorded this as "small caster elevations change nothing, large ones change a lot", having
+seen `0/4/8/16` produce counts byte-identical to all-zero. Re-running the same inputs A/B/A destroyed
+that reading:
 
-The second row is **byte-identical** to the first across three independent counters. That is not the
-signature of "a small change had a small effect".
+| run | caster elevations | shadow texels | corridorWalk | occlusionDiffering |
+|---|---|---|---|---|
+| 1 | all 0 | 5854 | 5419 | **0** |
+| 2 | 0/4/8/16 | 4254 | 3702 | **0** |
+| 3 | **all 0** | **5854** | 5419 | **0** |
+| 4 | all 4 | 4254 | 3702 | **0** |
+| 5 | all 8 | 5090 | 4646 | **0** |
+| 6 | all 16 | 5606 | 5163 | **0** |
+| 7 | **all 0** | **5131** | 4906 | **0** |
 
-**The writes are real.** A probe taken immediately after the same assignment reports 6 casters at each
-of 0, 4, 8 and 16, with card heights of 13 and 24 units. So the records carry the elevations when the
-gather runs.
+**Rows 1, 3 and 7 are the same input.** They give 5854, 5854 and 5131. The metric varies by ~12% on
+identical records, so it was never measuring what I read into it.
 
-**And the geometry says it should matter.** With lights at `Lz = 40` and a 24-unit card, raising it 4
-units moves the occluded range from `t ≥ 0.4` to `t ∈ [0.3, 0.9]` — a different set of slots, not a
-slightly different one.
+**Cause:** the shadow buffer is **ping-ponged and incremental** — the `incumbent` tier is precisely
+previously-computed shadows surviving into the next pass. `nonZeroBefore` therefore reports
+accumulated state, not a pure function of the current records.
 
-**Candidates, none verified:** the self-test's own per-caster save/restore; a `RecordSync` pass
-between the write and the measurement resetting `unit.z`; a quantisation somewhere between the record
-and the shader that floors small elevations.
+### What this invalidates
 
-**Does not block P1** — the acceptance is `occlusionDiffering = 0`, which holds at every mix. It does
-matter for **P3**, where the pawn's head elevation is about **5.92 units** — squarely inside the range
-that appears to do nothing. Resolve before trusting P3's result.
+Every texel-count delta quoted earlier in this stream is **noise**, not signal:
+
+- P0b's A/B — "4242 → 4253, +0.26%, tracks caster count". It does not track anything; ~12% is the
+  noise floor. The conclusion (the relayout changed no behaviour) still stands, but on the *other*
+  evidence: `roundTrip.exact`, the six lane assertions, `occlusionDiffering = 0`, and `__elev`
+  decoding a fixture's declared `block` and `cardH`.
+- P1's ground-unchanged check — "+1 texel of 4254". Also noise. That claim does not need measuring
+  at all: at `cElev = 0` the new expressions are `hBot = 0, hTop = subH`, which is the old code
+  character-for-character.
+
+### What survives
+
+**`occlusionDiffering` is 0 in every row above, and in every run this session** — 131,072 slot
+comparisons each. It is computed fresh within a single pass by comparing the corridor walk against an
+exhaustive brute-force reference, so it does not inherit buffer state. **It is the metric to quote.**
+
+**Rule for the rest of this stream: never quote a shadow-texel count as evidence.** Use
+`occlusionDiffering`, `roundTrip`, the lane assertions, and `__elev` decodes against known fixtures.

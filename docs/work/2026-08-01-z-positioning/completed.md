@@ -240,3 +240,27 @@ I do not have an explanation, and the plausible ones (the self-test's own save/r
 between write and measure) are guesses. **Recorded as [I17](issues.md#i17) rather than explained** —
 this stream's predecessor lost time to three confident diagnoses that turned out to be invented, and
 the acceptance that matters (0 differing) does not depend on resolving it.
+
+
+## 2026-08-01 · Correction — the texel counts quoted above are noise ([I17](issues.md#i17))
+
+Re-running identical inputs A/B/A shows the shadow-texel count varying by ~12% with the records held
+constant (5854 → 5854 → 5131 for the same all-zero elevations). The shadow buffer is ping-ponged and
+incremental — the `incumbent` tier *is* carried-over shadows — so `nonZeroBefore` reports accumulated
+state rather than a function of the current scene.
+
+**Struck from the evidence above:** P0b's "shadow texels 4242 → 4253 (+0.26%, tracks caster count)"
+and P1's "shadow texels 4253 → 4254 (+1)". Neither number means anything.
+
+**Both conclusions still hold, on evidence that does not depend on it:**
+
+- **P0b** — `roundTrip.exact` true, all six lane assertions pass, `__elev` decodes a fixture's
+  declared `block: 3` and `cardH: 24`, and `occlusionDiffering = 0` over 131,072 comparisons.
+- **P1's ground case** — needs no measurement: at `cElev = 0`, `hBot = cElev` and
+  `hTop = cElev + subHi` reduce to `hBot = 0.0` and `hTop = subHi`, which is the replaced code exactly.
+- **P1's mixed heights** — `occlusionDiffering = 0` at every elevation set, which is the acceptance
+  as written.
+
+**And I17's original claim is withdrawn entirely.** There is no "small elevations do nothing" effect;
+there was an unreproducible metric. That matters for P3, which I had flagged as at-risk on the
+strength of it — it is not.
