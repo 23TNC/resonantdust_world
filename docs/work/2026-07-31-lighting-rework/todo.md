@@ -61,6 +61,11 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 
 ## P5 — The per-pixel refine
 
+_Two items below are **not reached**, not done: [F12](forks.md#f12) moved the refine to lighting
+resolution, where the design's per-pixel receiver loop does not exist in that form yet. The finding in
+[I2](issues.md#i2) still has to be honoured wherever that loop is eventually written._
+
+
 - [ ] Select the receiver by **coverage first**, then the stored pair. Acceptance: a px covered only by `r6` resolves to `r6` for EVERY light — the design's early `break` picked a different surface per light.
 - [ ] Hoist surface selection out of the light loop, now that it is light-independent. Acceptance: `r.has(px)` is evaluated once per pixel, not up to 8 times, in the pass that dominates cost.
 - [x] Gate the refine on the unit holding a caster ([F5](forks.md#f5)). Acceptance: the gate's selectivity is reported as a measured percentage of pixels, and interior/fully-lit pixels do no texture test.
@@ -79,4 +84,4 @@ queries ([strip I7](../2026-07-31-lighting-strip/issues.md#i7)).
 - [x] Re-measure moving lights at reach 16, zoom 1, inside 8 ms. Acceptance: the largest N that fits, plus the ms at N and N+1 — against the old system's 15–16.
 - [x] Measure resident bytes across every new map. Acceptance: a table against the 83 MiB the strip freed, so the rework's real footprint is known rather than estimated.
 - [x] Record the capability A/B against the strip's four before-images. Acceptance: same camera, same content, side by side — and an honest sentence on anything the new system does NOT do.
-- [ ] Update `VARIABLES.md` with the shipped record layouts. Acceptance: it describes what the code writes, and `docs/intent/2026-07-31-rework.md` retires to `../archive/` once its content lives in the authoritative file.
+- [x] Update `VARIABLES.md` with the shipped record layouts. Acceptance: it describes what the code writes, and `docs/intent/2026-07-31-rework.md` retires to `../archive/` once its content lives in the authoritative file.

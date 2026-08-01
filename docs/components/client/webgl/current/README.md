@@ -41,5 +41,5 @@ the corpus is hours of GPU time.
 
 `shadowGather.ts` and `coldShadowData.ts` (4 348 lines), ~99 MiB of render targets, and the whole
 unified data texture with every band on it. The successor is designed in
-[`intent/2026-07-31-rework.md`](../../../../intent/2026-07-31-rework.md) and built by
+`intent/2026-07-31-rework.md` and built by
 [`work/2026-07-31-lighting-rework`](../../../../work/2026-07-31-lighting-rework/README.md).

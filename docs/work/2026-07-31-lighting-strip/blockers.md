@@ -4,7 +4,7 @@ _No open blockers._
 
 B1 asked what replaces the stripped system, and carried "does NOT block the strip" in its own title —
 which is the tell that it was never a blocker. **It was answered on 2026-07-31**: the user authored
-[`docs/intent/2026-07-31-rework.md`](../../intent/2026-07-31-rework.md), and the implementing stream is
+`docs/intent/2026-07-31-rework.md`, and the implementing stream is
 [`2026-07-31-lighting-rework`](../2026-07-31-lighting-rework/README.md).
 
 The five inputs B1 promised the answer would be made against were delivered:

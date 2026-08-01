@@ -45,14 +45,30 @@ int pmod(int a, int m) { return ((a % m) + m) % m; }
 vec3 lightAt(vec2 world) {
   int tx = int(floor(world.x / SQ)), ty = int(floor(world.y / SQ));
   if (tx < uLWinCol || tx >= uLWinCol + uLCols || ty < uLWinRow || ty >= uLWinRow + uLRows)
-    return vec3(uAmbient);
+    return vec3(uAmbient);   // outside the lit window entirely
   // LINEAR from the window origin, NOT toroidal: the slot pass writes texel x -> winCol + x/uLSlot,
   // so reading it mod cols lands the light in the wrong slot whenever winCol is not a multiple of
   // cols. The writer and the reader must share ONE addressing rule; this is the writer's.
-  int sx = tx - uLWinCol, sy = ty - uLWinRow;
-  float lx = fract(world.x / SQ), ly = fract(world.y / SQ);
-  ivec2 t = ivec2(sx * uLSlot + int(lx * float(uLSlot)), sy * uLSlot + int(ly * float(uLSlot)));
-  return vec3(uAmbient) + texelFetch(uLightmap, t, 0).rgb * uLightRead;
+  //
+  // MANUAL BILINEAR, four taps, each clamped inside the map. The lightmap is 64/tile against art at
+  // 128 px/tile, so IT is the blocky thing on screen -- not the art. Hardware LINEAR is not used
+  // because the map is RGBA32F holding integer levels and the sampler state is shared; doing the
+  // weights here keeps the filter local to this read and cannot leak into the accumulator, whose
+  // exactness the whole delta path depends on.
+  float fx = (world.x / SQ - float(uLWinCol)) * float(uLSlot) - 0.5;
+  float fy = (world.y / SQ - float(uLWinRow)) * float(uLSlot) - 0.5;
+  vec2 f = fract(vec2(fx, fy));
+  ivec2 b = ivec2(floor(fx), floor(fy));
+  int maxX = uLCols * uLSlot - 1, maxY = uLRows * uLSlot - 1;
+  vec3 acc = vec3(0.0);
+  for (int j = 0; j < 2; j++) {
+    for (int i = 0; i < 2; i++) {
+      ivec2 s = ivec2(clamp(b.x + i, 0, maxX), clamp(b.y + j, 0, maxY));
+      float wgt = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
+      acc += texelFetch(uLightmap, s, 0).rgb * wgt;
+    }
+  }
+  return vec3(uAmbient) + acc * uLightRead;
 }
 void main() {
   vec4 outColor = texture(uAlbedo, vUV);

@@ -1,7 +1,7 @@
 # Lighting + shader rework — build the new method — 2026-07-31
 
 _Component: [`client/webgl`](../../components/client/webgl/). The user's design is
-[`docs/intent/2026-07-31-rework.md`](../../intent/2026-07-31-rework.md) — **that file is the source of
+`docs/intent/2026-07-31-rework.md` — **that file is the source of
 truth for record layouts**; this stream implements it. Plan in [`todo.md`](todo.md); the adjustments I
 made for performance and error handling are in [`forks.md`](forks.md)._
 

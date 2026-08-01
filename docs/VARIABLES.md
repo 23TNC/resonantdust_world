@@ -346,6 +346,67 @@ filtered at all, `zdepth` encodes a discrete `0x80 | baseRow` that averaging sil
 lightmap must stay exactly-representable to remain invertible. Linear is permitted for albedo/normal/surface
 only.
 
+## Lighting data textures (`client/webgl`)
+
+_Shipped by [`work/2026-07-31-lighting-rework`](work/2026-07-31-lighting-rework/README.md), verified @ 5e33c84a._
+
+**Everything is a prim.** One flat `u16` index space — no `set` nibble, no billboard/light/tile
+taxonomy. Three type lanes say what a prim *does*: `cast_type`, `receive_type`, `emit_type`. **Index 0
+is the global sentinel** in every index space, so one comparison covers "empty slot", "no caster",
+"unresolved definition", and no magic value is carved out of the `u16` range.
+
+```
+prim_data                                          1 px per prim, RGBA32UI
+  R  u16 unit.x            | u16 unit.y
+  G  u8  unit.z            | u4 fine.x | u4 fine.y | u16 definition_index
+  B  u2  cast_type (30-31) | u2 receive_type (28-29) | u2 emit_type (26-27)
+     u4  layer (22-25)     | u8 seed (14-21) | u4 rotation (10-13) | u10 intensity (0-9)
+  A  u8  color.1 | u8 color.2 | u8 color.3 | u8 color.4      (.4 = emitted light colour)
+
+definition_data                     16 sequential px per definition, indexed by ROTATION
+  R  u12 frame.x | u12 frame.y | u4 frame.span | u2 anchor.x | u2 anchor.y
+  G  u8  subframe.x | u8 subframe.y | u8 subframe.width | u8 subframe.height
+  B  (as prim B — the defaults a prim copies)
+  A  u8  color.1 | u8 color.2 | u8 color.3 | u8 color.4
+```
+
+`frame.span` and `subframe.width`/`height` are **biased**: 0 means 1, 15 means 16. A span of 0 would
+be no frame, so the natural encoding wastes the one value it cannot use and gets the maximum wrong by
+one. `subframe.x`/`y` are genuine 0-based offsets and take **no** bias — the two conventions sit in
+adjacent lanes of the same channel.
+
+`base + rotation` is the whole addressing rule for art. It subsumes the n/s perpendicular caster card,
+the e/w mirror and the 16-cell autotile table: three special cases collapse into one add.
+
+**Reach is DERIVED from `u10 intensity`**, not stored — nothing has spare bits, and reach *is* the
+distance at which a light falls below the visible threshold, so a field would be a second source of
+truth. `L(d) = I / (1 + (d/d0)²)` solved at `L = 1/255`, `d0` = 1 tile; full intensity reaches exactly
+**16 tiles**. One implementation in `lightReach.ts`, in TS **and** GLSL in the same file, because the
+CPU builds each tile's light set from it and the GPU bounds its walk with it.
+
+```
+light        1 px per TILE, RGBA32UI   8 x u16 prim indices — the 8 nearest emitters reaching it
+presence     1 px per TILE, RGBA32UI   8 x u16 — slot 0 = the tile; 1..7 receivers, LAYER-SORTED
+shadow       3 px per UNIT, RGBA32UI   ping-ponged
+  px 0   8 x u16 — the caster occluding each light, for the ground
+  px 1   4 x (u16 caster, u16 receiver) — lights 0..3
+  px 2   4 x (u16 caster, u16 receiver) — lights 4..7      (the split is `l >= 4`)
+```
+
+`presence` being layer-sorted is load-bearing, not cosmetic: the resolution order walks it topmost-
+first and takes the first receiver covering the pixel. Over-cap eviction keeps the **topmost**.
+
+```
+light slots  LIGHT_SLOTS px per lighting texel, RGB10_A2   one light each, value stored /4
+summed map   1 px per lighting texel, RGBA32F              integer QUANTISATION LEVELS
+```
+
+Slots are stored at **¼ scale** because the display clamps at 4.0 — 4× overbright is shipped
+behaviour, and a 0..1 format would clip each light *before* the sum. The summed map holds **integer
+levels, not floats**: a deposit and its later withdrawal then cancel bit-exactly (integers below 2²⁴
+are exact in FP32), which is what makes removing a light an exact operation rather than an
+approximate one. Slots need no such care — they are overwritten, never accumulated.
+
 ## Removed
 
 `valid_at`, `cold_reference`, `hot_reference`, `reference_id`, `event_word` — see

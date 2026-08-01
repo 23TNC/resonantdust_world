@@ -2,7 +2,7 @@
 
 _Decision points, options, which we chose and why. F1–F6 are performance adjustments to the user's
 design; F7–F10 are error handling. Everything here is an addition to
-[`docs/intent/2026-07-31-rework.md`](../../intent/2026-07-31-rework.md), not a change to it — where
+`docs/intent/2026-07-31-rework.md`, not a change to it — where
 this file and that file disagree about a record layout, **that file wins**._
 
 ## F1 — Per-light slots for writing, one summed map for reading {#f1}

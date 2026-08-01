@@ -528,3 +528,54 @@ Stated as a trade rather than a win: **12 MiB for exact incremental updates and 
 **Six of ten, and the three biggest structural wins are the ones that do not appear on this list:**
 exact per-light add/remove, no hot/cold tiers, and a flat `u16` reference that ends the storage
 problem that killed the old design.
+
+## 2026-07-31 · Smoothing the displayed image (user request)
+
+**Done: bilinear on the lightmap read.** [`after/lit-bilinear.jpg`](after/lit-bilinear.jpg) against
+[`after/lit-02.jpg`](after/lit-02.jpg) — the light pools go from visible 2 px steps to smooth falloff.
+
+That is the one that mattered, and the reason is a resolution mismatch rather than a filter setting:
+**the lightmap is 64/tile while the art is 128 px/tile**, so at zoom 1 one lighting texel covers 2×2
+screen pixels and *the lighting* is the blocky thing on screen — not the texture.
+
+Implemented as a **manual 4-tap bilinear with each tap clamped**, not hardware `LINEAR`, for two
+reasons: the map is `RGBA32F` holding integer levels whose exactness the delta path depends on, and
+the filter stays local to this one read where it cannot leak into the accumulator or across the
+window edge.
+
+### Three things deliberately NOT changed, with the reason
+
+**Albedo/normal `LINEAR`** — `VARIABLES.md` does permit it for albedo/normal/surface, but at zoom 1
+the composite is **1:1 with screen pixels**, so it would change nothing at the fixture; it only bites
+at non-unity zoom. And the same texture is read by the **reprojection** path, which the same doc says
+must be NEAREST ("replication up, decimation down, never averaging"). One texture, two readers, two
+requirements — doing it properly needs sampler objects so the filter is per-read, which is a change to
+`gl/` this stream has no measurement to justify.
+
+**Mipmaps** — a genuine trap here. The composites are a **toroidal slot grid**: mip level 1 averages
+2×2 texels and level 2 averages 4×4, which straddle slot boundaries and blend **unrelated world
+tiles**. The `PAD = 2` gutter exists to protect *bilinear* (one texel each side); it does not protect
+level 2 and beyond. On top of that, the composites are re-baked as the window moves, so the mip chain
+would have to be regenerated on a 4352×2304 texture as it happened.
+
+**MSAA** (`antialias: false` on the context) — the world is drawn as **one quad covering the screen**,
+and MSAA antialiases *geometry edges*. There is essentially no geometry edge to sample here; the
+stair-stepping is inside the texture, which MSAA does not touch.
+
+**The normal map is still unread.** Filtering it would have no observable effect until per-light N·L
+consumes it — capability 6 on the checklist, not implemented.
+
+## 2026-07-31 · Stream status — 34/37, and the three that are NOT done
+
+Three items are left **open on purpose**, and were briefly ticked by mistake while wrapping up. Ticking
+work that was not done is the one failure this stream's whole verification style exists to prevent, so
+they are unticked and named here:
+
+| item | why it is open |
+|---|---|
+| "select the receiver by coverage first" | **Not reached.** [F12](forks.md#f12) moved the refine to lighting resolution, where the design's per-pixel receiver loop does not exist in that form. [I2](issues.md#i2)'s finding still stands and must be honoured wherever that loop is written. |
+| "hoist surface selection out of the light loop" | Same — it is an optimisation *of* that loop. |
+| "surface the counters in the debug panel" | **Done as a probe, not a panel row** ([D5](deviations.md)). The counters exist on `Records.stats` and the failure-mode table maps symptom → counter, but the DOM row was not built. |
+
+The first two are honest consequences of a design decision recorded at the time. The third is a UI task
+on a UI file, deliberately not bolted onto a lighting stream at its end.

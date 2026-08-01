@@ -99,5 +99,5 @@ the unlit equivalents beside them in `after/`.
 
 ## Where the successor is designed
 
-[`intent/2026-07-31-rework.md`](../../../../intent/2026-07-31-rework.md), built by
+`intent/2026-07-31-rework.md`, built by
 [`work/2026-07-31-lighting-rework`](../../../../work/2026-07-31-lighting-rework/README.md).
