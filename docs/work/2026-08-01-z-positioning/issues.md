@@ -3,27 +3,26 @@
 _Problems hit, candidate solutions, which we chose and why. **Open issues only** — solved ones are
 removed once their resolution is logged in [`completed.md`](completed.md)._
 
-## I1 — Lights have no height, so the caster height test proves nothing {#i1}
+## I1 — WITHDRAWN: I read stale code; lights DO have height {#i1}
 
-**Found while checking whether the head change was already possible; it is my own bug, from
-`2026-07-31-lighting-rework`.**
+I claimed `unitZ` was never written, so `Lz` was 0 and the caster height test collapsed to `0 <= H`.
+**False.** `recordSync.ts:194` writes it from the authored light height:
 
-`placeLights()` and `buildRecords()` both call `writePrim` without `unitZ`, so it defaults to 0 for
-every light. The gather then reads:
-
-```glsl
-float Lz = float(lrec.y >> 24);        // 0, always
-...
-return Lz * (1.0 - t) <= H;            // 0 <= H  -- true for every caster
+```ts
+unitZ: L ? Math.min(255, Math.round((L.height / SQUARE) * UNITS_PER_TILE)) : 0,
 ```
 
-**The height test is not discriminating at all.** Any caster whose card the ray crosses occludes,
-regardless of how tall it is or how high the light sits. That is very likely feeding
-[lighting-rework I13](../2026-07-31-lighting-rework/issues.md#i13) defect 3 ("shadows aren't anchored
-at the base of our billboards"), because with no light height there is no geometry to anchor to.
+And `occludesAt()` does a proper height interpolation along the ray — `h = mix(Lz, targetH, t)`,
+against a bottom-aligned card `[0, subH]`, with the silhouette sampled at `(hTop - h) / subH`. There is
+also a `cast_type 2` branch handling n/s side-frame casters.
 
-**It blocks this whole stream, not just its own fix**: nothing about elevation can be *verified* until
-a light has a height for elevation to be measured against. Hence P0.
+I was describing code I wrote earlier in the same session; `lighting-visual` and
+`lighting-correctness` ran after it and rewrote exactly these parts. **I diagnosed from memory instead
+of re-reading** — the identical failure I had recorded in
+[lighting-rework I13](../2026-07-31-lighting-rework/issues.md#i13) and then repeated twice more in
+conversation.
+
+**The stream's premise survives, narrowed.** See [I9](#i9).
 
 ## I2 — `z` already means draw order in this code {#i2}
 
@@ -181,3 +180,24 @@ convention may make them genuinely equal, and that is the user's call.
 
 The same applies to walking up the billboard (`world.z += sin(θ) * height`), which looks like it wants
 a `world.y` term too, or the card leans as it climbs.
+
+## I9 — The real gap: heights are ISOTROPIC with ground distance {#i9}
+
+Replaces the wrong diagnosis in [I1](#i1) and [I8](#i8).
+
+`Lz`, `targetH` and `hTop` are all in **units** — the same units as x/y ground distance — and
+`h = mix(Lz, targetH, t)` interpolates them as if commensurate. **One unit of height is treated as one
+unit of ground distance.**
+
+That is a projection choice, and an internally consistent one, which is why the shadows read as
+plausible rather than obviously broken. It is also the thing the user's diagrams identify as wrong: the
+ground is foreshortened relative to the screen vertical, so a unit of height and a unit of ground
+distance are **not** the same world length. The missing relationship is exactly the cyan line —
+`tan(world_angle)`.
+
+**This is a metric correction in the height comparison, not a transform written from nothing.** The
+ray maths, the bottom-aligned card, the silhouette sampling and the n/s branch are all already there
+and already coherent. What they lack is the scale factor between the two axes they compare.
+
+Which also means the **drawn** side needs nothing: drawing is flat and screen-aligned, with the
+obliqueness baked into the art.
