@@ -143,7 +143,24 @@ export class RecordSync {
     const byTile = new Map<number, { index: number; layer: number }[]>();
     const emitters: { index: number; tileX: number; tileY: number; reach: number }[] = [];
 
-    for (const [prefix, prims] of [["c", cold], ["w", warm]] as const) {
+    // z-positioning P2b: a carried piece STANDS WHERE ITS CARRIER STANDS. Its own opaque bbox is
+    // no guide — a head's art bottom is the bottom of the head, not the pawn's feet, which left
+    // head and body 4 units apart even with the elevation added back. So the carrier's ground row
+    // is resolved FIRST and the pieces adopt it; the vertical gap between them then IS the piece's
+    // elevation, derived rather than authored, and head and body align by construction.
+    const coldA = [...cold], warmA = [...warm];
+    const groundRowOf = (p: Primitive): number => {
+      const bb = p.textureName && resolver ? resolver.opaqueBBox(p.textureName) : null;
+      return p.y + (bb ? (bb.fy + bb.fh) * p.height : p.height);
+    };
+    const carrierGround = new Map<number, { ax: number; ay: number }>();
+    for (const p of warmA) {
+      if (p.carrierOf === undefined) {
+        carrierGround.set(p.id, { ax: p.x + p.width / 2, ay: groundRowOf(p) });
+      }
+    }
+
+    for (const [prefix, prims] of [["c", coldA], ["w", warmA]] as const) {
       for (const p of prims) {
         const L = p.light;
         if (!p.textureName && !L) continue;      // a flat tint rect neither casts nor emits
@@ -177,8 +194,14 @@ export class RecordSync {
         // the feet — not the frame box's bottom (the letterboxed master's bottom margin put
         // the plan line ~half a tile south of the feet; I1's table). Emit-only prims (no
         // texture) keep the box bottom.
-        const bbA = p.textureName && resolver ? resolver.opaqueBBox(p.textureName) : null;
-        const ay = p.y + (bbA ? (bbA.fy + bbA.fh) * p.height : p.height);
+        // z-positioning P2b (F7): the record holds GAME coordinates — where the prim physically
+        // STANDS — not where it is drawn. For a standalone prim that is its own art bottom; for a
+        // carried piece it is the CARRIER's, and the gap between the two is the piece's elevation.
+        // Everything on the floor takes the first branch with elev 0 — the old expression exactly.
+        const ownGround = groundRowOf(p);
+        const carrier = p.carrierOf !== undefined ? carrierGround.get(p.carrierOf) : undefined;
+        const ay = carrier ? carrier.ay : ownGround + (p.elevation ?? 0);
+        const elev = carrier ? Math.max(0, carrier.ay - ownGround) : (p.elevation ?? 0);
         // P5: FINE position — quantise to SIXTEENTHS of a unit in one rounding (carry-safe:
         // the integer unit is the high bits of the same number), so a gliding mover's card
         // and light move smoothly instead of stepping whole units.
@@ -199,7 +222,13 @@ export class RecordSync {
           // and every downstream reader compares like with like. Without this the lane held a world
           // height for lights and a drawn shift for elevated parts — quantities differing by
           // sin(tilt), silently compared against each other in the height test.
-          unitZ: L ? Math.min(255, Math.round(drawnForWorldHeight((L.height / SQUARE) * UNITS_PER_TILE))) : 0,
+          // A light's authored height is a WORLD height; a drawn part's elevation is already a
+          // drawn shift. Both land in the same lane, so the light converts and the part does not.
+          unitZ: L
+            ? Math.min(255, Math.round(drawnForWorldHeight((L.height / SQUARE) * UNITS_PER_TILE)))
+            : Math.min(255, Math.floor((elev / U) )),
+          // P0b: the sixteenths of the SAME elevation — `unit.z + fine.z/16` is the whole value.
+          fineZ: L ? 0 : Math.max(0, Math.min(15, Math.round(((elev / U) % 1) * 16))),
           definition: def,
           rotation,
           castType,

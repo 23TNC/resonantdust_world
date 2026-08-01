@@ -166,9 +166,15 @@ void main() {
   if (recvIdx != 0u) {
     uvec4 rrec = fetchPrim(recvIdx);
     if (((rrec.z >> 28) & 3u) != 0u) {
-      float baseY = primPos(rrec).y;   // P5: fine-refined receiver base
+      // z-positioning P2b/F8: primPos now returns the receiver's GROUND row (the record holds
+      // GAME coordinates), so this measures height above the GROUND, not above the card's drawn
+      // base. F8 wrote the fix as E + (screenBase - P.y); with game coordinates
+      // screenBase = groundY - E, so it collapses to exactly the line below. The expression is
+      // unchanged and now correct for an ELEVATED receiver, which it was not before: a head's
+      // texels used to be shadow-tested as though the head stood on the floor.
+      float baseY = primPos(rrec).y;   // P5: fine-refined receiver GROUND row
       targetH = max(0.0, baseY - P.y);
-      Puse = vec2(P.x, baseY);
+      Puse = vec2(P.x, baseY);         // the card's plan position = where it STANDS
     }
   }
 

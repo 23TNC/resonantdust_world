@@ -173,7 +173,21 @@ pub struct VisualPart {
   /// bbox all move together.
   pub scale: f64,
   /// Placement offset in TILES relative to slot 0's anchor (`&prim.offset.x/y`, default 0).
+  ///
+  /// **Horizontal plane only.** A part that is genuinely further north on the GROUND uses
+  /// `offset.y`; a part that is off the ground uses [`Self::elevation`]. They look identical on
+  /// screen and mean opposite things to the shadow system, which is why they are separate fields
+  /// (work `2026-08-01-z-positioning`, F5).
   pub offset: (f64, f64),
+  /// Height off the ground in TILES (`&prim.offset.z`, default 0) — the pawn's head, a wall torch,
+  /// a carried tool.
+  ///
+  /// The renderer draws it as a shift **north by the same amount, 1:1**, so it looks exactly like
+  /// an `offset.y`. The difference is what the SHADOW system sees: an elevated part keeps the
+  /// body's ground footprint and casts from there, so body and head produce **one aligned shadow**
+  /// instead of two offset ones. Authoring the same displacement as `offset.y` moves the part to a
+  /// different world position and the shadows separate.
+  pub elevation: f64,
   /// Draw-order offset along the VIEW's depth axis (`&prim.depth`, default 0), in the pawn's own
   /// frame: **positive = toward the viewer when the pawn faces the camera** (pawn-part-placement
   /// F1). The client negates it when the pawn faces AWAY (north), so one authored number covers
@@ -400,6 +414,7 @@ impl Bundle {
         part: rf("part", 0.0) as u32,
         scale: rf("scale", 1.0),
         offset: (rf("offset.x", 0.0), rf("offset.y", 0.0)),
+        elevation: rf("offset.z", 0.0),
         depth: rf("depth", 0.0),
         size: rf("size", 1.0),
         span: rf("span", 1.0),

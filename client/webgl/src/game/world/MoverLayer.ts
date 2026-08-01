@@ -49,7 +49,13 @@ interface MoverPart {
   part: number;
   scale: number;
   offsetX: number;
+  /** Placement offset on the GROUND plane, in tiles — a part genuinely further north. */
   offsetY: number;
+  /** HEIGHT off the ground, in tiles ({@link MoverPart.offsetY}'s opposite in meaning, its twin
+   *  on screen). Drawn as a 1:1 northward shift, so it looks exactly like `offsetY` — but it
+   *  travels to the record as an ELEVATION, so the shadow system keeps the carrier's ground
+   *  footprint and body + head cast one aligned shadow (z-positioning P3, F5). */
+  offsetZ: number;
   /** Draw-order offset along the view's depth axis, in the pawn's OWN frame: positive = toward
    *  the viewer when the pawn faces the camera. {@link facingDepth} negates it when the pawn
    *  faces away, so `+1` reads as "head over body, except from behind" (F1). */
@@ -642,6 +648,8 @@ export class MoverLayer {
     interface SlotSpec {
       texName: string | undefined; flipX: boolean; x: number; y: number; w: number;
       tint: number; geoColor: number; zIndex: number;
+      /** z-positioning P3: world px above the ground plane; `y` is already shifted north by it. */
+      elevation?: number;
     }
     const specs: SlotSpec[] = [
       { texName: tex0.name, flipX: tex0.flipX, x: box.x, y: box.y, w: size0,
@@ -659,11 +667,17 @@ export class MoverLayer {
       // facing so the part stays on the sprite's correct side.
       const ox = (tex.flipX ? -s.offsetX : s.offsetX) * tilePx;
       const cx = ax + ox;
-      const cy = ay + s.offsetY * tilePx;
+      // z-positioning P3: elevation draws as a northward shift of the SAME size (F6 — "there is
+      // no draw-side constant; the screen-north shift IS the elevation"). It is added here beside
+      // offsetY because on screen they are indistinguishable; they part company at the record,
+      // where `elevation` is carried separately so the ground position stays recoverable.
+      const elevTiles = s.offsetZ ?? 0;
+      const cy = ay + s.offsetY * tilePx - elevTiles * tilePx;
       specs.push({
         texName: tex.name, flipX: tex.flipX, x: cx - w * 0.5, y: cy - w * 0.5, w,
         tint: s.tint, geoColor: s.geoColor,
         zIndex: slotZ(s, i),
+        elevation: elevTiles * tilePx,   // world px above the ground plane
       });
     }
 
@@ -697,6 +711,7 @@ export class MoverLayer {
           rotation: facing, // P4: the record carries the TRUE cardinal (the frame follows it anyway)
           carrierOf: i > 0 ? parts[0].id : undefined, // P5: pieces name the carrier owner
           layer: i,
+          elevation: sp.elevation ?? 0, // z-positioning P3 — `y` is already shifted north by this
         });
         parts.push({
           id,
@@ -741,6 +756,8 @@ export class MoverLayer {
         p.tint = sp.tint;
         p.geoColor = sp.geoColor;
         p.zIndex = sp.zIndex;
+        p.elevation = sp.elevation ?? 0; // z-positioning P3 — must track, or a moving elevated
+                                         // part keeps the elevation it was CREATED with
         p.rotation = facing; // P4: keep the record's cardinal in step with the drawn facing
         this.viewport.warmRefreshPrim(pp.id);
         // hot-sync P1: the ONE hot dirty — the same eps crossing that re-bakes the sprite

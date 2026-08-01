@@ -352,3 +352,52 @@ not have been evidence anyway.
 Its acceptance was *"one source, read by BOTH the record writer and the shadow transform"*. Now true:
 `RecordSync` reads `drawnForWorldHeight`, `lightPass` reads `worldHeightForDrawn`, both out of
 `worldTilt.ts`, with the reference axis named. The deviation logged when P0a was built is resolved.
+
+
+## 2026-08-01 · P2b — the coordinate systems separate, and the head lands on the body's footprint
+
+**The record now holds GAME coordinates** — where a prim physically stands, not where it is drawn.
+
+### A carried piece stands where its CARRIER stands
+
+Adding the elevation back to the drawn row was not enough. Measured, head and body still sat 4 units
+apart: each prim derives its ground row from its **own** opaque bbox, and a head's art bottom is the
+bottom of the head, not the pawn's feet.
+
+So the carrier's ground row is resolved in a pre-pass and pieces adopt it. The vertical gap between a
+piece's own art bottom and its carrier's row **is** the piece's elevation — derived, not authored:
+
+```ts
+const carrier = p.carrierOf !== undefined ? carrierGround.get(p.carrierOf) : undefined;
+const ay   = carrier ? carrier.ay : ownGround + (p.elevation ?? 0);
+const elev = carrier ? Math.max(0, carrier.ay - ownGround) : (p.elevation ?? 0);
+```
+
+`ax` deliberately stays the prim's own: an `offset.x` part genuinely *is* at a different ground x.
+
+### The result — read off the live pawn
+
+| prim | `unitX` | `unitY` | elevation | `screenY` | card top (world) |
+|---|---|---|---|---|---|
+| 525 — body | 1528 | **911** | 0 | 911 | 13.60 |
+| 526 — head | 1528 | **911** | **9.125** | **901.875** | 22.72 |
+
+**Same ground position, differing only in `unit.z`** — the acceptance verbatim. `screenY` is
+`911 − 9.125 = 901.875`, so the head still draws exactly where it did: the drawing is unchanged and
+only its *meaning* moved.
+
+### `targetH` fixed itself
+
+[F8](forks.md#f8) wrote the fix as `E + (screenBase − P.y)`. With game coordinates
+`screenBase = groundY − E`, so it collapses to `groundY − P.y` — the line already there. **The
+expression did not change; `primPos` returning a ground row made it correct.** Before this, a head's
+texels were shadow-tested as though the head stood on the floor.
+
+### Verified
+
+| acceptance | result |
+|---|---|
+| head and body write the same `unit.x/y` | **1528 / 911 both**, elevation 0 vs 9.125 |
+| presence keys on game coordinates | both in tile **(95, 56)**, both in that tile's presence slots `[525, 526]` |
+| no caster read converts per-test | the conversion is once per texel at `ldir`; `occludesAt` reads records directly |
+| the walk stays exact | `occlusionDiffering` **0** / 131,072 · 524 casters · `glError` 0 |

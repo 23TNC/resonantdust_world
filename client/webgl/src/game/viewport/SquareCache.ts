@@ -51,6 +51,11 @@ export interface Primitive {
   packed?: readonly PackedChannel[];
   seed?: number;
   zIndex: number;
+  /** z-positioning P3: world px this prim sits ABOVE the ground plane, 0 for anything standing on
+   *  it. `y` is ALREADY shifted north by this much (the draw applies elevation 1:1), so the ground
+   *  row is `y + elevation`. That recovery is the whole point: a drawn position alone cannot tell
+   *  an elevated part from one genuinely further north, and the shadow system needs to know which. */
+  elevation?: number;
   /** pawn-render P2: the prim's TEMPERATURE — true for movers (warm-cache prims). A hot prim's
    *  light/shadow participation lands ONLY in the HOT maps (the ratified tier matrix: any hot
    *  participant → hot); its record carries the same class bit hot lights use. */
@@ -557,6 +562,9 @@ export class SquareCache {
                                // wall never joins the lighting class (the addPrim gotcha)
       carrierOf: spec.carrierOf, // human-pawns P5: the piece link — dropped here, a head mints
       layer: spec.layer,         // its own root + loses its layer (the addPrim gotcha again)
+      elevation: spec.elevation, // z-positioning P3: the HEIGHT — dropped here, every elevated
+                                 // part reverts to standing on the floor and casts from the wrong
+                                 // footprint, which is the exact bug this stream exists to fix
     };
     const range = squaresForAABB(prim.x, prim.y, prim.x + prim.width, prim.y + prim.height);
     this.prims.set(id, { prim, range });

@@ -353,8 +353,8 @@ impl Content {
 
     /// A pawn KIND's part SLOTS (human-pawns P2) — the DSL skeleton MoverLayer renders,
     /// one JS object per `^prim call` in the kind's visual: `{stem, part, scale, offsetX,
-    /// offsetY, depth, size, span, anchorX, anchorY, spriteAnchorX, spriteAnchorY, tint,
-    /// geoColor}`.
+    /// offsetY, offsetZ, depth, size, span, anchorX, anchorY, spriteAnchorX, spriteAnchorY,
+    /// tint, geoColor}`.
     /// The wolf yields 1 slot, a human 2 (body + head). An unknown kind yields a single
     /// default slot (white fill), so the caller never branches on emptiness. Replaces the
     /// old `moverPrim` (position now comes from the state row alone).
@@ -374,6 +374,11 @@ impl Content {
             set("scale", &JsValue::from_f64(p.scale));
             set("offsetX", &JsValue::from_f64(p.offset.0));
             set("offsetY", &JsValue::from_f64(p.offset.1));
+            // z-positioning P3: HEIGHT off the ground, in tiles. The renderer shifts the part
+            // north 1:1 so it draws where an equal `offsetY` would, but the shadow system keeps
+            // the parent's ground footprint -- which is what makes body and head cast ONE
+            // aligned shadow instead of two.
+            set("offsetZ", &JsValue::from_f64(p.elevation));
             set("depth", &JsValue::from_f64(p.depth));
             set("size", &JsValue::from_f64(p.size));
             set("span", &JsValue::from_f64(p.span));

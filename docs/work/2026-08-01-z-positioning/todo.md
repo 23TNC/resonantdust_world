@@ -53,10 +53,10 @@ _There is no draw-side constant: the screen-north shift IS the elevation, 1:1. T
 
 ## P2b — Separate the coordinate systems ([F7](forks.md#f7))
 
-- [ ] Make `RecordSync` write GAME coordinates — the prim's ground tile plus elevation — instead of the drawn position. Acceptance: a head and its body write the SAME `unit.x/y`, differing only in `unit.z`.
-- [ ] Convert `P` screen→WORLD once per texel and solve in world ([F8](forks.md#f8)). Acceptance: no caster read converts per-test; falloff `d` and `ldir` are computed on world quantities, since both are metric and neither survives an affine change of space.
-- [ ] Fix `targetH` to include the receiver's OWN elevation ([F8](forks.md#f8)). Acceptance: `E + (baseY - P.y)`, height above the ground; an elevated receiver is shadow-tested at its true height, and a floor receiver is bit-identical.
-- [ ] Prove presence keys on game coordinates. Acceptance: head and body appear in the SAME presence tile, read back from the mirror.
+- [x] Make `RecordSync` write GAME coordinates — the prim's ground tile plus elevation — instead of the drawn position. Acceptance: a head and its body write the SAME `unit.x/y`, differing only in `unit.z`.
+- [x] Convert `P` screen→WORLD once per texel and solve in world ([F8](forks.md#f8)). Acceptance: no caster read converts per-test; falloff `d` and `ldir` are computed on world quantities, since both are metric and neither survives an affine change of space.
+- [x] Fix `targetH` to include the receiver's OWN elevation ([F8](forks.md#f8)). Acceptance: `E + (baseY - P.y)`, height above the ground; an elevated receiver is shadow-tested at its true height, and a floor receiver is bit-identical.
+- [x] Prove presence keys on game coordinates. Acceptance: head and body appear in the SAME presence tile, read back from the mirror.
 
 ## P3 — The head rides elevation
 
