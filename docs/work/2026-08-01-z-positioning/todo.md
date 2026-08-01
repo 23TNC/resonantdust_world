@@ -21,7 +21,7 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 ## P0a — Pin the two unknowns before writing any transform
 
 - [ ] Reintroduce the world tilt as a live parameter at **65°** ([I7](issues.md#i7)) — it does not exist; the strip deleted it with `shadowGather.ts`. Acceptance: one source, read by BOTH the record writer and the shadow transform, with the reference axis named.
-- [ ] Pin the game→world transform's coefficients ([I8](issues.md#i8)). Acceptance: `unit.z`'s split into `world.y` and `world.z` is stated once and derived from the live tilt — the solve is metric, so a wrong coefficient biases falloff and `N·L`, not just geometry.
+- [x] Pin the game→world transform's coefficients ([I8](issues.md#i8)). Acceptance: `unit.z`'s split into `world.y` and `world.z` is stated once and derived from the live tilt — the solve is metric, so a wrong coefficient biases falloff and `N·L`, not just geometry.
 
 ## P0 — Make height observable at all
 
