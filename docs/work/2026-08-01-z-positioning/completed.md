@@ -183,3 +183,60 @@ and reads back), all six lane assertions pass, and `__elev` decodes a fixture ca
 - **The `__gather` self-test round-trip dropped the fine lanes.** It saves and restores every caster
   twice, and `writePrim` writes a *whole* record — so the omission was nudging every caster onto a
   whole-unit position for the duration of the check. Pre-existing; fixed while the file was open.
+
+
+## 2026-08-01 · P1 — the caster card starts at its own height ([F3](forks.md#f3))
+
+```glsl
+// was: float hTop = float(subHi), hBot = 0.0;
+float cElev = primElevation(rec);
+float hBot = cElev, hTop = cElev + float(subHi);
+```
+
+Both branches of `occludesAt` — the x-aligned card and the `cast_type 2` perpendicular one. There is
+only ONE definition to change: the refine calls the same `occludesAt` (`lightPass:232`), so
+[F2](forks.md#f2)'s "one rule, one place" already held here and did not need building.
+
+`silhouetteHit`'s `fracY = (hTop - h) / subHi` needed no change — it normalises *down the card*, which
+is `subHi` tall wherever the card sits.
+
+### The ground case is unchanged
+
+At `cElev = 0` the new expressions are the old ones exactly. Measured, same protocol, same run
+(`castersRestored` identical at 524, so directly comparable):
+
+| metric | pre-P1 | post-P1 | Δ |
+|---|---|---|---|
+| `occlusionDiffering` | 0 | 0 | **0** |
+| `castersRestored` | 524 | 524 | **0** |
+| `corridorWalk` | 3702 | 3702 | **0** |
+| shadow texels | 4253 | 4254 | +1 (0.02%) |
+
+### The walk stays exact with elevated casters
+
+`__gather()` re-checks the corridor walk against an exhaustive brute-force reference. Casters given
+mixed elevations, 131,072 slot comparisons each time:
+
+| caster elevations | occlusionDiffering | shadow texels | corridorWalk |
+|---|---|---|---|
+| all 0 | **0** | 4254 | 3702 |
+| 0/4/8/16 | **0** | 4254 | 3702 |
+| 0/8/24/48 | **0** | 5854 | 5419 |
+| all 32 | **0** | 2477 | 2043 |
+
+**Zero differing at every mix** — that is the acceptance. And elevation visibly reshapes the field:
+raising every caster 32 units cuts the shadow texels to 58% of the ground case, while a mixed set
+raises them to 138%, which is the expected behaviour when some cards lift clear of the light rays and
+others start intercepting rays that used to pass over them.
+
+### Unexplained, and left that way
+
+**`0/4/8/16` produced numbers byte-identical to all-zero** — 4254 texels, 3702 walks, 41
+identityDiffering. The writes definitely landed: a probe immediately afterwards shows 6 casters at
+each of 0, 4, 8, 16 with card heights of 13 and 24 units. So small elevations changed literally
+nothing while larger ones changed a great deal.
+
+I do not have an explanation, and the plausible ones (the self-test's own save/restore, a re-sync
+between write and measure) are guesses. **Recorded as [I17](issues.md#i17) rather than explained** —
+this stream's predecessor lost time to three confident diagnoses that turned out to be invented, and
+the acceptance that matters (0 differing) does not depend on resolving it.

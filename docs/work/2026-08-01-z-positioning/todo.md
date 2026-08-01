@@ -38,9 +38,9 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 
 ## P1 — The caster card starts at its own height
 
-- [ ] Make `occludes()` and `refineOccluded()` span `[z, z + H]` instead of `[0, H]` ([F3](forks.md#f3)). Acceptance: a caster at z casts a shadow displaced by the geometry, not one starting at the ground.
-- [ ] Prove a ground prim is unchanged. Acceptance: with every `unitZ` at 0 the shadow buffer is bit-identical to before the change — elevation must cost the floor case nothing.
-- [ ] Re-check the walk against the exhaustive reference with mixed heights. Acceptance: 0 differing occlusion decisions, the same check P4 used, with casters at several heights.
+- [x] Make `occludes()` and `refineOccluded()` span `[z, z + H]` instead of `[0, H]` ([F3](forks.md#f3)). Acceptance: a caster at z casts a shadow displaced by the geometry, not one starting at the ground.
+- [x] Prove a ground prim is unchanged. Acceptance: with every `unitZ` at 0 the shadow buffer is bit-identical to before the change — elevation must cost the floor case nothing.
+- [x] Re-check the walk against the exhaustive reference with mixed heights. Acceptance: 0 differing occlusion decisions, the same check P4 used, with casters at several heights.
 
 ## P2 — The screen↔world transform ([F6](forks.md#f6), [I8](issues.md#i8))
 

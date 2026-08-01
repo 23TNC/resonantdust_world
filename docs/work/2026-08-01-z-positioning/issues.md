@@ -278,3 +278,34 @@ that reasoning transfers to a record that has no `definition_index` and a live `
 The item existed to free bits. The definition record has no bit pressure, so there is nothing to buy.
 **Recommend closing it as unnecessary** rather than re-scoping — but that is a plan change, so it is
 recorded here rather than decided silently.
+
+
+## I17 — Small caster elevations change nothing; large ones change a lot {#i17}
+
+P1's mixed-height sweep, 131,072 slot comparisons per row:
+
+| caster elevations | shadow texels | corridorWalk | identityDiffering |
+|---|---|---|---|
+| all 0 | 4254 | 3702 | 41 |
+| **0/4/8/16** | **4254** | **3702** | **41** |
+| 0/8/24/48 | 5854 | 5419 | 76 |
+| all 32 | 2477 | 2043 | 0 |
+
+The second row is **byte-identical** to the first across three independent counters. That is not the
+signature of "a small change had a small effect".
+
+**The writes are real.** A probe taken immediately after the same assignment reports 6 casters at each
+of 0, 4, 8 and 16, with card heights of 13 and 24 units. So the records carry the elevations when the
+gather runs.
+
+**And the geometry says it should matter.** With lights at `Lz = 40` and a 24-unit card, raising it 4
+units moves the occluded range from `t ≥ 0.4` to `t ∈ [0.3, 0.9]` — a different set of slots, not a
+slightly different one.
+
+**Candidates, none verified:** the self-test's own per-caster save/restore; a `RecordSync` pass
+between the write and the measurement resetting `unit.z`; a quantisation somewhere between the record
+and the shader that floors small elevations.
+
+**Does not block P1** — the acceptance is `occlusionDiffering = 0`, which holds at every mix. It does
+matter for **P3**, where the pawn's head elevation is about **5.92 units** — squarely inside the range
+that appears to do nothing. Resolve before trusting P3's result.

@@ -156,9 +156,12 @@ bool occludesAt(uint c, vec2 L, float Lz, vec2 P, float targetH) {
     uvec4 d = fetchDef(block, 1u);                 // the SIDE frame silhouettes the ns card
     int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
     float W = float(subWi);
-    // lighting-visual P1: the bbox is BOTTOM-ALIGNED to the anchor — the caster occupies
-    // [0, subH] from its base; subY stays an ATLAS address only.
-    float hTop = float(subHi), hBot = 0.0;
+    // z-positioning P1 (F3): the card spans [z, z + H], NOT [0, H]. A caster at elevation z
+    // occupies its own slice of the air; spanning from 0 would cast as though it sat on the
+    // floor — the right shape in roughly the right place for entirely the wrong reason.
+    // subY stays an ATLAS address only (the bbox is bottom-aligned to the anchor).
+    float cElev = primElevation(rec);
+    float hBot = cElev, hTop = cElev + float(subHi);
     float dx = P.x - L.x;
     if (abs(dx) < 1e-4) return false;
     float t = (C.x - L.x) / dx;
@@ -169,15 +172,16 @@ bool occludesAt(uint c, vec2 L, float Lz, vec2 P, float targetH) {
     if (h > hTop || h < hBot) return false;
     float frac = (C.y - y) / W;
     if (prot == 0u) { frac = 1.0 - frac; }         // south-facing: the head end flips
-    return silhouetteHit(d, frac, (hTop - h) / float(subHi), true);
+    return silhouetteHit(d, frac, (hTop - h) / float(subHi), true);   // frac down the CARD
   }
   uvec4 d = fetchDef(block, prot);
   int subXi = int(d.y >> 24);
   int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
   int spanI = int((d.x >> 4) & 0xfu) + 1;
   float fu = float(spanI * 16);
-  // P1: bottom-aligned — the caster occupies [0, subH] from its base (the drawn feet).
-  float hTop = float(subHi), hBot = 0.0;
+  // z-positioning P1 (F3): [z, z + H] from the caster's OWN elevation, not [0, H] from the floor.
+  float cElev = primElevation(rec);
+  float hBot = cElev, hTop = cElev + float(subHi);
   float dy = P.y - L.y;
   if (abs(dy) < 1e-4) return false;
   float t = (C.y - L.y) / dy;
