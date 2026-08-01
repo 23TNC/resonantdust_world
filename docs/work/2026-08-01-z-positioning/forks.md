@@ -65,8 +65,20 @@ pieces — but it is currently true *by accident of iteration order*, and an acc
 stated is an accident that gets optimised away. (b) spends bits in a key that is working, to solve a
 problem that has not appeared.
 
-**If a case ever shows a head behind its body, that is the signal for (b)** — and P4 records what to
-look for so the diagnosis is one glance rather than a hunt.
+### Superseded — `screen.z` IS the tiebreak (user, 2026-08-01)
+
+> "screen.z is perpendicular to the screen. screen.z would make a decent z-ordering metric, so long
+> as we calculate screen.z against a common reference point."
+
+(c) was a fallback chosen because there was no *principled* tiebreak available. There is one, and this
+stream produces it anyway: a depth perpendicular to the screen is exactly what a painter's key wants,
+and it orders head against body **because the head is nearer the viewer**, not because of the order
+the graph happened to walk its pieces.
+
+The condition is the one the user attached: **a common reference point**. A depth measured from each
+prim's own origin is not comparable between prims; measured from one scene-wide plane it is. That is
+the acceptance for the item, and it is what makes this different from (b) — (b) proposed bolting
+elevation onto the existing key, whereas `screen.z` *replaces* the ad-hoc key with the real quantity.
 
 ## F5 — `offset.z` REPLACES `offset.y` on the head; it does not join it {#f5}
 
@@ -170,12 +182,34 @@ the screen conversion together — `fine.z` is not a separate refinement applied
 Follows from [F7](#f7). Once records hold game coordinates, *something* has to bridge them to the
 lit point `P`, which comes off the lightmap grid in screen space.
 
-- (a) Convert each caster game→screen where it is read.
-- **(b) Convert `P` screen→game once at the top of the shader; run the whole solve in game space.**
+- (a) Convert each caster where it is read.
+- **(b) Convert `P` once at the top of the shader; run the whole solve in one space.**
 
 **Chosen: (b).** (a) pays **per caster test, per light, per texel** — the hot loop, and the reason
 the walk exists at all. (b) pays **once per texel**, using the receiver record the shader *already*
 fetches. Same result, one conversion instead of thousands.
+
+### The target space is WORLD, not game (user, 2026-08-01) — corrects this fork
+
+I first wrote "solve in game space". Wrong target; the cost argument above is unaffected, but the
+destination is not game.
+
+> "the head reports unit.x/y/z and that converts into world.x/y/z which are used to determine
+> shadows, and those are then used on the screen using screen.x/y"
+
+**Lighting textiles are screen-space** — they are drawn to the screen. So `P` is screen, records are
+game, and the solve is world: *both* inputs convert, and they convert to world.
+
+**Why solving in game would have looked fine and been wrong.** game→world is **affine**, and affine
+maps preserve segments, collinearity and ratios along a segment — so *occlusion* would have come out
+identical. But two things in the same shader are **metric**, and affine maps with unequal axis scales
+do not preserve them:
+
+- `d = distance(Puse, Lpos)` against `reach` — **falloff**
+- `ldir` — **`N·L`**
+
+Both would have been quietly biased in north-south, in a way that looks like a tuning problem rather
+than a coordinate problem. Solving in world costs the same and is right for all three.
 
 ### The conversion is smaller than it looks
 

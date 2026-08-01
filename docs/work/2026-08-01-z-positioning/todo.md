@@ -21,7 +21,7 @@ offset is a handful of pixels at zoom 1 and invisible in a screenshot.
 ## P0a — Pin the two unknowns before writing any transform
 
 - [ ] Reintroduce the world tilt as a live parameter at **65°** ([I7](issues.md#i7)) — it does not exist; the strip deleted it with `shadowGather.ts`. Acceptance: one source, read by BOTH the record writer and the shadow transform, with the reference axis named.
-- [ ] Settle what `screen.z` FEEDS ([I8](issues.md#i8)). Acceptance: named consumer. The grid is square and elevation shifts screen-north 1:1, so the solve needs only ground x/y + height — `tan(angle)·elevation` has no reader yet.
+- [ ] Pin the game→world transform's coefficients ([I8](issues.md#i8)). Acceptance: `unit.z`'s split into `world.y` and `world.z` is stated once and derived from the live tilt — the solve is metric, so a wrong coefficient biases falloff and `N·L`, not just geometry.
 
 ## P0 — Make height observable at all
 
@@ -54,7 +54,7 @@ _There is no draw-side constant: the screen-north shift IS the elevation, 1:1. T
 ## P2b — Separate the coordinate systems ([F7](forks.md#f7))
 
 - [ ] Make `RecordSync` write GAME coordinates — the prim's ground tile plus elevation — instead of the drawn position. Acceptance: a head and its body write the SAME `unit.x/y`, differing only in `unit.z`.
-- [ ] Convert `P` screen→game ONCE per texel and run the solve in game space ([F8](forks.md#f8)). Acceptance: no caster read converts; the only conversion is at `P`, off the receiver record already fetched.
+- [ ] Convert `P` screen→WORLD once per texel and solve in world ([F8](forks.md#f8)). Acceptance: no caster read converts per-test; falloff `d` and `ldir` are computed on world quantities, since both are metric and neither survives an affine change of space.
 - [ ] Fix `targetH` to include the receiver's OWN elevation ([F8](forks.md#f8)). Acceptance: `E + (baseY - P.y)`, height above the ground; an elevated receiver is shadow-tested at its true height, and a floor receiver is bit-identical.
 - [ ] Prove presence keys on game coordinates. Acceptance: head and body appear in the SAME presence tile, read back from the mirror.
 
@@ -68,7 +68,7 @@ _There is no draw-side constant: the screen-north shift IS the elevation, 1:1. T
 ## P4 — Where a thing stands, for lighting as well as shadow
 
 - [ ] Sample the lightmap at the prim's BASE ROW, not its drawn position ([lighting-rework I13](../2026-07-31-lighting-rework/issues.md#i13) defect 4). Acceptance: a billboard is lit by the tile it stands on; `zdepth.B` already carries the base row.
-- [ ] Settle the z-order tie now that head and body share a base row ([F4](forks.md#f4)). Acceptance: the parts order deterministically, and the rule is written down rather than resting on draw order.
+- [ ] Order by `screen.z` against a COMMON reference ([F4](forks.md#f4)). Acceptance: head sorts before body because it is nearer the viewer, not because of graph walk order; the reference plane is scene-wide, so depths from different prims compare.
 - [ ] Rename the draw-order `z` away from the collision ([F1](forks.md#f1)). Acceptance: `slotZ`/`zIndex`/`depth` no longer read as height; one word means one thing.
 
 ## P5 — The verdict
