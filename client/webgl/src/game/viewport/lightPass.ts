@@ -17,8 +17,7 @@
 //! it hung Chrome twice in the previous stream and was never root-caused (strip I1).
 
 import { Program, Geometry, RenderTarget, type Renderer, type Texture } from "../../gl";
-import { LIGHT_SLOTS, LIGHT_SCALE, TILE_SLOTS } from "./records";
-import { REACH_GLSL } from "./lightReach";
+import { LIGHT_SLOTS, LIGHT_SCALE, TILE_SLOTS, LIGHT_LANES_GLSL } from "./records";
 import { SQUARE, UNITS_PER_TILE, SLOTS_X, SLOTS_Y, TEXTILE_LIGHT } from "./squareMath";
 
 /** Lighting texels per tile — the pinned lighting resolution, independent of the art dial. */
@@ -49,7 +48,7 @@ uniform vec2 uWindowOrigin;          // world tile of the map's (0,0)
 uniform int uMapW;                   // one slot block's width in texels
 out vec4 fragColor;
 
-${REACH_GLSL}
+${LIGHT_LANES_GLSL}
 
 const int   LIGHT_SLOTS = ${LIGHT_SLOTS};
 const float LIGHT_SCALE = ${LIGHT_SCALE}.0;
@@ -145,14 +144,14 @@ void main() {
   if (emitType == 0u) { fragColor = vec4(0.0); return; }
 
   vec2  Lpos      = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));   // unit.x | unit.y
-  uint  intensity = rec.z & 0x3ffu;
-  float reach     = reachFromIntensity(intensity);
-  if (reach <= 0.0) { fragColor = vec4(0.0); return; }
+  uint  intensity = intensityFromB(rec.z);
+  float reach     = reachUnitsFromB(rec.z);
+  if (intensity == 0u) { fragColor = vec4(0.0); return; }
 
   float d = distance(P, Lpos);
   if (d >= reach) { fragColor = vec4(0.0); return; }
 
-  // The SAME falloff reachFromIntensity inverts: L(d) = I / (1 + (d/d0)^2).
+  // Falloff within the stored reach: L(d) = I / (1 + (d/d0)^2).
   float I  = float(intensity) / INTENSITY_MAX;
   float at = I / (1.0 + (d / REACH_FALLOFF_UNITS) * (d / REACH_FALLOFF_UNITS));
 
@@ -251,7 +250,7 @@ uniform int uPrimIndex;
 uniform vec2 uWindowOrigin;
 out vec4 fragColor;
 
-${REACH_GLSL}
+${LIGHT_LANES_GLSL}
 
 const float LIGHT_SCALE = ${LIGHT_SCALE}.0;
 const float UPT = ${UNITS_PER_TILE}.0;
@@ -272,10 +271,10 @@ void main() {
   uvec4 rec = fetchPrim(uint(uPrimIndex));
   if (((rec.z >> 26) & 3u) == 0u) { fragColor = vec4(0.0); return; }
   vec2  Lpos      = vec2(float(rec.x >> 16), float(rec.x & 0xffffu));
-  uint  intensity = rec.z & 0x3ffu;
-  float reach     = reachFromIntensity(intensity);
+  uint  intensity = intensityFromB(rec.z);
+  float reach     = reachUnitsFromB(rec.z);
   float d = distance(P, Lpos);
-  if (reach <= 0.0 || d >= reach) { fragColor = vec4(0.0); return; }
+  if (intensity == 0u || d >= reach) { fragColor = vec4(0.0); return; }
   float I  = float(intensity) / INTENSITY_MAX;
   float at = I / (1.0 + (d / REACH_FALLOFF_UNITS) * (d / REACH_FALLOFF_UNITS));
   float c4 = float(rec.w & 0xffu) / 255.0;

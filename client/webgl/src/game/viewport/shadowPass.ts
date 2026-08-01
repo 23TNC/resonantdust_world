@@ -27,7 +27,8 @@
 
 import { Program, Geometry, RenderTarget, type Renderer, type Texture } from "../../gl";
 import { UNITS_PER_TILE, SLOTS_X, SLOTS_Y } from "./squareMath";
-import { REACH_GLSL } from "./lightReach";
+import { LIGHT_LANES_GLSL } from "./records";
+
 
 /** px per unit: ground casters, then two px of (caster, receiver) pairs. */
 export const SHADOW_PX_PER_UNIT = 3;
@@ -70,7 +71,7 @@ uniform int uBrute;                  // 1 = EXHAUSTIVE search, the reference the
 uniform int uDilateX;                // tiles of x-dilation: a card is WIDER than its tile
 out uvec4 fragColor;
 
-${REACH_GLSL}
+${LIGHT_LANES_GLSL}
 
 const float UPT      = ${UNITS_PER_TILE}.0;
 const int   UPTi     = ${UNITS_PER_TILE};
@@ -164,7 +165,7 @@ void main() {
     if (((lrec.z >> 26) & 3u) == 0u) continue;               // F9: not an emitter any more
     vec2  L  = vec2(float(lrec.x >> 16), float(lrec.x & 0xffffu));
     float Lz = float(lrec.y >> 24);
-    float reach = reachFromIntensity(lrec.z & 0x3ffu);
+    float reach = reachUnitsFromB(lrec.z);
     if (reach <= 0.0 || distance(P, L) >= reach) continue;   // F6 bounds the whole search
 
     uint found = NONE;

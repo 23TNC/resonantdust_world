@@ -15,7 +15,7 @@
 //!   RED    u16 unit.x            | u16 unit.y
 //!   GREEN  u8  unit.z            | u4 fine.x | u4 fine.y | u16 definition_index
 //!   BLUE   u2  cast_type         | u2 receive_type | u2 emit_type | u4 layer
-//!          u8  seed              | u4 rotation     | u10 intensity
+//!          u8  seed              | u4 rotation     | u4 reach (biased, tiles) | u6 intensity
 //!   ALPHA  u8  color.1 | u8 color.2 | u8 color.3 | u8 color.4
 //!
 //! definition_data (16 px, one per rotation)
@@ -32,7 +32,6 @@
 
 import { Texture } from "../../gl";
 import { UNITS_PER_TILE } from "./squareMath";
-import { reachTilesFromIntensity } from "./lightReach";
 
 /** Index 0 is the global sentinel in EVERY index space — "no prim", "no definition", "no caster",
  *  "empty slot". One comparison covers them all, and no magic value is carved out of the `u16`
@@ -57,6 +56,26 @@ export const TILE_SLOTS = 8;
 /** Lights per texel in the slot map — 8 px, one per light ([F3](forks.md#f3): the map is 8x wide and
  *  a fragment derives its light from x, so all 8 draw in ONE pass with no MRT). */
 export const LIGHT_SLOTS = 8;
+
+/** Intensity is `u6` — 64 levels across the 0..4 overbright range (lighting-correctness P1: the
+ *  old `u10` gave four bits to REACH, by user directive — reach in the data beats deriving it). */
+export const INTENSITY_MAX = 63;
+/** Reach is STORED — `u4`, biased +1 → 1..16 TILES ([F1](../../../../docs/work/2026-07-31-lighting-correctness/forks.md)).
+ *  16 caps the lane deliberately: reach is the measured cost dial, and 16 tiles is the ceiling every
+ *  headline number is priced at — the encoding refuses the value the system is known to choke on. */
+export const REACH_MAX_TILES = 16;
+
+/** The BLUE-lane light decodes, shared by every shader that reads an emitter — one definition, so
+ *  the CPU registration set and the GPU walk bound cannot disagree (the property the retired
+ *  `reachFromIntensity` had; STORED reach keeps it by making both read the same lane). */
+export const LIGHT_LANES_GLSL = /* glsl */ `
+const float INTENSITY_MAX = ${INTENSITY_MAX}.0;
+const float REACH_FALLOFF_UNITS = ${UNITS_PER_TILE}.0;
+// lighting-correctness P1: reach is STORED (u4 biased +1 = 1..16 tiles, BLUE bits 6-9);
+// intensity is u6 (bits 0-5). Reach bounds registration + walks; falloff shapes within it.
+uint  intensityFromB(uint B) { return B & 0x3Fu; }
+float reachUnitsFromB(uint B) { return float(((B >> 6u) & 0xFu) + 1u) * ${UNITS_PER_TILE}.0; }
+`;
 
 /** Per-light contributions are stored DIVIDED BY 4 ([F2](forks.md#f2)).
  *
@@ -98,7 +117,11 @@ export interface PrimFields {
   definition: number;
   rotation?: number;
   castType?: number; receiveType?: number; emitType?: number;
-  layer?: number; seed?: number; intensity?: number;
+  layer?: number; seed?: number;
+  /** 0..[`INTENSITY_MAX`] (u6). */
+  intensity?: number;
+  /** Emitter reach in TILES, 1..[`REACH_MAX_TILES`] — stored biased (default 1). */
+  reach?: number;
   colors?: [number, number, number, number];
 }
 
@@ -111,7 +134,7 @@ export interface DefinitionFields {
   /** Extents in UNITS, 1..256 — stored biased. */
   subW?: number; subH?: number;
   castType?: number; receiveType?: number; emitType?: number;
-  layer?: number; seed?: number; intensity?: number;
+  layer?: number; seed?: number; intensity?: number; reach?: number;
   colors?: [number, number, number, number];
 }
 
@@ -172,13 +195,13 @@ export class Records {
     if (Records.packSlots(slots, this.presenceMirror, base)) this.tileDirty = true;
   }
 
-  /** `light` — the 8 NEAREST light prims reaching a tile. Reach comes from `reachFromIntensity`, the
-   *  one shared definition ([F6](forks.md#f6)), so the set the CPU registers is the set the GPU's
-   *  walk bound agrees with. */
-  buildLights(lights: { index: number; tileX: number; tileY: number; intensity: number }[]): void {
+  /** `light` — the 8 NEAREST light prims reaching a tile. Reach is the light's STORED reach in
+   *  TILES (lighting-correctness P1): the same lane the GPU walk bound reads, so the registered
+   *  set and the walked set cannot disagree — the property F6 derived, now held by construction. */
+  buildLights(lights: { index: number; tileX: number; tileY: number; reach: number }[]): void {
     const acc = new Map<number, { index: number; d2: number }[]>();
     for (const L of lights) {
-      const reach = reachTilesFromIntensity(L.intensity);
+      const reach = Math.max(0, Math.min(REACH_MAX_TILES, Math.ceil(L.reach)));
       for (let dy = -reach; dy <= reach; dy++) {
         for (let dx = -reach; dx <= reach; dx++) {
           const d2 = dx * dx + dy * dy;
@@ -290,7 +313,8 @@ export class Records {
     this.writePrimRaw(idx, R, G, B, A);
   }
 
-  /** BLUE, shared by both records — a prim COPIES the definition's lanes and may override. */
+  /** BLUE, shared by both records — a prim COPIES the definition's lanes and may override.
+   *  Bits 0–9 (lighting-correctness P1): `u4 reach (6–9, biased +1 = 1..16 tiles) | u6 intensity`. */
   private packTypeLanes(f: PrimFields | DefinitionFields, rot: number): number {
     return ((fit(f.castType ?? 0, 2, "cast_type") << 30)
           | (fit(f.receiveType ?? 0, 2, "receive_type") << 28)
@@ -298,7 +322,8 @@ export class Records {
           | (fit(f.layer ?? 0, 4, "layer") << 22)
           | (fit(f.seed ?? 0, 8, "seed") << 14)
           | (fit(rot, 4, "rotation") << 10)
-          | fit(f.intensity ?? 0, 10, "intensity")) >>> 0;
+          | (biased(f.reach ?? 1, 4, "reach") << 6)
+          | fit(f.intensity ?? 0, 6, "intensity")) >>> 0;
   }
 
   writeDefinition(block: number, rotation: number, f: DefinitionFields): void {
@@ -368,7 +393,8 @@ export class Records {
       castType: (m[b + 2] >>> 30) & 3, receiveType: (m[b + 2] >>> 28) & 3,
       emitType: (m[b + 2] >>> 26) & 3, layer: (m[b + 2] >>> 22) & 0xf,
       seed: (m[b + 2] >>> 14) & 0xff, rotation: (m[b + 2] >>> 10) & 0xf,
-      intensity: m[b + 2] & 0x3ff,
+      reach: ((m[b + 2] >>> 6) & 0xf) + 1,                       // un-bias → tiles
+      intensity: m[b + 2] & 0x3f,
       tileX: Math.floor((m[b] >>> 16) / UNITS_PER_TILE), tileY: Math.floor((m[b] & 0xffff) / UNITS_PER_TILE),
     };
   }

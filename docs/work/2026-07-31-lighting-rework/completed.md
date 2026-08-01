@@ -51,10 +51,11 @@ the other's spread.
 
 ### `reachFromIntensity` — one definition, two languages, one file
 
-[`lightReach.ts`](../../../client/webgl/src/game/viewport/lightReach.ts) holds the TS function **and**
-the GLSL, deliberately in the same file: [F6](forks.md#f6)'s binding constraint is that the CPU
-building each tile's light set and the GPU bounding the walk cannot disagree, and separate files is
-how that starts.
+`lightReach.ts` held the TS function **and** the GLSL, deliberately in the same file:
+[F6](forks.md#f6)'s binding constraint is that the CPU building each tile's light set and the GPU
+bounding the walk cannot disagree, and separate files is how that starts. (Retired by
+[lighting-correctness P1](../2026-07-31-lighting-correctness/README.md) — reach became a STORED
+lane, which holds the same constraint by construction.)
 
 Falloff `L(d) = I / (1 + (d/d0)²)` solved at `L = ε`, with `ε = 1/255` (under one 8-bit level) and
 `d0 = 1 tile`:

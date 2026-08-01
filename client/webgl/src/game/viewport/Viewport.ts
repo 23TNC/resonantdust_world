@@ -20,7 +20,6 @@ import { SQUARE, ZONE_DIM, REGION_DIM } from "./squareMath";
 import { makeNoiseAtlas } from "./noiseAtlas";
 import { OutlineOverlay, type OutlineItem } from "./outlineOverlay";
 import { installFrameCost } from "./frameCost";
-import { installReachCheck } from "./lightReach";
 import { Records, INDEX_NONE, ROTATIONS_PER_DEF } from "./records";
 import { LightPass } from "./lightPass";
 import { ShadowBuffer, pairSlot, SHADOW_LIGHTS } from "./shadowPass";
@@ -157,8 +156,6 @@ export class Viewport {
     this.lights = new LightPass(this.renderer.gl);
     this.shadows = new ShadowBuffer(this.renderer.gl);
     installFrameCost(this, this.renderer.gl);
-    // lighting-rework P0 (F6): `__reachcheck()` — proves the TS and GLSL reach agree at all 1024 values.
-    installReachCheck(this.renderer.gl);
     // lighting-rework P1: `__records()` — the record layer's own acceptance, run against the LIVE
     // scene rather than a fixture, so it proves the writers on real definitions and real positions.
     (globalThis as unknown as { __records: () => unknown }).__records = () => this.recordSelfTest();
@@ -523,7 +520,7 @@ export class Viewport {
     this.map.bakeDirty(Math.max(BAKE_BUDGET - this.warm.lastBaked, COLD_BAKE_FLOOR));
 
     // lighting-rework P5: the new chain — gather (per unit) then the slot pass (per lighting texel,
-    // with the gated refine), both bounded by reachFromIntensity.
+    // with the gated refine), both bounded by the STORED reach lane (lighting-correctness P1).
     if (this.litEnabled && this.map.ready) {
       this.stepOrbit();
       const w = this.map.window, r = this.records;
@@ -671,7 +668,8 @@ export class Viewport {
     // (5) lanes assert instead of truncating
     const threw = (fn: () => void): boolean => { try { fn(); return false; } catch { return true; } };
     out.laneAssertions = {
-      intensityOver10Bits: threw(() => rec.writePrim(ids[0], { unitX: 0, unitY: 0, definition: bb, intensity: 1024 })),
+      intensityOver6Bits: threw(() => rec.writePrim(ids[0], { unitX: 0, unitY: 0, definition: bb, intensity: 64 })),
+      reachOver16Rejected: threw(() => rec.writePrim(ids[0], { unitX: 0, unitY: 0, definition: bb, reach: 17 })),
       // NOT a throw by design: F7 clamps rotation at the writer, so an out-of-range value is
       // corrected (and warned about in dev) rather than rejected. Assert the CLAMP instead — the
       // point of the lane check is that nothing can reach the GPU too wide for its bits.
@@ -681,7 +679,7 @@ export class Viewport {
       })(),
       unitOver16Bits: threw(() => rec.writePrim(ids[0], { unitX: 70000, unitY: 0, definition: bb })),
       spanZeroRejected: threw(() => rec.writeDefinition(bb, 0, { frameX: 0, frameY: 0, frameSpan: 0 })),
-      validWriteSucceeds: !threw(() => rec.writePrim(ids[0], { unitX: 1600, unitY: 800, definition: bb, intensity: 1023 })),
+      validWriteSucceeds: !threw(() => rec.writePrim(ids[0], { unitX: 1600, unitY: 800, definition: bb, intensity: 63, reach: 16 })),
     };
 
     // round-trip a real standing prim through the record and back
@@ -689,11 +687,11 @@ export class Viewport {
     if (live) {
       const id = rec.allocPrim();
       const ux = Math.round(live.x / (SQUARE / 16)), uy = Math.round(live.y / (SQUARE / 16));
-      rec.writePrim(id, { unitX: ux & 0xffff, unitY: uy & 0xffff, definition: bb, rotation: 2, intensity: 512 });
+      rec.writePrim(id, { unitX: ux & 0xffff, unitY: uy & 0xffff, definition: bb, rotation: 2, intensity: 40, reach: 12 });
       const back = rec.debugPrim(id);
-      out.roundTrip = { wrote: { ux: ux & 0xffff, uy: uy & 0xffff, rotation: 2, intensity: 512 }, read: back,
+      out.roundTrip = { wrote: { ux: ux & 0xffff, uy: uy & 0xffff, rotation: 2, intensity: 40, reach: 12 }, read: back,
                         exact: back.unitX === (ux & 0xffff) && back.unitY === (uy & 0xffff)
-                               && back.rotation === 2 && back.intensity === 512 };
+                               && back.rotation === 2 && back.intensity === 40 && back.reach === 12 };
     }
 
     rec.upload(this.renderer.gl);
@@ -777,17 +775,17 @@ export class Viewport {
       rec.writePresence(tx, ty, INDEX_NONE, list);
     }
 
-    // light — the reach relation, from reachFromIntensity (F6). No lights are authored in the
+    // light — the reach relation, from the STORED reach lane (lighting-correctness P1). No lights are authored in the
     // stripped scene, so mint a real EMITTER prim at the focus tile and register that. It must be a
     // genuine emitter: the slot shader re-checks `emit_type` before trusting a slot (F9), so
     // pointing the light record at an arbitrary prim index yields nothing — as it should.
     const lightPrim = rec.allocPrim();
     rec.writePrim(lightPrim, {
       unitX: 100 * 16 + 8, unitY: 50 * 16 + 8,
-      definition: 1, emitType: 1, intensity: 1023, colors: [0, 0, 0, 180],
+      definition: 1, emitType: 1, intensity: 63, reach: 16, colors: [0, 0, 0, 180],
     });
     this.debugLightPrim = lightPrim;
-    rec.buildLights([{ index: lightPrim, tileX: 100, tileY: 50, intensity: 1023 }]);
+    rec.buildLights([{ index: lightPrim, tileX: 100, tileY: 50, reach: 16 }]);
 
     rec.upload(this.renderer.gl);
 
@@ -822,7 +820,7 @@ export class Viewport {
     };
     // and over-subscribe the light cap: 10 lights on one tile, 8 slots
     rec.buildLights(Array.from({ length: 10 }, (_, i) => (
-      { index: rec.allocPrim(), tileX: 210, tileY: 210, intensity: 200 })));
+      { index: rec.allocPrim(), tileX: 210, tileY: 210, reach: 7 })));
     const overLights = { droppedLightsDelta: rec.droppedLights - before.lights,
                          slotsUsed: rec.slotsAt("light", 210, 210).filter((s) => s !== INDEX_NONE).length };
     rec.upload(this.renderer.gl);
@@ -891,14 +889,14 @@ export class Viewport {
   private lightCost(n: number): Record<string, unknown> {
     const gl = this.renderer.gl, rec = this.records, win = this.map.window;
     // N emitters spread across the window so their reach circles genuinely overlap the sampled tiles
-    const lights: { index: number; tileX: number; tileY: number; intensity: number }[] = [];
+    const lights: { index: number; tileX: number; tileY: number; reach: number }[] = [];
     for (let i = 0; i < n; i++) {
       const tx = win.winCol + 4 + (i % 8) * 3;
       const ty = win.winRow + 4 + Math.floor(i / 8) * 3;
       const id = rec.allocPrim();
       rec.writePrim(id, { unitX: tx * 16 + 8, unitY: ty * 16 + 8, definition: 1,
-                          emitType: 1, intensity: 1023, colors: [0, 0, 0, 180] });
-      lights.push({ index: id, tileX: tx, tileY: ty, intensity: 1023 });
+                          emitType: 1, intensity: 63, reach: 16, colors: [0, 0, 0, 180] });
+      lights.push({ index: id, tileX: tx, tileY: ty, reach: 16 });
     }
     rec.buildLights(lights);
     rec.upload(gl);
@@ -950,7 +948,7 @@ export class Viewport {
     // ADD a light into slot 7 (unused by the built set) via the delta path
     const id = rec.allocPrim();
     rec.writePrim(id, { unitX: (win.winCol + 16) * 16, unitY: (win.winRow + 8) * 16,
-                        definition: 1, emitType: 1, intensity: 900, colors: [0, 0, 0, 200] });
+                        definition: 1, emitType: 1, intensity: 55, reach: 16, colors: [0, 0, 0, 200] });
     rec.upload(gl);
     let draws = 0;
     const de = gl.drawElements, da = gl.drawArrays;
@@ -1105,7 +1103,7 @@ export class Viewport {
       saved.push([i, d.castType]);
       rec.writePrim(i, { unitX: d.unitX, unitY: d.unitY, unitZ: d.unitZ, definition: d.definition,
                          castType: 0, receiveType: d.receiveType, emitType: d.emitType,
-                         layer: d.layer, seed: d.seed, intensity: d.intensity });
+                         layer: d.layer, seed: d.seed, intensity: d.intensity, reach: d.reach });
     }
     rec.upload(gl);
     this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true);
@@ -1114,7 +1112,7 @@ export class Viewport {
       const d = rec.debugPrim(i);
       rec.writePrim(i, { unitX: d.unitX, unitY: d.unitY, unitZ: d.unitZ, definition: d.definition,
                          castType: ct, receiveType: d.receiveType, emitType: d.emitType,
-                         layer: d.layer, seed: d.seed, intensity: d.intensity });
+                         layer: d.layer, seed: d.seed, intensity: d.intensity, reach: d.reach });
     }
     rec.upload(gl);
     const typeLane = { castersRestored: saved.length, nonZeroBefore: before,
@@ -1204,7 +1202,7 @@ export class Viewport {
       const index = r.allocPrim();
       const homeX = tileX * 16 + 8, homeY = tileY * 16 + 8;
       r.writePrim(index, { unitX: homeX, unitY: homeY, definition: 1, emitType: 1,
-                           intensity: 1023, colors: [0, 0, 0, 190] });
+                           intensity: 63, reach: 16, colors: [0, 0, 0, 190] });
       this.liveLights.push({ index, homeX, homeY, tileX, tileY });
     }
     this.rebuildLightSet();
@@ -1225,7 +1223,7 @@ export class Viewport {
       const ux = Math.round(L.homeX + Math.cos(ph) * R);
       const uy = Math.round(L.homeY + Math.sin(ph) * R);
       r.writePrim(L.index, { unitX: ux & 0xffff, unitY: uy & 0xffff, definition: 1, emitType: 1,
-                             intensity: 1023, colors: [0, 0, 0, 190] });
+                             intensity: 63, reach: 16, colors: [0, 0, 0, 190] });
       L.tileX = Math.floor(ux / 16); L.tileY = Math.floor(uy / 16);
     }
     this.rebuildLightSet();
@@ -1234,7 +1232,7 @@ export class Viewport {
 
   private rebuildLightSet(): void {
     this.records.buildLights(this.liveLights.map((L) => (
-      { index: L.index, tileX: L.tileX, tileY: L.tileY, intensity: 1023 })));
+      { index: L.index, tileX: L.tileX, tileY: L.tileY, reach: 16 })));
   }
 
   private ensureGeometry(quads: number): void {

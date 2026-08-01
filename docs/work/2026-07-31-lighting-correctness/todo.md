@@ -19,14 +19,14 @@ Stances + fixtures: [`README`](README.md)._
 
 ## P1 — reach in the data
 
-- [ ] Split `prim_data.B`'s `u10 intensity` into `u4 reach` (bias +1 → 1..16 tiles) +
+- [x] Split `prim_data.B`'s `u10 intensity` into `u4 reach` (bias +1 → 1..16 tiles) +
       `u6 intensity`; update both record writers, the lane asserts, and `VARIABLES.md`.
       Acceptance: asserts pass; VARIABLES shows the new B layout; a probe reads back an
       authored reach.
-- [ ] Plumb authored reach from content (`&thing.light.reach`, torch = 8) through the DSL
+- [x] Plumb authored reach from content (`&thing.light.reach`, torch = 8) through the DSL
       bundle into the emit prim's reach lane. Acceptance: the torch registers on exactly
       the tiles its authored reach covers (occupancy overlay), independent of intensity.
-- [ ] Retire `reachFromIntensity` — the tile light-set build and the walk bound read the
+- [x] Retire `reachFromIntensity` — the tile light-set build and the walk bound read the
       STORED reach; delete `lightReach.ts`. Acceptance: grep-clean; the 16-light fixture
       renders identically when authored reach matches the previously derived values.
 

@@ -360,7 +360,8 @@ prim_data                                          1 px per prim, RGBA32UI
   R  u16 unit.x            | u16 unit.y
   G  u8  unit.z            | u4 fine.x | u4 fine.y | u16 definition_index
   B  u2  cast_type (30-31) | u2 receive_type (28-29) | u2 emit_type (26-27)
-     u4  layer (22-25)     | u8 seed (14-21) | u4 rotation (10-13) | u10 intensity (0-9)
+     u4  layer (22-25)     | u8 seed (14-21) | u4 rotation (10-13)
+     u4  reach (6-9, BIASED +1 = 1..16 tiles) | u6 intensity (0-5)
   A  u8  color.1 | u8 color.2 | u8 color.3 | u8 color.4      (.4 = emitted light colour)
 
 definition_data                     16 sequential px per definition, indexed by ROTATION
@@ -378,11 +379,15 @@ adjacent lanes of the same channel.
 `base + rotation` is the whole addressing rule for art. It subsumes the n/s perpendicular caster card,
 the e/w mirror and the 16-cell autotile table: three special cases collapse into one add.
 
-**Reach is DERIVED from `u10 intensity`**, not stored — nothing has spare bits, and reach *is* the
-distance at which a light falls below the visible threshold, so a field would be a second source of
-truth. `L(d) = I / (1 + (d/d0)²)` solved at `L = 1/255`, `d0` = 1 tile; full intensity reaches exactly
-**16 tiles**. One implementation in `lightReach.ts`, in TS **and** GLSL in the same file, because the
-CPU builds each tile's light set from it and the GPU bounds its walk with it.
+**Reach is STORED** (lighting-correctness P1, user directive), taking four of intensity's old ten
+bits: `u4` biased +1 → **1..16 tiles**. Sixteen caps the lane deliberately — reach is the measured
+cost dial (walk length ∝ reach, claimed texels ∝ reach², overlap multiplies both), and 16 is the
+ceiling every headline number is priced at; the encoding refuses the value the system is known to
+choke on. Reach bounds registration + walks; the falloff `L(d) = I / (1 + (d/d0)²)` (`d0` = 1 tile)
+shapes light WITHIN it, so a short reach on a bright light clips visibly — that is content's dial,
+exactly as the old authored `&thing.light.reach` behaved. The CPU tile-registration and the GPU walk
+bound both read the SAME lane via `records.ts`'s `LIGHT_LANES_GLSL` (`reachUnitsFromB`), which is
+what keeps them agreeing by construction (`lightReach.ts`'s derive-and-share is retired).
 
 ```
 light        1 px per TILE, RGBA32UI   8 x u16 prim indices — the 8 nearest emitters reaching it
