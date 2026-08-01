@@ -52,3 +52,39 @@ load, both zooms. Stances: [`README`](README.md)._
       per-light scissored updates, dirty-rect uploads) with this stream's final numbers
       as its baseline. Acceptance: the successor folder exists with its baseline
       recorded; this stream marked done.
+
+## P4 — the user's verdict (2026-08-01): reopened
+
+_Four defects from the user's eyes: lights are dim and do not project their 16-tile
+reach; zoom-out breaks lighting (the chain is NOT on the slot torus — probed: at lod 1
+the cache window is 64×32 tiles, the lighting RTs cover 32×16, two of three torches
+address OUTSIDE the RT); tiles have no working normals (the ground writes nothing into
+`normal-cold` — overlay-verified); a gap remains between a tree and its shadow. User
+directives: reach-16 lights must read as such; **"use the same machinery you're using
+for the existing toroidal maps"** for the lighting window._
+
+- [ ] Scale the falloff with STORED reach (today `d0` is pinned at ONE tile, so a
+      reach-16 light dies in ~3 tiles: at d=16 tiles attenuation = 1/257). One shared
+      GLSL falloff in LIGHT_LANES, both slot writers. Acceptance: a torch pool visibly
+      spans its 16 tiles; `__lightexact` still bit-identical.
+- [ ] Put the lighting chain on the SLOT TORUS (the composites' machinery): texel block
+      = `mod(tile, cols) × (TEXTILE_LIGHT >> lod)`, fixed RT sizes, window-unwrap as in
+      `fillDisplay`; same for the shadow buffer (`TEXTILE_UNIT >> lod`) and the blit's
+      read. Acceptance: all three pools light at zoom 0.5; probe px < RT bounds at lod 1.
+- [ ] Make ground/tile normals reach the composite: the ground bake writes NOTHING into
+      `normal-cold` (overlay: ground transparent/black; grass HAS `normal.l.0.png`, the
+      manifest lists it). Find the ground fill's bake path, wire `uNormalTex`.
+      Acceptance: the `normal-cold` overlay shows ground normals; grass shades under a
+      torch.
+- [ ] Close the shadow-base gap: the bbox threshold (>127 coverage) sits above the drawn
+      feet and `fracY = 1` samples one row PAST the subframe's last art row. Lower the
+      bbox threshold toward the drawn edge and clamp the silhouette row inside the art.
+      Acceptance: on screen the conifer/human shadow touches the visible feet at zoom 1
+      and 2.
+- [ ] The lod-1 wall surface bakes BLACK (`surface-cold` overlay: walls 0,0,0 at
+      zoom 0.5 — grid-stem surface missing at the 64 px lod → ambient×ao kills them).
+      Diagnose the grid-stem lod resolve; fix or record the fallback. Acceptance: walls
+      visible under ambient at zoom 0.5.
+- [ ] The zoom sweep: cold loads at zoom 2 / 1 / 0.5 / 0.25 at the fixture — pools
+      project 16 tiles, shadows grounded, walls lit, no window edges. Acceptance:
+      captures in `completed.md`; the user's eyes close the stream.
