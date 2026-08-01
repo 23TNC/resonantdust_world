@@ -550,3 +550,53 @@ A comment at each renamed definition says *why*, so the next person does not und
 | `roundTrip.exact` | true |
 | head and body footprint | **same** `unit.x/y`, head elevated |
 | `glError` | 0 |
+
+
+## 2026-08-01 · P3 — the corpus authors a HEIGHT ([F5](forks.md#f5))
+
+The deviation logged earlier — *"deferred, no cargo toolchain"* — was **wrong about the environment**.
+`bin/rd build shared` builds the wasm bundle **in docker** (`shared/compose.yml`'s `wasm` service),
+and the `rd-sim-builder` image was already present. No host cargo is needed and none ever was; I
+checked for `cargo` on `PATH`, found nothing, and stopped one step short of the build script that
+exists precisely because there is no host cargo.
+
+```
+-0.87 &head.offset.y set        →        0.87 &head.offset.z set
+```
+
+Both head slots — female and male — in `content/visual/pawns.rd`.
+
+### The build caught what I had missed
+
+`rustc` rejected the first attempt: `missing field 'elevation' in initializer of 'VisualPart'` at
+`shared/wasm/src/lib.rs:401` — a *second* construction site, the default slot for a kind with no
+parts list. Exactly the kind of thing a real build finds and a grep does not.
+
+### Verified — the drawing is unchanged, the meaning is not
+
+| | before (`offset.y = −0.87`) | after (`offset.z = 0.87`) |
+|---|---|---|
+| DSL delivers | `offY −0.87, offZ 0` | **`offY 0, offZ 0.87`** |
+| head draws at | `y = 7120.64` | **`y = 7120.64`** — identical |
+| head's record | `unitY 911`, elevation 9.125 | `unitY 911`, elevation 9.125 |
+| body's record | `unitY 911`, elevation 0 | `unitY 911`, elevation 0 |
+
+`occlusionDiffering` **0** / 131,072 · 524 casters · `glError` 0.
+
+**Two sources, each authoritative for its own thing** — worth stating because it looks like
+duplication and is not. The DSL's `offset.z` drives the **drawing** (where the head's frame centre
+goes). The carrier link drives the **shadow elevation** (the gap between the head's art bottom and
+the pawn's feet). They are different quantities: `offset.z` locates a frame centre, the record needs
+the card's *bottom*. Deriving the second from the first would reintroduce exactly the art-dependent
+fudge this stream removed.
+
+## 2026-08-01 · Stream complete — 30/30
+
+**Body and head cast ONE aligned shadow**, verified on screen against a real before-image.
+
+Secondary: elevation costs **nothing** — it is 2.8 ms *faster* than flattening, because flat heights
+put every light at `Lz = 0` and degenerate the occlusion solve.
+
+Everything else this stream found is in [`issues.md`](issues.md); the two corrections that changed
+conclusions are [I17](issues.md#i17) (texel counts are not reproducible — never quote them) and
+[I8](issues.md#i8) (the tilt factor is `sin`, on drawn extents only).

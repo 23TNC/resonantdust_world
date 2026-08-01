@@ -405,6 +405,7 @@ impl Content {
                     part: 0,
                     scale: 1.0,
                     offset: (0.0, 0.0),
+                    elevation: 0.0,   // a default slot stands on the ground
                     depth: 0.0,
                     size: v.as_ref().map(|v| v.size).unwrap_or(1.0),
                     span: v.as_ref().map(|v| v.span).unwrap_or(1.0),

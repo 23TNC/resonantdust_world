@@ -54,10 +54,17 @@
                 1 &head.part set
                 ; 0.5 tiles of head art (user spec) — absolute, not 0.625 × the body.
                 0.5 &head.scale set
-                ; Offset in TILES from slot 0's anchor (the feet) to the head FRAME's
+                ; HEIGHT in TILES above slot 0's anchor (the feet) to the head FRAME's
                 ; centre. Tuned against the 0.8-scale body: its art runs from 0.238 to
                 ; 0.938 tiles above the anchor, so the head centres just over its top.
-                -0.87 &head.offset.y set
+                ;
+                ; `offset.z`, NOT `offset.y` (z-positioning F5). The two look identical on screen —
+                ; the renderer draws elevation as a northward shift of the same size — but they mean
+                ; opposite things to the shadow system. `offset.y` would put the head at a different
+                ; WORLD position, so it would cast from its own ground footprint and the pawn would
+                ; throw two shadows offset by exactly this fudge. `offset.z` keeps the body's
+                ; footprint and says "this is how high it sits", so the two shadows are ONE.
+                0.87 &head.offset.z set
                 1 &head.span set
                 ; Draw-order along the VIEW's depth axis, in the pawn's own frame:
                 ; +1 = toward the viewer when it faces the camera. The client negates
@@ -84,7 +91,8 @@
                 #7a6a5a &head.geoColor set
                 1 &head.part set
                 0.5 &head.scale set
-                -0.87 &head.offset.y set
+                ; HEIGHT, not a y-fudge — see the female kind above (z-positioning F5).
+                0.87 &head.offset.z set
                 1 &head.span set
                 ; Draw-order along the VIEW's depth axis, in the pawn's own frame:
                 ; +1 = toward the viewer when it faces the camera. The client negates

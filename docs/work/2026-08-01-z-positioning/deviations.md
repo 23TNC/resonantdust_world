@@ -32,6 +32,19 @@ The item's intent — "stop comparing screen quantities to world ones" — is me
 was wrong because it was written before [I8](issues.md#i8) was resolved.
 
 
+## 2026-08-01 · P3's corpus change deferred — RESOLVED, the premise was wrong
+
+**Resolved the same day.** I wrote below that the DSL change was blocked for want of a cargo
+toolchain. It was not: `bin/rd build shared` builds the wasm **in docker**, and its own header says
+so — *"builds in docker (no host cargo)"*. I checked `PATH` for `cargo`, found none, and concluded
+"cannot build" without reading the build script that exists for exactly that situation.
+
+The change is made and verified (see [`completed.md`](completed.md)). **Kept below** because the
+mistake is the interesting part: a missing tool on `PATH` is not the same as a missing capability,
+and this repo builds everything Rust in containers by design.
+
+### The original entry
+
 ## 2026-08-01 · P3's corpus change deferred — no cargo toolchain
 
 `offset.z` is plumbed through `shared/dsl/src/loader.rs` (`VisualPart::elevation`) and exported by
