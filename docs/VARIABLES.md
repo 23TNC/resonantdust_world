@@ -389,9 +389,22 @@ always was in practice: `RecordSync` passes `cast_type`/`receive_type` from the 
 into `writePrim`, and each record packs from the field NAMES independently. Nothing ever copied the
 raw word, which is why the split is safe.
 
-**`fine.z` is game-space, in units**, like `fine.x`/`fine.y` and unlike anything projected: the full
-elevation is `unit.z + fine.z/16`, and both terms convert to screen together. It refines the
-ELEVATION, not the already-projected `screen.z` — the two differ by a factor of `tan(world_tilt)`.
+**`unit.z` is a HEIGHT above the ground, in units, and the record holds GAME coordinates.** `unit.x`
+and `unit.y` are where a prim physically **stands** — not where it is drawn. The drawn row is
+`unit.y − elevation`, a 1:1 shift with no coefficient, so a pawn's head and its body carry the
+**same `unit.x/y`** and differ only in `unit.z`. That is what makes their shadows align by
+construction rather than by tuning (work `2026-08-01-z-positioning`, F7).
+
+**`fine.z` is game-space, in units**, like `fine.x`/`fine.y`: the full elevation is
+`unit.z + fine.z/16`. It refines the ELEVATION, not a projected quantity.
+
+**One meaning, one conversion (F9).** The lane stores a **drawn** up-screen shift. A light's authored
+height is a *world* height, so `RecordSync` converts it on the way in — every reader downstream then
+compares like with like. The tilt enters in exactly two places: turning a **drawn extent** into a
+world elevation (`× sin(world_tilt)`, the factor `shadowGather.ts` used and
+`content/visual/things.rd` still documents), and `screen.z = tan(world_tilt) · unit.z`, which is a
+depth perpendicular to the screen used **only** for z-ordering, never as a height.
+`client/webgl/src/game/viewport/worldTilt.ts` is the one place the angle appears.
 
 `base + rotation` is the whole addressing rule for art. It subsumes the n/s perpendicular caster card,
 the e/w mirror and the 16-cell autotile table: three special cases collapse into one add.

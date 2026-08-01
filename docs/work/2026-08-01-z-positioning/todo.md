@@ -67,13 +67,13 @@ _There is no draw-side constant: the screen-north shift IS the elevation, 1:1. T
 
 ## P4 — Where a thing stands, for lighting as well as shadow
 
-- [ ] Sample the lightmap at the prim's BASE ROW, not its drawn position ([lighting-rework I13](../2026-07-31-lighting-rework/issues.md#i13) defect 4). Acceptance: a billboard is lit by the tile it stands on; `zdepth.B` already carries the base row.
+- [x] Sample the lightmap at the prim's BASE ROW, not its drawn position ([lighting-rework I13](../2026-07-31-lighting-rework/issues.md#i13) defect 4). Acceptance: a billboard is lit by the tile it stands on; `zdepth.B` already carries the base row.
 - [ ] Order by `screen.z` against a COMMON reference ([F4](forks.md#f4)). Acceptance: head sorts before body because it is nearer the viewer, not because of graph walk order; the reference plane is scene-wide, so depths from different prims compare.
 - [ ] Rename the draw-order `z` away from the collision ([F1](forks.md#f1)). Acceptance: `slotZ`/`zIndex`/`depth` no longer read as height; one word means one thing.
 
 ## P5 — The verdict
 
-- [ ] Re-measure the frame with elevation live. Acceptance: no measurable change against the pre-stream baseline — this adds arithmetic to existing passes, not passes.
+- [x] Re-measure the frame with elevation live. Acceptance: no measurable change against the pre-stream baseline — this adds arithmetic to existing passes, not passes.
 - [ ] Capture the A/B set at zoom 3. Acceptance: ground prim unchanged, head aligned, one shadow; each beside its before-image.
-- [ ] Record what elevation now buys for free. Acceptance: a sentence each on wall torches, carried items and any elevated caster, so the generalisation is not rediscovered.
-- [ ] Update `VARIABLES.md` on `unit.z`'s meaning and units. Acceptance: it says height in units, names the projection, and distinguishes it from the draw-order lane.
+- [x] Record what elevation now buys for free. Acceptance: a sentence each on wall torches, carried items and any elevated caster, so the generalisation is not rediscovered.
+- [x] Update `VARIABLES.md` on `unit.z`'s meaning and units. Acceptance: it says height in units, names the projection, and distinguishes it from the draw-order lane.

@@ -433,3 +433,54 @@ until someone rebuilds the wasm, because the shipped `shared/pkg/resonantdust_sh
 parse a field it does not know and drop the `offset.y` that currently does the work.
 
 **Recorded as a deviation** with the exact post-rebuild change.
+
+
+## 2026-08-01 · P4/P5 — lighting by the tile a thing stands on, cost, and what this generalises to
+
+### The blit already lights a billboard by where it STANDS ([lighting-rework I13](../2026-07-31-lighting-rework/issues.md#i13) defect 4)
+
+No change needed, and P2b is why. `__zprobe(95, 56)` on the pawn's tile:
+
+```
+receivers: [ 0 → 3033 texels (ground), 525 → 617 (body), 526 → 446 (head) ]
+```
+
+Both parts own lighting texels, so each is lit through the receiver mechanism at its **card's plan
+position** (`Puse = (P.x, baseY)`), and since P2b `baseY` is the true ground row rather than the drawn
+one. The blit samples the lightmap at the drawn pixel, but the value at that texel was computed for
+the card standing where it stands. Receiver self-test alongside: 2,097,152 texels sampled, 219,666
+with a receiver, 110 distinct owners, `ownersThatAreNotReceivers` **0**, `glError` 0.
+
+### Cost — elevation is free, and flattening it is *expensive*
+
+The plan wanted a comparison against the pre-stream baseline. **That baseline is not comparable**: the
+lighting-rework figures (2.79 ms static, 3.11 ms with 16 moving lights) were taken at
+`?focus=100,50`, which holds **zero casters** — they measured almost none of the shadow system.
+
+So the honest measurement is this stream against itself: same scene, same 16 lights at reach 16,
+elevations live vs flattened to 0.
+
+| | frame |
+|---|---|
+| elevation live | **10.35 ms** (min 10.29) |
+| every elevation zeroed | **13.15 ms** (min 11.08) |
+
+**Elevation is 2.8 ms FASTER.** Not a surprise once stated: zeroing every height puts the lights back
+at `Lz = 0`, where the height test cannot reject and every caster occludes at every distance — P0's
+degenerate case, arrived at again from the performance side. Elevation adds arithmetic to existing
+passes and removes work from the walk.
+
+### What this buys beyond the pawn's head
+
+- **A wall torch** — bracketed above head height. It now casts from the wall's ground footprint, not
+  from a phantom position a metre north of the wall, and its light direction is correct because the
+  height term is converted before it meets the ground offsets.
+- **A carried item** — a tool, a lantern, a pack. Elevation comes from the carrier link for free: any
+  piece with `carrierOf` adopts its carrier's footprint and derives its own height from geometry, so
+  new carried art needs **no** authored number to shadow correctly.
+- **Any elevated caster at all** — a bird, a shelf, a sign. The caster card spans `[z, z+H]`
+  ([F3](forks.md#f3)), so a thing off the ground casts a shadow displaced by the geometry rather than
+  one starting at the floor.
+
+The general rule: **height is authored once and everything else is derived.** The class of bug this
+removes is the one where a drawn offset was also, silently, a claim about where something stood.
