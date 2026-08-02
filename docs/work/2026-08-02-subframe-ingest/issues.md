@@ -169,3 +169,37 @@ author `r<n>` VARIANT indices on a single facing, which is the axis the code act
 they are the case the user confirmed "mostly works".
 
 **Do not restore the wolf's rects until the loader carries the two axes separately.**
+
+## I11 — Mover stems are registered as if they were COLD stems — OPEN {#i11}
+
+> "The wolf is textured as a tree, and moving at light speed." — user, 2026-08-02
+
+**Not a revert.** Probed live: `thingTextureStems()` has the wolf at kind 7 with stem
+`pawn/animal/wolf`, `moverParts(7)` returns one slot with that stem and 1536 subframe floats. The
+corpus, the kind ids and the DSL wire are all correct, so the cause is downstream of them and the
+symptom is not yet explained.
+
+**The one defect found while checking**, which is mine and is the first thing to rule out: P2's
+registration loop in `WorldBridge` walks `thingStems` and registers **only** `<base>/<DEFAULT_FACING>`
+— i.e. `pawn/animal/wolf/e` — at cell indices `0..15` meaning VARIANTS. But a mover does not resolve
+that way:
+
+| path | stem | cell |
+|---|---|---|
+| cold thing | `<base>/e` | the variant |
+| mover | `<base>/<variant>/<facing>`, else `<base>/<facing>` | **none** |
+
+So a mover's south/north stems (`…/wolf/s`, `…/wolf/n`) get **no** registration at all, its
+per-variant stems (`…/wolf/3/e`) get none either, and the one key it shares with the cold path
+(`…/wolf/e`) is registered with variant-indexed cells the mover never passes — it reads cell 0.
+The wolf is the only kind that is both a `thing` in the corpus and rendered as a mover, which is
+exactly why it is the kind that broke.
+
+**The mover registration is simply missing** — `MoverLayer` should register from `moverParts()`'s
+own `subframes`, against the stems `moverSlotTexture` actually builds, per part slot. That was a P2
+item and is not done.
+
+Whether that explains a TREE texture is unproven — a missing registration should leave art
+uncropped, not swap it — so this is a lead, not a diagnosis. The speed symptom is unexplained and may
+be unrelated (a stale sim binary and the render-chase are both prior suspects). **Investigate with a
+fresh look before changing anything.**
