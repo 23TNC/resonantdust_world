@@ -4,7 +4,11 @@ _Things needing the user: what blocks, why it needs **them**, options, my recomm
 blocker is theirs; a [fork](forks.md) is mine._
 
 ## B1 — Which base model to train on {#b1}
-_2026-08-02 · opened at P1.2 · **needs the user** (the plan designates this pick as theirs)_
+_2026-08-02 · opened at P1.2 · **RESOLVED same day by the user: animagine-xl-4.0**, with Illustrious explicitly kept alive for a future attempt_
+
+> "Both models have weaknesses. I agree we can start with animagine-xl-4.0 but I am not ruling out future attempts with illustrious." — user, 2026-08-02
+
+So this is a STARTING POINT, not an elimination. See [F4](forks.md#f4) and the README's future-intent section.
 
 **What blocks:** [P1.3](todo.md) onward (ControlNet check, VAE wiring, `generate.py` default) all
 name "the chosen base". [P2](todo.md) does **not** depend on it, so execution continues there.

@@ -31,7 +31,13 @@ REPO = os.environ.get("RD_REPO_ROOT") or os.path.abspath(os.path.join(HERE, ".."
 COMFY = os.environ.get("COMFYUI_URL", "http://172.16.10.10:8188").rstrip("/")
 
 # ---- proven recipe (see the sprite-gen memory / docs/sprite-gen-plan.md) ----
-MODEL   = "sdxl/cyberrealisticXL_v80.safetensors"
+# BASE CHECKPOINT. Was cyberrealisticXL_v80 until 2026-08-02 — a PHOTOREALISM finetune, chosen only
+# because it was the sole SDXL checkpoint on the box in March, while the target art is flat regions
+# bounded by hard black outlines (work/2026-08-02-lora-beat-e07 I5). Measured no-LoRA probe: this
+# base puts 4/4 east cells wider than tall (mean aspect 1.89) where Illustrious-XL managed 0/4
+# (1.02) — i.e. it draws BODIES in side profile, not busts. Illustrious is not ruled out (user,
+# 2026-08-02: "I am not ruling out future attempts"); switching is this constant plus eval_set.json.
+MODEL   = "sdxl/animagine-xl-4.0.safetensors"
 CN_MODEL= "sdxl/diffusion_pytorch_model.safetensors"
 STEPS, CFG, SAMPLER, SCHED = 26, 6.0, "dpmpp_2m", "karras"
 # Measured on the quadruped LoRA via `lora_eval.py --pipeline` (4x4 dn/cn grid + cn_end

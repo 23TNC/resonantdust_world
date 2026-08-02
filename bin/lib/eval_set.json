@@ -11,13 +11,19 @@
     "driven ad hoc. Only its OUTPUTS survive (.staging/ab5); the driver was never committed, so",
     "the verdict cannot be reproduced from the repo. See issues I6.",
     "",
-    "`model` is the BASE CHECKPOINT. It is cyberrealisticXL today only because that was the sole",
-    "SDXL checkpoint on the box in March (issues I5); P1 replaces it after the no-LoRA probe."
+    "`model` — the BASE CHECKPOINT, animagine-xl-4.0 since 2026-08-02 (P1.2). It was",
+    "cyberrealisticXL_v80, a PHOTOREALISM finetune, purely because that was the sole SDXL",
+    "checkpoint on the box in March (issues I5). The no-LoRA probe measured this base at 4/4 east",
+    "cells wider than tall (mean aspect 1.89) against Illustrious-XL's 0/4 (1.02) — bodies in side",
+    "profile rather than busts. Illustrious is NOT ruled out for a later attempt (user, 2026-08-02).",
+    "",
+    "`size` — 1024, SDXL-native for this base (forks F6). It was 768, which entered the project as",
+    "a 2080 Ti VRAM accommodation rather than a decision."
   ],
 
-  "model": "sdxl/cyberrealisticXL_v80.safetensors",
+  "model": "sdxl/animagine-xl-4.0.safetensors",
   "vae": null,
-  "size": 768,
+  "size": 1024,
   "seeds": [7700, 7701, 7702],
 
   "positive": "rd_style, rd_animal, rd_quadruped, {rd}, {phrase}, {family}, {name}, single creature, full body, white background",
@@ -28,7 +34,7 @@
     "s": ["rd_south", "front view, facing the viewer, facing forward", "south"]
   },
 
-  "_dirs_note": "n (back view) is deliberately OUT of the standing A/B: the shipping comparison was e/s only, and adding a direction now would move the bar. `n` is generated for review, not scored.",
+  "_dirs_note": "n (back view) is deliberately OUT of the scored set: the historical comparison was e/s only. `n` is generated for review, not scored. NOTE (issues I7): BOTH candidate bases failed on front views with no LoRA at all, so `s` is expected to stay the weak direction.",
   "dirs_review_only": {
     "n": ["rd_north", "back view, facing away, seen from behind", "north"]
   },

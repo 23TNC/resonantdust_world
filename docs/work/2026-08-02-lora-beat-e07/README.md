@@ -103,6 +103,13 @@ verifies that rather than assuming it.
 
 ## Future intent this plan must not trim
 
+- **Illustrious-XL is NOT eliminated.** The user's words on choosing Animagine: *"Both models have
+  weaknesses. I agree we can start with animagine-xl-4.0 but I am not ruling out future attempts
+  with illustrious."* So this is a starting point, not a verdict. The probe measured a **prior**,
+  and a prior only correlates with what a base LEARNS — Illustrious could still train better while
+  probing worse. Switching costs two constants (`eval_set.json:model`, `generate.py:MODEL`), and
+  that cheapness is deliberate: keep it that way.
+
 - **The two-stage architecture** stays the destination: generate a line drawing → use it as the
   ControlNet source → render detail in a second pass. The open
   [`lineart-lora`](../2026-07-27-lineart-lora/README.md) stream feeds that and is a *different

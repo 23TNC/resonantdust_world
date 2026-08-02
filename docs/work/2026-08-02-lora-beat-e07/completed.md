@@ -122,3 +122,9 @@ to confirm the baseline still reproduces, and that result is the first real entr
   --dst .staging/animal-lora-train-v3`, ESRGAN enforced (no silent fallback possible now).
   Measured rate ~3.8 s/image → ~29 min for the 459-image corpus. Log: `.staging/prep_v3.log`.
   P2.2 (outline sharpness) and P2.5 (eyeball spot-check) are measured off the finished set.
+- **2026-08-02 · P1.2 · Base chosen: `animagine-xl-4.0`** ([B1](blockers.md#b1) resolved). The
+  user: *"Both models have weaknesses. I agree we can start with animagine-xl-4.0 but I am not
+  ruling out future attempts with illustrious."* — recorded as a starting point, not an
+  elimination, and carried into the README's future-intent section so a later session does not
+  read it as settled. `eval_set.json:model` and `generate.py:MODEL` both moved off
+  `cyberrealisticXL_v80`; `eval_set.json:size` moved 768 → 1024 per [F6](forks.md#f6).

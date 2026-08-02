@@ -16,7 +16,7 @@ headroom**, **the user selects**. This stream changes many variables at once on 
 ## P1 — Choose the base model
 
 - [x] Generate the pinned set on Illustrious-XL v1.0 and animagine-xl-4.0 with NO LoRA. Acceptance: one sheet per candidate, same prompts and seeds. cyberrealisticXL is NOT probed — it is being replaced, not evaluated.
-- [ ] Have the user pick the base whose prior sits closest to flat-region/hard-outline art. Acceptance: a base chosen, with the user's reasoning recorded in `completed.md` ([F4](forks.md#f4) holds my pre-measurement pick).
+- [x] Have the user pick the base whose prior sits closest to flat-region/hard-outline art. Acceptance: a base chosen, with the user's reasoning recorded in `completed.md` ([F4](forks.md#f4) holds my pre-measurement pick).
 - [ ] Confirm the chosen base loads with the SDXL ControlNets already on the box. Acceptance: `mistoline-lineart` and `controlnet-union-promax` both produce a controlled generation without a shape or dtype error.
 - [ ] Confirm which VAE the chosen base wants and wire it explicitly. Acceptance: a generation with no washed-out or artefacted output, and the VAE named in `completed.md` rather than left implicit.
 - [ ] Point `generate.py`'s `MODEL` at the chosen base. Acceptance: the default no longer names a photorealism finetune; the old value is recorded in `completed.md` for rollback.
