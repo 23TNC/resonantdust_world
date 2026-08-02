@@ -69,7 +69,7 @@ nearly right while the other two stream in.
 Recorded as the shape of the P1 fix rather than a separate defect: the fix is not merely "do not
 await", it is "reveal in importance order".
 
-## I6 — What SHAPE does the drawn placeholder use? UNPINNED {#i6}
+## I6 — What SHAPE does the drawn placeholder use? MOOT — [F6](forks.md#f6) abandons drawing {#i6}
 
 [F4](forks.md#f4) draws the placeholder instead of fetching one, which needs a shape before any
 texture exists. Two candidates, and the choice changes every item under P3:
@@ -81,6 +81,7 @@ texture exists. Two candidates, and the choice changes every item under P3:
   [subframe-ingest I6](../2026-08-02-subframe-ingest/issues.md#i6) already worries about for the
   subframe itself.
 
-**Not blocking**: the rect alone is a large improvement over a flat geo box and can ship first, with
-the silhouette as a later refinement. Recorded so the choice is made deliberately rather than by
-whichever is convenient when P3 starts.
+**Answered by not needing an answer.** [F6](forks.md#f6) fetches a real 32 px preview instead of
+drawing one, so there is no shape to pin. Kept as a record of why the drawn route was explored and
+why it lost: a synthesized placeholder is a second rendering of every asset that must keep matching
+the first one as the corpus grows, and it measured LARGER than the real art it approximated.

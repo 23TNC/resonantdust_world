@@ -14,8 +14,9 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 - **No geometry changes.** [`subframe-ingest`](../2026-08-02-subframe-ingest/README.md) owns
   placement. If a change here moves a sprite, it is out of scope and wrong.
 - **No LOD ladder.** It was deleted deliberately and it made the runtime bbox unstable
-  ([subframe-ingest I7](../2026-08-02-subframe-ingest/issues.md#i7)). A cheap PLACEHOLDER tier is not
-  a ladder ([F2](forks.md#f2)).
+  ([subframe-ingest I7](../2026-08-02-subframe-ingest/issues.md#i7)). A fixed-size PREVIEW is not a
+  ladder ([F2](forks.md#f2), [F6](forks.md#f6)): one size, never chosen by zoom, never feeding
+  geometry, dropped when the master lands.
 
 ## P0 — Instrument what was actually reported
 
@@ -38,18 +39,14 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 - [ ] Cap concurrent decodes so a zone's worth of stems cannot storm the main thread. Acceptance: a bounded queue, with the bound justified by P2's measurement.
 - [ ] Decide whether decode moves to a worker ([F3](forks.md#f3)). Acceptance: a stated answer with its cost — `ImageBitmap` is transferable, but the atlas upload must stay on the GL thread.
 
-## P3 — DRAW the placeholder from the DSL ([F4](forks.md#f4))
+## P3 — A 32 px PREVIEW tier ([F6](forks.md#f6))
 
-- [ ] Ship `channel_tints` + outline `bbox`/`color` through the manifest ([F5](forks.md#f5)). Acceptance: ~4 KiB corpus-wide reaches the client, and the boot manifest's size is unchanged to measurement.
-- [ ] Draw the flat placeholder from those alone. Acceptance: real fill colour, real proportions, real outline colour, no polygons and no new rasterizer — the floor that the 26 outline-less stems need anyway.
-- [ ] Synthesize a co-pack quadrant set on the GPU from the shape + authored tints. Acceptance: one pass writes all four quadrants, so a placeholder is indistinguishable from a real frame to every consumer downstream.
-- [ ] Draw albedo as the outline stroke, near-black. Acceptance: it matches the master convention (`albedo-outlines-by-design`), so the blit's residual path needs no special case.
-- [ ] Fill surface.B with coverage and G with 1. Acceptance: shadows, the receiver map and `silhouetteHit` all work on a placeholder — the world is LIT before any art downloads, not flat-lit.
-- [ ] Write a flat `#8080FF` normal quadrant. Acceptance: the light pass reads `(0,0,1)` and needs no branch for placeholder frames.
-- [ ] Fill layers.R and let `packChannels` apply the kind's authored tints. Acceptance: a placeholder carries the same colours the real asset will, rather than a neutral grey.
-- [ ] Swap the real co-pack in through the existing pack path. Acceptance: no placeholder is ever consulted for geometry, and the swap needs no new eviction rule.
-- [ ] Re-measure first paint against P0. Acceptance: time to first RECOGNISABLE asset is stated, which is the number this fork actually moves — first non-geo pixel was already near-zero.
-- [ ] Decide whether polygons are needed at all ([F5](forks.md#f5)). Acceptance: judged by eye against the flat version; if yes they ship as a SEPARATE lazily-fetched bundle, never in the boot manifest that gates every fetch.
+- [ ] Request a fixed small size alongside the master. Acceptance: the edge derives and caches it (no offline pyramid, no art-pipeline change), and the preview is never chosen by zoom.
+- [ ] Pack the preview into the atlas and swap it for the master when that lands. Acceptance: the swap uses the existing pack path, and no preview is ever consulted for geometry ([F2](forks.md#f2)).
+- [ ] Serve the preview from IndexedDB first. Acceptance: a warm reload paints real art before any network round-trip completes, since `previewCache` survived the ladder's deletion.
+- [ ] Confirm the preview is smaller than the master by the expected margin. Acceptance: measured per stem — 2.2 KB (conifer) and 4.3 KB (flora) for all four maps are the figures this fork was chosen on.
+- [ ] Re-measure first paint against P0. Acceptance: time to first REAL art is stated cold and warm, which is the number this fork moves.
+
 
 ## P4 — The standing costs
 

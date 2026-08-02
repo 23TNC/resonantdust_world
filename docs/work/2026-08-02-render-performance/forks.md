@@ -137,3 +137,45 @@ stream's own goal.
   correct — a re-master could drift it silently.
 - **26 of 106 stems have no outline at all**, so the flat-quad path is the floor, not an optional
   first step.
+
+## F6 — 32 px PREVIEWS, not drawn placeholders — SUPERSEDES [F4](#f4) and [F5](#f5) {#f6}
+
+> "It doesn't matter what is implemented today. We have not finished the game. We will have MANY more
+> objects in the future we will need to handle … we need to generate 32px preview assets because that
+> would be more reliable than drawing outlines from meta.json as we would need to load 5.8KB anyway
+> so… may as well avoid manual drawing which could break us." — user, 2026-08-02
+
+**Chosen: fetch a small REAL preview. The drawn placeholder is abandoned.**
+
+F4 and F5 optimised for the corpus as it stands today — 106 stems, 80 with outlines. That is the
+wrong thing to optimise for: the corpus grows, and a synthesized placeholder is a second rendering
+of every asset that has to keep matching the first one forever. Real art at low resolution cannot
+disagree with itself.
+
+**The size argument, measured, and it is not close.** All four maps at 32 px, PNG-optimised:
+
+| stem | albedo | normal | surface | layers | total |
+|---|---|---|---|---|---|
+| conifer | 113 | 753 | 900 | 443 | **2,209 B** |
+| flora | 284 | 1,726 | 1,463 | 835 | **4,308 B** |
+
+against **5,840 B median** for a single stem's `outline` polygons. The preview is *smaller than the
+data the drawn version would have needed*, and it is the actual asset rather than an approximation
+of it.
+
+**And the serving already exists.** `server/edge/src/textures.rs`: *"sizes the client needs, so a
+re-mastered asset needs no offline pyramid"* — the edge derives a requested size from the master and
+caches the derivation. The cache is empty today only because nothing asks. So this needs no art
+pipeline work and no offline generation; the client stopped requesting small sizes when the ladder
+was deleted, and that request is what comes back.
+
+**Still not the LOD ladder** ([F2](#f2)'s fence holds, and it is the reason this is safe): the
+preview is one fixed small size, never chosen by zoom, never consulted for geometry, dropped when
+the master lands. What made the ladder harmful was that the drawing tier varied and the bbox was
+derived from whichever tier decoded first
+([subframe-ingest I7](../2026-08-02-subframe-ingest/issues.md#i7)). A fixed preview that feeds only
+pixels reintroduces none of that.
+
+**What dies with F4/F5:** the synthesized co-pack, the polygon rasteriser, the manifest plumbing for
+`outline`/`channel_tints`, and [I6](issues.md#i6)'s shape question — all moot. `meta.json`'s
+`outline` stays dead data; if it is genuinely unused it should be deleted rather than half-revived.
