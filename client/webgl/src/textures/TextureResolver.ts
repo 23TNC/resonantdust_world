@@ -78,10 +78,33 @@ export class TextureResolver {
    *  pivot added by pawn-part-placement F4): applied at pack — scaled about the pivot's point on
    *  the surface presence, clipped to the same pow2 frame, transparent-filled. */
   private readonly spriteScale = new Map<string, [number, number, number, number]>();
+  /** subframe-ingest: stem → the DSL-authored `[x, y, w, h, anchorX, anchorY]` — which FRACTION of
+   *  the master is actually art, plus the pivot on it. Applied at ingest by {@link packCoPack},
+   *  identically to all four maps, which is what registers them with each other.
+   *
+   *  Keyed by the RESOLVED stem, so the direction rides the key (`…/flora/e`). West needs no entry:
+   *  `FACING_BY_ROTATION` maps a west facing to the EAST stem plus `flipX`, so it inherits east's
+   *  rect by construction — which is the whole of F4, for free. */
+  private readonly subframe = new Map<string, [number, number, number, number, number, number]>();
   /** texture-generalization: linked stem (the `<stem>/l` name) → its DSL `internal_padding`
-   *  (UNITS, of a 16-unit cell) — the BETWEEN-CELL inset inside the atlas. Distinct from the
-   *  manifest's external `pad` (fractions), which stays 0 per R5. Applied by `cellFrame`. */
+   *  (UNITS, of a 16-unit cell) — the BETWEEN-CELL inset inside the atlas.
+   *
+   *  **Slated for deletion into {@link setSubframe}** ([F6](../../../../docs/work/2026-08-02-subframe-ingest/forks.md#f6)):
+   *  a uniform inset IS a uniform subframe. It survives only because a grid stem's subframe applies
+   *  per CELL at RESOLVE (each cell is a sub-rect of one packed image), not per stem at INGEST, so
+   *  the substitution is at `cellFrame` rather than at `packCoPack` and wants `cellFrame` to take a
+   *  rect instead of a symmetric pad. Deleting it half-way would silently shift every autotile cell. */
   private readonly linkedPad = new Map<string, number>();
+
+  /** texture-generalization: register a linked stem's DSL `internal_padding` (units of the
+   *  16-unit cell). See {@link linkedPad} — this is on its way out. */
+  setLinkedPad(name: string, padUnits: number): void {
+    const cur = this.linkedPad.get(name) ?? 0;
+    if (cur === padUnits) return;
+    this.linkedPad.set(name, padUnits);
+    this.packed.delete(name);
+    this.packedHash.delete(name);
+  }
   private scaleWarned = false;
 
   private targetPx = BASE_LOD_PX;
@@ -108,16 +131,29 @@ export class TextureResolver {
     return this.manifest.entry(`${stem}/l`)?.grid ?? null;
   }
 
-  /** texture-generalization: register a linked stem's DSL `internal_padding` (units of the
-   *  16-unit cell). A CHANGE evicts the stem's packed frames so the cell sub-frame cache
-   *  (keyed by frame object) rebuilds under the new inset — same eviction discipline as
-   *  {@link setSpriteScale}. `name` is the `<stem>/l` form the draw path resolves. */
-  setLinkedPad(name: string, padUnits: number): void {
-    const cur = this.linkedPad.get(name) ?? 0;
-    if (cur === padUnits) return;
-    this.linkedPad.set(name, padUnits);
-    this.packed.delete(name);
-    this.packedHash.delete(name);
+  /** subframe-ingest: register a stem's DSL-authored SUBFRAME — the fraction of the master that is
+   *  actually art (`x, y, w, h`, all `0..1`) plus the pivot on it (`ax, ay`).
+   *
+   *  The atlas then ingests **that rect and nothing else**, identically for albedo, normal, surface
+   *  and layers. This replaces deriving the rect from decoded pixels: the derived bbox ran on
+   *  whichever lod happened to decode first and so moved between sessions
+   *  (`docs/work/2026-08-02-subframe-ingest/issues.md` I7), which is not something placement can be
+   *  registered against.
+   *
+   *  It also replaces `internal_padding` — a uniform inset IS a uniform subframe, so a linked tile
+   *  grid authors its inset the same way everything else does (F6).
+   *
+   *  A CHANGE evicts the stem's packed frames so they repack under the new rect — the same eviction
+   *  discipline as {@link setSpriteScale} (bytes stay cached; only the pack redoes). */
+  setSubframe(stem: string, x: number, y: number, w: number, h: number, ax = 0.5, ay = 0.5): void {
+    const cur = this.subframe.get(stem);
+    if (cur && cur[0] === x && cur[1] === y && cur[2] === w && cur[3] === h && cur[4] === ax && cur[5] === ay) return;
+    // The whole frame with a centre pivot is the DEFAULT — registering it would make every
+    // unauthored stem take the crop path for a no-op, and evict on first registration.
+    if (!cur && x === 0 && y === 0 && w === 1 && h === 1 && ax === 0.5 && ay === 0.5) return;
+    this.subframe.set(stem, [x, y, w, h, ax, ay]);
+    this.packed.delete(stem); // co-packed by stem → drop the whole stem's frames; bytes stay cached
+    this.packedHash.delete(stem);
   }
 
   /** Repoint the texture root at login + fetch/poll the manifest. */
@@ -378,12 +414,52 @@ export class TextureResolver {
     const srcs = bmps.map((b) => (b ? new Texture(gl, { width: b.width, height: b.height, data: b, premultiply: false }) : null));
     try {
       let draws: Array<AtlasDraw | null> | undefined;
-      if (scale) {
+      const sub = this.subframe.get(stem);
+      if (sub) {
+        // ── SUBFRAME INGEST (subframe-ingest P2) ───────────────────────────────────────────────
+        // The crop the whole stream is about. ONE rect out of the master, blitted into the
+        // quadrant, and — critically — the SAME rect for all four maps, which is what registers
+        // albedo/normal/surface/layers with each other by construction rather than by two
+        // derivations agreeing.
+        const N = quadN;
+        const [fx, fy, fw, fh, ax, ay] = sub;
+        const sx = fx * N, sy = fy * N, sw = Math.max(1, fw * N), sh = Math.max(1, fh * N);
+        // F2: scale to FIT, aspect preserved. The quadrant must stay square pow2 — `ppu` and the
+        // lod ladder both assume it — so exactly one axis fills and the other keeps a margin.
+        // Stretching to fill would distort any non-square subframe; blitting at native px would
+        // keep the letterbox this exists to remove.
+        let k = Math.min(N / sw, N / sh);
+        // F5: `sprite_scale` MULTIPLIES the fitted rect. It no longer performs a pivot re-centre of
+        // its own — that was the second placement, and two placements at one seam is the bug class
+        // this stream removes. Its job is now purely "how much of the span's footprint the art
+        // occupies"; the subframe owns where the pixels go.
+        const kw = k * (scale ? scale[0] : 1), kh = k * (scale ? scale[1] : 1);
+        const dw = sw * kw, dh = sh * kh;
+        // Placed so the art's OWN anchor point lands at the same fraction of the quadrant. With the
+        // corpus's `sprite_anchor.y = 1` that puts the feet exactly on the frame's bottom edge —
+        // which is why the plan line ends up on the feet rather than on a letterbox margin.
+        const dx = ax * (N - dw), dy = ay * (N - dh);
+        // Clip to the quadrant, carrying the source rect with it, so an over-large `sprite_scale`
+        // cannot bleed into a neighbouring quadrant of the co-packed frame.
+        const d0x = Math.max(0, dx), d1x = Math.min(N, dx + dw);
+        const d0y = Math.max(0, dy), d1y = Math.min(N, dy + dh);
+        if (d1x <= d0x || d1y <= d0y) return false;
+        const draw: AtlasDraw = {
+          dx: d0x, dy: d0y, dw: d1x - d0x, dh: d1y - d0y,
+          sx: sx + ((d0x - dx) / kw), sy: sy + ((d0y - dy) / kh),
+          sw: (d1x - d0x) / kw, sh: (d1y - d0y) / kh,
+        };
+        draws = srcs.map((s) => (s ? draw : null));
+      } else if (scale) {
         const W = quadN, H = quadN;
         const dw = W * scale[0], dh = H * scale[1];
         // F4: scale ABOUT THE PIVOT — the pivot's point on the opaque bbox is the one art point
         // that must land where it already was, so bottom-anchored art keeps its feet. Pivot
         // (0.5, 0.5) reduces to the bbox-centre re-centring this replaces.
+        //
+        // LEGACY PATH: only reached by a stem with NO authored subframe. It re-centres on the
+        // DERIVED bbox, which is what drifts between sessions (I7). Authoring a subframe for the
+        // stem takes the branch above and this stops running for it.
         const px = rawB ? rawB.fx + rawB.fw * scale[2] : scale[2];
         const py = rawB ? rawB.fy + rawB.fh * scale[3] : scale[3];
         const ox = px * (W - dw), oy = py * (H - dh);

@@ -137,16 +137,22 @@ pub struct VisualParts {
   /// always meant (the client documented it as *"fractions of the sprite's opaque bbox"*); the
   /// bbox is simply authored now instead of recovered from pixels (subframe-ingest F7).
   pub sprite_anchor: (f64, f64),
-  /// Per-DIRECTION subframe + pivot, `[e, s, n]` (subframe-ingest F1/F4/F7).
+  /// Per-ROTATION subframe + pivot, indexed `0..15` (subframe-ingest F1/F7/F9).
   ///
-  /// Each facing is a genuinely different texture with its own art extent, so each authors its
-  /// own rect: `&thing.subframe.<e|s|n>.{x,y,w,h}` and `&thing.sprite_anchor.<e|s|n>.{x,y}`,
-  /// each falling back to the non-directional `&thing.subframe.*` / `&thing.sprite_anchor.*`.
+  /// **One index space for facings AND linked cells.** `definition_data` has always carried
+  /// [`ROTATIONS_PER_DEF`]`= 16` px per definition indexed by rotation: a sprite uses four
+  /// (`0 = s, 1 = e, 2 = n, 3 = w`) and a linked tile uses all sixteen (the autotile cell,
+  /// `y·4 + x`). They were never two lookups — one is a prefix of the other.
   ///
-  /// **West is absent on purpose** — it is the east master MIRRORED, not a fourth texture, so the
-  /// client derives it by mirroring `e` about the frame centre. Authoring it would be two numbers
-  /// describing one image, which is the failure this whole model removes.
-  pub dir_frames: [DirFrame; 3],
+  /// Authored `&thing.subframe.r<0..15>.{x,y,w,h}`, with `s`/`e`/`n`/`w` accepted as aliases for
+  /// `r0`/`r1`/`r2`/`r3` so sprite corpora stay readable, each falling back to the non-indexed
+  /// `&thing.subframe.*` and then to the whole frame. The `r` prefix is load-bearing — see
+  /// [`rotation_key`].
+  ///
+  /// **Index 3 (west) should not be authored** — it is the east master MIRRORED, not a fourth
+  /// texture, and the client derives it by mirroring index 1. The alias exists so the fallback
+  /// chain reads uniformly, not so west gets art of its own.
+  pub dir_frames: [DirFrame; ROTATIONS_PER_DEF],
   /// The prim's up-to-4 packed-map channel material bindings (`&prim.packed.<i>`),
   /// indexed by packed RGBA channel. Default (all zero) = no material system in
   /// play, so the renderer paints the flat albedo exactly as before.
@@ -189,6 +195,28 @@ impl Default for DirFrame {
   fn default() -> Self {
     Self { sub: (0.0, 0.0, 1.0, 1.0), anchor: (0.5, 0.5) }
   }
+}
+
+/// Rotation slots per definition — **the one index space for facings and linked cells alike**
+/// (subframe-ingest F9). `definition_data` has always been 16 px per definition indexed by
+/// rotation; a sprite uses the first four and a linked tile uses all sixteen (the autotile cell,
+/// `y·4 + x`). Mirrors `ROTATIONS_PER_DEF` in `client/webgl`'s `records.ts` — a divergence here
+/// would mis-address the def texture, so the two must move together.
+pub const ROTATIONS_PER_DEF: usize = 16;
+
+/// Readable aliases for the first four rotation indices, in `FACING_BY_ROTATION` order. A corpus
+/// authoring a sprite writes `subframe.e`; one authoring a linked tile writes `subframe.9`. Both
+/// reach the same array. Index 3 (`w`) is the east master mirrored and should carry no art of its
+/// own — the alias exists so the fallback chain reads uniformly ([F4]/[F9]).
+const ROTATION_ALIASES: [&str; 4] = ["s", "e", "n", "w"];
+
+/// The general per-rotation key: `r0`..`r15`. **Prefixed, not bare numerals** — a bare-digit path
+/// segment parses as an ARRAY INDEX, and a node that already holds the scalar default
+/// (`subframe.x`) is a Map, so `subframe.9.x` walks an index into a Map and is dropped with no
+/// error at all ([I8](../../../docs/work/2026-08-02-subframe-ingest/issues.md#i8)). Keeping every
+/// key a literal makes the scalar default and the indexed overrides coexist.
+fn rotation_key(r: usize) -> String {
+  format!("r{r}")
 }
 
 /// One part SLOT of a kind's visual skeleton — the per-prim fields of `prims.N`
@@ -241,13 +269,13 @@ pub struct VisualPart {
   pub sprite_scale: (f64, f64),
   pub sprite_anchor: (f64, f64),
   pub anchor: (f64, f64),
-  /// The slot's OWN per-direction subframe + pivot, `[e, s, n]` (subframe-ingest P1).
+  /// The slot's OWN per-rotation subframe + pivot, `0..15` (subframe-ingest P1/F9).
   ///
   /// Per SLOT, not inherited from slot 0, because a part is its own master with its own extent: a
   /// human's head fills a different fraction of its frame than its body does (measured on the
   /// corpus — female `s` body `h = 0.914`, head `h = 0.930`, at different `x`). Falls back to the
-  /// slot's non-directional `&prim.subframe.*` and then to the whole frame.
-  pub dir_frames: [DirFrame; 3],
+  /// slot's non-indexed `&prim.subframe.*` and then to the whole frame.
+  pub dir_frames: [DirFrame; ROTATIONS_PER_DEF],
 }
 
 /// A kind's emitted light, authored under `&thing.light.*`. Colour is `0..1`; `reach`
@@ -413,17 +441,34 @@ impl Bundle {
       read_f("prims.0.subframe.w", 1.0),
       read_f("prims.0.subframe.h", 1.0),
     );
-    let dir_frames = ["e", "s", "n"].map(|d| DirFrame {
-      sub: (
-        read_f(&format!("prims.0.subframe.{d}.x"), sub_all.0),
-        read_f(&format!("prims.0.subframe.{d}.y"), sub_all.1),
-        read_f(&format!("prims.0.subframe.{d}.w"), sub_all.2),
-        read_f(&format!("prims.0.subframe.{d}.h"), sub_all.3),
-      ),
-      anchor: (
-        read_f(&format!("prims.0.sprite_anchor.{d}.x"), sprite_anchor.0),
-        read_f(&format!("prims.0.sprite_anchor.{d}.y"), sprite_anchor.1),
-      ),
+    let dir_frames = std::array::from_fn::<DirFrame, ROTATIONS_PER_DEF, _>(|r| {
+      // Each rotation reads its INDEXED key, then its alias key (only 0..3 have one), then the
+      // non-indexed default. `read_key` collapses that chain so the two spellings cannot diverge.
+      let read_key = |base: &str, comp: &str, dflt: f64| {
+        let by_index = read_f(&format!("prims.0.{base}.{}.{comp}", rotation_key(r)), f64::NAN);
+        if !by_index.is_nan() {
+          return by_index;
+        }
+        if let Some(a) = ROTATION_ALIASES.get(r) {
+          let by_alias = read_f(&format!("prims.0.{base}.{a}.{comp}"), f64::NAN);
+          if !by_alias.is_nan() {
+            return by_alias;
+          }
+        }
+        dflt
+      };
+      DirFrame {
+        sub: (
+          read_key("subframe", "x", sub_all.0),
+          read_key("subframe", "y", sub_all.1),
+          read_key("subframe", "w", sub_all.2),
+          read_key("subframe", "h", sub_all.3),
+        ),
+        anchor: (
+          read_key("sprite_anchor", "x", sprite_anchor.0),
+          read_key("sprite_anchor", "y", sprite_anchor.1),
+        ),
+      }
     });
     // The kind's emitted light (`&thing.light.*`). `reach` is the discriminator: a def that
     // never sets it emits nothing and the whole struct stays `None`, so every existing kind is
@@ -491,17 +536,32 @@ impl Bundle {
         sprite_scale: (rf("sprite_scale.w", 1.0), rf("sprite_scale.h", 1.0)),
         sprite_anchor: (rf("sprite_anchor.x", 0.5), rf("sprite_anchor.y", 0.5)),
         anchor: (rf("anchor.x", 0.5), rf("anchor.y", 0.5)),
-        dir_frames: ["e", "s", "n"].map(|d| DirFrame {
-          sub: (
-            rf(&format!("subframe.{d}.x"), rf("subframe.x", 0.0)),
-            rf(&format!("subframe.{d}.y"), rf("subframe.y", 0.0)),
-            rf(&format!("subframe.{d}.w"), rf("subframe.w", 1.0)),
-            rf(&format!("subframe.{d}.h"), rf("subframe.h", 1.0)),
-          ),
-          anchor: (
-            rf(&format!("sprite_anchor.{d}.x"), rf("sprite_anchor.x", 0.5)),
-            rf(&format!("sprite_anchor.{d}.y"), rf("sprite_anchor.y", 0.5)),
-          ),
+        dir_frames: std::array::from_fn::<DirFrame, ROTATIONS_PER_DEF, _>(|r| {
+          let key = |base: &str, comp: &str, dflt: f64| {
+            let by_index = rf(&format!("{base}.{}.{comp}", rotation_key(r)), f64::NAN);
+            if !by_index.is_nan() {
+              return by_index;
+            }
+            if let Some(a) = ROTATION_ALIASES.get(r) {
+              let by_alias = rf(&format!("{base}.{a}.{comp}"), f64::NAN);
+              if !by_alias.is_nan() {
+                return by_alias;
+              }
+            }
+            dflt
+          };
+          DirFrame {
+            sub: (
+              key("subframe", "x", rf("subframe.x", 0.0)),
+              key("subframe", "y", rf("subframe.y", 0.0)),
+              key("subframe", "w", rf("subframe.w", 1.0)),
+              key("subframe", "h", rf("subframe.h", 1.0)),
+            ),
+            anchor: (
+              key("sprite_anchor", "x", rf("sprite_anchor.x", 0.5)),
+              key("sprite_anchor", "y", rf("sprite_anchor.y", 0.5)),
+            ),
+          }
         }),
       });
       i += 1;
@@ -665,23 +725,24 @@ impl Bundle {
     out
   }
 
-  /// Every thing's per-DIRECTION SUBFRAME in `object_id` order, flattened **stride-18** per def
-  /// (index 0 → object_id 1): three directions `[e, s, n]`, each
+  /// Every thing's per-ROTATION SUBFRAME in `object_id` order, flattened **stride-96** per def
+  /// (index 0 → object_id 1): [`ROTATIONS_PER_DEF`]` = 16` rotations, each
   /// `[sub.x, sub.y, sub.w, sub.h, anchor.x, anchor.y]`, all fractions in `0..1`.
   ///
   /// This is what the atlas CROPS to (subframe-ingest): the ingest copies exactly this rect out of
   /// each of the stem's four maps, so albedo/normal/surface/layers are registered with each other
   /// by construction rather than by two derivations agreeing.
   ///
-  /// **Only three directions.** West is the east master mirrored, so the client derives it by
-  /// mirroring `e` about the frame centre ([F4](../../../docs/work/2026-08-02-subframe-ingest/forks.md#f4)) —
-  /// a fourth row here would be a second number for one image.
+  /// **Sixteen, because facings and linked cells share one index space** (F9): a sprite uses
+  /// `0..3` (`s, e, n, w`) and a linked tile uses all sixteen (the autotile cell `y·4 + x`).
+  /// Index 3 (west) is the east master mirrored — the host derives it from index 1 rather than
+  /// the corpus authoring a rect for an image that does not exist.
   ///
-  /// A def that builds no prim gets the default row (whole frame, centre pivot) repeated three
-  /// times, so the host never special-cases "unset". Sibling of [`Self::thing_layout`], kept
-  /// separate rather than widening that stride because every existing consumer indexes into it.
+  /// A def that builds no prim gets the default row (whole frame, centre pivot) repeated, so the
+  /// host never special-cases "unset". Sibling of [`Self::thing_layout`], kept separate rather
+  /// than widening that stride because every existing consumer indexes into it.
   pub fn thing_subframe(&self) -> Vec<f64> {
-    let mut out = Vec::with_capacity(self.thing_ids.len() * 18);
+    let mut out = Vec::with_capacity(self.thing_ids.len() * ROTATIONS_PER_DEF * 6);
     for name in &self.thing_ids {
       let frames = self
         .thing(name)
@@ -1198,13 +1259,11 @@ mod tests {
   }
 
   #[test]
-  fn thing_subframe_is_per_direction_with_fallbacks() {
-    // subframe-ingest P1. `tree` authors a non-directional subframe AND overrides it for `n`
-    // only, plus a per-direction pivot for `e`; `shrub` authors nothing at all. This is the
-    // whole fallback chain in one corpus: per-direction → non-directional → the whole frame.
-    //
-    // WEST IS ABSENT BY DESIGN (F4) — west is the east master mirrored, derived by the client.
-    // The stride is 3 directions, not 4, and a `subframe.w` here would be silently ignored.
+  fn thing_subframe_is_per_rotation_with_alias_and_default_fallbacks() {
+    // subframe-ingest P1/F9. ONE index space 0..15 covers sprite facings AND linked autotile
+    // cells. `tree` authors a non-directional rect, an ALIAS override (`n` = index 2), an INDEX
+    // override (`9` — a linked cell, which has no alias), and an alias-only pivot (`e` = 1);
+    // `shrub` authors nothing. That is the whole fallback chain: index → alias → non-indexed.
     let data = "<thing>\n  ::tree>\n    :data>\n      @define>\n        0 return\n  ::shrub>\n    :data>\n      @define>\n        0 return\n";
     let visual = "\
 <thing>
@@ -1220,6 +1279,7 @@ mod tests {
         0.75 &thing.subframe.h set
         1.0 &thing.sprite_anchor.y set
         0.4 &thing.subframe.n.x set
+        0.6 &thing.subframe.r9.x set
         0.2 &thing.sprite_anchor.e.x set
         0 return
   ::shrub>
@@ -1231,26 +1291,29 @@ mod tests {
         0 return
 ";
     let b = load(&[src("data/things.rd", data), src("visual/things.rd", visual)]).expect("load");
-    assert_eq!(
-      b.thing_subframe(),
-      vec![
-        // tree — e: the non-directional rect, pivot x overridden to 0.2, y inherited 1.0
-        0.25, 0.125, 0.5, 0.75, 0.2, 1.0,
-        // tree — s: everything inherited
-        0.25, 0.125, 0.5, 0.75, 0.5, 1.0,
-        // tree — n: x overridden to 0.4, the rest inherited
-        0.4, 0.125, 0.5, 0.75, 0.5, 1.0,
-        // shrub — three identical default rows: the WHOLE frame, centre pivot
-        0.0, 0.0, 1.0, 1.0, 0.5, 0.5,
-        0.0, 0.0, 1.0, 1.0, 0.5, 0.5,
-        0.0, 0.0, 1.0, 1.0, 0.5, 0.5,
-      ],
-    );
-    // The default really is the whole frame — an unauthored kind must crop to nothing, so that
-    // adopting the subframe cannot move art that has not opted in.
+    let v = b.thing("tree").and_then(|n| b.node_visual(n)).expect("tree visual");
+    let f = &v.dir_frames;
+    assert_eq!(f.len(), ROTATIONS_PER_DEF, "one slot per rotation, sprites and linked cells alike");
+    // 0 = south: everything from the non-indexed default.
+    assert_eq!(f[0], DirFrame { sub: (0.25, 0.125, 0.5, 0.75), anchor: (0.5, 1.0) });
+    // 1 = east: the ALIAS pivot override, rect still inherited.
+    assert_eq!(f[1], DirFrame { sub: (0.25, 0.125, 0.5, 0.75), anchor: (0.2, 1.0) });
+    // 2 = north: the ALIAS rect override on x only.
+    assert_eq!(f[2], DirFrame { sub: (0.4, 0.125, 0.5, 0.75), anchor: (0.5, 1.0) });
+    // 3 = west: inherits, and SHOULD stay unauthored — it is east mirrored, derived host-side.
+    assert_eq!(f[3], f[0]);
+    // 9 = a linked autotile cell, addressed as `r9` because it has no alias.
+    assert_eq!(f[9], DirFrame { sub: (0.6, 0.125, 0.5, 0.75), anchor: (0.5, 1.0) });
+    // every other index falls all the way back to the non-indexed rect
+    assert_eq!(f[15], f[0]);
+
+    // An unauthored kind crops NOTHING — adopting the subframe cannot move art that has not
+    // opted in, at any rotation.
     let shrub = b.thing("shrub").and_then(|n| b.node_visual(n)).expect("shrub visual");
-    assert_eq!(shrub.dir_frames, [DirFrame::default(); 3]);
+    assert!(shrub.dir_frames.iter().all(|d| *d == DirFrame::default()));
     assert_eq!(DirFrame::default().sub, (0.0, 0.0, 1.0, 1.0));
+    // the flat wire is stride 16x6
+    assert_eq!(b.thing_subframe().len(), 2 * ROTATIONS_PER_DEF * 6);
   }
 
   #[test]

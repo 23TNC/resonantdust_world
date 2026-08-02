@@ -139,3 +139,51 @@ subframe lane — corrected to "free, reserved for the anchor" with the reason. 
 **Sprite subframes** section documents the DSL variables, the stride-18 wire shape, and the four
 rules that are easy to get wrong later: fractions not units, three directions not four, per-direction
 because a facing is a different texture, and authored from masters not from the client.
+
+## 2026-08-02 — F9 rework: ONE 0..15 rotation index space
+
+The user's mid-flight correction: *"you are almost certainly going to need rotation/direction 0..15
+because linked directions are 0..15."* Correct, and the evidence was already in the record —
+`ROTATIONS_PER_DEF` has always been **16**, a sprite using `0..3` and a linked tile all sixteen. They
+were never two index spaces; one is a prefix of the other. `[DirFrame; 3]` → `[DirFrame; 16]`, wire
+stride 18 → **96**, in both `thingSubframe()` and each `moverParts()` slot's `subframes`.
+
+Authored `&thing.subframe.r<0..15>.{x,y,w,h}` with `s`/`e`/`n`/`w` as aliases for `r0..r3`, so sprite
+corpora stay readable and linked tiles address cells directly. The fallback chain is index → alias →
+non-indexed → whole frame.
+
+**This is also what makes [F6](forks.md#f6) land without a mechanism of its own** — a linked stem's
+per-cell subframe is just indices `0..15` of the same array.
+
+**Verified:** `shared/dsl` 48 tests pass. The rewritten test exercises the full chain in one corpus —
+a non-indexed rect, an *alias* override (`n`), an *index* override (`r9`, a linked cell with no
+alias), and an alias-only pivot (`e`) — asserting each of `f[0]`, `f[1]`, `f[2]`, `f[3] == f[0]`,
+`f[9]`, `f[15] == f[0]`, and that an unauthored kind is `DirFrame::default()` at *every* rotation.
+
+**Cost, recorded as [I8](issues.md#i8):** the first attempt used bare numerals (`subframe.9.x`) and
+the write was **silently dropped**. A digit-only path segment parses as an array index, but
+`subframe` is already a Map once `subframe.x` is authored, so the walk falls through with no write
+and no error. Hence the `r` prefix. This trap is general to the DSL, not specific to this stream.
+
+## 2026-08-02 — P2 in flight (NOT yet ticked)
+
+`TextureResolver.setSubframe` + the crop branch in `packCoPack` are written and type-check, and the
+wasm carries the data — but **nothing calls `setSubframe` yet**, so the client behaviour is
+unchanged and no P2 item is ticked. What is written:
+
+- ONE `AtlasDraw` computed from the subframe and applied to all four sources — the same
+  `draws = srcs.map(...)` shape, now fed by an authored rect.
+- Scale-to-**fit**, aspect preserved ([F2](forks.md#f2)); the quadrant stays square pow2, so `ppu`
+  and the lod ladder are untouched ([I3](issues.md#i3)).
+- `sprite_scale` **multiplies** the fitted rect instead of performing its own pivot re-centre
+  ([F5](forks.md#f5)) — the old re-centre survives only on the legacy branch, for stems with no
+  authored subframe.
+- Placement puts the art's own anchor at the same fraction of the quadrant. **Worth noting for
+  [F3](forks.md#f3):** with the corpus's `sprite_anchor.y = 1`, that lands the feet exactly on the
+  frame's bottom edge — which may close [lighting-visual I1](../2026-07-31-lighting-visual/issues.md)
+  *without* the anchor record lane. P3 should test that before adding the lane.
+
+**`internal_padding` is deliberately still alive.** [F6](forks.md#f6) stands, but the substitution
+belongs at `cellFrame` (resolve-time, per cell) rather than at `packCoPack` (ingest, per stem), and
+`cellFrame` takes a symmetric pad where a subframe is an asymmetric rect. Removing it half-way would
+silently shift every autotile cell, so it stays until that item is worked properly.

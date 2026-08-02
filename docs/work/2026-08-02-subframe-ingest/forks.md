@@ -139,3 +139,36 @@ direction, but `flora` has 13 variant folders sharing one stem. A per-variant cr
 per-variant authoring; the union is the conservative choice — it never clips art off any variant, and
 it costs only the margin where variants disagree. If a variant is ever far tighter than its siblings,
 [F6](#f6)'s per-cell capability is where that gets fixed, not here.
+
+## F9 — ONE 0..15 rotation index space, covering facings AND linked cells {#f9}
+
+> "You are almost certainly going to need rotation/direction 0..15 because linked directions are
+> 0..15. That would generalize our rotation/direction lookups." — user, 2026-08-02
+
+**Chosen: index 0..15, with `s/e/n/w` as readable aliases for 0/1/2/3.** This supersedes the
+three-entry `[e, s, n]` array [F4](#f4) and [F6](#f6) were written against.
+
+The evidence that this is the right shape was already in the record layout: **`ROTATIONS_PER_DEF` is
+16** — `definition_data` is *"16 sequential px per definition, indexed by ROTATION"*. The def has
+always had sixteen slots per definition. A sprite uses four of them (`FACING_BY_ROTATION`:
+`0 = s, 1 = e, 2 = n, 3 = w`) and a linked tile uses all sixteen (`build-walls`: the autotile cell is
+`y·4 + x`, `x = N+2E`, `y = 3−(S+2W)`). They were never two index spaces — one was a prefix of the
+other, and treating them as different is what forced `internal_padding` to exist as a parallel
+mechanism in the first place.
+
+So a subframe is authored **per rotation index**, and "direction" and "autotile cell" stop being
+different lookups:
+
+```
+&thing.subframe.0.x   … .15.h        by index — the general form
+&thing.subframe.s|e|n|w.x            aliases for 0|1|2|3, so sprite corpora stay readable
+&thing.subframe.x                    non-directional: the fallback for every index
+```
+
+**West stays derived, and the aliases make that visible rather than implicit** ([F4](#f4)): index 3
+resolves to the east master plus `flipX`, so authoring `subframe.w` is authoring a rect for an image
+that does not exist. The alias exists so the fallback chain reads uniformly, not so west gets its own
+art.
+
+**This is why [F6](#f6) lands for free.** A linked stem's per-cell subframe is just indices 0..15 of
+the same array, so `internal_padding` retires into it with no per-cell mechanism of its own.

@@ -210,17 +210,18 @@ impl Content {
         self.bundle.thing_layout()
     }
 
-    /// Every thing's per-DIRECTION SUBFRAME in `object_id` order — flat **stride-18** per def:
-    /// three directions `[e, s, n]`, each `[sub.x, sub.y, sub.w, sub.h, anchor.x, anchor.y]`, all
-    /// fractions in `0..1` (subframe-ingest P1).
+    /// Every thing's per-ROTATION SUBFRAME in `object_id` order — flat **stride-96** per def:
+    /// 16 rotations, each `[sub.x, sub.y, sub.w, sub.h, anchor.x, anchor.y]`, all fractions in
+    /// `0..1` (subframe-ingest P1/F9).
     ///
     /// The rect the atlas CROPS to: ingest copies exactly this out of each of the stem's four maps,
     /// so albedo/normal/surface/layers are registered with each other by construction. A def that
     /// authors nothing yields the whole frame `(0,0,1,1)` three times, so adopting the subframe
     /// cannot move art that has not opted in.
     ///
-    /// **Three directions, not four** — west is the east master mirrored, derived host-side by
-    /// mirroring `e` about the frame centre.
+    /// **Sixteen, because facings and linked cells share ONE index space** (F9): a sprite uses
+    /// `0..3` (`s, e, n, w`) and a linked tile uses all sixteen (the autotile cell `y·4 + x`).
+    /// Index 3 (west) is the east master mirrored — derived host-side from index 1, never authored.
     #[wasm_bindgen(js_name = thingSubframe)]
     pub fn thing_subframe(&self) -> Vec<f64> {
         self.bundle.thing_subframe()
@@ -402,11 +403,11 @@ impl Content {
             set("anchorY", &JsValue::from_f64(p.anchor.1));
             set("spriteAnchorX", &JsValue::from_f64(p.sprite_anchor.0));
             set("spriteAnchorY", &JsValue::from_f64(p.sprite_anchor.1));
-            // subframe-ingest P1: the slot's OWN per-direction crop rect, flat stride-18
-            // (`[e, s, n] × [x, y, w, h, anchorX, anchorY]`) — the same shape `thingSubframe`
-            // uses for cold things, so the host has one decoder for both. Per SLOT because a
-            // part is its own master: a human's head fills a different fraction than its body.
-            let mut sf = [0.0f64; 18];
+            // subframe-ingest P1/F9: the slot's OWN per-rotation crop rect, flat stride-96
+            // (16 × `[x, y, w, h, anchorX, anchorY]`) — the same shape `thingSubframe` uses for
+            // cold things, so the host has one decoder for both. Per SLOT because a part is its
+            // own master: a human's head fills a different fraction than its body.
+            let mut sf = [0.0f64; 96];
             for (i, f) in p.dir_frames.iter().enumerate() {
                 sf[i * 6] = f.sub.0;
                 sf[i * 6 + 1] = f.sub.1;

@@ -86,3 +86,22 @@ authored fraction is identical at every lod by construction.
 
 It also sharpens [I6](#i6): the ingest-time warning must compare the authored subframe against the
 bbox **at a stated lod**, or it will fire spuriously on the low tiers.
+
+## I8 — A DSL store node cannot be both a Map and an Array {#i8}
+
+Found implementing [F9](forks.md#f9). Authoring `&thing.subframe.x` *and* `&thing.subframe.9.x`
+looks natural and **silently drops the second write**.
+
+`seg_of` turns an all-digit path segment into `Seg::Idx(i)` and anything else into `Seg::Lit`. The
+first write makes `subframe` a `Cell::Map` (key `"x"`); the second then walks `Seg::Idx(9)` into that
+Map, hits `Cell::Map(m) if *i < m.len()` — `9 >= 1` — and falls through with **no write and no
+error**. The value is simply gone, and the field reads as its default.
+
+**Resolved by never mixing the two under one node**: rotation keys are `r0`..`r15`, plus the
+`s`/`e`/`n`/`w` aliases for `r0`..`r3`. All `Seg::Lit`, so `subframe` stays a Map throughout and the
+non-indexed `subframe.x` default coexists with `subframe.r9.x`.
+
+**Worth knowing beyond this stream.** Any DSL variable that wants both a scalar default and indexed
+overrides under one name has this trap, and it fails silently — which is the worst way for a content
+authoring error to fail. If bare-numeric indices are ever wanted, they need their own sub-node
+(`subframe.rot.9.x`), not a sibling of the scalar keys.
