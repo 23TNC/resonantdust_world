@@ -22,6 +22,17 @@ import { getCachedMap, putCachedMap } from "./previewCache";
 import { texUrl, type TexMap } from "./urls";
 import { TextureManifest } from "./textureManifest";
 
+/** The PREVIEW size, in px (F6). ONE fixed size — never chosen by zoom, never consulted for
+ *  geometry, dropped the moment the master lands. That is the whole distinction from the deleted
+ *  LOD ladder, whose VARYING drawing tier made the runtime bbox depend on decode order
+ *  (`docs/work/2026-08-02-subframe-ingest/issues.md` I7).
+ *
+ *  32 because all four maps at 32 px cost 2.2 KB (conifer) to 4.3 KB (flora) — LESS than the 5.8 KB
+ *  median a drawn placeholder would have needed, and it is real art rather than an approximation
+ *  that has to keep matching. The edge derives and caches this size on demand from the master
+ *  (`server/edge/src/textures.rs`: "no offline pyramid"), so nothing is generated ahead of time. */
+const PREVIEW_PX = 32;
+
 /** A resolve result: the atlas sub-frame to bake (null for the GEO tier — the caller uses its own
  *  white fill + the prim's silhouette colour), and whether it's geo rather than real pixels. */
 export interface ResolvedTexture {
@@ -48,6 +59,10 @@ export class TextureResolver {
   private spritePool: SpritePool | null = null;
   /** stem → its ONE loaded co-packed `2N` frame (one-resolution: the ladder is gone). */
   private readonly packed = new Map<string, TexFrame>();
+  /** stem → the SIZE its resident frame was packed at. The NEVER-DOWNGRADE guard: a preview that
+   *  loses the race to its master must be discarded, not written over it (subframe-ingest taught
+   *  the cost of two sources for one value; this is the same rule for pixels). 0 = nothing packed. */
+  private readonly packedSize = new Map<string, number>();
   /** Cached per-map quadrant sub-frames of a co-packed frame (frame → map → quadrant). */
   private readonly quadFrames = new WeakMap<TexFrame, Map<TexMap, TexFrame>>();
   private readonly manifest = new TextureManifest();
@@ -91,6 +106,7 @@ export class TextureResolver {
     if (cur === padUnits) return;
     this.linkedPad.set(name, padUnits);
     this.packed.delete(name);
+    this.packedSize.delete(name);   // see the note in setSpriteScale
     this.packedHash.delete(name);
   }
   private scaleWarned = false;
@@ -144,6 +160,7 @@ export class TextureResolver {
     // so the stem's frames must go: dropping `packed` orphans the old TexFrame objects and the
     // WeakMap entries go with them. Bytes stay cached — only the pack redoes.
     this.packed.delete(stem);
+    this.packedSize.delete(stem);   // or the guard blocks the re-pack at the same size, forever
     this.packedHash.delete(stem);
   }
 
@@ -191,7 +208,8 @@ export class TextureResolver {
     if (cur && cur[0] === sw && cur[1] === sh && cur[2] === px && cur[3] === py) return;
     if (!cur && sw === 1 && sh === 1) return;
     this.spriteScale.set(stem, [sw, sh, px, py]);
-    this.packed.delete(stem); // co-packed by stem → drop the whole stem's frames; bytes stay cached
+    this.packed.delete(stem);
+    this.packedSize.delete(stem);   // or the guard blocks the re-pack at the same size, forever
     this.packedHash.delete(stem);
     this.spriteBBox.delete(stem);
     this.rawBBox.delete(stem);
@@ -233,11 +251,16 @@ export class TextureResolver {
 
     // one-resolution: ONE co-pack per stem at its maximum served size (F2). No target, no
     // tiers, no preview floor — a stem is packed or it is geo, and the kick is idempotent.
+    // F6: kick the PREVIEW and the MASTER in parallel. The preview is ~100x smaller so it almost
+    // always lands first; serialising them would only delay the master. Both kicks are idempotent
+    // and `packedSize` keeps a late preview from overwriting an early master.
     const cf = this.packed.get(stem);
-    if (!cf) {
-      void this.ensureCoPack(stem, entry.maxSize, entry.hash);
-      return { frame: null, geo: true };
+    const have = this.packedSize.get(stem) ?? 0;
+    if (have < entry.maxSize) {
+      if (have < PREVIEW_PX && entry.maxSize > PREVIEW_PX) this.ensureCoPack(stem, PREVIEW_PX, entry.hash);
+      this.ensureCoPack(stem, entry.maxSize, entry.hash);
     }
+    if (!cf) return { frame: null, geo: true };
     const quad = this.quadrant(cf, map); // this map's N×N quadrant of the co-packed frame
     if (entry.grid && cell != null) {
       // texture-generalization: the DSL internal_padding (units of the 16-unit cell) joins
@@ -317,6 +340,7 @@ export class TextureResolver {
       const e = this.manifest.entry(stem);
       if (!e || this.packedHash.get(stem) !== e.hash) {
         this.packed.delete(stem);
+        this.packedSize.delete(stem);   // or the guard blocks the re-pack at the same size, forever
         this.packedHash.delete(stem);
       }
     }
@@ -328,8 +352,13 @@ export class TextureResolver {
    *  normal TR, surface BL, layers BR). ONE allocation per stem — the four maps land co-located, so
    *  a prim's def frame + a fixed quadrant offset resolves any map. */
   private async ensureCoPack(stem: string, size: number, hash: string): Promise<void> {
-    const pkey = stem; // one-resolution: one pack per stem — the size IS the manifest max
-    if (this.pending.has(pkey) || this.packed.has(stem)) return;
+    // Keyed by SIZE, not stem: the preview and the master are two in-flight packs for one stem and
+    // must not dedupe each other (F6).
+    const pkey = `${stem}@${size}`;
+    // NEVER DOWNGRADE. A preview that loses the race to its master is discarded here rather than
+    // overwriting it — the failure this guard exists for is a slow 2 KB preview landing after a
+    // fast-cached master and visibly blurring an already-sharp stem.
+    if (this.pending.has(pkey) || (this.packedSize.get(stem) ?? 0) >= size) return;
     this.pending.add(pkey);
     try {
       const entry = this.manifest.entry(stem);
@@ -351,16 +380,27 @@ export class TextureResolver {
       }
       // Sprite opaque bbox from the SURFACE map's coverage (B channel) — size-independent fractions; drives
       // the re-centre + the shadow-cast quad. All maps decode together now, so there is no ordering defer.
-      if (surf && !this.spriteBBox.has(stem)) {
+      // The bbox is derived ONLY from the master. Deriving it from whichever size decoded first is
+      // precisely the instability that `subframe-ingest` I7 recorded — the same art measured
+      // fy 0.125 one session and 0.109 the next. The preview feeds PIXELS and nothing else (F2).
+      if (surf && size >= (entry.maxSize ?? size) && !this.spriteBBox.has(stem)) {
         const rawB = computeSpriteBBox(surf);
         this.rawBBox.set(stem, rawB);
         this.spriteBBox.set(stem, scaled ? transformedBBox(rawB, scale!) : rawB);
       }
       const quadN = (albedo ?? surf)!.width; // square masters → every map is quadN × quadN
+      // Re-check the guard: the master may have landed while these bytes were in flight.
+      if ((this.packedSize.get(stem) ?? 0) >= size) { for (const b of bmps) b?.close(); return; }
       const ok = this.packCoPack(stem, size, quadN, bmps, scaled ? scale : undefined, this.rawBBox.get(stem));
       for (const b of bmps) b?.close();
       if (ok) {
+        this.packedSize.set(stem, size);
         this.packedHash.set(stem, hash);
+        this.emit();
+      } else {
+        // I2: a pack that FAILS must still notify. `if (ok) emit()` alone left a stem whose bytes had
+        // arrived sitting on geo for the entire session, with no re-bake ever scheduled — the bytes
+        // were in memory and nothing asked for them again.
         this.emit();
       }
     } catch (e) {

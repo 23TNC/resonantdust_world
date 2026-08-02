@@ -85,3 +85,25 @@ texture exists. Two candidates, and the choice changes every item under P3:
 drawing one, so there is no shape to pin. Kept as a record of why the drawn route was explored and
 why it lost: a synthesized placeholder is a second rendering of every asset that must keep matching
 the first one as the corpus grows, and it measured LARGER than the real art it approximated.
+
+## I7 — The atlas pool cannot free, so every superseded frame leaks {#i7}
+
+`SpritePool` and `MaxRectsPacker` are **insert-only**: `addCoPacked` allocates, and there is no
+free, release or evict anywhere in the path. A frame that is superseded — by a better size, or by a
+re-master changing the hash — occupies its slot for the life of the atlas.
+
+**Consequences, in order of how soon they bite:**
+
+1. **The preview tier leaks one frame per stem** ([F6](forks.md#f6)). A 32 px co-pack is 64², a
+   master co-pack 256², so the steady-state overhead is ~6% of atlas space per stem. Bounded and
+   acceptable — but it is a floor that only ever rises.
+2. **Per-arrival packing is unaffordable**, which is why P1 packs once per size — see
+   [`deviations.md`](deviations.md).
+3. **A re-mastered asset leaks its old frame** for the session. `packedHash` notices the change and
+   re-packs; nothing reclaims what it replaced.
+
+**The fix is one of two, and they are not equivalent.** A pool free-list (return the rect to
+`MaxRectsPacker`'s free list, merge neighbours) reclaims space but fragments. An in-place quadrant
+re-blit (draw a newly arrived map into an already allocated frame) avoids allocation entirely and
+would ALSO unlock true per-map progressive packing — the thing P1 had to give up. The second is
+strictly more useful and is where I would start.

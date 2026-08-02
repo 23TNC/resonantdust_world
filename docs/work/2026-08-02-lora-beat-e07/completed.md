@@ -128,3 +128,16 @@ to confirm the baseline still reproduces, and that result is the first real entr
   elimination, and carried into the README's future-intent section so a later session does not
   read it as settled. `eval_set.json:model` and `generate.py:MODEL` both moved off
   `cyberrealisticXL_v80`; `eval_set.json:size` moved 768 → 1024 per [F6](forks.md#f6).
+- **2026-08-02 · P2.2 · ESRGAN verified on the v3 set: outline sharpness 92.9** (sd 12.6, 120-image
+  random sample), against the `sprite-gen-quality` benchmark of **90.1** for ESRGAN and 43.1 for
+  LANCZOS. Acceptance was "near 90.1" — met.
+
+  **Not claimed:** the same measure on the old `.staging/animal-lora-train` reads 48.4, which looks
+  like a LANCZOS set but is **confounded** — v2 was built at 768 where less upscaling happens, and
+  edge sharpness on the finished image depends on output resolution. Recorded as a number, not as
+  a conclusion about what v2 was.
+- **2026-08-02 · P2.4 · Corpus is larger than the stream assumed: 701 sources, not 459.** All 701
+  have captions (0 missing), so the v2-era "459 images" reflects a smaller corpus at that time, not
+  a filter. The v3 build is one FLAT `1_animal/` folder — no repeat weighting, unlike v2's "three
+  repeat-weighted folders (153 each), 765 effective". Whether to restore repeat weighting is a
+  [P3](todo.md) decision, not silently inherited.
