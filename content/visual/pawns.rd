@@ -46,6 +46,23 @@
                 0.8 &body.scale set
                 1.0 &body.anchor.y set
                 1.0 &body.sprite_anchor.y set
+                ; SUBFRAME (subframe-ingest P1) — which fraction of the body master is
+                ; actually art, per DIRECTION. A body is widest seen front/back and narrowest in profile.
+                ; Measured from the 128-px masters on disk (surface.B > 0.35), union across
+                ; every variant so no variant is clipped (F8). The atlas crops to exactly this
+                ; rect for all four maps, which is what registers them with each other.
+                0.1484 &body.subframe.e.x set
+                0.0469 &body.subframe.e.y set
+                0.7109 &body.subframe.e.w set
+                0.9141 &body.subframe.e.h set
+                0.0781 &body.subframe.n.x set
+                0.0469 &body.subframe.n.y set
+                0.8516 &body.subframe.n.w set
+                0.9141 &body.subframe.n.h set
+                0.0703 &body.subframe.s.x set
+                0.0469 &body.subframe.s.y set
+                0.8594 &body.subframe.s.w set
+                0.9141 &body.subframe.s.h set
                 ; ── slot 1: the HEAD — part-1 files, scaled + seated on the body ────
                 "thing ^prim call &head export
                 "pawn/human/female &head.texture set
@@ -71,6 +88,23 @@
                 ; it when the pawn faces AWAY, so this one number gives "head over the
                 ; body for e/w/s, under it for n". A backpack would author -1.
                 1 &head.depth set
+                ; SUBFRAME (subframe-ingest P1) — which fraction of the head master is
+                ; actually art, per DIRECTION. Per SLOT: a head fills a different fraction of its frame than the body does.
+                ; Measured from the 128-px masters on disk (surface.B > 0.35), union across
+                ; every variant so no variant is clipped (F8). The atlas crops to exactly this
+                ; rect for all four maps, which is what registers them with each other.
+                0.1172 &head.subframe.e.x set
+                0.0391 &head.subframe.e.y set
+                0.7656 &head.subframe.e.w set
+                0.9219 &head.subframe.e.h set
+                0.1328 &head.subframe.n.x set
+                0.0391 &head.subframe.n.y set
+                0.7344 &head.subframe.n.w set
+                0.9297 &head.subframe.n.h set
+                0.1484 &head.subframe.s.x set
+                0.0391 &head.subframe.s.y set
+                0.7109 &head.subframe.s.w set
+                0.9297 &head.subframe.s.h set
                 0 return
             @on_destroy>
                 0 return
@@ -85,6 +119,23 @@
                 0.8 &body.scale set
                 1.0 &body.anchor.y set
                 1.0 &body.sprite_anchor.y set
+                ; SUBFRAME (subframe-ingest P1) — which fraction of the body master is
+                ; actually art, per DIRECTION. A body is widest seen front/back and narrowest in profile.
+                ; Measured from the 128-px masters on disk (surface.B > 0.35), union across
+                ; every variant so no variant is clipped (F8). The atlas crops to exactly this
+                ; rect for all four maps, which is what registers them with each other.
+                0.1406 &body.subframe.e.x set
+                0.0391 &body.subframe.e.y set
+                0.7188 &body.subframe.e.w set
+                0.9219 &body.subframe.e.h set
+                0.0625 &body.subframe.n.x set
+                0.0469 &body.subframe.n.y set
+                0.8828 &body.subframe.n.w set
+                0.9141 &body.subframe.n.h set
+                0.0391 &body.subframe.s.x set
+                0.0469 &body.subframe.s.y set
+                0.9219 &body.subframe.s.w set
+                0.9062 &body.subframe.s.h set
                 "thing ^prim call &head export
                 "pawn/human/male &head.texture set
                 #ffffff &head.tint set
@@ -99,6 +150,23 @@
                 ; it when the pawn faces AWAY, so this one number gives "head over the
                 ; body for e/w/s, under it for n". A backpack would author -1.
                 1 &head.depth set
+                ; SUBFRAME (subframe-ingest P1) — which fraction of the head master is
+                ; actually art, per DIRECTION. Per SLOT: a head fills a different fraction of its frame than the body does.
+                ; Measured from the 128-px masters on disk (surface.B > 0.35), union across
+                ; every variant so no variant is clipped (F8). The atlas crops to exactly this
+                ; rect for all four maps, which is what registers them with each other.
+                0.1016 &head.subframe.e.x set
+                0.0391 &head.subframe.e.y set
+                0.8047 &head.subframe.e.w set
+                0.9219 &head.subframe.e.h set
+                0.125 &head.subframe.n.x set
+                0.0469 &head.subframe.n.y set
+                0.75 &head.subframe.n.w set
+                0.9141 &head.subframe.n.h set
+                0.1406 &head.subframe.s.x set
+                0.0312 &head.subframe.s.y set
+                0.7266 &head.subframe.s.w set
+                0.9375 &head.subframe.s.h set
                 0 return
             @on_destroy>
                 0 return

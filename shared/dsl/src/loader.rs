@@ -241,6 +241,13 @@ pub struct VisualPart {
   pub sprite_scale: (f64, f64),
   pub sprite_anchor: (f64, f64),
   pub anchor: (f64, f64),
+  /// The slot's OWN per-direction subframe + pivot, `[e, s, n]` (subframe-ingest P1).
+  ///
+  /// Per SLOT, not inherited from slot 0, because a part is its own master with its own extent: a
+  /// human's head fills a different fraction of its frame than its body does (measured on the
+  /// corpus — female `s` body `h = 0.914`, head `h = 0.930`, at different `x`). Falls back to the
+  /// slot's non-directional `&prim.subframe.*` and then to the whole frame.
+  pub dir_frames: [DirFrame; 3],
 }
 
 /// A kind's emitted light, authored under `&thing.light.*`. Colour is `0..1`; `reach`
@@ -484,6 +491,18 @@ impl Bundle {
         sprite_scale: (rf("sprite_scale.w", 1.0), rf("sprite_scale.h", 1.0)),
         sprite_anchor: (rf("sprite_anchor.x", 0.5), rf("sprite_anchor.y", 0.5)),
         anchor: (rf("anchor.x", 0.5), rf("anchor.y", 0.5)),
+        dir_frames: ["e", "s", "n"].map(|d| DirFrame {
+          sub: (
+            rf(&format!("subframe.{d}.x"), rf("subframe.x", 0.0)),
+            rf(&format!("subframe.{d}.y"), rf("subframe.y", 0.0)),
+            rf(&format!("subframe.{d}.w"), rf("subframe.w", 1.0)),
+            rf(&format!("subframe.{d}.h"), rf("subframe.h", 1.0)),
+          ),
+          anchor: (
+            rf(&format!("sprite_anchor.{d}.x"), rf("sprite_anchor.x", 0.5)),
+            rf(&format!("sprite_anchor.{d}.y"), rf("sprite_anchor.y", 0.5)),
+          ),
+        }),
       });
       i += 1;
     }

@@ -367,17 +367,27 @@ prim_data                                          1 px per prim, RGBA32UI
 
 definition_data                     16 sequential px per definition, indexed by ROTATION
   R  u12 frame.x | u12 frame.y | u4 frame.span | u2 anchor.x | u2 anchor.y
-  G  u8  subframe.x | u8 subframe.y | u8 subframe.width | u8 subframe.height
+  G  (free — held at 0; reserved for the ANCHOR lane, see below)
   B  u2  cast_type (30-31) | u2 receive_type (28-29) | u2 emit_type (26-27)
      u4  layer (22-25)     | u8 seed (14-21) | u4 rotation (10-13)
      u4  reach (6-9, BIASED +1) | u6 intensity (0-5)
   A  u8  color.1 | u8 color.2 | u8 color.3 | u8 color.4
 ```
 
-`frame.span` and `subframe.width`/`height` are **biased**: 0 means 1, 15 means 16. A span of 0 would
-be no frame, so the natural encoding wastes the one value it cannot use and gets the maximum wrong by
-one. `subframe.x`/`y` are genuine 0-based offsets and take **no** bias — the two conventions sit in
-adjacent lanes of the same channel.
+`frame.span` is **biased**: 0 means 1, 15 means 16. A span of 0 would be no frame, so the natural
+encoding wastes the one value it cannot use and gets the maximum wrong by one.
+
+**GREEN held a SUBFRAME and is now free** (2026-08-02). It carried the art's opaque bbox in whole
+units, and every card was placed and silhouetted through it, bottom-aligned to the prim's anchor —
+while that anchor was the *continuous* opaque bottom. Two derivations of one edge, one rounded and
+one not, drifting up to a unit and painting a halo around every sprite
+([`work/2026-08-02-normal-frames`](work/2026-08-02-normal-frames/issues.md#i8)). Placement and
+sampling now both address the **frame**, which carries no rounding and is the rect the bake draws.
+
+The crop moved to atlas **ingest**, from a DSL-authored subframe
+([`work/2026-08-02-subframe-ingest`](work/2026-08-02-subframe-ingest/README.md)) — see the DSL
+variables below. The lane is reserved for the **anchor** (`u16 x | u16 y`, sixteenths of a unit),
+which is what lets a prim's plan line sit on its art's feet rather than on its frame's bottom edge.
 
 **The two BLUE channels are NO LONGER the same layout** (z-positioning P0b). `definition_index` moved
 from GREEN to BLUE's clean low 16 bits, paid for by moving `seed` and `rotation` to GREEN and retiring
@@ -460,6 +470,50 @@ window tile (`fillDisplay`'s rule); the blit reads the same residues, and its bi
 by `pmod`, which lands them on the WORLD-adjacent tile — the torus makes the seam free. Falloff is
 `lightFalloff(d, reach, I)` in `LIGHT_LANES_GLSL` — d₀ = reach/2 with a linear feather to exactly
 0 AT the stored reach, so the registration boundary and the visible pool edge are one line.
+
+## Sprite subframes — the atlas crop (`shared/dsl` → `client/webgl`)
+
+**One rect, authored once, cropped at ingest, shared by all four maps.** Work stream:
+[`work/2026-08-02-subframe-ingest`](work/2026-08-02-subframe-ingest/README.md).
+
+A texture master is a **square pow2 canvas with the subject letterboxed** inside it
+(`bin/art`'s normalisation). The **subframe** says which fraction of that canvas is actually art.
+The atlas ingests exactly that rect out of each of the stem's four maps — albedo, normal, surface,
+layers — so they are registered with each other **by construction** rather than by two derivations
+agreeing.
+
+```
+&thing.subframe.x | .y | .w | .h            fractions 0..1, default (0, 0, 1, 1) = the whole frame
+&thing.subframe.<e|s|n>.x | .y | .w | .h    per-DIRECTION override, falling back to the above
+&thing.sprite_anchor.x | .y                 the pivot ON the subframe, default (0.5, 0.5)
+&thing.sprite_anchor.<e|s|n>.x | .y         per-DIRECTION override
+
+&prim.subframe.…  /  &prim.sprite_anchor.…  the same, PER PART SLOT (a head is its own master)
+```
+
+Exposed as `thingSubframe()` — **stride 18** per def, `[e, s, n] × [x, y, w, h, anchor.x, anchor.y]`
+— and on each `moverParts()` slot as `subframes` (the same 18 floats, so one decoder serves both).
+
+**FRACTIONS, never units.** A master streams at 16/32/64/128 px and a fraction addresses the same
+art at every tier, where a unit count silently means a different number of texels per lod. Whole
+units are also precisely what the deleted `definition_data` GREEN lane held, and rounding them
+against a continuous anchor is what put a halo around every sprite.
+
+**THREE directions, not four.** West is the east master *mirrored*, not a fourth texture, so the
+client derives it by mirroring `e` about the frame centre. A fourth row would be a second number
+describing one image — the failure this model exists to remove.
+
+**Per direction because a facing is a different texture.** The corpus's clearest case is the wolf:
+its side view is long and flat (`h 0.47`) and its front/back are tall and narrow (`w 0.33`). One
+rect could not serve both.
+
+**Authored from the MASTERS ON DISK**, never from the client: the runtime bbox is computed from
+whichever lod decoded first, so the same art measures differently between sessions. Masters are one
+size (`meta.json` `"square": 128`) and measure the same every time. The union across a kind's
+variants is taken, so no variant is clipped.
+
+**`internal_padding` was deleted into this** — a uniform inset *is* a uniform subframe, so a linked
+tile grid authors its inset as a subframe like everything else.
 
 ## Removed
 

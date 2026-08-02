@@ -210,6 +210,22 @@ impl Content {
         self.bundle.thing_layout()
     }
 
+    /// Every thing's per-DIRECTION SUBFRAME in `object_id` order — flat **stride-18** per def:
+    /// three directions `[e, s, n]`, each `[sub.x, sub.y, sub.w, sub.h, anchor.x, anchor.y]`, all
+    /// fractions in `0..1` (subframe-ingest P1).
+    ///
+    /// The rect the atlas CROPS to: ingest copies exactly this out of each of the stem's four maps,
+    /// so albedo/normal/surface/layers are registered with each other by construction. A def that
+    /// authors nothing yields the whole frame `(0,0,1,1)` three times, so adopting the subframe
+    /// cannot move art that has not opted in.
+    ///
+    /// **Three directions, not four** — west is the east master mirrored, derived host-side by
+    /// mirroring `e` about the frame centre.
+    #[wasm_bindgen(js_name = thingSubframe)]
+    pub fn thing_subframe(&self) -> Vec<f64> {
+        self.bundle.thing_subframe()
+    }
+
     /// Per-kind emitted light, stride-8 (`[r, g, b, intensity, reach, radius, height, flags]`;
     /// flags bit 0 = cast_shadows, bit 1 = hot). `reach == 0` ⇒ the kind emits no light.
     #[wasm_bindgen(js_name = thingLight)]
@@ -386,6 +402,20 @@ impl Content {
             set("anchorY", &JsValue::from_f64(p.anchor.1));
             set("spriteAnchorX", &JsValue::from_f64(p.sprite_anchor.0));
             set("spriteAnchorY", &JsValue::from_f64(p.sprite_anchor.1));
+            // subframe-ingest P1: the slot's OWN per-direction crop rect, flat stride-18
+            // (`[e, s, n] × [x, y, w, h, anchorX, anchorY]`) — the same shape `thingSubframe`
+            // uses for cold things, so the host has one decoder for both. Per SLOT because a
+            // part is its own master: a human's head fills a different fraction than its body.
+            let mut sf = [0.0f64; 18];
+            for (i, f) in p.dir_frames.iter().enumerate() {
+                sf[i * 6] = f.sub.0;
+                sf[i * 6 + 1] = f.sub.1;
+                sf[i * 6 + 2] = f.sub.2;
+                sf[i * 6 + 3] = f.sub.3;
+                sf[i * 6 + 4] = f.anchor.0;
+                sf[i * 6 + 5] = f.anchor.1;
+            }
+            set("subframes", &js_sys::Float64Array::from(&sf[..]).into());
             set("tint", &JsValue::from_f64(p.tint as f64));
             set("geoColor", &JsValue::from_f64(p.geo_color as f64));
             arr.push(&o);
@@ -412,6 +442,9 @@ impl Content {
                     sprite_scale: v.as_ref().map(|v| v.sprite_scale).unwrap_or((1.0, 1.0)),
                     sprite_anchor: v.as_ref().map(|v| v.sprite_anchor).unwrap_or((0.5, 0.5)),
                     anchor: v.as_ref().map(|v| v.anchor).unwrap_or((0.5, 0.5)),
+                    // A pre-parts kind carries its subframe on the flat prim-0 fields; anything
+                    // with no visual at all gets the whole frame, which crops nothing.
+                    dir_frames: v.as_ref().map(|v| v.dir_frames).unwrap_or_default(),
                 };
                 push(&arr, &d);
             }

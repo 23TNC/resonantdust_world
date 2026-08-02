@@ -24,6 +24,15 @@
                 2 &thing.span set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
+                ; SUBFRAME (subframe-ingest P1) — which fraction of the master is actually art.
+                ; A conifer is a narrow spire in a 2x2 frame: barely half its width is art.
+                ; Measured from the 128-px masters on disk (surface.B > 0.35), union across every
+                ; variant so none is clipped (F8). Authored NON-DIRECTIONALLY: a cold thing has one
+                ; mastered facing, so e/s/n all inherit this one rect.
+                0.2188 &thing.subframe.x set
+                0.0391 &thing.subframe.y set
+                0.5625 &thing.subframe.w set
+                0.9336 &thing.subframe.h set
                 ; The conifer's albedo splits into ch0 = foliage + ch1 = trunk (see `art
                 ; split_layers world/conifer`). The canonical reconstruction is
                 ;   out = packed_residual + packed.R*tint0 + packed.G*tint1
@@ -51,6 +60,15 @@
                 0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
+                ; SUBFRAME (subframe-ingest P1) — which fraction of the master is actually art.
+                ; The tightest stem in the corpus at 0.72 opaque, and the one whose halo found the
+                ; bug (docs/work/2026-08-02-normal-frames/issues.md#i8). Measured from the 128-px
+                ; masters on disk (surface.B > 0.35), union across all 13 variants so none is
+                ; clipped (F8). Authored NON-DIRECTIONALLY: a cold thing has one mastered facing.
+                0.0547 &thing.subframe.x set
+                0.1094 &thing.subframe.y set
+                0.8984 &thing.subframe.w set
+                0.7969 &thing.subframe.h set
                 0 return
             @on_destroy>
                 0 return
@@ -146,6 +164,24 @@
                 1.125 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
+                ; SUBFRAME (subframe-ingest P1) — which fraction of the master is actually art.
+                ; The clearest per-direction case in the corpus: the side view is long and flat (h 0.47),
+                ; front/back are tall and narrow (w 0.33). One rect could not serve both.
+                ; Measured from the 128-px masters on disk (surface.B > 0.35), union across every
+                ; variant so none is clipped (F8). The atlas crops to exactly this rect for all four
+                ; maps, which is what registers them with each other.
+                0.0 &thing.subframe.e.x set
+                0.2578 &thing.subframe.e.y set
+                1.0 &thing.subframe.e.w set
+                0.4688 &thing.subframe.e.h set
+                0.3359 &thing.subframe.n.x set
+                0.0859 &thing.subframe.n.y set
+                0.3281 &thing.subframe.n.w set
+                0.8438 &thing.subframe.n.h set
+                0.2969 &thing.subframe.s.x set
+                0.0469 &thing.subframe.s.y set
+                0.3906 &thing.subframe.s.w set
+                0.8594 &thing.subframe.s.h set
                 0 return
             @on_destroy>
                 0 return

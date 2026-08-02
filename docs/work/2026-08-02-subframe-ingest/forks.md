@@ -119,3 +119,23 @@ same two-numbers-for-one-thing failure as [F6](#f6) and [normal-frames I8](../20
 **Per direction, like the subframe** ([F4](#f4)): each facing's subframe differs, so the feet sit at
 a different fraction of each. `&thing.sprite_anchor.<e|s|n>.x/y` overrides the non-directional
 default the same way `&thing.subframe.<dir>` does.
+
+## F8 — Subframes are measured from the MASTERS ON DISK, never from the client {#f8}
+
+**Chosen: measure the masters.** [I7](issues.md#i7) killed the alternative: the client's
+`computeSpriteBBox` runs on whichever lod decoded first, so the same art reported `fy = 0.125` in one
+session and `0.109` in the next. Authoring a permanent number from a measurement that moves with
+streaming order would bake in the exact class of error this stream exists to end.
+
+The masters under `textures/` are the ground truth and carry no lod ambiguity — `meta.json` states
+`"square": 128` and every map is that size. Measuring there gives one answer, reproducibly.
+
+**The bbox is taken from the SURFACE map's B channel**, matching what the client derived from
+(`surface = R presence / G ao / B alpha`), so the authored number describes the same silhouette the
+renderer will silhouette-test against.
+
+**A kind with several variants takes the UNION of their bboxes.** The DSL authors per kind ×
+direction, but `flora` has 13 variant folders sharing one stem. A per-variant crop would need
+per-variant authoring; the union is the conservative choice — it never clips art off any variant, and
+it costs only the margin where variants disagree. If a variant is ever far tighter than its siblings,
+[F6](#f6)'s per-cell capability is where that gets fixed, not here.

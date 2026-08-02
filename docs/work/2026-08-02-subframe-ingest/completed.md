@@ -91,3 +91,51 @@ trap for anyone writing a loader fixture, and it presents as "my new field does 
 **Ticked out of order:** the `sprite_anchor` re-base ([F7](forks.md#f7)) and the west-mirror items
 have their DSL half done here but their client half in P2, so they stay open until the resolver
 actually reads them. Ticking them now would claim wiring that does not exist.
+
+## 2026-08-02 — P1 cont., the corpus is authored and VARIABLES.md carries the model
+
+**Measured from the masters on disk** ([F8](forks.md#f8)), not from the client — [I7](issues.md#i7)
+showed the runtime bbox moves with streaming order, and a permanent number must not. One pass over
+`textures/**/surface.<dir>.<part>.png` at 128 px, thresholded at `B > 0.35` (the shader's own
+constant), unioned across every variant folder so no variant is clipped:
+
+| stem | dir | variants | x | y | w | h |
+|---|---|---|---|---|---|---|
+| `biome-thing/default/conifer` | e | 9 | 0.2188 | 0.0391 | 0.5625 | 0.9336 |
+| `biome-thing/default/flora` | e | 13 | 0.0547 | 0.1094 | 0.8984 | 0.7969 |
+| `pawn/animal/wolf` | e | 15 | 0.0 | 0.2578 | 1.0 | 0.4688 |
+| `pawn/animal/wolf` | n | 9 | 0.3359 | 0.0859 | 0.3281 | 0.8438 |
+| `pawn/animal/wolf` | s | 9 | 0.2969 | 0.0469 | 0.3906 | 0.8594 |
+| `pawn/human/female` body | e/n/s | 9 | 0.1484 / 0.0781 / 0.0703 | 0.0469 | 0.7109 / 0.8516 / 0.8594 | 0.9141 |
+| `pawn/human/female` head | e/n/s | 16 | 0.1172 / 0.1328 / 0.1484 | 0.0391 | 0.7656 / 0.7344 / 0.7109 | 0.9219 / 0.9297 / 0.9297 |
+| `pawn/human/male` body | e/n/s | 9 | 0.1406 / 0.0625 / 0.0391 | 0.0391 / 0.0469 / 0.0469 | 0.7188 / 0.8828 / 0.9219 | 0.9219 / 0.9141 / 0.9062 |
+| `pawn/human/male` head | e/n/s | 16 | 0.1016 / 0.125 / 0.1406 | 0.0391 / 0.0469 / 0.0312 | 0.8047 / 0.75 / 0.7266 | 0.9219 / 0.9141 / 0.9375 |
+
+**The wolf is the case that justifies per-direction authoring**: its side view is long and flat
+(`h 0.47`) and its front/back are tall and narrow (`w 0.33`). One rect could not have served both,
+which is the user's point stated as data.
+
+Authored into `content/visual/things.rd` (conifer, flora, wolf) and `content/visual/pawns.rd`
+(female/male × body/head). Cold things author **non-directionally** — a cold thing has one mastered
+facing, so e/s/n all inherit one rect — and pawns author per direction.
+
+**That forced a plan extension, done here:** `VisualPart` needed its own `dir_frames`, because a
+part is its own master with its own extent (female `s` body `h 0.914` vs head `h 0.930`, at different
+`x`). Added to the loader, and exported on each `moverParts()` slot as `subframes` — the same
+stride-18 shape `thingSubframe()` uses, so the host has one decoder for both.
+
+**Every mastered stem in the corpus is covered.** The corpus references exactly five: conifer, flora,
+wolf, human/female, human/male. `berry` exists under `textures/` but no corpus kind uses it (and it
+ships no surface map). Every other kind draws the built-in `white`, which has no master and correctly
+keeps the whole-frame default. The `biome-tile/*/l` grid stems are deliberately **not** authored here
+— they need the per-cell path ([F6](forks.md#f6)), which is a P2 item.
+
+**Verified:** `cargo test --lib` in `shared/dsl` — 48 passed, 0 failed, including
+`the_real_repo_corpus_loads_and_the_humans_declare_their_parts`, which loads the actual repo corpus,
+so the authored `.rd` parses. `rd build shared` builds the wasm bundle clean.
+
+**`VARIABLES.md` updated on two counts.** It still documented the *deleted* `definition_data` GREEN
+subframe lane — corrected to "free, reserved for the anchor" with the reason. And a new
+**Sprite subframes** section documents the DSL variables, the stride-18 wire shape, and the four
+rules that are easy to get wrong later: fractions not units, three directions not four, per-direction
+because a facing is a different texture, and authored from masters not from the client.

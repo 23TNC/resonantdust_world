@@ -32,8 +32,8 @@ for coverage and `__elev(i)` for the anchor.
 - [ ] Re-base `sprite_anchor` onto the authored subframe rather than the derived bbox ([F7](forks.md#f7)). Acceptance: no new anchor variable exists, and an unauthored stem's default still reproduces today's placement.
 - [x] Make both PER DIRECTION, keyed the way the resolver already keys stems. Acceptance: e/s/n each carry their own values through the loader, since each is a genuinely different texture.
 - [ ] Derive west from east by mirroring, never authoring it ([F4](forks.md#f4)). Acceptance: a west stem's subframe is east's mirrored about the frame centre, with the rule stated where someone would be tempted to author it.
-- [ ] Author the real values for the corpus's stems. Acceptance: every mastered stem has a subframe matching its art, taken from the measured bbox ([I5](issues.md#i5)), not guessed.
-- [ ] Record the new variables in `VARIABLES.md`. Acceptance: the layout doc carries them, since it outranks the code on layouts and a DSL variable absent from it is invisible.
+- [x] Author the real values for the corpus's stems. Acceptance: every mastered stem has a subframe matching its art, taken from the measured bbox ([I5](issues.md#i5)), not guessed.
+- [x] Record the new variables in `VARIABLES.md`. Acceptance: the layout doc carries them, since it outranks the code on layouts and a DSL variable absent from it is invisible.
 
 ## P2 — Crop at ingest: one rect, four maps ([F2](forks.md#f2), [F5](forks.md#f5))
 
