@@ -642,6 +642,27 @@ export class SquareCache {
     }
   }
 
+  /** Dirty only the squares holding a prim that draws `stem` — the targeted form of
+   *  {@link invalidateAll}, for "one texture landed" rather than "the whole atlas moved".
+   *
+   *  **Why this exists** (render-performance I11): a texture arrival used to `invalidateAll()`, so
+   *  ONE stem landing dirtied all 2048–8192 squares. `bakeDirty` is budgeted, so during load the
+   *  queue never drained — the composites lagged permanently behind the lighting, which reads them
+   *  every frame. The preview tier made it acute by roughly doubling the arrival rate (geo →
+   *  preview → master, plus emit-on-failure). A stem occupies a handful of squares; dirtying the
+   *  other few thousand is pure waste that also starves the ones that changed. */
+  invalidateStem(stem: string): void {
+    for (const [k, ids] of this.squarePrims) {
+      let hit = false;
+      for (const id of ids) {
+        if (this.prims.get(id)?.prim.textureName === stem) { hit = true; break; }
+      }
+      if (!hit) continue;
+      const ci = k.indexOf(",");
+      this.markDirty(+k.slice(0, ci), +k.slice(ci + 1), PRIO_STD);
+    }
+  }
+
   // ── bake ─────────────────────────────────────────────────────────────────────────
   bakeDirty(budget: number): void {
     this.lastBaked = 0;

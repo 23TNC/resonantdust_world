@@ -111,7 +111,7 @@ export class TextureResolver {
   }
   private scaleWarned = false;
 
-  private readonly listeners = new Set<() => void>();
+  private readonly listeners = new Set<(stem?: string) => void>();
 
   constructor(renderer: Renderer | null, texturesRoot: string) {
     this.renderer = renderer;
@@ -215,12 +215,15 @@ export class TextureResolver {
     this.rawBBox.delete(stem);
   }
 
-  onLoad(fn: () => void): () => void {
+  onLoad(fn: (stem?: string) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
-  private emit(): void {
-    for (const fn of this.listeners) fn();
+  /** Notify that `stem`'s frames changed — or, with no stem, that EVERY frame may have moved (a
+   *  page repack, a manifest swap). The argument is what lets a listener dirty a handful of squares
+   *  instead of all of them (render-performance I11). */
+  private emit(stem?: string): void {
+    for (const fn of this.listeners) fn(stem);
   }
 
   poolStats(): PoolStats {
@@ -396,12 +399,12 @@ export class TextureResolver {
       if (ok) {
         this.packedSize.set(stem, size);
         this.packedHash.set(stem, hash);
-        this.emit();
+        this.emit(stem);
       } else {
         // I2: a pack that FAILS must still notify. `if (ok) emit()` alone left a stem whose bytes had
         // arrived sitting on geo for the entire session, with no re-bake ever scheduled — the bytes
         // were in memory and nothing asked for them again.
-        this.emit();
+        this.emit(stem);
       }
     } catch (e) {
       // Bytes unavailable — the stem stays geo. WARN, don't swallow: a silent catch here

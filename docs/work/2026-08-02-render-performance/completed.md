@@ -78,3 +78,25 @@ error beside the G-buffer.
 
 That reframes P4's budget item. Cutting texture memory cannot move this number; only re-costing the
 8 composites can.
+
+## 2026-08-02 — [I11](issues.md#i11): a texture arrival no longer invalidates every square
+
+`resolver.onLoad` ran `invalidateAll()` on both caches, so ONE stem landing dirtied every square in
+the window. `bakeDirty` is budgeted, so during load the queue never drained and the composites
+lagged permanently behind the lighting — which reads them every frame. The preview tier made it
+acute by roughly doubling arrivals.
+
+`emit(stem)` now carries which stem changed; `onLoad(stem)` routes it to a new
+`SquareCache.invalidateStem(stem)` that dirties only squares holding a prim drawing that stem. A
+no-stem emit (page repack, manifest swap) keeps the full invalidation.
+
+**Measured live:** one stem dirties **916** squares against **2310** for `invalidateAll`, and the
+queue drains to **0 in 3 ticks** — `dirtyNow: 0, baked: 512/512` on a cold load, where it previously
+never drained. 916 is the worst case by construction: `conifer/e` occupies nearly every square of a
+forest view, so that number is correct rather than wasteful; a rare stem dirties a handful.
+
+**Two theories discarded first, by reading rather than arguing** — both plausible, both wrong: the
+light pass is NOT gated (`run()` redraws the slots and overwrites `sumRT` every frame), and the
+shadow buffer does NOT go stale (tier 1 re-tests the incumbent through `occludes()`, tier 3's
+corridor DDA runs unconditionally on a miss, so it self-corrects in both directions). Written down
+in [I11](issues.md#i11) so neither gets re-investigated.

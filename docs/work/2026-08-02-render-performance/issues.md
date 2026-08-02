@@ -201,36 +201,37 @@ looks like a painter's-algorithm bug rather than a filtering one.
 level instead of destroying it — three render targets total, no resample, no filter question. The
 partition level only takes a handful of values.
 
-## I11 — Lighting is not invalidated when a prim tile re-bakes {#i11}
+## I11 — A texture arrival invalidated EVERY square — FIXED {#i11}
 
 > "We need to mark the lighting dirty on prim tiles that re-draw. I suspect we just need to mark
 > lighting dirty when we mark color dirty." — user, 2026-08-02
 
-Right that it needs invalidating; the *where* is narrower than "when colour goes dirty", because
-most of the chain already recomputes.
+Right about the seam, and the cause was the opposite of stale — it was *too much* invalidation.
 
-**What already re-runs every frame, unconditionally** — so it is NOT the culprit:
+**Two wrong theories, discarded by reading the code rather than by argument.** Recorded because both
+sounded right:
 
-- `LightPass.run()` has **no early-out**. It redraws the whole slot pass each frame from the
-  currently-bound composites, so a re-baked normal/surface composite is picked up the next frame.
-- `lights.receivers(...)` likewise runs each frame.
+1. *"The light pass is gated."* It is not. `LightPass.run()` has no early-out: it redraws the slot
+   pass **and** overwrites `sumRT` from the slots with `blend: "none"`, every frame. `receivers()`
+   likewise. The whole lighting chain recomputes from scratch each frame.
+2. *"The shadow buffer's cached casters go stale."* They do not. Tier 1 **re-tests** the incumbent
+   through `occludes()` against the current silhouette, so a caster that shrank fails and falls
+   through; and tier 3's corridor DDA runs unconditionally whenever `found == NONE`, so a caster
+   that GREW is discovered next frame. It is self-correcting in both directions.
 
-**What does NOT**, and is where the staleness lives:
+**The actual cause.** `resolver.onLoad` ran `invalidateAll()` on both caches — so ONE stem landing
+dirtied every square in the window (2310 measured). `bakeDirty` is budgeted, so during load the
+queue never drained: the composites lagged permanently behind the lighting, which reads them every
+frame. The lighting was not stale; it was reading composites that had not caught up.
 
-1. **The shadow buffer is INCREMENTAL.** `shadows.gather(renderer, …, false, false, 2, lwin)` — it
-   carries cached caster identity per (unit, light) across frames, which is the whole reason
-   [z-positioning I17](../2026-08-01-z-positioning/issues.md#i17) says never to quote a texel count
-   from it. When a prim's ART changes — a geo stem upgrading to its preview, a preview to its
-   master, a subframe crop landing — the silhouette that decided those cached casters is gone, but
-   the cache is not told.
-2. **`bakeDirty` is BUDGETED** (`BAKE_BUDGET`, `COLD_BAKE_FLOOR`). A square that is dirty but not
-   yet baked this frame still presents stale composite content, and the light pass reads it as
-   though it were current. That is a *lag*, not a corruption — it self-corrects as the queue drains.
+**I made it acute today.** The preview tier roughly doubles arrivals (geo → preview → master) and
+[I2](#i2)'s emit-on-failure added more. Each arrival was a full invalidation.
 
-So the fix is to invalidate the **shadow buffer** for the tiles a square covers when that square
-re-bakes, not to gate the light pass. The seam is `SquareCache.bakeDirty` — it already knows exactly
-which squares it baked this frame (`lastBaked`) — feeding a tile range into `ShadowBuffer`.
+**Fixed** by `SquareCache.invalidateStem(stem)` plus routing the stem through `emit(stem)` →
+`onLoad(stem)`. A no-stem emit (page repack, manifest swap) still invalidates everything.
 
-**Why this surfaced now**: art used to arrive once, so a stem's silhouette never changed after its
-first bake. The preview tier ([F6](forks.md#f6)) makes every stem change silhouette at least twice —
-geo → preview → master — which turns a latent staleness into a visible one.
+**Measured**: one stem dirties **916** squares against **2310** for `invalidateAll` — and the queue
+drains to **0 in 3 ticks**, where it previously never drained during load. 916 is the WORST case:
+`conifer/e` is in nearly every square of a forest view, so dirtying 916 is correct, not wasteful. A
+rare stem (a torch, a wolf) dirties a handful.
+

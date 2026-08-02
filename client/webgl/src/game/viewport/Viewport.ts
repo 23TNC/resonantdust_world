@@ -303,9 +303,18 @@ export class Viewport {
     this.resolver = resolver;
     resolver.attachRenderer(this.renderer);
     this.resolverUnsub?.();
-    this.resolverUnsub = resolver.onLoad(() => {
-      this.map.invalidateAll();
-      this.warm.invalidateAll();
+    this.resolverUnsub = resolver.onLoad((stem?: string) => {
+      // I11: dirty ONLY what changed. A stem landing used to invalidate all 2048–8192 squares, and
+      // `bakeDirty` is budgeted — so during load the queue never drained and the composites lagged
+      // the lighting permanently. No stem means "everything moved" (a page repack), which still
+      // warrants the sledgehammer.
+      if (stem) {
+        this.map.invalidateStem(stem);
+        this.warm.invalidateStem(stem);
+      } else {
+        this.map.invalidateAll();
+        this.warm.invalidateAll();
+      }
       // P1b: frames moved (a level landed / a page repacked) — every definition re-writes from
       // the resolver's CURRENT frames on the next reconcile (I2's staleness half).
       this.recordSync.markDefsStale();
