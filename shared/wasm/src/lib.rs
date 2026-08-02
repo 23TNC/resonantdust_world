@@ -210,18 +210,19 @@ impl Content {
         self.bundle.thing_layout()
     }
 
-    /// Every thing's per-ROTATION SUBFRAME in `object_id` order — flat **stride-96** per def:
-    /// 16 rotations, each `[sub.x, sub.y, sub.w, sub.h, anchor.x, anchor.y]`, all fractions in
-    /// `0..1` (subframe-ingest P1/F9).
+    /// Every thing's SUBFRAMES in `object_id` order — flat **stride-1536** per def: 16 VARIANTS ×
+    /// 16 ROTATIONS × `[sub.x, sub.y, sub.w, sub.h, anchor.x, anchor.y]`, fractions in `0..1`
+    /// (subframe-ingest I10).
     ///
     /// The rect the atlas CROPS to: ingest copies exactly this out of each of the stem's four maps,
     /// so albedo/normal/surface/layers are registered with each other by construction. A def that
     /// authors nothing yields the whole frame `(0,0,1,1)` three times, so adopting the subframe
     /// cannot move art that has not opted in.
     ///
-    /// **Sixteen, because facings and linked cells share ONE index space** (F9): a sprite uses
-    /// `0..3` (`s, e, n, w`) and a linked tile uses all sixteen (the autotile cell `y·4 + x`).
-    /// Index 3 (west) is the east master mirrored — derived host-side from index 1, never authored.
+    /// **Two axes, because every variation has rotations.** The ROTATION is `0..15` — a facing
+    /// (`0 = s, 1 = e, 2 = n, 3 = w`) or a linked autotile cell (`y·4 + x`) — and it lands in the
+    /// STEM. The VARIANT is the other `0..15` and lands in the CELL. Index 3 (west) is the east
+    /// master mirrored, derived host-side from index 1, never authored.
     #[wasm_bindgen(js_name = thingSubframe)]
     pub fn thing_subframe(&self) -> Vec<f64> {
         self.bundle.thing_subframe()
@@ -403,18 +404,15 @@ impl Content {
             set("anchorY", &JsValue::from_f64(p.anchor.1));
             set("spriteAnchorX", &JsValue::from_f64(p.sprite_anchor.0));
             set("spriteAnchorY", &JsValue::from_f64(p.sprite_anchor.1));
-            // subframe-ingest P1/F9: the slot's OWN per-rotation crop rect, flat stride-96
-            // (16 × `[x, y, w, h, anchorX, anchorY]`) — the same shape `thingSubframe` uses for
-            // cold things, so the host has one decoder for both. Per SLOT because a part is its
-            // own master: a human's head fills a different fraction than its body.
-            let mut sf = [0.0f64; 96];
-            for (i, f) in p.dir_frames.iter().enumerate() {
-                sf[i * 6] = f.sub.0;
-                sf[i * 6 + 1] = f.sub.1;
-                sf[i * 6 + 2] = f.sub.2;
-                sf[i * 6 + 3] = f.sub.3;
-                sf[i * 6 + 4] = f.anchor.0;
-                sf[i * 6 + 5] = f.anchor.1;
+            // subframe-ingest I10: the slot's OWN crop rects, flat **stride-1536** — 16 VARIANTS ×
+            // 16 ROTATIONS × `[x, y, w, h, anchorX, anchorY]`. Two axes, not one: a facing lands in
+            // the STEM and a variant in the CELL, so collapsing them put the wolf's south rect on
+            // its east art. Same shape `thingSubframe` uses, so the host has one decoder for both.
+            let mut sf = Vec::with_capacity(16 * 16 * 6);
+            for by_rot in p.dir_frames.iter() {
+                for f in by_rot.iter() {
+                    sf.extend_from_slice(&[f.sub.0, f.sub.1, f.sub.2, f.sub.3, f.anchor.0, f.anchor.1]);
+                }
             }
             set("subframes", &js_sys::Float64Array::from(&sf[..]).into());
             set("tint", &JsValue::from_f64(p.tint as f64));

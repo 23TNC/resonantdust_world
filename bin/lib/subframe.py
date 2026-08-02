@@ -70,7 +70,11 @@ def measure(stem, direction, part):
 
 
 def emit(handle, rects, indent, by_direction, direction):
-    """The `.rd` lines. Indexed `r<n>` per variant, or aliased by direction for a facing set."""
+    """The `.rd` lines. `v<n>` per VARIANT, or aliased by direction for a facing set.
+
+    Two axes (stream I10): a rotation/facing lands in the STEM, a variant in the CELL. Emitting a
+    variant as `r<n>` put the wolf's south rect on its east art.
+    """
     lines = []
     if by_direction:
         # A facing set authors ONE rect per direction, under the s/e/n aliases — index 3 (west) is
@@ -82,7 +86,7 @@ def emit(handle, rects, indent, by_direction, direction):
         lines.append(f"{indent}{v} {handle}.subframe.{k} set")
     for idx in sorted(rects):
         for k, v in zip("xywh", rects[idx]):
-            lines.append(f"{indent}{v} {handle}.subframe.r{idx}.{k} set")
+            lines.append(f"{indent}{v} {handle}.subframe.v{idx}.{k} set")
     return lines
 
 

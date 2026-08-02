@@ -27,8 +27,8 @@
                 ; SUBFRAME (subframe-ingest P1/F9) — the MINIMUM bbox, PER VARIANT.
                 ; A conifer varies enormously by variant: the smallest sapling fills 0.198 of its frame,
                 ; the largest 0.525. One union rect would waste 2.6x the texels on the small ones.
-                ; The rotation index IS the variant for a cold thing (F10): one 0..15 space serves
-                ; sprite facings, linked autotile cells and variants alike.
+                ; `v<n>` is the VARIANT axis; rotations are a separate axis that lands in the STEM
+                ; (subframe-ingest I10). A conifer ships one mastered facing, so it varies only by variant.
                 ; GENERATED — `python3 bin/lib/subframe.py <stem>`. Do not hand-edit: measured from
                 ; the 128-px masters (surface.B > 0.35, the shader's own constant), and a number
                 ; edited by hand is how an authored rect silently stops matching its art (I6).
@@ -38,42 +38,42 @@
                 0.0391 &thing.subframe.y set
                 0.5625 &thing.subframe.w set
                 0.9336 &thing.subframe.h set
-                0.3359 &thing.subframe.r0.x set
-                0.2109 &thing.subframe.r0.y set
-                0.3359 &thing.subframe.r0.w set
-                0.5898 &thing.subframe.r0.h set
-                0.2969 &thing.subframe.r1.x set
-                0.1445 &thing.subframe.r1.y set
-                0.4102 &thing.subframe.r1.w set
-                0.7148 &thing.subframe.r1.h set
-                0.2578 &thing.subframe.r2.x set
-                0.0898 &thing.subframe.r2.y set
-                0.4844 &thing.subframe.r2.w set
-                0.8281 &thing.subframe.r2.h set
-                0.2891 &thing.subframe.r3.x set
-                0.1445 &thing.subframe.r3.y set
-                0.4258 &thing.subframe.r3.w set
-                0.7188 &thing.subframe.r3.h set
-                0.25 &thing.subframe.r4.x set
-                0.0664 &thing.subframe.r4.y set
-                0.5039 &thing.subframe.r4.w set
-                0.875 &thing.subframe.r4.h set
-                0.2188 &thing.subframe.r5.x set
-                0.0391 &thing.subframe.r5.y set
-                0.5625 &thing.subframe.r5.w set
-                0.9336 &thing.subframe.r5.h set
-                0.25 &thing.subframe.r6.x set
-                0.1055 &thing.subframe.r6.y set
-                0.5 &thing.subframe.r6.w set
-                0.8008 &thing.subframe.r6.h set
-                0.2461 &thing.subframe.r7.x set
-                0.0664 &thing.subframe.r7.y set
-                0.5117 &thing.subframe.r7.w set
-                0.8711 &thing.subframe.r7.h set
-                0.2227 &thing.subframe.r8.x set
-                0.082 &thing.subframe.r8.y set
-                0.5547 &thing.subframe.r8.w set
-                0.8438 &thing.subframe.r8.h set
+                0.3359 &thing.subframe.v0.x set
+                0.2109 &thing.subframe.v0.y set
+                0.3359 &thing.subframe.v0.w set
+                0.5898 &thing.subframe.v0.h set
+                0.2969 &thing.subframe.v1.x set
+                0.1445 &thing.subframe.v1.y set
+                0.4102 &thing.subframe.v1.w set
+                0.7148 &thing.subframe.v1.h set
+                0.2578 &thing.subframe.v2.x set
+                0.0898 &thing.subframe.v2.y set
+                0.4844 &thing.subframe.v2.w set
+                0.8281 &thing.subframe.v2.h set
+                0.2891 &thing.subframe.v3.x set
+                0.1445 &thing.subframe.v3.y set
+                0.4258 &thing.subframe.v3.w set
+                0.7188 &thing.subframe.v3.h set
+                0.25 &thing.subframe.v4.x set
+                0.0664 &thing.subframe.v4.y set
+                0.5039 &thing.subframe.v4.w set
+                0.875 &thing.subframe.v4.h set
+                0.2188 &thing.subframe.v5.x set
+                0.0391 &thing.subframe.v5.y set
+                0.5625 &thing.subframe.v5.w set
+                0.9336 &thing.subframe.v5.h set
+                0.25 &thing.subframe.v6.x set
+                0.1055 &thing.subframe.v6.y set
+                0.5 &thing.subframe.v6.w set
+                0.8008 &thing.subframe.v6.h set
+                0.2461 &thing.subframe.v7.x set
+                0.0664 &thing.subframe.v7.y set
+                0.5117 &thing.subframe.v7.w set
+                0.8711 &thing.subframe.v7.h set
+                0.2227 &thing.subframe.v8.x set
+                0.082 &thing.subframe.v8.y set
+                0.5547 &thing.subframe.v8.w set
+                0.8438 &thing.subframe.v8.h set
                 ; The conifer's albedo splits into ch0 = foliage + ch1 = trunk (see `art
                 ; split_layers world/conifer`). The canonical reconstruction is
                 ;   out = packed_residual + packed.R*tint0 + packed.G*tint1
@@ -104,8 +104,8 @@
                 ; SUBFRAME (subframe-ingest P1/F9) — the MINIMUM bbox, PER VARIANT.
                 ; Flora varies less (0.533..0.710), but it is the stem whose halo found the original bug
                 ; (docs/work/2026-08-02-normal-frames/issues.md#i8), so it gets the same treatment.
-                ; The rotation index IS the variant for a cold thing (F10): one 0..15 space serves
-                ; sprite facings, linked autotile cells and variants alike.
+                ; `v<n>` is the VARIANT axis; rotations are a separate axis that lands in the STEM
+                ; (subframe-ingest I10). A conifer ships one mastered facing, so it varies only by variant.
                 ; GENERATED — `python3 bin/lib/subframe.py <stem>`. Do not hand-edit: measured from
                 ; the 128-px masters (surface.B > 0.35, the shader's own constant), and a number
                 ; edited by hand is how an authored rect silently stops matching its art (I6).
@@ -115,58 +115,58 @@
                 0.1094 &thing.subframe.y set
                 0.8984 &thing.subframe.w set
                 0.7969 &thing.subframe.h set
-                0.0859 &thing.subframe.r0.x set
-                0.1562 &thing.subframe.r0.y set
-                0.8359 &thing.subframe.r0.w set
-                0.7188 &thing.subframe.r0.h set
-                0.0703 &thing.subframe.r1.x set
-                0.1328 &thing.subframe.r1.y set
-                0.8672 &thing.subframe.r1.w set
-                0.7578 &thing.subframe.r1.h set
-                0.0859 &thing.subframe.r2.x set
-                0.125 &thing.subframe.r2.y set
-                0.8281 &thing.subframe.r2.w set
-                0.7656 &thing.subframe.r2.h set
-                0.0703 &thing.subframe.r3.x set
-                0.125 &thing.subframe.r3.y set
-                0.8672 &thing.subframe.r3.w set
-                0.7578 &thing.subframe.r3.h set
-                0.0781 &thing.subframe.r4.x set
-                0.1406 &thing.subframe.r4.y set
-                0.8516 &thing.subframe.r4.w set
-                0.7422 &thing.subframe.r4.h set
-                0.0703 &thing.subframe.r5.x set
-                0.1406 &thing.subframe.r5.y set
-                0.875 &thing.subframe.r5.w set
-                0.7344 &thing.subframe.r5.h set
-                0.0938 &thing.subframe.r6.x set
-                0.1406 &thing.subframe.r6.y set
-                0.8125 &thing.subframe.r6.w set
-                0.7422 &thing.subframe.r6.h set
-                0.0781 &thing.subframe.r7.x set
-                0.1641 &thing.subframe.r7.y set
-                0.8438 &thing.subframe.r7.w set
-                0.6875 &thing.subframe.r7.h set
-                0.0859 &thing.subframe.r8.x set
-                0.1406 &thing.subframe.r8.y set
-                0.8281 &thing.subframe.r8.w set
-                0.7422 &thing.subframe.r8.h set
-                0.0547 &thing.subframe.r9.x set
-                0.1094 &thing.subframe.r9.y set
-                0.8906 &thing.subframe.r9.w set
-                0.7969 &thing.subframe.r9.h set
-                0.0547 &thing.subframe.r10.x set
-                0.2109 &thing.subframe.r10.y set
-                0.8984 &thing.subframe.r10.w set
-                0.5938 &thing.subframe.r10.h set
-                0.0703 &thing.subframe.r11.x set
-                0.1641 &thing.subframe.r11.y set
-                0.8594 &thing.subframe.r11.w set
-                0.6719 &thing.subframe.r11.h set
-                0.0781 &thing.subframe.r12.x set
-                0.1484 &thing.subframe.r12.y set
-                0.8516 &thing.subframe.r12.w set
-                0.7266 &thing.subframe.r12.h set
+                0.0859 &thing.subframe.v0.x set
+                0.1562 &thing.subframe.v0.y set
+                0.8359 &thing.subframe.v0.w set
+                0.7188 &thing.subframe.v0.h set
+                0.0703 &thing.subframe.v1.x set
+                0.1328 &thing.subframe.v1.y set
+                0.8672 &thing.subframe.v1.w set
+                0.7578 &thing.subframe.v1.h set
+                0.0859 &thing.subframe.v2.x set
+                0.125 &thing.subframe.v2.y set
+                0.8281 &thing.subframe.v2.w set
+                0.7656 &thing.subframe.v2.h set
+                0.0703 &thing.subframe.v3.x set
+                0.125 &thing.subframe.v3.y set
+                0.8672 &thing.subframe.v3.w set
+                0.7578 &thing.subframe.v3.h set
+                0.0781 &thing.subframe.v4.x set
+                0.1406 &thing.subframe.v4.y set
+                0.8516 &thing.subframe.v4.w set
+                0.7422 &thing.subframe.v4.h set
+                0.0703 &thing.subframe.v5.x set
+                0.1406 &thing.subframe.v5.y set
+                0.875 &thing.subframe.v5.w set
+                0.7344 &thing.subframe.v5.h set
+                0.0938 &thing.subframe.v6.x set
+                0.1406 &thing.subframe.v6.y set
+                0.8125 &thing.subframe.v6.w set
+                0.7422 &thing.subframe.v6.h set
+                0.0781 &thing.subframe.v7.x set
+                0.1641 &thing.subframe.v7.y set
+                0.8438 &thing.subframe.v7.w set
+                0.6875 &thing.subframe.v7.h set
+                0.0859 &thing.subframe.v8.x set
+                0.1406 &thing.subframe.v8.y set
+                0.8281 &thing.subframe.v8.w set
+                0.7422 &thing.subframe.v8.h set
+                0.0547 &thing.subframe.v9.x set
+                0.1094 &thing.subframe.v9.y set
+                0.8906 &thing.subframe.v9.w set
+                0.7969 &thing.subframe.v9.h set
+                0.0547 &thing.subframe.v10.x set
+                0.2109 &thing.subframe.v10.y set
+                0.8984 &thing.subframe.v10.w set
+                0.5938 &thing.subframe.v10.h set
+                0.0703 &thing.subframe.v11.x set
+                0.1641 &thing.subframe.v11.y set
+                0.8594 &thing.subframe.v11.w set
+                0.6719 &thing.subframe.v11.h set
+                0.0781 &thing.subframe.v12.x set
+                0.1484 &thing.subframe.v12.y set
+                0.8516 &thing.subframe.v12.w set
+                0.7266 &thing.subframe.v12.h set
                 0 return
             @on_destroy>
                 0 return
@@ -262,10 +262,25 @@
                 1.125 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
-                ; NO SUBFRAME — deliberately (subframe-ingest I10). The wolf's rects are per FACING,
-                ; and a facing is not an index: it is already in the STEM (`pawn/animal/wolf/e`).
-                ; Authoring them here put the SOUTH rect on the EAST art and cut the wolf in half.
-                ; Restore once facings key the stem and indices key the cell/variant.
+                ; SUBFRAME, per FACING (subframe-ingest I10). The wolf is the kind that proved the
+                ; two axes must be separate: it has 3 mastered facings AND 15 east variants. These
+                ; are ROTATION rects — `s`/`e`/`n` alias rotations 0/1/2 — and they apply across
+                ; every variant. A VARIANT rect would be `subframe.v<n>` and would win over these
+                ; for its own variant; neither can land on the other's art any more.
+                ; West is absent: it is the east master mirrored, derived host-side.
+                ; Measured from the 128-px masters — `bin/lib/subframe.py <stem> --by-direction`.
+                0.0 &thing.subframe.e.x set
+                0.2578 &thing.subframe.e.y set
+                1.0 &thing.subframe.e.w set
+                0.4688 &thing.subframe.e.h set
+                0.2969 &thing.subframe.s.x set
+                0.0469 &thing.subframe.s.y set
+                0.3906 &thing.subframe.s.w set
+                0.8594 &thing.subframe.s.h set
+                0.3359 &thing.subframe.n.x set
+                0.0859 &thing.subframe.n.y set
+                0.3281 &thing.subframe.n.w set
+                0.8438 &thing.subframe.n.h set
                 0 return
             @on_destroy>
                 0 return

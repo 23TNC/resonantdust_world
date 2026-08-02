@@ -96,8 +96,15 @@ const LINKED_CATEGORY = "linked";
 
 /** Rotation slots per definition — the ONE index space for sprite facings, linked autotile cells
  *  and a cold thing's variant alike (subframe-ingest F9/F10). Mirrors `ROTATIONS_PER_DEF` in
- *  `records.ts` and `ROTATIONS_PER_DEF` in `shared/dsl`; `thingSubframe()` is strided by it. */
+ *  `records.ts` and `ROTATIONS_PER_DEF` in `shared/dsl`. */
 const ROTATION_SLOTS = 16;
+/** Variant slots per definition — the OTHER axis (subframe-ingest I10). `thingSubframe()` is
+ *  strided `VARIANT_SLOTS × ROTATION_SLOTS × 6`: a rotation lands in the STEM, a variant in the
+ *  CELL, and collapsing them put the wolf's south rect on its east art. */
+const VARIANT_SLOTS = 16;
+/** The rotation index of {@link DEFAULT_FACING} — a cold thing ships one mastered facing, so its
+ *  subframes are read at this rotation and indexed by VARIANT. `FACING_BY_ROTATION` order. */
+const DEFAULT_FACING_ROTATION = 1;
 
 /** A COLD thing's texture name + flip for its sprite variant. The def's base stem gets a
  *  trailing DIRECTION segment the resolver treats as its own stem: the single-facing
@@ -299,11 +306,15 @@ export class WorldBridge {
       const base = textureNameFor(this.thingStems[kind - 1]);
       if (!base) continue;
       const drawStem = base.startsWith(`${LINKED_CATEGORY}/`) ? `${base}/l` : `${base}/${DEFAULT_FACING}`;
-      const b = (kind - 1) * ROTATION_SLOTS * 6;
-      if (b + ROTATION_SLOTS * 6 > thingSub.length) break;
-      for (let r = 0; r < ROTATION_SLOTS; r++) {
-        const o = b + r * 6;
-        this.resolver.setSubframe(drawStem, r, thingSub[o], thingSub[o + 1], thingSub[o + 2],
+      const stride = VARIANT_SLOTS * ROTATION_SLOTS * 6;
+      const b = (kind - 1) * stride;
+      if (b + stride > thingSub.length) break;
+      // A cold thing resolves ONE mastered facing and passes its VARIANT as the cell, so the rect
+      // to register for cell `v` is `[variant v][rotation of that facing]` — the two axes read at
+      // the point where the draw path collapses them, rather than the corpus collapsing them (I10).
+      for (let v = 0; v < VARIANT_SLOTS; v++) {
+        const o = b + (v * ROTATION_SLOTS + DEFAULT_FACING_ROTATION) * 6;
+        this.resolver.setSubframe(drawStem, v, thingSub[o], thingSub[o + 1], thingSub[o + 2],
                                   thingSub[o + 3], thingSub[o + 4], thingSub[o + 5]);
       }
     }

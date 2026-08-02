@@ -152,7 +152,7 @@ pub struct VisualParts {
   /// **Index 3 (west) should not be authored** — it is the east master MIRRORED, not a fourth
   /// texture, and the client derives it by mirroring index 1. The alias exists so the fallback
   /// chain reads uniformly, not so west gets art of its own.
-  pub dir_frames: [DirFrame; ROTATIONS_PER_DEF],
+  pub dir_frames: [[DirFrame; ROTATIONS_PER_DEF]; VARIANTS_PER_DEF],
   /// The prim's up-to-4 packed-map channel material bindings (`&prim.packed.<i>`),
   /// indexed by packed RGBA channel. Default (all zero) = no material system in
   /// play, so the renderer paints the flat albedo exactly as before.
@@ -203,6 +203,16 @@ impl Default for DirFrame {
 /// `y·4 + x`). Mirrors `ROTATIONS_PER_DEF` in `client/webgl`'s `records.ts` — a divergence here
 /// would mis-address the def texture, so the two must move together.
 pub const ROTATIONS_PER_DEF: usize = 16;
+
+/// Variant slots per definition. **A variant and a rotation are DIFFERENT AXES** (user, 2026-08-02:
+/// *"they are similar but ultimately every variation has rotation/directions"*), so a subframe is
+/// indexed by BOTH: `[variant][rotation]`.
+///
+/// Collapsing them into one index is [I10](../../../docs/work/2026-08-02-subframe-ingest/issues.md#i10)
+/// — it put the wolf's SOUTH rect on its EAST art and cut the sprite in half. The tell is in how a
+/// stem resolves: a facing lands in the STEM (`…/wolf/e`) while a variant lands in the CELL, so they
+/// were never interchangeable; one kind needs both (the wolf has 3 facings and 15 east variants).
+pub const VARIANTS_PER_DEF: usize = 16;
 
 /// Readable aliases for the first four rotation indices, in `FACING_BY_ROTATION` order. A corpus
 /// authoring a sprite writes `subframe.e`; one authoring a linked tile writes `subframe.9`. Both
@@ -275,7 +285,7 @@ pub struct VisualPart {
   /// human's head fills a different fraction of its frame than its body does (measured on the
   /// corpus — female `s` body `h = 0.914`, head `h = 0.930`, at different `x`). Falls back to the
   /// slot's non-indexed `&prim.subframe.*` and then to the whole frame.
-  pub dir_frames: [DirFrame; ROTATIONS_PER_DEF],
+  pub dir_frames: [[DirFrame; ROTATIONS_PER_DEF]; VARIANTS_PER_DEF],
 }
 
 /// A kind's emitted light, authored under `&thing.light.*`. Colour is `0..1`; `reach`
@@ -435,41 +445,57 @@ impl Bundle {
     // override; whatever it does not override falls back to the non-directional value, which
     // itself defaults to the whole frame. WEST IS ABSENT — it is east mirrored, derived by the
     // client, never authored (F4).
-    let sub_all = (
-      read_f("prims.0.subframe.x", 0.0),
-      read_f("prims.0.subframe.y", 0.0),
-      read_f("prims.0.subframe.w", 1.0),
-      read_f("prims.0.subframe.h", 1.0),
-    );
-    let dir_frames = std::array::from_fn::<DirFrame, ROTATIONS_PER_DEF, _>(|r| {
-      // Each rotation reads its INDEXED key, then its alias key (only 0..3 have one), then the
-      // non-indexed default. `read_key` collapses that chain so the two spellings cannot diverge.
-      let read_key = |base: &str, comp: &str, dflt: f64| {
-        let by_index = read_f(&format!("prims.0.{base}.{}.{comp}", rotation_key(r)), f64::NAN);
-        if !by_index.is_nan() {
-          return by_index;
-        }
-        if let Some(a) = ROTATION_ALIASES.get(r) {
-          let by_alias = read_f(&format!("prims.0.{base}.{a}.{comp}"), f64::NAN);
-          if !by_alias.is_nan() {
-            return by_alias;
-          }
-        }
-        dflt
-      };
-      DirFrame {
-        sub: (
-          read_key("subframe", "x", sub_all.0),
-          read_key("subframe", "y", sub_all.1),
-          read_key("subframe", "w", sub_all.2),
-          read_key("subframe", "h", sub_all.3),
-        ),
-        anchor: (
-          read_key("sprite_anchor", "x", sprite_anchor.0),
-          read_key("sprite_anchor", "y", sprite_anchor.1),
-        ),
+    // subframe-ingest I10: TWO axes. `v<n>` is the variant, `r<m>` the rotation/facing, and the
+    // fallback runs most-specific first so a kind can author whichever axis it actually varies on:
+    //   subframe.v3.r1  →  subframe.v3.e  →  subframe.v3  →  subframe.r1  →  subframe.e  →  subframe
+    // conifer varies by VARIANT on one facing; the wolf varies by FACING across variants. Both are
+    // expressible, and neither can silently land on the other's rect.
+    let pick = |field: &str, comp: &str, v: usize, r: usize, dflt: f64| -> f64 {
+      let alias = ROTATION_ALIASES.get(r);
+      let mut keys: Vec<String> = vec![format!("prims.0.{field}.v{v}.r{r}.{comp}")];
+      if let Some(a) = alias {
+        keys.push(format!("prims.0.{field}.v{v}.{a}.{comp}"));
       }
-    });
+      keys.push(format!("prims.0.{field}.v{v}.{comp}"));
+      keys.push(format!("prims.0.{field}.r{r}.{comp}"));
+      if let Some(a) = alias {
+        keys.push(format!("prims.0.{field}.{a}.{comp}"));
+      }
+      keys.push(format!("prims.0.{field}.{comp}"));
+      for k in &keys {
+        let got = read_f(k, f64::NAN);
+        if !got.is_nan() {
+          return got;
+        }
+      }
+      dflt
+    };
+    // HOT PATH GUARD. `node_visual` runs per TILE in `zone_tile_prims`, and the resolution below
+    // builds up to six formatted keys per (variant, rotation, component) — 16x16x6 slots x 6 keys
+    // is ~9k string allocations per call, which froze the client outright when it first shipped.
+    // Almost nothing authors a subframe (every tile, and every thing drawing the built-in `white`),
+    // so the unauthored case must cost nothing: one map lookup, then the flat default array.
+    let authored = store.read("prims.0.subframe").is_some();
+    let dir_frames = if authored {
+      std::array::from_fn::<_, VARIANTS_PER_DEF, _>(|v| {
+        std::array::from_fn::<DirFrame, ROTATIONS_PER_DEF, _>(|r| DirFrame {
+          sub: (
+            pick("subframe", "x", v, r, 0.0),
+            pick("subframe", "y", v, r, 0.0),
+            pick("subframe", "w", v, r, 1.0),
+            pick("subframe", "h", v, r, 1.0),
+          ),
+          anchor: (
+            pick("sprite_anchor", "x", v, r, 0.5),
+            pick("sprite_anchor", "y", v, r, 0.5),
+          ),
+        })
+      })
+    } else {
+      // No subframe authored: the whole frame everywhere, carrying only the flat sprite pivot.
+      [[DirFrame { sub: (0.0, 0.0, 1.0, 1.0), anchor: sprite_anchor }; ROTATIONS_PER_DEF];
+       VARIANTS_PER_DEF]
+    };
     // The kind's emitted light (`&thing.light.*`). `reach` is the discriminator: a def that
     // never sets it emits nothing and the whole struct stays `None`, so every existing kind is
     // untouched and the client sees exactly what it saw before.
@@ -536,33 +562,34 @@ impl Bundle {
         sprite_scale: (rf("sprite_scale.w", 1.0), rf("sprite_scale.h", 1.0)),
         sprite_anchor: (rf("sprite_anchor.x", 0.5), rf("sprite_anchor.y", 0.5)),
         anchor: (rf("anchor.x", 0.5), rf("anchor.y", 0.5)),
-        dir_frames: std::array::from_fn::<DirFrame, ROTATIONS_PER_DEF, _>(|r| {
-          let key = |base: &str, comp: &str, dflt: f64| {
-            let by_index = rf(&format!("{base}.{}.{comp}", rotation_key(r)), f64::NAN);
-            if !by_index.is_nan() {
-              return by_index;
-            }
-            if let Some(a) = ROTATION_ALIASES.get(r) {
-              let by_alias = rf(&format!("{base}.{a}.{comp}"), f64::NAN);
-              if !by_alias.is_nan() {
-                return by_alias;
+        dir_frames: if store.read(&format!("prims.{i}.subframe")).is_none() {
+          // Same hot-path guard as prim 0 — a part that authors no subframe costs one lookup.
+          [[DirFrame { sub: (0.0, 0.0, 1.0, 1.0), anchor: (rf("sprite_anchor.x", 0.5), rf("sprite_anchor.y", 0.5)) };
+            ROTATIONS_PER_DEF]; VARIANTS_PER_DEF]
+        } else { std::array::from_fn::<_, VARIANTS_PER_DEF, _>(|v| {
+          std::array::from_fn::<DirFrame, ROTATIONS_PER_DEF, _>(|r| {
+            // Same two-axis chain as prim 0, on the slot's own keys — a part is its own master.
+            let pick = |field: &str, comp: &str, dflt: f64| -> f64 {
+              let alias = ROTATION_ALIASES.get(r);
+              let mut keys: Vec<String> = vec![format!("{field}.v{v}.r{r}.{comp}")];
+              if let Some(a) = alias { keys.push(format!("{field}.v{v}.{a}.{comp}")); }
+              keys.push(format!("{field}.v{v}.{comp}"));
+              keys.push(format!("{field}.r{r}.{comp}"));
+              if let Some(a) = alias { keys.push(format!("{field}.{a}.{comp}")); }
+              keys.push(format!("{field}.{comp}"));
+              for k in &keys {
+                let got = rf(k, f64::NAN);
+                if !got.is_nan() { return got; }
               }
+              dflt
+            };
+            DirFrame {
+              sub: (pick("subframe", "x", 0.0), pick("subframe", "y", 0.0),
+                    pick("subframe", "w", 1.0), pick("subframe", "h", 1.0)),
+              anchor: (pick("sprite_anchor", "x", 0.5), pick("sprite_anchor", "y", 0.5)),
             }
-            dflt
-          };
-          DirFrame {
-            sub: (
-              key("subframe", "x", rf("subframe.x", 0.0)),
-              key("subframe", "y", rf("subframe.y", 0.0)),
-              key("subframe", "w", rf("subframe.w", 1.0)),
-              key("subframe", "h", rf("subframe.h", 1.0)),
-            ),
-            anchor: (
-              key("sprite_anchor", "x", rf("sprite_anchor.x", 0.5)),
-              key("sprite_anchor", "y", rf("sprite_anchor.y", 0.5)),
-            ),
-          }
-        }),
+          })
+        }) },
       });
       i += 1;
     }
@@ -725,8 +752,8 @@ impl Bundle {
     out
   }
 
-  /// Every thing's per-ROTATION SUBFRAME in `object_id` order, flattened **stride-96** per def
-  /// (index 0 → object_id 1): [`ROTATIONS_PER_DEF`]` = 16` rotations, each
+  /// Every thing's SUBFRAMES in `object_id` order, flattened **stride-1536** per def (index 0 →
+  /// object_id 1): [`VARIANTS_PER_DEF`]` = 16` variants × [`ROTATIONS_PER_DEF`]` = 16` rotations, each
   /// `[sub.x, sub.y, sub.w, sub.h, anchor.x, anchor.y]`, all fractions in `0..1`.
   ///
   /// This is what the atlas CROPS to (subframe-ingest): the ingest copies exactly this rect out of
@@ -742,15 +769,17 @@ impl Bundle {
   /// host never special-cases "unset". Sibling of [`Self::thing_layout`], kept separate rather
   /// than widening that stride because every existing consumer indexes into it.
   pub fn thing_subframe(&self) -> Vec<f64> {
-    let mut out = Vec::with_capacity(self.thing_ids.len() * ROTATIONS_PER_DEF * 6);
+    let mut out = Vec::with_capacity(self.thing_ids.len() * VARIANTS_PER_DEF * ROTATIONS_PER_DEF * 6);
     for name in &self.thing_ids {
       let frames = self
         .thing(name)
         .and_then(|n| self.node_visual(n))
         .map(|v| v.dir_frames)
         .unwrap_or_default();
-      for f in frames {
-        out.extend_from_slice(&[f.sub.0, f.sub.1, f.sub.2, f.sub.3, f.anchor.0, f.anchor.1]);
+      for by_rot in frames {
+        for f in by_rot {
+          out.extend_from_slice(&[f.sub.0, f.sub.1, f.sub.2, f.sub.3, f.anchor.0, f.anchor.1]);
+        }
       }
     }
     out
@@ -1259,11 +1288,11 @@ mod tests {
   }
 
   #[test]
-  fn thing_subframe_is_per_rotation_with_alias_and_default_fallbacks() {
-    // subframe-ingest P1/F9. ONE index space 0..15 covers sprite facings AND linked autotile
-    // cells. `tree` authors a non-directional rect, an ALIAS override (`n` = index 2), an INDEX
-    // override (`9` — a linked cell, which has no alias), and an alias-only pivot (`e` = 1);
-    // `shrub` authors nothing. That is the whole fallback chain: index → alias → non-indexed.
+  fn subframe_variant_and_rotation_are_separate_axes() {
+    // subframe-ingest I10. A variant and a rotation are DIFFERENT AXES and one kind needs both.
+    // `tree` authors: a global rect, a per-VARIANT rect (v2, the conifer case — varies by variant
+    // on one facing), a per-ROTATION rect via an alias (n, the wolf case — varies by facing across
+    // every variant), and the most specific v3.r1. `shrub` authors nothing.
     let data = "<thing>\n  ::tree>\n    :data>\n      @define>\n        0 return\n  ::shrub>\n    :data>\n      @define>\n        0 return\n";
     let visual = "\
 <thing>
@@ -1274,13 +1303,10 @@ mod tests {
         \"world/conifer &thing.texture set
         #ffffff &thing.tint set
         0.25 &thing.subframe.x set
-        0.125 &thing.subframe.y set
         0.5 &thing.subframe.w set
-        0.75 &thing.subframe.h set
-        1.0 &thing.sprite_anchor.y set
+        0.6 &thing.subframe.v2.x set
         0.4 &thing.subframe.n.x set
-        0.6 &thing.subframe.r9.x set
-        0.2 &thing.sprite_anchor.e.x set
+        0.9 &thing.subframe.v3.r1.x set
         0 return
   ::shrub>
     :visual>
@@ -1293,27 +1319,30 @@ mod tests {
     let b = load(&[src("data/things.rd", data), src("visual/things.rd", visual)]).expect("load");
     let v = b.thing("tree").and_then(|n| b.node_visual(n)).expect("tree visual");
     let f = &v.dir_frames;
-    assert_eq!(f.len(), ROTATIONS_PER_DEF, "one slot per rotation, sprites and linked cells alike");
-    // 0 = south: everything from the non-indexed default.
-    assert_eq!(f[0], DirFrame { sub: (0.25, 0.125, 0.5, 0.75), anchor: (0.5, 1.0) });
-    // 1 = east: the ALIAS pivot override, rect still inherited.
-    assert_eq!(f[1], DirFrame { sub: (0.25, 0.125, 0.5, 0.75), anchor: (0.2, 1.0) });
-    // 2 = north: the ALIAS rect override on x only.
-    assert_eq!(f[2], DirFrame { sub: (0.4, 0.125, 0.5, 0.75), anchor: (0.5, 1.0) });
-    // 3 = west: inherits, and SHOULD stay unauthored — it is east mirrored, derived host-side.
-    assert_eq!(f[3], f[0]);
-    // 9 = a linked autotile cell, addressed as `r9` because it has no alias.
-    assert_eq!(f[9], DirFrame { sub: (0.6, 0.125, 0.5, 0.75), anchor: (0.5, 1.0) });
-    // every other index falls all the way back to the non-indexed rect
-    assert_eq!(f[15], f[0]);
-
-    // An unauthored kind crops NOTHING — adopting the subframe cannot move art that has not
-    // opted in, at any rotation.
+    assert_eq!(f.len(), VARIANTS_PER_DEF);
+    assert_eq!(f[0].len(), ROTATIONS_PER_DEF);
+    // the global rect reaches an unauthored (variant, rotation)
+    assert_eq!(f[0][0].sub.0, 0.25);
+    // a per-VARIANT rect covers EVERY rotation of that variant — the conifer case
+    assert_eq!(f[2][0].sub.0, 0.6);
+    assert_eq!(f[2][5].sub.0, 0.6);
+    // a per-ROTATION rect covers EVERY variant at that rotation — the wolf case. THIS is the one
+    // that was impossible before: rotation 2 (north) is authored across variants without ever
+    // colliding with variant 2's rect.
+    assert_eq!(f[0][2].sub.0, 0.4);
+    assert_eq!(f[7][2].sub.0, 0.4);
+    // ...and the two axes do not fight: variant 2's rect wins at variant 2, every rotation,
+    // because per-variant is more specific than per-rotation in the chain.
+    assert_eq!(f[2][2].sub.0, 0.6);
+    // the fully-specific key beats both
+    assert_eq!(f[3][1].sub.0, 0.9);
+    assert_eq!(f[3][0].sub.0, 0.25, "v3's OTHER rotations still fall back");
+    // width came only from the global rect everywhere
+    assert!(f.iter().all(|byr| byr.iter().all(|d| d.sub.2 == 0.5)));
+    // an unauthored kind crops NOTHING at any (variant, rotation)
     let shrub = b.thing("shrub").and_then(|n| b.node_visual(n)).expect("shrub visual");
-    assert!(shrub.dir_frames.iter().all(|d| *d == DirFrame::default()));
-    assert_eq!(DirFrame::default().sub, (0.0, 0.0, 1.0, 1.0));
-    // the flat wire is stride 16x6
-    assert_eq!(b.thing_subframe().len(), 2 * ROTATIONS_PER_DEF * 6);
+    assert!(shrub.dir_frames.iter().all(|byr| byr.iter().all(|d| *d == DirFrame::default())));
+    assert_eq!(b.thing_subframe().len(), 2 * VARIANTS_PER_DEF * ROTATIONS_PER_DEF * 6);
   }
 
   #[test]
