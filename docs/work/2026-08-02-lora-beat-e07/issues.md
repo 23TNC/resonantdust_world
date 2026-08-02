@@ -138,3 +138,38 @@ partly a **prior** problem, and the LoRA is being asked to teach a view the base
 **Not acted on in this stream** — [F2](forks.md#f2) says build, don't attribute. Recorded because
 it is the first evidence that south's difficulty is not purely ours to fix in the dataset, and
 because it predicts south will stay the weak direction whichever base wins.
+
+## I8 — The v3 build came out 52% corrupt, invisibly {#i8}
+_2026-08-02 · caught at P2.5 by the eyeball check · **the dataset was rebuilt, not shipped**_
+
+The 701-image v3 set looked finished — 701 png / 701 txt, outline sharpness 92.9, no errors. The
+spot-check sheet showed **wolf, tiger and pig as blank white plates**. They are not blank: the
+subject is present, correct, and **~25 px inside a 1024 frame**.
+
+Across all 701, the subject-fraction distribution is **perfectly bimodal**:
+
+| subject fills | count | |
+|---|---|---|
+| < 0.10 | **366** | **52.2%** — corrupt |
+| 0.10 – 0.60 | **0** | nothing in between |
+| > 0.60 | 335 | 47.8% — correct |
+
+Binary, not a gradient. And **the same inputs upscale correctly on a fresh run** — re-running
+`esrgan()` by hand on both a failing (Wolf_Timber) and a passing (Bear) source gave
+`128 → 512 → 2048`, subject fraction 1.000 for both. Source size does not predict it: Wolf 128 px
+failed, Bear 128 px passed, Tiger 256 px failed, Cat 64 px passed.
+
+So the upscale returns unscaled content intermittently under a long run, and **says nothing**. The
+output is a clean white plate with a speck — it survives every check the pipeline had, including
+the sharpness measure, because a mostly-white image has few edges but the few it has are sharp.
+
+**Not root-caused, and deliberately so.** It is intermittent, does not reproduce on demand, and
+this stream builds rather than investigates ([F2](forks.md#f2)). The fix is the one this pipeline
+has now needed three times — **assert the post-condition instead of trusting the step**
+([I2](#i2) was the LANCZOS fallback, and the P2-era alpha-bbox no-op was the first). `prep_train`
+now measures the subject fraction of every image it writes against its own source and aborts if it
+collapsed. Verified against the corrupt wolf (caught) and the good bear (passed).
+
+**Worth stating plainly:** had P2.5 been skipped as a formality, we would have trained ~3 hours on
+a set where half the images teach the model that subjects are tiny specks on white — and the most
+likely reading of that result would have been "the new base is bad".

@@ -90,6 +90,38 @@ def jittered_fill(fill, jitter, key):
     h = int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF   # [0,1)
     return fill + (h * 2.0 - 1.0) * jitter
 
+def _subject_frac(img):
+    """Longer side of the non-white bbox, as a fraction of the frame."""
+    import numpy as _np
+    g = _np.asarray(img.convert("L")); m = (g < 250)
+    ys, xs = _np.where(m)
+    if not len(ys): return 0.0
+    return max(ys.max()-ys.min()+1, xs.max()-xs.min()+1) / float(g.shape[0])
+
+
+def _assert_subject_preserved(src, out, allow_degraded, tol=0.55):
+    """The NATURAL path must not change how much of the frame the subject occupies — that is the
+    entire point of it. Measured 2026-08-02: a 701-image build came out 52% corrupt, perfectly
+    bimodal (366 images with the subject at ~2% of frame, 335 correct, NOTHING in between), while
+    the same inputs upscale correctly on a fresh run. So the upscale path fails intermittently
+    under a long run and does so INVISIBLY — the images look like clean white plates.
+
+    This is the third silent-corruption bug in this pipeline (the alpha-bbox no-op, the LANCZOS
+    fallback, now this). The lesson each time is the same: assert the post-condition rather than
+    trust the step. A mismatch aborts unless --allow-degraded."""
+    a = src.convert("RGBA")
+    plate = Image.new("RGBA", a.size, (255, 255, 255, 255)); plate.alpha_composite(a)
+    want = _subject_frac(plate.convert("RGB"))
+    got = _subject_frac(out)
+    if want > 0 and got < want * tol:
+        msg = (f"prep: subject collapsed during upscale — source fills {want:.3f} of its frame, "
+               f"output fills {got:.3f} ({got/want:.2f}x). The upscale silently returned unscaled "
+               f"content; the image LOOKS like a clean plate and would poison the training set.")
+        if not allow_degraded:
+            raise SystemExit(msg + "\n       Re-run (it is intermittent), or pass --allow-degraded.")
+        print("    " + msg + " [--allow-degraded]", flush=True)
+
+
 def normalise(im, size, fill, mode, use_esrgan, allow_degraded=False):
     """Crop to the subject, upscale it, and centre it at a consistent scale on a white plate.
 
@@ -118,7 +150,9 @@ def normalise(im, size, fill, mode, use_esrgan, allow_degraded=False):
                     raise SystemExit(f"prep: ESRGAN failed on this image ({e}). "
                                      f"Refusing to mix upscalers; see --allow-degraded / --upscale lanczos.")
                 print(f"    esrgan failed ({e}); LANCZOS for this one [--allow-degraded]", flush=True)
-        return rgb.resize((size, size), Image.LANCZOS)
+        out = rgb.resize((size, size), Image.LANCZOS)
+        _assert_subject_preserved(im, out, allow_degraded)
+        return out
 
     a = im.convert("RGBA")
     # THRESHOLD the alpha before taking the bbox. Two traps here, both measured:
