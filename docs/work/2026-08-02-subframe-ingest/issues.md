@@ -170,7 +170,7 @@ they are the case the user confirmed "mostly works".
 
 **Do not restore the wolf's rects until the loader carries the two axes separately.**
 
-## I11 — Mover stems are registered as if they were COLD stems — OPEN {#i11}
+## I11 — Mover stems are registered as if they were COLD stems — OPEN (the wolf symptom was STALE) {#i11}
 
 > "The wolf is textured as a tree, and moving at light speed." — user, 2026-08-02
 
@@ -199,7 +199,22 @@ exactly why it is the kind that broke.
 own `subframes`, against the stems `moverSlotTexture` actually builds, per part slot. That was a P2
 item and is not done.
 
-Whether that explains a TREE texture is unproven — a missing registration should leave art
-uncropped, not swap it — so this is a lead, not a diagnosis. The speed symptom is unexplained and may
-be unrelated (a stale sim binary and the render-chase are both prior suspects). **Investigate with a
-fresh look before changing anything.**
+**RESOLVED, and it was not this.** A full stack reset (`rd redeploy --force --run` plus restarting
+`rd-master`/`rd-orchestrator`/`rd-worker`/`rd-npc`) settled it: the npc resolves
+`def = 0x30010070` — kind **7**, variant 0 — with `speed = 12`, straight from the corpus, and the
+freshly-minted mover arrives `kind 7, tics 12, pawn/animal/wolf/e`. The offending entity
+(`813694980`) was a **stale row** carrying `kind 1`, which is the tree: kind 1's stem is the conifer,
+and the tree authors no speed, so the lookup fell through to `DEFAULT_TICS_PER_TILE = 3`. One stale
+kind id, both symptoms.
+
+**Nothing in the DSL work caused it.** Kind ids are assigned in `content/data/things.rd`, which this
+stream never touched; only `content/visual/` changed. What the crop did was make it *visible* — an
+uncropped kind-1 mover drew a letterboxed conifer at wolf size and read as a vague blob, where a
+cropped one is unmistakably a tree.
+
+**Worth keeping as a lesson:** a stale entity presenting as two unrelated-looking bugs (wrong art AND
+wrong speed) is a strong signal to check the KIND ID before suspecting the renderer. Both symptoms
+resolving to one wrong index is the shape of that failure.
+
+**I11 itself stands and is still unfixed** — the mover registration really is missing, it is simply
+not what broke the wolf.
