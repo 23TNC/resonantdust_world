@@ -92,3 +92,48 @@ improvement over a flat geo box and needs nothing new.
 
 **Swap is unchanged**: when the real co-pack lands it replaces the synthesized frame through the
 existing pack path. The placeholder is never consulted for geometry ([F2](#f2)'s rule survives).
+
+## F5 — The drawn placeholder uses TINTS first, polygons only if needed — and never at boot {#f5}
+
+Resolves [I6](issues.md#i6) with a third answer: the shape is already generated and shipped as
+`meta.json`'s `outline` — normalized image-space contours with holes and an earcut triangulation,
+plus `color`, `bbox` and `channel_tints`. Not the subframe rect, and not something to author.
+
+**Verified usable**: the contours are in normalized frame space (`0..1`), NOT projected, despite
+`bin/lib/meta.py`'s "shadow-cast silhouette … projected" phrasing. So they describe the sprite's own
+outline and are correct for albedo and coverage.
+
+**Measured, which decides the staging:**
+
+| | bytes |
+|---|---|
+| `outline`, median | 5,840 |
+| `outline`, max | 28,017 |
+| `outline`, all 80 stems | **531 KiB** |
+| `channel_tints` + `bbox` + `color` | ~50/stem, **~4 KiB total** |
+
+Neither reaches the client today: `ManifestEntry` carries `hash`/`maxSize`/`lods`/`maps`/`grid`/
+`pad`/`span` only, though the edge reads meta.json already.
+
+**Chosen:**
+
+1. **Ship tints + bbox + outline colour in the manifest.** ~4 KiB corpus-wide, no measurable cost,
+   no new render path — a solid quad in the real fill colour at the real proportions with the real
+   outline colour as a border.
+2. **Polygons only if flat shapes read badly**, and then in a **separate lazily-fetched bundle**,
+   rasterized once into the atlas quadrant so nothing downstream changes.
+
+**The failure mode this avoids — and it would be a bad one.** Putting 531 KiB of polygons in the
+boot manifest bloats the file that GATES EVERY TEXTURE FETCH. That trades first-paint for total-load
+and would plausibly be net negative: delaying the thing that unblocks all loading, in order to make
+loading feel faster. If an item here starts adding polygons to the manifest, it has inverted the
+stream's own goal.
+
+**Two cautions carried forward:**
+
+- **`outline` is effectively dead data.** The shadow system silhouettes via
+  `silhouetteHit` → `texelFetch(uSurfaceAtlas)`, not polygons; the client's other "outline" symbols
+  are the SELECTION overlay, unrelated. So nothing currently consumes it and nothing keeps it
+  correct — a re-master could drift it silently.
+- **26 of 106 stems have no outline at all**, so the flat-quad path is the floor, not an optional
+  first step.

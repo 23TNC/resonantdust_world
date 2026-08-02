@@ -40,7 +40,8 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 
 ## P3 — DRAW the placeholder from the DSL ([F4](forks.md#f4))
 
-- [ ] Pin the shape source ([I6](issues.md#i6)). Acceptance: a stated answer — the authored subframe rect alone, or a coarse per-kind silhouette beside it — since everything below draws whatever this decides.
+- [ ] Ship `channel_tints` + outline `bbox`/`color` through the manifest ([F5](forks.md#f5)). Acceptance: ~4 KiB corpus-wide reaches the client, and the boot manifest's size is unchanged to measurement.
+- [ ] Draw the flat placeholder from those alone. Acceptance: real fill colour, real proportions, real outline colour, no polygons and no new rasterizer — the floor that the 26 outline-less stems need anyway.
 - [ ] Synthesize a co-pack quadrant set on the GPU from the shape + authored tints. Acceptance: one pass writes all four quadrants, so a placeholder is indistinguishable from a real frame to every consumer downstream.
 - [ ] Draw albedo as the outline stroke, near-black. Acceptance: it matches the master convention (`albedo-outlines-by-design`), so the blit's residual path needs no special case.
 - [ ] Fill surface.B with coverage and G with 1. Acceptance: shadows, the receiver map and `silhouetteHit` all work on a placeholder — the world is LIT before any art downloads, not flat-lit.
@@ -48,6 +49,7 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 - [ ] Fill layers.R and let `packChannels` apply the kind's authored tints. Acceptance: a placeholder carries the same colours the real asset will, rather than a neutral grey.
 - [ ] Swap the real co-pack in through the existing pack path. Acceptance: no placeholder is ever consulted for geometry, and the swap needs no new eviction rule.
 - [ ] Re-measure first paint against P0. Acceptance: time to first RECOGNISABLE asset is stated, which is the number this fork actually moves — first non-geo pixel was already near-zero.
+- [ ] Decide whether polygons are needed at all ([F5](forks.md#f5)). Acceptance: judged by eye against the flat version; if yes they ship as a SEPARATE lazily-fetched bundle, never in the boot manifest that gates every fetch.
 
 ## P4 — The standing costs
 
