@@ -107,3 +107,39 @@ re-master changing the hash — occupies its slot for the life of the atlas.
 re-blit (draw a newly arrived map into an already allocated frame) avoids allocation entirely and
 would ALSO unlock true per-map progressive packing — the thing P1 had to give up. The second is
 strictly more useful and is where I would start.
+
+## I8 — A DERIVED preview is slower than the master it precedes {#i8}
+
+The P3 preview tier is built, correct, and **ineffective**, and the reason is the serving model.
+
+Measured on a cold cache with frames driven manually: `packed: 3`, **`prev: 0`, `master: 3`** — the
+master won every race. Not a bug in the kick: a manual `resolve()` queues both
+`…/conifer/e@32` and `…/conifer/e@256` immediately, and the manifest showed
+`'lods': [32, 256]` for that stem afterwards, proving the edge really did derive and cache the 32 px
+version on request.
+
+**The physics.** `server/edge/src/textures.rs` derives a requested size *from the master*: read the
+master, decode, resize, re-encode, write the cache, serve. The master is a direct file read. So the
+preview's critical path **contains** the master's, plus a decode and a resize. It cannot arrive
+first on a cold cache. It only wins once some earlier client has already paid to warm it — which is
+never true for the case that matters, the first load after a deploy.
+
+I read `textures.rs`'s *"no offline pyramid"* as "none is needed". It means **none exists**, and
+that is the problem, not the solution.
+
+**The fix is the user's original instruction, taken literally** (2026-08-02: *"we need to GENERATE
+32px preview assets"*). Either:
+
+1. **`bin/art` emits a 32 px co-pack alongside the master** — previews become direct file reads, and
+   the cost is paid once at art time. Adds ~2.2–4.3 KB per stem to the repo
+   ([F6](forks.md#f6)'s table).
+2. **The edge pre-warms its derived cache** for every manifest stem at startup — no repo growth, but
+   the first load after every deploy pays for it, and a cold container serves slowly until it
+   finishes.
+
+(1) is the honest one: it makes the preview a real asset with a real cost, rather than a latency
+that moves around depending on who warmed what. It is also what "generate" meant.
+
+**What still lands from P1/P3 regardless**: the parallel kick, the never-downgrade guard, the
+master-only bbox, and [I2](#i2)'s emit-on-failure are all correct and needed the moment previews
+become fast. The tier is wired; it is waiting on an asset that does not exist yet.

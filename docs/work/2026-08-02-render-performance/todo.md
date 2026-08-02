@@ -29,8 +29,8 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 
 - [ ] Stop awaiting all four maps together in `ensureCoPack`. Acceptance: `albedo` landing alone is enough to draw a stem; `layers` arriving late never holds `albedo` back.
 - [ ] Let each map upgrade the co-pack independently as it lands. Acceptance: a stem re-packs on each arrival rather than once at the end, and a missing map leaves its quadrant transparent instead of blocking.
-- [ ] Confirm the GEO tier draws with no network at all. Acceptance: with fetches blocked, the world still renders flat tinted geometry — proving the resting state is real and not merely a fallback that never runs.
-- [ ] Emit on every arrival, not only on success. Acceptance: a failed or partial pack still schedules a re-bake, closing [I2](issues.md#i2) where `if (ok) emit()` leaves a stem geo forever.
+- [x] Confirm the GEO tier draws with no network at all. Acceptance: with fetches blocked, the world still renders flat tinted geometry — proving the resting state is real and not merely a fallback that never runs.
+- [x] Emit on every arrival, not only on success. Acceptance: a failed or partial pack still schedules a re-bake, closing [I2](issues.md#i2) where `if (ok) emit()` leaves a stem geo forever.
 - [ ] Re-measure first paint against P0. Acceptance: time to first non-geo pixel drops, stated as a number and not as "feels faster".
 
 ## P2 — Decode off the critical path ([F3](forks.md#f3))
@@ -41,7 +41,8 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 
 ## P3 — A 32 px PREVIEW tier ([F6](forks.md#f6))
 
-- [ ] Request a fixed small size alongside the master. Acceptance: the edge derives and caches it (no offline pyramid, no art-pipeline change), and the preview is never chosen by zoom.
+- [x] Request a fixed small size alongside the master. Acceptance: the edge derives and caches it (no offline pyramid, no art-pipeline change), and the preview is never chosen by zoom.
+- [ ] GENERATE 32 px previews as real assets ([I8](issues.md#i8)). Acceptance: a preview is a direct file read, not a derive-on-demand — measured to arrive BEFORE its master on a cold cache, which it cannot do today.
 - [ ] Pack the preview into the atlas and swap it for the master when that lands. Acceptance: the swap uses the existing pack path, and no preview is ever consulted for geometry ([F2](forks.md#f2)).
 - [ ] Serve the preview from IndexedDB first. Acceptance: a warm reload paints real art before any network round-trip completes, since `previewCache` survived the ladder's deletion.
 - [ ] Confirm the preview is smaller than the master by the expected margin. Acceptance: measured per stem — 2.2 KB (conifer) and 4.3 KB (flora) for all four maps are the figures this fork was chosen on.
