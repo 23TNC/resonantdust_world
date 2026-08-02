@@ -57,38 +57,46 @@ Dropped: single-variable attribution. It was the right tool for `sprite-eval-tru
 specific hypothesis to kill. We have no hypothesis worth 25 GPU-hours — we have a pile of
 well-supported lessons and new hardware, and the user's call is to spend them all at once.
 
-## `e07` is the bar, not the control
+## `e07` is a reference point, not a gate
 
-We are not running a controlled comparison, but we still need to know whether the new thing is
-better. `iou_ref` scores a generated silhouette against the **real corpus sprite** — it never looks
-at the model that made it, so it works **across base models**. `e07`'s scoreline stands as a
-target no matter what a challenger is built on:
+`iou_ref` scores a generated silhouette against the **real corpus sprite** — it never looks at the
+model that made it, so it works across base models, and `e07`'s scoreline (**26/36 gate ·
+`iou_ref` 0.753**) remains meaningful as a rough target.
 
-> **26/36 gate · `iou_ref` 0.753 · winner on all six A/B species**
+**But it is NOT run before training and NOT a gate** ([D1](deviations.md)). The plan originally
+said to re-run the old model to "confirm the bar", which contradicted [F2](forks.md#f2) in this
+same folder; the user cut it — *"I have no clue why we need to be dicking around with the old
+models we are going to be replacing."* Any comparison happens at [P4](todo.md), against the
+finished candidate, if it is useful then.
 
-Clear that and the new LoRA ships. Miss it and we say so plainly, exactly as three prior runs did.
+For the record, `e07` on the reconstructed ruler scores gate 35/36 · `iou_ref` 0.740 · composite
+65.3 — which does **not** reproduce the historical 26/36 · 0.753, because [I6](issues.md#i6)
+established the original driver no longer exists.
 
-## Which base model — the pick, and how confident it is
+## Which base model — MEASURED, and it overturned the reasoning
 
 On the box (all pulled 2026-07-28): **Illustrious-XL-v1.0**, **animagine-xl-4.0**, and
-`sd_xl_base_1.0` as a clean reference, beside the incumbent `cyberrealisticXL_v80`.
+`sd_xl_base_1.0`, beside the incumbent `cyberrealisticXL_v80`.
 
-**My pick is Illustrious-XL v1.0** ([F4](forks.md#f4)). Both it and Animagine are Danbooru-tag
-bases with strong **flat-colour, hard-outline** priors — the exact quality our corpus has and the
-exact quality `cyberrealisticXL` lacks. Between them, Illustrious has the better prompt adherence
-and is the more common foundation for downstream LoRA training, while Animagine 4.0 is tuned more
-narrowly to anime character portraiture. Our subjects are quadrupeds in an oblique game-sprite
-convention — off-distribution for both, since Danbooru is overwhelmingly human characters — so the
-more *steerable* base is the better bet.
+My pre-measurement pick was **Illustrious**, on prompt adherence and its LoRA-training ecosystem.
+The no-LoRA probe said the opposite, on the axis that matters most here:
 
-**Confidence: this is reasoning, not measurement.** I have not generated a single image with
-either. [P1](todo.md) settles it in minutes with a no-LoRA probe across all three rather than by
-arguing — the same "measure, don't assume" that chose ESRGAN and caught the silent no-op.
+| | east cells wider than tall | mean aspect (east) |
+|---|---|---|
+| Illustrious-XL v1.0 | **0 / 4** | 1.02 — emblems, faces, logo compositions |
+| **animagine-xl-4.0** | **4 / 4** | **1.89** — side-profile bodies |
 
-Both are SDXL-architecture, so the existing SDXL ControlNets on the box carry over —
-`controlnet-union-promax` and `mistoline-lineart` are both present, and MistoLine is a
-line-art-specialised ControlNet that suits this art better than the generic union model. P1
-verifies that rather than assuming it.
+East aspect is the body-versus-bust discriminator `sprite-eval-trust` built its gate around.
+**Chosen: `animagine-xl-4.0`** ([F4](forks.md#f4), [B1](blockers.md#b1)) — as a starting point;
+see the future-intent section.
+
+Both are SDXL-architecture, so the SDXL ControlNets on the box carry over —
+`controlnet-union-promax` and `mistoline-lineart` are both present, and MistoLine is
+line-art-specialised, which suits this art better than the generic union model. [P1](todo.md)
+verifies rather than assumes.
+
+**Both bases failed on front views with no LoRA at all** ([I7](issues.md#i7)) — the first evidence
+that south's difficulty is not purely a dataset problem.
 
 ## Design stance
 
