@@ -94,3 +94,27 @@ produced on south and east respectively.
 
 **Not proven, and this stream will not try to prove it** ([F2](forks.md#f2)). It is recorded as the
 most plausible lesson available, it is cheap to act on, and [F4](forks.md#f4) acts on it.
+
+## I6 — The A/B that produced the shipping verdict does not exist as code {#i6}
+_2026-08-02 · found at P0.4 · **live** — it changes what [P0.5](todo.md) can mean_
+
+`sprite-eval-trust` P4 reports the verdict as *"6 species × e/s × 3 seeds with the frozen P0 gate
+plus `iou_ref` and signed aspect"*, and `e07` ships on **26/36 · `iou_ref` 0.753**. The outputs are
+on disk (`.staging/ab5/run4_768_<species>_<dir>_<seed>.png` — bear/cat/fox/pig/tiger/wolf ×
+e/s × 7700/7701/7702, exactly 36 cells).
+
+**The driver was never committed.** `lora_eval.py` hard-codes a *different* matrix — 4 subjects
+(wolf/tiger/bear/cat), 3 directions, one seed each, seeds 1001–1004 — and nothing in `bin/` or
+`.staging/` mentions 7700. So the shipping comparison is **not reproducible from the repo**; only
+its results survive, in prose and in loose PNGs.
+
+Consequences, both acted on rather than noted:
+
+- **[P0.5](todo.md) cannot "re-run the frozen A/B"** as written — there is no frozen A/B to run.
+  It becomes: rebuild the matrix from the pinned set and re-establish the bar, accepting that the
+  new number may not land exactly on 26/36 because the driver is a reconstruction.
+- **[P0.4](todo.md) is upgraded from hygiene to load-bearing.** `eval_set.json` now holds the
+  subjects, directions, seeds, prompts and base checkpoint, and `lora_eval.py` reads it instead of
+  its own constants. A future verdict is reproducible by construction.
+
+The same class as [I2](#i2): a thing that mattered lived somewhere nothing could check it.

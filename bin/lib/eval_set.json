@@ -1,0 +1,46 @@
+{
+  "_doc": [
+    "THE PINNED EVALUATION SET — work/2026-08-02-lora-beat-e07 P0.4.",
+    "",
+    "Every sample sheet, A/B and per-epoch selection reads THIS file, so the user is choosing",
+    "between models rather than between rolls of the dice. Change it and every prior number",
+    "becomes incomparable, so treat it as frozen for the life of a comparison and record any",
+    "change in the stream's completed.md.",
+    "",
+    "Why it exists: the 6-species x e/s x 3-seed A/B that produced the shipping `e07` verdict was",
+    "driven ad hoc. Only its OUTPUTS survive (.staging/ab5); the driver was never committed, so",
+    "the verdict cannot be reproduced from the repo. See issues I6.",
+    "",
+    "`model` is the BASE CHECKPOINT. It is cyberrealisticXL today only because that was the sole",
+    "SDXL checkpoint on the box in March (issues I5); P1 replaces it after the no-LoRA probe."
+  ],
+
+  "model": "sdxl/cyberrealisticXL_v80.safetensors",
+  "vae": null,
+  "size": 768,
+  "seeds": [7700, 7701, 7702],
+
+  "positive": "rd_style, rd_animal, rd_quadruped, {rd}, {phrase}, {family}, {name}, single creature, full body, white background",
+  "negative": "realistic, photo, photorealistic, 3d render, blurry, multiple, sprite sheet, grid, collage, close-up, portrait, logo, emblem, frame, background scenery, text, watermark",
+
+  "dirs": {
+    "e": ["rd_east",  "side profile, side view, facing right",         "east"],
+    "s": ["rd_south", "front view, facing the viewer, facing forward", "south"]
+  },
+
+  "_dirs_note": "n (back view) is deliberately OUT of the standing A/B: the shipping comparison was e/s only, and adding a direction now would move the bar. `n` is generated for review, not scored.",
+  "dirs_review_only": {
+    "n": ["rd_north", "back view, facing away, seen from behind", "north"]
+  },
+
+  "subjects": [
+    ["wolf",  "canine", "Wolf_Timber", "Wolf_Timber"],
+    ["tiger", "feline", "Tiger",       "Tiger"],
+    ["bear",  "bear",   "Bear",        "Bear"],
+    ["cat",   "feline", "Cat",         "Cat"],
+    ["fox",   "canine", "Fox_Red",     "Fox_Red"],
+    ["pig",   "suid",   "Pig",         "Pig"]
+  ],
+
+  "_subjects_note": "[name, family, corpus folder under .staging/animal-lora, file stem]. All six are IN the training corpus by design — this set measures fidelity to our own art, not generalisation. The anteater check (P4) is the separate generalisation test and is deliberately not scored here."
+}

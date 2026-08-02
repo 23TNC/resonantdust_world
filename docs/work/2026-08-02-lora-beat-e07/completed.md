@@ -51,3 +51,31 @@ to confirm the baseline still reproduces, and that result is the first real entr
 
   The per-image case was checked by monkeypatching `esrgan()` to raise, since a real miss cannot be
   provoked on demand.
+- **2026-08-02 · P0.4 · The evaluation set is pinned in `bin/lib/eval_set.json`, and three live
+  defects fell out of pinning it.** The file holds subjects, directions, seeds, both prompts, the
+  base checkpoint and the VAE; `lora_eval.py` now reads it instead of its own constants
+  (`RD_EVAL_SET` overrides for smoke runs). It reproduces the historical matrix exactly — 6
+  subjects (wolf/tiger/bear/cat/fox/pig) × e/s × seeds 7700-7702 = **36 cells** — with `n` carried
+  as review-only so adding a direction cannot silently move the bar.
+
+  What pinning exposed, none of it anticipated:
+
+  1. **[I6](issues.md#i6) — the shipping A/B has no code.** `lora_eval.py` hard-coded a *different*
+     matrix (4 subjects, 3 dirs, seeds 1001-1004); nothing in the repo mentions 7700. The verdict
+     that ships `e07` is unreproducible from source. This is why [P0.5](todo.md) has to rebuild the
+     matrix rather than "re-run" it.
+  2. **The main `--loras` path was broken outright.** `measure()` returns `iou_control=""` when
+     there is no control, and the row builder called `round()` over every value →
+     `TypeError: type str doesn't define __round__`. Dead since `iou_control` landed, unnoticed
+     because the real A/B never went through this path. Fixed to round only numerics.
+  3. **A cold checkpoint load outran the 240 s generation timeout**, aborting the first cell of a
+     matrix. Raised to 600 s and made tunable via `RD_COMFY_TIMEOUT`.
+
+- **2026-08-02 · P0.4 acceptance · two invocations now produce byte-identical sheets — after a
+  warm-up was added.** First attempt: `tiger_e` matched bit-for-bit but `wolf_e` did not — **max
+  |Δ| 34/255 across 23% of pixels**, mean 0.138, while `results.csv` metrics were identical. The
+  differing cell was the FIRST generation of each pass, so this is backend/allocator selection
+  settling on the cold path, not a seed problem. A discarded warm-up generation now precedes the
+  matrix; re-run twice, **both cells byte-identical**. Verified on a trimmed 2-cell set
+  (`RD_EVAL_SET`) rather than the full 36 to keep it to four generations — the mechanism is what
+  the criterion tests, and it is per-cell.

@@ -32,26 +32,36 @@ from PIL import Image
 
 REPO = os.environ.get("RD_REPO_ROOT") or os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 COMFY = os.environ.get("COMFYUI_URL", "http://172.16.10.10:8188").rstrip("/")
-MODEL = "sdxl/cyberrealisticXL_v80.safetensors"
 SRC   = os.path.join(REPO, ".staging", "animal-lora")
 
-# subject -> (family, reference folder under .staging/animal-lora, file stem prefix, seed)
-SUBJECTS = [
-    ("wolf",  "canine", "Wolf_Timber", "Wolf_Timber", 1001),
-    ("tiger", "feline", "Tiger",       "Tiger",       1002),
-    ("bear",  "bear",   "Bear",        "Bear",        1003),
-    ("cat",   "feline", "Cat",         "Cat",         1004),
-]
-DIRS = {
-    "e": ("rd_east",  "side profile, side view, facing right",         "east"),
-    "s": ("rd_south", "front view, facing the viewer, facing forward", "south"),
-    "n": ("rd_north", "back view, facing away, seen from behind",      "north"),
-}
-NEG = ("realistic, photo, photorealistic, 3d render, blurry, multiple, sprite sheet, grid, "
-       "collage, close-up, portrait, logo, emblem, frame, background scenery, text, watermark")
+# ---------------------------------------------------------------- the PINNED evaluation set
+# Subjects, directions, seeds, prompts and the base checkpoint all come from eval_set.json
+# (work/2026-08-02-lora-beat-e07 P0.4) rather than from constants here. One file, read by every
+# sample sheet and A/B, is what makes two runs comparable — and the previous shipping verdict
+# could not be reproduced precisely because its 6x2x3 driver lived only in someone's shell (I6).
+EVAL_SET = os.environ.get("RD_EVAL_SET") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_set.json")
+with open(EVAL_SET) as _f:
+    _ES = json.load(_f)
+
+MODEL = _ES["model"]
+VAE   = _ES.get("vae")
+SEEDS = list(_ES["seeds"])
+POSITIVE_TMPL = _ES["positive"]
+NEG = _ES["negative"]
+# (name, family, folder, stem, seed) — `seed` is the FIRST pinned seed, so the legacy
+# single-seed callers below keep working unchanged; the A/B path sweeps all of SEEDS.
+SUBJECTS = [(n, f, folder, stem, SEEDS[0]) for n, f, folder, stem in _ES["subjects"]]
+DIRS = {k: tuple(v) for k, v in _ES["dirs"].items()}
+DIRS_REVIEW = {k: tuple(v) for k, v in _ES.get("dirs_review_only", {}).items()}
 
 # ---------------------------------------------------------------- comfy
-def _run(graph, timeout=240):
+# A COLD run pays the checkpoint load (6.6 GB SDXL off spinning storage) before the first sample,
+# which alone can pass the old 240 s default and abort a whole matrix on its first cell. Tunable
+# via RD_COMFY_TIMEOUT for slower storage / larger bases.
+COMFY_TIMEOUT = int(os.environ.get("RD_COMFY_TIMEOUT", "600"))
+
+def _run(graph, timeout=None):
+    timeout = COMFY_TIMEOUT if timeout is None else timeout
     req = urllib.request.Request(COMFY + "/prompt",
         data=json.dumps({"prompt": graph, "client_id": uuid.uuid4().hex}).encode(),
         headers={"Content-Type": "application/json"})
@@ -412,6 +422,20 @@ def main():
     cfgs = [float(x) for x in args.cfgs.split(",")]
 
     refs = {(s[0], d): reference(s[2], s[3], DIRS[d][2]) for s in SUBJECTS for d in DIRS}
+
+    # WARM-UP, discarded. Measured 2026-08-02 (P0.4): the FIRST sample after a checkpoint load is
+    # not reproducible — repeating an identical run gave max |delta| 34/255 over 23% of pixels on
+    # the first cell, while every later cell came back bit-exact. The metrics agreed either way, so
+    # this is backend/allocator selection settling on the cold path, not a seed problem. One
+    # throwaway generation moves that instability off a scored cell and makes "two invocations
+    # produce identical sheets" true rather than nearly-true.
+    if loras and SUBJECTS and DIRS:
+        n0, f0, _fo, _st, sd0 = SUBJECTS[0]
+        d0 = next(iter(DIRS)); rd0, ph0, _ = DIRS[d0]
+        print("  (warm-up generation, discarded — the first sample after a model load is not reproducible)")
+        _run(graph(POSITIVE_TMPL.format(rd=rd0, phrase=ph0, family=f0, name=n0),
+                   loras[0], strengths[0], cfgs[0], sd0, args.size))
+
     rows = []
     for lora in loras:
         for st in strengths:
@@ -420,14 +444,18 @@ def main():
                 tot = []
                 for name, fam, folder, stem, seed in SUBJECTS:
                     for d, (rd, phrase, _) in DIRS.items():
-                        pos = (f"rd_style, rd_animal, rd_quadruped, {rd}, {phrase}, {fam}, {name}, "
-                               f"single creature, full body, white background")
+                        pos = POSITIVE_TMPL.format(rd=rd, phrase=phrase, family=fam, name=name)
                         img = Image.open(io.BytesIO(_run(graph(pos, lora, st, cfg, seed, args.size))))
                         img.save(os.path.join(out, f"{tag}__{name}_{d}.png"))
                         g = measure(img.convert("RGB")); r = refs[(name, d)]
                         sc = score(g, r); tot.append(sc)
+                        # `measure` returns iou_control as "" when there is no control image, so
+                        # round() only what is actually a number. This path had been dead since
+                        # iou_control landed (the shipping A/B was driven ad hoc — issues I6), so
+                        # the TypeError sat unnoticed until the pinned set started using it.
                         rows.append(dict(lora=lora, strength=st, cfg=cfg, subject=name, dir=d,
-                                         **{k: round(v,4) for k,v in g.items()}, score=round(sc,1)))
+                                         **{k: (round(v, 4) if isinstance(v, (int, float)) else v)
+                                            for k, v in g.items()}, score=round(sc, 1)))
                         print(f"  {tag:<34} {name}_{d}: blobs={g['blobs']} bg={g['bg']:.3f} "
                               f"fill={g['fill']:.3f} asp={g['aspect']:.2f} -> {sc:.0f}")
                 print(f"== {tag}  MEAN SCORE {sum(tot)/len(tot):.1f} ==")
