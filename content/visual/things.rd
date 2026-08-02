@@ -262,24 +262,10 @@
                 1.125 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
-                ; SUBFRAME (subframe-ingest P1) — which fraction of the master is actually art.
-                ; The clearest per-direction case in the corpus: the side view is long and flat (h 0.47),
-                ; front/back are tall and narrow (w 0.33). One rect could not serve both.
-                ; Measured from the 128-px masters on disk (surface.B > 0.35), union across every
-                ; variant so none is clipped (F8). The atlas crops to exactly this rect for all four
-                ; maps, which is what registers them with each other.
-                0.0 &thing.subframe.e.x set
-                0.2578 &thing.subframe.e.y set
-                1.0 &thing.subframe.e.w set
-                0.4688 &thing.subframe.e.h set
-                0.3359 &thing.subframe.n.x set
-                0.0859 &thing.subframe.n.y set
-                0.3281 &thing.subframe.n.w set
-                0.8438 &thing.subframe.n.h set
-                0.2969 &thing.subframe.s.x set
-                0.0469 &thing.subframe.s.y set
-                0.3906 &thing.subframe.s.w set
-                0.8594 &thing.subframe.s.h set
+                ; NO SUBFRAME — deliberately (subframe-ingest I10). The wolf's rects are per FACING,
+                ; and a facing is not an index: it is already in the STEM (`pawn/animal/wolf/e`).
+                ; Authoring them here put the SOUTH rect on the EAST art and cut the wolf in half.
+                ; Restore once facings key the stem and indices key the cell/variant.
                 0 return
             @on_destroy>
                 0 return

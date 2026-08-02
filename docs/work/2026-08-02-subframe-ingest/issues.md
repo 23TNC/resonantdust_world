@@ -133,3 +133,39 @@ subframe a crop rather than a master change ([I4](#i4)), and it keeps unauthored
 **Also unresolved by (1):** the ANCHOR. Once the box is right, the art's bottom sits at the box's
 bottom only if `sprite_anchor.y = 1` is honoured in the *placement*, which is [F3](forks.md#f3)/P3's
 question — and the shadow-gap symptom the user reported is that anchor, not this scale.
+
+## I10 — F9 collapsed TWO axes into one: a facing is not an index {#i10}
+
+> "Our wolf is being cut off, I didn't think we passed anything for wolf?" — user, 2026-08-02
+
+We did, and that is the bug. **[F9](forks.md#f9) is wrong as built**, and this is the correction.
+
+F9 claimed one `0..15` space serves sprite facings, linked autotile cells and variants alike. It does
+not, because **a facing and a cell are different axes and a single kind needs both**. The wolf has 3
+mastered facings *and* 15 east variants.
+
+The evidence is in how a stem resolves. `thingTexture` builds `<base>/<facing>` and passes
+`cell = variant`; `moverSlotTexture` builds `<base>/<variant>/<facing>` and passes no cell at all.
+Either way **the facing is already in the STEM** — so an index alongside it can only mean the cell.
+
+The wolf authored `subframe.e/s/n`, the loader collapsed those to indices 1/0/2, and the resolver
+then applied index 0 — the **south** rect, a narrow tall box — to the wolf's **east** art. Hence a
+wolf cut in half.
+
+**The right model, unimplemented:**
+
+| axis | keyed by | authored as |
+|---|---|---|
+| facing | the **stem** (`…/wolf/e`) | `&thing.subframe.<e\|s\|n>.*` → registered against `<base>/<facing>` |
+| cell / variant / autotile | the **index** `0..15` | `&thing.subframe.r<n>.*` → registered at that cell |
+
+So `s`/`e`/`n` must stop being *aliases* for `r0`/`r1`/`r2` in the loader and become their own axis.
+They are not two spellings of one thing — that was the mistake, and it is the same
+two-things-in-one-slot error the whole stream exists to remove, committed by me while removing it.
+
+**Mitigation applied now:** the wolf's subframe authoring is removed from the corpus, so it falls
+back to the whole frame and renders correctly again. Conifer and flora are **unaffected** — they
+author `r<n>` VARIANT indices on a single facing, which is the axis the code actually implements, and
+they are the case the user confirmed "mostly works".
+
+**Do not restore the wolf's rects until the loader carries the two axes separately.**
