@@ -99,3 +99,28 @@ world-space, is **unverified**.
 whichever rotation their prims currently classify as, which is very likely wrong for some facings —
 recorded here so that is a known gap rather than a surprise, and so the next person starts from
 "what frame are the analytic wall normals in" rather than from scratch.
+
+
+## I7 — The sprite light direction measured NORTH where the frame says south — FIXED {#i7}
+
+> "Light on the back of billboards is causing them to be brighter and on the front of billboards is
+> causing them to be darker." — user, 2026-08-02
+
+A plain sign error, found by eye under the single-torch fixture and fixed on the spot in
+`lightPass.ts`. The sprite branch declares its frame as *"x right, y up the card, z toward the viewer
+(world south)"* and then built the third component as `Puse.y - Lpos.y`, which is **north**. World y
+grows southward — the same convention the line below states as `backLit = Lpos.y < Puse.y`.
+
+The sampled normal's flat value decodes to `(0,0,1)`, out of the image and so toward the viewer, so
+the mismatched sign negated every front/back term: a light **behind** a card scored `N·L = +1` and
+one **in front** clamped to 0. It also inverted the invariant the shadow gate asserts three lines
+later — *"back-lit fronts already rest at the N·L wrap floor"* — which was exactly backwards.
+
+**This is not [I1](#i1), and does not shrink it.** I1 is the *frame* error (a camera-space normal
+dotted with a world-space direction, no rotation between them); this was a *sign* error inside the
+world-space direction itself. Both were present; only this one is now gone. The stream's P0–P4 still
+stand in full, and P0's east/west swing measurement is now measuring a correctly-signed baseline
+rather than a doubly-wrong one.
+
+**Worth noting for P0:** with the sign inverted, an orbiting light produced shading that tracked it
+*backwards* rather than not at all — so any pre-fix capture of the swing is not a usable "before".

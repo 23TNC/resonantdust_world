@@ -199,7 +199,16 @@ void main() {
     // so the height converts to WORLD before they are mixed (F9/I8: sin(tilt), the factor
     // shadowGather.ts used). Without it the direction is biased toward the horizontal by an amount
     // that grows with the light's height -- a shading error that reads as a tuning problem.
-    vec3 ldir = normalize(vec3(Lpos.x - Puse.x, worldHeightForDrawn(Lz2 - targetH), Puse.y - Lpos.y));
+    //
+    // The third component is Lpos.y - Puse.y, NOT the reverse (user, 2026-08-02: "light on the
+    // back of billboards is causing them to be brighter and on the front darker"). World y grows
+    // SOUTHWARD, and south is toward the viewer -- the same convention backLit below states as
+    // Lpos.y < Puse.y. The sampled normal's flat value decodes to (0,0,1), out of the image and
+    // so toward the viewer, so measuring the light's z as NORTH negated every front/back term:
+    // a light behind the card scored N.L = +1 and one in front clamped to 0. That also broke the
+    // invariant line 227 asserts -- "back-lit fronts already rest at the N.L wrap floor" -- which
+    // is exactly backwards while this sign is.
+    vec3 ldir = normalize(vec3(Lpos.x - Puse.x, worldHeightForDrawn(Lz2 - targetH), Lpos.y - Puse.y));
     ndotl = clamp(dot(nrm, ldir), 0.0, 1.0);
   } else {
     // ground frame: x right, y north (up-screen), z up -- the flat-up fallback decodes to

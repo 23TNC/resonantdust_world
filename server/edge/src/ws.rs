@@ -817,20 +817,23 @@ fn append_init_objects(worldgen: &Worldgen, zone: u16, things: &mut Vec<(u16, Ve
 
 /// `(macro_position, kind name, in-zone tile_references)`.
 ///
-/// The three torches sit around global tile (100, 50) — the default camera focus — which lands in zone
-/// (6, 3), so all three share `macro_position 0x0063`. In-zone cells (4,2), (12,4), (8,10) as `x:4|y:4`
-/// bytes. Pair distances 8.2 / 8.9 / 7.2 tiles.
+/// **ONE light, deliberately** (user, 2026-08-02: "remove the current lights and use one light so we
+/// can debug"). A single source is the only configuration where a lit pixel has exactly one possible
+/// cause: any falloff, normal, or shadow artefact seen on screen belongs to *this* torch, with no
+/// additive sum to disentangle it from. Debugging the lighting chain against overlapping pools means
+/// guessing which contributor is wrong.
 ///
-/// Reach is now 16 tiles, so those distances are all WELL inside a single pool — the three overlap
-/// heavily rather than reading as isolated sources. That is deliberate: overlapping pools are what
-/// exercise additive accumulation and multi-caster shadowing, which is the harder case. If isolated
-/// pools are wanted back, move the cells apart rather than shrinking reach.
+/// The torch sits at in-zone cell (4, 2) of zone (6, 3) — `macro_position 0x0063`, cell byte `x:4|y:4`
+/// = `0x42` — which is global tile (100, 50), the default camera focus, so it is on screen the moment
+/// the debug URL loads.
 ///
-/// One is `torch_blue` — a distinct KIND, because `&thing.light.*` is authored per kind and the prim
-/// light leaf carries no per-instance colour. Two warm plus one cold also makes overlap legible: where
-/// the pools cross, the sum is visibly neither colour, which is the additive accumulator being correct.
-const INIT_OBJECTS: &[(u16, &str, &[u8])] =
-    &[(0x0063, "torch", &[0x42, 0xC4]), (0x0063, "torch_blue", &[0x8A])];
+/// This previously seeded THREE (two `torch` at (4,2)/(12,4) plus one `torch_blue` at (8,10)) to
+/// exercise additive accumulation and multi-caster shadowing at reach 16, where all three pools
+/// overlap heavily. To restore that harder case, append the cells back — `torch_blue` must stay a
+/// separate entry because `&thing.light.*` is authored per KIND and the prim light leaf carries no
+/// per-instance colour. Note `seed` is REPLACE-by-(zone, subtype, layer), so anything added here must
+/// extend the single `seeded` vec in `append_init_objects`, never push a second row.
+const INIT_OBJECTS: &[(u16, &str, &[u8])] = &[(0x0063, "torch", &[0x42])];
 
 /// Build the per-client players upstream and subscribe to the auth table so the
 /// post-login row read is served from cache. `None` (with an error frame already
