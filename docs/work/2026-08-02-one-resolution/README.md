@@ -40,6 +40,16 @@ captures at the deepest zoom against pre-stream captures: equal or better, or th
 sampling is wrong. Memory is the other watch: one 128-px co-pack per stem replaces up
 to three sizes — the pool should SHRINK; `lodStats`' successor counter proves it.
 
+## The packing law rides along
+
+A concurrent stream apparently broke away from pow2 packing (the pool only WARNS on
+violations — which is exactly how it slipped). Since this stream rebuilds the pool
+anyway, it also settles and ENFORCES the packing convention first: P0 audits the live
+atlas for violators, [F3](forks.md#f3) records the pros/cons and fixes the law
+(square pow2 stays — every addressing invariant assumes it; ES 3.0's NPOT support only
+buys margin bytes), the warn becomes a reject, and violators are re-ingested before the
+one-resolution rebuild lands on top.
+
 ## Out of scope
 
 The server keeps deriving + serving lower sizes (`/textures` routes untouched — the

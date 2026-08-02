@@ -5,12 +5,27 @@ Stances: [`README`](README.md)._
 
 ---
 
-## P0 — pin the two concepts apart
+## P0 — pin the two concepts apart, and the packing law
 
 - [ ] Inventory every consumer of BOTH "lod"s into `issues.md`: the atlas ladder
       (resolver/LodPool/def-swap/IndexedDB keys) vs the slot-grid level
       (squareMath/SquareCache/lighting `win.lod`). Acceptance: the table names each
       file + which concept it touches; the deepest-zoom BEFORE captures taken.
+- [ ] AUDIT the live atlas for pow2 conformance (user: a concurrent stream apparently
+      broke away from pow2 packing; the pool only WARNS): dump every packed frame's
+      dims + grid stems' masters at runtime; name each violator and the stream that
+      introduced it. Acceptance: the violator table in `issues.md` (empty is a valid
+      finding).
+- [ ] Settle the packing convention as [F3](forks.md#f3) — pros/cons of pow2 vs
+      free-size recorded, ONE law chosen, the user's sign-off noted. Acceptance: F3
+      states the law and every P1-P3 item below builds to it.
+- [ ] Enforce the law at ingest: the pool's pow2-square warn becomes a REJECT (the
+      frame does not pack; loud console error), plus a boot-time conformance line in
+      the pool counter. Acceptance: a deliberately non-conforming test frame is
+      refused; the fixture boots clean.
+- [ ] Repair whatever the audit found: re-ingest (or re-master) each violator to the
+      law. Acceptance: the audit re-run reports zero violators; the affected stems
+      render unchanged on screen.
 
 ## P1 — one-resolution resolver
 
