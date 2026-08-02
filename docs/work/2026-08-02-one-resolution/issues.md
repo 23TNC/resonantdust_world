@@ -47,3 +47,24 @@ co-pack source that is not exactly `quadN²` is REFUSED (the brick/wall class).
 unserved pipeline intermediates — outside the client's `TexMap` set; left as-is,
 flagged for `bin/art` hygiene some other day. A stray `grass/sprite.l.0.png` sits one
 folder above its stem — same category.
+
+## I3 — the F4 split silently killed shadows; caught by the user's eyes {#i3}
+
+The def page registry (`recordSync.defFields`) registered the ALBEDO frame's source.
+Pre-split that was the one co-packed page; post-split it is the GRAPHICS twin — whose
+surface quadrant is EMPTY, so `uSurfaceAtlas` bound a page where every `silhouetteHit`
+read coverage 0 and the whole occlusion solve answered "none" (gather: 0 of 131 072
+pairs, with 457 casters live). Nothing errored; the world just stopped casting.
+
+Two-part fix, both halves necessary: the page registry takes the SURFACE frame's
+SOURCE (the data twin), but frameX/frameY stay the ALBEDO quadrant's coordinates —
+`silhouetteHit` reaches the surface by adding `+frameUnits` to the def frame, so
+registering the surface quadrant's own coords double-offset the sample one quadrant
+past the art (the first fix attempt; still zero). Verified: gather 355 occluding
+pairs, walk = brute, silhouette shadows on screen at the fixture.
+
+Lesson recorded: the def frame is ONE rect serving two pages and two addressing modes —
+any future re-plumbing of `resolve()`/quadrants must re-run `__gather()` (zero
+`nonZeroBefore` is the tell) before shipping; the P5 sweep checked `__lightexact`
+(delta-path exactness, which stayed green) but not occupancy, and exactness alone
+cannot see an all-zero shadow buffer.

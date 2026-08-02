@@ -12,8 +12,15 @@ Two quality fixes over the first version (docs/work/2026-07-25-sprite-gen-qualit
   literally ZERO strong-edge pixels. Since this art is flat regions bounded by hard outlines —
   vector graphics rendered as bitmaps — the missing pixels are RECONSTRUCTIBLE from that prior
   rather than invented. Measured on the box's ESRGAN: 109.8 (64px Cat) and 120.7 (128px Bear),
-  4-5x LANCZOS, and unlike NEAREST (107.4) it does not staircase the curves. Falls back to LANCZOS
-  automatically if ComfyUI is unreachable, so the prep never hard-fails on a box outage.
+  4-5x LANCZOS, and unlike NEAREST (107.4) it does not staircase the curves.
+
+  It used to fall back to LANCZOS automatically when ComfyUI was unreachable, "so the prep never
+  hard-fails on a box outage". That is the wrong trade for a TRAINING SET: the upscaler is a
+  property of the corpus, so a silent fallback means the same command produces a materially
+  different dataset depending on whether a container happened to be up, and nothing downstream can
+  tell. Worse, the PER-IMAGE fallback could mix both within one set. It now FAILS LOUD
+  (exit 2) and LANCZOS is opt-in via `--upscale lanczos` (whole set) or `--allow-degraded`
+  (tolerate per-image misses). See work/2026-08-02-lora-beat-e07 I2.
 
   SCALE NORMALISATION (--fill).  Source subjects fill wildly different fractions of their frame
   (a bear nearly fills it, a cat occupies a corner), so the LoRA learned that scale is arbitrary
@@ -83,7 +90,7 @@ def jittered_fill(fill, jitter, key):
     h = int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF   # [0,1)
     return fill + (h * 2.0 - 1.0) * jitter
 
-def normalise(im, size, fill, mode, use_esrgan):
+def normalise(im, size, fill, mode, use_esrgan, allow_degraded=False):
     """Crop to the subject, upscale it, and centre it at a consistent scale on a white plate.
 
     Scale is normalised on the LONGER SIDE, not bbox area. Equalising area would force every animal
@@ -113,7 +120,17 @@ def normalise(im, size, fill, mode, use_esrgan):
             while rgb.size[0] < nw and rgb.size[1] < nh:
                 rgb = esrgan(rgb)
         except Exception as e:
-            print(f"    esrgan failed ({e}); LANCZOS for this one", flush=True)
+            # A per-image miss is the NASTIER half of the old silent fallback: it yields a set that
+            # is part ESRGAN and part LANCZOS, with nothing on disk recording which. Fail fast so
+            # the corpus is never half-and-half; `--allow-degraded` opts back into the old mixing.
+            if not allow_degraded:
+                raise SystemExit(
+                    f"prep: ESRGAN failed on this image ({e}).\n"
+                    f"       Refusing to mix ESRGAN and LANCZOS in one training set — the upscaler is a\n"
+                    f"       property of the corpus, and a mixed set is unrecoverable after the fact.\n"
+                    f"       Fix the box, or pass --upscale lanczos (whole set) / --allow-degraded (tolerate)."
+                )
+            print(f"    esrgan failed ({e}); LANCZOS for this one [--allow-degraded]", flush=True)
     rgb = rgb.resize((nw, nh), Image.LANCZOS)         # final exact fit (down-sample from ESRGAN)
 
     out = Image.new("RGB", (size, size), (255, 255, 255))
@@ -130,14 +147,32 @@ def main():
     ap.add_argument("--size", type=int, default=SIZE)
     ap.add_argument("--dst", default=DST)
     ap.add_argument("--limit", type=int, default=0, help="stop after N images (smoke test)")
+    ap.add_argument("--allow-degraded", action="store_true",
+                    help="permit the LANCZOS fallback when ESRGAN is unavailable or misses an image. "
+                         "OFF by default: a silently-degraded or half-and-half training set is "
+                         "unrecoverable after the fact (I2).")
     args = ap.parse_args()
 
     use_esrgan = args.upscale == "esrgan"
     if use_esrgan:
+        # PRE-FLIGHT, and it is a HARD GATE (I2). The upscaler is a property of the corpus, so
+        # "ComfyUI happened to be down" must never silently become "we trained on a different
+        # dataset". Opting out is explicit and recorded in the command line.
         try:
             urllib.request.urlopen(COMFY + "/system_stats", timeout=8)
         except Exception as e:
-            print(f"prep: ComfyUI unreachable ({e}); falling back to LANCZOS"); use_esrgan = False
+            if not args.allow_degraded:
+                raise SystemExit(
+                    f"prep: ComfyUI unreachable at {COMFY} ({e}).\n"
+                    f"       REFUSING to silently build a LANCZOS training set — outline sharpness\n"
+                    f"       measures 43.1 that way versus 90.1 with ESRGAN, and nothing downstream\n"
+                    f"       can tell which one it got.\n"
+                    f"       Start ComfyUI, or choose explicitly:\n"
+                    f"         --upscale lanczos    build the whole set with LANCZOS, on purpose\n"
+                    f"         --allow-degraded     fall back per-image where ESRGAN misses"
+                )
+            print(f"prep: ComfyUI unreachable ({e}); LANCZOS for the whole set [--allow-degraded]")
+            use_esrgan = False
 
     dst = args.dst if os.path.isabs(args.dst) else os.path.join(REPO, args.dst)
     if os.path.isdir(dst): shutil.rmtree(dst)
@@ -149,7 +184,8 @@ def main():
         stem = os.path.basename(png)[:-4]
         name = f"{folder}__{stem}"
         f = jittered_fill(args.fill, args.jitter, os.path.basename(png))
-        normalise(Image.open(png), args.size, f, args.upscale, use_esrgan).save(
+        normalise(Image.open(png), args.size, f, args.upscale, use_esrgan,
+                  args.allow_degraded).save(
             os.path.join(cls, name + ".png"))
         n_img += 1
         txt = png[:-4] + ".txt"

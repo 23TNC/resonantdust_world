@@ -8,7 +8,7 @@ headroom**, **the user selects**. This stream changes many variables at once on 
 ## P0 — Rig, and the bar to clear
 
 - [x] Bring ComfyUI up on the 3090 and confirm torch sees the card. Acceptance: `/system_stats` answers on `:8188` reporting the 3090 and 24 GB.
-- [ ] Decide whether ComfyUI should autostart and record the choice. Acceptance: a line in `forks.md`; today it is absent from the unraid autostart list with restart policy `no`.
+- [x] Decide whether ComfyUI should autostart and record the choice. Acceptance: a line in `forks.md`; today it is absent from the unraid autostart list with restart policy `no`.
 - [ ] Make `prep_train` fail loudly when ComfyUI is unreachable instead of silently using LANCZOS. Acceptance: with the box down a rebuild exits non-zero; ESRGAN is opt-out via an explicit flag ([I2](issues.md#i2)).
 - [ ] Pin the sample set — fixed prompts, seeds and species — in a file every run and A/B reads. Acceptance: two invocations on one model produce byte-identical sample sheets.
 - [ ] Re-run the frozen A/B on `e07` to confirm the bar still reproduces. Acceptance: 26/36 gate and `iou_ref` 0.753 on 6 species × e/s × 3 seeds, or the drift is recorded as the new bar.

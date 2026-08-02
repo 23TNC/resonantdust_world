@@ -99,3 +99,33 @@ checkpoint on the box in March, not because anything chose it for this art.
 **Rejected — a non-SDXL base (Flux, SD3.5).** It would strand the SDXL ControlNets already on the
 box (`mistoline-lineart`, `controlnet-union-promax`), the whole two-stage architecture depends on
 ControlNet, and the licensing question the user raised on 2026-07-28 is unresolved for Flux.
+
+## F5 — Should ComfyUI autostart on the unraid box? {#f5}
+_2026-08-02 · resolved at P0.2 · **no — fix the silent fallback instead**_
+
+**Chosen.** Leave ComfyUI off the unraid autostart list with restart policy `no`, exactly as it is
+today. Start it on demand.
+
+**Why the question came up at all:** [I2](issues.md#i2) — `prep_train` silently swaps ESRGAN for
+LANCZOS when the box is unreachable, so "ComfyUI happened to be down" quietly becomes "we trained
+on a different dataset". Autostart looked like insurance against that.
+
+**Why it is the wrong insurance.** It papers over the failure rather than removing it. [P0.3](todo.md)
+makes the fallback *loud*, after which a down ComfyUI is an immediate non-zero exit instead of a
+corrupted corpus — which is the actual fix, and it holds whether or not the service happens to be
+running. Once that lands, autostart buys convenience only.
+
+**And the convenience is worth less than it looks.** Measured today: the container takes **~10
+minutes** to serve, nearly all of it a recursive `chown` over the mounted `ComfyUI`/`HF`/`venv`
+trees. That is paid on every boot, for a GPU service used in bursts.
+
+**Whose machine it is.** The box's standing job is home automation — Home Assistant, NodeRed and
+zwave-js-ui are the three on the autostart list, and they are what the house depends on. ComfyUI is
+a heavy occasional tenant. Changing how a home server boots is not something this stream needs, and
+the current configuration is the user's existing choice; nothing here requires overriding it.
+
+**Rejected — autostart with `restart: unless-stopped`.** Same objection, plus it would bring the
+service back after a deliberate stop, which is the opposite of what an occasional tenant wants.
+
+**Revisit if** the art pipeline becomes a scheduled/unattended job. A cron-driven rebuild that
+cannot ask a human to start a container is a real reason; "it is convenient" is not.
