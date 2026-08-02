@@ -16,7 +16,7 @@ import { AlbedoBlitShader } from "./albedoBlitShader";
 import { OverlayShader, overlayModeFor } from "./overlayShader";
 import { PACKED_CHANNELS } from "./mrtBakeShader";
 import type { MaterialRegistry } from "./material";
-import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_LIGHT } from "./squareMath";
+import { SQUARE, ZONE_DIM, REGION_DIM, TEXTILE_LIGHT, UNITS_PER_TILE } from "./squareMath";
 import { makeNoiseAtlas } from "./noiseAtlas";
 import { OutlineOverlay, type OutlineItem } from "./outlineOverlay";
 import { installFrameCost } from "./frameCost";
@@ -1158,8 +1158,11 @@ export class Viewport {
     const hi  = Math.max(1, Math.min(255, a.h ?? 24));    // units tall
     const elev = Math.max(0, Math.min(255, a.elev ?? 0));
 
-    // The subframe must FIT the frame — a span is 16 units, and the lane assertion rejects a
-    // subframe that overhangs it. Derive the span from the requested box rather than pinning it.
+    // The card IS the frame (2026-08-02: the subframe is deleted), so the ONLY dial is the span —
+    // a caster is frameUnits square, `frameSpan · 16` units on both axes. `w`/`h` survive as the
+    // requested box and choose the span that covers them; the returned `cardUnits` is what the
+    // renderer will actually use, and a fixture that asserts on `w`/`h` instead is asserting on a
+    // model this code no longer has.
     const span = Math.max(1, Math.min(16, Math.ceil(Math.max(wid, hi) / 16)));
     const frameUnits = span * 16;
     const block = r.allocDefinition(ROTATIONS_PER_DEF);
@@ -1167,8 +1170,6 @@ export class Viewport {
       r.writeDefinition(block, rot, {
         frameX: 0, frameY: 0, frameSpan: span,
         anchorX: 3,                              // ATLAS PAGE 3 -> off-page -> solid box, see above
-        subX: Math.round(frameUnits / 2 - wid / 2),   // centre the card on the prim: occludesAt
-        subY: 0, subW: wid, subH: hi,                 // places at C.x - frameUnits/2 + subX
         castType: 1, receiveType: 2, seed: 64,
       });
     }
@@ -1179,7 +1180,7 @@ export class Viewport {
     r.writePresence(tileX, tileY, INDEX_NONE, [{ index, layer: 0 }]);
     r.upload(gl);
     return { index, block, tile: [tileX, tileY], unit: [unitX, unitY], frameSpan: span,
-             widthUnits: wid, heightUnits: hi, elevationUnits: elev };
+             cardUnits: frameUnits, requestedW: wid, requestedH: hi, elevationUnits: elev };
   }
 
   /** z-positioning P0 — **how high does the code think this prim is, and where does it put it?**
@@ -1200,15 +1201,16 @@ export class Viewport {
       // and definition_index moved to BLUE's low 16 bits.
       const elevation = (y >>> 24) + ((y >>> 12) & 0xf) / 16;   // u8 unit.z + u4 fine.z
       const castType = (z >>> 30) & 3, block = z & 0xffff;
-      // The card's extent comes from the definition's subframe height (units), the same lane
-      // `occludesAt` reads as `hTop`. cast_type 2 silhouettes off the SIDE frame (rotation 1).
+      // The card's extent is the FRAME (2026-08-02: the subframe is deleted), so it comes off the
+      // span lane — the same number `occludesAt` reads as `hTop`. cast_type 2 silhouettes off the
+      // SIDE frame (rotation 1), which is a different rotation px but the same span.
       let cardH: number | null = null;
       if (block !== INDEX_NONE) {
         // A def BLOCK is ROTATIONS_PER_DEF rotation px wide — `writeDefinition` indexes
         // (block * ROTATIONS_PER_DEF + rotation), and so must anything reading it back.
         const d = r.defMirror;
         const di = (block * ROTATIONS_PER_DEF + (castType === 2 ? 1 : (y & 0xf))) * 4;
-        cardH = (d[di + 1] & 0xff) + 1;
+        cardH = (((d[di] >>> 4) & 0xf) + 1) * UNITS_PER_TILE;
       }
       return {
         i, unitX: x >>> 16, unitY: x & 0xffff,

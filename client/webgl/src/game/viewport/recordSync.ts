@@ -49,31 +49,29 @@ export class RecordSync {
   }
 
   /** One rotation px's fields from a resolved stem: span from the MANIFEST (I2 — never atlas
-   *  px), subframe from the sprite's own alpha (post pre-atlas scale), and the frame's atlas
-   *  scale carried in the def's otherwise-meaningless SEED lane as `pxPerUnit × 8` — the
-   *  silhouette sampler needs it, and hardcoding 8 was only ever true at the 128-px lod (P3). */
+   *  px), and the frame's atlas scale carried in the def's otherwise-meaningless SEED lane as
+   *  `pxPerUnit × 8` — the silhouette sampler needs it, and hardcoding 8 was only ever true at
+   *  the 128-px lod (P3).
+   *
+   *  **No subframe.** The def used to carry the art's opaque bbox in whole units and every card was
+   *  placed and silhouetted through it; that is deleted (user, 2026-08-02) because the quantised
+   *  rect could not stay registered with the continuous anchor it was re-seated against — see the
+   *  layout note in `records.ts`. The frame is the card, and the silhouette test still discards the
+   *  transparent margin, so coverage is the art's true shape either way. */
   private defFields(resolver: TextureResolver, stem: string, cell: number, boxSpanHint: number):
       { frameX: number; frameY: number; frameSpan: number; anchorX: number; anchorY: number;
-        subX: number; subY: number; subW: number; subH: number; seed: number;
-        castType: number; receiveType: number } | null {
+        seed: number; castType: number; receiveType: number } | null {
     const frame = resolver.resolve(stem, "albedo", cell)?.frame;
     if (!frame) return null;
     let page = this.pages.indexOf(frame.source);
     if (page < 0) { this.pages.push(frame.source); page = this.pages.length - 1; }
     const spanTiles = Math.max(1, Math.min(16, Math.round(resolver.spanOf(stem) ?? boxSpanHint)));
     const pxPerUnit = frame.w / (spanTiles * UNITS_PER_TILE);
-    const bb = resolver.opaqueBBox(stem);
-    const fu = spanTiles * UNITS_PER_TILE;
-    const subX = bb ? Math.round(bb.fx * fu) : 0;
-    const subY = bb ? Math.round(bb.fy * fu) : 0;
-    const subW = Math.min(fu - subX, Math.max(1, bb ? Math.round(bb.fw * fu) : fu));
-    const subH = Math.min(fu - subY, Math.max(1, bb ? Math.round(bb.fh * fu) : fu));
     return {
       frameX: Math.round(frame.x / pxPerUnit),
       frameY: Math.round(frame.y / pxPerUnit),
       frameSpan: spanTiles,
       anchorX: Math.min(3, page), anchorY: 2, // anchor.x = the ATLAS PAGE (P3); y unused
-      subX, subY, subW, subH,
       seed: Math.max(1, Math.min(255, Math.round(pxPerUnit * 8))),
       castType: 1, receiveType: 2,
     };
@@ -149,10 +147,15 @@ export class RecordSync {
     // is resolved FIRST and the pieces adopt it; the vertical gap between them then IS the piece's
     // elevation, derived rather than authored, and head and body align by construction.
     const coldA = [...cold], warmA = [...warm];
-    const groundRowOf = (p: Primitive): number => {
-      const bb = p.textureName && resolver ? resolver.opaqueBBox(p.textureName) : null;
-      return p.y + (bb ? (bb.fy + bb.fh) * p.height : p.height);
-    };
+    // The prim's ground row is the FRAME's bottom. It used to be the opaque bbox's bottom (the
+    // drawn art's feet), and that is exactly half of what put a halo around every sprite: the
+    // shaders place the card by whole-unit subframe lanes while this anchor was a continuous
+    // fraction of the box, so placement and sampling could not agree. Both ends now speak the
+    // frame. NOTE (user, 2026-08-02, deliberate): this re-opens lighting-visual I1 — a letterboxed
+    // master's bottom margin puts the plan line south of the feet again, so shadows start below
+    // the feet by that margin. Curing THAT wants a real anchor lane in the record, not a second
+    // frame for the geometry to disagree about.
+    const groundRowOf = (p: Primitive): number => p.y + p.height;
     const carrierGround = new Map<number, { ax: number; ay: number }>();
     for (const p of warmA) {
       if (p.carrierOf === undefined) {

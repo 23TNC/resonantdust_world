@@ -124,3 +124,41 @@ rather than a doubly-wrong one.
 
 **Worth noting for P0:** with the sign inverted, an orbiting light produced shading that tracked it
 *backwards* rather than not at all — so any pre-fix capture of the swing is not a usable "before".
+
+
+## I8 — The subframe was re-seated against a continuous anchor — DELETED {#i8}
+
+> "Something is offset about one unit causing us to draw an outline around our trees … we may be
+> improperly not using the same frame and offsets for ALL of the definitions maps." — user, 2026-08-02
+
+Right on both counts. The definition carried a SUBFRAME — the art's opaque bbox quantised to whole
+units (`subX/subY/subW/subH`) — and every card was placed and silhouetted through it, bottom-aligned
+to the prim's anchor. But the anchor (`recordSync.groundRowOf`) was the *continuous* opaque bottom,
+`p.y + (bb.fy + bb.fh) · p.height`. Two derivations of the same edge, one rounded and one not.
+
+Measured on the `100,48` bush (`biome-thing/default/flora/e`), all in units of a 16-unit frame:
+
+| | value |
+|---|---|
+| art inside the frame | rows **2 → 14.5** (bottom margin 1.5) |
+| `subY`, `subH` | 2, **13** → the model sampled rows **2 → 15** |
+| card placed at | `[anchor − subH, anchor]` = `[769.5, 782.5]` |
+| art actually drawn at | `[770, 782.5]` |
+
+So the sampled texture sat **0.5 unit north** of the drawn pixels and was stretched by
+`13 / 12.5`. Ground texels in that band resolved as *card*, took the sprite's `N·L` instead of the
+ground's, and painted a halo hugging every silhouette — brightest where it crossed a ground shadow,
+which is how the user spotted it.
+
+**Fixed by deleting the subframe outright.** Placement and sampling both speak the FRAME: it carries
+no rounding and is the same rect the bake draws, so the two cannot drift apart again. The silhouette
+test still discards the transparent margin, so coverage is the art's true shape either way. Gone
+from `silhouetteHit`, `occludesAt` (both cast types), `covers`, `defFields`, `writeDefinition` (the
+def's GREEN word is now free), `debugDefinition`, `__caster` and `__elev`.
+
+**Consequence — [lighting-visual I1](../2026-07-31-lighting-visual/issues.md) is re-opened, knowingly.**
+The anchor is now the frame box's bottom, so a letterboxed master's bottom margin puts the plan line
+south of the feet again (1.5 units for this bush) and shadows start below the feet by that margin.
+Curing it wants a real ANCHOR lane in the record — one number, written once, read by placement and
+sampling alike — not a second frame for the geometry to disagree about. That is the shape the old
+subframe should have had, and it is what the freed GREEN word is being kept for.

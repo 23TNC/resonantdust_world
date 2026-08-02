@@ -422,19 +422,22 @@ bool covers(uint r, vec2 P) {
   vec2 C = primPos(rec);            // P5: fine-refined — coverage glides with the mover
   uint prot = primRot(rec);
   uvec4 d = fetchDef(primBlock(rec), prot);
-  int subXi = int(d.y >> 24);
-  int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
   int spanI = int((d.x >> 4) & 0xfu) + 1;
   float fu = float(spanI * 16);
-  // P1: bottom-aligned — the receiver's card occupies [0, subH] from its base.
-  float hTop = float(subHi);
+  // The receiver's card IS the frame the bake drew, anchored at the frame's bottom. It was the
+  // SUBFRAME re-seated against the anchor, and that is what put a halo around every sprite: the
+  // subframe is quantised to whole units while the anchor is not, so the sampled texture sat up to
+  // a unit north of the drawn pixels and was stretched by subH/(true art height). Measured on the
+  // 100,48 bush: art rows 2..14.5 of a 16-unit frame, subY/subH 2/13, card [769.5, 782.5] against
+  // art drawn at [770, 782.5]. The frame carries no rounding and is shared with the draw.
+  float hTop = fu;
   float h = C.y - P.y;
   if (h < 0.0 || h > hTop) return false;
-  float left = prot == 3u ? C.x + fu * 0.5 - float(subXi + subWi) : C.x - fu * 0.5 + float(subXi);
-  if (P.x < left || P.x > left + float(subWi)) return false;
-  float frac = (P.x - left) / float(subWi);
+  float left = C.x - fu * 0.5;
+  if (P.x < left || P.x > left + fu) return false;
+  float frac = (P.x - left) / fu;
   if (prot == 3u) { frac = 1.0 - frac; }
-  return silhouetteHit(d, frac, (hTop - h) / float(subHi), false);
+  return silhouetteHit(d, frac, (hTop - h) / fu, false);
 }
 
 void main() {

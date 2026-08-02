@@ -20,15 +20,22 @@
 //!
 //! definition_data (16 px, one per rotation)
 //!   RED    u12 frame.x | u12 frame.y | u4 frame.span | u2 anchor.x | u2 anchor.y
-//!   GREEN  u8  subframe.x | u8 subframe.y | u8 subframe.width | u8 subframe.height
+//!   GREEN  (free — held at 0)
 //!   BLUE   (as prim BLUE — the defaults a prim copies)
 //!   ALPHA  u8  color.1 | u8 color.2 | u8 color.3 | u8 color.4
 //! ```
 //!
-//! `frame.span` and `subframe.width`/`height` are stored **biased**: 0 means 1, 15 means 16. A span
-//! of 0 would be no frame, so the natural encoding wastes the one value it cannot use — and gets the
-//! maximum wrong by one. `subframe.x`/`y` are genuine 0-based offsets and take **no** bias; the two
-//! conventions sit in adjacent lanes of the same channel, which is exactly why it is written here.
+//! `frame.span` is stored **biased**: 0 means 1, 15 means 16. A span of 0 would be no frame, so the
+//! natural encoding wastes the one value it cannot use — and gets the maximum wrong by one.
+//!
+//! **GREEN held a SUBFRAME** — the art's opaque bbox in whole units — and every card was placed and
+//! silhouetted through it. That is deleted (user, 2026-08-02). The subframe was quantised to whole
+//! units while the anchor it was re-seated against was a continuous fraction of the box, so the
+//! sampled texture sat up to a unit north of the drawn pixels and was stretched by
+//! `subH / (true art height)` — a halo hugging every sprite, brightest where it overlapped a ground
+//! shadow. Placement and sampling now BOTH speak the frame, which carries no rounding and is the
+//! same rect the bake draws, so the two cannot drift apart again. The lane is left free rather than
+//! reused: the next thing to want it is a real ANCHOR lane (see `recordSync`'s `groundRowOf`).
 
 import { Texture } from "../../gl";
 import { UNITS_PER_TILE } from "./squareMath";
@@ -127,18 +134,20 @@ export const OCCLUSION_GLSL = /* glsl */ `
 bool silhouetteHit(uvec4 d, float fracX, float fracY, bool offPage) {
   int fx = int(d.x >> 20), fy = int((d.x >> 8) & 0xfffu);
   int span = int((d.x >> 4) & 0xfu) + 1;
-  int subX = int(d.y >> 24), subY = int((d.y >> 16) & 0xffu);
-  int subW = int((d.y >> 8) & 0xffu) + 1, subH = int(d.y & 0xffu) + 1;
   float ppu = float((d.z >> 14) & 0xffu) / 8.0;   // the def SEED lane: atlas px per unit x 8
   if (ppu <= 0.0) { ppu = 8.0; }
   int frameUnits = span * 16;
-  // P4: clamp the sampled texel INSIDE the subframe's art rows/cols — frac = 1.0 (the caster's
-  // BASE: fracY is measured top-down) otherwise lands one texel PAST the last art row, reads
-  // transparent, and the shadow detaches from the feet by a texel band.
-  int ox = clamp(int(fracX * float(subW) * ppu), 0, max(0, int(float(subW) * ppu) - 1));
-  int oy = clamp(int(fracY * float(subH) * ppu), 0, max(0, int(float(subH) * ppu) - 1));
-  int px = int(float(fx + subX) * ppu) + ox;
-  int py = int(float(fy + frameUnits + subY) * ppu) + oy;
+  // FRAME-ADDRESSED, not subframe-addressed (user, 2026-08-02: "the error is in how we are
+  // handling shifting our texture so it aligns with the bottom of the frame ... remove that").
+  // fracX/fracY now run over the WHOLE frame, which is the same rect the bake draws, so the
+  // sampled texel and the drawn pixel are the same texel by construction. The subframe lanes are
+  // still written (they describe the art) but no longer take part in any geometry -- see the
+  // OCCLUSION_GLSL header for why re-seating them against the anchor could not be made to line up.
+  float fpx = float(frameUnits) * ppu;
+  int ox = clamp(int(fracX * fpx), 0, max(0, int(fpx) - 1));
+  int oy = clamp(int(fracY * fpx), 0, max(0, int(fpx) - 1));
+  int px = int(float(fx) * ppu) + ox;
+  int py = int(float(fy + frameUnits) * ppu) + oy;
   uint page = (d.x >> 2) & 3u;
   if (page == 0u) return texelFetch(uSurfaceAtlas, ivec2(px, py), 0).b > 0.35;
   if (page == 1u) return texelFetch(uSurfaceAtlas2, ivec2(px, py), 0).b > 0.35;
@@ -154,14 +163,12 @@ bool occludesAt(uint c, vec2 L, float Lz, vec2 P, float targetH) {
   uint prot  = primRot(rec);
   if (ct == 2u) {
     uvec4 d = fetchDef(block, 1u);                 // the SIDE frame silhouettes the ns card
-    int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
-    float W = float(subWi);
+    float W = float((int((d.x >> 4) & 0xfu) + 1) * 16);   // the FRAME, not the subframe
     // z-positioning P1 (F3): the card spans [z, z + H], NOT [0, H]. A caster at elevation z
     // occupies its own slice of the air; spanning from 0 would cast as though it sat on the
     // floor — the right shape in roughly the right place for entirely the wrong reason.
-    // subY stays an ATLAS address only (the bbox is bottom-aligned to the anchor).
     float cElev = primElevation(rec);
-    float hBot = cElev, hTop = cElev + float(subHi);
+    float hBot = cElev, hTop = cElev + W;
     float dx = P.x - L.x;
     if (abs(dx) < 1e-4) return false;
     float t = (C.x - L.x) / dx;
@@ -172,31 +179,28 @@ bool occludesAt(uint c, vec2 L, float Lz, vec2 P, float targetH) {
     if (h > hTop || h < hBot) return false;
     float frac = (C.y - y) / W;
     if (prot == 0u) { frac = 1.0 - frac; }         // south-facing: the head end flips
-    return silhouetteHit(d, frac, (hTop - h) / float(subHi), true);   // frac down the CARD
+    return silhouetteHit(d, frac, (hTop - h) / W, true);   // frac down the CARD
   }
   uvec4 d = fetchDef(block, prot);
-  int subXi = int(d.y >> 24);
-  int subWi = int((d.y >> 8) & 0xffu) + 1, subHi = int(d.y & 0xffu) + 1;
   int spanI = int((d.x >> 4) & 0xfu) + 1;
   float fu = float(spanI * 16);
   // z-positioning P1 (F3): [z, z + H] from the caster's OWN elevation, not [0, H] from the floor.
   float cElev = primElevation(rec);
-  float hBot = cElev, hTop = cElev + float(subHi);
+  float hBot = cElev, hTop = cElev + fu;
   float dy = P.y - L.y;
   if (abs(dy) < 1e-4) return false;
   float t = (C.y - L.y) / dy;
   if (t <= 0.0 || t >= 1.0) return false;
   float x = L.x + t * (P.x - L.x);
-  // FRAME-ANCHORED placement; rotation 3 mirrors placement AND sample about the frame centre.
-  float left = prot == 3u
-    ? C.x + fu * 0.5 - float(subXi + subWi)
-    : C.x - fu * 0.5 + float(subXi);
-  if (x < left || x > left + float(subWi)) return false;
+  // The card IS the frame, centred on the prim. Mirroring about the frame centre is now a no-op
+  // for placement (the rect is symmetric) and survives only in the SAMPLE.
+  float left = C.x - fu * 0.5;
+  if (x < left || x > left + fu) return false;
   float h = mix(Lz, targetH, t);
   if (h > hTop || h < hBot) return false;
-  float frac = (x - left) / float(subWi);
+  float frac = (x - left) / fu;
   if (prot == 3u) { frac = 1.0 - frac; }
-  return silhouetteHit(d, frac, (hTop - h) / float(subHi), true);
+  return silhouetteHit(d, frac, (hTop - h) / fu, true);
 }
 bool occludes(uint c, vec2 L, float Lz, vec2 P) { return occludesAt(c, L, Lz, P, 0.0); }
 `;
@@ -262,9 +266,6 @@ export interface DefinitionFields {
   /** Span in TILES, 1..16 — stored biased. */
   frameSpan: number;
   anchorX?: number; anchorY?: number;
-  subX?: number; subY?: number;
-  /** Extents in UNITS, 1..256 — stored biased. */
-  subW?: number; subH?: number;
   castType?: number; receiveType?: number; emitType?: number;
   layer?: number; seed?: number; intensity?: number; reach?: number;
   colors?: [number, number, number, number];
@@ -511,15 +512,8 @@ export class Records {
     if (rotation < 0 || rotation >= n) {
       throw new Error(`[records] definition ${block} has ${n} rotation(s); cannot write ${rotation}`);
     }
-    // lighting-correctness P2: the subframe must sit INSIDE the frame — a bbox past the frame
-    // edge samples a NEIGHBOUR definition's art in the refine, silently (the GPU never checks).
-    const frameUnits = f.frameSpan * 16;
-    if ((f.subX ?? 0) + (f.subW ?? 1) > frameUnits || (f.subY ?? 0) + (f.subH ?? 1) > frameUnits) {
-      throw new Error(
-        `[records] definition ${block} r${rotation}: subframe (${f.subX ?? 0},${f.subY ?? 0} ` +
-        `${f.subW ?? 1}x${f.subH ?? 1}) exceeds the ${frameUnits}-unit frame`,
-      );
-    }
+    // lighting-correctness P2's subframe-fits-the-frame assertion is gone with the subframe: the
+    // sampled rect IS the frame now, so it cannot overhang into a neighbour definition's art.
     const px = block * ROTATIONS_PER_DEF + rotation;
     const c = f.colors ?? [0, 0, 0, 0];
     const R = ((fit(f.frameX, 12, "frame.x") << 20)
@@ -527,10 +521,7 @@ export class Records {
              | (biased(f.frameSpan, 4, "frame.span") << 4)
              | (fit(f.anchorX ?? 0, 2, "anchor.x") << 2)
              | fit(f.anchorY ?? 0, 2, "anchor.y")) >>> 0;
-    const G = ((fit(f.subX ?? 0, 8, "subframe.x") << 24)
-             | (fit(f.subY ?? 0, 8, "subframe.y") << 16)
-             | (biased(f.subW ?? 1, 8, "subframe.width") << 8)
-             | biased(f.subH ?? 1, 8, "subframe.height")) >>> 0;
+    const G = 0;   // free — the subframe lived here; see the layout note at the top of the file
     const B = this.packTypeLanes(f, rotation);
     const A = ((fit(c[0], 8, "color.1") << 24) | (fit(c[1], 8, "color.2") << 16)
              | (fit(c[2], 8, "color.3") << 8) | fit(c[3], 8, "color.4")) >>> 0;
@@ -595,8 +586,8 @@ export class Records {
       frameX: m[b] >>> 20, frameY: (m[b] >>> 8) & 0xfff,
       frameSpan: ((m[b] >>> 4) & 0xf) + 1,                       // un-bias
       anchorX: (m[b] >>> 2) & 3, anchorY: m[b] & 3,
-      subX: m[b + 1] >>> 24, subY: (m[b + 1] >>> 16) & 0xff,
-      subW: ((m[b + 1] >>> 8) & 0xff) + 1, subH: (m[b + 1] & 0xff) + 1,
+      // The card in UNITS — the FRAME, which is the whole geometry now.
+      cardUnits: (((m[b] >>> 4) & 0xf) + 1) * 16,
       rotation: (m[b + 2] >>> 10) & 0xf,
     };
   }
