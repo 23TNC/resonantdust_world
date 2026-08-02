@@ -118,3 +118,7 @@ to confirm the baseline still reproduces, and that result is the first real entr
 - **2026-08-02 · P2.3 · Training resolution 1024²** ([F6](forks.md#f6)) — SDXL-native for both
   candidate bases. 768 was a VRAM accommodation from the 11 GB ceiling ([I4](issues.md#i4)), not a
   decision, and that ceiling is gone.
+- **2026-08-02 · P2.4 IN FLIGHT · full rebuild running** — `prep_train.py --fill 0 --size 1024
+  --dst .staging/animal-lora-train-v3`, ESRGAN enforced (no silent fallback possible now).
+  Measured rate ~3.8 s/image → ~29 min for the 459-image corpus. Log: `.staging/prep_v3.log`.
+  P2.2 (outline sharpness) and P2.5 (eyeball spot-check) are measured off the finished set.
