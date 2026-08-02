@@ -41,7 +41,9 @@ for coverage and `__elev(i)` for the anchor.
 - [ ] Compute ONE `AtlasDraw` from the subframe and apply it to all four sources in `packCoPack`. Acceptance: the four maps land quadrant-aligned from a single rect; a deliberately offset test subframe moves all four together.
 - [ ] Scale-to-fit preserving aspect, positioned by the anchor ([F2](forks.md#f2)). Acceptance: a non-square subframe is not distorted, and the residual margin sits on one axis only.
 - [ ] Compose with `sprite_scale` rather than double-placing ([F5](forks.md#f5)). Acceptance: `sprite_scale` multiplies the target rect and no longer performs its own pivot re-centre; a stem with both authored is placed once.
-- [ ] Settle grid/linked stems ([I2](issues.md#i2)). Acceptance: a stated answer — apply, compose with `internal_padding`, or reject as `sprite_scale` does — with the reason, so no autotile cell is silently double-cropped.
+- [ ] Apply the subframe per CELL, not only per stem ([F6](forks.md#f6)). Acceptance: a linked stem's autotile cells each resolve their own subframe, using the `(stem, cell)` keying the resolver already has.
+- [ ] Delete `internal_padding` and express it as a subframe ([F6](forks.md#f6)). Acceptance: the DSL variable, `setLinkedPad` and the resolver's pad path are gone, and linked tiles inset identically to before under an authored subframe.
+- [ ] Re-examine the `entry.grid` exclusion that blocks `sprite_scale` ([F5](forks.md#f5), [F6](forks.md#f6)). Acceptance: a stated answer now that placement and world extent are split — grids stop being a special case, or the reason they stay one is written down.
 
 ## P3 — The anchor lane, and the end of the runtime bbox ([F3](forks.md#f3), [I5](issues.md#i5))
 

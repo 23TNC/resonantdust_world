@@ -77,3 +77,26 @@ seam**, re-centring the art in its frame. If both applied, the art would be posi
 
 So the ingest draw is computed **once**, from the subframe, and `sprite_scale` multiplies the target
 rect rather than performing its own pivot re-centre. One rect, one placement, both dials live.
+
+## F6 — `internal_padding` is DELETED; the subframe subsumes it {#f6}
+
+> "We can likely drop internal_padding and leverage this subframe method to accomplish the same thing
+> unifying our code and variables." — user, 2026-08-02
+
+**Chosen: delete it.** A uniform inset is a uniform subframe — `internal_padding = p` (units of the
+16-unit cell) is exactly the subframe `(p/16, p/16, 1 − 2p/16, 1 − 2p/16)` in [F1](#f1)'s fractions.
+Keeping both would mean two crops applied at one seam, which is [I2](issues.md#i2)'s double-crop and
+the same *two-numbers-for-one-thing* failure the whole stream exists to end.
+
+**Per CELL, not per stem, and that needs no new indexing.** The resolver already keys frames by
+`(stem, cell)` — `resolve(stem, map, cell)` and `defByKey`'s `stem#cell` — and a linked stem's
+"directions" are its autotile cells the way a sprite's are its facings. So [F4](#f4)'s per-direction
+rule generalises to per-cell without a second mechanism: one subframe per addressable frame.
+
+A grid stem authoring ONE subframe applies it to every cell, which reproduces `internal_padding`
+exactly. Authoring per cell is then a capability the pad never had, for a grid whose cells are not
+uniformly inset.
+
+**Consequence:** grid stems stop being a special case. `packCoPack`'s `entry.grid` exclusion for
+`sprite_scale` should be re-examined in the same pass ([F5](#f5) splits placement from world extent,
+and the reason grids were excluded was the placement half).

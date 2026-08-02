@@ -15,15 +15,18 @@ columns 0.5..15.5, so **~73%** of the frame is art and ~27% is margin. One sprit
 near 1.0 the crop is a correctness change only, and the plan should say so rather than claiming a
 win it did not get.
 
-## I2 — Linked/grid stems already crop, and must not crop twice {#i2}
+## I2 — Linked/grid stems already crop — DECIDED, `internal_padding` retires ([F6](forks.md#f6)) {#i2}
 
 `<stem>/l` stems carry a DSL `internal_padding` and the resolver *already* trims each linked cell by
 it (`setLinkedPad`, `texture-generalization`). A grid stem is also explicitly excluded from
-`sprite_scale` today — `packCoPack` warns and packs unscaled when `entry.grid` is set.
+`sprite_scale` today — `packCoPack` warns and packs unscaled when `entry.grid` is set. So a grid stem
+had a per-cell crop that was not the per-stem subframe, and applying both would shift every autotile
+cell by the pad.
 
-So a grid stem has a per-cell crop that is not the per-stem subframe. **Unverified** whether the
-subframe should apply to grid stems at all, compose with the pad, or be rejected the way
-`sprite_scale` is. Settle it explicitly — a silent double-crop shifts every autotile cell by the pad.
+**Resolved by deleting the older of the two** (user, 2026-08-02: *"we can likely drop
+internal_padding and leverage this subframe method to accomplish the same thing unifying our code and
+variables"*). A uniform inset **is** a uniform subframe, so the pad is a special case of the thing
+that replaces it. See [F6](forks.md#f6).
 
 ## I3 — `ppu` is derived from the frame, and the frame's meaning changes {#i3}
 
