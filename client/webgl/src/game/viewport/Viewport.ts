@@ -27,7 +27,7 @@ import { RecordSync } from "./recordSync";
 import { LIGHT_READ_SCALE } from "./lightPass";
 import { BlueprintOverlay, type BlueprintTile } from "./blueprintOverlay";
 import { NOISE_FIELDS } from "./material";
-import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
+import { ZOOM_MAX, ZOOM_MIN } from "../../textures/urls";
 import { WORLD_TILT_DEG, TILT_SIN, worldHeightForDrawn, drawnForWorldHeight } from "./worldTilt";
 
 /** Height for debug-placed lights, in units — **the corpus's own contract**, not a taste call.
@@ -297,8 +297,8 @@ export class Viewport {
     this.resolver?.setSpriteScale(stem, sw, sh, px, py);
   }
 
-  /** Attach the texture resolver (master→preview→geo) + our GL context. Called by the world scene once
-   *  the viewport exists (F6). A LOD landing re-bakes both caches so prims pick up the upgrade. */
+  /** Attach the texture resolver (packed→geo) + our GL context. Called by the world scene once
+   *  the viewport exists (F6). A pack landing re-bakes both caches so prims pick up the art. */
   setResolver(resolver: TextureResolver): void {
     this.resolver = resolver;
     resolver.attachRenderer(this.renderer);

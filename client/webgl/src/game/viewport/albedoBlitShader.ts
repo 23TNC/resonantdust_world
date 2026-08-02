@@ -47,7 +47,7 @@ vec3 lightAt(vec2 world, float ao) {
   if (tx < uLWinCol || tx >= uLWinCol + uLCols || ty < uLWinRow || ty >= uLWinRow + uLRows)
     return vec3(uAmbient);   // outside the lit window entirely
   // lighting-visual P4: TOROIDAL, the composites' machinery — a tile's texel block sits at
-  // mod(tile, cols) · uLSlot (uLSlot = texels/tile at the current lod), the writer unwraps the
+  // mod(tile, cols) · uLSlot (uLSlot = texels/tile at the current partition level), the writer unwraps the
   // same residues, and the texture never changes size. The torus makes the bilinear seam-free:
   // a tap past a block edge wraps (pmod) onto the texel of the WORLD-adjacent tile.
   //

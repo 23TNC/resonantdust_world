@@ -3,7 +3,7 @@
 //! pixijs `Viewport` carried, lifted out so the render layer and the input handlers share
 //! one source of truth. Pure — no GL, no DOM.
 
-import { ZOOM_MAX, ZOOM_MIN } from "../../textures/lod";
+import { ZOOM_MAX, ZOOM_MIN } from "../../textures/urls";
 import { coverScale } from "./squareMath";
 
 export class Camera {
@@ -13,9 +13,9 @@ export class Camera {
   /** Viewport size in CSS px. */
   width = 0;
   height = 0;
-  /** LOGICAL zoom — 1 = a tile at its native `SQUARE` px on the REFERENCE target, and the dial the lod
+  /** LOGICAL zoom — 1 = a tile at its native `SQUARE` px on the REFERENCE target, and the dial the partition
    *  ladder reads. Deliberately NOT screen px per world px: that is {@link renderScale}. Keeping the
-   *  logical zoom monitor-independent is what puts every player on the same lod at the same zoom. */
+   *  logical zoom monitor-independent is what puts every player on the same partition level at the same zoom. */
   private zoomFactor = 1;
   /** The COVER fit for the current viewport (`max(W/2560, H/1536)`) — see {@link renderScale}. */
   private cover = 1;

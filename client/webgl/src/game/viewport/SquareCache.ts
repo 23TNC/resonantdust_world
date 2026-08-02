@@ -6,9 +6,9 @@
 //! Mesh/Sprite → engine RenderTarget/Program/draw).
 //!
 //! SIMPLIFICATION vs pixijs (W4c): one buffer per channel (no ping-pong) and NO reproject — a
-//! zoom/LOD re-partition clears + re-bakes the whole window (a brief flash on zoom) instead of
-//! reprojecting the old content. Pan is unaffected (leading-edge re-bake only). The ping-pong +
-//! reproject smooth-LOD path is a deferred follow-up.
+//! zoom/partition-level change clears + re-bakes the whole window (a brief flash on zoom) instead
+//! of reprojecting the old content. Pan is unaffected (leading-edge re-bake only). The ping-pong +
+//! reproject smooth path is a deferred follow-up.
 //!
 //! COORD CONVENTION: composite + scratch pixel coords have y increasing the same way GL texture
 //! rows do; the display's uProjection maps world→screen. Any net Y flip is corrected there.

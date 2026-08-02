@@ -1,5 +1,28 @@
 # Completed — one resolution
 
+## 2026-08-02 · P4–P5 — the survivor renamed; the sweep
+
+**P4, PARTITION LEVEL** (F1): `lodForZoom`→`partitionForZoom`, `LOD_LEVELS/MAX`→
+`PARTITION_*`, `SquareCache.lod`→`level` (window getter key included), the lighting
+`win.lod`→`win.level`, `lod.ts`→`urls.ts` (`lodUrl`→`texUrl`, zoom bounds annotated),
+`lodStats`→`poolStats`, previewCache helpers renamed. `grep -wi lod` over the client
+now hits SEVEN lines: history notes (the rename note, the deleted-ladder note, the
+died-split note) and the server's `/lod/` route literal — a wire name this stream
+deliberately does not touch. Typecheck clean. VARIABLES.md rewritten in partition-level
+language, including the stale "maximum art size is 128 px" claim (SQUARE now caps only
+what a level-0 slot DISPLAYS; art packs at manifest max) and the bake's mip-chain note.
+
+**P5, the sweep**: live zoom 2 → 1 → 0.5 → 0.25 on the renamed plumbing — level
+0/0/1/2, cols 32/32/64/128, slotPx 128/128/64/32, defs CONSTANT at 33, pool CONSTANT at
+{1 page, 5 frames} through the whole sweep (zero ladder churn — the P0 baseline showed
+per-zoom repacking and duplicate tiers), `__lightexact` bit-identical at the end,
+world textured with pools + shadows at every stop; the zoom-2 render is visibly
+SHARPER than before (the conifer's true 256 master, previously capped to 128).
+Captures in the session record. `__framecost` not re-run — the sweep's per-frame
+behaviour was visibly normal and lighting cost is owned by the perf stream's baseline;
+noted as assumed, not measured. **The user's eyes are the exit criterion — the stream
+closes on their verdict.**
+
 ## 2026-08-02 · P1–P3 — the ladder dies; the atlas splits; mips carry minification
 
 **P1, the resolver collapse**: one co-pack per stem at the manifest's `maxSize` (F2 —

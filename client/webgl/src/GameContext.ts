@@ -33,8 +33,8 @@ export interface GameContext {
   /** Per-frame GL draw-call counter (patched at boot); read by the debug panel. */
   readonly drawCalls: DrawCallCounter;
 
-  /** The three-tier texture resolver (master → preview → geo). Owns the per-LOD
-   *  atlas pools and the all-purpose `white` fill. */
+  /** The one-resolution texture resolver (packed → geo). Owns the sprite pool
+   *  and the all-purpose `white` fill. */
   readonly textureResolver: TextureResolver;
 
   /** The DSL content runtime (def_id → colour), fetched at boot and hot-swapped

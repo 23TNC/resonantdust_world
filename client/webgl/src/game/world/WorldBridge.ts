@@ -450,7 +450,7 @@ export class WorldBridge {
    *  of dropping + re-fetching. Called every anchor move; mutates the sticky state. */
   private radii(): AnchorRadii {
     // Reach follows the CACHE'S TILE WINDOW, not a screen estimate. On the fixed slot grid the window
-    // is `SLOTS << lod` tiles and is the authoritative answer to "how much world will we draw" — the
+    // is `SLOTS << level` tiles and is the authoritative answer to "how much world will we draw" — the
     // renderer bakes exactly those tiles, so subscribing to anything less guarantees empty edges.
     //
     // The old `screenPx / (SQUARE · zoom)` estimate silently HALVED when `SQUARE` went 64 → 128, which
@@ -458,7 +458,7 @@ export class WorldBridge {
     // only fetched 5–6, so the window edges baked to nothing (textile-slot [I8]).
     // Derived from the zoom rather than read off the viewport: `zoomTo` sets the zoom and calls us in
     // the SAME turn, but the cache only re-partitions on the next tick, so reading `viewport.window`
-    // here would size the subscription from the OUTGOING lod and lag a frame behind every zoom.
+    // here would size the subscription from the OUTGOING partition level and lag a frame behind every zoom.
     // `SLOTS << partitionForZoom(zoom)` is exactly the window the cache is about to adopt.
     const windowTiles = Math.max(SLOTS_X, SLOTS_Y) << partitionForZoom(this.zoom);
     const active = Math.ceil(windowTiles / 2) + 2;

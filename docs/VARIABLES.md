@@ -275,18 +275,20 @@ is the separate fact that the value reached `state`.
 [`work/2026-07-26-textile-slot`](work/2026-07-26-textile-slot/README.md).
 
 A fixed grid of **32 × 16 SLOTS** (28×12 visible + **2 slots of overscan per side**). A slot holds **1 tile
-at lod 0** and **`2^k × 2^k` tiles at lod k**, so the texture is constant while the world it covers grows 4×
-per step. `SQUARE = 128`; **maximum art size is 128 px** — a slot cannot show more.
+at PARTITION LEVEL 0** and **`2^k × 2^k` tiles at level k**, so the texture is constant while the world it
+covers grows 4× per step. (`2026-08-02-one-resolution` P4: this concept was formerly ALSO called "lod";
+the atlas LOD ladder is deleted and the **partition level** is the renamed survivor. `SQUARE = 128` caps
+what a level-0 slot DISPLAYS; art now packs at its manifest max regardless.)
 
 ```
 SLOTS_X = 32   SLOTS_Y = 16      VISIBLE_X = 28   VISIBLE_Y = 12   OVERSCAN = 2
-LOD_LEVELS = 3                   (lod 0..2 — fits u2, with room to restore lod 3)
-REFERENCE = 3584 × 1536          (the visible slots at lod 0)
+PARTITION_LEVELS = 3             (level 0..2 — fits u2, with room to restore level 3)
+REFERENCE = 3584 × 1536          (the visible slots at level 0)
 ```
 
-**`SLOTS` is a POWER OF TWO on both axes, deliberately.** The toroidal wrap is `mod(wc, SLOTS << lod)`,
-which stays pow2 at every lod, so it compiles to a bitmask rather than an integer division. Correctness does
-not depend on it — a slot subdivides into `2^lod` tiles at any grid size — this is purely a cost property.
+**`SLOTS` is a POWER OF TWO on both axes, deliberately.** The toroidal wrap is `mod(wc, SLOTS << level)`,
+which stays pow2 at every level, so it compiles to a bitmask rather than an integer division. Correctness
+does not depend on it — a slot subdivides into `2^level` tiles at any grid size — purely a cost property.
 
 **MODULUS vs STRIDE.** The `textile_square` TEXTURE is `SLOTS + 2` slots per axis (34×18 = 4352×2304). The
 extra ring is the **wrap-apron**, applied as a `(sx + 1)` offset AFTER the modulus, so it never enters the
@@ -295,14 +297,14 @@ the opposite border so a square adjacent across the wrap has physically adjacent
 costs nothing (WebGL2 handles NPOT at NEAREST/CLAMP); the address math stays pow2 regardless. The
 `textile_unit` and `textile_tile` maps carry no apron.
 
-**One grid serves every map; only texels-per-slot differs** — which is why `lod` can be published once in
-the constants px and read by every shader, instead of each deriving a slot address from a world coord (the
-recurring failure [`work/2026-07-24-map-compatibility`](work/2026-07-24-map-compatibility/README.md) exists
-to police).
+**One grid serves every map; only texels-per-slot differs** — which is why the partition level can be
+published once in the constants px and read by every shader, instead of each deriving a slot address from
+a world coord (the recurring failure
+[`work/2026-07-24-map-compatibility`](work/2026-07-24-map-compatibility/README.md) exists to police).
 
 | family | texels/slot | texture | maps |
 |---|---|---|---|
-| `TEXTILE_SQUARE` (per px at lod 0) | `SQUARE` = 128 | 4352 × 2304 (incl. apron) | albedo, normal, surface, zdepth — **× 2, cold AND warm** |
+| `TEXTILE_SQUARE` (per px at level 0) | `SQUARE` = 128 | 4352 × 2304 (incl. apron) | albedo, normal, surface, zdepth — **× 2, cold AND warm** |
 | `TEXTILE_LIGHT`, no apron | **64, PINNED** | 2048 × 1024 | lightmap (cold + hot), fine receiver |
 | `TEXTILE_UNIT` (per unit) | 16 | 512 × 256 | shadow (cold/hot + both prev), coarse receiver, decay |
 | `TEXTILE_TILE` (per tile) | 1 | 32 × 16 | presence, caster buckets, dirty |
@@ -321,26 +323,27 @@ atlas **16** — **405 MiB** total, against **621 MiB** if the two dials were st
 **Fit is COVER, not contain:** `s = max(W / 3584, H / 1536)`. `max` (not `min`) is what keeps the viewport
 entirely inside the visible slots; `min` would fit the whole grid and expose overscan at the edges.
 
-| lod | tiles/slot | tile texels | visible tiles | zoom band (s=1) |
+| level | tiles/slot | tile texels | visible tiles | zoom band (s=1) |
 |---|---|---|---|---|
 | 0 | 1×1 | 128 | 28×12 | [1, 2) |
 | 1 | 2×2 | 64 | 56×24 | [0.5, 1) |
 | 2 | 4×4 | 32 | 112×48 | [0.25, 0.5) |
 
-`ZOOM_MIN = 0.25` stops the ladder at lod 2. Lod 3 (8×8 tiles/slot, 224×96 visible) is expressible — the
-`u2` field has room and no layout changes — but its window is ~450 zones, which needs a **loading-priority
-system** before it is pleasant. Deliberately deferred, not designed out.
+`ZOOM_MIN = 0.25` stops the ladder at level 2. Level 3 (8×8 tiles/slot, 224×96 visible) is expressible —
+the `u2` field has room and no layout changes — but its window is ~450 zones, which needs a
+**loading-priority system** before it is pleasant. Deliberately deferred, not designed out.
 
 At a 16:9 display the VERTICAL axis binds (`1440/1536 > 2560/3584`), so a 2560×1440 player sees 120-px tiles
 and 21.3×12 of the 28×12 visible slots — the horizontal slack is cached-but-offscreen, which is the correct
 axis to spend it on since the vertical budget is the scarcer one.
 
-**Lod does not affect display sharpness.** Texels per screen pixel is `(128/2^k) / (σ · 128/2^k) = 1/σ` —
-the `2^k` cancels. Lod selects *world coverage* only; sharpness is governed by the viewport against the
-2560×1536 reference. The **bake** stage is separate and always exactly 1:1 (art mip `128/2^k` px into a
-`128/2^k` texel footprint).
+**The partition level does not affect display sharpness.** Texels per screen pixel is
+`(128/2^k) / (σ · 128/2^k) = 1/σ` — the `2^k` cancels. The level selects *world coverage* only; sharpness
+is governed by the viewport against the 2560×1536 reference. The **bake** stage samples the one
+max-size master through the GRAPHICS page's capped mip chain (one-resolution P3/F4 — the ladder of
+pre-shrunk files is gone; the DATA page stays NEAREST/exact).
 
-**Rescaling on a lod change is NEAREST** — replication up, decimation down, never averaging. Independently
+**Rescaling on a level change is NEAREST** — replication up, decimation down, never averaging. Independently
 mandatory for three maps, which is what permits one shared reproject path: the shadow bitfield cannot be
 filtered at all, `zdepth` encodes a discrete `0x80 | baseRow` that averaging silently corrupts, and the
 lightmap must stay exactly-representable to remain invertible. Linear is permitted for albedo/normal/surface
@@ -464,8 +467,8 @@ approximate one. Slots need no such care — they are overwritten, never accumul
 **Torus addressing** (lighting-visual P4, user directive): every lighting-chain map — the slot
 map, the summed map, the receiver map and the shadow buffer — rides the SAME slot torus as the
 composites: a tile's texel block sits at `mod(tile, cols/rows) × texelsPerTile`, the texture never
-changes size, and texels-per-tile HALVE per lod (`TEXTILE_LIGHT >> lod` for the lighting maps,
-`TEXTILE_UNIT >> lod` for the shadow buffer). Writers unwrap a fragment's residue to its unique
+changes size, and texels-per-tile HALVE per partition level (`TEXTILE_LIGHT >> level` for the lighting maps,
+`TEXTILE_UNIT >> level` for the shadow buffer). Writers unwrap a fragment's residue to its unique
 window tile (`fillDisplay`'s rule); the blit reads the same residues, and its bilinear taps wrap
 by `pmod`, which lands them on the WORLD-adjacent tile — the torus makes the seam free. Falloff is
 `lightFalloff(d, reach, I)` in `LIGHT_LANES_GLSL` — d₀ = reach/2 with a linear feather to exactly
@@ -494,9 +497,9 @@ agreeing.
 Exposed as `thingSubframe()` — **stride 18** per def, `[e, s, n] × [x, y, w, h, anchor.x, anchor.y]`
 — and on each `moverParts()` slot as `subframes` (the same 18 floats, so one decoder serves both).
 
-**FRACTIONS, never units.** A master streams at 16/32/64/128 px and a fraction addresses the same
-art at every tier, where a unit count silently means a different number of texels per lod. Whole
-units are also precisely what the deleted `definition_data` GREEN lane held, and rounding them
+**FRACTIONS, never units.** A fraction addresses the same art at ANY served size (a unit count
+silently means a different number of texels per size — and one-resolution now packs each stem at
+its manifest max). Whole units are also precisely what the deleted `definition_data` GREEN lane held, and rounding them
 against a continuous anchor is what put a halo around every sprite.
 
 **THREE directions, not four.** West is the east master *mirrored*, not a fourth texture, so the
@@ -507,8 +510,8 @@ describing one image — the failure this model exists to remove.
 its side view is long and flat (`h 0.47`) and its front/back are tall and narrow (`w 0.33`). One
 rect could not serve both.
 
-**Authored from the MASTERS ON DISK**, never from the client: the runtime bbox is computed from
-whichever lod decoded first, so the same art measures differently between sessions. Masters are one
+**Authored from the MASTERS ON DISK**, never from the client: the runtime bbox was computed from
+whichever size decoded first, so the same art measured differently between sessions. Masters are one
 size (`meta.json` `"square": 128`) and measure the same every time. The union across a kind's
 variants is taken, so no variant is clipped.
 

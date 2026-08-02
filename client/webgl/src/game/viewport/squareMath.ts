@@ -21,14 +21,12 @@
  *    SQUARE  ->  UNIT = SQUARE/16 (px per world unit; units-per-tile is FIXED at 16, so every tile+unit
  *                position on the wire and in the data records is untouched)
  *            ->  TEXTILE_SQUARE   (albedo/normal/surface/zdepth, cold AND warm — 8 maps)
- *            ->  BASE_LOD_PX in TextureResolver — the cap on how much art a sprite may fetch
- *            ->  REFERENCE_W/H, SLOT_PW/PH, the lod ladder
+ *            ->  REFERENCE_W/H, SLOT_PW/PH, the partition ladder
  *        NOT ->  the lightmap, the receiver map, the shadow map, or any tile map
  *
  *  At 128 the art maps cost ~321 MiB against ~76 at 64 (measured P0). That is the real price, and it
- *  buys back the resolution: `BASE_LOD_PX` goes 64 -> 128, so every sprite steps up one LOD. The corpus
- *  already carries it — 0 of 27 manifest entries are short of 128 and the wolf's master is 512, which is
- *  why it read as mush at 64. */
+ *  buys back the resolution. (one-resolution: sprites now pack at their manifest MAX regardless —
+ *  `SQUARE` no longer caps what art is fetched, only how many texels a level-0 slot displays.) */
 export const SQUARE = 128;
 
 /** World UNIT in px — `UNIT = SQUARE/16`; 16 units per tile edge. Shadow math is in units.

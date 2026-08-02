@@ -124,8 +124,8 @@ vec2 primPos(uvec4 rec) {
  *  `[0, subH]` from its base — `subY` stays purely the art's atlas address.
  *  `targetH` is the LIT POINT's height (0 = ground; a billboard texel's height up its card),
  *  so shadows land on billboards through the same solve. The def's SEED lane carries the
- *  frame's atlas scale (`pxPerUnit × 8`) — the old hardcoded ×8 was only true at the 128-px
- *  lod. */
+ *  frame's atlas scale (`pxPerUnit × 8`) — the old hardcoded ×8 was only true for 128-px
+ *  masters. */
 export const OCCLUSION_GLSL = /* glsl */ `
 // The def's ATLAS PAGE rides the (otherwise unread) anchor.x lane: frames spread across
 // SpritePool pages, and sampling a page-1 frame on page 0 reads another stem's silhouette

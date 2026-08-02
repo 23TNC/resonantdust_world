@@ -67,17 +67,20 @@ Stances: [`README`](README.md)._
 
 ## P4 — rename the survivor
 
-- [ ] Rename the slot-grid "lod" to PARTITION LEVEL ([F1](forks.md#f1)) across
+- [x] Rename the slot-grid "lod" to PARTITION LEVEL ([F1](forks.md#f1)) across
       squareMath (`lodForZoom` → `partitionForZoom`, `LOD_MAX` → `PARTITION_MAX`),
       SquareCache, and the lighting `win.lod` plumbing. Acceptance: `grep -wi lod`
       over `client/webgl/src` hits only history-referencing comments; typecheck.
-- [ ] Update VARIABLES.md (the freed `frame_lod` u2 returns to reserved; the torus
+      → 7 residual hits: history notes + the server's `/lod/` route literal (wire
+      name, out of scope). `lodUrl`→`texUrl`, `lodStats`→`poolStats`,
+      `lod.ts`→`urls.ts`, previewCache helpers renamed.
+- [x] Update VARIABLES.md (the freed `frame_lod` u2 returns to reserved; the torus
       paragraph says "partition level") and the affected component docs. Acceptance:
       `bin/rd docs-check` green.
 
 ## P5 — the sweep
 
-- [ ] Cold loads at zoom 2 / 1 / 0.5 / 0.25: textured world, pools + shadows intact,
+- [x] Cold loads at zoom 2 / 1 / 0.5 / 0.25: textured world, pools + shadows intact,
       A/B captures beside P0's, memory counter beside P0's, `__framecost` sanity
       (no regression). Acceptance: captures + numbers in `completed.md`; **the user's
       eyes are the exit criterion**.

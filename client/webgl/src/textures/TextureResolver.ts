@@ -18,8 +18,8 @@
 import { Blitter, type Renderer, Texture, TexFrame } from "../gl";
 import { SpritePool } from "./SpritePool";
 import { type AtlasDraw } from "./TextureAtlas";
-import { getLod, putLod } from "./previewCache";
-import { lodUrl, type TexMap } from "./lod";
+import { getCachedMap, putCachedMap } from "./previewCache";
+import { texUrl, type TexMap } from "./urls";
 import { TextureManifest } from "./textureManifest";
 
 /** A resolve result: the atlas sub-frame to bake (null for the GEO tier — the caller uses its own
@@ -30,7 +30,7 @@ export interface ResolvedTexture {
 }
 
 /** Sprite-pool occupancy for the debug HUD — one frame per stem now, so a plain counter. */
-export interface LodStats {
+export interface PoolStats {
   pages: number;
   frames: number;
 }
@@ -40,13 +40,11 @@ export class TextureResolver {
   private blitter: Blitter | null = null;
   private root: string;
 
-  /** ONE shared pool for every CO-PACKED sprite frame across ALL lod sizes. Each frame is `2N × 2N`
-   *  holding the stem's four maps as quadrants (albedo TL, normal TR, surface BL, layers BR). The shadow
-   *  gather + the lighting bake bind a SINGLE page while prims hold defs at MIXED lods (immutable per-lod
-   *  defs), so every lod's frame must live on the same page — per-size pools put each lod on its own page
-   *  and every mid-session lod change went off-page. Co-packing keeps all four maps co-located at every lod
-   *  (normal = frame + a fixed quadrant offset), so there is no separate normal page/band. Mixed pow2 ≥16
-   *  frames keep the 16-px def alignment. 2048² spill hits the off-page warn (the C5 texture array lifts it). */
+  /** ONE shared pool for every CO-PACKED sprite frame — one frame per stem, at its manifest max.
+   *  Each frame is `2N × 2N` holding the stem's four maps as quadrants (albedo TL, normal TR,
+   *  surface BL, layers BR) across the TWIN pages (F4: graphics filtered, data exact — same
+   *  coordinates, two textures). Pow2-square ≥16 frames keep the 16-px def alignment (the F3
+   *  LAW, enforced by refusal). 2048² spill hits the off-page warn (the C5 texture array lifts it). */
   private spritePool: SpritePool | null = null;
   /** stem → its ONE loaded co-packed `2N` frame (one-resolution: the ladder is gone). */
   private readonly packed = new Map<string, TexFrame>();
@@ -125,7 +123,7 @@ export class TextureResolver {
    *
    *  The atlas then ingests **that rect and nothing else**, identically for albedo, normal, surface
    *  and layers. This replaces deriving the rect from decoded pixels: the derived bbox ran on
-   *  whichever lod happened to decode first and so moved between sessions
+   *  whichever size happened to decode first and so moved between sessions
    *  (`docs/work/2026-08-02-subframe-ingest/issues.md` I7), which is not something placement can be
    *  registered against.
    *
@@ -207,13 +205,11 @@ export class TextureResolver {
     for (const fn of this.listeners) fn();
   }
 
-  lodStats(): LodStats {
+  poolStats(): PoolStats {
     // one-resolution: ONE co-pack per stem — a plain counter is the whole story.
     return { pages: this.spritePool?.pageCount ?? 0, frames: this.packed.size };
   }
 
-  /** Best sub-frame for `stem`'s `map` available now (+ tier), kicking the upgrade toward the target
-   *  LOD. A falsy stem, no root/renderer, an unlisted stem, or a map the stem lacks → geo (null). */
   /** Whether the serving manifest lists `stem` (human-pawns P3): the variant-folder
    *  fallback — a def variant with no mastered folder degrades to the canonical stem
    *  instead of resolving geo forever (the wolf's variant-0 case). */
@@ -223,7 +219,7 @@ export class TextureResolver {
 
   /** The stem's frame WORLD SPAN in tiles, from the manifest (meta.json → DSL-authored), or
    *  null when unstamped. Lighting-correctness P1b/I2: the RECORD layer's span source — span
-   *  must never be derived from streamed atlas px, which is lod-dependent and simply wrong. */
+   *  must never be derived from streamed atlas px, which is size-dependent and simply wrong. */
   spanOf(stem: string): number | null {
     return this.manifest.entry(stem)?.span ?? null;
   }
@@ -328,9 +324,9 @@ export class TextureResolver {
   }
 
   // ── loads (CO-PACK) ───────────────────────────────────────────────────────────
-  /** Load ALL of `stem`'s maps at `size` and CO-PACK them into one `2N` frame (albedo TL, normal TR,
-   *  surface BL, layers BR). One 2N allocation per (stem, size) — the four maps land co-located on one
-   *  page, so a prim's def frame + a fixed quadrant offset resolves any map at any lod. */
+  /** Load ALL of `stem`'s maps at the manifest max and CO-PACK them into one `2N` frame (albedo TL,
+   *  normal TR, surface BL, layers BR). ONE allocation per stem — the four maps land co-located, so
+   *  a prim's def frame + a fixed quadrant offset resolves any map. */
   private async ensureCoPack(stem: string, size: number, hash: string): Promise<void> {
     const pkey = stem; // one-resolution: one pack per stem — the size IS the manifest max
     if (this.pending.has(pkey) || this.packed.has(stem)) return;
@@ -353,14 +349,14 @@ export class TextureResolver {
         this.scaleWarned = true;
         console.warn(`[resolver] ${stem}: sprite_scale on a GRID stem is unsupported — packed unscaled`);
       }
-      // Sprite opaque bbox from the SURFACE map's coverage (B channel) — LOD-independent fractions; drives
+      // Sprite opaque bbox from the SURFACE map's coverage (B channel) — size-independent fractions; drives
       // the re-centre + the shadow-cast quad. All maps decode together now, so there is no ordering defer.
       if (surf && !this.spriteBBox.has(stem)) {
         const rawB = computeSpriteBBox(surf);
         this.rawBBox.set(stem, rawB);
         this.spriteBBox.set(stem, scaled ? transformedBBox(rawB, scale!) : rawB);
       }
-      const quadN = (albedo ?? surf)!.width; // square masters → every map is quadN × quadN at this lod
+      const quadN = (albedo ?? surf)!.width; // square masters → every map is quadN × quadN
       const ok = this.packCoPack(stem, size, quadN, bmps, scaled ? scale : undefined, this.rawBBox.get(stem));
       for (const b of bmps) b?.close();
       if (ok) {
@@ -368,7 +364,7 @@ export class TextureResolver {
         this.emit();
       }
     } catch (e) {
-      // LOD unavailable — stay on the current tier. WARN, don't swallow: a silent catch here
+      // Bytes unavailable — the stem stays geo. WARN, don't swallow: a silent catch here
       // once hid a whole-world geo regression (lighting-visual P5) behind zero console output.
       console.warn(`[resolver] co-pack failed for ${stem}@${size}:`, e);
     } finally {
@@ -378,16 +374,16 @@ export class TextureResolver {
 
   /** Fetch (or read the IndexedDB cache for) one map's bytes; null on 404 (a stem lacking the map). */
   private async loadMapBytes(stem: string, size: number, hash: string, map: TexMap): Promise<ArrayBuffer | null> {
-    const cached = await getLod(stem, map);
+    const cached = await getCachedMap(stem, map);
     if (cached && cached.v === hash) return cached.bytes;
-    const res = await fetch(lodUrl(this.root, stem, hash, size, map));
+    const res = await fetch(texUrl(this.root, stem, hash, size, map));
     if (res.status === 404) {
       this.manifest.refresh();
       return null;
     }
-    if (!res.ok) throw new Error(`lod fetch ${res.status}: ${lodUrl(this.root, stem, hash, size, map)}`);
+    if (!res.ok) throw new Error(`texture fetch ${res.status}: ${texUrl(this.root, stem, hash, size, map)}`);
     const bytes = await res.arrayBuffer();
-    void putLod(stem, map, { v: hash, bytes });
+    void putCachedMap(stem, map, { v: hash, bytes });
     return bytes;
   }
 
@@ -414,7 +410,7 @@ export class TextureResolver {
         const [fx, fy, fw, fh, ax, ay] = sub;
         const sx = fx * N, sy = fy * N, sw = Math.max(1, fw * N), sh = Math.max(1, fh * N);
         // F2: scale to FIT, aspect preserved. The quadrant must stay square pow2 — `ppu` and the
-        // lod ladder both assume it — so exactly one axis fills and the other keeps a margin.
+        // F3 packing law both assume it — so exactly one axis fills and the other keeps a margin.
         // Stretching to fill would distort any non-square subframe; blitting at native px would
         // keep the letterbox this exists to remove.
         let k = Math.min(N / sw, N / sh);

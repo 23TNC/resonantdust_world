@@ -38,7 +38,7 @@ uniform sampler2D uResidual;               // albedo residual base (RGB)
 uniform sampler2D uLayers;                 // per-material weight map (RGB coefficients)
 uniform sampler2D uSurface;                // surface: R=height, G=ao, B=coverage (also the silhouette)
 uniform sampler2D uNoise;                  // tiling noise atlas
-uniform sampler2D uNormalTex;              // normal LOD (RGB; flat-up bg)
+uniform sampler2D uNormalTex;              // normal map (RGB; flat-up bg)
 uniform vec4 uResidualRect;
 uniform vec4 uLayersRect;
 uniform vec4 uSurfaceRect;
@@ -208,7 +208,7 @@ export class MrtBakeShader {
   setNoise(t: Texture | null): void {
     this.noise = t;
   }
-  /** The normal LOD, or null → flat-up fallback (`uHasNormal = 0`). */
+  /** The normal map, or null → flat-up fallback (`uHasNormal = 0`). */
   setNormal(t: Texture | null, rect = IDENTITY_RECT()): void {
     this.normalTex = t;
     this.normalRect = rect;

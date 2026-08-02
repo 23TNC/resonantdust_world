@@ -19,10 +19,10 @@ export class SpritePool {
   private readonly blitter: Blitter;
   private readonly pageSize: number;
   private readonly atlases: TextureAtlas[] = [];
-  /** stem → its packed sub-frame at this pool's LOD size. */
+  /** stem → its ONE packed co-pack frame (references the DATA page; see F4). */
   private readonly byStem = new Map<string, TexFrame>();
 
-  /** `pageSize` sizes each atlas page — big enough to hold many of this LOD before spilling. */
+  /** `pageSize` sizes each atlas page pair — big enough to hold many stems before spilling. */
   constructor(renderer: Renderer, blitter: Blitter, pageSize: number) {
     this.renderer = renderer;
     this.blitter = blitter;

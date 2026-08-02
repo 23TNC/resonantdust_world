@@ -36,7 +36,7 @@ export class RecordSync {
   private occupied = new Set<number>();
   /** The emitter set the light map currently describes. */
   private lightSig = "";
-  /** Resolver frames moved (a lod landed / a page repacked) → re-write every definition. */
+  /** Resolver frames moved (a pack landed / a page repacked) → re-write every definition. */
   private defsStale = true;
   /** Atlas PAGE registry, first-seen order — a def's page index rides its anchor.x lane
    *  (P3: silhouettes sample the page they live on; two pages bind, more fall back). */
@@ -51,7 +51,7 @@ export class RecordSync {
   /** One rotation px's fields from a resolved stem: span from the MANIFEST (I2 — never atlas
    *  px), and the frame's atlas scale carried in the def's otherwise-meaningless SEED lane as
    *  `pxPerUnit × 8` — the silhouette sampler needs it, and hardcoding 8 was only ever true at
-   *  the 128-px lod (P3).
+   *  the 128-px masters (P3).
    *
    *  **No subframe.** The def used to carry the art's opaque bbox in whole units and every card was
    *  placed and silhouetted through it; that is deleted (user, 2026-08-02) because the quantised

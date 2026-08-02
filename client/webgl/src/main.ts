@@ -169,13 +169,13 @@ async function main(): Promise<void> {
   // Drive the debug HUD every frame, scene-independent: frame-time → fps, the
   // draw-call tally (0 until W4), and the atlas occupancy (empty until W4).
   app.ticker.add((deltaMS) => {
-    const lod = textureResolver.lodStats();
+    const pool = textureResolver.poolStats();
     debugPanel.setStats(
       deltaMS,
       drawCalls.readAndReset(),
       {
-        atlases: lod.pages,
-        frames: lod.frames,
+        atlases: pool.pages,
+        frames: pool.frames,
       },
       syncHistory.current() ?? undefined,
       buildNowStats(),

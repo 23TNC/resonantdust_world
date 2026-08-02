@@ -1,15 +1,15 @@
 //! The client mirror of the server's texture manifest — the authoritative index of
-//! what LODs exist, so the resolver builds every LOD URL from it and never
+//! what is served, so the resolver builds every texture URL from it and never
 //! speculatively requests one that isn't there (a 404 against R2 is a billable op).
 //!
-//! Per stem: a content `hash` (the LOD URL's cache-buster — a re-master changes it,
-//! so a stale URL 404s and we refetch here) and the master's `maxSize` (the LOD
-//! ceiling the resolver clamps to). Fetched at login ({@link setRoot}) and polled
-//! for changes; a change fires {@link onChange} so the resolver drops stale LODs and
+//! Per stem: a content `hash` (the URL's cache-buster — a re-master changes it, so a
+//! stale URL 404s and we refetch here) and the master's `maxSize` — one-resolution F2:
+//! THE size the stem packs at. Fetched at login ({@link setRoot}) and polled for
+//! changes; a change fires {@link onChange} so the resolver drops stale packs and
 //! re-fetches with the fresh hash.
 
-import { manifestUrl, manifestVersionUrl } from "./lod";
-import type { TexMap } from "./lod";
+import { manifestUrl, manifestVersionUrl } from "./urls";
+import type { TexMap } from "./urls";
 
 /** One stem's manifest row: the master's content hash, its short-axis ceiling, and which
  *  maps (albedo|normal|depth|emissive) actually have a leaf on disk — the resolver skips
@@ -62,7 +62,7 @@ export class TextureManifest {
     return this.entries.get(stem);
   }
 
-  /** Subscribe to "the manifest changed" (a re-master or newly-generated LOD).
+  /** Subscribe to "the manifest changed" (a re-master or newly-served stem).
    *  Returns an unsubscribe. */
   onChange(fn: () => void): () => void {
     this.listeners.add(fn);

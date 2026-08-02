@@ -1,20 +1,16 @@
-//! Persistent LOD store (IndexedDB) — pins low-res texture bytes in a store the
-//! browser's HTTP cache can't evict, so a returning player's placeholders decode
-//! with ZERO network (and never get pushed out by large full-res masters, which
-//! share the HTTP cache's one LRU pool).
+//! Persistent texture-byte store (IndexedDB) — pins each stem's map bytes in a store the
+//! browser's HTTP cache can't evict, so a returning player packs the whole world with
+//! ZERO network (one-resolution: a fresh reload after priming issues no texture fetches).
 //!
-//! Keyed by `stem@size`, one entry per (kind, LOD) — the entry carries the content
-//! `hash` it was fetched at (the manifest's per-master hash), so a re-mastered kind
-//! reads as stale and is re-fetched + overwritten in place (no accumulation). A hash
-//! MATCH is served with no network at all — the URL is content-addressed.
-//! The largest masters are best left to the evictable HTTP cache (a lower LOD floor
-//! catches an eviction gracefully), so callers persist the small buckets here.
+//! Keyed by `stem@map`, one entry per (stem, MAP) at the manifest's one size — the entry
+//! carries the content `hash` it was fetched at (the manifest's per-master hash), so a
+//! re-mastered kind reads as stale and is re-fetched + overwritten in place (no
+//! accumulation). A hash MATCH is served with no network at all.
 //!
 //! Every op is best-effort: a private-mode / quota / unsupported failure degrades
-//! to "no persistence" (the network fetch still runs), never a thrown error. One PNG
-//! per (stem, size, MAP) entry — the multi-channel cache (albedo|normal|depth|…).
+//! to "no persistence" (the network fetch still runs), never a thrown error.
 
-import type { TexMap } from "./lod";
+import type { TexMap } from "./urls";
 
 const DB_NAME = "resonantdust-tex";
 const STORE = "previews";
@@ -23,15 +19,15 @@ const STORE = "previews";
  *  per-size rows become dead weight under the new `stem@map` keys — harmless (re-fetched once). */
 const DB_VERSION = 3;
 
-/** A persisted LOD: the raw PNG bytes for one map plus the content hash they were fetched
+/** A persisted map: the raw PNG bytes for one map plus the content hash they were fetched
  *  at (`v`), for staleness checks. */
-export interface LodBytes {
+export interface CachedBytes {
   v: string;
   bytes: ArrayBuffer;
 }
 
 /** The composite store key for one (stem, map) — one-resolution: no size dimension. */
-const lodKey = (stem: string, map: TexMap): string => `${stem}@${map}`;
+const mapKey = (stem: string, map: TexMap): string => `${stem}@${map}`;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -80,12 +76,12 @@ function db(): Promise<IDBDatabase> {
 
 /** The persisted bytes for `(stem, map)`, or null if absent / storage unavailable.
  *  The caller revalidates `.v` against the gate with a conditional request. */
-export async function getLod(stem: string, map: TexMap): Promise<LodBytes | null> {
+export async function getCachedMap(stem: string, map: TexMap): Promise<CachedBytes | null> {
   try {
     const d = await db();
-    return await new Promise<LodBytes | null>((resolve, reject) => {
-      const req = d.transaction(STORE, "readonly").objectStore(STORE).get(lodKey(stem, map));
-      req.onsuccess = () => resolve((req.result as LodBytes | undefined) ?? null);
+    return await new Promise<CachedBytes | null>((resolve, reject) => {
+      const req = d.transaction(STORE, "readonly").objectStore(STORE).get(mapKey(stem, map));
+      req.onsuccess = () => resolve((req.result as CachedBytes | undefined) ?? null);
       req.onerror = () => reject(req.error);
     });
   } catch {
@@ -94,12 +90,12 @@ export async function getLod(stem: string, map: TexMap): Promise<LodBytes | null
 }
 
 /** Persist `entry` for `(stem, map)`, overwriting any prior version. Best-effort. */
-export async function putLod(stem: string, map: TexMap, entry: LodBytes): Promise<void> {
+export async function putCachedMap(stem: string, map: TexMap, entry: CachedBytes): Promise<void> {
   try {
     const d = await db();
     await new Promise<void>((resolve, reject) => {
       const tx = d.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).put(entry, lodKey(stem, map));
+      tx.objectStore(STORE).put(entry, mapKey(stem, map));
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
