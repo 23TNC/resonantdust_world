@@ -172,3 +172,23 @@ art.
 
 **This is why [F6](#f6) lands for free.** A linked stem's per-cell subframe is just indices 0..15 of
 the same array, so `internal_padding` retires into it with no per-cell mechanism of its own.
+
+## F10 — For a cold thing the rotation index IS the VARIANT {#f10}
+
+**Chosen: yes — variants occupy the same 0..15 space as facings and autotile cells.**
+
+[F9](#f9) collapsed facings and linked cells into one index. A cold thing's variant is the third
+consumer of that space, and it needs no fourth mechanism: the resolver already addresses a cold
+thing's art by `(stem, cell)` where `cell` **is** the variant, and `defByKey` is already `stem#cell`.
+
+This is what makes per-variant minimum bboxes possible at all, and the payoff is not marginal. The
+conifer's nine variants range from **0.198** to **0.525** opaque; their union is 0.525, so a single
+union rect would waste **2.6×** the texels on the smallest sapling. Per-variant rects give each one
+its own tight crop.
+
+**The union is still authored, as the non-indexed fallback.** An index past the mastered set — a
+variant the corpus does not know about — must not be clipped by a rect measured from its siblings.
+
+**This binds the P2 wiring**: `setSubframe` must be keyed by `(stem, cell)`, not by stem alone, and
+the cold-thing path must pass the variant as the rotation index. Keyed by stem alone, every variant
+would take variant 0's crop and eight of nine trees would be clipped.

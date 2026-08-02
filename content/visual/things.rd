@@ -24,15 +24,56 @@
                 2 &thing.span set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
-                ; SUBFRAME (subframe-ingest P1) — which fraction of the master is actually art.
-                ; A conifer is a narrow spire in a 2x2 frame: barely half its width is art.
-                ; Measured from the 128-px masters on disk (surface.B > 0.35), union across every
-                ; variant so none is clipped (F8). Authored NON-DIRECTIONALLY: a cold thing has one
-                ; mastered facing, so e/s/n all inherit this one rect.
+                ; SUBFRAME (subframe-ingest P1/F9) — the MINIMUM bbox, PER VARIANT.
+                ; A conifer varies enormously by variant: the smallest sapling fills 0.198 of its frame,
+                ; the largest 0.525. One union rect would waste 2.6x the texels on the small ones.
+                ; The rotation index IS the variant for a cold thing (F10): one 0..15 space serves
+                ; sprite facings, linked autotile cells and variants alike.
+                ; GENERATED — `python3 bin/lib/subframe.py <stem>`. Do not hand-edit: measured from
+                ; the 128-px masters (surface.B > 0.35, the shader's own constant), and a number
+                ; edited by hand is how an authored rect silently stops matching its art (I6).
+                ; The non-indexed rect is the UNION of every variant — the fallback for an index
+                ; past the mastered set, which must never clip art it does not know about.
                 0.2188 &thing.subframe.x set
                 0.0391 &thing.subframe.y set
                 0.5625 &thing.subframe.w set
                 0.9336 &thing.subframe.h set
+                0.3359 &thing.subframe.r0.x set
+                0.2109 &thing.subframe.r0.y set
+                0.3359 &thing.subframe.r0.w set
+                0.5898 &thing.subframe.r0.h set
+                0.2969 &thing.subframe.r1.x set
+                0.1445 &thing.subframe.r1.y set
+                0.4102 &thing.subframe.r1.w set
+                0.7148 &thing.subframe.r1.h set
+                0.2578 &thing.subframe.r2.x set
+                0.0898 &thing.subframe.r2.y set
+                0.4844 &thing.subframe.r2.w set
+                0.8281 &thing.subframe.r2.h set
+                0.2891 &thing.subframe.r3.x set
+                0.1445 &thing.subframe.r3.y set
+                0.4258 &thing.subframe.r3.w set
+                0.7188 &thing.subframe.r3.h set
+                0.25 &thing.subframe.r4.x set
+                0.0664 &thing.subframe.r4.y set
+                0.5039 &thing.subframe.r4.w set
+                0.875 &thing.subframe.r4.h set
+                0.2188 &thing.subframe.r5.x set
+                0.0391 &thing.subframe.r5.y set
+                0.5625 &thing.subframe.r5.w set
+                0.9336 &thing.subframe.r5.h set
+                0.25 &thing.subframe.r6.x set
+                0.1055 &thing.subframe.r6.y set
+                0.5 &thing.subframe.r6.w set
+                0.8008 &thing.subframe.r6.h set
+                0.2461 &thing.subframe.r7.x set
+                0.0664 &thing.subframe.r7.y set
+                0.5117 &thing.subframe.r7.w set
+                0.8711 &thing.subframe.r7.h set
+                0.2227 &thing.subframe.r8.x set
+                0.082 &thing.subframe.r8.y set
+                0.5547 &thing.subframe.r8.w set
+                0.8438 &thing.subframe.r8.h set
                 ; The conifer's albedo splits into ch0 = foliage + ch1 = trunk (see `art
                 ; split_layers world/conifer`). The canonical reconstruction is
                 ;   out = packed_residual + packed.R*tint0 + packed.G*tint1
@@ -60,15 +101,72 @@
                 0.5 &thing.sprite_scale.h set
                 1.0 &thing.anchor.y set
                 1.0 &thing.sprite_anchor.y set
-                ; SUBFRAME (subframe-ingest P1) — which fraction of the master is actually art.
-                ; The tightest stem in the corpus at 0.72 opaque, and the one whose halo found the
-                ; bug (docs/work/2026-08-02-normal-frames/issues.md#i8). Measured from the 128-px
-                ; masters on disk (surface.B > 0.35), union across all 13 variants so none is
-                ; clipped (F8). Authored NON-DIRECTIONALLY: a cold thing has one mastered facing.
+                ; SUBFRAME (subframe-ingest P1/F9) — the MINIMUM bbox, PER VARIANT.
+                ; Flora varies less (0.533..0.710), but it is the stem whose halo found the original bug
+                ; (docs/work/2026-08-02-normal-frames/issues.md#i8), so it gets the same treatment.
+                ; The rotation index IS the variant for a cold thing (F10): one 0..15 space serves
+                ; sprite facings, linked autotile cells and variants alike.
+                ; GENERATED — `python3 bin/lib/subframe.py <stem>`. Do not hand-edit: measured from
+                ; the 128-px masters (surface.B > 0.35, the shader's own constant), and a number
+                ; edited by hand is how an authored rect silently stops matching its art (I6).
+                ; The non-indexed rect is the UNION of every variant — the fallback for an index
+                ; past the mastered set, which must never clip art it does not know about.
                 0.0547 &thing.subframe.x set
                 0.1094 &thing.subframe.y set
                 0.8984 &thing.subframe.w set
                 0.7969 &thing.subframe.h set
+                0.0859 &thing.subframe.r0.x set
+                0.1562 &thing.subframe.r0.y set
+                0.8359 &thing.subframe.r0.w set
+                0.7188 &thing.subframe.r0.h set
+                0.0703 &thing.subframe.r1.x set
+                0.1328 &thing.subframe.r1.y set
+                0.8672 &thing.subframe.r1.w set
+                0.7578 &thing.subframe.r1.h set
+                0.0859 &thing.subframe.r2.x set
+                0.125 &thing.subframe.r2.y set
+                0.8281 &thing.subframe.r2.w set
+                0.7656 &thing.subframe.r2.h set
+                0.0703 &thing.subframe.r3.x set
+                0.125 &thing.subframe.r3.y set
+                0.8672 &thing.subframe.r3.w set
+                0.7578 &thing.subframe.r3.h set
+                0.0781 &thing.subframe.r4.x set
+                0.1406 &thing.subframe.r4.y set
+                0.8516 &thing.subframe.r4.w set
+                0.7422 &thing.subframe.r4.h set
+                0.0703 &thing.subframe.r5.x set
+                0.1406 &thing.subframe.r5.y set
+                0.875 &thing.subframe.r5.w set
+                0.7344 &thing.subframe.r5.h set
+                0.0938 &thing.subframe.r6.x set
+                0.1406 &thing.subframe.r6.y set
+                0.8125 &thing.subframe.r6.w set
+                0.7422 &thing.subframe.r6.h set
+                0.0781 &thing.subframe.r7.x set
+                0.1641 &thing.subframe.r7.y set
+                0.8438 &thing.subframe.r7.w set
+                0.6875 &thing.subframe.r7.h set
+                0.0859 &thing.subframe.r8.x set
+                0.1406 &thing.subframe.r8.y set
+                0.8281 &thing.subframe.r8.w set
+                0.7422 &thing.subframe.r8.h set
+                0.0547 &thing.subframe.r9.x set
+                0.1094 &thing.subframe.r9.y set
+                0.8906 &thing.subframe.r9.w set
+                0.7969 &thing.subframe.r9.h set
+                0.0547 &thing.subframe.r10.x set
+                0.2109 &thing.subframe.r10.y set
+                0.8984 &thing.subframe.r10.w set
+                0.5938 &thing.subframe.r10.h set
+                0.0703 &thing.subframe.r11.x set
+                0.1641 &thing.subframe.r11.y set
+                0.8594 &thing.subframe.r11.w set
+                0.6719 &thing.subframe.r11.h set
+                0.0781 &thing.subframe.r12.x set
+                0.1484 &thing.subframe.r12.y set
+                0.8516 &thing.subframe.r12.w set
+                0.7266 &thing.subframe.r12.h set
                 0 return
             @on_destroy>
                 0 return
