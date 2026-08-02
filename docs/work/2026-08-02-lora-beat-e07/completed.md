@@ -28,3 +28,26 @@ to confirm the baseline still reproduces, and that result is the first real entr
   a config change, not a risk.** Noted for that phase: `allow_tf32` is currently **False**, so
   fp32 matmuls are not using the tensor cores either — worth turning on for the non-bf16 parts of
   the graph.
+- **2026-08-02 · P0.2 · ComfyUI stays OFF autostart** ([F5](forks.md#f5)). Autostart was insurance
+  against [I2](issues.md#i2), but [P0.3](todo.md) removes that failure properly — a down box is now
+  an immediate non-zero exit rather than a quietly-different corpus, which holds whether or not the
+  service is running. Against it: the container takes **~10 min** to serve (measured today, nearly
+  all recursive `chown`), the box's standing job is home automation, and its boot config is the
+  user's existing choice. Revisit only if the pipeline becomes an unattended/cron job.
+- **2026-08-02 · P0.3 · The silent LANCZOS fallback is gone — BOTH of them.** The known one was
+  the pre-flight in `main()`. Reading the code found a **second, nastier** path: `normalise()`
+  caught per-image ESRGAN failures and printed a line, so one interrupted run could produce a set
+  that is **part ESRGAN and part LANCZOS**, with nothing on disk recording which images got which.
+  Both now abort; `--allow-degraded` opts back in, and `--upscale lanczos` remains the deliberate
+  whole-set choice. Verified all five paths:
+
+  | case | expected | result |
+  |---|---|---|
+  | box unreachable, default | exit ≠ 0 | **exit 1**, message names both opt-outs |
+  | box unreachable, `--allow-degraded` | proceeds | exit 0, `upscale=lanczos`, 2/2 images |
+  | box unreachable, `--upscale lanczos` | proceeds | exit 0, `upscale=lanczos`, 2/2 images |
+  | box UP, default | ESRGAN happy path intact | exit 0, `upscale=esrgan`, 2/2 in 33 s |
+  | per-image ESRGAN miss (injected) | abort by default, tolerate with flag | **aborted**; `--allow-degraded` proceeded |
+
+  The per-image case was checked by monkeypatching `esrgan()` to raise, since a real miss cannot be
+  provoked on demand.
