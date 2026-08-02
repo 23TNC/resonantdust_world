@@ -70,3 +70,27 @@ not against a considered baseline.
 Recorded so [P3](todo.md) does not read the old numbers as a tuned starting point — and so the new
 headroom gets spent one turn at a time rather than all at once, which would recreate exactly the
 attribution problem in [I3](#i3).
+
+## I5 — Every LoRA to date was trained against a PHOTOREALISM base {#i5}
+_2026-08-02 · read from `bin/lib/generate.py` + the box's checkpoint dir · **the headline lesson**_
+
+```python
+MODEL = "sdxl/cyberrealisticXL_v80.safetensors"   # bin/lib/generate.py:34
+```
+
+The box's `checkpoints/sdxl/` holds four files. Three — `Illustrious-XL-v1.0`,
+`animagine-xl-4.0`, `sd_xl_base_1.0` — are all dated **2026-07-28**, pulled during the hardware
+conversation. The fourth, `cyberrealisticXL_v80`, is dated **2026-03-23**. So for the whole life of
+`rd_quadruped` (runs 1–5, `e07` included) the only SDXL checkpoints available were a photoreal
+portrait finetune and `sdxlturbo`.
+
+The target art is *"flat regions bounded by hard outlines — vector graphics rendered as bitmaps"*
+(the P2 log's own description). A photorealism finetune's prior pulls the opposite way, so the LoRA
+was not only learning our convention, it was spending capacity **overcoming its own base**.
+
+It also fits the failure *shapes* rather than just being a plausible story: photoreal bases favour
+a framed portrait subject and a naturalistic sitting pose, which is exactly what runs 4 and 5
+produced on south and east respectively.
+
+**Not proven, and this stream will not try to prove it** ([F2](forks.md#f2)). It is recorded as the
+most plausible lesson available, it is cheap to act on, and [F4](forks.md#f4) acts on it.

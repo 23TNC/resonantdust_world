@@ -89,45 +89,47 @@ export const REGION_DIM = 16;
 export const OVERSCAN = 2;
 
 // ── The fixed slot grid (work `2026-07-26-textile-slot`; VARIABLES is authoritative) ──
-// Every textile map is sized in TILES, never in screen resolution, and NEVER CHANGES SIZE. A slot holds
-// 1 tile at lod 0 and `2^lod × 2^lod` tiles at lod k, so the texture is constant while the world it covers
-// grows 4× per step. That is what stops the lightmap tracking zoom (it was 176 MB at zoom 0.25) and what
-// makes gameplay identical on every monitor.
-/** Visible slots — the world every player sees at a given lod, regardless of monitor. */
+// Every textile map is sized in TILES, never in screen resolution, and NEVER CHANGES SIZE. A slot
+// holds 1 tile at PARTITION LEVEL 0 and `2^level × 2^level` tiles at level k, so the texture is
+// constant while the world it covers grows 4× per step. That is what stops the lightmap tracking
+// zoom (it was 176 MB at zoom 0.25) and what makes gameplay identical on every monitor.
+// (one-resolution P4: this concept USED to share the name "lod" with the deleted atlas ladder —
+// the PARTITION LEVEL is the survivor, renamed.)
+/** Visible slots — the world every player sees at a given partition level, regardless of monitor. */
 export const VISIBLE_X = 28;
 export const VISIBLE_Y = 12;
 /** Total slots including {@link OVERSCAN} on each side. Chosen so BOTH are POWERS OF TWO: the toroidal
- *  wrap modulus is `SLOTS << lod`, which stays pow2 at every lod, so `mod(wc, cols)` compiles to a
+ *  wrap modulus is `SLOTS << level`, which stays pow2 at every level, so `mod(wc, cols)` compiles to a
  *  bitmask instead of an integer division. Purely a performance property — the grid is correct at any
- *  size, since a slot subdivides into `2^lod` tiles regardless. */
+ *  size, since a slot subdivides into `2^level` tiles regardless. */
 export const SLOTS_X = VISIBLE_X + 2 * OVERSCAN; // 32
 export const SLOTS_Y = VISIBLE_Y + 2 * OVERSCAN; // 16
-/** Lod levels 0..2 — `SQUARE` (128) down to 32 px, matching `ZOOM_MIN` 0.25. Fits `u2`
- *  (`definition_data.frame_lod`), which leaves room to restore lod 3 without a layout change. */
-export const LOD_LEVELS = 3;
-export const LOD_MAX = LOD_LEVELS - 1;
-/** The reference render target: the visible slots at lod 0. Standardising on this (rather than the
+/** Partition levels 0..2 — `SQUARE` (128) down to 32 px per tile, matching `ZOOM_MIN` 0.25. Fits
+ *  `u2`, which leaves room to restore level 3 without a layout change. */
+export const PARTITION_LEVELS = 3;
+export const PARTITION_MAX = PARTITION_LEVELS - 1;
+/** The reference render target: the visible slots at level 0. Standardising on this (rather than the
  *  player's panel) is what equalises gameplay across monitors — 4K magnifies ~1.5×, 1080p minifies. */
 export const REFERENCE_W = VISIBLE_X * SQUARE; // 3584
 export const REFERENCE_H = VISIBLE_Y * SQUARE; // 1536
 
-/** Tiles per slot edge at `lod` — 1, 2, 4, 8. */
-export function tilesPerSlot(lod: number): number {
-  return 1 << lod;
+/** Tiles per slot edge at `level` — 1, 2, 4, 8. */
+export function tilesPerSlot(level: number): number {
+  return 1 << level;
 }
-/** Texels per TILE edge at `lod` for a map with `texelsPerSlot` (SQUARE / TEXTILE_UNIT / 1). */
-export function tileTexels(texelsPerSlot: number, lod: number): number {
-  return texelsPerSlot >> lod;
+/** Texels per TILE edge at `level` for a map with `texelsPerSlot` (SQUARE / TEXTILE_UNIT / 1). */
+export function tileTexels(texelsPerSlot: number, level: number): number {
+  return texelsPerSlot >> level;
 }
 /** The COVER fit — the scale that keeps the viewport entirely inside the visible slots.
  *  `max`, not `min`: `min` would fit the whole grid and expose overscan at the edges. */
 export function coverScale(screenW: number, screenH: number): number {
   return Math.max(screenW / REFERENCE_W, screenH / REFERENCE_H);
 }
-/** The lod a zoom sits in: lod 0 covers `[1, 2)`, lod 1 `[0.5, 1)`, … Clamped to the ladder. */
-export function lodForZoom(zoom: number): number {
+/** The partition level a zoom sits in: level 0 covers `[1, 2)`, level 1 `[0.5, 1)`, … Clamped. */
+export function partitionForZoom(zoom: number): number {
   if (!(zoom > 0)) return 0;
-  return Math.min(LOD_MAX, Math.max(0, Math.ceil(-Math.log2(zoom))));
+  return Math.min(PARTITION_MAX, Math.max(0, Math.ceil(-Math.log2(zoom))));
 }
 
 /** Gutter (px) baked around every slot's interior. The bake over-renders neighbour

@@ -53,8 +53,8 @@ uniform highp usampler2D uShadow;    // the gather's output: WHICH caster occlud
 uniform highp usampler2D uReceiver;  // P3: which receiver owns each lighting texel (the receiver map)
 uniform int uRefine;                 // 0 = no shadows, 1 = refine at THIS resolution (F12)
 uniform int uDebugGate;              // 1 = emit the gate's selectivity instead of light
-uniform int uLightW;                 // lighting texels per TILE (TEXTILE_LIGHT >> lod)
-uniform int uUnitT;                  // shadow texels per TILE (TEXTILE_UNIT >> lod)
+uniform int uLightW;                 // lighting texels per TILE (TEXTILE_LIGHT >> level)
+uniform int uUnitT;                  // shadow texels per TILE (TEXTILE_UNIT >> level)
 uniform int uCols;                   // window extent in TILES — the slot torus modulus
 uniform int uRows;
 uniform vec2 uWindowOrigin;          // world tile of the window's start (for the unwrap)
@@ -131,7 +131,7 @@ void main() {
 
   // texel -> world position, in units. lighting-visual P4: the map is on the SLOT TORUS (the
   // composites' machinery — a tile's texel block sits at mod(tile, cols) · uLightW, texture size
-  // fixed, texels-per-tile halving per lod). The UNWRAP recovers the unique window tile with this
+  // fixed, texels-per-tile halving per level). The UNWRAP recovers the unique window tile with this
   // residue, exactly as fillDisplay assigns it.
   int tileX = int(uWindowOrigin.x) + pmod(tx / uLightW - int(uWindowOrigin.x), uCols);
   int tileY = int(uWindowOrigin.y) + pmod(ty / uLightW - int(uWindowOrigin.y), uRows);
@@ -505,8 +505,8 @@ export class LightPass {
   /** Compute the receiver map — ONE draw, light-independent, read by all 8 light fragments. */
   receivers(renderer: Renderer, prim: Texture, def: Texture, presence: Texture, atlas: Texture,
             originTileX: number, originTileY: number, atlas2?: Texture,
-            win?: { cols: number; rows: number; lod: number }): void {
-    const lightW = LIGHT_TEXELS >> (win?.lod ?? 0);
+            win?: { cols: number; rows: number; level: number }): void {
+    const lightW = LIGHT_TEXELS >> (win?.level ?? 0);
     renderer.draw({
       program: this.recvProg, geometry: this.quad, target: this.receiverRT, blend: "none",
       textures: { uPrim: prim, uDef: def, uPresence: presence, uSurfaceAtlas: atlas, uSurfaceAtlas2: atlas2 ?? atlas },
@@ -525,15 +525,15 @@ export class LightPass {
       originTileX: number, originTileY: number,
       opt: { def?: Texture; shadow?: Texture; atlas?: Texture; atlas2?: Texture; refine?: boolean;
              debugGate?: boolean;
-             // P4: the window's torus extent in TILES + the lod (texels-per-tile halve per step).
-             win?: { cols: number; rows: number; lod: number };
+             // P4: the window's torus extent in TILES + the level (texels-per-tile halve per step).
+             win?: { cols: number; rows: number; level: number };
              // lighting-visual P2: the baked normal composites + the display torus that addresses
              // them. slotPx is the CACHE'S current partition — never recomputed here; 0 = unbound
              // (the shader falls back to flat-up).
              normalCold?: Texture; normalWarm?: Texture; surfaceWarm?: Texture;
              depthCold?: Texture; depthWarm?: Texture;
              slotCols?: number; slotRows?: number; slotPx?: number } = {}): void {
-    const lod = opt.win?.lod ?? 0;
+    const level = opt.win?.level ?? 0;
     renderer.draw({
       program: this.slotProg, geometry: this.quad, target: this.slotRT, blend: "none",
       textures: { uPrim: prim, uLight: light,
@@ -547,8 +547,8 @@ export class LightPass {
                   uDepthWarm: opt.depthWarm ?? opt.atlas ?? prim,
                   uReceiver: this.receiverRT.textures[0] },
       uniforms: (p) => {
-        p.uInt("uLightW", LIGHT_TEXELS >> lod);
-        p.uInt("uUnitT", UNITS_PER_TILE >> lod);
+        p.uInt("uLightW", LIGHT_TEXELS >> level);
+        p.uInt("uUnitT", UNITS_PER_TILE >> level);
         p.uInt("uMapW", LIGHT_W);
         p.uInt("uCols", opt.win?.cols ?? SLOTS_X);
         p.uInt("uRows", opt.win?.rows ?? SLOTS_Y);
@@ -584,7 +584,7 @@ export class LightPass {
    *  Still one slot: the other seven, and the whole rest of the sum, are never touched. */
   updateLight(renderer: Renderer, prim: Texture, slot: number, primIndex: number,
               originTileX: number, originTileY: number,
-              win?: { cols: number; rows: number; lod: number }): void {
+              win?: { cols: number; rows: number; level: number }): void {
     const gl = this.gl;
     const deposit = (sign: number): void => {
       renderer.draw({
@@ -602,7 +602,7 @@ export class LightPass {
       program: this.slotOneProg, geometry: this.quad, target: this.slotRT, blend: "none",
       textures: { uPrim: prim },
       uniforms: (p) => {
-        p.uInt("uLightW", LIGHT_TEXELS >> (win?.lod ?? 0)); p.uInt("uMapW", LIGHT_W);
+        p.uInt("uLightW", LIGHT_TEXELS >> (win?.level ?? 0)); p.uInt("uMapW", LIGHT_W);
         p.uInt("uCols", win?.cols ?? SLOTS_X); p.uInt("uRows", win?.rows ?? SLOTS_Y);
         p.uInt("uPrimIndex", primIndex);
         p.uVec2("uWindowOrigin", originTileX, originTileY);

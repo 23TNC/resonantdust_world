@@ -1,42 +1,46 @@
 # Beat e07 — plan
 
 Items are checkboxes; tick in place (`[x]`), never move them. One action + acceptance each.
-Ordering: **make the box able to train at all**, then **decompose P2 one variable at a time**
-(the only axis that correlates with every failure), then spend the 3090's new headroom, then close.
+Ordering: **rig up**, **pick the base**, **build the dataset from lessons**, **train on the 3090's
+headroom**, **the user selects**. This stream changes many variables at once on purpose
+([F2](forks.md#f2)) — do not re-introduce single-variable runs to "make it comparable".
 
-## P0 — Make the rig trainable and the baseline reproducible
+## P0 — Rig, and the bar to clear
 
-- [ ] Bring ComfyUI up on the 3090 and confirm torch sees the card. Acceptance: `/system_stats` answers on `:8188` and reports the 3090 with 24 GB.
-- [ ] Decide whether ComfyUI should autostart, and record the choice. Acceptance: a line in `forks.md`; today it is absent from the unraid autostart list and its restart policy is `no`.
-- [ ] Make `prep_train` FAIL LOUDLY when ComfyUI is unreachable instead of falling back to LANCZOS. Acceptance: with the box down, a rebuild exits non-zero rather than silently producing a different dataset ([I2](issues.md#i2)).
-- [ ] Re-run the frozen A/B harness on `e07` alone to confirm the baseline still reproduces. Acceptance: 26/36 gate and `iou_ref` 0.753 on the same 6 species × e/s × 3 seeds, or the drift is recorded.
-- [ ] Pin the sample set: fixed prompts, fixed seeds, fixed species, written to a file every run reads. Acceptance: two invocations on the same model produce byte-identical sample sheets.
+- [ ] Bring ComfyUI up on the 3090 and confirm torch sees the card. Acceptance: `/system_stats` answers on `:8188` reporting the 3090 and 24 GB.
+- [ ] Decide whether ComfyUI should autostart and record the choice. Acceptance: a line in `forks.md`; today it is absent from the unraid autostart list with restart policy `no`.
+- [ ] Make `prep_train` fail loudly when ComfyUI is unreachable instead of silently using LANCZOS. Acceptance: with the box down a rebuild exits non-zero; ESRGAN is opt-out via an explicit flag ([I2](issues.md#i2)).
+- [ ] Pin the sample set — fixed prompts, seeds and species — in a file every run and A/B reads. Acceptance: two invocations on one model produce byte-identical sample sheets.
+- [ ] Re-run the frozen A/B on `e07` to confirm the bar still reproduces. Acceptance: 26/36 gate and `iou_ref` 0.753 on 6 species × e/s × 3 seeds, or the drift is recorded as the new bar.
 
-## P1 — Decompose the P2 rebuild (the untested common factor)
+## P1 — Choose the base model
 
-- [ ] Rebuild the dataset at v1 settings EXCEPT the upscaler — ESRGAN, unnormalised. Acceptance: fill sd back near v1's 0.148 with outline sharpness near v2's 90.1, both measured over a 120-image sample.
-- [ ] Train run-6 on that set, config identical to run-5. Acceptance: the ONLY delta versus run-5 is scale normalisation, stated in `completed.md` before the run starts.
-- [ ] A/B run-6 against `e07` and review the image sheet before accepting any verdict. Acceptance: gate + `iou_ref` + the user's read on south framing and east pose, recorded together.
-- [ ] If normalisation is exonerated, rebuild at v1 resolution (768) holding the winner's other settings. Acceptance: the delta versus the previous run is resolution alone.
-- [ ] Train run-7 on that set and A/B it the same way. Acceptance: south framing and east pose compared at matched epochs against both `e07` and run-6.
-- [ ] If resolution is exonerated too, rebuild with LANCZOS to close the last P2 variable. Acceptance: the delta is the upscaler alone; this is the last of the three.
-- [ ] Record which P2 variable (if any) accounts for the south-framing regression. Acceptance: a named variable with its A/B evidence in `completed.md`, or an explicit "none of the three" finding.
+- [ ] Generate the pinned set on cyberrealisticXL, Illustrious-XL v1.0 and animagine-xl-4.0 with NO LoRA. Acceptance: one sheet per base, same prompts and seeds, showing each base's untrained prior.
+- [ ] Have the user pick the base whose prior sits closest to flat-region/hard-outline art. Acceptance: a base chosen, with the user's reasoning recorded in `completed.md` ([F4](forks.md#f4) holds my pre-measurement pick).
+- [ ] Confirm the chosen base loads with the SDXL ControlNets already on the box. Acceptance: `mistoline-lineart` and `controlnet-union-promax` both produce a controlled generation without a shape or dtype error.
+- [ ] Confirm which VAE the chosen base wants and wire it explicitly. Acceptance: a generation with no washed-out or artefacted output, and the VAE named in `completed.md` rather than left implicit.
+- [ ] Point `generate.py`'s `MODEL` at the chosen base. Acceptance: the default no longer names a photorealism finetune; the old value is recorded in `completed.md` for rollback.
 
-## P2 — Per-epoch selection, the user's loop
+## P2 — Rebuild the dataset from the lessons
 
-- [ ] Emit samples every epoch on the pinned set for whichever run P1 leaves standing. Acceptance: 15 sample sheets from one run, same prompts and seeds, epoch-labelled.
-- [ ] Have the user pick the best EPOCH from the sheets, not the best run. Acceptance: a chosen epoch recorded with the user's reasoning in `completed.md`.
-- [ ] A/B the chosen epoch against `e07` and the run's final epoch. Acceptance: three-way gate + `iou_ref`, confirming or refuting that mid-run beats end-of-run as `e07`'s own provenance suggests.
+- [ ] Restore v1-range scale variance in `prep_train`, targeting `e07`'s measured spread rather than run-5's timid jitter. Acceptance: fill sd near **0.148**, not 0.027 ([I1](issues.md#i1)).
+- [ ] Keep ESRGAN upscaling and re-verify it on the rebuilt set. Acceptance: outline sharpness near the measured 90.1, versus 43.1 for LANCZOS, over a 120-image sample.
+- [ ] Choose and record the training resolution for the new base. Acceptance: a resolution with a stated reason; 1024² is SDXL-native but was never separated from the other P2 changes.
+- [ ] Rebuild the training set end to end and measure it before any training starts. Acceptance: image/caption counts match, fill sd and outline sharpness recorded, no silent-no-op ([I3](issues.md#i3)).
+- [ ] Spot-check ~10 rebuilt images by eye against their sources. Acceptance: no clipping, no halo, no aspect distortion — the check that caught the P2 no-op.
 
-## P3 — Spend the 3090's headroom, one turn at a time
+## P3 — Train on the 3090's headroom
 
-- [ ] Measure peak VRAM for the standing config on the 3090. Acceptance: a MiB figure against 24576, so the batch/dim decisions below are sized on data not guesswork.
-- [ ] Collapse grad-accum 4 into a real batch and retrain. Acceptance: the ONLY delta is effective batching; wall-clock and A/B both recorded.
-- [ ] Switch fp16 to bf16 and retrain. Acceptance: the ONLY delta is precision; loss curve compared for the scaling instability bf16 is meant to remove.
-- [ ] Raise `dim`/`alpha` past the 2080 Ti's ceiling and retrain. Acceptance: the ONLY delta is rank; A/B'd against the P3 winner so far.
+- [ ] Probe peak VRAM for a candidate config before committing to a full run. Acceptance: a MiB figure against 24576, so batch and rank are sized on data rather than guesswork ([I4](issues.md#i4)).
+- [ ] Train in bf16 rather than fp16. Acceptance: the run completes with a loss curve free of the scaling spikes bf16 exists to remove; Ampere supports it and Turing had none.
+- [ ] Replace grad-accum 4 with a real batch that fits 24 GB. Acceptance: the effective batch is stated and peak VRAM stays under ~22 GB with headroom for sampling.
+- [ ] Raise `dim`/`alpha` past the 11 GB ceiling's 48/24. Acceptance: the new rank is recorded with its VRAM cost; it was a constraint before, not a choice.
+- [ ] Emit samples every epoch on the pinned set. Acceptance: one sheet per epoch, epoch-labelled, same prompts and seeds throughout the run.
 
-## P4 — Close out
+## P4 — The user selects, then ship or say so
 
-- [ ] State whether anything beat `e07`, and ship it or say plainly that nothing did. Acceptance: `completed.md` carries the verdict with its A/B sheet; a loss is recorded as a result, not retried by reflex.
-- [ ] Run the anteater generalisation check on whatever ships. Acceptance: the anteater's three views reviewed by eye; a species with no corpus analogue is the honest test.
-- [ ] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, index row updated to `done`.
+- [ ] Have the user pick the best epoch from the sheets. Acceptance: a chosen epoch recorded with their reasoning; the final epoch is not assumed to be the best.
+- [ ] A/B the chosen epoch against the `e07` bar and review the images before accepting a verdict. Acceptance: gate + `iou_ref` + the user's read on south framing and east pose, recorded together.
+- [ ] Run the anteater generalisation check on the candidate. Acceptance: its three views reviewed by eye — a species with no corpus analogue is the honest test.
+- [ ] Ship it or state plainly that it lost. Acceptance: `completed.md` carries the verdict and its sheet; a loss is recorded as a result, not retried by reflex.
+- [ ] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, index row updated, `generate.py` left pointing at whatever actually ships.

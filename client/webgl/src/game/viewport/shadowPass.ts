@@ -65,7 +65,7 @@ uniform highp usampler2D uLight;
 uniform highp usampler2D uPresence;
 uniform highp usampler2D uPrev;      // LAST frame's shadow -- ping-pong, never the one we write
 uniform vec2 uWindowOrigin;
-uniform int uUnitT;                  // P4: shadow texels per TILE (TEXTILE_UNIT >> lod)
+uniform int uUnitT;                  // P4: shadow texels per TILE (TEXTILE_UNIT >> level)
 uniform int uCols;                   // P4: the slot torus modulus (window tiles)
 uniform int uRows;
 uniform int uDebugTier;              // 1 = emit which TIER answered, for the hit-rate histogram
@@ -102,7 +102,7 @@ void main() {
 
   // P4: the buffer rides the SLOT TORUS at uUnitT texels/tile — unwrap the fragment's residue to
   // its window tile (the composites' rule), then place the tested point at the TEXEL'S CENTRE in
-  // world units (at lod > 0 one texel spans several units; the centre is the representative).
+  // world units (at level > 0 one texel spans several units; the centre is the representative).
   int tileX = int(uWindowOrigin.x) + pmod(ux / uUnitT - int(uWindowOrigin.x), uCols);
   int tileY = int(uWindowOrigin.y) + pmod(uy / uUnitT - int(uWindowOrigin.y), uRows);
   float upt = UPT / float(uUnitT);   // world units per shadow texel
@@ -255,14 +255,14 @@ export class ShadowBuffer {
    *  caster, so the hit rates are measured rather than assumed. */
   gather(renderer: Renderer, tex: { prim: Texture; def: Texture; light: Texture; presence: Texture; atlas: Texture; atlas2?: Texture },
          originTileX: number, originTileY: number, debugTier = false, brute = false,
-         dilateX = 2, win?: { cols: number; rows: number; lod: number }): void {
+         dilateX = 2, win?: { cols: number; rows: number; level: number }): void {
     renderer.draw({
       program: this.prog, geometry: this.quad, target: this.a, blend: "none",
       textures: { uPrim: tex.prim, uDef: tex.def, uLight: tex.light, uPresence: tex.presence,
                   uPrev: this.b.textures[0], uSurfaceAtlas: tex.atlas, uSurfaceAtlas2: tex.atlas2 ?? tex.atlas },
       uniforms: (p) => {
         p.uVec2("uWindowOrigin", originTileX, originTileY);
-        p.uInt("uUnitT", UNITS_PER_TILE >> (win?.lod ?? 0));
+        p.uInt("uUnitT", UNITS_PER_TILE >> (win?.level ?? 0));
         p.uInt("uCols", win?.cols ?? SLOTS_X); p.uInt("uRows", win?.rows ?? SLOTS_Y);
         p.uInt("uDebugTier", debugTier ? 1 : 0);
         p.uInt("uBrute", brute ? 1 : 0);

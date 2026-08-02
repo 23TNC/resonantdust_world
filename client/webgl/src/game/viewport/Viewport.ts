@@ -306,7 +306,7 @@ export class Viewport {
     this.resolverUnsub = resolver.onLoad(() => {
       this.map.invalidateAll();
       this.warm.invalidateAll();
-      // P1b: frames moved (a lod landed / a page repacked) — every definition re-writes from
+      // P1b: frames moved (a level landed / a page repacked) — every definition re-writes from
       // the resolver's CURRENT frames on the next reconcile (I2's staleness half).
       this.recordSync.markDefsStale();
     });
@@ -396,14 +396,14 @@ export class Viewport {
     return name.endsWith("-warm") ? this.warm.displayComposite(name) : this.map.displayComposite(name);
   }
 
-  /** Current LOGICAL zoom (the lod dial, not screen px per world px — that is `camera.renderScale`). */
+  /** Current LOGICAL zoom (the level dial, not screen px per world px — that is `camera.renderScale`). */
   get zoom(): number {
     return this.camera.zoom;
   }
-  /** The cold cache's tile window (`SLOTS << lod` tiles + its origin). The authoritative answer to
+  /** The cold cache's tile window (`SLOTS << level` tiles + its origin). The authoritative answer to
    *  "how much world will we draw", so the zone subscription sizes itself from this rather than
    *  re-deriving a screen estimate that can disagree with what the renderer actually bakes. */
-  get window(): { winCol: number; winRow: number; cols: number; rows: number; slotPx: number; lod: number } {
+  get window(): { winCol: number; winRow: number; cols: number; rows: number; slotPx: number; level: number } {
     return this.map.window;
   }
   /** Set an absolute zoom, holding the viewport centre; returns the anchor to push
@@ -411,7 +411,7 @@ export class Viewport {
    *
    *  **Callers MUST push the returned anchor through `WorldBridge.zoomTo`.** This moves the CAMERA only —
    *  it does not update the bridge's own zoom, so the zone subscription would stay sized for the previous
-   *  lod and the window edges would have no tile data. From a console use **`__zoom(z)`**, which does both
+   *  level and the window edges would have no tile data. From a console use **`__zoom(z)`**, which does both
    *  (work `2026-07-26-textile-slot` I11 — this exact shortcut cost real debugging time). */
   setZoom(z: number): { x: number; y: number } | null {
     return this.camera.setZoom(z);
@@ -562,9 +562,9 @@ export class Viewport {
       // No atlas means the silhouette cannot be sampled. Skip the refine rather than run it against
       // a texture that answers 0 everywhere, which reads on screen as "the shadows are broken".
       const canRefine = atlas !== null;
-      // P4: every pass rides the SLOT TORUS — the window's cols/rows/lod steer the wrap and the
+      // P4: every pass rides the SLOT TORUS — the window's cols/rows/level steer the wrap and the
       // texels-per-tile, so the fixed-size maps cover the whole window at every zoom.
-      const lwin = { cols: w.cols, rows: w.rows, lod: w.lod };
+      const lwin = { cols: w.cols, rows: w.rows, level: w.level };
       this.shadows.gather(this.renderer, { prim: r.primTex, def: r.defTex, light: r.lightTex,
                                            presence: r.presenceTex, atlas: atlas ?? this.white, atlas2 },
                           w.winCol, w.winRow, false, false, 2, lwin);
@@ -641,7 +641,7 @@ export class Viewport {
             p.uFloat("uAmbient", 0.12);
             p.uInt("uLCols", win.cols); p.uInt("uLRows", win.rows);
             p.uInt("uLWinCol", win.winCol); p.uInt("uLWinRow", win.winRow);
-            p.uInt("uLSlot", TEXTILE_LIGHT >> win.lod);   // P4: texels/tile at the current lod
+            p.uInt("uLSlot", TEXTILE_LIGHT >> win.level);   // P4: texels/tile at the current level
           },
         });
 
@@ -763,7 +763,7 @@ export class Viewport {
     const de = gl.drawElements, da = gl.drawArrays;
     gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
     gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
-    this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, lod: win.lod } });
+    this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, level: win.level } });
     gl.drawElements = de; gl.drawArrays = da;
 
     // read the SUM at the light's own tile and at the reach boundary
@@ -818,10 +818,10 @@ export class Viewport {
     rec.upload(gl);
 
     const run = (): number => {
-      for (let i = 0; i < 8; i++) this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, lod: win.lod } });
+      for (let i = 0; i < 8; i++) this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, level: win.level } });
       gl.finish();
       const t0 = performance.now();
-      for (let i = 0; i < 30; i++) this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, lod: win.lod } });
+      for (let i = 0; i < 30; i++) this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, level: win.level } });
       gl.finish();
       return (performance.now() - t0) / 30;
     };
@@ -858,7 +858,7 @@ export class Viewport {
     };
 
     // baseline: a full recompute, then snapshot
-    this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, lod: win.lod } });
+    this.lights.run(this.renderer, rec.primTex, rec.lightTex, win.winCol, win.winRow, { win: { cols: win.cols, rows: win.rows, level: win.level } });
     const before = snap();
 
     // ADD a light into slot 7 (unused by the built set) via the delta path
@@ -870,12 +870,12 @@ export class Viewport {
     const de = gl.drawElements, da = gl.drawArrays;
     gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
     gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
-    this.lights.updateLight(this.renderer, rec.primTex, 7, id, win.winCol, win.winRow, { cols: win.cols, rows: win.rows, lod: win.lod });
+    this.lights.updateLight(this.renderer, rec.primTex, 7, id, win.winCol, win.winRow, { cols: win.cols, rows: win.rows, level: win.level });
     const drawsToAdd = draws;
     const added = snap();
 
     // REMOVE it — primIndex 0
-    this.lights.updateLight(this.renderer, rec.primTex, 7, 0, win.winCol, win.winRow, { cols: win.cols, rows: win.rows, lod: win.lod });
+    this.lights.updateLight(this.renderer, rec.primTex, 7, 0, win.winCol, win.winRow, { cols: win.cols, rows: win.rows, level: win.level });
     gl.drawElements = de; gl.drawArrays = da;
     const after = snap();
 
@@ -938,13 +938,13 @@ export class Viewport {
     gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
     gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
     // two real gathers: the first fills the incumbents, the second is the steady state the tiers describe
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, level: win.level });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, level: win.level });
     const drawsPerGather = draws / 2;
     gl.drawElements = de; gl.drawArrays = da;
 
     // tier pass — same shader, uDebugTier=1, does NOT swap, so it cannot disturb the steady state
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, true, false, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, true, false, 2, { cols: win.cols, rows: win.rows, level: win.level });
     const d = this.shadows.dims;
     const W = 256, H = 64;
     const buf = new Uint32Array(W * H * 4);
@@ -971,10 +971,10 @@ export class Viewport {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       return b;
     };
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, lod: win.lod });      // steady state (swaps)
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, level: win.level });      // steady state (swaps)
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, level: win.level });
     const walked = readCur();
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 2, { cols: win.cols, rows: win.rows, lod: win.lod });   // brute, no swap
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 2, { cols: win.cols, rows: win.rows, level: win.level });   // brute, no swap
     const brute = readCur();
     // Compare OCCLUSION, not identity. Where several casters block the same ray, "which one" is
     // arbitrary: the walk takes the first along the ray, brute the first in scan order, and both are
@@ -1026,7 +1026,7 @@ export class Viewport {
                          seed: d.seed, intensity: d.intensity, reach: d.reach });
     }
     rec.upload(gl);
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 2, { cols: win.cols, rows: win.rows, lod: win.lod });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 2, { cols: win.cols, rows: win.rows, level: win.level });
     const afterCleared = casterFields(readCur());
     for (const [i, ct] of saved) {
       const d = rec.debugPrim(i);
@@ -1119,7 +1119,7 @@ export class Viewport {
   private zProbe(tileX: number, tileY: number): Record<string, unknown> {
     const gl = this.renderer.gl, w = this.map.window;
     // P4: the receiver map is on the slot torus — a tile's block sits at mod(tile, cols/rows).
-    const L = TEXTILE_LIGHT >> w.lod;
+    const L = TEXTILE_LIGHT >> w.level;
     const mod = (a: number, m: number) => ((a % m) + m) % m;
     const x0 = mod(tileX, w.cols) * L, y0 = mod(tileY, w.rows) * L;
     this.lights.receiverRT.bind();

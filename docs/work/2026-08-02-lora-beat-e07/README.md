@@ -1,92 +1,114 @@
-# Beat `e07` — find why every retrain loses, with the 3090 and the user's eyes — 2026-08-02
+# Beat `e07` — build the best LoRA we can, fresh, on a non-photoreal base and the 3090 — 2026-08-02
 
 _Component: [`dev/art`](../../components/dev/) · `bin/lib/{prep_train,build_quad,lora_eval,generate}.py`
-+ the `rd_quadruped` LoRA. Plan in [`todo.md`](todo.md); decisions in [`forks.md`](forks.md);
++ a new `rd_quadruped`. Plan in [`todo.md`](todo.md); decisions in [`forks.md`](forks.md);
 findings in [`issues.md`](issues.md). Follows
 [`2026-07-26-sprite-eval-trust`](../2026-07-26-sprite-eval-trust/README.md) (done 18/18) and
 [`2026-07-25-sprite-gen-quality`](../2026-07-25-sprite-gen-quality/README.md) (P4/P5 still open
-there, not in scope here). Shipping LoRA is STILL `rd_quadruped_e07`._
+there, not in scope). Shipping LoRA is `rd_quadruped_e07` and stays so until something beats it._
 
 ## What the user asked for
 
-> "train a new lora using the 3090 the same as we did on the 2080ti, but this time with better
-> hardware and feature support … spit out samples for each generation … I select the best and
-> re-train from that generation … repeating until we have something somewhat workable. Once we
-> have something somewhat workable we'll look back into functions to grade the systems work."
+> "write this up with the intention of **starting new**. We are **not intending to create a valid
+> comparison**, we are intending to create the **best lora we can** utilizing lessons learned from
+> our previous runs and advantages of the new hardware."
 
-The instinct behind it — **stop firing and forgetting, put the user's eyes in the loop** — is
-right, and this project has four separate occasions where looking at the images overturned the
-numbers. This stream keeps that and changes the *shape* of the loop, for the reasons below.
+Plus, from the same conversation: use the 3090's **bf16** and **memory**, train against one of the
+**non-photoreal** base models rather than a realistic one, and **emit samples every epoch so the
+user selects** rather than firing and forgetting.
 
-## Three retrains have now lost to `e07`, and the reason is still unknown
+**This stream therefore changes many variables at once, deliberately** ([F2](forks.md#f2)). It is
+not an experiment and will not attribute its result. The accepted cost, stated once: **if the
+output is worse, we will not know which change did it.** The exit condition is not "we learned
+why", it is "the user looks at the sprites and they are better."
 
-| run | dataset | config | result |
-|---|---|---|---|
-| `e07` **(ships)** | **v1** — LANCZOS, unnormalised, fill sd **0.1478** | — | 26/36 gate, `iou_ref` **0.753**, wins all six species |
-| run-3 | v2 | — | did not ship |
-| run-4 | v2 — ESRGAN + normalised, fill sd 0.0032, 1024² | dim 48/α 24, ga 4, LR 3e-5 cosine, 15 ep, 4 h 39 m | 25/36. **Wins east** 15/18 vs 12/18, **loses south** 10/18 vs 14/18 |
-| run-5 | v2 + jittered fill (sd 0.027) | same as run-4 | 4 h 35 m. Visually identical to run-4 |
+## The lesson that reframes everything: we have been training against a photorealism model
 
-**The common factor in all three failures is the P2 dataset rebuild.** `e07` is the only model
-trained on **v1**. Everything since has been trained on **v2**, and everything since has lost.
+`bin/lib/generate.py` line 34:
 
-That is not a hypothesis anyone has tested, because P2 bundled **three** changes at once — upscaler
-(LANCZOS → ESRGAN), scale normalisation (unnormalised → longer side pinned to 0.85), and resolution
-(768 → 1024²). Runs 3, 4 and 5 all inherit all three. Run-5 was a genuinely clean single-variable
-test, but of a **fourth** variable (jitter *within* normalisation), not of any of the three.
+```python
+MODEL = "sdxl/cyberrealisticXL_v80.safetensors"
+```
 
-**And the jitter test did not restore v1's condition** ([I1](issues.md#i1)). It moved fill sd
-0.003 → 0.027. `e07`'s data sat at **0.148** — still 5.4× more variable than the jittered set. So
-"scale variance doesn't matter" is refuted only over the range actually tested, which stopped well
-short of the shipping model's.
+Before 2026-07-28 the box held **no other SDXL checkpoint** — so every `rd_quadruped` run, `e07`
+included, was fitted onto a **photoreal portrait finetune**, while the target art is flat regions
+bounded by hard black outlines: *vector graphics rendered as bitmaps*, in the P2 log's own words.
 
-## What this stream does instead of ten generations
+That reframes three days of failures. The LoRA was not only learning our style — it was spending
+capacity **fighting a prior pulling the opposite way**. It also fits the specific failure shapes:
+photoreal bases love a framed portrait subject and a naturalistic sitting pose, which is precisely
+what runs 4 and 5 produced on south and east.
 
-**Decompose P2 one variable at a time against the `e07` baseline**, with the user picking the
-winner from images at each step. Selection over *chosen differences*, not over checkpoints.
+Not proven, and this stream will not try to prove it ([F2](forks.md#f2)). It is the single most
+plausible lesson available and it is cheap to act on, which is enough.
 
-Why not the loop as described — see [F1](forks.md#f1) in full, but in short: "re-train ten more
-from the best" doesn't map onto gradient descent. There is no crossover between two LoRAs, and
-continuing training from a winner is not mutation — it is the same descent going further, which on
-459 images at 15 epochs means memorising. Ten runs is also 20–25 GPU-hours **per round** on the
-3090 and 30 sample sets for the user to review, spent searching an axis (config) that has never
-been shown to be the problem, while the axis that correlates perfectly with every failure (the
-dataset) goes untested.
+## What we carry forward, and what we drop
+
+| lesson | source | carried as |
+|---|---|---|
+| **`iou_ref` agrees with the eye** — called both run-4 failures 6/6 where `d_aspect` scored a tie | `sprite-eval-trust` 18/18 | the A/B statistic; the **eye ratifies** ([F3](forks.md#f3)) |
+| **ESRGAN upscale beats LANCZOS** — outline sharpness 43.1 → 90.1 (2.1×), no staircasing | `sprite-gen-quality` P2 | **kept** — the one P2 change with no failure attached |
+| **Pinned `fill` correlates with every failure**; `e07`'s data sat at sd **0.148**, v2 at 0.0032, run-5's jitter only reached 0.027 | [I1](issues.md#i1) | **restore v1-range scale variance**, not the timid jitter |
+| **Photoreal base** | this stream, above | **replaced** ([F4](forks.md#f4)) |
+| **11 GB ceiling shaped every config** — run-4 held 10,379 of 11,264 MiB | [I4](issues.md#i4) | dim/α, batch and precision re-chosen on 24 GB, not inherited |
+| **Look at the images before accepting a verdict** — 4 occasions where they overturned the numbers | both streams | per-epoch samples; the user picks the **epoch** |
+
+Dropped: single-variable attribution. It was the right tool for `sprite-eval-trust`, which had a
+specific hypothesis to kill. We have no hypothesis worth 25 GPU-hours — we have a pile of
+well-supported lessons and new hardware, and the user's call is to spend them all at once.
+
+## `e07` is the bar, not the control
+
+We are not running a controlled comparison, but we still need to know whether the new thing is
+better. `iou_ref` scores a generated silhouette against the **real corpus sprite** — it never looks
+at the model that made it, so it works **across base models**. `e07`'s scoreline stands as a
+target no matter what a challenger is built on:
+
+> **26/36 gate · `iou_ref` 0.753 · winner on all six A/B species**
+
+Clear that and the new LoRA ships. Miss it and we say so plainly, exactly as three prior runs did.
+
+## Which base model — the pick, and how confident it is
+
+On the box (all pulled 2026-07-28): **Illustrious-XL-v1.0**, **animagine-xl-4.0**, and
+`sd_xl_base_1.0` as a clean reference, beside the incumbent `cyberrealisticXL_v80`.
+
+**My pick is Illustrious-XL v1.0** ([F4](forks.md#f4)). Both it and Animagine are Danbooru-tag
+bases with strong **flat-colour, hard-outline** priors — the exact quality our corpus has and the
+exact quality `cyberrealisticXL` lacks. Between them, Illustrious has the better prompt adherence
+and is the more common foundation for downstream LoRA training, while Animagine 4.0 is tuned more
+narrowly to anime character portraiture. Our subjects are quadrupeds in an oblique game-sprite
+convention — off-distribution for both, since Danbooru is overwhelmingly human characters — so the
+more *steerable* base is the better bet.
+
+**Confidence: this is reasoning, not measurement.** I have not generated a single image with
+either. [P1](todo.md) settles it in minutes with a no-LoRA probe across all three rather than by
+arguing — the same "measure, don't assume" that chose ESRGAN and caught the silent no-op.
+
+Both are SDXL-architecture, so the existing SDXL ControlNets on the box carry over —
+`controlnet-union-promax` and `mistoline-lineart` are both present, and MistoLine is a
+line-art-specialised ControlNet that suits this art better than the generic union model. P1
+verifies that rather than assuming it.
 
 ## Design stance
 
-- **One variable per run. Enforced.** Run-5 is the model: it varied exactly one thing, so its
-  result was *attributable*, and it killed a wrong hypothesis in one run. Run-4 varied three and
-  produced an argument. Every run here names its single delta in `completed.md` before it starts.
-- **The user picks from images; the metrics are the tiebreak, not the judge.** `iou_ref` now agrees
-  with the eye and is kept as the A/B statistic — but the four occasions where images overturned
-  numbers all stand, and the harness already emits a visual sheet. The eye ratifies.
-- **Per-epoch samples are the selection surface, and they already exist.** Runs 4 and 5 both
-  emitted them on the same five prompts and seeds. `e07`'s epoch-7 provenance is itself evidence
-  that the best checkpoint is mid-run — so sample every epoch, and let the user pick the *epoch*,
-  which costs one run rather than ten.
-- **Fixed prompts, fixed seeds, fixed species set across every run.** Otherwise the user is
-  selecting on sampling noise.
-- **Say plainly when a run loses.** Three have. A fourth that loses is a result, not a failure —
-  what would be a failure is shipping one because it was expensive.
-
-## What the 3090 actually buys
-
-Not just speed. Run-4 held 10,379 MiB of the 2080 Ti's 11,264 — it was **memory-bound**, and every
-config choice since has been made under that ceiling. With 24 GB: grad-accum 4 can collapse to a
-real batch, `dim`/`alpha` are no longer capped by VRAM, and **bf16 becomes available at all**
-(Turing has none; Ampere has it). bf16 over fp16 removes the loss-scaling failure mode rather than
-making anything faster. These are new *degrees of freedom*, which is exactly why they must not all
-be turned at once — see the single-variable rule above.
+- **Best output wins; attribution is explicitly not a goal.** Do not re-introduce single-variable
+  runs here. If a future stream needs to know *why*, it can bisect then, on a model worth bisecting.
+- **The user picks the epoch.** Samples every epoch on a pinned prompt/seed set. `e07`'s own
+  epoch-7 provenance says the best checkpoint is mid-run, and end-of-run is not automatically it.
+- **Fixed prompts, fixed seeds, fixed species across every sample sheet**, so the user is choosing
+  between models rather than between rolls of the dice.
+- **Say plainly if it loses.** Three runs have. A fourth loss is a result; shipping a worse model
+  because it was expensive is the only real failure available here.
 
 ## Future intent this plan must not trim
 
-- **The two-stage architecture** the user described stays the destination: generate a line drawing
-  → use it as the ControlNet source → render detail in a second pass. The open
-  [`lineart-lora`](../2026-07-27-lineart-lora/README.md) stream feeds that, and this stream must not
-  fold into it — a structure-only LoRA and a better `rd_quadruped` are different products.
-- **The anteater acceptance test survives.** A species with no body-plan analogue in the corpus
-  (`--control auto` declines it at 0.53) is the honest generalisation check, and no aggregate score
-  replaces it.
-- **Grading functions come back later, by the user's own sequencing** — "once we have something
-  somewhat workable." `iou_ref` stays in use meanwhile; nothing here builds a new metric.
+- **The two-stage architecture** stays the destination: generate a line drawing → use it as the
+  ControlNet source → render detail in a second pass. The open
+  [`lineart-lora`](../2026-07-27-lineart-lora/README.md) stream feeds that and is a *different
+  product* — do not fold this into it. A non-photoreal base likely helps it too, which is a reason
+  to settle the base question here first.
+- **The anteater generalisation check survives.** A species with no body-plan analogue in the
+  corpus (`--control auto` declines it at 0.53) is the honest test; no aggregate replaces it.
+- **Grading functions return on the user's sequencing** — "once we have something somewhat
+  workable." `iou_ref` carries us until then; nothing here builds a new metric.

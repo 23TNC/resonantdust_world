@@ -4,12 +4,10 @@ _A choice I resolved, with what was rejected and why. A fork is mine; a [blocker
 the user's._
 
 ## F1 — The shape of the selection loop {#f1}
-_2026-08-02 · resolved at plan time · **single-variable runs the user picks between, not
+_2026-08-02 · resolved at plan time · **the user picks the EPOCH from per-epoch samples; no
 breed-from-the-winner**_
 
-**Chosen.** Each round changes exactly ONE thing, the user picks the winner from images, and the
-next round changes exactly one more thing starting from that winner's *settings*. Within a run,
-samples every epoch let the user pick the best **epoch**.
+**Chosen.** Sample every epoch on a pinned prompt/seed set; the user picks the best **epoch**.
 
 **What the user proposed**, and why the mechanism doesn't hold: "run 10 generations, I select the
 best, we then build another 10 off of that." Two readings, both problematic.
@@ -21,58 +19,83 @@ best, we then build another 10 off of that." Two readings, both problematic.
   memorises.
 
 Genetic search doesn't map onto gradient descent: there is no crossover between two LoRAs, and
-"more training from the winner" is not mutation, it is the same descent going further. Selection
-creates value only when the candidates differ along an axis someone chose — which is what this
-fork keeps, at a tenth of the cost.
+"more training from the winner" is not mutation, it is the same descent going further.
 
-**The cost that decided it.** Run-4 took 4 h 39 m on the 2080 Ti; call it ~2.5 h on the 3090. Ten
-runs is 20–25 GPU-hours per round and 30 sample sets for the user to review, three rounds is
-60–75 hours — spent searching CONFIG, which has never been implicated, while the DATASET, which
-correlates with all three failures, stays untested.
+**Kept from the proposal, because it is the right instinct:** the user's eyes decide, samples come
+out every epoch rather than at the end, and no automated score ships a model on its own. `e07`'s
+own epoch-7 provenance is the evidence that the best checkpoint is mid-run.
 
-**Kept from the user's proposal, because it is right:** the user's eyes decide, samples come out
-every epoch rather than at the end, and no automated score ships a model on its own.
+## F2 — Attribution is NOT a goal of this stream {#f2}
+_2026-08-02 · **RE-RESOLVED on the user's instruction** — the original planned a single-variable
+decomposition · **change everything at once and judge the output**_
 
-## F2 — Which axis to attack first {#f2}
-_2026-08-02 · resolved at plan time · **the P2 dataset rebuild, decomposed**_
+**Chosen.** Change base model, dataset, precision, batch and rank together, and judge the result
+by the sprites. Do not run controlled variants.
 
-**Chosen.** Test the three P2 changes — upscaler, scale normalisation, resolution — one at a time
-against the `e07` baseline, before touching any training config.
+**The user's instruction, verbatim:** *"we are **not intending to create a valid comparison**, we
+are intending to create the **best lora we can** utilizing lessons learned from our previous runs
+and advantages of the new hardware."*
 
-**Why.** `e07` is the only model trained on **v1** and the only model that wins. Runs 3, 4 and 5
-are the only models trained on **v2** and are the only models that lose. That is a perfect
-correlation nobody has tested, because P2 shipped all three changes together and every run since
-inherited all three.
+**Why it is the right call here.** Attribution costs runs, and runs cost 2–4 h each. The prior
+streams already bought the lessons worth having — `iou_ref` agrees with the eye, ESRGAN beats
+LANCZOS, pinned `fill` correlates with every failure, the config was VRAM-capped. Spending 25+
+GPU-hours to re-derive *which* of those matters buys knowledge, not sprites, and the user wants
+sprites. Bisection stays available later, on a model worth bisecting.
 
-**Why normalisation goes first.** Run-4's south failure was diagnosed as a learned white margin
-from pinned `fill`, and run-5 refuted that — but only over sd 0.003 → 0.027, while `e07`'s data sat
-at **0.148** ([I1](issues.md#i1)). The refutation stopped 5.4× short of the shipping condition, so
-normalisation is the one P2 change with a half-tested hypothesis already attached to it.
+**The cost, accepted explicitly and recorded so nobody re-litigates it:** if the result is worse,
+we will not know which change did it. That is the trade, not an oversight.
 
-**Rejected — train a bigger/longer model on the 3090 first.** It is the tempting use of new
-hardware and it changes the variable that has never been shown to matter. If v2 is the problem, a
-bigger model trained on v2 is a more expensive way to lose.
-
-**Rejected — go straight back to v1 and ship that.** It would probably beat run-5, and it would
-teach nothing: v1 also has the scale drift and soft outlines P2 was built to fix. The point is to
-learn which of the three fixes cost more than it bought.
-
-**Rejected — jump to the lineart LoRA instead.** Different product, still open on its own stream,
-and it inherits the same dataset questions. Answering these first de-risks it.
+**What the original fork said**, kept because it was sound reasoning for a different goal: `e07` is
+the only model trained on dataset v1 and the only winner; runs 3/4/5 are the only ones on v2 and
+the only losers; P2 bundled three changes (upscaler, scale normalisation, 768→1024) that no run has
+isolated ([I3](issues.md#i3)). A future stream that needs *why* starts there.
 
 ## F3 — What "the user selects" is allowed to select {#f3}
 _2026-08-02 · resolved at plan time · **the eye ratifies; `iou_ref` is the tiebreak**_
 
 **Chosen.** Every A/B reports gate + `iou_ref` + signed aspect AND emits the visual sheet, and no
 verdict is accepted before the images are looked at. Where they disagree, the images win and the
-disagreement is recorded as a finding.
+disagreement is recorded.
 
 **Why not "the metrics decide".** Four times in this project the images overturned the numbers —
-the anteater (metric rated the visually best output worst), run-4 south (passed 10/18 while broken),
-run-4 east (scored a tie while the pose convention broke), and run-4 overall ("slightly worse"
+the anteater (the metric rated the visually best output worst), run-4 south (passed 10/18 while
+broken), run-4 east (a tie while the pose convention broke), and run-4 overall (a "slightly worse"
 aggregate hiding "better on east, broken on south").
 
 **Why not "the eye alone".** `sprite-eval-trust` spent a whole stream making the ruler agree with
-the eye and succeeded — `iou_ref` called both run-4 failures 6/6 where `d_aspect` scored a tie. A
-statistic that now agrees is worth keeping as the cheap first pass and the record of record;
-discarding it would throw away the one thing that stream bought.
+the eye and succeeded — `iou_ref` called both run-4 failures 6/6. It also survives a base-model
+change, because it scores the generated silhouette against the **real corpus sprite** and never
+looks at the model that produced it. That is what lets `e07`'s scoreline stay a valid bar here.
+
+## F4 — Which base model {#f4}
+_2026-08-02 · resolved at plan time · **Illustrious-XL v1.0, pending the P1 probe**_
+
+**Chosen (provisionally).** Illustrious-XL v1.0, with `animagine-xl-4.0` as the alternate and
+`sd_xl_base_1.0` as a clean reference. [P1](todo.md) confirms or overturns it by generating,
+because this pick is reasoning and the project's record strongly favours measurement.
+
+**Why any change at all.** `generate.py` names `sdxl/cyberrealisticXL_v80.safetensors`, and before
+2026-07-28 the box held no other SDXL checkpoint — so every run including `e07` was fitted onto a
+**photorealism finetune** while targeting flat regions bounded by hard black outlines. The LoRA has
+been spending capacity fighting its own base.
+
+**Why Illustrious over Animagine.** Both are Danbooru-tag bases with strong flat-colour and
+hard-outline priors, which is the property we want. Illustrious has the better prompt adherence and
+is the more common foundation for downstream LoRA training; Animagine 4.0 is tuned more narrowly to
+anime character portraiture. Our subjects are quadrupeds in an oblique game-sprite convention —
+off-distribution for both, since Danbooru is overwhelmingly human characters — so the more
+*steerable* base is the better bet.
+
+**Stated plainly: both are anime bases and our target is not anime.** What we are buying is the
+flat/outline prior, not the style. The risk is a pull toward anime faces and proportions on
+animals, which the P1 probe will show before a single GPU-hour is spent on it.
+
+**Rejected — `sd_xl_base_1.0`.** Neutral rather than helpful; it has no flat-art prior to lend, so
+it asks the LoRA to teach the whole convention from 459 images again.
+
+**Rejected — stay on cyberrealisticXL.** It is the incumbent only because it was the only SDXL
+checkpoint on the box in March, not because anything chose it for this art.
+
+**Rejected — a non-SDXL base (Flux, SD3.5).** It would strand the SDXL ControlNets already on the
+box (`mistoline-lineart`, `controlnet-union-promax`), the whole two-stage architecture depends on
+ControlNet, and the licensing question the user raised on 2026-07-28 is unresolved for Flux.

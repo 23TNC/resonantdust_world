@@ -20,7 +20,7 @@ import type { WasmClient, AnchorRadii, ColdStateOverride } from "../../client/Wa
 import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
 import type { TextureResolver } from "../../textures";
-import { lodForZoom, SLOTS_X, SLOTS_Y, SQUARE } from "../viewport/squareMath";
+import { partitionForZoom, SLOTS_X, SLOTS_Y, SQUARE } from "../viewport/squareMath";
 import type { PrimitiveLight, PrimitiveSpec } from "../viewport/SquareCache";
 import { MaterialRegistry, type PackedChannel } from "../viewport/material";
 import { placeThing, readLayout } from "./thingPlacement";
@@ -459,8 +459,8 @@ export class WorldBridge {
     // Derived from the zoom rather than read off the viewport: `zoomTo` sets the zoom and calls us in
     // the SAME turn, but the cache only re-partitions on the next tick, so reading `viewport.window`
     // here would size the subscription from the OUTGOING lod and lag a frame behind every zoom.
-    // `SLOTS << lodForZoom(zoom)` is exactly the window the cache is about to adopt.
-    const windowTiles = Math.max(SLOTS_X, SLOTS_Y) << lodForZoom(this.zoom);
+    // `SLOTS << partitionForZoom(zoom)` is exactly the window the cache is about to adopt.
+    const windowTiles = Math.max(SLOTS_X, SLOTS_Y) << partitionForZoom(this.zoom);
     const active = Math.ceil(windowTiles / 2) + 2;
     const now = Date.now();
     if (active >= this.stickyActive) {

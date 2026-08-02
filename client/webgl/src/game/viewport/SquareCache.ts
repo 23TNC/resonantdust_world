@@ -23,7 +23,7 @@ import { Renderer, RenderTarget, Program, Geometry, Texture, TexFrame } from "..
 import { MrtBakeShader } from "./mrtBakeShader";
 import type { PackedChannel } from "./material";
 import {
-  lodForZoom,
+  partitionForZoom,
   mod,
   sameRange,
   SLOTS_X,
@@ -140,11 +140,11 @@ const sqKey = (c: number, r: number): string => `${c},${r}`;
 // every zoom (work 2026-07-26-textile-slot).
 const PRIO_HIGH = 0;
 
-// ── the reproject program (P3) — carry content ACROSS a lod change instead of clearing ─────────
-// A lod change rescales every tile (`slotPx` halves or doubles) AND permutes its slot (the torus
+// ── the reproject program (P3) — carry content ACROSS a level change instead of clearing ─────────
+// A level change rescales every tile (`slotPx` halves or doubles) AND permutes its slot (the torus
 // modulus is `cols`, which also changes). One pass per channel maps DESTINATION texel → source texel
 // arithmetically, so the whole grid moves in a single draw instead of a blit per tile (24 576 of them
-// at lod 3).
+// at level 3).
 //
 // NEAREST by construction — `texelFetch`, no filtering. Mandatory, not preference: `zdepth` encodes a
 // discrete `0x80 | baseRow` that averaging corrupts silently, and the lightmap must stay exactly
@@ -247,8 +247,8 @@ export class SquareCache {
   private cols = 0;
   private rows = 0;
   private slotPx = SQUARE;
-  /** Current lod (0..3). `-1` = unpartitioned. `cols`/`rows`/`slotPx` all derive from it. */
-  private lod = -1;
+  /** Current level (0..3). `-1` = unpartitioned. `cols`/`rows`/`slotPx` all derive from it. */
+  private level = -1;
 
   private winCol = 0;
   private winRow = 0;
@@ -279,17 +279,17 @@ export class SquareCache {
   lastBaked = 0;
   /** DEBUG (textile-slot P6): pending dirty squares + the grid state, for asserting a zoom sweep
    *  without screenshots — a reproject that works dirties ~nothing on zoom-IN. */
-  get debugState(): { lod: number; cols: number; rows: number; slotPx: number; dirty: number; empty: number; stale: number; baked: number; bufW: number; bufH: number } {
+  get debugState(): { level: number; cols: number; rows: number; slotPx: number; dirty: number; empty: number; stale: number; baked: number; bufW: number; bufH: number } {
     let baked = 0;
     for (let i = 0; i < this.slotBaked.length; i++) if (this.slotBaked[i] === 1) baked++;
     // P5 evidence: the dirty queue's priority histogram. A priority is `band + ring` (see `prio`), so the
     // BAND is what classifies and the ring only orders within it — EMPTY tiles (never baked / wrong owner)
-    // occupy PRIO_HIGH..+RING_MAX, tiles carried across a lod change occupy PRIO_STD..+RING_MAX. Split on
+    // occupy PRIO_HIGH..+RING_MAX, tiles carried across a level change occupy PRIO_STD..+RING_MAX. Split on
     // the band boundary, NOT on the band value. `bakeDirty` sorts ascending, so every empty tile drains
     // before any stale one, and within each class the centre of the screen fills first.
     let empty = 0, stale = 0;
     for (const p of this.dirty.values()) { if (p < PRIO_STD) empty++; else stale++; }
-    return { lod: this.lod, cols: this.cols, rows: this.rows, slotPx: this.slotPx,
+    return { level: this.level, cols: this.cols, rows: this.rows, slotPx: this.slotPx,
              dirty: this.dirty.size, empty, stale, baked, bufW: this.fixedCW, bufH: this.fixedCH };
   }
 
@@ -349,11 +349,11 @@ export class SquareCache {
   }
 
   /** The toroidal tile window geometry — for a sibling world-space toroidal map (shadow-cold) that must
-   *  align tile-for-tile with this cache: `cols`/`rows` tiles (`SLOTS << lod`, incl. overscan), the window
-   *  origin (`winCol`/`winRow`, in world tiles), the per-tile texel size (`SQUARE >> lod`) and the `lod`
-   *  itself — siblings need the lod to derive THEIR own per-tile size from their own texels-per-slot. */
-  get window(): { winCol: number; winRow: number; cols: number; rows: number; slotPx: number; lod: number } {
-    return { winCol: this.winCol, winRow: this.winRow, cols: this.cols, rows: this.rows, slotPx: this.slotPx, lod: Math.max(0, this.lod) };
+   *  align tile-for-tile with this cache: `cols`/`rows` tiles (`SLOTS << level`, incl. overscan), the window
+   *  origin (`winCol`/`winRow`, in world tiles), the per-tile texel size (`SQUARE >> level`) and the `level`
+   *  itself — siblings need the level to derive THEIR own per-tile size from their own texels-per-slot. */
+  get window(): { winCol: number; winRow: number; cols: number; rows: number; slotPx: number; level: number } {
+    return { winCol: this.winCol, winRow: this.winRow, cols: this.cols, rows: this.rows, slotPx: this.slotPx, level: Math.max(0, this.level) };
   }
 
   // ── sizing ───────────────────────────────────────────────────────────────────
@@ -362,23 +362,23 @@ export class SquareCache {
     this.ensureBuffers();
 
     // FIXED SLOT GRID (work 2026-07-26-textile-slot). The texture never changes size; what varies with
-    // zoom is TILES PER SLOT. A slot is SQUARE texels and holds `2^lod` tiles per axis, so the tile grid
-    // is `SLOTS << lod` tiles at `SQUARE >> lod` texels each — and those multiply back to the SAME
-    // `SLOTS · SQUARE` texels at every lod. That identity is why the rest of this class is unchanged:
+    // zoom is TILES PER SLOT. A slot is SQUARE texels and holds `2^level` tiles per axis, so the tile grid
+    // is `SLOTS << level` tiles at `SQUARE >> level` texels each — and those multiply back to the SAME
+    // `SLOTS · SQUARE` texels at every level. That identity is why the rest of this class is unchanged:
     // it is still "a uniform grid of `cols × rows` tiles at `slotPx` texels", just with both derived
-    // from the lod ladder instead of from the screen.
-    const lod = lodForZoom(zoom);
-    const cols = SLOTS_X << lod;
-    const rows = SLOTS_Y << lod;
-    const slotPx = SQUARE >> lod;
-    if (lod === this.lod && this.aimed) return;
+    // from the level ladder instead of from the screen.
+    const level = partitionForZoom(zoom);
+    const cols = SLOTS_X << level;
+    const rows = SLOTS_Y << level;
+    const slotPx = SQUARE >> level;
+    if (level === this.level && this.aimed) return;
 
     // P3: REPROJECT, don't clear. The old content is still valid world data — it just needs rescaling
     // into the new slot layout. Clearing here is what made zoom flash ([I5]).
-    const prev = this.lod >= 0 && this.aimed
+    const prev = this.level >= 0 && this.aimed
       ? { winCol: this.winCol, winRow: this.winRow, cols: this.cols, rows: this.rows, slotPx: this.slotPx }
       : null;
-    this.lod = lod;
+    this.level = level;
     this.cols = cols;
     this.rows = rows;
     this.slotPx = slotPx;
@@ -409,7 +409,7 @@ export class SquareCache {
     if (prev) {
       this.reproject(prev);
       // Carry each tile's BAKED flag across: a tile that was baked and is still in range keeps its
-      // reprojected content (rescaled, so visually correct until re-baked at the new lod). Everything
+      // reprojected content (rescaled, so visually correct until re-baked at the new level). Everything
       // else has no source and must bake. This is what turns a whole-grid re-bake into a partial one:
       // zooming IN dirties nothing, zooming OUT dirties only the newly exposed ring.
       for (let sr = 0; sr < rows; sr++) {
@@ -425,8 +425,8 @@ export class SquareCache {
           this.slotOwnerRow[si] = wr;
           this.slotBaked[si] = 1;
           carried++;
-          // STALE, not clean: the content is a rescale of the other lod's bake, so it must be re-baked
-          // at the new lod eventually — just at lower priority than a tile with nothing at all (P5).
+          // STALE, not clean: the content is a rescale of the other level's bake, so it must be re-baked
+          // at the new level eventually — just at lower priority than a tile with nothing at all (P5).
           this.markDirty(wc, wr, PRIO_STD);
         }
       }
@@ -436,16 +436,16 @@ export class SquareCache {
     // the only moment the carry-over is observable from outside.
     this.debugReproj = {
       from: prev ? { cols: prev.cols, rows: prev.rows, slotPx: prev.slotPx } : null,
-      to: { lod, cols, rows, slotPx },
+      to: { level, cols, rows, slotPx },
       carried, total: cols * rows, fresh: cols * rows - carried, dirty: this.dirty.size,
       queue: this.debugState, // priority split at the moment of the switch (P5 evidence)
     };
   }
 
-  /** DEBUG (P6): what the last lod change carried across vs had to bake fresh. */
+  /** DEBUG (P6): what the last level change carried across vs had to bake fresh. */
   debugReproj: unknown = null;
 
-  /** P3: carry every channel's content across a lod change. One full-target pass per channel through a
+  /** P3: carry every channel's content across a level change. One full-target pass per channel through a
    *  scratch (the slot permutation makes source and destination overlap arbitrarily, so in-place is
    *  undefined — [I4]), then swap the scratch in as the channel's buffer. */
   private reproject(prev: { winCol: number; winRow: number; cols: number; rows: number; slotPx: number }): void {
@@ -478,15 +478,15 @@ export class SquareCache {
    *  the player's monitor.
    *
    *  **MODULUS vs STRIDE — these are different numbers and only one of them is pow2 by design.**
-   *  The toroidal wrap is `sx = mod(wc, cols)` with `cols = SLOTS_X << lod`, i.e. **32 · 2^lod** — a
-   *  power of two at every lod, so the wrap is a bitmask, not an integer division. That is the whole
+   *  The toroidal wrap is `sx = mod(wc, cols)` with `cols = SLOTS_X << level`, i.e. **32 · 2^level** — a
+   *  power of two at every level, so the wrap is a bitmask, not an integer division. That is the whole
    *  reason `SLOTS` is 32×16 ([F5](../../../../docs/work/2026-07-26-textile-slot/forks.md#f5)).
    *
    *  The TEXTURE is `SLOTS + 2` slots per axis (34×18). The extra ring is the **WRAP-APRON**, applied
    *  as a `(sx + 1)` offset AFTER the modulus, so it never touches the wrap arithmetic. It exists
    *  because the toroidal window straddles the texture edge: `bakeSquare` mirrors an edge slot to the
    *  opposite border so a square adjacent across the wrap has physically adjacent texels. Sized for the
-   *  LARGEST apron (lod 0) — the apron is `2 · (SQUARE >> lod)`, so higher lods leave margin unused
+   *  LARGEST apron (level 0) — the apron is `2 · (SQUARE >> level)`, so higher levels leave margin unused
    *  rather than resizing.
    *
    *  So: a non-pow2 4352×2304 texture costs nothing (WebGL2 handles NPOT fine at NEAREST/CLAMP) while
@@ -499,7 +499,7 @@ export class SquareCache {
     this.fixedCW = cw;
     this.fixedCH = ch;
     for (const channel of this.channels) channel.ensureBuffer(cw, ch, this.gl);
-    this.lod = -1;
+    this.level = -1;
     this.cols = 0;
     this.rows = 0;
     this.slotPx = 0;
