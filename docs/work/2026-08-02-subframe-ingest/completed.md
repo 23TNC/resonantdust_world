@@ -61,3 +61,33 @@ Nothing enforces it, which is why the item exists; the design rests on this line
 **Found while measuring — [I7](issues.md#i7):** `flora/e`'s bbox read `fy = 0.125` in one session and
 `0.109` in the next. The bbox is computed from whichever lod happened to decode first, so it is
 **not lod-stable**. That is independent evidence for authoring the number rather than deriving it.
+
+## 2026-08-02 — P1, the DSL carries the subframe
+
+`shared/dsl` gains `DirFrame { sub: (x,y,w,h), anchor: (x,y) }`, all fractions, and
+`VisualParts.dir_frames: [DirFrame; 3]` for `[e, s, n]`. Read from
+`&thing.subframe.<dir>.{x,y,w,h}` / `&thing.sprite_anchor.<dir>.{x,y}`, each falling back to the
+non-directional `&thing.subframe.*` / `&thing.sprite_anchor.*`, which default to the **whole frame**
+`(0,0,1,1)` and centre pivot — so a kind that has not opted in cannot move.
+
+Exposed to the client as `thing_subframe()`, **stride 18** (3 directions × 6 floats). Kept as a
+sibling of `thing_layout()` rather than widening its stride-10, because every existing consumer
+indexes into that array.
+
+**Verified:** `cargo test --lib` in `shared/dsl` — **48 passed, 0 failed** (47 before). The new
+`thing_subframe_is_per_direction_with_fallbacks` exercises the whole fallback chain in one corpus: a
+kind authoring a non-directional rect *plus* an `n`-only `x` override *plus* an `e`-only pivot
+override, beside a kind authoring nothing. It asserts the exact 36-float output and that an
+unauthored kind's `dir_frames == [DirFrame::default(); 3]` with `sub == (0,0,1,1)`.
+
+**West has no row** ([F4](forks.md#f4)) — the stride is 3, not 4, and the loader doc says why where
+someone would be tempted to add it.
+
+**Cost of the fixture, worth recording:** the test first failed with *every* row defaulted, including
+the authored kind. Cause: `node_visual` opens with `store.read("prims.0.tint")?` — a corpus that
+authors no tint returns `None` and every field silently defaults. Not a bug in this work, but it is a
+trap for anyone writing a loader fixture, and it presents as "my new field does not parse".
+
+**Ticked out of order:** the `sprite_anchor` re-base ([F7](forks.md#f7)) and the west-mirror items
+have their DSL half done here but their client half in P2, so they stay open until the resolver
+actually reads them. Ticking them now would claim wiring that does not exist.

@@ -132,7 +132,21 @@ pub struct VisualParts {
   /// `(0.5, 0.5)`. `(0.5, 1.0)` = the art's bottom-centre (its "feet"), which pinned
   /// to a bottom-centre `anchor` reproduces the old bottom-anchored placement. A
   /// west (mirrored-east) facing mirrors `x → 1 − x` so the pin stays put.
+  ///
+  /// Measured against the [`DirFrame::sub`] SUBFRAME, not the whole master — which is what it
+  /// always meant (the client documented it as *"fractions of the sprite's opaque bbox"*); the
+  /// bbox is simply authored now instead of recovered from pixels (subframe-ingest F7).
   pub sprite_anchor: (f64, f64),
+  /// Per-DIRECTION subframe + pivot, `[e, s, n]` (subframe-ingest F1/F4/F7).
+  ///
+  /// Each facing is a genuinely different texture with its own art extent, so each authors its
+  /// own rect: `&thing.subframe.<e|s|n>.{x,y,w,h}` and `&thing.sprite_anchor.<e|s|n>.{x,y}`,
+  /// each falling back to the non-directional `&thing.subframe.*` / `&thing.sprite_anchor.*`.
+  ///
+  /// **West is absent on purpose** — it is the east master MIRRORED, not a fourth texture, so the
+  /// client derives it by mirroring `e` about the frame centre. Authoring it would be two numbers
+  /// describing one image, which is the failure this whole model removes.
+  pub dir_frames: [DirFrame; 3],
   /// The prim's up-to-4 packed-map channel material bindings (`&prim.packed.<i>`),
   /// indexed by packed RGBA channel. Default (all zero) = no material system in
   /// play, so the renderer paints the flat albedo exactly as before.
@@ -149,6 +163,32 @@ pub struct VisualParts {
   /// its head. Which STATE feeds each slot's sprite is the payload's business
   /// (`PART(slot, def)`), not the DSL's — the DSL declares only the skeleton.
   pub parts: Vec<VisualPart>,
+}
+
+/// One DIRECTION's authored art rect and pivot (subframe-ingest F1/F7).
+///
+/// The **subframe** says which fraction of the square pow2 master actually IS the art; the atlas
+/// ingests that rect and nothing else, identically for all four maps. The **anchor** is the point
+/// on that rect which pins to the prim's logical `anchor` — its feet, normally.
+///
+/// Both are FRACTIONS (`0..1`) rather than units, deliberately: a master streams at 16/32/64/128 px
+/// and a fraction addresses the same art at every lod, where a unit count silently means a
+/// different number of texels per tier. Whole units are also exactly what the deleted def
+/// subframe lanes held, and rounding them against a continuous anchor is what put a halo around
+/// every sprite (`docs/work/2026-08-02-normal-frames/issues.md` I8).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DirFrame {
+  /// `(x, y, w, h)` of the art inside the master, `0..1`. Default `(0, 0, 1, 1)` — the whole
+  /// frame, i.e. "this master is already tight", which is what an unauthored kind gets.
+  pub sub: (f64, f64, f64, f64),
+  /// The pivot ON [`Self::sub`] that pins to the prim's `anchor`, `0..1`. Default `(0.5, 0.5)`.
+  pub anchor: (f64, f64),
+}
+
+impl Default for DirFrame {
+  fn default() -> Self {
+    Self { sub: (0.0, 0.0, 1.0, 1.0), anchor: (0.5, 0.5) }
+  }
 }
 
 /// One part SLOT of a kind's visual skeleton — the per-prim fields of `prims.N`
@@ -355,6 +395,29 @@ impl Bundle {
     let span = read_f("prims.0.span", 1.0);
     let sprite_scale = (read_f("prims.0.sprite_scale.w", 1.0), read_f("prims.0.sprite_scale.h", 1.0));
     let sprite_anchor = (read_f("prims.0.sprite_anchor.x", 0.5), read_f("prims.0.sprite_anchor.y", 0.5));
+    // subframe-ingest F1/F4/F7: which fraction of the master is the ART, per DIRECTION, plus the
+    // pivot measured against it. Each facing is its own texture with its own extent, so each may
+    // override; whatever it does not override falls back to the non-directional value, which
+    // itself defaults to the whole frame. WEST IS ABSENT — it is east mirrored, derived by the
+    // client, never authored (F4).
+    let sub_all = (
+      read_f("prims.0.subframe.x", 0.0),
+      read_f("prims.0.subframe.y", 0.0),
+      read_f("prims.0.subframe.w", 1.0),
+      read_f("prims.0.subframe.h", 1.0),
+    );
+    let dir_frames = ["e", "s", "n"].map(|d| DirFrame {
+      sub: (
+        read_f(&format!("prims.0.subframe.{d}.x"), sub_all.0),
+        read_f(&format!("prims.0.subframe.{d}.y"), sub_all.1),
+        read_f(&format!("prims.0.subframe.{d}.w"), sub_all.2),
+        read_f(&format!("prims.0.subframe.{d}.h"), sub_all.3),
+      ),
+      anchor: (
+        read_f(&format!("prims.0.sprite_anchor.{d}.x"), sprite_anchor.0),
+        read_f(&format!("prims.0.sprite_anchor.{d}.y"), sprite_anchor.1),
+      ),
+    });
     // The kind's emitted light (`&thing.light.*`). `reach` is the discriminator: a def that
     // never sets it emits nothing and the whole struct stays `None`, so every existing kind is
     // untouched and the client sees exactly what it saw before.
@@ -424,7 +487,7 @@ impl Bundle {
       });
       i += 1;
     }
-    Some(VisualParts { tint, geo_color, texture, footprint, anchor, size, span, sprite_scale, sprite_anchor, packed, light, parts })
+    Some(VisualParts { tint, geo_color, texture, footprint, anchor, size, span, sprite_scale, sprite_anchor, dir_frames, packed, light, parts })
   }
 
   /// A tile's background colour as a packed `0xRRGGBB` (see [`node_color_bg`]).
@@ -578,6 +641,36 @@ impl Bundle {
           v.span, v.sprite_scale.0, v.sprite_scale.1,
         ]),
         None => out.extend_from_slice(&[1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 1.0, 1.0]),
+      }
+    }
+    out
+  }
+
+  /// Every thing's per-DIRECTION SUBFRAME in `object_id` order, flattened **stride-18** per def
+  /// (index 0 → object_id 1): three directions `[e, s, n]`, each
+  /// `[sub.x, sub.y, sub.w, sub.h, anchor.x, anchor.y]`, all fractions in `0..1`.
+  ///
+  /// This is what the atlas CROPS to (subframe-ingest): the ingest copies exactly this rect out of
+  /// each of the stem's four maps, so albedo/normal/surface/layers are registered with each other
+  /// by construction rather than by two derivations agreeing.
+  ///
+  /// **Only three directions.** West is the east master mirrored, so the client derives it by
+  /// mirroring `e` about the frame centre ([F4](../../../docs/work/2026-08-02-subframe-ingest/forks.md#f4)) —
+  /// a fourth row here would be a second number for one image.
+  ///
+  /// A def that builds no prim gets the default row (whole frame, centre pivot) repeated three
+  /// times, so the host never special-cases "unset". Sibling of [`Self::thing_layout`], kept
+  /// separate rather than widening that stride because every existing consumer indexes into it.
+  pub fn thing_subframe(&self) -> Vec<f64> {
+    let mut out = Vec::with_capacity(self.thing_ids.len() * 18);
+    for name in &self.thing_ids {
+      let frames = self
+        .thing(name)
+        .and_then(|n| self.node_visual(n))
+        .map(|v| v.dir_frames)
+        .unwrap_or_default();
+      for f in frames {
+        out.extend_from_slice(&[f.sub.0, f.sub.1, f.sub.2, f.sub.3, f.anchor.0, f.anchor.1]);
       }
     }
     out
@@ -1083,6 +1176,62 @@ mod tests {
         1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 1.0, 1.0, // shrub (defaults)
       ],
     );
+  }
+
+  #[test]
+  fn thing_subframe_is_per_direction_with_fallbacks() {
+    // subframe-ingest P1. `tree` authors a non-directional subframe AND overrides it for `n`
+    // only, plus a per-direction pivot for `e`; `shrub` authors nothing at all. This is the
+    // whole fallback chain in one corpus: per-direction → non-directional → the whole frame.
+    //
+    // WEST IS ABSENT BY DESIGN (F4) — west is the east master mirrored, derived by the client.
+    // The stride is 3 directions, not 4, and a `subframe.w` here would be silently ignored.
+    let data = "<thing>\n  ::tree>\n    :data>\n      @define>\n        0 return\n  ::shrub>\n    :data>\n      @define>\n        0 return\n";
+    let visual = "\
+<thing>
+  ::tree>
+    :visual>
+      @on_create>
+        \"thing ^prim call &thing export
+        \"world/conifer &thing.texture set
+        #ffffff &thing.tint set
+        0.25 &thing.subframe.x set
+        0.125 &thing.subframe.y set
+        0.5 &thing.subframe.w set
+        0.75 &thing.subframe.h set
+        1.0 &thing.sprite_anchor.y set
+        0.4 &thing.subframe.n.x set
+        0.2 &thing.sprite_anchor.e.x set
+        0 return
+  ::shrub>
+    :visual>
+      @on_create>
+        \"thing ^prim call &thing export
+        \"white &thing.texture set
+        #5a6e3a &thing.tint set
+        0 return
+";
+    let b = load(&[src("data/things.rd", data), src("visual/things.rd", visual)]).expect("load");
+    assert_eq!(
+      b.thing_subframe(),
+      vec![
+        // tree — e: the non-directional rect, pivot x overridden to 0.2, y inherited 1.0
+        0.25, 0.125, 0.5, 0.75, 0.2, 1.0,
+        // tree — s: everything inherited
+        0.25, 0.125, 0.5, 0.75, 0.5, 1.0,
+        // tree — n: x overridden to 0.4, the rest inherited
+        0.4, 0.125, 0.5, 0.75, 0.5, 1.0,
+        // shrub — three identical default rows: the WHOLE frame, centre pivot
+        0.0, 0.0, 1.0, 1.0, 0.5, 0.5,
+        0.0, 0.0, 1.0, 1.0, 0.5, 0.5,
+        0.0, 0.0, 1.0, 1.0, 0.5, 0.5,
+      ],
+    );
+    // The default really is the whole frame — an unauthored kind must crop to nothing, so that
+    // adopting the subframe cannot move art that has not opted in.
+    let shrub = b.thing("shrub").and_then(|n| b.node_visual(n)).expect("shrub visual");
+    assert_eq!(shrub.dir_frames, [DirFrame::default(); 3]);
+    assert_eq!(DirFrame::default().sub, (0.0, 0.0, 1.0, 1.0));
   }
 
   #[test]

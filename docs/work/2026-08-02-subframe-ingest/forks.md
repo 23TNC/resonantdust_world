@@ -100,3 +100,22 @@ uniformly inset.
 **Consequence:** grid stems stop being a special case. `packCoPack`'s `entry.grid` exclusion for
 `sprite_scale` should be re-examined in the same pass ([F5](#f5) splits placement from world extent,
 and the reason grids were excluded was the placement half).
+
+## F7 — There is NO new anchor variable; `sprite_anchor` is re-based onto the subframe {#f7}
+
+**Chosen: reuse `sprite_anchor`.** The plan originally added `&thing.anchor_point.x/y`. It should
+not, because the variable already exists and already means this.
+
+`sprite_anchor` is documented as *"the pivot ON THE SPRITE that aligns to `anchor`"*, and
+`TextureResolver.setSpriteScale` states its frame explicitly: *"fractions of the sprite's **opaque
+bbox**"*. The opaque bbox is precisely what the authored subframe replaces — so `sprite_anchor` was
+**already** fractions-of-the-subframe, measured against a *derived* subframe.
+
+So its meaning does not change at all; it becomes **exact**. The frame it is measured against stops
+being recovered from pixels (and stops drifting with streaming order, [I7](issues.md#i7)) and starts
+being authored. Adding `anchor_point` beside it would have created two pivots on one image — the
+same two-numbers-for-one-thing failure as [F6](#f6) and [normal-frames I8](../2026-08-02-normal-frames/issues.md#i8).
+
+**Per direction, like the subframe** ([F4](#f4)): each facing's subframe differs, so the feet sit at
+a different fraction of each. `&thing.sprite_anchor.<e|s|n>.x/y` overrides the non-directional
+default the same way `&thing.subframe.<dir>` does.
