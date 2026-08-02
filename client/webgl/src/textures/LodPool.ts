@@ -45,8 +45,12 @@ export class LodPool {
   add(stem: string, source: Texture, width: number, height: number, draw?: AtlasDraw): TexFrame | null {
     // Def-grid invariants (def-frame-anchors P1): frames must be pow2 SQUARES ≥ 16px, placed on the
     // 16-px page grid — the shadow def addresses them by u4 lod exponent + u10 16-px-grid origin.
-    if (width !== height || (width & (width - 1)) !== 0 || width < 16)
-      console.warn(`[lod-pool] ${stem}: frame ${width}×${height} violates pow2-square ≥16 — def grid addressing will degrade`);
+    // one-resolution F3: the LAW — a violating frame is REFUSED, not warned past. A warn is how a
+    // non-pow2 master drifted in unseen; a refused pack is loud (the stem renders geo until fixed).
+    if (width !== height || (width & (width - 1)) !== 0 || width < 16) {
+      console.error(`[lod-pool] ${stem}: frame ${width}×${height} violates the pow2-square ≥16 LAW — REFUSED (F3, 2026-08-02-one-resolution)`);
+      return null;
+    }
     let packed: TexFrame | null = null;
     for (const atlas of this.atlases) {
       packed = atlas.add(source, width, height, PADDING, draw);
@@ -69,8 +73,21 @@ export class LodPool {
    *  fit a whole page. The def-grid invariant holds: `2·quadN` is pow2-square ≥16 and lands on the 16-px grid. */
   addCoPacked(stem: string, sources: Array<Texture | null>, quadN: number, draws?: Array<AtlasDraw | null>): TexFrame | null {
     const full = quadN * 2;
-    if ((full & (full - 1)) !== 0 || full < 16)
-      console.warn(`[lod-pool] ${stem}: co-pack frame ${full}×${full} violates pow2-square ≥16 — def grid addressing will degrade`);
+    // one-resolution F3: the LAW — refuse, never warn past (see add()).
+    if ((full & (full - 1)) !== 0 || full < 16) {
+      console.error(`[lod-pool] ${stem}: co-pack frame ${full}×${full} violates the pow2-square ≥16 LAW — REFUSED (F3, 2026-08-02-one-resolution)`);
+      return null;
+    }
+    // F3's second face: a WHOLE-BLIT source (no draw rect) must BE quadN² — brick/wall shipped a
+    // 320-px normal beside 512-px siblings and the quadrant landed misregistered, silently. A
+    // subframe draw carries its own source rect and may come from any size; a bare source may not.
+    for (let i = 0; i < sources.length; i++) {
+      const s = sources[i];
+      if (s && !draws?.[i] && (s.width !== quadN || s.height !== quadN)) {
+        console.error(`[lod-pool] ${stem}: co-pack source ${i} is ${s.width}×${s.height}, quadrant is ${quadN} — REFUSED (F3: mixed-size map set)`);
+        return null;
+      }
+    }
     let packed: TexFrame | null = null;
     for (const atlas of this.atlases) {
       packed = atlas.addCoPacked(sources, quadN, PADDING, draws);
