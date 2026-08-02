@@ -78,3 +78,24 @@ corpus at a different obliquity and the normals silently go wrong while `WORLD_T
 
 **If they ever diverge, split the constant.** The plan's last item (recording the convention in
 `design/de-lighting.md`) exists so the next generator change has somewhere to collide with this.
+
+
+## I6 — Walls are a third orientation, and nobody has decided it {#i6}
+
+> "I have no clue how walls will function." — user, 2026-08-02
+
+Tiles are parallel to the ground and billboards are perpendicular to it. A wall is **neither in
+general**: it is a vertical surface like a billboard, but it does not face the camera — it faces
+along its own run, which the autotile cell already knows (`build-walls`: `x = N+2E`, `y = 3−(S+2W)`).
+
+So a wall's correct normal frame depends on **which way that wall faces**, and a single global
+"billboard" rotation is wrong for three of its four faces.
+
+`mrtBakeShader` already mentions *"the analytic wall normals"*, so something is being generated for
+them — what frame that is in, and whether it is camera-space like the sprite maps or already
+world-space, is **unverified**.
+
+**Explicitly out of scope.** This stream implements the two orientations the user named. Walls get
+whichever rotation their prims currently classify as, which is very likely wrong for some facings —
+recorded here so that is a known gap rather than a surprise, and so the next person starts from
+"what frame are the analytic wall normals in" rather than from scratch.

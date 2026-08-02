@@ -2,51 +2,54 @@
 
 _Decision points, options, which we chose and why._
 
-## F1 — There is ONE rotation, not two: the ground is drawn top-down {#f1}
+## F1 — BOTH rotations: ground pitches UP, billboard pitches DOWN (user, 2026-08-02) {#f1}
 
-**Corrected 2026-08-02, before any code.** My first framing assumed a single camera looking at both
-the ground and the sprites, which forced two complementary rotations and a 40° ambiguity about which
-surface got which. `design/art-style.md` says that premise is false, in its own most-emphatic section:
+> "Billboards are perpendicular, I scoped the work for the billboards. You decided to also scope for
+> tiles. Fine. Tiles are indeed parallel to the ground. I have no clue how walls will function.
+> Implement ground lighting by pitching up and billboard lighting by pitching down."
 
-> **"This is the single most important and most misunderstood point.**
-> The **world grid is viewed top-down**, but **objects and characters are drawn in an oblique
-> three-quarter top-down perspective** — they show their **front or sides**, NOT a true bird's-eye
-> projection … Do **not** render characters/creatures as if seen from directly overhead."
+**Settled: two rotations.** I had corrected this fork *down* to one, on the strength of
+`art-style.md`'s *"the world grid is viewed top-down"* — reading that as a straight-down camera for
+the ground, which would leave its flat normal already vertical.
 
-**Two different projections, by design.** That changes the answer:
+**That reading was wrong**, and the user's is the coherent one: *"the world grid is viewed top-down"*
+describes the **layout** — a square, axis-aligned grid rather than isometric diamonds — not a second
+camera. There is one camera at `world_angle`; the ground is merely drawn **unforeshortened**, which
+is a stylistic choice about the grid, not a claim about the view direction. The rest of the codebase
+agrees: `P = (tile + inTile) * UPT` is square on both axes, and `2026-08-01-z-positioning` already
+found and documented that the renderer does not foreshorten.
 
-| surface | how it is DRAWN | its flat normal `(0,0,1)` | rotation |
+So the camera sees both surfaces from the same place, and their flat normals both point at it:
+
+| surface | sits | true normal | rotation |
 |---|---|---|---|
-| the **ground** | top-down | already **straight up** — the ground's true normal | **none** |
-| a **sprite** | oblique, showing front/sides | tilted up from the card's horizontal by the art's obliquity | pitch **down** by that obliquity |
+| **tile / ground** | parallel to the ground | vertical | pitch **UP** |
+| **billboard** | perpendicular to the ground | ground-parallel | pitch **DOWN** |
 
-So there is exactly **one** rotation, it applies to **billboards only**, and it is what the user
-described: *"pitched down 90−world_angle so they are parallel with the ground"*.
+They are complements: the surfaces are perpendicular to each other, so the two rotations sum to 90°.
+Both come from the one `world_angle`.
 
-It also means `lightPass`'s existing ground comment — *"the flat-up fallback decodes to (0,0,1),
-reproducing the old overhead/grazing falloff exactly"* — was **already right**, and my plan to rotate
-the ground would have broken a working case.
+### Expressed by MEANING, not by a formula that depends on the reference axis
 
-### What is still open, and it is smaller
+The user's phrasing puts the billboard at `90 − world_angle`. Under the reference this repo already
+documents — `world_angle` measured **from the ground plane**, currently 65° — that magnitude is the
+**ground's**, and the billboard's is `world_angle`. Under a from-the-vertical reference the two swap.
+The pair `{25°, 65°}` is the same either way; only the assignment moves, and picking wrong misses by
+**40°** on every normal.
 
-`90 − world_angle` = **25°** at the documented 65°-from-the-ground reference. That reads as sprites
-drawn 25° above eye level — mostly front-on, which is exactly *"they show their front or sides, NOT
-a true bird's-eye"*. **Consistent, and it makes the user's formula right as written.**
+**So the code does not encode either formula.** It encodes the geometric requirement:
 
-The residual question is not *which* surface, but whether the sprite's obliquity is **tied** to
-`world_angle` at all:
+- a billboard's flat normal must come out **ground-parallel** (vertical component 0)
+- a tile's flat normal must come out **vertical**
 
-- **(a) Tied** — obliquity = `90 − world_angle`, one dial moves shadow projection and normal
-  correction together.
-- **(b) Independent** — the obliquity is an art-side fact (how the generator was prompted / how
-  masters were drawn) that happens to sit near 25°, and deserves its own constant.
+Both are asserted. Under the documented from-the-ground reference those resolve to 65° down and 25°
+up; under the other reading the assertions fail loudly instead of shading 40° wrong in silence. That
+is the point of asserting rather than trusting the arithmetic.
 
-**Recommend (a)** and note it plainly: `world_angle` and the art's obliquity are *not* the same kind
-of number — one governs shadow projection, the other governs how a picture was drawn — and this
-renderer already keeps two deliberately inconsistent projections. Tying them is a **convention**, not
-a derivation. It is the right default because one dial is better than two silently-drifting ones, but
-if the art is ever regenerated at a different obliquity, (b) is the honest answer and the constant
-should split.
+### Walls are NOT covered
+
+*"I have no clue how walls will function."* Neither is settled here — see [I6](issues.md#i6). A wall
+is a third orientation and this stream deliberately does not guess at it.
 
 ## F2 — Rotate the NORMAL into world, not the light into the surface {#f2}
 

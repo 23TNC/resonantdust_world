@@ -196,7 +196,7 @@ export class Viewport {
       (tx: number, ty: number) => this.zProbe(tx, ty);
     // lighting-rework I11: place N lights, and move them.
     (globalThis as unknown as { __lights: (n?: number, h?: number) => unknown }).__lights =
-      (n?: number, h?: number) => this.placeLights(n ?? 16, h ?? DEBUG_LIGHT_HEIGHT_UNITS);
+      (n?: number, h?: number) => this.placeLights(n ?? 1, h ?? DEBUG_LIGHT_HEIGHT_UNITS);
     // z-positioning P0: a DETERMINISTIC caster, because the live scene cannot supply one (I14).
     (globalThis as unknown as {
       __caster: (a?: { tileX?: number; tileY?: number; w?: number; h?: number; elev?: number }) => unknown;
@@ -1245,6 +1245,10 @@ export class Viewport {
    *  that authored contract so the debug path and the content path agree by construction. */
   placeLights(n: number, heightUnits: number = DEBUG_LIGHT_HEIGHT_UNITS): Record<string, unknown> {
     const r = this.records, w = this.map.window, gl = this.renderer.gl;
+    // Free the PREVIOUS debug lights before placing new ones. Without this the old prims stayed
+    // allocated and kept emitting, so calling this hook twice left both sets lit and the scene
+    // accumulated emitters that nothing owned.
+    for (const L of this.liveLights) { r.freePrim(L.index); }
     this.liveLights = [];
     for (let i = 0; i < n; i++) {
       const tileX = w.winCol + 3 + (i % 8) * 4;
