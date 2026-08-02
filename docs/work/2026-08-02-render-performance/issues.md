@@ -200,3 +200,37 @@ looks like a painter's-algorithm bug rather than a filtering one.
 **Cheaper alternative worth costing first:** keep the per-level allocation but CACHE the scratch per
 level instead of destroying it — three render targets total, no resample, no filter question. The
 partition level only takes a handful of values.
+
+## I11 — Lighting is not invalidated when a prim tile re-bakes {#i11}
+
+> "We need to mark the lighting dirty on prim tiles that re-draw. I suspect we just need to mark
+> lighting dirty when we mark color dirty." — user, 2026-08-02
+
+Right that it needs invalidating; the *where* is narrower than "when colour goes dirty", because
+most of the chain already recomputes.
+
+**What already re-runs every frame, unconditionally** — so it is NOT the culprit:
+
+- `LightPass.run()` has **no early-out**. It redraws the whole slot pass each frame from the
+  currently-bound composites, so a re-baked normal/surface composite is picked up the next frame.
+- `lights.receivers(...)` likewise runs each frame.
+
+**What does NOT**, and is where the staleness lives:
+
+1. **The shadow buffer is INCREMENTAL.** `shadows.gather(renderer, …, false, false, 2, lwin)` — it
+   carries cached caster identity per (unit, light) across frames, which is the whole reason
+   [z-positioning I17](../2026-08-01-z-positioning/issues.md#i17) says never to quote a texel count
+   from it. When a prim's ART changes — a geo stem upgrading to its preview, a preview to its
+   master, a subframe crop landing — the silhouette that decided those cached casters is gone, but
+   the cache is not told.
+2. **`bakeDirty` is BUDGETED** (`BAKE_BUDGET`, `COLD_BAKE_FLOOR`). A square that is dirty but not
+   yet baked this frame still presents stale composite content, and the light pass reads it as
+   though it were current. That is a *lag*, not a corruption — it self-corrects as the queue drains.
+
+So the fix is to invalidate the **shadow buffer** for the tiles a square covers when that square
+re-bakes, not to gate the light pass. The seam is `SquareCache.bakeDirty` — it already knows exactly
+which squares it baked this frame (`lastBaked`) — feeding a tile range into `ShadowBuffer`.
+
+**Why this surfaced now**: art used to arrive once, so a stem's silhouette never changed after its
+first bake. The preview tier ([F6](forks.md#f6)) makes every stem change silhouette at least twice —
+geo → preview → master — which turns a latent staleness into a visible one.
