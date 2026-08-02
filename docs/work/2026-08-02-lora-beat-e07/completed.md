@@ -79,3 +79,22 @@ to confirm the baseline still reproduces, and that result is the first real entr
   matrix; re-run twice, **both cells byte-identical**. Verified on a trimmed 2-cell set
   (`RD_EVAL_SET`) rather than the full 36 to keep it to four generations — the mechanism is what
   the criterion tests, and it is per-cell.
+- **2026-08-02 · P1.1 · Base probe run; it overturned my pick.** 4 subjects × e/s × 1 seed, no
+  LoRA, identical prompts and seeds on both candidates. cyberrealisticXL was NOT probed — it is
+  being replaced, not evaluated ([D1](deviations.md)). Two code changes were needed first:
+  `graph()` gained a **bare** path (`--loras none` wires the checkpoint straight through — an
+  identity LoRA node is not the same thing), and the probe uses a **plain-language style prompt**
+  instead of the pinned one, whose `rd_style`/`rd_quadruped`/`rd_east` triggers mean nothing
+  without a LoRA.
+
+  **Result: Animagine 4/4 east cells wider than tall (mean aspect 1.89); Illustrious 0/4 (1.02).**
+  East aspect is the body-vs-bust discriminator, and the sheet agrees with the number — Animagine
+  draws full-body side-profile quadrupeds, Illustrious draws emblems and faces. See
+  [F4 measured](forks.md#f4).
+
+  Incidental but important: **both bases fail on front views** ([I7](issues.md#i7)) — recorded
+  because south has been blamed on the dataset for three runs and here it appears with no LoRA at
+  all.
+
+  Also learned operationally: the first cold read of a 6.6 GB checkpoint off the array exceeded even
+  the 600 s timeout; once page-cached, generations run **~4.4 s**. `RD_COMFY_TIMEOUT` covers it.

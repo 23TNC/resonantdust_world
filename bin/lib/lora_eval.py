@@ -78,18 +78,25 @@ def _run(graph, timeout=None):
     raise SystemExit("lora-eval: timed out waiting for ComfyUI")
 
 def graph(pos, lora, strength, cfg, seed, size=768, steps=24):
-    return {
+    # lora == "none"/"" wires the checkpoint STRAIGHT through, no LoraLoader — the base-prior
+    # probe (P1) needs to see what a base does untrained, and inserting an identity LoRA node is
+    # not the same thing.
+    bare = (not lora) or str(lora).lower() == "none"
+    src = "4" if bare else "10"
+    g = {
      "4":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":MODEL}},
-     "10":{"class_type":"LoraLoader","inputs":{"model":["4",0],"clip":["4",1],
-           "lora_name":lora,"strength_model":strength,"strength_clip":strength}},
-     "6":{"class_type":"CLIPTextEncode","inputs":{"text":pos,"clip":["10",1]}},
-     "7":{"class_type":"CLIPTextEncode","inputs":{"text":NEG,"clip":["10",1]}},
+     "6":{"class_type":"CLIPTextEncode","inputs":{"text":pos,"clip":[src,1]}},
+     "7":{"class_type":"CLIPTextEncode","inputs":{"text":NEG,"clip":[src,1]}},
      "5":{"class_type":"EmptyLatentImage","inputs":{"width":size,"height":size,"batch_size":1}},
      "3":{"class_type":"KSampler","inputs":{"seed":seed,"steps":steps,"cfg":cfg,
            "sampler_name":"euler_ancestral","scheduler":"normal","denoise":1.0,
-           "model":["10",0],"positive":["6",0],"negative":["7",0],"latent_image":["5",0]}},
+           "model":[src,0],"positive":["6",0],"negative":["7",0],"latent_image":["5",0]}},
      "8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},
      "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"loraeval","images":["8",0]}}}
+    if not bare:
+        g["10"] = {"class_type":"LoraLoader","inputs":{"model":["4",0],"clip":["4",1],
+                   "lora_name":lora,"strength_model":strength,"strength_clip":strength}}
+    return g
 
 # ---------------------------------------------------------------- metrics
 def _bg_color(a, cs=6):

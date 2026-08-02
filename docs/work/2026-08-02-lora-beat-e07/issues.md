@@ -118,3 +118,23 @@ Consequences, both acted on rather than noted:
   its own constants. A future verdict is reproducible by construction.
 
 The same class as [I2](#i2): a thing that mattered lived somewhere nothing could check it.
+
+## I7 — Neither candidate base can draw a front-facing quadruped {#i7}
+_2026-08-02 · measured at P1.1 · **may reframe the "south" failure entirely**_
+
+In the no-LoRA probe, **both** bases produced usable side profiles and **both** collapsed on the
+front (`s`) view — Illustrious returned angular face emblems, Animagine returned blobby
+penguin-like shapes and, on `pig_s`, six disconnected pieces.
+
+That matters because *"south renders head-only portraits"* has been treated as a dataset defect
+through runs 3, 4 and 5, and diagnosed variously as a learned white margin and as pinned `fill`.
+Here it appears **before any LoRA exists**, on two unrelated bases.
+
+The plausible reading: a front-on quadruped is genuinely rare in any illustration corpus (Danbooru
+is overwhelmingly human characters, drawn facing the viewer — an orientation that does not
+transfer to four legs), so the prior has little to offer and falls back on faces. If so, south is
+partly a **prior** problem, and the LoRA is being asked to teach a view the base actively resists.
+
+**Not acted on in this stream** — [F2](forks.md#f2) says build, don't attribute. Recorded because
+it is the first evidence that south's difficulty is not purely ours to fix in the dataset, and
+because it predicts south will stay the weak direction whichever base wins.

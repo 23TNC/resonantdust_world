@@ -129,3 +129,29 @@ service back after a deliberate stop, which is the opposite of what an occasiona
 
 **Revisit if** the art pipeline becomes a scheduled/unattended job. A cron-driven rebuild that
 cannot ask a human to start a container is a real reason; "it is convenient" is not.
+
+### F4 — MEASURED at P1.1: the probe overturns the pick
+_2026-08-02 · **Animagine, not Illustrious** — pending the user's confirmation from the sheet_
+
+My pre-measurement reasoning above chose Illustrious on prompt adherence and its LoRA-training
+ecosystem. **The images say the opposite**, and on the one axis that matters most for this art:
+
+| | east cells wider than tall | mean aspect (east) | read |
+|---|---|---|---|
+| Illustrious-XL v1.0 | **0 / 4** | **1.02** | square/upright — emblems, faces, logo compositions |
+| animagine-xl-4.0 | **4 / 4** | **1.89** | side-profile bodies with quadruped proportions |
+
+Aspect on an east view is exactly the body-versus-bust discriminator `sprite-eval-trust` built its
+gate around, and the separation is not marginal. Visually the sheet agrees: Animagine draws
+full-body quadrupeds in side profile with flat fills and heavy black outlines on wolf/tiger/fox/pig;
+Illustrious draws angular emblems, a stacked pile of foxes, and four pigs.
+
+**What stands from the original reasoning:** both are Danbooru bases, both give the flat-colour
+hard-outline prior we wanted, and both are wrong on front views ([I7](issues.md#i7)).
+
+**What does not:** "Illustrious is the more steerable base" was an inference from its ecosystem
+reputation, not from this art. For quadrupeds in side profile it is measurably the worse prior.
+
+Caveat kept honest: 8 cells, one seed, one heavily-loaded prompt, and an untrained base's prior
+only *correlates* with what it will learn — it does not settle it. This is enough to choose which
+to spend a training run on; it is not proof.
