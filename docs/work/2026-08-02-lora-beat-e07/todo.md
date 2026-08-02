@@ -11,11 +11,11 @@ headroom**, **the user selects**. This stream changes many variables at once on 
 - [x] Decide whether ComfyUI should autostart and record the choice. Acceptance: a line in `forks.md`; today it is absent from the unraid autostart list with restart policy `no`.
 - [x] Make `prep_train` fail loudly when ComfyUI is unreachable instead of silently using LANCZOS. Acceptance: with the box down a rebuild exits non-zero; ESRGAN is opt-out via an explicit flag ([I2](issues.md#i2)).
 - [x] Pin the sample set — fixed prompts, seeds and species — in a file every run and A/B reads. Acceptance: two invocations on one model produce byte-identical sample sheets.
-- [ ] Re-run the frozen A/B on `e07` to confirm the bar still reproduces. Acceptance: 26/36 gate and `iou_ref` 0.753 on 6 species × e/s × 3 seeds, or the drift is recorded as the new bar.
+- [x] CUT on the user's instruction — do not run the old model to "establish a bar" before training. Acceptance: the item is recorded as a plan error in `deviations.md`; `e07` is compared against only at [P4](todo.md), if at all.
 
 ## P1 — Choose the base model
 
-- [ ] Generate the pinned set on cyberrealisticXL, Illustrious-XL v1.0 and animagine-xl-4.0 with NO LoRA. Acceptance: one sheet per base, same prompts and seeds, showing each base's untrained prior.
+- [ ] Generate the pinned set on Illustrious-XL v1.0 and animagine-xl-4.0 with NO LoRA. Acceptance: one sheet per candidate, same prompts and seeds. cyberrealisticXL is NOT probed — it is being replaced, not evaluated.
 - [ ] Have the user pick the base whose prior sits closest to flat-region/hard-outline art. Acceptance: a base chosen, with the user's reasoning recorded in `completed.md` ([F4](forks.md#f4) holds my pre-measurement pick).
 - [ ] Confirm the chosen base loads with the SDXL ControlNets already on the box. Acceptance: `mistoline-lineart` and `controlnet-union-promax` both produce a controlled generation without a shape or dtype error.
 - [ ] Confirm which VAE the chosen base wants and wire it explicitly. Acceptance: a generation with no washed-out or artefacted output, and the VAE named in `completed.md` rather than left implicit.
