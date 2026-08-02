@@ -23,9 +23,9 @@ headroom**, **the user selects**. This stream changes many variables at once on 
 
 ## P2 — Rebuild the dataset from the lessons
 
-- [ ] Restore v1-range scale variance in `prep_train`, targeting `e07`'s measured spread rather than run-5's timid jitter. Acceptance: fill sd near **0.148**, not 0.027 ([I1](issues.md#i1)).
+- [x] Restore v1-range scale variance in `prep_train`, targeting `e07`'s measured spread rather than run-5's timid jitter. Acceptance: fill sd near **0.148**, not 0.027 ([I1](issues.md#i1)).
 - [ ] Keep ESRGAN upscaling and re-verify it on the rebuilt set. Acceptance: outline sharpness near the measured 90.1, versus 43.1 for LANCZOS, over a 120-image sample.
-- [ ] Choose and record the training resolution for the new base. Acceptance: a resolution with a stated reason; 1024² is SDXL-native but was never separated from the other P2 changes.
+- [x] Choose and record the training resolution for the new base. Acceptance: a resolution with a stated reason; 1024² is SDXL-native but was never separated from the other P2 changes.
 - [ ] Rebuild the training set end to end and measure it before any training starts. Acceptance: image/caption counts match, fill sd and outline sharpness recorded, no silent-no-op ([I3](issues.md#i3)).
 - [ ] Spot-check ~10 rebuilt images by eye against their sources. Acceptance: no clipping, no halo, no aspect distortion — the check that caught the P2 no-op.
 

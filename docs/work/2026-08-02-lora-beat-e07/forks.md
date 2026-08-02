@@ -155,3 +155,21 @@ reputation, not from this art. For quadrupeds in side profile it is measurably t
 Caveat kept honest: 8 cells, one seed, one heavily-loaded prompt, and an untrained base's prior
 only *correlates* with what it will learn — it does not settle it. This is enough to choose which
 to spend a training run on; it is not proof.
+
+## F6 — Training resolution {#f6}
+_2026-08-02 · resolved at P2.3 · **1024²**_
+
+**Chosen.** 1024², the SDXL native resolution both candidate bases were trained at.
+
+**Why.** 768 entered this project as a VRAM accommodation, not a decision — run-4 held 10,379 MiB
+of the 2080 Ti's 11,264 ([I4](issues.md#i4)). That ceiling is gone. Training a 1024-native base at
+768 asks it to work off-distribution for no remaining reason.
+
+**Why it is not "the P2 change that broke things".** It might be — 768→1024 is one of the three
+bundled P2 changes nobody isolated ([I3](issues.md#i3)). But `e07`'s base was cyberrealisticXL,
+which is also SDXL-native-1024, so 768 was off-distribution for *it* too, and it still won. That
+makes resolution the least likely of the three to be the culprit, and [F2](forks.md#f2) says build
+the best thing rather than litigate it.
+
+**Rejected — 768 "because e07 used it".** Copying the winner's incidental constraint is
+cargo-culting a limitation we no longer have.

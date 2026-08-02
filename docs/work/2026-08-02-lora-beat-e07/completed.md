@@ -98,3 +98,23 @@ to confirm the baseline still reproduces, and that result is the first real entr
 
   Also learned operationally: the first cold read of a 6.6 GB checkpoint off the array exceeded even
   the 600 s timeout; once page-cached, generations run **~4.4 s**. `RD_COMFY_TIMEOUT` covers it.
+
+## P2 — Rebuild the dataset from the lessons
+
+- **2026-08-02 · P2.1 · v1-range scale variance restored via `--fill 0` (NATURAL).** Rather than
+  widening the jitter — which cannot reach v1's spread without pushing subjects past the frame edge
+  — `--fill 0` skips normalisation entirely and keeps the source framing verbatim, which *is* what
+  v1 did. Measured over 120 corpus images, geometry only:
+
+  | mode | mean | sd |
+  |---|---|---|
+  | v2 pinned (`--fill 0.85 --jitter 0`) | 0.850 | 0.0001 |
+  | run-5 jitter (`--jitter 0.05`) | 0.852 | 0.0286 |
+  | **NATURAL (`--fill 0`)** | **0.832** | **0.1405** |
+
+  Against v1's measured **sd 0.1478**, that is a match on the property that matters (the spread);
+  it also keeps ESRGAN, so this is the combination no run has had — v1's framing with v2's
+  outlines. Acceptance asked for "near 0.148, not 0.027": **0.1405**.
+- **2026-08-02 · P2.3 · Training resolution 1024²** ([F6](forks.md#f6)) — SDXL-native for both
+  candidate bases. 768 was a VRAM accommodation from the 11 GB ceiling ([I4](issues.md#i4)), not a
+  decision, and that ceiling is gone.

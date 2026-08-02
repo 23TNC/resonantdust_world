@@ -98,6 +98,28 @@ def normalise(im, size, fill, mode, use_esrgan, allow_degraded=False):
     view (aspect ~0.4) can only be achieved by DISTORTING one of them — the plan's original
     "bbox area / frame area = 0.80" criterion is unsatisfiable while preserving aspect (issues I10).
     Longer-side normalisation gives every sprite the same on-screen presence with aspect intact."""
+    # NATURAL SCALE (`--fill 0`) — reproduce v1's condition, which is the ONE dataset property the
+    # shipping model had and every loser lacked. v1 was unnormalised: the subject occupied whatever
+    # fraction of its frame the source gave it (measured mean 0.755, sd 0.1478). Normalisation
+    # crushed that to sd 0.0032 and run-5's jitter only reached 0.027 — 5.4x short of the shipping
+    # condition, so "scale variance doesn't matter" was never tested where it mattered (I1).
+    # This keeps the source framing verbatim while still gaining the ESRGAN outline, which is the
+    # combination no run has had.
+    if fill <= 0:
+        a = im.convert("RGBA")
+        plate = Image.new("RGBA", a.size, (255, 255, 255, 255)); plate.alpha_composite(a)
+        rgb = plate.convert("RGB")
+        if use_esrgan and size > max(rgb.size):
+            try:
+                while max(rgb.size) < size:
+                    rgb = esrgan(rgb)
+            except Exception as e:
+                if not allow_degraded:
+                    raise SystemExit(f"prep: ESRGAN failed on this image ({e}). "
+                                     f"Refusing to mix upscalers; see --allow-degraded / --upscale lanczos.")
+                print(f"    esrgan failed ({e}); LANCZOS for this one [--allow-degraded]", flush=True)
+        return rgb.resize((size, size), Image.LANCZOS)
+
     a = im.convert("RGBA")
     # THRESHOLD the alpha before taking the bbox. Two traps here, both measured:
     #   * Image.getbbox() on RGBA calls a pixel non-zero if ANY channel is, so a colour-in-the-
@@ -140,7 +162,9 @@ def normalise(im, size, fill, mode, use_esrgan, allow_degraded=False):
 def main():
     ap = argparse.ArgumentParser(prog="prep_train")
     ap.add_argument("--upscale", choices=["esrgan", "lanczos"], default="esrgan")
-    ap.add_argument("--fill", type=float, default=0.85, help="subject's longer side as a fraction of the frame")
+    ap.add_argument("--fill", type=float, default=0.85,
+                    help="subject's longer side as a fraction of the frame. 0 = NATURAL: keep the "
+                         "source framing verbatim (v1's condition, measured sd 0.148 — see I1).")
     ap.add_argument("--jitter", type=float, default=0.05,
                     help="+/- range around --fill, deterministic per source file; 0 pins it (which "
                          "taught run-4 to draw a margin, issues I3)")
