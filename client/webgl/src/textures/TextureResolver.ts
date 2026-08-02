@@ -264,7 +264,9 @@ export class TextureResolver {
   private static readonly QUADRANT: Record<string, [number, number]> = {
     albedo: [0, 0], normal: [1, 0], surface: [0, 1], layers: [1, 1],
   };
-  /** The `map`'s N×N quadrant sub-frame of a `2N × 2N` co-packed frame (cached per (frame, map)). */
+  /** The `map`'s N×N quadrant sub-frame of a `2N × 2N` co-packed frame (cached per (frame, map)).
+   *  F4: the co-pack frame references the DATA page; albedo/normal quadrants RE-SOURCE to the
+   *  page's graphics twin (identical coordinates — one packer rect, two textures). */
   private quadrant(cf: TexFrame, map: TexMap): TexFrame {
     let byMap = this.quadFrames.get(cf);
     if (!byMap) this.quadFrames.set(cf, (byMap = new Map()));
@@ -272,7 +274,9 @@ export class TextureResolver {
     if (hit) return hit;
     const n = cf.w / 2;
     const [qx, qy] = TextureResolver.QUADRANT[map] ?? [0, 0];
-    const q = new TexFrame(cf.source, cf.x + qx * n, cf.y + qy * n, n, n);
+    const graphics = map !== "surface"; // F4: surface alone is DATA; albedo/normal/layers filter
+    const source = graphics ? this.spritePool?.graphicsTwin(cf.source) ?? cf.source : cf.source;
+    const q = new TexFrame(source, cf.x + qx * n, cf.y + qy * n, n, n);
     byMap.set(map, q);
     return q;
   }

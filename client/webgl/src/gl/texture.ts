@@ -50,6 +50,12 @@ export interface TextureOptions {
   /** Premultiply RGB by alpha on a `TexImageSource` upload. Colour maps (albedo) want `true`;
    *  data maps (surface/layers/normal — exact bytes) want `false`. Default `false` (verbatim). */
   premultiply?: boolean;
+  /** one-resolution P3: > 1 → the texture carries a MIP CHAIN (levels `0..mipLevels-1`,
+   *  `TEXTURE_MAX_LEVEL`-capped) and MINIFIES trilinear; magnification keeps the base filter.
+   *  Call {@link Texture.regenerateMips} after mutating level 0 (blits render to level 0 only).
+   *  The cap is the atlas-bleed bound: level k blends 2^k-px blocks, and frames sit on a 16-px
+   *  grid with no gutter, so deep levels would blend neighbouring frames. `rgba8unorm` only. */
+  mipLevels?: number;
 }
 
 export class Texture {
@@ -60,6 +66,7 @@ export class Texture {
   private readonly gl: WebGL2RenderingContext;
   private readonly fmt: Fmt;
   private readonly premultiply: boolean = false;
+  private readonly mipLevels: number = 1;
 
   /** A 1×1 opaque-white texture — the geo-tier residual/surface fill + the atlas white stem. */
   static white(gl: WebGL2RenderingContext): Texture {
@@ -79,9 +86,23 @@ export class Texture {
     const filter = opts.nearest === false && !this.fmt.integer && this.format === "rgba8unorm" ? gl.LINEAR : gl.NEAREST;
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+    // one-resolution P3/F4: a GRAPHICS-page texture carries a capped mip chain and minifies
+    // trilinear; magnification keeps `filter`. Data textures never pass mipLevels.
+    if ((opts.mipLevels ?? 1) > 1 && this.format === "rgba8unorm") {
+      this.mipLevels = opts.mipLevels!;
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, this.mipLevels - 1);
+    }
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this.allocate(opts.data ?? null);
+  }
+
+  /** Rebuild the mip chain from level 0 (call after a blit mutates the base). No-op unmipped. */
+  regenerateMips(): void {
+    if (this.mipLevels <= 1) return;
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this.handle);
+    this.gl.generateMipmap(this.gl.TEXTURE_2D);
   }
 
   /** (Re)allocate storage at the current size with optional data. */

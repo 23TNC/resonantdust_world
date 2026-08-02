@@ -37,34 +37,11 @@ export class SpritePool {
     return this.byStem.get(stem) ?? null;
   }
 
-  /** Pack `source` as `stem`'s texture into a `width × height` frame. Spills to a fresh page when
-   *  the current ones are full. `draw`, if given, composites the source into a SUB-rect of the frame
-   *  from a source sub-rect (the P5 ingest scale/clip/re-centre; the rest of the frame stays the
-   *  page-clear transparency). Returns the framed sub-texture, or null if it can't fit a whole page. */
-  add(stem: string, source: Texture, width: number, height: number, draw?: AtlasDraw): TexFrame | null {
-    // Def-grid invariants (def-frame-anchors P1): frames must be pow2 SQUARES ≥ 16px, placed on the
-    // 16-px page grid — the shadow def addresses them by u4 lod exponent + u10 16-px-grid origin.
-    // one-resolution F3: the LAW — a violating frame is REFUSED, not warned past. A warn is how a
-    // non-pow2 master drifted in unseen; a refused pack is loud (the stem renders geo until fixed).
-    if (width !== height || (width & (width - 1)) !== 0 || width < 16) {
-      console.error(`[sprite-pool] ${stem}: frame ${width}×${height} violates the pow2-square ≥16 LAW — REFUSED (F3, 2026-08-02-one-resolution)`);
-      return null;
-    }
-    let packed: TexFrame | null = null;
-    for (const atlas of this.atlases) {
-      packed = atlas.add(source, width, height, PADDING, draw);
-      if (packed) break;
-    }
-    if (!packed) {
-      if (width + PADDING > this.pageSize || height + PADDING > this.pageSize) return null;
-      packed = this.newAtlas().add(source, width, height, PADDING, draw);
-    }
-    if (packed) {
-      if (packed.x % 16 !== 0 || packed.y % 16 !== 0)
-        console.warn(`[sprite-pool] ${stem}: frame placed off the 16-px grid (${packed.x},${packed.y})`);
-      this.byStem.set(stem, packed);
-    }
-    return packed;
+  /** F4: the GRAPHICS twin of a frame's (data-page) source texture — the resolver re-sources
+   *  albedo/normal quadrants through this. Null for a texture no page of ours owns. */
+  graphicsTwin(source: Texture): Texture | null {
+    for (const atlas of this.atlases) if (atlas.dataTex === source) return atlas.graphicsTex;
+    return null;
   }
 
   /** CO-PACK a stem's four maps into ONE `2·quadN × 2·quadN` frame (quadrants: albedo TL, normal TR,

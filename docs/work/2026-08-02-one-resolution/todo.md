@@ -50,15 +50,19 @@ Stances: [`README`](README.md)._
 - [ ] Delete `setTargetLod` plumbing from the Viewport/zoom path (the resolver no
       longer has a target to set). Acceptance: grep-clean; zoom drills unchanged.
 
-## P3 — mipmaps carry minification
+## P3 — mipmaps carry minification, on a SPLIT atlas
 
-- [ ] Give the sprite pool's pages mip chains + trilinear sampling for the BAKE path
-      (the composites/display keep their settled filtering). Acceptance: zoom 0.25
-      A/B against the P0 captures — equal or better; no shimmer on a pan.
-- [ ] Verify the silhouette/records side is resolution-independent: `texelFetch`
-      consumers (silhouetteHit, receiver coverage) read the one size via the SEED
-      ppu lane exactly as before. Acceptance: `__lightexact` + a `__zprobe` at two
-      zooms; shadows unchanged on screen.
+- [ ] Split every pool page into TWIN textures per [F4](forks.md#f4) (user): ONE packer
+      rect, GRAPHICS page holds albedo+normal quadrants, DATA page holds
+      surface+layers; `resolve()` hands each map its page; frame coords identical.
+      Acceptance: typecheck; cold load textured; a surface texel readback is
+      byte-identical to the master (unfiddled).
+- [ ] Mips + filtered sampling on the GRAPHICS page ONLY (mip chain capped at level 2 —
+      the bleed bound; DATA stays NEAREST/no-mips). Acceptance: zoom 0.25 A/B against
+      the P0 captures — equal or better; no shimmer on a pan.
+- [ ] Verify the silhouette/records side reads the DATA page exactly as before:
+      `silhouetteHit`, receiver coverage, `__zprobe` at two zooms; shadows unchanged
+      on screen. Acceptance: `__lightexact` bit-identical + captures.
 
 ## P4 — rename the survivor
 
